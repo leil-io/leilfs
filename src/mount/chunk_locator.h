@@ -106,7 +106,7 @@ public:
 	}
 
 	void updateFileLength(uint64_t fileLength) {
-		locationInfo_. fileLength = fileLength;
+		locationInfo_.fileLength = fileLength;
 	}
 
 	const ChunkLocationInfo& locationInfo() const {

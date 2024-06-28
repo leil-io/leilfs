@@ -46,7 +46,8 @@ public:
 	 * \param dataChainFd - end of pipe; if anything is written to it, ChunkWriter will break its
 	 *        poll call and look for some new data in write cache for the currently written chunk
 	 */
-	ChunkWriter(ChunkserverStats& stats, ChunkConnector& connector, int dataChainFd);
+	ChunkWriter(uint32_t chunkIndex, ChunkserverStats &stats,
+	            ChunkConnector &connector, int dataChainFd);
 	ChunkWriter(const ChunkWriter&) = delete;
 	~ChunkWriter();
 	ChunkWriter& operator=(const ChunkWriter&) = delete;
@@ -181,6 +182,7 @@ private:
 	int combinedStripeSize_;
 	int dataChainFd_;
 	int chunkSizeInBlocks_;
+	uint32_t chunkIndex_;
 
 	std::map<int, std::unique_ptr<WriteExecutor>> executors_;
 	std::list<WriteCacheBlock> journal_;
