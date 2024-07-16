@@ -17,6 +17,20 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+// This library provides a means of manipulating Prometheus metrics safely and
+// efficiently.
+// The two key restraints in the design are:
+// 1. Prefer compile time costs/safety over initialization time costs/safety,
+// and avoid runtime costs except in accessing the metrics themselves (but
+// minimize them).
+// 2. Do not allow dynamic dimensional data on runtime (i.e, calling Add after
+// initialization)
+//
+// This should allow placing metric gathering functions pretty much everywhere,
+// without worry for performance impact. To do this, it uses a lookup table
+// using enums instead of a map. See master.cc and master.h for an example
+// implementation for adding new metrics.
+
 #ifdef HAVE_PROMETHEUS
 #include <prometheus/counter.h>
 #include <prometheus/detail/builder.h>
@@ -30,16 +44,20 @@
 #endif
 
 #include "metrics.h"
+#include "metrics/master.h"
 #include "slogger/slogger.h"
+
+
+constexpr auto THREAD_SLEEP_TIME_MS = 100;
 
 namespace metrics {
 
 std::unique_ptr<std::jthread>
-    metrics_main_thread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+    gMetricsMainThread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 void destroy() {
-	if (metrics_main_thread != nullptr) {
-		metrics_main_thread->request_stop();
+	if (gMetricsMainThread != nullptr) {
+		gMetricsMainThread->request_stop();
 	}
 }
 
@@ -52,73 +70,41 @@ void init(const char* /* unused */) {
 }
 #else
 
-constexpr auto THREAD_SLEEP_TIME_MS = 100;
-
-prometheus::Family<prometheus::Counter> &setup_family(
-    const char *name, const char *help,
-    std::shared_ptr<prometheus::Registry> &registry) {
-	return prometheus::BuildCounter().Name(name).Help(help).Register(*registry);
-}
-
-class Counters {
+class PrometheusMetrics {
 public:
-	Counters() {
-		registry = std::make_shared<prometheus::Registry>();
-		// NOLINTBEGIN(cppcoreguidelines-prefer-member-initializer)
-		packet_counter = &setup_family(
-		    "observed_packets_total_client",
-		    "Number of observed packets from and for client", registry);
-		// NOLINTEND(cppcoreguidelines-prefer-member-initializer)
-
-		// A very hacky way to allow compile time checking if metrics have been
-		// set. Any enum value not used will throw a compile time error.
-		Counter::Key start = Counter::KEY_START;
-		switch (start) {
-		case Counter::KEY_START:
-		case Counter::CLIENT_RX_PACKETS:
-			counters[Counter::CLIENT_RX_PACKETS] = Counter(
-			    {{"protocol", "tcp"}, {"direction", "rx"}}, packet_counter);
-			[[fallthrough]];
-		case Counter::CLIENT_TX_PACKETS:
-			counters[Counter::CLIENT_TX_PACKETS] = Counter(
-			    {{"protocol", "tcp"}, {"direction", "tx"}}, packet_counter);
-		case Counter::KEY_END:
-			break;
-		}
+	PrometheusMetrics() : registry(std::make_shared<prometheus::Registry>()) {
+		master = Master(registry);
 	}
 
-	std::shared_ptr<prometheus::Registry> get_registry() {
+	std::shared_ptr<prometheus::Registry> getRegistry() {
 		return registry;
 	}
 
-	inline Counter& get(Counter::Key type) {
-		// Completely safe, as all values are defined
-		return counters[type]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
-	}
+	// Master metrics
+	Master master; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 
 private:
-	// Registry, used by packet_counter and counters
+	// Registry
 	std::shared_ptr<prometheus::Registry> registry;
-
-	// Metric(s)
-	prometheus::Family<prometheus::Counter> *packet_counter;
-
-	// All counters
-	std::array<Counter, Counter::Key::KEY_END + 1> counters;
 };
-Counters counters;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+PrometheusMetrics gPrometheusMetrics;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-void Counter::increment(Key key, double n) {
-	auto counter = counters.get(key);
+template <typename T>
+void Counter::increment(T key, double n) {
+	// Safe as all values are constructed at specific keys, however a check
+	// needs to be made whether the actual counter initialized or not (for
+	// whatever reason)
+	auto counterKey = static_cast<unsigned int>(key);
+	auto counter = gPrometheusMetrics.master.masterCounters[counterKey]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
 }
 
-void prometheus_loop(const std::stop_token& stop, const char* host) {
+void prometheusLoop(const std::stop_token& stop, const char* host) {
 	try {
 		// create an http server
 		prometheus::Exposer exposer{host};
 
-		exposer.RegisterCollectable(counters.get_registry());
+		exposer.RegisterCollectable(gPrometheusMetrics.getRegistry());
 		safs::log_info("started prometheus server");
 
 		while (!stop.stop_requested()) {
@@ -130,8 +116,10 @@ void prometheus_loop(const std::stop_token& stop, const char* host) {
 }
 
 void init(const char* host) {
-	metrics_main_thread = std::make_unique<std::jthread>(std::jthread(prometheus_loop, host));
+	gMetricsMainThread = std::make_unique<std::jthread>(std::jthread(prometheusLoop, host));
 }
 
 }
 #endif
+template void metrics::Counter::increment<metrics::Counter::Master>
+	(metrics::Counter::Master key, double n);

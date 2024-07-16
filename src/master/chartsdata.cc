@@ -18,6 +18,9 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
+/* DEPRECATED (master/chartsdata.h): Use src/metrics instead */
+
 #include "common/platform.h"
 
 #include "master/chartsdata.h"
