@@ -113,10 +113,6 @@ ChunkWriter::ChunkWriter(uint32_t chunkIndex,
                          ChunkConnector &connector, int dataChainFd)
 	: chunkserverStats_(chunkserverStats),
 	  connector_(connector),
-	  locator_(nullptr),
-	  idCounter_(0),
-	  acceptsNewOperations_(true),
-	  combinedStripeSize_(0),
 	  dataChainFd_(dataChainFd),
 	  chunkIndex_(chunkIndex) {
 }
@@ -664,7 +660,7 @@ void ChunkWriter::readBlocks(int block_index, int size, int block_from, int bloc
 	for (int index = block_index; index < block_index + size; ++index) {
 		assert(index < SFSBLOCKSINCHUNK);
 
-		WriteCacheBlock block(chunkIndex_,index, WriteCacheBlock::kReadBlock);
+		WriteCacheBlock block(chunkIndex_, index, WriteCacheBlock::kReadBlock);
 		memcpy(block.data(), buffer.data() + offset, SFSBLOCKSIZE);
 		block.from = block_from;
 		block.to = block_to;

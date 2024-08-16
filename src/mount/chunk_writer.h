@@ -40,6 +40,7 @@ public:
 	/**
 	 * Constructor
 	 *
+	 * \param chunkIndex - index of the chunk within the inode the ChunkWriter will be writing.
 	 * \param stats - database which will be updated by the object when accessing servers
 	 * \param connector - object that will be used to create connection with chunkservers
 	 *        to write to them and read from them
@@ -176,10 +177,10 @@ private:
 
 	ChunkserverStats& chunkserverStats_;
 	ChunkConnector& connector_;
-	WriteChunkLocator* locator_;
-	uint32_t idCounter_;
-	bool acceptsNewOperations_;
-	int combinedStripeSize_;
+	WriteChunkLocator *locator_ = nullptr;
+	uint32_t idCounter_ = 0;
+	bool acceptsNewOperations_ = true;
+	int combinedStripeSize_ = 0;
 	int dataChainFd_;
 	int chunkSizeInBlocks_;
 	uint32_t chunkIndex_;

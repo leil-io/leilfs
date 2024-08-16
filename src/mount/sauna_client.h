@@ -91,7 +91,6 @@ struct FsInitParams {
 	static constexpr const char *kDefaultUmaskFile = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
 	static constexpr const char *kDefaultLogLevel = "warn";
 	static constexpr const char *kDefaultLogFlushLevel = "err";
-	static constexpr unsigned kDefaultWriteCacheSize = 50;
 	static constexpr unsigned kDefaultCleanAcquiredFilesPeriod = 0;
 	static constexpr unsigned kDefaultCleanAcquiredFilesTimeout = 0;
 	static constexpr int      kDefaultEnableStatusUpdaterThread = 0;
@@ -99,11 +98,12 @@ struct FsInitParams {
 	static constexpr bool     kDefaultMkdirCopySgid = false;
 #else
 	static constexpr unsigned kDefaultReportReservedPeriod = 30;
-	static constexpr unsigned kDefaultWriteCacheSize = 0;
 	static constexpr unsigned kDefaultLimitGlibcMallocArenas = 0;
 	static constexpr unsigned kDefaultMallocTrimPeriod = 0;
 	static constexpr bool     kDefaultMkdirCopySgid = true;
 #endif
+	static constexpr unsigned kDefaultWriteCacheSize = 128;
+
 	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
 	static constexpr unsigned kDefaultWriteWindowSize = 15;

@@ -80,7 +80,7 @@ private:
 
 class WriteChunkLocator {
 public:
-	WriteChunkLocator() : inode_(0), index_(0), lockId_(0) {}
+	WriteChunkLocator() {}
 
 	virtual ~WriteChunkLocator() {
 		try {
@@ -124,9 +124,9 @@ protected:
 			  lockId_(lockId) {
 	}
 
-	uint32_t inode_;
-	uint32_t index_;
-	uint32_t lockId_;
+	uint32_t inode_ = 0;
+	uint32_t index_ = 0;
+	uint32_t lockId_ = 0;
 	ChunkLocationInfo locationInfo_;
 };
 
