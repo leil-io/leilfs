@@ -89,6 +89,7 @@ struct sfsopts_ {
 	int passwordask;
 	int donotrememberpassword;
 	unsigned writecachesize;
+	unsigned chunkserverwavewriteto;
 	unsigned cachePerInodePercentage;
 	unsigned writeworkers;
 	unsigned ioretries;
@@ -154,6 +155,7 @@ struct sfsopts_ {
 		passwordask(0),
 		donotrememberpassword(SaunaClient::FsInitParams::kDefaultDoNotRememberPassword),
 		writecachesize(SaunaClient::FsInitParams::kDefaultWriteCacheSize),
+		chunkserverwavewriteto(SaunaClient::FsInitParams::kDefaultWriteWaveTo),
 		cachePerInodePercentage(SaunaClient::FsInitParams::kDefaultCachePerInodePercentage),
 		writeworkers(SaunaClient::FsInitParams::kDefaultWriteWorkers),
 		ioretries(SaunaClient::FsInitParams::kDefaultIoRetries),
