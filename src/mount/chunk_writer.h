@@ -40,15 +40,14 @@ public:
 	/**
 	 * Constructor
 	 *
-	 * \param chunkIndex - index of the chunk within the inode the ChunkWriter will be writing.
 	 * \param stats - database which will be updated by the object when accessing servers
 	 * \param connector - object that will be used to create connection with chunkservers
 	 *        to write to them and read from them
 	 * \param dataChainFd - end of pipe; if anything is written to it, ChunkWriter will break its
 	 *        poll call and look for some new data in write cache for the currently written chunk
 	 */
-	ChunkWriter(uint32_t chunkIndex, ChunkserverStats &stats,
-	            ChunkConnector &connector, int dataChainFd);
+	ChunkWriter(ChunkserverStats &stats, ChunkConnector &connector,
+	            int dataChainFd);
 	ChunkWriter(const ChunkWriter&) = delete;
 	~ChunkWriter();
 	ChunkWriter& operator=(const ChunkWriter&) = delete;
@@ -183,7 +182,6 @@ private:
 	int combinedStripeSize_ = 0;
 	int dataChainFd_;
 	int chunkSizeInBlocks_;
-	uint32_t chunkIndex_;
 
 	std::map<int, std::unique_ptr<WriteExecutor>> executors_;
 	std::list<WriteCacheBlock> journal_;

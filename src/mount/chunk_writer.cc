@@ -108,14 +108,11 @@ bool ChunkWriter::Operation::isFullStripe(uint32_t stripeSize) const {
 	return (journalPositions.size() == elementsInStripe);
 }
 
-ChunkWriter::ChunkWriter(uint32_t chunkIndex,
-                         ChunkserverStats &chunkserverStats,
+ChunkWriter::ChunkWriter(ChunkserverStats &chunkserverStats,
                          ChunkConnector &connector, int dataChainFd)
-	: chunkserverStats_(chunkserverStats),
-	  connector_(connector),
-	  dataChainFd_(dataChainFd),
-	  chunkIndex_(chunkIndex) {
-}
+    : chunkserverStats_(chunkserverStats),
+      connector_(connector),
+      dataChainFd_(dataChainFd) {}
 
 ChunkWriter::~ChunkWriter() {
 	try {
@@ -458,7 +455,8 @@ void ChunkWriter::fillNotExisting(Operation &operation, int first_block,
 	// Fills not existing blocks with zeroes
 	for (int index = beyond_start; index < beyond_start + blocks_number;
 	     ++index) {
-		WriteCacheBlock block(chunkIndex_, index, WriteCacheBlock::kReadBlock);
+		WriteCacheBlock block(locator_->chunkIndex(), index,
+		                      WriteCacheBlock::kReadBlock);
 		memset(block.data(), 0, SFSBLOCKSIZE);
 		block.from = block_from;
 		block.to = block_to;
@@ -573,8 +571,8 @@ void ChunkWriter::startOperation(Operation operation) {
 					continue;
 				}
 
-				operation.parityBuffers.push_back(
-				    WriteCacheBlock(chunkIndex_, 0, WriteCacheBlock::kParityBlock));
+				operation.parityBuffers.push_back(WriteCacheBlock(
+				    locator_->chunkIndex(), 0, WriteCacheBlock::kParityBlock));
 				WriteCacheBlock &block = operation.parityBuffers.back();
 				parity_blocks.push_back(&block);
 				blocks_to_write.push_back(&block);
@@ -660,7 +658,8 @@ void ChunkWriter::readBlocks(int block_index, int size, int block_from, int bloc
 	for (int index = block_index; index < block_index + size; ++index) {
 		assert(index < SFSBLOCKSINCHUNK);
 
-		WriteCacheBlock block(chunkIndex_, index, WriteCacheBlock::kReadBlock);
+		WriteCacheBlock block(locator_->chunkIndex(), index,
+		                      WriteCacheBlock::kReadBlock);
 		memcpy(block.data(), buffer.data() + offset, SFSBLOCKSIZE);
 		block.from = block_from;
 		block.to = block_to;

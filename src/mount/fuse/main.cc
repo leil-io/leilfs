@@ -261,6 +261,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.acl_cache_size = gMountOptions.aclcachesize;
 	params.debug_mode = gMountOptions.debug;
 	params.direct_io = gMountOptions.directio;
+	params.use_old_write_algorithm = gMountOptions.useoldwritealgorithm;
 	params.ignore_flush = gMountOptions.ignoreflush;
 	params.malloc_trim_period = gMountOptions.malloctrimperiod;
 	params.log_notifications_area = gMountOptions.lognotificationarea;

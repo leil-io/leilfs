@@ -104,6 +104,7 @@ struct FsInitParams {
 	static constexpr bool     kDefaultMkdirCopySgid = true;
 	static constexpr unsigned kDefaultWriteWaveTo = 50;
 #endif
+	static constexpr bool     kDefaultUseOldWriteAlgorithm = false;
 	static constexpr unsigned kDefaultWriteCacheSize = 128;
 	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
@@ -169,6 +170,7 @@ struct FsInitParams {
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
+	             use_old_write_algorithm(kDefaultUseOldWriteAlgorithm),
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -214,7 +216,8 @@ struct FsInitParams {
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
-#endif
+#endif 
+	             use_old_write_algorithm(kDefaultUseOldWriteAlgorithm),
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -280,6 +283,7 @@ struct FsInitParams {
 	unsigned malloc_trim_period;
 #endif
 
+	bool use_old_write_algorithm;
 	bool ignore_flush;
 	unsigned statfs_cache_timeout;
 	bool use_quota_in_volume_size;
