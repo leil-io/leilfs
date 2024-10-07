@@ -1,7 +1,6 @@
 // chunk_trash_manager.cc
 
 #include <iostream> // For debugging output
-#include <filesystem>
 
 #include "chunk_trash_manager.h"
 #include "errors/saunafs_error_codes.h"

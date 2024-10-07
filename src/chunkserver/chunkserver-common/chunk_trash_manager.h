@@ -1,7 +1,11 @@
 // chunk_trash_manager.h
 #pragma once
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
 #include <filesystem>
+#pragma GCC diagnostic pop
 #include <string>
 
 class ChunkTrashManager {

@@ -1,5 +1,8 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
 #include <gtest/gtest.h>
-#include <filesystem>
+#pragma GCC diagnostic pop
 #include <fstream>
 #include "chunk_trash_manager.h"
 #include "cmr_disk.h"
