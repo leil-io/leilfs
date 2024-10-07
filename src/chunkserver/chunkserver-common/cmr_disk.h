@@ -1,5 +1,12 @@
 #pragma once
 
+// A fix for https://stackoverflow.com/q/77034039/10788155
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#include <filesystem>
+#pragma GCC diagnostic pop
+
 #include "common/platform.h"
 
 #include "chunkserver-common/disk_with_fd.h"
@@ -129,4 +136,16 @@ public:
 	/// Writes to device custom blockSize from blockBuffer
 	int writeChunkData(IChunk *chunk, uint8_t *blockBuffer, int32_t blockSize,
 	                   off64_t offset) override;
+
+private:
+	/// Helper function to get the current timestamp as a UTC string
+	static std::string getDeletionTimeString();
+
+	/// Move a file to the trash directory
+	int moveToTrash(const std::filesystem::path& filePath, const std::filesystem::path& diskPath, const std::string& deletionTime) ;
+
+	friend class CmrDiskTest_GetDeletionTimeStringTest_Test;
+	friend class CmrDiskTest_MoveToTrashValidFile_Test;
+	friend class CmrDiskTest_MoveToTrashNonExistentFile_Test;
+	friend class CmrDiskTest_UnlinkChunkTest_Test;
 };

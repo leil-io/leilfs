@@ -453,3 +453,7 @@ const std::string &FDDisk::metaPath() const { return metaPath_; }
 void FDDisk::setMetaPath(const std::string &newMetaPath) {
 	metaPath_ = newMetaPath;
 }
+
+std::string FDDisk::trashDir() { return trashDir_; }
+
+std::string FDDisk::trashDir_ = ".trash.bin";

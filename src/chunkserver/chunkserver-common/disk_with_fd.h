@@ -188,12 +188,15 @@ public:
 	/// Setter for lastErrorIndex_
 	void setLastErrorIndex(uint32_t newLastErrorIndex) override;
 
+	static std::string trashDir();
+
 private:
 	/// Internal helper to sync both FDs (metadata and data)
 	int fsyncFD(IChunk *chunk, bool isForMetadata);
 
 	std::string metaPath_;  ///< Metadata directory
 	std::string dataPath_;  ///< Data directory
+	static std::string trashDir_;  ///< Trash directory name
 
 	ScanState scanState_ = ScanState::kNeeded;  ///< Scanning status
 	uint8_t scanProgress_ = 0;                  ///< Scan progress percentage
