@@ -31,11 +31,11 @@ void CmrDisk::createPathsAndSubfolders() {
 
 	if (!isMarkedForDeletion()) {
 		ret &= (::mkdir(metaPath().c_str(), mode) == 0);
-		ret &= (::mkdir((dataPath() + "/" + FDDisk::trashDir()).c_str(), mode) == 0);
+		ret &= (::mkdir((std::filesystem::path(metaPath()) / ChunkTrashManager::kTrashDirname).c_str(), mode) == 0);
 
 		if (dataPath() != metaPath()) {
 			ret &= (::mkdir(dataPath().c_str(), mode) == 0);
-			ret &= (::mkdir((dataPath() + "/" + FDDisk::trashDir()).c_str(), mode) == 0);
+			ret &= (::mkdir((std::filesystem::path(dataPath()) / ChunkTrashManager::kTrashDirname).c_str(), mode) == 0);
 		}
 
 		for (uint32_t i = 0; i < Subfolder::kNumberOfSubfolders; ++i) {
@@ -191,44 +191,6 @@ void CmrDisk::open(IChunk *chunk) {
 	                        isReadOnly() ? O_RDONLY : O_RDWR));
 }
 
-std::string CmrDisk::getDeletionTimeString() {
-	auto now = std::chrono::system_clock::now();
-	std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
-	std::tm* utcTime = std::gmtime(&nowTime);  // Convert to UTC
-
-	std::ostringstream oss;
-	oss << std::put_time(utcTime, "%Y%m%d%H%M%S");
-	return oss.str();
-}
-
-int CmrDisk::moveToTrash(const std::filesystem::path& filePath, const std::filesystem::path& diskPath, const std::string& deletionTime) {
-	if (!std::filesystem::exists(filePath)) {
-		safs_pretty_syslog(LOG_WARNING, "File does not exist: %s", filePath.c_str());
-		return SAUNAFS_ERROR_ENOENT;
-	}
-
-	const std::filesystem::path trashDir = diskPath / FDDisk::trashDir();
-	std::filesystem::create_directories(trashDir);
-
-	// Move the file to the trash directory preserving the path relative to the disk root
-	if (!filePath.string().starts_with(diskPath.string())) {
-		safs_pretty_syslog(LOG_WARNING, "File path does not start with disk path: %s", filePath.c_str());
-		return SAUNAFS_ERROR_EINVAL;
-	}
-
-	const std::filesystem::path relativePath = std::filesystem::relative(filePath, diskPath);
-	const std::filesystem::path trashPath = trashDir / (relativePath.string() + "." + deletionTime);
-
-	try {
-		std::filesystem::rename(filePath, trashPath);
-	} catch (const std::filesystem::filesystem_error& e) {
-		safs_pretty_syslog(LOG_WARNING, "Error moving file to trash: %s", e.what());
-		return SAUNAFS_ERROR_IO;
-	}
-
-	return SAUNAFS_STATUS_OK;
-}
-
 int CmrDisk::unlinkChunk(IChunk *chunk) {
 	// Get absolute paths for meta and data files
 	const std::filesystem::path metaFile = chunk->fullMetaFilename();
@@ -245,16 +207,16 @@ int CmrDisk::unlinkChunk(IChunk *chunk) {
 	}
 
 	// Create a deletion timestamp
-	const std::string deletionTime = getDeletionTimeString();
+	const std::string deletionTime = trashManager.getDeletionTimeString();
 
 	// Move meta file to trash
-	int result = moveToTrash(metaFile, metaDiskPath, deletionTime);
+	int result = trashManager.moveToTrash(metaFile, metaDiskPath, deletionTime);
 	if (result != SAUNAFS_STATUS_OK) {
 		return result;
 	}
 
 	// Move data file to trash
-	result = moveToTrash(dataFile, dataDiskPath, deletionTime);
+	result = trashManager.moveToTrash(dataFile, dataDiskPath, deletionTime);
 	if (result != SAUNAFS_STATUS_OK) {
 		return result;
 	}

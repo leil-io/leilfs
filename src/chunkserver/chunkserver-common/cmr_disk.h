@@ -9,6 +9,7 @@
 
 #include "common/platform.h"
 
+#include "chunk_trash_manager.h"
 #include "chunkserver-common/disk_with_fd.h"
 
 class CmrDisk : public FDDisk {
@@ -138,14 +139,5 @@ public:
 	                   off64_t offset) override;
 
 private:
-	/// Helper function to get the current timestamp as a UTC string
-	static std::string getDeletionTimeString();
-
-	/// Move a file to the trash directory
-	int moveToTrash(const std::filesystem::path& filePath, const std::filesystem::path& diskPath, const std::string& deletionTime) ;
-
-	friend class CmrDiskTest_GetDeletionTimeStringTest_Test;
-	friend class CmrDiskTest_MoveToTrashValidFile_Test;
-	friend class CmrDiskTest_MoveToTrashNonExistentFile_Test;
-	friend class CmrDiskTest_UnlinkChunkTest_Test;
+	ChunkTrashManager trashManager;
 };

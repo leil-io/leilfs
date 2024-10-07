@@ -1,123 +1,124 @@
-// A fix for https://stackoverflow.com/q/77034039/10788155
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-#include <filesystem>
 #include <gtest/gtest.h>
-#pragma GCC diagnostic pop
-
+#include <filesystem>
 #include <fstream>
+#include "chunk_trash_manager.h"
+#include "cmr_disk.h"
+#include "errors/saunafs_error_codes.h"
+#include "chunk_with_fd.h"
 
-#include "cmr_disk.h"  // Include your CmrDisk header file
-#include "chunk_with_fd.h"  // Include your FDChunk header file
+class MockChunk : public FDChunk {
+public:
+	MockChunk()
+	    : FDChunk(0, ChunkPartType(detail::SliceType::kECFirst), ChunkState::Available) {}
+
+	MockChunk(const std::filesystem::path& metaFile, const std::filesystem::path& dataFile)
+	    : FDChunk(0, ChunkPartType(detail::SliceType::kECFirst), ChunkState::Available),
+	      metaFile_(metaFile.string()), dataFile_(dataFile.string()) {}
+
+	std::string metaFilename() const override { return metaFile_; }
+	std::string dataFilename() const override { return dataFile_; }
+
+	// Implement all the pure virtual methods with simple stubs
+	std::string generateDataFilenameForVersion(uint32_t) const override { return ""; }
+	int renameChunkFile(uint32_t) override { return 0; }
+	uint8_t* getChunkHeaderBuffer() const override { return nullptr; }
+	size_t getHeaderSize() const override { return 0; }
+	off_t getCrcOffset() const override { return 0; }
+	void shrinkToBlocks(uint16_t) override {}
+	bool isDirty() override { return false; }
+	std::string toString() const override { return "MockChunk"; }
+
+private:
+	std::string metaFile_;
+	std::string dataFile_;
+};
 
 class CmrDiskTest : public ::testing::Test {
 protected:
+	CmrDiskTest()
+	    : cmrDiskInstance("", "",false, false) {}
+	static std::filesystem::path testDir;
+	CmrDisk cmrDiskInstance;
+
 	void SetUp() override {
-		// Create a temporary directory to use for the tests
 		testDir = std::filesystem::temp_directory_path() / "cmr_disk_test";
 		std::filesystem::create_directories(testDir);
+
+		// Create dummy disk paths
+		cmrDiskInstance.setMetaPath(testDir / "meta");
+		cmrDiskInstance.setDataPath(testDir / "data");
+		std::filesystem::create_directories(cmrDiskInstance.metaPath());
+		std::filesystem::create_directories(cmrDiskInstance.dataPath());
 	}
 
 	void TearDown() override {
-		// Clean up the temporary test directory after each test
-//		std::filesystem::remove_all(testDir);
+		std::filesystem::remove_all(testDir);
 	}
-
-	static std::filesystem::path testDir;
 };
 
 std::filesystem::path CmrDiskTest::testDir;
 
-// Test getDeletionTimeString() to ensure it produces a UTC timestamp
-TEST_F(CmrDiskTest, GetDeletionTimeStringTest) {
-	std::string timestamp = CmrDisk::getDeletionTimeString();  // Now accessible due to friend declaration
-	EXPECT_EQ(timestamp.size(), 14);  // Check that the timestamp length is correct (YYYYMMDDHHMMSS)
-}
+TEST_F(CmrDiskTest, UnlinkChunkSuccessful) {
+	// Create a dummy meta and data file in the test directory
+	std::filesystem::path metaFile = std::filesystem::path(cmrDiskInstance.metaPath()) / "chunk_meta_file.txt";
+	std::filesystem::path dataFile = std::filesystem::path(cmrDiskInstance.dataPath()) / "chunk_data_file.txt";
+	std::ofstream(metaFile) << "meta content";
+	std::ofstream(dataFile) << "data content";
 
-// Test moveToTrash() with a valid file path
-TEST_F(CmrDiskTest, MoveToTrashValidFile) {
-	// Create a dummy file in the test directory
-	std::filesystem::path filePath = testDir / "test_file.txt";
-	std::ofstream(filePath) << "dummy content";  // Create the file
+	MockChunk chunk(metaFile, dataFile);
 
-	// Create a CmrDisk instance using one of its constructors
-	CmrDisk cmrDiskInstance(testDir.string(),
-	                        testDir.string(),
-	                        false, false);
-
-	// Call the moveToTrash function
-	std::string diskPath = testDir.string();
-	std::string deletionTime = CmrDisk::getDeletionTimeString();
-	int result = cmrDiskInstance.moveToTrash(filePath, diskPath, deletionTime);
-
-	// Check that the file was moved successfully
-	std::filesystem::path expectedTrashPath = testDir / ".trash.bin" / ("test_file.txt." + deletionTime);
-	EXPECT_TRUE(std::filesystem::exists(expectedTrashPath));
-	EXPECT_EQ(result, SAUNAFS_STATUS_OK);
-}
-
-// Test moveToTrash() with a non-existent file
-TEST_F(CmrDiskTest, MoveToTrashNonExistentFile) {
-	// Define a non-existent file path
-	std::filesystem::path filePath = testDir / "non_existent_file.txt";
-
-	// Create a CmrDisk instance using one of its constructors
-	CmrDisk cmrDiskInstance(testDir.string(),
-	                        testDir.string(),
-	                        false, false);
-
-	// Call the moveToTrash function
-	std::string diskPath = testDir.string();
-	std::string deletionTime = CmrDisk::getDeletionTimeString();
-	int result = cmrDiskInstance.moveToTrash(filePath, diskPath, deletionTime);
-
-	// Check that the function returned the correct error code for a non-existent file
-	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
-}
-
-// Test unlinkChunk() to ensure both meta and data files are moved to the trash
-TEST_F(CmrDiskTest, UnlinkChunkTest) {
-	// Mock the IChunk object
-	class MockChunk : public FDChunk {
-	public:
-		MockChunk()
-		    : FDChunk(0, ChunkPartType(detail::SliceType::kECFirst), ChunkState::Available) {}  // Call base class constructor with dummy values
-
-		std::string metaFilename() const override { return (CmrDiskTest::testDir / "chunk_file.met").string(); }
-		std::string dataFilename() const override { return (CmrDiskTest::testDir / "chunk_file.dat").string(); }
-
-		// Implement all the pure virtual methods with simple stubs
-		std::string generateDataFilenameForVersion(uint32_t) const override { return ""; }
-		int renameChunkFile(uint32_t) override { return 0; }
-		uint8_t* getChunkHeaderBuffer() const override { return nullptr; }
-		size_t getHeaderSize() const override { return 0; }
-		off_t getCrcOffset() const override { return 0; }
-		void shrinkToBlocks(uint16_t) override {}
-		bool isDirty() override { return false; }
-		std::string toString() const override { return "MockChunk"; }
-	};
-
-	MockChunk chunk;
-
-	// Create dummy meta and data files
-	std::ofstream(chunk.metaFilename()) << "meta content";
-	std::ofstream(chunk.dataFilename()) << "data content";
-
-	// Create a CmrDisk instance using one of its constructors
-	CmrDisk cmrDiskInstance(CmrDiskTest::testDir.string(),
-	                        CmrDiskTest::testDir.string(),
-	                        false, false);
-
-	// Call the unlinkChunk function
+	// Call the unlinkChunk method
 	int result = cmrDiskInstance.unlinkChunk(&chunk);
 
-	// Check that both files were moved to the trash successfully
-	std::string deletionTime = CmrDisk::getDeletionTimeString();
-	std::filesystem::path expectedMetaTrashPath = CmrDiskTest::testDir / ".trash.bin" / ("chunk_file.met." + deletionTime);
-	std::filesystem::path expectedDataTrashPath = CmrDiskTest::testDir / ".trash.bin" / ("chunk_file.dat." + deletionTime);
+	// Capture the deletion time immediately after unlinking to ensure consistency
+	std::string deletionTime = ChunkTrashManager::getDeletionTimeString();
+	std::filesystem::path expectedMetaTrashPath = std::filesystem::path(cmrDiskInstance.metaPath()) / ChunkTrashManager::kTrashDirname / (metaFile.filename().string() + "." + deletionTime);
+	std::filesystem::path expectedDataTrashPath = std::filesystem::path(cmrDiskInstance.dataPath()) / ChunkTrashManager::kTrashDirname / (dataFile.filename().string() + "." + deletionTime);
 
+	// Verify that the meta and data files were moved to the trash
 	EXPECT_TRUE(std::filesystem::exists(expectedMetaTrashPath));
 	EXPECT_TRUE(std::filesystem::exists(expectedDataTrashPath));
 	EXPECT_EQ(result, SAUNAFS_STATUS_OK);
+}
+
+TEST_F(CmrDiskTest, UnlinkChunkMetaFileMissing) {
+	// Create only the data file
+	std::filesystem::path dataFile = std::filesystem::path(cmrDiskInstance.dataPath()) / "chunk_data_file.txt";
+	std::ofstream(dataFile) << "data content";
+
+	MockChunk chunk("non_existent_meta_file.txt", dataFile);
+
+	// Call the unlinkChunk method
+	int result = cmrDiskInstance.unlinkChunk(&chunk);
+
+	// Check that the correct error code is returned
+	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
+}
+
+TEST_F(CmrDiskTest, UnlinkChunkDataFileMissing) {
+	// Create only the meta file
+	std::filesystem::path metaFile = std::filesystem::path (cmrDiskInstance.metaPath()) / "chunk_meta_file.txt";
+	std::ofstream(metaFile) << "meta content";
+
+	MockChunk chunk(metaFile, "non_existent_data_file.txt");
+
+	// Call the unlinkChunk method
+	int result = cmrDiskInstance.unlinkChunk(&chunk);
+
+	// Check that the correct error code is returned
+	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
+}
+
+TEST_F(CmrDiskTest, UnlinkChunkDiskPathError) {
+	// Set disk paths to empty strings to simulate a disk path error
+	cmrDiskInstance.setMetaPath("");
+	cmrDiskInstance.setDataPath("");
+
+	MockChunk chunk("chunk_meta_file.txt", "chunk_data_file.txt");
+
+	// Call the unlinkChunk method
+	int result = cmrDiskInstance.unlinkChunk(&chunk);
+
+	// Check that the correct error code is returned
+	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }
