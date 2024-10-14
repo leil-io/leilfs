@@ -855,6 +855,39 @@ find_all_metadata_chunks() {
 	done
 }
 
+
+# print absolute paths of all trashed chunk files on selected server, one per
+# line
+find_chunkserver_trashed_chunks() {
+	local chunkserver_number=$1
+	local chunk_metadata_pattern="chunk*${chunk_metadata_extension}.*"
+	local chunk_data_pattern="chunk*${chunk_data_extension}.*"
+	shift
+	local trash_bins=$(sed \
+	  -e 's/*//' \
+	  -e 's/zonefs://' \
+	  -e 's/|//' \
+	  -e 's@/\?$@/.trash.bin@' \
+		${saunafs_info_[chunkserver${chunkserver_number}_hdd]})
+	if (($# > 0)); then
+		find ${trash_bins} "(" -name "${chunk_data_pattern}" \
+			-o -name "${chunk_metadata_pattern}" ")" -a "(" "$@" ")"
+	else
+		find ${trash_bins} "(" -name "${chunk_data_pattern}" \
+			-o -name "${chunk_metadata_pattern}" ")"
+	fi
+}
+
+# print absolute paths of all trashed chunk files on all servers used in test,
+# one per line
+find_all_trashed_chunks() {
+	local count=${saunafs_info_[chunkserver_count]}
+	local chunkserver
+	for ((chunkserver = 0; chunkserver < count; ++chunkserver)); do
+		find_chunkserver_trashed_chunks $chunkserver "$@"
+	done
+}
+
 # A useful shortcut for saunafs-admin
 # Usage: saunafs_admin_master_no_password <command> [option...]
 # Calls saunafs-admin with the given command and and automatically adds address

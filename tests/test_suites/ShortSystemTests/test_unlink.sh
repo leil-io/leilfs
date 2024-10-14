@@ -24,3 +24,9 @@ timeout="3 minutes"
 if ! wait_for '[[ $(find_all_chunks | wc -l) == 0 ]]' "$timeout"; then
 	test_add_failure $'The following chunks were not removed:\n'"$(find_all_chunks)"
 fi
+
+# Ensure thr "unlinked" files are trashed
+trashed_chunk_files=$(find_all_trashed_chunks | wc -l)
+if [ "${trashed_chunk_files}" -eq 0 ]; then
+  test_add_failure $'The removed chunks were not moved to the trash folder'
+fi
