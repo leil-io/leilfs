@@ -1,6 +1,20 @@
-// chunk_trash_manager.cc
+/*
+   Copyright 2023-2024  Leil Storage OÜ
 
-#include <iostream> // For debugging output
+   This file is part of SaunaFS.
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include "chunk_trash_manager.h"
 #include "errors/saunafs_error_codes.h"
@@ -15,9 +29,10 @@ std::string ChunkTrashManager::getDeletionTimeString() {
 	return oss.str();
 }
 
-int ChunkTrashManager::moveToTrash(const std::filesystem::path& filePath, const std::filesystem::path& diskPath, const std::string& deletionTime) {
+int ChunkTrashManager::moveToTrash(const std::filesystem::path &filePath,
+                                   const std::filesystem::path &diskPath,
+                                   const std::string &deletionTime) {
 	if (!std::filesystem::exists(filePath)) {
-		// Log warning or error
 		return SAUNAFS_ERROR_ENOENT;
 	}
 
@@ -25,16 +40,15 @@ int ChunkTrashManager::moveToTrash(const std::filesystem::path& filePath, const 
 	std::filesystem::create_directories(trashDir);
 
 	if (!filePath.string().starts_with(diskPath.string())) {
-		// Log warning or error
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	const std::filesystem::path trashPath = trashDir / (filePath.filename().string() + "." + deletionTime);
+	const std::filesystem::path trashPath =
+			trashDir / (filePath.filename().string() + "." + deletionTime);
 
 	try {
 		std::filesystem::rename(filePath, trashPath);
-	} catch (const std::filesystem::filesystem_error& e) {
-		// Log error
+	} catch (const std::filesystem::filesystem_error &e) {
 		return SAUNAFS_ERROR_IO;
 	}
 

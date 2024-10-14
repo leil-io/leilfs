@@ -1,4 +1,20 @@
-// chunk_trash_manager_unittest.cc
+/*
+   Copyright 2023-2024  Leil Storage OÜ
+
+   This file is part of SaunaFS.
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+ */
 // A fix for https://stackoverflow.com/q/77034039/10788155
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
@@ -22,7 +38,9 @@ protected:
 	}
 
 	void TearDown() override {
-		std::filesystem::remove_all(testDir);
+		if (std::filesystem::remove_all(testDir) == 0) {
+			std::cerr << "Failed to remove test directory: " << testDir << '\n';
+		}
 	}
 };
 
@@ -30,50 +48,49 @@ std::filesystem::path ChunkTrashManagerTest::testDir;
 
 // Test getDeletionTimeString() to ensure it produces a UTC timestamp
 TEST_F(ChunkTrashManagerTest, GetDeletionTimeStringTest) {
-	ChunkTrashManager manager;
-	std::string timestamp = manager.getDeletionTimeString();
+	std::string timestamp = ChunkTrashManager::getDeletionTimeString();
 	EXPECT_EQ(timestamp.size(), 14);  // Check that the timestamp length is correct (YYYYMMDDHHMMSS)
 	EXPECT_TRUE(std::all_of(timestamp.begin(), timestamp.end(), ::isdigit));  // Check that all characters are digits
 }
 
 TEST_F(ChunkTrashManagerTest, MoveToTrashValidFile) {
-	// Test the moveToTrash() method directly using ChunkTrashManager
-	ChunkTrashManager manager;
-	std::filesystem::path filePath = testDir / "test_file.txt";
+	std::filesystem::path const filePath = testDir / "test_file.txt";
 	std::ofstream(filePath) << "dummy content";
 
-	std::string deletionTime = manager.getDeletionTimeString();
-	int result = manager.moveToTrash(filePath, testDir, deletionTime);
+	// Test the moveToTrash() method directly using ChunkTrashManager
+	std::string const deletionTime = ChunkTrashManager::getDeletionTimeString();
+	int const result = ChunkTrashManager::moveToTrash(filePath, testDir, deletionTime);
 
-	std::filesystem::path expectedTrashPath = testDir / ChunkTrashManager::kTrashDirname / ("test_file.txt." + deletionTime);
+	std::filesystem::path const expectedTrashPath = testDir / ChunkTrashManager::kTrashDirname /
+	                                          ("test_file.txt." + deletionTime);
 	EXPECT_TRUE(std::filesystem::exists(expectedTrashPath));
 	EXPECT_EQ(result, SAUNAFS_STATUS_OK);
 }
 
 TEST_F(ChunkTrashManagerTest, MoveToTrashNonExistentFile) {
-	// Test the moveToTrash() method directly using ChunkTrashManager
-	ChunkTrashManager manager;
 	// Define a non-existent file path
-	std::filesystem::path filePath = testDir / "non_existent_file.txt";
+	std::filesystem::path const filePath = testDir / "non_existent_file.txt";
 
-	std::string deletionTime = manager.getDeletionTimeString();
-	int result = manager.moveToTrash(filePath, testDir, deletionTime);
+	// Test the moveToTrash() method directly using ChunkTrashManager
+	std::string const deletionTime = ChunkTrashManager::getDeletionTimeString();
+	int const result = ChunkTrashManager::moveToTrash(filePath, testDir, deletionTime);
 
 	// Check that the function returned the correct error code for a non-existent file
 	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }
 
 TEST_F(ChunkTrashManagerTest, MoveToTrashFileInNestedDirectory) {
-	ChunkTrashManager manager;
-	std::filesystem::path nestedDir = testDir / "nested/dir/structure";
+	std::filesystem::path const nestedDir = testDir / "nested/dir/structure";
 	std::filesystem::create_directories(nestedDir);
-	std::filesystem::path filePath = nestedDir / "test_file_nested.txt";
+	std::filesystem::path const filePath = nestedDir / "test_file_nested.txt";
 	std::ofstream(filePath) << "nested content";
 
-	std::string deletionTime = manager.getDeletionTimeString();
-	int result = manager.moveToTrash(filePath, testDir, deletionTime);
+	std::string const deletionTime = ChunkTrashManager::getDeletionTimeString();
+	int const result = ChunkTrashManager::moveToTrash(filePath, testDir, deletionTime);
 
-	std::filesystem::path expectedTrashPath = testDir / ChunkTrashManager::kTrashDirname / ("test_file_nested.txt." + deletionTime);
+	std::filesystem::path const expectedTrashPath = testDir /
+	                                          ChunkTrashManager::kTrashDirname /
+	                                          ("test_file_nested.txt." + deletionTime);
 	EXPECT_TRUE(std::filesystem::exists(expectedTrashPath));
 	EXPECT_EQ(result, SAUNAFS_STATUS_OK);
 }

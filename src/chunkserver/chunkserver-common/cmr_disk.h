@@ -1,15 +1,7 @@
 #pragma once
 
-// A fix for https://stackoverflow.com/q/77034039/10788155
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-#include <filesystem>
-#pragma GCC diagnostic pop
-
 #include "common/platform.h"
 
-#include "chunk_trash_manager.h"
 #include "chunkserver-common/disk_with_fd.h"
 
 class CmrDisk : public FDDisk {
@@ -31,7 +23,7 @@ public:
 	CmrDisk &operator=(CmrDisk &&) = delete;
 
 	/// Virtual destructor needed for correct polymorphism
-	~CmrDisk() = default;
+	~CmrDisk() override = default;
 
 	/// Tries to create the paths and subfolders for metaPath and dataPath
 	///
@@ -41,8 +33,8 @@ public:
 
 	/// Creates the lock files for metadata and data directories
 	void createLockFiles(
-	    bool isLockNeeded,
-	    std::vector<std::unique_ptr<IDisk>> &allDisks) override;
+	        bool isLockNeeded,
+	        std::vector<std::unique_ptr<IDisk>> &allDisks) override;
 
 	/// Updates the disk usage information preserving the reserved space
 	///
@@ -57,7 +49,7 @@ public:
 	/// Creates a new ChunkSignature for the given Chunk.
 	/// Used mostly to write the metadata file of an existing in-memory Chunk.
 	std::unique_ptr<ChunkSignature> createChunkSignature(
-	    IChunk *chunk) override;
+	        IChunk *chunk) override;
 
 	/// Creates a new empty ChunkSignature that later will be filled with the
 	/// information of the Chunk using readFromDescriptor.
@@ -137,7 +129,4 @@ public:
 	/// Writes to device custom blockSize from blockBuffer
 	int writeChunkData(IChunk *chunk, uint8_t *blockBuffer, int32_t blockSize,
 	                   off64_t offset) override;
-
-private:
-	ChunkTrashManager trashManager;
 };

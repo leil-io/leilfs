@@ -1,11 +1,12 @@
 #include "cmr_disk.h"
 
-#include <c++/13/iostream>
 #include <filesystem>
 #include <fcntl.h>
+#include <iostream>
 #include <linux/falloc.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+
 
 #include "chunkserver-common/chunk_interface.h"
 #include "chunkserver-common/cmr_chunk.h"
@@ -16,6 +17,8 @@
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
 #include "errors/saunafs_error_codes.h"
+
+#include "chunk_trash_manager.h"
 
 CmrDisk::CmrDisk(const std::string &_metaPath, const std::string &_dataPath,
                  bool _isMarkedForRemoval, bool _isZonedDevice)
@@ -31,11 +34,14 @@ void CmrDisk::createPathsAndSubfolders() {
 
 	if (!isMarkedForDeletion()) {
 		ret &= (::mkdir(metaPath().c_str(), mode) == 0);
-		ret &= (::mkdir((std::filesystem::path(metaPath()) / ChunkTrashManager::kTrashDirname).c_str(), mode) == 0);
+		ret &= (::mkdir((std::filesystem::path(metaPath()) /
+		                 ChunkTrashManager::kTrashDirname).c_str(), mode) == 0);
 
 		if (dataPath() != metaPath()) {
 			ret &= (::mkdir(dataPath().c_str(), mode) == 0);
-			ret &= (::mkdir((std::filesystem::path(dataPath()) / ChunkTrashManager::kTrashDirname).c_str(), mode) == 0);
+			ret &= (::mkdir((std::filesystem::path(dataPath()) /
+			                 ChunkTrashManager::kTrashDirname).c_str(), mode)
+			        == 0);
 		}
 
 		for (uint32_t i = 0; i < Subfolder::kNumberOfSubfolders; ++i) {
@@ -197,26 +203,27 @@ int CmrDisk::unlinkChunk(IChunk *chunk) {
 	const std::filesystem::path dataFile = chunk->fullDataFilename();
 
 	// Use the metaPath() and dataPath() to get the disk paths
-	const std::string metaDiskPath = FDDisk::metaPath();
-	const std::string dataDiskPath = FDDisk::dataPath();
+	const std::string metaDiskPath = metaPath();
+	const std::string dataDiskPath = dataPath();
 
 	// Ensure we found a valid disk path
 	if (metaDiskPath.empty() || dataDiskPath.empty()) {
-		safs_pretty_syslog(LOG_WARNING, "Error finding disk path for chunk: %s", chunk->metaFilename().c_str());
+		safs_pretty_errlog(LOG_ERR, "Error finding disk path for chunk: %s",
+		                   chunk->metaFilename().c_str());
 		return SAUNAFS_ERROR_ENOENT;
 	}
 
 	// Create a deletion timestamp
-	const std::string deletionTime = trashManager.getDeletionTimeString();
+	const std::string deletionTime = ChunkTrashManager::getDeletionTimeString();
 
 	// Move meta file to trash
-	int result = trashManager.moveToTrash(metaFile, metaDiskPath, deletionTime);
+	int result = ChunkTrashManager::moveToTrash(metaFile, metaDiskPath, deletionTime);
 	if (result != SAUNAFS_STATUS_OK) {
 		return result;
 	}
 
 	// Move data file to trash
-	result = trashManager.moveToTrash(dataFile, dataDiskPath, deletionTime);
+	result = ChunkTrashManager::moveToTrash(dataFile, dataDiskPath, deletionTime);
 	if (result != SAUNAFS_STATUS_OK) {
 		return result;
 	}
