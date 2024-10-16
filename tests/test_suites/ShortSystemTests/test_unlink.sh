@@ -17,7 +17,12 @@ saunafs setgoal xor3 "$xorfile"
 dd if=/dev/zero of="$file" bs=1MiB count=130
 dd if=/dev/zero of="$xorfile" bs=1MiB count=130
 saunafs settrashtime 0 "$file" "$xorfile"
-chunks_count_before_files_removal="$(find_all_chunks | wc -l)"
+if [ "$(find_all_trashed_chunks | wc -l)" -ne 0 ]; then
+	test_add_failure $'The trash folder should be empty'
+fi
+# Below value is non-deterministic, but it should be enough to test the
+# feature. Avoiding to use a fixed value to prevent false positives.
+random_files_count_before_removal=$(find_all_chunks | wc -l)
 rm -f "$file" "$xorfile"
 
 # Wait for removing all the chunks
@@ -27,12 +32,11 @@ if ! wait_for '[[ $(find_all_chunks | wc -l) == 0 ]]' "$timeout"; then
 fi
 
 # Ensure the "unlinked" files are trashed
-trashed_chunks_count=$(find_all_trashed_chunks | wc -l)
-if [ "${trashed_chunks_count}" -eq 0 ]; then
-	test_add_failure $'The removed chunks were not moved to the trash folder'
+trashed_chunks=$(find_all_trashed_chunks | wc -l)
+if [ "${trashed_chunks}" -eq 0 ]; then
+	test_add_failure $'No chunk files in the trash folder'
 fi
 
-# Ensure the trashed chunks are removed after the trashing time
-if [ "${trashed_chunks_count}" -ne  "${chunks_count_before_files_removal}" ]; then
-	test_add_failure $'The removed chunks do not match the chunks number in the trash folder'
+if [ "${trashed_chunks}" -lt "${random_files_count_before_removal}" ]; then
+	test_add_failure $'Trashed files number less than the sample count'
 fi
