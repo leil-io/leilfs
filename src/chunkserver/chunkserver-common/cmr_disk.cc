@@ -7,7 +7,6 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
-
 #include "chunkserver-common/chunk_interface.h"
 #include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/global_shared_resources.h"

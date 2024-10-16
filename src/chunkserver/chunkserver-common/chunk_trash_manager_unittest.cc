@@ -49,7 +49,7 @@ std::filesystem::path ChunkTrashManagerTest::testDir;
 // Test getDeletionTimeString() to ensure it produces a UTC timestamp
 TEST_F(ChunkTrashManagerTest, GetDeletionTimeStringTest) {
 	std::string timestamp = ChunkTrashManager::getDeletionTimeString();
-	EXPECT_EQ(timestamp.size(), 14);  // Check that the timestamp length is correct (YYYYMMDDHHMMSS)
+	EXPECT_EQ(timestamp.size(), strlen("YYYYMMDDHHMMSS"));  // Check that the timestamp has the correct length
 	EXPECT_TRUE(std::all_of(timestamp.begin(), timestamp.end(), ::isdigit));  // Check that all characters are digits
 }
 

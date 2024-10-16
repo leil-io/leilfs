@@ -194,7 +194,6 @@ private:
 
 	std::string metaPath_;  ///< Metadata directory
 	std::string dataPath_;  ///< Data directory
-	static std::string trashDir_;  ///< Trash directory name
 
 	ScanState scanState_ = ScanState::kNeeded;  ///< Scanning status
 	uint8_t scanProgress_ = 0;                  ///< Scan progress percentage

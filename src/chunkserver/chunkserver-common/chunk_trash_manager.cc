@@ -20,8 +20,7 @@
 #include "errors/saunafs_error_codes.h"
 
 std::string ChunkTrashManager::getDeletionTimeString() {
-	auto now = std::chrono::system_clock::now();
-	const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+	const std::time_t nowTime = std::time(nullptr);
 	std::tm* utcTime = std::gmtime(&nowTime);  // Convert to UTC
 
 	std::ostringstream oss;
