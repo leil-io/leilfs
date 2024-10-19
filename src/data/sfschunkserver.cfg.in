@@ -184,6 +184,29 @@
 ## of read requests is sent to other chunkservers.
 # REPLICATION_WAVE_TIMEOUT_MS = 500
 
+## Enables or disables the chunk trash feature. When enabled, deleted chunks are
+## moved to a trash directory instead of being immediately removed. (Default: 1)
+# CHUNK_TRASH_ENABLED = 1
+
+## Specifies the timeout in seconds for chunks to remain in the trash before
+## being permanently deleted. (Default: 259200)
+# CHUNK_TRASH_EXPIRATION_SECONDS = 259200
+
+## Sets the available space threshold in gigabytes. If the available space on
+## the disk falls below this threshold, the system will start deleting older
+## chunks from the trash to free up space. (Default: 1024)
+# CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB = 1024
+
+## Defines the bulk size for the garbage collector when processing chunks in the
+## trash. This determines how many files are processed in each garbage
+## collection cycle. (Default: 1000)
+# CHUNK_TRASH_GC_BATCH_SIZE = 1000
+
+## [ADVANCED] The number of files to remove from the trash in a single GC cycle,
+## in case the disk is full ans space needs to be recovered. (Default: 100)
+## (Default: 100)
+# CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE = 100
+
 ## Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or config
 ## value LOG_LEVEL to determine logging level.
 ## Valid log levels are

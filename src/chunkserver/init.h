@@ -36,7 +36,8 @@ inline const std::vector<RunTab> earlyRunTabs = {};
 inline const std::vector<RunTab> runTabs = {
     RunTab{rnd_init, "random generator"},
     RunTab{initDiskManager, "disk manager"},  // Always before "plugin manager"
-    RunTab{loadPlugins, "plugin manager"}, RunTab{hddInit, "hdd space manager"},
+    RunTab{loadPlugins, "plugin manager"},
+	RunTab{hddInit, "hdd space manager"},
     // Has to be before "masterconn"
     RunTab{mainNetworkThreadInit, "main server module"},
     RunTab{masterconn_init, "master connection module"},

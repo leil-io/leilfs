@@ -867,7 +867,7 @@ find_chunkserver_trashed_chunks() {
 	  -e 's/*//' \
 	  -e 's/zonefs://' \
 	  -e 's/|//' \
-	  -e 's@/\?$@/.trash.bin@' \
+	  -e 's@\/?$@/.trash.bin/@' \
 		${saunafs_info_[chunkserver${chunkserver_number}_hdd]})
 	if (($# > 0)); then
 		find ${trash_bins} "(" -name "${chunk_data_pattern}" \
@@ -884,7 +884,7 @@ find_all_trashed_chunks() {
 	local count=${saunafs_info_[chunkserver_count]}
 	local chunkserver
 	for ((chunkserver = 0; chunkserver < count; ++chunkserver)); do
-		find_chunkserver_trashed_chunks $chunkserver "$@"
+		find_chunkserver_trashed_chunks ${chunkserver} "$@"
 	done
 }
 

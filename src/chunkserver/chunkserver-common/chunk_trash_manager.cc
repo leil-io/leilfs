@@ -16,40 +16,51 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <cassert>
+
 #include "chunk_trash_manager.h"
-#include "errors/saunafs_error_codes.h"
+#include "chunk_trash_manager_impl.h"
+#include "common/cfg.h"
 
-std::string ChunkTrashManager::getDeletionTimeString() {
-	const std::time_t nowTime = std::time(nullptr);
-	std::tm* utcTime = std::gmtime(&nowTime);  // Convert to UTC
+u_short ChunkTrashManager::isEnabled = 1;
 
-	std::ostringstream oss;
-	oss << std::put_time(utcTime, "%Y%m%d%H%M%S");
-	return oss.str();
+ChunkTrashManager::ImplentationPtr ChunkTrashManager::pImpl =
+		std::make_shared<ChunkTrashManagerImpl>();
+
+ChunkTrashManager &ChunkTrashManager::instance(ImplentationPtr newImpl) {
+	static ChunkTrashManager instance;
+	if (newImpl) {
+		pImpl = newImpl;
+	}
+	return instance;
 }
 
 int ChunkTrashManager::moveToTrash(const std::filesystem::path &filePath,
                                    const std::filesystem::path &diskPath,
-                                   const std::string &deletionTime) {
-	if (!std::filesystem::exists(filePath)) {
-		return SAUNAFS_ERROR_ENOENT;
+                                   const std::time_t &deletionTime) {
+	if(!isEnabled) {
+		return 0;
 	}
+	assert(pImpl && "Implementation should be set");
+	return pImpl->moveToTrash(filePath, diskPath, deletionTime);
+}
 
-	const std::filesystem::path trashDir = diskPath / kTrashDirname;
-	std::filesystem::create_directories(trashDir);
+int ChunkTrashManager::init(const std::string &diskPath) {
+	reloadConfig();
+	assert(pImpl && "Implementation should be set");
+	return pImpl->init(diskPath);
+}
 
-	if (!filePath.string().starts_with(diskPath.string())) {
-		return SAUNAFS_ERROR_EINVAL;
+void ChunkTrashManager::collectGarbage() {
+	if(!isEnabled) {
+		return;
 	}
+	assert(pImpl && "Implementation should be set");
+	pImpl->collectGarbage();
+}
 
-	const std::filesystem::path trashPath =
-			trashDir / (filePath.filename().string() + "." + deletionTime);
-
-	try {
-		std::filesystem::rename(filePath, trashPath);
-	} catch (const std::filesystem::filesystem_error &e) {
-		return SAUNAFS_ERROR_IO;
-	}
-
-	return SAUNAFS_STATUS_OK;
+void ChunkTrashManager::reloadConfig() {
+	assert(pImpl && "Implementation should be set");
+	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", isEnabled);
+	pImpl->reloadConfig();
 }

@@ -171,6 +171,11 @@ const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
     {"REPLICATION_TOTAL_TIMEOUT_MS", "60000"},
     {"REPLICATION_CONNECTION_TIMEOUT_MS", "1000"},
     {"REPLICATION_WAVE_TIMEOUT_MS", "500"},
+    {"CHUNK_TRASH_ENABLED", "1"},
+    {"CHUNK_TRASH_EXPIRATION_SECONDS", "259200"},
+    {"CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB", "1024"},
+    {"CHUNK_TRASH_GC_BATCH_SIZE", "1000"},
+    {"CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE", "100"},
 };
 
 const static std::unordered_map<std::string, std::string> defaultOptionsMeta = {

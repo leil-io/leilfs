@@ -66,6 +66,7 @@
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
+#include "chunkserver-common/chunk_trash_manager.h"
 #include "chunkserver-common/chunk_with_fd.h"
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/default_disk_manager.h"
@@ -84,17 +85,17 @@
 #include "common/disk_info.h"
 #include "common/event_loop.h"
 #include "common/exceptions.h"
-#include "common/massert.h"
 #include "common/legacy_vector.h"
-#include "errors/saunafs_error_codes.h"
+#include "common/massert.h"
 #include "common/serialization.h"
 #include "common/slice_traits.h"
-#include "slogger/slogger.h"
 #include "common/time_utils.h"
 #include "common/unique_queue.h"
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
+#include "errors/saunafs_error_codes.h"
 #include "protocol/SFSCommunication.h"
+#include "slogger/slogger.h"
 
 constexpr int kErrorLimit = 2;
 constexpr int kLastErrorTime = 60;
@@ -2400,6 +2401,7 @@ void hddFreeResourcesThread() {
 	while (!gTerminate) {
 		gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex,
 		                       kMaxFreeUnused);
+		ChunkTrashManager::instance().collectGarbage();
 		sleep(kDelayedStep);
 	}
 }
@@ -2652,6 +2654,10 @@ int hddInit() {
 		for (const auto& disk : gDisks) {
 			safs_pretty_syslog(LOG_INFO, "hdd space manager: disk to scan: %s",
 			                   disk->getPaths().c_str());
+			ChunkTrashManager::instance().init(disk->metaPath());
+			if(disk->metaPath() != disk->dataPath()) {
+				ChunkTrashManager::instance().init(disk->dataPath());
+			}
 		}
 	}
 
