@@ -72,8 +72,7 @@ public:
 	 * @param timeLimit The cutoff time; files older than this will be removed.
 	 * @param bulkSize The number of files to process in a batch operation.
 	 */
-	void removeExpiredFiles(const std::time_t &timeLimit, size_t
-	bulkSize = 0);
+	void removeExpiredFiles(const std::time_t &timeLimit, size_t bulkSize = 0);
 
 	/**
 	 * @brief Removes a set of specified files from the trash.

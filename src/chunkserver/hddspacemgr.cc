@@ -2651,11 +2651,14 @@ int hddInit() {
 
 	{
 		std::lock_guard disksLockGuard(gDisksMutex);
-		for (const auto& disk : gDisks) {
+		for (const auto &disk: gDisks) {
 			safs_pretty_syslog(LOG_INFO, "hdd space manager: disk to scan: %s",
 			                   disk->getPaths().c_str());
 			ChunkTrashManager::instance().init(disk->metaPath());
-			if(disk->metaPath() != disk->dataPath()) {
+			if (disk->isZonedDevice()) {
+				continue;
+			}
+			if (disk->metaPath() != disk->dataPath()) {
 				ChunkTrashManager::instance().init(disk->dataPath());
 			}
 		}

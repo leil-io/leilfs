@@ -221,6 +221,8 @@ int CmrDisk::unlinkChunk(IChunk *chunk) {
 		                                                       metaDiskPath,
 		                                                       deletionTime);
 		if (result != SAUNAFS_STATUS_OK) {
+			safs_pretty_errlog(LOG_ERR, "Error moving meta file to trash: %s, error: %d",
+			                   metaFile.c_str(), result);
 			return result;
 		}
 
@@ -229,6 +231,8 @@ int CmrDisk::unlinkChunk(IChunk *chunk) {
 		                                                   dataDiskPath,
 		                                                   deletionTime);
 		if (result != SAUNAFS_STATUS_OK) {
+			safs_pretty_errlog(LOG_ERR, "Error moving data file to trash: %s, error: %d",
+			                   dataFile.c_str(), result);
 			return result;
 		}
 	} else {

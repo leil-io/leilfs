@@ -97,27 +97,22 @@ public:
 	 */
 	void collectGarbage();
 
-	/**
-	 * @brief Reloads the configuration for the trash manager.
-	 */
+	/// Reloads the configuration for the trash manager.
 	void reloadConfig();
 
 	// Deleted to enforce singleton behavior
-	ChunkTrashManager(
-			const ChunkTrashManager &) = delete; ///< Copy constructor is deleted.
-	ChunkTrashManager &operator=(
-			const ChunkTrashManager &) = delete; ///< Copy assignment operator is deleted.
-	ChunkTrashManager(
-			ChunkTrashManager &&) = delete; ///< Move constructor is deleted.
-	ChunkTrashManager &operator=(
-			ChunkTrashManager &&) = delete; ///< Move assignment operator is deleted.
-	~ChunkTrashManager() = default; ///< Destructor is explicitly defaulted.
+	ChunkTrashManager(const ChunkTrashManager &) = delete;
+	ChunkTrashManager &operator=(const ChunkTrashManager &) = delete;
+	ChunkTrashManager(ChunkTrashManager &&) = delete;
+	ChunkTrashManager &operator=(ChunkTrashManager &&) = delete;
+
+	~ChunkTrashManager() = default; ///< Destructor
 
 private:
-	// Constructor is private to enforce singleton behavior
-	ChunkTrashManager() = default; ///< Default constructor.
+	/// Constructor is private to enforce singleton behavior
+	ChunkTrashManager() = default;
 
-	static ChunkTrashManager::ImplentationPtr pImpl; ///< Pointer to the
-	// implementation details.
+	/// Pointer to the singleton instance of the trash manager implementation.
+	static ChunkTrashManager::ImplentationPtr pImpl;
 
 };
