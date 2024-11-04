@@ -151,7 +151,7 @@ bool initialize(const std::vector<RunTab> &tabs) {
 				break;
 			}
 		} catch (const std::exception &e) {
-			safs_pretty_syslog(LOG_ERR, "%s", e.what());
+			safs::log_err("unhandled exception ({}): {}", typeid(e).name(), e.what());
 			isOk = false;
 			break;
 		}
@@ -659,18 +659,19 @@ void makedaemon() {
 	fflush(stdout);
 	fflush(stderr);
 	if (pipe(piped)<0) {
-		safs_pretty_syslog(LOG_ERR, "pipe error");
+		safs::log_err("pipe error: {}", strerr(errno));
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
 	}
 	f = fork();
 	if (f<0) {
-		safs_pretty_errlog(LOG_ERR, "first fork error");
+		safs::log_err("pipe error: {}", strerr(errno));
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
 	}
 	if (f>0) {
 		wait(&f);       // just get child status - prevents child from being zombie during initialization stage
 		if (f) {
 			safs_pretty_syslog(LOG_ERR, "child status: %d",f);
+			safs::log_err("{}", strerr(errno));
 			exit(SAUNAFS_EXIT_STATUS_ERROR);
 		}
 		close(piped[1]);
@@ -681,12 +682,13 @@ void makedaemon() {
 						happy = fwrite(pipebuff,1,r-1,stderr);
 						(void)happy;
 					}
+					safs::log_err("pipe error: {}", strerr(errno));
 					exit(SAUNAFS_EXIT_STATUS_ERROR);
 				}
 				happy = fwrite(pipebuff,1,r,stderr);
 				(void)happy;
 			} else {
-				safs_pretty_errlog(LOG_ERR,"error reading pipe");
+				safs::log_err("pipe error: {}", strerr(errno));
 				exit(SAUNAFS_EXIT_STATUS_ERROR);
 			}
 		}
@@ -696,9 +698,9 @@ void makedaemon() {
 	setpgid(0,getpid());
 	f = fork();
 	if (f<0) {
-		safs_pretty_errlog(LOG_ERR,"second fork error");
+		safs::log_err("second fork error: {}", strerr(errno));
 		if (write(piped[1],"fork error\n",11)!=11) {
-			safs_pretty_errlog(LOG_ERR,"pipe write error");
+			safs::log_err("pipe error: {}", strerr(errno));
 		}
 		close(piped[1]);
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
@@ -951,7 +953,7 @@ int main(int argc,char **argv) {
 
 
 	if (chdir(wrkdir)<0) {
-		safs_pretty_syslog(LOG_ERR,"can't set working directory to %s",wrkdir);
+		safs::log_err("can't set working directory to {}: {}", wrkdir, strerr(errno));
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
@@ -960,7 +962,7 @@ int main(int argc,char **argv) {
 		return SAUNAFS_EXIT_STATUS_ERROR;
 	} else {
 		if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {
-			safs_pretty_syslog(LOG_INFO,"changed working directory to: %s",wrkdir);
+			safs::log_info("changed working directory to: {}", wrkdir);
 		}
 	}
 	free(wrkdir);
@@ -970,6 +972,7 @@ int main(int argc,char **argv) {
 	eventloop_pollregister(signal_pipe_desc, signal_pipe_serv);
 
 	if (!initialize_early()) {
+		safs::log_err("couldn't initialize early functions");
 		if (gRunAsDaemon) {
 			fputc(0, stderr);
 			close_msg_channel();
@@ -981,6 +984,7 @@ int main(int argc,char **argv) {
 	// Only kStart should check for lock file consistency
 	FileLock fl(runmode, locktimeout);
 	if (fl.lockstatus() == FileLock::LockStatus::kFail) {
+		safs::log_err("couldn't not acquire lock on {}", fl.name());
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
@@ -1062,6 +1066,7 @@ int main(int argc,char **argv) {
 			ch=SAUNAFS_EXIT_STATUS_ERROR;
 		}
 	} else {
+		safs::log_err("couldn't initialize functions");
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
