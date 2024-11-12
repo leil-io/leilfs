@@ -59,7 +59,9 @@
 #include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
 
-const uint32_t localhost = 0x7F000001;
+bool isLoopbackAddress(uint32_t ip) {	
+	return ((ip & 0xFF000000) == 0x7F000000); // ip in range (127.0.0.0...127.255.255.255)
+}
 
 struct threc {
 	pthread_t thid;
