@@ -2253,7 +2253,7 @@ uint8_t fs_sauwritechunk(uint32_t inode, uint32_t chunkIndex, uint32_t &lockId,
 	for (auto& server : chunkservers) {
 		// If 127.0.0.1, let's assume it's the same as master
 		if (server.address.ip == localhost) {
-			server.address.ip=masterip;
+			server.address.ip = masterip;
 			safs::log_debug("changing chunkserver ip address 127.0.0.1 to {}", htonl(masterip));
 		}
 	}
