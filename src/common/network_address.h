@@ -28,6 +28,10 @@
 #include "common/human_readable_format.h"
 #include "common/serialization.h"
 
+inline bool isLoopbackAddress(uint32_t address) {
+	return ((address & 0xFF000000) == 0x7F000000); // ip in range (127.0.0.0...127.255.255.255)
+}
+
 struct NetworkAddress {
 	uint32_t ip;
 	uint16_t port;
