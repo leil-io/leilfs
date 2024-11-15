@@ -484,6 +484,9 @@ int masterconn_initconnect(masterconn *eptr) {
 		}
 		eptr->bindip = bip;
 		if (tcpresolve(MasterHost,MasterPort,&mip,&mport,0)>=0) {
+			if (isLoopbackAddress(mip)) {
+				safs::log_warn("Chunkserver loopback IP addresses are experimental; consider assigning an IP address to chunkserver (via /etc/hosts or some other way)");
+			}
 				eptr->masterip = mip;
 				eptr->masterport = mport;
 				eptr->masteraddrvalid = 1;
@@ -762,6 +765,9 @@ void masterconn_reload(void) {
 			eptr->mode = KILL;
 		}
 		if (tcpresolve(MasterHost,MasterPort,&mip,&mport,0)>=0) {
+			if (isLoopbackAddress(mip)) {
+				safs::log_warn("Chunkserver loopback IP addresses are experimental; consider a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
+			}
 			if (eptr->masterip != mip || eptr->masterport != mport) {
 				eptr->masterip = mip;
 				eptr->masterport = mport;

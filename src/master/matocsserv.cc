@@ -1038,6 +1038,9 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		free(eptr->servstrip);
 	}
 	eptr->servstrip = matocsserv_makestrip(eptr->servip);
+	if (isLoopbackAddress(eptr->servip)) {
+		safs::log_warn("Chunkserver loopback IP addresses are experimental; consider assigning a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
+	}
 	if (csdb_new_connection(eptr->servip,eptr->servport,eptr)<0) {
 		safs_pretty_syslog(LOG_WARNING,"chunk-server already connected !!!");
 		eptr->mode=KILL;
