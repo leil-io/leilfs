@@ -20,7 +20,7 @@ add_library(metarestore ${METARESTORE_SOURCES} ${METARESTORE_MASTER_SOURCES} ${M
   ../master/restore.cc ../master/locks.cc ../master/task_manager.cc ../master/snapshot_task.cc
   ../master/metadata_loader.cc ../master/setgoal_task.cc ../master/settrashtime_task.cc)
 
-target_link_libraries(metarestore sfscommon)
+target_link_libraries(metarestore metrics sfscommon)
 if(JUDY_LIBRARY)
   target_link_libraries(metarestore ${JUDY_LIBRARY})
 endif()
