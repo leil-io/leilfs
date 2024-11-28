@@ -434,6 +434,7 @@ public:
 		kSuccess = 0,
 		kAlive = 1,
 		kAgain = 2,
+		kTest = 3,
 		kFail = -1
 	};
 
@@ -533,8 +534,11 @@ FileLock::LockStatus FileLock::wdlock(RunMode runmode, uint32_t timeout) {
 			return LockStatus::kAlive;
 		}
 		if (runmode==RunMode::kTest) {
+			// TODO(5.0.0): Fix this stupidity in a breaking change by changing it
+			// to stdout. It's not that hard, stderr for logs/errors, stdout
+			// for output
 			fprintf(stderr,STR(APPNAME) " pid: %ld\n",(long)ownerpid);
-			return LockStatus::kFail;
+			return LockStatus::kTest;
 		}
 		if (runmode==RunMode::kStart) {
 			safs_pretty_syslog(LOG_ERR,
@@ -993,8 +997,17 @@ int main(int argc,char **argv) {
 		return SAUNAFS_EXIT_STATUS_ERROR;
 	}
 
+	if (fl.lockstatus() == FileLock::LockStatus::kTest) {
+		if (gRunAsDaemon) {
+			fputc(0,stderr);
+			close_msg_channel();
+		}
+		closelog();
+		return SAUNAFS_STATUS_OK;
+	}
+
 	if (runmode==RunMode::kStop || runmode==RunMode::kKill || runmode==RunMode::kReload
-			|| runmode==RunMode::kTest || runmode==RunMode::kIsAlive) {
+			|| runmode==RunMode::kIsAlive) {
 		if (gRunAsDaemon) {
 			close_msg_channel();
 		}
