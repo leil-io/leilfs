@@ -988,7 +988,7 @@ int main(int argc,char **argv) {
 	// Only kStart should check for lock file consistency
 	FileLock fl(runmode, locktimeout);
 	if (fl.lockstatus() == FileLock::LockStatus::kFail) {
-		safs::log_err("couldn't not acquire lock on {}", fl.name());
+		safs::log_err("couldn't acquire lock on {}", fl.name());
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
