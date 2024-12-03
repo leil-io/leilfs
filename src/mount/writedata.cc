@@ -66,7 +66,7 @@
 #define NO_INODEDATA nullptr
 #define NO_CHUNKDATA nullptr
 
-namespace OldWriteAlgorithm {
+namespace InodeBasedWriteAlgorithm {
 
 struct inodedata {
 	uint32_t inode;
@@ -107,7 +107,7 @@ struct inodedata {
 		newDataInChainPipe[0] = newDataInChainPipe[1] = -1;
 #else
 		if (pipe(newDataInChainPipe) < 0) {
-			safs_pretty_syslog(LOG_WARNING, "creating pipe error: %s", strerr(errno));
+			safs::log_warn("creating pipe error: {}", strerr(errno));
 			newDataInChainPipe[0] = -1;
 		}
 #endif
@@ -129,7 +129,7 @@ struct inodedata {
 		 */
 		if (workerWaitingForData && dataChain.size() == 1 && isDataChainPipeValid()) {
 			if (write(newDataInChainPipe[1], " ", 1) != 1) {
-				safs_pretty_syslog(LOG_ERR, "write pipe error: %s", strerr(errno));
+				safs::log_err("write pipe error: {}", strerr(errno));
 			}
 			workerWaitingForData = false;
 		}
@@ -204,7 +204,7 @@ struct DelayedQueueEntry {
 };
 
 static std::atomic<uint32_t> maxretries;
-static std::atomic<uint32_t> gWaveTimeout;
+static std::atomic<uint32_t> gWriteWaveTimeout;
 static std::mutex gMutex;
 typedef std::unique_lock<std::mutex> Glock;
 
@@ -345,7 +345,8 @@ void write_job_delayed_end(inodedata* id, int status, int seconds, Glock &lock) 
 	LOG_AVG_TILL_END_OF_SCOPE1("write_job_delayed_end#sec", seconds);
 	id->locator.reset();
 	if (status != SAUNAFS_STATUS_OK) {
-		safs_pretty_syslog(LOG_WARNING, "error writing file number %" PRIu32 ": %s", id->inode, saunafs_error_string(status));
+		safs::log_warn("error writing file number {}: {}", id->inode,
+		               saunafs_error_string(status));
 		id->status = status;
 	}
 	status = id->status;
@@ -414,7 +415,7 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 	} else {
 		// No data, no unfinished jobs -- something wrong!
 		// This should never happen, so the status doesn't really matter
-		safs_pretty_syslog(LOG_WARNING, "got inode with no data to write!!!");
+		safs::log_warn("got inode with no data to write!!!");
 		haveDataToWrite = false;
 		status = SAUNAFS_ERROR_EINVAL;
 	}
@@ -486,8 +487,8 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 			returnJournalToDataChain(writer.releaseJournal(), lock);
 			lock.unlock();
 
-			safs_pretty_syslog(LOG_WARNING, "write file error, inode: %" PRIu32 ", index: %" PRIu32 " - %s",
-					inodeData_->inode, chunkIndex_, errorString.c_str());
+			safs::log_warn("write file error, inode: {}, index: {} - {}",
+			               inodeData_->inode, chunkIndex_, errorString.c_str());
 			if (inodeData_->trycnt >= maxretries) {
 				// Convert error to an unrecoverable error
 				throw UnrecoverableWriteException(e.message(), e.status());
@@ -590,7 +591,7 @@ void InodeChunkWriter::processDataChain(ChunkWriter& writer) {
 					SAUNAFS_ERROR_TIMEOUT);
 		}
 
-		writer.processOperations(gWaveTimeout);
+		writer.processOperations(gWriteWaveTimeout);
 	}
 }
 
@@ -687,7 +688,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	gWriteWindowSize = writewindowsize;
 	gChunkserverTimeout_ms = chunkserverTimeout_ms;
 	maxretries = retries;
-	gWaveTimeout = waveTimeout;
+	gWriteWaveTimeout = waveTimeout;
 	if (cacheblockcount < 10) {
 		cacheblockcount = 10;
 	}
@@ -707,7 +708,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	pthread_attr_destroy(&thattr);
 
 	gTweaks.registerVariable("WriteMaxRetries", maxretries);
-	gTweaks.registerVariable("WriteWaveTimeout", gWaveTimeout);
+	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout);
 }
 
 void write_data_term(void) {
@@ -949,8 +950,9 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 	do {
 		status = fs_truncate(inode, opened, uid, gid, length, writeNeeded, attr, oldLength, lockId);
 		if (status != SAUNAFS_STATUS_OK) {
-			safs_pretty_syslog(LOG_INFO, "truncate file %" PRIu32 " to length %" PRIu64 ": %s (try %d/%d)",
-					inode, length, saunafs_error_string(status), int(retries + 1), int(maxretries));
+			safs::log_info("truncate file {} to length {}: {} (try {}/{})",
+			               inode, length, saunafs_error_string(status),
+			               int(retries + 1), int(maxretries));
 		}
 		if (retries >= maxretries) {
 			break;
@@ -975,8 +977,7 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 			}
 			return 0;
 		} else {
-			// status is now SFS status, so we cannot return any errno
-			throw UnrecoverableWriteException("fs_truncate failed", status);
+			return status;
 		}
 	}
 
@@ -1019,15 +1020,17 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 	}
 
 	id->maxfleng = length;
-	// Now we can tell the master server to finish the truncate operation and then unblock the inode
+	// Now we can tell the master server to finish the truncate operation and
+	// then unblock the inode
 	lock.unlock();
 	status = fs_truncateend(inode, uid, gid, length, lockId, attr);
 	write_data_flushwaiting_decrease(id, lock);
 	write_data_lcnt_decrease(id, lock);
 
 	if (status != SAUNAFS_STATUS_OK) {
-		// status is now SFS status, so we cannot return any errno
-		throw UnrecoverableWriteException("fs_truncateend failed", status);
+		safs::log_warn("truncateend on file {} to length {}: {}", inode, length,
+		               saunafs_error_string(status));
+		return status;
 	}
 	return 0;
 }
@@ -1043,9 +1046,9 @@ int write_data_end(void* vid) {
 	return status;
 }
 
-}  // namespace OldWriteAlgorithm
+}  // namespace InodeBasedWriteAlgorithm
 
-namespace NewWriteAlgorithm {
+namespace ChunkBasedWriteAlgorithm {
 
 struct ChunkData;
 
@@ -1134,7 +1137,7 @@ struct ChunkData {
 		newDataInChainPipe[0] = newDataInChainPipe[1] = -1;
 #else
 		if (pipe(newDataInChainPipe) < 0) {
-			safs_pretty_syslog(LOG_WARNING, "creating pipe error: %s", strerr(errno));
+			safs::log_warn("creating pipe error: {}", strerr(errno));
 			newDataInChainPipe[0] = -1;
 		}
 #endif
@@ -1161,7 +1164,7 @@ struct ChunkData {
 		 */
 		if (workerWaitingForData && dataChain.size() == 1 && isDataChainPipeValid()) {
 			if (write(newDataInChainPipe[1], " ", 1) != 1) {
-				safs_pretty_syslog(LOG_ERR, "write pipe error: %s", strerr(errno));
+				safs::log_err("write pipe error: {}", strerr(errno));
 			}
 			workerWaitingForData = false;
 		}
@@ -1220,7 +1223,7 @@ struct DelayedQueueEntry {
 };
 
 static std::atomic<uint32_t> maxretries;
-static std::atomic<uint32_t> gWaveTimeout;
+static std::atomic<uint32_t> gWriteWaveTimeout;
 static std::mutex gMutex;
 
 static std::mutex fcbcondMutex;
@@ -1459,7 +1462,8 @@ void write_job_delayed_end(ChunkData* chunkData, int status, int seconds, Lock &
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
-		safs_pretty_syslog(LOG_WARNING, "error writing file number %" PRIu32 ": %s", parent->inode, saunafs_error_string(status));
+		safs::log_warn("error writing file number {}: {}", parent->inode,
+		               saunafs_error_string(status));
 		chunkData->updateParentStatus(status);
 	}
 	status = chunkData->getParentStatus();
@@ -1628,9 +1632,8 @@ void ChunkJobWriter::processJob(ChunkData* chunkData) {
 			returnJournalToDataChain(writer.releaseJournal(), inodeLock);
 			inodeLock.unlock();
 
-			safs_pretty_syslog(LOG_WARNING, "write file error, inode: %" PRIu32 ", index: %" PRIu32 " - %s",
-					parent->inode, chunkIndex_, errorString.c_str());
-
+			safs::log_warn("write file error, inode: {}, index: {} - {}", parent->inode,
+			               chunkIndex_, errorString.c_str());
 			if (chunkData_->tryCounter >= maxretries) {
 				// Convert error to an unrecoverable error
 				throw UnrecoverableWriteException(e.message(), e.status());
@@ -1749,7 +1752,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter& writer) {
 					SAUNAFS_ERROR_TIMEOUT);
 		}
 
-		writer.processOperations(gWaveTimeout);
+		writer.processOperations(gWriteWaveTimeout);
 	}
 }
 
@@ -1830,7 +1833,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	gWriteWindowSize = writewindowsize;
 	gChunkserverTimeout_ms = chunkserverTimeout_ms;
 	maxretries = retries;
-	gWaveTimeout = waveTimeout;
+	gWriteWaveTimeout = waveTimeout;
 	if (cacheblockcount < 10) {
 		cacheblockcount = 10;
 	}
@@ -1850,7 +1853,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	pthread_attr_destroy(&thattr);
 
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
-	gTweaks.registerVariable("WriteWaveTimeout", gWaveTimeout, "sfschunkserverwavewriteto");
+	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
 }
 
 void write_data_term(void) {
@@ -2157,8 +2160,9 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 	do {
 		status = fs_truncate(inode, opened, uid, gid, length, writeNeeded, attr, oldLength, lockId);
 		if (status != SAUNAFS_STATUS_OK) {
-			safs_pretty_syslog(LOG_INFO, "truncate file %" PRIu32 " to length %" PRIu64 ": %s (try %d/%d)",
-					inode, length, saunafs_error_string(status), int(retries + 1), int(maxretries));
+			safs::log_info("truncate file {} to length {}: {} (try {}/{})",
+			               inode, length, saunafs_error_string(status),
+			               int(retries + 1), int(maxretries));
 		}
 		if (retries >= maxretries) {
 			break;
@@ -2183,8 +2187,7 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 			}
 			return 0;
 		} else {
-			// status is now SFS status, so we cannot return any errno
-			throw UnrecoverableWriteException("fs_truncate failed", status);
+			return status;
 		}
 	}
 
@@ -2238,7 +2241,8 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 	}
 
 	id->maxfleng = length;
-	// Now we can tell the master server to finish the truncate operation and then unblock the inode
+	// Now we can tell the master server to finish the truncate operation and
+	// then unblock the inode
 	inodeLock.unlock();
 
 	status = fs_truncateend(inode, uid, gid, length, lockId, attr);
@@ -2248,8 +2252,9 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 	write_data_lcnt_decrease(id, inodeLock);
 
 	if (status != SAUNAFS_STATUS_OK) {
-		// status is now SFS status, so we cannot return any errno
-		throw UnrecoverableWriteException("fs_truncateend failed", status);
+		safs::log_warn("truncateend on file {} to length {}: {}", inode, length,
+		               saunafs_error_string(status));
+		return status;
 	}
 	return 0;
 }
@@ -2268,80 +2273,81 @@ int write_data_end(void* vid) {
 	return status;
 }
 
-}  // namespace NewWriteAlgorithm
+}  // namespace ChunkBasedWriteAlgorithm
 
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
                      uint32_t cachePerInodePercentage, uint32_t waveTimeout) {
-	if (gUseOldWriteAlgorithm) {
-		OldWriteAlgorithm::write_data_init(
+	if (gUseInodeBasedWriteAlgorithm) {
+		InodeBasedWriteAlgorithm::write_data_init(
 		    cachesize, retries, workers, writewindowsize, chunkserverTimeout_ms,
 		    cachePerInodePercentage, waveTimeout);
 	} else {
-		NewWriteAlgorithm::write_data_init(
+		ChunkBasedWriteAlgorithm::write_data_init(
 		    cachesize, retries, workers, writewindowsize, chunkserverTimeout_ms,
 		    cachePerInodePercentage, waveTimeout);
 	}
 }
 
 void write_data_term(void) {
-	if (gUseOldWriteAlgorithm) {
-		OldWriteAlgorithm::write_data_term();
+	if (gUseInodeBasedWriteAlgorithm) {
+		InodeBasedWriteAlgorithm::write_data_term();
 	} else {
-		NewWriteAlgorithm::write_data_term();
+		ChunkBasedWriteAlgorithm::write_data_term();
 	}
 }
 
 void *write_data_new(uint32_t inode) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data_new(inode);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data_new(inode);
 	}
-	return NewWriteAlgorithm::write_data_new(inode);
+	return ChunkBasedWriteAlgorithm::write_data_new(inode);
 }
 
 int write_data_end(void *vid) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data_end(vid);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data_end(vid);
 	}
-	return NewWriteAlgorithm::write_data_end(vid);
+	return ChunkBasedWriteAlgorithm::write_data_end(vid);
 }
 
 int write_data_flush(void *vid) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data_flush(vid);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data_flush(vid);
 	}
-	return NewWriteAlgorithm::write_data_flush(vid);
+	return ChunkBasedWriteAlgorithm::write_data_flush(vid);
 }
 
 uint64_t write_data_getmaxfleng(uint32_t inode) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data_getmaxfleng(inode);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data_getmaxfleng(inode);
 	}
-	return NewWriteAlgorithm::write_data_getmaxfleng(inode);
+	return ChunkBasedWriteAlgorithm::write_data_getmaxfleng(inode);
 }
 
 int write_data_flush_inode(uint32_t inode) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data_flush_inode(inode);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data_flush_inode(inode);
 	}
-	return NewWriteAlgorithm::write_data_flush_inode(inode);
+	return ChunkBasedWriteAlgorithm::write_data_flush_inode(inode);
 }
 
 int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
                         uint64_t length, Attributes &attr) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data_truncate(inode, opened, uid, gid,
-		                                              length, attr);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data_truncate(inode, opened, uid,
+		                                                     gid, length, attr);
 	}
-	return NewWriteAlgorithm::write_data_truncate(inode, opened, uid, gid,
-	                                              length, attr);
+	return ChunkBasedWriteAlgorithm::write_data_truncate(inode, opened, uid,
+	                                                     gid, length, attr);
 }
 
 int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff,
                size_t currentSize) {
-	if (gUseOldWriteAlgorithm) {
-		return OldWriteAlgorithm::write_data(vid, offset, size, buff,
-		                                     currentSize);
+	if (gUseInodeBasedWriteAlgorithm) {
+		return InodeBasedWriteAlgorithm::write_data(vid, offset, size, buff,
+		                                            currentSize);
 	}
-	return NewWriteAlgorithm::write_data(vid, offset, size, buff, currentSize);
+	return ChunkBasedWriteAlgorithm::write_data(vid, offset, size, buff,
+	                                            currentSize);
 }

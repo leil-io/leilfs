@@ -3666,7 +3666,7 @@ void fs_init(FsInitParams &params) {
 			params.prefetch_xor_stripes,
 			std::max(params.bandwidth_overuse, 1.));
 
-	gUseOldWriteAlgorithm = params.use_old_write_algorithm;
+	gUseInodeBasedWriteAlgorithm = params.use_inode_based_write_algorithm;
 	write_data_init(
 	    params.write_cache_size, params.io_retries, params.write_workers,
 	    params.write_window_size, params.chunkserver_write_timeout_ms,

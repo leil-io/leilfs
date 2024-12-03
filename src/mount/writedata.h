@@ -27,7 +27,7 @@
 
 #include "common/attributes.h"
 
-inline bool gUseOldWriteAlgorithm;
+inline bool gUseInodeBasedWriteAlgorithm;
 
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
