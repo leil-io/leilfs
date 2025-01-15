@@ -61,8 +61,10 @@ static int append_file(const char *fname, const char *afname) {
 		printf("%s: not a file\n", fname);
 		return -1;
 	}
-	uid = getuid();
-	gid = getgid();
+
+	uid = getUId();
+	gid = getGId();
+	
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_APPEND);
 	put32bit(&wptr, 20);

@@ -28,6 +28,7 @@
 
 #include "common/lambda_guard.h"
 #include "common/server_connection.h"
+#include "common/signal_handling.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -58,23 +59,47 @@ static int recursive_remove(const char *file_name, int long_wait) {
 	sigaddset(&set, SIGUSR1);
 	sigprocmask(SIG_BLOCK, &set, NULL);
 
-	if (realpath(file_name, path_buf) == nullptr) {
-		printf("%s: Resolving path returned error\n", file_name);
+	auto find_last_delimiter_pos = [](const std::string &parent_path) {
+		std::size_t last_pos_delimiter_unix = parent_path.find_last_of("/");
+		std::size_t last_pos_delimiter_win = parent_path.find_last_of("\\");
+		std::size_t last_pos_delimiter = std::string::npos;
+
+		if (last_pos_delimiter_unix != std::string::npos &&
+		    last_pos_delimiter_win != std::string::npos) {
+			last_pos_delimiter =
+			    std::max(last_pos_delimiter_unix, last_pos_delimiter_win);
+		} else {
+			last_pos_delimiter = (last_pos_delimiter_unix == std::string::npos)
+			                         ? last_pos_delimiter_win
+			                         : last_pos_delimiter_unix;
+		}
+
+		return last_pos_delimiter;
+	};
+
+	std::string name_to_use = std::string(file_name);
+#ifdef _WIN32
+	if (name_to_use.back() == '\\' || name_to_use.back() == '/') { 
+		name_to_use.pop_back(); 
+	}
+#endif
+	if (!get_full_path(name_to_use.c_str(), path_buf)) {
+		printf("%s: get_full_path error\n", file_name);
 		return -1;
 	}
 	std::string parent_path(path_buf);
-	parent_path = parent_path.substr(0, parent_path.find_last_of("/"));
+	parent_path = parent_path.substr(0, find_last_delimiter_pos(parent_path));
 
 	fd = open_master_conn(parent_path.c_str(), &parent, nullptr, false);
 	if (fd < 0) {
 		return -1;
 	}
 
-	uid = getuid();
-	gid = getgid();
+	uid = getUId();
+	gid = getGId();
 
 	std::string fname(path_buf);
-	std::size_t pos = fname.find_last_of("/");
+	std::size_t pos = find_last_delimiter_pos(fname);
 	if (pos != std::string::npos) {
 		fname = fname.substr(pos + 1);
 	}

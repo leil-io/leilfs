@@ -49,13 +49,17 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 	if (fd < 0) {
 		return -1;
 	}
+
+	uint32_t uid = getUId();
+	uint32_t gid = getGId();
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_REPAIR);
 	put32bit(&wptr, 17);
 	put32bit(&wptr, 0);
 	put32bit(&wptr, inode);
-	put32bit(&wptr, getuid());
-	put32bit(&wptr, getgid());
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
 	put8bit(&wptr, correct_only_flag);
 	if (tcpwrite(fd, reqbuff, 25) != 25) {
 		printf("%s: master query: send error\n", fname);

@@ -60,6 +60,10 @@ int main(int argc, char **argv) {
 	int status = 0;
 	set_humode();
 
+#ifdef _WIN32
+	socketinit();
+#endif
+
 	if (argc > 1) {
 		std::string func_name(argv[1]);
 		if (func_name == "--version" || func_name == "-v") {

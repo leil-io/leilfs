@@ -77,3 +77,46 @@ inline void print_extra_attributes() {
 		}
 	}
 }
+
+inline bool get_full_path(const char *file_name, char *path_buf) {
+#ifdef _WIN32
+	// Use GetFullPathName on Windows
+	const char *prefix = "/mnt/";
+	if (strncmp(file_name, prefix, strlen(prefix)) == 0) {
+		// Get the drive letter (should be right after /mnt/)
+		char drive_letter = toupper(file_name[strlen(prefix)]);
+
+		// Find the path after the drive letter
+		const char *path_start = strchr(file_name + strlen(prefix) + 1, '/');
+		if (path_start != nullptr) {
+			// Construct Windows path: "<drive>:\<rest_of_path>"
+			snprintf(path_buf, PATH_MAX, "%c:%s", drive_letter, path_start);
+			// Convert forward slashes to backslashes
+			for (char *p = path_buf; *p; p++) {
+				if (*p == '/') *p = '\\';
+			}
+			return true;
+		}
+	}
+	return GetFullPathName(file_name, PATH_MAX, path_buf, NULL) != 0;
+#else
+	// Use realpath on Unix-like systems
+	return realpath(file_name, path_buf) != nullptr;
+#endif
+}
+
+inline uint32_t getUId() {
+#ifdef _WIN32
+	return 0;
+#else
+	return getuid();
+#endif
+}
+
+inline uint32_t getGId() {
+#ifdef _WIN32
+	return 0;
+#else
+	return getgid();
+#endif
+}

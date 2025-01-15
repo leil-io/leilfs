@@ -34,6 +34,7 @@
 #include "common/human_readable_format.h"
 #include "errors/sfserr.h"
 #include "common/server_connection.h"
+#include "common/signal_handling.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 
@@ -50,8 +51,10 @@ void signalHandler(uint32_t job_id) {
 	sigaddset(&set, SIGTERM);
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGUSR1);
-	int sig;
+	int sig = 0;
+#ifndef _WIN32
 	sigwait(&set, &sig);
+#endif
 	if (sig == SIGINT || sig == SIGTERM || sig == SIGHUP) {
 		uint32_t inode;
 		int fd = open_master_conn(".", &inode, nullptr, false);
@@ -286,19 +289,19 @@ int bsd_basename(const char *path, char *bname) {
 
 	/* Strip trailing slashes */
 	endp = path + strlen(path) - 1;
-	while (endp > path && *endp == '/') {
+	while (endp > path && (*endp == '/' || *endp == '\\')) {
 		endp--;
 	}
 
 	/* All slashes becomes "/" */
-	if (endp == path && *endp == '/') {
+	if (endp == path && (*endp == '/' || *endp == '\\')) {
 		(void)strcpy(bname, "/");
 		return 0;
 	}
 
 	/* Find the start of the base */
 	startp = endp;
-	while (startp > path && *(startp - 1) != '/') {
+	while (startp > path && *(startp - 1) != '/' && *(startp - 1) != '\\') {
 		startp--;
 	}
 
@@ -322,23 +325,23 @@ int bsd_dirname(const char *path, char *bname) {
 
 	/* Strip trailing slashes */
 	endp = path + strlen(path) - 1;
-	while (endp > path && *endp == '/') {
+	while (endp > path && (*endp == '/' || *endp == '\\')) {
 		endp--;
 	}
 
 	/* Find the start of the dir */
-	while (endp > path && *endp != '/') {
+	while (endp > path && *endp != '/' && *endp != '\\') {
 		endp--;
 	}
 
 	/* Either the dir is "/" or there are no slashes */
 	if (endp == path) {
-		(void)strcpy(bname, *endp == '/' ? "/" : ".");
+		(void)strcpy(bname, (*endp == '/' || *endp == '\\') ? "/" : ".");
 		return 0;
 	} else {
 		do {
 			endp--;
-		} while (endp > path && *endp == '/');
+		} while (endp > path && (*endp == '/' || *endp == '\\'));
 	}
 
 	if (endp - path + 2 > PATH_MAX) {
@@ -359,20 +362,27 @@ void dirname_inplace(char *path) {
 		path[0] = '.';
 		path[1] = '\0';
 		return;
+	} else if (strlen(path) == 3 && path[1] == ':' && path[2] == '\\') {
+		path[3] = '.';
+		path[4] = '\0';
+		return;
 	}
 
 	/* Strip trailing slashes */
 	endp = path + strlen(path) - 1;
-	while (endp > path && *endp == '/') {
+	while (endp > path && (*endp == '/' || *endp == '\\')) {
 		endp--;
 	}
 
 	/* Find the start of the dir */
-	while (endp > path && *endp != '/') {
+	while (endp > path && (*endp != '/' && *endp != '\\')) {
 		endp--;
 	}
 
-	if (endp == path) {
+	if ((endp - path) == 2 && path[1] == ':' && path[2] == '\\') {
+		path[3] = '.';
+		path[4] = '\0';
+	} else if (endp == path) {
 		if (path[0] == '/') {
 			path[1] = '\0';
 		} else {

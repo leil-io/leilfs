@@ -25,10 +25,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#endif
 
 #include "common/chunk_with_address_and_label.h"
 #include "common/server_connection.h"
-#include "master/quota_database.h"
+#include "common/quota_database.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -120,7 +124,7 @@ static void quota_print_rep(const std::string &path, uint32_t path_inode,
 
 	char rpath[PATH_MAX + 1];
 	std::string real_path;
-	if (realpath(path.c_str(), rpath)) {
+	if (get_full_path(path.c_str(), rpath)) {
 		real_path = rpath;
 	} else {
 		real_path = path;
@@ -163,8 +167,8 @@ static void quota_print_rep(const std::string &path, uint32_t path_inode,
 static int quota_rep(const std::string &path, std::vector<int> requested_uids,
 					 std::vector<int> requested_gid, bool report_all, bool per_directory_quota) {
 	std::vector<uint8_t> request;
-	uint32_t uid = getuid();
-	uint32_t gid = getgid();
+	uint32_t uid = getUId();
+	uint32_t gid = getGId();
 	uint32_t message_id = 0;
 
 	sassert((requested_uids.size() + requested_gid.size() > 0) ^

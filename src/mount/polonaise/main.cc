@@ -47,7 +47,7 @@
 #include "mount/polonaise/options.h"
 #include "mount/polonaise/setup.h"
 
-#include "mount/stat_defs.h" // !!! This must be the last include. Do not move !!!
+#include "common/stat_defs.h" // !!! This must be the last include. Do not move !!!
 
 using namespace ::polonaise;
 
