@@ -20,7 +20,7 @@
 
 #include "common/platform.h"
 
-#include "master/quota_database.h"
+#include "common/quota_database.h"
 
 void QuotaDatabase::remove(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor,
 		QuotaResource resource) {

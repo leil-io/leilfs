@@ -81,7 +81,7 @@
 #include "mount/osx_acl_converter.h"
 #endif
 
-#include "mount/stat_defs.h" // !!! This must be last include. Do not move !!!
+#include "common/stat_defs.h" // !!! This must be last include. Do not move !!!
 
 namespace SaunaClient {
 

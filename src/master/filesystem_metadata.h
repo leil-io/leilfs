@@ -25,6 +25,7 @@
 #include <map>
 
 #include "common/special_inode_defs.h"
+#include "common/quota_database.h"
 #include "master/acl_storage.h"
 #include "master/filesystem_checksum_background_updater.h"
 #include "master/filesystem_node_types.h"
@@ -32,7 +33,6 @@
 #include "master/id_pool_detainer.h"
 #include "master/locks.h"
 #include "master/metadata_dumper.h"
-#include "master/quota_database.h"
 #include "master/task_manager.h"
 
 /** Metadata of the filesystem.

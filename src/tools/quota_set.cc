@@ -24,7 +24,7 @@
 #include <stdlib.h>
 
 #include "common/server_connection.h"
-#include "master/quota_database.h"
+#include "common/quota_database.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -47,8 +47,8 @@ static int quota_set(const std::string &path, QuotaOwner owner, uint64_t soft_in
 		return -1;
 	}
 
-	uint32_t uid = getuid();
-	uint32_t gid = getgid();
+	uint32_t uid = getUId();
+	uint32_t gid = getGId();
 
 	if (owner.ownerType == QuotaOwnerType::kInode) {
 		owner.ownerId = inode;

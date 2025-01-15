@@ -30,8 +30,10 @@ install(FILES sfstools.sh DESTINATION ${BIN_SUBDIR} PERMISSIONS OWNER_EXECUTE OW
                     GROUP_EXECUTE GROUP_READ WORLD_EXECUTE WORLD_READ)
 
 foreach(LINK ${SFSTOOL_LINKS})
-  add_custom_target(${LINK} ALL
+  if(NOT WIN32)	
+    add_custom_target(${LINK} ALL
       COMMAND ln -sf sfstools.sh ${LINK}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+  endif()
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${LINK} DESTINATION ${BIN_SUBDIR})
 endforeach()
