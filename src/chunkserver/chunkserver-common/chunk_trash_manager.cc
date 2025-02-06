@@ -20,7 +20,7 @@
 
 #include "chunk_trash_manager.h"
 #include "chunk_trash_manager_impl.h"
-#include "common/cfg.h"
+#include "config/cfg.h"
 
 u_short ChunkTrashManager::isEnabled = 1;
 

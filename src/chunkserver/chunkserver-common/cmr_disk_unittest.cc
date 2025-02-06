@@ -52,14 +52,14 @@ public:
 	MockChunk(const std::filesystem::path &metaFile, const
 	std::filesystem::path &dataFile) : FDChunk(0,
 	                                           ChunkPartType(
-			                                           detail::SliceType::kECFirst),
+	                                           detail::SliceType::kECFirst),
 	                                           ChunkState::Available),
 	                                   metaFile_(metaFile.string()),
 	                                   dataFile_(dataFile.string()) {}
 
-	std::string metaFilename() const override { return metaFile_; }
+	std::string fullMetaFilename() const override { return metaFile_; }
 
-	std::string dataFilename() const override { return dataFile_; }
+	std::string fullDataFilename() const override { return dataFile_; }
 
 	// Implement all the pure virtual methods with simple stubs
 	std::string generateDataFilenameForVersion(
