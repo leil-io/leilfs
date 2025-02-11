@@ -1,22 +1,22 @@
 #include "common/platform.h"
+
+#include "common/time_utils.h"
 #include "uraft.h"
 #include "uraftcontroller.h"
 
 #include <poll.h>
+#include <sys/syslog.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <cstdio>
-#include <iostream>
-#include <stdexcept>
+#include <memory>
 
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 #include <boost/bind.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/version.hpp>
-
-#include "common/time_utils.h"
 
 uRaftController::uRaftController(boost::asio::io_service &ios)
 	: uRaftStatus(ios),
@@ -30,6 +30,7 @@ uRaftController::uRaftController(boost::asio::io_service &ios)
 
 	opt_.check_node_status_period = 250;
 	opt_.check_cmd_status_period  = 100;
+	opt_.check_floating_ip_period = 500;
 	opt_.getversion_timeout       = 50;
 	opt_.promote_timeout          = 1000000;
 	opt_.demote_timeout           = 1000000;
@@ -79,6 +80,15 @@ void uRaftController::nodePromote() {
 	setSlowCommandTimeout(opt_.promote_timeout);
 	if (runSlowCommand("saunafs-uraft-helper promote")) {
 		command_type_ = kCmdPromote;
+
+		// Create HAFloatingIPManager
+		haFloatingIPManager = std::make_unique<HAFloatingIPManager>(
+		    opt_.floating_iface, opt_.floating_ip,
+		    opt_.check_floating_ip_period);
+
+		// Start HAFloatingIPManager
+		haFloatingIPManager->start();
+		syslog(LOG_INFO, "Floating IP manager started");
 	}
 }
 
@@ -99,6 +109,13 @@ void uRaftController::nodeDemote() {
 	if (runSlowCommand("saunafs-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
 		set_block_promotion(true);
+
+		// Stop HAFloatingIPManager
+		if (haFloatingIPManager) {
+			haFloatingIPManager->stop();
+			haFloatingIPManager.reset();
+			syslog(LOG_INFO, "Floating IP manager stopped");
+		}
 	}
 }
 
@@ -144,21 +161,6 @@ void uRaftController::nodeLeader(int id) {
 	}
 
 	syslog(LOG_NOTICE, "Node '%s' is now a leader.", name.c_str());
-}
-
-bool uRaftController::isFloatingIpAlive() {
-	std::vector<std::string> params = {"saunafs-uraft-helper",
-	                                   "is-floating-ip-alive"};
-	std::string result;
-
-	if (runCommand(params, result, opt_.check_cmd_status_period)) {
-		if (result == "alive" || result == "dead") { return result == "alive"; }
-		syslog(LOG_ERR, "Invalid floating IP status.");
-	} else {
-		syslog(LOG_WARNING, "is-floating-ip-alive timeout.");
-	}
-
-	return false;
 }
 
 /*! \brief Check promote/demote script status. */
@@ -228,14 +230,6 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 				}
 			}
 			node_alive_ = is_alive;
-		}
-
-		if (state_.president) {
-			if (!isFloatingIpAlive()) {
-				syslog(LOG_ERR, "Floating IP is not alive. Demoting leader.");
-				demoteLeader(); // Demote current leader and trigger a new election
-				nodeDemote();   // Restart metadata server and sync metadata version
-			}
 		}
 	}
 

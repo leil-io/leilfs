@@ -59,6 +59,9 @@ heartbeat messages.
 *LOCAL_MASTER_CHECK_PERIOD*:: *[advanced]* period in milliseconds between
 checking whether local master is alive.
 
+*URAFT_FLOATING_IP_CHECK_PERIOD*:: *[advanced]* period in milliseconds between
+checking whether the floating IP is alive.
+
 == REPORTING BUGS
 
 Report bugs to the Github repository <https://github.com/leil/saunafs> as an

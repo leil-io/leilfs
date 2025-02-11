@@ -421,12 +421,16 @@ if(NOT MINGW)
   endif()
 endif()
 
+if (ENABLE_URAFT)
+  add_subdirectory(src/uraft)
+endif()
+
+# 'src/unittests' should be the last to be added to guarantee that all unit
+# tests are included.
+# Otherwise, some unit tests could not be generated, like uraft's ones.
 if(BUILD_TESTS)
   add_subdirectory(src/unittests)
   add_subdirectory(tests)
-endif()
-if (ENABLE_URAFT)
-  add_subdirectory(src/uraft)
 endif()
 
 include(Packing)
