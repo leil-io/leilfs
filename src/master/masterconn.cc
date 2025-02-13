@@ -157,7 +157,8 @@ static void* reconnect_hook;
 #ifdef METALOGGER
 static void* download_hook;
 #endif /* #ifdef METALOGGER */
-static uint64_t lastlogversion=0;
+
+static uint64_t lastLogVersion = 0;
 
 static uint32_t stats_bytesout=0;
 static uint32_t stats_bytesin=0;
@@ -168,85 +169,6 @@ void masterconn_stats(uint32_t *bin,uint32_t *bout) {
 	stats_bytesin = 0;
 	stats_bytesout = 0;
 }
-
-#ifdef METALOGGER
-void masterconn_findlastlogversion(void) {
-	struct stat st;
-	uint8_t buff[32800];    // 32800 = 32768 + 32
-	uint64_t size;
-	uint32_t buffpos;
-	uint64_t lastnewline;
-	int fd;
-	lastlogversion = 0;
-
-	if ((stat(kMetadataMlFilename, &st) < 0) || (st.st_size == 0) || ((st.st_mode & S_IFMT) != S_IFREG)) {
-		return;
-	}
-
-	fd = open(kChangelogMlFilename, O_RDWR);
-	if (fd<0) {
-		return;
-	}
-	fstat(fd,&st);
-	size = st.st_size;
-	memset(buff,0,32);
-	lastnewline = 0;
-	while (size>0 && size+200000>(uint64_t)(st.st_size)) {
-		if (size>32768) {
-			memcpy(buff+32768,buff,32);
-			size-=32768;
-			lseek(fd,size,SEEK_SET);
-			if (read(fd,buff,32768)!=32768) {
-				lastlogversion = 0;
-				close(fd);
-				return;
-			}
-			buffpos = 32768;
-		} else {
-			memmove(buff+size,buff,32);
-			lseek(fd,0,SEEK_SET);
-			if (read(fd,buff,size)!=(ssize_t)size) {
-				lastlogversion = 0;
-				close(fd);
-				return;
-			}
-			buffpos = size;
-			size = 0;
-		}
-		// size = position in file of first byte in buff
-		// buffpos = position of last byte in buff to search
-		while (buffpos>0) {
-			buffpos--;
-			if (buff[buffpos]=='\n') {
-				if (lastnewline==0) {
-					lastnewline = size + buffpos;
-				} else {
-					if (lastnewline+1 != (uint64_t)(st.st_size)) {  // garbage at the end of file - truncate
-						if (ftruncate(fd,lastnewline+1)<0) {
-							lastlogversion = 0;
-							close(fd);
-							return;
-						}
-					}
-					buffpos++;
-					while (buffpos<32800 && buff[buffpos]>='0' && buff[buffpos]<='9') {
-						lastlogversion *= 10;
-						lastlogversion += buff[buffpos]-'0';
-						buffpos++;
-					}
-					if (buffpos==32800 || buff[buffpos]!=':') {
-						lastlogversion = 0;
-					}
-					close(fd);
-					return;
-				}
-			}
-		}
-	}
-	close(fd);
-	return;
-}
-#endif /* #ifdef METALOGGER */
 
 uint8_t* masterconn_createpacket(MasterConn *eptr,uint32_t type,uint32_t size) {
 	PacketStruct *outpacket;
@@ -299,14 +221,14 @@ void masterconn_sendregister(MasterConn *eptr) {
 	return;
 #endif
 
-	if (lastlogversion>0) {
+	if (lastLogVersion>0) {
 		buff = masterconn_createpacket(eptr,MLTOMA_REGISTER,1+4+2+8);
 		put8bit(&buff,2);
 		put16bit(&buff,SAUNAFS_PACKAGE_VERSION_MAJOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MINOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MICRO);
 		put16bit(&buff,Timeout);
-		put64bit(&buff,lastlogversion);
+		put64bit(&buff,lastLogVersion);
 	} else {
 		buff = masterconn_createpacket(eptr,MLTOMA_REGISTER,1+4+2);
 		put8bit(&buff,1);
@@ -353,7 +275,7 @@ void masterconn_force_metadata_download(MasterConn* eptr) {
 	fs_unload();
 	restore_reset();
 #endif
-	lastlogversion = 0;
+	lastLogVersion = 0;
 	masterconn_kill_session(eptr);
 }
 
@@ -444,8 +366,8 @@ void masterconn_metachanges_log(MasterConn *eptr,const uint8_t *data,uint32_t le
 	uint64_t version = get64bit(&data);
 	const char* changelogEntry = reinterpret_cast<const char*>(data);
 
-	if ((lastlogversion > 0) && (version != (lastlogversion + 1))) {
-		safs_pretty_syslog(LOG_WARNING, "some changes lost: [%" PRIu64 "-%" PRIu64 "], download metadata again",lastlogversion,version-1);
+	if ((lastLogVersion > 0) && (version != (lastLogVersion + 1))) {
+		safs_pretty_syslog(LOG_WARNING, "some changes lost: [%" PRIu64 "-%" PRIu64 "], download metadata again",lastLogVersion,version-1);
 		masterconn_handle_changelog_apply_error(eptr, SAUNAFS_ERROR_METADATAVERSIONMISMATCH);
 		return;
 	}
@@ -466,7 +388,7 @@ void masterconn_metachanges_log(MasterConn *eptr,const uint8_t *data,uint32_t le
 	}
 #endif /* #ifndef METALOGGER */
 	changelog(version, changelogEntry);
-	lastlogversion = version;
+	lastLogVersion = version;
 }
 
 void masterconn_end_session(MasterConn *eptr, const uint8_t* data, uint32_t length) {
@@ -575,8 +497,8 @@ void masterconn_download_next(MasterConn *eptr) {
 				if (eptr->state == MasterConn::State::kDownloading) {
 					try {
 						fs_loadall();
-						lastlogversion = fs_getversion() - 1;
-						safs_pretty_syslog(LOG_NOTICE, "synced at version = %" PRIu64, lastlogversion);
+						lastLogVersion = fs_getversion() - 1;
+						safs_pretty_syslog(LOG_NOTICE, "synced at version = %" PRIu64, lastLogVersion);
 						eptr->state = MasterConn::State::kSynchronized;
 					} catch (Exception& ex) {
 						safs_pretty_syslog(LOG_WARNING, "can't load downloaded metadata and changelogs: %s",
@@ -830,7 +752,7 @@ void masterconn_connected(MasterConn *eptr) {
 #ifdef METALOGGER
 	masterconn_send_metalogger_config(eptr);
 #endif
-	if (lastlogversion==0) {
+	if (lastLogVersion==0) {
 		masterconn_metadownloadinit();
 	} else if (eptr->state == MasterConn::State::kDumpRequestPending) {
 		masterconn_request_metadata_dump(eptr);
@@ -1240,7 +1162,7 @@ int masterconn_init(void) {
 	eptr->state = MasterConn::State::kNone;
 #ifdef METALOGGER
 	gMetadataBackend->changelogsMigrateFrom_1_6_29("changelog_ml");
-	masterconn_findlastlogversion();
+	lastLogVersion = gMetadataBackend->findLastLogVersion();
 #endif /* #ifdef METALOGGER */
 	if (masterconn_initconnect(eptr)<0) {
 		return -1;

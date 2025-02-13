@@ -117,6 +117,8 @@ public:
 	/// @param file -- path to the changelog file
 	/// @return 0 in case of any error.
 	virtual uint64_t changelogGetLastLogVersion(const std::string& fname) = 0;
+#else   // #ifndef METALOGGER
+	virtual uint64_t findLastLogVersion() = 0;
 #endif  // #ifndef METALOGGER
 
 // Available for master and shadow only
