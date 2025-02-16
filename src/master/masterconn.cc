@@ -160,16 +160,6 @@ static void* download_hook;
 
 static uint64_t lastLogVersion = 0;
 
-static uint32_t stats_bytesout=0;
-static uint32_t stats_bytesin=0;
-
-void masterconn_stats(uint32_t *bin,uint32_t *bout) {
-	*bin = stats_bytesin;
-	*bout = stats_bytesout;
-	stats_bytesin = 0;
-	stats_bytesout = 0;
-}
-
 uint8_t *masterconn_createpacket(MasterConn *eptr, uint32_t type,
                                  uint32_t size) {
 	auto outpacket = std::make_unique<PacketStruct>();
@@ -838,7 +828,7 @@ void masterconn_read(MasterConn *eptr) {
 			}
 			return;
 		}
-		stats_bytesin+=i;
+
 		eptr->inputPacket.startPtr+=i;
 		eptr->inputPacket.bytesLeft-=i;
 
@@ -910,7 +900,6 @@ void masterconn_write(MasterConn *eptr) {
 			return;
 		}
 
-		stats_bytesout += writtenBytes;
 		pack->startPtr += writtenBytes;
 		pack->bytesLeft -= writtenBytes;
 
