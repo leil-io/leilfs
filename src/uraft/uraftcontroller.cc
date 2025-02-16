@@ -82,13 +82,12 @@ void uRaftController::nodePromote() {
 		command_type_ = kCmdPromote;
 
 		// Create HAFloatingIPManager
-		haFloatingIPManager = std::make_unique<HAFloatingIPManager>(
+		haFloatingIpManager = std::make_unique<HAFloatingIPManager>(
 		    opt_.floating_iface, opt_.floating_ip,
 		    opt_.check_floating_ip_period);
 
 		// Start HAFloatingIPManager
-		haFloatingIPManager->start();
-		syslog(LOG_INFO, "Floating IP manager started");
+		haFloatingIpManager->start();
 	}
 }
 
@@ -111,10 +110,9 @@ void uRaftController::nodeDemote() {
 		set_block_promotion(true);
 
 		// Stop HAFloatingIPManager
-		if (haFloatingIPManager) {
-			haFloatingIPManager->stop();
-			haFloatingIPManager.reset();
-			syslog(LOG_INFO, "Floating IP manager stopped");
+		if (haFloatingIpManager) {
+			haFloatingIpManager->stop();
+			haFloatingIpManager.reset();
 		}
 	}
 }

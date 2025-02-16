@@ -18,21 +18,27 @@
 
 #include "floating-ip-manager.h"
 
+#include "common/time_utils.h"
+
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/syslog.h>
+#include <sys/wait.h>
 #include <stop_token>
-
 
 HAFloatingIPManager::HAFloatingIPManager(const std::string &iface,
                                          const std::string &ipAddress,
-                                         const int &checkPeriod)
+                                         const uint &checkPeriod)
     : floatingIpInterface(iface),
       floatingIpAddress(ipAddress),
-      checkFloatingIpPeriodMS(checkPeriod) { }
+      checkFloatingIpPeriodMS(checkPeriod) {
+	if (!isFloatingIpManagerEnabled()) {
+		syslog(LOG_INFO, "Floating IP manager is disabled.");
+	}
+}
 
 HAFloatingIPManager::~HAFloatingIPManager() {
 	stopEventListener();
@@ -41,13 +47,17 @@ HAFloatingIPManager::~HAFloatingIPManager() {
 void HAFloatingIPManager::initialize() { }
 
 void HAFloatingIPManager::start() {
-	// Start the event listener
-	startEventListener();
+	if (isFloatingIpManagerEnabled()) {
+		startEventListener();
+		syslog(LOG_INFO, "Floating IP manager started.");
+	}
 }
 
 void HAFloatingIPManager::stop() {
-	// Stop the event listener
-	stopEventListener();
+	if (isFloatingIpManagerEnabled()) {
+		stopEventListener();
+		syslog(LOG_INFO, "Floating IP manager stopped.");
+	}
 }
 
 bool HAFloatingIPManager::isFloatingIpAlive() const {
@@ -55,14 +65,71 @@ bool HAFloatingIPManager::isFloatingIpAlive() const {
 }
 
 bool HAFloatingIPManager::restoreFloatingIp() {
-	std::string command = "saunafs-uraft-helper assign-ip";
-	int result = system(command.c_str());
+	const char *command = "saunafs-uraft-helper";
+	const char *args[] = {command, "assign-ip", nullptr};
 
-	if (result != 0) {
-		syslog(LOG_WARNING, "Command %s was not successful", command.c_str());
+	constexpr int kTimeoutInMilliseconds = 3000; // 3 seconds
+	constexpr int kSleepTimeInMilliseconds = 100; // 0.1 seconds
+
+	pid_t pid = fork();
+	if (pid < 0) {
+		syslog(LOG_ERR, "Failed to fork process: %s", strerror(errno));
+		return false;
 	}
 
-	return (result == 0);
+	if (pid == 0) {  // Child process
+		execvp(command, const_cast<char *const *>(args));
+		syslog(LOG_ERR, "Failed to execute command: %s", strerror(errno));
+		_exit(127);  // Exit with error if execvp fails
+	}
+
+	// Parent process: Wait for the child process with a timeout
+	int status = 0;
+	pid_t result = 0;
+	Timeout timer {std::chrono::milliseconds(kTimeoutInMilliseconds)};
+
+	do {
+		result = waitpid(pid, &status, WNOHANG);
+		if (result != 0) { break; }  // Child exited or error occurred
+
+		std::this_thread::sleep_for(
+		    std::chrono::milliseconds(kSleepTimeInMilliseconds));
+	} while (!timer.expired());
+
+	// If the child is still running after timeout, terminate it
+	if (result == 0) {  // Timeout occurred
+		syslog(LOG_ERR, "Command %s timed out after %d milliseconds", command,
+		       kTimeoutInMilliseconds);
+
+		kill(pid, SIGTERM);  // Try graceful termination first
+		std::this_thread::sleep_for(std::chrono::milliseconds(
+		    kSleepTimeInMilliseconds));  // Give it time to exit
+
+		if (waitpid(pid, &status, WNOHANG) == 0) {  // Still running?
+			syslog(LOG_ERR, "Process did not exit, forcing termination.");
+			kill(pid, SIGKILL);
+		}
+
+		waitpid(pid, &status, 0);  // Ensure the process is cleaned up
+		return false;
+	}
+
+	if (result < 0) {
+		syslog(LOG_ERR, "waitpid failed: %s", strerror(errno));
+		return false;
+	}
+
+	// Check exit status
+	if (WIFEXITED(status)) {
+		if (WEXITSTATUS(status) == 0) { return true; }
+		syslog(LOG_ERR, "Command failed with exit code %d",
+		       WEXITSTATUS(status));
+	}
+
+	if (WIFSIGNALED(status)) {
+		syslog(LOG_ERR, "Command terminated by signal %d", WTERMSIG(status));
+	}
+	return false;
 }
 
 void HAFloatingIPManager::startEventListener() {
@@ -96,12 +163,12 @@ void HAFloatingIPManager::eventListenerThread(const std::stop_token &stopToken) 
 	constexpr int kRetryTimeout = 2; // timeout before retrying
 
 	while (!stopToken.stop_requested()) {
-		int sock_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-		if (sock_fd < 0) {
+		int socket_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+		if (socket_fd < 0) {
 			syslog(LOG_WARNING,
-			       "[FloatingIPManager] Failed to create socket. "
+			       "[FloatingIPManager] Failed to create socket: %s. "
 			       "Retrying in %ds...",
-			       kRetryTimeout);
+			       strerror(errno), kRetryTimeout);
 			std::this_thread::sleep_for(std::chrono::seconds(kRetryTimeout));
 			continue;  // Retry loop
 		}
@@ -110,34 +177,45 @@ void HAFloatingIPManager::eventListenerThread(const std::stop_token &stopToken) 
 		local_addr.nl_family = AF_NETLINK;
 		local_addr.nl_groups = RTMGRP_IPV4_IFADDR | RTMGRP_LINK;
 
-		if (bind(sock_fd, reinterpret_cast<struct sockaddr *>(&local_addr),
+		if (bind(socket_fd, reinterpret_cast<struct sockaddr *>(&local_addr),
 		         sizeof(local_addr)) < 0) {
-			syslog(
-			    LOG_WARNING,
-			    "[FloatingIPManager] Failed to bind socket. Retrying in %ds...",
-			    kRetryTimeout);
-			close(sock_fd);
+			syslog(LOG_WARNING,
+			       "[FloatingIPManager] Failed to bind socket: %s. "
+			       "Retrying in %ds...",
+			       strerror(errno), kRetryTimeout);
+
+			if (close(socket_fd) < 0) {
+				syslog(LOG_WARNING,
+				       "[FloatingIPManager] Failed to close socket: %s",
+				       strerror(errno));
+			}
+
 			std::this_thread::sleep_for(std::chrono::seconds(kRetryTimeout));
 			continue;  // Retry loop
 		}
 
 		// Poll for IP removal events
-		pollSocketForIpRemovalEvents(sock_fd, stopToken);
+		pollSocketForIpRemovalEvents(socket_fd, stopToken);
 
-		close(sock_fd);
+		if (close(socket_fd) < 0) {
+			syslog(LOG_WARNING,
+			       "[FloatingIPManager] Failed to close socket: %s",
+			       strerror(errno));
+		}
 
 		if (!stopToken.stop_requested()) {
 			// Wait before retrying is the thread is still active
-			syslog(LOG_WARNING,
-			       "[FloatingIPManager] Socket closed. Restarting in %ds...",
-			       kRetryTimeout);
+			syslog(
+			    LOG_WARNING,
+			    "[FloatingIPManager] Waiting %d seconds to restart the socket",
+			    kRetryTimeout);
 			std::this_thread::sleep_for(std::chrono::seconds(kRetryTimeout));
 		}
 	}
 }
 
 void HAFloatingIPManager::pollSocketForIpRemovalEvents(
-    int sock_fd, const std::stop_token &stopToken) {
+    int socket_fd, const std::stop_token &stopToken) {
 	constexpr int kBufferSize = 8192;  // 8KB
 	constexpr long kMillisecondsInOneMicrosecond = 1000;
 	char buffer[kBufferSize];
@@ -145,17 +223,18 @@ void HAFloatingIPManager::pollSocketForIpRemovalEvents(
 
 	while (!stopToken.stop_requested()) {
 		FD_ZERO(&read_fds);
-		FD_SET(sock_fd, &read_fds);
+		FD_SET(socket_fd, &read_fds);
 
-		// checkFloatingIPPeriodMS defines the timeout in milliseconds
+		// checkFloatingIpPeriodMS defines the timeout in milliseconds
 		struct timeval timeout = {
 		    0, checkFloatingIpPeriodMS * kMillisecondsInOneMicrosecond};
 
-		int result = select(sock_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+		int result = select(socket_fd + 1, &read_fds, nullptr, nullptr, &timeout);
 
 		if (result < 0) {
 			syslog(LOG_WARNING,
-			       "[FloatingIPManager] select() function failed.");
+			       "[FloatingIPManager] select() function failed: %s.",
+			       strerror(errno));
 			break;  // Exit on error
 		}
 		if (result == 0) {
@@ -163,25 +242,26 @@ void HAFloatingIPManager::pollSocketForIpRemovalEvents(
 		}
 
 		struct iovec iov = {buffer, sizeof(buffer)};
-		struct msghdr msg = {};
+		struct msghdr message = {};
 		struct sockaddr_nl nladdr = {};
 		struct nlmsghdr *nlh;
 
-		msg.msg_name = &nladdr;
-		msg.msg_namelen = sizeof(nladdr);
-		msg.msg_iov = &iov;
-		msg.msg_iovlen = 1;
+		message.msg_name = &nladdr;
+		message.msg_namelen = sizeof(nladdr);
+		message.msg_iov = &iov;
+		message.msg_iovlen = 1;
 
-		ssize_t recv_len = recvmsg(sock_fd, &msg, 0);
-		if (recv_len < 0) {
-			syslog(
-			    LOG_WARNING,
-			    "[FloatingIPManager] recvmsg() failed. Restarting socket...");
+		ssize_t bytesReceived = recvmsg(socket_fd, &message, 0);
+		if (bytesReceived < 0) {
+			syslog(LOG_WARNING,
+			       "[FloatingIPManager] recvmsg() failed: %s. Restarting "
+			       "socket...",
+			       strerror(errno));
 			break;  // Exit on error
 		}
 
-		for (nlh = (struct nlmsghdr *)buffer; NLMSG_OK(nlh, recv_len);
-		     nlh = NLMSG_NEXT(nlh, recv_len)) {
+		for (nlh = (struct nlmsghdr *)buffer; NLMSG_OK(nlh, bytesReceived);
+		     nlh = NLMSG_NEXT(nlh, bytesReceived)) {
 			if (nlh->nlmsg_type == NLMSG_DONE) { break; }
 
 			if (nlh->nlmsg_type == NLMSG_ERROR) {
@@ -210,9 +290,9 @@ void HAFloatingIPManager::pollSocketForIpRemovalEvents(
 				} else {
 					syslog(LOG_WARNING,
 					       "[FloatingIPManager] Failed to get interface name "
-					       "for index: %d",
-					       ifaceAddress->ifa_index);
-					continue;
+					       "for index %d: %s",
+					       ifaceAddress->ifa_index, strerror(errno));
+					continue;  // Skip processing this IP address
 				}
 
 				// Parse attributes to extract the removed IP address
@@ -225,8 +305,15 @@ void HAFloatingIPManager::pollSocketForIpRemovalEvents(
 				while (RTA_OK(rta, attributeLength)) {
 					if (rta->rta_type == IFA_LOCAL) {
 						char ipAddress[INET_ADDRSTRLEN] = {0};
-						inet_ntop(AF_INET, RTA_DATA(rta), ipAddress,
-						          sizeof(ipAddress));
+
+						if (inet_ntop(AF_INET, RTA_DATA(rta), ipAddress,
+						              sizeof(ipAddress)) == nullptr) {
+							syslog(LOG_WARNING,
+							       "[FloatingIPManager] Failed to convert IP "
+							       "address: %s",
+							       strerror(errno));
+							continue;  // Skip processing this IP address
+						}
 
 						syslog(LOG_WARNING,
 						       "[FloatingIPManager] Removed IP: %s from "
@@ -243,4 +330,8 @@ void HAFloatingIPManager::pollSocketForIpRemovalEvents(
 			}
 		}
 	}
+}
+
+bool HAFloatingIPManager::isFloatingIpManagerEnabled() const {
+	return checkFloatingIpPeriodMS > 0;
 }

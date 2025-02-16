@@ -60,7 +60,9 @@ heartbeat messages.
 checking whether local master is alive.
 
 *URAFT_FLOATING_IP_CHECK_PERIOD*:: *[advanced]* period in milliseconds between
-checking whether the floating IP is alive.
+checking whether the floating IP is alive. A value of 0 disables floating IP
+monitoring and its automatic recovery mechanism. Adjust this setting based on
+network stability and failover requirements.
 
 == REPORTING BUGS
 

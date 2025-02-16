@@ -57,6 +57,11 @@ public:
 	/// @return True if the floating IP was successfully restored, false
 	/// otherwise.
 	virtual bool restoreFloatingIp() = 0;
+
+	/// @brief Check if the floating IP manager is enabled.
+	///
+	/// @return True if the floating IP manager is enabled, false otherwise.
+	virtual bool isFloatingIpManagerEnabled() const = 0;
 };
 
 /**
@@ -76,7 +81,7 @@ public:
 	/// @param checkPeriod The period (in milliseconds) to check the floating IP
 	/// status.
 	HAFloatingIPManager(const std::string &iface, const std::string &ipAddress,
-	                    const int &checkPeriod);
+	                    const uint &checkPeriod);
 
 	/// @brief Destructor for HAFloatingIPManager.
 	virtual ~HAFloatingIPManager();
@@ -86,6 +91,7 @@ public:
 	void stop() override;
 	bool isFloatingIpAlive() const override;
 	bool restoreFloatingIp() override;
+	bool isFloatingIpManagerEnabled() const override;
 
 private:
 	/// @brief Start the event listener thread.
@@ -131,5 +137,5 @@ protected:
 
 	std::string floatingIpInterface; ///< Network interface for the floating IP.
 	std::string floatingIpAddress;   ///< Floating IP address.
-	int checkFloatingIpPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
+	uint checkFloatingIpPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
 };

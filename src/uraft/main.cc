@@ -51,7 +51,7 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	("URAFT_STATUS_PORT", po::value<int>()->default_value(9428), "node status port")
 	("URAFT_FLOATING_IP", po::value<std::string>(), "floating IP address")
 	("URAFT_FLOATING_IFACE", po::value<std::string>(), "floating IP interface")
-	("URAFT_FLOATING_IP_CHECK_PERIOD", po::value<int>()->default_value(500), "floating IP check status period");
+	("URAFT_FLOATING_IP_CHECK_PERIOD", po::value<uint>()->default_value(500), "floating IP check status period");
 
 	po::options_description cmdline_options;
 	cmdline_options.add(generic).add(config).add(hidden);
@@ -115,7 +115,7 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	opt.check_cmd_status_period   = vm["URAFT_CHECK_CMD_PERIOD"].as<int>();
 	opt.floating_ip               = vm["URAFT_FLOATING_IP"].as<std::string>();
 	opt.floating_iface            = vm["URAFT_FLOATING_IFACE"].as<std::string>();
-	opt.check_floating_ip_period  = vm["URAFT_FLOATING_IP_CHECK_PERIOD"].as<int>();
+	opt.check_floating_ip_period  = vm["URAFT_FLOATING_IP_CHECK_PERIOD"].as<uint>();
 	make_daemon                   = vm["start-daemon"].as<bool>();
 
 	if (vm.count("id")) {

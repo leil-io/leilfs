@@ -34,7 +34,7 @@ public:
 		int         dead_handler_timeout;     //!< Time after which we kill dead script. //
 		std::string floating_ip;              //!< Floating IP assigned to the master server. //
 		std::string floating_iface;           //!< Network interface to manage floating IP. //
-		int         check_floating_ip_period; //!< How often we check floating ip status. //
+		uint        check_floating_ip_period; //!< How often we check floating ip status. //
 	};
 
 public:
@@ -81,5 +81,5 @@ protected:
 	bool                        node_alive_;  /// Last is_alive node status.
 	Options                     opt_;
 	///< Smart pointer to the floating IP manager.
-	std::unique_ptr<IHAFloatingIPManager> haFloatingIPManager = nullptr;
+	std::unique_ptr<IHAFloatingIPManager> haFloatingIpManager = nullptr;
 };

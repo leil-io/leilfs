@@ -170,3 +170,27 @@ TEST_F(FloatingIPManagerTest, HandleIPLossAfterInitialize) {
 	// mockManager is started, so it should handle IP loss
 	EXPECT_TRUE(mockManager->isFloatingIpAlive());
 }
+
+// Test to disable Floating IP Manager
+TEST_F(FloatingIPManagerTest, DisableManager) {
+	// Set checkPeriod to 0 to disable the manager
+	auto mockedDisabledManager =
+	    std::make_unique<MockFloatingIPManager>("test0", "192.168.1.105", 0);
+	mockedDisabledManager->start();
+
+	// Simulate loss of floating IP address
+	std::string ipAddress = mockedDisabledManager->floatingIp();
+	std::string ipIface = mockedDisabledManager->floatingIpIface();
+	std::string command = "sudo ip addr del " + ipAddress + "/24 dev " + ipIface;
+
+	if (system(command.c_str()) != 0) {
+		std::cerr << "Failed to remove " + ipAddress + " from " + ipIface + "\n";
+		std::exit(EXIT_FAILURE);
+	}
+
+	// Wait for a short period to allow the listener to detect the IP loss
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+
+	// Verify that the IP address is not restored when the manager is disabled
+	EXPECT_FALSE(mockedDisabledManager->isFloatingIpAlive());
+}
