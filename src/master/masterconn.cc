@@ -70,10 +70,9 @@ constexpr uint32_t kMetadataDownloadBlocksize = 1000000U;
 constexpr uint32_t kMaxPacketSize = 1500000U;
 
 struct PacketStruct {
-	struct PacketStruct *next;
 	uint8_t *startPtr;
 	uint32_t bytesLeft;
-	uint8_t *packet;
+	std::vector<uint8_t> packet;
 };
 
 /// Represents a connection to the master server.
@@ -176,13 +175,13 @@ uint8_t *masterconn_createpacket(MasterConn *eptr, uint32_t type,
 	auto outpacket = std::make_unique<PacketStruct>();
 	passert(outpacket.get());
 	uint32_t psize = size + MasterConn::kHeaderSize;
-	outpacket->packet= (uint8_t*) malloc(psize);
-	passert(outpacket->packet);
+	outpacket->packet.resize(psize);
+	passert(outpacket->packet.data());
 	outpacket->bytesLeft = psize;
-	auto *ptr = outpacket->packet;
+	auto *ptr = outpacket->packet.data();
 	put32bit(&ptr,type);
 	put32bit(&ptr,size);
-	outpacket->startPtr = (uint8_t*)(outpacket->packet);
+	outpacket->startPtr = outpacket->packet.data();
 	eptr->outputQueue.push(std::move(outpacket));
 
 	return ptr;
@@ -191,12 +190,10 @@ uint8_t *masterconn_createpacket(MasterConn *eptr, uint32_t type,
 void masterconn_createpacket(MasterConn *eptr, std::vector<uint8_t> data) {
 	auto outpacket = std::make_unique<PacketStruct>();
 	passert(outpacket);
-	outpacket->packet = (uint8_t*) malloc(data.size());
-	passert(outpacket->packet);
-	memcpy(outpacket->packet, data.data(), data.size());
-	outpacket->bytesLeft = data.size();
-	outpacket->startPtr = outpacket->packet;
-	outpacket->next = nullptr;
+	outpacket->packet = std::move(data);
+	passert(outpacket->packet.data());
+	outpacket->bytesLeft = outpacket->packet.size();
+	outpacket->startPtr = outpacket->packet.data();
 	eptr->outputQueue.push(std::move(outpacket));
 }
 
@@ -713,16 +710,10 @@ void masterconn_term(void) {
 		tcpclose(eptr->sock);
 
 		if (eptr->mode != MasterConn::Mode::Connecting) {
-			if (eptr->inputPacket.packet) {
-				free(eptr->inputPacket.packet);
-			}
+			eptr->inputPacket.packet.clear();
 
 			while(!eptr->outputQueue.empty()) {
-				auto packet = std::move(eptr->outputQueue.front());
 				eptr->outputQueue.pop();
-				if (packet->packet) {
-					free(packet->packet);
-				}
 			}
 		}
 	}
@@ -735,10 +726,8 @@ void masterconn_connected(MasterConn *eptr) {
 	tcpnodelay(eptr->sock);
 	eptr->mode = MasterConn::Mode::Header;
 	eptr->masterVersion = MasterConn::kInvalidMasterVersion;
-	eptr->inputPacket.next = NULL;
 	eptr->inputPacket.bytesLeft = MasterConn::kHeaderSize;
 	eptr->inputPacket.startPtr = eptr->headerBuffer.data();
-	eptr->inputPacket.packet = NULL;
 	eptr->outputQueue = std::queue<std::unique_ptr<PacketStruct>>();
 
 	masterconn_sendregister(eptr);
@@ -867,10 +856,11 @@ void masterconn_read(MasterConn *eptr) {
 					masterconn_kill_session(eptr);
 					return;
 				}
-				eptr->inputPacket.packet = (uint8_t*) malloc(size);
-				passert(eptr->inputPacket.packet);
+
+				eptr->inputPacket.packet.resize(size);
+				passert(eptr->inputPacket.packet.data());
 				eptr->inputPacket.bytesLeft = size;
-				eptr->inputPacket.startPtr = eptr->inputPacket.packet;
+				eptr->inputPacket.startPtr = eptr->inputPacket.packet.data();
 				eptr->mode = MasterConn::Mode::Data;
 				continue;
 			}
@@ -883,15 +873,13 @@ void masterconn_read(MasterConn *eptr) {
 			size = get32bit(&ptr);
 
 			eptr->mode=MasterConn::Mode::Header;
-			eptr->inputPacket.bytesLeft = 8;
+			eptr->inputPacket.bytesLeft = MasterConn::kHeaderSize;
 			eptr->inputPacket.startPtr = eptr->headerBuffer.data();
 
-			masterconn_gotpacket(eptr,type,eptr->inputPacket.packet,size);
+			masterconn_gotpacket(eptr, type, eptr->inputPacket.packet.data(),
+			                     size);
 
-			if (eptr->inputPacket.packet) {
-				free(eptr->inputPacket.packet);
-			}
-			eptr->inputPacket.packet=NULL;
+			eptr->inputPacket.packet.clear();
 		}
 
 		if (watchdog.expired()) {
@@ -928,7 +916,6 @@ void masterconn_write(MasterConn *eptr) {
 
 		if (pack->bytesLeft > 0) { return; }
 
-		free(pack->packet);
 		eptr->outputQueue.pop();
 
 		if (watchdog.expired()) {
@@ -1017,17 +1004,11 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		masterconn_beforeclose(eptr);
 		tcpclose(eptr->sock);
 		eptr->sock = MasterConn::kInvalidFD;
-		if (eptr->inputPacket.packet) {
-			free(eptr->inputPacket.packet);
-			eptr->inputPacket.packet = NULL;
-		}
+
+		eptr->inputPacket.packet.clear();
 
 		while (!eptr->outputQueue.empty()) {
-			auto packet = std::move(eptr->outputQueue.front());
 			eptr->outputQueue.pop();
-			if (packet->packet) {
-				free(packet->packet);
-			}
 		}
 
 		eptr->mode = MasterConn::Mode::Free;
