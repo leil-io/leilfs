@@ -29,24 +29,24 @@ public:
 	    : HAFloatingIPManager(iface, ipAddress, checkPeriod) {}
 	void initialize() override {
 		HAFloatingIPManager::initialize();
-		restored = false;
+		restored.store(false);
 	}
 
-	bool restoreFloatingIP() override {
-		restored = true;
+	bool restoreFloatingIp() override {
 		std::string command =
-		    "sudo ip addr add " + floatingIP() + "/24 dev " + floatingIPIface();
+		    "sudo ip addr add " + floatingIp() + "/24 dev " + floatingIpIface();
 		int result = system(command.c_str());
+		restored.store(result == 0);
 		return (result == 0);
 	}
 
-	bool wasFloatingIPRestored() const { return restored; }
+	bool wasFloatingIpRestored() const { return restored.load(); }
 
-	std::string floatingIP() const { return floatingIPAddress; }
-	std::string floatingIPIface() const { return floatingIPInterface; }
+	std::string floatingIp() const { return floatingIpAddress; }
+	std::string floatingIpIface() const { return floatingIpInterface; }
 
 private:
-	bool restored = false;
+	std::atomic<bool> restored;
 };
 
 // Test Fixture
@@ -90,12 +90,12 @@ protected:
 };
 
 // Test Floating IP Loss Notification
-TEST_F(FloatingIPManagerTest, HandleIPLoss) {
+TEST_F(FloatingIPManagerTest, HandleIpLoss) {
 	mockManager->start();
 
 	// Simulate IP loss by removing the IP address
-	std::string ipAddress = mockManager->floatingIP();
-	std::string ipIface = mockManager->floatingIPIface();
+	std::string ipAddress = mockManager->floatingIp();
+	std::string ipIface = mockManager->floatingIpIface();
 	std::string command = "sudo ip addr del " + ipAddress + "/24 dev " + ipIface;
 
 	if (system(command.c_str()) != 0) {
@@ -103,11 +103,14 @@ TEST_F(FloatingIPManagerTest, HandleIPLoss) {
 		std::exit(EXIT_FAILURE);
 	}
 
+	// Verify that the IP address is removed
+	EXPECT_FALSE(mockManager->isFloatingIpAlive());
+
 	// Wait for a short period to allow the listener to detect the IP loss
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 
-	// Verify that handleIPLoss was called
-	EXPECT_TRUE(mockManager->isFloatingIPAlive());
+	// Verify that handleIpLoss was called
+	EXPECT_TRUE(mockManager->isFloatingIpAlive());
 }
 
 // Test HandleIPLoss does not run for a different IP
@@ -119,8 +122,8 @@ TEST_F(FloatingIPManagerTest, HandleLossNonFloatingIP) {
 	mockManager105->start();
 
 	// Simulate IP loss of a different IP address: 192.168.1.105
-	std::string ipAddress = mockManager105->floatingIP();
-	std::string ipIface = mockManager105->floatingIPIface();
+	std::string ipAddress = mockManager105->floatingIp();
+	std::string ipIface = mockManager105->floatingIpIface();
 	std::string command = "sudo ip addr del " + ipAddress + "/24 dev " + ipIface;
 
 	if (system(command.c_str()) != 0) {
@@ -128,19 +131,23 @@ TEST_F(FloatingIPManagerTest, HandleLossNonFloatingIP) {
 		std::exit(EXIT_FAILURE);
 	}
 
+	// Verify that the IP addresses have not been restored
+	EXPECT_FALSE(mockManager105->wasFloatingIpRestored());
+	EXPECT_FALSE(mockManager->wasFloatingIpRestored());
+
 	// Wait for a short period to allow the listener to detect the IP loss
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 
-	// Verify that handleIPLoss was only called for mockManager105
-	EXPECT_TRUE(mockManager105->wasFloatingIPRestored());
-	EXPECT_FALSE(mockManager->wasFloatingIPRestored());
+	// Verify that handleIpLoss was only called for mockManager105
+	EXPECT_TRUE(mockManager105->wasFloatingIpRestored());
+	EXPECT_FALSE(mockManager->wasFloatingIpRestored());
 }
 
 // Test HandleIPLoss works only after calling start() function
 TEST_F(FloatingIPManagerTest, HandleIPLossAfterInitialize) {
 	// Simulate IP loss by removing the IP address
-	std::string ipAddress = mockManager->floatingIP();
-	std::string ipIface = mockManager->floatingIPIface();
+	std::string ipAddress = mockManager->floatingIp();
+	std::string ipIface = mockManager->floatingIpIface();
 	std::string command = "sudo ip addr del " + ipAddress + "/24 dev " + ipIface;
 
 	if (system(command.c_str()) != 0) {
@@ -152,7 +159,7 @@ TEST_F(FloatingIPManagerTest, HandleIPLossAfterInitialize) {
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 
 	// mockManager was not started, so it should not handle IP loss
-	EXPECT_FALSE(mockManager->isFloatingIPAlive());
+	EXPECT_FALSE(mockManager->isFloatingIpAlive());
 
 	// start the mockManager
 	mockManager->start();
@@ -161,5 +168,5 @@ TEST_F(FloatingIPManagerTest, HandleIPLossAfterInitialize) {
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 
 	// mockManager is started, so it should handle IP loss
-	EXPECT_TRUE(mockManager->isFloatingIPAlive());
+	EXPECT_TRUE(mockManager->isFloatingIpAlive());
 }

@@ -24,14 +24,15 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/syslog.h>
+#include <stop_token>
 
 
 HAFloatingIPManager::HAFloatingIPManager(const std::string &iface,
                                          const std::string &ipAddress,
                                          const int &checkPeriod)
-    : floatingIPInterface(iface),
-      floatingIPAddress(ipAddress),
-      checkFloatingIPPeriodMS(checkPeriod) { }
+    : floatingIpInterface(iface),
+      floatingIpAddress(ipAddress),
+      checkFloatingIpPeriodMS(checkPeriod) { }
 
 HAFloatingIPManager::~HAFloatingIPManager() {
 	stopEventListener();
@@ -49,11 +50,11 @@ void HAFloatingIPManager::stop() {
 	stopEventListener();
 }
 
-bool HAFloatingIPManager::isFloatingIPAlive() const {
-	return _isFloatingIPAlive;
+bool HAFloatingIPManager::isFloatingIpAlive() const {
+	return _isFloatingIpAlive;
 }
 
-bool HAFloatingIPManager::restoreFloatingIP() {
+bool HAFloatingIPManager::restoreFloatingIp() {
 	std::string command = "saunafs-uraft-helper assign-ip";
 	int result = system(command.c_str());
 
@@ -65,37 +66,36 @@ bool HAFloatingIPManager::restoreFloatingIP() {
 }
 
 void HAFloatingIPManager::startEventListener() {
-	stopListenerFlag = false;
 	if (!listenerThread.joinable()) {
 		listenerThread =
-		    std::thread(&HAFloatingIPManager::eventListenerThread, this);
-		_isFloatingIPAlive = true;
+		    std::jthread(&HAFloatingIPManager::eventListenerThread, this);
+		_isFloatingIpAlive = true;
 	}
 }
 
 void HAFloatingIPManager::stopEventListener() {
-	stopListenerFlag = true;
 	if (listenerThread.joinable()) {
-		listenerThread.join();
-		_isFloatingIPAlive = false;
+		listenerThread.request_stop();
+		_isFloatingIpAlive = false;
 	}
 }
 
-void HAFloatingIPManager::handleIPLoss(const std::string &ipAddress) {
+void HAFloatingIPManager::handleIpLoss(const std::string &ipAddress) {
 	syslog(LOG_WARNING, "[FloatingIPManager] Handling lost IP: %s",
 	       ipAddress.c_str());
-	_isFloatingIPAlive = false;
+	_isFloatingIpAlive = false;
+
 	// Trigger failover
-	if (!stopListenerFlag) { _isFloatingIPAlive = restoreFloatingIP(); }
+	const std::stop_token stopToken = listenerThread.get_stop_token();
+	if (!stopToken.stop_requested()) {
+		_isFloatingIpAlive = restoreFloatingIp();
+	}
 }
 
-void HAFloatingIPManager::eventListenerThread() {
-	constexpr int kBufferSize = 8192; // 8KB
-	char buffer[kBufferSize];
+void HAFloatingIPManager::eventListenerThread(const std::stop_token &stopToken) {
 	constexpr int kRetryTimeout = 2; // timeout before retrying
-	constexpr long kMillisecondsInOneMicrosecond = 1000;
 
-	while (!stopListenerFlag) {
+	while (!stopToken.stop_requested()) {
 		int sock_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 		if (sock_fd < 0) {
 			syslog(LOG_WARNING,
@@ -121,108 +121,126 @@ void HAFloatingIPManager::eventListenerThread() {
 			continue;  // Retry loop
 		}
 
-		while (!stopListenerFlag) {
-			fd_set read_fds;
-			FD_ZERO(&read_fds);
-			FD_SET(sock_fd, &read_fds);
-
-			// checkFloatingIPPeriodMS defines the timeout in milliseconds
-			struct timeval timeout = {
-			    0, checkFloatingIPPeriodMS * kMillisecondsInOneMicrosecond};
-
-			int result =
-			    select(sock_fd + 1, &read_fds, nullptr, nullptr, &timeout);
-
-			if (result < 0) {
-				syslog(LOG_WARNING,
-				       "[FloatingIPManager] select() function failed.");
-				break;
-			}
-			if (result == 0) {
-				continue;  // Timeout, check again
-			}
-
-			struct iovec iov = {buffer, sizeof(buffer)};
-			struct msghdr msg = {};
-			struct sockaddr_nl nladdr = {};
-			struct nlmsghdr *nlh;
-
-			msg.msg_name = &nladdr;
-			msg.msg_namelen = sizeof(nladdr);
-			msg.msg_iov = &iov;
-			msg.msg_iovlen = 1;
-
-			ssize_t recv_len = recvmsg(sock_fd, &msg, 0);
-			if (recv_len < 0) {
-				syslog(LOG_WARNING,
-				       "[FloatingIPManager] recvmsg() failed. "
-				       "Restarting socket...");
-				break;  // Restart socket
-			}
-
-			for (nlh = (struct nlmsghdr *)buffer; NLMSG_OK(nlh, recv_len);
-			     nlh = NLMSG_NEXT(nlh, recv_len)) {
-				if (nlh->nlmsg_type == NLMSG_DONE) { break; }
-				if (nlh->nlmsg_type == NLMSG_ERROR) {
-					syslog(LOG_WARNING,
-					       "[FloatingIPManager] Received an error message.");
-					continue;
-				}
-
-				if (nlh->nlmsg_type == RTM_DELADDR) {
-					auto *ifa = (struct ifaddrmsg *)NLMSG_DATA(nlh);
-
-					// Convert interface index to name
-					char networkInterface[IF_NAMESIZE] = {0};
-
-					if (if_indextoname(ifa->ifa_index, networkInterface)) {
-						syslog(
-						    LOG_WARNING,
-						    "[FloatingIPManager] IP removed from interface: %s",
-						    networkInterface);
-					} else {
-						syslog(LOG_WARNING,
-						       "[FloatingIPManager] Failed to get "
-						       "interface name for index: %d",
-						       ifa->ifa_index);
-						continue;  // It happens when the IP is already removed
-					}
-
-					// Parse attributes to extract the removed IP address
-					auto *rta = (struct rtattr *)((char *)ifa +
-					                              NLMSG_ALIGN(sizeof(*ifa)));
-					int attr_len = nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa));
-
-					while (RTA_OK(rta, attr_len)) {
-						if (rta->rta_type == IFA_LOCAL) { // Local IP address
-							char ipAddress[INET_ADDRSTRLEN] = {0};
-							inet_ntop(AF_INET, RTA_DATA(rta), ipAddress,
-							          sizeof(ipAddress));
-
-							syslog(LOG_WARNING,
-							       "[FloatingIPManager] Removed "
-							       "IP: %s from interface: %s",
-							       ipAddress, networkInterface);
-
-							if (floatingIPAddress == ipAddress &&
-							    floatingIPInterface == networkInterface) {
-								handleIPLoss(ipAddress);
-							}
-						}
-						rta = RTA_NEXT(rta, attr_len);
-					}
-				}
-			}
-		}
+		// Poll for IP removal events
+		pollSocketForIpRemovalEvents(sock_fd, stopToken);
 
 		close(sock_fd);
 
-		if (!stopListenerFlag) {
+		if (!stopToken.stop_requested()) {
 			// Wait before retrying is the thread is still active
 			syslog(LOG_WARNING,
 			       "[FloatingIPManager] Socket closed. Restarting in %ds...",
 			       kRetryTimeout);
 			std::this_thread::sleep_for(std::chrono::seconds(kRetryTimeout));
+		}
+	}
+}
+
+void HAFloatingIPManager::pollSocketForIpRemovalEvents(
+    int sock_fd, const std::stop_token &stopToken) {
+	constexpr int kBufferSize = 8192;  // 8KB
+	constexpr long kMillisecondsInOneMicrosecond = 1000;
+	char buffer[kBufferSize];
+	fd_set read_fds;
+
+	while (!stopToken.stop_requested()) {
+		FD_ZERO(&read_fds);
+		FD_SET(sock_fd, &read_fds);
+
+		// checkFloatingIPPeriodMS defines the timeout in milliseconds
+		struct timeval timeout = {
+		    0, checkFloatingIpPeriodMS * kMillisecondsInOneMicrosecond};
+
+		int result = select(sock_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+
+		if (result < 0) {
+			syslog(LOG_WARNING,
+			       "[FloatingIPManager] select() function failed.");
+			break;  // Exit on error
+		}
+		if (result == 0) {
+			continue;  // Timeout, check again
+		}
+
+		struct iovec iov = {buffer, sizeof(buffer)};
+		struct msghdr msg = {};
+		struct sockaddr_nl nladdr = {};
+		struct nlmsghdr *nlh;
+
+		msg.msg_name = &nladdr;
+		msg.msg_namelen = sizeof(nladdr);
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+
+		ssize_t recv_len = recvmsg(sock_fd, &msg, 0);
+		if (recv_len < 0) {
+			syslog(
+			    LOG_WARNING,
+			    "[FloatingIPManager] recvmsg() failed. Restarting socket...");
+			break;  // Exit on error
+		}
+
+		for (nlh = (struct nlmsghdr *)buffer; NLMSG_OK(nlh, recv_len);
+		     nlh = NLMSG_NEXT(nlh, recv_len)) {
+			if (nlh->nlmsg_type == NLMSG_DONE) { break; }
+
+			if (nlh->nlmsg_type == NLMSG_ERROR) {
+				auto *errMsg =
+				    reinterpret_cast<struct nlmsgerr *>(NLMSG_DATA(nlh));
+
+				if (errMsg->error != 0) { // Error occurred
+					int err = -errMsg->error;  // Convert to positive errno
+					syslog(LOG_WARNING,
+					       "[FloatingIPManager] Netlink error: %s (errno: %d)",
+					       strerror(err),  // Convert errno to readable string
+					       err);           // Log the positive errno value
+				}
+				continue;
+			}
+
+			if (nlh->nlmsg_type == RTM_DELADDR) {  // IP Removal Event
+				auto *ifaceAddress = (struct ifaddrmsg *)NLMSG_DATA(nlh);
+
+				// Convert interface index to name
+				char networkInterface[IF_NAMESIZE] = {0};
+				if (if_indextoname(ifaceAddress->ifa_index, networkInterface)) {
+					syslog(LOG_WARNING,
+					       "[FloatingIPManager] IP removed from interface: %s",
+					       networkInterface);
+				} else {
+					syslog(LOG_WARNING,
+					       "[FloatingIPManager] Failed to get interface name "
+					       "for index: %d",
+					       ifaceAddress->ifa_index);
+					continue;
+				}
+
+				// Parse attributes to extract the removed IP address
+				auto *rta =
+				    (struct rtattr *)((char *)ifaceAddress +
+				                      NLMSG_ALIGN(sizeof(*ifaceAddress)));
+				int attributeLength =
+				    nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*ifaceAddress));
+
+				while (RTA_OK(rta, attributeLength)) {
+					if (rta->rta_type == IFA_LOCAL) {
+						char ipAddress[INET_ADDRSTRLEN] = {0};
+						inet_ntop(AF_INET, RTA_DATA(rta), ipAddress,
+						          sizeof(ipAddress));
+
+						syslog(LOG_WARNING,
+						       "[FloatingIPManager] Removed IP: %s from "
+						       "interface: %s",
+						       ipAddress, networkInterface);
+
+						if (floatingIpAddress == ipAddress &&
+						    floatingIpInterface == networkInterface) {
+							handleIpLoss(ipAddress);
+						}
+					}
+					rta = RTA_NEXT(rta, attributeLength);
+				}
+			}
 		}
 	}
 }

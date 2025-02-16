@@ -18,9 +18,6 @@
 
 #pragma once
 
-#ifndef FLOATING_IP_MANAGER_H
-#define FLOATING_IP_MANAGER_H
-
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cstdlib>
@@ -53,13 +50,13 @@ public:
 	/// @brief Check if the floating IP is alive.
 	///
 	/// @return True if the floating IP is alive, false otherwise.
-	virtual bool isFloatingIPAlive() const = 0;
+	virtual bool isFloatingIpAlive() const = 0;
 
 	/// @brief Restore the floating IP if it has been lost.
 	///
 	/// @return True if the floating IP was successfully restored, false
 	/// otherwise.
-	virtual bool restoreFloatingIP() = 0;
+	virtual bool restoreFloatingIp() = 0;
 };
 
 /**
@@ -87,8 +84,8 @@ public:
 	void initialize() override;
 	void start() override;
 	void stop() override;
-	bool isFloatingIPAlive() const override;
-	bool restoreFloatingIP() override;
+	bool isFloatingIpAlive() const override;
+	bool restoreFloatingIp() override;
 
 private:
 	/// @brief Start the event listener thread.
@@ -109,26 +106,30 @@ private:
 	/// failover process.
 	///
 	/// @param ipAddress The IP address that was lost.
-	void handleIPLoss(const std::string &ipAddress);
+	void handleIpLoss(const std::string &ipAddress);
 
 	/// @brief Event listener thread function.
 	///
 	/// This function runs a dedicated listener thread that monitors changes in
 	/// network interface addresses and link status using the Netlink protocol.
-	/// It uses a Netlink socket to listen for RTM_DELADDR messages, which
+	/// Additionally, it manages the lifecycle of the Netlink socket, restarting
+	/// it in case of errors.
+	void eventListenerThread(const std::stop_token &stopToken);
+
+	/// @brief Poll the Netlink socket for IP removal events.
+	///
+	/// This function polls the Netlink socket for RTM_DELADDR messages, which
 	/// indicate the removal of an IP address from an interface. If the removed
-	/// IP matches the configured floating IP, it triggers the handleIPLoss()
+	/// IP matches the configured floating IP, it triggers the handleIpLoss()
 	/// function to take appropriate recovery actions.
-	void eventListenerThread();
+	void pollSocketForIpRemovalEvents(int sock_fd,
+	                                  const std::stop_token &stopToken);
 
 protected:
-	std::thread listenerThread; ///< Background thread for event listening.
-	std::atomic<bool> stopListenerFlag{false}; ///< Flag to stop the event listener thread.
-	bool _isFloatingIPAlive{false}; ///< Flag indicating if the floating IP is alive.
+	std::jthread listenerThread; ///< Background thread for event listening.
+	bool _isFloatingIpAlive{false}; ///< Flag indicating if the floating IP is alive.
 
-	std::string floatingIPInterface; ///< Network interface for the floating IP.
-	std::string floatingIPAddress;   ///< Floating IP address.
-	int checkFloatingIPPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
+	std::string floatingIpInterface; ///< Network interface for the floating IP.
+	std::string floatingIpAddress;   ///< Floating IP address.
+	int checkFloatingIpPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
 };
-
-#endif  // FLOATING_IP_MANAGER_H
