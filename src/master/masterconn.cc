@@ -35,6 +35,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <memory>
+#include <queue>
 #include <string>
 
 #include "common/crc.h"
@@ -116,9 +118,8 @@ struct MasterConn {
 
 	std::array<uint8_t, kHeaderSize> headerBuffer{};  ///< Buffer for headers.
 	PacketStruct inputPacket{};  ///< Structure for the input packet.
-	// To be replaced by a container.
-	PacketStruct *outputHead{};  ///< Head of the output packet queue.
-	PacketStruct **outputTail{};  ///< Tail of the output packet queue.
+	/// Queue of output packets.
+	std::queue<std::unique_ptr<PacketStruct>> outputQueue;
 
 	uint32_t bindIP{};  ///< IP address to bind the socket.
 	uint32_t masterIP{};  ///< IP address of the master server.
@@ -170,29 +171,25 @@ void masterconn_stats(uint32_t *bin,uint32_t *bout) {
 	stats_bytesout = 0;
 }
 
-uint8_t* masterconn_createpacket(MasterConn *eptr,uint32_t type,uint32_t size) {
-	PacketStruct *outpacket;
-	uint8_t *ptr;
-	uint32_t psize;
-
-	outpacket=(PacketStruct*)malloc(sizeof(PacketStruct));
-	passert(outpacket);
-	psize = size+8;
+uint8_t *masterconn_createpacket(MasterConn *eptr, uint32_t type,
+                                 uint32_t size) {
+	auto outpacket = std::make_unique<PacketStruct>();
+	passert(outpacket.get());
+	uint32_t psize = size + MasterConn::kHeaderSize;
 	outpacket->packet= (uint8_t*) malloc(psize);
 	passert(outpacket->packet);
 	outpacket->bytesLeft = psize;
-	ptr = outpacket->packet;
+	auto *ptr = outpacket->packet;
 	put32bit(&ptr,type);
 	put32bit(&ptr,size);
 	outpacket->startPtr = (uint8_t*)(outpacket->packet);
-	outpacket->next = NULL;
-	*(eptr->outputTail) = outpacket;
-	eptr->outputTail = &(outpacket->next);
+	eptr->outputQueue.push(std::move(outpacket));
+
 	return ptr;
 }
 
 void masterconn_createpacket(MasterConn *eptr, std::vector<uint8_t> data) {
-	PacketStruct *outpacket = (PacketStruct*) malloc(sizeof(PacketStruct));
+	auto outpacket = std::make_unique<PacketStruct>();
 	passert(outpacket);
 	outpacket->packet = (uint8_t*) malloc(data.size());
 	passert(outpacket->packet);
@@ -200,8 +197,7 @@ void masterconn_createpacket(MasterConn *eptr, std::vector<uint8_t> data) {
 	outpacket->bytesLeft = data.size();
 	outpacket->startPtr = outpacket->packet;
 	outpacket->next = nullptr;
-	*(eptr->outputTail) = outpacket;
-	eptr->outputTail = &(outpacket->next);
+	eptr->outputQueue.push(std::move(outpacket));
 }
 
 void masterconn_sendregister(MasterConn *eptr) {
@@ -709,32 +705,30 @@ void masterconn_gotpacket(MasterConn *eptr,uint32_t type,const uint8_t *data,uin
 }
 
 void masterconn_term(void) {
-	if (!gMasterConn) {
-		return;
-	}
-	PacketStruct *pptr,*paptr;
+	if (!gMasterConn) { return; }
+
 	MasterConn *eptr = gMasterConn;
 
-	if (eptr->mode!=MasterConn::Mode::Free) {
+	if (eptr->mode != MasterConn::Mode::Free) {
 		tcpclose(eptr->sock);
-		if (eptr->mode!=MasterConn::Mode::Connecting) {
+
+		if (eptr->mode != MasterConn::Mode::Connecting) {
 			if (eptr->inputPacket.packet) {
 				free(eptr->inputPacket.packet);
 			}
-			pptr = eptr->outputHead;
-			while (pptr) {
-				if (pptr->packet) {
-					free(pptr->packet);
+
+			while(!eptr->outputQueue.empty()) {
+				auto packet = std::move(eptr->outputQueue.front());
+				eptr->outputQueue.pop();
+				if (packet->packet) {
+					free(packet->packet);
 				}
-				paptr = pptr;
-				pptr = pptr->next;
-				free(paptr);
 			}
 		}
 	}
 
 	delete gMasterConn;
-	gMasterConn = NULL;
+	gMasterConn = nullptr;
 }
 
 void masterconn_connected(MasterConn *eptr) {
@@ -742,11 +736,10 @@ void masterconn_connected(MasterConn *eptr) {
 	eptr->mode = MasterConn::Mode::Header;
 	eptr->masterVersion = MasterConn::kInvalidMasterVersion;
 	eptr->inputPacket.next = NULL;
-	eptr->inputPacket.bytesLeft = 8;
+	eptr->inputPacket.bytesLeft = MasterConn::kHeaderSize;
 	eptr->inputPacket.startPtr = eptr->headerBuffer.data();
 	eptr->inputPacket.packet = NULL;
-	eptr->outputHead = NULL;
-	eptr->outputTail = &(eptr->outputHead);
+	eptr->outputQueue = std::queue<std::unique_ptr<PacketStruct>>();
 
 	masterconn_sendregister(eptr);
 #ifdef METALOGGER
@@ -909,35 +902,34 @@ void masterconn_read(MasterConn *eptr) {
 
 void masterconn_write(MasterConn *eptr) {
 	SignalLoopWatchdog watchdog;
-	PacketStruct *pack;
-	int32_t i;
+	PacketStruct *pack = nullptr;
+	int32_t writtenBytes = 0;
 
 	watchdog.start();
+
 	for (;;) {
-		pack = eptr->outputHead;
-		if (pack==NULL) {
-			return;
-		}
-		i=write(eptr->sock,pack->startPtr,pack->bytesLeft);
-		if (i<0) {
-			if (errno!=EAGAIN) {
-				safs_silent_errlog(LOG_NOTICE,"write to Master error");
+		if (eptr->outputQueue.empty()) { return; }
+
+		pack = eptr->outputQueue.front().get();
+
+		writtenBytes = ::write(eptr->sock, pack->startPtr, pack->bytesLeft);
+
+		if (writtenBytes < 0) {
+			if (errno != EAGAIN) {
+				safs_silent_errlog(LOG_NOTICE, "write to Master error");
 				eptr->mode = MasterConn::Mode::Kill;
 			}
 			return;
 		}
-		stats_bytesout+=i;
-		pack->startPtr+=i;
-		pack->bytesLeft-=i;
-		if (pack->bytesLeft>0) {
-			return;
-		}
+
+		stats_bytesout += writtenBytes;
+		pack->startPtr += writtenBytes;
+		pack->bytesLeft -= writtenBytes;
+
+		if (pack->bytesLeft > 0) { return; }
+
 		free(pack->packet);
-		eptr->outputHead = pack->next;
-		if (eptr->outputHead==NULL) {
-			eptr->outputTail = &(eptr->outputHead);
-		}
-		free(pack);
+		eptr->outputQueue.pop();
 
 		if (watchdog.expired()) {
 			break;
@@ -965,26 +957,29 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 	if (eptr->mode==MasterConn::Mode::Free || eptr->sock<0) {
 		return;
 	}
+
 	if (eptr->mode==MasterConn::Mode::Header || eptr->mode==MasterConn::Mode::Data) {
 		pdesc.push_back({eptr->sock,POLLIN,0});
 		eptr->pollDescPos = pdesc.size() - 1;
 	}
-	if (((eptr->mode==MasterConn::Mode::Header || eptr->mode==MasterConn::Mode::Data) && eptr->outputHead!=NULL) || eptr->mode==MasterConn::Mode::Connecting) {
-		if (eptr->pollDescPos>=0) {
+
+	if (((eptr->mode == MasterConn::Mode::Header ||
+	      eptr->mode == MasterConn::Mode::Data) &&
+	     !eptr->outputQueue.empty()) ||
+	    (eptr->mode == MasterConn::Mode::Connecting)) {
+		if (eptr->pollDescPos >= 0) {
 			pdesc[eptr->pollDescPos].events |= POLLOUT;
 		} else {
-			pdesc.push_back({eptr->sock,POLLOUT,0});
+			pdesc.push_back({eptr->sock, POLLOUT, 0});
 			eptr->pollDescPos = pdesc.size() - 1;
 		}
 	}
 }
 
 void masterconn_serve(const std::vector<pollfd> &pdesc) {
-	if (!gMasterConn) {
-		return;
-	}
-	uint32_t now=eventloop_time();
-	PacketStruct *pptr,*paptr;
+	if (!gMasterConn) { return; }
+
+	uint32_t now = eventloop_time();
 	MasterConn *eptr = gMasterConn;
 
 	if (eptr->pollDescPos>=0 && (pdesc[eptr->pollDescPos].revents & (POLLHUP | POLLERR))) {
@@ -994,6 +989,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 			eptr->mode = MasterConn::Mode::Kill;
 		}
 	}
+
 	if (eptr->mode==MasterConn::Mode::Connecting) {
 		if (eptr->sock>=0 && eptr->pollDescPos>=0 && (pdesc[eptr->pollDescPos].revents & POLLOUT)) { // FD_ISSET(eptr->sock,wset)) {
 			masterconn_connecttest(eptr);
@@ -1011,11 +1007,12 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 			if ((eptr->mode==MasterConn::Mode::Header || eptr->mode==MasterConn::Mode::Data) && eptr->lastRead+Timeout<now) {
 				eptr->mode = MasterConn::Mode::Kill;
 			}
-			if ((eptr->mode==MasterConn::Mode::Header || eptr->mode==MasterConn::Mode::Data) && eptr->lastWrite+(Timeout/3)<now && eptr->outputHead==NULL) {
+			if ((eptr->mode==MasterConn::Mode::Header || eptr->mode==MasterConn::Mode::Data) && eptr->lastWrite+(Timeout/3)<now && eptr->outputQueue.empty()) {
 				masterconn_createpacket(eptr,ANTOAN_NOP,0);
 			}
 		}
 	}
+
 	if (eptr->mode == MasterConn::Mode::Kill) {
 		masterconn_beforeclose(eptr);
 		tcpclose(eptr->sock);
@@ -1024,16 +1021,15 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 			free(eptr->inputPacket.packet);
 			eptr->inputPacket.packet = NULL;
 		}
-		pptr = eptr->outputHead;
-		while (pptr) {
-			if (pptr->packet) {
-				free(pptr->packet);
+
+		while (!eptr->outputQueue.empty()) {
+			auto packet = std::move(eptr->outputQueue.front());
+			eptr->outputQueue.pop();
+			if (packet->packet) {
+				free(packet->packet);
 			}
-			paptr = pptr;
-			pptr = pptr->next;
-			free(paptr);
 		}
-		eptr->outputHead = NULL;
+
 		eptr->mode = MasterConn::Mode::Free;
 		eptr->masterVersion = MasterConn::kInvalidMasterVersion;
 	}
