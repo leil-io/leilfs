@@ -42,6 +42,11 @@ struct MessageCache {
 
 inline std::jthread notificationThread;
 
+#ifdef _WIN32
+inline std::string mountpointIdentifierName = "SaunaFS Windows Client";	
+#else
+inline std::string mountpointIdentifierName = "SaunaFS Linux Client";
+#endif
 inline std::unordered_map<std::string, MessageCache> messageCache;
 inline std::map<int, MessageCache> fullPathFromInodeCache;
 inline std::chrono::seconds gMessageSuppressionPeriodSeconds;
@@ -63,7 +68,7 @@ inline void ShowWindowsNotification(const std::string &message) {
 	nid.uFlags = NIF_INFO | NIF_ICON;  // Display an info balloon and an icon
 	nid.dwInfoFlags = NIIF_INFO;       // Info icon
 	strcpy_s(nid.szInfo, message.c_str());                // Set the message
-	strcpy_s(nid.szInfoTitle, "SaunaFS Windows Client");  // Set the title
+	strcpy_s(nid.szInfoTitle, mountpointIdentifierName.c_str());  // Set the title
 	nid.hIcon = LoadIcon(NULL, IDI_INFORMATION);  // Load a standard icon
 
 	// Display the notification
@@ -79,8 +84,8 @@ inline void ShowWindowsNotification(const std::string &message) {
 }
 #else
 inline void ShowLinuxNotification(const std::string &message) {
-	std::string command =
-	    R"(notify-send "SaunaFS Linux Client" ")" + message + "\"";
+	std::string command = R"(notify-send ")" + mountpointIdentifierName +
+	                      R"(" ")" + message + "\"";
 
 	if (std::system(command.c_str()) != 0) {
 		safs::log_debug(
@@ -177,7 +182,9 @@ inline void StopNotificationThread() {
 }
 
 inline void notifications_area_logging_init(
-    bool log_notification_area, unsigned message_suppression_period) {
+    bool log_notification_area, unsigned message_suppression_period,
+    std::string mountpoint_identifier_name) {
+	mountpointIdentifierName += " (" + mountpoint_identifier_name + ")";
 	gShowMessagesOnNotificationArea = log_notification_area;
 	gMessageSuppressionPeriodSeconds =
 	    std::chrono::seconds(message_suppression_period);
