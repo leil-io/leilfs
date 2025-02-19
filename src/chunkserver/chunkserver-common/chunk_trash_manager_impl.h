@@ -33,14 +33,13 @@ class ChunkTrashManagerImpl : public IChunkTrashManagerImpl {
 	using TrashIndex = ChunkTrashIndex;
 public:
 	/// A string representing the guard that distinguishes trash directories.
-	static constexpr const std::string kTrashGuardString =
-			"/" + (ChunkTrashManager::kTrashDirname) + "/";
+	static const std::string kTrashGuardString;
 
 	/// The format of the timestamp used in file names, representing the deletion time.
-	static constexpr const std::string kTimeStampFormat = "%Y%m%d%H%M%S";
+	static constexpr std::string kTimeStampFormat = "%Y%m%d%H%M%S";
 
 	/// Length of the timestamp string expected in file names.
-	static constexpr const u_short kTimeStampLength = 14;
+	static constexpr u_short kTimeStampLength = 14;
 
 	/**
 	 * @brief Initializes the trash manager for the specified disk path.

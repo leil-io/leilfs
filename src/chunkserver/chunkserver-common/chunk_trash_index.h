@@ -19,14 +19,7 @@
 
 #include "common/platform.h"
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-
 #include <filesystem>
-
-#pragma GCC diagnostic pop
-
 #include <map>
 #include <unordered_map>
 #include <string>

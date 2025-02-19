@@ -15,14 +15,8 @@
    You should have received a copy of the GNU General Public License
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
 
 #include <algorithm>
-
-#pragma GCC diagnostic pop
-
 #include <sys/syslog.h>
 #include <sys/statvfs.h>
 #include <stack>
@@ -40,6 +34,8 @@ size_t ChunkTrashManagerImpl::kTrashTimeLimitSeconds = 259200;
 size_t ChunkTrashManagerImpl::kTrashGarbageCollectorBulkSize = 1000;
 size_t ChunkTrashManagerImpl::kGarbageCollectorSpaceRecoveryStep = 10;
 
+const std::string ChunkTrashManagerImpl::kTrashGuardString = std::string("/") + ChunkTrashManager::kTrashDirname + "/";
+
 void ChunkTrashManagerImpl::reloadConfig() {
 	kAvailableThresholdGB = cfg_get("CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB",
 	                                kAvailableThresholdGB);
@@ -54,7 +50,6 @@ void ChunkTrashManagerImpl::reloadConfig() {
 
 std::string
 ChunkTrashManagerImpl::getTimeString(std::time_t time1) {
-//
 	std::tm *utcTime = std::gmtime(&time1);  // Convert to UTC
 
 	std::ostringstream oss;
@@ -153,8 +148,15 @@ fs::path ChunkTrashManagerImpl::getTrashDir(const fs::path &diskPath) {
 int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 	reloadConfig();
 	const fs::path trashDir = getTrashDir(diskPath);
+
 	if (!fs::exists(trashDir)) {
-		fs::create_directories(trashDir);
+		std::error_code errorCode_;
+		fs::create_directories(trashDir, errorCode_);
+		if (errorCode_) {
+			safs_pretty_syslog(LOG_ERR, "Failed to create trash directory: %s",
+			                   trashDir.string().c_str());
+			return SAUNAFS_ERROR_NOTDONE;
+		}
 	}
 
 	trashIndex->reset(diskPath);
@@ -274,7 +276,6 @@ void ChunkTrashManagerImpl::collectGarbage() {
 	removeExpiredFiles(expirationTime, kTrashGarbageCollectorBulkSize);
 	makeSpace(kAvailableThresholdGB,
 	          kGarbageCollectorSpaceRecoveryStep);
-//	cleanEmptyFolders();
 }
 
 bool ChunkTrashManagerImpl::isTrashPath(const std::string &filePath) {

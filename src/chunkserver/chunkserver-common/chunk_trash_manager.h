@@ -20,14 +20,7 @@
 
 #include "common/platform.h"
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-
 #include <filesystem>
-
-#pragma GCC diagnostic pop
-
 #include <string>
 
 class IChunkTrashManagerImpl {
@@ -54,15 +47,15 @@ public:
  */
 class ChunkTrashManager {
 public:
-	using Implentation = IChunkTrashManagerImpl;
-	using ImplentationPtr = std::shared_ptr<Implentation>;
+	using Implementation = IChunkTrashManagerImpl;
+	using ImplementationPtr = std::shared_ptr<Implementation>;
 
 	/**
 	 * @brief Gets the singleton instance of the ChunkTrashManager.
 	 *
 	 * @return Reference to the singleton instance of ChunkTrashManager.
 	 */
-	static ChunkTrashManager &instance(ImplentationPtr newImpl = nullptr);
+	static ChunkTrashManager &instance(ImplementationPtr newImpl = nullptr);
 
 	/**
 	 * @brief The name of the trash directory.
@@ -113,6 +106,6 @@ private:
 	ChunkTrashManager() = default;
 
 	/// Pointer to the singleton instance of the trash manager implementation.
-	static ChunkTrashManager::ImplentationPtr pImpl;
+	static ImplementationPtr pImpl;
 
 };

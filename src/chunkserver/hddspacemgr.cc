@@ -2654,6 +2654,13 @@ int hddInit() {
 		for (const auto &disk: gDisks) {
 			safs_pretty_syslog(LOG_INFO, "hdd space manager: disk to scan: %s",
 			                   disk->getPaths().c_str());
+			if (disk->isDamaged() || disk->isMarkedForDeletion() || disk->isReadOnly()) {
+				safs_pretty_syslog(LOG_WARNING,
+				                   "hdd space manager: disk %s is damaged, "
+				                   "marked for deletion or read-only",
+				                   disk->getPaths().c_str());
+				continue;
+			}
 			ChunkTrashManager::instance().init(disk->metaPath());
 			if (disk->isZonedDevice()) {
 				continue;

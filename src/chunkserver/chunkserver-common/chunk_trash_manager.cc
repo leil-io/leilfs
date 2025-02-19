@@ -24,10 +24,10 @@
 
 u_short ChunkTrashManager::isEnabled = 1;
 
-ChunkTrashManager::ImplentationPtr ChunkTrashManager::pImpl =
+ChunkTrashManager::ImplementationPtr ChunkTrashManager::pImpl =
 		std::make_shared<ChunkTrashManagerImpl>();
 
-ChunkTrashManager &ChunkTrashManager::instance(ImplentationPtr newImpl) {
+ChunkTrashManager &ChunkTrashManager::instance(ImplementationPtr newImpl) {
 	static ChunkTrashManager instance;
 	if (newImpl) {
 		pImpl = newImpl;

@@ -863,10 +863,10 @@ find_chunkserver_trashed_chunks() {
 	local chunk_metadata_pattern="chunk*${chunk_metadata_extension}.*"
 	local chunk_data_pattern="chunk*${chunk_data_extension}.*"
 	shift
-	local trash_bins=$(sed \
-	  -e 's/*//' \
+	local trash_bins=$(sed -E \
+	  -e 's/\*//' \
 	  -e 's/zonefs://' \
-	  -e 's/|//' \
+	  -e 's/\|//' \
 	  -e 's@\/?$@/.trash.bin/@' \
 		${saunafs_info_[chunkserver${chunkserver_number}_hdd]})
 	if (($# > 0)); then

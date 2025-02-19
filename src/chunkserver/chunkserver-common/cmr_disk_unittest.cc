@@ -18,26 +18,17 @@
 
 #include "common/platform.h"
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-
-#include <gtest/gtest.h>
-
-#pragma GCC diagnostic pop
-
 #include <fstream>
+#include <gtest/gtest.h>
 
 #include "chunk_trash_manager.h"
 #include "cmr_disk.h"
 #include "errors/saunafs_error_codes.h"
 #include "chunk_with_fd.h"
 
-extern "C" std::time_t __wrap_time(std::time_t *time1);
-
 std::time_t mockTimeValue = 0;
 
-std::time_t __wrap_time(std::time_t *time1) {
+extern "C" std::time_t __wrap_time(std::time_t *time1) {
 	if (time1 != nullptr) {
 		*time1 = mockTimeValue;
 	}
@@ -111,8 +102,7 @@ protected:
 };
 
 std::filesystem::path CmrDiskTest::testDir;
-TEST_F(CmrDiskTest, UnlinkChunkSuccessful
-) {
+TEST_F(CmrDiskTest, UnlinkChunkSuccessful) {
 // Create a dummy meta and data file in the test directory
 	std::filesystem::path const metaFile =
 			std::filesystem::path(cmrDiskInstance.metaPath()) /
@@ -143,16 +133,12 @@ TEST_F(CmrDiskTest, UnlinkChunkSuccessful
 			(dataFile.filename().string() + "." + mockDeletionTimeString);
 
 // Verify that the meta and data files were moved to the trash
-	EXPECT_TRUE(std::filesystem::exists(expectedMetaTrashPath)
-	);
-	EXPECT_TRUE(std::filesystem::exists(expectedDataTrashPath)
-	);
-	EXPECT_EQ(result, SAUNAFS_STATUS_OK
-	);
+	EXPECT_TRUE(std::filesystem::exists(expectedMetaTrashPath));
+	EXPECT_TRUE(std::filesystem::exists(expectedDataTrashPath));
+	EXPECT_EQ(result, SAUNAFS_STATUS_OK);
 }
 
-TEST_F(CmrDiskTest, UnlinkChunkMetaFileMissing
-) {
+TEST_F(CmrDiskTest, UnlinkChunkMetaFileMissing) {
 // Create only the data file
 	std::filesystem::path const dataFile =
 			std::filesystem::path(cmrDiskInstance.dataPath()) /
@@ -170,8 +156,7 @@ TEST_F(CmrDiskTest, UnlinkChunkMetaFileMissing
 	);
 }
 
-TEST_F(CmrDiskTest, UnlinkChunkDataFileMissing
-) {
+TEST_F(CmrDiskTest, UnlinkChunkDataFileMissing) {
 // Create only the meta file
 	std::filesystem::path const metaFile =
 			std::filesystem::path(cmrDiskInstance.metaPath()) /
@@ -185,12 +170,10 @@ TEST_F(CmrDiskTest, UnlinkChunkDataFileMissing
 	int const result = cmrDiskInstance.unlinkChunk(&chunk);
 
 // Check that the correct error code is returned
-	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT
-	);
+	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }
 
-TEST_F(CmrDiskTest, UnlinkChunkDiskPathError
-) {
+TEST_F(CmrDiskTest, UnlinkChunkDiskPathError) {
 // Set disk paths to empty strings to simulate a disk path error
 	cmrDiskInstance.setMetaPath("");
 	cmrDiskInstance.setDataPath("");
@@ -201,6 +184,5 @@ TEST_F(CmrDiskTest, UnlinkChunkDiskPathError
 	int const result = cmrDiskInstance.unlinkChunk(&chunk);
 
 // Check that the correct error code is returned
-	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT
-	);
+	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }

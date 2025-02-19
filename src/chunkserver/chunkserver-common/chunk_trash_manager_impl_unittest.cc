@@ -16,18 +16,11 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-
-#include <gtest/gtest.h>
 #include <filesystem>
-
-#pragma GCC diagnostic pop
-
 #include <fstream>
+#include <gtest/gtest.h>
 #include <thread>
+
 #include "chunk_trash_manager_impl.h"
 #include "errors/saunafs_error_codes.h"  // Include the error codes header
 
@@ -263,9 +256,8 @@ TEST_F(ChunkTrashManagerImplTest, CollectGarbage) {
 
 // Testing check available space functionality
 TEST_F(ChunkTrashManagerImplTest, CheckAvailableSpace) {
-	size_t availableSpace = chunkTrashManagerImpl.checkAvailableSpace(
-			testDir.string());
-	ASSERT_GT(availableSpace, 0); // Ensure there is available space
+	size_t availableSpace = chunkTrashManagerImpl.checkAvailableSpace(testDir.string());
+	ASSERT_GT(availableSpace, static_cast<size_t>(0)); // Ensure there is available space
 }
 
 // Testing makeSpace with specific disk path

@@ -17,6 +17,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <thread>
 
 #include "chunk_trash_index.h"
 
@@ -45,7 +46,7 @@ TEST_F(ChunkTrashIndexTest, AddFileEntry) {
 	index.add(1234567890, "/.trash.bin/path/to/file", "/testDisk");
 
 	auto expiredFiles = index.getExpiredFiles(1234567891);
-	ASSERT_EQ(expiredFiles.size(), 1);
+	ASSERT_EQ(expiredFiles.size(), static_cast<size_t>(1));
 	EXPECT_EQ(expiredFiles["/testDisk"].begin()->second, "/.trash.bin/path/to/file");
 }
 
@@ -55,7 +56,7 @@ TEST_F(ChunkTrashIndexTest, RemoveFileEntry) {
 	index.remove(1234567890, "/path/to/file", "/testDisk");
 
 	auto expiredFiles = index.getExpiredFiles(1234567891);
-	EXPECT_EQ(expiredFiles["/testDisk"].size(), 0);
+	EXPECT_EQ(expiredFiles["/testDisk"].size(), static_cast<size_t>(0));
 }
 
 TEST_F(ChunkTrashIndexTest, ThreadSafety) {
@@ -71,24 +72,6 @@ TEST_F(ChunkTrashIndexTest, ThreadSafety) {
 	t2.join();
 
 	auto expiredFiles = index.getExpiredFiles(1234567892);
-	ASSERT_EQ(expiredFiles.size(), 1);
-	EXPECT_EQ(expiredFiles["/testDisk"].size(), 2);
-}
-
-TEST_F(ChunkTrashIndexTest, RemoveFileEntry2) {
-	auto &index = ChunkTrashIndex::instance();
-
-	// Arrange: Add a file to the trash index
-	std::string diskPath = "/testDisk";
-	std::string filePath1 = diskPath + "/.trash.bin/path/to/file1";
-	time_t deletionTime = 1234567890;
-	index.add(deletionTime, filePath1, diskPath);
-
-	// Act: Remove the file entries
-	index.remove(deletionTime, filePath1);
-
-	// Assert: Verify the file entry is removed
-	auto expiredFiles = index.getExpiredFiles(deletionTime + 1);
-	EXPECT_EQ(expiredFiles.size(), 1);
-	EXPECT_EQ(expiredFiles[diskPath].size(), 0);
+	ASSERT_EQ(expiredFiles.size(), static_cast<size_t>(1));
+	EXPECT_EQ(expiredFiles["/testDisk"].size(), static_cast<size_t>(2));
 }

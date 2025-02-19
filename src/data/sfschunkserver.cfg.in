@@ -203,7 +203,7 @@
 # CHUNK_TRASH_GC_BATCH_SIZE = 1000
 
 ## [ADVANCED] The number of files to remove from the trash in a single GC cycle,
-## in case the disk is full ans space needs to be recovered. (Default: 100)
+## in case the disk is full and space needs to be recovered. (Default: 100)
 ## (Default: 100)
 # CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE = 100
 
