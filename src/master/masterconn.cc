@@ -105,7 +105,7 @@ struct MasterConn {
 	};
 
 	Mode mode{};  ///< Current connection mode.
-	State state{State::kNone};  ///< Current synchonization state.
+	State state{State::kNone};  ///< Current synchronization state.
 
 	int sock{kInvalidFD};  ///< Socket descriptor.
 	int32_t pollDescPos{};  ///< Position in the poll descriptors array.
