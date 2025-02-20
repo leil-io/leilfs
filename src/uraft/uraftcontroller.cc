@@ -86,6 +86,16 @@ void uRaftController::nodePromote() {
 		    opt_.floating_iface, opt_.floating_ip,
 		    opt_.check_floating_ip_period);
 
+		std::function<bool()> restoreFloatingIpFunction = [this]() -> bool {
+			std::vector<std::string> params = {"saunafs-uraft-helper", "assign-ip"};
+			std::string result;
+			int timeout = 6 * opt_.check_floating_ip_period;
+			return runCommand(params, result, timeout);
+		};
+
+		// Set callback for HAFloatingIPManager to restore the floating IP
+		haFloatingIpManager->setCallback(restoreFloatingIpFunction);
+
 		// Start HAFloatingIPManager
 		haFloatingIpManager->start();
 	}

@@ -46,6 +46,11 @@ server (default: 9421).
 
 *URAFT_FLOATING_IFACE*:: Network interface where floating IP should be managed
 (example: eth0).
+Important: If the network interface used for the floating IP becomes unavailable,
+the failover mechanism will not restore it. As a result, the floating IP cannot
+be recovered, causing SaunaFS services that depend on it to become unavailable.
+The failover mechanism is based on the URAFT_FLOATING_IP_CHECK_PERIOD option.
+See its documentation for more details.
 
 *ELECTION_TIMEOUT_MIN*:: *[advanced]* minimal timeout in milliseconds for
 election algorithm.

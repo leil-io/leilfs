@@ -19,7 +19,6 @@
 #include "floating-ip-manager.h"
 
 #include <gtest/gtest.h>
-#include <gmock/gmock.h>
 
 class MockFloatingIPManager : public HAFloatingIPManager {
 public:

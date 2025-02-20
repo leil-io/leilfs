@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -62,6 +63,10 @@ public:
 	///
 	/// @return True if the floating IP manager is enabled, false otherwise.
 	virtual bool isFloatingIpManagerEnabled() const = 0;
+
+	/// @brief Set the callback function to be called when the floating IP is
+	/// lost.
+	virtual void setCallback(std::function<bool()>& func) = 0;
 };
 
 /**
@@ -92,6 +97,7 @@ public:
 	bool isFloatingIpAlive() const override;
 	bool restoreFloatingIp() override;
 	bool isFloatingIpManagerEnabled() const override;
+	void setCallback(std::function<bool()>& func) override;
 
 private:
 	/// @brief Start the event listener thread.
@@ -138,4 +144,5 @@ protected:
 	std::string floatingIpInterface; ///< Network interface for the floating IP.
 	std::string floatingIpAddress;   ///< Floating IP address.
 	uint checkFloatingIpPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
+	std::function<bool()> assignFloatingIpFunction{nullptr}; ///< Function to assign the floating IP.
 };

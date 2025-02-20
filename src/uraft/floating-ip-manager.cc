@@ -18,8 +18,6 @@
 
 #include "floating-ip-manager.h"
 
-#include "common/time_utils.h"
-
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
@@ -65,71 +63,12 @@ bool HAFloatingIPManager::isFloatingIpAlive() const {
 }
 
 bool HAFloatingIPManager::restoreFloatingIp() {
-	const char *command = "saunafs-uraft-helper";
-	const char *args[] = {command, "assign-ip", nullptr};
-
-	constexpr int kTimeoutInMilliseconds = 3000; // 3 seconds
-	constexpr int kSleepTimeInMilliseconds = 100; // 0.1 seconds
-
-	pid_t pid = fork();
-	if (pid < 0) {
-		syslog(LOG_ERR, "Failed to fork process: %s", strerror(errno));
+	if (assignFloatingIpFunction == nullptr) {
+		syslog(LOG_ERR, "AssignFloatingIpFunction is not set.");
 		return false;
 	}
 
-	if (pid == 0) {  // Child process
-		execvp(command, const_cast<char *const *>(args));
-		syslog(LOG_ERR, "Failed to execute command: %s", strerror(errno));
-		_exit(127);  // Exit with error if execvp fails
-	}
-
-	// Parent process: Wait for the child process with a timeout
-	int status = 0;
-	pid_t result = 0;
-	Timeout timer {std::chrono::milliseconds(kTimeoutInMilliseconds)};
-
-	do {
-		result = waitpid(pid, &status, WNOHANG);
-		if (result != 0) { break; }  // Child exited or error occurred
-
-		std::this_thread::sleep_for(
-		    std::chrono::milliseconds(kSleepTimeInMilliseconds));
-	} while (!timer.expired());
-
-	// If the child is still running after timeout, terminate it
-	if (result == 0) {  // Timeout occurred
-		syslog(LOG_ERR, "Command %s timed out after %d milliseconds", command,
-		       kTimeoutInMilliseconds);
-
-		kill(pid, SIGTERM);  // Try graceful termination first
-		std::this_thread::sleep_for(std::chrono::milliseconds(
-		    kSleepTimeInMilliseconds));  // Give it time to exit
-
-		if (waitpid(pid, &status, WNOHANG) == 0) {  // Still running?
-			syslog(LOG_ERR, "Process did not exit, forcing termination.");
-			kill(pid, SIGKILL);
-		}
-
-		waitpid(pid, &status, 0);  // Ensure the process is cleaned up
-		return false;
-	}
-
-	if (result < 0) {
-		syslog(LOG_ERR, "waitpid failed: %s", strerror(errno));
-		return false;
-	}
-
-	// Check exit status
-	if (WIFEXITED(status)) {
-		if (WEXITSTATUS(status) == 0) { return true; }
-		syslog(LOG_ERR, "Command failed with exit code %d",
-		       WEXITSTATUS(status));
-	}
-
-	if (WIFSIGNALED(status)) {
-		syslog(LOG_ERR, "Command terminated by signal %d", WTERMSIG(status));
-	}
-	return false;
+	return assignFloatingIpFunction();
 }
 
 void HAFloatingIPManager::startEventListener() {
@@ -334,4 +273,8 @@ void HAFloatingIPManager::pollSocketForIpRemovalEvents(
 
 bool HAFloatingIPManager::isFloatingIpManagerEnabled() const {
 	return checkFloatingIpPeriodMS > 0;
+}
+
+void HAFloatingIPManager::setCallback(std::function<bool()>& func) {
+	assignFloatingIpFunction = func;
 }
