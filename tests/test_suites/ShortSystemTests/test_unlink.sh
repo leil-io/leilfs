@@ -18,7 +18,6 @@ saunafs setgoal xor3 "$xorfile"
 dd if=/dev/zero of="$file" bs=1MiB count=130
 dd if=/dev/zero of="$xorfile" bs=1MiB count=130
 saunafs settrashtime 0 "$file" "$xorfile"
-chunks_count_before_files_removal="$(find_all_chunks | wc -l)"
 rm -f "$file" "$xorfile"
 
 # Wait for removing all the chunks

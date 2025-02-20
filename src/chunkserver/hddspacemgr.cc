@@ -2401,7 +2401,7 @@ void hddFreeResourcesThread() {
 	while (!gTerminate) {
 		gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex,
 		                       kMaxFreeUnused);
-		ChunkTrashManager::instance().collectGarbage();
+		ChunkTrashManager::collectGarbage();
 		sleep(kDelayedStep);
 	}
 }
@@ -2536,6 +2536,7 @@ void hddReload(void) {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
+		ChunkTrashManager::reloadConfig();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
@@ -2645,6 +2646,7 @@ int hddInit() {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
+		ChunkTrashManager::reloadConfig();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
@@ -2661,12 +2663,12 @@ int hddInit() {
 				                   disk->getPaths().c_str());
 				continue;
 			}
-			ChunkTrashManager::instance().init(disk->metaPath());
+			ChunkTrashManager::init(disk->metaPath());
 			if (disk->isZonedDevice()) {
 				continue;
 			}
 			if (disk->metaPath() != disk->dataPath()) {
-				ChunkTrashManager::instance().init(disk->dataPath());
+				ChunkTrashManager::init(disk->dataPath());
 			}
 		}
 	}

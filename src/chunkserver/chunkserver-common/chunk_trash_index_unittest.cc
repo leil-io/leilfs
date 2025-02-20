@@ -25,12 +25,12 @@ class ChunkTrashIndexTest : public ::testing::Test {
 protected:
 	void SetUp() override {
 		// Resetting state before each test to ensure no interference
-		ChunkTrashIndex::instance().reset("/testDisk");
+		ChunkTrashIndex::instance().clear();
 	}
 
 	void TearDown() override {
 		// Resetting state after each test to clean up
-		ChunkTrashIndex::instance().reset("/testDisk");
+		ChunkTrashIndex::instance().clear();
 	}
 };
 
@@ -47,7 +47,8 @@ TEST_F(ChunkTrashIndexTest, AddFileEntry) {
 
 	auto expiredFiles = index.getExpiredFiles(1234567891);
 	ASSERT_EQ(expiredFiles.size(), static_cast<size_t>(1));
-	EXPECT_EQ(expiredFiles["/testDisk"].begin()->second, "/.trash.bin/path/to/file");
+	EXPECT_EQ(expiredFiles["/testDisk"].begin()->second,
+	          "/.trash.bin/path/to/file");
 }
 
 TEST_F(ChunkTrashIndexTest, RemoveFileEntry) {
@@ -59,14 +60,36 @@ TEST_F(ChunkTrashIndexTest, RemoveFileEntry) {
 	EXPECT_EQ(expiredFiles["/testDisk"].size(), static_cast<size_t>(0));
 }
 
+TEST_F(ChunkTrashIndexTest, RemoveFileEntryWithoutDiskPath) {
+	auto &index = ChunkTrashIndex::instance();
+	index.add(1234567890, "/path/to/file", "/testDisk");
+	index.remove(1234567890, "/path/to/file");
+
+	auto expiredFiles = index.getExpiredFiles(1234567891);
+	EXPECT_EQ(expiredFiles["/testDisk"].size(), static_cast<size_t>(0));
+}
+
+TEST_F(ChunkTrashIndexTest, RemoveFileEntryFromLastDisk) {
+	auto &index = ChunkTrashIndex::instance();
+	index.add(1234567890, "/path/to/file", "/testDisk");
+	index.add(123456, "/path/to/file", "/testDisk2");
+
+        // Expect removing from /testDisk
+	index.remove(1234567890, "/path/to/file");
+
+	auto expiredFiles = index.getExpiredFiles(1234567891);
+	// Expect /testDisk should be empty
+	EXPECT_EQ(expiredFiles["/testDisk"].size(), static_cast<size_t>(0));
+	// Expect /testDisk2 has one file
+	EXPECT_EQ(expiredFiles["/testDisk2"].size(), static_cast<size_t>(1));
+}
+
 TEST_F(ChunkTrashIndexTest, ThreadSafety) {
 	auto &index = ChunkTrashIndex::instance();
-	std::thread t1([&index]() {
-		index.add(1234567890, "/path/to/file1", "/testDisk");
-	});
-	std::thread t2([&index]() {
-		index.add(1234567891, "/path/to/file2", "/testDisk");
-	});
+	std::thread t1(
+	    [&index]() { index.add(1234567890, "/path/to/file1", "/testDisk"); });
+	std::thread t2(
+	    [&index]() { index.add(1234567891, "/path/to/file2", "/testDisk"); });
 
 	t1.join();
 	t2.join();

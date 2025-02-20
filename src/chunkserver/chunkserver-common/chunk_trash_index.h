@@ -19,12 +19,12 @@
 
 #include "common/platform.h"
 
+#include <ctime>
 #include <filesystem>
 #include <map>
-#include <unordered_map>
-#include <string>
-#include <ctime>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 /**
@@ -35,9 +35,22 @@
  */
 class ChunkTrashIndex {
 public:
-	using TrashIndexFileEntries = std::multimap<std::time_t, std::string>; ///< Type for storing file entries with their deletion time.
-	using TrashIndexDiskEntries = std::unordered_map<std::string, TrashIndexFileEntries>; ///< Type for storing disk path entries and their associated file entries.
-	using TrashIndexType = TrashIndexDiskEntries; ///< Alias for the trash index type.
+	/**
+	 * @brief Type for storing file entries with their deletion time.
+	 */
+	using TrashIndexFileEntries = std::multimap<std::time_t, std::string>;
+
+	/**
+	 * @brief Type for storing disk path entries and their associated file
+	 * entries.
+	 */
+	using TrashIndexDiskEntries =
+	    std::unordered_map<std::string, TrashIndexFileEntries>;
+
+	/**
+	 * @brief Alias for the trash index type.
+	 */
+	using TrashIndexType = TrashIndexDiskEntries;
 
 	/**
 	 * @brief Gets the singleton instance of the ChunkTrashIndex.
@@ -45,6 +58,13 @@ public:
 	 * @return Reference to the singleton instance of ChunkTrashIndex.
 	 */
 	static ChunkTrashIndex &instance();
+
+	/**
+	 * @brief Clears the entire trash index.
+	 *
+	 * This method removes all entries from the trash index.
+	 */
+	void clear();
 
 	/**
 	 * @brief Resets the trash index for a specific disk path.
@@ -62,7 +82,8 @@ public:
 	 * specified time limit and bulk size.
 	 *
 	 * @param timeLimit The time limit to determine expired files.
-	 * @param bulkSize The maximum number of files to retrieve (default is 0, which means no limit).
+	 * @param bulkSize The maximum number of files to retrieve (default is 0,
+	 * which means no limit).
 	 * @return A map containing expired files.
 	 */
 	TrashIndexDiskEntries getExpiredFiles(const std::time_t &timeLimit,
@@ -79,7 +100,8 @@ public:
 	         const std::string &diskPath);
 
 	/**
-	 * @brief Removes a file entry from the trash index by its deletion time and path.
+	 * @brief Removes a file entry from the trash index by its deletion time and
+	 * path.
 	 *
 	 * @param deletionTime The time when the file was deleted.
 	 * @param filePath The path of the file being removed.
@@ -87,7 +109,8 @@ public:
 	void remove(const time_t &deletionTime, const std::string &filePath);
 
 	/**
-	 * @brief Removes a file entry from the trash index for a specific disk path.
+	 * @brief Removes a file entry from the trash index for a specific disk
+	 * path.
 	 *
 	 * @param deletionTime The time when the file was deleted.
 	 * @param filePath The path of the file being removed.
@@ -97,50 +120,57 @@ public:
 	            const std::string &diskPath);
 
 	// Deleted to enforce singleton behavior
-	ChunkTrashIndex(
-			const ChunkTrashIndex &) = delete; ///< Copy constructor is deleted.
+	ChunkTrashIndex(const ChunkTrashIndex &) =
+	    delete;  ///< Copy constructor is deleted.
 
-	ChunkTrashIndex &operator=(
-			const ChunkTrashIndex &) = delete; ///< Copy assignment operator is deleted.
+	ChunkTrashIndex &operator=(const ChunkTrashIndex &) =
+	    delete;  ///< Copy assignment operator is deleted.
 
-	ChunkTrashIndex(
-			ChunkTrashIndex &&) = delete; ///< Move constructor is deleted.
+	ChunkTrashIndex(ChunkTrashIndex &&) =
+	    delete;  ///< Move constructor is deleted.
 
-	ChunkTrashIndex &operator=(
-			ChunkTrashIndex &&) = delete; ///< Move assignment operator is deleted.
+	ChunkTrashIndex &operator=(ChunkTrashIndex &&) =
+	    delete;  ///< Move assignment operator is deleted.
 
-	TrashIndexFileEntries
-	getOlderFiles(const std::string &diskPath, const size_t removalStepSize);
+	TrashIndexFileEntries getOlderFiles(const std::string &diskPath,
+	                                    const size_t removalStepSize);
 
 	std::vector<std::string> getDiskPaths();
 
 private:
 	// Constructor is private to enforce singleton behavior
-	ChunkTrashIndex() = default; ///< Default constructor.
+	ChunkTrashIndex() = default;  ///< Default constructor.
 
-	~ChunkTrashIndex() = default; ///< Destructor.
-
-
-	TrashIndexType trashIndex; ///< The main data structure holding the trash index.
-	std::mutex trashIndexMutex; ///< Mutex for thread-safe access to the trash index.
-
-
+	~ChunkTrashIndex() = default;  ///< Destructor.
 
 	/**
-	 * @brief Retrieves expired files from the trash index for a specific disk path.
+	 * @brief The main data structure holding the trash index.
+	 */
+	TrashIndexType trashIndex;
+
+	/**
+	 * @brief Mutex for thread-safe access to the trash index.
+	 */
+	std::mutex trashIndexMutex;
+
+	/**
+	 * @brief Retrieves expired files from the trash index for a specific disk
+	 * path.
 	 *
 	 * This method populates the provided expiredFiles map with entries that
 	 * have a deletion time earlier than the specified time limit.
 	 *
 	 * @param diskPath The path of the disk to retrieve expired files from.
 	 * @param timeLimit The time limit to determine expired files.
-	 * @param expiredFiles Reference to a map that will be populated with expired files.
-	 * @param bulkSize The maximum number of files to retrieve (default is 0, which means no limit).
+	 * @param expiredFiles Reference to a map that will be populated with
+	 * expired files.
+	 * @param bulkSize The maximum number of files to retrieve (default is 0,
+	 * which means no limit).
 	 * @return The number of expired files retrieved.
 	 */
 	size_t getExpiredFilesInternal(const std::filesystem::path &diskPath,
 	                               const std::time_t &timeLimit,
-	                               std::unordered_map<std::string, std::multimap<std::time_t, std::string>> &expiredFiles,
+	                               TrashIndexDiskEntries &expiredFiles,
 	                               size_t bulkSize = 0);
 
 	/**
@@ -150,18 +180,21 @@ private:
 	 * specified time limit and bulk size.
 	 *
 	 * @param timeLimit The time limit to determine expired files.
-	 * @param bulkSize The maximum number of files to retrieve (default is 0, which means no limit).
+	 * @param bulkSize The maximum number of files to retrieve (default is 0,
+	 * which means no limit).
 	 * @return A map containing expired files.
 	 */
 	TrashIndexDiskEntries getExpiredFilesInternal(const std::time_t &timeLimit,
 	                                              size_t bulkSize = 0);
 
 	/**
-	 * @brief Removes a file entry from the trash index for a specific disk path.
+	 * @brief Removes a file entry from the trash index for a specific disk
+	 * path.
 	 * @param deletionTime
 	 * @param filePath
 	 * @param diskPath
+	 * @return true if the file was removed, false otherwise
 	 */
-	void removeInternal(const time_t &deletionTime, const std::string &filePath,
+	bool removeInternal(const time_t &deletionTime, const std::string &filePath,
 	                    const std::string &diskPath);
 };

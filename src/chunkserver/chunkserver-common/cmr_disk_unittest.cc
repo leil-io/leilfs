@@ -18,35 +18,33 @@
 
 #include "common/platform.h"
 
-#include <fstream>
 #include <gtest/gtest.h>
+#include <fstream>
 
 #include "chunk_trash_manager.h"
+#include "chunk_with_fd.h"
 #include "cmr_disk.h"
 #include "errors/saunafs_error_codes.h"
-#include "chunk_with_fd.h"
 
 std::time_t mockTimeValue = 0;
 
 extern "C" std::time_t __wrap_time(std::time_t *time1) {
-	if (time1 != nullptr) {
-		*time1 = mockTimeValue;
-	}
+	if (time1 != nullptr) { *time1 = mockTimeValue; }
 	return mockTimeValue;
 }
 
 class MockChunk : public FDChunk {
 public:
-	MockChunk() : FDChunk(0, ChunkPartType(detail::SliceType::kECFirst),
-	                      ChunkState::Available) {}
+	MockChunk()
+	    : FDChunk(0, ChunkPartType(detail::SliceType::kECFirst),
+	              ChunkState::Available) {}
 
-	MockChunk(const std::filesystem::path &metaFile, const
-	std::filesystem::path &dataFile) : FDChunk(0,
-	                                           ChunkPartType(
-	                                           detail::SliceType::kECFirst),
-	                                           ChunkState::Available),
-	                                   metaFile_(metaFile.string()),
-	                                   dataFile_(dataFile.string()) {}
+	MockChunk(const std::filesystem::path &metaFile,
+	          const std::filesystem::path &dataFile)
+	    : FDChunk(0, ChunkPartType(detail::SliceType::kECFirst),
+	              ChunkState::Available),
+	      metaFile_(metaFile.string()),
+	      dataFile_(dataFile.string()) {}
 
 	std::string fullMetaFilename() const override { return metaFile_; }
 
@@ -54,7 +52,9 @@ public:
 
 	// Implement all the pure virtual methods with simple stubs
 	std::string generateDataFilenameForVersion(
-			uint32_t /*_version*/) const override { return ""; }
+	    uint32_t /*_version*/) const override {
+		return "";
+	}
 
 	int renameChunkFile(uint32_t /*new_version*/) override { return 0; }
 
@@ -77,8 +77,7 @@ private:
 
 class CmrDiskTest : public ::testing::Test {
 protected:
-	CmrDiskTest()
-			: cmrDiskInstance("", "", false, false) {}
+	CmrDiskTest() : cmrDiskInstance("", "", false, false) {}
 
 	static std::filesystem::path testDir;
 	CmrDisk cmrDiskInstance;
@@ -95,6 +94,9 @@ protected:
 	}
 
 	void TearDown() override {
+		// Reset the disabled state
+		ChunkTrashManager::isEnabled = 0;
+		// Clean up test directory
 		if (std::filesystem::remove_all(testDir) == 0) {
 			std::cerr << "Failed to remove test directory: " << testDir << '\n';
 		}
@@ -103,86 +105,118 @@ protected:
 
 std::filesystem::path CmrDiskTest::testDir;
 TEST_F(CmrDiskTest, UnlinkChunkSuccessful) {
-// Create a dummy meta and data file in the test directory
+	ChunkTrashManager::isEnabled = 1;
+	// Create a dummy meta and data file in the test directory
 	std::filesystem::path const metaFile =
-			std::filesystem::path(cmrDiskInstance.metaPath()) /
-			"chunk_meta_file.txt";
+	    std::filesystem::path(cmrDiskInstance.metaPath()) /
+	    "chunk_meta_file.txt";
 	std::filesystem::path const dataFile =
-			std::filesystem::path(cmrDiskInstance.dataPath()) /
-			"chunk_data_file.txt";
-	std::ofstream(metaFile)
-			<< "meta content";
-	std::ofstream(dataFile)
-			<< "data content";
+	    std::filesystem::path(cmrDiskInstance.dataPath()) /
+	    "chunk_data_file.txt";
+	std::ofstream(metaFile) << "meta content";
+	std::ofstream(dataFile) << "data content";
 
 	MockChunk chunk(metaFile, dataFile);
 
 	mockTimeValue = 1729259531;
 	std::string const mockDeletionTimeString = "20241018135211";
 
-// Call the unlinkChunk method
+	// Call the unlinkChunk method
 	int const result = cmrDiskInstance.unlinkChunk(&chunk);
 
 	std::filesystem::path const expectedMetaTrashPath =
-			std::filesystem::path(cmrDiskInstance.metaPath()) /
-			ChunkTrashManager::kTrashDirname /
-			(metaFile.filename().string() + "." + mockDeletionTimeString);
+	    std::filesystem::path(cmrDiskInstance.metaPath()) /
+	    ChunkTrashManager::kTrashDirname /
+	    (metaFile.filename().string() + "." + mockDeletionTimeString);
 	std::filesystem::path const expectedDataTrashPath =
-			std::filesystem::path(cmrDiskInstance.dataPath()) /
-			ChunkTrashManager::kTrashDirname /
-			(dataFile.filename().string() + "." + mockDeletionTimeString);
+	    std::filesystem::path(cmrDiskInstance.dataPath()) /
+	    ChunkTrashManager::kTrashDirname /
+	    (dataFile.filename().string() + "." + mockDeletionTimeString);
 
-// Verify that the meta and data files were moved to the trash
+	// Verify that the meta and data files were moved to the trash
 	EXPECT_TRUE(std::filesystem::exists(expectedMetaTrashPath));
 	EXPECT_TRUE(std::filesystem::exists(expectedDataTrashPath));
 	EXPECT_EQ(result, SAUNAFS_STATUS_OK);
 }
 
-TEST_F(CmrDiskTest, UnlinkChunkMetaFileMissing) {
-// Create only the data file
+TEST_F(CmrDiskTest, TrashChunkMetaFileMissing) {
+	ChunkTrashManager::isEnabled = 1;
+	// Create only the data file
 	std::filesystem::path const dataFile =
-			std::filesystem::path(cmrDiskInstance.dataPath()) /
-			"chunk_data_file.txt";
-	std::ofstream(dataFile)
-			<< "data content";
+	    std::filesystem::path(cmrDiskInstance.dataPath()) /
+	    "chunk_data_file.txt";
+	std::ofstream(dataFile) << "data content";
 
 	MockChunk chunk("non_existent_meta_file.txt", dataFile);
 
-// Call the unlinkChunk method
+	// Call the unlinkChunk method
 	int const result = cmrDiskInstance.unlinkChunk(&chunk);
 
-// Check that the correct error code is returned
-	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT
-	);
-}
-
-TEST_F(CmrDiskTest, UnlinkChunkDataFileMissing) {
-// Create only the meta file
-	std::filesystem::path const metaFile =
-			std::filesystem::path(cmrDiskInstance.metaPath()) /
-			"chunk_meta_file.txt";
-	std::ofstream(metaFile)
-			<< "meta content";
-
-	MockChunk chunk(metaFile, "non_existent_data_file.txt");
-
-// Call the unlinkChunk method
-	int const result = cmrDiskInstance.unlinkChunk(&chunk);
-
-// Check that the correct error code is returned
+	// Check that the correct error code is returned
 	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }
 
+TEST_F(CmrDiskTest, UnlinkChunkMetaFileMissing) {
+	ChunkTrashManager::isEnabled = 0;
+	// Create only the data file
+	std::filesystem::path const dataFile =
+	    std::filesystem::path(cmrDiskInstance.dataPath()) /
+	    "chunk_data_file.txt";
+	std::ofstream(dataFile) << "data content";
+
+	MockChunk chunk("non_existent_meta_file.txt", dataFile);
+
+	// Call the unlinkChunk method
+	int const result = cmrDiskInstance.unlinkChunk(&chunk);
+
+	// Check that the correct error code is returned
+	EXPECT_EQ(result, SAUNAFS_ERROR_NOTDONE);
+}
+
+TEST_F(CmrDiskTest, TrashChunkDataFileMissing) {
+	ChunkTrashManager::isEnabled = 1;
+	// Create only the meta file
+	std::filesystem::path const metaFile =
+	    std::filesystem::path(cmrDiskInstance.metaPath()) /
+	    "chunk_meta_file.txt";
+	std::ofstream(metaFile) << "meta content";
+
+	MockChunk chunk(metaFile, "non_existent_data_file.txt");
+
+	// Call the unlinkChunk method
+	int const result = cmrDiskInstance.unlinkChunk(&chunk);
+
+	// Check that the correct error code is returned
+	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
+}
+
+TEST_F(CmrDiskTest, UnlinkChunkDataFileMissing) {
+	ChunkTrashManager::isEnabled = 0;
+	// Create only the meta file
+	std::filesystem::path const metaFile =
+	    std::filesystem::path(cmrDiskInstance.metaPath()) /
+	    "chunk_meta_file.txt";
+	std::ofstream(metaFile) << "meta content";
+
+	MockChunk chunk(metaFile, "non_existent_data_file.txt");
+
+	// Call the unlinkChunk method
+	int const result = cmrDiskInstance.unlinkChunk(&chunk);
+
+	// Check that the correct error code is returned
+	EXPECT_EQ(result, SAUNAFS_ERROR_NOTDONE);
+}
+
 TEST_F(CmrDiskTest, UnlinkChunkDiskPathError) {
-// Set disk paths to empty strings to simulate a disk path error
+	// Set disk paths to empty strings to simulate a disk path error
 	cmrDiskInstance.setMetaPath("");
 	cmrDiskInstance.setDataPath("");
 
 	MockChunk chunk("chunk_meta_file.txt", "chunk_data_file.txt");
 
-// Call the unlinkChunk method
+	// Call the unlinkChunk method
 	int const result = cmrDiskInstance.unlinkChunk(&chunk);
 
-// Check that the correct error code is returned
+	// Check that the correct error code is returned
 	EXPECT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }

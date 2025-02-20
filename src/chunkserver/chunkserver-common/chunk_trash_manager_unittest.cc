@@ -16,34 +16,33 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "chunk_trash_manager.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "chunk_trash_manager.h"
 
 class MockChunkTrashManagerImpl : public IChunkTrashManagerImpl {
 public:
 	MOCK_METHOD(int, moveToTrash,
-	            (const std::filesystem::path&, const std::filesystem::path&, const std::time_t&),
-	            (override));
-	MOCK_METHOD(int, init, (const std::string&), (override));
-	MOCK_METHOD(void, collectGarbage, (), (override));
-	MOCK_METHOD(void, reloadConfig, (), (override));
+	            (const std::filesystem::path &, const std::filesystem::path &,
+	             const std::time_t &),
+	            ());
+	MOCK_METHOD(int, init, (const std::string &), ());
+	MOCK_METHOD(void, collectGarbage, (), ());
+	MOCK_METHOD(void, reloadConfig, (), ());
 };
 
 class ChunkTrashManagerTest : public ::testing::Test {
 public:
-	std::shared_ptr<MockChunkTrashManagerImpl> mockImpl = nullptr;
+	std::shared_ptr<MockChunkTrashManagerImpl> mockImpl{nullptr};
 
 protected:
-
 	void SetUp() override {
 		mockImpl = std::make_shared<MockChunkTrashManagerImpl>();
-		ChunkTrashManager::instance(mockImpl).isEnabled = 1;
+		ChunkTrashManager::setImpl(mockImpl);
+		ChunkTrashManager::isEnabled = 1;
 	}
 
-	void TearDown() override {
-		mockImpl.reset();
-	}
+	void TearDown() override { mockImpl.reset(); }
 };
 
 TEST_F(ChunkTrashManagerTest, MoveToTrashForwardsCall) {
@@ -52,11 +51,11 @@ TEST_F(ChunkTrashManagerTest, MoveToTrashForwardsCall) {
 	std::time_t deletionTime = 1234567890;
 
 	EXPECT_CALL(*mockImpl, moveToTrash(filePath, diskPath, deletionTime))
-			.Times(1)
-			.WillOnce(testing::Return(0));  // Assuming 0 is a success return
+	    .Times(1)
+	    .WillOnce(testing::Return(0));  // Assuming 0 is a success return
 	// value.
 
-	int result = ChunkTrashManager::instance().moveToTrash(filePath, diskPath,
+	int result = ChunkTrashManager::moveToTrash(filePath, diskPath,
 	                                                       deletionTime);
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
@@ -66,42 +65,31 @@ TEST_F(ChunkTrashManagerTest, InitForwardsCall) {
 
 	EXPECT_CALL(*mockImpl, init(diskPath)).Times(1);
 
-	ChunkTrashManager::instance().init(diskPath);  // Call the method.
+	ChunkTrashManager::init(diskPath);  // Call the method.
 }
 
 TEST_F(ChunkTrashManagerTest, CollectGarbageForwardsCall) {
 	EXPECT_CALL(*mockImpl, collectGarbage()).Times(1);
 
-	ChunkTrashManager::instance().collectGarbage();  // Call the method.
+	ChunkTrashManager::collectGarbage();  // Call the method.
 }
 
 TEST_F(ChunkTrashManagerTest, ReloadConfigForwardsCall) {
 	EXPECT_CALL(*mockImpl, reloadConfig()).Times(1);
 
-	ChunkTrashManager::instance().reloadConfig();  // Call the method.
-}
-
-TEST_F(ChunkTrashManagerTest, SingletonBehavior) {
-	// Get the first instance
-	ChunkTrashManager &firstInstance = ChunkTrashManager::instance();
-
-	// Get a second instance
-	ChunkTrashManager &secondInstance = ChunkTrashManager::instance();
-
-	// Verify that both instances point to the same address
-	EXPECT_EQ(&firstInstance, &secondInstance);
+	ChunkTrashManager::reloadConfig();  // Call the method.
 }
 
 TEST_F(ChunkTrashManagerTest, DisabledMoveToTrashDoesNotForwardsCall) {
 	std::filesystem::path filePath = "example.txt";
 	std::filesystem::path diskPath = "/disk/";
 	std::time_t deletionTime = 1234567890;
-	ChunkTrashManager::instance().isEnabled = 0;
+	ChunkTrashManager::isEnabled = 0;
 
 	EXPECT_CALL(*mockImpl, moveToTrash(filePath, diskPath, deletionTime))
 	    .Times(0);
 
-	int result = ChunkTrashManager::instance().moveToTrash(filePath, diskPath,
+	int result = ChunkTrashManager::moveToTrash(filePath, diskPath,
 	                                                       deletionTime);
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
@@ -111,20 +99,20 @@ TEST_F(ChunkTrashManagerTest, DisabledInitForwardsCall) {
 
 	EXPECT_CALL(*mockImpl, init(diskPath)).Times(1);
 
-	ChunkTrashManager::instance().isEnabled = 0;
-	ChunkTrashManager::instance().init(diskPath);  // Call the method.
+	ChunkTrashManager::isEnabled = 0;
+	ChunkTrashManager::init(diskPath);  // Call the method.
 }
 
 TEST_F(ChunkTrashManagerTest, DisabledCollectGarbageDoesNotForwardsCall) {
 	EXPECT_CALL(*mockImpl, collectGarbage()).Times(0);
 
-	ChunkTrashManager::instance().isEnabled = 0;
-	ChunkTrashManager::instance().collectGarbage();  // Call the method.
+	ChunkTrashManager::isEnabled = 0;
+	ChunkTrashManager::collectGarbage();  // Call the method.
 }
 
 TEST_F(ChunkTrashManagerTest, DisabledReloadConfigForwardsCall) {
 	EXPECT_CALL(*mockImpl, reloadConfig()).Times(1);
 
-	ChunkTrashManager::instance().isEnabled = 0;
-	ChunkTrashManager::instance().reloadConfig();  // Call the method.
+	ChunkTrashManager::isEnabled = 0;
+	ChunkTrashManager::reloadConfig();  // Call the method.
 }

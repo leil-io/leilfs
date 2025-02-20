@@ -16,7 +16,9 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <syslog.h>
 #include <cassert>
+#include <memory>
 
 #include "chunk_trash_manager.h"
 #include "chunk_trash_manager_impl.h"
@@ -25,22 +27,12 @@
 u_short ChunkTrashManager::isEnabled = 0;
 
 ChunkTrashManager::ImplementationPtr ChunkTrashManager::pImpl =
-		std::make_shared<ChunkTrashManagerImpl>();
-
-ChunkTrashManager &ChunkTrashManager::instance(ImplementationPtr newImpl) {
-	static ChunkTrashManager instance;
-	if (newImpl) {
-		pImpl = newImpl;
-	}
-	return instance;
-}
+    std::make_shared<ChunkTrashManagerImpl>();
 
 int ChunkTrashManager::moveToTrash(const std::filesystem::path &filePath,
                                    const std::filesystem::path &diskPath,
                                    const std::time_t &deletionTime) {
-	if(!isEnabled) {
-		return 0;
-	}
+	if (!isEnabled) { return 0; }
 	assert(pImpl && "Implementation should be set");
 	return pImpl->moveToTrash(filePath, diskPath, deletionTime);
 }
@@ -52,15 +44,14 @@ int ChunkTrashManager::init(const std::string &diskPath) {
 }
 
 void ChunkTrashManager::collectGarbage() {
-	if(!isEnabled) {
-		return;
-	}
+	if (!isEnabled) { return; }
 	assert(pImpl && "Implementation should be set");
 	pImpl->collectGarbage();
 }
 
 void ChunkTrashManager::reloadConfig() {
 	assert(pImpl && "Implementation should be set");
-	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", isEnabled);
+	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", static_cast<u_short>(0));
+	safs::log_info("Chunk trash manager is {}", isEnabled ? "enabled" : "disabled");
 	pImpl->reloadConfig();
 }

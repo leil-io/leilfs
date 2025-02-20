@@ -33,8 +33,8 @@ public:
 
 	/// Creates the lock files for metadata and data directories
 	void createLockFiles(
-	        bool isLockNeeded,
-	        std::vector<std::unique_ptr<IDisk>> &allDisks) override;
+	    bool isLockNeeded,
+	    std::vector<std::unique_ptr<IDisk>> &allDisks) override;
 
 	/// Updates the disk usage information preserving the reserved space
 	///
@@ -49,7 +49,7 @@ public:
 	/// Creates a new ChunkSignature for the given Chunk.
 	/// Used mostly to write the metadata file of an existing in-memory Chunk.
 	std::unique_ptr<ChunkSignature> createChunkSignature(
-	        IChunk *chunk) override;
+	    IChunk *chunk) override;
 
 	/// Creates a new empty ChunkSignature that later will be filled with the
 	/// information of the Chunk using readFromDescriptor.

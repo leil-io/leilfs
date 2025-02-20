@@ -194,8 +194,9 @@
 
 ## Sets the available space threshold in gigabytes. If the available space on
 ## the disk falls below this threshold, the system will start deleting older
-## chunks from the trash to free up space. (Default: 1024)
-# CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB = 1024
+## chunks from the trash to free up space. A suggested value is about the 15% of
+## the capacity of the smaller configured disk. (Default: 0)
+# CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB = 0
 
 ## Defines the bulk size for the garbage collector when processing chunks in the
 ## trash. This determines how many files are processed in each garbage
@@ -204,7 +205,6 @@
 
 ## [ADVANCED] The number of files to remove from the trash in a single GC cycle,
 ## in case the disk is full and space needs to be recovered. (Default: 100)
-## (Default: 100)
 # CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE = 100
 
 ## Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or config
