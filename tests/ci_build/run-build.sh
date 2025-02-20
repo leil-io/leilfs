@@ -68,7 +68,7 @@ case "${build_type,,}" in
 			-DCMAKE_INSTALL_PREFIX="${PROJECT_DIR}/install/saunafs/"
 			-DENABLE_TESTS=ON
 			-DCODE_COVERAGE=OFF
-			-DSAUNAFS_TEST_POINTER_OBFUSCATION=ON
+			# -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON  # Deprecated feature
 			-DENABLE_WERROR=ON
 		)
 		build_dir="${PROJECT_DIR}/build/saunafs-debug"
@@ -80,7 +80,7 @@ case "${build_type,,}" in
 			-DCMAKE_INSTALL_PREFIX="${PROJECT_DIR}/install/saunafs/"
 			-DENABLE_TESTS=ON
 			-DCODE_COVERAGE=ON
-			-DSAUNAFS_TEST_POINTER_OBFUSCATION=ON
+			# -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON  # Deprecated feature
 			-DENABLE_WERROR=OFF
 		)
 		build_dir="${PROJECT_DIR}/build/saunafs-coverage"
@@ -92,7 +92,7 @@ case "${build_type,,}" in
 			-DCMAKE_INSTALL_PREFIX="${PROJECT_DIR}/install/saunafs/"
 			-DENABLE_TESTS=ON
 			-DCODE_COVERAGE=OFF
-			-DSAUNAFS_TEST_POINTER_OBFUSCATION=ON
+			# -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON  # Deprecated feature
 			-DENABLE_WERROR=ON
 		)
 		build_dir="${PROJECT_DIR}/build/saunafs"

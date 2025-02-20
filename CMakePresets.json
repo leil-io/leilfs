@@ -16,12 +16,10 @@
                 "ENABLE_CLIENT_LIB": "ON",
                 "ENABLE_DOCS": "ON",
                 "ENABLE_NFS_GANESHA": "ON",
-                "ENABLE_POLONAISE": "OFF",
                 "ENABLE_TESTS": "ON",
                 "ENABLE_URAFT": "ON",
                 "ENABLE_WERROR": "ON",
-                "GSH_CAN_HOST_LOCAL_FS": "ON",
-                "SAUNAFS_TEST_POINTER_OBFUSCATION": "ON"
+                "GSH_CAN_HOST_LOCAL_FS": "ON"
             },
             "hidden": true
         },
@@ -30,33 +28,30 @@
             "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
             "hidden": true
         },
-		{
-			"name": "windows",
+        {
+            "name": "windows",
             "inherits": ["default", "vcpkg"],
-			"generator": "MinGW Makefiles",
-			"cacheVariables": {
-				"CMAKE_MAKE_PROGRAM": "C:/msys64/mingw64/bin/mingw32-make.exe",
-				"CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/gcc.exe",
-				"CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe",
-				"SOCKET_LIBRARIES": "C:/msys64/mingw64/lib/libws2_32.a",
-				"VCPKG_TARGET_TRIPLET": "x64-mingw-static",
-				"VCPKG_DEFAULT_TRIPLET": "x64-mingw-static",
-				"VCPKG_HOST_TRIPLET": "x64-mingw-static",
-				"CMAKE_BUILD_TYPE": "RelWithDebInfo",
-				"ENABLE_DOCS": "OFF",
-				"ENABLE_CLIENT_LIB": "OFF",
-				"ENABLE_URAFT": "OFF",
-				"ENABLE_NFS_GANESHA": "OFF",
-				"GSH_CAN_HOST_LOCAL_FS": "OFF",
-				"ENABLE_POLONAISE": "OFF",
-				"ENABLE_TESTS": "OFF",
-				"ENABLE_PROMETHEUS": "OFF",
-				"ENABLE_NFS_ACL_SUPPORT": "OFF",
-				"CODE_COVERAGE": "OFF",
-				"SAUNAFS_TEST_POINTER_OBFUSCATION": "OFF",
-				"ENABLE_WERROR": "ON"
-			}
-		},
+            "generator": "MinGW Makefiles",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe",
+                "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw64/bin/mingw32-make.exe",
+                "CODE_COVERAGE": "OFF",
+                "ENABLE_CLIENT_LIB": "OFF",
+                "ENABLE_DOCS": "OFF",
+                "ENABLE_NFS_GANESHA": "OFF",
+                "ENABLE_PROMETHEUS": "OFF",
+                "ENABLE_TESTS": "OFF",
+                "ENABLE_URAFT": "OFF",
+                "ENABLE_WERROR": "ON",
+                "GSH_CAN_HOST_LOCAL_FS": "OFF",
+                "SOCKET_LIBRARIES": "C:/msys64/mingw64/lib/libws2_32.a",
+                "VCPKG_DEFAULT_TRIPLET": "x64-mingw-static",
+                "VCPKG_HOST_TRIPLET": "x64-mingw-static",
+                "VCPKG_TARGET_TRIPLET": "x64-mingw-static"
+            }
+        },
         {
             "name": "debug",
             "binaryDir": "${sourceDir}/build/saunafs/debug",
@@ -83,8 +78,7 @@
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "/",
                 "ENABLE_TESTS": "OFF",
-                "ENABLE_WERROR": "OFF",
-                "SAUNAFS_TEST_POINTER_OBFUSCATION": "OFF"
+                "ENABLE_WERROR": "OFF"
             },
             "inherits": "default"
         },
