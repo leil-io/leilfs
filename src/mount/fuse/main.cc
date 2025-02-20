@@ -263,6 +263,8 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.ignore_flush = gMountOptions.ignoreflush;
 	params.log_notifications_area = gMountOptions.lognotificationarea;
 	params.message_suppression_period = gMountOptions.messagesuppressionperiod;
+	params.statfs_cache_timeout = gMountOptions.statfscachetimeout;
+	params.use_quota_in_volume_size = gMountOptions.usequotainvolumesize;
 
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);

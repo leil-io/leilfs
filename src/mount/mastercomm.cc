@@ -3095,6 +3095,41 @@ uint8_t fs_makesnapshot(uint32_t src_inode, uint32_t dst_inode, const std::strin
 	}
 }
 
+uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid,
+                          std::vector<QuotaEntry> &quota_entries) {
+	threc *rec = fs_get_my_threc();
+	std::vector<std::string> quota_info;
+
+	std::vector<QuotaOwner> requested_entities;
+	requested_entities.emplace_back(QuotaOwnerType::kUser, uid);
+	requested_entities.emplace_back(QuotaOwnerType::kGroup, gid);
+	auto message = cltoma::fuseGetQuota::build(rec->packetId, uid, gid, requested_entities);
+
+	if (!fs_saucreatepacket(rec, message)) {
+		return SAUNAFS_ERROR_IO;
+	}
+
+	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GET_QUOTA, message)) {
+		return SAUNAFS_ERROR_IO;
+	}
+
+	try {
+		PacketVersion packet_version;
+		deserializePacketVersionNoHeader(message, packet_version);
+		if (packet_version == matocl::fuseGetQuota::kStatusPacketVersion) {
+			uint8_t status;
+			matocl::fuseGetQuota::deserialize(message, rec->packetId, status);
+			throw Exception(": failed", status);
+		}
+		matocl::fuseGetQuota::deserialize(message, rec->packetId, quota_entries, quota_info);
+		return SAUNAFS_STATUS_OK;
+	} catch (Exception& ex) {
+		fs_got_inconsistent("SAU_MATOCL_FUSE_GET_QUOTA", message.size(), ex.what());
+		quota_entries.clear();
+		return SAUNAFS_ERROR_IO;
+	}
+}
+
 uint8_t fs_getgoal(uint32_t inode, std::string &goal) {
 	threc *rec = fs_get_my_threc();
 

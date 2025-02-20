@@ -61,15 +61,6 @@ struct FsInitParams {
 	static constexpr const char *kDefaultSubfolder = DEFAULT_MOUNTED_SUBFOLDER;
 	static constexpr bool     kDefaultDoNotRememberPassword = false;
 	static constexpr bool     kDefaultDelayedInit = false;
-#ifdef _WIN32
-	static constexpr unsigned kDefaultReportReservedPeriod = 60;
-	static constexpr const char *kDefaultUmaskDir = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
-	static constexpr const char *kDefaultUmaskFile = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
-	static constexpr const char *kDefaultLogLevel = "warn";
-	static constexpr const char *kDefaultLogFlushLevel = "err";
-#else
-	static constexpr unsigned kDefaultReportReservedPeriod = 30;
-#endif
 	static constexpr unsigned kDefaultIoRetries = 30;
 	static constexpr unsigned kDefaultRoundTime = 200;
 	static constexpr unsigned kDefaultChunkserverConnectTo = 2000;
@@ -88,14 +79,25 @@ struct FsInitParams {
 	static constexpr bool     kDefaultIgnoreFlush = false;
 	static constexpr int      kDefaultLogNotificationArea = 0;
 	static constexpr unsigned kDefaultMessageSuppressionPeriod = 10;
+	static constexpr unsigned kDefaultStatfsCacheTo = 0;
+	static constexpr bool     kDefaultUseQuotaInVolumeSize = false;
 #ifdef _WIN32
+	static constexpr unsigned kDefaultReportReservedPeriod = 60;
+	static constexpr const char *kDefaultUmaskDir = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
+	static constexpr const char *kDefaultUmaskFile = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
+	static constexpr const char *kDefaultLogLevel = "warn";
+	static constexpr const char *kDefaultLogFlushLevel = "err";
 	static constexpr unsigned kDefaultWriteCacheSize = 50;
 	static constexpr unsigned kDefaultCleanAcquiredFilesPeriod = 0;
 	static constexpr unsigned kDefaultCleanAcquiredFilesTimeout = 0;
 	static constexpr int      kDefaultEnableStatusUpdaterThread = 0;
 	static constexpr bool     kDefaultIgnoreUtimensUpdate = false;
+	static constexpr bool     kDefaultMkdirCopySgid = false;
 #else
+	static constexpr unsigned kDefaultReportReservedPeriod = 30;
 	static constexpr unsigned kDefaultWriteCacheSize = 0;
+	static constexpr unsigned kDefaultLimitGlibcMallocArenas = 0;
+	static constexpr bool     kDefaultMkdirCopySgid = true;
 #endif
 	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
@@ -109,11 +111,6 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultDirentryCacheSize = 100000;
 	static constexpr double   kDefaultEntryCacheTimeout = 0.0;
 	static constexpr double   kDefaultAttrCacheTimeout = 1.0;
-#ifdef __linux__
-	static constexpr bool     kDefaultMkdirCopySgid = true;
-#else
-	static constexpr bool     kDefaultMkdirCopySgid = false;
-#endif
 #if defined(DEFAULT_SUGID_CLEAR_MODE_EXT)
 	static constexpr SugidClearMode kDefaultSugidClearMode = SugidClearMode::kExt;
 #elif defined(DEFAULT_SUGID_CLEAR_MODE_BSD)
@@ -128,7 +125,6 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultAclCacheSize = 1000;
 	static constexpr bool     kDefaultVerbose = false;
 	static constexpr bool     kDirectIO = false;
-	static constexpr unsigned kDefaultLimitGlibcMallocArenas = 0;
 	// Thank you, GCC 4.6, for no delegating constructors
 	FsInitParams()
 	             : bind_host(), host(), port(), meta(false), mountpoint(), subfolder(kDefaultSubfolder),
@@ -163,14 +159,14 @@ struct FsInitParams {
 	             clean_acquired_files_timeout(kDefaultCleanAcquiredFilesTimeout),
 	             enable_status_updater_thread(kDefaultEnableStatusUpdaterThread),
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
-#endif
-	             ignore_flush(kDefaultIgnoreFlush), 
-	             verbose(kDefaultVerbose), 
-	             direct_io(kDirectIO),
+#else
 	             limit_glibc_malloc_arenas(kDefaultLimitGlibcMallocArenas),
+#endif
+	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
+				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
+	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea), 
 	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
-
 	}
 
 	FsInitParams(const std::string &bind_host, const std::string &host, const std::string &port, const std::string &mountpoint)
@@ -206,14 +202,14 @@ struct FsInitParams {
 	             clean_acquired_files_timeout(kDefaultCleanAcquiredFilesTimeout),
 	             enable_status_updater_thread(kDefaultEnableStatusUpdaterThread),
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
-#endif
-	             ignore_flush(kDefaultIgnoreFlush), 
-	             verbose(kDefaultVerbose), 
-	             direct_io(kDirectIO),
+#else
 	             limit_glibc_malloc_arenas(kDefaultLimitGlibcMallocArenas),
-	             log_notifications_area(kDefaultLogNotificationArea), 
+#endif 
+	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
+				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
+	             verbose(kDefaultVerbose), direct_io(kDirectIO),
+	             log_notifications_area(kDefaultLogNotificationArea),
 	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
-
 	}
 
 	std::string bind_host;
@@ -267,12 +263,15 @@ struct FsInitParams {
 	unsigned clean_acquired_files_timeout;
 	unsigned enable_status_updater_thread;
 	unsigned ignore_utimens_update;
+#else
+	unsigned limit_glibc_malloc_arenas;
 #endif
 
 	bool ignore_flush;
+	unsigned statfs_cache_timeout;
+	bool use_quota_in_volume_size;
 	bool verbose;
 	bool direct_io;
-	unsigned limit_glibc_malloc_arenas;
 	int log_notifications_area;
 	unsigned message_suppression_period;
 

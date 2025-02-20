@@ -224,6 +224,7 @@ static unsigned gDirEntryCacheMaxSize = 100000;
 static int debug_mode = 0;
 static int usedircache = 1;
 static std::atomic<bool> gIgnoreFlush = false;
+static std::atomic<bool> gUseQuotaInVolumeSize = false;
 static int keep_cache = 0;
 static double direntry_cache_timeout = 0.1;
 static double entry_cache_timeout = 0.0;
@@ -236,6 +237,12 @@ static std::atomic<bool> gDirectIo(false);
 // lock_request_counter shared by flock and setlk
 static uint32_t lock_request_counter = 0;
 static std::mutex lock_request_mutex;
+
+static std::mutex statfsCacheMutex;
+static std::atomic<uint32_t> gStatfsCacheTimeout(0);
+// uid -> (timer, statvfs)
+static std::unordered_map<uint32_t, Timer> gStatfsCacheTimer;
+static std::unordered_map<uint32_t, struct statvfs> gStatfsCache;
 
 #ifdef _WIN32
 uint8_t session_flags;
@@ -682,12 +689,70 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 	struct statvfs stfsbuf;
 	memset(&stfsbuf,0,sizeof(stfsbuf));
 
+	if (gStatfsCacheTimeout > 0) {
+		std::unique_lock<std::mutex> gStatfsCacheLock(statfsCacheMutex);
+		auto timer = gStatfsCacheTimer.find(ctx.uid);
+		if (timer != gStatfsCacheTimer.end() &&
+		    timer->second.elapsed_ms() < gStatfsCacheTimeout &&
+		    gStatfsCache.contains(ctx.uid)) {
+			stfsbuf = gStatfsCache[ctx.uid];
+			gStatfsCacheLock.unlock();
+			oplog_printf(ctx, "statfs: sending data from statfscache");
+			return stfsbuf;
+		}
+	}
+
 	stats_inc(OP_STATFS);
 	if (debug_mode) {
 		oplog_printf(ctx, "statfs (%lu)", (unsigned long int)ino);
 	}
 	(void)ino;
 	fs_statfs(&totalspace,&availspace,&trashspace,&reservedspace,&inodes);
+
+	if (gUseQuotaInVolumeSize) {
+		std::vector<QuotaEntry> quota_entries;
+		auto gid = ctx.gids[0];
+
+		auto status = fs_get_self_quota(ctx.uid, gid, quota_entries);
+		if (status == SAUNAFS_STATUS_OK) {
+			uint64_t userUsedSpace = 0;
+			uint64_t userTotalSpace = std::numeric_limits<uint64_t>::max();
+			uint64_t groupUsedSpace = 0;
+			uint64_t groupTotalSpace = std::numeric_limits<uint64_t>::max();
+
+			for (const QuotaEntry &entry : quota_entries) {
+				if (entry.entryKey.owner.ownerId == ctx.uid &&
+				    entry.entryKey.owner.ownerType == QuotaOwnerType::kUser &&
+				    entry.entryKey.resource == QuotaResource::kSize) {
+					if (entry.entryKey.rigor == QuotaRigor::kHard &&
+					    entry.limit > 0) {
+						userTotalSpace = entry.limit;
+					} else if (entry.entryKey.rigor == QuotaRigor::kUsed) {
+						userUsedSpace = entry.limit;
+					}
+				}
+
+				if (entry.entryKey.owner.ownerId == gid &&
+				    entry.entryKey.owner.ownerType == QuotaOwnerType::kGroup &&
+				    entry.entryKey.resource == QuotaResource::kSize) {
+					if (entry.entryKey.rigor == QuotaRigor::kHard &&
+					    entry.limit > 0) {
+						groupTotalSpace = entry.limit;
+					} else if (entry.entryKey.rigor == QuotaRigor::kUsed) {
+						groupUsedSpace = entry.limit;
+					}
+				}
+			}
+
+			userUsedSpace = std::min(userUsedSpace, userTotalSpace);
+			groupUsedSpace = std::min(groupUsedSpace, groupTotalSpace);
+			uint64_t userAvailSpace = userTotalSpace - userUsedSpace;
+			uint64_t groupAvailSpace = groupTotalSpace - groupUsedSpace;
+			availspace =
+			    std::min({userAvailSpace, groupAvailSpace, availspace});
+			totalspace = userUsedSpace + availspace;
+		}
+	}
 
 #if defined(__APPLE__)
 	if (totalspace>0x0001000000000000ULL) {
@@ -727,6 +792,12 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 	stfsbuf.f_ffree = MAX_REGULAR_INODE - inodes;
 	stfsbuf.f_favail = MAX_REGULAR_INODE - inodes;
 	//stfsbuf.f_flag = ST_RDONLY;
+
+	if (gStatfsCacheTimeout > 0) {
+		std::lock_guard<std::mutex> gStatfsCacheLock(statfsCacheMutex);
+		gStatfsCache[ctx.uid] = stfsbuf;
+		gStatfsCacheTimer[ctx.uid] = Timer();
+	}
 	oplog_printf(ctx, "statfs (%lu): OK (%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ")",
 			(unsigned long int)ino,
 			totalspace,
@@ -3434,12 +3505,12 @@ std::vector<ChunkserverListEntry> getchunkservers() {
 void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsigned direntry_cache_size_,
 		double entry_cache_timeout_, double attr_cache_timeout_, int mkdir_copy_sgid_,
 		SugidClearMode sugid_clear_mode_, bool use_rwlock_,
-		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io
+		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io,
 #ifdef _WIN32
-		, int mounting_uid_, int mounting_gid_, std::unordered_set<uint32_t> &allowed_users_
-		, bool ignore_utimens_update_
+		int mounting_uid_, int mounting_gid_, std::unordered_set<uint32_t> &allowed_users_,
+		bool ignore_utimens_update_,
 #endif
-		, bool ignore_flush_
+		bool ignore_flush_, unsigned statfs_cache_timeout_, bool use_quota_in_volume_size_
 		) {
 #ifdef _WIN32
 	mounting_uid = mounting_uid_;
@@ -3448,6 +3519,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	gIgnoreUtimensUpdate = ignore_utimens_update_;
 #endif
 	gIgnoreFlush = ignore_flush_;
+	gStatfsCacheTimeout = statfs_cache_timeout_;
+	gUseQuotaInVolumeSize = use_quota_in_volume_size_;
 	debug_mode = debug_mode_;
 	keep_cache = keep_cache_;
 	direntry_cache_timeout = direntry_cache_timeout_;
@@ -3480,6 +3553,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 
 	gTweaks.registerVariable("DirectIO", gDirectIo);
 	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush);
+	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout);
+	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize);
 #ifdef _WIN32
 	gTweaks.registerVariable("IgnoreUtimens", gIgnoreUtimensUpdate);
 #endif
@@ -3547,12 +3622,12 @@ void fs_init(FsInitParams &params) {
 	init(params.debug_mode, params.keep_cache, params.direntry_cache_timeout, params.direntry_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,
 		params.sugid_clear_mode, params.use_rw_lock,
-		params.acl_cache_timeout, params.acl_cache_size, params.direct_io
+		params.acl_cache_timeout, params.acl_cache_size, params.direct_io,
 #ifdef _WIN32
-		, params.mounting_uid, params.mounting_gid, params.allowed_users
-		, params.ignore_utimens_update
+		params.mounting_uid, params.mounting_gid, params.allowed_users,
+		params.ignore_utimens_update,
 #endif
-		, params.ignore_flush
+		params.ignore_flush, params.statfs_cache_timeout, params.use_quota_in_volume_size
 		);
 }
 

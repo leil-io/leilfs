@@ -228,14 +228,22 @@ huge amount of virtual memory. This can influence performance by reducing
 memory fragmentation and improving cache locality, but it may also lead to
 contention and reduced parallelism in multi-threaded applications.
 Use it in constrained memory environments, recommended values are 4 or 8.
-(default is 0: disabled or let glibc decide)
+(default is 0: disabled or let glibc decide).
 
 *-o sfslognotificationarea=*'0|1'::  
 Enable/disable logging to Linux notification area (default: 0).
 
 *-o sfsmessagesuppressionperiod=*'N'::
 Set period of message suppression in seconds for logging on notification area 
-(default: 10)
+(default: 10).
+
+*-o statfscachetimeout=*'MSEC'::
+Set statfs cache timeout in milliseconds. When equal to 0 the cache is 
+disabled (default: 0).
+
+*-o usequotainvolumesize=*'0|1'::
+When set to 1, use the user and group specific quota hard limit to calculate
+the volume size (default: 0).
 
 General mount options (see *mount*(8) manual):
 
