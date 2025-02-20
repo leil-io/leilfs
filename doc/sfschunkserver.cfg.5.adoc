@@ -155,7 +155,7 @@ chunkservers (default: 500)
 
 *CHUNK_TRASH_ENABLED*:: enables or disables the chunk trash feature. When
 enabled, deleted chunks are moved to a trash directory instead of being
-immediately removed. (Default: 1)
+immediately removed. (Default: 0)
 
 *CHUNK_TRASH_EXPIRATION_SECONDS*:: specifies the timeout in seconds for chunks to remain
 in the trash before being permanently deleted. (Default: 259200)

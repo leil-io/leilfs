@@ -22,7 +22,7 @@
 #include "chunk_trash_manager_impl.h"
 #include "config/cfg.h"
 
-u_short ChunkTrashManager::isEnabled = 1;
+u_short ChunkTrashManager::isEnabled = 0;
 
 ChunkTrashManager::ImplementationPtr ChunkTrashManager::pImpl =
 		std::make_shared<ChunkTrashManagerImpl>();

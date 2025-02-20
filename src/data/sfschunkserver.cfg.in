@@ -185,8 +185,8 @@
 # REPLICATION_WAVE_TIMEOUT_MS = 500
 
 ## Enables or disables the chunk trash feature. When enabled, deleted chunks are
-## moved to a trash directory instead of being immediately removed. (Default: 1)
-# CHUNK_TRASH_ENABLED = 1
+## moved to a trash directory instead of being immediately removed. (Default: 0)
+# CHUNK_TRASH_ENABLED = 0
 
 ## Specifies the timeout in seconds for chunks to remain in the trash before
 ## being permanently deleted. (Default: 259200)
