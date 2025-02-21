@@ -2,10 +2,12 @@
 
 #include "common/platform.h"
 
-#include <unistd.h>
+#include "floating-ip-manager.h"
 
 #include "common/time_utils.h"
 #include "uraftstatus.h"
+
+#include <unistd.h>
 
 /*! \brief Management of SaunaFS metadata server based on uRaft algorithm.
  *
@@ -30,6 +32,9 @@ public:
 		int         promote_timeout;          //!< Time after which we kill promote script. //
 		int         demote_timeout;           //!< Time after which we kill demote script. //
 		int         dead_handler_timeout;     //!< Time after which we kill dead script. //
+		std::string floating_ip;              //!< Floating IP assigned to the master server. //
+		std::string floating_iface;           //!< Network interface to manage floating IP. //
+		uint        check_floating_ip_period; //!< How often we check floating ip status. //
 	};
 
 public:
@@ -54,9 +59,6 @@ public:
 	//! called by uRaft with new leader id.
 	virtual void     nodeLeader(int id);
 
-	//! called to check if floating ip is alive.
-	bool isFloatingIpAlive();
-
 protected:
 	void  checkCommandStatus(const boost::system::error_code &error);
 	void  checkNodeStatus(const boost::system::error_code &error);
@@ -78,4 +80,6 @@ protected:
 	bool                        force_demote_;
 	bool                        node_alive_;  /// Last is_alive node status.
 	Options                     opt_;
+	///< Smart pointer to the floating IP manager.
+	std::unique_ptr<IHAFloatingIPManager> haFloatingIpManager = nullptr;
 };
