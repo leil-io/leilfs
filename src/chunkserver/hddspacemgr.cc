@@ -703,7 +703,10 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 	LOG_AVG_TILL_END_OF_SCOPE0("hddRead");
 	TRACETHIS3(chunkId, offset, size);
 
-	safs_silent_syslog(LOG_DEBUG, "chunkserver.hddRead");
+	uint16_t block = offset / SFSBLOCKSIZE;
+
+	safs::log_debug("hddRead: chunkId: {}, block: {}, offset: {}, size: {}",
+	                chunkId, block, offset, size);
 
 	uint32_t offsetWithinBlock = offset % SFSBLOCKSIZE;
 
@@ -722,8 +725,6 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 		hddChunkRelease(chunk);
 		return SAUNAFS_ERROR_WRONGVERSION;
 	}
-
-	uint16_t block = offset / SFSBLOCKSIZE;
 
 	// Zoned devices use direct_io, so prefetched data is not cached
 	if (!chunk->owner()->isZonedDevice()) {

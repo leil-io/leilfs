@@ -187,7 +187,10 @@ void safs::drop_all_logs() {
 bool safs::add_log_syslog([[maybe_unused]] log_level::LogLevel level) {
 #ifndef _WIN32
 	try {
-		LoggerPtr logger = spdlog::syslog_logger_mt("syslog");
+		static constexpr bool kEnableFormatting = true;
+		// Except for first and last arguments, the rest are defaults
+		LoggerPtr logger = spdlog::syslog_logger_mt("syslog", "", 0, LOG_USER, kEnableFormatting);
+		logger->set_pattern("[%t] %l: %v");
 		logger->set_level((spdlog::level::level_enum)level);
 		return true;
 	} catch (const spdlog::spdlog_ex &e) {
