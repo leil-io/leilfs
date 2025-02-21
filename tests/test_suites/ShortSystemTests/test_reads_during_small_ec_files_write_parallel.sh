@@ -42,7 +42,7 @@ for index in ${!positions[@]}; do
 	echo -n "1" | dd of="${info[mount0]}/file0" seek=$position bs=1 count=1 oflag=direct status=progress
 
 	# Check the number of extra reads
-	number_of_extra_reads=$(grep chunkserver.hddRead $TEMP_DIR/log | wc -l);
+	number_of_extra_reads=$(grep "hddRead" $TEMP_DIR/log | wc -l);
 
 	# Assert that the number of extra reads is as expected
 	assert_equals ${expected_reads_one_mountpoint[$index]} "${number_of_extra_reads}"
@@ -63,7 +63,7 @@ for index in ${!positions[@]}; do
 done
 
 # Check the number of extra reads
-number_of_extra_reads=$(grep chunkserver.hddRead $TEMP_DIR/log | wc -l);
+number_of_extra_reads=$(grep "hddRead" $TEMP_DIR/log | wc -l);
 
 # Assert that the number of extra reads is as expected
 assert_less_or_equal "${number_of_extra_reads}" "${total_expected_reads}"

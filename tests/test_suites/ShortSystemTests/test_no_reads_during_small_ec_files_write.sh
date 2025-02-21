@@ -15,6 +15,6 @@ for i in {1..100}; do
 	dd if=/dev/zero of=file${i} bs=33 count=1 oflag=direct status=progress
 done
 
-number_of_extra_reads=$(grep chunkserver.hddRead $TEMP_DIR/log | wc -l);
+number_of_extra_reads=$(grep "hddRead" $TEMP_DIR/log | wc -l);
 
 assert_equals "0" "${number_of_extra_reads}"
