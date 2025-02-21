@@ -15,7 +15,7 @@ CHUNKSERVERS=4 \
 # Create an empty file on the SaunaFS filesystem with ec_3_1 goal
 file="${info[mount0]}/file"
 touch "$file"
-saunafs setgoal ec_3_1 "$file"
+saunafs_command setgoal ec_3_1 "$file"
 
 # Create a temporary file with 25 megabytes of generated data
 tmpf=$RAMDISK_DIR/tmpf

@@ -26,12 +26,12 @@ pseudorandom_init
 cd "${info[mount0]}"
 for i in "${levels[@]}"; do
 	mkdir "ec${i}1"
-	saunafs setgoal "ec${i}1" "ec${i}1"
+	saunafs_command setgoal "ec${i}1" "ec${i}1"
 	for size in "${sizes[@]}"; do
 		FILE_SIZE=$size file-generate "ec${i}1/file_${size}"
 		assert_success file-validate "ec${i}1/file_${size}"
 		head -c $(pseudorandom 1 $((i * 100000))) /dev/urandom >> "ec${i}1/file_${size}"
-		saunafs makesnapshot "ec${i}1/file_${size}" "ec${i}1/snapshot_${size}"
+		saunafs_command makesnapshot "ec${i}1/file_${size}" "ec${i}1/snapshot_${size}"
 	done
 done
 

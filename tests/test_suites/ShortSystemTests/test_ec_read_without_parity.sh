@@ -6,7 +6,7 @@ CHUNKSERVERS=3 \
 
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs setgoal ec21 "$dir"
+saunafs_command setgoal ec21 "$dir"
 FILE_SIZE=6M file-generate "$dir/file"
 
 # Find the chunkserver serving parity part and stop it

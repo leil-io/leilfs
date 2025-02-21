@@ -8,7 +8,7 @@ CHUNKSERVERS=4 \
 cd "${info[mount0]}"
 
 mkdir dir
-saunafs setgoal ec31 dir
+saunafs_command setgoal ec31 dir
 cd dir
 
 echo "ABCDEFGHIJKLMNOPQRSTUVWXYZ" > file
@@ -18,8 +18,8 @@ saunafs_chunkserver_daemon 1 stop
 saunafs_wait_for_ready_chunkservers 2
 
 # Not enough parts are available
-assert_equals "not enough parts available" "$(saunafs fileinfo file | grep parts | xargs)"
-assert_equals 2 $(saunafs fileinfo file | grep copy | wc -l)
+assert_equals "not enough parts available" "$(saunafs_command fileinfo file | grep parts | xargs)"
+assert_equals 2 $(saunafs_command fileinfo file | grep copy | wc -l)
 
 assert_failure dd if=/dev/zero of=file bs=1 count=10 conv=notrunc
 
@@ -29,8 +29,8 @@ saunafs_chunkserver_daemon 0 start
 saunafs_wait_for_ready_chunkservers 3
 
 # There should be enough parts now
-assert_equals "" "$(saunafs fileinfo file | grep parts | xargs)"
-assert_equals 3 "$(saunafs fileinfo file | grep copy | wc -l)"
+assert_equals "" "$(saunafs_command fileinfo file | grep parts | xargs)"
+assert_equals 3 "$(saunafs_command fileinfo file | grep copy | wc -l)"
 
 # Data should be consistent
 assert_equals "ABCDEFGHIJKLMNOPQRSTUVWXYZ" $(cat file)

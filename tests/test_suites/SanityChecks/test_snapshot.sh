@@ -6,17 +6,17 @@ CHUNKSERVERS=4 \
 # Create small files of goals 2 and xor3
 cd "${info[mount0]}"
 touch file{1..2}
-saunafs setgoal 2 file1
-saunafs setgoal xor3 file2
+saunafs_command setgoal 2 file1
+saunafs_command setgoal xor3 file2
 FILE_SIZE=1M file-generate file1
 FILE_SIZE=1M file-generate file2
 assert_success file-validate file*
 assert_equals 6 $(find_all_metadata_chunks | wc -l)
 
 # Create some snapshots of this file
-saunafs makesnapshot file1 file1_snapshot1
-saunafs makesnapshot file2 file2_snapshot1
-saunafs makesnapshot file2 file2_snapshot2
+saunafs_command makesnapshot file1 file1_snapshot1
+saunafs_command makesnapshot file2 file2_snapshot1
+saunafs_command makesnapshot file2 file2_snapshot2
 assert_success file-validate file*
 assert_equals 6 $(find_all_metadata_chunks | wc -l)
 

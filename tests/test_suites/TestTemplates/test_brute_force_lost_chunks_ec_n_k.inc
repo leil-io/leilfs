@@ -87,7 +87,7 @@ cd ${info[mount0]}
 
 directory="dir_${goal}"
 mkdir $directory
-saunafs setgoal -r $goal $directory
+saunafs_command setgoal -r $goal $directory
 
 FILE_SIZE=64M BLOCK_SIZE=12345 file-generate $directory/file
 

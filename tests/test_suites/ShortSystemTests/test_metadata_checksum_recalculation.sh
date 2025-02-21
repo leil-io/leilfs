@@ -34,7 +34,7 @@ truncate -s 0 "$TEMP_DIR/log"
 		assert_success attr -qs name -V $i dir_$k
 		assert_success attr -qs name -V $i dir_$((k+1))
 		for k in {0..19}; do
-			assert_success saunafs setgoal $((1 + i % 7)) chunk_$(((k * s + (i % s)) % count))
+			assert_success saunafs_command setgoal $((1 + i % 7)) chunk_$(((k * s + (i % s)) % count))
 		done
 		: $((++i))
 	done &>/dev/null &

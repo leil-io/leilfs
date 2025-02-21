@@ -7,15 +7,15 @@ CHUNKSERVERS=5 \
 cd "${info[mount0]}"
 
 mkdir dir_xor5
-saunafs setgoal xor5 dir_xor5
+saunafs_command setgoal xor5 dir_xor5
 for i in {1..60}; do
 	FILE_SIZE=1M file-generate "dir_xor5/file$i"
 done
 mkdir dir_9
-saunafs setgoal 9 dir_9
+saunafs_command setgoal 9 dir_9
 FILE_SIZE=1k file-generate dir_9/file
 
-chunks=$(saunafs fileinfo */* | grep copy)
+chunks=$(saunafs_command fileinfo */* | grep copy)
 expect_equals 5 $(grep -v part <<< "$chunks" | grep -v parity | wc -l)
 
 # No parity is expected to appear

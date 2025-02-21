@@ -35,20 +35,20 @@ USE_RAMDISK=YES \
 
 cd "${info[mount0]}"
 mkdir dir
-saunafs setgoal ec21_ssd dir
+saunafs_command setgoal ec21_ssd dir
 FILE_SIZE=1K file-generate dir/file
 
 assert_equals "3 ec2_2_1" "$(chunks_state)"
 assert_equals 3 "$(count_chunks_on_chunkservers {6..8})"
 assert_equals 3 "$(count_chunks_on_chunkservers {0..8})"
 
-saunafs setgoal ec31_hdd dir/file
+saunafs_command setgoal ec31_hdd dir/file
 #Wait for migration to finish
 assert_eventually_prints '4 ec2_3_1' 'chunks_state' '2 minutes'
 assert_equals 3 "$(count_chunks_on_chunkservers {3..5})"
 assert_equals 4 "$(count_chunks_on_chunkservers {0..8})"
 
-saunafs setgoal ec51_mix dir/file
+saunafs_command setgoal ec51_mix dir/file
 #Wait for migration to finish
 assert_eventually_prints '6 ec2_5_1' 'chunks_state' '2 minutes'
 assert_less_or_equal 2 "$(count_chunks_on_chunkservers {3..5})"

@@ -19,7 +19,7 @@ chunks_health() {
 
 cd "${info[mount0]}"
 mkdir dir
-saunafs setgoal 2 dir
+saunafs_command setgoal 2 dir
 cd dir
 
 file_size_kb=$((5 * 1024)) # test assumes that this is less or equal to chunk size

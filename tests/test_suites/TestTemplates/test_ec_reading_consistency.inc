@@ -7,7 +7,7 @@ MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	setup_local_empty_saunafs info
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs setgoal ec21 "$dir"
+saunafs_command setgoal ec21 "$dir"
 
 DATA_SIZE_PER_THREAD=$(parse_si_suffix 3G)
 thread_count=10

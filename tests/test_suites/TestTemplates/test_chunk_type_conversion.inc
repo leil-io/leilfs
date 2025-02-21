@@ -10,22 +10,22 @@ cd "${info[mount0]}"
 # echo "OK" on success, echo <some error message> otherwise
 verify_file_goal() {
 	file=$1;
-	goal=$(saunafs getgoal "$file" | awk '{print $NF}')
+	goal=$(saunafs_command getgoal "$file" | awk '{print $NF}')
 
 	if [[ $goal =~ xor([2-9]|10) ]]; then
 		level=${BASH_REMATCH[1]}
 		# Check if all parts are present:
 		for i in $(seq $((level+1))); do
-			saunafs fileinfo "$file" | grep "part $i/$((level+1)) of $goal$" > /dev/null \
+			saunafs_command fileinfo "$file" | grep "part $i/$((level+1)) of $goal$" > /dev/null \
 					|| { echo "$file: missing part $i of $goal"; return; };
 		done
 	elif [[ $goal =~ ([1-9]) ]]; then
 		level=${BASH_REMATCH[1]}
 
-		copies=$(saunafs fileinfo "$file" | egrep 'copy.*:[a-zA-Z0-9_]+$' | sort | uniq | wc -l)
+		copies=$(saunafs_command fileinfo "$file" | egrep 'copy.*:[a-zA-Z0-9_]+$' | sort | uniq | wc -l)
 		if (( $level > $copies )); then
 			echo "$file: expected $level copies, have $copies"
-			saunafs fileinfo "$file"
+			saunafs_command fileinfo "$file"
 			return
 		fi
 	else
@@ -47,7 +47,7 @@ goals="$GOALS_TO_BE_TESTED"
 # Create files with goals from the $goals list
 for goal in $goals; do
 	mkdir "dir_$goal"
-	saunafs setgoal "$goal" "dir_$goal"
+	saunafs_command setgoal "$goal" "dir_$goal"
 	FILE_SIZE=1M file-generate "dir_$goal/file"
 done
 old_chunks=$(find_all_chunks)
@@ -56,7 +56,7 @@ old_chunks=$(find_all_chunks)
 prev_goal=$(echo $goals | tr " " "\n" | tail -n1) # last one on the $goals list
 for next_goal in $goals; do
 	file="dir_${prev_goal}/file"
-	saunafs setgoal "$next_goal" "$file"
+	saunafs_command setgoal "$next_goal" "$file"
 	prev_goal="$next_goal"
 done
 
