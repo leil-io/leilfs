@@ -20,18 +20,18 @@ saunafs_wait_for_ready_chunkservers 2
 
 # Create 20 files. Expect that for each file there are 2 chunk copies.
 FILE_SIZE=1K file-generate "${info[mount0]}"/file{1..20}
-assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies: *1' | wc -l)
+assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 2 copies: *1' | wc -l)
 
 # Stop the chunkserver labeled "ssd" and expect all files to have a chunk in only one copy.
 assert_equals 20 $(find_chunkserver_metadata_chunks 0 | wc -l)
 saunafs_chunkserver_daemon 0 stop
 saunafs_wait_for_ready_chunkservers 1
-assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 1 copy: *1' | wc -l)
+assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 1 copy: *1' | wc -l)
 
 # Add one "hdd" chunkserver. Expect that second copy of each chunk will be created there.
 saunafs_chunkserver_daemon 2 start
 saunafs_wait_for_ready_chunkservers 2
-assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 2 copies: *1" | wc -l'
+assert_eventually_prints 20 'saunafs_command checkfile "${info[mount0]}"/* | grep "with 2 copies: *1" | wc -l'
 
 # Remove all chunks from the chunkserver "ssd" and bring it back to life.
 find_chunkserver_metadata_chunks 0 | xargs -d'\n' rm -f

@@ -9,7 +9,7 @@ CHUNKSERVERS=4 \
 
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs setgoal ec_3_1 "$dir"
+saunafs_command setgoal ec_3_1 "$dir"
 FILE_SIZE=6M file-generate "$dir/file"
 
 # Corrupt data in part 1 of the chunk

@@ -17,7 +17,7 @@ USE_RAMDISK=YES \
 # Create a directory with many files on mountpoint
 cd "${info[mount0]}"
 mkdir goal3
-saunafs setgoal 2 goal3
+saunafs_command setgoal 2 goal3
 
 for file in {1..1000}; do
 	FILE_SIZE=1K file-generate goal3/test_${file}

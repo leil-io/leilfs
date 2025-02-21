@@ -9,7 +9,7 @@ CHUNKSERVERS=5 \
 cd ${info[mount0]}
 
 mkdir dir_ec
-saunafs setgoal -r ec32 dir_ec
+saunafs_command setgoal -r ec32 dir_ec
 FILE_SIZE=$((3*64*1024)) BLOCK_SIZE=1024 file-generate dir_ec/file
 
 saunafs_chunkserver_daemon 0 stop

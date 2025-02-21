@@ -36,14 +36,14 @@ USE_RAMDISK=YES \
 
 cd "${info[mount0]}"
 mkdir dir
-saunafs setgoal ec21_ssd dir
+saunafs_command setgoal ec21_ssd dir
 FILE_SIZE=1K file-generate dir/file
 
 assert_equals "3 ec2_1" "$(chunks_state)"
 assert_equals 3 "$(count_chunks_on_chunkservers {6..8})"
 assert_equals 3 "$(count_chunks_on_chunkservers {0..11})"
 
-saunafs setgoal ec33_hdd dir/file
+saunafs_command setgoal ec33_hdd dir/file
 if is_windows_system; then
 	assert_eventually_prints '6 ec3_3' 'chunks_state' '4 minutes'
 else
@@ -52,7 +52,7 @@ fi
 assert_equals 3 "$(count_chunks_on_chunkservers {3..5})"
 assert_equals 6 "$(count_chunks_on_chunkservers {0..11})"
 
-saunafs setgoal ec22_mix dir/file
+saunafs_command setgoal ec22_mix dir/file
 if is_windows_system; then
 	assert_eventually_prints '4 ec2_2' 'chunks_state' '4 minutes'
 else
@@ -61,14 +61,14 @@ fi
 assert_equals 2 "$(count_chunks_on_chunkservers {3..5})"
 assert_equals 2 "$(count_chunks_on_chunkservers {6..8})"
 
-saunafs setgoal ec36_mix dir/file
-saunafs fileinfo dir/*
+saunafs_command setgoal ec36_mix dir/file
+saunafs_command fileinfo dir/*
 if is_windows_system; then
 	assert_eventually_prints '9 ec3_6' 'chunks_state' '4 minutes'
 else
 	assert_eventually_prints '9 ec3_6' 'chunks_state' '2 minutes'
 fi
-saunafs fileinfo dir/*
+saunafs_command fileinfo dir/*
 assert_equals 3 "$(count_chunks_on_chunkservers {3..5})"
 assert_equals 3 "$(count_chunks_on_chunkservers {6..8})"
 assert_equals 3 "$(count_chunks_on_chunkservers {9..11})"

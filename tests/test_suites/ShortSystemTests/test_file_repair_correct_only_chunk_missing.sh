@@ -5,7 +5,7 @@ USE_RAMDISK=YES \
 
 cd ${info[mount0]}
 mkdir test
-saunafs setgoal ec test
+saunafs_command setgoal ec test
 
 FILE_SIZE=1K file-generate test/file{1..5}
 
@@ -17,7 +17,7 @@ for CS in {0..4}; do
 	saunafs_chunkserver_daemon $CS stop
 done
 
-saunafs filerepair -c test/file1
+saunafs_command filerepair -c test/file1
 
 for CS in {0..4}; do
 	saunafs_chunkserver_daemon $CS start
@@ -46,7 +46,7 @@ for CS in {0..4}; do
 	saunafs_chunkserver_daemon $CS stop
 done
 
-saunafs filerepair test/file1
+saunafs_command filerepair test/file1
 
 for CS in {0..4}; do
 	saunafs_chunkserver_daemon $CS start

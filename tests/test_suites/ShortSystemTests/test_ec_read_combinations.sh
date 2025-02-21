@@ -9,7 +9,7 @@ CHUNKSERVERS=8 \
 
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs setgoal ec "$dir"
+saunafs_command setgoal ec "$dir"
 FILE_SIZE=876M file-generate "$dir/file"
 
 for i in {0..7}; do

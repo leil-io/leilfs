@@ -10,7 +10,7 @@ metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.sfs
 
 cd ${info[mount0]}
 mkdir dir
-saunafs setgoal 3 dir
+saunafs_command setgoal 3 dir
 FILE_SIZE=$(( 4 * SAUNAFS_CHUNK_SIZE )) file-generate dir/file
 
 wait_if_windows
@@ -61,11 +61,11 @@ saunafs_wait_for_ready_chunkservers 0
 saunafs_chunkserver_daemon 0 start
 saunafs_chunkserver_daemon 1 start
 saunafs_wait_for_ready_chunkservers 2
-assert_awk_finds '/chunks with 0 copies: *3$/' "$(saunafs checkfile dir/file)"
+assert_awk_finds '/chunks with 0 copies: *3$/' "$(saunafs_command checkfile dir/file)"
 
 # Repair the file and remember metadata after the repair.
-repairinfo=$(saunafs filerepair dir/file)
-fileinfo=$(saunafs fileinfo dir/file)
+repairinfo=$(saunafs_command filerepair dir/file)
+fileinfo=$(saunafs_command fileinfo dir/file)
 assert_awk_finds '/chunks not changed: *1$/' "$repairinfo"
 assert_awk_finds '/chunks erased: *1$/' "$repairinfo"
 assert_awk_finds '/chunks repaired: *2$/' "$repairinfo"
@@ -73,7 +73,7 @@ assert_awk_finds '/chunks repaired: *2$/' "$repairinfo"
 assert_awk_finds '/id:1 ver:2/' "$fileinfo"
 # Second chunk should have version 1 (from CS 0).
 assert_awk_finds '/id:2 ver:1/' "$fileinfo"
-assert_awk_finds_no '/chunks with 0 copies/' "$(saunafs checkfile dir/file)"
+assert_awk_finds_no '/chunks with 0 copies/' "$(saunafs_command checkfile dir/file)"
 metadata=$(metadata_print)
 
 # Simulate crash of the master.

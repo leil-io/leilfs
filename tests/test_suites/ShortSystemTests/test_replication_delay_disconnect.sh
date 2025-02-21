@@ -24,7 +24,7 @@ saunafs_wait_for_ready_chunkservers 2
 
 # Create 20 files. Expect that for each file there are 2 chunk copies.
 FILE_SIZE=1K file-generate "${info[mount0]}"/file{1..20}
-assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
+assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
 
 # Stop one server with valid copy and start four new servers.
 saunafs_chunkserver_daemon 5 stop
@@ -37,18 +37,18 @@ saunafs_wait_for_ready_chunkservers 5
 # All chunks has 4 missing copies but 2 chunkservers are disconnected,
 # so only two new copies should be created
 if is_windows_system; then
-	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '15 seconds'
+	assert_eventually_prints 20 'saunafs_command checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '15 seconds'
 else
-	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '5 seconds'
+	assert_eventually_prints 20 'saunafs_command checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '5 seconds'
 fi
 
 # Replication shouldn't be started for few more seconds.
 sleep 10
-assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 3 copies:' | wc -l)
+assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 3 copies:' | wc -l)
 
 # Expect two more copies of each chunk to migrate to the two empty servers
 if is_windows_system; then
-	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '60 seconds'
+	assert_eventually_prints 20 'saunafs_command checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '60 seconds'
 else
-	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '20 seconds'
+	assert_eventually_prints 20 'saunafs_command checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '20 seconds'
 fi
