@@ -3617,7 +3617,8 @@ void fs_init(FsInitParams &params) {
 #endif
 
 	notifications_area_logging_init(params.log_notifications_area,
-	                               params.message_suppression_period);
+		params.message_suppression_period,
+		params.mountpoint);
 
 	init(params.debug_mode, params.keep_cache, params.direntry_cache_timeout, params.direntry_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,
