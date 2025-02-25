@@ -110,6 +110,14 @@ struct MasterConn {
 	static constexpr uint32_t kMinMasterTimeout = 10;
 	static constexpr uint32_t kMaxBackMetaCopies = 100;
 
+	static constexpr uint32_t kCfgDefaultBackMetaKeepPrevious = 3;
+	static constexpr const char *kCfgDefaultMasterHost = "sfsmaster";
+	static constexpr const char *kCfgDefaultMasterPort = "9419";
+	static constexpr const char *kCfgDefaultBindHost = "*";
+	static constexpr uint32_t kCfgDefaultMasterTimeout = 60;
+	static constexpr uint32_t kCfgDefaultMasterReconnectionDelay = 1;
+	static constexpr uint32_t kCfgDefaultMetaDownloadFreq = 24;
+
 	enum class Mode : uint8_t {
 		Free,        ///< Connection is not in use.
 		Connecting,  ///< Connection is being established.
@@ -174,16 +182,16 @@ struct MasterConn {
 	uint64_t lastLogVersion = 0;
 
 	// from config
-	uint32_t BackMetaCopies;
-	std::string MasterHost;
-	std::string MasterPort;
-	std::string BindHost;
-	uint32_t masterTimeout;
+	uint32_t cfgBackMetaKeepPrevious = kCfgDefaultBackMetaKeepPrevious;
+	std::string cfgMasterHost = kCfgDefaultMasterHost;
+	std::string cfgMasterPort = kCfgDefaultMasterPort;
+	std::string cfgBindHost = kCfgDefaultBindHost;
+	uint32_t cfgMasterTimeout = kCfgDefaultMasterTimeout;
 
 	// Callbacks
-	void *reconnect_hook;
+	void *reconnect_hook{};
 #ifdef METALOGGER
-	void *download_hook;
+	void *download_hook{};
 #endif /* #ifdef METALOGGER */
 
 	// Configuration
@@ -282,7 +290,7 @@ void MasterConn::sendRegister() {
 	if (state == State::kSynchronized) {
 		metadataVersion = fs_getversion();
 	}
-	auto request = mltoma::registerShadow::build(SAUNAFS_VERSHEX, masterTimeout * 1000, metadataVersion);
+	auto request = mltoma::registerShadow::build(SAUNAFS_VERSHEX, cfgMasterTimeout * 1000, metadataVersion);
 	createPacket(std::move(request));
 	return;
 #endif
@@ -293,7 +301,7 @@ void MasterConn::sendRegister() {
 		put16bit(&buff,SAUNAFS_PACKAGE_VERSION_MAJOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MINOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MICRO);
-		put16bit(&buff,masterTimeout);
+		put16bit(&buff,cfgMasterTimeout);
 		put64bit(&buff,lastLogVersion);
 	} else {
 		buff = createPacket(MLTOMA_REGISTER, 1 + 4 + 2);
@@ -301,7 +309,7 @@ void MasterConn::sendRegister() {
 		put16bit(&buff,SAUNAFS_PACKAGE_VERSION_MAJOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MINOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MICRO);
-		put16bit(&buff,masterTimeout);
+		put16bit(&buff,cfgMasterTimeout);
 	}
 }
 
@@ -513,8 +521,8 @@ void MasterConn::downloadNext() {
 				(double)(fileSize) / (double)(dltime));
 		if (filenum == DOWNLOAD_METADATA_SFS) {
 			if (metadataCheck(metadataTmpFilename) == 0) {
-				if (BackMetaCopies>0) {
-					rotateFiles(metadataFilename, BackMetaCopies, 1);
+				if (cfgBackMetaKeepPrevious>0) {
+					rotateFiles(metadataFilename, cfgBackMetaKeepPrevious, 1);
 				}
 				if (rename(metadataTmpFilename.c_str(), metadataFilename.c_str()) < 0) {
 					safs_pretty_syslog(LOG_NOTICE,"can't rename downloaded metadata - do it manually before next download");
@@ -816,19 +824,19 @@ int MasterConn::initConnect() {
 	if (isMasterAddressValid == 0) {
 		uint32_t mip,bip;
 		uint16_t mport;
-		if (tcpresolve(BindHost.c_str(), NULL, &bip, NULL, 1)>=0) {
+		if (tcpresolve(cfgBindHost.c_str(), NULL, &bip, NULL, 1)>=0) {
 			bindIP = bip;
 		} else {
 			bindIP = 0;
 		}
-		if (tcpresolve(MasterHost.c_str(), MasterPort.c_str(), &mip, &mport, 0)>=0) {
+		if (tcpresolve(cfgMasterHost.c_str(), cfgMasterPort.c_str(), &mip, &mport, 0)>=0) {
 			masterIP = mip;
 			masterPort = mport;
 			isMasterAddressValid = 1;
 		} else {
 			safs_pretty_syslog(LOG_WARNING,
 					"can't resolve master host/port (%s:%s)",
-					MasterHost.c_str(), MasterPort.c_str());
+					cfgMasterHost.c_str(), cfgMasterPort.c_str());
 			return -1;
 		}
 	}
@@ -1046,10 +1054,10 @@ void MasterConn::serve(const std::vector<pollfd> &pdesc) {
 				lastWrite = now;
 				writeToSocket();
 			}
-			if ((mode == Mode::Header || mode == Mode::Data) && lastRead + masterTimeout < now) {
+			if ((mode == Mode::Header || mode == Mode::Data) && lastRead + cfgMasterTimeout < now) {
 				mode = Mode::Kill;
 			}
-			if ((mode == Mode::Header || mode == Mode::Data) && lastWrite + (masterTimeout / 3) < now && outputQueue.empty()) {
+			if ((mode == Mode::Header || mode == Mode::Data) && lastWrite + (cfgMasterTimeout / 3) < now && outputQueue.empty()) {
 				createPacket(ANTOAN_NOP, 0);
 			}
 		}
@@ -1089,41 +1097,45 @@ void MasterConn::becomeMaster() {
 }
 
 void MasterConn::loadConfig() {
-	MasterHost = cfg_getstring("MASTER_HOST","sfsmaster");
-	MasterPort = cfg_getstring("MASTER_PORT","9419");
-	BindHost = cfg_getstring("BIND_HOST","*");
-	masterTimeout = cfg_getuint32("MASTER_TIMEOUT",60);
-	BackMetaCopies = cfg_getuint32("BACK_META_KEEP_PREVIOUS",3);
+	cfgMasterHost = cfg_getstring("MASTER_HOST", kCfgDefaultMasterHost);
+	cfgMasterPort = cfg_getstring("MASTER_PORT", kCfgDefaultMasterPort);
+	cfgBindHost = cfg_getstring("BIND_HOST", kCfgDefaultBindHost);
+	cfgMasterTimeout = cfg_getuint32("MASTER_TIMEOUT", kCfgDefaultMasterTimeout);
+	cfgBackMetaKeepPrevious = cfg_getuint32("BACK_META_KEEP_PREVIOUS",
+	                                        kCfgDefaultBackMetaKeepPrevious);
 
-	masterTimeout = std::min(masterTimeout, kMaxMasterTimeout);
-	masterTimeout = std::max<uint32_t>(masterTimeout, kMinMasterTimeout);
+	cfgMasterTimeout = std::min(cfgMasterTimeout, kMaxMasterTimeout);
+	cfgMasterTimeout = std::max<uint32_t>(cfgMasterTimeout, kMinMasterTimeout);
 }
 
 void MasterConn::reload() {
-	std::string newMasterHost = cfg_getstring("MASTER_HOST","sfsmaster");
-	std::string newMasterPort = cfg_getstring("MASTER_PORT","9419");
-	std::string newBindHost = cfg_getstring("BIND_HOST","*");
+	std::string newMasterHost = cfg_getstring("MASTER_HOST", kCfgDefaultMasterHost);
+	std::string newMasterPort = cfg_getstring("MASTER_PORT", kCfgDefaultMasterPort);
+	std::string newBindHost = cfg_getstring("BIND_HOST", kCfgDefaultBindHost);
 
-	if (newMasterHost != MasterHost || newMasterPort != MasterPort || newBindHost != BindHost) {
-		MasterHost = newMasterHost;
-		MasterPort = newMasterPort;
-		BindHost = newBindHost;
+	if (newMasterHost != cfgMasterHost || newMasterPort != cfgMasterPort || newBindHost != cfgBindHost) {
+		cfgMasterHost = newMasterHost;
+		cfgMasterPort = newMasterPort;
+		cfgBindHost = newBindHost;
 		isMasterAddressValid = 0;
 		if (mode != Mode::Free) {
 			mode = Mode::Kill;
 		}
 	}
 
-	masterTimeout = cfg_getuint32("MASTER_TIMEOUT",60);
-	BackMetaCopies = cfg_getuint32("BACK_META_KEEP_PREVIOUS",3);
-	auto reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY",1);
+	cfgMasterTimeout = cfg_getuint32("MASTER_TIMEOUT", kCfgDefaultMasterTimeout);
+	cfgBackMetaKeepPrevious = cfg_getuint32("BACK_META_KEEP_PREVIOUS",
+	                                        kCfgDefaultBackMetaKeepPrevious);
+	auto reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY",
+	                                       kCfgDefaultMasterReconnectionDelay);
 
-	masterTimeout = std::min(masterTimeout, MasterConn::kMaxMasterTimeout);
-	masterTimeout = std::max<uint32_t>(masterTimeout, MasterConn::kMinMasterTimeout);
-	BackMetaCopies = std::min(BackMetaCopies, MasterConn::kMaxBackMetaCopies);
+	cfgMasterTimeout = std::min(cfgMasterTimeout, MasterConn::kMaxMasterTimeout);
+	cfgMasterTimeout = std::max<uint32_t>(cfgMasterTimeout, MasterConn::kMinMasterTimeout);
+	cfgBackMetaKeepPrevious = std::min(cfgBackMetaKeepPrevious, MasterConn::kMaxBackMetaCopies);
 
 #ifdef METALOGGER
-	auto metadataDownloadFreq = cfg_getuint32("META_DOWNLOAD_FREQ", 24);
+	auto metadataDownloadFreq =
+	    cfg_getuint32("META_DOWNLOAD_FREQ", kCfgDefaultMetaDownloadFreq);
 	if (metadataDownloadFreq > (changelog_get_back_logs_config_value() / 2)) {
 		metadataDownloadFreq = (changelog_get_back_logs_config_value() / 2);
 	}
@@ -1225,14 +1237,16 @@ int masterconn_init(void) {
 	// Could be multiple connections in the future, so let's use a pointer
 	auto *eptr = gMasterConn;
 
-	auto reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY", 1);
+	auto reconnectionDelay =
+	    cfg_getuint32("MASTER_RECONNECTION_DELAY",
+	                  MasterConn::kCfgDefaultMasterReconnectionDelay);
 	eptr->loadConfig();
 
 #ifdef METALOGGER
 	changelog_init(kChangelogMlFilename, 5, 1000); // may throw
 	changelog_disable_flush(); // metalogger does it once a second
-	uint32_t metadataDownloadFreq;
-	metadataDownloadFreq = cfg_getuint32("META_DOWNLOAD_FREQ",24);
+	auto metadataDownloadFreq =
+	    cfg_getuint32("META_DOWNLOAD_FREQ", MasterConn::kCfgDefaultMetaDownloadFreq);
 	if (metadataDownloadFreq > (changelog_get_back_logs_config_value() / 2)) {
 		metadataDownloadFreq = (changelog_get_back_logs_config_value() / 2);
 	}
