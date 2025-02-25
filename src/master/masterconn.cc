@@ -179,6 +179,7 @@ struct MasterConn {
 	Timeout changelogApplyErrorTimeout{
 	    std::chrono::seconds(kChangeLogApplyErrorTimeout)};
 
+	/// Last log version received from the master.
 	uint64_t lastLogVersion = 0;
 
 	// from config
@@ -248,6 +249,9 @@ struct MasterConn {
 	void killSession();
 	void beforeClose();
 	void terminate();
+
+private:
+	static std::string getDownloadingFileName(uint8_t filenum);
 };
 
 static std::unique_ptr<MasterConn> gMasterConn = nullptr;
@@ -343,10 +347,10 @@ void MasterConn::requestMetadataDump() {
 
 void MasterConn::handleChangelogApplyError(uint8_t status) {
 	if (masterVersion <= saunafsVersion(2, 5, 0)) {
-		safs_pretty_syslog(LOG_NOTICE, "Dropping in-memory metadata and starting download from master");
+		safs::log_info("Dropping in-memory metadata and starting download from master");
 		forceMetadataDownload();
 	} else {
-		safs_pretty_syslog(LOG_NOTICE, "Waiting for master to produce up-to-date metadata image");
+		safs::log_info("Waiting for master to produce up-to-date metadata image");
 		errorStatus = status;
 		requestMetadataDump();
 	}
@@ -365,7 +369,7 @@ void MasterConn::sendMatoClPort() {
 
 	if (portStr != previousPort) {
 		if (tcpresolve(nullptr, portStr.c_str(), nullptr, &port, false) < 0) {
-			safs_pretty_syslog(LOG_WARNING, "Cannot resolve MATOCL_LISTEN_PORT: %s", portStr.c_str());
+			safs::log_warn("Cannot resolve MATOCL_LISTEN_PORT: {}", portStr);
 			return;
 		}
 		previousPort = portStr;
@@ -380,7 +384,7 @@ void MasterConn::onRegistered(const uint8_t *data, uint32_t length) {
 	if (responseVersion == matoml::registerShadow::kStatusPacketVersion) {
 		uint8_t status{};
 		matoml::registerShadow::deserialize(data, length, status);
-		safs_pretty_syslog(LOG_NOTICE, "Cannot register to master: %s", saunafs_error_string(status));
+		safs::log_info("Cannot register to master: {}", saunafs_error_string(status));
 		mode = Mode::Kill;
 	} else if (responseVersion == matoml::registerShadow::kResponsePacketVersion) {
 		uint32_t incommingMasterVersion{};
@@ -392,7 +396,7 @@ void MasterConn::onRegistered(const uint8_t *data, uint32_t length) {
 			forceMetadataDownload();
 		}
 	} else {
-		safs_pretty_syslog(LOG_NOTICE, "Unknown register response: #%u", unsigned(responseVersion));
+		spdlog::info("Unknown register response: #{}", responseVersion);
 	}
 }
 #endif
@@ -407,17 +411,17 @@ void MasterConn::metachangesLog(const uint8_t *data,uint32_t length) {
 		return;
 	}
 	if (length<10) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_METACHANGES_LOG - wrong size (%" PRIu32 "/9+data)",length);
+		safs::log_info("MATOML_METACHANGES_LOG - wrong size ({}/9+data)", length);
 		mode = Mode::Kill;
 		return;
 	}
 	if (data[0]!=0xFF) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_METACHANGES_LOG - wrong packet");
+		safs::log_info("MATOML_METACHANGES_LOG - wrong packet");
 		mode = Mode::Kill;
 		return;
 	}
 	if (data[length-1]!='\0') {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_METACHANGES_LOG - invalid string");
+		safs::log_info("MATOML_METACHANGES_LOG - invalid string");
 		mode = Mode::Kill;
 		return;
 	}
@@ -427,7 +431,7 @@ void MasterConn::metachangesLog(const uint8_t *data,uint32_t length) {
 	const char* changelogEntry = reinterpret_cast<const char*>(data);
 
 	if ((lastLogVersion > 0) && (version != (lastLogVersion + 1))) {
-		safs_pretty_syslog(LOG_WARNING, "some changes lost: [%" PRIu64 "-%" PRIu64 "], download metadata again",lastLogVersion,version-1);
+		safs::log_warn("some changes lost: [{}}-{}}], download metadata again", lastLogVersion, version - 1);
 		handleChangelogApplyError(SAUNAFS_ERROR_METADATAVERSIONMISMATCH);
 		return;
 	}
@@ -437,11 +441,11 @@ void MasterConn::metachangesLog(const uint8_t *data,uint32_t length) {
 		std::string buf(": ");
 		buf.append(changelogEntry);
 		static char const network[] = "network";
-		uint8_t status;
-		if ((status = restore(network, version, buf.c_str(),
-				RestoreRigor::kDontIgnoreAnyErrors)) != SAUNAFS_STATUS_OK) {
-			safs_pretty_syslog(LOG_WARNING, "malformed changelog sent by the master server, can't apply it. status: %s",
-					saunafs_error_string(status));
+		uint8_t status = restore(network, version, buf.c_str(), RestoreRigor::kDontIgnoreAnyErrors);
+
+		if (status != SAUNAFS_STATUS_OK) {
+			safs::log_warn("malformed changelog sent by the master server, can't apply it. status: {}",
+			               saunafs_error_string(status));
 			handleChangelogApplyError(status);
 			return;
 		}
@@ -453,7 +457,7 @@ void MasterConn::metachangesLog(const uint8_t *data,uint32_t length) {
 
 void MasterConn::endSession(const uint8_t* data, uint32_t length) {
 	matoml::endSession::deserialize(data, length); // verify the empty packet
-	safs_pretty_syslog(LOG_NOTICE, "Master server is terminating; closing the connection...");
+	safs::log_info("Master server is terminating; closing the connection...");
 	killSession();
 }
 
@@ -491,57 +495,77 @@ int MasterConn::metadataCheck(const std::string& name) {
 		gMetadataBackend->getVersion(name);
 		return 0;
 	} catch (MetadataCheckException& ex) {
-		safs_pretty_syslog(LOG_NOTICE, "Verification of the downloaded metadata file failed: %s", ex.what());
+		safs::log_info(
+		    "Verification of the downloaded metadata file failed: {}",
+		    ex.what());
 		return -1;
 	}
 }
 
-void MasterConn::downloadNext() {
-	uint8_t *ptr;
-	uint8_t filenum;
-	int64_t dltime;
+std::string MasterConn::getDownloadingFileName(uint8_t filenum) {
+	static std::string changelogFilename_1 = changelogFilename + ".1";
+	static std::string changelogFilename_2 = changelogFilename + ".2";
 
+	switch (filenum) {
+	case DOWNLOAD_METADATA_SFS:
+		return "metadata";
+	case DOWNLOAD_SESSIONS_SFS:
+		return "sessions";
+	case DOWNLOAD_CHANGELOG_SFS:
+		return changelogFilename_1;
+	case DOWNLOAD_CHANGELOG_SFS_1:
+		return changelogFilename_2;
+	default:
+		return "???";
+	}
+}
+
+void MasterConn::downloadNext() {
 	if (downloadOffset >= fileSize) {   // end of file
-		filenum = downloadingFileNum;
+		auto filenum = downloadingFileNum;
 		if (downloadEnd() < 0) {
 			return;
 		}
-		dltime = eventloop_utime() - downloadStartTimeInMicroSeconds;
+
+		int64_t dltime = eventloop_utime() - downloadStartTimeInMicroSeconds;
 		if (dltime<=0) {
 			dltime=1;
 		}
-		std::string changelogFilename_1 = changelogFilename + ".1";
-		std::string changelogFilename_2 = changelogFilename + ".2";
-		safs_pretty_syslog(LOG_NOTICE, "%s downloaded %" PRIu64 "B/%" PRIu64 ".%06" PRIu32 "s (%.3f MB/s)",
-				(filenum == DOWNLOAD_METADATA_SFS) ? "metadata" :
-				(filenum == DOWNLOAD_SESSIONS_SFS) ? "sessions" :
-				(filenum == DOWNLOAD_CHANGELOG_SFS) ? changelogFilename_1.c_str() :
-				(filenum == DOWNLOAD_CHANGELOG_SFS_1) ? changelogFilename_2.c_str() : "???",
-				fileSize, dltime/1000000, (uint32_t)(dltime%1000000),
-				(double)(fileSize) / (double)(dltime));
+
+		static std::string changelogFilename_1 = changelogFilename + ".1";
+		static std::string changelogFilename_2 = changelogFilename + ".2";
+		static constexpr uint32_t kMicroSecondsInSecond = 1000000;
+
+		safs::log_info(
+		    "{} downloaded {}B/{}.{:06}s ({:.3f} MB/s)",
+		    getDownloadingFileName(filenum), fileSize,
+		    dltime / kMicroSecondsInSecond,
+		    static_cast<uint32_t>(dltime % kMicroSecondsInSecond),
+		    static_cast<double>(fileSize) / static_cast<double>(dltime));
+
 		if (filenum == DOWNLOAD_METADATA_SFS) {
 			if (metadataCheck(metadataTmpFilename) == 0) {
 				if (cfgBackMetaKeepPrevious>0) {
 					rotateFiles(metadataFilename, cfgBackMetaKeepPrevious, 1);
 				}
 				if (rename(metadataTmpFilename.c_str(), metadataFilename.c_str()) < 0) {
-					safs_pretty_syslog(LOG_NOTICE,"can't rename downloaded metadata - do it manually before next download");
+					safs::log_info("can't rename downloaded metadata - do it manually before next download");
 				}
 			}
 			downloadInit(DOWNLOAD_CHANGELOG_SFS);
 		} else if (filenum == DOWNLOAD_CHANGELOG_SFS) {
 			if (::rename(changelogTmpFilename.c_str(), changelogFilename_1.c_str()) < 0) {
-				safs_pretty_syslog(LOG_NOTICE,"can't rename downloaded changelog - do it manually before next download");
+				safs::log_info("can't rename downloaded changelog - do it manually before next download");
 			}
 			downloadInit(DOWNLOAD_CHANGELOG_SFS_1);
 		} else if (filenum == DOWNLOAD_CHANGELOG_SFS_1) {
 			if (::rename(changelogTmpFilename.c_str(), changelogFilename_2.c_str()) < 0) {
-				safs_pretty_syslog(LOG_NOTICE,"can't rename downloaded changelog - do it manually before next download");
+				safs::log_info("can't rename downloaded changelog - do it manually before next download");
 			}
 			downloadInit(DOWNLOAD_SESSIONS_SFS);
 		} else if (filenum == DOWNLOAD_SESSIONS_SFS) {
 			if (::rename(sessionsTmpFilename.c_str(), sessionsFilename.c_str()) < 0) {
-				safs_pretty_syslog(LOG_NOTICE,"can't rename downloaded sessions - do it manually before next download");
+				safs::log_info("can't rename downloaded sessions - do it manually before next download");
 			} else {
 #ifndef METALOGGER
 				/*
@@ -552,10 +576,10 @@ void MasterConn::downloadNext() {
 					try {
 						fs_loadall();
 						lastLogVersion = fs_getversion() - 1;
-						safs_pretty_syslog(LOG_NOTICE, "synced at version = %" PRIu64, lastLogVersion);
+						safs::log_info("synced at version = {}", lastLogVersion);
 						state = MasterConn::State::kSynchronized;
 					} catch (Exception& ex) {
-						safs_pretty_syslog(LOG_WARNING, "can't load downloaded metadata and changelogs: %s",
+						safs::log_warn("can't load downloaded metadata and changelogs: {}",
 								ex.what());
 						uint8_t status = ex.status();
 						if (status == SAUNAFS_STATUS_OK) {
@@ -572,7 +596,7 @@ void MasterConn::downloadNext() {
 			}
 		}
 	} else {        // send request for next data packet
-		ptr = createPacket(MLTOMA_DOWNLOAD_DATA, 12);
+		auto *ptr = createPacket(MLTOMA_DOWNLOAD_DATA, 12);
 		put64bit(&ptr, downloadOffset);
 		if (fileSize - downloadOffset > kMetadataDownloadBlocksize) {
 			put32bit(&ptr, kMetadataDownloadBlocksize);
@@ -584,7 +608,7 @@ void MasterConn::downloadNext() {
 
 void MasterConn::downloadStart(const uint8_t *data, uint32_t length) {
 	if (length != 1 && length != 8) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_DOWNLOAD_START - wrong size (%" PRIu32 "/1|8)",length);
+		safs::log_info("MATOML_DOWNLOAD_START - wrong size ({}/1|8)", length);
 		mode = Mode::Kill;
 		return;
 	}
@@ -593,7 +617,7 @@ void MasterConn::downloadStart(const uint8_t *data, uint32_t length) {
 
 	if (length == 1) {
 		downloadingFileNum = 0;
-		safs_pretty_syslog(LOG_NOTICE,"download start error");
+		safs::log_info("download start error");
 		return;
 	}
 
@@ -615,13 +639,13 @@ void MasterConn::downloadStart(const uint8_t *data, uint32_t length) {
 			|| (downloadingFileNum == DOWNLOAD_CHANGELOG_SFS_1)) {
 		downloadFD = ::open(changelogTmpFilename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
 	} else {
-		safs_pretty_syslog(LOG_NOTICE,"unexpected MATOML_DOWNLOAD_START packet");
+		safs::log_info("unexpected MATOML_DOWNLOAD_START packet");
 		mode = Mode::Kill;
 		return;
 	}
 
 	if (downloadFD < 0) {
-		safs_silent_errlog(LOG_NOTICE,"error opening metafile");
+		safs::log_info("error opening metafile");
 		downloadEnd();
 		return;
 	}
@@ -636,13 +660,13 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 	ssize_t ret;
 
 	if (downloadFD < 0) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - file not opened");
+		safs::log_info("MATOML_DOWNLOAD_DATA - file not opened");
 		mode = MasterConn::Mode::Kill;
 		return;
 	}
 
 	if (length<16) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - wrong size (%" PRIu32 "/16+data)",length);
+		safs::log_info("MATOML_DOWNLOAD_DATA - wrong size ({}/16+data)", length);
 		mode = MasterConn::Mode::Kill;
 		return;
 	}
@@ -653,19 +677,19 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 	crc = get32bit(&data);
 
 	if (leng+16!=length) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - wrong size (%" PRIu32 "/16+%" PRIu32 ")",length,leng);
+		safs::log_info("MATOML_DOWNLOAD_DATA - wrong size ({}/16+{})", length, leng);
 		mode = MasterConn::Mode::Kill;
 		return;
 	}
 
 	if (offset != downloadOffset) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - unexpected file offset (%" PRIu64 "/%" PRIu64 ")",offset,downloadOffset);
+		safs::log_info("MATOML_DOWNLOAD_DATA - unexpected file offset ({}/{})", offset, downloadOffset);
 		mode = MasterConn::Mode::Kill;
 		return;
 	}
 
 	if (offset + leng > fileSize) {
-		safs_pretty_syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - unexpected file size (%" PRIu64 "/%" PRIu64 ")",offset+leng,fileSize);
+		safs::log_info("MATOML_DOWNLOAD_DATA - unexpected file size ({}/{})", offset + leng, fileSize);
 		mode = MasterConn::Mode::Kill;
 		return;
 	}
@@ -689,7 +713,7 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 	}
 
 	if (crc != mycrc32(0,data,leng)) {
-		safs_pretty_syslog(LOG_NOTICE,"metafile data crc error");
+		safs::log_info("metafile data crc error");
 		if (downloadRetryCnt >= 5) {
 			downloadEnd();
 		} else {
@@ -700,7 +724,7 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 	}
 
 	if (::fsync(downloadFD) < 0) {
-		safs_silent_errlog(LOG_NOTICE,"error syncing metafile");
+		safs::log_info("error syncing metafile");
 		if (downloadRetryCnt >= 5) {
 			downloadEnd();
 		} else {
@@ -719,16 +743,16 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 void MasterConn::changelogApplyError(const uint8_t *data, uint32_t length) {
 	uint8_t status{};
 	matoml::changelogApplyError::deserialize(data, length, status);
-	safs_silent_syslog(LOG_DEBUG, "master.matoml_changelog_apply_error status: %u", status);
+	safs::log_debug("master.matoml_changelog_apply_error status: {}", status);
 
 	if (status == SAUNAFS_STATUS_OK) {
 		forceMetadataDownload();
 	} else if (status == SAUNAFS_ERROR_DELAYED) {
 		state = State::kLimbo;
-		safs_pretty_syslog(LOG_NOTICE, "Master temporarily refused to produce a new metadata image");
+		safs::log_info("Master temporarily refused to produce a new metadata image");
 	} else {
 		state = State::kLimbo;
-		safs_pretty_syslog(LOG_NOTICE, "Master failed to produce a new metadata image: %s", saunafs_error_string(status));
+		safs::log_info("Master failed to produce a new metadata image: {}", saunafs_error_string(status));
 	}
 }
 
@@ -772,12 +796,12 @@ void MasterConn::gotPacket(uint32_t type,const uint8_t *data,uint32_t length) {
 				changelogApplyError(data, length);
 				break;
 			default:
-				safs_pretty_syslog(LOG_NOTICE,"got unknown message (type:%" PRIu32 ")",type);
+				safs::log_info("got unknown message (type: {})", type);
 				mode = Mode::Kill;
 				break;
 		}
 	} catch (IncorrectDeserializationException& ex) {
-		safs_pretty_syslog(LOG_NOTICE, "Packet 0x%" PRIX32 " - can't deserialize: %s", type, ex.what());
+		safs::log_info("Packet 0x{:X} - can't deserialize: {}", type, ex.what());
 		mode = Mode::Kill;
 	}
 }
@@ -834,9 +858,8 @@ int MasterConn::initConnect() {
 			masterPort = mport;
 			isMasterAddressValid = 1;
 		} else {
-			safs_pretty_syslog(LOG_WARNING,
-					"can't resolve master host/port (%s:%s)",
-					cfgMasterHost.c_str(), cfgMasterPort.c_str());
+			safs::log_warn("can't resolve master host/port ({}:{})",
+			               cfgMasterHost.c_str(), cfgMasterPort.c_str());
 			return -1;
 		}
 	}
@@ -875,11 +898,11 @@ int MasterConn::initConnect() {
 	}
 
 	if (status == 0) {
-		safs_pretty_syslog(LOG_NOTICE,"connected to Master immediately");
+		safs::log_info("connected to Master immediately");
 		onConnected();
 	} else {
 		mode = Mode::Connecting;
-		safs_pretty_syslog_attempt(LOG_NOTICE,"connecting to Master");
+		safs::log_info("connecting to Master");
 	}
 
 	return 0;
@@ -912,13 +935,13 @@ void MasterConn::readFromSocket() {
 	while (mode != MasterConn::Mode::Kill) {
 		i = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
 		if (i==0) {
-			safs_pretty_syslog(LOG_NOTICE,"connection was reset by Master");
+			safs::log_info("connection was reset by Master");
 			killSession();
 			return;
 		}
 		if (i<0) {
 			if (errno!=EAGAIN) {
-				safs_silent_errlog(LOG_NOTICE,"read from Master error");
+				safs_silent_errlog(LOG_NOTICE, "read from Master error");
 				killSession();
 			}
 			return;
@@ -935,7 +958,7 @@ void MasterConn::readFromSocket() {
 
 			if (size > 0) {
 				if (size > kMaxPacketSize) {
-					safs_pretty_syslog(LOG_WARNING,"Master packet too long (%" PRIu32 "/%u)",size,kMaxPacketSize);
+					safs::log_warn("Master packet too long ({}/{})", size, kMaxPacketSize);
 					killSession();
 					return;
 				}
