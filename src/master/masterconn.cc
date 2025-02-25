@@ -65,24 +65,6 @@
 #include "master/restore.h"
 #endif /* #ifndef METALOGGER */
 
-namespace {
-#ifdef METALOGGER
-const std::string metadataFilename = kMetadataMlFilename;
-const std::string metadataTmpFilename = kMetadataMlTmpFilename;
-const std::string changelogFilename = kChangelogMlFilename;
-const std::string changelogTmpFilename = kChangelogMlTmpFilename;
-const std::string sessionsFilename = kSessionsMlFilename;
-const std::string sessionsTmpFilename = kSessionsMlTmpFilename;
-#else  /* #ifdef METALOGGER */
-const std::string metadataFilename = kMetadataFilename;
-const std::string metadataTmpFilename = kMetadataTmpFilename;
-const std::string changelogFilename = kChangelogFilename;
-const std::string changelogTmpFilename = kChangelogTmpFilename;
-const std::string sessionsFilename = kSessionsFilename;
-const std::string sessionsTmpFilename = kSessionsTmpFilename;
-#endif /* #else #ifdef METALOGGER */
-}  // namespace
-
 /// Block size for metadata download (1 MB).
 constexpr uint32_t kMetadataDownloadBlocksize = 1000000U;
 
@@ -90,8 +72,8 @@ constexpr uint32_t kMetadataDownloadBlocksize = 1000000U;
 constexpr uint32_t kMaxPacketSize = 1500000U;
 
 struct PacketStruct {
-	uint8_t *startPtr;
-	uint32_t bytesLeft;
+	uint8_t *startPtr{};
+	uint32_t bytesLeft{0};
 	std::vector<uint8_t> packet;
 };
 
@@ -250,11 +232,75 @@ struct MasterConn {
 	void beforeClose();
 	void terminate();
 
+	// Helpers to determine the correct version (metalogger or not)
+
+	static inline const std::string &getMetadataFilename();
+	static inline const std::string &getMetadataTmpFilename();
+	static inline const std::string &getChangelogFilename();
+	static inline const std::string &getChangelogTmpFilename();
+	static inline const std::string &getSessionsFilename();
+	static inline const std::string &getSessionsTmpFilename();
+
 private:
 	static std::string getDownloadingFileName(uint8_t filenum);
 };
 
 static std::unique_ptr<MasterConn> gMasterConn = nullptr;
+
+inline const std::string &MasterConn::getMetadataFilename() {
+#ifdef METALOGGER
+	static const std::string metadataFilename = kMetadataMlFilename;
+#else  /* #ifdef METALOGGER */
+	static const std::string metadataFilename = kMetadataFilename;
+#endif /* #else #ifdef METALOGGER */
+
+	return metadataFilename;
+}
+
+inline const std::string &MasterConn::getMetadataTmpFilename() {
+#ifdef METALOGGER
+	static const std::string metadataTmpFilename = kMetadataMlTmpFilename;
+#else  /* #ifdef METALOGGER */
+	static const std::string metadataTmpFilename = kMetadataTmpFilename;
+#endif /* #else #ifdef METALOGGER */
+	return metadataTmpFilename;
+}
+
+inline const std::string &MasterConn::getChangelogFilename() {
+#ifdef METALOGGER
+	static const std::string changelogFilename = kChangelogMlFilename;
+#else  /* #ifdef METALOGGER */
+	static const std::string changelogFilename = kChangelogFilename;
+#endif /* #else #ifdef METALOGGER */
+	return changelogFilename;
+}
+
+inline const std::string &MasterConn::getChangelogTmpFilename() {
+#ifdef METALOGGER
+	static const std::string changelogTmpFilename = kChangelogMlTmpFilename;
+#else  /* #ifdef METALOGGER */
+	static const std::string changelogTmpFilename = kChangelogTmpFilename;
+#endif /* #else #ifdef METALOGGER */
+	return changelogTmpFilename;
+}
+
+inline const std::string &MasterConn::getSessionsFilename() {
+#ifdef METALOGGER
+	static const std::string sessionsFilename = kSessionsMlFilename;
+#else  /* #ifdef METALOGGER */
+	static const std::string sessionsFilename = kSessionsFilename;
+#endif /* #else #ifdef METALOGGER */
+	return sessionsFilename;
+}
+
+inline const std::string &MasterConn::getSessionsTmpFilename() {
+#ifdef METALOGGER
+	static const std::string sessionsTmpFilename = kSessionsMlTmpFilename;
+#else  /* #ifdef METALOGGER */
+	static const std::string sessionsTmpFilename = kSessionsTmpFilename;
+#endif /* #else #ifdef METALOGGER */
+	return sessionsTmpFilename;
+}
 
 uint8_t *MasterConn::createPacket(uint32_t type, uint32_t size) {
 	auto outpacket = std::make_unique<PacketStruct>();
@@ -503,8 +549,8 @@ int MasterConn::metadataCheck(const std::string& name) {
 }
 
 std::string MasterConn::getDownloadingFileName(uint8_t filenum) {
-	static std::string changelogFilename_1 = changelogFilename + ".1";
-	static std::string changelogFilename_2 = changelogFilename + ".2";
+	static std::string changelogFilename_1 = getChangelogFilename() + ".1";
+	static std::string changelogFilename_2 = getChangelogFilename() + ".2";
 
 	switch (filenum) {
 	case DOWNLOAD_METADATA_SFS:
@@ -532,8 +578,8 @@ void MasterConn::downloadNext() {
 			dltime=1;
 		}
 
-		static std::string changelogFilename_1 = changelogFilename + ".1";
-		static std::string changelogFilename_2 = changelogFilename + ".2";
+		static std::string changelogFilename_1 = getChangelogFilename() + ".1";
+		static std::string changelogFilename_2 = getChangelogFilename() + ".2";
 		static constexpr uint32_t kMicroSecondsInSecond = 1000000;
 
 		safs::log_info(
@@ -544,27 +590,27 @@ void MasterConn::downloadNext() {
 		    static_cast<double>(fileSize) / static_cast<double>(dltime));
 
 		if (filenum == DOWNLOAD_METADATA_SFS) {
-			if (metadataCheck(metadataTmpFilename) == 0) {
+			if (metadataCheck(getMetadataTmpFilename()) == 0) {
 				if (cfgBackMetaKeepPrevious>0) {
-					rotateFiles(metadataFilename, cfgBackMetaKeepPrevious, 1);
+					rotateFiles(getMetadataFilename(), cfgBackMetaKeepPrevious, 1);
 				}
-				if (rename(metadataTmpFilename.c_str(), metadataFilename.c_str()) < 0) {
+				if (::rename(getMetadataTmpFilename().c_str(), getMetadataFilename().c_str()) < 0) {
 					safs::log_info("can't rename downloaded metadata - do it manually before next download");
 				}
 			}
 			downloadInit(DOWNLOAD_CHANGELOG_SFS);
 		} else if (filenum == DOWNLOAD_CHANGELOG_SFS) {
-			if (::rename(changelogTmpFilename.c_str(), changelogFilename_1.c_str()) < 0) {
+			if (::rename(getChangelogTmpFilename().c_str(), changelogFilename_1.c_str()) < 0) {
 				safs::log_info("can't rename downloaded changelog - do it manually before next download");
 			}
 			downloadInit(DOWNLOAD_CHANGELOG_SFS_1);
 		} else if (filenum == DOWNLOAD_CHANGELOG_SFS_1) {
-			if (::rename(changelogTmpFilename.c_str(), changelogFilename_2.c_str()) < 0) {
+			if (::rename(getChangelogTmpFilename().c_str(), changelogFilename_2.c_str()) < 0) {
 				safs::log_info("can't rename downloaded changelog - do it manually before next download");
 			}
 			downloadInit(DOWNLOAD_SESSIONS_SFS);
 		} else if (filenum == DOWNLOAD_SESSIONS_SFS) {
-			if (::rename(sessionsTmpFilename.c_str(), sessionsFilename.c_str()) < 0) {
+			if (::rename(getSessionsTmpFilename().c_str(), getSessionsFilename().c_str()) < 0) {
 				safs::log_info("can't rename downloaded sessions - do it manually before next download");
 			} else {
 #ifndef METALOGGER
@@ -632,12 +678,15 @@ void MasterConn::downloadStart(const uint8_t *data, uint32_t length) {
 	downloadStartTimeInMicroSeconds = eventloop_utime();
 
 	if (downloadingFileNum == DOWNLOAD_METADATA_SFS) {
-		downloadFD = ::open(metadataTmpFilename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
+		downloadFD = ::open(getMetadataTmpFilename().c_str(),
+		                    O_WRONLY | O_TRUNC | O_CREAT, 0666);
 	} else if (downloadingFileNum == DOWNLOAD_SESSIONS_SFS) {
-		downloadFD = ::open(sessionsTmpFilename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
-	} else if ((downloadingFileNum == DOWNLOAD_CHANGELOG_SFS)
-			|| (downloadingFileNum == DOWNLOAD_CHANGELOG_SFS_1)) {
-		downloadFD = ::open(changelogTmpFilename.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0666);
+		downloadFD = ::open(getSessionsTmpFilename().c_str(),
+		                    O_WRONLY | O_TRUNC | O_CREAT, 0666);
+	} else if ((downloadingFileNum == DOWNLOAD_CHANGELOG_SFS) ||
+	           (downloadingFileNum == DOWNLOAD_CHANGELOG_SFS_1)) {
+		downloadFD = ::open(getChangelogTmpFilename().c_str(),
+		                    O_WRONLY | O_TRUNC | O_CREAT, 0666);
 	} else {
 		safs::log_info("unexpected MATOML_DOWNLOAD_START packet");
 		mode = Mode::Kill;
@@ -760,9 +809,9 @@ void MasterConn::beforeClose() {
 	if (downloadFD >= 0) {
 		::close(downloadFD);
 		downloadFD = MasterConn::kInvalidFD;
-		::unlink(metadataTmpFilename.c_str());
-		::unlink(sessionsTmpFilename.c_str());
-		::unlink(changelogTmpFilename.c_str());
+		::unlink(getMetadataTmpFilename().c_str());
+		::unlink(getSessionsTmpFilename().c_str());
+		::unlink(getChangelogTmpFilename().c_str());
 	}
 }
 
