@@ -1251,7 +1251,6 @@ int masterconn_init(void) {
 	eptr->download_hook = eventloop_timeregister(TIMEMODE_RUN_LATE,metadataDownloadFreq*3600,630,masterconn_metadownloadinit);
 #endif /* #ifdef METALOGGER */
 	eventloop_destructregister(masterconn_term);
-	//eventloop_pollregister(masterconn_desc, masterconn_serve);
 	eventloop_reloadregister(masterconn_reload);
 	eventloop_wantexitregister(masterconn_wantexit);
 	eventloop_canexitregister(masterconn_canexit);
