@@ -1,4 +1,7 @@
 #include "common/platform.h"
+
+#include <boost/lexical_cast.hpp>
+
 #include "uraft.h"
 
 #if defined(SAUNAFS_HAVE_GETIFADDRS)
@@ -12,7 +15,7 @@
 
 using boost::asio::ip::udp;
 
-uRaft::uRaft(boost::asio::io_service &ios)
+uRaft::uRaft(boost::asio::io_context &ios)
 	: io_service_(ios),
 	  socket_(ios),
 	  election_timer_(ios),
@@ -385,27 +388,29 @@ void uRaft::init() {
 	for (int i = 0; i < (int)node_.size(); i++) {
 		std::string::size_type p = opt_.server[i].find(":");
 		boost::system::error_code err;
-		udp::resolver::iterator   iendpoint;
+		udp::resolver::results_type results;
+
 
 		if (p != std::string::npos) {
-			udp::resolver::query query(udp::v4(), opt_.server[i].substr(0, p),
-			                           opt_.server[i].substr(p + 1));
-
-			iendpoint = resolver.resolve(query, err);
+			results = resolver.resolve(opt_.server[i].substr(0, p), opt_.server[i].substr(p + 1), err);
 			if (err) {
 				throw std::runtime_error("Failed to resolve dns name '" + opt_.server[i] + "'");
 			}
 		} else {
-			udp::resolver::query query(udp::v4(), opt_.server[i],
-			                           boost::lexical_cast<std::string>(opt_.port));
-			iendpoint = resolver.resolve(query, err);
+			results = resolver.resolve(opt_.server[i], boost::lexical_cast<std::string>(opt_.port), err);
 			if (err) {
 				throw std::runtime_error("Failed to resolve dns name '" + opt_.server[i]
 				                         + ":" + boost::lexical_cast<std::string>(opt_.port)+"'");
 			}
 		}
 
-		node_[i].addr = *iendpoint;
+		if (results.empty()) {
+			throw std::runtime_error(
+			    "Failed to resolve dns name '" + opt_.server[i] + ":" +
+			    boost::lexical_cast<std::string>(opt_.port) +
+			    "':" + "No results found");
+		}
+		node_[i].addr = results.begin()->endpoint();
 	}
 
 	state_.id = opt_.id;
