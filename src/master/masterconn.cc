@@ -250,7 +250,7 @@ struct MasterConn {
 	void terminate();
 };
 
-static MasterConn *gMasterConn = nullptr;
+static std::unique_ptr<MasterConn> gMasterConn = nullptr;
 
 uint8_t *MasterConn::createPacket(uint32_t type, uint32_t size) {
 	auto outpacket = std::make_unique<PacketStruct>();
@@ -1191,8 +1191,7 @@ void masterconn_reconnect(void) {
 void masterconn_term(void) {
 	if (gMasterConn != nullptr) {
 		gMasterConn->terminate();
-		delete gMasterConn;
-		gMasterConn = nullptr;
+		gMasterConn.reset();
 	}
 }
 
@@ -1231,11 +1230,11 @@ int masterconn_init(void) {
 #endif /* #ifndef METALOGGER */
 
 	// Create the instance for Shadows and Metaloggers only
-	gMasterConn = new MasterConn();
-	passert(gMasterConn);
+	gMasterConn = std::make_unique<MasterConn>();
+	passert(gMasterConn.get());
 
 	// Could be multiple connections in the future, so let's use a pointer
-	auto *eptr = gMasterConn;
+	auto *eptr = gMasterConn.get();
 
 	auto reconnectionDelay =
 	    cfg_getuint32("MASTER_RECONNECTION_DELAY",
@@ -1277,7 +1276,7 @@ int masterconn_init(void) {
 }
 
 bool masterconn_is_connected() {
-	MasterConn *eptr = gMasterConn;
+	MasterConn *eptr = gMasterConn.get();
 	return (eptr != nullptr
 			&& (eptr->mode == MasterConn::Mode::Header || eptr->mode == MasterConn::Mode::Data) // socket is connected
 			&& eptr->masterVersion > MasterConn::kInvalidMasterVersion // registration was successful
