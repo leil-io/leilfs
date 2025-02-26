@@ -24,4 +24,10 @@ IncludeBlocks: Preserve
 # loop. Instead, we must use braces until it does.
 AllowShortLoopsOnASingleLine: true
 AllowShortBlocksOnASingleLine: Always
+
+# Avoid breaking string literals
+BreakStringLiterals: false
+
+# Use maximum 100 characters per line
+ColumnLimit: 100
 ...
