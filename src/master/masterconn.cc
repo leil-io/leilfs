@@ -65,12 +65,7 @@
 #include "master/restore.h"
 #endif /* #ifndef METALOGGER */
 
-/// Block size for metadata download (1 MB).
-constexpr uint32_t kMetadataDownloadBlocksize = 1000000U;
-
-/// Safety measure about expected max packet size.
-constexpr uint32_t kMaxPacketSize = 1500000U;
-
+/// Structure for the packet being sent or received.
 struct PacketStruct {
 	uint8_t *startPtr{};
 	uint32_t bytesLeft{0};
@@ -79,10 +74,15 @@ struct PacketStruct {
 
 /// Represents a connection to the master server.
 /// Holds the connection state and the data that is being sent or received.
+/// In charge of downloading metadata, sessions and changelogs.
 struct MasterConn {
 	// Useful constants.
-	static constexpr uint8_t kHeaderSize = 8;
-	static constexpr uint8_t kPacketTypeSize = 4;
+	/// Block size for metadata download (1 MB).
+	static constexpr uint32_t kMetadataDownloadBlocksize = 1000000U;
+	/// Safety measure about expected max packet size.
+	static constexpr uint32_t kMaxPacketSize = 1500000U;
+	static constexpr uint8_t kHeaderSize = 8;  ///< Packet type + size.
+	static constexpr uint8_t kPacketTypeSize = 4;  ///< sizeof(uint32_t).
 	static constexpr uint8_t kChangeLogApplyErrorTimeout = 10;
 	static constexpr int kInvalidFD = -1;
 	static constexpr int kInvalidPollDescPos = -1;
@@ -329,8 +329,6 @@ void MasterConn::createPacket(std::vector<uint8_t> data) {
 }
 
 void MasterConn::sendRegister() {
-	uint8_t *buff;
-
 	downloadingFileNum = 0;
 	downloadFD = kInvalidFD;
 
@@ -346,7 +344,7 @@ void MasterConn::sendRegister() {
 #endif
 
 	if (lastLogVersion>0) {
-		buff = createPacket(MLTOMA_REGISTER, 1 + 4 + 2 + 8);
+		auto *buff = createPacket(MLTOMA_REGISTER, 1 + 4 + 2 + 8);
 		put8bit(&buff,2);
 		put16bit(&buff,SAUNAFS_PACKAGE_VERSION_MAJOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MINOR);
@@ -354,7 +352,7 @@ void MasterConn::sendRegister() {
 		put16bit(&buff,cfgMasterTimeout);
 		put64bit(&buff,lastLogVersion);
 	} else {
-		buff = createPacket(MLTOMA_REGISTER, 1 + 4 + 2);
+		auto *buff = createPacket(MLTOMA_REGISTER, 1 + 4 + 2);
 		put8bit(&buff,1);
 		put16bit(&buff,SAUNAFS_PACKAGE_VERSION_MAJOR);
 		put8bit(&buff,SAUNAFS_PACKAGE_VERSION_MINOR);
@@ -377,7 +375,7 @@ void MasterConn::killSession() {
 
 void MasterConn::forceMetadataDownload() {
 #ifndef METALOGGER
-	state = MasterConn::State::kNone;
+	state = State::kNone;
 	fs_unload();
 	restore_reset();
 #endif
@@ -477,7 +475,7 @@ void MasterConn::metachangesLog(const uint8_t *data,uint32_t length) {
 	const char* changelogEntry = reinterpret_cast<const char*>(data);
 
 	if ((lastLogVersion > 0) && (version != (lastLogVersion + 1))) {
-		safs::log_warn("some changes lost: [{}}-{}}], download metadata again", lastLogVersion, version - 1);
+		safs::log_warn("some changes lost: [{}-{}], download metadata again", lastLogVersion, version - 1);
 		handleChangelogApplyError(SAUNAFS_ERROR_METADATAVERSIONMISMATCH);
 		return;
 	}
@@ -618,12 +616,12 @@ void MasterConn::downloadNext() {
 				 * We can have other state if we are synchronized or we got changelog apply error
 				 * during independent sessions download session.
 				 */
-				if (state == MasterConn::State::kDownloading) {
+				if (state == State::kDownloading) {
 					try {
 						fs_loadall();
 						lastLogVersion = fs_getversion() - 1;
 						safs::log_info("synced at version = {}", lastLogVersion);
-						state = MasterConn::State::kSynchronized;
+						state = State::kSynchronized;
 					} catch (Exception& ex) {
 						safs::log_warn("can't load downloaded metadata and changelogs: {}",
 								ex.what());
@@ -637,7 +635,7 @@ void MasterConn::downloadNext() {
 					}
 				}
 #else /* #ifndef METALOGGER */
-				state = MasterConn::State::kSynchronized;
+				state = State::kSynchronized;
 #endif /* #else #ifndef METALOGGER */
 			}
 		}
@@ -677,16 +675,19 @@ void MasterConn::downloadStart(const uint8_t *data, uint32_t length) {
 	downloadRetryCnt = 0;
 	downloadStartTimeInMicroSeconds = eventloop_utime();
 
+	static constexpr mode_t kFilePermissions = 0666;
+	static constexpr int kFileFlags = O_WRONLY | O_TRUNC | O_CREAT;
+
 	if (downloadingFileNum == DOWNLOAD_METADATA_SFS) {
-		downloadFD = ::open(getMetadataTmpFilename().c_str(),
-		                    O_WRONLY | O_TRUNC | O_CREAT, 0666);
+		downloadFD = ::open(getMetadataTmpFilename().c_str(), kFileFlags,
+		                    kFilePermissions);
 	} else if (downloadingFileNum == DOWNLOAD_SESSIONS_SFS) {
-		downloadFD = ::open(getSessionsTmpFilename().c_str(),
-		                    O_WRONLY | O_TRUNC | O_CREAT, 0666);
+		downloadFD = ::open(getSessionsTmpFilename().c_str(), kFileFlags,
+		                    kFilePermissions);
 	} else if ((downloadingFileNum == DOWNLOAD_CHANGELOG_SFS) ||
 	           (downloadingFileNum == DOWNLOAD_CHANGELOG_SFS_1)) {
-		downloadFD = ::open(getChangelogTmpFilename().c_str(),
-		                    O_WRONLY | O_TRUNC | O_CREAT, 0666);
+		downloadFD = ::open(getChangelogTmpFilename().c_str(), kFileFlags,
+		                    kFilePermissions);
 	} else {
 		safs::log_info("unexpected MATOML_DOWNLOAD_START packet");
 		mode = Mode::Kill;
@@ -710,13 +711,13 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 
 	if (downloadFD < 0) {
 		safs::log_info("MATOML_DOWNLOAD_DATA - file not opened");
-		mode = MasterConn::Mode::Kill;
+		mode = Mode::Kill;
 		return;
 	}
 
 	if (length<16) {
 		safs::log_info("MATOML_DOWNLOAD_DATA - wrong size ({}/16+data)", length);
-		mode = MasterConn::Mode::Kill;
+		mode = Mode::Kill;
 		return;
 	}
 
@@ -727,31 +728,31 @@ void MasterConn::downloadData(const uint8_t *data,uint32_t length) {
 
 	if (leng+16!=length) {
 		safs::log_info("MATOML_DOWNLOAD_DATA - wrong size ({}/16+{})", length, leng);
-		mode = MasterConn::Mode::Kill;
+		mode = Mode::Kill;
 		return;
 	}
 
 	if (offset != downloadOffset) {
 		safs::log_info("MATOML_DOWNLOAD_DATA - unexpected file offset ({}/{})", offset, downloadOffset);
-		mode = MasterConn::Mode::Kill;
+		mode = Mode::Kill;
 		return;
 	}
 
 	if (offset + leng > fileSize) {
 		safs::log_info("MATOML_DOWNLOAD_DATA - unexpected file size ({}/{})", offset + leng, fileSize);
-		mode = MasterConn::Mode::Kill;
+		mode = Mode::Kill;
 		return;
 	}
 
 #ifdef SAUNAFS_HAVE_PWRITE
-	ret = ::pwrite(downloadFD,data,leng,offset);
+	ret = ::pwrite(downloadFD, data, leng, offset);
 #else /* SAUNAFS_HAVE_PWRITE */
-	::lseek(metafd,offset,SEEK_SET);
-	ret = ::write(metafd,data,leng);
+	::lseek(downloadFD, offset, SEEK_SET);
+	ret = ::write(downloadFD, data, leng);
 #endif /* SAUNAFS_HAVE_PWRITE */
 
-	if (ret!=(ssize_t)leng) {
-		safs_silent_errlog(LOG_NOTICE,"error writing metafile");
+	if (ret != (ssize_t)leng) {
+		safs_silent_errlog(LOG_NOTICE, "error writing metafile");
 		if (downloadRetryCnt >= 5) {
 			downloadEnd();
 		} else {
@@ -975,29 +976,30 @@ void MasterConn::connectTest() {
 
 void MasterConn::readFromSocket() {
 	SignalLoopWatchdog watchdog;
-	int32_t i;
-	uint32_t type,size;
-	const uint8_t *ptr;
+	int32_t readBytes{};
+	uint32_t type{};
+	uint32_t size{};
+	const uint8_t *ptr{};
 
 	watchdog.start();
 
-	while (mode != MasterConn::Mode::Kill) {
-		i = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
-		if (i==0) {
+	while (mode != Mode::Kill) {
+		readBytes = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+		if (readBytes == 0) {
 			safs::log_info("connection was reset by Master");
 			killSession();
 			return;
 		}
-		if (i<0) {
-			if (errno!=EAGAIN) {
+		if (readBytes < 0) {
+			if (errno != EAGAIN) {
 				safs_silent_errlog(LOG_NOTICE, "read from Master error");
 				killSession();
 			}
 			return;
 		}
 
-		inputPacket.startPtr += i;
-		inputPacket.bytesLeft -= i;
+		inputPacket.startPtr += readBytes;
+		inputPacket.bytesLeft -= readBytes;
 
 		if (inputPacket.bytesLeft > 0) { return; }
 
@@ -1007,7 +1009,8 @@ void MasterConn::readFromSocket() {
 
 			if (size > 0) {
 				if (size > kMaxPacketSize) {
-					safs::log_warn("Master packet too long ({}/{})", size, kMaxPacketSize);
+					safs::log_warn("Master packet too long ({}/{})", size,
+					               kMaxPacketSize);
 					killSession();
 					return;
 				}
@@ -1164,8 +1167,8 @@ void MasterConn::reconnect() {
 }
 
 void MasterConn::becomeMaster() {
-	eventloop_timeunregister(sessionsDownloadInitHandle);
-	eventloop_timeunregister(changelogFlushHandle);
+	eventloop_timeunregister(this->sessionsDownloadInitHandle);
+	eventloop_timeunregister(this->changelogFlushHandle);
 }
 
 void MasterConn::loadConfig() {
