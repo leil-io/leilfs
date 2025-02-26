@@ -84,6 +84,11 @@ void CmrDisk::refreshDataDiskUsage() {
 	} else {
 		setAvailableSpace(availableSpace() - leaveFreeSpace());
 	}
+	if (totalSpace() < leaveFreeSpace()) {
+		setTotalSpace(0ULL);
+	} else {
+		setTotalSpace(totalSpace() - leaveFreeSpace());
+	}
 }
 
 int CmrDisk::updateChunkAttributes(IChunk *chunk, bool isFromScan) {
