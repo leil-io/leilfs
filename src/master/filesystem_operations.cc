@@ -346,9 +346,6 @@ void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availsp
 		fsnodes_quota_adjust_space(rn, *totalspace, *availspace);
 		fsnodes_get_stats(rn, &sr);
 		*inodes = sr.inodes;
-		if (sr.realsize + *availspace < *totalspace) {
-			*totalspace = sr.realsize + *availspace;
-		}
 	}
 	++gFsStatsArray[FsStats::Statfs];
 }
