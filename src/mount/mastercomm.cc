@@ -22,6 +22,7 @@
 #include "mount/mastercomm.h"
 
 #include <limits.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -2143,6 +2144,14 @@ uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_
 		setDisconnect(true);
 		return SAUNAFS_ERROR_IO;
 	}
+	for (auto& server : chunkservers) {
+		if (isLoopbackAddress(server.address.ip)) {
+			safs::log_debug("Changing chunkserver ip address {} to {}",
+				  htonl(server.address.ip),
+				  htonl(masterip));
+			server.address.ip = masterip;
+		}
+	}
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2237,6 +2246,15 @@ uint8_t fs_sauwritechunk(uint32_t inode, uint32_t chunkIndex, uint32_t &lockId,
 				"(length:%zu), %s", message.size(), ex.what());
 		setDisconnect(true);
 		return SAUNAFS_ERROR_IO;
+	}
+	for (auto& server : chunkservers) {
+		// If 127.0.0.1, let's assume it's the same as master
+		if (isLoopbackAddress(server.address.ip)) {
+			safs::log_debug("fs_sauwritechunk: Changing chunkserver ip address {} to {}",
+				  htonl(server.address.ip),
+				  htonl(masterip));
+			server.address.ip = masterip;
+		}
 	}
 
 	return SAUNAFS_STATUS_OK;
@@ -3253,5 +3271,15 @@ uint8_t fs_getchunkservers(std::vector<ChunkserverListEntry> &chunkservers) {
 
 	chunkservers.clear();
 	matocl::cservList::deserialize(message, message_id, chunkservers);
+	for (auto& server : chunkservers) {
+		// If 127.0.0.1, let's assume chunkserver is the same as master host
+		if (isLoopbackAddress(server.servip)) {
+			server.servip = masterip;
+			safs::log_debug("fs_getchunkservers: changing chunkserver ip address {} to {}",
+				  htonl(server.servip),
+				  htonl(masterip));
+			safs::log_warn("localhost chunkserver ip addresses are experimental, consider assigning an IP address to chunkserver (via /etc/hosts or some other way)");
+		}
+	}
 	return SAUNAFS_STATUS_OK;
 }
