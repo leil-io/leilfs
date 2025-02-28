@@ -1,5 +1,0 @@
-usr/sbin/sfsmaster
-usr/sbin/sfsmetadump
-usr/sbin/sfsmetarestore
-usr/sbin/sfsrestoremaster
-var/lib/saunafs/metadata.sfs.empty
