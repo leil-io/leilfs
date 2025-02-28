@@ -148,6 +148,7 @@ ChunkserverEntry::createDetachedPacketWithOutputBuffer(
 	passert(outPacket);
 
 	outPacket->outputBuffer = getReadOutputBufferPool().get(sizeOfWholePacket);
+	outPacket->outputBuffer->isReadCompleted = false;
 
 	if (outPacket->outputBuffer->copyIntoBuffer(packetPrefix) !=
 	    static_cast<ssize_t>(packetPrefix.size())) {
@@ -289,8 +290,18 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 	if (eptr->writeJobId > 0 && eptr->writeJobWriteId == 0 &&
 	    status == SAUNAFS_STATUS_OK) {  // this was job_open
 		eptr->isChunkOpen = 1;
-	} else if (eptr->readJobId > 0 &&
+	} else if ((!eptr->pendingReadJobIds.empty() || !eptr->toDiscardReadJobIds.empty()) &&
 	           status == SAUNAFS_STATUS_OK) {  // this could be job_open
+		while (!eptr->toDiscardReadDataPackets.empty() &&
+		       eptr->toDiscardReadDataPackets.front()->outputBuffer->isReadCompleted) {
+			eptr->toDiscardReadDataPackets.pop_front();
+			eptr->toDiscardReadJobIds.pop_front();
+		}
+		while (!eptr->pendingReadDataPackets.empty() &&
+		       eptr->pendingReadDataPackets.front()->outputBuffer->isReadCompleted) {
+			eptr->pendingReadDataPackets.pop_front();
+			eptr->pendingReadJobIds.pop_front();
+		}
 		eptr->isChunkOpen = 1;
 	}
 	if (eptr->isChunkOpen) {
@@ -298,22 +309,59 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 		          eptr->chunkType);
 		eptr->isChunkOpen = 0;
 	}
-	eptr->state = State::Closed;
+	if (eptr->pendingReadJobIds.empty() && eptr->toDiscardReadJobIds.empty() && eptr->writeJobWriteId == 0) {
+		eptr->state = State::Closed;
+	}
 }
 
 // bg reading
 
+void ChunkserverEntry::readDiscardCallback(uint8_t status, void *entry) {
+	TRACETHIS();
+	(void) status;
+	auto *eptr = static_cast<ChunkserverEntry *>(entry);
+	while (!eptr->toDiscardReadDataPackets.empty() &&
+	       eptr->toDiscardReadDataPackets.front()->outputBuffer->isReadCompleted) {
+		eptr->toDiscardReadDataPackets.pop_front();
+		eptr->toDiscardReadJobIds.pop_front();
+	}
+}
+
+void ChunkserverEntry::prepareDiscardReadJobs() {
+	// We need to:
+	// - change state of packets not taken by any hdd worker
+	// - change callback in already taken ones
+	// - move packets from pending to toDiscard lists
+	job_pool_disable_jobs(workerJobPool, pendingReadJobIds);
+	job_pool_change_callback(workerJobPool, pendingReadJobIds, readDiscardCallback, this);
+	while (!pendingReadJobIds.empty()) {
+		// pendingReadJobIds and pendingReadDataPackets should have the related elements in the
+		// correct order
+		toDiscardReadJobIds.push_back(pendingReadJobIds.front());
+		pendingReadJobIds.pop_front();
+
+		toDiscardReadDataPackets.emplace_back(std::move(pendingReadDataPackets.front()));
+		pendingReadDataPackets.pop_front();
+	}
+	assert(pendingReadJobIds.empty());
+	assert(pendingReadDataPackets.empty());
+}
+
 void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 	TRACETHIS();
 	auto *eptr = static_cast<ChunkserverEntry*>(entry);
-	eptr->readJobId = 0;
 	if (status == SAUNAFS_STATUS_OK) {
-		eptr->todoReadCounter--;
+		eptr->readyReadDataPackets++;
 		eptr->isChunkOpen = 1;
-		if (eptr->todoReadCounter == 0) {
-			eptr->readContinue();
-		}
+		eptr->readContinue();
 	} else {
+		// - prepare discard
+		// - send status
+		// - close chunk
+		// - change state
+		eptr->prepareDiscardReadJobs();
+		ChunkserverEntry::readDiscardCallback(status, eptr);
+
 		std::vector<uint8_t> buffer;
 		eptr->messageSerializer->serializeCstoclReadStatus(
 		    buffer, eptr->chunkId, status);
@@ -324,29 +372,23 @@ void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 			eptr->isChunkOpen = 0;
 		}
 		// after sending status even if there was an error it's possible to
-		eptr->state = State::Idle;
 		// receive new requests on the same connection
+		eptr->state = State::Idle;
 		LOG_AVG_STOP(readOperationTimer);
-	}
-}
-
-void ChunkserverEntry::sendFinished() {
-	TRACETHIS();
-	todoReadCounter--;
-	if (todoReadCounter == 0) {
-		readContinue();
 	}
 }
 
 void ChunkserverEntry::readContinue() {
 	TRACETHIS2(offset, size);
 
-	if (readPacket) {
-		attachPacket(std::move(readPacket));
-		readPacket.reset();
-		todoReadCounter++;
+	while (readyReadDataPackets > 0 && pendingReadDataPackets.front()->outputBuffer->isReadCompleted) {
+		attachPacket(std::move(pendingReadDataPackets.front()));
+		pendingReadDataPackets.pop_front();
+		pendingReadJobIds.pop_front();
+		readyReadDataPackets--;
 	}
-	if (size == 0) {  // everything has been read
+
+	if (pendingReadDataPackets.empty() && size == 0) {  // everything has been read
 		std::vector<uint8_t> buffer;
 		messageSerializer->serializeCstoclReadStatus(
 		    buffer, chunkId, SAUNAFS_STATUS_OK);
@@ -361,49 +403,50 @@ void ChunkserverEntry::readContinue() {
 		state = State::Idle;
 		LOG_AVG_STOP(readOperationTimer);
 	} else {
-		const uint32_t totalRequestSize = size;
-		const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
-		const uint32_t thisPartSize = std::min<uint32_t>(
-				totalRequestSize, SFSBLOCKSIZE - thisPartOffset);
-		const uint16_t totalRequestBlocks =
-		    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) /
-		    SFSBLOCKSIZE;
+		while (size > 0 && pendingReadDataPackets.size() < maxParallelHddReadJobs) {
+			const uint32_t totalRequestSize = size;
+			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
+			const uint32_t thisPartSize =
+			    std::min<uint32_t>(totalRequestSize, SFSBLOCKSIZE - thisPartOffset);
+			const uint16_t totalRequestBlocks =
+			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
-		std::vector<uint8_t> readDataPrefix;
-		messageSerializer->serializePrefixOfCstoclReadData(
-		    readDataPrefix, chunkId, offset, thisPartSize);
-		auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix);
-		if (packet == kInvalidPacket) {
-			state = State::Close;
-			return;
-		}
-		readPacket = std::move(packet);
-
-		uint32_t readAheadBlocks = 0;
-		uint32_t maxReadBehindBlocks = 0;
-
-		if (!static_cast<bool>(isChunkOpen)) {
-			if (gHDDReadAhead.blocksToBeReadAhead() > 0) {
-				readAheadBlocks =
-				    totalRequestBlocks + gHDDReadAhead.blocksToBeReadAhead();
+			std::vector<uint8_t> readDataPrefix;
+			messageSerializer->serializePrefixOfCstoclReadData(readDataPrefix, chunkId, offset,
+			                                                   thisPartSize);
+			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix);
+			if (packet == kInvalidPacket) {
+				state = State::Close;
+				return;
 			}
-			// Try not to influence slow streams to much:
-			maxReadBehindBlocks = std::min(totalRequestBlocks,
-					gHDDReadAhead.maxBlocksToBeReadBehind());
-		}
+			pendingReadDataPackets.emplace_back(std::move(packet));
 
-		readJobId = job_read(workerJobPool, readFinishedCallback, this, chunkId,
-		                     chunkVersion, chunkType, offset, thisPartSize,
-		                     maxReadBehindBlocks, readAheadBlocks,
-		                     readPacket->outputBuffer.get(), !isChunkOpen);
-		if (readJobId == 0) {
-			state = State::Close;
-			return;
-		}
+			uint32_t readAheadBlocks = 0;
+			uint32_t maxReadBehindBlocks = 0;
 
-		todoReadCounter++;
-		offset += thisPartSize;
-		size -= thisPartSize;
+			if (!static_cast<bool>(isChunkOpen)) {
+				if (gHDDReadAhead.blocksToBeReadAhead() > 0) {
+					readAheadBlocks = totalRequestBlocks + gHDDReadAhead.blocksToBeReadAhead();
+				}
+				// Try not to influence slow streams to much:
+				maxReadBehindBlocks =
+				    std::min(totalRequestBlocks, gHDDReadAhead.maxBlocksToBeReadBehind());
+			}
+
+			uint32_t readJobId =
+			    job_read(workerJobPool, readFinishedCallback, this, chunkId, chunkVersion,
+			             chunkType, offset, thisPartSize, maxReadBehindBlocks, readAheadBlocks,
+			             pendingReadDataPackets.back()->outputBuffer.get(), !isChunkOpen);
+
+			if (readJobId == 0) {
+				state = State::Close;
+				return;
+			}
+			pendingReadJobIds.push_back(readJobId);
+
+			offset += thisPartSize;
+			size -= thisPartSize;
+		}
 	}
 }
 
@@ -473,8 +516,6 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 	// Process the request
 	stats_hlopr++;
 	state = State::Read;
-	todoReadCounter = 0;
-	readJobId = 0;
 	LOG_AVG_START0(readOperationTimer, "csserv_read");
 	readContinue();
 }
@@ -1022,16 +1063,16 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 void ChunkserverEntry::outputCheckReadFinished() {
 	TRACETHIS();
 	if (state == State::Read) {
-		sendFinished();
+		readContinue();
 	}
 }
 
 void ChunkserverEntry::closeJobs() {
 	TRACETHIS();
-	if (readJobId > 0) {
-		job_pool_disable_job(workerJobPool, readJobId);
-		job_pool_change_callback(workerJobPool, readJobId, delayedCloseCallback,
-		                         this);
+	if (!pendingReadJobIds.empty() || !toDiscardReadJobIds.empty()) {
+		job_pool_disable_jobs(workerJobPool, pendingReadJobIds);
+		job_pool_change_callback(workerJobPool, pendingReadJobIds, delayedCloseCallback, this);
+		job_pool_change_callback(workerJobPool, toDiscardReadJobIds, delayedCloseCallback, this);
 		state = State::CloseWait;
 	} else if (writeJobId > 0) {
 		job_pool_disable_job(workerJobPool, writeJobId);

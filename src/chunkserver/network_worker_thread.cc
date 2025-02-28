@@ -318,7 +318,7 @@ void NetworkWorkerThread::addConnection(int newSocketFD) {
 	tcpnodelay(newSocketFD);
 
 	std::unique_lock lock(csservheadLock);
-	csservEntries.emplace_front(newSocketFD, bgJobPool_);
+	csservEntries.emplace_front(newSocketFD, bgJobPool_, gMaxParallelHddReadJobsPerCsEntry);
 	csservEntries.front().lastActivity = eventloop_time();
 
 	eassert(write(notify_pipe[1], "9", 1) == 1);

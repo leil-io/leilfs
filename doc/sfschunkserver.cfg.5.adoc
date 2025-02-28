@@ -115,12 +115,15 @@ worker may use to do disk operations like opening chunks, reading or writing
 them (default is 16)
 
 *BGJOBSCNT_PER_NETWORK_WORKER*:: maximum number of jobs that each network worker
-may use for disk operations (default is 1000)
+may use for disk operations (default is 4000)
 
 *POLL_TIMEOUT_MS*:: Maximum amount of time in milliseconds that the polling
 operation will wait for events. In the chunkservers, the same value is applied
 for the events loop and for the network worker threads. Smaller values could
 reduce latency at the cost of CPU usage (default: 50)
+
+*MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY*:: maximum number of read jobs processed
+in parallel per client connection (default is 16)
 
 *READ_AHEAD_KB*:: additional number of kilobytes which should be passed to
 posix_fadvise(POSIX_FADV_WILLNEED) before reading data from a chunk (default is

@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include <inttypes.h>
+#include <list>
 #include <vector>
 
 #include "chunkserver/output_buffer.h"
@@ -32,8 +33,11 @@ void* job_pool_new(uint8_t workers,uint32_t jobs,int *wakeupdesc);
 uint32_t job_pool_jobs_count(void *jpool);
 void job_pool_disable_and_change_callback_all(void *jpool,void (*callback)(uint8_t status,void *extra));
 void job_pool_disable_job(void *jpool,uint32_t jobid);
+void job_pool_disable_jobs(void *jpool, std::list<uint32_t> &jobIds);
 void job_pool_check_jobs(void *jpool);
-void job_pool_change_callback(void *jpool,uint32_t jobid,void (*callback)(uint8_t status,void *extra),void *extra);
+void job_pool_change_callback(void *jpool, uint32_t jobid, void (*callback)(uint8_t status, void *extra), void *extra);
+void job_pool_change_callback(void *jpool, std::list<uint32_t> &jobIds,
+                              void (*callback)(uint8_t status, void *extra), void *extra);
 void job_pool_delete(void *jpool);
 
 

@@ -277,6 +277,8 @@ void* job_worker(void *th_arg) {
 						rdargs->offset, rdargs->size, rdargs->maxBlocksToBeReadBehind,
 						rdargs->blocksToBeReadAhead, rdargs->outputBuffer);
 
+				rdargs->outputBuffer->isReadCompleted = true;
+
 				if (rdargs->performHddOpen && status != SAUNAFS_STATUS_OK) {
 					int ret = hddClose(rdargs->chunkid, rdargs->chunkType);
 					if (ret != SAUNAFS_STATUS_OK) {
@@ -439,6 +441,25 @@ void job_pool_disable_job(void *jpool,uint32_t jobid) {
 	}
 }
 
+void job_pool_disable_jobs(void *jpool, std::list<uint32_t> &jobIds) {
+	TRACETHIS();
+	jobpool *jp = (jobpool *)jpool;
+	job *jptr;
+
+	std::unique_lock jobsUniqueLock(jp->jobsMutex, std::defer_lock);
+	for (auto jobid : jobIds) {
+		uint32_t jhpos = JHASHPOS(jobid);
+
+		for (jptr = jp->jobhash[jhpos]; jptr; jptr = jptr->next) {
+			if (jptr->jobid == jobid) {
+				jobsUniqueLock.lock();
+				if (jptr->jstate == JSTATE_ENABLED) { jptr->jstate = JSTATE_DISABLED; }
+				jobsUniqueLock.unlock();
+			}
+		}
+	}
+}
+
 void job_pool_change_callback(void *jpool,uint32_t jobid,void (*callback)(uint8_t status,void *extra),void *extra) {
 	TRACETHIS();
 	jobpool* jp = (jobpool*)jpool;
@@ -448,6 +469,22 @@ void job_pool_change_callback(void *jpool,uint32_t jobid,void (*callback)(uint8_
 		if (jptr->jobid==jobid) {
 			jptr->callback=callback;
 			jptr->extra=extra;
+		}
+	}
+}
+
+void job_pool_change_callback(void *jpool, std::list<uint32_t> &jobIds,
+                              void (*callback)(uint8_t status, void *extra), void *extra) {
+	TRACETHIS();
+	jobpool *jp = (jobpool *)jpool;
+	job *jptr;
+	for (auto jobid : jobIds) {
+		uint32_t jhpos = JHASHPOS(jobid);
+		for (jptr = jp->jobhash[jhpos]; jptr; jptr = jptr->next) {
+			if (jptr->jobid == jobid) {
+				jptr->callback = callback;
+				jptr->extra = extra;
+			}
 		}
 	}
 }

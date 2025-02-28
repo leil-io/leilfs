@@ -65,6 +65,8 @@ public:
 		return capacity + disk::kIoBlockSize - remainder;
 	}
 
+	std::atomic_bool isReadCompleted{false};
+
 private:
 	const size_t internalBufferCapacity_;
 	const size_t internalBufferCapacityAligned_;

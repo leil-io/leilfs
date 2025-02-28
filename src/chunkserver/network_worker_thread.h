@@ -29,11 +29,15 @@
 
 #include "chunkserver/chunkserver_entry.h"
 
+inline std::atomic<uint16_t> gMaxParallelHddReadJobsPerCsEntry;
+
 class NetworkWorkerThread {
 public:
 	static constexpr uint32_t kDefaultNumberOfNetworkWorkers = 4;
 	static constexpr uint32_t kDefaultNumberOfHddWorkersPerNetworkWorker = 16;
-	static constexpr uint32_t kDefaultMaxBackgroundJobsPerNetworkWorker = 1000;
+	static constexpr uint32_t kDefaultMaxBackgroundJobsPerNetworkWorker = 4000;
+
+	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 16;
 
 	NetworkWorkerThread(uint32_t nrOfBgjobsWorkers, uint32_t bgjobsCount);
 	NetworkWorkerThread(const NetworkWorkerThread&) = delete;
