@@ -120,6 +120,10 @@ void mainNetworkThreadReload(void) {
 	}
 	chunkReplicatorReload();
 
+	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
+	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
+	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
+
 	gHDDReadAhead.setReadAhead_kB(
 			cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));
 	gHDDReadAhead.setMaxReadBehind_kB(
@@ -236,6 +240,10 @@ int mainNetworkThreadInit(void) {
 	gBgjobsCountPerNetworkWorker = cfg_get_minvalue<uint32_t>(
 	    "BGJOBSCNT_PER_NETWORK_WORKER",
 	    NetworkWorkerThread::kDefaultMaxBackgroundJobsPerNetworkWorker, 10);
+
+	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
+	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
+	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
 
 	gHDDReadAhead.setReadAhead_kB(
 			cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));

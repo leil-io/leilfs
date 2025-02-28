@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -120,6 +121,11 @@ public:
 	/// @param jobId The ID of the job to be disabled.
 	void disableJob(uint32_t jobId);
 
+	/// @brief Disables a list of jobs.
+	///
+	/// @param jobIds The list of jobs by IDs to be disabled.
+	void disableJobs(std::list<uint32_t> &jobIds);
+
 	/// @brief Checks the status of jobs in the JobPool and calls their callbacks.
 	void checkJobs();
 
@@ -129,6 +135,13 @@ public:
 	/// @param callback The new callback function.
 	/// @param extra Additional data to be passed to the new callback.
 	void changeCallback(uint32_t jobId, JobCallback callback, void *extra);
+
+	/// @brief Changes the callback function for a list of jobs.
+	///
+	/// @param jobIds The list of jobs by IDs.
+	/// @param callback The new callback function.
+	/// @param extra Additional data to be passed to the new callback.
+	void changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra);
 
 private:
 	/// @brief Represents a job in the JobPool.

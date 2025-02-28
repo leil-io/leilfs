@@ -157,15 +157,22 @@ struct ChunkserverEntry {
 	std::set<uint32_t> partiallyCompletedWrites;
 
 	/* read */
-	uint32_t readJobId = 0; ///< ID of the current read job being processed.
-	uint8_t todoReadCounter = 0; ///< R (read finished + send finished)
+	uint16_t maxParallelHddReadJobs; ///< Maximum size of pendingReadDataPackets.
+
+	/// List of read data packets waiting for the HDD worker to finish, and then be sent.
+	std::list<std::unique_ptr<PacketStruct>> pendingReadDataPackets;
+	std::list<uint32_t> pendingReadJobIds; ///< Job IDs for pending read operations.
+	/// List of read data packets within a failing read operation, which are to be discarded.
+	std::list<std::unique_ptr<PacketStruct>> toDiscardReadDataPackets;
+	std::list<uint32_t> toDiscardReadJobIds; ///< Job IDs for read operations to discard.
+
+	size_t readyReadDataPackets{0}; ///< Number of pending read data packets ready to be sent.
 
 	/* get blocks */
 	uint32_t getBlocksJobId = 0; ///< Current job ID for retrieving chunk blocks
 	uint16_t getBlocksJobResult = 0; ///< Result of the get blocks job
 
-	/* common for read and write but meaning is different !!! */
-	std::unique_ptr<PacketStruct> readPacket = nullptr;
+	/* PacketStruct is common for read and write but meaning is different !!! */
 	std::unique_ptr<PacketStruct> writePacket =
 	    std::make_unique<PacketStruct>();
 
@@ -184,8 +191,9 @@ struct ChunkserverEntry {
 
 	LOG_AVG_TYPE readOperationTimer;
 
-	ChunkserverEntry(int socket, JobPool *workerJobPool)
-	    : workerJobPool(workerJobPool), sock(socket) {
+	ChunkserverEntry(int socket, JobPool *workerJobPool, uint16_t maxParallelHddReadJobs)
+	    : workerJobPool(workerJobPool), sock(socket),
+	      maxParallelHddReadJobs(maxParallelHddReadJobs) {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;
 	}
@@ -320,9 +328,17 @@ struct ChunkserverEntry {
 	/// in the page cache.
 	void prefetch(const uint8_t *data, PacketHeader::Type type,
 	              PacketHeader::Length length);
+	
+	/// Prepares the discard of the current ongoing read operations.
+	///
+	/// It disables the jobs, changes the callback and moves the jobs from pending
+	/// to discard lists.
+	void prepareDiscardReadJobs();
 
 	/// Callback for when a read operation finishes.
 	static void readFinishedCallback(uint8_t status, void *entry);
+	/// Callback for when a discarded read operation finishes.
+	static void readDiscardCallback(uint8_t status, void *entry);
 	/// Callback after delayed close operations.
 	static void delayedCloseCallback(uint8_t status, void *entry);
 	/// Callback for when a write operation finishes.
@@ -385,8 +401,6 @@ struct ChunkserverEntry {
 	void readFromSocket();
 	/// Checks if it is a read operation and tries to finish it.
 	void outputCheckReadFinished();
-	/// Indirectly sends a read status message if there is no more data to read.
-	void sendFinished();
 
 	/// Closes all active jobs and updates the state.
 	///

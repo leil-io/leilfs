@@ -124,8 +124,8 @@
 # NR_OF_HDD_WORKERS_PER_NETWORK_WORKER = 16
 
 ## Maximum number of jobs that each network worker may use for disk operations.
-## (Default: 1000)
-# BGJOBSCNT_PER_NETWORK_WORKER = 1000
+## (Default: 4000)
+# BGJOBSCNT_PER_NETWORK_WORKER = 4000
 
 ## Maximum amount of time in milliseconds that the polling operation will wait
 ## for events. In the chunkservers, the same value is applied for the events
@@ -133,6 +133,10 @@
 ## at the cost of CPU usage.
 ## (Default: 50)
 # POLL_TIMEOUT_MS = 50
+
+## Maximum number of read jobs processed in parallel per client connection.
+## (Default: 16)
+# MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY = 16
 
 ## additional number of kilobytes which should be passed to
 ## posix_fadvise(POSIX_FADV_WILLNEED) before reading data from a chunk
