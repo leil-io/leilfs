@@ -908,15 +908,24 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 		InodePathByInode::inodePathInfo.locked = true;
 		InodePathByInode::inodePathInfo.inode = inode;
 		std::string fullPath = "";
-		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+		int lookupStatus = SAUNAFS_STATUS_OK;
+		int getattrStatus = SAUNAFS_STATUS_OK;
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(lookupStatus, ctx,
 		fs_fullpath(inode, ctx.uid, ctx.gid, fullPath));
-		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(getattrStatus, ctx,
 			fs_getattr(inode, ctx.uid, ctx.gid, attr));
+		if (lookupStatus != SAUNAFS_STATUS_OK || getattrStatus != SAUNAFS_STATUS_OK) {
+			status = lookupStatus != SAUNAFS_STATUS_OK ? lookupStatus : getattrStatus;
+			InodePathByInode::inodePathInfo.locked = false;
+			InodePathByInode::inodePathInfo.cv.notify_one();
+			lock.unlock();
+			throw RequestException(status);
+		}
+		status = SAUNAFS_STATUS_OK;
 		InodePathByInode::inodePathInfo.pathByInode = new char[fullPath.length() + 1];
 		std::strcpy(InodePathByInode::inodePathInfo.pathByInode, fullPath.c_str());
 		attr[0] = TYPE_FILE;
 		inode = parent;
-		status = 0;
 		icacheflag = 0;
 	} else if (usedircache && gDirEntryCache.lookup(ctx,parent,std::string(name,nleng),inode,attr)) {
 		if (debug_mode) {

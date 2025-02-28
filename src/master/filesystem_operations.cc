@@ -493,7 +493,9 @@ uint8_t fs_full_path_by_inode(const FsContext &context, uint32_t initial_inode,
 	std::string current_name = "";
 
 	while (current_inode != context.rootinode()) {
-		if (!current_node) { return SAUNAFS_ERROR_ENOENT; }
+		if (!current_node || current_node->parent.empty()) { 
+			return SAUNAFS_ERROR_ENOENT; 
+		}
 		auto [parentId, nameHandle] = current_node->parent[0];
 		auto parent_node = fsnodes_id_to_node<FSNodeDirectory>(parentId);
 		current_name = nameHandle->get();

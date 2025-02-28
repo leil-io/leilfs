@@ -2796,7 +2796,9 @@ uint8_t fs_fullpath(uint32_t inode, uint32_t uid,
 	threc *rec = fs_get_my_threc();
 	auto message =
 	    cltoma::fullPathByInode::build(rec->packetId, inode, uid, gid);
-	if (!fs_saucreatepacket(rec, message)) { return SAUNAFS_ERROR_IO; }
+	if (!fs_saucreatepacket(rec, message)) { 
+		return SAUNAFS_ERROR_IO; 
+	}
 	if (!fs_sausendandreceive(rec, SAU_MATOCL_FULL_PATH_BY_INODE, message)) {
 		return SAUNAFS_ERROR_IO;
 	}
