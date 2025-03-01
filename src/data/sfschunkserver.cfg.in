@@ -134,6 +134,10 @@
 ## (Default: 50)
 # POLL_TIMEOUT_MS = 50
 
+## Maximum number of blocks read from the device in a single read job. If possible,
+## will try to make a single pread call. (Default is 8)
+# MAX_BLOCKS_PER_HDD_READ_JOB = 8
+
 ## Maximum number of read jobs processed in parallel per client connection.
 ## (Default: 16)
 # MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY = 16

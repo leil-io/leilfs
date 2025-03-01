@@ -432,20 +432,43 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 		while (size > 0 && pendingReadDataPackets.size() < callMaxParallelHddReadJobs) {
 			const uint32_t totalRequestSize = size;
 			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
-			const uint32_t thisPartSize =
-			    std::min<uint32_t>(totalRequestSize, SFSBLOCKSIZE - thisPartOffset);
+			const uint32_t thisPartSize = std::min<uint32_t>(
+			    totalRequestSize, maxBlocksPerHddReadJob * SFSBLOCKSIZE - thisPartOffset);
 			const uint32_t numBlocks = (thisPartSize + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS;
 			const uint16_t totalRequestBlocks =
-			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
+			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS;
 
 			std::vector<uint8_t> readDataPrefix;
-			messageSerializer->serializePrefixOfCstoclReadData(readDataPrefix, chunkId, offset,
-			                                                   thisPartSize);
+			messageSerializer->serializePrefixOfCstoclReadData(
+			    readDataPrefix, chunkId, offset,
+			    std::min<uint32_t>(thisPartSize, SFSBLOCKSIZE - thisPartOffset));
+
 			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix, numBlocks);
 			if (packet == kInvalidPacket) {
 				state = State::Close;
 				return;
 			}
+			if (thisPartSize > SFSBLOCKSIZE) {
+				// won't execute if requesting only one block
+				for (uint32_t i = 1; i < numBlocks; i++) {
+					readDataPrefix.clear();
+					messageSerializer->serializePrefixOfCstoclReadData(
+					    readDataPrefix, chunkId, offset - thisPartOffset + (i << SFSBLOCKBITS),
+					    SFSBLOCKSIZE);
+
+					if (packet->outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Header,
+					                                         readDataPrefix) !=
+					    static_cast<ssize_t>(readDataPrefix.size())) {
+						if (packet->outputBuffer) {
+							getReadOutputBufferPool().put(std::move(packet->outputBuffer));
+						}
+
+						state = State::Close;
+						return;
+					}
+				}
+			}
+
 			pendingReadDataPackets.emplace_back(std::move(packet));
 
 			uint32_t readAheadBlocks = 0;

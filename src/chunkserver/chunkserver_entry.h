@@ -157,6 +157,7 @@ struct ChunkserverEntry {
 	std::set<uint32_t> partiallyCompletedWrites;
 
 	/* read */
+	uint16_t maxBlocksPerHddReadJob; ///< Number of blocks to read from the device in one read job.
 	uint16_t maxParallelHddReadJobs; ///< Maximum size of pendingReadDataPackets.
 
 	/// List of read data packets waiting for the HDD worker to finish, and then be sent.
@@ -190,8 +191,11 @@ struct ChunkserverEntry {
 
 	LOG_AVG_TYPE readOperationTimer;
 
-	ChunkserverEntry(int socket, JobPool *workerJobPool, uint16_t maxParallelHddReadJobs)
-	    : workerJobPool(workerJobPool), sock(socket),
+	ChunkserverEntry(int socket, JobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
+	                 uint16_t maxParallelHddReadJobs)
+	    : workerJobPool(workerJobPool),
+	      sock(socket),
+	      maxBlocksPerHddReadJob(maxBlocksPerHddReadJob),
 	      maxParallelHddReadJobs(maxParallelHddReadJobs) {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;

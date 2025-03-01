@@ -31,7 +31,8 @@ namespace readData {
 inline void serializePrefix(std::vector<uint8_t>& destination,
 		uint64_t chunkId, uint32_t readOffset, uint32_t readSize) {
 	// This prefix requires CRC (uint32_t) and data (readSize * uint8_t) to be appended
-	uint32_t extraSpace = serializedSize(uint32_t()) + readSize;
+	uint32_t extraSpace =
+	    (((readSize + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS) * sizeof(uint32_t)) + readSize;
 	serializePacketPrefix(destination, extraSpace,
 			SAU_CSTOCL_READ_DATA, 0, chunkId, readOffset, readSize);
 }

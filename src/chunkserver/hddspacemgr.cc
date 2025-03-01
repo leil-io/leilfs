@@ -715,10 +715,6 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 
 	uint32_t offsetWithinBlock = offset % SFSBLOCKSIZE;
 
-	if ((size == 0) || ((offsetWithinBlock + size) > SFSBLOCKSIZE)) {
-		return SAUNAFS_ERROR_WRONGSIZE;
-	}
-
 	auto* chunk = hddChunkFindAndLock(chunkId, chunkType);
 
 	if (chunk == ChunkNotFound) {
@@ -743,8 +739,22 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 	// the checksum
 
 	int status = SAUNAFS_STATUS_OK;
+	if (size > SFSBLOCKSIZE && size % SFSBLOCKSIZE == 0) {
+		uint16_t numBlocks = size / SFSBLOCKSIZE;
+		uint16_t initialBlock = block;
+		for (uint16_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
+			uint16_t blockNumber = initialBlock + i;
+			status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer);
 
-	if (size == SFSBLOCKSIZE) {  // Full block
+			if (status == SAUNAFS_STATUS_OK) {
+				status = hddCheckCrcForFullBlock(chunk, blockNumber, outputBuffer,
+					i * SFSBLOCKSIZE, false);
+			}
+		}
+	} else if (size > SFSBLOCKSIZE && size % SFSBLOCKSIZE != 0) {
+		// won't worry us for now
+		return ENOTSUP;
+	} else if (size == SFSBLOCKSIZE) {  // Full block
 		status = hddReadCrcAndBlock(chunk, block, outputBuffer);
 
 		if (status == SAUNAFS_STATUS_OK) {
