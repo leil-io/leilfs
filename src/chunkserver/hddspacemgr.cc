@@ -740,15 +740,66 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 
 	int status = SAUNAFS_STATUS_OK;
 	if (size > SFSBLOCKSIZE && size % SFSBLOCKSIZE == 0) {
-		uint16_t numBlocks = size / SFSBLOCKSIZE;
+		uint16_t numBlocks = size >> SFSBLOCKBITS;
 		uint16_t initialBlock = block;
-		for (uint16_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
-			uint16_t blockNumber = initialBlock + i;
-			status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer);
+		if (!chunk->owner()->isZonedDevice()) {
+			if (initialBlock < chunk->blocks()) {
+				uint32_t bytesRead = outputBuffer->copyIntoBuffer(
+				    OutputBuffer::BufferType::Block, chunk,
+				    std::min<uint32_t>(size, SFSBLOCKSIZE * (chunk->blocks() - initialBlock)),
+				    offset);
+				if (bytesRead !=
+				    std::min<uint32_t>(size, SFSBLOCKSIZE * (chunk->blocks() - initialBlock))) {
+					hddAddErrorAndPreserveErrno(chunk);
+					safs::log_warn("hddRead: file:{} - read error from block {} to {}",
+					               chunk->fullDataFilename().c_str(), initialBlock,
+					               initialBlock + numBlocks - 1);
+					hddReportDamagedChunk(chunk->id(), chunk->type());
+					return SAUNAFS_ERROR_IO;
+				}
+			}
+			for (uint32_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
+				uint16_t blockNumber = initialBlock + i;
+				int bytesRead = 0;
 
-			if (status == SAUNAFS_STATUS_OK) {
-				status = hddCheckCrcForFullBlock(chunk, blockNumber, outputBuffer,
-					i * SFSBLOCKSIZE, false);
+				if (blockNumber >= SFSBLOCKSINCHUNK) {
+					status = SAUNAFS_ERROR_BNUMTOOBIG;
+					continue;
+				}
+
+				if (blockNumber >= chunk->blocks()) {
+					bytesRead = outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC,
+					                                         &gEmptyBlockCrc, kCrcSize);
+					// The block data is already in the buffer
+					bytesRead += outputBuffer->copyValueIntoBuffer(OutputBuffer::BufferType::Block,
+					                                               0, SFSBLOCKSIZE);
+
+					if (static_cast<uint32_t>(bytesRead) != kHddBlockSize) {
+						status = SAUNAFS_ERROR_IO;
+						continue;
+					}
+				} else {
+					const uint8_t *crcData =
+						gOpenChunks.getResource(chunk->metaFD()).crcData() +
+						blockNumber * kCrcSize;
+					outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcData, kCrcSize);
+					// The block data is already in the buffer
+				}
+
+				if (status == SAUNAFS_STATUS_OK) {
+					status = hddCheckCrcForFullBlock(chunk, blockNumber, outputBuffer,
+					                                 i * SFSBLOCKSIZE, false);
+				}
+			}
+		} else {
+			for (uint16_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
+				uint16_t blockNumber = initialBlock + i;
+				status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer);
+	
+				if (status == SAUNAFS_STATUS_OK) {
+					status = hddCheckCrcForFullBlock(chunk, blockNumber, outputBuffer,
+					                                 i * SFSBLOCKSIZE, false);
+				}
 			}
 		}
 	} else if (size > SFSBLOCKSIZE && size % SFSBLOCKSIZE != 0) {
