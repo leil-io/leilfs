@@ -22,7 +22,11 @@
 #include "mount/mastercomm.h"
 
 #include <limits.h>
+#if _WIN32
+#include <winsock2.h>
+#else
 #include <netinet/in.h>
+#endif
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
