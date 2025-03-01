@@ -272,7 +272,7 @@ bool ReadaheadOperationsManager::request(
 	// Let's check if we very recently finished the request we've been waiting
 	// for
 	if (!result.back()->done) {
-		rcvpPtr = addRequest_(rrec, result.back());
+		rcvpPtr = addRequest_(rrec, result.back(), 0);
 	}
 
 	addExtraRequests_(rrec, offset, recommendedSize,
@@ -287,24 +287,25 @@ bool ReadaheadOperationsManager::request(
 }
 
 Request ReadaheadOperationsManager::nextRequest() {
-	Request request = readaheadRequestContainer_.front();
+	massert(!readaheadRequestContainer_.empty(), "There is no request to be processed");
+	Request request = readaheadRequestContainer_.top().second;
 	readaheadRequestContainer_.pop();
 	return request;
 }
 
 void ReadaheadOperationsManager::putTerminateRequest() {
 	std::unique_lock requestsLock(gReadaheadRequestsContainerMutex);
-	readaheadRequestContainer_.push(
-	    std::make_pair(EMPTY_REQUEST, EMPTY_REQUEST));
+	putRequestWithPriority(std::numeric_limits<int64_t>::max(), EMPTY_REQUEST, EMPTY_REQUEST);
 	readOperationsAvailable.notify_one();
 }
 
 RequestConditionVariablePair *ReadaheadOperationsManager::addRequest_(
-    ReadRecord *rrec, ReadCache::Entry *entry) {
+    ReadRecord *rrec, ReadCache::Entry *entry, int64_t extraPriority) {
 	ReadaheadRequestPtr readaheadRequestPtr =
 	    ReadaheadRequestPtr(new ReadaheadRequestEntry(entry));
 	std::unique_lock requestsLock(gReadaheadRequestsContainerMutex);
-	readaheadRequestContainer_.push(std::make_pair(rrec, readaheadRequestPtr));
+	int64_t priority = requestsTimer_.elapsed_us() + extraPriority;
+	putRequestWithPriority(priority, rrec, readaheadRequestPtr);
 	rrec->requestsNotDone++;
 	entry->acquire();
 
@@ -339,13 +340,20 @@ void ReadaheadOperationsManager::addExtraRequests_(
 			continue;
 		}
 
-		ReadCache::Entry *entry = rrec->cache.forceInsert(
-		    maximumRequestedOffset, satisfyingSize);
+		// Try to align extra requests to SFSCHUNKSIZE
+		uint64_t extraRequestSize = std::min<uint64_t>(
+		    satisfyingSize, SFSCHUNKSIZE - (maximumRequestedOffset % SFSCHUNKSIZE));
+		ReadCache::Entry *entry = rrec->cache.forceInsert(maximumRequestedOffset, extraRequestSize);
+
+		massert(maximumRequestedOffset >= currentOffset,
+		        "Maximum requested offset should be greater than or equal current offset");
+		int64_t extraPriority =
+		    rrec->readahead_adviser.expectedNeededTime_us(maximumRequestedOffset - currentOffset);
 
 		// we are not going to use the return value from the addRequest_ call
-		addRequest_(rrec, entry);
+		addRequest_(rrec, entry, extraPriority);
 
-		maximumRequestedOffset += satisfyingSize;
+		maximumRequestedOffset += extraRequestSize;
 	}
 }
 

@@ -91,15 +91,18 @@ public:
 	}
 
 	/*!
+	* \brief Estimate the time a readahead request will be needed.
+	*/
+	double expectedNeededTime_us(uint64_t aheadSize) {
+		return aheadSize / throughputMBps();
+	}
+
+	/*!
 	 * \brief Estimation of the size of data requested by the process
 	 * considering the last read requests made.
 	 */
 	uint64_t throughputWindow() {
-		int64_t timestamp = timer_.elapsed_us();
-		double throughput_MBps = static_cast<double>(requested_bytes_) /
-		                         (timestamp - history_.front().timestamp);
-
-		return kConservativeMultiplier * throughput_MBps * timeout_ms_
+		return kConservativeMultiplier * throughputMBps() * timeout_ms_
 		       * kBytesInOneKiB;
 	}
 
@@ -141,6 +144,25 @@ public:
 	}
 
 private:
+
+	/*!
+	* \brief Calculates an estimation of the throughput in MB/s considering the current history.
+	* The timestamp that could be provided is to save the call to ```elapsed_us``` if already done.
+	*/
+	double throughputMBps(int64_t timestamp = 0) {
+		if (timestamp == 0) {
+			timestamp = timer_.elapsed_us();
+		}
+		// Make sure non-zero division
+		double throughput_MBps = static_cast<double>(requested_bytes_) /
+		                         std::max<int64_t>(timestamp - history_.front().timestamp, 1);
+
+		if (throughput_MBps <= 0) {
+			safs::log_warn("Throughput must be greater than 0, current value: {}", throughput_MBps);
+			throughput_MBps = kNeutralThroughput;
+		}
+		return throughput_MBps;
+	}
 
 	/*!
 	 * \brief Calculates the absolute difference between two ```uint64_t``` values.
@@ -191,12 +213,10 @@ private:
 	 * \param timestamp time point used for latency estimation
 	 */
 	void adjustMaxWindowSize(int64_t timestamp) {
-		double throughput_MBps =
-		    (double)requested_bytes_ / (timestamp - history_.front().timestamp);
 		// Max window size is set on the basis of estimated throughput
 		max_window_size_ = std::min<uint64_t>(
 		    window_size_limit_,
-		    kConservativeMultiplier * throughput_MBps * timeout_ms_ * 1024);
+		    kConservativeMultiplier * throughputMBps(timestamp) * timeout_ms_ * kBytesInOneKiB);
 		max_window_size_ = std::max(max_window_size_, kInitWindowSize);
 	}
 
@@ -239,7 +259,8 @@ private:
 	// This multiplier makes the raw estimation of the throughput window a much
 	// conservative one -- it is much safer to assume the process won't ask more
 	// data than expected.
-	static const int64_t kConservativeMultiplier = 2;
+	static const int64_t kConservativeMultiplier = 1;
+	static const uint64_t kNeutralThroughput = 1;
 	static const uint16_t kBytesInOneKiB = 1024;
 	// up to add a command line options for these parameters
 	static const int64_t kErrorThreshold = SFSBLOCKSIZE;

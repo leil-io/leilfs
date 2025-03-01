@@ -311,10 +311,19 @@ public:
 	/** \brief Insert a request signaling one read worker thread to stop.
 	 *
 	 * requestsLock: UNLOCKED
-	*/
+	 */
 	void putTerminateRequest();
 
 private:
+	/** \brief Insert a request consisting of the passed parameters.
+	 *
+	 * requestsLock: LOCKED
+	 */
+	void putRequestWithPriority(int64_t priority, ReadRecord *readRecord,
+	                            ReadaheadRequestPtr request) {
+		readaheadRequestContainer_.emplace(priority, std::make_pair(readRecord, request));
+	}
+
 	/**
 	 * \brief Add a readahead request to the underlying container and to the
 	 * provided ```ReadRecord```'s ```ReadaheadRequests``` member.
@@ -324,11 +333,13 @@ private:
 	 * \param rrec The related ```ReadRecord```.
 	 * \param entry Pointer to the ```Entry``` in the read cache of the given
 	 * ```ReadRecord```.
+	 * \param extraPriority How much time after the current time the request
+	 * should be needed in microseconds.
 	 * \return ```RequestConditionVariablePair``` - A pair of pointers to the
 	 * request inserted and the ```std::conditional_variable``` to wait for.
 	 */
-	RequestConditionVariablePair *addRequest_(ReadRecord *rrec,
-	                                          ReadCache::Entry *entry);
+	RequestConditionVariablePair *addRequest_(ReadRecord *rrec, ReadCache::Entry *entry,
+	                                          int64_t extraPriority);
 
 	/**
 	 * \brief Add extra requests to increase the cached data from a given offset.
@@ -352,13 +363,16 @@ private:
 	 * scheduled request. If not, this value provides the starting offset to
 	 * add the extra requests.
 	 */
-	void addExtraRequests_(ReadRecord *rrec, uint64_t currentOffset,
-	                       uint64_t satisfyingSize,
+	void addExtraRequests_(ReadRecord *rrec, uint64_t currentOffset, uint64_t satisfyingSize,
 	                       uint64_t maximumRequestedOffset);
 
-	using ReadaheadRequestContainer = std::queue<Request>;
+	using RequestWithPriority = std::pair<int64_t, Request>;
+	using ReadaheadRequestContainer =
+	    std::priority_queue<RequestWithPriority, std::vector<RequestWithPriority>,
+	                        std::greater<RequestWithPriority>>;
 
 	ReadaheadRequestContainer readaheadRequestContainer_;
+	Timer requestsTimer_;
 };
 
 inline uint64_t round_up_to_blocksize(uint64_t bytes);
