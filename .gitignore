@@ -90,6 +90,7 @@ tests/test_suites/ICETests
 ###########
 src/mount/windows
 create-win-release.bat
+deliver-win-release.bat
 
 # Test setup #
 ##############
