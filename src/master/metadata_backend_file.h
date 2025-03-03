@@ -59,6 +59,8 @@ public:
 	/// @param file -- path to the changelog file
 	/// @return 0 in case of any error.
 	uint64_t changelogGetLastLogVersion(const std::string& fname) override;
+#else   // #ifndef METALOGGER
+	uint64_t findLastLogVersion() override;
 #endif  // #ifndef METALOGGER
 
 #if !defined(METARESTORE) && !defined(METALOGGER)

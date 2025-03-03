@@ -1607,6 +1607,89 @@ void MetadataBackendFile::store_fd(FILE *fd) {
 	}
 }
 
+#else   // #ifndef METALOGGER
+
+uint64_t MetadataBackendFile::findLastLogVersion() {
+	struct stat st;
+	uint8_t buff[32800];    // 32800 = 32768 + 32
+	uint64_t size;
+	uint32_t buffpos;
+	uint64_t lastnewline;
+	int fd;
+	uint64_t lastlogversion = 0;
+
+	if ((stat(kMetadataMlFilename, &st) < 0) || (st.st_size == 0) || ((st.st_mode & S_IFMT) != S_IFREG)) {
+		return 0;
+	}
+
+	fd = open(kChangelogMlFilename, O_RDWR);
+	if (fd<0) {
+		return 0;
+	}
+
+	::fstat(fd, &st);
+	size = st.st_size;
+	memset(buff,0,32);
+	lastnewline = 0;
+
+	while (size>0 && size+200000>(uint64_t)(st.st_size)) {
+		if (size>32768) {
+			memcpy(buff+32768,buff,32);
+			size-=32768;
+			lseek(fd,size,SEEK_SET);
+			if (read(fd,buff,32768)!=32768) {
+				lastlogversion = 0;
+				close(fd);
+				return lastlogversion;
+			}
+			buffpos = 32768;
+		} else {
+			memmove(buff+size,buff,32);
+			lseek(fd,0,SEEK_SET);
+			if (read(fd,buff,size)!=(ssize_t)size) {
+				lastlogversion = 0;
+				close(fd);
+				return lastlogversion;
+			}
+			buffpos = size;
+			size = 0;
+		}
+		// size = position in file of first byte in buff
+		// buffpos = position of last byte in buff to search
+		while (buffpos>0) {
+			buffpos--;
+			if (buff[buffpos]=='\n') {
+				if (lastnewline==0) {
+					lastnewline = size + buffpos;
+				} else {
+					if (lastnewline+1 != (uint64_t)(st.st_size)) {  // garbage at the end of file - truncate
+						if (ftruncate(fd,lastnewline+1)<0) {
+							lastlogversion = 0;
+							close(fd);
+							return lastlogversion;
+						}
+					}
+					buffpos++;
+					while (buffpos<32800 && buff[buffpos]>='0' && buff[buffpos]<='9') {
+						lastlogversion *= 10;
+						lastlogversion += buff[buffpos]-'0';
+						buffpos++;
+					}
+					if (buffpos==32800 || buff[buffpos]!=':') {
+						lastlogversion = 0;
+					}
+					close(fd);
+					return lastlogversion;
+				}
+			}
+		}
+	}
+
+	close(fd);
+
+	return lastlogversion;
+}
+
 #endif  // #ifndef METALOGGER
 
 uint64_t MetadataBackendFile::getVersion(const std::string& file) {
