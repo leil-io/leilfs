@@ -1,5 +1,46 @@
 This file lists noteworthy changes in SaunaFS.
 
+ * SaunaFS (4.9.0) (2025-03-04)
+ - feat(uraft): Introduce floating IP manager for HA (#301)
+ - feat: Use quota in volume size option (#295)
+ - feat: Statfs cache
+ - feat: Use quota in volume size option
+ - fix(build): Fix vcpkg presets for Windows (#305)
+ - build: Add vcpkg support (#302)
+ - feat(mds,common): Start decoupling metadata backend (#296)
+ - perf(uraft): Reduce CPU usage on non-leader nodes (#297)
+ - feat(mount): add log on OS notification area (#280)
+ - fix: Fixes on sfsappendchunks + test (#293)
+ - feat: Improve metadata speed for big directories (#272)
+ - feat(chunkserver): Reduce strings RAM usage (#290)
+ - feat(mount): Add client limit glibc malloc arenas (#274)
+ - feat(mount): Add ignore utimens data for Windows (#283)
+ - fix: Fix CLang compilation (#286)
+ - build: Move cpack to another script (#285)
+ - feat: Speedup unlink operation in big dirs (#268)
+ - feat: Enlarge chunk hash table
+ - feat: Reduce unlink overhead
+ - feat: Reuse the buffers when storing metadata
+ - feat: Make MD benchmark to show time per slice
+ - fix(slogger): Set log level as `maybe_unused` (#278)
+ - fix(slogger): Use level to set syslog as well
+ - feat(slogger): Add setting up logging using env/config variables
+ - feat(mount): Enable status updater thread option (#276)
+ - Build saunafs using clang (#270)
+ - fix: Addressing minor issues detected by Clang
+ - fix: Fix functions detection in CMake (#267)
+ - fix: Remove array-bounds and stringop-overflow warnings
+ - fix: Fix functions detection in CMake
+ - feat(mount): Add path by inode hidden file (#265)
+ - feat: Reduce malloc virtual memory usage (#266)
+ - fix(mount): Fix low level fuse options in help (#254)
+ - fix(build): suppress warnings in manpage generation (#264)
+ - fix: metarestore logging (#255)
+ - fix(mount): Fix helgrind issues on `fs_nop_thread`
+ - fix(mount): Fix consistent read cache release
+ - Fix readcache memory release (#241)
+ - feat(mount): Add option for open files on Windows (#230)
+
  * SaunaFS (4.7.0) (2024-12-18)
  - fix(mount): Remove helgrind warning
  - fix(mount): Reduce data race conditions in mount
