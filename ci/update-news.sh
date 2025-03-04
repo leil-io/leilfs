@@ -3,10 +3,9 @@
 set -eux
 
 gitChangelog=$(./ci/get-changelog.sh)
-newVersion=$(./ci/new-version.sh)
+version=$(sed -nE 's/^set\(DEFAULT_MIN_VERSION "([^"]+)"\).*/\1/p' ./CMakeLists.txt)
 
-
-newsEntry="\n * SaunaFS (${newVersion}) ($(date '+%Y-%m-%d' -u))\n"
+newsEntry="\n * SaunaFS (${version}) ($(date '+%Y-%m-%d' -u))\n"
 
 while read -r _ title message; do
 	case $title in
