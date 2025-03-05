@@ -33,6 +33,9 @@ inline const int kOpenRetry_ms = 5;
 
 inline bool gPunchHolesInFiles;
 
+/// Allow the chunkserver to load chunks with legacy interleave format.
+inline bool gLoadLegacyChunks = false;
+
 /// The collection of data Disks (directories where chunks are stored).
 /// Protected by gDisksMutex.
 inline std::vector<std::unique_ptr<IDisk>> gDisks;

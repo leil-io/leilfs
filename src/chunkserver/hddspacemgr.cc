@@ -2493,6 +2493,7 @@ void hddReload(void) {
 
 	gAdviseNoCache = cfg_getuint32("HDD_ADVISE_NO_CACHE", 0);
 	gPerformFsync = cfg_getuint32("PERFORM_FSYNC", 1);
+	gLoadLegacyChunks = cfg_getuint32("LEGACY_INTERLEAVE_SUPPORT", 0);
 
 	gStatChunksAtDiskScan = cfg_getuint8("STAT_CHUNKS_AT_DISK_SCAN", 1) != 0U;
 	if (!gStatChunksAtDiskScan) {
@@ -2603,6 +2604,7 @@ int hddInit() {
 	initializeEmptyBlockCrcForDisks();
 
 	gPerformFsync = cfg_getuint32("PERFORM_FSYNC", 1);
+	gLoadLegacyChunks = cfg_getuint32("LEGACY_INTERLEAVE_SUPPORT", 0);
 
 	gStatChunksAtDiskScan = cfg_getuint8("STAT_CHUNKS_AT_DISK_SCAN", 1) != 0U;
 	if (!gStatChunksAtDiskScan) {
