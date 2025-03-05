@@ -1,6 +1,6 @@
 This file lists noteworthy changes in SaunaFS.
 
- * SaunaFS (4.9.0) (2025-03-04)
+ * SaunaFS (4.8.0) (2025-03-04)
  - feat(uraft): Introduce floating IP manager for HA (#301)
  - feat: Use quota in volume size option (#295)
  - feat: Statfs cache
