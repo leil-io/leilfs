@@ -59,9 +59,8 @@ elif [[ ${isMinor} == 1 ]]; then
 elif [[ ${isPatch} == 1 ]]; then
 	((newPatch++))
 else
+	1>&2 echo "No new version"
 	exit 1
 fi
 
 echo -n "${newMajor}.${newMinor}.${newPatch}"
-# git switch dev
-# git cherry-pick last commit from newVersionTag-rc1
