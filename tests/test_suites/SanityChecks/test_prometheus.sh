@@ -1,11 +1,8 @@
-if ! ldd $(whereis sfsmaster | awk '{print $2}') | grep prometheus; then
-	echo "Prometheus client isn't linked with master, skipping test..."
-	test_end
-fi
-expected_client_received_initial='observed_packets_total_client{direction="rx",protocol="tcp"}'
-expected_client_sent_initial='observed_packets_total_client{direction="tx",protocol="tcp"}'
-prometheus_host="localhost:8080"
-
+expected_client_received_initial='metadata_observed_packets_client_total{direction="rx",protocol="tcp"}'
+expected_client_sent_initial='metadata_observed_packets_client_total{direction="tx",protocol="tcp"}'
+declare port
+get_next_port_number port
+prometheus_host="localhost:${port}"
 USE_RAMDISK=YES \
 	MASTERSERVERS=1 \
 	CHUNKSERVERS=0 \

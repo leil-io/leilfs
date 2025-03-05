@@ -16,11 +16,10 @@
 #  along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-
 collect_sources(METRICS)
 
 add_library(metrics ${METRICS_SOURCES})
 
-if (PROMETHEUS_CPP_ENABLE_PULL)
+if (ENABLE_PROMETHEUS)
   target_link_libraries(metrics slogger prometheus-cpp::pull)
 endif()
