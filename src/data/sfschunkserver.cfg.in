@@ -184,6 +184,10 @@
 ## of read requests is sent to other chunkservers.
 # REPLICATION_WAVE_TIMEOUT_MS = 500
 
+## [Support] Load and migrate Legacy Interleave chunk format.
+# (Default: 0), i.e. disabled.
+# LEGACY_INTERLEAVE_SUPPORT = 0
+
 ## Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or config
 ## value LOG_LEVEL to determine logging level.
 ## Valid log levels are
