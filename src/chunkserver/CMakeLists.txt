@@ -7,7 +7,8 @@ add_subdirectory(plugins)
 
 collect_sources(CHUNKSERVER)
 add_library(chunkserver ${CHUNKSERVER_SOURCES})
-target_link_libraries(chunkserver chunkserver-common safsprotocol sfscommon
+target_link_libraries(chunkserver chunkserver-common safsprotocol sfscommon metrics
+    ${Boost_LIBRARIES}
     ${ADDITIONAL_LIBS})
 create_unittest(chunkserver ${CHUNKSERVER_TESTS})
 link_unittest(chunkserver chunkserver sfscommon)

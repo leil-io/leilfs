@@ -26,18 +26,35 @@
 
 namespace metrics {
 
-struct Master {
-	Master() = default;
+struct Master : ServiceType {
+	Master(const Master &) = default;
+	Master(Master &&) = delete;
+	Master &operator=(const Master &) = default;
+	Master &operator=(Master &&) = delete;
 	Master(std::shared_ptr<prometheus::Registry>& registry);
 
+	Counter& get(chunkserver::Counters  /*key*/) override {
+		throw std::logic_error("Master should not call with chunkserver counters");
+	}
+	Counter& get(master::Counters key) override {
+		return counters[static_cast<uint8_t>(key)];
+	};
+	Gauge& get(chunkserver::Gauges  /*key*/) override {
+		throw std::logic_error("Not implemented");
+	};
+	Gauge& get(master::Gauges  /*key*/) override {
+		throw std::logic_error("Not implemented");
+	};
+
 	// Metric(s)
-	CounterFamily *packetClientCounter{nullptr};
-	CounterFamily *byteClientCounter{nullptr};
-	CounterFamily *filesystemCounter{nullptr};
+	CounterFamily *packet_client_counter{nullptr};
+	CounterFamily *byte_client_counter{nullptr};
+	CounterFamily *filesystem_counter{nullptr};
 	CounterFamily *chunkCounter{nullptr};
 
 	// Master Counters
-	std::array<Counter, static_cast<unsigned int>(Counter::Master::KEY_END) + 1> masterCounters;
+	std::array<Counter, static_cast<uint8_t>(master::Counters::KEY_END) + 1> counters;
+	~Master() override = default;
 };
 }
 #endif

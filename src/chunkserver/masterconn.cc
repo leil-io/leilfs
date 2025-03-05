@@ -45,6 +45,7 @@
 #include "common/massert.h"
 #include "common/output_packet.h"
 #include "common/random.h"
+#include "metrics/metrics.h"
 #include "slogger/slogger.h"
 #include "common/sockets.h"
 #include "common/time_utils.h"
@@ -602,7 +603,10 @@ void masterconn_read(masterconn *eptr) {
 			return;
 		}
 
+		metrics::Counter::increment(metrics::chunkserver::Counters::MASTER_RX_BYTES,
+		                            static_cast<double>(ret));
 		stats_bytesin += ret;
+
 		try {
 			eptr->inputPacket.increaseBytesRead(ret);
 		} catch (InputPacketTooLongException& ex) {

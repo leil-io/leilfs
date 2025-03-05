@@ -32,19 +32,19 @@
 // implementation for adding new metrics.
 
 #ifdef HAVE_PROMETHEUS
+#include "chunkserver.h"
+#include "master.h"
 #include <prometheus/counter.h>
 #include <prometheus/detail/builder.h>
 #include <prometheus/family.h>
 #include <prometheus/registry.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <array>
 #include <exception>
 #include <memory>
 #endif
 
 #include "metrics.h"
-#include "metrics/master.h"
 #include "slogger/slogger.h"
 
 
@@ -52,7 +52,7 @@ constexpr auto THREAD_SLEEP_TIME_MS = 100;
 
 namespace metrics {
 
-std::unique_ptr<std::jthread>
+static std::unique_ptr<std::jthread>
     gMetricsMainThread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 void destroy() {
@@ -62,7 +62,7 @@ void destroy() {
 }
 
 #ifndef HAVE_PROMETHEUS
-void init(const char* /* unused */) {
+void init(const char* /* unused */, const Type /* unused */) {
 	safs::log_err(
 	    "could not setup prometheus server: Prometheus isn't compiled with "
 	    "this program");
@@ -72,8 +72,21 @@ void init(const char* /* unused */) {
 
 class PrometheusMetrics {
 public:
-	PrometheusMetrics() : registry(std::make_shared<prometheus::Registry>()) {
-		master = Master(registry);
+
+	PrometheusMetrics()
+	    :
+	      registry(std::make_shared<prometheus::Registry>()) {
+	}
+
+	void initialize_service(Type type) {
+		switch (type) {
+			case MASTER:
+				service = std::make_unique<Master>(registry);
+				break;
+			case CHUNKSERVER:
+				service = std::make_unique<Chunkserver>(registry);
+				break;
+		}
 	}
 
 	std::shared_ptr<prometheus::Registry> getRegistry() {
@@ -81,7 +94,7 @@ public:
 	}
 
 	// Master metrics
-	Master master; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
+	std::unique_ptr<ServiceType> service; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 
 private:
 	// Registry
@@ -94,12 +107,25 @@ void Counter::increment(T key, double n) {
 	// Safe as all values are constructed at specific keys, however a check
 	// needs to be made whether the actual counter initialized or not (for
 	// whatever reason)
-	auto counterKey = static_cast<unsigned int>(key);
-	auto counter = gPrometheusMetrics.master.masterCounters[counterKey]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+	auto counter = gPrometheusMetrics.service->get(key); // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
 }
 
-void prometheusLoop(const std::stop_token& stop, const char* host) {
+template <typename T>
+void Gauge::set(T key, double n) {
+	// Safe as all values are constructed at specific keys, however a check
+	// needs to be made whether the actual counter initialized or not (for
+	// whatever reason)
+	auto counter = gPrometheusMetrics.service->get(key); // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+	if (counter.gauge_ != nullptr) { counter.gauge_->Set(n); }
+}
+
+void Gauge::set(chunkserver::Gauges key, double n) {
+	auto counter = gPrometheusMetrics.service->get(key); // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+	if (counter.gauge_ != nullptr) { counter.gauge_->Set(n); }
+}
+
+void prometheus_loop(const std::stop_token& stop, const char* host) {
 	try {
 		// create an http server
 		prometheus::Exposer exposer{host};
@@ -115,11 +141,18 @@ void prometheusLoop(const std::stop_token& stop, const char* host) {
 	}
 }
 
-void init(const char* host) {
-	gMetricsMainThread = std::make_unique<std::jthread>(std::jthread(prometheusLoop, host));
+void init(const char* host, Type type) {
+	gMetricsMainThread = std::make_unique<std::jthread>(std::jthread(prometheus_loop, host));
+	gPrometheusMetrics.initialize_service(type);
 }
 
 }
 #endif
-template void metrics::Counter::increment<metrics::Counter::Master>
-	(metrics::Counter::Master key, double n);
+template void metrics::Counter::increment<metrics::master::Counters>
+	(master::Counters key, double n);
+template void metrics::Counter::increment<metrics::chunkserver::Counters>
+	(chunkserver::Counters key, double n);
+template void metrics::Gauge::set<metrics::master::Gauges>
+	(master::Gauges key, double n);
+template void metrics::Gauge::set<metrics::chunkserver::Gauges>
+	(chunkserver::Gauges key, double n);

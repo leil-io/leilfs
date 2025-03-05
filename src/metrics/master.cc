@@ -27,13 +27,13 @@ using namespace metrics;
 Master::Master(std::shared_ptr<prometheus::Registry> &registry) {
 	// clang-format off
 	// NOLINTBEGIN(cppcoreguidelines-prefer-member-initializer)
-	packetClientCounter = &setupFamily(
+	packet_client_counter = &setupFamily(
 		"metadata_observed_packets_client_total",
 		"Number of observed packets from and for client", registry);
-	byteClientCounter = &setupFamily(
+	byte_client_counter = &setupFamily(
 		"metadata_observed_bytes_client_total",
 		"Number of observed bytes from and for client", registry);
-	filesystemCounter = &setupFamily(
+	filesystem_counter = &setupFamily(
 		"metadata_stats_total",
 		"Number of observed filesystem operations", registry);
 	chunkCounter= &setupFamily(
@@ -43,143 +43,143 @@ Master::Master(std::shared_ptr<prometheus::Registry> &registry) {
 
 	// A very hacky way to allow compile time checking if metrics have been
 	// set. Any enum value not used will throw a compile time error.
-	using Master = Counter::Master;
-	Master start = Master::KEY_START;
+	using master::Counters;
+	Counters start = Counters::KEY_START;
 	switch (start) {
-		case Master::KEY_START:
+		case Counters::KEY_START:
 			[[fallthrough]];
-		case Master::CHUNK_DELETE:
-			masterCounters[static_cast<unsigned int>(Master::CHUNK_DELETE)] =
+		case Counters::CHUNK_DELETE:
+			counters[static_cast<unsigned int>(Counters::CHUNK_DELETE)] =
 				Counter(
 					{{"chunk", "operations"}, {"operation", "delete"}},
 					chunkCounter);
 			[[fallthrough]];
-		case Master::CHUNK_REPLICATE:
-			masterCounters[static_cast<unsigned int>(Master::CHUNK_REPLICATE)] =
+		case Counters::CHUNK_REPLICATE:
+			counters[static_cast<unsigned int>(Counters::CHUNK_REPLICATE)] =
 				Counter(
 					{{"chunk", "operations"}, {"operation", "replicate"}},
 					chunkCounter);
 			[[fallthrough]];
-		case Master::FS_STATFS:
-			masterCounters[static_cast<unsigned int>(Master::FS_STATFS)] =
+		case Counters::FS_STATFS:
+			counters[static_cast<unsigned int>(Counters::FS_STATFS)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "STATFS"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_GETATTR:
-			masterCounters[static_cast<unsigned int>(Master::FS_GETATTR)] =
+		case Counters::FS_GETATTR:
+			counters[static_cast<unsigned int>(Counters::FS_GETATTR)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "GETATTR"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_SETATTR:
-			masterCounters[static_cast<unsigned int>(Master::FS_SETATTR)] =
+		case Counters::FS_SETATTR:
+			counters[static_cast<unsigned int>(Counters::FS_SETATTR)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "SETATTR"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_LOOKUP:
-			masterCounters[static_cast<unsigned int>(Master::FS_LOOKUP)] =
+		case Counters::FS_LOOKUP:
+			counters[static_cast<unsigned int>(Counters::FS_LOOKUP)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "LOOKUP"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_MKDIR:
-			masterCounters[static_cast<unsigned int>(Master::FS_MKDIR)] =
+		case Counters::FS_MKDIR:
+			counters[static_cast<unsigned int>(Counters::FS_MKDIR)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "MKDIR"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_RMDIR:
-			masterCounters[static_cast<unsigned int>(Master::FS_RMDIR)] =
+		case Counters::FS_RMDIR:
+			counters[static_cast<unsigned int>(Counters::FS_RMDIR)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "RMDIR"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_SYMLINK:
-			masterCounters[static_cast<unsigned int>(Master::FS_SYMLINK)] =
+		case Counters::FS_SYMLINK:
+			counters[static_cast<unsigned int>(Counters::FS_SYMLINK)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "SYMLINK"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_READLINK:
-			masterCounters[static_cast<unsigned int>(Master::FS_READLINK)] =
+		case Counters::FS_READLINK:
+			counters[static_cast<unsigned int>(Counters::FS_READLINK)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "READLINK"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_MKNOD:
-			masterCounters[static_cast<unsigned int>(Master::FS_MKNOD)] =
+		case Counters::FS_MKNOD:
+			counters[static_cast<unsigned int>(Counters::FS_MKNOD)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "MKNOD"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_UNLINK:
-			masterCounters[static_cast<unsigned int>(Master::FS_UNLINK)] =
+		case Counters::FS_UNLINK:
+			counters[static_cast<unsigned int>(Counters::FS_UNLINK)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "UNLINK"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_RENAME:
-			masterCounters[static_cast<unsigned int>(Master::FS_RENAME)] =
+		case Counters::FS_RENAME:
+			counters[static_cast<unsigned int>(Counters::FS_RENAME)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "RENAME"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_LINK:
-			masterCounters[static_cast<unsigned int>(Master::FS_LINK)] =
+		case Counters::FS_LINK:
+			counters[static_cast<unsigned int>(Counters::FS_LINK)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "LINK"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_READDIR:
-			masterCounters[static_cast<unsigned int>(Master::FS_READDIR)] = Counter(
+		case Counters::FS_READDIR:
+			counters[static_cast<unsigned int>(Counters::FS_READDIR)] = Counter(
 				{{"filesystem", "operations"}, {"operation", "READDIR"}},
-				filesystemCounter);
+				filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_OPEN:
-			masterCounters[static_cast<unsigned int>(Master::FS_OPEN)] =
+		case Counters::FS_OPEN:
+			counters[static_cast<unsigned int>(Counters::FS_OPEN)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "OPEN"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_READ:
-			masterCounters[static_cast<unsigned int>(Master::FS_READ)] =
+		case Counters::FS_READ:
+			counters[static_cast<unsigned int>(Counters::FS_READ)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "READ"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::FS_WRITE:
-			masterCounters[static_cast<unsigned int>(Master::FS_WRITE)] =
+		case Counters::FS_WRITE:
+			counters[static_cast<unsigned int>(Counters::FS_WRITE)] =
 				Counter(
 					{{"filesystem", "operations"}, {"operation", "WRITE"}},
-					filesystemCounter);
+					filesystem_counter);
 			[[fallthrough]];
-		case Master::CLIENT_RX_PACKETS:
-			masterCounters[static_cast<unsigned int>(Master::CLIENT_RX_PACKETS)] =
+		case Counters::CLIENT_RX_PACKETS:
+			counters[static_cast<unsigned int>(Counters::CLIENT_RX_PACKETS)] =
 				Counter(
 					{{"protocol", "tcp"}, {"direction", "rx"}},
-					packetClientCounter);
+					packet_client_counter);
 			[[fallthrough]];
-		case Master::CLIENT_TX_PACKETS:
-			masterCounters[static_cast<unsigned int>(Master::CLIENT_TX_PACKETS)] =
+		case Counters::CLIENT_TX_PACKETS:
+			counters[static_cast<unsigned int>(Counters::CLIENT_TX_PACKETS)] =
 				Counter(
 					{{"protocol", "tcp"}, {"direction", "tx"}},
-					packetClientCounter);
+					packet_client_counter);
 			[[fallthrough]];
-		case Master::CLIENT_RX_BYTES:
-			masterCounters[static_cast<unsigned int>(Master::CLIENT_RX_BYTES)] =
+		case Counters::CLIENT_RX_BYTES:
+			counters[static_cast<unsigned int>(Counters::CLIENT_RX_BYTES)] =
 				Counter(
 					{{"protocol", "tcp"}, {"direction", "rx"}},
-					byteClientCounter);
+					byte_client_counter);
 			[[fallthrough]];
-		case Master::CLIENT_TX_BYTES:
-			masterCounters[static_cast<unsigned int>(Master::CLIENT_TX_BYTES)] =
+		case Counters::CLIENT_TX_BYTES:
+			counters[static_cast<unsigned int>(Counters::CLIENT_TX_BYTES)] =
 				Counter(
 					{{"protocol", "tcp"}, {"direction", "tx"}},
-					byteClientCounter);
+					byte_client_counter);
 			[[fallthrough]];
-		case Master::KEY_END:
+		case Counters::KEY_END:
 			break;
 	}
 	// clang-format on

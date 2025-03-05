@@ -26,11 +26,26 @@
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
 #include "chunkserver/network_main_thread.h"
+#include <common/event_loop.h>
+#include "config/cfg.h"
 #include "common/random.h"
 #include "common/run_tab.h"
+#include "metrics/metrics.h"
 
 /// Functions to call before normal startup
 inline const std::vector<RunTab> earlyRunTabs = {};
+
+inline int prometheus_init() {
+	if (cfg_getuint8("ENABLE_PROMETHEUS", 0) != 1) {
+		safs::log_info(
+		    "Prometheus disabled, no Prometheus metrics will be "
+		    "gathered");
+		return 0;
+	}
+	metrics::init(cfg_getstr("PROMETHEUS_HOST", "0.0.0.0:9450"), metrics::CHUNKSERVER);
+	eventloop_destructregister(metrics::destroy);
+	return 0;
+}
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
@@ -40,7 +55,8 @@ inline const std::vector<RunTab> runTabs = {
     // Has to be before "masterconn"
     RunTab{mainNetworkThreadInit, "main server module"},
     RunTab{masterconn_init, "master connection module"},
-    RunTab{chartsdata_init, "charts module"}};
+    RunTab{chartsdata_init, "charts module"},
+    RunTab{.function=prometheus_init, .name="prometheus module"}};
 
 /// Functions to call delayed after the initialization is correct
 inline const std::vector<RunTab> lateRunTabs = {

@@ -28,3 +28,43 @@ inline prometheus::Family<prometheus::Counter> &setupFamily(
 	return prometheus::BuildCounter().Name(name).Help(help).Register(*registry);
 }
 #endif
+
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
+#define CHUNKSERVER_START_COUNTER_SWITCH \
+	using chunkserver::Counters; \
+	chunkserver::Counters start = Counters::KEY_START; \
+	switch (start) { \
+		case Counters::KEY_START: \
+		[[fallthrough]];
+
+#define DEFINE_COUNTER_CASE(enum_val, family, ...) \
+	case Counters::enum_val:                              \
+        counters[static_cast<uint8_t>(Counters::enum_val)] = Counter(__VA_ARGS__, family); \
+        [[fallthrough]];
+
+#define END_COUNTER_CASE \
+	case Counters::KEY_END: \
+		break; \
+	}
+
+#define MASTER_START_GAUGE_SWITCH \
+	master::Gauges start = GAUGE_KEY_START; \
+	switch (start) { \
+    case GAUGE_KEY_START: \
+		[[fallthrough]];
+
+#define DEFINE_GAUGE_CASE(enum_val, family, ...) \
+    case enum_val:                              \
+        counters[enum_val] = Counter(__VA_ARGS__, family); \
+        [[fallthrough]];
+
+#define END_GAUGE_CASE \
+    case GAUGE_KEY_END: \
+		break; \
+	}
+
+
+#define INITIALIZE_CHUNKSERVER_FAMILY(family, description) \
+	family = &setupFamily("chunkserver_" TOSTRING(family), description, registry)

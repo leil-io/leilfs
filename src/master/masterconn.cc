@@ -47,6 +47,7 @@
 #include "common/massert.h"
 #include "common/rotate_files.h"
 #include "common/saunafs_version.h"
+#include "slogger/slogger.h"
 #include "common/sockets.h"
 #include "common/time_utils.h"
 #include "config/cfg.h"
