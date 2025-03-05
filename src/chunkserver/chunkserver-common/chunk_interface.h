@@ -31,6 +31,7 @@
 #include "chunkserver-common/disk_interface.h"
 #include "common/chunk_part_type.h"
 
+#define CHUNK_LEGACY_FILE_EXTENSION ".liz"
 #define CHUNK_METADATA_FILE_EXTENSION ".met"
 #define CHUNK_DATA_FILE_EXTENSION     ".dat"
 
@@ -59,7 +60,9 @@ struct CondVarWithWaitCount {
 /// SPLIT format is used by default.
 enum class ChunkFormat {
 	IMPROPER,  ///< Not valid format detected or uninitialized Chunk
-	SPLIT      ///< The Chunk is split in two files (metadata and data)
+	SPLIT,     ///< The Chunk is split in two files (metadata and data)
+	LEGACY     ///< The Chunk is stored in a single file using the legacy
+			   ///< interleave format.
 };
 
 /**
@@ -99,6 +102,14 @@ public:
 	virtual const std::string &dataFilename() const = 0;
 	/// Setter for the name of the data file.
 	virtual void setDataFilename(const std::string &_dataFilename) = 0;
+
+	/// Returns the full path to the legacy chunk file.
+	virtual std::string fullLegacyFilename() const = 0;
+
+	/// Getter for the name of legacy chunk file.
+	virtual std::string legacyFilename() const = 0;
+	/// Setter for the name of legacy chunk file.
+	virtual void setLegacyFilename(const std::string &_legacyFilename) = 0;
 
 	/// Updates the metadata and data filenames according to the given version.
 	/// The version of the Chunk is included in the filenames. Therefore, when
@@ -203,11 +214,15 @@ public:
 	virtual int32_t metaFD() const = 0;
 	/// Returns the data file descriptor.
 	virtual int32_t dataFD() const = 0;
+	/// Returns the legacy file descriptor.
+	virtual int32_t legacyFD() const = 0;
 
 	/// Sets the metadata file descriptor.
 	virtual void setMetaFD(int32_t newMetaFD) = 0;
 	/// Sets the data file descriptor.
 	virtual void setDataFD(int32_t newDataFD) = 0;
+	/// Sets the legacy file descriptor.
+	virtual void setLegacyFD(int32_t newLegacyFD) = 0;
 
 	/// Returns 1 if the attributes were recently updated, 0 otherwise.
 	virtual uint8_t validAttr() const = 0;
@@ -259,4 +274,7 @@ public:
 	/// Sets the new block expected to be read.
 	virtual void setBlockExpectedToBeReadNext(
 	    uint16_t newBlockExpectedToBeReadNext) = 0;
+
+	virtual void requiereMigration(bool migrate = false ) = 0;
+	virtual bool needsMigration() const = 0;
 };

@@ -94,6 +94,8 @@ int CmrDisk::updateChunkAttributes(IChunk *chunk, bool isFromScan) {
 		return SAUNAFS_STATUS_OK;
 	}
 
+	if (chunk->needsMigration()) { return SAUNAFS_STATUS_OK; }
+
 	struct stat metaStat {};
 	if (::stat(chunk->fullMetaFilename().c_str(), &metaStat) < 0) {
 		safs::log_err("CmrDisk::updateChunkAttributes: could not access chunk metadata: chunk->metaFilename ({}), strerror ({})",
@@ -177,6 +179,9 @@ void CmrDisk::creat(IChunk *chunk) {
 	chunk->setDataFD(::open(chunk->fullDataFilename().c_str(),
 	                        O_RDWR | O_TRUNC | O_CREAT,
 	                        disk::kDefaultOpenMode));
+	chunk->setLegacyFD(::open(chunk->fullLegacyFilename().c_str(),
+	                          O_RDWR | O_TRUNC | O_CREAT,
+	                          disk::kDefaultOpenMode));
 }
 
 void CmrDisk::open(IChunk *chunk) {
@@ -185,6 +190,9 @@ void CmrDisk::open(IChunk *chunk) {
 
 	chunk->setDataFD(::open(chunk->fullDataFilename().c_str(),
 	                        isReadOnly() ? O_RDONLY : O_RDWR));
+
+	chunk->setLegacyFD(::open(chunk->fullLegacyFilename().c_str(),
+	                          isReadOnly() ? O_RDONLY : O_RDWR));
 }
 
 int CmrDisk::unlinkChunk(IChunk *chunk) {
@@ -195,6 +203,10 @@ int CmrDisk::unlinkChunk(IChunk *chunk) {
 	}
 
 	if (::unlink(chunk->fullDataFilename().c_str()) != 0) {
+		result = -1;
+	}
+
+	if (::unlink(chunk->fullLegacyFilename().c_str()) != 0) {
 		result = -1;
 	}
 

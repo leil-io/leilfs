@@ -14,6 +14,11 @@ std::string FDChunk::fullMetaFilename() const {
 	       "/" + metaFilename_;
 }
 
+std::string FDChunk::fullLegacyFilename() const {
+	return owner_->metaPath() + Subfolder::getSubfolderNameGivenChunkId(id_) +
+	       "/" + legacyFilename_;
+}
+
 const std::string &FDChunk::metaFilename() const { return metaFilename_; }
 
 void FDChunk::setMetaFilename(const std::string &_metaFilename) {
@@ -31,9 +36,19 @@ void FDChunk::setDataFilename(const std::string &_dataFilename) {
 	dataFilename_ = _dataFilename;
 }
 
+std::string FDChunk::legacyFilename() const { return legacyFilename_; }
+
+void FDChunk::setLegacyFilename(const std::string &_legacyFilename) {
+	legacyFilename_ = _legacyFilename;
+}
+
 void FDChunk::updateFilenamesFromVersion(uint32_t _version) {
 	metaFilename_ = generateMetadataFilenameForVersion(_version);
 	dataFilename_ = generateDataFilenameForVersion(_version);
+	legacyFilename_ = !this->needsMigration() ? "" :
+	                  this->metaFilename_.substr(0,
+	                                             this->metaFilename_.size() - 4) +
+	                                              CHUNK_LEGACY_FILE_EXTENSION;
 }
 
 std::string FDChunk::generateMetadataFilenameForVersion(
@@ -125,9 +140,13 @@ int32_t FDChunk::metaFD() const { return metaFD_; }
 
 int32_t FDChunk::dataFD() const { return dataFD_; }
 
+int32_t FDChunk::legacyFD() const { return legacyFD_; }
+
 void FDChunk::setMetaFD(int32_t newMetaFD) { metaFD_ = newMetaFD; }
 
 void FDChunk::setDataFD(int32_t newDataFD) { dataFD_ = newDataFD; }
+
+void FDChunk::setLegacyFD(int32_t newLegacyFD) { legacyFD_ = newLegacyFD; }
 
 void FDChunk::setValidAttr(uint8_t newValidAttr) { validAttr_ = newValidAttr; }
 
@@ -161,6 +180,12 @@ void FDChunk::setBlockExpectedToBeReadNext(
     uint16_t newBlockExpectedToBeReadNext) {
 	blockExpectedToBeReadNext_ = newBlockExpectedToBeReadNext;
 }
+
+void FDChunk::requiereMigration(bool migrate) {
+	needsMigration_ = migrate;
+}
+
+bool FDChunk::needsMigration() const { return needsMigration_; }
 
 uint8_t FDChunk::wasChanged() const { return wasChanged_; }
 

@@ -62,6 +62,9 @@ public:
 	/// Returns the full path to the metadata file.
 	std::string fullMetaFilename() const override;
 
+	/// Returns the full path to the legacy chunk file.
+	std::string fullLegacyFilename() const override;
+
 	/// Getter for the name of the metadata filename.
 	const std::string &metaFilename() const override;
 	/// Setter for the name of the metadata filename.
@@ -74,6 +77,11 @@ public:
 	const std::string &dataFilename() const override;
 	/// Setter for the name of the data filename.
 	void setDataFilename(const std::string &_dataFilename) override;
+
+	/// Getter for the name of the legacy chunk file.
+	std::string legacyFilename() const override;
+	/// Setter for the name of the legacy chunk file.
+	void setLegacyFilename(const std::string &_legacyFilename) override;
 
 	/// Updates the metadata and data filenames according to the given version.
 	void updateFilenamesFromVersion(uint32_t _version) override;
@@ -130,11 +138,15 @@ public:
 	int32_t metaFD() const override;
 	/// Returns the data file descriptor.
 	int32_t dataFD() const override;
+	/// Returns the data file descriptor.
+	int32_t legacyFD() const override;
 
 	/// Sets the metadata file descriptor.
 	void setMetaFD(int32_t newMetaFD) override;
 	/// Sets the data file descriptor.
 	void setDataFD(int32_t newDataFD) override;
+	/// Set the legacy file descriptor.
+	void setLegacyFD(int32_t newLegacyFD) override;
 
 	/// Returns the valid attribute.
 	uint8_t validAttr() const override;
@@ -178,6 +190,9 @@ public:
 	void setBlockExpectedToBeReadNext(
 	    uint16_t newBlockExpectedToBeReadNext) override;
 
+	virtual void requiereMigration(bool migrate = false ) override;
+	virtual bool needsMigration() const override;
+
 private:
 	/// The pointer to the condition variable on which threads wait until this
 	/// chunk is unlocked.
@@ -193,14 +208,17 @@ private:
 	ChunkPartType type_;        ///< The type of the chunk (ec:5, xor:2, etc.).
 	std::string metaFilename_;  ///< Metadata filename (header + CRC).
 	std::string dataFilename_;  ///< Data filename (blocks of data).
+	std::string legacyFilename_;  ///< Legacy filename (for compatibility).
 	int32_t metaFD_ = -1;       ///< Metadata file descriptor
 	int32_t dataFD_ = -1;       ///< Data file descriptor
+	int32_t legacyFD_ = -1;     ///< Legacy file descriptor
 	uint16_t blocks_ = 0;       ///< Number of blocks in the chunk
 	uint16_t refCount_ = 0;     ///< Used to properly release the chunk
 	uint16_t blockExpectedToBeReadNext_ = 0;  ///< Read ahead helper
 	uint8_t validAttr_ = 0;   ///< Tells if the attributes were recently updated
 	uint8_t wasChanged_ = 0;  ///< Tells if it was changed from last flush
 	ChunkState state_;        ///< The state of the chunk
+	bool needsMigration_ = false; ///< Tells if the chunk needs migration
 
 	/// The index of the chunk within the Disk.
 	///

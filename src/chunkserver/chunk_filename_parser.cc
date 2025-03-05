@@ -222,6 +222,8 @@ ChunkFilenameParser::Status ChunkFilenameParser::parse() try {
 
 	if (consume(CHUNK_METADATA_FILE_EXTENSION) == Parser::OK) {
 		chunkFormat_ = ChunkFormat::SPLIT;
+	} else if (consume (CHUNK_LEGACY_FILE_EXTENSION) == Parser::OK) {
+		chunkFormat_ = ChunkFormat::LEGACY;
 	} else {
 		return ERROR_INVALID_FILENAME;
 	}

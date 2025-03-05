@@ -2184,11 +2184,16 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 	auto *chunk = hddChunkFindOrCreatePlusLock(
 	    disk, chunkId, chunkType, disk::ChunkGetMode::kFindOrCreate);
 
+	if (fullname.find(CHUNK_LEGACY_FILE_EXTENSION) != std::string::npos) {
+		chunk->requiereMigration(true);
+	}
+
 	if (chunk == ChunkNotFound) {
 		safs_pretty_syslog(LOG_ERR, "Can't use file %s as chunk",
 		                   fullname.c_str());
 		return;
 	}
+
 
 	bool isNewChunk = chunk->metaFilename().empty();
 
@@ -2215,10 +2220,15 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 
 	chunk->setVersion(version);
 	chunk->updateFilenamesFromVersion(version);
-	sassert(chunk->fullMetaFilename() == fullname);
+
+	if(!chunk->needsMigration()) {
+		sassert(chunk->fullMetaFilename() == fullname);
+	}
 
 	{
-		disk->updateChunkAttributes(chunk, true);
+		if (!chunk->needsMigration()) { /// Postpone until migration is finished
+			disk->updateChunkAttributes(chunk, true);
+		}
 		chunk->setValidAttr(0);
 	}
 
@@ -2274,8 +2284,10 @@ void hddDiskScan(IDisk *disk, uint32_t beginTime) {
 
 			if (filenameParser.parse() != ChunkFilenameParser::Status::OK) {
 				if (filename != "." && filename != ".." &&
-				    filename.find(CHUNK_DATA_FILE_EXTENSION) ==
-				        std::string::npos) {
+				    ((filename.find(CHUNK_DATA_FILE_EXTENSION) ==
+				      std::string::npos) &&
+				     (filename.find(CHUNK_LEGACY_FILE_EXTENSION) ==
+				      std::string::npos))) {
 					safs_pretty_syslog(LOG_WARNING,
 					                   "Invalid file %s placed in chunks "
 					                   "directory %s; skipping it.",
