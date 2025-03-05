@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "bgjobs.h"
 #include "common/platform.h"
 
 #include <cstdint>
@@ -119,7 +120,7 @@ struct ChunkserverEntry {
 	static constexpr uint32_t kGenerateChartExpectedPacketSize =
 	    sizeof(uint32_t);
 
-	void* workerJobPool; // Job pool assigned to a given network worker thread
+	JobPool *workerJobPool;  // Job pool assigned to a given network worker thread
 
 	ChunkserverEntry::State state = ChunkserverEntry::State::Idle;
 	ChunkserverEntry::Mode mode = ChunkserverEntry::Mode::Header;
@@ -183,7 +184,7 @@ struct ChunkserverEntry {
 
 	LOG_AVG_TYPE readOperationTimer;
 
-	ChunkserverEntry(int socket, void *workerJobPool)
+	ChunkserverEntry(int socket, JobPool *workerJobPool)
 	    : workerJobPool(workerJobPool), sock(socket) {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;

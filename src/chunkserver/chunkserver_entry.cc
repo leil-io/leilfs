@@ -294,8 +294,7 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 		eptr->isChunkOpen = 1;
 	}
 	if (eptr->isChunkOpen) {
-		job_close(eptr->workerJobPool, nullptr, nullptr, eptr->chunkId,
-		          eptr->chunkType);
+		job_close(*eptr->workerJobPool, nullptr, nullptr, eptr->chunkId, eptr->chunkType);
 		eptr->isChunkOpen = 0;
 	}
 	eptr->state = State::Closed;
@@ -319,8 +318,7 @@ void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 		    buffer, eptr->chunkId, status);
 		eptr->createAttachedPacket(buffer);
 		if (eptr->isChunkOpen) {
-			job_close(eptr->workerJobPool, nullptr, nullptr, eptr->chunkId,
-			          eptr->chunkType);
+			job_close(*eptr->workerJobPool, nullptr, nullptr, eptr->chunkId, eptr->chunkType);
 			eptr->isChunkOpen = 0;
 		}
 		// after sending status even if there was an error it's possible to
@@ -353,8 +351,7 @@ void ChunkserverEntry::readContinue() {
 		createAttachedPacket(buffer);
 		sassert(isChunkOpen);
 
-		job_close(workerJobPool, nullptr, nullptr, chunkId,
-		          chunkType);
+		job_close(*workerJobPool, nullptr, nullptr, chunkId, chunkType);
 		isChunkOpen = 0;
 		// no error - do not disconnect - go direct to the IDLE state, ready for
 		// requests on the same connection
@@ -391,10 +388,8 @@ void ChunkserverEntry::readContinue() {
 			maxReadBehindBlocks = std::min(totalRequestBlocks,
 					gHDDReadAhead.maxBlocksToBeReadBehind());
 		}
-
-		readJobId = job_read(workerJobPool, readFinishedCallback, this, chunkId,
-		                     chunkVersion, chunkType, offset, thisPartSize,
-		                     maxReadBehindBlocks, readAheadBlocks,
+		readJobId = job_read(*workerJobPool, readFinishedCallback, this, chunkId, chunkVersion,
+		                     chunkType, offset, thisPartSize, maxReadBehindBlocks, readAheadBlocks,
 		                     readPacket->outputBuffer.get(), !isChunkOpen);
 		if (readJobId == 0) {
 			state = State::Close;
@@ -508,8 +503,7 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 	auto lastByte = offset + size - 1;
 	auto lastBlock = lastByte / SFSBLOCKSIZE;
 	auto nrOfBlocks = lastBlock - firstBlock + 1;
-	job_prefetch(workerJobPool, chunkId, chunkVersion, chunkType, firstBlock,
-	             nrOfBlocks);
+	job_prefetch(*workerJobPool, chunkId, chunkVersion, chunkType, firstBlock, nrOfBlocks);
 }
 
 // bg writing
@@ -651,8 +645,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	}
 	stats_hlopw++;
 	writeJobWriteId = 0;
-	writeJobId = job_open(workerJobPool, writeFinishedCallback, this, chunkId,
-	                      chunkType);
+	writeJobId = job_open(*workerJobPool, writeFinishedCallback, this, chunkId, chunkType);
 }
 
 void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
@@ -717,9 +710,8 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 
 	preserveInputPacket();
 	writeJobWriteId = writeId;
-	writeJobId = job_write(workerJobPool, writeFinishedCallback, this,
-	                       opChunkId, chunkVersion, chunkType, blocknum,
-	                       opOffset, opSize, crc, dataToWrite);
+	writeJobId = job_write(*workerJobPool, writeFinishedCallback, this, opChunkId, chunkVersion,
+	                       chunkType, blocknum, opOffset, opSize, crc, dataToWrite);
 }
 
 void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
@@ -824,7 +816,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		return;
 	}
 	if (isChunkOpen) {
-		job_close(workerJobPool, nullptr, nullptr, chunkId, chunkType);
+		job_close(*workerJobPool, nullptr, nullptr, chunkId, chunkType);
 		isChunkOpen = 0;
 	}
 	if (fwdSocket > 0) {
@@ -883,19 +875,17 @@ void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
 		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
 		                                    chunkType);
 
-		getBlocksJobId = job_get_blocks(
-		    workerJobPool, sauGetChunkBlocksFinishedCallback, this, chunkId,
-		    chunkVersion, chunkType, &getBlocksJobResult);
+		getBlocksJobId = job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedCallback, this,
+		                                chunkId, chunkVersion, chunkType, &getBlocksJobResult);
 
 	} else {
 		legacy::ChunkPartType legacy_type;
 		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
 		                                    legacy_type);
 		chunkType = legacy_type;
-
-		getBlocksJobId = job_get_blocks(
-		    workerJobPool, sauGetChunkBlocksFinishedLegacyCallback, this,
-		    chunkId, chunkVersion, chunkType, &getBlocksJobResult);
+		getBlocksJobId =
+		    job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedLegacyCallback, this, chunkId,
+		                   chunkVersion, chunkType, &getBlocksJobResult);
 	}
 	state = State::GetBlock;
 }
@@ -904,9 +894,8 @@ void ChunkserverEntry::getChunkBlocks(const uint8_t *data, uint32_t length) {
 	deserializeAllLegacyPacketDataNoHeader(data, length, chunkId,
 	                                       chunkVersion);
 	chunkType = slice_traits::standard::ChunkPartType();
-	getBlocksJobId =
-	    job_get_blocks(workerJobPool, getChunkBlocksFinishedCallback, this,
-	                   chunkId, chunkVersion, chunkType, &(getBlocksJobResult));
+	getBlocksJobId = job_get_blocks(*workerJobPool, getChunkBlocksFinishedCallback, this, chunkId,
+	                                chunkVersion, chunkType, &(getBlocksJobResult));
 	state = State::GetBlock;
 }
 
@@ -1029,23 +1018,20 @@ void ChunkserverEntry::outputCheckReadFinished() {
 void ChunkserverEntry::closeJobs() {
 	TRACETHIS();
 	if (readJobId > 0) {
-		job_pool_disable_job(workerJobPool, readJobId);
-		job_pool_change_callback(workerJobPool, readJobId, delayedCloseCallback,
-		                         this);
+		workerJobPool->disableJob(readJobId);
+		workerJobPool->changeCallback(readJobId, delayedCloseCallback, this);
 		state = State::CloseWait;
 	} else if (writeJobId > 0) {
-		job_pool_disable_job(workerJobPool, writeJobId);
-		job_pool_change_callback(workerJobPool, writeJobId,
-		                         delayedCloseCallback, this);
+		workerJobPool->disableJob(writeJobId);
+		workerJobPool->changeCallback(writeJobId, delayedCloseCallback, this);
 		state = State::CloseWait;
 	} else if (getBlocksJobId > 0) {
-		job_pool_disable_job(workerJobPool, getBlocksJobId);
-		job_pool_change_callback(workerJobPool, getBlocksJobId,
-		                         delayedCloseCallback, this);
+		workerJobPool->disableJob(getBlocksJobId);
+		workerJobPool->changeCallback(getBlocksJobId, delayedCloseCallback, this);
 		state = State::CloseWait;
 	} else {
 		if (isChunkOpen) {
-			job_close(workerJobPool, nullptr, nullptr, chunkId, chunkType);
+			job_close(*workerJobPool, nullptr, nullptr, chunkId, chunkType);
 			isChunkOpen = 0;
 		}
 		state = State::Closed;

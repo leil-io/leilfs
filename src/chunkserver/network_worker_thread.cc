@@ -64,8 +64,7 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t nrOfBgjobsWorkers,
 	static constexpr int kPageAlignedPipeSize = 4096 * 32;
 	eassert(fcntl(notify_pipe[1], F_SETPIPE_SZ, kPageAlignedPipeSize));
 #endif
-	bgJobPool_ =
-	    job_pool_new(nrOfBgjobsWorkers, bgjobsCount, &bgJobPoolWakeUpFd_);
+	bgJobPool_ = std::make_unique<JobPool>(nrOfBgjobsWorkers, bgjobsCount, &bgJobPoolWakeUpFd_);
 }
 
 void NetworkWorkerThread::operator()() {
@@ -102,7 +101,7 @@ void NetworkWorkerThread::operator()() {
 
 void NetworkWorkerThread::terminate() {
 	TRACETHIS();
-	job_pool_delete(bgJobPool_);
+	bgJobPool_.reset();
 
 	std::unique_lock lock(csservheadLock);
 
@@ -190,7 +189,7 @@ void NetworkWorkerThread::servePoll() {
 	ChunkserverEntry::State lstate;
 
 	if (pdesc[JOB_FD_PDESC_POS].revents & POLLIN) {
-		job_pool_check_jobs(bgJobPool_);
+		bgJobPool_->checkJobs();
 	}
 	std::unique_lock lock(csservheadLock);
 	for (auto& entry : csservEntries) {
@@ -283,7 +282,7 @@ void NetworkWorkerThread::servePoll() {
 		}
 	}
 
-	jobscnt = job_pool_jobs_count(bgJobPool_);
+	jobscnt = bgJobPool_->getJobCount();
 //      // Lock free stats_maxjobscnt = max(stats_maxjobscnt, jobscnt), but I don't trust myself :(...
 //      uint32_t expected_value = stats_maxjobscnt;
 //      while (jobscnt > expected_value
@@ -318,8 +317,17 @@ void NetworkWorkerThread::addConnection(int newSocketFD) {
 	tcpnodelay(newSocketFD);
 
 	std::unique_lock lock(csservheadLock);
-	csservEntries.emplace_front(newSocketFD, bgJobPool_);
-	csservEntries.front().lastActivity = eventloop_time();
+	try {
+		if (!bgJobPool_) { throw std::runtime_error("JobPool instance is null"); }
+		csservEntries.emplace_front(newSocketFD, bgJobPool_.get());
+		csservEntries.front().lastActivity = eventloop_time();
+	} catch (const std::runtime_error &e) {
+		safs_pretty_syslog(LOG_ERR, "Failed to add connection: %s", e.what());
+		tcpclose(newSocketFD);
+	} catch (const std::exception &e) {
+		safs_pretty_syslog(LOG_ERR, "Unexpected error: %s", e.what());
+		tcpclose(newSocketFD);
+	}
 
 	eassert(write(notify_pipe[1], "9", 1) == 1);
 }

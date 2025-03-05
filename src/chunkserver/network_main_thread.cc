@@ -210,7 +210,7 @@ void mainNetworkThreadServe(const std::vector<pollfd> &pdesc) {
 			if (nextNetworkThread == networkThreadObjects.end()) {
 				nextNetworkThread = networkThreadObjects.begin();
 			}
-			if (job_pool_jobs_count(nextNetworkThread->bgJobPool())
+			if (nextNetworkThread->backgroundJobPool()->getJobCount()
 					>= (gBgjobsCountPerNetworkWorker * 9) / 10) {
 				safs_pretty_syslog(LOG_WARNING, "jobs queue is full !!!");
 				tcpclose(newSocketFD);

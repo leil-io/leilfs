@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "chunkserver/chunkserver_entry.h"
+#include "chunkserver/bgjobs.h"
 
 class NetworkWorkerThread {
 public:
@@ -42,8 +43,9 @@ public:
 	void operator()();
 	void askForTermination();
 	void addConnection(int newSocketFD);
-	void* bgJobPool() {
-		return bgJobPool_;
+
+	JobPool *backgroundJobPool() {
+		return bgJobPool_.get();
 	}
 
 private:
@@ -55,7 +57,7 @@ private:
 	std::mutex csservheadLock;
 	std::list<ChunkserverEntry> csservEntries;
 
-	void *bgJobPool_;
+	std::unique_ptr<JobPool> bgJobPool_;
 	int bgJobPoolWakeUpFd_;
 	static const uint32_t JOB_FD_PDESC_POS = 1;
 	std::vector<struct pollfd> pdesc;

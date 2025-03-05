@@ -22,80 +22,129 @@
 
 #include "common/platform.h"
 
-#include <inttypes.h>
+#include "chunkserver/output_buffer.h"
+#include "common/pcqueue.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
-#include "chunkserver/output_buffer.h"
-#include "common/chunk_type_with_address.h"
+class JobPool {
+public:
+	enum class State : uint8_t {
+		Disabled,
+		Enabled,
+		InProgress
+	};
 
-void* job_pool_new(uint8_t workers,uint32_t jobs,int *wakeupdesc);
-uint32_t job_pool_jobs_count(void *jpool);
-void job_pool_disable_and_change_callback_all(void *jpool,void (*callback)(uint8_t status,void *extra));
-void job_pool_disable_job(void *jpool,uint32_t jobid);
-void job_pool_check_jobs(void *jpool);
-void job_pool_change_callback(void *jpool,uint32_t jobid,void (*callback)(uint8_t status,void *extra),void *extra);
-void job_pool_delete(void *jpool);
+	enum ChunkOperation {
+		Exit,
+		Invalid,
+		ChunkOp,
+		Open,
+		Close,
+		Read,
+		Prefetch,
+		Write,
+		Replicate,
+		GetBlocks
+	};
 
+public:
+	using JobCallback = std::function<void(uint8_t status, void *extra)>;
 
-uint32_t job_inval(void *jpool,void (*callback)(uint8_t status,void *extra),void *extra);
-uint32_t job_chunkop(void *jpool, void (*callback)(uint8_t status, void *extra), void *extra,
-		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType, uint32_t newChunkVersion,
-		uint64_t copyChunkId, uint32_t copyChunkVersion, uint32_t length);
+	JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc);
+	~JobPool();
 
-#define job_delete(jobPool, callback, extra, chunkId, chunkVersion, chunkType) \
-	job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType, 0, 0, 0, 0)
+	uint32_t addJob(ChunkOperation operation, void *args, JobCallback callback, void *extra);
+	uint32_t getJobCount() const;
+	void disableAndChangeCallbackAll(const JobCallback& callback);
+	void disableJob(uint32_t jobId);
+	void checkJobs();
+	void changeCallback(uint32_t jobId, JobCallback callback, void *extra);
 
-#define job_create(jobPool, callback, extra, chunkId, chunkType, chunkVersion) \
-	job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType, 0, 0, 0, 1)
+private:
+	struct Job {
+		uint32_t jobId;
+		JobCallback callback;
+		void *extra;
+		void *args;
+		JobPool::State state;
+	};
 
-#define job_test(jobPool, callback, extra, chunkId, chunkVersion) job_chunkop(jobPool, callback, \
-		extra, chunkId, chunkVersion, ChunkType::getStandardChunkType(), 0, 0, 0, 2)
+	void workerThread();
+	void sendStatus(uint32_t jobId, uint8_t status);
+	int receiveStatus(uint32_t &jobId, uint8_t &status);
 
-#define job_version(jobPool, callback, extra, chunkId, chunkVersion, chunkType, \
-		newChunkVersion) \
-	(((newChunkVersion)>0) \
-	? job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType, newChunkVersion, 0, \
-			0, 0xFFFFFFFF) \
-	: job_inval(jobPool, callback, extra))
+	int rpipe, wpipe;
+	uint8_t workers;
+	std::vector<std::thread> workerThreads;
+	std::mutex pipeMutex;
+	std::mutex jobsMutex;
+	std::unique_ptr<ProducerConsumerQueue> jobsQueue;
+	std::unique_ptr<ProducerConsumerQueue> statusQueue;
+	std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;
+	uint32_t nextJobId = 1;
+};
 
-#define job_truncate(jobPool, callback, extra, chunkId, chunkType, chunkVersion, newChunkVersion, \
-		length) (((newChunkVersion) > 0 && (length) != 0xFFFFFFFF) \
-	? job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, \
-			chunkType, newChunkVersion, 0, 0, length) \
-	: job_inval(jobPool, callback, extra))
+uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                  uint64_t chunkId, ChunkPartType chunkType);
 
-#define job_duplicate(jobPool, callback, extra, chunkId, chunkVersion, newChunkVersion, chunkType, \
-		chunkIdCopy, chunkVersionCopy) \
-	(((newChunkVersion > 0) && (chunkIdCopy) > 0) \
-	? job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType, \
-			newChunkVersion, chunkIdCopy, chunkVersionCopy, 0xFFFFFFFF) \
-	: job_inval(jobPool, callback, extra))
+uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                   ChunkPartType chunkType);
 
-#define job_duptrunc(jobPool, callback, extra, chunkId, chunkVersion, newChunkVersion, chunkType, \
-		chunkIdCopy, chunkVersionCopy, length) \
-	(((newChunkVersion > 0) && (chunkIdCopy) > 0 && (length) != 0xFFFFFFFF) \
-	? job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType, \
-			newChunkVersion, chunkIdCopy, chunkVersionCopy, length) \
-	: job_inval(jobPool, callback, extra))
+uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                  uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
+                  uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
+                  OutputBuffer *outputBuffer, bool performHddOpen);
 
-uint32_t job_open(void *jpool, void (*callback)(uint8_t status, void *extra), void *extra,
-		uint64_t chunkid, ChunkPartType chunkType);
-uint32_t job_close(void *jpool, void (*callback)(uint8_t status, void *extra), void *extra,
-		uint64_t chunkid, ChunkPartType chunkType);
-uint32_t job_read(void *jpool, void (*callback)(uint8_t status,void *extra), void *extra,
-		uint64_t chunkid, uint32_t chunkVersion, ChunkPartType chunkType,
-		uint32_t offset, uint32_t size, uint32_t maxBlocksToBeReadBehind,
-		uint32_t blocksToBeReadAhead, OutputBuffer *outputBuffer, bool performHddOpen);
-uint32_t job_prefetch(void *jpool, uint64_t chunkid, uint32_t version, ChunkPartType chunkType,
-		uint32_t firstBlockToBePrefetched, uint32_t nrOfBlocksToBePrefetched) ;
-uint32_t job_write(void *jpool, void (*callback)(uint8_t status, void *extra), void *extra,
-		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-		uint16_t blocknum, uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer);
-uint32_t job_get_blocks(void *jpool, void (*callback)(uint8_t status, void *extra), void *extra,
-		uint64_t chunkId, uint32_t version, ChunkPartType chunkType, uint16_t* blocks);
-uint32_t job_replicate(void *jpool, void (*callback)(uint8_t status, void *extra), void *extra,
-		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-		uint32_t sourcesBufferSize, const uint8_t* sourcesBuffer);
+uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                      uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched);
+
+uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                   uint32_t chunkVersion, ChunkPartType chunkType, uint16_t blockNum,
+                   uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer);
+
+uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                        uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                        uint16_t *blocks);
+
+uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                       uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                       uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer);
+
+uint32_t job_chunkop(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                     uint32_t chunkVersion, ChunkPartType chunkType, uint32_t newChunkVersion,
+                     uint64_t copyChunkId, uint32_t copyChunkVersion, uint32_t length);
+
+uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra);
+
+uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                    uint32_t chunkVersion, ChunkPartType chunkType);
+
+uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                    uint32_t chunkVersion, ChunkPartType chunkType);
+
+uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+                     uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                     uint32_t newChunkVersion);
+
+uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+                      uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
+                      uint32_t newChunkVersion, uint32_t length);
+
+uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+                       uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
+                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy);
+
+uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+                      uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
+                      ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
+                      uint32_t length);
 
 /* srcs: srccnt * (chunkid:64 chunkVersion:32 ip:32 port:16) */
 uint32_t job_legacy_replicate(void *jpool,void (*callback)(uint8_t status,void *extra),void *extra,uint64_t chunkid,uint32_t chunkVersion,uint8_t srccnt,const uint8_t *srcs);
