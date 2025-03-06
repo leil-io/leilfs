@@ -23,7 +23,7 @@ public:
 	CmrDisk &operator=(CmrDisk &&) = delete;
 
 	/// Virtual destructor needed for correct polymorphism
-	~CmrDisk() = default;
+	~CmrDisk() override = default;
 
 	/// Tries to create the paths and subfolders for metaPath and dataPath
 	///
