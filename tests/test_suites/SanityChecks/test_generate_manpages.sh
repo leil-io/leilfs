@@ -1,21 +1,19 @@
 assert_program_installed a2x
 timeout_set 2 minutes
 
-# Clone the 'dev' branch from the SaunaFS repository
-git clone --branch dev https://github.com/leil-io/saunafs.git "${TEMP_DIR}/saunafs"
+# Change to saunafs SOURCE_DIR
+cp -r "${SOURCE_DIR}" "${TEMP_DIR}"
 
-# Change to the temporary directory
-cd "${TEMP_DIR}/saunafs"
+# Fetch the name of the saunafs folder
+SAUNAFS_FOLDER=$(basename "${SOURCE_DIR}")
+cd "${TEMP_DIR}/${SAUNAFS_FOLDER}" || exit 1
 
-# Check if the feature branch exists and check it out if it does
-if git ls-remote --heads origin fix-warnings-build-doc | \
-	grep -q "fix-warnings-build-doc"; then
-	git checkout fix-warnings-build-doc
-fi
+# Create a unique build directory
+BUILD_DIR="${TEMP_DIR}/build_saunafs_doc_$(date +%s)"
 
 # Run the build process and capture the output
-cmake -B ./build
-make -C ./build/doc 2>&1 | tee "${TEMP_DIR}/build-doc.log"
+cmake -B "${BUILD_DIR}" -S .
+make -C "${BUILD_DIR}/doc" 2>&1 | tee "${TEMP_DIR}/build-doc.log"
 
 # Check for the presence of 'SyntaxWarning: invalid escape sequence' lines
 pattern="SyntaxWarning: invalid escape sequence"
