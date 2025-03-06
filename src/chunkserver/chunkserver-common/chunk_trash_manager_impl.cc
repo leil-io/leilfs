@@ -184,14 +184,14 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath,
 	fs::create_directories(fs::path(trashFilename).parent_path(), errorCode_);
 	if (errorCode_) {
 		safs::log_err(errorCode_,
-		              "Failed to create trash directory: {} ({}: {})",
+		              "Failed to create trash directory: {}",
 		              trashFilename.c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 
 	fs::rename(filePath, trashFilename, errorCode_);
 	if (errorCode_) {
-		safs::log_err(errorCode_, "Failed to move file to trash: {} ({}: {})",
+		safs::log_err(errorCode_, "Failed to move file to trash: {}",
 		              filePath.string().c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
