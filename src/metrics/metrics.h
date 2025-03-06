@@ -36,7 +36,7 @@ enum Type : uint8_t {
 	CHUNKSERVER,
 };
 
-namespace master {
+namespace metadata {
 
 enum class Counters : uint8_t {
 	KEY_START = 0,      // Used internally, has no effect
@@ -165,10 +165,8 @@ struct ServiceType {
 	ServiceType(ServiceType &&) = delete;
 	ServiceType &operator=(const ServiceType &) = default;
 	ServiceType &operator=(ServiceType &&) = delete;
-	virtual Counter& get(chunkserver::Counters key) = 0;
-	virtual Counter& get(master::Counters key) = 0;
-	virtual Gauge& get(chunkserver::Gauges key) = 0;
-	virtual Gauge& get(master::Gauges key) = 0;
+	virtual Counter& getCounter(uint8_t key) = 0;
+	virtual Gauge& getGauge(uint8_t key) = 0;
 	virtual ~ServiceType() = default;
 };
 

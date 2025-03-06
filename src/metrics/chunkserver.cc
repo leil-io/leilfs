@@ -6,27 +6,19 @@ using namespace metrics::chunkserver;
 metrics::Chunkserver::Chunkserver(std::shared_ptr<prometheus::Registry>& registry) {
 	// clang-format off
 	// NOLINTBEGIN(cppcoreguidelines-prefer-member-initializer)
-	INITIALIZE_CHUNKSERVER_FAMILY(network_bytes_total,
-	                              "Number of observed network bytes");
-	INITIALIZE_CHUNKSERVER_FAMILY(network_operations_total,
-	                              "Number of chunkserver operations");
-	INITIALIZE_CHUNKSERVER_FAMILY(max_operations_jobs_total,
-	                              "Number of max operations in total");
-	INITIALIZE_CHUNKSERVER_FAMILY(chunk_operations_total,
-	                              "Number of chunk operations");
-	INITIALIZE_CHUNKSERVER_FAMILY(local_bytes_total,
-	                              "Number of read/writes on local filesystem");
-	INITIALIZE_CHUNKSERVER_FAMILY(hdd_bytes_total,
-	                              "Number of bytes read/written on local filesystem");
-	INITIALIZE_CHUNKSERVER_FAMILY(hdd_operations_total,
-	                              "Number of read/write operations on local filesystem");
-	INITIALIZE_CHUNKSERVER_FAMILY(replications_total,
-	                              "Number of replications");
+	INITIALIZE_FAMILY(chunkserver, network_bytes_total      , "Number of observed network bytes"                    );
+	INITIALIZE_FAMILY(chunkserver, network_operations_total , "Number of chunkserver operations"                    );
+	INITIALIZE_FAMILY(chunkserver, max_operations_jobs_total, "Number of max operations in total"                   );
+	INITIALIZE_FAMILY(chunkserver, chunk_operations_total   , "Number of chunk operations"                          );
+	INITIALIZE_FAMILY(chunkserver, local_bytes_total        , "Number of read/writes on local filesystem"           );
+	INITIALIZE_FAMILY(chunkserver, hdd_bytes_total          , "Number of bytes read/written on local filesystem"    );
+	INITIALIZE_FAMILY(chunkserver, hdd_operations_total     , "Number of read/write operations on local filesystem" );
+	INITIALIZE_FAMILY(chunkserver, replications_total       , "Number of replications"                              );
 	// NOLINTEND(cppcoreguidelines-prefer-member-initializer)
 
 	// A very hacky way to allow compile time checking if metrics have been
 	// set. Any enum value not used will throw a compile time error.
-	CHUNKSERVER_START_COUNTER_SWITCH
+	START_COUNTER_SWITCH(chunkserver)
 	DEFINE_COUNTER_CASE(MASTER_TX_BYTES,                  network_bytes_total,       { {"direction", "tx"}, {"peer", "master"}              });
 	DEFINE_COUNTER_CASE(MASTER_RX_BYTES,                  network_bytes_total,       { {"direction", "rx"}, {"peer", "master"}              });
 	DEFINE_COUNTER_CASE(ANY_RX_BYTES,                     network_bytes_total,       { {"direction", "rx"}, {"peer", "client_chunkserver"}  });

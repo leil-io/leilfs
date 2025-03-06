@@ -18,7 +18,6 @@
  */
 
 #include "metrics/master.h"
-#include "metrics.h"
 #include "metrics/utils.h"
 
 #ifdef HAVE_PROMETHEUS
@@ -27,161 +26,40 @@ using namespace metrics;
 Master::Master(std::shared_ptr<prometheus::Registry> &registry) {
 	// clang-format off
 	// NOLINTBEGIN(cppcoreguidelines-prefer-member-initializer)
-	packet_client_counter = &setupFamily(
-		"metadata_observed_packets_client_total",
-		"Number of observed packets from and for client", registry);
-	byte_client_counter = &setupFamily(
-		"metadata_observed_bytes_client_total",
-		"Number of observed bytes from and for client", registry);
-	filesystem_counter = &setupFamily(
-		"metadata_stats_total",
-		"Number of observed filesystem operations", registry);
-	chunkCounter= &setupFamily(
-		"metadata_chunk_operations_total",
-		"Number of chunk operations", registry);
+
+	INITIALIZE_FAMILY(metadata, packets_client_total  , "Number of observed packets from and for client" );
+	INITIALIZE_FAMILY(metadata, bytes_client_total    , "Number of observed bytes from and for client"   );
+	INITIALIZE_FAMILY(metadata, filesystem_stats_total, "Number of observed filesystem operations"       );
+	INITIALIZE_FAMILY(metadata, chunk_operations_total, "Number of chunk operations"                     );
+
 	// NOLINTEND(cppcoreguidelines-prefer-member-initializer)
 
-	// A very hacky way to allow compile time checking if metrics have been
-	// set. Any enum value not used will throw a compile time error.
-	using master::Counters;
-	Counters start = Counters::KEY_START;
-	switch (start) {
-		case Counters::KEY_START:
-			[[fallthrough]];
-		case Counters::CHUNK_DELETE:
-			counters[static_cast<unsigned int>(Counters::CHUNK_DELETE)] =
-				Counter(
-					{{"chunk", "operations"}, {"operation", "delete"}},
-					chunkCounter);
-			[[fallthrough]];
-		case Counters::CHUNK_REPLICATE:
-			counters[static_cast<unsigned int>(Counters::CHUNK_REPLICATE)] =
-				Counter(
-					{{"chunk", "operations"}, {"operation", "replicate"}},
-					chunkCounter);
-			[[fallthrough]];
-		case Counters::FS_STATFS:
-			counters[static_cast<unsigned int>(Counters::FS_STATFS)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "STATFS"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_GETATTR:
-			counters[static_cast<unsigned int>(Counters::FS_GETATTR)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "GETATTR"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_SETATTR:
-			counters[static_cast<unsigned int>(Counters::FS_SETATTR)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "SETATTR"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_LOOKUP:
-			counters[static_cast<unsigned int>(Counters::FS_LOOKUP)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "LOOKUP"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_MKDIR:
-			counters[static_cast<unsigned int>(Counters::FS_MKDIR)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "MKDIR"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_RMDIR:
-			counters[static_cast<unsigned int>(Counters::FS_RMDIR)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "RMDIR"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_SYMLINK:
-			counters[static_cast<unsigned int>(Counters::FS_SYMLINK)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "SYMLINK"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_READLINK:
-			counters[static_cast<unsigned int>(Counters::FS_READLINK)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "READLINK"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_MKNOD:
-			counters[static_cast<unsigned int>(Counters::FS_MKNOD)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "MKNOD"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_UNLINK:
-			counters[static_cast<unsigned int>(Counters::FS_UNLINK)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "UNLINK"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_RENAME:
-			counters[static_cast<unsigned int>(Counters::FS_RENAME)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "RENAME"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_LINK:
-			counters[static_cast<unsigned int>(Counters::FS_LINK)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "LINK"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_READDIR:
-			counters[static_cast<unsigned int>(Counters::FS_READDIR)] = Counter(
-				{{"filesystem", "operations"}, {"operation", "READDIR"}},
-				filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_OPEN:
-			counters[static_cast<unsigned int>(Counters::FS_OPEN)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "OPEN"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_READ:
-			counters[static_cast<unsigned int>(Counters::FS_READ)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "READ"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::FS_WRITE:
-			counters[static_cast<unsigned int>(Counters::FS_WRITE)] =
-				Counter(
-					{{"filesystem", "operations"}, {"operation", "WRITE"}},
-					filesystem_counter);
-			[[fallthrough]];
-		case Counters::CLIENT_RX_PACKETS:
-			counters[static_cast<unsigned int>(Counters::CLIENT_RX_PACKETS)] =
-				Counter(
-					{{"protocol", "tcp"}, {"direction", "rx"}},
-					packet_client_counter);
-			[[fallthrough]];
-		case Counters::CLIENT_TX_PACKETS:
-			counters[static_cast<unsigned int>(Counters::CLIENT_TX_PACKETS)] =
-				Counter(
-					{{"protocol", "tcp"}, {"direction", "tx"}},
-					packet_client_counter);
-			[[fallthrough]];
-		case Counters::CLIENT_RX_BYTES:
-			counters[static_cast<unsigned int>(Counters::CLIENT_RX_BYTES)] =
-				Counter(
-					{{"protocol", "tcp"}, {"direction", "rx"}},
-					byte_client_counter);
-			[[fallthrough]];
-		case Counters::CLIENT_TX_BYTES:
-			counters[static_cast<unsigned int>(Counters::CLIENT_TX_BYTES)] =
-				Counter(
-					{{"protocol", "tcp"}, {"direction", "tx"}},
-					byte_client_counter);
-			[[fallthrough]];
-		case Counters::KEY_END:
-			break;
-	}
+	START_COUNTER_SWITCH(metadata)
+
+	DEFINE_COUNTER_CASE(CHUNK_DELETE     , chunk_operations_total, { {"chunk", "operations"}, {"operation", "delete"}        });
+	DEFINE_COUNTER_CASE(CHUNK_REPLICATE  , chunk_operations_total, { {"chunk", "operations"}, {"operation", "replicate"}     });
+	DEFINE_COUNTER_CASE(FS_STATFS        , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "STATFS"}   });
+	DEFINE_COUNTER_CASE(FS_GETATTR       , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "GETATTR"}  });
+	DEFINE_COUNTER_CASE(FS_SETATTR       , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "SETATTR"}  });
+	DEFINE_COUNTER_CASE(FS_LOOKUP        , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "LOOKUP"}   });
+	DEFINE_COUNTER_CASE(FS_MKDIR         , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "MKDIR"}    });
+	DEFINE_COUNTER_CASE(FS_RMDIR         , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "RMDIR"}    });
+	DEFINE_COUNTER_CASE(FS_SYMLINK       , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "SYMLINK"}  });
+	DEFINE_COUNTER_CASE(FS_READLINK      , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "READLINK"} });
+	DEFINE_COUNTER_CASE(FS_MKNOD         , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "MKNOD"}    });
+	DEFINE_COUNTER_CASE(FS_UNLINK        , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "UNLINK"}   });
+	DEFINE_COUNTER_CASE(FS_RENAME        , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "RENAME"}   });
+	DEFINE_COUNTER_CASE(FS_LINK          , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "LINK"}     });
+	DEFINE_COUNTER_CASE(FS_READDIR       , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "READDIR"}  });
+	DEFINE_COUNTER_CASE(FS_OPEN          , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "OPEN"}     });
+	DEFINE_COUNTER_CASE(FS_READ          , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "READ"}     });
+	DEFINE_COUNTER_CASE(FS_WRITE         , filesystem_stats_total, { {"filesystem", "operations"}, {"operation", "WRITE"}    });
+	DEFINE_COUNTER_CASE(CLIENT_RX_PACKETS, packets_client_total  , { {"protocol", "tcp"}, {"direction", "rx"}                });
+	DEFINE_COUNTER_CASE(CLIENT_TX_PACKETS, packets_client_total  , { {"protocol", "tcp"}, {"direction", "tx"}                });
+	DEFINE_COUNTER_CASE(CLIENT_RX_BYTES  , bytes_client_total    , { {"protocol", "tcp"}, {"direction", "rx"}                });
+	DEFINE_COUNTER_CASE(CLIENT_TX_BYTES  , bytes_client_total    , { {"protocol", "tcp"}, {"direction", "tx"}                });
+
+	END_COUNTER_CASE
 	// clang-format on
 }
 #endif

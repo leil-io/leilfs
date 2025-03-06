@@ -5268,7 +5268,7 @@ void matoclserv_read(matoclserventry *eptr) {
 		}
 		eptr->inputpacket.startptr+=i;
 		eptr->inputpacket.bytesleft-=i;
-		metrics::Counter::increment(metrics::master::Counters::CLIENT_RX_BYTES, i);
+		metrics::Counter::increment(metrics::metadata::Counters::CLIENT_RX_BYTES, i);
 		stats_brcvd+=i;
 
 		if (eptr->inputpacket.bytesleft>0) {
@@ -5304,7 +5304,7 @@ void matoclserv_read(matoclserventry *eptr) {
 			eptr->inputpacket.startptr = eptr->hdrbuff;
 			matoclserv_gotpacket(eptr,type,eptr->inputpacket.packet,size);
 			stats_prcvd++;
-			metrics::Counter::increment(metrics::master::Counters::CLIENT_RX_PACKETS);
+			metrics::Counter::increment(metrics::metadata::Counters::CLIENT_RX_PACKETS);
 
 			if (eptr->inputpacket.packet) {
 				free(eptr->inputpacket.packet);
@@ -5340,14 +5340,14 @@ void matoclserv_write(matoclserventry *eptr) {
 		}
 		pack->startptr+=i;
 		pack->bytesleft-=i;
-		metrics::Counter::increment(metrics::master::Counters::CLIENT_TX_BYTES, i);
+		metrics::Counter::increment(metrics::metadata::Counters::CLIENT_TX_BYTES, i);
 		stats_bsent+=i;
 		if (pack->bytesleft>0) {
 			return;
 		}
 		free(pack->packet);
 		stats_psent++;
-		metrics::Counter::increment(metrics::master::Counters::CLIENT_TX_PACKETS);
+		metrics::Counter::increment(metrics::metadata::Counters::CLIENT_TX_PACKETS);
 		eptr->outputhead = pack->next;
 		if (eptr->outputhead==NULL) {
 			eptr->outputtail = &(eptr->outputhead);

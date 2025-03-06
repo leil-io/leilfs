@@ -1,9 +1,10 @@
 #pragma once
 #ifdef HAVE_PROMETHEUS
-#include <stdexcept>
-#include "metrics/metrics.h"
 #include <prometheus/counter.h>
 #include <prometheus/registry.h>
+#include <cstdint>
+#include <stdexcept>
+#include "metrics/metrics.h"
 
 namespace metrics {
 
@@ -15,16 +16,10 @@ public:
 	Chunkserver &operator=(Chunkserver &&) = delete;
 	Chunkserver(std::shared_ptr<prometheus::Registry> &registry);
 
-	Counter& get(chunkserver::Counters key) override {
-		return counters[static_cast<uint8_t>(key)];
+	Counter& getCounter(uint8_t key) override {
+		return counters.at(key);
 	}
-	Counter& get(master::Counters /*key*/) override {
-		throw std::logic_error("Chunkserver should not call with master counters");
-	};
-	Gauge& get(chunkserver::Gauges  /*key*/) override {
-		throw std::logic_error("Not implemented");
-	};
-	Gauge& get(master::Gauges  /*key*/) override {
+	Gauge& getGauge(uint8_t  /*key*/) override {
 		throw std::logic_error("Not implemented");
 	};
 

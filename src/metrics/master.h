@@ -18,6 +18,7 @@
  */
 
 #pragma once
+#include <stdexcept>
 #include "metrics/metrics.h"
 
 #ifdef HAVE_PROMETHEUS
@@ -33,27 +34,21 @@ struct Master : ServiceType {
 	Master &operator=(Master &&) = delete;
 	Master(std::shared_ptr<prometheus::Registry>& registry);
 
-	Counter& get(chunkserver::Counters  /*key*/) override {
-		throw std::logic_error("Master should not call with chunkserver counters");
+	Counter& getCounter(const uint8_t key) override {
+		return counters.at(key);
+	};
+	Gauge& getGauge(const uint8_t  /*key*/) override {
+		throw std::logic_error("Not implemented");
 	}
-	Counter& get(master::Counters key) override {
-		return counters[static_cast<uint8_t>(key)];
-	};
-	Gauge& get(chunkserver::Gauges  /*key*/) override {
-		throw std::logic_error("Not implemented");
-	};
-	Gauge& get(master::Gauges  /*key*/) override {
-		throw std::logic_error("Not implemented");
-	};
 
 	// Metric(s)
-	CounterFamily *packet_client_counter{nullptr};
-	CounterFamily *byte_client_counter{nullptr};
-	CounterFamily *filesystem_counter{nullptr};
-	CounterFamily *chunkCounter{nullptr};
+	CounterFamily *packets_client_total{nullptr};
+	CounterFamily *bytes_client_total{nullptr};
+	CounterFamily *filesystem_stats_total{nullptr};
+	CounterFamily *chunk_operations_total{nullptr};
 
 	// Master Counters
-	std::array<Counter, static_cast<uint8_t>(master::Counters::KEY_END) + 1> counters;
+	std::array<Counter, static_cast<uint8_t>(metadata::Counters::KEY_END) + 1> counters;
 	~Master() override = default;
 };
 }

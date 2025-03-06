@@ -50,25 +50,8 @@
 
 constexpr auto THREAD_SLEEP_TIME_MS = 100;
 
+
 namespace metrics {
-
-static std::unique_ptr<std::jthread>
-    gMetricsMainThread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-
-void destroy() {
-	if (gMetricsMainThread != nullptr) {
-		gMetricsMainThread->request_stop();
-	}
-}
-
-#ifndef HAVE_PROMETHEUS
-void init(const char* /* unused */, const Type /* unused */) {
-	safs::log_err(
-	    "could not setup prometheus server: Prometheus isn't compiled with "
-	    "this program");
-}
-}
-#else
 
 class PrometheusMetrics {
 public:
@@ -100,30 +83,15 @@ private:
 	// Registry
 	std::shared_ptr<prometheus::Registry> registry;
 };
-PrometheusMetrics gPrometheusMetrics;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-template <typename T>
-void Counter::increment(T key, double n) {
-	// Safe as all values are constructed at specific keys, however a check
-	// needs to be made whether the actual counter initialized or not (for
-	// whatever reason)
-	auto counter = gPrometheusMetrics.service->get(key); // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
-	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
 }
 
-template <typename T>
-void Gauge::set(T key, double n) {
-	// Safe as all values are constructed at specific keys, however a check
-	// needs to be made whether the actual counter initialized or not (for
-	// whatever reason)
-	auto counter = gPrometheusMetrics.service->get(key); // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
-	if (counter.gauge_ != nullptr) { counter.gauge_->Set(n); }
-}
+namespace {
 
-void Gauge::set(chunkserver::Gauges key, double n) {
-	auto counter = gPrometheusMetrics.service->get(key); // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
-	if (counter.gauge_ != nullptr) { counter.gauge_->Set(n); }
-}
+std::unique_ptr<std::jthread>
+    gMetricsMainThread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
+metrics::PrometheusMetrics gPrometheusMetrics;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 void prometheus_loop(const std::stop_token& stop, const char* host) {
 	try {
@@ -141,18 +109,59 @@ void prometheus_loop(const std::stop_token& stop, const char* host) {
 	}
 }
 
+
+} // anonymous
+
+namespace metrics {
+
+void destroy() {
+	if (gMetricsMainThread != nullptr) {
+		gMetricsMainThread->request_stop();
+	}
+}
+
+#ifndef HAVE_PROMETHEUS
+void init(const char* /* unused */, const Type /* unused */) {
+	safs::log_err(
+	    "could not setup prometheus server: Prometheus isn't compiled with "
+	    "this program");
+}
+}
+#else
+
+
+
+template <typename T>
+void Counter::increment(const T key, double n) {
+	// Safe as all values are constructed at specific keys, however a check
+	// needs to be made whether the actual counter initialized or not (for
+	// whatever reason)
+	auto counter = gPrometheusMetrics.service->getCounter(static_cast<uint8_t>(key));
+	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
+}
+
+template <typename T>
+void Gauge::set(const T key, double n) {
+	// Safe as all values are constructed at specific keys, however a check
+	// needs to be made whether the actual counter initialized or not (for
+	// whatever reason)
+	auto counter = gPrometheusMetrics.service->getGauge(static_cast<uint8_t>(key));
+	if (counter.gauge_ != nullptr) { counter.gauge_->Set(n); }
+}
+
 void init(const char* host, Type type) {
 	gMetricsMainThread = std::make_unique<std::jthread>(std::jthread(prometheus_loop, host));
 	gPrometheusMetrics.initialize_service(type);
 }
 
+//
 }
 #endif
-template void metrics::Counter::increment<metrics::master::Counters>
-	(master::Counters key, double n);
+template void metrics::Counter::increment<metrics::metadata::Counters>
+	(metadata::Counters key, double n);
 template void metrics::Counter::increment<metrics::chunkserver::Counters>
 	(chunkserver::Counters key, double n);
-template void metrics::Gauge::set<metrics::master::Gauges>
-	(master::Gauges key, double n);
+template void metrics::Gauge::set<metrics::metadata::Gauges>
+	(metadata::Gauges key, double n);
 template void metrics::Gauge::set<metrics::chunkserver::Gauges>
 	(chunkserver::Gauges key, double n);

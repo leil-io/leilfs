@@ -32,9 +32,9 @@ inline prometheus::Family<prometheus::Counter> &setupFamily(
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
-#define CHUNKSERVER_START_COUNTER_SWITCH \
-	using chunkserver::Counters; \
-	chunkserver::Counters start = Counters::KEY_START; \
+#define START_COUNTER_SWITCH(type) \
+	using type::Counters; \
+	type::Counters start = Counters::KEY_START; \
 	switch (start) { \
 		case Counters::KEY_START: \
 		[[fallthrough]];
@@ -49,8 +49,8 @@ inline prometheus::Family<prometheus::Counter> &setupFamily(
 		break; \
 	}
 
-#define MASTER_START_GAUGE_SWITCH \
-	master::Gauges start = GAUGE_KEY_START; \
+#define START_GAUGE_SWITCH(type) \
+	type::Gauges start = GAUGE_KEY_START; \
 	switch (start) { \
     case GAUGE_KEY_START: \
 		[[fallthrough]];
@@ -66,5 +66,5 @@ inline prometheus::Family<prometheus::Counter> &setupFamily(
 	}
 
 
-#define INITIALIZE_CHUNKSERVER_FAMILY(family, description) \
-	family = &setupFamily("chunkserver_" TOSTRING(family), description, registry)
+#define INITIALIZE_FAMILY(type, family, description) \
+	family = &setupFamily(TOSTRING(type) "_" TOSTRING(family), description, registry)
