@@ -49,75 +49,6 @@
 
 constexpr auto kInvalidJob = nullptr;
 
-
-// for ChunkOp
-struct chunk_chunkop_args {
-	uint64_t chunkid,copychunkid;
-	uint32_t version,newversion,copyversion;
-	uint32_t length;
-	ChunkPartType chunkType;
-};
-
-// for Open and Close
-struct chunk_open_and_close_args {
-	uint64_t chunkid;
-	ChunkPartType chunkType;
-};
-
-// for Read
-struct chunk_read_args {
-	uint64_t chunkid;
-	uint32_t version;
-	ChunkPartType chunkType;
-	uint32_t offset,size;
-	uint8_t *crcbuff;
-	uint32_t maxBlocksToBeReadBehind;
-	uint32_t blocksToBeReadAhead;
-	OutputBuffer* outputBuffer;
-	bool performHddOpen;
-};
-
-// for Prefetch
-struct chunk_prefetch_args {
-	uint64_t chunkid;
-	uint32_t version;
-	ChunkPartType chunkType;
-	uint32_t firstBlock;
-	uint32_t nrOfBlocks;
-};
-
-// for Write
- struct chunk_write_args {
-	uint64_t chunkId;
-	uint32_t chunkVersion;
-	ChunkPartType chunkType;
-	uint16_t blocknum;
-	uint32_t offset, size;
-	uint32_t crc;
-	const uint8_t *buffer;
-};
-
-struct chunk_get_blocks_args {
-	uint64_t chunkId;
-	uint32_t chunkVersion;
-	ChunkPartType chunkType;
-	uint16_t* blocks;
-};
-
-struct chunk_legacy_replication_args {
-	uint64_t chunkid;
-	uint32_t version;
-	uint8_t srccnt;
-};
-
-struct chunk_replication_args {
-	uint64_t chunkId;
-	uint32_t chunkVersion;
-	ChunkPartType chunkType;
-	uint32_t sourcesBufferSize;
-	uint8_t* sourcesBuffer;
-};
-
 JobPool::JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc) : workers(workers) {
 	int fd[2];
 	if (pipe(fd) < 0) { throw std::runtime_error("Failed to create pipe"); }
@@ -154,14 +85,15 @@ JobPool::~JobPool() {
 	close(wpipe);
 }
 
-uint32_t JobPool::addJob(ChunkOperation operation, void *args, JobCallback callback, void *extra) {
+uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
+                         ProcessJobCallback processJob) {
 	std::unique_lock lock(jobsMutex);
 	uint32_t jobId = nextJobId++;
 	auto job = std::make_unique<Job>();
 	job->jobId = jobId;
 	job->callback = std::move(callback);
+	job->processJob = std::move(processJob);
 	job->extra = extra;
-	job->args = args;
 	job->state = JobPool::State::Enabled;
 	jobHash[jobId] = std::move(job);
 	jobsQueue->put(jobId, operation, reinterpret_cast<uint8_t *>(jobHash[jobId].get()), 1);
@@ -253,144 +185,12 @@ void JobPool::workerThread() {
 		}
 
 		jobsUniqueLock.unlock();
-		switch (operation) {
-		case ChunkOperation::Invalid:
-		{
-			status = SAUNAFS_ERROR_EINVAL;
-			break;
-		}
-		case ChunkOperation::Delete:
-		{
-			auto args =
-			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			status = hddInternalDelete(args->chunkid, args->version, args->chunkType);
-			break;
-		}
-		case ChunkOperation::Create:
-		{
-			auto args =
-			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			status = hddInternalCreate(args->chunkid, args->version, args->chunkType);
-			break;
-		}
-		case ChunkOperation::ChangeVersion:
-		{
-			auto args =
-			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			status = hddInternalUpdateVersion(args->chunkid, args->version, args->newversion,
-			                                  args->chunkType);
-			break;
-		}
-		case ChunkOperation::Truncate:
-		{
-			auto args =
-			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			status = hddTruncate(args->chunkid, args->version, args->chunkType, args->newversion,
-			                     args->length);
-			break;
-		}
-		case ChunkOperation::Duplicate:
-		{
-			auto args =
-			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			status = hddDuplicate(args->chunkid, args->version, args->newversion, args->chunkType,
-			                      args->copychunkid, args->copyversion);
-			break;
-		}
-		case ChunkOperation::DuplicateTruncate:
-		{
-			auto args =
-			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			status = hddDuplicateTruncate(args->chunkid, args->version, args->newversion,
-			                              args->chunkType, args->copychunkid, args->copyversion,
-			                              args->length);
-			break;
-		}
-		case ChunkOperation::Open:
-		{
-			auto args = std::unique_ptr<chunk_open_and_close_args>(
-			    static_cast<chunk_open_and_close_args *>(job->args));
-			status = hddOpen(args->chunkid, args->chunkType);
-			break;
-		}
-		case ChunkOperation::Close:
-		{
-			auto args = std::unique_ptr<chunk_open_and_close_args>(
-			    static_cast<chunk_open_and_close_args *>(job->args));
-			status = hddClose(args->chunkid, args->chunkType);
-			break;
-		}
-		case ChunkOperation::Read:
-		{
-			auto args = std::unique_ptr<chunk_read_args>(static_cast<chunk_read_args *>(job->args));
-			LOG_AVG_TILL_END_OF_SCOPE0("job_read");
-			if (args->performHddOpen) {
-				status = hddOpen(args->chunkid, args->chunkType);
-				if (status != SAUNAFS_STATUS_OK) { break; }
-			}
 
-			status = hddRead(args->chunkid, args->version, args->chunkType, args->offset,
-			                 args->size, args->maxBlocksToBeReadBehind, args->blocksToBeReadAhead,
-			                 args->outputBuffer);
-
-			if (args->performHddOpen && status != SAUNAFS_STATUS_OK) {
-				int ret = hddClose(args->chunkid, args->chunkType);
-				if (ret != SAUNAFS_STATUS_OK) {
-					safs_silent_syslog(LOG_ERR,
-					                   "read job: cannot close chunk after read error (%s): %s",
-					                   saunafs_error_string(status), saunafs_error_string(ret));
-				}
-			}
-			break;
-		}
-		case ChunkOperation::Prefetch:
-		{
-			auto args =
-			    std::unique_ptr<chunk_prefetch_args>(static_cast<chunk_prefetch_args *>(job->args));
-			status = hddPrefetchBlocks(args->chunkid, args->chunkType, args->firstBlock,
-			                           args->nrOfBlocks);
-			break;
-		}
-		case ChunkOperation::Write:
-		{
-			auto args =
-			    std::unique_ptr<chunk_write_args>(static_cast<chunk_write_args *>(job->args));
-			status = hddChunkWriteBlock(args->chunkId, args->chunkVersion, args->chunkType,
-			                            args->blocknum, args->offset, args->size, args->crc,
-			                            args->buffer);
-			if (status != SAUNAFS_STATUS_OK) {
-				safs::log_err("Failed to write chunk id {}: {}", args->chunkId,
-				              saunafs_error_string(status));
-			}
-			break;
-		}
-		case ChunkOperation::Replicate:
-		{
-			auto args = std::unique_ptr<chunk_replication_args>(
-			    static_cast<chunk_replication_args *>(job->args));
-			try {
-				std::vector<ChunkTypeWithAddress> sources;
-				deserialize(args->sourcesBuffer, args->sourcesBufferSize, sources);
-				ChunkFileCreator creator(args->chunkId, args->chunkVersion, args->chunkType);
-				gReplicator.replicate(creator, sources);
-				status = SAUNAFS_STATUS_OK;
-			} catch (Exception &ex) {
-				safs_pretty_syslog(LOG_WARNING, "replication error: %s", ex.what());
-				status = ex.status();
-			}
-			break;
-		}
-		case ChunkOperation::GetBlocks:
-		{
-			auto args = std::unique_ptr<chunk_get_blocks_args>(
-			    static_cast<chunk_get_blocks_args *>(job->args));
-			status = hddChunkGetNumberOfBlocks(args->chunkId, args->chunkType, args->chunkVersion,
-			                                   args->blocks);
-			break;
-		}
-		default:
-			status = SAUNAFS_ERROR_EINVAL;
-			break;
+		auto processJobCallback = job->processJob;
+		if (processJobCallback) {
+			status = processJobCallback();
+		} else {
+			status = SAUNAFS_ERROR_NOTDONE;
 		}
 
 		sendStatus(jobId, status);
@@ -417,128 +217,134 @@ int JobPool::receiveStatus(uint32_t &jobId, uint8_t &status) {
 
 uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                   ChunkPartType chunkType) {
-	auto args = std::make_unique<chunk_open_and_close_args>();
-	args->chunkid = chunkId;
-	args->chunkType = chunkType;
-	return jobPool.addJob(JobPool::ChunkOperation::Open, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddOpen(chunkId, chunkType);
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Open, std::move(callback), extra, processJob);
 }
 
 uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
 	ChunkPartType chunkType) {
-	auto args = std::make_unique<chunk_open_and_close_args>();
-	args->chunkid = chunkId;
-	args->chunkType = chunkType;
-	return jobPool.addJob(JobPool::ChunkOperation::Close, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddClose(chunkId, chunkType);
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Close, std::move(callback), extra, processJob);
 }
 
 uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
                   OutputBuffer *outputBuffer, bool performHddOpen) {
-	auto args = std::make_unique<chunk_read_args>();
-	args->chunkid = chunkId;
-	args->version = version;
-	args->chunkType = chunkType;
-	args->offset = offset;
-	args->size = size;
-	args->maxBlocksToBeReadBehind = maxBlocksToBeReadBehind;
-	args->blocksToBeReadAhead = blocksToBeReadAhead;
-	args->outputBuffer = outputBuffer;
-	args->performHddOpen = performHddOpen;
-	return jobPool.addJob(JobPool::ChunkOperation::Read, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		LOG_AVG_TILL_END_OF_SCOPE0("job_read");
+		uint8_t status = SAUNAFS_STATUS_OK;
+		if (performHddOpen) {
+			status = hddOpen(chunkId, chunkType);
+			if (status != SAUNAFS_STATUS_OK) { return status; }
+		}
+
+		status = hddRead(chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
+		                 blocksToBeReadAhead, outputBuffer);
+
+		if (performHddOpen && status != SAUNAFS_STATUS_OK) {
+			int ret = hddClose(chunkId, chunkType);
+			if (ret != SAUNAFS_STATUS_OK) {
+				safs_silent_syslog(LOG_ERR,
+				                   "read job: cannot close chunk after read error (%s): %s",
+				                   saunafs_error_string(status), saunafs_error_string(ret));
+			}
+		}
+		return status;
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), extra, processJob);
 }
 
-uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, uint32_t  /*version*/, ChunkPartType chunkType,
 	uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched) {
-	auto args = std::make_unique<chunk_prefetch_args>();
-	args->chunkid = chunkId;
-	args->version = version;
-	args->chunkType = chunkType;
-	args->firstBlock = firstBlockToBePrefetched;
-	args->nrOfBlocks = blocksToBePrefetched;
-	return jobPool.addJob(JobPool::ChunkOperation::Prefetch, args.release(), nullptr, nullptr);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddPrefetchBlocks(chunkId, chunkType, firstBlockToBePrefetched,
+		                         blocksToBePrefetched);
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Prefetch, nullptr, nullptr, processJob);
 }
 
 uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                    uint32_t chunkVersion, ChunkPartType chunkType, uint16_t blockNum,
                    uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer) {
-	auto args = std::make_unique<chunk_write_args>();
-	args->chunkId = chunkId;
-	args->chunkVersion = chunkVersion;
-	args->chunkType = chunkType;
-	args->blocknum = blockNum;
-	args->offset = offset;
-	args->size = size;
-	args->crc = crc;
-	args->buffer = buffer;
-	return jobPool.addJob(JobPool::ChunkOperation::Write, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		auto status = hddChunkWriteBlock(chunkId, chunkVersion, chunkType, blockNum, offset, size,
+		                                 crc, buffer);
+
+		if (status != SAUNAFS_STATUS_OK) {
+			safs::log_err("Failed to write chunk id {}: {}", chunkId, saunafs_error_string(status));
+		}
+
+		return status;
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Write, std::move(callback), extra, processJob);
 }
 
 uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                         uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
                         uint16_t *blocks) {
-	auto args = std::make_unique<chunk_get_blocks_args>();
-	args->chunkId = chunkId;
-	args->chunkVersion = version;
-	args->chunkType = chunkType;
-	args->blocks = blocks;
-	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddChunkGetNumberOfBlocks(chunkId, chunkType, version, blocks);
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, std::move(callback), extra,
+	                      processJob);
 }
 
 uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                        uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer) {
-	auto args = std::make_unique<chunk_replication_args>();
-	args->chunkId = chunkId;
-	args->chunkVersion = chunkVersion;
-	args->chunkType = chunkType;
-	args->sourcesBufferSize = sourcesBufferSize;
-	args->sourcesBuffer = new uint8_t[sourcesBufferSize];
-	std::memcpy(args->sourcesBuffer, sourcesBuffer, sourcesBufferSize);
-	return jobPool.addJob(JobPool::ChunkOperation::Replicate, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		uint8_t status = SAUNAFS_STATUS_OK;
+		try {
+			std::vector<ChunkTypeWithAddress> sources;
+			deserialize(sourcesBuffer, sourcesBufferSize, sources);
+			ChunkFileCreator creator(chunkId, chunkVersion, chunkType);
+			gReplicator.replicate(creator, sources);
+		} catch (Exception &ex) {
+			safs_pretty_syslog(LOG_WARNING, "replication error: %s", ex.what());
+			status = ex.status();
+		}
+		return status;
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Replicate, std::move(callback), extra,
+	                      processJob);
 }
 
 uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra) {
-	return jobPool.addJob(JobPool::ChunkOperation::Invalid, nullptr, std::move(callback), extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return SAUNAFS_ERROR_EINVAL;
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Invalid, std::move(callback), extra, processJob);
 }
 
 uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
 	uint32_t chunkVersion, ChunkPartType chunkType) {
-	auto args = std::make_unique<chunk_chunkop_args>();
-	args->chunkid = chunkId;
-	args->version = chunkVersion;
-	args->chunkType = chunkType;
-	return jobPool.addJob(JobPool::ChunkOperation::Delete, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddInternalDelete(chunkId, chunkVersion, chunkType);
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Delete, std::move(callback), extra, processJob);
 }
 
 uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
 	uint32_t chunkVersion, ChunkPartType chunkType) {
-	auto args = std::make_unique<chunk_chunkop_args>();
-	args->chunkid = chunkId;
-	args->version = chunkVersion;
-	args->chunkType = chunkType;
-	return jobPool.addJob(JobPool::ChunkOperation::Create, args.release(), std::move(callback),
-	                      extra);
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddInternalCreate(chunkId, chunkVersion, chunkType);
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::Create, std::move(callback), extra, processJob);
 }
 
 uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                      uint32_t newChunkVersion) {
 	if (newChunkVersion > 0) {
-		auto args = std::make_unique<chunk_chunkop_args>();
-		args->chunkid = chunkId;
-		args->version = chunkVersion;
-		args->newversion = newChunkVersion;
-		args->chunkType = chunkType;
-		return jobPool.addJob(JobPool::ChunkOperation::ChangeVersion, args.release(), callback,
-		                      extra);
+		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+			return hddInternalUpdateVersion(chunkId, chunkVersion, newChunkVersion, chunkType);
+		};
+		return jobPool.addJob(JobPool::ChunkOperation::ChangeVersion, callback, extra, processJob);
 	}
 	return job_invalid(jobPool, callback, extra);
 }
@@ -547,13 +353,10 @@ uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, vo
 	uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
 	uint32_t newChunkVersion, uint32_t length) {
 	if (newChunkVersion > 0) {
-		auto args = std::make_unique<chunk_chunkop_args>();
-		args->chunkid = chunkId;
-		args->version = chunkVersion;
-		args->newversion = newChunkVersion;
-		args->length = length;
-		args->chunkType = chunkType;
-		return jobPool.addJob(JobPool::ChunkOperation::Truncate, args.release(), callback, extra);
+		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+			return hddTruncate(chunkId, chunkVersion, chunkType, newChunkVersion, length);
+		};
+		return jobPool.addJob(JobPool::ChunkOperation::Truncate, callback, extra, processJob);
 	}
 	return job_invalid(jobPool, callback, extra);
 }
@@ -562,14 +365,11 @@ uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, v
                        uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                        ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy) {
 	if (newChunkVersion > 0) {
-		auto args = std::make_unique<chunk_chunkop_args>();
-		args->chunkid = chunkId;
-		args->version = chunkVersion;
-		args->newversion = newChunkVersion;
-		args->chunkType = chunkType;
-		args->copychunkid = chunkIdCopy;
-		args->copyversion = chunkVersionCopy;
-		return jobPool.addJob(JobPool::ChunkOperation::Duplicate, args.release(), callback, extra);
+		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+			return hddDuplicate(chunkId, chunkVersion, newChunkVersion, chunkType, chunkIdCopy,
+			                    chunkVersionCopy);
+		};
+		return jobPool.addJob(JobPool::ChunkOperation::Duplicate, callback, extra, processJob);
 	}
 	return job_invalid(jobPool, callback, extra);
 }
@@ -579,16 +379,12 @@ uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, vo
                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
                       uint32_t length) {
 	if (newChunkVersion > 0) {
-		auto args = std::make_unique<chunk_chunkop_args>();
-		args->chunkid = chunkId;
-		args->version = chunkVersion;
-		args->newversion = newChunkVersion;
-		args->copychunkid = chunkIdCopy;
-		args->copyversion = chunkVersionCopy;
-		args->length = length;
-		args->chunkType = chunkType;
-		return jobPool.addJob(JobPool::ChunkOperation::DuplicateTruncate, args.release(), callback,
-		                      extra);
+		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+			return hddDuplicateTruncate(chunkId, chunkVersion, newChunkVersion, chunkType,
+			                            chunkIdCopy, chunkVersionCopy, length);
+		};
+		return jobPool.addJob(JobPool::ChunkOperation::DuplicateTruncate, callback, extra,
+		                      processJob);
 	}
 	return job_invalid(jobPool, callback, extra);
 }

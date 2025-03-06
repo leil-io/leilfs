@@ -62,11 +62,13 @@ public:
 
 public:
 	using JobCallback = std::function<void(uint8_t status, void *extra)>;
+	using ProcessJobCallback = std::function<uint8_t()>;
 
 	JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc);
 	~JobPool();
 
-	uint32_t addJob(ChunkOperation operation, void *args, JobCallback callback, void *extra);
+	uint32_t addJob(ChunkOperation operation, JobCallback callback, void *extra,
+	                ProcessJobCallback processJob);
 	uint32_t getJobCount() const;
 	void disableAndChangeCallbackAll(const JobCallback& callback);
 	void disableJob(uint32_t jobId);
@@ -77,8 +79,8 @@ private:
 	struct Job {
 		uint32_t jobId;
 		JobCallback callback;
+		ProcessJobCallback processJob;
 		void *extra;
-		void *args;
 		JobPool::State state;
 	};
 
