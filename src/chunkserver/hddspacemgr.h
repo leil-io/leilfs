@@ -77,19 +77,15 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
                               uint32_t version, uint16_t *blocks);
 
 /* chunk operations */
+int hddTruncate(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                uint32_t chunkNewVersion, uint32_t length);
 
-/* all chunk operations in one call */
-// chunkNewVersion>0 && length==0xFFFFFFFF && chunkIdCopy==0   -> change version
-// chunkNewVersion>0 && length==0xFFFFFFFF && chunkIdCopy>0     -> duplicate
-// chunkNewVersion>0 && length<=SFSCHUNKSIZE && chunkIdCopy==0  -> truncate
-// chunkNewVersion>0 && length<=SFSCHUNKSIZE && chunkIdCopy>0   -> dup and turn
-// chunkNewVersion==0 && length==0                              -> delete
-// chunkNewVersion==0 && length==1                              -> create
-// chunkNewVersion==0 && length==2                              -> test
-int hddChunkOperation(uint64_t chunkId, uint32_t chunkVersion,
-                      ChunkPartType chunkType, uint32_t chunkNewVersion,
-                      uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
-                      uint32_t length);
+int hddDuplicate(uint64_t chunkId, uint32_t chunkVersion, uint32_t chunkNewVersion,
+                 ChunkPartType chunkType, uint64_t copyChunkId, uint32_t copyChunkVersion);
+
+int hddDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion, uint32_t chunkNewVersion,
+                         ChunkPartType chunkType, uint64_t copyChunkId, uint32_t copyChunkVersion,
+                         uint32_t length);
 
 /* chunk testing */
 void hddAddChunkToTestQueue(ChunkWithVersionAndType chunk);

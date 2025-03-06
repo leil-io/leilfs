@@ -45,6 +45,12 @@ public:
 		Exit,
 		Invalid,
 		ChunkOp,
+		ChangeVersion,
+		Duplicate,
+		Truncate,
+		DuplicateTruncate,
+		Delete,
+		Create,
 		Open,
 		Close,
 		Read,
@@ -116,10 +122,6 @@ uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *e
 uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                        uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer);
-
-uint32_t job_chunkop(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                     uint32_t chunkVersion, ChunkPartType chunkType, uint32_t newChunkVersion,
-                     uint64_t copyChunkId, uint32_t copyChunkVersion, uint32_t length);
 
 uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra);
 

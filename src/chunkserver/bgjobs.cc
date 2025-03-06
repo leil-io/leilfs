@@ -47,10 +47,6 @@
 #define JHASHSIZE 0x400
 #define JHASHPOS(id) ((id)&0x3FF)
 
-/// This is a special value used to determine the chunk operation that will be executed
-/// by \ref hddChunkOperation function.
-constexpr uint32_t kWildCardLength = 0xFFFFFFFF;
-
 constexpr auto kInvalidJob = nullptr;
 
 
@@ -263,14 +259,51 @@ void JobPool::workerThread() {
 			status = SAUNAFS_ERROR_EINVAL;
 			break;
 		}
-		case ChunkOperation::ChunkOp:
+		case ChunkOperation::Delete:
 		{
 			auto args =
 			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
-			// TODO(Crash): Refactor hddChunkOperation and separate operations and states
-			status =
-			    hddChunkOperation(args->chunkid, args->version, args->chunkType, args->newversion,
-			                      args->copychunkid, args->copyversion, args->length);
+			status = hddInternalDelete(args->chunkid, args->version, args->chunkType);
+			break;
+		}
+		case ChunkOperation::Create:
+		{
+			auto args =
+			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
+			status = hddInternalCreate(args->chunkid, args->version, args->chunkType);
+			break;
+		}
+		case ChunkOperation::ChangeVersion:
+		{
+			auto args =
+			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
+			status = hddInternalUpdateVersion(args->chunkid, args->version, args->newversion,
+			                                  args->chunkType);
+			break;
+		}
+		case ChunkOperation::Truncate:
+		{
+			auto args =
+			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
+			status = hddTruncate(args->chunkid, args->version, args->chunkType, args->newversion,
+			                     args->length);
+			break;
+		}
+		case ChunkOperation::Duplicate:
+		{
+			auto args =
+			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
+			status = hddDuplicate(args->chunkid, args->version, args->newversion, args->chunkType,
+			                      args->copychunkid, args->copyversion);
+			break;
+		}
+		case ChunkOperation::DuplicateTruncate:
+		{
+			auto args =
+			    std::unique_ptr<chunk_chunkop_args>(static_cast<chunk_chunkop_args *>(job->args));
+			status = hddDuplicateTruncate(args->chunkid, args->version, args->newversion,
+			                              args->chunkType, args->copychunkid, args->copyversion,
+			                              args->length);
 			break;
 		}
 		case ChunkOperation::Open:
@@ -471,43 +504,41 @@ uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *ex
 	                      extra);
 }
 
-uint32_t job_chunkop(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                     uint32_t chunkVersion, ChunkPartType chunkType, uint32_t newChunkVersion,
-                     uint64_t copyChunkId, uint32_t copyChunkVersion, uint32_t length) {
-    auto args = std::make_unique<chunk_chunkop_args>();
-    args->chunkid = chunkId;
-    args->version = chunkVersion;
-    args->newversion = newChunkVersion;
-    args->copychunkid = copyChunkId;
-    args->copyversion = copyChunkVersion;
-    args->length = length;
-    args->chunkType = chunkType;
-	return jobPool.addJob(JobPool::ChunkOperation::ChunkOp, args.release(), std::move(callback),
-	                      extra);
-}
-
 uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra) {
 	return jobPool.addJob(JobPool::ChunkOperation::Invalid, nullptr, std::move(callback), extra);
 }
 
 uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
 	uint32_t chunkVersion, ChunkPartType chunkType) {
-	return job_chunkop(jobPool, std::move(callback), extra, chunkId, chunkVersion, chunkType, 0, 0,
-	                   0, 0);
+	auto args = std::make_unique<chunk_chunkop_args>();
+	args->chunkid = chunkId;
+	args->version = chunkVersion;
+	args->chunkType = chunkType;
+	return jobPool.addJob(JobPool::ChunkOperation::Delete, args.release(), std::move(callback),
+	                      extra);
 }
 
 uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
 	uint32_t chunkVersion, ChunkPartType chunkType) {
-	return job_chunkop(jobPool, std::move(callback), extra, chunkId, chunkVersion, chunkType, 0, 0,
-	                   0, 1);
+	auto args = std::make_unique<chunk_chunkop_args>();
+	args->chunkid = chunkId;
+	args->version = chunkVersion;
+	args->chunkType = chunkType;
+	return jobPool.addJob(JobPool::ChunkOperation::Create, args.release(), std::move(callback),
+	                      extra);
 }
 
 uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                      uint32_t newChunkVersion) {
 	if (newChunkVersion > 0) {
-		return job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType,
-		                   newChunkVersion, 0, 0, kWildCardLength);
+		auto args = std::make_unique<chunk_chunkop_args>();
+		args->chunkid = chunkId;
+		args->version = chunkVersion;
+		args->newversion = newChunkVersion;
+		args->chunkType = chunkType;
+		return jobPool.addJob(JobPool::ChunkOperation::ChangeVersion, args.release(), callback,
+		                      extra);
 	}
 	return job_invalid(jobPool, callback, extra);
 }
@@ -515,9 +546,14 @@ uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, voi
 uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
 	uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
 	uint32_t newChunkVersion, uint32_t length) {
-	if (newChunkVersion > 0 && length != kWildCardLength) {
-		return job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType,
-		                   newChunkVersion, 0, 0, length);
+	if (newChunkVersion > 0) {
+		auto args = std::make_unique<chunk_chunkop_args>();
+		args->chunkid = chunkId;
+		args->version = chunkVersion;
+		args->newversion = newChunkVersion;
+		args->length = length;
+		args->chunkType = chunkType;
+		return jobPool.addJob(JobPool::ChunkOperation::Truncate, args.release(), callback, extra);
 	}
 	return job_invalid(jobPool, callback, extra);
 }
@@ -525,9 +561,15 @@ uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, vo
 uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                        ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy) {
-	if (newChunkVersion > 0 && chunkIdCopy > 0) {
-		return job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType,
-		                   newChunkVersion, chunkIdCopy, chunkVersionCopy, kWildCardLength);
+	if (newChunkVersion > 0) {
+		auto args = std::make_unique<chunk_chunkop_args>();
+		args->chunkid = chunkId;
+		args->version = chunkVersion;
+		args->newversion = newChunkVersion;
+		args->chunkType = chunkType;
+		args->copychunkid = chunkIdCopy;
+		args->copyversion = chunkVersionCopy;
+		return jobPool.addJob(JobPool::ChunkOperation::Duplicate, args.release(), callback, extra);
 	}
 	return job_invalid(jobPool, callback, extra);
 }
@@ -536,9 +578,17 @@ uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, vo
                       uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
                       uint32_t length) {
-	if (newChunkVersion > 0 && chunkIdCopy > 0 && length != kWildCardLength) {
-		return job_chunkop(jobPool, callback, extra, chunkId, chunkVersion, chunkType,
-		                   newChunkVersion, chunkIdCopy, chunkVersionCopy, length);
+	if (newChunkVersion > 0) {
+		auto args = std::make_unique<chunk_chunkop_args>();
+		args->chunkid = chunkId;
+		args->version = chunkVersion;
+		args->newversion = newChunkVersion;
+		args->copychunkid = chunkIdCopy;
+		args->copyversion = chunkVersionCopy;
+		args->length = length;
+		args->chunkType = chunkType;
+		return jobPool.addJob(JobPool::ChunkOperation::DuplicateTruncate, args.release(), callback,
+		                      extra);
 	}
 	return job_invalid(jobPool, callback, extra);
 }

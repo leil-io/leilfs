@@ -2016,53 +2016,22 @@ int hddInternalDelete(uint64_t chunkId, uint32_t version,
 	return hddInternalDelete(chunk, version);
 }
 
-/* all chunk operations in one call */
-// newversion>0 && length==0xFFFFFFFF && copychunkid==0    -> change version
-// newversion>0 && length==0xFFFFFFFF && copycnunkid>0     -> duplicate
-// newversion>0 && length<=SFSCHUNKSIZE && copychunkid==0  -> truncate
-// newversion>0 && length<=SFSCHUNKSIZE && copychunkid>0   -> dup and truncate
-// newversion==0 && length==0                             -> delete
-// newversion==0 && length==1                             -> create
-// newversion==0 && length==2                             -> check chunk content
-int hddChunkOperation(uint64_t chunkId, uint32_t chunkVersion,
-                      ChunkPartType chunkType, uint32_t chunkNewVersion,
-                      uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
-                      uint32_t length) {
-	TRACETHIS();
+int hddTruncate(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+	uint32_t chunkNewVersion, uint32_t length) {
+	return hddInternalTruncate(chunkId, chunkType, chunkVersion, chunkNewVersion, length);
+}
 
-	if (chunkNewVersion > 0) {
-		if (length == 0xFFFFFFFF) {
-			if (chunkIdCopy == 0) {
-				return hddInternalUpdateVersion(chunkId, chunkVersion,
-				                                chunkNewVersion, chunkType);
-			} else {
-				return hddInternalDuplicate(chunkId, chunkVersion,
-				                            chunkNewVersion, chunkType,
-				                            chunkIdCopy, chunkVersionCopy);
-			}
-		} else if (length <= SFSCHUNKSIZE) {
-			if (chunkIdCopy == 0) {
-				return hddInternalTruncate(chunkId, chunkType, chunkVersion,
-				                           chunkNewVersion, length);
-			} else {
-				return hddInternalDuplicateTruncate(
-				    chunkId, chunkVersion, chunkNewVersion, chunkType,
-				    chunkIdCopy, chunkVersionCopy, length);
-			}
-		} else {
-			return SAUNAFS_ERROR_EINVAL;
-		}
-	} else {
-		if (length == 0) {
-			return hddInternalDelete(chunkId, chunkVersion, chunkType);
-		} else if (length == 1) {
-			return hddInternalCreate(chunkId, chunkVersion, chunkType);
-		} else if (length == 2) {
-			return hddInternalTestChunk(chunkId, chunkVersion, chunkType);
-		} else {
-			return SAUNAFS_ERROR_EINVAL;
-		}
-	}
+int hddDuplicate(uint64_t chunkId, uint32_t chunkVersion, uint32_t chunkNewVersion,
+                 ChunkPartType chunkType, uint64_t copyChunkId, uint32_t copyChunkVersion) {
+	return hddInternalDuplicate(chunkId, chunkVersion, chunkNewVersion, chunkType, copyChunkId,
+	                            copyChunkVersion);
+}
+
+int hddDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion, uint32_t chunkNewVersion,
+                         ChunkPartType chunkType, uint64_t copyChunkId, uint32_t copyChunkVersion,
+                         uint32_t length) {
+	return hddInternalDuplicateTruncate(chunkId, chunkVersion, chunkNewVersion, chunkType,
+	                                    copyChunkId, copyChunkVersion, length);
 }
 
 static UniqueQueue<ChunkWithVersionAndType> gTestChunkQueue;
