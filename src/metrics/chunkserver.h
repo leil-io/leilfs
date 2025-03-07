@@ -19,8 +19,8 @@ public:
 	Counter& getCounter(uint8_t key) override {
 		return counters.at(key);
 	}
-	Gauge& getGauge(uint8_t  /*key*/) override {
-		throw std::logic_error("Not implemented");
+	Gauge& getGauge(uint8_t key) override {
+		return gauges.at(key);
 	};
 
 	~Chunkserver() override = default;
@@ -30,15 +30,16 @@ private:
 	// prometheus
 	prometheus::Family<prometheus::Counter> *network_bytes_total{nullptr};
 	prometheus::Family<prometheus::Counter> *network_operations_total{nullptr};
-	prometheus::Family<prometheus::Counter> *local_bytes_total{nullptr};
-	prometheus::Family<prometheus::Counter> *max_operations_jobs_total{nullptr};
+	prometheus::Family<prometheus::Counter> *operations_jobs{nullptr};
 	prometheus::Family<prometheus::Counter> *chunk_operations_total{nullptr};
 	prometheus::Family<prometheus::Counter> *hdd_operations_total{nullptr};
 	prometheus::Family<prometheus::Counter> *hdd_bytes_total{nullptr};
+	prometheus::Family<prometheus::Counter> *hdd_time_total{nullptr};
 	prometheus::Family<prometheus::Counter> *replications_total{nullptr};
 
 	// Counters
 	std::array<Counter, static_cast<uint8_t>(chunkserver::Counters::KEY_END) + 1> counters;
+	std::array<Gauge, static_cast<uint8_t>(chunkserver::Counters::KEY_END) + 1> gauges;
   };
 }
 #endif

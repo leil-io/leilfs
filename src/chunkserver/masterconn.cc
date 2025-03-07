@@ -646,6 +646,7 @@ void masterconn_write(masterconn *eptr) {
 			}
 			return;
 		}
+		metrics::Counter::increment(metrics::chunkserver::Counters::MASTER_TX_BYTES, i);
 		stats_bytesout+=i;
 		pack.bytesSent += i;
 		if (pack.packet.size() != pack.bytesSent) {
@@ -741,6 +742,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	}
 	if (eptr->mode == CONNECTED) {
 		uint32_t jobscnt = jobPool->getJobCount();
+		metrics::Gauge::set(metrics::chunkserver::MASTER_OPERATION_JOBS, jobscnt);
 		if (jobscnt>=stats_maxjobscnt) {
 			stats_maxjobscnt=jobscnt;
 		}

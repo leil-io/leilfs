@@ -96,6 +96,7 @@
 #include "errors/saunafs_error_codes.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
+#include "metrics/metrics.h"
 
 constexpr int kErrorLimit = 2;
 constexpr int kLastErrorTime = 60;
@@ -905,6 +906,7 @@ int hddInternalCreate(uint64_t chunkId, uint32_t version,
 	TRACETHIS2(chunkId, version);
 
 	HddStats::gStatsOperationsCreate++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_CREATE);
 
 	auto [creationStatus, chunk] =
 	    hddInternalCreateChunk(chunkId, version, chunkType);
@@ -922,6 +924,7 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 	uint16_t block;
 
 	HddStats::gStatsOperationsTest++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_TEST);
 
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 
@@ -1007,6 +1010,7 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 	IDisk *dupDisk, *originalDisk;
 
 	HddStats::gStatsOperationsDuplicate++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_DUPLICATE);
 
 	uint8_t *blockBuffer = getChunkBlockBuffer() + kCrcSize;
 
@@ -1270,6 +1274,7 @@ int hddInternalUpdateVersion(uint64_t chunkId, uint32_t version,
 	TRACETHIS();
 
 	HddStats::gStatsOperationsVersion++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_VERSION);
 
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 	if (chunk == ChunkNotFound) {
@@ -1293,6 +1298,7 @@ static int hddInternalTruncate(uint64_t chunkId, ChunkPartType chunkType,
 	uint32_t crc;
 
 	HddStats::gStatsOperationsTruncate++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_TRUNCATE);
 
 	if (length > SFSCHUNKSIZE) {
 		return SAUNAFS_ERROR_WRONGSIZE;
@@ -1508,6 +1514,7 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 	IDisk *dupDisk, *origDisk;
 
 	HddStats::gStatsOperationsDupTrunc++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_DUPLICATE_TRUNCATE);
 
 	if (copyChunkLength > SFSCHUNKSIZE) {
 		return SAUNAFS_ERROR_WRONGSIZE;
@@ -2006,6 +2013,7 @@ int hddInternalDelete(uint64_t chunkId, uint32_t version,
 	TRACETHIS();
 
 	HddStats::gStatsOperationsDelete++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::OPERATION_DELETE);
 
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 	if (chunk == ChunkNotFound) {

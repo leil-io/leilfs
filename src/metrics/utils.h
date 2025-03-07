@@ -29,42 +29,47 @@ inline prometheus::Family<prometheus::Counter> &setupFamily(
 }
 #endif
 
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
+#define METRICS_STRINGIFY(x) #x
+#define METRICS_TOSTRING(x) METRICS_STRINGIFY(x)
 
-#define START_COUNTER_SWITCH(type) \
+#define METRICS_START_COUNTER_SWITCH(type) \
+	{ \
 	using type::Counters; \
 	type::Counters start = Counters::KEY_START; \
 	switch (start) { \
 		case Counters::KEY_START: \
 		[[fallthrough]];
 
-#define DEFINE_COUNTER_CASE(enum_val, family, ...) \
+#define METRICS_DEFINE_COUNTER_CASE(enum_val, family, ...) \
 	case Counters::enum_val:                              \
         counters[static_cast<uint8_t>(Counters::enum_val)] = Counter(__VA_ARGS__, family); \
         [[fallthrough]];
 
-#define END_COUNTER_CASE \
+#define METRICS_END_COUNTER_CASE \
 	case Counters::KEY_END: \
 		break; \
+	} \
 	}
 
-#define START_GAUGE_SWITCH(type) \
-	type::Gauges start = GAUGE_KEY_START; \
+#define METRICS_START_GAUGE_SWITCH(type) \
+	{ \
+	using type::Gauges; \
+	Gauges start = KEY_START; \
 	switch (start) { \
-    case GAUGE_KEY_START: \
+    case KEY_START: \
 		[[fallthrough]];
 
-#define DEFINE_GAUGE_CASE(enum_val, family, ...) \
+#define METRICS_DEFINE_GAUGE_CASE(enum_val, family, ...) \
     case enum_val:                              \
         counters[enum_val] = Counter(__VA_ARGS__, family); \
         [[fallthrough]];
 
-#define END_GAUGE_CASE \
-    case GAUGE_KEY_END: \
+#define METRICS_END_GAUGE_CASE \
+	case Gauges::KEY_END: \
 		break; \
+	} \
 	}
 
 
-#define INITIALIZE_FAMILY(type, family, description) \
-	family = &setupFamily(TOSTRING(type) "_" TOSTRING(family), description, registry)
+#define METRICS_INITIALIZE_FAMILY(type, family, description) \
+	family = &setupFamily(METRICS_TOSTRING(type) "_" METRICS_TOSTRING(family), description, registry)

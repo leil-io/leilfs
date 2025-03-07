@@ -18,7 +18,6 @@
  */
 
 #pragma once
-#include <stdexcept>
 #include "metrics/metrics.h"
 
 #ifdef HAVE_PROMETHEUS
@@ -37,8 +36,8 @@ struct Master : ServiceType {
 	Counter& getCounter(const uint8_t key) override {
 		return counters.at(key);
 	};
-	Gauge& getGauge(const uint8_t  /*key*/) override {
-		throw std::logic_error("Not implemented");
+	Gauge& getGauge(const uint8_t key) override {
+		return gauges.at(key);
 	}
 
 	// Metric(s)
@@ -47,8 +46,9 @@ struct Master : ServiceType {
 	CounterFamily *filesystem_stats_total{nullptr};
 	CounterFamily *chunk_operations_total{nullptr};
 
-	// Master Counters
+	// Master client metrics
 	std::array<Counter, static_cast<uint8_t>(metadata::Counters::KEY_END) + 1> counters;
+	std::array<Gauge, static_cast<uint8_t>(metadata::Gauges::KEY_END) + 1> gauges;
 	~Master() override = default;
 };
 }

@@ -56,6 +56,7 @@
 #include "common/sockets.h"
 #include "devtools/request_log.h"
 #include "devtools/TracePrinter.h"
+#include "metrics/metrics.h"
 
 constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 constexpr uint8_t kConnectRetries = 10;
@@ -467,6 +468,7 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 	// Process the request
+	metrics::Counter::increment(metrics::chunkserver::Counters::CHUNKSERVER_HIGH_LEVEL_READ_OPS);
 	stats_hlopr++;
 	state = State::Read;
 	todoReadCounter = 0;
@@ -644,6 +646,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	} else {
 		state = State::WriteLast;
 	}
+	metrics::Counter::increment(metrics::chunkserver::Counters::CHUNKSERVER_HIGH_LEVEL_WRITE_OPS);
 	stats_hlopw++;
 	writeJobWriteId = 0;
 	writeJobId = job_open(*workerJobPool, writeFinishedCallback, this, chunkId, chunkType);
@@ -1274,6 +1277,7 @@ void ChunkserverEntry::fwdRead() {
 				}
 				return;
 			}
+			metrics::Counter::increment(metrics::chunkserver::Counters::ANY_RX_BYTES, bytesRead);
 			stats_bytesin += bytesRead;
 			fwdInputPacket.startPtr += bytesRead;
 			fwdInputPacket.bytesLeft -= bytesRead;
@@ -1345,6 +1349,7 @@ void ChunkserverEntry::forward() {
 			}
 			return;
 		}
+		metrics::Counter::increment(metrics::chunkserver::Counters::ANY_RX_BYTES, bytesReadOrWritten);
 		stats_bytesin += bytesReadOrWritten;
 		inputPacket.startPtr += bytesReadOrWritten;
 		inputPacket.bytesLeft -= bytesReadOrWritten;
@@ -1467,6 +1472,7 @@ void ChunkserverEntry::readFromSocket() {
 			}
 			return;
 		}
+		metrics::Counter::increment(metrics::chunkserver::Counters::ANY_RX_BYTES, bytesRead);
 		stats_bytesin += bytesRead;
 		inputPacket.startPtr += bytesRead;
 		inputPacket.bytesLeft -= bytesRead;
@@ -1523,6 +1529,7 @@ void ChunkserverEntry::readFromSocket() {
 				}
 				return;
 			}
+			metrics::Counter::increment(metrics::chunkserver::Counters::ANY_RX_BYTES, bytesRead);
 			stats_bytesin += bytesRead;
 			inputPacket.startPtr += bytesRead;
 			inputPacket.bytesLeft -= bytesRead;

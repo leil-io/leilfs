@@ -41,6 +41,7 @@
 #include "common/sockets.h"
 #include "devtools/request_log.h"
 #include "devtools/TracePrinter.h"
+#include "metrics/metrics.h"
 
 // connection timeout in seconds
 constexpr uint32_t kCSServTimeout = 10;
@@ -288,6 +289,7 @@ void NetworkWorkerThread::servePoll() {
 	}
 
 	jobscnt = bgJobPool_->getJobCount();
+	metrics::Gauge::set(metrics::chunkserver::CHUNKSERVER_OPERATION_JOBS, jobscnt);
 //      // Lock free stats_maxjobscnt = max(stats_maxjobscnt, jobscnt), but I don't trust myself :(...
 //      uint32_t expected_value = stats_maxjobscnt;
 //      while (jobscnt > expected_value

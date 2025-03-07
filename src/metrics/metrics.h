@@ -67,8 +67,8 @@ enum class Counters : uint8_t {
 };
 
 enum class Gauges : uint8_t {
-	GAUGE_KEY_START = 0,
-	GAUGE_KEY_END,
+	KEY_START = 0,
+	KEY_END,
 };
 
 }
@@ -76,39 +76,40 @@ enum class Gauges : uint8_t {
 namespace chunkserver {
 
 enum class Counters : uint8_t {
-	KEY_START = 0,                     // Used internally, has no effect
-	MASTER_RX_BYTES,                   // Received bytes from master
-	MASTER_TX_BYTES,                   // Sent bytes to master
-	ANY_RX_BYTES,                      // Bytes from client(s)/chunkserver(s)
-	ANY_TX_BYTES,                      // Bytes to client(s)/chunkserver(s)
-	CHUNKSERVER_HIGH_LEVEL_READ_OPS,   // ???
-	CHUNKSERVER_HIGH_LEVEL_WRITE_OPS,  // ???
-	CHUNKSERVER_LOW_LEVEL_READ_OPS,    // ???
-	CHUNKSERVER_LOW_LEVEL_WRITE_OPS,   // ???
-	OVERHEAD_BYTES_READ,               // ???
-	OVERHEAD_BYTES_WRITE,              // ???
-	OVERHEAD_OPERATIONS_READ,          // ???
-	OVERHEAD_OPERATIONS_WRITE,         // ???
-	HDD_TOTAL_BYTES_READ,
-	HDD_TOTAL_BYTES_WRITE,
-	HDD_TOTAL_LOW_LEVEL_READS,
-	HDD_TOTAL_LOW_LEVEL_WRITES,
-	REPLICATIONS,
-	OPERATION_CREATE,                  // Chunk create operations
-	OPERATION_DELETE,                  // Chunk delete operations
-	OPERATION_VERSION,                 // Chunk version operation
-	OPERATION_DUPLICATE,               // Chunk duplicate operation
-	OPERATION_TRUNCATE,                // Chunk truncate operations
-	OPERATION_DUPLICATE_TRUNCATE,      // Chunk duplicate truncate operations
-	OPERATION_TEST,                    // Chunk test operations
-	KEY_END,                           // Used internally, has no effect
+	KEY_START = 0,                       // Used internally, has no effect
+	MASTER_RX_BYTES,                     // Received bytes from master
+	MASTER_TX_BYTES,                     // Sent bytes to master
+	ANY_RX_BYTES,                        // Bytes from client(s)/chunkserver(s)
+	ANY_TX_BYTES,                        // Bytes to client(s)/chunkserver(s)
+	CHUNKSERVER_HIGH_LEVEL_READ_OPS,     // Network read operations
+	CHUNKSERVER_HIGH_LEVEL_WRITE_OPS,    // Network write operations
+	CHUNKSERVER_LOW_LEVEL_READ_OPS,      //
+	CHUNKSERVER_LOW_LEVEL_WRITE_OPS,     // ???
+	HDD_TOTAL_OVERHEAD_BYTES_READ,       // Metadata (CRC, etc.) bytes read
+	HDD_TOTAL_OVERHEAD_BYTES_WRITE,      // Metadata (CRC, etc.) bytes written
+	HDD_TOTAL_READ_OPERATIONS_OVERHEAD,  // Metadata (CRC, etc.) read operations
+	HDD_TOTAL_WRITE_OPERATIONS_OVERHEAD, // Metadata (CRC, etc.) write operations
+	HDD_TOTAL_BYTES_READ,                // Bytes read from all HDD's
+	HDD_TOTAL_BYTES_WRITE,               // Bytes written from all HDD's
+	HDD_TOTAL_TIME_READ,                 // Total time reading from all HDD's
+	HDD_TOTAL_TIME_WRITE,                // Total time writing from all HDD's
+	HDD_TOTAL_READ_OPERATIONS,           // Total read operations (non-overhead)
+	HDD_TOTAL_WRITE_OPERATIONS,          // Total write operations (non-overhead)
+	OPERATION_CREATE,                    // Chunk create operations
+	OPERATION_DELETE,                    // Chunk delete operations
+	OPERATION_VERSION,                   // Chunk version operation
+	OPERATION_DUPLICATE,                 // Chunk duplicate operation
+	OPERATION_TRUNCATE,                  // Chunk truncate operations
+	OPERATION_DUPLICATE_TRUNCATE,        // Chunk duplicate truncate operations
+	OPERATION_TEST,                      // Chunk test operations
+	KEY_END,                             // Used internally, has no effect
 };
 
 enum Gauges : uint8_t {
-	GAUGE_KEY_START = 0,
-	CHUNKSERVER_MAX_SERVER_JOBS,
-	MASTER_MAX_OPERATION_JOBS,
-	GAUGE_KEY_END,
+	KEY_START = 0,
+	CHUNKSERVER_OPERATION_JOBS,        // Number of jobs from chunkserver
+	MASTER_OPERATION_JOBS,             // Number of jobs from master
+	KEY_END,
 };
 
 }
@@ -144,8 +145,7 @@ public:
 	    : gauge_(&family->Add(labels)) {};
 
 	template <typename T>
-	static void set(T key, double n = 1);
-	static void set(chunkserver::Gauges key, double n = 1);
+	static void set(T key, double n);
 
 private:
 	prometheus::Gauge* gauge_;

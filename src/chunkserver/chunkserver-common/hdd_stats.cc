@@ -2,6 +2,7 @@
 
 #include "chunkserver-common/disk_interface.h"
 #include "devtools/TracePrinter.h"
+#include "metrics/metrics.h"
 
 namespace HddStats {
 
@@ -19,8 +20,13 @@ static inline void totalRead(IDisk *disk, uint64_t size, MicroSeconds duration) 
 		return;
 	}
 
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_READ_OPERATIONS);
 	gStatsTotalOperationsRead++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_BYTES_READ,
+	                            static_cast<double>(size));
 	gStatsTotalBytesRead += size;
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_TIME_READ,
+	                            static_cast<double>(duration));
 	gStatsTotalTimeRead += duration;
 
 	auto &diskStats = disk->getCurrentStats();
@@ -38,8 +44,13 @@ static inline void totalWrite(IDisk *disk, uint64_t size,
 		return;
 	}
 
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_WRITE_OPERATIONS);
 	gStatsTotalOperationsWrite++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_BYTES_WRITE,
+	                            static_cast<double>(size));
 	gStatsTotalBytesWrite += size;
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_TIME_WRITE,
+	                            static_cast<double>(duration));
 	gStatsTotalTimeWrite += duration;
 
 	auto &diskStats = disk->getCurrentStats();
@@ -79,13 +90,17 @@ void operationStats(uint32_t *opsCreate, uint32_t *opsDelete,
 
 void overheadRead(uint32_t size) {
 	TRACETHIS();
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_READ_OPERATIONS_OVERHEAD);
 	gStatsOverheadOperationsRead++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_OVERHEAD_BYTES_READ, size);
 	gStatsOverheadBytesRead += size;
 }
 
 void overheadWrite(uint32_t size) {
 	TRACETHIS();
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_WRITE_OPERATIONS_OVERHEAD);
 	gStatsOverheadOperationsWrite++;
+	metrics::Counter::increment(metrics::chunkserver::Counters::HDD_TOTAL_OVERHEAD_BYTES_WRITE, size);
 	gStatsOverheadBytesWrite += size;
 }
 
