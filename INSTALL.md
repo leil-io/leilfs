@@ -128,7 +128,7 @@ Or follow the instructions from their [official documentation](https://vcpkg.io/
 To install the dependencies using VCPKG, you can use the following command from the root of the repository:
 
 ```shell
-vcpgk install
+vcpkg install
 ```
 
 ### Building
