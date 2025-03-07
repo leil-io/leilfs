@@ -44,9 +44,6 @@
 #include <utility>
 #include <vector>
 
-#define JHASHSIZE 0x400
-#define JHASHPOS(id) ((id)&0x3FF)
-
 constexpr auto kInvalidJob = nullptr;
 
 JobPool::JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc) : workers(workers) {

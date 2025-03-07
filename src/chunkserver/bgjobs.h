@@ -57,7 +57,6 @@ public:
 	enum ChunkOperation {
 		Exit,
 		Invalid,
-		ChunkOp,
 		ChangeVersion,
 		Duplicate,
 		Truncate,
@@ -362,7 +361,3 @@ uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, vo
                       uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
                       uint32_t length);
-
-/* srcs: srccnt * (chunkid:64 chunkVersion:32 ip:32 port:16) */
-uint32_t job_legacy_replicate(void *jpool,void (*callback)(uint8_t status,void *extra),void *extra,uint64_t chunkid,uint32_t chunkVersion,uint8_t srccnt,const uint8_t *srcs);
-uint32_t job_legacy_replicate_simple(void *jpool,void (*callback)(uint8_t status,void *extra),void *extra,uint64_t chunkid,uint32_t chunkVersion,uint32_t ip,uint16_t port);
