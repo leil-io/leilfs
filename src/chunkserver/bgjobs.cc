@@ -177,7 +177,7 @@ void JobPool::workerThread() {
 
 		if (jobState == State::Disabled) {
 			status = SAUNAFS_ERROR_NOTDONE;
-			sendStatus(jobId, status);
+			jobsUniqueLock.unlock();
 			continue;
 		}
 
