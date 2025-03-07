@@ -72,4 +72,4 @@ inline prometheus::Family<prometheus::Counter> &setupFamily(
 
 
 #define METRICS_INITIALIZE_FAMILY(type, family, description) \
-	family = &setupFamily(METRICS_TOSTRING(type) "_" METRICS_TOSTRING(family), description, registry)
+	family = &setupFamily("saunafs_" METRICS_TOSTRING(type) "_" METRICS_TOSTRING(family), description, registry)
