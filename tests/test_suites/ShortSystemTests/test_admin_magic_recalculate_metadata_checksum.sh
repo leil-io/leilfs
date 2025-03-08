@@ -20,19 +20,19 @@ fi
 
 
 # Verify if wrong password doesn't work
-assert_failure saunafs-admin magic-recalculate-metadata-checksum localhost "$port" <<< "no-pass"
+assert_failure saunafs_admin_command magic-recalculate-metadata-checksum localhost "$port" <<< "no-pass"
 
 assert_equals 0 $(grep updater_end "$TEMP_DIR/log" | wc -l)
 assert_equals 0 $(grep updater_start "$TEMP_DIR/log" | wc -l)
 
 # Verify if the command without --async blocks us until checksum is recalculated
-time assert_success saunafs-admin magic-recalculate-metadata-checksum localhost "$port" <<< "pass"
+time assert_success saunafs_admin_command magic-recalculate-metadata-checksum localhost "$port" <<< "pass"
 log_data=$(tail -n 100 "$TEMP_DIR/log")
 assert_equals 1 $(echo "$log_data" | grep updater_end | wc -l)
 assert_equals 1 $(echo "$log_data" | grep updater_start | wc -l)
 
 # Verify if the command with --async starts the process, but doesn't block us
-time assert_success saunafs-admin magic-recalculate-metadata-checksum localhost "$port" --async <<< "pass"
+time assert_success saunafs_admin_command magic-recalculate-metadata-checksum localhost "$port" --async <<< "pass"
 log_data=$(tail -n 100 "$TEMP_DIR/log")
 assert_equals 2 $(echo "$log_data" | grep updater_start | wc -l)
 assert_equals 1 $(echo "$log_data" | grep updater_end | wc -l)

@@ -14,7 +14,7 @@ CHUNKSERVERS=2 \
 	setup_local_empty_saunafs info
 
 chunks_health() {
-	saunafs-admin chunks-health --porcelain localhost "${info[matocl]}"
+	saunafs_admin_command chunks-health --porcelain localhost "${info[matocl]}"
 }
 
 cd "${info[mount0]}"

@@ -131,6 +131,15 @@ setup_local_empty_saunafs() {
 	done
 }
 
+saunafs_admin_command() {
+	if is_windows_system; then
+		${SAFS_ADMIN_COMMAND} "$@" | tr -d '\r'
+	else
+		saunafs-admin "$@"
+	fi
+	return ${PIPESTATUS[0]}
+}
+
 saunafs_fusermount() {
 	fuse_version=$(${SAFS_MOUNT_COMMAND} --version 2>&1 | grep "FUSE library" | grep -Eo "[0-9]+\..+")
 	if [[ "$fuse_version" =~ ^3\..+$ ]]; then
