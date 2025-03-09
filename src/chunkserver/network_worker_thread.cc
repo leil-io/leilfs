@@ -322,10 +322,10 @@ void NetworkWorkerThread::addConnection(int newSocketFD) {
 		csservEntries.emplace_front(newSocketFD, bgJobPool_.get());
 		csservEntries.front().lastActivity = eventloop_time();
 	} catch (const std::runtime_error &e) {
-		safs_pretty_syslog(LOG_ERR, "Failed to add connection: %s", e.what());
+		safs::log_err("Failed to add connection: {}", e.what());
 		tcpclose(newSocketFD);
 	} catch (const std::exception &e) {
-		safs_pretty_syslog(LOG_ERR, "Unexpected error: %s", e.what());
+		safs::log_err("Unexpected error: {}", e.what());
 		tcpclose(newSocketFD);
 	}
 

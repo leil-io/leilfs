@@ -17,6 +17,8 @@
 */
 
 #include "chunkserver/bgjobs.h"
+#include "errors/saunafs_error_codes.h"
+
 #include <sys/poll.h>
 #include <thread>
 
@@ -103,14 +105,19 @@ TEST_F(JobPoolTest, ProcessJob) {
 
 // Test job disabling
 TEST_F(JobPoolTest, DisableJob) {
+	JobPool::JobCallback mockedJobCallback = [](uint8_t status, void *extra) -> void {
+		auto *counter = static_cast<std::atomic<int> *>(extra);
+		counter->store(status);
+	};
+
 	uint32_t jobId =
-	    jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counter, mockProcessJob);
+	    jobPool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback, &counter, mockProcessJob);
 	jobPool->disableJob(jobId);
 
 	// Wait for the job to be processed
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 
-	EXPECT_EQ(counter.load(), 0);
+	EXPECT_EQ(counter.load(), SAUNAFS_ERROR_NOTDONE);
 }
 
 // Test changing callbacks

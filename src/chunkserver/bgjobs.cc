@@ -29,6 +29,7 @@
 #include "common/pcqueue.h"
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
+#include "slogger/slogger.h"
 
 #include <atomic>
 #include <cassert>
@@ -125,21 +126,19 @@ void JobPool::disableJob(uint32_t jobId) {
 void JobPool::checkJobs() {
 	uint32_t jobId;
 	uint8_t status;
-
-	receiveStatus(jobId, status);
-
-	auto jobIterator = jobHash.find(jobId);
-	if (jobIterator != jobHash.end()) {
-		auto callback = jobIterator->second->callback;
-		if (callback) {
-			callback(status, jobIterator->second->extra);
+	int notLastJob = 1;
+	do {
+		notLastJob = receiveStatus(jobId, status);
+		auto jobIterator = jobHash.find(jobId);
+		if (jobIterator != jobHash.end()) {
+			auto callback = jobIterator->second->callback;
+			if (callback) { callback(status, jobIterator->second->extra); }
+			jobHash.erase(jobIterator);
 		}
-		jobHash.erase(jobIterator);
-	}
+	} while (notLastJob > 0);
 }
 
 void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra) {
-	std::unique_lock lock(jobsMutex);
 	auto jobIterator = jobHash.find(jobId);
 	if (jobIterator != jobHash.end()) {
 		jobIterator->second->callback = std::move(callback);
@@ -178,6 +177,7 @@ void JobPool::workerThread() {
 		if (jobState == State::Disabled) {
 			status = SAUNAFS_ERROR_NOTDONE;
 			jobsUniqueLock.unlock();
+			sendStatus(jobId, status);
 			continue;
 		}
 
@@ -246,9 +246,8 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 		if (performHddOpen && status != SAUNAFS_STATUS_OK) {
 			int ret = hddClose(chunkId, chunkType);
 			if (ret != SAUNAFS_STATUS_OK) {
-				safs_silent_syslog(LOG_ERR,
-				                   "read job: cannot close chunk after read error (%s): %s",
-				                   saunafs_error_string(status), saunafs_error_string(ret));
+				safs::log_err("read job: cannot close chunk after read error ({}): {}",
+				              saunafs_error_string(status), saunafs_error_string(ret));
 			}
 		}
 		return status;
@@ -302,7 +301,7 @@ uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *ex
 			ChunkFileCreator creator(chunkId, chunkVersion, chunkType);
 			gReplicator.replicate(creator, sources);
 		} catch (Exception &ex) {
-			safs_pretty_syslog(LOG_WARNING, "replication error: %s", ex.what());
+			safs::log_warn("replication error: {}", ex.what());
 			status = ex.status();
 		}
 		return status;
