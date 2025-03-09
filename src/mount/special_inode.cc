@@ -73,3 +73,12 @@ const Inode InodePathByInode::inode_ = SPECIAL_INODE_PATH_BY_INODE;
 namespace InodePathByInode {
     InodePathInfo inodePathInfo = {nullptr, 0, std::mutex(), std::condition_variable(), false};
 }
+
+// 0x01A4 == 0b110100100 == 0644
+const Attributes InodeMountInfo::attr =
+	  {{'f', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
+const Inode InodeMountInfo::inode_ = SPECIAL_INODE_MOUNT_INFO;
+namespace InodeMountInfo {
+	MountInfo mountInfo;
+	std::string mountInfoStr;
+}

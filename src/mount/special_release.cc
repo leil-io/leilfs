@@ -114,6 +114,14 @@ static void release(FileInfo *fi) {
 }
 } // InodePathByInode
 
+namespace InodeMountInfo {
+static void release(FileInfo *fi) {
+	oplog_releasehandle(fi->fh);
+	oplog_printf("release (%lu) (internal node: MOUNT_INFO): OK",
+	            (unsigned long int)inode_);
+}
+}  // InodeMountInfo
+
 typedef void (*ReleaseFunc)(FileInfo *);
 static const std::array<ReleaseFunc, 16> funcs = {{
 	 &InodeStats::release,          //0x0U
@@ -125,7 +133,7 @@ static const std::array<ReleaseFunc, 16> funcs = {{
 	 nullptr,                       //0x6U
 	 nullptr,                       //0x7U
 	 &InodePathByInode::release,    //0x8U
-	 nullptr,                       //0x9U
+	 &InodeMountInfo::release,      //0x9U
 	 nullptr,                       //0xAU
 	 nullptr,                       //0xBU
 	 nullptr,                       //0xCU
