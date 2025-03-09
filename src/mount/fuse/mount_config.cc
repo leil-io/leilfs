@@ -30,6 +30,7 @@
 #define SFS_OPT(t, p, v) { t, offsetof(struct sfsopts_, p), v }
 
 sfsopts_ gMountOptions;
+std::map<std::string, std::string> gOptsNameValues;
 
 int gCustomCfg = 0;
 char *gDefaultMountpoint = NULL;
@@ -115,6 +116,83 @@ struct fuse_opt gSfsOptsStage2[] = {
 	FUSE_OPT_KEY("--nonempty",     KEY_NONEMPTY),
 	FUSE_OPT_END
 };
+
+void initialize_opts_name_values() {
+	gOptsNameValues["sfsmaster"] =
+	    gMountOptions.masterhost ? std::string(gMountOptions.masterhost) : "sfsmaster";
+	gOptsNameValues["sfsport"] =
+	    gMountOptions.masterport ? std::string(gMountOptions.masterport) : "9421";
+	gOptsNameValues["sfsbind"] = gMountOptions.bindhost ? std::string(gMountOptions.bindhost) : "";
+	gOptsNameValues["sfssubfolder"] = gMountOptions.subfolder
+	                                      ? std::string(gMountOptions.subfolder)
+	                                      : SaunaClient::FsInitParams::kDefaultSubfolder;
+	gOptsNameValues["askpassword"] = std::to_string(gMountOptions.passwordask);
+	gOptsNameValues["sfsrlimitnofile"] = std::to_string(gMountOptions.nofile);
+	gOptsNameValues["sfsnice"] = std::to_string(gMountOptions.nice);
+#ifdef SFS_USE_MEMLOCK
+	gOptsNameValues["sfsmemlock"] = std::to_string(gMountOptions.memlock);
+#endif
+	gOptsNameValues["sfswritecachesize"] = std::to_string(gMountOptions.writecachesize);
+	gOptsNameValues["sfsaclcachesize"] = std::to_string(gMountOptions.aclcachesize);
+	gOptsNameValues["sfscacheperinodepercentage"] =
+	    std::to_string(gMountOptions.cachePerInodePercentage);
+	gOptsNameValues["sfswriteworkers"] = std::to_string(gMountOptions.writeworkers);
+	gOptsNameValues["sfsioretries"] = std::to_string(gMountOptions.ioretries);
+	gOptsNameValues["sfswritewindowsize"] = std::to_string(gMountOptions.writewindowsize);
+	gOptsNameValues["sfsdebug"] = std::to_string(gMountOptions.debug);
+	gOptsNameValues["sfsmeta"] = std::to_string(gMountOptions.meta);
+	gOptsNameValues["sfsdelayedinit"] = std::to_string(gMountOptions.delayedinit);
+	gOptsNameValues["sfsacl"] = std::to_string(gMountOptions.acl);
+	gOptsNameValues["sfsrwlock"] = std::to_string(gMountOptions.rwlock);
+	gOptsNameValues["sfsdonotrememberpassword"] =
+	    std::to_string(gMountOptions.donotrememberpassword);
+	gOptsNameValues["sfscachefiles"] = std::to_string(gMountOptions.cachefiles);
+	gOptsNameValues["sfscachemode"] =
+	    gMountOptions.cachemode ? std::string(gMountOptions.cachemode) : "AUTO";
+	gOptsNameValues["sfsmkdircopysgid"] = std::to_string(gMountOptions.mkdircopysgid);
+	gOptsNameValues["sfssugidclearmode"] =
+	    gMountOptions.sugidclearmodestr
+	        ? std::string(gMountOptions.sugidclearmodestr)
+	        : sugidClearModeString(SaunaClient::FsInitParams::kDefaultSugidClearMode);
+	gOptsNameValues["sfsattrcacheto"] = std::to_string(gMountOptions.attrcacheto);
+	gOptsNameValues["sfsentrycacheto"] = std::to_string(gMountOptions.entrycacheto);
+	gOptsNameValues["sfsdirectio"] = std::to_string(gMountOptions.directio);
+	gOptsNameValues["sfsdirentrycacheto"] = std::to_string(gMountOptions.direntrycacheto);
+	gOptsNameValues["sfsaclcacheto"] = std::to_string(gMountOptions.aclcacheto);
+	gOptsNameValues["sfsreportreservedperiod"] = std::to_string(gMountOptions.reportreservedperiod);
+	gOptsNameValues["sfsiolimits"] =
+	    gMountOptions.iolimits ? std::string(gMountOptions.iolimits) : "";
+	gOptsNameValues["sfschunkserverrtt"] = std::to_string(gMountOptions.chunkserverrtt);
+	gOptsNameValues["sfschunkserverconnectreadto"] =
+	    std::to_string(gMountOptions.chunkserverconnectreadto);
+	gOptsNameValues["sfschunkserverwavereadto"] =
+	    std::to_string(gMountOptions.chunkserverwavereadto);
+	gOptsNameValues["sfschunkservertotalreadto"] =
+	    std::to_string(gMountOptions.chunkservertotalreadto);
+	gOptsNameValues["cacheexpirationtime"] = std::to_string(gMountOptions.cacheexpirationtime);
+	gOptsNameValues["readaheadmaxwindowsize"] =
+	    std::to_string(gMountOptions.readaheadmaxwindowsize);
+	gOptsNameValues["readcachemaxsizepercentage"] =
+	    std::to_string(gMountOptions.readcachemaxsizepercentage);
+	gOptsNameValues["readworkers"] = std::to_string(gMountOptions.readworkers);
+	gOptsNameValues["maxreadaheadrequests"] = std::to_string(gMountOptions.maxreadaheadrequests);
+	gOptsNameValues["sfsprefetchxorstripes"] = std::to_string(gMountOptions.prefetchxorstripes);
+	gOptsNameValues["sfschunkserverwriteto"] = std::to_string(gMountOptions.chunkserverwriteto);
+	gOptsNameValues["symlinkcachetimeout"] = std::to_string(gMountOptions.symlinkcachetimeout);
+	gOptsNameValues["bandwidthoveruse"] = std::to_string(gMountOptions.bandwidthoveruse);
+	gOptsNameValues["sfsdirentrycachesize"] = std::to_string(gMountOptions.direntrycachesize);
+	gOptsNameValues["nostdmountoptions"] = std::to_string(gMountOptions.nostdmountoptions);
+	gOptsNameValues["sfsignoreflush"] = std::to_string(gMountOptions.ignoreflush);
+	gOptsNameValues["limitglibcmallocarenas"] =
+	    std::to_string(gMountOptions.limitglibcmallocarenas);
+	gOptsNameValues["sfslognotificationarea"] = std::to_string(gMountOptions.lognotificationarea);
+	gOptsNameValues["sfsmessagesuppressionperiod"] =
+	    std::to_string(gMountOptions.messagesuppressionperiod);
+	gOptsNameValues["statfscachetimeout"] = std::to_string(gMountOptions.statfscachetimeout);
+	gOptsNameValues["usequotainvolumesize"] = std::to_string(gMountOptions.usequotainvolumesize);
+	gOptsNameValues["enablefilelocks"] = std::to_string(gMountOptions.filelocks);
+	gOptsNameValues["nonempty"] = std::to_string(gMountOptions.nonemptymount);
+}
 
 void usage(const char *progname) {
 	printf(

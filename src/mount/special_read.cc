@@ -239,6 +239,24 @@ static std::vector<uint8_t> read(const Context &ctx,
 }
 } // InodePathByInode
 
+namespace InodeMountInfo {
+static std::vector<uint8_t> read(const Context &ctx, size_t size, off_t off, FileInfo *fi,
+                                 int debug_mode) {
+	if (debug_mode) { printDebugReadInfo(ctx, SPECIAL_INODE_MOUNT_INFO, size, off); }
+	uint32_t ssize = strlen(mountInfoStr.c_str());
+	uint8_t *buff = reinterpret_cast<uint8_t *>(fi->fh);
+	if (off >= static_cast<off_t>(ssize)) {
+		printReadOplogNoData(ctx, SPECIAL_INODE_MOUNT_INFO, (uint64_t)size, (uint64_t)off);
+		return std::vector<uint8_t>();
+	} else {
+		const uint8_t *data = reinterpret_cast<const uint8_t *>(buff);
+		printReadOplogOk(ctx, SPECIAL_INODE_MOUNT_INFO, (uint64_t)size, (uint64_t)off,
+		                 (unsigned long int)size);
+		return std::vector<uint8_t>(data, data + ssize);
+	}
+}
+}  // InodeMountInfo
+
 static const std::array<std::function<std::vector<uint8_t>
 	(const Context&, size_t, off_t, FileInfo*, int)>, 16> funcs = {{
 	 &InodeStats::read,             //0x0U
@@ -250,7 +268,7 @@ static const std::array<std::function<std::vector<uint8_t>
 	 nullptr,                       //0x6U
 	 nullptr,                       //0x7U
 	 &InodePathByInode::read,       //0x8U
-	 nullptr,                       //0x9U
+	 &InodeMountInfo::read,         //0x9U
 	 nullptr,                       //0xAU
 	 nullptr,                       //0xBU
 	 nullptr,                       //0xCU

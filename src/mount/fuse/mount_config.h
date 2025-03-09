@@ -188,8 +188,10 @@ extern int gCustomCfg;
 extern char *gDefaultMountpoint;
 extern fuse_opt gSfsOptsStage1[];
 extern fuse_opt gSfsOptsStage2[];
+extern std::map<std::string, std::string> gOptsNameValues;
 
 void usage(const char *progname);
 void sfs_opt_parse_cfg_file(const char *filename,int optional,struct fuse_args *outargs);
 int sfs_opt_proc_stage1(void *data, const char *arg, int key, struct fuse_args *outargs);
 int sfs_opt_proc_stage2(void *data, const char *arg, int key, struct fuse_args *outargs);
+void initialize_opts_name_values();

@@ -128,6 +128,21 @@ static void open(const Context &ctx, FileInfo *fi) {
 }
 } // InodePathByInode
 
+namespace InodeMountInfo {
+static void open(const Context &ctx, FileInfo *fi) {
+	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
+		oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): %s",
+		             (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
+		throw RequestException(SAUNAFS_ERROR_EACCES);
+	}
+	fi->fh = reinterpret_cast<uintptr_t>(mountInfoStr.c_str());
+	fi->direct_io = 1;
+	fi->keep_cache = 0;
+	oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): OK (1,0)",
+	             (unsigned long int)inode_);
+}
+}  // InodeMountInfo
+
 static const std::array<std::function<void
 	(const Context&, FileInfo*)>, 16> funcs = {{
 	 &InodeStats::open,             //0x0U
@@ -139,7 +154,7 @@ static const std::array<std::function<void
 	 nullptr,                       //0x6U
 	 nullptr,                       //0x7U
 	 &InodePathByInode::open,       //0x8U
-	 nullptr,                       //0x9U
+	 &InodeMountInfo::open,         //0x9U
 	 nullptr,                       //0xAU
 	 nullptr,                       //0xBU
 	 nullptr,                       //0xCU

@@ -110,6 +110,17 @@ static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size,
 }
 } // InodePathByInode
 
+namespace InodeMountInfo {
+static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size, off_t off,
+                          FileInfo * /*fi*/) {
+	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s", (unsigned long int)inode_,
+	             (uint64_t)size, 
+	             (uint64_t)off, 
+	             saunafs_error_string(SAUNAFS_ERROR_EACCES));
+	throw RequestException(SAUNAFS_ERROR_EACCES);
+}
+}  // InodeMountInfo
+
 static const std::array<std::function<BytesWritten
 	(const Context&, const char *, size_t, off_t, FileInfo*)>, 16> funcs = {{
 	 &InodeStats::write,            //0x0U
@@ -121,7 +132,7 @@ static const std::array<std::function<BytesWritten
 	 nullptr,                       //0x6U
 	 nullptr,                       //0x7U
 	 &InodePathByInode::write,      //0x8U
-	 nullptr,                       //0x9U
+	 &InodeMountInfo::write,        //0x9U
 	 nullptr,                       //0xAU
 	 nullptr,                       //0xBU
 	 nullptr,                       //0xCU
