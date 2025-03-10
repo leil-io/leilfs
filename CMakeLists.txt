@@ -371,6 +371,7 @@ endif()
 include_directories(src) # Allow paths relative to src, eg. #include common/crc.h
 link_directories(${LINK_DIRECTORIES} ${FUSE_LIBRARY_DIR})
 
+set(ICON_RESOURCE_FILE "")
 if(MINGW)
   option(ENABLE_WINFSP_WINCLIENT  "Enable winfsp library based windows client build"    ON)
 
@@ -379,6 +380,8 @@ if(MINGW)
     set(WINFSP_FUSE_DLL  "C:/Program Files (x86)/WinFsp/bin/winfsp-x64.dll"    CACHE STRING "winfsp-fuse dll for specific arch")
     set(WINFSP_FUSE_LIBRARY  "C:/Program Files (x86)/WinFsp/lib/winfsp-x64.lib"    CACHE STRING "winfsp-fuse lib for specific arch")
   endif()
+
+  set(ICON_RESOURCE_FILE "${CMAKE_SOURCE_DIR}/src/mount/windows/resources/icons/icon.rc")
 endif()
 
 add_subdirectory(external)
