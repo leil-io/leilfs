@@ -33,6 +33,7 @@
 #include <ctime>
 #include <unistd.h>
 #include <list>
+#include <stdexcept>
 
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
@@ -303,7 +304,14 @@ void masterconn_create(masterconn */*eptr*/, const std::vector<uint8_t> &data) {
 	matocs::createChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 	OutputPacket *outputPacket = new OutputPacket;
 	cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
-	job_create(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion, chunkType);
+	if (jobPool) {
+		job_create(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		           chunkType);
+	}
+	else {
+		safs::log_err("masterconn_create: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_delete(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
@@ -314,7 +322,13 @@ void masterconn_delete(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
 	matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
-	job_delete(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion, chunkType);
+	if (jobPool) {
+		job_delete(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		           chunkType);
+	} else {
+		safs::log_err("masterconn_delete: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_setversion(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
@@ -326,8 +340,13 @@ void masterconn_setversion(masterconn */*eptr*/, const std::vector<uint8_t>& dat
 	matocs::setVersion::deserialize(data, chunkId, chunkType, chunkVersion, newVersion);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
-	job_version(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion, chunkType,
-	            newVersion);
+	if (jobPool) {
+		job_version(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		            chunkType, newVersion);
+	} else {
+		safs::log_err("masterconn_setversion: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_duplicate(masterconn* /*eptr*/,const std::vector<uint8_t>& data) {
@@ -339,8 +358,13 @@ void masterconn_duplicate(masterconn* /*eptr*/,const std::vector<uint8_t>& data)
 			oldChunkId, oldChunkVersion);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
-	job_duplicate(*jobPool, masterconn_saujobfinished, outputPacket, oldChunkId, oldChunkVersion,
-	              oldChunkVersion, chunkType, newChunkId, newChunkVersion);
+	if (jobPool) {
+		job_duplicate(*jobPool, masterconn_saujobfinished, outputPacket, oldChunkId,
+		              oldChunkVersion, oldChunkVersion, chunkType, newChunkId, newChunkVersion);
+	} else {
+		safs::log_err("masterconn_duplicate: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_truncate(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
@@ -353,8 +377,13 @@ void masterconn_truncate(masterconn */*eptr*/, const std::vector<uint8_t>& data)
 	matocs::truncateChunk::deserialize(data, chunkId, chunkType, chunkLength, newVersion, version);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
-	job_truncate(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkType, version,
-			newVersion, chunkLength);
+	if (jobPool) {
+		job_truncate(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkType, version,
+		             newVersion, chunkLength);
+	} else {
+		safs::log_err("masterconn_truncate: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_duptrunc(masterconn* /*eptr*/, const std::vector<uint8_t>& data) {
@@ -367,8 +396,13 @@ void masterconn_duptrunc(masterconn* /*eptr*/, const std::vector<uint8_t>& data)
 			chunkType, chunkId, chunkVersion, newLength);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::duptruncChunk::serialize(outputPacket->packet, copyChunkId, chunkType, 0);
-	job_duptrunc(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
-	             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
+	if (jobPool) {
+		job_duptrunc(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
+	} else {
+		safs::log_err("masterconn_duptrunc: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_replicate(const std::vector<uint8_t>& data) {
@@ -390,8 +424,13 @@ void masterconn_replicate(const std::vector<uint8_t>& data) {
 		// Disk scan in progress - replication is not possible
 		masterconn_saujobfinished(SAUNAFS_ERROR_WAITING, outputPacket);
 	} else {
-		job_replicate(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
-		              chunkType, sourcesBufferSize, sourcesBuffer);
+		if (jobPool) {
+			job_replicate(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+			              chunkType, sourcesBufferSize, sourcesBuffer);
+		} else {
+			safs::log_err("masterconn_replicate: jobPool is null.");
+			delete outputPacket;
+		}
 	}
 
 }
@@ -825,7 +864,15 @@ int masterconn_init(void) {
 }
 
 int masterconn_init_threads(void) {
-	jobPool = std::make_unique<JobPool>(gNumberOfWorkers, BGJOBSCNT, &jobfd);
+	try {
+		jobPool = std::make_unique<JobPool>(gNumberOfWorkers, BGJOBSCNT, &jobfd);
+	} catch (const std::runtime_error &e) {
+		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
+		return -1;
+	} catch (const std::exception &e) {
+		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
+		return -1;
+	}
 
 	if (jobPool == nullptr) { return -1; }
 

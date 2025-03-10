@@ -49,7 +49,9 @@ constexpr auto kInvalidJob = nullptr;
 
 JobPool::JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc) : workers(workers) {
 	int fd[2];
-	if (pipe(fd) < 0) { throw std::runtime_error("Failed to create pipe"); }
+	if (pipe(fd) < 0) {  // pipe is a critical resource for communication within the JobPool
+		throw std::runtime_error("Failed to create pipe: " + std::string(strerror(errno)));
+	}
 	rpipe = fd[0];
 	wpipe = fd[1];
 
