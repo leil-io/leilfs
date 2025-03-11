@@ -41,33 +41,33 @@
 #endif
 
 #define massert(e, msg) do { if (!(e)) { \
-				safs_pretty_syslog(LOG_ERR, "failed assertion '%s' : %s", #e, (msg)); \
+				safs::log_err("failed assertion '{}' : {}", #e, (msg)); \
 				ABORT_OR_THROW(); \
 		} } while (false)
 
 #define passert(ptr) do { if ((ptr) == NULL) { \
-				safs_pretty_syslog(LOG_ERR, "out of memory: %s is NULL", #ptr); \
+				safs::log_err("out of memory: {} is NULL", #ptr); \
 				ABORT_OR_THROW(); \
 		} } while (false)
 
 #define sassert(e) do { if (!(e)) { \
-				safs_pretty_syslog(LOG_ERR, "failed assertion '%s'", #e); \
+				safs::log_err("failed assertion '{}'", #e); \
 				ABORT_OR_THROW(); \
 		} } while (false)
 
 #define eassert(e) do { if (!(e)) { \
 			const char *_sfs_errorstring = strerr(errno); \
-			safs_pretty_syslog(LOG_ERR, "failed assertion '%s', error: %s", #e, _sfs_errorstring); \
+			safs::log_err("failed assertion '{}', error: {}", #e, _sfs_errorstring); \
 			ABORT_OR_THROW(); \
 		} } while(false)
 
 #define zassert(e) do { if ((e) != 0) { \
 			const char *_sfs_errorstring = strerr(errno); \
-			safs_pretty_syslog(LOG_ERR, "unexpected status, '%s' returned: %s", #e, _sfs_errorstring); \
+			safs::log_err("unexpected status, '{}' returned: {}", #e, _sfs_errorstring); \
 			ABORT_OR_THROW(); \
 		} } while(false)
 
 #define mabort(msg) do { \
-			safs_pretty_syslog(LOG_ERR, "abort '%s'", msg); \
+			safs::log_err("abort '{}'", msg); \
 			ABORT_OR_THROW(); \
 		} while (false)
