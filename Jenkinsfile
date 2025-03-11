@@ -2,7 +2,7 @@ def buildSfstests() {
     sh '''
         git clone "https://github.com/leil-io/sfstests"
         cd sfstests
-        git checkout v0.3.0
+        git checkout v0.4.0
         go build -o $WORKSPACE/sfstests
         '''
 }
@@ -18,7 +18,7 @@ def buildImage(imageName) {
 }
 
 def runSanity() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --workers 28 --multiplier 4 --cpus 1'''
+    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --workers 16 --multiplier 4 --cpus 1'''
 }
 def runShort() {
     sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite ShortSystemTests --workers 16 --multiplier 5 --cpus 2'''
@@ -27,7 +27,7 @@ def runMachine() {
     sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite SingleMachineTests --workers 1 --multiplier 5'''
 }
 def runLong() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite LongSystemTests --workers 12 --multiplier 5 --cpus 2'''
+    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --workers 35 --suite LongSystemTests --multiplier 5 --cpus 2'''
 }
 
 pipeline {
