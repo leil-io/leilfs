@@ -148,8 +148,11 @@ ssize_t OutputBuffer::copyIntoBlockBuffer(const void *mem, size_t len) {
 	return len;
 }
 
-ssize_t OutputBuffer::copyIntoBlockBuffer(const std::vector<uint8_t> &mem) {
-	return copyIntoBlockBuffer(mem.data(), mem.size());
+ssize_t OutputBuffer::copyValueIntoBlockBuffer(uint8_t value, size_t len) {
+	eassert(blockBufferUnflushedDataOneAfterLastIndex_ + len <= blockBufferCapacityAligned_);
+	memset((void *)&blockBuffer_[blockBufferUnflushedDataOneAfterLastIndex_], value, len);
+	blockBufferUnflushedDataOneAfterLastIndex_ += len;
+	return len;
 }
 
 ssize_t OutputBuffer::copyIntoHeaderBuffer(const std::vector<uint8_t> &mem) {
