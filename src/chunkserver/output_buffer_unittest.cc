@@ -49,14 +49,17 @@ TEST(OutputBufferTests, outputBuffersTest) {
 
 	uint8_t buf[WRITE_SIZE];
 	memset(buf, VALUE, WRITE_SIZE);
-	ASSERT_EQ(outputBuffer.copyIntoHeaderBuffer(std::vector<uint8_t>(testHeaderSize, VALUE)), testHeaderSize);
-	ASSERT_EQ(outputBuffer.copyIntoCRCBuffer(buf, kCrcSize), kCrcSize);
-	ASSERT_EQ(outputBuffer.copyIntoBlockBuffer(buf, WRITE_SIZE_DATA), WRITE_SIZE_DATA);
+	ASSERT_EQ(outputBuffer.copyIntoBuffer(OutputBuffer::BufferType::Header,
+	                                      std::vector<uint8_t>(testHeaderSize, VALUE)),
+	          testHeaderSize);
+	ASSERT_EQ(outputBuffer.copyIntoBuffer(OutputBuffer::BufferType::CRC, buf, kCrcSize), kCrcSize);
+	ASSERT_EQ(outputBuffer.copyIntoBuffer(OutputBuffer::BufferType::Block, buf, WRITE_SIZE_DATA),
+	          WRITE_SIZE_DATA);
 
 	while (true) {
 		OutputBuffer::WriteStatus status = outputBuffer.writeOutToAFileDescriptor(auxPipeFileDescriptors[1]);
-		ASSERT_NE(status, OutputBuffer::WRITE_ERROR);
-		if (status == OutputBuffer::WRITE_DONE) {
+		ASSERT_NE(status, OutputBuffer::WriteStatus::Error);
+		if (status == OutputBuffer::WriteStatus::Done) {
 			break;
 		}
 		sleep(1);

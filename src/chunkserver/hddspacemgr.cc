@@ -571,8 +571,11 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
 	}
 
 	if (blockNumber >= chunk->blocks()) {
-		bytesRead = outputBuffer->copyIntoCRCBuffer(&gEmptyBlockCrc, kCrcSize);
-		bytesRead += outputBuffer->copyValueIntoBlockBuffer(0, SFSBLOCKSIZE);
+		bytesRead =
+		    outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, &gEmptyBlockCrc, kCrcSize);
+		// Put a block of zeros into the buffer
+		bytesRead +=
+		    outputBuffer->copyValueIntoBuffer(OutputBuffer::BufferType::Block, 0, SFSBLOCKSIZE);
 		if (static_cast<uint32_t>(bytesRead) != kHddBlockSize) {
 			return SAUNAFS_ERROR_IO;
 		}
@@ -583,8 +586,9 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
 		const uint8_t *crcData =
 		    gOpenChunks.getResource(chunk->metaFD()).crcData() +
 		    blockNumber * kCrcSize;
-		outputBuffer->copyIntoCRCBuffer(crcData, kCrcSize);
-		bytesRead = outputBuffer->copyIntoBlockBuffer(chunk, SFSBLOCKSIZE, off);
+		outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcData, kCrcSize);
+		bytesRead =
+		    outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block, chunk, SFSBLOCKSIZE, off);
 
 		if (bytesRead != toBeRead) {
 			hddAddErrorAndPreserveErrno(chunk);
@@ -756,9 +760,14 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 			if (status == SAUNAFS_STATUS_OK) {  // CRC is OK or check disabled
 				uint8_t crcBuff[kCrcSize];
 				uint8_t *crcBuffPointer = crcBuff;
-				put32bit(&crcBuffPointer, mycrc32(0, tmp.blockData() + offsetWithinBlock, size));
-				outputBuffer->copyIntoCRCBuffer(crcBuff, kCrcSize);
-				outputBuffer->copyIntoBlockBuffer(tmp.blockData() + offsetWithinBlock, size);
+				put32bit(
+				    &crcBuffPointer,
+				    mycrc32(0, tmp.rawData(OutputBuffer::BufferType::Block) + offsetWithinBlock,
+				            size));
+				outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcBuff, kCrcSize);
+				outputBuffer->copyIntoBuffer(
+				    OutputBuffer::BufferType::Block,
+				    tmp.rawData(OutputBuffer::BufferType::Block) + offsetWithinBlock, size);
 			}
 		}
 	}

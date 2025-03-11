@@ -34,27 +34,9 @@ OutputBuffer::OutputBuffer(size_t headerSize, size_t numBlocks)
     : currentRemainingBytesForFD_(0),
       headerSize_(headerSize),
       numBlocks_(numBlocks),
-      blockBufferCapacity_(numBlocks * SFSBLOCKSIZE),
-      blockBufferCapacityAligned_(numBlocks * SFSBLOCKSIZE + disk::kIoBlockSize),
-      blockBufferPadding_(blockBufferCapacityAligned_ - blockBufferCapacity_),
-      blockBufferUnflushedDataFirstIndex_(blockBufferPadding_),
-      blockBufferUnflushedDataOneAfterLastIndex_(blockBufferPadding_),
-      blockBuffer_(blockBufferCapacityAligned_, 0),
-      crcBufferCapacity_(kCrcSize * numBlocks),
-      crcBufferUnflushedDataFirstIndex_(0),
-      crcBufferUnflushedDataOneAfterLastIndex_(0),
-      crcBuffer_(crcBufferCapacity_, 0),
-      headerBufferCapacity_(headerSize * numBlocks),
-      headerBufferUnflushedDataFirstIndex_(0),
-      headerBufferUnflushedDataOneAfterLastIndex_(0),
-      headerBuffer_(headerBufferCapacity_, 0) {
-	eassert(blockBufferCapacity_ > 0);
-	eassert(crcBufferCapacity_ > 0);
-	eassert(headerBufferCapacity_ > 0);
-	blockBuffer_.reserve(blockBufferCapacityAligned_);
-	crcBuffer_.reserve(crcBufferCapacity_);
-	headerBuffer_.reserve(headerBufferCapacity_);
-}
+      blockBuffer_(numBlocks * SFSBLOCKSIZE, disk::kIoBlockSize),
+      crcBuffer_(numBlocks * kCrcSize),
+      headerBuffer_(numBlocks * headerSize) {}
 
 OutputBuffer::WriteStatus OutputBuffer::writeOutToAFileDescriptor(int outputFileDescriptor) {
 	// Let's write block by block
@@ -65,100 +47,102 @@ OutputBuffer::WriteStatus OutputBuffer::writeOutToAFileDescriptor(int outputFile
 			// - copy the header
 			// - copy the crc
 			// - set the currentRemainingBytesForFD_
-			blockBufferUnflushedDataFirstIndex_ -= kCrcSize + headerSize_;
-			memcpy((void *)&blockBuffer_[blockBufferUnflushedDataFirstIndex_],
-			       (void *)&headerBuffer_[headerBufferUnflushedDataFirstIndex_], headerSize_);
-			headerBufferUnflushedDataFirstIndex_ += headerSize_;
-			assert(headerBufferUnflushedDataFirstIndex_ <= headerBufferUnflushedDataOneAfterLastIndex_);
-			memcpy((void *)&blockBuffer_[blockBufferUnflushedDataFirstIndex_ + headerSize_],
-			       (void *)&crcBuffer_[crcBufferUnflushedDataFirstIndex_], kCrcSize);
-			crcBufferUnflushedDataFirstIndex_ += kCrcSize;
-			assert(crcBufferUnflushedDataFirstIndex_ <= crcBufferUnflushedDataOneAfterLastIndex_);
+			blockBuffer_.moveUnflushedDataFirstIndex(-(int32_t)(kCrcSize));
+			crcBuffer_.copyFromBuffer(blockBuffer_.getUnflushedDataFirstIndex(), kCrcSize);
+			blockBuffer_.moveUnflushedDataFirstIndex(-(int32_t)(headerSize_));
+			headerBuffer_.copyFromBuffer(blockBuffer_.getUnflushedDataFirstIndex(), headerSize_);
 			currentRemainingBytesForFD_ =
 			    std::min(SFSBLOCKSIZE + kCrcSize + headerSize_, bytesInABuffer());
 		}
-		ssize_t ret =
-		    ::write(outputFileDescriptor, &blockBuffer_[blockBufferUnflushedDataFirstIndex_],
-				currentRemainingBytesForFD_);
+		ssize_t ret = ::write(outputFileDescriptor, blockBuffer_.getUnflushedDataFirstIndex(),
+		                      currentRemainingBytesForFD_);
 
 		if (ret <= 0) {
-			if (ret == 0 || errno == EAGAIN) { return WRITE_AGAIN; }
-			return WRITE_ERROR;
+			if (ret == 0 || errno == EAGAIN) { return WriteStatus::Again; }
+			return WriteStatus::Error;
 		}
 		currentRemainingBytesForFD_ -= ret;
-		blockBufferUnflushedDataFirstIndex_ += ret;
+		blockBuffer_.moveUnflushedDataFirstIndex(ret);
 	}
-	return WRITE_DONE;
+	return WriteStatus::Done;
 }
 
 size_t OutputBuffer::bytesInABuffer() const {
-	return (blockBufferUnflushedDataOneAfterLastIndex_ - blockBufferUnflushedDataFirstIndex_) +
-	       (crcBufferUnflushedDataOneAfterLastIndex_ - crcBufferUnflushedDataFirstIndex_) +
-	       (headerBufferUnflushedDataOneAfterLastIndex_ - headerBufferUnflushedDataFirstIndex_);
+	return blockBuffer_.bytesInABuffer() + crcBuffer_.bytesInABuffer() +
+	       headerBuffer_.bytesInABuffer();
 }
 
 void OutputBuffer::clear() {
 	currentRemainingBytesForFD_ = 0;
 
-	blockBufferUnflushedDataFirstIndex_ = blockBufferPadding_;
-	blockBufferUnflushedDataOneAfterLastIndex_ = blockBufferPadding_;
-	crcBufferUnflushedDataFirstIndex_ = 0;
-	crcBufferUnflushedDataOneAfterLastIndex_ = 0;
-	headerBufferUnflushedDataFirstIndex_ = 0;
-	headerBufferUnflushedDataOneAfterLastIndex_ = 0;
+	blockBuffer_.clear();
+	crcBuffer_.clear();
+	headerBuffer_.clear();
 
 	isReadCompleted = false;
 }
 
-ssize_t OutputBuffer::copyIntoBlockBuffer(IChunk *chunk, size_t len, off_t offset) {
-	eassert(len + blockBufferUnflushedDataOneAfterLastIndex_ <= blockBufferCapacityAligned_);
-	off_t bytes_written = 0;
-
-	while (len > 0) {
-		ssize_t ret = chunk->owner()->preadData(
-		    chunk, &blockBuffer_[blockBufferUnflushedDataOneAfterLastIndex_], len, offset);
-		if (ret <= 0) {
-			return bytes_written;
-		}
-		len -= ret;
-		blockBufferUnflushedDataOneAfterLastIndex_ += ret;
-		bytes_written += ret;
-	}
-
-	return bytes_written;
-}
-
 bool OutputBuffer::checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset) const {
-	startingOffset += blockBufferPadding_;
-	assert(startingOffset > 0 && startingOffset < blockBuffer_.size());
-	return mycrc32(0, &blockBuffer_[startingOffset], bytes) == crc;
+	return mycrc32(0, blockBuffer_.paddedIndex(startingOffset), bytes) == crc;
 }
 
-ssize_t OutputBuffer::copyIntoCRCBuffer(const void *mem, size_t len) {
-	eassert(crcBufferUnflushedDataOneAfterLastIndex_ + len <= crcBufferCapacity_);
-	memcpy((void *)&crcBuffer_[crcBufferUnflushedDataOneAfterLastIndex_], mem, len);
-	crcBufferUnflushedDataOneAfterLastIndex_ += len;
-	return len;
+ssize_t OutputBuffer::copyIntoBuffer(BufferType type, IChunk *chunk, size_t len, off_t offset) {
+	massert(type == BufferType::Block, "Invalid buffer type");
+	return blockBuffer_.copyIntoBuffer(chunk, len, offset);
 }
 
-ssize_t OutputBuffer::copyIntoBlockBuffer(const void *mem, size_t len) {
-	eassert(blockBufferUnflushedDataOneAfterLastIndex_ + len <= blockBufferCapacityAligned_);
-	memcpy((void *)&blockBuffer_[blockBufferUnflushedDataOneAfterLastIndex_], mem, len);
-	blockBufferUnflushedDataOneAfterLastIndex_ += len;
-	return len;
+ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const void *mem, size_t len) {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.copyIntoBuffer(mem, len);
+	case BufferType::CRC:
+		return crcBuffer_.copyIntoBuffer(mem, len);
+	case BufferType::Header:
+		return headerBuffer_.copyIntoBuffer(mem, len);
+	default:
+		safs::log_err("Invalid buffer type");
+		return 0;
+	}
 }
 
-ssize_t OutputBuffer::copyValueIntoBlockBuffer(uint8_t value, size_t len) {
-	eassert(blockBufferUnflushedDataOneAfterLastIndex_ + len <= blockBufferCapacityAligned_);
-	memset((void *)&blockBuffer_[blockBufferUnflushedDataOneAfterLastIndex_], value, len);
-	blockBufferUnflushedDataOneAfterLastIndex_ += len;
-	return len;
+ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const std::vector<uint8_t> &mem) {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.copyIntoBuffer(mem.data(), mem.size());
+	case BufferType::CRC:
+		return crcBuffer_.copyIntoBuffer(mem.data(), mem.size());
+	case BufferType::Header:
+		return headerBuffer_.copyIntoBuffer(mem.data(), mem.size());
+	default:
+		safs::log_err("Invalid buffer type");
+		return 0;
+	}
 }
 
-ssize_t OutputBuffer::copyIntoHeaderBuffer(const std::vector<uint8_t> &mem) {
-	eassert(headerBufferUnflushedDataOneAfterLastIndex_ + mem.size() <= headerBufferCapacity_);
-	memcpy((void *)&headerBuffer_[headerBufferUnflushedDataOneAfterLastIndex_], mem.data(),
-	       mem.size());
-	headerBufferUnflushedDataOneAfterLastIndex_ += mem.size();
-	return mem.size();
+ssize_t OutputBuffer::copyValueIntoBuffer(BufferType type, uint8_t value, size_t len) {
+	switch (type) {
+	case BufferType::Block:
+		blockBuffer_.copyValueIntoBuffer(value, len);
+	case BufferType::CRC:
+		crcBuffer_.copyValueIntoBuffer(value, len);
+	case BufferType::Header:
+		headerBuffer_.copyValueIntoBuffer(value, len);
+	default:
+		safs::log_err("Invalid buffer type");
+		return 0;
+	}
+}
+
+const uint8_t *OutputBuffer::rawData(BufferType type) const {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.data();
+	case BufferType::CRC:
+		return crcBuffer_.data();
+	case BufferType::Header:
+		return headerBuffer_.data();
+	default:
+		safs::log_err("Invalid buffer type");
+		return 0;
+	}
 }

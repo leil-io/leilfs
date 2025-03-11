@@ -148,7 +148,7 @@ ChunkserverEntry::createDetachedPacketWithOutputBuffer(
 
 	outPacket->outputBuffer = getReadOutputBufferPool().get(packetPrefix.size(), numBlocks);
 
-	if (outPacket->outputBuffer->copyIntoHeaderBuffer(packetPrefix) !=
+	if (outPacket->outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Header, packetPrefix) !=
 	    static_cast<ssize_t>(packetPrefix.size())) {
 		if (outPacket->outputBuffer) {
 			getReadOutputBufferPool().put(std::move(outPacket->outputBuffer));
@@ -1622,11 +1622,11 @@ void ChunkserverEntry::writeToSocket() {
 			massert(bytesInBufferAfter <= bytesInBufferBefore,
 					"New bytes in pack->outputBuffer after sending some data");
 			stats_bytesout += (bytesInBufferBefore - bytesInBufferAfter);
-			if (ret == OutputBuffer::WRITE_ERROR) {
+			if (ret == OutputBuffer::WriteStatus::Error) {
 				safs_silent_errlog(LOG_NOTICE, "(write) write error");
 				state = State::Close;
 				return;
-			} else if (ret == OutputBuffer::WRITE_AGAIN) {
+			} else if (ret == OutputBuffer::WriteStatus::Again) {
 				return;
 			}
 		} else {
