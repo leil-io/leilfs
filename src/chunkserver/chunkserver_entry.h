@@ -227,7 +227,7 @@ struct ChunkserverEntry {
 	/// Creates a detached packet with an output buffer.
 	/// @see OutputBufferPool
 	static std::unique_ptr<PacketStruct> createDetachedPacketWithOutputBuffer(
-	    const std::vector<uint8_t> &packetPrefix);
+	    const std::vector<uint8_t> &packetPrefix, uint32_t numBlocks);
 
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.

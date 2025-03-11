@@ -41,22 +41,22 @@
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_stats.h"
+#include "chunkserver/output_buffer.h"
 #include "common/charts.h"
-#include "output_buffer.h"
+#include "common/datapack.h"
+#include "common/event_loop.h"
+#include "common/legacy_vector.h"
+#include "common/massert.h"
+#include "common/saunafs_version.h"
+#include "common/sockets.h"
+#include "devtools/TracePrinter.h"
+#include "devtools/request_log.h"
+#include "protocol/SFSCommunication.h"
 #include "protocol/cltocs.h"
 #include "protocol/cstocl.h"
 #include "protocol/cstocs.h"
-#include "common/datapack.h"
-#include "common/event_loop.h"
-#include "common/saunafs_version.h"
-#include "common/massert.h"
-#include "protocol/SFSCommunication.h"
-#include "common/legacy_vector.h"
 #include "protocol/packet.h"
 #include "slogger/slogger.h"
-#include "common/sockets.h"
-#include "devtools/request_log.h"
-#include "devtools/TracePrinter.h"
 
 constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 constexpr uint8_t kConnectRetries = 10;
@@ -138,20 +138,18 @@ MessageSerializer *MessageSerializer::getSerializer(PacketHeader::Type type) {
 
 std::unique_ptr<PacketStruct>
 ChunkserverEntry::createDetachedPacketWithOutputBuffer(
-    const std::vector<uint8_t> &packetPrefix) {
+    const std::vector<uint8_t> &packetPrefix, uint32_t numBlocks) {
 	TRACETHIS();
 
 	PacketHeader header;
 	deserializePacketHeader(packetPrefix, header);
 
-	uint32_t sizeOfWholePacket = PacketHeader::kSize + header.length;
 	std::unique_ptr<PacketStruct> outPacket = std::make_unique<PacketStruct>();
 	passert(outPacket);
 
-	outPacket->outputBuffer = getReadOutputBufferPool().get(sizeOfWholePacket);
-	outPacket->outputBuffer->status = kNotSaunafsStatus;
+	outPacket->outputBuffer = getReadOutputBufferPool().get(packetPrefix.size(), numBlocks);
 
-	if (outPacket->outputBuffer->copyIntoBuffer(packetPrefix) !=
+	if (outPacket->outputBuffer->copyIntoHeaderBuffer(packetPrefix) !=
 	    static_cast<ssize_t>(packetPrefix.size())) {
 		if (outPacket->outputBuffer) {
 			getReadOutputBufferPool().put(std::move(outPacket->outputBuffer));
@@ -436,13 +434,14 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
 			const uint32_t thisPartSize =
 			    std::min<uint32_t>(totalRequestSize, SFSBLOCKSIZE - thisPartOffset);
+			const uint32_t numBlocks = (thisPartSize + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS;
 			const uint16_t totalRequestBlocks =
 			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
 			std::vector<uint8_t> readDataPrefix;
 			messageSerializer->serializePrefixOfCstoclReadData(readDataPrefix, chunkId, offset,
 			                                                   thisPartSize);
-			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix);
+			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix, numBlocks);
 			if (packet == kInvalidPacket) {
 				state = State::Close;
 				return;

@@ -27,7 +27,7 @@
 #include "unittests/TemporaryDirectory.h"
 
 TEST(OutputBufferTests, outputBuffersTest) {
-	OutputBuffer outputBuffer(512*1024);
+	OutputBuffer outputBuffer(1, 8);
 
 	int auxPipeFileDescriptors[2];
 
@@ -47,7 +47,7 @@ TEST(OutputBufferTests, outputBuffersTest) {
 
 	uint8_t buf[WRITE_SIZE];
 	memset(buf, VALUE, WRITE_SIZE);
-	ASSERT_EQ(outputBuffer.copyIntoBuffer(buf, WRITE_SIZE), WRITE_SIZE);
+	ASSERT_EQ(outputBuffer.copyIntoBlockBuffer(buf, WRITE_SIZE), WRITE_SIZE);
 
 	while (true) {
 		OutputBuffer::WriteStatus status = outputBuffer.writeOutToAFileDescriptor(auxPipeFileDescriptors[1]);

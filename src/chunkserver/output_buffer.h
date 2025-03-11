@@ -40,42 +40,50 @@ public:
 		WRITE_ERROR
 	};
 
-	explicit OutputBuffer(size_t internalBufferCapacity);
+	explicit OutputBuffer(size_t headerSize, size_t numBlocks);
 	~OutputBuffer() = default;
 
-	ssize_t copyIntoBuffer(IChunk *chunk, size_t len, off_t offset);
-	ssize_t copyIntoBuffer(const void *mem, size_t len);
+	ssize_t copyIntoBlockBuffer(IChunk *chunk, size_t len, off_t offset);
 
-	bool checkCRC(size_t bytes, uint32_t crc) const;
+	bool checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset) const;
 
-	ssize_t copyIntoBuffer(const std::vector<uint8_t>& mem) {
-		return copyIntoBuffer(mem.data(), mem.size());
-	}
+	ssize_t copyIntoCRCBuffer(const void *mem, size_t len);
+	ssize_t copyIntoBlockBuffer(const void *mem, size_t len);
+	ssize_t copyIntoBlockBuffer(const std::vector<uint8_t> &mem);
+	ssize_t copyIntoHeaderBuffer(const std::vector<uint8_t> &mem);
 
 	WriteStatus writeOutToAFileDescriptor(int outputFileDescriptor);
 
 	size_t bytesInABuffer() const;
-	inline size_t capacity() const { return internalBufferCapacity_; }
-	inline const uint8_t *data() const { return buffer_.data(); }
+	inline std::pair<size_t, size_t> type() const { return {headerSize_, numBlocks_}; }
+	inline const uint8_t *blockData() const { return blockBuffer_.data(); }
 	void clear();
-
-	static inline size_t getAlignedSize(size_t capacity) {
-		size_t remainder = capacity % disk::kIoBlockSize;
-
-		if (remainder == 0) { return capacity; }
-
-		return capacity + disk::kIoBlockSize - remainder;
-	}
 
 	std::atomic_uint8_t status{kNotSaunafsStatus};
 
 private:
-	const size_t internalBufferCapacity_;
-	const size_t internalBufferCapacityAligned_;
-	const size_t padding_;
-	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer_;
-	size_t bufferUnflushedDataFirstIndex_;
-	size_t bufferUnflushedDataOneAfterLastIndex_;
+	// The current remaining bytes to be written to the file descriptor at once.
+	// When the buffer is prepared, should be equal to: SFSBLOCKSIZE + kCrcSize + headerSize_.
+	// 0 means that the buffer is not prepared.
+	size_t currentRemainingBytesForFD_;
+	const size_t headerSize_;
+	const size_t numBlocks_;
+
+	const size_t blockBufferCapacity_;
+	const size_t blockBufferCapacityAligned_;
+	const size_t blockBufferPadding_;
+	size_t blockBufferUnflushedDataFirstIndex_;
+	size_t blockBufferUnflushedDataOneAfterLastIndex_;
+	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> blockBuffer_;
+
+	const size_t crcBufferCapacity_;
+	size_t crcBufferUnflushedDataFirstIndex_;
+	size_t crcBufferUnflushedDataOneAfterLastIndex_;
+	std::vector<uint8_t> crcBuffer_;
+	const size_t headerBufferCapacity_;
+	size_t headerBufferUnflushedDataFirstIndex_;
+	size_t headerBufferUnflushedDataOneAfterLastIndex_;
+	std::vector<uint8_t> headerBuffer_;
 };
 
 using OutputBufferPool = BuffersPool<OutputBuffer>;
