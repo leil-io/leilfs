@@ -133,6 +133,9 @@ void init(const char* /* unused */, const Type /* unused */) {
 
 template <typename T>
 void Counter::increment(const T key, double n) {
+	if (!gPrometheusMetrics.service) {
+		return;
+	}
 	// Safe as all values are constructed at specific keys, however a check
 	// needs to be made whether the actual counter initialized or not (for
 	// whatever reason)
@@ -142,6 +145,9 @@ void Counter::increment(const T key, double n) {
 
 template <typename T>
 void Gauge::set(const T key, double n) {
+	if (!gPrometheusMetrics.service) {
+		return;
+	}
 	// Safe as all values are constructed at specific keys, however a check
 	// needs to be made whether the actual counter initialized or not (for
 	// whatever reason)

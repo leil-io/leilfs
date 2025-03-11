@@ -12,7 +12,7 @@ USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
 
-# Why are these at 1 when master is started with no clients?
+# TODO: Figure out why are these at 1 when master is started with no clients?
 expect_equals 1 $(grep "${expected_client_received_initial}" <<< "$(curl --fail "${prometheus_host}/metrics")" | awk '{print $2}' )
 expect_equals 1 $(grep "${expected_client_sent_initial}" <<< "$(curl --fail "${prometheus_host}/metrics")" | awk '{print $2}' )
 

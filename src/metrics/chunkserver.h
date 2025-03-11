@@ -39,7 +39,7 @@ private:
 
 	// Counters
 	std::array<Counter, static_cast<uint8_t>(chunkserver::Counters::KEY_END) + 1> counters;
-	std::array<Gauge, static_cast<uint8_t>(chunkserver::Counters::KEY_END) + 1> gauges;
+	std::array<Gauge, static_cast<uint8_t>(chunkserver::Gauges::KEY_END) + 1> gauges;
   };
 }
 #endif
