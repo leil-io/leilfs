@@ -27,7 +27,8 @@
 #include "unittests/TemporaryDirectory.h"
 
 TEST(OutputBufferTests, outputBuffersTest) {
-	OutputBuffer outputBuffer(1, 8);
+	const ssize_t  testHeaderSize = 1;
+	OutputBuffer outputBuffer(testHeaderSize, 8);
 
 	int auxPipeFileDescriptors[2];
 
@@ -42,12 +43,15 @@ TEST(OutputBufferTests, outputBuffersTest) {
 #endif
 
 
-	const unsigned WRITE_SIZE = 10;
+	const unsigned WRITE_SIZE_DATA = 10;
+	const unsigned WRITE_SIZE = WRITE_SIZE_DATA + kCrcSize + testHeaderSize;
 	unsigned VALUE = 17u;
 
 	uint8_t buf[WRITE_SIZE];
 	memset(buf, VALUE, WRITE_SIZE);
-	ASSERT_EQ(outputBuffer.copyIntoBlockBuffer(buf, WRITE_SIZE), WRITE_SIZE);
+	ASSERT_EQ(outputBuffer.copyIntoHeaderBuffer(std::vector<uint8_t>(testHeaderSize, VALUE)), testHeaderSize);
+	ASSERT_EQ(outputBuffer.copyIntoCRCBuffer(buf, kCrcSize), kCrcSize);
+	ASSERT_EQ(outputBuffer.copyIntoBlockBuffer(buf, WRITE_SIZE_DATA), WRITE_SIZE_DATA);
 
 	while (true) {
 		OutputBuffer::WriteStatus status = outputBuffer.writeOutToAFileDescriptor(auxPipeFileDescriptors[1]);
