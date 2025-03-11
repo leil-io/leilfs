@@ -49,7 +49,7 @@ static int cfg_do_load(void) {
 	FILE *fd = fopen(cfgfname, "r");
 
 	if (!fd) {
-		safs_silent_syslog(LOG_ERR, "can't load config file: %s", cfgfname);
+		safs::log_err("can't load config file: {}", cfgfname);
 		return 1;
 	}
 
@@ -67,9 +67,7 @@ static int cfg_do_load(void) {
 
 		if (linebuff[i] != '=' || npe <= nps) {
 			if (linebuff[i] > ' ')
-				safs_pretty_syslog(LOG_WARNING, "bad "
-						"definition in config file "
-						"'%s': %s", cfgfname, linebuff);
+				safs::log_warn("bad definition in config file '{}': {}", cfgfname, linebuff);
 			continue;
 		}
 
@@ -83,9 +81,7 @@ static int cfg_do_load(void) {
 
 		if ((linebuff[i] != '\0' && linebuff[i] != '\r' &&
 		     linebuff[i] != '\n' && linebuff[i] != '#') || vps == vpe) {
-			safs_pretty_syslog(LOG_WARNING, "bad definition in "
-					"config file '%s': %s", cfgfname,
-					linebuff);
+			safs::log_warn("bad definition in config file '{}': {}", cfgfname, linebuff);
 			continue;
 		}
 		linebuff[npe] = 0;
@@ -96,7 +92,7 @@ static int cfg_do_load(void) {
 			std::string value(linebuff + vps, linebuff + vpe);
 			configParameters[key] = value;
 		} catch (const std::exception& e) {
-			safs_pretty_syslog(LOG_ERR, "could not set config file %s values in key map: %s", cfgfname, e.what());
+			safs::log_err("could not set config file {} values in key map: {}", cfgfname, e.what());
 			fclose(fd);
 			cfg_term();
 			return -1;
@@ -302,7 +298,7 @@ type cfg_get##fname(const char *name, const type def) { \
 		STR_TO_##convname(configParameters[name].c_str()); \
 	} \
 	if (logundefined) { \
-		safs_pretty_syslog(LOG_NOTICE,"config: using default value for option '%s' - '" format "'", \
+		safs::log_info("config: using default value for option '{}' - '{}'", \
 				name,TOPRINTF_##convname(def)); \
 	} \
 	COPY_##convname(def) \
