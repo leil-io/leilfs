@@ -137,20 +137,18 @@ MessageSerializer *MessageSerializer::getSerializer(PacketHeader::Type type) {
 
 std::unique_ptr<PacketStruct>
 ChunkserverEntry::createDetachedPacketWithOutputBuffer(
-    const std::vector<uint8_t> &packetPrefix) {
+    const std::vector<uint8_t> &packetPrefix, uint32_t numBlocks) {
 	TRACETHIS();
 
 	PacketHeader header;
 	deserializePacketHeader(packetPrefix, header);
 
-	uint32_t sizeOfWholePacket = PacketHeader::kSize + header.length;
 	std::unique_ptr<PacketStruct> outPacket = std::make_unique<PacketStruct>();
 	passert(outPacket);
 
-	outPacket->outputBuffer = getReadOutputBufferPool().get(sizeOfWholePacket);
-	outPacket->outputBuffer->isReadCompleted = false;
+	outPacket->outputBuffer = getReadOutputBufferPool().get(packetPrefix.size(), numBlocks);
 
-	if (outPacket->outputBuffer->copyIntoBuffer(packetPrefix) !=
+	if (outPacket->outputBuffer->copyIntoHeaderBuffer(packetPrefix) !=
 	    static_cast<ssize_t>(packetPrefix.size())) {
 		if (outPacket->outputBuffer) {
 			getReadOutputBufferPool().put(std::move(outPacket->outputBuffer));
@@ -408,13 +406,14 @@ void ChunkserverEntry::readContinue() {
 			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
 			const uint32_t thisPartSize =
 			    std::min<uint32_t>(totalRequestSize, SFSBLOCKSIZE - thisPartOffset);
+			const uint32_t numBlocks = (thisPartSize + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS;
 			const uint16_t totalRequestBlocks =
 			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
 			std::vector<uint8_t> readDataPrefix;
 			messageSerializer->serializePrefixOfCstoclReadData(readDataPrefix, chunkId, offset,
 			                                                   thisPartSize);
-			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix);
+			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix, numBlocks);
 			if (packet == kInvalidPacket) {
 				state = State::Close;
 				return;
