@@ -294,7 +294,8 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 		eptr->isChunkOpen = 1;
 	}
 	if (eptr->isChunkOpen) {
-		job_close(*eptr->workerJobPool, nullptr, nullptr, eptr->chunkId, eptr->chunkType);
+		job_close(*eptr->workerJobPool, kEmptyCallback, kEmptyExtra, eptr->chunkId,
+		          eptr->chunkType);
 		eptr->isChunkOpen = 0;
 	}
 	eptr->state = State::Closed;
@@ -503,7 +504,7 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 	auto lastByte = offset + size - 1;
 	auto lastBlock = lastByte / SFSBLOCKSIZE;
 	auto nrOfBlocks = lastBlock - firstBlock + 1;
-	job_prefetch(*workerJobPool, chunkId, chunkVersion, chunkType, firstBlock, nrOfBlocks);
+	job_prefetch(*workerJobPool, chunkId, chunkType, firstBlock, nrOfBlocks);
 }
 
 // bg writing

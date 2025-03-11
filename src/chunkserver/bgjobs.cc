@@ -46,11 +46,12 @@
 #include <vector>
 
 constexpr auto kInvalidJob = nullptr;
+constexpr auto STATUS_BYTE_SIZE = 1;
 
 JobPool::JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc) : workers(workers) {
 	int fd[2];
 	if (pipe(fd) < 0) {  // pipe is a critical resource for communication within the JobPool
-		throw std::runtime_error("Failed to create pipe: " + std::string(strerror(errno)));
+		throw std::runtime_error("JobPool: Failed to create pipe: " + std::string(strerror(errno)));
 	}
 	rpipe = fd[0];
 	wpipe = fd[1];
@@ -128,7 +129,7 @@ void JobPool::disableJob(uint32_t jobId) {
 void JobPool::checkJobs() {
 	uint32_t jobId;
 	uint8_t status;
-	int notLastJob = 1;
+	bool notLastJob = true;
 	do {
 		notLastJob = receiveStatus(jobId, status);
 		auto jobIterator = jobHash.find(jobId);
@@ -137,7 +138,7 @@ void JobPool::checkJobs() {
 			if (callback) { callback(status, jobIterator->second->extra); }
 			jobHash.erase(jobIterator);
 		}
-	} while (notLastJob > 0);
+	} while (notLastJob);
 }
 
 void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra) {
@@ -198,20 +199,24 @@ void JobPool::workerThread() {
 
 void JobPool::sendStatus(uint32_t jobId, uint8_t status) {
 	std::lock_guard pipeLockGuard(pipeMutex);
-	if (statusQueue->isEmpty()) { eassert(write(wpipe, &status, 1) == 1); }
+	if (statusQueue->isEmpty()) {
+		eassert(write(wpipe, &status, STATUS_BYTE_SIZE) == STATUS_BYTE_SIZE &&
+		        "JobPool: SendStatus: Failed to write status to pipe");
+	}
 	statusQueue->put(jobId, status, nullptr, 1);
 }
 
-int JobPool::receiveStatus(uint32_t &jobId, uint8_t &status) {
+bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status) {
 	uint32_t qstatus = 0;
 	std::lock_guard pipeLockGuard(pipeMutex);
 	statusQueue->get(&jobId, &qstatus, nullptr, nullptr);
 	status = qstatus;
 	if (statusQueue->isEmpty()) {
-		eassert(read(rpipe, &qstatus, 1) == 1);
-		return 0;
+		eassert(read(rpipe, &qstatus, STATUS_BYTE_SIZE) == STATUS_BYTE_SIZE &&
+		        "JobPool: ReceiveStatus: Failed to read status from pipe");
+		return false;
 	}
-	return 1;
+	return true;
 }
 
 uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
@@ -257,13 +262,14 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), extra, processJob);
 }
 
-uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, uint32_t  /*version*/, ChunkPartType chunkType,
-	uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched) {
+uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
+                      uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddPrefetchBlocks(chunkId, chunkType, firstBlockToBePrefetched,
 		                         blocksToBePrefetched);
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Prefetch, nullptr, nullptr, processJob);
+	return jobPool.addJob(JobPool::ChunkOperation::Prefetch, kEmptyCallback, kEmptyExtra,
+	                      processJob);
 }
 
 uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,

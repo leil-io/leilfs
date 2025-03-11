@@ -66,9 +66,6 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t nrOfBgjobsWorkers,
 #endif
 	try {
 		bgJobPool_ = std::make_unique<JobPool>(nrOfBgjobsWorkers, bgjobsCount, &bgJobPoolWakeUpFd_);
-	} catch (const std::runtime_error &e) {
-		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
-		throw;
 	} catch (const std::exception &e) {
 		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
 		throw;

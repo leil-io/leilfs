@@ -874,7 +874,10 @@ int masterconn_init_threads(void) {
 		return -1;
 	}
 
-	if (jobPool == nullptr) { return -1; }
+	if (jobPool == nullptr) {
+		safs::log_err("masterconn_init_threads: jobPool is null. Unable to create worker threads.");
+		return -1;
+	}
 
 	safs_pretty_syslog(LOG_INFO,
 	                   "master connection: %u background workers created",

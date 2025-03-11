@@ -33,6 +33,9 @@
 #include <unordered_map>
 #include <vector>
 
+constexpr auto kEmptyCallback = nullptr;
+constexpr auto kEmptyExtra = nullptr;
+
 /**
  * @class JobPool
  * @brief Manages and processes background jobs in a thread pool.
@@ -72,7 +75,6 @@ public:
 		GetBlocks
 	};
 
-public:
 	/// @brief Callback function type for job completion.
 	///
 	/// @param status The status of the job.
@@ -152,7 +154,7 @@ private:
 	/// @param jobId The ID of the job.
 	/// @param status The status of the job.
 	/// @return 1 if a status was received, 0 otherwise.
-	int receiveStatus(uint32_t &jobId, uint8_t &status);
+	bool receiveStatus(uint32_t &jobId, uint8_t &status);
 
 	int rpipe;                                         /// Read pipe for job status notifications.
 	int wpipe;                                         /// Write pipe for job status notifications.
@@ -212,12 +214,11 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 ///
 /// @param jobPool The JobPool instance.
 /// @param chunkId The ID of the chunk.
-/// @param version The version of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param firstBlockToBePrefetched The first block to be prefetched.
 /// @param blocksToBePrefetched The number of blocks to be prefetched.
 /// @return The ID of the added job.
-uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
                       uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched);
 
 /// @brief Adds a write job to the JobPool.
