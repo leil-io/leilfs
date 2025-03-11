@@ -572,8 +572,7 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
 
 	if (blockNumber >= chunk->blocks()) {
 		bytesRead = outputBuffer->copyIntoCRCBuffer(&gEmptyBlockCrc, kCrcSize);
-		static const std::vector<uint8_t> zeros_block(SFSBLOCKSIZE, 0);
-		bytesRead += outputBuffer->copyIntoBlockBuffer(zeros_block);
+		bytesRead += outputBuffer->copyValueIntoBlockBuffer(0, SFSBLOCKSIZE);
 		if (static_cast<uint32_t>(bytesRead) != kHddBlockSize) {
 			return SAUNAFS_ERROR_IO;
 		}

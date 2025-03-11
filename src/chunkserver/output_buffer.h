@@ -47,7 +47,7 @@ public:
 
 	ssize_t copyIntoCRCBuffer(const void *mem, size_t len);
 	ssize_t copyIntoBlockBuffer(const void *mem, size_t len);
-	ssize_t copyIntoBlockBuffer(const std::vector<uint8_t> &mem);
+	ssize_t copyValueIntoBlockBuffer(uint8_t value, size_t len);
 	ssize_t copyIntoHeaderBuffer(const std::vector<uint8_t> &mem);
 
 	WriteStatus writeOutToAFileDescriptor(int outputFileDescriptor);
