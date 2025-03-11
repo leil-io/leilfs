@@ -34,29 +34,107 @@ constexpr uint8_t kNotSaunafsStatus = 255;
 
 class OutputBuffer {
 public:
-	enum WriteStatus {
-		WRITE_DONE,
-		WRITE_AGAIN,
-		WRITE_ERROR
+	enum class WriteStatus : uint8_t {
+		Done,
+		Again,
+		Error
+	};
+
+	enum class BufferType : uint8_t {
+		Block,
+		CRC,
+		Header
+	};
+
+	template <typename C = std::vector<uint8_t>>
+	class Buffer {
+	public:
+		Buffer(size_t capacity, size_t padding = 0)
+		    : capacity_(capacity),
+		      trueCapacity_(capacity + padding),
+		      padding_(padding),
+		      unflushedDataFirstIndex_(padding),
+		      unflushedDataOneAfterLastIndex_(padding),
+		      data_(trueCapacity_) {
+			eassert(trueCapacity_ > 0);
+			data_.reserve(trueCapacity_);
+		}
+		~Buffer() = default;
+
+		ssize_t copyFromBuffer(const void *mem, size_t len) {
+			eassert(unflushedDataFirstIndex_ + len <= unflushedDataOneAfterLastIndex_);
+			memcpy((void *)mem, &data_[unflushedDataFirstIndex_], len);
+			unflushedDataFirstIndex_ += len;
+			return len;
+		}
+		ssize_t copyIntoBuffer(const void *mem, size_t len) {
+			eassert(unflushedDataOneAfterLastIndex_ + len <= trueCapacity_);
+			memcpy((void *)&data_[unflushedDataOneAfterLastIndex_], mem, len);
+			unflushedDataOneAfterLastIndex_ += len;
+			return len;
+		}
+		ssize_t copyValueIntoBuffer(uint8_t value, size_t len) {
+			eassert(unflushedDataOneAfterLastIndex_ + len <= trueCapacity_);
+			memset((void *)&data_[unflushedDataOneAfterLastIndex_], value, len);
+			unflushedDataOneAfterLastIndex_ += len;
+			return len;
+		}
+		ssize_t copyIntoBuffer(IChunk *chunk, size_t len, off_t offset) {
+			eassert(unflushedDataOneAfterLastIndex_ + len <= trueCapacity_);
+			off_t bytes_written = 0;
+			while (len > 0) {
+				ssize_t ret = chunk->owner()->preadData(
+				    chunk, &data_[unflushedDataOneAfterLastIndex_], len, offset);
+				if (ret <= 0) { return bytes_written; }
+				len -= ret;
+				unflushedDataOneAfterLastIndex_ += ret;
+				bytes_written += ret;
+			}
+			return bytes_written;
+		}
+		void clear() {
+			unflushedDataFirstIndex_ = padding_;
+			unflushedDataOneAfterLastIndex_ = padding_;
+		}
+		inline size_t capacity() const { return capacity_; }
+		inline size_t bytesInABuffer() const {
+			return unflushedDataOneAfterLastIndex_ - unflushedDataFirstIndex_;
+		}
+		inline const uint8_t *paddedIndex(size_t index) const {
+			assert(index < capacity_);
+			return data_.data() + index + padding_;
+		}
+		inline const uint8_t *getUnflushedDataFirstIndex() const {
+			return &data_[unflushedDataFirstIndex_];
+		}
+		inline void moveUnflushedDataFirstIndex(int64_t offset) {
+			unflushedDataFirstIndex_ += offset;
+		}
+
+	private:
+		const size_t capacity_;
+		const size_t trueCapacity_;
+		const size_t padding_;
+		size_t unflushedDataFirstIndex_;
+		size_t unflushedDataOneAfterLastIndex_;
+		C data_;
 	};
 
 	explicit OutputBuffer(size_t headerSize, size_t numBlocks);
 	~OutputBuffer() = default;
 
-	ssize_t copyIntoBlockBuffer(IChunk *chunk, size_t len, off_t offset);
-
 	bool checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset) const;
 
-	ssize_t copyIntoCRCBuffer(const void *mem, size_t len);
-	ssize_t copyIntoBlockBuffer(const void *mem, size_t len);
-	ssize_t copyValueIntoBlockBuffer(uint8_t value, size_t len);
-	ssize_t copyIntoHeaderBuffer(const std::vector<uint8_t> &mem);
+	ssize_t copyIntoBuffer(BufferType type, IChunk *chunk, size_t len, off_t offset);
+	ssize_t copyIntoBuffer(BufferType type, const void *mem, size_t len);
+	ssize_t copyIntoBuffer(BufferType type, const std::vector<uint8_t> &mem);
+	ssize_t copyValueIntoBuffer(BufferType type, uint8_t value, size_t len);
 
 	WriteStatus writeOutToAFileDescriptor(int outputFileDescriptor);
 
 	size_t bytesInABuffer() const;
 	inline std::pair<size_t, size_t> type() const { return {headerSize_, numBlocks_}; }
-	inline const uint8_t *blockData() const { return blockBuffer_.data(); }
+	const uint8_t *rawData(BufferType type) const;
 	void clear();
 
 	std::atomic_uint8_t status{kNotSaunafsStatus};
@@ -69,21 +147,9 @@ private:
 	const size_t headerSize_;
 	const size_t numBlocks_;
 
-	const size_t blockBufferCapacity_;
-	const size_t blockBufferCapacityAligned_;
-	const size_t blockBufferPadding_;
-	size_t blockBufferUnflushedDataFirstIndex_;
-	size_t blockBufferUnflushedDataOneAfterLastIndex_;
-	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> blockBuffer_;
-
-	const size_t crcBufferCapacity_;
-	size_t crcBufferUnflushedDataFirstIndex_;
-	size_t crcBufferUnflushedDataOneAfterLastIndex_;
-	std::vector<uint8_t> crcBuffer_;
-	const size_t headerBufferCapacity_;
-	size_t headerBufferUnflushedDataFirstIndex_;
-	size_t headerBufferUnflushedDataOneAfterLastIndex_;
-	std::vector<uint8_t> headerBuffer_;
+	Buffer<std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>>> blockBuffer_;
+	Buffer<std::vector<uint8_t>> crcBuffer_;
+	Buffer<std::vector<uint8_t>> headerBuffer_;
 };
 
 using OutputBufferPool = BuffersPool<OutputBuffer>;
