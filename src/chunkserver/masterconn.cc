@@ -21,34 +21,28 @@
 #include "common/platform.h"
 #include "chunkserver/masterconn.h"
 
-#include <errno.h>
-#include <inttypes.h>
+#include <cerrno>
+#include <cinttypes>
 #include <netinet/in.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <syslog.h>
-#include <time.h>
+#include <ctime>
 #include <unistd.h>
-#include <algorithm>
 #include <list>
-
-#include <list>
+#include <stdexcept>
 
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_main_thread.h"
 #include "config/cfg.h"
-#include "common/datapack.h"
 #include "common/event_loop.h"
-#include "common/goal.h"
 #include "common/loop_watchdog.h"
-#include "common/main.h"
 #include "common/massert.h"
-#include "common/legacy_vector.h"
 #include "common/output_packet.h"
 #include "common/random.h"
 #include "slogger/slogger.h"
@@ -102,7 +96,7 @@ struct masterconn {
 static const uint64_t kSendStatusDelay = 5;
 
 static masterconn *masterconnsingleton=NULL;
-static void *jpool;
+static std::unique_ptr<JobPool> jobPool;
 static int jobfd;
 static int32_t jobfdpdescpos;
 
@@ -310,7 +304,14 @@ void masterconn_create(masterconn */*eptr*/, const std::vector<uint8_t> &data) {
 	matocs::createChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 	OutputPacket *outputPacket = new OutputPacket;
 	cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
-	job_create(jpool, masterconn_saujobfinished, outputPacket, chunkId, chunkType, chunkVersion);
+	if (jobPool) {
+		job_create(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		           chunkType);
+	}
+	else {
+		safs::log_err("masterconn_create: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_delete(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
@@ -321,7 +322,13 @@ void masterconn_delete(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
 	matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
-	job_delete(jpool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion, chunkType);
+	if (jobPool) {
+		job_delete(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		           chunkType);
+	} else {
+		safs::log_err("masterconn_delete: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_setversion(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
@@ -333,8 +340,13 @@ void masterconn_setversion(masterconn */*eptr*/, const std::vector<uint8_t>& dat
 	matocs::setVersion::deserialize(data, chunkId, chunkType, chunkVersion, newVersion);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
-	job_version(jpool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion, chunkType,
-			newVersion);
+	if (jobPool) {
+		job_version(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		            chunkType, newVersion);
+	} else {
+		safs::log_err("masterconn_setversion: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_duplicate(masterconn* /*eptr*/,const std::vector<uint8_t>& data) {
@@ -346,8 +358,13 @@ void masterconn_duplicate(masterconn* /*eptr*/,const std::vector<uint8_t>& data)
 			oldChunkId, oldChunkVersion);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
-	job_duplicate(jpool, masterconn_saujobfinished, outputPacket, oldChunkId,
-			oldChunkVersion, oldChunkVersion, chunkType, newChunkId, newChunkVersion);
+	if (jobPool) {
+		job_duplicate(*jobPool, masterconn_saujobfinished, outputPacket, oldChunkId,
+		              oldChunkVersion, oldChunkVersion, chunkType, newChunkId, newChunkVersion);
+	} else {
+		safs::log_err("masterconn_duplicate: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_truncate(masterconn */*eptr*/, const std::vector<uint8_t>& data) {
@@ -360,8 +377,13 @@ void masterconn_truncate(masterconn */*eptr*/, const std::vector<uint8_t>& data)
 	matocs::truncateChunk::deserialize(data, chunkId, chunkType, chunkLength, newVersion, version);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
-	job_truncate(jpool, masterconn_saujobfinished, outputPacket, chunkId, chunkType, version,
-			newVersion, chunkLength);
+	if (jobPool) {
+		job_truncate(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkType, version,
+		             newVersion, chunkLength);
+	} else {
+		safs::log_err("masterconn_truncate: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_duptrunc(masterconn* /*eptr*/, const std::vector<uint8_t>& data) {
@@ -374,8 +396,13 @@ void masterconn_duptrunc(masterconn* /*eptr*/, const std::vector<uint8_t>& data)
 			chunkType, chunkId, chunkVersion, newLength);
 	OutputPacket* outputPacket = new OutputPacket;
 	cstoma::duptruncChunk::serialize(outputPacket->packet, copyChunkId, chunkType, 0);
-	job_duptrunc(jpool, masterconn_saujobfinished, outputPacket, chunkId,
-			chunkVersion, chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
+	if (jobPool) {
+		job_duptrunc(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+		             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
+	} else {
+		safs::log_err("masterconn_duptrunc: jobPool is null.");
+		delete outputPacket;
+	}
 }
 
 void masterconn_replicate(const std::vector<uint8_t>& data) {
@@ -397,8 +424,13 @@ void masterconn_replicate(const std::vector<uint8_t>& data) {
 		// Disk scan in progress - replication is not possible
 		masterconn_saujobfinished(SAUNAFS_ERROR_WAITING, outputPacket);
 	} else {
-		job_replicate(jpool, masterconn_saujobfinished, outputPacket,
-				chunkId, chunkVersion, chunkType, sourcesBufferSize, sourcesBuffer);
+		if (jobPool) {
+			job_replicate(*jobPool, masterconn_saujobfinished, outputPacket, chunkId, chunkVersion,
+			              chunkType, sourcesBufferSize, sourcesBuffer);
+		} else {
+			safs::log_err("masterconn_replicate: jobPool is null.");
+			delete outputPacket;
+		}
 	}
 
 }
@@ -449,7 +481,7 @@ void masterconn_term(void) {
 //      syslog(LOG_INFO,"closing %s:%s",MasterHost,MasterPort);
 	masterconn *eptr = masterconnsingleton;
 
-	job_pool_delete(jpool);
+	jobPool.reset();
 
 	if (eptr->mode!=FREE && eptr->mode!=CONNECTING) {
 		tcpclose(eptr->sock);
@@ -553,7 +585,7 @@ void masterconn_read(masterconn *eptr) {
 
 	watchdog.start();
 	while (eptr->mode != KILL) {
-		if (job_pool_jobs_count(jpool) >= (BGJOBSCNT * 9) / 10) {
+		if (jobPool->getJobCount() >= (BGJOBSCNT * 9) / 10) {
 			return;
 		}
 		uint32_t bytesToRead = eptr->inputPacket.bytesToBeRead();
@@ -637,7 +669,7 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 	if (eptr->mode == CONNECTED) {
 		pdesc.push_back({jobfd,POLLIN,0});
 		jobfdpdescpos = pdesc.size() - 1;
-		if (job_pool_jobs_count(jpool)<(BGJOBSCNT*9)/10) {
+		if (jobPool->getJobCount() < (BGJOBSCNT * 9) / 10) {
 			pdesc.push_back({eptr->sock,POLLIN,0});
 			eptr->pdescpos = pdesc.size() - 1;
 		}
@@ -684,7 +716,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		}
 	} else {
 		if ((eptr->mode == CONNECTED) && jobfdpdescpos>=0 && (pdesc[jobfdpdescpos].revents & POLLIN)) { // FD_ISSET(jobfd,rset)) {
-			job_pool_check_jobs(jpool);
+			jobPool->checkJobs();
 		}
 		if (eptr->pdescpos>=0) {
 			if ((eptr->mode == CONNECTED) && (pdesc[eptr->pdescpos].revents & POLLIN)) { // FD_ISSET(eptr->sock,rset)) {
@@ -704,13 +736,13 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		}
 	}
 	if (eptr->mode == CONNECTED) {
-		uint32_t jobscnt = job_pool_jobs_count(jpool);
+		uint32_t jobscnt = jobPool->getJobCount();
 		if (jobscnt>=stats_maxjobscnt) {
 			stats_maxjobscnt=jobscnt;
 		}
 	}
 	if (eptr->mode == KILL) {
-		job_pool_disable_and_change_callback_all(jpool,masterconn_unwantedjobfinished);
+		jobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
 		tcpclose(eptr->sock);
 		eptr->inputPacket.reset();
 		eptr->outputPackets.clear();
@@ -832,9 +864,20 @@ int masterconn_init(void) {
 }
 
 int masterconn_init_threads(void) {
-	jpool = job_pool_new(gNumberOfWorkers, BGJOBSCNT, &jobfd);
+	try {
+		jobPool = std::make_unique<JobPool>(gNumberOfWorkers, BGJOBSCNT, &jobfd);
+	} catch (const std::runtime_error &e) {
+		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
+		return -1;
+	} catch (const std::exception &e) {
+		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
+		return -1;
+	}
 
-	if (jpool == nullptr) { return -1; }
+	if (jobPool == nullptr) {
+		safs::log_err("masterconn_init_threads: jobPool is null. Unable to create worker threads.");
+		return -1;
+	}
 
 	safs_pretty_syslog(LOG_INFO,
 	                   "master connection: %u background workers created",
