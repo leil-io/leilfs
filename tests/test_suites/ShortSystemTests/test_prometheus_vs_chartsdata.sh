@@ -1,10 +1,21 @@
 assert_program_installed curl
-timeout_set 10 minutes
+timeout_set 10000 minutes
 
-get_next_port_number port
-prometheus_host="localhost:${port}"
+get_next_port_number port0
+prometheus_host0="localhost:${port0}"
+get_next_port_number port1
+prometheus_host1="localhost:${port1}"
+get_next_port_number port2
+prometheus_host2="localhost:${port2}"
+get_next_port_number port3
+prometheus_host3="localhost:${port3}"
 
-CHUNKSERVERS=3 \
+echo $prometheus_host0
+echo $prometheus_host1
+echo $prometheus_host2
+echo $prometheus_host3
+
+CHUNKSERVERS=4 \
 	DISK_PER_CHUNKSERVER=3 \
 	CGI_SERVER="YES" \
 	MOUNTS=3 \
@@ -14,23 +25,41 @@ CHUNKSERVERS=3 \
 	MOUNT_2_EXTRA_EXPORTS="mingoal=1,maxgoal=10,maxtrashtime=2w" \
     SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
     SFSEXPORTS_META_EXTRA_OPTIONS="nonrootmeta" \
+	MASTER_CUSTOM_GOALS="2 2: _ _ |10 ec_3_1: \$ec(3,1)" \
+	CHUNKSERVER_0_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host0}" \
+	CHUNKSERVER_1_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host1}" \
+	CHUNKSERVER_2_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host2}" \
+	CHUNKSERVER_3_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host3}" \
 	setup_local_empty_saunafs info
 
-# MASTER_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host}" \
+echo "Waiting for prometheus metrics to come up"
+sleep infinity
+echo "Checking prometheus metrics"
+assert_success curl --fail "${prometheus_host0}/metrics"
+assert_success curl --fail "${prometheus_host1}/metrics"
+assert_success curl --fail "${prometheus_host2}/metrics"
+assert_success curl --fail "${prometheus_host3}/metrics"
 
 cd "${info[mount0]}"
-echo "${info[cgi_url]}"
-charts_url="${info[cgi_url]//sfs.cgi/chart.cgi}"
-echo "${charts_url}"
-echo "${charts_url}&id=90180"
-echo "Generating metadata..."
-metadata_generate_all
-echo "Metadata generated, sleeping to allow chartsdata to update"
-sleep 300
-echo "${charts_url}&id=91000"
-curl --verbose "${charts_url}&id=91000"
 
-cgi_pages="$RAMDISK_DIR/cgi_pages"
-traverse_cgi "$cgi_pages"
+file0="bar"
+file1="foo"
+echo "Doing reads and writes"
+echo "foo" > "$file0"
+echo "bar" > "$file1"
+cat bar
+cat foo
 
-cat "$cgi_pages/read_master_operations"
+# Set different goals to simulate replications
+echo "Setting goals"
+saunafs setgoal ec_3_1 "$file0"
+saunafs setgoal 2 "$file1"
+
+echo ""
+sleep 65
+
+
+curl --fail "${prometheus_host0}/metrics"
+curl --fail "${prometheus_host1}/metrics"
+curl --fail "${prometheus_host2}/metrics"
+curl --fail "${prometheus_host3}/metrics"

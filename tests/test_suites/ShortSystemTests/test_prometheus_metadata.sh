@@ -20,9 +20,10 @@ echo "foo" > bar
 ln -s bar bar_ln
 cat bar
 readlink bar_ln
+curl --fail "${prometheus_host}/metrics"
 
 # Check if any value is zero
-input_data=$(grep -E 'saunafs_metadata_stats_total\{filesystem="operations",operation="[A-Z]+"\}' <<< "$(curl --fail "${prometheus_host}/metrics")")
+input_data=$(grep -E 'saunafs_metadata_filesystem_stats_total\{filesystem="operations",operation="[A-Z]+"\}' <<< "$(curl --fail "${prometheus_host}/metrics")")
 echo "$input_data" | while read -r line; do
 	echo "${line}"
 	# BUG: Setting symlinkcachetimeout to 0, it still uses client cache
