@@ -5,7 +5,11 @@ target_link_libraries(saunafs-admin-lib sfscommon)
 create_unittest(saunafs-admin-lib ${SAUNAFS_ADMIN_TESTS})
 link_unittest(saunafs-admin-lib sfscommon)
 
-add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN})
+if(ICON_RESOURCE_FILE STREQUAL "")
+  add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN})
+else()
+  add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN} ${ICON_RESOURCE_FILE})
+endif()
 target_link_libraries(saunafs-admin saunafs-admin-lib)
 install(TARGETS saunafs-admin RUNTIME DESTINATION ${BIN_SUBDIR})
 
