@@ -163,7 +163,17 @@ if(ENABLE_NFS_GANESHA)
 endif()
 
 # Find Prometheus
-find_package(prometheus-cpp CONFIG)
+find_package(prometheus-cpp QUIET)
+if(ENABLE_PROMETHEUS AND NOT prometheus-cpp_FOUND)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_PUSH OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+      prometheus-cpp
+      GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+      GIT_TAG        e5fada43131d251e9c4786b04263ce98b6767ba5 # v.1.3.0
+    )
+    FetchContent_MakeAvailable(prometheus-cpp)
+endif()
 if (PROMETHEUS_CPP_ENABLE_PULL)
     message(STATUS "Found Prometheus C++ Client Library")
 else()

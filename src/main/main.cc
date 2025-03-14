@@ -706,11 +706,11 @@ void makedaemon() {
 	set_signal_handlers(1);
 
 	close(STDIN_FILENO);
-	sassert(open("/dev/null", O_RDWR, 0)==STDIN_FILENO);
+	eassert(open("/dev/null", O_RDWR, 0)==STDIN_FILENO);
 	close(STDOUT_FILENO);
-	sassert(dup(STDIN_FILENO)==STDOUT_FILENO);
+	eassert(dup(STDIN_FILENO)==STDOUT_FILENO);
 	close(STDERR_FILENO);
-	sassert(dup(piped[1])==STDERR_FILENO);
+	eassert(dup(piped[1])==STDERR_FILENO);
 	close(piped[1]);
 
 	// close all inherited file descriptors
@@ -726,7 +726,7 @@ void makedaemon() {
 void close_msg_channel() {
 	fflush(stderr);
 	close(STDERR_FILENO);
-	sassert(open("/dev/null", O_RDWR, 0)==STDERR_FILENO);
+	eassert(open("/dev/null", O_RDWR, 0)==STDERR_FILENO);
 }
 
 void createpath(const char *filename) {

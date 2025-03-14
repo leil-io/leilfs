@@ -29,6 +29,7 @@ private:
 	// WARNING: Changing the variable names will change what appears in
 	// prometheus
 	prometheus::Family<prometheus::Counter> *network_bytes_total{nullptr};
+	prometheus::Family<prometheus::Counter> *master_network_bytes_total{nullptr};
 	prometheus::Family<prometheus::Counter> *network_operations_total{nullptr};
 	prometheus::Family<prometheus::Counter> *operations_jobs{nullptr};
 	prometheus::Family<prometheus::Counter> *chunk_operations_total{nullptr};

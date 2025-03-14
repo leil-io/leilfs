@@ -31,6 +31,8 @@
 // using enums instead of a map. See master.cc and master.h for an example
 // implementation for adding new metrics.
 
+#include <cstdint>
+#include <stdexcept>
 #ifdef HAVE_PROMETHEUS
 #include "chunkserver.h"
 #include "master.h"
@@ -139,8 +141,12 @@ void Counter::increment(const T key, double n) {
 	// Safe as all values are constructed at specific keys, however a check
 	// needs to be made whether the actual counter initialized or not (for
 	// whatever reason)
+	safs::log_info("Counter::increment(const T key: {}, double n: {})", static_cast<uint8_t>(key), n);
 	auto counter = gPrometheusMetrics.service->getCounter(static_cast<uint8_t>(key));
-	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
+	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); } else {
+		safs::log_critical("Prometheus found null counter with key {} and n {}", static_cast<uint8_t>(key), n);
+		throw std::logic_error("Prometheus counter not found");
+	}
 }
 
 template <typename T>

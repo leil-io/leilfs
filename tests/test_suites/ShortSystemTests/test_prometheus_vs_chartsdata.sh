@@ -25,15 +25,13 @@ CHUNKSERVERS=4 \
 	MOUNT_2_EXTRA_EXPORTS="mingoal=1,maxgoal=10,maxtrashtime=2w" \
     SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
     SFSEXPORTS_META_EXTRA_OPTIONS="nonrootmeta" \
-	MASTER_CUSTOM_GOALS="2 2: _ _ |10 ec_3_1: \$ec(3,1)" \
 	CHUNKSERVER_0_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host0}" \
 	CHUNKSERVER_1_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host1}" \
 	CHUNKSERVER_2_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host2}" \
 	CHUNKSERVER_3_EXTRA_CONFIG="ENABLE_PROMETHEUS = 1|PROMETHEUS_HOST = ${prometheus_host3}" \
 	setup_local_empty_saunafs info
 
-echo "Waiting for prometheus metrics to come up"
-sleep infinity
+	# MASTER_CUSTOM_GOALS="1 1: _ |2 2: _ _ | 3 3: _ _ _ | 4 4: _ _ _ _ | 5 5: _ _ _ _ _ |10 ec_3_1: \$ec(3,1)" \
 echo "Checking prometheus metrics"
 assert_success curl --fail "${prometheus_host0}/metrics"
 assert_success curl --fail "${prometheus_host1}/metrics"
@@ -41,6 +39,7 @@ assert_success curl --fail "${prometheus_host2}/metrics"
 assert_success curl --fail "${prometheus_host3}/metrics"
 
 cd "${info[mount0]}"
+metadata_generate_all
 
 file0="bar"
 file1="foo"
@@ -52,12 +51,10 @@ cat foo
 
 # Set different goals to simulate replications
 echo "Setting goals"
-saunafs setgoal ec_3_1 "$file0"
+saunafs setgoal ec22 "$file0"
 saunafs setgoal 2 "$file1"
 
-echo ""
-sleep 65
-
+find . -type f -exec cat {} + > /dev/null
 
 curl --fail "${prometheus_host0}/metrics"
 curl --fail "${prometheus_host1}/metrics"

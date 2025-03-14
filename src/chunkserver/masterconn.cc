@@ -602,7 +602,7 @@ void masterconn_read(masterconn *eptr) {
 			}
 			return;
 		}
-
+		safs::log_info("bytes_read (static cast): {}", static_cast<double>(ret));
 		metrics::Counter::increment(metrics::chunkserver::Counters::MASTER_RX_BYTES,
 		                            static_cast<double>(ret));
 		stats_bytesin += ret;

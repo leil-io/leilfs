@@ -123,7 +123,6 @@ apt_packages=(
 	software-properties-common
 )
 noble_packages=(
-	prometheus-cpp-dev
 	util-linux-extra
 )
 dnf_packages=(
@@ -178,7 +177,6 @@ dnf_packages=(
 	libacl-devel
 	libcap-devel
 	libnfsidmap-devel
-	libprometheus-cpp-devel
 	libsqlite3x-devel
 	xfsprogs-devel
 )

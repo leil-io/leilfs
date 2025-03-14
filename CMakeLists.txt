@@ -9,6 +9,8 @@ set(CMAKE_ENABLE_EXPORTS ON)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
+include(FetchContent)
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR
     "In-source builds are disabled for this project. This is for your "
@@ -349,14 +351,7 @@ set(CHARTS_CSV_CHARTID_BASE 90000)
 # Internal capability required by some FSALs
 set(GSH_CAN_HOST_LOCAL_FS ${ENABLE_NFS_GANESHA})
 
-if (ENABLE_PROMETHEUS AND NOT PROMETHEUS_CPP_ENABLE_PULL)
-    message(STATUS "Prometheus C++ Client Library: Enabled but not found")
-elseif(ENABLE_PROMETHEUS)
-    add_definitions(-DHAVE_PROMETHEUS)
-    message(STATUS "Prometheus C++ Client Library: Enabled")
-else()
-    message(STATUS "Prometheus C++ Client Library: Disabled")
-endif()
+add_definitions(-DHAVE_PROMETHEUS)
 
 # Create config.h file
 configure_file(config.h.in config.h)

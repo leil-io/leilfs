@@ -1315,7 +1315,7 @@ void ChunkserverEntry::fwdWrite() {
 			}
 			return;
 		}
-
+		metrics::Counter::increment(metrics::chunkserver::Counters::ANY_TX_BYTES, bytesWritten);
 		stats_bytesout += bytesWritten;
 		fwdStartPtr += bytesWritten;
 		fwdBytesLeft -= bytesWritten;
@@ -1425,6 +1425,7 @@ void ChunkserverEntry::forward() {
 			}
 			return;
 		}
+		metrics::Counter::increment(metrics::chunkserver::Counters::ANY_TX_BYTES, bytesReadOrWritten);
 		stats_bytesout += bytesReadOrWritten;
 		fwdStartPtr += bytesReadOrWritten;
 		fwdBytesLeft -= bytesReadOrWritten;
@@ -1575,6 +1576,9 @@ void ChunkserverEntry::writeToSocket() {
 			size_t bytesInBufferAfter = pack->outputBuffer->bytesInABuffer();
 			massert(bytesInBufferAfter <= bytesInBufferBefore,
 					"New bytes in pack->outputBuffer after sending some data");
+			metrics::Counter::increment(
+			    metrics::chunkserver::Counters::ANY_TX_BYTES,
+			    static_cast<double>(bytesInBufferBefore - bytesInBufferAfter));
 			stats_bytesout += (bytesInBufferBefore - bytesInBufferAfter);
 			if (ret == OutputBuffer::WRITE_ERROR) {
 				safs_silent_errlog(LOG_NOTICE, "(write) write error");
@@ -1596,6 +1600,7 @@ void ChunkserverEntry::writeToSocket() {
 				}
 				return;
 			}
+			metrics::Counter::increment(metrics::chunkserver::Counters::ANY_TX_BYTES, bytesWritten);
 			stats_bytesout += bytesWritten;
 			pack->startPtr += bytesWritten;
 			pack->bytesLeft -= bytesWritten;
