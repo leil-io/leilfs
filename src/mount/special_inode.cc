@@ -78,7 +78,3 @@ namespace InodePathByInode {
 const Attributes InodeMountInfo::attr =
 	  {{'f', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
 const Inode InodeMountInfo::inode_ = SPECIAL_INODE_MOUNT_INFO;
-namespace InodeMountInfo {
-	MountInfo mountInfo;
-	std::string mountInfoStr;
-}

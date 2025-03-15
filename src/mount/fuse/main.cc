@@ -299,8 +299,9 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.statfs_cache_timeout = gMountOptions.statfscachetimeout;
 	params.use_quota_in_volume_size = gMountOptions.usequotainvolumesize;
 
-	InodeMountInfo::mountInfo.pid = getpid();
-	InodeMountInfo::buildMountInfoStr();
+	// Update mount info actual pid
+	mountInfo.pid = getpid();
+	buildMountInfoStr();
 
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);
@@ -786,7 +787,7 @@ int main(int argc, char *argv[]) try {
 	}
 
 	initialize_opts_name_values();
-	InodeMountInfo::setMountInfo(
+	setMountInfo(
 		get_current_local_time(),
 		getuid(),
 		getgid(),
