@@ -46,6 +46,7 @@
 #include "mount/chunk_locator.h"
 #include "mount/chunk_reader.h"
 #include "mount/mastercomm.h"
+#include "mount/mount_info.h"
 #include "mount/notification_area_logging.h"
 #include "mount/readahead_adviser.h"
 #include "mount/readdata_cache.h"
@@ -618,6 +619,7 @@ void read_data_init(uint32_t retries,
 	gPrefetchXorStripes = prefetchXorStripes;
 	gBandwidthOveruse = bandwidth_overuse;
 	gTweaks.registerVariable("PrefetchXorStripes", gPrefetchXorStripes);
+	tweakByMountOption["sfsprefetchxorstripes"] = "PrefetchXorStripes";
 	gChunkConnector.setRoundTripTime(chunkserverRoundTripTime_ms);
 	gChunkConnector.setSourceIp(fs_getsrcip());
 	pthread_attr_init(&thattr);
@@ -629,13 +631,21 @@ void read_data_init(uint32_t retries,
 	pthread_attr_destroy(&thattr);
 
 	gTweaks.registerVariable("ReadMaxRetries", maxRetries);
+	tweakByMountOption["sfsioretries"] = "ReadMaxRetries";
 	gTweaks.registerVariable("ReadConnectTimeout", gChunkserverConnectTimeout_ms);
+	tweakByMountOption["sfschunkserverrtt"] = "ReadConnectTimeout";
 	gTweaks.registerVariable("ReadWaveTimeout", gChunkserverWaveReadTimeout_ms);
+	tweakByMountOption["sfschunkserverwavereadto"] = "ReadWaveTimeout";
 	gTweaks.registerVariable("ReadTotalTimeout", gChunkserverTotalReadTimeout_ms);
+	tweakByMountOption["sfschunkservertotalreadto"] = "ReadTotalTimeout";
 	gTweaks.registerVariable("CacheExpirationTime", gOriginalCacheExpirationTime_ms);
+	tweakByMountOption["cacheexpirationtime"] = "CacheExpirationTime";
 	gTweaks.registerVariable("ReadaheadMaxWindowSize", gReadaheadMaxWindowSize);
+	tweakByMountOption["readaheadmaxwindowsize"] = "ReadaheadMaxWindowSize";
 	gTweaks.registerVariable("ReadCacheMaxSize", gReadCacheMaxSize);
+	tweakByMountOption["readcachemaxsizepercentage"] = "ReadCacheMaxSize";
 	gTweaks.registerVariable("MaxReadaheadRequests", gMaxReadaheadRequests);
+	tweakByMountOption["maxreadaheadrequests"] = "MaxReadaheadRequests";
 	gTweaks.registerVariable("ReadChunkPrepare", ChunkReader::preparations);
 	gTweaks.registerVariable("ReqExecutedTotal", ReadPlanExecutor::executions_total_);
 	gTweaks.registerVariable("ReqExecutedUsingAll", ReadPlanExecutor::executions_with_additional_operations_);

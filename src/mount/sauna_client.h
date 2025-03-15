@@ -34,6 +34,7 @@
 #include "common/chunk_with_address_and_label.h"
 #include "common/exception.h"
 #include "mount/group_cache.h"
+#include "mount/mount_info.h"
 #include "mount/sauna_client_context.h"
 #include "mount/readdata_cache.h"
 #include "mount/stat_defs.h"

@@ -135,6 +135,7 @@ static void open(const Context &ctx, FileInfo *fi) {
 		             (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
+	buildMountInfoStr();
 	fi->fh = reinterpret_cast<uintptr_t>(mountInfoStr.c_str());
 	fi->direct_io = 1;
 	fi->keep_cache = 0;

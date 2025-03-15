@@ -54,6 +54,7 @@
 #include "mount/chunk_writer.h"
 #include "mount/global_chunkserver_stats.h"
 #include "mount/mastercomm.h"
+#include "mount/mount_info.h"
 #include "mount/readdata.h"
 #include "mount/tweaks.h"
 #include "mount/notification_area_logging.h"
@@ -717,6 +718,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	pthread_attr_destroy(&thattr);
 
 	gTweaks.registerVariable("WriteMaxRetries", maxretries);
+	tweakByMountOption["sfsioretries"] = "WriteMaxRetries";
 }
 
 void write_data_term(void) {
