@@ -29,6 +29,7 @@
 #include "mount/masterproxy.h"
 #include "mount/oplog.h"
 #include "mount/tweaks.h"
+#include "mount/mount_info.h"
 
 namespace InodeMasterInfo {
 	extern const Attributes attr;
@@ -102,74 +103,6 @@ namespace InodePathByInode {
 }
 
 namespace InodeMountInfo {
-	typedef struct _mountInfo {
-		std::string startedDateUtc;
-#ifdef _WIN32
-		std::string sid;
-#else
-		std::string uid;
-		std::string gid;
-#endif
-		std::string username;
-		int pid;
-		std::string version;
-		std::string commitId;
-		std::string arguments;
-		std::unique_ptr<std::map<std::string, std::string>> mountOptions;
-	} MountInfo;
-	extern MountInfo mountInfo;
-	extern std::string mountInfoStr;
-
-	inline void buildMountInfoStr() {
-		mountInfoStr.clear();
-		mountInfoStr = "SAUNAFS CLIENT MOUNT INFO:\n";
-		mountInfoStr += "--------------------------------\n";
-		mountInfoStr += "STARTED DATE: " + mountInfo.startedDateUtc + "\n";
-#ifdef _WIN32
-		mountInfoStr += "SID: " + mountInfo.sid + "\n";
-#else
-		mountInfoStr += "UID: " + mountInfo.uid + "\n";
-		mountInfoStr += "GID: " + mountInfo.gid + "\n";
-#endif
-		mountInfoStr += "USERNAME: " + mountInfo.username + "\n";
-		mountInfoStr += "PID: " + std::to_string(mountInfo.pid) + "\n";
-		mountInfoStr += "VERSION: " + mountInfo.version + "\n";
-		mountInfoStr += "COMMIT_ID: " + mountInfo.commitId + "\n";
-		mountInfoStr += "ARGUMENTS: " + mountInfo.arguments + "\n";
-		if (mountInfo.mountOptions) {
-			mountInfoStr += "MOUNT OPTIONS:\n";
-			for (const auto &opt : *mountInfo.mountOptions) {
-				mountInfoStr += opt.first + ": " + opt.second + "\n";
-			}
-		}
-		mountInfoStr += "--------------------------------\n";
-	}
-
-	inline void setMountInfo(const std::string &startedDateUtc,
-#ifdef _WIN32
-		const std::string &sid,
-#else
-		const int &uid, const int &gid,
-#endif
-		const std::string &username, int pid,
-		const std::string &version, const std::string &commitId,
-		const std::string &arguments, std::unique_ptr<std::map<std::string, std::string>> mountOptions = nullptr) {
-		mountInfo.startedDateUtc = startedDateUtc;
-#ifdef _WIN32
-		mountInfo.sid = sid;
-#else
-		mountInfo.uid = std::to_string(uid);
-		mountInfo.gid = std::to_string(gid);
-#endif
-		mountInfo.username = username;
-		mountInfo.pid = pid;
-		mountInfo.version = version;
-		mountInfo.commitId = commitId;
-		mountInfo.arguments = arguments;
-		mountInfo.mountOptions = std::move(mountOptions);
-		buildMountInfoStr();
-	}
-
 	extern const Attributes attr;
 	extern const SaunaClient::Inode inode_;
 }
