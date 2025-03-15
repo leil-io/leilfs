@@ -18,8 +18,6 @@ compare_dates() {
 USE_RAMDISK=YES \
     setup_local_empty_saunafs info
 
-cd "${info[mount0]}"
-
 if is_windows_system; then
     # Get the PID and username of the sfsmount process on Windows
     tasklist_output=$(tasklist.exe /FI "IMAGENAME eq sfsmount.exe" 2>&1)
@@ -38,7 +36,7 @@ expected_started_date="$(date '+%Y-%m-%d_%H:%M:%S')"
 expected_pid="PID: $sfsmount_pid"
 
 # Read the .saunafs_mount_info file
-mount_info=$(cat .saunafs_mount_info)
+mount_info=$(cat "${info[mount0]}/.saunafs_mount_info")
 
 # Check if the contents match the expected values
 actual_started_date=$(echo "$mount_info" | egrep "STARTED DATE" | awk '{print $3}')
@@ -57,3 +55,16 @@ assert_success $(echo "$mount_info" | grep -q "VERSION: ")
 assert_success $(echo "$mount_info" | grep -q "COMMIT_ID: ")
 assert_success $(echo "$mount_info" | grep -q "ARGUMENTS: ")
 assert_success $(echo "$mount_info" | grep -q "MOUNT OPTIONS:")
+
+# Check if tweaks are correctly updated
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep CacheExpirationTime | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep cacheexpirationtime | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep sfsioretries | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep MaxReadaheadRequests | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep maxreadaheadrequests | awk '{print $2}')
+
+echo "CacheExpirationTime=251" | sudo tee "${info[mount0]}/.saunafs_tweaks"
+echo "WriteMaxRetries=55" | sudo tee "${info[mount0]}/.saunafs_tweaks"
+echo "MaxReadaheadRequests=23" | sudo tee "${info[mount0]}/.saunafs_tweaks"
+
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep CacheExpirationTime | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep cacheexpirationtime | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep sfsioretries | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep MaxReadaheadRequests | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep maxreadaheadrequests | awk '{print $2}')

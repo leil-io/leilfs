@@ -26,6 +26,8 @@
 #include <memory>
 #include <string>
 
+#include "mount/tweaks.h"
+
 typedef struct _mountInfo {
 	std::string startedDateUtc;
 #ifdef _WIN32
@@ -44,6 +46,7 @@ typedef struct _mountInfo {
 
 inline MountInfo mountInfo;
 inline std::string mountInfoStr;
+inline std::map<std::string, std::string> tweakByMountOption;
 
 inline void buildMountInfoStr() {
 	mountInfoStr.clear();
@@ -64,6 +67,11 @@ inline void buildMountInfoStr() {
 	if (mountInfo.mountOptions) {
 		mountInfoStr += "MOUNT OPTIONS:\n";
 		for (const auto &opt : *mountInfo.mountOptions) {
+			if (tweakByMountOption.find(opt.first) != tweakByMountOption.end()) {
+				mountInfoStr += opt.first + ": " + gTweaks.getValue(tweakByMountOption[opt.first]) + "\n";
+			} else {
+				mountInfoStr += opt.first + ": " + opt.second + "\n";
+			}
 			mountInfoStr += opt.first + ": " + opt.second + "\n";
 		}
 	}

@@ -89,6 +89,15 @@ void Tweaks::setValue(const std::string& name, const std::string& value) {
 	}
 }
 
+std::string Tweaks::getValue(const std::string& name) const {
+	for (const auto& nameAndVariable : impl_->variables) {
+		if (nameAndVariable.first == name) {
+			return nameAndVariable.second->getValue();
+		}
+	}
+	return std::string();
+}
+
 std::string Tweaks::getAllValues() const {
 	std::stringstream ss;
 	for (const auto& nameAndVariable : impl_->variables) {

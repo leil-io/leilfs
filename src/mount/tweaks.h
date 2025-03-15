@@ -45,6 +45,8 @@ public:
 	/// Changes value of all variables with the given name.
 	void setValue(const std::string& name, const std::string& value);
 
+	std::string getValue(const std::string& name) const;
+
 	/// Returns values of all the registered variables.
 	std::string getAllValues() const;
 

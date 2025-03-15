@@ -64,6 +64,7 @@
 #include "mount/io_limit_group.h"
 #include "mount/mastercomm.h"
 #include "mount/masterproxy.h"
+#include "mount/mount_info.h"
 #include "mount/notification_area_logging.h"
 #include "mount/oplog.h"
 #include "mount/readdata.h"
@@ -3563,13 +3564,19 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 			getAcl));
 
 	gTweaks.registerVariable("DirectIO", gDirectIo);
+	tweakByMountOption["sfsdirectio"] = "DirectIO";
 	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush);
+	tweakByMountOption["sfsignoreflush"] = "IgnoreFlush";
 	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout);
+	tweakByMountOption["statfscachetimeout"] = "StatfsCacheTimeout";
 	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize);
+	tweakByMountOption["usequotainvolumesize"] = "UseQuotaInVolumeSize";
 #ifdef _WIN32
 	gTweaks.registerVariable("IgnoreUtimens", gIgnoreUtimensUpdate);
+	tweakByMountOption["sfsignoreutimensupdate"] = "IgnoreUtimens";
 #endif
 	gTweaks.registerVariable("AclCacheMaxTime", acl_cache->maxTime_ms);
+	tweakByMountOption["aclcacheto"] = "AclCacheMaxTime";
 	gTweaks.registerVariable("AclCacheHit", acl_cache->cacheHit);
 	gTweaks.registerVariable("AclCacheExpired", acl_cache->cacheExpired);
 	gTweaks.registerVariable("AclCacheMiss", acl_cache->cacheMiss);
