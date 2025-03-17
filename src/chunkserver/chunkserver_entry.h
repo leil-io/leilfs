@@ -166,8 +166,6 @@ struct ChunkserverEntry {
 	std::list<std::unique_ptr<PacketStruct>> toDiscardReadDataPackets;
 	std::list<uint32_t> toDiscardReadJobIds; ///< Job IDs for read operations to discard.
 
-	size_t readyReadDataPackets{0}; ///< Number of pending read data packets ready to be sent.
-
 	/* get blocks */
 	uint32_t getBlocksJobId = 0; ///< Current job ID for retrieving chunk blocks
 	uint16_t getBlocksJobResult = 0; ///< Result of the get blocks job
@@ -176,6 +174,7 @@ struct ChunkserverEntry {
 	std::unique_ptr<PacketStruct> writePacket =
 	    std::make_unique<PacketStruct>();
 
+	uint16_t pendingDelayedJobs = 0; ///< Number of remaining delayed jobs running
 	uint8_t isChunkOpen = 0;
 	uint64_t chunkId = 0; // R+W
 	uint32_t chunkVersion = 0; // R+W
@@ -320,8 +319,9 @@ struct ChunkserverEntry {
 	/// data has been read, it sends a read status message and closes the chunk.
 	/// Otherwise, it prepares the next part of the read operation.
 	///
+	/// @param callMaxParallelHddReadJobs The maximum number of parallel HDD read for this call.
 	/// @see ChunkserverEntry::readInit
-	void readContinue();
+	void readContinue(uint16_t callMaxParallelHddReadJobs);
 
 	/// Requests a data prefetch operation.
 	/// Prefetch in this context means reading data from the disk and storing it
@@ -341,6 +341,8 @@ struct ChunkserverEntry {
 	static void readDiscardCallback(uint8_t status, void *entry);
 	/// Callback after delayed close operations.
 	static void delayedCloseCallback(uint8_t status, void *entry);
+	/// Callback after delayed discard operations.
+	static void delayedDiscardCallback(uint8_t status, void *entry);
 	/// Callback for when a write operation finishes.
 	static void writeFinishedCallback(uint8_t status, void *entry);
 	/// Callback for legacy chunk block retrieval completion.

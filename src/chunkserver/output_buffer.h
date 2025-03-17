@@ -30,6 +30,8 @@
 #include "chunkserver/aligned_allocator.h"
 #include "chunkserver/buffers_pool.h"
 
+constexpr uint8_t kNotSaunafsStatus = 255;
+
 class OutputBuffer {
 public:
 	enum WriteStatus {
@@ -65,7 +67,7 @@ public:
 		return capacity + disk::kIoBlockSize - remainder;
 	}
 
-	std::atomic_bool isReadCompleted{false};
+	std::atomic_uint8_t status{kNotSaunafsStatus};
 
 private:
 	const size_t internalBufferCapacity_;

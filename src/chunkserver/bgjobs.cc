@@ -272,7 +272,7 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 
 		status = hddRead(chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
 		                 blocksToBeReadAhead, outputBuffer);
-		outputBuffer->isReadCompleted = true;
+		outputBuffer->status = status;
 
 		if (performHddOpen && status != SAUNAFS_STATUS_OK) {
 			int ret = hddClose(chunkId, chunkType);
