@@ -22,7 +22,11 @@ set(SFSTOOL_LINKS
 
 collect_sources(TOOLS)
 
-add_executable(saunafs ${TOOLS_MAIN} ${TOOLS_SOURCES})
+if(ICON_RESOURCE_FILE STREQUAL "")
+  add_executable(saunafs ${TOOLS_MAIN} ${TOOLS_SOURCES})
+else()
+  add_executable(saunafs ${TOOLS_MAIN} ${TOOLS_SOURCES} ${ICON_RESOURCE_FILE})
+endif()
 target_link_libraries(saunafs sfscommon)
 install(TARGETS saunafs DESTINATION ${BIN_SUBDIR})
 
