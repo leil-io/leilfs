@@ -29,8 +29,7 @@ class IChunkTrashManagerImpl {
 public:
 	virtual ~IChunkTrashManagerImpl() = default;
 
-	virtual int moveToTrash(const std::filesystem::path &,
-	                        const std::filesystem::path &,
+	virtual int moveToTrash(const std::filesystem::path &, const std::filesystem::path &,
 	                        const std::time_t &) = 0;
 
 	virtual int init(const std::string &) = 0;
@@ -83,8 +82,7 @@ public:
 	 * @return 0 on success, error code otherwise.
 	 */
 	static int moveToTrash(const std::filesystem::path &filePath,
-	                       const std::filesystem::path &diskPath,
-	                       const std::time_t &deletionTime);
+	                       const std::filesystem::path &diskPath, const std::time_t &deletionTime);
 
 	/**
 	 * @brief Runs the garbage collection process, which includes

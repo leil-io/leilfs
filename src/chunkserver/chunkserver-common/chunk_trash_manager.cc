@@ -31,8 +31,7 @@ std::mutex ChunkTrashManager::implMutex;
 // Using the Meyer's singleton pattern to ensure proper initialization and
 // cleanup
 ChunkTrashManager::ImplementationPtr &ChunkTrashManager::getImpl() {
-	static ImplementationPtr instance =
-	    std::make_shared<ChunkTrashManagerImpl>();
+	static ImplementationPtr instance = std::make_shared<ChunkTrashManagerImpl>();
 	return instance;
 }
 
@@ -40,8 +39,7 @@ void ChunkTrashManager::setImpl(ImplementationPtr newImpl) {
 	// Protect against concurrent access
 	std::lock_guard<std::mutex> lock(implMutex);
 	if (!newImpl) {
-		safs::log_err(
-		    "Attempt to set null implementation for ChunkTrashManager");
+		safs::log_err("Attempt to set null implementation for ChunkTrashManager");
 		return;  // Don't set null implementation
 	}
 	getImpl() = newImpl;
@@ -102,7 +100,6 @@ void ChunkTrashManager::reloadConfig() {
 	}
 
 	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", static_cast<u_short>(0));
-	safs::log_info("Chunk trash manager is {}",
-	               isEnabled ? "enabled" : "disabled");
+	safs::log_info("Chunk trash manager is {}", isEnabled ? "enabled" : "disabled");
 	impl->reloadConfig();
 }

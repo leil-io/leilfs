@@ -23,8 +23,7 @@
 class MockChunkTrashManagerImpl : public IChunkTrashManagerImpl {
 public:
 	MOCK_METHOD(int, moveToTrash,
-	            (const std::filesystem::path &, const std::filesystem::path &,
-	             const std::time_t &),
+	            (const std::filesystem::path &, const std::filesystem::path &, const std::time_t &),
 	            ());
 	MOCK_METHOD(int, init, (const std::string &), ());
 	MOCK_METHOD(void, collectGarbage, (), ());
@@ -55,8 +54,7 @@ TEST_F(ChunkTrashManagerTest, MoveToTrashForwardsCall) {
 	    .WillOnce(testing::Return(0));  // Assuming 0 is a success return
 	// value.
 
-	int result =
-	    ChunkTrashManager::moveToTrash(filePath, diskPath, deletionTime);
+	int result = ChunkTrashManager::moveToTrash(filePath, diskPath, deletionTime);
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
 
@@ -86,11 +84,9 @@ TEST_F(ChunkTrashManagerTest, DisabledMoveToTrashDoesNotForwardsCall) {
 	std::time_t deletionTime = 1234567890;
 	ChunkTrashManager::isEnabled = 0;
 
-	EXPECT_CALL(*mockImpl, moveToTrash(filePath, diskPath, deletionTime))
-	    .Times(0);
+	EXPECT_CALL(*mockImpl, moveToTrash(filePath, diskPath, deletionTime)).Times(0);
 
-	int result =
-	    ChunkTrashManager::moveToTrash(filePath, diskPath, deletionTime);
+	int result = ChunkTrashManager::moveToTrash(filePath, diskPath, deletionTime);
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
 

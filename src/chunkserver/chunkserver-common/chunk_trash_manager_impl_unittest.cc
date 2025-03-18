@@ -39,9 +39,7 @@ int fake_statvfs(const char *path, struct statvfs *buf) {
 
 // Fake statvfs() definition to override the real one
 // Used by the checkAvailableSpace() method
-extern "C" int statvfs(const char *path, struct statvfs *buf) {
-	return fake_statvfs(path, buf);
-}
+extern "C" int statvfs(const char *path, struct statvfs *buf) { return fake_statvfs(path, buf); }
 
 namespace fs = std::filesystem;
 
@@ -63,24 +61,21 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashValidFile) {
 	fs::path filePath = testDir / "valid_file.txt";
 	std::ofstream(filePath.string());  // Create a valid file
 	std::time_t deletionTime = 1729259531;
-	std::string const deletionTimeString = ChunkTrashManagerImpl::getTimeString(
-	    deletionTime);  // Convert time to string format
+	std::string const deletionTimeString =
+	    ChunkTrashManagerImpl::getTimeString(deletionTime);  // Convert time to string format
 
 	ASSERT_TRUE(fs::exists(filePath));
-	int const result =
-	    chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
+	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 	ASSERT_EQ(result, SAUNAFS_STATUS_OK);
 	ASSERT_FALSE(fs::exists(filePath));
-	ASSERT_TRUE(fs::exists((testDir / ".trash.bin/valid_file.txt.").string() +
-	                       deletionTimeString));
+	ASSERT_TRUE(fs::exists((testDir / ".trash.bin/valid_file.txt.").string() + deletionTimeString));
 }
 
 TEST_F(ChunkTrashManagerImplTest, MoveToTrashNonExistentFile) {
 	fs::path filePath = testDir / "non_existent_file.txt";
 	std::time_t deletionTime = std::time(nullptr);
 
-	int const result =
-	    chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
+	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 	ASSERT_EQ(result, SAUNAFS_ERROR_ENOENT);
 }
 
@@ -91,16 +86,13 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashFileInNestedDirectory) {
 	std::ofstream(filePath.string());
 
 	std::time_t deletionTime = 1729259531;
-	std::string const deletionTimeString =
-	    ChunkTrashManagerImpl::getTimeString(deletionTime);
+	std::string const deletionTimeString = ChunkTrashManagerImpl::getTimeString(deletionTime);
 
-	int const result =
-	    chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
+	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 	ASSERT_EQ(result, SAUNAFS_STATUS_OK);
 	ASSERT_FALSE(fs::exists(filePath));
 	ASSERT_TRUE(
-	    fs::exists((testDir / ".trash.bin/nested/nested_file.txt.").string() +
-	               deletionTimeString));
+	    fs::exists((testDir / ".trash.bin/nested/nested_file.txt.").string() + deletionTimeString));
 }
 
 TEST_F(ChunkTrashManagerImplTest, MoveToTrashReadOnlyTrashDirectory) {
@@ -112,8 +104,7 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashReadOnlyTrashDirectory) {
 	std::ofstream(filePath.string());
 	std::time_t deletionTime = 1729259531;
 
-	int const result =
-	    chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
+	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 	ASSERT_EQ(result, SAUNAFS_ERROR_NOTDONE);  // Expect failure
 }
 
@@ -123,21 +114,18 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashAlreadyTrashedFile) {
 	std::time_t deletionTime = 1729259531;
 	chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 
-	int const result =
-	    chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
+	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 	ASSERT_EQ(result, SAUNAFS_ERROR_ENOENT);  // Expect failure
 }
 
 TEST_F(ChunkTrashManagerImplTest, ConcurrentMoveToTrash) {
 	const int numFiles = 10;
 	std::time_t deletionTime = 1729259531;
-	const std::string deletionTimeString =
-	    ChunkTrashManagerImpl::getTimeString(deletionTime);
+	const std::string deletionTimeString = ChunkTrashManagerImpl::getTimeString(deletionTime);
 	std::vector<std::thread> threads;
 	for (int i = 0; i < numFiles; ++i) {
 		threads.emplace_back([this, i, deletionTime]() {
-			fs::path filePath =
-			    testDir / ("concurrent_file_" + std::to_string(i) + ".txt");
+			fs::path filePath = testDir / ("concurrent_file_" + std::to_string(i) + ".txt");
 			std::ofstream(filePath.string());
 			chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 		});
@@ -147,11 +135,9 @@ TEST_F(ChunkTrashManagerImplTest, ConcurrentMoveToTrash) {
 
 	// Check if all files are moved to trash
 	for (int i = 0; i < numFiles; ++i) {
-		ASSERT_FALSE(fs::exists(
-		    testDir / ("concurrent_file_" + std::to_string(i) + ".txt")));
-		ASSERT_TRUE(
-		    fs::exists((testDir / ".trash.bin/concurrent_file_").string() +
-		               std::to_string(i) + ".txt." + deletionTimeString));
+		ASSERT_FALSE(fs::exists(testDir / ("concurrent_file_" + std::to_string(i) + ".txt")));
+		ASSERT_TRUE(fs::exists((testDir / ".trash.bin/concurrent_file_").string() +
+		                       std::to_string(i) + ".txt." + deletionTimeString));
 	}
 }
 
@@ -160,11 +146,9 @@ TEST_F(ChunkTrashManagerImplTest, PerformanceTest) {
 	auto start = std::chrono::high_resolution_clock::now();
 
 	for (int i = 0; i < numFiles; ++i) {
-		fs::path filePath =
-		    testDir / ("performance_file_" + std::to_string(i) + ".txt");
+		fs::path filePath = testDir / ("performance_file_" + std::to_string(i) + ".txt");
 		std::ofstream(filePath.string());
-		chunkTrashManagerImpl.moveToTrash(filePath, testDir,
-		                                  std::time(nullptr));
+		chunkTrashManagerImpl.moveToTrash(filePath, testDir, std::time(nullptr));
 	}
 
 	auto end = std::chrono::high_resolution_clock::now();
@@ -184,9 +168,8 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrash) {
 	std::ofstream(filePath.string());
 	std::time_t deletionTime = std::time(nullptr);
 
-	ASSERT_EQ(
-	    chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime),
-	    SAUNAFS_STATUS_OK);
+	ASSERT_EQ(chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime),
+	          SAUNAFS_STATUS_OK);
 	ASSERT_FALSE(fs::exists(filePath));  // Ensure file is moved to trash
 }
 
@@ -194,8 +177,7 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrash) {
 TEST_F(ChunkTrashManagerImplTest, GetTimeString) {
 	std::time_t testDeletionTime = 1729259531;
 	std::string testTimeString = "20241018135211";
-	std::string timeString =
-	    chunkTrashManagerImpl.getTimeString(testDeletionTime);
+	std::string timeString = chunkTrashManagerImpl.getTimeString(testDeletionTime);
 	ASSERT_EQ(timeString, testTimeString);  // Compare formatted strings
 }
 
@@ -204,31 +186,25 @@ TEST_F(ChunkTrashManagerImplTest, RemoveExpiredFiles) {
 	fs::path expiredFilePath = testDir / "expired_file.txt";
 	std::ofstream(expiredFilePath.string());
 	std::time_t oldDeletionTime = std::time(nullptr) - 86400;  // 1 day ago
-	const std::string oldDeletionTimeString =
-	    chunkTrashManagerImpl.getTimeString(oldDeletionTime);
+	const std::string oldDeletionTimeString = chunkTrashManagerImpl.getTimeString(oldDeletionTime);
 	const std::string trashPath =
-	    (testDir / ".trash.bin/expired_file.txt.").string() +
-	    oldDeletionTimeString;
+	    (testDir / ".trash.bin/expired_file.txt.").string() + oldDeletionTimeString;
 
-	chunkTrashManagerImpl.moveToTrash(expiredFilePath, testDir,
-	                                  oldDeletionTime);
+	chunkTrashManagerImpl.moveToTrash(expiredFilePath, testDir, oldDeletionTime);
 	ASSERT_FALSE(fs::exists(expiredFilePath));  // Ensure file is moved to trash
 	ASSERT_TRUE(fs::exists(trashPath));         // Ensure file is in trash
 
-	chunkTrashManagerImpl.removeExpiredFiles(std::time(nullptr) -
-	                                         3600);  // 1 hour ago
+	chunkTrashManagerImpl.removeExpiredFiles(std::time(nullptr) - 3600);  // 1 hour ago
 
-	ASSERT_FALSE(fs::exists(trashPath));  // Ensure expired file is removed
-	ASSERT_FALSE(
-	    fs::exists(expiredFilePath));  // Ensure original file is removed
+	ASSERT_FALSE(fs::exists(trashPath));        // Ensure expired file is removed
+	ASSERT_FALSE(fs::exists(expiredFilePath));  // Ensure original file is removed
 }
 
 // Testing checking valid timestamp format
 TEST_F(ChunkTrashManagerImplTest, ValidTimestampFormat) {
-	ASSERT_TRUE(chunkTrashManagerImpl.isValidTimestampFormat(
-	    "20231018120350"));  // Valid format
-	ASSERT_FALSE(chunkTrashManagerImpl.isValidTimestampFormat(
-	    "invalid_timestamp"));  // Invalid format
+	ASSERT_TRUE(chunkTrashManagerImpl.isValidTimestampFormat("20231018120350"));  // Valid format
+	ASSERT_FALSE(
+	    chunkTrashManagerImpl.isValidTimestampFormat("invalid_timestamp"));  // Invalid format
 }
 
 // Testing makeSpace functionality
@@ -236,8 +212,7 @@ TEST_F(ChunkTrashManagerImplTest, MakeSpaceRemovesOldFiles) {
 	fs::path lowSpaceFilePath = testDir / "file1.txt";
 	std::ofstream(lowSpaceFilePath.string());
 
-	chunkTrashManagerImpl.moveToTrash(lowSpaceFilePath, testDir,
-	                                  std::time(nullptr));
+	chunkTrashManagerImpl.moveToTrash(lowSpaceFilePath, testDir, std::time(nullptr));
 
 	// Simulate low space condition and check removal
 	chunkTrashManagerImpl.makeSpace(1, 1);       // 1 GB threshold
@@ -246,8 +221,7 @@ TEST_F(ChunkTrashManagerImplTest, MakeSpaceRemovesOldFiles) {
 
 // Testing check available space functionality
 TEST_F(ChunkTrashManagerImplTest, CheckAvailableSpace) {
-	size_t availableSpace =
-	    ChunkTrashManagerImpl::checkAvailableSpace(testDir.string());
+	size_t availableSpace = ChunkTrashManagerImpl::checkAvailableSpace(testDir.string());
 
 	constexpr size_t kGiBMultiplier = 1 << 30;
 	size_t expectedGb = 1024 * 4096 / kGiBMultiplier;  // Fake available space
@@ -265,16 +239,15 @@ TEST_F(ChunkTrashManagerImplTest, MakeSpaceOnSpecificDisk) {
 	chunkTrashManagerImpl.moveToTrash(filePath2, testDir, std::time(nullptr));
 
 	chunkTrashManagerImpl.makeSpace(testDir.string(), 1, 1);  // 1 GB threshold
-	ASSERT_FALSE(fs::exists(filePath1));  // Ensure the first file is removed
-	ASSERT_FALSE(fs::exists(filePath2));  // Ensure the second file is removed
+	ASSERT_FALSE(fs::exists(filePath1));                      // Ensure the first file is removed
+	ASSERT_FALSE(fs::exists(filePath2));                      // Ensure the second file is removed
 }
 
 // Testing converting time string to time value
 TEST_F(ChunkTrashManagerImplTest, GetTimeFromString) {
 	std::string timeString = "20231018120350";
 	int errorCode = 0;
-	time_t timeValue =
-	    ChunkTrashManagerImpl::getTimeFromString(timeString, errorCode);
+	time_t timeValue = ChunkTrashManagerImpl::getTimeFromString(timeString, errorCode);
 
 	std::tm tm = {};
 	strptime(timeString.c_str(), "%Y%m%d%H%M%S", &tm);
