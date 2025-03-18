@@ -717,8 +717,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	}
 	pthread_attr_destroy(&thattr);
 
-	gTweaks.registerVariable("WriteMaxRetries", maxretries);
-	tweakByMountOption["sfsioretries"] = "WriteMaxRetries";
+	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
 }
 
 void write_data_term(void) {

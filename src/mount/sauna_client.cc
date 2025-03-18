@@ -3563,20 +3563,14 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 			acl_cache_size_,
 			getAcl));
 
-	gTweaks.registerVariable("DirectIO", gDirectIo);
-	tweakByMountOption["sfsdirectio"] = "DirectIO";
-	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush);
-	tweakByMountOption["sfsignoreflush"] = "IgnoreFlush";
-	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout);
-	tweakByMountOption["statfscachetimeout"] = "StatfsCacheTimeout";
-	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize);
-	tweakByMountOption["usequotainvolumesize"] = "UseQuotaInVolumeSize";
+	gTweaks.registerVariable("DirectIO", gDirectIo, "sfsdirectio");
+	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush, "sfsignoreflush");
+	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout, "statfscachetimeout");
+	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize, "usequotainvolumesize");
 #ifdef _WIN32
-	gTweaks.registerVariable("IgnoreUtimens", gIgnoreUtimensUpdate);
-	tweakByMountOption["sfsignoreutimensupdate"] = "IgnoreUtimens";
+	gTweaks.registerVariable("IgnoreUtimens", gIgnoreUtimensUpdate, "sfsignoreutimensupdate");
 #endif
-	gTweaks.registerVariable("AclCacheMaxTime", acl_cache->maxTime_ms);
-	tweakByMountOption["aclcacheto"] = "AclCacheMaxTime";
+	gTweaks.registerVariable("AclCacheMaxTime", acl_cache->maxTime_ms, "aclcacheto");
 	gTweaks.registerVariable("AclCacheHit", acl_cache->cacheHit);
 	gTweaks.registerVariable("AclCacheExpired", acl_cache->cacheExpired);
 	gTweaks.registerVariable("AclCacheMiss", acl_cache->cacheMiss);
@@ -3637,6 +3631,20 @@ void fs_init(FsInitParams &params) {
 	notifications_area_logging_init(params.log_notifications_area,
 		params.message_suppression_period,
 		params.mountpoint);
+
+	mount_info_init(
+#ifdef _WIN32
+		get_current_user_sid(),
+		get_username(),
+#else
+		getuid(),
+		getgid(),
+		get_username_by_uid(getuid()),
+#endif
+		getpid(),
+		SAUNAFS_PACKAGE_VERSION,
+		GIT_COMMIT
+	);
 
 	init(params.debug_mode, params.keep_cache, params.direntry_cache_timeout, params.direntry_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,

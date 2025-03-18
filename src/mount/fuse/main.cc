@@ -27,8 +27,6 @@
 #include <ostream>
 #include <fuse.h>
 #include <fuse_lowlevel.h>
-#include <iomanip>
-#include <pwd.h>
 #include <sys/types.h>
 
 #include "common/crc.h"
@@ -45,7 +43,6 @@
 #include "mount/masterproxy.h"
 #include "mount/option_casing_normalization.h"
 #include "mount/readdata.h"
-#include "mount/special_inode.h"
 #include "mount/stats.h"
 #include "mount/symlinkcache.h"
 #include "mount/writedata.h"
@@ -178,36 +175,6 @@ int fuse_mnt_check_empty(const char *mnt, mode_t rootmode, off_t rootsize) {
 	return 0;
 }
 
-std::string get_username_by_uid(uid_t uid) {
-    struct passwd *pw = getpwuid(uid);
-    if (pw) {
-        return std::string(pw->pw_name);
-    } else {
-        return std::string();
-    }
-}
-
-std::string get_all_mountpoint_arguments(int argc, char **argv) {
-	std::string arguments;
-	for (int i = 0; i < argc; i++) {
-		arguments += argv[i];
-		if (i < argc - 1) {
-			arguments += " ";
-		}
-	}
-	return arguments;
-}
-
-std::string get_current_local_time() {
-	auto now = std::chrono::system_clock::now();
-	std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-	std::tm *localtm = std::localtime(&now_time);
-
-	std::ostringstream oss;
-	oss << std::put_time(localtm, "%Y-%m-%d_%H:%M:%S");
-	return oss.str();
-}
-
 static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 			struct fuse_conn_info_opts *conn_opts) try {
 	const char *mountpoint = fuse_opts->mountpoint;
@@ -298,10 +265,6 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.message_suppression_period = gMountOptions.messagesuppressionperiod;
 	params.statfs_cache_timeout = gMountOptions.statfscachetimeout;
 	params.use_quota_in_volume_size = gMountOptions.usequotainvolumesize;
-
-	// Update mount info actual pid
-	mountInfo.pid = getpid();
-	buildMountInfoStr();
 
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);
@@ -786,18 +749,9 @@ int main(int argc, char *argv[]) try {
 		}
 	}
 
+	set_current_local_time();
+	set_all_mountpoint_arguments(argc, argv);
 	initialize_opts_name_values();
-	setMountInfo(
-		get_current_local_time(),
-		getuid(),
-		getgid(),
-		get_username_by_uid(getuid()),
-		getpid(),
-		SAUNAFS_PACKAGE_VERSION,
-		GIT_COMMIT,
-		get_all_mountpoint_arguments(argc, argv),
-		std::make_unique<std::map<std::string, std::string>>(gOptsNameValues)
-	);
 
 	if (!fuse_opts.foreground)
 		res = daemonize_and_wait(std::bind(&mainloop, &args, &fuse_opts, conn_opts));

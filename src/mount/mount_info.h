@@ -22,84 +22,91 @@
 
 #include "common/platform.h"
 
+#ifndef _WIN32
+#include <pwd.h>
+#else
+#include <windows.h>
+#include <iostream>
+#include <lmcons.h>
+#include <sddl.h> 
+#endif
+#include <chrono>
+#include <iomanip>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include "mount/tweaks.h"
 
-typedef struct _mountInfo {
-	std::string startedDateUtc;
-#ifdef _WIN32
-	std::string sid;
-#else
-	std::string uid;
-	std::string gid;
-#endif
-	std::string username;
-	int pid;
-	std::string version;
-	std::string commitId;
-	std::string arguments;
-	std::unique_ptr<std::map<std::string, std::string>> mountOptions;
-} MountInfo;
+class MountInfo {
+public:
+	MountInfo();
 
-inline MountInfo mountInfo;
-inline std::string mountInfoStr;
-inline std::map<std::string, std::string> tweakByMountOption;
+	std::string getStartedDateUtc() const;
+#ifdef _WIN32
+	std::string getSid() const;
+#else
+	std::string getUid() const;
+	std::string getGid() const;
+#endif
+	std::string getUsername() const;
+	int getPid() const;
+	std::string getVersion() const;
+	std::string getCommitId() const;
+	std::string getArguments() const;
+	std::map<std::string, std::string> getMountOptions() const;
+	const std::string& getMountInfoStr();
 
-inline void buildMountInfoStr() {
-	mountInfoStr.clear();
-	mountInfoStr = "SAUNAFS CLIENT MOUNT INFO:\n";
-	mountInfoStr += "--------------------------------\n";
-	mountInfoStr += "STARTED DATE: " + mountInfo.startedDateUtc + "\n";
+	void setStartedDateUtc(const std::string &date);
 #ifdef _WIN32
-	mountInfoStr += "SID: " + mountInfo.sid + "\n";
+	void setSid(const std::string &sidValue);
 #else
-	mountInfoStr += "UID: " + mountInfo.uid + "\n";
-	mountInfoStr += "GID: " + mountInfo.gid + "\n";
+	void setUid(const std::string &uidValue);
+	void setGid(const std::string &gidValue);
 #endif
-	mountInfoStr += "USERNAME: " + mountInfo.username + "\n";
-	mountInfoStr += "PID: " + std::to_string(mountInfo.pid) + "\n";
-	mountInfoStr += "VERSION: " + mountInfo.version + "\n";
-	mountInfoStr += "COMMIT_ID: " + mountInfo.commitId + "\n";
-	mountInfoStr += "ARGUMENTS: " + mountInfo.arguments + "\n";
-	if (mountInfo.mountOptions) {
-		mountInfoStr += "MOUNT OPTIONS:\n";
-		for (const auto &opt : *mountInfo.mountOptions) {
-			if (tweakByMountOption.find(opt.first) != tweakByMountOption.end()) {
-				mountInfoStr += opt.first + ": " + gTweaks.getValue(tweakByMountOption[opt.first]) + "\n";
-			} else {
-				mountInfoStr += opt.first + ": " + opt.second + "\n";
-			}
-			mountInfoStr += opt.first + ": " + opt.second + "\n";
-		}
-	}
-	mountInfoStr += "--------------------------------\n";
-}
+	void setUsername(const std::string &user);
+	void setPid(int processId);
+	void setVersion(const std::string &ver);
+	void setCommitId(const std::string &commit);
+	void setArguments(const std::string &args);
+	void setMountOptions(const std::map<std::string, std::string> &options);
+	void buildMountInfoStr();
 
-inline void setMountInfo(
-    const std::string &startedDateUtc,
+private:
+	std::string startedDateUtc_;
 #ifdef _WIN32
-    const std::string &sid,
+	std::string sid_;
 #else
-    const int &uid, const int &gid,
+	std::string uid_;
+	std::string gid_;
 #endif
-    const std::string &username, int pid, const std::string &version, const std::string &commitId,
-    const std::string &arguments,
-    std::unique_ptr<std::map<std::string, std::string>> mountOptions = nullptr) {
-	mountInfo.startedDateUtc = startedDateUtc;
+	std::string username_;
+	int pid_;
+	std::string version_;
+	std::string commitId_;
+	std::string arguments_;
+	std::unique_ptr<std::map<std::string, std::string>> mountOptions_;
+	std::string mountInfoStr_;
+};
+
+// Global variables and utility functions
+inline MountInfo gMountInfo;
+
+void mount_info_init(
 #ifdef _WIN32
-	mountInfo.sid = sid;
+	const std::string &sid,
 #else
-	mountInfo.uid = std::to_string(uid);
-	mountInfo.gid = std::to_string(gid);
+	const int &uid, const int &gid,
 #endif
-	mountInfo.username = username;
-	mountInfo.pid = pid;
-	mountInfo.version = version;
-	mountInfo.commitId = commitId;
-	mountInfo.arguments = arguments;
-	mountInfo.mountOptions = std::move(mountOptions);
-	buildMountInfoStr();
-}
+	const std::string &username, int pid, const std::string &version,
+	const std::string &commitId);
+
+#ifdef _WIN32
+std::string get_username();
+std::string get_current_user_sid();
+#else
+std::string get_username_by_uid(uid_t uid);
+#endif
+void set_all_mountpoint_arguments(int argc, char **argv);
+void set_current_local_time();

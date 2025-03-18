@@ -62,37 +62,46 @@ std::unique_ptr<Variable> makeVariable(std::atomic<T>& v) {
 
 class Tweaks::Impl {
 public:
-	std::list<std::pair<std::string, std::unique_ptr<Variable>>> variables;
+	std::list<std::tuple<std::string, std::unique_ptr<Variable>, std::string>> variables;
 };
 
 Tweaks::Tweaks() : impl_(new Impl) {}
 
 Tweaks::~Tweaks() {}
 
-void Tweaks::registerVariable(const std::string& name, std::atomic<bool>& variable) {
-	impl_->variables.push_back({name, makeVariable(variable)});
+void Tweaks::registerVariable(const std::string& name, std::atomic<bool>& variable, const std::string optionName) {
+	impl_->variables.push_back({name, makeVariable(variable), optionName});
 }
 
-void Tweaks::registerVariable(const std::string& name, std::atomic<uint32_t>& variable) {
-	impl_->variables.push_back({name, makeVariable(variable)});
+void Tweaks::registerVariable(const std::string& name, std::atomic<uint32_t>& variable, const std::string optionName) {
+	impl_->variables.push_back({name, makeVariable(variable), optionName});
 }
 
-void Tweaks::registerVariable(const std::string& name, std::atomic<uint64_t>& variable) {
-	impl_->variables.push_back({name, makeVariable(variable)});
+void Tweaks::registerVariable(const std::string& name, std::atomic<uint64_t>& variable, const std::string optionName) {
+	impl_->variables.push_back({name, makeVariable(variable), optionName});
 }
 
 void Tweaks::setValue(const std::string& name, const std::string& value) {
 	for (auto& nameAndVariable : impl_->variables) {
-		if (nameAndVariable.first == name) {
-			nameAndVariable.second->setValue(value);
+		if (std::get<0>(nameAndVariable) == name) {
+			std::get<1>(nameAndVariable)->setValue(value);
 		}
 	}
 }
 
 std::string Tweaks::getValue(const std::string& name) const {
 	for (const auto& nameAndVariable : impl_->variables) {
-		if (nameAndVariable.first == name) {
-			return nameAndVariable.second->getValue();
+		if (std::get<0>(nameAndVariable) == name) {
+			return std::get<1>(nameAndVariable)->getValue();
+		}
+	}
+	return std::string();
+}
+
+std::string Tweaks::getValeByOptionName(const std::string& optionName) const {
+	for (const auto& nameAndVariable : impl_->variables) {
+		if (std::get<2>(nameAndVariable) == optionName) {
+			return std::get<1>(nameAndVariable)->getValue();
 		}
 	}
 	return std::string();
@@ -101,7 +110,7 @@ std::string Tweaks::getValue(const std::string& name) const {
 std::string Tweaks::getAllValues() const {
 	std::stringstream ss;
 	for (const auto& nameAndVariable : impl_->variables) {
-		ss << nameAndVariable.first << "\t" << nameAndVariable.second->getValue() << "\n";
+		ss << std::get<0>(nameAndVariable) << "\t" << std::get<1>(nameAndVariable)->getValue() << "\n";
 	}
 	return ss.str();
 }

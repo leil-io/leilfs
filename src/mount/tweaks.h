@@ -34,18 +34,20 @@ public:
 	~Tweaks();
 
 	/// Adds a new bool variable.
-	void registerVariable(const std::string& name, std::atomic<bool>& variable);
+	void registerVariable(const std::string& name, std::atomic<bool>& variable, const std::string optionName = "");
 
 	/// Adds a new uint32_t variable.
-	void registerVariable(const std::string& name, std::atomic<uint32_t>& variable);
+	void registerVariable(const std::string& name, std::atomic<uint32_t>& variable,  const std::string optionName = "");
 
 	/// Adds a new uint64_t variable.
-	void registerVariable(const std::string& name, std::atomic<uint64_t>& variable);
+	void registerVariable(const std::string& name, std::atomic<uint64_t>& variable, const std::string optionName = "");
 
 	/// Changes value of all variables with the given name.
 	void setValue(const std::string& name, const std::string& value);
 
 	std::string getValue(const std::string& name) const;
+
+	std::string getValeByOptionName(const std::string& optionName) const;
 
 	/// Returns values of all the registered variables.
 	std::string getAllValues() const;

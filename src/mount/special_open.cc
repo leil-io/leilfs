@@ -135,8 +135,8 @@ static void open(const Context &ctx, FileInfo *fi) {
 		             (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
-	buildMountInfoStr();
-	fi->fh = reinterpret_cast<uintptr_t>(mountInfoStr.c_str());
+	gMountInfo.buildMountInfoStr();
+	fi->fh = reinterpret_cast<uintptr_t>(gMountInfo.getMountInfoStr().c_str());
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
 	oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): OK (1,0)",

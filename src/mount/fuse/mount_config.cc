@@ -137,7 +137,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfscacheperinodepercentage"] =
 	    std::to_string(gMountOptions.cachePerInodePercentage);
 	gOptsNameValues["sfswriteworkers"] = std::to_string(gMountOptions.writeworkers);
-	gOptsNameValues["sfsioretries"] = std::to_string(gMountOptions.ioretries);
+	gOptsNameValues["sfsioretries (read)"] = std::to_string(gMountOptions.ioretries);
+	gOptsNameValues["sfsioretries (write)"] = std::to_string(gMountOptions.ioretries);
 	gOptsNameValues["sfswritewindowsize"] = std::to_string(gMountOptions.writewindowsize);
 	gOptsNameValues["sfsdebug"] = std::to_string(gMountOptions.debug);
 	gOptsNameValues["sfsmeta"] = std::to_string(gMountOptions.meta);
@@ -172,7 +173,7 @@ void initialize_opts_name_values() {
 	gOptsNameValues["cacheexpirationtime"] = std::to_string(gMountOptions.cacheexpirationtime);
 	gOptsNameValues["readaheadmaxwindowsize"] =
 	    std::to_string(gMountOptions.readaheadmaxwindowsize);
-	gOptsNameValues["readcachemaxsizepercentage"] =
+	gOptsNameValues["readcachemaxsizepercentage (bytes)"] =
 	    std::to_string(gMountOptions.readcachemaxsizepercentage);
 	gOptsNameValues["readworkers"] = std::to_string(gMountOptions.readworkers);
 	gOptsNameValues["maxreadaheadrequests"] = std::to_string(gMountOptions.maxreadaheadrequests);
@@ -192,6 +193,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["usequotainvolumesize"] = std::to_string(gMountOptions.usequotainvolumesize);
 	gOptsNameValues["enablefilelocks"] = std::to_string(gMountOptions.filelocks);
 	gOptsNameValues["nonempty"] = std::to_string(gMountOptions.nonemptymount);
+
+	gMountInfo.setMountOptions(gOptsNameValues);
 }
 
 void usage(const char *progname) {
