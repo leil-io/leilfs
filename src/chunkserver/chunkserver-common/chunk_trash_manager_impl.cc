@@ -101,15 +101,13 @@ std::string ChunkTrashManagerImpl::getTimeString(std::time_t time1) {
 
 #ifdef _WIN32
 	if (gmtime_s(&utcTime, &time1) != 0) {
-		safs::log_err(SAUNAFS_ERROR_EINVAL,
-		              "Failed to convert time to UTC: {}",
+		safs::log_err(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
 		              std::strerror(errno));
 		return "";
 	}
 #else
 	if (gmtime_r(&time1, &utcTime) == nullptr) {
-		safs::log_err(SAUNAFS_ERROR_EINVAL,
-		              "Failed to convert time to UTC: {}",
+		safs::log_err(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
 		              std::strerror(errno));
 		return "";
 	}
@@ -183,8 +181,7 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath,
 
 	fs::create_directories(fs::path(trashFilename).parent_path(), errorCode_);
 	if (errorCode_) {
-		safs::log_err(errorCode_,
-		              "Failed to create trash directory: {}",
+		safs::log_err(errorCode_, "Failed to create trash directory: {}",
 		              trashFilename.c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
@@ -196,7 +193,7 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath,
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 
-	trashIndex->add(deletionTime, trashFilename, diskPath.string());
+	getTrashIndex().add(deletionTime, trashFilename, diskPath.string());
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -208,7 +205,7 @@ void ChunkTrashManagerImpl::removeTrashFiles(
 			if (removeFileFromTrash(fileEntry.second) != SAUNAFS_STATUS_OK) {
 				continue;
 			}
-			trashIndex->remove(fileEntry.first, fileEntry.second, diskPath);
+			getTrashIndex().remove(fileEntry.first, fileEntry.second, diskPath);
 		}
 	}
 }
@@ -231,7 +228,7 @@ int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 		}
 	}
 
-	trashIndex->reset(diskPath);
+	getTrashIndex().reset(diskPath);
 
 	for (const auto &file : fs::recursive_directory_iterator(trashDir)) {
 		if (fs::is_regular_file(file) && isTrashPath(file.path().string())) {
@@ -254,7 +251,7 @@ int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 				    file.path().string().c_str());
 				continue;
 			}
-			trashIndex->add(deletionTime, file.path().string(), diskPath);
+			getTrashIndex().add(deletionTime, file.path().string(), diskPath);
 		}
 	}
 
@@ -270,7 +267,7 @@ bool ChunkTrashManagerImpl::isValidTimestampFormat(
 void ChunkTrashManagerImpl::removeExpiredFiles(const time_t &timeLimit,
                                                size_t bulkSize) const {
 	const auto expiredFilesCollection =
-	    trashIndex->getExpiredFiles(timeLimit, bulkSize);
+	    getTrashIndex().getExpiredFiles(timeLimit, bulkSize);
 	removeTrashFiles(expiredFilesCollection);
 }
 
@@ -291,7 +288,7 @@ void ChunkTrashManagerImpl::makeSpace(const std::string &diskPath,
 	size_t availableSpace = checkAvailableSpace(diskPath);
 	while (availableSpace < spaceAvailabilityThreshold) {
 		const auto olderFilesCollection =
-		    trashIndex->getOlderFiles(diskPath, recoveryStep);
+		    getTrashIndex().getOlderFiles(diskPath, recoveryStep);
 		if (olderFilesCollection.empty()) { break; }
 		removeTrashFiles({{diskPath, olderFilesCollection}});
 		availableSpace = checkAvailableSpace(diskPath);
@@ -300,7 +297,7 @@ void ChunkTrashManagerImpl::makeSpace(const std::string &diskPath,
 
 void ChunkTrashManagerImpl::makeSpace(const size_t spaceAvailabilityThreshold,
                                       const size_t recoveryStep) const {
-	for (const auto &diskPath : trashIndex->getDiskPaths()) {
+	for (const auto &diskPath : getTrashIndex().getDiskPaths()) {
 		makeSpace(diskPath, spaceAvailabilityThreshold, recoveryStep);
 	}
 }

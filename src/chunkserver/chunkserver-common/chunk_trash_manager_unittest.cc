@@ -55,8 +55,8 @@ TEST_F(ChunkTrashManagerTest, MoveToTrashForwardsCall) {
 	    .WillOnce(testing::Return(0));  // Assuming 0 is a success return
 	// value.
 
-	int result = ChunkTrashManager::moveToTrash(filePath, diskPath,
-	                                                       deletionTime);
+	int result =
+	    ChunkTrashManager::moveToTrash(filePath, diskPath, deletionTime);
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
 
@@ -89,8 +89,8 @@ TEST_F(ChunkTrashManagerTest, DisabledMoveToTrashDoesNotForwardsCall) {
 	EXPECT_CALL(*mockImpl, moveToTrash(filePath, diskPath, deletionTime))
 	    .Times(0);
 
-	int result = ChunkTrashManager::moveToTrash(filePath, diskPath,
-	                                                       deletionTime);
+	int result =
+	    ChunkTrashManager::moveToTrash(filePath, diskPath, deletionTime);
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
 

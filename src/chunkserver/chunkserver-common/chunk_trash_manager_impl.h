@@ -143,10 +143,6 @@ public:
 	void reloadConfig() override;
 
 private:
-	/// Pointer to the singleton instance of the trash index used for managing
-	/// trash files.
-	TrashIndex *trashIndex = &ChunkTrashIndex::instance();
-
 	/// Minimum available space threshold (in GB) before triggering garbage
 	/// collection.
 	static size_t availableThresholdGB;
@@ -165,6 +161,14 @@ private:
 	/// Number of files to remove in each step to free up space when required.
 	static size_t garbageCollectorSpaceRecoveryStep;
 	static constexpr size_t kDefaultGarbageCollectorSpaceRecoveryStep = 100;
+
+	// Use a function to safely get the ChunkTrashIndex instance
+	// This prevents issues during program shutdown
+	/**
+	 * @brief Gets the singleton instance of the ChunkTrashIndex.
+	 * @return Reference to the singleton instance of ChunkTrashIndex.
+	 */
+	static TrashIndex &getTrashIndex() { return TrashIndex::instance(); }
 
 	/**
 	 * @brief Gets the trash directory for the specified disk path.
