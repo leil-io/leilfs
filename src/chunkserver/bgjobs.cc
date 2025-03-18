@@ -126,6 +126,19 @@ void JobPool::disableJob(uint32_t jobId) {
 	}
 }
 
+void JobPool::disableJobs(std::list<uint32_t> &jobIds) {
+	if (jobIds.empty()) { return; } // to save the locking
+	std::unique_lock jobsUniqueLock(jobsMutex);
+	for (auto jobId : jobIds) {
+		auto jobIterator = jobHash.find(jobId);
+		if (jobIterator != jobHash.end()) {
+			if (jobIterator->second->state == JobPool::State::Enabled) {
+				jobIterator->second->state = JobPool::State::Disabled;
+			}
+		}
+	}
+}
+
 void JobPool::checkJobs() {
 	uint32_t jobId;
 	uint8_t status;
@@ -146,6 +159,16 @@ void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra) 
 	if (jobIterator != jobHash.end()) {
 		jobIterator->second->callback = std::move(callback);
 		jobIterator->second->extra = extra;
+	}
+}
+
+void JobPool::changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra) {
+	for (auto jobId : jobIds) {
+		auto jobIterator = jobHash.find(jobId);
+		if (jobIterator != jobHash.end()) {
+			jobIterator->second->callback = std::move(callback);
+			jobIterator->second->extra = extra;
+		}
 	}
 }
 
@@ -249,6 +272,7 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 
 		status = hddRead(chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
 		                 blocksToBeReadAhead, outputBuffer);
+		outputBuffer->status = status;
 
 		if (performHddOpen && status != SAUNAFS_STATUS_OK) {
 			int ret = hddClose(chunkId, chunkType);

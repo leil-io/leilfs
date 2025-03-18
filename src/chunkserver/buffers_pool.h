@@ -81,7 +81,7 @@ public:
 
 private:
 	/// Maximum number of buffers in the pool.
-	static constexpr size_t kMaxSize = 1024;
+	static constexpr size_t kMaxSize = 8192;
 	/// Buffers pool (container).
 	std::queue<std::shared_ptr<T>> buffers_;
 	/// Mutex to protect the pool.
