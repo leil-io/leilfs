@@ -243,7 +243,7 @@ namespace InodeMountInfo {
 static std::vector<uint8_t> read(const Context &ctx, size_t size, off_t off, FileInfo *fi,
                                  int debug_mode) {
 	if (debug_mode) { printDebugReadInfo(ctx, SPECIAL_INODE_MOUNT_INFO, size, off); }
-	uint32_t ssize = strlen(mountInfoStr.c_str());
+	uint32_t ssize = strlen(gMountInfo.getMountInfoStr().c_str());
 	uint8_t *buff = reinterpret_cast<uint8_t *>(fi->fh);
 	if (off >= static_cast<off_t>(ssize)) {
 		printReadOplogNoData(ctx, SPECIAL_INODE_MOUNT_INFO, (uint64_t)size, (uint64_t)off);

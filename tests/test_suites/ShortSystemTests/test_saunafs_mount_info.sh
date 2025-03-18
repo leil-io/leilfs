@@ -58,7 +58,7 @@ assert_success $(echo "$mount_info" | grep -q "MOUNT OPTIONS:")
 
 # Check if tweaks are correctly updated
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep CacheExpirationTime | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep cacheexpirationtime | awk '{print $2}')
-assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep sfsioretries | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep "sfsioretries \(write\)" | awk -F': ' '{print $2}')
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep MaxReadaheadRequests | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep maxreadaheadrequests | awk '{print $2}')
 
 echo "CacheExpirationTime=251" | sudo tee "${info[mount0]}/.saunafs_tweaks"
@@ -66,5 +66,5 @@ echo "WriteMaxRetries=55" | sudo tee "${info[mount0]}/.saunafs_tweaks"
 echo "MaxReadaheadRequests=23" | sudo tee "${info[mount0]}/.saunafs_tweaks"
 
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep CacheExpirationTime | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep cacheexpirationtime | awk '{print $2}')
-assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep sfsioretries | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep "sfsioretries \(write\)" | awk -F': ' '{print $2}')
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep MaxReadaheadRequests | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep maxreadaheadrequests | awk '{print $2}')
