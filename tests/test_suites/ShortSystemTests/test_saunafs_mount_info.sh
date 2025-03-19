@@ -68,3 +68,32 @@ echo "MaxReadaheadRequests=23" | sudo tee "${info[mount0]}/.saunafs_tweaks"
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep CacheExpirationTime | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep cacheexpirationtime | awk '{print $2}')
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep "sfsioretries \(write\)" | awk -F': ' '{print $2}')
 assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep MaxReadaheadRequests | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep maxreadaheadrequests | awk '{print $2}')
+
+# Simulate concurrent writes to .saunafs_tweaks
+simulate_concurrent_writes() {
+    for i in {1..10}; do
+        echo "CacheExpirationTime=$((RANDOM % 1000))" | sudo tee "${info[mount0]}/.saunafs_tweaks" > /dev/null
+        echo "WriteMaxRetries=$((RANDOM % 100))" | sudo tee "${info[mount0]}/.saunafs_tweaks" > /dev/null
+        echo "MaxReadaheadRequests=$((RANDOM % 50))" | sudo tee "${info[mount0]}/.saunafs_tweaks" > /dev/null
+    done
+}
+
+# Simulate concurrent reads from .saunafs_mount_info
+simulate_concurrent_reads() {
+    for i in {1..10}; do
+        cat "${info[mount0]}/.saunafs_mount_info" > /dev/null
+    done
+}
+
+# Run concurrent writes and reads in the background
+simulate_concurrent_writes &
+simulate_concurrent_reads &
+simulate_concurrent_reads &
+
+# Wait for all background processes to finish
+wait
+
+# Verify consistency after concurrent operations
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep CacheExpirationTime | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep cacheexpirationtime | awk '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep WriteMaxRetries | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep "sfsioretries \(write\)" | awk -F': ' '{print $2}')
+assert_equals $(cat "${info[mount0]}/.saunafs_tweaks" | egrep MaxReadaheadRequests | awk '{print $2}') $(cat "${info[mount0]}/.saunafs_mount_info" | egrep maxreadaheadrequests | awk '{print $2}')

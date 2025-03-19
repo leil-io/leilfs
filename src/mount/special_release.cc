@@ -116,6 +116,7 @@ static void release(FileInfo *fi) {
 
 namespace InodeMountInfo {
 static void release(FileInfo *fi) {
+	std::unique_lock<std::mutex> lock(gMountInfoMtx);
 	oplog_releasehandle(fi->fh);
 	oplog_printf("release (%lu) (internal node: MOUNT_INFO): OK",
 	            (unsigned long int)inode_);

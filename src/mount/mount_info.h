@@ -31,6 +31,7 @@
 #include <sddl.h> 
 #endif
 #include <chrono>
+#include <condition_variable>
 #include <iomanip>
 #include <map>
 #include <memory>
@@ -92,6 +93,7 @@ private:
 
 // Global variables and utility functions
 inline MountInfo gMountInfo;
+inline std::mutex gMountInfoMtx;
 
 void mount_info_init(
 #ifdef _WIN32
