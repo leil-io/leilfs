@@ -43,13 +43,14 @@ OutputBuffer::WriteStatus OutputBuffer::writeOutToAFileDescriptor(int outputFile
 	while (bytesInABuffer() > 0) {
 		if (currentRemainingBytesForFD_ == 0) {
 			// Prepare the blockBuffer to write the current block:
-			// - move back the unflushed data in block buffer
-			// - copy the header
+			// - move back the unflushed data in block buffer kCrcSize bytes back
 			// - copy the crc
+			// - move back the unflushed data in block buffer headerSize_ bytes back
+			// - copy the header
 			// - set the currentRemainingBytesForFD_
-			blockBuffer_.moveUnflushedDataFirstIndex(-(int32_t)(kCrcSize));
+			blockBuffer_.moveUnflushedDataFirstIndex(-(static_cast<int32_t>(kCrcSize)));
 			crcBuffer_.copyFromBuffer(blockBuffer_.getUnflushedDataFirstIndex(), kCrcSize);
-			blockBuffer_.moveUnflushedDataFirstIndex(-(int32_t)(headerSize_));
+			blockBuffer_.moveUnflushedDataFirstIndex(-(static_cast<int32_t>(headerSize_)));
 			headerBuffer_.copyFromBuffer(blockBuffer_.getUnflushedDataFirstIndex(), headerSize_);
 			currentRemainingBytesForFD_ =
 			    std::min(SFSBLOCKSIZE + kCrcSize + headerSize_, bytesInABuffer());
@@ -87,7 +88,11 @@ bool OutputBuffer::checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset)
 }
 
 ssize_t OutputBuffer::copyIntoBuffer(BufferType type, IChunk *chunk, size_t len, off_t offset) {
-	massert(type == BufferType::Block, "Invalid buffer type");
+	if (type != BufferType::Block) {
+		safs::log_warn("(OutputBuffer) Invalid buffer type, using block buffer");
+		type = BufferType::Block;
+	}
+
 	return blockBuffer_.copyIntoBuffer(chunk, len, offset);
 }
 
@@ -100,7 +105,7 @@ ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const void *mem, size_t le
 	case BufferType::Header:
 		return headerBuffer_.copyIntoBuffer(mem, len);
 	default:
-		safs::log_err("Invalid buffer type");
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
 		return 0;
 	}
 }
@@ -114,7 +119,7 @@ ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const std::vector<uint8_t>
 	case BufferType::Header:
 		return headerBuffer_.copyIntoBuffer(mem.data(), mem.size());
 	default:
-		safs::log_err("Invalid buffer type");
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
 		return 0;
 	}
 }
@@ -128,7 +133,7 @@ ssize_t OutputBuffer::copyValueIntoBuffer(BufferType type, uint8_t value, size_t
 	case BufferType::Header:
 		return headerBuffer_.copyValueIntoBuffer(value, len);
 	default:
-		safs::log_err("Invalid buffer type");
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
 		return 0;
 	}
 }
@@ -142,7 +147,7 @@ const uint8_t *OutputBuffer::rawData(BufferType type) const {
 	case BufferType::Header:
 		return headerBuffer_.paddedIndex(0);
 	default:
-		safs::log_err("Invalid buffer type");
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
 		return 0;
 	}
 }

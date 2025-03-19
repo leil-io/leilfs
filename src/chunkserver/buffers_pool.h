@@ -51,6 +51,14 @@ public:
 	std::shared_ptr<T> get(size_t headerSize, size_t numBlocks) {
 		std::unique_lock lock(mutex_);
 
+		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
+			safs::log_trace(
+			    "BuffersPool::get {} blocks, currentNumberOfBlocks_ = {}, kMaxNumberOfBlocks = {}",
+			    numBlocks, currentNumberOfBlocks_, kMaxNumberOfBlocks);
+			operationsSinceLastLog_ = 0;
+		}
+		operationsSinceLastLog_++;
+
 		auto it = buffersMap_.find({headerSize, numBlocks});
 		if (it == buffersMap_.end() || it->second.empty()) {
 			// To make sure the allocation is not done under the lock.
@@ -63,7 +71,7 @@ public:
 
 		buffers.pop();
 		buffer->clear();
-		currentSize_--;
+		currentNumberOfBlocks_ -= numBlocks;
 
 		return buffer;
 	}
@@ -74,21 +82,36 @@ public:
 	 */
 	void put(std::shared_ptr<T> &&buffer) {
 		std::unique_lock lock(mutex_);
-		auto &buffers = buffersMap_[buffer->type()];
-		if (currentSize_ < kMaxSize) {
+
+		auto [headerSize, numBlocks] = buffer->type();
+		auto &buffers = buffersMap_[{headerSize, numBlocks}];
+
+		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
+			safs::log_trace(
+			    "BuffersPool::put {} blocks, currentNumberOfBlocks_ = {}, kMaxNumberOfBlocks = {}",
+			    numBlocks, currentNumberOfBlocks_, kMaxNumberOfBlocks);
+			operationsSinceLastLog_ = 0;
+		}
+		operationsSinceLastLog_++;
+
+		if (currentNumberOfBlocks_ + numBlocks <= kMaxNumberOfBlocks) {
 			buffer->clear();
 			buffers.push(std::move(buffer));
-			currentSize_++;
+			currentNumberOfBlocks_ += numBlocks;
 		}
 		// To make sure the deallocation is not done under the lock.
 		lock.unlock();
 	}
 
 private:
+	/// How many operations should pass between two log messages.
+	static constexpr size_t kLogAfterEveryXTimes = 1000;
+	/// Number of operations since last log message.
+	size_t operationsSinceLastLog_ = 0;
 	/// Maximum number of buffers in the pool.
-	static constexpr size_t kMaxSize = 8192;
+	static constexpr size_t kMaxNumberOfBlocks = 8192;
 	/// Current number of buffers in the pool.
-	size_t currentSize_ = 0;
+	size_t currentNumberOfBlocks_ = 0;
 	/// Buffers pool map: a queue of buffers for each type of buffer.
 	std::map<std::pair<size_t, size_t>, std::queue<std::shared_ptr<T>>> buffersMap_;
 	/// Mutex to protect the pool.

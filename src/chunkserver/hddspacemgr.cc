@@ -99,6 +99,7 @@
 
 constexpr int kErrorLimit = 2;
 constexpr int kLastErrorTime = 60;
+constexpr size_t kIgnoreHeaderSize = 1;
 
 inline std::atomic_bool gCheckCrcWhenReading{true};
 
@@ -658,8 +659,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 		chunk->owner()->prefetchChunkBlocks(
 		    *chunk, firstBlockToRead,
 		    blocksToBeReadAhead + block - firstBlockToRead);
-		OutputBuffer buffer =
-		    OutputBuffer(1, block - firstBlockToRead);
+		OutputBuffer buffer = OutputBuffer(kIgnoreHeaderSize, block - firstBlockToRead);
 		for (uint16_t b = firstBlockToRead; b < block; ++b) {
 			hddReadCrcAndBlock(chunk, b, &buffer);
 		}
@@ -751,7 +751,8 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 			status = hddCheckCrcForFullBlock(chunk, block, outputBuffer, 0, false);
 		}
 	} else {  // Partial block
-		OutputBuffer tmp(1, 1);
+		// Temporary buffer to read the full block
+		OutputBuffer tmp(kIgnoreHeaderSize, 1);
 		status = hddReadCrcAndBlock(chunk, block, &tmp);
 
 		if (status == SAUNAFS_STATUS_OK) {  // Successful read of the full block
