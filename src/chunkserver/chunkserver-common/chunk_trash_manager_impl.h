@@ -56,8 +56,7 @@ public:
 	 * @param deletionTime The time at which the file was marked for deletion.
 	 * @return Status code indicating success or failure.
 	 */
-	int moveToTrash(const std::filesystem::path &filePath,
-	                const std::filesystem::path &diskPath,
+	int moveToTrash(const std::filesystem::path &filePath, const std::filesystem::path &diskPath,
 	                const std::time_t &deletionTime) override;
 
 	/**
@@ -73,15 +72,13 @@ public:
 	 * @param timeLimit The cutoff time; files older than this will be removed.
 	 * @param bulkSize The number of files to process in a batch operation.
 	 */
-	void removeExpiredFiles(const std::time_t &timeLimit,
-	                        size_t bulkSize = 0) const;
+	void removeExpiredFiles(const std::time_t &timeLimit, size_t bulkSize = 0) const;
 
 	/**
 	 * @brief Removes a set of specified files from the trash.
 	 * @param filesToRemove The list of files to be permanently deleted.
 	 */
-	void removeTrashFiles(
-	    const ChunkTrashIndex::TrashIndexDiskEntries &filesToRemove) const;
+	void removeTrashFiles(const ChunkTrashIndex::TrashIndexDiskEntries &filesToRemove) const;
 
 	/**
 	 * @brief Checks if a given timestamp string matches the expected format.
@@ -98,8 +95,7 @@ public:
 	 * @param recoveryStep The number of files to delete in each step until
 	 * sufficient space is recovered.
 	 */
-	void makeSpace(size_t spaceAvailabilityThreshold,
-	               size_t recoveryStep) const;
+	void makeSpace(size_t spaceAvailabilityThreshold, size_t recoveryStep) const;
 
 	/**
 	 * @brief Runs the garbage collection process, which includes
@@ -114,8 +110,7 @@ public:
 	 * @param errorCode (output) The value to return in case of an error.
 	 * @return The corresponding time value.
 	 */
-	static time_t getTimeFromString(const std::string &timeString,
-	                                int &errorCode);
+	static time_t getTimeFromString(const std::string &timeString, int &errorCode);
 
 	/**
 	 * @brief Checks the available disk space on the specified disk path.
@@ -132,8 +127,7 @@ public:
 	 * @param recoveryStep The number of files to delete in each step until
 	 * sufficient space is recovered.
 	 */
-	void makeSpace(const std::string &diskPath,
-	               size_t spaceAvailabilityThreshold,
+	void makeSpace(const std::string &diskPath, size_t spaceAvailabilityThreshold,
 	               size_t recoveryStep) const;
 
 	/**
@@ -143,10 +137,6 @@ public:
 	void reloadConfig() override;
 
 private:
-	/// Pointer to the singleton instance of the trash index used for managing
-	/// trash files.
-	TrashIndex *trashIndex = &ChunkTrashIndex::instance();
-
 	/// Minimum available space threshold (in GB) before triggering garbage
 	/// collection.
 	static size_t availableThresholdGB;
@@ -166,13 +156,20 @@ private:
 	static size_t garbageCollectorSpaceRecoveryStep;
 	static constexpr size_t kDefaultGarbageCollectorSpaceRecoveryStep = 100;
 
+	// Use a function to safely get the ChunkTrashIndex instance
+	// This prevents issues during program shutdown
+	/**
+	 * @brief Gets the singleton instance of the ChunkTrashIndex.
+	 * @return Reference to the singleton instance of ChunkTrashIndex.
+	 */
+	static TrashIndex &getTrashIndex() { return TrashIndex::instance(); }
+
 	/**
 	 * @brief Gets the trash directory for the specified disk path.
 	 * @param diskPath The path of the disk to get the trash directory for.
 	 * @return The path to the trash directory.
 	 */
-	static std::filesystem::path getTrashDir(
-	    const std::filesystem::path &diskPath);
+	static std::filesystem::path getTrashDir(const std::filesystem::path &diskPath);
 
 	/**
 	 * @brief Gets the destination path for a file to be moved to the trash.

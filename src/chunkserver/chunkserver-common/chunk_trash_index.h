@@ -44,8 +44,7 @@ public:
 	 * @brief Type for storing disk path entries and their associated file
 	 * entries.
 	 */
-	using TrashIndexDiskEntries =
-	    std::unordered_map<std::string, TrashIndexFileEntries>;
+	using TrashIndexDiskEntries = std::unordered_map<std::string, TrashIndexFileEntries>;
 
 	/**
 	 * @brief Alias for the trash index type.
@@ -86,8 +85,7 @@ public:
 	 * which means no limit).
 	 * @return A map containing expired files.
 	 */
-	TrashIndexDiskEntries getExpiredFiles(const std::time_t &timeLimit,
-	                                      size_t bulkSize = 0);
+	TrashIndexDiskEntries getExpiredFiles(const std::time_t &timeLimit, size_t bulkSize = 0);
 
 	/**
 	 * @brief Adds a file entry to the trash index with its deletion time.
@@ -120,20 +118,17 @@ public:
 	            const std::string &diskPath);
 
 	// Deleted to enforce singleton behavior
-	ChunkTrashIndex(const ChunkTrashIndex &) =
-	    delete;  ///< Copy constructor is deleted.
+	ChunkTrashIndex(const ChunkTrashIndex &) = delete;  ///< Copy constructor is deleted.
 
 	ChunkTrashIndex &operator=(const ChunkTrashIndex &) =
 	    delete;  ///< Copy assignment operator is deleted.
 
-	ChunkTrashIndex(ChunkTrashIndex &&) =
-	    delete;  ///< Move constructor is deleted.
+	ChunkTrashIndex(ChunkTrashIndex &&) = delete;  ///< Move constructor is deleted.
 
 	ChunkTrashIndex &operator=(ChunkTrashIndex &&) =
 	    delete;  ///< Move assignment operator is deleted.
 
-	TrashIndexFileEntries getOlderFiles(const std::string &diskPath,
-	                                    const size_t removalStepSize);
+	TrashIndexFileEntries getOlderFiles(const std::string &diskPath, const size_t removalStepSize);
 
 	std::vector<std::string> getDiskPaths();
 
@@ -170,8 +165,7 @@ private:
 	 */
 	size_t getExpiredFilesInternal(const std::filesystem::path &diskPath,
 	                               const std::time_t &timeLimit,
-	                               TrashIndexDiskEntries &expiredFiles,
-	                               size_t bulkSize = 0);
+	                               TrashIndexDiskEntries &expiredFiles, size_t bulkSize = 0);
 
 	/**
 	 * @brief Retrieves expired files from the trash index.

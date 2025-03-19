@@ -47,8 +47,7 @@ TEST_F(ChunkTrashIndexTest, AddFileEntry) {
 
 	auto expiredFiles = index.getExpiredFiles(1234567891);
 	ASSERT_EQ(expiredFiles.size(), static_cast<size_t>(1));
-	EXPECT_EQ(expiredFiles["/testDisk"].begin()->second,
-	          "/.trash.bin/path/to/file");
+	EXPECT_EQ(expiredFiles["/testDisk"].begin()->second, "/.trash.bin/path/to/file");
 }
 
 TEST_F(ChunkTrashIndexTest, RemoveFileEntry) {
@@ -74,7 +73,7 @@ TEST_F(ChunkTrashIndexTest, RemoveFileEntryFromLastDisk) {
 	index.add(1234567890, "/path/to/file", "/testDisk");
 	index.add(123456, "/path/to/file", "/testDisk2");
 
-        // Expect removing from /testDisk
+	// Expect removing from /testDisk
 	index.remove(1234567890, "/path/to/file");
 
 	auto expiredFiles = index.getExpiredFiles(1234567891);
@@ -86,10 +85,8 @@ TEST_F(ChunkTrashIndexTest, RemoveFileEntryFromLastDisk) {
 
 TEST_F(ChunkTrashIndexTest, ThreadSafety) {
 	auto &index = ChunkTrashIndex::instance();
-	std::thread t1(
-	    [&index]() { index.add(1234567890, "/path/to/file1", "/testDisk"); });
-	std::thread t2(
-	    [&index]() { index.add(1234567891, "/path/to/file2", "/testDisk"); });
+	std::thread t1([&index]() { index.add(1234567890, "/path/to/file1", "/testDisk"); });
+	std::thread t2([&index]() { index.add(1234567891, "/path/to/file2", "/testDisk"); });
 
 	t1.join();
 	t2.join();

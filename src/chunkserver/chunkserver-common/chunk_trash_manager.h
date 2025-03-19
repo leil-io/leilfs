@@ -22,14 +22,14 @@
 
 #include <ctime>
 #include <filesystem>
+#include <mutex>
 #include <string>
 
 class IChunkTrashManagerImpl {
 public:
 	virtual ~IChunkTrashManagerImpl() = default;
 
-	virtual int moveToTrash(const std::filesystem::path &,
-	                        const std::filesystem::path &,
+	virtual int moveToTrash(const std::filesystem::path &, const std::filesystem::path &,
 	                        const std::time_t &) = 0;
 
 	virtual int init(const std::string &) = 0;
@@ -55,7 +55,7 @@ public:
 	 *
 	 * @param newImpl The new implementation to be set.
 	 */
-	static inline void setImpl(ImplementationPtr newImpl) { pImpl = newImpl; }
+	static void setImpl(ImplementationPtr newImpl);
 
 	/**
 	 * @brief The name of the trash directory.
@@ -69,6 +69,7 @@ public:
 	 *
 	 * @param diskPath The path of the disk where the trash directory will be
 	 * initialized.
+	 * @return Status code indicating success or failure.
 	 */
 	static int init(const std::string &diskPath);
 
@@ -81,8 +82,7 @@ public:
 	 * @return 0 on success, error code otherwise.
 	 */
 	static int moveToTrash(const std::filesystem::path &filePath,
-	                       const std::filesystem::path &diskPath,
-	                       const std::time_t &deletionTime);
+	                       const std::filesystem::path &diskPath, const std::time_t &deletionTime);
 
 	/**
 	 * @brief Runs the garbage collection process, which includes
@@ -96,11 +96,11 @@ public:
 
 	// Deleted to enforce singleton behavior.
 	// It follows the Static Class with Encapsulated State pattern, ensuring
-	// a single, globally accessible instance of the pImpl implementation without
-	// requiring instance management. All methods and members are static, and
-	// instantiation is prevented by deleting the constructor. This approach avoids
-	// unnecessary singleton complexity while maintaining encapsulation and
-	// controlled access to internal state.
+	// a single, globally accessible instance of the pImpl implementation
+	// without requiring instance management. All methods and members are
+	// static, and instantiation is prevented by deleting the constructor. This
+	// approach avoids unnecessary singleton complexity while maintaining
+	// encapsulation and controlled access to internal state.
 	ChunkTrashManager() = delete;
 	ChunkTrashManager(const ChunkTrashManager &) = delete;
 	ChunkTrashManager &operator=(const ChunkTrashManager &) = delete;
@@ -110,6 +110,10 @@ public:
 	~ChunkTrashManager() = default;  ///< Destructor
 
 private:
-	/// Pointer to the singleton instance of the trash manager implementation.
-	static ImplementationPtr pImpl;
+	/// Get the implementation singleton instance using Meyer's singleton
+	/// pattern for thread-safety
+	static ImplementationPtr &getImpl();
+
+	/// Mutex to protect concurrent access to the implementation singleton
+	static std::mutex implMutex;
 };
