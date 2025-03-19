@@ -186,6 +186,14 @@ if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Client' /etc/sudoers.d/sa
 	END
 fi
 
+if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# FoundationDB' /etc/sudoers.d/saunafstest > /dev/null; then
+	cat <<-'END' >>/etc/sudoers.d/saunafstest
+		# FoundationDB
+		saunafstest ALL = NOPASSWD: /usr/lib/foundationdb/fdbmonitor --conffile*
+		saunafstest ALL = NOPASSWD: /usr/bin/pkill -f fdbmonitor*
+	END
+fi
+
 echo ; echo 'Fixing GIDs of users'
 for name in saunafstest saunafstest_{0..9}; do
 	uid=$(getent passwd "${name}" | cut -d: -f3)

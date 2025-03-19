@@ -15,6 +15,7 @@ done
 . tools/legacy.sh
 . tools/string.sh
 . tools/nullblk_zoned.sh
+. tools/foundationdb.sh
 . tools/saunafs.sh
 . tools/saunafsXX.sh
 . tools/network.sh

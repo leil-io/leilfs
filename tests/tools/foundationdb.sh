@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 
-# Starts a temporary FoundationDB Cluster in /tmp/saunafs-fdb-test.
-# The cluster uses two servers on ports 4500 and 4501.
-# This script is intended for testing purposes only.
-
-set -eu -o pipefail
-
-readonly script_name=$(basename "$0")
 readonly workspace="/tmp/saunafs-fdb-test"
-
-readonly action="${1:-}"
 
 function create_workspace() {
 	mkdir -p "${workspace}"/{conf,data,logs}
@@ -84,20 +75,3 @@ function start_fdb_cluster() {
 function stop_fdb_cluster() {
 	cleanup_fdb_cluster
 }
-
-function main() {
-  case "${action}" in
-    start)
-      start_fdb_cluster
-      ;;
-    stop)
-      stop_fdb_cluster
-      ;;
-    *)
-      echo "Usage: ${script_name} {start|stop}"
-      exit 1
-      ;;
-  esac
-}
-
-main "$@"
