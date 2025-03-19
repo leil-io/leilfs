@@ -242,6 +242,7 @@ static std::vector<uint8_t> read(const Context &ctx,
 namespace InodeMountInfo {
 static std::vector<uint8_t> read(const Context &ctx, size_t size, off_t off, FileInfo *fi,
                                  int debug_mode) {
+	std::unique_lock<std::mutex> lock(gMountInfoMtx);
 	if (debug_mode) { printDebugReadInfo(ctx, SPECIAL_INODE_MOUNT_INFO, size, off); }
 	uint32_t ssize = strlen(gMountInfo.getMountInfoStr().c_str());
 	uint8_t *buff = reinterpret_cast<uint8_t *>(fi->fh);

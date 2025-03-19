@@ -130,6 +130,7 @@ static void open(const Context &ctx, FileInfo *fi) {
 
 namespace InodeMountInfo {
 static void open(const Context &ctx, FileInfo *fi) {
+	std::unique_lock<std::mutex> lock(gMountInfoMtx);
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
 		oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): %s",
 		             (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
