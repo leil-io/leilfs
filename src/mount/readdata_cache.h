@@ -410,6 +410,20 @@ public:
 		}
 	}
 
+	void selective_clear(uint32_t chunkId) {
+		uint64_t chunkStart = chunkId * SFSCHUNKSIZE;
+		uint64_t chunkEnd = chunkStart + SFSCHUNKSIZE;
+		auto it = entries_.begin();
+		while (it != entries_.end()) {
+			// If the entry is not in the chunk, skip it
+			if (it->endOffset() < chunkStart || it->offset >= chunkEnd) {
+				++it;
+				continue;
+			}
+			it = erase(it);
+		}
+	}
+
 	Entry *find(uint64_t offset) {
 		auto it = entries_.upper_bound(offset, Entry::OffsetComp());
 		if (it != entries_.begin()) {
