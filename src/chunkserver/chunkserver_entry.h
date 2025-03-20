@@ -317,6 +317,18 @@ struct ChunkserverEntry {
 	void readInit(const uint8_t *data, PacketHeader::Type type,
 	              PacketHeader::Length length);
 
+	/// Prepares a read data packet.
+	///
+	/// Creates the packet to be used in the read operation and assigns the OutputBuffer to it.
+	/// The packet is then provided with the headers of the blocks to be read.
+	///
+	/// @param readDataPrefix A buffer to store the read data prefix.
+	/// @param jobSize The size of the job.
+	/// @param jobOffset The offset of the job.
+	/// @return A unique pointer to the prepared packet.
+	std::unique_ptr<PacketStruct> prepareReadDataPacket(std::vector<uint8_t> &readDataPrefix,
+	                                                    uint32_t jobSize, uint32_t jobOffset);
+
 	/// Continues a previously started read operation.
 	///
 	/// Processes the remaining data to be read from the chunkserver. If all

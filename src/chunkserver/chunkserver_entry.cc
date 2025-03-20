@@ -136,27 +136,14 @@ MessageSerializer *MessageSerializer::getSerializer(PacketHeader::Type type) {
 	return &singleton;
 }
 
-std::unique_ptr<PacketStruct>
-ChunkserverEntry::createDetachedPacketWithOutputBuffer(
+std::unique_ptr<PacketStruct> ChunkserverEntry::createDetachedPacketWithOutputBuffer(
     const std::vector<uint8_t> &packetPrefix, uint32_t numBlocks) {
 	TRACETHIS();
-
-	PacketHeader header;
-	deserializePacketHeader(packetPrefix, header);
 
 	std::unique_ptr<PacketStruct> outPacket = std::make_unique<PacketStruct>();
 	passert(outPacket);
 
 	outPacket->outputBuffer = getReadOutputBufferPool().get(packetPrefix.size(), numBlocks);
-
-	if (outPacket->outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Header, packetPrefix) !=
-	    static_cast<ssize_t>(packetPrefix.size())) {
-		if (outPacket->outputBuffer) {
-			getReadOutputBufferPool().put(std::move(outPacket->outputBuffer));
-		}
-
-		return kInvalidPacket;
-	}
 
 	return outPacket;
 }
@@ -404,6 +391,37 @@ void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 	}
 }
 
+std::unique_ptr<PacketStruct> ChunkserverEntry::prepareReadDataPacket(
+    std::vector<uint8_t> &readDataPrefix, uint32_t jobSize, uint32_t jobOffset) {
+	const uint32_t numBlocks = (jobSize + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
+
+	readDataPrefix.clear();
+	messageSerializer->serializePrefixOfCstoclReadData(
+	    readDataPrefix, chunkId, offset, std::min<uint32_t>(jobSize, SFSBLOCKSIZE - jobOffset));
+
+	auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix, numBlocks);
+
+	for (uint32_t i = 0; i < numBlocks; i++) {
+		if (i > 0) {  // first block is already serialized
+			readDataPrefix.clear();
+			messageSerializer->serializePrefixOfCstoclReadData(
+			    readDataPrefix, chunkId, offset - jobOffset + (i * SFSBLOCKSIZE), SFSBLOCKSIZE);
+		}
+
+		if (packet->outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Header,
+		                                         readDataPrefix) !=
+		    static_cast<ssize_t>(readDataPrefix.size())) {
+			if (packet->outputBuffer) {
+				getReadOutputBufferPool().put(std::move(packet->outputBuffer));
+			}
+
+			return kInvalidPacket;
+		}
+	}
+
+	return packet;
+}
+
 void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 	TRACETHIS2(offset, size);
 
@@ -429,44 +447,20 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 		state = State::Idle;
 		LOG_AVG_STOP(readOperationTimer);
 	} else {
+		std::vector<uint8_t> readDataPrefix;
+
 		while (size > 0 && pendingReadDataPackets.size() < callMaxParallelHddReadJobs) {
 			const uint32_t totalRequestSize = size;
 			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
 			const uint32_t thisPartSize = std::min<uint32_t>(
 			    totalRequestSize, maxBlocksPerHddReadJob * SFSBLOCKSIZE - thisPartOffset);
-			const uint32_t numBlocks = (thisPartSize + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS;
 			const uint16_t totalRequestBlocks =
-			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) >> SFSBLOCKBITS;
+			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
-			std::vector<uint8_t> readDataPrefix;
-			messageSerializer->serializePrefixOfCstoclReadData(
-			    readDataPrefix, chunkId, offset,
-			    std::min<uint32_t>(thisPartSize, SFSBLOCKSIZE - thisPartOffset));
-
-			auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix, numBlocks);
+			auto packet = prepareReadDataPacket(readDataPrefix, thisPartSize, thisPartOffset);
 			if (packet == kInvalidPacket) {
 				state = State::Close;
 				return;
-			}
-			if (thisPartSize > SFSBLOCKSIZE) {
-				// won't execute if requesting only one block
-				for (uint32_t i = 1; i < numBlocks; i++) {
-					readDataPrefix.clear();
-					messageSerializer->serializePrefixOfCstoclReadData(
-					    readDataPrefix, chunkId, offset - thisPartOffset + (i << SFSBLOCKBITS),
-					    SFSBLOCKSIZE);
-
-					if (packet->outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Header,
-					                                         readDataPrefix) !=
-					    static_cast<ssize_t>(readDataPrefix.size())) {
-						if (packet->outputBuffer) {
-							getReadOutputBufferPool().put(std::move(packet->outputBuffer));
-						}
-
-						state = State::Close;
-						return;
-					}
-				}
 			}
 
 			pendingReadDataPackets.emplace_back(std::move(packet));
@@ -478,7 +472,7 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 				if (gHDDReadAhead.blocksToBeReadAhead() > 0) {
 					readAheadBlocks = totalRequestBlocks + gHDDReadAhead.blocksToBeReadAhead();
 				}
-				// Try not to influence slow streams to much:
+				// Try not to influence slow streams too much:
 				maxReadBehindBlocks =
 				    std::min(totalRequestBlocks, gHDDReadAhead.maxBlocksToBeReadBehind());
 			}
