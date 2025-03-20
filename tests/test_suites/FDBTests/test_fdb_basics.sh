@@ -8,4 +8,4 @@ CHUNKSERVERS=1 \
 
 cd "${info[mount0]}"
 
-echo saunafs > file
+assert_success sfs-test-fdb "/tmp/saunafs-fdb-test/conf/fdb.cluster"
