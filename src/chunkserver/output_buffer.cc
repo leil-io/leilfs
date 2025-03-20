@@ -30,71 +30,124 @@
 #include "common/crc.h"
 #include "common/massert.h"
 
-OutputBuffer::OutputBuffer(size_t internalBufferCapacity)
-    : internalBufferCapacity_(internalBufferCapacity),
-      internalBufferCapacityAligned_(getAlignedSize(internalBufferCapacity_)),
-      padding_(internalBufferCapacityAligned_ - internalBufferCapacity_),
-      buffer_(internalBufferCapacityAligned_, 0),
-      bufferUnflushedDataFirstIndex_(padding_),
-      bufferUnflushedDataOneAfterLastIndex_(padding_) {
-	eassert(internalBufferCapacity > 0);
-	buffer_.reserve(internalBufferCapacityAligned_);
-}
+OutputBuffer::OutputBuffer(size_t headerSize, size_t numBlocks)
+    : currentRemainingBytesForFD_(0),
+      headerSize_(headerSize),
+      numBlocks_(numBlocks),
+      blockBuffer_(numBlocks * SFSBLOCKSIZE, disk::kIoBlockSize),
+      crcBuffer_(numBlocks * kCrcSize),
+      headerBuffer_(numBlocks * headerSize) {}
 
 OutputBuffer::WriteStatus OutputBuffer::writeOutToAFileDescriptor(int outputFileDescriptor) {
+	// Let's write block by block
 	while (bytesInABuffer() > 0) {
-		ssize_t ret = ::write(outputFileDescriptor, &buffer_[bufferUnflushedDataFirstIndex_],
-				bytesInABuffer());
-		if (ret <= 0) {
-			if (ret == 0 || errno == EAGAIN) {
-				return WRITE_AGAIN;
-			}
-			return WRITE_ERROR;
+		if (currentRemainingBytesForFD_ == 0) {
+			// Prepare the blockBuffer to write the current block:
+			// - move back the unflushed data in block buffer kCrcSize bytes back
+			// - copy the crc
+			// - move back the unflushed data in block buffer headerSize_ bytes back
+			// - copy the header
+			// - set the currentRemainingBytesForFD_
+			blockBuffer_.moveUnflushedDataFirstIndex(-(static_cast<int32_t>(kCrcSize)));
+			crcBuffer_.copyFromBuffer(blockBuffer_.getUnflushedDataFirstIndex(), kCrcSize);
+			blockBuffer_.moveUnflushedDataFirstIndex(-(static_cast<int32_t>(headerSize_)));
+			headerBuffer_.copyFromBuffer(blockBuffer_.getUnflushedDataFirstIndex(), headerSize_);
+			currentRemainingBytesForFD_ =
+			    std::min(SFSBLOCKSIZE + kCrcSize + headerSize_, bytesInABuffer());
 		}
-		bufferUnflushedDataFirstIndex_ += ret;
+		ssize_t ret = ::write(outputFileDescriptor, blockBuffer_.getUnflushedDataFirstIndex(),
+		                      currentRemainingBytesForFD_);
+
+		if (ret <= 0) {
+			if (ret == 0 || errno == EAGAIN) { return WriteStatus::Again; }
+			return WriteStatus::Error;
+		}
+		currentRemainingBytesForFD_ -= ret;
+		blockBuffer_.moveUnflushedDataFirstIndex(ret);
 	}
-	return WRITE_DONE;
+	return WriteStatus::Done;
 }
 
 size_t OutputBuffer::bytesInABuffer() const {
-	return bufferUnflushedDataOneAfterLastIndex_ - bufferUnflushedDataFirstIndex_;
+	return blockBuffer_.bytesInABuffer() + crcBuffer_.bytesInABuffer() +
+	       headerBuffer_.bytesInABuffer();
 }
 
 void OutputBuffer::clear() {
-	bufferUnflushedDataFirstIndex_ = padding_;
-	bufferUnflushedDataOneAfterLastIndex_ = padding_;
+	currentRemainingBytesForFD_ = 0;
+
+	blockBuffer_.clear();
+	crcBuffer_.clear();
+	headerBuffer_.clear();
+
+	status = kNotSaunafsStatus;
 }
 
-ssize_t OutputBuffer::copyIntoBuffer(IChunk *chunk, size_t len, off_t offset) {
-	eassert(len + bufferUnflushedDataOneAfterLastIndex_ <=
-	        internalBufferCapacityAligned_);
-	off_t bytes_written = 0;
+bool OutputBuffer::checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset) const {
+	return mycrc32(0, blockBuffer_.paddedIndex(startingOffset), bytes) == crc;
+}
 
-	while (len > 0) {
-		ssize_t ret = chunk->owner()->preadData(
-		    chunk, &buffer_[bufferUnflushedDataOneAfterLastIndex_], len, offset);
-		if (ret <= 0) {
-			return bytes_written;
-		}
-		len -= ret;
-		bufferUnflushedDataOneAfterLastIndex_ += ret;
-		bytes_written += ret;
+ssize_t OutputBuffer::copyIntoBuffer(BufferType type, IChunk *chunk, size_t len, off_t offset) {
+	if (type != BufferType::Block) {
+		safs::log_warn("(OutputBuffer) Invalid buffer type, using block buffer");
+		type = BufferType::Block;
 	}
 
-	return bytes_written;
+	return blockBuffer_.copyIntoBuffer(chunk, len, offset);
 }
 
-bool OutputBuffer::checkCRC(size_t bytes, uint32_t crc) const {
-	assert(bufferUnflushedDataOneAfterLastIndex_ - bytes > 0
-			&& bufferUnflushedDataOneAfterLastIndex_ - bytes < buffer_.size());
-	return mycrc32(0, &buffer_[bufferUnflushedDataOneAfterLastIndex_ - bytes], bytes) == crc;
+ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const void *mem, size_t len) {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.copyIntoBuffer(mem, len);
+	case BufferType::CRC:
+		return crcBuffer_.copyIntoBuffer(mem, len);
+	case BufferType::Header:
+		return headerBuffer_.copyIntoBuffer(mem, len);
+	default:
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		return 0;
+	}
 }
 
-ssize_t OutputBuffer::copyIntoBuffer(const void *mem, size_t len) {
-	eassert(bufferUnflushedDataOneAfterLastIndex_ + len <=
-	        internalBufferCapacityAligned_);
-	memcpy((void*)&buffer_[bufferUnflushedDataOneAfterLastIndex_], mem, len);
-	bufferUnflushedDataOneAfterLastIndex_ += len;
+ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const std::vector<uint8_t> &mem) {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.copyIntoBuffer(mem.data(), mem.size());
+	case BufferType::CRC:
+		return crcBuffer_.copyIntoBuffer(mem.data(), mem.size());
+	case BufferType::Header:
+		return headerBuffer_.copyIntoBuffer(mem.data(), mem.size());
+	default:
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		return 0;
+	}
+}
 
-	return len;
+ssize_t OutputBuffer::copyValueIntoBuffer(BufferType type, uint8_t value, size_t len) {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.copyValueIntoBuffer(value, len);
+	case BufferType::CRC:
+		return crcBuffer_.copyValueIntoBuffer(value, len);
+	case BufferType::Header:
+		return headerBuffer_.copyValueIntoBuffer(value, len);
+	default:
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		return 0;
+	}
+}
+
+const uint8_t *OutputBuffer::rawData(BufferType type) const {
+	switch (type) {
+	case BufferType::Block:
+		return blockBuffer_.paddedIndex(0);
+	case BufferType::CRC:
+		return crcBuffer_.paddedIndex(0);
+	case BufferType::Header:
+		return headerBuffer_.paddedIndex(0);
+	default:
+		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		return 0;
+	}
 }

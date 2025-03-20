@@ -44,26 +44,36 @@ public:
 
 	/**
 	 * Gets a buffer from the pool or creates a new one.
-	 * @param capacity Requested buffer capacity.
+	 * @param headerSize The size of the header.
+	 * @param numBlocks The number of blocks.
 	 * @return The existent buffer or a newly created one.
 	 */
-	std::shared_ptr<T> get(size_t capacity) {
-		std::lock_guard lock(mutex_);
+	std::shared_ptr<T> get(size_t headerSize, size_t numBlocks) {
+		std::unique_lock lock(mutex_);
 
-		if (buffers_.empty()) {
-			return std::make_shared<T>(capacity);
+		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
+			safs::log_trace(
+			    "BuffersPool::get {} blocks, currentNumberOfBlocks_ = {}, kMaxNumberOfBlocks = {}",
+			    numBlocks, currentNumberOfBlocks_, kMaxNumberOfBlocks);
+			operationsSinceLastLog_ = 0;
+		}
+		operationsSinceLastLog_++;
+
+		auto it = buffersMap_.find({headerSize, numBlocks});
+		if (it == buffersMap_.end() || it->second.empty()) {
+			// To make sure the allocation is not done under the lock.
+			lock.unlock();
+			return std::make_shared<T>(headerSize, numBlocks);
 		}
 
-		auto buffer = buffers_.front();
+		auto &buffers = it->second;
+		auto buffer = buffers.front();
 
-		if (buffer->capacity() == capacity) {
-			buffers_.pop();
-			buffer->clear();
+		buffers.pop();
+		buffer->clear();
+		currentNumberOfBlocks_ -= numBlocks;
 
-			return buffer;
-		}
-
-		return std::make_shared<T>(capacity);
+		return buffer;
 	}
 
 	/**
@@ -71,19 +81,39 @@ public:
 	 * @param buffer The buffer to put back.
 	 */
 	void put(std::shared_ptr<T> &&buffer) {
-		std::lock_guard lock(mutex_);
+		std::unique_lock lock(mutex_);
 
-		if (buffers_.size() < kMaxSize) {
-			buffer->clear();
-			buffers_.push(std::move(buffer));
+		auto [headerSize, numBlocks] = buffer->type();
+		auto &buffers = buffersMap_[{headerSize, numBlocks}];
+
+		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
+			safs::log_trace(
+			    "BuffersPool::put {} blocks, currentNumberOfBlocks_ = {}, kMaxNumberOfBlocks = {}",
+			    numBlocks, currentNumberOfBlocks_, kMaxNumberOfBlocks);
+			operationsSinceLastLog_ = 0;
 		}
+		operationsSinceLastLog_++;
+
+		if (currentNumberOfBlocks_ + numBlocks <= kMaxNumberOfBlocks) {
+			buffer->clear();
+			buffers.push(std::move(buffer));
+			currentNumberOfBlocks_ += numBlocks;
+		}
+		// To make sure the deallocation is not done under the lock.
+		lock.unlock();
 	}
 
 private:
+	/// How many operations should pass between two log messages.
+	static constexpr size_t kLogAfterEveryXTimes = 1000;
+	/// Number of operations since last log message.
+	size_t operationsSinceLastLog_ = 0;
 	/// Maximum number of buffers in the pool.
-	static constexpr size_t kMaxSize = 8192;
-	/// Buffers pool (container).
-	std::queue<std::shared_ptr<T>> buffers_;
+	static constexpr size_t kMaxNumberOfBlocks = 8192;
+	/// Current number of buffers in the pool.
+	size_t currentNumberOfBlocks_ = 0;
+	/// Buffers pool map: a queue of buffers for each type of buffer.
+	std::map<std::pair<size_t, size_t>, std::queue<std::shared_ptr<T>>> buffersMap_;
 	/// Mutex to protect the pool.
 	std::mutex mutex_;
 };

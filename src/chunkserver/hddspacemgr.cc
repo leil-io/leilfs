@@ -99,6 +99,7 @@
 
 constexpr int kErrorLimit = 2;
 constexpr int kLastErrorTime = 60;
+constexpr size_t kIgnoreHeaderSize = 1;
 
 inline std::atomic_bool gCheckCrcWhenReading{true};
 
@@ -571,9 +572,11 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
 	}
 
 	if (blockNumber >= chunk->blocks()) {
-		bytesRead = outputBuffer->copyIntoBuffer(&gEmptyBlockCrc, kCrcSize);
-		static const std::vector<uint8_t> zeros_block(SFSBLOCKSIZE, 0);
-		bytesRead += outputBuffer->copyIntoBuffer(zeros_block);
+		bytesRead =
+		    outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, &gEmptyBlockCrc, kCrcSize);
+		// Put a block of zeros into the buffer
+		bytesRead +=
+		    outputBuffer->copyValueIntoBuffer(OutputBuffer::BufferType::Block, 0, SFSBLOCKSIZE);
 		if (static_cast<uint32_t>(bytesRead) != kHddBlockSize) {
 			return SAUNAFS_ERROR_IO;
 		}
@@ -584,8 +587,9 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
 		const uint8_t *crcData =
 		    gOpenChunks.getResource(chunk->metaFD()).crcData() +
 		    blockNumber * kCrcSize;
-		outputBuffer->copyIntoBuffer(crcData, kCrcSize);
-		bytesRead = outputBuffer->copyIntoBuffer(chunk, SFSBLOCKSIZE, off);
+		outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcData, kCrcSize);
+		bytesRead =
+		    outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block, chunk, SFSBLOCKSIZE, off);
 
 		if (bytesRead != toBeRead) {
 			hddAddErrorAndPreserveErrno(chunk);
@@ -655,8 +659,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 		chunk->owner()->prefetchChunkBlocks(
 		    *chunk, firstBlockToRead,
 		    blocksToBeReadAhead + block - firstBlockToRead);
-		OutputBuffer buffer =
-		    OutputBuffer(kHddBlockSize * (block - firstBlockToRead));
+		OutputBuffer buffer = OutputBuffer(kIgnoreHeaderSize, block - firstBlockToRead);
 		for (uint16_t b = firstBlockToRead; b < block; ++b) {
 			hddReadCrcAndBlock(chunk, b, &buffer);
 		}
@@ -675,19 +678,20 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 * @param chunk Chunk to read from.
 * @param block Block to check.
 * @param outputBuffer Assumes the outputBuffer is already filled with data.
+* @param offsetInBlockBuffer Starting index of the block in the outputBuffer.
 * @param forceCheck If true, the CRC is checked even if the option is disabled
                     from the configuration. This is needed to keep integrity of
                     partial reads.
 */
-int hddCheckCrcForFullBlock(IChunk *chunk, uint16_t block,
-                            OutputBuffer *outputBuffer, bool forceCheck) {
+int hddCheckCrcForFullBlock(IChunk *chunk, uint16_t block, OutputBuffer *outputBuffer,
+                            uint32_t offsetInBlockBuffer, bool forceCheck) {
 	if (!forceCheck && (!gCheckCrcWhenReading || block >= chunk->blocks())) {
 		return SAUNAFS_STATUS_OK;
 	}
 
 	const uint8_t *crcData =
 	    gOpenChunks.getResource(chunk->metaFD()).crcData() + block * kCrcSize;
-	if (!outputBuffer->checkCRC(SFSBLOCKSIZE, get32bit(&crcData))) {
+	if (!outputBuffer->checkCRC(SFSBLOCKSIZE, get32bit(&crcData), offsetInBlockBuffer)) {
 		hddAddChunkToTestQueue(ChunkWithVersionAndType{
 		    chunk->id(), chunk->version(), chunk->type()});
 		return SAUNAFS_ERROR_CRC;
@@ -744,24 +748,27 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 		status = hddReadCrcAndBlock(chunk, block, outputBuffer);
 
 		if (status == SAUNAFS_STATUS_OK) {
-			status = hddCheckCrcForFullBlock(chunk, block, outputBuffer, false);
+			status = hddCheckCrcForFullBlock(chunk, block, outputBuffer, 0, false);
 		}
 	} else {  // Partial block
-		OutputBuffer tmp(kHddBlockSize);
+		// Temporary buffer to read the full block
+		OutputBuffer tmp(kIgnoreHeaderSize, 1);
 		status = hddReadCrcAndBlock(chunk, block, &tmp);
 
 		if (status == SAUNAFS_STATUS_OK) {  // Successful read of the full block
-			status = hddCheckCrcForFullBlock(chunk, block, &tmp, true);
+			status = hddCheckCrcForFullBlock(chunk, block, &tmp, 0, true);
 
 			if (status == SAUNAFS_STATUS_OK) {  // CRC is OK or check disabled
 				uint8_t crcBuff[kCrcSize];
 				uint8_t *crcBuffPointer = crcBuff;
-				put32bit(&crcBuffPointer,
-				         mycrc32(0, tmp.data() + kCrcSize + offsetWithinBlock,
-				                 size));
-				outputBuffer->copyIntoBuffer(crcBuff, kCrcSize);
+				put32bit(
+				    &crcBuffPointer,
+				    mycrc32(0, tmp.rawData(OutputBuffer::BufferType::Block) + offsetWithinBlock,
+				            size));
+				outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcBuff, kCrcSize);
 				outputBuffer->copyIntoBuffer(
-				    tmp.data() + kCrcSize + offsetWithinBlock, size);
+				    OutputBuffer::BufferType::Block,
+				    tmp.rawData(OutputBuffer::BufferType::Block) + offsetWithinBlock, size);
 			}
 		}
 	}
