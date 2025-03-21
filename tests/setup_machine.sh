@@ -194,6 +194,9 @@ if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# FoundationDB' /etc/sudoer
 	END
 fi
 
+echo ; echo 'Install FoundationDB'
+"$script_dir/ci_build/install-foundationdb.sh"
+
 echo ; echo 'Fixing GIDs of users'
 for name in saunafstest saunafstest_{0..9}; do
 	uid=$(getent passwd "${name}" | cut -d: -f3)
