@@ -100,6 +100,7 @@
 constexpr int kErrorLimit = 2;
 constexpr int kLastErrorTime = 60;
 constexpr size_t kIgnoreHeaderSize = 1;
+constexpr uint32_t startingOffsetOfBlock(uint32_t blocknum) { return blocknum * SFSBLOCKSIZE; }
 
 inline std::atomic_bool gCheckCrcWhenReading{true};
 
@@ -559,13 +560,13 @@ int hddClose(uint64_t chunkId, ChunkPartType chunkType) {
 	return status;
 }
 
-int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
-                       OutputBuffer *outputBuffer) {
+int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber, OutputBuffer *outputBuffer,
+                       bool isDataPreviouslyRead) {
 	LOG_AVG_TILL_END_OF_SCOPE0("hddReadCrcAndBlock");
 	assert(chunk);
 	TRACETHIS2(chunk->id(), blockNumber);
 
-	int bytesRead = 0;
+	uint32_t bytesRead = 0;
 
 	if (blockNumber >= SFSBLOCKSINCHUNK) {
 		return SAUNAFS_ERROR_BNUMTOOBIG;
@@ -577,28 +578,30 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber,
 		// Put a block of zeros into the buffer
 		bytesRead +=
 		    outputBuffer->copyValueIntoBuffer(OutputBuffer::BufferType::Block, 0, SFSBLOCKSIZE);
-		if (static_cast<uint32_t>(bytesRead) != kHddBlockSize) {
+
+		if (bytesRead != kHddBlockSize) {
+			safs::log_warn(
+			    "hddReadCrcAndBlock: read error on block: {}, chunk: {}, current block count: {}",
+			    blockNumber, chunk->id(), chunk->blocks());
 			return SAUNAFS_ERROR_IO;
 		}
 	} else {
-		int32_t toBeRead = SFSBLOCKSIZE;
-		off_t off = chunk->getBlockOffset(blockNumber);
-
 		const uint8_t *crcData =
-		    gOpenChunks.getResource(chunk->metaFD()).crcData() +
-		    blockNumber * kCrcSize;
-		outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcData, kCrcSize);
-		bytesRead =
-		    outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block, chunk, SFSBLOCKSIZE, off);
+		    gOpenChunks.getResource(chunk->metaFD()).crcData() + blockNumber * kCrcSize;
+		bytesRead = outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::CRC, crcData, kCrcSize);
 
-		if (bytesRead != toBeRead) {
-			hddAddErrorAndPreserveErrno(chunk);
-			safs_silent_errlog(LOG_WARNING,
-			                   "hddReadCrcAndBlock: file:%s"
-			                   " - read error on block: %d",
-			                   chunk->fullDataFilename().c_str(), blockNumber);
-			hddReportDamagedChunk(chunk->id(), chunk->type());
-			return SAUNAFS_ERROR_IO;
+		if (!isDataPreviouslyRead) {
+			bytesRead +=
+			    outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block, chunk, SFSBLOCKSIZE,
+			                                 startingOffsetOfBlock(blockNumber));
+
+			if (bytesRead != kHddBlockSize) {
+				hddAddErrorAndPreserveErrno(chunk);
+				safs::log_warn("hddReadCrcAndBlock: file: {} - read error on block: {}",
+				               chunk->fullDataFilename().c_str(), blockNumber);
+				hddReportDamagedChunk(chunk->id(), chunk->type());
+				return SAUNAFS_ERROR_IO;
+			}
 		}
 	}
 
@@ -661,7 +664,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 		    blocksToBeReadAhead + block - firstBlockToRead);
 		OutputBuffer buffer = OutputBuffer(kIgnoreHeaderSize, block - firstBlockToRead);
 		for (uint16_t b = firstBlockToRead; b < block; ++b) {
-			hddReadCrcAndBlock(chunk, b, &buffer);
+			hddReadCrcAndBlock(chunk, b, &buffer, false);
 		}
 	} else {
 		chunk->owner()->prefetchChunkBlocks(*chunk, block, blocksToBeReadAhead);
@@ -715,10 +718,6 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 
 	uint32_t offsetWithinBlock = offset % SFSBLOCKSIZE;
 
-	if ((size == 0) || ((offsetWithinBlock + size) > SFSBLOCKSIZE)) {
-		return SAUNAFS_ERROR_WRONGSIZE;
-	}
-
 	auto* chunk = hddChunkFindAndLock(chunkId, chunkType);
 
 	if (chunk == ChunkNotFound) {
@@ -737,23 +736,73 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 		                      blocksToBeReadAhead);
 	}
 
-	// Put checksum of the requested data followed by data itself into buffer.
+	// Put CRC and the data requested into buffer.
 	// If possible (in case when whole block is read) try to put data directly
 	// into passed outputBuffer, otherwise use temporary buffer to recompute
 	// the checksum
 
 	int status = SAUNAFS_STATUS_OK;
-
-	if (size == SFSBLOCKSIZE) {  // Full block
-		status = hddReadCrcAndBlock(chunk, block, outputBuffer);
-
-		if (status == SAUNAFS_STATUS_OK) {
-			status = hddCheckCrcForFullBlock(chunk, block, outputBuffer, 0, false);
+	if (size >= SFSBLOCKSIZE) {
+		// We're are considering only reads of full blocks here
+		if (offsetWithinBlock != 0) {
+			safs::log_warn(
+			    "hddRead: offset is not aligned to block size (chunkId: {}, offset: {}, size: {}). "
+			    "Considering it aligned.",
+			    chunkId, offset, size);
+			offsetWithinBlock = 0;
 		}
-	} else {  // Partial block
+
+		uint16_t numBlocks = size / SFSBLOCKSIZE;
+		uint16_t initialBlock = block;
+		bool isDataPreviouslyRead = false;
+
+		if (!chunk->owner()->isZonedDevice()) {
+			// Only non-zoned devices in our implementation ensure blocks to be contiguous
+			if (initialBlock < chunk->blocks()) {
+				uint32_t bytesToBeRead = std::min<uint32_t>(
+				    numBlocks * SFSBLOCKSIZE, (chunk->blocks() - initialBlock) * SFSBLOCKSIZE);
+				uint32_t bytesRead = outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block,
+				                                                  chunk, bytesToBeRead, offset);
+
+				if (bytesRead != bytesToBeRead) {
+					hddAddErrorAndPreserveErrno(chunk);
+					safs::log_warn("hddRead: file:{} - read error from block {} to {}",
+					               chunk->fullDataFilename().c_str(), initialBlock,
+					               initialBlock + numBlocks - 1);
+					hddReportDamagedChunk(chunk->id(), chunk->type());
+					return SAUNAFS_ERROR_IO;
+				}
+			}
+
+			isDataPreviouslyRead = true;
+		}
+
+		for (uint16_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
+			uint16_t blockNumber = initialBlock + i;
+			status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer, isDataPreviouslyRead);
+
+			if (status == SAUNAFS_STATUS_OK) {
+				status = hddCheckCrcForFullBlock(chunk, blockNumber, outputBuffer,
+				                                 startingOffsetOfBlock(i), false);
+			}
+		}
+
+		// Update the size and offset for the remaining part of the read if last block is partial
+		size -= numBlocks * SFSBLOCKSIZE;
+		offset += numBlocks * SFSBLOCKSIZE;
+		block += numBlocks;
+	}
+
+	// The remaining must be within a block
+	if (offsetWithinBlock + size > SFSBLOCKSIZE) {
+		return SAUNAFS_ERROR_WRONGSIZE;
+	}
+
+	// Full blocks were read previously, the remaining case is a partial block
+	if (status == SAUNAFS_STATUS_OK && size > 0) {
 		// Temporary buffer to read the full block
 		OutputBuffer tmp(kIgnoreHeaderSize, 1);
-		status = hddReadCrcAndBlock(chunk, block, &tmp);
+		status = hddReadCrcAndBlock(chunk, block, &tmp, false);
 
 		if (status == SAUNAFS_STATUS_OK) {  // Successful read of the full block
 			status = hddCheckCrcForFullBlock(chunk, block, &tmp, 0, true);

@@ -324,7 +324,7 @@ void NetworkWorkerThread::addConnection(int newSocketFD) {
 	std::unique_lock lock(csservheadLock);
 	try {
 		if (!bgJobPool_) { throw std::runtime_error("JobPool instance is null"); }
-		csservEntries.emplace_front(newSocketFD, bgJobPool_.get(),
+		csservEntries.emplace_front(newSocketFD, bgJobPool_.get(), gMaxBlocksPerHddReadJob,
 		                            gMaxParallelHddReadJobsPerCsEntry);
 		csservEntries.front().lastActivity = eventloop_time();
 	} catch (const std::runtime_error &e) {
