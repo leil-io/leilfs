@@ -43,8 +43,8 @@ to have timeouts use the `timeout` command.
 
 == NOTE
 
-*rgetgoal* and *rsetgoal* are deprecated aliases for
-*getgoal -r* and *setgoal -r* respectively.
+*rgetgoal* and *rsetgoal* are deprecated aliases for *getgoal -r* and *setgoal
+-r* respectively. They will be removed in 5.0.0.
 
 == REPORTING BUGS
 
