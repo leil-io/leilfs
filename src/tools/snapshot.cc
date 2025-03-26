@@ -47,7 +47,7 @@ static void snapshot_usage() {
 	fprintf(stderr,
 	        "make snapshot (lazy copy)\n\nusage:\n saunafs makesnapshot [-ofl] src [src ...] dst\n");
 	fprintf(stderr, " -o,-f - allow to overwrite existing objects\n");
-	fprintf(stderr, " -l - wait until snapshot will finish (otherwise there is 60s timeout)\n");
+	fprintf(stderr, " -l - wait until snapshot will finish (otherwise there is 60s timeout) (will be default in 5.0.0)\n");
 }
 
 static int make_snapshot(const char *dstdir, const char *dstbase, const char *srcname,
@@ -56,6 +56,10 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 	uint8_t status;
 	uint32_t msgid = 0, job_id;
 	int fd;
+
+	fmt::println(
+	    stderr,
+	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
 
 	sigset_t set;
 	sigemptyset(&set);

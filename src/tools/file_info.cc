@@ -35,7 +35,7 @@ static void file_info_usage() {
 	fprintf(stderr,
 	        "show files info (shows detailed info of each file chunk)\n\nusage:\n"
 	        " saunafs fileinfo name [name ...]\n");
-	fprintf(stderr, " -l - wait until fileinfo will finish (otherwise there is a 10s timeout)\n");
+	fprintf(stderr, " -l - wait until fileinfo will finish (otherwise there is a 10s timeout) (will be default in 5.0.0)\n");
 }
 
 static std::string chunkTypeToString(ChunkPartType type) {
@@ -152,6 +152,11 @@ static int file_info(const char *fileName, bool long_wait) {
 	std::vector<uint8_t> buffer;
 	uint32_t inode;
 	int fd;
+
+	fmt::println(
+	    stderr,
+	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
+
 
 	fd = open_master_conn(fileName, &inode, nullptr, false);
 	if (fd < 0) {
