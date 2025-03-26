@@ -58,6 +58,9 @@ static void fs_remove_invisible_quota_entries(uint32_t root_inode, std::vector<Q
 			if (!node) {
 				return true;
 			}
+			if (root_node->id == entry.entryKey.owner.ownerId) {
+				return false;
+			}
 			return !fsnodes_isancestor(root_node, node);
 		}
 		return false;

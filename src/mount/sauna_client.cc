@@ -722,6 +722,8 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 			uint64_t userTotalSpace = std::numeric_limits<uint64_t>::max();
 			uint64_t groupUsedSpace = 0;
 			uint64_t groupTotalSpace = std::numeric_limits<uint64_t>::max();
+			uint64_t inodeUsedSpace = 0;
+			uint64_t inodeTotalSpace = std::numeric_limits<uint64_t>::max();
 
 			for (const QuotaEntry &entry : quota_entries) {
 				if (entry.entryKey.owner.ownerId == ctx.uid &&
@@ -745,14 +747,26 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 						groupUsedSpace = entry.limit;
 					}
 				}
+
+				if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode &&
+				    entry.entryKey.resource == QuotaResource::kSize) {
+					if (entry.entryKey.rigor == QuotaRigor::kHard &&
+					    entry.limit > 0) {
+						inodeTotalSpace = entry.limit;
+					} else if (entry.entryKey.rigor == QuotaRigor::kUsed) {
+						inodeUsedSpace = entry.limit;
+					}
+				}
 			}
 
 			userUsedSpace = std::min(userUsedSpace, userTotalSpace);
 			groupUsedSpace = std::min(groupUsedSpace, groupTotalSpace);
+			inodeUsedSpace = std::min(inodeUsedSpace, inodeTotalSpace);
 			uint64_t userAvailSpace = userTotalSpace - userUsedSpace;
 			uint64_t groupAvailSpace = groupTotalSpace - groupUsedSpace;
+			uint64_t inodeAvailSpace = inodeTotalSpace - inodeUsedSpace;
 			availspace =
-			    std::min({userAvailSpace, groupAvailSpace, availspace});
+			    std::min({userAvailSpace, inodeAvailSpace, groupAvailSpace, availspace});
 			totalspace = userUsedSpace + availspace;
 		}
 	}
