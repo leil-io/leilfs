@@ -147,6 +147,9 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsrwlock"] = std::to_string(gMountOptions.rwlock);
 	gOptsNameValues["sfsdonotrememberpassword"] =
 	    std::to_string(gMountOptions.donotrememberpassword);
+	if (gMountOptions.cachefiles) {
+		fprintf(stderr, "Warning: sfscachefiles is deprecated, use -o sfscachemode=YES");
+	}
 	gOptsNameValues["sfscachefiles"] = std::to_string(gMountOptions.cachefiles);
 	gOptsNameValues["sfscachemode"] =
 	    gMountOptions.cachemode ? std::string(gMountOptions.cachemode) : "AUTO";
