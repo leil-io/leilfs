@@ -23,6 +23,7 @@
 
 #include "common/platform.h"
 
+#include <algorithm>
 #include <array>
 #include <algorithm>
 #include <cassert>
@@ -548,6 +549,13 @@ public:
 
 	const std::string &getName() const {
 		return name_;
+	}
+
+	bool isXor() const {
+		return std::ranges::any_of(goal_slices_, [](const auto &slice) {
+			return int(slice.getType()) >= detail::SliceType::kXor2 &&
+			       int(slice.getType()) <= detail::SliceType::kXor9;
+		});
 	}
 
 	void setName(const std::string &name) {

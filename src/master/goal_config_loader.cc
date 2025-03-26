@@ -269,6 +269,11 @@ std::map<int, Goal> load(std::istream& stream) {
 	for (int line_num = 1; std::getline(stream, line); ++line_num) try {
 		auto parsed_line = parseLine(line);
 		int goal_id = parsed_line.first;
+		if (parsed_line.second.isXor()) {
+			safs::log_warn(
+				"XOR goal in goals config line {}. XOR goals are not supported and will be removed in a future release",
+				line_num);
+		}
 		if (goal_id) {
 			if (goals.find(goal_id) != goals.end()) {
 				throw ParseException("repeated goal ID " + std::to_string(goal_id));
