@@ -8,10 +8,7 @@ sfsmaster - start, restart or stop Sauna File System metadata server process
 == SYNOPSIS
 
 [verse]
-sfsmaster [*-f*] [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
-
-[verse]
-*sfsmaster -s* [*-c* 'CFGFILE']
+sfsmaster [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
 
 [verse]
 *sfsmaster -v*
@@ -60,15 +57,6 @@ print version information and exit
 
 *-h*::
 print usage information and exit
-
-*-f*::
-(deprecated, use *start* action instead) forcily run SaunaFS master process,
-without trying to kill previous instance (this option allows to run SaunaFS
-master if stale PID file exists)
-
-*-s*::
-(deprecated, use *stop* action instead)
-stop SaunaFS master process
 
 *-c* 'CFGFILE'::
 specify alternative path of configuration file (default is *sfsmaster.cfg* in
