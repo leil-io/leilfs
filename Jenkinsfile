@@ -2,7 +2,7 @@ def buildSfstests() {
     sh '''
         git clone "https://github.com/leil-io/sfstests"
         cd sfstests
-        git checkout v0.4.0
+        git checkout v0.4.1
         go build -o $WORKSPACE/sfstests
         '''
 }
