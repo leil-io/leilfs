@@ -66,7 +66,7 @@ endif()
 
 project(saunafs)
 
-set(DEFAULT_MIN_VERSION "4.8.0")
+set(DEFAULT_MIN_VERSION "4.8.1")
 
 enable_language(C)
 include(GNUInstallDirs)
