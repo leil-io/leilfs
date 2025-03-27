@@ -1,5 +1,8 @@
 This file lists noteworthy changes in SaunaFS.
 
+ * SaunaFS (4.8.1) (2025-03-27)
+ - fix: Show same stats as CGI in statfs call
+
  * SaunaFS (4.8.0) (2025-03-04)
  - feat(uraft): Introduce floating IP manager for HA (#301)
  - feat: Use quota in volume size option (#295)
