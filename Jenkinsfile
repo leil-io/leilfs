@@ -40,6 +40,29 @@ pipeline {
     }
     tools { go '1.22.2' }
     stages {
+        stage('Build with clang') {
+            agent {label 'build && ubuntu-2204'}
+            steps {
+                checkout scm
+                script {
+                    sh """
+                        docker buildx build --tag saunafs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
+                    """
+                }
+            }
+            post {
+                always {
+                    cleanWs(cleanWhenNotBuilt: true,
+                        deleteDirs: true,
+                        disableDeferredWipeout: true,
+                        notFailBuild: true,
+                    )
+                    sh """
+                        docker image rm saunafs-clang-build || true
+                    """
+                }
+            }
+        }
         stage('Build and test') {
             matrix {
                 axes {
