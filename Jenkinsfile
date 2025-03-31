@@ -18,10 +18,10 @@ def buildImage(imageName) {
 }
 
 def runSanity() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --workers 16 --multiplier 4 --cpus 1'''
+    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --workers 8 --multiplier 8 --cpus 1'''
 }
 def runShort() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite ShortSystemTests --workers 16 --multiplier 5 --cpus 2'''
+    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite ShortSystemTests --workers 8 --multiplier 5 --cpus 2'''
 }
 def runMachine() {
     sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite SingleMachineTests --workers 1 --multiplier 5'''
