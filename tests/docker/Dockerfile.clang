@@ -1,0 +1,63 @@
+ARG BASE_IMAGE=ubuntu:24.04
+
+### Test env phase
+FROM ${BASE_IMAGE} AS test-setup
+ARG BASE_IMAGE=ubuntu:24.04
+
+ENV LC_ALL="C.UTF-8"
+ENV GTEST_ROOT=/usr/local
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /saunafs
+COPY ./tests/install-packages.sh ./tests/
+COPY ./tests/llvm.sh ./tests/
+RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
+    --mount=target=/var/cache/apt,type=cache,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+	apt-get update && apt-get install tini && \
+    ./tests/install-packages.sh;
+
+### Build Phase
+FROM test-setup AS test-build
+
+# Enable additional basic tools
+ENV PATH="/usr/lib/ccache:${PATH}"
+
+WORKDIR /
+RUN git clone https://github.com/microsoft/vcpkg.git /vcpkg;
+WORKDIR /vcpkg
+COPY vcpkg.json .
+RUN git pull;
+RUN ./bootstrap-vcpkg.sh;
+RUN --mount=type=cache,target=/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/vcpkg/packages/,sharing=locked ./vcpkg install;
+
+ENV VCPKG_ROOT="/vcpkg/"
+ENV PATH="${VCPKG_ROOT}:${PATH}"
+
+WORKDIR /saunafs
+COPY CMakeLists.txt .
+COPY cmake ./cmake
+COPY config.h.in .
+COPY external ./external
+COPY utils ./utils
+COPY src ./src
+COPY doc ./doc
+COPY tests ./tests
+COPY COPYING .
+COPY README.md .
+RUN cp /vcpkg/vcpkg.json .;
+
+RUN mkdir -p /saunafs/build && ls /saunafs && \
+    cd /saunafs/build && cmake \
+	-DCMAKE_TOOLCHAIN_FILE="/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_C_COMPILER=clang \
+	-DCMAKE_CXX_COMPILER=clang++-19 \
+    -DENABLE_TESTS=1 \
+    -DENABLE_NFS_GANESHA=1 \
+    -DENABLE_CLIENT_LIB=ON \
+    ..;
+
+# TODO: Use CMake presets
+RUN --mount=type=cache,target=/root/.ccache \
+    cd /saunafs/build && make -j$(nproc);

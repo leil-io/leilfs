@@ -41,89 +41,137 @@ pipeline {
     tools { go '1.22.2' }
     stages {
         stage('Build and test') {
-            matrix {
-                axes {
-                    axis {
-                        name 'DISTRO'
-                        values 'ubuntu-2404', 'ubuntu-2204'
+            parallel {
+                stage('Build with clang') {
+                    agent {label 'build && ubuntu-2204'}
+                    steps {
+                        checkout scm
+                        script {
+                            sh """
+                                docker buildx build --tag saunafs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
+                                """
+                        }
+                    }
+                    post {
+                        always {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh """
+                                docker image rm saunafs-clang-build || true
+                                """
+                        }
                     }
                 }
-                agent { label "test && ${DISTRO}" }
-                stages {
-                    stage('Checkout code') {
-                        steps {
-                            checkout scm
+                stage('Build Ubuntu 22.04') {
+                    agent { label "test && ubuntu-2204" }
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkout scm
+                            }
                         }
-                    }
-
-                    stage('Build sfstests') {
-                        steps {
-                            buildSfstests()
-                        }
-                    }
-
-
-                    stage('Build image') {
-                        steps {
-                            script {
-                                if (DISTRO == "ubuntu-2404") {
-                                    buildImage("ubuntu:24.04")
-                                } else if (DISTRO == "ubuntu-2204") {
+                        stage('Build image') {
+                            steps {
+                                script {
                                     buildImage("ubuntu:22.04")
                                 }
                             }
                         }
                     }
-
-                    stage('Run Sanity') {
-                        when {expression { DISTRO == "ubuntu-2404" }}
-                        steps {
-                            runSanity()
-                        }
-                    }
-
-                    stage('Run short system tests') {
-                        when {expression { DISTRO == "ubuntu-2404" }}
-                        steps {
-                            runShort()
-                        }
-                    }
-
-                    stage('Run machine tests') {
-                        when {expression { DISTRO == "ubuntu-2404" }}
-                        steps {
-                            runMachine()
-                        }
-                    }
-
-                    stage('Run long system tests') {
-                        when {expression { DISTRO == "ubuntu-2404" }}
-                        steps {
-                            runLong()
+                    post {
+                        // Clean after build
+                        always {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh '''
+                                docker image rm saunafs-test || true
+                                '''
                         }
                     }
                 }
-                post {
-                    // Clean after build
-                    always {
-                        cleanWs(cleanWhenNotBuilt: true,
-                            deleteDirs: true,
-                            disableDeferredWipeout: true,
-                            notFailBuild: true,
-                        )
-                        sh '''
-                            docker rm $(docker stop $(docker ps -a -q --filter ancestor=saunafs-test --format="{{.ID}}")) || true
-                            docker image rm saunafs-test || true
-                            '''
+                stage('Build Ubuntu 24.04') {
+                    agent { label "test && ubuntu-2404" }
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkout scm
+                            }
+                        }
+                        stage('Build sfstests') {
+                            steps {
+                                buildSfstests()
+                            }
+                        }
+
+
+                        stage('Build image') {
+                            steps {
+                                script {
+                                        buildImage("ubuntu:24.04")
+                                }
+                            }
+                        }
+
+                        stage('Run Sanity') {
+                            steps {
+                                runSanity()
+                            }
+                        }
+
+                        stage('Run short system tests') {
+                            steps {
+                                runShort()
+                            }
+                        }
+
+                        stage('Run machine tests') {
+                            steps {
+                                runMachine()
+                            }
+                        }
+
+                        stage('Run long system tests') {
+                            steps {
+                                runLong()
+                            }
+                        }
+                    }
+                    post {
+                        // Clean after build
+                        always {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh '''
+                                docker rm $(docker stop $(docker ps -a -q --filter ancestor=saunafs-test --format="{{.ID}}")) || true
+                                docker image rm saunafs-test || true
+                                '''
+                        }
                     }
                 }
+
             }
         }
         stage('Deploy packages to dev repository') {
             agent none
             when { branch "dev" }
             steps {
-                build job: 'SaunaFS Packages (Dev)', parameters: [string(name: 'VERSION', value: ''), string(name: 'REFERENCE', value: 'dev'), string(name: 'REPOSITORY', value: 'Development')]
+                build (
+                    job: 'SaunaFS Packages (Dev)',
+                    parameters: [
+                        string(name: 'VERSION', value: ''),
+                        string(name: 'REFERENCE', value: 'dev'),
+                        string(name: 'REPOSITORY', value: 'Development')
+                    ]
+                )
             }
         }
     }
