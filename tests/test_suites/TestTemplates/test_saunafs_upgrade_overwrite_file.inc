@@ -28,7 +28,7 @@ assert_saunafsXX_services_count_equals 1 ${CHUNKSERVERS} 1
 
 cd "${info[mount0]}"
 mkdir dir
-assert_success saunafsXX saunafs_command setgoal $GOAL dir
+assert_success saunafsXX saunafs setgoal $GOAL dir
 cd dir
 
 echo "Starting test"

@@ -19,7 +19,7 @@ USE_RAMDISK=YES \
 # Create a directory with many files on mountpoint
 cd "${info[mount0]}"
 mkdir goal2
-saunafs_command setgoal 2 goal2
+saunafs setgoal 2 goal2
 FILE_SIZE=1234 file-generate goal2/small_{1..10}
 FILE_SIZE=1M   file-generate goal2/big_{1..10}
 
@@ -54,6 +54,6 @@ assert_awk_finds_no '(/EIO/ && $4 != "yes") || (!/EIO/ && $4 != "no")' "$list"
 
 # Assert that data is replicated to chunkservers 1, 2 and no chunk is stored on cs 0
 for f in goal2/*; do
-	assert_eventually_prints "" "saunafs_command fileinfo '$f' | grep ':${info[chunkserver0_port]}'"
-	assert_eventually_prints 2 "saunafs_command fileinfo '$f' | grep copy | wc -l"
+	assert_eventually_prints "" "saunafs fileinfo '$f' | grep ':${info[chunkserver0_port]}'"
+	assert_eventually_prints 2 "saunafs fileinfo '$f' | grep copy | wc -l"
 done

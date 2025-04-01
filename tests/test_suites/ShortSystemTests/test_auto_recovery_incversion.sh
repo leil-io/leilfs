@@ -15,7 +15,7 @@ metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.sfs
 
 cd ${info[mount0]}
 mkdir dir
-saunafs_command setgoal 2 dir
+saunafs setgoal 2 dir
 echo 'aaaaaaaa' > dir/file
 assert_equals 1 $(find_chunkserver_metadata_chunks 0 | wc -l)
 assert_equals 1 $(find_chunkserver_metadata_chunks 1 | wc -l)

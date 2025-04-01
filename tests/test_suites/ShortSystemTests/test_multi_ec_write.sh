@@ -32,18 +32,18 @@ cd ${info[mount0]}
 
 # Produce first version chunks
 dd if=/dev/zero of=file bs=1k count=5k
-saunafs_command setgoal ec4_1 file
+saunafs setgoal ec4_1 file
 
 wait_if_windows
 
-while (( $(saunafs_command fileinfo file | grep -c copy) < 6 )); do # 1 [goal1] + 5 [ec4_1]
+while (( $(saunafs fileinfo file | grep -c copy) < 6 )); do # 1 [goal1] + 5 [ec4_1]
 	sleep 1
 done
-saunafs_command setgoal ec5_4 file
+saunafs setgoal ec5_4 file
 
 wait_if_windows
 
-while (( $(saunafs_command fileinfo file | grep -c copy) < 15 )); do # 1 [goal1] + 5 [ec4_1] + 9 [ec5_4]
+while (( $(saunafs fileinfo file | grep -c copy) < 15 )); do # 1 [goal1] + 5 [ec4_1] + 9 [ec5_4]
 	sleep 1
 done
 sleep 2

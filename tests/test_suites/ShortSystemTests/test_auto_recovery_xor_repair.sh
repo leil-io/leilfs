@@ -21,7 +21,7 @@ metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.sfs
 cd ${info[mount0]}
 # Create file and make sure it has all xor chunks on CS 0, 1 and 2.
 mkdir dir
-saunafs_command setgoal xor2 dir
+saunafs setgoal xor2 dir
 FILE_SIZE=$(( 4 * SAUNAFS_CHUNK_SIZE )) file-generate dir/file
 
 wait_if_windows
@@ -32,8 +32,8 @@ done
 
 # Make snapshot of the file and wait until it has ordinary chunks on CS 3.
 mkdir backup
-saunafs_command makesnapshot dir/file backup/snapshot
-saunafs_command setgoal backup backup/snapshot
+saunafs makesnapshot dir/file backup/snapshot
+saunafs setgoal backup backup/snapshot
 
 wait_if_windows
 
@@ -111,13 +111,13 @@ saunafs_wait_for_ready_chunkservers 4
 # chunk 1 [1 copy  ] - three xor parts (id: 6, ver: 1)
 # chunk 2 [0 copies] - one xor part (id: 3, ver: 1)
 # chunk 3 [1 copy  ] - one std chunk with (id: 4 ver: 1) (from snapshot)
-checkfile=$(saunafs_command checkfile dir/file)
+checkfile=$(saunafs checkfile dir/file)
 assert_awk_finds '/chunks with 0 copies: *2$/' "$checkfile"
 assert_awk_finds '/chunks with 1 copy: *2$/' "$checkfile"
 
 # Repair the file and remember metadata after the repair.
-repairinfo=$(saunafs_command filerepair dir/file)
-fileinfo=$(saunafs_command fileinfo dir/file)
+repairinfo=$(saunafs filerepair dir/file)
+fileinfo=$(saunafs fileinfo dir/file)
 assert_awk_finds '/chunks not changed: *2$/' "$repairinfo"
 assert_awk_finds '/chunks erased: *1$/' "$repairinfo"
 assert_awk_finds '/chunks repaired: *1$/' "$repairinfo"

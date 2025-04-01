@@ -6,7 +6,7 @@ CHUNKSERVERS=4 \
 
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs_command setgoal ec22 "$dir"
+saunafs setgoal ec22 "$dir"
 FILE_SIZE=6M file-generate "$dir/file"
 
 # Find the chunkserver serving part 1 of 4 and stop it

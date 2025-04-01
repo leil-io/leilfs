@@ -16,21 +16,21 @@ if ! file-validate dir_std/file; then
 fi
 
 mkdir dir_xor
-saunafs_command setgoal -r xor2 dir_xor
+saunafs setgoal -r xor2 dir_xor
 FILE_SIZE=123456789 BLOCK_SIZE=12345 file-generate dir_xor/file
 if ! file-validate dir_xor/file; then
 	test_add_failure "Data read from file is different than written"
 fi
 
 mkdir dir_ec
-saunafs_command setgoal -r ec32 dir_ec
+saunafs setgoal -r ec32 dir_ec
 FILE_SIZE=123456789 BLOCK_SIZE=12345 file-generate dir_ec/file
 if ! file-validate dir_ec/file; then
 	test_add_failure "Data read from file is different than written"
 fi
 
 mkdir dir_turbo_ec
-saunafs_command setgoal -r ec_4_17 dir_turbo_ec
+saunafs setgoal -r ec_4_17 dir_turbo_ec
 FILE_SIZE=123456789 BLOCK_SIZE=12345 file-generate dir_turbo_ec/file
 if ! file-validate dir_turbo_ec/file; then
 	test_add_failure "Data read from file is different than written"

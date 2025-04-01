@@ -51,7 +51,6 @@ if is_windows_system; then
 	export PATH="$(get_windows_homepath)/SaunaFS:/mnt/c/Windows/System32:$PATH"
 	export SAFS_MOUNT_COMMAND="sfsmount.exe"
 	export SAFS_ADMIN_COMMAND="saunafs-admin.exe"
-	export SAFS_SAUNAFS_COMMAND="saunafs.exe"
 fi
 
 # Quick checks needed to call test_begin and test_fail

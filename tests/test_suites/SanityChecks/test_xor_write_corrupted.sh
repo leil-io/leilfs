@@ -9,7 +9,7 @@ pseudorandom_init
 
 cd "${info[mount0]}"
 mkdir dir
-saunafs_command setgoal xor3 dir
+saunafs setgoal xor3 dir
 cd dir
 
 for i in {0..19} ; do

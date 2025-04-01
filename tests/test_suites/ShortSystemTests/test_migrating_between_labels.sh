@@ -27,7 +27,7 @@ done
 wait
 saunafs_wait_for_ready_chunkservers 3
 mkdir dir
-saunafs_command setgoal 2 dir
+saunafs setgoal 2 dir
 FILE_SIZE=1K file-generate dir/file{1..10}
 
 # Turn on all chunkservers
@@ -37,7 +37,7 @@ done
 wait
 
 # Change goal of all files, verify
-saunafs_command setgoal two_hdds dir/file*
+saunafs setgoal two_hdds dir/file*
 if is_windows_system; then
 	expect_eventually_prints 20 'count_chunks_on_chunkservers {3..5}' '75 seconds'
 	assert_eventually_prints 20 'find_all_metadata_chunks | wc -l' '75 seconds'
@@ -47,7 +47,7 @@ else
 fi
 
 # Change goal of some files, verify
-saunafs_command setgoal two_flops dir/file{1..4}
+saunafs setgoal two_flops dir/file{1..4}
 if is_windows_system; then
 	expect_eventually_prints 8 'count_chunks_on_chunkservers {6..8}' '75 seconds'
 	expect_eventually_prints 12 'count_chunks_on_chunkservers {3..5}' '75 seconds'

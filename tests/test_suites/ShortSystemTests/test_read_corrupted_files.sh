@@ -14,10 +14,10 @@ USE_RAMDISK=YES \
 
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs_command setgoal ec_4_1 "$dir"
+saunafs setgoal ec_4_1 "$dir"
 FILE_SIZE=${SAUNAFS_CHUNK_SIZE} file-generate "$dir/file"
 
-saunafs_command fileinfo "$dir/file"
+saunafs fileinfo "$dir/file"
 
 # Delete data and metadata in parts 2, 3 and 4 of the chunk
 for i in 2 3 4; do

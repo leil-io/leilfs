@@ -34,7 +34,7 @@ done
 # Create some files in goal 3, try to modify them and expect everything to work
 cd "${info[mount0]}"
 mkdir dir
-saunafs_command setgoal 3 dir
+saunafs setgoal 3 dir
 FILE_SIZE=5M file-generate dir/file{1..10}
 assert_success file-validate dir/file{1..10}
 assert_success file-overwrite dir/file{1..10}
@@ -44,7 +44,7 @@ assert_success file-validate dir/file{5..15}
 
 # Verify if the files indeed have proper chunks only on a single chunkserver
 for file in dir/file*; do
-	fileinfo=$(saunafs_command fileinfo "$file")
+	fileinfo=$(saunafs fileinfo "$file")
 	assert_awk_finds    "/copy 1/" "$fileinfo"
 	assert_awk_finds_no "/copy 2/" "$fileinfo"
 done

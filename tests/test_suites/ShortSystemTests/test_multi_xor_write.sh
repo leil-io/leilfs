@@ -31,18 +31,18 @@ cd ${info[mount0]}
 
 # Produce first version chunks
 dd if=/dev/zero of=file bs=1k count=5k
-saunafs_command setgoal xor2 file
+saunafs setgoal xor2 file
 
 wait_if_windows
 
-while (( $(saunafs_command fileinfo file | grep -c copy) < 4 )); do # 1 [goal1] + 3 [xor2]
+while (( $(saunafs fileinfo file | grep -c copy) < 4 )); do # 1 [goal1] + 3 [xor2]
 	sleep 1
 done
-saunafs_command setgoal xor3 file
+saunafs setgoal xor3 file
 
 wait_if_windows
 
-while (( $(saunafs_command fileinfo file | grep -c copy) < 8 )); do # 1 [goal1] + 3 [xor2] + 4 [xor3]
+while (( $(saunafs fileinfo file | grep -c copy) < 8 )); do # 1 [goal1] + 3 [xor2] + 4 [xor3]
 	sleep 1
 done
 sleep 2

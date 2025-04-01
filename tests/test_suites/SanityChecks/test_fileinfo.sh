@@ -45,13 +45,13 @@ files=()
 for goal in 1 2 3 xor2 xor3 ec32; do
 	file="file_goal_$goal"
 	touch "$file"
-	saunafs_command setgoal "$goal" "$file"
+	saunafs setgoal "$goal" "$file"
 	dd if=/dev/zero of="$file" bs=1MiB count=5 seek=62 conv=notrunc
 	truncate -s 100M "$file" # Increases version of the second chunk
 	files+=("$file")
 done
 
-chunks_info=$(saunafs_command fileinfo "${files[@]}" \
+chunks_info=$(saunafs fileinfo "${files[@]}" \
 		| awk -v meta_extension="${chunk_metadata_extension}" "$awkscript" \
 		| sed -e "s|CS${info[chunkserver0_port]}|$(get_metadata_path ${info[chunkserver0_hdd]})|" \
 		| sed -e "s|CS${info[chunkserver1_port]}|$(get_metadata_path ${info[chunkserver1_hdd]})|" \

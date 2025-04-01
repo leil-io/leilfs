@@ -7,7 +7,7 @@ CHUNKSERVERS=9 \
 
 cd "${info[mount0]}"
 touch file
-saunafs_command setgoal $goal file
+saunafs setgoal $goal file
 FILE_SIZE=1234567 file-generate file
 
 hdds=()

@@ -8,7 +8,7 @@ CHUNKSERVERS=4 \
 
 dir="${info[mount0]}/dir"
 mkdir "$dir"
-saunafs_command setgoal ec_3_1 "$dir"
+saunafs setgoal ec_3_1 "$dir"
 
 # Create a temporary file with some data
 file_size_mb=5

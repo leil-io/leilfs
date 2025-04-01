@@ -9,7 +9,7 @@ pseudorandom_init
 
 cd "${info[mount0]}"
 mkdir dir
-saunafs_command setgoal ec22 dir
+saunafs setgoal ec22 dir
 cd dir
 
 for i in {0..19} ; do

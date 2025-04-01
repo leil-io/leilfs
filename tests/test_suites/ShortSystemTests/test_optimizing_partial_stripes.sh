@@ -10,7 +10,7 @@ CHUNKSERVERS=4 \
 
 # Create a directory with a goal of xor3
 mkdir "${info[mount0]}/dir"
-saunafs_command setgoal xor3 "${info[mount0]}/dir"
+saunafs setgoal xor3 "${info[mount0]}/dir"
 stripe_size=$((3 * SAUNAFS_BLOCK_SIZE))
 
 # Create a background process which writes 1.5 stripes to some file and then sleeps forever

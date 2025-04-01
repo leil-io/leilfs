@@ -26,7 +26,7 @@ saunafs_wait_for_ready_chunkservers 5
 
 # Create files with 3x hdd goal
 mkdir dir
-saunafs_command setgoal three_hdds dir
+saunafs setgoal three_hdds dir
 FILE_SIZE=32K file-generate dir/file{1..10}
 
 expect_eventually_prints 30 'count_chunks_on_chunkservers {0..2}'

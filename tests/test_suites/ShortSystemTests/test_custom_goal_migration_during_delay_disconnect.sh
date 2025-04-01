@@ -22,7 +22,7 @@ saunafs_wait_for_ready_chunkservers 2
 
 # Create 20 files. Expect that for each file there are 2 chunk copies.
 FILE_SIZE=1K file-generate "${info[mount0]}"/file{1..20}
-assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
+assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
 
 # Stop one server with valid copy and start two new servers.
 saunafs_chunkserver_daemon 2 stop
@@ -31,12 +31,12 @@ saunafs_chunkserver_daemon 1 start
 saunafs_wait_for_ready_chunkservers 3
 
 # All chunks has 1 missing copy but replication shouldn't be started.
-assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 1 copy:' | wc -l)
+assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 1 copy:' | wc -l)
 sleep 10
-assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 1 copy:' | wc -l)
+assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 1 copy:' | wc -l)
 
 # Change goal. From now all chunks have 1 missing copy on 'raid' server and 1 on some other server.
-saunafs_command setgoal raid_goal "${info[mount0]}"/* > /dev/null
+saunafs setgoal raid_goal "${info[mount0]}"/* > /dev/null
 
 # Chunks should be replicated only on 'raid' server.
 # Replication to other servers is delayed because of disconnected chunkserver 2.
@@ -45,11 +45,11 @@ if is_windows_system; then
 else
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 0 | wc -l' '5 seconds'
 fi
-assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
+assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
 
 # Replication shouldn't be started for few more seconds.
 sleep 10
-assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
+assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
 assert_equals 0 $(find_chunkserver_metadata_chunks 1 | wc -l)
 
 # Expect one copy of each chunk to migrate to the last unlabeled server.
@@ -58,4 +58,4 @@ if is_windows_system; then
 else
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 1 | wc -l' '20 seconds'
 fi
-assert_equals 20 $(saunafs_command checkfile "${info[mount0]}"/* | grep 'with 3 copies:' | wc -l)
+assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 3 copies:' | wc -l)
