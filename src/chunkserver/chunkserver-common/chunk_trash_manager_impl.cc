@@ -27,38 +27,6 @@
 #include "chunk_trash_manager_impl.h"
 #include "config/cfg.h"
 
-namespace safs {
-
-// EXPERIMENTAL logging functions, private to this unit until further notice.
-// These functions include the error code and message in the log message.
-
-template <typename FormatType, typename... Args>
-void log_err(std::error_code error_code, const FormatType &format, Args &&...args) {
-	auto extended_format = fmt::format("{} (error_code: {}, message: {})", format,
-	                                   error_code.value(), error_code.message());
-
-	log_err(extended_format, std::forward<Args>(args)...);
-}
-
-template <typename FormatType, typename... Args>
-void log_err(saunafs_error_code error_code, const FormatType &format, Args &&...args) {
-	auto extended_format =
-	    fmt::format("{} (saunafs_error_code: {}, message: {})", format,
-	                static_cast<int>(error_code), saunafs_error_string(error_code));
-
-	log_err(extended_format, std::forward<Args>(args)...);
-}
-
-template <typename FormatType, typename... Args>
-void log_err(int error_code, const FormatType &format, Args &&...args) {
-	auto extended_format =
-	    fmt::format("{} (errno: {}, message: {})", format, error_code, std::strerror(error_code));
-
-	log_err(extended_format, std::forward<Args>(args)...);
-}
-
-}  // namespace safs
-
 namespace fs = std::filesystem;
 
 size_t ChunkTrashManagerImpl::availableThresholdGB = kDefaultAvailableThresholdGB;
@@ -94,14 +62,14 @@ std::string ChunkTrashManagerImpl::getTimeString(std::time_t time1) {
 
 #ifdef _WIN32
 	if (gmtime_s(&utcTime, &time1) != 0) {
-		safs::log_err(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
-		              std::strerror(errno));
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
+		                     std::strerror(errno));
 		return "";
 	}
 #else
 	if (gmtime_r(&time1, &utcTime) == nullptr) {
-		safs::log_err(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
-		              std::strerror(errno));
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
+		                     std::strerror(errno));
 		return "";
 	}
 #endif
@@ -119,8 +87,8 @@ std::time_t ChunkTrashManagerImpl::getTimeFromString(const std::string &timeStri
 	stringReader >> std::get_time(&time, kTimeStampFormat.c_str());
 	if (stringReader.fail()) {
 		errorCode = SAUNAFS_ERROR_EINVAL;
-		safs::log_err(static_cast<error_type>(errorCode), "Failed to parse time string: {}",
-		              timeString.c_str());
+		safs::log_error_code(static_cast<error_type>(errorCode), "Failed to parse time string: {}",
+		                     timeString.c_str());
 	}
 	return std::mktime(&time);
 }
@@ -131,7 +99,8 @@ ChunkTrashManagerImpl::error_type ChunkTrashManagerImpl::getMoveDestinationPath(
 	auto error_code = SAUNAFS_STATUS_OK;
 	if (filePath.find(sourceRoot) != 0) {
 		error_code = SAUNAFS_ERROR_EINVAL;
-		safs::log_err(error_code, "File path is outside the source root: {}", filePath.c_str());
+		safs::log_error_code(error_code, "File path is outside the source root: {}",
+		                     filePath.c_str());
 		return error_code;
 	}
 
@@ -143,15 +112,15 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath, const fs::path 
                                        const std::time_t &deletionTime) {
 	std::error_code errorCode_;
 	if (!fs::exists(filePath, errorCode_)) {
-		safs::log_err(errorCode_, "File does not exist: {}", filePath.string().c_str());
+		safs::log_error_code(errorCode_, "File does not exist: {}", filePath.string().c_str());
 		return SAUNAFS_ERROR_ENOENT;
 	}
 
 	const fs::path trashDir = getTrashDir(diskPath);
 	fs::create_directories(trashDir, errorCode_);
 	if (errorCode_) {
-		safs::log_err(errorCode_, "Failed to create trash directory: {}",
-		              trashDir.string().c_str());
+		safs::log_error_code(errorCode_, "Failed to create trash directory: {}",
+		                     trashDir.string().c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 
@@ -161,8 +130,8 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath, const fs::path 
 	auto errorCode = getMoveDestinationPath(filePath.string(), diskPath.string(), trashDir.string(),
 	                                        trashFilename);
 	if (errorCode != SAUNAFS_STATUS_OK) {
-		safs::log_err(errorCode, "Failed to get destination path for file: {}",
-		              filePath.string().c_str());
+		safs::log_error_code(errorCode, "Failed to get destination path for file: {}",
+		                     filePath.string().c_str());
 		return errorCode;
 	}
 
@@ -170,13 +139,15 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath, const fs::path 
 
 	fs::create_directories(fs::path(trashFilename).parent_path(), errorCode_);
 	if (errorCode_) {
-		safs::log_err(errorCode_, "Failed to create trash directory: {}", trashFilename.c_str());
+		safs::log_error_code(errorCode_, "Failed to create trash directory: {}",
+		                     trashFilename.c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 
 	fs::rename(filePath, trashFilename, errorCode_);
 	if (errorCode_) {
-		safs::log_err(errorCode_, "Failed to move file to trash: {}", filePath.string().c_str());
+		safs::log_error_code(errorCode_, "Failed to move file to trash: {}",
+		                     filePath.string().c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 
@@ -207,8 +178,8 @@ int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 		std::error_code errorCode_;
 		fs::create_directories(trashDir, errorCode_);
 		if (errorCode_) {
-			safs::log_err(errorCode_, "Failed to create trash directory: {}",
-			              trashDir.string().c_str());
+			safs::log_error_code(errorCode_, "Failed to create trash directory: {}",
+			                     trashDir.string().c_str());
 			return SAUNAFS_ERROR_NOTDONE;
 		}
 	}
@@ -220,17 +191,17 @@ int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 			const std::string filename = file.path().filename().string();
 			const std::string deletionTimeStr = filename.substr(filename.find_last_of('.') + 1);
 			if (!isValidTimestampFormat(deletionTimeStr)) {
-				safs::log_err(SAUNAFS_ERROR_EINVAL,
-				              "Invalid timestamp format in file: {}, skipping.",
-				              file.path().string().c_str());
+				safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+				                     "Invalid timestamp format in file: {}, skipping.",
+				                     file.path().string().c_str());
 				continue;
 			}
 			int errorCode;
 			const std::time_t deletionTime = getTimeFromString(deletionTimeStr, errorCode);
 			if (errorCode != SAUNAFS_STATUS_OK) {
-				safs::log_err(static_cast<error_type>(errorCode),
-				              "Failed to parse deletion time from file: {}, skipping.",
-				              file.path().string().c_str());
+				safs::log_error_code(static_cast<error_type>(errorCode),
+				                     "Failed to parse deletion time from file: {}, skipping.",
+				                     file.path().string().c_str());
 				continue;
 			}
 			getTrashIndex().add(deletionTime, file.path().string(), diskPath);
@@ -252,7 +223,7 @@ void ChunkTrashManagerImpl::removeExpiredFiles(const time_t &timeLimit, size_t b
 size_t ChunkTrashManagerImpl::checkAvailableSpace(const std::string &diskPath) {
 	struct statvfs stat {};
 	if (statvfs(diskPath.c_str(), &stat) != 0) {
-		safs::log_err(errno, "Failed to get file system statistics");
+		safs::log_error_code(errno, "Failed to get file system statistics");
 		return 0;
 	}
 	constexpr size_t kGiBMultiplier = 1 << 30;
@@ -294,13 +265,13 @@ bool ChunkTrashManagerImpl::isTrashPath(const std::string &filePath) {
 ChunkTrashManagerImpl::error_type ChunkTrashManagerImpl::removeFileFromTrash(
     const std::string &filePath) {
 	if (!isTrashPath(filePath)) {
-		safs::log_err(SAUNAFS_ERROR_EINVAL, "Invalid trash path: {}", filePath.c_str());
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL, "Invalid trash path: {}", filePath.c_str());
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	std::error_code errorCode;
 	fs::remove(filePath, errorCode);  // Remove the file or directory
 	if (errorCode) {
-		safs::log_err(errorCode, "Failed to remove file or directory: {}", filePath.c_str());
+		safs::log_error_code(errorCode, "Failed to remove file or directory: {}", filePath.c_str());
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 

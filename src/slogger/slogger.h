@@ -25,6 +25,7 @@
 #include <expected>
 
 #include "common/syslog_defs.h"
+#include "errors/saunafs_error_codes.h"
 
 #ifndef _WIN32
 #define SPDLOG_ENABLE_SYSLOG
@@ -93,6 +94,48 @@ void log_err(const FormatType &format, Args&&... args) {
 template<typename FormatType, typename... Args>
 void log_critical(const FormatType &format, Args&&... args) {
 	log(log_level::critical, fmt::runtime(format), std::forward<Args>(args)...);
+}
+
+/**
+ * @brief Log an error message with the given error code and format string appended.
+ *
+ * @param error_code The error code to log, expected to be std::error_code.
+ * @param format The format string for the log message.
+ * @param args The arguments to format the log message.
+ */
+template <typename FormatType, typename... Args>
+inline void log_error_code(std::error_code error_code, const FormatType &format, Args &&...args) {
+    auto extended_format = fmt::format("{} (error_code: {}, message: {})", format,
+                                     error_code.value(), error_code.message());
+    safs::log_err(extended_format, std::forward<Args>(args)...);
+}
+
+/**
+ * @brief Log an error message with the given error code and format string appended.
+ *
+ * @param error_code The error code to log, expected to be saunafs_error_code.
+ * @param format The format string for the log message.
+ * @param args The arguments to format the log message.
+ */
+template <typename FormatType, typename... Args>
+inline void log_error_code(saunafs_error_code error_code, const FormatType &format, Args &&...args) {
+    auto extended_format = fmt::format("{} (saunafs_error_code: {}, message: {})", format,
+                                     static_cast<int>(error_code), saunafs_error_string(error_code));
+    safs::log_err(extended_format, std::forward<Args>(args)...);
+}
+
+/**
+ * @brief Log an error message with the given error code and format string appended.
+ *
+ * @param error_code The error code to log, expected to be errno.
+ * @param format The format string for the log message.
+ * @param args The arguments to format the log message.
+ */
+template <typename FormatType, typename... Args>
+inline void log_error_code(int error_code, const FormatType &format, Args &&...args) {
+    auto extended_format = fmt::format("{} (errno: {}, message: {})", format,
+                                     error_code, std::strerror(error_code));
+    safs::log_err(extended_format, std::forward<Args>(args)...);
 }
 
 bool add_log_file(const char *path, log_level::LogLevel level, int max_file_size, int max_file_count);

@@ -217,38 +217,30 @@ int CmrDisk::unlinkChunk(IChunk *chunk) {
 		const std::time_t deletionTime = std::time(nullptr);
 
 		// Move meta file to trash
-		int result = ChunkTrashManager::moveToTrash(
-		    metaFile, metaDiskPath, deletionTime);
+		saunafs_error_code result = static_cast<saunafs_error_code>(
+		    ChunkTrashManager::moveToTrash(metaFile, metaDiskPath, deletionTime));
 		if (result != SAUNAFS_STATUS_OK) {
-			safs_pretty_errlog(LOG_ERR,
-			                   "Error moving meta file to trash: %s, error: %d",
-			                   metaFile.c_str(), result);
+			safs::log_error_code(result, "Error moving meta file to trash: {}", metaFile.c_str());
 			return result;
 		}
 
 		// Move data file to trash
-		result = ChunkTrashManager::moveToTrash(
-		    dataFile, dataDiskPath, deletionTime);
+		result = static_cast<saunafs_error_code>(
+		    ChunkTrashManager::moveToTrash(dataFile, dataDiskPath, deletionTime));
 		if (result != SAUNAFS_STATUS_OK) {
-			safs_pretty_errlog(LOG_ERR,
-			                   "Error moving data file to trash: %s, error: %d",
-			                   dataFile.c_str(), result);
+			safs::log_error_code(result, "Error moving data file to trash: {}", dataFile.c_str());
 			return result;
 		}
 	} else {
 		// Unlink the meta file
 		if (::unlink(metaFile.c_str()) != 0) {
-			safs_pretty_errlog(LOG_ERR,
-			                   "Error unlinking meta file: %s, (%d, %s)",
-			                   metaFile.c_str(), errno, strerror(errno));
+			safs::log_error_code(errno, "Error unlinking meta file: {}", metaFile.c_str());
 			return SAUNAFS_ERROR_NOTDONE;
 		}
 
 		// Unlink the data file
 		if (::unlink(dataFile.c_str()) != 0) {
-			safs_pretty_errlog(LOG_ERR,
-			                   "Error unlinking data file: %s, (%d, %s)",
-			                   dataFile.c_str(), errno, strerror(errno));
+			safs::log_error_code(errno, "Error unlinking data file: {}", dataFile.c_str());
 			return SAUNAFS_ERROR_NOTDONE;
 		}
 	}
