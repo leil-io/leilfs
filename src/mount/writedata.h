@@ -39,6 +39,5 @@ int write_data_flush(void *vid);
 uint64_t write_data_getmaxfleng(uint32_t inode);
 int write_data_flush_inode(uint32_t inode);
 int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
-		Attributes& attr);
-int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff,
-               size_t currentSize);
+                        Attributes &attr);
+int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff, size_t currentSize);
