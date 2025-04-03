@@ -382,6 +382,7 @@ uint32_t read_data_get_total_read_timeout_ms();
 bool read_data_get_prefetchxorstripes();
 
 void read_inode_ops(uint32_t inode);
+void read_inode_reconnect_and_clear_cache(uint32_t inode, uint32_t chunkIndex);
 ReadRecord *read_data_new(uint32_t inode);
 void read_data_end(ReadRecord *rr);
 int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,

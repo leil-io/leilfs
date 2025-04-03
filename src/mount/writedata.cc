@@ -455,7 +455,7 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 				lock.unlock();
 			}
 			locator->unlockChunk();
-			read_inode_ops(inodeData_->inode);
+			read_inode_reconnect_and_clear_cache(inodeData_->inode, chunkIndex_);
 
 			lock.lock();
 			inodeData_->minimumBlocksToWrite = writer.getMinimumBlockCountWorthWriting();
