@@ -31,6 +31,7 @@
 #include "common/richacl.h"
 #include "common/serialization_macros.h"
 #include "common/small_vector.h"
+#include "common/type_defs.h"
 #include "protocol/lock_info.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
@@ -49,7 +50,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, updateCredentials, SAU_CLTOMA_UPDATE
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseMknod, SAU_CLTOMA_FUSE_MKNOD, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		LegacyString<uint8_t>, name,
 		uint8_t, nodeType,
 		uint16_t, mode,
@@ -60,7 +61,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseMknod, SAU_CLTOMA_FUSE_MKNOD, 0,
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseMkdir, SAU_CLTOMA_FUSE_MKDIR, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		LegacyString<uint8_t>, name,
 		uint16_t, mode,
 		uint16_t, umask,
@@ -71,7 +72,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseMkdir, SAU_CLTOMA_FUSE_MKDIR, 0,
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseDeleteAcl, SAU_CLTOMA_FUSE_DELETE_ACL, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		AclType, type)
@@ -79,7 +80,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseGetAcl, SAU_CLTOMA_FUSE_GET_ACL, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		AclType, type)
@@ -90,7 +91,7 @@ SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseSetAcl, kRichACL, 2)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseSetAcl, SAU_CLTOMA_FUSE_SET_ACL, kLegacyACL,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		AclType, type,
@@ -98,7 +99,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseSetAcl, SAU_CLTOMA_FUSE_SET_ACL, kPosixACL,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		AclType, type,
@@ -106,7 +107,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseSetAcl, SAU_CLTOMA_FUSE_SET_ACL, kRichACL,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		RichACL, acl)
@@ -168,14 +169,14 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseGetGoal, SAU_CLTOMA_FUSE_GETGOAL, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint8_t, gmode)
 
 // SAU_CLTOMA_FUSE_SETGOAL
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseSetGoal, SAU_CLTOMA_FUSE_SETGOAL, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		std::string, goalName,
 		uint8_t, smode)
@@ -210,7 +211,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, message_id,
 		uint32_t, uid,
 		uint32_t, gid,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, chunk_index,
 		uint32_t, chunk_count)
 
@@ -257,7 +258,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseTruncate, SAU_CLTOMA_FUSE_TRUNCATE, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		bool, isOpened,
 		uint32_t, uid,
 		uint32_t, gid,
@@ -266,7 +267,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseTruncateEnd, SAU_CLTOMA_FUSE_TRUNCATE_END, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		uint64_t, length,
@@ -276,7 +277,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseFlock, SAU_CLTOMA_FUSE_FLOCK, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint64_t, owner,
 		uint32_t, requestId,
 		uint16_t, operation)
@@ -289,14 +290,14 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseGetlk, SAU_CLTOMA_FUSE_GETLK, 0,
 		uint32_t, message_id,
-		uint32_t, inode,
+		inode_t, inode,
 		uint64_t, owner,
 		safs_locks::FlockWrapper, lock)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseSetlk, SAU_CLTOMA_FUSE_SETLK, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint64_t, owner,
 		uint32_t, requestId,
 		safs_locks::FlockWrapper, lock)
@@ -320,7 +321,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, manageLocksList, SAU_CLTOMA_MANAGE_LOCKS_LIST, kInode,
-		uint32_t, inode,
+		inode_t, inode,
 		safs_locks::Type, type,
 		bool, pending,
 		uint64_t, start,
@@ -332,7 +333,7 @@ SAUNAFS_DEFINE_PACKET_VERSION(cltoma, manageLocksUnlock, kInode, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, manageLocksUnlock, SAU_CLTOMA_MANAGE_LOCKS_UNLOCK, kSingle,
 		safs_locks::Type, type,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, sessionid,
 		uint64_t, owner,
 		uint64_t, start,
@@ -341,18 +342,18 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, manageLocksUnlock, SAU_CLTOMA_MANAGE_LOCKS_UNLOCK, kInode,
 		safs_locks::Type, type,
-		uint32_t, inode)
+		inode_t, inode)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, wholePathLookup, SAU_CLTOMA_WHOLE_PATH_LOOKUP, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		std::string, name,
 		uint32_t, uid,
 		uint32_t, gid)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fullPathByInode, SAU_CLTOMA_FULL_PATH_BY_INODE, 0,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid)
 
@@ -374,7 +375,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, recursiveRemove, SAU_CLTOMA_RECURSIVE_REMOVE, 0,
 		uint32_t, msgid,
 		uint32_t, jobId,
-		uint32_t, inode,
+		inode_t, inode,
 		std::string, file_name,
 		uint32_t, uid,
 		uint32_t, gid)
@@ -383,14 +384,14 @@ SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetDirLegacy, kLegacyClient, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetDir, kClientAbleToProcessDirentIndex, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetDirLegacy, SAU_CLTOMA_FUSE_GETDIR, kLegacyClient,
 		uint32_t, message_id,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		uint64_t, first_entry,
 		uint64_t, number_of_entries)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetDir, SAU_CLTOMA_FUSE_GETDIR, kClientAbleToProcessDirentIndex,
 		uint32_t, message_id,
-		uint32_t, inode,
+		inode_t, inode,
 		uint32_t, uid,
 		uint32_t, gid,
 		uint64_t, first_entry,
@@ -430,8 +431,8 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, snapshot, SAU_CLTOMA_FUSE_SNAPSHOT, 0,
 		uint32_t, msgid,
 		uint32_t, jobid,
-		uint32_t, inode,
-		uint32_t, inode_dst,
+		inode_t, inode,
+		inode_t, inode_dst,
 		std::string, name_dst,
 		uint32_t, uid,
 		uint32_t, gid,
@@ -461,13 +462,13 @@ namespace cltoma {
 namespace fuseReadChunk {
 
 inline void serialize(std::vector<uint8_t>& destination,
-		uint32_t messageId, uint32_t inode, uint32_t chunkIndex) {
+		uint32_t messageId, inode_t inode, uint32_t chunkIndex) {
 	serializePacket(destination, SAU_CLTOMA_FUSE_READ_CHUNK, 0, messageId, inode,
 			chunkIndex);
 }
 
 inline void deserialize(const std::vector<uint8_t>& source,
-		uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex) {
+		uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) {
 	verifyPacketVersionNoHeader(source, 0);
 	deserializeAllPacketDataNoHeader(source, messageId, inode, chunkIndex);
 }
@@ -477,13 +478,13 @@ inline void deserialize(const std::vector<uint8_t>& source,
 namespace fuseWriteChunk {
 
 inline void serialize(std::vector<uint8_t>& destination,
-		uint32_t messageId, uint32_t inode, uint32_t chunkIndex, uint32_t lockId) {
+		uint32_t messageId, inode_t inode, uint32_t chunkIndex, uint32_t lockId) {
 	serializePacket(destination, SAU_CLTOMA_FUSE_WRITE_CHUNK, 0,
 			messageId, inode, chunkIndex, lockId);
 }
 
 inline void deserialize(const std::vector<uint8_t>& source,
-		uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex, uint32_t& lockId) {
+		uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) {
 	verifyPacketVersionNoHeader(source, 0);
 	deserializeAllPacketDataNoHeader(source, messageId, inode, chunkIndex, lockId);
 }
@@ -494,7 +495,7 @@ namespace fuseWriteChunkEnd {
 
 inline void serialize(std::vector<uint8_t>& destination,
 		uint32_t messageId, uint64_t chunkId, uint32_t lockId,
-		uint32_t inode, uint64_t fileLength) {
+		inode_t inode, uint64_t fileLength) {
 	serializePacket(destination, SAU_CLTOMA_FUSE_WRITE_CHUNK_END, 0,
 			messageId, chunkId, lockId, inode, fileLength);
 }
@@ -502,7 +503,7 @@ inline void serialize(std::vector<uint8_t>& destination,
 
 inline void deserialize(const std::vector<uint8_t>& source,
 		uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-		uint32_t& inode, uint64_t& fileLength) {
+		inode_t& inode, uint64_t& fileLength) {
 	verifyPacketVersionNoHeader(source, 0);
 	deserializeAllPacketDataNoHeader(source, messageId, chunkId, lockId, inode, fileLength);
 }

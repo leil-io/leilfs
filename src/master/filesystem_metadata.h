@@ -42,7 +42,7 @@ struct FilesystemMetadata {
 public:
 	xattr_inode_entry *xattr_inode_hash[XATTR_INODE_HASH_SIZE];
 	xattr_data_entry *xattr_data_hash[XATTR_DATA_HASH_SIZE];
-	IdPoolDetainer<uint32_t, uint32_t> inode_pool;
+	IdPoolDetainer<inode_t, uint32_t> inode_pool;
 	AclStorage acl_storage;
 	TrashPathContainer trash;
 	ReservedPathContainer reserved;
@@ -52,17 +52,17 @@ public:
 	FileLocks flock_locks;
 	FileLocks posix_locks;
 
-	uint32_t maxnodeid;
+	inode_t maxnodeid;
 	uint32_t nextsessionid;
-	uint32_t nodes;
+	inode_t nodes;
 	uint64_t metaversion;
 	uint64_t trashspace;
 	uint64_t reservedspace;
-	uint32_t trashnodes;
-	uint32_t reservednodes;
-	uint32_t filenodes;
-	uint32_t dirnodes;
-	uint32_t linknodes;
+	inode_t trashnodes;
+	inode_t reservednodes;
+	inode_t filenodes;
+	inode_t dirnodes;
+	inode_t linknodes;
 
 	QuotaDatabase quota_database;
 

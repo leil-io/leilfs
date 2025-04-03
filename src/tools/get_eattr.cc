@@ -38,7 +38,8 @@ static void get_eattr_usage() {
 static int get_eattr(const char *fname, uint8_t mode) {
 	uint8_t reqbuff[17], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
+	uint32_t cmd, leng;
+	inode_t inode;
 	uint8_t fn, dn, i, j;
 	uint32_t fcnt[EATTR_BITS];
 	uint32_t dcnt[EATTR_BITS];

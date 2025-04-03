@@ -142,7 +142,7 @@ static const std::array<std::function<BytesWritten
 	 &InodeMasterInfo::write        //0xFU
 }};
 
-BytesWritten special_write(Inode ino, const Context &ctx, const char *buf,
+BytesWritten special_write(inode_t ino, const Context &ctx, const char *buf,
 	                           size_t size, off_t off, FileInfo *fi) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {

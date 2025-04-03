@@ -63,6 +63,7 @@
 #include "common/serialized_goal.h"
 #include "common/sessions_file.h"
 #include "common/sockets.h"
+#include "common/type_defs.h"
 #include "common/user_groups.h"
 #include "config/cfg.h"
 #include "master/changelog.h"
@@ -115,7 +116,7 @@ struct chunklist {
 	uint64_t fleng;     // file length
 	uint32_t lockid;    // lock ID
 	uint32_t qid;       // queryid for answer
-	uint32_t inode;     // inode
+	inode_t inode;      // inode
 	uint32_t uid;
 	uint32_t gid;
 	uint32_t auid;
@@ -128,7 +129,7 @@ struct chunklist {
 struct session {
 	using GroupCache = GenericLruCache<uint32_t, FsContext::GroupsContainer, 1024>;
 
-	using OpenedFilesSet = std::set<uint32_t>;
+	using OpenedFilesSet = std::set<inode_t>;
 
 	uint32_t sessionid;
 	char *info;
@@ -146,7 +147,7 @@ struct session {
 	uint32_t rootgid;
 	uint32_t mapalluid;
 	uint32_t mapallgid;
-	uint32_t rootinode;
+	inode_t rootinode;
 	uint32_t disconnected;  // 0 = connected ; other = disconnection timestamp
 	uint32_t nsocks;        // >0 - connected (number of active connections) ; 0 - not connected
 	std::array<uint32_t,SESSION_STATS> currentopstats;
@@ -277,7 +278,7 @@ public:
 			uint32_t messageId, uint64_t fileLength, uint64_t chunkId, uint32_t chunkVersion,
 			const std::vector<ChunkTypeWithAddress>& chunkCopies) const = 0;
 	virtual void deserializeFuseReadChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex) const = 0;
+			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) const = 0;
 
 	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
 			uint32_t messageId, uint8_t status) const = 0;
@@ -286,13 +287,13 @@ public:
 			uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
 			const std::vector<ChunkTypeWithAddress>& chunkCopies) const = 0;
 	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const = 0;
+			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const = 0;
 
 	virtual void serializeFuseWriteChunkEnd(std::vector<uint8_t>& packetBuffer,
 			uint32_t messageId, uint8_t status) const = 0;
 	virtual void deserializeFuseWriteChunkEnd(const std::vector<uint8_t>& packetBuffer,
 			uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-			uint32_t& inode, uint64_t& fileLength) const = 0;
+			inode_t& inode, uint64_t& fileLength) const = 0;
 
 	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
 			uint32_t type /* FUSE_TRUNCATE | FUSE_TRUNCATE_END*/,
@@ -301,7 +302,7 @@ public:
 			uint32_t type /* FUSE_TRUNCATE | FUSE_TRUNCATE_END*/,
 			uint32_t messageId, const Attributes& attributes) const = 0;
 	virtual void deserializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, bool& isOpened,
+			uint32_t& messageId, inode_t& inode, bool& isOpened,
 			uint32_t& uid, uint32_t& gid, uint64_t& length) const = 0;
 };
 
@@ -326,7 +327,7 @@ public:
 	}
 
 	virtual void deserializeFuseReadChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex) const {
+			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) const {
 		deserializeAllLegacyPacketDataNoHeader(packetBuffer, messageId, inode, chunkIndex);
 	}
 
@@ -347,7 +348,7 @@ public:
 	}
 
 	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const {
+			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const {
 		deserializeAllLegacyPacketDataNoHeader(packetBuffer, messageId, inode, chunkIndex);
 		lockId = 1;
 	}
@@ -359,7 +360,7 @@ public:
 
 	virtual void deserializeFuseWriteChunkEnd(const std::vector<uint8_t>& packetBuffer,
 			uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-			uint32_t& inode, uint64_t& fileLength) const {
+			inode_t& inode, uint64_t& fileLength) const {
 		deserializeAllLegacyPacketDataNoHeader(packetBuffer,
 				messageId, chunkId, inode, fileLength);
 		lockId = 1;
@@ -391,7 +392,7 @@ public:
 	}
 
 	virtual void deserializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, bool& isOpened,
+			uint32_t& messageId, inode_t& inode, bool& isOpened,
 			uint32_t& uid, uint32_t& gid, uint64_t& length) const {
 		deserializeAllLegacyPacketDataNoHeader(packetBuffer,
 				messageId, inode, isOpened, uid, gid, length);
@@ -418,7 +419,7 @@ public:
 	}
 
 	virtual void deserializeFuseReadChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex) const {
+			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) const {
 		cltoma::fuseReadChunk::deserialize(packetBuffer, messageId, inode, chunkIndex);
 	}
 
@@ -436,7 +437,7 @@ public:
 	}
 
 	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const {
+			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const {
 		cltoma::fuseWriteChunk::deserialize(packetBuffer, messageId, inode, chunkIndex, lockId);
 	}
 
@@ -447,7 +448,7 @@ public:
 
 	virtual void deserializeFuseWriteChunkEnd(const std::vector<uint8_t>& packetBuffer,
 			uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-			uint32_t& inode, uint64_t& fileLength) const {
+			inode_t& inode, uint64_t& fileLength) const {
 		cltoma::fuseWriteChunkEnd::deserialize(packetBuffer,
 				messageId, chunkId, lockId, inode, fileLength);
 	}
@@ -474,7 +475,7 @@ public:
 	}
 
 	virtual void deserializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint32_t& inode, bool& isOpened,
+			uint32_t& messageId, inode_t& inode, bool& isOpened,
 			uint32_t& uid, uint32_t& gid, uint64_t& length) const {
 		cltoma::fuseTruncate::deserialize(packetBuffer,
 				messageId, inode, isOpened, uid, gid, length);
@@ -825,7 +826,7 @@ int matoclserv_load_sessions() {
 }
 #undef MFSSIGNATURE
 
-int matoclserv_insert_openfile(session *cr, uint32_t inode) {
+int matoclserv_insert_openfile(session *cr, inode_t inode) {
 	if (cr->openedfiles.contains(inode)) {
 		return SAUNAFS_STATUS_OK;  // file already acquired - nothing to do
 	}
@@ -838,7 +839,7 @@ int matoclserv_insert_openfile(session *cr, uint32_t inode) {
 	return status;
 }
 
-void matoclserv_add_open_file(uint32_t sessionid,uint32_t inode) {
+void matoclserv_add_open_file(uint32_t sessionid, inode_t inode) {
 	session *asesdata;
 
 	for (asesdata = sessionshead ; asesdata && asesdata->sessionid!=sessionid; asesdata=asesdata->next) ;
@@ -858,7 +859,7 @@ void matoclserv_add_open_file(uint32_t sessionid,uint32_t inode) {
 	asesdata->openedfiles.insert(inode);
 }
 
-void matoclserv_remove_open_file(uint32_t sessionid, uint32_t inode) {
+void matoclserv_remove_open_file(uint32_t sessionid, inode_t inode) {
 	session *asesdata;
 
 	for (asesdata = sessionshead; asesdata && asesdata->sessionid != sessionid; asesdata = asesdata->next) {
@@ -1422,7 +1423,8 @@ void matoclserv_info(matoclserventry *eptr,const uint8_t *data,uint32_t length) 
 }
 
 void matoclserv_fstest_info(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t loopstart,loopend,files,ugfiles,mfiles,chunks,ugchunks,mchunks;
+	uint32_t loopstart,loopend,chunks,ugchunks,mchunks;
+	inode_t files,ugfiles,mfiles;
 	uint8_t *ptr;
 	(void)data;
 	if (length!=0) {
@@ -1643,7 +1645,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 		eptr->registered = (tools) ? ClientState::kOldTools : ClientState::kRegistered;
 		return;
 	} else if (memcmp(data,FUSE_REGISTER_BLOB_ACL,64)==0) {
-		uint32_t rootinode;
+		inode_t rootinode;
 		uint8_t sesflags;
 		uint8_t mingoal,maxgoal;
 		uint32_t mintrashtime,maxtrashtime;
@@ -1942,7 +1944,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr,const uint8_t *data,u
 
 	ptr = data;
 	length >>= 2;
-	std::set<uint32_t> inodes_to_reserve;
+	std::set<inode_t> inodes_to_reserve;
 	// read in advance all the files to reserve
 	while (length) {
 		length--;
@@ -1953,7 +1955,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr,const uint8_t *data,u
 	changelog_disable_flush();
 	auto it = eptr->sesdata->openedfiles.begin();
 	while (it != eptr->sesdata->openedfiles.end()) {
-		uint32_t openFileIno = *it;
+		inode_t openFileIno = *it;
 		if (!inodes_to_reserve.contains(openFileIno)) {
 			// erase files not belonging to the reserve inodes list provided
 			fs_release(context, openFileIno, eptr->sesdata->sessionid);
@@ -2001,7 +2003,8 @@ void matoclserv_fuse_statfs(matoclserventry *eptr,const uint8_t *data,uint32_t l
 }
 
 void matoclserv_fuse_access(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint8_t modemask;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -2029,7 +2032,8 @@ void matoclserv_fuse_access(matoclserventry *eptr,const uint8_t *data,uint32_t l
 
 void matoclserv_sau_whole_path_lookup(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint32_t msgid;
-	uint32_t inode, found_inode;
+	inode_t inode;
+	inode_t found_inode;
 	std::string path;
 	uint32_t uid, gid;
 	Attributes attr;
@@ -2053,7 +2057,7 @@ void matoclserv_sau_whole_path_lookup(matoclserventry *eptr, const uint8_t *data
 
 void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint32_t msgid;
-	uint32_t inode;
+	inode_t inode;
 	std::string fullPath;
 	uint32_t uid, gid;
 	uint8_t status = SAUNAFS_STATUS_OK;
@@ -2133,10 +2137,11 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 }
 
 void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint8_t nleng;
 	const uint8_t *name;
-	uint32_t newinode;
+	inode_t newinode;
 	Attributes attr;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -2175,7 +2180,8 @@ void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t l
 }
 
 void matoclserv_fuse_getattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	Attributes attr;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -2207,7 +2213,8 @@ void matoclserv_fuse_getattr(matoclserventry *eptr,const uint8_t *data,uint32_t 
 }
 
 void matoclserv_fuse_setattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint16_t setmask;
 	Attributes attr;
 	uint32_t msgid;
@@ -2262,7 +2269,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 	// Deserialize the request
 	std::vector<uint8_t> request(data, data + header.length);
 	uint8_t status = SAUNAFS_STATUS_OK;
-	uint32_t messageId, inode, uid, gid, type;
+	uint32_t messageId, uid, gid, type;
+	inode_t inode;
 	uint32_t lockId = 0;
 	bool opened;
 	uint64_t chunkId, length;
@@ -2375,7 +2383,7 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 }
 
 void matoclserv_fuse_readlink(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t msgid;
 	uint8_t *ptr;
 	uint8_t status;
@@ -2407,12 +2415,12 @@ void matoclserv_fuse_readlink(matoclserventry *eptr,const uint8_t *data,uint32_t
 }
 
 void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint8_t nleng;
 	const uint8_t *name, *path;
 	uint32_t uid, gid;
 	uint32_t pleng;
-	uint32_t newinode;
+	inode_t newinode;
 	Attributes attr;
 	uint32_t msgid;
 	uint8_t status;
@@ -2470,7 +2478,8 @@ void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t 
 }
 
 void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	uint32_t messageId, inode, uid, gid, rdev;
+	uint32_t messageId, uid, gid, rdev;
+	inode_t inode;
 	LegacyString<uint8_t> name;
 	uint8_t type;
 	uint16_t mode, umask;
@@ -2487,7 +2496,7 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 				"Unknown packet type for matoclserv_fuse_mknod: " + std::to_string(header.type));
 	}
 
-	uint32_t newinode;
+	inode_t newinode;
 	Attributes attr;
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
@@ -2515,7 +2524,8 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 }
 
 void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	uint32_t messageId, inode, uid, gid;
+	uint32_t messageId, uid, gid;
+	inode_t inode;
 	LegacyString<uint8_t> name;
 	bool copysgid;
 	uint16_t mode, umask;
@@ -2538,7 +2548,7 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 				"Unknown packet type for matoclserv_fuse_mkdir: " + std::to_string(header.type));
 	}
 
-	uint32_t newinode;
+	inode_t newinode;
 	Attributes attr;
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
@@ -2565,7 +2575,8 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 }
 
 void matoclserv_fuse_unlink(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint8_t nleng;
 	const uint8_t *name;
 	uint32_t msgid;
@@ -2610,7 +2621,8 @@ void matoclserv_fuse_recursive_remove_wake_up(uint32_t session_id, uint32_t msgi
 }
 
 void matoclserv_fuse_recursive_remove(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t parent_inode, uid, gid;
+	inode_t parent_inode;
+	uint32_t uid, gid;
 	uint32_t msgid;
 	uint8_t status;
 
@@ -2632,7 +2644,8 @@ void matoclserv_fuse_recursive_remove(matoclserventry *eptr, const uint8_t *data
 }
 
 void matoclserv_fuse_rmdir(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint8_t nleng;
 	const uint8_t *name;
 	uint32_t msgid;
@@ -2669,7 +2682,9 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr,const uint8_t *data,uint32_t le
 }
 
 void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,inode_src,inode_dst;
+	inode_t inode;
+	inode_t inode_src;
+	inode_t inode_dst;
 	uint8_t nleng_src,nleng_dst;
 	const uint8_t *name_src,*name_dst;
 	uint32_t uid,gid;
@@ -2727,11 +2742,12 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 }
 
 void matoclserv_fuse_link(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,inode_dst;
+	inode_t inode;
+	inode_t inode_dst;
 	uint8_t nleng_dst;
 	const uint8_t *name_dst;
 	uint32_t uid,gid;
-	uint32_t newinode;
+	inode_t newinode;
 	Attributes attr;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -2773,7 +2789,8 @@ void matoclserv_fuse_link(matoclserventry *eptr,const uint8_t *data,uint32_t len
 }
 
 void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, const uint8_t *data) {
-	uint32_t message_id, inode, uid, gid;
+	uint32_t message_id, uid, gid;
+	inode_t inode;
 	uint64_t first_entry, number_of_entries;
 	MessageBuffer buffer;
 
@@ -2826,7 +2843,8 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 }
 
 void matoclserv_fuse_getdir(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint8_t flags;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -2871,7 +2889,8 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const uint8_t *data,uint32_t l
 }
 
 void matoclserv_fuse_open(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint8_t flags;
 	Attributes attr;
 	uint32_t msgid;
@@ -2924,7 +2943,7 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	uint64_t fleng;
 	uint32_t version;
 	uint32_t messageId;
-	uint32_t inode;
+	inode_t inode;
 	uint32_t index;
 	std::vector<uint8_t> outMessage;
 	const PacketSerializer* serializer = PacketSerializer::getSerializer(header.type, eptr->version);
@@ -2961,7 +2980,8 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 }
 
 void matoclserv_chunks_info(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t message_id{0}, inode, chunk_index, chunk_count, uid, gid;
+	uint32_t message_id{0}, chunk_index, chunk_count, uid, gid;
+	inode_t inode;
 	PacketVersion version;
 	uint8_t status;
 	std::vector<ChunkWithAddressAndLabel> chunks;
@@ -2994,7 +3014,7 @@ void matoclserv_chunks_info(matoclserventry *eptr, const uint8_t *data, uint32_t
 void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
 	sassert(header.type == CLTOMA_FUSE_WRITE_CHUNK || header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK);
 	uint8_t status;
-	uint32_t inode;
+	inode_t inode;
 	uint32_t chunkIndex;
 	uint64_t fileLength;
 	uint64_t chunkId;
@@ -3056,7 +3076,7 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr,
 	uint32_t messageId;
 	uint64_t chunkId;
 	uint32_t lockId;
-	uint32_t inode;
+	inode_t inode;
 	uint64_t fileLength;
 	uint8_t status;
 	std::vector<uint8_t> outMessage;
@@ -3078,7 +3098,8 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr,
 }
 
 void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t inode, uid, gid;
+	inode_t inode;
+	uint32_t uid,gid;
 	uint32_t msgid;
 	uint32_t chunksnotchanged, chunkserased, chunksrepaired;
 	uint8_t *ptr;
@@ -3117,7 +3138,7 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 }
 
 void matoclserv_fuse_check(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t chunkcount[CHUNK_MATRIX_SIZE];
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -3175,7 +3196,7 @@ void matoclserv_fuse_request_task_id(matoclserventry *eptr, const uint8_t *data,
 }
 
 void matoclserv_fuse_gettrashtime(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint8_t gmode;
 	TrashtimeMap fileTrashtimes, dirTrashtimes;
 	uint32_t fileTrashtimesSize, dirTrashtimesSize;
@@ -3218,7 +3239,7 @@ void matoclserv_fuse_settrashtime_wake_up(uint32_t session_id, uint32_t msgid,
 	if (status != SAUNAFS_STATUS_OK) {
 		serializeLegacyPacket(reply, MATOCL_FUSE_SETTRASHTIME, msgid, status);
 	} else {
-		uint32_t changed, notchanged, notpermitted;
+		inode_t changed, notchanged, notpermitted;
 		changed = (*settrashtime_stats)[SetTrashtimeTask::kChanged];
 		notchanged = (*settrashtime_stats)[SetTrashtimeTask::kNotChanged];
 		notpermitted = (*settrashtime_stats)[SetTrashtimeTask::kNotPermitted];
@@ -3229,7 +3250,8 @@ void matoclserv_fuse_settrashtime_wake_up(uint32_t session_id, uint32_t msgid,
 }
 
 void matoclserv_fuse_settrashtime(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	uint32_t inode, uid, trashtime, msgid;
+	inode_t inode;
+	uint32_t uid, trashtime, msgid;
 	uint8_t smode, status;
 
 	deserializeAllLegacyPacketDataNoHeader(data, header.length, msgid, inode,
@@ -3271,7 +3293,7 @@ void matoclserv_fuse_settrashtime(matoclserventry *eptr, PacketHeader header, co
 }
 
 void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t msgid;
 	uint8_t gmode;
 
@@ -3333,7 +3355,7 @@ void matoclserv_fuse_setgoal_wake_up(uint32_t session_id, uint32_t msgid, uint32
 
 	MessageBuffer reply;
 	if (status == SAUNAFS_STATUS_OK) {
-		uint32_t changed, notchanged, notpermitted;
+		inode_t changed, notchanged, notpermitted;
 		changed = (*setgoal_stats)[SetGoalTask::kChanged];
 		notchanged = (*setgoal_stats)[SetGoalTask::kNotChanged];
 		notpermitted = (*setgoal_stats)[SetGoalTask::kNotPermitted];
@@ -3355,7 +3377,9 @@ void matoclserv_fuse_setgoal_wake_up(uint32_t session_id, uint32_t msgid, uint32
 }
 
 void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	uint32_t inode, uid, msgid;
+	inode_t inode;
+	uint32_t uid;
+	uint32_t msgid;
 	uint8_t goalId = 0, smode;
 	uint8_t status = SAUNAFS_STATUS_OK;
 
@@ -3414,7 +3438,7 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 }
 
 void matoclserv_fuse_geteattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t msgid;
 	uint32_t feattrtab[16],deattrtab[16];
 	uint8_t i,fn,dn,gmode;
@@ -3464,10 +3488,11 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 }
 
 void matoclserv_fuse_seteattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid;
+	inode_t inode;
+	uint32_t uid;
 	uint32_t msgid;
 	uint8_t eattr,smode;
-	uint32_t changed,notchanged,notpermitted;
+	inode_t changed,notchanged,notpermitted;
 	uint8_t *ptr;
 	uint8_t status;
 	if (length!=14) {
@@ -3493,7 +3518,8 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 }
 
 void matoclserv_fuse_getxattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid, gid;
 	uint32_t msgid;
 	uint8_t opened;
 	uint8_t mode;
@@ -3567,7 +3593,8 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 }
 
 void matoclserv_fuse_setxattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode,uid,gid;
+	inode_t inode;
+	uint32_t uid, gid;
 	uint32_t msgid;
 	const uint8_t *attrname,*attrvalue;
 	uint8_t opened;
@@ -3614,7 +3641,10 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 }
 
 void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t inode,inode_src,uid,gid;
+	inode_t inode;
+	inode_t inode_src;
+	uint32_t uid;
+	uint32_t gid;
 	uint32_t msgid;
 	uint8_t *ptr;
 	uint8_t status;
@@ -3654,7 +3684,8 @@ void matoclserv_fuse_snapshot_wake_up(uint32_t type, uint32_t session_id, uint32
 }
 
 void matoclserv_fuse_snapshot(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	uint32_t inode, inode_dst;
+	inode_t inode;
+	inode_t inode_dst;
 	uint32_t uid, gid;
 	uint8_t canoverwrite;
 	uint32_t msgid;
@@ -3693,7 +3724,7 @@ void matoclserv_fuse_snapshot(matoclserventry *eptr, PacketHeader header, const 
 constexpr uint8_t kDirStatsEmptyPayload = 5;
 void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	constexpr uint8_t kDirStatsLegacyFullPayload = 64;
-	uint32_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0, chunks = 0;
+	inode_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0, chunks = 0;
 	uint64_t leng = 0, size = 0, rsize = 0;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -3734,7 +3765,7 @@ void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,u
 
 void matoclserv_fuse_getdirstats(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	constexpr uint8_t kDirStatsFullPayload = 48;
-	uint32_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0, chunks = 0;
+	inode_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0, chunks = 0;
 	uint64_t leng = 0, size = 0, rsize = 0;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -3798,7 +3829,7 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const PacketHeader &header,
 }
 
 void matoclserv_fuse_getdetachedattr(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 	uint32_t msgid;
 	uint8_t dtype;
@@ -3827,7 +3858,7 @@ void matoclserv_fuse_getdetachedattr(matoclserventry *eptr,const uint8_t *data,u
 }
 
 void matoclserv_fuse_gettrashpath(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t msgid;
 	uint8_t *ptr;
 	uint8_t status;
@@ -3855,7 +3886,7 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr,const uint8_t *data,uint
 }
 
 void matoclserv_fuse_settrashpath(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	const uint8_t *path;
 	uint32_t pleng;
 	uint32_t msgid;
@@ -3886,7 +3917,7 @@ void matoclserv_fuse_settrashpath(matoclserventry *eptr,const uint8_t *data,uint
 }
 
 void matoclserv_fuse_undel(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t msgid;
 	uint8_t status;
 	uint8_t *ptr;
@@ -3904,7 +3935,7 @@ void matoclserv_fuse_undel(matoclserventry *eptr,const uint8_t *data,uint32_t le
 }
 
 void matoclserv_fuse_purge(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t msgid;
 	uint8_t *ptr;
 	uint8_t status;
@@ -3952,7 +3983,8 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const PacketHeader &head
 }
 
 void matoclserv_fuse_deleteacl(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t messageId, inode, uid, gid;
+	uint32_t messageId, uid, gid;
+	inode_t inode;
 	AclType type;
 	cltoma::fuseDeleteAcl::deserialize(data, length, messageId, inode, uid, gid, type);
 
@@ -3965,7 +3997,8 @@ void matoclserv_fuse_deleteacl(matoclserventry *eptr, const uint8_t *data, uint3
 }
 
 void matoclserv_fuse_getacl(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t messageId, inode, uid, gid;
+	uint32_t messageId, uid, gid;
+	inode_t inode;
 	AclType type;
 	cltoma::fuseGetAcl::deserialize(data, length, messageId, inode, uid, gid, type);
 	safs::log_trace("master.cltoma_fuse_getacl: {}", inode);
@@ -4044,7 +4077,7 @@ static void matoclserv_lock_wake_up(std::vector<FileLocks::Owner> &owners, safs_
 void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 	uint32_t messageId;
-	uint32_t inode;
+	inode_t inode;
 	uint64_t owner;
 
 	uint32_t requestId;
@@ -4089,7 +4122,7 @@ void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t 
 void matoclserv_fuse_getlk(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 	uint32_t message_id;
-	uint32_t inode;
+	inode_t inode;
 	uint64_t owner;
 
 	safs_locks::FlockWrapper lock_info;
@@ -4128,7 +4161,7 @@ void matoclserv_fuse_getlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 	uint32_t message_id;
-	uint32_t inode;
+	inode_t inode;
 	uint64_t owner;
 
 	uint32_t request_id;
@@ -4191,7 +4224,7 @@ void matoclserv_list_defective_files(matoclserventry *eptr, const uint8_t *data,
 
 void matoclserv_manage_locks_list(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
-	uint32_t inode;
+	inode_t inode;
 	safs_locks::Type type;
 	bool pending;
 	uint64_t start;
@@ -4234,7 +4267,7 @@ void matoclserv_manage_locks_list(matoclserventry *eptr, const uint8_t *data, ui
 
 void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
-	uint32_t inode;
+	inode_t inode;
 	uint64_t owner;
 	uint32_t sessionid;
 	safs_locks::Type type;
@@ -4353,7 +4386,8 @@ void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, u
 }
 
 void matoclserv_fuse_setacl(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t messageId, inode, uid, gid;
+	uint32_t messageId, uid, gid;
+	inode_t inode;
 	AclType type = AclType::kRichACL;
 	RichACL rich_acl;
 	AccessControlList posix_acl;
@@ -4671,7 +4705,7 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status) {
 	}
 }
 
-void matocl_locks_release(const FsContext &context, uint32_t inode, uint32_t sessionid) {
+void matocl_locks_release(const FsContext &context, inode_t inode, uint32_t sessionid) {
 	std::vector<FileLocks::Owner> applied;
 
 	fs_locks_clear_session(context, (uint8_t)safs_locks::Type::kFlock, inode, sessionid, applied);

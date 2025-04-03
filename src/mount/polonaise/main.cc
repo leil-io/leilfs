@@ -448,7 +448,7 @@ public:
 	 * Implement Polonaise.lookup method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void lookup(EntryReply& _return, const Context& context, const Inode inode,
+	void lookup(EntryReply& _return, const Context& context, const inode_t inode,
 			const std::string& name) {
 		OPERATION_PROLOG
 		SaunaClient::EntryParam entry = SaunaClient::lookup(
@@ -463,7 +463,7 @@ public:
 	 * Implement Polonaise.getattr method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void getattr(AttributesReply& _return, const Context& context, const Inode inode,
+	void getattr(AttributesReply& _return, const Context& context, const inode_t inode,
 			const Descriptor) {
 		OPERATION_PROLOG
 		SaunaClient::AttrReply reply = SaunaClient::getattr(
@@ -478,7 +478,7 @@ public:
 	 * Implement Polonaise.setattr method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void setattr(AttributesReply& _return, const Context& context, const Inode inode,
+	void setattr(AttributesReply& _return, const Context& context, const inode_t inode,
 			const FileStat& attributes, const int32_t toSet, const Descriptor) {
 		OPERATION_PROLOG
 		struct stat stats = toStructStat(attributes);
@@ -496,7 +496,7 @@ public:
 	 * Implement Polonaise.mknod method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void mknod(EntryReply& _return, const Context& context, const Inode parent,
+	void mknod(EntryReply& _return, const Context& context, const inode_t parent,
 			const std::string& name, const FileType::type type, const Mode& mode,
 			const int32_t rdev) {
 		OPERATION_PROLOG
@@ -514,7 +514,7 @@ public:
 	 * Implement Polonaise.mkdir method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void mkdir(EntryReply& _return, const Context& context, const Inode parent,
+	void mkdir(EntryReply& _return, const Context& context, const inode_t parent,
 			const std::string& name, const FileType::type type, const Mode& mode) {
 		OPERATION_PROLOG
 		SaunaClient::EntryParam reply = SaunaClient::mkdir(
@@ -530,7 +530,7 @@ public:
 	 * Implement Polonaise.opendir method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	Descriptor opendir(const Context& context, const Inode inode) {
+	Descriptor opendir(const Context& context, const inode_t inode) {
 		OPERATION_PROLOG
 		Descriptor descriptor = createDescriptor(0);
 		SaunaClient::opendir(toSaunaFsContext(context), toUint32(inode));
@@ -543,7 +543,7 @@ public:
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
 	void readdir(std::vector<polonaise::DirectoryEntry> & _return, const Context& context,
-			const Inode inode, const int64_t firstEntryOffset,
+			const inode_t inode, const int64_t firstEntryOffset,
 			const int64_t maxNumberOfEntries, const Descriptor) {
 		OPERATION_PROLOG
 		std::vector<SaunaClient::DirEntry> entries = SaunaClient::readdir(
@@ -566,7 +566,7 @@ public:
 	 * Implement Polonaise.releasedir method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void releasedir(const Context&, const Inode inode, const Descriptor descriptor) {
+	void releasedir(const Context&, const inode_t inode, const Descriptor descriptor) {
 		OPERATION_PROLOG
 		SaunaClient::releasedir(toUint64(inode));
 		removeDescriptor(descriptor);
@@ -577,7 +577,7 @@ public:
 	 * Implement Polonaise.rmdir method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void rmdir(const Context& context, const Inode parent, const std::string& name) {
+	void rmdir(const Context& context, const inode_t parent, const std::string& name) {
 		OPERATION_PROLOG
 		SaunaClient::rmdir(toSaunaFsContext(context), toUint64(parent), name.c_str());
 		OPERATION_EPILOG
@@ -587,7 +587,7 @@ public:
 	 * Implement Polonaise.access method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void access(const Context& context, const Inode inode, const int32_t mask) {
+	void access(const Context& context, const inode_t inode, const int32_t mask) {
 		OPERATION_PROLOG
 		int saunaFsMask = 0;
 		saunaFsMask |= mask & AccessMask::kRead    ? MODE_MASK_R : 0;
@@ -604,7 +604,7 @@ public:
 	 * Implement Polonaise.create method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void create(CreateReply& _return, const Context& context, const Inode parent,
+	void create(CreateReply& _return, const Context& context, const inode_t parent,
 			const std::string& name, const Mode& mode, const int32_t flags) {
 		OPERATION_PROLOG
 		Descriptor descriptor = createDescriptor(flags);
@@ -626,7 +626,7 @@ public:
 	 * Implement Polonaise.open method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void open(OpenReply& _return, const Context& context, const Inode inode, const int32_t flags) {
+	void open(OpenReply& _return, const Context& context, const inode_t inode, const int32_t flags) {
 		OPERATION_PROLOG
 		Descriptor descriptor = createDescriptor(flags);
 		SaunaClient::FileInfo* fi = getFileInfo(descriptor);
@@ -642,7 +642,7 @@ public:
 	 * Implement Polonaise.read method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void read(std::string& _return, const Context& context, const Inode inode,
+	void read(std::string& _return, const Context& context, const inode_t inode,
 			const int64_t offset, const int64_t size, const Descriptor descriptor) {
 		OPERATION_PROLOG
 		if (descriptor == g_polonaise_constants.kNullDescriptor) {
@@ -678,7 +678,7 @@ public:
 	 * Implement Polonaise.write method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	int64_t write(const Context& context, const Inode inode, const int64_t offset,
+	int64_t write(const Context& context, const inode_t inode, const int64_t offset,
 			const int64_t size, const std::string& data, const Descriptor descriptor) {
 		OPERATION_PROLOG
 		if (descriptor == g_polonaise_constants.kNullDescriptor) {
@@ -699,7 +699,7 @@ public:
 	 * Implement Polonaise.fsync method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void fsync(const Context& context, const Inode inode, const bool syncOnlyData,
+	void fsync(const Context& context, const inode_t inode, const bool syncOnlyData,
 			const Descriptor descriptor) {
 		OPERATION_PROLOG
 		if (descriptor == g_polonaise_constants.kNullDescriptor) {
@@ -717,7 +717,7 @@ public:
 	 * Implement Polonaise.flush method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void flush(const Context& context, const Inode inode, const Descriptor descriptor) {
+	void flush(const Context& context, const inode_t inode, const Descriptor descriptor) {
 		OPERATION_PROLOG
 		if (descriptor == g_polonaise_constants.kNullDescriptor) {
 			throw makeFailure("Null descriptor");
@@ -730,7 +730,7 @@ public:
 	 * Implement Polonaise.release method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void release(const Context&, const Inode inode, const Descriptor descriptor) {
+	void release(const Context&, const inode_t inode, const Descriptor descriptor) {
 		OPERATION_PROLOG
 		if (descriptor == g_polonaise_constants.kNullDescriptor) {
 			throw makeFailure("Null descriptor");
@@ -744,7 +744,7 @@ public:
 	 * Implement Polonaise.statfs method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void statfs(StatFsReply& _return, const Context& context, const Inode inode) {
+	void statfs(StatFsReply& _return, const Context& context, const inode_t inode) {
 		OPERATION_PROLOG
 		struct statvfs sv = SaunaClient::statfs(toSaunaFsContext(context), toUint64(inode));
 		_return.filesystemId = sv.f_fsid;
@@ -764,7 +764,7 @@ public:
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
 	void symlink(EntryReply& _return, const Context& context, const std::string& path,
-				const Inode parent, const std::string& name) {
+				const inode_t parent, const std::string& name) {
 		OPERATION_PROLOG
 		SaunaClient::EntryParam entry = SaunaClient::symlink(
 				toSaunaFsContext(context),
@@ -779,7 +779,7 @@ public:
 	 * Implement Polonaise.readlink method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void readlink(std::string& _return, const Context& context, const Inode inode) {
+	void readlink(std::string& _return, const Context& context, const inode_t inode) {
 		OPERATION_PROLOG
 		_return = SaunaClient::readlink(toSaunaFsContext(context), toUint64(inode));
 		OPERATION_EPILOG
@@ -789,8 +789,8 @@ public:
 	 * Implement Polonaise.link method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void link(EntryReply& _return, const Context& context, const Inode inode,
-			const Inode newParent, const std::string& newName) {
+	void link(EntryReply& _return, const Context& context, const inode_t inode,
+			const inode_t newParent, const std::string& newName) {
 		OPERATION_PROLOG
 		_return = toEntryReply(SaunaClient::link(
 				toSaunaFsContext(context),
@@ -804,7 +804,7 @@ public:
 	 * Implement Polonaise.unlink method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void unlink(const Context& context, const Inode parent, const std::string& name) {
+	void unlink(const Context& context, const inode_t parent, const std::string& name) {
 		OPERATION_PROLOG
 		SaunaClient::unlink(toSaunaFsContext(context), toUint64(parent), name.c_str());
 		OPERATION_EPILOG
@@ -814,8 +814,8 @@ public:
 	 * Implement Polonaise.rename method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void rename(const Context& context, const Inode parent, const std::string& name,
-			const Inode newParent, const std::string& newName) {
+	void rename(const Context& context, const inode_t parent, const std::string& name,
+			const inode_t newParent, const std::string& newName) {
 		OPERATION_PROLOG
 		SaunaClient::rename(
 				toSaunaFsContext(context),
@@ -830,7 +830,7 @@ public:
 	 * Implement Polonaise.getxattr method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void getxattr(std::string& _return, const Context& context, const Inode inode,
+	void getxattr(std::string& _return, const Context& context, const inode_t inode,
 		      const std::string& name, const int64_t size) {
 		OPERATION_PROLOG
 		uint32_t position = 0;
@@ -848,7 +848,7 @@ public:
 	 * Implement Polonaise.setxattr method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void setxattr(const Context& context, const Inode inode, const std::string& name,
+	void setxattr(const Context& context, const inode_t inode, const std::string& name,
 		      const std::string& value, const int64_t size, const int32_t flags) {
 		OPERATION_PROLOG
 		uint32_t position = 0;
@@ -861,7 +861,7 @@ public:
 	 * Implement Polonaise.listxattr method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void listxattr(std::string& _return, const Context& context, const Inode inode,
+	void listxattr(std::string& _return, const Context& context, const inode_t inode,
 		       const int64_t size) {
 		OPERATION_PROLOG
 		auto a = SaunaClient::listxattr(toSaunaFsContext(context), toUint64(inode), size);
@@ -876,7 +876,7 @@ public:
 	 * Implement Polonaise.removexattr method
 	 * \note for more information, see the protocol definition in Polonaise sources
 	 */
-	void removexattr(const Context& context, const Inode inode, const std::string& name) {
+	void removexattr(const Context& context, const inode_t inode, const std::string& name) {
 		OPERATION_PROLOG
 		SaunaClient::removexattr(toSaunaFsContext(context), toUint64(inode), name.c_str());
 		OPERATION_EPILOG

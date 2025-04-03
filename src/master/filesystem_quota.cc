@@ -45,7 +45,7 @@ bool decodeChar(const char *keys, const std::vector<T> values, char key, T &valu
 
 #ifndef METARESTORE
 /*! \brief Remove entries that are not descendants of \param root_inode. */
-static void fs_remove_invisible_quota_entries(uint32_t root_inode, std::vector<QuotaEntry> &results) {
+static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<QuotaEntry> &results) {
 	if (root_inode == SPECIAL_INODE_ROOT) {
 		return;
 	}
@@ -155,7 +155,7 @@ uint8_t fs_quota_get(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-static void fsnodes_getpath(uint32_t root_inode, FSNode *node, std::string &ret) {
+static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) {
 	std::string::size_type size;
 	FSNode *p;
 

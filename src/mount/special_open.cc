@@ -166,7 +166,7 @@ static const std::array<std::function<void
 	 &InodeMasterInfo::open         //0xFU
 }};
 
-void special_open(Inode ino, const Context &ctx, FileInfo *fi) {
+void special_open(inode_t ino, const Context &ctx, FileInfo *fi) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {
 		safs_pretty_syslog(LOG_WARNING,

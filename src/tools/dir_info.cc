@@ -22,8 +22,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 #include "common/datapack.h"
+#include "common/type_defs.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
@@ -41,8 +43,9 @@ static void dir_info_usage() {
 static int dir_info(const char *fname) {
 	uint8_t reqbuff[16], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
-	uint32_t inodes, dirs, files, links, chunks;
+	uint32_t cmd, leng;
+	inode_t inode, inodes, dirs, files, links;
+	uint32_t chunks;
 	uint64_t length, size, realsize;
 	constexpr uint8_t kDirStatsPayload = 44;
 	constexpr uint8_t kDirStatsLegacyPayload = 60;

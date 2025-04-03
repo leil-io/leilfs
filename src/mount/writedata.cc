@@ -69,7 +69,7 @@
 namespace InodeBasedWriteAlgorithm {
 
 struct inodedata {
-	uint32_t inode;
+	inode_t inode;
 	uint64_t maxfleng;
 	int status;
 	uint16_t flushwaiting;
@@ -88,7 +88,7 @@ struct inodedata {
 	Timer lastWriteToDataChain;
 	Timer lastWriteToChunkservers;
 
-	inodedata(uint32_t inode)
+	inodedata(inode_t inode)
 	    : inode(inode),
 	      maxfleng(0),
 	      status(SAUNAFS_STATUS_OK),
@@ -218,7 +218,7 @@ static uint32_t fcbwaiting = 0;
 static int64_t freecacheblocks;
 
 // <inode, respective inodedata> and sorted by inode
-using InodeDataMap = std::map<uint32_t, inodedata *>;
+using InodeDataMap = std::map<inode_t, inodedata *>;
 static InodeDataMap inodedataMap;
 
 static uint32_t gWriteWindowSize;
@@ -258,12 +258,12 @@ void write_cb_wait_for_block(inodedata *id, Glock &glock) {
 
 /* inode */
 
-inodedata *write_find_inodedata(uint32_t inode, Glock &) {
+inodedata *write_find_inodedata(inode_t inode, Glock &) {
 	if (inodedataMap.contains(inode)) { return inodedataMap[inode]; }
 	return NULL;
 }
 
-inodedata *write_get_inodedata(uint32_t inode, Glock &) {
+inodedata *write_get_inodedata(inode_t inode, Glock &) {
 	if (inodedataMap.contains(inode)) { return inodedataMap[inode]; }
 	auto id = new inodedata(inode);
 	inodedataMap[inode] = id;
@@ -271,7 +271,7 @@ inodedata *write_get_inodedata(uint32_t inode, Glock &) {
 }
 
 void write_free_inodedata(inodedata *fid, Glock &) {
-	uint32_t inode = fid->inode;
+	inode_t inode = fid->inode;
 	if (!inodedataMap.contains(inode)) { return; }
 
 	auto id = inodedataMap[inode];
@@ -842,7 +842,7 @@ inline void write_data_lcnt_decrease(inodedata *id, Glock &lock) {
 	(void)dummy_isDeleted;
 }
 
-void *write_data_new(uint32_t inode) {
+void *write_data_new(inode_t inode) {
 	inodedata *id;
 	Glock lock(gMutex);
 	id = write_get_inodedata(inode, lock);
@@ -869,7 +869,7 @@ int write_data_flush(void *vid) {
 	return write_data_flush(vid, lock);
 }
 
-uint64_t write_data_getmaxfleng(uint32_t inode) {
+uint64_t write_data_getmaxfleng(inode_t inode) {
 	uint64_t maxfleng;
 	inodedata *id;
 	Glock lock(gMutex);
@@ -882,14 +882,14 @@ uint64_t write_data_getmaxfleng(uint32_t inode) {
 	return maxfleng;
 }
 
-int write_data_flush_inode(uint32_t inode) {
+int write_data_flush_inode(inode_t inode) {
 	Glock lock(gMutex);
 	inodedata *id = write_find_inodedata(inode, lock);
 	if (id == NULL) { return 0; }
 	return write_data_flush(id, lock);
 }
 
-int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
+int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
                         Attributes &attr) {
 	Glock lock(gMutex);
 

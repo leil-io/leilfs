@@ -27,6 +27,7 @@
 #include "admin/registered_admin_connection.h"
 #include "common/saunafs_version.h"
 #include "common/server_connection.h"
+#include "common/type_defs.h"
 #include "master/locks.h"
 #include "protocol/cltoma.h"
 #include "protocol/lock_info.h"
@@ -86,7 +87,7 @@ static void processUnlock(RegisteredAdminConnection &conn, const Options &option
 		throw WrongUsageException("Both session id and owner must be specified for single unlock");
 	}
 
-	uint32_t inode = options.getValue<uint32_t>("--inode", 0);
+	auto inode = options.getValue<inode_t>("--inode", 0);
 	uint64_t owner = options.getValue<uint64_t>("--owner", 0);
 	uint32_t sessionid = options.getValue<uint32_t>("--sessionid", 0);
 
@@ -111,12 +112,12 @@ static void processUnlock(RegisteredAdminConnection &conn, const Options &option
 	}
 }
 
-static void processListType(uint32_t inode, RegisteredAdminConnection &conn, const Options &options,
+static void processListType(inode_t inode, RegisteredAdminConnection &conn, const Options &options,
 		safs_locks::Type type, bool pending) {
 	const uint64_t kDataPortion = SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT;
 	for (uint64_t begin = 0; true; begin += kDataPortion) {
 		MessageBuffer msg;
-		if (inode) {
+		if (inode != 0U) {
 			msg = cltoma::manageLocksList::build(inode, type, pending, begin, kDataPortion);
 		} else {
 			msg = cltoma::manageLocksList::build(type, pending, begin, kDataPortion);
@@ -155,7 +156,7 @@ static void processListType(uint32_t inode, RegisteredAdminConnection &conn, con
 
 static void processList(RegisteredAdminConnection &conn, const Options &options) {
 	auto type = parseType(options.argument(3));
-	uint32_t inode = options.getValue("--inode", 0UL);
+	inode_t inode = options.getValue("--inode", 0UL);
 	if (type == safs_locks::Type::kFlock || type == safs_locks::Type::kAll) {
 		if (options.isSet("--active") || !options.isSet("--pending")) {
 			std::cout << "Active flocks:" << std::endl;

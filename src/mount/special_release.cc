@@ -147,7 +147,7 @@ static const std::array<ReleaseFunc, 16> funcs = {{
 	 &InodeMasterInfo::release      //0xFU
 }};
 
-void special_release(Inode ino, FileInfo *fi) {
+void special_release(inode_t ino, FileInfo *fi) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {
 		safs_pretty_syslog(LOG_WARNING,

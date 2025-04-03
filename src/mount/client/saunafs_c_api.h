@@ -26,6 +26,8 @@ extern "C" {
 #include <stdbool.h>
 #endif
 
+#include "common/type_defs.h"
+
 enum sau_sugid_clear_mode {
 	SAUNAFS_SUGID_CLEAR_MODE_NEVER,
 	SAUNAFS_SUGID_CLEAR_MODE_ALWAYS,
@@ -87,7 +89,7 @@ typedef struct sau_init_params {
 #define SAUNAFS_MAX_GOAL_NAME 64
 #define SAUNAFS_MAX_READLINK_LENGTH 65535
 
-typedef uint32_t sau_inode_t;
+typedef inode_t sau_inode_t;
 typedef int sau_err_t;
 struct sau;
 typedef struct sau sau_t;
@@ -219,7 +221,7 @@ typedef struct sau_stat {
 	uint64_t avail_space;
 	uint64_t trash_space;
 	uint64_t reserved_space;
-	uint32_t inodes;
+	inode_t inodes;
 } sau_stat_t;
 
 /* Server location for a chunk part */
@@ -265,7 +267,7 @@ typedef struct sau_lock_info {
 
 typedef struct sau_lock_interrupt_info {
 	uint64_t owner;
-	uint32_t ino;
+	inode_t ino;
 	uint32_t reqid;
 } sau_lock_interrupt_info_t;
 

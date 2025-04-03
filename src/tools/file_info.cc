@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 #include "common/chunk_copies_calculator.h"
+#include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -48,7 +49,7 @@ static std::string chunkTypeToString(ChunkPartType type) {
 	return "";
 }
 
-static int chunks_info(const char *file_name, int fd, uint32_t inode, bool long_wait) {
+static int chunks_info(const char *file_name, int fd, inode_t inode, bool long_wait) {
 	static constexpr uint32_t kRequestSize = 100;
 	std::vector<ChunkWithAddressAndLabel> chunks;
 	std::vector<uint8_t> buffer;
@@ -150,7 +151,7 @@ static int chunks_info(const char *file_name, int fd, uint32_t inode, bool long_
 
 static int file_info(const char *fileName, bool long_wait) {
 	std::vector<uint8_t> buffer;
-	uint32_t inode;
+	inode_t inode;
 	int fd;
 
 	fmt::println(

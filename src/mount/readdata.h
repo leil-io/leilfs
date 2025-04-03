@@ -204,14 +204,14 @@ private:
 struct ReadRecord {
 	ReadCache cache; // inodeLock
 	ReadaheadAdviser readahead_adviser; // inodeLock
-	uint32_t inode;
+	inode_t inode;
 	std::mutex mutex;
 	ReadaheadRequests readaheadRequests; // inodeLock
 	std::atomic<uint8_t> refreshCounter = 0;
 	std::atomic<uint16_t> requestsNotDone = 0;
 	bool expired = false; //gMutex
 
-	ReadRecord(uint32_t inode)
+	ReadRecord(inode_t inode)
 	    : cache(gCacheExpirationTime_ms),
 	      readahead_adviser(gCacheExpirationTime_ms, gReadaheadMaxWindowSize),
 	      inode(inode) {}
@@ -380,9 +380,9 @@ uint32_t read_data_get_connect_timeout_ms();
 uint32_t read_data_get_total_read_timeout_ms();
 bool read_data_get_prefetchxorstripes();
 
-void read_inode_ops(uint32_t inode);
-void read_inode_reconnect_and_clear_cache(uint32_t inode, uint32_t chunkIndex);
-ReadRecord *read_data_new(uint32_t inode);
+void read_inode_ops(inode_t inode);
+void read_inode_reconnect_and_clear_cache(inode_t inode, uint32_t chunkIndex);
+ReadRecord *read_data_new(inode_t inode);
 void read_data_end(ReadRecord *rr);
 int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
                    uint64_t bytes_to_read, std::vector<uint8_t> &read_buffer,

@@ -34,7 +34,7 @@ void fs_read_snapshot_config_file() {
 	gSnapshotTaskBatchLimit = cfg_getuint32("SNAPSHOT_INITIAL_BATCH_SIZE_LIMIT", 10000);
 }
 
-uint8_t fs_snapshot(const FsContext &context, uint32_t inode_src, uint32_t parent_dst,
+uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 	            const HString &name_dst, uint8_t can_overwrite, uint8_t ignore_missing_src,
 		    uint32_t initial_batch_size, const std::function<void(int)> &callback, uint32_t job_id) {
 	ChecksumUpdater cu(context.ts());
@@ -86,8 +86,8 @@ uint8_t fs_snapshot(const FsContext &context, uint32_t inode_src, uint32_t paren
 						  callback);
 }
 
-uint8_t fs_clone_node(const FsContext &context, uint32_t inode_src, uint32_t parent_dst,
-			uint32_t inode_dst, const HString &name_dst, uint8_t can_overwrite) {
+uint8_t fs_clone_node(const FsContext &context, inode_t inode_src, inode_t parent_dst,
+			inode_t inode_dst, const HString &name_dst, uint8_t can_overwrite) {
 
 	SnapshotTask task({{inode_src, name_dst}}, 0, parent_dst, inode_dst, can_overwrite,
 			  0, false, false);

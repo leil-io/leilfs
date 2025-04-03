@@ -30,6 +30,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
+#include "common/type_defs.h"
 #endif
 
 #include "common/datapack.h"
@@ -157,10 +158,10 @@ static int read_master_info(const char *name, master_info_t *info) {
 }
 
 #ifdef _WIN32
-int get_inode_by_path(int sd, std::string path, uint32_t &inode) {
+int get_inode_by_path(int sd, std::string path, inode_t &inode) {
 	try {
 		uint32_t messageId = 0;
-		uint32_t rootInodeParent = 1;
+		inode_t rootInodeParent = 1;
 		uint32_t parentUid = 0;
 		uint32_t parentGid = 0;
 		Attributes attr;
@@ -263,8 +264,7 @@ void get_next_path_iteration(std::string &path) {
 	}
 }
 
-int open_master_conn(const char *name, uint32_t *inode, mode_t *mode,
-                     [[maybe_unused]] bool needrwfs) {
+int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unused]] bool needrwfs) {
 	char rpath[PATH_MAX + 1];
 	struct stat stb;
 	[[maybe_unused]] struct statvfs stvfsb;
@@ -320,7 +320,7 @@ int open_master_conn(const char *name, uint32_t *inode, mode_t *mode,
 	}
 
 	for (;;) {
-		uint32_t rpath_inode;
+		inode_t rpath_inode;
 
 		if (stat(rpath, &stb) != 0) {
 			printf("%s: (%s) stat error: %s\n", name, rpath, strerr(errno));

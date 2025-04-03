@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 #include "common/server_connection.h"
+#include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -37,7 +38,7 @@ static void get_goal_usage() {
 }
 
 static int get_goal(const char *fname, uint8_t mode) {
-	uint32_t inode;
+	inode_t inode;
 	int fd = open_master_conn(fname, &inode, NULL, false);
 	if (fd < 0) {
 		return -1;

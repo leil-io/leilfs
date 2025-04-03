@@ -22,9 +22,9 @@
 
 #include "common/platform.h"
 
-#include <inttypes.h>
+#include "common/type_defs.h"
 
-void symlink_cache_insert(uint32_t inode,const uint8_t *path);
-int symlink_cache_search(uint32_t inode,const uint8_t **path);
+void symlink_cache_insert(inode_t inode,const uint8_t *path);
+int symlink_cache_search(inode_t inode,const uint8_t **path);
 void symlink_cache_init(uint32_t cache_time = 3600);
 void symlink_cache_term(void);

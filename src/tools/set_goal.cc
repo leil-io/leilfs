@@ -24,6 +24,7 @@
 #include <stdlib.h>
 
 #include "common/server_connection.h"
+#include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -43,7 +44,7 @@ static void set_goal_usage() {
 }
 
 static int set_goal(const char *fname, const std::string &goal, uint8_t mode, int long_wait) {
-	uint32_t inode;
+	inode_t inode;
 	int fd;
 	uint32_t messageId = 0;
 	uint32_t uid = getUId();
@@ -61,9 +62,9 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode, in
 		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SETGOAL,
 		                    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
 		                    long_wait ? kInfiniteTimeout : kDefaultTimeout);
-		uint32_t changed;
-		uint32_t notChanged;
-		uint32_t notPermitted;
+		inode_t changed;
+		inode_t notChanged;
+		inode_t notPermitted;
 		PacketVersion version;
 
 		deserializePacketVersionNoHeader(response, version);

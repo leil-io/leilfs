@@ -85,7 +85,7 @@ void xattr_recalculate_checksum() {
 	}
 }
 
-void xattr_removeinode(uint32_t inode) {
+void xattr_removeinode(inode_t inode) {
 	xattr_inode_entry *ih, **ihp;
 
 	ihp = &(gMetadata->xattr_inode_hash[xattr_inode_hash_fn(inode)]);
@@ -102,7 +102,7 @@ void xattr_removeinode(uint32_t inode) {
 	}
 }
 
-uint8_t xattr_setattr(uint32_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
+uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 			const uint8_t *attrvalue, uint8_t mode) {
 	xattr_inode_entry *ih;
 	xattr_data_entry *xa;
@@ -220,7 +220,7 @@ uint8_t xattr_setattr(uint32_t inode, uint8_t anleng, const uint8_t *attrname, u
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t xattr_getattr(uint32_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
+uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
 			uint8_t **attrvalue) {
 	xattr_data_entry *xa;
 
@@ -239,7 +239,7 @@ uint8_t xattr_getattr(uint32_t inode, uint8_t anleng, const uint8_t *attrname, u
 	return SAUNAFS_ERROR_ENOATTR;
 }
 
-uint8_t xattr_listattr_leng(uint32_t inode, void **xanode, uint32_t *xasize) {
+uint8_t xattr_listattr_leng(inode_t inode, void **xanode, uint32_t *xasize) {
 	xattr_inode_entry *ih;
 	xattr_data_entry *xa;
 

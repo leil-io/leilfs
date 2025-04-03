@@ -36,6 +36,7 @@
 #include <span>
 
 #include "common/datapack.h"
+#include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 #include "common/special_inode_defs.h"
@@ -84,8 +85,8 @@ static int debug_mode = 0;
 static double entry_cache_timeout = 0.0;
 static double attr_cache_timeout = 1.0;
 
-uint32_t sfs_meta_name_to_inode(const char *name) {
-	uint32_t inode=0;
+inode_t sfs_meta_name_to_inode(const char *name) {
+	inode_t inode=0;
 	char *end;
 	inode = strtoul(name,&end,16);
 	if (*end=='|' && end[1]!=0) {
@@ -95,7 +96,7 @@ uint32_t sfs_meta_name_to_inode(const char *name) {
 	}
 }
 
-static void sfs_meta_type_to_stat(uint32_t inode,uint8_t type, struct stat *stbuf) {
+static void sfs_meta_type_to_stat(inode_t inode,uint8_t type, struct stat *stbuf) {
 	memset(stbuf,0,sizeof(struct stat));
 	stbuf->st_ino = inode;
 	switch (type) {
@@ -125,7 +126,7 @@ static void sfs_meta_type_to_stat(uint32_t inode,uint8_t type, struct stat *stbu
 	}
 }
 
-static void sfs_meta_stat(uint32_t inode, struct stat *stbuf) {
+static void sfs_meta_stat(inode_t inode, struct stat *stbuf) {
 	int now;
 	stbuf->st_ino = inode;
 	stbuf->st_size = 0;
@@ -156,7 +157,7 @@ static void sfs_meta_stat(uint32_t inode, struct stat *stbuf) {
 	stbuf->st_ctime = now;
 }
 
-static void sfs_attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf) {
+static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
 	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink;
@@ -190,7 +191,7 @@ static void sfs_attr_to_stat(uint32_t inode, const Attributes &attr, struct stat
 
 void sfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
 	uint64_t totalspace,availspace,trashspace,reservedspace;
-	uint32_t inodes;
+	inode_t inodes;
 	struct statvfs stfsbuf;
 	memset(&stfsbuf,0,sizeof(stfsbuf));
 
@@ -212,7 +213,7 @@ void sfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
 
 void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 	struct fuse_entry_param e;
-	uint32_t inode;
+	inode_t inode;
 	memset(&e, 0, sizeof(e));
 	inode = 0;
 	switch (parent) {
@@ -338,7 +339,7 @@ void sfs_meta_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *stbuf, int to
 
 void sfs_meta_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
 	int status;
-	uint32_t inode;
+	inode_t inode;
 	if (parent!=SPECIAL_INODE_META_TRASH) {
 		fuse_reply_err(req,EACCES);
 		return;
@@ -356,7 +357,7 @@ void sfs_meta_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
 void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname, unsigned int flags) {
 	(void)flags;
 	int status;
-	uint32_t inode;
+	inode_t inode;
 	(void)newname;
 	if (parent!=SPECIAL_INODE_META_TRASH && newparent!=SPECIAL_INODE_META_UNDEL) {
 		fuse_reply_err(req,EACCES);
@@ -372,7 +373,7 @@ void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_i
 	fuse_reply_err(req, status);
 }
 
-static uint32_t dir_metaentries_size(uint32_t ino) {
+static uint32_t dir_metaentries_size(inode_t ino) {
 	switch (ino) {
 	case SPECIAL_INODE_ROOT:
 		return 4*6+1+2+strlen(SPECIAL_FILE_NAME_META_TRASH)+strlen(SPECIAL_FILE_NAME_META_RESERVED);
@@ -384,6 +385,21 @@ static uint32_t dir_metaentries_size(uint32_t ino) {
 		return 2*6+1+2;
 	}
 	return 0;
+}
+
+struct MetaStat {
+	std::string name;
+	inode_t inode;
+	char type;
+};
+
+static constexpr std::array<MetaStat, 4> rootDirEntries() {
+		auto rootDir = MetaStat(".", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
+		auto upDir = MetaStat("..", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
+		auto trash = MetaStat(SPECIAL_FILE_NAME_META_TRASH, SPECIAL_INODE_META_TRASH, TYPE_DIRECTORY);
+		auto reserved = MetaStat(SPECIAL_FILE_NAME_META_RESERVED, SPECIAL_INODE_META_RESERVED, TYPE_DIRECTORY);
+		std::array<MetaStat, 4> entries = {rootDir, upDir, trash, reserved};
+		return entries;
 }
 
 struct MetaStat {
@@ -401,7 +417,7 @@ static constexpr std::array<MetaStat, 4> rootDirEntries() {
 		return entries;
 }
 
-static void dir_metaentries_fill(uint8_t *buff,uint32_t ino) {
+static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
 	uint8_t l;
 	switch (ino) {
 	case SPECIAL_INODE_ROOT:
@@ -503,7 +519,7 @@ static uint32_t dir_dataentries_size(const uint8_t *dbuff,uint32_t dsize) {
 
 static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t dsize) {
 	const char *name;
-	uint32_t inode;
+	inode_t inode;
 	uint8_t nleng;
 	uint8_t inoleng;
 	const uint8_t *eptr;
@@ -539,7 +555,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 }
 
 
-static void dirbuf_meta_fill(dirbuf *b, uint32_t ino) {
+static void dirbuf_meta_fill(dirbuf *b, inode_t ino) {
 	int status;
 	uint32_t msize, dsize = 0, dcsize;
 	const uint8_t *dbuff = nullptr;
@@ -651,7 +667,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 	uint8_t end;
 	size_t opos,oleng;
 	uint8_t nleng;
-	uint32_t inode;
+	inode_t inode;
 	uint8_t type;
 	struct stat stbuf;
 

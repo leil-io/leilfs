@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include "common/serialization_macros.h"
+#include "common/type_defs.h"
 
 namespace safs_locks {
 enum {
@@ -39,7 +40,7 @@ SAUNAFS_DEFINE_SERIALIZABLE_ENUM_CLASS(Type, kFlock, kPosix, kAll)
 
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(Info,
 	uint32_t, version,
-	uint32_t, inode,
+	inode_t, inode,
 	uint64_t, owner,
 	uint32_t, sessionid,
 	uint16_t, type,
@@ -49,13 +50,13 @@ SAUNAFS_DEFINE_SERIALIZABLE_CLASS(Info,
 
 struct InterruptData {
 	InterruptData() : owner(), ino(), reqid() {}
-	InterruptData(uint64_t o, uint32_t i, uint32_t r)
+	InterruptData(uint64_t o, inode_t i, uint32_t r)
 		: owner(o), ino(i), reqid(r) {}
 
 	SAUNAFS_DEFINE_SERIALIZE_METHODS(owner, ino, reqid);
 
 	uint64_t owner;
-	uint32_t ino;
+	inode_t ino;
 	uint32_t reqid;
 };
 

@@ -195,7 +195,7 @@ void SnapshotTask::cloneSymlinkData(FSNodeSymlink *src_node, FSNodeSymlink *dst_
 	fsnodes_add_sub_stats(dst_parent, &nsr, &psr);
 }
 
-void SnapshotTask::emitChangelog(uint32_t ts, uint32_t dst_inode) {
+void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
 	if (!emit_changelog_) {
 		gMetadata->metaversion++;
 		return;

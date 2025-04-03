@@ -40,9 +40,9 @@ typedef LruCache<
 		LruCacheOption::UseTreeMap,
 		LruCacheOption::Reentrant,
 		AclCacheEntry,
-		uint32_t, uint32_t, uint32_t> AclCache;
+		inode_t, uint32_t, uint32_t> AclCache;
 
-inline AclCacheEntry getAcl(uint32_t inode, uint32_t uid, uint32_t gid) {
+inline AclCacheEntry getAcl(inode_t inode, uint32_t uid, uint32_t gid) {
 	AclCacheEntry entry(new RichACLWithOwner());
 	uint8_t status = fs_getacl(inode, uid, gid, entry->acl, entry->owner_id);
 	if (status == SAUNAFS_STATUS_OK) {

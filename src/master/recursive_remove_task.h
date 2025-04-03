@@ -42,7 +42,7 @@ class RemoveTask : public TaskManager::Task {
 public:
 	using SubtaskContainer = std::vector<HString>;
 
-	RemoveTask(SubtaskContainer &&subtask, uint32_t parent,
+	RemoveTask(SubtaskContainer &&subtask, inode_t parent,
 		   const std::shared_ptr<FsContext> &context) :
 		   subtask_(std::move(subtask)), parent_(parent),
 		   context_(context), repeat_counter_(0) {
@@ -79,7 +79,7 @@ private:
 	SubtaskContainer subtask_;
 	SubtaskContainer::iterator current_subtask_;
 
-	uint32_t parent_;
+	inode_t parent_;
 	std::shared_ptr<FsContext> context_;
 	uint32_t repeat_counter_;
 };

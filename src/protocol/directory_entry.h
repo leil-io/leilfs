@@ -22,12 +22,13 @@
 
 #include "common/platform.h"
 
-#include "common/serialization_macros.h"
 #include "common/attributes.h"
+#include "common/serialization_macros.h"
+#include "common/type_defs.h"
 
 namespace legacy {
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(DirectoryEntry,
-	uint32_t, inode,
+	inode_t, inode,
 	std::string, name,
 	Attributes, attributes);
 } // namespace legacy
@@ -35,6 +36,6 @@ SAUNAFS_DEFINE_SERIALIZABLE_CLASS(DirectoryEntry,
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(DirectoryEntry,
 	uint64_t, index,
 	uint64_t, next_index,
-	uint32_t, inode,
+	inode_t, inode,
 	std::string, name,
 	Attributes, attributes);

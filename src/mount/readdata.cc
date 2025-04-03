@@ -572,7 +572,7 @@ void* read_worker(void *arg) {
 	return EMPTY_REQUEST;
 }
 
-ReadRecord *read_data_new(uint32_t inode) {
+ReadRecord *read_data_new(inode_t inode) {
 	ReadRecord *rrec = new ReadRecord(inode);
 	std::unique_lock gMutexLock(gMutex);
 
@@ -668,7 +668,7 @@ void read_data_term(void) {
 	gMemoryInfo.reset();
 }
 
-void read_inode_ops(uint32_t inode) { // attributes of inode have been changed - force reconnect and clear cache
+void read_inode_ops(inode_t inode) { // attributes of inode have been changed - force reconnect and clear cache
 	std::unique_lock gMutexLock(gMutex);
 
 	ReadRecordRange range = gActiveReadRecords.equal_range(inode);
@@ -679,7 +679,7 @@ void read_inode_ops(uint32_t inode) { // attributes of inode have been changed -
 }
 
 // Ongoing write on this inode and chunkIndex, force reconnect and clear cache for this chunk
-void read_inode_reconnect_and_clear_cache(uint32_t inode, uint32_t chunkIndex) {
+void read_inode_reconnect_and_clear_cache(inode_t inode, uint32_t chunkIndex) {
 	std::unique_lock gMutexLock(gMutex);
 
 	ReadRecordRange range = gActiveReadRecords.equal_range(inode);
@@ -719,7 +719,7 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset, uint64_t bytes_to_
                    std::vector<uint8_t> &read_buffer, uint64_t *bytes_read, ChunkReader &reader,
                    std::unique_lock<std::mutex> &entryLock) {
 	uint32_t try_counter = 0;
-	uint32_t prepared_inode = 0;  // this is always different than any real inode
+	inode_t prepared_inode = 0;  // this is always different than any real inode
 	uint32_t prepared_chunk_id = 0;
 	assert(*bytes_read == 0);
 

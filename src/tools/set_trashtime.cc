@@ -48,8 +48,8 @@ static void set_trashtime_usage() {
 static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, int long_wait) {
 	uint8_t reqbuff[25], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode, uid;
-	uint32_t changed, notchanged, notpermitted;
+	uint32_t cmd, leng, uid;
+	inode_t inode, changed, notchanged, notpermitted;
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, true);
 	if (fd < 0) {

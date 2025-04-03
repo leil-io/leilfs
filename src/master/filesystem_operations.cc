@@ -112,7 +112,7 @@ void fs_changelog(uint32_t ts, const char *format, ...) {
 }
 
 #ifndef METARESTORE
-uint8_t fs_readreserved_size(uint32_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) {
+uint8_t fs_readreserved_size(inode_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) {
 	if (rootinode != 0) {
 		return SAUNAFS_ERROR_EPERM;
 	}
@@ -121,7 +121,7 @@ uint8_t fs_readreserved_size(uint32_t rootinode, uint8_t sesflags, uint32_t *dbu
 	return SAUNAFS_STATUS_OK;
 }
 
-void fs_readreserved_data(uint32_t rootinode, uint8_t sesflags, uint8_t *dbuff) {
+void fs_readreserved_data(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) {
 	(void)rootinode;
 	(void)sesflags;
 	fsnodes_getdetacheddata(gMetadata->reserved, dbuff);
@@ -131,7 +131,7 @@ void fs_readreserved(uint32_t off, uint32_t max_entries, std::vector<NamedInodeE
 	fsnodes_getdetacheddata(gMetadata->reserved, off, max_entries, entries);
 }
 
-uint8_t fs_readtrash_size(uint32_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) {
+uint8_t fs_readtrash_size(inode_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) {
 	if (rootinode != 0) {
 		return SAUNAFS_ERROR_EPERM;
 	}
@@ -140,7 +140,7 @@ uint8_t fs_readtrash_size(uint32_t rootinode, uint8_t sesflags, uint32_t *dbuffs
 	return SAUNAFS_STATUS_OK;
 }
 
-void fs_readtrash_data(uint32_t rootinode, uint8_t sesflags, uint8_t *dbuff) {
+void fs_readtrash_data(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) {
 	(void)rootinode;
 	(void)sesflags;
 	fsnodes_getdetacheddata(gMetadata->trash, dbuff);
@@ -151,7 +151,7 @@ void fs_readtrash(uint32_t off, uint32_t max_entries, std::vector<NamedInodeEntr
 }
 
 /* common procedure for trash and reserved files */
-uint8_t fs_getdetachedattr(uint32_t rootinode, uint8_t sesflags, uint32_t inode, Attributes &attr,
+uint8_t fs_getdetachedattr(inode_t rootinode, uint8_t sesflags, inode_t inode, Attributes &attr,
 				uint8_t dtype) {
 	FSNode *p;
 	attr.fill(0);
@@ -179,7 +179,7 @@ uint8_t fs_getdetachedattr(uint32_t rootinode, uint8_t sesflags, uint32_t inode,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_gettrashpath(uint32_t rootinode, uint8_t sesflags, uint32_t inode, std::string &path) {
+uint8_t fs_gettrashpath(inode_t rootinode, uint8_t sesflags, inode_t inode, std::string &path) {
 	FSNode *p;
 	if (rootinode != 0) {
 		return SAUNAFS_ERROR_EPERM;
@@ -197,7 +197,7 @@ uint8_t fs_gettrashpath(uint32_t rootinode, uint8_t sesflags, uint32_t inode, st
 }
 #endif
 
-uint8_t fs_settrashpath(const FsContext &context, uint32_t inode, const std::string &path) {
+uint8_t fs_settrashpath(const FsContext &context, inode_t inode, const std::string &path) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
@@ -230,7 +230,7 @@ uint8_t fs_settrashpath(const FsContext &context, uint32_t inode, const std::str
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_undel(const FsContext &context, uint32_t inode) {
+uint8_t fs_undel(const FsContext &context, inode_t inode) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
@@ -256,7 +256,7 @@ uint8_t fs_undel(const FsContext &context, uint32_t inode) {
 	return status;
 }
 
-uint8_t fs_purge(const FsContext &context, uint32_t inode) {
+uint8_t fs_purge(const FsContext &context, inode_t inode) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
@@ -270,8 +270,8 @@ uint8_t fs_purge(const FsContext &context, uint32_t inode) {
 	} else if (p->type != FSNode::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	uint32_t purged_inode =
-	        p->id;  // This should be equal to inode, because p is not a directory
+	// This should be equal to inode, because p is not a directory
+	inode_t purged_inode = p->id;
 	fsnodes_purge(context.ts(), p);
 
 	if (context.isPersonalityMaster()) {
@@ -284,9 +284,9 @@ uint8_t fs_purge(const FsContext &context, uint32_t inode) {
 
 #ifndef METARESTORE
 void fs_info(uint64_t *totalspace, uint64_t *availspace, uint64_t *trspace,
-             uint32_t *trnodes, uint64_t *respace, uint32_t *renodes,
-             uint32_t *inodes, uint32_t *dnodes, uint32_t *fnodes,
-             uint32_t *lnodes) {
+             inode_t *trnodes, uint64_t *respace, inode_t *renodes,
+             inode_t *inodes, inode_t *dnodes, inode_t *fnodes,
+             inode_t *lnodes) {
 	matocsserv_getspace(totalspace, availspace);
 	*trspace = gMetadata->trashspace;
 	*trnodes = gMetadata->trashnodes;
@@ -298,7 +298,7 @@ void fs_info(uint64_t *totalspace, uint64_t *availspace, uint64_t *trspace,
 	*lnodes = gMetadata->linknodes;
 }
 
-uint8_t fs_getrootinode(uint32_t *rootinode, const uint8_t *path) {
+uint8_t fs_getrootinode(inode_t *rootinode, const uint8_t *path) {
 	HString hname;
 	uint32_t nleng;
 	const uint8_t *name;
@@ -335,7 +335,7 @@ uint8_t fs_getrootinode(uint32_t *rootinode, const uint8_t *path) {
 }
 
 void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availspace,
-		uint64_t *trspace, uint64_t *respace, uint32_t *inodes) {
+               uint64_t *trspace, uint64_t *respace, inode_t *inodes) {
 	FSNode *rn;
 	statsrecord sr;
 	if (context.rootinode() == SPECIAL_INODE_ROOT) {
@@ -374,7 +374,7 @@ uint8_t fs_apply_checksum(const std::string &version, uint64_t checksum) {
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_apply_access(uint32_t ts, uint32_t inode) {
+uint8_t fs_apply_access(uint32_t ts, inode_t inode) {
 	FSNode *p;
 	p = fsnodes_id_to_node(inode);
 	if (!p) {
@@ -387,7 +387,7 @@ uint8_t fs_apply_access(uint32_t ts, uint32_t inode) {
 }
 
 #ifndef METARESTORE
-uint8_t fs_access(const FsContext &context, uint32_t inode, int modemask) {
+uint8_t fs_access(const FsContext &context, inode_t inode, int modemask) {
 	FSNode *p;
 
 	uint8_t status = verify_session(context, (modemask & MODE_MASK_W) ? OperationMode::kReadWrite : OperationMode::kReadOnly, SessionType::kNotMeta);
@@ -399,7 +399,7 @@ uint8_t fs_access(const FsContext &context, uint32_t inode, int modemask) {
 	                                      inode, &p);
 }
 
-uint8_t fs_lookup(const FsContext &context, uint32_t parent, const HString &name, uint32_t *inode, Attributes &attr) {
+uint8_t fs_lookup(const FsContext &context, inode_t parent, const HString &name, inode_t *inode, Attributes &attr) {
 	FSNode *wd;
 	FSNodeDirectory *rn;
 
@@ -469,9 +469,9 @@ uint8_t fs_lookup(const FsContext &context, uint32_t parent, const HString &name
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_whole_path_lookup(const FsContext &context, uint32_t parent, const std::string &path, uint32_t *found_inode, Attributes &attr) {
+uint8_t fs_whole_path_lookup(const FsContext &context, inode_t parent, const std::string &path, inode_t *found_inode, Attributes &attr) {
 	uint8_t status;
-	uint32_t tmp_inode = context.rootinode();
+	inode_t tmp_inode = context.rootinode();
 
 	auto current_it = path.begin();
 	while (current_it != path.end()) {
@@ -497,9 +497,9 @@ uint8_t fs_whole_path_lookup(const FsContext &context, uint32_t parent, const st
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_full_path_by_inode(const FsContext &context, uint32_t initial_inode,
+uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
                               std::string &fullPath) {
-	uint32_t current_inode = initial_inode;
+	inode_t current_inode = initial_inode;
 	FSNode *parent_node;
 	FSNode *current_node;
 	std::string current_name = "";
@@ -530,7 +530,7 @@ uint8_t fs_full_path_by_inode(const FsContext &context, uint32_t initial_inode,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_getattr(const FsContext &context, uint32_t inode, Attributes &attr) {
+uint8_t fs_getattr(const FsContext &context, inode_t inode, Attributes &attr) {
 	FSNode *p;
 
 	attr.fill(0);
@@ -552,7 +552,7 @@ uint8_t fs_getattr(const FsContext &context, uint32_t inode, Attributes &attr) {
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_try_setlength(const FsContext &context, uint32_t inode, uint8_t opened,
+uint8_t fs_try_setlength(const FsContext &context, inode_t inode, uint8_t opened,
 			uint64_t length, bool denyTruncatingParity, uint32_t lockId, Attributes &attr,
 			uint64_t *chunkid) {
 	uint32_t ts = eventloop_time();
@@ -605,7 +605,7 @@ uint8_t fs_try_setlength(const FsContext &context, uint32_t inode, uint8_t opene
 }
 #endif
 
-uint8_t fs_apply_trunc(uint32_t ts, uint32_t inode, uint32_t indx, uint64_t chunkid,
+uint8_t fs_apply_trunc(uint32_t ts, inode_t inode, uint32_t indx, uint64_t chunkid,
 			uint32_t lockid) {
 	uint64_t ochunkid, nchunkid;
 	uint8_t status;
@@ -668,7 +668,7 @@ uint8_t fs_apply_unlock(uint64_t chunkid) {
 }
 
 #ifndef METARESTORE
-uint8_t fs_do_setlength(const FsContext &context, uint32_t inode, uint64_t length,
+uint8_t fs_do_setlength(const FsContext &context, inode_t inode, uint64_t length,
 			Attributes &attr) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
@@ -704,7 +704,7 @@ uint8_t fs_do_setlength(const FsContext &context, uint32_t inode, uint64_t lengt
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_setattr(const FsContext &context, uint32_t inode, uint8_t setmask, uint16_t attrmode,
+uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uint16_t attrmode,
 		uint32_t attruid, uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 		SugidClearMode sugidclearmode, Attributes &attr) {
 	uint32_t ts = eventloop_time();
@@ -839,7 +839,7 @@ uint8_t fs_setattr(const FsContext &context, uint32_t inode, uint8_t setmask, ui
 }
 #endif
 
-uint8_t fs_apply_attr(uint32_t ts, uint32_t inode, uint32_t mode, uint32_t uid, uint32_t gid,
+uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, uint32_t gid,
 			uint32_t atime, uint32_t mtime) {
 	FSNode *p = fsnodes_id_to_node(inode);
 	if (!p) {
@@ -861,7 +861,7 @@ uint8_t fs_apply_attr(uint32_t ts, uint32_t inode, uint32_t mode, uint32_t uid, 
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_apply_length(uint32_t ts, uint32_t inode, uint64_t length, bool eraseFurtherChunks) {
+uint8_t fs_apply_length(uint32_t ts, Inode inode, uint64_t length, bool eraseFurtherChunks) {
 	FSNode *p = fsnodes_id_to_node(inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
@@ -889,7 +889,7 @@ static inline void fs_update_atime(FSNode *p, uint32_t ts) {
 	}
 }
 
-uint8_t fs_readlink(const FsContext &context, uint32_t inode, std::string &path) {
+uint8_t fs_readlink(const FsContext &context, inode_t inode, std::string &path) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *p = NULL;
@@ -916,8 +916,8 @@ uint8_t fs_readlink(const FsContext &context, uint32_t inode, std::string &path)
 }
 #endif
 
-uint8_t fs_symlink(const FsContext &context, uint32_t parent, const HString &name,
-		const std::string &path, uint32_t *inode, Attributes *attr) {
+uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name,
+		const std::string &path, inode_t *inode, Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *wd;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -981,8 +981,8 @@ uint8_t fs_symlink(const FsContext &context, uint32_t parent, const HString &nam
 }
 
 #ifndef METARESTORE
-uint8_t fs_mknod(const FsContext &context, uint32_t parent, const HString &name,
-		uint8_t type, uint16_t mode, uint16_t umask, uint32_t rdev, uint32_t *inode,
+uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name,
+		uint8_t type, uint16_t mode, uint16_t umask, uint32_t rdev, inode_t *inode,
 		Attributes &attr) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
@@ -1036,8 +1036,8 @@ uint8_t fs_mknod(const FsContext &context, uint32_t parent, const HString &name,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_mkdir(const FsContext &context, uint32_t parent, const HString &name, uint16_t mode,
-				 uint16_t umask, uint8_t copysgid, uint32_t *inode, Attributes &attr) {
+uint8_t fs_mkdir(const FsContext &context, inode_t parent, const HString &name, uint16_t mode,
+				 uint16_t umask, uint8_t copysgid, inode_t *inode, Attributes &attr) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *wd, *p;
@@ -1088,9 +1088,9 @@ uint8_t fs_mkdir(const FsContext &context, uint32_t parent, const HString &name,
 }
 #endif
 
-uint8_t fs_apply_create(uint32_t ts, uint32_t parent, const HString &name,
+uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name,
 		uint8_t type, uint32_t mode, uint32_t uid, uint32_t gid, uint32_t rdev,
-		uint32_t inode) {
+		inode_t inode) {
 	FSNode *wd, *p;
 	if (type != FSNode::kFile && type != FSNode::kSocket && type != FSNode::kFifo &&
 	    type != FSNode::kBlockDev && type != FSNode::kCharDev && type != FSNode::kDirectory) {
@@ -1122,7 +1122,7 @@ uint8_t fs_apply_create(uint32_t ts, uint32_t parent, const HString &name,
 }
 
 #ifndef METARESTORE
-uint8_t fs_unlink(const FsContext &context, uint32_t parent, const HString &name) {
+uint8_t fs_unlink(const FsContext &context, inode_t parent, const HString &name) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *wd;
@@ -1159,7 +1159,7 @@ uint8_t fs_unlink(const FsContext &context, uint32_t parent, const HString &name
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_recursive_remove(const FsContext &context, uint32_t parent,
+uint8_t fs_recursive_remove(const FsContext &context, inode_t parent,
 			    const HString &name, const std::function<void(int)> &callback,
 			    uint32_t job_id) {
 	ChecksumUpdater cu(context.ts());
@@ -1191,7 +1191,7 @@ uint8_t fs_recursive_remove(const FsContext &context, uint32_t parent,
 	                                          callback);
 }
 
-uint8_t fs_rmdir(const FsContext &context, uint32_t parent, const HString &name) {
+uint8_t fs_rmdir(const FsContext &context, inode_t parent, const HString &name) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *wd;
@@ -1232,8 +1232,8 @@ uint8_t fs_rmdir(const FsContext &context, uint32_t parent, const HString &name)
 }
 #endif
 
-uint8_t fs_apply_unlink(uint32_t ts, uint32_t parent, const HString &name,
-		uint32_t inode) {
+uint8_t fs_apply_unlink(uint32_t ts, inode_t parent, const HString &name,
+		inode_t inode) {
 	FSNode *wd;
 	wd = fsnodes_id_to_node(parent);
 	if (!wd) {
@@ -1257,8 +1257,8 @@ uint8_t fs_apply_unlink(uint32_t ts, uint32_t parent, const HString &name,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_rename(const FsContext &context, uint32_t parent_src, const HString &name_src,
-		uint32_t parent_dst, const HString &name_dst, uint32_t *inode, Attributes *attr) {
+uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &name_src,
+		inode_t parent_dst, const HString &name_dst, inode_t *inode, Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *swd;
 	FSNode *dwd;
@@ -1361,8 +1361,8 @@ uint8_t fs_rename(const FsContext &context, uint32_t parent_src, const HString &
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_link(const FsContext &context, uint32_t inode_src, uint32_t parent_dst,
-		const HString &name_dst, uint32_t *inode, Attributes *attr) {
+uint8_t fs_link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
+		const HString &name_dst, inode_t *inode, Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *sp;
 	FSNode *dwd;
@@ -1409,7 +1409,7 @@ uint8_t fs_link(const FsContext &context, uint32_t inode_src, uint32_t parent_ds
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_append(const FsContext &context, uint32_t inode, uint32_t inode_src) {
+uint8_t fs_append(const FsContext &context, inode_t inode, inode_t inode_src) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p, *sp;
 	if (inode == inode_src) {
@@ -1444,7 +1444,7 @@ uint8_t fs_append(const FsContext &context, uint32_t inode, uint32_t inode_src) 
 	return status;
 }
 
-static int fsnodes_check_lock_permissions(const FsContext &context, uint32_t inode, uint16_t op) {
+static int fsnodes_check_lock_permissions(const FsContext &context, inode_t inode, uint16_t op) {
 	FSNode *dummy;
 	uint8_t modemask = MODE_MASK_EMPTY;
 
@@ -1457,7 +1457,7 @@ static int fsnodes_check_lock_permissions(const FsContext &context, uint32_t ino
 	return fsnodes_get_node_for_operation(context, ExpectedNodeType::kAny, modemask, inode, &dummy);
 }
 
-int fs_posixlock_probe(const FsContext &context, uint32_t inode, uint64_t start, uint64_t end,
+int fs_posixlock_probe(const FsContext &context, inode_t inode, uint64_t start, uint64_t end,
 		uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t op,
 		safs_locks::FlockWrapper &info) {
 	uint8_t status;
@@ -1487,7 +1487,7 @@ int fs_posixlock_probe(const FsContext &context, uint32_t inode, uint64_t start,
 	}
 }
 
-int fs_lock_op(const FsContext &context, FileLocks &locks, uint32_t inode,
+int fs_lock_op(const FsContext &context, FileLocks &locks, inode_t inode,
 		uint64_t start, uint64_t end, uint64_t owner, uint32_t sessionid,
 		uint32_t reqid, uint32_t msgid, uint16_t op, bool nonblocking,
 		std::vector<FileLocks::Owner> &applied) {
@@ -1545,7 +1545,7 @@ int fs_lock_op(const FsContext &context, FileLocks &locks, uint32_t inode,
 	return status;
 }
 
-int fs_flock_op(const FsContext &context, uint32_t inode, uint64_t owner, uint32_t sessionid,
+int fs_flock_op(const FsContext &context, inode_t inode, uint64_t owner, uint32_t sessionid,
 		uint32_t reqid, uint32_t msgid, uint16_t op, bool nonblocking,
 		std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
@@ -1560,7 +1560,7 @@ int fs_flock_op(const FsContext &context, uint32_t inode, uint64_t owner, uint32
 	return ret;
 }
 
-int fs_posixlock_op(const FsContext &context, uint32_t inode, uint64_t start, uint64_t end,
+int fs_posixlock_op(const FsContext &context, inode_t inode, uint64_t start, uint64_t end,
 		uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t op,
 		bool nonblocking, std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
@@ -1575,7 +1575,7 @@ int fs_posixlock_op(const FsContext &context, uint32_t inode, uint64_t start, ui
 	return ret;
 }
 
-int fs_locks_clear_session(const FsContext &context, uint8_t type, uint32_t inode,
+int fs_locks_clear_session(const FsContext &context, uint8_t type, inode_t inode,
 		uint32_t sessionid, std::vector<FileLocks::Owner> &applied) {
 
 	if (type != (uint8_t)safs_locks::Type::kFlock && type != (uint8_t)safs_locks::Type::kPosix) {
@@ -1633,7 +1633,7 @@ int fs_locks_list_all(const FsContext &context, uint8_t type, bool pending, uint
 	return SAUNAFS_STATUS_OK;
 }
 
-int fs_locks_list_inode(const FsContext &context, uint8_t type, bool pending, uint32_t inode,
+int fs_locks_list_inode(const FsContext &context, uint8_t type, bool pending, inode_t inode,
 		uint64_t start, uint64_t max, std::vector<safs_locks::Info> &result) {
 	(void)context;
 	FileLocks *locks;
@@ -1655,7 +1655,7 @@ int fs_locks_list_inode(const FsContext &context, uint8_t type, bool pending, ui
 	return SAUNAFS_STATUS_OK;
 }
 
-static void fs_manage_lock_try_lock_pending(FileLocks &locks, uint32_t inode, uint64_t start,
+static void fs_manage_lock_try_lock_pending(FileLocks &locks, inode_t inode, uint64_t start,
 		uint64_t end, std::vector<FileLocks::Owner> &applied) {
 	FileLocks::LockQueue queue;
 	locks.gatherCandidates(inode, start, end, queue);
@@ -1666,7 +1666,7 @@ static void fs_manage_lock_try_lock_pending(FileLocks &locks, uint32_t inode, ui
 	}
 }
 
-int fs_locks_unlock_inode(const FsContext &context, uint8_t type, uint32_t inode,
+int fs_locks_unlock_inode(const FsContext &context, uint8_t type, inode_t inode,
 		std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
 
@@ -1691,7 +1691,7 @@ int fs_locks_unlock_inode(const FsContext &context, uint8_t type, uint32_t inode
 }
 
 int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t ownerid,
-			uint32_t sessionid, uint32_t inode, uint64_t reqid) {
+			uint32_t sessionid, inode_t inode, uint64_t reqid) {
 	ChecksumUpdater cu(context.ts());
 
 	FileLocks *locks;
@@ -1729,7 +1729,7 @@ int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t own
 
 #ifndef METARESTORE
 
-uint8_t fs_readdir_size(const FsContext &context, uint32_t inode, uint8_t flags, void **dnode, uint32_t *dbuffsize) {
+uint8_t fs_readdir_size(const FsContext &context, inode_t inode, uint8_t flags, void **dnode, uint32_t *dbuffsize) {
 	FSNode *p;
 	*dnode = NULL;
 	*dbuffsize = 0;
@@ -1763,7 +1763,7 @@ void fs_readdir_data(const FsContext &context, uint8_t flags, void *dnode, uint8
 }
 
 template <typename SerializableDirentType>
-uint8_t fs_readdir(const FsContext &context, uint32_t inode, uint64_t first_entry, uint64_t number_of_entries,
+uint8_t fs_readdir(const FsContext &context, inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
 		std::vector<SerializableDirentType> &dir_entries) {
 	uint8_t status = verify_session(context, OperationMode::kReadOnly, SessionType::kNotMeta);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -1793,12 +1793,12 @@ uint8_t fs_readdir(const FsContext &context, uint32_t inode, uint64_t first_entr
 
 	return SAUNAFS_STATUS_OK;
 }
-template uint8_t fs_readdir<legacy::DirectoryEntry>(const FsContext &context, uint32_t inode, uint64_t first_entry, uint64_t number_of_entries,
+template uint8_t fs_readdir<legacy::DirectoryEntry>(const FsContext &context, inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
 		std::vector<legacy::DirectoryEntry> &dir_entries);
-template uint8_t fs_readdir<DirectoryEntry>(const FsContext &context, uint32_t inode, uint64_t first_entry, uint64_t number_of_entries,
+template uint8_t fs_readdir<DirectoryEntry>(const FsContext &context, inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
 		std::vector<DirectoryEntry> &dir_entries);
 
-uint8_t fs_checkfile(const FsContext &context, uint32_t inode,
+uint8_t fs_checkfile(const FsContext &context, inode_t inode,
 		uint32_t chunkcount[CHUNK_MATRIX_SIZE]) {
 	FSNode *p;
 
@@ -1817,7 +1817,7 @@ uint8_t fs_checkfile(const FsContext &context, uint32_t inode,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_opencheck(const FsContext &context, uint32_t inode, uint8_t flags, Attributes &attr) {
+uint8_t fs_opencheck(const FsContext &context, inode_t inode, uint8_t flags, Attributes &attr) {
 	FSNode *p;
 
 
@@ -1851,7 +1851,7 @@ uint8_t fs_opencheck(const FsContext &context, uint32_t inode, uint8_t flags, At
 }
 #endif
 
-uint8_t fs_acquire(const FsContext &context, uint32_t inode, uint32_t sessionid) {
+uint8_t fs_acquire(const FsContext &context, inode_t inode, uint32_t sessionid) {
 	ChecksumUpdater cu(context.ts());
 #ifndef METARESTORE
 	if (context.isPersonalityShadow()) {
@@ -1878,7 +1878,7 @@ uint8_t fs_acquire(const FsContext &context, uint32_t inode, uint32_t sessionid)
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_release(const FsContext &context, uint32_t inode, uint32_t sessionid) {
+uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) {
 	ChecksumUpdater cu(context.ts());
 	FSNodeFile *p = fsnodes_id_to_node<FSNodeFile>(inode);
 	if (!p) {
@@ -1948,7 +1948,7 @@ uint8_t fs_auto_repair_if_needed(FSNodeFile *p, uint32_t chunkIndex) {
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_readchunk(uint32_t inode, uint32_t indx, uint64_t *chunkid, uint64_t *length) {
+uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *chunkid, uint64_t *length) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNodeFile *p;
@@ -1981,7 +1981,7 @@ uint8_t fs_readchunk(uint32_t inode, uint32_t indx, uint64_t *chunkid, uint64_t 
 }
 #endif
 
-uint8_t fs_writechunk(const FsContext &context, uint32_t inode, uint32_t indx, bool usedummylockid,
+uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bool usedummylockid,
 		/* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 		uint64_t *length, uint32_t min_server_version) {
 	ChecksumUpdater cu(context.ts());
@@ -2084,7 +2084,7 @@ uint8_t fs_writechunk(const FsContext &context, uint32_t inode, uint32_t indx, b
 }
 
 #ifndef METARESTORE
-uint8_t fs_writeend(uint32_t inode, uint64_t length, uint64_t chunkid, uint32_t lockid) {
+uint8_t fs_writeend(inode_t inode, uint64_t length, uint64_t chunkid, uint32_t lockid) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	uint8_t status = chunk_can_unlock(chunkid, lockid);
@@ -2130,8 +2130,8 @@ uint8_t fs_apply_incversion(uint64_t chunkid) {
 }
 
 #ifndef METARESTORE
-uint8_t fs_repair(const FsContext &context, uint32_t inode,
-		uint8_t correct_only, uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) {
+uint8_t fs_repair(const FsContext &context, inode_t inode,
+		uint8_t correct_only, inode_t *notchanged, inode_t *erased, inode_t *repaired) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	uint32_t nversion, indx;
@@ -2183,7 +2183,7 @@ uint8_t fs_repair(const FsContext &context, uint32_t inode,
 }
 #endif /* #ifndef METARESTORE */
 
-uint8_t fs_apply_repair(uint32_t ts, uint32_t inode, uint32_t indx, uint32_t nversion) {
+uint8_t fs_apply_repair(uint32_t ts, inode_t inode, uint32_t indx, uint32_t nversion) {
 	FSNodeFile *p;
 	uint8_t status;
 	statsrecord psr, nsr;
@@ -2228,7 +2228,7 @@ uint8_t fs_apply_repair(uint32_t ts, uint32_t inode, uint32_t indx, uint32_t nve
 }
 
 #ifndef METARESTORE
-uint8_t fs_getgoal(const FsContext &context, uint32_t inode, uint8_t gmode,
+uint8_t fs_getgoal(const FsContext &context, inode_t inode, uint8_t gmode,
 		GoalStatistics &fgtab, GoalStatistics &dgtab) {
 	FSNode *p;
 
@@ -2250,7 +2250,7 @@ uint8_t fs_getgoal(const FsContext &context, uint32_t inode, uint8_t gmode,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_gettrashtime_prepare(const FsContext &context, uint32_t inode, uint8_t gmode,
+uint8_t fs_gettrashtime_prepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes) {
 	FSNode *p;
 
@@ -2284,7 +2284,7 @@ void fs_gettrashtime_store(TrashtimeMap &fileTrashtimes,TrashtimeMap &dirTrashti
 	}
 }
 
-uint8_t fs_geteattr(const FsContext &context, uint32_t inode, uint8_t gmode,
+uint8_t fs_geteattr(const FsContext &context, inode_t inode, uint8_t gmode,
 			uint32_t feattrtab[16], uint32_t deattrtab[16]) {
 	FSNode *p;
 
@@ -2310,7 +2310,7 @@ uint8_t fs_geteattr(const FsContext &context, uint32_t inode, uint8_t gmode,
 
 #endif
 
-uint8_t fs_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8_t smode,
+uint8_t fs_setgoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 		std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 		const std::function<void(int)> &callback) {
 	ChecksumUpdater cu(context.ts());
@@ -2355,7 +2355,7 @@ uint8_t fs_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8
 }
 
 //This function is only used by Shadow
-uint8_t fs_apply_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8_t smode,
+uint8_t fs_apply_setgoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 		uint32_t master_result) {
 
 	assert(context.isPersonalityShadow());
@@ -2391,7 +2391,7 @@ uint8_t fs_apply_setgoal(const FsContext &context, uint32_t inode, uint8_t goal,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime, uint8_t smode,
+uint8_t fs_settrashtime(const FsContext &context, inode_t inode, uint32_t trashtime, uint8_t smode,
 			std::shared_ptr<SetTrashtimeTask::StatsArray> settrashtime_stats,
 			const std::function<void(int)> &callback) {
 	ChecksumUpdater cu(context.ts());
@@ -2427,7 +2427,7 @@ uint8_t fs_settrashtime(const FsContext &context, uint32_t inode, uint32_t trash
 	                                          callback);
 }
 
-uint8_t fs_apply_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime,
+uint8_t fs_apply_settrashtime(const FsContext &context, inode_t inode, uint32_t trashtime,
 			      uint8_t smode, uint32_t master_result) {
 
 	assert(context.isPersonalityShadow());
@@ -2462,8 +2462,8 @@ uint8_t fs_apply_settrashtime(const FsContext &context, uint32_t inode, uint32_t
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_seteattr(const FsContext &context, uint32_t inode, uint8_t eattr, uint8_t smode,
-			uint32_t *sinodes, uint32_t *ncinodes, uint32_t *nsinodes) {
+uint8_t fs_seteattr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
+			inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) {
 	ChecksumUpdater cu(context.ts());
 	if (!SMODE_ISVALID(smode) ||
 	    (eattr & (~(EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NOECACHE | EATTR_NODATACACHE)))) {
@@ -2480,9 +2480,9 @@ uint8_t fs_seteattr(const FsContext &context, uint32_t inode, uint8_t eattr, uin
 		return status;
 	}
 
-	uint32_t si = 0;
-	uint32_t nci = 0;
-	uint32_t nsi = 0;
+	inode_t si = 0;
+	inode_t nci = 0;
+	inode_t nsi = 0;
 	sassert(context.hasUidGidData());
 	fsnodes_seteattr_recursive(p, context.ts(), context.uid(), eattr, smode, &si, &nci, &nsi);
 	if (context.isPersonalityMaster()) {
@@ -2506,7 +2506,7 @@ uint8_t fs_seteattr(const FsContext &context, uint32_t inode, uint8_t eattr, uin
 
 #ifndef METARESTORE
 
-uint8_t fs_listxattr_leng(const FsContext &context, uint32_t inode, uint8_t opened,
+uint8_t fs_listxattr_leng(const FsContext &context, inode_t inode, uint8_t opened,
 			void **xanode, uint32_t *xasize) {
 	FSNode *p;
 
@@ -2530,7 +2530,7 @@ void fs_listxattr_data(void *xanode, uint8_t *xabuff) {
 	xattr_listattr_data(xanode, xabuff + sizeof(kAclXattrs));
 }
 
-uint8_t fs_setxattr(const FsContext &context, uint32_t inode, uint8_t opened,
+uint8_t fs_setxattr(const FsContext &context, inode_t inode, uint8_t opened,
 		uint8_t anleng, const uint8_t *attrname,
 		uint32_t avleng, const uint8_t *attrvalue, uint8_t mode) {
 	uint32_t ts = eventloop_time();
@@ -2568,7 +2568,7 @@ uint8_t fs_setxattr(const FsContext &context, uint32_t inode, uint8_t opened,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_getxattr(const FsContext &context, uint32_t inode, uint8_t opened,
+uint8_t fs_getxattr(const FsContext &context, inode_t inode, uint8_t opened,
 		uint8_t anleng, const uint8_t *attrname,
 		uint32_t *avleng, uint8_t **attrvalue) {
 	FSNode *p;
@@ -2592,7 +2592,7 @@ uint8_t fs_getxattr(const FsContext &context, uint32_t inode, uint8_t opened,
 
 #endif /* #ifndef METARESTORE */
 
-uint8_t fs_apply_setxattr(uint32_t ts, uint32_t inode, uint32_t anleng, const uint8_t *attrname,
+uint8_t fs_apply_setxattr(uint32_t ts, inode_t inode, uint32_t anleng, const uint8_t *attrname,
 			uint32_t avleng, const uint8_t *attrvalue, uint32_t mode) {
 	FSNode *p;
 	uint8_t status;
@@ -2615,7 +2615,7 @@ uint8_t fs_apply_setxattr(uint32_t ts, uint32_t inode, uint32_t anleng, const ui
 	return status;
 }
 
-uint8_t fs_deleteacl(const FsContext &context, uint32_t inode, AclType type) {
+uint8_t fs_deleteacl(const FsContext &context, inode_t inode, AclType type) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -2646,7 +2646,7 @@ uint8_t fs_deleteacl(const FsContext &context, uint32_t inode, AclType type) {
 
 #ifndef METARESTORE
 
-uint8_t fs_setacl(const FsContext &context, uint32_t inode, const RichACL &acl) {
+uint8_t fs_setacl(const FsContext &context, inode_t inode, const RichACL &acl) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -2670,7 +2670,7 @@ uint8_t fs_setacl(const FsContext &context, uint32_t inode, const RichACL &acl) 
 	return status;
 }
 
-uint8_t fs_setacl(const FsContext &context, uint32_t inode, AclType type, const AccessControlList &acl) {
+uint8_t fs_setacl(const FsContext &context, inode_t inode, AclType type, const AccessControlList &acl) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -2697,7 +2697,7 @@ uint8_t fs_setacl(const FsContext &context, uint32_t inode, AclType type, const 
 	return SAUNAFS_ERROR_EINVAL;
 }
 
-uint8_t fs_getacl(const FsContext &context, uint32_t inode, RichACL &acl) {
+uint8_t fs_getacl(const FsContext &context, inode_t inode, RichACL &acl) {
 	FSNode *p;
 	uint8_t status = verify_session(context, OperationMode::kReadOnly, SessionType::kAny);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -2713,7 +2713,7 @@ uint8_t fs_getacl(const FsContext &context, uint32_t inode, RichACL &acl) {
 
 #endif /* #ifndef METARESTORE */
 
-uint8_t fs_apply_setacl(uint32_t ts, uint32_t inode, char aclType, const char *aclString) {
+uint8_t fs_apply_setacl(uint32_t ts, inode_t inode, char aclType, const char *aclString) {
 	AccessControlList acl;
 	try {
 		acl = AccessControlList::fromString(aclString);
@@ -2735,7 +2735,7 @@ uint8_t fs_apply_setacl(uint32_t ts, uint32_t inode, char aclType, const char *a
 	return status;
 }
 
-uint8_t fs_apply_setrichacl(uint32_t ts, uint32_t inode, const std::string &acl_string) {
+uint8_t fs_apply_setrichacl(uint32_t ts, inode_t inode, const std::string &acl_string) {
 	RichACL acl;
 	try {
 		acl = RichACL::fromString(acl_string);
@@ -2754,7 +2754,7 @@ uint8_t fs_apply_setrichacl(uint32_t ts, uint32_t inode, const std::string &acl_
 }
 
 #ifndef METARESTORE
-uint32_t fs_getdirpath_size(uint32_t inode) {
+uint32_t fs_getdirpath_size(inode_t inode) {
 	FSNode *node;
 	node = fsnodes_id_to_node(inode);
 	if (node) {
@@ -2774,7 +2774,7 @@ uint32_t fs_getdirpath_size(uint32_t inode) {
 	return 0;  // unreachable
 }
 
-void fs_getdirpath_data(uint32_t inode, uint8_t *buff, uint32_t size) {
+void fs_getdirpath_data(inode_t inode, uint8_t *buff, uint32_t size) {
 	FSNode *node;
 	node = fsnodes_id_to_node(inode);
 	if (node) {
@@ -2804,9 +2804,9 @@ void fs_getdirpath_data(uint32_t inode, uint8_t *buff, uint32_t size) {
 	}
 }
 
-uint8_t fs_get_dir_stats(const FsContext &context, uint32_t inode,
-                         uint32_t *inodes, uint32_t *dirs, uint32_t *files,
-                         uint32_t *links, uint32_t *chunks, uint64_t *length,
+uint8_t fs_get_dir_stats(const FsContext &context, inode_t inode,
+                         inode_t *inodes, inode_t *dirs, inode_t *files,
+                         inode_t *links, uint32_t *chunks, uint64_t *length,
                          uint64_t *size, uint64_t *rsize) {
 	FSNode *p;
 	statsrecord sr;
@@ -2835,7 +2835,7 @@ uint8_t fs_get_dir_stats(const FsContext &context, uint32_t inode,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_get_chunkid(const FsContext &context, uint32_t inode, uint32_t index,
+uint8_t fs_get_chunkid(const FsContext &context, inode_t inode, uint32_t index,
 			uint64_t *chunkid) {
 	FSNode *p;
 	uint8_t status = fsnodes_get_node_for_operation(context, ExpectedNodeType::kFile,
@@ -2904,7 +2904,7 @@ uint32_t fs_reserve_job_id() {
 	return gMetadata->task_manager.reserveJobId();
 }
 
-uint8_t fs_getchunksinfo(const FsContext& context, uint32_t current_ip, uint32_t inode,
+uint8_t fs_getchunksinfo(const FsContext& context, uint32_t current_ip, inode_t inode,
 		uint32_t chunk_index, uint32_t chunk_count, std::vector<ChunkWithAddressAndLabel> &chunks) {
 	static constexpr int kMaxNumberOfChunkCopies = 100;
 

@@ -34,9 +34,9 @@ public:
 	  kNoAction
 	};
 
-	using StatsArray = std::array<uint32_t, kStatsSize>;
+	using StatsArray = std::array<inode_t, kStatsSize>;
 
-	SetGoalTask(std::vector<uint32_t> inode_list, uint32_t uid, uint8_t goal, uint8_t smode,
+	SetGoalTask(std::vector<inode_t> inode_list, uint32_t uid, uint8_t goal, uint8_t smode,
 		    const std::shared_ptr<StatsArray> &setgoal_stats) :
 		    inode_list_(std::move(inode_list)), uid_(uid), goal_(goal), smode_(smode),
 		    stats_(setgoal_stats) {
@@ -70,8 +70,8 @@ public:
 	uint8_t setGoal(FSNode *node, uint32_t ts);
 
 private:
-	std::vector<uint32_t> inode_list_;
-	std::vector<uint32_t>::iterator current_inode_;
+	std::vector<inode_t> inode_list_;
+	std::vector<inode_t>::iterator current_inode_;
 
 	uint32_t uid_;
 	uint8_t goal_;

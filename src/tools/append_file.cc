@@ -42,7 +42,8 @@ static void append_file_usage() {
 static int append_file(const char *fname, const char *afname) {
 	uint8_t reqbuff[28], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode, ainode, uid, gid;
+	uint32_t cmd, leng, uid, gid;
+	inode_t inode, ainode;
 	mode_t dmode, smode;
 	int fd;
 	fd = open_master_conn(fname, &inode, &dmode, true);

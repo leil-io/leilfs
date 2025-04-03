@@ -34,12 +34,12 @@ const Attributes InodeMasterInfo::attr =
 const Attributes InodeMasterInfo::attr =
 	  {{'f', 0x01,0x24, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,10}};
 #endif
-const Inode InodeMasterInfo::inode_ = SPECIAL_INODE_MASTERINFO;
+const inode_t InodeMasterInfo::inode_ = SPECIAL_INODE_MASTERINFO;
 
 // 0x01A4 == 0b110100100 == 0644
 const Attributes InodeStats::attr =
 	  {{'f', 0x01,0xA4, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
-const Inode InodeStats::inode_ = SPECIAL_INODE_STATS;
+const inode_t InodeStats::inode_ = SPECIAL_INODE_STATS;
 
 // Win: 0x0124 == 0b100100100 == 0444
 // Other OSs: 0x0100 == 0b100000000 == 0400
@@ -49,27 +49,27 @@ const Attributes InodeOplog::attr =
 #else
 	  {{'f', 0x01,0x00, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
 #endif
-const Inode InodeOplog::inode_ = SPECIAL_INODE_OPLOG;
+const inode_t InodeOplog::inode_ = SPECIAL_INODE_OPLOG;
 
 // 0x0100 == 0b100000000 == 0400
 const Attributes InodeOphistory::attr =
 	  {{'f', 0x01,0x00, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
-const Inode InodeOphistory::inode_ = SPECIAL_INODE_OPHISTORY;
+const inode_t InodeOphistory::inode_ = SPECIAL_INODE_OPHISTORY;
 
 // 0x01A4 == 0b110100100 == 0644
 const Attributes InodeTweaks::attr =
 	  {{'f', 0x01,0xA4, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
-const Inode InodeTweaks::inode_ = SPECIAL_INODE_TWEAKS;
+const inode_t InodeTweaks::inode_ = SPECIAL_INODE_TWEAKS;
 
 // 0x01ED == 0b111101101 == 0755
 const Attributes InodeFileByInode::attr =
 	  {{'d', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
-const Inode InodeFileByInode::inode_ = SPECIAL_INODE_FILE_BY_INODE;
+const inode_t InodeFileByInode::inode_ = SPECIAL_INODE_FILE_BY_INODE;
 
 // 0x01ED == 0b111101101 == 0755
 const Attributes InodePathByInode::attr =
 	  {{'d', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
-const Inode InodePathByInode::inode_ = SPECIAL_INODE_PATH_BY_INODE;
+const inode_t InodePathByInode::inode_ = SPECIAL_INODE_PATH_BY_INODE;
 namespace InodePathByInode {
     InodePathInfo inodePathInfo = {nullptr, 0, std::mutex(), std::condition_variable(), false};
 }
@@ -77,4 +77,4 @@ namespace InodePathByInode {
 // 0x01A4 == 0b110100100 == 0644
 const Attributes InodeMountInfo::attr =
 	  {{'f', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
-const Inode InodeMountInfo::inode_ = SPECIAL_INODE_MOUNT_INFO;
+const inode_t InodeMountInfo::inode_ = SPECIAL_INODE_MOUNT_INFO;

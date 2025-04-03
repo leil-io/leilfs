@@ -25,7 +25,7 @@
 
 using namespace SaunaClient;
 
-static void printSetattrOplog(const Context &ctx, Inode ino, struct stat *stbuf, int to_set,
+static void printSetattrOplog(const Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
 	                    const char modestr[11], const char attrstr[256], const char *node_name) {
 
 	oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]) (internal node: %s): OK (3600,%s)",
@@ -166,7 +166,7 @@ static const std::array<std::function<AttrReply
 	 &InodeMasterInfo::setattr      //0xFU
 }};
 
-AttrReply special_setattr(Inode ino, const Context &ctx, struct stat *stbuf, int to_set,
+AttrReply special_setattr(inode_t ino, const Context &ctx, struct stat *stbuf, int to_set,
 	                  char modestr[11], char attrstr[256]) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {

@@ -159,7 +159,7 @@ static const std::array<GetAttrFunc, 16> funcs = {{
 	 &InodeMasterInfo::getattr      //0xFU
 }};
 
-AttrReply special_getattr(Inode ino, const Context &ctx, char (&attrstr)[256]) {
+AttrReply special_getattr(inode_t ino, const Context &ctx, char (&attrstr)[256]) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {
 		safs_pretty_syslog(LOG_WARNING,

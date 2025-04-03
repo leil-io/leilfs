@@ -27,16 +27,18 @@
 #include <set>
 #include <stdexcept>
 
+#include "common/type_defs.h"
+
 inline uint32_t gCleanAcquiredFilesPeriod;
 inline uint32_t gCleanAcquiredFilesTimeout;
 
 // Define the AcquiredFileLastTimeUsed struct
 struct AcquiredFileLastTimeUsed {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t lastTimeUsed;
 
 	// Constructor
-	AcquiredFileLastTimeUsed(uint32_t inode, uint32_t lastTimeUsed)
+	AcquiredFileLastTimeUsed(inode_t inode, uint32_t lastTimeUsed)
 	    : inode(inode), lastTimeUsed(lastTimeUsed) {}
 };
 
@@ -51,7 +53,7 @@ struct CompareByLastTimeUsed {
 
 using AcquiredFilesLastTimeUsed =
     std::set<AcquiredFileLastTimeUsed, CompareByLastTimeUsed>;
-using InodeToFileMap = std::map<uint32_t, AcquiredFilesLastTimeUsed::iterator>;
+using InodeToFileMap = std::map<inode_t, AcquiredFilesLastTimeUsed::iterator>;
 
 inline AcquiredFilesLastTimeUsed acquiredFilesLastTimeUsed;
 inline InodeToFileMap inodeToFileMap;
@@ -68,7 +70,7 @@ inline AcquiredFileLastTimeUsed getOldestAcquiredFile() {
 
 // Function to add/update a new AcquiredFileLastTimeUsed
 inline void addOrUpdateAcquiredFileLastTimeUsed(
-    uint32_t inode, uint32_t lastTimeUsed = time(nullptr)) {
+    inode_t inode, uint32_t lastTimeUsed = time(nullptr)) {
 	auto it = inodeToFileMap.find(inode);
 	if (it != inodeToFileMap.end()) {
 		// Update existing entry
@@ -87,7 +89,7 @@ inline void addOrUpdateAcquiredFileLastTimeUsed(
 }
 
 // Function to remove an AcquiredFileLastTimeUsed
-inline void removeAcquiredFileLastTimeUsed(uint32_t inode) {
+inline void removeAcquiredFileLastTimeUsed(inode_t inode) {
 	auto it = inodeToFileMap.find(inode);
 	if (it != inodeToFileMap.end()) {
 		acquiredFilesLastTimeUsed.erase(it->second);

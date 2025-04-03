@@ -28,6 +28,7 @@
 #include <string.h>
 #include <limits>
 
+#include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 #include "mount/stats.h"
 
@@ -43,7 +44,7 @@ static uint32_t kCacheTimeInSeconds;
 // Any number should work but it is better to use prime numbers here.
 
 typedef struct _hashbucket {
-	uint32_t inode[HASH_BUCKET_SIZE];
+	inode_t inode[HASH_BUCKET_SIZE];
 	uint32_t time[HASH_BUCKET_SIZE];
 	uint8_t* path[HASH_BUCKET_SIZE];
 } hashbucket;
@@ -86,7 +87,7 @@ static inline void symlink_cache_stats_dec(uint8_t id) {
 	}
 }
 
-void symlink_cache_insert(uint32_t inode,const uint8_t *path) {
+void symlink_cache_insert(inode_t inode,const uint8_t *path) {
 	uint32_t primes[HASH_FUNCTIONS] = {1072573589U,3465827623U,2848548977U,748191707U};
 	hashbucket *hb,*fhb;
 	uint8_t h,i,fi;
@@ -133,7 +134,7 @@ void symlink_cache_insert(uint32_t inode,const uint8_t *path) {
 	pthread_mutex_unlock(&slcachelock);
 }
 
-int symlink_cache_search(uint32_t inode,const uint8_t **path) {
+int symlink_cache_search(inode_t inode,const uint8_t **path) {
 	uint32_t primes[HASH_FUNCTIONS] = {1072573589U,3465827623U,2848548977U,748191707U};
 	hashbucket *hb;
 	uint8_t h,i;

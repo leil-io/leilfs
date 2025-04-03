@@ -102,7 +102,7 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 		}
 
 		// Deserialize inode & ACL
-		uint32_t inode;
+		inode_t inode;
 		AccessControlList posix_acl;
 		deserialize(ptr, size, inode, posix_acl);
 		offsetBegin += size;
@@ -171,7 +171,7 @@ static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataF
 		}
 
 		// Deserialize inode & ACL
-		uint32_t inode;
+		inode_t inode;
 		std::unique_ptr<legacy::ExtendedAcl> extended_acl;
 		std::unique_ptr<legacy::AccessControlList> default_acl;
 		deserialize(ptr, size, inode, extended_acl, default_acl);
@@ -271,7 +271,7 @@ int fs_load_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &o
 		}
 
 		// Deserialize inode & ACL
-		uint32_t inode;
+		inode_t inode;
 		RichACL acl;
 		deserialize(ptr, size, inode, acl);
 		offsetBegin += size;

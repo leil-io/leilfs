@@ -39,7 +39,6 @@ namespace saunafs {
 class Client {
 public:
 	typedef SaunaClient::FsInitParams FsInitParams;
-	typedef SaunaClient::Inode Inode;
 	typedef SaunaClient::JobId JobId;
 	typedef SaunaClient::NamedInodeOffset NamedInodeOffset;
 	typedef SaunaClient::AttrReply AttrReply;
@@ -58,16 +57,16 @@ public:
 		uint64_t avail_space;
 		uint64_t trash_space;
 		uint64_t reserved_space;
-		uint32_t inodes;
+		inode_t inodes;
 	};
 
 	struct FileInfo : public SaunaClient::FileInfo, public boost::intrusive::list_base_hook<> {
 		FileInfo() {}
-		FileInfo(Inode inode, uint64_t opendirSessionID = 0)
+		FileInfo(inode_t inode, uint64_t opendirSessionID = 0)
 			: inode(inode)
 			, opendirSessionID(opendirSessionID) {
 		}
-		Inode inode;
+		inode_t inode;
 		uint64_t opendirSessionID;
 	};
 	typedef boost::intrusive::list<FileInfo> FileInfoList;
@@ -82,43 +81,43 @@ public:
 	void updateGroups(Context &ctx, std::error_code &ec);
 
 	/*! \brief Find inode in parent directory by name */
-	void lookup(Context &ctx, Inode parent, const std::string &path, EntryParam &param);
-	void lookup(Context &ctx, Inode parent, const std::string &path, EntryParam &param,
+	void lookup(Context &ctx, inode_t parent, const std::string &path, EntryParam &param);
+	void lookup(Context &ctx, inode_t parent, const std::string &path, EntryParam &param,
 	            std::error_code &ec);
 
 	/*! \brief Create a file with given parent and name */
-	void mknod(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+	void mknod(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 	           dev_t rdev, EntryParam &param);
-	void mknod(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+	void mknod(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 	           dev_t rdev, EntryParam &param, std::error_code &ec);
 
 	/*! \brief Create a link with a given parent and name */
-	void link(Context &ctx, Inode inode, Inode parent,
+	void link(Context &ctx, inode_t inode, inode_t parent,
 	             const std::string &name, EntryParam &param);
-	void link(Context &ctx, Inode inode, Inode parent,
+	void link(Context &ctx, inode_t inode, inode_t parent,
 	             const std::string &name, EntryParam &param, std::error_code &ec);
 
 	/*! \brief Create a symbolic link with a given parent and name */
-	void symlink(Context &ctx, const std::string &link, Inode parent,
+	void symlink(Context &ctx, const std::string &link, inode_t parent,
 	             const std::string &name, EntryParam &param);
-	void symlink(Context &ctx, const std::string &link, Inode parent,
+	void symlink(Context &ctx, const std::string &link, inode_t parent,
 	             const std::string &name, EntryParam &param, std::error_code &ec);
 
 	/*! \brief Open a file by inode */
-	FileInfo *open(Context &ctx, Inode inode, int flags);
-	FileInfo *open(Context &ctx, Inode inode, int flags, std::error_code &ec);
+	FileInfo *open(Context &ctx, inode_t inode, int flags);
+	FileInfo *open(Context &ctx, inode_t inode, int flags, std::error_code &ec);
 
 	/*! \brief Open a directory by inode */
-	FileInfo *opendir(Context &ctx, Inode ino);
-	FileInfo *opendir(Context &ctx, Inode ino, std::error_code &ec);
+	FileInfo *opendir(Context &ctx, inode_t ino);
+	FileInfo *opendir(Context &ctx, inode_t ino, std::error_code &ec);
 
 	/*! \brief Release a previously open directory */
 	void releasedir(FileInfo* fileinfo);
 	void releasedir(FileInfo* fileinfo, std::error_code &ec);
 
 	/*! \brief Remove a directory */
-	void rmdir(Context &ctx, Inode parent, const std::string &path);
-	void rmdir(Context &ctx, Inode parent, const std::string &path, std::error_code &ec);
+	void rmdir(Context &ctx, inode_t parent, const std::string &path);
+	void rmdir(Context &ctx, inode_t parent, const std::string &path, std::error_code &ec);
 
 	/*! \brief Read directory contents */
 	ReadDirReply readdir(Context &ctx, FileInfo* fileinfo, off_t offset,
@@ -127,8 +126,8 @@ public:
 	                     size_t max_entries, std::error_code &ec);
 
 	/*! \brief Read link contents */
-	std::string readlink(Context &ctx, Inode inode);
-	std::string readlink(Context &ctx, Inode inode, std::error_code &ec);
+	std::string readlink(Context &ctx, inode_t inode);
+	std::string readlink(Context &ctx, inode_t inode, std::error_code &ec);
 
 	/*! \brief Read reserved contents */
 	ReadReservedReply readreserved(Context &ctx, NamedInodeOffset offset, NamedInodeOffset max_entries);
@@ -139,29 +138,29 @@ public:
 	ReadTrashReply readtrash(Context &ctx, NamedInodeOffset offset, NamedInodeOffset max_entries, std::error_code &ec);
 
 	/*! \brief Create a directory */
-	void mkdir(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+	void mkdir(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 	           EntryParam &entry_param);
-	void mkdir(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+	void mkdir(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 	           EntryParam &entry_param, std::error_code &ec);
 
 	/*! \brief Unlink a file by parent and name entry */
-	void unlink(Context &ctx, Inode parent, const std::string &path);
-	void unlink(Context &ctx, Inode parent, const std::string &path, std::error_code &ec);
+	void unlink(Context &ctx, inode_t parent, const std::string &path);
+	void unlink(Context &ctx, inode_t parent, const std::string &path, std::error_code &ec);
 
 	/*! \brief Undelete file from trash */
-	void undel(Context &ctx, Inode ino);
-	void undel(Context &ctx, Inode ino, std::error_code &ec);
+	void undel(Context &ctx, inode_t ino);
+	void undel(Context &ctx, inode_t ino, std::error_code &ec);
 
 	/*! \brief Rename a file */
-	void rename(Context &ctx, Inode parent, const std::string &path, Inode new_parent,
+	void rename(Context &ctx, inode_t parent, const std::string &path, inode_t new_parent,
 	            const std::string &new_path);
-	void rename(Context &ctx, Inode parent, const std::string &path, Inode new_parent,
+	void rename(Context &ctx, inode_t parent, const std::string &path, inode_t new_parent,
 	            const std::string &new_path, std::error_code &ec);
 
 	/*! \brief Set inode attributes */
-	void setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
+	void setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
 	             AttrReply &attr_reply);
-	void setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
+	void setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
 	             AttrReply &attr_reply, std::error_code &ec);
 
 	/*! \brief Read bytes from open file, returns read cache result that holds cache lock */
@@ -184,22 +183,22 @@ public:
 	void flush(Context &ctx, FileInfo *fileinfo, std::error_code &ec);
 
 	/*! \brief Get attributes by inode */
-	void getattr(Context &ctx, Inode ino, AttrReply &attr_reply);
-	void getattr(Context &ctx, Inode ino, AttrReply &attr_reply, std::error_code &ec);
+	void getattr(Context &ctx, inode_t ino, AttrReply &attr_reply);
+	void getattr(Context &ctx, inode_t ino, AttrReply &attr_reply, std::error_code &ec);
 
 	/*! \brief Create a snapshot of a file */
-	JobId makesnapshot(Context &ctx, Inode src_inode, Inode dst_inode,
+	JobId makesnapshot(Context &ctx, inode_t src_inode, inode_t dst_inode,
 	                  const std::string &dst_name, bool can_overwrite);
-	JobId makesnapshot(Context &ctx, Inode src_inode, Inode dst_inode,
+	JobId makesnapshot(Context &ctx, inode_t src_inode, inode_t dst_inode,
 	                  const std::string &dst_name, bool can_overwrite, std::error_code &ec);
 
 	/*! \brief Get replication goal for a file */
-	std::string getgoal(Context &ctx, Inode ino);
-	std::string getgoal(Context &ctx, Inode ino, std::error_code &ec);
+	std::string getgoal(Context &ctx, inode_t ino);
+	std::string getgoal(Context &ctx, inode_t ino, std::error_code &ec);
 
 	/*! \brief Set replication goal for a file */
-	void setgoal(Context &ctx, Inode inode, const std::string &goal_name, uint8_t smode);
-	void setgoal(Context &ctx, Inode inode, const std::string &goal_name, uint8_t smode,
+	void setgoal(Context &ctx, inode_t inode, const std::string &goal_name, uint8_t smode);
+	void setgoal(Context &ctx, inode_t inode, const std::string &goal_name, uint8_t smode,
 	             std::error_code &ec);
 
 	void fsync(Context &ctx, FileInfo *fileinfo);
@@ -208,44 +207,44 @@ public:
 	void statfs(Stats &stats);
 	void statfs(Stats &stats, std::error_code &ec);
 
-	void setxattr(Context &ctx, Inode ino, const std::string &name,
+	void setxattr(Context &ctx, inode_t ino, const std::string &name,
 	              const XattrBuffer &value, int flags);
-	void setxattr(Context &ctx, Inode ino, const std::string &name,
+	void setxattr(Context &ctx, inode_t ino, const std::string &name,
 	              const XattrBuffer &value, int flags, std::error_code &ec);
 
-	XattrBuffer getxattr(Context &ctx, Inode ino, const std::string &name);
-	XattrBuffer getxattr(Context &ctx, Inode ino, const std::string &name,
+	XattrBuffer getxattr(Context &ctx, inode_t ino, const std::string &name);
+	XattrBuffer getxattr(Context &ctx, inode_t ino, const std::string &name,
 	                     std::error_code &ec);
 
-	XattrBuffer listxattr(Context &ctx, Inode ino);
-	XattrBuffer listxattr(Context &ctx, Inode ino, std::error_code &ec);
+	XattrBuffer listxattr(Context &ctx, inode_t ino);
+	XattrBuffer listxattr(Context &ctx, inode_t ino, std::error_code &ec);
 
-	void removexattr(Context &ctx, Inode ino, const std::string &name);
-	void removexattr(Context &ctx, Inode ino, const std::string &name, std::error_code &ec);
+	void removexattr(Context &ctx, inode_t ino, const std::string &name);
+	void removexattr(Context &ctx, inode_t ino, const std::string &name, std::error_code &ec);
 
-	void setacl(Context &ctx, Inode ino, const RichACL &acl);
-	void setacl(Context &ctx, Inode ino, const RichACL &acl, std::error_code &ec);
+	void setacl(Context &ctx, inode_t ino, const RichACL &acl);
+	void setacl(Context &ctx, inode_t ino, const RichACL &acl, std::error_code &ec);
 
-	RichACL getacl(Context &ctx, Inode ino);
-	RichACL getacl(Context &ctx, Inode ino, std::error_code &ec);
+	RichACL getacl(Context &ctx, inode_t ino);
+	RichACL getacl(Context &ctx, inode_t ino, std::error_code &ec);
 
 	static std::vector<std::string> toXattrList(const XattrBuffer &buffer);
 
-	std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, Inode ino,
+	std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, inode_t ino,
 	                                      uint32_t chunk_index, uint32_t chunk_count);
-	std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, Inode ino,
+	std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, inode_t ino,
 	                                      uint32_t chunk_index, uint32_t chunk_count,
 	                                      std::error_code &ec);
 
 	std::vector<ChunkserverListEntry> getchunkservers();
 	std::vector<ChunkserverListEntry> getchunkservers(std::error_code &ec);
 
-	void getlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock);
-	void getlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock,
+	void getlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock);
+	void getlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock,
 	           std::error_code &ec);
-	void setlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock,
+	void setlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock,
 	               std::function<int(const safs_locks::InterruptData &)> handler);
-	void setlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock,
+	void setlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock,
 	               std::function<int(const safs_locks::InterruptData &)> handler,
 	               std::error_code &ec);
 	void setlk_interrupt(const safs_locks::InterruptData &data);

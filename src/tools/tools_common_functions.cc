@@ -32,9 +32,10 @@
 #include <string.h>
 
 #include "common/human_readable_format.h"
-#include "errors/sfserr.h"
 #include "common/server_connection.h"
 #include "common/signal_handling.h"
+#include "common/type_defs.h"
+#include "errors/sfserr.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 
@@ -56,7 +57,7 @@ void signalHandler(uint32_t job_id) {
 	sigwait(&set, &sig);
 #endif
 	if (sig == SIGINT || sig == SIGTERM || sig == SIGHUP) {
-		uint32_t inode;
+		inode_t inode;
 		int fd = open_master_conn(".", &inode, nullptr, false);
 		if (fd < 0) {
 			printf("Connection to master failed\n");

@@ -27,6 +27,7 @@
 #include "common/attributes.h"
 #include "common/shared_mutex.h"
 #include "common/time_utils.h"
+#include "common/type_defs.h"
 #include "mount/sauna_client_context.h"
 #include "protocol/directory_entry.h"
 
@@ -34,7 +35,7 @@
 #include <boost/intrusive/set.hpp>
 
 constexpr uint64_t kInvalidIndex = std::numeric_limits<uint64_t>::max();
-constexpr uint32_t kInvalidParent = std::numeric_limits<uint32_t>::max();
+constexpr inode_t kInvalidParent = std::numeric_limits<inode_t>::max();
 constexpr uint32_t kNoMoreEntriesMarker = 0;
 constexpr char kEmptyName[] = "";
 
@@ -51,7 +52,7 @@ constexpr char kEmptyName[] = "";
 class DirEntryCache {
 public:
 	struct DirEntry {
-		DirEntry(const SaunaClient::Context &ctx, uint32_t parent_inode, uint32_t inode,
+		DirEntry(const SaunaClient::Context &ctx, inode_t parent_inode, inode_t inode,
 		         uint64_t index, uint64_t next_index, std::string name,
 				 Attributes attr, uint64_t ts)
 		    : uid(ctx.uid),
@@ -75,8 +76,8 @@ public:
 
 		uint32_t uid;
 		uint32_t gid;
-		uint32_t parent_inode;
-		uint32_t inode;
+		inode_t parent_inode;
+		inode_t inode;
 		uint64_t index;
 		uint64_t next_index;
 		uint64_t timestamp;
@@ -100,13 +101,13 @@ protected:
 		}
 
 		bool operator()(const DirEntry &e,
-		                const std::tuple<uint32_t, uint32_t, uint32_t, std::string>
+		                const std::tuple<inode_t, uint32_t, uint32_t, std::string>
 		                        &lookup_info) const {
 			return std::make_tuple(e.parent_inode, e.uid, e.gid, e.name) < lookup_info;
 		}
 
 		bool operator()(
-		        const std::tuple<uint32_t, uint32_t, uint32_t, std::string> &lookup_info,
+		        const std::tuple<inode_t, uint32_t, uint32_t, std::string> &lookup_info,
 		        const DirEntry &e) const {
 			return lookup_info < std::make_tuple(e.parent_inode, e.uid, e.gid, e.name);
 		}
@@ -119,13 +120,13 @@ protected:
 		}
 
 		bool operator()(const DirEntry &e,
-		                const std::tuple<uint32_t, uint32_t, uint32_t, uint64_t>
+		                const std::tuple<inode_t, uint32_t, uint32_t, uint64_t>
 		                        &index_info) const {
 			return std::make_tuple(e.parent_inode, e.uid, e.gid, e.index) < index_info;
 		}
 
 		bool operator()(
-		        const std::tuple<uint32_t, uint32_t, uint32_t, uint64_t> &index_info,
+		        const std::tuple<inode_t, uint32_t, uint32_t, uint64_t> &index_info,
 		        const DirEntry &e) const {
 			return index_info < std::make_tuple(e.parent_inode, e.uid, e.gid, e.index);
 		}
@@ -136,11 +137,11 @@ protected:
 			return e1.inode < e2.inode;
 		}
 
-		bool operator()(const DirEntry &e, const uint32_t &inode) const {
+		bool operator()(const DirEntry &e, const inode_t &inode) const {
 			return e.inode < inode;
 		}
 
-		bool operator()(const uint32_t &inode, const DirEntry &e) const {
+		bool operator()(const inode_t &inode, const DirEntry &e) const {
 			return inode < e.inode;
 		}
 	};
@@ -215,7 +216,7 @@ public:
 	 *
 	 * \return Iterator to found entry.
 	 */
-	LookupSet::iterator find(const SaunaClient::Context &ctx, uint32_t parent_inode,
+	LookupSet::iterator find(const SaunaClient::Context &ctx, inode_t parent_inode,
 	                         const std::string &name) {
 		return lookup_set_.find(std::make_tuple(parent_inode, ctx.uid, ctx.gid, name),
 		                        LookupCompare());
@@ -229,7 +230,7 @@ public:
 	 *
 	 * \return Iterator to found entry.
 	 */
-	IndexSet::iterator find(const SaunaClient::Context &ctx, uint32_t parent_inode,
+	IndexSet::iterator find(const SaunaClient::Context &ctx, inode_t parent_inode,
 	                        uint64_t index) {
 		return index_set_.find(std::make_tuple(parent_inode, ctx.uid, ctx.gid, index),
 		                       IndexCompare());
@@ -242,7 +243,7 @@ public:
 	 *
 	 * \return Iterator to found entry.
 	 */
-	InodeMultiset::iterator find(const SaunaClient::Context &ctx, uint32_t inode) {
+	InodeMultiset::iterator find(const SaunaClient::Context &ctx, inode_t inode) {
 		auto it = inode_multiset_.lower_bound(inode, InodeCompare());
 
 		while (it != inode_multiset_.end() && it->inode == inode) {
@@ -264,7 +265,7 @@ public:
 	 *
 	 * \return True if inode has been found in cache, false otherwise.
 	 */
-	bool lookup(const SaunaClient::Context &ctx, uint32_t inode, Attributes &attr) {
+	bool lookup(const SaunaClient::Context &ctx, inode_t inode, Attributes &attr) {
 		if (inode == kNoMoreEntriesMarker) {
 			return false;
 		}
@@ -298,8 +299,8 @@ public:
 	 *
 	 * \return True if inode has been found in cache, false otherwise.
 	 */
-	bool lookup(const SaunaClient::Context &ctx, uint32_t parent_inode,
-	            const std::string &name, uint32_t &inode, Attributes &attr) {
+	bool lookup(const SaunaClient::Context &ctx, inode_t parent_inode,
+	            const std::string &name, inode_t &inode, Attributes &attr) {
 		shared_lock<SharedMutex> guard(rwlock_);
 		updateTime();
 		auto it = find(ctx, parent_inode, name);
@@ -315,14 +316,14 @@ public:
 	 *
 	 * \param ctx Process credentials.
 	 * \param parent_inode Parent node index (inode).
-	 * \param inode Inode of directory entry.
+	 * \param inode inode_t of directory entry.
 	 * \param index Position of entry in directory listing.
 	 * \param next_index Position of the next entry.
 	 * \param name Name of directory entry.
 	 * \param attr attributes of found directory entry.
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
-	void insert(const SaunaClient::Context &ctx, uint32_t parent_inode, uint32_t inode,
+	void insert(const SaunaClient::Context &ctx, inode_t parent_inode, inode_t inode,
 	            uint64_t index, uint64_t next_index, const std::string name,
 				const Attributes &attr, uint64_t timestamp) {
 		// Avoid inserting stale data
@@ -349,13 +350,13 @@ public:
 	 *
 	 * \param ctx Process credentials.
 	 * \param parent_inode Parent node index (inode).
-	 * \param inode Inode of directory entry.
+	 * \param inode inode_t of directory entry.
 	 * \param name Name of directory entry.
 	 * \param attr attributes of found directory entry.
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
-	void insert(const SaunaClient::Context &ctx, uint32_t parent_inode,
-	            uint32_t inode, const std::string name, const Attributes &attr,
+	void insert(const SaunaClient::Context &ctx, inode_t parent_inode,
+	            inode_t inode, const std::string name, const Attributes &attr,
 	            uint64_t timestamp) {
 		// Avoid inserting stale data
 		if (timestamp + timeout_ <= current_time_) {
@@ -376,11 +377,11 @@ public:
 	/*! \brief Add directory entry information to cache.
 	 *
 	 * \param ctx Process credentials.
-	 * \param inode Inode of directory entry.
+	 * \param inode inode_t of directory entry.
 	 * \param attr attributes of found directory entry.
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
-	void insert(const SaunaClient::Context &ctx, uint32_t inode,
+	void insert(const SaunaClient::Context &ctx, inode_t inode,
 	            const Attributes &attr, uint64_t timestamp) {
 		// Avoid inserting stale data
 		if (timestamp + timeout_ <= current_time_) {
@@ -402,7 +403,7 @@ public:
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
 	template <typename Container>
-	void insertSequence(const SaunaClient::Context &ctx, uint32_t parent_inode,
+	void insertSequence(const SaunaClient::Context &ctx, inode_t parent_inode,
 	                      const Container &container, uint64_t timestamp) {
 		// Avoid inserting stale data
 		if (timestamp + timeout_ <= current_time_) {
@@ -439,7 +440,7 @@ public:
 	 * \param parent_inode Parent node inode.
 	 * \param first_index Directory index of first entry to remove.
 	 */
-	void invalidate(const SaunaClient::Context &ctx, uint32_t parent_inode, uint64_t first_index) {
+	void invalidate(const SaunaClient::Context &ctx, inode_t parent_inode, uint64_t first_index) {
 		uint64_t entry_index = first_index;
 		while (true) {
 			auto it = index_set_.find(
@@ -459,9 +460,9 @@ public:
 	 *
 	 * \warning This function takes write (unique) lock.
 	 *
-	 * \param inode Inode.
+	 * \param inode inode_t.
 	 */
-	void lockAndInvalidateInode(uint32_t inode) {
+	void lockAndInvalidateInode(inode_t inode) {
 		std::unique_lock<SharedMutex> guard(rwlock_);
 		auto it = inode_multiset_.find(inode, InodeCompare());
 		while (it != inode_multiset_.end() && it->inode == inode) {
@@ -477,7 +478,7 @@ public:
 	 *
 	 * \param parent_inode Parent inode.
 	 */
-	void lockAndInvalidateParent(uint32_t parent_inode) {
+	void lockAndInvalidateParent(inode_t parent_inode) {
 		std::unique_lock<SharedMutex> guard(rwlock_);
 		// lookup_set_ should contain all the elements inside index_set
 		auto it = lookup_set_.lower_bound(
@@ -507,7 +508,7 @@ public:
 	 * \param ctx Process credentials.
 	 * \param parent_inode Parent inode.
 	 */
-	void lockAndInvalidateParent(const SaunaClient::Context &ctx, uint32_t parent_inode) {
+	void lockAndInvalidateParent(const SaunaClient::Context &ctx, inode_t parent_inode) {
 		std::unique_lock<SharedMutex> guard(rwlock_);
 		// lookup_set_ should contain all the elements inside index_set
 		auto it = lookup_set_.lower_bound(
@@ -684,8 +685,8 @@ protected:
 		entry.next_index = de.next_index;
 	}
 
-	void addEntry(const SaunaClient::Context &ctx, uint32_t parent_inode,
-	              uint32_t inode, uint64_t index, uint64_t next_index,
+	void addEntry(const SaunaClient::Context &ctx, inode_t parent_inode,
+	              inode_t inode, uint64_t index, uint64_t next_index,
 	              std::string name, Attributes attr, uint64_t timestamp) {
 		DirEntry *entry = new DirEntry(ctx, parent_inode, inode, index,
 		                               next_index, name, attr, timestamp);

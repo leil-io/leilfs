@@ -19,6 +19,7 @@
 */
 
 #include "common/platform.h"
+#include "protocol/SFSCommunication.h"
 
 #include "master/metadata_backend_file.h"
 
@@ -408,7 +409,7 @@ uint64_t MetadataBackendFile::changelogGetLastLogVersion(const std::string& fnam
 
 bool xattr_load(MetadataLoader::Options options) {
 	const uint8_t *ptr;
-	uint32_t inode;
+	inode_t inode;
 	uint8_t anleng;
 	uint32_t avleng;
 	xattr_data_entry *xa;
@@ -552,14 +553,14 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 	static const int8_t kError = -1;
 	static const int8_t kSuccess = 0;
 	static const int8_t kLastEdge = 1;
-	static uint32_t currentParentId;
+	static inode_t currentParentId;
 	if (init) {
 		currentParentId = 0;
 		return kSuccess;
 	}
 	const auto* pSrc = metadataFile->seek(sectionOffset);
-	auto parentId = get32bit(&pSrc);
-	auto childId = get32bit(&pSrc);
+	inode_t parentId = get32bit(&pSrc);
+	inode_t childId = get32bit(&pSrc);
 	auto edgeNameSize = get16bit(&pSrc);
 	sectionOffset = metadataFile->offset(pSrc);
 
@@ -919,7 +920,8 @@ static bool fs_loadlocks(MetadataLoader::Options options) {
 
 bool fs_loadfree(MetadataLoader::Options options) {
 	const uint8_t *ptr;
-	uint32_t freeNodesToLoad, freeNodesNumber;
+	inode_t freeNodesToLoad;
+	inode_t freeNodesNumber;
 
 	try {
 		ptr = options.metadataFile->seek(options.offset);
@@ -942,7 +944,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 		if (freeNodesToLoad == 0) {
 			freeNodesToLoad = std::min(freeNodesNumber, uint32_t(1024));
 		}
-		uint32_t id = get32bit(&ptr);
+		inode_t id = get32bit(&ptr);
 		uint32_t timestamp = get32bit(&ptr);
 		gMetadata->inode_pool.detain(id, timestamp, true);
 		freeNodesToLoad--;

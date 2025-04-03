@@ -41,7 +41,8 @@ static void get_trashtime_usage() {
 static int get_trashtime(const char *fname, uint8_t mode) {
 	uint8_t reqbuff[17], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
+	uint32_t cmd, leng;
+	inode_t inode;
 	uint32_t fn, dn, i;
 	uint32_t trashtime;
 	uint32_t cnt;

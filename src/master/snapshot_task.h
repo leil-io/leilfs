@@ -40,10 +40,11 @@
  */
 class SnapshotTask : public TaskManager::Task {
 public:
-	using SubtaskContainer = std::vector<std::pair<uint32_t, HString>>;
+	// {inode, snapshot path}
+	using SubtaskContainer = std::vector<std::pair<inode_t, HString>>;
 
-	SnapshotTask(SubtaskContainer &&subtask, uint32_t orig_inode, uint32_t dst_parent_inode,
-		     uint32_t dst_inode, uint8_t can_overwrite, uint8_t ignore_missing_src,
+	SnapshotTask(SubtaskContainer &&subtask, inode_t orig_inode, inode_t dst_parent_inode,
+		     inode_t dst_inode, uint8_t can_overwrite, uint8_t ignore_missing_src,
 		     bool emit_changelog, bool enqueue_work) :
 		     subtask_(std::move(subtask)), orig_inode_(orig_inode),
 		     dst_parent_inode_(dst_parent_inode),dst_inode_(dst_inode),
@@ -102,15 +103,15 @@ protected:
 	 * The function (for master) emits metadata CLONE information. For shadow it updates
 	 * metadata version.
 	 */
-	void emitChangelog(uint32_t ts, uint32_t dst_inode);
+	void emitChangelog(uint32_t ts, inode_t dst_inode);
 
 private:
 	SubtaskContainer subtask_; /*!< List of pairs (inode to be cloned, clone file name). */
 	SubtaskContainer::iterator current_subtask_; /*!< Current subtask to execute. */
 
-	uint32_t orig_inode_;       /*!< First inode of snapshot request. */
-	uint32_t dst_parent_inode_; /*!< Inode of clone parent. */
-	uint32_t dst_inode_;        /*!< Inode number of clone. If 0 means that
+	inode_t orig_inode_;       /*!< First Inode of snapshot request. */
+	inode_t dst_parent_inode_; /*!< Inode of clone parent. */
+	inode_t dst_inode_;        /*!< Inode number of clone. If 0 means that
 	                                 inode number should be requested. */
 	uint8_t can_overwrite_;     /*!< Can cloning operation overwrite existing node. */
 	uint8_t ignore_missing_src_;/*!< Continue execution of snapshot task despite encountering

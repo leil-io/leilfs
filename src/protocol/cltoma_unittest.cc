@@ -28,7 +28,7 @@
 
 TEST(CltomaCommunicationTests, FuseReadChunk) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 512, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, inode, 112, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 112, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, index, 1583, 0);
 
 	std::vector<uint8_t> buffer;
@@ -45,7 +45,7 @@ TEST(CltomaCommunicationTests, FuseReadChunk) {
 
 TEST(CltomaCommunicationTests, FuseWriteChunk) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 512, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, inode, 112, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 112, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, index, 1583, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, lockId, 986589, 0);
 
@@ -68,7 +68,7 @@ TEST(CltomaCommunicationTests, FuseWriteChunkEnd) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 512, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 4254, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, lockId, 986589, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, inode, 112, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 112, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, fileLength, 1583, 0);
 
 	std::vector<uint8_t> buffer;
@@ -102,7 +102,7 @@ TEST(CltomaCommunicationTests, XorChunksHealth) {
 
 TEST(CltomaCommunicationTests, FuseDeleteAcl) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 123, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, inode, 456, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 456, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, uid, 789, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, gid, 1011, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(AclType, type, AclType::kDefault, AclType::kAccess);
@@ -125,7 +125,7 @@ TEST(CltomaCommunicationTests, FuseDeleteAcl) {
 
 TEST(CltomaCommunicationTests, FuseGetAcl) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 123, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, inode, 456, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 456, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, uid, 789, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, gid, 1011, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(AclType, type, AclType::kDefault, AclType::kAccess);
@@ -148,7 +148,7 @@ TEST(CltomaCommunicationTests, FuseGetAcl) {
 
 TEST(CltomaCommunicationTests, FuseSetAcl) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 123, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, inode, 456, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 456, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, uid, 789, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, gid, 1011, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(AclType, type, AclType::kDefault, AclType::kAccess);

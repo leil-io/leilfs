@@ -135,11 +135,11 @@ struct SaunaFSHandle {
 };
 
 struct DSWire {
-	uint32_t inode; /// inode
+	inode_t inode; /// inode
 };
 
 struct DataServerHandle {
 	struct fsal_ds_handle handle; /// Public Data Server handle
-	uint32_t inode; /// inode
+	inode_t inode; /// inode
 	FileInfoEntry_t *cacheHandle; /// Cache entry for inode
 };

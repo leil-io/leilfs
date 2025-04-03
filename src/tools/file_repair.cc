@@ -42,8 +42,8 @@ static void file_repair_usage() {
 static int file_repair(const char *fname, uint8_t correct_only_flag) {
 	uint8_t reqbuff[25], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
-	uint32_t notchanged, erased, repaired;
+	uint32_t cmd, leng;
+	inode_t inode, notchanged, erased, repaired;
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, true);
 	if (fd < 0) {

@@ -148,7 +148,7 @@ inline void addNotificationMessage(const std::string &message) {
 }
 
 inline void addPathByInodeBasedNotificationMessage(const std::string &message,
-                                                   uint32_t inode) {
+                                                   inode_t inode) {
 	if (stopThread || !gShowMessagesOnNotificationArea) { return; }
 	auto now = std::chrono::steady_clock::now();
 

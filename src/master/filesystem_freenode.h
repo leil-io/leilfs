@@ -24,6 +24,8 @@
 
 #include <cstdint>
 
+#include "common/type_defs.h"
+
 /*! \brief Get next free inode number.
  *
  * \param ts        - current time stamp
@@ -34,4 +36,4 @@
  * \return 0  - no more free inodes
  *         >0 - allocated inode number (may differ from requested if it was already taken)
  */
-uint32_t fsnodes_get_next_id(uint32_t ts, uint32_t req_inode);
+inode_t fsnodes_get_next_id(uint32_t ts, inode_t req_inode);

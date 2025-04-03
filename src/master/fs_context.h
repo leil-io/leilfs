@@ -76,7 +76,7 @@ public:
 	 *
 	 * \param ts - a timestamp of the operations made in this context
 	 */
-	static FsContext getForMaster(uint32_t ts, uint32_t rootinode, uint8_t sesflags) {
+	static FsContext getForMaster(uint32_t ts, inode_t rootinode, uint8_t sesflags) {
 		return FsContext(ts, metadataserver::Personality::kMaster, rootinode, sesflags);
 	}
 
@@ -94,11 +94,11 @@ public:
 	 * \param auid - real uid of the user which will perform operations in this context
 	 * \param agid - real gid of the user which will perform operations in this context
 	 */
-	static FsContext getForMasterWithSession(uint32_t ts,
-			uint32_t rootinode, uint8_t sesflags,
-			uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid) {
-		return FsContext(ts, metadataserver::Personality::kMaster,
-				rootinode, sesflags, uid, gid, auid, agid);
+	static FsContext getForMasterWithSession(uint32_t ts, inode_t rootinode, uint8_t sesflags,
+	                                         uint32_t uid, uint32_t gid, uint32_t auid,
+	                                         uint32_t agid) {
+		return FsContext(ts, metadataserver::Personality::kMaster, rootinode, sesflags, uid, gid,
+		                 auid, agid);
 	}
 
 	/**
@@ -115,12 +115,11 @@ public:
 	 * \param auid - real uid of the user which will perform operations in this context
 	 * \param agid - real gid of the user which will perform operations in this context
 	 */
-	static FsContext getForMasterWithSession(uint32_t ts,
-			uint32_t rootinode, uint8_t sesflags,
-			uint32_t uid, GroupsContainer &&gids,
-			uint32_t auid, uint32_t agid) {
-		return FsContext(ts, metadataserver::Personality::kMaster,
-				rootinode, sesflags, uid, std::move(gids), auid, agid);
+	static FsContext getForMasterWithSession(uint32_t ts, inode_t rootinode, uint8_t sesflags,
+	                                         uint32_t uid, GroupsContainer &&gids, uint32_t auid,
+	                                         uint32_t agid) {
+		return FsContext(ts, metadataserver::Personality::kMaster, rootinode, sesflags, uid,
+		                 std::move(gids), auid, agid);
 	}
 
 	/**
@@ -137,12 +136,11 @@ public:
 	 * \param auid - real uid of the user which will perform operations in this context
 	 * \param agid - real gid of the user which will perform operations in this context
 	 */
-	static FsContext getForMasterWithSession(uint32_t ts,
-			uint32_t rootinode, uint8_t sesflags,
-			uint32_t uid, const GroupsContainer &gids,
-			uint32_t auid, uint32_t agid) {
-		return FsContext(ts, metadataserver::Personality::kMaster,
-				rootinode, sesflags, uid, std::move(gids), auid, agid);
+	static FsContext getForMasterWithSession(uint32_t ts, inode_t rootinode, uint8_t sesflags,
+	                                         uint32_t uid, const GroupsContainer &gids,
+	                                         uint32_t auid, uint32_t agid) {
+		return FsContext(ts, metadataserver::Personality::kMaster, rootinode, sesflags, uid,
+		                 std::move(gids), auid, agid);
 	}
 
 	/**
@@ -235,7 +233,7 @@ public:
 	 * Returns inode which is the root of the hierarchy.
 	 * Returns 0 in case of meta session.
 	 */
-	uint32_t rootinode() const {
+	inode_t rootinode() const {
 		assert(hasSessionData_);
 		return rootinode_;
 	}
@@ -260,7 +258,7 @@ private:
 	uint32_t ts_;
 	metadataserver::Personality personality_;
 	bool hasSessionData_;
-	uint32_t rootinode_;
+	inode_t rootinode_;
 	uint8_t sesflags_;
 	bool hasUidGidData_;
 	uint32_t uid_, auid_;
@@ -271,7 +269,7 @@ private:
 	 * Constructs object with session data and uid/gid data.
 	 */
 	FsContext(uint32_t ts, metadataserver::Personality personality,
-			uint32_t rootinode, uint8_t sesflags,
+			inode_t rootinode, uint8_t sesflags,
 			uint32_t uid, GroupsContainer &&gids, uint32_t auid, uint32_t agid)
 			: ts_(ts),
 			  personality_(personality),
@@ -289,7 +287,7 @@ private:
 	 * Constructs object with session data and uid/gid data.
 	 */
 	FsContext(uint32_t ts, metadataserver::Personality personality,
-			uint32_t rootinode, uint8_t sesflags,
+			inode_t rootinode, uint8_t sesflags,
 			uint32_t uid, const GroupsContainer &gids, uint32_t auid, uint32_t agid)
 			: ts_(ts),
 			  personality_(personality),
@@ -307,7 +305,7 @@ private:
 	 * Constructs object with session data and uid/gid data.
 	 */
 	FsContext(uint32_t ts, metadataserver::Personality personality,
-			uint32_t rootinode, uint8_t sesflags,
+			inode_t rootinode, uint8_t sesflags,
 			uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid)
 			: ts_(ts),
 			  personality_(personality),
@@ -324,7 +322,7 @@ private:
 	/**
 	 * Constructs object with session data and without uid/gid data.
 	 */
-	FsContext(uint32_t ts, metadataserver::Personality personality, uint32_t rootinode, uint8_t sesflags)
+	FsContext(uint32_t ts, metadataserver::Personality personality, inode_t rootinode, uint8_t sesflags)
 			: ts_(ts),
 			  personality_(personality),
 			  hasSessionData_(true),

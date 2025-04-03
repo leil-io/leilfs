@@ -24,6 +24,7 @@
 #include <unordered_map>
 
 #include "common/richacl.h"
+#include "common/type_defs.h"
 
 /*!
  * \brief A class aggregating ACL storage and inode->acl maps, deduplication included.
@@ -43,17 +44,12 @@ public:
 	~AclStorage();
 
 	/*!
-	 * \brief Inode identifier type
-	 */
-	using InodeId = uint32_t;
-
-	/*!
 	 * \brief Find ACL for an inode.
 	 *
 	 * \param id inode id
 	 * \return ACL mapped to id or nullptr if none
 	 */
-	const RichACL *get(InodeId id) const;
+	const RichACL *get(inode_t id) const;
 
 	/*!
 	 * \brief Set ACL for an inode.
@@ -61,14 +57,14 @@ public:
 	 * \param id inode id
 	 * \param acl ACL to be set
 	 */
-	void set(InodeId id, RichACL &&acl);
+	void set(inode_t id, RichACL &&acl);
 
 	/*!
 	 * \brief Erase ACL for an inode.
 	 *
 	 * \param id inode id
 	 */
-	void erase(InodeId id);
+	void erase(inode_t id);
 
 	/*!
 	 * \brief Set mode of ACL of an inode (if any).
@@ -77,7 +73,7 @@ public:
 	 * \param mode mode to be set
 	 * \param is_dir true if inode is a directory
 	 */
-	void setMode(InodeId id, uint16_t mode, bool is_dir);
+	void setMode(inode_t id, uint16_t mode, bool is_dir);
 private:
 	struct Hash {
 		size_t operator()(const RichACL &acl) const;
@@ -85,7 +81,7 @@ private:
 
 	using AclToRefCountMap = std::unordered_map<RichACL, unsigned long, Hash>;
 	using KeyValue = AclToRefCountMap::value_type;
-	using InodeToKVMap = std::unordered_map<InodeId, std::reference_wrapper<KeyValue>>;
+	using InodeToKVMap = std::unordered_map<inode_t, std::reference_wrapper<KeyValue>>;
 
 	/*!
 	 * \brief Insert an ACL into permanent storage.

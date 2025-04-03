@@ -23,8 +23,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "common/server_connection.h"
 #include "common/quota_database.h"
+#include "common/server_connection.h"
+#include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -41,7 +42,7 @@ static void quota_set_usage() {
 
 static int quota_set(const std::string &path, QuotaOwner owner, uint64_t soft_inodes,
 					 uint64_t hard_inodes, uint64_t soft_size, uint64_t hard_size) {
-	uint32_t inode;
+	inode_t inode;
 	int fd = open_master_conn(path.c_str(), &inode, nullptr, true);
 	if (fd < 0) {
 		return -1;

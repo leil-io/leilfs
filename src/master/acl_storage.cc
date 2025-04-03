@@ -53,14 +53,14 @@ size_t AclStorage::Hash::operator()(const RichACL &acl) const {
 	return seed;
 }
 
-const RichACL *AclStorage::get(InodeId id) const {
+const RichACL *AclStorage::get(inode_t id) const {
 	const auto it = acl_.find(id);
 	return it != acl_.end()
 		? std::addressof(it->second.get().first)
 		: nullptr;
 }
 
-void AclStorage::set(InodeId id, RichACL &&acl) {
+void AclStorage::set(inode_t id, RichACL &&acl) {
 	const auto it = acl_.find(id);
 	KeyValue &kv = ref(std::move(acl));
 	if (it == acl_.end()) {
@@ -71,7 +71,7 @@ void AclStorage::set(InodeId id, RichACL &&acl) {
 	}
 }
 
-void AclStorage::erase(InodeId id) {
+void AclStorage::erase(inode_t id) {
 	const auto it = acl_.find(id);
 	if (it != acl_.end()) {
 		unref(it->second);
@@ -79,7 +79,7 @@ void AclStorage::erase(InodeId id) {
 	}
 }
 
-void AclStorage::setMode(InodeId id, uint16_t mode, bool is_dir) {
+void AclStorage::setMode(inode_t id, uint16_t mode, bool is_dir) {
 	const auto it = acl_.find(id);
 	if (it != acl_.end()) {
 		auto &kv_ref = it->second;

@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "common/datapack.h"
+#include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 
 #define STR_AUX(x) #x
@@ -98,8 +99,8 @@ void print_name(FILE *in,uint32_t nleng) {
 int fs_loadedge(FILE *fd) {
 	uint8_t uedgebuff[4+4+2];
 	const uint8_t *ptr;
-	uint32_t parent_id;
-	uint32_t child_id;
+	inode_t parent_id;
+	inode_t child_id;
 	uint16_t nleng;
 
 	if (fread(uedgebuff,1,4+4+2,fd)!=4+4+2) {
@@ -128,7 +129,8 @@ int fs_loadnode(FILE *fd) {
 	uint8_t unodebuff[4+1+2+4+4+4+4+4+4+8+4+2+8*65536+4*65536+4];
 	const uint8_t *ptr,*chptr;
 	uint8_t type,goal;
-	uint32_t nodeid,uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime;
+	inode_t nodeid;
+	uint32_t uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime;
 	uint16_t mode;
 	char c;
 
@@ -206,7 +208,10 @@ int fs_loadnode(FILE *fd) {
 	ctimestamp = get32bit(&ptr);
 	trashtime = get32bit(&ptr);
 
-	printf("%c|i:%10" PRIu32 "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32 "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,c,nodeid,goal,(uint16_t)(mode>>12),(uint16_t)(mode&0xFFF),uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime);
+	printf("%c|i:%10" PRIu32 "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
+	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
+	       c, nodeid, goal, (uint16_t)(mode >> 12), (uint16_t)(mode & 0xFFF), uid, gid, atimestamp,
+	       mtimestamp, ctimestamp, trashtime);
 
 	if (type==TYPE_BLOCKDEV || type==TYPE_CHARDEV) {
 		uint32_t rdev;
@@ -305,19 +310,21 @@ int fs_loadedges(FILE *fd) {
 int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
 	uint8_t rbuff[8];
 	const uint8_t *ptr;
-	uint32_t t,nodeid,ftime;
+	uint32_t ftime;
+	inode_t totalFreeNodes;
+	inode_t nodeid;
 	if (fread(rbuff,1,4,fd)!=4) {
 		return -1;
 	}
 	ptr=rbuff;
-	t = get32bit(&ptr);
+	totalFreeNodes = get32bit(&ptr);
 
-	if (section_size && t != (section_size - 4) / 8) {
-		t = (section_size - 4) / 8;
+	if (section_size && totalFreeNodes != (section_size - 4) / 8) {
+		totalFreeNodes = (section_size - 4) / 8;
 	}
 
-	printf("# free nodes: %" PRIu32 "\n",t);
-	while (t>0) {
+	printf("# free nodes: %" PRIu32 "\n",totalFreeNodes);
+	while (totalFreeNodes>0) {
 		if (fread(rbuff,1,8,fd)!=8) {
 			return -1;
 		}
@@ -325,7 +332,7 @@ int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
 		nodeid = get32bit(&ptr);
 		ftime = get32bit(&ptr);
 		printf("I|i:%10" PRIu32 "|f:%10" PRIu32 "\n", nodeid, ftime);
-		t--;
+		totalFreeNodes--;
 	}
 	return 0;
 }
@@ -372,7 +379,8 @@ int hexdump(FILE *fd,uint64_t sleng) {
 }
 
 int fs_load(FILE *fd) {
-	uint32_t maxnodeid,nextsessionid;
+	inode_t maxnodeid;
+	uint32_t nextsessionid;
 	uint64_t version;
 	uint8_t hdr[16];
 	const uint8_t *ptr;
@@ -406,7 +414,8 @@ int fs_load(FILE *fd) {
 }
 
 int fs_load_2x(FILE *fd, bool loadLockIds) {
-	uint32_t maxnodeid,nextsessionid;
+	inode_t maxnodeid;
+	uint32_t nextsessionid;
 	uint64_t sleng;
 	off_t offbegin;
 	uint64_t version;

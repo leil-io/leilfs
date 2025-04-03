@@ -30,6 +30,7 @@
 #include "common/attributes.h"
 #include "common/massert.h"
 #include "common/slice_traits.h"
+#include "common/type_defs.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
 #include "master/filesystem_checksum.h"
@@ -528,12 +529,10 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 
 	auto it = std::find_if(
 	    node->parent.begin(), node->parent.end(),
-	    [parent,
-	     currentName](const std::pair<uint32_t, const hstorage::Handle *> &p) {
+	    [parent, currentName](const std::pair<inode_t, const hstorage::Handle *> &p) {
 		    return p.first == parent->id &&
-		           (parent->case_insensitive
-		                ? HString::hstringToLowerCase(p.second->get())
-		                : p.second->get()) == currentName;
+		           (parent->case_insensitive ? HString::hstringToLowerCase(p.second->get())
+		                                     : p.second->get()) == currentName;
 	    });
 
 	if (it != node->parent.end()) {
@@ -582,9 +581,9 @@ void fsnodes_link(uint32_t ts, FSNodeDirectory *parent, FSNode *child, const HSt
 	}
 }
 
-FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString &name,
-			uint8_t type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
-			uint8_t copysgid, AclInheritance inheritacl, uint32_t req_inode) {
+FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString &name, uint8_t type,
+                            uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
+                            uint8_t copysgid, AclInheritance inheritacl, inode_t req_inode) {
 	assert(type != FSNode::kTrash);
 
 	FSNode *node = FSNode::create(type);
@@ -751,11 +750,11 @@ static inline uint32_t getdetachedsize(const T &data) {
 	return result;
 }
 
-static inline uint32_t getdetacheddata_getNodeId(const TrashPathContainer::key_type &key) {
+static inline inode_t getdetacheddata_getNodeId(const TrashPathContainer::key_type &key) {
 	return key.id;
 }
 
-static inline uint32_t getdetacheddata_getNodeId(const uint32_t &key) {
+static inline inode_t getdetacheddata_getNodeId(const inode_t &key) {
 	return key;
 }
 
@@ -866,9 +865,8 @@ uint32_t fsnodes_getdirsize(const FSNodeDirectory *p, uint8_t withattr) {
 	return result;
 }
 
-void fsnodes_getdirdata(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid,
-			uint32_t agid, uint8_t sesflags, FSNodeDirectory *p, uint8_t *dbuff,
-			uint8_t withattr) {
+void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+                        uint8_t sesflags, FSNodeDirectory *p, uint8_t *dbuff, uint8_t withattr) {
 	// '.' - self
 	dbuff[0] = 1;
 	dbuff[1] = '.';
@@ -962,11 +960,11 @@ namespace legacy {
  * This implementation was not removed so as to support pre-3.13 client (sfsmount) using
  * old SAU_FUSE_GETDIR packet version (0 = kLegacyClient).
  */
-void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-		uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
-		uint64_t number_of_entries, std::vector<legacy::DirectoryEntry> &dir_entries) {
+void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+                    uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
+                    uint64_t number_of_entries, std::vector<legacy::DirectoryEntry> &dir_entries) {
 	FSNodeDirectory *parent;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 
 	if (first_entry == 0 && number_of_entries >= 1) {
@@ -1040,9 +1038,9 @@ void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t aui
  * \param number_of_entries number of dirents to get
  * \param[out] container into which dirents are inserted
  */
-void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-		uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
-		uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) {
+void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+                    uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
+                    uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) {
 	uint64_t const SIGN_BIT_64(1ULL << 63ULL);
 	sassert(!(first_entry & SIGN_BIT_64));
 	// special entryIndex values
@@ -1051,7 +1049,7 @@ void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t aui
 	static constexpr uint64_t kUnusedEntryIndex = (static_cast<uint64_t>(2) << hstorage::Handle::kHashShift);
 
 	FSNodeDirectory *parent;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 
 	if (first_entry == kDotEntryIndex && number_of_entries >= 1) {
@@ -1619,8 +1617,7 @@ void fsnodes_geteattr_recursive(FSNode *node, uint8_t gmode, uint32_t feattrtab[
 #endif
 
 void fsnodes_setgoal_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t goal, uint8_t smode,
-				uint32_t *sinodes, uint32_t *ncinodes, uint32_t *nsinodes) {
-
+                               inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) {
 	if (node->type == FSNode::kFile || node->type == FSNode::kDirectory || node->type == FSNode::kTrash ||
 	    node->type == FSNode::kReserved) {
 		if ((node->mode & (EATTR_NOOWNER << 12)) == 0 && uid != 0 && node->uid != uid) {
@@ -1650,8 +1647,8 @@ void fsnodes_setgoal_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t 
 }
 
 void fsnodes_settrashtime_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint32_t trashtime,
-					uint8_t smode, uint32_t *sinodes, uint32_t *ncinodes,
-					uint32_t *nsinodes) {
+                                    uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
+                                    inode_t *nsinodes) {
 	uint8_t set;
 
 	if (node->type == FSNode::kFile || node->type == FSNode::kDirectory || node->type == FSNode::kTrash ||
@@ -1704,8 +1701,8 @@ void fsnodes_settrashtime_recursive(FSNode *node, uint32_t ts, uint32_t uid, uin
 }
 
 void fsnodes_seteattr_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t eattr,
-				uint8_t smode, uint32_t *sinodes, uint32_t *ncinodes,
-				uint32_t *nsinodes) {
+                                uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
+                                inode_t *nsinodes) {
 	uint8_t neweattr, seattr;
 
 	if ((node->mode & (EATTR_NOOWNER << 12)) == 0 && uid != 0 && node->uid != uid) {
@@ -1947,7 +1944,8 @@ uint8_t verify_session(const FsContext &context, OperationMode operationMode,
  * Can return a reserved node or a node from trash
  */
 uint8_t fsnodes_get_node_for_operation(const FsContext &context, ExpectedNodeType expectedNodeType,
-					uint8_t modemask, uint32_t inode, FSNode **ret, FSNodeDirectory **ret_rn) {
+                                       uint8_t modemask, inode_t inode, FSNode **ret,
+                                       FSNodeDirectory **ret_rn) {
 	FSNode *p;
 	FSNodeDirectory *rn;
 	if (!context.hasSessionData()) {

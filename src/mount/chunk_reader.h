@@ -47,7 +47,7 @@ public:
 	 * Doesn't do anything if the chunk given by (inode, index) is already known to the reader
 	 * (ie. the last call to this method had the same inode and index) unless forcePrepare is true.
 	 */
-	void prepareReadingChunk(uint32_t inode, uint32_t index, bool forcePrepare);
+	void prepareReadingChunk(inode_t inode, uint32_t index, bool forcePrepare);
 
 	/**
 	 * Reads data from the previously located chunk and appends it to the buffer
@@ -59,7 +59,7 @@ public:
 	bool isChunkLocated() const {
 		return (bool)location_;
 	}
-	uint32_t inode() const {
+	inode_t inode() const {
 		return inode_;
 	}
 	uint32_t index() const {
@@ -81,7 +81,7 @@ public:
 private:
 	ChunkConnector& connector_;
 	std::unique_ptr<ReadChunkLocator> locator_;
-	uint32_t inode_;
+	inode_t inode_;
 	uint32_t index_;
 	std::shared_ptr<const ChunkLocationInfo> location_;
 	ChunkReadPlanner planner_;

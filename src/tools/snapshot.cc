@@ -51,8 +51,10 @@ static void snapshot_usage() {
 }
 
 static int make_snapshot(const char *dstdir, const char *dstbase, const char *srcname,
-	                 uint32_t srcinode, uint8_t canoverwrite, int long_wait, uint8_t ignore_missing_src, int initial_batch_size) {
-	uint32_t nleng, dstinode, uid, gid;
+                         inode_t srcinode, uint8_t canoverwrite, int long_wait,
+                         uint8_t ignore_missing_src, int initial_batch_size) {
+	inode_t dstinode;
+	uint32_t nleng, uid, gid;
 	uint8_t status;
 	uint32_t msgid = 0, job_id;
 	int fd;
@@ -203,7 +205,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 		}
 
 #ifdef _WIN32
-		uint32_t srcinode;
+		inode_t srcinode;
 		int fd = open_master_conn(srcnames[0], &srcinode, NULL, true);
 		if (fd < 0) { return -1; }
 		return make_snapshot(to, base, srcnames[0], srcinode, canowerwrite, long_wait, ignore_missing_src, initial_batch_size);
@@ -242,7 +244,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 				return -1;
 			}
 #ifdef _WIN32
-			uint32_t srcinode;
+			inode_t srcinode;
 			int fd = open_master_conn(srcnames[0], &srcinode, NULL, true);
 			if (fd < 0) { return -1; }
 			return make_snapshot(dir, base, srcnames[0], srcinode, canowerwrite, long_wait, ignore_missing_src, initial_batch_size);
@@ -292,7 +294,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 						}
 					}
 #ifdef _WIN32
-					uint32_t srcinode;
+					inode_t srcinode;
 					int fd =
 					    open_master_conn(srcnames[i], &srcinode, NULL, true);
 					if (fd < 0) { return -1; }
@@ -320,7 +322,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 							continue;
 						}
 #ifdef _WIN32
-						uint32_t srcinode;
+						inode_t srcinode;
 						int fd = open_master_conn(srcnames[i], &srcinode, NULL,
 						                          true);
 						if (fd < 0) { return -1; }
@@ -341,7 +343,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 							continue;
 						}
 #ifdef _WIN32
-						uint32_t srcinode;
+						inode_t srcinode;
 						int fd = open_master_conn(srcnames[i], &srcinode, NULL,
 						                          true);
 						if (fd < 0) { return -1; }

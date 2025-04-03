@@ -226,7 +226,7 @@ static inline void setDisconnect(bool value) {
 	}
 }
 
-void fs_inc_acnt(uint32_t inode) {
+void fs_inc_acnt(inode_t inode) {
 	std::unique_lock<std::mutex> acquiredFileLock(acquiredFileMutex);
 	acquiredFiles[inode]++;
 #ifdef _WIN32
@@ -236,7 +236,7 @@ void fs_inc_acnt(uint32_t inode) {
 #endif
 }
 
-void fs_dec_acnt(uint32_t inode) {
+void fs_dec_acnt(inode_t inode) {
 	std::unique_lock<std::mutex> afLock(acquiredFileMutex);
 	if (!acquiredFiles.contains(inode)) {
 		return;
@@ -1035,7 +1035,7 @@ void* fs_nop_thread(void *arg) {
 	uint8_t *ptr,hdr[12],*inodespacket;
 	int32_t inodesleng;
 	int now;
-	uint32_t inodeswritecnt=0;
+	inode_t inodeswritecnt=0;
 	(void)arg;
 
 #ifdef ENABLE_EXIT_ON_USR1
@@ -1408,7 +1408,8 @@ static void fs_got_inconsistent(const std::string& type, uint32_t size, const st
 	setDisconnect(true);
 }
 
-void fs_statfs(uint64_t *totalspace,uint64_t *availspace,uint64_t *trashspace,uint64_t *reservedspace,uint32_t *inodes) {
+void fs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
+               uint64_t *reservedspace, inode_t *inodes) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1438,7 +1439,7 @@ void fs_statfs(uint64_t *totalspace,uint64_t *availspace,uint64_t *trashspace,ui
 	}
 }
 
-uint8_t fs_access(uint32_t inode,uint32_t uid,uint32_t gid,uint8_t modemask) {
+uint8_t fs_access(inode_t inode,uint32_t uid,uint32_t gid,uint8_t modemask) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1461,7 +1462,8 @@ uint8_t fs_access(uint32_t inode,uint32_t uid,uint32_t gid,uint8_t modemask) {
 	return ret;
 }
 
-uint8_t fs_lookup(uint32_t parent, const std::string &path, uint32_t uid, uint32_t gid, uint32_t *inode, Attributes &attr) {
+uint8_t fs_lookup(inode_t parent, const std::string &path, uint32_t uid, uint32_t gid, inode_t *inode,
+                  Attributes &attr) {
 	threc *rec = fs_get_my_threc();
 	auto message = cltoma::wholePathLookup::build(rec->packetId, parent, path, uid, gid);
 	if (!fs_saucreatepacket(rec, message)) {
@@ -1497,7 +1499,7 @@ uint8_t fs_lookup(uint32_t parent, const std::string &path, uint32_t uid, uint32
 	}
 }
 
-uint8_t fs_getattr(uint32_t inode, uint32_t uid, uint32_t gid, Attributes &attr) {
+uint8_t fs_getattr(inode_t inode, uint32_t uid, uint32_t gid, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1525,7 +1527,9 @@ uint8_t fs_getattr(uint32_t inode, uint32_t uid, uint32_t gid, Attributes &attr)
 	return ret;
 }
 
-uint8_t fs_setattr(uint32_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, uint16_t attrmode, uint32_t attruid, uint32_t attrgid, uint32_t attratime, uint32_t attrmtime, uint8_t sugidclearmode, Attributes &attr) {
+uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, uint16_t attrmode,
+                   uint32_t attruid, uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
+                   uint8_t sugidclearmode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1566,8 +1570,8 @@ uint8_t fs_setattr(uint32_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, 
 	return ret;
 }
 
-uint8_t fs_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
-		bool& clientPerforms, Attributes& attr, uint64_t& oldLength, uint32_t& lockId) {
+uint8_t fs_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
+                    bool &clientPerforms, Attributes &attr, uint64_t &oldLength, uint32_t &lockId) {
 	threc *rec = fs_get_my_threc();
 	std::vector<uint8_t> message;
 	cltoma::fuseTruncate::serialize(message, rec->packetId, inode, opened, uid, gid, length);
@@ -1616,8 +1620,8 @@ uint8_t fs_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid, uin
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_truncateend(uint32_t inode, uint32_t uid, uint32_t gid, uint64_t length, uint32_t lockId,
-		Attributes& attr) {
+uint8_t fs_truncateend(inode_t inode, uint32_t uid, uint32_t gid, uint64_t length, uint32_t lockId,
+                       Attributes &attr) {
 	threc *rec = fs_get_my_threc();
 	std::vector<uint8_t> message;
 	cltoma::fuseTruncateEnd::serialize(message, rec->packetId, inode, uid, gid, length, lockId);
@@ -1662,8 +1666,7 @@ uint8_t fs_truncateend(uint32_t inode, uint32_t uid, uint32_t gid, uint64_t leng
 	return SAUNAFS_STATUS_OK;
 }
 
-
-uint8_t fs_readlink(uint32_t inode,const uint8_t **path) {
+uint8_t fs_readlink(inode_t inode,const uint8_t **path) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1696,7 +1699,8 @@ uint8_t fs_readlink(uint32_t inode,const uint8_t **path) {
 	return ret;
 }
 
-uint8_t fs_symlink(uint32_t parent, uint8_t nleng, const uint8_t *name, const uint8_t *path, uint32_t uid, uint32_t gid, uint32_t *inode, Attributes &attr) {
+uint8_t fs_symlink(inode_t parent, uint8_t nleng, const uint8_t *name, const uint8_t *path,
+                   uint32_t uid, uint32_t gid, inode_t *inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1734,9 +1738,9 @@ uint8_t fs_symlink(uint32_t parent, uint8_t nleng, const uint8_t *name, const ui
 	return ret;
 }
 
-uint8_t fs_mknod(uint32_t parent, uint8_t nleng, const uint8_t *name, uint8_t type,
-		uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid, uint32_t rdev,
-		uint32_t &inode, Attributes& attr) {
+uint8_t fs_mknod(inode_t parent, uint8_t nleng, const uint8_t *name, uint8_t type, uint16_t mode,
+                 uint16_t umask, uint32_t uid, uint32_t gid, uint32_t rdev, inode_t &inode,
+                 Attributes &attr) {
 	threc* rec = fs_get_my_threc();
 	auto message = cltoma::fuseMknod::build(rec->packetId, parent,
 			LegacyString<uint8_t>(reinterpret_cast<const char*>(name), nleng),
@@ -1775,9 +1779,8 @@ uint8_t fs_mknod(uint32_t parent, uint8_t nleng, const uint8_t *name, uint8_t ty
 	}
 }
 
-uint8_t fs_mkdir(uint32_t parent, uint8_t nleng, const uint8_t *name,
-		uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
-		uint8_t copysgid,uint32_t &inode, Attributes& attr) {
+uint8_t fs_mkdir(inode_t parent, uint8_t nleng, const uint8_t *name, uint16_t mode, uint16_t umask,
+                 uint32_t uid, uint32_t gid, uint8_t copysgid, inode_t &inode, Attributes &attr) {
 	threc* rec = fs_get_my_threc();
 	auto message = cltoma::fuseMkdir::build(rec->packetId, parent,
 			LegacyString<uint8_t>(reinterpret_cast<const char*>(name), nleng),
@@ -1816,7 +1819,7 @@ uint8_t fs_mkdir(uint32_t parent, uint8_t nleng, const uint8_t *name,
 	}
 }
 
-uint8_t fs_unlink(uint32_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,uint32_t gid) {
+uint8_t fs_unlink(inode_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,uint32_t gid) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1844,7 +1847,7 @@ uint8_t fs_unlink(uint32_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid
 	return ret;
 }
 
-uint8_t fs_rmdir(uint32_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,uint32_t gid) {
+uint8_t fs_rmdir(inode_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,uint32_t gid) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1872,7 +1875,9 @@ uint8_t fs_rmdir(uint32_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,
 	return ret;
 }
 
-uint8_t fs_rename(uint32_t parent_src, uint8_t nleng_src, const uint8_t *name_src, uint32_t parent_dst, uint8_t nleng_dst, const uint8_t *name_dst, uint32_t uid, uint32_t gid, uint32_t *inode, Attributes &attr) {
+uint8_t fs_rename(inode_t parent_src, uint8_t nleng_src, const uint8_t *name_src, inode_t parent_dst,
+                  uint8_t nleng_dst, const uint8_t *name_dst, uint32_t uid, uint32_t gid,
+                  inode_t *inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1912,7 +1917,8 @@ uint8_t fs_rename(uint32_t parent_src, uint8_t nleng_src, const uint8_t *name_sr
 	return ret;
 }
 
-uint8_t fs_link(uint32_t inode_src, uint32_t parent_dst, uint8_t nleng_dst, const uint8_t *name_dst, uint32_t uid, uint32_t gid, uint32_t *inode, Attributes &attr) {
+uint8_t fs_link(inode_t inode_src, inode_t parent_dst, uint8_t nleng_dst, const uint8_t *name_dst,
+                uint32_t uid, uint32_t gid, inode_t *inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1947,7 +1953,7 @@ uint8_t fs_link(uint32_t inode_src, uint32_t parent_dst, uint8_t nleng_dst, cons
 	return ret;
 }
 
-uint8_t fs_getdir(uint32_t inode,uint32_t uid,uint32_t gid,const uint8_t **dbuff,uint32_t *dbuffsize) {
+uint8_t fs_getdir(inode_t inode,uint32_t uid,uint32_t gid,const uint8_t **dbuff,uint32_t *dbuffsize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -1973,7 +1979,8 @@ uint8_t fs_getdir(uint32_t inode,uint32_t uid,uint32_t gid,const uint8_t **dbuff
 	return ret;
 }
 
-uint8_t fs_getdir_plus(uint32_t inode,uint32_t uid,uint32_t gid,uint8_t addtocache,const uint8_t **dbuff,uint32_t *dbuffsize) {
+uint8_t fs_getdir_plus(inode_t inode, uint32_t uid, uint32_t gid, uint8_t addtocache,
+                       const uint8_t **dbuff, uint32_t *dbuffsize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2005,8 +2012,8 @@ uint8_t fs_getdir_plus(uint32_t inode,uint32_t uid,uint32_t gid,uint8_t addtocac
 	return ret;
 }
 
-uint8_t fs_getdir(uint32_t inode, uint32_t uid, uint32_t gid, uint64_t first_entry,
-		uint64_t max_entries, std::vector<DirectoryEntry> &dir_entries) {
+uint8_t fs_getdir(inode_t inode, uint32_t uid, uint32_t gid, uint64_t first_entry,
+                  uint64_t max_entries, std::vector<DirectoryEntry> &dir_entries) {
 	threc *rec = fs_get_my_threc();
 	auto message =
 	        cltoma::fuseGetDir::build(rec->packetId, inode, uid, gid, first_entry, max_entries);
@@ -2050,7 +2057,7 @@ uint8_t fs_getdir(uint32_t inode, uint32_t uid, uint32_t gid, uint64_t first_ent
 
 // FUSE - I/O
 
-uint8_t fs_opencheck(uint32_t inode, uint32_t uid, uint32_t gid, uint8_t flags, Attributes &attr) {
+uint8_t fs_opencheck(inode_t inode, uint32_t uid, uint32_t gid, uint8_t flags, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2105,11 +2112,12 @@ uint8_t fs_update_credentials(uint32_t key, const GroupCache::Groups &gids) {
 	}
 }
 
-void fs_release(uint32_t inode) {
+void fs_release(inode_t inode) {
 	fs_dec_acnt(inode);
 }
 
-uint8_t fs_readchunk(uint32_t inode,uint32_t indx,uint64_t *length,uint64_t *chunkid,uint32_t *version,const uint8_t **csdata,uint32_t *csdatasize) {
+uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *chunkid,
+                     uint32_t *version, const uint8_t **csdata, uint32_t *csdatasize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2151,7 +2159,8 @@ uint8_t fs_readchunk(uint32_t inode,uint32_t indx,uint64_t *length,uint64_t *chu
 }
 
 uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_t &chunkId,
-		uint32_t &chunkVersion, uint64_t &fileLength, uint32_t inode, uint32_t chunkIndex) {
+                        uint32_t &chunkVersion, uint64_t &fileLength, inode_t inode,
+                        uint32_t chunkIndex) {
 	threc *rec = fs_get_my_threc();
 
 	std::vector<uint8_t> message;
@@ -2202,7 +2211,8 @@ uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_writechunk(uint32_t inode,uint32_t indx,uint64_t *length,uint64_t *chunkid,uint32_t *version,const uint8_t **csdata,uint32_t *csdatasize) {
+uint8_t fs_writechunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *chunkid,
+                      uint32_t *version, const uint8_t **csdata, uint32_t *csdatasize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2242,9 +2252,9 @@ uint8_t fs_writechunk(uint32_t inode,uint32_t indx,uint64_t *length,uint64_t *ch
 	return ret;
 }
 
-uint8_t fs_sauwritechunk(uint32_t inode, uint32_t chunkIndex, uint32_t &lockId,
-		uint64_t &fileLength, uint64_t &chunkId, uint32_t &chunkVersion,
-		std::vector<ChunkTypeWithAddress> &chunkservers) {
+uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, uint64_t &fileLength,
+                         uint64_t &chunkId, uint32_t &chunkVersion,
+                         std::vector<ChunkTypeWithAddress> &chunkservers) {
 	threc *rec = fs_get_my_threc();
 
 	std::vector<uint8_t> message;
@@ -2307,7 +2317,7 @@ uint8_t fs_sauwritechunk(uint32_t inode, uint32_t chunkIndex, uint32_t &lockId,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, uint32_t inode, uint64_t length) {
+uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length) {
 	threc* rec = fs_get_my_threc();
 	std::vector<uint8_t> message;
 	cltoma::fuseWriteChunkEnd::serialize(message, rec->packetId, chunkId, lockId, inode, length);
@@ -2330,7 +2340,7 @@ uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, uint32_t inode, uint64
 	}
 }
 
-uint8_t fs_writeend(uint64_t chunkid, uint32_t inode, uint64_t length) {
+uint8_t fs_writeend(uint64_t chunkid, inode_t inode, uint64_t length) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2449,7 +2459,7 @@ uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOf
 	}
 }
 
-uint8_t fs_getdetachedattr(uint32_t inode, Attributes &attr) {
+uint8_t fs_getdetachedattr(inode_t inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2475,7 +2485,7 @@ uint8_t fs_getdetachedattr(uint32_t inode, Attributes &attr) {
 	return ret;
 }
 
-uint8_t fs_gettrashpath(uint32_t inode,const uint8_t **path) {
+uint8_t fs_gettrashpath(inode_t inode,const uint8_t **path) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2508,7 +2518,7 @@ uint8_t fs_gettrashpath(uint32_t inode,const uint8_t **path) {
 	return ret;
 }
 
-uint8_t fs_settrashpath(uint32_t inode,const uint8_t *path) {
+uint8_t fs_settrashpath(inode_t inode,const uint8_t *path) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2535,7 +2545,7 @@ uint8_t fs_settrashpath(uint32_t inode,const uint8_t *path) {
 	return ret;
 }
 
-uint8_t fs_undel(uint32_t inode) {
+uint8_t fs_undel(inode_t inode) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2558,7 +2568,7 @@ uint8_t fs_undel(uint32_t inode) {
 	return ret;
 }
 
-uint8_t fs_purge(uint32_t inode) {
+uint8_t fs_purge(inode_t inode) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2581,7 +2591,8 @@ uint8_t fs_purge(uint32_t inode) {
 	return ret;
 }
 
-uint8_t fs_getxattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint8_t nleng,const uint8_t *name,uint8_t mode,const uint8_t **vbuff,uint32_t *vleng) {
+uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, uint8_t nleng,
+                    const uint8_t *name, uint8_t mode, const uint8_t **vbuff, uint32_t *vleng) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2623,7 +2634,8 @@ uint8_t fs_getxattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint
 	return ret;
 }
 
-uint8_t fs_listxattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint8_t mode,const uint8_t **dbuff,uint32_t *dleng) {
+uint8_t fs_listxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, uint8_t mode,
+                     const uint8_t **dbuff, uint32_t *dleng) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2663,7 +2675,8 @@ uint8_t fs_listxattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uin
 	return ret;
 }
 
-uint8_t fs_setxattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint8_t nleng,const uint8_t *name,uint32_t vleng,const uint8_t *value,uint8_t mode) {
+uint8_t fs_setxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, uint8_t nleng,
+                    const uint8_t *name, uint32_t vleng, const uint8_t *value, uint8_t mode) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2702,7 +2715,8 @@ uint8_t fs_setxattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint
 	return ret;
 }
 
-uint8_t fs_removexattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,uint8_t nleng,const uint8_t *name) {
+uint8_t fs_removexattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, uint8_t nleng,
+                       const uint8_t *name) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
 	uint32_t i;
@@ -2736,7 +2750,7 @@ uint8_t fs_removexattr(uint32_t inode,uint8_t opened,uint32_t uid,uint32_t gid,u
 	return ret;
 }
 
-uint8_t fs_deletacl(uint32_t inode, uint32_t uid, uint32_t gid, AclType type) {
+uint8_t fs_deletacl(inode_t inode, uint32_t uid, uint32_t gid, AclType type) {
 	threc* rec = fs_get_my_threc();
 	auto message = cltoma::fuseDeleteAcl::build(rec->packetId, inode, uid, gid, type);
 	if (!fs_saucreatepacket(rec, message)) {
@@ -2756,7 +2770,7 @@ uint8_t fs_deletacl(uint32_t inode, uint32_t uid, uint32_t gid, AclType type) {
 	}
 }
 
-uint8_t fs_getacl(uint32_t inode, uint32_t uid, uint32_t gid, RichACL& acl, uint32_t &owner_id) {
+uint8_t fs_getacl(inode_t inode, uint32_t uid, uint32_t gid, RichACL& acl, uint32_t &owner_id) {
 	threc* rec = fs_get_my_threc();
 	auto message = cltoma::fuseGetAcl::build(rec->packetId, inode, uid, gid, AclType::kRichACL);
 	if (!fs_saucreatepacket(rec, message)) {
@@ -2794,7 +2808,7 @@ uint8_t fs_getacl(uint32_t inode, uint32_t uid, uint32_t gid, RichACL& acl, uint
 	}
 }
 
-uint8_t fs_setacl(uint32_t inode, uint32_t uid, uint32_t gid, const RichACL& acl) {
+uint8_t fs_setacl(inode_t inode, uint32_t uid, uint32_t gid, const RichACL& acl) {
 	threc* rec = fs_get_my_threc();
 	auto message = cltoma::fuseSetAcl::build(rec->packetId, inode, uid, gid, acl);
 	if (!fs_saucreatepacket(rec, message)) {
@@ -2814,7 +2828,8 @@ uint8_t fs_setacl(uint32_t inode, uint32_t uid, uint32_t gid, const RichACL& acl
 	}
 }
 
-uint8_t fs_setacl(uint32_t inode, uint32_t uid, uint32_t gid, AclType type, const AccessControlList& acl) {
+uint8_t fs_setacl(inode_t inode, uint32_t uid, uint32_t gid, AclType type,
+                  const AccessControlList &acl) {
 	threc* rec = fs_get_my_threc();
 	auto message = cltoma::fuseSetAcl::build(rec->packetId, inode, uid, gid, type, acl);
 	if (!fs_saucreatepacket(rec, message)) {
@@ -2834,8 +2849,7 @@ uint8_t fs_setacl(uint32_t inode, uint32_t uid, uint32_t gid, AclType type, cons
 	}
 }
 
-uint8_t fs_fullpath(uint32_t inode, uint32_t uid,
-                    uint32_t gid, std::string &fullPath) {
+uint8_t fs_fullpath(inode_t inode, uint32_t uid, uint32_t gid, std::string &fullPath) {
 	threc *rec = fs_get_my_threc();
 	if (masterversion < saunafsVersion(4, 8, 0)) {
 		safs::log_warn(
@@ -2992,7 +3006,7 @@ void fs_setlk_interrupt(const safs_locks::InterruptData &data) {
 	fs_sausend(rec);
 }
 
-uint8_t fs_getlk(uint32_t inode, uint64_t owner, safs_locks::FlockWrapper &lock) {
+uint8_t fs_getlk(inode_t inode, uint64_t owner, safs_locks::FlockWrapper &lock) {
 	threc *rec = fs_get_my_threc();
 
 	auto message = cltoma::fuseGetlk::build(rec->packetId, inode, owner, lock);
@@ -3030,7 +3044,8 @@ uint8_t fs_getlk(uint32_t inode, uint64_t owner, safs_locks::FlockWrapper &lock)
 	}
 }
 
-uint8_t fs_setlk_send(uint32_t inode, uint64_t owner, uint32_t reqid, const safs_locks::FlockWrapper &lock) {
+uint8_t fs_setlk_send(inode_t inode, uint64_t owner, uint32_t reqid,
+                      const safs_locks::FlockWrapper &lock) {
 	threc *rec = fs_get_my_threc();
 
 	auto message = cltoma::fuseSetlk::build(rec->packetId, inode, owner, reqid, lock);
@@ -3075,7 +3090,7 @@ uint8_t fs_setlk_recv() {
 	}
 }
 
-uint8_t fs_flock_send(uint32_t inode, uint64_t owner, uint32_t reqid, uint16_t op) {
+uint8_t fs_flock_send(inode_t inode, uint64_t owner, uint32_t reqid, uint16_t op) {
 	threc *rec = fs_get_my_threc();
 
 	auto message = cltoma::fuseFlock::build(rec->packetId, inode, owner, reqid, op);
@@ -3120,8 +3135,9 @@ uint8_t fs_flock_recv() {
 	}
 }
 
-uint8_t fs_makesnapshot(uint32_t src_inode, uint32_t dst_inode, const std::string &dst_parent,
-	                uint32_t uid, uint32_t gid, uint8_t can_overwrite, SaunaClient::JobId &job_id) {
+uint8_t fs_makesnapshot(inode_t src_inode, inode_t dst_inode, const std::string &dst_parent,
+                        uint32_t uid, uint32_t gid, uint8_t can_overwrite,
+                        SaunaClient::JobId &job_id) {
 	static const int kBatchSize = 1024;
 	threc *rec = fs_get_my_threc();
 	job_id = 0;
@@ -3209,7 +3225,7 @@ uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, uint32_t inode, std::vecto
 	}
 }
 
-uint8_t fs_getgoal(uint32_t inode, std::string &goal) {
+uint8_t fs_getgoal(inode_t inode, std::string &goal) {
 	threc *rec = fs_get_my_threc();
 
 	goal.clear();
@@ -3249,7 +3265,7 @@ uint8_t fs_getgoal(uint32_t inode, std::string &goal) {
 	}
 }
 
-uint8_t fs_setgoal(uint32_t inode, uint32_t uid, const std::string &goal_name, uint8_t smode) {
+uint8_t fs_setgoal(inode_t inode, uint32_t uid, const std::string &goal_name, uint8_t smode) {
 	threc *rec = fs_get_my_threc();
 
 	auto message = cltoma::fuseSetGoal::build(rec->packetId, inode, uid, goal_name, smode);
@@ -3281,8 +3297,8 @@ uint8_t fs_setgoal(uint32_t inode, uint32_t uid, const std::string &goal_name, u
 	}
 }
 
-uint8_t fs_getchunksinfo(uint32_t uid, uint32_t gid, uint32_t inode, uint32_t chunk_index,
-		uint32_t chunk_count, std::vector<ChunkWithAddressAndLabel> &chunks) {
+uint8_t fs_getchunksinfo(uint32_t uid, uint32_t gid, inode_t inode, uint32_t chunk_index,
+                         uint32_t chunk_count, std::vector<ChunkWithAddressAndLabel> &chunks) {
 	threc *rec = fs_get_my_threc();
 
 	auto message = cltoma::chunksInfo::build(rec->packetId, uid, gid, inode, chunk_index, chunk_count);

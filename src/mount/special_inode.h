@@ -33,7 +33,7 @@
 
 namespace InodeMasterInfo {
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodeStats {
@@ -45,17 +45,17 @@ namespace InodeStats {
 	} sinfo;
 
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodeOplog {
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodeOphistory {
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodeTweaks {
@@ -80,18 +80,18 @@ namespace InodeTweaks {
 #endif
 
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodeFileByInode {
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodePathByInode {
 	typedef struct _inodePathInfo {
 		char *pathByInode;
-		uint32_t inode;
+		inode_t inode;
 		std::mutex mtx;
 		std::condition_variable cv;
 		bool locked = false;
@@ -99,29 +99,29 @@ namespace InodePathByInode {
     extern InodePathInfo inodePathInfo;
 
     extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
 namespace InodeMountInfo {
 	extern const Attributes attr;
-	extern const SaunaClient::Inode inode_;
+	extern const inode_t inode_;
 }
 
-std::vector<uint8_t> special_read(SaunaClient::Inode ino, const SaunaClient::Context &ctx,
+std::vector<uint8_t> special_read(inode_t ino, const SaunaClient::Context &ctx,
 	                          size_t size, off_t off, SaunaClient::FileInfo *fi, int debug_mode);
 
-SaunaClient::BytesWritten special_write(SaunaClient::Inode ino, const SaunaClient::Context &ctx,
+SaunaClient::BytesWritten special_write(inode_t ino, const SaunaClient::Context &ctx,
 	                                 const char *buf, size_t size, off_t off, SaunaClient::FileInfo *fi);
 
-SaunaClient::EntryParam special_lookup(SaunaClient::Inode ino, const SaunaClient::Context &ctx,
-	                                SaunaClient::Inode parent, const char *name, char attrstr[256]);
+SaunaClient::EntryParam special_lookup(inode_t ino, const SaunaClient::Context &ctx,
+	                                inode_t parent, const char *name, char attrstr[256]);
 
-SaunaClient::AttrReply special_getattr(SaunaClient::Inode ino, const SaunaClient::Context &ctx,
+SaunaClient::AttrReply special_getattr(inode_t ino, const SaunaClient::Context &ctx,
 	                                char (&attrstr)[256]);
 
-SaunaClient::AttrReply special_setattr(SaunaClient::Inode ino, const SaunaClient::Context &ctx, struct stat *stbuf,
+SaunaClient::AttrReply special_setattr(inode_t ino, const SaunaClient::Context &ctx, struct stat *stbuf,
 	                                int to_set, char modestr[11], char attrstr[256]);
 
-void special_open(SaunaClient::Inode ino, const SaunaClient::Context &ctx, SaunaClient::FileInfo *fi);
+void special_open(inode_t ino, const SaunaClient::Context &ctx, SaunaClient::FileInfo *fi);
 
-void special_release(SaunaClient::Inode ino, SaunaClient::FileInfo *fi);
+void special_release(inode_t ino, SaunaClient::FileInfo *fi);

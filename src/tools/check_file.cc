@@ -36,7 +36,8 @@ static void check_file_usage() {
 static int check_file(const char *fname) {
 	uint8_t reqbuff[16], *wptr, *buff;
 	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
+	uint32_t cmd, leng;
+	inode_t inode;
 	uint8_t copies;
 	uint32_t chunks;
 	int fd;
