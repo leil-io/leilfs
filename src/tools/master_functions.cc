@@ -51,6 +51,9 @@ struct master_info_t {
 };
 
 static thread_local int gCurrentMaster = -1;
+#ifdef _WIN32
+static int kMaxMasterRetries = 5;
+#endif
 
 static int master_register(int rfd, uint32_t cuid) {
 	uint32_t i;
@@ -271,6 +274,7 @@ int open_master_conn(const char *name, uint32_t *inode, mode_t *mode,
 
 	std::string name_to_use = std::string(name);
 #ifdef _WIN32
+	int master_conn_retries = 0;
 	if (name_to_use.back() == '\\' || name_to_use.back() == '/') {
 		name_to_use.pop_back();
 	}
@@ -415,6 +419,14 @@ int open_master_conn(const char *name, uint32_t *inode, mode_t *mode,
 			printf("%s: (%s) stat error: %s\n", name, rpath, strerr(errno));
 			return -1;
 		}
+
+#ifdef _WIN32
+		if (master_conn_retries++ > kMaxMasterRetries) {
+			printf("%s: exceeded master connection max retries: not SaunaFS object\n", name);
+			return -1;
+		}
+		sleep(master_conn_retries);
+#endif
 	}
 	return -1;
 }
