@@ -394,6 +394,9 @@ private:
 	static const uint32_t kMaximumTimeWhenJobsWaiting = 10;
 	// For the last 'kTimeToFinishOperations' seconds of maximumTime we won't start new operations
 	static const uint32_t kTimeToFinishOperations = 5;
+	// Minimum tries counter value before showing write error message on
+	// notifications area
+	static const uint32_t kMinTryCounterToShowWriteErrorMessage = 4;
 };
 
 void InodeChunkWriter::processJob(inodedata* inodeData) {
@@ -453,7 +456,7 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 				lock.unlock();
 			}
 			locator->unlockChunk();
-			read_inode_ops(inodeData_->inode);
+			read_inode_reconnect_and_clear_cache(inodeData_->inode, chunkIndex_);
 
 			lock.lock();
 			inodeData_->minimumBlocksToWrite = writer.getMinimumBlockCountWorthWriting();
@@ -471,6 +474,8 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 			write_job_delayed_end(inodeData_, SAUNAFS_STATUS_OK, (canWait ? 1 : 0), lock);
 		} catch (Exception& e) {
 			std::string errorString = e.what();
+			addPathByInodeBasedNotificationMessage(
+				"Write error: " + std::string(e.what()), inodeData_->inode);
 			Glock lock(gMutex);
 			if (e.status() != SAUNAFS_ERROR_LOCKED) {
 				inodeData_->trycnt++;
@@ -498,6 +503,8 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 			}
 		}
 	} catch (UnrecoverableWriteException& e) {
+		addPathByInodeBasedNotificationMessage(
+			"Write error: " + std::string(e.what()), inodeData_->inode);
 		Glock lock(gMutex);
 		if (e.status() == SAUNAFS_ERROR_ENOENT) {
 			write_job_end(inodeData_, SAUNAFS_ERROR_EBADF, lock);
@@ -509,6 +516,10 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 			write_job_end(inodeData_, SAUNAFS_ERROR_IO, lock);
 		}
 	} catch (Exception& e) {
+		if (inodeData_->trycnt > kMinTryCounterToShowWriteErrorMessage) {
+			addPathByInodeBasedNotificationMessage(
+				"Write error: " + std::string(e.what()), inodeData_->inode);
+		}
 		Glock lock(gMutex);
 		int waitTime = 1;
 		if (inodeData_->trycnt > 10) {
@@ -707,8 +718,8 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	}
 	pthread_attr_destroy(&thattr);
 
-	gTweaks.registerVariable("WriteMaxRetries", maxretries);
-	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout);
+	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
+	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
 }
 
 void write_data_term(void) {
