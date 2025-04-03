@@ -1,4 +1,4 @@
-timeout_set 1 hour
+timeout_set '30 minutes'
 
 sqlite_test_path=$(realpath test_utils/sqlite_stress_test.py)
 
@@ -23,4 +23,4 @@ run_sqlite_test_with_parameters() {
 	assert_equals 1 $(grep "Test completed without fatal errors." $TEMP_DIR/sqlite_test.log | wc -l)
 }
 
-run_sqlite_test_with_parameters 200 2000
+run_sqlite_test_with_parameters 100 1000

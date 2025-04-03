@@ -672,8 +672,8 @@ void read_inode_ops(uint32_t inode) { // attributes of inode have been changed -
 	}
 }
 
-// Ongoing write on this inode and chunkId, force reconnect and clear cache for this chunk
-void read_inode_reconnect_clear(uint32_t inode, uint32_t chunkId) {
+// Ongoing write on this inode and chunkIndex, force reconnect and clear cache for this chunk
+void read_inode_reconnect_and_clear_cache(uint32_t inode, uint32_t chunkIndex) {
 	std::unique_lock gMutexLock(gMutex);
 
 	ReadRecordRange range = gActiveReadRecords.equal_range(inode);
@@ -682,7 +682,7 @@ void read_inode_reconnect_clear(uint32_t inode, uint32_t chunkId) {
 		if (!it->second->expired) {
 			it->second->refreshCounter = REFRESHTICKS;  // force reconnect on forthcoming access
 			std::unique_lock inodeLock(it->second->mutex);
-			it->second->cache.selective_clear(chunkId);  // clear cache for this chunk
+			it->second->cache.selective_clear(chunkIndex);  // clear cache for this chunk
 		}
 	}
 }

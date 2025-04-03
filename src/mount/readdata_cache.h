@@ -410,16 +410,29 @@ public:
 		}
 	}
 
-	void selective_clear(uint32_t chunkId) {
-		uint64_t chunkStart = chunkId * SFSCHUNKSIZE;
+	void selective_clear(uint32_t chunkIndex) {
+		// The least starting offset such that the end of the entry could overlap with the chunk
+		uint64_t leastOverlappingOffset = 0;
+		if (chunkIndex > 0) {
+			leastOverlappingOffset = (chunkIndex - 1) * SFSCHUNKSIZE;
+		}
+		uint64_t chunkStart = chunkIndex * SFSCHUNKSIZE;
 		uint64_t chunkEnd = chunkStart + SFSCHUNKSIZE;
+
+		// Find the first entry that could overlap with the chunk
 		auto it = entries_.begin();
+		if (leastOverlappingOffset > 0) {
+			it = entries_.upper_bound(leastOverlappingOffset - 1, Entry::OffsetComp());
+		}
 		while (it != entries_.end()) {
-			// If the entry is not in the chunk, skip it
-			if (it->endOffset() < chunkStart || it->offset >= chunkEnd) {
+			// If the entry ends before the chunk, skip it
+			if (it->endOffset() < chunkStart) {
 				++it;
 				continue;
 			}
+			// If it starts after the chunk, stop
+			if (it->offset >= chunkEnd) { break; }
+
 			it = erase(it);
 		}
 	}
