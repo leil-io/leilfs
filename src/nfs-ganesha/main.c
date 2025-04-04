@@ -18,6 +18,7 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "fsal_pnfs.h"
 #include "fsal_types.h"
 #include "FSAL/fsal_init.h"
 #include "FSAL/fsal_commonlib.h"
@@ -96,6 +97,7 @@ static struct config_block export_param = {
 	.dbus_interface_name = "org.ganesha.nfsd.config.fsal.saunafs",
 	.blk_desc.name = "SaunaFS",
 	.blk_desc.type = CONFIG_BLOCK,
+	.blk_desc.flags = CONFIG_UNIQUE,  /* too risky to have more */
 	.blk_desc.u.blk.init = noop_conf_init,
 	.blk_desc.u.blk.params = export_params,
 	.blk_desc.u.blk.commit = noop_conf_commit
@@ -166,7 +168,7 @@ static struct config_block fsal_export_param_block = {
  *
  * @param[in] export SaunaFS export
  */
-inline static void releaseExport(struct SaunaFSExport *export) {
+static inline void releaseExport(struct SaunaFSExport *export) {
 	if (export) {
 		if (export->fsInstance) {
 			sau_destroy(export->fsInstance);
@@ -210,7 +212,7 @@ static fsal_status_t createExport(struct fsal_module *module, void *parseNode,
 	fsal_export_init(&export->export);
 	exportOperationsInit(&export->export.exp_ops);
 
-	// parse parameters for this export
+	/* parse parameters for this export */
 	sau_set_default_init_params(&export->parameters, "", "", "");
 
 	if (parseNode) {
@@ -272,7 +274,7 @@ static fsal_status_t createExport(struct fsal_module *module, void *parseNode,
 			return status;
 		}
 
-		// special case: server_id matches export_id
+		/* special case: server_id matches export_id */
 		pnfsDs->id_servers = op_ctx->ctx_export->export_id;
 		pnfsDs->mds_export = op_ctx->ctx_export;
 		pnfsDs->mds_fsal_export = &export->export;
@@ -283,7 +285,7 @@ static fsal_status_t createExport(struct fsal_module *module, void *parseNode,
 
 			status.major = ERR_FSAL_EXIST;
 
-			// Return the ref taken by create_fsal_pnfs_ds
+			/* Return the ref taken by create_fsal_pnfs_ds */
 			pnfs_ds_put(pnfsDs);
 
 			releaseExport(export);
@@ -304,8 +306,9 @@ static fsal_status_t createExport(struct fsal_module *module, void *parseNode,
 		exportOperationsPnfs(&export->export.exp_ops);
 	}
 
-	// get attributes for root inode
+	/* get attributes for root inode */
 	sau_attr_reply_t reply;
+
 	retvalue = saunafs_getattr(export->fsInstance, &op_ctx->creds,
 	                           SPECIAL_INODE_ROOT, &reply);
 
@@ -313,12 +316,12 @@ static fsal_status_t createExport(struct fsal_module *module, void *parseNode,
 		status = fsalLastError();
 
 		if (pnfsDs != NULL) {
-			// Remove and destroy the fsal_pnfs_ds
+			/* Remove and destroy the fsal_pnfs_ds */
 			pnfs_ds_remove(pnfsDs->id_servers);
 		}
 
 		if (pnfsDs != NULL) {
-			// Return the ref taken by create_fsal_pnfs_ds
+			/* Return the ref taken by create_fsal_pnfs_ds */
 			pnfs_ds_put(pnfsDs);
 		}
 
@@ -347,6 +350,7 @@ static fsal_status_t initialize(struct fsal_module *module,
                                 config_file_t configFile,
                                 struct config_error_type *errorType) {
 	struct SaunaFSModule *myself = NULL;
+
 	myself = container_of(module, struct SaunaFSModule, fsal);
 
 	(void)load_config_from_parse(configFile, &export_param,
@@ -377,21 +381,21 @@ MODULE_INIT void initializeSaunaFS(void) {
 	struct fsal_module *myself = &SaunaFS.fsal;
 
 	int retval = register_fsal(myself, module, FSAL_MAJOR_VERSION,
-	                           FSAL_MINOR_VERSION, FSAL_ID_EXPERIMENTAL);
+	                           FSAL_MINOR_VERSION, FSAL_ID_SAUNAFS);
 
 	if (retval) {
 		LogCrit(COMPONENT_FSAL, "SaunaFS module failed to register.");
 		return;
 	}
 
-	// Set up module operations
+	/* Set up module operations */
 	myself->m_ops.create_export = createExport;
 	myself->m_ops.init_config = initialize;
 	myself->m_ops.fsal_pnfs_ds_ops = pnfsDsOperationsInit;
 
 	pnfsMdsOperationsInit(&myself->m_ops);
 
-	// Initialize fsal_obj_handle ops for FSAL SaunaFS
+	/* Initialize fsal_obj_handle ops for FSAL SaunaFS */
 	handleOperationsInit(&SaunaFS.handleOperations);
 }
 

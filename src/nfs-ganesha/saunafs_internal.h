@@ -1,8 +1,19 @@
-/**
- * @file   saunafs_internal.h
- * @author Crash <crash@leil.io>
- *
- * @brief Function definitions for SaunaFS FSAL
+/*
+   Copyright 2023 Leil Storage OÜ
+
+   This file is part of SaunaFS.
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #pragma once
@@ -15,7 +26,7 @@ sau_context_t *createContext(sau_t *instance, struct user_cred *cred);
 void exportOperationsInit(struct export_ops *ops);
 void handleOperationsInit(struct fsal_obj_ops *ops);
 
-/// Functions for allocating/deleting handles
+/* Functions for allocating/deleting handles */
 struct SaunaFSHandle *allocateHandle(const struct stat *attribute,
                                      struct SaunaFSExport *export);
 
@@ -28,12 +39,12 @@ fsal_status_t getACL(struct SaunaFSExport *export, inode_t inode,
 fsal_status_t setACL(struct SaunaFSExport *export, inode_t inode,
                      const fsal_acl_t *acl, unsigned int mode);
 
-// Functions for handling errors
+/* Functions for handling errors */
 fsal_status_t saunafsToFsalError(sau_err_t errorCode);
 fsal_status_t fsalLastError(void);
 nfsstat4 nfs4LastError(void);
 
-// Functions for pNFS
+/* Functions for pNFS */
 void pnfsMdsOperationsInit(struct fsal_ops *ops);
 void exportOperationsPnfs(struct export_ops *ops);
 

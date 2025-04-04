@@ -21,7 +21,6 @@
 #include "pnfs_utils.h"
 
 #include "context_wrap.h"
-#include "protocol/SFSCommunication.h"
 #include "saunafs_internal.h"
 
 /**
@@ -29,18 +28,22 @@
  *
  * pNFS functions.
  *
- * This function is called by nfs41_op_layoutget. It may be called multiple times,
- * to satisfy a request with multiple segments. The FSAL may track state (what
- * portion of the request has been or remains to be satisfied or any other
- * information it wishes) in the bookkeeper member of res. Each segment may have
- * FSAL-specific information associated with it its segid. This segid will be
- * supplied to the FSAL when the segment is committed or returned.
+ * This function is called by nfs41_op_layoutget.
+ * It may be called multiple times, to satisfy a request with multiple segments.
+ * The FSAL may track state (what portion of the request has been or remains
+ * to be satisfied or any other information it wishes) in the bookkeeper member
+ * of res. Each segment may have FSAL-specific information associated with its
+ * segid.
+ * This segid will be supplied to the FSAL when the segment is committed or
+ * returned.
  *
  * When the granting the last segment it intends to grant, the FSAL must set the
  * last_segment flag in res.
  *
- * @param[in] objectHandle      The handle of the file on which the layout is requested
- * @param[out] xdrStream        An XDR stream to which the FSAL must encode the layout
+ * @param[in] objectHandle      The handle of the file on which the layout is
+ *                              requested
+ * @param[out] xdrStream        An XDR stream to which the FSAL must encode the
+ *                              layout
  *                              specific portion of the granted layout segment
  * @param[in] arguments         Input arguments of the function
  * @param[in,out] output        In/out and output arguments of the function
@@ -58,7 +61,7 @@ static nfsstat4 layoutget(struct fsal_obj_handle *objectHandle, XDR *xdrStream,
 		.len = sizeof(struct DSWire)
 	};
 
-	struct pnfs_deviceid deviceid = DEVICE_ID_INIT_ZERO(FSAL_ID_EXPERIMENTAL);
+	struct pnfs_deviceid deviceid = DEVICE_ID_INIT_ZERO(FSAL_ID_SAUNAFS);
 	nfl_util4 layoutUtil = 0;
 	nfsstat4 status = NFS4_OK;
 
@@ -81,9 +84,8 @@ static nfsstat4 layoutget(struct fsal_obj_handle *objectHandle, XDR *xdrStream,
 	dataServerWire.inode = handle->inode;
 	layoutUtil = SFSCHUNKSIZE;
 
-	status =
-	    FSAL_encode_file_layout(xdrStream, &deviceid, layoutUtil, 0, 0,
-	                            &op_ctx->ctx_export->export_id, 1, &dsBuffer);
+	status = FSAL_encode_file_layout(xdrStream, &deviceid, layoutUtil, 0, 0,
+	                                 &op_ctx->ctx_export->export_id, 1, &dsBuffer, false);
 
 	if (status) {
 		LogMajor(COMPONENT_PNFS, "Failed to encode nfsv4_1_file_layout.");
@@ -180,8 +182,9 @@ bool hasRecentModificationTime(const struct fsal_layoutcommit_arg *arguments,
  * or new_size until after the last call to FSAL_layoutcommit.
  *
  * @param[in] objectHandle      The object on which to commit
- * @param[in] xdrStream         An XDR stream containing the layout type-specific
- *                              portion of the LAYOUTCOMMIT arguments
+ * @param[in] xdrStream         An XDR stream containing the layout
+ *                              type-specific portion of the LAYOUTCOMMIT
+ *                              arguments
  * @param[in] arguments         Input arguments of the function
  * @param[in,out] output        In/out and output arguments of the function
  *
@@ -233,7 +236,7 @@ static nfsstat4 layoutcommit(struct fsal_obj_handle *objectHandle,
 		posixAttributes.st_mtim.tv_sec = arguments->new_time.seconds;
 		posixAttributes.st_mtim.tv_sec = arguments->new_time.nseconds;
 		mask |= SAU_SET_ATTR_MTIME;
-		mask = (unsigned)mask | SAU_SET_ATTR_MTIME;
+		mask = (unsigned int)mask | SAU_SET_ATTR_MTIME;
 	}
 
 	sau_attr_reply_t reply;

@@ -46,7 +46,7 @@ struct FileInfoCache {
 
 	int entry_count;
 
-	unsigned max_entries;
+	unsigned int max_entries;
 	int min_timeout_ms;
 
 	pthread_mutex_t lock;
@@ -54,6 +54,7 @@ struct FileInfoCache {
 
 static uint64_t get_time_ms() {
 	struct timespec time_;
+
 	timespec_get(&time_, TIME_UTC);
 
 	return (uint64_t)time_.tv_sec * kMillisecondsInOneSecond +
@@ -88,6 +89,7 @@ static int cacheEntryCompareFunction(const struct avltree_node *nodeA,
 FileInfoCache_t *createFileInfoCache(unsigned maxEntries,
                                      int minTimeoutMilliseconds) {
 	FileInfoCache_t *cache = gsh_calloc(1, sizeof(FileInfoCache_t));
+
 	cache->max_entries = maxEntries;
 	cache->min_timeout_ms = minTimeoutMilliseconds;
 	PTHREAD_MUTEX_init(&cache->lock, NULL);
@@ -148,8 +150,7 @@ FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache,
 		glist_del(&entry->list_hook);
 		glist_add(&cache->used_list, &entry->list_hook);
 		avltree_remove(node, &cache->entry_lookup);
-	}
-	else {
+	} else {
 		entry = gsh_calloc(1, sizeof(FileInfoEntry_t));
 		glist_add(&cache->used_list, &entry->list_hook);
 		cache->entry_count++;
@@ -204,8 +205,7 @@ FileInfoEntry_t *popExpiredFileInfoCache(FileInfoCache_t *cache) {
 		glist_del(&entry->list_hook);
 		avltree_remove(&entry->tree_hook, &cache->entry_lookup);
 		cache->entry_count--;
-	}
-	else {
+	} else {
 		entry = NULL;
 	}
 

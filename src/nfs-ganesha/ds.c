@@ -42,6 +42,7 @@ static void clearFileInfoCache(struct SaunaFSExport *export, int count) {
 
 	for (int i = 0; i < count; ++i) {
 		FileInfoEntry_t *cacheHandle = NULL;
+
 		cacheHandle = popExpiredFileInfoCache(export->cache);
 
 		if (cacheHandle == NULL) {
@@ -49,6 +50,7 @@ static void clearFileInfoCache(struct SaunaFSExport *export, int count) {
 		}
 
 		fileinfo_t *fileHandle = extractFileInfo(cacheHandle);
+
 		sau_release(export->fsInstance, fileHandle);
 		fileInfoEntryFree(cacheHandle);
 	}
@@ -59,16 +61,19 @@ static void clearFileInfoCache(struct SaunaFSExport *export, int count) {
  *
  * DS handle Lifecycle management.
  * This function cleans up private resources associated with a filehandle
- * and deallocates it. Implement this method or you will leak. This function
- * should not be called directly.
+ * and deallocates it. Implement this method or you will leak. This
+ * function should not be called directly.
  *
  * @param[in] dataServerHandle     Handle to release
  */
 static void dsh_release(struct fsal_ds_handle *const dataServerHandle) {
-	struct SaunaFSExport *export = container_of(
-	    op_ctx->ctx_pnfs_ds->mds_fsal_export, struct SaunaFSExport, export);
+	struct SaunaFSExport *export;
+	struct DataServerHandle *dataServer;
 
-	struct DataServerHandle *dataServer =
+	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export,
+	                      struct SaunaFSExport, export);
+
+	dataServer =
 	    container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	assert(export->cache);
@@ -104,6 +109,7 @@ static nfsstat4 openfile(struct SaunaFSExport *export,
 	clearFileInfoCache(export, 2);
 
 	struct FileInfoEntry *entry = NULL;
+
 	entry = acquireFileInfoCache(export->cache, dataServer->inode);
 
 	dataServer->cacheHandle = entry;
@@ -134,14 +140,16 @@ static nfsstat4 openfile(struct SaunaFSExport *export,
  *
  * DS handle I/O Functions
  *
- * NFSv4.1 data server handles are disjount from normal filehandles (in Ganesha,
- * there is a ds_flag in the filehandle_v4_t structure) and do not get loaded
- * into mdcache or processed the normal way.
+ * NFSv4.1 data server handles are disjount from normal filehandles (in
+ * Ganesha, there is a ds_flag in the filehandle_v4_t structure) and do not
+ * get loaded into mdcache or processed the normal way.
  *
  * @param[in] dataServerHandle      Handle to release
- * @param[in] stateid               The stateid supplied with the READ operation, for validation
+ * @param[in] stateid               The stateid supplied with the READ
+ *                                  operation, for validation
  * @param[in] offset                The offset at which to read
- * @param[in] requestedLength       Length of read requested (and size of buffer)
+ * @param[in] requestedLength       Length of read requested (and size of
+ *                                  buffer)
  * @param[out] buffer               The buffer to which to store read data
  * @param[out] suppliedLength       Length of data read
  * @param[out] eof                  true on end of file
@@ -192,19 +200,22 @@ static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle,
 /**
  * @brief Write to a data-server handle.
  *
- * NFSv4.1 data server filehandles are disjount from normal filehandles (in Ganesha,
- * there is a ds_flag in the filehandle_v4_t structure) and do not get loaded into
- * mdcache or processed the normal way.
+ * NFSv4.1 data server filehandles are disjount from normal filehandles (in
+ * Ganesha, there is a ds_flag in the filehandle_v4_t structure) and do not
+ * get loaded into mdcache or processed the normal way.
  *
  * @param[in] dataServerHandle      FSAL DS handle
- * @param[in] stateid               The stateid supplied with the READ operation, for validation
+ * @param[in] stateid               The stateid supplied with the READ
+ *                                  operation, for validation
  * @param[in] offset                The offset at which to read
- * @param[in] writeLength           Length of write requested (and size of buffer)
+ * @param[in] writeLength           Length of write requested (and size of
+ *                                  buffer)
  * @param[out] buffer               The buffer to which to store read data
  * @param[in] stability             wanted Stability of write
  * @param[out] writtenLength        Length of data written
  * @param[out] writeVerifier        Write verifier
- * @param[out] stabilityGot         Stability used for write (must be as or more stable than request)
+ * @param[out] stabilityGot         Stability used for write (must be as or
+ *                                  more stable than request)
  *
  * @returns: An NFSv4.1 status code.
  */
@@ -261,9 +272,9 @@ static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle,
 /**
  * @brief Commit a byte range to a DS handle.
  *
- * NFSv4.1 data server filehandles are disjount from normal filehandles (in Ganesha,
- * there is a ds_flag in the filehandle_v4_t structure) and do not get loaded into
- * mdcache or processed the normal way.
+ * NFSv4.1 data server filehandles are disjount from normal filehandles (in
+ * Ganesha, there is a ds_flag in the filehandle_v4_t structure) and do not
+ * get loaded into mdcache or processed the normal way.
  *
  * @param[in] dataServerHandle      FSAL DS handle
  * @param[in] offset                Start of commit window
@@ -295,8 +306,9 @@ static nfsstat4 dsh_commit(struct fsal_ds_handle *const dataServerHandle,
 	nfsstat4 nfsStatus = openfile(export, dataServer);
 
 	if (nfsStatus != NFS4_OK) {
-		// If we failed here then there is no opened SaunaFS file descriptor,
-		// which implies that we don't need to flush anything
+		/* If we failed here then there is no opened SaunaFS file
+		 * descriptor, which implies that we don't need to flush
+		 * anything */
 		return NFS4_OK;
 	}
 
@@ -315,13 +327,13 @@ static nfsstat4 dsh_commit(struct fsal_ds_handle *const dataServerHandle,
 /**
  * @brief Read plus from a data-server handle.
  *
- * NFSv4.2 data server handles are disjount from normal filehandles (in Ganesha,
- * there is a ds_flag in the filehandle_v4_t structure) and do not get loaded
- * into mdcache or processed the normal way.
+ * NFSv4.2 data server handles are disjount from normal filehandles (in
+ * Ganesha, there is a ds_flag in the filehandle_v4_t structure) and do not
+ * get loaded into mdcache or processed the normal way.
  *
  * @param[in]  dataServerHandle      FSAL DS handle
- * @param[in]  stateid               Stateid supplied with the READ operation,
- *                                   for validation
+ * @param[in]  stateid               Stateid supplied with the READ
+ *                                   operation, for validation
  * @param[in]  offset                The offset at which to read
  * @param[in]  requestedLength       Length of read requested (and size of
  *                                   buffer)
@@ -353,14 +365,14 @@ static nfsstat4 dsh_read_plus(struct fsal_ds_handle *const dataServerHandle,
 /**
  * @brief Create a FSAL data server handle from a wire handle.
  *
- * This function creates a FSAL data server handle from a client supplied "wire"
- * handle.
+ * This function creates a FSAL data server handle from a client supplied
+ * "wire" handle.
  *
  * @param[in]  pnfsDataServer       FSAL pNFS DS
  * @param[in]  buffer               Buffer from which to create the struct
  * @param[out] handle               FSAL DS handle
- * @param[out] flags                Flags used to create the FSAL data server
- *                                  handle
+ * @param[out] flags                Flags used to create the FSAL data
+ *                                  server handle
  *
  * @returns: NFSv4.1 error codes.
  */
@@ -371,6 +383,7 @@ static nfsstat4 make_ds_handle(struct fsal_pnfs_ds *const pnfsDataServer,
 	(void) pnfsDataServer;
 
 	struct DSWire *dataServerWire = NULL;
+
 	dataServerWire = (struct DSWire *)buffer->addr;
 
 	struct DataServerHandle *dataServerHandle = NULL;
@@ -393,8 +406,7 @@ static nfsstat4 make_ds_handle(struct fsal_pnfs_ds *const pnfsDataServer,
 #else
 		dataServerHandle->inode = dataServerWire->inode;
 #endif
-	}
-	else {
+	} else {
 #if (BYTE_ORDER == BIG_ENDIAN)
 		dataServerHandle->inode = bswap_32(dataServerWire->inode);
 #else

@@ -19,14 +19,12 @@
  */
 
 #include "gsh_config.h"
-#include "nfs-ganesha/saunafs_fsal_types.h"
+#include "saunafs_fsal_types.h"
 #include "pnfs_utils.h"
 #include <stdlib.h>
 
 #include "context_wrap.h"
 #include "mount/client/saunafs_c_api.h"
-#include "protocol/SFSCommunication.h"
-#include "saunafs_internal.h"
 
 const int MaxBufferSize = 0x100;
 const int ChunkAddressSizeInBytes = 40;
@@ -44,7 +42,7 @@ const int ChunkDataOverhead = 32;
  *
  * @retval value < 0: chunkserverA's ip is less than chunkserverB's ip
  * @retval value > 0: chunkserverA's ip is greater than chunkserverB's ip
- * @retval     0    : Both chunkservers have the same ip
+ * @retval         0: Both chunkservers have the same ip
  */
 static int ascendingIpCompare(const void *chunkserverA,
                               const void *chunkserverB) {
@@ -175,25 +173,25 @@ static sau_chunkserver_info_t *randomizedChunkserverList(
 		return NULL;
 	}
 
-	// Free labels, we don't need them.
+	/* Free labels, we don't need them. */
 	sau_destroy_chunkservers_info(chunkserverInfo);
 
-	// remove disconnected
+	/* remove disconnected */
 	*chunkserverCount = remove_if(chunkserverInfo, *chunkserverCount,
 	                              sizeof(sau_chunkserver_info_t),
 	                              isChunkserverDisconnected, NULL);
 
-	// sorting chunkservers based on its ip attribute
+	/* sorting chunkservers based on its ip attribute */
 	qsort(chunkserverInfo, *chunkserverCount,
 	      sizeof(sau_chunkserver_info_t), ascendingIpCompare);
 
-	// remove entries with the same ip
+	/* remove entries with the same ip */
 	*chunkserverCount = remove_if(chunkserverInfo, *chunkserverCount,
 	                              sizeof(sau_chunkserver_info_t),
 	                              adjacentChunkserversWithSameIp,
 	                              chunkserverInfo);
 
-	// randomize
+	/* randomize */
 	shuffle(chunkserverInfo, *chunkserverCount, sizeof(sau_chunkserver_info_t));
 
 	return chunkserverInfo;
@@ -226,7 +224,7 @@ static int fillChunkDataServerList(XDR *da_addr_body,
 
 		memset(host, 0, upperBound * sizeof(fsal_multipath_member_t));
 
-		// prefer std chunk part type
+		/* prefer std chunk part type */
 		for (size_t i = 0; i < chunk->parts_size && serverCount < upperBound;
 		     ++i) {
 			if (chunk->parts[i].part_type_id != SAUNAFS_STD_CHUNK_PART_TYPE) {
@@ -251,7 +249,8 @@ static int fillChunkDataServerList(XDR *da_addr_body,
 			++serverCount;
 		}
 
-		// fill unused entries with the servers from randomized chunkserver list
+		/* fill unused entries with the servers from randomized
+		 * chunkserver list */
 		while (serverCount < upperBound) {
 			host[serverCount].proto = TCP_PROTO_NUMBER;
 			host[serverCount].addr = chunkserverInfo[*chunkserverIndex].ip;
@@ -261,7 +260,7 @@ static int fillChunkDataServerList(XDR *da_addr_body,
 			*chunkserverIndex = (*chunkserverIndex + 1) % chunkserverCount;
 		}
 
-		// encode ds entry
+		/* encode ds entry */
 		nfsstat4 status =
 		    FSAL_encode_v4_multipath(da_addr_body, serverCount, host);
 
@@ -377,7 +376,7 @@ static void releaseResources(sau_chunk_info_t *chunkInfo,
  * @param[in]  module         FSAL module
  * @param[out] xdrStream      XDR stream to which the FSAL is to write the
  *                            layout type-specific information corresponding to
-                              the deviceid.
+ *                            the deviceid.
  * @param[in]  type           The type of layout that specified the device
  * @param[in]  deviceid       The device to look up
  *
@@ -423,7 +422,7 @@ static nfsstat4 getdeviceinfo(struct fsal_module *module, XDR *xdrStream,
 		return NFS4ERR_SERVERFAULT;
 	}
 
-	// get the chunk list for file
+	/* get the chunk list for file */
 	chunkInfo =
 	    gsh_malloc(SAUNAFS_BIGGEST_STRIPE_COUNT * sizeof(sau_chunk_info_t));
 
@@ -570,7 +569,7 @@ static nfsstat4 getdevicelist(struct fsal_export *exportHandle,
  * @param[out] count             Number of layout types in array
  * @param[out] types             Static array of layout types that must not be
  *                               freed or modified and must not be dereferenced
-                                 after export reference is relinquished.
+ *                               after export reference is relinquished.
  */
 static void fs_layouttypes(struct fsal_export *exportHandle, int32_t *count,
                            const layouttype4 **types) {
@@ -622,7 +621,8 @@ static uint32_t fs_maximum_segments(struct fsal_export *export) {
 /**
  * @brief Size of the buffer needed for loc_body at layoutget.
  *
- * This function sets policy for XDR buffer allocation in layoutget vector below.
+ * This function sets policy for XDR buffer allocation in layoutget
+ * vector below.
  * If FSAL has a const size, just return it here. If it is dependent on what the
  * client can take return ~0UL. In any case the buffer allocated will not be
  * bigger than client's requested maximum.
@@ -634,7 +634,7 @@ static uint32_t fs_maximum_segments(struct fsal_export *export) {
 static size_t fs_loc_body_size(struct fsal_export *export) {
 	(void)export;
 
-	return MaxBufferSize;  // typical value in NFS FSAL plugins
+	return MaxBufferSize;  /* typical value in NFS FSAL plugins */
 }
 
 /**
@@ -652,10 +652,10 @@ static size_t fs_loc_body_size(struct fsal_export *export) {
 static size_t fs_da_addr_size(struct fsal_module *module) {
 	(void)module;
 
-	// one stripe index + number of addresses +
-	// SAUNAFS_EXPECTED_BACKUP_DS_COUNT addresses per chunk each address takes
-	// 37 bytes (we use 40 for safety) we add 32 bytes of overhead
-	// (includes stripe count and DS count)
+	/* one stripe index + number of addresses +
+	 * SAUNAFS_EXPECTED_BACKUP_DS_COUNT addresses per chunk each address
+	 * takes 37 bytes (we use 40 for safety) we add 32 bytes of overhead
+	 * (includes stripe count and DS count) */
 	return SAUNAFS_BIGGEST_STRIPE_COUNT *
 	      (4 + (4 + SAUNAFS_EXPECTED_BACKUP_DS_COUNT * ChunkAddressSizeInBytes))
 	      + ChunkDataOverhead;

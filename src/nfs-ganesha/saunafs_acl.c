@@ -57,14 +57,14 @@ sau_acl_t *convertFsalACLToSaunafsACL(const fsal_acl_t *fsalACL,
 		}
 
 		sau_acl_ace_t ace;
+
 		ace.flags = fsalACE->flag & ByteMaxValue;
 		ace.mask  = fsalACE->perm;
 		ace.type  = fsalACE->type;
 
 		if (IS_FSAL_ACE_GROUP_ID(*fsalACE)) {
 			ace.id = GET_FSAL_ACE_GROUP(*fsalACE);
-		}
-		else {
+		} else {
 			ace.id = GET_FSAL_ACE_USER(*fsalACE);
 		}
 
@@ -136,8 +136,7 @@ fsal_acl_t *convertSaunafsACLToFsalACL(const sau_acl_t *saunafsACL) {
 
 		if (IS_FSAL_ACE_GROUP_ID(*fsalACE)) {
 			fsalACE->who.gid = saunafsACE.id;
-		}
-		else {
+		} else {
 			fsalACE->who.uid = saunafsACE.id;
 		}
 

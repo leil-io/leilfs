@@ -20,9 +20,9 @@ HEALTHCHECK --interval=30s --timeout=3s \
 
 FROM base AS ganesha-builder
 
-ARG GANESHA_VERSION=4.3
+ARG GANESHA_VERSION=6.5
 ENV GANESHA_VERSION=${GANESHA_VERSION}
-ARG NTIRPC_VERSION=4.3
+ARG NTIRPC_VERSION=6.3
 ENV NTIRPC_VERSION=${NTIRPC_VERSION}
 
 # install ganesha from sources
@@ -98,6 +98,8 @@ RUN set -e ; \
     mkdir -p /tmp/dependencies; \
     find /usr/ -name ganesha.nfsd -type f -exec ldd {} \; | \
         grep -oP '(/usr)?(/local)?/lib(64)?/.*\s' | sed 's/\s*$//' | sort -u | \
+        xargs -I{} cp -v --parents {} /tmp/dependencies; \
+    find /usr/ -name 'libboost_*.so*' -type f | grep -oP '(/usr)?(/local)?/lib(64)?/.*' | sort -u | \
         xargs -I{} cp -v --parents {} /tmp/dependencies;
 
 FROM base AS dbus
@@ -138,6 +140,7 @@ COPY --from=ganesha-builder /etc/ganesha /etc/ganesha
 COPY --from=ganesha-builder /usr/lib/ganesha /usr/lib/ganesha
 COPY --from=ganesha-builder /tmp/dependencies/lib /lib
 COPY --from=ganesha-builder /tmp/dependencies/lib64 /lib64
+COPY --from=ganesha-builder /tmp/dependencies/usr/lib /usr/lib
 
 RUN set -e ; \
     apt update; \

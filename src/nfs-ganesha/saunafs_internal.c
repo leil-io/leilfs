@@ -1,9 +1,21 @@
-/**
- * @file   saunafs_internal.c
- * @author Crash <crash@leil.io>
- *
- * @brief Function definitions for SaunaFS FSAL
+/*
+   Copyright 2023 Leil Storage OÜ
+
+   This file is part of SaunaFS.
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
+
 #include "fsal_convert.h"
 #include "pnfs_utils.h"
 
@@ -25,11 +37,12 @@ sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 	}
 
 	if (cred->caller_glen > 0) {
-		gid_t *garray = malloc((cred->caller_glen + 1) * sizeof(gid_t));
+		gid_t *garray = gsh_malloc((cred->caller_glen + 1) * sizeof(gid_t));
 
 		if (garray != NULL) {
 			garray[0] = gid;
 			size_t size = sizeof(gid_t) * cred->caller_glen;
+
 			memcpy(garray + 1, cred->caller_garray, size);
 			sau_update_groups(instance, ctx, garray, cred->caller_glen + 1);
 			free(garray);

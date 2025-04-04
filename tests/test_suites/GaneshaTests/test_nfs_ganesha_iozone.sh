@@ -19,9 +19,6 @@ create_ganesha_pid_file
 cd ${info[mount0]}
 
 cat <<EOF > ${info[mount0]}/ganesha.conf
-NFS_KRB5 {
-	Active_krb5=false;
-}
 NFSV4 {
 	Grace_Period = 5;
 	Lease_Lifetime = 5;
