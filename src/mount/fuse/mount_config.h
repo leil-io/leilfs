@@ -116,6 +116,7 @@ struct sfsopts_ {
 	bool directio;
 	int ignoreflush;
 	unsigned limitglibcmallocarenas;
+	unsigned malloctrimperiod;
 	int lognotificationarea;
 	unsigned messagesuppressionperiod;
 	int statfscachetimeout;
@@ -178,6 +179,7 @@ struct sfsopts_ {
 		directio(SaunaClient::FsInitParams::kDirectIO),
 		ignoreflush(SaunaClient::FsInitParams::kDefaultIgnoreFlush),
 		limitglibcmallocarenas(SaunaClient::FsInitParams::kDefaultLimitGlibcMallocArenas),
+		malloctrimperiod(SaunaClient::FsInitParams::kDefaultMallocTrimPeriod),
 		statfscachetimeout(SaunaClient::FsInitParams::kDefaultStatfsCacheTo),
 		usequotainvolumesize(SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize)
 	{ }

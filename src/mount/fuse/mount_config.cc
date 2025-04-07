@@ -95,6 +95,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("nostdmountoptions", nostdmountoptions, 1),
 	SFS_OPT("sfsignoreflush=%d", ignoreflush, 0),
 	SFS_OPT("limitglibcmallocarenas=%d", limitglibcmallocarenas, 0),
+	SFS_OPT("malloctrimperiod=%d", malloctrimperiod, 0),
 	SFS_OPT("sfslognotificationarea=%d", lognotificationarea, 0),
 	SFS_OPT("sfsmessagesuppressionperiod=%u", messagesuppressionperiod, 0),
 	SFS_OPT("statfscachetimeout=%d", statfscachetimeout, 0),
@@ -189,6 +190,7 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsignoreflush"] = std::to_string(gMountOptions.ignoreflush);
 	gOptsNameValues["limitglibcmallocarenas"] =
 	    std::to_string(gMountOptions.limitglibcmallocarenas);
+	gOptsNameValues["malloctrimperiod"] = std::to_string(gMountOptions.malloctrimperiod);
 	gOptsNameValues["sfslognotificationarea"] = std::to_string(gMountOptions.lognotificationarea);
 	gOptsNameValues["sfsmessagesuppressionperiod"] =
 	    std::to_string(gMountOptions.messagesuppressionperiod);
@@ -327,6 +329,9 @@ void usage(const char *progname) {
 "    -o limitglibcmallocarenas=N  limit glibc malloc arenas to given value - prevents "
 				"from using huge amount of virtual memory. Use it in constrained memory "
 				"environments (default: %u)\n"
+"    -o malloctrimperiod=MSEC    set period of malloc trim in milliseconds. Could prove useful "
+				"in memory constrained scenarios. When equal to 0 the periodic trimming is "
+				"disabled (default: %u)\n"
 "    -o sfslognotificationarea=0|1  enable/disable logging to Linux notification area (default: %d)\n"
 "    -o sfsmessagesuppressionperiod=N  set period of message suppression in seconds for logging on "
 				"notification area (default: %u)\n"
@@ -365,6 +370,7 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultSymlinkCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultSubfolder,
 		SaunaClient::FsInitParams::kDefaultLimitGlibcMallocArenas,
+		SaunaClient::FsInitParams::kDefaultMallocTrimPeriod,
 		SaunaClient::FsInitParams::kDefaultLogNotificationArea,
 		SaunaClient::FsInitParams::kDefaultMessageSuppressionPeriod,
 		SaunaClient::FsInitParams::kDefaultStatfsCacheTo,

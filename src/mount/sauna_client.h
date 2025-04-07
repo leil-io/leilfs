@@ -98,6 +98,7 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultReportReservedPeriod = 30;
 	static constexpr unsigned kDefaultWriteCacheSize = 0;
 	static constexpr unsigned kDefaultLimitGlibcMallocArenas = 0;
+	static constexpr unsigned kDefaultMallocTrimPeriod = 0;
 	static constexpr bool     kDefaultMkdirCopySgid = true;
 #endif
 	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
@@ -161,7 +162,7 @@ struct FsInitParams {
 	             enable_status_updater_thread(kDefaultEnableStatusUpdaterThread),
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
 #else
-	             limit_glibc_malloc_arenas(kDefaultLimitGlibcMallocArenas),
+	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
@@ -204,8 +205,8 @@ struct FsInitParams {
 	             enable_status_updater_thread(kDefaultEnableStatusUpdaterThread),
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
 #else
-	             limit_glibc_malloc_arenas(kDefaultLimitGlibcMallocArenas),
-#endif 
+	             malloc_trim_period(kDefaultMallocTrimPeriod),
+#endif
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
@@ -265,7 +266,7 @@ struct FsInitParams {
 	unsigned enable_status_updater_thread;
 	unsigned ignore_utimens_update;
 #else
-	unsigned limit_glibc_malloc_arenas;
+	unsigned malloc_trim_period;
 #endif
 
 	bool ignore_flush;

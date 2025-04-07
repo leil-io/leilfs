@@ -261,6 +261,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.debug_mode = gMountOptions.debug;
 	params.direct_io = gMountOptions.directio;
 	params.ignore_flush = gMountOptions.ignoreflush;
+	params.malloc_trim_period = gMountOptions.malloctrimperiod;
 	params.log_notifications_area = gMountOptions.lognotificationarea;
 	params.message_suppression_period = gMountOptions.messagesuppressionperiod;
 	params.statfs_cache_timeout = gMountOptions.statfscachetimeout;
@@ -701,6 +702,13 @@ int main(int argc, char *argv[]) try {
 
 	gLimitGlibcArenas = gMountOptions.limitglibcmallocarenas;
 	tuneMalloc();
+
+	if (gMountOptions.malloctrimperiod > 0 && gMountOptions.malloctrimperiod < 100) {
+		// Try to avoid malloc_trim() being called too often
+		fprintf(stderr, "malloc trim period too small (%u ms) - increased to 100 ms\n",
+				gMountOptions.malloctrimperiod);
+		gMountOptions.malloctrimperiod = 100;
+	}
 
 	make_fsname(&args);
 
