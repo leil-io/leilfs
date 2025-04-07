@@ -33,12 +33,13 @@ WriteCacheBlock::WriteCacheBlock(uint32_t chunkIndex, uint32_t blockIndex, Type 
 		  to(0),
 		  type(type) {
 	sassert(blockIndex < SFSBLOCKSINCHUNK);
-	blockData = new uint8_t[SFSBLOCKSIZE];
+	blockData.reserve(SFSBLOCKSIZE);
+	blockData.resize(SFSBLOCKSIZE);
 }
 
 WriteCacheBlock::WriteCacheBlock(WriteCacheBlock&& block) noexcept {
-	blockData = block.blockData;
-	block.blockData = nullptr;
+	blockData = std::move(block.blockData);
+	block.blockData.clear();
 	chunkIndex = block.chunkIndex;
 	blockIndex = block.blockIndex;
 	from = block.from;
@@ -58,21 +59,17 @@ WriteCacheBlock &WriteCacheBlock::operator=(WriteCacheBlock &&block) {
 	return *this;
 }
 
-WriteCacheBlock::~WriteCacheBlock() {
-	delete[] blockData;
-}
-
 bool WriteCacheBlock::expand(uint32_t from, uint32_t to, const uint8_t *buffer) {
 	if (size() == 0) {
 		this->from = from;
 		this->to = to;
-		memcpy(blockData + from, buffer, to - from);
+		memcpy(blockData.data() + from, buffer, to - from);
 		return true;
 	}
 	if (from > this->to || to < this->from) { // can't expand
 		return false;
 	}
-	memcpy(blockData + from, buffer, to - from);
+	memcpy(blockData.data() + from, buffer, to - from);
 	if (from < this->from) {
 		this->from = from;
 	}
@@ -95,9 +92,9 @@ uint32_t WriteCacheBlock::size() const {
 }
 
 const uint8_t* WriteCacheBlock::data() const {
-	return blockData + from;
+	return blockData.data() + from;
 }
 
 uint8_t* WriteCacheBlock::data() {
-	return blockData + from;
+	return blockData.data() + from;
 }
