@@ -409,6 +409,20 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, messageId,
 		std::string, fullPath)
 
+// SAU_MATOCL_FUSE_GET_SELF_QUOTA
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetSelfQuota, kStatusPacketVersion, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetSelfQuota, kResponsePacketVersion, 1)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, fuseGetSelfQuota, SAU_MATOCL_FUSE_GET_SELF_QUOTA, kStatusPacketVersion,
+		uint32_t, messageId,
+		uint8_t, status)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, fuseGetSelfQuota, SAU_MATOCL_FUSE_GET_SELF_QUOTA, kResponsePacketVersion,
+		uint32_t, messageId,
+		std::vector<QuotaEntry>, quotaEntries)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, recursiveRemove, SAU_MATOCL_RECURSIVE_REMOVE, 0,
 		uint32_t, msgid,

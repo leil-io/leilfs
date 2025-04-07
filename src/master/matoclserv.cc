@@ -2048,6 +2048,36 @@ void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *dat
 	eptr->sesdata->currentopstats[3]++;
 }
 
+void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	uint32_t version, messageId, uid, gid;
+	std::vector<QuotaEntry> results;
+	std::vector<std::string> info;
+	uint8_t status;
+	deserializePacketVersionNoHeader(data, length, version);
+	
+	std::vector<QuotaOwner> owners;
+	cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid);
+	status = matoclserv_check_group_cache(eptr, gid);
+	if (status == SAUNAFS_STATUS_OK) {
+		FsContext context = matoclserv_get_context(eptr, uid, gid);
+		owners.emplace_back(QuotaOwnerType::kUser, uid);
+		owners.emplace_back(QuotaOwnerType::kGroup, gid);
+		owners.emplace_back(QuotaOwnerType::kInode, context.rootinode());
+		status = fs_quota_get(context, owners, results);
+	}
+
+	MessageBuffer reply;
+	if (status == SAUNAFS_STATUS_OK) {
+		status = fs_quota_get_info(matoclserv_get_context(eptr), results, info);
+	}
+	if (status == SAUNAFS_STATUS_OK) {
+		matocl::fuseGetSelfQuota::serialize(reply, messageId, results);
+	} else {
+		matocl::fuseGetSelfQuota::serialize(reply, messageId, status);
+	}
+	matoclserv_createpacket(eptr, std::move(reply));
+}
+
 void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	uint32_t inode,uid,gid;
 	uint8_t nleng;
@@ -5135,6 +5165,9 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 				case SAU_CLTOMA_FULL_PATH_BY_INODE:
 					matoclserv_sau_full_path_by_inode(eptr, data, length);
 					break;
+				case SAU_CLTOMA_FUSE_GET_SELF_QUOTA:
+					matoclserv_sau_get_self_quota(eptr, data, length);
+					break;	
 				case SAU_CLTOMA_CSERV_LIST:
 					matoclserv_sau_cserv_list(eptr, data, length);
 					break;

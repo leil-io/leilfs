@@ -3119,37 +3119,35 @@ uint8_t fs_makesnapshot(uint32_t src_inode, uint32_t dst_inode, const std::strin
 	}
 }
 
-uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid,
-                          std::vector<QuotaEntry> &quota_entries) {
+uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, std::vector<QuotaEntry> &quotaEntries) {
 	threc *rec = fs_get_my_threc();
-	std::vector<std::string> quota_info;
-
-	std::vector<QuotaOwner> requested_entities;
-	requested_entities.emplace_back(QuotaOwnerType::kUser, uid);
-	requested_entities.emplace_back(QuotaOwnerType::kGroup, gid);
-	auto message = cltoma::fuseGetQuota::build(rec->packetId, uid, gid, requested_entities);
+	auto message = cltoma::fuseGetSelfQuota::build(rec->packetId, uid, gid);
 
 	if (!fs_saucreatepacket(rec, message)) {
 		return SAUNAFS_ERROR_IO;
 	}
 
-	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GET_QUOTA, message)) {
+	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GET_SELF_QUOTA, message)) {
 		return SAUNAFS_ERROR_IO;
 	}
 
 	try {
 		PacketVersion packet_version;
 		deserializePacketVersionNoHeader(message, packet_version);
-		if (packet_version == matocl::fuseGetQuota::kStatusPacketVersion) {
+		if (packet_version == matocl::fuseGetSelfQuota::kStatusPacketVersion) {
 			uint8_t status;
-			matocl::fuseGetQuota::deserialize(message, rec->packetId, status);
-			throw Exception(": failed", status);
+			uint32_t dummy_message_id;
+			matocl::fuseGetSelfQuota::deserialize(message, dummy_message_id, status);
+			return status;
+		} else if (packet_version == matocl::fuseGetSelfQuota::kResponsePacketVersion) {
+			uint32_t messageId;
+			matocl::fuseGetSelfQuota::deserialize(message, messageId, quotaEntries);
+			return SAUNAFS_STATUS_OK;
+		} else {
+			return SAUNAFS_ERROR_EINVAL;
 		}
-		matocl::fuseGetQuota::deserialize(message, rec->packetId, quota_entries, quota_info);
-		return SAUNAFS_STATUS_OK;
 	} catch (Exception& ex) {
-		fs_got_inconsistent("SAU_MATOCL_FUSE_GET_QUOTA", message.size(), ex.what());
-		quota_entries.clear();
+		fs_got_inconsistent("SAU_MATOCL_FUSE_GET_SELF_QUOTA", message.size(), ex.what());
 		return SAUNAFS_ERROR_IO;
 	}
 }
