@@ -1,8 +1,10 @@
+GIT_COMMIT_EMAIL = ""
+
 def buildSfstests() {
     sh '''
         git clone "https://github.com/leil-io/sfstests"
         cd sfstests
-        git checkout v0.3.0
+        git checkout v0.5.0
         go build -o $WORKSPACE/sfstests
         '''
 }
@@ -18,16 +20,100 @@ def buildImage(imageName) {
 }
 
 def runSanity() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --workers 28 --multiplier 4 --cpus 1'''
+    def resultsFile = "test_results_sanity.xml"
+    sh """
+        ./sfstests/sfstests \
+        --auth /etc/apt/auth.conf.d/ \
+        --workers ${SANITY_WORKERS} \
+        --multiplier ${MACHINE_MULTIPLIER} \
+        --cpus 1 \
+        --xml-path ${resultsFile}
+        """
+    publishJunit(resultsFile)
 }
 def runShort() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite ShortSystemTests --workers 16 --multiplier 5 --cpus 2'''
+    def resultsFile = "test_results_short.xml"
+    sh """
+        ./sfstests/sfstests \
+        --auth /etc/apt/auth.conf.d/ \
+        --suite ShortSystemTests \
+        --workers ${SHORT_WORKERS} \
+        --multiplier ${MACHINE_MULTIPLIER} \
+        --cpus 2 \
+        --xml-path ${resultsFile}
+        """
+    publishJunit(resultsFile)
 }
 def runMachine() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite SingleMachineTests --workers 1 --multiplier 5'''
+    def resultsFile = "test_results_machine.xml"
+    sh """ ./sfstests/sfstests \
+        --auth /etc/apt/auth.conf.d/ \
+        --suite SingleMachineTests \
+        --workers 1 \
+        --skip-on-fail \
+        --multiplier ${MACHINE_MULTIPLIER} \
+        --xml-path ${resultsFile}
+        """
+    publishJunit(resultsFile)
 }
 def runLong() {
-    sh ''' ./sfstests/sfstests --auth /etc/apt/auth.conf.d/ --suite LongSystemTests --workers 12 --multiplier 5 --cpus 2'''
+    def resultsFile = "test_results_long.xml"
+    sh """ ./sfstests/sfstests \
+        --auth /etc/apt/auth.conf.d/ \
+        --workers ${LONG_WORKERS} \
+        --suite LongSystemTests \
+        --multiplier ${MACHINE_MULTIPLIER} \
+        --skip-on-fail \
+        --cpus 2 \
+        --xml-path ${resultsFile}
+        """
+    publishJunit(resultsFile)
+}
+
+def publishJunit(resultsFile) {
+    junit(
+        skipMarkingBuildUnstable: false,
+        testResults: resultsFile,
+    )
+}
+
+def slackBadMessage(channelMsg, userMsg) {
+    if (env.BRANCH_NAME == 'dev') {
+        slackSend(color: "danger", message: "<$BUILD_URL|$channelMsg>")
+    } else {
+        GIT_COMMIT_EMAIL = sh(
+            script: 'git --no-pager show -s --format="%ae"',
+            returnStdout: true
+        ).trim()
+        def userId = slackUserIdFromEmail(GIT_COMMIT_EMAIL)
+        if (userId?.trim()) {
+            slackSend(
+                color: "warning",
+                channel: "$userId",
+                message: "<$BUILD_URL|$userMsg>"
+            )
+        } else {
+            echo "Failed to retrieve Slack user ID for email: ${GIT_COMMIT_EMAIL}"
+        }
+    }
+}
+
+def slackGoodMessage(userMsg) {
+    if (env.BRANCH_NAME == 'dev') {
+        // No need to alert if everything works :)
+       return
+    }
+    // We still want to alert developers that a pipeline passed
+    def userId = slackUserIdFromEmail(GIT_COMMIT_EMAIL)
+    if (userId?.trim()) {
+        slackSend(
+            color: "good",
+            channel: "$userId",
+            message: "<$BUILD_URL|$userMsg>"
+        )
+    } else {
+        echo "Failed to retrieve Slack user ID for email: ${GIT_COMMIT_EMAIL}"
+    }
 }
 
 pipeline {
@@ -40,6 +126,27 @@ pipeline {
     }
     tools { go '1.22.2' }
     stages {
+        stage('Get build metadata') {
+            agent {label 'linux'}
+            steps {
+                checkout scm
+                script {
+                    GIT_COMMIT_EMAIL = sh(
+                        script: 'git --no-pager show -s --format="%ae"',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+            post {
+                cleanup {
+                    cleanWs(cleanWhenNotBuilt: true,
+                        deleteDirs: true,
+                        disableDeferredWipeout: true,
+                        notFailBuild: true,
+                    )
+                }
+            }
+        }
         stage('Build and test') {
             parallel {
                 stage('Build with clang') {
@@ -53,7 +160,13 @@ pipeline {
                         }
                     }
                     post {
-                        always {
+                        failure {
+                            slackBadMessage(
+                                "clang failed to build on ${BRANCH_NAME}",
+                                "clang failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                            )
+                        }
+                        cleanup {
                             cleanWs(cleanWhenNotBuilt: true,
                                 deleteDirs: true,
                                 disableDeferredWipeout: true,
@@ -83,7 +196,13 @@ pipeline {
                     }
                     post {
                         // Clean after build
-                        always {
+                        failure {
+                            slackBadMessage(
+                                "Ubuntu 22.04 build failed on ${BRANCH_NAME}",
+                                "Ubuntu 22.04 build failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                            )
+                        }
+                        cleanup {
                             cleanWs(cleanWhenNotBuilt: true,
                                 deleteDirs: true,
                                 disableDeferredWipeout: true,
@@ -97,6 +216,13 @@ pipeline {
                 }
                 stage('Build Ubuntu 24.04') {
                     agent { label "test && ubuntu-2404" }
+                    environment {
+                        SANITY_WORKERS = "${env.SANITY_WORKERS ?: '4'}"
+                        SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
+                        LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
+
+                        MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                    }
                     stages {
                         stage("Checkout source") {
                             steps {
@@ -113,7 +239,7 @@ pipeline {
                         stage('Build image') {
                             steps {
                                 script {
-                                        buildImage("ubuntu:24.04")
+                                    buildImage("ubuntu:24.04")
                                 }
                             }
                         }
@@ -143,8 +269,31 @@ pipeline {
                         }
                     }
                     post {
+                        unstable {
+                            script {
+                                slackBadMessage(
+                                    "Tests failed to pass on ${BRANCH_NAME}",
+                                    "Tests failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                )
+                            }
+                        }
+                        failure {
+                            script {
+                                slackBadMessage(
+                                    "Ubuntu 24.04 pipeline failed on ${BRANCH_NAME}",
+                                    "Ubuntu 24.04 pipeline failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                )
+                            }
+                        }
+                        success {
+                            script {
+                                slackGoodMessage(
+                                    "Ubuntu 24.04 pipeline passed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                )
+                            }
+                        }
                         // Clean after build
-                        always {
+                        cleanup {
                             cleanWs(cleanWhenNotBuilt: true,
                                 deleteDirs: true,
                                 disableDeferredWipeout: true,
@@ -157,7 +306,6 @@ pipeline {
                         }
                     }
                 }
-
             }
         }
         stage('Deploy packages to dev repository') {
