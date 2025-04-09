@@ -13,8 +13,18 @@ def buildImage(imageName) {
     sh """
         cd $WORKSPACE
         mkdir build
-        docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
+        docker buildx build \
+        --build-arg BASE_IMAGE=${imageName} \
+        --tag saunafs-test:latest \
+        -f tests/docker/Dockerfile.test \
+        $WORKSPACE
+
         docker save saunafs-test:latest | zstd -o ./build/sfstests.${imageName}.tar.zst
+
+        docker buildx build \
+        -f tests/docker/Dockerfile.binaries \
+        --output type=tar,dest=- \
+        $WORKSPACE | zstd -o ./build/binaries.tar.zst
         """
     archiveArtifacts artifacts: 'build/*.tar.zst', fingerprint: true
 }

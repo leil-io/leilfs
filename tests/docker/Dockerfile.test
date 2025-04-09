@@ -44,15 +44,19 @@ ENV PATH="/usr/lib/ccache:${PATH}"
 WORKDIR /
 RUN git clone https://github.com/microsoft/vcpkg.git /vcpkg;
 WORKDIR /vcpkg
-COPY vcpkg.json .
-RUN git pull;
+RUN git checkout 9b75e789ece3f942159b8500584e35aafe3979ff;
 RUN ./bootstrap-vcpkg.sh;
-RUN --mount=type=cache,target=/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/vcpkg/packages/,sharing=locked ./vcpkg install;
-
 ENV VCPKG_ROOT="/vcpkg/"
 ENV PATH="${VCPKG_ROOT}:${PATH}"
 
 WORKDIR /saunafs
+COPY vcpkg.json .
+RUN --mount=type=cache,target=/root/.ccache \
+	--mount=type=cache,target=/root/.cache/vcpkg \
+	--mount=type=cache,target=/vcpkg/downloads/,sharing=locked \
+	--mount=type=cache,target=/vcpkg/packages/,sharing=locked \
+	vcpkg --debug install;
+
 COPY CMakeLists.txt .
 COPY cmake ./cmake
 COPY config.h.in .
@@ -63,9 +67,12 @@ COPY doc ./doc
 COPY tests ./tests
 COPY COPYING .
 COPY README.md .
-RUN cp /vcpkg/vcpkg.json .;
 
-RUN mkdir -p /saunafs/build && ls /saunafs && \
+RUN --mount=type=cache,target=/root/.ccache \
+	--mount=type=cache,target=/root/.cache/vcpkg \
+	--mount=type=cache,target=/vcpkg/downloads/,sharing=locked \
+	--mount=type=cache,target=/vcpkg/packages/,sharing=locked \
+	mkdir -p /saunafs/build && ls /saunafs && \
     cd /saunafs/build && cmake \
 	-DCMAKE_TOOLCHAIN_FILE="/vcpkg/scripts/buildsystems/vcpkg.cmake" \
     -DENABLE_TESTS=1 \
@@ -74,13 +81,16 @@ RUN mkdir -p /saunafs/build && ls /saunafs && \
     -DENABLE_CLIENT_LIB=ON \
     -DENABLE_URAFT=ON \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_INSTALL_PREFIX=/install \
     ..;
 
 # TODO: Use CMake presets
 RUN --mount=type=cache,target=/root/.ccache \
     cd /saunafs/build && make -j$(nproc) install;
 
-
 WORKDIR /
 ENV TERM=xterm
+ENV SAUNAFS_ROOT="/install"
+ENV PATH="$PATH:$SAUNAFS_ROOT/bin:$SAUNAFS_ROOT/sbin"
+ENV MANPATH=":/saunafs/share/man"
 ENTRYPOINT ["tini", "--"]
