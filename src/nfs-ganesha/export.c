@@ -285,17 +285,17 @@ static fsal_status_t wire_to_host(struct fsal_export *export,
 	}
 
 	sau_inode_t *inode = (sau_inode_t *)buffer->addr;
+	static_assert(
+	    sizeof(sau_inode_t) == sizeof(uint32_t) || sizeof(sau_inode_t) == sizeof(uint64_t),
+	    "Supported inode sizes are only 4 (32 bits) or 8 (64 bits)");
 
 	if (flags & FH_FSAL_BIG_ENDIAN) {
 #if (BYTE_ORDER != BIG_ENDIAN)
-		static_assert(sizeof(sau_inode_t) == 4, "");
-		*inode = bswap_32(*inode);
+		bswap_sau_inode_t(inode);
 #endif
-	}
-	else {
+	} else {
 #if (BYTE_ORDER == BIG_ENDIAN)
-		assert(sizeof(sau_inode_t) == 4);
-		*inode = bswap_32(*inode);
+		bswap_sau_inode_t(inode);
 #endif
 	}
 

@@ -45,6 +45,19 @@ static const int kNFS4_ERROR = -1;
 typedef sau_fileinfo_t fileinfo_t;
 
 /**
+* Helper function to swap the byte order of a sau_inode_t.
+*
+* @param[in,out] inode Pointer to the sau_inode_t to swap.
+*/
+inline void bswap_sau_inode_t(sau_inode_t *inode) {
+	if (sizeof(sau_inode_t) == sizeof(uint32_t)) {
+		*inode = bswap_32(*inode);
+	} else if (sizeof(sau_inode_t) == sizeof(uint64_t)) {
+		*inode = bswap_64(*inode);
+	}
+}
+
+/**
  * @struct SaunaFSModule saunafs_fsal_types.h [saunafs_fsal_types.h]
  *
  * @brief SaunaFS Main global module object.
