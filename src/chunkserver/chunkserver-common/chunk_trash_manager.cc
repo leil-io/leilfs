@@ -39,7 +39,8 @@ void ChunkTrashManager::setImpl(ImplementationPtr newImpl) {
 	// Protect against concurrent access
 	std::lock_guard<std::mutex> lock(implMutex);
 	if (!newImpl) {
-		safs::log_err("Attempt to set null implementation for ChunkTrashManager");
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "Attempt to set null implementation for ChunkTrashManager");
 		return;  // Don't set null implementation
 	}
 	getImpl() = newImpl;
@@ -55,7 +56,8 @@ int ChunkTrashManager::moveToTrash(const std::filesystem::path &filePath,
 
 	auto &impl = getImpl();
 	if (!impl) {
-		safs::log_err("ChunkTrashManager implementation not initialized");
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 	return impl->moveToTrash(filePath, diskPath, deletionTime);
@@ -69,7 +71,8 @@ int ChunkTrashManager::init(const std::string &diskPath) {
 
 	auto &impl = getImpl();
 	if (!impl) {
-		safs::log_err("ChunkTrashManager implementation not initialized");
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 	return impl->init(diskPath);
@@ -83,7 +86,8 @@ void ChunkTrashManager::collectGarbage() {
 
 	auto &impl = getImpl();
 	if (!impl) {
-		safs::log_err("ChunkTrashManager implementation not initialized");
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
 		return;
 	}
 	impl->collectGarbage();
@@ -95,7 +99,8 @@ void ChunkTrashManager::reloadConfig() {
 
 	auto &impl = getImpl();
 	if (!impl) {
-		safs::log_err("ChunkTrashManager implementation not initialized");
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
 		return;
 	}
 
