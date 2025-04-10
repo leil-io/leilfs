@@ -8,10 +8,7 @@ sfschunkserver - start, restart or stop Sauna File System chunkserver process
 == SYNOPSIS
 
 [verse]
-*sfschunkserver* [*-f*] [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
-
-[verse]
-*sfschunkserver -s* [*-c* 'CFGFILE']
+*sfschunkserver* [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
 
 [verse]
 *sfschunkserver -v*
@@ -43,12 +40,6 @@ Chunkserver scans attached disks in background.
 *-v*:: print version information and exit
 
 *-h*:: print usage information and exit
-
-*-f*:: (deprecated, use *start* action instead) forcily run SaunaFS chunkserver
-process, without trying to kill previous instance (this option allows to run
-SaunaFS chunkserver if stale PID file exists)
-
-*-s*:: (deprecated, use *stop* action instead) stop SaunaFS chunkserver process
 
 *-c* 'CFGFILE':: specify alternative path of configuration file (default is
 *sfschunkserver.cfg* in system configuration directory)

@@ -40,7 +40,7 @@ static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeou
 static void recursive_remove_usage() {
 	fprintf(stderr,
 	        "recursive remove\n\nusage:\n saunafs rremove [-l] name [name ...]\n");
-	fprintf(stderr, " -l - wait until removing will finish (otherwise there is %ds timeout)\n",
+	fprintf(stderr, " -l - wait until removing will finish (otherwise there is %ds timeout) (will be default in 5.0.0)\n",
 		kDefaultTimeout/1000);
 }
 
@@ -58,6 +58,10 @@ static int recursive_remove(const char *file_name, int long_wait) {
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGUSR1);
 	sigprocmask(SIG_BLOCK, &set, NULL);
+
+	fmt::println(
+	    stderr,
+	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
 
 	auto find_last_delimiter_pos = [](const std::string &parent_path) {
 		std::size_t last_pos_delimiter_unix = parent_path.find_last_of("/");
@@ -79,8 +83,8 @@ static int recursive_remove(const char *file_name, int long_wait) {
 
 	std::string name_to_use = std::string(file_name);
 #ifdef _WIN32
-	if (name_to_use.back() == '\\' || name_to_use.back() == '/') { 
-		name_to_use.pop_back(); 
+	if (name_to_use.back() == '\\' || name_to_use.back() == '/') {
+		name_to_use.pop_back();
 	}
 #endif
 	if (!get_full_path(name_to_use.c_str(), path_buf)) {

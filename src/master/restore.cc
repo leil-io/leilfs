@@ -293,6 +293,7 @@ int do_emptytrash_deprecated(const char *filename, uint64_t lv, uint32_t ts, con
 	GETU32(freeinodes,ptr);
 	EAT(ptr,filename,lv,',');
 	GETU32(reservedinodes,ptr);
+	safs::log_warn("Deprecated apply emptytrash operation used in changelog, will no longer be recognized in 5.0.0");
 	return fs_apply_emptytrash_deprecated(ts,freeinodes,reservedinodes);
 }
 
@@ -302,6 +303,7 @@ int do_emptyreserved_deprecated(const char *filename, uint64_t lv, uint32_t ts, 
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU32(freeinodes,ptr);
+	safs::log_warn("Deprecated apply emptyreserved operation used in changelog, will no longer be recognized in 5.0.0");
 	return fs_apply_emptyreserved_deprecated(ts,freeinodes);
 }
 
@@ -536,6 +538,7 @@ int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 			GETU32(nci, ptr);
 			EAT(ptr, filename, lv, ',');
 			GETU32(npi, ptr);
+			safs::log_warn("Deprecated goal type used in changelog, will no longer be recognized in 5.0.0");
 			return fs_deprecated_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0),
 			                             inode, goal, smode, &ci, &nci, &npi);
 		} else {
@@ -581,6 +584,8 @@ int do_settrashtime(const char *filename, uint64_t lv, uint32_t ts, const char *
 			GETU32(nci, ptr);
 			EAT(ptr, filename, lv, ',');
 			GETU32(npi, ptr);
+			safs::log_warn(
+			    "Deprecated settrashtime operation used in changelog, will no longer be recognized in 5.0.0");
 			return fs_deprecated_settrashtime(
 			        FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, trashtime,
 			        smode, &ci, &nci, &npi);

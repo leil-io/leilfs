@@ -28,6 +28,7 @@
 #include <ostream>
 #include <unistd.h>
 
+#include "common/massert.h"
 #include "common/version.h"
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
@@ -77,6 +78,11 @@ int main(int argc, char **argv) {
 			status = 1;
 		} else {
 			status = func(argc - 1, &argv[1]);
+		}
+		if (func_name == "rgetgoal" || func_name == "rsetgoal" || func_name == "rgettrashtime" ||
+		    func_name == "rsettrashtime") {
+			fmt::println(stderr, "Warning: {} is deprecated (use {} -r instead)",
+			        func_name, func_name.substr(1, func_name.size() - 1));
 		}
 	} else if (argc == 1) {
 		std::string command;

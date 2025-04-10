@@ -8,7 +8,7 @@ sfsmetalogger - start, restart or stop Sauna File System metalogger process
 == SYNOPSIS
 
 [verse]
-*sfsmetalogger* [*-f*] [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
+*sfsmetalogger* [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
 
 [verse]
 *sfsmetalogger -s* [*-c* 'CFGFILE']
