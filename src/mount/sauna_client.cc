@@ -119,11 +119,15 @@ struct ReaddirSession {
 	}
 };
 
-#ifndef _WIN32
+#ifdef __linux__
 std::jthread gMallocTrimThread;
 
 void mallocTrimThread(const std::stop_token& stop, unsigned mallocTrimePeriod_ms) {
-	pthread_setname_np(pthread_self(), "mallocTrimThread");
+	if (pthread_setname_np(pthread_self(), "mallocTrimThread") != 0) {
+		// If thread name was not set, log a warning
+		// This is not a fatal error, so we just log it
+		safs::log_warn("Failed to set malloc trim thread name: {}", strerror(errno));
+	}
 
 	while (!stop.stop_requested()) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(mallocTrimePeriod_ms));
@@ -3549,7 +3553,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 #ifdef _WIN32
 		int mounting_uid_, int mounting_gid_, std::unordered_set<uint32_t> &allowed_users_,
 		bool ignore_utimens_update_,
-#else
+#endif
+#ifdef __linux__
 		unsigned malloc_trim_period_,
 #endif
 		bool ignore_flush_, unsigned statfs_cache_timeout_, bool use_quota_in_volume_size_
@@ -3593,7 +3598,7 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 			acl_cache_size_,
 			getAcl));
 
-#ifndef _WIN32
+#ifdef __linux__
 	if (malloc_trim_period_ > 0) {
 		gMallocTrimThread = std::jthread(mallocTrimThread, malloc_trim_period_);
 	}
@@ -3689,7 +3694,8 @@ void fs_init(FsInitParams &params) {
 #ifdef _WIN32
 		params.mounting_uid, params.mounting_gid, params.allowed_users,
 		params.ignore_utimens_update,
-#else
+#endif
+#ifdef __linux__
 		params.malloc_trim_period,
 #endif
 		params.ignore_flush, params.statfs_cache_timeout, params.use_quota_in_volume_size

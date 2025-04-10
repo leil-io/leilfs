@@ -72,3 +72,33 @@ echo "VSZ for ${info[mount0]}: ${vsz_mount0}"
 echo "VSZ for ${info[mount1]}: ${vsz_mount1}"
 
 assert_less_than "${vsz_mount1}" "${vsz_mount0}"
+
+cd $TEMP_DIR
+
+saunafs_mount_unmount 0
+saunafs_mount_unmount 1
+
+# Use malloctrimperiod option
+echo "malloctrimperiod=100" >> "${info[mount0_cfg]}"
+echo "malloctrimperiod=1000" >> "${info[mount1_cfg]}"
+
+saunafs_mount_start 0
+saunafs_mount_start 1
+
+malloc_trim_job_size=128
+malloc_trim_job_num=5
+
+# Let's check writes work, at least 128M per job
+fio --name=test_multiple_writes_with_malloc_trim --directory="${info[mount0]}" \
+	--size=${malloc_trim_job_size}M --rw=write --ioengine=libaio --group_reporting \
+	--numjobs=${malloc_trim_job_num} --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1
+fio --name=test_multiple_writes_with_malloc_trim --directory="${info[mount1]}" \
+	--size=${malloc_trim_job_size}M --rw=write --ioengine=libaio --group_reporting \
+	--numjobs=${malloc_trim_job_num} --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1
+
+fio --name=test_multiple_writes_with_malloc_trim --directory="${info[mount0]}" \
+	--size=${malloc_trim_job_size}M --rw=read --ioengine=libaio --group_reporting \
+	--numjobs=${malloc_trim_job_num} --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1
+fio --name=test_multiple_writes_with_malloc_trim --directory="${info[mount1]}" \
+	--size=${malloc_trim_job_size}M --rw=read --ioengine=libaio --group_reporting \
+	--numjobs=${malloc_trim_job_num} --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1

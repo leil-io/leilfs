@@ -33,13 +33,10 @@ WriteCacheBlock::WriteCacheBlock(uint32_t chunkIndex, uint32_t blockIndex, Type 
 		  to(0),
 		  type(type) {
 	sassert(blockIndex < SFSBLOCKSINCHUNK);
-	blockData.reserve(SFSBLOCKSIZE);
-	blockData.resize(SFSBLOCKSIZE);
 }
 
 WriteCacheBlock::WriteCacheBlock(WriteCacheBlock&& block) noexcept {
 	blockData = std::move(block.blockData);
-	block.blockData.clear();
 	chunkIndex = block.chunkIndex;
 	blockIndex = block.blockIndex;
 	from = block.from;

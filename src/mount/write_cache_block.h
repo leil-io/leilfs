@@ -33,7 +33,7 @@ public:
 		kReadBlock      // a block read from a chunkserver to calculate a parity
 	};
 
-	std::vector<uint8_t> blockData;
+	std::vector<uint8_t> blockData = std::vector<uint8_t>(SFSBLOCKSIZE);
 	uint32_t chunkIndex;
 	uint32_t blockIndex;
 	uint32_t from;
