@@ -90,7 +90,7 @@ public:
 			}
 		} catch (Exception& ex) {
 			safs_pretty_syslog(LOG_WARNING,
-					"unlocking chunk error, inode: %" PRIu32 ", index: %" PRIu32 " - %s",
+					"unlocking chunk error, inode: %" PRIiNode ", index: %" PRIu32 " - %s",
 					inode_, index_, ex.what());
 		}
 	}

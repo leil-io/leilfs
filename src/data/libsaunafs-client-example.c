@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
 		sau_err = sau_last_err();
 		goto release_fileinfo;
 	}
-	printf("Read %.3s from inode %u\n", buf, entry.ino);
+	printf("Read %.3s from inode %" PRIiNode "\n", buf, entry.ino);
 
 	/* Get chunkservers info */
 	uint32_t reply_size;

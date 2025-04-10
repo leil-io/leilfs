@@ -121,8 +121,8 @@ uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name, 
                  uint16_t mode, uint16_t umask, uint32_t rdev, inode_t *inode, Attributes &attr);
 uint8_t fs_mkdir(const FsContext &context, inode_t parent, const HString &name, uint16_t mode,
                  uint16_t umask, uint8_t copysgid, inode_t *inode, Attributes &attr);
-uint8_t fs_repair(const FsContext &context, inode_t inode, uint8_t correct_only, inode_t *notchanged,
-                  inode_t *erased, inode_t *repaired);
+uint8_t fs_repair(const FsContext &context, inode_t inode, uint8_t correct_only,
+                  uint32_t *notchanged, uint32_t *erased, uint32_t *repaired);
 uint8_t fs_rmdir(const FsContext &context, inode_t parent, const HString &name);
 uint8_t fs_recursive_remove(const FsContext &context, inode_t parent, const HString &name,
                             const std::function<void(int)> &callback,
@@ -141,7 +141,7 @@ extern template uint8_t fs_readdir<DirectoryEntry>(const FsContext &context, ino
                                                    uint64_t first_entry, uint64_t number_of_entries,
                                                    std::vector<DirectoryEntry> &dir_entries);
 
-uint8_t fs_checkfile(const FsContext &context, inode_t inode, inode_t chunkcount[CHUNK_MATRIX_SIZE]);
+uint8_t fs_checkfile(const FsContext &context, inode_t inode, uint32_t chunkcount[CHUNK_MATRIX_SIZE]);
 uint8_t fs_opencheck(const FsContext &context, inode_t inode, uint8_t flags, Attributes &attr);
 uint8_t fs_getgoal(const FsContext &context, inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
                    GoalStatistics &dgtab);

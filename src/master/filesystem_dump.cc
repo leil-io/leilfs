@@ -29,17 +29,17 @@
 void fs_dumpedge(FSNodeDirectory *parent, FSNode *child, const std::string &name) {
 	if (parent == NULL) {
 		if (child->type == FSNode::kTrash) {
-			printf("E|p:     TRASH|c:%10" PRIu32 "|n:%s\n", child->id,
+			printf("E|p:     TRASH|c:%10" PRIiNode "|n:%s\n", child->id,
 			       fsnodes_escape_name(name).c_str());
 		} else if (child->type == FSNode::kReserved) {
-			printf("E|p:  RESERVED|c:%10" PRIu32 "|n:%s\n", child->id,
+			printf("E|p:  RESERVED|c:%10" PRIiNode "|n:%s\n", child->id,
 			       fsnodes_escape_name(name).c_str());
 		} else {
-			printf("E|p:      NULL|c:%10" PRIu32 "|n:%s\n", child->id,
+			printf("E|p:      NULL|c:%10" PRIiNode "|n:%s\n", child->id,
 			       fsnodes_escape_name(name).c_str());
 		}
 	} else {
-		printf("E|p:%10" PRIu32 "|c:%10" PRIu32 "|n:%s\n", parent->id, child->id,
+		printf("E|p:%10" PRIiNode "|c:%10" PRIiNode "|n:%s\n", parent->id, child->id,
 		       fsnodes_escape_name(name).c_str());
 	}
 }
@@ -79,7 +79,7 @@ void fs_dumpnode(FSNode *f) {
 		break;
 	}
 
-	printf("%c|i:%10" PRIu32 "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
+	printf("%c|i:%10" PRIiNode "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
 	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
 	       c, f->id, f->goal, (uint16_t)(f->mode >> 12), (uint16_t)(f->mode & 0xFFF), f->uid,
 	       f->gid, f->atime, f->mtime, f->ctime, f->trashtime);
@@ -173,7 +173,7 @@ void fs_dumpedges(FSNodeDirectory *parent) {
 
 void fs_dumpfree() {
 	for (const auto &n : gMetadata->inode_pool) {
-		printf("I|i:%10" PRIu32 "|f:%10" PRIu32 "\n", n.id, n.ts);
+		printf("I|i:%10" PRIiNode "|f:%10" PRIu32 "\n", n.id, n.ts);
 	}
 }
 
@@ -183,7 +183,7 @@ void xattr_dump() {
 
 	for (i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
 		for (xa = gMetadata->xattr_data_hash[i]; xa; xa = xa->next) {
-			printf("X|i:%10" PRIu32 "|n:%s|v:%s\n", xa->inode,
+			printf("X|i:%10" PRIiNode "|n:%s|v:%s\n", xa->inode,
 			       fsnodes_escape_name(std::string((char*)xa->attrname, xa->anleng)).c_str(),
 			       fsnodes_escape_name(std::string((char*)xa->attrvalue, xa->avleng)).c_str());
 		}

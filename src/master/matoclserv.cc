@@ -1980,7 +1980,8 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr,const uint8_t *data,u
 
 void matoclserv_fuse_statfs(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	uint64_t totalspace,availspace,trashspace,reservedspace;
-	uint32_t msgid,inodes;
+	uint32_t msgid;
+	inode_t inodes;
 	uint8_t *ptr;
 	if (length!=4) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_STATFS - wrong size (%" PRIu32 "/4)",length);
@@ -3724,7 +3725,8 @@ void matoclserv_fuse_snapshot(matoclserventry *eptr, PacketHeader header, const 
 constexpr uint8_t kDirStatsEmptyPayload = 5;
 void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	constexpr uint8_t kDirStatsLegacyFullPayload = 64;
-	inode_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0, chunks = 0;
+	inode_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0;
+	uint32_t chunks = 0;
 	uint64_t leng = 0, size = 0, rsize = 0;
 	uint32_t msgid;
 	uint8_t *ptr;
@@ -3765,7 +3767,8 @@ void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,u
 
 void matoclserv_fuse_getdirstats(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	constexpr uint8_t kDirStatsFullPayload = 48;
-	inode_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0, chunks = 0;
+	inode_t inode = 0, inodes = 0, files = 0, dirs = 0, links = 0;
+	uint32_t chunks = 0;
 	uint64_t leng = 0, size = 0, rsize = 0;
 	uint32_t msgid;
 	uint8_t *ptr;

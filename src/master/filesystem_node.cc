@@ -186,7 +186,7 @@ static uint64_t file_realsize(FSNodeFile *node, uint32_t nonzero_chunks, uint64_
 			}
 			full_size += size;
 		} else {
-			safs_pretty_syslog(LOG_ERR, "file_realsize: inode %" PRIu32 " has unknown goal 0x%" PRIx8, node->id,
+			safs_pretty_syslog(LOG_ERR, "file_realsize: inode %" PRIiNode " has unknown goal 0x%" PRIx8, node->id,
 			       node->goal);
 			return 0;
 		}
@@ -1184,7 +1184,7 @@ uint8_t fsnodes_appendchunks(uint32_t ts, FSNodeFile *dst, FSNodeFile *src) {
 		auto chunkid = src->chunks[i];
 		if (chunkid > 0) {
 			if (chunk_add_file(chunkid, dst->goal) != SAUNAFS_STATUS_OK) {
-				safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64 " not found (inode: %" PRIu32
+				safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64 " not found (inode: %" PRIiNode
 				                " ; index: %" PRIu32 ")",
 				       chunkid, src->id, i);
 			}
@@ -1330,7 +1330,7 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 			if (chunkid > 0) {
 				if (chunk_delete_file(chunkid, toremove->goal) != SAUNAFS_STATUS_OK) {
 					safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64
-					                " not found (inode: %" PRIu32
+					                " not found (inode: %" PRIiNode
 					                " ; index: %" PRIu32 ")",
 					       chunkid, toremove->id, i);
 				}
@@ -1541,8 +1541,8 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 				assert(metadataserver::isMaster());
 #endif
 
-				fs_changelog(ts, "CREATE(%" PRIu32 ",%s,%c,%d,%" PRIu32 ",%" PRIu32
-				                 ",%" PRIu32 "):%" PRIu32,
+				fs_changelog(ts, "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32
+				                 ",%" PRIu32 "):%" PRIiNode,
 				             p->id, fsnodes_escape_name(name).c_str(),
 				             FSNode::kDirectory, n->mode & 07777, (uint32_t)0,
 				             (uint32_t)0, (uint32_t)0, n->id);
@@ -1561,7 +1561,7 @@ void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgta
 		GoalStatistics &dgtab) {
 	if (node->type == FSNode::kFile || node->type == FSNode::kTrash || node->type == FSNode::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
-			safs_pretty_syslog(LOG_WARNING, "file inode %" PRIu32 ": unknown goal !!! - fixing",
+			safs_pretty_syslog(LOG_WARNING, "file inode %" PRIiNode ": unknown goal !!! - fixing",
 			       node->id);
 			fsnodes_changefilegoal(static_cast<FSNodeFile*>(node), DEFAULT_GOAL);
 		}
@@ -1569,7 +1569,7 @@ void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgta
 	} else if (node->type == FSNode::kDirectory) {
 		if (!GoalId::isValid(node->goal)) {
 			safs_pretty_syslog(LOG_WARNING,
-			       "directory inode %" PRIu32 ": unknown goal !!! - fixing", node->id);
+			       "directory inode %" PRIiNode ": unknown goal !!! - fixing", node->id);
 			node->goal = DEFAULT_GOAL;
 		}
 		dgtab[node->goal]++;

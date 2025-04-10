@@ -48,7 +48,7 @@ int RemoveTask::retrieveNodes(FSNodeDirectory *&wd, FSNode *&child) {
 }
 
 void RemoveTask::doUnlink(uint32_t ts, FSNodeDirectory *wd, FSNode *child) {
-	fs_changelog(ts, "UNLINK(%" PRIu32 ",%s):%" PRIu32, parent_,
+	fs_changelog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
 		    fsnodes_escape_name(*current_subtask_).c_str(), child->id);
 	fsnodes_unlink(ts, wd, *current_subtask_, child);
 }

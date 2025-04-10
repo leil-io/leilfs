@@ -545,7 +545,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
-		fs_changelog(ts, "PURGE(%" PRIu32 ")", node_id);
+		fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->trash.begin();
 
@@ -580,7 +580,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway
-		fs_changelog(ts, "PURGE(%" PRIu32 ")", node_id);
+		fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->reserved.begin();
 

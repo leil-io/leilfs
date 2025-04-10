@@ -139,7 +139,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 					if (ih->anleng != 0 || ih->avleng != 0) {
 						safs_pretty_syslog(LOG_WARNING,
 						       "xattr non zero lengths on remove "
-						       "(inode:%" PRIu32 ",anleng:%" PRIu32
+						       "(inode:%" PRIiNode ",anleng:%" PRIu32
 						       ",avleng:%" PRIu32 ")",
 						       ih->inode, ih->anleng, ih->avleng);
 					}

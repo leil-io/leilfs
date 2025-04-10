@@ -72,7 +72,7 @@ void fs_add_files_to_chunks();
 
 uint64_t fs_getversion();
 uint8_t fs_repair(inode_t rootinode, uint8_t sesflags, inode_t inode, uint32_t uid, uint32_t gid,
-                  uint8_t correct_only, inode_t *notchanged, inode_t *erased, inode_t *repaired);
+                  uint8_t correct_only, uint32_t *notchanged, uint32_t *erased, uint32_t *repaired);
 
 /*! \brief Perform a flock operation on filesystem
  * Possible operations:

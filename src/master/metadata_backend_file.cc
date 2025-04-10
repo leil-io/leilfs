@@ -570,7 +570,7 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 
 	if (!edgeNameSize) {
 		safs_pretty_syslog(
-		    LOG_ERR, "loading edge: %" PRIu32 "->%" PRIu32 " error: empty name",
+		    LOG_ERR, "loading edge: %" PRIiNode "->%" PRIiNode " error: empty name",
 		    parentId, childId);
 		return kError;
 	}
@@ -581,7 +581,7 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 	if (!child) {
 		safs_pretty_syslog(
 		    LOG_ERR,
-		    "loading edge: %" PRIu32 ",%s->%" PRIu32 " error: child not found",
+		    "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: child not found",
 		    parentId, fsnodes_escape_name(name).c_str(), childId);
 		if (ignoreFlag) {
 			return kSuccess;
@@ -601,7 +601,7 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 			gMetadata->reservednodes++;
 		} else {
 			safs_pretty_syslog(LOG_ERR,
-			                   "loading edge: %" PRIu32 ",%s->%" PRIu32
+			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
 			                   " error: bad child type (%c)\n",
 			                   parentId, fsnodes_escape_name(name).c_str(),
 			                   childId, child->type);
@@ -611,7 +611,7 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 		FSNodeDirectory *parent = fsnodes_id_to_node<FSNodeDirectory>(parentId);
 		if (!parent) {
 			safs_pretty_syslog(LOG_ERR,
-			                   "loading edge: %" PRIu32 ",%s->%" PRIu32
+			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
 			                   " error: parent not found",
 			                   parentId, fsnodes_escape_name(name).c_str(),
 			                   childId);
@@ -621,13 +621,13 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 				if (!parent || parent->type != FSNode::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
-					    "loading edge: %" PRIu32 ",%s->%" PRIu32
+					    "loading edge: %" PRIiNode ",%s->%" PRIiNode
 					    " root dir not found !!!",
 					    parentId, fsnodes_escape_name(name).c_str(), childId);
 					return kError;
 				}
 				safs_pretty_syslog(LOG_ERR,
-				                   "loading edge: %" PRIu32 ",%s->%" PRIu32
+				                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
 				                   " attaching node to root dir",
 				                   parentId, fsnodes_escape_name(name).c_str(),
 				                   childId);
@@ -642,7 +642,7 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 		}
 		if (parent->type != FSNode::kDirectory) {
 			safs_pretty_syslog(LOG_ERR,
-			                   "loading edge: %" PRIu32 ",%s->%" PRIu32
+			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
 			                   " error: bad parent type (%c)",
 			                   parentId, fsnodes_escape_name(name).c_str(),
 			                   childId, parent->type);
@@ -652,13 +652,13 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 				if (!parent || parent->type != FSNode::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
-					    "loading edge: %" PRIu32 ",%s->%" PRIu32
+					    "loading edge: %" PRIiNode ",%s->%" PRIiNode
 					    " root dir not found !!!",
 					    parentId, fsnodes_escape_name(name).c_str(), childId);
 					return kError;
 				}
 				safs_pretty_syslog(LOG_ERR,
-				                   "loading edge: %" PRIu32 ",%s->%" PRIu32
+				                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
 				                   " attaching node to root dir",
 				                   parentId, fsnodes_escape_name(name).c_str(),
 				                   childId);
@@ -674,7 +674,7 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 		if (currentParentId != parentId) {
 			if (parent->entries.size() > 0) {
 				safs_pretty_syslog(LOG_ERR,
-				                   "loading edge: %" PRIu32 ",%s->%" PRIu32
+				                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
 				                   " error: parent node sequence error",
 				                   parentId, fsnodes_escape_name(name).c_str(),
 				                   childId);
@@ -823,9 +823,9 @@ int fs_lostnode(FSNode *p) {
 	i = 0;
 	do {
 		if (i == 0) {
-			l = snprintf((char *)artname, 40, "lost_node_%" PRIu32, p->id);
+			l = snprintf((char *)artname, 40, "lost_node_%" PRIiNode, p->id);
 		} else {
-			l = snprintf((char *)artname, 40, "lost_node_%" PRIu32 ".%" PRIu32,
+			l = snprintf((char *)artname, 40, "lost_node_%" PRIiNode ".%" PRIu32,
 			             p->id, i);
 		}
 		HString name((const char *)artname, l);
@@ -845,8 +845,7 @@ int fs_checknodes(int ignoreflag) {
 		for (p = gMetadata->nodehash[i]; p; p = p->next) {
 			if (p->parent.empty() && p != gMetadata->root &&
 			    (p->type != FSNode::kTrash) && (p->type != FSNode::kReserved)) {
-				safs_pretty_syslog(LOG_ERR, "found orphaned inode: %" PRIu32,
-				                   p->id);
+				safs_pretty_syslog(LOG_ERR, "found orphaned inode: %" PRIiNode, p->id);
 				if (ignoreflag) {
 					if (fs_lostnode(p) < 0) {
 						return -1;
@@ -942,7 +941,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 	freeNodesToLoad = 0;
 	while (freeNodesNumber > 0) {
 		if (freeNodesToLoad == 0) {
-			freeNodesToLoad = std::min(freeNodesNumber, uint32_t(1024));
+			freeNodesToLoad = std::min(freeNodesNumber, inode_t(1024));
 		}
 		inode_t id = get32bit(&ptr);
 		uint32_t timestamp = get32bit(&ptr);
@@ -1164,8 +1163,8 @@ void MetadataBackendFile::loadall(const std::string &fname, int ignoreflag) {
 #ifndef METARESTORE
 	safs_pretty_syslog(
 	    LOG_INFO,
-	    "metadata file %s read (%" PRIu32 " inodes including %" PRIu32
-	    " directory inodes, %" PRIu32 " file inodes, %" PRIu32
+	    "metadata file %s read (%" PRIiNode " inodes including %" PRIiNode
+	    " directory inodes, %" PRIiNode " file inodes, %" PRIiNode
 	    " symlink inodes and %" PRIu32 " chunks)",
 	    metadataFile->filename().c_str(), gMetadata->nodes, gMetadata->dirnodes,
 	    gMetadata->filenodes, gMetadata->linknodes, chunk_count());

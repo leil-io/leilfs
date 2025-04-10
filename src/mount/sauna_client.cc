@@ -849,8 +849,8 @@ struct statvfs statfs(Context &ctx, inode_t ino) {
 		gStatfsCache[statfsKey] = stfsbuf;
 		gStatfsCacheTimer[statfsKey] = Timer();
 	}
-	oplog_printf(ctx, "statfs (%lu): OK (%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ")",
-			(unsigned long int)ino,
+	oplog_printf(ctx, "statfs (%" PRIiNode "): OK (%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIiNode ")",
+			ino,
 			totalspace,
 			availspace,
 			trashspace,

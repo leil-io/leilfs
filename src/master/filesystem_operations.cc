@@ -222,7 +222,7 @@ uint8_t fs_settrashpath(const FsContext &context, inode_t inode, const std::stri
 	gMetadata->trash[TrashPathKey(p)] = HString(path);
 
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "SETPATH(%" PRIu32 ",%s)", p->id,
+		fs_changelog(context.ts(), "SETPATH(%" PRIiNode ",%s)", p->id,
 		             fsnodes_escape_name(path).c_str());
 	} else {
 		gMetadata->metaversion++;
@@ -248,7 +248,7 @@ uint8_t fs_undel(const FsContext &context, inode_t inode) {
 	status = fsnodes_undel(context.ts(), static_cast<FSNodeFile*>(p));
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
-			fs_changelog(context.ts(), "UNDEL(%" PRIu32 ")", p->id);
+			fs_changelog(context.ts(), "UNDEL(%" PRIiNode ")", p->id);
 		}
 	} else {
 		gMetadata->metaversion++;
@@ -275,7 +275,7 @@ uint8_t fs_purge(const FsContext &context, inode_t inode) {
 	fsnodes_purge(context.ts(), p);
 
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "PURGE(%" PRIu32 ")", purged_inode);
+		fs_changelog(context.ts(), "PURGE(%" PRIiNode ")", purged_inode);
 	} else {
 		gMetadata->metaversion++;
 	}
@@ -591,7 +591,7 @@ uint8_t fs_try_setlength(const FsContext &context, inode_t inode, uint8_t opened
 				}
 				node_file->chunks[indx] = nchunkid;
 				*chunkid = nchunkid;
-				fs_changelog(ts, "TRUNC(%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIu64, p->id, indx,
+				fs_changelog(ts, "TRUNC(%" PRIiNode ",%" PRIu32 ",%" PRIu32 "):%" PRIu64, p->id, indx,
 				             lockId, nchunkid);
 				fsnodes_update_checksum(p);
 				return SAUNAFS_ERROR_DELAYED;
@@ -693,7 +693,7 @@ uint8_t fs_do_setlength(const FsContext &context, inode_t inode, uint64_t length
 	// length of the file and we should erase further chunks.
 	bool eraseFurtherChunks = true;
 	fsnodes_setlength(static_cast<FSNodeFile *>(p), length, eraseFurtherChunks);
-	fs_changelog(ts, "LENGTH(%" PRIu32 ",%" PRIu64 ",%" PRIu32 ")", inode,
+	fs_changelog(ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode,
 	             static_cast<FSNodeFile *>(p)->length, static_cast<uint32_t>(eraseFurtherChunks));
 	p->mtime = ts;
 	fsnodes_update_ctime(p, ts);
@@ -828,7 +828,7 @@ uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uin
 	} else if (setmask & SET_MTIME_FLAG) {
 		p->mtime = attrmtime;
 	}
-	fs_changelog(ts, "ATTR(%" PRIu32 ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")",
+	fs_changelog(ts, "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")",
 	             p->id, p->mode & 07777, p->uid, p->gid, p->atime, p->mtime);
 	fsnodes_update_ctime(p, ts);
 	fsnodes_fill_attr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(), attr);
@@ -885,7 +885,7 @@ static inline void fs_update_atime(FSNode *p, uint32_t ts) {
 	if (!gAtimeDisabled && p->atime != ts) {
 		p->atime = ts;
 		fsnodes_update_checksum(p);
-		fs_changelog(ts, "ACCESS(%" PRIu32 ")", p->id);
+		fs_changelog(ts, "ACCESS(%" PRIiNode ")", p->id);
 	}
 }
 
@@ -964,7 +964,7 @@ uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name
 	if (context.isPersonalityMaster()) {
 		assert(*inode == 0);
 		*inode = p->id;
-		fs_changelog(context.ts(), "SYMLINK(%" PRIu32 ",%s,%s,%" PRIu32 ",%" PRIu32 "):%" PRIu32,
+		fs_changelog(context.ts(), "SYMLINK(%" PRIiNode ",%s,%s,%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 		             wd->id, fsnodes_escape_name(name).c_str(), fsnodes_escape_name(path).c_str(),
 		             context.uid(), context.gid(), p->id);
 	} else {
@@ -1027,7 +1027,7 @@ uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name,
 	*inode = p->id;
 	fsnodes_fill_attr(p, wd, context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(), attr);
 	fs_changelog(ts,
-	             "CREATE(%" PRIu32 ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIu32,
+	             "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 	             wd->id, fsnodes_escape_name(name).c_str(), type, p->mode & 07777, context.uid(), context.gid(),
 	             rdev, p->id);
 	++gFsStatsArray[FsStats::Mknod];
@@ -1079,7 +1079,7 @@ uint8_t fs_mkdir(const FsContext &context, inode_t parent, const HString &name, 
 	                        umask, context.uid(), context.gid(), copysgid, AclInheritance::kInheritAcl);
 	*inode = p->id;
 	fsnodes_fill_attr(p, wd, context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(), attr);
-	fs_changelog(ts, "CREATE(%" PRIu32 ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIu32,
+	fs_changelog(ts, "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 	             wd->id, fsnodes_escape_name(name).c_str(), FSNode::kDirectory, p->mode & 07777,
 	             context.uid(), context.gid(), 0, p->id);
 	++gFsStatsArray[FsStats::Mkdir];
@@ -1151,7 +1151,7 @@ uint8_t fs_unlink(const FsContext &context, inode_t parent, const HString &name)
 	if (child->type == FSNode::kDirectory) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	fs_changelog(ts, "UNLINK(%" PRIu32 ",%s):%" PRIu32, wd->id,
+	fs_changelog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, wd->id,
 	             fsnodes_escape_name(name).c_str(), child->id);
 	fsnodes_unlink(ts, static_cast<FSNodeDirectory*>(wd), name, child);
 	++gFsStatsArray[FsStats::Unlink];
@@ -1223,7 +1223,7 @@ uint8_t fs_rmdir(const FsContext &context, inode_t parent, const HString &name) 
 	if (!static_cast<FSNodeDirectory*>(child)->entries.empty()) {
 		return SAUNAFS_ERROR_ENOTEMPTY;
 	}
-	fs_changelog(ts, "UNLINK(%" PRIu32 ",%s):%" PRIu32, wd->id,
+	fs_changelog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, wd->id,
 	             fsnodes_escape_name(name).c_str(), child->id);
 	fsnodes_unlink(ts, static_cast<FSNodeDirectory*>(wd), name, child);
 	++gFsStatsArray[FsStats::Rmdir];
@@ -1348,7 +1348,7 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 		fsnodes_fill_attr(context, se_child, dwd, *attr);
 	}
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "MOVE(%" PRIu32 ",%s,%" PRIu32 ",%s):%" PRIu32, swd->id,
+		fs_changelog(context.ts(), "MOVE(%" PRIiNode ",%s,%" PRIiNode ",%s):%" PRIiNode, swd->id,
 		             fsnodes_escape_name(name_src).c_str(), dwd->id,
 		             fsnodes_escape_name(name_dst).c_str(), se_child->id);
 	} else {
@@ -1397,7 +1397,7 @@ uint8_t fs_link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 		fsnodes_fill_attr(context, sp, dwd, *attr);
 	}
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "LINK(%" PRIu32 ",%" PRIu32 ",%s)", sp->id, dwd->id,
+		fs_changelog(context.ts(), "LINK(%" PRIiNode ",%" PRIiNode ",%s)", sp->id, dwd->id,
 		             fsnodes_escape_name(name_dst).c_str());
 	} else {
 		gMetadata->metaversion++;
@@ -1437,7 +1437,7 @@ uint8_t fs_append(const FsContext &context, inode_t inode, inode_t inode_src) {
 		return status;
 	}
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "APPEND(%" PRIu32 ",%" PRIu32 ")", p->id, sp->id);
+		fs_changelog(context.ts(), "APPEND(%" PRIiNode ",%" PRIiNode ")", p->id, sp->id);
 	} else {
 		gMetadata->metaversion++;
 	}
@@ -1552,7 +1552,7 @@ int fs_flock_op(const FsContext &context, inode_t inode, uint64_t owner, uint32_
 	int ret = fs_lock_op(context, gMetadata->flock_locks, inode, 0, 1, owner, sessionid,
 			reqid, msgid, op, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIu32 ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
+		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
 				(uint8_t)safs_locks::Type::kFlock, inode, owner, sessionid, op);
 	} else {
 		gMetadata->metaversion++;
@@ -1567,7 +1567,7 @@ int fs_posixlock_op(const FsContext &context, inode_t inode, uint64_t start, uin
 	int ret = fs_lock_op(context, gMetadata->posix_locks, inode, start, end, owner, sessionid,
 			reqid, msgid, op, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIu32 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
+		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
 				(uint8_t)safs_locks::Type::kPosix, inode, start, end, owner, sessionid, op);
 	} else {
 		gMetadata->metaversion++;
@@ -1603,7 +1603,7 @@ int fs_locks_clear_session(const FsContext &context, uint8_t type, inode_t inode
 		}
 	}
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "CLRLCK(%" PRIu8 ",%" PRIu32 ",%" PRIu32 ")", type, inode,
+		fs_changelog(context.ts(), "CLRLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu32 ")", type, inode,
 		             sessionid);
 	} else {
 		gMetadata->metaversion++;
@@ -1682,7 +1682,7 @@ int fs_locks_unlock_inode(const FsContext &context, uint8_t type, inode_t inode,
 	}
 
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "FLCKINODE(%" PRIu8 ",%" PRIu32 ")", type, inode);
+		fs_changelog(context.ts(), "FLCKINODE(%" PRIu8 ",%" PRIiNode ")", type, inode);
 	} else {
 		gMetadata->metaversion++;
 	}
@@ -1718,7 +1718,7 @@ int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t own
 
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(),
-			     "RMPLOCK(%" PRIu8 ",%" PRIu64",%" PRIu32 ",%" PRIu32 ",%" PRIu64")",
+			     "RMPLOCK(%" PRIu8 ",%" PRIu64",%" PRIu32 ",%" PRIiNode ",%" PRIu64")",
 			     type, ownerid, sessionid, inode, reqid);
 	} else {
 		gMetadata->metaversion++;
@@ -1799,7 +1799,7 @@ template uint8_t fs_readdir<DirectoryEntry>(const FsContext &context, inode_t in
 		std::vector<DirectoryEntry> &dir_entries);
 
 uint8_t fs_checkfile(const FsContext &context, inode_t inode,
-		uint32_t chunkcount[CHUNK_MATRIX_SIZE]) {
+                     uint32_t chunkcount[CHUNK_MATRIX_SIZE]) {
 	FSNode *p;
 
 	uint8_t status = verify_session(context, OperationMode::kReadOnly, SessionType::kAny);
@@ -1871,7 +1871,7 @@ uint8_t fs_acquire(const FsContext &context, inode_t inode, uint32_t sessionid) 
 	p->sessionid.push_back(sessionid);
 	fsnodes_update_checksum(p);
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "ACQUIRE(%" PRIu32 ",%" PRIu32 ")", inode, sessionid);
+		fs_changelog(context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
 	} else {
 		gMetadata->metaversion++;
 	}
@@ -1901,7 +1901,7 @@ uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) 
 		}
 #endif /* #ifndef METARESTORE */
 		if (context.isPersonalityMaster()) {
-			fs_changelog(context.ts(), "RELEASE(%" PRIu32 ",%" PRIu32 ")", inode, sessionid);
+			fs_changelog(context.ts(), "RELEASE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
 		} else {
 			gMetadata->metaversion++;
 		}
@@ -1939,11 +1939,11 @@ uint8_t fs_auto_repair_if_needed(FSNodeFile *p, uint32_t chunkIndex) {
 		FsContext context = FsContext::getForMasterWithSession(0, SPECIAL_INODE_ROOT, 0, 0, 0, 0, 0);
 		fs_repair(context, p->id, 0, &notchanged, &erased, &repaired);
 		safs_pretty_syslog(LOG_NOTICE,
-		       "auto repair inode %" PRIu32 ", chunk %016" PRIX64
+		       "auto repair inode %" PRIiNode ", chunk %016" PRIX64
 		       ": "
 		       "not changed: %" PRIu32 ", erased: %" PRIu32 ", repaired: %" PRIu32,
 		       p->id, chunkId, notchanged, erased, repaired);
-		safs_silent_syslog(LOG_DEBUG, "master.fs.file_auto_repaired: %u %u", p->id, repaired);
+		safs_silent_syslog(LOG_DEBUG, "master.fs.file_auto_repaired: %" PRIiNode " %" PRIu32, p->id, repaired);
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -2068,7 +2068,7 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 	}
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(),
-		             "WRITE(%" PRIu32 ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
+		             "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
 		             inode, indx, *opflag, *lockid, nchunkid);
 	} else {
 		gMetadata->metaversion++;
@@ -2109,7 +2109,7 @@ uint8_t fs_writeend(inode_t inode, uint64_t length, uint64_t chunkid, uint32_t l
 			p->mtime = ts;
 			fsnodes_update_ctime(p, ts);
 			fsnodes_update_checksum(p);
-			fs_changelog(ts, "LENGTH(%" PRIu32 ",%" PRIu64 ",%" PRIu32 ")", inode, length,
+			fs_changelog(ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode, length,
 			             static_cast<uint32_t>(eraseFurtherChunks));
 		}
 	}
@@ -2131,7 +2131,7 @@ uint8_t fs_apply_incversion(uint64_t chunkid) {
 
 #ifndef METARESTORE
 uint8_t fs_repair(const FsContext &context, inode_t inode,
-		uint8_t correct_only, inode_t *notchanged, inode_t *erased, inode_t *repaired) {
+		uint8_t correct_only, uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	uint32_t nversion, indx;
@@ -2157,7 +2157,7 @@ uint8_t fs_repair(const FsContext &context, inode_t inode,
 	fsnodes_get_stats(p, &psr);
 	for (indx = 0; indx < node_file->chunks.size(); indx++) {
 		if (chunk_repair(p->goal, node_file->chunks[indx], &nversion, correct_only)) {
-			fs_changelog(ts, "REPAIR(%" PRIu32 ",%" PRIu32 "):%" PRIu32, inode, indx,
+			fs_changelog(ts, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode, indx,
 			             nversion);
 			p->mtime = ts;
 			fsnodes_update_ctime(p, ts);
@@ -2492,8 +2492,8 @@ uint8_t fs_seteattr(const FsContext &context, inode_t inode, uint8_t eattr, uint
 		*sinodes = si;
 		*ncinodes = nci;
 		*nsinodes = nsi;
-		fs_changelog(context.ts(), "SETEATTR(%" PRIu32 ",%" PRIu32 ",%" PRIu8 ",%" PRIu8
-		                           "):%" PRIu32 ",%" PRIu32 ",%" PRIu32,
+		fs_changelog(context.ts(), "SETEATTR(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8
+		                           "):%" PRIiNode ",%" PRIiNode ",%" PRIiNode,
 		             p->id, context.uid(), eattr, smode, si, nci, nsi);
 	} else {
 		gMetadata->metaversion++;
@@ -2561,7 +2561,7 @@ uint8_t fs_setxattr(const FsContext &context, inode_t inode, uint8_t opened,
 	}
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
-	fs_changelog(ts, "SETXATTR(%" PRIu32 ",%s,%s,%" PRIu8 ")", p->id,
+	fs_changelog(ts, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", p->id,
 	             fsnodes_escape_name(std::string((const char*)attrname, anleng)).c_str(),
 	             fsnodes_escape_name(std::string((const char*)attrvalue, avleng)).c_str(),
 	             mode);
@@ -2636,7 +2636,7 @@ uint8_t fs_deleteacl(const FsContext &context, inode_t inode, AclType type) {
 			static_assert((int)AclType::kDefault == 1, "fix acl_type table");
 			static_assert((int)AclType::kRichACL == 2, "fix acl_type table");
 
-			fs_changelog(context.ts(), "DELETEACL(%" PRIu32 ",%c)", p->id, acl_type[std::min(3, (int)type)]);
+			fs_changelog(context.ts(), "DELETEACL(%" PRIiNode ",%c)", p->id, acl_type[std::min(3, (int)type)]);
 		}
 	} else {
 		gMetadata->metaversion++;
@@ -2662,7 +2662,7 @@ uint8_t fs_setacl(const FsContext &context, inode_t inode, const RichACL &acl) {
 	status = fsnodes_setacl(p, acl, context.ts());
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
-			fs_changelog(context.ts(), "SETRICHACL(%" PRIu32 ",%s)", p->id, acl_string.c_str());
+			fs_changelog(context.ts(), "SETRICHACL(%" PRIiNode ",%s)", p->id, acl_string.c_str());
 		}
 	} else {
 		gMetadata->metaversion++;
@@ -2686,7 +2686,7 @@ uint8_t fs_setacl(const FsContext &context, inode_t inode, AclType type, const A
 	status = fsnodes_setacl(p, type, acl, context.ts());
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
-			fs_changelog(context.ts(), "SETACL(%" PRIu32 ",%c,%s)", p->id,
+			fs_changelog(context.ts(), "SETACL(%" PRIiNode ",%c,%s)", p->id,
 						 (type == AclType::kAccess ? 'a' : 'd'), acl_string.c_str());
 		}
 	} else {

@@ -704,12 +704,12 @@ int read_data_sleep_time_ms(int tryCounter) {
 static void print_error_msg(ChunkReader& reader, uint32_t try_counter, const Exception &ex) {
 	if (reader.isChunkLocated()) {
 		safs_pretty_syslog(LOG_WARNING,
-		                   "read file error, inode: %u, index: %u, chunk: %" PRIu64 ", version: %u - %s "
+		                   "read file error, inode: %" PRIiNode ", index: %u, chunk: %" PRIu64 ", version: %u - %s "
 		                   "(try counter: %u)", reader.inode(), reader.index(),
 		                   reader.chunkId(), reader.version(), ex.what(), try_counter);
 	} else {
 		safs_pretty_syslog(LOG_WARNING,
-		                   "read file error, inode: %u, index: %u, chunk: failed to locate - %s "
+		                   "read file error, inode: %" PRIiNode ", index: %u, chunk: failed to locate - %s "
 		                   "(try counter: %u)", reader.inode(), reader.index(),
 		                   ex.what(), try_counter);
 	}

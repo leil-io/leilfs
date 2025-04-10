@@ -116,9 +116,9 @@ int fs_loadedge(FILE *fd) {
 	nleng = get16bit(&ptr);
 
 	if (parent_id==0) {
-		printf("E|p:      NULL|c:%10" PRIu32 "|n:",child_id);
+		printf("E|p:      NULL|c:%10" PRIiNode "|n:",child_id);
 	} else {
-		printf("E|p:%10" PRIu32 "|c:%10" PRIu32 "|n:", parent_id, child_id);
+		printf("E|p:%10" PRIiNode "|c:%10" PRIiNode "|n:", parent_id, child_id);
 	}
 	print_name(fd,nleng);
 	printf("\n");
@@ -208,7 +208,7 @@ int fs_loadnode(FILE *fd) {
 	ctimestamp = get32bit(&ptr);
 	trashtime = get32bit(&ptr);
 
-	printf("%c|i:%10" PRIu32 "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
+	printf("%c|i:%10" PRIiNode "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
 	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
 	       c, nodeid, goal, (uint16_t)(mode >> 12), (uint16_t)(mode & 0xFFF), uid, gid, atimestamp,
 	       mtimestamp, ctimestamp, trashtime);
@@ -323,7 +323,7 @@ int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
 		totalFreeNodes = (section_size - 4) / 8;
 	}
 
-	printf("# free nodes: %" PRIu32 "\n",totalFreeNodes);
+	printf("# free nodes: %" PRIiNode "\n", totalFreeNodes);
 	while (totalFreeNodes>0) {
 		if (fread(rbuff,1,8,fd)!=8) {
 			return -1;
@@ -331,7 +331,7 @@ int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
 		ptr = rbuff;
 		nodeid = get32bit(&ptr);
 		ftime = get32bit(&ptr);
-		printf("I|i:%10" PRIu32 "|f:%10" PRIu32 "\n", nodeid, ftime);
+		printf("I|i:%10" PRIiNode "|f:%10" PRIu32 "\n", nodeid, ftime);
 		totalFreeNodes--;
 	}
 	return 0;
@@ -392,7 +392,7 @@ int fs_load(FILE *fd) {
 	version = get64bit(&ptr);
 	nextsessionid = get32bit(&ptr);
 
-	printf("# maxnodeid: %" PRIu32 " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
+	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 
 	printf("# -------------------------------------------------------------------\n");
 	if (fs_loadnodes(fd)<0) {
@@ -429,7 +429,7 @@ int fs_load_2x(FILE *fd, bool loadLockIds) {
 	version = get64bit(&ptr);
 	nextsessionid = get32bit(&ptr);
 
-	printf("# maxnodeid: %" PRIu32 " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
+	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 
 	while (1) {
 		if (fread(hdr,1,16,fd)!=16) {
