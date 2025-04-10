@@ -1050,7 +1050,6 @@ AttrReply getattr(Context &ctx, Inode ino) {
 #endif
 	}
 
-	maxfleng = write_data_getmaxfleng(ino);
 	if (usedircache && gDirEntryCache.lookup(ctx,ino,attr)) {
 		if (debug_mode) {
 			safs::log_debug("getattr: sending data from dircache");
@@ -1070,6 +1069,8 @@ AttrReply getattr(Context &ctx, Inode ino) {
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
+
+	maxfleng = write_data_getmaxfleng(ino);
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(ino,attr,&o_stbuf);
 	if (attr[0]==TYPE_FILE && maxfleng>(uint64_t)(o_stbuf.st_size)) {
