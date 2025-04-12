@@ -22,6 +22,7 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <vector>
 
 struct WriteCacheBlock {
 public:
@@ -32,7 +33,7 @@ public:
 		kReadBlock      // a block read from a chunkserver to calculate a parity
 	};
 
-	uint8_t* blockData;
+	std::vector<uint8_t> blockData = std::vector<uint8_t>(SFSBLOCKSIZE);
 	uint32_t chunkIndex;
 	uint32_t blockIndex;
 	uint32_t from;
@@ -42,7 +43,7 @@ public:
 	WriteCacheBlock(uint32_t chunkIndex, uint32_t blockIndex, Type type);
 	WriteCacheBlock(const WriteCacheBlock&) = delete;
 	WriteCacheBlock(WriteCacheBlock&& block) noexcept;
-	~WriteCacheBlock();
+	~WriteCacheBlock() = default;
 	WriteCacheBlock& operator=(const WriteCacheBlock&) = delete;
 	WriteCacheBlock& operator=(WriteCacheBlock&&);
 	bool expand(uint32_t from, uint32_t to, const uint8_t *buffer);

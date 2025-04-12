@@ -231,6 +231,14 @@ contention and reduced parallelism in multi-threaded applications.
 Use it in constrained memory environments, recommended values are 4 or 8.
 (default is 0: disabled or let glibc decide).
 
+*-o malloctrimperiod=*'MSEC'::
+Linux only: call malloc_trim on a periodical basis - prevents from using
+huge amount of virtual memory by returning already freed memory to OS. This can
+influence performance by increasing memory fragmentation and worsening cache
+locality. Use it in constrained memory environments, recommended values are
+300 or 1000. Minimum value is 100 to avoid excessive calls to malloc_trim.
+(default is 0: disabled periodic trimming).
+
 *-o sfslognotificationarea=*'0|1'::
 Enable/disable logging to Linux notification area (default: 0).
 
