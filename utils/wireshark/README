@@ -15,7 +15,7 @@ Follow below steps to install SaunaFS Wireshark plugin:
 
 1) Ensure you have the following packages installed (for Debian and Ubuntu):
 
-        # apt install wireshark cmake libcap-dev libglib2.0-dev bison flex libcrypto++-dev libc-ares-dev
+        # apt install wireshark cmake libcap-dev libglib2.0-dev bison flex libcrypto++-dev libc-ares-dev libgcrypt20 libgcrypt20-dev libspeexdsp1 libspeexdsp-dev
 
 2) If you want to be able to sniff interfaces without root privileges follow
    instructions from /usr/share/doc/wireshark-common/README.Debian (same steps
@@ -32,13 +32,13 @@ Follow below steps to install SaunaFS Wireshark plugin:
 
 3) Set some variables:
 
-        $ SAUNAFS_SRCDIR=~/src/saunafs
-        $ WIRESHARK_SRCDIR=~/src/wireshark
-        $ WIRESHARK_VERSION=2.2.6  # get version by invoking wireshark --version
+        $ export SAUNAFS_SRCDIR=$(cd ../../; pwd)
+        $ export WIRESHARK_SRCDIR=/tmp/wireshark/
+        $ WIRESHARK_VERSION=$(wireshark --version | head -1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')  # get version by invoking wireshark --version
 
 4) Clone the Wireshark sources, e.g.:
 
-        $ git clone http://code.wireshark.org/git/wireshark "$WIRESHARK_SRCDIR"
+        $ git clone https://gitlab.com/wireshark/wireshark.git "$WIRESHARK_SRCDIR"
 
 5) Checkout your version of Wireshark:
 
@@ -57,24 +57,26 @@ Follow below steps to install SaunaFS Wireshark plugin:
    new plugin:
 
         $ vim "$WIRESHARK_SRCDIR"/CMakeLists.txt
+```
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1804,6 +1804,7 @@ if(ENABLE_PLUGINS)
+                plugins/epan/mate
+                plugins/epan/opcua
+                plugins/epan/profinet
++               plugins/epan/saunafs
+                plugins/epan/stats_tree
+                plugins/epan/transum
+                plugins/epan/unistim
+```
 
-            --- a/CMakeLists.txt
-            +++ b/CMakeLists.txt
-            @@ -1401,6 +1401,7 @@ if(ENABLE_PLUGINS)
-                            plugins/epan/ethercat
-                            plugins/epan/gryphon
-                            plugins/epan/irda
-            +               plugins/epan/saunafs
-                            plugins/epan/mate
-                            plugins/epan/opcua
-                            plugins/epan/profinet
 
 9) Build the Wireshark using cmake (you don't have to build the GUI):
 
         $ mkdir "$WIRESHARK_SRCDIR"/build
         $ cd "$WIRESHARK_SRCDIR"/build
         $ cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_wireshark=NO
-        $ make -j8
+        $ nice nice make -j$(nproc)
 
 10) To install the plugin copy saunafs.so library to the personal plugin
     folder:
@@ -95,7 +97,8 @@ Follow below steps to install SaunaFS Wireshark plugin:
     E.g. for Wireshark 2.6.7:
 
         PERSONAL_CONFIG_DIR=~/.local/lib/wireshark/plugins/2.6
-        GLOBAL_CONFIG_DIR=/usr/lib/x86_64-linux-gnu/wireshark/plugins/2.6
+        GLOBAL_CONFIG_DIR=/usr/lib/x86_64-linux-gnu/wireshark/plugins/2.6/
+            or for 4.4.3 =/usr/lib/x86_64-linux-gnu/wireshark/plugins/4.4/epan/
 
 12) Enjoy!
 

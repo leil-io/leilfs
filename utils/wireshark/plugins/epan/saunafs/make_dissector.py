@@ -41,7 +41,7 @@ class Types:
     }
 
     int_length_to_getter = {
-        1: 'tvb_get_guint8',
+        1: 'tvb_get_uint8',
         2: 'tvb_get_ntohs',
         4: 'tvb_get_ntohl',
         8: 'tvb_get_ntoh64',
@@ -425,7 +425,7 @@ for message in sorted(dissectinfo):
 
 # Generate dissector for saunafs
 print('''
-static void dissect_saunafs_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree) {
+static int dissect_saunafs_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     proto_item *ti = NULL;
     proto_tree *saunafs_tree = NULL;
     guint32 type = 0;
@@ -463,17 +463,18 @@ for message in sorted(dissectinfo):
     print('            dissect_{}(tvb, length, version, pinfo, saunafs_tree);'.format(message))
     print('            break;')
 print('    }')
-print('}')  # Generate function registering the protocol
+print('return tvb_captured_length(tvb);}')  # Generate function registering the protocol
 print('''
-static guint saunafs_get_message_length(packet_info *pinfo, tvbuff_t *tvb, int offset) {
+static guint saunafs_get_message_length(packet_info *pinfo, tvbuff_t *tvb, int offset, void *data _U_) {
     (void)pinfo;
     (void)tvb;
     return (guint)(tvb_get_ntohl(tvb, offset + 4) + 8);
 }
 
-static void dissect_saunafs(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree) {
+static int dissect_saunafs(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_) {
     col_clear(pinfo->cinfo, COL_INFO);
     tcp_dissect_pdus(tvb, pinfo, tree, TRUE, 8, saunafs_get_message_length, dissect_saunafs_message, NULL);
+return tvb_captured_length(tvb);
 }
 
 static void register_tcp_port(guint32 port, gpointer ptr _U_) {

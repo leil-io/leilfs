@@ -1,5 +1,5 @@
 cd "$TEMP_DIR"
-cp -a "$SOURCE_DIR/utils/wireshark/plugins/saunafs" .
+cp -av "${SOURCE_DIR}/utils/wireshark/plugins/epan/saunafs" .
 rm -f saunafs/*.c
 
 if is_program_installed python3 ; then
