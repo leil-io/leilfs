@@ -14,9 +14,9 @@ def buildImage(imageName) {
         cd $WORKSPACE
         mkdir build
         docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
-        docker save saunafs-test:latest -o ./build/sfstests.${imageName}.tar
+        docker save saunafs-test:latest | zstd -o ./build/sfstests.${imageName}.tar.zst
         """
-    archiveArtifacts artifacts: 'build/*.tar', fingerprint: true
+    archiveArtifacts artifacts: 'build/*.tar.zst', fingerprint: true
 }
 
 def runSanity() {
@@ -257,12 +257,26 @@ pipeline {
                         }
 
                         stage('Run machine tests') {
+                            when {
+                                anyOf {
+                                    branch 'dev'
+                                    branch 'stable'
+                                    changeRequest()
+                                }
+                            }
                             steps {
                                 runMachine()
                             }
                         }
 
                         stage('Run long system tests') {
+                            when {
+                                anyOf {
+                                    branch 'dev'
+                                    branch 'stable'
+                                    changeRequest()
+                                }
+                            }
                             steps {
                                 runLong()
                             }
