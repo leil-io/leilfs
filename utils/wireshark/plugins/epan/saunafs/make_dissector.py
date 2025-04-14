@@ -41,11 +41,21 @@ class Types:
     }
 
     int_length_to_getter = {
-        1: 'tvb_get_uint8',
+        1: 'tvb_get_guint8',
         2: 'tvb_get_ntohs',
         4: 'tvb_get_ntohl',
         8: 'tvb_get_ntoh64',
     }
+
+
+# Check wireshark version
+if len(sys.argv) > 1:
+    version_str = sys.argv[1]
+    version_parts = version_str.split('.')
+    major = int(version_parts[0])
+    minor = int(version_parts[1])
+    if major > 4 or (major == 4 and minor >= 4):
+        Types.int_length_to_getter[1] = 'tvb_get_uint8'
 
 
 class PacketDissectionVariant(object):
