@@ -324,12 +324,15 @@ uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *e
 
 uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                       uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer) {
+                       uint32_t sourcesBufferSize, const uint8_t *sourcesBufferPtr) {
+	// Copy the sources buffer to a vector to ensure it is valid for the lifetime of the job
+	std::vector<uint8_t> sourcesBuffer(sourcesBufferSize);
+	std::memcpy(sourcesBuffer.data(), sourcesBufferPtr, sourcesBufferSize);
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		uint8_t status = SAUNAFS_STATUS_OK;
 		try {
 			std::vector<ChunkTypeWithAddress> sources;
-			deserialize(sourcesBuffer, sourcesBufferSize, sources);
+			deserialize(sourcesBuffer.data(), sourcesBufferSize, sources);
 			ChunkFileCreator creator(chunkId, chunkVersion, chunkType);
 			gReplicator.replicate(creator, sources);
 		} catch (Exception &ex) {
