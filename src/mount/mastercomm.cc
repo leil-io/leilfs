@@ -19,6 +19,7 @@
  */
 
 #include "common/platform.h"
+
 #include "mount/mastercomm.h"
 
 #include <limits.h>
@@ -50,18 +51,19 @@
 #include "common/exception.h"
 #include "common/exit_status.h"
 #include "common/goal.h"
-#include "common/saunafs_version.h"
 #include "common/md5.h"
-#include "errors/sfserr.h"
+#include "common/saunafs_version.h"
 #include "common/sockets.h"
-#include "slogger/slogger.h"
+#include "common/type_defs.h"
+#include "errors/sfserr.h"
 #include "mount/exports.h"
 #include "mount/notification_area_logging.h"
 #include "mount/stats.h"
+#include "protocol/SFSCommunication.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
-#include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
+#include "slogger/slogger.h"
 
 struct threc {
 	pthread_t thid;
@@ -1080,13 +1082,13 @@ void* fs_nop_thread(void *arg) {
 			if (++inodeswritecnt >= gInitParams.report_reserved_period && !disconnect) {
 				inodeswritecnt = 0;
 				std::unique_lock<std::mutex> asLock(acquiredFileMutex);
-				inodesleng = 8 + 4 * acquiredFiles.size();
+				inodesleng = 8 + kinode_t_size * acquiredFiles.size();
 				inodespacket = (uint8_t*) malloc(inodesleng);
 				ptr = inodespacket;
-				put32bit(&ptr,CLTOMA_FUSE_RESERVED_INODES);
-				put32bit(&ptr,inodesleng-8);
+				putINode(&ptr, (inode_t)CLTOMA_FUSE_RESERVED_INODES);
+				put32bit(&ptr, inodesleng - 8);
 				for (const auto &[inode, _] : acquiredFiles) {
-					put32bit(&ptr, inode);
+					putINode(&ptr, inode);
 				}
 				if (tcptowrite(fd,inodespacket,inodesleng,1000)!=inodesleng) {
 					safs::log_warn("Failed to send CLTOMA_FUSE_RESERVED_INODES to master");
@@ -1449,7 +1451,7 @@ uint8_t fs_access(inode_t inode,uint32_t uid,uint32_t gid,uint8_t modemask) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
 	put8bit(&wptr,modemask);
@@ -1509,7 +1511,7 @@ uint8_t fs_getattr(inode_t inode, uint32_t uid, uint32_t gid, Attributes &attr) 
 	if (!wptr) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETATTR,&i);
@@ -1543,7 +1545,7 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
 	put8bit(&wptr,setmask);
@@ -1677,7 +1679,7 @@ uint8_t fs_readlink(inode_t inode,const uint8_t **path) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_READLINK,&i);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
@@ -1712,7 +1714,7 @@ uint8_t fs_symlink(inode_t parent, uint8_t nleng, const uint8_t *name, const uin
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,parent);
+	putINode(&wptr,parent);
 	put8bit(&wptr,nleng);
 	memcpy(wptr,name,nleng);
 	wptr+=nleng;
@@ -1829,7 +1831,7 @@ uint8_t fs_unlink(inode_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,parent);
+	putINode(&wptr,parent);
 	put8bit(&wptr,nleng);
 	memcpy(wptr,name,nleng);
 	wptr+=nleng;
@@ -1857,7 +1859,7 @@ uint8_t fs_rmdir(inode_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,u
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,parent);
+	putINode(&wptr,parent);
 	put8bit(&wptr,nleng);
 	memcpy(wptr,name,nleng);
 	wptr+=nleng;
@@ -1888,11 +1890,11 @@ uint8_t fs_rename(inode_t parent_src, uint8_t nleng_src, const uint8_t *name_src
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,parent_src);
+	putINode(&wptr,parent_src);
 	put8bit(&wptr,nleng_src);
 	memcpy(wptr,name_src,nleng_src);
 	wptr+=nleng_src;
-	put32bit(&wptr,parent_dst);
+	putINode(&wptr,parent_dst);
 	put8bit(&wptr,nleng_dst);
 	memcpy(wptr,name_dst,nleng_dst);
 	wptr+=nleng_dst;
@@ -1929,8 +1931,8 @@ uint8_t fs_link(inode_t inode_src, inode_t parent_dst, uint8_t nleng_dst, const 
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode_src);
-	put32bit(&wptr,parent_dst);
+	putINode(&wptr,inode_src);
+	putINode(&wptr,parent_dst);
 	put8bit(&wptr,nleng_dst);
 	memcpy(wptr,name_dst,nleng_dst);
 	wptr+=nleng_dst;
@@ -1963,7 +1965,7 @@ uint8_t fs_getdir(inode_t inode,uint32_t uid,uint32_t gid,const uint8_t **dbuff,
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETDIR,&i);
@@ -1991,7 +1993,7 @@ uint8_t fs_getdir_plus(inode_t inode, uint32_t uid, uint32_t gid, uint8_t addtoc
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
 	flags = GETDIR_FLAG_WITHATTR;
@@ -2067,7 +2069,7 @@ uint8_t fs_opencheck(inode_t inode, uint32_t uid, uint32_t gid, uint8_t flags, A
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
 	put8bit(&wptr,flags);
@@ -2132,7 +2134,7 @@ uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *c
 		return SAUNAFS_ERROR_IO;
 	}
 
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,indx);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_READ_CHUNK,&i);
 	if (rptr==NULL) {
@@ -2226,7 +2228,7 @@ uint8_t fs_writechunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,indx);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_WRITE_CHUNK,&i);
 	if (rptr==NULL) {
@@ -2351,7 +2353,7 @@ uint8_t fs_writeend(uint64_t chunkid, inode_t inode, uint64_t length) {
 		return SAUNAFS_ERROR_IO;
 	}
 	put64bit(&wptr,chunkid);
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put64bit(&wptr,length);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_WRITE_CHUNK_END,&i);
 	if (rptr==NULL) {
@@ -2469,7 +2471,7 @@ uint8_t fs_getdetachedattr(inode_t inode, Attributes &attr) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETDETACHEDATTR,&i);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
@@ -2496,7 +2498,7 @@ uint8_t fs_gettrashpath(inode_t inode,const uint8_t **path) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETTRASHPATH,&i);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
@@ -2530,7 +2532,7 @@ uint8_t fs_settrashpath(inode_t inode,const uint8_t *path) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put32bit(&wptr,t32);
 	memcpy(wptr,path,t32);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SETTRASHPATH,&i);
@@ -2555,7 +2557,7 @@ uint8_t fs_undel(inode_t inode) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_UNDEL,&i);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
@@ -2578,7 +2580,7 @@ uint8_t fs_purge(inode_t inode) {
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	rptr = fs_sendandreceive(rec,MATOCL_FUSE_PURGE,&i);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
@@ -2605,7 +2607,7 @@ uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put8bit(&wptr,opened);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
@@ -2648,7 +2650,7 @@ uint8_t fs_listxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, 
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put8bit(&wptr,opened);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
@@ -2692,7 +2694,7 @@ uint8_t fs_setxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put8bit(&wptr,opened);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
@@ -2729,7 +2731,7 @@ uint8_t fs_removexattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	put32bit(&wptr,inode);
+	putINode(&wptr,inode);
 	put8bit(&wptr,opened);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);

@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <cstdint>
 
 #include "common/datapack.h"
 #include "errors/saunafs_error_codes.h"
@@ -40,10 +41,15 @@ static void append_file_usage() {
 }
 
 static int append_file(const char *fname, const char *afname) {
-	uint8_t reqbuff[28], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng, uid, gid;
 	inode_t inode, ainode;
+
+	constexpr uint32_t kAppendFilePayload =
+	    sizeof(uint32_t) + sizeof(inode) + sizeof(ainode) + sizeof(uid) + sizeof(gid);
+	constexpr uint32_t kReqBuffSize =
+	    sizeof(cmd) + sizeof(kAppendFilePayload) + sizeof(uint32_t) + kAppendFilePayload;
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
 	mode_t dmode, smode;
 	int fd;
 	fd = open_master_conn(fname, &inode, &dmode, true);
@@ -68,13 +74,13 @@ static int append_file(const char *fname, const char *afname) {
 	
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_APPEND);
-	put32bit(&wptr, 20);
+	put32bit(&wptr, kAppendFilePayload);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
-	put32bit(&wptr, ainode);
+	putINode(&wptr, inode);
+	putINode(&wptr, ainode);
 	put32bit(&wptr, uid);
 	put32bit(&wptr, gid);
-	if (tcpwrite(fd, reqbuff, 28) != 28) {
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;

@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 #include "common/datapack.h"
 #include "errors/saunafs_error_codes.h"
@@ -40,10 +41,10 @@ static void file_repair_usage() {
 }
 
 static int file_repair(const char *fname, uint8_t correct_only_flag) {
-	uint8_t reqbuff[25], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng;
-	inode_t inode, notchanged, erased, repaired;
+	inode_t inode;
+	uint32_t notchanged, erased, repaired;
+
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, true);
 	if (fd < 0) {
@@ -53,15 +54,21 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 	uint32_t uid = getUId();
 	uint32_t gid = getGId();
 
+	constexpr uint32_t kRepairPayload =
+	    sizeof(uint32_t) + sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(correct_only_flag);
+	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kRepairPayload) + kRepairPayload;
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_REPAIR);
-	put32bit(&wptr, 17);
+	put32bit(&wptr, kRepairPayload);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
+	putINode(&wptr, inode);
 	put32bit(&wptr, uid);
 	put32bit(&wptr, gid);
 	put8bit(&wptr, correct_only_flag);
-	if (tcpwrite(fd, reqbuff, 25) != 25) {
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;

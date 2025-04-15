@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 #include "common/datapack.h"
 #include "errors/saunafs_error_codes.h"
@@ -36,8 +37,6 @@ static void get_eattr_usage() {
 }
 
 static int get_eattr(const char *fname, uint8_t mode) {
-	uint8_t reqbuff[17], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng;
 	inode_t inode;
 	uint8_t fn, dn, i, j;
@@ -50,13 +49,19 @@ static int get_eattr(const char *fname, uint8_t mode) {
 	if (fd < 0) {
 		return -1;
 	}
+
+	constexpr uint32_t kGetEAttrPayload = sizeof(uint32_t) + sizeof(inode) + sizeof(mode);
+	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kGetEAttrPayload) + kGetEAttrPayload;
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_GETEATTR);
-	put32bit(&wptr, 9);
+	put32bit(&wptr, kGetEAttrPayload);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
+	putINode(&wptr, inode);
 	put8bit(&wptr, mode);
-	if (tcpwrite(fd, reqbuff, 17) != 17) {
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;

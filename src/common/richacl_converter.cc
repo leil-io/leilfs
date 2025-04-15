@@ -303,7 +303,8 @@ std::vector<uint8_t> richAclConverter::objectToNFSXattr(const RichACL& acl, uint
 
 	buffer.resize(sizeof(uint32_t));
 	uint8_t *current = buffer.data();
-	put32bit(&current, acl_with_applied_masks.size());
+	// Safe cast, the length should always fit
+	put32bit(&current, static_cast<uint32_t>(acl_with_applied_masks.size()));
 
 	for (const RichACL::Ace &ace : acl_with_applied_masks) {
 		std::string owner_name = idToName(ace);
@@ -320,7 +321,8 @@ std::vector<uint8_t> richAclConverter::objectToNFSXattr(const RichACL& acl, uint
 		}
 		put32bit(&current, flags);
 		put32bit(&current, ace.mask);
-		put32bit(&current, padded_length);
+		// Safe cast, the length should always fit
+		put32bit(&current, static_cast<uint32_t>(padded_length));
 		owner_name.copy((char *)current, owner_name.size());
 		current += padded_length; // redundant, but makes it safe to write code below it
 	}

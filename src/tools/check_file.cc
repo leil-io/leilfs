@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 #include "common/datapack.h"
 #include "errors/saunafs_error_codes.h"
@@ -34,12 +35,18 @@ static void check_file_usage() {
 }
 
 static int check_file(const char *fname) {
-	uint8_t reqbuff[16], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng;
 	inode_t inode;
 	uint8_t copies;
 	uint32_t chunks;
+
+	constexpr uint32_t kCheckFilePayload = sizeof(uint32_t) + sizeof(inode);
+	constexpr uint32_t kReqBuffSize =
+	    sizeof(uint32_t) + sizeof(kCheckFilePayload) + kCheckFilePayload;
+
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, false);
 	if (fd < 0) {
@@ -47,10 +54,10 @@ static int check_file(const char *fname) {
 	}
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_CHECK);
-	put32bit(&wptr, 8);
+	put32bit(&wptr, kCheckFilePayload);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
-	if (tcpwrite(fd, reqbuff, 16) != 16) {
+	putINode(&wptr, inode);
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;

@@ -887,7 +887,8 @@ void chunk_store_chunkcounters(uint8_t *buff,uint8_t matrixid) {
 	if (matrixid == MATRIX_ALL_COPIES) {
 		for (int i = 0; i < CHUNK_MATRIX_SIZE; i++) {
 			for (int j = 0; j < CHUNK_MATRIX_SIZE; j++) {
-				put32bit(&buff, Chunk::allFullChunkCopies[i][j]);
+				// TODO(Guillex): possible truncation if the chunks number is greater than 2^32
+				put32bit(&buff, static_cast<uint32_t>(Chunk::allFullChunkCopies[i][j]));
 			}
 		}
 	} else {

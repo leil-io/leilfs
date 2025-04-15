@@ -609,7 +609,14 @@ void matoclserv_close_session(uint32_t sessionid) {
 void matoclserv_store_sessions() {
 	session *asesdata;
 	uint32_t ileng;
-	uint8_t fsesrecord[43+SESSION_STATS*8]; // 4+4+4+4+1+1+1+4+4+4+4+4+4+SESSION_STATS*4+SESSION_STATS*4
+	constexpr uint32_t kSessionSerializedSize =
+	    sizeof(session::sessionid) + sizeof(ileng) + sizeof(session::peerip) +
+	    sizeof(session::rootinode) + sizeof(session::sesflags) + sizeof(session::mingoal) +
+	    sizeof(session::maxgoal) + sizeof(session::mintrashtime) + sizeof(session::maxtrashtime) +
+	    sizeof(session::rootuid) + sizeof(session::rootgid) + sizeof(session::mapalluid) +
+	    sizeof(session::mapallgid);
+	constexpr uint32_t kBufferSize = kSessionSerializedSize + (SESSION_STATS * 8);
+	uint8_t fsesrecord[kBufferSize]; // 4+4+4+4+1+1+1+4+4+4+4+4+4+SESSION_STATS*4+SESSION_STATS*4
 	uint8_t *ptr;
 	int i;
 	FILE *fd;
@@ -638,7 +645,7 @@ void matoclserv_store_sessions() {
 			put32bit(&ptr,asesdata->sessionid);
 			put32bit(&ptr,ileng);
 			put32bit(&ptr,asesdata->peerip);
-			put32bit(&ptr,asesdata->rootinode);
+			putINode(&ptr,asesdata->rootinode);
 			put8bit(&ptr,asesdata->sesflags);
 			put8bit(&ptr,asesdata->mingoal);
 			put8bit(&ptr,asesdata->maxgoal);
@@ -654,7 +661,7 @@ void matoclserv_store_sessions() {
 			for (i=0 ; i<SESSION_STATS ; i++) {
 				put32bit(&ptr,asesdata->lasthouropstats[i]);
 			}
-			if (fwrite(fsesrecord,(43+SESSION_STATS*8),1,fd)!=1) {
+			if (fwrite(fsesrecord, kBufferSize, 1, fd) != 1) {
 				safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
 				fclose(fd);
 				return;
@@ -1434,12 +1441,15 @@ void matoclserv_fstest_info(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	}
 	std::string report;
 	fs_test_getdata(loopstart,loopend,files,ugfiles,mfiles,chunks,ugchunks,mchunks,report);
-	ptr = matoclserv_createpacket(eptr,MATOCL_FSTEST_INFO,report.size()+36);
+	constexpr uint32_t kPacketExtraSize = sizeof(loopstart) + sizeof(loopend) + sizeof(files) +
+	                                      sizeof(ugfiles) + sizeof(mfiles) + sizeof(chunks) +
+	                                      sizeof(ugchunks) + sizeof(mchunks) + sizeof(uint32_t);
+	ptr = matoclserv_createpacket(eptr, MATOCL_FSTEST_INFO, report.size() + kPacketExtraSize);
 	put32bit(&ptr,loopstart);
 	put32bit(&ptr,loopend);
-	put32bit(&ptr,files);
-	put32bit(&ptr,ugfiles);
-	put32bit(&ptr,mfiles);
+	putINode(&ptr,files);
+	putINode(&ptr,ugfiles);
+	putINode(&ptr,mfiles);
 	put32bit(&ptr,chunks);
 	put32bit(&ptr,ugchunks);
 	put32bit(&ptr,mchunks);
@@ -1997,7 +2007,7 @@ void matoclserv_fuse_statfs(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	put64bit(&ptr,availspace);
 	put64bit(&ptr,trashspace);
 	put64bit(&ptr,reservedspace);
-	put32bit(&ptr,inodes);
+	putINode(&ptr, inodes);
 	if (eptr->sesdata) {
 		eptr->sesdata->currentopstats[0]++;
 	}
@@ -2174,7 +2184,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	if (status!=SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		put32bit(&ptr,newinode);
+		putINode(&ptr,newinode);
 		memcpy(ptr, attr.data(), attr.size());
 	}
 	eptr->sesdata->currentopstats[3]++;
@@ -2404,7 +2414,8 @@ void matoclserv_fuse_readlink(matoclserventry *eptr,const uint8_t *data,uint32_t
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		put32bit(&ptr, path.length() + 1);
+		// Safe cast, the length should always fit
+		put32bit(&ptr, static_cast<uint32_t>(path.length() + 1));
 		if (path.length() > 0) {
 			memcpy(ptr, path.c_str(), path.length());
 		}
@@ -2470,7 +2481,7 @@ void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		put32bit(&ptr, newinode);
+		putINode(&ptr, newinode);
 		memcpy(ptr, attr.data(), attr.size());
 	}
 	if (eptr->sesdata) {
@@ -2732,7 +2743,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	}
 	put32bit(&ptr,msgid);
 	if (eptr->version>=0x010615 && status==SAUNAFS_STATUS_OK) {
-		put32bit(&ptr,inode);
+		putINode(&ptr, inode);
 		memcpy(ptr, attr.data(), attr.size());
 	} else {
 		put8bit(&ptr,status);
@@ -2781,7 +2792,7 @@ void matoclserv_fuse_link(matoclserventry *eptr,const uint8_t *data,uint32_t len
 	if (status!=SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		put32bit(&ptr,newinode);
+		putINode(&ptr,newinode);
 		memcpy(ptr, attr.data(), attr.size());
 	}
 	if (eptr->sesdata) {
@@ -3512,9 +3523,9 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 	if (status!=SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		put32bit(&ptr,changed);
-		put32bit(&ptr,notchanged);
-		put32bit(&ptr,notpermitted);
+		putINode(&ptr, changed);
+		putINode(&ptr, notchanged);
+		putINode(&ptr, notpermitted);
 	}
 }
 
@@ -3749,10 +3760,10 @@ void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,u
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		put32bit(&ptr,inodes);
-		put32bit(&ptr,dirs);
-		put32bit(&ptr,files);
-		put32bit(&ptr, links);
+		putINode(&ptr, inodes);
+		putINode(&ptr, dirs);
+		putINode(&ptr, files);
+		putINode(&ptr, links);
 		put32bit(&ptr,0);
 		put32bit(&ptr,0);
 		put32bit(&ptr,chunks);
@@ -3791,11 +3802,11 @@ void matoclserv_fuse_getdirstats(matoclserventry *eptr,const uint8_t *data,uint3
 	if (status!=SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		put32bit(&ptr,inodes);
-		put32bit(&ptr,dirs);
-		put32bit(&ptr,files);
-		put32bit(&ptr, links);
-		put32bit(&ptr,chunks);
+		putINode(&ptr, inodes);
+		putINode(&ptr, dirs);
+		putINode(&ptr, files);
+		putINode(&ptr, links);
+		put32bit(&ptr,chunks);  // TODO(Guillex): check possible overflow
 		put64bit(&ptr,leng);
 		put64bit(&ptr,size);
 		put64bit(&ptr,rsize);
@@ -3880,7 +3891,8 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr,const uint8_t *data,uint
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		put32bit(&ptr, path.length() + 1);
+		// Safe cast, the length should always fit
+		put32bit(&ptr, static_cast<uint32_t>(path.length() + 1));
 		if (path.length() > 0) {
 			memcpy(ptr, path.c_str(), path.length());
 		}

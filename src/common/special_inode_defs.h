@@ -22,9 +22,16 @@
 
 #include "common/platform.h"
 
-#define SPECIAL_INODE_BASE   0xFFFFFFF0U
+#include "common/type_defs.h"
 
-#define SPECIAL_INODE_ROOT            0x01U
+#ifdef USE_INODE_64
+#define SPECIAL_INODE_BASE 0xFFFFFFF0LU
+#define SPECIAL_INODE_ROOT 0x01LU
+#else
+#define SPECIAL_INODE_BASE 0xFFFFFFF0U
+#define SPECIAL_INODE_ROOT 0x01U
+#endif  // USE_INODE_64
+
 #define SPECIAL_INODE_MASTERINFO      (SPECIAL_INODE_BASE + 0xFU)
 #define SPECIAL_INODE_STATS           (SPECIAL_INODE_BASE + 0x0U)
 #define SPECIAL_INODE_OPLOG           (SPECIAL_INODE_BASE + 0x1U)

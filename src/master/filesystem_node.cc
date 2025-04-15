@@ -811,7 +811,7 @@ static inline void getdetacheddata(const T &data, uint8_t *dbuff) {
 			}
 		}
 		count++;
-		put32bit(&dbuff, getdetacheddata_getNodeId(entry.first));
+		putINode(&dbuff, getdetacheddata_getNodeId(entry.first));
 	}
 }
 
@@ -872,9 +872,9 @@ void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t 
 	dbuff[1] = '.';
 	dbuff += 2;
 	if (p->id != rootinode) {
-		put32bit(&dbuff, p->id);
+		putINode(&dbuff, p->id);
 	} else {
-		put32bit(&dbuff, SPECIAL_INODE_ROOT);
+		putINode(&dbuff, SPECIAL_INODE_ROOT);
 	}
 	Attributes attr;
 	if (withattr) {
@@ -890,7 +890,7 @@ void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t 
 	dbuff[2] = '.';
 	dbuff += 3;
 	if (p->id == rootinode) {  // root node should returns self as its parent
-		put32bit(&dbuff, SPECIAL_INODE_ROOT);
+		putINode(&dbuff, SPECIAL_INODE_ROOT);
 		if (withattr) {
 			fsnodes_fill_attr(p, p, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(dbuff, attr.data(), attr.size());
@@ -900,9 +900,9 @@ void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t 
 		}
 	} else {
 		if (!p->parent.empty() && p->parent[0].first != rootinode) {
-			put32bit(&dbuff, p->parent[0].first);
+			putINode(&dbuff, p->parent[0].first);
 		} else {
-			put32bit(&dbuff, SPECIAL_INODE_ROOT);
+			putINode(&dbuff, SPECIAL_INODE_ROOT);
 		}
 		if (withattr) {
 			if (!p->parent.empty()) {
@@ -941,7 +941,7 @@ void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t 
 		dbuff++;
 		memcpy(dbuff, name.c_str(), name.length());
 		dbuff += name.length();
-		put32bit(&dbuff, entry.second->id);
+		putINode(&dbuff, entry.second->id);
 		if (withattr) {
 			fsnodes_fill_attr(entry.second, p, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(dbuff, attr.data(), attr.size());

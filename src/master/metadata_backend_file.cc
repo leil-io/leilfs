@@ -19,11 +19,11 @@
 */
 
 #include "common/platform.h"
-#include "protocol/SFSCommunication.h"
 
 #include "master/metadata_backend_file.h"
 
 #include <fcntl.h> // for open and O_RDONLY
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <sys/mman.h>
@@ -33,6 +33,7 @@
 #include <common/rotate_files.h>
 #include <common/saunafs_version.h>
 #include <common/setup.h>
+#include <common/type_defs.h>
 #include <master/changelog.h>
 #include <master/chunks.h>
 #include <master/filesystem.h>
@@ -47,6 +48,7 @@
 #include <master/metadata_dumper.h>
 #include <master/restore.h>
 #include <slogger/slogger.h>
+#include "protocol/SFSCommunication.h"
 
 MetadataBackendFile::MetadataBackendFile()
 #if !defined(METARESTORE) && !defined(METALOGGER)
@@ -1186,7 +1188,7 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 	}
 	ptr = gNodeStoreBuffer;
 	put8bit(&ptr, f->type);
-	put32bit(&ptr, f->id);
+	putINode(&ptr, f->id);
 	put8bit(&ptr, f->goal);
 	put16bit(&ptr, f->mode);
 	put32bit(&ptr, f->uid);
@@ -1219,7 +1221,8 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 		break;
 	case FSNode::kSymlink:
 		name = (std::string) static_cast<FSNodeSymlink *>(f)->path;
-		put32bit(&ptr, name.length());
+		// Safe cast, the length should always fit
+		put32bit(&ptr, static_cast<uint32_t>(name.length()));
 		if (fwrite(gNodeStoreBuffer, 1, kNodeHeaderSize + 4, fd) !=
 		    (size_t)(kNodeHeaderSize + 4)) {
 			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
@@ -1312,8 +1315,8 @@ void MetadataBackendFile::storeedge(FSNodeDirectory *parent, FSNode *child,
 		return;
 	}
 	ptr = gEdgeStoreBuffer;
-	put32bit(&ptr, (parent == nullptr) ? 0 : parent->id);
-	put32bit(&ptr, child->id);
+	putINode(&ptr, (parent == nullptr) ? 0 : parent->id);
+	putINode(&ptr, child->id);
 	put16bit(&ptr, name.length());
 	memcpy(ptr, name.c_str(), name.length());
 	if (fwrite(gEdgeStoreBuffer, 1, kEdgeHeaderSize + name.length(), fd) !=
@@ -1384,7 +1387,7 @@ void MetadataBackendFile::storefree(FILE *fd) {
 			l = 0;
 			ptr = wbuff;
 		}
-		put32bit(&ptr, n.id);
+		putINode(&ptr, n.id);
 		put32bit(&ptr, n.ts);
 		l++;
 	}
@@ -1399,18 +1402,21 @@ void MetadataBackendFile::storefree(FILE *fd) {
 // XAttr
 
 void MetadataBackendFile::xattr_store(FILE *fd) {
-	uint8_t hdrbuff[4 + 1 + 4];
-	uint8_t *ptr;
 	uint32_t i;
 	xattr_data_entry *xa;
+
+	constexpr uint32_t kHdrSize =
+	    kinode_t_size + sizeof(xattr_data_entry::anleng) + sizeof(xattr_data_entry::avleng);
+	uint8_t hdrbuff[kHdrSize];
+	uint8_t *ptr;
 
 	for (i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
 		for (xa = gMetadata->xattr_data_hash[i]; xa; xa = xa->next) {
 			ptr = hdrbuff;
-			put32bit(&ptr, xa->inode);
+			putINode(&ptr, xa->inode);
 			put8bit(&ptr, xa->anleng);
 			put32bit(&ptr, xa->avleng);
-			if (fwrite(hdrbuff, 1, 4 + 1 + 4, fd) != (size_t)(4 + 1 + 4)) {
+			if (fwrite(hdrbuff, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
 				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 				return;
 			}
@@ -1428,8 +1434,8 @@ void MetadataBackendFile::xattr_store(FILE *fd) {
 			}
 		}
 	}
-	memset(hdrbuff, 0, 4 + 1 + 4);
-	if (fwrite(hdrbuff, 1, 4 + 1 + 4, fd) != (size_t)(4 + 1 + 4)) {
+	memset(hdrbuff, 0, kHdrSize);
+	if (fwrite(hdrbuff, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return;
 	}
@@ -1464,39 +1470,39 @@ void MetadataBackendFile::storelocks(FILE *fd) {
 
 // Full FS
 
-int MetadataBackendFile::process_section(const char *label, uint8_t (&hdr)[16],
+int MetadataBackendFile::process_section(const char *label, uint8_t (&hdr)[kSectionSize],
                                          uint8_t *&ptr, off_t &offbegin,
                                          off_t &offend, FILE *&fd) {
 	offend = ftello(fd);
 	memcpy(hdr, label, 8);
 	ptr = hdr + 8;
-	put64bit(&ptr, offend - offbegin - 16);
+	put64bit(&ptr, offend - offbegin - kSectionSize);
 	fseeko(fd, offbegin, SEEK_SET);
-	if (fwrite(hdr, 1, 16, fd) != (size_t)16) {
+	if (fwrite(hdr, 1, kSectionSize, fd) != kSectionSize) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return SAUNAFS_ERROR_IO;
 	}
 	offbegin = offend;
-	fseeko(fd, offbegin + 16, SEEK_SET);
+	fseeko(fd, offbegin + kSectionSize, SEEK_SET);
 	return SAUNAFS_STATUS_OK;
 }
 
 void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
-	uint8_t hdr[16];
+	uint8_t hdr[kSectionSize];
 	uint8_t *ptr;
 	off_t offbegin, offend;
 
 	ptr = hdr;
-	put32bit(&ptr, gMetadata->maxnodeid);
+	putINode(&ptr, gMetadata->maxnodeid);
 	put64bit(&ptr, gMetadata->metaversion);
 	put32bit(&ptr, gMetadata->nextsessionid);
-	if (fwrite(hdr, 1, 16, fd) != (size_t)16) {
+	if (fwrite(hdr, 1, kSectionSize, fd) != kSectionSize) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return;
 	}
 	if (fver >= kMetadataVersionWithSections) {
 		offbegin = ftello(fd);
-		fseeko(fd, offbegin + 16, SEEK_SET);
+		fseeko(fd, offbegin + kSectionSize, SEEK_SET);
 	} else {
 		offbegin = 0;  // makes some old compilers happy
 	}

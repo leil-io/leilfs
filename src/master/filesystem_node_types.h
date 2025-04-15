@@ -389,9 +389,12 @@ struct TrashPathKey {
 
 #ifdef WORDS_BIGENDIAN
 	uint32_t timestamp;
-	inode_t id;
+	// inode_t id;
+	uint32_t id;
 #else
-	inode_t id;
+	// TODO(Guillex): the type should be inode_t, but there is an issue with Judy
+	// inode_t id;
+	uint32_t id;
 	uint32_t timestamp;
 #endif
 };

@@ -374,16 +374,23 @@ void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_i
 }
 
 static uint32_t dir_metaentries_size(inode_t ino) {
+	// 2 could be name length + type
+	constexpr uint32_t kFixedEntrySize = kinode_t_size + 2;
+
 	switch (ino) {
 	case SPECIAL_INODE_ROOT:
-		return 4*6+1+2+strlen(SPECIAL_FILE_NAME_META_TRASH)+strlen(SPECIAL_FILE_NAME_META_RESERVED);
+		return (4 * kFixedEntrySize) + 1 + 2 + strlen(SPECIAL_FILE_NAME_META_TRASH) +
+		       strlen(SPECIAL_FILE_NAME_META_RESERVED);
 	case SPECIAL_INODE_META_TRASH:
-		return 3*6+1+2+strlen(SPECIAL_FILE_NAME_META_UNDEL);
+		return (3 * kFixedEntrySize) + 1 + 2 + strlen(SPECIAL_FILE_NAME_META_UNDEL);
 	case SPECIAL_INODE_META_UNDEL:
-		return 2*6+1+2;
+		return (2 * kFixedEntrySize) + 1 + 2;
 	case SPECIAL_INODE_META_RESERVED:
-		return 2*6+1+2;
+		return (2 * kFixedEntrySize) + 1 + 2;
+	default:
+		return 0;
 	}
+
 	return 0;
 }
 
@@ -424,73 +431,73 @@ static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// trash
 		l = strlen(SPECIAL_FILE_NAME_META_TRASH);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_TRASH,l);
 		buff+=l;
-		put32bit(&buff,SPECIAL_INODE_META_TRASH);
+		putINode(&buff,SPECIAL_INODE_META_TRASH);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// reserved
 		l = strlen(SPECIAL_FILE_NAME_META_RESERVED);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_RESERVED,l);
 		buff+=l;
-		put32bit(&buff,SPECIAL_INODE_META_RESERVED);
+		putINode(&buff,SPECIAL_INODE_META_RESERVED);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_TRASH:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_TRASH);
+		putINode(&buff,SPECIAL_INODE_META_TRASH);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// undel
 		l = strlen(SPECIAL_FILE_NAME_META_UNDEL);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_UNDEL,l);
 		buff+=l;
-		put32bit(&buff,SPECIAL_INODE_META_UNDEL);
+		putINode(&buff,SPECIAL_INODE_META_UNDEL);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_UNDEL:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_UNDEL);
+		putINode(&buff,SPECIAL_INODE_META_UNDEL);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_TRASH);
+		putINode(&buff,SPECIAL_INODE_META_TRASH);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_RESERVED:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_RESERVED);
+		putINode(&buff,SPECIAL_INODE_META_RESERVED);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	}
@@ -545,7 +552,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 				memcpy(buff+9,name,nleng);
 				buff+=9+nleng;
 			}
-			put32bit(&buff,inode);
+			putINode(&buff,inode);
 			put8bit(&buff,TYPE_FILE);
 		} else {
 			safs_pretty_syslog(LOG_WARNING,"dir data malformed (trash)");

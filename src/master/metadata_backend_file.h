@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <master/filesystem_metadata.h>
 #include <master/metadata_backend_interface.h>
 
 class MetadataBackendFile : public IMetadataBackend {
@@ -89,6 +90,10 @@ public:
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 
 private:
+	static constexpr size_t kSectionSize = sizeof(FilesystemMetadata::maxnodeid) +
+	                                       sizeof(FilesystemMetadata::metaversion) +
+	                                       sizeof(FilesystemMetadata::nextsessionid);
+
 #ifndef METALOGGER
 	// Nodes
 	void storenode(FSNode *f, FILE *fd);
@@ -119,7 +124,7 @@ private:
 	void storelocks(FILE *fd);
 
 	// Full FS
-	static int process_section(const char *label, uint8_t (&hdr)[16],
+	static int process_section(const char *label, uint8_t (&hdr)[kSectionSize],
 	                           uint8_t *&ptr, off_t &offbegin, off_t &offend,
 	                           FILE *&fd);
 

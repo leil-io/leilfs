@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstddef>
 
 #include "common/datapack.h"
 #include "common/massert.h"
@@ -46,12 +47,20 @@ static void set_trashtime_usage() {
 }
 
 static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, int long_wait) {
-	uint8_t reqbuff[25], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng, uid;
 	inode_t inode, changed, notchanged, notpermitted;
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, true);
+
+	constexpr uint32_t kPacketPayloadSize =
+	    sizeof(uint32_t) + sizeof(inode) + sizeof(uid) + sizeof(trashtime) + sizeof(mode);
+	//                                    CLTOMA_FUSE...  kPacketPayloadSize
+	constexpr size_t kReqBuffSize = sizeof(uint32_t) + sizeof(uint32_t) + kPacketPayloadSize;
+	uint8_t reqbuff[kReqBuffSize];
+	uint8_t *wptr;
+	uint8_t *buff;
+	const uint8_t *rptr;
+
+	int fd = open_master_conn(fname, &inode, nullptr, true);
+
 	if (fd < 0) {
 		return -1;
 	}
@@ -63,13 +72,13 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 	uid = getUId();
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_SETTRASHTIME);
-	put32bit(&wptr, 17);
+	put32bit(&wptr, kPacketPayloadSize);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
+	putINode(&wptr, inode);
 	put32bit(&wptr, uid);
 	put32bit(&wptr, trashtime);
 	put8bit(&wptr, mode);
-	if (tcpwrite(fd, reqbuff, 25) != 25) {
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;

@@ -41,25 +41,31 @@ static void dir_info_usage() {
 }
 
 static int dir_info(const char *fname) {
-	uint8_t reqbuff[16], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng;
 	inode_t inode, inodes, dirs, files, links;
 	uint32_t chunks;
 	uint64_t length, size, realsize;
 	constexpr uint8_t kDirStatsPayload = 44;
 	constexpr uint8_t kDirStatsLegacyPayload = 60;
+
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, false);
 	if (fd < 0) {
 		return -1;
 	}
+
+	constexpr uint32_t kDirInfoPayload = sizeof(uint32_t) + sizeof(inode);
+	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kDirInfoPayload) + kDirInfoPayload;
+
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_GETDIRSTATS);
-	put32bit(&wptr, 8);
+	put32bit(&wptr, kDirInfoPayload);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
-	if (tcpwrite(fd, reqbuff, 16) != 16) {
+	putINode(&wptr, inode);
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;

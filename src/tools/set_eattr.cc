@@ -53,8 +53,6 @@ static void set_eattr_usage() {
 }
 
 static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
-	uint8_t reqbuff[22], *wptr, *buff;
-	const uint8_t *rptr;
 	uint32_t cmd, leng, uid;
 	inode_t inode, changed, notchanged, notpermitted;
 	int fd;
@@ -63,15 +61,23 @@ static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
 		return -1;
 	}
 	uid = getUId();
+
+	constexpr uint32_t kSetEAttrPayload =
+	    sizeof(uint32_t) + sizeof(inode) + sizeof(uid) + sizeof(eattr) + sizeof(mode);
+	constexpr uint32_t kSetEAttrPayloadSize =
+	    sizeof(cmd) + sizeof(kSetEAttrPayload) + kSetEAttrPayload;
+	uint8_t reqbuff[kSetEAttrPayloadSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_SETEATTR);
-	put32bit(&wptr, 14);
+	put32bit(&wptr, kSetEAttrPayload);
 	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
+	putINode(&wptr, inode);
 	put32bit(&wptr, uid);
 	put8bit(&wptr, eattr);
 	put8bit(&wptr, mode);
-	if (tcpwrite(fd, reqbuff, 22) != 22) {
+	if (tcpwrite(fd, reqbuff, kSetEAttrPayloadSize) != kSetEAttrPayloadSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;
