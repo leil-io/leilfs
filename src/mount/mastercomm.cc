@@ -2794,6 +2794,13 @@ uint8_t fs_setacl(uint32_t inode, uint32_t uid, uint32_t gid, AclType type, cons
 uint8_t fs_fullpath(uint32_t inode, uint32_t uid,
                     uint32_t gid, std::string &fullPath) {
 	threc *rec = fs_get_my_threc();
+	if (masterversion < saunafsVersion(4, 8, 0)) {
+		safs::log_warn(
+		    "fs_fullpath: Operation not supported for current master version: {}, for this operation "
+		    "master version should be 4.8.0 or higher",
+		    saunafsVersionToString(masterversion));
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
 	auto message =
 	    cltoma::fullPathByInode::build(rec->packetId, inode, uid, gid);
 	if (!fs_saucreatepacket(rec, message)) { 
@@ -3121,6 +3128,13 @@ uint8_t fs_makesnapshot(uint32_t src_inode, uint32_t dst_inode, const std::strin
 
 uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, std::vector<QuotaEntry> &quotaEntries) {
 	threc *rec = fs_get_my_threc();
+	if (masterversion < saunafsVersion(4, 9, 0)) {
+		safs::log_warn(
+		    "fs_get_self_quota: Operation not supported for current master version: {}, for this operation "
+		    "master version should be 4.9.0 or higher",
+		    saunafsVersionToString(masterversion));
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
 	auto message = cltoma::fuseGetSelfQuota::build(rec->packetId, uid, gid);
 
 	if (!fs_saucreatepacket(rec, message)) {
