@@ -89,8 +89,8 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 		return -1;
 	}
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
 	if (cmd != MATOCL_FUSE_SETTRASHTIME) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
@@ -105,7 +105,7 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 	}
 	close_master_conn(0);
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
+	get32bit(&rptr, cmd);  // queryid
 	if (cmd != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
@@ -121,9 +121,9 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 		free(buff);
 		return -1;
 	}
-	changed = get32bit(&rptr);
-	notchanged = get32bit(&rptr);
-	notpermitted = get32bit(&rptr);
+	get32bit(&rptr, changed);
+	get32bit(&rptr, notchanged);
+	get32bit(&rptr, notpermitted);
 	if ((mode & SMODE_RMASK) == 0) {
 		if (changed || mode == SMODE_SET) {
 			printf("%s: %" PRIu32 "\n", fname, trashtime);

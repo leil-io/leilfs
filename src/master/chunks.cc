@@ -2687,11 +2687,13 @@ bool chunksLoadFromFile(MetadataLoader::Options options) {
 
 	while (true) {
 		uint64_t chunkId = get64bit(&ptr);
-		uint32_t version = get32bit(&ptr);
-		uint32_t lockedTo = get32bit(&ptr);
+		uint32_t version;
+		get32bit(&ptr, version);
+		uint32_t lockedTo;
+		get32bit(&ptr, lockedTo);
 		uint32_t lockId = 0;
 		if (options.loadLockIds) {
-			lockId = get32bit(&ptr);
+			get32bit(&ptr, lockId);
 		}
 		if (chunkId > 0) {
 			Chunk * chunk = chunk_new(chunkId, version);

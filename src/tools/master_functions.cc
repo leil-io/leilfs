@@ -80,12 +80,12 @@ static int master_register(int rfd, uint32_t cuid) {
 		return -1;
 	}
 	rptr = regbuff;
-	i = get32bit(&rptr);
+	get32bit(&rptr, i);
 	if (i != MATOCL_FUSE_REGISTER) {
 		printf("register to master: wrong answer (type)\n");
 		return -1;
 	}
-	i = get32bit(&rptr);
+	get32bit(&rptr, i);
 	if (i != 1) {
 		printf("register to master: wrong answer (length)\n");
 		return -1;

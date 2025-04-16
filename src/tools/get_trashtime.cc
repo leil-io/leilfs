@@ -74,8 +74,8 @@ static int get_trashtime(const char *fname, uint8_t mode) {
 		return -1;
 	}
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
 	if (cmd != MATOCL_FUSE_GETTRASHTIME) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
@@ -90,7 +90,7 @@ static int get_trashtime(const char *fname, uint8_t mode) {
 	}
 	close_master_conn(0);
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
+	get32bit(&rptr, cmd);  // queryid
 	if (cmd != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
@@ -111,10 +111,10 @@ static int get_trashtime(const char *fname, uint8_t mode) {
 		return -1;
 	}
 	if (mode == GMODE_NORMAL) {
-		fn = get32bit(&rptr);
-		dn = get32bit(&rptr);
-		trashtime = get32bit(&rptr);
-		cnt = get32bit(&rptr);
+		get32bit(&rptr, fn);
+		get32bit(&rptr, dn);
+		get32bit(&rptr, trashtime);
+		get32bit(&rptr, cnt);
 		if ((fn != 0 || dn != 1) && (fn != 1 || dn != 0)) {
 			printf("%s: master query: wrong answer (fn,dn)\n", fname);
 			free(buff);
@@ -129,18 +129,18 @@ static int get_trashtime(const char *fname, uint8_t mode) {
 	} else {
 		std::vector<std::pair<uint32_t, uint32_t>> files;
 		std::vector<std::pair<uint32_t, uint32_t>> dirs;
-		fn = get32bit(&rptr);
-		dn = get32bit(&rptr);
+		get32bit(&rptr, fn);
+		get32bit(&rptr, dn);
 		files.reserve(fn);
 		dirs.reserve(dn);
 		for (i = 0; i < fn; ++i) {
-			trashtime = get32bit(&rptr);
-			cnt = get32bit(&rptr);
+			get32bit(&rptr, trashtime);
+			get32bit(&rptr, cnt);
 			files.push_back({trashtime, cnt});
 		}
 		for (i = 0; i < dn; ++i) {
-			trashtime = get32bit(&rptr);
-			cnt = get32bit(&rptr);
+			get32bit(&rptr, trashtime);
+			get32bit(&rptr, cnt);
 			dirs.push_back({trashtime, cnt});
 		}
 		std::sort(files.begin(), files.end());

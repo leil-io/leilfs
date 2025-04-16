@@ -60,10 +60,10 @@ int chunk_load(FILE *fd, bool loadLockIds) {
 		(void)r;
 		ptr = loadbuff.data();
 		chunkid = get64bit(&ptr);
-		version = get32bit(&ptr);
-		lockedto = get32bit(&ptr);
+		get32bit(&ptr, version);
+		get32bit(&ptr, lockedto);
 		if (loadLockIds) {
-			lockid = get32bit(&ptr);
+			get32bit(&ptr, lockid);
 		} else {
 			lockid = 1;
 		}
@@ -108,8 +108,8 @@ int fs_loadedge(FILE *fd) {
 		return -1;
 	}
 	ptr = uedgebuff;
-	parent_id = get32bit(&ptr);
-	child_id = get32bit(&ptr);
+	get32bit(&ptr, parent_id);
+	get32bit(&ptr, child_id);
 	if (parent_id==0 && child_id==0) {      // last edge
 		return 1;
 	}
@@ -198,15 +198,15 @@ int fs_loadnode(FILE *fd) {
 		break;
 	}
 	ptr = unodebuff;
-	nodeid = get32bit(&ptr);
+	get32bit(&ptr, nodeid);
 	goal = get8bit(&ptr);
 	mode = get16bit(&ptr);
-	uid = get32bit(&ptr);
-	gid = get32bit(&ptr);
-	atimestamp = get32bit(&ptr);
-	mtimestamp = get32bit(&ptr);
-	ctimestamp = get32bit(&ptr);
-	trashtime = get32bit(&ptr);
+	get32bit(&ptr, uid);
+	get32bit(&ptr, gid);
+	get32bit(&ptr, atimestamp);
+	get32bit(&ptr, mtimestamp);
+	get32bit(&ptr, ctimestamp);
+	get32bit(&ptr, trashtime);
 
 	printf("%c|i:%10" PRIiNode "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
 	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
@@ -215,11 +215,11 @@ int fs_loadnode(FILE *fd) {
 
 	if (type==TYPE_BLOCKDEV || type==TYPE_CHARDEV) {
 		uint32_t rdev;
-		rdev = get32bit(&ptr);
+		get32bit(&ptr, rdev);
 		printf("|d:%5" PRIu32 ",%5" PRIu32 "\n",rdev>>16,rdev&0xFFFF);
 	} else if (type==TYPE_SYMLINK) {
 		uint32_t pleng;
-		pleng = get32bit(&ptr);
+		get32bit(&ptr, pleng);
 		printf("|p:");
 		print_name(fd,pleng);
 		printf("\n");
@@ -229,7 +229,7 @@ int fs_loadnode(FILE *fd) {
 		uint16_t sessionids;
 
 		length = get64bit(&ptr);
-		ch = get32bit(&ptr);
+		get32bit(&ptr, ch);
 		sessionids = get16bit(&ptr);
 
 		printf("|l:%20" PRIu64 "|c:(",length);
@@ -270,7 +270,7 @@ int fs_loadnode(FILE *fd) {
 		}
 		printf(")|r:(");
 		while (sessionids>0) {
-			sessionid = get32bit(&ptr);
+			get32bit(&ptr, sessionid);
 			printf("%" PRIu32,sessionid);
 			if (sessionids>1) {
 				printf(",");
@@ -317,7 +317,7 @@ int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
 		return -1;
 	}
 	ptr=rbuff;
-	totalFreeNodes = get32bit(&ptr);
+	get32bit(&ptr, totalFreeNodes);
 
 	if (section_size && totalFreeNodes != (section_size - 4) / 8) {
 		totalFreeNodes = (section_size - 4) / 8;
@@ -329,8 +329,8 @@ int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
 			return -1;
 		}
 		ptr = rbuff;
-		nodeid = get32bit(&ptr);
-		ftime = get32bit(&ptr);
+		get32bit(&ptr, nodeid);
+		get32bit(&ptr, ftime);
 		printf("I|i:%10" PRIiNode "|f:%10" PRIu32 "\n", nodeid, ftime);
 		totalFreeNodes--;
 	}
@@ -388,9 +388,9 @@ int fs_load(FILE *fd) {
 		return -1;
 	}
 	ptr = hdr;
-	maxnodeid = get32bit(&ptr);
+	get32bit(&ptr, maxnodeid);
 	version = get64bit(&ptr);
-	nextsessionid = get32bit(&ptr);
+	get32bit(&ptr, nextsessionid);
 
 	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 
@@ -425,9 +425,9 @@ int fs_load_2x(FILE *fd, bool loadLockIds) {
 		return -1;
 	}
 	ptr = hdr;
-	maxnodeid = get32bit(&ptr);
+	get32bit(&ptr, maxnodeid);
 	version = get64bit(&ptr);
-	nextsessionid = get32bit(&ptr);
+	get32bit(&ptr, nextsessionid);
 
 	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 

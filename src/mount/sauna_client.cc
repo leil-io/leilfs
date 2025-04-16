@@ -538,12 +538,12 @@ void attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	ptr = attr.data();
 	attrtype = get8bit(&ptr);
 	attrmode = get16bit(&ptr);
-	attruid = get32bit(&ptr);
-	attrgid = get32bit(&ptr);
-	attratime = get32bit(&ptr);
-	attrmtime = get32bit(&ptr);
-	attrctime = get32bit(&ptr);
-	attrnlink = get32bit(&ptr);
+	get32bit(&ptr, attruid);
+	get32bit(&ptr, attrgid);
+	get32bit(&ptr, attratime);
+	get32bit(&ptr, attrmtime);
+	get32bit(&ptr, attrctime);
+	get32bit(&ptr, attrnlink);
 	memset(stbuf, 0, sizeof(*stbuf));
 	stbuf->st_ino = inode;
 #ifdef SAUNAFS_HAVE_STRUCT_STAT_ST_BLKSIZE
@@ -590,7 +590,7 @@ void attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 		break;
 	case TYPE_BLOCKDEV:
 		stbuf->st_mode = S_IFBLK | (attrmode & 07777);
-		attrrdev = get32bit(&ptr);
+		get32bit(&ptr, attrrdev);
 #ifdef SAUNAFS_HAVE_STRUCT_STAT_ST_RDEV
 		stbuf->st_rdev = attrrdev;
 #endif
@@ -601,7 +601,7 @@ void attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 		break;
 	case TYPE_CHARDEV:
 		stbuf->st_mode = S_IFCHR | (attrmode & 07777);
-		attrrdev = get32bit(&ptr);
+		get32bit(&ptr, attrrdev);
 #ifdef SAUNAFS_HAVE_STRUCT_STAT_ST_RDEV
 		stbuf->st_rdev = attrrdev;
 #endif

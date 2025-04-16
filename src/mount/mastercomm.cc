@@ -23,6 +23,7 @@
 #include "mount/mastercomm.h"
 
 #include <limits.h>
+#include <cstdint>
 #if _WIN32
 #include <winsock2.h>
 #else
@@ -585,7 +586,7 @@ int fs_connect(bool verbose) {
 			return -1;
 		}
 		rptr = regbuff;
-		i = get32bit(&rptr);
+		get32bit(&rptr, i);
 		if (i!=MATOCL_FUSE_REGISTER) {
 			if (verbose) {
 				fprintf(stderr,"got incorrect answer from sfsmaster\n");
@@ -597,7 +598,7 @@ int fs_connect(bool verbose) {
 			free(regbuff);
 			return -1;
 		}
-		i = get32bit(&rptr);
+		get32bit(&rptr, i);
 		if (i!=32) {
 			if (verbose) {
 				fprintf(stderr,"got incorrect answer from sfsmaster\n");
@@ -682,7 +683,7 @@ int fs_connect(bool verbose) {
 		return -1;
 	}
 	rptr = regbuff;
-	i = get32bit(&rptr);
+	get32bit(&rptr, i);
 	if (i!=MATOCL_FUSE_REGISTER) {
 		if (verbose) {
 			fprintf(stderr,"got incorrect answer from sfsmaster\n");
@@ -694,7 +695,7 @@ int fs_connect(bool verbose) {
 		free(regbuff);
 		return -1;
 	}
-	i = get32bit(&rptr);
+	get32bit(&rptr, i);
 	if (!(i==1 || (gInitParams.meta && (i==5 || i==9 || i==19)) || (gInitParams.meta==0 && (i==13 || i==21 || i==25 || i==35)))) {
 		if (verbose) {
 			fprintf(stderr,"got incorrect answer from sfsmaster\n");
@@ -730,21 +731,21 @@ int fs_connect(bool verbose) {
 		return -1;
 	}
 	if (i==9 || i==19 || i==25 || i==35) {
-		masterversion = get32bit(&rptr);
+		get32bit(&rptr, masterversion);
 	} else {
 		masterversion = 0;
 	}
-	sessionid = get32bit(&rptr);
+	get32bit(&rptr, sessionid);
 	sesflags = get8bit(&rptr);
 #ifdef _WIN32
 	*sessionFlags = sesflags;
 #endif
 	if (!gInitParams.meta) {
-		rootuid = get32bit(&rptr);
-		rootgid = get32bit(&rptr);
+		get32bit(&rptr, rootuid);
+		get32bit(&rptr, rootgid);
 		if (i==21 || i==25 || i==35) {
-			mapalluid = get32bit(&rptr);
-			mapallgid = get32bit(&rptr);
+			get32bit(&rptr, mapalluid);
+			get32bit(&rptr, mapallgid);
 		} else {
 			mapalluid = 0;
 			mapallgid = 0;
@@ -758,8 +759,8 @@ int fs_connect(bool verbose) {
 	if (i==19 || i==35) {
 		mingoal = get8bit(&rptr);
 		maxgoal = get8bit(&rptr);
-		mintrashtime = get32bit(&rptr);
-		maxtrashtime = get32bit(&rptr);
+		get32bit(&rptr, mintrashtime);
+		get32bit(&rptr, maxtrashtime);
 	} else {
 		mingoal = 0;
 		maxgoal = 0;
@@ -972,14 +973,14 @@ void fs_reconnect() {
 	}
 	master_stats_add(MASTER_BYTESRCVD,8);
 	rptr = regbuff;
-	i = get32bit(&rptr);
+	get32bit(&rptr, i);
 	if (i!=MATOCL_FUSE_REGISTER) {
 		safs_pretty_syslog(LOG_WARNING,"master: register error (bad answer: %" PRIu32 ")",i);
 		tcpclose(fd);
 		fd=-1;
 		return;
 	}
-	i = get32bit(&rptr);
+	get32bit(&rptr, i);
 	if (i!=1) {
 		safs_pretty_syslog(LOG_WARNING,"master: register error (bad length: %" PRIu32 ")",i);
 		tcpclose(fd);
@@ -1437,7 +1438,9 @@ void fs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 		*availspace = get64bit(&rptr);
 		*trashspace = get64bit(&rptr);
 		*reservedspace = get64bit(&rptr);
-		*inodes = get32bit(&rptr);
+		inode_t tmpInodes;
+		get32bit(&rptr, tmpInodes);
+		*inodes = tmpInodes;
 	}
 }
 
@@ -1689,7 +1692,7 @@ uint8_t fs_readlink(inode_t inode,const uint8_t **path) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		pleng = get32bit(&rptr);
+		get32bit(&rptr, pleng);
 		if (i!=4+pleng || pleng==0 || rptr[pleng-1]!=0) {
 			setDisconnect(true);
 			ret = SAUNAFS_ERROR_IO;
@@ -1732,7 +1735,7 @@ uint8_t fs_symlink(inode_t parent, uint8_t nleng, const uint8_t *name, const uin
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		t32 = get32bit(&rptr);
+		get32bit(&rptr, t32);
 		*inode = t32;
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
@@ -1911,7 +1914,7 @@ uint8_t fs_rename(inode_t parent_src, uint8_t nleng_src, const uint8_t *name_src
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		t32 = get32bit(&rptr);
+		get32bit(&rptr, t32);
 		*inode = t32;
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
@@ -1947,7 +1950,7 @@ uint8_t fs_link(inode_t inode_src, inode_t parent_dst, uint8_t nleng_dst, const 
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		t32 = get32bit(&rptr);
+		get32bit(&rptr, t32);
 		*inode = t32;
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
@@ -2149,7 +2152,7 @@ uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *c
 		*length = t64;
 		t64 = get64bit(&rptr);
 		*chunkid = t64;
-		t32 = get32bit(&rptr);
+		get32bit(&rptr, t32);
 		*version = t32;
 		if (i>20) {
 			*csdata = rptr;
@@ -2243,7 +2246,7 @@ uint8_t fs_writechunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *
 		*length = t64;
 		t64 = get64bit(&rptr);
 		*chunkid = t64;
-		t32 = get32bit(&rptr);
+		get32bit(&rptr, t32);
 		*version = t32;
 		if (i>20) {
 			*csdata = rptr;
@@ -2508,7 +2511,7 @@ uint8_t fs_gettrashpath(inode_t inode,const uint8_t **path) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		pleng = get32bit(&rptr);
+		get32bit(&rptr, pleng);
 		if (i!=4+pleng || pleng==0 || rptr[pleng-1]!=0) {
 			setDisconnect(true);
 			ret = SAUNAFS_ERROR_IO;
@@ -2624,7 +2627,9 @@ uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		*vleng = get32bit(&rptr);
+		uint32_t tempVLeng;
+		get32bit(&rptr, tempVLeng);
+		*vleng = tempVLeng;
 		*vbuff = (mode==XATTR_GMODE_GET_DATA)?rptr:NULL;
 		if ((mode==XATTR_GMODE_GET_DATA && i!=(*vleng)+4) || (mode==XATTR_GMODE_LENGTH_ONLY && i!=4)) {
 			setDisconnect(true);
@@ -2665,7 +2670,9 @@ uint8_t fs_listxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, 
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		*dleng = get32bit(&rptr);
+		uint32_t tmpDLeng;
+		get32bit(&rptr, tmpDLeng);
+		*dleng = tmpDLeng;
 		*dbuff = (mode==XATTR_GMODE_GET_DATA)?rptr:NULL;
 		if ((mode==XATTR_GMODE_GET_DATA && i!=(*dleng)+4) || (mode==XATTR_GMODE_LENGTH_ONLY && i!=4)) {
 			setDisconnect(true);

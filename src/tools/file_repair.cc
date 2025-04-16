@@ -79,8 +79,8 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 		return -1;
 	}
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
 	if (cmd != MATOCL_FUSE_REPAIR) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
@@ -94,7 +94,7 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 		return -1;
 	}
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
+	get32bit(&rptr, cmd);  // queryid
 	if (cmd != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
@@ -114,9 +114,9 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 		return -1;
 	}
 	close_master_conn(0);
-	notchanged = get32bit(&rptr);
-	erased = get32bit(&rptr);
-	repaired = get32bit(&rptr);
+	get32bit(&rptr, notchanged);
+	get32bit(&rptr, erased);
+	get32bit(&rptr, repaired);
 	free(buff);
 	printf("%s:\n", fname);
 	print_number(" chunks not changed: ", "\n", notchanged, 1, 0, 1);

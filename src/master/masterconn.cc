@@ -712,8 +712,8 @@ void MasterConn::downloadData(const uint8_t *data, uint32_t length) {
 
 	passert(data);
 	offset = get64bit(&data);
-	leng = get32bit(&data);
-	crc = get32bit(&data);
+	get32bit(&data, leng);
+	get32bit(&data, crc);
 
 	if (leng + 16 != length) {
 		safs::log_info("MATOML_DOWNLOAD_DATA - wrong size ({}/16+{})", length, leng);
@@ -994,7 +994,7 @@ void MasterConn::readFromSocket() {
 
 		if (mode == Mode::Header) {
 			ptr = headerBuffer.data() + kPacketTypeSize;
-			size = get32bit(&ptr);
+			get32bit(&ptr, size);
 
 			if (size > 0) {
 				if (size > kMaxPacketSize) {
@@ -1016,8 +1016,8 @@ void MasterConn::readFromSocket() {
 
 		if (mode == Mode::Data) {
 			ptr = headerBuffer.data();
-			type = get32bit(&ptr);
-			size = get32bit(&ptr);
+			get32bit(&ptr, type);
+			get32bit(&ptr, size);
 
 			mode = Mode::Header;
 			inputPacket.bytesLeft = kHeaderSize;

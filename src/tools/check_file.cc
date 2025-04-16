@@ -68,8 +68,8 @@ static int check_file(const char *fname) {
 		return -1;
 	}
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
 	if (cmd != MATOCL_FUSE_CHECK) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
@@ -84,7 +84,7 @@ static int check_file(const char *fname) {
 	}
 	close_master_conn(0);
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
+	get32bit(&rptr, cmd);  // queryid
 	if (cmd != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
@@ -114,7 +114,7 @@ static int check_file(const char *fname) {
 		}
 	} else {
 		for (cmd = 0; cmd < 11; cmd++) {
-			chunks = get32bit(&rptr);
+			get32bit(&rptr, chunks);
 			if (chunks > 0) {
 				if (cmd == 1) {
 					printf(" chunks with 1 copy:    ");

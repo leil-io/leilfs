@@ -437,7 +437,7 @@ inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, uin
 inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, uint32_t& value) {
 	verifySize(value, bytesLeftInBuffer);
 	bytesLeftInBuffer -= 4;
-	value = get32bit(source);
+	get32bit(source, value);
 }
 
 inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, uint64_t& value) {
@@ -455,7 +455,7 @@ inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, int
 inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, int32_t& value) {
 	verifySize(value, bytesLeftInBuffer);
 	bytesLeftInBuffer -= 4;
-	value = get32bit(source);
+	get32bit(source, value);
 }
 
 inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, int64_t& value) {

@@ -425,9 +425,9 @@ bool xattr_load(MetadataLoader::Options options) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: can't read xattr");
 			return false;
 		}
-		inode = get32bit(&ptr);
+		get32bit(&ptr, inode);
 		anleng = get8bit(&ptr);
-		avleng = get32bit(&ptr);
+		get32bit(&ptr, avleng);
 		options.offset = options.metadataFile->offset(ptr);
 		if (inode == 0) {
 			return true;
@@ -561,8 +561,10 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 		return kSuccess;
 	}
 	const auto* pSrc = metadataFile->seek(sectionOffset);
-	inode_t parentId = get32bit(&pSrc);
-	inode_t childId = get32bit(&pSrc);
+	inode_t parentId;
+	get32bit(&pSrc, parentId);
+	inode_t childId;
+	get32bit(&pSrc, childId);
 	auto edgeNameSize = get16bit(&pSrc);
 	sectionOffset = metadataFile->offset(pSrc);
 
@@ -731,15 +733,15 @@ int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size
 
 	node = FSNode::create(type);
 	passert(node);
-	node->id = get32bit(&pSrc);
+	get32bit(&pSrc, node->id);
 	node->goal = get8bit(&pSrc);
 	node->mode = get16bit(&pSrc);
-	node->uid = get32bit(&pSrc);
-	node->gid = get32bit(&pSrc);
-	node->atime = get32bit(&pSrc);
-	node->mtime = get32bit(&pSrc);
-	node->ctime = get32bit(&pSrc);
-	node->trashtime = get32bit(&pSrc);
+	get32bit(&pSrc, node->uid);
+	get32bit(&pSrc, node->gid);
+	get32bit(&pSrc, node->atime);
+	get32bit(&pSrc, node->mtime);
+	get32bit(&pSrc, node->ctime);
+	get32bit(&pSrc, node->trashtime);
 	sectionOffset = metadataFile->offset(pSrc);
 	auto *nodeFile = static_cast<FSNodeFile *>(node);
 
@@ -759,10 +761,12 @@ int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size
 		break;
 	case FSNode::kBlockDev:
 	case FSNode::kCharDev:
-		static_cast<FSNodeDevice *>(node)->rdev = get32bit(&pSrc);
+		uint32_t tempRDev;
+		get32bit(&pSrc, tempRDev);
+		static_cast<FSNodeDevice *>(node)->rdev = tempRDev;
 		break;
 	case FSNode::kSymlink:
-		nodeNameLength = get32bit(&pSrc);
+		get32bit(&pSrc, nodeNameLength);
 		static_cast<FSNodeSymlink *>(node)->path_length = nodeNameLength;
 		if (nodeNameLength > 0) {
 			static_cast<FSNodeSymlink *>(node)->path = HString(pSrc, pSrc + nodeNameLength);
@@ -774,7 +778,7 @@ int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size
 	case FSNode::kTrash:
 	case FSNode::kReserved:
 		nodeFile->length = get64bit(&pSrc);
-		chunkAmount = get32bit(&pSrc);
+		get32bit(&pSrc, chunkAmount);
 		sessionIds = get16bit(&pSrc);
 
 		nodeFile->chunks.resize(chunkAmount);
@@ -790,7 +794,8 @@ int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size
 			nodeFile->chunks[index++] = get64bit(&pSrc);
 		}
 		while (sessionIds) {
-			uint32_t sessionId = get32bit(&pSrc);
+			uint32_t sessionId;
+			get32bit(&pSrc, sessionId);
 			nodeFile->sessionid.push_back(sessionId);
 #ifndef METARESTORE
 			matoclserv_add_open_file(sessionId, node->id);
@@ -931,7 +936,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 		return false;
 	}
 
-	freeNodesNumber = get32bit(&ptr);
+	get32bit(&ptr, freeNodesNumber);
 
 	if (options.sectionLength && freeNodesNumber != (options.sectionLength - 4) / 8) {
 		safs_pretty_errlog(LOG_INFO,
@@ -945,8 +950,10 @@ bool fs_loadfree(MetadataLoader::Options options) {
 		if (freeNodesToLoad == 0) {
 			freeNodesToLoad = std::min(freeNodesNumber, inode_t(1024));
 		}
-		inode_t id = get32bit(&ptr);
-		uint32_t timestamp = get32bit(&ptr);
+		inode_t id;
+		get32bit(&ptr, id);
+		uint32_t timestamp;
+		get32bit(&ptr, timestamp);
 		gMetadata->inode_pool.detain(id, timestamp, true);
 		freeNodesToLoad--;
 		freeNodesNumber--;
@@ -995,9 +1002,9 @@ int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile,
 	/// Skip File Signature
 	const uint8_t *metadataHeaderPtr= metadataFile->seek(kMetadataHeaderOffset);
 
-	gMetadata->maxnodeid = get32bit(&metadataHeaderPtr);
+	get32bit(&metadataHeaderPtr, gMetadata->maxnodeid);
 	gMetadata->metaversion = get64bit(&metadataHeaderPtr);
-	gMetadata->nextsessionid = get32bit(&metadataHeaderPtr);
+	get32bit(&metadataHeaderPtr, gMetadata->nextsessionid);
 
 	size_t offsetBegin = metadataFile->offset(metadataHeaderPtr);
 

@@ -166,12 +166,12 @@ static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat 
 	ptr = attr.data();
 	attrtype = get8bit(&ptr);
 	attrmode = get16bit(&ptr);
-	attruid = get32bit(&ptr);
-	attrgid = get32bit(&ptr);
-	attratime = get32bit(&ptr);
-	attrmtime = get32bit(&ptr);
-	attrctime = get32bit(&ptr);
-	attrnlink = get32bit(&ptr);
+	get32bit(&ptr, attruid);
+	get32bit(&ptr, attrgid);
+	get32bit(&ptr, attratime);
+	get32bit(&ptr, attrmtime);
+	get32bit(&ptr, attrctime);
+	get32bit(&ptr, attrnlink);
 	attrlength = get64bit(&ptr);
 	stbuf->st_ino = inode;
 	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_RESERVED) {
@@ -543,7 +543,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 			put8bit(&buff,inoleng);
 			name = (const char*)dbuff;
 			dbuff+=nleng;
-			inode = get32bit(&dbuff);
+			get32bit(&dbuff, inode);
 			sprintf((char*)buff,"%08" PRIXiNode "|",inode);
 			if (nleng>255-9) {
 				memcpy(buff+9,name,255-9);
@@ -713,7 +713,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 			ptr+=nleng;
 			off+=nleng+6;
 			if (ptr+5<=eptr) {
-				inode = get32bit(&ptr);
+				get32bit(&ptr, inode);
 				type = get8bit(&ptr);
 				sfs_meta_type_to_stat(inode,type,&stbuf);
 				c = name[nleng];

@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
 		sau_err = sau_last_err();
 		goto release_fileinfo;
 	}
-	printf("Filled interrupt info: %lx %u %u\n", lock_interrupt_info.owner,
+	printf("Filled interrupt info: %lx %" PRIiNode " %u\n", lock_interrupt_info.owner,
 	       lock_interrupt_info.ino, lock_interrupt_info.reqid);
 
 release_fileinfo:

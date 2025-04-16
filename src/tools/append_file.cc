@@ -91,8 +91,8 @@ static int append_file(const char *fname, const char *afname) {
 		return -1;
 	}
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
 	if (cmd != MATOCL_FUSE_APPEND) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
@@ -107,7 +107,7 @@ static int append_file(const char *fname, const char *afname) {
 	}
 	close_master_conn(0);
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
+	get32bit(&rptr, cmd);  // queryid
 	if (cmd != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);

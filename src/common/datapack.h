@@ -81,11 +81,11 @@ static inline uint64_t get64bit(const uint8_t **ptr) {
 	return t64;
 }
 
-static inline uint32_t get32bit(const uint8_t **ptr) {
-	uint32_t t32;
-	t32=((*ptr)[3]+256U*((*ptr)[2]+256U*((*ptr)[1]+256U*(*ptr)[0])));
-	(*ptr)+=4;
-	return t32;
+template<typename T>
+static inline void get32bit(const uint8_t **ptr, T& output) {
+	static_assert(sizeof(T) == 4, "get32bit only accepts types of 4 bytes size");
+	output = ((*ptr)[3]+256U*((*ptr)[2]+256U*((*ptr)[1]+256U*(*ptr)[0])));
+	(*ptr) += sizeof(uint32_t);
 }
 
 static inline uint16_t get16bit(const uint8_t **ptr) {

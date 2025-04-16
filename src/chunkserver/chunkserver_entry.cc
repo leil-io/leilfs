@@ -1040,7 +1040,7 @@ void ChunkserverEntry::generateChartPNGorCSV(const uint8_t *data,
 		state = State::Close;
 		return;
 	}
-	chartid = get32bit(&data);
+	get32bit(&data, chartid);
 	if(chartid <= CHARTS_CSV_CHARTID_BASE) {
 		len = charts_make_png(chartid);
 		ptr = createAttachedPacket(ANTOCL_CHART, len);
@@ -1068,7 +1068,7 @@ void ChunkserverEntry::generateChartData(const uint8_t *data, uint32_t length) {
 		state = State::Close;
 		return;
 	}
-	chartid = get32bit(&data);
+	get32bit(&data, chartid);
 	len = charts_datasize(chartid);
 	ptr = createAttachedPacket(ANTOCL_CHART_DATA, len);
 	if (len > 0) {
@@ -1262,8 +1262,10 @@ void ChunkserverEntry::checkNextPacket() {
 
 	auto processNextPacket = [this]() {
 		const uint8_t *ptr = headerBuffer;
-		uint32_t type = get32bit(&ptr);
-		uint32_t opSize = get32bit(&ptr);
+		uint32_t type;
+		uint32_t opSize;
+		get32bit(&ptr, type);
+		get32bit(&ptr, opSize);
 
 		mode = Mode::Header;
 		inputPacket.bytesLeft = PacketHeader::kSize;
@@ -1328,8 +1330,8 @@ void ChunkserverEntry::fwdRead() {
 		}
 
 		ptr = fwdHeaderBuffer;
-		type = get32bit(&ptr);
-		opSize = get32bit(&ptr);
+		get32bit(&ptr, type);
+		get32bit(&ptr, opSize);
 
 		if (opSize > kMaxPacketSize) {
 			safs_pretty_syslog(LOG_WARNING,
@@ -1370,8 +1372,8 @@ void ChunkserverEntry::fwdRead() {
 			}
 		}
 		ptr = fwdHeaderBuffer;
-		type = get32bit(&ptr);
-		opSize = get32bit(&ptr);
+		get32bit(&ptr, type);
+		get32bit(&ptr, opSize);
 
 		fwdMode = Mode::Header;
 		fwdInputPacket.bytesLeft = PacketHeader::kSize;
@@ -1593,8 +1595,8 @@ void ChunkserverEntry::readFromSocket() {
 		}
 
 		ptr = headerBuffer;
-		type = get32bit(&ptr);
-		opSize = get32bit(&ptr);
+		get32bit(&ptr, type);
+		get32bit(&ptr, opSize);
 
 		if (opSize > 0) {
 			if (opSize > kMaxPacketSize) {
@@ -1648,8 +1650,8 @@ void ChunkserverEntry::readFromSocket() {
 		}
 		if (writeJobId == 0) {
 			ptr = headerBuffer;
-			type = get32bit(&ptr);
-			opSize = get32bit(&ptr);
+			get32bit(&ptr, type);
+			get32bit(&ptr, opSize);
 
 			mode = Mode::Header;
 			inputPacket.bytesLeft = PacketHeader::kSize;

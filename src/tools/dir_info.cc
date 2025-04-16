@@ -76,8 +76,8 @@ static int dir_info(const char *fname) {
 		return -1;
 	}
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
 	if (cmd != MATOCL_FUSE_GETDIRSTATS) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
@@ -91,7 +91,7 @@ static int dir_info(const char *fname) {
 		return -1;
 	}
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
+	get32bit(&rptr, cmd);  // queryid
 	if (cmd != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
@@ -111,15 +111,15 @@ static int dir_info(const char *fname) {
 		return -1;
 	}
 	close_master_conn(0);
-	inodes = get32bit(&rptr);
-	dirs = get32bit(&rptr);
-	files = get32bit(&rptr);
-	links = get32bit(&rptr);
+	get32bit(&rptr, inodes);
+	get32bit(&rptr, dirs);
+	get32bit(&rptr, files);
+	get32bit(&rptr, links);
 	if (leng == kDirStatsLegacyPayload) {
 		// skip empty data (8 bytes) from legacy format
 		rptr += sizeof(uint32_t ) << 1;
 	}
-	chunks = get32bit(&rptr);
+	get32bit(&rptr, chunks);
 	if (leng == kDirStatsLegacyPayload) {
 		// skip empty data (8 bytes) from legacy format
 		rptr += sizeof(uint32_t ) << 1;

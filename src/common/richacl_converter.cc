@@ -150,10 +150,16 @@ static RichACL::Ace extractAceFromNFS(const uint8_t *&buffer, uint32_t &bytes_le
 		throw ExtractionException("Buffer too short for ACE header");
 	}
 
-	uint32_t type = get32bit(&buffer);
-	uint32_t flag = get32bit(&buffer);
-	uint32_t access_mask = get32bit(&buffer);
-	uint32_t owner_length = get32bit(&buffer);
+	uint32_t type;
+	uint32_t flag;
+	uint32_t access_mask;
+	uint32_t owner_length;
+
+	get32bit(&buffer, type);
+	get32bit(&buffer, flag);
+	get32bit(&buffer, access_mask);
+	get32bit(&buffer, owner_length);
+
 	bytes_left -= 4 * sizeof(uint32_t);
 
 	if (bytes_left < owner_length) {
@@ -192,7 +198,8 @@ RichACL richAclConverter::extractObjectFromNFS(const uint8_t *buffer, uint32_t b
 	}
 
 	uint32_t bytes_left = buffer_size;
-	uint32_t ace_count = get32bit(&buffer);
+	uint32_t ace_count;
+	get32bit(&buffer, ace_count);
 	bytes_left -= sizeof(uint32_t);
 
 	for (uint32_t i = 0; i < ace_count; ++i) {
