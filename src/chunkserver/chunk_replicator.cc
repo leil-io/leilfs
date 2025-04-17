@@ -141,7 +141,7 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 		const std::vector<ChunkTypeWithAddress>& sources) {
 	// Get number of blocks to replicate
 	int blocks = getChunkBlocks(fileCreator.chunkId(), fileCreator.chunkVersion(), sources);
-	int batchSize = 50;
+	int batchSize = SFSBLOCKSINCHUNK;
 	int data_part_count = slice_traits::getNumberOfDataParts(fileCreator.chunkType());
 	blocks = slice_traits::getNumberOfBlocks(fileCreator.chunkType(), blocks);
 	batchSize = data_part_count * ((batchSize + data_part_count - 1) / data_part_count);
