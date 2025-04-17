@@ -147,7 +147,7 @@ public:
 	std::unique_ptr<ReadPlan> buildPlan() {
 		switch (recovery_type_) {
 		case kReadDataPart:
-			return slice_planner_.buildPlanFor(first_block_, block_count_);
+			return slice_planner_.buildPlanFor(first_block_, block_count_, false);
 		case kRecoverDataPart: {
 			std::unique_ptr<ReadPlan> plan = chunk_planner_.buildPlan();
 

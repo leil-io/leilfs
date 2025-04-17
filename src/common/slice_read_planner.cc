@@ -165,10 +165,13 @@ bool SliceReadPlanner::shouldReadPartsRequiredForRecovery() const {
  * are queued for first wave and additional parts are added to consecutive waves.
  * \param first_block first block to be read
  * \param block_count number of blocks to be read
+ * \param addExtraPartsWhenRequiredPartsAvailable whether to add extra parts when required parts are
+ * available
  * \return read plan ready to be executed
  */
-std::unique_ptr<ReadPlan> SliceReadPlanner::buildPlanFor(uint32_t first_block,
-		uint32_t block_count) {
+std::unique_ptr<ReadPlan> SliceReadPlanner::buildPlanFor(
+    uint32_t first_block, uint32_t block_count,
+    bool addExtraPartsWhenRequiredPartsAvailable) {
 	std::unique_ptr<SliceReadPlan> plan = getPlan();
 	plan->buffer_part_size = block_count * SFSBLOCKSIZE;
 
@@ -208,7 +211,9 @@ std::unique_ptr<ReadPlan> SliceReadPlanner::buildPlanFor(uint32_t first_block,
 
 		int requested_parts_count = std::distance(weighted_parts_to_use_.begin(), breakpoint);
 		int offset = addBasicParts(plan.get(), first_block, block_count, requested_parts_count);
-		addExtraParts(plan.get(), first_block, block_count, offset);
+		if (addExtraPartsWhenRequiredPartsAvailable) {
+			addExtraParts(plan.get(), first_block, block_count, offset);
+		}
 	}
 
 	return plan;

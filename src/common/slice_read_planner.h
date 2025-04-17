@@ -89,7 +89,8 @@ public:
 	/*!
 	 * Builds a plan for reading blocks in range [first_block, first_block + block_count).
 	 */
-	std::unique_ptr<ReadPlan> buildPlanFor(uint32_t first_block, uint32_t block_count);
+	std::unique_ptr<ReadPlan> buildPlanFor(uint32_t first_block, uint32_t block_count,
+	                                       bool addExtraPartsWhenRequiredPartsAvailable = true);
 
 private:
 	struct WeightedPart {
