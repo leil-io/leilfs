@@ -778,7 +778,7 @@ int matoclserv_load_sessions() {
 			get32bit(&ptr, asesdata->sessionid);
 			get32bit(&ptr, ileng);
 			get32bit(&ptr, asesdata->peerip);
-			get32bit(&ptr, asesdata->rootinode);
+			getINode(&ptr, asesdata->rootinode);
 			asesdata->sesflags = get8bit(&ptr);
 			if (goaltrashdata) {
 				asesdata->mingoal = get8bit(&ptr);
@@ -1967,7 +1967,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr,const uint8_t *data,u
 	// read in advance all the files to reserve
 	while (length) {
 		length--;
-		get32bit(&ptr, inode);
+		getINode(&ptr, inode);
 		inodes_to_reserve.insert(inode);
 	}
 
@@ -2036,7 +2036,7 @@ void matoclserv_fuse_access(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
 	modemask = get8bit(&data);
@@ -2173,7 +2173,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	nleng = get8bit(&data);
 	if (length!=17U+nleng) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_LOOKUP - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",length,nleng);
@@ -2213,7 +2213,7 @@ void matoclserv_fuse_getattr(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
 	status = matoclserv_check_group_cache(eptr, gid);
@@ -2250,7 +2250,7 @@ void matoclserv_fuse_setattr(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
 	setmask = get8bit(&data);
@@ -2415,7 +2415,7 @@ void matoclserv_fuse_readlink(matoclserventry *eptr,const uint8_t *data,uint32_t
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	FsContext context = matoclserv_get_context(eptr);
 	status = fs_readlink(context, inode, path);
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_READLINK,
@@ -2453,7 +2453,7 @@ void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	nleng = get8bit(&data);
 	if (length < 21U + nleng) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_SYMLINK - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",
@@ -2610,7 +2610,7 @@ void matoclserv_fuse_unlink(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	nleng = get8bit(&data);
 	if (length!=17U+nleng) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_UNLINK - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",length,nleng);
@@ -2679,7 +2679,7 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr,const uint8_t *data,uint32_t le
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	nleng = get8bit(&data);
 	if (length!=17U+nleng) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_RMDIR - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",length,nleng);
@@ -2720,7 +2720,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode_src);
+	getINode(&data, inode_src);
 	nleng_src = get8bit(&data);
 	if (length<22U+nleng_src) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_RENAME - wrong size (%" PRIu32 ":nleng_src=%" PRIu8 ")",length,nleng_src);
@@ -2729,7 +2729,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	}
 	name_src = data;
 	data += nleng_src;
-	get32bit(&data, inode_dst);
+	getINode(&data, inode_dst);
 	nleng_dst = get8bit(&data);
 	if (length!=22U+nleng_src+nleng_dst) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_RENAME - wrong size (%" PRIu32 ":nleng_src=%" PRIu8 ":nleng_dst=%" PRIu8 ")",length,nleng_src,nleng_dst);
@@ -2780,8 +2780,8 @@ void matoclserv_fuse_link(matoclserventry *eptr,const uint8_t *data,uint32_t len
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
-	get32bit(&data, inode_dst);
+	getINode(&data, inode);
+	getINode(&data, inode_dst);
 	nleng_dst = get8bit(&data);
 	if (length!=21U+nleng_dst) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_LINK - wrong size (%" PRIu32 ":nleng_dst=%" PRIu8 ")",length,nleng_dst);
@@ -2879,7 +2879,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
 	if (length==17) {
@@ -2925,7 +2925,7 @@ void matoclserv_fuse_open(matoclserventry *eptr,const uint8_t *data,uint32_t len
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
 	flags = get8bit(&data);
@@ -3129,7 +3129,7 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 	uint8_t correct_only = 0;
 	if (length == 16 || length == 17) {
 		get32bit(&data, msgid);
-		get32bit(&data, inode);
+		getINode(&data, inode);
 		get32bit(&data, uid);
 		get32bit(&data, gid);
 		if (length == 17) {
@@ -3171,7 +3171,7 @@ void matoclserv_fuse_check(matoclserventry *eptr,const uint8_t *data,uint32_t le
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	status = fs_checkfile(matoclserv_get_context(eptr),inode,chunkcount);
 	if (status!=SAUNAFS_STATUS_OK) {
 		ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_CHECK,5);
@@ -3231,7 +3231,7 @@ void matoclserv_fuse_gettrashtime(matoclserventry *eptr,const uint8_t *data,uint
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	gmode = get8bit(&data);
 	status = fs_gettrashtime_prepare(matoclserv_get_context(eptr), inode, gmode, fileTrashtimes, dirTrashtimes);
 	fileTrashtimesSize = fileTrashtimes.size();
@@ -3472,7 +3472,7 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	gmode = get8bit(&data);
 	status = fs_geteattr(matoclserv_get_context(eptr),inode,gmode,feattrtab,deattrtab);
 	fn=0;
@@ -3523,7 +3523,7 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, uid);
 	eattr = get8bit(&data);
 	smode = get8bit(&data);
@@ -3555,7 +3555,7 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	opened = get8bit(&data);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
@@ -3631,7 +3631,7 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	opened = get8bit(&data);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
@@ -3676,8 +3676,8 @@ void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
-	get32bit(&data, inode_src);
+	getINode(&data, inode);
+	getINode(&data, inode_src);
 	get32bit(&data, uid);
 	get32bit(&data, gid);
 	status = matoclserv_check_group_cache(eptr, gid);
@@ -3758,7 +3758,7 @@ void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,u
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	status = fs_get_dir_stats(matoclserv_get_context(eptr), inode,
 							  &inodes, &dirs, &files, &links, &chunks,
 							  &leng, &size, &rsize);
@@ -3800,7 +3800,7 @@ void matoclserv_fuse_getdirstats(matoclserventry *eptr,const uint8_t *data,uint3
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	status = fs_get_dir_stats(matoclserv_get_context(eptr), inode,
 							  &inodes, &dirs, &files, &links, &chunks,
 							  &leng, &size, &rsize);
@@ -3865,7 +3865,7 @@ void matoclserv_fuse_getdetachedattr(matoclserventry *eptr,const uint8_t *data,u
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	if (length==9) {
 		dtype = get8bit(&data);
 	} else {
@@ -3893,7 +3893,7 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr,const uint8_t *data,uint
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	status = fs_gettrashpath(eptr->sesdata->rootinode, eptr->sesdata->sesflags, inode, path);
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_GETTRASHPATH,
 	                              (status != SAUNAFS_STATUS_OK) ? 5 : 8 + path.length() + 1);
@@ -3923,7 +3923,7 @@ void matoclserv_fuse_settrashpath(matoclserventry *eptr,const uint8_t *data,uint
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	get32bit(&data, pleng);
 	if (length!=12+pleng) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_SETTRASHPATH - wrong size (%" PRIu32 "/%" PRIu32 ")",length,12+pleng);
@@ -3952,7 +3952,7 @@ void matoclserv_fuse_undel(matoclserventry *eptr,const uint8_t *data,uint32_t le
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	status = fs_undel(matoclserv_get_context(eptr), inode);
 	ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_UNDEL,5);
 	put32bit(&ptr,msgid);
@@ -3970,7 +3970,7 @@ void matoclserv_fuse_purge(matoclserventry *eptr,const uint8_t *data,uint32_t le
 		return;
 	}
 	get32bit(&data, msgid);
-	get32bit(&data, inode);
+	getINode(&data, inode);
 	status = fs_purge(matoclserv_get_context(eptr), inode);
 	ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_PURGE,5);
 	put32bit(&ptr,msgid);

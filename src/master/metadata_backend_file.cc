@@ -425,7 +425,7 @@ bool xattr_load(MetadataLoader::Options options) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: can't read xattr");
 			return false;
 		}
-		get32bit(&ptr, inode);
+		getINode(&ptr, inode);
 		anleng = get8bit(&ptr);
 		get32bit(&ptr, avleng);
 		options.offset = options.metadataFile->offset(ptr);
@@ -562,9 +562,9 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
 	}
 	const auto* pSrc = metadataFile->seek(sectionOffset);
 	inode_t parentId;
-	get32bit(&pSrc, parentId);
+	getINode(&pSrc, parentId);
 	inode_t childId;
-	get32bit(&pSrc, childId);
+	getINode(&pSrc, childId);
 	auto edgeNameSize = get16bit(&pSrc);
 	sectionOffset = metadataFile->offset(pSrc);
 
@@ -733,7 +733,7 @@ int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size
 
 	node = FSNode::create(type);
 	passert(node);
-	get32bit(&pSrc, node->id);
+	getINode(&pSrc, node->id);
 	node->goal = get8bit(&pSrc);
 	node->mode = get16bit(&pSrc);
 	get32bit(&pSrc, node->uid);
@@ -936,7 +936,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 		return false;
 	}
 
-	get32bit(&ptr, freeNodesNumber);
+	getINode(&ptr, freeNodesNumber);
 
 	if (options.sectionLength && freeNodesNumber != (options.sectionLength - 4) / 8) {
 		safs_pretty_errlog(LOG_INFO,
@@ -951,7 +951,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 			freeNodesToLoad = std::min(freeNodesNumber, inode_t(1024));
 		}
 		inode_t id;
-		get32bit(&ptr, id);
+		getINode(&ptr, id);
 		uint32_t timestamp;
 		get32bit(&ptr, timestamp);
 		gMetadata->inode_pool.detain(id, timestamp, true);
@@ -1002,7 +1002,7 @@ int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile,
 	/// Skip File Signature
 	const uint8_t *metadataHeaderPtr= metadataFile->seek(kMetadataHeaderOffset);
 
-	get32bit(&metadataHeaderPtr, gMetadata->maxnodeid);
+	getINode(&metadataHeaderPtr, gMetadata->maxnodeid);
 	gMetadata->metaversion = get64bit(&metadataHeaderPtr);
 	get32bit(&metadataHeaderPtr, gMetadata->nextsessionid);
 

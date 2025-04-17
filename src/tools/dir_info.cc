@@ -111,10 +111,10 @@ static int dir_info(const char *fname) {
 		return -1;
 	}
 	close_master_conn(0);
-	get32bit(&rptr, inodes);
-	get32bit(&rptr, dirs);
-	get32bit(&rptr, files);
-	get32bit(&rptr, links);
+	getINode(&rptr, inodes);
+	getINode(&rptr, dirs);
+	getINode(&rptr, files);
+	getINode(&rptr, links);
 	if (leng == kDirStatsLegacyPayload) {
 		// skip empty data (8 bytes) from legacy format
 		rptr += sizeof(uint32_t ) << 1;

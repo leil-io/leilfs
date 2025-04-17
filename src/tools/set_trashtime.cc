@@ -26,6 +26,7 @@
 
 #include "common/datapack.h"
 #include "common/massert.h"
+#include "common/type_defs.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
@@ -78,12 +79,17 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 	put32bit(&wptr, uid);
 	put32bit(&wptr, trashtime);
 	put8bit(&wptr, mode);
+
 	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
-	if (tcptoread(fd, reqbuff, 8, long_wait ? kInfiniteTimeout : kDefaultTimeout) != 8) {
+
+	constexpr uint32_t kAnswerHeaderSize = sizeof(cmd) + sizeof(leng);
+	int effectiveTimeout = long_wait ? kInfiniteTimeout : kDefaultTimeout;
+
+	if (tcptoread(fd, reqbuff, kAnswerHeaderSize, effectiveTimeout) != kAnswerHeaderSize) {
 		printf("%s: master query: receive error\n", fname);
 		close_master_conn(1);
 		return -1;
@@ -111,19 +117,19 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 		free(buff);
 		return -1;
 	}
-	leng -= 4;
+	leng -= sizeof(cmd);
 	if (leng == 1) {
 		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
 		free(buff);
 		return -1;
-	} else if (leng != 12) {
+	} else if (leng != 3 * kinode_t_size) {  // changed, notchanged, notpermitted
 		printf("%s: master query: wrong answer (leng)\n", fname);
 		free(buff);
 		return -1;
 	}
-	get32bit(&rptr, changed);
-	get32bit(&rptr, notchanged);
-	get32bit(&rptr, notpermitted);
+	getINode(&rptr, changed);
+	getINode(&rptr, notchanged);
+	getINode(&rptr, notpermitted);
 	if ((mode & SMODE_RMASK) == 0) {
 		if (changed || mode == SMODE_SET) {
 			printf("%s: %" PRIu32 "\n", fname, trashtime);

@@ -81,11 +81,22 @@ static inline uint64_t get64bit(const uint8_t **ptr) {
 	return t64;
 }
 
-template<typename T>
-static inline void get32bit(const uint8_t **ptr, T& output) {
+template <typename T>
+static inline void get32bit(const uint8_t **ptr, T &output) {
 	static_assert(sizeof(T) == 4, "get32bit only accepts types of 4 bytes size");
-	output = ((*ptr)[3]+256U*((*ptr)[2]+256U*((*ptr)[1]+256U*(*ptr)[0])));
+	output = ((*ptr)[3] + 256U * ((*ptr)[2] + 256U * ((*ptr)[1] + 256U * (*ptr)[0])));
 	(*ptr) += sizeof(uint32_t);
+}
+
+template <typename T>
+static inline void getINode(const uint8_t **ptr, T &output) {
+	static_assert(sizeof(T) == kinode_t_size, "getINode only accepts types with sizeof(inode_t)");
+
+#ifdef USE_INODE_64
+	output = get64bit(ptr);
+#else
+	get32bit(ptr, output);
+#endif  // USE_INODE_64
 }
 
 static inline uint16_t get16bit(const uint8_t **ptr) {

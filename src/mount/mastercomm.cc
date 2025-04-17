@@ -1439,7 +1439,7 @@ void fs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 		*trashspace = get64bit(&rptr);
 		*reservedspace = get64bit(&rptr);
 		inode_t tmpInodes;
-		get32bit(&rptr, tmpInodes);
+		getINode(&rptr, tmpInodes);
 		*inodes = tmpInodes;
 	}
 }

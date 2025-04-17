@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <cstdint>
 #include <vector>
 
 #include "common/datapack.h"
@@ -97,19 +98,21 @@ void print_name(FILE *in,uint32_t nleng) {
 }
 
 int fs_loadedge(FILE *fd) {
-	uint8_t uedgebuff[4+4+2];
-	const uint8_t *ptr;
 	inode_t parent_id;
 	inode_t child_id;
 	uint16_t nleng;
 
-	if (fread(uedgebuff,1,4+4+2,fd)!=4+4+2) {
-		fprintf(stderr,"loading edge: read error\n");
+	constexpr uint32_t kEdgeBufferSize = sizeof(parent_id) + sizeof(child_id) + sizeof(nleng);
+	uint8_t uedgebuff[kEdgeBufferSize];
+	const uint8_t *ptr;
+
+	if (fread(uedgebuff, 1, kEdgeBufferSize, fd) != kEdgeBufferSize) {
+		fprintf(stderr, "loading edge: read error\n");
 		return -1;
 	}
 	ptr = uedgebuff;
-	get32bit(&ptr, parent_id);
-	get32bit(&ptr, child_id);
+	getINode(&ptr, parent_id);
+	getINode(&ptr, child_id);
 	if (parent_id==0 && child_id==0) {      // last edge
 		return 1;
 	}
@@ -198,7 +201,7 @@ int fs_loadnode(FILE *fd) {
 		break;
 	}
 	ptr = unodebuff;
-	get32bit(&ptr, nodeid);
+	getINode(&ptr, nodeid);
 	goal = get8bit(&ptr);
 	mode = get16bit(&ptr);
 	get32bit(&ptr, uid);
@@ -308,32 +311,39 @@ int fs_loadedges(FILE *fd) {
 }
 
 int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
-	uint8_t rbuff[8];
-	const uint8_t *ptr;
-	uint32_t ftime;
 	inode_t totalFreeNodes;
 	inode_t nodeid;
-	if (fread(rbuff,1,4,fd)!=4) {
+	uint32_t ftime;
+
+	constexpr uint32_t kFreeBufferSize = sizeof(nodeid) + sizeof(ftime);
+	uint8_t rbuff[kFreeBufferSize];
+	const uint8_t *ptr;
+
+	if (fread(rbuff, 1, sizeof(totalFreeNodes), fd) != sizeof(totalFreeNodes)) {
 		return -1;
 	}
 	ptr=rbuff;
-	get32bit(&ptr, totalFreeNodes);
+	getINode(&ptr, totalFreeNodes);
 
-	if (section_size && totalFreeNodes != (section_size - 4) / 8) {
-		totalFreeNodes = (section_size - 4) / 8;
+	uint64_t sectionSizeWithoutHeader = section_size - sizeof(totalFreeNodes);
+
+	if (section_size && totalFreeNodes != sectionSizeWithoutHeader / kFreeBufferSize) {
+		totalFreeNodes = sectionSizeWithoutHeader / kFreeBufferSize;
 	}
 
 	printf("# free nodes: %" PRIiNode "\n", totalFreeNodes);
-	while (totalFreeNodes>0) {
-		if (fread(rbuff,1,8,fd)!=8) {
+
+	while (totalFreeNodes > 0) {
+		if (fread(rbuff, 1, kFreeBufferSize, fd) != kFreeBufferSize) {
 			return -1;
 		}
 		ptr = rbuff;
-		get32bit(&ptr, nodeid);
+		getINode(&ptr, nodeid);
 		get32bit(&ptr, ftime);
 		printf("I|i:%10" PRIiNode "|f:%10" PRIu32 "\n", nodeid, ftime);
 		totalFreeNodes--;
 	}
+
 	return 0;
 }
 
@@ -380,15 +390,17 @@ int hexdump(FILE *fd,uint64_t sleng) {
 
 int fs_load(FILE *fd) {
 	inode_t maxnodeid;
-	uint32_t nextsessionid;
 	uint64_t version;
-	uint8_t hdr[16];
+	uint32_t nextsessionid;
+
+	constexpr uint32_t kHeaderSize = sizeof(maxnodeid) + sizeof(version) + sizeof(nextsessionid);
+	uint8_t hdr[kHeaderSize];
 	const uint8_t *ptr;
-	if (fread(hdr,1,16,fd)!=16) {
-		return -1;
-	}
+
+	if (fread(hdr, 1, kHeaderSize, fd) != kHeaderSize) { return -1; }
+
 	ptr = hdr;
-	get32bit(&ptr, maxnodeid);
+	getINode(&ptr, maxnodeid);
 	version = get64bit(&ptr);
 	get32bit(&ptr, nextsessionid);
 
@@ -415,54 +427,60 @@ int fs_load(FILE *fd) {
 
 int fs_load_2x(FILE *fd, bool loadLockIds) {
 	inode_t maxnodeid;
+	uint64_t version;
 	uint32_t nextsessionid;
 	uint64_t sleng;
 	off_t offbegin;
-	uint64_t version;
-	uint8_t hdr[16];
+
+	constexpr uint32_t kHeaderSize = sizeof(maxnodeid) + sizeof(version) + sizeof(nextsessionid);
+	uint8_t hdr[kHeaderSize];
 	const uint8_t *ptr;
-	if (fread(hdr,1,16,fd)!=16) {
-		return -1;
-	}
+
+	if (fread(hdr, 1, kHeaderSize, fd) != kHeaderSize) { return -1; }
+
 	ptr = hdr;
-	get32bit(&ptr, maxnodeid);
+	getINode(&ptr, maxnodeid);
 	version = get64bit(&ptr);
 	get32bit(&ptr, nextsessionid);
 
 	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 
-	while (1) {
-		if (fread(hdr,1,16,fd)!=16) {
+	constexpr const char *kEOFMarker = "[SFS EOF MARKER]";
+	constexpr size_t kEOFMarkerSize = 16;  // Compile time equivalent of strlen(kEOFMarker)
+	constexpr uint32_t kSectionNameSize = 8;
+
+	while (true) {
+		if (fread(hdr, 1, kEOFMarkerSize, fd) != kEOFMarkerSize) {
 			printf("can't read section header\n");
 			return -1;
 		}
-		if (memcmp(hdr,"[SFS EOF MARKER]",16)==0) {
+		if (memcmp(hdr, kEOFMarker, kEOFMarkerSize) == 0) {
 			printf("# -------------------------------------------------------------------\n");
 			printf("# SaunaFS END OF FILE MARKER\n");
 			printf("# -------------------------------------------------------------------\n");
 			return 0;
 		}
-		ptr = hdr+8;
+		ptr = hdr + kSectionNameSize;
 		sleng = get64bit(&ptr);
 		offbegin = ftello(fd);
 		printf("# -------------------------------------------------------------------\n");
 		printf("# section header: %c%c%c%c%c%c%c%c (%02X%02X%02X%02X%02X%02X%02X%02X) ; length: %" PRIu64 "\n",dispchar(hdr[0]),dispchar(hdr[1]),dispchar(hdr[2]),dispchar(hdr[3]),dispchar(hdr[4]),dispchar(hdr[5]),dispchar(hdr[6]),dispchar(hdr[7]),hdr[0],hdr[1],hdr[2],hdr[3],hdr[4],hdr[5],hdr[6],hdr[7],sleng);
-		if (memcmp(hdr,"NODE 1.0",8)==0) {
+		if (memcmp(hdr, "NODE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadnodes(fd)<0) {
 				printf("error reading metadata (NODE 1.0)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"EDGE 1.0",8)==0) {
+		} else if (memcmp(hdr, "EDGE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadedges(fd)<0) {
 				printf("error reading metadata (EDGE 1.0)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"FREE 1.0",8)==0) {
+		} else if (memcmp(hdr, "FREE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadfree(fd, sleng)<0) {
 				printf("error reading metadata (FREE 1.0)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"CHNK 1.0",8)==0) {
+		} else if (memcmp(hdr, "CHNK 1.0", kSectionNameSize) == 0) {
 			if (chunk_load(fd, loadLockIds) < 0) {
 				printf("error reading metadata (CHNK 1.0)\n");
 				return -1;

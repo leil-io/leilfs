@@ -120,9 +120,9 @@ static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
 		free(buff);
 		return -1;
 	}
-	get32bit(&rptr, changed);
-	get32bit(&rptr, notchanged);
-	get32bit(&rptr, notpermitted);
+	getINode(&rptr, changed);
+	getINode(&rptr, notchanged);
+	getINode(&rptr, notpermitted);
 	if ((mode & SMODE_RMASK) == 0) {
 		if (changed) {
 			printf("%s: attribute(s) changed\n", fname);

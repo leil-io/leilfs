@@ -543,7 +543,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 			put8bit(&buff,inoleng);
 			name = (const char*)dbuff;
 			dbuff+=nleng;
-			get32bit(&dbuff, inode);
+			getINode(&dbuff, inode);
 			sprintf((char*)buff,"%08" PRIXiNode "|",inode);
 			if (nleng>255-9) {
 				memcpy(buff+9,name,255-9);
@@ -713,7 +713,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 			ptr+=nleng;
 			off+=nleng+6;
 			if (ptr+5<=eptr) {
-				get32bit(&ptr, inode);
+				getINode(&ptr, inode);
 				type = get8bit(&ptr);
 				sfs_meta_type_to_stat(inode,type,&stbuf);
 				c = name[nleng];
