@@ -149,7 +149,11 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 	SliceRecoveryPlanner planner;
 	ReadPlanExecutor::ChunkTypeLocations locations;
 	SliceRecoveryPlanner::PartsContainer available_parts;
+#ifdef SAUNAFS_HAVE_THREAD_LOCAL
+	static thread_local std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
+#else
 	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
+#endif
 
 	for (const auto& source : sources) {
 		available_parts.push_back(source.chunk_type);
