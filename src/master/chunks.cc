@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <random>
 #include <unordered_map>
 
 #include "common/chunk_copies_calculator.h"
@@ -2247,10 +2248,17 @@ bool ChunkWorker::rebalanceChunkParts(Chunk *c, ChunkCopiesCalculator &calc, boo
 		}
 	}
 
+	// Avoid same part types landing in the same chunkservers by randomizing...
+	size_t partsSize = c->parts.size();
+	std::vector<int> part_indices(partsSize);
+	std::iota(part_indices.begin(), part_indices.end(), 0);
+	std::shuffle(part_indices.begin(), part_indices.end(), kRandomEngine);
+
 	// Consider each copy to be moved to a server with disk usage much less than actual.
 	// There are at least two servers with a disk usage difference grater than
 	// gAcceptableDifference, so it's worth checking.
-	for (const auto &part : c->parts) {
+	for (size_t i = 0; i < partsSize; ++i) {
+		const auto &part = c->parts[part_indices[i]];
 		if (!part.is_valid()) {
 			continue;
 		}
