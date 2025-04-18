@@ -1214,7 +1214,8 @@ void masterconn_wantexit(void) {
 }
 
 int masterconn_canexit(void) {
-	return static_cast<int>(gMasterConn != nullptr || gMasterConn->mode == MasterConn::Mode::Free);
+	return static_cast<int>(gMasterConn == nullptr || gMasterConn->mode == MasterConn::Mode::Free ||
+		gMasterConn->mode == MasterConn::Mode::Kill);
 }
 
 void masterconn_desc(std::vector<pollfd> &pdesc) {
