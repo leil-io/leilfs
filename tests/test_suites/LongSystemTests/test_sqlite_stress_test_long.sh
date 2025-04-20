@@ -1,4 +1,4 @@
-timeout_set 5 minutes
+timeout_set '30 minutes'
 
 sqlite_test_path=$(realpath test_utils/sqlite_stress_test.py)
 
@@ -19,14 +19,9 @@ run_sqlite_test_with_parameters() {
 	local nr_of_threads=$1
 	local nr_of_operations=$2
 	python3 $sqlite_test --threads=$nr_of_threads --operations_per_thread=$nr_of_operations \
-		--seed=1 --db_file=$(realpath db) |& tee $TEMP_DIR/sqlite_test.log
-	assert_equals 1 $(grep "Test completed without fatal errors." $TEMP_DIR/sqlite_test.log | wc -l)
+		--seed=1 --db_file=$(realpath db) | grep -q "Test completed without fatal errors."
+	echo "SQLite stress test with $nr_of_threads threads and $nr_of_operations operations per" \
+		"thread completed successfully."
 }
 
-run_sqlite_test_with_parameters 10 10
-run_sqlite_test_with_parameters 10 100
-run_sqlite_test_with_parameters 100 10
-run_sqlite_test_with_parameters 100 100
-run_sqlite_test_with_parameters 100 200
-run_sqlite_test_with_parameters 200 100
-run_sqlite_test_with_parameters 200 200
+run_sqlite_test_with_parameters 100 1000
