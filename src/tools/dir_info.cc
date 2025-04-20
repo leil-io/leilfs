@@ -42,11 +42,17 @@ static void dir_info_usage() {
 
 static int dir_info(const char *fname) {
 	uint32_t cmd, leng;
+	uint32_t msgid = 0;
 	inode_t inode, inodes, dirs, files, links;
 	uint32_t chunks;
 	uint64_t length, size, realsize;
-	constexpr uint8_t kDirStatsPayload = 44;
-	constexpr uint8_t kDirStatsLegacyPayload = 60;
+
+	constexpr uint8_t kDirStatsPayload =
+	    sizeof(cmd) + sizeof(leng) + sizeof(msgid) + sizeof(inodes) + sizeof(dirs) + sizeof(files) +
+	    sizeof(links) + sizeof(chunks) + sizeof(length) + sizeof(size) + sizeof(realsize);
+	constexpr uint8_t kDirStatsLegacyPayload =
+	    sizeof(msgid) + sizeof(inodes) + sizeof(dirs) + sizeof(files) + sizeof(links) +
+	    (4 * sizeof(uint32_t)) + sizeof(chunks) + sizeof(length) + sizeof(size) + sizeof(realsize);
 
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, false);
@@ -54,7 +60,7 @@ static int dir_info(const char *fname) {
 		return -1;
 	}
 
-	constexpr uint32_t kDirInfoPayload = sizeof(uint32_t) + sizeof(inode);
+	constexpr uint32_t kDirInfoPayload = sizeof(msgid) + sizeof(inode);
 	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kDirInfoPayload) + kDirInfoPayload;
 
 	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
@@ -63,71 +69,87 @@ static int dir_info(const char *fname) {
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_GETDIRSTATS);
 	put32bit(&wptr, kDirInfoPayload);
-	put32bit(&wptr, 0);
+	put32bit(&wptr, msgid);
 	putINode(&wptr, inode);
+
+	// send the request
 	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
-	if (tcpread(fd, reqbuff, 8) != 8) {
+
+	// read the first part of the answer (cmd and length)
+	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
 		printf("%s: master query: receive error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
+
 	rptr = reqbuff;
 	get32bit(&rptr, cmd);
 	get32bit(&rptr, leng);
+
 	if (cmd != MATOCL_FUSE_GETDIRSTATS) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
+
 	buff = (uint8_t *)malloc(leng);
+
+	// read the rest of the answer into the buffer
 	if (tcpread(fd, buff, leng) != (int32_t)leng) {
 		printf("%s: master query: receive error\n", fname);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
+
 	rptr = buff;
-	get32bit(&rptr, cmd);  // queryid
-	if (cmd != 0) {
+	get32bit(&rptr, msgid);  // queryid
+
+	if (msgid != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
-	leng -= sizeof(uint32_t);
-	if (leng == sizeof(uint8_t)) {
+
+	if (leng == sizeof(msgid) + sizeof(uint8_t)) {  // status code
 		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
 		free(buff);
 		close_master_conn(1);
 		return -1;
-	} else if (leng != kDirStatsLegacyPayload && leng != kDirStatsPayload) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
+	}
+
+	if (leng != kDirStatsLegacyPayload && leng != kDirStatsPayload) {
+		printf("%s: master query: wrong answer (leng) %u/(%u|%u)\n", fname, leng, kDirStatsPayload,
+		       kDirStatsLegacyPayload);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
+
 	close_master_conn(0);
+
 	getINode(&rptr, inodes);
 	getINode(&rptr, dirs);
 	getINode(&rptr, files);
 	getINode(&rptr, links);
 	if (leng == kDirStatsLegacyPayload) {
-		// skip empty data (8 bytes) from legacy format
-		rptr += sizeof(uint32_t ) << 1;
+		rptr += 2 * sizeof(uint32_t);  // skip empty data (8 bytes) from legacy format
 	}
 	get32bit(&rptr, chunks);
 	if (leng == kDirStatsLegacyPayload) {
-		// skip empty data (8 bytes) from legacy format
-		rptr += sizeof(uint32_t ) << 1;
+		rptr += 2 * sizeof(uint32_t);  // skip empty data (8 bytes) from legacy format
 	}
 	length = get64bit(&rptr);
 	size = get64bit(&rptr);
 	realsize = get64bit(&rptr);
+
 	free(buff);
+
 	printf("%s:\n", fname);
 	print_number(" inodes:       ", "\n", inodes, 0, 0, 1);
 	print_number("  directories: ", "\n", dirs, 0, 0, 1);
@@ -137,6 +159,7 @@ static int dir_info(const char *fname) {
 	print_number(" length:       ", "\n", length, 0, 1, 1);
 	print_number(" size:         ", "\n", size, 0, 1, 1);
 	print_number(" realsize:     ", "\n", realsize, 0, 1, 1);
+
 	return 0;
 }
 

@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <cinttypes>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1806,6 +1807,19 @@ void chunk_got_duptrunc_status(matocsserventry *ptr, uint64_t chunkId, ChunkPart
 /* ----------------------- */
 /* JOBS (DELETE/REPLICATE) */
 /* ----------------------- */
+
+uint32_t get_chunk_info_serialized_size() {
+	constexpr uint32_t kInfoSize =
+	    sizeof(chunksinfo_loopstart) + sizeof(chunksinfo_loopend) +
+	    sizeof(job_info::del_invalid) + sizeof(job_info::del_invalid) +
+	    sizeof(job_info::del_unused) + sizeof(job_info::del_unused) +
+	    sizeof(job_info::del_diskclean) + sizeof(job_info::del_diskclean) +
+	    sizeof(job_info::del_overgoal) + sizeof(job_info::del_overgoal) +
+	    sizeof(job_info::copy_undergoal) + sizeof(job_info::copy_undergoal) +
+	    sizeof(loop_info::copy_rebalance);
+
+	return kInfoSize;
+}
 
 void chunk_store_info(uint8_t *buff) {
 	put32bit(&buff,chunksinfo_loopstart);

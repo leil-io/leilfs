@@ -225,14 +225,15 @@ void matomlserv_store_logstring(uint64_t version,uint8_t *logstr,uint32_t logstr
 
 uint32_t matomlserv_mloglist_size(void) {
 	matomlserventry *eptr;
-	uint32_t i;
-	i=0;
+	uint32_t i = 0;
+
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
 		if (!eptr->shadow && eptr->mode!=KILL) {
 			i++;
 		}
 	}
-	return i*(4+4);
+
+	return i * (sizeof(matomlserventry::version) + sizeof(matomlserventry::servip));
 }
 
 void matomlserv_mloglist_data(uint8_t *ptr) {

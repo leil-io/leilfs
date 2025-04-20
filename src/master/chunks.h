@@ -59,6 +59,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
 		uint8_t goal, bool denyTruncatingParityParts, bool quota_exceeded, uint64_t *nchunkid);
 void chunk_stats(uint32_t *del,uint32_t *repl);
+uint32_t get_chunk_info_serialized_size();
 void chunk_store_info(uint8_t *buff);
 uint32_t chunk_get_missing_count(void);
 void chunk_store_chunkcounters(uint8_t *buff,uint8_t matrixid);

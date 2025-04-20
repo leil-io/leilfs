@@ -51,8 +51,6 @@ inline AcquiredFileMap acquiredFiles;
 void fs_getmasterlocation(uint8_t loc[14]);
 uint32_t fs_getsrcip(void);
 
-//void fs_notify_sendremoved(uint32_t cnt, inode_t *inodes);
-
 void fs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
                uint64_t *reservedspace, inode_t *inodes);
 uint8_t fs_access(inode_t inode, uint32_t uid, uint32_t gid, uint8_t modemask);
@@ -81,8 +79,6 @@ uint8_t fs_rename(inode_t parent_src, uint8_t nleng_src, const uint8_t *name_src
                   Attributes &attr);
 uint8_t fs_link(inode_t inode_src, inode_t parent_dst, uint8_t nleng_dst, const uint8_t *name_dst,
                 uint32_t uid, uint32_t gid, inode_t *inode, Attributes &attr);
-uint8_t fs_getdir(inode_t inode, uint32_t uid, uint32_t gid, const uint8_t **dbuff,
-                  uint32_t *dbuffsize);
 uint8_t fs_getdir_plus(inode_t inode, uint32_t uid, uint32_t gid, uint8_t addtocache,
                        const uint8_t **dbuff, uint32_t *dbuffsize);
 uint8_t fs_getdir(inode_t inode, uint32_t uid, uint32_t gid, uint64_t first_entry,
@@ -92,17 +88,12 @@ uint8_t fs_opencheck(inode_t inode, uint32_t uid, uint32_t gid, uint8_t flags, A
 uint8_t fs_update_credentials(uint32_t key, const GroupCache::Groups &gids);
 void fs_release(inode_t inode);
 
-uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *chunkid,
-                     uint32_t *version, const uint8_t **csdata, uint32_t *csdatasize);
 uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &serverList, uint64_t &chunkId,
                         uint32_t &chunkVersion, uint64_t &fileLength, inode_t inode, uint32_t index);
-uint8_t fs_writechunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *chunkid,
-                      uint32_t *version, const uint8_t **csdata, uint32_t *csdatasize);
 uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, uint64_t &fileLength,
                          uint64_t &chunkId, uint32_t &chunkVersion,
                          std::vector<ChunkTypeWithAddress> &chunkservers);
 uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length);
-uint8_t fs_writeend(uint64_t chunkid, inode_t inode, uint64_t length);
 
 uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, uint8_t nleng,
                     const uint8_t *name, uint8_t mode, const uint8_t **vbuff, uint32_t *vleng);

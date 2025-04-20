@@ -64,6 +64,21 @@ struct exports {
 	uint32_t mapalluid;
 	uint32_t mapallgid;
 	struct exports *next;
+
+	uint32_t serialized_size(uint8_t versmode) const {
+		constexpr uint32_t kBaseSize = sizeof(fromip) + sizeof(toip) + sizeof(uint32_t) +
+		                               sizeof(uint8_t) + sizeof(minversion) + sizeof(uint8_t) +
+		                               sizeof(sesflags) + sizeof(rootuid) + sizeof(rootgid) +
+		                               sizeof(mapalluid) + sizeof(mapallgid);
+		constexpr uint32_t kExtraSizeWithVersMode =
+		    sizeof(mingoal) + sizeof(maxgoal) + sizeof(mintrashtime) + sizeof(maxtrashtime);
+
+		if (meta) {
+			return kBaseSize + ((versmode) ? kExtraSizeWithVersMode : 0);
+		}
+
+		return kBaseSize + ((versmode) ? kExtraSizeWithVersMode : 0) + pleng;
+	}
 };
 
 static exports *exports_records;
@@ -100,15 +115,12 @@ static char* exports_strsep(char **stringp, const char *delim) {
 
 
 uint32_t exports_info_size(uint8_t versmode) {
-	exports *e;
-	uint32_t size=0;
-	for (e=exports_records ; e ; e=e->next) {
-		if (e->meta) {
-			size+=35+((versmode)?10:0);
-		} else {
-			size+=35+((versmode)?10:0)+e->pleng;
-		}
+	uint32_t size = 0;
+
+	for (auto *e = exports_records; e; e = e->next) {
+		size += e->serialized_size(versmode);
 	}
+
 	return size;
 }
 

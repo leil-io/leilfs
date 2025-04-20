@@ -295,9 +295,10 @@ threc* fs_get_threc_by_id(uint32_t packetId) {
 
 uint8_t* fs_createpacket(threc *rec,uint32_t cmd,uint32_t size) {
 	uint8_t *ptr;
-	uint32_t hdrsize = size+4;
+	uint32_t hdrsize = size + sizeof(cmd);
 	std::unique_lock<std::mutex> lock(rec->mutex);
-	rec->outputBuffer.resize(size+12);
+	constexpr uint32_t kExtraSize = sizeof(cmd) + sizeof(hdrsize) + sizeof(threc::packetId);
+	rec->outputBuffer.resize(size + kExtraSize);
 	ptr = rec->outputBuffer.data();
 	put32bit(&ptr,cmd);
 	put32bit(&ptr,hdrsize);
@@ -1035,10 +1036,11 @@ static void usr1_handler(int) {
 void* fs_nop_thread(void *arg) {
 	pthread_setname_np(pthread_self(), "nopThread");
 
-	uint8_t *ptr,hdr[12],*inodespacket;
+	constexpr uint32_t kHeaderSize = sizeof(uint32_t) * 3;
+	uint8_t *ptr, hdr[kHeaderSize], *inodespacket;
 	int32_t inodesleng;
 	int now;
-	inode_t inodeswritecnt=0;
+	inode_t inodeswritecnt = 0;
 	(void)arg;
 
 #ifdef ENABLE_EXIT_ON_USR1
@@ -1066,38 +1068,43 @@ void* fs_nop_thread(void *arg) {
 			exit(SAUNAFS_EXIT_STATUS_GENTLY_KILL);
 		}
 		if (disconnect == false && fd >= 0) {
-			if (lastwrite+2<now) {  // NOP
+			if (lastwrite + 2 < now) {  // NOP
 				ptr = hdr;
-				put32bit(&ptr,ANTOAN_NOP);
-				put32bit(&ptr,4);
-				put32bit(&ptr,0);
-				if (tcptowrite(fd,hdr,12,1000)!=12) {
+				put32bit(&ptr, ANTOAN_NOP);  // cmd
+				put32bit(&ptr, 4);           // length
+				put32bit(&ptr, 0);           // msg id
+				if (tcptowrite(fd, hdr, kHeaderSize, 1000) != kHeaderSize) {
 					safs::log_warn("Failed to send ANTOAN_NOP to master");
 					disconnect = true;
 				} else {
-					master_stats_add(MASTER_BYTESSENT,12);
+					master_stats_add(MASTER_BYTESSENT, kHeaderSize);
 					master_stats_inc(MASTER_PACKETSSENT);
 				}
-				lastwrite=now;
+				lastwrite = now;
 			}
 			if (++inodeswritecnt >= gInitParams.report_reserved_period && !disconnect) {
 				inodeswritecnt = 0;
+				constexpr uint32_t kHeaderSizeCmdPlusLeng = sizeof(uint32_t) + sizeof(uint32_t);
+
 				std::unique_lock<std::mutex> asLock(acquiredFileMutex);
-				inodesleng = 8 + kinode_t_size * acquiredFiles.size();
+				inodesleng = kHeaderSizeCmdPlusLeng + kinode_t_size * acquiredFiles.size();
 				inodespacket = (uint8_t*) malloc(inodesleng);
 				ptr = inodespacket;
-				putINode(&ptr, (inode_t)CLTOMA_FUSE_RESERVED_INODES);
-				put32bit(&ptr, inodesleng - 8);
+				put32bit(&ptr, CLTOMA_FUSE_RESERVED_INODES);
+				put32bit(&ptr, inodesleng - kHeaderSizeCmdPlusLeng);
+
 				for (const auto &[inode, _] : acquiredFiles) {
 					putINode(&ptr, inode);
 				}
-				if (tcptowrite(fd,inodespacket,inodesleng,1000)!=inodesleng) {
+
+				if (tcptowrite(fd, inodespacket, inodesleng, 1000) != inodesleng) {
 					safs::log_warn("Failed to send CLTOMA_FUSE_RESERVED_INODES to master");
 					disconnect = true;
 				} else {
-					master_stats_add(MASTER_BYTESSENT,inodesleng);
+					master_stats_add(MASTER_BYTESSENT, inodesleng);
 					master_stats_inc(MASTER_PACKETSSENT);
 				}
+
 				free(inodespacket);
 			}
 
@@ -1125,7 +1132,9 @@ void* fs_nop_thread(void *arg) {
 				}
 			}
 		}
+
 		fdLock.unlock();
+
 		sleep(1);
 	}
 }
@@ -1415,33 +1424,50 @@ void fs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
                uint64_t *reservedspace, inode_t *inodes) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	threc *rec = fs_get_my_threc();
+
 	wptr = fs_createpacket(rec,CLTOMA_FUSE_STATFS,0);
-	if (wptr==NULL) {
+
+	auto resetStats = [&]() {
 		*totalspace = 0;
 		*availspace = 0;
 		*trashspace = 0;
 		*reservedspace = 0;
 		*inodes = 0;
+	};
+
+	if (wptr == nullptr) {
+		resetStats();
 		return;
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_STATFS,&i);
-	if (rptr==NULL || i!=36) {
-		*totalspace = 0;
-		*availspace = 0;
-		*trashspace = 0;
-		*reservedspace = 0;
-		*inodes = 0;
-	} else {
-		*totalspace = get64bit(&rptr);
-		*availspace = get64bit(&rptr);
-		*trashspace = get64bit(&rptr);
-		*reservedspace = get64bit(&rptr);
-		inode_t tmpInodes;
-		getINode(&rptr, tmpInodes);
-		*inodes = tmpInodes;
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_STATFS, &answerLength);
+
+	constexpr uint32_t kExpectedAnswerLength = sizeof(*totalspace) + sizeof(*availspace) +
+	                                           sizeof(*trashspace) + sizeof(*reservedspace) +
+	                                           sizeof(*inodes);
+
+	if (rptr == nullptr) {
+		safs::log_warn("fs_statfs: MATOCL_FUSE_STATFS - no answer");
+		resetStats();
+		return;
 	}
+
+	if (answerLength != kExpectedAnswerLength) {
+		safs::log_warn("fs_statfs: MATOCL_FUSE_STATFS - wrong size ({}/{})", kExpectedAnswerLength,
+		               answerLength);
+		resetStats();
+		return;
+	}
+
+	*totalspace = get64bit(&rptr);
+	*availspace = get64bit(&rptr);
+	*trashspace = get64bit(&rptr);
+	*reservedspace = get64bit(&rptr);
+	inode_t tmpInodes;
+	getINode(&rptr, tmpInodes);
+	*inodes = tmpInodes;
 }
 
 uint8_t fs_access(inode_t inode,uint32_t uid,uint32_t gid,uint8_t modemask) {
@@ -1450,7 +1476,8 @@ uint8_t fs_access(inode_t inode,uint32_t uid,uint32_t gid,uint8_t modemask) {
 	uint32_t i;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_ACCESS,13);
+	constexpr uint32_t kPacketSize = sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(modemask);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_ACCESS, kPacketSize);
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
@@ -1507,22 +1534,23 @@ uint8_t fs_lookup(inode_t parent, const std::string &path, uint32_t uid, uint32_
 uint8_t fs_getattr(inode_t inode, uint32_t uid, uint32_t gid, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETATTR,12);
+	constexpr uint32_t kPacketSize = sizeof(inode) + sizeof(uid) + sizeof(gid);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETATTR, kPacketSize);
 	if (!wptr) {
 		return SAUNAFS_ERROR_IO;
 	}
 	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETATTR,&i);
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETATTR, &answerLength);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i != attr.size()) {
+	} else if (answerLength != attr.size()) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
@@ -1537,17 +1565,24 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
                    uint8_t sugidclearmode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	if (masterversion<0x010619) {
-		wptr = fs_createpacket(rec,CLTOMA_FUSE_SETATTR,31);
+
+	constexpr uint32_t kPacketSize =
+	    sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(setmask) + sizeof(attrmode) +
+	    sizeof(attruid) + sizeof(attrgid) + sizeof(attratime) + sizeof(attrmtime);
+	constexpr uint32_t kPacketSizeWithSugid = kPacketSize + sizeof(sugidclearmode);
+
+	if (masterversion < 0x010619) {
+		wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSize);
 	} else {
-		wptr = fs_createpacket(rec,CLTOMA_FUSE_SETATTR,32);
+		wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSizeWithSugid);
 	}
-	if (wptr==NULL) {
+	if (wptr == nullptr) {
 		return SAUNAFS_ERROR_IO;
 	}
+
 	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
@@ -1560,18 +1595,21 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
 	if (masterversion>=0x010619) {
 		put8bit(&wptr,sugidclearmode);
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SETATTR,&i);
-	if (rptr==NULL) {
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_SETATTR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i != attr.size()) {
+	} else if (answerLength != attr.size()) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
 	}
+
 	return ret;
 }
 
@@ -1674,26 +1712,31 @@ uint8_t fs_truncateend(inode_t inode, uint32_t uid, uint32_t gid, uint64_t lengt
 uint8_t fs_readlink(inode_t inode,const uint8_t **path) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
-	uint32_t pleng;
+	uint32_t answerLength;
+	uint32_t pathLeng;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_READLINK,4);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
+
+	constexpr uint32_t kPacketSize = sizeof(inode);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_READLINK, kPacketSize);
+
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
 	putINode(&wptr,inode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_READLINK,&i);
-	if (rptr==NULL) {
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_READLINK, &answerLength);
+
+	if (rptr == NULL) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {  // A status code
 		ret = rptr[0];
-	} else if (i<4) {
+	} else if (answerLength < kPacketSize) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		get32bit(&rptr, pleng);
-		if (i!=4+pleng || pleng==0 || rptr[pleng-1]!=0) {
+		get32bit(&rptr, pathLeng);
+		if (answerLength != sizeof(uint32_t) + pathLeng || pathLeng == 0 ||
+		    rptr[pathLeng - 1] != 0) {  // null-terminated string
 			setDisconnect(true);
 			ret = SAUNAFS_ERROR_IO;
 		} else {
@@ -1701,6 +1744,7 @@ uint8_t fs_readlink(inode_t inode,const uint8_t **path) {
 			ret = SAUNAFS_STATUS_OK;
 		}
 	}
+
 	return ret;
 }
 
@@ -1708,38 +1752,44 @@ uint8_t fs_symlink(inode_t parent, uint8_t nleng, const uint8_t *name, const uin
                    uint32_t uid, uint32_t gid, inode_t *inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint32_t t32;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	t32 = strlen((const char *)path)+1;
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_SYMLINK,t32+nleng+17);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,parent);
-	put8bit(&wptr,nleng);
-	memcpy(wptr,name,nleng);
-	wptr+=nleng;
-	put32bit(&wptr,t32);
-	memcpy(wptr,path,t32);
-	wptr+=t32;
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SYMLINK,&i);
-	if (rptr==NULL) {
+	t32 = strlen((const char *)path) + 1;
+
+	constexpr uint32_t kPacketExtraSize =
+	    sizeof(parent) + sizeof(nleng) + sizeof(t32) + sizeof(uid) + sizeof(gid);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_SYMLINK, t32 + nleng + kPacketExtraSize);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, parent);
+	put8bit(&wptr, nleng);
+	memcpy(wptr, name, nleng);
+	wptr += nleng;
+	put32bit(&wptr, t32);
+	memcpy(wptr, path, t32);
+	wptr += t32;
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_SYMLINK, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {  // A status code
 		ret = rptr[0];
-	} else if (i != (attr.size() + 4)) {
+	} else if (answerLength != attr.size() + sizeof(inode_t)) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		get32bit(&rptr, t32);
-		*inode = t32;
+		inode_t tmpInode;
+		getINode(&rptr, tmpInode);
+		*inode = tmpInode;
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
 	}
+
 	return ret;
 }
 
@@ -1827,56 +1877,64 @@ uint8_t fs_mkdir(inode_t parent, uint8_t nleng, const uint8_t *name, uint16_t mo
 uint8_t fs_unlink(inode_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,uint32_t gid) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_UNLINK,13+nleng);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,parent);
-	put8bit(&wptr,nleng);
-	memcpy(wptr,name,nleng);
-	wptr+=nleng;
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_UNLINK,&i);
-	if (rptr==NULL) {
+
+	constexpr uint32_t kPacketSize = sizeof(parent) + sizeof(nleng) + sizeof(uid) + sizeof(gid);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_UNLINK, kPacketSize + nleng);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, parent);
+	put8bit(&wptr, nleng);
+	memcpy(wptr, name, nleng);
+	wptr += nleng;
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_UNLINK, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	return ret;
 }
 
 uint8_t fs_rmdir(inode_t parent,uint8_t nleng,const uint8_t *name,uint32_t uid,uint32_t gid) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_RMDIR,13+nleng);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,parent);
-	put8bit(&wptr,nleng);
-	memcpy(wptr,name,nleng);
-	wptr+=nleng;
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_RMDIR,&i);
-	if (rptr==NULL) {
+
+	constexpr uint32_t kPacketSize = sizeof(parent) + sizeof(nleng) + sizeof(uid) + sizeof(gid);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_RMDIR, kPacketSize + nleng);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, parent);
+	put8bit(&wptr, nleng);
+	memcpy(wptr, name, nleng);
+	wptr += nleng;
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_RMDIR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	return ret;
 }
 
@@ -1885,40 +1943,45 @@ uint8_t fs_rename(inode_t parent_src, uint8_t nleng_src, const uint8_t *name_src
                   inode_t *inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
-	uint32_t t32;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_RENAME,18+nleng_src+nleng_dst);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,parent_src);
-	put8bit(&wptr,nleng_src);
-	memcpy(wptr,name_src,nleng_src);
-	wptr+=nleng_src;
-	putINode(&wptr,parent_dst);
-	put8bit(&wptr,nleng_dst);
-	memcpy(wptr,name_dst,nleng_dst);
-	wptr+=nleng_dst;
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_RENAME,&i);
+
+	constexpr uint32_t kPacketSize = sizeof(parent_src) + sizeof(nleng_src) + sizeof(parent_dst) +
+		sizeof(nleng_dst) + sizeof(uid) + sizeof(gid);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_RENAME, kPacketSize + nleng_src + nleng_dst);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, parent_src);
+	put8bit(&wptr, nleng_src);
+	memcpy(wptr, name_src, nleng_src);
+	wptr += nleng_src;
+	putINode(&wptr, parent_dst);
+	put8bit(&wptr, nleng_dst);
+	memcpy(wptr, name_dst, nleng_dst);
+	wptr += nleng_dst;
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_RENAME, &answerLength);
+
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength==1) {
 		ret = rptr[0];
 		*inode = 0;
 		attr.fill(0);
-	} else if (i != (attr.size() + 4)) {
+	} else if (answerLength != (attr.size() + sizeof(*inode))) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		get32bit(&rptr, t32);
-		*inode = t32;
+		inode_t tmpInode;
+		getINode(&rptr, tmpInode);
+		*inode = tmpInode;
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
 	}
+
 	return ret;
 }
 
@@ -1926,61 +1989,40 @@ uint8_t fs_link(inode_t inode_src, inode_t parent_dst, uint8_t nleng_dst, const 
                 uint32_t uid, uint32_t gid, inode_t *inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
-	uint32_t t32;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_LINK,17+nleng_dst);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode_src);
-	putINode(&wptr,parent_dst);
-	put8bit(&wptr,nleng_dst);
-	memcpy(wptr,name_dst,nleng_dst);
-	wptr+=nleng_dst;
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_LINK,&i);
-	if (rptr==NULL) {
+
+	constexpr uint32_t kPacketSize = sizeof(inode_src) + sizeof(parent_dst) + sizeof(nleng_dst) +
+		sizeof(uid) + sizeof(gid);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_LINK, kPacketSize + nleng_dst);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode_src);
+	putINode(&wptr, parent_dst);
+	put8bit(&wptr, nleng_dst);
+	memcpy(wptr, name_dst, nleng_dst);
+	wptr += nleng_dst;
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_LINK, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i != (attr.size() + 4)) {
+	} else if (answerLength != (attr.size() + sizeof(*inode))) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
-		get32bit(&rptr, t32);
-		*inode = t32;
+		inode_t tmpInode;
+		getINode(&rptr, tmpInode);
+		*inode = tmpInode;
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
 	}
-	return ret;
-}
 
-uint8_t fs_getdir(inode_t inode,uint32_t uid,uint32_t gid,const uint8_t **dbuff,uint32_t *dbuffsize) {
-	uint8_t *wptr;
-	const uint8_t *rptr;
-	uint32_t i;
-	uint8_t ret;
-	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETDIR,12);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETDIR,&i);
-	if (rptr==NULL) {
-		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
-		ret = rptr[0];
-	} else {
-		*dbuff = rptr;
-		*dbuffsize = i;
-		ret = SAUNAFS_STATUS_OK;
-	}
 	return ret;
 }
 
@@ -1988,14 +2030,15 @@ uint8_t fs_getdir_plus(inode_t inode, uint32_t uid, uint32_t gid, uint8_t addtoc
                        const uint8_t **dbuff, uint32_t *dbuffsize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	uint8_t flags;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETDIR,13);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
+
+	constexpr uint32_t kPacketSize = sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(flags);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETDIR, kPacketSize);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
 	putINode(&wptr,inode);
 	put32bit(&wptr,uid);
 	put32bit(&wptr,gid);
@@ -2004,16 +2047,19 @@ uint8_t fs_getdir_plus(inode_t inode, uint32_t uid, uint32_t gid, uint8_t addtoc
 		flags |= GETDIR_FLAG_ADDTOCACHE;
 	}
 	put8bit(&wptr,flags);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETDIR,&i);
-	if (rptr==NULL) {
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETDIR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {  // A status code
 		ret = rptr[0];
 	} else {
 		*dbuff = rptr;
-		*dbuffsize = i;
+		*dbuffsize = answerLength;
 		ret = SAUNAFS_STATUS_OK;
 	}
+
 	return ret;
 }
 
@@ -2065,34 +2111,40 @@ uint8_t fs_getdir(inode_t inode, uint32_t uid, uint32_t gid, uint64_t first_entr
 uint8_t fs_opencheck(inode_t inode, uint32_t uid, uint32_t gid, uint8_t flags, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_OPEN,13);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	put8bit(&wptr,flags);
+
+	constexpr uint32_t kPacketSize = sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(flags);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_OPEN, kPacketSize);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+	put8bit(&wptr, flags);
+
 	fs_inc_acnt(inode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_OPEN,&i);
-	if (rptr==NULL) {
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_OPEN, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		attr.fill(0);
 		ret = rptr[0];
-	} else if (i == attr.size()) {
+	} else if (answerLength == attr.size()) {
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	if (ret) {      // release on error
 		fs_dec_acnt(inode);
 	}
+
 	return ret;
 }
 
@@ -2119,48 +2171,6 @@ uint8_t fs_update_credentials(uint32_t key, const GroupCache::Groups &gids) {
 
 void fs_release(inode_t inode) {
 	fs_dec_acnt(inode);
-}
-
-uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *chunkid,
-                     uint32_t *version, const uint8_t **csdata, uint32_t *csdatasize) {
-	uint8_t *wptr;
-	const uint8_t *rptr;
-	uint32_t i;
-	uint8_t ret;
-	uint64_t t64;
-	uint32_t t32;
-	threc *rec = fs_get_my_threc();
-	*csdata=NULL;
-	*csdatasize=0;
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_READ_CHUNK,8);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-
-	putINode(&wptr,inode);
-	put32bit(&wptr,indx);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_READ_CHUNK,&i);
-	if (rptr==NULL) {
-		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
-		ret = rptr[0];
-	} else if (i<20 || ((i-20)%6)!=0) {
-		setDisconnect(true);
-		ret = SAUNAFS_ERROR_IO;
-	} else {
-		t64 = get64bit(&rptr);
-		*length = t64;
-		t64 = get64bit(&rptr);
-		*chunkid = t64;
-		get32bit(&rptr, t32);
-		*version = t32;
-		if (i>20) {
-			*csdata = rptr;
-			*csdatasize = i-20;
-		}
-		ret = SAUNAFS_STATUS_OK;
-	}
-	return ret;
 }
 
 uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_t &chunkId,
@@ -2214,47 +2224,6 @@ uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_
 		}
 	}
 	return SAUNAFS_STATUS_OK;
-}
-
-uint8_t fs_writechunk(inode_t inode, uint32_t indx, uint64_t *length, uint64_t *chunkid,
-                      uint32_t *version, const uint8_t **csdata, uint32_t *csdatasize) {
-	uint8_t *wptr;
-	const uint8_t *rptr;
-	uint32_t i;
-	uint8_t ret;
-	uint64_t t64;
-	uint32_t t32;
-	threc *rec = fs_get_my_threc();
-	*csdata=NULL;
-	*csdatasize=0;
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_WRITE_CHUNK,8);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put32bit(&wptr,indx);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_WRITE_CHUNK,&i);
-	if (rptr==NULL) {
-		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
-		ret = rptr[0];
-	} else if (i<20 || ((i-20)%6)!=0) {
-		setDisconnect(true);
-		ret = SAUNAFS_ERROR_IO;
-	} else {
-		t64 = get64bit(&rptr);
-		*length = t64;
-		t64 = get64bit(&rptr);
-		*chunkid = t64;
-		get32bit(&rptr, t32);
-		*version = t32;
-		if (i>20) {
-			*csdata = rptr;
-			*csdatasize = i-20;
-		}
-		ret = SAUNAFS_STATUS_OK;
-	}
-	return ret;
 }
 
 uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, uint64_t &fileLength,
@@ -2345,53 +2314,26 @@ uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_
 	}
 }
 
-uint8_t fs_writeend(uint64_t chunkid, inode_t inode, uint64_t length) {
-	uint8_t *wptr;
-	const uint8_t *rptr;
-	uint32_t i;
-	uint8_t ret;
-	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_WRITE_CHUNK_END,20);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	put64bit(&wptr,chunkid);
-	putINode(&wptr,inode);
-	put64bit(&wptr,length);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_WRITE_CHUNK_END,&i);
-	if (rptr==NULL) {
-		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
-		ret = rptr[0];
-	} else {
-		setDisconnect(true);
-		ret = SAUNAFS_ERROR_IO;
-	}
-	return ret;
-}
-
-
 // FUSE - META
-
 
 uint8_t fs_getreserved(const uint8_t **dbuff,uint32_t *dbuffsize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETRESERVED,0);
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETRESERVED, 0);
 	if (wptr==NULL) {
 		return SAUNAFS_ERROR_IO;
 	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETRESERVED,&i);
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETRESERVED, &answerLength);
 	if (rptr==NULL) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength==1) {
 		ret = rptr[0];
 	} else {
 		*dbuff = rptr;
-		*dbuffsize = i;
+		*dbuffsize = answerLength;
 		ret = SAUNAFS_STATUS_OK;
 	}
 	return ret;
@@ -2400,23 +2342,25 @@ uint8_t fs_getreserved(const uint8_t **dbuff,uint32_t *dbuffsize) {
 uint8_t fs_gettrash(const uint8_t **dbuff,uint32_t *dbuffsize) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETTRASH,0);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETTRASH,&i);
-	if (rptr==NULL) {
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETTRASH, 0);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETTRASH, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		*dbuff = rptr;
-		*dbuffsize = i;
+		*dbuffsize = answerLength;
 		ret = SAUNAFS_STATUS_OK;
 	}
+
 	return ret;
 }
 
@@ -2467,52 +2411,57 @@ uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOf
 uint8_t fs_getdetachedattr(inode_t inode, Attributes &attr) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETDETACHEDATTR,4);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETDETACHEDATTR, sizeof(inode));
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
 	putINode(&wptr,inode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETDETACHEDATTR,&i);
-	if (rptr==NULL) {
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETDETACHEDATTR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i != attr.size()) {
+	} else if (answerLength != attr.size()) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
 		memcpy(attr.data(), rptr, attr.size());
 		ret = SAUNAFS_STATUS_OK;
 	}
+
 	return ret;
 }
 
 uint8_t fs_gettrashpath(inode_t inode,const uint8_t **path) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint32_t pleng;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETTRASHPATH,4);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETTRASHPATH,&i);
-	if (rptr==NULL) {
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETTRASHPATH, sizeof(inode));
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETTRASHPATH, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i<4) {
+	} else if (answerLength < sizeof(uint32_t)) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
 		get32bit(&rptr, pleng);
-		if (i!=4+pleng || pleng==0 || rptr[pleng-1]!=0) {
+		if (answerLength != sizeof(uint32_t) + pleng || pleng == 0 || rptr[pleng - 1] != 0) {
 			setDisconnect(true);
 			ret = SAUNAFS_ERROR_IO;
 		} else {
@@ -2520,74 +2469,83 @@ uint8_t fs_gettrashpath(inode_t inode,const uint8_t **path) {
 			ret = SAUNAFS_STATUS_OK;
 		}
 	}
+
 	return ret;
 }
 
 uint8_t fs_settrashpath(inode_t inode,const uint8_t *path) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint32_t t32;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	t32 = strlen((const char *)path)+1;
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_SETTRASHPATH,t32+8);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put32bit(&wptr,t32);
-	memcpy(wptr,path,t32);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SETTRASHPATH,&i);
-	if (rptr==NULL) {
+	t32 = strlen((const char *)path) + 1;
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_SETTRASHPATH, sizeof(inode) + sizeof(t32) + t32);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+	put32bit(&wptr, t32);
+	memcpy(wptr, path, t32);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_SETTRASHPATH, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	return ret;
 }
 
 uint8_t fs_undel(inode_t inode) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_UNDEL,4);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_UNDEL,&i);
-	if (rptr==NULL) {
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_UNDEL, sizeof(inode));
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_UNDEL, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	return ret;
 }
 
 uint8_t fs_purge(inode_t inode) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_PURGE,4);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_PURGE,&i);
-	if (rptr==NULL) {
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_PURGE, sizeof(inode));
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_PURGE, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
@@ -2600,44 +2558,51 @@ uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
                     const uint8_t *name, uint8_t mode, const uint8_t **vbuff, uint32_t *vleng) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	if (masterversion < saunafsVersion(1, 6, 29)) {
-		return SAUNAFS_ERROR_ENOTSUP;
-	}
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETXATTR,15+nleng);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put8bit(&wptr,opened);
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	put8bit(&wptr,nleng);
-	memcpy(wptr,name,nleng);
-	wptr+=nleng;
-	put8bit(&wptr,mode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETXATTR,&i);
-	if (rptr==NULL) {
+
+	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+
+	constexpr uint32_t kPacketHeaderSize =
+	    sizeof(inode) + sizeof(opened) + sizeof(uid) + sizeof(gid) + sizeof(nleng) + sizeof(mode);
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETXATTR, kPacketHeaderSize + nleng);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+	put8bit(&wptr, opened);
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+	put8bit(&wptr, nleng);
+	memcpy(wptr, name, nleng);
+	wptr += nleng;
+	put8bit(&wptr, mode);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETXATTR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i<4) {
+	} else if (answerLength < sizeof(uint32_t)) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
 		uint32_t tempVLeng;
 		get32bit(&rptr, tempVLeng);
 		*vleng = tempVLeng;
-		*vbuff = (mode==XATTR_GMODE_GET_DATA)?rptr:NULL;
-		if ((mode==XATTR_GMODE_GET_DATA && i!=(*vleng)+4) || (mode==XATTR_GMODE_LENGTH_ONLY && i!=4)) {
+		*vbuff = (mode == XATTR_GMODE_GET_DATA) ? rptr : nullptr;
+
+		if ((mode == XATTR_GMODE_GET_DATA && answerLength != (*vleng) + sizeof(uint32_t)) ||
+		    (mode == XATTR_GMODE_LENGTH_ONLY && answerLength != sizeof(uint32_t))) {
 			setDisconnect(true);
 			ret = SAUNAFS_ERROR_IO;
 		} else {
 			ret = SAUNAFS_STATUS_OK;
 		}
 	}
+
 	return ret;
 }
 
@@ -2645,42 +2610,48 @@ uint8_t fs_listxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, 
                      const uint8_t **dbuff, uint32_t *dleng) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	if (masterversion < saunafsVersion(1, 6, 29)) {
-		return SAUNAFS_ERROR_ENOTSUP;
-	}
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_GETXATTR,15);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put8bit(&wptr,opened);
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	put8bit(&wptr,0);
-	put8bit(&wptr,mode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_GETXATTR,&i);
-	if (rptr==NULL) {
+
+	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+
+	constexpr uint32_t kPacketSize =
+	    sizeof(inode) + sizeof(opened) + sizeof(uid) + sizeof(gid) + sizeof(uint8_t) + sizeof(mode);
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_GETXATTR, kPacketSize);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+	put8bit(&wptr, opened);
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+	put8bit(&wptr, 0);
+	put8bit(&wptr, mode);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_GETXATTR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
-	} else if (i<4) {
+	} else if (answerLength < sizeof(uint32_t)) {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	} else {
 		uint32_t tmpDLeng;
 		get32bit(&rptr, tmpDLeng);
 		*dleng = tmpDLeng;
-		*dbuff = (mode==XATTR_GMODE_GET_DATA)?rptr:NULL;
-		if ((mode==XATTR_GMODE_GET_DATA && i!=(*dleng)+4) || (mode==XATTR_GMODE_LENGTH_ONLY && i!=4)) {
+		*dbuff = (mode == XATTR_GMODE_GET_DATA) ? rptr : nullptr;
+		if ((mode == XATTR_GMODE_GET_DATA && answerLength != (*dleng) + sizeof(uint32_t)) ||
+		    (mode == XATTR_GMODE_LENGTH_ONLY && answerLength != sizeof(uint32_t))) {
 			setDisconnect(true);
 			ret = SAUNAFS_ERROR_IO;
 		} else {
 			ret = SAUNAFS_STATUS_OK;
 		}
 	}
+
 	return ret;
 }
 
@@ -2688,39 +2659,44 @@ uint8_t fs_setxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
                     const uint8_t *name, uint32_t vleng, const uint8_t *value, uint8_t mode) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	if (masterversion < saunafsVersion(1, 6, 29)) {
-		return SAUNAFS_ERROR_ENOTSUP;
-	}
-	if (mode>=XATTR_SMODE_REMOVE) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_SETXATTR,19+nleng+vleng);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put8bit(&wptr,opened);
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	put8bit(&wptr,nleng);
-	memcpy(wptr,name,nleng);
-	wptr+=nleng;
-	put32bit(&wptr,vleng);
-	memcpy(wptr,value,vleng);
-	wptr+=vleng;
-	put8bit(&wptr,mode);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SETXATTR,&i);
-	if (rptr==NULL) {
+
+	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+
+	if (mode >= XATTR_SMODE_REMOVE) { return SAUNAFS_ERROR_EINVAL; }
+
+	constexpr uint32_t kPacketHeaderSize = sizeof(inode) + sizeof(opened) + sizeof(uid) +
+	                                       sizeof(gid) + sizeof(nleng) + sizeof(vleng) +
+	                                       sizeof(mode);
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_SETXATTR, kPacketHeaderSize + nleng + vleng);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+	put8bit(&wptr, opened);
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+	put8bit(&wptr, nleng);
+	memcpy(wptr, name, nleng);
+	wptr += nleng;
+	put32bit(&wptr, vleng);
+	memcpy(wptr, value, vleng);
+	wptr += vleng;
+	put8bit(&wptr, mode);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_SETXATTR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	return ret;
 }
 
@@ -2728,34 +2704,40 @@ uint8_t fs_removexattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid
                        const uint8_t *name) {
 	uint8_t *wptr;
 	const uint8_t *rptr;
-	uint32_t i;
+	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-	if (masterversion < saunafsVersion(1, 6, 29)) {
-		return SAUNAFS_ERROR_ENOTSUP;
-	}
-	wptr = fs_createpacket(rec,CLTOMA_FUSE_SETXATTR,19+nleng);
-	if (wptr==NULL) {
-		return SAUNAFS_ERROR_IO;
-	}
-	putINode(&wptr,inode);
-	put8bit(&wptr,opened);
-	put32bit(&wptr,uid);
-	put32bit(&wptr,gid);
-	put8bit(&wptr,nleng);
-	memcpy(wptr,name,nleng);
-	wptr+=nleng;
-	put32bit(&wptr,0);
-	put8bit(&wptr,XATTR_SMODE_REMOVE);
-	rptr = fs_sendandreceive(rec,MATOCL_FUSE_SETXATTR,&i);
-	if (rptr==NULL) {
+
+	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+
+	constexpr uint32_t kPacketHeaderSize = sizeof(inode) + sizeof(opened) + sizeof(uid) +
+	                                       sizeof(gid) + sizeof(nleng) + sizeof(uint32_t) +
+	                                       sizeof(uint8_t);
+
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_SETXATTR, kPacketHeaderSize + nleng);
+	if (wptr == nullptr) { return SAUNAFS_ERROR_IO; }
+
+	putINode(&wptr, inode);
+	put8bit(&wptr, opened);
+	put32bit(&wptr, uid);
+	put32bit(&wptr, gid);
+	put8bit(&wptr, nleng);
+	memcpy(wptr, name, nleng);
+	wptr += nleng;
+	put32bit(&wptr, 0);
+	put8bit(&wptr, XATTR_SMODE_REMOVE);
+
+	rptr = fs_sendandreceive(rec, MATOCL_FUSE_SETXATTR, &answerLength);
+
+	if (rptr == nullptr) {
 		ret = SAUNAFS_ERROR_IO;
-	} else if (i==1) {
+	} else if (answerLength == 1) {
 		ret = rptr[0];
 	} else {
 		setDisconnect(true);
 		ret = SAUNAFS_ERROR_IO;
 	}
+
 	return ret;
 }
 

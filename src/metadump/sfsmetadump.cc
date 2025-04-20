@@ -29,6 +29,7 @@
 
 #include "common/datapack.h"
 #include "common/type_defs.h"
+#include "master/filesystem_node_types.h"
 #include "protocol/SFSCommunication.h"
 
 #define STR_AUX(x) #x
@@ -129,7 +130,11 @@ int fs_loadedge(FILE *fd) {
 }
 
 int fs_loadnode(FILE *fd) {
-	uint8_t unodebuff[4+1+2+4+4+4+4+4+4+8+4+2+8*65536+4*65536+4];
+	constexpr uint8_t kFSNodeSizeWithoutType =
+	    sizeof(FSNode::id) + sizeof(FSNode::goal) + sizeof(FSNode::mode) + sizeof(FSNode::uid) +
+	    sizeof(FSNode::gid) + sizeof(FSNode::atime) + sizeof(FSNode::mtime) +
+	    sizeof(FSNode::ctime) + sizeof(FSNode::trashtime);
+	static uint8_t unodebuff[kFSNodeSizeWithoutType+8+4+2+8*65536+4*65536+4];
 	const uint8_t *ptr,*chptr;
 	uint8_t type,goal;
 	inode_t nodeid;
@@ -138,14 +143,14 @@ int fs_loadnode(FILE *fd) {
 	char c;
 
 	type = fgetc(fd);
-	if (type==0) {  // last node
+	if (type == 0) {  // last node
 		return 1;
 	}
 	switch (type) {
 	case TYPE_DIRECTORY:
 	case TYPE_FIFO:
 	case TYPE_SOCKET:
-		if (fread(unodebuff,1,4+1+2+4+4+4+4+4+4,fd)!=4+1+2+4+4+4+4+4+4) {
+		if (fread(unodebuff,1,kFSNodeSizeWithoutType,fd)!=kFSNodeSizeWithoutType) {
 			fprintf(stderr,"loading node: read error\n");
 			return -1;
 		}
@@ -153,7 +158,7 @@ int fs_loadnode(FILE *fd) {
 	case TYPE_BLOCKDEV:
 	case TYPE_CHARDEV:
 	case TYPE_SYMLINK:
-		if (fread(unodebuff,1,4+1+2+4+4+4+4+4+4+4,fd)!=4+1+2+4+4+4+4+4+4+4) {
+		if (fread(unodebuff,1,kFSNodeSizeWithoutType+4,fd)!=kFSNodeSizeWithoutType+4) {
 			fprintf(stderr,"loading node: read error\n");
 			return -1;
 		}
@@ -161,7 +166,7 @@ int fs_loadnode(FILE *fd) {
 	case TYPE_FILE:
 	case TYPE_TRASH:
 	case TYPE_RESERVED:
-		if (fread(unodebuff,1,4+1+2+4+4+4+4+4+4+8+4+2,fd)!=4+1+2+4+4+4+4+4+4+8+4+2) {
+		if (fread(unodebuff,1,kFSNodeSizeWithoutType+8+4+2,fd)!=kFSNodeSizeWithoutType+8+4+2) {
 			fprintf(stderr,"loading node: read error\n");
 			return -1;
 		}
@@ -170,7 +175,9 @@ int fs_loadnode(FILE *fd) {
 		fprintf(stderr,"loading node: unrecognized node type: %c\n",type);
 		return -1;
 	}
-	c='?';
+
+	c = '?';
+
 	switch (type) {
 	case TYPE_DIRECTORY:
 		c='D';
