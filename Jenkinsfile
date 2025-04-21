@@ -155,6 +155,7 @@ pipeline {
                         checkout scm
                         script {
                             sh """
+                                git submodule update --init
                                 docker buildx build --tag saunafs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
                                 """
                         }
@@ -189,6 +190,7 @@ pipeline {
                         stage('Build image') {
                             steps {
                                 script {
+                                    sh 'git submodule update --init'
                                     buildImage("ubuntu:22.04")
                                 }
                             }
@@ -227,6 +229,9 @@ pipeline {
                         stage("Checkout source") {
                             steps {
                                 checkout scm
+                                script {
+                                    sh 'git submodule update --init'
+                                }
                             }
                         }
                         stage('Build sfstests') {
