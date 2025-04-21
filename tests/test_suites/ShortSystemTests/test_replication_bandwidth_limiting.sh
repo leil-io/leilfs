@@ -42,7 +42,11 @@ expected_time_s=$((file_size_kb * chunks_count / replication_limit))
 accepted_inaccuracy_s=5
 if valgrind_enabled; then
 	accepted_inaccuracy_s=30
+else
+	accepted_inaccuracy_s="$(timeout_rescale_seconds $accepted_inaccuracy_s)"
 fi;
+echo "accepted_inaccuracy_s: $accepted_inaccuracy_s"
+
 assert_success wait_for \
 		'[ "$health_ok" == "$(chunks_health)" ]' \
 		"$((expected_time_s + accepted_inaccuracy_s)) seconds"
