@@ -309,16 +309,6 @@
 ## (Default: 3600)
 # FILE_TEST_LOOP_MIN_TIME = 3600
 
-## Option to enable Prometheus support and metric collection. Set to either 1
-## to enable, or 0 to disable.
-## (Default: 0)
-# ENABLE_PROMETHEUS = 0
-
-## When ENABLE_PROMETHEUS is set, you can use this option to set the host and
-## port where it will listen for scrapers. Must in the format of HOST:PORT.
-## (Default: 0.0.0.0:9499)
-# PROMETHEUS_HOST=0.0.0.0:9499
-
 ## Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or config
 ## value LOG_LEVEL to determine logging level.
 ## Valid log levels are
@@ -330,3 +320,15 @@
 ## 'crit' or 'critical'
 ## 'off'
 # LOG_LEVEL = info
+
+##### EXPERIMENTAL:
+
+## Option to enable Prometheus support and metric collection. Set to either 1
+## to enable, or 0 to disable.
+## (Default: 0)
+# ENABLE_PROMETHEUS = 0
+
+## When ENABLE_PROMETHEUS is set, you can use this option to set the host and
+## port where it will listen for scrapers. Must in the format of HOST:PORT.
+## (Default: 0.0.0.0:9499)
+# PROMETHEUS_HOST=0.0.0.0:9499
