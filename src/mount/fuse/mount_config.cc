@@ -123,6 +123,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 };
 
 void initialize_opts_name_values() {
+	std::lock_guard lock(gMountInfoMtx);
 	gOptsNameValues["sfsmaster"] =
 	    gMountOptions.masterhost ? std::string(gMountOptions.masterhost) : "sfsmaster";
 	gOptsNameValues["sfsport"] =

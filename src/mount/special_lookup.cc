@@ -184,7 +184,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 namespace InodeMountInfo {
 static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	                            char attrstr[256]) {
-	std::unique_lock<std::mutex> lock(gMountInfoMtx);
+	std::lock_guard lock(gMountInfoMtx);
 	EntryParam e;
 	e.ino = inode_;
 	e.attr_timeout = 3600.0;

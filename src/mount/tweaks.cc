@@ -70,18 +70,30 @@ Tweaks::Tweaks() : impl_(new Impl) {}
 Tweaks::~Tweaks() {}
 
 void Tweaks::registerVariable(const std::string& name, std::atomic<bool>& variable, const std::string optionName) {
+	if (!gChangedTweaksValue) {
+		gChangedTweaksValue = true;
+	}
 	impl_->variables.push_back({name, makeVariable(variable), optionName});
 }
 
 void Tweaks::registerVariable(const std::string& name, std::atomic<uint32_t>& variable, const std::string optionName) {
+	if (!gChangedTweaksValue) {
+		gChangedTweaksValue = true;
+	}
 	impl_->variables.push_back({name, makeVariable(variable), optionName});
 }
 
 void Tweaks::registerVariable(const std::string& name, std::atomic<uint64_t>& variable, const std::string optionName) {
+	if (!gChangedTweaksValue) {
+		gChangedTweaksValue = true;
+	}
 	impl_->variables.push_back({name, makeVariable(variable), optionName});
 }
 
 void Tweaks::setValue(const std::string& name, const std::string& value) {
+	if (!gChangedTweaksValue) {
+		gChangedTweaksValue = true;
+	}
 	for (auto& nameAndVariable : impl_->variables) {
 		if (std::get<0>(nameAndVariable) == name) {
 			std::get<1>(nameAndVariable)->setValue(value);
@@ -98,7 +110,7 @@ std::string Tweaks::getValue(const std::string& name) const {
 	return std::string();
 }
 
-std::string Tweaks::getValeByOptionName(const std::string& optionName) const {
+std::string Tweaks::getValueByOptionName(const std::string& optionName) const {
 	for (const auto& nameAndVariable : impl_->variables) {
 		if (std::get<2>(nameAndVariable) == optionName) {
 			return std::get<1>(nameAndVariable)->getValue();

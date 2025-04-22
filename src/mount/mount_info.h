@@ -57,7 +57,7 @@ public:
 	std::string getCommitId() const;
 	std::string getArguments() const;
 	std::map<std::string, std::string> getMountOptions() const;
-	const std::string& getMountInfoStr();
+	std::string getMountInfoStr();
 
 	void setStartedDateUtc(const std::string &date);
 #ifdef _WIN32

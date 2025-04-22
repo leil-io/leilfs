@@ -1097,6 +1097,30 @@ void* fs_nop_thread(void *arg) {
 				}
 				free(inodespacket);
 			}
+
+			if (masterversion >= saunafsVersion(5, 0, 0) && !disconnect && gChangedTweaksValue) {
+				gChangedTweaksValue = false;
+				std::string mountInfoStr;
+				{
+					std::lock_guard lock(gMountInfoMtx);
+					gMountInfo.buildMountInfoStr();
+					mountInfoStr = gMountInfo.getMountInfoStr();
+				}
+				auto message = cltoma::updateMountInfo::build(mountInfoStr);
+
+				uint32_t messageLength = message.size();
+				std::vector<uint8_t> mountInfoPacket(messageLength);
+				std::copy(message.begin(), message.end(), mountInfoPacket.begin());
+
+				if (tcptowrite(fd, mountInfoPacket.data(), messageLength, 1000) !=
+				    (int32_t)messageLength) {
+					safs::log_warn("Failed to send mount info to master");
+					disconnect = true;
+				} else {
+					master_stats_add(MASTER_BYTESSENT, messageLength);
+					master_stats_inc(MASTER_PACKETSSENT);
+				}
+			}
 		}
 		fdLock.unlock();
 		sleep(1);
@@ -1331,10 +1355,13 @@ void fs_init_threads(uint32_t retries, uint32_t maxWaitTimeForRetry, uint32_t sl
 	maxretries = retries;
 	maxWaitRetryTime = maxWaitTimeForRetry;
 	mastercommSleepTimeDivisor = sleepTimeDivisor;
+	fterm = 0;
+	
+	std::unique_lock mountInfoLock(gMountInfoMtx);
 	gTweaks.registerVariable("MaxRetriesMasterComm", maxretries, "maxretriesmastercomm");
 	gTweaks.registerVariable("MaxWaitRetryTimeMasterComm", maxWaitRetryTime, "maxwaitretrytime");
 	gTweaks.registerVariable("MasterCommSleepTimeDivisor", mastercommSleepTimeDivisor, "mastercommsleeptimedivisor");
-	fterm = 0;
+	mountInfoLock.unlock();
 
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr,0x100000);

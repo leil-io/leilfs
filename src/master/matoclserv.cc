@@ -132,6 +132,7 @@ struct session {
 
 	uint32_t sessionid;
 	char *info;
+	std::string mountinfo;
 	std::string config;
 	uint32_t peerip;
 	uint16_t peerport{};
@@ -1336,6 +1337,23 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	}
 }
 
+void matoclserv_mount_info_list(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	std::vector<MountInfoEntry> mountInfoList;
+	matoclserventry *eaptr;
+	cltoma::mountInfoList::deserialize(data, length);
+
+	for (eaptr = matoclservhead ; eaptr ; eaptr=eaptr->next) {
+		if (eaptr->mode != KILL && eaptr->sesdata && eaptr->registered == ClientState::kRegistered) {
+			MountInfoEntry entry;
+			entry.sessionId = eaptr->sesdata->sessionid;
+			entry.mountInfo = eaptr->sesdata->mountinfo;
+			mountInfoList.push_back(entry);
+		}
+	}
+
+	matoclserv_createpacket(eptr, matocl::mountInfoList::build(mountInfoList));
+}
+
 void matoclserv_chart(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
 	uint32_t chartid;
 	uint8_t *ptr;
@@ -1903,6 +1921,14 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 void matoclserv_register_config(matoclserventry *eptr, const uint8_t *data,
                                 uint32_t length) {
 	cltoma::registerConfig::deserialize(data, length, eptr->sesdata->config);
+}
+
+void matoclserv_update_mount_info(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	std::string mount_info;
+	cltoma::updateMountInfo::deserialize(data, length, mount_info);
+	if (eptr->sesdata && eptr->sesdata->mountinfo != mount_info) {
+		eptr->sesdata->mountinfo = mount_info;
+	}
 }
 
 void matoclserv_fuse_reserved_inodes(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
@@ -4856,6 +4882,9 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 				case CLTOMA_SESSION_LIST:
 					matoclserv_session_list(eptr,data,length);
 					break;
+				case SAU_CLTOMA_MOUNT_INFO_LIST:
+					matoclserv_mount_info_list(eptr,data,length);
+					break;
 				case SAU_CLTOMA_SESSION_FILES:
 					matoclserv_session_files(eptr, data, length);
 					break;
@@ -4959,6 +4988,9 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 					break;
 				case SAU_CLTOMA_REGISTER_CONFIG:
 					matoclserv_register_config(eptr,data,length);
+					break;
+				case SAU_CLTOMA_UPDATE_MOUNT_INFO:
+					matoclserv_update_mount_info(eptr,data,length);
 					break;
 				case CLTOMA_FUSE_RESERVED_INODES:
 					matoclserv_fuse_reserved_inodes(eptr,data,length);

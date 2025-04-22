@@ -42,6 +42,7 @@
 #include "protocol/directory_entry.h"
 #include "protocol/lock_info.h"
 #include "protocol/named_inode_entry.h"
+#include "protocol/mount_info_entry.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
 #include "protocol/quota.h"
@@ -422,6 +423,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseGetSelfQuota, SAU_MATOCL_FUSE_GET_SELF_QUOTA, kResponsePacketVersion,
 		uint32_t, messageId,
 		std::vector<QuotaEntry>, quotaEntries)
+
+// SAU_MATOCL_MOUNT_INFO_LIST
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, mountInfoList, SAU_MATOCL_MOUNT_INFO_LIST, 0,
+		std::vector<MountInfoEntry>, mountInfoList)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, recursiveRemove, SAU_MATOCL_RECURSIVE_REMOVE, 0,

@@ -52,6 +52,7 @@
 #include "mount/readdata_cache.h"
 #include "mount/memory_info.h"
 #include "mount/tweaks.h"
+#include "mount/mount_info.h"
 #include "protocol/SFSCommunication.h"
 
 #define REFRESHTICKS 15
@@ -622,7 +623,6 @@ void read_data_init(uint32_t retries,
 	gMaxReadaheadRequests = max_readahead_requests;
 	gPrefetchXorStripes = prefetchXorStripes;
 	gBandwidthOveruse = bandwidth_overuse;
-	gTweaks.registerVariable("PrefetchXorStripes", gPrefetchXorStripes, "sfsprefetchxorstripes");
 	gChunkConnector.setRoundTripTime(chunkserverRoundTripTime_ms);
 	gChunkConnector.setSourceIp(fs_getsrcip());
 	pthread_attr_init(&thattr);
@@ -633,6 +633,8 @@ void read_data_init(uint32_t retries,
 		pthread_create(&th, &thattr, read_worker, NULL);
 	pthread_attr_destroy(&thattr);
 
+	std::lock_guard lock(gMountInfoMtx);
+	gTweaks.registerVariable("PrefetchXorStripes", gPrefetchXorStripes, "sfsprefetchxorstripes");
 	gTweaks.registerVariable("ReadMaxRetries", maxRetries, "sfsioretries (read)");
 	gTweaks.registerVariable("ReadConnectTimeout", gChunkserverConnectTimeout_ms, "sfschunkserverrtt");
 	gTweaks.registerVariable("ReadWaveTimeout", gChunkserverWaveReadTimeout_ms, "sfschunkserverwavereadto");

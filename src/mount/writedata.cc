@@ -706,6 +706,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	for (auto &th : write_worker_th) { pthread_create(&th, &thattr, write_worker, NULL); }
 	pthread_attr_destroy(&thattr);
 
+	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
 	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
 }

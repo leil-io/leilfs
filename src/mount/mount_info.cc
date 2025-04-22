@@ -40,7 +40,7 @@ std::string MountInfo::getVersion() const { return version_; }
 std::string MountInfo::getCommitId() const { return commitId_; }
 std::string MountInfo::getArguments() const { return arguments_; }
 std::map<std::string, std::string> MountInfo::getMountOptions() const { return *mountOptions_; }
-const std::string &MountInfo::getMountInfoStr() {
+std::string MountInfo::getMountInfoStr() {
 	if (mountInfoStr_.empty()) { buildMountInfoStr(); }
 	return mountInfoStr_;
 }
@@ -64,33 +64,34 @@ void MountInfo::setMountOptions(const std::map<std::string, std::string> &option
 
 // Utility method
 void MountInfo::buildMountInfoStr() {
-	mountInfoStr_.clear();
-	mountInfoStr_ += "SAUNAFS CLIENT MOUNT INFO:\n";
-	mountInfoStr_ += "--------------------------------\n";
-	mountInfoStr_ += "STARTED DATE: " + startedDateUtc_ + "\n";
+	std::stringstream mountInfoStream;
+
+	mountInfoStream << "SAUNAFS CLIENT MOUNT INFO:\n";
+	mountInfoStream << "--------------------------------\n";
+	mountInfoStream << "STARTED DATE: " << (startedDateUtc_.empty() ? "Unknown" : startedDateUtc_)
+	                << "\n";
 #ifdef _WIN32
-	mountInfoStr_ += "SID: " + sid_ + "\n";
+	mountInfoStream << "SID: " << (sid_.empty() ? "Unknown" : sid_) << "\n";
 #else
-	mountInfoStr_ += "UID: " + uid_ + "\n";
-	mountInfoStr_ += "GID: " + gid_ + "\n";
+	mountInfoStream << "UID: " << (uid_.empty() ? "Unknown" : uid_) << "\n";
+	mountInfoStream << "GID: " << (gid_.empty() ? "Unknown" : gid_) << "\n";
 #endif
-	mountInfoStr_ += "USERNAME: " + username_ + "\n";
-	mountInfoStr_ += "PID: " + std::to_string(pid_) + "\n";
-	mountInfoStr_ += "VERSION: " + version_ + "\n";
-	mountInfoStr_ += "COMMIT_ID: " + commitId_ + "\n";
-	mountInfoStr_ += "ARGUMENTS: " + arguments_ + "\n";
-	if (mountOptions_) {
-		mountInfoStr_ += "MOUNT OPTIONS:\n";
+	mountInfoStream << "USERNAME: " << (username_.empty() ? "Unknown" : username_) << "\n";
+	mountInfoStream << "PID: " << pid_ << "\n";
+	mountInfoStream << "VERSION: " << (version_.empty() ? "Unknown" : version_) << "\n";
+	mountInfoStream << "COMMIT_ID: " << (commitId_.empty() ? "Unknown" : commitId_) << "\n";
+	mountInfoStream << "ARGUMENTS: " << (arguments_.empty() ? "None" : arguments_) << "\n";
+	if (mountOptions_ && !mountOptions_->empty()) {
+		mountInfoStream << "MOUNT OPTIONS:\n";
 		for (const auto &opt : *mountOptions_) {
-			std::string optionValueFromTweaks = gTweaks.getValeByOptionName(opt.first);
-			if (!optionValueFromTweaks.empty()) {
-				mountInfoStr_ += opt.first + ": " + optionValueFromTweaks + "\n";
-			} else {
-				mountInfoStr_ += opt.first + ": " + opt.second + "\n";
-			}
+			std::string optionValueFromTweaks = gTweaks.getValueByOptionName(opt.first);
+			mountInfoStream << opt.first << ": "
+			                << (!optionValueFromTweaks.empty() ? optionValueFromTweaks : opt.second)
+			                << "\n";
 		}
 	}
-	mountInfoStr_ += "--------------------------------\n";
+	mountInfoStream << "--------------------------------\n";
+	mountInfoStr_ = mountInfoStream.str();
 }
 
 // Global functions
@@ -102,6 +103,7 @@ void mount_info_init(
 #endif
 	const std::string &username, int pid, const std::string &version,
 	const std::string &commitId) {
+	std::lock_guard lock(gMountInfoMtx);
 #ifdef _WIN32
 	gMountInfo.setSid(sid);
 #else
@@ -197,6 +199,7 @@ void set_all_mountpoint_arguments(int argc, char **argv) {
 		arguments += argv[i];
 		if (i < argc - 1) { arguments += " "; }
 	}
+	std::lock_guard lock(gMountInfoMtx);
 	gMountInfo.setArguments(arguments);
 }
 
@@ -213,5 +216,6 @@ void set_current_local_time() {
 
 	std::ostringstream oss;
 	oss << std::put_time(&localtm, "%Y-%m-%d_%H:%M:%S");
+	std::lock_guard lock(gMountInfoMtx);
 	gMountInfo.setStartedDateUtc(oss.str());
 }

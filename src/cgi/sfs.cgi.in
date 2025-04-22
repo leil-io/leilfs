@@ -45,6 +45,8 @@ SAU_CLTOMA_METADATASERVER_STATUS = 1545
 SAU_MATOCL_METADATASERVER_STATUS = 1546
 SAU_CLTOMA_HOSTNAME = 1551
 SAU_MATOCL_HOSTNAME = 1552
+SAU_CLTOMA_MOUNT_INFO_LIST = 1609
+SAU_MATOCL_MOUNT_INFO_LIST = 1610
 
 SAUNAFS_VERSION_WITH_QUOTAS = (2, 5, 0)
 SAUNAFS_VERSION_WITH_CUSTOM_GOALS = (2, 5, 3)
@@ -211,6 +213,24 @@ def cltoma_list_goals():
             raise RuntimeError(
                 "malformed SAU_MATOCL_LIST_GOALS response (too long by {0} bytes)".format(len(response)))
         return goals
+
+
+def cltoma_mount_info_list():
+    entries = dict()
+    if masterversion >= (5, 0, 0):
+        request = make_sau_message(SAU_CLTOMA_MOUNT_INFO_LIST, 0, b"")
+        response = send_and_receive(
+            masterhost, masterport, request, SAU_MATOCL_MOUNT_INFO_LIST, 0)
+        # each entry is a tuple: (sessionid:uint32, mountinfo:string)
+        mount_info_list = deserialize(response, List( Primitive("L") + String ))
+        if response:
+            raise RuntimeError(
+                "malformed SAU_MATOCL_MOUNT_INFO_LIST response "
+                "(too long by {0} bytes)".format(len(response))
+            )
+        for sessionid, mountinfo in mount_info_list:
+            entries[sessionid] = mountinfo
+    return entries
 
 
 def cltoma_chunks_health(only_regular):
@@ -2244,6 +2264,7 @@ if "ML" in sectionset:
 
 if "MS" in sectionset:
     out = []
+    mountinfo_list = cltoma_mount_info_list() 
 
     try:
         MSorder = int(fields.getvalue("MSorder"))
@@ -2331,6 +2352,7 @@ if "MS" in sectionset:
             while pos < length:
                 sessionid, ip1, ip2, ip3, ip4, v1, v2, v3, ileng = struct.unpack(
                     ">LBBBBHBBL", data[pos:pos + 16])
+                mountinfo = mountinfo_list.get(sessionid, "")
                 ipnum = "%d.%d.%d.%d" % (ip1, ip2, ip3, ip4)
                 ver = "%d.%d.%d" % (v1, v2, v3)
                 pos += 16
@@ -2434,13 +2456,21 @@ if "MS" in sectionset:
                 else:
                     sf = 0
                 servers.append((sf, sessionid, host, ipnum, info, ver, meta, path, sesflags, rootuid,
-                                rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime))
+                                rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime, mountinfo))
             servers.sort()
             if MSrev:
                 servers.reverse()
             i = 1
-            for sf, sessionid, host, ipnum, info, ver, meta, path, sesflags, rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime in servers:
-                out.append("""	<tr class="C%u">""" % (((i - 1) % 2) + 1))
+            out.append("""<script type="text/javascript">""")
+            out.append("""function toggleRow(row) {""")
+            out.append("""    const nextRow = row.nextElementSibling;""")
+            out.append("""    if (nextRow && nextRow.classList.contains('collapsible-row')) {""")
+            out.append("""        nextRow.style.display = nextRow.style.display === 'none' ? 'table-row' : 'none';""")
+            out.append("""    }""")
+            out.append("""}""")
+            out.append("""</script>""")
+            for sf, sessionid, host, ipnum, info, ver, meta, path, sesflags, rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime, mountinfo in servers:
+                out.append("""<tr class="C%u" onclick="toggleRow(this)">""" % (((i - 1) % 2) + 1))
                 out.append("""		<td align="right">%u</td>""" % i)
                 out.append("""		<td align="center">%u</td>""" % sessionid)
                 out.append("""		<td align="left">%s</td>""" % host)
@@ -2499,6 +2529,13 @@ if "MS" in sectionset:
                     else:
                         out.append("""		<td align="center">-</td>""")
                         out.append("""		<td align="center">-</td>""")
+                out.append("""	</tr>""")
+                out.append("""	<tr class="collapsible-row" style="display: none;">""")
+                out.append("""		<td colspan="19" align="left">""")
+                out.append("""			<div style="padding: 10px; background-color: #f9f9f9; border: 1px solid #ddd;">""")
+                out.append("""				<pre>%s</pre>""" % mountinfo)
+                out.append("""			</div>""")
+                out.append("""		</td>""")
                 out.append("""	</tr>""")
                 i += 1
         out.append("""</table>""")
