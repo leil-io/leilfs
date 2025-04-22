@@ -136,7 +136,7 @@ static AttrReply setattr(const Context &ctx, struct stat *stbuf, int to_set,
 namespace InodeMountInfo {
 static AttrReply setattr(const Context &ctx, struct stat *stbuf, int to_set, char modestr[11],
                          char attrstr[256]) {
-	std::unique_lock<std::mutex> lock(gMountInfoMtx);
+	std::lock_guard lock(gMountInfoMtx);
 	struct stat o_stbuf;
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(inode_, attr, &o_stbuf);

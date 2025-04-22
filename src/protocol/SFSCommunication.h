@@ -1243,6 +1243,10 @@ enum class SugidClearMode {
 #define SAU_CLTOMA_REGISTER_CONFIG (1000U + 486U)
 /// config:STDSTRING
 
+//0x01E7
+#define SAU_CLTOMA_UPDATE_MOUNT_INFO (1000U + 487U)
+/// mount_info:STDSTRING
+
 /// version==0 msgid:32 status:8
 /// version==1 msgid:32 filelength:64 chunkid:64 chunkversion:32 locations:(N * [ip:32 port:16 label:STDSTRING chunktype:8])
 /// version==2 msgid:32 filelength:64 chunkid:64 chunkversion:32 locations:(N * [ip:32 port:16 label:STDSTRING chunktype:16])
@@ -1754,6 +1758,14 @@ enum class SugidClearMode {
 
 // 0x648
 #define SAU_MATOCL_FUSE_GET_SELF_QUOTA (1000U + 608U)
+
+// 0x649
+#define SAU_CLTOMA_MOUNT_INFO_LIST (1000U + 609U)
+/// -
+
+// 0x64A
+#define SAU_MATOCL_MOUNT_INFO_LIST (1000U + 610U)
+// N * [ sessionid:32 mountinfo:STDSTRING ]
 
 // CHUNKSERVER STATS
 

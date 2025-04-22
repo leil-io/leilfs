@@ -113,7 +113,7 @@ static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size,
 namespace InodeMountInfo {
 static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size, off_t off,
                           FileInfo * /*fi*/) {
-	std::unique_lock<std::mutex> lock(gMountInfoMtx);
+	std::lock_guard lock(gMountInfoMtx);
 	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s", (unsigned long int)inode_,
 	             (uint64_t)size, 
 	             (uint64_t)off, 

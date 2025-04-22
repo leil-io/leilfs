@@ -3605,6 +3605,7 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	}
 #endif
 
+	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("DirectIO", gDirectIo, "sfsdirectio");
 	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush, "sfsignoreflush");
 	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout, "statfscachetimeout");

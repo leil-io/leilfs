@@ -47,7 +47,7 @@ public:
 
 	std::string getValue(const std::string& name) const;
 
-	std::string getValeByOptionName(const std::string& optionName) const;
+	std::string getValueByOptionName(const std::string& optionName) const;
 
 	/// Returns values of all the registered variables.
 	std::string getAllValues() const;
@@ -57,4 +57,5 @@ private:
 	std::unique_ptr<Impl> impl_;
 };
 
+inline std::atomic_bool gChangedTweaksValue;
 inline Tweaks gTweaks;

@@ -130,14 +130,15 @@ static void open(const Context &ctx, FileInfo *fi) {
 
 namespace InodeMountInfo {
 static void open(const Context &ctx, FileInfo *fi) {
-	std::unique_lock<std::mutex> lock(gMountInfoMtx);
+	std::lock_guard lock(gMountInfoMtx);
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
 		oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): %s",
 		             (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	gMountInfo.buildMountInfoStr();
-	fi->fh = reinterpret_cast<uintptr_t>(gMountInfo.getMountInfoStr().c_str());
+	char *buff = strdup(gMountInfo.getMountInfoStr().c_str());
+	fi->fh = reinterpret_cast<uintptr_t>(buff);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
 	oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): OK (1,0)",
