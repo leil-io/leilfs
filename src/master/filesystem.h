@@ -161,7 +161,7 @@ uint8_t fs_apply_emptytrash_deprecated(uint32_t ts,uint32_t freeinodes,uint32_t 
 uint8_t fs_apply_emptyreserved_deprecated(uint32_t ts,uint32_t freeinodes);
 uint8_t fs_apply_freeinodes(uint32_t ts,uint32_t freeinodes);
 uint8_t fs_apply_incversion(uint64_t chunkid);
-uint8_t fs_apply_length(uint32_t ts,uint32_t inode,uint64_t length);
+uint8_t fs_apply_length(uint32_t ts, uint32_t inode, uint64_t length, bool eraseFurtherChunks);
 uint8_t fs_apply_repair(uint32_t ts,uint32_t inode,uint32_t indx,uint32_t nversion);
 uint8_t fs_apply_setxattr(uint32_t ts,uint32_t inode,uint32_t anleng,const uint8_t *attrname,uint32_t avleng,const uint8_t *attrvalue,uint32_t mode);
 uint8_t fs_apply_setacl(uint32_t ts, uint32_t inode, char aclType, const char *aclString);

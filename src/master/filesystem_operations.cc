@@ -678,8 +678,14 @@ uint8_t fs_do_setlength(const FsContext &context, uint32_t inode, uint64_t lengt
 		return status;
 	}
 
-	fsnodes_setlength(static_cast<FSNodeFile*>(p), length);
-	fs_changelog(ts, "LENGTH(%" PRIu32 ",%" PRIu64 ")", inode, static_cast<FSNodeFile*>(p)->length);
+	// This function is called only when the file is being truncated, in
+	// matoclserv_chunk_status and in matoclserv_fuse_truncate. Therefore,
+	// eraseFurtherChunks should be set to true because we are setting the
+	// length of the file and we should erase further chunks.
+	bool eraseFurtherChunks = true;
+	fsnodes_setlength(static_cast<FSNodeFile *>(p), length, eraseFurtherChunks);
+	fs_changelog(ts, "LENGTH(%" PRIu32 ",%" PRIu64 ",%" PRIu32 ")", inode,
+	             static_cast<FSNodeFile *>(p)->length, static_cast<uint32_t>(eraseFurtherChunks));
 	p->mtime = ts;
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
@@ -846,7 +852,7 @@ uint8_t fs_apply_attr(uint32_t ts, uint32_t inode, uint32_t mode, uint32_t uid, 
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_apply_length(uint32_t ts, uint32_t inode, uint64_t length) {
+uint8_t fs_apply_length(uint32_t ts, uint32_t inode, uint64_t length, bool eraseFurtherChunks) {
 	FSNode *p = fsnodes_id_to_node(inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
@@ -854,7 +860,7 @@ uint8_t fs_apply_length(uint32_t ts, uint32_t inode, uint64_t length) {
 	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	fsnodes_setlength(static_cast<FSNodeFile*>(p), length);
+	fsnodes_setlength(static_cast<FSNodeFile *>(p), length, eraseFurtherChunks);
 	p->mtime = ts;
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
@@ -2076,11 +2082,17 @@ uint8_t fs_writeend(uint32_t inode, uint64_t length, uint64_t chunkid, uint32_t 
 			return SAUNAFS_ERROR_EPERM;
 		}
 		if (length > p->length) {
-			fsnodes_setlength(p, length);
+			// eraseFurtherChunks should be set to false because we don't want
+			// to erase the further chunks while we are write operations. The
+			// reason is that those might be done by other clients and we don't
+			// want to erase the chunks other clients are writing.
+			bool eraseFurtherChunks = false;
+			fsnodes_setlength(p, length, eraseFurtherChunks);
 			p->mtime = ts;
 			fsnodes_update_ctime(p, ts);
 			fsnodes_update_checksum(p);
-			fs_changelog(ts, "LENGTH(%" PRIu32 ",%" PRIu64 ")", inode, length);
+			fs_changelog(ts, "LENGTH(%" PRIu32 ",%" PRIu64 ",%" PRIu32 ")", inode, length,
+			             static_cast<uint32_t>(eraseFurtherChunks));
 		}
 	}
 	fs_changelog(ts, "UNLOCK(%" PRIu64 ")", chunkid);

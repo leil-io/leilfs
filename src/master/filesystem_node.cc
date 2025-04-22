@@ -1218,7 +1218,7 @@ void fsnodes_changefilegoal(FSNodeFile *obj, uint8_t goal) {
 	fsnodes_update_checksum(obj);
 }
 
-void fsnodes_setlength(FSNodeFile *obj, uint64_t length) {
+void fsnodes_setlength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) {
 	uint32_t chunks;
 	statsrecord psr, nsr;
 	fsnodes_get_stats(obj, &psr);
@@ -1230,24 +1230,27 @@ void fsnodes_setlength(FSNodeFile *obj, uint64_t length) {
 		gMetadata->reservedspace += length;
 	}
 	obj->length = length;
-	if (length > 0) {
-		chunks = ((length - 1) >> SFSCHUNKBITS) + 1;
-	} else {
-		chunks = 0;
-	}
-	for (uint32_t i = chunks; i < obj->chunks.size(); i++) {
-		uint64_t chunkid = obj->chunks[i];
-		if (chunkid > 0) {
-			if (chunk_delete_file(chunkid, obj->goal) != SAUNAFS_STATUS_OK) {
-				safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64 " not found (inode: %" PRIu32
-				                " ; index: %" PRIu32 ")",
-				       chunkid, obj->id, i);
+
+	if (eraseFurtherChunks) {
+		if (length > 0) {
+			chunks = ((length - 1) >> SFSCHUNKBITS) + 1;
+		} else {
+			chunks = 0;
+		}
+		for (uint32_t i = chunks; i < obj->chunks.size(); i++) {
+			uint64_t chunkid = obj->chunks[i];
+			if (chunkid > 0) {
+				if (chunk_delete_file(chunkid, obj->goal) != SAUNAFS_STATUS_OK) {
+					safs::log_err(
+					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
+					    chunkid, obj->id, i);
+				}
 			}
 		}
-	}
 
-	if (chunks < obj->chunks.size()) {
-		obj->chunks.resize(chunks);
+		if (chunks < obj->chunks.size()) {
+			obj->chunks.resize(chunks);
+		}
 	}
 
 	fsnodes_get_stats(obj, &nsr);

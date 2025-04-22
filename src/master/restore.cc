@@ -342,12 +342,21 @@ int do_link(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 int do_length(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	uint32_t inode;
 	uint64_t length;
-	EAT(ptr,filename,lv,'(');
-	GETU32(inode,ptr);
-	EAT(ptr,filename,lv,',');
-	GETU64(length,ptr);
-	EAT(ptr,filename,lv,')');
-	return fs_apply_length(ts,inode,length);
+	uint32_t eraseFurtherChunks;
+	EAT(ptr, filename, lv, '(');
+	GETU32(inode, ptr);
+	EAT(ptr, filename, lv, ',');
+	GETU64(length, ptr);
+	if (*ptr == ')') {
+		// Old metadata version was always deleting further chunks
+		eraseFurtherChunks = 1;
+	} else {
+		// New metadata version logs whether further chunks must be deleted
+		EAT(ptr, filename, lv, ',');
+		GETU32(eraseFurtherChunks, ptr);
+	}
+	EAT(ptr, filename, lv, ')');
+	return fs_apply_length(ts, inode, length, eraseFurtherChunks != 0);
 }
 
 int do_move(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
