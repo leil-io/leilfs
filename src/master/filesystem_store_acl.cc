@@ -39,7 +39,7 @@ static void fs_store_marker(FILE *fd) {
 	}
 }
 
-static void fs_store_acl(uint32_t id, const RichACL &acl, FILE *fd) {
+static void fs_store_acl(inode_t id, const RichACL &acl, FILE *fd) {
 	static std::vector<uint8_t> buffer;
 	buffer.clear();
 	uint32_t size = serializedSize(id, acl);

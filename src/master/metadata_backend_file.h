@@ -90,9 +90,10 @@ public:
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 
 private:
-	static constexpr size_t kSectionSize = sizeof(FilesystemMetadata::maxnodeid) +
-	                                       sizeof(FilesystemMetadata::metaversion) +
-	                                       sizeof(FilesystemMetadata::nextsessionid);
+	/// Fixed size section names. Examples: "NODE 1.0", "CHNK 1.0", etc.
+	static constexpr size_t kSectionNameSize = 8;
+	/// Section name length + size
+	static constexpr size_t kSectionSize = kSectionNameSize + sizeof(uint64_t);
 
 #ifndef METALOGGER
 	// Nodes

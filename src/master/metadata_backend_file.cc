@@ -928,6 +928,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 	const uint8_t *ptr;
 	inode_t freeNodesToLoad;
 	inode_t freeNodesNumber;
+	uint32_t timestamp;
 
 	try {
 		ptr = options.metadataFile->seek(options.offset);
@@ -938,23 +939,28 @@ bool fs_loadfree(MetadataLoader::Options options) {
 
 	getINode(&ptr, freeNodesNumber);
 
-	if (options.sectionLength && freeNodesNumber != (options.sectionLength - 4) / 8) {
+	constexpr uint8_t kFreeNodesEntrySize = sizeof(inode_t) + sizeof(timestamp);
+
+	if (options.sectionLength &&
+	    freeNodesNumber != (options.sectionLength - sizeof(inode_t)) / kFreeNodesEntrySize) {
 		safs_pretty_errlog(LOG_INFO,
 		                   "loading free nodes: section size doesn't match "
 		                   "number of free nodes");
-		freeNodesNumber = (options.sectionLength - 4) / 8;
+		freeNodesNumber = (options.sectionLength - sizeof(inode_t)) / kFreeNodesEntrySize;
 	}
 
 	freeNodesToLoad = 0;
+
+	constexpr inode_t kFreeBatchSize = 1024;
+	inode_t inode{0};
+
 	while (freeNodesNumber > 0) {
 		if (freeNodesToLoad == 0) {
-			freeNodesToLoad = std::min(freeNodesNumber, inode_t(1024));
+			freeNodesToLoad = std::min(freeNodesNumber, kFreeBatchSize);
 		}
-		inode_t id;
-		getINode(&ptr, id);
-		uint32_t timestamp;
+		getINode(&ptr, inode);
 		get32bit(&ptr, timestamp);
-		gMetadata->inode_pool.detain(id, timestamp, true);
+		gMetadata->inode_pool.detain(inode, timestamp, true);
 		freeNodesToLoad--;
 		freeNodesNumber--;
 	}
@@ -986,8 +992,7 @@ static const std::vector<MetadataSection> kMetadataSections = {
 };
 
 bool isEndOfMetadata(const uint8_t *sectionPtr) {
-	static constexpr std::string_view kMetadataTrailer("[" SFSSIGNATURE
-	                                                   " EOF MARKER]");
+	static constexpr std::string_view kMetadataTrailer("[" SFSSIGNATURE " EOF MARKER]");
 	static constexpr std::string_view kMetadataLegacyTrailer("[MFS EOF MARKER]");
 	return ((memcmp(sectionPtr, kMetadataTrailer.data(),
 	              ::kMetadataSectionHeaderSize) == kOpSuccess) ||
@@ -1009,8 +1014,7 @@ int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile,
 	size_t offsetBegin = metadataFile->offset(metadataHeaderPtr);
 
 	/// First secuential pass to gather section offsets and lengths
-	std::unordered_map<std::string_view, std::pair<size_t, uint64_t>>
-	    sectionMarkers;
+	std::unordered_map<std::string_view, std::pair<size_t, uint64_t>> sectionMarkers;
 	uint8_t *sectionPtr = metadataFile->seek(offsetBegin);
 	while (!isEndOfMetadata(sectionPtr)) {
 		const uint8_t *sectionLengthPtr = sectionPtr + kMetadataSectionNameSize;
@@ -1018,8 +1022,8 @@ int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile,
 		const uint8_t *sectionDataPtr = sectionLengthPtr;
 		for (const auto &section : kMetadataSections) {
 			if (section.matchesSectionTypeOf(sectionPtr)) {
-				sectionMarkers[section.name] = {
-				    metadataFile->offset(sectionDataPtr), sectionLength};
+				sectionMarkers[section.name] = {metadataFile->offset(sectionDataPtr),
+				                                sectionLength};
 				break;
 			}
 		}
@@ -1372,34 +1376,43 @@ void MetadataBackendFile::storeedges(FILE *fd) {
 //FREE
 
 void MetadataBackendFile::storefree(FILE *fd) {
-	uint8_t wbuff[8 * 1024], *ptr;
+	constexpr uint32_t kFreeBatchSize = 1024;
+	constexpr size_t kFreeEntrySize = sizeof(inode_t) + sizeof(uint32_t);  // inode + timestamp
+	constexpr size_t kFreeFullBatchSize = kFreeBatchSize * kFreeEntrySize;
 
-	uint32_t l = gMetadata->inode_pool.detainedCount();
+	uint8_t wbuff[kFreeFullBatchSize], *ptr;
+
+	inode_t totalFreeNodes = gMetadata->inode_pool.detainedCount();
 
 	ptr = wbuff;
-	put32bit(&ptr, l);
-	if (fwrite(wbuff, 1, 4, fd) != (size_t)4) {
+	putINode(&ptr, totalFreeNodes);
+
+	if (fwrite(wbuff, 1, sizeof(inode_t), fd) != sizeof(inode_t)) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return;
 	}
-	l = 0;
+
+	uint32_t batchCursor = 0;
 	ptr = wbuff;
 
 	for (const auto &n : gMetadata->inode_pool) {
-		if (l == 1024) {
-			if (fwrite(wbuff, 1, 8 * 1024, fd) != (size_t)(8 * 1024)) {
+		if (batchCursor == kFreeBatchSize) {
+			if (fwrite(wbuff, 1, kFreeFullBatchSize, fd) != kFreeFullBatchSize) {
 				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 				return;
 			}
-			l = 0;
+
+			batchCursor = 0;
 			ptr = wbuff;
 		}
+
 		putINode(&ptr, n.id);
 		put32bit(&ptr, n.ts);
-		l++;
+		batchCursor++;
 	}
-	if (l > 0) {
-		if (fwrite(wbuff, 1, 8 * l, fd) != (size_t)(8 * l)) {
+
+	if (batchCursor > 0) {
+		if (fwrite(wbuff, 1, kFreeEntrySize * batchCursor, fd) != kFreeEntrySize * batchCursor) {
 			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 			return;
 		}
@@ -1481,8 +1494,8 @@ int MetadataBackendFile::process_section(const char *label, uint8_t (&hdr)[kSect
                                          uint8_t *&ptr, off_t &offbegin,
                                          off_t &offend, FILE *&fd) {
 	offend = ftello(fd);
-	memcpy(hdr, label, 8);
-	ptr = hdr + 8;
+	memcpy(hdr, label, kSectionNameSize);
+	ptr = hdr + kSectionNameSize;
 	put64bit(&ptr, offend - offbegin - kSectionSize);
 	fseeko(fd, offbegin, SEEK_SET);
 	if (fwrite(hdr, 1, kSectionSize, fd) != kSectionSize) {
@@ -1495,75 +1508,84 @@ int MetadataBackendFile::process_section(const char *label, uint8_t (&hdr)[kSect
 }
 
 void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
-	uint8_t hdr[kSectionSize];
-	uint8_t *ptr;
-	off_t offbegin, offend;
+	constexpr uint8_t kHeaderSize = sizeof(FilesystemMetadata::maxnodeid) +
+	                                sizeof(FilesystemMetadata::metaversion) +
+	                                sizeof(FilesystemMetadata::nextsessionid);
+	uint8_t header[kHeaderSize];
 
-	ptr = hdr;
+	uint8_t sectionHeader[kSectionSize];
+	uint8_t *ptr;
+	off_t offbegin{0};
+	off_t offend;
+
+	ptr = header;
 	putINode(&ptr, gMetadata->maxnodeid);
 	put64bit(&ptr, gMetadata->metaversion);
 	put32bit(&ptr, gMetadata->nextsessionid);
-	if (fwrite(hdr, 1, kSectionSize, fd) != kSectionSize) {
+
+	if (fwrite(header, 1, kHeaderSize, fd) != kHeaderSize) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return;
 	}
+
 	if (fver >= kMetadataVersionWithSections) {
 		offbegin = ftello(fd);
 		fseeko(fd, offbegin + kSectionSize, SEEK_SET);
-	} else {
-		offbegin = 0;  // makes some old compilers happy
 	}
+
+	ptr = sectionHeader;
+
 	storenodes(fd);
 	if (fver >= kMetadataVersionWithSections) {
-		if (process_section("NODE 1.0", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("NODE 1.0", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 	}
 	storeedges(fd);
 	if (fver >= kMetadataVersionWithSections) {
-		if (process_section("EDGE 1.0", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("EDGE 1.0", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 	}
 	storefree(fd);
 	if (fver >= kMetadataVersionWithSections) {
-		if (process_section("FREE 1.0", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("FREE 1.0", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 		xattr_store(fd);
-		if (process_section("XATR 1.0", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("XATR 1.0", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 		fs_store_acls(fd);
-		if (process_section("ACLS 1.2", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("ACLS 1.2", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 		storequotas(fd);
-		if (process_section("QUOT 1.1", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("QUOT 1.1", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 		storelocks(fd);
-		if (process_section("FLCK 1.0", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("FLCK 1.0", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 	}
 	chunk_store(fd);
 	if (fver >= kMetadataVersionWithSections) {
-		if (process_section("CHNK 1.0", hdr, ptr, offbegin, offend, fd) !=
+		if (process_section("CHNK 1.0", sectionHeader, ptr, offbegin, offend, fd) !=
 		    SAUNAFS_STATUS_OK) {
 			return;
 		}
 
 		fseeko(fd, offend, SEEK_SET);
-		memcpy(hdr, "[SFS EOF MARKER]", 16);
-		if (fwrite(hdr, 1, 16, fd) != (size_t)16) {
+		memcpy(sectionHeader, "[SFS EOF MARKER]", 16);
+		if (fwrite(sectionHeader, 1, 16, fd) != (size_t)16) {
 			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 			return;
 		}

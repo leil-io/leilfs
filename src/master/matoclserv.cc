@@ -686,11 +686,12 @@ void matoclserv_store_sessions() {
 }
 
 #define MFSSIGNATURE "MFS"
+
 int matoclserv_load_sessions() {
 	session *asesdata;
 	uint32_t ileng;
-	uint8_t hdr[8];
-	uint8_t *fsesrecord;
+	uint8_t hdr[8];  // for signature and version. e.g. "SFS" " S 1.5"
+	std::vector<uint8_t> fsesrecord;
 	const uint8_t *ptr;
 	uint8_t mapalldata;
 	uint8_t goaltrashdata;
@@ -699,36 +700,42 @@ int matoclserv_load_sessions() {
 	FILE *fd;
 
 	fd = fopen(kSessionsFilename, "r");
-	if (fd==NULL) {
-		safs_silent_errlog(LOG_WARNING,"can't load sessions, fopen error");
-		if (errno==ENOENT) {    // it's ok if file does not exist
+
+	if (fd == nullptr) {
+		safs_silent_errlog(LOG_WARNING, "can't load sessions, fopen error");
+		if (errno == ENOENT) {  // it's ok if file does not exist
 			return 0;
-		} else {
-			return -1;
 		}
+
+		return -1;
 	}
-	if (fread(hdr,8,1,fd)!=1) {
-		safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
+
+	const size_t kSessionsHeaderSize = strlen(SFSSIGNATURE) + 5;
+
+	if (fread(hdr, kSessionsHeaderSize, 1, fd) != 1) {
+		safs_pretty_syslog(LOG_WARNING, "can't load sessions, fread error");
 		fclose(fd);
 		return -1;
 	}
-	if (memcmp(hdr, SFSSIGNATURE "S 1.5", 8) == 0 ||
-	    memcmp(hdr, MFSSIGNATURE "S 1.5", 8) == 0) {
+
+	// Guillex: Only "S \001\006\004" (last option) is expected
+	if (memcmp(hdr, SFSSIGNATURE "S 1.5", kSessionsHeaderSize) == 0 ||
+	    memcmp(hdr, MFSSIGNATURE "S 1.5", kSessionsHeaderSize) == 0) {
 		mapalldata = 0;
 		goaltrashdata = 0;
 		statsinfile = 16;
-	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\001", 8) == 0 ||
-	           memcmp(hdr, MFSSIGNATURE "S \001\006\001", 8) == 0) {
+	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\001", kSessionsHeaderSize) == 0 ||
+	           memcmp(hdr, MFSSIGNATURE "S \001\006\001", kSessionsHeaderSize) == 0) {
 		mapalldata = 1;
 		goaltrashdata = 0;
 		statsinfile = 16;
-	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\002", 8) == 0 ||
-	           memcmp(hdr, MFSSIGNATURE "S \001\006\002", 8) == 0) {
+	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\002", kSessionsHeaderSize) == 0 ||
+	           memcmp(hdr, MFSSIGNATURE "S \001\006\002", kSessionsHeaderSize) == 0) {
 		mapalldata = 1;
 		goaltrashdata = 0;
 		statsinfile = 21;
-	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\003", 8) == 0 ||
-	           memcmp(hdr, MFSSIGNATURE "S \001\006\003", 8) == 0) {
+	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0 ||
+	           memcmp(hdr, MFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0) {
 		mapalldata = 1;
 		goaltrashdata = 0;
 		if (fread(hdr,2,1,fd)!=1) {
@@ -738,12 +745,12 @@ int matoclserv_load_sessions() {
 		}
 		ptr = hdr;
 		statsinfile = get16bit(&ptr);
-	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\004", 8) == 0 ||
-	           memcmp(hdr, MFSSIGNATURE "S \001\006\004", 8) == 0) {
+	} else if (memcmp(hdr, SFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) == 0 ||
+	           memcmp(hdr, MFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) == 0) {
 		mapalldata = 1;
 		goaltrashdata = 1;
-		if (fread(hdr,2,1,fd)!=1) {
-			safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
+		if (fread(hdr, sizeof(uint16_t), 1, fd) != 1) {
+			safs_pretty_syslog(LOG_WARNING, "can't load sessions, fread error");
 			fclose(fd);
 			return -1;
 		}
@@ -755,25 +762,38 @@ int matoclserv_load_sessions() {
 		return -1;
 	}
 
-	if (mapalldata==0) {
-		fsesrecord = (uint8_t*) malloc(25+statsinfile*8);
-	} else if (goaltrashdata==0) {
-		fsesrecord = (uint8_t*) malloc(33+statsinfile*8);
+	// Compile time constants
+	constexpr uint8_t kStatEntrySize =
+	    sizeof(std::remove_extent<decltype(session::currentopstats)>::type::value_type) +
+	    sizeof(std::remove_extent<decltype(session::lasthouropstats)>::type::value_type);
+
+	constexpr uint32_t kCommonSize = sizeof(session::sessionid) + sizeof(ileng) +
+	                                 sizeof(session::peerip) + sizeof(session::rootinode) +
+	                                 sizeof(session::sesflags) + sizeof(session::rootuid) +
+	                                 sizeof(session::rootgid);
+	constexpr uint32_t kExtraSizeWithMapAll =
+	    sizeof(session::mapalluid) + sizeof(session::mapallgid);
+	constexpr uint32_t kExtraSizeWithGoalTrash =
+	    sizeof(session::mingoal) + sizeof(session::maxgoal) + sizeof(session::mintrashtime) +
+	    sizeof(session::maxtrashtime);
+
+	// statsinfile is unknown at compile time, we need to use a runtime constant
+	const uint32_t kStatsSize = statsinfile * kStatEntrySize;
+
+	if (mapalldata == 0) {
+		fsesrecord.resize(kCommonSize + kStatsSize);
+	} else if (goaltrashdata == 0) {
+		fsesrecord.resize(kCommonSize + kExtraSizeWithMapAll + kStatsSize);
 	} else {
-		fsesrecord = (uint8_t*) malloc(43+statsinfile*8);
+		fsesrecord.resize(kCommonSize + kExtraSizeWithMapAll + kExtraSizeWithGoalTrash +
+		                  kStatsSize);
 	}
-	passert(fsesrecord);
 
 	while (!feof(fd)) {
-		if (mapalldata==0) {
-			r = fread(fsesrecord,25+statsinfile*8,1,fd);
-		} else if (goaltrashdata==0) {
-			r = fread(fsesrecord,33+statsinfile*8,1,fd);
-		} else {
-			r = fread(fsesrecord,43+statsinfile*8,1,fd);
-		}
+		r = fread(fsesrecord.data(), fsesrecord.size(), 1, fd);
+
 		if (r==1) {
-			ptr = fsesrecord;
+			ptr = fsesrecord.data();
 			asesdata = new session();
 			passert(asesdata);
 			get32bit(&ptr, asesdata->sessionid);
@@ -818,7 +838,6 @@ int matoclserv_load_sessions() {
 				if (fread(asesdata->info,ileng,1,fd)!=1) {
 					free(asesdata->info);
 					delete asesdata;
-					free(fsesrecord);
 					safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
 					fclose(fd);
 					return -1;
@@ -829,14 +848,13 @@ int matoclserv_load_sessions() {
 			sessionshead = asesdata;
 		}
 		if (ferror(fd)) {
-			free(fsesrecord);
 			safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
 			fclose(fd);
 			return -1;
 		}
 	}
-	free(fsesrecord);
-	safs_pretty_syslog(LOG_NOTICE,"sessions have been loaded");
+
+	safs_pretty_syslog(LOG_NOTICE, "sessions have been loaded");
 	fclose(fd);
 	return 1;
 }
