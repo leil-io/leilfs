@@ -150,7 +150,7 @@ pipeline {
         stage('Build and test') {
             parallel {
                 stage('Build with clang') {
-                    agent {label 'build && ubuntu-2204'}
+                    agent {label 'build'}
                     steps {
                         checkout scm
                         script {
@@ -179,7 +179,7 @@ pipeline {
                     }
                 }
                 stage('Build Ubuntu 22.04') {
-                    agent { label "test && ubuntu-2204" }
+                    agent { label "build" }
                     stages {
                         stage("Checkout source") {
                             steps {
