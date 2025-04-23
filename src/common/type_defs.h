@@ -21,15 +21,13 @@
 
 #include "common/platform.h"
 
-//#define USE_INODE_64
-
 /// inode_t is meant to be used as type for all inode number references.
 /// Needs to be compatible with C++ and C code.
 #ifdef __cplusplus
 
 #include <cstdint>
 
-#ifdef USE_INODE_64
+#ifdef SAUNAFS_USE_INODE64
 using inode_t = uint64_t;
 #define PRIiNode PRIu64
 #define PRIXiNode PRIX64
@@ -46,7 +44,7 @@ constexpr std::size_t kinode_t_size = sizeof(inode_t);
 #include <inttypes.h>
 #include <stdint.h>
 
-#ifdef USE_INODE_64
+#ifdef SAUNAFS_USE_INODE64
 typedef uint64_t inode_t;
 #define PRIiNode PRIu64
 #define PRIXiNode PRIX64

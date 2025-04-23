@@ -54,6 +54,8 @@ option(ENABLE_CCACHE            "Enable ccache during compilation"              
 option(ENABLE_NFS_ACL_SUPPORT   "Enable nfs-ganesha ACL support"                         ON)
 option(ENABLE_COMPILE_COMMANDS  "Enable generation of compile_commands.json"             ON)
 option(ENABLE_PROMETHEUS        "Enable prometheus metrics"                              ON)
+# Experimental
+option(ENABLE_INODE64           "Enable 64 bits for inode numbers and quantities"        OFF)
 
 option(GENERATE_GIT_INFO "Generate git info from current repository (for version commands)" ON)
 
@@ -145,6 +147,11 @@ message(STATUS "ENABLE_REQUEST_LOG: ${ENABLE_REQUEST_LOG}")
 message(STATUS "USE_LEGACY_READ_MESSAGES: ${USE_LEGACY_READ_MESSAGES}")
 message(STATUS "ENABLE_NFS_GANESHA: ${ENABLE_NFS_GANESHA}")
 message(STATUS "ENABLE_COMPILE_COMMANDS: ${CMAKE_EXPORT_COMPILE_COMMANDS}")
+message(STATUS "ENABLE_INODE64: ${ENABLE_INODE64}")
+
+if(ENABLE_INODE64)
+  add_definitions(-DSAUNAFS_USE_INODE64)
+endif()
 
 if(ENABLE_TESTS)
   if(NOT THROW_INSTEAD_OF_ABORT)
