@@ -392,7 +392,7 @@ bool open_pam_session() {
 #if defined(SAUNAFS_HAVE_PAM)
 	static struct pam_conv conv = {misc_conv, NULL};
 
-	assert(gPAMHandle == NULL);
+	assert(gPAMHandle == nullptr);
 
 	int retval;
 
@@ -405,6 +405,8 @@ bool open_pam_session() {
 	retval = pam_open_session(gPAMHandle, 0);
 	if (retval != PAM_SUCCESS) {
 		safs_pretty_errlog(LOG_ERR, "Can't open PAM session");
+		pam_end(gPAMHandle, retval);  // Cleanup if session opening fails (valgrind + clang warning)
+		gPAMHandle = nullptr;
 		return false;
 	}
 
@@ -422,6 +424,7 @@ void close_pam_session() {
 
 	int retval = pam_close_session(gPAMHandle, 0);
 	pam_end(gPAMHandle, retval);
+	gPAMHandle = nullptr;
 #endif
 }
 
