@@ -38,16 +38,29 @@ fi;
 ### Build Phase
 FROM test-setup AS test-build
 
+# TODO(Urmas): Figure out why binary cache submissions take always 11 seconds.
+# For now, just disable it since it's faster with ccache and docker cache.
+ENV VCPKG_BINARY_SOURCES="clear"
+
 # Enable additional basic tools
 ENV PATH="/usr/lib/ccache:${PATH}"
 
 WORKDIR /
-RUN git clone https://github.com/microsoft/vcpkg.git /vcpkg;
+COPY vcpkg /vcpkg
 WORKDIR /vcpkg
+
+# Manifest mode doesn't work without git, and we don't want to bring in the
+# entire source code of SaunaFS just yet, so we need to remove the .git file
+# (if it's a proper submodule) and replace it with the submodule .git in
+# saunafs directory. Suprisingly works.
+RUN rm -r .git;
+COPY .git/modules/vcpkg/ .git
+
 COPY vcpkg.json .
-RUN git pull;
 RUN ./bootstrap-vcpkg.sh;
-RUN --mount=type=cache,target=/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/vcpkg/packages/,sharing=locked ./vcpkg install;
+RUN --mount=type=cache,target=/vcpkg/downloads/,sharing=locked \
+	--mount=type=cache,target=/vcpkg/packages/,sharing=locked \
+	./vcpkg install --only-downloads;
 
 ENV VCPKG_ROOT="/vcpkg/"
 ENV PATH="${VCPKG_ROOT}:${PATH}"
@@ -65,7 +78,13 @@ COPY COPYING .
 COPY README.md .
 RUN cp /vcpkg/vcpkg.json .;
 
-RUN mkdir -p /saunafs/build && ls /saunafs && \
+ENV CMAKE_C_COMPILER_LAUNCHER=ccache
+ENV CMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+RUN --mount=type=cache,target=/vcpkg/downloads/ \
+    --mount=type=cache,target=/root/.ccache \
+	--mount=type=cache,target=/vcpkg/packages/ \
+	mkdir -p /saunafs/build && ls /saunafs && \
     cd /saunafs/build && cmake \
 	-DCMAKE_TOOLCHAIN_FILE="/vcpkg/scripts/buildsystems/vcpkg.cmake" \
     -DENABLE_TESTS=1 \
