@@ -45,19 +45,15 @@ static void open(const Context &ctx, FileInfo *fi) {
 
 namespace InodeStats {
 static void open(const Context &ctx, FileInfo *fi) {
-	sinfo *statsinfo;
-	statsinfo = (sinfo*) malloc(sizeof(sinfo));
+	auto *statsinfo = new sinfo();
 	if (!statsinfo) {
 		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: STATS): %s",
 		            inode_,
 		            saunafs_error_string(SAUNAFS_ERROR_OUTOFMEMORY));
 		throw RequestException(SAUNAFS_ERROR_OUTOFMEMORY);
 	}
-	if (pthread_mutex_init(&(statsinfo->lock), NULL))  {
-		free(statsinfo);
-		throw RequestException(SAUNAFS_ERROR_EPERM);
-	}
-	PthreadMutexWrapper lock((statsinfo->lock));         // make helgrind happy
+
+	std::lock_guard lock(statsinfo->lock);         // make helgrind happy
 	stats_show_all(&(statsinfo->buff),&(statsinfo->leng));
 	statsinfo->reset = 0;
 	fi->fh = reinterpret_cast<uintptr_t>(statsinfo);

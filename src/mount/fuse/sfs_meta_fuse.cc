@@ -50,14 +50,14 @@ struct dirbuf {
 	bool wasread;
 	uint8_t *p;
 	size_t size;
-	pthread_mutex_t lock;
+	std::mutex lock;
 };
 
 typedef struct _pathbuf {
 	int changed;
 	char *p;
 	size_t size;
-	pthread_mutex_t lock;
+	std::mutex lock;
 } pathbuf;
 
 #define READDIR_BUFFSIZE 50000
@@ -593,15 +593,7 @@ void sfs_meta_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 	if (ino == SPECIAL_INODE_ROOT || ino == SPECIAL_INODE_META_TRASH ||
 	    ino == SPECIAL_INODE_META_UNDEL || ino == SPECIAL_INODE_META_RESERVED) {
 
-		if (!(dirinfo = (dirbuf*)malloc(sizeof(dirbuf)))) {
-			safs_pretty_syslog(LOG_EMERG, "out of memory");
-			return;
-		}
-
-		if (pthread_mutex_init(&(dirinfo->lock), NULL)) {
-			free(dirinfo);
-			return;
-		}
+		dirinfo = new dirbuf();
 
 		dirinfo->p = NULL;
 		dirinfo->size = 0;
@@ -611,10 +603,7 @@ void sfs_meta_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 		if (fuse_reply_open(req,fi) == -ENOENT) {
 			fi->fh = 0;
 			free(dirinfo->p);
-			bool lock_destroy_failed = pthread_mutex_destroy(&(dirinfo->lock));
-			free(dirinfo);
-			if (lock_destroy_failed)
-				return;
+			delete dirinfo;
 		}
 	} else {
 		fuse_reply_err(req, ENOTDIR);
@@ -667,14 +656,13 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 		fuse_reply_err(req,EINVAL);
 		return;
 	}
-	pthread_mutex_lock(&(dirinfo->lock));
+	std::lock_guard lock(dirinfo->lock);
 	if (!dirinfo->wasread || (dirinfo->wasread && off==0)) {
 		if (dirinfo->p!=NULL) {
 			free(dirinfo->p);
 		}
 		if (ino == SPECIAL_INODE_ROOT) {
 			replyDirReadRoot(req, off, size);
-			pthread_mutex_unlock(&(dirinfo->lock));
 			return;
 		}
 		dirbuf_meta_fill(dirinfo, ino);
@@ -714,17 +702,15 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 		}
 		fuse_reply_buf(req,buffer,opos);
 	}
-	pthread_mutex_unlock(&(dirinfo->lock));
 }
 
 void sfs_meta_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 	(void)ino;
 	dirbuf *dirinfo = (dirbuf *)((unsigned long)(fi->fh));
-	pthread_mutex_lock(&(dirinfo->lock));
-	pthread_mutex_unlock(&(dirinfo->lock));
-	pthread_mutex_destroy(&(dirinfo->lock));
+	dirinfo->lock.lock();
+	dirinfo->lock.unlock();
 	free(dirinfo->p);
-	free(dirinfo);
+	delete dirinfo;
 	fi->fh = 0;
 	fuse_reply_err(req,0);
 }
@@ -753,22 +739,13 @@ void sfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 	if (status) {
 		fuse_reply_err(req, status);
 	} else {
-		if (!(pathinfo = (pathbuf*)malloc(sizeof(pathbuf)))) {
-			safs_pretty_syslog(LOG_EMERG, "out of memory");
-			return;
-		}
-
-		if (pthread_mutex_init(&(pathinfo->lock), NULL)) {
-			free(pathinfo);
-			return;
-		}
+		pathinfo = new pathbuf();
 
 		pathinfo->changed = 0;
 		pathinfo->size = strlen((char*)path) + 1;
 		if (!(pathinfo->p = (char*)malloc(pathinfo->size))) {
 			safs_pretty_syslog(LOG_EMERG, "out of memory");
-			pthread_mutex_destroy(&(pathinfo->lock));
-			free(pathinfo);
+			delete pathinfo;
 			return;
 		}
 		memcpy(pathinfo->p, path, pathinfo->size - 1);
@@ -778,9 +755,8 @@ void sfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 
 		if (fuse_reply_open(req, fi) == -ENOENT) {
 			fi->fh = 0;
-			pthread_mutex_destroy(&(pathinfo->lock));
 			free(pathinfo->p);
-			free(pathinfo);
+			delete pathinfo;
 		}
 	}
 }
@@ -791,7 +767,7 @@ void sfs_meta_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 		return;
 	}
 	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
-	pthread_mutex_lock(&(pathinfo->lock));
+	std::unique_lock lock(pathinfo->lock);
 	if (pathinfo->changed) {
 		if (pathinfo->p[pathinfo->size-1]=='\n') {
 			pathinfo->p[pathinfo->size-1]=0;
@@ -801,10 +777,9 @@ void sfs_meta_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 		}
 		fs_settrashpath(ino,(uint8_t*)pathinfo->p);
 	}
-	pthread_mutex_unlock(&(pathinfo->lock));
-	pthread_mutex_destroy(&(pathinfo->lock));
+	lock.unlock();
 	free(pathinfo->p);
-	free(pathinfo);
+	delete pathinfo;
 	fi->fh = 0;
 	fuse_reply_err(req,0);
 }
@@ -835,9 +810,9 @@ void sfs_meta_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struc
 		fuse_reply_err(req,EBADF);
 		return;
 	}
-	pthread_mutex_lock(&(pathinfo->lock));
+	std::unique_lock lock(pathinfo->lock);
 	if (off<0) {
-		pthread_mutex_unlock(&(pathinfo->lock));
+		lock.unlock();
 		fuse_reply_err(req,EINVAL);
 		return;
 	}
@@ -848,7 +823,6 @@ void sfs_meta_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struc
 	} else {
 		fuse_reply_buf(req, (pathinfo->p)+off,size);
 	}
-	pthread_mutex_unlock(&(pathinfo->lock));
 }
 
 void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
@@ -865,7 +839,7 @@ void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size
 		fuse_reply_err(req,EINVAL);
 		return;
 	}
-	pthread_mutex_lock(&(pathinfo->lock));
+	std::unique_lock lock(pathinfo->lock);
 	if (pathinfo->changed==0) {
 		pathinfo->size = 0;
 	}
@@ -877,7 +851,7 @@ void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size
 	}
 	memcpy((pathinfo->p)+off,buf,size);
 	pathinfo->changed = 1;
-	pthread_mutex_unlock(&(pathinfo->lock));
+	lock.unlock();
 	fuse_reply_write(req,size);
 }
 

@@ -53,12 +53,12 @@ static fhentry *fhhead=NULL;
 static uint8_t opbuff[OPBUFFSIZE];
 static uint64_t writepos=0;
 static uint8_t waiting=0;
-static pthread_mutex_t opbufflock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t nodata = PTHREAD_COND_INITIALIZER;
+static std::mutex opbufflock;
+static std::condition_variable noData;
 
 static time_t gConvTmHour = std::numeric_limits<time_t>::max(); // enforce update on first read
 static struct tm gConvTm;
-static pthread_mutex_t timelock = PTHREAD_MUTEX_INITIALIZER;
+static std::mutex timelock;
 #ifdef _WIN32
 static int debug_mode_;
 
@@ -81,7 +81,7 @@ static inline void oplog_put(uint8_t *buff,uint32_t leng) {
 		buff+=leng-OPBUFFSIZE;
 		leng=OPBUFFSIZE;
 	}
-	pthread_mutex_lock(&opbufflock);
+	std::lock_guard lock(opbufflock);
 	bpos = writepos%OPBUFFSIZE;
 	writepos+=leng;
 	if (bpos+leng>OPBUFFSIZE) {
@@ -92,10 +92,9 @@ static inline void oplog_put(uint8_t *buff,uint32_t leng) {
 	}
 	memcpy(opbuff+bpos,buff,leng);
 	if (waiting) {
-		pthread_cond_broadcast(&nodata);
+		noData.notify_all();
 		waiting=0;
 	}
-	pthread_mutex_unlock(&opbufflock);
 }
 
 static void get_time(timeval &tv, tm &ltime) {
@@ -104,14 +103,14 @@ static void get_time(timeval &tv, tm &ltime) {
 	time_t hour = tv.tv_sec / secs_per_hour;
 	unsigned secs_this_hour = tv.tv_sec % secs_per_hour;
 
-	pthread_mutex_lock(&timelock);
+	std::unique_lock lock(timelock);
 	if (hour != gConvTmHour) {
 		gConvTmHour = hour;
 		time_t convts = hour * secs_per_hour;
 		localtime_r(&convts, &gConvTm);
 	}
 	ltime = gConvTm;
-	pthread_mutex_unlock(&timelock);
+	lock.unlock();
 
 	assert(ltime.tm_sec == 0);
 	assert(ltime.tm_min == 0);
@@ -189,7 +188,7 @@ unsigned long oplog_newhandle(int hflag) {
 	fhentry *fhptr;
 	uint32_t bpos;
 
-	pthread_mutex_lock(&opbufflock);
+	std::lock_guard lock(opbufflock);
 	fhptr = (fhentry*) malloc(sizeof(fhentry));
 	fhptr->fh = nextfh++;
 	fhptr->refcount = 1;
@@ -216,18 +215,16 @@ unsigned long oplog_newhandle(int hflag) {
 	}
 	fhptr->next = fhhead;
 	fhhead = fhptr;
-	pthread_mutex_unlock(&opbufflock);
 	return fhptr->fh;
 }
 
-void oplog_releasehandle(unsigned long fh) {
-	fhentry **fhpptr,*fhptr;
-	pthread_mutex_lock(&opbufflock);
+void oplog_releasedata(unsigned long fh) {
+	fhentry **fhpptr, *fhptr;
 	fhpptr = &fhhead;
 	while ((fhptr = *fhpptr)) {
-		if (fhptr->fh==fh) {
+		if (fhptr->fh == fh) {
 			fhptr->refcount--;
-			if (fhptr->refcount==0) {
+			if (!fhptr->refcount) {
 				*fhpptr = fhptr->next;
 				free(fhptr);
 			} else {
@@ -237,16 +234,18 @@ void oplog_releasehandle(unsigned long fh) {
 			fhpptr = &(fhptr->next);
 		}
 	}
-	pthread_mutex_unlock(&opbufflock);
+}
+
+void oplog_releasehandle(unsigned long fh) {
+	std::lock_guard lock(opbufflock);
+	oplog_releasedata(fh);
 }
 
 void oplog_getdata(unsigned long fh,uint8_t **buff,uint32_t *leng,uint32_t maxleng) {
 	fhentry *fhptr;
 	uint32_t bpos;
-	struct timeval tv;
-	struct timespec ts;
 
-	pthread_mutex_lock(&opbufflock);
+	std::unique_lock lock(opbufflock);
 	for (fhptr=fhhead ; fhptr && fhptr->fh != fh ; fhptr=fhptr->next) {
 	}
 	if (fhptr==NULL) {
@@ -256,11 +255,8 @@ void oplog_getdata(unsigned long fh,uint8_t **buff,uint32_t *leng,uint32_t maxle
 	}
 	fhptr->refcount++;
 	while (fhptr->readpos>=writepos) {
-		gettimeofday(&tv,NULL);
-		ts.tv_sec = tv.tv_sec+1;
-		ts.tv_nsec = tv.tv_usec*1000;
 		waiting=1;
-		if (pthread_cond_timedwait(&nodata,&opbufflock,&ts)==ETIMEDOUT) {
+		if (noData.wait_for(lock, std::chrono::seconds(1)) == std::cv_status::timeout) {
 			*buff = (uint8_t*)"#\n";
 			*leng = 2;
 			return;
@@ -276,23 +272,6 @@ void oplog_getdata(unsigned long fh,uint8_t **buff,uint32_t *leng,uint32_t maxle
 		(*leng) = maxleng;
 	}
 	fhptr->readpos+=(*leng);
-}
 
-void oplog_releasedata(unsigned long fh) {
-	fhentry **fhpptr,*fhptr;
-	fhpptr = &fhhead;
-	while ((fhptr = *fhpptr)) {
-		if (fhptr->fh==fh) {
-			fhptr->refcount--;
-			if (fhptr->refcount==0) {
-				*fhpptr = fhptr->next;
-				free(fhptr);
-			} else {
-				fhpptr = &(fhptr->next);
-			}
-		} else {
-			fhpptr = &(fhptr->next);
-		}
-	}
-	pthread_mutex_unlock(&opbufflock);
+	oplog_releasedata(fh);
 }

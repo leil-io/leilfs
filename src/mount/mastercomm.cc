@@ -153,7 +153,7 @@ enum {
 	STATNODES
 };
 
-static uint64_t *statsptr[STATNODES];
+static std::vector<uint64_t *> statsptr(STATNODES);
 
 struct InitParams {
 	std::string bind_host;
@@ -198,22 +198,6 @@ void master_statsptr_init(void) {
 	statsptr[MASTER_BYTESRCVD] = stats_get_counterptr(stats_get_subnode(s,"bytes_received",0));
 	statsptr[MASTER_BYTESSENT] = stats_get_counterptr(stats_get_subnode(s,"bytes_sent",0));
 	statsptr[MASTER_CONNECTS] = stats_get_counterptr(stats_get_subnode(s,"reconnects",0));
-}
-
-void master_stats_inc(uint8_t id) {
-	if (id<STATNODES) {
-		stats_lock();
-		(*statsptr[id])++;
-		stats_unlock();
-	}
-}
-
-void master_stats_add(uint8_t id,uint64_t s) {
-	if (id<STATNODES) {
-		stats_lock();
-		(*statsptr[id])+=s;
-		stats_unlock();
-	}
 }
 
 static inline void setDisconnect(bool value) {
@@ -332,8 +316,8 @@ static bool fs_threc_flush(threc *rec) {
 	rec->received = false;
 	rec->sent = true;
 	lock.unlock();
-	master_stats_add(MASTER_BYTESSENT, size);
-	master_stats_inc(MASTER_PACKETSSENT);
+	stats_inc(MASTER_BYTESSENT, statsptr, size);
+	stats_inc(MASTER_PACKETSSENT, statsptr);
 	lastwrite = time(NULL);
 	return true;
 }
@@ -947,7 +931,7 @@ void fs_reconnect() {
 		fd=-1;
 		return;
 	}
-	master_stats_inc(MASTER_CONNECTS);
+	stats_inc(MASTER_CONNECTS, statsptr);
 	wptr = regbuff;
 	put32bit(&wptr,CLTOMA_FUSE_REGISTER);
 	put32bit(&wptr,73);
@@ -964,15 +948,15 @@ void fs_reconnect() {
 		fd=-1;
 		return;
 	}
-	master_stats_add(MASTER_BYTESSENT,16+64);
-	master_stats_inc(MASTER_PACKETSSENT);
+	stats_inc(MASTER_BYTESSENT, statsptr, 16 + 64);
+	stats_inc(MASTER_PACKETSSENT, statsptr);
 	if (tcptoread(fd,regbuff,8,1000)!=8) {
 		safs_pretty_syslog(LOG_WARNING,"master: register error (read header: %s)",strerr(tcpgetlasterror()));
 		tcpclose(fd);
 		fd=-1;
 		return;
 	}
-	master_stats_add(MASTER_BYTESRCVD,8);
+	stats_inc(MASTER_BYTESRCVD, statsptr, 8);
 	rptr = regbuff;
 	get32bit(&rptr, i);
 	if (i!=MATOCL_FUSE_REGISTER) {
@@ -994,8 +978,8 @@ void fs_reconnect() {
 		fd=-1;
 		return;
 	}
-	master_stats_add(MASTER_BYTESRCVD,i);
-	master_stats_inc(MASTER_PACKETSRCVD);
+	stats_inc(MASTER_BYTESRCVD, statsptr, i);
+	stats_inc(MASTER_PACKETSRCVD, statsptr);
 	rptr = regbuff;
 	if (rptr[0]!=0) {
 		sessionlost=1;
@@ -1077,8 +1061,8 @@ void* fs_nop_thread(void *arg) {
 					safs::log_warn("Failed to send ANTOAN_NOP to master");
 					disconnect = true;
 				} else {
-					master_stats_add(MASTER_BYTESSENT, kHeaderSize);
-					master_stats_inc(MASTER_PACKETSSENT);
+					stats_inc(MASTER_BYTESSENT, statsptr, kHeaderSize);
+					stats_inc(MASTER_PACKETSSENT, statsptr);
 				}
 				lastwrite = now;
 			}
@@ -1101,8 +1085,8 @@ void* fs_nop_thread(void *arg) {
 					safs::log_warn("Failed to send CLTOMA_FUSE_RESERVED_INODES to master");
 					disconnect = true;
 				} else {
-					master_stats_add(MASTER_BYTESSENT, inodesleng);
-					master_stats_inc(MASTER_PACKETSSENT);
+					stats_inc(MASTER_BYTESSENT, statsptr, inodesleng);
+					stats_inc(MASTER_PACKETSSENT, statsptr);
 				}
 
 				free(inodespacket);
@@ -1127,8 +1111,8 @@ void* fs_nop_thread(void *arg) {
 					safs::log_warn("Failed to send mount info to master");
 					disconnect = true;
 				} else {
-					master_stats_add(MASTER_BYTESSENT, messageLength);
-					master_stats_inc(MASTER_PACKETSSENT);
+					stats_inc(MASTER_BYTESSENT, statsptr, messageLength);
+					stats_inc(MASTER_PACKETSSENT, statsptr);
 				}
 			}
 		}
@@ -1157,7 +1141,7 @@ bool fs_append_from_master(MessageBuffer& buffer, uint32_t size) {
 		setDisconnect(true);
 		return false;
 	}
-	master_stats_add(MASTER_BYTESRCVD, size);
+	stats_inc(MASTER_BYTESRCVD, statsptr, size);
 	return true;
 }
 
@@ -1257,7 +1241,7 @@ void* fs_receive_thread(void *) {
 		if (!fs_deserialize_from_master(remainingBytes, packetHeader)) {
 			continue;
 		}
-		master_stats_inc(MASTER_PACKETSRCVD);
+		stats_inc(MASTER_PACKETSRCVD, statsptr);
 		remainingBytes = packetHeader.length;
 
 		{
