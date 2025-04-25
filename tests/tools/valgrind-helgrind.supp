@@ -66,7 +66,7 @@
    # False positive about gPollTimeout (not atomic to avoid not needed overhead)
    poll_timeout_loading
    Helgrind:Race
-   fun:_Z27eventloop_load_poll_timeoutv
+   fun:*eventloop_load_poll_timeout*
    fun:_Z13eventloop_runv
    fun:main
 }
