@@ -785,7 +785,7 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 			uint64_t inodeAvailSpace = inodeTotalSpace - inodeUsedSpace;
 			availspace =
 			    std::min({userAvailSpace, inodeAvailSpace, groupAvailSpace, availspace});
-			totalspace = userUsedSpace + availspace;
+			totalspace = inodeUsedSpace + availspace;
 		}
 	}
 
