@@ -53,7 +53,7 @@
 
 ## Number of threads that the connection to master may use to process operations
 ## on chunks, like create, duplicate, replicate and truncate.
-(Default: 10, Minimum: 2)
+## (Default: 10, Minimum: 2)
 # MASTER_NR_OF_WORKERS = 10
 
 ## IP address to listen on for client (sfsmount) connections:
