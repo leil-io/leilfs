@@ -2054,16 +2054,37 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 	std::vector<std::string> info;
 	uint8_t status;
 	deserializePacketVersionNoHeader(data, length, version);
-	
+
+	auto foundContextRootInodeResult = [&](uint32_t rootInode) {
+		for (const auto &result : results) {
+			if (result.entryKey.owner.ownerType == QuotaOwnerType::kInode && 
+				result.entryKey.owner.ownerId == rootInode) {
+				return true;
+			}
+		}
+		return false;
+	};
+
 	std::vector<QuotaOwner> owners;
 	cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid);
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
+		uint32_t rootInode = context.rootinode();
 		owners.emplace_back(QuotaOwnerType::kUser, uid);
 		owners.emplace_back(QuotaOwnerType::kGroup, gid);
-		owners.emplace_back(QuotaOwnerType::kInode, context.rootinode());
+		owners.emplace_back(QuotaOwnerType::kInode, rootInode);
 		status = fs_quota_get(context, owners, results);
+
+		if (!foundContextRootInodeResult(rootInode)) {
+			auto ino = fsnodes_id_to_node(rootInode);
+			statsrecord rootInodeStatRec;
+			fsnodes_get_stats(ino, &rootInodeStatRec);
+			results.emplace_back(
+				QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, rootInode},
+											QuotaRigor::kUsed, QuotaResource::kSize},
+											rootInodeStatRec.size});
+		}
 	}
 
 	MessageBuffer reply;
