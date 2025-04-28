@@ -770,6 +770,7 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 					               chunk->fullDataFilename().c_str(), initialBlock,
 					               initialBlock + numBlocks - 1);
 					hddReportDamagedChunk(chunk->id(), chunk->type());
+					hddChunkRelease(chunk);
 					return SAUNAFS_ERROR_IO;
 				}
 			}
@@ -795,6 +796,10 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 
 	// The remaining must be within a block
 	if (offsetWithinBlock + size > SFSBLOCKSIZE) {
+		safs::log_warn(
+		    "hddRead: partial block read bigger than block size: offset in block: {}, size: {}",
+		    offsetWithinBlock, size);
+		hddChunkRelease(chunk);
 		return SAUNAFS_ERROR_WRONGSIZE;
 	}
 

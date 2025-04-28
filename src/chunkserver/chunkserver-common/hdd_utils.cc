@@ -71,7 +71,6 @@ void hddChunkRelease(IChunk *chunk) {
 	} else if (chunk->state() == ChunkState::ToBeDeleted) {
 		if (chunk->condVar()) {
 			chunk->setState(ChunkState::Deleted);
-			chunksMapUniqueLock.unlock();
 			chunk->condVar()->condVar.notify_one();
 		} else {
 			hddRemoveChunkFromContainers(chunk);
