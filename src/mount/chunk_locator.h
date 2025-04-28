@@ -113,6 +113,10 @@ public:
 		return locationInfo_;
 	}
 
+	virtual bool shouldReset() const {
+		return true;
+	}
+
 protected:
 	WriteChunkLocator(uint32_t inode, uint32_t index, uint32_t lockId)
 			: inode_(inode),
@@ -130,8 +134,10 @@ protected:
 class TruncateWriteChunkLocator : public WriteChunkLocator {
 public:
 	// Locator is created for single operation
-	explicit TruncateWriteChunkLocator(uint32_t inode, uint32_t index, uint32_t lockId)
-		: WriteChunkLocator(inode, index, lockId) {
+	explicit TruncateWriteChunkLocator(uint32_t inode, uint32_t index, uint32_t lockId,
+	                                   uint64_t targetSize)
+	    : WriteChunkLocator(inode, index, lockId) {
+		targetSize_ = targetSize;
 	}
 
 	~TruncateWriteChunkLocator() {
@@ -141,4 +147,12 @@ public:
 
 	// In this case a chunk is unlocked by master so this locator will be simply destroyed
 	void unlockChunk() {}
+
+	bool shouldReset() const {
+		return locationInfo_.fileLength == targetSize_;
+	}
+
+private:
+	// Target offset to fill with zeros up to
+	uint64_t targetSize_;
 };

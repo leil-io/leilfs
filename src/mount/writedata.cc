@@ -343,7 +343,9 @@ void write_enqueue(inodedata* id, Glock&) {
 void write_job_delayed_end(inodedata* id, int status, int seconds, Glock &lock) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_job_delayed_end");
 	LOG_AVG_TILL_END_OF_SCOPE1("write_job_delayed_end#sec", seconds);
-	id->locator.reset();
+	if (id->locator != nullptr && id->locator->shouldReset()) {
+		id->locator.reset();
+	}
 	if (status != SAUNAFS_STATUS_OK) {
 		safs_pretty_syslog(LOG_WARNING, "error writing file number %" PRIu32 ": %s", id->inode, saunafs_error_string(status));
 		id->status = status;
@@ -470,6 +472,13 @@ void InodeChunkWriter::processJob(inodedata* inodeData) {
 				// has to be flushed, because no more data will be added to it
 				canWait = false;
 			}
+
+			if (!locator->shouldReset()) {
+				// In the case of a truncate operation that is not finished yet, we don't want to
+				// reset the locator, because it will be used later to lock the chunk again
+				inodeData_->locator = std::move(locator);
+			}
+
 			write_job_delayed_end(inodeData_, SAUNAFS_STATUS_OK, (canWait ? 1 : 0), lock);
 		} catch (Exception& e) {
 			std::string errorString = e.what();
@@ -1004,7 +1013,8 @@ int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid,
 
 		// Something has to be written, so pass our lock to writing threads
 		sassert(id->dataChain.empty());
-		id->locator.reset(new TruncateWriteChunkLocator(inode, length / SFSCHUNKSIZE, lockId));
+		id->locator.reset(
+		    new TruncateWriteChunkLocator(inode, length / SFSCHUNKSIZE, lockId, endOffset));
 
 		// And now pass block of zeros to writing threads
 		std::vector<uint8_t> zeros(endOffset - length, 0);
