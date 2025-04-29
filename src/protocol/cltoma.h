@@ -360,7 +360,8 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, fuseGetSelfQuota, SAU_CLTOMA_FUSE_GET_SELF_QUOTA, 0,
 		uint32_t, messageId,
 		uint32_t, uid,
-		uint32_t, gid)
+		uint32_t, gid,
+		uint32_t, inode)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, recursiveRemove, SAU_CLTOMA_RECURSIVE_REMOVE, 0,

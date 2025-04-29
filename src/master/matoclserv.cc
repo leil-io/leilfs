@@ -2049,7 +2049,7 @@ void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *dat
 }
 
 void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t version, messageId, uid, gid;
+	uint32_t version, messageId, uid, gid, inode;
 	std::vector<QuotaEntry> results;
 	std::vector<std::string> info;
 	uint8_t status;
@@ -2066,22 +2066,24 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 	};
 
 	std::vector<QuotaOwner> owners;
-	cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid);
+	cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid, inode);
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		uint32_t rootInode = context.rootinode();
+		if (inode == SPECIAL_INODE_ROOT) {
+			inode = context.rootinode();
+		}
 		owners.emplace_back(QuotaOwnerType::kUser, uid);
 		owners.emplace_back(QuotaOwnerType::kGroup, gid);
-		owners.emplace_back(QuotaOwnerType::kInode, rootInode);
+		owners.emplace_back(QuotaOwnerType::kInode, inode);
 		status = fs_quota_get(context, owners, results);
 
-		if (!foundContextRootInodeResult(rootInode)) {
-			auto ino = fsnodes_id_to_node(rootInode);
+		if (inode == context.rootinode() && !foundContextRootInodeResult(inode)) {
+			auto ino = fsnodes_id_to_node(inode);
 			statsrecord rootInodeStatRec;
 			fsnodes_get_stats(ino, &rootInodeStatRec);
 			results.emplace_back(
-				QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, rootInode},
+				QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
 											QuotaRigor::kUsed, QuotaResource::kSize},
 											rootInodeStatRec.size});
 		}
