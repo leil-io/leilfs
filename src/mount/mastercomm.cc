@@ -3126,7 +3126,7 @@ uint8_t fs_makesnapshot(uint32_t src_inode, uint32_t dst_inode, const std::strin
 	}
 }
 
-uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, std::vector<QuotaEntry> &quotaEntries) {
+uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, uint32_t inode, std::vector<QuotaEntry> &quotaEntries) {
 	threc *rec = fs_get_my_threc();
 	if (masterversion < saunafsVersion(4, 9, 0)) {
 		safs::log_warn(
@@ -3135,7 +3135,7 @@ uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, std::vector<QuotaEntry> &q
 		    saunafsVersionToString(masterversion));
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
-	auto message = cltoma::fuseGetSelfQuota::build(rec->packetId, uid, gid);
+	auto message = cltoma::fuseGetSelfQuota::build(rec->packetId, uid, gid, inode);
 
 	if (!fs_saucreatepacket(rec, message)) {
 		return SAUNAFS_ERROR_IO;

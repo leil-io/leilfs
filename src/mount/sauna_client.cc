@@ -734,7 +734,7 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 		std::vector<QuotaEntry> quota_entries;
 		auto gid = ctx.gids[0];
 
-		auto status = fs_get_self_quota(ctx.uid, gid, quota_entries);
+		auto status = fs_get_self_quota(ctx.uid, gid, ino, quota_entries);
 		if (status == SAUNAFS_STATUS_OK) {
 			uint64_t userUsedSpace = 0;
 			uint64_t userTotalSpace = std::numeric_limits<uint64_t>::max();
