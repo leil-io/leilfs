@@ -18,8 +18,8 @@ touch db
 run_sqlite_test_with_parameters() {
 	local nr_of_threads=$1
 	local nr_of_operations=$2
-	python3 $sqlite_test --threads=$nr_of_threads --operations_per_thread=$nr_of_operations \
-		--seed=1 --db_file=$(realpath db) | grep -q "Test completed without fatal errors."
+	assert_success python3 $sqlite_test --threads=$nr_of_threads --operations_per_thread=$nr_of_operations \
+		--seed=1 --db_file="$(realpath db)"
 	echo "SQLite stress test with $nr_of_threads threads and $nr_of_operations operations per" \
 		"thread completed successfully."
 }
