@@ -135,7 +135,7 @@ protected:
 class TruncateWriteChunkLocator : public WriteChunkLocator {
 public:
 	// Locator is created for single operation
-	explicit TruncateWriteChunkLocator(Inode inode, uint32_t index, uint32_t lockId,
+	explicit TruncateWriteChunkLocator(inode_t inode, uint32_t index, uint32_t lockId,
 	                                   uint64_t targetSize)
 		: WriteChunkLocator(inode, index, lockId) {
 			targetSize_ = targetSize;

@@ -409,21 +409,6 @@ static constexpr std::array<MetaStat, 4> rootDirEntries() {
 		return entries;
 }
 
-struct MetaStat {
-	std::string name;
-	SaunaClient::Inode inode;
-	char type;
-};
-
-static constexpr std::array<MetaStat, 4> rootDirEntries() {
-		auto rootDir = MetaStat(".", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
-		auto upDir = MetaStat("..", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
-		auto trash = MetaStat(SPECIAL_FILE_NAME_META_TRASH, SPECIAL_INODE_META_TRASH, TYPE_DIRECTORY);
-		auto reserved = MetaStat(SPECIAL_FILE_NAME_META_RESERVED, SPECIAL_INODE_META_RESERVED, TYPE_DIRECTORY);
-		std::array<MetaStat, 4> entries = {rootDir, upDir, trash, reserved};
-		return entries;
-}
-
 static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
 	uint8_t l;
 	switch (ino) {

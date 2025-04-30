@@ -2185,7 +2185,7 @@ void write_data_term(void) {
 	}
 }
 
-void *write_data_new(uint32_t inode) {
+void *write_data_new(inode_t inode) {
 	if (gUseInodeBasedWriteAlgorithm) { return InodeBasedWriteAlgorithm::write_data_new(inode); }
 	return ChunkBasedWriteAlgorithm::write_data_new(inode);
 }
@@ -2200,21 +2200,21 @@ int write_data_flush(void *vid) {
 	return ChunkBasedWriteAlgorithm::write_data_flush(vid);
 }
 
-uint64_t write_data_getmaxfleng(uint32_t inode) {
+uint64_t write_data_getmaxfleng(inode_t inode) {
 	if (gUseInodeBasedWriteAlgorithm) {
 		return InodeBasedWriteAlgorithm::write_data_getmaxfleng(inode);
 	}
 	return ChunkBasedWriteAlgorithm::write_data_getmaxfleng(inode);
 }
 
-int write_data_flush_inode(uint32_t inode) {
+int write_data_flush_inode(inode_t inode) {
 	if (gUseInodeBasedWriteAlgorithm) {
 		return InodeBasedWriteAlgorithm::write_data_flush_inode(inode);
 	}
 	return ChunkBasedWriteAlgorithm::write_data_flush_inode(inode);
 }
 
-int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
+int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
                         Attributes &attr) {
 	if (gUseInodeBasedWriteAlgorithm) {
 		return InodeBasedWriteAlgorithm::write_data_truncate(inode, opened, uid, gid, length, attr);

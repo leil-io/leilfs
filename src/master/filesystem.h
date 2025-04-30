@@ -178,9 +178,9 @@ uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, u
 uint8_t fs_apply_session(uint32_t sessionid);
 uint8_t fs_apply_freeinodes(uint32_t ts, inode_t freeinodes);
 uint8_t fs_apply_incversion(uint64_t chunkid);
-uint8_t fs_apply_length(uint32_t ts, Inode inode, uint64_t length, bool eraseFurtherChunks);
-uint8_t fs_apply_repair(uint32_t ts, Inode inode, uint32_t indx, uint32_t nversion);
-uint8_t fs_apply_setxattr(uint32_t ts, Inode inode, uint32_t anleng, const uint8_t *attrname,
+uint8_t fs_apply_length(uint32_t ts, inode_t inode, uint64_t length, bool eraseFurtherChunks);
+uint8_t fs_apply_repair(uint32_t ts, inode_t inode, uint32_t indx, uint32_t nversion);
+uint8_t fs_apply_setxattr(uint32_t ts, inode_t inode, uint32_t anleng, const uint8_t *attrname,
                           uint32_t avleng, const uint8_t *attrvalue, uint32_t mode);
 uint8_t fs_apply_setacl(uint32_t ts, inode_t inode, char aclType, const char *aclString);
 uint8_t fs_apply_setrichacl(uint32_t ts, inode_t inode, const std::string &acl_string);

@@ -289,28 +289,6 @@ int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	return fs_apply_session(cuid);
 }
 
-int do_emptytrash_deprecated(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
-	inode_t reservedinodes,freeinodes;
-	EAT(ptr,filename,lv,'(');
-	EAT(ptr,filename,lv,')');
-	EAT(ptr,filename,lv,':');
-	GETU32(freeinodes,ptr);
-	EAT(ptr,filename,lv,',');
-	GETU32(reservedinodes,ptr);
-	safs::log_warn("Deprecated apply emptytrash operation used in changelog, will no longer be recognized in 5.0.0");
-	return fs_apply_emptytrash_deprecated(ts,freeinodes,reservedinodes);
-}
-
-int do_emptyreserved_deprecated(const char *filename, uint64_t lv, uint32_t ts, const char* ptr) {
-	inode_t freeinodes;
-	EAT(ptr,filename,lv,'(');
-	EAT(ptr,filename,lv,')');
-	EAT(ptr,filename,lv,':');
-	GETU32(freeinodes,ptr);
-	safs::log_warn("Deprecated apply emptyreserved operation used in changelog, will no longer be recognized in 5.0.0");
-	return fs_apply_emptyreserved_deprecated(ts,freeinodes);
-}
-
 int do_freeinodes(const char *filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	inode_t freeinodes;
 	EAT(ptr,filename,lv,'(');

@@ -861,7 +861,7 @@ uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, u
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_apply_length(uint32_t ts, Inode inode, uint64_t length, bool eraseFurtherChunks) {
+uint8_t fs_apply_length(uint32_t ts, inode_t inode, uint64_t length, bool eraseFurtherChunks) {
 	FSNode *p = fsnodes_id_to_node(inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;

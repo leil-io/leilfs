@@ -3176,7 +3176,8 @@ uint8_t fs_makesnapshot(inode_t src_inode, inode_t dst_inode, const std::string 
 	}
 }
 
-uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, uint32_t inode, std::vector<QuotaEntry> &quotaEntries) {
+uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, inode_t inode,
+                          std::vector<QuotaEntry> &quotaEntries) {
 	threc *rec = fs_get_my_threc();
 	if (masterversion < saunafsVersion(4, 9, 0)) {
 		safs::log_warn(
