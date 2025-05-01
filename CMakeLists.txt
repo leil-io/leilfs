@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
+project(saunafs LANGUAGES C CXX)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_C_STANDARD 23)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Enable symbol export for loadable modules, ensuring same shared resource
 # references. Needed for the plugins, as they are shared libraries.
@@ -59,16 +64,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ${ENABLE_COMPILE_COMMANDS})
 find_program(CCACHE_FOUND ccache)
 message(STATUS "ENABLE_CCACHE: ${ENABLE_CCACHE}")
 message(STATUS "CCACHE_FOUND: ${CCACHE_FOUND}")
+
 if(ENABLE_CCACHE AND CCACHE_FOUND)
-  set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+  set(CMAKE_C_COMPILER_LAUNCHER ccache)
+  set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
   message(STATUS "Using ccache")
 endif()
 
-project(saunafs)
-
 set(DEFAULT_MIN_VERSION "4.9.0")
 
-enable_language(C)
 include(GNUInstallDirs)
 
 set(BIN_SUBDIR                  "${CMAKE_INSTALL_FULL_BINDIR}")
