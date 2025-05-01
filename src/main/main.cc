@@ -151,7 +151,7 @@ bool initialize(const std::vector<RunTab> &tabs) {
 				break;
 			}
 		} catch (const std::exception &e) {
-			safs::log_err("unhandled exception ({}): {}", typeid(e).name(), e.what());
+			safs::log_exception(e, "unhandled exception in initialize");
 			isOk = false;
 			break;
 		}
@@ -663,19 +663,21 @@ void makedaemon() {
 	fflush(stdout);
 	fflush(stderr);
 	if (pipe(piped)<0) {
-		safs::log_err("pipe error: {}", strerr(errno));
+		safs::log_error_code(errno, "pipe error in makedaemon");
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
 	}
 	f = fork();
 	if (f<0) {
-		safs::log_err("pipe error: {}", strerr(errno));
+		safs::log_error_code(errno, "first fork error in makedaemon");
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
 	}
 	if (f>0) {
-		wait(&f);       // just get child status - prevents child from being zombie during initialization stage
+		auto returnValue = wait(&f);       // just get child status - prevents child from being zombie during initialization stage
+		if (returnValue == -1) {
+			safs::log_error_code(errno, "wait returned error in makedaemon");
+		}
 		if (f) {
-			safs_pretty_syslog(LOG_ERR, "child status: %d",f);
-			safs::log_err("{}", strerr(errno));
+			safs::log_err("child returned non-successful status in makedaemon: {}", f);
 			exit(SAUNAFS_EXIT_STATUS_ERROR);
 		}
 		close(piped[1]);
@@ -686,13 +688,13 @@ void makedaemon() {
 						happy = fwrite(pipebuff,1,r-1,stderr);
 						(void)happy;
 					}
-					safs::log_err("pipe error: {}", strerr(errno));
+					safs::log_err("zero as last char on pipe in makedaemon");
 					exit(SAUNAFS_EXIT_STATUS_ERROR);
 				}
 				happy = fwrite(pipebuff,1,r,stderr);
 				(void)happy;
 			} else {
-				safs::log_err("pipe error: {}", strerr(errno));
+				safs::log_error_code(errno, "error reading pipe in makedaemon");
 				exit(SAUNAFS_EXIT_STATUS_ERROR);
 			}
 		}
@@ -702,9 +704,9 @@ void makedaemon() {
 	setpgid(0,getpid());
 	f = fork();
 	if (f<0) {
-		safs::log_err("second fork error: {}", strerr(errno));
+		safs::log_error_code(errno, "second fork error in makedaemon");
 		if (write(piped[1],"fork error\n",11)!=11) {
-			safs::log_err("pipe error: {}", strerr(errno));
+			safs::log_error_code(errno, "could not write to pipe in makedaemon");
 		}
 		close(piped[1]);
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
@@ -957,7 +959,7 @@ int main(int argc,char **argv) {
 
 
 	if (chdir(wrkdir)<0) {
-		safs::log_err("can't set working directory to {}: {}", wrkdir, strerr(errno));
+		safs::log_error_code(errno, "can't set working directory to {}", wrkdir);
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
