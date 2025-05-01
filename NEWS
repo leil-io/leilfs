@@ -1,5 +1,25 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (4.9.0) (2025-05-01)
+ - fix(chunkserver): Fix chunkserver locking (#367)
+ - fix: Fix truncate tests (#372)
+ - fix: Fix masterconn_canexit() (#355)
+ - docs: Define experimental features (#361)
+ - fix(mount): Fix client to master response delay (#348)
+ - fix(chunkserver): Fix long rebalancing/replicate (#351)
+ - feat(mount): Reduce write memory usage (#343)
+ - feat: Log error_code related message (#339)
+ - feat: Add deprecation warning for XOR
+ - docs: Fix incorrect documentation
+ - feat: Add deprecation warnings for old changelog entries
+ - feat: Add deprecation warning for sfstools script
+ - feat: Add warning for deprecated sfscachemode
+ - feat(tools): Add warnings for deprecated set/get commands
+ - feat: Add deprecation warnings and documentation for -l option
+ - fix: Add break to saunafs infinite loop on Windows (#342)
+ - feat: Use inode quota in volume size (#336)
+ - fix: Fix SQLite issue (#337)
+
  * SaunaFS (4.8.1) (2025-03-27)
  - fix: Show same stats as CGI in statfs call
 
