@@ -228,6 +228,8 @@ elseif(GENERATE_GIT_INFO)
   execute_process(COMMAND "git" "rev-parse" "HEAD"
   OUTPUT_VARIABLE GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE)
   add_compile_definitions(GIT_COMMIT="${GIT_COMMIT}")
+else()
+  add_compile_definitions(GIT_COMMIT="N/A")
 endif()
 
 if(GIT_BRANCH)
@@ -236,6 +238,8 @@ elseif(GENERATE_GIT_INFO)
   execute_process(COMMAND "git" "rev-parse" "--abbrev-ref" "HEAD"
   OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
   add_compile_definitions(GIT_BRANCH="${GIT_BRANCH}")
+else()
+  add_compile_definitions(GIT_BRANCH="N/A")
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")

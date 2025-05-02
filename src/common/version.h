@@ -26,16 +26,8 @@ inline std::string version() {
 	return "Version: " \
 	SAUNAFS_PACKAGE_VERSION "\n"
 	"Build time: " BUILD_TIME "\n"
-	#ifdef GIT_COMMIT
 		"Git commit: " GIT_COMMIT "\n"
-	#else
-		"Git commit: N/A\n"
-	#endif
-	#ifdef GIT_BRANCH
 		"Git branch: " GIT_BRANCH
-	#else
-		"Git branch: N/A"
-	#endif
 	;
 }
 
