@@ -292,7 +292,7 @@ def cltoma_metadataservers_list():
     for (addr, port, v1, v2, v3) in servers:
         # for shadow masters, addr is int (4 bytes) -- convert it to string.
         # for the active master we use "masterhost" to connect with it and we don't know the real IP
-        ip = addr_to_host(addr) if isinstance(addr, int) else "-"
+        ip = addr_to_host(addr) if isinstance(addr, int) else masterhost
         version = "%u.%u.%u" % (v1, v2, v3)
         if port == 0:
             # shadow didn't register its port yet
