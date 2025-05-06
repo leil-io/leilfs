@@ -46,7 +46,8 @@ SaunaFS options:
 Loads file with additional mount options.
 
 *-m*, *--meta*, *-o sfsmeta*::
-Mount SFSMETA companion filesystem instead of primary SaunaFS.
+Mount SFSMETA companion filesystem instead of primary SaunaFS. This allows you
+to interact with trashed and reserved files. (See NOTES)
 
 *-n*, *--nostdopts*::
 Omit default mount options (*-o allow_other,default_permissions*). Equivalent
@@ -322,6 +323,24 @@ You can define your `/etc/fstab` SaunaFS share like this:
 
 Report bugs to the Github repository <https://github.com/leil/saunafs> as an
 issue.
+
+== NOTES
+
+The metadata mount point has two directories available: 'trash' and 'reserved'.
+
+In 'trash' you can see files that have been deleted but are still being kept in
+master trash. You can undelete them by moving the files into 'trash/undel', and
+delete permanently by deleting them again.
+
+There is a bug with this though. See BUGS for more details.
+
+== BUGS
+
+Due to a limit in the protocol, the metadata mount point can at most return the
+first 1 million trash/reserved files. To see more, you will need to either
+delete or undelete the existing files. Older versions of master (4.9.0 or
+earlier) will crash when reading a lot of files in trash/reserved. After around
+1 million files in trash/reserved, it becomes unsafe to read trash.
 
 == COPYRIGHT
 
