@@ -175,6 +175,10 @@ struct inodedata {
 		return alterations_in_chain > 0;
 	}
 
+	bool wasLastBlockRecentlyWrittenAndTaken() const {
+		return dataChain.empty() && lastWriteToDataChain.elapsed_ms() < kVeryRecentWrite_ms;
+	}
+
 private:
 	/*! Limit for \p lastWriteToChunkservers after which we force a flush.
 	 *
@@ -188,6 +192,13 @@ private:
 	 * if no new data is written into the data chain
 	 */
 	static const uint32_t kMaximumTimeInDataChainSinceLastWrite_ms = 5000;
+
+	/*! Limit for considering the last write to data chain very recent.
+	 *
+	 * This is used to avoid writing a partial stripe to chunkservers when last block was full and
+	 * next one has not even started.
+	 */
+	static const uint32_t kVeryRecentWrite_ms = 5;
 };
 
 struct DelayedQueueEntry {
@@ -577,7 +588,8 @@ void InodeChunkWriter::processDataChain(ChunkWriter& writer) {
 			if (writer.getUnfinishedOperationsCount() < gWriteWindowSize) {
 				inodeData_->workerWaitingForData = true;
 			}
-			can_expect_next_block = haveAnyBlockInCurrentChunk(lock);
+			can_expect_next_block = haveAnyBlockInCurrentChunk(lock) ||
+			                        inodeData_->wasLastBlockRecentlyWrittenAndTaken();
 		} else if (writer.acceptsNewOperations()) {
 			// We are running out of time...
 			Glock lock(gMutex);
@@ -590,7 +602,8 @@ void InodeChunkWriter::processDataChain(ChunkWriter& writer) {
 				// Somebody if waiting for a flush, so we have to finish writing everything.
 				writer.startFlushMode();
 			}
-			can_expect_next_block = haveAnyBlockInCurrentChunk(lock);
+			can_expect_next_block = haveAnyBlockInCurrentChunk(lock) ||
+			                        inodeData_->wasLastBlockRecentlyWrittenAndTaken();
 		}
 
 		Glock lock(gMutex);
