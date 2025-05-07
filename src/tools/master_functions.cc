@@ -275,7 +275,7 @@ int open_master_conn(const char *name, uint32_t *inode, mode_t *mode,
 	std::string name_to_use = std::string(name);
 #ifdef _WIN32
 	int master_conn_retries = 0;
-	if (name_to_use.back() == '\\' || name_to_use.back() == '/') {
+	if (name_to_use.back() == '\\' || name_to_use.back() == '/' || name_to_use.back() == '"') {
 		name_to_use.pop_back();
 	}
 #endif
