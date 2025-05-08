@@ -414,8 +414,10 @@ def main():
         error = run_stress_test(args.threads, args.operations_per_thread, args.db_file, args.seed)
         if error:
             log_message(f"{COLOR_RED}Test completed with fatal errors.{COLOR_RESET}")
+            sys.exit(1)
         else:
             log_message(f"{COLOR_GREEN}Test completed without fatal errors.{COLOR_RESET}")
+            # Exit code is OK
 
 if __name__ == "__main__":
     main()
