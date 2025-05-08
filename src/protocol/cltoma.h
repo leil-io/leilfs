@@ -356,8 +356,15 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fullPathByInode, SAU_CLTOMA_FULL_PAT
 		uint32_t, uid,
 		uint32_t, gid)
 
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetSelfQuota, kGetSelfQuota, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetSelfQuota, kGetSelfQuotaWithInode, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		cltoma, fuseGetSelfQuota, SAU_CLTOMA_FUSE_GET_SELF_QUOTA, 0,
+		cltoma, fuseGetSelfQuota, SAU_CLTOMA_FUSE_GET_SELF_QUOTA, kGetSelfQuota,
+		uint32_t, messageId,
+		uint32_t, uid,
+		uint32_t, gid)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		cltoma, fuseGetSelfQuota, SAU_CLTOMA_FUSE_GET_SELF_QUOTA, kGetSelfQuotaWithInode,
 		uint32_t, messageId,
 		uint32_t, uid,
 		uint32_t, gid,
