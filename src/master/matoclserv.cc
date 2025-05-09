@@ -2066,7 +2066,12 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 	};
 
 	std::vector<QuotaOwner> owners;
-	cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid, inode);
+	if (version == cltoma::fuseGetSelfQuota::kGetSelfQuotaWithInode) {
+		cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid, inode);
+	} else {
+		cltoma::fuseGetSelfQuota::deserialize(data, length, messageId, uid, gid);
+		inode = SPECIAL_INODE_ROOT;
+	}
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
