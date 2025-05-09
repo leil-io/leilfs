@@ -161,7 +161,7 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 	}
 
 	fileCreator.create();
-	static const SteadyDuration max_wait_time = std::chrono::milliseconds(total_timeout_ms_);
+	const SteadyDuration max_wait_time = std::chrono::milliseconds(total_timeout_ms_);
 	Timeout timeout{max_wait_time};
 	for (int firstBlock = 0; firstBlock < blocks; firstBlock += batchSize) {
 		int nrOfBlocks = std::min(blocks - firstBlock, batchSize);
