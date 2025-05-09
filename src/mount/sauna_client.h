@@ -48,9 +48,10 @@
 
 namespace SaunaClient {
 
-typedef uint32_t Inode;
-typedef uint32_t JobId;
-typedef uint32_t NamedInodeOffset;
+using Inode = uint32_t;
+using JobId = uint32_t;
+using NamedInodeOffset = uint32_t;
+
 #ifdef _WIN32
 inline std::atomic<bool> gIgnoreUtimensUpdate = false;
 #endif
@@ -157,7 +158,7 @@ struct FsInitParams {
 	             acl_cache_timeout(kDefaultAclCacheTimeout), acl_cache_size(kDefaultAclCacheSize),
 #ifdef _WIN32
 	             mounting_uid(USE_LOCAL_ID), mounting_gid(USE_LOCAL_ID),
-	             clean_acquired_files_period(kDefaultCleanAcquiredFilesPeriod), 
+	             clean_acquired_files_period(kDefaultCleanAcquiredFilesPeriod),
 	             clean_acquired_files_timeout(kDefaultCleanAcquiredFilesTimeout),
 	             enable_status_updater_thread(kDefaultEnableStatusUpdaterThread),
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
@@ -167,7 +168,7 @@ struct FsInitParams {
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
-	             log_notifications_area(kDefaultLogNotificationArea), 
+	             log_notifications_area(kDefaultLogNotificationArea),
 	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
 	}
 
@@ -200,7 +201,7 @@ struct FsInitParams {
 	             acl_cache_timeout(kDefaultAclCacheTimeout), acl_cache_size(kDefaultAclCacheSize),
 #ifdef _WIN32
 	             mounting_uid(USE_LOCAL_ID), mounting_gid(USE_LOCAL_ID),
-	             clean_acquired_files_period(kDefaultCleanAcquiredFilesPeriod), 
+	             clean_acquired_files_period(kDefaultCleanAcquiredFilesPeriod),
 	             clean_acquired_files_timeout(kDefaultCleanAcquiredFilesTimeout),
 	             enable_status_updater_thread(kDefaultEnableStatusUpdaterThread),
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),

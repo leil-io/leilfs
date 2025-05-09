@@ -18,6 +18,7 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "common/massert.h"
 #include "common/platform.h"
 #include "mount/fuse/sfs_meta_fuse.h"
 
@@ -28,6 +29,11 @@
 #include <string.h>
 #include <time.h>
 #include <fuse_lowlevel.h>
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <iterator>
+#include <span>
 
 #include "common/datapack.h"
 #include "protocol/SFSCommunication.h"
@@ -39,12 +45,12 @@
 
 static_assert(FUSE_ROOT_ID == SPECIAL_INODE_ROOT, "invalid value of FUSE_ROOT_ID");
 
-typedef struct _dirbuf {
-	int wasread;
+struct dirbuf {
+	bool wasread;
 	uint8_t *p;
 	size_t size;
 	pthread_mutex_t lock;
-} dirbuf;
+};
 
 typedef struct _pathbuf {
 	int changed;
@@ -380,6 +386,21 @@ static uint32_t dir_metaentries_size(uint32_t ino) {
 	return 0;
 }
 
+struct MetaStat {
+	std::string name;
+	SaunaClient::Inode inode;
+	char type;
+};
+
+static constexpr std::array<MetaStat, 4> rootDirEntries() {
+		auto rootDir = MetaStat(".", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
+		auto upDir = MetaStat("..", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
+		auto trash = MetaStat(SPECIAL_FILE_NAME_META_TRASH, SPECIAL_INODE_META_TRASH, TYPE_DIRECTORY);
+		auto reserved = MetaStat(SPECIAL_FILE_NAME_META_RESERVED, SPECIAL_INODE_META_RESERVED, TYPE_DIRECTORY);
+		std::array<MetaStat, 4> entries = {rootDir, upDir, trash, reserved};
+		return entries;
+}
+
 static void dir_metaentries_fill(uint8_t *buff,uint32_t ino) {
 	uint8_t l;
 	switch (ino) {
@@ -576,7 +597,7 @@ void sfs_meta_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 
 		dirinfo->p = NULL;
 		dirinfo->size = 0;
-		dirinfo->wasread = 0;
+		dirinfo->wasread = false;
 		fi->fh = (unsigned long)dirinfo;
 
 		if (fuse_reply_open(req,fi) == -ENOENT) {
@@ -590,6 +611,36 @@ void sfs_meta_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 	} else {
 		fuse_reply_err(req, ENOTDIR);
 	}
+}
+
+void replyDirReadRoot(fuse_req_t request, off_t offset, size_t maxsize) {
+	std::array<char, READDIR_BUFFSIZE> buffer{};
+	struct stat statBuffer{};
+	static const auto files = rootDirEntries();
+	size_t size = 0;
+
+	sassert(offset >= 0);
+
+	if (static_cast<size_t>(offset) > files.size()) {
+		fuse_reply_buf(request, nullptr, 0);
+		return;
+	}
+
+	for (const auto &file : std::span(files).subspan(offset)) {
+		offset += 1;
+		sfs_meta_type_to_stat(file.inode, file.type, &statBuffer);
+		size_t needed = fuse_add_direntry(request, nullptr, 0, file.name.c_str(), &statBuffer, 0);
+		if (size + needed > buffer.size() || size + needed > maxsize) {
+			// No more buffer space or we would be over maxsize
+			fuse_reply_buf(request, buffer.data(), size);
+			return;
+		}
+
+		fuse_add_direntry(request, buffer.data() + size, buffer.size() - size,
+		                                  file.name.c_str(), &statBuffer, offset);
+		size += needed;
+	}
+	fuse_reply_buf(request, buffer.data(), size);
 }
 
 void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi) {
@@ -609,21 +660,24 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 		return;
 	}
 	pthread_mutex_lock(&(dirinfo->lock));
-	if (dirinfo->wasread==0 || (dirinfo->wasread==1 && off==0)) {
+	if (!dirinfo->wasread || (dirinfo->wasread && off==0)) {
 		if (dirinfo->p!=NULL) {
 			free(dirinfo->p);
 		}
-		dirbuf_meta_fill(dirinfo,ino);
+		if (ino == SPECIAL_INODE_ROOT) {
+			replyDirReadRoot(req, off, size);
+			pthread_mutex_unlock(&(dirinfo->lock));
+			return;
+		}
+		dirbuf_meta_fill(dirinfo, ino);
 //              safs_pretty_syslog(LOG_WARNING,"inode: %lu , dirinfo->p: %p , dirinfo->size: %lu",(unsigned long)ino,dirinfo->p,(unsigned long)dirinfo->size);
 	}
-	dirinfo->wasread=1;
+	dirinfo->wasread=true;
 
 	if (off>=(off_t)(dirinfo->size)) {
 		fuse_reply_buf(req, NULL, 0);
 	} else {
-		if (size>READDIR_BUFFSIZE) {
-			size=READDIR_BUFFSIZE;
-		}
+		size = std::min<size_t>(size, READDIR_BUFFSIZE);
 		ptr = (const uint8_t*)(dirinfo->p)+off;
 		eptr = (const uint8_t*)(dirinfo->p)+dirinfo->size;
 		opos = 0;
