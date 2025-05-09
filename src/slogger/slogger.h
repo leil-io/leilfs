@@ -138,6 +138,21 @@ inline void log_error_code(int error_code, const FormatType &format, Args &&...a
     safs::log_err(extended_format, std::forward<Args>(args)...);
 }
 
+/**
+ * @brief Log an exception error message with the given exception message and type
+ *
+ * @param error_code The exception to log, expected to be std::exception or a sub-class.
+ * @param format The format string for the log message.
+ * @param args The arguments to format the log message.
+ */
+template <typename FormatType, typename... Args>
+inline void log_exception(const std::exception &exception, const FormatType &format,
+                          Args &&...args) {
+	auto extended_format = fmt::format("{} (exception: {}, message: {})", format,
+	                                   typeid(exception).name(), exception.what());
+	safs::log_err(extended_format, std::forward<Args>(args)...);
+}
+
 bool add_log_file(const char *path, log_level::LogLevel level, int max_file_size, int max_file_count);
 void set_log_flush_on(log_level::LogLevel level);
 void drop_all_logs();

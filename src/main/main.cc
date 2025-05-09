@@ -151,7 +151,7 @@ bool initialize(const std::vector<RunTab> &tabs) {
 				break;
 			}
 		} catch (const std::exception &e) {
-			safs_pretty_syslog(LOG_ERR, "%s", e.what());
+			safs::log_exception(e, "unhandled exception in initialize");
 			isOk = false;
 			break;
 		}
@@ -434,6 +434,7 @@ public:
 		kSuccess = 0,
 		kAlive = 1,
 		kAgain = 2,
+		kTest = 3,
 		kFail = -1
 	};
 
@@ -533,8 +534,11 @@ FileLock::LockStatus FileLock::wdlock(RunMode runmode, uint32_t timeout) {
 			return LockStatus::kAlive;
 		}
 		if (runmode==RunMode::kTest) {
+			// TODO(5.0.0): Fix this stupidity in a breaking change by changing it
+			// to stdout. It's not that hard, stderr for logs/errors, stdout
+			// for output
 			fprintf(stderr,STR(APPNAME) " pid: %ld\n",(long)ownerpid);
-			return LockStatus::kFail;
+			return LockStatus::kTest;
 		}
 		if (runmode==RunMode::kStart) {
 			safs_pretty_syslog(LOG_ERR,
@@ -659,18 +663,21 @@ void makedaemon() {
 	fflush(stdout);
 	fflush(stderr);
 	if (pipe(piped)<0) {
-		safs_pretty_syslog(LOG_ERR, "pipe error");
+		safs::log_error_code(errno, "pipe error in makedaemon");
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
 	}
 	f = fork();
 	if (f<0) {
-		safs_pretty_errlog(LOG_ERR, "first fork error");
+		safs::log_error_code(errno, "first fork error in makedaemon");
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
 	}
 	if (f>0) {
-		wait(&f);       // just get child status - prevents child from being zombie during initialization stage
+		auto returnValue = wait(&f);       // just get child status - prevents child from being zombie during initialization stage
+		if (returnValue == -1) {
+			safs::log_error_code(errno, "wait returned error in makedaemon");
+		}
 		if (f) {
-			safs_pretty_syslog(LOG_ERR, "child status: %d",f);
+			safs::log_err("child returned non-successful status in makedaemon: {}", f);
 			exit(SAUNAFS_EXIT_STATUS_ERROR);
 		}
 		close(piped[1]);
@@ -681,12 +688,13 @@ void makedaemon() {
 						happy = fwrite(pipebuff,1,r-1,stderr);
 						(void)happy;
 					}
+					safs::log_err("zero as last char on pipe in makedaemon");
 					exit(SAUNAFS_EXIT_STATUS_ERROR);
 				}
 				happy = fwrite(pipebuff,1,r,stderr);
 				(void)happy;
 			} else {
-				safs_pretty_errlog(LOG_ERR,"error reading pipe");
+				safs::log_error_code(errno, "error reading pipe in makedaemon");
 				exit(SAUNAFS_EXIT_STATUS_ERROR);
 			}
 		}
@@ -696,9 +704,9 @@ void makedaemon() {
 	setpgid(0,getpid());
 	f = fork();
 	if (f<0) {
-		safs_pretty_errlog(LOG_ERR,"second fork error");
+		safs::log_error_code(errno, "second fork error in makedaemon");
 		if (write(piped[1],"fork error\n",11)!=11) {
-			safs_pretty_errlog(LOG_ERR,"pipe write error");
+			safs::log_error_code(errno, "could not write to pipe in makedaemon");
 		}
 		close(piped[1]);
 		exit(SAUNAFS_EXIT_STATUS_ERROR);
@@ -951,7 +959,7 @@ int main(int argc,char **argv) {
 
 
 	if (chdir(wrkdir)<0) {
-		safs_pretty_syslog(LOG_ERR,"can't set working directory to %s",wrkdir);
+		safs::log_error_code(errno, "can't set working directory to {}", wrkdir);
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
@@ -960,7 +968,7 @@ int main(int argc,char **argv) {
 		return SAUNAFS_EXIT_STATUS_ERROR;
 	} else {
 		if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {
-			safs_pretty_syslog(LOG_INFO,"changed working directory to: %s",wrkdir);
+			safs::log_info("changed working directory to: {}", wrkdir);
 		}
 	}
 	free(wrkdir);
@@ -970,6 +978,7 @@ int main(int argc,char **argv) {
 	eventloop_pollregister(signal_pipe_desc, signal_pipe_serv);
 
 	if (!initialize_early()) {
+		safs::log_err("couldn't initialize early functions");
 		if (gRunAsDaemon) {
 			fputc(0, stderr);
 			close_msg_channel();
@@ -981,6 +990,7 @@ int main(int argc,char **argv) {
 	// Only kStart should check for lock file consistency
 	FileLock fl(runmode, locktimeout);
 	if (fl.lockstatus() == FileLock::LockStatus::kFail) {
+		safs::log_err("couldn't acquire lock on {}", fl.name());
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
@@ -989,8 +999,17 @@ int main(int argc,char **argv) {
 		return SAUNAFS_EXIT_STATUS_ERROR;
 	}
 
+	if (fl.lockstatus() == FileLock::LockStatus::kTest) {
+		if (gRunAsDaemon) {
+			fputc(0,stderr);
+			close_msg_channel();
+		}
+		closelog();
+		return SAUNAFS_STATUS_OK;
+	}
+
 	if (runmode==RunMode::kStop || runmode==RunMode::kKill || runmode==RunMode::kReload
-			|| runmode==RunMode::kTest || runmode==RunMode::kIsAlive) {
+			|| runmode==RunMode::kIsAlive) {
 		if (gRunAsDaemon) {
 			close_msg_channel();
 		}
@@ -1062,6 +1081,7 @@ int main(int argc,char **argv) {
 			ch=SAUNAFS_EXIT_STATUS_ERROR;
 		}
 	} else {
+		safs::log_err("couldn't initialize functions");
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
