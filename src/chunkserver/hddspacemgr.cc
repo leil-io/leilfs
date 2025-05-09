@@ -484,6 +484,7 @@ void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
 					total += disk->totalSpace();
 				}
 
+				std::lock_guard testsLockGuard(gTestsMutex);
 				chunks += disk->chunks().size();
 			} else {
 				if (disk->scanState() == IDisk::ScanState::kWorking) {
@@ -491,6 +492,7 @@ void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
 					toDelTotal += disk->totalSpace();
 				}
 
+				std::lock_guard testsLockGuard(gTestsMutex);
 				toDelChunks += disk->chunks().size();
 			}
 		}
