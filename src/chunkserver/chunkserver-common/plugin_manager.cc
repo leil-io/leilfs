@@ -41,6 +41,7 @@ bool PluginManager::loadPlugins(const std::string &directory) {
 			    directory.c_str(), e.what());
 			return false;
 	}
+	safs::log_info("Loading plugins from {}", directory);
 
 	boost::filesystem::path dir(directory);
 	bool loadedPluginsSuccessfully = true;
@@ -48,6 +49,7 @@ bool PluginManager::loadPlugins(const std::string &directory) {
 	for (auto &dirEntry : boost::filesystem::directory_iterator(dir)) {
 		if (boost::filesystem::is_regular_file(dirEntry)) {
 			std::string filename = dirEntry.path().filename().string();
+			safs::log_info("Loading plugin {}", filename);
 
 			if (filename.find("lib") == std::string::npos) { continue; }
 
