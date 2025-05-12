@@ -69,6 +69,7 @@ void uRaftController::nodePromote() {
 
 	if (command_pid_ >= 0 && command_type_ != kCmdPromote) {
 		syslog(LOG_ERR, "Trying to switch metadata server to master during switch to slave");
+		stopFloatingIpManager();
 		demoteLeader();
 		set_block_promotion(true);
 		return;
@@ -80,24 +81,7 @@ void uRaftController::nodePromote() {
 	setSlowCommandTimeout(opt_.promote_timeout);
 	if (runSlowCommand("saunafs-uraft-helper promote")) {
 		command_type_ = kCmdPromote;
-
-		// Create HAFloatingIPManager
-		haFloatingIpManager = std::make_unique<HAFloatingIPManager>(
-		    opt_.floating_iface, opt_.floating_ip,
-		    opt_.check_floating_ip_period);
-
-		std::function<bool()> restoreFloatingIpFunction = [this]() -> bool {
-			std::vector<std::string> params = {"saunafs-uraft-helper", "assign-ip"};
-			std::string result;
-			int timeout = 6 * opt_.check_floating_ip_period;
-			return runCommand(params, result, timeout);
-		};
-
-		// Set callback for HAFloatingIPManager to restore the floating IP
-		haFloatingIpManager->setCallback(restoreFloatingIpFunction);
-
-		// Start HAFloatingIPManager
-		haFloatingIpManager->start();
+		startFloatingIpManager();
 	}
 }
 
@@ -118,12 +102,7 @@ void uRaftController::nodeDemote() {
 	if (runSlowCommand("saunafs-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
 		set_block_promotion(true);
-
-		// Stop HAFloatingIPManager
-		if (haFloatingIpManager) {
-			haFloatingIpManager->stop();
-			haFloatingIpManager.reset();
-		}
+		stopFloatingIpManager();
 	}
 }
 
@@ -230,6 +209,7 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 				set_block_promotion(false);
 			} else {
 				syslog(LOG_NOTICE, "Metadata server is dead");
+				stopFloatingIpManager();
 				demoteLeader();
 				set_block_promotion(true);
 				setSlowCommandTimeout(opt_.dead_handler_timeout);
@@ -413,4 +393,27 @@ int uRaftController::readString(int fd, std::string &result, const int timeout) 
 	}
 
 	return 1;
+}
+
+void uRaftController::startFloatingIpManager() {
+	haFloatingIpManager = std::make_unique<HAFloatingIPManager>(
+	    opt_.floating_iface, opt_.floating_ip, opt_.check_floating_ip_period);
+
+	std::function<bool()> restoreFloatingIpFunction = [this]() -> bool {
+		std::vector<std::string> params = {"saunafs-uraft-helper", "assign-ip"};
+		std::string result;
+		int timeout = 6 * opt_.check_floating_ip_period;
+		return runCommand(params, result, timeout);
+	};
+
+	haFloatingIpManager->setCallback(restoreFloatingIpFunction);
+
+	haFloatingIpManager->start();
+}
+
+void uRaftController::stopFloatingIpManager() {
+	if (haFloatingIpManager) {
+		haFloatingIpManager->stop();
+		haFloatingIpManager.reset();
+	}
 }
