@@ -484,6 +484,7 @@ void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
 					total += disk->totalSpace();
 				}
 
+				std::lock_guard testsLockGuard(gTestsMutex);
 				chunks += disk->chunks().size();
 			} else {
 				if (disk->scanState() == IDisk::ScanState::kWorking) {
@@ -491,6 +492,7 @@ void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
 					toDelTotal += disk->totalSpace();
 				}
 
+				std::lock_guard testsLockGuard(gTestsMutex);
 				toDelChunks += disk->chunks().size();
 			}
 		}
@@ -2145,6 +2147,7 @@ void hddTesterThread() {
 	uint32_t elapsedTimeMs = 0;
 	uint64_t startMicroSecs = 0;
 	uint64_t endMicroSecs = 0;
+	std::string chunkName;
 
 	while (!gTerminate) {
 		startMicroSecs = getMicroSecsTime();
@@ -2166,6 +2169,7 @@ void hddTesterThread() {
 				chunkId = chunk->id();
 				version = chunk->version();
 				chunkType = chunk->type();
+				chunkName = chunk->fullDataFilename();
 			}
 		}
 
@@ -2177,9 +2181,8 @@ void hddTesterThread() {
 				safs_pretty_syslog(LOG_DEBUG,
 				                   "Tester: chunk: %lu, v: %u, type: %s, file: "
 				                   "%s: tested (OK)",
-				                   chunkId, version,
-				                   chunkType.toString().c_str(),
-				                   chunk->fullDataFilename().c_str());
+				                   chunkId, version, chunkType.toString().c_str(),
+				                   chunkName.c_str());
 			}
 		}
 
