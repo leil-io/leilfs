@@ -19,7 +19,7 @@ firstDisk=$(head -1 "${info[chunkserver0_hdd]}")
 isZoned=$(is_zoned_device "${firstDisk}")
 
 # wait for saunafs to close files
-cs_pid=$(saunafs_chunkserver_daemon 0 test 2>&1 | sed 's/.*: //')
+cs_pid=$(saunafs_chunkserver_daemon 0 test | sed 's/.*: //')
 for ((time_elapsed=0; time_elapsed < time_limit; ++time_elapsed)); do
 	leaked_descriptors_number=$(lsof +D $RAMDISK_DIR -p$cs_pid 2>/dev/null | \
 		grep -v 'lock' | grep chunk_ | wc -l)
