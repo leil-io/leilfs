@@ -285,28 +285,6 @@ int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	return fs_apply_session(cuid);
 }
 
-int do_emptytrash_deprecated(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
-	uint32_t reservedinodes,freeinodes;
-	EAT(ptr,filename,lv,'(');
-	EAT(ptr,filename,lv,')');
-	EAT(ptr,filename,lv,':');
-	GETU32(freeinodes,ptr);
-	EAT(ptr,filename,lv,',');
-	GETU32(reservedinodes,ptr);
-	safs::log_warn("Deprecated apply emptytrash operation used in changelog, will no longer be recognized in 5.0.0");
-	return fs_apply_emptytrash_deprecated(ts,freeinodes,reservedinodes);
-}
-
-int do_emptyreserved_deprecated(const char *filename, uint64_t lv, uint32_t ts, const char* ptr) {
-	uint32_t freeinodes;
-	EAT(ptr,filename,lv,'(');
-	EAT(ptr,filename,lv,')');
-	EAT(ptr,filename,lv,':');
-	GETU32(freeinodes,ptr);
-	safs::log_warn("Deprecated apply emptyreserved operation used in changelog, will no longer be recognized in 5.0.0");
-	return fs_apply_emptyreserved_deprecated(ts,freeinodes);
-}
-
 int do_freeinodes(const char *filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	uint32_t freeinodes;
 	EAT(ptr,filename,lv,'(');
@@ -528,7 +506,7 @@ int do_seteattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr)
 }
 
 int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
-	uint32_t inode, uid, ci, nci, npi;
+	uint32_t inode, uid, ci;
 	uint8_t goal, smode;
 	EAT(ptr, filename, lv, '(');
 	GETU32(inode, ptr);
@@ -542,18 +520,8 @@ int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	if (*(ptr) == ':') {
 		EAT(ptr, filename, lv, ':');
 		GETU32(ci, ptr);
-		if (*(ptr) == ',') {
-			EAT(ptr, filename, lv, ',');
-			GETU32(nci, ptr);
-			EAT(ptr, filename, lv, ',');
-			GETU32(npi, ptr);
-			safs::log_warn("Deprecated goal type used in changelog, will no longer be recognized in 5.0.0");
-			return fs_deprecated_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0),
-			                             inode, goal, smode, &ci, &nci, &npi);
-		} else {
-			return fs_apply_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+		return fs_apply_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0),
 			                        inode, goal, smode, ci);
-		}
 	} else {
 		return fs_apply_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, goal,
 		                        smode, SetGoalTask::kChanged);
@@ -573,7 +541,7 @@ int do_setpath(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 }
 
 int do_settrashtime(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
-	uint32_t inode, uid, ci, nci, npi;
+	uint32_t inode, uid, ci;
 	uint32_t trashtime;
 	uint8_t smode;
 	EAT(ptr, filename, lv, '(');
@@ -588,20 +556,8 @@ int do_settrashtime(const char *filename, uint64_t lv, uint32_t ts, const char *
 	if ((*ptr) == ':') {
 		EAT(ptr, filename, lv, ':');
 		GETU32(ci, ptr);
-		if ((*ptr) == ',') {
-			EAT(ptr, filename, lv, ',');
-			GETU32(nci, ptr);
-			EAT(ptr, filename, lv, ',');
-			GETU32(npi, ptr);
-			safs::log_warn(
-			    "Deprecated settrashtime operation used in changelog, will no longer be recognized in 5.0.0");
-			return fs_deprecated_settrashtime(
-			        FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, trashtime,
-			        smode, &ci, &nci, &npi);
-		} else {
-			return fs_apply_settrashtime(FsContext::getForRestoreWithUidGid(ts, uid, 0),
-			                             inode, trashtime, smode, ci);
-		}
+		return fs_apply_settrashtime(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+			                         inode, trashtime, smode, ci);
 	} else {
 		return fs_apply_settrashtime(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode,
 		                             trashtime, smode, SetTrashtimeTask::kChanged);
@@ -870,13 +826,6 @@ int restore_line(const char* filename, uint64_t lv, const char* line) {
 		case 'D':
 			if (strncmp(ptr,"DELETEACL",9)==0) {
 				status = do_deleteacl(filename,lv,ts,ptr+9);
-			}
-			break;
-		case 'E':
-			if (strncmp(ptr,"EMPTYTRASH",10)==0) {
-				status = do_emptytrash_deprecated(filename,lv,ts,ptr+10);
-			} else if (strncmp(ptr,"EMPTYRESERVED",13)==0) {
-				status = do_emptyreserved_deprecated(filename,lv,ts,ptr+13);
 			}
 			break;
 		case 'F':
