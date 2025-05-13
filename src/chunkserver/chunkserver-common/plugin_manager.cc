@@ -116,3 +116,12 @@ bool PluginManager::checkVersion(IPlugin *plugin) {
 
 	return false;
 }
+
+void PluginManager::cleanupPlugins() {
+	for (auto &[name, plugin] : diskPlugins_) {
+		if (plugin) {
+			safs::log_info("Cleaning up plugin {}", plugin->toString());
+			plugin->cleanup();
+		}
+	}
+}

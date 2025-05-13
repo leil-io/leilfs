@@ -46,6 +46,9 @@ public:
 	/// True if this plugin manager can handle the plugin based on the version.
 	bool checkVersion(IPlugin *plugin);
 
+	/// Cleanup resources for all the needed plugins.
+	void cleanupPlugins();
+
 private:
 	/// Creators should never be out of scope or the plugin will be unloaded
 	std::map<std::string, boost::function<IPlugin_t>> creators_;
