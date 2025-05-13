@@ -356,11 +356,6 @@ static bool fs_threc_send_receive(threc *rec, bool filter, PacketHeader::Type ex
 					}
 				}
 			}
-#ifdef _WIN32
-			else if (gIsDisconnectedFromMaster.load()) {
-				return false;
-			}
-#endif
 			sleep(sleep_time(cnt));
 			continue;
 		}
