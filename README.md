@@ -7,15 +7,34 @@
 
 ## About
 
-[SaunaFS](https://saunafs.com) is a free and open source, distributed POSIX
-file system inspired by [Google File
-System](https://en.wikipedia.org/wiki/Google_File_System). Designed to run on
-commodity hardware, SaunaFS is a high-performance, scalable, and reliable file
-system that provides high availability, data integrity, fault tolerance, and
-performance on par with local file systems. It it easy to deploy and manage,
-and it is designed to be used in a wide range of applications, from small
-clusters to large data centers.
+[SaunaFS](https://saunafs.com) is a free and open source, distributed POSIX file
+system inspired by [Google File System](https://en.wikipedia.org/wiki/Google_File_System).
+SaunaFS is being developed and maintained by the team from [Leil
+Storage](https://leil.io). Designed to run on commodity hardware, SaunaFS is a
+high-performance, scalable, and reliable file system that provides high
+availability, data integrity, fault tolerance, and performance on par with local
+file systems. It is easy to deploy and manage, and it is designed to be used in
+a wide range of applications, from small clusters to large data centers.
 
+### About Leil Storage
+
+There are a few commercial products built on top of SaunaFS, Leil Storage being
+the flagship product. Leil Storage = SaunaFS + [HM-SMR drives
+support](https://leil.io/#whatishmsmr) + [ICE](https://leil.io/#green) + Arctic
+Forest Concept.
+
+#### Use Cases
+
+We target the use cases below as primary and this is where we are proud to be a
+great fit. Contact us to learn more.
+
+* Active Archive
+* AI & HPC
+* Backup
+* CCTV Storage
+* Enterprise File Sharing
+* Media and Video Post-Production (including proprietary Windows Client, Connect
+  and Navigator Apps, clustered performant Samba support)
 
 ### Feature List
 
