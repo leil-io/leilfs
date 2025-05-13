@@ -89,11 +89,12 @@ public:
 
 	/// @brief Constructor for JobPool.
 	///
+	/// @param name Human readable name for this pool, useful for debugging.
 	/// @param workers The number of worker threads in the pool.
 	/// @param maxJobs The maximum number of jobs that can be queued.
 	/// @param wakeupDesc Pointer to the file descriptor for wakeup notifications.
 	/// @throws std::runtime_error If the pipe creation fails.
-	JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc);
+	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, int *wakeupDesc);
 
 	/// @brief Destructor for JobPool.
 	~JobPool();
@@ -154,7 +155,9 @@ private:
 	};
 
 	/// @brief Worker thread function.
-	void workerThread();
+	/// @param poolName Parent pool name, used to name the specific thread.
+	/// @param workerId Worker index in this pool, used to name the thread.
+	void workerThread(const std::string &poolName, uint8_t workerId);
 
 	/// @brief Sends the status of a job.
 	///
@@ -171,6 +174,7 @@ private:
 
 	int rpipe;                                         /// Read pipe for job status notifications.
 	int wpipe;                                         /// Write pipe for job status notifications.
+	std::string name_;                                 /// Human readable id of the JobPool.
 	uint8_t workers;                                   /// Number of worker threads in the pool.
 	std::vector<std::thread> workerThreads;            /// Vector of worker threads.
 	std::mutex pipeMutex;                              /// Mutex for pipe operations.

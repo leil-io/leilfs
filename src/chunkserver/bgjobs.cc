@@ -48,7 +48,8 @@
 constexpr auto kInvalidJob = nullptr;
 constexpr auto STATUS_BYTE_SIZE = 1;
 
-JobPool::JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc) : workers(workers) {
+JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, int *wakeupDesc)
+    : name_(name), workers(workers) {
 	int fd[2];
 	if (pipe(fd) < 0) {  // pipe is a critical resource for communication within the JobPool
 		throw std::runtime_error("JobPool: Failed to create pipe: " + std::string(strerror(errno)));
@@ -62,7 +63,7 @@ JobPool::JobPool(uint8_t workers, uint32_t maxJobs, int *wakeupDesc) : workers(w
 	statusQueue = std::make_unique<ProducerConsumerQueue>();
 
 	for (uint8_t i = 0; i < workers; ++i) {
-		workerThreads.emplace_back(&JobPool::workerThread, this);
+		workerThreads.emplace_back(&JobPool::workerThread, this, name_, i);
 	}
 }
 
@@ -172,9 +173,8 @@ void JobPool::changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, 
 	}
 }
 
-void JobPool::workerThread() {
-	static std::atomic_uint16_t workersCounter(0);
-	std::string threadName = "jobWorker " + std::to_string(workersCounter++);
+void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
+	std::string threadName = poolName + "_worker_" + std::to_string(workerId);
 	pthread_setname_np(pthread_self(), threadName.c_str());
 
 	uint32_t jobId;

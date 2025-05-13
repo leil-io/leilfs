@@ -287,8 +287,8 @@ int mainNetworkThreadInit(void) {
 }
 
 int mainNetworkThreadInitThreads(void) {
-	for (unsigned i = 0; i < gNrOfNetworkWorkers; ++i) {
-		networkThreadObjects.emplace_back(gNrOfHddWorkersPerNetworkWorker,
+	for (uint32_t i = 0; i < gNrOfNetworkWorkers; ++i) {
+		networkThreadObjects.emplace_back(i, gNrOfHddWorkersPerNetworkWorker,
 				gBgjobsCountPerNetworkWorker);
 	}
 	for (auto obj = networkThreadObjects.begin(); obj != networkThreadObjects.end(); ++obj) {
