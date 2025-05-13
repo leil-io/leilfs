@@ -57,10 +57,6 @@ void printTools() {
 	fprintf(stderr, "\trremove\n");
 	fprintf(stderr, "\thelp [tool name]\n");
 	fprintf(stderr, "deprecated tools:\n");
-	fprintf(stderr, "\trgetgoal = getgoal -r\n");
-	fprintf(stderr, "\trsetgoal = setgoal -r\n");
-	fprintf(stderr, "\trgettrashtime = gettrashtime -r\n");
-	fprintf(stderr, "\trsettrashtime = settrashtime -r\n");
 }
 
 void printOptions() {
@@ -99,13 +95,9 @@ static int exit_func(int /*argc*/, char **/*argv*/) {
 
 static std::unordered_map<std::string, std::function<int(int, char **)>> sauna_commands({
 	{"getgoal", get_goal_run},
-	{"rgetgoal", rget_goal_run},
 	{"setgoal", set_goal_run},
-	{"rsetgoal", rset_goal_run},
 	{"gettrashtime", get_trashtime_run},
-	{"rgettrashtime", rget_trashtime_run},
 	{"settrashtime", set_trashtime_run},
-	{"rsettrashtime", rset_trashtime_run},
 	{"checkfile", check_file_run},
 	{"fileinfo", file_info_run},
 	{"appendchunks", append_file_run},
