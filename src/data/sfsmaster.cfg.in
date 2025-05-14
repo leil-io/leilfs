@@ -332,3 +332,8 @@
 ## port where it will listen for scrapers. Must in the format of HOST:PORT.
 ## (Default: 0.0.0.0:9499)
 # PROMETHEUS_HOST=0.0.0.0:9499
+
+## This option allows the system to create metadata for empty folders when
+## storage space is depleted.
+## (Default: 1)
+# CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED = 1

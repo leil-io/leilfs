@@ -262,6 +262,12 @@ Set to either 1 to enable, or 0 to disable (default is 0)
 *PROMETHEUS_HOST (EXPERIMENTAL)*:: Host address where Prometheus metric data
 can be collected, must be in the format of HOST:PORT (default 0.0.0.0:9499)
 
+*CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED (EXPERIMENTAL)* When enabled,
+this option allows the system to create metadata for empty folders when
+storage space is depleted. This helps preserving the intended file and
+directory structure. When this option is disabled, no metadata for folders
+will be created if there is insufficient storage space (default: 1).
+
 *LOG_LEVEL*:: Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or
 config value LOG_LEVEL to determine logging level. Valid log levels are
 - 'trace'
