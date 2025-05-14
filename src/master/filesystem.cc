@@ -57,6 +57,8 @@ static bool gAutoRecovery = false;
 bool gMagicAutoFileRepair = false;
 bool gAtimeDisabled = false;
 
+bool gDisableEmptyFoldersMetadataOnFullDisk = false;
+
 uint32_t gTestStartTime;
 
 static bool gSaveMetadataAtExit = true;
@@ -359,6 +361,14 @@ static void fs_read_config_file() {
 		" entries are deprecated. Use OPERATIONS_DELAY_INIT and OPERATIONS_DELAY_DISCONNECT instead.");
 	}
 	gEmptyReservedFilesPeriod = cfg_getuint32("EMPTY_RESERVED_FILES_PERIOD_MSECONDS", 0);
+
+	gDisableEmptyFoldersMetadataOnFullDisk =
+	    cfg_getint32("CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED", 1) == 0;
+	if (gDisableEmptyFoldersMetadataOnFullDisk) {
+		safs::log_info(
+		    "CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED option is disabled. "
+		    "Empty folders will not be created when space is depleted.");
+	}
 
 	chunk_invalidate_goal_cache();
 	fs_read_goal_config_file(); // may throw

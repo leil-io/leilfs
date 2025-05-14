@@ -129,6 +129,7 @@ const static std::unordered_map<std::string, std::string> defaultOptionsMaster =
     {"SNAPSHOT_INITIAL_BATCH_SIZE_LIMIT", "10000"},
     {"FILE_TEST_LOOP_MIN_TIME", "3600"},
     {"PRIORITIZE_DATA_PARTS", "1"},
+    {"CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED", "1"},
 };
 
 const static std::unordered_map<std::string, std::string> defaultOptionsShadow = {

@@ -28,6 +28,7 @@
 
 #include "common/attributes.h"
 #include "common/event_loop.h"
+#include "errors/saunafs_error_codes.h"
 #include "filesystem_metadata.h"
 #include "master/changelog.h"
 #include "master/chunks.h"
@@ -45,10 +46,18 @@
 #include "master/task_manager.h"
 #include "metrics/metrics.h"
 #include "protocol/matocl.h"
+#include "slogger/slogger.h"
 
 std::array<uint32_t, FsStats::Size> gFsStatsArray = {{}};
 
 [[maybe_unused]] static const char kAclXattrs[] = "system.richacl";
+
+inline bool isDepletedSpace() {
+	uint64_t totalSpace = 0;
+	uint64_t availableSpace = 0;
+	matocsserv_getspace(&totalSpace, &availableSpace);
+	return (totalSpace < SFSCHUNKSIZE || availableSpace < SFSCHUNKSIZE);
+}
 
 void fs_retrieve_stats(std::array<uint32_t, FsStats::Size> &output_stats) {
 	output_stats = gFsStatsArray;
@@ -1001,6 +1010,7 @@ uint8_t fs_mknod(const FsContext &context, uint32_t parent, const HString &name,
 	    fsnodes_quota_exceeded_dir(wd, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
+
 	static_cast<FSNodeDirectory *>(wd)->case_insensitive =
 	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
 	p = fsnodes_create_node(ts, static_cast<FSNodeDirectory*>(wd), name, type, mode, umask, context.uid(), context.gid(), 0,
@@ -1049,6 +1059,14 @@ uint8_t fs_mkdir(const FsContext &context, uint32_t parent, const HString &name,
 	    fsnodes_quota_exceeded_dir(wd, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
+
+	if (gDisableEmptyFoldersMetadataOnFullDisk) {
+		if (isDepletedSpace()) {
+			safs::log_err("fs_mkdir: not enough space to create a folder");
+			return SAUNAFS_ERROR_NOSPACE;
+		}
+	}
+
 	static_cast<FSNodeDirectory *>(wd)->case_insensitive =
 	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
 	p = fsnodes_create_node(ts, static_cast<FSNodeDirectory *>(wd), name, FSNode::kDirectory, mode,

@@ -150,6 +150,7 @@ extern FilesystemMetadata *gMetadata;
 extern ChecksumBackgroundUpdater gChecksumBackgroundUpdater;
 extern bool gDisableChecksumVerification;
 extern uint32_t gTestStartTime;
+extern bool gDisableEmptyFoldersMetadataOnFullDisk;
 
 #ifndef METARESTORE
 extern std::map<int, Goal> gGoalDefinitions;
