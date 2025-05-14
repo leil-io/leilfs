@@ -87,13 +87,12 @@ void HAFloatingIPManager::stopEventListener() {
 }
 
 void HAFloatingIPManager::handleIpLoss(const std::string &ipAddress) {
-	syslog(LOG_WARNING, "[FloatingIPManager] Handling lost IP: %s",
-	       ipAddress.c_str());
 	_isFloatingIpAlive = false;
 
 	// Trigger failover
 	const std::stop_token stopToken = listenerThread.get_stop_token();
 	if (!stopToken.stop_requested()) {
+		syslog(LOG_WARNING, "[FloatingIPManager] Handling lost IP: %s", ipAddress.c_str());
 		_isFloatingIpAlive = restoreFloatingIp();
 	}
 }

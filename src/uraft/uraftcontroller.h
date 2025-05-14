@@ -71,6 +71,10 @@ protected:
 	bool  runCommand(const std::vector<std::string> &cmd, std::string &result, int timeout);
 	int   readString(int fd, std::string &result, int timeout);
 
+private:
+	void startFloatingIpManager();
+	void stopFloatingIpManager();
+
 protected:
 	boost::asio::deadline_timer check_cmd_status_timer_,check_node_status_timer_;
 	boost::asio::deadline_timer cmd_timeout_timer_;
