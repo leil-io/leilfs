@@ -2446,6 +2446,9 @@ void hddTerminate(void) {
 	// started, so do not join with them
 	uint32_t terminate = gTerminate.exchange(true);
 
+	// Request plugins to cleanup before removing Chunks and Disks
+	pluginManager.cleanupPlugins();
+
 	if (terminate == 0) {
 		gTesterThread.join();
 		gDisksThread.join();

@@ -35,6 +35,9 @@ public:
 	/// debugging purposes.
 	std::string toString() override;
 
+	/// Do specific resources cleanup.
+	virtual void cleanup() = 0;
+
 private:
 	/// Needed for correct logging after upgrade to c++23
 	std::shared_ptr<spdlog::logger> logger_;
