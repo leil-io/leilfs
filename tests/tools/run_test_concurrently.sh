@@ -66,6 +66,7 @@ RESET=$(tput sgr0)
 
 if [ $VALGRIND == "Yes" ]; then
 	export USE_VALGRIND=YES
+	export VALGRIND_TOOL="memcheck"
 fi
 
 # TODO: maybe somehow implement the following lines, to not run compilation,
