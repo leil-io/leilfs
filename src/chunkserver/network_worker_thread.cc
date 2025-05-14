@@ -53,9 +53,9 @@ constexpr int getConnectTimeout(int cnt) {
 	               : kTimeoutEven * (1 << (cnt >> 1));
 }
 
-NetworkWorkerThread::NetworkWorkerThread(uint32_t nrOfBgjobsWorkers,
+NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers,
                                          uint32_t bgjobsCount)
-    : doTerminate(false) {
+    : name_("nw_" + std::to_string(id)), doTerminate(false) {
 	TRACETHIS();
 	eassert(pipe(notify_pipe) != -1);
 #ifdef F_SETPIPE_SZ
@@ -65,7 +65,8 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t nrOfBgjobsWorkers,
 	eassert(fcntl(notify_pipe[1], F_SETPIPE_SZ, kPageAlignedPipeSize));
 #endif
 	try {
-		bgJobPool_ = std::make_unique<JobPool>(nrOfBgjobsWorkers, bgjobsCount, &bgJobPoolWakeUpFd_);
+		bgJobPool_ =
+		    std::make_unique<JobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, &bgJobPoolWakeUpFd_);
 	} catch (const std::exception &e) {
 		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
 		throw;

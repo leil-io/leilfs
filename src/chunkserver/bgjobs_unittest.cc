@@ -48,7 +48,7 @@ private:
 protected:
 	void SetUp() override {
 		wakeupDesc = 0;
-		jobPool = std::make_unique<JobPool>(4, 10, &wakeupDesc);
+		jobPool = std::make_unique<JobPool>("TestPool", 4, 10, &wakeupDesc);
 		counter.store(0);
 		counter2.store(0);
 		wakeupDescPollFd = {wakeupDesc, POLLIN, 0};

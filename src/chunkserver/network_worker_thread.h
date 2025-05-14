@@ -42,7 +42,7 @@ public:
 	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 16;
 	static constexpr uint16_t kDefaultMaxBlocksPerHddReadJob = 8;
 
-	NetworkWorkerThread(uint32_t nrOfBgjobsWorkers, uint32_t bgjobsCount);
+	NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers, uint32_t bgjobsCount);
 	NetworkWorkerThread(const NetworkWorkerThread&) = delete;
 
 	// main loop
@@ -58,6 +58,9 @@ private:
 	void preparePollFds();
 	void servePoll() ;
 	void terminate();
+
+	/// Human readable name for the thread
+	std::string name_;
 
 	std::atomic<bool> doTerminate;
 	std::mutex csservheadLock;

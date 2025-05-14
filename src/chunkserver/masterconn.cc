@@ -865,7 +865,7 @@ int masterconn_init(void) {
 
 int masterconn_init_threads(void) {
 	try {
-		jobPool = std::make_unique<JobPool>(gNumberOfWorkers, BGJOBSCNT, &jobfd);
+		jobPool = std::make_unique<JobPool>("ma", gNumberOfWorkers, BGJOBSCNT, &jobfd);
 	} catch (const std::runtime_error &e) {
 		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
 		return -1;
