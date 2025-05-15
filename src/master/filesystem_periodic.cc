@@ -556,51 +556,12 @@ static void fs_do_emptytrash(uint32_t ts) {
 		}
 	}
 }
-#endif
 
-static InodeInfo fs_do_emptytrash_deprecated(uint32_t ts) {
-	InodeInfo ii{0, 0};
-
-	auto it = gMetadata->trash.begin();
-	while (it != gMetadata->trash.end() && ((*it).first.timestamp < ts)) {
-		FSNodeFile *node = fsnodes_id_to_node_verify<FSNodeFile>((*it).first.id);
-
-		if (!node) {
-			gMetadata->trash.erase(it);
-			it = gMetadata->trash.begin();
-			continue;
-		}
-
-		assert(node->type == FSNode::kTrash);
-
-		if (fsnodes_purge(ts, node)) {
-			ii.free++;
-		} else {
-			ii.reserved++;
-		}
-
-		it = gMetadata->trash.begin();
-	}
-	return ii;
-}
-
-#ifndef METARESTORE
 void fs_periodic_emptytrash(void) {
 	uint32_t ts = eventloop_time();
 	fs_do_emptytrash(ts);
 }
-#endif
 
-uint8_t fs_apply_emptytrash_deprecated(uint32_t ts, uint32_t freeinodes, uint32_t reservedinodes) {
-	InodeInfo ii = fs_do_emptytrash_deprecated(ts);
-	gMetadata->metaversion++;
-	if ((freeinodes != ii.free) || (reservedinodes != ii.reserved)) {
-		return SAUNAFS_ERROR_MISMATCH;
-	}
-	return SAUNAFS_STATUS_OK;
-}
-
-#ifndef METARESTORE
 static void fs_do_emptyreserved(uint32_t ts) {
 	SignalLoopWatchdog watchdog;
 
@@ -630,13 +591,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		}
 	}
 }
-#endif
 
-uint8_t fs_apply_emptyreserved_deprecated(uint32_t /*ts*/,uint32_t /*freeinodes*/) {
-	return SAUNAFS_STATUS_OK;
-}
-
-#ifndef METARESTORE
 void fs_periodic_emptyreserved(void) {
 	uint32_t ts = eventloop_time();
 	fs_do_emptyreserved(ts);
