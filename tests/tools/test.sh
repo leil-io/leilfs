@@ -128,7 +128,8 @@ test_begin() {
 	timeout_init
 	system_init
 	if [[ ${USE_VALGRIND} ]]; then
-		valgrind_enable
+		valgrind_tool=${VALGRIND_TOOL:-}
+		valgrind_enable ${valgrind_tool}
 	fi
 	if [[ ${DEBUG} ]]; then
 		export PS4='+$(basename "${BASH_SOURCE:-}"):${LINENO:-}:${FUNCNAME[0]:+${FUNCNAME[0]}():} '
