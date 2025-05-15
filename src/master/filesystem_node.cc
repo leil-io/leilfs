@@ -39,6 +39,7 @@
 #include "master/filesystem_periodic.h"
 #include "master/filesystem_quota.h"
 #include "master/fs_context.h"
+#include "slogger/slogger.h"
 
 #ifndef NDEBUG
   #include "master/personality.h"
@@ -725,6 +726,7 @@ void fsnodes_getpath(FSNodeDirectory *parent, FSNode *child, std::string &path) 
 
 
 #ifndef METARESTORE
+constexpr uint32_t kOldPathContainerLimit = 1000000;
 
 template<class T>
 static inline uint32_t getdetachedsize(const T &data) {
@@ -732,13 +734,19 @@ static inline uint32_t getdetachedsize(const T &data) {
 	              || std::is_same<T, ReservedPathContainer>::value, "unsupported container");
 	uint32_t result = 0;
 	std::string name;
+	uint32_t count = 0;
 	for (const auto &entry : data) {
+		if (count > kOldPathContainerLimit) {
+			// See explanation in getdetacheddata
+			break;
+		}
 		name = (std::string)entry.second;
 		if (name.length() > 240) {
 			result += 245;
 		} else {
 			result += 5 + name.length();
 		}
+		count++;
 	}
 	return result;
 }
@@ -759,7 +767,19 @@ static inline void getdetacheddata(const T &data, uint8_t *dbuff) {
 	uint8_t *sptr;
 	uint8_t c;
 	std::string name;
+	// Limit to 1 million, see explanation below
+	uint32_t count = 0;
 	for (const auto &entry : data) {
+		if (count > kOldPathContainerLimit) {
+			// Due to the size limit of packets (at time of writing,
+			// UINT32_MAX), if we write any more we risk overflowing buffer.
+			// While this could be done better rather than an arbitrary limit,
+			// there's already an alternative in client library that allows
+			// buffered reads from trash/reserved.
+			safs::log_warn("getdetachedsize: path container size longer than {}, truncating",
+				  kOldPathContainerLimit);
+			break;
+		}
 		name = (std::string)entry.second;
 
 		if (name.length() > 240) {
@@ -791,6 +811,7 @@ static inline void getdetacheddata(const T &data, uint8_t *dbuff) {
 				dbuff++;
 			}
 		}
+		count++;
 		put32bit(&dbuff, getdetacheddata_getNodeId(entry.first));
 	}
 }
