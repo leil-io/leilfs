@@ -2391,53 +2391,6 @@ uint8_t fs_apply_setgoal(const FsContext &context, uint32_t inode, uint8_t goal,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_deprecated_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8_t smode,
-		uint32_t *sinodes, uint32_t *ncinodes, uint32_t *nsinodes) {
-	ChecksumUpdater cu(context.ts());
-	if (!SMODE_ISVALID(smode) || !GoalId::isValid(goal) ||
-	    (smode & (SMODE_INCREASE | SMODE_DECREASE))) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
-	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != 0) {
-		return status;
-	}
-	FSNode *p;
-	status = fsnodes_get_node_for_operation(context, ExpectedNodeType::kAny, MODE_MASK_EMPTY,
-	                                        inode, &p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
-	if (p->type != FSNode::kDirectory && p->type != FSNode::kFile && p->type != FSNode::kTrash &&
-	    p->type != FSNode::kReserved) {
-		return SAUNAFS_ERROR_EPERM;
-	}
-	sassert(context.hasUidGidData());
-	uint32_t si = 0;
-	uint32_t nci = 0;
-	uint32_t nsi = 0;
-
-	fsnodes_setgoal_recursive(p, context.ts(), context.uid(), goal, smode, &si, &nci, &nsi);
-
-	if (context.isPersonalityMaster()) {
-		if ((smode & SMODE_RMASK) == 0 && nsi > 0 && si == 0 && nci == 0) {
-			return SAUNAFS_ERROR_EPERM;
-		}
-		*sinodes = si;
-		*ncinodes = nci;
-		*nsinodes = nsi;
-		fs_changelog(context.ts(), "SETGOAL(%" PRIu32 ",%" PRIu32 ",%" PRIu8 ",%" PRIu8
-		                           "):%" PRIu32 ",%" PRIu32 ",%" PRIu32,
-		             p->id, context.uid(), goal, smode, si, nci, nsi);
-	} else {
-		gMetadata->metaversion++;
-		if ((*sinodes != si) || (*ncinodes != nci) || (*nsinodes != nsi)) {
-			return SAUNAFS_ERROR_MISMATCH;
-		}
-	}
-	return SAUNAFS_STATUS_OK;
-}
-
 uint8_t fs_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime, uint8_t smode,
 			std::shared_ptr<SetTrashtimeTask::StatsArray> settrashtime_stats,
 			const std::function<void(int)> &callback) {
@@ -2506,52 +2459,6 @@ uint8_t fs_apply_settrashtime(const FsContext &context, uint32_t inode, uint32_t
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 
-	return SAUNAFS_STATUS_OK;
-}
-
-uint8_t fs_deprecated_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime,
-				   uint8_t smode, uint32_t *sinodes, uint32_t *ncinodes,
-				   uint32_t *nsinodes) {
-	ChecksumUpdater cu(context.ts());
-	if (!SMODE_ISVALID(smode)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
-	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != 0) {
-		return status;
-	}
-	FSNode *p;
-	status = fsnodes_get_node_for_operation(context, ExpectedNodeType::kAny, MODE_MASK_EMPTY,
-	                                        inode, &p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
-	if (p->type != FSNode::kDirectory && p->type != FSNode::kFile && p->type != FSNode::kTrash &&
-	    p->type != FSNode::kReserved) {
-		return SAUNAFS_ERROR_EPERM;
-	}
-	uint32_t si = 0;
-	uint32_t nci = 0;
-	uint32_t nsi = 0;
-	sassert(context.hasUidGidData());
-	fsnodes_settrashtime_recursive(p, context.ts(), context.uid(), trashtime, smode, &si, &nci,
-	                               &nsi);
-	if (context.isPersonalityMaster()) {
-		if ((smode & SMODE_RMASK) == 0 && nsi > 0 && si == 0 && nci == 0) {
-			return SAUNAFS_ERROR_EPERM;
-		}
-		*sinodes = si;
-		*ncinodes = nci;
-		*nsinodes = nsi;
-		fs_changelog(context.ts(), "SETTRASHTIME(%" PRIu32 ",%" PRIu32 ",%" PRIu32
-		                           ",%" PRIu8 "):%" PRIu32 ",%" PRIu32 ",%" PRIu32,
-		             p->id, context.uid(), trashtime, smode, si, nci, nsi);
-	} else {
-		gMetadata->metaversion++;
-		if ((*sinodes != si) || (*ncinodes != nci) || (*nsinodes != nsi)) {
-			return SAUNAFS_ERROR_MISMATCH;
-		}
-	}
 	return SAUNAFS_STATUS_OK;
 }
 

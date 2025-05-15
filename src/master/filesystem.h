@@ -86,8 +86,6 @@ uint8_t fs_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8
 		const std::function<void(int)> &callback);
 uint8_t fs_apply_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8_t smode,
 		uint32_t master_result);
-uint8_t fs_deprecated_setgoal(const FsContext &context, uint32_t inode, uint8_t goal, uint8_t smode,
-		uint32_t *sinodes, uint32_t *ncinodes, uint32_t *nsinodes);
 uint8_t fs_settrashpath(const FsContext& context,
 		uint32_t inode, const std::string &path);
 uint8_t fs_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime, uint8_t smode,
@@ -95,9 +93,6 @@ uint8_t fs_settrashtime(const FsContext &context, uint32_t inode, uint32_t trash
 			const std::function<void(int)> &callback);
 uint8_t fs_apply_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime,
 			      uint8_t smode, uint32_t master_result);
-uint8_t fs_deprecated_settrashtime(const FsContext &context, uint32_t inode, uint32_t trashtime,
-				   uint8_t smode, uint32_t *sinodes, uint32_t *ncinodes,
-				   uint32_t *nsinodes);
 uint8_t fs_symlink(const FsContext& context,
 		uint32_t parent, const HString &name, const std::string &path,
 		uint32_t *inode, Attributes* attr);
@@ -157,8 +152,6 @@ uint8_t fs_apply_create(uint32_t ts,uint32_t parent,const HString &name,uint8_t 
 uint8_t fs_apply_access(uint32_t ts,uint32_t inode);
 uint8_t fs_apply_attr(uint32_t ts,uint32_t inode,uint32_t mode,uint32_t uid,uint32_t gid,uint32_t atime,uint32_t mtime);
 uint8_t fs_apply_session(uint32_t sessionid);
-uint8_t fs_apply_emptytrash_deprecated(uint32_t ts,uint32_t freeinodes,uint32_t reservedinodes);
-uint8_t fs_apply_emptyreserved_deprecated(uint32_t ts,uint32_t freeinodes);
 uint8_t fs_apply_freeinodes(uint32_t ts,uint32_t freeinodes);
 uint8_t fs_apply_incversion(uint64_t chunkid);
 uint8_t fs_apply_length(uint32_t ts, uint32_t inode, uint64_t length, bool eraseFurtherChunks);
