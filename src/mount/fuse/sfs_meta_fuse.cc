@@ -18,17 +18,15 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "common/massert.h"
 #include "common/platform.h"
-#include "mount/fuse/sfs_meta_fuse.h"
 
 #include <errno.h>
+#include <fuse_lowlevel.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <fuse_lowlevel.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -36,13 +34,16 @@
 #include <span>
 
 #include "common/datapack.h"
-#include "common/type_defs.h"
-#include "protocol/SFSCommunication.h"
-#include "slogger/slogger.h"
+#include "common/massert.h"
 #include "common/special_inode_defs.h"
+#include "common/type_defs.h"
 #include "mount/exports.h"
+#include "mount/fuse/sfs_fuselib/metadata.h"
+#include "mount/fuse/sfs_meta_fuse.h"
 #include "mount/mastercomm.h"
 #include "mount/masterproxy.h"
+#include "protocol/SFSCommunication.h"
+#include "slogger/slogger.h"
 
 static_assert(FUSE_ROOT_ID == SPECIAL_INODE_ROOT, "invalid value of FUSE_ROOT_ID");
 
@@ -53,12 +54,12 @@ struct dirbuf {
 	std::mutex lock;
 };
 
-typedef struct _pathbuf {
+struct pathbuf {
 	int changed;
 	char *p;
 	size_t size;
 	std::mutex lock;
-} pathbuf;
+};
 
 #define READDIR_BUFFSIZE 50000
 
@@ -67,13 +68,6 @@ typedef struct _pathbuf {
 
 #define META_ROOT_MODE 0555
 
-// 0x0124 = 0444
-#ifdef MASTERINFO_WITH_VERSION
-static Attributes masterinfoattr={{'f', 0x01,0x24, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,14}};
-#else
-static Attributes masterinfoattr={{'f', 0x01,0x24, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,10}};
-#endif
-
 #define PKGVERSION \
 		((SAUNAFS_PACKAGE_VERSION_MAJOR)*1000000 + \
 		(SAUNAFS_PACKAGE_VERSION_MINOR)*1000 + \
@@ -81,81 +75,8 @@ static Attributes masterinfoattr={{'f', 0x01,0x24, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,
 
 #define IS_SPECIAL_INODE(inode) ((inode)>=SPECIAL_INODE_BASE || (inode)==SPECIAL_INODE_ROOT)
 
-static int debug_mode = 0;
 static double entry_cache_timeout = 0.0;
 static double attr_cache_timeout = 1.0;
-
-inode_t sfs_meta_name_to_inode(const char *name) {
-	inode_t inode=0;
-	char *end;
-	inode = strtoul(name,&end,16);
-	if (*end=='|' && end[1]!=0) {
-		return inode;
-	} else {
-		return 0;
-	}
-}
-
-static void sfs_meta_type_to_stat(inode_t inode,uint8_t type, struct stat *stbuf) {
-	memset(stbuf,0,sizeof(struct stat));
-	stbuf->st_ino = inode;
-	switch (type) {
-	case TYPE_DIRECTORY:
-		stbuf->st_mode = S_IFDIR;
-		break;
-	case TYPE_SYMLINK:
-		stbuf->st_mode = S_IFLNK;
-		break;
-	case TYPE_FILE:
-		stbuf->st_mode = S_IFREG;
-		break;
-	case TYPE_FIFO:
-		stbuf->st_mode = S_IFIFO;
-		break;
-	case TYPE_SOCKET:
-		stbuf->st_mode = S_IFSOCK;
-		break;
-	case TYPE_BLOCKDEV:
-		stbuf->st_mode = S_IFBLK;
-		break;
-	case TYPE_CHARDEV:
-		stbuf->st_mode = S_IFCHR;
-		break;
-	default:
-		stbuf->st_mode = 0;
-	}
-}
-
-static void sfs_meta_stat(inode_t inode, struct stat *stbuf) {
-	int now;
-	stbuf->st_ino = inode;
-	stbuf->st_size = 0;
-	stbuf->st_blocks = 0;
-	switch (inode) {
-	case SPECIAL_INODE_ROOT:
-		stbuf->st_nlink = 4;
-		stbuf->st_mode = S_IFDIR | META_ROOT_MODE ;
-		break;
-	case SPECIAL_INODE_META_TRASH:
-		stbuf->st_nlink = 3;
-		stbuf->st_mode = S_IFDIR | (nonRootAllowedToUseMeta() ? 0777 : 0700) ;
-		break;
-	case SPECIAL_INODE_META_UNDEL:
-		stbuf->st_nlink = 2;
-		stbuf->st_mode = S_IFDIR | (nonRootAllowedToUseMeta() ? 0777 : 0200) ;
-		break;
-	case SPECIAL_INODE_META_RESERVED:
-		stbuf->st_nlink = 2;
-		stbuf->st_mode = S_IFDIR | (nonRootAllowedToUseMeta() ? 0555 : 0500) ;
-		break;
-	}
-	stbuf->st_uid = 0;
-	stbuf->st_gid = 0;
-	now = time(NULL);
-	stbuf->st_atime = now;
-	stbuf->st_mtime = now;
-	stbuf->st_ctime = now;
-}
 
 static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
@@ -229,7 +150,7 @@ void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 			e.ino = SPECIAL_INODE_MASTERINFO;
 			e.attr_timeout = 3600.0;
 			e.entry_timeout = 3600.0;
-			sfs_attr_to_stat(SPECIAL_INODE_MASTERINFO,masterinfoattr,&e.attr);
+			e.attr = getMasterInfoStat();
 			fuse_reply_entry(req, &e);
 			return ;
 		}
@@ -242,7 +163,7 @@ void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 		} else if (strcmp(name,SPECIAL_FILE_NAME_META_UNDEL)==0) {
 			inode = SPECIAL_INODE_META_UNDEL;
 		} else {
-			inode = sfs_meta_name_to_inode(name);
+			inode = metadataNameToInode(name);
 			if (inode>0) {
 				int status;
 				Attributes attr;
@@ -274,7 +195,7 @@ void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 		} else if (strcmp(name,"..")==0) {
 			inode = SPECIAL_INODE_ROOT;
 		} else {
-			inode = sfs_meta_name_to_inode(name);
+			inode = metadataNameToInode(name);
 			if (inode>0) {
 				int status;
 				Attributes attr;
@@ -300,7 +221,7 @@ void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 		e.ino = inode;
 		e.attr_timeout = attr_cache_timeout;
 		e.entry_timeout = entry_cache_timeout;
-		sfs_meta_stat(inode,&e.attr);
+		sfsMetaStat(inode,&e.attr);
 		fuse_reply_entry(req,&e);
 	}
 }
@@ -310,11 +231,11 @@ void sfs_meta_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 	(void)fi;
 	if (ino==SPECIAL_INODE_MASTERINFO) {
 		memset(&o_stbuf, 0, sizeof(struct stat));
-		sfs_attr_to_stat(ino,masterinfoattr,&o_stbuf);
+		o_stbuf = getMasterInfoStat();
 		fuse_reply_attr(req, &o_stbuf, 3600.0);
 	} else if (IS_SPECIAL_INODE(ino)) {
 		memset(&o_stbuf, 0, sizeof(struct stat));
-		sfs_meta_stat(ino,&o_stbuf);
+		sfsMetaStat(ino,&o_stbuf);
 		fuse_reply_attr(req, &o_stbuf, attr_cache_timeout);
 	} else {
 		int status;
@@ -325,7 +246,7 @@ void sfs_meta_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 			fuse_reply_err(req, status);
 		} else {
 			memset(&o_stbuf, 0, sizeof(struct stat));
-			sfs_attr_to_stat(ino,attr,&o_stbuf);
+			sfs_attr_to_stat(ino, attr, &o_stbuf);
 			fuse_reply_attr(req, &o_stbuf, attr_cache_timeout);
 		}
 	}
@@ -344,7 +265,7 @@ void sfs_meta_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
 		fuse_reply_err(req,EACCES);
 		return;
 	}
-	inode = sfs_meta_name_to_inode(name);
+	inode = metadataNameToInode(name);
 	if (inode==0) {
 		fuse_reply_err(req,ENOENT);
 		return;
@@ -363,7 +284,7 @@ void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_i
 		fuse_reply_err(req,EACCES);
 		return;
 	}
-	inode = sfs_meta_name_to_inode(name);
+	inode = metadataNameToInode(name);
 	if (inode==0) {
 		fuse_reply_err(req,ENOENT);
 		return;
@@ -392,21 +313,6 @@ static uint32_t dir_metaentries_size(inode_t ino) {
 	}
 
 	return 0;
-}
-
-struct MetaStat {
-	std::string name;
-	inode_t inode;
-	char type;
-};
-
-static constexpr std::array<MetaStat, 4> rootDirEntries() {
-		auto rootDir = MetaStat(".", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
-		auto upDir = MetaStat("..", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
-		auto trash = MetaStat(SPECIAL_FILE_NAME_META_TRASH, SPECIAL_INODE_META_TRASH, TYPE_DIRECTORY);
-		auto reserved = MetaStat(SPECIAL_FILE_NAME_META_RESERVED, SPECIAL_INODE_META_RESERVED, TYPE_DIRECTORY);
-		std::array<MetaStat, 4> entries = {rootDir, upDir, trash, reserved};
-		return entries;
 }
 
 static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
@@ -625,7 +531,7 @@ void replyDirReadRoot(fuse_req_t request, off_t offset, size_t maxsize) {
 
 	for (const auto &file : std::span(files).subspan(offset)) {
 		offset += 1;
-		sfs_meta_type_to_stat(file.inode, file.type, &statBuffer);
+		resetStat(file.inode, file.type, statBuffer);
 		size_t needed = fuse_add_direntry(request, nullptr, 0, file.name.c_str(), &statBuffer, 0);
 		if (size + needed > buffer.size() || size + needed > maxsize) {
 			// No more buffer space or we would be over maxsize
@@ -688,7 +594,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 			if (ptr+5<=eptr) {
 				getINode(&ptr, inode);
 				type = get8bit(&ptr);
-				sfs_meta_type_to_stat(inode,type,&stbuf);
+				resetStat(inode, type, stbuf);
 				c = name[nleng];
 				name[nleng]=0;
 				oleng = fuse_add_direntry(req, buffer + opos, size - opos, name, &stbuf, off);
@@ -855,12 +761,11 @@ void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size
 	fuse_reply_write(req,size);
 }
 
-void sfs_meta_init(int debug_mode_in,double entry_cache_timeout_in,double attr_cache_timeout_in) {
-	debug_mode = debug_mode_in;
+void sfs_meta_init(double entry_cache_timeout_in, double attr_cache_timeout_in) {
 	entry_cache_timeout = entry_cache_timeout_in;
 	attr_cache_timeout = attr_cache_timeout_in;
-	if (debug_mode) {
-		fprintf(stdout, "cache parameters: entry_cache_timeout=%.2f attr_cache_timeout=%.2f\n",
-		        entry_cache_timeout, attr_cache_timeout);
-	}
+	fmt::print(stderr,
+	           "cache parameters: entry_cache_timeout={:.2f} "
+	           "attr_cache_timeout={:.2f}\n",
+	           entry_cache_timeout, attr_cache_timeout);
 }

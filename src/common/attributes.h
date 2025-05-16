@@ -22,7 +22,61 @@
 
 #include "common/platform.h"
 
+#include <fcntl.h>
+#include <sys/stat.h>
+
+#include "protocol/SFSCommunication.h"
+
 #include <array>
 #include <cstdint>
 
 typedef std::array<uint8_t, 35> Attributes;
+
+constexpr int saunaFileTypeToPosix(unsigned char type) {
+	switch (type) {
+	case TYPE_BLOCKDEV:
+		return S_IFBLK;
+	case TYPE_CHARDEV:
+		return S_IFCHR;
+	case TYPE_DIRECTORY:
+		return S_IFDIR;
+	case TYPE_FIFO:
+		return S_IFIFO;
+	case TYPE_FILE:
+		return S_IFREG;
+	case TYPE_SOCKET:
+		return S_IFSOCK;
+	case TYPE_SYMLINK:
+		return S_IFLNK;
+	default:
+		return 0;
+	}
+}
+
+struct PosixFileAttributes {
+	uint8_t type;
+	uint16_t permissions;
+	uint32_t userID;
+	uint32_t groupID;
+	uint32_t accessTime;
+	uint32_t modificationTime;
+	uint32_t creationTime;
+	uint32_t hardLinkCount;
+	uint64_t size;
+
+	constexpr struct stat getStat() const {
+		struct stat fileStat{};
+		fileStat.st_mode = saunaFileTypeToPosix(type) | permissions;
+		fileStat.st_size = static_cast<off_t>(size);
+		// TODO(Urmas): Why are we returning to clients blocks of 512?
+		// Instead of S_BLKSIZE, it should SFSBLOCKSIZE
+		fileStat.st_blocks = (static_cast<off_t>(size) + S_BLKSIZE - 1) / S_BLKSIZE;
+		fileStat.st_uid = userID;
+		fileStat.st_gid = groupID;
+		fileStat.st_atime = accessTime;
+		fileStat.st_mtime = modificationTime;
+		fileStat.st_ctime = creationTime;
+		fileStat.st_nlink = hardLinkCount;
+		return fileStat;
+	}
+};

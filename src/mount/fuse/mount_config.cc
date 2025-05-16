@@ -19,6 +19,7 @@
 
 #include "common/platform.h"
 #include "mount/fuse/mount_config.h"
+#include "mount/mount_info.h"
 #include "mount/sugid_clear_mode_string.h"
 
 #include <stdio.h>

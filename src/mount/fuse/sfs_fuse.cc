@@ -19,6 +19,7 @@
  */
 
 #include "common/platform.h"
+
 #include "mount/fuse/sfs_fuse.h"
 
 #include <atomic>
@@ -33,11 +34,12 @@
 #include "common/special_inode_defs.h"
 #include "common/time_utils.h"
 #include "mount/fuse/lock_conversion.h"
+#include "mount/group_cache.h"
 #include "mount/sauna_client.h"
 #include "mount/sauna_client_context.h"
 #include "mount/thread_safe_map.h"
-#include "protocol/cltoma.h"
 #include "protocol/SFSCommunication.h"
+#include "protocol/cltoma.h"
 
 #include "grp.h"
 #include "pwd.h"
