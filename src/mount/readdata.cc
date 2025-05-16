@@ -174,20 +174,14 @@ uint64_t ReadaheadRequests::continuousOffsetRequested(
 
 	auto it = pendingRequests_.begin();
 	while (it != pendingRequests_.end() && offset < endOffset) {
-		if (pendingRequests_.front().requestPtr->request_offset() <= offset &&
-		    pendingRequests_.front().requestPtr->endOffset() > offset) {
+		if (it->requestPtr->request_offset() <= offset && it->requestPtr->endOffset() > offset) {
 			result.add(*(it->requestPtr->entry));
 			offset = it->requestPtr->endOffset();
+			rcvpPtr = &(*it);
 		}
 		it++;
 	}
-	if (offset >= endOffset) {
-		// the process finalized in the next one after achieving the desired
-		// offset
-		it--;
-		offset = endOffset;
-		rcvpPtr = &(*it);
-	}
+	offset = std::min(offset, endOffset);
 	return offset;
 }
 
