@@ -7,7 +7,7 @@ CHUNKSERVERS=1 \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
-cs0_pid="$(saunafs_chunkserver_daemon 0 test 2>&1 | sed 's/.*pid: //')"
+cs0_pid="$(saunafs_chunkserver_daemon 0 test | sed 's/.*pid: //')"
 test -n $cs0_pid
 kill -s SIGSTOP $cs0_pid
 

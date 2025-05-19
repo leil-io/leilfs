@@ -141,12 +141,7 @@ saunafs_admin_command() {
 }
 
 saunafs_fusermount() {
-	fuse_version=$(${SAFS_MOUNT_COMMAND} --version 2>&1 | grep "FUSE library" | grep -Eo "[0-9]+\..+")
-	if [[ "$fuse_version" =~ ^3\..+$ ]]; then
-		fusermount3 "$@"
-	else
-		fusermount "$@"
-	fi
+	fusermount3 "$@"
 }
 
 windows_server_aux(){

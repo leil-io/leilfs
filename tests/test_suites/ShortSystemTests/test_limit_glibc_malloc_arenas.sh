@@ -44,7 +44,7 @@ arenas=2
 ### Test the limit in the first chunkserver ###
 
 # Get initial values
-cs0Pid=$(saunafs_chunkserver_daemon 0 test 2>&1 | tr -d '\0' | awk '{print $NF}')
+cs0Pid=$(saunafs_chunkserver_daemon 0 test | tr -d '\0' | awk '{print $NF}')
 virtualMemoryCS0=$(getVirtualMemoryForPid ${cs0Pid})
 echo "CS0 PID: ${cs0Pid} - Virtual memory: ${virtualMemoryCS0}"
 
@@ -59,7 +59,7 @@ assert_equals ${arenas} ${effectiveArenaLimit}
 echo "Arena limit set to ${effectiveArenaLimit} for chunkserver 0"
 
 # Check if the memory usage decreased
-cs0PidAfter=$(saunafs_chunkserver_daemon 0 test 2>&1 | tr -d '\0' | awk '{print $NF}')
+cs0PidAfter=$(saunafs_chunkserver_daemon 0 test | tr -d '\0' | awk '{print $NF}')
 virtualMemoryCS0After=$(getVirtualMemoryForPid ${cs0PidAfter})
 echo "CS0 PID: ${cs0PidAfter} - Virtual memory: ${virtualMemoryCS0After}"
 assert_less_than ${virtualMemoryCS0After} ${virtualMemoryCS0}
@@ -67,7 +67,7 @@ assert_less_than ${virtualMemoryCS0After} ${virtualMemoryCS0}
 ### Test the limit in the master ###
 
 # Get initial values
-master0Pid=$(saunafs_master_n 0 test 2>&1 | tr -d '\0' | awk '{print $NF}')
+master0Pid=$(saunafs_master_n 0 test | tr -d '\0' | awk '{print $NF}')
 virtualMemoryMaster0=$(getVirtualMemoryForPid ${master0Pid})
 echo "Master0 PID: ${master0Pid} - Virtual memory: ${virtualMemoryMaster0}"
 
@@ -82,7 +82,7 @@ assert_equals ${arenas} ${effectiveArenaLimit}
 echo "Arena limit set to ${effectiveArenaLimit} for master 0"
 
 # Check if the memory usage decreased
-master0PidAfter=$(saunafs_master_n 0 test 2>&1 | tr -d '\0' | awk '{print $NF}')
+master0PidAfter=$(saunafs_master_n 0 test | tr -d '\0' | awk '{print $NF}')
 virtualMemoryMaster0After=$(getVirtualMemoryForPid ${master0PidAfter})
 echo "Master0 PID: ${master0PidAfter} - Virtual memory: ${virtualMemoryMaster0After}"
 assert_less_than ${virtualMemoryMaster0After} ${virtualMemoryMaster0}

@@ -17,7 +17,7 @@ wait_if_windows
 if is_windows_system; then
 	saunafs_chunkserver_daemon 0 stop
 else
-	kill -s SIGSTOP "$(saunafs_chunkserver_daemon 0 test 2>&1 | sed 's/.*pid: //')"
+	kill -s SIGSTOP "$(saunafs_chunkserver_daemon 0 test | sed 's/.*pid: //')"
 fi
 for i in {0..4}; do
 	( assert_success file-overwrite "${info[mount$i]}/dir/file$i" && touch "$TEMP_DIR/finish$i" & )
