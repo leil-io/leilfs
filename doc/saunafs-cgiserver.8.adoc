@@ -1,5 +1,5 @@
-sfscgiserv(8)
-=============
+saunafs-cgiserver(8)
+=====================
 
 == NAME
 

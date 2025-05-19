@@ -393,9 +393,7 @@ rm -rf $RPM_BUILD_ROOT
 %files cgiserv
 %defattr(644,root,root,755)
 %attr(755,root,root) %{_sbindir}/saunafs-cgiserver
-%attr(755,root,root) %{_sbindir}/sfscgiserv
 %{_mandir}/man8/saunafs-cgiserver.8*
-%{_mandir}/man8/sfscgiserv.8*
 %attr(644,root,root) %{_unitdir}/saunafs-cgiserv.service
 
 %files adm
