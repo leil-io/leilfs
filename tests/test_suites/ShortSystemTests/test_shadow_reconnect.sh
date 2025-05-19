@@ -16,7 +16,7 @@ assert_eventually "saunafs_shadow_synchronized 1"
 files_before=$(ls "${info[master1_data_path]}" | grep -v "stats.sfs" | sort)
 
 # Make shadow master lose connection with the master by making it sleep more than timeout
-shadow_pid=$(saunafs_master_n 1 test 2>&1 | sed 's/.*: //')
+shadow_pid=$(saunafs_master_n 1 test | sed 's/.*: //')
 assert_matches "^[0-9]+$" "$shadow_pid"
 kill -STOP "$shadow_pid"
 sleep 13

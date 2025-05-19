@@ -534,10 +534,7 @@ FileLock::LockStatus FileLock::wdlock(RunMode runmode, uint32_t timeout) {
 			return LockStatus::kAlive;
 		}
 		if (runmode==RunMode::kTest) {
-			// TODO(5.0.0): Fix this stupidity in a breaking change by changing it
-			// to stdout. It's not that hard, stderr for logs/errors, stdout
-			// for output
-			fprintf(stderr,STR(APPNAME) " pid: %ld\n",(long)ownerpid);
+			fprintf(stdout,STR(APPNAME) " pid: %ld\n",(long)ownerpid);
 			return LockStatus::kTest;
 		}
 		if (runmode==RunMode::kStart) {

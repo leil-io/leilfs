@@ -18,7 +18,7 @@ touch "${info[mount0]}"/file{1..10}
 assert_eventually "saunafs_shadow_synchronized 1"
 
 # Make shadow master lose connection with the master by making it sleep and restarting master server
-shadow_pid=$(saunafs_master_n 1 test 2>&1 | sed 's/.*: //')
+shadow_pid=$(saunafs_master_n 1 test | sed 's/.*: //')
 assert_matches "^[0-9]+$" "$shadow_pid"
 kill -STOP "$shadow_pid"
 saunafs_master_daemon restart
