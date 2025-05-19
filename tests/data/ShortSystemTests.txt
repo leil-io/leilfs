@@ -15,7 +15,6 @@ test_auto_recovery_start_during_metarestore=5
 test_auto_recovery_subdir=70
 test_auto_recovery_switch=10
 test_auto_recovery_xor_repair=10
-test_backwards_changelog_compatibilty=5
 test_cache_per_inode=5
 test_cgi_validate_html=190
 test_chunk_creation_on_small_instalation=5

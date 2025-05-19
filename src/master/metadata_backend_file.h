@@ -36,13 +36,6 @@ public:
 
 	std::string backendType() override { return "MetadataBackendFile"; }
 
-	/// @deprecated for version 5.0.0
-	/// Rename changelog files from old to new version
-	/// from <name>.X.sfs to <name>.sfs.X
-	/// Used only once - after upgrade from version before 1.6.29
-	/// @param name -- changelog name before first dot
-	void changelogsMigrateFrom_1_6_29(const std::string& fname) override;
-
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.
 	void store_fd(FILE *fd) override;
