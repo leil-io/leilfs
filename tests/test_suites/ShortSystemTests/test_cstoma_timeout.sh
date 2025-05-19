@@ -8,7 +8,7 @@ assert_equals 1 $(saunafs_ready_chunkservers_count)
 
 # Make the chunkserver hang and check if master disconnects if not earlier than
 # 2/3 * MASTER_TIMEOUT and not later than after the MASTER_TIMEOUT is expired
-pid=$(saunafs_chunkserver_daemon 0 test 2>&1 | sed 's/.*pid: //')
+pid=$(saunafs_chunkserver_daemon 0 test | sed 's/.*pid: //')
 kill -STOP $pid
 assert_equals 1 $(saunafs_ready_chunkservers_count)
 sleep 6
