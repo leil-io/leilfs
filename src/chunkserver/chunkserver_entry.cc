@@ -1258,49 +1258,32 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 
 void ChunkserverEntry::checkNextPacket() {
 	TRACETHIS();
-	uint32_t type;
-	uint32_t opSize;
-	const uint8_t *ptr;
+
+	auto processNextPacket = [this]() {
+		const uint8_t *ptr = headerBuffer;
+		uint32_t type = get32bit(&ptr);
+		uint32_t opSize = get32bit(&ptr);
+
+		mode = Mode::Header;
+		inputPacket.bytesLeft = PacketHeader::kSize;
+		inputPacket.startPtr = headerBuffer;
+
+		if (inputPacket.useAlignedMemory) {
+			gotPacket(type, inputPacket.alignedBuffer.data() + kIOAlignedOffset, opSize);
+		} else {
+			gotPacket(type, inputPacket.packet.data(), opSize);
+		}
+	};
 
 	if (state == State::WriteForward) {
-		if (mode == Mode::Data && inputPacket.bytesLeft == 0 &&
-		    fwdBytesLeft == 0) {
-			ptr = headerBuffer;
-			type = get32bit(&ptr);
-			opSize = get32bit(&ptr);
-
-			mode = Mode::Header;
-			inputPacket.bytesLeft = PacketHeader::kSize;
-			inputPacket.startPtr = headerBuffer;
-
-			if (inputPacket.useAlignedMemory) {
-				gotPacket(type,
-				          inputPacket.alignedBuffer.data() + kIOAlignedOffset +
-				              PacketHeader::kSize,
-				          opSize);
-			} else {
-				gotPacket(type, inputPacket.packet.data() + PacketHeader::kSize,
-				          opSize);
-			}
+		// the current packet has been fully read from the socket and written to the next
+		// chunkserver in the chain
+		if (mode == Mode::Data && inputPacket.bytesLeft == 0 && fwdBytesLeft == 0) {
+			processNextPacket();
 		}
 	} else {
-		if (mode == Mode::Data && inputPacket.bytesLeft == 0) {
-			ptr = headerBuffer;
-			type = get32bit(&ptr);
-			opSize = get32bit(&ptr);
-
-			mode = Mode::Header;
-			inputPacket.bytesLeft = PacketHeader::kSize;
-			inputPacket.startPtr = headerBuffer;
-
-			if (inputPacket.useAlignedMemory) {
-				gotPacket(type,
-				          inputPacket.alignedBuffer.data() + kIOAlignedOffset,
-				          opSize);
-			} else {
-				gotPacket(type, inputPacket.packet.data(), opSize);
-			}
-		}
+		// the current packet has been fully read from the socket
+		if (mode == Mode::Data && inputPacket.bytesLeft == 0) { processNextPacket(); }
 	}
 }
 
@@ -1324,8 +1307,7 @@ void ChunkserverEntry::fwdRead() {
 	const uint8_t *ptr;
 
 	if (fwdMode == Mode::Header) {
-		bytesRead =
-		    read(fwdSocket, fwdInputPacket.startPtr, fwdInputPacket.bytesLeft);
+		bytesRead = read(fwdSocket, fwdInputPacket.startPtr, fwdInputPacket.bytesLeft);
 		if (bytesRead == 0) {
 			fwdError();
 			return;
@@ -1343,8 +1325,11 @@ void ChunkserverEntry::fwdRead() {
 		if (fwdInputPacket.bytesLeft > 0) {
 			return;
 		}
-		ptr = fwdHeaderBuffer + sizeof(PacketHeader::Type);  // skip type
+
+		ptr = fwdHeaderBuffer;
+		type = get32bit(&ptr);
 		opSize = get32bit(&ptr);
+
 		if (opSize > kMaxPacketSize) {
 			safs_pretty_syslog(LOG_WARNING,
 			                   "(fwdread) packet too long (%" PRIu32 "/%u)",
@@ -1352,6 +1337,7 @@ void ChunkserverEntry::fwdRead() {
 			fwdError();
 			return;
 		}
+
 		if (opSize > 0) {
 			fwdInputPacket.packet.resize(opSize);
 			passert(fwdInputPacket.packet.data());
@@ -1363,8 +1349,7 @@ void ChunkserverEntry::fwdRead() {
 
 	if (fwdMode == Mode::Data) {
 		if (fwdInputPacket.bytesLeft > 0) {
-			bytesRead = read(fwdSocket, fwdInputPacket.startPtr,
-			                 fwdInputPacket.bytesLeft);
+			bytesRead = read(fwdSocket, fwdInputPacket.startPtr, fwdInputPacket.bytesLeft);
 			if (bytesRead == 0) {
 				fwdError();
 				return;
@@ -1431,15 +1416,16 @@ void ChunkserverEntry::fwdWrite() {
 
 void ChunkserverEntry::forward() {
 	TRACETHIS();
-	int32_t bytesReadOrWritten;
+	ssize_t bytesReadOrWritten{0};
 
 	if (mode == Mode::Header) {
-		bytesReadOrWritten =
-		    ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+		bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+
 		if (bytesReadOrWritten == 0) {
 			state = State::Close;
 			return;
 		}
+
 		if (bytesReadOrWritten < 0) {
 			if (errno != EAGAIN) {
 				safs_silent_errlog(LOG_NOTICE, "(forward) read error");
@@ -1447,48 +1433,71 @@ void ChunkserverEntry::forward() {
 			}
 			return;
 		}
+
 		stats_bytesin += bytesReadOrWritten;
 		inputPacket.startPtr += bytesReadOrWritten;
 		inputPacket.bytesLeft -= bytesReadOrWritten;
+
 		if (inputPacket.bytesLeft > 0) {
 			return;
 		}
+
 		PacketHeader header;
+
 		try {
-			deserializePacketHeader(headerBuffer,
-			                        sizeof(headerBuffer), header);
-		} catch (IncorrectDeserializationException&) {
-			safs_pretty_syslog(LOG_WARNING,
-			                   "(forward) Received malformed network packet");
+			deserializePacketHeader(headerBuffer, sizeof(headerBuffer), header);
+		} catch (IncorrectDeserializationException &) {
+			safs_pretty_syslog(LOG_WARNING, "(forward) Received malformed network packet");
 			state = State::Close;
 			return;
 		}
+
 		if (header.length > kMaxPacketSize) {
-			safs_pretty_syslog(LOG_WARNING,
-			                   "(forward) packet too long (%" PRIu32 "/%u)",
+			safs_pretty_syslog(LOG_WARNING, "(forward) packet too long (%" PRIu32 "/%u)",
 			                   header.length, kMaxPacketSize);
 			state = State::Close;
 			return;
 		}
+
 		uint32_t totalPacketLength = PacketHeader::kSize + header.length;
-		inputPacket.packet.resize(totalPacketLength);
-		passert(inputPacket.packet.data());
-		std::copy(headerBuffer, headerBuffer + PacketHeader::kSize,
-		          inputPacket.packet.begin());
-		inputPacket.bytesLeft = header.length;
-		inputPacket.startPtr = inputPacket.packet.data() + PacketHeader::kSize;
-		if (header.type == CLTOCS_WRITE_DATA
-				|| header.type == SAU_CLTOCS_WRITE_DATA
-				|| header.type == SAU_CLTOCS_WRITE_END) {
-			fwdBytesLeft = PacketHeader::kSize;
-			fwdStartPtr = inputPacket.packet.data();
+
+		// Check if we can use aligned memory directly
+		if (header.type == CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_DATA) {
+			if (inputPacket.alignedBuffer.size() < kIOAlignedPacketSize) {
+				inputPacket.alignedBuffer.resize(kIOAlignedPacketSize);
+				passert(inputPacket.alignedBuffer.data());
+			}
+			std::copy(headerBuffer, headerBuffer + PacketHeader::kSize,
+			          inputPacket.alignedBuffer.data() + kIOAlignedOffset - PacketHeader::kSize);
+			inputPacket.startPtr = inputPacket.alignedBuffer.data() + kIOAlignedOffset;
+			inputPacket.bytesLeft = header.length;
+			inputPacket.useAlignedMemory = true;
+		} else {
+			inputPacket.packet.resize(totalPacketLength);
+			passert(inputPacket.packet.data());
+			std::copy(headerBuffer, headerBuffer + PacketHeader::kSize, inputPacket.packet.begin());
+			inputPacket.startPtr = inputPacket.packet.data() + PacketHeader::kSize;
+			inputPacket.bytesLeft = header.length;
+			inputPacket.useAlignedMemory = false;
 		}
+
+		if (header.type == CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_DATA ||
+		    header.type == SAU_CLTOCS_WRITE_END) {
+			fwdBytesLeft = PacketHeader::kSize;
+			// Use the correct buffer for forwarding
+			if (inputPacket.useAlignedMemory && header.type != SAU_CLTOCS_WRITE_END) {
+				fwdStartPtr =
+				    inputPacket.alignedBuffer.data() + kIOAlignedOffset - PacketHeader::kSize;
+			} else {
+				fwdStartPtr = inputPacket.packet.data();
+			}
+		}
+
 		mode = Mode::Data;
 	}
 
 	if (inputPacket.bytesLeft > 0) {
-		bytesReadOrWritten =
-		    ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+		bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
 		if (bytesReadOrWritten == 0) {
 			state = State::Close;
 			return;
@@ -1500,6 +1509,7 @@ void ChunkserverEntry::forward() {
 			}
 			return;
 		}
+
 		stats_bytesin += bytesReadOrWritten;
 		inputPacket.startPtr += bytesReadOrWritten;
 		inputPacket.bytesLeft -= bytesReadOrWritten;
@@ -1541,7 +1551,12 @@ void ChunkserverEntry::forward() {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;
 
-		uint8_t *packetData = inputPacket.packet.data() + PacketHeader::kSize;
+		uint8_t *packetData{nullptr};
+		if (inputPacket.useAlignedMemory) {
+			packetData = inputPacket.alignedBuffer.data() + kIOAlignedOffset;
+		} else {
+			packetData = inputPacket.packet.data() + PacketHeader::kSize;
+		}
 		gotPacket(header.type, packetData, header.length);
 		fwdStartPtr = nullptr;
 	}
@@ -1555,8 +1570,7 @@ void ChunkserverEntry::readFromSocket() {
 	const uint8_t *ptr;
 
 	if (mode == Mode::Header) {
-		sassert(inputPacket.startPtr + inputPacket.bytesLeft ==
-		        headerBuffer + PacketHeader::kSize);
+		sassert(inputPacket.startPtr + inputPacket.bytesLeft == headerBuffer + PacketHeader::kSize);
 		bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
 		if (bytesRead == 0) {
 			state = State::Close;
@@ -1590,14 +1604,13 @@ void ChunkserverEntry::readFromSocket() {
 				return;
 			}
 
-			if (type == SAU_CLTOCS_WRITE_DATA || type == SAU_CLTOCS_WRITE_END) {
+			if (type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA) {
 				// Allocate memory only if needed. Reuse it most of the time.
 				if (inputPacket.alignedBuffer.size() < kIOAlignedPacketSize) {
 					inputPacket.alignedBuffer.reserve(kIOAlignedPacketSize);
 					passert(inputPacket.alignedBuffer.data());
 				}
-				inputPacket.startPtr =
-				    inputPacket.alignedBuffer.data() + kIOAlignedOffset;
+				inputPacket.startPtr = inputPacket.alignedBuffer.data() + kIOAlignedOffset;
 				inputPacket.useAlignedMemory = true;
 			} else {
 				inputPacket.packet.resize(opSize);
@@ -1612,8 +1625,7 @@ void ChunkserverEntry::readFromSocket() {
 
 	if (mode == Mode::Data) {
 		if (inputPacket.bytesLeft > 0) {
-			bytesRead =
-			    ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+			bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
 			if (bytesRead == 0) {
 				state = State::Close;
 				return;
@@ -1643,9 +1655,7 @@ void ChunkserverEntry::readFromSocket() {
 			inputPacket.startPtr = headerBuffer;
 
 			if (inputPacket.useAlignedMemory) {
-				gotPacket(type,
-				          inputPacket.alignedBuffer.data() + kIOAlignedOffset,
-				          opSize);
+				gotPacket(type, inputPacket.alignedBuffer.data() + kIOAlignedOffset, opSize);
 			} else {
 				gotPacket(type, inputPacket.packet.data(), opSize);
 			}
