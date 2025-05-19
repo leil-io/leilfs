@@ -260,6 +260,7 @@ pipeline {
                             when {
                                 anyOf {
                                     branch 'dev'
+                                    branch 'gh-readonly-queue/*'
                                     branch 'stable'
                                     changeRequest()
                                 }
@@ -273,6 +274,7 @@ pipeline {
                             when {
                                 anyOf {
                                     branch 'dev'
+                                    branch 'gh-readonly-queue/*'
                                     branch 'stable'
                                     changeRequest()
                                 }
