@@ -82,7 +82,7 @@ chunkservers_restarting_loop() {
 			saunafs_chunkserver_daemon $i stop
 			sleep $(pseudorandom 1 30)
 			saunafs_chunkserver_daemon $i start
-			sleep 5
+			sleep 7
 		done
 	done
 	echo "chunkservers_restarting_loop stopped"
