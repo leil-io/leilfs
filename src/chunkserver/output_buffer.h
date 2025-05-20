@@ -27,8 +27,8 @@
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
-#include "chunkserver/aligned_allocator.h"
 #include "chunkserver/buffers_pool.h"
+#include "common/aligned_allocator.h"
 
 constexpr uint8_t kNotSaunafsStatus = 255;
 

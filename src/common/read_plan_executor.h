@@ -24,6 +24,7 @@
 #include <atomic>
 #include <map>
 
+#include "common/aligned_allocator.h"
 #include "common/chunk_connector.h"
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
@@ -65,12 +66,46 @@ public:
 	 * \param wave_timeout wave timeout
 	 * \param totalTimeout timeout of the whole operation
 	 */
-	void executePlan(std::vector<uint8_t>& buffer,
-			const ChunkTypeLocations& locations,
-			ChunkConnector& connector,
-			int connect_timeout,
-			int wave_timeout,
-			const Timeout& total_timeout);
+	template <typename VectorT>
+	void executePlan(VectorT &buffer, const ChunkTypeLocations &locations,
+	                 ChunkConnector &connector, int connect_timeout, int wave_timeout,
+	                 const Timeout &total_timeout) {
+		executors_.clear();
+		networking_failures_.clear();
+		available_parts_.clear();
+		++executions_total_;
+
+		std::size_t initial_size_of_buffer = buffer.size();
+		buffer.resize(initial_size_of_buffer + plan_->fullBufferSize());
+
+		checkPlan(buffer.data() + initial_size_of_buffer);
+
+		ExecuteParams params{buffer.data() + initial_size_of_buffer + plan_->readOffset(),
+		                     locations,
+		                     connector,
+		                     connect_timeout,
+		                     wave_timeout,
+		                     total_timeout};
+
+		try {
+			executeReadOperations(params);
+			int result_size =
+			    plan_->postProcessData(buffer.data() + initial_size_of_buffer, available_parts_);
+			buffer.resize(initial_size_of_buffer + result_size);
+		} catch (Exception &) {
+			for (const auto &fd_and_executor : executors_) {
+				tcpclose(fd_and_executor.first);
+				stats_.unregisterReadOperation(fd_and_executor.second.server());
+			}
+			buffer.resize(initial_size_of_buffer);
+			throw;
+		}
+
+		for (const auto &fd_and_executor : executors_) {
+			tcpclose(fd_and_executor.first);
+			stats_.unregisterReadOperation(fd_and_executor.second.server());
+		}
+	}
 
 	/*! \brief Function Return parts that couldn't be read in execution phase.
 	 *

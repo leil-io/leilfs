@@ -29,24 +29,22 @@
 #include <vector>
 
 #include "chunkserver-common/disk_utils.h"
-#include "chunkserver/aligned_allocator.h"
 #include "chunkserver/output_buffer.h"
+#include "common/aligned_allocator.h"
 #include "common/chunk_part_type.h"
 #include "common/network_address.h"
 #include "common/slice_traits.h"
 #include "devtools/request_log.h"
 #include "protocol/cltocs.h"
 
-using AlignedVectorForIO =
-    std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>>;
+using AlignedVectorForIO = std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>>;
 
 // 4 K + 64 K
 // [4K    ....   HEADER]+[Up to SFSBLOCKSIZE of aligned data              ...]
 constexpr uint32_t kIOAlignedPacketSize = disk::kIoBlockSize + SFSBLOCKSIZE;
 
 // Starting point to have the actual data aligned to 4 K
-constexpr uint32_t kIOAlignedOffset =
-    disk::kIoBlockSize - cltocs::writeData::kPrefixSize;
+constexpr uint32_t kIOAlignedOffset = disk::kIoBlockSize - cltocs::writeData::kPrefixSize;
 
 // Alias for better readability
 #define kInvalidPacket nullptr

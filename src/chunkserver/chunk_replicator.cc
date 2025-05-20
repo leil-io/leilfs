@@ -28,6 +28,7 @@
 #include <string>
 
 #include "chunkserver/g_limiters.h"
+#include "common/aligned_allocator.h"
 #include "common/crc.h"
 #include "common/exception.h"
 #include "common/saunafs_version.h"
@@ -149,7 +150,7 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 	SliceRecoveryPlanner planner;
 	ReadPlanExecutor::ChunkTypeLocations locations;
 	SliceRecoveryPlanner::PartsContainer available_parts;
-	std::vector<uint8_t> buffer;
+	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
 
 	for (const auto& source : sources) {
 		available_parts.push_back(source.chunk_type);

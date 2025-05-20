@@ -225,6 +225,14 @@ inline uint8_t *getChunkBlockBuffer() {
 	return blockbuffer.data() + (disk::kIoBlockSize - kCrcSize);
 }
 
+inline uint8_t *getAlignedBlockBuffer() {
+	// Align to IO block size to be able to use O_DIRECT
+	alignas(disk::kIoBlockSize) static thread_local std::array<
+	    uint8_t, disk::kIoBlockSize + SFSBLOCKSIZE>
+	    extraBlockbuffer;
+	return extraBlockbuffer.data();
+}
+
 #else  // SAUNAFS_HAVE_THREAD_LOCAL
 
 inline static pthread_key_t hdrbufferkey;
