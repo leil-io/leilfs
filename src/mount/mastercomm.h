@@ -139,7 +139,7 @@ int fs_init_master_connection(SaunaClient::FsInitParams &params
 , uint8_t &session_flags, int &mounting_uid, int &mounting_gid
 #endif
 );
-void fs_init_threads(uint32_t retries);
+void fs_init_threads(uint32_t retries, uint32_t maxWaitTimeForRetry, uint32_t sleepTimeDivisor);
 void fs_term(void);
 
 class PacketHandler {

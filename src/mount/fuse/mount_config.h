@@ -121,6 +121,8 @@ struct sfsopts_ {
 	unsigned messagesuppressionperiod;
 	int statfscachetimeout;
 	int usequotainvolumesize;
+	unsigned maxwaitretrytime;
+	unsigned mastercommsleeptimedivisor;
 
 	sfsopts_()
 		: masterhost(NULL),
@@ -181,7 +183,9 @@ struct sfsopts_ {
 		limitglibcmallocarenas(SaunaClient::FsInitParams::kDefaultLimitGlibcMallocArenas),
 		malloctrimperiod(SaunaClient::FsInitParams::kDefaultMallocTrimPeriod),
 		statfscachetimeout(SaunaClient::FsInitParams::kDefaultStatfsCacheTo),
-		usequotainvolumesize(SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize)
+		usequotainvolumesize(SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize),
+		maxwaitretrytime(SaunaClient::FsInitParams::kDefaultMaxWaitRetryTime),
+		mastercommsleeptimedivisor(SaunaClient::FsInitParams::kDefaultMasterCommSleepTimeDivisor)
 	{ }
 };
 

@@ -83,6 +83,8 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultMessageSuppressionPeriod = 10;
 	static constexpr unsigned kDefaultStatfsCacheTo = 0;
 	static constexpr bool     kDefaultUseQuotaInVolumeSize = false;
+	static constexpr unsigned kDefaultMaxWaitRetryTime = 10;
+	static constexpr unsigned kDefaultMasterCommSleepTimeDivisor = 3;
 #ifdef _WIN32
 	static constexpr unsigned kDefaultReportReservedPeriod = 60;
 	static constexpr const char *kDefaultUmaskDir = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
@@ -166,7 +168,9 @@ struct FsInitParams {
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
-				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
+	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
+	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
+	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
 	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
@@ -209,7 +213,9 @@ struct FsInitParams {
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
-				 use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
+	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
+	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
+	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
 	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
@@ -273,6 +279,8 @@ struct FsInitParams {
 	bool ignore_flush;
 	unsigned statfs_cache_timeout;
 	bool use_quota_in_volume_size;
+	unsigned max_wait_retry_time;
+	unsigned mastercomm_sleep_time_divisor;
 	bool verbose;
 	bool direct_io;
 	int log_notifications_area;
