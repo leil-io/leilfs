@@ -404,7 +404,7 @@ IChunk *hddRecreateChunk(IDisk *disk, IChunk *chunk, uint64_t chunkId,
 
 		if (chunk->state() != ChunkState::Deleted &&
 		    chunk->owner() != nullptr) {
-			const std::scoped_lock lock(gTestsMutex);
+			const std::lock_guard lock(gTestsMutex);
 			disk->chunks().remove(chunk);
 			disk->setNeedRefresh(true);
 		}
