@@ -281,7 +281,8 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 	           status == SAUNAFS_STATUS_OK) {  // this could be job_open
 
 		while (!eptr->pendingReadDataPackets.empty() &&
-		       eptr->pendingReadDataPackets.front()->outputBuffer->status != kNotSaunafsStatus) {
+		       eptr->pendingReadDataPackets.front()->outputBuffer->getStatus() !=
+		           kNotSaunafsStatus) {
 			getReadOutputBufferPool().put(
 			    std::move(eptr->pendingReadDataPackets.front()->outputBuffer));
 			eptr->pendingReadDataPackets.pop_front();
@@ -309,7 +310,7 @@ void ChunkserverEntry::delayedDiscardCallback(uint8_t status, void *entry) {
 	auto *eptr = static_cast<ChunkserverEntry*>(entry);
 
 	while (!eptr->toDiscardReadDataPackets.empty() &&
-	       eptr->toDiscardReadDataPackets.front()->outputBuffer->status != kNotSaunafsStatus) {
+	       eptr->toDiscardReadDataPackets.front()->outputBuffer->getStatus() != kNotSaunafsStatus) {
 		getReadOutputBufferPool().put(
 		    std::move(eptr->toDiscardReadDataPackets.front()->outputBuffer));
 		eptr->toDiscardReadDataPackets.pop_front();
@@ -330,7 +331,7 @@ void ChunkserverEntry::readDiscardCallback(uint8_t status, void *entry) {
 	auto *eptr = static_cast<ChunkserverEntry *>(entry);
 
 	while (!eptr->toDiscardReadDataPackets.empty() &&
-	       eptr->toDiscardReadDataPackets.front()->outputBuffer->status != kNotSaunafsStatus) {
+	       eptr->toDiscardReadDataPackets.front()->outputBuffer->getStatus() != kNotSaunafsStatus) {
 		getReadOutputBufferPool().put(
 		    std::move(eptr->toDiscardReadDataPackets.front()->outputBuffer));
 		eptr->toDiscardReadDataPackets.pop_front();
@@ -426,7 +427,7 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 	TRACETHIS2(offset, size);
 
 	while (!pendingReadDataPackets.empty() &&
-	       pendingReadDataPackets.front()->outputBuffer->status == SAUNAFS_STATUS_OK) {
+	       pendingReadDataPackets.front()->outputBuffer->getStatus() == SAUNAFS_STATUS_OK) {
 		attachPacket(std::move(pendingReadDataPackets.front()));
 		pendingReadDataPackets.pop_front();
 		workerJobPool->changeCallback(pendingReadJobIds.front(), kEmptyCallback, kEmptyExtra);

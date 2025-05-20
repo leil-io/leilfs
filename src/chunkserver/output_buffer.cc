@@ -80,7 +80,7 @@ void OutputBuffer::clear() {
 	crcBuffer_.clear();
 	headerBuffer_.clear();
 
-	status = kNotSaunafsStatus;
+	setStatus(kNotSaunafsStatus);
 }
 
 bool OutputBuffer::checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset) const {

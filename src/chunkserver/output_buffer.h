@@ -24,6 +24,7 @@
 #include <sys/types.h>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
@@ -252,8 +253,17 @@ public:
 	/// @brief Clears the buffer.
 	void clear();
 
-	/// Status of the buffer's related read operation.
-	std::atomic_uint8_t status{kNotSaunafsStatus};
+	/// @brief Returns the `status` in a thread-safe manner.
+	uint8_t getStatus() {
+		std::lock_guard<std::mutex> lock(mutex_);
+		return status;
+	}
+
+	/// @brief Sets the `status` in a thread-safe manner.
+	void setStatus(uint8_t newStatus) {
+		std::lock_guard<std::mutex> lock(mutex_);
+		status = newStatus;
+	}
 
 private:
 	// The current remaining bytes to be written to the file descriptor at once.
@@ -264,6 +274,12 @@ private:
 	const size_t headerSize_;
 	// The number of blocks.
 	const size_t numBlocks_;
+
+	/// Protects the `status` member variable used for custom thread synchronization.
+	std::mutex mutex_;
+
+	/// Status of the buffer's related read operation.
+	uint8_t status{kNotSaunafsStatus};
 
 	// The buffer for the block data.
 	Buffer<std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>>> blockBuffer_;
