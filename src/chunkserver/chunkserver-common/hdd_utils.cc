@@ -360,8 +360,7 @@ IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
 				    hddRecreateChunk(effectiveDisk, chunk, chunkid, chunkType);
 				return chunk;
 			}
-			if (chunk->condVar() !=
-			    nullptr) {  // waiting threads - wake them up
+			if (chunk->condVar() != nullptr) {  // waiting threads - wake them up
 				chunk->condVar()->condVar.notify_one();
 			} else {  // no more waiting threads - remove
 				hddRemoveChunkFromContainers(chunk);
@@ -383,13 +382,14 @@ IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
 			    chunksMapLock,
 			    std::chrono::seconds(kSecondsToWaitForLockedChunk_));
 			chunk->condVar()->numberOfWaitingThreads--;
+			uint32_t waitingThreads = chunk->condVar()->numberOfWaitingThreads;
 			if (chunk->condVar()->numberOfWaitingThreads == 0) {
 				// No more waiting threads, store it to be reused
 				gFreeCondVars.emplace_back(std::move(chunk->condVar()));
 			}
 			if (status == std::cv_status::timeout) {
-				safs_pretty_syslog(LOG_WARNING, "Chunk locked for long time");
-				return nullptr;
+				safs::log_warn("Chunk {} locked for {} seconds, waiting threads {}", chunkid,
+				               kSecondsToWaitForLockedChunk_, waitingThreads);
 			}
 		}
 	}
