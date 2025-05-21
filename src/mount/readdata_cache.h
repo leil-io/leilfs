@@ -312,14 +312,17 @@ public:
 	void collectGarbage(unsigned count = 1000000) {
 		unsigned reserved_count = count;
 		expiration_time_ = gCacheExpirationTime_ms.load();
+		std::vector<Entry *> to_erase;
 
-		while (!lru_.empty() && count-- > 0) {
-			Entry *e = std::addressof(lru_.front());
-			if (e->expired(expiration_time_) && e->done) {
-				erase(entries_.iterator_to(*e));
-			} else {
-				break;
+		for (auto it = lru_.begin(); it != lru_.end() && count > 0; ++it) {
+			if (it->expired(expiration_time_) && it->done) {
+				to_erase.push_back(std::addressof(*it));
+				count--;
 			}
+		}
+
+		for (auto entry : to_erase) {
+			erase(entries_.iterator_to(*entry));
 		}
 
 		clearReserved(reserved_count);
