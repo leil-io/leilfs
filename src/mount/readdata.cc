@@ -448,6 +448,7 @@ void* read_data_delayed_ops(void *arg) {
 					// Otherwise just try to clear the cache
 					std::unique_lock inodeLock(readRecordIt->second->mutex);
 					readRecordIt->second->cache.clear();
+					++readRecordIt;
 				}
 			} else {
 				toCollectGarbage.push_back(readRecordIt->second);
