@@ -581,12 +581,13 @@ ReadRecord *read_data_new(uint32_t inode) {
 }
 
 void read_data_end(ReadRecord *rrec) {
-	std::unique_lock gMutexLock(gMutex);
-	rrec->expired = true;
-
 	std::unique_lock inodeLock(rrec->mutex);
 	rrec->readaheadRequests.discardAllPendingRequests();
+	rrec->cache.clear();
 	inodeLock.unlock();
+
+	std::unique_lock gMutexLock(gMutex);
+	rrec->expired = true;
 }
 
 void read_data_init(uint32_t retries,
