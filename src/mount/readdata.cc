@@ -586,7 +586,6 @@ void read_data_end(ReadRecord *rrec) {
 
 	std::unique_lock inodeLock(rrec->mutex);
 	rrec->readaheadRequests.discardAllPendingRequests();
-	rrec->stopThread.store(true);
 	inodeLock.unlock();
 }
 
