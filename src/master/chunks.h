@@ -28,12 +28,15 @@
 #include "common/chunk_type_with_address.h"
 #include "common/chunk_with_address_and_label.h"
 #include "common/chunks_availability_state.h"
+#include "common/time_utils.h"
 #include "master/checksum.h"
 #include "master/metadata_loader.h"
 
 struct matocsserventry;
 
 extern bool gAvoidSameIpChunkservers;
+
+extern Timeout gTimeoutSinceLastChunkRegistration;
 
 int chunk_increase_version(uint64_t chunkid);
 int chunk_set_version(uint64_t chunkid,uint32_t version);

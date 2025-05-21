@@ -19,6 +19,7 @@
  */
 
 #include "common/platform.h"
+#include "slogger/slogger.h"
 
 #include "master/metadata_dumper.h"
 
@@ -127,6 +128,7 @@ bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum
 	}
 
 	// the child process tells the parent process "OK" or "ERR", until then parent assumes "ERR"
+	safs::log_info("Starting fork process for metadata dumping...");
 	switch (fork()) {
 		case -1:
 			// on fork error store metadata in foreground
@@ -136,6 +138,7 @@ bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum
 			close(pipeFd[1]);
 			return false;
 		case 0:
+			safs::log_info("Child process started for metadata dumping (pid: {})", getpid());
 			close(pipeFd[0]); // ignore close error
 			if (dup2(pipeFd[1], STDOUT_FILENO)  == -1) {
 				// can't give the response
@@ -198,7 +201,7 @@ void MetadataDumper::pollServe(const std::vector<pollfd> &pdesc) {
 		char buffer[1024];
 		int ret = read(dumpingProcessFd_, buffer, sizeof(buffer) - 1);
 		if (ret == -1) {
-			safs_pretty_errlog(LOG_WARNING, "read from the process dumping metadata failed");
+			safs::log_warn("read from the process dumping metadata failed");
 			dumpingFinished();
 		} else if (ret == 0) {
 			dumpingFinished();
@@ -207,8 +210,9 @@ void MetadataDumper::pollServe(const std::vector<pollfd> &pdesc) {
 			dumpingProcessOutputEmpty_ = false;
 			dumpingSucceeded_ = std::string(buffer) == "OK\n";
 			if (!dumpingSucceeded_) {
-				safs_pretty_syslog(LOG_WARNING, "metadata dumping failed: expected 'OK', received '%s'",
-						buffer);
+				safs::log_warn("metadata dumping failed: expected 'OK', received {}", buffer);
+			} else {
+				safs::log_info("periodic metadata dump: success");
 			}
 		}
 	}

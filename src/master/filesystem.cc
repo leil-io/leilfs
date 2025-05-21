@@ -119,11 +119,16 @@ static void metadataPollServe(const std::vector<pollfd> &pdesc) {
 }
 
 void fs_periodic_storeall() {
-	auto result = gMetadataBackend->fs_storeall(
-	    MetadataDumper::kBackgroundDump);  // ignore error
+	// Prevent metadata dump while chunks registration is in progress to prevent slowing down
+	// the chunks registration process
+	auto isChunkRegistrationInProgress = !gTimeoutSinceLastChunkRegistration.expired();
+	if (isChunkRegistrationInProgress) {
+		safs::log_info(
+		    "periodic metadata dump was skipped while chunks registration is in progress");
+		return;
+	}
 
-	safs_silent_syslog(LOG_DEBUG, "periodic metadata dump: %s",
-	                   (SAUNAFS_STATUS_OK == result) ? "success" : "failure");
+	gMetadataBackend->fs_storeall(MetadataDumper::kBackgroundDump);  // ignore error
 }
 
 void fs_term(void) {

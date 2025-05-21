@@ -321,6 +321,7 @@ uint8_t MetadataBackendFile::fs_storeall(MetadataDumper::DumpType dumpType) {
 		}
 		if (child) {
 			printf("OK\n");  // give sfsmetarestore another chance
+			safs::log_info("Child process for metadata dumping finished (pid: {})", getpid());
 			exit(0);
 		}
 		broadcast_metadata_saved(status);
