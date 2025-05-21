@@ -340,8 +340,15 @@ void ReadaheadOperationsManager::addExtraRequests_(
 		    satisfyingSize, SFSCHUNKSIZE - (maximumRequestedOffset % SFSCHUNKSIZE));
 		ReadCache::Entry *entry = rrec->cache.forceInsert(maximumRequestedOffset, extraRequestSize);
 
-		massert(maximumRequestedOffset >= currentOffset,
-		        "Maximum requested offset should be greater than or equal current offset");
+		if (maximumRequestedOffset < currentOffset) {
+			safs::log_warn(
+			    "ReadaheadOperationsManager::addExtraRequests_: Maximum requested offset should be "
+			    "greater than or equal current offset (currentOffset: {}, "
+			    "maximumRequestedOffset: {}, extraRequestSize: {})",
+			    currentOffset, maximumRequestedOffset, extraRequestSize);
+			// Next subtraction will overflow, so let's just return here
+			return;
+		}
 		int64_t extraPriority =
 		    rrec->readahead_adviser.expectedNeededTime_us(maximumRequestedOffset - currentOffset);
 
