@@ -54,14 +54,13 @@
 #include "mount/tweaks.h"
 #include "protocol/SFSCommunication.h"
 
-#define USECTICK 333333
 #define REFRESHTICKS 15
 
 #define EMPTY_REQUEST nullptr
 
 inline std::condition_variable readOperationsAvailable;
 inline std::mutex gReadaheadRequestsContainerMutex;
-inline int kMaxThresholdTicks = 180;
+inline int kMaxThresholdTicks = 360;
 uint32_t maxWindowConsideringMaxReadCacheSize;
 uint64_t timesRequestedMemory = 0;
 uint64_t successfulTimesRequestedMemory = 0;
@@ -69,6 +68,8 @@ constexpr double kTimesRequestedMemoryLowerSuccessRate = 0.3;
 constexpr double kTimesRequestedMemoryUpperSuccessRate = 0.8;
 constexpr uint32_t kMinCacheExpirationTime = 1;
 constexpr uint32_t kMinTryCounterToShowReadErrorMessage = 9;
+constexpr int64_t kDelayedOpsTimeout_us = 166667;
+constexpr int64_t kMinDelayedOpsSleepTime_us = 50000;
 
 std::unique_ptr<IMemoryInfo> createMemoryInfo() {
     std::unique_ptr<IMemoryInfo> memoryInfo;
@@ -428,6 +429,7 @@ void* read_data_delayed_ops(void *arg) {
 	for (;;) {
 		gReadConnectionPool.cleanup();
 		gMutexLock.lock();
+		Timeout sleep_timeout = Timeout(std::chrono::microseconds(kDelayedOpsTimeout_us));
 		if (readDataTerminate) {
 			return EMPTY_REQUEST;
 		}
@@ -473,7 +475,7 @@ void* read_data_delayed_ops(void *arg) {
 
 		gMutexLock.unlock();
 
-		usleep(USECTICK);
+		usleep(std::max(sleep_timeout.remaining_us(), kMinDelayedOpsSleepTime_us));
 	}
 }
 
