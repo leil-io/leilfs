@@ -71,7 +71,7 @@ public:
 	struct Entry {
 		Offset offset;
 		std::vector<uint8_t> buffer;
-		Timer timer;
+		std::atomic<Timer> timer;
 		std::atomic<int> refcount = 0;
 		std::atomic<Size> requested_size;
 		std::atomic<bool> done = false;
@@ -101,12 +101,12 @@ public:
 		}
 
 		bool expired(uint32_t expiration_time) {
-			std::unique_lock entryLock(mutex);
-			return timer.elapsed_ms() >= expiration_time;
+			return timer.load().elapsed_ms() >= expiration_time;
 		}
 
 		void reset_timer() {
-			timer.reset();
+			Timer new_timer;
+			timer.store(new_timer);
 		}
 
 		Offset endOffset() const {
@@ -114,8 +114,6 @@ public:
 		}
 
 		void acquire() {
-			std::unique_lock entryLock(mutex);
-			timer.reset();
 			refcount++;
 		}
 
