@@ -31,7 +31,7 @@ inline std::mutex gMasterReportsLock;
 /// release the condition variable waiting on a Chunk. The number is small
 /// enough not to stop the operation (mount retries) and big enough to detect
 /// unusual/unexpected behavior.
-static constexpr uint8_t kSecondsToWaitForLockedChunk_ = 20;
+static constexpr uint8_t kSecondsToWaitForLockedChunk_ = 30;
 
 /// Adds the error to the Disk owner of chunk in a thread sage way and preserves
 /// the errno to be used in later checks.

@@ -2154,7 +2154,10 @@ void hddTesterThread() {
 		chunk = ChunkNotFound;
 
 		{
-			std::scoped_lock lock(gDisksMutex, gChunksMapMutex, gTestsMutex);
+			// We could use a scoped_lock here, but helgrind complains about it
+			std::lock_guard gDisksLock(gDisksMutex);
+			std::lock_guard gChunksMapLock(gChunksMapMutex);
+			std::lock_guard gTestsLock(gTestsMutex);
 
 			bool testerResetExpected = true;
 			if (gResetTester.compare_exchange_strong(testerResetExpected,
