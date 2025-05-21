@@ -17,8 +17,9 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "output_buffer.h"
 #include "common/platform.h"
+
+#include "chunkserver/output_buffer.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -28,7 +29,6 @@
 #include <cstdint>
 
 #include "common/crc.h"
-#include "common/massert.h"
 
 OutputBuffer::OutputBuffer(size_t headerSize, size_t numBlocks)
     : currentRemainingBytesForFD_(0),

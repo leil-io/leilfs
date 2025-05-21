@@ -16,6 +16,8 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "common/platform.h"
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sys/statvfs.h>
@@ -23,8 +25,7 @@
 #include <fstream>
 #include <thread>
 
-#include "chunk_trash_index.h"
-#include "chunk_trash_manager_impl.h"
+#include "chunkserver-common/chunk_trash_manager_impl.h"
 #include "errors/saunafs_error_codes.h"  // Include the error codes header
 
 int fake_statvfs(const char *path, struct statvfs *buf) {

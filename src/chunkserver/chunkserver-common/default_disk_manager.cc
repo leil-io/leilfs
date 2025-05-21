@@ -18,15 +18,15 @@
 
 #include "common/platform.h"
 
-#include <fstream>
-
 #include "chunkserver-common/default_disk_manager.h"
+
+#include <fstream>
 
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/plugin_manager.h"
-#include "config/cfg.h"
 #include "common/exceptions.h"
+#include "config/cfg.h"
 #include "devtools/TracePrinter.h"
 
 int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {

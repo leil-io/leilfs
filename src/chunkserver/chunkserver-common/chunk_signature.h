@@ -25,7 +25,6 @@
 #include <cstdlib>
 
 #include "common/chunk_part_type.h"
-#include "common/serialization_macros.h"
 
 class IDisk;
 

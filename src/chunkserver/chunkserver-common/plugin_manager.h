@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <map>
 
 #include <boost/dll/import.hpp>

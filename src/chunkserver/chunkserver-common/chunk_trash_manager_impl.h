@@ -22,8 +22,8 @@
 
 #include <string>
 
-#include "chunk_trash_index.h"
-#include "chunk_trash_manager.h"
+#include "chunkserver-common/chunk_trash_index.h"
+#include "chunkserver-common/chunk_trash_manager.h"
 #include "errors/saunafs_error_codes.h"
 
 class ChunkTrashManagerImpl : public IChunkTrashManagerImpl {

@@ -27,17 +27,15 @@
 
 #include "common/platform.h"
 
-#include <cassert>
-#include <cstdio>
-#include <cstring>
-#include <algorithm>
-#include <unordered_map>
-#include <vector>
-
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <unordered_map>
 
 #ifndef __linux__
 

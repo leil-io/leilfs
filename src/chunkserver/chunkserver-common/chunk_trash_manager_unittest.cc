@@ -16,7 +16,10 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "chunk_trash_manager.h"
+#include "common/platform.h"
+
+#include "chunkserver-common/chunk_trash_manager.h"
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 

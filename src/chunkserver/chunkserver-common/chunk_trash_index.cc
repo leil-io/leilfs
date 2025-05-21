@@ -16,7 +16,9 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "chunk_trash_index.h"
+#include "common/platform.h"
+
+#include "chunkserver-common/chunk_trash_index.h"
 
 ChunkTrashIndex &ChunkTrashIndex::instance() {
 	static ChunkTrashIndex instance;

@@ -19,8 +19,8 @@
  */
 
 #include "common/platform.h"
-#include "chunkserver/bgjobs.h"
 
+#include "chunkserver/bgjobs.h"
 #include "chunkserver/chunk_replicator.h"
 #include "chunkserver/hddspacemgr.h"
 #include "common/chunk_part_type.h"
@@ -31,7 +31,8 @@
 #include "devtools/request_log.h"
 #include "slogger/slogger.h"
 
-#include <atomic>
+#include <sys/syslog.h>
+#include <unistd.h>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -39,8 +40,6 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <sys/syslog.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>

@@ -18,10 +18,9 @@
  */
 
 #include "common/platform.h"
-#include "chunkserver/chunk_filename_parser.h"
 
+#include "chunkserver/chunk_filename_parser.h"
 #include "common/chunk_part_type.h"
-#include "common/goal.h"
 #include "common/parser.h"
 #include "common/slice_traits.h"
 
