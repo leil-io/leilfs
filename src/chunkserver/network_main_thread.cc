@@ -190,7 +190,7 @@ void mainNetworkThreadDesc(std::vector<pollfd> &pdesc) {
 
 void mainNetworkThreadTerm(void) {
 	TRACETHIS();
-	safs_pretty_syslog(LOG_NOTICE, "closing %s:%s", ListenHost, ListenPort);
+	safs::log_info("closing {}:{}", ListenHost, ListenPort);
 	tcpclose(lsock);
 
 	free(ListenHost);
@@ -199,9 +199,13 @@ void mainNetworkThreadTerm(void) {
 	for (auto& threadObject : networkThreadObjects) {
 		threadObject.askForTermination();
 	}
-	for (auto& thread : networkThreads) {
-		thread.join();
+
+	for (auto &thread : networkThreads) {
+		if (thread.joinable()) { thread.join(); }
 	}
+
+	networkThreads.clear();
+	networkThreadObjects.clear();
 }
 
 void mainNetworkThreadServe(const std::vector<pollfd> &pdesc) {
