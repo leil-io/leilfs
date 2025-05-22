@@ -173,6 +173,10 @@ struct inodedata {
 
 	bool hasMultipleChunkIdsInChain() const { return alterations_in_chain > 0; }
 
+	bool wasLastBlockRecentlyWrittenAndTaken() const {
+		return dataChain.empty() && lastWriteToDataChain.elapsed_ms() < kVeryRecentWrite_ms;
+	}
+
 private:
 	/*! Limit for \p lastWriteToChunkservers after which we force a flush.
 	 *
@@ -186,6 +190,13 @@ private:
 	 * if no new data is written into the data chain
 	 */
 	static const uint32_t kMaximumTimeInDataChainSinceLastWrite_ms = 5000;
+
+	/*! Limit for considering the last write to data chain very recent.
+	 *
+	 * This is used to avoid writing a partial stripe to chunkservers when last block was full and
+	 * next one has not even started.
+	 */
+	static const uint32_t kVeryRecentWrite_ms = 5;
 };
 
 struct DelayedQueueEntry {
@@ -324,7 +335,9 @@ void write_enqueue(inodedata *id, Glock &) {
 void write_job_delayed_end(inodedata *id, int status, int seconds, Glock &lock) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_job_delayed_end");
 	LOG_AVG_TILL_END_OF_SCOPE1("write_job_delayed_end#sec", seconds);
-	id->locator.reset();
+	if (id->locator != nullptr && id->locator->shouldReset()) {
+		id->locator.reset();
+	}
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_warn("error writing file number {}: {}", id->inode, saunafs_error_string(status));
 		id->status = status;
@@ -446,6 +459,13 @@ void InodeChunkWriter::processJob(inodedata *inodeData) {
 				// has to be flushed, because no more data will be added to it
 				canWait = false;
 			}
+
+			if (!locator->shouldReset()) {
+				// In the case of a truncate operation that is not finished yet, we don't want to
+				// reset the locator, because it will be used later to lock the chunk again
+				inodeData_->locator = std::move(locator);
+			}
+
 			write_job_delayed_end(inodeData_, SAUNAFS_STATUS_OK, (canWait ? 1 : 0), lock);
 		} catch (Exception &e) {
 			std::string errorString = e.what();
@@ -542,7 +562,8 @@ void InodeChunkWriter::processDataChain(ChunkWriter &writer) {
 			if (writer.getUnfinishedOperationsCount() < gWriteWindowSize) {
 				inodeData_->workerWaitingForData = true;
 			}
-			can_expect_next_block = haveAnyBlockInCurrentChunk(lock);
+			can_expect_next_block = haveAnyBlockInCurrentChunk(lock) ||
+			                        inodeData_->wasLastBlockRecentlyWrittenAndTaken();
 		} else if (writer.acceptsNewOperations()) {
 			// We are running out of time...
 			Glock lock(gMutex);
@@ -555,7 +576,8 @@ void InodeChunkWriter::processDataChain(ChunkWriter &writer) {
 				// Somebody if waiting for a flush, so we have to finish writing everything.
 				writer.startFlushMode();
 			}
-			can_expect_next_block = haveAnyBlockInCurrentChunk(lock);
+			can_expect_next_block = haveAnyBlockInCurrentChunk(lock) ||
+			                        inodeData_->wasLastBlockRecentlyWrittenAndTaken();
 		}
 
 		Glock lock(gMutex);
@@ -1380,7 +1402,7 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Lock &
 		// Don't sleep if we have to write all the data immediately
 		seconds = 0;
 	}
-	if (chunkData->writesCount > 0) {
+	if (chunkData->writesCount > 0 && status == SAUNAFS_STATUS_OK) {
 		inodeLock.unlock();
 
 		globalLock.lock();
@@ -1393,18 +1415,27 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Lock &
 		globalLock.lock();
 		write_delayed_enqueue(chunkData, seconds, globalLock);
 	} else {  // no more work or error occurred
+		bool somebodyIsWriting = chunkData->writesCount > 0;
 		// if this is an error then release all data blocks
 		write_cb_release_blocks(chunkData->dataChain.size());
 
 		chunkData->clear();
-		// We don't reset maxfleng (id->maxfleng = 0;) for a while longer, to
-		// have its value ready to some quick cache responses in lookup and
-		// getattr syscalls
-		write_free_chunkdata(chunkData, inodeLock);
+		if (!somebodyIsWriting) {
+			// We don't reset maxfleng (id->maxfleng = 0;) for a while longer, to
+			// have its value ready to some quick cache responses in lookup and
+			// getattr syscalls
+			write_free_chunkdata(chunkData, inodeLock);
+		}
 		inodeLock.unlock();
 
 		globalLock.lock();
-		if (parent->emptyChunkDataList) { parent->flushcond.notify_all(); }
+		if (parent->emptyChunkDataList || status != SAUNAFS_STATUS_OK) {
+			parent->flushcond.notify_all();
+		} else {// parent->emptyChunkDataList = false and status == SAUNAFS_STATUS_OK
+			if (somebodyIsWriting) {
+				write_enqueue(chunkData, globalLock);
+			}
+		}
 	}
 }
 
@@ -1481,15 +1512,6 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 
 				inodeLock.lock();
 				returnJournalToDataChain(writer.releaseJournal(), inodeLock);
-			}
-
-			for (auto const &it : parent->chunkDataList) {
-				if (it->chunkIndex > chunkData_->chunkIndex) {
-					// set it to 0 in order to don't update master size of the
-					// file
-					locator->updateFileLength(0);
-					break;
-				}
 			}
 			inodeLock.unlock();
 
@@ -1619,7 +1641,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 			}
 			can_expect_next_block =
 			    haveAnyBlockInCurrentChunk(inodeLock) ||
-			    (parent->wasLastBlockRecentlyWritten() && !chunkData_->dataChain.empty());
+			    (parent->wasLastBlockRecentlyWritten() && chunkData_->dataChain.empty());
 		} else if (writer.acceptsNewOperations()) {
 			// We are running out of time...
 			Lock inodeLock(parent->mutex);
@@ -1634,7 +1656,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 			}
 			can_expect_next_block =
 			    haveAnyBlockInCurrentChunk(inodeLock) ||
-			    (parent->wasLastBlockRecentlyWritten() && !chunkData_->dataChain.empty());
+			    (parent->wasLastBlockRecentlyWritten() && chunkData_->dataChain.empty());
 		}
 
 		Lock inodeLock(parent->mutex);
@@ -1849,6 +1871,10 @@ int write_blocks(inodedata *id, uint64_t offset, uint32_t size, const uint8_t *d
 			size = 0;
 		}
 		chunkData->writesCount--;
+
+		if (id->status != SAUNAFS_STATUS_OK) {
+			return id->status;
+		}
 	}
 	return 0;
 }
@@ -1946,12 +1972,13 @@ static int write_data_flush(void *vid, Lock &globalLock) {
 	}
 
 	// Wait for the data to be flushed
-	while (!id->emptyChunkDataList) { id->flushcond.wait(globalLock); }
+	while (!id->emptyChunkDataList && id->status == SAUNAFS_STATUS_OK) {
+		id->flushcond.wait(globalLock);
+	}
 	globalLock.unlock();
 
 	inodeLock.lock();
 	write_data_flushwaiting_decrease(id, inodeLock);
-	id->maxfleng = 0;
 	inodeLock.unlock();
 
 	globalLock.lock();
@@ -1969,6 +1996,7 @@ uint64_t write_data_getmaxfleng(uint32_t inode) {
 	Lock globalLock(gMutex);
 	id = write_find_inodedata(inode, globalLock);
 	if (id) {
+		Lock inodeLock(id->mutex);
 		maxfleng = id->maxfleng;
 	} else {
 		maxfleng = 0;

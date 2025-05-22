@@ -427,7 +427,7 @@ public:
 		}
 		while (it != entries_.end()) {
 			// If the entry ends before the chunk, skip it
-			if (it->endOffset() < chunkStart) {
+			if (it->offset + it->requested_size < chunkStart) {
 				++it;
 				continue;
 			}
