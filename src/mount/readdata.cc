@@ -54,14 +54,13 @@
 #include "mount/tweaks.h"
 #include "protocol/SFSCommunication.h"
 
-#define USECTICK 333333
 #define REFRESHTICKS 15
 
 #define EMPTY_REQUEST nullptr
 
 inline std::condition_variable readOperationsAvailable;
 inline std::mutex gReadaheadRequestsContainerMutex;
-inline int kMaxThresholdTicks = 180;
+inline int kMaxThresholdTicks = 360;
 uint32_t maxWindowConsideringMaxReadCacheSize;
 uint64_t timesRequestedMemory = 0;
 uint64_t successfulTimesRequestedMemory = 0;
@@ -69,6 +68,8 @@ constexpr double kTimesRequestedMemoryLowerSuccessRate = 0.3;
 constexpr double kTimesRequestedMemoryUpperSuccessRate = 0.8;
 constexpr uint32_t kMinCacheExpirationTime = 1;
 constexpr uint32_t kMinTryCounterToShowReadErrorMessage = 9;
+constexpr int64_t kDelayedOpsTimeout_us = 166667;
+constexpr int64_t kMinDelayedOpsSleepTime_us = 50000;
 
 std::unique_ptr<IMemoryInfo> createMemoryInfo() {
     std::unique_ptr<IMemoryInfo> memoryInfo;
@@ -174,20 +175,14 @@ uint64_t ReadaheadRequests::continuousOffsetRequested(
 
 	auto it = pendingRequests_.begin();
 	while (it != pendingRequests_.end() && offset < endOffset) {
-		if (pendingRequests_.front().requestPtr->request_offset() <= offset &&
-		    pendingRequests_.front().requestPtr->endOffset() > offset) {
+		if (it->requestPtr->request_offset() <= offset && it->requestPtr->endOffset() > offset) {
 			result.add(*(it->requestPtr->entry));
 			offset = it->requestPtr->endOffset();
+			rcvpPtr = &(*it);
 		}
 		it++;
 	}
-	if (offset >= endOffset) {
-		// the process finalized in the next one after achieving the desired
-		// offset
-		it--;
-		offset = endOffset;
-		rcvpPtr = &(*it);
-	}
+	offset = std::min(offset, endOffset);
 	return offset;
 }
 
@@ -346,8 +341,15 @@ void ReadaheadOperationsManager::addExtraRequests_(
 		    satisfyingSize, SFSCHUNKSIZE - (maximumRequestedOffset % SFSCHUNKSIZE));
 		ReadCache::Entry *entry = rrec->cache.forceInsert(maximumRequestedOffset, extraRequestSize);
 
-		massert(maximumRequestedOffset >= currentOffset,
-		        "Maximum requested offset should be greater than or equal current offset");
+		if (maximumRequestedOffset < currentOffset) {
+			safs::log_warn(
+			    "ReadaheadOperationsManager::addExtraRequests_: Maximum requested offset should be "
+			    "greater than or equal current offset (currentOffset: {}, "
+			    "maximumRequestedOffset: {}, extraRequestSize: {})",
+			    currentOffset, maximumRequestedOffset, extraRequestSize);
+			// Next subtraction will overflow, so let's just return here
+			return;
+		}
 		int64_t extraPriority =
 		    rrec->readahead_adviser.expectedNeededTime_us(maximumRequestedOffset - currentOffset);
 
@@ -427,6 +429,7 @@ void* read_data_delayed_ops(void *arg) {
 	for (;;) {
 		gReadConnectionPool.cleanup();
 		gMutexLock.lock();
+		Timeout sleep_timeout = Timeout(std::chrono::microseconds(kDelayedOpsTimeout_us));
 		if (readDataTerminate) {
 			return EMPTY_REQUEST;
 		}
@@ -447,6 +450,7 @@ void* read_data_delayed_ops(void *arg) {
 					// Otherwise just try to clear the cache
 					std::unique_lock inodeLock(readRecordIt->second->mutex);
 					readRecordIt->second->cache.clear();
+					++readRecordIt;
 				}
 			} else {
 				toCollectGarbage.push_back(readRecordIt->second);
@@ -471,7 +475,7 @@ void* read_data_delayed_ops(void *arg) {
 
 		gMutexLock.unlock();
 
-		usleep(USECTICK);
+		usleep(std::max(sleep_timeout.remaining_us(), kMinDelayedOpsSleepTime_us));
 	}
 }
 
@@ -577,13 +581,13 @@ ReadRecord *read_data_new(uint32_t inode) {
 }
 
 void read_data_end(ReadRecord *rrec) {
-	std::unique_lock gMutexLock(gMutex);
-	rrec->expired = true;
-
 	std::unique_lock inodeLock(rrec->mutex);
 	rrec->readaheadRequests.discardAllPendingRequests();
-	rrec->stopThread.store(true);
+	rrec->cache.clear();
 	inodeLock.unlock();
+
+	std::unique_lock gMutexLock(gMutex);
+	rrec->expired = true;
 }
 
 void read_data_init(uint32_t retries,
@@ -709,12 +713,11 @@ static void print_error_msg(ChunkReader& reader, uint32_t try_counter, const Exc
 	}
 }
 
-int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
-                   uint64_t bytes_to_read, std::vector<uint8_t> &read_buffer,
-                   uint64_t *bytes_read, ChunkReader &reader,
+int read_to_buffer(ReadRecord *rrec, uint64_t current_offset, uint64_t bytes_to_read,
+                   std::vector<uint8_t> &read_buffer, uint64_t *bytes_read, ChunkReader &reader,
                    std::unique_lock<std::mutex> &entryLock) {
 	uint32_t try_counter = 0;
-	uint32_t prepared_inode = 0; // this is always different than any real inode
+	uint32_t prepared_inode = 0;  // this is always different than any real inode
 	uint32_t prepared_chunk_id = 0;
 	assert(*bytes_read == 0);
 
@@ -723,8 +726,8 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
 
 	bool force_prepare = (rrec->refreshCounter == REFRESHTICKS);
 
-	uint32_t total_read_cache_bytes_to_reserve = 0,
-	         last_read_cache_bytes_to_reserve = 0;
+	uint32_t total_read_cache_bytes_to_reserve = 0;
+	uint32_t last_read_cache_bytes_to_reserve = 0;
 
 	while (bytes_to_read > 0) {
 		Timeout sleep_timeout = Timeout(std::chrono::milliseconds(sleep_time_ms));
@@ -733,6 +736,7 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
 		uint32_t timeout_ms = std::max(gChunkserverTotalReadTimeout_ms.load(), sleep_time_ms);
 		Timeout communication_timeout = Timeout(std::chrono::milliseconds(timeout_ms));
 		sleep_time_ms = 0;
+
 		try {
 			uint32_t chunk_id = current_offset / SFSCHUNKSIZE;
 			if (force_prepare || prepared_inode != rrec->inode || prepared_chunk_id != chunk_id) {
@@ -746,13 +750,10 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
 			uint64_t offset_of_chunk = static_cast<uint64_t>(chunk_id) * SFSCHUNKSIZE;
 			uint32_t offset_in_chunk = current_offset - offset_of_chunk;
 			uint32_t size_in_chunk = SFSCHUNKSIZE - offset_in_chunk;
-			if (size_in_chunk > bytes_to_read) {
-				size_in_chunk = bytes_to_read;
-			}
+			if (size_in_chunk > bytes_to_read) { size_in_chunk = bytes_to_read; }
 
-			uint32_t read_cache_bytes_to_reserve =
-				getBytesToBeReadFromCS(reader.index(), offset_in_chunk,
-										size_in_chunk, reader.fileLength());
+			uint32_t read_cache_bytes_to_reserve = getBytesToBeReadFromCS(
+			    reader.index(), offset_in_chunk, size_in_chunk, reader.fileLength());
 			std::unique_lock usedMemoryLock(gReadCacheMemoryMutex);
 			timesRequestedMemory++;
 			if (readShouldWaitForSystemMemory(read_cache_bytes_to_reserve)) {
@@ -764,10 +765,10 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
 			last_read_cache_bytes_to_reserve = read_cache_bytes_to_reserve;
 			total_read_cache_bytes_to_reserve += read_cache_bytes_to_reserve;
 			usedMemoryLock.unlock();
+
 			uint32_t bytes_read_from_chunk = reader.readData(
-					read_buffer, offset_in_chunk, size_in_chunk,
-					gChunkserverConnectTimeout_ms, gChunkserverWaveReadTimeout_ms,
-					communication_timeout, gPrefetchXorStripes);
+			    read_buffer, offset_in_chunk, size_in_chunk, gChunkserverConnectTimeout_ms,
+			    gChunkserverWaveReadTimeout_ms, communication_timeout, gPrefetchXorStripes);
 			// No exceptions thrown. We can increase the counters and go to the next chunk
 			*bytes_read += bytes_read_from_chunk;
 			current_offset += bytes_read_from_chunk;
@@ -780,40 +781,42 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
 		} catch (UnrecoverableReadException &ex) {
 			print_error_msg(reader, try_counter, ex);
 			addPathByInodeBasedNotificationMessage(
-			    "Unrecoverable read error: " + std::string(ex.what()),
-			    rrec->inode);
+			    "Unrecoverable read error: " + std::string(ex.what()), rrec->inode);
+
 			std::unique_lock usedMemoryLock(gReadCacheMemoryMutex);
 			decreaseUsedReadCacheMemory(total_read_cache_bytes_to_reserve);
 			usedMemoryLock.unlock();
+
 			if (ex.status() == SAUNAFS_ERROR_ENOENT) {
-				return SAUNAFS_ERROR_EBADF; // stale handle
+				return SAUNAFS_ERROR_EBADF;  // stale handle
 			} else {
 				return SAUNAFS_ERROR_IO;
 			}
 		} catch (Exception &ex) {
-			if (try_counter > 0) {
-				print_error_msg(reader, try_counter, ex);
-			}
+			if (try_counter > 0) { print_error_msg(reader, try_counter, ex); }
 			force_prepare = true;
+
 			if (try_counter > maxRetries) {
 				addPathByInodeBasedNotificationMessage(
-				    "Read error: Exceeded max retries:" +
-				        std::string(ex.what()),
-				    rrec->inode);
+				    "Read error: Exceeded max retries:" + std::string(ex.what()), rrec->inode);
+
 				std::unique_lock usedMemoryLock(gReadCacheMemoryMutex);
 				decreaseUsedReadCacheMemory(total_read_cache_bytes_to_reserve);
 				usedMemoryLock.unlock();
+
 				return SAUNAFS_ERROR_IO;
 			} else {
 				if (try_counter > kMinTryCounterToShowReadErrorMessage) {
-					addPathByInodeBasedNotificationMessage(
-					    "Read error: " + std::string(ex.what()), rrec->inode);
+					addPathByInodeBasedNotificationMessage("Read error: " + std::string(ex.what()),
+					                                       rrec->inode);
 				}
+
 				std::unique_lock usedMemoryLock(gReadCacheMemoryMutex);
 				decreaseUsedReadCacheMemory(last_read_cache_bytes_to_reserve);
 				total_read_cache_bytes_to_reserve -= last_read_cache_bytes_to_reserve;
 				usedMemoryLock.unlock();
 				entryLock.unlock();
+
 				usleep(sleep_timeout.remaining_us());
 				entryLock.lock();
 				sleep_time_ms = read_data_sleep_time_ms(try_counter);
