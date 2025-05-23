@@ -14,9 +14,9 @@ def buildImage(imageName) {
         cd $WORKSPACE
         mkdir build
         docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
-        docker save saunafs-test:latest | zstd -o ./build/sfstests.${imageName}.tar.zst
+        docker tag saunafs-test:latest registry.ci.leil.io/saunafs-test:$GIT_COMMIT
+        docker push registry.ci.leil.io/saunafs-test:$GIT_COMMIT
         """
-    archiveArtifacts artifacts: 'build/*.tar.zst', fingerprint: true
 }
 
 def runSanity() {
@@ -318,6 +318,7 @@ pipeline {
                             sh '''
                                 docker rm $(docker stop $(docker ps -a -q --filter ancestor=saunafs-test --format="{{.ID}}")) || true
                                 docker image rm saunafs-test || true
+                                docker image rm registry.ci.leil.io/saunafs-test || true
                                 '''
                         }
                     }
