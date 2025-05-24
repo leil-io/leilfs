@@ -22,8 +22,6 @@
 
 #include "common/platform.h"
 
-#include <inttypes.h>
-
 #define SECONDS_IN_ONE_MINUTE 60
 #define SECONDS_IN_ONE_HOUR   3600
 

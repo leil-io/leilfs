@@ -18,21 +18,20 @@
  */
 
 #include "common/platform.h"
+
 #include "chunkserver/chunk_replicator.h"
 
 #include <unistd.h>
-#include <cassert>
 #include <algorithm>
-#include <initializer_list>
-#include <memory>
+#include <cassert>
 #include <string>
 
 #include "chunkserver/g_limiters.h"
 #include "common/aligned_allocator.h"
 #include "common/crc.h"
 #include "common/exception.h"
-#include "common/saunafs_version.h"
 #include "common/read_plan_executor.h"
+#include "common/saunafs_version.h"
 #include "common/sockets.h"
 #include "protocol/cstocs.h"
 

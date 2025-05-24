@@ -23,11 +23,9 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <random>
-#include <string>
 
 #include "chunkserver/output_buffer.h"
 #include "common/crc.h"
-#include "unittests/TemporaryDirectory.h"
 
 const ssize_t testHeaderSize = 1;
 const ssize_t testNumBlocks = 4;

@@ -24,8 +24,6 @@
 #include <atomic>
 #include <cstdint>
 
-#include "protocol/SFSCommunication.h"
-
 class HDDReadAhead {
 public:
 	uint16_t maxBlocksToBeReadBehind() {

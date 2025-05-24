@@ -19,6 +19,7 @@
 #include "common/platform.h"
 
 #include "chunkserver-common/plugin_manager.h"
+
 #include <boost/filesystem/exception.hpp>
 
 #include "chunkserver-common/disk_plugin.h"

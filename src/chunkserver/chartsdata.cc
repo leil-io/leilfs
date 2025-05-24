@@ -18,18 +18,20 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "chartsdata.h"
+#include "common/platform.h"
 
-#include <errno.h>
+#include "chunkserver/chartsdata.h"
+
 #include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <syslog.h>
-#include <time.h>
 #include <unistd.h>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 #include "chunkserver-common/hdd_stats.h"
 #include "chunkserver/chunk_replicator.h"

@@ -19,47 +19,33 @@
 
 #include "common/platform.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <netinet/in.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <syslog.h>
-#include <time.h>
 #include <unistd.h>
-#include <atomic>
-#include <memory>
-#include <mutex>
-#include <set>
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <thread>
-#include <tuple>
 
 #include "chunkserver/bgjobs.h"
+#include "chunkserver/chunk_replicator.h"
 #include "chunkserver/g_limiters.h"
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/network_main_thread.h"
-#include "chunkserver/network_stats.h"
 #include "chunkserver/network_worker_thread.h"
-#include "chunkserver/chunk_replicator.h"
-#include "config/cfg.h"
-#include "common/charts.h"
-#include "common/event_loop.h"
-#include "protocol/cltocs.h"
-#include "protocol/cstocl.h"
-#include "protocol/cstocs.h"
 #include "common/cwrap.h"
-#include "common/datapack.h"
+#include "common/event_loop.h"
 #include "common/exceptions.h"
-#include "common/main.h"
 #include "common/massert.h"
-#include "protocol/SFSCommunication.h"
-#include "protocol/packet.h"
-#include "slogger/slogger.h"
 #include "common/sockets.h"
+#include "config/cfg.h"
 #include "devtools/TracePrinter.h"
+#include "protocol/SFSCommunication.h"
+#include "slogger/slogger.h"
 
 static int lsock;
 static int32_t lsockpdescpos;

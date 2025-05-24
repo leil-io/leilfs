@@ -21,7 +21,7 @@
 
 #include "common/platform.h"
 
-#include <inttypes.h>
+#include <cstdint>
 
 int mainNetworkThreadInit(void);
 int mainNetworkThreadInitThreads(void);

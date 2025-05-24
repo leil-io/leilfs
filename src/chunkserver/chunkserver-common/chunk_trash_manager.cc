@@ -16,11 +16,13 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "common/platform.h"
+
 #include <syslog.h>
 #include <memory>
 
-#include "chunk_trash_manager.h"
-#include "chunk_trash_manager_impl.h"
+#include "chunkserver-common/chunk_trash_manager.h"
+#include "chunkserver-common/chunk_trash_manager_impl.h"
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
 #include "slogger/slogger.h"

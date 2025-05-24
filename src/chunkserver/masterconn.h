@@ -22,7 +22,7 @@
 
 #include "common/platform.h"
 
-#include <inttypes.h>
+#include <cstdint>
 
 void masterconn_stats(uint64_t *bin,uint64_t *bout,uint32_t *maxjobscnt);
 int masterconn_init(void);

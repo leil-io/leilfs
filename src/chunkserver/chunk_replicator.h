@@ -22,7 +22,6 @@
 #include "common/platform.h"
 
 #include <cstdint>
-#include <memory>
 #include <mutex>
 
 #include "chunkserver/chunk_file_creator.h"

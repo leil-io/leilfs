@@ -18,6 +18,7 @@
  */
 
 #include "common/platform.h"
+
 #include "chunkserver/hdd_readahead.h"
 
 #include <gtest/gtest.h>
