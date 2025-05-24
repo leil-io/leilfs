@@ -70,6 +70,15 @@ enum{KILL, CONNECTED};
 double gLoadFactorPenalty = 0.;
 bool gPrioritizeDataParts = true;
 
+// A safe threshold of 15 seconds to determine whether chunks registration is in progress and
+// prevent dumping metadata.
+constexpr auto kTimeoutForChunkRegistration = std::chrono::seconds(15);
+
+// Default value of 1 second to initialize the Timeout instance.
+// This value expires fast enough to not affect metadata dump when the cluster starts empty and
+// there is no chunks registration.
+Timeout gTimeoutSinceLastChunkRegistration(std::chrono::seconds(1));
+
 struct matocsserventry {
 	matocsserventry() : inputPacket(MaxPacketSize) {}
 
@@ -1112,6 +1121,8 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 			chunk_server_has_chunk(eptr, chunk.id, chunk.version, slice_traits::standard::ChunkPartType());
 		}
 	}
+	// Chunks registration is in progress, so we reset the timeout
+	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
 }
 
 void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t>& data) {
