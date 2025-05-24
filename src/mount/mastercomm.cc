@@ -105,7 +105,9 @@ int *mountingUid  = nullptr;
 int *mountingGid = nullptr;
 #endif
 
-static uint32_t maxretries;
+static std::atomic<uint32_t> maxretries;
+static std::atomic<uint32_t> maxWaitRetryTime;
+static std::atomic<uint32_t> mastercommSleepTimeDivisor;
 
 static pthread_t rpthid,npthid;
 static std::mutex fdMutex, recMutex;
@@ -176,6 +178,14 @@ struct InitParams {
 };
 
 static InitParams gInitParams;
+
+uint32_t getSafeSleepTimeDivisor() {
+	uint32_t safeSleepTimeDivisor = mastercommSleepTimeDivisor.load();
+	if (safeSleepTimeDivisor == 0) {
+		safeSleepTimeDivisor = 1;
+	}
+	return safeSleepTimeDivisor;
+}
 
 void master_statsptr_init(void) {
 	statsnode *s;
@@ -334,11 +344,11 @@ static bool fs_threc_wait(threc *rec, std::unique_lock<std::mutex>& lock) {
 }
 
 static inline uint32_t sleep_time(uint32_t tryNo) {
-	if (tryNo < 30) {
-		return 1 + (tryNo) / 3;
-	} else {
-		return 10;
+	uint32_t safeSleepTimeDivisor = getSafeSleepTimeDivisor();
+	if (tryNo / safeSleepTimeDivisor < maxWaitRetryTime.load()) {
+		return 1 + (tryNo / safeSleepTimeDivisor);
 	}
+	return maxWaitRetryTime.load();
 }
 
 // TODO(jotek): not every request should be retransmitted if recv failed (e.g. snapshot)
@@ -1310,9 +1320,14 @@ int fs_init_master_connection(SaunaClient::FsInitParams &params
 }
 
 // called after fork
-void fs_init_threads(uint32_t retries) {
+void fs_init_threads(uint32_t retries, uint32_t maxWaitTimeForRetry, uint32_t sleepTimeDivisor) {
 	pthread_attr_t thattr;
 	maxretries = retries;
+	maxWaitRetryTime = maxWaitTimeForRetry;
+	mastercommSleepTimeDivisor = sleepTimeDivisor;
+	gTweaks.registerVariable("MaxRetriesMasterComm", maxretries, "maxretriesmastercomm");
+	gTweaks.registerVariable("MaxWaitRetryTimeMasterComm", maxWaitRetryTime, "maxwaitretrytime");
+	gTweaks.registerVariable("MasterCommSleepTimeDivisor", mastercommSleepTimeDivisor, "mastercommsleeptimedivisor");
 	fterm = 0;
 
 	pthread_attr_init(&thattr);

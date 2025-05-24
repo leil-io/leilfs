@@ -266,6 +266,8 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.message_suppression_period = gMountOptions.messagesuppressionperiod;
 	params.statfs_cache_timeout = gMountOptions.statfscachetimeout;
 	params.use_quota_in_volume_size = gMountOptions.usequotainvolumesize;
+	params.max_wait_retry_time = gMountOptions.maxwaitretrytime;
+	params.mastercomm_sleep_time_divisor = gMountOptions.mastercommsleeptimedivisor;
 
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);
@@ -279,7 +281,8 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 				return 1;
 			}
 		}
-		fs_init_threads(params.io_retries);
+		fs_init_threads(params.io_retries, params.max_wait_retry_time,
+		                params.mastercomm_sleep_time_divisor);
 	}
 
 	struct fuse_session *se;

@@ -100,6 +100,8 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsmessagesuppressionperiod=%u", messagesuppressionperiod, 0),
 	SFS_OPT("statfscachetimeout=%d", statfscachetimeout, 0),
 	SFS_OPT("usequotainvolumesize=%d", usequotainvolumesize, 0),
+	SFS_OPT("maxwaitretrytime=%u", maxwaitretrytime, 0),
+	SFS_OPT("mastercommsleeptimedivisor=%u", mastercommsleeptimedivisor, 0),
 
 	SFS_OPT("enablefilelocks=%u", filelocks, 0),
 	SFS_OPT("nonempty", nonemptymount, 1),
@@ -196,6 +198,9 @@ void initialize_opts_name_values() {
 	    std::to_string(gMountOptions.messagesuppressionperiod);
 	gOptsNameValues["statfscachetimeout"] = std::to_string(gMountOptions.statfscachetimeout);
 	gOptsNameValues["usequotainvolumesize"] = std::to_string(gMountOptions.usequotainvolumesize);
+	gOptsNameValues["maxwaitretrytime"] = std::to_string(gMountOptions.maxwaitretrytime);
+	gOptsNameValues["mastercommsleeptimedivisor"] =
+	    std::to_string(gMountOptions.mastercommsleeptimedivisor);
 	gOptsNameValues["enablefilelocks"] = std::to_string(gMountOptions.filelocks);
 	gOptsNameValues["nonempty"] = std::to_string(gMountOptions.nonemptymount);
 
@@ -339,6 +344,11 @@ void usage(const char *progname) {
 				"the cache is disabled (default: %u)\n"
 "    -o usequotainvolumesize=0|1  when set to 1, use the user and group specific quota hard "
 				"limit to calculate the volume size (default: %u)\n"
+"    -o maxwaitretrytime=SECS    set the maximum wait time in seconds for retrying a master "
+				"server communication attempt in seconds (default: %u)\n"
+"    -o mastercommsleeptimedivisor=N  number of retries between each time increase of the "
+				"master-communication sleep interval, up to maxwaitretrytime; smaller N "
+				"converges faster—ideal for critical fast-reconnect scenarios (default: %u)\n"
 "\n",
 		SaunaClient::FsInitParams::kDefaultCacheExpirationTime,
 		SaunaClient::FsInitParams::kDefaultReadaheadMaxWindowSize,
@@ -374,7 +384,9 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultLogNotificationArea,
 		SaunaClient::FsInitParams::kDefaultMessageSuppressionPeriod,
 		SaunaClient::FsInitParams::kDefaultStatfsCacheTo,
-		SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize
+		SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize,
+		SaunaClient::FsInitParams::kDefaultMaxWaitRetryTime,
+		SaunaClient::FsInitParams::kDefaultMasterCommSleepTimeDivisor
 	);
 	printf(
 "CMODE can be set to:\n"

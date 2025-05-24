@@ -3633,7 +3633,8 @@ void fs_init(FsInitParams &params) {
 	}
 	symlink_cache_init(params.symlink_cache_timeout_s);
 	gGlobalIoLimiter();
-	fs_init_threads(params.io_retries);
+	fs_init_threads(params.io_retries, params.max_wait_retry_time,
+	                params.mastercomm_sleep_time_divisor);
 	masterproxy_init();
 
 	gLocalIoLimiter();

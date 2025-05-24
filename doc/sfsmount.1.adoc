@@ -255,6 +255,22 @@ disabled (default: 0).
 When set to 1, use the user and group specific quota hard limit to calculate
 the volume size (default: 0).
 
+*-o maxwaitretrytime=*'SECS'::
+Set the maximum wait time in seconds for retrying a master server communication
+attempt in seconds (default: 10).
+
+*-o mastercommsleeptimedivisor=*'N'::
+Specify the number of retry attempts between each increase of the
+master-communication sleep interval. The client starts with a 1 second
+pause and adds 1 second every N retries, up to the maxwaitretrytime limit.
+When reconnecting, the client makes up to sfsioretries attempts, applying
+the computed pause at each zero-based retry.
+For example, with mastercommsleeptimedivisor=2, maxwaitretrytime=3 and
+sfsioretries=10 the sleep intervals are:
+try 0 → 1 s, try 1 → 1 s, try 2 → 2 s, try 3 → 2 s, try 4 → 3 s,
+then 3 s for all subsequent retries until reaching the last retry counter
+index, which would be try 9 (default: 3).
+
 General mount options (see *mount*(8) manual):
 
 *-o rw* | *-o ro*::
