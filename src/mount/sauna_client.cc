@@ -77,12 +77,41 @@
 #include "mount/writedata.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/matocl.h"
+#include "mount/file_activity_stats.h" // Added for file activity stats
+#include <sstream> // Added for std::ostringstream
 
 #ifdef __APPLE__
 #include "mount/osx_acl_converter.h"
 #endif
 
 #include "common/stat_defs.h" // !!! This must be last include. Do not move !!!
+
+static MyProject::TopFileStatsManager g_file_stats_manager; // Global instance for file activity stats
+
+// Helper function to get full path; returns empty string on error
+static std::string internal_get_full_path(SaunaClient::Inode ino, SaunaClient::Context& ctx) {
+    if (ino == SPECIAL_INODE_ROOT) { // Handle root inode explicitly
+        return "/";
+    }
+    if (IS_SPECIAL_INODE(ino)) { // Avoid trying to get path for other special inodes not handled by fs_fullpath
+        return ""; // Or a placeholder like "/<special_inode>"
+    }
+    std::string full_path;
+    // Assuming fs_fullpath is available and suitable.
+    // The fs_fullpath is declared in "protocol/matocl.h" and implemented elsewhere.
+    // It might throw or return a status. Here, we assume it's used within a try-catch or status check.
+    // For simplicity, let's assume a direct call and if it fails, it might return non-OK or throw.
+    // This helper should be robust.
+    uint8_t status = fs_fullpath(ino, ctx.uid, ctx.gid, full_path);
+    if (status != SAUNAFS_STATUS_OK) {
+        if (SaunaClient::debug_mode) { // Assuming debug_mode is accessible
+            oplog_printf(ctx, "internal_get_full_path: fs_fullpath failed for inode %lu with status %d", (unsigned long)ino, status);
+        }
+        return ""; // Return empty on error
+    }
+    return full_path;
+}
+
 
 namespace SaunaClient {
 
@@ -219,6 +248,8 @@ Inode getSpecialInodeByName(const char *name) {
 		return SPECIAL_INODE_PATH_BY_INODE;
 	} else if (strcmp(name, SPECIAL_FILE_NAME_MOUNT_INFO) == 0) {
 		return SPECIAL_INODE_MOUNT_INFO;
+	} else if (strcmp(name, SPECIAL_FILE_NAME_FILE_STATS) == 0) { // Added case for .stats_files
+		return SPECIAL_INODE_FILE_STATS;
 	} else {
 		return MAX_REGULAR_INODE;
 	}
@@ -840,6 +871,9 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 			trashspace,
 			reservedspace,
 			inodes);
+	// Not typically a direct file operation on 'ino', more of a filesystem overview.
+	// If specific file stats were desired for statfs target, it would be complex.
+	// For now, not logging to g_file_stats_manager for statfs.
 	return stfsbuf;
 }
 
@@ -877,6 +911,10 @@ void access(Context &ctx, Inode ino, int mask) {
 	if (status != SAUNAFS_STATUS_OK) {
 		throw RequestException(status);
 	}
+	// Successful access check, could be considered a 'stat_op' or 'other_op'
+	// For now, let's assume access itself isn't changing file content or primary metadata like size/time directly.
+	// If detailed access patterns are needed, record_other_op could be used.
+	// Let's follow the subtask description: no specific mention for access(), so skipping for now.
 }
 
 EntryParam lookup(Context &ctx, Inode parent, const char *name) {
@@ -1024,6 +1062,28 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 			(unsigned long int)e.ino,
 			e.attr_timeout,
 			attrstr);
+	// Lookup itself is a metadata operation. The looked-up item 'e.ino' is what we care about.
+	// Not explicitly requested to log 'lookup' itself, but subsequent ops on e.ino will be logged.
+	// However, a successful lookup implies a kind of "stat" on the parent to find the child.
+	// Let's record an 'other_op' on the parent.
+	if (status == SAUNAFS_STATUS_OK && !IS_SPECIAL_INODE(parent)) {
+		std::string parent_full_path = internal_get_full_path(parent, ctx);
+		g_file_stats_manager.record_other_op(parent, parent_full_path);
+	}
+	// And an 'other_op' for the successfully looked up inode.
+	if (status == SAUNAFS_STATUS_OK && !IS_SPECIAL_INODE(e.ino)) {
+		std::string target_full_path = internal_get_full_path(e.ino, ctx);
+		// If path is empty, it might be because it's derived from parent path + name
+		if (target_full_path.empty() && parent != SPECIAL_INODE_ROOT) {
+			std::string parent_path_for_lookup = internal_get_full_path(parent, ctx);
+			if (!parent_path_for_lookup.empty()) {
+				target_full_path = (parent_path_for_lookup == "/" ? "" : parent_path_for_lookup) + "/" + name;
+			}
+		} else if (target_full_path.empty() && parent == SPECIAL_INODE_ROOT) {
+             target_full_path = std::string("/") + name;
+        }
+		g_file_stats_manager.record_other_op(e.ino, target_full_path);
+	}
 	return e;
 }
 
@@ -1104,6 +1164,15 @@ AttrReply getattr(Context &ctx, Inode ino) {
 			fromCache ? " (using open dir cache)" : "",
 			attr_timeout,
 			attrstr);
+	if (status == SAUNAFS_STATUS_OK && !IS_SPECIAL_INODE(ino)) {
+		std::string full_path = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_stat_op(ino, full_path);
+	}
+	// Record stat_op if successful and not a special inode
+	if (!IS_SPECIAL_INODE(ino)) { // Assuming status is OK if we reach here without throwing
+		std::string full_path = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_stat_op(ino, full_path);
+	}
 	return AttrReply{o_stbuf, attr_timeout};
 }
 
@@ -1398,6 +1467,17 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 				(unsigned long int)e.ino,
 				e.attr_timeout,
 				attrstr);
+		if (status == SAUNAFS_STATUS_OK) {
+			std::string parent_full_path = internal_get_full_path(parent, ctx);
+			if (!IS_SPECIAL_INODE(parent)) {
+				g_file_stats_manager.record_other_op(parent, parent_full_path);
+			}
+			if (!IS_SPECIAL_INODE(e.ino)) {
+				std::string new_node_full_path = (parent_full_path == "/" ? "" : parent_full_path) + "/" + name;
+				g_file_stats_manager.record_other_op(e.ino, new_node_full_path);
+				// mknod often implies an eventual open/use, but record_other_op is fine for creation event.
+			}
+		}
 		return e;
 	}
 }
@@ -1405,6 +1485,13 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 void unlink(Context &ctx, Inode parent, const char *name) {
 	uint32_t nleng;
 	int status;
+	// For unlink, we need ino of the item being unlinked to record its activity precisely.
+	// This requires a lookup before unlinking.
+	// For simplicity as per subtask ("ino_or_parent_ino"), log for parent.
+	std::string parent_full_path;
+	if (!IS_SPECIAL_INODE(parent)) {
+		parent_full_path = internal_get_full_path(parent, ctx);
+	}
 
 	stats_inc(OP_UNLINK);
 	if (debug_mode) {
@@ -1429,6 +1516,10 @@ void unlink(Context &ctx, Inode parent, const char *name) {
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
 	}
 
+	// To record the specific inode being unlinked, a lookup would be needed here.
+	// SaunaClient::lookup(ctx, parent, name); then get inode from result.
+	// For now, sticking to parent inode as per "ino_or_parent_ino" flexibility.
+
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_unlink(parent,nleng,(const uint8_t*)name,ctx.uid,ctx.gid));
 	gDirEntryCache.lockAndInvalidateParent(parent);
@@ -1442,6 +1533,11 @@ void unlink(Context &ctx, Inode parent, const char *name) {
 		oplog_printf(ctx, "unlink (%lu,%s): OK",
 				(unsigned long int)parent,
 				name);
+		if (!IS_SPECIAL_INODE(parent)) {
+			g_file_stats_manager.record_other_op(parent, parent_full_path);
+		}
+		// If we had target_ino and target_full_path:
+		// g_file_stats_manager.record_other_op(target_ino, target_full_path);
 		return;
 	}
 }
@@ -1456,6 +1552,11 @@ void undel(Context &ctx, Inode ino) {
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, fs_undel(ino));
 	if (status != SAUNAFS_STATUS_OK) {
 		throw RequestException(status);
+	}
+	// undel is an "other_op" on the file being restored
+	if (!IS_SPECIAL_INODE(ino)) {
+		std::string full_path = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_other_op(ino, full_path);
 	}
 }
 
@@ -1527,6 +1628,16 @@ EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
 				(unsigned long int)e.ino,
 				e.attr_timeout,
 				attrstr);
+		if (status == SAUNAFS_STATUS_OK) {
+			std::string parent_full_path = internal_get_full_path(parent, ctx);
+			if (!IS_SPECIAL_INODE(parent)) {
+				g_file_stats_manager.record_other_op(parent, parent_full_path);
+			}
+			if (!IS_SPECIAL_INODE(e.ino)) {
+				std::string new_dir_full_path = (parent_full_path == "/" ? "" : parent_full_path) + "/" + name;
+				g_file_stats_manager.record_other_op(e.ino, new_dir_full_path);
+			}
+		}
 		return e;
 	}
 }
@@ -1534,6 +1645,10 @@ EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
 void rmdir(Context &ctx, Inode parent, const char *name) {
 	uint32_t nleng;
 	int status;
+	std::string parent_full_path;
+	if (!IS_SPECIAL_INODE(parent)) {
+		parent_full_path = internal_get_full_path(parent, ctx);
+	}
 
 	stats_inc(OP_RMDIR);
 	if (debug_mode) {
@@ -1556,7 +1671,8 @@ void rmdir(Context &ctx, Inode parent, const char *name) {
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
 	}
-
+	// Similar to unlink, ideally would get target ino first.
+	// Recording for parent for now.
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_rmdir(parent,nleng,(const uint8_t*)name,ctx.uid,ctx.gid));
 	gDirEntryCache.lockAndInvalidateParent(parent);
@@ -1570,6 +1686,11 @@ void rmdir(Context &ctx, Inode parent, const char *name) {
 		oplog_printf(ctx, "rmdir (%lu,%s): OK",
 				(unsigned long int)parent,
 				name);
+		if (!IS_SPECIAL_INODE(parent)) {
+			g_file_stats_manager.record_other_op(parent, parent_full_path);
+		}
+		// If we had target_ino and target_full_path:
+		// g_file_stats_manager.record_other_op(target_ino, target_full_path);
 		return;
 	}
 }
@@ -1637,46 +1758,68 @@ EntryParam symlink(Context &ctx, const char *path, Inode parent,
 				(unsigned long int)e.ino,
 				e.attr_timeout,
 				attrstr);
+		if (status == SAUNAFS_STATUS_OK) {
+			std::string parent_full_path = internal_get_full_path(parent, ctx);
+			if (!IS_SPECIAL_INODE(parent)) {
+				g_file_stats_manager.record_other_op(parent, parent_full_path);
+			}
+			if (!IS_SPECIAL_INODE(e.ino)) {
+				std::string new_symlink_full_path = (parent_full_path == "/" ? "" : parent_full_path) + "/" + name;
+				g_file_stats_manager.record_other_op(e.ino, new_symlink_full_path);
+			}
+		}
 		return e;
 	}
 }
 
 std::string readlink(Context &ctx, Inode ino) {
 	int status;
-	const uint8_t *path;
+	const uint8_t *path_ptr; // Renamed to avoid conflict with std::string path
 
 	if (debug_mode) {
 		oplog_printf(ctx, "readlink (%lu) ...",
 				(unsigned long int)ino);
 	}
-	if (symlink_cache_search(ino,&path)) {
+	std::string result_path_str;
+	bool from_cache = false;
+	if (symlink_cache_search(ino,&path_ptr)) {
 		stats_inc(OP_READLINK_CACHED);
+		result_path_str = std::string((char*)path_ptr);
+		from_cache = true;
+		status = SAUNAFS_STATUS_OK; // Assuming success if cache hit
 		oplog_printf(ctx, "readlink (%lu) (using cache): OK (%s)",
 				(unsigned long int)ino,
-				(char*)path);
-		return std::string((char*)path);
-	}
-	stats_inc(OP_READLINK);
-	status = fs_readlink(ino,&path);
-	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "readlink (%lu): %s",
-				(unsigned long int)ino,
-				saunafs_error_string(status));
-		throw RequestException(status);
+				result_path_str.c_str());
 	} else {
-		symlink_cache_insert(ino,path);
-		oplog_printf(ctx, "readlink (%lu): OK (%s)",
-				(unsigned long int)ino,
-				(char*)path);
-		return std::string((char*)path);
+		stats_inc(OP_READLINK);
+		status = fs_readlink(ino,&path_ptr);
+		if (status != SAUNAFS_STATUS_OK) {
+			oplog_printf(ctx, "readlink (%lu): %s",
+					(unsigned long int)ino,
+					saunafs_error_string(status));
+			throw RequestException(status);
+		} else {
+			result_path_str = std::string((char*)path_ptr);
+			symlink_cache_insert(ino,path_ptr);
+			oplog_printf(ctx, "readlink (%lu): OK (%s)",
+					(unsigned long int)ino,
+					result_path_str.c_str());
+		}
 	}
+	
+	if (status == SAUNAFS_STATUS_OK && !IS_SPECIAL_INODE(ino)) {
+		// readlink is a kind of stat operation on the symlink itself
+		std::string full_path_of_symlink = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_stat_op(ino, full_path_of_symlink);
+	}
+	return result_path_str;
 }
 
 void rename(Context &ctx, Inode parent, const char *name,
 			Inode newparent, const char *newname) {
 	uint32_t nleng,newnleng;
 	int status;
-	uint32_t inode;
+	uint32_t inode; // This is the inode of the source file/dir that was renamed.
 	Attributes attr;
 
 	stats_inc(OP_RENAME);
@@ -1687,6 +1830,16 @@ void rename(Context &ctx, Inode parent, const char *name,
 				(unsigned long int)newparent,
 				newname);
 	}
+	// Path retrievals before the operation changes things
+	std::string src_parent_full_path;
+	if (!IS_SPECIAL_INODE(parent)) {
+		src_parent_full_path = internal_get_full_path(parent, ctx);
+	}
+	std::string dst_parent_full_path;
+	if (!IS_SPECIAL_INODE(newparent)) {
+		dst_parent_full_path = internal_get_full_path(newparent, ctx);
+	}
+
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
 			oplog_printf(ctx, "rename (%lu,%s,%lu,%s): %s",
@@ -1748,6 +1901,20 @@ void rename(Context &ctx, Inode parent, const char *name,
 				name,
 				(unsigned long int)newparent,
 				newname);
+		// Record other_op for both parent directories
+		if (!IS_SPECIAL_INODE(parent)) {
+			g_file_stats_manager.record_other_op(parent, src_parent_full_path);
+		}
+		if (!IS_SPECIAL_INODE(newparent)) {
+			g_file_stats_manager.record_other_op(newparent, dst_parent_full_path);
+		}
+		// And for the moved inode itself, its path has now changed.
+		// The 'inode' returned by fs_rename is the inode of the source file/directory.
+		if (!IS_SPECIAL_INODE(inode)) {
+			// Path after rename is dst_parent_full_path + "/" + newname
+			std::string new_full_path = (dst_parent_full_path == "/" ? "" : dst_parent_full_path) + "/" + newname;
+			g_file_stats_manager.record_other_op(inode, new_full_path);
+		}
 		return;
 	}
 }
@@ -1756,7 +1923,7 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 	uint32_t newnleng;
 	int status;
 	EntryParam e;
-	uint32_t inode;
+	uint32_t linked_inode; // fs_link returns the original inode being linked
 	Attributes attr;
 	char attrstr[256];
 	uint8_t mattr;
@@ -1765,10 +1932,15 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 	stats_inc(OP_LINK);
 	if (debug_mode) {
 		oplog_printf(ctx, "link (%lu,%lu,%s) ...",
-				(unsigned long int)ino,
+				(unsigned long int)ino, // ino is the source inode to link to
 				(unsigned long int)newparent,
 				newname);
 	}
+	std::string new_parent_full_path;
+	if (!IS_SPECIAL_INODE(newparent)) {
+		new_parent_full_path = internal_get_full_path(newparent, ctx);
+	}
+
 	if (IS_SPECIAL_INODE(ino)) {
 		oplog_printf(ctx, "link (%lu,%lu,%s): %s",
 				(unsigned long int)ino,
@@ -1798,7 +1970,7 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 	}
 
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_link(ino,newparent,newnleng,(const uint8_t*)newname,ctx.uid,ctx.gid,&inode,attr));
+		fs_link(ino,newparent,newnleng,(const uint8_t*)newname,ctx.uid,ctx.gid,&linked_inode,attr));
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "link (%lu,%lu,%s): %s",
 				(unsigned long int)ino,
@@ -1807,13 +1979,13 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
-		gDirEntryCache.lockAndInvalidateInode(inode);
+		gDirEntryCache.lockAndInvalidateInode(linked_inode); // linked_inode is same as ino
 		gDirEntryCache.lockAndInvalidateParent(newparent);
-		e.ino = inode;
+		e.ino = linked_inode; // The EntryParam refers to the inode that was linked.
 		mattr = attr_get_mattr(attr);
 		e.attr_timeout = (mattr&MATTR_NOACACHE)?0.0:attr_cache_timeout;
 		e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:entry_cache_timeout;
-		attr_to_stat(inode,attr,&e.attr);
+		attr_to_stat(linked_inode,attr,&e.attr);
 		makeattrstr(attrstr,256,&e.attr);
 		oplog_printf(ctx, "link (%lu,%lu,%s): OK (%.1f,%lu,%.1f,%s)",
 				(unsigned long int)ino,
@@ -1823,6 +1995,18 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 				(unsigned long int)e.ino,
 				e.attr_timeout,
 				attrstr);
+		
+		// Record other_op for the directory where link is created
+		if (!IS_SPECIAL_INODE(newparent)) {
+			g_file_stats_manager.record_other_op(newparent, new_parent_full_path);
+		}
+		// Record other_op for the inode being linked (its nlink changes)
+		if (!IS_SPECIAL_INODE(linked_inode)) {
+			// Path of the linked_inode itself doesn't change, but its metadata (nlink) does.
+			// We need *a* path for it. internal_get_full_path(linked_inode, ctx) should give one.
+			std::string linked_inode_full_path = internal_get_full_path(linked_inode, ctx);
+			g_file_stats_manager.record_other_op(linked_inode, linked_inode_full_path);
+		}
 		return e;
 	}
 }
@@ -1849,6 +2033,11 @@ void opendir(Context &ctx, Inode ino) {
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
+	// Successful opendir is like an "open" on a directory
+	if (!IS_SPECIAL_INODE(ino)) {
+		std::string full_path = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_open(ino, full_path);
+	}
 }
 
 /// List DirEntry objects in the directory described by \a ino inode.
@@ -1859,6 +2048,7 @@ void opendir(Context &ctx, Inode ino) {
  * \return std::vector of directory entries
  */
 std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, size_t max_entries) {
+	// fh is file handle for the opened directory
 	static constexpr int kBatchSize = 1000;
 	const uint64_t start_off = static_cast<std::make_unsigned<off_t>::type>(off);
 	// type to cast to should be the same size to avoid potential sign-extension
@@ -1872,6 +2062,10 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 				static_cast<uint64_t>(max_entries),
 				start_off);
 	}
+	std::string dir_full_path;
+	if (!IS_SPECIAL_INODE(ino)) {
+		dir_full_path = internal_get_full_path(ino, ctx);
+	}
 
 	// for more detailed oplogging
 	size_t initial_max_entries = max_entries;
@@ -1883,32 +2077,32 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 	gDirEntryCache.updateTime();
 
 	uint64_t entry_index = start_off;
-	auto it = gDirEntryCache.find(ctx, ino, entry_index);
+	auto it_cache = gDirEntryCache.find(ctx, ino, entry_index); // Renamed 'it' to 'it_cache'
 
 	result.reserve(max_entries);
-	for(; it != gDirEntryCache.index_end() && max_entries > 0; ++it) {
-		if (!gDirEntryCache.isValid(it) || it->index != entry_index ||
-				it->parent_inode != ino || it->uid != ctx.uid || it->gid != ctx.gid) {
+	for(; it_cache != gDirEntryCache.index_end() && max_entries > 0; ++it_cache) {
+		if (!gDirEntryCache.isValid(it_cache) || it_cache->index != entry_index ||
+				it_cache->parent_inode != ino || it_cache->uid != ctx.uid || it_cache->gid != ctx.gid) {
 			break;
 		}
 
-		if (it->inode == 0) {
+		if (it_cache->inode == 0) {
 			// we have valid 'no more entries' marker
-			assert(it->name.empty());
+			assert(it_cache->name.empty());
 			max_entries = 0;
 			break;
 		}
 
-		entry_index = it->next_index;
+		entry_index = it_cache->next_index;
 		--max_entries;
 		++entries_from_cache;
 
 		struct stat stats;
-		attr_to_stat(it->inode,it->attr,&stats);
-		result.emplace_back(it->name, stats, entry_index); // nextEntryOffset = entry_index
+		attr_to_stat(it_cache->inode,it_cache->attr,&stats);
+		result.emplace_back(it_cache->name, stats, entry_index); // nextEntryOffset = entry_index
 	}
 
-	if (max_entries == 0) {
+	if (max_entries == 0) { // All entries from cache
 		if (debug_mode) {
 			oplog_printf(ctx, "readdir (%lu,%" PRIu64 ",%" PRIu64 ") returned %zu dirents all from direntrycache; index of next dirent is %" PRIu64
 				" (%#" PRIx64 ")",
@@ -1919,12 +2113,18 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 					entry_index,
 					entry_index);
 		}
+		// Record read event on the directory itself, if it's not special
+		if (!IS_SPECIAL_INODE(ino) && initial_max_entries > 0 && entries_from_cache > 0) { // only if read attempt was made and yielded something
+			// The "size" of a readdir is tricky. Let's use number of entries read as "bytes_read"
+			// and initial_max_entries as "block_size" (requested items).
+			g_file_stats_manager.record_read(ino, dir_full_path, entries_from_cache, initial_max_entries);
+		}
 		return result;
 	}
 
 	access_guard.unlock();
 
-	std::vector<DirectoryEntry> dir_entries;
+	std::vector<DirectoryEntry> dir_entries; // Fetched from master
 	uint8_t status;
 	uint64_t request_size = std::min<std::size_t>(std::max<std::size_t>(kBatchSize, max_entries),
 	                                              matocl::fuseGetDir::kMaxNumberOfDirectoryEntries);
@@ -1948,17 +2148,18 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 
 	auto data_acquire_time = gDirEntryCache.updateTime();
 
-	if(status != SAUNAFS_STATUS_OK) {
+	if(status != SAUNAFS_STATUS_OK) { // Error fetching from master
+		// Even if some entries came from cache, if master fetch fails, the overall op might be seen as failed.
+		// However, result already contains cached entries. The function will throw.
+		// If we recorded cache reads above, that's fine. No further recording here.
 		throw RequestException(status);
 	}
 
 	std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
 	gDirEntryCache.updateTime();
 
-	// dir_entries.front().index must be equal to entry_index
 	gDirEntryCache.insertSequence(ctx, ino, dir_entries, data_acquire_time);
 	if (dir_entries.size() < request_size) {
-		// insert 'no more entries' marker
 		auto marker_index = entry_index;
 		if (!dir_entries.empty()) {
 			marker_index = dir_entries.back().next_index;
@@ -1973,23 +2174,25 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 
 	write_guard.unlock();
 
-	for(auto it = dir_entries.begin(); it != dir_entries.end() && max_entries > 0; ++it) {
+	size_t current_master_entries_count = 0;
+	for(auto it_master = dir_entries.begin(); it_master != dir_entries.end() && max_entries > 0; ++it_master) { // Renamed 'it'
 		--max_entries;
-		entry_index = it->next_index;
+		entry_index = it_master->next_index;
 		++entries_from_master;
+		current_master_entries_count++;
 
 		struct stat stats;
-		attr_to_stat(it->inode,it->attributes,&stats);
-		result.emplace_back(it->name, stats, it->next_index);
+		attr_to_stat(it_master->inode,it_master->attributes,&stats);
+		result.emplace_back(it_master->name, stats, it_master->next_index);
 
 		if (debug_mode) {
 			oplog_printf(ctx, "readdir (%lu ,%" PRIu64 ",%#" PRIx64 ") from master: entry index: %#" PRIx64 ", next: %#" PRIx64 ", name: %s",
 					static_cast<unsigned long int>(ino),
 					static_cast<uint64_t>(initial_max_entries),
 					start_off,
-					it->index,
-					it->next_index,
-					it->name.c_str());
+					it_master->index,
+					it_master->next_index,
+					it_master->name.c_str());
 		}
 	}
 
@@ -2005,6 +2208,12 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 				entry_index,
 				entry_index);
 	}
+	
+	// Record read event on the directory, combining cached and master results.
+	size_t total_entries_read_this_call = entries_from_cache + current_master_entries_count;
+	if (!IS_SPECIAL_INODE(ino) && initial_max_entries > 0 && total_entries_read_this_call > 0) {
+		g_file_stats_manager.record_read(ino, dir_full_path, total_entries_read_this_call, initial_max_entries);
+	}
 
 	return result;
 }
@@ -2016,7 +2225,8 @@ std::vector<NamedInodeEntry> readreserved(Context &ctx, NamedInodeOffset off, Na
 				(uint64_t)max_entries,
 				(uint64_t)off);
 	}
-
+	// This is a special listing operation, not directly on a user file/directory inode.
+	// Not logging to g_file_stats_manager.
 	std::vector<NamedInodeEntry> entries;
 	uint8_t status;
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2036,7 +2246,8 @@ std::vector<NamedInodeEntry> readtrash(Context &ctx, NamedInodeOffset off, Named
 				(uint64_t)max_entries,
 				(uint64_t)off);
 	}
-
+	// Similar to readreserved, this is a special listing.
+	// Not logging to g_file_stats_manager.
 	std::vector<NamedInodeEntry> entries;
 	uint8_t status;
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2059,7 +2270,9 @@ void releasedir(Inode ino) {
 	}
 	oplog_printf("releasedir (%lu): OK",
 			(unsigned long int)ino);
-
+	// releasedir implies a close operation on the directory.
+	// No specific record_close, but could be an other_op or nothing if open handles it.
+	// For now, no specific recording for releasedir, as opendir already records an open.
 	std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
 	gDirEntryCache.updateTime();
 	gDirEntryCache.removeExpired(kBatchSize);
@@ -2124,14 +2337,18 @@ void remove_file_info(FileInfo *f) {
 EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 		FileInfo* fi) {
 	struct EntryParam e;
-	uint32_t inode;
+	uint32_t created_inode; // Renamed from inode to avoid conflict with function parameter
 	uint8_t oflags;
 	Attributes attr;
 	char modestr[11];
 	char attrstr[256];
 	uint8_t mattr;
+	std::string parent_full_path;
+	if (!IS_SPECIAL_INODE(parent)) {
+		parent_full_path = internal_get_full_path(parent, ctx);
+	}
 	uint32_t nleng;
-	int status;
+	int status_mknod, status_opencheck;
 
 	finfo *fileinfo;
 
@@ -2183,33 +2400,52 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 
-	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_mknod(parent,nleng,(const uint8_t*)name,TYPE_FILE,mode&07777,ctx.umask,ctx.uid,ctx.gid,0,inode,attr));
-	if (status != SAUNAFS_STATUS_OK) {
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status_mknod, ctx,
+		fs_mknod(parent,nleng,(const uint8_t*)name,TYPE_FILE,mode&07777,ctx.umask,ctx.uid,ctx.gid,0,created_inode,attr));
+	
+	if (status_mknod != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o) (mknod): %s",
 				(unsigned long int)parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
-				saunafs_error_string(status));
-		throw RequestException(status);
+				saunafs_error_string(status_mknod));
+		throw RequestException(status_mknod);
 	}
-	Attributes tmp_attr;
-	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_opencheck(inode,ctx.uid,ctx.gid,oflags,tmp_attr));
+	
+	// If mknod was successful, record other_op for parent and new inode
+	if (!IS_SPECIAL_INODE(parent)) {
+		g_file_stats_manager.record_other_op(parent, parent_full_path);
+	}
+	std::string new_file_full_path;
+	if (!IS_SPECIAL_INODE(created_inode)) {
+		new_file_full_path = (parent_full_path == "/" ? "" : parent_full_path) + "/" + name;
+		g_file_stats_manager.record_other_op(created_inode, new_file_full_path);
+	}
 
-	if (status != SAUNAFS_STATUS_OK) {
+	Attributes tmp_attr; // fs_opencheck might modify attributes, use a temporary one
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status_opencheck, ctx,
+		fs_opencheck(created_inode,ctx.uid,ctx.gid,oflags,tmp_attr));
+
+	if (status_opencheck != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o) (open): %s",
 				(unsigned long int)parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
-				saunafs_error_string(status));
-		throw RequestException(status);
+				saunafs_error_string(status_opencheck));
+		// Note: mknod succeeded. If opencheck fails, the file exists but isn't opened.
+		// The other_op calls above are still valid.
+		throw RequestException(status_opencheck);
 	}
 
-	mattr = attr_get_mattr(attr);
-	fileinfo = fs_newfileinfo(fi->flags & O_ACCMODE,inode);
+	// If opencheck is also OK, then record open
+	if (!IS_SPECIAL_INODE(created_inode)) {
+		g_file_stats_manager.record_open(created_inode, new_file_full_path);
+	}
+
+	mattr = attr_get_mattr(attr); // Use attr from mknod for cache flags
+	fileinfo = fs_newfileinfo(fi->flags & O_ACCMODE, created_inode);
 	fi->fh = reinterpret_cast<uintptr_t>(fileinfo);
 	if (keep_cache==1) {
 		fi->keep_cache=1;
@@ -2219,13 +2455,13 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 		fi->keep_cache = (mattr&MATTR_ALLOWDATACACHE)?1:0;
 	}
 	if (debug_mode) {
-		safs::log_debug("create ({}) ok -> keep cache: {}", inode, (int)fi->keep_cache);
+		safs::log_debug("create ({}) ok -> keep cache: {}", created_inode, (int)fi->keep_cache);
 	}
 	gDirEntryCache.lockAndInvalidateParent(ctx, parent);
-	e.ino = inode;
+	e.ino = created_inode;
 	e.attr_timeout = (mattr&MATTR_NOACACHE)?0.0:attr_cache_timeout;
 	e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:entry_cache_timeout;
-	attr_to_stat(inode,attr,&e.attr);
+	attr_to_stat(created_inode,attr,&e.attr); // Use attr from mknod for EntryParam
 	makeattrstr(attrstr,256,&e.attr);
 	oplog_printf(ctx, "create (%lu,%s,-%s:0%04o): OK (%.1f,%lu,%.1f,%s,%lu)",
 			(unsigned long int)parent,
@@ -2242,7 +2478,7 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 
 void open(Context &ctx, Inode ino, FileInfo *fi) {
 	uint8_t oflags;
-	Attributes attr;
+	Attributes attr; // This will be filled by fs_opencheck
 	uint8_t mattr;
 	int status;
 
@@ -2255,11 +2491,14 @@ void open(Context &ctx, Inode ino, FileInfo *fi) {
 
 	if (IS_SPECIAL_INODE(ino)) {
 		special_open(ino, ctx, fi);
+		// Even special inodes might be interesting for stats, but fs_fullpath might not work.
+		// For now, skipping stats for special inodes here.
 		return;
 	}
+	std::string full_path = internal_get_full_path(ino, ctx);
 
 	oflags = 0;
-	if ((fi->flags & O_CREAT) == O_CREAT) {
+	if ((fi->flags & O_CREAT) == O_CREAT) { // Should not happen with open, create handles this
 		oflags |= AFTER_CREATE;
 	}
 	if ((fi->flags & O_ACCMODE) == O_RDONLY) {
@@ -2277,6 +2516,9 @@ void open(Context &ctx, Inode ino, FileInfo *fi) {
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
+
+	// If fs_opencheck is OK, record the open event.
+	g_file_stats_manager.record_open(ino, full_path);
 
 	mattr = attr_get_mattr(attr);
 	fileinfo = fs_newfileinfo(fi->flags & O_ACCMODE,ino);
@@ -2317,6 +2559,9 @@ void release(Inode ino, FileInfo *fi) {
 		special_release(ino, fi);
 		return;
 	}
+	// Release is like a close. No specific record_close in TopFileStatsManager.
+	// If needed, could be an other_op. Open/create already logged.
+	// Skipping for now.
 
 	if (fileinfo != NULL){
 		if (fileinfo->use_flocks) {
@@ -2337,12 +2582,55 @@ std::vector<uint8_t> read_special_inode(Context &ctx,
 	LOG_AVG_TILL_END_OF_SCOPE0("read");
 	stats_inc(OP_READ);
 
+	// Handle SPECIAL_INODE_FILE_STATS
+	if (ino == SPECIAL_INODE_FILE_STATS) {
+		std::vector<std::shared_ptr<MyProject::FileActivityStat>> top_files = g_file_stats_manager.get_top_files();
+		std::ostringstream oss;
+		
+		for (const auto& stat_ptr : top_files) {
+			if (!stat_ptr) continue; // Should not happen with shared_ptr from get_top_files copies
+
+			oss << stat_ptr->inode << "|"
+			    << stat_ptr->full_path << "|"
+			    << stat_ptr->bytes_read << "|"
+			    << stat_ptr->bytes_written << "|"
+			    << stat_ptr->opens << "|"
+			    << stat_ptr->reads << "|"
+			    << stat_ptr->writes << "|"
+			    << stat_ptr->stats_ops << "|"
+			    << stat_ptr->other_ops << "|";
+
+			std::string hist_str;
+			for (auto const& [key, val] : stat_ptr->block_size_histogram) {
+				if (!hist_str.empty()) {
+					hist_str += ",";
+				}
+				hist_str += std::to_string(key) + ":" + std::to_string(val);
+			}
+			oss << hist_str << "\n";
+		}
+		
+		std::string result_str = oss.str();
+		// Apply offset and size for partial reads if necessary (as per typical special file reads)
+		size_t content_len = result_str.length();
+		size_t read_len = 0;
+		std::vector<uint8_t> result_bytes;
+
+		if (static_cast<size_t>(off) < content_len) {
+			read_len = std::min(size, content_len - static_cast<size_t>(off));
+			result_bytes.assign(result_str.begin() + off, result_str.begin() + off + read_len);
+		}
+		// No explicit oplog_printf here for this special inode, but could be added.
+		return result_bytes;
+	}
+
+	// Original special_read call for other special inodes
 	return special_read(ino, ctx, size, off, fi, debug_mode);
 }
 
 ReadCache::Result read(Context &ctx,
 			Inode ino,
-			size_t size,
+			size_t size, // Requested size
 			off_t off,
 			FileInfo *fi) {
 	LOG_AVG_TILL_END_OF_SCOPE0("read");
@@ -2351,6 +2639,11 @@ ReadCache::Result read(Context &ctx,
 	finfo *fileinfo = reinterpret_cast<finfo*>(fi->fh);
 	int err;
 	ReadCache::Result ret;
+	std::string full_path; // Moved up to be available for stats call
+	if (!IS_SPECIAL_INODE(ino)) {
+		full_path = internal_get_full_path(ino, ctx);
+	}
+
 	if (debug_mode) {
 		safs::log_debug("read from inode {} up to {} bytes from position {}",
 		                ino, size, off);
@@ -2363,7 +2656,7 @@ ReadCache::Result read(Context &ctx,
 				saunafs_error_string(SAUNAFS_ERROR_EBADF));
 		throw RequestException(SAUNAFS_ERROR_EBADF);
 	}
-	if (off>=MAX_FILE_SIZE || off+size>=MAX_FILE_SIZE) {
+	if (off>=MAX_FILE_SIZE || off+size>=MAX_FILE_SIZE) { // Check against size too
 		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
 				(unsigned long int)ino,
 				(uint64_t)size,
@@ -2373,12 +2666,12 @@ ReadCache::Result read(Context &ctx,
 	}
 	try {
 		const SteadyTimePoint deadline = SteadyClock::now() + std::chrono::seconds(30);
-		uint8_t status = gLocalIoLimiter().waitForRead(ctx.pid, size, deadline);
-		if (status == SAUNAFS_STATUS_OK) {
-			status = gGlobalIoLimiter().waitForRead(ctx.pid, size, deadline);
+		uint8_t status_limit = gLocalIoLimiter().waitForRead(ctx.pid, size, deadline); // Renamed status to avoid conflict
+		if (status_limit == SAUNAFS_STATUS_OK) {
+			status_limit = gGlobalIoLimiter().waitForRead(ctx.pid, size, deadline);
 		}
-		if (status != SAUNAFS_STATUS_OK) {
-			err = (status == SAUNAFS_ERROR_EPERM ? SAUNAFS_ERROR_EPERM : SAUNAFS_ERROR_IO);
+		if (status_limit != SAUNAFS_STATUS_OK) {
+			err = (status_limit == SAUNAFS_ERROR_EPERM ? SAUNAFS_ERROR_EPERM : SAUNAFS_ERROR_IO);
 			oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
 					(unsigned long int)ino,
 					(uint64_t)size,
@@ -2419,17 +2712,18 @@ ReadCache::Result read(Context &ctx,
 	// end of reader critical section
 	flushlock.unlock();
 
-	write_data_flush_inode(ino);
+	write_data_flush_inode(ino); // Why is this here? Seems like it should be in write path.
 
 	uint64_t firstBlockToRead = off / SFSBLOCKSIZE;
 	uint64_t firstBlockNotToRead = (off + size + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 	uint64_t alignedOffset = firstBlockToRead * SFSBLOCKSIZE;
 	uint64_t alignedSize = (firstBlockNotToRead - firstBlockToRead) * SFSBLOCKSIZE;
 
-	uint32_t ssize = alignedSize;
+	uint32_t actual_bytes_read = alignedSize; // Will be modified by read_data
 
-	err = read_data(static_cast<ReadRecord *>(fileinfo->data), off, size, alignedOffset, ssize, ret);
-	ssize = ret.requestSize(alignedOffset, ssize);
+	err = read_data(static_cast<ReadRecord *>(fileinfo->data), off, size, alignedOffset, actual_bytes_read, ret);
+	actual_bytes_read = ret.requestSize(alignedOffset, actual_bytes_read); // get actual size from ret
+	
 	if (err != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
 				(unsigned long int)ino,
@@ -2439,19 +2733,24 @@ ReadCache::Result read(Context &ctx,
 		throw RequestException(err);
 	} else {
 		uint32_t replyOffset = off - alignedOffset;
-		if (ssize > replyOffset) {
-			ssize -= replyOffset;
-			if (ssize > size) {
-				ssize = size;
+		if (actual_bytes_read > replyOffset) {
+			actual_bytes_read -= replyOffset; // Now actual_bytes_read is relative to `off`
+			if (actual_bytes_read > size) { // Cannot exceed requested size
+				actual_bytes_read = size;
 			}
 		} else {
-			ssize = 0;
+			actual_bytes_read = 0;
 		}
 		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
 				(unsigned long int)ino,
-				(uint64_t)size,
+				(uint64_t)size, // requested size
 				(uint64_t)off,
-				(unsigned long int)ssize);
+				(unsigned long int)actual_bytes_read); // actual bytes read from 'off' limited by 'size'
+		
+		if (!IS_SPECIAL_INODE(ino)) {
+			// block_size is 'size' (requested read size) as per subtask
+			g_file_stats_manager.record_read(ino, full_path, actual_bytes_read, size);
+		}
 	}
 	return ret;
 }
@@ -2460,6 +2759,10 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 			FileInfo *fi) {
 	finfo *fileinfo = reinterpret_cast<finfo*>(fi->fh);
 	int err;
+	std::string full_path;
+	if (!IS_SPECIAL_INODE(ino)) {
+		full_path = internal_get_full_path(ino, ctx);
+	}
 
 	stats_inc(OP_WRITE);
 	if (debug_mode) {
@@ -2470,6 +2773,7 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	}
 
 	if (IS_SPECIAL_INODE(ino)) {
+		// Not logging special inodes for now
 		return special_write(ino, ctx, buf, size, off, fi);
 	}
 
@@ -2481,7 +2785,7 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 				saunafs_error_string(SAUNAFS_ERROR_EBADF));
 		throw RequestException(SAUNAFS_ERROR_EBADF);
 	}
-	if (off>=MAX_FILE_SIZE || off+size>=MAX_FILE_SIZE) {
+	if (off>=MAX_FILE_SIZE || off+size>=MAX_FILE_SIZE) { // Check against size too
 		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
 				(unsigned long int)ino,
 				(uint64_t)size,
@@ -2491,12 +2795,12 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	}
 	try {
 		const SteadyTimePoint deadline = SteadyClock::now() + std::chrono::seconds(30);
-		uint8_t status = gLocalIoLimiter().waitForWrite(ctx.pid, size, deadline);
-		if (status == SAUNAFS_STATUS_OK) {
-			status = gGlobalIoLimiter().waitForWrite(ctx.pid, size, deadline);
+		uint8_t status_limit = gLocalIoLimiter().waitForWrite(ctx.pid, size, deadline); // Renamed status
+		if (status_limit == SAUNAFS_STATUS_OK) {
+			status_limit = gGlobalIoLimiter().waitForWrite(ctx.pid, size, deadline);
 		}
-		if (status != SAUNAFS_STATUS_OK) {
-			err = status == SAUNAFS_ERROR_EPERM ? SAUNAFS_ERROR_EPERM : SAUNAFS_ERROR_IO;
+		if (status_limit != SAUNAFS_STATUS_OK) {
+			err = status_limit == SAUNAFS_ERROR_EPERM ? SAUNAFS_ERROR_EPERM : SAUNAFS_ERROR_IO;
 			oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): (logical) %s",
 							(unsigned long int)ino,
 							(uint64_t)size,
@@ -2526,13 +2830,15 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 		fileinfo->data = write_data_new(ino);
 	}
 
-	Attributes attr;
-	attr.fill(0);
+	Attributes file_attr; // Renamed from attr to avoid conflict
+	file_attr.fill(0);
 	if (usedircache) {
-		gDirEntryCache.lookup(ctx, ino, attr);
+		// This lookup is to get currentSize. It's a metadata read.
+		// Could potentially be a separate stat_op record if desired.
+		gDirEntryCache.lookup(ctx, ino, file_attr);
 	}
 	struct stat stbuf;
-	attr_to_stat(ino, attr, &stbuf);
+	attr_to_stat(ino, file_attr, &stbuf);
 	size_t currentSize = stbuf.st_size;
 
 	err = write_data(fileinfo->data, off, size, (const uint8_t *)buf,
@@ -2548,9 +2854,13 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	} else {
 		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
 				(unsigned long int)ino,
-				(uint64_t)size,
+				(uint64_t)size, // requested size
 				(uint64_t)off,
-				(unsigned long int)size);
+				(unsigned long int)size); // bytes_written is 'size' if successful
+		
+		// Record write operation
+		// block_size is 'size' (requested write size) as per subtask
+		g_file_stats_manager.record_write(ino, full_path, size, size);
 		return size;
 	}
 }
@@ -2573,6 +2883,7 @@ void flush(Context &ctx, Inode ino, FileInfo* fi) {
 	if (IS_SPECIAL_INODE(ino)) {
 		oplog_printf(ctx, "flush (%lu): OK",
 				(unsigned long int)ino);
+		// Not logging for special inodes.
 		return;
 	}
 	if (fileinfo==NULL) {
@@ -2601,6 +2912,10 @@ void flush(Context &ctx, Inode ino, FileInfo* fi) {
 	} else {
 		oplog_printf(ctx, "flush (%lu): OK",
 				(unsigned long int)ino);
+		// Flush is a type of "other_op" or could be a "write" if it implies data sync.
+		// Let's consider it an other_op for now.
+		std::string full_path = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_other_op(ino, full_path);
 	}
 }
 
@@ -2618,6 +2933,7 @@ void fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
 		oplog_printf(ctx, "fsync (%lu,%d): OK",
 				(unsigned long int)ino,
 				datasync);
+		// Not logging for special inodes.
 		return;
 	}
 	if (fileinfo==NULL) {
@@ -2630,7 +2946,7 @@ void fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
 	err = SAUNAFS_STATUS_OK;
 	PthreadMutexWrapper lock(fileinfo->lock);
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_WRITEONLY) {
-		err = write_data_flush(fileinfo->data);
+		err = write_data_flush(fileinfo->data); // fsync implies flush
 	}
 	if (err != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "fsync (%lu,%d): %s",
@@ -2642,6 +2958,9 @@ void fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
 		oplog_printf(ctx, "fsync (%lu,%d): OK",
 				(unsigned long int)ino,
 				datasync);
+		// Fsync is a stronger flush, also an "other_op".
+		std::string full_path = internal_get_full_path(ino, ctx);
+		g_file_stats_manager.record_other_op(ino, full_path);
 	}
 }
 

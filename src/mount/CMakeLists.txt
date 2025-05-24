@@ -20,6 +20,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 collect_sources(MOUNT)
 
 shared_add_library(mount ${MOUNT_SOURCES})
+target_sources(mount PRIVATE file_activity_stats.cc) # Explicitly add the new source file
 shared_target_link_libraries(mount sfscommon ${ADDITIONAL_LIBS})
 
 create_unittest(mount ${MOUNT_TESTS})
