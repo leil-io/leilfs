@@ -6376,12 +6376,9 @@ void matoclserv_reload(void) {
 
 	char *oldListenHost = ListenHost;
 	char *oldListenPort = ListenPort;
-	if (cfg_isdefined("MATOCL_LISTEN_HOST") || cfg_isdefined("MATOCL_LISTEN_PORT") || !(cfg_isdefined("MATOCU_LISTEN_HOST") || cfg_isdefined("MATOCU_LISTEN_HOST"))) {
+	if (cfg_isdefined("MATOCL_LISTEN_HOST") || cfg_isdefined("MATOCL_LISTEN_PORT")) {
 		ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
 		ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
-	} else {
-		ListenHost = cfg_getstr("MATOCU_LISTEN_HOST","*");
-		ListenPort = cfg_getstr("MATOCU_LISTEN_PORT","9421");
 	}
 	if (strcmp(oldListenHost,ListenHost)==0 && strcmp(oldListenPort,ListenPort)==0) {
 		free(oldListenHost);
@@ -6422,14 +6419,9 @@ void matoclserv_reload(void) {
 }
 
 int matoclserv_networkinit(void) {
-	if (cfg_isdefined("MATOCL_LISTEN_HOST") || cfg_isdefined("MATOCL_LISTEN_PORT") || !(cfg_isdefined("MATOCU_LISTEN_HOST") || cfg_isdefined("MATOCU_LISTEN_HOST"))) {
+	if (cfg_isdefined("MATOCL_LISTEN_HOST") || cfg_isdefined("MATOCL_LISTEN_PORT")) {
 		ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
 		ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
-	} else {
-		safs_pretty_syslog(LOG_WARNING, "options MATOCU_LISTEN_* are deprecated -- use "
-				"MATOCL_LISTEN_* instead");
-		ListenHost = cfg_getstr("MATOCU_LISTEN_HOST","*");
-		ListenPort = cfg_getstr("MATOCU_LISTEN_PORT","9421");
 	}
 	RejectOld = cfg_getuint32("REJECT_OLD_CLIENTS",0);
 
