@@ -108,8 +108,6 @@ struct matocsserventry {
 
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
-	matocsserventry *next;
-
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
@@ -119,9 +117,15 @@ struct matocsserventry {
 
 		return first_usage < second_usage;
 	}
+
+	~matocsserventry() {
+		if (servstrip != nullptr) {
+			free(servstrip);
+		}
+	}
 };
 
-static matocsserventry *matocsservhead=NULL;
+static std::list<std::unique_ptr<matocsserventry>> matocsservList;
 static int lsock;
 static int32_t lsockpdescpos;
 
@@ -314,26 +318,27 @@ void matocsserv_replication_disconnected(matocsserventry *srv) {
 
 /* replication DB END */
 void matocsserv_usagedifference(double *minusage,double *maxusage,uint16_t *usablescount,uint16_t *totalscount) {
-	matocsserventry *eptr;
 	uint32_t j,k;
 	double minspace=1.0,maxspace=0.0;
 	double space;
 	j = 0;
 	k = 0;
-	for (eptr = matocsservhead ; eptr && j<65535 && k<65535; eptr=eptr->next) {
-		if (eptr->mode!=KILL) {
-			if (eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace) {
-				space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
-				if (j==0) {
-					minspace = maxspace = space;
-				} else if (space<minspace) {
-					minspace = space;
-				} else if (space>maxspace) {
-					maxspace = space;
+	for (const auto &eptr : matocsservList) {
+		if (j < 65535 && k < 65535) {
+			if (eptr->mode != KILL) {
+				if (eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace) {
+					space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
+					if (j == 0) {
+						minspace = maxspace = space;
+					} else if (space < minspace) {
+						minspace = space;
+					} else if (space > maxspace) {
+						maxspace = space;
+					}
+					j++;
 				}
-				j++;
+				k++;
 			}
-			k++;
 		}
 	}
 	if (usablescount) {
@@ -361,12 +366,12 @@ void matocsserv_usagedifference(double *minusage,double *maxusage,uint16_t *usab
 
 std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
 	std::vector<ServerWithUsage> result;
-	for (matocsserventry* eptr = matocsservhead; eptr != nullptr; eptr=eptr->next) {
+	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != KILL
 				&& eptr->totalspace > 0
 				&& eptr->usedspace <= eptr->totalspace) {
 			double usage = double(eptr->usedspace) / double(eptr->totalspace);
-			result.emplace_back(eptr, usage, eptr->label);
+			result.emplace_back(eptr.get(), usage, eptr->label);
 		}
 	}
 	std::sort(result.begin(), result.end(), [](const ServerWithUsage &u1, const ServerWithUsage &u2){
@@ -381,7 +386,7 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	GetServersForNewChunk getter;
 	const Goal &goal(fs_get_goal_definition(goal_id));
 
-	for (matocsserventry *eptr = matocsservhead; eptr != nullptr; eptr = eptr->next) {
+	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != KILL && eptr->totalspace > 0 &&
 		    eptr->usedspace <= eptr->totalspace &&
 		    (eptr->totalspace - eptr->usedspace) >= SFSCHUNKSIZE) {
@@ -394,8 +399,8 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 			//     that the 'history' can also do its job.
 			//
 			// weight = percent free spaces
-			const int64_t weight = 1024 * 1024 * (1. - matocsserv_get_usage(eptr));
-			getter.addServer(eptr, eptr->label, weight, eptr->version, eptr->load_factor);
+			const int64_t weight = 1024 * 1024 * (1. - matocsserv_get_usage(eptr.get()));
+			getter.addServer(eptr.get(), eptr->label, weight, eptr->version, eptr->load_factor);
 		}
 	}
 
@@ -478,7 +483,7 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 	returned_matching = 0;
 	temporarily_unavailable = 0;
 	servers.clear();
-	for (matocsserventry* eptr = matocsservhead; eptr; eptr = eptr->next) {
+	for (const auto &eptr : matocsservList) {
 		if (eptr->mode == KILL
 				|| eptr->totalspace == 0
 				|| eptr->usedspace > eptr->totalspace
@@ -495,7 +500,7 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 			matchesRequestedLabel = true;
 		}
 		if (eptr->wrepcounter < replication_write_limit) {
-			servers.push_back(eptr);
+			servers.push_back(eptr.get());
 			if (matchesRequestedLabel) {
 				++returned_matching;
 			}
@@ -535,11 +540,9 @@ double matocsserv_get_usage(matocsserventry* eptr) {
 }
 
 void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
-	matocsserventry *eptr;
-	uint64_t tspace,uspace;
-	tspace = 0;
-	uspace = 0;
-	for (eptr = matocsservhead ; eptr ; eptr=eptr->next) {
+	uint64_t tspace = 0;
+	uint64_t uspace = 0;
+	for (const auto &eptr : matocsservList) {
 		if (eptr->mode!=KILL && eptr->totalspace>0) {
 			tspace += eptr->totalspace;
 			uspace += eptr->usedspace;
@@ -1411,20 +1414,10 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 }
 
 void matocsserv_term(void) {
-	matocsserventry *eptr,*eaptr;
 	safs_pretty_syslog(LOG_INFO,"master <-> chunkservers module: closing %s:%s",ListenHost,ListenPort);
 	tcpclose(lsock);
 
-	eptr = matocsservhead;
-	while (eptr) {
-		if (eptr->servstrip) {
-			free(eptr->servstrip);
-		}
-		eaptr = eptr;
-		eptr = eptr->next;
-		delete eaptr;
-	}
-	matocsservhead=NULL;
+	matocsservList.clear();
 
 	free(ListenHost);
 	free(ListenPort);
@@ -1501,10 +1494,10 @@ void matocsserv_write(matocsserventry *eptr) {
 }
 
 void matocsserv_desc(std::vector<pollfd> &pdesc) {
-	matocsserventry *eptr;
 	pdesc.push_back({lsock,POLLIN,0});
 	lsockpdescpos = pdesc.size()-1;
-	for (eptr=matocsservhead ; eptr ; eptr=eptr->next) {
+
+	for (const auto &eptr : matocsservList) {
 		pdesc.push_back({eptr->sock,POLLIN,0});
 		eptr->pdescpos = pdesc.size() - 1;
 		if (!eptr->outputPackets.empty()) {
@@ -1515,7 +1508,7 @@ void matocsserv_desc(std::vector<pollfd> &pdesc) {
 
 void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 	uint32_t peerip;
-	matocsserventry *eptr,**kptr;
+	std::unique_ptr<matocsserventry> eptr;
 	int ns;
 
 	if (lsockpdescpos>=0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
@@ -1525,17 +1518,15 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 		} else if (metadataserver::isMaster()) {
 			tcpnonblock(ns);
 			tcpnodelay(ns);
-			eptr = new matocsserventry;
+			eptr = std::make_unique<matocsserventry>();
 			passert(eptr);
-			eptr->next = matocsservhead;
-			matocsservhead = eptr;
 			eptr->sock = ns;
 			eptr->pdescpos = -1;
 			eptr->mode = CONNECTED;
 			eptr->lastread.reset();
 			eptr->lastwrite.reset();
 
-			tcpgetpeer(eptr->sock,&peerip,NULL);
+			tcpgetpeer(eptr->sock, &peerip, nullptr);
 			eptr->servstrip = matocsserv_makestrip(peerip);
 			eptr->version = 0;
 			eptr->servip = 0;
@@ -1554,38 +1545,40 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->delcounter = 0;
 			eptr->csdb = nullptr;
 			eptr->load_factor = 0;
+
+			matocsservList.emplace_back(std::move(eptr));
 			chunk_server_unlabelled_connected();
 		} else {
 			tcpclose(ns);
 		}
 	}
-	for (eptr=matocsservhead ; eptr ; eptr=eptr->next) {
+	for (const auto &eptr : matocsservList) {
 		if (eptr->pdescpos>=0) {
 			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
 				eptr->mode = KILL;
 			}
 			if ((pdesc[eptr->pdescpos].revents & POLLIN) && eptr->mode!=KILL) {
 				eptr->lastread.reset();
-				matocsserv_read(eptr);
+				matocsserv_read(eptr.get());
 			}
 			if ((pdesc[eptr->pdescpos].revents & POLLOUT) && eptr->mode!=KILL) {
 				eptr->lastwrite.reset();
-				matocsserv_write(eptr);
+				matocsserv_write(eptr.get());
 			}
 		}
 		if (eptr->lastread.elapsed_ms() > eptr->timeout) {
 			eptr->mode = KILL;
 		}
 		if (eptr->lastwrite.elapsed_ms() > (eptr->timeout/3) && eptr->outputPackets.empty()) {
-			matocsserv_createpacket(eptr,ANTOAN_NOP,0);
+			matocsserv_createpacket(eptr.get(), ANTOAN_NOP, 0);
 		}
 	}
-	kptr = &matocsservhead;
-	while ((eptr=*kptr)) {
+
+	for (auto entriesIterator = matocsservList.begin(); entriesIterator != matocsservList.end();) {
+		auto *eptr = entriesIterator->get();
 		if (eptr->mode == KILL) {
-			double us,ts;
-			us = (double)(eptr->usedspace)/(double)(1024*1024*1024);
-			ts = (double)(eptr->totalspace)/(double)(1024*1024*1024);
+			double us = (double)(eptr->usedspace) / (double)(1024 * 1024 * 1024);
+			double ts = (double)(eptr->totalspace) / (double)(1024 * 1024 * 1024);
 			safs_pretty_syslog(LOG_NOTICE,
 					"chunkserver disconnected - ip: %s, port: %" PRIu16
 					", usedspace: %" PRIu64 " (%.2f GiB), totalspace: %" PRIu64
@@ -1598,13 +1591,9 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			}
 			tcpclose(eptr->sock);
 
-			if (eptr->servstrip) {
-				free(eptr->servstrip);
-			}
-			*kptr = eptr->next;
-			delete eptr;
+			entriesIterator = matocsservList.erase(entriesIterator);
 		} else {
-			kptr = &(eptr->next);
+			++entriesIterator;
 		}
 	}
 }
@@ -1697,7 +1686,7 @@ int matocsserv_init(void) {
 	safs_pretty_syslog(LOG_NOTICE,"master <-> chunkservers module: listen on %s:%s",ListenHost,ListenPort);
 
 	matocsserv_replication_init();
-	matocsservhead = NULL;
+
 	eventloop_reloadregister(matocsserv_reload);
 	eventloop_destructregister(matocsserv_term);
 	eventloop_pollregister(matocsserv_desc,matocsserv_serve);
