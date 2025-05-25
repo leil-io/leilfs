@@ -151,7 +151,6 @@ csdbentry *matocsserv_get_csdb(matocsserventry* s) {
 
 struct repsrc {
 	matocsserventry *src;
-	repsrc *next;
 };
 
 struct repdst {
@@ -159,61 +158,22 @@ struct repdst {
 	uint32_t chunkVersion;
 	ChunkPartType chunkType;
 	matocsserventry *destinationCs;
-	repsrc *repsrcHead;
-	repdst *next;
+	std::list<repsrc*> replicaSourceList;
 };
 
-static repdst* rephash[REPHASHSIZE];
-static repsrc *repsrcfreehead=NULL;
-static repdst *repdstfreehead=NULL;
+static std::list<repdst*> rephash[REPHASHSIZE];
 
-repsrc* matocsserv_repsrc_malloc() {
-	repsrc *r;
-	if (repsrcfreehead) {
-		r = repsrcfreehead;
-		repsrcfreehead = r->next;
-	} else {
-		r = (repsrc*)malloc(sizeof(repsrc));
-		passert(r);
-	}
-	return r;
-}
-
-void matocsserv_repsrc_free(repsrc *r) {
-	r->next = repsrcfreehead;
-	repsrcfreehead = r;
-}
-
-repdst* matocsserv_repdst_malloc() {
-	repdst *r;
-	if (repdstfreehead) {
-		r = repdstfreehead;
-		repdstfreehead = r->next;
-	} else {
-		r = (repdst*)malloc(sizeof(repdst));
-		passert(r);
-	}
-	return r;
-}
-
-void matocsserv_repdst_free(repdst *r) {
-	r->next = repdstfreehead;
-	repdstfreehead = r;
-}
-
-void matocsserv_replication_init(void) {
+void matocsserv_replication_init() {
 	uint32_t hash;
-	for (hash=0 ; hash<REPHASHSIZE ; hash++) {
-		rephash[hash]=NULL;
+	for (hash = 0; hash < REPHASHSIZE; hash++) {
+		rephash[hash].clear();
 	}
-	repsrcfreehead=NULL;
-	repdstfreehead=NULL;
 }
 
 int matocsserv_replication_find(uint64_t chunkId, uint32_t chunkVersion,
 		ChunkPartType chunkType, matocsserventry *dst) {
 	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
-	for (repdst *replica = rephash[hash]; replica; replica = replica->next) {
+	for (auto *replica : rephash[hash]) {
 		if (replica->chunkId == chunkId
 				&& replica->chunkVersion == chunkVersion
 				&& replica->chunkType == chunkType
@@ -231,86 +191,77 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion,
 	}
 
 	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
-	repdst *replica;
+
 	repsrc *replicaSource;
 
-	replica = matocsserv_repdst_malloc();
+	auto *replica = new repdst();
 	replica->chunkId = chunkId;
 	replica->chunkVersion = chunkVersion;
 	replica->chunkType = chunkType;
 	replica->destinationCs = dst;
-	replica->repsrcHead = NULL;
-	replica->next = rephash[hash];
-	rephash[hash] = replica;
+	rephash[hash].push_back(replica);
+
 	for (uint8_t i = 0 ; i < srccnt ; i++) {
-		replicaSource = matocsserv_repsrc_malloc();
+		replicaSource = new repsrc();
 		replicaSource->src = src[i];
-		replicaSource->next = replica->repsrcHead;
-		replica->repsrcHead = replicaSource;
+		replica->replicaSourceList.push_back(replicaSource);
 		static_cast<matocsserventry *>(src[i])->rrepcounter++;
 	}
-	static_cast<matocsserventry *>(dst)->wrepcounter++;
+
+	dst->wrepcounter++;
 }
 
 void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion,
 		ChunkPartType chunkType, matocsserventry *destination) {
 	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
-	repdst *replica, **replicaPointer;
-	repsrc *replicaSource, *replicaSourceToDelete;
 
-	replicaPointer = &(rephash[hash]);
-	while ((replica = *replicaPointer) != NULL) {
-		if (replica->chunkId == chunkId
-				&& replica->chunkVersion == chunkVersion
-				&& replica->chunkType == chunkType
-				&& replica->destinationCs == destination) {
-			replicaSource = replica->repsrcHead;
-			while (replicaSource) {
-				replicaSourceToDelete = replicaSource;
-				replicaSource = replicaSource->next;
-				static_cast<matocsserventry *>(replicaSourceToDelete->src)->rrepcounter--;
-				matocsserv_repsrc_free(replicaSourceToDelete);
+	for (auto replicaIt = rephash[hash].begin(); replicaIt != rephash[hash].end();) {
+		auto *replica = *replicaIt;
+		if (replica->chunkId == chunkId && replica->chunkVersion == chunkVersion &&
+		    replica->chunkType == chunkType && replica->destinationCs == destination) {
+
+			for (auto *replicaSource : replica->replicaSourceList) {
+				replicaSource->src->rrepcounter--;
 			}
-			static_cast<matocsserventry *>(destination)->wrepcounter--;
-			*replicaPointer = replica->next;
-			matocsserv_repdst_free(replica);
+
+			replica->replicaSourceList.clear();
+			destination->wrepcounter--;
+
+			replicaIt = rephash[hash].erase(replicaIt);
 		} else {
-			replicaPointer = &(replica->next);
+			++replicaIt;
 		}
 	}
 }
 
 void matocsserv_replication_disconnected(matocsserventry *srv) {
-	uint32_t hash;
-	repdst *r, **rp;
-	repsrc *rs, *rsdel, **rsp;
-
-	for (hash = 0; hash < REPHASHSIZE; hash++) {
-		rp = &(rephash[hash]);
-		while ((r = *rp) != NULL) {
-			if (r->destinationCs == srv) {
-				rs = r->repsrcHead;
-				while (rs) {
-					rsdel = rs;
-					rs = rs->next;
-					rsdel->src->rrepcounter--;
-					matocsserv_repsrc_free(rsdel);
+	for (auto & hash : rephash) {
+		// Iterate through the list of replicas in the hash bucket.
+		for (auto replicaIterator = hash.begin(); replicaIterator != hash.end();) {
+			auto *replica = *replicaIterator;
+			if (replica->destinationCs == srv) {
+				// If the destination server is the one we are disconnecting,
+				// remove all sources and the replica itself.
+				for (auto *replicaSource : replica->replicaSourceList) {
+					replicaSource->src->rrepcounter--;
 				}
+
+				replica->replicaSourceList.clear();
 				srv->wrepcounter--;
-				*rp = r->next;
-				matocsserv_repdst_free(r);
+
+				replicaIterator = hash.erase(replicaIterator);
 			} else {
-				rsp = &(r->repsrcHead);
-				while ((rs = *rsp) != NULL) {
-					if (rs->src == srv) {
+				auto replicaSrcIterator = replica->replicaSourceList.begin();
+				while (replicaSrcIterator != replica->replicaSourceList.end()) {
+					auto *replicaSource = *replicaSrcIterator;
+					if (replicaSource->src == srv) {
 						srv->rrepcounter--;
-						*rsp = rs->next;
-						matocsserv_repsrc_free(rs);
+						replicaSrcIterator = replica->replicaSourceList.erase(replicaSrcIterator);
 					} else {
-						rsp = &(rs->next);
+						++replicaSrcIterator;
 					}
 				}
-				rp = &(r->next);
+				++replicaIterator;
 			}
 		}
 	}
@@ -534,9 +485,9 @@ const MediaLabel& matocsserv_get_label(matocsserventry* e) {
 double matocsserv_get_usage(matocsserventry* eptr) {
 	if (eptr->usedspace > eptr->totalspace) {
 		return 1.0;
-	} else {
-		return double(eptr->usedspace) / double(eptr->totalspace);
 	}
+
+	return double(eptr->usedspace) / double(eptr->totalspace);
 }
 
 void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
