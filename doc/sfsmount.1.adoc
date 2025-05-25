@@ -170,7 +170,7 @@ Set percentage of system memory used for max value of read cache size (default: 
 Define number of read workers (default: 30).
 
 *-o maxreadaheadrequests=*'N'::
-Define number of readahead requests per inode (default: 5).
+Define number of readahead requests per inode (default: 2).
 
 *-o sfsrlimitnofile=*'N'::
 Try to change limit of simultaneously opened file descriptors on startup
