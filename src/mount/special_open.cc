@@ -109,14 +109,14 @@ static void open(const Context &ctx, FileInfo *fi) {
 
 namespace InodePathByInode {
 static void open(const Context &ctx, FileInfo *fi) {
-	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
+	std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
 		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): %s",
 		            inode_,
 		            saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
-	fi->fh = reinterpret_cast<uintptr_t>(inodePathInfo.pathByInode);
+	fi->fh = reinterpret_cast<uintptr_t>(gInodePathInfo.pathByInode.c_str());
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
 	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): OK (1,0)",

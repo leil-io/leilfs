@@ -111,7 +111,7 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 
 namespace InodePathByInode {
 static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
-	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
+	std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
 	struct stat o_stbuf;
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(inode_, attr, &o_stbuf);

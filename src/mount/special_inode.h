@@ -30,6 +30,7 @@
 #include "mount/oplog.h"
 #include "mount/tweaks.h"
 #include "mount/mount_info.h"
+#include "mount/path_by_inode.h"
 
 namespace InodeMasterInfo {
 	extern const Attributes attr;
@@ -89,15 +90,6 @@ namespace InodeFileByInode {
 }
 
 namespace InodePathByInode {
-	typedef struct _inodePathInfo {
-		char *pathByInode;
-		inode_t inode;
-		std::mutex mtx;
-		std::condition_variable cv;
-		bool locked = false;
-	} InodePathInfo;
-    extern InodePathInfo inodePathInfo;
-
     extern const Attributes attr;
 	extern const inode_t inode_;
 }

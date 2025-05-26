@@ -941,13 +941,13 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 		if (endptr == nullptr || *endptr != '\0') {
 			throw RequestException(SAUNAFS_ERROR_EINVAL);
 		}
-		std::unique_lock<std::mutex> lock(InodePathByInode::inodePathInfo.mtx);
-		InodePathByInode::inodePathInfo.cv.wait(lock, [inode] {
-			return !InodePathByInode::inodePathInfo.locked ||
-			       InodePathByInode::inodePathInfo.inode == inode;
+		std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
+		gInodePathInfo.cv.wait(lock, [inode] {
+			return !gInodePathInfo.locked ||
+			       gInodePathInfo.inode == inode;
 		});
-		InodePathByInode::inodePathInfo.locked = true;
-		InodePathByInode::inodePathInfo.inode = inode;
+		gInodePathInfo.locked = true;
+		gInodePathInfo.inode = inode;
 		std::string fullPath = "";
 		int lookupStatus = SAUNAFS_STATUS_OK;
 		int getattrStatus = SAUNAFS_STATUS_OK;
@@ -957,14 +957,13 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 			fs_getattr(inode, ctx.uid, ctx.gid, attr));
 		if (lookupStatus != SAUNAFS_STATUS_OK || getattrStatus != SAUNAFS_STATUS_OK) {
 			status = lookupStatus != SAUNAFS_STATUS_OK ? lookupStatus : getattrStatus;
-			InodePathByInode::inodePathInfo.locked = false;
-			InodePathByInode::inodePathInfo.cv.notify_one();
+			gInodePathInfo.locked = false;
+			gInodePathInfo.cv.notify_one();
 			lock.unlock();
 			throw RequestException(status);
 		}
 		status = SAUNAFS_STATUS_OK;
-		InodePathByInode::inodePathInfo.pathByInode = new char[fullPath.length() + 1];
-		std::strcpy(InodePathByInode::inodePathInfo.pathByInode, fullPath.c_str());
+		gInodePathInfo.pathByInode = fullPath;
 		attr[0] = TYPE_FILE;
 		inode = parent;
 		icacheflag = 0;

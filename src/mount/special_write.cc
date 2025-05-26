@@ -100,7 +100,7 @@ static BytesWritten write(const Context &ctx, const char *buf, size_t size,
 namespace InodePathByInode {
 static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size,
 	                           off_t off, FileInfo * /*fi*/) {
-	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
+	std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
 	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
 	            inode_,
 	            (uint64_t)size,
