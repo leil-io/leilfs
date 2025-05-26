@@ -516,6 +516,7 @@ uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
 			return SAUNAFS_ERROR_ENOENT; 
 		}
 		auto [parentId, nameHandle] = current_node->parent[0];
+		if (!nameHandle) { return SAUNAFS_ERROR_ENOENT; }
 		status = fsnodes_get_node_for_operation(context, ExpectedNodeType::kAny, MODE_MASK_R,
 		                                        parentId, &parent_node);
 		if (status != SAUNAFS_STATUS_OK) { return status; }
