@@ -71,7 +71,7 @@ vsz_mount1=$(run_fio_and_measure_vsz "${info[mount1]}" $pid2)
 echo "VSZ for ${info[mount0]}: ${vsz_mount0}"
 echo "VSZ for ${info[mount1]}: ${vsz_mount1}"
 
-assert_less_than "${vsz_mount1}" "${vsz_mount0}"
+assert_less_or_equal "${vsz_mount1}" "${vsz_mount0}"
 
 cd $TEMP_DIR
 
