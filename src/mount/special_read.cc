@@ -210,11 +210,11 @@ static std::vector<uint8_t> read(const Context &ctx,
 namespace InodePathByInode {
 static std::vector<uint8_t> read(const Context &ctx,
 		size_t size, off_t off, FileInfo *fi, int debug_mode) {
-	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
+	std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
 	if (debug_mode) {
 		printDebugReadInfo(ctx, SPECIAL_INODE_PATH_BY_INODE, size, off);
 	}
-	uint32_t ssize = strlen(inodePathInfo.pathByInode);
+	uint32_t ssize = gInodePathInfo.pathByInode.size();
 	uint8_t *buff = reinterpret_cast<uint8_t*>(fi->fh);
 	if (off >= static_cast<off_t>(ssize)) {
 		printReadOplogNoData(ctx,

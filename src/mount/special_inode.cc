@@ -70,9 +70,6 @@ const inode_t InodeFileByInode::inode_ = SPECIAL_INODE_FILE_BY_INODE;
 const Attributes InodePathByInode::attr =
 	  {{'d', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
 const inode_t InodePathByInode::inode_ = SPECIAL_INODE_PATH_BY_INODE;
-namespace InodePathByInode {
-    InodePathInfo inodePathInfo = {nullptr, 0, std::mutex(), std::condition_variable(), false};
-}
 
 // 0x01A4 == 0b110100100 == 0644
 const Attributes InodeMountInfo::attr =

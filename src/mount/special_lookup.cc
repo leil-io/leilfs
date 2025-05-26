@@ -162,7 +162,7 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 namespace InodePathByInode {
 static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                            char attrstr[256]) {
-	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
+	std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
 	EntryParam e;
 	e.ino = inode_;
 	e.attr_timeout = 3600.0;
