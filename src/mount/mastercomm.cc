@@ -1047,6 +1047,10 @@ void* fs_nop_thread(void *arg) {
 		now = time(NULL);
 		std::unique_lock<std::mutex> fdLock(fdMutex);
 		if (fterm) {
+			if (disconnect) {  // setDisconnect was already called async
+				fdLock.unlock();
+				return nullptr;
+			}
 			if (fd>=0) {
 				fs_close_session();
 			}
@@ -1072,7 +1076,7 @@ void* fs_nop_thread(void *arg) {
 				}
 				lastwrite=now;
 			}
-			if (++inodeswritecnt >= gInitParams.report_reserved_period) {
+			if (++inodeswritecnt >= gInitParams.report_reserved_period && !disconnect) {
 				inodeswritecnt = 0;
 				std::unique_lock<std::mutex> asLock(acquiredFileMutex);
 				inodesleng = 8 + 4 * acquiredFiles.size();
