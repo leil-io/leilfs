@@ -512,8 +512,17 @@ uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	while (current_inode != context.rootinode()) {
-		if (!current_node || current_node->parent.empty()) { 
-			return SAUNAFS_ERROR_ENOENT; 
+		if (!current_node || current_node->parent.empty()) {
+			if (current_node->parent.empty() &&
+			    (current_node->type == FSNode::kReserved || current_node->type == FSNode::kTrash)) {
+				current_name =
+				    current_node->type == FSNode::kTrash
+				        ? gMetadata->trash.at(TrashPathKey(current_node)).get() + " (trash)"
+				        : gMetadata->reserved.at(current_inode).get() + " (reserved)";
+				fullPath = current_name;
+				return SAUNAFS_STATUS_OK;
+			}
+			return SAUNAFS_ERROR_ENOENT;
 		}
 		auto [parentId, nameHandle] = current_node->parent[0];
 		if (!nameHandle) { return SAUNAFS_ERROR_ENOENT; }
