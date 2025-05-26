@@ -30,10 +30,12 @@ saunafs_chunkserver_daemon 0 start
 
 saunafs_wait_for_ready_chunkservers 1
 
-# Wait for the next metadata dump
-while ! is_time_for_metadata_dump; do
-	echo "Waiting for next metadata dump, current seconds: $(date +%S)"
-	sleep 1
+# Wait for the next two metadata dump executions to prevent the test being flaky
+for i in $(seq 1 2); do
+	while ! is_time_for_metadata_dump; do
+		echo "Waiting for next metadata dump, current seconds: $(date +%S)"
+		sleep 1
+	done
 done
 
 # Confirm the metadata dump is skipped during chunks registration in the master
