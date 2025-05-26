@@ -158,7 +158,7 @@ struct repdst {
 	uint32_t chunkVersion;
 	ChunkPartType chunkType;
 	matocsserventry *destinationCs;
-	std::list<repsrc*> replicaSourceList;
+	std::list<std::unique_ptr<repsrc>> replicaSourceList;
 };
 
 static std::list<repdst*> rephash[REPHASHSIZE];
@@ -193,7 +193,7 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 
 	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
 
-	repsrc *replicaSource;
+	std::unique_ptr<repsrc> replicaSource;
 
 	auto *replica = new repdst();
 	replica->chunkId = chunkId;
@@ -203,9 +203,9 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 	rephash[hash].push_back(replica);
 
 	for (uint8_t i = 0 ; i < srccnt ; i++) {
-		replicaSource = new repsrc();
+		replicaSource = std::make_unique<repsrc>();
 		replicaSource->src = src[i];
-		replica->replicaSourceList.push_back(replicaSource);
+		replica->replicaSourceList.push_back(std::move(replicaSource));
 		static_cast<matocsserventry *>(src[i])->rrepcounter++;
 	}
 
@@ -221,13 +221,14 @@ void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
 		if (replica->chunkId == chunkId && replica->chunkVersion == chunkVersion &&
 		    replica->chunkType == chunkType && replica->destinationCs == destination) {
 
-			for (auto *replicaSource : replica->replicaSourceList) {
+			for (auto &replicaSource : replica->replicaSourceList) {
 				replicaSource->src->rrepcounter--;
 			}
 
 			replica->replicaSourceList.clear();
 			destination->wrepcounter--;
 
+			delete *replicaIt;
 			replicaIt = rephash[hash].erase(replicaIt);
 		} else {
 			++replicaIt;
@@ -243,18 +244,19 @@ void matocsserv_replication_disconnected(matocsserventry *server) {
 			if (replica->destinationCs == server) {
 				// If the destination server is the one we are disconnecting,
 				// remove all sources and the replica itself.
-				for (auto *replicaSource : replica->replicaSourceList) {
+				for (auto &replicaSource : replica->replicaSourceList) {
 					replicaSource->src->rrepcounter--;
 				}
 
 				replica->replicaSourceList.clear();
 				server->wrepcounter--;
 
+				delete *replicaIterator;
 				replicaIterator = hash.erase(replicaIterator);
 			} else {
 				auto replicaSrcIterator = replica->replicaSourceList.begin();
 				while (replicaSrcIterator != replica->replicaSourceList.end()) {
-					auto *replicaSource = *replicaSrcIterator;
+					auto &replicaSource = *replicaSrcIterator;
 					if (replicaSource->src == server) {
 						server->rrepcounter--;
 						replicaSrcIterator = replica->replicaSourceList.erase(replicaSrcIterator);
