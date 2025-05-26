@@ -1069,6 +1069,7 @@ void* fs_nop_thread(void *arg) {
 				put32bit(&ptr,4);
 				put32bit(&ptr,0);
 				if (tcptowrite(fd,hdr,12,1000)!=12) {
+					safs::log_warn("Failed to send ANTOAN_NOP to master");
 					disconnect = true;
 				} else {
 					master_stats_add(MASTER_BYTESSENT,12);
@@ -1088,6 +1089,7 @@ void* fs_nop_thread(void *arg) {
 					put32bit(&ptr, inode);
 				}
 				if (tcptowrite(fd,inodespacket,inodesleng,1000)!=inodesleng) {
+					safs::log_warn("Failed to send CLTOMA_FUSE_RESERVED_INODES to master");
 					disconnect = true;
 				} else {
 					master_stats_add(MASTER_BYTESSENT,inodesleng);
