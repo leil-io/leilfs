@@ -331,6 +331,39 @@ uint8_t MetadataBackendFile::fs_storeall(MetadataDumper::DumpType dumpType) {
 
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 
+/// @deprecated for version 5.0.0
+void MetadataBackendFile::changelogsMigrateFrom_1_6_29(const std::string& fname) {
+	std::string name_new;
+	std::string name_old;
+
+	for (uint32_t i = 0; i < 99; i++) {
+		// 99 is the maximum number of changelog file in versions up to 1.6.29.
+		name_old = fname + "." + std::to_string(i) + ".sfs";
+		name_new = fname + ".sfs";
+
+		if (i != 0) { name_new += "." + std::to_string(i); }
+		try {
+			if (fs::exists(name_old)) {
+				if (!fs::exists(name_new)) {
+					fs::rename(name_old, name_new);
+				} else {
+					safs_pretty_syslog(
+					    LOG_WARNING,
+					    "migrating changelogs from version 1.6.29: "
+					    "both old and new changelog files exist (%s and %s); "
+					    "old changelog won't be renamed automatically, "
+					    "fix this manually to remove this warning",
+					    name_old.c_str(), name_new.c_str());
+				}
+			}
+		} catch (const FilesystemException &ex) {
+			throw FilesystemException(
+			    "error when migrating changelogs from version 1.6.29: " +
+			    ex.message());
+		}
+	}
+}
+
 #ifndef METALOGGER
 
 uint64_t MetadataBackendFile::changelogGetFirstLogVersion(const std::string& fname) {

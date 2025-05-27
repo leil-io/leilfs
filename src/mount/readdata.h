@@ -210,6 +210,7 @@ struct ReadRecord {
 	std::atomic<uint8_t> refreshCounter = 0;
 	std::atomic<uint16_t> requestsNotDone = 0;
 	bool expired = false; //gMutex
+	std::atomic<bool> stopThread{false};
 
 	ReadRecord(uint32_t inode)
 	    : cache(gCacheExpirationTime_ms),

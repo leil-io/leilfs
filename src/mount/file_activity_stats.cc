@@ -1,4 +1,4 @@
-#include "src/mount/file_activity_stats.h"
+#include "file_activity_stats.h"
 
 #include <mutex>
 #include <algorithm> // For std::reverse

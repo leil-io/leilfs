@@ -1287,6 +1287,7 @@ int masterconn_init(void) {
 #endif /* #ifdef METALOGGER */
 
 #ifdef METALOGGER
+	gMetadataBackend->changelogsMigrateFrom_1_6_29("changelog_ml");
 	eptr->lastLogVersion = gMetadataBackend->findLastLogVersion();
 #endif /* #ifdef METALOGGER */
 	if (eptr->initConnect() < 0) { return -1; }

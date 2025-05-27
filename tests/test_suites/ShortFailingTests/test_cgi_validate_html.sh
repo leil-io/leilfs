@@ -56,7 +56,7 @@ saunafs_chunkserver_daemon 0 stop
 # Download data from cgi after creating some files
 traverse_cgi "$cgi_pages/full"
 
-# Make sure saunafs-cgiserver connected to the master server and downloaded more than 20 files.
+# Make sure sfscgiserv connected to the master server and downloaded more than 20 files.
 # Only a few files are downloaded when connection to the master server was unsuccessful.
 assert_less_than '20' "$(find "$cgi_pages/empty" -name "sfs.cgi*" | wc -l)"
 assert_less_than '20' "$(find "$cgi_pages/full" -name "sfs.cgi*" | wc -l)"

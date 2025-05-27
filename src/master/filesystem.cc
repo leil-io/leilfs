@@ -224,6 +224,7 @@ void fs_erase_message_from_lockfile() {
 int fs_loadall(void) {
 	fs_strinit();
 	chunk_strinit();
+	gMetadataBackend->changelogsMigrateFrom_1_6_29("changelog");
 	if (fs::exists(kMetadataTmpFilename)) {
 		throw MetadataFsConsistencyException(
 		    "temporary metadata file (" + std::string(kMetadataTmpFilename) + ") exists,"

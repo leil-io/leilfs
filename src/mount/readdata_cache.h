@@ -71,7 +71,7 @@ public:
 	struct Entry {
 		Offset offset;
 		std::vector<uint8_t> buffer;
-		std::atomic<Timer> timer;
+		Timer timer;
 		std::atomic<int> refcount = 0;
 		std::atomic<Size> requested_size;
 		std::atomic<bool> done = false;
@@ -101,12 +101,12 @@ public:
 		}
 
 		bool expired(uint32_t expiration_time) {
-			return timer.load().elapsed_ms() >= expiration_time;
+			std::unique_lock entryLock(mutex);
+			return timer.elapsed_ms() >= expiration_time;
 		}
 
 		void reset_timer() {
-			Timer new_timer;
-			timer.store(new_timer);
+			timer.reset();
 		}
 
 		Offset endOffset() const {
@@ -114,6 +114,8 @@ public:
 		}
 
 		void acquire() {
+			std::unique_lock entryLock(mutex);
+			timer.reset();
 			refcount++;
 		}
 
@@ -312,17 +314,14 @@ public:
 	void collectGarbage(unsigned count = 1000000) {
 		unsigned reserved_count = count;
 		expiration_time_ = gCacheExpirationTime_ms.load();
-		std::vector<Entry *> to_erase;
 
-		for (auto it = lru_.begin(); it != lru_.end() && count > 0; ++it) {
-			if (it->expired(expiration_time_) && it->done) {
-				to_erase.push_back(std::addressof(*it));
-				count--;
+		while (!lru_.empty() && count-- > 0) {
+			Entry *e = std::addressof(lru_.front());
+			if (e->expired(expiration_time_) && e->done) {
+				erase(entries_.iterator_to(*e));
+			} else {
+				break;
 			}
-		}
-
-		for (auto entry : to_erase) {
-			erase(entries_.iterator_to(*entry));
 		}
 
 		clearReserved(reserved_count);

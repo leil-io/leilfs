@@ -90,6 +90,13 @@ public:
 	/// To be used from configuration to instantiate the correct backend.
 	virtual std::string backendType() = 0;
 
+	/// @deprecated for version 5.0.0
+	/// Rename changelog files from old to new version
+	/// from <name>.X.sfs to <name>.sfs.X
+	/// Used only once - after upgrade from version before 1.6.29
+	/// @param name -- changelog name before first dot
+	virtual void changelogsMigrateFrom_1_6_29(const std::string& fname) = 0;
+
 // Available for master, shadow and metarestore
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.
