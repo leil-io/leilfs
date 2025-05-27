@@ -161,7 +161,7 @@ struct repdst {
 	std::list<std::unique_ptr<repsrc>> replicaSourceList;
 };
 
-static std::list<repdst*> rephash[REPHASHSIZE];
+static std::list<std::unique_ptr<repdst>> rephash[REPHASHSIZE];
 
 void matocsserv_replication_init() {
 	uint32_t hash;
@@ -173,7 +173,7 @@ void matocsserv_replication_init() {
 int matocsserv_replication_find(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                                 matocsserventry *dst) {
 	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
-	for (auto *replica : rephash[hash]) {
+	for (const auto &replica : rephash[hash]) {
 		if (replica->chunkId == chunkId
 				&& replica->chunkVersion == chunkVersion
 				&& replica->chunkType == chunkType
@@ -195,12 +195,11 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 
 	std::unique_ptr<repsrc> replicaSource;
 
-	auto *replica = new repdst();
+	auto replica = std::make_unique<repdst>();
 	replica->chunkId = chunkId;
 	replica->chunkVersion = chunkVersion;
 	replica->chunkType = chunkType;
 	replica->destinationCs = destination;
-	rephash[hash].push_back(replica);
 
 	for (uint8_t i = 0 ; i < srccnt ; i++) {
 		replicaSource = std::make_unique<repsrc>();
@@ -209,6 +208,7 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 		static_cast<matocsserventry *>(src[i])->rrepcounter++;
 	}
 
+	rephash[hash].push_back(std::move(replica));
 	destination->wrepcounter++;
 }
 
@@ -217,7 +217,7 @@ void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
 	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
 
 	for (auto replicaIt = rephash[hash].begin(); replicaIt != rephash[hash].end();) {
-		auto *replica = *replicaIt;
+		auto &replica = *replicaIt;
 		if (replica->chunkId == chunkId && replica->chunkVersion == chunkVersion &&
 		    replica->chunkType == chunkType && replica->destinationCs == destination) {
 
@@ -228,7 +228,6 @@ void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
 			replica->replicaSourceList.clear();
 			destination->wrepcounter--;
 
-			delete *replicaIt;
 			replicaIt = rephash[hash].erase(replicaIt);
 		} else {
 			++replicaIt;
@@ -240,7 +239,7 @@ void matocsserv_replication_disconnected(matocsserventry *server) {
 	for (auto & hash : rephash) {
 		// Iterate through the list of replicas in the hash bucket.
 		for (auto replicaIterator = hash.begin(); replicaIterator != hash.end();) {
-			auto *replica = *replicaIterator;
+			auto &replica = *replicaIterator;
 			if (replica->destinationCs == server) {
 				// If the destination server is the one we are disconnecting,
 				// remove all sources and the replica itself.
@@ -251,7 +250,6 @@ void matocsserv_replication_disconnected(matocsserventry *server) {
 				replica->replicaSourceList.clear();
 				server->wrepcounter--;
 
-				delete *replicaIterator;
 				replicaIterator = hash.erase(replicaIterator);
 			} else {
 				auto replicaSrcIterator = replica->replicaSourceList.begin();
@@ -271,51 +269,33 @@ void matocsserv_replication_disconnected(matocsserventry *server) {
 }
 
 /* replication DB END */
-void matocsserv_usagedifference(double *minusage,double *maxusage,uint16_t *usablescount,uint16_t *totalscount) {
-	uint32_t j,k;
-	double minspace=1.0,maxspace=0.0;
+void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *usablescount,
+                                uint16_t *totalscount) {
+	double minspace = 1.0;
+	double maxspace = 0.0;
 	double space;
-	j = 0;
-	k = 0;
+	uint32_t chunkserversWithAvailableSpace = 0;
+	uint32_t chunkserversAvailable = 0;
+	constexpr uint32_t kMaxChunkservers = 65535;
+
 	for (const auto &eptr : matocsservList) {
-		if (j < 65535 && k < 65535) {
-			if (eptr->mode != KILL) {
-				if (eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace) {
-					space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
-					if (j == 0) {
-						minspace = maxspace = space;
-					} else if (space < minspace) {
-						minspace = space;
-					} else if (space > maxspace) {
-						maxspace = space;
-					}
-					j++;
-				}
-				k++;
+		if (eptr->mode != KILL) {
+			if (eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace) {
+				space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
+				minspace = std::min(minspace, space);
+				maxspace = std::max(maxspace, space);
+				chunkserversWithAvailableSpace++;
 			}
+			chunkserversAvailable++;
 		}
+		if (chunkserversAvailable >= kMaxChunkservers) { break; }
 	}
-	if (usablescount) {
-		*usablescount = j;
-	}
-	if (totalscount) {
-		*totalscount = k;
-	}
-	if (j==0) {
-		if (minusage) {
-			*minusage = 1.0;
-		}
-		if (maxusage) {
-			*maxusage = 0.0;
-		}
-	} else {
-		if (minusage) {
-			*minusage = minspace;
-		}
-		if (maxusage) {
-			*maxusage = maxspace;
-		}
-	}
+
+	if (usablescount) { *usablescount = chunkserversWithAvailableSpace; }
+	if (totalscount) { *totalscount = chunkserversAvailable; }
+
+	if (minusage) { *minusage = minspace; }
+	if (maxusage) { *maxusage = maxspace; }
 }
 
 std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
