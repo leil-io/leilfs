@@ -2147,8 +2147,16 @@ int write_data_end(void *vid) {
 	int status = write_data_flush(id, globalLock);
 	globalLock.unlock();
 
-	Lock inodeLock(id->mutex);
-	write_data_lcnt_decrease(id, inodeLock);
+	bool almostDone = false;
+	{
+		Lock inodeLock(id->mutex);
+		almostDone = (id->emptyChunkDataList) && (id->flushwaiting == 0) && (id->writewaiting == 0);
+	}
+
+	globalLock.lock();
+	id->lcnt--;
+	if (id->lcnt == 0 && almostDone) { write_free_inodedata(id, globalLock); }
+
 	return status;
 }
 
