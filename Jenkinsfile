@@ -10,12 +10,14 @@ def buildSfstests() {
 }
 
 def buildImage(imageName) {
+    def imageTag = str.replaceAll(":", "\-")
+    echo "${imageTag}"
     sh """
         cd $WORKSPACE
         mkdir build
         docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
-        docker tag saunafs-test:latest registry.ci.leil.io/saunafs-test:$GIT_COMMIT
-        docker push registry.ci.leil.io/saunafs-test:$GIT_COMMIT
+        docker tag saunafs-test:latest registry.ci.leil.io/${imageName}-saunafs-test:$GIT_COMMIT
+        docker push registry.ci.leil.io/${imageTag}-saunafs-test:$GIT_COMMIT
         """
 }
 
