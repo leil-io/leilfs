@@ -1,5 +1,16 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (4.10.0) (2025-05-28)
+ - fix(mount): Remove unnecessary waits on reads (#402)
+ - fix: Fix client recover when master disconnects (#383)
+ - fix(uraft): Remove floating IP on sfsmaster kill (#391)
+ - fix: Fix replicate related chunkserver locking (#381)
+ - fix(master): Large trash causing crash (#379)
+ - fix: Corrected stat behavior when using quotas
+ - fix: Correct quota per directory calculation
+ - fix: Fix optimizing partial stripes test (#377)
+ - feat: Disable creation of folders for full disk (#346)
+
 * SaunaFS (4.9.0) (2025-05-01)
  - fix(chunkserver): Fix chunkserver locking (#367)
  - fix: Fix truncate tests (#372)
