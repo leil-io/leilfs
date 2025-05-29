@@ -35,8 +35,10 @@
 #include <cstring>
 #include <ctime>
 #include <memory>
+#include <mutex>
 #include <set>
 
+#include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/hddspacemgr.h"
@@ -994,22 +996,20 @@ void ChunkserverEntry::getChunkBlocks(const uint8_t *data, uint32_t length) {
 
 /* IDLE operations */
 
-void ChunkserverEntry::hddListV2([[maybe_unused]] const uint8_t *data,
-                                 uint32_t length) {
+void ChunkserverEntry::hddListV2([[maybe_unused]] const uint8_t *data, uint32_t length) {
 	TRACETHIS();
-	uint32_t opSize;
-	uint8_t *ptr;
 
 	if (length != 0) {  // This packet should not have any data
-		safs_pretty_syslog(LOG_NOTICE,
-		                   "CLTOCS_HDD_LIST_V2 - wrong size (%" PRIu32 "/0)",
-		                   length);
+		safs::log_info("CLTOCS_HDD_LIST_V2 - wrong size ({}/0)", length);
 		state = State::Close;
 		return;
 	}
-	opSize = hddGetSerializedSizeOfAllDiskInfosV2(); // lock
-	ptr = createAttachedPacket(CSTOCL_HDD_LIST_V2, opSize);
-	hddSerializeAllDiskInfosV2(ptr); // unlock
+
+	std::lock_guard disksLock(gDisksMutex);
+
+	uint32_t opSize = hddGetSerializedSizeOfAllDiskInfosV2();
+	uint8_t *ptr = createAttachedPacket(CSTOCL_HDD_LIST_V2, opSize);
+	hddSerializeAllDiskInfosV2(ptr);
 }
 
 void ChunkserverEntry::listDiskGroups([[maybe_unused]] const uint8_t *data,
