@@ -3665,8 +3665,12 @@ void fs_init(FsInitParams &params) {
 			params.max_readahead_requests,
 			params.prefetch_xor_stripes,
 			std::max(params.bandwidth_overuse, 1.));
-	write_data_init(params.write_cache_size, params.io_retries, params.write_workers,
-			params.write_window_size, params.chunkserver_write_timeout_ms, params.cache_per_inode_percentage);
+
+	gUseInodeBasedWriteAlgorithm = params.use_inode_based_write_algorithm;
+	write_data_init(
+	    params.write_cache_size, params.io_retries, params.write_workers,
+	    params.write_window_size, params.chunkserver_write_timeout_ms,
+	    params.cache_per_inode_percentage, params.write_wave_timeout_ms);
 #ifdef _WIN32
 	set_debug_mode(params.debug_mode);
 #endif

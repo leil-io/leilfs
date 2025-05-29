@@ -91,19 +91,21 @@ struct FsInitParams {
 	static constexpr const char *kDefaultUmaskFile = "002"; // means rwxrwxr-x permissions mask, 775 default permissions
 	static constexpr const char *kDefaultLogLevel = "warn";
 	static constexpr const char *kDefaultLogFlushLevel = "err";
-	static constexpr unsigned kDefaultWriteCacheSize = 50;
 	static constexpr unsigned kDefaultCleanAcquiredFilesPeriod = 0;
 	static constexpr unsigned kDefaultCleanAcquiredFilesTimeout = 0;
 	static constexpr int      kDefaultEnableStatusUpdaterThread = 0;
 	static constexpr bool     kDefaultIgnoreUtimensUpdate = false;
 	static constexpr bool     kDefaultMkdirCopySgid = false;
+	static constexpr unsigned kDefaultWriteWaveTo = 10;
 #else
 	static constexpr unsigned kDefaultReportReservedPeriod = 30;
-	static constexpr unsigned kDefaultWriteCacheSize = 0;
 	static constexpr unsigned kDefaultLimitGlibcMallocArenas = 0;
 	static constexpr unsigned kDefaultMallocTrimPeriod = 0;
 	static constexpr bool     kDefaultMkdirCopySgid = true;
+	static constexpr unsigned kDefaultWriteWaveTo = 50;
 #endif
+	static constexpr bool     kDefaultUseInodeBasedWriteAlgorithm = false;
+	static constexpr unsigned kDefaultWriteCacheSize = 128;
 	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
 	static constexpr unsigned kDefaultWriteWindowSize = 15;
@@ -148,6 +150,7 @@ struct FsInitParams {
 	             prefetch_xor_stripes(kDefaultPrefetchXorStripes),
 	             bandwidth_overuse(kDefaultBandwidthOveruse),
 	             write_cache_size(kDefaultWriteCacheSize),
+	             write_wave_timeout_ms(kDefaultWriteWaveTo),
 	             write_workers(kDefaultWriteWorkers), write_window_size(kDefaultWriteWindowSize),
 	             chunkserver_write_timeout_ms(kDefaultChunkserverWriteTo),
 	             cache_per_inode_percentage(kDefaultCachePerInodePercentage),
@@ -167,6 +170,7 @@ struct FsInitParams {
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
+	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -193,6 +197,7 @@ struct FsInitParams {
 	             prefetch_xor_stripes(kDefaultPrefetchXorStripes),
 	             bandwidth_overuse(kDefaultBandwidthOveruse),
 	             write_cache_size(kDefaultWriteCacheSize),
+	             write_wave_timeout_ms(kDefaultWriteWaveTo),
 	             write_workers(kDefaultWriteWorkers), write_window_size(kDefaultWriteWindowSize),
 	             chunkserver_write_timeout_ms(kDefaultChunkserverWriteTo),
 	             cache_per_inode_percentage(kDefaultCachePerInodePercentage),
@@ -211,7 +216,8 @@ struct FsInitParams {
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
-#endif
+#endif 
+	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -246,6 +252,7 @@ struct FsInitParams {
 	double bandwidth_overuse;
 
 	unsigned write_cache_size;
+	unsigned write_wave_timeout_ms;
 	unsigned write_workers;
 	unsigned write_window_size;
 	unsigned chunkserver_write_timeout_ms;
@@ -276,6 +283,7 @@ struct FsInitParams {
 	unsigned malloc_trim_period;
 #endif
 
+	bool use_inode_based_write_algorithm;
 	bool ignore_flush;
 	unsigned statfs_cache_timeout;
 	bool use_quota_in_volume_size;

@@ -127,6 +127,9 @@ Set directory entry cache timeout in seconds (default: 1.0).
 *-o sfswritecachesize=*'N'::
 Specify write cache size in MiB (in range: 16..2048 - default: 128).
 
+*-o sfschunkserverwavewriteto=*'MSEC'::
+Set timeout for executing each wave of a write operation in milliseconds (default: 50).
+
 *-o sfscacheperinodepercentage=*'N'::
 Specify what part of the write cache non occupied by other inodes can a single
 inode occupy (measured in %). E.g. When N=75 and the inode X uses 10 MiB, and
@@ -215,9 +218,14 @@ Equivalent to *--nostdopts* (*-n*) option for use in fstab.
 *-o nonempty*::
 Equivalent to *--nonempty* option for use in fstab.
 
-*-o sfsignoreflush*'0|1'::
-Advanced: use with caution. Ignore flush usual behavior by replying SUCCESS to it
-immediately. Targets fast creation of small files, but may cause data loss
+*-o sfsuseinodebasedwritealgorithm=*'0|1'::
+Use inode based write algorithm when set to 1. Use chunk based write algorithm
+when set to 0. Though chunk based algorithm is faster in most cases, inode
+based algorithm may prove useful in some scenarios (default: 0).
+
+*-o sfsignoreflush=*'0|1'::
+Advanced: use with caution. Ignore flush usual behavior by replying SUCCESS to
+it immediately. Targets fast creation of small files, but may cause data loss
 during crashes when allegedly flushed data is still being processed (default: 0).
 
 *-o sfsdirectio=*'0|1'::

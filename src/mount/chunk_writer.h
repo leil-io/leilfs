@@ -46,7 +46,8 @@ public:
 	 * \param dataChainFd - end of pipe; if anything is written to it, ChunkWriter will break its
 	 *        poll call and look for some new data in write cache for the currently written chunk
 	 */
-	ChunkWriter(ChunkserverStats& stats, ChunkConnector& connector, int dataChainFd);
+	ChunkWriter(ChunkserverStats &stats, ChunkConnector &connector,
+	            int dataChainFd);
 	ChunkWriter(const ChunkWriter&) = delete;
 	~ChunkWriter();
 	ChunkWriter& operator=(const ChunkWriter&) = delete;
@@ -175,10 +176,10 @@ private:
 
 	ChunkserverStats& chunkserverStats_;
 	ChunkConnector& connector_;
-	WriteChunkLocator* locator_;
-	uint32_t idCounter_;
-	bool acceptsNewOperations_;
-	int combinedStripeSize_;
+	WriteChunkLocator *locator_ = nullptr;
+	uint32_t idCounter_ = 0;
+	bool acceptsNewOperations_ = true;
+	int combinedStripeSize_ = 0;
 	int dataChainFd_;
 	int chunkSizeInBlocks_;
 

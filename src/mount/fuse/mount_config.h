@@ -89,6 +89,7 @@ struct sfsopts_ {
 	int passwordask;
 	int donotrememberpassword;
 	unsigned writecachesize;
+	unsigned chunkserverwavewriteto;
 	unsigned cachePerInodePercentage;
 	unsigned writeworkers;
 	unsigned ioretries;
@@ -114,6 +115,7 @@ struct sfsopts_ {
 	double bandwidthoveruse;
 	int nonemptymount;
 	bool directio;
+    int useinodebasedwritealgorithm;
 	int ignoreflush;
 	unsigned limitglibcmallocarenas;
 	unsigned malloctrimperiod;
@@ -154,6 +156,7 @@ struct sfsopts_ {
 		passwordask(0),
 		donotrememberpassword(SaunaClient::FsInitParams::kDefaultDoNotRememberPassword),
 		writecachesize(SaunaClient::FsInitParams::kDefaultWriteCacheSize),
+		chunkserverwavewriteto(SaunaClient::FsInitParams::kDefaultWriteWaveTo),
 		cachePerInodePercentage(SaunaClient::FsInitParams::kDefaultCachePerInodePercentage),
 		writeworkers(SaunaClient::FsInitParams::kDefaultWriteWorkers),
 		ioretries(SaunaClient::FsInitParams::kDefaultIoRetries),
@@ -179,6 +182,7 @@ struct sfsopts_ {
 		bandwidthoveruse(SaunaClient::FsInitParams::kDefaultBandwidthOveruse),
 		nonemptymount(SaunaClient::FsInitParams::kDefaultNonEmptyMounts),
 		directio(SaunaClient::FsInitParams::kDirectIO),
+        useinodebasedwritealgorithm(SaunaClient::FsInitParams::kDefaultUseInodeBasedWriteAlgorithm),
 		ignoreflush(SaunaClient::FsInitParams::kDefaultIgnoreFlush),
 		limitglibcmallocarenas(SaunaClient::FsInitParams::kDefaultLimitGlibcMallocArenas),
 		malloctrimperiod(SaunaClient::FsInitParams::kDefaultMallocTrimPeriod),

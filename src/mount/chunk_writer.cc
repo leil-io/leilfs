@@ -108,16 +108,11 @@ bool ChunkWriter::Operation::isFullStripe(uint32_t stripeSize) const {
 	return (journalPositions.size() == elementsInStripe);
 }
 
-ChunkWriter::ChunkWriter(ChunkserverStats& chunkserverStats, ChunkConnector& connector,
-		int dataChainFd)
-	: chunkserverStats_(chunkserverStats),
-	  connector_(connector),
-	  locator_(nullptr),
-	  idCounter_(0),
-	  acceptsNewOperations_(true),
-	  combinedStripeSize_(0),
-	  dataChainFd_(dataChainFd) {
-}
+ChunkWriter::ChunkWriter(ChunkserverStats &chunkserverStats,
+                         ChunkConnector &connector, int dataChainFd)
+    : chunkserverStats_(chunkserverStats),
+      connector_(connector),
+      dataChainFd_(dataChainFd) {}
 
 ChunkWriter::~ChunkWriter() {
 	try {
@@ -576,8 +571,8 @@ void ChunkWriter::startOperation(Operation operation) {
 					continue;
 				}
 
-				operation.parityBuffers.push_back(
-					WriteCacheBlock(locator_->chunkIndex(), 0, WriteCacheBlock::kParityBlock));
+				operation.parityBuffers.push_back(WriteCacheBlock(
+				    locator_->chunkIndex(), 0, WriteCacheBlock::kParityBlock));
 				WriteCacheBlock &block = operation.parityBuffers.back();
 				parity_blocks.push_back(&block);
 				blocks_to_write.push_back(&block);
@@ -663,7 +658,8 @@ void ChunkWriter::readBlocks(int block_index, int size, int block_from, int bloc
 	for (int index = block_index; index < block_index + size; ++index) {
 		assert(index < SFSBLOCKSINCHUNK);
 
-		WriteCacheBlock block(locator_->chunkIndex(), index, WriteCacheBlock::kReadBlock);
+		WriteCacheBlock block(locator_->chunkIndex(), index,
+		                      WriteCacheBlock::kReadBlock);
 		memcpy(block.data(), buffer.data() + offset, SFSBLOCKSIZE);
 		block.from = block_from;
 		block.to = block_to;
