@@ -94,7 +94,7 @@ struct MasterConn {
 
 static const uint64_t kSendStatusDelay = 5;
 
-static MasterConn *gMasterConnSingleton = nullptr;
+static std::unique_ptr<MasterConn> gMasterConnSingleton = nullptr;
 static std::unique_ptr<JobPool> gJobPool;
 static int jobfd;
 static int32_t jobfdpdescpos;
@@ -202,7 +202,7 @@ void masterconn_sendregister(MasterConn *eptr) {
 }
 
 void masterconn_check_hdd_reports() {
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 	uint32_t errorcounter;
 	if (eptr->mode == ConnectionMode::CONNECTED) {
 		if (hddGetAndResetSpaceChanged()) {
@@ -241,7 +241,7 @@ void masterconn_check_hdd_reports() {
 
 void masterconn_jobfinished(uint8_t status, void *packet) {
 	uint8_t *ptr;
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 	if (eptr->mode == ConnectionMode::CONNECTED) {
 		ptr = masterconn_get_packet_data(packet);
 		ptr[8]=status;
@@ -253,7 +253,7 @@ void masterconn_jobfinished(uint8_t status, void *packet) {
 
 void masterconn_saujobfinished(uint8_t status, void *packet) {
 	OutputPacket* outputPacket = static_cast<OutputPacket*>(packet);
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 	if (eptr->mode == ConnectionMode::CONNECTED) {
 		cstoma::overwriteStatusField(outputPacket->packet, status);
 		masterconn_attach_packet(eptr, packet);
@@ -264,7 +264,7 @@ void masterconn_saujobfinished(uint8_t status, void *packet) {
 
 void masterconn_chunkopfinished(uint8_t status,void *packet) {
 	uint8_t *ptr;
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 	if (eptr->mode == ConnectionMode::CONNECTED) {
 		ptr = masterconn_get_packet_data(packet);
 		ptr[32]=status;
@@ -276,7 +276,7 @@ void masterconn_chunkopfinished(uint8_t status,void *packet) {
 
 void masterconn_replicationfinished(uint8_t status,void *packet) {
 	uint8_t *ptr;
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 //      syslog(LOG_NOTICE,"job replication status: %" PRIu8,status);
 	if (eptr->mode == ConnectionMode::CONNECTED) {
 		ptr = masterconn_get_packet_data(packet);
@@ -475,7 +475,7 @@ void masterconn_gotpacket(MasterConn *eptr, PacketHeader header, const MessageBu
 
 
 void masterconn_term(void) {
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 
 	gJobPool.reset();
 
@@ -484,8 +484,7 @@ void masterconn_term(void) {
 		eptr->inputPacket.reset();
 	}
 
-	delete eptr;
-	gMasterConnSingleton = nullptr;
+	gMasterConnSingleton.reset();
 }
 
 void masterconn_connected(MasterConn *eptr) {
@@ -663,7 +662,7 @@ void masterconn_write(MasterConn *eptr) {
 
 void masterconn_desc(std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_desc");
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 
 	eptr->pDescPos = -1;
 	jobfdpdescpos = -1;
@@ -692,7 +691,7 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 
 void masterconn_send_status() {
 	static uint8_t prev_factor = 0;
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 
 	if (gEnableLoadFactor) {
 		uint8_t load_factor = hddGetLoadFactor();
@@ -706,7 +705,7 @@ void masterconn_send_status() {
 
 void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_serve");
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 
 	if (eptr->pDescPos >= 0 && (pdesc[eptr->pDescPos].revents & (POLLHUP | POLLERR))) {
 		if (eptr->mode == ConnectionMode::CONNECTING) {
@@ -760,7 +759,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 }
 
 void masterconn_reconnect(void) {
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 	if (eptr->mode == ConnectionMode::FREE) {
 		masterconn_initconnect(eptr);
 	}
@@ -782,7 +781,7 @@ bool masterconn_load_label() {
 }
 
 void masterconn_reload(void) {
-	MasterConn *eptr = gMasterConnSingleton;
+	MasterConn *eptr = gMasterConnSingleton.get();
 
 	gMasterHost = cfg_getstring("MASTER_HOST", "sfsmaster");
 	gMasterPort = cfg_getstring("MASTER_PORT", "9420");
@@ -848,7 +847,8 @@ int masterconn_init(void) {
 
 	if (!masterconn_load_label()) { return -1; }
 
-	eptr = gMasterConnSingleton = new MasterConn;
+	gMasterConnSingleton = std::make_unique<MasterConn>();
+	eptr = gMasterConnSingleton.get();
 	passert(eptr);
 
 	eptr->isMasterAddressValid = false;
