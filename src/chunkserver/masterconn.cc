@@ -591,16 +591,19 @@ void masterconn_read(MasterConn *eptr) {
 
 	watchdog.start();
 	while (eptr->mode != ConnectionMode::KILL) {
-		if (gJobPool->getJobCount() >= (kMaxBackgroundJobsCount * 9) / 10) {
-			return;
-		}
+		// If the job pool is too busy, do not read more data.
+		if (gJobPool->getJobCount() >= (kMaxBackgroundJobsCount * 9) / 10) { return; }
+
 		uint32_t bytesToRead = eptr->inputPacket.bytesToBeRead();
-		ssize_t ret = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+		ssize_t ret = ::read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+
 		if (ret == 0) {
 			safs_silent_syslog(LOG_NOTICE, "connection reset by Master");
 			eptr->mode = ConnectionMode::KILL;
 			return;
-		} else if (ret < 0) {
+		}
+
+		if (ret < 0) {
 			if (errno != EAGAIN) {
 				safs_silent_errlog(LOG_NOTICE, "read from Master error");
 				eptr->mode = ConnectionMode::KILL;
@@ -609,55 +612,56 @@ void masterconn_read(MasterConn *eptr) {
 		}
 
 		stats_bytesin += ret;
+
 		try {
 			eptr->inputPacket.increaseBytesRead(ret);
-		} catch (InputPacketTooLongException& ex) {
+		} catch (InputPacketTooLongException &ex) {
 			safs_silent_syslog(LOG_WARNING, "reading from master: %s", ex.what());
 			eptr->mode = ConnectionMode::KILL;
 			return;
 		}
+
 		if (ret == bytesToRead && !eptr->inputPacket.hasData()) {
-			// there might be more data to read in socket's buffer
-			continue;
-		} else if (!eptr->inputPacket.hasData()) {
-			return;
+			continue;  // there might be more data to read in socket's buffer
 		}
 
+		if (!eptr->inputPacket.hasData()) { return; }
+
+		// We have a complete packet in the input buffer, let's process it.
 		masterconn_gotpacket(eptr, eptr->inputPacket.getHeader(), eptr->inputPacket.getData());
+
 		eptr->inputPacket.reset();
 
-		if (watchdog.expired()) {
-			break;
-		}
+		if (watchdog.expired()) { break; }
 	}
 }
 
 void masterconn_write(MasterConn *eptr) {
 	ActiveLoopWatchdog watchdog(std::chrono::milliseconds(20));
-	int32_t i;
+	int32_t bytesWritten{-1};
 
 	watchdog.start();
 	while (!eptr->outputPackets.empty()) {
-		OutputPacket& pack = eptr->outputPackets.front();
-		i=write(eptr->sock, pack.packet.data() + pack.bytesSent,
-				pack.packet.size() - pack.bytesSent);
-		if (i<0) {
-			if (errno!=EAGAIN) {
-				safs_silent_errlog(LOG_NOTICE,"write to Master error");
+		OutputPacket &pack = eptr->outputPackets.front();
+		bytesWritten = ::write(eptr->sock, pack.packet.data() + pack.bytesSent,
+		                       pack.packet.size() - pack.bytesSent);
+
+		if (bytesWritten < 0) {
+			if (errno != EAGAIN) {
+				safs_silent_errlog(LOG_NOTICE, "write to Master error");
 				eptr->mode = ConnectionMode::KILL;
 			}
 			return;
 		}
-		stats_bytesout+=i;
-		pack.bytesSent += i;
-		if (pack.packet.size() != pack.bytesSent) {
-			return;
-		}
+
+		stats_bytesout += bytesWritten;
+		pack.bytesSent += bytesWritten;
+
+		if (pack.packet.size() != pack.bytesSent) { return; }
+
 		eptr->outputPackets.pop_front();
 
-		if (watchdog.expired()) {
-			break;
-		}
+		if (watchdog.expired()) { break; }
 	}
 }
 
