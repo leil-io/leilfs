@@ -96,8 +96,9 @@ static const uint64_t kSendStatusDelay = 5;
 
 static std::unique_ptr<MasterConn> gMasterConnSingleton = nullptr;
 static std::unique_ptr<JobPool> gJobPool;
-static int jobfd;
-static int32_t jobfdpdescpos;
+
+static int gJobFD{-1};  ///< File descriptor for the job pool notifications
+static int32_t gJobFDpDescPos{-1};  ///< Position in the pollfd array for the job pool notifications
 
 // from config
 static std::string gMasterHost;
@@ -665,16 +666,17 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 	MasterConn *eptr = gMasterConnSingleton.get();
 
 	eptr->pDescPos = -1;
-	jobfdpdescpos = -1;
+	gJobFDpDescPos = -1;
 
 	if (eptr->mode == ConnectionMode::FREE || eptr->sock < 0) { return; }
 
 	if (eptr->mode == ConnectionMode::CONNECTED) {
-		pdesc.push_back({jobfd, POLLIN, 0});
-		jobfdpdescpos = pdesc.size() - 1;
+		pdesc.emplace_back(gJobFD, POLLIN, 0);
+		gJobFDpDescPos = static_cast<int32_t>(pdesc.size() - 1);
+
 		if (gJobPool->getJobCount() < (kMaxBackgroundJobsCount * 9) / 10) {
-			pdesc.push_back({eptr->sock, POLLIN, 0});
-			eptr->pDescPos = pdesc.size() - 1;
+			pdesc.emplace_back(eptr->sock, POLLIN, 0);
+			eptr->pDescPos = static_cast<int32_t>(pdesc.size() - 1);
 		}
 	}
 
@@ -683,8 +685,8 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 		if (eptr->pDescPos >= 0) {
 			pdesc[eptr->pDescPos].events |= POLLOUT;
 		} else {
-			pdesc.push_back({eptr->sock, POLLOUT, 0});
-			eptr->pDescPos = pdesc.size() - 1;
+			pdesc.emplace_back(eptr->sock, POLLOUT, 0);
+			eptr->pDescPos = static_cast<int32_t>(pdesc.size() - 1);
 		}
 	}
 }
@@ -707,6 +709,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_serve");
 	MasterConn *eptr = gMasterConnSingleton.get();
 
+	// Check if the socket has been closed or has an error.
 	if (eptr->pDescPos >= 0 && (pdesc[eptr->pDescPos].revents & (POLLHUP | POLLERR))) {
 		if (eptr->mode == ConnectionMode::CONNECTING) {
 			masterconn_connecttest(eptr);
@@ -714,31 +717,43 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 			eptr->mode = ConnectionMode::KILL;
 		}
 	}
+
 	if (eptr->mode == ConnectionMode::CONNECTING) {
-		if (eptr->sock >= 0 && eptr->pDescPos >= 0 &&
-		    (pdesc[eptr->pDescPos].revents & POLLOUT)) {  // FD_ISSET(eptr->sock,wset)) {
+		// Check if the connection has been established.
+		if (eptr->sock >= 0 && eptr->pDescPos >= 0 && (pdesc[eptr->pDescPos].revents & POLLOUT)) {
 			masterconn_connecttest(eptr);
 		}
 	} else {
-		if ((eptr->mode == ConnectionMode::CONNECTED) && jobfdpdescpos >= 0 &&
-		    (pdesc[jobfdpdescpos].revents & POLLIN)) {  // FD_ISSET(jobfd,rset)) {
+		// Check if there are any background jobs to process.
+		if ((eptr->mode == ConnectionMode::CONNECTED) && gJobFDpDescPos >= 0 &&
+		    (pdesc[gJobFDpDescPos].revents & POLLIN)) {
 			gJobPool->checkJobs();
 		}
 
 		if (eptr->pDescPos >= 0) {
+			// Check if there is data to read from this connection
 			if ((eptr->mode == ConnectionMode::CONNECTED) &&
-			    (pdesc[eptr->pDescPos].revents & POLLIN)) {  // FD_ISSET(eptr->sock,rset)) {
+			    (pdesc[eptr->pDescPos].revents & POLLIN)) {
 				eptr->lastRead.reset();
 				masterconn_read(eptr);
 			}
-			if ((eptr->mode == ConnectionMode::CONNECTED) && (pdesc[eptr->pDescPos].revents & POLLOUT)) { // FD_ISSET(eptr->sock,wset)) {
+
+			// Check if there is data to write to this connection
+			if ((eptr->mode == ConnectionMode::CONNECTED) &&
+			    (pdesc[eptr->pDescPos].revents & POLLOUT)) {
 				eptr->lastWrite.reset();
 				masterconn_write(eptr);
 			}
-			if ((eptr->mode == ConnectionMode::CONNECTED) && eptr->lastRead.elapsed_ms() > gTimeout_ms) {
+
+			// Check if the connection has not been used for a while and should be closed
+			if ((eptr->mode == ConnectionMode::CONNECTED) &&
+			    eptr->lastRead.elapsed_ms() > gTimeout_ms) {
 				eptr->mode = ConnectionMode::KILL;
 			}
-			if ((eptr->mode == ConnectionMode::CONNECTED) && eptr->lastWrite.elapsed_ms() > (gTimeout_ms/3) && eptr->outputPackets.empty()) {
+
+			// Keep the connection alive by sending a NOP packet
+			if ((eptr->mode == ConnectionMode::CONNECTED) &&
+			    eptr->lastWrite.elapsed_ms() > (gTimeout_ms / 3) && eptr->outputPackets.empty()) {
 				masterconn_create_attached_no_version_packet(eptr, ANTOAN_NOP, 0);
 			}
 		}
@@ -873,7 +888,7 @@ int masterconn_init(void) {
 int masterconn_init_threads(void) {
 	try {
 		gJobPool =
-		    std::make_unique<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, &jobfd);
+		    std::make_unique<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, &gJobFD);
 	} catch (const std::runtime_error &e) {
 		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
 		return -1;
