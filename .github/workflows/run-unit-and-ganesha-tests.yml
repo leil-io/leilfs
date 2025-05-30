@@ -26,8 +26,9 @@ jobs:
               with:
                   create-symlink: true
 
-            - name: Setup anew (or from cache) vcpkg
-              uses: lukka/run-vcpkg@v11
+            # Reference for previous vcpkg setup: maybe we can fix it in the future
+            #- name: Setup a new (or from cache) vcpkg
+            #  uses: lukka/run-vcpkg@v11
 
             - name: Install nfs-ganesha v4.3 from Ubuntu repository
               run: |
@@ -44,7 +45,20 @@ jobs:
                   sudo mkdir /mnt/hd{b,c,d}
                   cd $GITHUB_WORKSPACE/tests
                   sudo ./setup_machine.sh setup /mnt/hdb /mnt/hdc /mnt/hdd
-                  cd $GITHUB_WORKSPACE
+
+            - name: Cache vcpkg downloads
+              uses: actions/cache@v4
+              with:
+                path: |
+                  ~/.cache/vcpkg
+                key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+                restore-keys: |
+                  ${{ runner.os }}-vcpkg-
+
+            - name: Setup vcpkg and install dependencies
+              run: |
+                $GITHUB_WORKSPACE/utils/vcpkg_setup.sh
+                vcpkg install --triplet x64-linux
 
             - name: Build SaunaFS
               run: |
@@ -53,7 +67,7 @@ jobs:
                   mkdir -p build
                   cd build
                   nice cmake \
-                  -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+                  -DCMAKE_TOOLCHAIN_FILE="${HOME}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
                   -DENABLE_CLIENT_LIB=ON \
                   -DENABLE_DOCS=ON \
                   -DENABLE_NFS_GANESHA=ON \
