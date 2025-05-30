@@ -293,8 +293,7 @@ void masterconn_unwantedjobfinished(uint8_t status,void *packet) {
 	masterconn_delete_packet(packet);
 }
 
-
-void masterconn_create(MasterConn */*eptr*/, const std::vector<uint8_t> &data) {
+void masterconn_create([[maybe_unused]] MasterConn *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint32_t chunkVersion;
@@ -312,7 +311,7 @@ void masterconn_create(MasterConn */*eptr*/, const std::vector<uint8_t> &data) {
 	}
 }
 
-void masterconn_delete(MasterConn */*eptr*/, const std::vector<uint8_t>& data) {
+void masterconn_delete([[maybe_unused]] MasterConn *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	uint32_t chunkVersion;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
@@ -329,7 +328,7 @@ void masterconn_delete(MasterConn */*eptr*/, const std::vector<uint8_t>& data) {
 	}
 }
 
-void masterconn_setversion(MasterConn */*eptr*/, const std::vector<uint8_t>& data) {
+void masterconn_setversion([[maybe_unused]] MasterConn *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	uint32_t chunkVersion;
 	uint32_t newVersion;
@@ -347,7 +346,7 @@ void masterconn_setversion(MasterConn */*eptr*/, const std::vector<uint8_t>& dat
 	}
 }
 
-void masterconn_duplicate(MasterConn* /*eptr*/,const std::vector<uint8_t>& data) {
+void masterconn_duplicate([[maybe_unused]] MasterConn *eptr, const std::vector<uint8_t> &data) {
 	uint64_t newChunkId, oldChunkId;
 	uint32_t newChunkVersion, oldChunkVersion;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
@@ -365,7 +364,7 @@ void masterconn_duplicate(MasterConn* /*eptr*/,const std::vector<uint8_t>& data)
 	}
 }
 
-void masterconn_truncate(MasterConn */*eptr*/, const std::vector<uint8_t>& data) {
+void masterconn_truncate([[maybe_unused]] MasterConn *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint32_t version;
@@ -384,7 +383,7 @@ void masterconn_truncate(MasterConn */*eptr*/, const std::vector<uint8_t>& data)
 	}
 }
 
-void masterconn_duptrunc(MasterConn* /*eptr*/, const std::vector<uint8_t>& data) {
+void masterconn_duptrunc([[maybe_unused]] MasterConn *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId, copyChunkId;
 	uint32_t chunkVersion, copyChunkVersion;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
