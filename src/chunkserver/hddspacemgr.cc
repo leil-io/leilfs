@@ -158,12 +158,11 @@ uint32_t hddGetSerializedSizeOfAllDiskInfosV2() {
 	TRACETHIS();
 	uint32_t serializedSizeOfAllDisks = 0;
 	static constexpr uint32_t kMaxDiskInfoSerializedSizeWithoutPath = (2 + 226);
+	static constexpr size_t kMaxDiskPathSize = 255;
 
-	gDisksMutex.lock();  // Will be unlocked by hddSerializeAllDiskInfosV2
-
-	for (const auto& disk : gDisks) {
-		serializedSizeOfAllDisks += kMaxDiskInfoSerializedSizeWithoutPath
-		                            + std::min(disk->dataPath().size(), 255UL);
+	for (const auto &disk : gDisks) {
+		serializedSizeOfAllDisks += kMaxDiskInfoSerializedSizeWithoutPath +
+		                            std::min(disk->dataPath().size(), kMaxDiskPathSize);
 	}
 
 	return serializedSizeOfAllDisks;
@@ -172,17 +171,13 @@ uint32_t hddGetSerializedSizeOfAllDiskInfosV2() {
 void hddSerializeAllDiskInfosV2(uint8_t *buff) {
 	TRACETHIS();
 
-	if (buff) {
+	if (buff != nullptr) {
 		LegacyVector<DiskInfo> diskInfoVector;
 
-		for (const auto& disk : gDisks) {
-			diskInfoVector.emplace_back(disk->toDiskInfo());
-		}
+		for (const auto &disk : gDisks) { diskInfoVector.emplace_back(disk->toDiskInfo()); }
 
 		serialize(&buff, diskInfoVector);
 	}
-
-	gDisksMutex.unlock();  //Locked by hddGetSerializedSizeOfAllDiskInfosV2
 }
 
 std::string hddGetDiskGroups() {

@@ -37,7 +37,7 @@ void hddGetLostChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
 void hddGetNewChunks(std::vector<ChunkWithVersionAndType>& chunks,
                      std::size_t limit);
 
-/* lock/unlock pair */
+/* Both must be called with the disks mutex locked */
 uint32_t hddGetSerializedSizeOfAllDiskInfosV2();
 void hddSerializeAllDiskInfosV2(uint8_t *buff);
 
