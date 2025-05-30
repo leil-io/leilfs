@@ -41,9 +41,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <exception>
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #include "common/crc.h"
 #include "common/cwrap.h"
@@ -54,6 +57,7 @@
 #include "common/setup.h"
 #include "common/version.h"
 #include "config/cfg.h"
+#include "master/metadata_backend_common.h"
 #include "slogger/slogger.h"
 
 #if defined(SAUNAFS_HAVE_MLOCKALL)
@@ -812,8 +816,45 @@ inline void tuneMalloc() {
 #endif
 }
 
+
+
+bool isV5ChangeLog(const std::string &dataPath) {
+	sassert(STR(APPNAME) == std::string("sfsmaster") || STR(APPNAME) == std::string("sfsmetalogger"));
+
+	DIR *dir = opendir(dataPath.c_str());
+    if (dir == nullptr) {
+		safs::log_error_code(errno, "isV5ChangeLog: Error opening directory '{}'", dataPath);
+        throw std::runtime_error("Could not check version of changelog");
+    }
+
+    struct dirent *entry = nullptr;
+
+    while ((entry = readdir(dir)) != nullptr) {
+		if (strncmp(entry->d_name, kChangelogFilename, strlen(kChangelogFilename)) != 0) {
+			continue;
+		}
+
+		std::string filePath = dataPath + (char *)entry->d_name;
+		std::ifstream changeLogFile(filePath);
+
+		std::string line;
+		while (std::getline(changeLogFile, line)) {
+			if (line.contains("LENGTH")) {
+					long commas = std::count(line.begin(), line.end(), ',');
+					if (commas == 1) {
+						continue;  // Version 4.0.0 line
+					} // More than that and it is greater than 4.0.0
+					changeLogFile.close();
+					return true;
+			}
+		}
+		changeLogFile.close();
+    }
+	return false;
+}
+
 int main(int argc,char **argv) {
-	char *wrkdir;
+	std::string workingDirectory;
 	char *appname;
 	int ch;
 	int logundefined;
@@ -952,11 +993,11 @@ int main(int argc,char **argv) {
 
 	changeugid(runmode);
 
-	wrkdir = cfg_getstr("DATA_PATH",DATA_PATH);
+	workingDirectory = cfg_getstring("DATA_PATH", DATA_PATH);
 
 
-	if (chdir(wrkdir)<0) {
-		safs::log_error_code(errno, "can't set working directory to {}", wrkdir);
+	if (chdir(workingDirectory.c_str())<0) {
+		safs::log_error_code(errno, "can't set working directory to {}", workingDirectory);
 		if (gRunAsDaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
@@ -965,10 +1006,9 @@ int main(int argc,char **argv) {
 		return SAUNAFS_EXIT_STATUS_ERROR;
 	} else {
 		if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {
-			safs::log_info("changed working directory to: {}", wrkdir);
+			safs::log_info("changed working directory to: {}", workingDirectory);
 		}
-	}
-	free(wrkdir);
+	};
 
 	umask(cfg_getuint32("FILE_UMASK",027)&077);
 
