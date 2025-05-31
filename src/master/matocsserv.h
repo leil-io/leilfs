@@ -87,8 +87,8 @@ double matocsserv_get_usage(matocsserventry* e);
 std::vector<ServerWithUsage> matocsserv_getservers_sorted();
 
 uint32_t matocsserv_get_version(matocsserventry* e);
-void matocsserv_usagedifference(double* minusage, double* maxusage,
-		uint16_t* usablescount, uint16_t* totalscount);
+void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *usablescount,
+                                uint16_t *totalscount);
 std::vector<std::pair<matocsserventry*, ChunkPartType>> matocsserv_getservers_for_new_chunk(
 		uint8_t goalId, uint32_t min_server_version = 0);
 void matocsserv_getspace(uint64_t* totalspace, uint64_t* availspace);
@@ -103,9 +103,7 @@ int matocsserv_send_sau_replicatechunk(matocsserventry* e,
 		uint64_t chunkid, uint32_t version, ChunkPartType type,
 		const std::vector<matocsserventry*> &sourcePointers,
 		const std::vector<ChunkPartType> &sourceTypes);
-int matocsserv_send_chunkop(matocsserventry* e,
-		uint64_t chunkid, uint32_t version, uint32_t newversion,
-		uint64_t copychunkid, uint32_t copyversion, uint32_t leng);
+
 int matocsserv_send_deletechunk(matocsserventry* e,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
 int matocsserv_send_createchunk(matocsserventry* e,
@@ -121,6 +119,6 @@ void matocsserv_send_truncatechunk(matocsserventry* e,
 int matocsserv_send_duptruncchunk(matocsserventry* e,
 		uint64_t newChunkId, uint32_t newChunkVersion,
 		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion, uint32_t length);
-int matocsserv_init(void);
+int matocsserv_init();
 void matocsserv_getserverdata(const matocsserventry* s, ChunkserverListEntry &result);
 csdbentry *matocsserv_get_csdb(matocsserventry* s);
