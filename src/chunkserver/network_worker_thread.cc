@@ -195,7 +195,7 @@ void NetworkWorkerThread::servePoll() {
 	ChunkserverEntry::State lstate;
 
 	if (pdesc[JOB_FD_PDESC_POS].revents & POLLIN) {
-		bgJobPool_->checkJobs();
+		bgJobPool_->processCompletedJobs();
 	}
 	std::unique_lock lock(csservheadLock);
 	for (auto& entry : csservEntries) {

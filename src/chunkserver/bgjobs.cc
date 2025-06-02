@@ -75,7 +75,7 @@ JobPool::~JobPool() {
 		if (thread.joinable()) { thread.join(); }
 	}
 
-	if (!statusQueue->isEmpty()) { checkJobs(); }
+	if (!statusQueue->isEmpty()) { processCompletedJobs(); }
 
 	jobsQueue.reset();
 	statusQueue.reset();
@@ -139,11 +139,12 @@ void JobPool::disableJobs(std::list<uint32_t> &jobIds) {
 	}
 }
 
-void JobPool::checkJobs() {
-	uint32_t jobId;
-	uint8_t status;
+void JobPool::processCompletedJobs() {
+	uint32_t jobId{};
+	uint8_t status{};
 	bool notLastJob = true;
-	do {
+
+	while (notLastJob) {
 		notLastJob = receiveStatus(jobId, status);
 		auto jobIterator = jobHash.find(jobId);
 		if (jobIterator != jobHash.end()) {
@@ -151,7 +152,7 @@ void JobPool::checkJobs() {
 			if (callback) { callback(status, jobIterator->second->extra); }
 			jobHash.erase(jobIterator);
 		}
-	} while (notLastJob);
+	}
 }
 
 void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra) {

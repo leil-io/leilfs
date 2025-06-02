@@ -730,7 +730,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		// Check if there are any background jobs to process.
 		if ((eptr->mode == ConnectionMode::CONNECTED) && gJobFDpDescPos >= 0 &&
 		    (pdesc[gJobFDpDescPos].revents & POLLIN)) {
-			gJobPool->checkJobs();
+			gJobPool->processCompletedJobs();
 		}
 
 		if (eptr->pDescPos >= 0) {

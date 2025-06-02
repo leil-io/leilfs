@@ -128,7 +128,7 @@ public:
 	void disableJobs(std::list<uint32_t> &jobIds);
 
 	/// @brief Checks the status of jobs in the JobPool and calls their callbacks.
-	void checkJobs();
+	void processCompletedJobs();
 
 	/// @brief Changes the callback function for a specific job.
 	///
