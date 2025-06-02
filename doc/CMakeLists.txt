@@ -48,6 +48,7 @@ set(MANPAGES
     sfsrestoremaster.8
     sfs.7                     # not a source
     sfschunkserver.8
+    saunafs-migrations.7
     sfsmaster.8
     sfsmetalogger.8
     sfsmetarestore.8
