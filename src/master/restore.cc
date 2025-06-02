@@ -346,6 +346,12 @@ int do_length(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	GETU32(inode,ptr);
 	EAT(ptr,filename,lv,',');
 	GETU64(length,ptr);
+	if (*ptr == ',') {
+		safs::log_err(
+		    "5.0.0 or later changelog found in file {}:{}. Run with later version of sfsmetarestore or downgrade the changelogs, see man 7 saunafs-migrations",
+		    filename, lv);
+		return -1;
+	}
 	EAT(ptr,filename,lv,')');
 	return fs_apply_length(ts,inode,length);
 }
