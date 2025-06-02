@@ -140,6 +140,15 @@ saunafs_admin_command() {
 	return ${PIPESTATUS[0]}
 }
 
+saunafs_command() {
+	if is_windows_system; then
+		${SAFS_SAUNAFS_COMMAND} "$@" | tr -d '\r'
+	else
+		saunafs "$@"
+	fi
+	return ${PIPESTATUS[0]}
+}
+
 saunafs_fusermount() {
 	fusermount3 "$@"
 }
@@ -779,7 +788,7 @@ sfs_dir_info() {
 	fi
 	field=$1
 	file=$2
-	saunafs dirinfo "$file" | grep -w "$field" | grep -o '[0-9]*'
+	saunafs_command dirinfo "$file" | grep -w "$field" | grep -o '[0-9]*'
 }
 
 find_first_chunkserver_with_chunks_matching() {

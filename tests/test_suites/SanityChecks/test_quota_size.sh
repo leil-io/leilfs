@@ -18,8 +18,8 @@ one_chunk_file_size=$(sfs_dir_info size file_chunk)
 soft=$((2*one_kb_file_size))
 hard=$((3*one_kb_file_size))
 
-saunafs setquota -g $gid1 $soft $hard 0 0 .
-saunafs setquota -g $gid $soft $hard 0 0 .
+saunafs_command setquota -g $gid1 $soft $hard 0 0 .
+saunafs_command setquota -g $gid $soft $hard 0 0 .
 
 verify_quota "Group $gid1 -- 0 $soft $hard 0 0 0" saunafstest_1
 verify_quota "Group $gid -- 0 $soft $hard 0 0 0" saunafstest
@@ -55,18 +55,18 @@ verify_quota "Group $gid1 +- $((one_kb_file_size + one_chunk_file_size)) $soft $
 verify_quota "Group $gid -- $one_kb_file_size $soft $hard 1 0 0" saunafstest
 
 # check if snapshots are properly handled:
-saunafs makesnapshot file_2 snapshot_1
+saunafs_command makesnapshot file_2 snapshot_1
 verify_quota "Group $gid -- $soft $soft $hard 2 0 0" saunafstest
 
 # BTW, check if '+' for soft limit is properly printed..
-saunafs setquota -g $gid $((soft-1)) $hard 0 0 .
+saunafs_command setquota -g $gid $((soft-1)) $hard 0 0 .
 verify_quota "Group $gid +- $soft $((soft-1)) $hard 2 0 0" saunafstest
-saunafs setquota -g $gid $soft $hard 0 0 .  # .. OK, come back to the previous limit
+saunafs_command setquota -g $gid $soft $hard 0 0 .  # .. OK, come back to the previous limit
 
 # snapshots continued..
-saunafs makesnapshot file_2 snapshot_2
+saunafs_command makesnapshot file_2 snapshot_2
 verify_quota "Group $gid +- $hard $soft $hard 3 0 0" saunafstest
-expect_failure saunafs makesnapshot file_2 snapshot_3
+expect_failure saunafs_command makesnapshot file_2 snapshot_3
 
 # verify that we can't create new chunks by 'splitting' a chunk shared by multiple files
 expect_failure sudo -nu saunafstest_1 dd if=/dev/zero of=snapshot_2 bs=1k count=1 conv=notrunc
