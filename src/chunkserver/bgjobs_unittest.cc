@@ -39,7 +39,7 @@ private:
 			int ret = poll(&wakeupDescPollFd, 1, kWaitTimeMs);
 			if (ret > 0) {
 				if (wakeupDescPollFd.revents & POLLIN) {
-					jobPool->checkJobs();
+					jobPool->processCompletedJobs();
 				}
 			}
 		}
@@ -143,6 +143,6 @@ TEST_F(JobPoolTest, JobStatusHandling) {
 	// Wait for the job to be processed
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 
-	jobPool->checkJobs();
+	jobPool->processCompletedJobs();
 	EXPECT_EQ(counter.load(), 1);
 }
