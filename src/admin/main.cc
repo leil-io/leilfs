@@ -38,6 +38,7 @@
 #include "admin/magic_recalculate_metadata_checksum_command.h"
 #include "admin/manage_locks_command.h"
 #include "admin/metadataserver_status_command.h"
+#include "admin/mount_info_list_command.h"
 #include "admin/promote_shadow_command.h"
 #include "admin/ready_chunkservers_count_command.h"
 #include "admin/reload_config_command.h"
@@ -78,6 +79,7 @@ int main(int argc, const char** argv) {
 			new ListSessionsCommand(),
 			new DeleteSessionsCommand(),
 			new DumpConfigurationCommand(),
+			new MountInfoListCommand(),
 	};
 
 	std::string command_name;
