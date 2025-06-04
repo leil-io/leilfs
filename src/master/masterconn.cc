@@ -636,7 +636,6 @@ void MasterConn::downloadNext() {
 		if (fileSize - downloadOffset > kMetadataDownloadBlocksize) {
 			put32bit(&ptr, kMetadataDownloadBlocksize);
 		} else {
-			// TODO(Guillex): Possible truncation if the file size is too big
 			put32bit(&ptr, static_cast<uint32_t>(fileSize - downloadOffset));
 		}
 	}

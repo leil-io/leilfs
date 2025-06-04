@@ -24,12 +24,6 @@
 
 #include "common/type_defs.h"
 
-/*
-  open(inode,sessionid) -> isset? (inode,sessionid)
-  access(inode,sessionid) -> set (inode,sessionid)
-  modify(inode,sessionid) -> clear (inode,!sessionid) and set (inode,sessionid)
-*/
-
 #define DCM_TAB_LENG 500000
 #define DCM_INODEHASH_LENG ((DCM_TAB_LENG)/2)
 
@@ -41,13 +35,13 @@ struct datacache_entry {
 	inode_t inode;
 	unsigned cacheok:1;
 	unsigned sessionid:31;
-	inode_t iprev,inext;
-	inode_t lruprev,lrunext;
+	uint32_t iprev,inext;
+	uint32_t lruprev,lrunext;
 };
 
 static datacache_entry dcm_tab[DCM_TAB_LENG];
-static inode_t dcm_inodehash[DCM_INODEHASH_LENG];
-static inode_t dcm_lru_first,dcm_lru_last;
+static uint32_t dcm_inodehash[DCM_INODEHASH_LENG];
+static uint32_t dcm_lru_first,dcm_lru_last;
 
 int dcm_open(inode_t inode, uint32_t sessionid) {
 	uint32_t ih = DCM_INODE_HASH(inode);

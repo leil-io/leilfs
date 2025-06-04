@@ -27,19 +27,16 @@
 using namespace SaunaClient;
 
 static void printDebugReadInfo(const Context &ctx, inode_t ino, uint64_t size, uint64_t off) {
-	oplog_printf(ctx, "read (%u,%" PRIu64 ",%" PRIu64 ") ...",
-	             (unsigned int)ino, size, off);
+	oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 ") ...", ino, size, off);
 }
 
 static void printReadOplogOk(const Context &ctx, inode_t ino, uint64_t size, uint64_t off,
 	                            unsigned long int size_read) {
-	oplog_printf(ctx, "read (%u,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-	            (unsigned int)ino, size, off, size_read);
+	oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)", ino, size, off, size_read);
 }
 
 static void printReadOplogNoData(const Context &ctx, inode_t ino, uint64_t size, uint64_t off) {
-	oplog_printf(ctx, "read (%u,%" PRIu64 ",%" PRIu64 "): OK (no data)",
-	            (unsigned int)ino, size, off);
+	oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (no data)", ino, size, off);
 }
 
 namespace InodeMasterInfo {

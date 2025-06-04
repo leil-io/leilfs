@@ -361,7 +361,7 @@ void ReadaheadOperationsManager::addExtraRequests_(
 	}
 }
 
-using ReadRecords = std::unordered_multimap<uint32_t, ReadRecord *>;
+using ReadRecords = std::unordered_multimap<inode_t, ReadRecord *>;
 using ReadRecordRange = std::pair<ReadRecords::iterator, ReadRecords::iterator>;
 
 inline ConnectionPool gReadConnectionPool;

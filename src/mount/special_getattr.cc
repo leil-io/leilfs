@@ -32,8 +32,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: MASTERINFO): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: MASTERINFO): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -46,8 +46,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: STATS): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: STATS): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -60,8 +60,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: OPLOG): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: OPLOG): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -74,8 +74,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: OPHISTORY): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: OPHISTORY): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -88,8 +88,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: TWEAKS_FILE): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: TWEAKS_FILE): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -102,8 +102,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: FILE_BY_INODE_FILE): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: FILE_BY_INODE_FILE): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -117,8 +117,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: PATH_BY_INODE_FILE): OK (3600,%s)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): OK (3600,%s)",
+	            inode_,
 	            attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }
@@ -132,8 +132,8 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	attr_to_stat(inode_, attr, &o_stbuf);
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%lu) (internal node: MOUNT_INFO): OK (3600,%s)",
-		        (unsigned long int)inode_,
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: MOUNT_INFO): OK (3600,%s)",
+		        inode_,
 		        attrstr);
 	return AttrReply{o_stbuf, 3600.0};
 }

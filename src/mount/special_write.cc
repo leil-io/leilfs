@@ -28,8 +28,8 @@ using namespace SaunaClient;
 namespace InodeMasterInfo {
 static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 	                            off_t off, FileInfo */*fi*/) {
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+	            inode_,
 	            (uint64_t)size,
 	            (uint64_t)off,
 	            saunafs_error_string(SAUNAFS_ERROR_EACCES));
@@ -45,8 +45,8 @@ static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 		PthreadMutexWrapper lock((statsinfo->lock));         // make helgrind happy
 		statsinfo->reset = 1;
 	}
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)",
+	            inode_,
 	            (uint64_t)size,
 	            (uint64_t)off,
 	            (unsigned long int)size);
@@ -57,8 +57,8 @@ static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 namespace InodeOplog {
 static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 	                       off_t off, FileInfo */*fi*/) {
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+	            inode_,
 	            (uint64_t)size,
 	            (uint64_t)off,
 	            saunafs_error_string(SAUNAFS_ERROR_EACCES));
@@ -69,8 +69,8 @@ static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 namespace InodeOphistory {
 static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 	                           off_t off, FileInfo */*fi*/) {
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+	            inode_,
 	            (uint64_t)size,
 	            (uint64_t)off,
 	            saunafs_error_string(SAUNAFS_ERROR_EACCES));
@@ -88,8 +88,8 @@ static BytesWritten write(const Context &ctx, const char *buf, size_t size,
 	}
 	file->value.replace(off, size, buf, size);
 	file->wasWritten = true;
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)",
+	            inode_,
 	            (uint64_t)size,
 	            (uint64_t)off,
 	            (unsigned long int)size);
@@ -101,8 +101,8 @@ namespace InodePathByInode {
 static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size,
 	                           off_t off, FileInfo * /*fi*/) {
 	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-	            (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+	            inode_,
 	            (uint64_t)size,
 	            (uint64_t)off,
 	            saunafs_error_string(SAUNAFS_ERROR_EACCES));
@@ -114,7 +114,7 @@ namespace InodeMountInfo {
 static BytesWritten write(const Context &ctx, const char * /*buf*/, size_t size, off_t off,
                           FileInfo * /*fi*/) {
 	std::lock_guard lock(gMountInfoMtx);
-	oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s", (unsigned long int)inode_,
+	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s", inode_,
 	             (uint64_t)size, 
 	             (uint64_t)off, 
 	             saunafs_error_string(SAUNAFS_ERROR_EACCES));

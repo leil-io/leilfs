@@ -1018,7 +1018,7 @@ using Lock = std::unique_lock<std::mutex>;
 using ChunkDataPtr = std::unique_ptr<ChunkData>;
 
 struct inodedata {
-	uint32_t inode;
+	inode_t inode;
 	uint64_t maxfleng = 0;           // inodeLock
 	int status = SAUNAFS_STATUS_OK;  // inodeLock
 	uint16_t flushwaiting = 0;       // inodeLock
@@ -1033,7 +1033,7 @@ struct inodedata {
 	Timer lastWriteToDataChain;     // inodeLock
 	Timer lastWriteToChunkservers;  // inodeLock
 
-	inodedata(uint32_t inode) : inode(inode) {}
+	inodedata(inode_t inode) : inode(inode) {}
 
 	/*! Check if inode requires flushing all its data chain to chunkservers.
 	 *
@@ -1182,11 +1182,11 @@ static std::atomic<uint32_t> fcbwaiting = 0;
 static std::atomic<int64_t> freecacheblocks;
 
 // <inode, respective inodedata> and sorted by inode
-using InodeDataMap = std::map<uint32_t, inodedata *>;
+using InodeDataMap = std::map<inode_t, inodedata *>;
 static InodeDataMap inodedataMap;
 
 // <inode, <lockid, endoffset>> and sorted by inode
-static std::map<uint32_t, std::pair<uint64_t, uint64_t>> truncateLocatorsData;
+static std::map<inode_t, std::pair<uint64_t, uint64_t>> truncateLocatorsData;
 static uint32_t gWriteWindowSize;
 static uint32_t gChunkserverTimeout_ms;
 
@@ -1236,12 +1236,12 @@ void write_cb_wait_for_block(inodedata *id) {
 
 /* inode */
 
-inodedata *write_find_inodedata(uint32_t inode, Lock &) {
+inodedata *write_find_inodedata(inode_t inode, Lock &) {
 	if (inodedataMap.contains(inode)) { return inodedataMap[inode]; }
 	return NO_INODEDATA;
 }
 
-inodedata *write_get_inodedata(uint32_t inode, Lock &) {
+inodedata *write_get_inodedata(inode_t inode, Lock &) {
 	if (inodedataMap.contains(inode)) { return inodedataMap[inode]; }
 	auto id = new inodedata(inode);
 	inodedataMap[inode] = id;
@@ -1249,7 +1249,7 @@ inodedata *write_get_inodedata(uint32_t inode, Lock &) {
 }
 
 void write_free_inodedata(inodedata *fid, Lock &) {
-	uint32_t inode = fid->inode;
+	inode_t inode = fid->inode;
 	if (!inodedataMap.contains(inode)) { return; }
 
 	auto id = inodedataMap[inode];
@@ -1944,7 +1944,7 @@ inline void write_data_lcnt_decrease(inodedata *id, Lock &inodeLock) {
 	(void)dummy_isDeleted;
 }
 
-void *write_data_new(uint32_t inode) {
+void *write_data_new(inode_t inode) {
 	inodedata *id;
 	Lock globalLock(gMutex);
 	id = write_get_inodedata(inode, globalLock);
@@ -1991,7 +1991,7 @@ int write_data_flush(void *vid) {
 	return write_data_flush(vid, globalLock);
 }
 
-uint64_t write_data_getmaxfleng(uint32_t inode) {
+uint64_t write_data_getmaxfleng(inode_t inode) {
 	uint64_t maxfleng;
 	inodedata *id;
 	Lock globalLock(gMutex);
@@ -2005,14 +2005,14 @@ uint64_t write_data_getmaxfleng(uint32_t inode) {
 	return maxfleng;
 }
 
-int write_data_flush_inode(uint32_t inode) {
+int write_data_flush_inode(inode_t inode) {
 	Lock globalLock(gMutex);
 	inodedata *id = write_find_inodedata(inode, globalLock);
 	if (id == NO_INODEDATA) { return 0; }
 	return write_data_flush(id, globalLock);
 }
 
-int write_data_truncate(uint32_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
+int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
                         Attributes &attr) {
 	Lock globalLock(gMutex);
 

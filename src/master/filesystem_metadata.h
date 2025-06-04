@@ -42,6 +42,7 @@ struct FilesystemMetadata {
 public:
 	xattr_inode_entry *xattr_inode_hash[XATTR_INODE_HASH_SIZE];
 	xattr_data_entry *xattr_data_hash[XATTR_DATA_HASH_SIZE];
+	// TODO(Guillex): Check implications of using 64 bits for inode_t in this structure.
 	IdPoolDetainer<inode_t, uint32_t> inode_pool;
 	AclStorage acl_storage;
 	TrashPathContainer trash;

@@ -25,6 +25,7 @@
 #include "common/type_defs.h"
 
 #ifdef SAUNAFS_USE_INODE64
+// TODO(Guillex): Correct this values when adding support for 64-bit inodes
 #define SPECIAL_INODE_BASE 0xFFFFFFF0LU
 #define SPECIAL_INODE_ROOT 0x01LU
 #else

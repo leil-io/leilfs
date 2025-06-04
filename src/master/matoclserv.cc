@@ -1802,10 +1802,10 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 		const char *info;
 
 		constexpr uint32_t kBlobSizeWithRCode = kBlobSize + sizeof(rcode);
-		constexpr uint32_t kRegisterNewSessionMinSize =
-		    kBlobSizeWithRCode + sizeof(eptr->version) + sizeof(ileng) + sizeof(pleng);
 		constexpr uint32_t kRegisterNewMetaSessionMinSize =
 		    kBlobSizeWithRCode + sizeof(eptr->version) + sizeof(ileng);
+		constexpr uint32_t kRegisterNewSessionMinSize =
+		    kRegisterNewMetaSessionMinSize + sizeof(pleng);
 		constexpr uint32_t kRegisterWithSessionIdAndVersion =
 		    kBlobSizeWithRCode + sizeof(sessionid) + sizeof(eptr->version);
 

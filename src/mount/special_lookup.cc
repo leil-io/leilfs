@@ -35,11 +35,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: MASTERINFO): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: MASTERINFO): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -56,11 +56,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: STATS): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: STATS): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -84,11 +84,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
 #ifndef _WIN32
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: OPLOG): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: OPLOG): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 #endif
@@ -106,11 +106,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: OPHISTORY): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: OPHISTORY): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -127,11 +127,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: TWEAKS_FILE): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: TWEAKS_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -148,11 +148,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: FILE_BY_INODE_FILE): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: FILE_BY_INODE_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -170,11 +170,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: PATH_BY_INODE_FILE): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: PATH_BY_INODE_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -192,11 +192,11 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: MOUNT_INFO): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: MOUNT_INFO): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;

@@ -28,8 +28,7 @@ using namespace SaunaClient;
 
 namespace InodeMasterInfo {
 static void release(FileInfo */*fi*/) {
-	oplog_printf("release (%lu) (internal node: MASTERINFO): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: MASTERINFO): OK", inode_);
 }
 } // InodeMasterInfo
 
@@ -48,24 +47,21 @@ static void release(FileInfo *fi) {
 		pthread_mutex_destroy(&(statsinfo->lock));      // make helgrind happy
 		free(statsinfo);
 	}
-	oplog_printf("release (%lu) (internal node: STATS): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: STATS): OK", inode_);
 }
 } // InodeStats
 
 namespace InodeOplog {
 static void release(FileInfo *fi) {
 	oplog_releasehandle(fi->fh);
-	oplog_printf("release (%lu) (internal node: OPLOG): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: OPLOG): OK", inode_);
 }
 } // InodeOplog
 
 namespace InodeOphistory {
 static void release(FileInfo *fi) {
 	oplog_releasehandle(fi->fh);
-	oplog_printf("release (%lu) (internal node: OPHISTORY): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: OPHISTORY): OK", inode_);
 }
 } // InodeOphistory
 
@@ -95,8 +91,7 @@ static void release(FileInfo *fi) {
 		}
 	}
 	delete file;
-	oplog_printf("release (%lu) (internal node: TWEAKS_FILE): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: TWEAKS_FILE): OK", inode_);
 }
 } // InodeTweaks
 
@@ -109,8 +104,7 @@ static void release(FileInfo *fi) {
 		inodePathInfo.locked = false;
 		inodePathInfo.cv.notify_one();
 	}
-	oplog_printf("release (%lu) (internal node: PATH_BY_INODE_FILE): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): OK", inode_);
 }
 } // InodePathByInode
 
@@ -122,8 +116,7 @@ static void release(FileInfo *fi) {
 		free(buff);
 	}
 	fi->fh = 0;
-	oplog_printf("release (%lu) (internal node: MOUNT_INFO): OK",
-	            (unsigned long int)inode_);
+	oplog_printf("release (%" PRIiNode ") (internal node: MOUNT_INFO): OK", inode_);
 }
 }  // InodeMountInfo
 

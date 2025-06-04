@@ -32,6 +32,10 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <map>
+
+#include "common/type_defs.h"
+#include "slogger/slogger.h"
 
 inline bool gShowMessagesOnNotificationArea = false;
 
@@ -48,7 +52,7 @@ inline std::string mountpointIdentifierName = "SaunaFS Windows Client";
 inline std::string mountpointIdentifierName = "SaunaFS Linux Client";
 #endif
 inline std::unordered_map<std::string, MessageCache> messageCache;
-inline std::map<int, MessageCache> fullPathFromInodeCache;
+inline std::map<inode_t, MessageCache> fullPathFromInodeCache;
 inline std::chrono::seconds gMessageSuppressionPeriodSeconds;
 inline std::mutex messageCacheMutex;
 inline std::condition_variable cv;

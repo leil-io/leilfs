@@ -31,15 +31,15 @@ using namespace SaunaClient;
 namespace InodeMasterInfo {
 static void open(const Context &ctx, FileInfo *fi) {
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
-		oplog_printf(ctx, "open (%lu) (internal node: MASTERINFO): %s",
-		            (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
+		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: MASTERINFO): %s",
+		            inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	fi->fh = 0;
 	fi->direct_io = 0;
 	fi->keep_cache = 1;
-	oplog_printf(ctx, "open (%lu) (internal node: MASTERINFO): OK (0,1)",
-	            (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: MASTERINFO): OK (0,1)",
+	            inode_);
 }
 } // InodeMasterInfo
 
@@ -48,8 +48,8 @@ static void open(const Context &ctx, FileInfo *fi) {
 	sinfo *statsinfo;
 	statsinfo = (sinfo*) malloc(sizeof(sinfo));
 	if (!statsinfo) {
-		oplog_printf(ctx, "open (%lu) (internal node: STATS): %s",
-		            (unsigned long int)inode_,
+		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: STATS): %s",
+		            inode_,
 		            saunafs_error_string(SAUNAFS_ERROR_OUTOFMEMORY));
 		throw RequestException(SAUNAFS_ERROR_OUTOFMEMORY);
 	}
@@ -63,40 +63,40 @@ static void open(const Context &ctx, FileInfo *fi) {
 	fi->fh = reinterpret_cast<uintptr_t>(statsinfo);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
-	oplog_printf(ctx, "open (%lu) (internal node: STATS): OK (1,0)",
-	            (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: STATS): OK (1,0)",
+	            inode_);
 }
 } // InodeStats
 
 namespace InodeOplog {
 static void open(const Context &ctx, FileInfo *fi) {
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
-		oplog_printf(ctx, "open (%lu) (internal node: OPLOG): %s",
-		            (unsigned long int)inode_,
+		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: OPLOG): %s",
+		            inode_,
 		            saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	fi->fh = oplog_newhandle(0);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
-	oplog_printf(ctx, "open (%lu) (internal node: OPLOG): OK (1,0)",
-	            (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: OPLOG): OK (1,0)",
+	            inode_);
 }
 } // InodeOplog
 
 namespace InodeOphistory {
 static void open(const Context &ctx, FileInfo *fi) {
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
-		oplog_printf(ctx, "open (%lu) (internal node: OPHISTORY): %s",
-		            (unsigned long int)inode_,
+		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: OPHISTORY): %s",
+		            inode_,
 		            saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	fi->fh = oplog_newhandle(1);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
-	oplog_printf(ctx, "open (%lu) (internal node: OPHISTORY): OK (1,0)",
-	            (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: OPHISTORY): OK (1,0)",
+	            inode_);
 }
 } // InodeOphistory
 
@@ -106,8 +106,8 @@ static void open(const Context &ctx, FileInfo *fi) {
 	fi->fh = reinterpret_cast<uintptr_t>(file);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
-	oplog_printf(ctx, "open (%lu) (internal node: TWEAKS_FILE): OK (1,0)",
-	            (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: TWEAKS_FILE): OK (1,0)",
+	            inode_);
 }
 } // InodeTweaks
 
@@ -115,16 +115,16 @@ namespace InodePathByInode {
 static void open(const Context &ctx, FileInfo *fi) {
 	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
-		oplog_printf(ctx, "open (%lu) (internal node: PATH_BY_INODE_FILE): %s",
-		            (unsigned long int)inode_,
+		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): %s",
+		            inode_,
 		            saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	fi->fh = reinterpret_cast<uintptr_t>(inodePathInfo.pathByInode);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
-	oplog_printf(ctx, "open (%lu) (internal node: PATH_BY_INODE_FILE): OK (1,0)",
-	            (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): OK (1,0)",
+	            inode_);
 }
 } // InodePathByInode
 
@@ -132,8 +132,8 @@ namespace InodeMountInfo {
 static void open(const Context &ctx, FileInfo *fi) {
 	std::lock_guard lock(gMountInfoMtx);
 	if ((fi->flags & O_ACCMODE) != O_RDONLY) {
-		oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): %s",
-		             (unsigned long int)inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
+		oplog_printf(ctx, "open (%" PRIiNode ") (internal node: MOUNT_INFO): %s",
+		             inode_, saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	gMountInfo.buildMountInfoStr();
@@ -141,8 +141,8 @@ static void open(const Context &ctx, FileInfo *fi) {
 	fi->fh = reinterpret_cast<uintptr_t>(buff);
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
-	oplog_printf(ctx, "open (%lu) (internal node: MOUNT_INFO): OK (1,0)",
-	             (unsigned long int)inode_);
+	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: MOUNT_INFO): OK (1,0)",
+	             inode_);
 }
 }  // InodeMountInfo
 

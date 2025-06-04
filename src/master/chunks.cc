@@ -1809,14 +1809,13 @@ void chunk_got_duptrunc_status(matocsserventry *ptr, uint64_t chunkId, ChunkPart
 /* ----------------------- */
 
 uint32_t get_chunk_info_serialized_size() {
+	// Some fields are multiplied by 2 because they are stored in both 'done' and 'not done' states.
+	// See `chunk_store_info` function for details.
 	constexpr uint32_t kInfoSize =
 	    sizeof(chunksinfo_loopstart) + sizeof(chunksinfo_loopend) +
-	    sizeof(job_info::del_invalid) + sizeof(job_info::del_invalid) +
-	    sizeof(job_info::del_unused) + sizeof(job_info::del_unused) +
-	    sizeof(job_info::del_diskclean) + sizeof(job_info::del_diskclean) +
-	    sizeof(job_info::del_overgoal) + sizeof(job_info::del_overgoal) +
-	    sizeof(job_info::copy_undergoal) + sizeof(job_info::copy_undergoal) +
-	    sizeof(loop_info::copy_rebalance);
+	    (2 * sizeof(job_info::del_invalid)) + (2 * sizeof(job_info::del_unused)) +
+	    (2 * sizeof(job_info::del_diskclean)) + (2 * sizeof(job_info::del_overgoal)) +
+	    (2 * sizeof(job_info::copy_undergoal)) + sizeof(loop_info::copy_rebalance);
 
 	return kInfoSize;
 }
