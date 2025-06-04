@@ -138,9 +138,9 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 		}
 	} else {
 		printf("%s:\n", fname);
-		print_number(" inodes with trashtime changed:     ", "\n", changed, 1, 0, 1);
-		print_number(" inodes with trashtime not changed: ", "\n", notchanged, 1, 0, 1);
-		print_number(" inodes with permission denied:     ", "\n", notpermitted, 1, 0, 1);
+		print_number(" inodes with trashtime changed:     ", "\n", changed, kMode32, 0, 1);
+		print_number(" inodes with trashtime not changed: ", "\n", notchanged, kMode32, 0, 1);
+		print_number(" inodes with permission denied:     ", "\n", notpermitted, kMode32, 0, 1);
 	}
 	free(buff);
 	return 0;

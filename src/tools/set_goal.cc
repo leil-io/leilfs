@@ -83,9 +83,9 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode, in
 			}
 		} else {
 			printf("%s:\n", fname);
-			print_number(" inodes with goal changed:      ", "\n", changed, 1, 0, 1);
-			print_number(" inodes with goal not changed:  ", "\n", notChanged, 1, 0, 1);
-			print_number(" inodes with permission denied: ", "\n", notPermitted, 1, 0, 1);
+			print_number(" inodes with goal changed:      ", "\n", changed, kMode32, 0, 1);
+			print_number(" inodes with goal not changed:  ", "\n", notChanged, kMode32, 0, 1);
+			print_number(" inodes with permission denied: ", "\n", notPermitted, kMode32, 0, 1);
 		}
 	} catch (Exception &e) {
 		fprintf(stderr, "%s\n", e.what());

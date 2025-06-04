@@ -39,6 +39,9 @@ using inode_t = uint32_t;
 
 constexpr std::size_t kinode_t_size = sizeof(inode_t);
 
+// Used for printing numbers in tools
+constexpr std::uint8_t kMode32 = kinode_t_size == 4 ? 1 : 0;
+
 #else  // __cplusplus
 
 #include <inttypes.h>

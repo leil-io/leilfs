@@ -149,9 +149,9 @@ static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
 		}
 	} else {
 		printf("%s:\n", fname);
-		print_number(" inodes with attributes changed:     ", "\n", changed, 1, 0, 1);
-		print_number(" inodes with attributes not changed: ", "\n", notchanged, 1, 0, 1);
-		print_number(" inodes with permission denied:      ", "\n", notpermitted, 1, 0, 1);
+		print_number(" inodes with attributes changed:     ", "\n", changed, kMode32, 0, 1);
+		print_number(" inodes with attributes not changed: ", "\n", notchanged, kMode32, 0, 1);
+		print_number(" inodes with permission denied:      ", "\n", notpermitted, kMode32, 0, 1);
 	}
 
 	free(buff);

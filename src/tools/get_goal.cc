@@ -70,13 +70,13 @@ static int get_goal(const char *fname, uint8_t mode) {
 			for (FuseGetGoalStats goalStats : goalsStats) {
 				if (goalStats.files > 0) {
 					printf(" files with goal        %s :", goalStats.goalName.c_str());
-					print_number(" ", "\n", goalStats.files, 1, 0, 1);
+					print_number(" ", "\n", goalStats.files, kMode32, 0, 1);
 				}
 			}
 			for (FuseGetGoalStats goalStats : goalsStats) {
 				if (goalStats.directories > 0) {
 					printf(" directories with goal  %s :", goalStats.goalName.c_str());
-					print_number(" ", "\n", goalStats.directories, 1, 0, 1);
+					print_number(" ", "\n", goalStats.directories, kMode32, 0, 1);
 				}
 			}
 		}
