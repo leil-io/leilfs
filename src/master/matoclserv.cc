@@ -132,7 +132,7 @@ struct session {
 	using OpenedFilesSet = std::set<inode_t>;
 
 	uint32_t sessionid;
-	char *info;
+	std::string info;
 	std::string mountinfo;
 	std::string config;
 	uint32_t peerip;
@@ -628,11 +628,7 @@ void matoclserv_store_sessions() {
 	for (const auto& sessionPtr : sessionVector) {
 		if (sessionPtr->newsession == 1) {
 			ptr = fsesrecord;
-			if (sessionPtr->info) {
-				ileng = strlen(sessionPtr->info);
-			} else {
-				ileng = 0;
-			}
+			ileng = sessionPtr->info.size();
 
 			put32bit(&ptr, sessionPtr->sessionid);
 			put32bit(&ptr, ileng);
@@ -662,7 +658,7 @@ void matoclserv_store_sessions() {
 			}
 
 			if (ileng > 0) {
-				if (fwrite(sessionPtr->info, ileng, 1, fd) != 1) {
+				if (fwrite(sessionPtr->info.data(), ileng, 1, fd) != 1) {
 					safs_pretty_syslog(LOG_WARNING, "can't store sessions, fwrite error");
 					fclose(fd);
 					return;
@@ -829,16 +825,13 @@ int matoclserv_load_sessions() {
 				}
 			}
 			if (ileng > 0) {
-				sessionPtr->info = (char *)malloc(ileng + 1);
-				passert(sessionPtr->info);
-				if (fread(sessionPtr->info, ileng, 1, fd) != 1) {
-					free(sessionPtr->info);
+				sessionPtr->info.resize(ileng);
+				if (fread(sessionPtr->info.data(), ileng, 1, fd) != 1) {
 					sessionPtr.reset();
 					safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
 					fclose(fd);
 					return -1;
 				}
-				sessionPtr->info[ileng] = 0;
 			}
 			sessionVector.push_back(std::move(sessionPtr));
 		}
@@ -1343,8 +1336,8 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 			size += kCommonSessionSize + (SESSION_STATS * kCurrentPlusLastHourEntrySize) +
 			        (vmode ? kExtraVModeSize : 0);
 
-			if (eaptr->sesdata->info) {
-				size += strlen(eaptr->sesdata->info);
+			if (!eaptr->sesdata->info.empty()) {
+				size += eaptr->sesdata->info.size();
 			}
 
 			if (eaptr->sesdata->rootinode == 0) {
@@ -1368,10 +1361,10 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 			put32bit(&ptr, eaptr->peerip);
 			put32bit(&ptr, eaptr->version);
 
-			if (eaptr->sesdata->info) {
-				ileng = strlen(eaptr->sesdata->info);
+			if (!eaptr->sesdata->info.empty()) {
+				ileng = eaptr->sesdata->info.size();
 				put32bit(&ptr, ileng);
-				memcpy(ptr, eaptr->sesdata->info, ileng);
+				memcpy(ptr, eaptr->sesdata->info.data(), ileng);
 				ptr += ileng;
 			} else {
 				put32bit(&ptr, 0);
@@ -1916,15 +1909,11 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				eptr->sesdata->maxtrashtime = maxtrashtime;
 				eptr->sesdata->peerip = eptr->peerip;
 				eptr->sesdata->peerport = eptr->peerport;
-				if (ileng > 0) {
-					if (info[ileng - 1] == 0) {
-						eptr->sesdata->info = strdup(info);
-						passert(eptr->sesdata->info);
+				if (ileng>0) {
+					if (info[ileng-1]==0) {
+						eptr->sesdata->info = std::string(info);
 					} else {
-						eptr->sesdata->info = (char *)malloc(ileng + 1);
-						passert(eptr->sesdata->info);
-						memcpy(eptr->sesdata->info, info, ileng);
-						eptr->sesdata->info[ileng] = 0;
+						eptr->sesdata->info = std::string(info, ileng);
 					}
 				}
 
@@ -2038,13 +2027,9 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				eptr->sesdata->peerport = eptr->peerport;
 				if (ileng > 0) {
 					if (info[ileng - 1] == 0) {
-						eptr->sesdata->info = strdup(info);
-						passert(eptr->sesdata->info);
+						eptr->sesdata->info = std::string(info);
 					} else {
-						eptr->sesdata->info = (char *)malloc(ileng + 1);
-						passert(eptr->sesdata->info);
-						memcpy(eptr->sesdata->info, info, ileng);
-						eptr->sesdata->info[ileng] = 0;
+						eptr->sesdata->info = std::string(info, ileng);
 					}
 				}
 
@@ -5392,9 +5377,6 @@ void matoclserv_session_files(matoclserventry *eptr,
 
 void matocl_session_timedout(session *sesdata) {
 	matocl_close_files(sesdata);
-	if (sesdata->info) {
-		free(sesdata->info);
-	}
 }
 
 void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data,
@@ -6471,9 +6453,6 @@ int matoclserv_networkinit(void) {
 void matoclserv_session_unload(void) {
 	for (const auto& sessionPtr : sessionVector) {
 		sessionPtr->openedfiles.clear();
-		if (sessionPtr->info) {
-			free(sessionPtr->info);
-		}
 	}
 
 	sessionVector.clear();
