@@ -261,9 +261,24 @@ static std::mutex lock_request_mutex;
 
 static std::mutex statfsCacheMutex;
 static std::atomic<uint32_t> gStatfsCacheTimeout(0);
-// uid -> (timer, statvfs)
-static std::unordered_map<uint32_t, Timer> gStatfsCacheTimer;
-static std::unordered_map<uint32_t, struct statvfs> gStatfsCache;
+// StatfsCacheKey uniquely identifies a statfs cache entry by (uid, gid, inode)
+struct StatfsCacheKey {
+	uint32_t uid;
+	uint32_t gid;
+	uint32_t inode;
+
+	bool operator<(const StatfsCacheKey &other) const noexcept {
+		if (uid != other.uid) return uid < other.uid;
+		if (gid != other.gid) return gid < other.gid;
+		return inode < other.inode;
+	}
+	bool operator==(const StatfsCacheKey &other) const noexcept {
+		return uid == other.uid && gid == other.gid && inode == other.inode;
+	}
+};
+// statfs cache: maps (uid, gid, inode) to Timer and statvfs structures
+static std::map<StatfsCacheKey, Timer> gStatfsCacheTimer;
+static std::map<StatfsCacheKey, struct statvfs> gStatfsCache;
 
 #ifdef _WIN32
 uint8_t session_flags;
@@ -709,14 +724,15 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 	uint32_t bsize;
 	struct statvfs stfsbuf;
 	memset(&stfsbuf,0,sizeof(stfsbuf));
+	StatfsCacheKey statfsKey = {ctx.uid, ctx.gid, ino};
 
 	if (gStatfsCacheTimeout > 0) {
 		std::unique_lock<std::mutex> gStatfsCacheLock(statfsCacheMutex);
-		auto timer = gStatfsCacheTimer.find(ctx.uid);
+		auto timer = gStatfsCacheTimer.find(statfsKey);
 		if (timer != gStatfsCacheTimer.end() &&
 		    timer->second.elapsed_ms() < gStatfsCacheTimeout &&
-		    gStatfsCache.contains(ctx.uid)) {
-			stfsbuf = gStatfsCache[ctx.uid];
+		    gStatfsCache.contains(statfsKey)) {
+			stfsbuf = gStatfsCache[statfsKey];
 			gStatfsCacheLock.unlock();
 			oplog_printf(ctx, "statfs: sending data from statfscache");
 			return stfsbuf;
@@ -830,8 +846,8 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 
 	if (gStatfsCacheTimeout > 0) {
 		std::lock_guard<std::mutex> gStatfsCacheLock(statfsCacheMutex);
-		gStatfsCache[ctx.uid] = stfsbuf;
-		gStatfsCacheTimer[ctx.uid] = Timer();
+		gStatfsCache[statfsKey] = stfsbuf;
+		gStatfsCacheTimer[statfsKey] = Timer();
 	}
 	oplog_printf(ctx, "statfs (%lu): OK (%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ")",
 			(unsigned long int)ino,
