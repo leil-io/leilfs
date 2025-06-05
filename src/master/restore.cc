@@ -928,12 +928,22 @@ int restore_line(const char* filename, uint64_t lv, const char* line) {
 #endif
 		safs_pretty_syslog(LOG_ERR, "%s:%" PRIu64 ": unknown entry '%s'", filename, lv, ptr);
 	} else if (status != SAUNAFS_STATUS_OK) {
+		uint8_t errorStatus = 0;
+		if (status == -1) {
+			errorStatus = SAUNAFS_ERROR_PARSE;
+		} else if (status > SAUNAFS_ERROR_MAX || status < 0) {
+			safs::log_err("restore_line returned error code other than -1 or SAUNAFS_ERROR_CODE, in file {}:{}, status number {}", filename, lv, status);
+			assert(false);
+			errorStatus = SAUNAFS_ERROR_UNKNOWN;
+		} else {
+			errorStatus = static_cast<uint8_t>(status);
+		}
 #ifndef METARESTORE
 		safs_silent_syslog(LOG_DEBUG, "master.mismatch File %s, %" PRIu64 ", %s -- %s",
-			   filename, lv, line, saunafs_error_string(status));
+			   filename, lv, line, saunafs_error_string(errorStatus));
 #endif
 		safs_pretty_syslog(LOG_ERR, "%s:%" PRIu64 ": error: %d (%s)", filename, lv, status,
-			saunafs_error_string(status));
+			saunafs_error_string(errorStatus));
 	}
 	return status;
 }
