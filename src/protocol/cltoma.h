@@ -369,7 +369,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, messageId,
 		uint32_t, uid,
 		uint32_t, gid,
-		uint32_t, inode)
+		inode_t, inode)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, recursiveRemove, SAU_CLTOMA_RECURSIVE_REMOVE, 0,

@@ -22,7 +22,7 @@
 
 #include "common/quota_database.h"
 
-void QuotaDatabase::remove(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor,
+void QuotaDatabase::remove(QuotaOwnerType owner_type, inode_t owner_id, QuotaRigor rigor,
 		QuotaResource resource) {
 	auto &map = quota_data_[(int)owner_type];
 	auto it = map.find(owner_id);
@@ -36,7 +36,7 @@ void QuotaDatabase::remove(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRi
 	}
 }
 
-void QuotaDatabase::remove(QuotaOwnerType owner_type, uint32_t owner_id) {
+void QuotaDatabase::remove(QuotaOwnerType owner_type, inode_t owner_id) {
 	auto &map = quota_data_[(int)owner_type];
 	auto it = map.find(owner_id);
 	if (it == map.end()) {
@@ -46,7 +46,7 @@ void QuotaDatabase::remove(QuotaOwnerType owner_type, uint32_t owner_id) {
 	map.erase(it);
 }
 
-bool QuotaDatabase::exceeds(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor,
+bool QuotaDatabase::exceeds(QuotaOwnerType owner_type, inode_t owner_id, QuotaRigor rigor,
 		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) const {
 	const Limits *entry = get(owner_type, owner_id);
 	if (!entry) {

@@ -184,7 +184,7 @@ uint8_t fs_apply_setxattr(uint32_t ts, inode_t inode, uint32_t anleng, const uin
                           uint32_t avleng, const uint8_t *attrvalue, uint32_t mode);
 uint8_t fs_apply_setacl(uint32_t ts, inode_t inode, char aclType, const char *aclString);
 uint8_t fs_apply_setrichacl(uint32_t ts, inode_t inode, const std::string &acl_string);
-uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, uint32_t ownerId,
+uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, inode_t ownerId,
                           uint64_t limit);
 uint8_t fs_apply_unlink(uint32_t ts, inode_t parent, const HString &name, inode_t inode);
 uint8_t fs_apply_unlock(uint64_t chunkid);

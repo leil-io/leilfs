@@ -31,18 +31,16 @@
 class QuotaDatabase {
 public:
 	using Limits = std::array<std::array<uint64_t, 2>, 3>;
-	using DataTable = std::unordered_map<uint32_t, Limits>;
+	using DataTable = std::unordered_map<inode_t, Limits>;
 
-public:
 	QuotaDatabase() = default;
-
 
 	/*! \brief Gets information about the given owner's usage of resources and limits.
 	 * \param owner_type Quota entry type (user, group, inode (directory)).
 	 * \param owner_id Entry id.
 	 * \return Pointer to full set of limits.
 	 */
-	const Limits *get(QuotaOwnerType owner_type, uint32_t owner_id) const {
+	const Limits *get(QuotaOwnerType owner_type, inode_t owner_id) const {
 		const auto &map = quota_data_[(int)owner_type];
 		auto it = map.find(owner_id);
 		if (it == map.end()) {
@@ -59,9 +57,9 @@ public:
 	 * \param resource Resource type (number of inodes, size of file).
 	 * \param value Resource value to set.
 	 */
-	void set(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor, QuotaResource resource,
+	void set(QuotaOwnerType owner_type, inode_t owner_id, QuotaRigor rigor, QuotaResource resource,
 	         uint64_t value) {
-		quota_data_[(int)owner_type][(int)owner_id][(int)rigor][(int)resource] = value;
+		quota_data_[(int)owner_type][owner_id][(int)rigor][(int)resource] = value;
 	}
 
 	/*! \brief Update quota for specific resource.
@@ -71,9 +69,9 @@ public:
 	 * \param resource Resource type (number of inodes, size of file).
 	 * \param delta New resource value is equal to old value plus \param delta.
 	 */
-	void update(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor,
+	void update(QuotaOwnerType owner_type, inode_t owner_id, QuotaRigor rigor,
 	            QuotaResource resource, int64_t delta) {
-		quota_data_[(int)owner_type][(int)owner_id][(int)rigor][(int)resource] += delta;
+		quota_data_[(int)owner_type][owner_id][(int)rigor][(int)resource] += delta;
 	}
 
 	/*! \brief Remove quota for specific resource.
@@ -82,20 +80,20 @@ public:
 	 * \param rigor Resource rigor (soft, hard, used).
 	 * \param resource Resource type (number of inodes, size of file).
 	 */
-	void remove(QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor,
+	void remove(QuotaOwnerType owner_type, inode_t owner_id, QuotaRigor rigor,
 	            QuotaResource resource);
 
 	/*! \brief Remove all resource quotas for specific entry.
 	 * \param owner_type Quota entry type (user, group, inode (directory)).
 	 * \param owner_id Entry id.
 	 */
-	void remove(QuotaOwnerType owner_type, uint32_t owner_id);
+	void remove(QuotaOwnerType owner_type, inode_t owner_id);
 
 	/*! \brief Remove cleared resources for specific entry.
 	 * \param owner_type Quota entry type (user, group, inode (directory)).
 	 * \param owner_id Entry id.
 	 */
-	void removeEmpty(QuotaOwnerType owner_type, uint32_t owner_id) {
+	void removeEmpty(QuotaOwnerType owner_type, inode_t owner_id) {
 		auto &map = quota_data_[(int)owner_type];
 		auto it = map.find(owner_id);
 		if (it != map.end()) {
@@ -112,7 +110,7 @@ public:
 	 * \param resource_list List of resources to check (with change value).
 	 */
 	bool exceeds(
-	    QuotaOwnerType owner_type, uint32_t owner_id, QuotaRigor rigor,
+	    QuotaOwnerType owner_type, inode_t owner_id, QuotaRigor rigor,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) const;
 
 	/*! \brief Returns all quota entries (with used). */

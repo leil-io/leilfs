@@ -666,7 +666,7 @@ int do_setrichacl(const char *filename, uint64_t lv, uint32_t ts, const char *pt
 
 int do_setquota(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
 	char rigor = '\0', resource = '\0', ownerType = '\0';
-	uint32_t ownerId;
+	inode_t ownerId;
 	uint64_t limit;
 
 	EAT(ptr, filename, lv, '(');
@@ -676,7 +676,7 @@ int do_setquota(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
 	EAT(ptr, filename, lv, ',');
 	GETCHAR(ownerType, ptr);
 	EAT(ptr, filename, lv, ',');
-	GETU32(ownerId, ptr);
+	GETINODE(ownerId, ptr);
 	EAT(ptr, filename, lv, ',');
 	GETU64(limit, ptr);
 	EAT(ptr, filename, lv, ')');

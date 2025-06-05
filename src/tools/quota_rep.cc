@@ -69,7 +69,7 @@ static void quota_putc_plus_or_minus(uint64_t usage, uint64_t soft_limit, uint64
  */
 
 static void quota_print_entry(const std::string &path, inode_t path_inode, int owner_type,
-							  uint32_t owner_id, const std::string &info,
+							  inode_t owner_id, const std::string &info,
 							  const QuotaDatabase::Limits &limit) {
 	static const char *owner_type_name[4] = {"User ", "Group", "Directory", "Unknown"};
 	std::string line;
@@ -86,7 +86,7 @@ static void quota_print_entry(const std::string &path, inode_t path_inode, int o
 			fputs(info.c_str(), stdout);
 		}
 	} else {
-		printf("%10" PRIu32, owner_id);
+		printf("%10" PRIiNode, owner_id);
 	}
 	fputs(" ", stdout);
 
@@ -135,7 +135,7 @@ static void quota_print_rep(const std::string &path, inode_t path_inode,
 	    "# User/Group ID/Directory; Bytes: current usage, soft limit, hard limit; "
 	    "Inodes: current usage, soft limit, hard limit;");
 
-	std::pair<int, uint32_t> prev_entry(-1, 0);
+	std::pair<int, inode_t> prev_entry(-1, 0);
 	QuotaDatabase::Limits limits_value{{{{0}}}};  // workaround for a bug in gcc 4.6
 	std::string info;
 	for (auto index : ordering) {

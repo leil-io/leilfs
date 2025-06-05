@@ -2316,13 +2316,14 @@ void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *dat
 }
 
 void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint32_t version, messageId, uid, gid, inode;
+	uint32_t version, messageId, uid, gid;
+	inode_t inode;
 	std::vector<QuotaEntry> results;
 	std::vector<std::string> info;
 	uint8_t status;
 	deserializePacketVersionNoHeader(data, length, version);
 
-	auto foundContextRootInodeResult = [&](uint32_t rootInode) {
+	auto foundContextRootInodeResult = [&](inode_t rootInode) {
 		for (const auto &result : results) {
 			if (result.entryKey.owner.ownerType == QuotaOwnerType::kInode && 
 				result.entryKey.owner.ownerId == rootInode) {
@@ -2354,10 +2355,9 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 			auto ino = fsnodes_id_to_node(inode);
 			statsrecord rootInodeStatRec;
 			fsnodes_get_stats(ino, &rootInodeStatRec);
-			results.emplace_back(
-				QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
-											QuotaRigor::kUsed, QuotaResource::kSize},
-											rootInodeStatRec.size});
+			results.emplace_back(QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
+			                                              QuotaRigor::kUsed, QuotaResource::kSize},
+			                                rootInodeStatRec.size});
 		}
 	}
 
