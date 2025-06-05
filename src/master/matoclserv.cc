@@ -154,7 +154,6 @@ struct session {
 	std::array<uint32_t,SESSION_STATS> lasthouropstats;
 	GroupCache group_cache;
 	OpenedFilesSet openedfiles;
-	struct session *next;
 
 	session()
 	    : sessionid(),
@@ -176,8 +175,7 @@ struct session {
 	      currentopstats(),
 	      lasthouropstats(),
 	      group_cache(),
-	      openedfiles(),
-	      next() {
+	      openedfiles() {
 	}
 };
 
@@ -240,7 +238,7 @@ struct matoclserventry {
 	struct matoclserventry *next;
 };
 
-static session *sessionshead=NULL;
+static std::vector<std::unique_ptr<session>> sessionVector;
 static matoclserventry *matoclservhead=NULL;
 static int lsock;
 static int32_t lsockpdescpos;
@@ -554,61 +552,50 @@ matoclserventry *matoclserv_find_connection(uint32_t id) {
 }
 
 /* new registration procedure */
-session* matoclserv_new_session(uint8_t newsession,uint8_t nonewid) {
-	session *asesdata = new session();
-	passert(asesdata);
+session *matoclserv_new_session(uint8_t newsession, uint8_t nonewid) {
+	auto sessionPtr = std::make_unique<session>();
+	passert(sessionPtr.get());
 	if (newsession==0 && nonewid) {
-		asesdata->sessionid = 0;
+		sessionPtr->sessionid = 0;
 	} else {
-		asesdata->sessionid = fs_newsessionid();
+		sessionPtr->sessionid = fs_newsessionid();
 	}
 
-	asesdata->newsession = newsession;
-	asesdata->nsocks = 1;
-	asesdata->next = sessionshead;
-	sessionshead = asesdata;
-	return asesdata;
+	sessionPtr->newsession = newsession;
+	sessionPtr->nsocks = 1;
+	sessionVector.push_back(std::move(sessionPtr));
+	return sessionVector.back().get();
 }
 
 session* matoclserv_find_session(uint32_t sessionid) {
-	session *asesdata;
-	if (sessionid==0) {
-		return NULL;
-	}
-	for (asesdata = sessionshead ; asesdata ; asesdata=asesdata->next) {
-		if (asesdata->sessionid==sessionid) {
-//                      syslog(LOG_NOTICE,"found: %u ; before ; nsocks: %u ; state: %u",sessionid,asesdata->nsocks,asesdata->newsession);
-			if (asesdata->newsession>=2) {
-				asesdata->newsession-=2;
+	if (sessionid == 0) { return nullptr; }
+
+	for (const auto& sessionPtr : sessionVector) {
+		if (sessionPtr->sessionid == sessionid) {
+			if (sessionPtr->newsession >= 2) {
+				sessionPtr->newsession -= 2;
 			}
-			asesdata->nsocks++;
-//                      syslog(LOG_NOTICE,"found: %u ; after ; nsocks: %u ; state: %u",sessionid,asesdata->nsocks,asesdata->newsession);
-			asesdata->disconnected = 0;
-			return asesdata;
+			sessionPtr->nsocks++;
+			sessionPtr->disconnected = 0;
+			return sessionPtr.get();
 		}
 	}
-	return NULL;
+	return nullptr;
 }
 
 void matoclserv_close_session(uint32_t sessionid) {
-	session *asesdata;
-	if (sessionid==0) {
-		return;
-	}
-	for (asesdata = sessionshead ; asesdata ; asesdata=asesdata->next) {
-		if (asesdata->sessionid==sessionid) {
-//                      syslog(LOG_NOTICE,"close: %u ; before ; nsocks: %u ; state: %u",sessionid,asesdata->nsocks,asesdata->newsession);
-			if (asesdata->nsocks==1 && asesdata->newsession<2) {
-				asesdata->newsession+=2;
+	if (sessionid == 0) { return; }
+
+	for (const auto& sessionPtr : sessionVector) {
+		if (sessionPtr->sessionid == sessionid) {
+			if (sessionPtr->nsocks == 1 && sessionPtr->newsession < 2) {
+				sessionPtr->newsession += 2;
 			}
-//                      syslog(LOG_NOTICE,"close: %u ; after ; nsocks: %u ; state: %u",sessionid,asesdata->nsocks,asesdata->newsession);
 		}
 	}
-	return;
 }
 
 void matoclserv_store_sessions() {
-	session *asesdata;
 	uint32_t ileng;
 	constexpr uint32_t kSessionSerializedSize =
 	    sizeof(session::sessionid) + sizeof(ileng) + sizeof(session::peerip) +
@@ -623,72 +610,80 @@ void matoclserv_store_sessions() {
 	FILE *fd;
 
 	fd = fopen(kSessionsTmpFilename, "w");
-	if (fd==NULL) {
+	if (fd == NULL) {
 		safs_silent_errlog(LOG_WARNING,"can't store sessions, open error");
 		return;
 	}
-	memcpy(fsesrecord,SFSSIGNATURE "S \001\006\004",8);
-	ptr = fsesrecord+8;
+
+	memcpy(fsesrecord, SFSSIGNATURE "S \001\006\004", 8);
+	ptr = fsesrecord + 8;
 	put16bit(&ptr,SESSION_STATS);
-	if (fwrite(fsesrecord,10,1,fd)!=1) {
+
+	if (fwrite(fsesrecord, 10, 1, fd) != 1) {
 		safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
 		fclose(fd);
 		return;
 	}
-	for (asesdata = sessionshead ; asesdata ; asesdata=asesdata->next) {
-		if (asesdata->newsession==1) {
+
+	for (const auto& sessionPtr : sessionVector) {
+		if (sessionPtr->newsession == 1) {
 			ptr = fsesrecord;
-			if (asesdata->info) {
-				ileng = strlen(asesdata->info);
+			if (sessionPtr->info) {
+				ileng = strlen(sessionPtr->info);
 			} else {
 				ileng = 0;
 			}
-			put32bit(&ptr,asesdata->sessionid);
-			put32bit(&ptr,ileng);
-			put32bit(&ptr,asesdata->peerip);
-			putINode(&ptr,asesdata->rootinode);
-			put8bit(&ptr,asesdata->sesflags);
-			put8bit(&ptr,asesdata->mingoal);
-			put8bit(&ptr,asesdata->maxgoal);
-			put32bit(&ptr,asesdata->mintrashtime);
-			put32bit(&ptr,asesdata->maxtrashtime);
-			put32bit(&ptr,asesdata->rootuid);
-			put32bit(&ptr,asesdata->rootgid);
-			put32bit(&ptr,asesdata->mapalluid);
-			put32bit(&ptr,asesdata->mapallgid);
-			for (i=0 ; i<SESSION_STATS ; i++) {
-				put32bit(&ptr,asesdata->currentopstats[i]);
+
+			put32bit(&ptr, sessionPtr->sessionid);
+			put32bit(&ptr, ileng);
+			put32bit(&ptr, sessionPtr->peerip);
+			put32bit(&ptr, sessionPtr->rootinode);
+			put8bit(&ptr, sessionPtr->sesflags);
+			put8bit(&ptr, sessionPtr->mingoal);
+			put8bit(&ptr, sessionPtr->maxgoal);
+			put32bit(&ptr, sessionPtr->mintrashtime);
+			put32bit(&ptr, sessionPtr->maxtrashtime);
+			put32bit(&ptr, sessionPtr->rootuid);
+			put32bit(&ptr, sessionPtr->rootgid);
+			put32bit(&ptr, sessionPtr->mapalluid);
+			put32bit(&ptr, sessionPtr->mapallgid);
+
+			for (i = 0; i < SESSION_STATS; i++) {
+				put32bit(&ptr, sessionPtr->currentopstats[i]);
 			}
-			for (i=0 ; i<SESSION_STATS ; i++) {
-				put32bit(&ptr,asesdata->lasthouropstats[i]);
+
+			for (i = 0; i < SESSION_STATS; i++) {
+				put32bit(&ptr, sessionPtr->lasthouropstats[i]);
 			}
 			if (fwrite(fsesrecord, kBufferSize, 1, fd) != 1) {
 				safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
 				fclose(fd);
 				return;
 			}
-			if (ileng>0) {
-				if (fwrite(asesdata->info,ileng,1,fd)!=1) {
-					safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
+
+			if (ileng > 0) {
+				if (fwrite(sessionPtr->info, ileng, 1, fd) != 1) {
+					safs_pretty_syslog(LOG_WARNING, "can't store sessions, fwrite error");
 					fclose(fd);
 					return;
 				}
 			}
 		}
 	}
-	if (fclose(fd)!=0) {
+
+	if (fclose(fd) != 0) {
 		safs_silent_errlog(LOG_WARNING,"can't store sessions, fclose error");
 		return;
 	}
+
 	if (rename(kSessionsTmpFilename, kSessionsFilename) < 0) {
-		safs_silent_errlog(LOG_WARNING,"can't store sessions, rename error");
+		safs_silent_errlog(LOG_WARNING, "can't store sessions, rename error");
 	}
 }
 
 #define MFSSIGNATURE "MFS"
 
 int matoclserv_load_sessions() {
-	session *asesdata;
 	uint32_t ileng;
 	uint8_t hdr[8];  // for signature and version. e.g. "SFS" " S 1.5"
 	std::vector<uint8_t> fsesrecord;
@@ -738,7 +733,7 @@ int matoclserv_load_sessions() {
 	           memcmp(hdr, MFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0) {
 		mapalldata = 1;
 		goaltrashdata = 0;
-		if (fread(hdr,2,1,fd)!=1) {
+		if (fread(hdr, 2, 1, fd) != 1) {
 			safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
 			fclose(fd);
 			return -1;
@@ -794,59 +789,60 @@ int matoclserv_load_sessions() {
 
 		if (r==1) {
 			ptr = fsesrecord.data();
-			asesdata = new session();
-			passert(asesdata);
-			get32bit(&ptr, asesdata->sessionid);
+			auto sessionPtr = std::make_unique<session>();
+			passert(sessionPtr);
+			get32bit(&ptr, sessionPtr->sessionid);
 			get32bit(&ptr, ileng);
-			get32bit(&ptr, asesdata->peerip);
-			getINode(&ptr, asesdata->rootinode);
-			asesdata->sesflags = get8bit(&ptr);
+			get32bit(&ptr, sessionPtr->peerip);
+			getINode(&ptr, sessionPtr->rootinode);
+			sessionPtr->sesflags = get8bit(&ptr);
 			if (goaltrashdata) {
-				asesdata->mingoal = get8bit(&ptr);
-				asesdata->maxgoal = get8bit(&ptr);
-				get32bit(&ptr, asesdata->mintrashtime);
-				get32bit(&ptr, asesdata->maxtrashtime);
+				sessionPtr->mingoal = get8bit(&ptr);
+				sessionPtr->maxgoal = get8bit(&ptr);
+				get32bit(&ptr, sessionPtr->mintrashtime);
+				get32bit(&ptr, sessionPtr->maxtrashtime);
 			}
-			get32bit(&ptr, asesdata->rootuid);
-			get32bit(&ptr, asesdata->rootgid);
+			get32bit(&ptr, sessionPtr->rootuid);
+			get32bit(&ptr, sessionPtr->rootgid);
 			if (mapalldata) {
-				get32bit(&ptr, asesdata->mapalluid);
-				get32bit(&ptr, asesdata->mapallgid);
+				get32bit(&ptr, sessionPtr->mapalluid);
+				get32bit(&ptr, sessionPtr->mapallgid);
 			}
-			asesdata->newsession = 1;
-			asesdata->disconnected = eventloop_time();
-			for (i=0 ; i<SESSION_STATS ; i++) {
-				if (i<statsinfile) {
-					get32bit(&ptr, asesdata->currentopstats[i]);
+			sessionPtr->newsession = 1;
+			sessionPtr->disconnected = eventloop_time();
+			for (i = 0; i < SESSION_STATS; i++) {
+				if (i < statsinfile) {
+					get32bit(&ptr, sessionPtr->currentopstats[i]);
 				} else {
-					asesdata->currentopstats[i] = 0;
+					sessionPtr->currentopstats[i] = 0;
 				}
 			}
-			if (statsinfile>SESSION_STATS) {
-				ptr+=4*(statsinfile-SESSION_STATS);
+
+			if (statsinfile > SESSION_STATS) {
+				ptr += 4 * (statsinfile - SESSION_STATS);
 			}
-			for (i=0 ; i<SESSION_STATS ; i++) {
-				if (i<statsinfile) {
-					get32bit(&ptr, asesdata->lasthouropstats[i]);
+			for (i = 0; i < SESSION_STATS; i++) {
+				if (i < statsinfile) {
+					get32bit(&ptr, sessionPtr->lasthouropstats[i]);
 				} else {
-					asesdata->lasthouropstats[i] = 0;
+					sessionPtr->lasthouropstats[i] = 0;
 				}
 			}
-			if (ileng>0) {
-				asesdata->info = (char*) malloc(ileng+1);
-				passert(asesdata->info);
-				if (fread(asesdata->info,ileng,1,fd)!=1) {
-					free(asesdata->info);
-					delete asesdata;
+			if (ileng > 0) {
+				sessionPtr->info = (char *)malloc(ileng + 1);
+				passert(sessionPtr->info);
+				if (fread(sessionPtr->info, ileng, 1, fd) != 1) {
+					free(sessionPtr->info);
+					sessionPtr.reset();
 					safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
 					fclose(fd);
 					return -1;
 				}
-				asesdata->info[ileng]=0;
+				sessionPtr->info[ileng] = 0;
 			}
-			asesdata->next = sessionshead;
-			sessionshead = asesdata;
+			sessionVector.push_back(std::move(sessionPtr));
 		}
+
 		if (ferror(fd)) {
 			safs_pretty_syslog(LOG_WARNING,"can't load sessions, fread error");
 			fclose(fd);
@@ -873,46 +869,44 @@ int matoclserv_insert_openfile(session *cr, inode_t inode) {
 	return status;
 }
 
-void matoclserv_add_open_file(uint32_t sessionid, inode_t inode) {
-	session *asesdata;
+void matoclserv_add_open_file(uint32_t sessionid, uint32_t inode) {
+	for (const auto& sessionPtr : sessionVector) {
+		if (sessionPtr->sessionid == sessionid) {
+			if (!sessionPtr->openedfiles.contains(inode)) {
+				sessionPtr->openedfiles.insert(inode);
+			}
+			return;
+		}
+	}
 
-	for (asesdata = sessionshead ; asesdata && asesdata->sessionid!=sessionid; asesdata=asesdata->next) ;
-	if (asesdata==NULL) {
-		asesdata = new session();
-		passert(asesdata);
-		asesdata->sessionid = sessionid;
+	// If session does not exist, create a new one
+	auto sessionPtr = std::make_unique<session>();
+	passert(sessionPtr.get());
+	sessionPtr->sessionid = sessionid;
 /* session created by filesystem - only for old clients (pre 1.5.13) */
-		asesdata->disconnected = eventloop_time();
-		asesdata->next = sessionshead;
-		sessionshead = asesdata;
-	}
-
-	if (asesdata->openedfiles.contains(inode)) {
-		return;  // file already open - nothing to do
-	}
-	asesdata->openedfiles.insert(inode);
+	sessionPtr->disconnected = eventloop_time();
+	sessionPtr->openedfiles.insert(inode);
+	sessionVector.push_back(std::move(sessionPtr));
 }
 
-void matoclserv_remove_open_file(uint32_t sessionid, inode_t inode) {
-	session *asesdata;
+void matoclserv_remove_open_file(uint32_t sessionid, uint32_t inode) {
+	for (const auto& sessionPtr : sessionVector) {
+		if (sessionPtr->sessionid == sessionid) {
+			if (sessionPtr->openedfiles.contains(inode)) {
+				sessionPtr->openedfiles.erase(inode);
+			}
+			return;
+		}
+	}
 
-	for (asesdata = sessionshead; asesdata && asesdata->sessionid != sessionid; asesdata = asesdata->next) {
-	}
-	if (asesdata == NULL) {
-		safs_pretty_syslog(LOG_ERR, "sessions file is corrupted");
-		return;
-	}
-
-	if (asesdata->openedfiles.contains(inode)) {
-		asesdata->openedfiles.erase(inode);
-	}
+	safs_pretty_syslog(LOG_ERR, "sessions file is corrupted");
 }
 
 void matoclserv_reset_session_timeouts() {
-	session *asesdata;
 	uint32_t now = eventloop_time();
-	for (asesdata = sessionshead ; asesdata ; asesdata=asesdata->next) {
-		asesdata->disconnected = now;
+
+	for (auto& sessionPtr : sessionVector) {
+		sessionPtr->disconnected = now;
 	}
 }
 
@@ -5250,10 +5244,10 @@ void matoclserv_admin_reload(matoclserventry* eptr, const uint8_t* data, uint32_
 
 std::string get_client_configs() {
 	std::map<std::string, std::string> client_configs;
-	for (session *sess = sessionshead; sess != nullptr; sess = sess->next) {
-		if (sess->config.empty()) { continue; }
-		NetworkAddress addr(sess->peerip, sess->peerport);
-		client_configs[addr.toString()] = sess->config;
+	for (const auto& sessionPtr : sessionVector) {
+		if (sessionPtr->config.empty()) { continue; }
+		NetworkAddress addr(sessionPtr->peerip, sessionPtr->peerport);
+		client_configs[addr.toString()] = sessionPtr->config;
 	}
 	return cfg_yaml_list("clients", client_configs);
 }
@@ -5442,29 +5436,26 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data,
 }
 
 void matocl_session_check(void) {
-	session **sesdata,*asesdata;
-	uint32_t now;
+	uint32_t now = eventloop_time();
 
-	now = eventloop_time();
-	sesdata = &(sessionshead);
-	while ((asesdata=*sesdata)) {
-//              syslog(LOG_NOTICE,"session: %u ; nsocks: %u ; state: %u ; disconnected: %u",asesdata->sessionid,asesdata->nsocks,asesdata->newsession,asesdata->disconnected);
-		if (asesdata->nsocks==0 && ((asesdata->newsession>1 && asesdata->disconnected<now) || (asesdata->newsession==1 && asesdata->disconnected+SessionSustainTime<now) || (asesdata->newsession==0 && asesdata->disconnected+7200<now))) {
-//                      syslog(LOG_NOTICE,"remove session: %u",asesdata->sessionid);
-			matocl_session_timedout(asesdata);
-			*sesdata = asesdata->next;
-			delete asesdata;
+	for (auto sessionIt = sessionVector.begin(); sessionIt != sessionVector.end();) {
+		auto& sessionPtr = *sessionIt;
+		if (sessionPtr->nsocks == 0 &&
+		    ((sessionPtr->newsession > 1 && sessionPtr->disconnected < now) ||
+		     (sessionPtr->newsession == 1 && sessionPtr->disconnected + SessionSustainTime < now) ||
+		     (sessionPtr->newsession == 0 && sessionPtr->disconnected + 7200 < now))) {
+			matocl_session_timedout(sessionPtr.get());
+			sessionIt = sessionVector.erase(sessionIt);
 		} else {
-			sesdata = &(asesdata->next);
+			++sessionIt;
 		}
 	}
 }
 
 void matocl_session_statsmove(void) {
-	session *sesdata;
-	for (sesdata = sessionshead ; sesdata ; sesdata=sesdata->next) {
-		sesdata->lasthouropstats = sesdata->currentopstats;
-		sesdata->currentopstats.fill(0);
+	for (auto& sessionPtr : sessionVector) {
+		sessionPtr->lasthouropstats = sessionPtr->currentopstats;
+		sessionPtr->currentopstats.fill(0);
 	}
 	matoclserv_store_sessions();
 }
@@ -6296,7 +6287,7 @@ void matoclserv_start_cond_check(void) {
 }
 
 int matoclserv_sessionsinit(void) {
-	sessionshead = NULL;
+	sessionVector.clear();
 
 	switch (matoclserv_load_sessions()) {
 		case 0: // no file
@@ -6478,13 +6469,12 @@ int matoclserv_networkinit(void) {
 }
 
 void matoclserv_session_unload(void) {
-	for (session* ss = sessionshead, *ssn = NULL; ss ; ss = ssn) {
-		ssn = ss->next;
-		ss->openedfiles.clear();
-		if (ss->info) {
-			free(ss->info);
+	for (const auto& sessionPtr : sessionVector) {
+		sessionPtr->openedfiles.clear();
+		if (sessionPtr->info) {
+			free(sessionPtr->info);
 		}
-		delete ss;
 	}
-	sessionshead = nullptr;
+
+	sessionVector.clear();
 }
