@@ -175,7 +175,7 @@ bool fsnodes_has_tape_goal(FSNode *node);
 void fsnodes_add_sub_stats(FSNodeDirectory *parent, statsrecord *newsr, statsrecord *prevsr);
 
 void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
-		GoalStatistics &dgtab);
+                               GoalStatistics &dgtab);
 
 void fsnodes_gettrashtime_recursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
                                     TrashtimeMap &dirTrashtimes);

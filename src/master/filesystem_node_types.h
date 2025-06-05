@@ -67,7 +67,7 @@ enum class OperationMode { kReadWrite, kReadOnly };
 enum class ExpectedNodeType { kFile, kDirectory, kNotDirectory, kFileOrDirectory, kAny };
 
 using TrashtimeMap = std::unordered_map<uint32_t, uint32_t>;
-using GoalStatistics = std::array<uint32_t, GoalId::kMax + 1>;
+using GoalStatistics = std::array<inode_t, GoalId::kMax + 1>;
 using ParentsCompactVector = compact_vector<std::pair<inode_t, const hstorage::Handle *>, uint32_t>;
 
 struct statsrecord {

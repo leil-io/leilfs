@@ -1558,7 +1558,7 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 #ifndef METARESTORE
 
 void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
-		GoalStatistics &dgtab) {
+                               GoalStatistics &dgtab) {
 	if (node->type == FSNode::kFile || node->type == FSNode::kTrash || node->type == FSNode::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
 			safs_pretty_syslog(LOG_WARNING, "file inode %" PRIiNode ": unknown goal !!! - fixing",

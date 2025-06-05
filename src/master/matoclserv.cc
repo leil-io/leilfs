@@ -3753,7 +3753,7 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	if (status == SAUNAFS_STATUS_OK) {
 		const std::map<int, Goal>& goalDefinitions = fs_get_goal_definitions();
 		std::vector<FuseGetGoalStats> sauReply;
-		LegacyVector<std::pair<uint8_t, uint32_t>> legacyReplyFiles, legacyReplyDirectories;
+		LegacyVector<std::pair<uint8_t, inode_t>> legacyReplyFiles, legacyReplyDirectories;
 		for (const auto &goal : goalDefinitions) {
 			if (fgtab[goal.first] || dgtab[goal.first]) {
 				sauReply.emplace_back(goal.second.getName(), fgtab[goal.first], dgtab[goal.first]);
