@@ -1,5 +1,10 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (4.11.0) (2025-05-28)
+ - feat: Add migration script and documentation on migrations
+        See saunafs-migrations.7 for more info
+ - Add log showing an error that 5.0.0 changelogs are unsupported
+
 * SaunaFS (4.10.0) (2025-05-28)
  - fix(mount): Remove unnecessary waits on reads (#402)
  - fix: Fix client recover when master disconnects (#383)
