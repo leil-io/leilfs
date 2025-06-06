@@ -62,13 +62,9 @@
 static constexpr uint32_t kMaxPacketSize = 10000;
 static constexpr uint32_t kMaxBackgroundJobsCount = 1000;
 
-// from config
-static std::string gMasterHost;
-static std::string gMasterPort;
+// Common variables from config
 static std::string gBindHostStr;
-static NetworkAddress gBindHost;
 static bool gEnableLoadFactor;
-
 static std::string gLabel;
 static uint32_t gTimeout_ms;
 
@@ -89,7 +85,9 @@ enum class ConnectionMode : std::uint8_t {
 /// Currently, only one active MDS (known as Master) is supported.
 class MasterConn {
 public:
-	explicit MasterConn(const std::shared_ptr<JobPool> &jobPool) : jobPool_(jobPool) {}
+	explicit MasterConn(const std::string &masterHostStr, const std::string &masterPortStr,
+	                    const std::shared_ptr<JobPool> &jobPool)
+	    : masterHostStr_(masterHostStr), masterPortStr_(masterPortStr), jobPool_(jobPool) {}
 
 	// Disable unneeded copying and moving of the connection objects.
 	MasterConn(const MasterConn &) = delete;
@@ -123,6 +121,38 @@ public:
 		std::vector<uint8_t> buffer;
 		serializeLegacyPacket(buffer, type, data...);
 		createAttachedPacket(std::move(buffer));
+	}
+
+	// Configuration
+
+	void reloadConfig() {
+		auto newMasterHostStr_ = cfg_getstring("MASTER_HOST", "sfsmaster");
+		auto newMasterPortStr_ = cfg_getstring("MASTER_PORT", "9420");
+
+		if (newMasterHostStr_ == masterHostStr_ && newMasterPortStr_ == masterPortStr_) {
+			return;  // no change
+		}
+
+		masterHostStr_ = newMasterHostStr_;
+		masterPortStr_ = newMasterPortStr_;
+
+		uint32_t mip{};
+		uint16_t mport{};
+
+		if (tcpresolve(masterHostStr_.c_str(), masterPortStr_.c_str(), &mip, &mport, 0) >= 0) {
+			if (isLoopbackAddress(mip)) {
+				safs::log_warn(
+				    "Chunkserver loopback IP addresses are experimental; consider a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
+			}
+
+			if (address().ip != mip || address().port != mport) {
+				setMasterAddress(mip, mport);
+				setMode(ConnectionMode::KILL);
+			}
+		} else {
+			safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
+			               masterHostStr_, masterPortStr_);
+		}
 	}
 
 	// Connection management
@@ -166,15 +196,15 @@ public:
 
 	int initConnect() {
 		if (!isMasterAddressValid_) {
-			uint32_t mip;
-			uint32_t bip;
-			uint16_t mport;
+			uint32_t mip{};
+			uint32_t bip{};
+			uint16_t mport{};
 
 			if (tcpresolve(gBindHostStr.c_str(), nullptr, &bip, nullptr, 1) < 0) { bip = 0; }
 
-			gBindHost.ip = bip;
+			bindHostAddress_.ip = bip;
 
-			if (tcpresolve(gMasterHost.c_str(), gMasterPort.c_str(), &mip, &mport, 0) >= 0) {
+			if (tcpresolve(masterHostStr_.c_str(), masterPortStr_.c_str(), &mip, &mport, 0) >= 0) {
 				if (isLoopbackAddress(mip)) {
 					safs::log_warn(
 					    "Chunkserver loopback IP addresses are experimental; consider assigning an IP address to chunkserver (via /etc/hosts or some other way)");
@@ -184,7 +214,7 @@ public:
 				isMasterAddressValid_ = true;
 			} else {
 				safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
-				               gMasterHost, gMasterPort);
+				               masterHostStr_, masterPortStr_);
 				return -1;
 			}
 		}
@@ -203,8 +233,8 @@ public:
 			return -1;
 		}
 
-		if (gBindHost.ip > 0) {
-			if (tcpnumbind(socketFD_, gBindHost.ip, 0) < 0) {
+		if (bindHostAddress_.ip > 0) {
+			if (tcpnumbind(socketFD_, bindHostAddress_.ip, 0) < 0) {
 				safs_pretty_errlog(LOG_WARNING,
 				                   "master connection module: can't bind socket to given ip");
 				tcpclose(socketFD_);
@@ -636,9 +666,16 @@ public:
 
 	const NetworkAddress &address() const { return address_; }
 
-	void setAddress(uint32_t ip_, uint16_t port_) {
+	void setMasterAddress(uint32_t ip_, uint16_t port_) {
 		address_.ip = ip_;
 		address_.port = port_;
+	}
+
+	const NetworkAddress &bindHostAddress() const { return bindHostAddress_; }
+
+	void setBindHostAddress(uint32_t ip_, uint16_t port_) {
+		bindHostAddress_.ip = ip_;
+		bindHostAddress_.port = port_;
 	}
 
 	int socketFD() const { return socketFD_; }
@@ -648,7 +685,10 @@ public:
 	void setMasterAddressValid(bool valid) { isMasterAddressValid_ = valid; }
 
 private:
-	std::shared_ptr<JobPool> jobPool_;           ///< Shared reference to the JobPool
+	std::string masterHostStr_;                  ///< Hostname of the master server.
+	std::string masterPortStr_;                  ///< Port of the master server.
+	std::shared_ptr<JobPool> jobPool_;           ///< Shared reference to the JobPool.
+
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	int socketFD_{-1};                           ///< Socket file descriptor for this connection.
 	int32_t pDescPos_{-1};                       ///< Position in the pollfd array.
@@ -656,9 +696,16 @@ private:
 	Timer lastWrite_;                            ///< Time since the last write operation.
 	InputPacket inputPacket_{kMaxPacketSize};    ///< Input buffer for reading data from the socket.
 	std::list<OutputPacket> outputPackets_;      ///< Output packets to be sent to the master.
-	NetworkAddress address_;                     ///< Address of this master server (IP and port).
-	bool isMasterAddressValid_{false};           ///< Tells if the master address is valid.
+
+
+	NetworkAddress address_;            ///< Address of this master server (IP and port).
+	NetworkAddress bindHostAddress_;    ///< Address to bind the socket to (IP and port).
+	bool isMasterAddressValid_{false};  ///< Tells if the master address is valid.
 };
+
+//  From config
+static std::string gMasterHost;
+static std::string gMasterPort;
 
 static const uint64_t kSendStatusDelay = 5;
 
@@ -820,52 +867,35 @@ bool masterconn_load_label() {
 }
 
 void masterconn_reload(void) {
-	MasterConn *eptr = gMasterConnSingleton.get();
-
-	gMasterHost = cfg_getstring("MASTER_HOST", "sfsmaster");
-	gMasterPort = cfg_getstring("MASTER_PORT", "9420");
+	//  Read the common configuration from file.
 	gBindHostStr = cfg_getstring("BIND_HOST", "*");
-
 	gEnableLoadFactor = static_cast<bool>(cfg_getuint32("ENABLE_LOAD_FACTOR", 0));
 
+	uint32_t bip = 0;
+
+	if (tcpresolve(gBindHostStr.c_str(), nullptr, &bip, nullptr, 1) < 0) { bip = 0; }
+
+	// For each connection, reload the configuration and reconnect if needed.
+	MasterConn *eptr = gMasterConnSingleton.get();
+
 	if (eptr->isMasterAddressValid() && eptr->mode() != ConnectionMode::FREE) {
-		uint32_t mip{};
-		uint32_t bip{};
-		uint16_t mport{};
-
-		if (tcpresolve(gBindHostStr.c_str(), nullptr, &bip, nullptr, 1) < 0) { bip = 0; }
-
-		if (gBindHost.ip != bip) {
-			gBindHost.ip = bip;
+		if (eptr->bindHostAddress().ip != bip) {
+			eptr->setBindHostAddress(bip, eptr->bindHostAddress().port);
 			eptr->setMode(ConnectionMode::KILL);
 		}
 
-		if (tcpresolve(gMasterHost.c_str(), gMasterPort.c_str(), &mip, &mport, 0) >= 0) {
-			if (isLoopbackAddress(mip)) {
-				safs::log_warn(
-				    "Chunkserver loopback IP addresses are experimental; consider a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
-			}
-
-			if (eptr->address().ip != mip || eptr->address().port != mport) {
-				eptr->setAddress(mip, mport);
-				eptr->setMode(ConnectionMode::KILL);
-			}
-		} else {
-			safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
-			               gMasterHost, gMasterPort);
-		}
+		eptr->reloadConfig();
 	} else {
 		eptr->setMasterAddressValid(false);
 	}
 
 	gTimeout_ms = get_cfg_timeout();
 
-	uint32_t reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY", 5);
-
 	if (masterconn_load_label()) { eptr->sendRegisterLabel(); }
 
 	eptr->sendConfig();
 
+	uint32_t reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY", 5);
 	eventloop_timechange(gReconnectHook, TIMEMODE_RUN_LATE, reconnectionDelay, 0);
 }
 
@@ -917,7 +947,7 @@ int masterconn_init_threads(void) {
 	safs::log_info("master connection: {} background workers created", gNumberOfWorkers);
 
 	// Create the connections (only one at this point)
-	gMasterConnSingleton = std::make_unique<MasterConn>(gJobPool);
+	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, gJobPool);
 	MasterConn *eptr = gMasterConnSingleton.get();
 	passert(eptr);
 
