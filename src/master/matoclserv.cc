@@ -248,8 +248,8 @@ static int32_t lsockpdescpos;
 static int exiting,starting;
 
 // from config
-static char *ListenHost;
-static char *ListenPort;
+static std::string ListenHost;
+static std::string ListenPort;
 static uint32_t RejectOld;
 static uint32_t SessionSustainTime;
 
@@ -5961,9 +5961,6 @@ void matoclserv_term(void) {
 
 	matoclservList.clear();
 	matoclserv_session_unload();
-
-	free(ListenHost);
-	free(ListenPort);
 }
 
 void matoclserv_read(matoclserventry *eptr) {
@@ -6358,63 +6355,81 @@ void matoclserv_reload(void) {
 
 	RejectOld = cfg_getuint32("REJECT_OLD_CLIENTS",0);
 	SessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME",86400);
-	if (SessionSustainTime>7*86400) {
-		SessionSustainTime=7*86400;
-		safs_pretty_syslog(LOG_WARNING,"SESSION_SUSTAIN_TIME too big (more than week) - setting this value to one week");
+	if (SessionSustainTime > 7 * 86400) {
+		SessionSustainTime = 7 * 86400;
+		safs::log_warn(
+		    "SESSION_SUSTAIN_TIME too big (more than week) - setting this value to one week");
 	}
-	if (SessionSustainTime<60) {
-		SessionSustainTime=60;
-		safs_pretty_syslog(LOG_WARNING,"SESSION_SUSTAIN_TIME too low (less than minute) - setting this value to one minute");
+
+	if (SessionSustainTime < 60) {
+		SessionSustainTime = 60;
+		safs::log_warn(
+		    "SESSION_SUSTAIN_TIME too low (less than minute) - setting this value to one minute");
 	}
 
 	matoclserv_iolimits_reload();
 
-	char *oldListenHost = ListenHost;
-	char *oldListenPort = ListenPort;
-	ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
-	ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
+	std::string oldListenHost = ListenHost;
+	std::string oldListenPort = ListenPort;
 
-	if (strcmp(oldListenHost,ListenHost)==0 && strcmp(oldListenPort,ListenPort)==0) {
-		free(oldListenHost);
-		free(oldListenPort);
-		safs_pretty_syslog(LOG_NOTICE,"main master server module: socket address hasn't changed (%s:%s)",ListenHost,ListenPort);
+	auto host = cfg_getstr("MATOCL_LISTEN_HOST","*");
+	auto port = cfg_getstr("MATOCL_LISTEN_PORT","9421");
+
+	ListenHost = host;
+	ListenPort = port;
+
+	free(host); // to avoid memory leak allocated by strdup in cfg_getstr() function
+	free(port); // to avoid memory leak allocated by strdup in cfg_getstr() function
+
+	if (oldListenHost == ListenHost && oldListenPort == ListenPort) {
+		safs::log_info("main master server module: socket address hasn't changed ({}:{})",
+		               ListenHost, ListenPort);
 		return;
 	}
 
 	int newlsock = tcpsocket();
-	if (newlsock<0) {
-		safs_pretty_errlog(LOG_WARNING,"main master server module: socket address has changed, but can't create new socket");
-		free(ListenHost);
-		free(ListenPort);
+	if (newlsock < 0) {
+		safs::log_warn(
+		    "main master server module: socket address has changed, but can't create new socket");
 		ListenHost = oldListenHost;
 		ListenPort = oldListenPort;
 		return;
 	}
+
 	tcpnonblock(newlsock);
 	tcpnodelay(newlsock);
 	tcpreuseaddr(newlsock);
-	if (tcpsetacceptfilter(newlsock)<0 && errno!=ENOTSUP) {
+
+	if (tcpsetacceptfilter(newlsock) < 0 && errno != ENOTSUP) {
 		safs_silent_errlog(LOG_NOTICE,"main master server module: can't set accept filter");
 	}
-	if (tcpstrlisten(newlsock,ListenHost,ListenPort,100)<0) {
-		safs_pretty_errlog(LOG_ERR,"main master server module: socket address has changed, but can't listen on socket (%s:%s)",ListenHost,ListenPort);
-		free(ListenHost);
-		free(ListenPort);
+
+	if (tcpstrlisten(newlsock, ListenHost.c_str(), ListenPort.c_str(), 100) < 0) {
+		safs::log_err(
+		    "main master server module: socket address has changed, but can't listen on socket ({}:{})",
+		    ListenHost, ListenPort);
 		ListenHost = oldListenHost;
 		ListenPort = oldListenPort;
 		tcpclose(newlsock);
 		return;
 	}
-	safs_pretty_syslog(LOG_NOTICE,"main master server module: socket address has changed, now listen on %s:%s",ListenHost,ListenPort);
-	free(oldListenHost);
-	free(oldListenPort);
+
+	safs::log_info("main master server module: socket address has changed, now listen on {}:{}",
+	               ListenHost, ListenPort);
 	tcpclose(lsock);
 	lsock = newlsock;
 }
 
 int matoclserv_networkinit(void) {
-	ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
-	ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
+	auto host = cfg_getstr("MATOCL_LISTEN_HOST", "*");
+	auto port = cfg_getstr("MATOCL_LISTEN_PORT", "9421");
+
+	ListenHost = host;
+	ListenPort = port;
+
+	free(host);  // to avoid memory leak allocated by strdup in cfg_getstr() function
+	free(port);  // to avoid memory leak allocated by strdup in cfg_getstr() function
+
 	RejectOld = cfg_getuint32("REJECT_OLD_CLIENTS",0);
 
 	if (matoclserv_iolimits_reload() != 0) {
@@ -6423,27 +6438,32 @@ int matoclserv_networkinit(void) {
 
 	exiting = 0;
 	lsock = tcpsocket();
-	if (lsock<0) {
-		safs_pretty_errlog(LOG_ERR,"main master server module: can't create socket");
+	if (lsock < 0) {
+		safs::log_err("main master server module: can't create socket");
 		return -1;
 	}
+
 	tcpnonblock(lsock);
 	tcpnodelay(lsock);
 	tcpreuseaddr(lsock);
-	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
-		safs_silent_errlog(LOG_NOTICE,"main master server module: can't set accept filter");
+
+	if (tcpsetacceptfilter(lsock) < 0 && errno != ENOTSUP) {
+		safs::log_info("main master server module: can't set accept filter");
 	}
-	if (tcpstrlisten(lsock,ListenHost,ListenPort,100)<0) {
-		safs_pretty_errlog(LOG_ERR,"main master server module: can't listen on %s:%s",ListenHost,ListenPort);
+
+	if (tcpstrlisten(lsock, ListenHost.c_str(), ListenPort.c_str(), 100) < 0) {
+		safs::log_err("main master server module: can't listen on {}:{}", ListenHost, ListenPort);
 		return -1;
 	}
-	safs_pretty_syslog(LOG_NOTICE,"main master server module: listen on %s:%s",ListenHost,ListenPort);
+
+	safs::log_info("main master server module: listen on {}:{}", ListenHost, ListenPort);
 
 	matoclservList.clear();
 
 	if (metadataserver::isMaster()) {
 		matoclserv_become_master();
 	}
+
 	eventloop_reloadregister(matoclserv_reload);
 	metadataserver::registerFunctionCalledOnPromotion(matoclserv_become_master);
 	eventloop_destructregister(matoclserv_term);
