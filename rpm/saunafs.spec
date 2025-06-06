@@ -313,26 +313,6 @@ rm -rf $RPM_BUILD_ROOT
 %doc NEWS README.md UPGRADE
 %attr(755,root,root) %{_bindir}/saunafs
 %attr(755,root,root) %{_bindir}/sfsmount
-%attr(755,root,root) %{_bindir}/sfstools.sh
-%{_bindir}/sfsappendchunks
-%{_bindir}/sfscheckfile
-%{_bindir}/sfsdeleattr
-%{_bindir}/sfsdirinfo
-%{_bindir}/sfsfileinfo
-%{_bindir}/sfsfilerepair
-%{_bindir}/sfsgeteattr
-%{_bindir}/sfsgetgoal
-%{_bindir}/sfsgettrashtime
-%{_bindir}/sfsmakesnapshot
-%{_bindir}/sfsrepquota
-%{_bindir}/sfsrgetgoal
-%{_bindir}/sfsrgettrashtime
-%{_bindir}/sfsrsetgoal
-%{_bindir}/sfsrsettrashtime
-%{_bindir}/sfsseteattr
-%{_bindir}/sfssetgoal
-%{_bindir}/sfssetquota
-%{_bindir}/sfssettrashtime
 %{_mandir}/man1/saunafs-appendchunks.1*
 %{_mandir}/man1/saunafs-checkfile.1*
 %{_mandir}/man1/saunafs-deleattr.1*
