@@ -604,22 +604,19 @@ void matoclserv_store_sessions() {
 	    sizeof(session::rootuid) + sizeof(session::rootgid) + sizeof(session::mapalluid) +
 	    sizeof(session::mapallgid);
 	constexpr uint32_t kBufferSize = kSessionSerializedSize + (SESSION_STATS * 8);
-	uint8_t fsesrecord[kBufferSize]; // 4+4+4+4+1+1+1+4+4+4+4+4+4+SESSION_STATS*4+SESSION_STATS*4
-	uint8_t *ptr;
-	int i;
-	FILE *fd;
+	std::vector<uint8_t> fsesrecord(kBufferSize); // 4+4+4+4+1+1+1+4+4+4+4+4+4+SESSION_STATS*4+SESSION_STATS*4
 
-	fd = fopen(kSessionsTmpFilename, "w");
+	FILE *fd = fopen(kSessionsTmpFilename, "w");
 	if (fd == NULL) {
 		safs_silent_errlog(LOG_WARNING,"can't store sessions, open error");
 		return;
 	}
 
-	memcpy(fsesrecord, SFSSIGNATURE "S \001\006\004", 8);
-	ptr = fsesrecord + 8;
+	memcpy(fsesrecord.data(), SFSSIGNATURE "S \001\006\004", 8);
+	uint8_t *ptr = fsesrecord.data() + 8;
 	put16bit(&ptr,SESSION_STATS);
 
-	if (fwrite(fsesrecord, 10, 1, fd) != 1) {
+	if (fwrite(fsesrecord.data(), 10, 1, fd) != 1) {
 		safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
 		fclose(fd);
 		return;
@@ -627,7 +624,7 @@ void matoclserv_store_sessions() {
 
 	for (const auto& sessionPtr : sessionVector) {
 		if (sessionPtr->newsession == 1) {
-			ptr = fsesrecord;
+			ptr = fsesrecord.data();
 			ileng = sessionPtr->info.size();
 
 			put32bit(&ptr, sessionPtr->sessionid);
@@ -644,14 +641,14 @@ void matoclserv_store_sessions() {
 			put32bit(&ptr, sessionPtr->mapalluid);
 			put32bit(&ptr, sessionPtr->mapallgid);
 
-			for (i = 0; i < SESSION_STATS; i++) {
+			for (auto i = 0; i < SESSION_STATS; i++) {
 				put32bit(&ptr, sessionPtr->currentopstats[i]);
 			}
 
-			for (i = 0; i < SESSION_STATS; i++) {
+			for (auto i = 0; i < SESSION_STATS; i++) {
 				put32bit(&ptr, sessionPtr->lasthouropstats[i]);
 			}
-			if (fwrite(fsesrecord, kBufferSize, 1, fd) != 1) {
+			if (fwrite(fsesrecord.data(), kBufferSize, 1, fd) != 1) {
 				safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
 				fclose(fd);
 				return;
@@ -783,7 +780,7 @@ int matoclserv_load_sessions() {
 	while (!feof(fd)) {
 		r = fread(fsesrecord.data(), fsesrecord.size(), 1, fd);
 
-		if (r==1) {
+		if (r == 1) {
 			ptr = fsesrecord.data();
 			auto sessionPtr = std::make_unique<session>();
 			passert(sessionPtr);
