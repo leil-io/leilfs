@@ -265,11 +265,11 @@ static std::atomic<uint32_t> gStatfsCacheTimeout(0);
 struct StatfsCacheKey {
 	uint32_t uid;
 	uint32_t gid;
-	uint32_t inode;
+	inode_t inode;
 
 	bool operator<(const StatfsCacheKey &other) const noexcept {
-		if (uid != other.uid) return uid < other.uid;
-		if (gid != other.gid) return gid < other.gid;
+		if (uid != other.uid) { return uid < other.uid; }
+		if (gid != other.gid) { return gid < other.gid; }
 		return inode < other.inode;
 	}
 	bool operator==(const StatfsCacheKey &other) const noexcept {
