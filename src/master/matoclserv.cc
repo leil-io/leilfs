@@ -93,13 +93,18 @@
 #define MaxPacketSize 1000000
 
 // matoclserventry.mode
-enum {KILL,HEADER,DATA};
-// chunklis.type
-enum {
-	FUSE_WRITE,          // reply to FUSE_WRITE_CHUNK is delayed
-	FUSE_TRUNCATE,       // reply to FUSE_TRUNCATE which does not require writing is delayed
-	FUSE_TRUNCATE_BEGIN, // reply to FUSE_TRUNCATE which does require writing is delayed
-	FUSE_TRUNCATE_END    // reply to FUSE_TRUNCATE_END is delayed
+enum class ClientConnectionMode : std::uint8_t {
+	KILL,			/// Connection is terminated,
+	HEADER,			/// Read header
+	DATA			/// Read data packet
+};
+
+// chunkDelayedOperation types
+enum ChunkDelayedOperationType : std::uint32_t {
+	FUSE_WRITE,          /// Reply to FUSE_WRITE_CHUNK is delayed
+	FUSE_TRUNCATE,       /// Reply to FUSE_TRUNCATE which does not require writing is delayed
+	FUSE_TRUNCATE_BEGIN, /// Reply to FUSE_TRUNCATE which does require writing is delayed
+	FUSE_TRUNCATE_END    /// Reply to FUSE_TRUNCATE_END is delayed
 };
 
 #define SESSION_STATS 16
@@ -111,7 +116,7 @@ struct matoclserventry;
 // locked chunks
 class PacketSerializer;
 
-struct chunklist {
+struct chunkDelayedOperation {
 	uint64_t chunkid;
 	uint64_t fleng;     // file length
 	uint32_t lockid;    // lock ID
@@ -215,7 +220,7 @@ enum class AdminTask {
 /** Client entry in the server. */
 struct matoclserventry {
 	ClientState registered;
-	uint8_t mode;                           //0 - not active, 1 - read header, 2 - read packet
+	ClientConnectionMode mode;
 	bool iolimits;
 	int sock;                               //socket number
 	int32_t pdescpos;
@@ -232,7 +237,7 @@ struct matoclserventry {
 	session *sesdata;
 	std::unique_ptr<SauMatoclAdminRegisterChallengeData> adminChallenge;
 	AdminTask adminTask;                   // admin task requested by this client
-	std::vector<std::unique_ptr<chunklist>> chunkdelayedops;
+	std::vector<std::unique_ptr<chunkDelayedOperation>> chunkdelayedops;
 };
 
 static std::vector<std::unique_ptr<session>> sessionVector;
@@ -1065,7 +1070,7 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
 }
 
 void matoclserv_chunk_status(uint64_t chunkid,uint8_t status) {
-	chunklist *currentChunk;
+	chunkDelayedOperation *operation;
 	const PacketSerializer *serializer;
 
 	matoclserventry *eptr = NULL;
@@ -1083,26 +1088,26 @@ void matoclserv_chunk_status(uint64_t chunkid,uint8_t status) {
 	auto eptrIterator = matoclservList.begin();
 	for (; eptrIterator != matoclservList.end() && eptr == NULL; eptrIterator++) {
 		matoclserventry* eaptr = eptrIterator->get();
-		if (eaptr->mode != KILL) {
-			auto chunkListIterator = eaptr->chunkdelayedops.begin();
-			while (chunkListIterator != eaptr->chunkdelayedops.end() && eptr == NULL) {
-				currentChunk = chunkListIterator->get();
-				if (currentChunk->chunkid == chunkid) {
+		if (eaptr->mode != ClientConnectionMode::KILL) {
+			auto chunkOpsIterator = eaptr->chunkdelayedops.begin();
+			while (chunkOpsIterator != eaptr->chunkdelayedops.end() && eptr == NULL) {
+				operation = chunkOpsIterator->get();
+				if (operation->chunkid == chunkid) {
 					eptr = eaptr;
-					qid = currentChunk->qid;
-					fleng = currentChunk->fleng;
-					lockid = currentChunk->lockid;
-					type = currentChunk->type;
-					inode = currentChunk->inode;
-					uid = currentChunk->uid;
-					gid = currentChunk->gid;
-					auid = currentChunk->auid;
-					agid = currentChunk->agid;
-					serializer = currentChunk->serializer;
+					qid = operation->qid;
+					fleng = operation->fleng;
+					lockid = operation->lockid;
+					type = operation->type;
+					inode = operation->inode;
+					uid = operation->uid;
+					gid = operation->gid;
+					auid = operation->auid;
+					agid = operation->agid;
+					serializer = operation->serializer;
 
-					chunkListIterator = eaptr->chunkdelayedops.erase(chunkListIterator);
+					chunkOpsIterator = eaptr->chunkdelayedops.erase(chunkOpsIterator);
 				} else {
-					++chunkListIterator;
+					++chunkOpsIterator;
 				}
 			}
 		}
@@ -1161,7 +1166,7 @@ void matoclserv_chunk_status(uint64_t chunkid,uint8_t status) {
 void matoclserv_cserv_list(matoclserventry *eptr, const uint8_t */*data*/, uint32_t length) {
 	if (length!=0) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_CSERV_LIST - wrong size (%" PRIu32 "/0)",length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1205,7 +1210,7 @@ void matoclserv_sau_cserv_list(matoclserventry *eptr, const uint8_t *data, uint3
 		matocl::cservList::serialize(buffer, message_id, csdb_chunkserver_list());
 	} else {
 		safs_pretty_syslog(LOG_NOTICE,"SAU_CSERV_LIST - wrong packet version %u", version);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	matoclserv_createpacket(eptr, std::move(buffer));
@@ -1217,11 +1222,11 @@ void matoclserv_cserv_removeserv(matoclserventry *eptr,const uint8_t *data,uint3
 
 	constexpr uint32_t kExpectedSize = sizeof(ip) + sizeof(port);
 
-	if (length!=kExpectedSize) {
+	if (length != kExpectedSize) {
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_CSSERV_REMOVESERV - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1296,7 +1301,7 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	if (length != 0 && length != sizeof(vmode)) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_SESSION_LIST - wrong size (%" PRIu32 "/(0|%lu))",
 		                   length, sizeof(vmode));
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1322,7 +1327,7 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	constexpr uint32_t kCurrentPlusLastHourEntrySize = sizeof(uint32_t) + sizeof(uint32_t);
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode != KILL && eaptr->sesdata &&
+		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sesdata &&
 		    eaptr->registered == ClientState::kRegistered) {
 			size += kCommonSessionSize + (SESSION_STATS * kCurrentPlusLastHourEntrySize) +
 			        (vmode ? kExtraVModeSize : 0);
@@ -1346,7 +1351,7 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	put16bit(&ptr, SESSION_STATS);
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode != KILL && eaptr->sesdata &&
+		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sesdata &&
 		    eaptr->registered == ClientState::kRegistered) {
 			put32bit(&ptr, eaptr->sesdata->sessionid);
 			put32bit(&ptr, eaptr->peerip);
@@ -1408,7 +1413,7 @@ void matoclserv_mount_info_list(matoclserventry *eptr, const uint8_t *data, uint
 	cltoma::mountInfoList::deserialize(data, length);
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode != KILL && eaptr->sesdata != nullptr &&
+		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sesdata != nullptr &&
 		    eaptr->registered == ClientState::kRegistered) {
 			MountInfoEntry entry;
 			entry.sessionId = eaptr->sesdata->sessionid;
@@ -1428,7 +1433,7 @@ void matoclserv_chart(matoclserventry *eptr,const uint8_t *data,uint32_t length)
 	if (length != sizeof(chartid)) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOAN_CHART - wrong size (%" PRIu32 "/%lu)", length,
 		                   sizeof(chartid));
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1457,7 +1462,7 @@ void matoclserv_chart_data(matoclserventry *eptr,const uint8_t *data,uint32_t le
 	if (length != sizeof(chartid)) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOAN_CHART_DATA - wrong size (%" PRIu32 "/%lu)", length,
 		                   sizeof(chartid));
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1476,7 +1481,7 @@ void matoclserv_info(matoclserventry *eptr,const uint8_t *data,uint32_t length) 
 
 	if (length != 0) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_INFO - wrong size (%" PRIu32 "/0)",length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1506,7 +1511,7 @@ void matoclserv_fstest_info(matoclserventry *eptr,const uint8_t *data,uint32_t l
 
 	if (length != 0) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FSTEST_INFO - wrong size (%" PRIu32 "/0)", length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1538,7 +1543,7 @@ void matoclserv_chunkstest_info(matoclserventry *eptr,const uint8_t *data,uint32
 	if (length != 0) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_CHUNKSTEST_INFO - wrong size (%" PRIu32 "/0)",
 		                   length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1556,7 +1561,7 @@ void matoclserv_chunks_matrix(matoclserventry *eptr,const uint8_t *data,uint32_t
 	if (length > sizeof(matrixid)) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_CHUNKS_MATRIX - wrong size (%" PRIu32 "/0|%zu)",
 		                   length, sizeof(matrixid));
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1578,7 +1583,7 @@ void matoclserv_exports_info(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	if (length != 0 && length != sizeof(vmode)) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_EXPORTS_INFO - wrong size (%" PRIu32 "/0|%zu)",
 		                   length, sizeof(vmode));
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1598,7 +1603,7 @@ void matoclserv_mlog_list(matoclserventry *eptr,const uint8_t *data,uint32_t len
 
 	if (length != 0) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_MLOG_LIST - wrong size (%" PRIu32 "/0)", length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1645,7 +1650,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 	constexpr uint32_t kBlobSizeWithSessionIdAndVersion = kBlobSizeWithVersion + sizeof(session::sessionid);
 
 	if (starting) {
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1653,7 +1658,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_REGISTER - wrong size (%" PRIu32 "/<%" PRIu32 ")", length,
 		                   kBlobSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -1665,7 +1670,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 	if (eptr->registered == ClientState::kUnregistered && (clientsNoACL || toolsNoACL)) {
 		if (RejectOld) {
 			safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_REGISTER/NOACL - rejected (option REJECT_OLD_CLIENTS is set)");
-			eptr->mode = KILL;
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 		if (toolsNoACL) {
@@ -1674,7 +1679,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/NOACL-TOOLS - wrong size (%" PRIu32
 				                   "/%" PRIu32 "|%" PRIu32 ")",
 				                   length, kBlobSize, kBlobSizeWithVersion);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 		} else {  // clientsNoACL
@@ -1683,7 +1688,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/NOACL-MOUNT - wrong size (%" PRIu32
 				                   "/%" PRIu32 "|%" PRIu32 ")",
 				                   length, kBlobSizeWithVersion, kBlobSizeWithSessionIdAndVersion);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 		}
@@ -1700,7 +1705,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 
 		if (eptr->version<0x010500 && !toolsNoACL) {
 			safs_pretty_syslog(LOG_NOTICE,"got register packet from mount older than 1.5 - rejecting");
-			eptr->mode = KILL;
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 
@@ -1709,7 +1714,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			eptr->sesdata = matoclserv_new_session(0, toolsNoACL);
 			if (eptr->sesdata == nullptr) {
 				safs_pretty_syslog(LOG_NOTICE, "can't allocate session record");
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			eptr->sesdata->rootinode = SPECIAL_INODE_ROOT;
@@ -1722,7 +1727,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				eptr->sesdata = matoclserv_new_session(0, 0);
 				if (eptr->sesdata == nullptr) {
 					safs_pretty_syslog(LOG_NOTICE, "can't allocate session record");
-					eptr->mode = KILL;
+					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 				eptr->sesdata->rootinode = SPECIAL_INODE_ROOT;
@@ -1792,7 +1797,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			safs_pretty_syslog(LOG_NOTICE,
 			                   "CLTOMA_FUSE_REGISTER/ACL - wrong size (%" PRIu32 "/<%u)", length,
 			                   kBlobSizeWithRCode);
-			eptr->mode = KILL;
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 
@@ -1805,7 +1810,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			    LOG_NOTICE,
 			    "CLTOMA_FUSE_REGISTER/ACL - wrong rcode (%d) for registered status (%d)", rcode,
 			    (int)eptr->registered);
-			eptr->mode = KILL;
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 
@@ -1815,7 +1820,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				safs_pretty_syslog(LOG_NOTICE,
 				                   "CLTOMA_FUSE_REGISTER/ACL.1 - wrong size (%" PRIu32 "/%u)",
 				                   length, kBlobSizeWithRCode);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER, matoclserventry::kPasswordSize);
@@ -1831,7 +1836,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/ACL.2 - wrong size (%" PRIu32 "/>=%" PRIu32
 				                   ")",
 				                   length, kRegisterNewSessionMinSize);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			get32bit(&rptr, eptr->version);
@@ -1841,7 +1846,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/ACL.2 - wrong size (%" PRIu32 "/>=%" PRIu32
 				                   "+ileng(%" PRIu32 "))",
 				                   length, kRegisterNewSessionMinSize, ileng);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			info = (const char*)rptr;
@@ -1853,7 +1858,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/ACL.2 - wrong size (%" PRIu32 "/%" PRIu32
 				                   "+ileng(%" PRIu32 ")+pleng(%" PRIu32 ")[+16])",
 				                   length, kRegisterNewSessionMinSize, ileng, pleng);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			path = rptr;
@@ -1861,7 +1866,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			if (pleng > 0 && rptr[-1] != 0) {
 				safs_pretty_syslog(
 				    LOG_NOTICE, "CLTOMA_FUSE_REGISTER/ACL.2 - received path without ending zero");
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			if (pleng == 0) {
@@ -1885,7 +1890,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				eptr->sesdata = matoclserv_new_session(1, 0);
 				if (eptr->sesdata == nullptr) {
 					safs_pretty_syslog(LOG_NOTICE, "can't allocate session record");
-					eptr->mode = KILL;
+					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 
@@ -1912,7 +1917,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				safs::log_info(
 				    "Session {} created for mount: {} exported path: {} with ip: {} and port: {}",
 				    eptr->sesdata->sessionid,
-				    eptr->sesdata->info ? eptr->sesdata->info : "unknown info",
+				    !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info",
 				    path ? (const char *)path : "unknown path", ipToString(eptr->peerip),
 				    eptr->peerport);
 
@@ -1967,7 +1972,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/ACL.5 - wrong size (%" PRIu32 "/>=%" PRIu32
 				                   ")",
 				                   length, kRegisterNewMetaSessionMinSize);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 
@@ -1980,7 +1985,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/ACL.5 - wrong size (%" PRIu32 "/%" PRIu32
 				                   "+ileng(%" PRIu32 ")[+16])",
 				                   length, kRegisterNewMetaSessionMinSize, ileng);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 
@@ -2001,7 +2006,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				eptr->sesdata = matoclserv_new_session(1, 0);
 				if (eptr->sesdata == nullptr) {
 					safs_pretty_syslog(LOG_NOTICE, "can't allocate session record");
-					eptr->mode = KILL;
+					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 
@@ -2027,7 +2032,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 
 				safs::log_info("Meta session {} created for mount: {} with ip: {} and port: {}",
 				               eptr->sesdata->sessionid,
-				               eptr->sesdata->info ? eptr->sesdata->info : "unknown info",
+				               !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info",
 				               ipToString(eptr->peerip), eptr->peerport);
 
 				matoclserv_store_sessions();
@@ -2068,7 +2073,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				                   "CLTOMA_FUSE_REGISTER/ACL.%" PRIu8 " - wrong size (%" PRIu32
 				                   "/>=%" PRIu32 ")",
 				                   rcode, length, kRegisterWithSessionIdAndVersion);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			get32bit(&rptr, sessionid);
@@ -2082,10 +2087,11 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 					status = SAUNAFS_ERROR_EACCES;
 				} else {
 					status = SAUNAFS_STATUS_OK;
-					safs::log_info("Session {} reconnected for mount: {} with ip: {} and port: {}",
-					               eptr->sesdata->sessionid,
-					               eptr->sesdata->info ? eptr->sesdata->info : "unknown info",
-					               ipToString(eptr->peerip), eptr->peerport);
+					safs::log_info(
+					    "Session {} reconnected for mount: {} with ip: {} and port: {}",
+					    eptr->sesdata->sessionid,
+					    !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info",
+					    ipToString(eptr->peerip), eptr->peerport);
 				}
 			}
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER, sizeof(status));
@@ -2107,24 +2113,24 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				safs_pretty_syslog(LOG_NOTICE,
 				                   "CLTOMA_FUSE_REGISTER/ACL.6 - wrong size (%" PRIu32 "/>=%lu)",
 				                   length, kBlobSizeWithRCode + sizeof(sessionid));
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 			get32bit(&rptr, sessionid);
 			matoclserv_close_session(sessionid);
 			safs::log_info("Session {} for mount {} was closed", sessionid,
-			               eptr->sesdata->info ? eptr->sesdata->info : "unknown info");
-			eptr->mode = KILL;
+			               !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info");
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_REGISTER/ACL - wrong rcode (%" PRIu8 ")",
 		                   rcode);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
 	safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_REGISTER - wrong register blob");
-	eptr->mode = KILL;
+	eptr->mode = ClientConnectionMode::KILL;
 }
 
 void matoclserv_register_config(matoclserventry *eptr, const uint8_t *data,
@@ -2147,7 +2153,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr,const uint8_t *data,u
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_RESERVED_INODES - wrong size (%" PRIu32 "/N*%zu)", length,
 		                   kinode_t_size);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2200,7 +2206,7 @@ void matoclserv_fuse_statfs(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	if (length != kExpectedSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_STATFS - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2236,7 +2242,7 @@ void matoclserv_fuse_access(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	if (length != kPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_ACCESS - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kPacketSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	get32bit(&data, msgid);
@@ -2377,7 +2383,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	    sizeof(msgid) + sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(nleng);
 	if (length < kExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_LOOKUP - wrong size (%" PRIu32 ")",length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	get32bit(&data, msgid);
@@ -2385,7 +2391,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr,const uint8_t *data,uint32_t l
 	nleng = get8bit(&data);
 	if (length != kExpectedPacketSize + nleng) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_LOOKUP - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",length,nleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	name = data;
@@ -2425,7 +2431,7 @@ void matoclserv_fuse_getattr(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	if (length != kExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_GETATTR - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedPacketSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	get32bit(&data, msgid);
@@ -2476,7 +2482,7 @@ void matoclserv_fuse_setattr(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		safs_pretty_syslog(
 		    LOG_NOTICE, "CLTOMA_FUSE_SETATTR - wrong size (%" PRIu32 "/%" PRIu32 " | %" PRIu32 ")",
 		    length, kExpectedPacketSize, kExpectedPacketSizeWithSugid);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2605,20 +2611,20 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 
 	if (status == SAUNAFS_ERROR_DELAYED) {
 		// Duplicate or truncate request has been sent to chunkservers, delay the reply
-		auto chunkList = std::make_unique<chunklist>();
-		passert(chunkList.get());
-		chunkList->chunkid = chunkId;
-		chunkList->qid = messageId;
-		chunkList->inode = inode;
-		chunkList->uid = context.uid();
-		chunkList->gid = context.gid();
-		chunkList->auid = context.auid();
-		chunkList->agid = context.agid();
-		chunkList->fleng = length;
-		chunkList->lockid = lockId;
-		chunkList->type = type;
-		chunkList->serializer = serializer;
-		eptr->chunkdelayedops.push_back(std::move(chunkList));
+		auto chunkOperationPtr = std::make_unique<chunkDelayedOperation>();
+		passert(chunkOperationPtr.get());
+		chunkOperationPtr->chunkid = chunkId;
+		chunkOperationPtr->qid = messageId;
+		chunkOperationPtr->inode = inode;
+		chunkOperationPtr->uid = context.uid();
+		chunkOperationPtr->gid = context.gid();
+		chunkOperationPtr->auid = context.auid();
+		chunkOperationPtr->agid = context.agid();
+		chunkOperationPtr->fleng = length;
+		chunkOperationPtr->lockid = lockId;
+		chunkOperationPtr->type = type;
+		chunkOperationPtr->serializer = serializer;
+		eptr->chunkdelayedops.push_back(std::move(chunkOperationPtr));
 		if (eptr->sesdata) {
 			eptr->sesdata->currentopstats[2]++;
 		}
@@ -2657,7 +2663,7 @@ void matoclserv_fuse_readlink(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_READLINK - wrong size (%" PRIu32 "/%" PRIu32 ")", length,
 		                   kExpectedPacketSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2710,7 +2716,7 @@ void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t 
 	if (length < kMinExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_SYMLINK - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kMinExpectedPacketSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2722,7 +2728,7 @@ void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_SYMLINK - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",
 		                   length, nleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2733,7 +2739,7 @@ void matoclserv_fuse_symlink(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		safs_pretty_syslog(LOG_NOTICE,
 		       "CLTOMA_FUSE_SYMLINK - wrong size (%" PRIu32 ":nleng=%" PRIu8 ":pleng=%" PRIu32 ")",
 		       length, nleng, pleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2883,7 +2889,7 @@ void matoclserv_fuse_unlink(matoclserventry *eptr,const uint8_t *data,uint32_t l
 
 	if (length < kMinExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_UNLINK - wrong size (%" PRIu32 ")",length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2895,7 +2901,7 @@ void matoclserv_fuse_unlink(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_UNLINK - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")", length,
 		                   nleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2966,7 +2972,7 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr,const uint8_t *data,uint32_t le
 
 	if (length < kMinExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_RMDIR - wrong size (%" PRIu32 ")", length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -2978,7 +2984,7 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr,const uint8_t *data,uint32_t le
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_RMDIR - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")", length,
 		                   nleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3022,7 +3028,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 
 	if (length < kMinExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_RENAME - wrong size (%" PRIu32 ")", length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3034,7 +3040,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_RENAME - wrong size (%" PRIu32 ":nleng_src=%" PRIu8 ")",
 		                   length, nleng_src);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3048,7 +3054,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		                   "CLTOMA_FUSE_RENAME - wrong size (%" PRIu32 ":nleng_src=%" PRIu8
 		                   ":nleng_dst=%" PRIu8 ")",
 		                   length, nleng_src, nleng_dst);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3104,7 +3110,7 @@ void matoclserv_fuse_link(matoclserventry *eptr,const uint8_t *data,uint32_t len
 
 	if (length < kMinExpectedPacketSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_LINK - wrong size (%" PRIu32 ")", length);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3117,7 +3123,7 @@ void matoclserv_fuse_link(matoclserventry *eptr,const uint8_t *data,uint32_t len
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_LINK - wrong size (%" PRIu32 ":nleng_dst=%" PRIu8 ")",
 		                   length, nleng_dst);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3224,7 +3230,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETDIR - wrong size (%" PRIu32 "/%" PRIu32 "|%" PRIu32 ")",
 		                   length, kExpectedSize, kExpectedSizeWithFlags);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3284,7 +3290,7 @@ void matoclserv_fuse_open(matoclserventry *eptr,const uint8_t *data,uint32_t len
 	if (length != kExpectedSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_OPEN - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3434,17 +3440,17 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	}
 
 	if (opflag) {   // wait for operation end
-		auto currentChunk = std::make_unique<chunklist>();
-		passert(currentChunk.get());
-		memset(currentChunk.get(), 0, sizeof(chunklist));
-		currentChunk->inode = inode;
-		currentChunk->chunkid = chunkId;
-		currentChunk->qid = messageId;
-		currentChunk->fleng = fileLength;
-		currentChunk->lockid = lockId;
-		currentChunk->type = FUSE_WRITE;
-		currentChunk->serializer = serializer;
-		eptr->chunkdelayedops.push_back(std::move(currentChunk));
+		auto operation = std::make_unique<chunkDelayedOperation>();
+		passert(operation.get());
+		memset(operation.get(), 0, sizeof(chunkDelayedOperation));
+		operation->inode = inode;
+		operation->chunkid = chunkId;
+		operation->qid = messageId;
+		operation->fleng = fileLength;
+		operation->lockid = lockId;
+		operation->type = FUSE_WRITE;
+		operation->serializer = serializer;
+		eptr->chunkdelayedops.push_back(std::move(operation));
 	} else {        // return status immediately
 		dcm_modify(inode,eptr->sesdata->sessionid);
 		status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
@@ -3510,7 +3516,7 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 		safs_pretty_syslog(
 		    LOG_NOTICE, "CLTOMA_FUSE_REPAIR - wrong size (%" PRIu32 "/(%" PRIu32 "|%" PRIu32 "))",
 		    length, kMinExpectedPacketSize, kMaxExpectedPacketSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3552,7 +3558,7 @@ void matoclserv_fuse_check(matoclserventry *eptr,const uint8_t *data,uint32_t le
 	if (length != kExpectedSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_CHECK - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3621,7 +3627,7 @@ void matoclserv_fuse_gettrashtime(matoclserventry *eptr,const uint8_t *data,uint
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETTRASHTIME - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3881,7 +3887,7 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETEATTR - wrong size (%" PRIu32 "/%" PRIu32 ")", length,
 		                   kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3945,7 +3951,7 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_SETEATTR - wrong size (%" PRIu32 "/%" PRIu32 ")", length,
 		                   kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -3994,7 +4000,7 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETXATTR - wrong min size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedMinSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4011,7 +4017,7 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETXATTR - wrong size (%" PRIu32 ":anleng=%" PRIu8 ")",
 		                   length, anleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4091,7 +4097,7 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_SETXATTR - wrong min size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedMinSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4106,7 +4112,7 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_SETXATTR - wrong size (%" PRIu32 ":anleng=%" PRIu8 ")",
 		                   length, anleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4119,7 +4125,7 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr,const uint8_t *data,uint32_t
 		                   "CLTOMA_FUSE_SETXATTR - wrong size (%" PRIu32 ":anleng=%" PRIu8
 		                   ":avleng=%" PRIu32 ")",
 		                   length, anleng, avleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4154,7 +4160,7 @@ void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t
 	if (length != kExpectedSize) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_APPEND - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4243,7 +4249,7 @@ void matoclserv_fuse_getdirstats_old(matoclserventry *eptr,const uint8_t *data,u
 		safs_pretty_syslog(LOG_NOTICE,
 			"CLTOMA_FUSE_GETDIRSTATS - wrong size (%" PRIu32 "/%" PRIu32 ")", length,
 			kExpectedLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4296,7 +4302,7 @@ void matoclserv_fuse_getdirstats(matoclserventry *eptr,const uint8_t *data,uint3
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETDIRSTATS - wrong size (%" PRIu32 "/%" PRIu32 ")", length,
 		                   kExpectedLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4339,7 +4345,7 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr,const uint8_t *data,uint32_t
 	if (length != sizeof(msgid)) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_GETTRASH - wrong size (%" PRIu32 "/%zu)",
 		                   length, sizeof(msgid));
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4383,7 +4389,7 @@ void matoclserv_fuse_getdetachedattr(matoclserventry *eptr,const uint8_t *data,u
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETDETACHEDATTR - wrong size (%" PRIu32 "/%u-%u)", length,
 		                   kExpectedMinLength, kExpectedMaxLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	get32bit(&data, msgid);
@@ -4424,7 +4430,7 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr,const uint8_t *data,uint
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETTRASHPATH - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4467,7 +4473,7 @@ void matoclserv_fuse_settrashpath(matoclserventry *eptr,const uint8_t *data,uint
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_SETTRASHPATH - wrong size (%" PRIu32 "/<%" PRIu32 ")",
 		                   length, kExpectedMinLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4479,7 +4485,7 @@ void matoclserv_fuse_settrashpath(matoclserventry *eptr,const uint8_t *data,uint
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_SETTRASHPATH - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedMinLength + pleng);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4506,7 +4512,7 @@ void matoclserv_fuse_undel(matoclserventry *eptr,const uint8_t *data,uint32_t le
 	if (length != kExpectedLength) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_UNDEL - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4532,7 +4538,7 @@ void matoclserv_fuse_purge(matoclserventry *eptr,const uint8_t *data,uint32_t le
 	if (length != kExpectedLength) {
 		safs_pretty_syslog(LOG_NOTICE, "CLTOMA_FUSE_PURGE - wrong size (%" PRIu32 "/%" PRIu32 ")",
 		                   length, kExpectedLength);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4559,7 +4565,7 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr,const uint8_t *data,uint3
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "CLTOMA_FUSE_GETRESERVED - wrong size (%" PRIu32 "/%" PRIu32 ")", length,
 		                   kExpectedSize);
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4843,7 +4849,7 @@ void matoclserv_manage_locks_list(matoclserventry *eptr, const uint8_t *data, ui
 
 	if (eptr->registered != ClientState::kAdmin) {
 		safs_pretty_syslog(LOG_NOTICE, "Listing file locks is available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -4887,7 +4893,7 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 
 	if (eptr->registered != ClientState::kAdmin) {
 		safs_pretty_syslog(LOG_NOTICE, "Removing file locks is available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -5016,7 +5022,7 @@ void matoclserv_fuse_setacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 		cltoma::fuseSetAcl::deserialize(data, length, messageId, inode, uid, gid, rich_acl);
 	} else {
 		safs_pretty_syslog(LOG_WARNING, "SAU_CLTOMA_FUSE_SET_ACL: unknown packet version");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 
@@ -5127,7 +5133,7 @@ void matoclserv_admin_register(matoclserventry* eptr, const uint8_t* data, uint3
 		matoclserv_createpacket(eptr, matocl::adminRegisterChallenge::build(array));
 	} else {
 		safs_pretty_syslog(LOG_NOTICE, "SAU_CLTOMA_ADMIN_REGISTER_CHALLENGE: retry not allowed");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5154,7 +5160,7 @@ void matoclserv_admin_register_response(matoclserventry* eptr, const uint8_t* da
 	} else {
 		safs_pretty_syslog(LOG_NOTICE,
 				"SAU_CLTOMA_ADMIN_REGISTER_RESPONSE: response without previous challenge");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5167,7 +5173,7 @@ void matoclserv_admin_become_master(matoclserventry* eptr, const uint8_t* data, 
 	} else {
 		safs_pretty_syslog(LOG_NOTICE,
 				"SAU_CLTOMA_ADMIN_BECOME_MASTER: available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5200,7 +5206,7 @@ void matoclserv_admin_stop_without_metadata_dump(
 		safs_pretty_syslog(LOG_NOTICE,
 				"SAU_CLTOMA_ADMIN_STOP_WITHOUT_METADATA_DUMP:"
 				" available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5213,7 +5219,7 @@ void matoclserv_admin_reload(matoclserventry* eptr, const uint8_t* data, uint32_
 				ipToString(eptr->peerip).c_str());
 	} else {
 		safs_pretty_syslog(LOG_NOTICE, "SAU_CLTOMA_ADMIN_RELOAD: available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5232,7 +5238,7 @@ void matoclserv_admin_dump_config(matoclserventry *eptr) {
 		safs_pretty_syslog(LOG_NOTICE,
 		                   "SAU_CLTOMA_ADMING_DUMP_CONFIG: available only for "
 		                   "registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
 	MessageBuffer reply;
@@ -5264,7 +5270,7 @@ void matoclserv_admin_save_metadata(matoclserventry* eptr, const uint8_t* data, 
 		}
 	} else {
 		safs_pretty_syslog(LOG_NOTICE, "SAU_CLTOMA_ADMIN_SAVE_METADATA: available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5297,7 +5303,7 @@ void matoclserv_admin_recalculate_metadata_checksum(matoclserventry* eptr,
 	} else {
 		safs_pretty_syslog(LOG_NOTICE, "SAU_CLTOMA_ADMIN_RECALCULATE_METADATA_CHECKSUM: "
 				"available only for registered admins");
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5348,7 +5354,7 @@ void matoclserv_session_files(matoclserventry *eptr,
 	MessageBuffer reply;
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode == KILL || !eaptr->sesdata ||
+		if (eaptr->mode == ClientConnectionMode::KILL || !eaptr->sesdata ||
 		    eaptr->registered != ClientState::kRegistered) {
 			continue;
 		}
@@ -5394,7 +5400,7 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data,
 		status = SAUNAFS_ERROR_BADSESSIONID;
 	} else {
 		matoclserv_close_session(sessionId);
-		target->mode = KILL;
+		target->mode = ClientConnectionMode::KILL;
 		// Force closure of files immediately.
 		// Otherwise, it will take a few moments before the session
 		// times out and the files are removed automatically, unless the
@@ -5498,7 +5504,7 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 					break;
 				default:
 					safs_pretty_syslog(LOG_NOTICE,"main master server module: got invalid message in shadow state (type:%" PRIu32 ")",type);
-					eptr->mode = KILL;
+					eptr->mode = ClientConnectionMode::KILL;
 			}
 		} else if (eptr->registered == ClientState::kUnregistered
 				|| eptr->registered == ClientState::kAdmin) { // beware that in this context sesdata is NULL
@@ -5607,12 +5613,12 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 					break;
 				default:
 					safs_pretty_syslog(LOG_NOTICE,"main master server module: got unknown message from unregistered (type:%" PRIu32 ")",type);
-					eptr->mode=KILL;
+					eptr->mode=ClientConnectionMode::KILL;
 			}
 		} else if (eptr->registered == ClientState::kRegistered) {      // mounts and new tools
 			if (eptr->sesdata==NULL) {
 				safs_pretty_syslog(LOG_ERR,"registered connection without sesdata !!!");
-				eptr->mode=KILL;
+				eptr->mode=ClientConnectionMode::KILL;
 				return;
 			}
 			switch (type) {
@@ -5866,12 +5872,12 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 					break;
 				default:
 					safs_pretty_syslog(LOG_NOTICE,"main master server module: got unknown message from sfsmount (type:%" PRIu32 ")",type);
-					eptr->mode=KILL;
+					eptr->mode=ClientConnectionMode::KILL;
 			}
 		} else if (eptr->registered == ClientState::kOldTools) {        // old sfstools
 			if (eptr->sesdata==NULL) {
 				safs_pretty_syslog(LOG_ERR,"registered connection (tools) without sesdata !!!");
-				eptr->mode=KILL;
+				eptr->mode=ClientConnectionMode::KILL;
 				return;
 			}
 			switch (type) {
@@ -5920,14 +5926,14 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 					break;
 				default:
 					safs_pretty_syslog(LOG_NOTICE,"main master server module: got unknown message from saunafs <COMMAND> tools (type:%" PRIu32 ")",type);
-					eptr->mode=KILL;
+				    eptr->mode = ClientConnectionMode::KILL;
 			}
 		}
 	} catch (IncorrectDeserializationException& e) {
 		safs_pretty_syslog(LOG_NOTICE,
 				"main master server module: got inconsistent message from mount "
 				"(type:%" PRIu32 ", length:%" PRIu32"), %s", type, length, e.what());
-		eptr->mode = KILL;
+		eptr->mode = ClientConnectionMode::KILL;
 	}
 }
 
@@ -5967,13 +5973,13 @@ void matoclserv_read(matoclserventry *eptr) {
 	const uint8_t *ptr;
 
 	watchdog.start();
-	while (eptr->mode != KILL) {
+	while (eptr->mode != ClientConnectionMode::KILL) {
 		i=read(eptr->sock,eptr->inputpacket.startptr,eptr->inputpacket.bytesleft);
 		if (i==0) {
 			if (eptr->registered == ClientState::kRegistered) {       // show this message only for standard, registered clients
 				safs_pretty_syslog(LOG_NOTICE,"connection with client(ip:%u.%u.%u.%u) has been closed by peer",(eptr->peerip>>24)&0xFF,(eptr->peerip>>16)&0xFF,(eptr->peerip>>8)&0xFF,eptr->peerip&0xFF);
 			}
-			eptr->mode = KILL;
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 		if (i<0) {
@@ -5985,7 +5991,7 @@ void matoclserv_read(matoclserventry *eptr) {
 #ifdef ECONNRESET
 				}
 #endif
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 			}
 			return;
 		}
@@ -5998,31 +6004,31 @@ void matoclserv_read(matoclserventry *eptr) {
 			return;
 		}
 
-		if (eptr->mode==HEADER) {
+		if (eptr->mode == ClientConnectionMode::HEADER) {
 			ptr = eptr->hdrbuff+4;
 			get32bit(&ptr, size);
 			if (size>0) {
 				if (size>MaxPacketSize) {
 					safs_pretty_syslog(LOG_WARNING,"main master server module: packet too long (%" PRIu32 "/%u)",size,MaxPacketSize);
-					eptr->mode = KILL;
+					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 				eptr->inputpacket.packet = (uint8_t*) malloc(size);
 				passert(eptr->inputpacket.packet);
 				eptr->inputpacket.bytesleft = size;
 				eptr->inputpacket.startptr = eptr->inputpacket.packet;
-				eptr->mode = DATA;
+				eptr->mode = ClientConnectionMode::DATA;
 				continue;
 			}
-			eptr->mode = DATA;
+			eptr->mode = ClientConnectionMode::DATA;
 		}
 
-		if (eptr->mode==DATA) {
+		if (eptr->mode==ClientConnectionMode::DATA) {
 			ptr = eptr->hdrbuff;
 			get32bit(&ptr, type);
 			get32bit(&ptr, size);
 
-			eptr->mode=HEADER;
+			eptr->mode = ClientConnectionMode::HEADER;
 			eptr->inputpacket.bytesleft = 8;
 			eptr->inputpacket.startptr = eptr->hdrbuff;
 			matoclserv_gotpacket(eptr,type,eptr->inputpacket.packet,size);
@@ -6057,7 +6063,7 @@ void matoclserv_write(matoclserventry *eptr) {
 		if (i<0) {
 			if (errno!=EAGAIN) {
 				safs_silent_errlog(LOG_NOTICE,"main master server module: (ip:%u.%u.%u.%u) write error",(eptr->peerip>>24)&0xFF,(eptr->peerip>>16)&0xFF,(eptr->peerip>>8)&0xFF,eptr->peerip&0xFF);
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 			}
 			return;
 		}
@@ -6170,7 +6176,7 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->registered = ClientState::kUnregistered;
 			eptr->iolimits = false;
 			eptr->version = 0;
-			eptr->mode = HEADER;
+			eptr->mode = ClientConnectionMode::HEADER;
 			eptr->lastread = now;
 			eptr->lastwrite = now;
 			eptr->inputpacket.next = NULL;
@@ -6193,10 +6199,11 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 	for (const auto &eptr : matoclservList) {
 		if (eptr->pdescpos >= 0) {
 			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
-				eptr->mode = KILL;
+				eptr->mode = ClientConnectionMode::KILL;
 			}
 
-			if ((pdesc[eptr->pdescpos].revents & POLLIN) && eptr->mode != KILL) {
+			if ((pdesc[eptr->pdescpos].revents & POLLIN) &&
+			    eptr->mode != ClientConnectionMode::KILL) {
 				eptr->lastread = now;
 				matoclserv_read(eptr.get());
 			}
@@ -6215,19 +6222,19 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 		if (eptr->pdescpos >= 0) {
 			if ((((pdesc[eptr->pdescpos].events & POLLOUT) == 0 && (eptr->outputhead)) ||
 			     (pdesc[eptr->pdescpos].revents & POLLOUT)) &&
-			    eptr->mode != KILL) {
+			    eptr->mode != ClientConnectionMode::KILL) {
 				eptr->lastwrite = now;
 				matoclserv_write(eptr.get());
 			}
 		}
 
-		if (eptr->lastread + 10 < now && exiting == 0) { eptr->mode = KILL; }
+		if (eptr->lastread + 10 < now && exiting == 0) { eptr->mode = ClientConnectionMode::KILL; }
 	}
 
 // close
 	for (auto eptrIt = matoclservList.begin(); eptrIt != matoclservList.end();) {
 		auto *eptr = eptrIt->get();
-		if (eptr->mode == KILL) {
+		if (eptr->mode == ClientConnectionMode::KILL) {
 			matocl_beforedisconnect(eptr);
 			tcpclose(eptr->sock);
 
