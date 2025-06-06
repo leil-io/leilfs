@@ -123,7 +123,6 @@ struct chunklist {
 	uint32_t agid;
 	uint8_t type;
 	const PacketSerializer* serializer;
-	struct chunklist *next;
 };
 
 struct session {
@@ -233,7 +232,7 @@ struct matoclserventry {
 	session *sesdata;
 	std::unique_ptr<SauMatoclAdminRegisterChallengeData> adminChallenge;
 	AdminTask adminTask;                   // admin task requested by this client
-	chunklist *chunkdelayedops;
+	std::vector<std::unique_ptr<chunklist>> chunkdelayedops;
 };
 
 static std::vector<std::unique_ptr<session>> sessionVector;
@@ -1066,48 +1065,44 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
 }
 
 void matoclserv_chunk_status(uint64_t chunkid,uint8_t status) {
-	uint32_t lockid,qid,inode,uid,gid,auid,agid;
-	uint64_t fleng;
-	uint8_t type;
-	chunklist *cl,**acl;
-	matoclserventry *eptr;
+	chunklist *currentChunk;
 	const PacketSerializer *serializer;
 
-	eptr=NULL;
-	lockid=0;
-	qid=0;
-	fleng=0;
-	type=0;
-	inode=0;
-	uid=0;
-	gid=0;
-	auid=0;
-	agid=0;
+	matoclserventry *eptr = NULL;
+	uint32_t lockid = 0;
+	uint32_t qid = 0;
+	uint64_t fleng = 0;
+	uint8_t type = 0;
+	uint32_t inode = 0;
+	uint32_t uid = 0;
+	uint32_t gid = 0;
+	uint32_t auid = 0;
+	uint32_t agid = 0;
 	serializer = nullptr;
+
 	auto eptrIterator = matoclservList.begin();
 	for (; eptrIterator != matoclservList.end() && eptr == NULL; eptrIterator++) {
 		matoclserventry* eaptr = eptrIterator->get();
 		if (eaptr->mode != KILL) {
-			acl = &(eaptr->chunkdelayedops);
-			while (*acl && eptr == NULL) {
-				cl = *acl;
-				if (cl->chunkid == chunkid) {
+			auto chunkListIterator = eaptr->chunkdelayedops.begin();
+			while (chunkListIterator != eaptr->chunkdelayedops.end() && eptr == NULL) {
+				currentChunk = chunkListIterator->get();
+				if (currentChunk->chunkid == chunkid) {
 					eptr = eaptr;
-					qid = cl->qid;
-					fleng = cl->fleng;
-					lockid = cl->lockid;
-					type = cl->type;
-					inode = cl->inode;
-					uid = cl->uid;
-					gid = cl->gid;
-					auid = cl->auid;
-					agid = cl->agid;
-					serializer = cl->serializer;
+					qid = currentChunk->qid;
+					fleng = currentChunk->fleng;
+					lockid = currentChunk->lockid;
+					type = currentChunk->type;
+					inode = currentChunk->inode;
+					uid = currentChunk->uid;
+					gid = currentChunk->gid;
+					auid = currentChunk->auid;
+					agid = currentChunk->agid;
+					serializer = currentChunk->serializer;
 
-					*acl = cl->next;
-					free(cl);
+					chunkListIterator = eaptr->chunkdelayedops.erase(chunkListIterator);
 				} else {
-					acl = &(cl->next);
+					++chunkListIterator;
 				}
 			}
 		}
@@ -2610,21 +2605,20 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 
 	if (status == SAUNAFS_ERROR_DELAYED) {
 		// Duplicate or truncate request has been sent to chunkservers, delay the reply
-		chunklist *cl = (chunklist*)malloc(sizeof(chunklist));
-		passert(cl);
-		cl->chunkid = chunkId;
-		cl->qid = messageId;
-		cl->inode = inode;
-		cl->uid = context.uid();
-		cl->gid = context.gid();
-		cl->auid = context.auid();
-		cl->agid = context.agid();
-		cl->fleng = length;
-		cl->lockid = lockId;
-		cl->type = type;
-		cl->serializer = serializer;
-		cl->next = eptr->chunkdelayedops;
-		eptr->chunkdelayedops = cl;
+		auto chunkList = std::make_unique<chunklist>();
+		passert(chunkList.get());
+		chunkList->chunkid = chunkId;
+		chunkList->qid = messageId;
+		chunkList->inode = inode;
+		chunkList->uid = context.uid();
+		chunkList->gid = context.gid();
+		chunkList->auid = context.auid();
+		chunkList->agid = context.agid();
+		chunkList->fleng = length;
+		chunkList->lockid = lockId;
+		chunkList->type = type;
+		chunkList->serializer = serializer;
+		eptr->chunkdelayedops.push_back(std::move(chunkList));
 		if (eptr->sesdata) {
 			eptr->sesdata->currentopstats[2]++;
 		}
@@ -3418,7 +3412,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	uint32_t lockId;
 	uint32_t messageId;
 	uint8_t opflag;
-	chunklist *cl;
+
 	std::vector<uint8_t> outMessage;
 	const PacketSerializer* serializer = PacketSerializer::getSerializer(header.type, eptr->version);
 
@@ -3440,18 +3434,17 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	}
 
 	if (opflag) {   // wait for operation end
-		cl = (chunklist*)malloc(sizeof(chunklist));
-		passert(cl);
-		memset(cl, 0, sizeof(chunklist));
-		cl->inode = inode;
-		cl->chunkid = chunkId;
-		cl->qid = messageId;
-		cl->fleng = fileLength;
-		cl->lockid = lockId;
-		cl->type = FUSE_WRITE;
-		cl->next = eptr->chunkdelayedops;
-		cl->serializer = serializer;
-		eptr->chunkdelayedops = cl;
+		auto currentChunk = std::make_unique<chunklist>();
+		passert(currentChunk.get());
+		memset(currentChunk.get(), 0, sizeof(chunklist));
+		currentChunk->inode = inode;
+		currentChunk->chunkid = chunkId;
+		currentChunk->qid = messageId;
+		currentChunk->fleng = fileLength;
+		currentChunk->lockid = lockId;
+		currentChunk->type = FUSE_WRITE;
+		currentChunk->serializer = serializer;
+		eptr->chunkdelayedops.push_back(std::move(currentChunk));
 	} else {        // return status immediately
 		dcm_modify(inode,eptr->sesdata->sessionid);
 		status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
@@ -5440,18 +5433,15 @@ void matocl_session_statsmove(void) {
 }
 
 void matocl_beforedisconnect(matoclserventry *eptr) {
-	chunklist *cl,*acl;
 // unlock locked chunks
-	cl=eptr->chunkdelayedops;
-	while (cl) {
-		acl = cl;
-		cl=cl->next;
-		if (acl->type == FUSE_TRUNCATE) {
-			fs_end_setlength(acl->chunkid);
+	for (const auto &operation : eptr->chunkdelayedops) {
+		if (operation->type == FUSE_TRUNCATE) {
+			fs_end_setlength(operation->chunkid);
 		}
-		free(acl);
 	}
-	eptr->chunkdelayedops=NULL;
+
+	eptr->chunkdelayedops.clear();
+
 	if (eptr->sesdata) {
 		if (eptr->sesdata->nsocks>0) {
 			eptr->sesdata->nsocks--;
@@ -5943,7 +5933,6 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 
 void matoclserv_term(void) {
 	packetstruct *pptr,*pptrn;
-	chunklist *cl,*cln;
 
 	safs::log_info("main master server module: closing {}:{}", ListenHost, ListenPort);
 	tcpclose(lsock);
@@ -5961,10 +5950,7 @@ void matoclserv_term(void) {
 			free(pptr);
 		}
 
-		for (cl = eptr->chunkdelayedops ; cl ; cl = cln) {
-			cln = cl->next;
-			free(cl);
-		}
+		eptr->chunkdelayedops.clear();
 	}
 
 	matoclservList.clear();
@@ -6110,7 +6096,7 @@ int matoclserv_canexit(void) {
 			return 0;
 		}
 
-		if (eptr->chunkdelayedops != NULL) {
+		if (!eptr->chunkdelayedops.empty()) {
 			return 0;
 		}
 
@@ -6195,7 +6181,7 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->outputhead = NULL;
 			eptr->outputtail = &(eptr->outputhead);
 
-			eptr->chunkdelayedops = NULL;
+			eptr->chunkdelayedops.clear();
 			eptr->sesdata = NULL;
 			memset(eptr->passwordrnd, 0, 32);
 
