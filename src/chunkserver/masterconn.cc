@@ -72,9 +72,6 @@ static bool gEnableLoadFactor;
 static std::string gLabel;
 static uint32_t gTimeout_ms;
 
-// JobPool shared between all connections to MDSs
-static std::unique_ptr<JobPool> gJobPool;
-
 // Stats
 static uint64_t stats_bytesout = 0;
 static uint64_t stats_bytesin = 0;
@@ -87,13 +84,12 @@ enum class ConnectionMode : std::uint8_t {
 	KILL         /// Connection has been dropped, a reconnection will be attempted.
 };
 
-
 /// @brief Class representing a connection to a Metadata Server (MDS).
 ///
 /// Currently, only one active MDS (known as Master) is supported.
 class MasterConn {
 public:
-	MasterConn() : inputPacket_(kMaxPacketSize) {}
+	explicit MasterConn(const std::shared_ptr<JobPool> &jobPool) : jobPool_(jobPool) {}
 
 	// Disable unneeded copying and moving of the connection objects.
 	MasterConn(const MasterConn &) = delete;
@@ -271,7 +267,7 @@ public:
 		if (mode_ == ConnectionMode::FREE || socketFD_ < 0) { return; }
 
 		if (mode_ == ConnectionMode::CONNECTED) {
-			if (gJobPool->getJobCount() < (kMaxBackgroundJobsCount * 9) / 10) {
+			if (jobPool_->getJobCount() < (kMaxBackgroundJobsCount * 9) / 10) {
 				pdesc.emplace_back(socketFD_, POLLIN, 0);
 				pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 			}
@@ -338,7 +334,7 @@ public:
 
 		while (mode_ != ConnectionMode::KILL) {
 			// If the job pool is too busy, do not read more data.
-			if (gJobPool->getJobCount() >= (kMaxBackgroundJobsCount * 9) / 10) { return; }
+			if (jobPool_->getJobCount() >= (kMaxBackgroundJobsCount * 9) / 10) { return; }
 
 			uint32_t bytesToRead = inputPacket_.bytesToBeRead();
 			ssize_t ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
@@ -463,9 +459,9 @@ public:
 		matocs::createChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 		auto *outputPacket = new OutputPacket;
 		cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
-		if (gJobPool) {
+		if (jobPool_) {
 			job_create(
-			    *gJobPool, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
+			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 			    outputPacket, chunkId, chunkVersion, chunkType);
 		} else {
 			safs::log_err("masterconn_create: jobPool is null.");
@@ -481,9 +477,9 @@ public:
 		matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 		auto *outputPacket = new OutputPacket;
 		cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
-		if (gJobPool) {
+		if (jobPool_) {
 			job_delete(
-			    *gJobPool, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
+			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 			    outputPacket, chunkId, chunkVersion, chunkType);
 		} else {
 			safs::log_err("masterconn_delete: jobPool is null.");
@@ -500,9 +496,9 @@ public:
 		matocs::setVersion::deserialize(data, chunkId, chunkType, chunkVersion, newVersion);
 		auto *outputPacket = new OutputPacket;
 		cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
-		if (gJobPool) {
+		if (jobPool_) {
 			job_version(
-			    *gJobPool, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
+			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 			    outputPacket, chunkId, chunkVersion, chunkType, newVersion);
 		} else {
 			safs::log_err("masterconn_setversion: jobPool is null.");
@@ -519,9 +515,9 @@ public:
 		                                    oldChunkId, oldChunkVersion);
 		auto *outputPacket = new OutputPacket;
 		cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
-		if (gJobPool) {
+		if (jobPool_) {
 			job_duplicate(
-			    *gJobPool, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
+			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 			    outputPacket, oldChunkId, oldChunkVersion, oldChunkVersion, chunkType, newChunkId,
 			    newChunkVersion);
 		} else {
@@ -541,9 +537,9 @@ public:
 		                                   version);
 		auto *outputPacket = new OutputPacket;
 		cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
-		if (gJobPool) {
+		if (jobPool_) {
 			job_truncate(
-			    *gJobPool, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
+			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 			    outputPacket, chunkId, chunkType, version, newVersion, chunkLength);
 		} else {
 			safs::log_err("masterconn_truncate: jobPool is null.");
@@ -561,9 +557,9 @@ public:
 		                                   chunkVersion, newLength);
 		auto *outputPacket = new OutputPacket;
 		cstoma::duptruncChunk::serialize(outputPacket->packet, copyChunkId, chunkType, 0);
-		if (gJobPool) {
+		if (jobPool_) {
 			job_duptrunc(
-			    *gJobPool, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
+			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 			    outputPacket, chunkId, chunkVersion, chunkVersion, chunkType, copyChunkId,
 			    copyChunkVersion, newLength);
 		} else {
@@ -592,9 +588,9 @@ public:
 			// Disk scan in progress - replication is not possible
 			sauJobFinished(SAUNAFS_ERROR_WAITING, outputPacket);
 		} else {
-			if (gJobPool) {
+			if (jobPool_) {
 				job_replicate(
-				    *gJobPool,
+				    *jobPool_,
 				    [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
 				    outputPacket, chunkId, chunkVersion, chunkType, sourcesBufferSize,
 				    sourcesBuffer);
@@ -652,12 +648,13 @@ public:
 	void setMasterAddressValid(bool valid) { isMasterAddressValid_ = valid; }
 
 private:
+	std::shared_ptr<JobPool> jobPool_;           ///< Shared reference to the JobPool
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	int socketFD_{-1};                           ///< Socket file descriptor for this connection.
 	int32_t pDescPos_{-1};                       ///< Position in the pollfd array.
 	Timer lastRead_;                             ///< Time since the last read operation.
 	Timer lastWrite_;                            ///< Time since the last write operation.
-	InputPacket inputPacket_;                    ///< Input buffer for reading data from the socket.
+	InputPacket inputPacket_{kMaxPacketSize};    ///< Input buffer for reading data from the socket.
 	std::list<OutputPacket> outputPackets_;      ///< Output packets to be sent to the master.
 	NetworkAddress address_;                     ///< Address of this master server (IP and port).
 	bool isMasterAddressValid_{false};           ///< Tells if the master address is valid.
@@ -665,6 +662,10 @@ private:
 
 static const uint64_t kSendStatusDelay = 5;
 
+//  JobPool shared between all connections to MDSs
+static std::shared_ptr<JobPool> gJobPool;
+
+//  Singleton for the MasterConn instance (will become a list of connections in the future)
 static std::unique_ptr<MasterConn> gMasterConnSingleton = nullptr;
 
 static int gJobFD{-1};  ///< File descriptor for the job pool notifications
@@ -728,14 +729,13 @@ void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
 }
 
 void masterconn_term(void) {
-	gJobPool.reset();
-
-	// For each connection (currently only one), release its resources.
+	//  For each connection (currently only one), release its resources.
 	MasterConn *eptr = gMasterConnSingleton.get();
-
 	eptr->releaseResources();
-
 	gMasterConnSingleton.reset();
+
+	//  Now reset the last reference to the job pool.
+	gJobPool.reset();
 }
 
 void masterconn_desc(std::vector<pollfd> &pdesc) {
@@ -883,14 +883,6 @@ int masterconn_init(void) {
 
 	if (!masterconn_load_label()) { return -1; }
 
-	// Create the connections (only one at this point)
-	gMasterConnSingleton = std::make_unique<MasterConn>();
-	MasterConn *eptr = gMasterConnSingleton.get();
-	passert(eptr);
-
-	// Init the connections
-	if (eptr->initConnect() < 0) { return -1; }
-
 	// Register the callbacks in the event loop
 	eventloop_eachloopregister(masterconn_check_hdd_reports);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, kSendStatusDelay,
@@ -908,7 +900,7 @@ int masterconn_init(void) {
 int masterconn_init_threads(void) {
 	try {
 		gJobPool =
-		    std::make_unique<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, &gJobFD);
+		    std::make_shared<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, &gJobFD);
 	} catch (const std::runtime_error &e) {
 		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
 		return -1;
@@ -923,6 +915,14 @@ int masterconn_init_threads(void) {
 	}
 
 	safs::log_info("master connection: {} background workers created", gNumberOfWorkers);
+
+	// Create the connections (only one at this point)
+	gMasterConnSingleton = std::make_unique<MasterConn>(gJobPool);
+	MasterConn *eptr = gMasterConnSingleton.get();
+	passert(eptr);
+
+	// Init the connections
+	if (eptr->initConnect() < 0) { return -1; }
 
 	return 0;
 }
