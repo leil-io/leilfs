@@ -68,11 +68,6 @@ static bool gEnableLoadFactor;
 static std::string gLabel;
 static uint32_t gTimeout_ms;
 
-// Stats
-static uint64_t stats_bytesout = 0;
-static uint64_t stats_bytesin = 0;
-static uint32_t stats_maxjobscnt = 0;
-
 enum class ConnectionMode : std::uint8_t {
 	FREE,        /// There is no socket for the connection yet.
 	CONNECTING,  /// Connection is being established.
@@ -383,7 +378,7 @@ public:
 				return;
 			}
 
-			stats_bytesin += ret;
+			bytesIn_ += ret;
 
 			try {
 				inputPacket_.increaseBytesRead(ret);
@@ -427,7 +422,8 @@ public:
 				return;
 			}
 
-			stats_bytesout += bytesWritten;
+			// stats_bytesout += bytesWritten;
+			bytesOut_ += bytesWritten;
 			pack.bytesSent += bytesWritten;
 
 			if (pack.packet.size() != pack.bytesSent) { return; }
@@ -684,6 +680,14 @@ public:
 
 	void setMasterAddressValid(bool valid) { isMasterAddressValid_ = valid; }
 
+	uint64_t bytesIn() const { return bytesIn_; }
+	uint64_t bytesOut() const { return bytesOut_; }
+
+	void resetStats() {
+		bytesIn_ = 0;
+		bytesOut_ = 0;
+	}
+
 private:
 	std::string masterHostStr_;                  ///< Hostname of the master server.
 	std::string masterPortStr_;                  ///< Port of the master server.
@@ -701,6 +705,10 @@ private:
 	NetworkAddress address_;            ///< Address of this master server (IP and port).
 	NetworkAddress bindHostAddress_;    ///< Address to bind the socket to (IP and port).
 	bool isMasterAddressValid_{false};  ///< Tells if the master address is valid.
+
+	// Statistics
+	uint64_t bytesIn_ = 0;   ///< Number of bytes read from the master.
+	uint64_t bytesOut_ = 0;  ///< Number of bytes sent to the master.
 };
 
 //  From config
@@ -724,12 +732,21 @@ static uint32_t gNumberOfWorkers = kDefaultNumberOfWorkers;
 
 static void* gReconnectHook;
 
+//  Stats
+static uint32_t stats_maxjobscnt = 0;
+
 void masterconn_stats(uint64_t *bin,uint64_t *bout,uint32_t *maxjobscnt) {
-	*bin = stats_bytesin;
-	*bout = stats_bytesout;
+	//  For each connection, add the statistics
+	auto totalBytesIn = gMasterConnSingleton->bytesIn();
+	auto totalBytesOut = gMasterConnSingleton->bytesOut();
+
+	*bin = totalBytesIn;
+	*bout = totalBytesOut;
+
+	gMasterConnSingleton->resetStats();
+
+	// Get the stats non dependent on specific connections
 	*maxjobscnt = stats_maxjobscnt;
-	stats_bytesin = 0;
-	stats_bytesout = 0;
 	stats_maxjobscnt = 0;
 }
 
