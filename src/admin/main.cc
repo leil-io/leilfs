@@ -54,6 +54,41 @@
 #include "common/sockets.h"
 #include <common/version.h>
 
+int printVersion() {
+	std::cout << "SaunaFS Admin Tool\n\n";
+	std::cout << "Version: " << common::version() << "\n";
+	return 0;
+}
+
+void printCommandHelp(const SaunaFsAdminCommand* command) {
+	command->usage();
+	if (!command->supportedOptions().empty()) {
+		std::cerr << "  Possible command-line options:\n";
+		for (const auto& optionWithDescription : command->supportedOptions()) {
+			std::cerr << "\n    " << optionWithDescription.first << "\n";
+			std::cerr << "      " << optionWithDescription.second << "\n";
+		}
+	}
+	std::cerr << std::endl;
+}
+
+int printHelp(const std::string& programName,
+	const std::vector<const SaunaFsAdminCommand*>& commands, bool _printVersion = false) {
+	if (_printVersion) { printVersion(); }
+	std::cerr << std::endl;
+	std::cerr << "Usage:\n";
+	std::cerr << "    " << programName << " COMMAND [OPTIONS...] [ARGUMENTS...]\n\n";
+	std::cerr << "Available COMMANDs:\n\n";
+	for (const auto command : commands) {
+		if (command->name().substr(0, 6) == "magic-") {
+			// Treat magic-* commands as undocumented
+			continue;
+		}
+		printCommandHelp(command);
+	}
+	return 0;
+}
+
 int main(int argc, const char** argv) {
 	std::vector<const SaunaFsAdminCommand*> allCommands = {
 			new ChunksHealthCommand(),
@@ -92,8 +127,10 @@ int main(int argc, const char** argv) {
 #endif
 		std::string command_name = argv[1];
 		if (command_name == "-v" || command_name == "--version") {
-			std::cout << common::version() << '\n';
-			return 0;
+			return printVersion();
+		}
+		if (command_name == "-h" || command_name == "--help" || command_name == "help") {
+			return printHelp(argv[0], allCommands, true);
 		}
 		std::vector<std::string> arguments(argv + 2, argv + argc);
 		for (auto command : allCommands) {
@@ -114,47 +151,20 @@ int main(int argc, const char** argv) {
 				}
 			}
 		}
-		if (command_name == "help" || command_name == "-h" || command_name == "--help") {
-			command_name.clear();
-		}
-		throw WrongUsageException("Unknown command " + command_name
-		                          + ". Use saunafs-admin help for a list of available commands");
+		throw WrongUsageException("Unknown command " + command_name +
+			                  ". Use saunafs-admin help for a list of available commands");
 	} catch (WrongUsageException& ex) {
-		std::cerr << ex.message() << std::endl;
-		std::cerr << "Usage:\n";
-		std::cerr << "    " << argv[0] << " COMMAND [OPTIONS...] [ARGUMENTS...]\n\n";
+		std::cerr << ex.message() << std::endl << std::endl;
 
 		std::cerr << "Options:\n";
-		std::cerr << "-v --version: Print version\n\n";
+		std::cerr << "-v --version: Print version\n";
+		std::cerr << "-h --help: Print this help message\n\n";
 		if (command_name.empty()) {
-			std::cerr << "Available COMMANDs:\n\n";
-			for (auto command : allCommands) {
-				if (command->name().substr(0, 6) == "magic-") {
-					// Treat magic-* commands as undocumented
-					continue;
-				}
-				command->usage();
-				if (!command->supportedOptions().empty()) {
-					std::cerr << "    Possible command-line options:\n";
-					for (const auto& optionWithDescription : command->supportedOptions()) {
-						std::cerr << "\n    " << optionWithDescription.first << "\n";
-						std::cerr << "        " << optionWithDescription.second << "\n";
-					}
-				}
-				std::cerr << std::endl;
-			}
+			printHelp(argv[0], allCommands, false);
 		} else {
-			for (auto command : allCommands) {
+			for (const auto command : allCommands) {
 				if (command->name() == command_name) {
-					command->usage();
-					if (!command->supportedOptions().empty()) {
-						std::cerr << "    Possible command-line options:\n";
-						for (const auto& optionWithDescription : command->supportedOptions()) {
-							std::cerr << "\n    " << optionWithDescription.first << "\n";
-							std::cerr << "        " << optionWithDescription.second << "\n";
-						}
-					}
-					std::cerr << std::endl;
+					printCommandHelp(command);
 					break;
 				}
 			}
