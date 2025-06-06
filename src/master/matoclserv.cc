@@ -234,12 +234,11 @@ struct matoclserventry {
 	std::unique_ptr<SauMatoclAdminRegisterChallengeData> adminChallenge;
 	AdminTask adminTask;                   // admin task requested by this client
 	chunklist *chunkdelayedops;
-
-	struct matoclserventry *next;
 };
 
 static std::vector<std::unique_ptr<session>> sessionVector;
-static matoclserventry *matoclservhead=NULL;
+static std::list<std::unique_ptr<matoclserventry>> matoclservList;
+
 static int lsock;
 static int32_t lsockpdescpos;
 static int exiting,starting;
@@ -542,10 +541,9 @@ void matoclserv_stats(uint64_t stats[5]) {
 }
 
 matoclserventry *matoclserv_find_connection(uint32_t id) {
-	matoclserventry *eptr;
-	for (eptr = matoclservhead; eptr; eptr = eptr->next) {
+	for (const auto& eptr : matoclservList) {
 		if (eptr->sesdata && eptr->sesdata->sessionid == id) {
-			return eptr;
+			return eptr.get();
 		}
 	}
 	return nullptr;
@@ -1072,7 +1070,7 @@ void matoclserv_chunk_status(uint64_t chunkid,uint8_t status) {
 	uint64_t fleng;
 	uint8_t type;
 	chunklist *cl,**acl;
-	matoclserventry *eptr,*eaptr;
+	matoclserventry *eptr;
 	const PacketSerializer *serializer;
 
 	eptr=NULL;
@@ -1086,12 +1084,14 @@ void matoclserv_chunk_status(uint64_t chunkid,uint8_t status) {
 	auid=0;
 	agid=0;
 	serializer = nullptr;
-	for (eaptr = matoclservhead ; eaptr && eptr==NULL ; eaptr=eaptr->next) {
-		if (eaptr->mode!=KILL) {
+	auto eptrIterator = matoclservList.begin();
+	for (; eptrIterator != matoclservList.end() && eptr == NULL; eptrIterator++) {
+		matoclserventry* eaptr = eptrIterator->get();
+		if (eaptr->mode != KILL) {
 			acl = &(eaptr->chunkdelayedops);
-			while (*acl && eptr==NULL) {
+			while (*acl && eptr == NULL) {
 				cl = *acl;
-				if (cl->chunkid==chunkid) {
+				if (cl->chunkid == chunkid) {
 					eptr = eaptr;
 					qid = cl->qid;
 					fleng = cl->fleng;
@@ -1294,9 +1294,8 @@ void matoclserv_chunks_health(matoclserventry *eptr, const uint8_t *data, uint32
 }
 
 void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
-	uint8_t *ptr;
-	matoclserventry *eaptr;
-	uint32_t size,ileng,pleng,i;
+	uint32_t ileng;
+	uint32_t pleng;
 	uint8_t vmode;
 
 	if (length != 0 && length != sizeof(vmode)) {
@@ -1313,7 +1312,7 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		vmode = get8bit(&data);
 	}
 
-	size = sizeof(uint16_t);  // 2 bytes for SESSION_STATS
+	uint32_t size = sizeof(uint16_t);  // 2 bytes for SESSION_STATS
 
 	constexpr uint32_t kExtraVModeSize = sizeof(session::mingoal) + sizeof(session::maxgoal) +
 	                                     sizeof(session::mintrashtime) +
@@ -1327,7 +1326,7 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 
 	constexpr uint32_t kCurrentPlusLastHourEntrySize = sizeof(uint32_t) + sizeof(uint32_t);
 
-	for (eaptr = matoclservhead; eaptr; eaptr = eaptr->next) {
+	for (const auto &eaptr : matoclservList) {
 		if (eaptr->mode != KILL && eaptr->sesdata &&
 		    eaptr->registered == ClientState::kRegistered) {
 			size += kCommonSessionSize + (SESSION_STATS * kCurrentPlusLastHourEntrySize) +
@@ -1347,11 +1346,11 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 		}
 	}
 
-	ptr = matoclserv_createpacket(eptr, MATOCL_SESSION_LIST, size);
+	uint8_t *ptr = matoclserv_createpacket(eptr, MATOCL_SESSION_LIST, size);
 
 	put16bit(&ptr, SESSION_STATS);
 
-	for (eaptr = matoclservhead; eaptr; eaptr = eaptr->next) {
+	for (const auto &eaptr : matoclservList) {
 		if (eaptr->mode != KILL && eaptr->sesdata &&
 		    eaptr->registered == ClientState::kRegistered) {
 			put32bit(&ptr, eaptr->sesdata->sessionid);
@@ -1393,10 +1392,10 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 			}
 
 			if (eaptr->sesdata) {
-				for (i = 0; i < SESSION_STATS; i++) {
+				for (auto i = 0; i < SESSION_STATS; i++) {
 					put32bit(&ptr, eaptr->sesdata->currentopstats[i]);
 				}
-				for (i = 0; i < SESSION_STATS; i++) {
+				for (auto i = 0; i < SESSION_STATS; i++) {
 					put32bit(&ptr, eaptr->sesdata->lasthouropstats[i]);
 				}
 			} else {
@@ -1410,11 +1409,12 @@ void matoclserv_session_list(matoclserventry *eptr,const uint8_t *data,uint32_t 
 
 void matoclserv_mount_info_list(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	std::vector<MountInfoEntry> mountInfoList;
-	matoclserventry *eaptr;
+
 	cltoma::mountInfoList::deserialize(data, length);
 
-	for (eaptr = matoclservhead ; eaptr ; eaptr=eaptr->next) {
-		if (eaptr->mode != KILL && eaptr->sesdata && eaptr->registered == ClientState::kRegistered) {
+	for (const auto &eaptr : matoclservList) {
+		if (eaptr->mode != KILL && eaptr->sesdata != nullptr &&
+		    eaptr->registered == ClientState::kRegistered) {
 			MountInfoEntry entry;
 			entry.sessionId = eaptr->sesdata->sessionid;
 			entry.mountInfo = eaptr->sesdata->mountinfo;
@@ -1626,9 +1626,9 @@ static void matoclserv_send_iolimits_cfg(matoclserventry *eptr) {
 }
 
 static void matoclserv_broadcast_iolimits_cfg() {
-	for (matoclserventry *eptr = matoclservhead; eptr; eptr = eptr->next) {
+	for (const auto &eptr : matoclservList) {
 		if (eptr->iolimits) {
-			matoclserv_send_iolimits_cfg(eptr);
+			matoclserv_send_iolimits_cfg(eptr.get());
 		}
 	}
 }
@@ -5279,9 +5279,9 @@ void matoclserv_broadcast_metadata_saved(uint8_t status) {
 	if (exiting) {
 		return;
 	}
-	for (matoclserventry* eptr = matoclservhead; eptr != nullptr; eptr = eptr->next) {
+	for (const auto &eptr : matoclservList) {
 		if (eptr->adminTask == AdminTask::kSaveMetadata) {
-			matoclserv_createpacket(eptr, matocl::adminSaveMetadata::build(status));
+			matoclserv_createpacket(eptr.get(), matocl::adminSaveMetadata::build(status));
 			eptr->adminTask = AdminTask::kNone;
 		}
 	}
@@ -5312,9 +5312,9 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status) {
 	if (exiting) {
 		return;
 	}
-	for (matoclserventry* eptr = matoclservhead; eptr != nullptr; eptr = eptr->next) {
+	for (const auto &eptr : matoclservList) {
 		if (eptr->adminTask == AdminTask::kRecalculateChecksums) {
-			matoclserv_createpacket(eptr, matocl::adminRecalculateMetadataChecksum::build(status));
+			matoclserv_createpacket(eptr.get(), matocl::adminRecalculateMetadataChecksum::build(status));
 			eptr->adminTask = AdminTask::kNone;
 		}
 	}
@@ -5351,11 +5351,10 @@ uint32_t session_number_of_files(session *sess) {
 void matoclserv_session_files(matoclserventry *eptr,
                               [[maybe_unused]] const uint8_t *data,
                               [[maybe_unused]] uint32_t length) {
-	matoclserventry *eaptr;
 	std::vector<SessionFiles> sessions;
 	MessageBuffer reply;
 
-	for (eaptr = matoclservhead; eaptr; eaptr = eaptr->next) {
+	for (const auto &eaptr : matoclservList) {
 		if (eaptr->mode == KILL || !eaptr->sesdata ||
 		    eaptr->registered != ClientState::kRegistered) {
 			continue;
@@ -5386,8 +5385,9 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data,
 	// Find the session with the given sessionId
 	matoclserventry *target = nullptr;
 
-	for (target = matoclservhead; target; target = target->next) {
-		if (target->sesdata && target->sesdata->sessionid == sessionId) {
+	for (const auto &eaptr : matoclservList) {
+		if (eaptr->sesdata && eaptr->sesdata->sessionid == sessionId) {
+			target = eaptr.get();
 			break;
 		}
 	}
@@ -5942,18 +5942,17 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 }
 
 void matoclserv_term(void) {
-	matoclserventry *eptr,*eptrn;
 	packetstruct *pptr,*pptrn;
 	chunklist *cl,*cln;
 
-	safs_pretty_syslog(LOG_NOTICE,"main master server module: closing %s:%s",ListenHost,ListenPort);
+	safs::log_info("main master server module: closing {}:{}", ListenHost, ListenPort);
 	tcpclose(lsock);
 
-	for (eptr = matoclservhead ; eptr ; eptr = eptrn) {
-		eptrn = eptr->next;
+	for (const auto &eptr : matoclservList) {
 		if (eptr->inputpacket.packet) {
 			free(eptr->inputpacket.packet);
 		}
+
 		for (pptr = eptr->outputhead ; pptr ; pptr = pptrn) {
 			pptrn = pptr->next;
 			if (pptr->packet) {
@@ -5961,12 +5960,14 @@ void matoclserv_term(void) {
 			}
 			free(pptr);
 		}
+
 		for (cl = eptr->chunkdelayedops ; cl ; cl = cln) {
 			cln = cl->next;
 			free(cl);
 		}
-		delete eptr;
 	}
+
+	matoclservList.clear();
 	matoclserv_session_unload();
 
 	free(ListenHost);
@@ -6103,17 +6104,21 @@ void matoclserv_wantexit(void) {
 int matoclserv_canexit(void) {
 	matoclserventry *adminTerminator = NULL;
 	static bool terminatorPacketSent = false;
-	for (matoclserventry* eptr = matoclservhead; eptr != nullptr; eptr = eptr->next) {
-		if (eptr->outputhead!=NULL) {
+
+	for (const auto &eptr : matoclservList) {
+		if (eptr->outputhead != NULL) {
 			return 0;
 		}
-		if (eptr->chunkdelayedops!=NULL) {
+
+		if (eptr->chunkdelayedops != NULL) {
 			return 0;
 		}
+
 		if (eptr->adminTask == AdminTask::kTerminate) {
-			adminTerminator = eptr;
+			adminTerminator = eptr.get();
 		}
 	}
+
 	if (adminTerminator != NULL && !terminatorPacketSent) {
 		// Are we replying to termination request?
 		if (!matomlserv_canexit()){  // make sure there are no ml connected
@@ -6125,32 +6130,35 @@ int matoclserv_canexit(void) {
 			terminatorPacketSent = true;
 		}
 	}
+
 	// Wait for the admin which requested termination (if exists) to disconnect.
 	// This ensures that he received the response (or died and is no longer interested).
-	for (matoclserventry* eptr = matoclservhead; eptr != nullptr; eptr = eptr->next) {
+	for (const auto &eptr : matoclservList) {
 		if (eptr->adminTask == AdminTask::kTerminate) {
 			return 0;
 		}
 	}
+
 	return 1;
 }
 
 void matoclserv_desc(std::vector<pollfd> &pdesc) {
-	matoclserventry *eptr;
-
-	if (exiting==0) {
-		pdesc.push_back({lsock,POLLIN,0});
+	if (exiting == 0) {
+		pdesc.push_back({lsock, POLLIN, 0});
 		lsockpdescpos = pdesc.size() - 1;
 	} else {
 		lsockpdescpos = -1;
 	}
-	for (eptr=matoclservhead ; eptr ; eptr=eptr->next) {
-		pdesc.push_back({eptr->sock,0,0});
+
+	for (const auto &eptr : matoclservList) {
+		pdesc.push_back({eptr->sock, 0, 0});
 		eptr->pdescpos = pdesc.size() - 1;
-		if (exiting==0) {
+
+		if (exiting == 0) {
 			pdesc.back().events |= POLLIN;
 		}
-		if (eptr->outputhead!=NULL) {
+
+		if (eptr->outputhead != NULL) {
 			pdesc.back().events |= POLLOUT;
 		}
 	}
@@ -6159,20 +6167,17 @@ void matoclserv_desc(std::vector<pollfd> &pdesc) {
 
 void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 	uint32_t now=eventloop_time();
-	matoclserventry *eptr,**kptr;
-	packetstruct *pptr,*paptr;
-	int ns;
+	packetstruct *pptr;
+	packetstruct *paptr;
 
-	if (lsockpdescpos>=0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
-		ns=tcpaccept(lsock);
-		if (ns<0) {
+	if (lsockpdescpos >= 0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
+		int ns = tcpaccept(lsock);
+		if (ns < 0) {
 			safs_silent_errlog(LOG_NOTICE,"main master server module: accept error");
 		} else {
 			tcpnonblock(ns);
 			tcpnodelay(ns);
-			eptr = new matoclserventry;
-			eptr->next = matoclservhead;
-			matoclservhead = eptr;
+			auto eptr = std::make_unique<matoclserventry>();
 			eptr->sock = ns;
 			eptr->pdescpos = -1;
 			tcpgetpeer(ns,&(eptr->peerip),&(eptr->peerport));
@@ -6192,50 +6197,58 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 
 			eptr->chunkdelayedops = NULL;
 			eptr->sesdata = NULL;
-			memset(eptr->passwordrnd,0,32);
+			memset(eptr->passwordrnd, 0, 32);
+
+			matoclservList.push_front(std::move(eptr));
 		}
 	}
 
 // read
-	for (eptr=matoclservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->pdescpos>=0) {
+	for (const auto &eptr : matoclservList) {
+		if (eptr->pdescpos >= 0) {
 			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
 				eptr->mode = KILL;
 			}
-			if ((pdesc[eptr->pdescpos].revents & POLLIN) && eptr->mode!=KILL) {
+
+			if ((pdesc[eptr->pdescpos].revents & POLLIN) && eptr->mode != KILL) {
 				eptr->lastread = now;
-				matoclserv_read(eptr);
+				matoclserv_read(eptr.get());
 			}
 		}
 	}
 
 // write
-	for (eptr=matoclservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->lastwrite+2<now && eptr->registered != ClientState::kOldTools
-				&& eptr->outputhead==NULL) {
-			uint8_t *ptr = matoclserv_createpacket(eptr,ANTOAN_NOP,4);      // 4 byte length because of 'msgid'
-			*((uint32_t*)ptr) = 0;
+	for (const auto &eptr : matoclservList) {
+		if (eptr->lastwrite + 2 < now && eptr->registered != ClientState::kOldTools &&
+		    eptr->outputhead == NULL) {
+			// 4 byte length because of 'msgid'
+			uint8_t *ptr = matoclserv_createpacket(eptr.get(), ANTOAN_NOP, 4);
+			*((uint32_t *)ptr) = 0;
 		}
-		if (eptr->pdescpos>=0) {
-			if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && eptr->mode!=KILL) {
+
+		if (eptr->pdescpos >= 0) {
+			if ((((pdesc[eptr->pdescpos].events & POLLOUT) == 0 && (eptr->outputhead)) ||
+			     (pdesc[eptr->pdescpos].revents & POLLOUT)) &&
+			    eptr->mode != KILL) {
 				eptr->lastwrite = now;
-				matoclserv_write(eptr);
+				matoclserv_write(eptr.get());
 			}
 		}
-		if (eptr->lastread+10<now && exiting==0) {
-			eptr->mode = KILL;
-		}
+
+		if (eptr->lastread + 10 < now && exiting == 0) { eptr->mode = KILL; }
 	}
 
 // close
-	kptr = &matoclservhead;
-	while ((eptr=*kptr)) {
+	for (auto eptrIt = matoclservList.begin(); eptrIt != matoclservList.end();) {
+		auto *eptr = eptrIt->get();
 		if (eptr->mode == KILL) {
 			matocl_beforedisconnect(eptr);
 			tcpclose(eptr->sock);
+
 			if (eptr->inputpacket.packet) {
 				free(eptr->inputpacket.packet);
 			}
+
 			pptr = eptr->outputhead;
 			while (pptr) {
 				if (pptr->packet) {
@@ -6245,10 +6258,10 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 				pptr = pptr->next;
 				free(paptr);
 			}
-			*kptr = eptr->next;
-			delete eptr;
+
+			eptrIt = matoclservList.erase(eptrIt);
 		} else {
-			kptr = &(eptr->next);
+			++eptrIt;
 		}
 	}
 }
@@ -6343,9 +6356,9 @@ void  matoclserv_become_master() {
 
 void matoclserv_reload(void) {
 	// Notify admins that reload was performed - put responses in their packet queues
-	for (matoclserventry* eptr = matoclservhead; eptr != nullptr; eptr = eptr->next) {
+	for (const auto &eptr : matoclservList) {
 		if (eptr->adminTask == AdminTask::kReload) {
-			matoclserv_createpacket(eptr, matocl::adminReload::build(SAUNAFS_STATUS_OK));
+			matoclserv_createpacket(eptr.get(), matocl::adminReload::build(SAUNAFS_STATUS_OK));
 			eptr->adminTask = AdminTask::kNone;
 		}
 	}
@@ -6433,7 +6446,7 @@ int matoclserv_networkinit(void) {
 	}
 	safs_pretty_syslog(LOG_NOTICE,"main master server module: listen on %s:%s",ListenHost,ListenPort);
 
-	matoclservhead = NULL;
+	matoclservList.clear();
 
 	if (metadataserver::isMaster()) {
 		matoclserv_become_master();
