@@ -22,7 +22,9 @@
 
 #include "common/platform.h"
 
-#include <inttypes.h>
+#include <cstdint>
+
+#include <common/type_defs.h>
 
 /* SFS data pack */
 
@@ -38,12 +40,25 @@ static inline void put64bit(uint8_t **ptr,uint64_t val) {
 	(*ptr)+=8;
 }
 
-static inline void put32bit(uint8_t **ptr,uint32_t val) {
+template <typename T>
+static inline void put32bit(uint8_t **ptr, T val) {
+	static_assert(sizeof(T) <= 4, "put32bit only accepts types up to 4 bytes size");
 	(*ptr)[0]=((val)>>24)&0xFF;
 	(*ptr)[1]=((val)>>16)&0xFF;
 	(*ptr)[2]=((val)>>8)&0xFF;
 	(*ptr)[3]=(val)&0xFF;
 	(*ptr)+=4;
+}
+
+template <typename T>
+static inline void putINode(uint8_t **ptr, T val) {
+	static_assert(sizeof(T) == kinode_t_size, "putINode only accepts types with sizeof(inode_t)");
+
+#ifdef SAUNAFS_USE_INODE64
+	put64bit(ptr, val);
+#else
+	put32bit(ptr, val);
+#endif  // SAUNAFS_USE_INODE64
 }
 
 static inline void put16bit(uint8_t **ptr,uint16_t val) {
@@ -66,11 +81,22 @@ static inline uint64_t get64bit(const uint8_t **ptr) {
 	return t64;
 }
 
-static inline uint32_t get32bit(const uint8_t **ptr) {
-	uint32_t t32;
-	t32=((*ptr)[3]+256U*((*ptr)[2]+256U*((*ptr)[1]+256U*(*ptr)[0])));
-	(*ptr)+=4;
-	return t32;
+template <typename T>
+static inline void get32bit(const uint8_t **ptr, T &output) {
+	static_assert(sizeof(T) == 4, "get32bit only accepts types of 4 bytes size");
+	output = ((*ptr)[3] + 256U * ((*ptr)[2] + 256U * ((*ptr)[1] + 256U * (*ptr)[0])));
+	(*ptr) += sizeof(uint32_t);
+}
+
+template <typename T>
+static inline void getINode(const uint8_t **ptr, T &output) {
+	static_assert(sizeof(T) == kinode_t_size, "getINode only accepts types with sizeof(inode_t)");
+
+#ifdef SAUNAFS_USE_INODE64
+	output = get64bit(ptr);
+#else
+	get32bit(ptr, output);
+#endif  // SAUNAFS_USE_INODE64
 }
 
 static inline uint16_t get16bit(const uint8_t **ptr) {

@@ -28,14 +28,14 @@
 #include "devtools/request_log.h"
 #include "mount/mastercomm.h"
 
-void ReadChunkLocator::invalidateCache(uint32_t inode, uint32_t index) {
+void ReadChunkLocator::invalidateCache(inode_t inode, uint32_t index) {
 	std::unique_lock<std::mutex> lock(mutex_);
 	if (cache_ && inode == inode_ && index == index_) {
 		cache_ = nullptr;
 	}
 }
 
-std::shared_ptr<const ChunkLocationInfo> ReadChunkLocator::locateChunk(uint32_t inode, uint32_t index) {
+std::shared_ptr<const ChunkLocationInfo> ReadChunkLocator::locateChunk(inode_t inode, uint32_t index) {
 	{
 		std::unique_lock<std::mutex> lock(mutex_);
 		if (cache_ && inode == inode_ && index == index_) {
@@ -88,7 +88,7 @@ std::shared_ptr<const ChunkLocationInfo> ReadChunkLocator::locateChunk(uint32_t 
 	}
 }
 
-void WriteChunkLocator::locateAndLockChunk(uint32_t inode, uint32_t index) {
+void WriteChunkLocator::locateAndLockChunk(inode_t inode, uint32_t index) {
 	LOG_AVG_TILL_END_OF_SCOPE0("WriteChunkLocator::locateAndLockChunk");
 	sassert(inode_ == 0 || (inode_ == inode && index_ == index));
 	inode_ = inode;

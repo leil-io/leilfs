@@ -176,17 +176,17 @@ void LockRanges::clear() {
 	data_.clear();
 }
 
-bool FileLocks::sharedLock(uint32_t inode, uint64_t start, uint64_t end, Owner owner,
+bool FileLocks::sharedLock(inode_t inode, uint64_t start, uint64_t end, Owner owner,
 		bool nonblocking) {
 	return apply(inode, Lock{Lock::Type::kShared, start, end, owner}, nonblocking);
 }
 
-bool FileLocks::exclusiveLock(uint32_t inode, uint64_t start, uint64_t end, Owner owner,
+bool FileLocks::exclusiveLock(inode_t inode, uint64_t start, uint64_t end, Owner owner,
 		bool nonblocking) {
 	return apply(inode, Lock{Lock::Type::kExclusive, start, end, owner}, nonblocking);
 }
 
-const FileLocks::Lock *FileLocks::findCollision(uint32_t inode, Lock::Type type, uint64_t start,
+const FileLocks::Lock *FileLocks::findCollision(inode_t inode, Lock::Type type, uint64_t start,
 		uint64_t end, Owner owner) {
 	auto it = active_locks_.find(inode);
 	if (it == active_locks_.end()) {
@@ -196,15 +196,15 @@ const FileLocks::Lock *FileLocks::findCollision(uint32_t inode, Lock::Type type,
 	return it->second.findCollision(Lock{type, start, end, owner});
 }
 
-bool FileLocks::unlock(uint32_t inode, uint64_t start, uint64_t end, Owner owner) {
+bool FileLocks::unlock(inode_t inode, uint64_t start, uint64_t end, Owner owner) {
 	return apply(inode, Lock{Lock::Type::kUnlock, start, end, owner});
 }
 
-void FileLocks::unlock(uint32_t inode) {
+void FileLocks::unlock(inode_t inode) {
 	active_locks_.erase(inode);
 }
 
-bool FileLocks::apply(uint32_t inode, Lock lock, bool nonblocking) {
+bool FileLocks::apply(inode_t inode, Lock lock, bool nonblocking) {
 	auto it = active_locks_.find(inode);
 	if (it == active_locks_.end()) {
 		it = active_locks_.insert(std::make_pair(inode, Locks())).first;
@@ -226,13 +226,13 @@ bool FileLocks::apply(uint32_t inode, Lock lock, bool nonblocking) {
 	return false;
 }
 
-void FileLocks::enqueue(uint32_t inode, Lock lock) {
+void FileLocks::enqueue(inode_t inode, Lock lock) {
 	LockQueue &queue = pending_locks_[inode];
 
 	queue.insert(std::lower_bound(queue.begin(), queue.end(), lock), lock);
 }
 
-void FileLocks::gatherCandidates(uint32_t inode, uint64_t start, uint64_t end, LockQueue &result) {
+void FileLocks::gatherCandidates(inode_t inode, uint64_t start, uint64_t end, LockQueue &result) {
 	auto it = pending_locks_.find(inode);
 	if (it == pending_locks_.end()) {
 		return;
@@ -295,7 +295,7 @@ void copyToVector(const Container &full_data, int64_t index, int64_t count,
 }
 
 template <typename Container>
-void copyInodeToVector(const Container &lock_data, uint32_t inode, int64_t index, int64_t count,
+void copyInodeToVector(const Container &lock_data, inode_t inode, int64_t index, int64_t count,
 		std::vector<safs_locks::Info> &data) {
 	int64_t pos = 0; // current index (increased only until pos < index)
 
@@ -340,7 +340,7 @@ void FileLocks::copyPendingToVector(int64_t index, int64_t count,
 	::copyToVector(pending_locks_, index, count, data);
 }
 
-void FileLocks::copyActiveToVector(uint32_t inode, int64_t index, int64_t count,
+void FileLocks::copyActiveToVector(inode_t inode, int64_t index, int64_t count,
 		std::vector<safs_locks::Info> &data) {
 	auto active_it = active_locks_.find(inode);
 
@@ -352,7 +352,7 @@ void FileLocks::copyActiveToVector(uint32_t inode, int64_t index, int64_t count,
 	::copyInodeToVector(active_it->second, inode, index, count, data);
 }
 
-void FileLocks::copyPendingToVector(uint32_t inode, int64_t index, int64_t count,
+void FileLocks::copyPendingToVector(inode_t inode, int64_t index, int64_t count,
 		std::vector<safs_locks::Info> &data) {
 	auto pending_it = pending_locks_.find(inode);
 
@@ -436,10 +436,10 @@ void store(FILE *file, const Container &data) {
 
 void FileLocks::load(const std::shared_ptr<MemoryMappedFile> &metadataFile,
                      size_t &offsetBegin) {
-	::load(metadataFile, offsetBegin, [this](uint32_t inode, Lock &lock) {
+	::load(metadataFile, offsetBegin, [this](inode_t inode, Lock &lock) {
 		active_locks_[inode].insert(lock);
 	});
-	::load(metadataFile, offsetBegin, [this](uint32_t inode, Lock &lock) {
+	::load(metadataFile, offsetBegin, [this](inode_t inode, Lock &lock) {
 		pending_locks_[inode].push_back(lock);
 	});
 }

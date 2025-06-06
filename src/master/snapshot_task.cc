@@ -152,7 +152,7 @@ void SnapshotTask::cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_no
 			if (chunk_add_file(chunkid, dst_node->goal) != SAUNAFS_STATUS_OK) {
 				safs_pretty_syslog(LOG_ERR,
 				       "structure error - chunk %016" PRIX64
-				       " not found (inode: %" PRIu32 " ; index: %" PRIu32 ")",
+				       " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",
 				       chunkid, src_node->id, i);
 			}
 		}
@@ -195,13 +195,13 @@ void SnapshotTask::cloneSymlinkData(FSNodeSymlink *src_node, FSNodeSymlink *dst_
 	fsnodes_add_sub_stats(dst_parent, &nsr, &psr);
 }
 
-void SnapshotTask::emitChangelog(uint32_t ts, uint32_t dst_inode) {
+void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
 	if (!emit_changelog_) {
 		gMetadata->metaversion++;
 		return;
 	}
 
-	fs_changelog(ts, "CLONE(%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%s,%" PRIu8 ")",
+	fs_changelog(ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
 	             current_subtask_->first, dst_parent_inode_, dst_inode,
 	             fsnodes_escape_name(current_subtask_->second).c_str(), can_overwrite_);
 }

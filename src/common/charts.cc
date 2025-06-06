@@ -680,7 +680,7 @@ void charts_load(void) {
 		return;
 	}
 	ptr = hdr;
-	i = get32bit(&ptr);
+	get32bit(&ptr, i);
 	if (i!=CHARTS_FILE_VERSION) {
 		lseek(fd,4,SEEK_SET);
 		memcpy((void*)&j,hdr,4);        // get first 4 bytes of hdr as a 32-bit number in "natural" order
@@ -698,9 +698,9 @@ void charts_load(void) {
 		close(fd);
 		return;
 	}
-	fleng = get32bit(&ptr);
-	fcharts = get32bit(&ptr);
-	i = get32bit(&ptr);
+	get32bit(&ptr, fleng);
+	get32bit(&ptr, fcharts);
+	get32bit(&ptr, i);
 	timepoint[SHORTRANGE]=i;
 	pointers[SHORTRANGE]=LENG-1;
 	pointers[MEDIUMRANGE]=LENG-1;
@@ -1765,7 +1765,7 @@ void charts_fill_crc(uint8_t *buff,uint32_t leng) {
 	ptr = buff+8;
 	eptr = buff+leng;
 	while (ptr+4<=eptr) {
-		chleng = get32bit((const uint8_t **)&ptr);
+		get32bit((const uint8_t **)&ptr, chleng);
 		if (ptr+8+chleng<=eptr) {
 			crc = mycrc32(0, ptr, chleng+4);
 			ptr += chleng+4;

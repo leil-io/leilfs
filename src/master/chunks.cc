@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <cinttypes>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -887,7 +888,8 @@ void chunk_store_chunkcounters(uint8_t *buff,uint8_t matrixid) {
 	if (matrixid == MATRIX_ALL_COPIES) {
 		for (int i = 0; i < CHUNK_MATRIX_SIZE; i++) {
 			for (int j = 0; j < CHUNK_MATRIX_SIZE; j++) {
-				put32bit(&buff, Chunk::allFullChunkCopies[i][j]);
+				// TODO(Guillex): possible truncation if the chunks number is greater than 2^32
+				put32bit(&buff, static_cast<uint32_t>(Chunk::allFullChunkCopies[i][j]));
 			}
 		}
 	} else {
@@ -1806,6 +1808,18 @@ void chunk_got_duptrunc_status(matocsserventry *ptr, uint64_t chunkId, ChunkPart
 /* JOBS (DELETE/REPLICATE) */
 /* ----------------------- */
 
+uint32_t get_chunk_info_serialized_size() {
+	// Some fields are multiplied by 2 because they are stored in both 'done' and 'not done' states.
+	// See `chunk_store_info` function for details.
+	constexpr uint32_t kInfoSize =
+	    sizeof(chunksinfo_loopstart) + sizeof(chunksinfo_loopend) +
+	    (2 * sizeof(job_info::del_invalid)) + (2 * sizeof(job_info::del_unused)) +
+	    (2 * sizeof(job_info::del_diskclean)) + (2 * sizeof(job_info::del_overgoal)) +
+	    (2 * sizeof(job_info::copy_undergoal)) + sizeof(loop_info::copy_rebalance);
+
+	return kInfoSize;
+}
+
 void chunk_store_info(uint8_t *buff) {
 	put32bit(&buff,chunksinfo_loopstart);
 	put32bit(&buff,chunksinfo_loopend);
@@ -2686,11 +2700,13 @@ bool chunksLoadFromFile(MetadataLoader::Options options) {
 
 	while (true) {
 		uint64_t chunkId = get64bit(&ptr);
-		uint32_t version = get32bit(&ptr);
-		uint32_t lockedTo = get32bit(&ptr);
+		uint32_t version;
+		get32bit(&ptr, version);
+		uint32_t lockedTo;
+		get32bit(&ptr, lockedTo);
 		uint32_t lockId = 0;
 		if (options.loadLockIds) {
-			lockId = get32bit(&ptr);
+			get32bit(&ptr, lockId);
 		}
 		if (chunkId > 0) {
 			Chunk * chunk = chunk_new(chunkId, version);

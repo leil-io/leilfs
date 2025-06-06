@@ -21,7 +21,8 @@
                 "ENABLE_URAFT": "ON",
                 "ENABLE_WERROR": "ON",
                 "GSH_CAN_HOST_LOCAL_FS": "ON",
-                "SAUNAFS_TEST_POINTER_OBFUSCATION": "ON"
+                "SAUNAFS_TEST_POINTER_OBFUSCATION": "ON",
+                "ENABLE_INODE64": "OFF"
             },
             "hidden": true
         },

@@ -22,10 +22,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 #include "common/datapack.h"
 #include "errors/saunafs_error_codes.h"
-#include "errors/sfserr.h"
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
@@ -34,65 +34,93 @@ static void check_file_usage() {
 }
 
 static int check_file(const char *fname) {
-	uint8_t reqbuff[16], *wptr, *buff;
-	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
+	uint32_t cmd, leng;
+	uint32_t msgid{0};
+	inode_t inode;
 	uint8_t copies;
 	uint32_t chunks;
+
+	constexpr uint32_t kCheckFilePayload = sizeof(msgid) + sizeof(inode);
+	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kCheckFilePayload) + kCheckFilePayload;
+
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, false);
 	if (fd < 0) {
 		return -1;
 	}
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_CHECK);
-	put32bit(&wptr, 8);
-	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
-	if (tcpwrite(fd, reqbuff, 16) != 16) {
+	put32bit(&wptr, kCheckFilePayload);
+	put32bit(&wptr, msgid);
+	putINode(&wptr, inode);
+
+	// send request to master
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
-	if (tcpread(fd, reqbuff, 8) != 8) {
+
+	// read the first part of the answer
+	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
 		printf("%s: master query: receive error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
+
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
+
 	if (cmd != MATOCL_FUSE_CHECK) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
+
 	buff = (uint8_t *)malloc(leng);
+
+	// read the rest of the answer into the buffer
 	if (tcpread(fd, buff, leng) != (int32_t)leng) {
 		printf("%s: master query: receive error\n", fname);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
-	close_master_conn(0);
+
+	close_master_conn(0);  // not needed anymore
+
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
-	if (cmd != 0) {
+	get32bit(&rptr, msgid);  // queryid
+
+	if (msgid != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
 		return -1;
 	}
-	leng -= 4;
-	if (leng == 1) {
+
+	if (leng - sizeof(msgid) == 1) {  // an error code was returned
 		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
 		free(buff);
 		return -1;
-	} else if (leng % 3 != 0 && leng != 44) {
+	}
+
+	leng -= 4;
+
+	constexpr uint32_t kExpectedSize = + CHUNK_MATRIX_SIZE * sizeof(uint32_t);
+
+	if (leng % 3 != 0 && leng != kExpectedSize) {
 		printf("%s: master query: wrong answer (leng)\n", fname);
 		free(buff);
 		return -1;
 	}
+
 	printf("%s:\n", fname);
+
 	if (leng % 3 == 0) {
 		for (cmd = 0; cmd < leng; cmd += 3) {
 			copies = get8bit(&rptr);
@@ -105,8 +133,8 @@ static int check_file(const char *fname) {
 			print_number(" ", "\n", chunks, 1, 0, 1);
 		}
 	} else {
-		for (cmd = 0; cmd < 11; cmd++) {
-			chunks = get32bit(&rptr);
+		for (cmd = 0; cmd < CHUNK_MATRIX_SIZE; cmd++) {
+			get32bit(&rptr, chunks);
 			if (chunks > 0) {
 				if (cmd == 1) {
 					printf(" chunks with 1 copy:    ");
@@ -119,7 +147,9 @@ static int check_file(const char *fname) {
 			}
 		}
 	}
+
 	free(buff);
+
 	return 0;
 }
 

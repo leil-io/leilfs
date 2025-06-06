@@ -24,6 +24,7 @@
 #include <stdlib.h>
 
 #include "common/server_connection.h"
+#include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -43,7 +44,7 @@ static void set_goal_usage() {
 }
 
 static int set_goal(const char *fname, const std::string &goal, uint8_t mode, int long_wait) {
-	uint32_t inode;
+	inode_t inode;
 	int fd;
 	uint32_t messageId = 0;
 	uint32_t uid = getUId();
@@ -61,9 +62,9 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode, in
 		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SETGOAL,
 		                    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
 		                    long_wait ? kInfiniteTimeout : kDefaultTimeout);
-		uint32_t changed;
-		uint32_t notChanged;
-		uint32_t notPermitted;
+		inode_t changed;
+		inode_t notChanged;
+		inode_t notPermitted;
 		PacketVersion version;
 
 		deserializePacketVersionNoHeader(response, version);
@@ -82,9 +83,9 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode, in
 			}
 		} else {
 			printf("%s:\n", fname);
-			print_number(" inodes with goal changed:      ", "\n", changed, 1, 0, 1);
-			print_number(" inodes with goal not changed:  ", "\n", notChanged, 1, 0, 1);
-			print_number(" inodes with permission denied: ", "\n", notPermitted, 1, 0, 1);
+			print_number(" inodes with goal changed:      ", "\n", changed, kMode32, 0, 1);
+			print_number(" inodes with goal not changed:  ", "\n", notChanged, kMode32, 0, 1);
+			print_number(" inodes with permission denied: ", "\n", notPermitted, kMode32, 0, 1);
 		}
 	} catch (Exception &e) {
 		fprintf(stderr, "%s\n", e.what());

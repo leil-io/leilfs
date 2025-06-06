@@ -176,8 +176,8 @@ fsal_acl_t *convertSaunafsACLToFsalACL(const sau_acl_t *saunafsACL) {
  *
  * @returns: FSAL status.
  */
-fsal_status_t getACL(struct SaunaFSExport *export, uint32_t inode,
-                     uint32_t ownerId, fsal_acl_t **acl) {
+fsal_status_t getACL(struct SaunaFSExport *export, inode_t inode, uint32_t ownerId,
+                     fsal_acl_t **acl) {
 	if (*acl) {
 		nfs4_acl_release_entry(*acl);
 		*acl = NULL;
@@ -189,7 +189,7 @@ fsal_status_t getACL(struct SaunaFSExport *export, uint32_t inode,
 
 	if (status < 0) {
 		LogFullDebug(COMPONENT_FSAL,
-		             "getacl status = %s export=%" PRIu16 " inode=%" PRIu32,
+		             "getacl status = %s export=%" PRIu16 " inode=%" PRIiNode,
 		             sau_error_string(sau_last_err()), export->export.export_id,
 		             inode);
 
@@ -204,7 +204,7 @@ fsal_status_t getACL(struct SaunaFSExport *export, uint32_t inode,
 	if (*acl == NULL) {
 		LogFullDebug(COMPONENT_FSAL,
 		             "Failed to convert saunafs acl to nfs4 acl, export=%"
-		             PRIu16 " inode=%" PRIu32,
+		             PRIu16 " inode=%" PRIiNode,
 		             export->export.export_id, inode);
 		return fsalstat(ERR_FSAL_FAULT, 0);
 	}
@@ -226,8 +226,8 @@ fsal_status_t getACL(struct SaunaFSExport *export, uint32_t inode,
  *
  * @returns: FSAL status.
  */
-fsal_status_t setACL(struct SaunaFSExport *export, uint32_t inode,
-                     const fsal_acl_t *acl, unsigned int mode) {
+fsal_status_t setACL(struct SaunaFSExport *export, inode_t inode, const fsal_acl_t *acl,
+                     unsigned int mode) {
 	if (!acl) {
 		return fsalstat(ERR_FSAL_NO_ERROR, 0);
 	}

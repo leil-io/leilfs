@@ -24,9 +24,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <cstdint>
 #include <vector>
 
 #include "common/datapack.h"
+#include "common/type_defs.h"
+#include "master/filesystem_node_types.h"
 #include "protocol/SFSCommunication.h"
 
 #define STR_AUX(x) #x
@@ -59,10 +62,10 @@ int chunk_load(FILE *fd, bool loadLockIds) {
 		(void)r;
 		ptr = loadbuff.data();
 		chunkid = get64bit(&ptr);
-		version = get32bit(&ptr);
-		lockedto = get32bit(&ptr);
+		get32bit(&ptr, version);
+		get32bit(&ptr, lockedto);
 		if (loadLockIds) {
-			lockid = get32bit(&ptr);
+			get32bit(&ptr, lockid);
 		} else {
 			lockid = 1;
 		}
@@ -96,28 +99,30 @@ void print_name(FILE *in,uint32_t nleng) {
 }
 
 int fs_loadedge(FILE *fd) {
-	uint8_t uedgebuff[4+4+2];
-	const uint8_t *ptr;
-	uint32_t parent_id;
-	uint32_t child_id;
+	inode_t parent_id;
+	inode_t child_id;
 	uint16_t nleng;
 
-	if (fread(uedgebuff,1,4+4+2,fd)!=4+4+2) {
-		fprintf(stderr,"loading edge: read error\n");
+	constexpr uint32_t kEdgeBufferSize = sizeof(parent_id) + sizeof(child_id) + sizeof(nleng);
+	uint8_t uedgebuff[kEdgeBufferSize];
+	const uint8_t *ptr;
+
+	if (fread(uedgebuff, 1, kEdgeBufferSize, fd) != kEdgeBufferSize) {
+		fprintf(stderr, "loading edge: read error\n");
 		return -1;
 	}
 	ptr = uedgebuff;
-	parent_id = get32bit(&ptr);
-	child_id = get32bit(&ptr);
+	getINode(&ptr, parent_id);
+	getINode(&ptr, child_id);
 	if (parent_id==0 && child_id==0) {      // last edge
 		return 1;
 	}
 	nleng = get16bit(&ptr);
 
 	if (parent_id==0) {
-		printf("E|p:      NULL|c:%10" PRIu32 "|n:",child_id);
+		printf("E|p:      NULL|c:%10" PRIiNode "|n:",child_id);
 	} else {
-		printf("E|p:%10" PRIu32 "|c:%10" PRIu32 "|n:", parent_id, child_id);
+		printf("E|p:%10" PRIiNode "|c:%10" PRIiNode "|n:", parent_id, child_id);
 	}
 	print_name(fd,nleng);
 	printf("\n");
@@ -125,22 +130,27 @@ int fs_loadedge(FILE *fd) {
 }
 
 int fs_loadnode(FILE *fd) {
-	uint8_t unodebuff[4+1+2+4+4+4+4+4+4+8+4+2+8*65536+4*65536+4];
+	constexpr uint8_t kFSNodeSizeWithoutType =
+	    sizeof(FSNode::id) + sizeof(FSNode::goal) + sizeof(FSNode::mode) + sizeof(FSNode::uid) +
+	    sizeof(FSNode::gid) + sizeof(FSNode::atime) + sizeof(FSNode::mtime) +
+	    sizeof(FSNode::ctime) + sizeof(FSNode::trashtime);
+	static uint8_t unodebuff[kFSNodeSizeWithoutType+8+4+2+8*65536+4*65536+4];
 	const uint8_t *ptr,*chptr;
 	uint8_t type,goal;
-	uint32_t nodeid,uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime;
+	inode_t nodeid;
+	uint32_t uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime;
 	uint16_t mode;
 	char c;
 
 	type = fgetc(fd);
-	if (type==0) {  // last node
+	if (type == 0) {  // last node
 		return 1;
 	}
 	switch (type) {
 	case TYPE_DIRECTORY:
 	case TYPE_FIFO:
 	case TYPE_SOCKET:
-		if (fread(unodebuff,1,4+1+2+4+4+4+4+4+4,fd)!=4+1+2+4+4+4+4+4+4) {
+		if (fread(unodebuff,1,kFSNodeSizeWithoutType,fd)!=kFSNodeSizeWithoutType) {
 			fprintf(stderr,"loading node: read error\n");
 			return -1;
 		}
@@ -148,7 +158,7 @@ int fs_loadnode(FILE *fd) {
 	case TYPE_BLOCKDEV:
 	case TYPE_CHARDEV:
 	case TYPE_SYMLINK:
-		if (fread(unodebuff,1,4+1+2+4+4+4+4+4+4+4,fd)!=4+1+2+4+4+4+4+4+4+4) {
+		if (fread(unodebuff,1,kFSNodeSizeWithoutType+4,fd)!=kFSNodeSizeWithoutType+4) {
 			fprintf(stderr,"loading node: read error\n");
 			return -1;
 		}
@@ -156,7 +166,7 @@ int fs_loadnode(FILE *fd) {
 	case TYPE_FILE:
 	case TYPE_TRASH:
 	case TYPE_RESERVED:
-		if (fread(unodebuff,1,4+1+2+4+4+4+4+4+4+8+4+2,fd)!=4+1+2+4+4+4+4+4+4+8+4+2) {
+		if (fread(unodebuff,1,kFSNodeSizeWithoutType+8+4+2,fd)!=kFSNodeSizeWithoutType+8+4+2) {
 			fprintf(stderr,"loading node: read error\n");
 			return -1;
 		}
@@ -165,7 +175,9 @@ int fs_loadnode(FILE *fd) {
 		fprintf(stderr,"loading node: unrecognized node type: %c\n",type);
 		return -1;
 	}
-	c='?';
+
+	c = '?';
+
 	switch (type) {
 	case TYPE_DIRECTORY:
 		c='D';
@@ -196,25 +208,28 @@ int fs_loadnode(FILE *fd) {
 		break;
 	}
 	ptr = unodebuff;
-	nodeid = get32bit(&ptr);
+	getINode(&ptr, nodeid);
 	goal = get8bit(&ptr);
 	mode = get16bit(&ptr);
-	uid = get32bit(&ptr);
-	gid = get32bit(&ptr);
-	atimestamp = get32bit(&ptr);
-	mtimestamp = get32bit(&ptr);
-	ctimestamp = get32bit(&ptr);
-	trashtime = get32bit(&ptr);
+	get32bit(&ptr, uid);
+	get32bit(&ptr, gid);
+	get32bit(&ptr, atimestamp);
+	get32bit(&ptr, mtimestamp);
+	get32bit(&ptr, ctimestamp);
+	get32bit(&ptr, trashtime);
 
-	printf("%c|i:%10" PRIu32 "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32 "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,c,nodeid,goal,(uint16_t)(mode>>12),(uint16_t)(mode&0xFFF),uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime);
+	printf("%c|i:%10" PRIiNode "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
+	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
+	       c, nodeid, goal, (uint16_t)(mode >> 12), (uint16_t)(mode & 0xFFF), uid, gid, atimestamp,
+	       mtimestamp, ctimestamp, trashtime);
 
 	if (type==TYPE_BLOCKDEV || type==TYPE_CHARDEV) {
 		uint32_t rdev;
-		rdev = get32bit(&ptr);
+		get32bit(&ptr, rdev);
 		printf("|d:%5" PRIu32 ",%5" PRIu32 "\n",rdev>>16,rdev&0xFFFF);
 	} else if (type==TYPE_SYMLINK) {
 		uint32_t pleng;
-		pleng = get32bit(&ptr);
+		get32bit(&ptr, pleng);
 		printf("|p:");
 		print_name(fd,pleng);
 		printf("\n");
@@ -224,7 +239,7 @@ int fs_loadnode(FILE *fd) {
 		uint16_t sessionids;
 
 		length = get64bit(&ptr);
-		ch = get32bit(&ptr);
+		get32bit(&ptr, ch);
 		sessionids = get16bit(&ptr);
 
 		printf("|l:%20" PRIu64 "|c:(",length);
@@ -265,7 +280,7 @@ int fs_loadnode(FILE *fd) {
 		}
 		printf(")|r:(");
 		while (sessionids>0) {
-			sessionid = get32bit(&ptr);
+			get32bit(&ptr, sessionid);
 			printf("%" PRIu32,sessionid);
 			if (sessionids>1) {
 				printf(",");
@@ -303,30 +318,39 @@ int fs_loadedges(FILE *fd) {
 }
 
 int fs_loadfree(FILE *fd, uint64_t section_size = 0) {
-	uint8_t rbuff[8];
+	inode_t totalFreeNodes;
+	inode_t nodeid;
+	uint32_t ftime;
+
+	constexpr uint32_t kFreeBufferSize = sizeof(nodeid) + sizeof(ftime);
+	uint8_t rbuff[kFreeBufferSize];
 	const uint8_t *ptr;
-	uint32_t t,nodeid,ftime;
-	if (fread(rbuff,1,4,fd)!=4) {
+
+	if (fread(rbuff, 1, sizeof(totalFreeNodes), fd) != sizeof(totalFreeNodes)) {
 		return -1;
 	}
 	ptr=rbuff;
-	t = get32bit(&ptr);
+	getINode(&ptr, totalFreeNodes);
 
-	if (section_size && t != (section_size - 4) / 8) {
-		t = (section_size - 4) / 8;
+	uint64_t sectionSizeWithoutHeader = section_size - sizeof(totalFreeNodes);
+
+	if (section_size && totalFreeNodes != sectionSizeWithoutHeader / kFreeBufferSize) {
+		totalFreeNodes = sectionSizeWithoutHeader / kFreeBufferSize;
 	}
 
-	printf("# free nodes: %" PRIu32 "\n",t);
-	while (t>0) {
-		if (fread(rbuff,1,8,fd)!=8) {
+	printf("# free nodes: %" PRIiNode "\n", totalFreeNodes);
+
+	while (totalFreeNodes > 0) {
+		if (fread(rbuff, 1, kFreeBufferSize, fd) != kFreeBufferSize) {
 			return -1;
 		}
 		ptr = rbuff;
-		nodeid = get32bit(&ptr);
-		ftime = get32bit(&ptr);
-		printf("I|i:%10" PRIu32 "|f:%10" PRIu32 "\n", nodeid, ftime);
-		t--;
+		getINode(&ptr, nodeid);
+		get32bit(&ptr, ftime);
+		printf("I|i:%10" PRIiNode "|f:%10" PRIu32 "\n", nodeid, ftime);
+		totalFreeNodes--;
 	}
+
 	return 0;
 }
 
@@ -372,19 +396,22 @@ int hexdump(FILE *fd,uint64_t sleng) {
 }
 
 int fs_load(FILE *fd) {
-	uint32_t maxnodeid,nextsessionid;
+	inode_t maxnodeid;
 	uint64_t version;
-	uint8_t hdr[16];
-	const uint8_t *ptr;
-	if (fread(hdr,1,16,fd)!=16) {
-		return -1;
-	}
-	ptr = hdr;
-	maxnodeid = get32bit(&ptr);
-	version = get64bit(&ptr);
-	nextsessionid = get32bit(&ptr);
+	uint32_t nextsessionid;
 
-	printf("# maxnodeid: %" PRIu32 " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
+	constexpr uint32_t kHeaderSize = sizeof(maxnodeid) + sizeof(version) + sizeof(nextsessionid);
+	uint8_t hdr[kHeaderSize];
+	const uint8_t *ptr;
+
+	if (fread(hdr, 1, kHeaderSize, fd) != kHeaderSize) { return -1; }
+
+	ptr = hdr;
+	getINode(&ptr, maxnodeid);
+	version = get64bit(&ptr);
+	get32bit(&ptr, nextsessionid);
+
+	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 
 	printf("# -------------------------------------------------------------------\n");
 	if (fs_loadnodes(fd)<0) {
@@ -406,54 +433,61 @@ int fs_load(FILE *fd) {
 }
 
 int fs_load_2x(FILE *fd, bool loadLockIds) {
-	uint32_t maxnodeid,nextsessionid;
+	inode_t maxnodeid;
+	uint64_t version;
+	uint32_t nextsessionid;
 	uint64_t sleng;
 	off_t offbegin;
-	uint64_t version;
-	uint8_t hdr[16];
+
+	constexpr uint32_t kHeaderSize = sizeof(maxnodeid) + sizeof(version) + sizeof(nextsessionid);
+	uint8_t hdr[kHeaderSize];
 	const uint8_t *ptr;
-	if (fread(hdr,1,16,fd)!=16) {
-		return -1;
-	}
+
+	if (fread(hdr, 1, kHeaderSize, fd) != kHeaderSize) { return -1; }
+
 	ptr = hdr;
-	maxnodeid = get32bit(&ptr);
+	getINode(&ptr, maxnodeid);
 	version = get64bit(&ptr);
-	nextsessionid = get32bit(&ptr);
+	get32bit(&ptr, nextsessionid);
 
-	printf("# maxnodeid: %" PRIu32 " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
+	printf("# maxnodeid: %" PRIiNode " ; version: %" PRIu64 " ; nextsessionid: %" PRIu32 "\n",maxnodeid,version,nextsessionid);
 
-	while (1) {
-		if (fread(hdr,1,16,fd)!=16) {
+	constexpr const char *kEOFMarker = "[SFS EOF MARKER]";
+	constexpr size_t kEOFMarkerSize = 16;  // Compile time equivalent of strlen(kEOFMarker)
+	constexpr uint32_t kSectionNameSize = 8;
+
+	while (true) {
+		if (fread(hdr, 1, kEOFMarkerSize, fd) != kEOFMarkerSize) {
 			printf("can't read section header\n");
 			return -1;
 		}
-		if (memcmp(hdr,"[SFS EOF MARKER]",16)==0) {
+		if (memcmp(hdr, kEOFMarker, kEOFMarkerSize) == 0) {
 			printf("# -------------------------------------------------------------------\n");
 			printf("# SaunaFS END OF FILE MARKER\n");
 			printf("# -------------------------------------------------------------------\n");
 			return 0;
 		}
-		ptr = hdr+8;
+		ptr = hdr + kSectionNameSize;
 		sleng = get64bit(&ptr);
 		offbegin = ftello(fd);
 		printf("# -------------------------------------------------------------------\n");
 		printf("# section header: %c%c%c%c%c%c%c%c (%02X%02X%02X%02X%02X%02X%02X%02X) ; length: %" PRIu64 "\n",dispchar(hdr[0]),dispchar(hdr[1]),dispchar(hdr[2]),dispchar(hdr[3]),dispchar(hdr[4]),dispchar(hdr[5]),dispchar(hdr[6]),dispchar(hdr[7]),hdr[0],hdr[1],hdr[2],hdr[3],hdr[4],hdr[5],hdr[6],hdr[7],sleng);
-		if (memcmp(hdr,"NODE 1.0",8)==0) {
+		if (memcmp(hdr, "NODE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadnodes(fd)<0) {
 				printf("error reading metadata (NODE 1.0)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"EDGE 1.0",8)==0) {
+		} else if (memcmp(hdr, "EDGE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadedges(fd)<0) {
 				printf("error reading metadata (EDGE 1.0)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"FREE 1.0",8)==0) {
+		} else if (memcmp(hdr, "FREE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadfree(fd, sleng)<0) {
 				printf("error reading metadata (FREE 1.0)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"CHNK 1.0",8)==0) {
+		} else if (memcmp(hdr, "CHNK 1.0", kSectionNameSize) == 0) {
 			if (chunk_load(fd, loadLockIds) < 0) {
 				printf("error reading metadata (CHNK 1.0)\n");
 				return -1;

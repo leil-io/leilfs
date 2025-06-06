@@ -21,6 +21,7 @@
 
 #include "common/platform.h"
 
+#include "common/type_defs.h"
 #include "master/fs_context.h"
 #include "master/hstring.h"
 
@@ -36,9 +37,10 @@ void fs_read_snapshot_config_file();
  * \param callback function that should be executed on finish of snapshot task.
  * \param job_id desired id for this snapshot request.
  */
-uint8_t fs_snapshot(const FsContext &context, uint32_t inode_src, uint32_t parent_dst,
-		const HString &name_dst, uint8_t can_overwrite, uint8_t ignore_missing_src, uint32_t initial_batch_size,
-		const std::function<void(int)> &callback, uint32_t job_id);
+uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_dst,
+                    const HString &name_dst, uint8_t can_overwrite, uint8_t ignore_missing_src,
+                    uint32_t initial_batch_size, const std::function<void(int)> &callback,
+                    uint32_t job_id);
 
 /*! \brief Clone one inode.
  *
@@ -49,6 +51,5 @@ uint8_t fs_snapshot(const FsContext &context, uint32_t inode_src, uint32_t paren
  * \param name_dst clone name.
  * \param can_overwrite if true then cloning process can overwrite existing nodes.
  */
-uint8_t fs_clone_node(const FsContext &context, uint32_t inode_src, uint32_t parent_dst,
-		uint32_t inode_dst, const HString &name_dst,
-		uint8_t can_overwrite);
+uint8_t fs_clone_node(const FsContext &context, inode_t inode_src, inode_t parent_dst, inode_t inode_dst,
+                      const HString &name_dst, uint8_t can_overwrite);

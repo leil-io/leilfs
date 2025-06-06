@@ -225,14 +225,15 @@ void matomlserv_store_logstring(uint64_t version,uint8_t *logstr,uint32_t logstr
 
 uint32_t matomlserv_mloglist_size(void) {
 	matomlserventry *eptr;
-	uint32_t i;
-	i=0;
+	uint32_t i = 0;
+
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
 		if (!eptr->shadow && eptr->mode!=KILL) {
 			i++;
 		}
 	}
-	return i*(4+4);
+
+	return i * (sizeof(matomlserventry::version) + sizeof(matomlserventry::servip));
 }
 
 void matomlserv_mloglist_data(uint8_t *ptr) {
@@ -400,7 +401,7 @@ void matomlserv_register(matomlserventry *eptr,const uint8_t *data,uint32_t leng
 			eptr->mode=KILL;
 			return;
 		}
-		eptr->version = get32bit(&data);
+		get32bit(&data, eptr->version);
 		eptr->timeout = get16bit(&data);
 		eptr->shadow = (rversion == 3 || rversion == 4);
 		if (eptr->shadow) {
@@ -564,7 +565,7 @@ void matomlserv_download_data(matomlserventry *eptr,const uint8_t *data,uint32_t
 		return;
 	}
 	offset = get64bit(&data);
-	leng = get32bit(&data);
+	get32bit(&data, leng);
 	ptr = matomlserv_createpacket(eptr,MATOML_DOWNLOAD_DATA,16+leng);
 	put64bit(&ptr,offset);
 	put32bit(&ptr,leng);
@@ -773,7 +774,7 @@ void matomlserv_read(matomlserventry *eptr) {
 
 		if (eptr->mode==HEADER) {
 			ptr = eptr->hdrbuff+4;
-			size = get32bit(&ptr);
+			get32bit(&ptr, size);
 
 			if (size>0) {
 				if (size>MaxPacketSize) {
@@ -793,8 +794,8 @@ void matomlserv_read(matomlserventry *eptr) {
 
 		if (eptr->mode==DATA) {
 			ptr = eptr->hdrbuff;
-			type = get32bit(&ptr);
-			size = get32bit(&ptr);
+			get32bit(&ptr, type);
+			get32bit(&ptr, size);
 
 			eptr->mode=HEADER;
 			eptr->inputpacket.bytesleft = 8;

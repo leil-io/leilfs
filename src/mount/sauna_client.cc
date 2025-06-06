@@ -196,7 +196,7 @@ static void registerGroupsInMaster(Context &ctx) {
 	}
 }
 
-Inode getSpecialInodeByName(const char *name) {
+inode_t getSpecialInodeByName(const char *name) {
 	assert(name);
 
 	while (name[0] == '/') {
@@ -224,7 +224,7 @@ Inode getSpecialInodeByName(const char *name) {
 	}
 }
 
-bool isSpecialInode(Inode ino) {
+bool isSpecialInode(inode_t ino) {
 	return IS_SPECIAL_INODE(ino);
 }
 
@@ -265,11 +265,11 @@ static std::atomic<uint32_t> gStatfsCacheTimeout(0);
 struct StatfsCacheKey {
 	uint32_t uid;
 	uint32_t gid;
-	uint32_t inode;
+	inode_t inode;
 
 	bool operator<(const StatfsCacheKey &other) const noexcept {
-		if (uid != other.uid) return uid < other.uid;
-		if (gid != other.gid) return gid < other.gid;
+		if (uid != other.uid) { return uid < other.uid; }
+		if (gid != other.gid) { return gid < other.gid; }
 		return inode < other.inode;
 	}
 	bool operator==(const StatfsCacheKey &other) const noexcept {
@@ -350,7 +350,7 @@ void drop_readdir_session(uint64_t opendirSessionID) {
 }
 
 static void updateNextReaddirEntryIndexIfMasterRestarted(ReaddirSession& readdirSession, uint64_t &nextEntryIndex,
-		Context &ctx, Inode parentInode, uint64_t requestSize) {
+		Context &ctx, inode_t parentInode, uint64_t requestSize) {
 	if (!readdirSession.restarted) {
 		return;
 	}
@@ -392,7 +392,7 @@ void masterDisconnectedCallback() {
 	}
 }
 
-inline void eraseAclCache(Inode inode) {
+inline void eraseAclCache(inode_t inode) {
 	acl_cache->erase(
 			inode    , 0, 0,
 			inode + 1, 0, 0);
@@ -495,7 +495,7 @@ void stats_inc(uint8_t id) {
 	}
 }
 
-void type_to_stat(uint32_t inode,uint8_t type, struct stat *stbuf) {
+void type_to_stat(inode_t inode,uint8_t type, struct stat *stbuf) {
 	memset(stbuf,0,sizeof(struct stat));
 	stbuf->st_ino = inode;
 	switch (type) {
@@ -529,7 +529,7 @@ uint8_t attr_get_mattr(const Attributes &attr) {
 	return (attr[1]>>4);    // higher 4 bits of mode
 }
 
-void attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf) {
+void attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
 	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink,attrrdev;
@@ -538,12 +538,12 @@ void attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf) {
 	ptr = attr.data();
 	attrtype = get8bit(&ptr);
 	attrmode = get16bit(&ptr);
-	attruid = get32bit(&ptr);
-	attrgid = get32bit(&ptr);
-	attratime = get32bit(&ptr);
-	attrmtime = get32bit(&ptr);
-	attrctime = get32bit(&ptr);
-	attrnlink = get32bit(&ptr);
+	get32bit(&ptr, attruid);
+	get32bit(&ptr, attrgid);
+	get32bit(&ptr, attratime);
+	get32bit(&ptr, attrmtime);
+	get32bit(&ptr, attrctime);
+	get32bit(&ptr, attrnlink);
 	memset(stbuf, 0, sizeof(*stbuf));
 	stbuf->st_ino = inode;
 #ifdef SAUNAFS_HAVE_STRUCT_STAT_ST_BLKSIZE
@@ -590,7 +590,7 @@ void attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf) {
 		break;
 	case TYPE_BLOCKDEV:
 		stbuf->st_mode = S_IFBLK | (attrmode & 07777);
-		attrrdev = get32bit(&ptr);
+		get32bit(&ptr, attrrdev);
 #ifdef SAUNAFS_HAVE_STRUCT_STAT_ST_RDEV
 		stbuf->st_rdev = attrrdev;
 #endif
@@ -601,7 +601,7 @@ void attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf) {
 		break;
 	case TYPE_CHARDEV:
 		stbuf->st_mode = S_IFCHR | (attrmode & 07777);
-		attrrdev = get32bit(&ptr);
+		get32bit(&ptr, attrrdev);
 #ifdef SAUNAFS_HAVE_STRUCT_STAT_ST_RDEV
 		stbuf->st_rdev = attrrdev;
 #endif
@@ -718,9 +718,9 @@ RequestException::RequestException(int error_code) : system_error_code(), saunaf
 	}
 }
 
-struct statvfs statfs(Context &ctx, Inode ino) {
+struct statvfs statfs(Context &ctx, inode_t ino) {
 	uint64_t totalspace,availspace,trashspace,reservedspace;
-	uint32_t inodes;
+	inode_t inodes;
 	uint32_t bsize;
 	struct statvfs stfsbuf;
 	memset(&stfsbuf,0,sizeof(stfsbuf));
@@ -741,7 +741,7 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 
 	stats_inc(OP_STATFS);
 	if (debug_mode) {
-		oplog_printf(ctx, "statfs (%lu)", (unsigned long int)ino);
+		oplog_printf(ctx, "statfs (%" PRIiNode ")", ino);
 	}
 	(void)ino;
 	fs_statfs(&totalspace,&availspace,&trashspace,&reservedspace,&inodes);
@@ -849,8 +849,8 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 		gStatfsCache[statfsKey] = stfsbuf;
 		gStatfsCacheTimer[statfsKey] = Timer();
 	}
-	oplog_printf(ctx, "statfs (%lu): OK (%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ")",
-			(unsigned long int)ino,
+	oplog_printf(ctx, "statfs (%" PRIiNode "): OK (%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIiNode ")",
+			ino,
 			totalspace,
 			availspace,
 			trashspace,
@@ -859,14 +859,12 @@ struct statvfs statfs(Context &ctx, Inode ino) {
 	return stfsbuf;
 }
 
-void access(Context &ctx, Inode ino, int mask) {
+void access(Context &ctx, inode_t ino, int mask) {
 	int status;
 
 	int mmode;
 
-	oplog_printf(ctx, "access (%lu,0x%X)",
-			(unsigned long int)ino,
-			mask);
+	oplog_printf(ctx, "access (%" PRIiNode ",0x%X)", ino, mask);
 	stats_inc(OP_ACCESS);
 #if (R_OK==MODE_MASK_R) && (W_OK==MODE_MASK_W) && (X_OK==MODE_MASK_X)
 	mmode = mask & (MODE_MASK_R | MODE_MASK_W | MODE_MASK_X);
@@ -895,10 +893,10 @@ void access(Context &ctx, Inode ino, int mask) {
 	}
 }
 
-EntryParam lookup(Context &ctx, Inode parent, const char *name) {
+EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	EntryParam e;
 	uint64_t maxfleng;
-	uint32_t inode;
+	inode_t inode;
 	uint32_t nleng;
 	Attributes attr;
 	char attrstr[256];
@@ -910,20 +908,16 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 #ifdef _WIN32
 		if (parent != SPECIAL_INODE_ROOT ||
 		    strcmp(name, SPECIAL_FILE_NAME_OPLOG) != 0) {
-			oplog_printf(ctx, "lookup (%lu,%s) ...", (unsigned long int)parent,
-			             name);
+			oplog_printf(ctx, "lookup (%" PRIiNode ",%s) ...", parent, name);
 		}
 #else
-		oplog_printf(ctx, "lookup (%lu,%s) ...", (unsigned long int)parent, name);
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s) ...", parent, name);
 #endif
 	}
 	nleng = strlen(name);
 	if (nleng > SFS_NAME_MAX) {
 		stats_inc(OP_LOOKUP);
-		oplog_printf(ctx, "lookup (%lu,%s): %s",
-				(unsigned long int)parent,
-				name,
-				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name, saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
 	}
 	if (parent == SPECIAL_INODE_ROOT) {
@@ -931,7 +925,7 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 			nleng = 1;
 		}
 
-		Inode ino = getSpecialInodeByName(name);
+		inode_t ino = getSpecialInodeByName(name);
 		if (IS_SPECIAL_INODE(ino)) {
 			return special_lookup(ino, ctx, parent, name, attrstr);
 		}
@@ -985,7 +979,6 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 		stats_inc(OP_DIRCACHE_LOOKUP);
 		status = 0;
 		icacheflag = 1;
-//              oplog_printf(ctx, "lookup (%lu,%s) (using open dir cache): OK (%lu)",(unsigned long int)parent,name,(unsigned long int)inode);
 	} else {
 		stats_inc(OP_LOOKUP);
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -993,10 +986,7 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 		icacheflag = 0;
 	}
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "lookup (%lu,%s): %s",
-				(unsigned long int)parent,
-				name,
-				saunafs_error_string(status));
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name, saunafs_error_string(status));
 		throw RequestException(status);
 	}
 	if (attr[0]==TYPE_FILE) {
@@ -1032,18 +1022,18 @@ EntryParam lookup(Context &ctx, Inode parent, const char *name) {
 	}
 
 	makeattrstr(attrstr,256,&e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s)%s: OK (%.1f,%lu,%.1f,%s)",
-			(unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s)%s: OK (%.1f,%" PRIiNode ",%.1f,%s)",
+			parent,
 			name,
 			icacheflag?" (using open dir cache)":"",
 			e.entry_timeout,
-			(unsigned long int)e.ino,
+			e.ino,
 			e.attr_timeout,
 			attrstr);
 	return e;
 }
 
-AttrReply getattr(Context &ctx, Inode ino) {
+AttrReply getattr(Context &ctx, inode_t ino) {
 	uint64_t maxfleng;
 	double attr_timeout;
 	struct stat o_stbuf;
@@ -1053,7 +1043,7 @@ AttrReply getattr(Context &ctx, Inode ino) {
 	bool fromCache;
 
 	if (debug_mode) {
-		oplog_printf(ctx, "getattr (%lu) ...", (unsigned long int)ino);
+		oplog_printf(ctx, "getattr (%" PRIiNode ") ...", ino);
 	}
 
 	if (IS_SPECIAL_INODE(ino)) {
@@ -1080,8 +1070,8 @@ AttrReply getattr(Context &ctx, Inode ino) {
 		fromCache = false;
 	}
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "getattr (%lu): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getattr (%" PRIiNode "): %s",
+				ino,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
@@ -1115,15 +1105,15 @@ AttrReply getattr(Context &ctx, Inode ino) {
 	}
 
 	makeattrstr(attrstr,256,&o_stbuf);
-	oplog_printf(ctx, "getattr (%lu)%s: OK (%.1f,%s)",
-			(unsigned long int)ino,
+	oplog_printf(ctx, "getattr (%" PRIiNode ")%s: OK (%.1f,%s)",
+			ino,
 			fromCache ? " (using open dir cache)" : "",
 			attr_timeout,
 			attrstr);
 	return AttrReply{o_stbuf, attr_timeout};
 }
 
-AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
+AttrReply setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set) {
 	struct stat o_stbuf;
 	uint64_t maxfleng;
 	Attributes attr;
@@ -1135,8 +1125,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 	makemodestr(modestr,stbuf->st_mode);
 	stats_inc(OP_SETATTR);
 	if (debug_mode) {
-		oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]) ...",
-			(unsigned long int)ino,
+		oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]) ...",
+			ino,
 			to_set,
 			modestr+1,
 			(unsigned int)(stbuf->st_mode & 07777),
@@ -1164,8 +1154,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_setattr(ino,ctx.uid,ctx.gid,0,0,0,0,0,0,0,attr));    // ext3 compatibility - change ctime during this operation (usually chown(-1,-1))
 		if (status != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
+					ino,
 					to_set,
 					modestr+1,
 					(unsigned int)(stbuf->st_mode & 07777),
@@ -1217,8 +1207,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 			eraseAclCache(ino);
 		}
 		if (status != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
+					ino,
 					to_set,
 					modestr+1,
 					(unsigned int)(stbuf->st_mode & 07777),
@@ -1233,8 +1223,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 	}
 	if (to_set & SAUNAFS_SET_ATTR_SIZE) {
 		if (stbuf->st_size<0) {
-			oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
+					ino,
 					to_set,
 					modestr+1,
 					(unsigned int)(stbuf->st_mode & 07777),
@@ -1247,8 +1237,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 			throw RequestException(SAUNAFS_ERROR_EINVAL);
 		}
 		if (stbuf->st_size>=MAX_FILE_SIZE) {
-			oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
+					ino,
 					to_set,
 					modestr+1,
 					(unsigned int)(stbuf->st_mode & 07777),
@@ -1269,8 +1259,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 		}
 		read_inode_ops(ino);
 		if (status != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
+					ino,
 					to_set,
 					modestr+1,
 					(unsigned int)(stbuf->st_mode & 07777),
@@ -1284,8 +1274,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 		}
 	}
 	if (status != SAUNAFS_STATUS_OK) {        // should never happen but better check than sorry
-		oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): %s",
+				ino,
 				to_set,
 				modestr+1,
 				(unsigned int)(stbuf->st_mode & 07777),
@@ -1305,8 +1295,8 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 	}
 	attr_timeout = (attr_get_mattr(attr)&MATTR_NOACACHE)?0.0:attr_cache_timeout;
 	makeattrstr(attrstr,256,&o_stbuf);
-	oplog_printf(ctx, "setattr (%lu,0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): OK (%.1f,%s)",
-			(unsigned long int)ino,
+	oplog_printf(ctx, "setattr (%" PRIiNode ",0x%X,[%s:0%04o,%ld,%ld,%lu,%lu,%" PRIu64 "]): OK (%.1f,%s)",
+			ino,
 			to_set,
 			modestr+1,
 			(unsigned int)(stbuf->st_mode & 07777),
@@ -1320,9 +1310,9 @@ AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set) {
 	return AttrReply{o_stbuf, attr_timeout};
 }
 
-EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_t rdev) {
+EntryParam mknod(Context &ctx, inode_t parent, const char *name, mode_t mode, dev_t rdev) {
 	EntryParam e;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 	char modestr[11];
 	char attrstr[256];
@@ -1334,8 +1324,8 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 	makemodestr(modestr,mode);
 	stats_inc(OP_MKNOD);
 	if (debug_mode) {
-		oplog_printf(ctx, "mknod (%lu,%s,%s:0%04o,0x%08lX) ...",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mknod (%" PRIiNode ",%s,%s:0%04o,0x%08lX) ...",
+				parent,
 				name,
 				modestr,
 				(unsigned int)mode,
@@ -1343,8 +1333,8 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "mknod (%lu,%s,%s:0%04o,0x%08lX): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mknod (%" PRIiNode ",%s,%s:0%04o,0x%08lX): %s",
+				parent,
 				name,
 				modestr,
 				(unsigned int)mode,
@@ -1363,8 +1353,8 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 	} else if (S_ISREG(mode) || (mode&0170000)==0) {
 		type = TYPE_FILE;
 	} else {
-		oplog_printf(ctx, "mknod (%lu,%s,%s:0%04o,0x%08lX): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mknod (%" PRIiNode ",%s,%s:0%04o,0x%08lX): %s",
+				parent,
 				name,
 				modestr,
 				(unsigned int)mode,
@@ -1375,8 +1365,8 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "mknod (%lu,%s,%s:0%04o,0x%08lX): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "mknod (%" PRIiNode ",%s,%s:0%04o,0x%08lX): %s",
+					parent,
 					name,
 					modestr,
 					(unsigned int)mode,
@@ -1388,8 +1378,8 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_mknod(parent,nleng,(const uint8_t*)name,type,mode&07777,ctx.umask,ctx.uid,ctx.gid,rdev,inode,attr));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "mknod (%lu,%s,%s:0%04o,0x%08lX): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mknod (%" PRIiNode ",%s,%s:0%04o,0x%08lX): %s",
+				parent,
 				name,
 				modestr,
 				(unsigned int)mode,
@@ -1404,32 +1394,32 @@ EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_
 		e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:entry_cache_timeout;
 		attr_to_stat(inode,attr,&e.attr);
 		makeattrstr(attrstr,256,&e.attr);
-		oplog_printf(ctx, "mknod (%lu,%s,%s:0%04o,0x%08lX): OK (%.1f,%lu,%.1f,%s)",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mknod (%" PRIiNode ",%s,%s:0%04o,0x%08lX): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+				parent,
 				name,
 				modestr,
 				(unsigned int)mode,
 				(unsigned long int)rdev,
 				e.entry_timeout,
-				(unsigned long int)e.ino,
+				e.ino,
 				e.attr_timeout,
 				attrstr);
 		return e;
 	}
 }
 
-void unlink(Context &ctx, Inode parent, const char *name) {
+void unlink(Context &ctx, inode_t parent, const char *name) {
 	uint32_t nleng;
 	int status;
 
 	stats_inc(OP_UNLINK);
 	if (debug_mode) {
-		oplog_printf(ctx, "unlink (%lu,%s) ...", (unsigned long int)parent, name);
+		oplog_printf(ctx, "unlink (%" PRIiNode ",%s) ...", parent, name);
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "unlink (%lu,%s): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "unlink (%" PRIiNode ",%s): %s",
+					parent,
 					name,
 					saunafs_error_string(SAUNAFS_ERROR_EACCES));
 			throw RequestException(SAUNAFS_ERROR_EACCES);
@@ -1438,8 +1428,8 @@ void unlink(Context &ctx, Inode parent, const char *name) {
 
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "unlink (%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "unlink (%" PRIiNode ",%s): %s",
+				parent,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
@@ -1449,23 +1439,23 @@ void unlink(Context &ctx, Inode parent, const char *name) {
 		fs_unlink(parent,nleng,(const uint8_t*)name,ctx.uid,ctx.gid));
 	gDirEntryCache.lockAndInvalidateParent(parent);
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "unlink (%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "unlink (%" PRIiNode ",%s): %s",
+				parent,
 				name,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
-		oplog_printf(ctx, "unlink (%lu,%s): OK",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "unlink (%" PRIiNode ",%s): OK",
+				parent,
 				name);
 		return;
 	}
 }
 
-void undel(Context &ctx, Inode ino) {
+void undel(Context &ctx, inode_t ino) {
 	stats_inc(OP_UNDEL);
 	if (debug_mode) {
-		oplog_printf(ctx, "undel (%lu) ...", (unsigned long)ino);
+		oplog_printf(ctx, "undel (%" PRIiNode ") ...", ino);
 	}
 	uint8_t status;
 	// FIXME(haze): modify undel to return parent inode and call gDirEntryCache.lockAndInvalidateParent(parent)
@@ -1475,9 +1465,9 @@ void undel(Context &ctx, Inode ino) {
 	}
 }
 
-EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
+EntryParam mkdir(Context &ctx, inode_t parent, const char *name, mode_t mode) {
 	struct EntryParam e;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 	char modestr[11];
 	char attrstr[256];
@@ -1488,16 +1478,16 @@ EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
 	makemodestr(modestr,mode);
 	stats_inc(OP_MKDIR);
 	if (debug_mode) {
-		oplog_printf(ctx, "mkdir (%lu,%s,d%s:0%04o) ...",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mkdir (%" PRIiNode ",%s,d%s:0%04o) ...",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode);
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "mkdir (%lu,%s,d%s:0%04o): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "mkdir (%" PRIiNode ",%s,d%s:0%04o): %s",
+					parent,
 					name,
 					modestr+1,
 					(unsigned int)mode,
@@ -1507,8 +1497,8 @@ EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "mkdir (%lu,%s,d%s:0%04o): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mkdir (%" PRIiNode ",%s,d%s:0%04o): %s",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
@@ -1519,8 +1509,8 @@ EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_mkdir(parent,nleng,(const uint8_t*)name,mode,ctx.umask,ctx.uid,ctx.gid,mkdir_copy_sgid,inode,attr));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "mkdir (%lu,%s,d%s:0%04o): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mkdir (%" PRIiNode ",%s,d%s:0%04o): %s",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
@@ -1534,31 +1524,31 @@ EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode) {
 		e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:direntry_cache_timeout;
 		attr_to_stat(inode,attr,&e.attr);
 		makeattrstr(attrstr,256,&e.attr);
-		oplog_printf(ctx, "mkdir (%lu,%s,d%s:0%04o): OK (%.1f,%lu,%.1f,%s)",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "mkdir (%" PRIiNode ",%s,d%s:0%04o): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
 				e.entry_timeout,
-				(unsigned long int)e.ino,
+				e.ino,
 				e.attr_timeout,
 				attrstr);
 		return e;
 	}
 }
 
-void rmdir(Context &ctx, Inode parent, const char *name) {
+void rmdir(Context &ctx, inode_t parent, const char *name) {
 	uint32_t nleng;
 	int status;
 
 	stats_inc(OP_RMDIR);
 	if (debug_mode) {
-		oplog_printf(ctx, "rmdir (%lu,%s) ...", (unsigned long int)parent, name);
+		oplog_printf(ctx, "rmdir (%" PRIiNode ",%s) ...", parent, name);
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "rmdir (%lu,%s): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "rmdir (%" PRIiNode ",%s): %s",
+					parent,
 					name,
 					saunafs_error_string(SAUNAFS_ERROR_EACCES));
 			throw RequestException(SAUNAFS_ERROR_EACCES);
@@ -1566,8 +1556,8 @@ void rmdir(Context &ctx, Inode parent, const char *name) {
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "rmdir (%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rmdir (%" PRIiNode ",%s): %s",
+				parent,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
@@ -1577,23 +1567,23 @@ void rmdir(Context &ctx, Inode parent, const char *name) {
 		fs_rmdir(parent,nleng,(const uint8_t*)name,ctx.uid,ctx.gid));
 	gDirEntryCache.lockAndInvalidateParent(parent);
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "rmdir (%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rmdir (%" PRIiNode ",%s): %s",
+				parent,
 				name,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
-		oplog_printf(ctx, "rmdir (%lu,%s): OK",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rmdir (%" PRIiNode ",%s): OK",
+				parent,
 				name);
 		return;
 	}
 }
 
-EntryParam symlink(Context &ctx, const char *path, Inode parent,
+EntryParam symlink(Context &ctx, const char *path, inode_t parent,
 			 const char *name) {
 	struct EntryParam e;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 	char attrstr[256];
 	uint8_t mattr;
@@ -1602,16 +1592,16 @@ EntryParam symlink(Context &ctx, const char *path, Inode parent,
 
 	stats_inc(OP_SYMLINK);
 	if (debug_mode) {
-		oplog_printf(ctx, "symlink (%s,%lu,%s) ...",
+		oplog_printf(ctx, "symlink (%s,%" PRIiNode ",%s) ...",
 				path,
-				(unsigned long int)parent,
+				parent,
 				name);
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "symlink (%s,%lu,%s): %s",
+			oplog_printf(ctx, "symlink (%s,%" PRIiNode ",%s): %s",
 					path,
-					(unsigned long int)parent,
+					parent,
 					name,
 					saunafs_error_string(SAUNAFS_ERROR_EACCES));
 			throw RequestException(SAUNAFS_ERROR_EACCES);
@@ -1619,9 +1609,9 @@ EntryParam symlink(Context &ctx, const char *path, Inode parent,
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "symlink (%s,%lu,%s): %s",
+		oplog_printf(ctx, "symlink (%s,%" PRIiNode ",%s): %s",
 				path,
-				(unsigned long int)parent,
+				parent,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
@@ -1630,9 +1620,9 @@ EntryParam symlink(Context &ctx, const char *path, Inode parent,
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_symlink(parent,nleng,(const uint8_t*)name,(const uint8_t*)path,ctx.uid,ctx.gid,&inode,attr));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "symlink (%s,%lu,%s): %s",
+		oplog_printf(ctx, "symlink (%s,%" PRIiNode ",%s): %s",
 				path,
-				(unsigned long int)parent,
+				parent,
 				name,
 				saunafs_error_string(status));
 		throw RequestException(status);
@@ -1645,70 +1635,70 @@ EntryParam symlink(Context &ctx, const char *path, Inode parent,
 		attr_to_stat(inode,attr,&e.attr);
 		makeattrstr(attrstr,256,&e.attr);
 		symlink_cache_insert(inode, (const uint8_t *)path);
-		oplog_printf(ctx, "symlink (%s,%lu,%s): OK (%.1f,%lu,%.1f,%s)",
+		oplog_printf(ctx, "symlink (%s,%" PRIiNode ",%s): OK (%.1f,%" PRIiNode ",%.1f,%s)",
 				path,
-				(unsigned long int)parent,
+				parent,
 				name,
 				e.entry_timeout,
-				(unsigned long int)e.ino,
+				e.ino,
 				e.attr_timeout,
 				attrstr);
 		return e;
 	}
 }
 
-std::string readlink(Context &ctx, Inode ino) {
+std::string readlink(Context &ctx, inode_t ino) {
 	int status;
 	const uint8_t *path;
 
 	if (debug_mode) {
-		oplog_printf(ctx, "readlink (%lu) ...",
-				(unsigned long int)ino);
+		oplog_printf(ctx, "readlink (%" PRIiNode ") ...",
+				ino);
 	}
 	if (symlink_cache_search(ino,&path)) {
 		stats_inc(OP_READLINK_CACHED);
-		oplog_printf(ctx, "readlink (%lu) (using cache): OK (%s)",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "readlink (%" PRIiNode ") (using cache): OK (%s)",
+				ino,
 				(char*)path);
 		return std::string((char*)path);
 	}
 	stats_inc(OP_READLINK);
 	status = fs_readlink(ino,&path);
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "readlink (%lu): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "readlink (%" PRIiNode "): %s",
+				ino,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
 		symlink_cache_insert(ino,path);
-		oplog_printf(ctx, "readlink (%lu): OK (%s)",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "readlink (%" PRIiNode "): OK (%s)",
+				ino,
 				(char*)path);
 		return std::string((char*)path);
 	}
 }
 
-void rename(Context &ctx, Inode parent, const char *name,
-			Inode newparent, const char *newname) {
+void rename(Context &ctx, inode_t parent, const char *name,
+			inode_t newparent, const char *newname) {
 	uint32_t nleng,newnleng;
 	int status;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 
 	stats_inc(OP_RENAME);
 	if (debug_mode) {
-		oplog_printf(ctx, "rename (%lu,%s,%lu,%s) ...",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s) ...",
+				parent,
 				name,
-				(unsigned long int)newparent,
+				newparent,
 				newname);
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "rename (%lu,%s,%lu,%s): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): %s",
+					parent,
 					name,
-					(unsigned long int)newparent,
+					newparent,
 					newname,
 					saunafs_error_string(SAUNAFS_ERROR_EACCES));
 			throw RequestException(SAUNAFS_ERROR_EACCES);
@@ -1716,10 +1706,10 @@ void rename(Context &ctx, Inode parent, const char *name,
 	}
 	if (newparent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(newname)) {
-			oplog_printf(ctx, "rename (%lu,%s,%lu,%s): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): %s",
+					parent,
 					name,
-					(unsigned long int)newparent,
+					newparent,
 					newname,
 					saunafs_error_string(SAUNAFS_ERROR_EACCES));
 			throw RequestException(SAUNAFS_ERROR_EACCES);
@@ -1727,20 +1717,20 @@ void rename(Context &ctx, Inode parent, const char *name,
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "rename (%lu,%s,%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): %s",
+				parent,
 				name,
-				(unsigned long int)newparent,
+				newparent,
 				newname,
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
 	}
 	newnleng = strlen(newname);
 	if (newnleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "rename (%lu,%s,%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): %s",
+				parent,
 				name,
-				(unsigned long int)newparent,
+				newparent,
 				newname,
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
@@ -1751,28 +1741,28 @@ void rename(Context &ctx, Inode parent, const char *name,
 	gDirEntryCache.lockAndInvalidateParent(parent);
 	gDirEntryCache.lockAndInvalidateParent(newparent);
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "rename (%lu,%s,%lu,%s): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): %s",
+				parent,
 				name,
-				(unsigned long int)newparent,
+				newparent,
 				newname,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
-		oplog_printf(ctx, "rename (%lu,%s,%lu,%s): OK",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): OK",
+				parent,
 				name,
-				(unsigned long int)newparent,
+				newparent,
 				newname);
 		return;
 	}
 }
 
-EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
+EntryParam link(Context &ctx, inode_t ino, inode_t newparent, const char *newname) {
 	uint32_t newnleng;
 	int status;
 	EntryParam e;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 	char attrstr[256];
 	uint8_t mattr;
@@ -1780,24 +1770,24 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 
 	stats_inc(OP_LINK);
 	if (debug_mode) {
-		oplog_printf(ctx, "link (%lu,%lu,%s) ...",
-				(unsigned long int)ino,
-				(unsigned long int)newparent,
+		oplog_printf(ctx, "link (%" PRIiNode ",%" PRIiNode ",%s) ...",
+				ino,
+				newparent,
 				newname);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "link (%lu,%lu,%s): %s",
-				(unsigned long int)ino,
-				(unsigned long int)newparent,
+		oplog_printf(ctx, "link (%" PRIiNode ",%" PRIiNode ",%s): %s",
+				ino,
+				newparent,
 				newname,
 				saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	if (newparent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(newname)) {
-			oplog_printf(ctx, "link (%lu,%lu,%s): %s",
-					(unsigned long int)ino,
-					(unsigned long int)newparent,
+			oplog_printf(ctx, "link (%" PRIiNode ",%" PRIiNode ",%s): %s",
+					ino,
+					newparent,
 					newname,
 					saunafs_error_string(SAUNAFS_ERROR_EACCES));
 			throw RequestException(SAUNAFS_ERROR_EACCES);
@@ -1805,9 +1795,9 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 	}
 	newnleng = strlen(newname);
 	if (newnleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "link (%lu,%lu,%s): %s",
-				(unsigned long int)ino,
-				(unsigned long int)newparent,
+		oplog_printf(ctx, "link (%" PRIiNode ",%" PRIiNode ",%s): %s",
+				ino,
+				newparent,
 				newname,
 				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
@@ -1816,9 +1806,9 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_link(ino,newparent,newnleng,(const uint8_t*)newname,ctx.uid,ctx.gid,&inode,attr));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "link (%lu,%lu,%s): %s",
-				(unsigned long int)ino,
-				(unsigned long int)newparent,
+		oplog_printf(ctx, "link (%" PRIiNode ",%" PRIiNode ",%s): %s",
+				ino,
+				newparent,
 				newname,
 				saunafs_error_string(status));
 		throw RequestException(status);
@@ -1831,28 +1821,28 @@ EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname) {
 		e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:entry_cache_timeout;
 		attr_to_stat(inode,attr,&e.attr);
 		makeattrstr(attrstr,256,&e.attr);
-		oplog_printf(ctx, "link (%lu,%lu,%s): OK (%.1f,%lu,%.1f,%s)",
-				(unsigned long int)ino,
-				(unsigned long int)newparent,
+		oplog_printf(ctx, "link (%" PRIiNode ",%" PRIiNode ",%s): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+				ino,
+				newparent,
 				newname,
 				e.entry_timeout,
-				(unsigned long int)e.ino,
+				e.ino,
 				e.attr_timeout,
 				attrstr);
 		return e;
 	}
 }
 
-void opendir(Context &ctx, Inode ino) {
+void opendir(Context &ctx, inode_t ino) {
 	int status;
 
 	stats_inc(OP_OPENDIR);
 	if (debug_mode) {
-		oplog_printf(ctx, "opendir (%lu) ...", (unsigned long int)ino);
+		oplog_printf(ctx, "opendir (%" PRIiNode ") ...", ino);
 	}
 	if (ino != SPECIAL_INODE_PATH_BY_INODE &&
 	    ino != SPECIAL_INODE_FILE_BY_INODE && IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "opendir (%lu): %s", (unsigned long int)ino,
+		oplog_printf(ctx, "opendir (%" PRIiNode "): %s", ino,
 		             saunafs_error_string(SAUNAFS_ERROR_ENOTDIR));
 		throw RequestException(SAUNAFS_ERROR_ENOTDIR);
 	}
@@ -1860,8 +1850,8 @@ void opendir(Context &ctx, Inode ino) {
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_access(ino,ctx.uid,ctx.gid,MODE_MASK_R));    // at least test rights
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "opendir (%lu): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "opendir (%" PRIiNode "): %s",
+				ino,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
@@ -1874,7 +1864,7 @@ void opendir(Context &ctx, Inode ino) {
  * \param max_entries max number of dir entries to list
  * \return std::vector of directory entries
  */
-std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, size_t max_entries) {
+std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off, size_t max_entries) {
 	static constexpr int kBatchSize = 1000;
 	const uint64_t start_off = static_cast<std::make_unsigned<off_t>::type>(off);
 	// type to cast to should be the same size to avoid potential sign-extension
@@ -1883,8 +1873,8 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 
 	stats_inc(OP_READDIR);
 	if (debug_mode) {
-		oplog_printf(ctx, "readdir (%lu,%" PRIu64 ",%" PRIu64 ") ...",
-				static_cast<unsigned long int>(ino),
+		oplog_printf(ctx, "readdir (%" PRIiNode ",%" PRIu64 ",%" PRIu64 ") ...",
+				ino,
 				static_cast<uint64_t>(max_entries),
 				start_off);
 	}
@@ -1926,9 +1916,9 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 
 	if (max_entries == 0) {
 		if (debug_mode) {
-			oplog_printf(ctx, "readdir (%lu,%" PRIu64 ",%" PRIu64 ") returned %zu dirents all from direntrycache; index of next dirent is %" PRIu64
+			oplog_printf(ctx, "readdir (%" PRIiNode ",%" PRIu64 ",%" PRIu64 ") returned %zu dirents all from direntrycache; index of next dirent is %" PRIu64
 				" (%#" PRIx64 ")",
-					static_cast<unsigned long int>(ino),
+					ino,
 					static_cast<uint64_t>(initial_max_entries),
 					start_off,
 					entries_from_cache,
@@ -1999,8 +1989,8 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 		result.emplace_back(it->name, stats, it->next_index);
 
 		if (debug_mode) {
-			oplog_printf(ctx, "readdir (%lu ,%" PRIu64 ",%#" PRIx64 ") from master: entry index: %#" PRIx64 ", next: %#" PRIx64 ", name: %s",
-					static_cast<unsigned long int>(ino),
+			oplog_printf(ctx, "readdir (%" PRIiNode " ,%" PRIu64 ",%#" PRIx64 ") from master: entry index: %#" PRIx64 ", next: %#" PRIx64 ", name: %s",
+					ino,
 					static_cast<uint64_t>(initial_max_entries),
 					start_off,
 					it->index,
@@ -2010,9 +2000,9 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 	}
 
 	if (debug_mode) {
-		oplog_printf(ctx, "readdir (%lu,%" PRIu64 ",%" PRIu64 ") returned %zu dirents (%zu from cache, %zu from master); index of next dirent is %" PRIu64
+		oplog_printf(ctx, "readdir (%" PRIiNode ",%" PRIu64 ",%" PRIu64 ") returned %zu dirents (%zu from cache, %zu from master); index of next dirent is %" PRIu64
 			" (%#" PRIx64 ")",
-				static_cast<unsigned long int>(ino),
+				ino,
 				static_cast<uint64_t>(initial_max_entries),
 				start_off,
 				result.size(),
@@ -2065,16 +2055,16 @@ std::vector<NamedInodeEntry> readtrash(Context &ctx, NamedInodeOffset off, Named
 	return entries;
 }
 
-void releasedir(Inode ino) {
+void releasedir(inode_t ino) {
 	static constexpr int kBatchSize = 1000;
 
 	stats_inc(OP_RELEASEDIR);
 	if (debug_mode) {
-		oplog_printf("releasedir (%lu) ...",
-				(unsigned long int)ino);
+		oplog_printf("releasedir (%" PRIiNode ") ...",
+				ino);
 	}
-	oplog_printf("releasedir (%lu): OK",
-			(unsigned long int)ino);
+	oplog_printf("releasedir (%" PRIiNode "): OK",
+			ino);
 
 	std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
 	gDirEntryCache.updateTime();
@@ -2082,7 +2072,7 @@ void releasedir(Inode ino) {
 }
 
 
-static finfo* fs_newfileinfo(uint8_t accmode, uint32_t inode) {
+static finfo* fs_newfileinfo(uint8_t accmode, inode_t inode) {
 	finfo *fileinfo;
 	if (!(fileinfo = (finfo*)malloc(sizeof(finfo))))
 		throw RequestException(SAUNAFS_ERROR_OUTOFMEMORY);
@@ -2137,10 +2127,10 @@ void remove_file_info(FileInfo *f) {
 	free(fileinfo);
 }
 
-EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
+EntryParam create(Context &ctx, inode_t parent, const char *name, mode_t mode,
 		FileInfo* fi) {
 	struct EntryParam e;
-	uint32_t inode;
+	inode_t inode;
 	uint8_t oflags;
 	Attributes attr;
 	char modestr[11];
@@ -2154,16 +2144,16 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 	makemodestr(modestr,mode);
 	stats_inc(OP_CREATE);
 	if (debug_mode) {
-		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o)",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o)",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode);
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "create (%lu,%s,-%s:0%04o): %s",
-					(unsigned long int)parent,
+			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
+					parent,
 					name,
 					modestr+1,
 					(unsigned int)mode,
@@ -2173,8 +2163,8 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
@@ -2190,8 +2180,8 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 	} else if ((fi->flags & O_ACCMODE) == O_RDWR) {
 		oflags |= WANT_READ | WANT_WRITE;
 	} else {
-		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
@@ -2202,8 +2192,8 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_mknod(parent,nleng,(const uint8_t*)name,TYPE_FILE,mode&07777,ctx.umask,ctx.uid,ctx.gid,0,inode,attr));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o) (mknod): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (mknod): %s",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
@@ -2215,8 +2205,8 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 		fs_opencheck(inode,ctx.uid,ctx.gid,oflags,tmp_attr));
 
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "create (%lu,%s,-%s:0%04o) (open): %s",
-				(unsigned long int)parent,
+		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (open): %s",
+				parent,
 				name,
 				modestr+1,
 				(unsigned int)mode,
@@ -2243,20 +2233,20 @@ EntryParam create(Context &ctx, Inode parent, const char *name, mode_t mode,
 	e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:entry_cache_timeout;
 	attr_to_stat(inode,attr,&e.attr);
 	makeattrstr(attrstr,256,&e.attr);
-	oplog_printf(ctx, "create (%lu,%s,-%s:0%04o): OK (%.1f,%lu,%.1f,%s,%lu)",
-			(unsigned long int)parent,
+	oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): OK (%.1f,%" PRIiNode ",%.1f,%s,%lu)",
+			parent,
 			name,
 			modestr+1,
 			(unsigned int)mode,
 			e.entry_timeout,
-			(unsigned long int)e.ino,
+			e.ino,
 			e.attr_timeout,
 			attrstr,
 			(unsigned long int)fi->keep_cache);
 	return e;
 }
 
-void open(Context &ctx, Inode ino, FileInfo *fi) {
+void open(Context &ctx, inode_t ino, FileInfo *fi) {
 	uint8_t oflags;
 	Attributes attr;
 	uint8_t mattr;
@@ -2266,7 +2256,7 @@ void open(Context &ctx, Inode ino, FileInfo *fi) {
 
 	stats_inc(OP_OPEN);
 	if (debug_mode) {
-		oplog_printf(ctx, "open (%lu) ...", (unsigned long int)ino);
+		oplog_printf(ctx, "open (%" PRIiNode ") ...", ino);
 	}
 
 	if (IS_SPECIAL_INODE(ino)) {
@@ -2288,8 +2278,8 @@ void open(Context &ctx, Inode ino, FileInfo *fi) {
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_opencheck(ino,ctx.uid,ctx.gid,oflags,attr));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "open (%lu): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "open (%" PRIiNode "): %s",
+				ino,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
@@ -2308,8 +2298,8 @@ void open(Context &ctx, Inode ino, FileInfo *fi) {
 		safs::log_debug("open ({}) ok -> keep cache: {}", ino, (int)fi->keep_cache);
 	}
 	fi->direct_io = gDirectIo;
-	oplog_printf(ctx, "open (%lu): OK (%lu,%lu)",
-			(unsigned long int)ino,
+	oplog_printf(ctx, "open (%" PRIiNode "): OK (%lu,%lu)",
+			ino,
 			(unsigned long int)fi->direct_io,
 			(unsigned long int)fi->keep_cache);
 }
@@ -2321,12 +2311,12 @@ static void update_credentials(Context::IdType index, const GroupCache::Groups &
 	}
 }
 
-void release(Inode ino, FileInfo *fi) {
+void release(inode_t ino, FileInfo *fi) {
 	finfo *fileinfo = reinterpret_cast<finfo*>(fi->fh);
 
 	stats_inc(OP_RELEASE);
 	if (debug_mode) {
-		oplog_printf("release (%lu) ...", (unsigned long int)ino);
+		oplog_printf("release (%" PRIiNode ") ...", ino);
 	}
 
 	if (IS_SPECIAL_INODE(ino)) {
@@ -2341,12 +2331,12 @@ void release(Inode ino, FileInfo *fi) {
 		remove_file_info(fi);
 	}
 	fs_release(ino);
-	oplog_printf("release (%lu): OK",
-			(unsigned long int)ino);
+	oplog_printf("release (%" PRIiNode "): OK",
+			ino);
 }
 
 std::vector<uint8_t> read_special_inode(Context &ctx,
-			Inode ino,
+			inode_t ino,
 			size_t size,
 			off_t off,
 			FileInfo* fi) {
@@ -2357,7 +2347,7 @@ std::vector<uint8_t> read_special_inode(Context &ctx,
 }
 
 ReadCache::Result read(Context &ctx,
-			Inode ino,
+			inode_t ino,
 			size_t size,
 			off_t off,
 			FileInfo *fi) {
@@ -2372,16 +2362,16 @@ ReadCache::Result read(Context &ctx,
 		                ino, size, off);
 	}
 	if (fileinfo==NULL) {
-		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(SAUNAFS_ERROR_EBADF));
 		throw RequestException(SAUNAFS_ERROR_EBADF);
 	}
 	if (off>=MAX_FILE_SIZE || off+size>=MAX_FILE_SIZE) {
-		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(SAUNAFS_ERROR_EFBIG));
@@ -2395,8 +2385,8 @@ ReadCache::Result read(Context &ctx,
 		}
 		if (status != SAUNAFS_STATUS_OK) {
 			err = (status == SAUNAFS_ERROR_EPERM ? SAUNAFS_ERROR_EPERM : SAUNAFS_ERROR_IO);
-			oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+					ino,
 					(uint64_t)size,
 					(uint64_t)off,
 					saunafs_error_string(err));
@@ -2409,8 +2399,8 @@ ReadCache::Result read(Context &ctx,
 	PthreadMutexWrapper lock(fileinfo->lock);
 	PthreadMutexWrapper flushlock(fileinfo->flushlock);
 	if (fileinfo->mode==IO_WRITEONLY) {
-		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(SAUNAFS_ERROR_EACCES));
@@ -2419,8 +2409,8 @@ ReadCache::Result read(Context &ctx,
 	if (fileinfo->mode==IO_WRITE) {
 		err = write_data_flush(fileinfo->data);
 		if (err != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+					ino,
 					(uint64_t)size,
 					(uint64_t)off,
 					saunafs_error_string(err));
@@ -2447,8 +2437,8 @@ ReadCache::Result read(Context &ctx,
 	err = read_data(static_cast<ReadRecord *>(fileinfo->data), off, size, alignedOffset, ssize, ret);
 	ssize = ret.requestSize(alignedOffset, ssize);
 	if (err != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(err));
@@ -2463,8 +2453,8 @@ ReadCache::Result read(Context &ctx,
 		} else {
 			ssize = 0;
 		}
-		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				(unsigned long int)ssize);
@@ -2472,15 +2462,15 @@ ReadCache::Result read(Context &ctx,
 	return ret;
 }
 
-BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t off,
+BytesWritten write(Context &ctx, inode_t ino, const char *buf, size_t size, off_t off,
 			FileInfo *fi) {
 	finfo *fileinfo = reinterpret_cast<finfo*>(fi->fh);
 	int err;
 
 	stats_inc(OP_WRITE);
 	if (debug_mode) {
-		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 ") ...",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 ") ...",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off);
 	}
@@ -2490,16 +2480,16 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	}
 
 	if (fileinfo==NULL) {
-		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(SAUNAFS_ERROR_EBADF));
 		throw RequestException(SAUNAFS_ERROR_EBADF);
 	}
 	if (off>=MAX_FILE_SIZE || off+size>=MAX_FILE_SIZE) {
-		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(SAUNAFS_ERROR_EFBIG));
@@ -2513,8 +2503,8 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 		}
 		if (status != SAUNAFS_STATUS_OK) {
 			err = status == SAUNAFS_ERROR_EPERM ? SAUNAFS_ERROR_EPERM : SAUNAFS_ERROR_IO;
-			oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): (logical) %s",
-							(unsigned long int)ino,
+			oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): (logical) %s",
+							ino,
 							(uint64_t)size,
 							(uint64_t)off,
 							saunafs_error_string(err));
@@ -2526,8 +2516,8 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	}
 	PthreadMutexWrapper lock(fileinfo->lock);
 	if (fileinfo->mode==IO_READONLY) {
-		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(SAUNAFS_ERROR_EACCES));
@@ -2555,15 +2545,15 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	                 currentSize);
 	gDirEntryCache.lockAndInvalidateInode(ino);
 	if (err != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): (physical) %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): (physical) %s",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				saunafs_error_string(err));
 		throw RequestException(err);
 	} else {
-		oplog_printf(ctx, "write (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)",
+				ino,
 				(uint64_t)size,
 				(uint64_t)off,
 				(unsigned long int)size);
@@ -2571,10 +2561,10 @@ BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t 
 	}
 }
 
-void flush(Context &ctx, Inode ino, FileInfo* fi) {
+void flush(Context &ctx, inode_t ino, FileInfo* fi) {
 	if (gIgnoreFlush) {
-		oplog_printf(ctx, "flush (%lu): OK",
-				(unsigned long int)ino);
+		oplog_printf(ctx, "flush (%" PRIiNode "): OK",
+				ino);
 		return;
 	}
 
@@ -2583,17 +2573,17 @@ void flush(Context &ctx, Inode ino, FileInfo* fi) {
 
 	stats_inc(OP_FLUSH);
 	if (debug_mode) {
-		oplog_printf(ctx, "flush (%lu) ...",
-				(unsigned long int)ino);
+		oplog_printf(ctx, "flush (%" PRIiNode ") ...",
+				ino);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "flush (%lu): OK",
-				(unsigned long int)ino);
+		oplog_printf(ctx, "flush (%" PRIiNode "): OK",
+				ino);
 		return;
 	}
 	if (fileinfo==NULL) {
-		oplog_printf(ctx, "flush (%lu): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "flush (%" PRIiNode "): %s",
+				ino,
 				saunafs_error_string(SAUNAFS_ERROR_EBADF));
 		throw RequestException(SAUNAFS_ERROR_EBADF);
 	}
@@ -2610,35 +2600,35 @@ void flush(Context &ctx, Inode ino, FileInfo* fi) {
 		fs_setlk_send(ino, fi->lock_owner, 0, file_lock);
 	}
 	if (err != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "flush (%lu): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "flush (%" PRIiNode "): %s",
+				ino,
 				saunafs_error_string(err));
 		throw RequestException(err);
 	} else {
-		oplog_printf(ctx, "flush (%lu): OK",
-				(unsigned long int)ino);
+		oplog_printf(ctx, "flush (%" PRIiNode "): OK",
+				ino);
 	}
 }
 
-void fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
+void fsync(Context &ctx, inode_t ino, int datasync, FileInfo* fi) {
 	finfo *fileinfo = reinterpret_cast<finfo*>(fi->fh);
 	int err;
 
 	stats_inc(OP_FSYNC);
 	if (debug_mode) {
-		oplog_printf(ctx, "fsync (%lu,%d) ...",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "fsync (%" PRIiNode ",%d) ...",
+				ino,
 				datasync);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "fsync (%lu,%d): OK",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "fsync (%" PRIiNode ",%d): OK",
+				ino,
 				datasync);
 		return;
 	}
 	if (fileinfo==NULL) {
-		oplog_printf(ctx, "fsync (%lu,%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "fsync (%" PRIiNode ",%d): %s",
+				ino,
 				datasync,
 				saunafs_error_string(SAUNAFS_ERROR_EBADF));
 		throw RequestException(SAUNAFS_ERROR_EBADF);
@@ -2649,14 +2639,14 @@ void fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
 		err = write_data_flush(fileinfo->data);
 	}
 	if (err != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "fsync (%lu,%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "fsync (%" PRIiNode ",%d): %s",
+				ino,
 				datasync,
 				saunafs_error_string(err));
 		throw RequestException(err);
 	} else {
-		oplog_printf(ctx, "fsync (%lu,%d): OK",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "fsync (%" PRIiNode ",%d): OK",
+				ino,
 				datasync);
 	}
 }
@@ -2672,7 +2662,7 @@ public:
 	 * mode - one of XATTR_SMODE_*
 	 * returns status
 	 */
-	virtual uint8_t setxattr(Context& ctx, Inode ino, const char *name,
+	virtual uint8_t setxattr(Context& ctx, inode_t ino, const char *name,
 			uint32_t nleng, const char *value, size_t size, int mode) = 0;
 
 	/*
@@ -2682,20 +2672,20 @@ public:
 	 * * sets value is mode is XATTR_GMODE_GET_DATA
 	 * * sets valueLength is mode is XATTR_GMODE_LENGTH_ONLY
 	 */
-	virtual uint8_t getxattr(Context& ctx, Inode ino, const char *name,
+	virtual uint8_t getxattr(Context& ctx, inode_t ino, const char *name,
 			uint32_t nleng, int mode, uint32_t& valueLength, std::vector<uint8_t>& value) = 0;
 
 	/*
 	 * handler for request to remove an extended attribute
 	 * returns status
 	 */
-	virtual uint8_t removexattr(Context& ctx, Inode ino, const char *name,
+	virtual uint8_t removexattr(Context& ctx, inode_t ino, const char *name,
 			uint32_t nleng) = 0;
 };
 
 class PlainXattrHandler : public XattrHandler {
 public:
-	uint8_t setxattr(Context& ctx, Inode ino, const char *name,
+	uint8_t setxattr(Context& ctx, inode_t ino, const char *name,
 		uint32_t nleng, const char *value, size_t size, int mode) override {
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2704,7 +2694,7 @@ public:
 		return status;
 	}
 
-	uint8_t getxattr(Context& ctx, Inode ino, const char *name,
+	uint8_t getxattr(Context& ctx, inode_t ino, const char *name,
 		uint32_t nleng, int mode, uint32_t& valueLength, std::vector<uint8_t>& value) override {
 		const uint8_t *buff;
 		uint8_t status;
@@ -2717,7 +2707,7 @@ public:
 		return status;
 	}
 
-	uint8_t removexattr(Context& ctx, Inode ino, const char *name,
+	uint8_t removexattr(Context& ctx, inode_t ino, const char *name,
 			uint32_t nleng) override {
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2729,17 +2719,17 @@ public:
 class ErrorXattrHandler : public XattrHandler {
 public:
 	ErrorXattrHandler(uint8_t error) : error_(error) {}
-	uint8_t setxattr(Context&, Inode, const char *,
+	uint8_t setxattr(Context&, inode_t, const char *,
 			uint32_t, const char *, size_t, int) override {
 		return error_;
 	}
 
-	uint8_t getxattr(Context&, Inode, const char *,
+	uint8_t getxattr(Context&, inode_t, const char *,
 			uint32_t, int, uint32_t&, std::vector<uint8_t>&) override {
 		return error_;
 	}
 
-	uint8_t removexattr(Context&, Inode, const char *,
+	uint8_t removexattr(Context&, inode_t, const char *,
 			uint32_t) override {
 		return error_;
 	}
@@ -2751,7 +2741,7 @@ class PosixAclXattrHandler : public XattrHandler {
 public:
 	PosixAclXattrHandler(AclType type) : type_(type) { }
 
-	uint8_t setxattr(Context& ctx, Inode ino, const char *,
+	uint8_t setxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, const char *value, size_t size, int) override {
 		static constexpr size_t kEmptyAclSize = 4;
 		AccessControlList posix_acl;
@@ -2774,7 +2764,7 @@ public:
 		return status;
 	}
 
-	uint8_t getxattr(Context& ctx, Inode ino, const char *,
+	uint8_t getxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, int /*mode*/, uint32_t& valueLength, std::vector<uint8_t>& value) override {
 		try {
 			AclCacheEntry cacheEntry = acl_cache->get(clock_.now(), ino, ctx.uid, ctx.gid);
@@ -2803,7 +2793,7 @@ public:
 		}
 	}
 
-	uint8_t removexattr(Context& ctx, Inode ino, const char *,
+	uint8_t removexattr(Context& ctx, inode_t ino, const char *,
 			uint32_t) override {
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2821,7 +2811,7 @@ class NFSAclXattrHandler : public XattrHandler {
 public:
 	NFSAclXattrHandler() { }
 
-	uint8_t setxattr(Context& ctx, Inode ino, const char *,
+	uint8_t setxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, const char *value, size_t size, int) override {
 		uint8_t status = SAUNAFS_STATUS_OK;
 		RichACL acl = richAclConverter::extractObjectFromNFS((uint8_t *)value, size);
@@ -2833,7 +2823,7 @@ public:
 		return status;
 	}
 
-	uint8_t getxattr(Context& ctx, Inode ino, const char *,
+	uint8_t getxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, int, uint32_t& valueLength, std::vector<uint8_t>& value) override {
 		try {
 			AclCacheEntry cache_entry = acl_cache->get(clock_.now(), ino, ctx.uid, ctx.gid);
@@ -2859,7 +2849,7 @@ public:
 		}
 	}
 
-	uint8_t removexattr(Context& ctx, Inode ino, const char *,
+	uint8_t removexattr(Context& ctx, inode_t ino, const char *,
 			uint32_t) override {
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2875,7 +2865,7 @@ class RichAclXattrHandler : public XattrHandler {
 public:
 	RichAclXattrHandler() { }
 
-	uint8_t setxattr(Context& ctx, Inode ino, const char *,
+	uint8_t setxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, const char *value, size_t size, int) override {
 		uint8_t status = SAUNAFS_STATUS_OK;
 		RichACL acl = richAclConverter::extractObjectFromRichACL((uint8_t *)value, size);
@@ -2887,7 +2877,7 @@ public:
 		return status;
 	}
 
-	uint8_t getxattr(Context& ctx, Inode ino, const char *,
+	uint8_t getxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, int, uint32_t& valueLength, std::vector<uint8_t>& value) override {
 		try {
 			AclCacheEntry cache_entry = acl_cache->get(clock_.now(), ino, ctx.uid, ctx.gid);
@@ -2913,7 +2903,7 @@ public:
 		}
 	}
 
-	uint8_t removexattr(Context& ctx, Inode ino, const char *,
+	uint8_t removexattr(Context& ctx, inode_t ino, const char *,
 			uint32_t) override {
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -2930,7 +2920,7 @@ class OsxAclXattrHandler : public XattrHandler {
 public:
 	OsxAclXattrHandler() {}
 
-	uint8_t setxattr(Context& ctx, Inode ino, const char *,
+	uint8_t setxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, const char *value, size_t size, int) override {
 		static constexpr size_t kEmptyAclSize = 4;
 		if (size <= kEmptyAclSize) {
@@ -2953,7 +2943,7 @@ public:
 		return status;
 	}
 
-	uint8_t getxattr(Context& ctx, Inode ino, const char *,
+	uint8_t getxattr(Context& ctx, inode_t ino, const char *,
 			uint32_t, int /*mode*/, uint32_t& valueLength, std::vector<uint8_t>& value) override {
 		try {
 			auto ts = clock_.now();
@@ -2977,7 +2967,7 @@ public:
 		valueLength = 0;
 	}
 
-	uint8_t removexattr(Context& ctx, Inode ino, const char *,
+	uint8_t removexattr(Context& ctx, inode_t ino, const char *,
 			uint32_t) override {
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
@@ -3024,7 +3014,7 @@ static XattrHandler* choose_xattr_handler(const char *name) {
 	}
 }
 
-void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
+void setxattr(Context &ctx, inode_t ino, const char *name, const char *value,
 			size_t size, int flags, uint32_t position) {
 	uint32_t nleng;
 	int status;
@@ -3033,15 +3023,15 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 
 	stats_inc(OP_SETXATTR);
 	if (debug_mode) {
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d) ...",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d) ...",
+				ino,
 				name,
 				(uint64_t)size,
 				flags);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
@@ -3051,16 +3041,16 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 	if (size>SFS_XATTR_SIZE_MAX) {
 #if defined(__APPLE__)
 		// Mac OS X returns E2BIG here
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
 				saunafs_error_string(SAUNAFS_ERROR_E2BIG));
 		throw RequestException(SAUNAFS_ERROR_E2BIG);
 #else
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
@@ -3072,16 +3062,16 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 	if (nleng>SFS_XATTR_NAME_MAX) {
 #if defined(__APPLE__)
 		// Mac OS X returns EPERM here
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
 #else
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
@@ -3090,8 +3080,8 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 #endif
 	}
 	if (nleng==0) {
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
@@ -3099,8 +3089,8 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 	if (strcmp(name,"security.capability")==0) {
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
@@ -3109,8 +3099,8 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 	}
 #if defined(XATTR_CREATE) && defined(XATTR_REPLACE)
 	if ((flags&XATTR_CREATE) && (flags&XATTR_REPLACE)) {
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
@@ -3124,22 +3114,22 @@ void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
 	(void)position;
 	status = choose_xattr_handler(name)->setxattr(ctx, ino, name, nleng, value, size, mode);
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				flags,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
-	oplog_printf(ctx, "setxattr (%lu,%s,%" PRIu64 ",%d): OK",
-			(unsigned long int)ino,
+	oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): OK",
+			ino,
 			name,
 			(uint64_t)size,
 			flags);
 }
 
-XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint32_t position) {
+XattrReply getxattr(Context &ctx, inode_t ino, const char *name, size_t size, uint32_t position) {
 	uint32_t nleng;
 	int status;
 	uint8_t mode;
@@ -3150,14 +3140,14 @@ XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint
 
 	stats_inc(OP_GETXATTR);
 	if (debug_mode) {
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 ") ...",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 ") ...",
+				ino,
 				name,
 				(uint64_t)size);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				saunafs_error_string(SAUNAFS_ERROR_ENODATA));
@@ -3167,15 +3157,15 @@ XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint
 	if (nleng>SFS_XATTR_NAME_MAX) {
 #if defined(__APPLE__)
 		// Mac OS X returns EPERM here
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
 #else
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				saunafs_error_string(SAUNAFS_ERROR_ERANGE));
@@ -3183,16 +3173,16 @@ XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint
 #endif
 	}
 	if (nleng==0) {
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 	if (strcmp(name,"security.capability")==0) {
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				saunafs_error_string(SAUNAFS_ERROR_ENOTSUP));
@@ -3207,8 +3197,8 @@ XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint
 	status = choose_xattr_handler(name)->getxattr(ctx, ino, name, nleng, mode, leng, buffer);
 	buff = buffer.data();
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
 				name,
 				(uint64_t)size,
 				saunafs_error_string(status));
@@ -3217,23 +3207,23 @@ XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint
 		throw RequestException(status);
 	}
 	if (size==0) {
-		oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): OK (%" PRIu32 ")",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): OK (%" PRIu32 ")",
+				ino,
 				name,
 				(uint64_t)size,
 				leng);
 		return XattrReply{leng, {}};
 	} else {
 		if (leng>size) {
-			oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+					ino,
 					name,
 					(uint64_t)size,
 					saunafs_error_string(SAUNAFS_ERROR_ERANGE));
 			throw RequestException(SAUNAFS_ERROR_ERANGE);
 		} else {
-			oplog_printf(ctx, "getxattr (%lu,%s,%" PRIu64 "): OK (%" PRIu32 ")",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): OK (%" PRIu32 ")",
+					ino,
 					name,
 					(uint64_t)size,
 					leng);
@@ -3242,7 +3232,7 @@ XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint
 	}
 }
 
-XattrReply listxattr(Context &ctx, Inode ino, size_t size) {
+XattrReply listxattr(Context &ctx, inode_t ino, size_t size) {
 	const uint8_t *buff;
 	uint32_t leng;
 	int status;
@@ -3250,13 +3240,13 @@ XattrReply listxattr(Context &ctx, Inode ino, size_t size) {
 
 	stats_inc(OP_LISTXATTR);
 	if (debug_mode) {
-		oplog_printf(ctx, "listxattr (%lu,%" PRIu64 ") ...",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 ") ...",
+				ino,
 				(uint64_t)size);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "listxattr (%lu,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
@@ -3269,28 +3259,28 @@ XattrReply listxattr(Context &ctx, Inode ino, size_t size) {
 	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_listxattr(ino,0,ctx.uid,ctx.gid,mode,&buff,&leng));
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "listxattr (%lu,%" PRIu64 "): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): %s",
+				ino,
 				(uint64_t)size,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
 	if (size==0) {
-		oplog_printf(ctx, "listxattr (%lu,%" PRIu64 "): OK (%" PRIu32 ")",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): OK (%" PRIu32 ")",
+				ino,
 				(uint64_t)size,
 				leng);
 		return XattrReply{leng, {}};
 	} else {
 		if (leng>size) {
-			oplog_printf(ctx, "listxattr (%lu,%" PRIu64 "): %s",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): %s",
+					ino,
 					(uint64_t)size,
 					saunafs_error_string(SAUNAFS_ERROR_ERANGE));
 			throw RequestException(SAUNAFS_ERROR_ERANGE);
 		} else {
-			oplog_printf(ctx, "listxattr (%lu,%" PRIu64 "): OK (%" PRIu32 ")",
-					(unsigned long int)ino,
+			oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): OK (%" PRIu32 ")",
+					ino,
 					(uint64_t)size,
 					leng);
 			return XattrReply{leng, std::vector<uint8_t>(buff, buff + leng)};
@@ -3298,19 +3288,19 @@ XattrReply listxattr(Context &ctx, Inode ino, size_t size) {
 	}
 }
 
-void removexattr(Context &ctx, Inode ino, const char *name) {
+void removexattr(Context &ctx, inode_t ino, const char *name) {
 	uint32_t nleng;
 	int status;
 
 	stats_inc(OP_REMOVEXATTR);
 	if (debug_mode) {
-		oplog_printf(ctx, "removexattr (%lu,%s) ...",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s) ...",
+				ino,
 				name);
 	}
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "removexattr (%lu,%s): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
+				ino,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
@@ -3319,36 +3309,36 @@ void removexattr(Context &ctx, Inode ino, const char *name) {
 	if (nleng>SFS_XATTR_NAME_MAX) {
 #if defined(__APPLE__)
 		// Mac OS X returns EPERM here
-		oplog_printf(ctx, "removexattr (%lu,%s): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
+				ino,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
 #else
-		oplog_printf(ctx, "removexattr (%lu,%s): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
+				ino,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_ERANGE));
 		throw RequestException(SAUNAFS_ERROR_ERANGE);
 #endif
 	}
 	if (nleng==0) {
-		oplog_printf(ctx, "removexattr (%lu,%s): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
+				ino,
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 	status = choose_xattr_handler(name)->removexattr(ctx, ino, name, nleng);
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "removexattr (%lu,%s): %s",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
+				ino,
 				name,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
-		oplog_printf(ctx, "removexattr (%lu,%s): OK",
-				(unsigned long int)ino,
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): OK",
+				ino,
 				name);
 	}
 }
@@ -3361,20 +3351,20 @@ void setlk_interrupt(const safs_locks::InterruptData &data) {
 	fs_setlk_interrupt(data);
 }
 
-void getlk(Context &ctx, Inode ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock) {
+void getlk(Context &ctx, inode_t ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock) {
 	uint32_t status;
 
 	stats_inc(OP_FLOCK);
 	if (IS_SPECIAL_INODE(ino)) {
 		if (debug_mode) {
-			oplog_printf(ctx, "flock(ctx, %lu, fi): %s", (unsigned long int)ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
+			oplog_printf(ctx, "flock(ctx, %" PRIiNode ", fi): %s", ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		}
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 
 	if (!fi) {
 		if (debug_mode) {
-			oplog_printf(ctx,"flock(ctx, %lu, fi): %s",(unsigned long int)ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
+			oplog_printf(ctx,"flock(ctx, %" PRIiNode ", fi): %s",ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		}
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
@@ -3387,21 +3377,21 @@ void getlk(Context &ctx, Inode ino, FileInfo* fi, struct safs_locks::FlockWrappe
 	}
 }
 
-uint32_t setlk_send(Context &ctx, Inode ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock) {
+uint32_t setlk_send(Context &ctx, inode_t ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock) {
 	uint32_t reqid;
 	uint32_t status;
 
 	stats_inc(OP_SETLK);
 	if (IS_SPECIAL_INODE(ino)) {
 		if (debug_mode) {
-			oplog_printf(ctx, "flock(ctx, %lu, fi): %s", (unsigned long int)ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
+			oplog_printf(ctx, "flock(ctx, %" PRIiNode ", fi): %s", ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		}
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 
 	if (!fi) {
 		if (debug_mode) {
-			oplog_printf(ctx,"flock(ctx, %lu, fi): %s",(unsigned long int)ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
+			oplog_printf(ctx,"flock(ctx, %" PRIiNode ", fi): %s",ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		}
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
@@ -3436,21 +3426,21 @@ void setlk_recv() {
 	}
 }
 
-uint32_t flock_send(Context &ctx, Inode ino, FileInfo* fi, int op) {
+uint32_t flock_send(Context &ctx, inode_t ino, FileInfo* fi, int op) {
 	uint32_t reqid;
 	uint32_t status;
 
 	stats_inc(OP_FLOCK);
 	if (IS_SPECIAL_INODE(ino)) {
 		if (debug_mode) {
-			oplog_printf(ctx, "flock(ctx, %lu, fi): %s", (unsigned long int)ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
+			oplog_printf(ctx, "flock(ctx, %" PRIiNode ", fi): %s", ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		}
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 
 	if (!fi) {
 		if (debug_mode) {
-			oplog_printf(ctx,"flock(ctx, %lu, fi): %s",(unsigned long int)ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
+			oplog_printf(ctx,"flock(ctx, %" PRIiNode ", fi): %s",ino, saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		}
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
@@ -3485,11 +3475,11 @@ void flock_recv() {
 	}
 }
 
-JobId makesnapshot(Context &ctx, Inode ino, Inode dst_parent, const std::string &dst_name,
+JobId makesnapshot(Context &ctx, inode_t ino, inode_t dst_parent, const std::string &dst_name,
 	          bool can_overwrite) {
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "makesnapshot (%lu, %lu, %s): %s",
-				(unsigned long)ino, (unsigned long)dst_parent, dst_name.c_str(), strerr(EINVAL));
+		oplog_printf(ctx, "makesnapshot (%" PRIiNode ", %" PRIiNode ", %s): %s",
+				ino, dst_parent, dst_name.c_str(), strerr(EINVAL));
 		throw RequestException(EINVAL);
 	}
 
@@ -3504,10 +3494,10 @@ JobId makesnapshot(Context &ctx, Inode ino, Inode dst_parent, const std::string 
 	return job_id;
 }
 
-std::string getgoal(Context &ctx, Inode ino) {
+std::string getgoal(Context &ctx, inode_t ino) {
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "getgoal (%lu): %s",
-				(unsigned long)ino, strerr(EINVAL));
+		oplog_printf(ctx, "getgoal (%" PRIiNode "): %s",
+				ino, strerr(EINVAL));
 		throw RequestException(EINVAL);
 	}
 
@@ -3520,10 +3510,10 @@ std::string getgoal(Context &ctx, Inode ino) {
 	return goal;
 }
 
-void setgoal(Context &ctx, Inode ino, const std::string &goal_name, uint8_t smode) {
+void setgoal(Context &ctx, inode_t ino, const std::string &goal_name, uint8_t smode) {
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "setgoal (%lu, %s): %s",
-				(unsigned long)ino, goal_name.c_str(), strerr(EINVAL));
+		oplog_printf(ctx, "setgoal (%" PRIiNode ", %s): %s",
+				ino, goal_name.c_str(), strerr(EINVAL));
 		throw RequestException(EINVAL);
 	}
 
@@ -3533,15 +3523,16 @@ void setgoal(Context &ctx, Inode ino, const std::string &goal_name, uint8_t smod
 	}
 }
 
-void statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace, uint64_t *reservedspace, uint32_t *inodes) {
+void statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
+            uint64_t *reservedspace, inode_t *inodes) {
 	fs_statfs(totalspace, availspace, trashspace, reservedspace, inodes);
 }
 
-std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, Inode ino,
+std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, inode_t ino,
 	                                  uint32_t chunk_index, uint32_t chunk_count) {
 	if (IS_SPECIAL_INODE(ino)) {
-		oplog_printf(ctx, "getchunksinfo (%lu, %u, %u): %s",
-				(unsigned long)ino, (unsigned)chunk_index, (unsigned)chunk_count, strerr(EINVAL));
+		oplog_printf(ctx, "getchunksinfo (%" PRIiNode ", %u, %u): %s",
+				ino, (unsigned)chunk_index, (unsigned)chunk_count, strerr(EINVAL));
 		throw RequestException(EINVAL);
 	}
 	std::vector<ChunkWithAddressAndLabel> chunks;

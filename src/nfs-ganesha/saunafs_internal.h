@@ -22,10 +22,10 @@ struct SaunaFSHandle *allocateHandle(const struct stat *attribute,
 void deleteHandle(struct SaunaFSHandle *object);
 
 // Functions for ACL
-fsal_status_t getACL(struct SaunaFSExport *export, uint32_t inode,
+fsal_status_t getACL(struct SaunaFSExport *export, inode_t inode,
                      uint32_t ownerId, fsal_acl_t **acl);
 
-fsal_status_t setACL(struct SaunaFSExport *export, uint32_t inode,
+fsal_status_t setACL(struct SaunaFSExport *export, inode_t inode,
                      const fsal_acl_t *acl, unsigned int mode);
 
 // Functions for handling errors

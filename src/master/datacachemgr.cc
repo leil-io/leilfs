@@ -22,11 +22,7 @@
 
 #include "master/datacachemgr.h"
 
-/*
-  open(inode,sessionid) -> isset? (inode,sessionid)
-  access(inode,sessionid) -> set (inode,sessionid)
-  modify(inode,sessionid) -> clear (inode,!sessionid) and set (inode,sessionid)
-*/
+#include "common/type_defs.h"
 
 #define DCM_TAB_LENG 500000
 #define DCM_INODEHASH_LENG ((DCM_TAB_LENG)/2)
@@ -36,7 +32,7 @@
 #define DCM_NIL 0xFFFFFFFF
 
 struct datacache_entry {
-	uint32_t inode;
+	inode_t inode;
 	unsigned cacheok:1;
 	unsigned sessionid:31;
 	uint32_t iprev,inext;
@@ -47,7 +43,7 @@ static datacache_entry dcm_tab[DCM_TAB_LENG];
 static uint32_t dcm_inodehash[DCM_INODEHASH_LENG];
 static uint32_t dcm_lru_first,dcm_lru_last;
 
-int dcm_open(uint32_t inode,uint32_t sessionid) {
+int dcm_open(inode_t inode, uint32_t sessionid) {
 	uint32_t ih = DCM_INODE_HASH(inode);
 	uint32_t p,pp,np;
 	p = dcm_inodehash[ih];
@@ -132,7 +128,7 @@ int dcm_open(uint32_t inode,uint32_t sessionid) {
 	return 0;
 }
 
-void dcm_access(uint32_t inode,uint32_t sessionid) {
+void dcm_access(inode_t inode, uint32_t sessionid) {
 	uint32_t ih = DCM_INODE_HASH(inode);
 	uint32_t p,pp,np;
 	p = dcm_inodehash[ih];
@@ -166,7 +162,7 @@ void dcm_access(uint32_t inode,uint32_t sessionid) {
 	}
 }
 
-void dcm_modify(uint32_t inode,uint32_t sessionid) {
+void dcm_modify(inode_t inode,uint32_t sessionid) {
 	uint32_t ih = DCM_INODE_HASH(inode);
 	uint32_t p,pp,np;
 	p = dcm_inodehash[ih];

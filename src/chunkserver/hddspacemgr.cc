@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include "hddspacemgr.h"
+#include <cstdint>
 
 #ifdef SAUNAFS_HAVE_FALLOC_FL_PUNCH_HOLE_IN_LINUX_FALLOC_H
 #  define SAUNAFS_HAVE_FALLOC_FL_PUNCH_HOLE
@@ -689,7 +690,10 @@ int hddCheckCrcForFullBlock(IChunk *chunk, uint16_t block, OutputBuffer *outputB
 
 	const uint8_t *crcData =
 	    gOpenChunks.getResource(chunk->metaFD()).crcData() + block * kCrcSize;
-	if (!outputBuffer->checkCRC(SFSBLOCKSIZE, get32bit(&crcData), offsetInBlockBuffer)) {
+	uint32_t crcValue;
+	get32bit(&crcData, crcValue);
+
+	if (!outputBuffer->checkCRC(SFSBLOCKSIZE, crcValue, offsetInBlockBuffer)) {
 		hddAddChunkToTestQueue(ChunkWithVersionAndType{
 		    chunk->id(), chunk->version(), chunk->type()});
 		return SAUNAFS_ERROR_CRC;
@@ -832,7 +836,8 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 /// CRC.
 void hddRecomputeCrcIfBlockEmpty(uint8_t *block, uint8_t *crcBuffer) {
 	const uint8_t* tmpPtr = crcBuffer;
-	uint32_t crc = get32bit(&tmpPtr);
+	uint32_t crc;
+	get32bit(&tmpPtr, crc);
 
 	recompute_crc_if_block_empty(block, crc);
 	uint8_t* tmpPtr2 = crcBuffer;
@@ -1017,7 +1022,8 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 		HddStats::overheadRead(readBytes);
 
 		const uint8_t* crcBuffPointer = blockbuffer;
-		uint32_t crc = get32bit(&crcBuffPointer);
+		uint32_t crc;
+		get32bit(&crcBuffPointer, crc);
 
 		if (crc != mycrc32(0, dataInBuffer, SFSBLOCKSIZE)) {
 			errno = 0; // set anything to errno
@@ -1224,7 +1230,8 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 
 			if (dupDisk->isZonedDevice()) {
 				const uint8_t *dupCrcBlock = dupCrcData + kCrcSize * block;
-				uint32_t crc = get32bit(&dupCrcBlock);
+				uint32_t crc;
+				get32bit(&dupCrcBlock, crc);
 				if (dupDisk->writeChunkBlock(
 				        dupChunk, dupChunk->version(), block, 0, SFSBLOCKSIZE,
 				        crc, dupCrcData, blockBuffer) == SAUNAFS_STATUS_OK) {
@@ -1722,7 +1729,8 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 
 				if (dupDisk->isZonedDevice()) {
 					const uint8_t *dupCrcBlock = crcDataOriginal + kCrcSize * block;
-					uint32_t crc = get32bit(&dupCrcBlock);
+					uint32_t crc;
+					get32bit(&dupCrcBlock, crc);
 
 					if (dupDisk->writeChunkBlock(dupChunk, dupChunk->version(),
 					                             block, 0, SFSBLOCKSIZE, crc,
@@ -1809,7 +1817,8 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 
 					if (dupDisk->isZonedDevice()) {
 						const uint8_t *dupCrcBlock = crcDataOriginal + kCrcSize * block;
-						uint32_t crc = get32bit(&dupCrcBlock);
+						uint32_t crc;
+						get32bit(&dupCrcBlock, crc);
 
 						if (dupDisk->writeChunkBlock(
 						        dupChunk, dupChunk->version(), block, 0,
@@ -1871,7 +1880,8 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 
 					if (dupDisk->isZonedDevice()) {
 						const uint8_t *dupCrcBlock = crcDataOriginal + kCrcSize * block;
-						uint32_t crc = get32bit(&dupCrcBlock);
+						uint32_t crc;
+						get32bit(&dupCrcBlock, crc);
 
 						if (dupDisk->writeChunkBlock(
 						        dupChunk, dupChunk->version(), block, 0,

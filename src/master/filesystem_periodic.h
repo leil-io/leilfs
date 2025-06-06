@@ -23,17 +23,18 @@
 #include "common/platform.h"
 
 #include "common/defective_file_info.h"
+#include "common/type_defs.h"
 
 inline uint32_t gEmptyReservedFilesPeriod = 0;
 
-std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_flags, uint64_t max_entries,
-	                                                   uint64_t &entry_index);
-
+std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_flags,
+                                                           uint64_t max_entries,
+                                                           uint64_t &entry_index);
 
 void fs_read_periodic_config_file();
 void fs_periodic_master_init();
 
-void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, uint32_t &files, uint32_t &ugfiles,
-			uint32_t &mfiles, uint32_t &chunks, uint32_t &ugchunks, uint32_t &mchunks,
-			std::string &report);
-void fsnodes_periodic_remove(uint32_t inode);
+void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, inode_t &ugfiles,
+                     inode_t &mfiles, uint32_t &chunks, uint32_t &ugchunks, uint32_t &mchunks,
+                     std::string &report);
+void fsnodes_periodic_remove(inode_t inode);

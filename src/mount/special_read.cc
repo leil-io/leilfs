@@ -26,20 +26,17 @@
 
 using namespace SaunaClient;
 
-static void printDebugReadInfo(const Context &ctx, Inode ino, uint64_t size, uint64_t off) {
-	oplog_printf(ctx, "read (%u,%" PRIu64 ",%" PRIu64 ") ...",
-	             (unsigned int)ino, size, off);
+static void printDebugReadInfo(const Context &ctx, inode_t ino, uint64_t size, uint64_t off) {
+	oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 ") ...", ino, size, off);
 }
 
-static void printReadOplogOk(const Context &ctx, Inode ino, uint64_t size, uint64_t off,
+static void printReadOplogOk(const Context &ctx, inode_t ino, uint64_t size, uint64_t off,
 	                            unsigned long int size_read) {
-	oplog_printf(ctx, "read (%u,%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-	            (unsigned int)ino, size, off, size_read);
+	oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)", ino, size, off, size_read);
 }
 
-static void printReadOplogNoData(const Context &ctx, Inode ino, uint64_t size, uint64_t off) {
-	oplog_printf(ctx, "read (%u,%" PRIu64 ",%" PRIu64 "): OK (no data)",
-	            (unsigned int)ino, size, off);
+static void printReadOplogNoData(const Context &ctx, inode_t ino, uint64_t size, uint64_t off) {
+	oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (no data)", ino, size, off);
 }
 
 namespace InodeMasterInfo {
@@ -278,7 +275,7 @@ static const std::array<std::function<std::vector<uint8_t>
 	 &InodeMasterInfo::read         //0xFU
 }};
 
-std::vector<uint8_t> special_read(Inode ino, const Context &ctx, size_t size, off_t off,
+std::vector<uint8_t> special_read(inode_t ino, const Context &ctx, size_t size, off_t off,
 	                          FileInfo *fi, int debug_mode) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {

@@ -24,7 +24,7 @@
 
 #include "master/filesystem_metadata.h"
 
-uint32_t fsnodes_get_next_id(uint32_t ts, uint32_t req_inode) {
+inode_t fsnodes_get_next_id(uint32_t ts, inode_t req_inode) {
 	if(req_inode == 0 || !gMetadata->inode_pool.markAsAcquired(req_inode,ts)) {
 		req_inode = gMetadata->inode_pool.acquire(ts);
 	}
@@ -38,7 +38,7 @@ uint32_t fsnodes_get_next_id(uint32_t ts, uint32_t req_inode) {
 	return req_inode;
 }
 
-uint8_t fs_apply_freeinodes(uint32_t /*ts*/, uint32_t /*freeinodes*/) {
+uint8_t fs_apply_freeinodes(uint32_t /*ts*/, inode_t /*freeinodes*/) {
 	// left for compatibility when reading from old metadata change log
 	gMetadata->metaversion++;
 	return 0;

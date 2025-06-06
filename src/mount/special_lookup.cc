@@ -26,7 +26,7 @@
 using namespace SaunaClient;
 
 namespace InodeMasterInfo {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                           char attrstr[256]) {
 	EntryParam e;
 	e.ino = inode_;
@@ -35,11 +35,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: MASTERINFO): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: MASTERINFO): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -47,7 +47,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodeMasterInfo
 
 namespace InodeStats {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                      char attrstr[256]) {
 	EntryParam e;
 	e.ino = inode_;
@@ -56,11 +56,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: STATS): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: STATS): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -68,7 +68,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 }  //InodeStats
 
 namespace InodeOplog {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                      char attrstr[256]) {
 #ifdef _WIN32
 	(void) ctx;
@@ -84,11 +84,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
 #ifndef _WIN32
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: OPLOG): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: OPLOG): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 #endif
@@ -97,7 +97,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodeOplog
 
 namespace InodeOphistory {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                          char attrstr[256]) {
 	EntryParam e;
 	e.ino = inode_;
@@ -106,11 +106,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: OPHISTORY): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: OPHISTORY): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -118,7 +118,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodeOphistory
 
 namespace InodeTweaks {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                       char attrstr[256]) {
 	EntryParam e;
 	e.ino = inode_;
@@ -127,11 +127,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: TWEAKS_FILE): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: TWEAKS_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -139,7 +139,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodeTweaks
 
 namespace InodeFileByInode {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                            char attrstr[256]) {
 	EntryParam e;
 	e.ino = inode_;
@@ -148,11 +148,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: FILE_BY_INODE_FILE): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: FILE_BY_INODE_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -160,7 +160,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodeFileByInode
 
 namespace InodePathByInode {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                            char attrstr[256]) {
 	std::unique_lock<std::mutex> lock(inodePathInfo.mtx);
 	EntryParam e;
@@ -170,11 +170,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: PATH_BY_INODE_FILE): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: PATH_BY_INODE_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -182,7 +182,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodePathByInode
 
 namespace InodeMountInfo {
-static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
+static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                            char attrstr[256]) {
 	std::lock_guard lock(gMountInfoMtx);
 	EntryParam e;
@@ -192,11 +192,11 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 	attr_to_stat(inode_, attr, &e.attr);
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
-	oplog_printf(ctx, "lookup (%lu,%s) (internal node: MOUNT_INFO): OK (%.1f,%lu,%.1f,%s)",
-	            (unsigned long int)parent,
+	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: MOUNT_INFO): OK (%.1f,%" PRIiNode ",%.1f,%s)",
+	            parent,
 	            name,
 	            e.entry_timeout,
-	            (unsigned long int)e.ino,
+	            e.ino,
 	            e.attr_timeout,
 	            attrstr);
 	return e;
@@ -204,7 +204,7 @@ static EntryParam lookup(const Context &ctx, Inode parent, const char *name,
 } // InodeMountInfo
 
 static const std::array<std::function<EntryParam
-	(const Context&, Inode, const char*, char[256])>, 16> funcs = {{
+	(const Context&, inode_t, const char*, char[256])>, 16> funcs = {{
 	 &InodeStats::lookup,           //0x0U
 	 &InodeOplog::lookup,           //0x1U
 	 &InodeOphistory::lookup,       //0x2U
@@ -223,7 +223,7 @@ static const std::array<std::function<EntryParam
 	 &InodeMasterInfo::lookup       //0xFU
 }};
 
-EntryParam special_lookup(Inode ino, const Context &ctx, Inode parent, const char *name,
+EntryParam special_lookup(inode_t ino, const Context &ctx, inode_t parent, const char *name,
 	                  char attrstr[256]) {
 	auto func = funcs[ino - SPECIAL_INODE_BASE];
 	if (!func) {

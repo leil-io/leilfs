@@ -30,6 +30,7 @@
 #include "common/attributes.h"
 #include "common/massert.h"
 #include "common/slice_traits.h"
+#include "common/type_defs.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
 #include "master/filesystem_checksum.h"
@@ -185,7 +186,7 @@ static uint64_t file_realsize(FSNodeFile *node, uint32_t nonzero_chunks, uint64_
 			}
 			full_size += size;
 		} else {
-			safs_pretty_syslog(LOG_ERR, "file_realsize: inode %" PRIu32 " has unknown goal 0x%" PRIx8, node->id,
+			safs_pretty_syslog(LOG_ERR, "file_realsize: inode %" PRIiNode " has unknown goal 0x%" PRIx8, node->id,
 			       node->goal);
 			return 0;
 		}
@@ -528,12 +529,10 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 
 	auto it = std::find_if(
 	    node->parent.begin(), node->parent.end(),
-	    [parent,
-	     currentName](const std::pair<uint32_t, const hstorage::Handle *> &p) {
+	    [parent, currentName](const std::pair<inode_t, const hstorage::Handle *> &p) {
 		    return p.first == parent->id &&
-		           (parent->case_insensitive
-		                ? HString::hstringToLowerCase(p.second->get())
-		                : p.second->get()) == currentName;
+		           (parent->case_insensitive ? HString::hstringToLowerCase(p.second->get())
+		                                     : p.second->get()) == currentName;
 	    });
 
 	if (it != node->parent.end()) {
@@ -582,9 +581,9 @@ void fsnodes_link(uint32_t ts, FSNodeDirectory *parent, FSNode *child, const HSt
 	}
 }
 
-FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString &name,
-			uint8_t type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
-			uint8_t copysgid, AclInheritance inheritacl, uint32_t req_inode) {
+FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString &name, uint8_t type,
+                            uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
+                            uint8_t copysgid, AclInheritance inheritacl, inode_t req_inode) {
 	assert(type != FSNode::kTrash);
 
 	FSNode *node = FSNode::create(type);
@@ -751,11 +750,11 @@ static inline uint32_t getdetachedsize(const T &data) {
 	return result;
 }
 
-static inline uint32_t getdetacheddata_getNodeId(const TrashPathContainer::key_type &key) {
+static inline inode_t getdetacheddata_getNodeId(const TrashPathContainer::key_type &key) {
 	return key.id;
 }
 
-static inline uint32_t getdetacheddata_getNodeId(const uint32_t &key) {
+static inline inode_t getdetacheddata_getNodeId(const inode_t &key) {
 	return key;
 }
 
@@ -812,7 +811,7 @@ static inline void getdetacheddata(const T &data, uint8_t *dbuff) {
 			}
 		}
 		count++;
-		put32bit(&dbuff, getdetacheddata_getNodeId(entry.first));
+		putINode(&dbuff, getdetacheddata_getNodeId(entry.first));
 	}
 }
 
@@ -866,17 +865,16 @@ uint32_t fsnodes_getdirsize(const FSNodeDirectory *p, uint8_t withattr) {
 	return result;
 }
 
-void fsnodes_getdirdata(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid,
-			uint32_t agid, uint8_t sesflags, FSNodeDirectory *p, uint8_t *dbuff,
-			uint8_t withattr) {
+void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+                        uint8_t sesflags, FSNodeDirectory *p, uint8_t *dbuff, uint8_t withattr) {
 	// '.' - self
 	dbuff[0] = 1;
 	dbuff[1] = '.';
 	dbuff += 2;
 	if (p->id != rootinode) {
-		put32bit(&dbuff, p->id);
+		putINode(&dbuff, p->id);
 	} else {
-		put32bit(&dbuff, SPECIAL_INODE_ROOT);
+		putINode(&dbuff, SPECIAL_INODE_ROOT);
 	}
 	Attributes attr;
 	if (withattr) {
@@ -892,7 +890,7 @@ void fsnodes_getdirdata(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t
 	dbuff[2] = '.';
 	dbuff += 3;
 	if (p->id == rootinode) {  // root node should returns self as its parent
-		put32bit(&dbuff, SPECIAL_INODE_ROOT);
+		putINode(&dbuff, SPECIAL_INODE_ROOT);
 		if (withattr) {
 			fsnodes_fill_attr(p, p, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(dbuff, attr.data(), attr.size());
@@ -902,9 +900,9 @@ void fsnodes_getdirdata(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t
 		}
 	} else {
 		if (!p->parent.empty() && p->parent[0].first != rootinode) {
-			put32bit(&dbuff, p->parent[0].first);
+			putINode(&dbuff, p->parent[0].first);
 		} else {
-			put32bit(&dbuff, SPECIAL_INODE_ROOT);
+			putINode(&dbuff, SPECIAL_INODE_ROOT);
 		}
 		if (withattr) {
 			if (!p->parent.empty()) {
@@ -943,7 +941,7 @@ void fsnodes_getdirdata(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t
 		dbuff++;
 		memcpy(dbuff, name.c_str(), name.length());
 		dbuff += name.length();
-		put32bit(&dbuff, entry.second->id);
+		putINode(&dbuff, entry.second->id);
 		if (withattr) {
 			fsnodes_fill_attr(entry.second, p, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(dbuff, attr.data(), attr.size());
@@ -962,11 +960,11 @@ namespace legacy {
  * This implementation was not removed so as to support pre-3.13 client (sfsmount) using
  * old SAU_FUSE_GETDIR packet version (0 = kLegacyClient).
  */
-void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-		uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
-		uint64_t number_of_entries, std::vector<legacy::DirectoryEntry> &dir_entries) {
+void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+                    uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
+                    uint64_t number_of_entries, std::vector<legacy::DirectoryEntry> &dir_entries) {
 	FSNodeDirectory *parent;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 
 	if (first_entry == 0 && number_of_entries >= 1) {
@@ -1040,9 +1038,9 @@ void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t aui
  * \param number_of_entries number of dirents to get
  * \param[out] container into which dirents are inserted
  */
-void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-		uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
-		uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) {
+void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+                    uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
+                    uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) {
 	uint64_t const SIGN_BIT_64(1ULL << 63ULL);
 	sassert(!(first_entry & SIGN_BIT_64));
 	// special entryIndex values
@@ -1051,7 +1049,7 @@ void fsnodes_getdir(uint32_t rootinode, uint32_t uid, uint32_t gid, uint32_t aui
 	static constexpr uint64_t kUnusedEntryIndex = (static_cast<uint64_t>(2) << hstorage::Handle::kHashShift);
 
 	FSNodeDirectory *parent;
-	uint32_t inode;
+	inode_t inode;
 	Attributes attr;
 
 	if (first_entry == kDotEntryIndex && number_of_entries >= 1) {
@@ -1186,7 +1184,7 @@ uint8_t fsnodes_appendchunks(uint32_t ts, FSNodeFile *dst, FSNodeFile *src) {
 		auto chunkid = src->chunks[i];
 		if (chunkid > 0) {
 			if (chunk_add_file(chunkid, dst->goal) != SAUNAFS_STATUS_OK) {
-				safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64 " not found (inode: %" PRIu32
+				safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64 " not found (inode: %" PRIiNode
 				                " ; index: %" PRIu32 ")",
 				       chunkid, src->id, i);
 			}
@@ -1332,7 +1330,7 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 			if (chunkid > 0) {
 				if (chunk_delete_file(chunkid, toremove->goal) != SAUNAFS_STATUS_OK) {
 					safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64
-					                " not found (inode: %" PRIu32
+					                " not found (inode: %" PRIiNode
 					                " ; index: %" PRIu32 ")",
 					       chunkid, toremove->id, i);
 				}
@@ -1543,8 +1541,8 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 				assert(metadataserver::isMaster());
 #endif
 
-				fs_changelog(ts, "CREATE(%" PRIu32 ",%s,%c,%d,%" PRIu32 ",%" PRIu32
-				                 ",%" PRIu32 "):%" PRIu32,
+				fs_changelog(ts, "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32
+				                 ",%" PRIu32 "):%" PRIiNode,
 				             p->id, fsnodes_escape_name(name).c_str(),
 				             FSNode::kDirectory, n->mode & 07777, (uint32_t)0,
 				             (uint32_t)0, (uint32_t)0, n->id);
@@ -1560,10 +1558,10 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 #ifndef METARESTORE
 
 void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
-		GoalStatistics &dgtab) {
+                               GoalStatistics &dgtab) {
 	if (node->type == FSNode::kFile || node->type == FSNode::kTrash || node->type == FSNode::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
-			safs_pretty_syslog(LOG_WARNING, "file inode %" PRIu32 ": unknown goal !!! - fixing",
+			safs_pretty_syslog(LOG_WARNING, "file inode %" PRIiNode ": unknown goal !!! - fixing",
 			       node->id);
 			fsnodes_changefilegoal(static_cast<FSNodeFile*>(node), DEFAULT_GOAL);
 		}
@@ -1571,7 +1569,7 @@ void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgta
 	} else if (node->type == FSNode::kDirectory) {
 		if (!GoalId::isValid(node->goal)) {
 			safs_pretty_syslog(LOG_WARNING,
-			       "directory inode %" PRIu32 ": unknown goal !!! - fixing", node->id);
+			       "directory inode %" PRIiNode ": unknown goal !!! - fixing", node->id);
 			node->goal = DEFAULT_GOAL;
 		}
 		dgtab[node->goal]++;
@@ -1619,8 +1617,7 @@ void fsnodes_geteattr_recursive(FSNode *node, uint8_t gmode, uint32_t feattrtab[
 #endif
 
 void fsnodes_setgoal_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t goal, uint8_t smode,
-				uint32_t *sinodes, uint32_t *ncinodes, uint32_t *nsinodes) {
-
+                               inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) {
 	if (node->type == FSNode::kFile || node->type == FSNode::kDirectory || node->type == FSNode::kTrash ||
 	    node->type == FSNode::kReserved) {
 		if ((node->mode & (EATTR_NOOWNER << 12)) == 0 && uid != 0 && node->uid != uid) {
@@ -1650,8 +1647,8 @@ void fsnodes_setgoal_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t 
 }
 
 void fsnodes_settrashtime_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint32_t trashtime,
-					uint8_t smode, uint32_t *sinodes, uint32_t *ncinodes,
-					uint32_t *nsinodes) {
+                                    uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
+                                    inode_t *nsinodes) {
 	uint8_t set;
 
 	if (node->type == FSNode::kFile || node->type == FSNode::kDirectory || node->type == FSNode::kTrash ||
@@ -1704,8 +1701,8 @@ void fsnodes_settrashtime_recursive(FSNode *node, uint32_t ts, uint32_t uid, uin
 }
 
 void fsnodes_seteattr_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t eattr,
-				uint8_t smode, uint32_t *sinodes, uint32_t *ncinodes,
-				uint32_t *nsinodes) {
+                                uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
+                                inode_t *nsinodes) {
 	uint8_t neweattr, seattr;
 
 	if ((node->mode & (EATTR_NOOWNER << 12)) == 0 && uid != 0 && node->uid != uid) {
@@ -1947,7 +1944,8 @@ uint8_t verify_session(const FsContext &context, OperationMode operationMode,
  * Can return a reserved node or a node from trash
  */
 uint8_t fsnodes_get_node_for_operation(const FsContext &context, ExpectedNodeType expectedNodeType,
-					uint8_t modemask, uint32_t inode, FSNode **ret, FSNodeDirectory **ret_rn) {
+                                       uint8_t modemask, inode_t inode, FSNode **ret,
+                                       FSNodeDirectory **ret_rn) {
 	FSNode *p;
 	FSNodeDirectory *rn;
 	if (!context.hasSessionData()) {

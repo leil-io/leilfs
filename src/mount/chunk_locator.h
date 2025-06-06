@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "common/chunk_type_with_address.h"
+#include "common/type_defs.h"
 #include "slogger/slogger.h"
 
 struct ChunkLocationInfo {
@@ -67,11 +68,11 @@ public:
 	ReadChunkLocator(const ReadChunkLocator&) = delete;
 	ReadChunkLocator() {}
 
-	std::shared_ptr<const ChunkLocationInfo> locateChunk(uint32_t inode, uint32_t index);
-	void invalidateCache(uint32_t inode, uint32_t index);
+	std::shared_ptr<const ChunkLocationInfo> locateChunk(inode_t inode, uint32_t index);
+	void invalidateCache(inode_t inode, uint32_t index);
 
 private:
-	uint32_t inode_;
+	inode_t inode_;
 	uint32_t index_;
 
 	std::shared_ptr<const ChunkLocationInfo> cache_ = nullptr;
@@ -89,12 +90,12 @@ public:
 			}
 		} catch (Exception& ex) {
 			safs_pretty_syslog(LOG_WARNING,
-					"unlocking chunk error, inode: %" PRIu32 ", index: %" PRIu32 " - %s",
+					"unlocking chunk error, inode: %" PRIiNode ", index: %" PRIu32 " - %s",
 					inode_, index_, ex.what());
 		}
 	}
 
-	virtual void locateAndLockChunk(uint32_t inode, uint32_t index);
+	virtual void locateAndLockChunk(inode_t inode, uint32_t index);
 	virtual void unlockChunk();
 
 	inline uint64_t fileLength() const {
@@ -118,13 +119,13 @@ public:
 	}
 
 protected:
-	WriteChunkLocator(uint32_t inode, uint32_t index, uint32_t lockId)
+	WriteChunkLocator(inode_t inode, uint32_t index, uint32_t lockId)
 			: inode_(inode),
 			  index_(index),
 			  lockId_(lockId) {
 	}
 
-	uint32_t inode_ = 0;
+	inode_t inode_ = 0;
 	uint32_t index_ = 0;
 	uint32_t lockId_ = 0;
 	ChunkLocationInfo locationInfo_;
@@ -134,10 +135,10 @@ protected:
 class TruncateWriteChunkLocator : public WriteChunkLocator {
 public:
 	// Locator is created for single operation
-	explicit TruncateWriteChunkLocator(uint32_t inode, uint32_t index, uint32_t lockId,
+	explicit TruncateWriteChunkLocator(inode_t inode, uint32_t index, uint32_t lockId,
 	                                   uint64_t targetSize)
-	    : WriteChunkLocator(inode, index, lockId) {
-		targetSize_ = targetSize;
+		: WriteChunkLocator(inode, index, lockId) {
+			targetSize_ = targetSize;
 	}
 
 	~TruncateWriteChunkLocator() {

@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 #include "common/datapack.h"
 #include "errors/saunafs_error_codes.h"
@@ -40,10 +41,11 @@ static void file_repair_usage() {
 }
 
 static int file_repair(const char *fname, uint8_t correct_only_flag) {
-	uint8_t reqbuff[25], *wptr, *buff;
-	const uint8_t *rptr;
-	uint32_t cmd, leng, inode;
+	uint32_t cmd, leng;
+	inode_t inode;
+	uint32_t msgid{0};
 	uint32_t notchanged, erased, repaired;
+
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, true);
 	if (fd < 0) {
@@ -53,68 +55,91 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 	uint32_t uid = getUId();
 	uint32_t gid = getGId();
 
+	constexpr uint32_t kRepairPayload =
+	    sizeof(msgid) + sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(correct_only_flag);
+	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kRepairPayload) + kRepairPayload;
+	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
+	const uint8_t *rptr;
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_REPAIR);
-	put32bit(&wptr, 17);
-	put32bit(&wptr, 0);
-	put32bit(&wptr, inode);
+	put32bit(&wptr, kRepairPayload);
+	put32bit(&wptr, msgid);
+	putINode(&wptr, inode);
 	put32bit(&wptr, uid);
 	put32bit(&wptr, gid);
 	put8bit(&wptr, correct_only_flag);
-	if (tcpwrite(fd, reqbuff, 25) != 25) {
+
+	// send request to master
+	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
 		printf("%s: master query: send error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
-	if (tcpread(fd, reqbuff, 8) != 8) {
+
+	// read the first part of the answer
+	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
 		printf("%s: master query: receive error\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
+
 	rptr = reqbuff;
-	cmd = get32bit(&rptr);
-	leng = get32bit(&rptr);
+	get32bit(&rptr, cmd);
+	get32bit(&rptr, leng);
+
 	if (cmd != MATOCL_FUSE_REPAIR) {
 		printf("%s: master query: wrong answer (type)\n", fname);
 		close_master_conn(1);
 		return -1;
 	}
+
 	buff = (uint8_t *)malloc(leng);
+
 	if (tcpread(fd, buff, leng) != (int32_t)leng) {
 		printf("%s: master query: receive error\n", fname);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
+
 	rptr = buff;
-	cmd = get32bit(&rptr);  // queryid
-	if (cmd != 0) {
+	get32bit(&rptr, msgid);  // queryid
+
+	if (msgid != 0) {
 		printf("%s: master query: wrong answer (queryid)\n", fname);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
-	leng -= 4;
-	if (leng == 1) {
+
+	if (leng - sizeof(msgid) == 1) {  // an error code was returned
 		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
 		free(buff);
 		close_master_conn(1);
 		return -1;
-	} else if (leng != 12) {
+	}
+
+	if (leng != sizeof(msgid) + 3 * sizeof(uint32_t)) {
 		printf("%s: master query: wrong answer (leng)\n", fname);
 		free(buff);
 		close_master_conn(1);
 		return -1;
 	}
-	close_master_conn(0);
-	notchanged = get32bit(&rptr);
-	erased = get32bit(&rptr);
-	repaired = get32bit(&rptr);
+
+	close_master_conn(0);  // not needed anymore
+
+	get32bit(&rptr, notchanged);
+	get32bit(&rptr, erased);
+	get32bit(&rptr, repaired);
+
 	free(buff);
+
 	printf("%s:\n", fname);
 	print_number(" chunks not changed: ", "\n", notchanged, 1, 0, 1);
 	print_number(" chunks erased:      ", "\n", erased, 1, 0, 1);
 	print_number(" chunks repaired:    ", "\n", repaired, 1, 0, 1);
+
 	return 0;
 }
 

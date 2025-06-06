@@ -111,7 +111,7 @@ private:
 namespace SaunaClient {
 void stats_inc(uint8_t id);
 
-void attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf);
+void attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf);
 
 void makeattrstr(char *buff, uint32_t size, struct stat *stbuf);
 } // SaunaClient

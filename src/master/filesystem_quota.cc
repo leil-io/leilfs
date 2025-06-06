@@ -45,7 +45,7 @@ bool decodeChar(const char *keys, const std::vector<T> values, char key, T &valu
 
 #ifndef METARESTORE
 /*! \brief Remove entries that are not descendants of \param root_inode. */
-static void fs_remove_invisible_quota_entries(uint32_t root_inode, std::vector<QuotaEntry> &results) {
+static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<QuotaEntry> &results) {
 	if (root_inode == SPECIAL_INODE_ROOT) {
 		return;
 	}
@@ -155,7 +155,7 @@ uint8_t fs_quota_get(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-static void fsnodes_getpath(uint32_t root_inode, FSNode *node, std::string &ret) {
+static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) {
 	std::string::size_type size;
 	FSNode *p;
 
@@ -248,17 +248,17 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 		                              entry.entryKey.resource, entry.limit);
 		gMetadata->quota_database.removeEmpty(owner.ownerType, owner.ownerId);
 		gMetadata->quota_checksum = gMetadata->quota_database.checksum();
-		fs_changelog(ts, "SETQUOTA(%c,%c,%c,%" PRIu32 ",%" PRIu64 ")",
+		fs_changelog(ts, "SETQUOTA(%c,%c,%c,%" PRIiNode ",%" PRIu64 ")",
 		             rigor_name[(int)entry.entryKey.rigor],
 		             resource_name[(int)entry.entryKey.resource], owner_name[(int)owner.ownerType],
-		             uint32_t{owner.ownerId}, uint64_t{entry.limit});
+		             inode_t{owner.ownerId}, uint64_t{entry.limit});
 	}
 	return SAUNAFS_STATUS_OK;
 }
 #endif
 
-uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, uint32_t owner_id,
-		uint64_t limit) {
+uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, inode_t owner_id,
+                          uint64_t limit) {
 	QuotaRigor quotaRigor = QuotaRigor::kSoft;
 	QuotaResource quotaResource = QuotaResource::kSize;
 	QuotaOwnerType quotaOwnerType = QuotaOwnerType::kUser;

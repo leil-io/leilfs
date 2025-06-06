@@ -63,7 +63,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseMknod, SAU_MATOCL_FUSE_MKNOD, kResponsePacketVersion,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		Attributes, attributes)
 
 // SAU_MATOCL_FUSE_MKDIR
@@ -78,7 +78,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseMkdir, SAU_MATOCL_FUSE_MKDIR, kResponsePacketVersion,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		Attributes, attributes)
 
 // SAU_MATOCL_FUSE_DELETE_ACL
@@ -191,8 +191,8 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(FuseGetGoalStats,
 		std::string, goalName,
-		uint32_t, files,
-		uint32_t, directories);
+		inode_t, files,
+		inode_t, directories);
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseGetGoal, SAU_MATOCL_FUSE_GETGOAL, kResponsePacketVersion,
@@ -211,9 +211,9 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseSetGoal, SAU_MATOCL_FUSE_SETGOAL, kResponsePacketVersion,
 		uint32_t, messageId,
-		uint32_t, changed,
-		uint32_t, notChanged,
-		uint32_t, notPermitted)
+		inode_t, changed,
+		inode_t, notChanged,
+		inode_t, notPermitted)
 
 // SAU_MATOCL_LIST_GOALS
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
@@ -393,7 +393,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, wholePathLookup, SAU_MATOCL_WHOLE_PATH_LOOKUP, kResponsePacketVersion,
 		uint32_t, messageId,
-		uint32_t, inode,
+		inode_t, inode,
 		Attributes, attr)
 
 // SAU_MATOCL_FULL_PATH_BY_INODE

@@ -34,9 +34,9 @@ public:
 	  kNoAction
 	};
 
-	using StatsArray = std::array<uint32_t, kStatsSize>;
+	using StatsArray = std::array<inode_t, kStatsSize>;
 
-	SetTrashtimeTask(std::vector<uint32_t> inode_list, uint32_t uid, uint32_t trashtime, uint8_t smode,
+	SetTrashtimeTask(std::vector<inode_t> inode_list, uint32_t uid, uint32_t trashtime, uint8_t smode,
 		         const std::shared_ptr<StatsArray> &settrashtime_stats) :
 		         inode_list_(inode_list), uid_(uid), trashtime_(trashtime), smode_(smode),
 		         stats_(settrashtime_stats) {
@@ -70,8 +70,8 @@ public:
 	uint8_t setTrashtime(FSNode *node, uint32_t ts);
 
 private:
-	std::vector<uint32_t> inode_list_;
-	std::vector<uint32_t>::iterator current_inode_;
+	std::vector<inode_t> inode_list_;
+	std::vector<inode_t>::iterator current_inode_;
 
 	uint32_t uid_;
 	uint32_t trashtime_;

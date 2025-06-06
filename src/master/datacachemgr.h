@@ -24,8 +24,10 @@
 
 #include <cstdint>
 
-int dcm_open(uint32_t inode,uint32_t sessionid);
-void dcm_access(uint32_t inode,uint32_t sessionid);
-void dcm_modify(uint32_t inode,uint32_t sessionid);
+#include "common/type_defs.h"
+
+int dcm_open(inode_t inode,uint32_t sessionid);
+void dcm_access(inode_t inode,uint32_t sessionid);
+void dcm_modify(inode_t inode,uint32_t sessionid);
 int dcm_init(void);
 void dcm_clear();

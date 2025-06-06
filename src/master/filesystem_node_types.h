@@ -28,6 +28,7 @@
 
 #include "common/goal.h"
 #include "common/compact_vector.h"
+#include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 
 #if defined(SAUNAFS_HAVE_64BIT_JUDY) &&               \
@@ -66,13 +67,14 @@ enum class OperationMode { kReadWrite, kReadOnly };
 enum class ExpectedNodeType { kFile, kDirectory, kNotDirectory, kFileOrDirectory, kAny };
 
 using TrashtimeMap = std::unordered_map<uint32_t, uint32_t>;
-using GoalStatistics = std::array<uint32_t, GoalId::kMax + 1>;
+using GoalStatistics = std::array<inode_t, GoalId::kMax + 1>;
+using ParentsCompactVector = compact_vector<std::pair<inode_t, const hstorage::Handle *>, uint32_t>;
 
 struct statsrecord {
-	uint32_t inodes;
-	uint32_t dirs;
-	uint32_t files;
-	uint32_t links;
+	inode_t inodes;
+	inode_t dirs;
+	inode_t files;
+	inode_t links;
 	uint32_t chunks;
 	uint64_t length;
 	uint64_t size;
@@ -104,7 +106,7 @@ struct FSNode {
 		kUnknown = TYPE_UNKNOWN
 	};
 
-	uint32_t id; /*!< Unique number identifying node. */
+	inode_t id; /*!< Unique number identifying node. */
 	uint32_t ctime; /*!< Change time. */
 	uint32_t mtime; /*!< Modification time. */
 	uint32_t atime; /*!< Access time. */
@@ -117,10 +119,8 @@ struct FSNode {
 	uint32_t gid; /*!< Group id. */
 	uint32_t trashtime; /*!< Trash time. */
 
-	compact_vector<std::pair<uint32_t, const hstorage::Handle *>, uint32_t>
-	    parent; /*!< Parent nodes ids + handles of entries of this node in those parents.
-	               To reduce memory usage ids are stored instead of pointers to
-	               FSNode. */
+	ParentsCompactVector parent; /*!< Parent nodes ids + handles of entries of this node in those
+	               parents. To reduce memory usage ids are stored instead of pointers to FSNode. */
 
 	FSNode   *next; /*!< Next field used for storing FSNode in hash map. */
 	uint64_t checksum; /*!< Node checksum. */
@@ -389,8 +389,11 @@ struct TrashPathKey {
 
 #ifdef WORDS_BIGENDIAN
 	uint32_t timestamp;
+	// inode_t id;
 	uint32_t id;
 #else
+	// TODO(Guillex): the type should be inode_t, but there is an issue with Judy
+	// inode_t id;
 	uint32_t id;
 	uint32_t timestamp;
 #endif
@@ -403,7 +406,7 @@ using TrashPathContainer = std::map<TrashPathKey, hstorage::Handle>;
 #endif
 
 #if defined(SAUNAFS_HAVE_64BIT_JUDY) && !defined(DISABLE_JUDY_FOR_RESERVEDPATHCONTAINER)
-using ReservedPathContainer = judy_map<uint32_t, hstorage::Handle>;
+using ReservedPathContainer = judy_map<inode_t, hstorage::Handle>;
 #else
-using ReservedPathContainer = std::map<uint32_t, hstorage::Handle>;
+using ReservedPathContainer = std::map<inode_t, hstorage::Handle>;
 #endif

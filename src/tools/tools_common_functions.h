@@ -31,6 +31,7 @@
 #include <sys/types.h>
 
 #include "common/sockets.h"
+#include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 
 #define tcpread(s, b, l) tcptoread(s, b, l, 10000)
@@ -53,7 +54,7 @@ int bsd_basename(const char *path, char *bname);
 int bsd_dirname(const char *path, char *bname);
 void dirname_inplace(char *path);
 
-int open_master_conn(const char *name, uint32_t *inode, mode_t *mode, bool needrwfs);
+int open_master_conn(const char *name, inode_t *inode, mode_t *mode, bool needrwfs);
 void close_master_conn(int err);
 void force_master_conn_close();
 

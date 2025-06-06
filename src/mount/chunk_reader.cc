@@ -37,7 +37,7 @@ ChunkReader::ChunkReader(ChunkConnector& connector, double bandwidth_overuse)
 		  chunkAlreadyRead(false) {
 }
 
-void ChunkReader::prepareReadingChunk(uint32_t inode, uint32_t index, bool force_prepare) {
+void ChunkReader::prepareReadingChunk(inode_t inode, uint32_t index, bool force_prepare) {
 	if (inode != inode_ || index != index_) {
 		// we moved to a new chunk
 		crcErrors_.clear();

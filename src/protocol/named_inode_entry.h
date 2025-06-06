@@ -23,7 +23,8 @@
 #include "common/platform.h"
 
 #include "common/serialization_macros.h"
+#include "common/type_defs.h"
 
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(NamedInodeEntry,
 	std::string, name,
-	uint32_t, inode);
+	inode_t, inode);

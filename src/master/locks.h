@@ -26,6 +26,7 @@
 
 #include "common/compact_vector.h"
 #include "common/memory_mapped_file.h"
+#include "common/type_defs.h"
 #include "protocol/lock_info.h"
 
 /*! \brief Representation of half-open interval [a, b) with it's type and owner */
@@ -228,7 +229,7 @@ public:
 	}
 
 	/*! \brief Tries to place a lock on inode */
-	bool apply(uint32_t inode, Lock lock, bool nonblocking = false);
+	bool apply(inode_t inode, Lock lock, bool nonblocking = false);
 
 	/*!
 	 * \brief Tries to place a read (shared) lock on inode
@@ -236,7 +237,7 @@ public:
 	 * \param end - end of locked range
 	 * \return true if operation succeeded
 	 */
-	bool sharedLock(uint32_t inode, uint64_t start, uint64_t end, Owner owner,
+	bool sharedLock(inode_t inode, uint64_t start, uint64_t end, Owner owner,
 			bool nonblocking = false);
 
 	/*!
@@ -245,14 +246,14 @@ public:
 	 * \param end - end of locked range
 	 * \return true if operation succeeded
 	 */
-	bool exclusiveLock(uint32_t inode, uint64_t start, uint64_t end, Owner owner,
+	bool exclusiveLock(inode_t inode, uint64_t start, uint64_t end, Owner owner,
 			bool nonblocking = false);
 
 	/*!
 	 * \brief Checks if any offending locks are active.
 	 * \return lock's address if it exists, nullptr otherwise.
 	 */
-	const Lock *findCollision(uint32_t inode, Lock::Type type, uint64_t start, uint64_t end,
+	const Lock *findCollision(inode_t inode, Lock::Type type, uint64_t start, uint64_t end,
 			Owner owner);
 
 	/*!
@@ -264,19 +265,19 @@ public:
 	 * \param end - end of unlocked range
 	 * \return true if operation succeeded
 	 */
-	bool unlock(uint32_t inode, uint64_t start, uint64_t end, Owner owner);
+	bool unlock(inode_t inode, uint64_t start, uint64_t end, Owner owner);
 
 	/*!
 	 * \brief Removes all locks from specified inode
 	 */
-	void unlock(uint32_t inode);
+	void unlock(inode_t inode);
 
 	/*! \brief Removes locks from specified inode.
 	 * \param pred unary predicate applied to its owner.
 	 * \return Range of a file affected by this unlock
 	 */
 	template<typename UnaryPredicate>
-	std::pair<uint64_t, uint64_t> unlock(uint32_t inode, UnaryPredicate pred);
+	std::pair<uint64_t, uint64_t> unlock(inode_t inode, UnaryPredicate pred);
 
 	/*! \brief Gather candidates from pending locks.
 	 * \param inode inode number
@@ -289,11 +290,11 @@ public:
 	 * This function effectively removes candidates from queue,
 	 * so they need to be reinserted after checking if they can be applied
 	 */
-	void gatherCandidates(uint32_t inode, uint64_t start, uint64_t end, LockQueue &result);
+	void gatherCandidates(inode_t inode, uint64_t start, uint64_t end, LockQueue &result);
 
 	/*! \brief Removes pending lock from queue using unary predicate applied to lock */
 	template<typename UnaryPredicate>
-	void removePending(uint32_t inode, UnaryPredicate pred);
+	void removePending(inode_t inode, UnaryPredicate pred);
 
 	/*! \brief Copy active locks to vector storage.
 	 * \param index index of first lock to copy
@@ -315,7 +316,7 @@ public:
 	 * \param count number of locks to copy
 	 * \param data output vector with copied locks
 	 */
-	void copyActiveToVector(uint32_t inode, int64_t index, int64_t count,
+	void copyActiveToVector(inode_t inode, int64_t index, int64_t count,
 	                        std::vector<safs_locks::Info> &data);
 
 	/*! \brief Copy pending locks for specific inode to vector storage.
@@ -324,7 +325,7 @@ public:
 	 * \param count number of locks to copy
 	 * \param data output vector with copied locks
 	 */
-	void copyPendingToVector(uint32_t inode, int64_t index, int64_t count,
+	void copyPendingToVector(inode_t inode, int64_t index, int64_t count,
 	                        std::vector<safs_locks::Info> &data);
 
 	/**
@@ -351,14 +352,14 @@ public:
 private:
 
 	/*! \brief Enqueues a lock */
-	void enqueue(uint32_t inode, Lock lock);
+	void enqueue(inode_t inode, Lock lock);
 
 	std::unordered_map<uint32_t, Locks> active_locks_;
 	std::unordered_map<uint32_t, LockQueue> pending_locks_;
 };
 
 template<typename UnaryPredicate>
-void FileLocks::removePending(uint32_t inode, UnaryPredicate pred) {
+void FileLocks::removePending(inode_t inode, UnaryPredicate pred) {
 	auto it = pending_locks_.find(inode);
 	if (it == pending_locks_.end()) {
 		return;
@@ -377,7 +378,7 @@ void FileLocks::removePending(uint32_t inode, UnaryPredicate pred) {
 }
 
 template<typename UnaryPredicate>
-std::pair<uint64_t, uint64_t> FileLocks::unlock(uint32_t inode, UnaryPredicate pred) {
+std::pair<uint64_t, uint64_t> FileLocks::unlock(inode_t inode, UnaryPredicate pred) {
 	uint64_t start = std::numeric_limits<uint64_t>::max();
 	uint64_t end = 0;
 	auto it = active_locks_.find(inode);

@@ -564,13 +564,13 @@ void matocsserv_got_chunk_checksum(matocsserventry *eptr,const uint8_t *data,uin
 	}
 	passert(data);
 	chunkid = get64bit(&data);
-	version = get32bit(&data);
+	get32bit(&data, version);
 	if (length==8+4+1) {
 		status = get8bit(&data);
 		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 " calculate checksum status: %s",
 		       eptr->servstrip, eptr->servport, chunkid, saunafs_error_string(status));
 	} else {
-		checksum = get32bit(&data);
+		get32bit(&data, checksum);
 		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 " calculate checksum: %08" PRIX32,eptr->servstrip,eptr->servport,chunkid,checksum);
 	}
 	(void)version;
@@ -1013,13 +1013,13 @@ void matocsserv_space(matocsserventry *eptr,const uint8_t *data,uint32_t length)
 	eptr->usedspace = get64bit(&data);
 	eptr->totalspace = get64bit(&data);
 	if (length==40) {
-		eptr->chunkscount = get32bit(&data);
+		get32bit(&data, eptr->chunkscount);
 	}
 	if (length>=32) {
 		eptr->todelusedspace = get64bit(&data);
 		eptr->todeltotalspace = get64bit(&data);
 		if (length==40) {
-			eptr->todelchunkscount = get32bit(&data);
+			get32bit(&data, eptr->todelchunkscount);
 		}
 	}
 }
@@ -1212,7 +1212,7 @@ void matocsserv_chunks_new(matocsserventry *eptr,const uint8_t *data,uint32_t le
 	}
 	for (i=0 ; i<length/12 ; i++) {
 		chunkid = get64bit(&data);
-		chunkversion = get32bit(&data);
+		get32bit(&data, chunkversion);
 		chunk_server_has_chunk(eptr, chunkid, chunkversion, slice_traits::standard::ChunkPartType());
 	}
 }

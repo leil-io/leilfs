@@ -38,40 +38,40 @@ extern "C" {
 
 int saunafs_fs_init(SaunaClient::FsInitParams &params);
 void saunafs_fs_term();
-int saunafs_lookup(SaunaClient::Context &ctx, SaunaClient::Inode parent,
-	                                 const char *name, SaunaClient::EntryParam &param);
-int saunafs_mknod(SaunaClient::Context &ctx, SaunaClient::Inode parent, const char *name,
-	           mode_t mode, dev_t rdev, SaunaClient::EntryParam &param);
-int saunafs_link(SaunaClient::Context ctx, SaunaClient::Inode inode, SaunaClient::Inode parent,
-	             const char *name, SaunaClient::EntryParam &param);
-int saunafs_symlink(SaunaClient::Context ctx, const char *link, SaunaClient::Inode parent,
-	             const char *name, SaunaClient::EntryParam &param);
-int saunafs_mkdir(SaunaClient::Context &ctx, SaunaClient::Inode parent,
-	                                 const char *name, mode_t mode, SaunaClient::EntryParam &entry_param);
-int saunafs_rmdir(SaunaClient::Context &ctx, SaunaClient::Inode parent, const char *name);
-int saunafs_unlink(SaunaClient::Context &ctx, SaunaClient::Inode parent, const char *name);
-int saunafs_undel(SaunaClient::Context &ctx, SaunaClient::Inode ino);
-int saunafs_open(SaunaClient::Context &ctx, SaunaClient::Inode ino, SaunaClient::FileInfo* fi);
-int saunafs_opendir(SaunaClient::Context &ctx, SaunaClient::Inode ino);
-int saunafs_release(SaunaClient::Inode ino, SaunaClient::FileInfo* fi);
-int saunafs_getattr(SaunaClient::Context &ctx, SaunaClient::Inode ino, SaunaClient::AttrReply &reply);
-int saunafs_releasedir(SaunaClient::Inode ino, uint64_t opendirSessionID);
-int saunafs_setattr(SaunaClient::Context &ctx, SaunaClient::Inode ino,
-	             struct stat *stbuf, int to_set, SaunaClient::AttrReply &attr_reply);
+int saunafs_lookup(SaunaClient::Context &ctx, inode_t parent, const char *name,
+                   SaunaClient::EntryParam &param);
+int saunafs_mknod(SaunaClient::Context &ctx, inode_t parent, const char *name, mode_t mode,
+                  dev_t rdev, SaunaClient::EntryParam &param);
+int saunafs_link(SaunaClient::Context ctx, inode_t inode, inode_t parent, const char *name,
+                 SaunaClient::EntryParam &param);
+int saunafs_symlink(SaunaClient::Context ctx, const char *link, inode_t parent, const char *name,
+                    SaunaClient::EntryParam &param);
+int saunafs_mkdir(SaunaClient::Context &ctx, inode_t parent, const char *name, mode_t mode,
+                  SaunaClient::EntryParam &entry_param);
+int saunafs_rmdir(SaunaClient::Context &ctx, inode_t parent, const char *name);
+int saunafs_unlink(SaunaClient::Context &ctx, inode_t parent, const char *name);
+int saunafs_undel(SaunaClient::Context &ctx, inode_t ino);
+int saunafs_open(SaunaClient::Context &ctx, inode_t ino, SaunaClient::FileInfo* fi);
+int saunafs_opendir(SaunaClient::Context &ctx, inode_t ino);
+int saunafs_release(inode_t ino, SaunaClient::FileInfo* fi);
+int saunafs_getattr(SaunaClient::Context &ctx, inode_t ino, SaunaClient::AttrReply &reply);
+int saunafs_releasedir(inode_t ino, uint64_t opendirSessionID);
+int saunafs_setattr(SaunaClient::Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
+                    SaunaClient::AttrReply &attr_reply);
 
-int saunafs_read(SaunaClient::Context &ctx, SaunaClient::Inode ino, size_t size,
+int saunafs_read(SaunaClient::Context &ctx, inode_t ino, size_t size,
                  off_t off, SaunaClient::FileInfo *fi, ReadCache::Result &result);
 
 int saunafs_read_special_inode(SaunaClient::Context &ctx,
-                               SaunaClient::Inode ino, size_t size, off_t off,
+                               inode_t ino, size_t size, off_t off,
                                SaunaClient::FileInfo *fi,
                                std::vector<uint8_t> &special_inode);
 
 int saunafs_readdir(SaunaClient::Context &ctx, uint64_t opendirSessionID,
-                    SaunaClient::Inode ino, off_t off, size_t max_entries,
+                    inode_t ino, off_t off, size_t max_entries,
                     std::vector<SaunaClient::DirEntry> &entries);
 
-int saunafs_readlink(SaunaClient::Context &ctx, SaunaClient::Inode ino, std::string &link);
+int saunafs_readlink(SaunaClient::Context &ctx, inode_t ino, std::string &link);
 
 int saunafs_readreserved(SaunaClient::Context &ctx,
                          SaunaClient::NamedInodeOffset off,
@@ -83,46 +83,44 @@ int saunafs_readtrash(SaunaClient::Context &ctx,
                       SaunaClient::NamedInodeOffset max_entries,
                       std::vector<NamedInodeEntry> &trash_entries);
 
-int saunafs_write(SaunaClient::Context &ctx, SaunaClient::Inode ino,
+int saunafs_write(SaunaClient::Context &ctx, inode_t ino,
                   const char *buf, size_t size, off_t off,
                   SaunaClient::FileInfo *fi, ssize_t &bytes_written);
 
-int saunafs_flush(SaunaClient::Context &ctx, SaunaClient::Inode ino, SaunaClient::FileInfo* fi);
-int saunafs_fsync(SaunaClient::Context &ctx, SaunaClient::Inode ino, int datasync, SaunaClient::FileInfo* fi);
-bool saunafs_isSpecialInode(SaunaClient::Inode ino);
+int saunafs_flush(SaunaClient::Context &ctx, inode_t ino, SaunaClient::FileInfo* fi);
+int saunafs_fsync(SaunaClient::Context &ctx, inode_t ino, int datasync, SaunaClient::FileInfo* fi);
+bool saunafs_isSpecialInode(inode_t ino);
 int saunafs_update_groups(SaunaClient::Context &ctx);
 
-int saunafs_makesnapshot(SaunaClient::Context &ctx, SaunaClient::Inode ino,
-                         SaunaClient::Inode dst_parent,
+int saunafs_makesnapshot(SaunaClient::Context &ctx, inode_t ino,
+                         inode_t dst_parent,
                          const std::string &dst_name, bool can_overwrite,
                          SaunaClient::JobId &job_id);
 
-int saunafs_getgoal(SaunaClient::Context &ctx, SaunaClient::Inode ino, std::string &goal);
-int saunafs_setgoal(SaunaClient::Context &ctx, SaunaClient::Inode ino,
-	             const std::string &goal_name, uint8_t smode);
-int saunafs_rename(SaunaClient::Context &ctx, SaunaClient::Inode parent, const char *name,
-	            SaunaClient::Inode newparent, const char *newname);
+int saunafs_getgoal(SaunaClient::Context &ctx, inode_t ino, std::string &goal);
+int saunafs_setgoal(SaunaClient::Context &ctx, inode_t ino, const std::string &goal_name,
+                    uint8_t smode);
+int saunafs_rename(SaunaClient::Context &ctx, inode_t parent, const char *name, inode_t newparent,
+                   const char *newname);
 int saunafs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
-	             uint64_t *reservedspace, uint32_t *inodes);
-int saunafs_setxattr(SaunaClient::Context ctx, SaunaClient::Inode ino, const char *name,
-	              const char *value, size_t size, int flags);
-int saunafs_getxattr(SaunaClient::Context ctx, SaunaClient::Inode ino, const char *name,
-	              size_t size, SaunaClient::XattrReply &xattr_reply);
-int saunafs_listxattr(SaunaClient::Context ctx, SaunaClient::Inode ino, size_t size,
-	               SaunaClient::XattrReply &xattr_reply);
-int saunafs_removexattr(SaunaClient::Context ctx, SaunaClient::Inode ino, const char *name);
+                   uint64_t *reservedspace, inode_t *inodes);
+int saunafs_setxattr(SaunaClient::Context ctx, inode_t ino, const char *name, const char *value,
+                     size_t size, int flags);
+int saunafs_getxattr(SaunaClient::Context ctx, inode_t ino, const char *name, size_t size,
+                     SaunaClient::XattrReply &xattr_reply);
+int saunafs_listxattr(SaunaClient::Context ctx, inode_t ino, size_t size,
+                      SaunaClient::XattrReply &xattr_reply);
+int saunafs_removexattr(SaunaClient::Context ctx, inode_t ino, const char *name);
 
-int saunafs_getchunksinfo(SaunaClient::Context &ctx, SaunaClient::Inode ino,
-                          uint32_t chunk_index, uint32_t chunk_count,
-                          std::vector<ChunkWithAddressAndLabel> &chunks);
+int saunafs_getchunksinfo(SaunaClient::Context &ctx, inode_t ino, uint32_t chunk_index,
+                          uint32_t chunk_count, std::vector<ChunkWithAddressAndLabel> &chunks);
 
 int saunafs_getchunkservers(std::vector<ChunkserverListEntry> &chunkservers);
 
-int saunafs_getlk(SaunaClient::Context &ctx, SaunaClient::Inode ino, SaunaClient::FileInfo *fi,
-	  safs_locks::FlockWrapper &lock);
+int saunafs_getlk(SaunaClient::Context &ctx, inode_t ino, SaunaClient::FileInfo *fi,
+                  safs_locks::FlockWrapper &lock);
 
-int saunafs_setlk_send(SaunaClient::Context &ctx, SaunaClient::Inode ino,
-                       SaunaClient::FileInfo *fi,
+int saunafs_setlk_send(SaunaClient::Context &ctx, inode_t ino, SaunaClient::FileInfo *fi,
                        safs_locks::FlockWrapper &lock, uint32_t &reqid);
 
 int saunafs_setlk_recv();

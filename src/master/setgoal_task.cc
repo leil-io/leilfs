@@ -29,7 +29,7 @@
 int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	assert(current_inode_ != inode_list_.end());
 
-	uint32_t inode = *current_inode_;
+	inode_t inode = *current_inode_;
 	++current_inode_;
 	FSNode *node = fsnodes_id_to_node(inode);
 	if (!node) {
@@ -41,7 +41,7 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	if (result != kNoAction) {
 		if (node->type == FSNode::kDirectory && (smode_ & SMODE_RMASK) &&
 		    !static_cast<const FSNodeDirectory *>(node)->entries.empty()) {
-			std::vector<uint32_t> inode_list;
+			std::vector<inode_t> inode_list;
 			inode_list.reserve(static_cast<const FSNodeDirectory *>(node)->entries.size());
 			for (const auto &entry : static_cast<const FSNodeDirectory *>(node)->entries) {
 				inode_list.push_back(entry.second->id);
@@ -55,7 +55,7 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		}
 		(*stats_)[result] += 1;
 		if (result == kChanged) {
-			fs_changelog(ts, "SETGOAL(%" PRIu32 ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 ")",
+			fs_changelog(ts, "SETGOAL(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 ")",
 			             inode, uid_, goal_, smode_);
 		}
 	}

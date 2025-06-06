@@ -29,6 +29,9 @@
  */
 
 #include <sys/stat.h>
+
+#include <common/type_defs.h>
+
 #ifdef _WIN32
 #include <cstdint>
 #ifdef stat
@@ -38,7 +41,7 @@
 
 struct stat32 {
     uint32_t st_dev;
-    uint32_t st_ino;
+    inode_t st_ino;
     uint16_t st_mode;
     uint32_t st_nlink;
     uint32_t st_uid;

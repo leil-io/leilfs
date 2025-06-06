@@ -30,7 +30,7 @@
 #define XATTRCHECKSUMSEED 29857986791741783ULL
 
 struct xattr_data_entry {
-	uint32_t inode;
+	inode_t inode;
 	uint8_t anleng;
 	uint32_t avleng;
 	uint8_t *attrname;
@@ -50,7 +50,7 @@ struct xattr_data_entry {
 void free(xattr_data_entry *);  // disable freeing using free at link time :)
 
 struct xattr_inode_entry {
-	uint32_t inode;
+	inode_t inode;
 	uint32_t anleng;
 	uint32_t avleng;
 	struct xattr_data_entry *data_head;
@@ -69,7 +69,7 @@ static inline int xattr_namecheck(uint8_t anleng, const uint8_t *attrname) {
 }
 #endif /* METARESTORE */
 
-static inline uint32_t xattr_data_hash_fn(uint32_t inode, uint8_t anleng, const uint8_t *attrname) {
+static inline uint32_t xattr_data_hash_fn(inode_t inode, uint8_t anleng, const uint8_t *attrname) {
 	uint32_t hash = inode * 5381U;
 	while (anleng) {
 		hash = (hash * 33U) + (*attrname);
@@ -79,17 +79,17 @@ static inline uint32_t xattr_data_hash_fn(uint32_t inode, uint8_t anleng, const 
 	return (hash & (XATTR_DATA_HASH_SIZE - 1));
 }
 
-static inline uint32_t xattr_inode_hash_fn(uint32_t inode) {
+static inline uint32_t xattr_inode_hash_fn(inode_t inode) {
 	return ((inode * 0x72B5F387U) & (XATTR_INODE_HASH_SIZE - 1));
 }
 
 void xattr_checksum_add_to_background(xattr_data_entry *xde);
 void xattr_listattr_data(void *xanode, uint8_t *xabuff);
 void xattr_recalculate_checksum();
-void xattr_removeinode(uint32_t inode);
+void xattr_removeinode(inode_t inode);
 
-uint8_t xattr_getattr(uint32_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
+uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
 			uint8_t **attrvalue);
-uint8_t xattr_listattr_leng(uint32_t inode, void **xanode, uint32_t *xasize);
-uint8_t xattr_setattr(uint32_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
+uint8_t xattr_listattr_leng(inode_t inode, void **xanode, uint32_t *xasize);
+uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 			const uint8_t *attrvalue, uint8_t mode);

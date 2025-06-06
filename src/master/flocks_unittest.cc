@@ -34,23 +34,23 @@ namespace {
 	};
 }
 
-bool wlock(FileLocks &locks, uint32_t inode, uint64_t owner, bool nonblocking = false) {
+bool wlock(FileLocks &locks, inode_t inode, uint64_t owner, bool nonblocking = false) {
 	return locks.exclusiveLock(inode, 0, 1, {owner, 0, 0, 0}, nonblocking);
 }
 
-bool rlock(FileLocks &locks, uint32_t inode, uint64_t owner, bool nonblocking = false) {
+bool rlock(FileLocks &locks, inode_t inode, uint64_t owner, bool nonblocking = false) {
 	return locks.sharedLock(inode, 0, 1, {owner, 0, 0, 0}, nonblocking);
 }
 
-bool ulock(FileLocks &locks, uint32_t inode, uint64_t owner) {
+bool ulock(FileLocks &locks, inode_t inode, uint64_t owner) {
 	return locks.unlock(inode, 0, 1, {owner, 0, 0, 0});
 }
 
-void gather(FileLocks &locks, uint32_t inode, FileLocks::LockQueue &queue) {
+void gather(FileLocks &locks, inode_t inode, FileLocks::LockQueue &queue) {
 	locks.gatherCandidates(inode, 0, 1, queue);
 }
 
-void flush(FileLocks &locks, uint32_t inode, FileLocks::LockQueue &queue) {
+void flush(FileLocks &locks, inode_t inode, FileLocks::LockQueue &queue) {
 	for (auto &candidate : queue) {
 		locks.apply(inode, candidate);
 	}

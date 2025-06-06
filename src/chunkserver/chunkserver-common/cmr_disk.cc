@@ -511,8 +511,10 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 
 			const uint8_t *crcBuffPointer = crcAndBlockbuffer;
 			const uint8_t **tmpPtr = &crcBuffPointer;
+			uint32_t tmpCrc;
+			get32bit(tmpPtr, tmpCrc);
 
-			if (get32bit(tmpPtr) != combinedCrc) {
+			if (tmpCrc != combinedCrc) {
 				errno = 0;
 				hddAddErrorAndPreserveErrno(chunk);
 				safs_pretty_syslog(LOG_WARNING,

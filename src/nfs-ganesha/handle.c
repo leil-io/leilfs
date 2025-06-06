@@ -213,7 +213,7 @@ static fsal_status_t getattrs(struct fsal_obj_handle *objectHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, " export = %" PRIu16 " inode = %" PRIu32,
+	LogFullDebug(COMPONENT_FSAL, " export = %" PRIu16 " inode = %" PRIiNode,
 	             export->export.export_id, handle->inode);
 
 	int status = saunafs_getattr(export->fsInstance, &op_ctx->creds,
@@ -806,7 +806,7 @@ static void read2(struct fsal_obj_handle *objectHandle, bool bypass,
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
-	             "export = %" PRIu16 " inode = %" PRIu32 " offset=%" PRIu64,
+	             "export = %" PRIu16 " inode = %" PRIiNode " offset=%" PRIu64,
 	             export->export.export_id, handle->inode, offset);
 
 	if (readArg->info != NULL) {
@@ -889,7 +889,7 @@ static fsal_status_t mkdir_(struct fsal_obj_handle *directoryHandle,
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %"
-	             PRIu32 " mode = %" PRIo32 " name = %s",
+	             PRIiNode " mode = %" PRIo32 " name = %s",
 	             export->export.export_id, directory->inode,
 	             attributesToSet->mode, name);
 
@@ -964,7 +964,7 @@ static fsal_status_t link_(struct fsal_obj_handle *objectHandle,
 	    container_of(destinationDirHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL, "export = %"
-	             PRIu16 " inode = %" PRIu32 " dest_inode = %" PRIu32
+	             PRIu16 " inode = %" PRIiNode " dest_inode = %" PRIiNode
 	             " name = %s", export->export.export_id,
 	             handle->inode, destinationHandle->inode, name);
 
@@ -1007,8 +1007,8 @@ static fsal_status_t rename_(struct fsal_obj_handle *objectHandle,
 	oldDir = container_of(oldParentHandle, struct SaunaFSHandle, handle);
 	newDir = container_of(newParentHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " old_inode=%" PRIu32
-	             " new_inode=%" PRIu32 " old_name=%s new_name=%s",
+	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " old_inode=%" PRIiNode
+	             " new_inode=%" PRIiNode " old_name=%s new_name=%s",
 	             export->export.export_id, oldDir->inode,
 	             newDir->inode, oldName, newName);
 
@@ -1045,7 +1045,7 @@ static fsal_status_t unlink_(struct fsal_obj_handle *directoryHandle,
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %"
-	             PRIu32 " name = %s type = %s", export->export.export_id,
+	             PRIiNode " name = %s type = %s", export->export.export_id,
 	             directory->inode, name,
 	             object_file_type_to_str(objectHandle->type));
 
@@ -1080,7 +1080,7 @@ static fsal_status_t close_(struct fsal_obj_handle *objectHandle) {
 	struct SaunaFSHandle *handle = NULL;
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIu32,
+	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIiNode,
 	             handle->key.exportId, handle->inode);
 
 	PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
@@ -1133,7 +1133,7 @@ static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIu32
+	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIiNode
 	             " offset=%" PRIu64, export->export.export_id,
 	             handle->inode, offset);
 
@@ -1224,7 +1224,7 @@ static fsal_status_t commit2(struct fsal_obj_handle *objectHandle, off_t offset,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIu32
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode
 	             " offset = %lli len = %zu", export->export.export_id,
 	             handle->inode, (long long)offset, length);
 
@@ -1406,7 +1406,7 @@ static fsal_status_t close2(struct fsal_obj_handle *objectHandle,
 	struct SaunaFSHandle *handle = NULL;
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIu32,
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode,
 	             handle->key.exportId, handle->inode);
 
 	if (state->state_type == STATE_TYPE_SHARE ||
@@ -1454,7 +1454,7 @@ static fsal_status_t symlink_(struct fsal_obj_handle *directoryHandle,
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %"
-	             PRIu32 " name = %s", export->export.export_id,
+	             PRIiNode " name = %s", export->export.export_id,
 	             directory->inode, name);
 
 	int retvalue =
@@ -1693,7 +1693,7 @@ static fsal_status_t reopen2(struct fsal_obj_handle *objectHandle,
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 	sharedFd = &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIu32,
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode,
 	             handle->key.exportId, handle->inode);
 
 	struct SaunaFSFd saunafsFd = { FSAL_O_CLOSED, NULL };
@@ -1768,7 +1768,7 @@ static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle,
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
-	             "export = %" PRIu16 " parent_inode = %" PRIu32 " mode = %"
+	             "export = %" PRIu16 " parent_inode = %" PRIiNode " mode = %"
 	             PRIo32 " name = %s", export->export.export_id,
 	             directory->inode, attributesToSet->mode, name);
 
@@ -1873,7 +1873,7 @@ static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIu32,
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode,
 	             export->export.export_id, handle->inode);
 
 	int size =

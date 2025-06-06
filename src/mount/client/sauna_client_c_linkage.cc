@@ -23,7 +23,6 @@
 #include "client/sauna_client_c_linkage.h"
 
 typedef SaunaClient::EntryParam EntryParam;
-typedef SaunaClient::Inode Inode;
 typedef SaunaClient::Context Context;
 typedef SaunaClient::AttrReply AttrReply;
 typedef SaunaClient::FileInfo FileInfo;
@@ -42,7 +41,7 @@ int saunafs_fs_init(SaunaClient::FsInitParams &params) {
 	}
 }
 
-int saunafs_lookup(Context &ctx, Inode parent, const char *name, EntryParam &param) {
+int saunafs_lookup(Context &ctx, inode_t parent, const char *name, EntryParam &param) {
 	try {
 		param = SaunaClient::lookup(ctx, parent, name);
 		return SAUNAFS_STATUS_OK;
@@ -53,7 +52,7 @@ int saunafs_lookup(Context &ctx, Inode parent, const char *name, EntryParam &par
 	}
 }
 
-int saunafs_mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_t rdev,
+int saunafs_mknod(Context &ctx, inode_t parent, const char *name, mode_t mode, dev_t rdev,
 		EntryParam &param) {
 	try {
 		param = SaunaClient::mknod(ctx, parent, name, mode, rdev);
@@ -65,7 +64,7 @@ int saunafs_mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev
 	}
 }
 
-int saunafs_link(Context ctx, Inode inode, Inode parent, const char *name,
+int saunafs_link(Context ctx, inode_t inode, inode_t parent, const char *name,
 		EntryParam &param) {
 	try {
 		param = SaunaClient::link(ctx, inode, parent, name);
@@ -77,7 +76,7 @@ int saunafs_link(Context ctx, Inode inode, Inode parent, const char *name,
 	}
 }
 
-int saunafs_symlink(Context ctx, const char *link, Inode parent, const char *name,
+int saunafs_symlink(Context ctx, const char *link, inode_t parent, const char *name,
 		EntryParam &param) {
 	try {
 		param = SaunaClient::symlink(ctx, link, parent, name);
@@ -89,7 +88,7 @@ int saunafs_symlink(Context ctx, const char *link, Inode parent, const char *nam
 	}
 }
 
-int saunafs_unlink(Context &ctx, Inode parent, const char *name) {
+int saunafs_unlink(Context &ctx, inode_t parent, const char *name) {
 	try {
 		SaunaClient::unlink(ctx, parent, name);
 		return SAUNAFS_STATUS_OK;
@@ -100,7 +99,7 @@ int saunafs_unlink(Context &ctx, Inode parent, const char *name) {
 	}
 }
 
-int saunafs_undel(Context &ctx, Inode ino) {
+int saunafs_undel(Context &ctx, inode_t ino) {
 	try {
 		SaunaClient::undel(ctx, ino);
 		return SAUNAFS_STATUS_OK;
@@ -111,7 +110,7 @@ int saunafs_undel(Context &ctx, Inode ino) {
 	}
 }
 
-int saunafs_open(Context &ctx, Inode ino, FileInfo *fi) {
+int saunafs_open(Context &ctx, inode_t ino, FileInfo *fi) {
 	try {
 		SaunaClient::open(ctx, ino, fi);
 		return SAUNAFS_STATUS_OK;
@@ -122,7 +121,7 @@ int saunafs_open(Context &ctx, Inode ino, FileInfo *fi) {
 	}
 }
 
-int saunafs_getattr(Context &ctx, Inode ino, AttrReply &reply) {
+int saunafs_getattr(Context &ctx, inode_t ino, AttrReply &reply) {
 	try {
 		reply = SaunaClient::getattr(ctx, ino);
 		return SAUNAFS_STATUS_OK;
@@ -133,7 +132,7 @@ int saunafs_getattr(Context &ctx, Inode ino, AttrReply &reply) {
 	}
 }
 
-int saunafs_makesnapshot(Context &ctx, Inode ino, Inode dst_parent,
+int saunafs_makesnapshot(Context &ctx, inode_t ino, inode_t dst_parent,
                          const std::string &dst_name, bool can_overwrite,
                          SaunaClient::JobId &job_id) {
 	try {
@@ -149,7 +148,7 @@ int saunafs_makesnapshot(Context &ctx, Inode ino, Inode dst_parent,
 	}
 }
 
-int saunafs_getgoal(Context &ctx, Inode ino, std::string &goal) {
+int saunafs_getgoal(Context &ctx, inode_t ino, std::string &goal) {
 	try {
 		goal = SaunaClient::getgoal(ctx, ino);
 		return SAUNAFS_STATUS_OK;
@@ -160,7 +159,7 @@ int saunafs_getgoal(Context &ctx, Inode ino, std::string &goal) {
 	}
 }
 
-int saunafs_setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
+int saunafs_setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
 	             AttrReply &reply) {
 	try {
 		reply = SaunaClient::setattr(ctx, ino, stbuf, to_set);
@@ -172,7 +171,7 @@ int saunafs_setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
 	}
 }
 
-int saunafs_setgoal(Context &ctx, Inode ino, const std::string &goal_name, uint8_t smode) {
+int saunafs_setgoal(Context &ctx, inode_t ino, const std::string &goal_name, uint8_t smode) {
 	try {
 		SaunaClient::setgoal(ctx, ino, goal_name, smode);
 		return SAUNAFS_STATUS_OK;
@@ -183,7 +182,7 @@ int saunafs_setgoal(Context &ctx, Inode ino, const std::string &goal_name, uint8
 	}
 }
 
-int saunafs_read(Context &ctx, Inode ino, size_t size, off_t off,
+int saunafs_read(Context &ctx, inode_t ino, size_t size, off_t off,
                  FileInfo *fi, ReadCache::Result &result) {
 	try {
 		result = SaunaClient::read(ctx, ino, size, off, fi);
@@ -197,7 +196,7 @@ int saunafs_read(Context &ctx, Inode ino, size_t size, off_t off,
 	}
 }
 
-int saunafs_read_special_inode(Context &ctx, Inode ino, size_t size, off_t off,
+int saunafs_read_special_inode(Context &ctx, inode_t ino, size_t size, off_t off,
                                FileInfo *fi,
                                std::vector<uint8_t> &special_inode) {
 	try {
@@ -213,7 +212,7 @@ int saunafs_read_special_inode(Context &ctx, Inode ino, size_t size, off_t off,
 	}
 }
 
-int saunafs_write(Context &ctx, Inode ino, const char *buf, size_t size,
+int saunafs_write(Context &ctx, inode_t ino, const char *buf, size_t size,
                   off_t off, FileInfo *fi, ssize_t &bytes_written) {
 	try {
 		bytes_written = SaunaClient::write(ctx, ino, buf, size, off, fi);
@@ -227,7 +226,7 @@ int saunafs_write(Context &ctx, Inode ino, const char *buf, size_t size,
 	}
 }
 
-int saunafs_release(Inode ino, FileInfo *fi) {
+int saunafs_release(inode_t ino, FileInfo *fi) {
 	try {
 		SaunaClient::release(ino, fi);
 		return SAUNAFS_STATUS_OK;
@@ -238,7 +237,7 @@ int saunafs_release(Inode ino, FileInfo *fi) {
 	}
 }
 
-int saunafs_flush(Context &ctx, Inode ino, FileInfo *fi) {
+int saunafs_flush(Context &ctx, inode_t ino, FileInfo *fi) {
 	try {
 		SaunaClient::flush(ctx, ino, fi);
 		return SAUNAFS_STATUS_OK;
@@ -249,7 +248,7 @@ int saunafs_flush(Context &ctx, Inode ino, FileInfo *fi) {
 	}
 }
 
-int saunafs_fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
+int saunafs_fsync(Context &ctx, inode_t ino, int datasync, FileInfo* fi) {
 	try {
 		SaunaClient::fsync(ctx, ino, datasync, fi);
 		return SAUNAFS_STATUS_OK;
@@ -261,7 +260,7 @@ int saunafs_fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi) {
 }
 
 int saunafs_statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
-	             uint64_t *reservedspace, uint32_t *inodes) {
+                   uint64_t *reservedspace, inode_t *inodes) {
 	try {
 		SaunaClient::statfs(totalspace, availspace, trashspace, reservedspace, inodes);
 		return SAUNAFS_STATUS_OK;
@@ -278,11 +277,11 @@ void saunafs_fs_term() {
 	}
 }
 
-bool saunafs_isSpecialInode(Inode ino) {
+bool saunafs_isSpecialInode(inode_t ino) {
 	return SaunaClient::isSpecialInode(ino);
 }
 
-int saunafs_readdir(Context &ctx, uint64_t opendirSessionID, Inode ino,
+int saunafs_readdir(Context &ctx, uint64_t opendirSessionID, inode_t ino,
                     off_t off, size_t max_entries,
                     std::vector<DirEntry> &entries) {
 	try {
@@ -299,7 +298,7 @@ int saunafs_readdir(Context &ctx, uint64_t opendirSessionID, Inode ino,
 	}
 }
 
-int saunafs_readlink(Context &ctx, Inode ino, std::string &link) {
+int saunafs_readlink(Context &ctx, inode_t ino, std::string &link) {
 	try {
 		link = SaunaClient::readlink(ctx, ino);
 		return SAUNAFS_STATUS_OK;
@@ -340,7 +339,7 @@ int saunafs_readtrash(Context &ctx, SaunaClient::NamedInodeOffset off,
 	}
 }
 
-int saunafs_opendir(Context &ctx, Inode ino) {
+int saunafs_opendir(Context &ctx, inode_t ino) {
 	try {
 		SaunaClient::opendir(ctx, ino);
 		return SAUNAFS_STATUS_OK;
@@ -351,7 +350,7 @@ int saunafs_opendir(Context &ctx, Inode ino) {
 	}
 }
 
-int saunafs_releasedir(Inode ino, uint64_t opendirSessionID) {
+int saunafs_releasedir(inode_t ino, uint64_t opendirSessionID) {
 	try {
 		SaunaClient::releasedir(ino);
 		SaunaClient::drop_readdir_session(opendirSessionID);
@@ -363,7 +362,7 @@ int saunafs_releasedir(Inode ino, uint64_t opendirSessionID) {
 	}
 }
 
-int saunafs_mkdir(Context &ctx, Inode parent, const char *name, mode_t mode,
+int saunafs_mkdir(Context &ctx, inode_t parent, const char *name, mode_t mode,
 		EntryParam &entry_param) {
 	try {
 		entry_param = SaunaClient::mkdir(ctx, parent, name, mode);
@@ -375,7 +374,7 @@ int saunafs_mkdir(Context &ctx, Inode parent, const char *name, mode_t mode,
 	}
 }
 
-int saunafs_rmdir(Context &ctx, Inode parent, const char *name) {
+int saunafs_rmdir(Context &ctx, inode_t parent, const char *name) {
 	try {
 		SaunaClient::rmdir(ctx, parent, name);
 		return SAUNAFS_STATUS_OK;
@@ -386,7 +385,7 @@ int saunafs_rmdir(Context &ctx, Inode parent, const char *name) {
 	}
 }
 
-int saunafs_rename(Context &ctx, Inode parent, const char *name, Inode new_parent,
+int saunafs_rename(Context &ctx, inode_t parent, const char *name, inode_t new_parent,
 	            const char *new_name) {
 	try {
 		SaunaClient::rename(ctx, parent, name, new_parent, new_name);
@@ -409,7 +408,7 @@ int saunafs_update_groups(Context &ctx) {
 	return SAUNAFS_STATUS_OK;
 }
 
-int saunafs_setxattr(Context ctx, Inode ino, const char *name, const char *value,
+int saunafs_setxattr(Context ctx, inode_t ino, const char *name, const char *value,
 		size_t size, int flags) {
 	try {
 		SaunaClient::setxattr(ctx, ino, name, value, size, flags, 0);
@@ -421,7 +420,7 @@ int saunafs_setxattr(Context ctx, Inode ino, const char *name, const char *value
 	}
 }
 
-int saunafs_getchunksinfo(Context &ctx, Inode ino, uint32_t chunk_index,
+int saunafs_getchunksinfo(Context &ctx, inode_t ino, uint32_t chunk_index,
                           uint32_t chunk_count,
                           std::vector<ChunkWithAddressAndLabel> &chunks) {
 	try {
@@ -450,7 +449,7 @@ int saunafs_getchunkservers(std::vector<ChunkserverListEntry> &chunkservers) {
 }
 
 
-int saunafs_getlk(Context &ctx, Inode ino,
+int saunafs_getlk(Context &ctx, inode_t ino,
 	           SaunaClient::FileInfo *fi, safs_locks::FlockWrapper &lock) {
 	try {
 		SaunaClient::getlk(ctx, ino, fi, lock);
@@ -462,7 +461,7 @@ int saunafs_getlk(Context &ctx, Inode ino,
 	}
 }
 
-int saunafs_setlk_send(Context &ctx, Inode ino, SaunaClient::FileInfo *fi,
+int saunafs_setlk_send(Context &ctx, inode_t ino, SaunaClient::FileInfo *fi,
                        safs_locks::FlockWrapper &lock, uint32_t &reqid) {
 	try {
 		reqid = SaunaClient::setlk_send(ctx, ino, fi, lock);
@@ -498,7 +497,7 @@ int saunafs_setlk_interrupt(const safs_locks::InterruptData &data) {
 	}
 }
 
-int saunafs_getxattr(Context ctx, Inode ino, const char *name,
+int saunafs_getxattr(Context ctx, inode_t ino, const char *name,
 	              size_t size, SaunaClient::XattrReply &xattr_reply) {
 	try {
 		xattr_reply = SaunaClient::getxattr(ctx, ino, name, size, 0);
@@ -509,7 +508,7 @@ int saunafs_getxattr(Context ctx, Inode ino, const char *name,
 		return SAUNAFS_ERROR_IO;
 	}
 }
-int saunafs_listxattr(Context ctx, Inode ino, size_t size,
+int saunafs_listxattr(Context ctx, inode_t ino, size_t size,
 	               SaunaClient::XattrReply &xattr_reply) {
 	try {
 		xattr_reply = SaunaClient::listxattr(ctx, ino, size);
@@ -521,7 +520,7 @@ int saunafs_listxattr(Context ctx, Inode ino, size_t size,
 	}
 }
 
-int saunafs_removexattr(Context ctx, Inode ino, const char *name) {
+int saunafs_removexattr(Context ctx, inode_t ino, const char *name) {
 	try {
 		SaunaClient::removexattr(ctx, ino, name);
 		return SAUNAFS_STATUS_OK;

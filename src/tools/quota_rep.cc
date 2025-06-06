@@ -31,8 +31,9 @@
 #endif
 
 #include "common/chunk_with_address_and_label.h"
-#include "common/server_connection.h"
 #include "common/quota_database.h"
+#include "common/server_connection.h"
+#include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 #include "tools/tools_commands.h"
@@ -67,8 +68,8 @@ static void quota_putc_plus_or_minus(uint64_t usage, uint64_t soft_limit, uint64
  *              quota type. (The function can only print known quota types that fit in table)
  */
 
-static void quota_print_entry(const std::string &path, uint32_t path_inode, int owner_type,
-							  uint32_t owner_id, const std::string &info,
+static void quota_print_entry(const std::string &path, inode_t path_inode, int owner_type,
+							  inode_t owner_id, const std::string &info,
 							  const QuotaDatabase::Limits &limit) {
 	static const char *owner_type_name[4] = {"User ", "Group", "Directory", "Unknown"};
 	std::string line;
@@ -85,7 +86,7 @@ static void quota_print_entry(const std::string &path, uint32_t path_inode, int 
 			fputs(info.c_str(), stdout);
 		}
 	} else {
-		printf("%10" PRIu32, owner_id);
+		printf("%10" PRIiNode, owner_id);
 	}
 	fputs(" ", stdout);
 
@@ -105,7 +106,7 @@ static void quota_print_entry(const std::string &path, uint32_t path_inode, int 
 	puts("");
 }
 
-static void quota_print_rep(const std::string &path, uint32_t path_inode,
+static void quota_print_rep(const std::string &path, inode_t path_inode,
 							const std::vector<QuotaEntry> &quota_entries,
 							const std::vector<std::string> &quota_info) {
 	std::vector<std::size_t> ordering;
@@ -134,7 +135,7 @@ static void quota_print_rep(const std::string &path, uint32_t path_inode,
 	    "# User/Group ID/Directory; Bytes: current usage, soft limit, hard limit; "
 	    "Inodes: current usage, soft limit, hard limit;");
 
-	std::pair<int, uint32_t> prev_entry(-1, 0);
+	std::pair<int, inode_t> prev_entry(-1, 0);
 	QuotaDatabase::Limits limits_value{{{{0}}}};  // workaround for a bug in gcc 4.6
 	std::string info;
 	for (auto index : ordering) {
@@ -174,7 +175,7 @@ static int quota_rep(const std::string &path, std::vector<int> requested_uids,
 	sassert((requested_uids.size() + requested_gid.size() > 0) ^
 	        (report_all || per_directory_quota));
 
-	uint32_t inode;
+	inode_t inode;
 	int fd = open_master_conn(path.c_str(), &inode, nullptr, false);
 	if (fd < 0) {
 		return -1;

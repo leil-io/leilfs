@@ -47,9 +47,9 @@
 
 #ifndef METARESTORE
 
-static uint32_t fsinfo_files = 0;
-static uint32_t fsinfo_ugfiles = 0;
-static uint32_t fsinfo_mfiles = 0;
+static inode_t fsinfo_files = 0;
+static inode_t fsinfo_ugfiles = 0;
+static inode_t fsinfo_mfiles = 0;
 static uint32_t fsinfo_chunks = 0;
 static uint32_t fsinfo_ugchunks = 0;
 static uint32_t fsinfo_mchunks = 0;
@@ -57,9 +57,9 @@ static uint32_t fsinfo_loopstart = 0;
 static uint32_t fsinfo_loopend = 0;
 static uint32_t fsinfo_notfoundchunks = 0;
 static uint32_t fsinfo_unavailchunks = 0;
-static uint32_t fsinfo_unavailfiles = 0;
-static uint32_t fsinfo_unavailtrashfiles = 0;
-static uint32_t fsinfo_unavailreservedfiles = 0;
+static inode_t fsinfo_unavailfiles = 0;
+static inode_t fsinfo_unavailtrashfiles = 0;
+static inode_t fsinfo_unavailreservedfiles = 0;
 
 static int gTasksBatchSize = 1000;
 
@@ -75,9 +75,9 @@ enum NodeErrorFlag {
 };
 
 #if defined(SAUNAFS_HAVE_64BIT_JUDY) && !defined(DISABLE_JUDY_FOR_DEFECTIVENODESMAP)
-	using DefectiveNodesMap = judy_map<uint32_t, uint8_t>;
+	using DefectiveNodesMap = judy_map<inode_t, uint8_t>;
 #else
-	using DefectiveNodesMap = flat_map<uint32_t, uint8_t>;
+	using DefectiveNodesMap = flat_map<inode_t, uint8_t>;
 #endif
 
 static const size_t kMaxNodeEntries = 1000000;
@@ -159,9 +159,9 @@ std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_fla
 	return defective_nodes_info;
 }
 
-void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, uint32_t &files, uint32_t &ugfiles,
-		uint32_t &mfiles, uint32_t &chunks, uint32_t &ugchunks, uint32_t &mchunks,
-		std::string &result) {
+void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, inode_t &ugfiles,
+                     inode_t &mfiles, uint32_t &chunks, uint32_t &ugchunks, uint32_t &mchunks,
+                     std::string &result) {
 	std::stringstream report;
 	int errors = 0;
 
@@ -329,17 +329,17 @@ void fs_process_file_test() {
 	uint8_t vc, node_error_flag;
 	ActiveLoopWatchdog watchdog;
 
-	static uint32_t files = 0;
-	static uint32_t ugfiles = 0;
-	static uint32_t mfiles = 0;
+	static inode_t files = 0;
+	static inode_t ugfiles = 0;
+	static inode_t mfiles = 0;
 	static uint32_t chunks = 0;
 	static uint32_t ugchunks = 0;
 	static uint32_t mchunks = 0;
 	static uint32_t notfoundchunks = 0;
 	static uint32_t unavailchunks = 0;
-	static uint32_t unavailfiles = 0;
-	static uint32_t unavailtrashfiles = 0;
-	static uint32_t unavailreservedfiles = 0;
+	static inode_t unavailfiles = 0;
+	static inode_t unavailtrashfiles = 0;
+	static inode_t unavailreservedfiles = 0;
 
 	FSNode *f;
 
@@ -425,15 +425,13 @@ void fs_process_file_test() {
 					} else {
 						auto parentInChildPtr = std::find_if(
 						    node->parent.begin(), node->parent.end(),
-						    [f](const std::pair<uint32_t,
-						                        const hstorage::Handle *> &p) {
+						    [f](const std::pair<inode_t, const hstorage::Handle *> &p) {
 							    return p.first == f->id;
 						    });
 						// the node doesn't have a parent entry pointing to the
 						// current directory
 						if (parentInChildPtr == node->parent.end()) {
-							node_error_flag |=
-							    static_cast<int>(kStructureError);
+							node_error_flag |= static_cast<int>(kStructureError);
 						}
 					}
 				}
@@ -513,7 +511,7 @@ void fs_background_file_test(void) {
 	}
 }
 
-void fsnodes_periodic_remove(uint32_t inode) {
+void fsnodes_periodic_remove(inode_t inode) {
 	auto it = gDefectiveNodes.find(inode);
 	if (it != gDefectiveNodes.end()) {
 		gDefectiveNodes.erase(it);
@@ -522,8 +520,8 @@ void fsnodes_periodic_remove(uint32_t inode) {
 #endif
 
 struct InodeInfo {
-	uint32_t free;
-	uint32_t reserved;
+	inode_t free;
+	inode_t reserved;
 };
 
 #ifndef METARESTORE
@@ -543,11 +541,11 @@ static void fs_do_emptytrash(uint32_t ts) {
 
 		assert(node->type == FSNode::kTrash);
 
-		uint32_t node_id = node->id;
+		auto node_id = node->id;
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
-		fs_changelog(ts, "PURGE(%" PRIu32 ")", node_id);
+		fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->trash.begin();
 
@@ -578,11 +576,11 @@ static void fs_do_emptyreserved(uint32_t ts) {
 
 		assert(node->type == FSNode::kReserved);
 
-		uint32_t node_id = node->id;
+		auto node_id = node->id;
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway
-		fs_changelog(ts, "PURGE(%" PRIu32 ")", node_id);
+		fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->reserved.begin();
 

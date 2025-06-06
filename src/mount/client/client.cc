@@ -176,7 +176,7 @@ void Client::updateGroups(Context &ctx, std::error_code &ec) {
 }
 
 
-void Client::lookup(Context &ctx, Inode parent, const std::string &path, EntryParam &param) {
+void Client::lookup(Context &ctx, inode_t parent, const std::string &path, EntryParam &param) {
 	std::error_code ec;
 	lookup(ctx, parent, path, param, ec);
 	if (ec) {
@@ -184,13 +184,13 @@ void Client::lookup(Context &ctx, Inode parent, const std::string &path, EntryPa
 	}
 }
 
-void Client::lookup(Context &ctx, Inode parent, const std::string &path, EntryParam &param,
+void Client::lookup(Context &ctx, inode_t parent, const std::string &path, EntryParam &param,
 		std::error_code &ec) {
 	int ret = saunafs_lookup_(ctx, parent, path.c_str(), param);
 	ec = make_error_code(ret);
 }
 
-void Client::mknod(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+void Client::mknod(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 		dev_t rdev, EntryParam &param) {
 	std::error_code ec;
 	mknod(ctx, parent, path, mode, rdev, param, ec);
@@ -199,13 +199,13 @@ void Client::mknod(Context &ctx, Inode parent, const std::string &path, mode_t m
 	}
 }
 
-void Client::mknod(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+void Client::mknod(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 		dev_t rdev, EntryParam &param, std::error_code &ec) {
 	int ret = saunafs_mknod_(ctx, parent, path.c_str(), mode, rdev, param);
 	ec = make_error_code(ret);
 }
 
-void Client::link(Context &ctx, Inode inode, Inode parent,
+void Client::link(Context &ctx, inode_t inode, inode_t parent,
 		const std::string &name, EntryParam &param) {
 	std::error_code ec;
 	link(ctx, inode, parent, name, param, ec);
@@ -214,13 +214,13 @@ void Client::link(Context &ctx, Inode inode, Inode parent,
 	}
 }
 
-void Client::link(Context &ctx, Inode inode, Inode parent,
+void Client::link(Context &ctx, inode_t inode, inode_t parent,
 		const std::string &name, EntryParam &param, std::error_code &ec) {
 	int ret = saunafs_link_(ctx, inode, parent, name.c_str(), param);
 	ec = make_error_code(ret);
 }
 
-void Client::symlink(Context &ctx, const std::string &link, Inode parent,
+void Client::symlink(Context &ctx, const std::string &link, inode_t parent,
 		const std::string &name, EntryParam &param) {
 	std::error_code ec;
 	symlink(ctx, link, parent, name, param, ec);
@@ -229,7 +229,7 @@ void Client::symlink(Context &ctx, const std::string &link, Inode parent,
 	}
 }
 
-void Client::symlink(Context &ctx, const std::string &link, Inode parent,
+void Client::symlink(Context &ctx, const std::string &link, inode_t parent,
 		const std::string &name, EntryParam &param, std::error_code &ec) {
 	int ret = saunafs_symlink_(ctx, link.c_str(), parent, name.c_str(), param);
 	ec = make_error_code(ret);
@@ -254,7 +254,7 @@ Client::ReadDirReply Client::readdir(Context &ctx, FileInfo* fileinfo, off_t off
 	return entries;
 }
 
-std::string Client::readlink(Context &ctx, Inode inode) {
+std::string Client::readlink(Context &ctx, inode_t inode) {
 	std::error_code ec;
 	std::string link = readlink(ctx, inode, ec);
 	if (ec) {
@@ -263,7 +263,7 @@ std::string Client::readlink(Context &ctx, Inode inode) {
 	return link;
 }
 
-std::string Client::readlink(Context &ctx, Inode inode, std::error_code &ec) {
+std::string Client::readlink(Context &ctx, inode_t inode, std::error_code &ec) {
 	std::string link;
 	int ret = saunafs_readlink_(ctx, inode, link);
 	ec = make_error_code(ret);
@@ -306,7 +306,7 @@ Client::ReadTrashReply Client::readtrash(Context &ctx, NamedInodeOffset offset,
 	return trash_entries;
 }
 
-Client::FileInfo *Client::opendir(Context &ctx, Inode inode) {
+Client::FileInfo *Client::opendir(Context &ctx, inode_t inode) {
 	std::error_code ec;
 	auto fileinfo = opendir(ctx, inode, ec);
 	if (ec) {
@@ -316,7 +316,7 @@ Client::FileInfo *Client::opendir(Context &ctx, Inode inode) {
 	return fileinfo;
 }
 
-Client::FileInfo *Client::opendir(Context &ctx, Inode inode, std::error_code &ec) {
+Client::FileInfo *Client::opendir(Context &ctx, inode_t inode, std::error_code &ec) {
 	int ret = saunafs_opendir_(ctx, inode);
 	ec = make_error_code(ret);
 	if (ec) {
@@ -348,7 +348,7 @@ void Client::releasedir(FileInfo* fileinfo, std::error_code &ec) {
 	delete fileinfo;
 }
 
-void Client::rmdir(Context &ctx, Inode parent, const std::string &path) {
+void Client::rmdir(Context &ctx, inode_t parent, const std::string &path) {
 	std::error_code ec;
 	rmdir(ctx, parent, path, ec);
 	if (ec) {
@@ -356,24 +356,24 @@ void Client::rmdir(Context &ctx, Inode parent, const std::string &path) {
 	}
 }
 
-void Client::rmdir(Context &ctx, Inode parent, const std::string &path, std::error_code &ec) {
+void Client::rmdir(Context &ctx, inode_t parent, const std::string &path, std::error_code &ec) {
 	int ret = saunafs_rmdir_(ctx, parent, path.c_str());
 	ec = make_error_code(ret);
 }
 
-void Client::mkdir(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+void Client::mkdir(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 	          Client::EntryParam &entry_param) {
 	std::error_code ec;
 	mkdir(ctx, parent, path, mode, entry_param, ec);
 }
 
-void Client::mkdir(Context &ctx, Inode parent, const std::string &path, mode_t mode,
+void Client::mkdir(Context &ctx, inode_t parent, const std::string &path, mode_t mode,
 	          Client::EntryParam &entry_param, std::error_code &ec) {
 	int ret = saunafs_mkdir_(ctx, parent, path.c_str(), mode, entry_param);
 	ec = make_error_code(ret);
 }
 
-void Client::unlink(Context &ctx, Inode parent, const std::string &path) {
+void Client::unlink(Context &ctx, inode_t parent, const std::string &path) {
 	std::error_code ec;
 	unlink(ctx, parent, path, ec);
 	if (ec) {
@@ -381,12 +381,12 @@ void Client::unlink(Context &ctx, Inode parent, const std::string &path) {
 	}
 }
 
-void Client::unlink(Context &ctx, Inode parent, const std::string &path, std::error_code &ec) {
+void Client::unlink(Context &ctx, inode_t parent, const std::string &path, std::error_code &ec) {
 	int ret = saunafs_unlink_(ctx, parent, path.c_str());
 	ec = make_error_code(ret);
 }
 
-void Client::undel(Context &ctx, Inode ino) {
+void Client::undel(Context &ctx, inode_t ino) {
 	std::error_code ec;
 	undel(ctx, ino, ec);
 	if (ec) {
@@ -394,12 +394,12 @@ void Client::undel(Context &ctx, Inode ino) {
 	}
 }
 
-void Client::undel(Context &ctx, Inode ino, std::error_code &ec) {
+void Client::undel(Context &ctx, inode_t ino, std::error_code &ec) {
 	int ret = saunafs_undel_(ctx, ino);
 	ec = make_error_code(ret);
 }
 
-void Client::rename(Context &ctx, Inode parent, const std::string &path, Inode newparent,
+void Client::rename(Context &ctx, inode_t parent, const std::string &path, inode_t newparent,
 	            const std::string &new_path) {
 	std::error_code ec;
 	rename(ctx, parent, path, newparent, new_path, ec);
@@ -408,13 +408,13 @@ void Client::rename(Context &ctx, Inode parent, const std::string &path, Inode n
 	}
 }
 
-void Client::rename(Context &ctx, Inode parent, const std::string &path, Inode newparent,
+void Client::rename(Context &ctx, inode_t parent, const std::string &path, inode_t newparent,
 	            const std::string &new_path, std::error_code &ec) {
 	int ret = saunafs_rename_(ctx, parent, path.c_str(), newparent, new_path.c_str());
 	ec = make_error_code(ret);
 }
 
-Client::FileInfo *Client::open(Context &ctx, Inode inode, int flags) {
+Client::FileInfo *Client::open(Context &ctx, inode_t inode, int flags) {
 	std::error_code ec;
 	auto fileinfo = open(ctx, inode, flags, ec);
 	if (ec) {
@@ -424,7 +424,7 @@ Client::FileInfo *Client::open(Context &ctx, Inode inode, int flags) {
 	return fileinfo;
 }
 
-Client::FileInfo *Client::open(Context &ctx, Inode inode, int flags, std::error_code &ec) {
+Client::FileInfo *Client::open(Context &ctx, inode_t inode, int flags, std::error_code &ec) {
 	FileInfo *fileinfo = new FileInfo(inode);
 	fileinfo->flags = flags;
 
@@ -439,7 +439,7 @@ Client::FileInfo *Client::open(Context &ctx, Inode inode, int flags, std::error_
 	return fileinfo;
 }
 
-void Client::getattr(Context &ctx, Inode inode, AttrReply &attr_reply) {
+void Client::getattr(Context &ctx, inode_t inode, AttrReply &attr_reply) {
 	std::error_code ec;
 	getattr(ctx, inode, attr_reply, ec);
 	if (ec) {
@@ -447,13 +447,13 @@ void Client::getattr(Context &ctx, Inode inode, AttrReply &attr_reply) {
 	}
 }
 
-void Client::getattr(Context &ctx, Inode inode, AttrReply &attr_reply,
+void Client::getattr(Context &ctx, inode_t inode, AttrReply &attr_reply,
 		std::error_code &ec) {
 	int ret = saunafs_getattr_(ctx, inode, attr_reply);
 	ec = make_error_code(ret);
 }
 
-void Client::setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
+void Client::setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
 	             AttrReply &attr_reply) {
 	std::error_code ec;
 	setattr(ctx, ino, stbuf, to_set, attr_reply, ec);
@@ -462,7 +462,7 @@ void Client::setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
 	}
 }
 
-void Client::setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set,
+void Client::setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set,
 	             AttrReply &attr_reply, std::error_code &ec) {
 	int ret = saunafs_setattr_(ctx, ino, stbuf, to_set, attr_reply);
 	ec = make_error_code(ret);
@@ -558,7 +558,7 @@ void Client::fsync(Context &ctx, FileInfo *fileinfo, std::error_code &ec) {
 	ec = make_error_code(ret);
 }
 
-SaunaClient::JobId Client::makesnapshot(Context &ctx, Inode src_inode, Inode dst_inode,
+SaunaClient::JobId Client::makesnapshot(Context &ctx, inode_t src_inode, inode_t dst_inode,
 	                                 const std::string &dst_name, bool can_overwrite) {
 	std::error_code ec;
 	JobId job_id = makesnapshot(ctx, src_inode, dst_inode, dst_name, can_overwrite, ec);
@@ -568,7 +568,7 @@ SaunaClient::JobId Client::makesnapshot(Context &ctx, Inode src_inode, Inode dst
 	return job_id;
 }
 
-SaunaClient::JobId Client::makesnapshot(Context &ctx, Inode src_inode, Inode dst_inode,
+SaunaClient::JobId Client::makesnapshot(Context &ctx, inode_t src_inode, inode_t dst_inode,
 	                                 const std::string &dst_name, bool can_overwrite,
 	                                 std::error_code &ec) {
 	SaunaClient::JobId job_id = 0;
@@ -578,7 +578,7 @@ SaunaClient::JobId Client::makesnapshot(Context &ctx, Inode src_inode, Inode dst
 	return job_id;
 }
 
-std::string Client::getgoal(Context &ctx, Inode inode) {
+std::string Client::getgoal(Context &ctx, inode_t inode) {
 	std::error_code ec;
 	std::string res = getgoal(ctx, inode, ec);
 	if (ec) {
@@ -587,14 +587,14 @@ std::string Client::getgoal(Context &ctx, Inode inode) {
 	return res;
 }
 
-std::string Client::getgoal(Context &ctx, Inode inode, std::error_code &ec) {
+std::string Client::getgoal(Context &ctx, inode_t inode, std::error_code &ec) {
 	std::string goal;
 	int ret = saunafs_getgoal_(ctx, inode, goal);
 	ec = make_error_code(ret);
 	return goal;
 }
 
-void Client::setgoal(Context &ctx, Inode inode, const std::string &goal_name, uint8_t smode) {
+void Client::setgoal(Context &ctx, inode_t inode, const std::string &goal_name, uint8_t smode) {
 	std::error_code ec;
 	setgoal(ctx, inode, goal_name, smode, ec);
 	if (ec) {
@@ -602,7 +602,7 @@ void Client::setgoal(Context &ctx, Inode inode, const std::string &goal_name, ui
 	}
 }
 
-void Client::setgoal(Context &ctx, Inode inode, const std::string &goal_name,
+void Client::setgoal(Context &ctx, inode_t inode, const std::string &goal_name,
 	             uint8_t smode, std::error_code &ec) {
 	int ret = saunafs_setgoal_(ctx, inode, goal_name, smode);
 	ec = make_error_code(ret);
@@ -622,7 +622,7 @@ void Client::statfs(Stats &stats, std::error_code &ec) {
 	ec = make_error_code(ret);
 }
 
-void Client::setxattr(Context &ctx, Inode ino, const std::string &name,
+void Client::setxattr(Context &ctx, inode_t ino, const std::string &name,
 	             const XattrBuffer &value, int flags) {
 	std::error_code ec;
 	setxattr(ctx, ino, name, value, flags, ec);
@@ -631,14 +631,14 @@ void Client::setxattr(Context &ctx, Inode ino, const std::string &name,
 	}
 }
 
-void Client::setxattr(Context &ctx, Inode ino, const std::string &name,
+void Client::setxattr(Context &ctx, inode_t ino, const std::string &name,
 	              const XattrBuffer &value, int flags, std::error_code &ec) {
 	int ret = saunafs_setxattr_(ctx, ino, name.c_str(),
 	                             (const char *)value.data(), value.size(), flags);
 	ec = make_error_code(ret);
 }
 
-Client::XattrBuffer Client::getxattr(Context &ctx, Inode ino, const std::string &name) {
+Client::XattrBuffer Client::getxattr(Context &ctx, inode_t ino, const std::string &name) {
 	std::error_code ec;
 	auto ret = getxattr(ctx, ino, name, ec);
 	if (ec) {
@@ -647,7 +647,7 @@ Client::XattrBuffer Client::getxattr(Context &ctx, Inode ino, const std::string 
 	return ret;
 }
 
-Client::XattrBuffer Client::getxattr(Context &ctx, Inode ino, const std::string &name,
+Client::XattrBuffer Client::getxattr(Context &ctx, inode_t ino, const std::string &name,
 	                                  std::error_code &ec) {
 	SaunaClient::XattrReply reply;
 	int ret = saunafs_getxattr_(ctx, ino, name.c_str(), kMaxXattrRequestSize, reply);
@@ -655,7 +655,7 @@ Client::XattrBuffer Client::getxattr(Context &ctx, Inode ino, const std::string 
 	return reply.valueBuffer;
 }
 
-Client::XattrBuffer Client::listxattr(Context &ctx, Inode ino) {
+Client::XattrBuffer Client::listxattr(Context &ctx, inode_t ino) {
 	std::error_code ec;
 	auto ret = listxattr(ctx, ino, ec);
 	if (ec) {
@@ -664,14 +664,14 @@ Client::XattrBuffer Client::listxattr(Context &ctx, Inode ino) {
 	return ret;
 }
 
-Client::XattrBuffer Client::listxattr(Context &ctx, Inode ino, std::error_code &ec) {
+Client::XattrBuffer Client::listxattr(Context &ctx, inode_t ino, std::error_code &ec) {
 	SaunaClient::XattrReply reply;
 	int ret = saunafs_listxattr_(ctx, ino, kMaxXattrRequestSize, reply);
 	ec = make_error_code(ret);
 	return reply.valueBuffer;
 }
 
-void Client::removexattr(Context &ctx, Inode ino, const std::string &name) {
+void Client::removexattr(Context &ctx, inode_t ino, const std::string &name) {
 	std::error_code ec;
 	removexattr(ctx, ino, name, ec);
 	if (ec) {
@@ -679,12 +679,12 @@ void Client::removexattr(Context &ctx, Inode ino, const std::string &name) {
 	}
 }
 
-void Client::removexattr(Context &ctx, Inode ino, const std::string &name, std::error_code &ec) {
+void Client::removexattr(Context &ctx, inode_t ino, const std::string &name, std::error_code &ec) {
 	int ret = saunafs_removexattr_(ctx, ino, name.c_str());
 	ec = make_error_code(ret);
 }
 
-void Client::setacl(Context &ctx, Inode ino, const RichACL &acl) {
+void Client::setacl(Context &ctx, inode_t ino, const RichACL &acl) {
 	std::error_code ec;
 	setacl(ctx, ino, std::move(acl), ec);
 	if (ec) {
@@ -692,7 +692,7 @@ void Client::setacl(Context &ctx, Inode ino, const RichACL &acl) {
 	}
 }
 
-void Client::setacl(Context &ctx, Inode ino, const RichACL &acl, std::error_code &ec) {
+void Client::setacl(Context &ctx, inode_t ino, const RichACL &acl, std::error_code &ec) {
 	try {
 		std::vector<uint8_t> xattr = richAclConverter::objectToRichACLXattr(acl);
 		setxattr(ctx, ino, kRichAclXattrName, xattr, 0, ec);
@@ -701,7 +701,7 @@ void Client::setacl(Context &ctx, Inode ino, const RichACL &acl, std::error_code
 	}
 }
 
-RichACL Client::getacl(Context &ctx, Inode ino) {
+RichACL Client::getacl(Context &ctx, inode_t ino) {
 	std::error_code ec;
 	auto ret = getacl(ctx, ino, ec);
 	if (ec) {
@@ -710,7 +710,7 @@ RichACL Client::getacl(Context &ctx, Inode ino) {
 	return ret;
 }
 
-RichACL Client::getacl(Context &ctx, Inode ino, std::error_code &ec) {
+RichACL Client::getacl(Context &ctx, inode_t ino, std::error_code &ec) {
 	try {
 		auto buffer = getxattr(ctx, ino, kRichAclXattrName, ec);
 		if (ec) {
@@ -741,7 +741,7 @@ std::vector<std::string> Client::toXattrList(const XattrBuffer &buffer) {
 	return xattr_list;
 }
 
-std::vector<ChunkWithAddressAndLabel> Client::getchunksinfo(Context &ctx, Inode ino,
+std::vector<ChunkWithAddressAndLabel> Client::getchunksinfo(Context &ctx, inode_t ino,
 	                                          uint32_t chunk_index, uint32_t chunk_count) {
 	std::error_code ec;
 	auto ret = getchunksinfo(ctx, ino, chunk_index, chunk_count, ec);
@@ -751,7 +751,7 @@ std::vector<ChunkWithAddressAndLabel> Client::getchunksinfo(Context &ctx, Inode 
 	return ret;
 }
 
-std::vector<ChunkWithAddressAndLabel> Client::getchunksinfo(Context &ctx, Inode ino,
+std::vector<ChunkWithAddressAndLabel> Client::getchunksinfo(Context &ctx, inode_t ino,
 	                             uint32_t chunk_index, uint32_t chunk_count, std::error_code &ec) {
 	std::vector<ChunkWithAddressAndLabel> chunks;
 	auto ret =
@@ -776,7 +776,7 @@ std::vector<ChunkserverListEntry> Client::getchunkservers(std::error_code &ec) {
 	return chunkservers;
 }
 
-void Client::getlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock) {
+void Client::getlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock) {
 	std::error_code ec;
 	getlk(ctx, ino, fileinfo, lock, ec);
 	if (ec) {
@@ -784,13 +784,13 @@ void Client::getlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lo
 	}
 }
 
-void Client::getlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock,
+void Client::getlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock,
 		std::error_code &ec) {
 	int ret = saunafs_getlk_(ctx, ino, fileinfo, lock);
 	ec = make_error_code(ret);
 }
 
-void Client::setlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock,
+void Client::setlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock,
 	           std::function<int(const safs_locks::InterruptData &)> handler) {
 	std::error_code ec;
 	setlk(ctx, ino, fileinfo, lock, handler, ec);
@@ -799,7 +799,7 @@ void Client::setlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lo
 	}
 }
 
-void Client::setlk(Context &ctx, Inode ino, FileInfo *fileinfo, FlockWrapper &lock,
+void Client::setlk(Context &ctx, inode_t ino, FileInfo *fileinfo, FlockWrapper &lock,
 	                    std::function<int(const safs_locks::InterruptData &)> handler,
 	                    std::error_code &ec) {
 	uint32_t reqid = 0;

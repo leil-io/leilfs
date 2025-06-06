@@ -36,6 +36,7 @@
 #include <span>
 
 #include "common/datapack.h"
+#include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 #include "common/special_inode_defs.h"
@@ -84,8 +85,8 @@ static int debug_mode = 0;
 static double entry_cache_timeout = 0.0;
 static double attr_cache_timeout = 1.0;
 
-uint32_t sfs_meta_name_to_inode(const char *name) {
-	uint32_t inode=0;
+inode_t sfs_meta_name_to_inode(const char *name) {
+	inode_t inode=0;
 	char *end;
 	inode = strtoul(name,&end,16);
 	if (*end=='|' && end[1]!=0) {
@@ -95,7 +96,7 @@ uint32_t sfs_meta_name_to_inode(const char *name) {
 	}
 }
 
-static void sfs_meta_type_to_stat(uint32_t inode,uint8_t type, struct stat *stbuf) {
+static void sfs_meta_type_to_stat(inode_t inode,uint8_t type, struct stat *stbuf) {
 	memset(stbuf,0,sizeof(struct stat));
 	stbuf->st_ino = inode;
 	switch (type) {
@@ -125,7 +126,7 @@ static void sfs_meta_type_to_stat(uint32_t inode,uint8_t type, struct stat *stbu
 	}
 }
 
-static void sfs_meta_stat(uint32_t inode, struct stat *stbuf) {
+static void sfs_meta_stat(inode_t inode, struct stat *stbuf) {
 	int now;
 	stbuf->st_ino = inode;
 	stbuf->st_size = 0;
@@ -156,7 +157,7 @@ static void sfs_meta_stat(uint32_t inode, struct stat *stbuf) {
 	stbuf->st_ctime = now;
 }
 
-static void sfs_attr_to_stat(uint32_t inode, const Attributes &attr, struct stat *stbuf) {
+static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
 	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink;
@@ -165,12 +166,12 @@ static void sfs_attr_to_stat(uint32_t inode, const Attributes &attr, struct stat
 	ptr = attr.data();
 	attrtype = get8bit(&ptr);
 	attrmode = get16bit(&ptr);
-	attruid = get32bit(&ptr);
-	attrgid = get32bit(&ptr);
-	attratime = get32bit(&ptr);
-	attrmtime = get32bit(&ptr);
-	attrctime = get32bit(&ptr);
-	attrnlink = get32bit(&ptr);
+	get32bit(&ptr, attruid);
+	get32bit(&ptr, attrgid);
+	get32bit(&ptr, attratime);
+	get32bit(&ptr, attrmtime);
+	get32bit(&ptr, attrctime);
+	get32bit(&ptr, attrnlink);
 	attrlength = get64bit(&ptr);
 	stbuf->st_ino = inode;
 	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_RESERVED) {
@@ -190,7 +191,7 @@ static void sfs_attr_to_stat(uint32_t inode, const Attributes &attr, struct stat
 
 void sfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
 	uint64_t totalspace,availspace,trashspace,reservedspace;
-	uint32_t inodes;
+	inode_t inodes;
 	struct statvfs stfsbuf;
 	memset(&stfsbuf,0,sizeof(stfsbuf));
 
@@ -212,7 +213,7 @@ void sfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
 
 void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 	struct fuse_entry_param e;
-	uint32_t inode;
+	inode_t inode;
 	memset(&e, 0, sizeof(e));
 	inode = 0;
 	switch (parent) {
@@ -338,7 +339,7 @@ void sfs_meta_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *stbuf, int to
 
 void sfs_meta_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
 	int status;
-	uint32_t inode;
+	inode_t inode;
 	if (parent!=SPECIAL_INODE_META_TRASH) {
 		fuse_reply_err(req,EACCES);
 		return;
@@ -356,7 +357,7 @@ void sfs_meta_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
 void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_ino_t newparent, const char *newname, unsigned int flags) {
 	(void)flags;
 	int status;
-	uint32_t inode;
+	inode_t inode;
 	(void)newname;
 	if (parent!=SPECIAL_INODE_META_TRASH && newparent!=SPECIAL_INODE_META_UNDEL) {
 		fuse_reply_err(req,EACCES);
@@ -372,23 +373,30 @@ void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_i
 	fuse_reply_err(req, status);
 }
 
-static uint32_t dir_metaentries_size(uint32_t ino) {
+static uint32_t dir_metaentries_size(inode_t ino) {
+	// 2 could be name length + type
+	constexpr uint32_t kFixedEntrySize = kinode_t_size + 2;
+
 	switch (ino) {
 	case SPECIAL_INODE_ROOT:
-		return 4*6+1+2+strlen(SPECIAL_FILE_NAME_META_TRASH)+strlen(SPECIAL_FILE_NAME_META_RESERVED);
+		return (4 * kFixedEntrySize) + 1 + 2 + strlen(SPECIAL_FILE_NAME_META_TRASH) +
+		       strlen(SPECIAL_FILE_NAME_META_RESERVED);
 	case SPECIAL_INODE_META_TRASH:
-		return 3*6+1+2+strlen(SPECIAL_FILE_NAME_META_UNDEL);
+		return (3 * kFixedEntrySize) + 1 + 2 + strlen(SPECIAL_FILE_NAME_META_UNDEL);
 	case SPECIAL_INODE_META_UNDEL:
-		return 2*6+1+2;
+		return (2 * kFixedEntrySize) + 1 + 2;
 	case SPECIAL_INODE_META_RESERVED:
-		return 2*6+1+2;
+		return (2 * kFixedEntrySize) + 1 + 2;
+	default:
+		return 0;
 	}
+
 	return 0;
 }
 
 struct MetaStat {
 	std::string name;
-	SaunaClient::Inode inode;
+	inode_t inode;
 	char type;
 };
 
@@ -401,80 +409,80 @@ static constexpr std::array<MetaStat, 4> rootDirEntries() {
 		return entries;
 }
 
-static void dir_metaentries_fill(uint8_t *buff,uint32_t ino) {
+static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
 	uint8_t l;
 	switch (ino) {
 	case SPECIAL_INODE_ROOT:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// trash
 		l = strlen(SPECIAL_FILE_NAME_META_TRASH);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_TRASH,l);
 		buff+=l;
-		put32bit(&buff,SPECIAL_INODE_META_TRASH);
+		putINode(&buff,SPECIAL_INODE_META_TRASH);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// reserved
 		l = strlen(SPECIAL_FILE_NAME_META_RESERVED);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_RESERVED,l);
 		buff+=l;
-		put32bit(&buff,SPECIAL_INODE_META_RESERVED);
+		putINode(&buff,SPECIAL_INODE_META_RESERVED);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_TRASH:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_TRASH);
+		putINode(&buff,SPECIAL_INODE_META_TRASH);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// undel
 		l = strlen(SPECIAL_FILE_NAME_META_UNDEL);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_UNDEL,l);
 		buff+=l;
-		put32bit(&buff,SPECIAL_INODE_META_UNDEL);
+		putINode(&buff,SPECIAL_INODE_META_UNDEL);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_UNDEL:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_UNDEL);
+		putINode(&buff,SPECIAL_INODE_META_UNDEL);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_TRASH);
+		putINode(&buff,SPECIAL_INODE_META_TRASH);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_RESERVED:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_META_RESERVED);
+		putINode(&buff,SPECIAL_INODE_META_RESERVED);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
-		put32bit(&buff,SPECIAL_INODE_ROOT);
+		putINode(&buff,SPECIAL_INODE_ROOT);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	}
@@ -503,7 +511,7 @@ static uint32_t dir_dataentries_size(const uint8_t *dbuff,uint32_t dsize) {
 
 static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t dsize) {
 	const char *name;
-	uint32_t inode;
+	inode_t inode;
 	uint8_t nleng;
 	uint8_t inoleng;
 	const uint8_t *eptr;
@@ -520,8 +528,8 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 			put8bit(&buff,inoleng);
 			name = (const char*)dbuff;
 			dbuff+=nleng;
-			inode = get32bit(&dbuff);
-			sprintf((char*)buff,"%08" PRIX32 "|",inode);
+			getINode(&dbuff, inode);
+			sprintf((char*)buff,"%08" PRIXiNode "|",inode);
 			if (nleng>255-9) {
 				memcpy(buff+9,name,255-9);
 				buff+=255;
@@ -529,7 +537,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 				memcpy(buff+9,name,nleng);
 				buff+=9+nleng;
 			}
-			put32bit(&buff,inode);
+			putINode(&buff,inode);
 			put8bit(&buff,TYPE_FILE);
 		} else {
 			safs_pretty_syslog(LOG_WARNING,"dir data malformed (trash)");
@@ -539,7 +547,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 }
 
 
-static void dirbuf_meta_fill(dirbuf *b, uint32_t ino) {
+static void dirbuf_meta_fill(dirbuf *b, inode_t ino) {
 	int status;
 	uint32_t msize, dsize = 0, dcsize;
 	const uint8_t *dbuff = nullptr;
@@ -651,7 +659,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 	uint8_t end;
 	size_t opos,oleng;
 	uint8_t nleng;
-	uint32_t inode;
+	inode_t inode;
 	uint8_t type;
 	struct stat stbuf;
 
@@ -690,7 +698,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 			ptr+=nleng;
 			off+=nleng+6;
 			if (ptr+5<=eptr) {
-				inode = get32bit(&ptr);
+				getINode(&ptr, inode);
 				type = get8bit(&ptr);
 				sfs_meta_type_to_stat(inode,type,&stbuf);
 				c = name[nleng];

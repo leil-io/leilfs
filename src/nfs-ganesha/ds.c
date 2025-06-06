@@ -165,7 +165,7 @@ static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle,
 	    container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
-	             "export=%" PRIu16 " inode=%" PRIu32 " offset=%" PRIu64
+	             "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64
 	             " size=%" PRIu32, export->export.export_id,
 	             dataServer->inode, offset, requestedLength);
 
@@ -231,7 +231,7 @@ static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle,
 	    container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
-	             "export=%" PRIu16 " inode=%" PRIu32 " offset=%" PRIu64
+	             "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64
 	             " size=%" PRIu32, export->export.export_id,
 	             dataServer->inode, offset, writeLength);
 
@@ -288,7 +288,7 @@ static nfsstat4 dsh_commit(struct fsal_ds_handle *const dataServerHandle,
 	    container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
-	             "export=%" PRIu16 " inode=%" PRIu32 " offset=%" PRIu64
+	             "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64
 	             " size=%" PRIu32, export->export.export_id,
 	             dataServer->inode, offset, count);
 

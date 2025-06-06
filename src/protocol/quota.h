@@ -30,7 +30,7 @@ SAUNAFS_DEFINE_SERIALIZABLE_ENUM_CLASS(QuotaOwnerType, kUser, kGroup, kInode)
 
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(QuotaOwner,
 		QuotaOwnerType, ownerType,
-		uint32_t      , ownerId);
+		inode_t       , ownerId);
 
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(QuotaEntryKey,
 		QuotaOwner   , owner,

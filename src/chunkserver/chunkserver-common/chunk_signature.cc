@@ -51,7 +51,7 @@ bool ChunkSignature::readFromDescriptor(IDisk * /*disk*/, int fileDescriptor,
 
 	const uint8_t* ptr = buffer + kSignatureIdSize;
 	chunkId_ = get64bit(&ptr);
-	chunkVersion_ = get32bit(&ptr);
+	get32bit(&ptr, chunkVersion_);
 	chunkType_ = slice_traits::standard::ChunkPartType();
 
 	if (memcmp(buffer, kSauSignatureId, kSignatureIdSize) == 0) {

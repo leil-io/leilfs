@@ -29,6 +29,8 @@
 #  include "common/platform.h"
 #endif
 
+#include <stdint.h>
+
 #define MSB_1 0
 #define MSB_2 1
 #define MSB_4 2
@@ -217,7 +219,7 @@
 #define SUGIDCLEAR_SFS 5
 // end of sugidclearmode values
 #else
-enum class SugidClearMode {
+enum class SugidClearMode : uint8_t {
 	kNever = 0,
 	kAlways = 1,
 	kOsx = 2,
@@ -696,6 +698,9 @@ enum class SugidClearMode {
 
 // NAME type:
 // (size:8 data:STRING[size])
+
+#define REGISTER_BLOB_SIZE 64
+// Constant blob size used in register packets.
 
 #define FUSE_REGISTER_BLOB_NOACL       "kFh9mdZsR84l5e675v8bi54VfXaXSYozaU3DSz9AsLLtOtKipzb9aQNkxeOISx64"
 // CLTOMA:

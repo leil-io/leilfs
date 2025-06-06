@@ -33,6 +33,7 @@
 
 #include "common/chunk_with_address_and_label.h"
 #include "common/exception.h"
+#include "common/type_defs.h"
 #include "mount/group_cache.h"
 #include "mount/mount_info.h"
 #include "mount/sauna_client_context.h"
@@ -48,7 +49,6 @@
 
 namespace SaunaClient {
 
-using Inode = uint32_t;
 using JobId = uint32_t;
 using NamedInodeOffset = uint32_t;
 
@@ -344,7 +344,7 @@ struct EntryParam {
 		memset(&attr, 0, sizeof(struct stat));
 	}
 
-	Inode ino;
+	inode_t ino;
 #if FUSE_USE_VERSION >= 30
 	uint64_t generation;
 #else
@@ -408,11 +408,11 @@ void masterDisconnectedCallback();
 
 // TODO what about this one? Will decide when writing non-fuse client
 // void fsinit(void *userdata, struct fuse_conn_info *conn);
-bool isSpecialInode(SaunaClient::Inode ino);
+bool isSpecialInode(inode_t ino);
 
-EntryParam lookup(Context &ctx, Inode parent, const char *name);
+EntryParam lookup(Context &ctx, inode_t parent, const char *name);
 
-AttrReply getattr(Context &ctx, Inode ino);
+AttrReply getattr(Context &ctx, inode_t ino);
 
 #define SAUNAFS_SET_ATTR_MODE      (1 << 0)
 #define SAUNAFS_SET_ATTR_UID       (1 << 1)
@@ -422,73 +422,73 @@ AttrReply getattr(Context &ctx, Inode ino);
 #define SAUNAFS_SET_ATTR_MTIME     (1 << 5)
 #define SAUNAFS_SET_ATTR_ATIME_NOW (1 << 7)
 #define SAUNAFS_SET_ATTR_MTIME_NOW (1 << 8)
-AttrReply setattr(Context &ctx, Inode ino, struct stat *stbuf, int to_set);
+AttrReply setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set);
 
-std::string readlink(Context &ctx, Inode ino);
+std::string readlink(Context &ctx, inode_t ino);
 
-EntryParam mknod(Context &ctx, Inode parent, const char *name, mode_t mode, dev_t rdev);
+EntryParam mknod(Context &ctx, inode_t parent, const char *name, mode_t mode, dev_t rdev);
 
-EntryParam mkdir(Context &ctx, Inode parent, const char *name, mode_t mode);
+EntryParam mkdir(Context &ctx, inode_t parent, const char *name, mode_t mode);
 
-void unlink(Context &ctx, Inode parent, const char *name);
+void unlink(Context &ctx, inode_t parent, const char *name);
 
-void undel(Context &ctx, Inode ino);
+void undel(Context &ctx, inode_t ino);
 
-void rmdir(Context &ctx, Inode parent, const char *name);
+void rmdir(Context &ctx, inode_t parent, const char *name);
 
-EntryParam symlink(Context &ctx, const char *link, Inode parent, const char *name);
+EntryParam symlink(Context &ctx, const char *link, inode_t parent, const char *name);
 
-void rename(Context &ctx, Inode parent, const char *name, Inode newparent, const char *newname);
+void rename(Context &ctx, inode_t parent, const char *name, inode_t newparent, const char *newname);
 
-EntryParam link(Context &ctx, Inode ino, Inode newparent, const char *newname);
+EntryParam link(Context &ctx, inode_t ino, inode_t newparent, const char *newname);
 
-void open(Context &ctx, Inode ino, FileInfo* fi);
+void open(Context &ctx, inode_t ino, FileInfo* fi);
 
-std::vector<uint8_t> read_special_inode(Context &ctx, Inode ino, size_t size, off_t off,
+std::vector<uint8_t> read_special_inode(Context &ctx, inode_t ino, size_t size, off_t off,
 				        FileInfo* fi);
 
-ReadCache::Result read(Context &ctx, Inode ino, size_t size, off_t off, FileInfo* fi);
+ReadCache::Result read(Context &ctx, inode_t ino, size_t size, off_t off, FileInfo* fi);
 
 typedef size_t BytesWritten;
-BytesWritten write(Context &ctx, Inode ino, const char *buf, size_t size, off_t off,
+BytesWritten write(Context &ctx, inode_t ino, const char *buf, size_t size, off_t off,
 		FileInfo* fi);
 
-void flush(Context &ctx, Inode ino, FileInfo* fi);
+void flush(Context &ctx, inode_t ino, FileInfo* fi);
 
-void release(Inode ino, FileInfo* fi);
+void release(inode_t ino, FileInfo* fi);
 
-void fsync(Context &ctx, Inode ino, int datasync, FileInfo* fi);
+void fsync(Context &ctx, inode_t ino, int datasync, FileInfo* fi);
 
-void opendir(Context &ctx, Inode ino);
+void opendir(Context &ctx, inode_t ino);
 
-std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, size_t max_entries);
+std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off, size_t max_entries);
 
 std::vector<NamedInodeEntry> readreserved(Context &ctx, NamedInodeOffset offset, NamedInodeOffset max_entries);
 
 std::vector<NamedInodeEntry> readtrash(Context &ctx, NamedInodeOffset offset, NamedInodeOffset max_entries);
 
-void releasedir(Inode ino);
+void releasedir(inode_t ino);
 
-struct statvfs statfs(Context &ctx, Inode ino);
+struct statvfs statfs(Context &ctx, inode_t ino);
 
-void setxattr(Context &ctx, Inode ino, const char *name, const char *value,
+void setxattr(Context &ctx, inode_t ino, const char *name, const char *value,
 		size_t size, int flags, uint32_t position);
 
-XattrReply getxattr(Context &ctx, Inode ino, const char *name, size_t size, uint32_t position);
+XattrReply getxattr(Context &ctx, inode_t ino, const char *name, size_t size, uint32_t position);
 
-XattrReply listxattr(Context &ctx, Inode ino, size_t size);
+XattrReply listxattr(Context &ctx, inode_t ino, size_t size);
 
-void removexattr(Context &ctx, Inode ino, const char *name);
+void removexattr(Context &ctx, inode_t ino, const char *name);
 
-void access(Context &ctx, Inode ino, int mask);
+void access(Context &ctx, inode_t ino, int mask);
 
-EntryParam create(Context &ctx, Inode parent, const char *name,
+EntryParam create(Context &ctx, inode_t parent, const char *name,
 		mode_t mode, FileInfo* fi);
 
-void getlk(Context &ctx, Inode ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock);
-uint32_t setlk_send(Context &ctx, Inode ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock);
+void getlk(Context &ctx, inode_t ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock);
+uint32_t setlk_send(Context &ctx, inode_t ino, FileInfo* fi, struct safs_locks::FlockWrapper &lock);
 void setlk_recv();
-uint32_t flock_send(Context &ctx, Inode ino, FileInfo* fi, int op);
+uint32_t flock_send(Context &ctx, inode_t ino, FileInfo* fi, int op);
 void flock_recv();
 
 void flock_interrupt(const safs_locks::InterruptData &data);
@@ -497,14 +497,14 @@ void setlk_interrupt(const safs_locks::InterruptData &data);
 void remove_file_info(FileInfo *f);
 void remove_dir_info(FileInfo *f);
 
-JobId makesnapshot(Context &ctx, Inode ino, Inode dst_parent, const std::string &dst_name,
+JobId makesnapshot(Context &ctx, inode_t ino, inode_t dst_parent, const std::string &dst_name,
 	          bool can_overwrite);
-std::string getgoal(Context &ctx, Inode ino);
-void setgoal(Context &ctx, Inode ino, const std::string &goal_name, uint8_t smode);
+std::string getgoal(Context &ctx, inode_t ino);
+void setgoal(Context &ctx, inode_t ino, const std::string &goal_name, uint8_t smode);
 
-void statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace, uint64_t *reservedspace, uint32_t *inodes);
+void statfs(uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace, uint64_t *reservedspace, inode_t *inodes);
 
-std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, Inode ino,
+std::vector<ChunkWithAddressAndLabel> getchunksinfo(Context &ctx, inode_t ino,
 	                                                uint32_t chunk_index, uint32_t chunk_count);
 
 std::vector<ChunkserverListEntry> getchunkservers();

@@ -46,7 +46,8 @@ static void recursive_remove_usage() {
 
 static int recursive_remove(const char *file_name, int long_wait) {
 	char path_buf[PATH_MAX];
-	uint32_t parent, uid, gid;
+	inode_t parent;
+	uint32_t uid, gid;
 	int fd;
 	uint8_t status;
 	uint32_t msgid = 0, job_id;
