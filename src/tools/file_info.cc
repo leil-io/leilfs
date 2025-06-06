@@ -29,14 +29,12 @@
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
-static int kDefaultTimeout = 10 * 1000;              // default timeout (10 seconds)
 static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeout (10 days)
 
 static void file_info_usage() {
 	fprintf(stderr,
 	        "show files info (shows detailed info of each file chunk)\n\nusage:\n"
 	        " saunafs fileinfo name [name ...]\n");
-	fprintf(stderr, " -l - wait until fileinfo will finish (otherwise there is a 10s timeout) (will be default in 5.0.0)\n");
 }
 
 static std::string chunkTypeToString(ChunkPartType type) {
@@ -49,12 +47,11 @@ static std::string chunkTypeToString(ChunkPartType type) {
 	return "";
 }
 
-static int chunks_info(const char *file_name, int fd, inode_t inode, bool long_wait) {
+static int chunks_info(const char *file_name, int fd, inode_t inode) {
 	static constexpr uint32_t kRequestSize = 100;
 	std::vector<ChunkWithAddressAndLabel> chunks;
 	std::vector<uint8_t> buffer;
 	uint32_t message_id, chunk_index;
-	int timeout_ms = long_wait ? kInfiniteTimeout : kDefaultTimeout;
 
 	chunk_index = 0;
 
@@ -67,7 +64,7 @@ static int chunks_info(const char *file_name, int fd, inode_t inode, bool long_w
 		}
 
 		buffer.resize(PacketHeader::kSize);
-		if (tcptoread(fd, buffer.data(), PacketHeader::kSize, timeout_ms) != (int)PacketHeader::kSize) {
+		if (tcptoread(fd, buffer.data(), PacketHeader::kSize, kInfiniteTimeout) != (int)PacketHeader::kSize) {
 			printf("%s [%" PRIu32 "]: master query: receive error\n", file_name, chunk_index);
 			return -1;
 		}
@@ -83,7 +80,7 @@ static int chunks_info(const char *file_name, int fd, inode_t inode, bool long_w
 
 		buffer.resize(header.length);
 
-		if (tcptoread(fd, buffer.data(), header.length, timeout_ms) != (int)header.length) {
+		if (tcptoread(fd, buffer.data(), header.length, kInfiniteTimeout) != (int)header.length) {
 			printf("%s [%" PRIu32 "]: master query: receive error\n", file_name, chunk_index);
 			return -1;
 		}
@@ -149,15 +146,10 @@ static int chunks_info(const char *file_name, int fd, inode_t inode, bool long_w
 	return 0;
 }
 
-static int file_info(const char *fileName, bool long_wait) {
+static int file_info(const char *fileName) {
 	std::vector<uint8_t> buffer;
 	inode_t inode;
 	int fd;
-
-	fmt::println(
-	    stderr,
-	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
-
 
 	fd = open_master_conn(fileName, &inode, nullptr, false);
 	if (fd < 0) {
@@ -166,7 +158,7 @@ static int file_info(const char *fileName, bool long_wait) {
 	try {
 		printf("%s:\n", fileName);
 
-		if (chunks_info(fileName, fd, inode, long_wait) < 0) {
+		if (chunks_info(fileName, fd, inode) < 0) {
 			close_master_conn(1);
 			return -1;
 		}
@@ -182,15 +174,6 @@ static int file_info(const char *fileName, bool long_wait) {
 int file_info_run(int argc, char **argv) {
 	int status;
 
-	int ch;
-	bool long_wait = false;
-	while ((ch = getopt(argc, argv, "l")) != -1) {
-		switch (ch) {
-		case 'l':
-			long_wait = true;
-			break;
-		}
-	}
 	argc -= optind;
 	argv += optind;
 
@@ -201,7 +184,7 @@ int file_info_run(int argc, char **argv) {
 
 	status = 0;
 	while (argc > 0) {
-		if (file_info(*argv, long_wait) < 0) {
+		if (file_info(*argv) < 0) {
 			status = 1;
 		}
 		argc--;

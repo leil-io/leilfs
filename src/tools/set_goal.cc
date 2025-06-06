@@ -30,7 +30,6 @@
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
-static int kDefaultTimeout = 30 * 1000;
 static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeout (10 days)
 
 static void set_goal_usage() {
@@ -43,7 +42,7 @@ static void set_goal_usage() {
 	fprintf(stderr, " GOAL - set goal to given goal name\n");
 }
 
-static int set_goal(const char *fname, const std::string &goal, uint8_t mode, int long_wait) {
+static int set_goal(const char *fname, const std::string &goal, uint8_t mode) {
 	inode_t inode;
 	int fd;
 	uint32_t messageId = 0;
@@ -61,7 +60,7 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode, in
 		auto request = cltoma::fuseSetGoal::build(messageId, inode, uid, goal, mode);
 		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SETGOAL,
 		                    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-		                    long_wait ? kInfiniteTimeout : kDefaultTimeout);
+		                    kInfiniteTimeout);
 		inode_t changed;
 		inode_t notChanged;
 		inode_t notPermitted;
@@ -99,7 +98,6 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode, in
 static int gene_set_goal_run(int argc, char **argv, int rflag) {
 	int ch, status;
 	std::string goal;
-	int long_wait = 0;
 
 	while ((ch = getopt(argc, argv, "rnhHl")) != -1) {
 		switch (ch) {
@@ -114,9 +112,6 @@ static int gene_set_goal_run(int argc, char **argv, int rflag) {
 			break;
 		case 'r':
 			rflag = 1;
-			break;
-		case 'l':
-			long_wait = 1;
 			break;
 		}
 	}
@@ -143,7 +138,7 @@ static int gene_set_goal_run(int argc, char **argv, int rflag) {
 	}
 	status = 0;
 	while (argc > 0) {
-		if (set_goal(*argv, goal, (rflag) ? (SMODE_SET | SMODE_RMASK) : SMODE_SET, long_wait) < 0) {
+		if (set_goal(*argv, goal, (rflag) ? (SMODE_SET | SMODE_RMASK) : SMODE_SET) < 0) {
 			status = 1;
 		}
 		argc--;

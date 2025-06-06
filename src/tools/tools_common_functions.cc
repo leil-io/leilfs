@@ -53,10 +53,13 @@ void signalHandler(uint32_t job_id) {
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGUSR1);
 	int sig = 0;
+	// In case you need it if the program crashed and want to cancel the task
+	fmt::println("Setup signal handler for task id {}", job_id);
 #ifndef _WIN32
 	sigwait(&set, &sig);
 #endif
 	if (sig == SIGINT || sig == SIGTERM || sig == SIGHUP) {
+		fmt::println("Stopping task id {}", job_id);
 		inode_t inode;
 		int fd = open_master_conn(".", &inode, nullptr, false);
 		if (fd < 0) {
