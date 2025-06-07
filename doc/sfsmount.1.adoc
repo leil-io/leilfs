@@ -111,10 +111,6 @@ Print some SaunaFS-specific debugging information.
 *-o sfscachemode=*'CACHEMODE'::
 Set cache mode (see *DATA CACHE MODES*; default is AUTO).
 
-*-o sfscachefiles*::
-(deprecated) Preserve file data in cache (equivalent to *-o
-sfscachemode=*'YES'). Will be removed in 5.0.0.
-
 *-o sfsattrcacheto=*'SEC'::
 Set attributes cache timeout in seconds (default: 1.0).
 
