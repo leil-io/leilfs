@@ -344,6 +344,19 @@ void fs_process_file_test() {
 	FSNode *f;
 
 	if (gFileTestLoopIndex == 0) {
+		if (unavailfiles > 0) {
+			safs::log_err("Currently unavailable files: {}", unavailfiles);
+		}
+		if (unavailchunks > 0) {
+			safs::log_err("Currently unavailable chunks: {}", unavailchunks);
+		}
+		if (unavailreservedfiles > 0) {
+			safs::log_err("Currently unavailable reserved files: {}", unavailreservedfiles);
+		}
+		if (unavailtrashfiles > 0) {
+			safs::log_warn("Currently unavailable trash files: {}", unavailtrashfiles);
+		}
+
 		fsinfo_files = files;
 		fsinfo_ugfiles = ugfiles;
 		fsinfo_mfiles = mfiles;
@@ -457,8 +470,8 @@ void fs_process_file_test() {
 				auto it = gDefectiveNodes.find(f->id);
 				if (it == gDefectiveNodes.end()) {
 					std::string name = get_node_info(f);
-					safs_pretty_syslog(LOG_ERR, "Chunks unavailable in %s",
-					                   name.c_str());
+					safs::log_trace("Chunks unavailable in {}",
+					                   name);
 				}
 			}
 			if (node_error_flag & kChunkUnderGoal) {
