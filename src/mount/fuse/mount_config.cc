@@ -68,7 +68,6 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsacl", acl, 1),
 	SFS_OPT("sfsrwlock=%d", rwlock, 0),
 	SFS_OPT("sfsdonotrememberpassword", donotrememberpassword, 1),
-	SFS_OPT("sfscachefiles", cachefiles, 1),
 	SFS_OPT("sfscachemode=%s", cachemode, 0),
 	SFS_OPT("sfsmkdircopysgid=%u", mkdircopysgid, 0),
 	SFS_OPT("sfssugidclearmode=%s", sugidclearmodestr, 0),
@@ -155,10 +154,6 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsrwlock"] = std::to_string(gMountOptions.rwlock);
 	gOptsNameValues["sfsdonotrememberpassword"] =
 	    std::to_string(gMountOptions.donotrememberpassword);
-	if (gMountOptions.cachefiles) {
-		fprintf(stderr, "Warning: sfscachefiles is deprecated, use -o sfscachemode=YES");
-	}
-	gOptsNameValues["sfscachefiles"] = std::to_string(gMountOptions.cachefiles);
 	gOptsNameValues["sfscachemode"] =
 	    gMountOptions.cachemode ? std::string(gMountOptions.cachemode) : "AUTO";
 	gOptsNameValues["sfsmkdircopysgid"] = std::to_string(gMountOptions.mkdircopysgid);
@@ -303,7 +298,6 @@ void usage(const char *progname) {
 				"operation (default: %d)\n"
 "    -o sfssugidclearmode=SMODE  set sugid clear mode (see below ; default: %s)\n"
 "    -o sfscachemode=CMODE       set cache mode (see below ; default: AUTO)\n"
-"    -o sfscachefiles            (deprecated) equivalent to '-o sfscachemode=YES'\n"
 "    -o sfsattrcacheto=SEC       set attributes cache timeout in seconds "
 				"(default: %.2f)\n"
 "    -o sfsentrycacheto=SEC      set file entry cache timeout in seconds "

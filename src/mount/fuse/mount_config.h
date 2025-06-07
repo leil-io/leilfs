@@ -84,7 +84,6 @@ struct sfsopts_ {
 	char *sugidclearmodestr;
 	SugidClearMode sugidclearmode;
 	char *cachemode;
-	int cachefiles;
 	int keepcache;
 	int passwordask;
 	int donotrememberpassword;
@@ -151,7 +150,6 @@ struct sfsopts_ {
 		sugidclearmodestr(NULL),
 		sugidclearmode(SaunaClient::FsInitParams::kDefaultSugidClearMode),
 		cachemode(NULL),
-		cachefiles(0),
 		keepcache(SaunaClient::FsInitParams::kDefaultKeepCache),
 		passwordask(0),
 		donotrememberpassword(SaunaClient::FsInitParams::kDefaultDoNotRememberPassword),

@@ -586,16 +586,8 @@ int main(int argc, char *argv[]) try {
 
 	init_fuse_lowlevel_ops();
 
-	if (gMountOptions.cachemode && gMountOptions.cachefiles) {
-		fprintf(stderr,
-			"sfscachemode and sfscachefiles options are exclusive "
-			"- use only " "sfscachemode\nsee: %s -h for help\n",
-		        argv[0]);
-		return 1;
-	}
-
 	if (!gMountOptions.cachemode) {
-		gMountOptions.keepcache = (gMountOptions.cachefiles) ? 1 : 0;
+		gMountOptions.keepcache = 0;
 	} else if (!strcasecmp(gMountOptions.cachemode, "AUTO")) {
 		gMountOptions.keepcache = 0;
 	} else if (!strcasecmp(gMountOptions.cachemode, "YES") ||
