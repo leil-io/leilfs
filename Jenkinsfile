@@ -1,4 +1,5 @@
 GIT_COMMIT_EMAIL = ""
+GIT_COMMIT_HASH = ""
 
 def buildSfstests() {
     sh '''
@@ -118,6 +119,20 @@ def slackGoodMessage(userMsg) {
 
 pipeline {
     agent none
+
+    parameters {
+        booleanParam(
+            name: 'DEPLOY_PACKAGE_TO_EXPERIMENTAL',
+            defaultValue: false,
+            description: 'Build and deploy packages to EXPERIMENTAL'
+        )
+        string(
+            name: 'DEBIAN_PACKAGE_REF',
+            defaultValue: 'dev',
+            description: 'If deploying packages, what leil-io/debian-package reference to use?'
+        )
+    }
+
     options {
         skipStagesAfterUnstable()
         // TODO: Add more lenient rules for dev
@@ -134,6 +149,10 @@ pipeline {
                     GIT_COMMIT_EMAIL = sh(
                         script: 'git --no-pager show -s --format="%ae"',
                         returnStdout: true
+                    ).trim()
+                    GIT_COMMIT_HASH = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true,
                     ).trim()
                 }
             }
@@ -327,16 +346,26 @@ pipeline {
         }
         stage('Deploy packages to dev repository') {
             agent none
-            when { branch "dev" }
+            when {
+                anyOf {
+                    branch "dev"
+                    expression { return params.DEPLOY_PACKAGE_TO_EXPERIMENTAL }
+                }
+            }
             steps {
-                build (
-                    job: 'SaunaFS Packages (Dev)',
-                    parameters: [
-                        string(name: 'VERSION', value: ''),
-                        string(name: 'REFERENCE', value: 'dev'),
-                        string(name: 'REPOSITORY', value: 'Development')
-                    ]
-                )
+                script {
+                    def repo = params.DEPLOY_PACKAGE_TO_EXPERIMENTAL
+                                ? "Experimental"
+                                : "Development"
+                    build (
+                        job: 'SaunaFS Packages (Dev)',
+                        parameters: [
+                            string(name: 'PACKAGE_REF', value: params.DEBIAN_PACKAGE_REF),
+                            string(name: 'SAUNAFS_REF', value: GIT_COMMIT_HASH),
+                            string(name: 'REPOSITORY', value: repo)
+                        ]
+                    )
+                }
             }
         }
     }
