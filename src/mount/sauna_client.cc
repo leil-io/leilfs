@@ -1952,12 +1952,25 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, Inode ino, off_t off, s
 		sassert(sessionIt != gReaddirSessions.end() || gReaddirSessions.empty());
 		readdirSession = &sessionIt->second;
 	}
+
+	auto clearDirEntries = [&](const uint32_t line) {
+		if (dir_entries.size() > 0) {
+			safs::log_info(
+			    "Clearing dir_entries ({} entries) at (line {}) from a previous uncompleted readdir",
+			    dir_entries.size(), line);
+			dir_entries.clear();
+		}
+	};
+
 	do {
 		updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx, ino, request_size);
+		clearDirEntries(__LINE__);
 		status = fs_getdir(ino, ctx.uid, ctx.gid, entry_index, request_size, dir_entries);
+
 		if (status == SAUNAFS_ERROR_GROUPNOTREGISTERED) {
 			registerGroupsInMaster(ctx);
 			updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx, ino, request_size);
+			clearDirEntries(__LINE__);
 			status = fs_getdir(ino, ctx.uid, ctx.gid, entry_index, request_size, dir_entries);
 		}
 	} while (readdirSession->restarted);
