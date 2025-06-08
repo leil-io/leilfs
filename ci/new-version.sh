@@ -4,7 +4,7 @@ set -eux
 
 previousRelease=${1:-"stable"}
 nextRelease=${2:-"dev"}
-changelogWithCommits="$(git log "${previousRelease}..${nextRelease}" --oneline --pretty='format:%h %s')"
+changelogWithCommits="$(git log --cherry-pick --right-only "${previousRelease}...${nextRelease}" --oneline --pretty='format:%h %s')"
 
 # Figure out version to bump
 isMajor=0
