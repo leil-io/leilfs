@@ -126,10 +126,6 @@ static int gene_get_goal_run(int argc, char **argv, int rflag) {
 	return status;
 }
 
-int rget_goal_run(int argc, char **argv) {
-	return gene_get_goal_run(argc, argv, 1);
-}
-
 int get_goal_run(int argc, char **argv) {
 	return gene_get_goal_run(argc, argv, 0);
 }
