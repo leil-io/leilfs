@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <errno.h>
+#include <fmt/base.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -37,7 +38,6 @@
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
-static int kDefaultTimeout = 60 * 1000;              // default timeout (60 seconds)
 static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeout (10 days)
 #ifdef _WIN32
 static struct stat kDefaultEmptyStat = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -47,21 +47,16 @@ static void snapshot_usage() {
 	fprintf(stderr,
 	        "make snapshot (lazy copy)\n\nusage:\n saunafs makesnapshot [-ofl] src [src ...] dst\n");
 	fprintf(stderr, " -o,-f - allow to overwrite existing objects\n");
-	fprintf(stderr, " -l - wait until snapshot will finish (otherwise there is 60s timeout) (will be default in 5.0.0)\n");
 }
 
 static int make_snapshot(const char *dstdir, const char *dstbase, const char *srcname,
-                         inode_t srcinode, uint8_t canoverwrite, int long_wait,
-                         uint8_t ignore_missing_src, int initial_batch_size) {
+                         inode_t srcinode, uint8_t canoverwrite, uint8_t ignore_missing_src,
+                         int initial_batch_size) {
 	inode_t dstinode;
 	uint32_t nleng, uid, gid;
 	uint8_t status;
 	uint32_t msgid = 0, job_id;
 	int fd;
-
-	fmt::println(
-	    stderr,
-	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
 
 	sigset_t set;
 	sigemptyset(&set);
@@ -91,7 +86,7 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 		auto response = ServerConnection::sendAndReceive(fd, request,
 				SAU_MATOCL_REQUEST_TASK_ID,
 				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-				long_wait ? kInfiniteTimeout : kDefaultTimeout);
+				kInfiniteTimeout);
 		matocl::requestTaskId::deserialize(response, msgid, job_id);
 
 		std::thread signal_thread(std::bind(signalHandler, job_id));
@@ -99,6 +94,7 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 		/* destructor of LambdaGuard will send SIGUSR1 signal in order to
 		 * return from signalHandler function and join thread */
 		auto join_guard = makeLambdaGuard([&signal_thread]() {
+			fmt::println("sending SIGUSR1 to signal_thread");
 			kill(getpid(), SIGUSR1);
 			signal_thread.join();
 		});
@@ -106,7 +102,7 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 		                                  uid, gid, canoverwrite, ignore_missing_src, initial_batch_size);
 		response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SNAPSHOT,
 				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-				long_wait ? kInfiniteTimeout : kDefaultTimeout);
+				kInfiniteTimeout);
 		matocl::snapshot::deserialize(response, msgid, status);
 
 		close_master_conn(0);
@@ -129,7 +125,7 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 }
 
 static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelements,
-					uint8_t canowerwrite, int long_wait, uint8_t ignore_missing_src, int initial_batch_size) {
+					uint8_t canowerwrite, uint8_t ignore_missing_src, int initial_batch_size) {
 	char to[PATH_MAX + 1], base[PATH_MAX + 1], dir[PATH_MAX + 1];
 	char src[PATH_MAX + 1];
 	std::string lookup_dstname = std::string(dstname);
@@ -208,9 +204,9 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 		inode_t srcinode;
 		int fd = open_master_conn(srcnames[0], &srcinode, NULL, true);
 		if (fd < 0) { return -1; }
-		return make_snapshot(to, base, srcnames[0], srcinode, canowerwrite, long_wait, ignore_missing_src, initial_batch_size);
+		return make_snapshot(to, base, srcnames[0], srcinode, canowerwrite, ignore_missing_src, initial_batch_size);
 #else
-		return make_snapshot(to, base, srcnames[0], sst.st_ino, canowerwrite, long_wait, ignore_missing_src, initial_batch_size);
+		return make_snapshot(to, base, srcnames[0], sst.st_ino, canowerwrite, ignore_missing_src, initial_batch_size);
 #endif
 	} else {  // dst exists
 		if (!get_full_path(dstname, to)) {
@@ -247,9 +243,9 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 			inode_t srcinode;
 			int fd = open_master_conn(srcnames[0], &srcinode, NULL, true);
 			if (fd < 0) { return -1; }
-			return make_snapshot(dir, base, srcnames[0], srcinode, canowerwrite, long_wait, ignore_missing_src, initial_batch_size);
+			return make_snapshot(dir, base, srcnames[0], srcinode, canowerwrite, ignore_missing_src, initial_batch_size);
 #else
-			return make_snapshot(dir, base, srcnames[0], sst.st_ino, canowerwrite, long_wait, ignore_missing_src, initial_batch_size);
+			return make_snapshot(dir, base, srcnames[0], sst.st_ino, canowerwrite, ignore_missing_src, initial_batch_size);
 #endif
 		} else {  // dst is a directory
 			status = 0;
@@ -298,10 +294,10 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 					int fd =
 					    open_master_conn(srcnames[i], &srcinode, NULL, true);
 					if (fd < 0) { return -1; }
-					if (make_snapshot(to, base, srcnames[i], srcinode, canowerwrite, long_wait,
+					if (make_snapshot(to, base, srcnames[i], srcinode, canowerwrite,
 					                  ignore_missing_src, initial_batch_size) < 0) {
 #else
-					if (make_snapshot(to, base, srcnames[i], sst.st_ino, canowerwrite, long_wait,
+					if (make_snapshot(to, base, srcnames[i], sst.st_ino, canowerwrite,
 					                  ignore_missing_src, initial_batch_size) < 0) {
 #endif
 						status = -1;
@@ -327,10 +323,10 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 						                          true);
 						if (fd < 0) { return -1; }
 						if (make_snapshot(to, base, srcnames[i], srcinode, canowerwrite,
-						                  long_wait, ignore_missing_src, initial_batch_size) < 0) {
+						                  ignore_missing_src, initial_batch_size) < 0) {
 #else
 						if (make_snapshot(to, base, srcnames[i], sst.st_ino, canowerwrite,
-						                  long_wait, ignore_missing_src, initial_batch_size) < 0) {
+						                  ignore_missing_src, initial_batch_size) < 0) {
 #endif
 							status = -1;
 						}
@@ -348,10 +344,10 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 						                          true);
 						if (fd < 0) { return -1; }
 						if (make_snapshot(dir, base, srcnames[i], srcinode, canowerwrite,
-						                  long_wait, ignore_missing_src, initial_batch_size) < 0) {
+						                  ignore_missing_src, initial_batch_size) < 0) {
 #else
 						if (make_snapshot(dir, base, srcnames[i], sst.st_ino, canowerwrite,
-						                  long_wait, ignore_missing_src, initial_batch_size) < 0) {
+						                  ignore_missing_src, initial_batch_size) < 0) {
 #endif
 							status = -1;
 						}
@@ -366,18 +362,14 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 int snapshot_run(int argc, char **argv) {
 	int ch;
 	int oflag = 0;
-	int lflag = 0;
 	uint8_t ignore_missing_src = 0;
 	int initial_batch_size = 0;
 
-	while ((ch = getopt(argc, argv, "folis:")) != -1) {
+	while ((ch = getopt(argc, argv, "fois:")) != -1) {
 		switch (ch) {
 		case 'f':
 		case 'o':
 			oflag = 1;
-			break;
-		case 'l':
-			lflag = 1;
 			break;
 		case 'i':
 			ignore_missing_src = 1;
@@ -393,5 +385,5 @@ int snapshot_run(int argc, char **argv) {
 		snapshot_usage();
 		return 1;
 	}
-	return snapshot(argv[argc - 1], argv, argc - 1, oflag, lflag, ignore_missing_src, initial_batch_size);
+	return snapshot(argv[argc - 1], argv, argc - 1, oflag, ignore_missing_src, initial_batch_size);
 }
