@@ -196,10 +196,6 @@ static int gene_get_trashtime_run(int argc, char **argv, int rflag) {
 	return status;
 }
 
-int rget_trashtime_run(int argc, char **argv) {
-	return gene_get_trashtime_run(argc, argv, 1);
-}
-
 int get_trashtime_run(int argc, char **argv) {
 	return gene_get_trashtime_run(argc, argv, 0);
 }

@@ -79,11 +79,6 @@ int main(int argc, char **argv) {
 		} else {
 			status = func(argc - 1, &argv[1]);
 		}
-		if (func_name == "rgetgoal" || func_name == "rsetgoal" || func_name == "rgettrashtime" ||
-		    func_name == "rsettrashtime") {
-			fmt::println(stderr, "Warning: {} is deprecated (use {} -r instead)",
-			        func_name, func_name.substr(1, func_name.size() - 1));
-		}
 	} else if (argc == 1) {
 		std::string command;
 		std::vector<char*> argv_new;
