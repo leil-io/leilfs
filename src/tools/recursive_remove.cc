@@ -34,17 +34,14 @@
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
-static int kDefaultTimeout = 60 * 1000;              // default timeout (60 seconds)
 static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeout (10 days)
 
 static void recursive_remove_usage() {
 	fprintf(stderr,
-	        "recursive remove\n\nusage:\n saunafs rremove [-l] name [name ...]\n");
-	fprintf(stderr, " -l - wait until removing will finish (otherwise there is %ds timeout) (will be default in 5.0.0)\n",
-		kDefaultTimeout/1000);
+	        "recursive remove\n\nusage:\n saunafs rremove name [name ...]\n");
 }
 
-static int recursive_remove(const char *file_name, int long_wait) {
+static int recursive_remove(const char *file_name) {
 	char path_buf[PATH_MAX];
 	uint32_t parent, uid, gid;
 	int fd;
@@ -58,10 +55,6 @@ static int recursive_remove(const char *file_name, int long_wait) {
 	sigaddset(&set, SIGHUP);
 	sigaddset(&set, SIGUSR1);
 	sigprocmask(SIG_BLOCK, &set, NULL);
-
-	fmt::println(
-	    stderr,
-	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
 
 	auto find_last_delimiter_pos = [](const std::string &parent_path) {
 		std::size_t last_pos_delimiter_unix = parent_path.find_last_of("/");
@@ -114,7 +107,7 @@ static int recursive_remove(const char *file_name, int long_wait) {
 		auto response = ServerConnection::sendAndReceive(fd,
 				request, SAU_MATOCL_REQUEST_TASK_ID,
 				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-				long_wait ? kInfiniteTimeout : kDefaultTimeout);
+				kInfiniteTimeout);
 		matocl::requestTaskId::deserialize(response, msgid, job_id);
 
 		std::thread signal_thread(std::bind(signalHandler, job_id));
@@ -128,7 +121,7 @@ static int recursive_remove(const char *file_name, int long_wait) {
 		request = cltoma::recursiveRemove::build(msgid, job_id, parent, fname, uid, gid);
 		response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_RECURSIVE_REMOVE,
 					ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-					long_wait ? kInfiniteTimeout : kDefaultTimeout);
+					kInfiniteTimeout);
 
 		matocl::recursiveRemove::deserialize(response, msgid, status);
 
@@ -151,28 +144,18 @@ static int recursive_remove(const char *file_name, int long_wait) {
 }
 
 int recursive_remove_run(int argc, char **argv) {
-	int ch;
-	int status;
-	int long_wait = 0;
-
-	while ((ch = getopt(argc, argv, "l")) != -1) {
-		switch(ch) {
-			case 'l':
-				long_wait = 1;
-				break;
-		}
-	}
-	argc -= optind;
-	argv += optind;
+	int status = 0;
 
 	if (argc < 1) {
 		recursive_remove_usage();
 		return 1;
 	}
+	// Go past initial command
+	argc--;
+	argv++;
 
-	status = 0;
 	while (argc > 0) {
-		if (recursive_remove(*argv, long_wait) < 0) {
+		if (recursive_remove(*argv) < 0) {
 			status = 1;
 		}
 		argc--;

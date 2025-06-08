@@ -34,7 +34,7 @@
 
 #include "common/datapack.h"
 #include "common/serialization.h"
-#include "common/server_connection.h"	
+#include "common/server_connection.h"
 #include "common/special_inode_defs.h"
 #include "common/sockets.h"
 #include "common/stat_defs.h"
@@ -216,7 +216,7 @@ size_t find_nth_occurrence(const std::string &str, char ch, int n) {
 	return pos;
 }
 
-// Converts a WSL path (e.g., \\wsl.localhost\Ubuntu-24.04\mnt\c\path) 
+// Converts a WSL path (e.g., \\wsl.localhost\Ubuntu-24.04\mnt\c\path)
 // to a Windows path (e.g., C:\path).
 void wsl_to_windows_path(char *rpath, size_t rpath_size) {
 	std::string wsl_path(rpath);

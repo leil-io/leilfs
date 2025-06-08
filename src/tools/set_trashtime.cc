@@ -30,22 +30,20 @@
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
-static int kDefaultTimeout = 30 * 1000;
 static int kInfiniteTimeout = -1;
 
 static void set_trashtime_usage() {
 	fprintf(stderr,
 	        "set objects trashtime (how many seconds file should be left in trash)\n\nusage: "
-	        "\n saunafs settrashtime [-nhHrl] SECONDS[-|+] name [name ...]\n");
+	        "\n saunafs settrashtime [-nhHr] SECONDS[-|+] name [name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();
-	fprintf(stderr, " -l - wait until settrashtime will finish (otherwise there is 30s timeout) (will be default in 5.0.0)\n");
 	fprintf(stderr, " SECONDS+ - if trashtime smaller then given value, increase trashtime to given value\n");
 	fprintf(stderr, " SECONDS- - if trashtime bigger then given value, decrease trashtime to given value\n");
 	fprintf(stderr, " SECONDS - just set trashtime to given value\n");
 }
 
-static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, int long_wait) {
+static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode) {
 	uint8_t reqbuff[25], *wptr, *buff;
 	const uint8_t *rptr;
 	uint32_t cmd, leng, inode, uid;
@@ -55,10 +53,6 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 	if (fd < 0) {
 		return -1;
 	}
-
-	fmt::println(
-	    stderr,
-	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
 
 	uid = getUId();
 	wptr = reqbuff;
@@ -74,7 +68,7 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 		close_master_conn(1);
 		return -1;
 	}
-	if (tcptoread(fd, reqbuff, 8, long_wait ? kInfiniteTimeout : kDefaultTimeout) != 8) {
+	if (tcptoread(fd, reqbuff, 8, kInfiniteTimeout) != 8) {
 		printf("%s: master query: receive error\n", fname);
 		close_master_conn(1);
 		return -1;
@@ -88,7 +82,7 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode, in
 		return -1;
 	}
 	buff = (uint8_t *)malloc(leng);
-	if (tcptoread(fd, buff, leng, long_wait ? kInfiniteTimeout : kDefaultTimeout) != (int32_t)leng) {
+	if (tcptoread(fd, buff, leng,  kInfiniteTimeout) != (int32_t)leng) {
 		printf("%s: master query: receive error\n", fname);
 		free(buff);
 		close_master_conn(1);
@@ -135,7 +129,6 @@ static int gene_set_trashtime_run(int argc, char **argv, int rflag) {
 	int ch, status;
 	uint32_t trashtime = 86400;
 	uint8_t smode = SMODE_SET;
-	int long_wait = 0;
 
 	while ((ch = getopt(argc, argv, "rnhHl")) != -1) {
 		switch (ch) {
@@ -150,9 +143,6 @@ static int gene_set_trashtime_run(int argc, char **argv, int rflag) {
 			break;
 		case 'r':
 			rflag = 1;
-			break;
-		case 'l':
-			long_wait = 1;
 			break;
 		}
 	}
@@ -193,7 +183,7 @@ static int gene_set_trashtime_run(int argc, char **argv, int rflag) {
 	}
 	status = 0;
 	while (argc > 0) {
-		if (set_trashtime(*argv, trashtime, (rflag) ? (smode | SMODE_RMASK) : smode, long_wait) < 0) {
+		if (set_trashtime(*argv, trashtime, (rflag) ? (smode | SMODE_RMASK) : smode) < 0) {
 			status = 1;
 		}
 		argc--;
