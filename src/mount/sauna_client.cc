@@ -235,8 +235,8 @@ struct finfo {
 	void *data;
 	uint8_t use_flocks;
 	uint8_t use_posixlocks;
-	pthread_mutex_t lock;
-	pthread_mutex_t flushlock;
+	std::mutex lock;
+	std::mutex flushlock;
 };
 
 static DirEntryCache gDirEntryCache;
@@ -436,7 +436,7 @@ private:
 	bool locked_;
 };
 
-static uint64_t *statsptr[STATNODES];
+static std::vector<uint64_t *> statsptr(STATNODES);
 
 void statsptr_init(void) {
 	statsnode *s;
@@ -488,11 +488,7 @@ void statsptr_init(void) {
 }
 
 void stats_inc(uint8_t id) {
-	if (id < STATNODES) {
-		stats_lock();
-		(*statsptr[id])++;
-		stats_unlock();
-	}
+	::stats_inc(id, statsptr);
 }
 
 void type_to_stat(inode_t inode,uint8_t type, struct stat *stbuf) {
@@ -2086,19 +2082,8 @@ void releasedir(inode_t ino) {
 
 
 static finfo* fs_newfileinfo(uint8_t accmode, inode_t inode) {
-	finfo *fileinfo;
-	if (!(fileinfo = (finfo*)malloc(sizeof(finfo))))
-		throw RequestException(SAUNAFS_ERROR_OUTOFMEMORY);
-	if (pthread_mutex_init(&(fileinfo->flushlock), NULL)) {
-		free(fileinfo);
-		throw RequestException(SAUNAFS_ERROR_EPERM);
-	}
-	if (pthread_mutex_init(&(fileinfo->lock), NULL)) {
-		pthread_mutex_destroy(&(fileinfo->flushlock));
-		free(fileinfo);
-		throw RequestException(SAUNAFS_ERROR_EPERM);
-	}
-	PthreadMutexWrapper lock((fileinfo->lock)); // make helgrind happy
+	finfo *fileinfo = new finfo();
+	std::lock_guard lock((fileinfo->lock)); // make helgrind happy
 #ifdef __FreeBSD__
 	/* old FreeBSD fuse reads whole file when opening with O_WRONLY|O_APPEND,
 	 * so can't open it write-only */
@@ -2126,7 +2111,7 @@ static finfo* fs_newfileinfo(uint8_t accmode, inode_t inode) {
 
 void remove_file_info(FileInfo *f) {
 	finfo* fileinfo = (finfo*)(f->fh);
-	PthreadMutexWrapper lock(fileinfo->lock);
+	std::unique_lock lock(fileinfo->lock);
 	fileinfo->use_flocks = false;
 	fileinfo->use_posixlocks = false;
 	if (fileinfo->mode == IO_READONLY || fileinfo->mode == IO_READ) {
@@ -2135,9 +2120,8 @@ void remove_file_info(FileInfo *f) {
 		write_data_end(fileinfo->data);
 	}
 	lock.unlock(); // This unlock is needed, since we want to destroy the mutex
-	pthread_mutex_destroy(&(fileinfo->lock));
-	pthread_mutex_destroy(&(fileinfo->flushlock));
-	free(fileinfo);
+	pthread_mutex_destroy(fileinfo->lock.native_handle()); // Make helgrind happy
+	delete fileinfo;
 }
 
 EntryParam create(Context &ctx, inode_t parent, const char *name, mode_t mode,
@@ -2409,8 +2393,8 @@ ReadCache::Result read(Context &ctx,
 		safs_pretty_syslog(LOG_WARNING, "I/O limiting error: %s", ex.what());
 		throw RequestException(SAUNAFS_ERROR_IO);
 	}
-	PthreadMutexWrapper lock(fileinfo->lock);
-	PthreadMutexWrapper flushlock(fileinfo->flushlock);
+	std::lock_guard lock(fileinfo->lock);
+	std::unique_lock flushlock(fileinfo->flushlock);
 	if (fileinfo->mode==IO_WRITEONLY) {
 		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
 				ino,
@@ -2527,7 +2511,7 @@ BytesWritten write(Context &ctx, inode_t ino, const char *buf, size_t size, off_
 		safs_pretty_syslog(LOG_WARNING, "I/O limiting error: %s", ex.what());
 		throw RequestException(SAUNAFS_ERROR_IO);
 	}
-	PthreadMutexWrapper lock(fileinfo->lock);
+	std::lock_guard lock(fileinfo->lock);
 	if (fileinfo->mode==IO_READONLY) {
 		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
 				ino,
@@ -2602,7 +2586,7 @@ void flush(Context &ctx, inode_t ino, FileInfo* fi) {
 	}
 
 	err = SAUNAFS_STATUS_OK;
-	PthreadMutexWrapper lock(fileinfo->lock);
+	std::unique_lock lock(fileinfo->lock);
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_WRITEONLY) {
 		err = write_data_flush(fileinfo->data);
 	}
@@ -2647,7 +2631,7 @@ void fsync(Context &ctx, inode_t ino, int datasync, FileInfo* fi) {
 		throw RequestException(SAUNAFS_ERROR_EBADF);
 	}
 	err = SAUNAFS_STATUS_OK;
-	PthreadMutexWrapper lock(fileinfo->lock);
+	std::lock_guard lock(fileinfo->lock);
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_WRITEONLY) {
 		err = write_data_flush(fileinfo->data);
 	}
@@ -3417,7 +3401,7 @@ uint32_t setlk_send(Context &ctx, inode_t ino, FileInfo* fi, struct safs_locks::
 	lock_request_mutex.unlock();
 
 	if (fileinfo != NULL) {
-		PthreadMutexWrapper lock(fileinfo->lock);
+		std::lock_guard lock(fileinfo->lock);
 		fileinfo->use_posixlocks = true;
 	}
 
@@ -3466,7 +3450,7 @@ uint32_t flock_send(Context &ctx, inode_t ino, FileInfo* fi, int op) {
 	lock_request_mutex.unlock();
 
 	if (fileinfo != NULL) {
-		PthreadMutexWrapper lock(fileinfo->lock);
+		std::lock_guard lock(fileinfo->lock);
 		fileinfo->use_flocks = true;
 	}
 

@@ -36,7 +36,7 @@ namespace InodeStats {
 static void release(FileInfo *fi) {
 	sinfo *statsinfo = reinterpret_cast<sinfo*>(fi->fh);
 	if (statsinfo!=NULL) {
-		PthreadMutexWrapper lock((statsinfo->lock));         // make helgrind happy
+		std::unique_lock lock(statsinfo->lock);         // make helgrind happy
 		if (statsinfo->buff!=NULL) {
 			free(statsinfo->buff);
 		}
@@ -44,8 +44,7 @@ static void release(FileInfo *fi) {
 			stats_reset_all();
 		}
 		lock.unlock(); // This unlock is needed, since we want to destroy the mutex
-		pthread_mutex_destroy(&(statsinfo->lock));      // make helgrind happy
-		free(statsinfo);
+		delete statsinfo;
 	}
 	oplog_printf("release (%" PRIiNode ") (internal node: STATS): OK", inode_);
 }

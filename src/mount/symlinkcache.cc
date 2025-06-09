@@ -21,12 +21,14 @@
 #include "common/platform.h"
 #include "mount/symlinkcache.h"
 
-#include <ctime>
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctime>
 #include <limits>
+#include <mutex>
+#include <vector>
 
 #include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
@@ -50,7 +52,7 @@ typedef struct _hashbucket {
 } hashbucket;
 
 static hashbucket *symlinkhash = NULL;
-static pthread_mutex_t slcachelock = PTHREAD_MUTEX_INITIALIZER;
+static std::mutex slcachelock;
 
 enum {
 	INSERTS = 0,
@@ -60,7 +62,7 @@ enum {
 	STATNODES
 };
 
-static uint64_t *statsptr[STATNODES];
+static std::vector<uint64_t *> statsptr(STATNODES);
 
 static inline void symlink_cache_statsptr_init(void) {
 	statsnode *s;
@@ -69,22 +71,6 @@ static inline void symlink_cache_statsptr_init(void) {
 	statsptr[SEARCH_HITS] = stats_get_counterptr(stats_get_subnode(s,"search_hits",0));
 	statsptr[SEARCH_MISSES] = stats_get_counterptr(stats_get_subnode(s,"search_misses",0));
 	statsptr[LINKS] = stats_get_counterptr(stats_get_subnode(s,"#links",1));
-}
-
-static inline void symlink_cache_stats_inc(uint8_t id) {
-	if (id<STATNODES) {
-		stats_lock();
-		(*statsptr[id])++;
-		stats_unlock();
-	}
-}
-
-static inline void symlink_cache_stats_dec(uint8_t id) {
-	if (id<STATNODES) {
-		stats_lock();
-		(*statsptr[id])--;
-		stats_unlock();
-	}
 }
 
 void symlink_cache_insert(inode_t inode,const uint8_t *path) {
@@ -99,8 +85,8 @@ void symlink_cache_insert(inode_t inode,const uint8_t *path) {
 	fi = 0;
 	fhb = NULL;
 
-	symlink_cache_stats_inc(INSERTS);
-	pthread_mutex_lock(&slcachelock);
+	stats_inc(INSERTS, statsptr);
+	std::lock_guard lock(slcachelock);
 	for (h=0 ; h<HASH_FUNCTIONS ; h++) {
 		hb = symlinkhash + ((inode*primes[h])%HASH_BUCKETS);
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
@@ -110,7 +96,6 @@ void symlink_cache_insert(inode_t inode,const uint8_t *path) {
 				}
 				hb->path[i]=(uint8_t*)strdup((const char *)path);
 				hb->time[i]=now;
-				pthread_mutex_unlock(&slcachelock);
 				return;
 			}
 			if (hb->time[i]<mints) {
@@ -122,7 +107,7 @@ void symlink_cache_insert(inode_t inode,const uint8_t *path) {
 	}
 	if (fhb) {      // just sanity check
 		if (fhb->time[fi]==0) {
-			symlink_cache_stats_inc(LINKS);
+			stats_inc(LINKS, statsptr);
 		}
 		if (fhb->path[fi]) {
 			free(fhb->path[fi]);
@@ -131,7 +116,6 @@ void symlink_cache_insert(inode_t inode,const uint8_t *path) {
 		fhb->path[fi]=(uint8_t*)strdup((const char *)path);
 		fhb->time[fi]=now;
 	}
-	pthread_mutex_unlock(&slcachelock);
 }
 
 int symlink_cache_search(inode_t inode,const uint8_t **path) {
@@ -142,7 +126,7 @@ int symlink_cache_search(inode_t inode,const uint8_t **path) {
 
 	now = time(NULL);
 
-	pthread_mutex_lock(&slcachelock);
+	std::unique_lock lock(slcachelock);
 	for (h=0 ; h<HASH_FUNCTIONS ; h++) {
 		hb = symlinkhash + ((inode*primes[h])%HASH_BUCKETS);
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
@@ -154,20 +138,20 @@ int symlink_cache_search(inode_t inode,const uint8_t **path) {
 					}
 					hb->time[i]=0;
 					hb->inode[i]=0;
-					pthread_mutex_unlock(&slcachelock);
-					symlink_cache_stats_dec(LINKS);
-					symlink_cache_stats_inc(SEARCH_MISSES);
+					lock.unlock();
+					stats_dec(LINKS, statsptr);
+					stats_inc(SEARCH_MISSES, statsptr);
 					return 0;
 				}
 				*path = hb->path[i];
-				pthread_mutex_unlock(&slcachelock);
-				symlink_cache_stats_inc(SEARCH_HITS);
+				lock.unlock();
+				stats_inc(SEARCH_HITS, statsptr);
 				return 1;
 			}
 		}
 	}
-	pthread_mutex_unlock(&slcachelock);
-	symlink_cache_stats_inc(SEARCH_MISSES);
+	lock.unlock();
+	stats_inc(SEARCH_MISSES, statsptr);
 	return 0;
 }
 
@@ -183,7 +167,7 @@ void symlink_cache_term(void) {
 	uint8_t i;
 	uint32_t hi;
 
-	pthread_mutex_lock(&slcachelock);
+	std::lock_guard lock(slcachelock);
 	for (hi=0 ; hi<HASH_BUCKETS ; hi++) {
 		hb = symlinkhash + hi;
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
@@ -193,5 +177,4 @@ void symlink_cache_term(void) {
 		}
 	}
 	free(symlinkhash);
-	pthread_mutex_unlock(&slcachelock);
 }

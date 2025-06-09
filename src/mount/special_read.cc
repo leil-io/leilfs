@@ -83,7 +83,7 @@ static std::vector<uint8_t> read(const Context &ctx,
 	std::vector<uint8_t> ret;
 	sinfo *statsinfo = reinterpret_cast<sinfo*>(fi->fh);
 	if (statsinfo != NULL) {
-		PthreadMutexWrapper lock((statsinfo->lock));         // make helgrind happy
+		std::lock_guard lock(statsinfo->lock);         // make helgrind happy
 
 		if (off >= statsinfo->leng) {
 			printReadOplogNoData(ctx,
@@ -132,7 +132,6 @@ static std::vector<uint8_t> read(const Context &ctx,
 	uint32_t ssize;
 	uint8_t *buff;
 	oplog_getdata(fi->fh, &buff, &ssize, size);
-	oplog_releasedata(fi->fh);
 	return std::vector<uint8_t>(buff, buff + ssize);
 }
 } // InodeOplog
@@ -146,7 +145,6 @@ static std::vector<uint8_t> read(const Context &ctx,
 	uint32_t ssize;
 	uint8_t *buff;
 	oplog_getdata(fi->fh, &buff, &ssize, size);
-	oplog_releasedata(fi->fh);
 	return std::vector<uint8_t>(buff, buff + ssize);
 }
 } // InodeOphistory

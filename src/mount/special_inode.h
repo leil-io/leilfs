@@ -41,7 +41,7 @@ namespace InodeStats {
 		char *buff;
 		uint32_t leng;
 		uint8_t reset;
-		pthread_mutex_t lock;
+		std::mutex lock;
 	} sinfo;
 
 	extern const Attributes attr;

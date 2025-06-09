@@ -42,7 +42,7 @@ static BytesWritten write(const Context &ctx, const char */*buf*/, size_t size,
 	                       off_t off, FileInfo *fi) {
 	sinfo *statsinfo = reinterpret_cast<sinfo*>(fi->fh);
 	if (statsinfo != NULL) {
-		PthreadMutexWrapper lock((statsinfo->lock));         // make helgrind happy
+		std::lock_guard lock(statsinfo->lock);         // make helgrind happy
 		statsinfo->reset = 1;
 	}
 	oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)",

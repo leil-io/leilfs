@@ -77,37 +77,6 @@ struct MagicFile {
 	bool wasWritten;
 };
 
-/**
- * A wrapper around pthread_mutex, acquiring a lock during construction and releasing it during
- * destruction in case if the lock wasn't released beforehand.
- */
-struct PthreadMutexWrapper {
-	PthreadMutexWrapper(pthread_mutex_t& mutex) : mutex_(mutex), locked_(true) {
-		pthread_mutex_lock(&mutex_);
-	}
-
-	~PthreadMutexWrapper() {
-		if (locked_) {
-			unlock();
-		}
-	}
-
-	void lock() {
-		sassert(!locked_);
-		locked_ = true;
-		pthread_mutex_lock(&mutex_);
-	}
-	void unlock() {
-		sassert(locked_);
-		locked_ = false;
-		pthread_mutex_unlock(&mutex_);
-	}
-
-private:
-	pthread_mutex_t& mutex_;
-	bool locked_;
-};
-
 namespace SaunaClient {
 void stats_inc(uint8_t id);
 
