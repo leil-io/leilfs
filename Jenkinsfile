@@ -1,5 +1,6 @@
 GIT_COMMIT_EMAIL = ""
 GIT_COMMIT_HASH = ""
+REGISTRY_URL = "registry.ci.leil.io"
 
 def buildSfstests() {
     sh '''
@@ -15,8 +16,13 @@ def buildImage(imageName) {
         cd $WORKSPACE
         mkdir build
         docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
-        docker tag saunafs-test:latest registry.ci.leil.io/saunafs-test:$GIT_COMMIT
-        docker push registry.ci.leil.io/saunafs-test:$GIT_COMMIT
+        """
+}
+
+def pushImage(registryImageName) {
+    sh """
+        docker tag saunafs-test:latest ${registryImageName}
+        docker push ${registryImageName}
         """
 }
 
@@ -198,6 +204,13 @@ pipeline {
                     }
                 }
                 stage('Build Ubuntu 22.04') {
+                    environment {
+                        SANITY_WORKERS = "${env.SANITY_WORKERS ?: '4'}"
+                        SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
+                        LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
+                        MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu22.04-saunafs-test:$GIT_COMMIT"
+                    }
                     agent { label "build" }
                     stages {
                         stage("Checkout source") {
@@ -209,6 +222,7 @@ pipeline {
                             steps {
                                 script {
                                     buildImage("ubuntu:22.04")
+                                    pushImage(env.REGISTRY_IMAGE_NAME)
                                 }
                             }
                         }
@@ -227,9 +241,10 @@ pipeline {
                                 disableDeferredWipeout: true,
                                 notFailBuild: true,
                             )
-                            sh '''
-                                docker image rm saunafs-test || true
-                                '''
+                            sh """
+                                docker image rm ${env.REGISTRY_IMAGE_NAME} || true
+                                docker image rm saunafs-test:latest || true
+                                """
                         }
                     }
                 }
@@ -241,6 +256,7 @@ pipeline {
                         LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
 
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu24.04-saunafs-test:$GIT_COMMIT"
                     }
                     stages {
                         stage("Checkout source") {
@@ -259,6 +275,7 @@ pipeline {
                             steps {
                                 script {
                                     buildImage("ubuntu:24.04")
+                                    pushImage(env.REGISTRY_IMAGE_NAME)
                                 }
                             }
                         }
@@ -336,9 +353,11 @@ pipeline {
                             )
                             sh '''
                                 docker rm $(docker stop $(docker ps -a -q --filter ancestor=saunafs-test --format="{{.ID}}")) || true
-                                docker image rm saunafs-test || true
-                                docker image rm registry.ci.leil.io/saunafs-test || true
                                 '''
+                            sh """
+                                docker image rm ${env.REGISTRY_IMAGE_NAME}:${GIT_COMMIT} || true
+                                docker image rm saunafs-test:latest || true
+                                """
                         }
                     }
                 }
