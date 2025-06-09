@@ -925,10 +925,15 @@ int masterconn_init(void) {
 	gTimeout_ms = get_cfg_timeout();
 	gEnableLoadFactor = static_cast<bool>(cfg_getuint32("ENABLE_LOAD_FACTOR", 0));
 
-	gNumberOfWorkers = cfg_get_minvalue<uint32_t>("MASTER_NR_OF_WORKERS", kDefaultNumberOfWorkers,
-	                                              kMinNumberOfWorkers);
-
 	if (!masterconn_load_label()) { return -1; }
+
+	// Create the connections (only one at this point)
+	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, gJobPool);
+	MasterConn *eptr = gMasterConnSingleton.get();
+	passert(eptr);
+
+	// Init the connections
+	if (eptr->initConnect() < 0) { return -1; }
 
 	// Register the callbacks in the event loop
 	eventloop_eachloopregister(masterconn_check_hdd_reports);
@@ -945,12 +950,12 @@ int masterconn_init(void) {
 }
 
 int masterconn_init_threads(void) {
+	gNumberOfWorkers = cfg_get_minvalue<uint32_t>("MASTER_NR_OF_WORKERS", kDefaultNumberOfWorkers,
+	                                              kMinNumberOfWorkers);
+
 	try {
 		gJobPool =
 		    std::make_shared<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, &gJobFD);
-	} catch (const std::runtime_error &e) {
-		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
-		return -1;
 	} catch (const std::exception &e) {
 		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
 		return -1;
@@ -962,14 +967,6 @@ int masterconn_init_threads(void) {
 	}
 
 	safs::log_info("master connection: {} background workers created", gNumberOfWorkers);
-
-	// Create the connections (only one at this point)
-	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, gJobPool);
-	MasterConn *eptr = gMasterConnSingleton.get();
-	passert(eptr);
-
-	// Init the connections
-	if (eptr->initConnect() < 0) { return -1; }
 
 	return 0;
 }
