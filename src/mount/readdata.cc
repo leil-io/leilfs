@@ -28,32 +28,25 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <filesystem>
 #include <limits>
-#include <map>
+#include <memory>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 #include "common/connection_pool.h"
-#include "common/datapack.h"
 #include "common/exceptions.h"
-#include "errors/sfserr.h"
 #include "common/read_plan_executor.h"
-#include "slogger/slogger.h"
-#include "common/sockets.h"
 #include "common/time_utils.h"
-#include "mount/chunk_locator.h"
 #include "mount/chunk_reader.h"
 #include "mount/mastercomm.h"
+#include "mount/memory_info.h"
 #include "mount/mount_info.h"
 #include "mount/notification_area_logging.h"
 #include "mount/readahead_adviser.h"
 #include "mount/readdata_cache.h"
-#include "mount/memory_info.h"
 #include "mount/tweaks.h"
-#include "mount/mount_info.h"
 #include "protocol/SFSCommunication.h"
+#include "slogger/slogger.h"
 
 #define REFRESHTICKS 15
 
@@ -607,6 +600,10 @@ void read_data_init(uint32_t retries,
 
 	readDataTerminate = false;
 
+	// Initialize the global read cache entries pool. This pool manages cached read entries
+	// and is used throughout the program. It is created during initialization and should
+	// remain valid until the program terminates.
+	gReadCacheEntriesPool = std::make_unique<ReadCacheEntriesPool>();
 	clear_active_read_records();
 
 	maxRetries = retries;
@@ -666,6 +663,7 @@ void read_data_term(void) {
 
 	clear_active_read_records();
 	gMemoryInfo.reset();
+	gReadCacheEntriesPool.reset();
 }
 
 void read_inode_ops(inode_t inode) { // attributes of inode have been changed - force reconnect and clear cache
