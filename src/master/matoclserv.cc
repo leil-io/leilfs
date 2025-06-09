@@ -6419,10 +6419,8 @@ void matoclserv_reload(void) {
 }
 
 int matoclserv_networkinit(void) {
-	if (cfg_isdefined("MATOCL_LISTEN_HOST") || cfg_isdefined("MATOCL_LISTEN_PORT")) {
-		ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
-		ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
-	}
+	ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
+	ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
 	RejectOld = cfg_getuint32("REJECT_OLD_CLIENTS",0);
 
 	if (matoclserv_iolimits_reload() != 0) {
