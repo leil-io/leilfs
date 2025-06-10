@@ -23,5 +23,5 @@ for i in {1..30}; do
 		assert_success mv -v "$file.tmp" "$file"
 	fi
 	# Randomly change goal of the file.
-	assert_success sfssetgoal "$(random 2 4)" "$file"
+	assert_success saunafs setgoal "$(random 2 4)" "$file"
 done

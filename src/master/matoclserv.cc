@@ -5266,7 +5266,7 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 				case CLTOMA_FUSE_REGISTER:
 					matoclserv_fuse_register(eptr,data,length);
 					break;
-				case CLTOMA_FUSE_READ_CHUNK: // used in sfsfileinfo
+				case CLTOMA_FUSE_READ_CHUNK: // used in saunafs fileinfo
 					matoclserv_fuse_read_chunk(eptr, PacketHeader(type, length), data);
 					break;
 				case CLTOMA_FUSE_CHECK:
@@ -5306,7 +5306,7 @@ void matoclserv_gotpacket(matoclserventry *eptr,uint32_t type,const uint8_t *dat
 					matoclserv_fuse_seteattr(eptr,data,length);
 					break;
 				default:
-					safs_pretty_syslog(LOG_NOTICE,"main master server module: got unknown message from sfstools (type:%" PRIu32 ")",type);
+					safs_pretty_syslog(LOG_NOTICE,"main master server module: got unknown message from saunafs <COMMAND> tools (type:%" PRIu32 ")",type);
 					eptr->mode=KILL;
 			}
 		}
