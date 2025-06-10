@@ -240,7 +240,7 @@ public:
 	ReadCacheEntriesPool(ReadCacheEntriesPool &&) = delete;
 	ReadCacheEntriesPool &operator=(ReadCacheEntriesPool &&) = delete;
 
-	ReadCacheEntriesPool() {
+	ReadCacheEntriesPool(uint32_t maxUnusedTime_ms) : maxUnusedTime_ms(maxUnusedTime_ms) {
 		cleanerThread_ =
 		    std::jthread([this](std::stop_token stopToken) { cleanerThreadFunc_(stopToken); });
 	}
@@ -274,7 +274,7 @@ private:
 		ReadCache::Entry *getEntry() const { return entry_; }
 	};
 
-	static constexpr uint32_t kMaxUnusedTime_ms = 1000 * 10;  // 10 seconds
+	uint32_t maxUnusedTime_ms;
 	std::jthread cleanerThread_;
 	std::unordered_map<size_t, std::deque<BufferEntry>> entriesMap_;
 	std::mutex mutex_;

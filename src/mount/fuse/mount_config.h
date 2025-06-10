@@ -105,6 +105,7 @@ struct sfsopts_ {
 	int chunkservertotalreadto;
 	int chunkserverwriteto;
 	int cacheexpirationtime;
+	int readbuffersexpirationtime;
 	int readaheadmaxwindowsize;
 	int readcachemaxsizepercentage;
 	unsigned readworkers;
@@ -171,6 +172,7 @@ struct sfsopts_ {
 		chunkservertotalreadto(SaunaClient::FsInitParams::kDefaultChunkserverTotalReadTo),
 		chunkserverwriteto(SaunaClient::FsInitParams::kDefaultChunkserverWriteTo),
 		cacheexpirationtime(SaunaClient::FsInitParams::kDefaultCacheExpirationTime),
+		readbuffersexpirationtime(SaunaClient::FsInitParams::kDefaultReadBuffersExpirationTime),
 		readaheadmaxwindowsize(SaunaClient::FsInitParams::kDefaultReadaheadMaxWindowSize),
 		readcachemaxsizepercentage(SaunaClient::FsInitParams::kDefaultReadCacheMaxSizePercentage),
 		readworkers(SaunaClient::FsInitParams::kDefaultReadWorkers),

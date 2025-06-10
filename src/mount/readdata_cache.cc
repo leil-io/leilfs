@@ -434,12 +434,12 @@ void ReadCacheEntriesPool::cleanerThreadFunc_(std::stop_token stopToken) {
 	pthread_setname_np(pthread_self(), "RCEP cleaner");
 
 	while (!stopToken.stop_requested()) {
-		std::this_thread::sleep_for(std::chrono::seconds(1));
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		std::unique_lock lock(mutex_);
 		std::vector<ReadCache::Entry *> entriesToDelete;
 		for (auto it = entriesMap_.begin(); it != entriesMap_.end();) {
 			auto &buffers = it->second;
-			while (!buffers.empty() && buffers.back().expired(kMaxUnusedTime_ms)) {
+			while (!buffers.empty() && buffers.back().expired(maxUnusedTime_ms)) {
 				entriesToDelete.push_back(buffers.back().getEntry());
 				buffers.pop_back();
 			}

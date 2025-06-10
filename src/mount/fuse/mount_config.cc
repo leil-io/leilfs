@@ -83,6 +83,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfschunkserverwavereadto=%d", chunkserverwavereadto, 0),
 	SFS_OPT("sfschunkservertotalreadto=%d", chunkservertotalreadto, 0),
 	SFS_OPT("cacheexpirationtime=%d", cacheexpirationtime, 0),
+	SFS_OPT("readbuffersexpirationtime=%d", readbuffersexpirationtime, 0),
 	SFS_OPT("readaheadmaxwindowsize=%d", readaheadmaxwindowsize, 4096),
 	SFS_OPT("readcachemaxsizepercentage=%d", readcachemaxsizepercentage, 60),
 	SFS_OPT("readworkers=%d", readworkers, 1),
@@ -177,6 +178,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfschunkservertotalreadto"] =
 	    std::to_string(gMountOptions.chunkservertotalreadto);
 	gOptsNameValues["cacheexpirationtime"] = std::to_string(gMountOptions.cacheexpirationtime);
+	gOptsNameValues["readbuffersexpirationtime"] =
+	    std::to_string(gMountOptions.readbuffersexpirationtime);
 	gOptsNameValues["readaheadmaxwindowsize"] =
 	    std::to_string(gMountOptions.readaheadmaxwindowsize);
 	gOptsNameValues["readcachemaxsizepercentage (bytes)"] =
@@ -238,6 +241,9 @@ void usage(const char *progname) {
 "    -o cacheexpirationtime=MSEC  set timeout for read cache entries to be "
 				"considered valid in milliseconds (0 disables "
 				"cache) (default: %u)\n"
+"    -o readbuffersexpirationtime=MSEC  set timeout for read buffers to expire. "
+				"Read buffers will be recycled and held aside for this amount of "
+				"milliseconds (default: %u)\n"
 "    -o readaheadmaxwindowsize=KB  set max value of readahead window per single "
 				"descriptor in kibibytes (default: %u)\n"
 "    -o readworkers=N            define number of read workers (default: %u)\n"
@@ -357,6 +363,7 @@ void usage(const char *progname) {
 				"converges faster—ideal for critical fast-reconnect scenarios (default: %u)\n"
 "\n",
 		SaunaClient::FsInitParams::kDefaultCacheExpirationTime,
+		SaunaClient::FsInitParams::kDefaultReadBuffersExpirationTime,
 		SaunaClient::FsInitParams::kDefaultReadaheadMaxWindowSize,
 		SaunaClient::FsInitParams::kDefaultReadWorkers,
 		SaunaClient::FsInitParams::kDefaultMaxReadaheadRequests,

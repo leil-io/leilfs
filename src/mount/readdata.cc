@@ -590,6 +590,7 @@ void read_data_init(uint32_t retries,
 		uint32_t chunkServerWaveReadTimeout_ms,
 		uint32_t chunkserverTotalReadTimeout_ms,
 		uint32_t cache_expiration_time_ms,
+		uint32_t read_buffers_expiration_time_ms,
 		uint32_t readahead_max_window_size_kB,
 		uint32_t read_chache_max_size_percentage,
 		uint32_t read_workers,
@@ -603,7 +604,7 @@ void read_data_init(uint32_t retries,
 	// Initialize the global read cache entries pool. This pool manages cached read entries
 	// and is used throughout the program. It is created during initialization and should
 	// remain valid until the program terminates.
-	gReadCacheEntriesPool = std::make_unique<ReadCacheEntriesPool>();
+	gReadCacheEntriesPool = std::make_unique<ReadCacheEntriesPool>(read_buffers_expiration_time_ms);
 	clear_active_read_records();
 
 	maxRetries = retries;
