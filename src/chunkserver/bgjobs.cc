@@ -31,6 +31,7 @@
 #include "devtools/request_log.h"
 #include "slogger/slogger.h"
 
+#include <sys/eventfd.h>
 #include <sys/syslog.h>
 #include <unistd.h>
 #include <cassert>
@@ -45,18 +46,15 @@
 #include <vector>
 
 constexpr auto kInvalidJob = nullptr;
-constexpr auto STATUS_BYTE_SIZE = 1;
 
 JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, int *wakeupDesc)
-    : name_(name), workers(workers) {
-	int fd[2];
-	if (pipe(fd) < 0) {  // pipe is a critical resource for communication within the JobPool
-		throw std::runtime_error("JobPool: Failed to create pipe: " + std::string(strerror(errno)));
+    // EFD_NONBLOCK to prevent blocking reads/writes
+    : notifierFD_(::eventfd(0, EFD_NONBLOCK)), name_(name), workers(workers) {
+	if (notifierFD_ < 0) {
+		throw std::runtime_error("JobPool: eventfd() failed: " + std::string(strerror(errno)));
 	}
-	rpipe = fd[0];
-	wpipe = fd[1];
 
-	*wakeupDesc = fd[0];
+	*wakeupDesc = notifierFD_;
 
 	jobsQueue = std::make_unique<ProducerConsumerQueue>(maxJobs);
 	statusQueue = std::make_unique<ProducerConsumerQueue>();
@@ -82,8 +80,7 @@ JobPool::~JobPool() {
 
 	workerThreads.clear();
 
-	close(rpipe);
-	close(wpipe);
+	close(notifierFD_);
 }
 
 uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
@@ -221,24 +218,31 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 }
 
 void JobPool::sendStatus(uint32_t jobId, uint8_t status) {
-	std::lock_guard pipeLockGuard(pipeMutex);
+	std::lock_guard statusLock(statusMutex_);
+
 	if (statusQueue->isEmpty()) {
-		eassert(write(wpipe, &status, STATUS_BYTE_SIZE) == STATUS_BYTE_SIZE &&
-		        "JobPool: SendStatus: Failed to write status to pipe");
+		static constexpr eventfd_t dummyValue = 1;  // Dummy value just to wake up the eventfd
+		eassert(::eventfd_write(notifierFD_, dummyValue) == 0 &&
+		        "JobPool: SendStatus: Failed to write to eventfd");
 	}
+
 	statusQueue->put(jobId, status, nullptr, 1);
 }
 
 bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status) {
 	uint32_t qstatus = 0;
-	std::lock_guard pipeLockGuard(pipeMutex);
+	std::lock_guard statusLock(statusMutex_);
+
 	statusQueue->get(&jobId, &qstatus, nullptr, nullptr);
 	status = qstatus;
+
 	if (statusQueue->isEmpty()) {
-		eassert(read(rpipe, &qstatus, STATUS_BYTE_SIZE) == STATUS_BYTE_SIZE &&
-		        "JobPool: ReceiveStatus: Failed to read status from pipe");
+		eventfd_t dummyEvent;  // Only to clear the eventfd
+		eassert(::eventfd_read(notifierFD_, &dummyEvent) == 0 &&
+		        "JobPool: ReceiveStatus: Failed to read from eventfd");
 		return false;
 	}
+
 	return true;
 }
 
