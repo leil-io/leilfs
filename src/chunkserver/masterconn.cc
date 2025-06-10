@@ -309,7 +309,7 @@ public:
 		}
 	}
 
-	void servePoll(const std::vector<pollfd> &pdesc) {
+	void handlePollErrors(const std::vector<pollfd> &pdesc) {
 		// Check if the socket has been closed or has an error.
 		if (pDescPos_ >= 0 && (pdesc[pDescPos_].revents & (POLLHUP | POLLERR))) {
 			if (mode_ == ConnectionMode::CONNECTING) {
@@ -318,7 +318,9 @@ public:
 				mode_ = ConnectionMode::KILL;
 			}
 		}
+	}
 
+	void servePoll(const std::vector<pollfd> &pdesc) {
 		if (mode_ == ConnectionMode::CONNECTING) {
 			// Check if the connection has been established.
 			if (socketFD_ >= 0 && pDescPos_ >= 0 && (pdesc[pDescPos_].revents & POLLOUT)) {
@@ -422,7 +424,6 @@ public:
 				return;
 			}
 
-			// stats_bytesout += bytesWritten;
 			bytesOut_ += bytesWritten;
 			pack.bytesSent += bytesWritten;
 
@@ -486,9 +487,8 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
 		if (jobPool_) {
-			job_create(
-			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-			    outputPacket, chunkId, chunkVersion, chunkType);
+			job_create(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+			           chunkType);
 		} else {
 			safs::log_err("masterconn_create: jobPool is null.");
 			delete outputPacket;
@@ -504,9 +504,8 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
 		if (jobPool_) {
-			job_delete(
-			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-			    outputPacket, chunkId, chunkVersion, chunkType);
+			job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+			           chunkType);
 		} else {
 			safs::log_err("masterconn_delete: jobPool is null.");
 			delete outputPacket;
@@ -523,9 +522,8 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
 		if (jobPool_) {
-			job_version(
-			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-			    outputPacket, chunkId, chunkVersion, chunkType, newVersion);
+			job_version(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+			            chunkType, newVersion);
 		} else {
 			safs::log_err("masterconn_setversion: jobPool is null.");
 			delete outputPacket;
@@ -542,10 +540,8 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
 		if (jobPool_) {
-			job_duplicate(
-			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-			    outputPacket, oldChunkId, oldChunkVersion, oldChunkVersion, chunkType, newChunkId,
-			    newChunkVersion);
+			job_duplicate(*jobPool_, sauJobFinished(this), outputPacket, oldChunkId,
+			              oldChunkVersion, oldChunkVersion, chunkType, newChunkId, newChunkVersion);
 		} else {
 			safs::log_err("masterconn_duplicate: jobPool is null.");
 			delete outputPacket;
@@ -564,9 +560,8 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
 		if (jobPool_) {
-			job_truncate(
-			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-			    outputPacket, chunkId, chunkType, version, newVersion, chunkLength);
+			job_truncate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkType, version,
+			             newVersion, chunkLength);
 		} else {
 			safs::log_err("masterconn_truncate: jobPool is null.");
 			delete outputPacket;
@@ -584,10 +579,8 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::duptruncChunk::serialize(outputPacket->packet, copyChunkId, chunkType, 0);
 		if (jobPool_) {
-			job_duptrunc(
-			    *jobPool_, [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-			    outputPacket, chunkId, chunkVersion, chunkVersion, chunkType, copyChunkId,
-			    copyChunkVersion, newLength);
+			job_duptrunc(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+			             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
 		} else {
 			safs::log_err("masterconn_duptrunc: jobPool is null.");
 			delete outputPacket;
@@ -615,11 +608,8 @@ public:
 			sauJobFinished(SAUNAFS_ERROR_WAITING, outputPacket);
 		} else {
 			if (jobPool_) {
-				job_replicate(
-				    *jobPool_,
-				    [this](uint8_t status, void *packet) { sauJobFinished(status, packet); },
-				    outputPacket, chunkId, chunkVersion, chunkType, sourcesBufferSize,
-				    sourcesBuffer);
+				job_replicate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+				              chunkType, sourcesBufferSize, sourcesBuffer);
 			} else {
 				safs::log_err("masterconn_replicate: jobPool is null.");
 				delete outputPacket;
@@ -628,6 +618,13 @@ public:
 	}
 
 	// Callbacks
+
+	static std::function<void(uint8_t status, void *packet)> sauJobFinished(
+	    MasterConn *masterConn) {
+		return [masterConn](uint8_t status, void *packet) {
+			masterConn->sauJobFinished(status, packet);
+		};
+	}
 
 	void sauJobFinished(uint8_t status, void *packet) {
 		auto *outputPacket = static_cast<OutputPacket *>(packet);
@@ -808,8 +805,6 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 	// For each connection to master (currently only one), add its socket to the pollfd array.
 	MasterConn *eptr = gMasterConnSingleton.get();
 
-	eptr->providePollDescriptors(pdesc);
-
 	// Add the descriptor for listening for background jobs finishing.
 	gJobFDpDescPos = -1;
 
@@ -817,6 +812,8 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 		pdesc.emplace_back(gJobFD, POLLIN, 0);
 		gJobFDpDescPos = static_cast<int32_t>(pdesc.size() - 1);
 	}
+
+	eptr->providePollDescriptors(pdesc);
 }
 
 void masterconn_send_status() {
@@ -836,6 +833,8 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_serve");
 	
 	MasterConn *eptr = gMasterConnSingleton.get();
+
+	eptr->handlePollErrors(pdesc);
 	
 	// Check if there are any background jobs to process.
 	if ((eptr->mode() == ConnectionMode::CONNECTED) && gJobFDpDescPos >= 0 &&
