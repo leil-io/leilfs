@@ -9,58 +9,58 @@ cd "${info[mount0]}"
 touch test
 mkdir dir
 
-goal=$(sfsgetgoal dir)
+goal=$(saunafs getgoal dir)
 
 assert_equals "$goal" "dir: 1"
 
-goal=$(sfssetgoal 2 dir)
+goal=$(saunafs setgoal 2 dir)
 
 assert_equals "$goal" "dir: 2"
 
 
-time=$(sfsgettrashtime test)
+time=$(saunafs gettrashtime test)
 assert_equals "$time" "test: 86400"
-sfssettrashtime 0 test
-time=$(sfsgettrashtime test)
+saunafs settrashtime 0 test
+time=$(saunafs gettrashtime test)
 assert_equals "$time" "test: 0"
 
-attrs=$(sfsgeteattr test)
+attrs=$(saunafs geteattr test)
 assert_equals "$attrs" "test: -"
-sfsseteattr -f noattrcache test
-attrs=$(sfsgeteattr test)
+saunafs seteattr -f noattrcache test
+attrs=$(saunafs geteattr test)
 assert_equals "$attrs" "test: noattrcache"
-sfsdeleattr -f noattrcache test
-attrs=$(sfsgeteattr test)
+saunafs deleattr -f noattrcache test
+attrs=$(saunafs geteattr test)
 assert_equals "$attrs" "test: -"
 
-check=$(sfscheckfile test)
+check=$(saunafs checkfile test)
 assert_equals "$check" "test:"
-check=$(sfsfileinfo test)
+check=$(saunafs fileinfo test)
 assert_equals "$check" "test:"
 
 echo "foo" > test
 echo "bar" > test2
 
-sfsappendchunks test2 test
+saunafs appendchunks test2 test
 # We aren't checking the result, since it can take some time. Another test
 # should be check if it's working with (with the saunafs command)
 
-assert_equals "$(sfsdirinfo dir)" "$(saunafs dirinfo dir)"
+assert_success saunafs dirinfo dir
 
-sfsfilerepair test
+saunafs filerepair test
 
-sfsmakesnapshot dir dir_snapshot
+saunafs makesnapshot dir dir_snapshot
 
-quota=$(sfsrepquota -d dir)
+quota=$(saunafs repquota -d dir)
 assert_equals "$quota" "# User/Group ID/Directory; Bytes: current usage, soft limit, hard limit; Inodes: current usage, soft limit, hard limit;"
 
-sfssetquota -d 1000000 2000 1000000 2000 dir
+saunafs setquota -d 1000000 2000 1000000 2000 dir
 
-quota=$(sfsrepquota -d dir)
+quota=$(saunafs repquota -d dir)
 assert_equals "$quota" "$(saunafs repquota -d dir)"
 
 # Create a 25 chunks file and make a 4x snapshot of it
 FILE_SIZE=1600M file-generate test3
-sfsappendchunks 4xtest3 test3 test3 test3 test3
-assert_equals $((4*25)) $(sfsfileinfo 4xtest3 | grep "chunk" | wc -l)
-assert_equals $((4*25*64*1024*1024)) $(sfsdirinfo 4xtest3 | grep "length:" | awk '{print $2}')
+saunafs appendchunks 4xtest3 test3 test3 test3 test3
+assert_equals $((4*25)) $(saunafs fileinfo 4xtest3 | grep "chunk" | wc -l)
+assert_equals $((4*25*64*1024*1024)) $(saunafs dirinfo 4xtest3 | grep "length:" | awk '{print $2}')

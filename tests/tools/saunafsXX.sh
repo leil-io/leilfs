@@ -152,8 +152,8 @@ saunafsXX_shadow_daemon_n() {
 # A generic function to run SaunaFS commands.
 #
 # Usage examples:
-#   sfs sfssetgoal 3 file
-#   sfs sfsdirinfo file
+#   saunafs setgoal 3 file
+#   saunafs dirinfo file
 #   sfs sfsmetalogger stop
 saunafsXX() {
 	local command="${1}"

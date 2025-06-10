@@ -43,8 +43,8 @@ legacy_master_daemon() {
 }
 
 # A generic function to run legacy commands. Usage examples:
-# sfs sfssetgoal 3 file
-# sfs sfsdirinfo file
+# saunafs setgoal 3 file
+# saunafs dirinfo file
 # sfs sfsmetalogger stop
 sfs() {
 	local command="$1"
