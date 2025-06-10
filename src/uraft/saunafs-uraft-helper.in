@@ -65,6 +65,94 @@ saunafs_master() {
 	sfsmaster -o ha-cluster-managed "$@"
 }
 
+saunafs_ha_master() {
+	sfsmaster -o ha-cluster-managed -o initial-personality=shadow "$@"
+}
+
+load_and_validate_elector_mode() {
+	if [ -f "${SAUNAFS_URAFT_CONFIG}" ]; then
+		# Check for commented lines first
+		if grep -q '^#\s*URAFT_ELECTOR_MODE' "${SAUNAFS_URAFT_CONFIG}"; then
+			log "Error: URAFT_ELECTOR_MODE is present but commented out in ${SAUNAFS_URAFT_CONFIG}"
+			return 1
+		fi
+
+		# Get only uncommented lines
+		URAFT_ELECTOR_MODE=$(grep '^[^#]*URAFT_ELECTOR_MODE' "${SAUNAFS_URAFT_CONFIG}" | sed 's/.*=\s*//')
+	else
+		print_missing_config "${SAUNAFS_URAFT_CONFIG}"
+	fi
+
+	if [[ "${URAFT_ELECTOR_MODE}" != "0" && "${URAFT_ELECTOR_MODE}" != "1" ]]; then
+		log "Error: Invalid URAFT_ELECTOR_MODE value: ${URAFT_ELECTOR_MODE}. Must be 0 or 1."
+		return 1
+	fi
+	echo "${URAFT_ELECTOR_MODE}"
+}
+
+start_saunafs_ha_master() {
+	local status=0
+
+	URAFT_ELECTOR_MODE=$(load_and_validate_elector_mode)
+
+	if [[ "${URAFT_ELECTOR_MODE}" == "1" ]]; then
+		# Handle the scenario of a MDS becoming ELECTOR, so we need to stop the master if it's running
+		if pgrep -x "sfsmaster" > /dev/null; then
+			log "Stopping sfsmaster..."
+			saunafs_ha_master stop || status=$?
+			if [[ $status -ne 0 ]]; then
+				log "Stopping sfsmaster failed with status $status."
+				return $status
+			fi
+		fi
+	fi
+
+	if [[ "${URAFT_ELECTOR_MODE}" == "0" ]]; then
+		log "Starting sfsmaster..."
+		saunafs_ha_master start || status=$?
+		if [[ $status -ne 0 ]]; then
+			log "Starting sfsmaster failed with status $status."
+			return $status
+		fi
+	fi
+
+	return $status
+}
+
+stop_saunafs_ha_master() {
+	local status=0
+
+	URAFT_ELECTOR_MODE=$(load_and_validate_elector_mode)
+
+	if [[ "${URAFT_ELECTOR_MODE}" == "0" ]]; then
+		log "Stopping sfsmaster..."
+		saunafs_ha_master stop || status=$?
+		if [[ $status -ne 0 ]]; then
+			log "Stopping sfsmaster failed with status $status."
+			return $status
+		fi
+	fi
+
+	return $status
+}
+
+reload_saunafs_ha_master() {
+	local status=0
+
+	URAFT_ELECTOR_MODE=$(load_and_validate_elector_mode)
+
+	if [[ "${URAFT_ELECTOR_MODE}" == "0" ]]; then
+		log "Reloading sfsmaster..."
+		saunafs_ha_master reload || status=$?
+		if [[ $status -ne 0 ]]; then
+			log "Reloading sfsmaster failed with status $status."
+			return $status
+		fi
+	fi
+
+	return $status
+}
+
 saunafs_admin() {
 	saunafs-admin "$@"
 }
@@ -221,6 +309,9 @@ print_help() {
 	echo "drop-ip"
 	echo "dead"
 	echo "is-floating-ip-alive"
+	echo "start-saunafs-ha-master"
+	echo "stop-saunafs-ha-master"
+	echo "reload-saunafs-ha-master"
 }
 
 case "$1" in
@@ -233,6 +324,9 @@ case "$1" in
 	drop-ip)           saunafs_drop_ip;;
 	dead)              saunafs_dead;;
 	is-floating-ip-alive) saunafs_is_floating_ip_present;;
+	start-saunafs-ha-master) start_saunafs_ha_master;;
+	stop-saunafs-ha-master) stop_saunafs_ha_master;;
+	reload-saunafs-ha-master) reload_saunafs_ha_master;;
 	*)                 print_help;;
 
 esac
