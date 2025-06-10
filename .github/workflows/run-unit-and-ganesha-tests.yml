@@ -84,6 +84,10 @@ jobs:
                   "${GITHUB_WORKSPACE}"
                   make -j"$(nproc)" install
 
+            - name: Allow core dumps
+              run: |
+                ulimit -c unlimited
+                echo '/tmp/core.%e.%p' | sudo tee /proc/sys/kernel/core_pattern
 
             - name: Run Unit Tests suite
               run: |
@@ -96,3 +100,10 @@ jobs:
                   sudo chown saunafstest:saunafstest /mnt/hd{b,c,d}
                   chmod +x "${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
                   "${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
+
+            - name: Upload core dump
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                name: core-dump
+                path: /tmp/core.*
