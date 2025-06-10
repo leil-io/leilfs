@@ -29,14 +29,12 @@
 #include <unistd.h>
 #include <algorithm>
 #include <cerrno>
-#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <list>
-#include <stdexcept>
 
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
@@ -217,12 +215,12 @@ public:
 		socketFD_ = tcpsocket();
 
 		if (socketFD_ < 0) {
-			safs_pretty_errlog(LOG_WARNING, "master connection module: create socket error");
+			safs::log_error_code(errno, "master connection module: create socket error");
 			return -1;
 		}
 
 		if (tcpnonblock(socketFD_) < 0) {
-			safs_pretty_errlog(LOG_WARNING, "master connection module: set nonblock error");
+			safs::log_error_code(errno, "master connection module: set nonblock error");
 			tcpclose(socketFD_);
 			socketFD_ = -1;
 			return -1;
@@ -230,8 +228,7 @@ public:
 
 		if (bindHostAddress_.ip > 0) {
 			if (tcpnumbind(socketFD_, bindHostAddress_.ip, 0) < 0) {
-				safs_pretty_errlog(LOG_WARNING,
-				                   "master connection module: can't bind socket to given ip");
+				safs::log_error_code(errno, "master connection module: can't bind socket to given ip");
 				tcpclose(socketFD_);
 				socketFD_ = -1;
 				return -1;
@@ -241,7 +238,7 @@ public:
 		int status = tcpnumconnect(socketFD_, address_.ip, address_.port);
 
 		if (status < 0) {
-			safs_pretty_errlog(LOG_WARNING, "master connection module: connect failed");
+			safs::log_error_code(errno, "master connection module: connect failed");
 			tcpclose(socketFD_);
 			socketFD_ = -1;
 			isMasterAddressValid_ = false;
@@ -249,11 +246,11 @@ public:
 		}
 
 		if (status == 0) {
-			safs_pretty_syslog(LOG_NOTICE, "connected to Master immediately");
+			safs::log_info("connected to Master immediately");
 			onConnected();
 		} else {
 			mode_ = ConnectionMode::CONNECTING;
-			safs_pretty_syslog_attempt(LOG_NOTICE, "connecting to Master");
+			safs::log_info("connecting to Master");
 		}
 
 		return 0;
@@ -263,7 +260,7 @@ public:
 		int status = tcpgetstatus(socketFD_);
 
 		if (status) {
-			safs_silent_errlog(LOG_WARNING, "connection failed, error");
+			safs::log_error_code(errno, "connection failed");
 			tcpclose(socketFD_);
 			socketFD_ = -1;
 			mode_ = ConnectionMode::FREE;
@@ -367,14 +364,14 @@ public:
 			ssize_t ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
 
 			if (ret == 0) {
-				safs_silent_syslog(LOG_NOTICE, "connection reset by Master");
+				safs::log_info("connection reset by Master");
 				mode_ = ConnectionMode::KILL;
 				return;
 			}
 
 			if (ret < 0) {
 				if (errno != EAGAIN) {
-					safs_silent_errlog(LOG_NOTICE, "read from Master error");
+					safs::log_error_code(errno, "read from Master error");
 					mode_ = ConnectionMode::KILL;
 				}
 				return;
@@ -385,7 +382,7 @@ public:
 			try {
 				inputPacket_.increaseBytesRead(ret);
 			} catch (InputPacketTooLongException &ex) {
-				safs_silent_syslog(LOG_WARNING, "reading from master: %s", ex.what());
+				safs::log_warn("reading from master: {}", ex.what());
 				mode_ = ConnectionMode::KILL;
 				return;
 			}
@@ -418,7 +415,7 @@ public:
 
 			if (bytesWritten < 0) {
 				if (errno != EAGAIN) {
-					safs_silent_errlog(LOG_NOTICE, "write to Master error");
+					safs::log_error_code(errno, "write to Master error");
 					mode_ = ConnectionMode::KILL;
 				}
 				return;
@@ -490,7 +487,7 @@ public:
 			job_create(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
 			           chunkType);
 		} else {
-			safs::log_err("masterconn_create: jobPool is null.");
+			safs::log_err("MasterConn::createChunk: jobPool is null.");
 			delete outputPacket;
 		}
 	}
@@ -507,7 +504,7 @@ public:
 			job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
 			           chunkType);
 		} else {
-			safs::log_err("masterconn_delete: jobPool is null.");
+			safs::log_err("MasterConn::deleteChunk: jobPool is null.");
 			delete outputPacket;
 		}
 	}
@@ -525,7 +522,7 @@ public:
 			job_version(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
 			            chunkType, newVersion);
 		} else {
-			safs::log_err("masterconn_setversion: jobPool is null.");
+			safs::log_err("MasterConn::setChunkVersion: jobPool is null.");
 			delete outputPacket;
 		}
 	}
@@ -543,7 +540,7 @@ public:
 			job_duplicate(*jobPool_, sauJobFinished(this), outputPacket, oldChunkId,
 			              oldChunkVersion, oldChunkVersion, chunkType, newChunkId, newChunkVersion);
 		} else {
-			safs::log_err("masterconn_duplicate: jobPool is null.");
+			safs::log_err("MasterConn::duplicateChunk: jobPool is null.");
 			delete outputPacket;
 		}
 	}
@@ -563,7 +560,7 @@ public:
 			job_truncate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkType, version,
 			             newVersion, chunkLength);
 		} else {
-			safs::log_err("masterconn_truncate: jobPool is null.");
+			safs::log_err("MasterConn::truncateChunk: jobPool is null.");
 			delete outputPacket;
 		}
 	}
@@ -582,7 +579,7 @@ public:
 			job_duptrunc(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
 			             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
 		} else {
-			safs::log_err("masterconn_duptrunc: jobPool is null.");
+			safs::log_err("MasterConn::duplicateTruncateChunk: jobPool is null.");
 			delete outputPacket;
 		}
 	}
@@ -601,7 +598,7 @@ public:
 		auto *outputPacket = new OutputPacket;
 		cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType,
 		                                  SAUNAFS_STATUS_OK, chunkVersion);
-		safs_silent_syslog(LOG_DEBUG, "cs.matocs.replicate %" PRIu64, chunkId);
+		safs::log_debug("cs.matocs.replicate {}", chunkId);
 
 		if (hddScansInProgress()) {
 			// Disk scan in progress - replication is not possible
@@ -611,7 +608,7 @@ public:
 				job_replicate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
 				              chunkType, sourcesBufferSize, sourcesBuffer);
 			} else {
-				safs::log_err("masterconn_replicate: jobPool is null.");
+				safs::log_err("MasterConn::replicateChunk: jobPool is null.");
 				delete outputPacket;
 			}
 		}
@@ -876,7 +873,7 @@ bool masterconn_load_label() {
 	std::string oldLabel = gLabel;
 	gLabel = cfg_getstring("LABEL", MediaLabelManager::kWildcard);
 	if (!MediaLabelManager::isLabelValid(gLabel)) {
-		safs_pretty_syslog(LOG_WARNING,"invalid label '%s'", gLabel.c_str());
+		safs::log_warn("invalid label '{}'", gLabel);
 		return false;
 	}
 	return gLabel != oldLabel;
