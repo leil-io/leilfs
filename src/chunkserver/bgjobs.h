@@ -172,12 +172,11 @@ private:
 	/// @return 1 if a status was received, 0 otherwise.
 	bool receiveStatus(uint32_t &jobId, uint8_t &status);
 
-	int rpipe;                                         /// Read pipe for job status notifications.
-	int wpipe;                                         /// Write pipe for job status notifications.
+	int notifierFD_;                                   /// File descriptor for notifications.
 	std::string name_;                                 /// Human readable id of the JobPool.
 	uint8_t workers;                                   /// Number of worker threads in the pool.
 	std::vector<std::thread> workerThreads;            /// Vector of worker threads.
-	std::mutex pipeMutex;                              /// Mutex for pipe operations.
+	std::mutex statusMutex_;                           /// Mutex for status notifications.
 	std::mutex jobsMutex;                              /// Mutex for job operations.
 	std::unique_ptr<ProducerConsumerQueue> jobsQueue;  /// Queue for jobs.
 	std::unique_ptr<ProducerConsumerQueue> statusQueue;          /// Queue for job statuses.
