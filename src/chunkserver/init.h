@@ -39,11 +39,11 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{loadPlugins, "plugin manager"}, RunTab{hddInit, "hdd space manager"},
     // Has to be before "masterconn"
     RunTab{mainNetworkThreadInit, "main server module"},
+    RunTab{masterconn_init_threads, "master connection module - threads"},
     RunTab{masterconn_init, "master connection module"},
     RunTab{chartsdata_init, "charts module"}};
 
 /// Functions to call delayed after the initialization is correct
 inline const std::vector<RunTab> lateRunTabs = {
-    RunTab{masterconn_init_threads, "master connection module - threads"},
     RunTab{hddLateInit, "hdd space manager - threads"},
     RunTab{mainNetworkThreadInitThreads, "main server module - threads"}};
