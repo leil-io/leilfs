@@ -65,8 +65,10 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers
 	eassert(fcntl(notify_pipe[1], F_SETPIPE_SZ, kPageAlignedPipeSize));
 #endif
 	try {
+		std::vector<int> bgJobPoolWakeUpFds(1);
 		bgJobPool_ =
-		    std::make_unique<JobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, &bgJobPoolWakeUpFd_);
+		    std::make_unique<JobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, 1, bgJobPoolWakeUpFds);
+		bgJobPoolWakeUpFd_ = bgJobPoolWakeUpFds[0];
 	} catch (const std::exception &e) {
 		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
 		throw;

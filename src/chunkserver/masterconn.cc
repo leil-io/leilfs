@@ -950,8 +950,10 @@ int masterconn_init_threads(void) {
 	                                              kMinNumberOfWorkers);
 
 	try {
-		gJobPool =
-		    std::make_shared<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, &gJobFD);
+		std::vector<int> bgJobPoolFDs(1);
+		gJobPool = std::make_shared<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, 1,
+		                                     bgJobPoolFDs);
+		gJobFD = bgJobPoolFDs[0];
 	} catch (const std::exception &e) {
 		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
 		return -1;
