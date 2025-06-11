@@ -77,7 +77,7 @@ void NetworkWorkerThread::operator()() {
 	TRACETHIS();
 
 	static std::atomic_uint16_t threadCounter(0);
-	std::string threadName = "networkWorker " + std::to_string(threadCounter++);
+	std::string threadName = "netWorker_" + std::to_string(threadCounter++);
 	pthread_setname_np(pthread_self(), threadName.c_str());
 
 	while (!doTerminate) {
