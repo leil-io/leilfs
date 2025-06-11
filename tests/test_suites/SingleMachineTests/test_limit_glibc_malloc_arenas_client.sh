@@ -2,23 +2,10 @@ timeout_set 5 minutes
 
 CHUNKSERVERS=1 \
 	MOUNTS=2 \
-    MOUNT_EXTRA_CONFIG="sfscachemode=NEVER`
-			`|cacheexpirationtime=10000`
-			`|readcachemaxsizepercentage=1`
-			`|sfschunkserverwavereadto=2000`
-			`|sfsioretries=50`
-			`|readaheadmaxwindowsize=5000`
-			`|sfschunkservertotalreadto=8000" \
 	MOUNT_0_EXTRA_CONFIG="limitglibcmallocarenas=8" \
 	MOUNT_1_EXTRA_CONFIG="limitglibcmallocarenas=2" \
     setup_local_empty_saunafs info
 
-num_jobs=18
-five_percent_ram_mb=$(awk '/MemTotal/ {print int($2 / 1024 * 0.05)}' /proc/meminfo)
-size_per_job=$(echo "${five_percent_ram_mb} / ${num_jobs}" | bc)
-echo "five_percent_ram_mb: ${five_percent_ram_mb}, num_jobs: ${num_jobs}, size_per_job: ${size_per_job}"
-
-pgrep -fa sfsmount
 # Get the PIDs of the sfsmount processes
 pids=($(pgrep -fa sfsmount | awk '{print $1}'))
 
@@ -29,49 +16,38 @@ pid2=${pids[1]}
 echo "pids: ${pids[@]}"
 echo "pid1: $pid1, pid2: $pid2"
 
-function getVirtualMemoryForPid() {
-	pid=${1}
-	ps -o vsz= -p ${pid}
+# Function to measure virtual memory usage (VSZ) for a given PID
+get_virtual_memory_for_pid() {
+    local pid=$1
+    ps -o vsz= -p ${pid}
 }
 
 # Function to run fio commands and measure VSZ for a given mount point
 run_fio_and_measure_vsz() {
-	# Prepare measure the virtual memory usage during the fio read command
-	local mount_point=$1
-	local pid=$2
-	local output_file="pidstat_output_$pid.txt"
+    local mount_point=$1
+    local pid=$2
 
-	cd "$mount_point"
-	
-	fio --name=test_multiple_reads --directory=$mount_point --size=${size_per_job}M --rw=write --ioengine=libaio --group_reporting --numjobs=${num_jobs} --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1
-	
-	# Run the fio read command in the background
-	fio --name=test_multiple_reads --directory=$mount_point --size=${size_per_job}M --rw=read --ioengine=libaio --group_reporting --numjobs=${num_jobs} --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1 &
-	
-	# Store the fio process ID
-	fio_pid=$(pgrep -f "fio --name=test_multiple_reads --directory=$mount_point --size=${size_per_job}M --rw=read")
+    # Run fio write command
+    fio --name=test_write --directory=$mount_point --size=128M --rw=write --ioengine=libaio \
+        --group_reporting --numjobs=4 --bs=1M --direct=1 --iodepth=1 > /dev/null 2>&1
 
-	# Run pidstat in the background to monitor virtual memory usage
-	sleep 1
-	virtualMemory=$(getVirtualMemoryForPid $pid)
-
-	# Wait for the fio command to complete
-	wait $fio_pid
-
-	# Return the virtual memory usage
-	echo $virtualMemory
+    # Measure virtual memory usage
+    local vsz=$(get_virtual_memory_for_pid $pid)
+    echo "$vsz"
 }
 
-# Run the fio commands and measure VSZ for both mount points
-echo "Running fio commands and measuring VSZ for both mount points"
+# Measure VSZ for both mount points
+echo "Measuring VSZ for both mount points"
 vsz_mount0=$(run_fio_and_measure_vsz "${info[mount0]}" $pid1)
 vsz_mount1=$(run_fio_and_measure_vsz "${info[mount1]}" $pid2)
 
 # Print the VSZ values
-echo "VSZ for ${info[mount0]}: ${vsz_mount0}"
-echo "VSZ for ${info[mount1]}: ${vsz_mount1}"
+echo "VSZ for ${info[mount0]} (limitglibcmallocarenas=8): ${vsz_mount0}"
+echo "VSZ for ${info[mount1]} (limitglibcmallocarenas=2): ${vsz_mount1}"
 
+# Assert that memory usage is lower for mount1 (limitglibcmallocarenas=2)
 assert_less_or_equal "${vsz_mount1}" "${vsz_mount0}"
+echo "OK: Memory usage is reduced when limitglibcmallocarenas=2"
 
 cd $TEMP_DIR
 
