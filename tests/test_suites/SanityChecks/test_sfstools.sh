@@ -19,7 +19,7 @@ assert_equals "$goal" "dir: 2"
 
 
 time=$(saunafs gettrashtime test)
-assert_equals "$time" "test: 86400"
+assert_equals "$time" "test: 94620"
 saunafs settrashtime 0 test
 time=$(saunafs gettrashtime test)
 assert_equals "$time" "test: 0"

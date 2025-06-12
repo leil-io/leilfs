@@ -31,7 +31,13 @@
 #include "protocol/lock_info.h"
 
 #define DEFAULT_GOAL 1
-#define DEFAULT_TRASHTIME 86400
+
+/// Default trashtime of 26 hours and 17 minutes.
+/// This time is selected for two main reasons:
+/// 1. Avoid overlapping daily scheduled file deletions with actual chunk deletions from the
+///    previous day.
+/// 2. Reduce collisions of chunk deletions and metadata dump operations.
+constexpr uint32_t kDefaultTrashTime = 94620;
 
 namespace FsStats {
 enum {
