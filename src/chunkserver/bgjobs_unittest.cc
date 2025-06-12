@@ -34,12 +34,14 @@ constexpr uint32_t kWaitTimeMs = 100;
 // Test fixture for JobPool tests
 class JobPoolTest : public ::testing::Test {
 private:
-	void servePoll() {
+	void servePoll(uint32_t listenerId) {
+		struct pollfd wakeupDescPollFd = {wakeupDescVec[listenerId], POLLIN, 0};
 		while (!terminate) {
 			int ret = poll(&wakeupDescPollFd, 1, kWaitTimeMs);
 			if (ret > 0) {
 				if (wakeupDescPollFd.revents & POLLIN) {
-					jobPool->processCompletedJobs();
+					processingCount[listenerId].fetch_add(1);
+					jobPool->processCompletedJobs(listenerId);
 				}
 			}
 		}
@@ -47,13 +49,15 @@ private:
 
 protected:
 	void SetUp() override {
-		wakeupDesc = 0;
-		std::vector<int> wakeupDescVec(1);
-		jobPool = std::make_unique<JobPool>("TestPool", 4, 10, 1, wakeupDescVec);
-		wakeupDesc = wakeupDescVec[0];
-		counter.store(0);
-		counter2.store(0);
-		wakeupDescPollFd = {wakeupDesc, POLLIN, 0};
+		// Let's create some listeners for the JobPool
+		wakeupDescVec.resize(kNrListeners);
+		jobPool = std::make_unique<JobPool>("TestPool", 4, 10, kNrListeners, wakeupDescVec);
+		for (uint32_t i = 0; i < kNrListeners; ++i) {
+			processingCount[i] = 0;
+		}
+		for (uint32_t i = 0; i < kNrOperationTypes; ++i) {
+			counters[i] = 0;
+		}
 		startServePoll();
 	}
 
@@ -64,7 +68,9 @@ protected:
 
 	void startServePoll() {
 		terminate = false;
-		servePollThread = std::thread([this]() { servePoll(); });
+		for (uint32_t i = 0; i < kNrListeners; ++i) {
+			servePollThreads.emplace_back(&JobPoolTest::servePoll, this, i);
+		}
 	}
 
 	void stopServePoll() {
@@ -72,7 +78,12 @@ protected:
 		terminate = true;
 		lock.unlock();
 
-		if (servePollThread.joinable()) { servePollThread.join(); }
+		for (auto &thread : servePollThreads) {
+			if (thread.joinable()) {
+				thread.join();
+			}
+		}
+		servePollThreads.clear();
 	}
 
 	JobPool::ProcessJobCallback mockProcessJob = []() -> uint8_t {
@@ -80,29 +91,48 @@ protected:
 	};
 
 	std::unique_ptr<JobPool> jobPool;
-	int wakeupDesc;
-	std::atomic<int> counter;
-	std::atomic<int> counter2;
-	struct pollfd wakeupDescPollFd;
-	std::thread servePollThread;
+	std::vector<int> wakeupDescVec;
+	std::vector<std::thread> servePollThreads;
 	bool terminate;
 	std::mutex mutex_;
+	static constexpr uint32_t kNrListeners = 4;
+	static constexpr uint32_t kNrOperationTypes = 10;
+	std::atomic<int> processingCount[kNrListeners];
+	std::atomic<int> counters[kNrOperationTypes];
 };
 
 // Test job addition
 TEST_F(JobPoolTest, AddJob) {
-	jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counter, mockProcessJob);
+	jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counters[0], mockProcessJob);
 	EXPECT_EQ(jobPool->getJobCount(), 1U);
 }
 
 // Test job processing
 TEST_F(JobPoolTest, ProcessJob) {
-	jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counter, mockProcessJob);
+	const int nrJobsToProcess = 10;
+	std::vector<int> expectedCounters(kNrOperationTypes, 0);
+	std::vector<int> expectedProcessingCount(kNrListeners, 0);
 
-	// Wait for the job to be processed
-	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	for (int i = 0; i < nrJobsToProcess; ++i) {
+		auto opType = std::rand() % kNrOperationTypes;
+		auto targetListener = std::rand() % kNrListeners;
+		jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counters[opType],
+		                mockProcessJob, targetListener);
 
-	EXPECT_EQ(counter.load(), 1);
+		// Update expected counters
+		expectedCounters[opType]++;
+		expectedProcessingCount[targetListener]++;
+
+		// Wait for the job to be processed
+		std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+
+		for (uint32_t j = 0; j < kNrOperationTypes; ++j) {
+			EXPECT_EQ(counters[j].load(), expectedCounters[j]);
+		}
+		for (uint32_t j = 0; j < kNrListeners; ++j) {
+			EXPECT_EQ(processingCount[j].load(), expectedProcessingCount[j]);
+		}
+	}
 }
 
 // Test job disabling
@@ -112,27 +142,58 @@ TEST_F(JobPoolTest, DisableJob) {
 		counter->store(status);
 	};
 
-	uint32_t jobId =
-	    jobPool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback, &counter, mockProcessJob);
-	jobPool->disableJob(jobId);
+	const uint32_t kOpToDisable = 0;           // Index of the operation to disable
+	const uint32_t kOpToNotDisable = 1;        // Index of the operation to not disable
+	const uint32_t kListenerToDisable = 0;     // Listener ID to disable the job for
+	const uint32_t kListenerToNotDisable = 1;  // Listener ID to not disable the job for
+
+	uint32_t jobIdToNotDisable =
+	    jobPool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback,
+	                    &counters[kOpToNotDisable], mockProcessJob, kListenerToNotDisable);
+	uint32_t jobIdToDisable =
+	    jobPool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback, &counters[kOpToDisable],
+	                    mockProcessJob, kListenerToDisable);
+
+	// Note the jobIds are equal, but we would only disable the job with the specified listener ID
+	EXPECT_EQ(jobIdToDisable, jobIdToNotDisable);
+
+	jobPool->disableJob(jobIdToDisable, kListenerToDisable);
 
 	// Wait for the job to be processed
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 
-	EXPECT_EQ(counter.load(), SAUNAFS_ERROR_NOTDONE);
+	EXPECT_EQ(counters[kOpToDisable].load(), SAUNAFS_ERROR_NOTDONE);
+	EXPECT_EQ(counters[kOpToNotDisable].load(), SAUNAFS_STATUS_OK);
 }
 
 // Test changing callbacks
 TEST_F(JobPoolTest, ChangeCallback) {
-	uint32_t jobId =
-	    jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counter, mockProcessJob);
-	jobPool->changeCallback(jobId, mockJobCallback, &counter2);
+	const uint32_t kOriginalOpType = 0;     // Index of the operation to change the callback for
+	const uint32_t kNewOpType = 1;          // Index of the operation to change the callback to
+	const uint32_t kNotChangingOpType = 2;  // Index of the operation to not change the callback for
+	const uint32_t kChangingListenerId = 0;     // Listener ID to change the callback for
+	const uint32_t kNotChangingListenerId = 1;  // Listener ID to not change the callback for
+
+	uint32_t jobIdToNotChange =
+	    jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback,
+	                    &counters[kNotChangingOpType], mockProcessJob, kNotChangingListenerId);
+	uint32_t jobIdToChange =
+	    jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counters[kOriginalOpType],
+	                    mockProcessJob, kChangingListenerId);
+
+	// Note the jobIds are equal, but we would only change the callback for the specified listener
+	// ID
+	EXPECT_EQ(jobIdToChange, jobIdToNotChange);
+
+	jobPool->changeCallback(jobIdToChange, mockJobCallback, &counters[kNewOpType],
+	                        kChangingListenerId);
 
 	// Wait for the job to be processed
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 
-	EXPECT_EQ(counter.load(), 0);
-	EXPECT_EQ(counter2.load(), 1);
+	EXPECT_EQ(counters[kOriginalOpType].load(), 0);
+	EXPECT_EQ(counters[kNewOpType].load(), 1);
+	EXPECT_EQ(counters[kNotChangingOpType].load(), 1);
 }
 
 // Test job status handling
@@ -140,11 +201,16 @@ TEST_F(JobPoolTest, JobStatusHandling) {
 	// Stop the servePoll thread to disable automatic job dispatching
 	stopServePoll();
 
-	jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counter, mockProcessJob);
+	for (uint32_t i = 0; i < kNrOperationTypes; ++i) {
+		jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counters[i],
+		                mockProcessJob);
+	}
 
 	// Wait for the job to be processed
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 
 	jobPool->processCompletedJobs();
-	EXPECT_EQ(counter.load(), 1);
+	for (uint32_t i = 0; i < kNrOperationTypes; ++i) {
+		EXPECT_EQ(counters[i].load(), 1);  // Each job should have been processed once
+	}
 }
