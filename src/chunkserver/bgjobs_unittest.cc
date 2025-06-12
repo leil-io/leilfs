@@ -113,6 +113,7 @@ TEST_F(JobPoolTest, ProcessJob) {
 	std::vector<int> expectedCounters(kNrOperationTypes, 0);
 	std::vector<int> expectedProcessingCount(kNrListeners, 0);
 
+	std::srand(42);  // Seed for random number generation
 	for (int i = 0; i < nrJobsToProcess; ++i) {
 		auto opType = std::rand() % kNrOperationTypes;
 		auto targetListener = std::rand() % kNrListeners;

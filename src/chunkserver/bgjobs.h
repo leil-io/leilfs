@@ -182,14 +182,14 @@ private:
 	///
 	/// @param jobId The ID of the job.
 	/// @param status The status of the job.
-	/// @return 1 if a status was received, 0 otherwise.
 	/// @param listenerId The ID of the listener associated with the job.
+	/// @return 1 if a status is not the last one, 0 if it is the last status.
 	bool receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId = 0);
 
 	/// @brief Structure to hold information about a listener.
 	struct ListenerInfo {
 		int notifierFD;                                      /// File descriptor for notifications.
-		std::mutex notifierMutex;                            /// Mutex for pipe operations.
+		std::mutex notifierMutex;                            /// Mutex for event notifications.
 		std::mutex jobsMutex;                                /// Mutex for job operations.
 		std::unique_ptr<ProducerConsumerQueue> statusQueue;  /// Queue for job statuses.
 		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.

@@ -51,6 +51,8 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
                  std::vector<int> &wakeupFDs)
     // EFD_NONBLOCK to prevent blocking reads/writes
     : listenerInfos_(nrListeners), name_(name), workers(workers) {
+	nrListeners = std::max(nrListeners, 1u);  // Ensure at least one listener
+
 	if (wakeupFDs.size() != nrListeners) {
 		safs::log_warn(
 		    "JobPool: wakeupFDs size {} does not match nrListeners {}, resizing to match.",
@@ -91,17 +93,22 @@ JobPool::~JobPool() {
 	}
 
 	jobsQueue.reset();
-	for (size_t i = 0; i < listenerInfos_.size(); ++i) { listenerInfos_[i].statusQueue.reset(); }
+	for (auto &listenerInfo : listenerInfos_) { listenerInfo.statusQueue.reset(); }
 
 	workerThreads.clear();
 
-	for (auto &listenerInfo : listenerInfos_) {
-		close(listenerInfo.notifierFD);
-	}
+	for (auto &listenerInfo : listenerInfos_) { close(listenerInfo.notifierFD); }
 }
 
 uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
                          ProcessJobCallback processJob, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: addJob: Invalid listenerId {} for operation {}, resetting to 0",
+		               listenerId, static_cast<int>(operation));
+		listenerId = 0;  // Reset to the first listener
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::unique_lock lock(listenerInfo.jobsMutex);
 	uint32_t jobId = listenerInfo.nextJobId++;
@@ -124,6 +131,13 @@ uint32_t JobPool::getJobCount() const {
 }
 
 void JobPool::disableAndChangeCallbackAll(const JobCallback &callback, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: disableAndChangeCallbackAll: Invalid listenerId {}, returning",
+		               listenerId);
+		return;
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::lock_guard jobsLockGuard(listenerInfo.jobsMutex);
 	for (auto &[jobId, job] : listenerInfo.jobHash) {
@@ -133,6 +147,13 @@ void JobPool::disableAndChangeCallbackAll(const JobCallback &callback, uint32_t 
 }
 
 void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: disableJob: Invalid listenerId {} for jobId {}, returning",
+		               listenerId, jobId);
+		return;
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex, std::defer_lock);
 	auto jobIterator = listenerInfo.jobHash.find(jobId);
@@ -146,6 +167,13 @@ void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
 }
 
 void JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: disableJobs: Invalid listenerId {}, returning",
+		               listenerId);
+		return;
+	}
+
 	if (jobIds.empty()) { return; }  // to save the locking
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex);
@@ -160,6 +188,13 @@ void JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
 }
 
 void JobPool::processCompletedJobs(uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: processCompletedJobs: Invalid listenerId {}, returning",
+		               listenerId);
+		return;
+	}
+
 	uint32_t jobId{};
 	uint8_t status{};
 	bool notLastJob = true;
@@ -177,6 +212,13 @@ void JobPool::processCompletedJobs(uint32_t listenerId) {
 
 void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
                              uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: changeCallback: Invalid listenerId {} for jobId {}, returning",
+		               listenerId, jobId);
+		return;
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	auto jobIterator = listenerInfo.jobHash.find(jobId);
 	if (jobIterator != listenerInfo.jobHash.end()) {
@@ -187,6 +229,13 @@ void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
 
 void JobPool::changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra,
                              uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: changeCallback: Invalid listenerId {}, returning",
+		               listenerId);
+		return;
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	for (auto jobId : jobIds) {
 		auto jobIterator = listenerInfo.jobHash.find(jobId);
@@ -246,18 +295,32 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 }
 
 void JobPool::sendStatus(uint32_t jobId, uint8_t status, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: SendStatus: Invalid listenerId {} for jobId {}, returning",
+		               listenerId, jobId);
+		return;
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::lock_guard statusLock(listenerInfo.notifierMutex);
 
 	if (listenerInfo.statusQueue->isEmpty()) {
 		static constexpr eventfd_t dummyValue = 1;  // Dummy value to wake up the eventfd
 		eassert(::eventfd_write(listenerInfo.notifierFD, dummyValue) == 0 &&
-		        "JobPool: SendStatus: Failed to write status to pipe");
+		        "JobPool: SendStatus: Failed to write to eventfd");
 	}
 	listenerInfo.statusQueue->put(jobId, status, nullptr, 1);
 }
 
 bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: receiveStatus: Invalid listenerId {} for jobId {}, returning",
+		               listenerId, jobId);
+		return false; // Return false to indicate that we should stop processing
+	}
+
 	auto &listenerInfo = listenerInfos_[listenerId];
 	uint32_t qstatus = 0;
 	std::lock_guard statusLock(listenerInfo.notifierMutex);
