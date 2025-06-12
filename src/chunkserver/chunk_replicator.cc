@@ -141,7 +141,7 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 		const std::vector<ChunkTypeWithAddress>& sources) {
 	// Get number of blocks to replicate
 	int blocks = getChunkBlocks(fileCreator.chunkId(), fileCreator.chunkVersion(), sources);
-	int batchSize = 50;
+	int batchSize = SFSBLOCKSINCHUNK;
 	int data_part_count = slice_traits::getNumberOfDataParts(fileCreator.chunkType());
 	blocks = slice_traits::getNumberOfBlocks(fileCreator.chunkType(), blocks);
 	batchSize = data_part_count * ((batchSize + data_part_count - 1) / data_part_count);
@@ -149,7 +149,11 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 	SliceRecoveryPlanner planner;
 	ReadPlanExecutor::ChunkTypeLocations locations;
 	SliceRecoveryPlanner::PartsContainer available_parts;
+#ifdef SAUNAFS_HAVE_THREAD_LOCAL
+	static thread_local std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
+#else
 	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
+#endif
 
 	for (const auto& source : sources) {
 		available_parts.push_back(source.chunk_type);
