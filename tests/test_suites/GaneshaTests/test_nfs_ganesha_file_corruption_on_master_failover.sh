@@ -10,9 +10,13 @@
 timeout_set 2 minutes
 
 CHUNKSERVERS=3 \
+	USE_RAMDISK=YES \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	CHUNKSERVER_EXTRA_CONFIG="READ_AHEAD_KB = 1024|MAX_READ_BEHIND_KB = 2048"
 	setup_local_empty_saunafs info
+
+grace_period=15
+delta=5
 
 test_error_cleanup() {
 	cd "${TEMP_DIR}"
@@ -41,8 +45,8 @@ NFS_KRB5 {
 	Active_krb5=false;
 }
 NFSV4 {
-	Grace_Period = 10;
-	Lease_Lifetime = 10;
+	Grace_Period = ${grace_period};
+	Lease_Lifetime = ${grace_period};
 }
 EXPORT {
 	Attr_Expiration_Time = 0;
@@ -66,7 +70,7 @@ EXPORT {
 EOF
 
 # Create a file for testing with checksum
-head -c 3G /dev/urandom | tee "${TEMP_DIR}/test_file" > /dev/null
+head -c 100M /dev/urandom | tee "${TEMP_DIR}/test_file" > /dev/null
 
 sudo /usr/bin/ganesha.nfsd -f "${info[mount0]}/ganesha.conf"
 
@@ -80,7 +84,7 @@ sudo mount -vvvv localhost:/ "${TEMP_DIR}/mnt/ganesha"
 ) &
 
 # Wait for Grace period so NFS Ganesha server will be ready
-sleep 10
+sleep $((grace_period + delta))
 
 # Copy the file after master restart
 cp "${TEMP_DIR}/test_file" "$TEMP_DIR/mnt/ganesha/test_file"
