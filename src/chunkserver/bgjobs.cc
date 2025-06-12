@@ -47,17 +47,24 @@
 
 constexpr auto kInvalidJob = nullptr;
 
-JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, int nrListeners,
-                 std::vector<int> &wakeupDesc)
+JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
+                 std::vector<int> &wakeupFDs)
     // EFD_NONBLOCK to prevent blocking reads/writes
     : listenerInfos_(nrListeners), name_(name), workers(workers) {
-	for (int i = 0; i < nrListeners; ++i) {
+	if (wakeupFDs.size() != nrListeners) {
+		safs::log_warn(
+		    "JobPool: wakeupFDs size {} does not match nrListeners {}, resizing to match.",
+		    wakeupFDs.size(), nrListeners);
+		wakeupFDs.resize(nrListeners);
+	}
+
+	for (uint32_t i = 0; i < nrListeners; ++i) {
 		listenerInfos_[i].notifierFD = ::eventfd(0, EFD_NONBLOCK);
 		if (listenerInfos_[i].notifierFD < 0) {
 			throw std::runtime_error("JobPool: eventfd() failed for listener" +
 			                         std::to_string(i) + ": " + std::string(strerror(errno)));
 		}
-		wakeupDesc[i] = listenerInfos_[i].notifierFD;
+		wakeupFDs[i] = listenerInfos_[i].notifierFD;
 
 		listenerInfos_[i].statusQueue = std::make_unique<ProducerConsumerQueue>();
 		listenerInfos_[i].nextJobId = 1;

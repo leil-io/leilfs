@@ -65,6 +65,8 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers
 	eassert(fcntl(notify_pipe[1], F_SETPIPE_SZ, kPageAlignedPipeSize));
 #endif
 	try {
+		// Create the JobPool instance with the specified number of workers. It would be serving
+		// only this network worker thread, thus the number of listeners is 1.
 		std::vector<int> bgJobPoolWakeUpFds(1);
 		bgJobPool_ =
 		    std::make_unique<JobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, 1, bgJobPoolWakeUpFds);

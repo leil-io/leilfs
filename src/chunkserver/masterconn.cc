@@ -950,6 +950,8 @@ int masterconn_init_threads(void) {
 	                                              kMinNumberOfWorkers);
 
 	try {
+		// Create the JobPool instance with the specified number of workers, it would be serving
+		// only this master network thread, thus the number of listeners is 1.
 		std::vector<int> bgJobPoolFDs(1);
 		gJobPool = std::make_shared<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, 1,
 		                                     bgJobPoolFDs);
