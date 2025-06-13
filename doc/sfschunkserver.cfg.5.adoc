@@ -71,9 +71,6 @@ to process operations on chunks, like create, duplicate, replicate and truncate
 *CSSERV_LISTEN_PORT*:: port to listen on for client (mount) connections
 (default is 9422)
 
-*CSSERV_TIMEOUT*:: timeout (in seconds) for client (mount) connections (default
-is 5)
-
 *HDD_CONF_FILENAME*:: alternative name of *sfshdd.cfg* file
 
 *HDD_LEAVE_SPACE_DEFAULT*:: free space threshold to set volume as 100% utisaued
