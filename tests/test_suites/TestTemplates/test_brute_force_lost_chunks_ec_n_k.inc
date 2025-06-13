@@ -78,7 +78,7 @@ echo "Testing EC(${n},${k}) with $cases cases."
 
 CHUNKSERVERS=$((n + k)) \
 	USE_RAMDISK=YES \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	CHUNKSERVER_EXTRA_CONFIG="READ_AHEAD_KB = 1024|MAX_READ_BEHIND_KB = 2048" \
 	MASTER_CUSTOM_GOALS="8 ${goal}: \$ec(${n},${k})" \
 	setup_local_empty_saunafs info

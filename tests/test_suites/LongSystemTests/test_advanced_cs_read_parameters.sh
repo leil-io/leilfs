@@ -8,7 +8,7 @@ timeout_set 20 minutes
 
 CHUNKSERVERS=5 \
 	USE_RAMDISK=YES \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	CHUNKSERVER_EXTRA_CONFIG="NR_OF_HDD_WORKERS_PER_NETWORK_WORKER = 1`
 		`|BGJOBSCNT_PER_NETWORK_WORKER = 1000`
 		`|MAX_BLOCKS_PER_HDD_READ_JOB = 1`

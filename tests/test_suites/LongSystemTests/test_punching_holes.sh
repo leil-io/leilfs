@@ -1,5 +1,6 @@
 CHUNKSERVERS=1 \
 	USE_RAMDISK=YES \
+	MOUNT_EXTRA_CONFIG="readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	CHUNKSERVER_EXTRA_CONFIG="HDD_PUNCH_HOLES = 1" \
 	setup_local_empty_saunafs info
 

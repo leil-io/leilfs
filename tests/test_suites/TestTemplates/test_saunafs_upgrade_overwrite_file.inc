@@ -16,7 +16,7 @@ source test_utils/upgrade.sh
 
 CHUNKSERVERS=3
 START_WITH_LEGACY_SAUNAFS=YES \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	MASTER_EXTRA_CONFIG="CHUNKS_LOOP_MIN_TIME = 1|OPERATIONS_DELAY_INIT = 0" \
 	setup_local_empty_saunafs info
 
