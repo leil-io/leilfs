@@ -92,9 +92,11 @@ public:
 	/// @param name Human readable name for this pool, useful for debugging.
 	/// @param workers The number of worker threads in the pool.
 	/// @param maxJobs The maximum number of jobs that can be queued.
-	/// @param wakeupDesc Pointer to the file descriptor for wakeup notifications.
+	/// @param nrListeners The number of listeners that will use this JobPool.
+	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
 	/// @throws std::runtime_error If the pipe creation fails.
-	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, int *wakeupDesc);
+	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
+	        std::vector<int> &wakeupFDs);
 
 	/// @brief Destructor for JobPool.
 	~JobPool();
@@ -105,9 +107,10 @@ public:
 	/// @param callback The callback function to be called upon job completion.
 	/// @param extra Additional data to be passed to the callback.
 	/// @param processJob The callback function to process the job.
+	/// @param listenerId The ID of the listener associated with the job.
 	/// @return The ID of the added job.
 	uint32_t addJob(ChunkOperation operation, JobCallback callback, void *extra,
-	                ProcessJobCallback processJob);
+	                ProcessJobCallback processJob, uint32_t listenerId = 0);
 
 	/// @brief Gets the number of jobs in the JobPool.
 	uint32_t getJobCount() const;
@@ -115,34 +118,42 @@ public:
 	/// @brief Disables all jobs and changes their callback function.
 	///
 	/// @param callback The new callback function to be set for all jobs.
-	void disableAndChangeCallbackAll(const JobCallback& callback);
+	/// @param listenerId The ID of the listener associated with the jobs.
+	void disableAndChangeCallbackAll(const JobCallback &callback, uint32_t listenerId = 0);
 
 	/// @brief Disables a specific job.
 	///
 	/// @param jobId The ID of the job to be disabled.
-	void disableJob(uint32_t jobId);
+	/// @param listenerId The ID of the listener associated with the job.
+	void disableJob(uint32_t jobId, uint32_t listenerId = 0);
 
 	/// @brief Disables a list of jobs.
 	///
 	/// @param jobIds The list of jobs by IDs to be disabled.
-	void disableJobs(std::list<uint32_t> &jobIds);
+	/// @param listenerId The ID of the listener associated with the jobs.
+	void disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId = 0);
 
 	/// @brief Checks the status of jobs in the JobPool and calls their callbacks.
-	void processCompletedJobs();
+	///
+	/// @param listenerId The ID of the listener associated with the jobs.
+	void processCompletedJobs(uint32_t listenerId = 0);
 
 	/// @brief Changes the callback function for a specific job.
 	///
 	/// @param jobId The ID of the job.
 	/// @param callback The new callback function.
 	/// @param extra Additional data to be passed to the new callback.
-	void changeCallback(uint32_t jobId, JobCallback callback, void *extra);
+	/// @param listenerId The ID of the listener associated with the jobs.
+	void changeCallback(uint32_t jobId, JobCallback callback, void *extra, uint32_t listenerId = 0);
 
 	/// @brief Changes the callback function for a list of jobs.
 	///
 	/// @param jobIds The list of jobs by IDs.
 	/// @param callback The new callback function.
 	/// @param extra Additional data to be passed to the new callback.
-	void changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra);
+	/// @param listenerId The ID of the listener associated with the jobs.
+	void changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra,
+	                    uint32_t listenerId = 0);
 
 private:
 	/// @brief Represents a job in the JobPool.
@@ -152,6 +163,7 @@ private:
 		ProcessJobCallback processJob;  // The callback function to process the job.
 		void *extra;                    // Additional data for the callback.
 		JobPool::State state;           // The state of the job.
+		uint32_t listenerId;            // The ID of the listener associated with the job.
 	};
 
 	/// @brief Worker thread function.
@@ -163,25 +175,32 @@ private:
 	///
 	/// @param jobId The ID of the job.
 	/// @param status The status of the job.
-	void sendStatus(uint32_t jobId, uint8_t status);
+	/// @param listenerId The ID of the listener associated with the job.
+	void sendStatus(uint32_t jobId, uint8_t status, uint32_t listenerId = 0);
 
 	/// @brief Receives the status of a job.
 	///
 	/// @param jobId The ID of the job.
 	/// @param status The status of the job.
-	/// @return 1 if a status was received, 0 otherwise.
-	bool receiveStatus(uint32_t &jobId, uint8_t &status);
+	/// @param listenerId The ID of the listener associated with the job.
+	/// @return 1 if a status is not the last one, 0 if it is the last status.
+	bool receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId = 0);
 
-	int notifierFD_;                                   /// File descriptor for notifications.
+	/// @brief Structure to hold information about a listener.
+	struct ListenerInfo {
+		int notifierFD;                                      /// File descriptor for notifications.
+		std::mutex notifierMutex;                            /// Mutex for event notifications.
+		std::mutex jobsMutex;                                /// Mutex for job operations.
+		std::unique_ptr<ProducerConsumerQueue> statusQueue;  /// Queue for job statuses.
+		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
+		uint32_t nextJobId;                                          /// Next job ID to be assigned.
+	};
+
+	std::vector<ListenerInfo> listenerInfos_;          /// Vector of listener information.
 	std::string name_;                                 /// Human readable id of the JobPool.
 	uint8_t workers;                                   /// Number of worker threads in the pool.
 	std::vector<std::thread> workerThreads;            /// Vector of worker threads.
-	std::mutex statusMutex_;                           /// Mutex for status notifications.
-	std::mutex jobsMutex;                              /// Mutex for job operations.
 	std::unique_ptr<ProducerConsumerQueue> jobsQueue;  /// Queue for jobs.
-	std::unique_ptr<ProducerConsumerQueue> statusQueue;          /// Queue for job statuses.
-	std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
-	uint32_t nextJobId = 1;                                      /// Next job ID to be assigned.
 };
 
 /// @brief Adds an open job to the JobPool.
@@ -191,9 +210,10 @@ private:
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
-                  uint64_t chunkId, ChunkPartType chunkType);
+uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                  ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a close job to the JobPool.
 ///
@@ -202,9 +222,10 @@ uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                   ChunkPartType chunkType);
+                   ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a read job to the JobPool.
 ///
@@ -220,11 +241,12 @@ uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 /// @param blocksToBeReadAhead The blocks to be read ahead.
 /// @param outputBuffer The output buffer for the read data.
 /// @param performHddOpen Whether to perform HDD open.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
-                  OutputBuffer *outputBuffer, bool performHddOpen);
+                  OutputBuffer *outputBuffer, bool performHddOpen, uint32_t listenerId = 0);
 
 /// @brief Adds a prefetch job to the JobPool.
 ///
@@ -233,9 +255,11 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 /// @param chunkType The type of the chunk.
 /// @param firstBlockToBePrefetched The first block to be prefetched.
 /// @param blocksToBePrefetched The number of blocks to be prefetched.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
-                      uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched);
+                      uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched,
+                      uint32_t listenerId = 0);
 
 /// @brief Adds a write job to the JobPool.
 ///
@@ -250,10 +274,12 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 /// @param size The size to write.
 /// @param crc The CRC of the data.
 /// @param buffer The data buffer to write.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                    uint32_t chunkVersion, ChunkPartType chunkType, uint16_t blockNum,
-                   uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer);
+                   uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer,
+                   uint32_t listenerId = 0);
 
 /// @brief Adds a get blocks job to the JobPool.
 ///
@@ -264,10 +290,11 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 /// @param version The version of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param blocks The blocks to get.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                         uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
-                        uint16_t *blocks);
+                        uint16_t *blocks, uint32_t listenerId = 0);
 
 /// @brief Adds a replicate job to the JobPool.
 ///
@@ -279,18 +306,22 @@ uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *e
 /// @param chunkType The type of the chunk.
 /// @param sourcesBufferSize The size of the sources buffer.
 /// @param sourcesBuffer The sources buffer.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                       uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer);
+                       uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer,
+                       uint32_t listenerId = 0);
 
 /// @brief Adds an invalid job to the JobPool.
 ///
 /// @param jobPool The JobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra);
+uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                     uint32_t listenerId = 0);
 
 /// @brief Adds a delete job to the JobPool.
 ///
@@ -300,9 +331,10 @@ uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extr
 /// @param chunkId The ID of the chunk.
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                    uint32_t chunkVersion, ChunkPartType chunkType);
+                    uint32_t chunkVersion, ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a create job to the JobPool.
 ///
@@ -312,9 +344,10 @@ uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra
 /// @param chunkId The ID of the chunk.
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                    uint32_t chunkVersion, ChunkPartType chunkType);
+                    uint32_t chunkVersion, ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a change version job to the JobPool.
 ///
@@ -325,10 +358,11 @@ uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param newChunkVersion The new version of the chunk.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                     uint32_t newChunkVersion);
+                     uint32_t newChunkVersion, uint32_t listenerId = 0);
 
 /// @brief Adds a truncate job to the JobPool.
 ///
@@ -340,10 +374,11 @@ uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, voi
 /// @param chunkVersion The version of the chunk.
 /// @param newChunkVersion The new version of the chunk.
 /// @param length The length to truncate to.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                       uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
-                      uint32_t newChunkVersion, uint32_t length);
+                      uint32_t newChunkVersion, uint32_t length, uint32_t listenerId = 0);
 
 /// @brief Adds a duplicate job to the JobPool.
 ///
@@ -356,10 +391,12 @@ uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, vo
 /// @param chunkType The type of the chunk.
 /// @param chunkIdCopy The ID of the chunk to copy.
 /// @param chunkVersionCopy The version of the chunk to copy.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
-                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy);
+                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
+                       uint32_t listenerId = 0);
 
 /// @brief Adds a duplicate and truncate job to the JobPool.
 ///
@@ -373,8 +410,9 @@ uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, v
 /// @param chunkIdCopy The ID of the chunk to copy.
 /// @param chunkVersionCopy The version of the chunk to copy.
 /// @param length The length to truncate to.
+/// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                       uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
-                      uint32_t length);
+                      uint32_t length, uint32_t listenerId = 0);
