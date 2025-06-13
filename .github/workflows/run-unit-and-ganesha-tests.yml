@@ -84,6 +84,10 @@ jobs:
                   "${GITHUB_WORKSPACE}"
                   make -j"$(nproc)" install
 
+            - name: Allow core dumps
+              run: |
+                ulimit -c unlimited
+                echo '/tmp/core.%e.%p' | sudo tee /proc/sys/kernel/core_pattern
 
             - name: Run Unit Tests suite
               run: |
@@ -96,3 +100,45 @@ jobs:
                   sudo chown saunafstest:saunafstest /mnt/hd{b,c,d}
                   chmod +x "${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
                   "${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
+
+            - name: Generate backtrace with gdb
+              if: failure()
+              run: |
+                sudo apt-get update && sudo apt-get install -y gdb || true
+
+                GANESHA_BIN="/usr/bin/ganesha.nfsd"
+
+                found_core=0
+                for corefile in /tmp/core.*; do
+                  if [ -f "$corefile" ]; then
+                    found_core=1
+                    echo "Processing $corefile with $GANESHA_BIN"
+
+                    gdb -batch -ex "set pagination off" \
+                        -ex "thread apply all bt full" \
+                        -ex "quit" \
+                        "$GANESHA_BIN" "$corefile" > "${corefile}.backtrace.txt" || echo "GDB failed on $corefile"
+
+                    echo "===== Backtrace excerpt from ${corefile}.backtrace.txt ====="
+                    head -n 100 "${corefile}.backtrace.txt"
+                    echo "============================================================="
+                  fi
+                done
+
+                if [ "$found_core" -eq 0 ]; then
+                  echo "No core files found in /tmp"
+                fi
+
+            - name: Upload GDB backtrace
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                name: gdb-backtrace
+                path: /tmp/core.*.backtrace.txt
+
+            - name: Upload core dump
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                name: core-dump
+                path: /tmp/core.*
