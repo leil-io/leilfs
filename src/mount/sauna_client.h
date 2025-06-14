@@ -73,7 +73,7 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultReadaheadMaxWindowSize = 65536;
 	static constexpr unsigned kDefaultReadCacheMaxSizePercentage = 60;
 	static constexpr unsigned kDefaultReadWorkers = 30;
-	static constexpr unsigned kDefaultMaxReadaheadRequests = 5;
+	static constexpr unsigned kDefaultMaxReadaheadRequests = 2;
 	static constexpr bool     kDefaultPrefetchXorStripes = false;
 
 	static constexpr float    kDefaultBandwidthOveruse = 1.0;
