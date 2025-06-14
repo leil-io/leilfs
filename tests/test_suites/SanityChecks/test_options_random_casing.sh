@@ -12,7 +12,7 @@ cd "${info[mount0]}"
 # Expected values are current defaults
 assert_equals $(cat .saunafs_tweaks | egrep CacheExpirationTime | awk '{print $2}') 1000
 assert_equals $(cat .saunafs_tweaks | egrep WriteMaxRetries | awk '{print $2}') 30
-assert_equals $(cat .saunafs_tweaks | egrep MaxReadaheadRequests | awk '{print $2}') 5
+assert_equals $(cat .saunafs_tweaks | egrep MaxReadaheadRequests | awk '{print $2}') 2
 assert_equals $(cat .saunafs_tweaks | egrep ReadWaveTimeout | awk '{print $2}') 500
 
 cd /
