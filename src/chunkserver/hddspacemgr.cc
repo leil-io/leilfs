@@ -753,33 +753,30 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 
 		uint16_t numBlocks = size / SFSBLOCKSIZE;
 		uint16_t initialBlock = block;
-		bool isDataPreviouslyRead = false;
 
-		if (!chunk->owner()->isZonedDevice()) {
-			// Only non-zoned devices in our implementation ensure blocks to be contiguous
-			if (initialBlock < chunk->blocks()) {
-				uint32_t bytesToBeRead = std::min<uint32_t>(
-				    numBlocks * SFSBLOCKSIZE, (chunk->blocks() - initialBlock) * SFSBLOCKSIZE);
-				uint32_t bytesRead = outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block,
-				                                                  chunk, bytesToBeRead, offset);
+		if (initialBlock < chunk->blocks()) {
+			uint32_t bytesToBeRead = std::min<uint32_t>(
+			    numBlocks * SFSBLOCKSIZE, (chunk->blocks() - initialBlock) * SFSBLOCKSIZE);
+			uint32_t bytesRead = outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Block,
+			                                                  chunk, bytesToBeRead, offset);
 
-				if (bytesRead != bytesToBeRead) {
-					hddAddErrorAndPreserveErrno(chunk);
-					safs::log_warn("hddRead: file:{} - read error from block {} to {}",
-					               chunk->fullDataFilename().c_str(), initialBlock,
-					               initialBlock + numBlocks - 1);
-					hddReportDamagedChunk(chunk->id(), chunk->type());
-					hddChunkRelease(chunk);
-					return SAUNAFS_ERROR_IO;
-				}
+			if (bytesRead != bytesToBeRead) {
+				hddAddErrorAndPreserveErrno(chunk);
+				safs::log_warn("hddRead: file:{} - read error from block {} to {}",
+				               chunk->fullDataFilename().c_str(), initialBlock,
+				               initialBlock + numBlocks - 1);
+				hddReportDamagedChunk(chunk->id(), chunk->type());
+				hddChunkRelease(chunk);
+				return SAUNAFS_ERROR_IO;
 			}
-
-			isDataPreviouslyRead = true;
 		}
+
+		// The data was already read in the previous step as a big block
+		constexpr bool dataWasPreviouslyRead = true;
 
 		for (uint16_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
 			uint16_t blockNumber = initialBlock + i;
-			status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer, isDataPreviouslyRead);
+			status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer, dataWasPreviouslyRead);
 
 			if (status == SAUNAFS_STATUS_OK) {
 				status = hddCheckCrcForFullBlock(chunk, blockNumber, outputBuffer,
