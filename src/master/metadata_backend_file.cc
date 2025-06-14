@@ -1095,7 +1095,7 @@ void fs_new(void) {
 	gMetadata->root->ctime = gMetadata->root->mtime = gMetadata->root->atime =
 	    eventloop_time();
 	gMetadata->root->goal = DEFAULT_GOAL;
-	gMetadata->root->trashtime = DEFAULT_TRASHTIME;
+	gMetadata->root->trashtime = kDefaultTrashTime;
 	gMetadata->root->mode = 0777;
 	gMetadata->root->uid = 0;
 	gMetadata->root->gid = 0;

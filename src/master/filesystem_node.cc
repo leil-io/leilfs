@@ -606,7 +606,7 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 		node->trashtime = parent->trashtime;
 	} else {
 		node->goal = DEFAULT_GOAL;
-		node->trashtime = DEFAULT_TRASHTIME;
+		node->trashtime = kDefaultTrashTime;
 	}
 	if (type == FSNode::kDirectory) {
 		node->mode = (mode & 07777) | (parent->mode & 0xF000);
