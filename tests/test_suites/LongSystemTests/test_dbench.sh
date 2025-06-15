@@ -10,7 +10,7 @@ dbench_tester() {
 
 CHUNKSERVERS=3 \
 	MOUNTS=1 \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	setup_local_empty_saunafs info
 
 cd "${info[mount0]}"

@@ -3663,6 +3663,7 @@ void fs_init(FsInitParams &params) {
 			params.chunkserver_wave_read_timeout_ms,
 			params.total_read_timeout_ms,
 			params.cache_expiration_time_ms,
+			params.read_buffers_expiration_time_ms,
 			params.readahead_max_window_size_kB,
 			params.read_cache_max_size_percentage,
 			params.read_workers,

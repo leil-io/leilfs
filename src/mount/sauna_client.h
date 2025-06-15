@@ -70,6 +70,7 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultChunkserverWaveReadTo = 500;
 	static constexpr unsigned kDefaultChunkserverTotalReadTo = 2000;
 	static constexpr unsigned kDefaultCacheExpirationTime = 1000;
+	static constexpr unsigned kDefaultReadBuffersExpirationTime = 1000;
 	static constexpr unsigned kDefaultReadaheadMaxWindowSize = 65536;
 	static constexpr unsigned kDefaultReadCacheMaxSizePercentage = 60;
 	static constexpr unsigned kDefaultReadWorkers = 30;
@@ -143,8 +144,9 @@ struct FsInitParams {
 	             chunkserver_wave_read_timeout_ms(kDefaultChunkserverWaveReadTo),
 	             total_read_timeout_ms(kDefaultChunkserverTotalReadTo),
 	             cache_expiration_time_ms(kDefaultCacheExpirationTime),
+	             read_buffers_expiration_time_ms(kDefaultReadBuffersExpirationTime),
 	             readahead_max_window_size_kB(kDefaultReadaheadMaxWindowSize),
-				 read_cache_max_size_percentage(kDefaultReadCacheMaxSizePercentage),
+	             read_cache_max_size_percentage(kDefaultReadCacheMaxSizePercentage),
 	             read_workers(kDefaultReadWorkers),
 	             max_readahead_requests(kDefaultMaxReadaheadRequests),
 	             prefetch_xor_stripes(kDefaultPrefetchXorStripes),
@@ -190,8 +192,9 @@ struct FsInitParams {
 	             chunkserver_wave_read_timeout_ms(kDefaultChunkserverWaveReadTo),
 	             total_read_timeout_ms(kDefaultChunkserverTotalReadTo),
 	             cache_expiration_time_ms(kDefaultCacheExpirationTime),
+	             read_buffers_expiration_time_ms(kDefaultReadBuffersExpirationTime),
 	             readahead_max_window_size_kB(kDefaultReadaheadMaxWindowSize),
-				 read_cache_max_size_percentage(kDefaultReadCacheMaxSizePercentage),
+	             read_cache_max_size_percentage(kDefaultReadCacheMaxSizePercentage),
 	             read_workers(kDefaultReadWorkers),
 	             max_readahead_requests(kDefaultMaxReadaheadRequests),
 	             prefetch_xor_stripes(kDefaultPrefetchXorStripes),
@@ -244,6 +247,7 @@ struct FsInitParams {
 	unsigned chunkserver_wave_read_timeout_ms;
 	unsigned total_read_timeout_ms;
 	unsigned cache_expiration_time_ms;
+	unsigned read_buffers_expiration_time_ms;
 	unsigned readahead_max_window_size_kB;
 	unsigned read_cache_max_size_percentage;
 	unsigned read_workers;

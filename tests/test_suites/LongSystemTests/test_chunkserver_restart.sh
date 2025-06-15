@@ -5,6 +5,7 @@ CHUNKSERVERS=64
 
 CHUNKSERVERS=$CHUNKSERVERS \
 	USE_RAMDISK=YES \
+	MOUNT_EXTRA_CONFIG="readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	setup_local_empty_saunafs info
 
 for ((i=1;i<=20;i++)) do

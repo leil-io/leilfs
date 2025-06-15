@@ -160,6 +160,12 @@ operation in milliseconds (default: 2000).
 Set timeout for read cache entries to be considered valid in milliseconds. 0
 disables cache (default: 1000).
 
+*-o readbuffersexpirationtime=*'MSEC'::
+Set timeout for read cache buffers to expire. Read buffers will be recycled
+among read operations to save allocation and deallocation of that memory. Those
+buffers will be held aside for this amount of milliseconds before releasing them
+(default: 1000).
+
 *-o readaheadmaxwindowsize=*'KB'::
 Set max value of readahead window per single descriptor in kibibytes (default: 16384).
 
