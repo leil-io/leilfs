@@ -1,0 +1,599 @@
+/*
+   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA
+   Copyright 2013-2014 EditShare
+   Copyright 2013-2015 Skytechnology sp. z o.o.
+   Copyright 2023      Leil Storage OÜ
+
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "common/platform.h"
+
+#include "chunkserver/master_connection.h"
+
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <syslog.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+
+#include "chunkserver-common/hdd_utils.h"
+#include "chunkserver/bgjobs.h"
+#include "chunkserver/hddspacemgr.h"
+#include "chunkserver/network_main_thread.h"
+#include "common/loop_watchdog.h"
+#include "common/network_address.h"
+#include "common/output_packet.h"
+#include "common/sockets.h"
+#include "config/cfg.h"
+#include "protocol/SFSCommunication.h"
+#include "protocol/cstoma.h"
+#include "protocol/input_packet.h"
+#include "protocol/matocs.h"
+#include "protocol/packet.h"
+#include "slogger/slogger.h"
+
+MasterConn::~MasterConn() {
+	if (socketFD_ >= 0) { tcpclose(socketFD_); }
+}
+
+// Packet handling
+
+void MasterConn::deletePacket(void *packet) {
+	auto *outputPacket = static_cast<OutputPacket *>(packet);
+	delete outputPacket;
+}
+
+void MasterConn::attachPacket(void *packet) {
+	auto *outputPacket = static_cast<OutputPacket *>(packet);
+	outputPackets_.emplace_back(std::move(*outputPacket));
+	delete outputPacket;
+}
+
+void MasterConn::createAttachedPacket(MessageBuffer serializedPacket) {
+	outputPackets_.emplace_back(std::move(serializedPacket));
+}
+
+// Configuration
+
+void MasterConn::reloadConfig() {
+	auto newMasterHostStr_ = cfg_getstring("MASTER_HOST", "sfsmaster");
+	auto newMasterPortStr_ = cfg_getstring("MASTER_PORT", "9420");
+
+	if (newMasterHostStr_ == masterHostStr_ && newMasterPortStr_ == masterPortStr_) {
+		return;  // no change
+	}
+
+	masterHostStr_ = newMasterHostStr_;
+	masterPortStr_ = newMasterPortStr_;
+
+	uint32_t mip{};
+	uint16_t mport{};
+
+	if (tcpresolve(masterHostStr_.c_str(), masterPortStr_.c_str(), &mip, &mport, 0) >= 0) {
+		if (isLoopbackAddress(mip)) {
+			safs::log_warn(
+			    "Chunkserver loopback IP addresses are experimental; consider a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
+		}
+
+		if (address().ip != mip || address().port != mport) {
+			setMasterAddress(mip, mport);
+			setMode(ConnectionMode::KILL);
+		}
+	} else {
+		safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
+		               masterHostStr_, masterPortStr_);
+	}
+}
+
+// Connection management
+
+void MasterConn::sendRegisterLabel() {
+	if (mode_ == ConnectionMode::CONNECTED) {
+		createAttachedPacket(cstoma::registerLabel::build(gLabel));
+	}
+}
+
+void MasterConn::sendConfig() {
+	if (mode_ == ConnectionMode::CONNECTED) {
+		createAttachedPacket(cstoma::registerConfig::build(cfg_yaml_string()));
+	}
+}
+
+void MasterConn::sendRegister() {
+	uint32_t myip;
+	uint16_t myport;
+	uint64_t usedspace, totalspace;
+	uint64_t tdusedspace, tdtotalspace;
+	uint32_t chunkcount, tdchunkcount;
+
+	myip = mainNetworkThreadGetListenIp();
+	myport = mainNetworkThreadGetListenPort();
+	createAttachedPacket(cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX));
+
+	hddForeachChunkInBulks([this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
+		createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
+	});
+
+	hddGetTotalSpace(&usedspace, &totalspace, &chunkcount, &tdusedspace, &tdtotalspace,
+	                 &tdchunkcount);
+	auto registerSpace = cstoma::registerSpace::build(usedspace, totalspace, chunkcount,
+	                                                  tdusedspace, tdtotalspace, tdchunkcount);
+	createAttachedPacket(std::move(registerSpace));
+	sendRegisterLabel();
+	sendConfig();
+}
+
+int MasterConn::initConnect() {
+	if (!isMasterAddressValid_) {
+		uint32_t mip{};
+		uint32_t bip{};
+		uint16_t mport{};
+
+		if (tcpresolve(gBindHostStr.c_str(), nullptr, &bip, nullptr, 1) < 0) { bip = 0; }
+
+		bindHostAddress_.ip = bip;
+
+		if (tcpresolve(masterHostStr_.c_str(), masterPortStr_.c_str(), &mip, &mport, 0) >= 0) {
+			if (isLoopbackAddress(mip)) {
+				safs::log_warn(
+				    "Chunkserver loopback IP addresses are experimental; consider assigning an IP address to chunkserver (via /etc/hosts or some other way)");
+			}
+			address_.ip = mip;
+			address_.port = mport;
+			isMasterAddressValid_ = true;
+		} else {
+			safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
+			               masterHostStr_, masterPortStr_);
+			return -1;
+		}
+	}
+
+	socketFD_ = tcpsocket();
+
+	if (socketFD_ < 0) {
+		safs::log_error_code(errno, "master connection module: create socket error");
+		return -1;
+	}
+
+	if (tcpnonblock(socketFD_) < 0) {
+		safs::log_error_code(errno, "master connection module: set nonblock error");
+		tcpclose(socketFD_);
+		socketFD_ = -1;
+		return -1;
+	}
+
+	if (bindHostAddress_.ip > 0) {
+		if (tcpnumbind(socketFD_, bindHostAddress_.ip, 0) < 0) {
+			safs::log_error_code(errno, "master connection module: can't bind socket to given ip");
+			tcpclose(socketFD_);
+			socketFD_ = -1;
+			return -1;
+		}
+	}
+
+	int status = tcpnumconnect(socketFD_, address_.ip, address_.port);
+
+	if (status < 0) {
+		safs::log_error_code(errno, "master connection module: connect failed");
+		tcpclose(socketFD_);
+		socketFD_ = -1;
+		isMasterAddressValid_ = false;
+		return -1;
+	}
+
+	if (status == 0) {
+		safs::log_info("connected to Master immediately");
+		onConnected();
+	} else {
+		mode_ = ConnectionMode::CONNECTING;
+		safs::log_info("connecting to Master");
+	}
+
+	return 0;
+}
+
+void MasterConn::connectTest() {
+	int status = tcpgetstatus(socketFD_);
+
+	if (status) {
+		safs::log_error_code(errno, "connection failed");
+		tcpclose(socketFD_);
+		socketFD_ = -1;
+		mode_ = ConnectionMode::FREE;
+		isMasterAddressValid_ = false;
+	} else {
+		safs::log_info("connected to Master");
+		onConnected();
+	}
+}
+
+void MasterConn::onConnected() {
+	tcpnodelay(socketFD_);
+	mode_ = ConnectionMode::CONNECTED;
+	inputPacket_.reset();
+
+	sendRegister();
+	lastRead_.reset();
+	lastWrite_.reset();
+}
+
+// Polling
+
+void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc) {
+	pDescPos_ = -1;
+
+	if (mode_ == ConnectionMode::FREE || socketFD_ < 0) { return; }
+
+	if (mode_ == ConnectionMode::CONNECTED) {
+		if (jobPool_->getJobCount() < (kMaxBackgroundJobsCount * 9) / 10) {
+			pdesc.emplace_back(socketFD_, POLLIN, 0);
+			pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
+		}
+	}
+
+	if (((mode_ == ConnectionMode::CONNECTED) && !outputPackets_.empty()) ||
+	    mode_ == ConnectionMode::CONNECTING) {
+		if (pDescPos_ >= 0) {
+			pdesc[pDescPos_].events |= POLLOUT;
+		} else {
+			pdesc.emplace_back(socketFD_, POLLOUT, 0);
+			pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
+		}
+	}
+}
+
+void MasterConn::handlePollErrors(const std::vector<pollfd> &pdesc) {
+	// Check if the socket has been closed or has an error.
+	if (pDescPos_ >= 0 && (pdesc[pDescPos_].revents & (POLLHUP | POLLERR))) {
+		if (mode_ == ConnectionMode::CONNECTING) {
+			connectTest();
+		} else {
+			mode_ = ConnectionMode::KILL;
+		}
+	}
+}
+
+void MasterConn::servePoll(const std::vector<pollfd> &pdesc) {
+	if (mode_ == ConnectionMode::CONNECTING) {
+		// Check if the connection has been established.
+		if (socketFD_ >= 0 && pDescPos_ >= 0 && (pdesc[pDescPos_].revents & POLLOUT)) {
+			connectTest();
+		}
+	} else {
+		if (pDescPos_ >= 0) {
+			// Check if there is data to read from this connection
+			if ((mode_ == ConnectionMode::CONNECTED) && (pdesc[pDescPos_].revents & POLLIN)) {
+				lastRead_.reset();
+				readFromSocket();
+			}
+
+			// Check if there is data to write to this connection
+			if ((mode_ == ConnectionMode::CONNECTED) && (pdesc[pDescPos_].revents & POLLOUT)) {
+				lastWrite_.reset();
+				writeToSocket();
+			}
+
+			// Check if the connection has not been used for a while and should be closed
+			if ((mode_ == ConnectionMode::CONNECTED) && lastRead_.elapsed_ms() > gTimeout_ms) {
+				mode_ = ConnectionMode::KILL;
+			}
+
+			// Keep the connection alive by sending a NOP packet
+			if ((mode_ == ConnectionMode::CONNECTED) &&
+			    lastWrite_.elapsed_ms() > (gTimeout_ms / 3) && outputPackets_.empty()) {
+				createAttachedNoVersionPacket(ANTOAN_NOP, 0);
+			}
+		}
+	}
+}
+
+void MasterConn::readFromSocket() {
+	ActiveLoopWatchdog watchdog(std::chrono::milliseconds(20));
+
+	watchdog.start();
+
+	while (mode_ != ConnectionMode::KILL) {
+		// If the job pool is too busy, do not read more data.
+		if (jobPool_->getJobCount() >= (kMaxBackgroundJobsCount * 9) / 10) { return; }
+
+		uint32_t bytesToRead = inputPacket_.bytesToBeRead();
+		ssize_t ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
+
+		if (ret == 0) {
+			safs::log_info("connection reset by Master");
+			mode_ = ConnectionMode::KILL;
+			return;
+		}
+
+		if (ret < 0) {
+			if (errno != EAGAIN) {
+				safs::log_error_code(errno, "read from Master error");
+				mode_ = ConnectionMode::KILL;
+			}
+			return;
+		}
+
+		bytesIn_ += ret;
+
+		try {
+			inputPacket_.increaseBytesRead(ret);
+		} catch (InputPacketTooLongException &ex) {
+			safs::log_warn("reading from master: {}", ex.what());
+			mode_ = ConnectionMode::KILL;
+			return;
+		}
+
+		if (ret == bytesToRead && !inputPacket_.hasData()) {
+			continue;  // there might be more data to read in socket's buffer
+		}
+
+		if (!inputPacket_.hasData()) { return; }
+
+		// We have a complete packet in the input buffer, let's process it.
+		gotPacket(inputPacket_.getHeader(), inputPacket_.getData());
+
+		inputPacket_.reset();
+
+		if (watchdog.expired()) { break; }
+	}
+}
+
+void MasterConn::writeToSocket() {
+	ActiveLoopWatchdog watchdog(std::chrono::milliseconds(20));
+	ssize_t bytesWritten{-1};
+
+	watchdog.start();
+
+	while (!outputPackets_.empty()) {
+		OutputPacket &pack = outputPackets_.front();
+		bytesWritten = ::write(socketFD_, pack.packet.data() + pack.bytesSent,
+		                       pack.packet.size() - pack.bytesSent);
+
+		if (bytesWritten < 0) {
+			if (errno != EAGAIN) {
+				safs::log_error_code(errno, "write to Master error");
+				mode_ = ConnectionMode::KILL;
+			}
+			return;
+		}
+
+		bytesOut_ += bytesWritten;
+		pack.bytesSent += bytesWritten;
+
+		if (pack.packet.size() != pack.bytesSent) { return; }
+
+		outputPackets_.pop_front();
+
+		if (watchdog.expired()) { break; }
+	}
+}
+
+void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) try {
+	switch (header.type) {
+	case ANTOAN_NOP:
+		break;
+	case ANTOAN_UNKNOWN_COMMAND:  // for future use
+		break;
+	case ANTOAN_BAD_COMMAND_SIZE:  // for future use
+		break;
+	case SAU_MATOCS_CREATE_CHUNK:
+		createChunk(message);
+		break;
+	case SAU_MATOCS_DELETE_CHUNK:
+		deleteChunk(message);
+		break;
+	case SAU_MATOCS_SET_VERSION:
+		setChunkVersion(message);
+		break;
+	case SAU_MATOCS_DUPLICATE_CHUNK:
+		duplicateChunk(message);
+		break;
+	case SAU_MATOCS_REPLICATE_CHUNK:
+		replicateChunk(message);
+		break;
+	case SAU_MATOCS_TRUNCATE:
+		truncateChunk(message);
+		break;
+	case SAU_MATOCS_DUPTRUNC_CHUNK:
+		duplicateTruncateChunk(message);
+		break;
+	default:
+		safs::log_info("got unknown message (type: {})", header.type);
+		mode_ = ConnectionMode::KILL;
+	}
+} catch (IncorrectDeserializationException &e) {
+	safs::log_info(
+	    "chunkserver <-> master module: got inconsistent message "
+	    "(type:{}, length:{}), {}",
+	    header.type, uint32_t(message.size()), e.what());
+	mode_ = ConnectionMode::KILL;
+}
+
+// Chunk operations
+
+void MasterConn::createChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t chunkVersion;
+
+	matocs::createChunk::deserialize(data, chunkId, chunkType, chunkVersion);
+	auto *outputPacket = new OutputPacket;
+	cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
+	if (jobPool_) {
+		job_create(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType);
+	} else {
+		safs::log_err("MasterConn::createChunk: jobPool is null.");
+		delete outputPacket;
+	}
+}
+
+void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	uint32_t chunkVersion;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+
+	matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
+	auto *outputPacket = new OutputPacket;
+	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	if (jobPool_) {
+		job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType);
+	} else {
+		safs::log_err("MasterConn::deleteChunk: jobPool is null.");
+		delete outputPacket;
+	}
+}
+
+void MasterConn::setChunkVersion(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	uint32_t chunkVersion;
+	uint32_t newVersion;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+
+	matocs::setVersion::deserialize(data, chunkId, chunkType, chunkVersion, newVersion);
+	auto *outputPacket = new OutputPacket;
+	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	if (jobPool_) {
+		job_version(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
+		            newVersion);
+	} else {
+		safs::log_err("MasterConn::setChunkVersion: jobPool is null.");
+		delete outputPacket;
+	}
+}
+
+void MasterConn::duplicateChunk(const std::vector<uint8_t> &data) {
+	uint64_t newChunkId, oldChunkId;
+	uint32_t newChunkVersion, oldChunkVersion;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+
+	matocs::duplicateChunk::deserialize(data, newChunkId, newChunkVersion, chunkType, oldChunkId,
+	                                    oldChunkVersion);
+	auto *outputPacket = new OutputPacket;
+	cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
+	if (jobPool_) {
+		job_duplicate(*jobPool_, sauJobFinished(this), outputPacket, oldChunkId, oldChunkVersion,
+		              oldChunkVersion, chunkType, newChunkId, newChunkVersion);
+	} else {
+		safs::log_err("MasterConn::duplicateChunk: jobPool is null.");
+		delete outputPacket;
+	}
+}
+
+void MasterConn::truncateChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t version;
+	uint32_t chunkLength;
+	uint32_t newVersion;
+
+	matocs::truncateChunk::deserialize(data, chunkId, chunkType, chunkLength, newVersion, version);
+	auto *outputPacket = new OutputPacket;
+	cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	if (jobPool_) {
+		job_truncate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkType, version,
+		             newVersion, chunkLength);
+	} else {
+		safs::log_err("MasterConn::truncateChunk: jobPool is null.");
+		delete outputPacket;
+	}
+}
+
+void MasterConn::duplicateTruncateChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId, copyChunkId;
+	uint32_t chunkVersion, copyChunkVersion;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t newLength;
+
+	matocs::duptruncChunk::deserialize(data, copyChunkId, copyChunkVersion, chunkType, chunkId,
+	                                   chunkVersion, newLength);
+	auto *outputPacket = new OutputPacket;
+	cstoma::duptruncChunk::serialize(outputPacket->packet, copyChunkId, chunkType, 0);
+	if (jobPool_) {
+		job_duptrunc(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+		             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
+	} else {
+		safs::log_err("MasterConn::duplicateTruncateChunk: jobPool is null.");
+		delete outputPacket;
+	}
+}
+
+void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t chunkVersion;
+	uint32_t sourcesBufferSize;
+	const uint8_t *sourcesBuffer;
+
+	matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
+	                                           sourcesBuffer);
+	sourcesBufferSize = data.size() - (sourcesBuffer - data.data());
+
+	auto *outputPacket = new OutputPacket;
+	cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK,
+	                                  chunkVersion);
+	safs::log_debug("cs.matocs.replicate {}", chunkId);
+
+	if (hddScansInProgress()) {
+		// Disk scan in progress - replication is not possible
+		sauJobFinished(SAUNAFS_ERROR_WAITING, outputPacket);
+	} else {
+		if (jobPool_) {
+			job_replicate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
+			              chunkType, sourcesBufferSize, sourcesBuffer);
+		} else {
+			safs::log_err("MasterConn::replicateChunk: jobPool is null.");
+			delete outputPacket;
+		}
+	}
+}
+
+// Callbacks
+
+std::function<void(uint8_t status, void *packet)> MasterConn::sauJobFinished(
+    MasterConn *masterConn) {
+	return
+	    [masterConn](uint8_t status, void *packet) { masterConn->sauJobFinished(status, packet); };
+}
+
+void MasterConn::sauJobFinished(uint8_t status, void *packet) {
+	auto *outputPacket = static_cast<OutputPacket *>(packet);
+
+	if (mode_ == ConnectionMode::CONNECTED) {
+		cstoma::overwriteStatusField(outputPacket->packet, status);
+		attachPacket(packet);
+	} else {
+		deletePacket(packet);
+	}
+}
+
+// Termination
+
+void MasterConn::releaseResources() {
+	if (mode_ != ConnectionMode::FREE && mode_ != ConnectionMode::CONNECTING) {
+		tcpclose(socketFD_);
+		inputPacket_.reset();
+	}
+}
+
+void MasterConn::resetPackets() {
+	inputPacket_.reset();
+	outputPackets_.clear();
+}
