@@ -6376,10 +6376,9 @@ void matoclserv_reload(void) {
 
 	char *oldListenHost = ListenHost;
 	char *oldListenPort = ListenPort;
-	if (cfg_isdefined("MATOCL_LISTEN_HOST") || cfg_isdefined("MATOCL_LISTEN_PORT")) {
-		ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
-		ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
-	}
+	ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
+	ListenPort = cfg_getstr("MATOCL_LISTEN_PORT","9421");
+
 	if (strcmp(oldListenHost,ListenHost)==0 && strcmp(oldListenPort,ListenPort)==0) {
 		free(oldListenHost);
 		free(oldListenPort);
