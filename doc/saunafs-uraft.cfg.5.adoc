@@ -58,6 +58,14 @@ election algorithm.
 *ELECTION_TIMEOUT_MAX*:: *[advanced]* maximal timeout in milliseconds for
 election algorithm.
 
+*URAFT_ELECTOR_MODE*:: *[advanced]* Controls the election role of this node.
+If set to `0` (Default value), the node can both vote in LEADER elections and be
+elected as the new leader.
+If set to `1`, the node acts as an elector only: it participates in voting for a
+new leader but cannot itself be elected leader.
+When running in elector-only mode, the node does not requires the metadata service,
+which reduces its memory consumption.
+
 *HEARTBEAT_PERIOD*:: *[advanced]* period in milliseconds between subsequent
 heartbeat messages.
 
