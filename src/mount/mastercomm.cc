@@ -2826,11 +2826,12 @@ uint8_t fs_setacl(inode_t inode, uint32_t uid, uint32_t gid, AclType type,
 
 uint8_t fs_fullpath(inode_t inode, uint32_t uid, uint32_t gid, std::string &fullPath) {
 	threc *rec = fs_get_my_threc();
-	if (masterversion < saunafsVersion(4, 8, 0)) {
+	if (masterversion < kFirstVersionWithPathByInodeHiddenFile) {
 		safs::log_warn(
 		    "fs_fullpath: Operation not supported for current master version: {}, for this operation "
-		    "master version should be 4.8.0 or higher",
-		    saunafsVersionToString(masterversion));
+		    "master version should be {} or higher",
+		    saunafsVersionToString(masterversion),
+		    saunafsVersionToString(kFirstVersionWithPathByInodeHiddenFile));
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
 	auto message =
