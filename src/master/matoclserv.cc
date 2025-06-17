@@ -1933,6 +1933,14 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 						eptr->sesdata->info[ileng] = 0;
 					}
 				}
+
+				safs::log_info(
+				    "Session {} created for mount: {} exported path: {} with ip: {} and port: {}",
+				    eptr->sesdata->sessionid,
+				    eptr->sesdata->info ? eptr->sesdata->info : "unknown info",
+				    path ? (const char *)path : "unknown path", ipToString(eptr->peerip),
+				    eptr->peerport);
+
 				matoclserv_store_sessions();
 			}
 
@@ -2046,6 +2054,11 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 					}
 				}
 
+				safs::log_info("Meta session {} created for mount: {} with ip: {} and port: {}",
+				               eptr->sesdata->sessionid,
+				               eptr->sesdata->info ? eptr->sesdata->info : "unknown info",
+				               ipToString(eptr->peerip), eptr->peerport);
+
 				matoclserv_store_sessions();
 			}
 
@@ -2098,6 +2111,10 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 					status = SAUNAFS_ERROR_EACCES;
 				} else {
 					status = SAUNAFS_STATUS_OK;
+					safs::log_info("Session {} reconnected for mount: {} with ip: {} and port: {}",
+					               eptr->sesdata->sessionid,
+					               eptr->sesdata->info ? eptr->sesdata->info : "unknown info",
+					               ipToString(eptr->peerip), eptr->peerport);
 				}
 			}
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER, sizeof(status));
@@ -2124,6 +2141,8 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			}
 			get32bit(&rptr, sessionid);
 			matoclserv_close_session(sessionid);
+			safs::log_info("Session {} for mount {} was closed", sessionid,
+			               eptr->sesdata->info ? eptr->sesdata->info : "unknown info");
 			eptr->mode = KILL;
 			return;
 		}
