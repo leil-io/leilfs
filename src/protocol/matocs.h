@@ -22,8 +22,13 @@
 #include "common/platform.h"
 
 #include "common/chunk_type_with_address.h"
+#include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
 #include "common/serialization_macros.h"
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocs, registerHost, SAU_MATOCS_REGISTER_HOST, 0,
+		uint8_t, status)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)

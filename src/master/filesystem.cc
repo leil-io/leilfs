@@ -336,6 +336,7 @@ static void fs_read_goal_config_file() {
 }
 
 static void fs_read_config_file() {
+	gClusterId = cfg_getstring("CLUSTER_ID", "default");
 	gAutoRecovery = cfg_getint32("AUTO_RECOVERY", 0) == 1;
 	gDisableChecksumVerification = cfg_getint32("DISABLE_METADATA_CHECKSUM_VERIFICATION", 0) != 0;
 	gMagicAutoFileRepair = cfg_getint32("MAGIC_AUTO_FILE_REPAIR", 0) == 1;
@@ -397,7 +398,13 @@ void fs_unload() {
 }
 
 int fs_init(bool doLoad) {
-	fs_read_config_file();
+	try {
+		fs_read_config_file();
+	} catch (Exception &ex) {
+		safs::log_err("Error in configuration: {}", ex.what());
+		throw;
+	}
+
 	if (!gMetadataLockfile) {
 		gMetadataLockfile.reset(new Lockfile(kMetadataFilename + std::string(".lock")));
 	}

@@ -47,6 +47,10 @@
 ## Master port to connect to (Default: 9420):
 # MASTER_PORT = 9420
 
+## Only connect to metadata servers with this CLUSTER_ID.
+## Prevents accidental connections to wrong metadata servers.
+# CLUSTER_ID = default
+
 ## Timeout (in seconds) for the master server connection (minimum is 0.01).
 ## (Default: 60)
 # MASTER_TIMEOUT = 60

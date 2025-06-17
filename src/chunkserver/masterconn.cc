@@ -262,6 +262,7 @@ int masterconn_init(void) {
 	uint32_t reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY", 5);
 	gMasterHost = cfg_getstring("MASTER_HOST", "sfsmaster");
 	gMasterPort = cfg_getstring("MASTER_PORT", "9420");
+	std::string clusterId = cfg_getstring("CLUSTER_ID", "default");
 	gBindHostStr = cfg_getstring("BIND_HOST", "*");
 	gTimeout_ms = get_cfg_timeout();
 	gEnableLoadFactor = static_cast<bool>(cfg_getuint32("ENABLE_LOAD_FACTOR", 0));
@@ -269,7 +270,8 @@ int masterconn_init(void) {
 	if (!masterconn_load_label()) { return -1; }
 
 	// Create the connections (only one at this point)
-	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, gJobPool);
+	gMasterConnSingleton =
+	    std::make_unique<MasterConn>(gMasterHost, gMasterPort, clusterId, gJobPool);
 	MasterConn *eptr = gMasterConnSingleton.get();
 	passert(eptr);
 

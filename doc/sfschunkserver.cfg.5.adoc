@@ -52,6 +52,9 @@ sfsmaster)
 
 *MASTER_PORT*:: number of SaunaFS master port to connect with (default is 9420)
 
+*CLUSTER_ID*:: Only connect to metadata servers with this CLUSTER_ID.
+Prevents accidental connections to wrong metadata servers. (default is 'default')
+
 *MASTER_RECONNECTION_DELAY*:: delay in seconds before trying to reconnect to
 the master server after disconnection (default is 5)
 

@@ -118,26 +118,53 @@ void MasterConn::sendConfig() {
 }
 
 void MasterConn::sendRegister() {
-	uint32_t myip;
-	uint16_t myport;
-	uint64_t usedspace, totalspace;
-	uint64_t tdusedspace, tdtotalspace;
-	uint32_t chunkcount, tdchunkcount;
+	assert(registrationStatus_ == RegistrationStatus::kUnregistered);
 
-	myip = mainNetworkThreadGetListenIp();
-	myport = mainNetworkThreadGetListenPort();
-	createAttachedPacket(cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX));
+	uint32_t myip = mainNetworkThreadGetListenIp();
+	uint16_t myport = mainNetworkThreadGetListenPort();
+
+	createAttachedPacket(
+	    cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_));
+
+	registrationStatus_ = RegistrationStatus::kRegistrationRequested;
+}
+
+void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
+	uint8_t status{};
+	matocs::registerHost::deserialize(data, status);
+
+	if (status != SAUNAFS_STATUS_OK) {
+		safs::log_err("Master connection registration failed with status: {}",
+		              saunafs_error_string(status));
+		setMode(ConnectionMode::KILL);
+		return;
+	}
+
+	safs::log_info("Registered to MDS at {}", address_.toString());
+
+	registrationStatus_ = RegistrationStatus::kHostRegistered;
 
 	hddForeachChunkInBulks([this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
 	});
 
-	hddGetTotalSpace(&usedspace, &totalspace, &chunkcount, &tdusedspace, &tdtotalspace,
-	                 &tdchunkcount);
-	auto registerSpace = cstoma::registerSpace::build(usedspace, totalspace, chunkcount,
-	                                                  tdusedspace, tdtotalspace, tdchunkcount);
+	uint64_t usedSpace;
+	uint64_t totalSpace;
+	uint64_t toDelUsedSpace;
+	uint64_t toDelTotalSpace;
+	uint32_t chunkCount;
+	uint32_t toDelChunkCount;
+
+	hddGetTotalSpace(&usedSpace, &totalSpace, &chunkCount, &toDelUsedSpace, &toDelTotalSpace,
+	                 &toDelChunkCount);
+	auto registerSpace = cstoma::registerSpace::build(
+	    usedSpace, totalSpace, chunkCount, toDelUsedSpace, toDelTotalSpace, toDelChunkCount);
 	createAttachedPacket(std::move(registerSpace));
+
+	registrationStatus_ = RegistrationStatus::kChunksRegistered;
+
 	sendRegisterLabel();
+
 	sendConfig();
 }
 
@@ -266,7 +293,7 @@ void MasterConn::handlePollErrors(const std::vector<pollfd> &pdesc) {
 		if (mode_ == ConnectionMode::CONNECTING) {
 			connectTest();
 		} else {
-			mode_ = ConnectionMode::KILL;
+			setMode(ConnectionMode::KILL);
 		}
 	}
 }
@@ -293,7 +320,7 @@ void MasterConn::servePoll(const std::vector<pollfd> &pdesc) {
 
 			// Check if the connection has not been used for a while and should be closed
 			if ((mode_ == ConnectionMode::CONNECTED) && lastRead_.elapsed_ms() > gTimeout_ms) {
-				mode_ = ConnectionMode::KILL;
+				setMode(ConnectionMode::KILL);
 			}
 
 			// Keep the connection alive by sending a NOP packet
@@ -319,14 +346,14 @@ void MasterConn::readFromSocket() {
 
 		if (ret == 0) {
 			safs::log_info("connection reset by Master");
-			mode_ = ConnectionMode::KILL;
+			setMode(ConnectionMode::KILL);
 			return;
 		}
 
 		if (ret < 0) {
 			if (errno != EAGAIN) {
 				safs::log_error_code(errno, "read from Master error");
-				mode_ = ConnectionMode::KILL;
+				setMode(ConnectionMode::KILL);
 			}
 			return;
 		}
@@ -337,7 +364,7 @@ void MasterConn::readFromSocket() {
 			inputPacket_.increaseBytesRead(ret);
 		} catch (InputPacketTooLongException &ex) {
 			safs::log_warn("reading from master: {}", ex.what());
-			mode_ = ConnectionMode::KILL;
+			setMode(ConnectionMode::KILL);
 			return;
 		}
 
@@ -370,7 +397,7 @@ void MasterConn::writeToSocket() {
 		if (bytesWritten < 0) {
 			if (errno != EAGAIN) {
 				safs::log_error_code(errno, "write to Master error");
-				mode_ = ConnectionMode::KILL;
+				setMode(ConnectionMode::KILL);
 			}
 			return;
 		}
@@ -415,16 +442,19 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_DUPTRUNC_CHUNK:
 		duplicateTruncateChunk(message);
 		break;
+	case SAU_MATOCS_REGISTER_HOST:
+		onRegistered(message);
+		break;
 	default:
 		safs::log_info("got unknown message (type: {})", header.type);
-		mode_ = ConnectionMode::KILL;
+		setMode(ConnectionMode::KILL);
 	}
 } catch (IncorrectDeserializationException &e) {
 	safs::log_info(
 	    "chunkserver <-> master module: got inconsistent message "
 	    "(type:{}, length:{}), {}",
 	    header.type, uint32_t(message.size()), e.what());
-	mode_ = ConnectionMode::KILL;
+	setMode(ConnectionMode::KILL);
 }
 
 // Chunk operations

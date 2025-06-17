@@ -9,6 +9,10 @@
 ## Only one metadata server in SaunaFS shall have 'master' personality.
 # PERSONALITY = master
 
+## Uniquely identifies this namespace.
+## Prevents accidental connections to wrong metadata or chunkservers.
+# CLUSTER_ID = default
+
 ## Password for administrative connections and commands.
 # ADMIN_PASSWORD =
 
