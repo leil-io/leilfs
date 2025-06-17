@@ -59,8 +59,6 @@ int CmrChunk::renameChunkFile(uint32_t new_version) {
 	}
 
 	setVersion(new_version);
-	setMetaFilename(newMetaBasename);
-	setDataFilename(newDataBasename);
 
 	return 0;
 }

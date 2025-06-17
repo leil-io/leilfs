@@ -63,20 +63,13 @@ public:
 	std::string fullMetaFilename() const override;
 
 	/// Getter for the name of the metadata filename.
-	const std::string &metaFilename() const override;
-	/// Setter for the name of the metadata filename.
-	void setMetaFilename(const std::string &_metaFilename) override;
+	const std::string metaFilename() const override;
 
 	/// Returns the full path to the data file.
 	std::string fullDataFilename() const override;
 
 	/// Getter for the name of the data filename.
-	const std::string &dataFilename() const override;
-	/// Setter for the name of the data filename.
-	void setDataFilename(const std::string &_dataFilename) override;
-
-	/// Updates the metadata and data filenames according to the given version.
-	void updateFilenamesFromVersion(uint32_t _version) override;
+	const std::string dataFilename() const override;
 
 	/// Generates the metadata filename for the given version.
 	std::string generateMetadataFilenameForVersion(
@@ -191,8 +184,6 @@ private:
 	uint64_t id_;               ///< The ID of the chunk.
 	uint32_t version_ = 0;      ///< The version of the chunk.
 	ChunkPartType type_;        ///< The type of the chunk (ec:5, xor:2, etc.).
-	std::string metaFilename_;  ///< Metadata filename (header + CRC).
-	std::string dataFilename_;  ///< Data filename (blocks of data).
 	int32_t metaFD_ = -1;       ///< Metadata file descriptor
 	int32_t dataFD_ = -1;       ///< Data file descriptor
 	uint16_t blocks_ = 0;       ///< Number of blocks in the chunk

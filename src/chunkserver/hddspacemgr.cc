@@ -216,7 +216,6 @@ static IChunk *hddChunkCreate(IDisk *disk, uint64_t chunkId,
 
 	chunk->setVersion(version);
 	disk->setNeedRefresh(true);
-	chunk->updateFilenamesFromVersion(version);
 
 	std::lock_guard testsLockGuard(gTestsMutex);
 	disk->chunks().insert(chunk);
@@ -2251,7 +2250,6 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 	}
 
 	chunk->setVersion(version);
-	chunk->updateFilenamesFromVersion(version);
 	sassert(chunk->fullMetaFilename() == fullname);
 
 	{

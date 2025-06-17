@@ -70,7 +70,6 @@ TEST_F(ChunkTests, GetFileName) {
 	standardChunk.setId(0x123456);
 	standardChunk.setOwner(&disk);
 	standardChunk.setVersion(0xabcd);
-	standardChunk.updateFilenamesFromVersion(0xabcd);
 	EXPECT_EQ("/mnt/chunks12/"
 	          "chunk_0000000000123456_0000ABCD" CHUNK_METADATA_FILE_EXTENSION,
 	          standardChunk.fullMetaFilename());
@@ -78,7 +77,6 @@ TEST_F(ChunkTests, GetFileName) {
 	chunk_1_of_3.setId(0x8765430d);
 	chunk_1_of_3.setOwner(&disk);
 	chunk_1_of_3.setVersion(0x654321);
-	chunk_1_of_3.updateFilenamesFromVersion(0x654321);
 	EXPECT_EQ("/mnt/chunks65/chunk_xor_1_of_3_000000008765430D_00654321"
 	          CHUNK_METADATA_FILE_EXTENSION,
 	          chunk_1_of_3.fullMetaFilename());
@@ -86,7 +84,6 @@ TEST_F(ChunkTests, GetFileName) {
 	chunk_p_of_3.setId(0x1234567890abcdef);
 	chunk_p_of_3.setOwner(&disk);
 	chunk_p_of_3.setVersion(0x12345678);
-	chunk_p_of_3.updateFilenamesFromVersion(0x12345678);
 	EXPECT_EQ("/mnt/chunksAB/chunk_xor_parity_of_3_1234567890ABCDEF_12345678"
 	          CHUNK_METADATA_FILE_EXTENSION,
 	          chunk_p_of_3.fullMetaFilename());

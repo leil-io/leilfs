@@ -88,24 +88,13 @@ public:
 	virtual std::string fullMetaFilename() const = 0;
 
 	/// Getter for the name of the metadata file.
-	virtual const std::string &metaFilename() const = 0;
-	/// Setter for the name of the metadata file.
-	virtual void setMetaFilename(const std::string& _metaFilename) = 0;
+	virtual const std::string metaFilename() const = 0;
 
 	/// Returns the full path to the data file.
 	virtual std::string fullDataFilename() const = 0;
 
 	/// Getter for the name of the data file.
-	virtual const std::string &dataFilename() const = 0;
-	/// Setter for the name of the data file.
-	virtual void setDataFilename(const std::string &_dataFilename) = 0;
-
-	/// Updates the metadata and data filenames according to the given version.
-	/// The version of the Chunk is included in the filenames. Therefore, when
-	/// the version changes, the filenames must be updated.
-	/// Some scenarios where the version changes are when a Chunk is created and
-	/// during operations like duplicate or truncate.
-	virtual void updateFilenamesFromVersion(uint32_t _version) = 0;
+	virtual const std::string dataFilename() const = 0;
 
 	/// Generates the name of the metadata file for the given version.
 	virtual std::string generateMetadataFilenameForVersion(
