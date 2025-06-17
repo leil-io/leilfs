@@ -1,11 +1,8 @@
 name: Run Unit and Ganesha Tests
 
 on:
-    push:
     merge_group:
     pull_request:
-        branches:
-            - "*"
 
 jobs:
     Run-Unit-Tests-and-Ganesha:
