@@ -26,16 +26,43 @@
 
 #include "common/type_defs.h"
 
+/// Get stats from client and reset them in the server.
+/// @param stats Array of 5 elements to store stats in the following order:
+/// 0 - packets received
+/// 1 - packets sent
+/// 2 - bytes received
+/// 3 - bytes sent
 void matoclserv_stats(uint64_t stats[5]);
-void matoclserv_chunk_status(uint64_t chunkid, uint8_t status);
-void matoclserv_add_open_file(uint32_t sessionid, inode_t inode);
-void matoclserv_remove_open_file(uint32_t sessionid, inode_t inode);
-int matoclserv_sessionsinit(void);
-int matoclserv_networkinit(void);
-void matoclserv_session_unload(void);
+
+/// Sends the status of a delayed operation associated with a chunk over the network.
+/// @param chunkId The ID of the chunk associated with the delayed operation
+/// @param status  The status of the operation, (e.g., SAUNAFS_STATUS_OK, SAUNAFS_ERROR_NOTDONE)
+void matoclserv_chunk_status(uint64_t chunkId, uint8_t status);
+
+/// Adds an open file to the list of open files for a given session.
+/// @param sessionId The ID of the session to which the open file will be added
+/// @param inode The inode of the open file to add
+void matoclserv_add_open_file(uint32_t sessionId, inode_t inode);
+
+/// Removes an open file from the list of open files for a given session.
+/// @param sessionId The ID of the session from which the open file will be removed
+/// @param inode The inode of the open file to remove
+void matoclserv_remove_open_file(uint32_t sessionId, inode_t inode);
+
+/// Loads and initializes the sessions.
+int matoclserv_sessions_init();
+
+/// Initializes the network configuration and register the eventloop callbacks.
+/// @return 0 on success, negative value on error
+int matoclserv_network_init();
+
+/// Clears the sessions.
+void matoclserv_session_unload();
 
 /// Notify interested clients about the status of metadata saving process.
+/// @param status Status of the metadata saving process
 void matoclserv_broadcast_metadata_saved(uint8_t status);
 
 /// Notify interested clients about the status of metadata checksum recalculation process.
+/// @param status Status of the metadata checksum recalculation process
 void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status);
