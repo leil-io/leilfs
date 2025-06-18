@@ -245,37 +245,41 @@ if ! grep /mnt/ramdisk /etc/fstab >/dev/null; then
 	echo ': ${RAMDISK_DIR:=/mnt/ramdisk}' >> /etc/saunafs_tests.conf
 fi
 
-echo ; echo 'Prepare loop devices'
-#creating loop devices more or less evenly distributed between available disks
-i=0
-devices=6
-loops=()
-while [ ${i} -lt ${devices} ] ; do
-	for disk in "$@"; do
-		if (( i == devices )); then #stop if we have enough devices
-			break
-		fi
-		loops+=("/mnt/saunafstest_loop_${i}")
-		if grep -q "saunafstest_loop_${i}" /etc/fstab; then
+if grep -q Microsoft /proc/version && ! grep -q microsoft-standard /proc/version; then
+	echo "Running on WSL1: skipping loop device creation."
+else
+	echo ; echo 'Prepare loop devices'
+	#creating loop devices more or less evenly distributed between available disks
+	i=0
+	devices=6
+	loops=()
+	while [ ${i} -lt ${devices} ] ; do
+		for disk in "$@"; do
+			if (( i == devices )); then #stop if we have enough devices
+				break
+			fi
+			loops+=("/mnt/saunafstest_loop_${i}")
+			if grep -q "saunafstest_loop_${i}" /etc/fstab; then
+				(( ++i ))
+				continue
+			fi
+			mkdir -p "${disk}/saunafstest_images"
+			# Create image file
+			image="${disk}/saunafstest_images/image_${i}"
+			truncate -s 1G "${image}"
+			mkfs.ext4 -Fq "${image}"
+			# Add it to fstab
+			echo "$(readlink -m "${image}") /mnt/saunafstest_loop_${i}  ext4  loop" >> /etc/fstab
+			mkdir -p "/mnt/saunafstest_loop_${i}"
+			# Mount and set permissions
+			mount "/mnt/saunafstest_loop_${i}"
+			chmod 1777 "/mnt/saunafstest_loop_${i}"
 			(( ++i ))
-			continue
-		fi
-		mkdir -p "${disk}/saunafstest_images"
-		# Create image file
-		image="${disk}/saunafstest_images/image_${i}"
-		truncate -s 1G "${image}"
-		mkfs.ext4 -Fq "${image}"
-		# Add it to fstab
-		echo "$(readlink -m "${image}") /mnt/saunafstest_loop_${i}  ext4  loop" >> /etc/fstab
-		mkdir -p "/mnt/saunafstest_loop_${i}"
-		# Mount and set permissions
-		mount "/mnt/saunafstest_loop_${i}"
-		chmod 1777 "/mnt/saunafstest_loop_${i}"
-		(( ++i ))
+		done
 	done
-done
-# shellcheck disable=SC2016
-echo ': ${SAUNAFS_LOOP_DISKS:="'"${loops[*]}"'"}' >> /etc/saunafs_tests.conf
+	# shellcheck disable=SC2016
+	echo ': ${SAUNAFS_LOOP_DISKS:="'"${loops[*]}"'"}' >> /etc/saunafs_tests.conf
+fi
 
 set +x
 echo 'Machine configured successfully'
