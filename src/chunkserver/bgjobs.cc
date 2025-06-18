@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include "chunkserver/bgjobs.h"
+#include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/chunk_replicator.h"
 #include "chunkserver/hddspacemgr.h"
 #include "common/chunk_part_type.h"
@@ -166,6 +167,12 @@ void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
 	}
 }
 
+void disableJob(uint32_t jobId, uint32_t listenerId, uint64_t chunkId, ChunkPartType chunkType) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto jobPool = static_cast<JobPool *>(disk->getWorkerPool());
+	jobPool->disableJob(jobId, listenerId);
+}
+
 void JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
 	// Check if the listenerId is valid
 	if (listenerId >= listenerInfos_.size()) {
@@ -185,6 +192,13 @@ void JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
 			}
 		}
 	}
+}
+
+void disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId, uint64_t chunkId,
+                 ChunkPartType chunkType) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto jobPool = static_cast<JobPool *>(disk->getWorkerPool());
+	jobPool->disableJobs(jobIds, listenerId);
 }
 
 void JobPool::processCompletedJobs(uint32_t listenerId) {
@@ -244,6 +258,20 @@ void JobPool::changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, 
 			jobIterator->second->extra = extra;
 		}
 	}
+}
+
+void changeCallback(std::list<uint32_t> &jobIds, JobPool::JobCallback callback, void *extra,
+                    uint32_t listenerId, uint64_t chunkId, ChunkPartType chunkType) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto jobPool = static_cast<JobPool *>(disk->getWorkerPool());
+	jobPool->changeCallback(jobIds, std::move(callback), extra, listenerId);
+}
+
+void changeCallback(uint32_t jobId, JobPool::JobCallback callback, void *extra, uint32_t listenerId,
+                    uint64_t chunkId, ChunkPartType chunkType) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto jobPool = static_cast<JobPool *>(disk->getWorkerPool());
+	jobPool->changeCallback(jobId, std::move(callback), extra, listenerId);
 }
 
 void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
@@ -346,6 +374,14 @@ uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 	                      listenerId);
 }
 
+uint32_t job_open(uint32_t listenerId, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                  ChunkPartType chunkType) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto ret = job_open(*(static_cast<JobPool *>(disk->getWorkerPool())),
+	                    std::move(callback), extra, chunkId, chunkType, listenerId);
+	return ret;
+}
+
 uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                    ChunkPartType chunkType, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
@@ -353,6 +389,14 @@ uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::Close, std::move(callback), extra, processJob,
 	                      listenerId);
+}
+
+uint32_t job_close(uint32_t sourceId, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                   ChunkPartType chunkType) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto ret = job_close(*(static_cast<JobPool *>(disk->getWorkerPool())),
+	                     std::move(callback), extra, chunkId, chunkType, sourceId);
+	return ret;
 }
 
 uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
@@ -384,6 +428,18 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 	                      listenerId);
 }
 
+uint32_t job_read(uint32_t listenerId, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                  uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
+                  uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
+                  OutputBuffer *outputBuffer, bool performHddOpen) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto ret =
+	    job_read(*(static_cast<JobPool *>(disk->getWorkerPool())), std::move(callback),
+	             extra, chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
+	             blocksToBeReadAhead, outputBuffer, performHddOpen, listenerId);
+	return ret;
+}
+
 uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
                       uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched,
                       uint32_t listenerId) {
@@ -393,6 +449,14 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::Prefetch, kEmptyCallback, kEmptyExtra,
 	                      processJob, listenerId);
+}
+
+uint32_t job_prefetch(uint32_t listenerId, uint64_t chunkId, ChunkPartType chunkType,
+                      uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto ret = job_prefetch(*(static_cast<JobPool *>(disk->getWorkerPool())), chunkId,
+	                        chunkType, firstBlockToBePrefetched, blocksToBePrefetched, listenerId);
+	return ret;
 }
 
 uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
@@ -413,6 +477,17 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 	                      listenerId);
 }
 
+uint32_t job_write(uint32_t listenerId, JobPool::JobCallback callback, void *extra,
+                   uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                   uint16_t blockNum, uint32_t offset, uint32_t size, uint32_t crc,
+                   const uint8_t *buffer) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto ret = job_write(*(static_cast<JobPool *>(disk->getWorkerPool())),
+	                     std::move(callback), extra, chunkId, chunkVersion, chunkType, blockNum,
+	                     offset, size, crc, buffer, listenerId);
+	return ret;
+}
+
 uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                         uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
                         uint16_t *blocks, uint32_t listenerId) {
@@ -421,6 +496,16 @@ uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *e
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, std::move(callback), extra,
 	                      processJob, listenerId);
+}
+
+uint32_t job_get_blocks(uint32_t listenerId, JobPool::JobCallback callback, void *extra,
+                        uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                        uint16_t *blocks) {
+	auto disk = hddChunkFindDisk(chunkId, chunkType);
+	auto ret = job_get_blocks(*(static_cast<JobPool *>(disk->getWorkerPool())),
+	                           std::move(callback), extra, chunkId, version, chunkType, blocks,
+	                           listenerId);
+	return ret;
 }
 
 uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,

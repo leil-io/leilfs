@@ -328,4 +328,7 @@ public:
 	virtual uint32_t lastErrorIndex() const = 0;
 	/// Setter for lastErrorIndex
 	virtual void setLastErrorIndex(uint32_t newLastErrorIndex) = 0;
+
+	virtual void setWorkerPool(void *workerPoolPtr) = 0;
+	virtual void *getWorkerPool() const = 0;
 };

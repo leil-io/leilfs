@@ -203,6 +203,17 @@ private:
 	std::unique_ptr<ProducerConsumerQueue> jobsQueue;  /// Queue for jobs.
 };
 
+void disableJob(uint32_t jobId, uint32_t listenerId, uint64_t chunkId, ChunkPartType chunkType);
+
+void disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId, uint64_t chunkId,
+                 ChunkPartType chunkType);
+
+void changeCallback(std::list<uint32_t> &jobIds, JobPool::JobCallback callback, void *extra,
+                    uint32_t listenerId, uint64_t chunkId, ChunkPartType chunkType);
+
+void changeCallback(uint32_t jobId, JobPool::JobCallback callback, void *extra, uint32_t listenerId,
+                    uint64_t chunkId, ChunkPartType chunkType);
+
 /// @brief Adds an open job to the JobPool.
 ///
 /// @param jobPool The JobPool instance.
@@ -214,6 +225,8 @@ private:
 /// @return The ID of the added job.
 uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                   ChunkPartType chunkType, uint32_t listenerId = 0);
+uint32_t job_open(uint32_t listenerId, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                  ChunkPartType chunkType);
 
 /// @brief Adds a close job to the JobPool.
 ///
@@ -226,6 +239,8 @@ uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 /// @return The ID of the added job.
 uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
                    ChunkPartType chunkType, uint32_t listenerId = 0);
+uint32_t job_close(uint32_t sourceId, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                   ChunkPartType chunkType);
 
 /// @brief Adds a read job to the JobPool.
 ///
@@ -247,6 +262,10 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
                   OutputBuffer *outputBuffer, bool performHddOpen, uint32_t listenerId = 0);
+uint32_t job_read(uint32_t listenerId, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+                  uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
+                  uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
+                  OutputBuffer *outputBuffer, bool performHddOpen);
 
 /// @brief Adds a prefetch job to the JobPool.
 ///
@@ -260,6 +279,9 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
                       uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched,
                       uint32_t listenerId = 0);
+
+uint32_t job_prefetch(uint32_t listenerId, uint64_t chunkId, ChunkPartType chunkType,
+                      uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched);
 
 /// @brief Adds a write job to the JobPool.
 ///
@@ -280,6 +302,10 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                    uint32_t chunkVersion, ChunkPartType chunkType, uint16_t blockNum,
                    uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer,
                    uint32_t listenerId = 0);
+uint32_t job_write(uint32_t listenerId, JobPool::JobCallback callback, void *extra,
+                   uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                   uint16_t blockNum, uint32_t offset, uint32_t size, uint32_t crc,
+                   const uint8_t *buffer);
 
 /// @brief Adds a get blocks job to the JobPool.
 ///
@@ -295,6 +321,9 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                         uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
                         uint16_t *blocks, uint32_t listenerId = 0);
+uint32_t job_get_blocks(uint32_t listenerId, JobPool::JobCallback callback, void *extra,
+                        uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                        uint16_t *blocks);
 
 /// @brief Adds a replicate job to the JobPool.
 ///

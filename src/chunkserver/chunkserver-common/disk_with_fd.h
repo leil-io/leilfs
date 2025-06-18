@@ -206,6 +206,8 @@ public:
 	/// Setter for lastErrorIndex_
 	void setLastErrorIndex(uint32_t newLastErrorIndex) override;
 
+	void setWorkerPool(void *workerPoolPtr) override;
+	void *getWorkerPool() const override;
 private:
 	/// Internal helper to sync both FDs (metadata and data)
 	int fsyncFD(IChunk *chunk, bool isForMetadata);
@@ -270,4 +272,6 @@ private:
 	/// The collection is guarded by `gTestsMutex`, which should be locked
 	/// when the collection is accessed for reading or modifying.
 	DiskChunks chunks_;
+
+	void *workerPool_;
 };

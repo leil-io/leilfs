@@ -118,7 +118,7 @@ struct ChunkserverEntry {
 	static constexpr uint32_t kGenerateChartExpectedPacketSize =
 	    sizeof(uint32_t);
 
-	JobPool *workerJobPool;  // Job pool assigned to a given network worker thread
+	uint32_t parentId;  // Id of the parent network worker thread
 
 	ChunkserverEntry::State state = ChunkserverEntry::State::Idle;
 	ChunkserverEntry::Mode mode = ChunkserverEntry::Mode::Header;
@@ -189,9 +189,9 @@ struct ChunkserverEntry {
 
 	LOG_AVG_TYPE readOperationTimer;
 
-	ChunkserverEntry(int socket, JobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
+	ChunkserverEntry(int socket, uint32_t parentId, uint16_t maxBlocksPerHddReadJob,
 	                 uint16_t maxParallelHddReadJobs)
-	    : workerJobPool(workerJobPool),
+	    : parentId(parentId),
 	      sock(socket),
 	      maxBlocksPerHddReadJob(maxBlocksPerHddReadJob),
 	      maxParallelHddReadJobs(maxParallelHddReadJobs) {

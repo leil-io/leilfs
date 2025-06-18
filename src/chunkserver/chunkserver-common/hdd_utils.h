@@ -79,6 +79,8 @@ int hddIOBegin(IChunk *chunk, int newFlag,
 
 bool hddScansInProgress();
 
+IDisk* hddChunkFindDisk(uint64_t chunkId, ChunkPartType chunkType);
+
 IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType);
 
 int chunkWriteCrc(IChunk *chunk);

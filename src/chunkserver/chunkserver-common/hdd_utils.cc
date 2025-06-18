@@ -314,6 +314,33 @@ IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType) {
 	                                    disk::ChunkGetMode::kFindOnly);
 }
 
+IDisk* hddChunkFindDisk(uint64_t chunkId, ChunkPartType chunkType) {
+	TRACETHIS1(chunkId);
+	IChunk *chunk = nullptr;
+	IDisk *disk = nullptr;
+
+	std::unique_lock chunksMapLock(gChunksMapMutex);
+	auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, chunkType));
+
+	if (chunkIter != gChunksMap.end()) {
+		chunk = chunkIter->second.get();
+		disk = chunk->owner();
+		if (disk == nullptr) {
+			safs::log_err(
+				"Chunk does not belong to a disk. "
+				"(chunkid: {:#04x}, chunktype: {})",
+				chunkId, chunkType.toString());
+		}
+	} else {
+		safs::log_err(
+		    "Chunk to be found wasn't found on the chunkserver. "
+		    "(chunkid: {:#04x}, chunktype: {})",
+		    chunkId, chunkType.toString());
+	}
+
+	return disk;
+}
+
 IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
                                      ChunkPartType chunkType,
                                      disk::ChunkGetMode creationMode) {

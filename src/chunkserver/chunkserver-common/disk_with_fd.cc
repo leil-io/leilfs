@@ -473,3 +473,10 @@ const std::string &FDDisk::metaPath() const { return metaPath_; }
 void FDDisk::setMetaPath(const std::string &newMetaPath) {
 	metaPath_ = newMetaPath;
 }
+
+void FDDisk::setWorkerPool(void *workerPoolPtr) {
+	workerPool_ = workerPoolPtr;
+}
+void *FDDisk::getWorkerPool() const {
+	return workerPool_;
+}

@@ -42,21 +42,18 @@ public:
 	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 16;
 	static constexpr uint16_t kDefaultMaxBlocksPerHddReadJob = 8;
 
-	NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers, uint32_t bgjobsCount);
-	NetworkWorkerThread(const NetworkWorkerThread&) = delete;
+	NetworkWorkerThread(uint32_t nwWorkerThreadId, std::vector<int> &bgJobPoolWakeUpFds,
+	                    std::vector<JobPool *> bgJobPools);
+	NetworkWorkerThread(const NetworkWorkerThread &) = delete;
 
 	// main loop
 	void operator()();
 	void askForTermination();
 	void addConnection(int newSocketFD);
 
-	JobPool *backgroundJobPool() {
-		return bgJobPool_.get();
-	}
-
 private:
 	void preparePollFds();
-	void servePoll() ;
+	void servePoll();
 	void terminate();
 
 	/// Human readable name for the thread
@@ -66,8 +63,9 @@ private:
 	std::mutex csservheadLock;
 	std::list<ChunkserverEntry> csservEntries;
 
-	std::unique_ptr<JobPool> bgJobPool_;
-	int bgJobPoolWakeUpFd_;
+	uint32_t nwWorkerThreadId_;
+	std::vector<int> bgJobPoolWakeUpFds_;
+	std::vector<JobPool *> bgJobPools_;
 	static const uint32_t JOB_FD_PDESC_POS = 1;
 	std::vector<struct pollfd> pdesc;
 	int notify_pipe[2];

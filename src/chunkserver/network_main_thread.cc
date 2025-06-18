@@ -36,6 +36,8 @@
 #include "chunkserver/g_limiters.h"
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/network_main_thread.h"
+#include "chunkserver-common/global_shared_resources.h"
+#include "chunkserver/network_stats.h"
 #include "chunkserver/network_worker_thread.h"
 #include "common/cwrap.h"
 #include "common/event_loop.h"
@@ -53,6 +55,7 @@ static int32_t lsockpdescpos;
 std::list<std::thread> networkThreads;
 std::list<NetworkWorkerThread> networkThreadObjects;
 std::list<NetworkWorkerThread>::iterator nextNetworkThread;
+std::vector<JobPool *> globalBgJobPools;
 
 static uint32_t mylistenip;
 static uint16_t mylistenport;
@@ -192,6 +195,9 @@ void mainNetworkThreadTerm(void) {
 
 	networkThreads.clear();
 	networkThreadObjects.clear();
+	for (auto jobPool : globalBgJobPools) {
+		delete jobPool;
+	}
 }
 
 void mainNetworkThreadServe(const std::vector<pollfd> &pdesc) {
@@ -206,13 +212,7 @@ void mainNetworkThreadServe(const std::vector<pollfd> &pdesc) {
 			if (nextNetworkThread == networkThreadObjects.end()) {
 				nextNetworkThread = networkThreadObjects.begin();
 			}
-			if (nextNetworkThread->backgroundJobPool()->getJobCount()
-					>= (gBgjobsCountPerNetworkWorker * 9) / 10) {
-				safs_pretty_syslog(LOG_WARNING, "jobs queue is full !!!");
-				tcpclose(newSocketFD);
-			} else {
-				nextNetworkThread->addConnection(newSocketFD);
-			}
+			nextNetworkThread->addConnection(newSocketFD);
 			++nextNetworkThread;
 		}
 	}
@@ -277,10 +277,26 @@ int mainNetworkThreadInit(void) {
 }
 
 int mainNetworkThreadInitThreads(void) {
-	for (uint32_t i = 0; i < gNrOfNetworkWorkers; ++i) {
-		networkThreadObjects.emplace_back(i, gNrOfHddWorkersPerNetworkWorker,
-				gBgjobsCountPerNetworkWorker);
+	std::unique_lock disksLock(gDisksMutex);
+	std::vector<std::vector<int>> globalBgJobPoolWakeUpFds(gDisks.size(),
+	                                                       std::vector<int>(gNrOfNetworkWorkers));
+	globalBgJobPools.resize(gDisks.size());
+	for (size_t i = 0; i < gDisks.size(); i++) {
+		gDisks[i]->setWorkerPool(new JobPool("disk" + std::to_string(i) + "_",
+		                                     gNrOfHddWorkersPerNetworkWorker, 4096,
+		                                     gNrOfNetworkWorkers, globalBgJobPoolWakeUpFds[i]));
+		globalBgJobPools[i] = static_cast<JobPool *>(gDisks[i]->getWorkerPool());
 	}
+	disksLock.unlock();
+
+	for (unsigned i = 0; i < gNrOfNetworkWorkers; ++i) {
+		std::vector<int> bgJobPoolWakeUpFds(gDisks.size());
+		for (size_t j = 0; j < gDisks.size(); j++) {
+			bgJobPoolWakeUpFds[j] = globalBgJobPoolWakeUpFds[j][i];
+		}
+		networkThreadObjects.emplace_back(i, bgJobPoolWakeUpFds, globalBgJobPools);
+	}
+
 	for (auto obj = networkThreadObjects.begin(); obj != networkThreadObjects.end(); ++obj) {
 		networkThreads.push_back(std::thread(std::ref(*obj)));
 	}

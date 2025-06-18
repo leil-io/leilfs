@@ -53,9 +53,14 @@ constexpr int getConnectTimeout(int cnt) {
 	               : kTimeoutEven * (1 << (cnt >> 1));
 }
 
-NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers,
-                                         uint32_t bgjobsCount)
-    : name_("nw_" + std::to_string(id)), doTerminate(false) {
+NetworkWorkerThread::NetworkWorkerThread(uint32_t nwWorkerThreadId,
+                                         std::vector<int> &bgJobPoolWakeUpFds,
+                                         std::vector<JobPool *> bgJobPools)
+    : name_("nw_" + std::to_string(nwWorkerThreadId)),
+      doTerminate(false),
+      nwWorkerThreadId_(nwWorkerThreadId),
+      bgJobPoolWakeUpFds_(bgJobPoolWakeUpFds),
+      bgJobPools_(bgJobPools) {
 	TRACETHIS();
 	eassert(pipe(notify_pipe) != -1);
 #ifdef F_SETPIPE_SZ
@@ -64,17 +69,6 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers
 	static constexpr int kPageAlignedPipeSize = 4096 * 32;
 	eassert(fcntl(notify_pipe[1], F_SETPIPE_SZ, kPageAlignedPipeSize));
 #endif
-	try {
-		// Create the JobPool instance with the specified number of workers. It would be serving
-		// only this network worker thread, thus the number of listeners is 1.
-		std::vector<int> bgJobPoolWakeUpFds(1);
-		bgJobPool_ =
-		    std::make_unique<JobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, 1, bgJobPoolWakeUpFds);
-		bgJobPoolWakeUpFd_ = bgJobPoolWakeUpFds[0];
-	} catch (const std::exception &e) {
-		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
-		throw;
-	}
 }
 
 void NetworkWorkerThread::operator()() {
@@ -111,7 +105,6 @@ void NetworkWorkerThread::operator()() {
 
 void NetworkWorkerThread::terminate() {
 	TRACETHIS();
-	bgJobPool_.reset();
 
 	std::unique_lock lock(csservheadLock);
 
@@ -131,8 +124,7 @@ void NetworkWorkerThread::preparePollFds() {
 	TRACETHIS();
 	pdesc.clear();
 	pdesc.emplace_back(pollfd(notify_pipe[0], POLLIN, 0));
-	pdesc.emplace_back(pollfd(bgJobPoolWakeUpFd_, POLLIN, 0));
-	sassert(JOB_FD_PDESC_POS == (pdesc.size() - 1));
+	for (auto &wakeUpFd : bgJobPoolWakeUpFds_) { pdesc.emplace_back(pollfd(wakeUpFd, POLLIN, 0)); }
 
 	std::unique_lock lock(csservheadLock);
 	for (auto& entry : csservEntries) {
@@ -195,12 +187,14 @@ void NetworkWorkerThread::servePoll() {
 	TRACETHIS();
 	uint32_t now = eventloop_time();
 	uint64_t usecnow = eventloop_utime();
-	uint32_t jobscnt;
 	ChunkserverEntry::State lstate;
 
-	if (pdesc[JOB_FD_PDESC_POS].revents & POLLIN) {
-		bgJobPool_->processCompletedJobs();
+	for (size_t i = 0; i < bgJobPools_.size(); i++) {
+		if (pdesc[i + 1].revents & POLLIN) {
+			bgJobPools_[i]->processCompletedJobs(nwWorkerThreadId_);
+		}
 	}
+
 	std::unique_lock lock(csservheadLock);
 	for (auto& entry : csservEntries) {
 		ChunkserverEntry* eptr = &entry;
@@ -292,19 +286,7 @@ void NetworkWorkerThread::servePoll() {
 		}
 	}
 
-	jobscnt = bgJobPool_->getJobCount();
-//      // Lock free stats_maxjobscnt = max(stats_maxjobscnt, jobscnt), but I don't trust myself :(...
-//      uint32_t expected_value = stats_maxjobscnt;
-//      while (jobscnt > expected_value
-//                      && !stats_maxjobscnt.compare_exchange_strong(expected_value, jobscnt)) {
-//              expected_value = stats_maxjobscnt;
-//      }
-// // .. Will end up with a racy code instead :(
-	if (jobscnt > stats_maxjobscnt) {
-		// A race is possible here, but it won't lead to any serious consequences, in a worst
-		// (and unlikely) case stats_maxjobscnt will be slightly lower than it actually should be
-		stats_maxjobscnt = jobscnt;
-	}
+	// jobsMaxCount update should be moved in master worker thread
 
 	for (auto it = csservEntries.begin(); it != csservEntries.end();) {
 		auto &eptr = *it;
@@ -328,8 +310,7 @@ void NetworkWorkerThread::addConnection(int newSocketFD) {
 
 	std::unique_lock lock(csservheadLock);
 	try {
-		if (!bgJobPool_) { throw std::runtime_error("JobPool instance is null"); }
-		csservEntries.emplace_front(newSocketFD, bgJobPool_.get(), gMaxBlocksPerHddReadJob,
+		csservEntries.emplace_front(newSocketFD, nwWorkerThreadId_, gMaxBlocksPerHddReadJob,
 		                            gMaxParallelHddReadJobsPerCsEntry);
 		csservEntries.front().lastActivity = eventloop_time();
 	} catch (const std::runtime_error &e) {

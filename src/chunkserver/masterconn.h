@@ -24,6 +24,8 @@
 
 #include <cstdint>
 
+constexpr uint32_t kMasterConnThreadIdInItsJobPool = 0;
+
 void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt);
 int masterconn_init(void);
 int masterconn_init_threads(void);
