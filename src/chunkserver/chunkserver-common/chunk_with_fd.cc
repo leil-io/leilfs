@@ -32,29 +32,26 @@ FDChunk::FDChunk(uint64_t chunkId, ChunkPartType type, ChunkState state)
 
 std::string FDChunk::fullMetaFilename() const {
 	return owner_->metaPath() + Subfolder::getSubfolderNameGivenChunkId(id_) +
-	       "/" + metaFilename_;
+	       "/" + generateFilenameForVersion(version_, true);
 }
 
-const std::string &FDChunk::metaFilename() const { return metaFilename_; }
-
-void FDChunk::setMetaFilename(const std::string &_metaFilename) {
-	metaFilename_ = _metaFilename;
+const std::string FDChunk::metaFilename() const {
+	if (version_ == 0) {
+		return "";
+	}
+	return generateFilenameForVersion(version_, true);
 }
 
 std::string FDChunk::fullDataFilename() const {
 	return owner_->dataPath() + Subfolder::getSubfolderNameGivenChunkId(id_) +
-	       "/" + dataFilename_;
+	       "/" + generateFilenameForVersion(version_, false);
 }
 
-const std::string &FDChunk::dataFilename() const { return dataFilename_; }
-
-void FDChunk::setDataFilename(const std::string &_dataFilename) {
-	dataFilename_ = _dataFilename;
-}
-
-void FDChunk::updateFilenamesFromVersion(uint32_t _version) {
-	metaFilename_ = generateMetadataFilenameForVersion(_version);
-	dataFilename_ = generateDataFilenameForVersion(_version);
+const std::string FDChunk::dataFilename() const {
+	if (version_ == 0) {
+		return "";
+	}
+	return generateFilenameForVersion(version_, false);
 }
 
 std::string FDChunk::generateMetadataFilenameForVersion(

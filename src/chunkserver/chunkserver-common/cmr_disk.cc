@@ -338,7 +338,6 @@ int CmrDisk::overwriteChunkVersion(IChunk *chunk, uint32_t newVersion) {
 	HddStats::overheadWrite(size);
 
 	chunk->setVersion(newVersion);
-	chunk->updateFilenamesFromVersion(newVersion);
 
 	return SAUNAFS_STATUS_OK;
 }
