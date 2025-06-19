@@ -100,7 +100,7 @@ enum class ClientConnectionMode : std::uint8_t {
 };
 
 // chunkDelayedOperation types
-enum ChunkDelayedOperationType : std::uint32_t {
+enum DelayedChunkOperationType : std::uint32_t {
 	FUSE_WRITE,          /// Reply to FUSE_WRITE_CHUNK is delayed
 	FUSE_TRUNCATE,       /// Reply to FUSE_TRUNCATE which does not require writing is delayed
 	FUSE_TRUNCATE_BEGIN, /// Reply to FUSE_TRUNCATE which does require writing is delayed
@@ -116,95 +116,95 @@ struct matoclserventry;
 // locked chunks
 class PacketSerializer;
 
-struct chunkDelayedOperation {
-	uint64_t chunkid;
-	uint64_t fleng;     // file length
-	uint32_t lockid;    // lock ID
-	uint32_t qid;       // queryid for answer
-	inode_t inode;      // inode
-	uint32_t uid;
-	uint32_t gid;
-	uint32_t auid;
-	uint32_t agid;
-	uint8_t type;
-	const PacketSerializer* serializer;
+struct DelayedChunkOperation {
+	uint64_t chunkId;       ///< Chunk ID
+	uint64_t fileLength;    ///< File length
+	uint32_t lockId;        ///< Lock ID
+	uint32_t messageId;     ///< Message ID for reply
+	inode_t inode;          ///< Inode
+	uint32_t uid;           ///< Remapped uid of the user which will run the operation
+	uint32_t gid;           ///< Remapped gid of the user which will run the operation
+	uint32_t auid;          ///< Real uid (not remapped) of the user who will run the operation
+	uint32_t agid;          ///< Real gid (not remapped) of the user who will run the operation
+	uint8_t type;           ///< Delayed operation type: FUSE_WRITE, FUSE_TRUNCATE,
+	                        ///< FUSE_TRUNCATE_BEGIN or FUSE_TRUNCATE_END
+	const PacketSerializer* serializer;  ///< Packet serializer for the operation
 };
 
-struct session {
+struct Session {
 	using GroupCache = GenericLruCache<uint32_t, FsContext::GroupsContainer, 1024>;
+	using OpenFilesSet = std::set<inode_t>;
 
-	using OpenedFilesSet = std::set<inode_t>;
+	uint32_t sessionId;      ///< Session ID
+	std::string info;        ///< Mount point path
+	std::string mountInfo;   ///< Mount information shown in the CGI, e.g., arguments, mount options
+	std::string config;      ///< Session configuration
+	uint32_t peerIpAddress;  ///< Peer IP address
+	uint16_t peerPort{};     ///< Peer port
+	uint8_t newSession;      ///< Indicates if this is a new session (1) or a reconnect (0)
+	uint8_t flags;           ///< Session flags. See more details in SFSCommunication.h
+	uint8_t minGoal;         ///< Minimum goal allowed for this session
+	uint8_t maxGoal;         ///< Maximum goal allowed for this session
+	uint32_t minTrashTime;   ///< Minimum time in seconds to keep files in trash
+	uint32_t maxTrashTime;   ///< Maximum time in seconds to keep files in trash
+	uint32_t rootUid;        ///< Remapped UID of the user who created the session
+	uint32_t rootGid;        ///< Remapped GID of the user who created the session
+	uint32_t mapAllUid;    ///< UID to map all non-root users to when the session has SESFLAG_MAPALL
+	                       ///< flag set)
+	uint32_t mapAllGid;    ///< GID to map all non-root users to when the session has SESFLAG_MAPALL
+	                       ///< flag set)
+	inode_t rootInode;     ///< Special Root Inode with value = 1
+	uint32_t disconnectedTimestamp;  ///< Last connected timestamp for this session
+	                                 ///< A value = 0 means a client is connected
+	                                 ///< A value > 0 means the last disconnection timestamp
+	uint32_t connections;  ///< Number of active connections. A value of 0 means no connections
+	std::array<uint32_t, SESSION_STATS> currHourOperationsStats; ///< Current hour operations stats
+	std::array<uint32_t, SESSION_STATS> prevHourOperationsStats; ///< Previous hour operations stats
+	GroupCache groupsCache;     ///< Cache for groups ID for this session
+	OpenFilesSet openFilesSet;  ///< Set of open files for this session
 
-	uint32_t sessionid;
-	std::string info;
-	std::string mountinfo;
-	std::string config;
-	uint32_t peerip;
-	uint16_t peerport{};
-	uint8_t newsession;
-	uint8_t sesflags;
-	uint8_t mingoal;
-	uint8_t maxgoal;
-	uint32_t mintrashtime;
-	uint32_t maxtrashtime;
-	uint32_t rootuid;
-	uint32_t rootgid;
-	uint32_t mapalluid;
-	uint32_t mapallgid;
-	inode_t rootinode;
-	uint32_t disconnected;  // 0 = connected ; other = disconnection timestamp
-	uint32_t nsocks;        // >0 - connected (number of active connections) ; 0 - not connected
-	std::array<uint32_t,SESSION_STATS> currentopstats;
-	std::array<uint32_t,SESSION_STATS> lasthouropstats;
-	GroupCache group_cache;
-	OpenedFilesSet openedfiles;
-
-	session()
-	    : sessionid(),
+	Session()
+	    : sessionId(),
 	      info(),
-	      peerip(),
-	      newsession(),
-	      sesflags(),
-	      mingoal(GoalId::kMin),
-	      maxgoal(GoalId::kMax),
-	      mintrashtime(),
-	      maxtrashtime(std::numeric_limits<uint32_t>::max()),
-	      rootuid(),
-	      rootgid(),
-	      mapalluid(),
-	      mapallgid(),
-	      rootinode(SPECIAL_INODE_ROOT),
-	      disconnected(),
-	      nsocks(),
-	      currentopstats(),
-	      lasthouropstats(),
-	      group_cache(),
-	      openedfiles() {
+	      peerIpAddress(),
+	      newSession(),
+	      flags(),
+	      minGoal(GoalId::kMin),
+	      maxGoal(GoalId::kMax),
+	      minTrashTime(),
+	      maxTrashTime(std::numeric_limits<uint32_t>::max()),
+	      rootUid(),
+	      rootGid(),
+	      mapAllUid(),
+	      mapAllGid(),
+	      rootInode(SPECIAL_INODE_ROOT),
+	      disconnectedTimestamp(),
+	      connections(),
+	      currHourOperationsStats(),
+	      prevHourOperationsStats(),
+	      groupsCache(),
+	      openFilesSet() {
 	}
 };
 
 struct packetstruct {
 	struct packetstruct *next;
-	uint8_t *startptr;
-	uint32_t bytesleft;
+	uint8_t *startPtr;
+	uint32_t bytesLeft;
 	uint8_t *packet;
 };
 
-/** This looks to be the client type. This is set in matoclserv_serve and matoclserv_fuse_register, and there are 3 possible values:
- *
- *    0: new client (default, just after TCP accept)
- *       This is referred to as "unregistered clients".
- *    1: FUSE_REGISTER_BLOB_NOACL       or (FUSE_REGISTER_BLOB_ACL and (REGISTER_NEWSESSION or REGISTER_NEWMETASESSION or REGISTER_RECONNECT))
- *       This is referred to as "mounts and new tools" or "standard, registered clients".
- *  100: FUSE_REGISTER_BLOB_TOOLS_NOACL or (FUSE_REGISTER_BLOB_ACL and REGISTER_TOOLS)
- *       This is referred to as "old sfstools".
- *  665: saunafs-admin after successful authentication
- */
+///< This looks to be the client type.
+///< This is set in matoclserv_serve and matoclserv_fuse_register, and there are 4 possible values:
 enum class ClientState {
-	kUnregistered = 0,
-	kRegistered = 1,
-	kOldTools = 100,
-	kAdmin = 665
+	kUnregistered = 0,  ///< New client (default, just after TCP accept).
+	                    ///  This is referred to as "unregistered clients".
+	kRegistered = 1,    ///< FUSE_REGISTER_BLOB_NOACL or (FUSE_REGISTER_BLOB_ACL and
+	                  ///<  (REGISTER_NEWSESSION or REGISTER_NEWMETASESSION or REGISTER_RECONNECT))
+	           ///< This is referred to as "mounts and new tools" or "standard, registered clients".
+	kOldTools = 100, ///< FUSE_REGISTER_BLOB_TOOLS_NOACL or (FUSE_REGISTER_BLOB_ACL and REGISTER_TOOLS)
+	           ///< This is referred to as "old sfstools" or "old tools clients".
+	kAdmin = 665 ///< saunafs-admin after successful authentication
 };
 
 /// Values for matoclserventry.adminTask
@@ -217,35 +217,40 @@ enum class AdminTask {
 	kRecalculateChecksums   ///< Admin successfully requested recalculation of metadata checksum
 };
 
-/** Client entry in the server. */
+///< Client entry in the server.
 struct matoclserventry {
-	ClientState registered;
-	ClientConnectionMode mode;
-	bool iolimits;
-	int sock;                               //socket number
-	int32_t pdescpos;
-	uint32_t lastread,lastwrite;            //time of last activity
-	uint32_t version;
-	uint32_t peerip;
-	uint16_t peerport;
-	uint8_t hdrbuff[8];
-	packetstruct inputpacket;
-	packetstruct *outputhead,**outputtail;
+	ClientState registered;           ///< Client state, see ClientState enum
+	ClientConnectionMode mode;        ///< Connection mode, see ClientConnectionMode enum
+	bool ioLimitsEnabled;             ///< Whether I/O limits are enabled for this client
+	int socket;                       ///< Socket number
+	int32_t pDescPos;                 ///< Position in the poll descriptors array
+	uint32_t lastReadTimestamp;       ///< Timestamp of last read operation
+	uint32_t lastWriteTimestamp;      ///< Timestamp of last write operation
+	uint32_t version;                 ///< SaunaFS version of the client, see saunafsVersion()
+	uint32_t peerIpAddress;           ///< Peer IP address of the client
+	uint16_t peerPort;                ///< Peer port of the client
+	uint8_t headerBuffer[8];          ///< Buffer for packet header
+	packetstruct inputPacket;         ///< Input packet structure for reading data from the client
+	packetstruct *outputPacketHead;   ///< Pointer to the head of the output packet list
+	packetstruct **outputPacketTail;  ///< Pointer to the tail of the output packet list
 
 	static constexpr uint8_t kPasswordSize = 32;
-	uint8_t passwordrnd[kPasswordSize];
-	session *sesdata;
+	uint8_t randomPassword[kPasswordSize];  ///< Random password for authentication
+	Session *sessionData;                   ///< Pointer to the session data for this client
+	///< Challenge data for admin authentication
 	std::unique_ptr<SauMatoclAdminRegisterChallengeData> adminChallenge;
-	AdminTask adminTask;                   // admin task requested by this client
-	std::vector<std::unique_ptr<chunkDelayedOperation>> chunkdelayedops;
+	AdminTask adminTask;  ///< admin task requested by this client
+	///< Delayed chunk operations for this client
+	std::vector<std::unique_ptr<DelayedChunkOperation>> delayedChunkOperations;
 };
 
-static std::vector<std::unique_ptr<session>> sessionVector;
+static std::vector<std::unique_ptr<Session>> sessionVector;
 static std::list<std::unique_ptr<matoclserventry>> matoclservList;
 
-static int lsock;
-static int32_t lsockpdescpos;
-static int exiting,starting;
+static int masterSocket;             ///< Master socket for accepting new connections
+static int32_t masterSocketDescPos;  ///< Position in the poll descriptors array for masterSocket
+static int exiting;   ///< Flag indicating whether the server is exiting (1) or running (0)
+static int starting;  ///< Flag indicating whether the server is starting (1) or not (0)
 
 // from config
 static std::string ListenHost;
@@ -259,10 +264,10 @@ static uint32_t gIoLimitsConfigId;
 static std::string gIoLimitsSubsystem;
 static IoLimitsDatabase gIoLimitsDatabase;
 
-static uint32_t stats_prcvd = 0;
-static uint32_t stats_psent = 0;
-static uint64_t stats_brcvd = 0;
-static uint64_t stats_bsent = 0;
+static uint32_t statsPacketsReceived = 0;
+static uint32_t statsPacketsSent = 0;
+static uint64_t statsBytesReceived = 0;
+static uint64_t statsBytesSent = 0;
 
 static void getStandardChunkCopies(const std::vector<ChunkTypeWithAddress>& allCopies,
 		std::vector<NetworkAddress>& standardCopies);
@@ -535,15 +540,15 @@ const PacketSerializer* PacketSerializer::getSerializer(PacketHeader::Type type,
 }
 
 void matoclserv_stats(uint64_t stats[5]) {
-	stats[0] = stats_prcvd;
-	stats[1] = stats_psent;
-	stats[2] = stats_brcvd;
-	stats[3] = stats_bsent;
+	stats[0] = statsPacketsReceived;
+	stats[1] = statsPacketsSent;
+	stats[2] = statsBytesReceived;
+	stats[3] = statsBytesSent;
 
-	stats_prcvd = 0;
-	stats_psent = 0;
-	stats_brcvd = 0;
-	stats_bsent = 0;
+	statsPacketsReceived = 0;
+	statsPacketsSent = 0;
+	statsBytesReceived = 0;
+	statsBytesSent = 0;
 }
 
 /// Returns the connection for a given session.
@@ -551,7 +556,7 @@ void matoclserv_stats(uint64_t stats[5]) {
 /// @return Pointer to the matoclserventry if found, nullptr otherwise
 matoclserventry *matoclserv_find_connection(uint32_t sessionId) {
 	for (const auto& eptr : matoclservList) {
-		if (eptr->sesdata && eptr->sesdata->sessionid == sessionId) {
+		if (eptr->sessionData && eptr->sessionData->sessionId == sessionId) {
 			return eptr.get();
 		}
 	}
@@ -562,14 +567,14 @@ matoclserventry *matoclserv_find_connection(uint32_t sessionId) {
 /// @param newSession Indicates if this is a new session
 /// @param noNewId Indicates if a new session ID should be generated
 /// @return Pointer to the newly created session
-session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
-	auto sessionPtr = std::make_unique<session>();
+Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
+	auto sessionPtr = std::make_unique<Session>();
 	passert(sessionPtr.get());
 
 	auto newSessionIdNotNeeded = (newSession == 0 && noNewId);
-	sessionPtr->sessionid = (newSessionIdNotNeeded) ? 0 : fs_newsessionid();
-	sessionPtr->newsession = newSession;
-	sessionPtr->nsocks = 1;
+	sessionPtr->sessionId = (newSessionIdNotNeeded) ? 0 : fs_newsessionid();
+	sessionPtr->newSession = newSession;
+	sessionPtr->connections = 1;
 	sessionVector.push_back(std::move(sessionPtr));
 	return sessionVector.back().get();
 }
@@ -577,16 +582,16 @@ session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
 /// Returns the session for a given ID.
 /// @param sessionId The session ID to search for
 /// @return Pointer to the session if found, nullptr otherwise
-session* matoclserv_find_session(uint32_t sessionId) {
+Session* matoclserv_find_session(uint32_t sessionId) {
 	if (sessionId == 0) { return nullptr; }
 
 	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionid == sessionId) {
-			if (sessionPtr->newsession >= 2) {
-				sessionPtr->newsession -= 2;
+		if (sessionPtr->sessionId == sessionId) {
+			if (sessionPtr->newSession >= 2) {
+				sessionPtr->newSession -= 2;
 			}
-			sessionPtr->nsocks++;
-			sessionPtr->disconnected = 0;
+			sessionPtr->connections++;
+			sessionPtr->disconnectedTimestamp = 0;
 			return sessionPtr.get();
 		}
 	}
@@ -599,9 +604,9 @@ void matoclserv_close_session(uint32_t sessionId) {
 	if (sessionId == 0) { return; }
 
 	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionid == sessionId) {
-			if (sessionPtr->nsocks == 1 && sessionPtr->newsession < 2) {
-				sessionPtr->newsession += 2;
+		if (sessionPtr->sessionId == sessionId) {
+			if (sessionPtr->connections == 1 && sessionPtr->newSession < 2) {
+				sessionPtr->newSession += 2;
 			}
 		}
 	}
@@ -611,11 +616,11 @@ void matoclserv_close_session(uint32_t sessionId) {
 void matoclserv_store_sessions() {
 	uint32_t sessionInfoLength;
 	constexpr uint32_t kSessionSerializedSize =
-	    sizeof(session::sessionid) + sizeof(sessionInfoLength) + sizeof(session::peerip) +
-	    sizeof(session::rootinode) + sizeof(session::sesflags) + sizeof(session::mingoal) +
-	    sizeof(session::maxgoal) + sizeof(session::mintrashtime) + sizeof(session::maxtrashtime) +
-	    sizeof(session::rootuid) + sizeof(session::rootgid) + sizeof(session::mapalluid) +
-	    sizeof(session::mapallgid);
+	    sizeof(Session::sessionId) + sizeof(sessionInfoLength) + sizeof(Session::peerIpAddress) +
+	    sizeof(Session::rootInode) + sizeof(Session::flags) + sizeof(Session::minGoal) +
+	    sizeof(Session::maxGoal) + sizeof(Session::minTrashTime) + sizeof(Session::maxTrashTime) +
+	    sizeof(Session::rootUid) + sizeof(Session::rootGid) + sizeof(Session::mapAllUid) +
+	    sizeof(Session::mapAllGid);
 	constexpr uint32_t kBufferSize = kSessionSerializedSize + (SESSION_STATS * 8);
 	std::vector<uint8_t> fsesrecord(kBufferSize); // 4+4+4+4+1+1+1+4+4+4+4+4+4+SESSION_STATS*4+SESSION_STATS*4
 
@@ -636,30 +641,30 @@ void matoclserv_store_sessions() {
 	}
 
 	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->newsession == 1) {
+		if (sessionPtr->newSession == 1) {
 			ptr = fsesrecord.data();
 			sessionInfoLength = sessionPtr->info.size();
 
-			put32bit(&ptr, sessionPtr->sessionid);
+			put32bit(&ptr, sessionPtr->sessionId);
 			put32bit(&ptr, sessionInfoLength);
-			put32bit(&ptr, sessionPtr->peerip);
-			put32bit(&ptr, sessionPtr->rootinode);
-			put8bit(&ptr, sessionPtr->sesflags);
-			put8bit(&ptr, sessionPtr->mingoal);
-			put8bit(&ptr, sessionPtr->maxgoal);
-			put32bit(&ptr, sessionPtr->mintrashtime);
-			put32bit(&ptr, sessionPtr->maxtrashtime);
-			put32bit(&ptr, sessionPtr->rootuid);
-			put32bit(&ptr, sessionPtr->rootgid);
-			put32bit(&ptr, sessionPtr->mapalluid);
-			put32bit(&ptr, sessionPtr->mapallgid);
+			put32bit(&ptr, sessionPtr->peerIpAddress);
+			put32bit(&ptr, sessionPtr->rootInode);
+			put8bit(&ptr, sessionPtr->flags);
+			put8bit(&ptr, sessionPtr->minGoal);
+			put8bit(&ptr, sessionPtr->maxGoal);
+			put32bit(&ptr, sessionPtr->minTrashTime);
+			put32bit(&ptr, sessionPtr->maxTrashTime);
+			put32bit(&ptr, sessionPtr->rootUid);
+			put32bit(&ptr, sessionPtr->rootGid);
+			put32bit(&ptr, sessionPtr->mapAllUid);
+			put32bit(&ptr, sessionPtr->mapAllGid);
 
 			for (auto i = 0; i < SESSION_STATS; i++) {
-				put32bit(&ptr, sessionPtr->currentopstats[i]);
+				put32bit(&ptr, sessionPtr->currHourOperationsStats[i]);
 			}
 
 			for (auto i = 0; i < SESSION_STATS; i++) {
-				put32bit(&ptr, sessionPtr->lasthouropstats[i]);
+				put32bit(&ptr, sessionPtr->prevHourOperationsStats[i]);
 			}
 
 			if (fwrite(fsesrecord.data(), kBufferSize, 1, fd) != 1) {
@@ -767,18 +772,18 @@ int matoclserv_load_sessions() {
 
 	// Compile time constants
 	constexpr uint8_t kStatEntrySize =
-	    sizeof(std::remove_extent<decltype(session::currentopstats)>::type::value_type) +
-	    sizeof(std::remove_extent<decltype(session::lasthouropstats)>::type::value_type);
+	    sizeof(std::remove_extent<decltype(Session::currHourOperationsStats)>::type::value_type) +
+	    sizeof(std::remove_extent<decltype(Session::prevHourOperationsStats)>::type::value_type);
 
-	constexpr uint32_t kCommonSize = sizeof(session::sessionid) + sizeof(sessionInfoLength) +
-	                                 sizeof(session::peerip) + sizeof(session::rootinode) +
-	                                 sizeof(session::sesflags) + sizeof(session::rootuid) +
-	                                 sizeof(session::rootgid);
+	constexpr uint32_t kCommonSize = sizeof(Session::sessionId) + sizeof(sessionInfoLength) +
+	                                 sizeof(Session::peerIpAddress) + sizeof(Session::rootInode) +
+	                                 sizeof(Session::flags) + sizeof(Session::rootUid) +
+	                                 sizeof(Session::rootGid);
 	constexpr uint32_t kExtraSizeWithMapAll =
-	    sizeof(session::mapalluid) + sizeof(session::mapallgid);
+	    sizeof(Session::mapAllUid) + sizeof(Session::mapAllGid);
 	constexpr uint32_t kExtraSizeWithGoalTrash =
-	    sizeof(session::mingoal) + sizeof(session::maxgoal) + sizeof(session::mintrashtime) +
-	    sizeof(session::maxtrashtime);
+	    sizeof(Session::minGoal) + sizeof(Session::maxGoal) + sizeof(Session::minTrashTime) +
+	    sizeof(Session::maxTrashTime);
 
 	// statsInFile is unknown at compile time, we need to use a runtime constant
 	const uint32_t kStatsSize = statsInFile * kStatEntrySize;
@@ -797,32 +802,32 @@ int matoclserv_load_sessions() {
 
 		if (bytesRead == 1) {
 			ptr = sessionBuffer.data();
-			auto sessionPtr = std::make_unique<session>();
+			auto sessionPtr = std::make_unique<Session>();
 			passert(sessionPtr);
-			get32bit(&ptr, sessionPtr->sessionid);
+			get32bit(&ptr, sessionPtr->sessionId);
 			get32bit(&ptr, sessionInfoLength);
-			get32bit(&ptr, sessionPtr->peerip);
-			getINode(&ptr, sessionPtr->rootinode);
-			sessionPtr->sesflags = get8bit(&ptr);
+			get32bit(&ptr, sessionPtr->peerIpAddress);
+			getINode(&ptr, sessionPtr->rootInode);
+			sessionPtr->flags = get8bit(&ptr);
 			if (goalTrashData) {
-				sessionPtr->mingoal = get8bit(&ptr);
-				sessionPtr->maxgoal = get8bit(&ptr);
-				get32bit(&ptr, sessionPtr->mintrashtime);
-				get32bit(&ptr, sessionPtr->maxtrashtime);
+				sessionPtr->minGoal = get8bit(&ptr);
+				sessionPtr->maxGoal = get8bit(&ptr);
+				get32bit(&ptr, sessionPtr->minTrashTime);
+				get32bit(&ptr, sessionPtr->maxTrashTime);
 			}
-			get32bit(&ptr, sessionPtr->rootuid);
-			get32bit(&ptr, sessionPtr->rootgid);
+			get32bit(&ptr, sessionPtr->rootUid);
+			get32bit(&ptr, sessionPtr->rootGid);
 			if (mapAllData) {
-				get32bit(&ptr, sessionPtr->mapalluid);
-				get32bit(&ptr, sessionPtr->mapallgid);
+				get32bit(&ptr, sessionPtr->mapAllUid);
+				get32bit(&ptr, sessionPtr->mapAllGid);
 			}
-			sessionPtr->newsession = 1;
-			sessionPtr->disconnected = eventloop_time();
+			sessionPtr->newSession = 1;
+			sessionPtr->disconnectedTimestamp = eventloop_time();
 			for (uint32_t i = 0; i < SESSION_STATS; i++) {
 				if (i < statsInFile) {
-					get32bit(&ptr, sessionPtr->currentopstats[i]);
+					get32bit(&ptr, sessionPtr->currHourOperationsStats[i]);
 				} else {
-					sessionPtr->currentopstats[i] = 0;
+					sessionPtr->currHourOperationsStats[i] = 0;
 				}
 			}
 
@@ -832,9 +837,9 @@ int matoclserv_load_sessions() {
 
 			for (uint32_t i = 0; i < SESSION_STATS; i++) {
 				if (i < statsInFile) {
-					get32bit(&ptr, sessionPtr->lasthouropstats[i]);
+					get32bit(&ptr, sessionPtr->prevHourOperationsStats[i]);
 				} else {
-					sessionPtr->lasthouropstats[i] = 0;
+					sessionPtr->prevHourOperationsStats[i] = 0;
 				}
 			}
 
@@ -868,15 +873,15 @@ int matoclserv_load_sessions() {
 /// @param currentSession Pointer to the session
 /// @param inode The inode of the open file
 /// @return SAUNAFS_STATUS_OK if the file was successfully acquired, or an error code otherwise
-int matoclserv_insert_open_file(session *currentSession, inode_t inode) {
-	if (currentSession->openedfiles.contains(inode)) {
+int matoclserv_insert_open_file(Session *currentSession, inode_t inode) {
+	if (currentSession->openFilesSet.contains(inode)) {
 		return SAUNAFS_STATUS_OK;  // file already acquired - nothing to do
 	}
 
 	int status = fs_acquire(FsContext::getForMaster(eventloop_time()), inode,
-	                        currentSession->sessionid);
+	                        currentSession->sessionId);
 
-	if (status == SAUNAFS_STATUS_OK) { currentSession->openedfiles.insert(inode); }
+	if (status == SAUNAFS_STATUS_OK) { currentSession->openFilesSet.insert(inode); }
 
 	return status;
 }
@@ -888,21 +893,21 @@ int matoclserv_insert_open_file(session *currentSession, inode_t inode) {
 /// Otherwise, a new session will be created and the open file will be added to the new session.
 void matoclserv_add_open_file(uint32_t sessionId, uint32_t inode) {
 	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionid == sessionId) {
-			if (!sessionPtr->openedfiles.contains(inode)) {
-				sessionPtr->openedfiles.insert(inode);
+		if (sessionPtr->sessionId == sessionId) {
+			if (!sessionPtr->openFilesSet.contains(inode)) {
+				sessionPtr->openFilesSet.insert(inode);
 			}
 			return;
 		}
 	}
 
 	// If session does not exist, create a new one
-	auto sessionPtr = std::make_unique<session>();
+	auto sessionPtr = std::make_unique<Session>();
 	passert(sessionPtr.get());
-	sessionPtr->sessionid = sessionId;
+	sessionPtr->sessionId = sessionId;
 	/* session created by filesystem - only for old clients (pre 1.5.13) */
-	sessionPtr->disconnected = eventloop_time();
-	sessionPtr->openedfiles.insert(inode);
+	sessionPtr->disconnectedTimestamp = eventloop_time();
+	sessionPtr->openFilesSet.insert(inode);
 	sessionVector.push_back(std::move(sessionPtr));
 }
 
@@ -911,9 +916,9 @@ void matoclserv_add_open_file(uint32_t sessionId, uint32_t inode) {
 /// @param inode The inode of the open file
 void matoclserv_remove_open_file(uint32_t sessionId, uint32_t inode) {
 	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionid == sessionId) {
-			if (sessionPtr->openedfiles.contains(inode)) {
-				sessionPtr->openedfiles.erase(inode);
+		if (sessionPtr->sessionId == sessionId) {
+			if (sessionPtr->openFilesSet.contains(inode)) {
+				sessionPtr->openFilesSet.erase(inode);
 			}
 			return;
 		}
@@ -927,7 +932,7 @@ void matoclserv_reset_session_timeouts() {
 	uint32_t now = eventloop_time();
 
 	for (auto& sessionPtr : sessionVector) {
-		sessionPtr->disconnected = now;
+		sessionPtr->disconnectedTimestamp = now;
 	}
 }
 
@@ -945,15 +950,15 @@ uint8_t *matoclserv_createpacket(matoclserventry *eptr, uint32_t type, uint32_t 
 	uint32_t packetSize = sizeof(type) + sizeof(size) + size;
 	outpacket->packet = (uint8_t *)malloc(packetSize);
 	passert(outpacket->packet);
-	outpacket->bytesleft = packetSize;
+	outpacket->bytesLeft = packetSize;
 
 	uint8_t *ptr = outpacket->packet;
 	put32bit(&ptr, type);
 	put32bit(&ptr, size);
-	outpacket->startptr = (uint8_t *)(outpacket->packet);
+	outpacket->startPtr = (uint8_t *)(outpacket->packet);
 	outpacket->next = NULL;
-	*(eptr->outputtail) = outpacket;
-	eptr->outputtail = &(outpacket->next);
+	*(eptr->outputPacketTail) = outpacket;
+	eptr->outputPacketTail = &(outpacket->next);
 	return ptr;
 }
 
@@ -966,13 +971,13 @@ void matoclserv_createpacket(matoclserventry *eptr, const MessageBuffer &buffer)
 	outpacket->packet = (uint8_t *)malloc(buffer.size());
 	passert(outpacket->packet);
 
-	outpacket->bytesleft = buffer.size();
+	outpacket->bytesLeft = buffer.size();
 	// TODO unificate output packets and remove suboptimal memory copying
 	memcpy(outpacket->packet, buffer.data(), buffer.size());
-	outpacket->startptr = outpacket->packet;
+	outpacket->startPtr = outpacket->packet;
 	outpacket->next = NULL;
-	*(eptr->outputtail) = outpacket;
-	eptr->outputtail = &(outpacket->next);
+	*(eptr->outputPacketTail) = outpacket;
+	eptr->outputPacketTail = &(outpacket->next);
 }
 
 /// Checks if user/group ID remapping is required for a given client connection.
@@ -980,7 +985,7 @@ void matoclserv_createpacket(matoclserventry *eptr, const MessageBuffer &buffer)
 /// @param uid The user ID to check
 /// @return true if remapping is required, false otherwise
 static inline bool matoclserv_ugid_remap_required(matoclserventry *eptr, uint32_t uid) {
-	return uid == 0 || eptr->sesdata->sesflags & SESFLAG_MAPALL;
+	return uid == 0 || eptr->sessionData->flags & SESFLAG_MAPALL;
 }
 
 /// Remaps user and group IDs for a given client connection.
@@ -989,14 +994,14 @@ static inline bool matoclserv_ugid_remap_required(matoclserventry *eptr, uint32_
 /// @param agid Pointer to the group ID to remap
 static inline void matoclserv_ugid_remap(matoclserventry *eptr, uint32_t *auid, uint32_t *agid) {
 	if (*auid == 0) {
-		*auid = eptr->sesdata->rootuid;
+		*auid = eptr->sessionData->rootUid;
 		if (agid) {
-			*agid = eptr->sesdata->rootgid;
+			*agid = eptr->sessionData->rootGid;
 		}
-	} else if (eptr->sesdata->sesflags & SESFLAG_MAPALL) {
-		*auid = eptr->sesdata->mapalluid;
+	} else if (eptr->sessionData->flags & SESFLAG_MAPALL) {
+		*auid = eptr->sessionData->mapAllUid;
 		if (agid) {
-			*agid = eptr->sesdata->mapallgid;
+			*agid = eptr->sessionData->mapAllGid;
 		}
 	}
 }
@@ -1010,19 +1015,19 @@ static inline uint8_t matoclserv_check_group_cache(matoclserventry *eptr, uint32
 		return SAUNAFS_STATUS_OK;
 	}
 
-	assert(eptr && eptr->sesdata);
-	auto it = eptr->sesdata->group_cache.find(user_groups::decodeGroupCacheId(gid));
-	return (it == eptr->sesdata->group_cache.end()) ? SAUNAFS_ERROR_GROUPNOTREGISTERED
-	                                                : SAUNAFS_STATUS_OK;
+	assert(eptr && eptr->sessionData);
+	auto it = eptr->sessionData->groupsCache.find(user_groups::decodeGroupCacheId(gid));
+	return (it == eptr->sessionData->groupsCache.end()) ? SAUNAFS_ERROR_GROUPNOTREGISTERED
+	                                                    : SAUNAFS_STATUS_OK;
 }
 
 /// Returns FsContext without information about sessions like user ID or group ID
 /// @param eptr Pointer to the client connection in the master
 /// @return FsContext with session data
 static inline FsContext matoclserv_get_context(matoclserventry *eptr) {
-	assert(eptr && eptr->sesdata);
-	return FsContext::getForMaster(eventloop_time(), eptr->sesdata->rootinode,
-	                               eptr->sesdata->sesflags);
+	assert(eptr && eptr->sessionData);
+	return FsContext::getForMaster(eventloop_time(), eptr->sessionData->rootInode,
+	                               eptr->sessionData->flags);
 }
 
 /// Returns FsContext with information about sessions like user ID and group ID
@@ -1030,20 +1035,20 @@ static inline FsContext matoclserv_get_context(matoclserventry *eptr) {
 /// @param uid The user ID to use in the context
 /// @param gid The group ID to use in the context
 static inline FsContext matoclserv_get_context(matoclserventry *eptr, uint32_t uid, uint32_t gid) {
-	assert(eptr && eptr->sesdata);
+	assert(eptr && eptr->sessionData);
 
 	if (user_groups::isGroupCacheId(gid)) {
-		auto it = eptr->sesdata->group_cache.find(user_groups::decodeGroupCacheId(gid));
-		if (it == eptr->sesdata->group_cache.end()) {
+		auto it = eptr->sessionData->groupsCache.find(user_groups::decodeGroupCacheId(gid));
+		if (it == eptr->sessionData->groupsCache.end()) {
 			throw std::runtime_error("Missing group data in session cache");
 		}
 
 		assert(!it->second.empty());
 
 		if (!matoclserv_ugid_remap_required(eptr, uid)) {
-			return FsContext::getForMasterWithSession(eventloop_time(), eptr->sesdata->rootinode,
-			                                          eptr->sesdata->sesflags, uid, it->second,
-			                                          uid, it->second[0]);
+			return FsContext::getForMasterWithSession(
+			    eventloop_time(), eptr->sessionData->rootInode, eptr->sessionData->flags, uid,
+			    it->second, uid, it->second[0]);
 		}
 
 		FsContext::GroupsContainer gids;
@@ -1059,16 +1064,16 @@ static inline FsContext matoclserv_get_context(matoclserventry *eptr, uint32_t u
 		uint32_t auid = uid;
 		matoclserv_ugid_remap(eptr, &uid, nullptr);
 
-		return FsContext::getForMasterWithSession(eventloop_time(), eptr->sesdata->rootinode,
-		                                          eptr->sesdata->sesflags, uid, std::move(gids),
+		return FsContext::getForMasterWithSession(eventloop_time(), eptr->sessionData->rootInode,
+		                                          eptr->sessionData->flags, uid, std::move(gids),
 		                                          auid, it->second[0]);
 	}
 
 	uint32_t auid = uid;
 	uint32_t agid = gid;
 	matoclserv_ugid_remap(eptr, &uid, &gid);
-	return FsContext::getForMasterWithSession(eventloop_time(), eptr->sesdata->rootinode,
-	                                          eptr->sesdata->sesflags, uid, gid, auid, agid);
+	return FsContext::getForMasterWithSession(eventloop_time(), eptr->sessionData->rootInode,
+	                                          eptr->sessionData->flags, uid, gid, auid, agid);
 }
 
 /// Extracts network addresses of standard chunk copies from a list of all chunk copies.
@@ -1112,7 +1117,7 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
                                             uint32_t lockId) {
 	uint32_t chunkVersion;
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
-	uint8_t status = chunk_getversionandlocations(chunkId, eptr->peerip, chunkVersion,
+	uint8_t status = chunk_getversionandlocations(chunkId, eptr->peerIpAddress, chunkVersion,
 			kMaxNumberOfChunkCopies, allChunkCopies);
 
 	remove_unsupported_ec_parts(eptr->version, allChunkCopies);
@@ -1144,7 +1149,7 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
 }
 
 void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
-	chunkDelayedOperation *operation;
+	DelayedChunkOperation *operation;
 	const PacketSerializer *serializer;
 
 	matoclserventry *eptr = NULL;
@@ -1163,14 +1168,14 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
 	for (; eptrIterator != matoclservList.end() && eptr == NULL; eptrIterator++) {
 		matoclserventry* eaptr = eptrIterator->get();
 		if (eaptr->mode != ClientConnectionMode::KILL) {
-			auto chunkOpsIterator = eaptr->chunkdelayedops.begin();
-			while (chunkOpsIterator != eaptr->chunkdelayedops.end() && eptr == NULL) {
+			auto chunkOpsIterator = eaptr->delayedChunkOperations.begin();
+			while (chunkOpsIterator != eaptr->delayedChunkOperations.end() && eptr == NULL) {
 				operation = chunkOpsIterator->get();
-				if (operation->chunkid == chunkId) {
+				if (operation->chunkId == chunkId) {
 					eptr = eaptr;
-					messageId = operation->qid;
-					fileLength = operation->fleng;
-					lockId = operation->lockid;
+					messageId = operation->messageId;
+					fileLength = operation->fileLength;
+					lockId = operation->lockId;
 					operationType = operation->type;
 					inode = operation->inode;
 					uid = operation->uid;
@@ -1179,7 +1184,7 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
 					agid = operation->agid;
 					serializer = operation->serializer;
 
-					chunkOpsIterator = eaptr->chunkdelayedops.erase(chunkOpsIterator);
+					chunkOpsIterator = eaptr->delayedChunkOperations.erase(chunkOpsIterator);
 				} else {
 					++chunkOpsIterator;
 				}
@@ -1191,11 +1196,12 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
 		safs_pretty_syslog(LOG_WARNING,"got chunk status, but don't want it");
 		return;
 	}
-	if (status == SAUNAFS_STATUS_OK) { dcm_modify(inode, eptr->sesdata->sessionid); }
+	if (status == SAUNAFS_STATUS_OK) { dcm_modify(inode, eptr->sessionData->sessionId); }
 
 	std::vector<uint8_t> reply;
-	FsContext context = FsContext::getForMasterWithSession(
-	    eventloop_time(), eptr->sesdata->rootinode, eptr->sesdata->sesflags, uid, gid, auid, agid);
+	FsContext context =
+	    FsContext::getForMasterWithSession(eventloop_time(), eptr->sessionData->rootInode,
+	                                       eptr->sessionData->flags, uid, gid, auid, agid);
 
 	switch (operationType) {
 	case FUSE_WRITE:
@@ -1431,34 +1437,34 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 
 	uint32_t size = sizeof(uint16_t);  // 2 bytes for SESSION_STATS
 
-	constexpr uint32_t kExtraVModeSize = sizeof(session::mingoal) + sizeof(session::maxgoal) +
-	                                     sizeof(session::mintrashtime) +
-	                                     sizeof(session::maxtrashtime);
+	constexpr uint32_t kExtraVModeSize = sizeof(Session::minGoal) + sizeof(Session::maxGoal) +
+	                                     sizeof(Session::minTrashTime) +
+	                                     sizeof(Session::maxTrashTime);
 
 	constexpr uint32_t kCommonSessionSize =
-	    sizeof(session::sessionid) + sizeof(matoclserventry::peerip) +
-	    sizeof(matoclserventry::version) + sizeof(sessionInfoLength) + sizeof(session::sesflags) +
-	    sizeof(session::rootuid) + sizeof(session::rootgid) + sizeof(session::mapalluid) +
-	    sizeof(session::mapallgid);
+	    sizeof(Session::sessionId) + sizeof(matoclserventry::peerIpAddress) +
+	    sizeof(matoclserventry::version) + sizeof(sessionInfoLength) + sizeof(Session::flags) +
+	    sizeof(Session::rootUid) + sizeof(Session::rootGid) + sizeof(Session::mapAllUid) +
+	    sizeof(Session::mapAllGid);
 
 	constexpr uint32_t kCurrentPlusLastHourEntrySize = sizeof(uint32_t) + sizeof(uint32_t);
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sesdata &&
+		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sessionData &&
 		    eaptr->registered == ClientState::kRegistered) {
 			size += kCommonSessionSize + (SESSION_STATS * kCurrentPlusLastHourEntrySize) +
 			        (vmode ? kExtraVModeSize : 0);
 
-			if (!eaptr->sesdata->info.empty()) {
-				size += eaptr->sesdata->info.size();
+			if (!eaptr->sessionData->info.empty()) {
+				size += eaptr->sessionData->info.size();
 			}
 
-			if (eaptr->sesdata->rootinode == 0) {
-				size += sizeof(session::rootinode);
+			if (eaptr->sessionData->rootInode == 0) {
+				size += sizeof(Session::rootInode);
 				size += 1;  // for '.'
 			} else {
 				size += sizeof(pathLength);
-				size += fs_getdirpath_size(eaptr->sesdata->rootinode);
+				size += fs_getdirpath_size(eaptr->sessionData->rootInode);
 			}
 		}
 	}
@@ -1468,52 +1474,52 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 	put16bit(&ptr, SESSION_STATS);
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sesdata &&
+		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sessionData &&
 		    eaptr->registered == ClientState::kRegistered) {
-			put32bit(&ptr, eaptr->sesdata->sessionid);
-			put32bit(&ptr, eaptr->peerip);
+			put32bit(&ptr, eaptr->sessionData->sessionId);
+			put32bit(&ptr, eaptr->peerIpAddress);
 			put32bit(&ptr, eaptr->version);
 
-			if (!eaptr->sesdata->info.empty()) {
-				sessionInfoLength = eaptr->sesdata->info.size();
+			if (!eaptr->sessionData->info.empty()) {
+				sessionInfoLength = eaptr->sessionData->info.size();
 				put32bit(&ptr, sessionInfoLength);
-				memcpy(ptr, eaptr->sesdata->info.data(), sessionInfoLength);
+				memcpy(ptr, eaptr->sessionData->info.data(), sessionInfoLength);
 				ptr += sessionInfoLength;
 			} else {
 				put32bit(&ptr, 0);
 			}
 
-			if (eaptr->sesdata->rootinode == 0) {
+			if (eaptr->sessionData->rootInode == 0) {
 				putINode(&ptr, static_cast<inode_t>(1));
 				put8bit(&ptr, '.');
 			} else {
-				pathLength = fs_getdirpath_size(eaptr->sesdata->rootinode);
+				pathLength = fs_getdirpath_size(eaptr->sessionData->rootInode);
 				put32bit(&ptr, pathLength);
 				if (pathLength > 0) {
-					fs_getdirpath_data(eaptr->sesdata->rootinode, ptr, pathLength);
+					fs_getdirpath_data(eaptr->sessionData->rootInode, ptr, pathLength);
 					ptr += pathLength;
 				}
 			}
 
-			put8bit(&ptr, eaptr->sesdata->sesflags);
-			put32bit(&ptr, eaptr->sesdata->rootuid);
-			put32bit(&ptr, eaptr->sesdata->rootgid);
-			put32bit(&ptr, eaptr->sesdata->mapalluid);
-			put32bit(&ptr, eaptr->sesdata->mapallgid);
+			put8bit(&ptr, eaptr->sessionData->flags);
+			put32bit(&ptr, eaptr->sessionData->rootUid);
+			put32bit(&ptr, eaptr->sessionData->rootGid);
+			put32bit(&ptr, eaptr->sessionData->mapAllUid);
+			put32bit(&ptr, eaptr->sessionData->mapAllGid);
 
 			if (vmode) {
-				put8bit(&ptr, eaptr->sesdata->mingoal);
-				put8bit(&ptr, eaptr->sesdata->maxgoal);
-				put32bit(&ptr, eaptr->sesdata->mintrashtime);
-				put32bit(&ptr, eaptr->sesdata->maxtrashtime);
+				put8bit(&ptr, eaptr->sessionData->minGoal);
+				put8bit(&ptr, eaptr->sessionData->maxGoal);
+				put32bit(&ptr, eaptr->sessionData->minTrashTime);
+				put32bit(&ptr, eaptr->sessionData->maxTrashTime);
 			}
 
-			if (eaptr->sesdata) {
+			if (eaptr->sessionData) {
 				for (auto i = 0; i < SESSION_STATS; i++) {
-					put32bit(&ptr, eaptr->sesdata->currentopstats[i]);
+					put32bit(&ptr, eaptr->sessionData->currHourOperationsStats[i]);
 				}
 				for (auto i = 0; i < SESSION_STATS; i++) {
-					put32bit(&ptr, eaptr->sesdata->lasthouropstats[i]);
+					put32bit(&ptr, eaptr->sessionData->prevHourOperationsStats[i]);
 				}
 			} else {
 				memset(ptr, 0xFF,
@@ -1538,11 +1544,11 @@ void matoclserv_mount_info_list(matoclserventry *eptr, const uint8_t *data, uint
 	cltoma::mountInfoList::deserialize(data, length);
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sesdata != nullptr &&
+		if (eaptr->mode != ClientConnectionMode::KILL && eaptr->sessionData != nullptr &&
 		    eaptr->registered == ClientState::kRegistered) {
 			MountInfoEntry entry;
-			entry.sessionId = eaptr->sesdata->sessionid;
-			entry.mountInfo = eaptr->sesdata->mountinfo;
+			entry.sessionId = eaptr->sessionData->sessionId;
+			entry.mountInfo = eaptr->sessionData->mountInfo;
 			mountInfoList.push_back(entry);
 		}
 	}
@@ -1784,7 +1790,7 @@ static void matoclserv_send_iolimits_cfg(matoclserventry *eptr) {
 
 static void matoclserv_broadcast_iolimits_cfg() {
 	for (const auto &eptr : matoclservList) {
-		if (eptr->iolimits) {
+		if (eptr->ioLimitsEnabled) {
 			matoclserv_send_iolimits_cfg(eptr.get());
 		}
 	}
@@ -1804,7 +1810,8 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 
 	constexpr uint32_t kBlobSize = REGISTER_BLOB_SIZE;
 	constexpr uint32_t kBlobSizeWithVersion = kBlobSize + sizeof(matoclserventry::version);
-	constexpr uint32_t kBlobSizeWithSessionIdAndVersion = kBlobSizeWithVersion + sizeof(session::sessionid);
+	constexpr uint32_t kBlobSizeWithSessionIdAndVersion =
+	    kBlobSizeWithVersion + sizeof(Session::sessionId);
 
 	if (starting) {
 		eptr->mode = ClientConnectionMode::KILL;
@@ -1862,39 +1869,39 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 
 		if (sessionId == 0) {           // new session
 			status = SAUNAFS_STATUS_OK; // exports_check(eptr->peerip,(const uint8_t*)"",NULL,NULL,&sesflags);      // check privileges for '/' w/o password
-			eptr->sesdata = matoclserv_new_session(0, toolsNoACL);
+			eptr->sessionData = matoclserv_new_session(0, toolsNoACL);
 
-			if (eptr->sesdata == nullptr) {
+			if (eptr->sessionData == nullptr) {
 				safs::log_info("can't allocate session record");
 				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
 
-			eptr->sesdata->rootinode = SPECIAL_INODE_ROOT;
-			eptr->sesdata->sesflags = 0;
-			eptr->sesdata->peerip = eptr->peerip;
-			eptr->sesdata->peerport = eptr->peerport;
+			eptr->sessionData->rootInode = SPECIAL_INODE_ROOT;
+			eptr->sessionData->flags = 0;
+			eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
+			eptr->sessionData->peerPort = eptr->peerPort;
 		} else {  // reconnect or tools
-			eptr->sesdata = matoclserv_find_session(sessionId);
-			if (eptr->sesdata == nullptr) {      // in old model if session doesn't exist then create it
-				eptr->sesdata = matoclserv_new_session(0, 0);
+			eptr->sessionData = matoclserv_find_session(sessionId);
+			if (eptr->sessionData == nullptr) {      // in old model if session doesn't exist then create it
+				eptr->sessionData = matoclserv_new_session(0, 0);
 
-				if (eptr->sesdata == nullptr) {
+				if (eptr->sessionData == nullptr) {
 					safs::log_info("can't allocate session record");
 					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 
-				eptr->sesdata->rootinode = SPECIAL_INODE_ROOT;
-				eptr->sesdata->sesflags = 0;
-				eptr->sesdata->peerip = eptr->peerip;
-				eptr->sesdata->peerport = eptr->peerport;
+				eptr->sessionData->rootInode = SPECIAL_INODE_ROOT;
+				eptr->sessionData->flags = 0;
+				eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
+				eptr->sessionData->peerPort = eptr->peerPort;
 				status = SAUNAFS_STATUS_OK;
-			} else if (eptr->sesdata->peerip == 0) {  // created by "filesystem"
-				eptr->sesdata->peerip = eptr->peerip;
-				eptr->sesdata->peerport = eptr->peerport;
+			} else if (eptr->sessionData->peerIpAddress == 0) {  // created by "filesystem"
+				eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
+				eptr->sessionData->peerPort = eptr->peerPort;
 				status = SAUNAFS_STATUS_OK;
-			} else if (eptr->sesdata->peerip == eptr->peerip) {
+			} else if (eptr->sessionData->peerIpAddress == eptr->peerIpAddress) {
 				status = SAUNAFS_STATUS_OK;
 			} else {
 				status = SAUNAFS_ERROR_EACCES;
@@ -1919,7 +1926,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 		if (toolsNoACL) {
 			put8bit(&wptr, status);
 		} else {
-			sessionId = eptr->sesdata->sessionid;
+			sessionId = eptr->sessionData->sessionId;
 			put32bit(&wptr, sessionId);
 		}
 
@@ -1976,9 +1983,9 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER, matoclserventry::kPasswordSize);
 			for (i = 0; i < matoclserventry::kPasswordSize; i++) {
-				eptr->passwordrnd[i] = rnd<uint8_t>();
+				eptr->randomPassword[i] = rnd<uint8_t>();
 			}
-			memcpy(wptr, eptr->passwordrnd, matoclserventry::kPasswordSize);
+			memcpy(wptr, eptr->randomPassword, matoclserventry::kPasswordSize);
 
 			return;
 		case REGISTER_NEWSESSION:
@@ -2018,13 +2025,14 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				path = (const uint8_t*)"";
 			}
 			if (length == kRegisterNewSessionMinSize + 16 + ileng + pleng) {
-				status = exports_check(eptr->peerip, eptr->version, 0, path, eptr->passwordrnd,
-				                       rptr, &sesflags, &rootuid, &rootgid, &mapalluid, &mapallgid,
-				                       &mingoal, &maxgoal, &mintrashtime, &maxtrashtime);
+				status =
+				    exports_check(eptr->peerIpAddress, eptr->version, 0, path, eptr->randomPassword,
+				                  rptr, &sesflags, &rootuid, &rootgid, &mapalluid, &mapallgid,
+				                  &mingoal, &maxgoal, &mintrashtime, &maxtrashtime);
 			} else {
-				status = exports_check(eptr->peerip, eptr->version, 0, path, NULL, NULL, &sesflags,
-				                       &rootuid, &rootgid, &mapalluid, &mapallgid, &mingoal,
-				                       &maxgoal, &mintrashtime, &maxtrashtime);
+				status = exports_check(eptr->peerIpAddress, eptr->version, 0, path, NULL, NULL,
+				                       &sesflags, &rootuid, &rootgid, &mapalluid, &mapallgid,
+				                       &mingoal, &maxgoal, &mintrashtime, &maxtrashtime);
 			}
 
 			if (status == SAUNAFS_STATUS_OK) {
@@ -2032,39 +2040,39 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 
 			if (status == SAUNAFS_STATUS_OK) {
-				eptr->sesdata = matoclserv_new_session(1, 0);
-				if (eptr->sesdata == nullptr) {
+				eptr->sessionData = matoclserv_new_session(1, 0);
+				if (eptr->sessionData == nullptr) {
 					safs::log_info("can't allocate session record");
 					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 
-				eptr->sesdata->rootinode = rootinode;
-				eptr->sesdata->sesflags = sesflags;
-				eptr->sesdata->rootuid = rootuid;
-				eptr->sesdata->rootgid = rootgid;
-				eptr->sesdata->mapalluid = mapalluid;
-				eptr->sesdata->mapallgid = mapallgid;
-				eptr->sesdata->mingoal = mingoal;
-				eptr->sesdata->maxgoal = maxgoal;
-				eptr->sesdata->mintrashtime = mintrashtime;
-				eptr->sesdata->maxtrashtime = maxtrashtime;
-				eptr->sesdata->peerip = eptr->peerip;
-				eptr->sesdata->peerport = eptr->peerport;
+				eptr->sessionData->rootInode = rootinode;
+				eptr->sessionData->flags = sesflags;
+				eptr->sessionData->rootUid = rootuid;
+				eptr->sessionData->rootGid = rootgid;
+				eptr->sessionData->mapAllUid = mapalluid;
+				eptr->sessionData->mapAllGid = mapallgid;
+				eptr->sessionData->minGoal = mingoal;
+				eptr->sessionData->maxGoal = maxgoal;
+				eptr->sessionData->minTrashTime = mintrashtime;
+				eptr->sessionData->maxTrashTime = maxtrashtime;
+				eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
+				eptr->sessionData->peerPort = eptr->peerPort;
 				if (ileng>0) {
 					if (info[ileng-1]==0) {
-						eptr->sesdata->info = std::string(info);
+						eptr->sessionData->info = std::string(info);
 					} else {
-						eptr->sesdata->info = std::string(info, ileng);
+						eptr->sessionData->info = std::string(info, ileng);
 					}
 				}
 
 				safs::log_info(
 				    "Session {} created for mount: {} exported path: {} with ip: {} and port: {}",
-				    eptr->sesdata->sessionid,
-				    !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info",
-				    path ? (const char *)path : "unknown path", ipToString(eptr->peerip),
-				    eptr->peerport);
+				    eptr->sessionData->sessionId,
+				    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
+				    (path != nullptr) ? reinterpret_cast<const char *>(path) : "unknown path",
+				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
 				matoclserv_store_sessions();
 			}
@@ -2083,7 +2091,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				put8bit(&wptr, status);
 				return;
 			}
-			sessionId = eptr->sesdata->sessionid;
+			sessionId = eptr->sessionData->sessionId;
 			if (eptr->version == saunafsVersion(1, 6, 21)) {
 				put32bit(&wptr, 0);
 			} else if (eptr->version >= saunafsVersion(1, 6, 22)) {
@@ -2106,7 +2114,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				put32bit(&wptr, maxtrashtime);
 			}
 			if (eptr->version >= saunafsVersion(1, 6, 30)) {
-				eptr->iolimits = true;
+				eptr->ioLimitsEnabled = true;
 				matoclserv_send_iolimits_cfg(eptr);
 			}
 			eptr->registered = ClientState::kRegistered;
@@ -2134,47 +2142,49 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			rptr += ileng;
 
 			if (length == kRegisterNewMetaSessionMinSize + 16 + ileng) {
-				status = exports_check(eptr->peerip, eptr->version, 1, NULL, eptr->passwordrnd,
-				                       rptr, &sesflags, &rootuid, &rootgid, &mapalluid, &mapallgid,
-				                       &mingoal, &maxgoal, &mintrashtime, &maxtrashtime);
+				status =
+				    exports_check(eptr->peerIpAddress, eptr->version, 1, NULL, eptr->randomPassword,
+				                  rptr, &sesflags, &rootuid, &rootgid, &mapalluid, &mapallgid,
+				                  &mingoal, &maxgoal, &mintrashtime, &maxtrashtime);
 			} else {
-				status = exports_check(eptr->peerip, eptr->version, 1, NULL, NULL, NULL, &sesflags,
-				                       &rootuid, &rootgid, &mapalluid, &mapallgid, &mingoal,
-				                       &maxgoal, &mintrashtime, &maxtrashtime);
+				status = exports_check(eptr->peerIpAddress, eptr->version, 1, NULL, NULL, NULL,
+				                       &sesflags, &rootuid, &rootgid, &mapalluid, &mapallgid,
+				                       &mingoal, &maxgoal, &mintrashtime, &maxtrashtime);
 			}
 
 			if (status == SAUNAFS_STATUS_OK) {
-				eptr->sesdata = matoclserv_new_session(1, 0);
-				if (eptr->sesdata == nullptr) {
+				eptr->sessionData = matoclserv_new_session(1, 0);
+				if (eptr->sessionData == nullptr) {
 					safs::log_info("can't allocate session record");
 					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
 
-				eptr->sesdata->rootinode = 0;
-				eptr->sesdata->sesflags = sesflags;
-				eptr->sesdata->rootuid = 0;
-				eptr->sesdata->rootgid = 0;
-				eptr->sesdata->mapalluid = 0;
-				eptr->sesdata->mapallgid = 0;
-				eptr->sesdata->mingoal = mingoal;
-				eptr->sesdata->maxgoal = maxgoal;
-				eptr->sesdata->mintrashtime = mintrashtime;
-				eptr->sesdata->maxtrashtime = maxtrashtime;
-				eptr->sesdata->peerip = eptr->peerip;
-				eptr->sesdata->peerport = eptr->peerport;
+				eptr->sessionData->rootInode = 0;
+				eptr->sessionData->flags = sesflags;
+				eptr->sessionData->rootUid = 0;
+				eptr->sessionData->rootGid = 0;
+				eptr->sessionData->mapAllUid = 0;
+				eptr->sessionData->mapAllGid = 0;
+				eptr->sessionData->minGoal = mingoal;
+				eptr->sessionData->maxGoal = maxgoal;
+				eptr->sessionData->minTrashTime = mintrashtime;
+				eptr->sessionData->maxTrashTime = maxtrashtime;
+				eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
+				eptr->sessionData->peerPort = eptr->peerPort;
 				if (ileng > 0) {
 					if (info[ileng - 1] == 0) {
-						eptr->sesdata->info = std::string(info);
+						eptr->sessionData->info = std::string(info);
 					} else {
-						eptr->sesdata->info = std::string(info, ileng);
+						eptr->sessionData->info = std::string(info, ileng);
 					}
 				}
 
-				safs::log_info("Meta session {} created for mount: {} with ip: {} and port: {}",
-				               eptr->sesdata->sessionid,
-				               !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info",
-				               ipToString(eptr->peerip), eptr->peerport);
+				safs::log_info(
+				    "Meta session {} created for mount: {} with ip: {} and port: {}",
+				    eptr->sessionData->sessionId,
+				    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
+				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
 				matoclserv_store_sessions();
 			}
@@ -2191,7 +2201,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				put8bit(&wptr,status);
 				return;
 			}
-			sessionId = eptr->sesdata->sessionid;
+			sessionId = eptr->sessionData->sessionId;
 			if (eptr->version >= saunafsVersion(1, 6, 21)) {
 				put16bit(&wptr,SAUNAFS_PACKAGE_VERSION_MAJOR);
 				put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MINOR);
@@ -2217,20 +2227,20 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 			get32bit(&rptr, sessionId);
 			get32bit(&rptr, eptr->version);
-			eptr->sesdata = matoclserv_find_session(sessionId);
-			if (eptr->sesdata == nullptr || eptr->sesdata->peerip == 0) {
+			eptr->sessionData = matoclserv_find_session(sessionId);
+			if (eptr->sessionData == nullptr || eptr->sessionData->peerIpAddress == 0) {
 				status = SAUNAFS_ERROR_BADSESSIONID;
 			} else {
-				if ((eptr->sesdata->sesflags & SESFLAG_DYNAMICIP) == 0 &&
-				    eptr->peerip != eptr->sesdata->peerip) {
+				if ((eptr->sessionData->flags & SESFLAG_DYNAMICIP) == 0 &&
+				    eptr->peerIpAddress != eptr->sessionData->peerIpAddress) {
 					status = SAUNAFS_ERROR_EACCES;
 				} else {
 					status = SAUNAFS_STATUS_OK;
 					safs::log_info(
 					    "Session {} reconnected for mount: {} with ip: {} and port: {}",
-					    eptr->sesdata->sessionid,
-					    !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info",
-					    ipToString(eptr->peerip), eptr->peerport);
+					    eptr->sessionData->sessionId,
+					    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
+					    ipToString(eptr->peerIpAddress), eptr->peerPort);
 				}
 			}
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER, sizeof(status));
@@ -2238,8 +2248,9 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			if (status != SAUNAFS_STATUS_OK) { return; }
 
 			if (rcode == REGISTER_RECONNECT) {
-				if (eptr->version >= saunafsVersion(1, 6, 30) && eptr->sesdata->rootinode != 0) {
-					eptr->iolimits = true;
+				if (eptr->version >= saunafsVersion(1, 6, 30) &&
+				    eptr->sessionData->rootInode != 0) {
+					eptr->ioLimitsEnabled = true;
 					matoclserv_send_iolimits_cfg(eptr);
 				}
 				eptr->registered = ClientState::kRegistered;
@@ -2256,8 +2267,9 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 			get32bit(&rptr, sessionId);
 			matoclserv_close_session(sessionId);
-			safs::log_info("Session {} for mount {} was closed", sessionId,
-			               !eptr->sesdata->info.empty() ? eptr->sesdata->info : "unknown info");
+			safs::log_info(
+			    "Session {} for mount {} was closed", sessionId,
+			    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info");
 			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
@@ -2271,14 +2283,14 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 }
 
 void matoclserv_register_config(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	cltoma::registerConfig::deserialize(data, length, eptr->sesdata->config);
+	cltoma::registerConfig::deserialize(data, length, eptr->sessionData->config);
 }
 
 void matoclserv_update_mount_info(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	std::string mount_info;
 	cltoma::updateMountInfo::deserialize(data, length, mount_info);
-	if (eptr->sesdata && eptr->sesdata->mountinfo != mount_info) {
-		eptr->sesdata->mountinfo = mount_info;
+	if (eptr->sessionData && eptr->sessionData->mountInfo != mount_info) {
+		eptr->sessionData->mountInfo = mount_info;
 	}
 }
 
@@ -2306,13 +2318,13 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 
 	FsContext context = FsContext::getForMaster(eventloop_time());
 	changelog_disable_flush();
-	auto it = eptr->sesdata->openedfiles.begin();
-	while (it != eptr->sesdata->openedfiles.end()) {
+	auto it = eptr->sessionData->openFilesSet.begin();
+	while (it != eptr->sessionData->openFilesSet.end()) {
 		inode_t openFileIno = *it;
 		if (!inodes_to_reserve.contains(openFileIno)) {
 			// erase files not belonging to the reserve inodes list provided
-			fs_release(context, openFileIno, eptr->sesdata->sessionid);
-			it = eptr->sesdata->openedfiles.erase(it);
+			fs_release(context, openFileIno, eptr->sessionData->sessionId);
+			it = eptr->sessionData->openFilesSet.erase(it);
 		} else {
 			// skip files already in session
 			it++;
@@ -2322,17 +2334,17 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	}
 
 	for (const auto &inode_to_reserve : inodes_to_reserve) {
-		if (fs_acquire(context, inode_to_reserve, eptr->sesdata->sessionid) ==
+		if (fs_acquire(context, inode_to_reserve, eptr->sessionData->sessionId) ==
 		    SAUNAFS_STATUS_OK) {
 			// Insert reserved inodes into the opened files set
-			eptr->sesdata->openedfiles.insert(inode_to_reserve);
+			eptr->sessionData->openFilesSet.insert(inode_to_reserve);
 		}
 	}
 	changelog_enable_flush();
 }
 
 void matoclserv_fuse_statfs(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	uint64_t totalspace,availspace,trashspace,reservedspace;
+	uint64_t totalspace, availspace, trashspace, reservedspace;
 	uint32_t msgid;
 	inode_t inodes;
 	uint8_t *ptr;
@@ -2361,8 +2373,8 @@ void matoclserv_fuse_statfs(matoclserventry *eptr, const uint8_t *data, uint32_t
 	put64bit(&ptr, reservedspace);
 	putINode(&ptr, inodes);
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[0]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[0]++;
 	}
 }
 
@@ -2421,7 +2433,7 @@ void matoclserv_sau_whole_path_lookup(matoclserventry *eptr, const uint8_t *data
 	} else {
 		matoclserv_createpacket(eptr, matocl::wholePathLookup::build(msgid, found_inode, attr));
 	}
-	eptr->sesdata->currentopstats[3]++;
+	eptr->sessionData->currHourOperationsStats[3]++;
 }
 
 void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -2444,7 +2456,7 @@ void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *dat
 	} else {
 		matoclserv_createpacket(eptr, matocl::fullPathByInode::build(msgid, fullPath));
 	}
-	eptr->sesdata->currentopstats[3]++;
+	eptr->sessionData->currHourOperationsStats[3]++;
 }
 
 void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -2518,7 +2530,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr, const uint8_t *data, uint32_t
 	constexpr uint32_t kExpectedPacketSize =
 	    sizeof(msgid) + sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(nleng);
 	if (length < kExpectedPacketSize) {
-		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_LOOKUP - wrong size (%" PRIu32 ")",length);
+		safs::log_info("CLTOMA_FUSE_LOOKUP - wrong size ({})", length);
 		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
@@ -2526,7 +2538,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr, const uint8_t *data, uint32_t
 	getINode(&data, inode);
 	nleng = get8bit(&data);
 	if (length != kExpectedPacketSize + nleng) {
-		safs_pretty_syslog(LOG_NOTICE,"CLTOMA_FUSE_LOOKUP - wrong size (%" PRIu32 ":nleng=%" PRIu8 ")",length,nleng);
+		safs::log_info("CLTOMA_FUSE_LOOKUP - wrong size ({}:nleng={})", length, nleng);
 		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
@@ -2552,7 +2564,7 @@ void matoclserv_fuse_lookup(matoclserventry *eptr, const uint8_t *data, uint32_t
 		putINode(&ptr,newinode);
 		memcpy(ptr, attr.data(), attr.size());
 	}
-	eptr->sesdata->currentopstats[3]++;
+	eptr->sessionData->currHourOperationsStats[3]++;
 }
 
 void matoclserv_fuse_getattr(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -2591,8 +2603,8 @@ void matoclserv_fuse_getattr(matoclserventry *eptr, const uint8_t *data, uint32_
 	} else {
 		memcpy(ptr, attr.data(), attr.size());
 	}
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[1]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[1]++;
 	}
 }
 
@@ -2661,8 +2673,8 @@ void matoclserv_fuse_setattr(matoclserventry *eptr, const uint8_t *data, uint32_
 		memcpy(ptr, attr.data(), attr.size());
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[2]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[2]++;
 	}
 }
 
@@ -2738,8 +2750,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 			std::vector<uint8_t> reply;
 			matocl::fuseTruncate::serialize(reply, messageId, fileLength, lockId);
 			matoclserv_createpacket(eptr, std::move(reply));
-			if (eptr->sesdata) {
-				eptr->sesdata->currentopstats[2]++;
+			if (eptr->sessionData) {
+				eptr->sessionData->currHourOperationsStats[2]++;
 			}
 			return;
 		}
@@ -2747,22 +2759,22 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 
 	if (status == SAUNAFS_ERROR_DELAYED) {
 		// Duplicate or truncate request has been sent to chunkservers, delay the reply
-		auto chunkOperationPtr = std::make_unique<chunkDelayedOperation>();
+		auto chunkOperationPtr = std::make_unique<DelayedChunkOperation>();
 		passert(chunkOperationPtr.get());
-		chunkOperationPtr->chunkid = chunkId;
-		chunkOperationPtr->qid = messageId;
+		chunkOperationPtr->chunkId = chunkId;
+		chunkOperationPtr->messageId = messageId;
 		chunkOperationPtr->inode = inode;
 		chunkOperationPtr->uid = context.uid();
 		chunkOperationPtr->gid = context.gid();
 		chunkOperationPtr->auid = context.auid();
 		chunkOperationPtr->agid = context.agid();
-		chunkOperationPtr->fleng = length;
-		chunkOperationPtr->lockid = lockId;
+		chunkOperationPtr->fileLength = length;
+		chunkOperationPtr->lockId = lockId;
 		chunkOperationPtr->type = type;
 		chunkOperationPtr->serializer = serializer;
-		eptr->chunkdelayedops.push_back(std::move(chunkOperationPtr));
-		if (eptr->sesdata) {
-			eptr->sesdata->currentopstats[2]++;
+		eptr->delayedChunkOperations.push_back(std::move(chunkOperationPtr));
+		if (eptr->sessionData) {
+			eptr->sessionData->currHourOperationsStats[2]++;
 		}
 		return;
 	}
@@ -2770,7 +2782,7 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		status = fs_do_setlength(context, inode, length, attr);
 	}
 	if (status == SAUNAFS_STATUS_OK) {
-		dcm_modify(inode, eptr->sesdata->sessionid);
+		dcm_modify(inode, eptr->sessionData->sessionId);
 	}
 
 	std::vector<uint8_t> reply;
@@ -2781,8 +2793,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		serializer->serializeFuseTruncate(reply, type, messageId, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[2]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[2]++;
 	}
 }
 
@@ -2829,8 +2841,8 @@ void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32
 		ptr[path.length()] = 0;
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[7]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[7]++;
 	}
 }
 
@@ -2909,8 +2921,8 @@ void matoclserv_fuse_symlink(matoclserventry *eptr, const uint8_t *data, uint32_
 		memcpy(ptr, attr.data(), attr.size());
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[6]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[6]++;
 	}
 }
 
@@ -2954,8 +2966,8 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 		serializeLegacyPacket(reply, MATOCL_FUSE_MKNOD, messageId, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[8]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[8]++;
 	}
 }
 
@@ -3005,8 +3017,8 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 		serializeLegacyPacket(reply, MATOCL_FUSE_MKDIR, messageId, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[4]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[4]++;
 	}
 }
 
@@ -3057,8 +3069,8 @@ void matoclserv_fuse_unlink(matoclserventry *eptr, const uint8_t *data, uint32_t
 	put32bit(&ptr, msgid);
 	put8bit(&ptr, status);
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[9]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[9]++;
 	}
 }
 
@@ -3084,7 +3096,7 @@ void matoclserv_fuse_recursive_remove(matoclserventry *eptr, const uint8_t *data
 
 		status = fs_recursive_remove(context, parent_inode, HString(name),
 					    std::bind(matoclserv_fuse_recursive_remove_wake_up,
-				      eptr->sesdata->sessionid, msgid, std::placeholders::_1), job_id);
+				      eptr->sessionData->sessionId, msgid, std::placeholders::_1), job_id);
 	}
 	if (status != SAUNAFS_ERROR_WAITING) {
 		matoclserv_createpacket(eptr, matocl::recursiveRemove::build(msgid, status));
@@ -3138,8 +3150,8 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	put32bit(&ptr, msgid);
 	put8bit(&ptr, status);
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[5]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[5]++;
 	}
 }
 
@@ -3220,8 +3232,8 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 		put8bit(&ptr,status);
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[10]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[10]++;
 	}
 }
 
@@ -3287,8 +3299,8 @@ void matoclserv_fuse_link(matoclserventry *eptr, const uint8_t *data, uint32_t l
 		memcpy(ptr, attr.data(), attr.size());
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[11]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[11]++;
 	}
 }
 
@@ -3342,7 +3354,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 		matocl::fuseGetDir::serialize(buffer, message_id, status);
 	}
 
-	eptr->sesdata->currentopstats[12]++;
+	eptr->sessionData->currHourOperationsStats[12]++;
 	matoclserv_createpacket(eptr, std::move(buffer));
 }
 
@@ -3383,7 +3395,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_GETDIR, sizeof(msgid) + sizeof(status));
 		put32bit(&ptr, msgid);
 		put8bit(&ptr, status);
-		eptr->sesdata->currentopstats[12]++;
+		eptr->sessionData->currHourOperationsStats[12]++;
 		return;
 	}
 
@@ -3404,7 +3416,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 		fs_readdir_data(context, flags, custom, ptr);
 	}
 
-	eptr->sesdata->currentopstats[12]++;
+	eptr->sessionData->currHourOperationsStats[12]++;
 }
 
 void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -3437,12 +3449,12 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = matoclserv_insert_open_file(eptr->sesdata, inode);
+		status = matoclserv_insert_open_file(eptr->sessionData, inode);
 		if (status == SAUNAFS_STATUS_OK) { status = fs_opencheck(context, inode, flags, attr); }
 	}
 
 	if (eptr->version >= 0x010609 && status == SAUNAFS_STATUS_OK) {
-		allowcache = dcm_open(inode, eptr->sesdata->sessionid);
+		allowcache = dcm_open(inode, eptr->sessionData->sessionId);
 		if (allowcache == 0) {
 			attr[1] &= (0xFF ^ (MATTR_ALLOWDATACACHE << 4));
 		}
@@ -3459,8 +3471,8 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 		put8bit(&ptr, status);
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[13]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[13]++;
 	}
 }
 
@@ -3483,7 +3495,7 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
 	if (status == SAUNAFS_STATUS_OK) {
 		if (chunkid > 0) {
-			status = chunk_getversionandlocations(chunkid, eptr->peerip, version,
+			status = chunk_getversionandlocations(chunkid, eptr->peerIpAddress, version,
 					kMaxNumberOfChunkCopies, allChunkCopies);
 			remove_unsupported_ec_parts(eptr->version, allChunkCopies);
 		} else {
@@ -3497,13 +3509,13 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 		return;
 	}
 
-	dcm_access(inode, eptr->sesdata->sessionid);
+	dcm_access(inode, eptr->sessionData->sessionId);
 	serializer->serializeFuseReadChunk(outMessage, messageId, fleng, chunkid, version,
 			allChunkCopies);
 	matoclserv_createpacket(eptr, outMessage);
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[14]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[14]++;
 	}
 }
 
@@ -3528,7 +3540,8 @@ void matoclserv_chunks_info(matoclserventry *eptr, const uint8_t *data, uint32_t
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_getchunksinfo(context, eptr->peerip, inode, chunk_index, chunk_count, chunks);
+		status =
+		    fs_getchunksinfo(context, eptr->peerIpAddress, inode, chunk_index, chunk_count, chunks);
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
@@ -3570,19 +3583,19 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	}
 
 	if (opflag) {   // wait for operation end
-		auto operation = std::make_unique<chunkDelayedOperation>();
+		auto operation = std::make_unique<DelayedChunkOperation>();
 		passert(operation.get());
-		memset(operation.get(), 0, sizeof(chunkDelayedOperation));
+		memset(operation.get(), 0, sizeof(DelayedChunkOperation));
 		operation->inode = inode;
-		operation->chunkid = chunkId;
-		operation->qid = messageId;
-		operation->fleng = fileLength;
-		operation->lockid = lockId;
+		operation->chunkId = chunkId;
+		operation->messageId = messageId;
+		operation->fileLength = fileLength;
+		operation->lockId = lockId;
 		operation->type = FUSE_WRITE;
 		operation->serializer = serializer;
-		eptr->chunkdelayedops.push_back(std::move(operation));
+		eptr->delayedChunkOperations.push_back(std::move(operation));
 	} else {        // return status immediately
-		dcm_modify(inode,eptr->sesdata->sessionid);
+		dcm_modify(inode,eptr->sessionData->sessionId);
 		status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
 				chunkId, messageId, fileLength, lockId);
 		if (status != SAUNAFS_STATUS_OK) {
@@ -3590,8 +3603,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		}
 	}
 
-	if (eptr->sesdata) {
-		eptr->sesdata->currentopstats[15]++;
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[15]++;
 	}
 }
 
@@ -3614,13 +3627,13 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 	if (lockId == 0) {
 		// this lock id passed to chunk_unlock would force chunk unlock
 		status = SAUNAFS_ERROR_WRONGLOCKID;
-	} else if (eptr->sesdata->sesflags & SESFLAG_READONLY) {
+	} else if (eptr->sessionData->flags & SESFLAG_READONLY) {
 		status = SAUNAFS_ERROR_EROFS;
 	} else {
 		status = fs_writeend(inode, fileLength, chunkId, lockId);
 	}
 
-	dcm_modify(inode,eptr->sesdata->sessionid);
+	dcm_modify(inode,eptr->sessionData->sessionId);
 	serializer->serializeFuseWriteChunkEnd(outMessage, messageId, status);
 	matoclserv_createpacket(eptr, outMessage);
 }
@@ -3826,17 +3839,18 @@ void matoclserv_fuse_settrashtime(matoclserventry *eptr, PacketHeader header, co
 	status = SAUNAFS_STATUS_OK;
 	switch (smode & SMODE_TMASK) {
 	case SMODE_SET:
-		if (trashtime < eptr->sesdata->mintrashtime || trashtime > eptr->sesdata->maxtrashtime) {
+		if (trashtime < eptr->sessionData->minTrashTime ||
+		    trashtime > eptr->sessionData->maxTrashTime) {
 			status = SAUNAFS_ERROR_EPERM;
 		}
 		break;
 	case SMODE_INCREASE:
-		if (trashtime > eptr->sesdata->maxtrashtime) {
+		if (trashtime > eptr->sessionData->maxTrashTime) {
 			status = SAUNAFS_ERROR_EPERM;
 		}
 		break;
 	case SMODE_DECREASE:
-		if (trashtime < eptr->sesdata->mintrashtime) {
+		if (trashtime < eptr->sessionData->minTrashTime) {
 			status = SAUNAFS_ERROR_EPERM;
 		}
 		break;
@@ -3848,13 +3862,13 @@ void matoclserv_fuse_settrashtime(matoclserventry *eptr, PacketHeader header, co
 	if (status == SAUNAFS_STATUS_OK) {
 		status = fs_settrashtime(matoclserv_get_context(eptr, uid, 0), inode, trashtime,
 					 smode, settrashtime_stats,
-			   std::bind(matoclserv_fuse_settrashtime_wake_up, eptr->sesdata->sessionid,
+			   std::bind(matoclserv_fuse_settrashtime_wake_up, eptr->sessionData->sessionId,
 				     msgid, settrashtime_stats, std::placeholders::_1));
 	}
 
 	if (status != SAUNAFS_ERROR_WAITING) {
-		matoclserv_fuse_settrashtime_wake_up(eptr->sesdata->sessionid, msgid, settrashtime_stats,
-		                                     status);
+		matoclserv_fuse_settrashtime_wake_up(eptr->sessionData->sessionId, msgid,
+		                                     settrashtime_stats, status);
 	}
 }
 
@@ -3979,10 +3993,10 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 		status = SAUNAFS_ERROR_EINVAL;
 	}
 	if (status == SAUNAFS_STATUS_OK) {
-		if (status == SAUNAFS_STATUS_OK && goalId < eptr->sesdata->mingoal) {
+		if (status == SAUNAFS_STATUS_OK && goalId < eptr->sessionData->minGoal) {
 			status = SAUNAFS_ERROR_EPERM;
 		}
-		if (status == SAUNAFS_STATUS_OK && goalId > eptr->sesdata->maxgoal) {
+		if (status == SAUNAFS_STATUS_OK && goalId > eptr->sessionData->maxGoal) {
 			status = SAUNAFS_ERROR_EPERM;
 		}
 	}
@@ -3993,12 +4007,12 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, 0);
 		status = fs_setgoal(context, inode, goalId, smode, setgoal_stats,
-			   std::bind(matoclserv_fuse_setgoal_wake_up, eptr->sesdata->sessionid,
+			   std::bind(matoclserv_fuse_setgoal_wake_up, eptr->sessionData->sessionId,
 				     msgid, header.type, setgoal_stats, std::placeholders::_1));
 	}
 
 	if (status != SAUNAFS_ERROR_WAITING) {
-		matoclserv_fuse_setgoal_wake_up(eptr->sesdata->sessionid, msgid, header.type,
+		matoclserv_fuse_setgoal_wake_up(eptr->sessionData->sessionId, msgid, header.type,
 						setgoal_stats, status);
 	}
 }
@@ -4360,10 +4374,10 @@ void matoclserv_fuse_snapshot(matoclserventry *eptr, PacketHeader header, const 
 		status = fs_snapshot(context, inode, inode_dst, HString(std::move(name_dst)),
 		                     canoverwrite, ignore_missing_src, initial_batch_size,
 		                     std::bind(matoclserv_fuse_snapshot_wake_up, header.type,
-		                     eptr->sesdata->sessionid, msgid, std::placeholders::_1), job_id);
+		                     eptr->sessionData->sessionId, msgid, std::placeholders::_1), job_id);
 	}
 	if (status != SAUNAFS_ERROR_WAITING) {
-		matoclserv_fuse_snapshot_wake_up(header.type, eptr->sesdata->sessionid, msgid, status);
+		matoclserv_fuse_snapshot_wake_up(header.type, eptr->sessionData->sessionId, msgid, status);
 	}
 }
 
@@ -4483,7 +4497,7 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const uint8_t *data, uint32
 
 	get32bit(&data, msgid);
 
-	status = fs_readtrash_size(eptr->sesdata->rootinode,eptr->sesdata->sesflags,&dleng);
+	status = fs_readtrash_size(eptr->sessionData->rootInode,eptr->sessionData->flags,&dleng);
 
 	ptr = matoclserv_createpacket(
 	    eptr, MATOCL_FUSE_GETTRASH,
@@ -4494,7 +4508,7 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const uint8_t *data, uint32
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		fs_readtrash_data(eptr->sesdata->rootinode, eptr->sesdata->sesflags, ptr);
+		fs_readtrash_data(eptr->sessionData->rootInode, eptr->sessionData->flags, ptr);
 	}
 }
 
@@ -4535,7 +4549,8 @@ void matoclserv_fuse_getdetachedattr(matoclserventry *eptr, const uint8_t *data,
 		dtype = DTYPE_UNKNOWN;
 	}
 
-	status = fs_getdetachedattr(eptr->sesdata->rootinode,eptr->sesdata->sesflags,inode,attr,dtype);
+	status = fs_getdetachedattr(eptr->sessionData->rootInode, eptr->sessionData->flags, inode, attr,
+	                            dtype);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessSize = sizeof(msgid) + attr.size();
@@ -4572,7 +4587,7 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr, const uint8_t *data, ui
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_gettrashpath(eptr->sesdata->rootinode, eptr->sesdata->sesflags, inode, path);
+	status = fs_gettrashpath(eptr->sessionData->rootInode, eptr->sessionData->flags, inode, path);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	const uint32_t kSuccessSize = sizeof(msgid) + sizeof(uint32_t) + path.length() + 1;
@@ -4705,7 +4720,7 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const uint8_t *data, uin
 
 	get32bit(&data, msgid);
 
-	status = fs_readreserved_size(eptr->sesdata->rootinode, eptr->sesdata->sesflags, &dleng);
+	status = fs_readreserved_size(eptr->sessionData->rootInode, eptr->sessionData->flags, &dleng);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	const uint32_t kSuccessSize = sizeof(msgid) + dleng;
@@ -4718,7 +4733,7 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const uint8_t *data, uin
 	if (status!=SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		fs_readreserved_data(eptr->sesdata->rootinode, eptr->sesdata->sesflags, ptr);
+		fs_readreserved_data(eptr->sessionData->rootInode, eptr->sessionData->flags, ptr);
 	}
 }
 
@@ -4857,7 +4872,7 @@ void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	status = fs_flock_op(context, inode, owner, eptr->sesdata->sessionid, requestId, messageId,
+	status = fs_flock_op(context, inode, owner, eptr->sessionData->sessionId, requestId, messageId,
 			op, nonblocking, applied);
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kFlock);
@@ -4899,7 +4914,7 @@ void matoclserv_fuse_getlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	status = fs_posixlock_probe(context, inode, lock_info.l_start, lock_end, owner,
-			eptr->sesdata->sessionid, 0, message_id, lock_info.l_type, lock_info);
+			eptr->sessionData->sessionId, 0, message_id, lock_info.l_type, lock_info);
 
 	// Standard states that lock of length 0 is a lock till EOF
 	if (lock_info.l_len == std::numeric_limits<int64_t>::max()) {
@@ -4952,7 +4967,7 @@ void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 	std::vector<FileLocks::Owner> applied;
 	status = fs_posixlock_op(context, inode, lock_info.l_start, lock_end,
-			owner, eptr->sesdata->sessionid, request_id, message_id, op, nonblocking, applied);
+			owner, eptr->sessionData->sessionId, request_id, message_id, op, nonblocking, applied);
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kPosix);
 
@@ -5118,7 +5133,7 @@ void matoclserv_fuse_locks_interrupt(matoclserventry *eptr, const uint8_t *data,
 
 	// we do not reply, so there is not need for checking status of this fs_operation
 	fs_locks_remove_pending(context, type, interruptData.owner,
-			   eptr->sesdata->sessionid, interruptData.ino, interruptData.reqid);
+			   eptr->sessionData->sessionId, interruptData.ino, interruptData.reqid);
 }
 
 void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -5127,15 +5142,15 @@ void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, u
 
 	cltoma::updateCredentials::deserialize(data, length, messageId, index, gids);
 
-	assert(eptr->sesdata);
+	assert(eptr->sessionData);
 
-	auto it = eptr->sesdata->group_cache.find(index);
-	if (it != eptr->sesdata->group_cache.end()) {
+	auto it = eptr->sessionData->groupsCache.find(index);
+	if (it != eptr->sessionData->groupsCache.end()) {
 		it->second.clear();
 		it->second.insert(it->second.end(), gids.begin(), gids.end());
 	} else {
 		FsContext::GroupsContainer tmp(gids.begin(), gids.end());
-		eptr->sesdata->group_cache.insert(std::move(index), std::move(tmp));
+		eptr->sessionData->groupsCache.insert(std::move(index), std::move(tmp));
 	}
 
 	matoclserv_createpacket(eptr, matocl::updateCredentials::build(messageId, SAUNAFS_STATUS_OK));
@@ -5371,7 +5386,7 @@ void matoclserv_admin_reload(matoclserventry* eptr, const uint8_t* data, uint32_
 		eptr->adminTask = AdminTask::kReload; // mark, that this admin waits for response
 		eventloop_want_to_reload();
 		safs::log_info("reload of the config file requested using saunafs-admin by {}",
-		               ipToString(eptr->peerip));
+		               ipToString(eptr->peerIpAddress));
 	} else {
 		safs::log_info("SAU_CLTOMA_ADMIN_RELOAD: available only for registered admins");
 		eptr->mode = ClientConnectionMode::KILL;
@@ -5383,7 +5398,7 @@ std::string get_client_configs() {
 
 	for (const auto& sessionPtr : sessionVector) {
 		if (sessionPtr->config.empty()) { continue; }
-		NetworkAddress addr(sessionPtr->peerip, sessionPtr->peerport);
+		NetworkAddress addr(sessionPtr->peerIpAddress, sessionPtr->peerPort);
 		client_configs[addr.toString()] = sessionPtr->config;
 	}
 
@@ -5417,7 +5432,7 @@ void matoclserv_admin_save_metadata(matoclserventry* eptr, const uint8_t* data, 
 
 	if (eptr->registered == ClientState::kAdmin) {
 		safs::log_info("saving metadata image requested using saunafs-admin by {}",
-		               ipToString(eptr->peerip));
+		               ipToString(eptr->peerIpAddress));
 		uint8_t status = gMetadataBackend->fs_storeall(
 		    MetadataDumper::DumpType::kBackgroundDump);
 
@@ -5453,7 +5468,7 @@ void matoclserv_admin_recalculate_metadata_checksum(matoclserventry *eptr, const
 
 	if (eptr->registered == ClientState::kAdmin) {
 		safs::log_info("metadata checksum recalculation requested using saunafs-admin by {}",
-		               ipToString(eptr->peerip));
+		               ipToString(eptr->peerIpAddress));
 		uint8_t status = fs_start_checksum_recalculation();
 
 		if (status != SAUNAFS_STATUS_OK || asynchronous) {
@@ -5500,19 +5515,19 @@ void matocl_locks_release(const FsContext &context, inode_t inode, uint32_t sess
 	}
 }
 
-void matocl_close_files(session *currentSession) {
+void matocl_close_files(Session *currentSession) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 
-	for (const auto &openFileInode : currentSession->openedfiles) {
-		fs_release(context, openFileInode, currentSession->sessionid);
-		matocl_locks_release(context, openFileInode, currentSession->sessionid);
+	for (const auto &openFileInode : currentSession->openFilesSet) {
+		fs_release(context, openFileInode, currentSession->sessionId);
+		matocl_locks_release(context, openFileInode, currentSession->sessionId);
 	}
 
-	currentSession->openedfiles.clear();
+	currentSession->openFilesSet.clear();
 }
 
-uint32_t session_number_of_files(session *currentSession) {
-	return currentSession->openedfiles.size();
+uint32_t session_number_of_files(Session *currentSession) {
+	return currentSession->openFilesSet.size();
 }
 
 void matoclserv_session_files(matoclserventry *eptr,
@@ -5522,15 +5537,15 @@ void matoclserv_session_files(matoclserventry *eptr,
 	MessageBuffer reply;
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode == ClientConnectionMode::KILL || !eaptr->sesdata ||
+		if (eaptr->mode == ClientConnectionMode::KILL || !eaptr->sessionData ||
 		    eaptr->registered != ClientState::kRegistered) {
 			continue;
 		}
 
 		SessionFiles session;
-		session.sessionId = eaptr->sesdata->sessionid;
-		session.peerIp = eaptr->sesdata->peerip;
-		session.filesNumber = session_number_of_files(eaptr->sesdata);
+		session.sessionId = eaptr->sessionData->sessionId;
+		session.peerIp = eaptr->sessionData->peerIpAddress;
+		session.filesNumber = session_number_of_files(eaptr->sessionData);
 		sessions.push_back(session);
 	}
 
@@ -5538,7 +5553,7 @@ void matoclserv_session_files(matoclserventry *eptr,
 	matoclserv_createpacket(eptr, std::move(reply));
 }
 
-void matocl_session_timedout(session *currentSession) {
+void matocl_session_timedout(Session *currentSession) {
 	matocl_close_files(currentSession);
 }
 
@@ -5552,7 +5567,7 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 	matoclserventry *target = nullptr;
 
 	for (const auto &eaptr : matoclservList) {
-		if (eaptr->sesdata && eaptr->sesdata->sessionid == sessionId) {
+		if (eaptr->sessionData && eaptr->sessionData->sessionId == sessionId) {
 			target = eaptr.get();
 			break;
 		}
@@ -5568,7 +5583,7 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 		// Otherwise, it will take a few moments before the session
 		// times out and the files are removed automatically, unless the
 		// peer reconnects during that time
-		matocl_close_files(target->sesdata);
+		matocl_close_files(target->sessionData);
 	}
 
 	MessageBuffer reply;
@@ -5581,10 +5596,11 @@ void matocl_session_check() {
 
 	for (auto sessionIt = sessionVector.begin(); sessionIt != sessionVector.end();) {
 		auto& sessionPtr = *sessionIt;
-		if (sessionPtr->nsocks == 0 &&
-		    ((sessionPtr->newsession > 1 && sessionPtr->disconnected < now) ||
-		     (sessionPtr->newsession == 1 && sessionPtr->disconnected + SessionSustainTime < now) ||
-		     (sessionPtr->newsession == 0 && sessionPtr->disconnected + 7200 < now))) {
+		if (sessionPtr->connections == 0 &&
+		    ((sessionPtr->newSession > 1 && sessionPtr->disconnectedTimestamp < now) ||
+		     (sessionPtr->newSession == 1 &&
+		      sessionPtr->disconnectedTimestamp + SessionSustainTime < now) ||
+		     (sessionPtr->newSession == 0 && sessionPtr->disconnectedTimestamp + 7200 < now))) {
 			matocl_session_timedout(sessionPtr.get());
 			sessionIt = sessionVector.erase(sessionIt);
 		} else {
@@ -5593,31 +5609,31 @@ void matocl_session_check() {
 	}
 }
 
-void matocl_session_statsmove() {
+void matocl_session_stats_rotate() {
 	for (auto& sessionPtr : sessionVector) {
-		sessionPtr->lasthouropstats = sessionPtr->currentopstats;
-		sessionPtr->currentopstats.fill(0);
+		sessionPtr->prevHourOperationsStats = sessionPtr->currHourOperationsStats;
+		sessionPtr->currHourOperationsStats.fill(0);
 	}
 	matoclserv_store_sessions();
 }
 
-void matocl_beforedisconnect(matoclserventry *eptr) {
+void matocl_before_disconnect(matoclserventry *eptr) {
 	// unlock locked chunks
-	for (const auto &operation : eptr->chunkdelayedops) {
+	for (const auto &operation : eptr->delayedChunkOperations) {
 		if (operation->type == FUSE_TRUNCATE) {
-			fs_end_setlength(operation->chunkid);
+			fs_end_setlength(operation->chunkId);
 		}
 	}
 
-	eptr->chunkdelayedops.clear();
+	eptr->delayedChunkOperations.clear();
 
-	if (eptr->sesdata) {
-		if (eptr->sesdata->nsocks > 0) {
-			eptr->sesdata->nsocks--;
+	if (eptr->sessionData) {
+		if (eptr->sessionData->connections > 0) {
+			eptr->sessionData->connections--;
 		}
 
-		if (eptr->sesdata->nsocks == 0) {
-			eptr->sesdata->disconnected = eventloop_time();
+		if (eptr->sessionData->connections == 0) {
+			eptr->sessionData->disconnectedTimestamp = eventloop_time();
 		}
 	}
 }
@@ -5789,7 +5805,7 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    eptr->mode = ClientConnectionMode::KILL;
 			}
 		} else if (eptr->registered == ClientState::kRegistered) {      // mounts and new tools
-			if (eptr->sesdata == NULL) {
+			if (eptr->sessionData == NULL) {
 				safs::log_err("registered connection without sesdata !!!");
 				eptr->mode = ClientConnectionMode::KILL;
 				return;
@@ -6048,7 +6064,7 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    eptr->mode=ClientConnectionMode::KILL;
 			}
 		} else if (eptr->registered == ClientState::kOldTools) {        // old sfstools
-			if (eptr->sesdata==NULL) {
+			if (eptr->sessionData == NULL) {
 				safs::log_err("registered connection (tools) without sesdata !!!");
 				eptr->mode=ClientConnectionMode::KILL;
 				return;
@@ -6116,14 +6132,14 @@ void matoclserv_term() {
 	packetstruct *pptr,*pptrn;
 
 	safs::log_info("main master server module: closing {}:{}", ListenHost, ListenPort);
-	tcpclose(lsock);
+	tcpclose(masterSocket);
 
 	for (const auto &eptr : matoclservList) {
-		if (eptr->inputpacket.packet) {
-			free(eptr->inputpacket.packet);
+		if (eptr->inputPacket.packet) {
+			free(eptr->inputPacket.packet);
 		}
 
-		for (pptr = eptr->outputhead ; pptr ; pptr = pptrn) {
+		for (pptr = eptr->outputPacketHead ; pptr ; pptr = pptrn) {
 			pptrn = pptr->next;
 			if (pptr->packet) {
 				free(pptr->packet);
@@ -6131,7 +6147,7 @@ void matoclserv_term() {
 			free(pptr);
 		}
 
-		eptr->chunkdelayedops.clear();
+		eptr->delayedChunkOperations.clear();
 	}
 
 	matoclservList.clear();
@@ -6146,11 +6162,11 @@ void matoclserv_read(matoclserventry *eptr) {
 
 	watchdog.start();
 	while (eptr->mode != ClientConnectionMode::KILL) {
-		i = read(eptr->sock, eptr->inputpacket.startptr, eptr->inputpacket.bytesleft);
+		i = read(eptr->socket, eptr->inputPacket.startPtr, eptr->inputPacket.bytesLeft);
 		if (i == 0) {
 			if (eptr->registered == ClientState::kRegistered) {       // show this message only for standard, registered clients
 				safs::log_info("connection with client (ip:{}) has been closed by peer",
-				               ipToString(eptr->peerip));
+				               ipToString(eptr->peerIpAddress));
 			}
 			eptr->mode = ClientConnectionMode::KILL;
 			return;
@@ -6162,7 +6178,7 @@ void matoclserv_read(matoclserventry *eptr) {
 				if (errno != ECONNRESET) {
 #endif
 					safs_silent_errlog(LOG_NOTICE, "main master server module: (ip:%s) read error",
-					                   ipToString(eptr->peerip).c_str());
+					                   ipToString(eptr->peerIpAddress).c_str());
 #ifdef ECONNRESET
 				}
 #endif
@@ -6170,17 +6186,17 @@ void matoclserv_read(matoclserventry *eptr) {
 			}
 			return;
 		}
-		eptr->inputpacket.startptr += i;
-		eptr->inputpacket.bytesleft -= i;
+		eptr->inputPacket.startPtr += i;
+		eptr->inputPacket.bytesLeft -= i;
 		metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_BYTES, i);
-		stats_brcvd += i;
+		statsBytesReceived += i;
 
-		if (eptr->inputpacket.bytesleft > 0) {
+		if (eptr->inputPacket.bytesLeft > 0) {
 			return;
 		}
 
 		if (eptr->mode == ClientConnectionMode::HEADER) {
-			ptr = eptr->hdrbuff + 4;
+			ptr = eptr->headerBuffer + 4;
 			get32bit(&ptr, size);
 			if (size > 0) {
 				if (size > MaxPacketSize) {
@@ -6189,10 +6205,10 @@ void matoclserv_read(matoclserventry *eptr) {
 					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
-				eptr->inputpacket.packet = (uint8_t*) malloc(size);
-				passert(eptr->inputpacket.packet);
-				eptr->inputpacket.bytesleft = size;
-				eptr->inputpacket.startptr = eptr->inputpacket.packet;
+				eptr->inputPacket.packet = (uint8_t*) malloc(size);
+				passert(eptr->inputPacket.packet);
+				eptr->inputPacket.bytesLeft = size;
+				eptr->inputPacket.startPtr = eptr->inputPacket.packet;
 				eptr->mode = ClientConnectionMode::DATA;
 				continue;
 			}
@@ -6200,21 +6216,21 @@ void matoclserv_read(matoclserventry *eptr) {
 		}
 
 		if (eptr->mode==ClientConnectionMode::DATA) {
-			ptr = eptr->hdrbuff;
+			ptr = eptr->headerBuffer;
 			get32bit(&ptr, type);
 			get32bit(&ptr, size);
 
 			eptr->mode = ClientConnectionMode::HEADER;
-			eptr->inputpacket.bytesleft = 8;
-			eptr->inputpacket.startptr = eptr->hdrbuff;
-			matoclserv_gotpacket(eptr,type,eptr->inputpacket.packet,size);
-			stats_prcvd++;
+			eptr->inputPacket.bytesLeft = 8;
+			eptr->inputPacket.startPtr = eptr->headerBuffer;
+			matoclserv_gotpacket(eptr,type,eptr->inputPacket.packet,size);
+			statsPacketsReceived++;
 			metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_PACKETS);
 
-			if (eptr->inputpacket.packet) {
-				free(eptr->inputpacket.packet);
+			if (eptr->inputPacket.packet) {
+				free(eptr->inputPacket.packet);
 			}
-			eptr->inputpacket.packet=NULL;
+			eptr->inputPacket.packet=NULL;
 			break;
 		}
 
@@ -6231,30 +6247,30 @@ void matoclserv_write(matoclserventry *eptr) {
 
 	watchdog.start();
 	for (;;) {
-		pack = eptr->outputhead;
+		pack = eptr->outputPacketHead;
 		if (pack == NULL) { return; }
-		i = write(eptr->sock, pack->startptr, pack->bytesleft);
+		i = write(eptr->socket, pack->startPtr, pack->bytesLeft);
 		if (i < 0) {
 			if (errno != EAGAIN) {
 				safs_silent_errlog(LOG_NOTICE, "main master server module: (ip:%s) write error",
-				                   ipToString(eptr->peerip).c_str());
+				                   ipToString(eptr->peerIpAddress).c_str());
 				eptr->mode = ClientConnectionMode::KILL;
 			}
 			return;
 		}
-		pack->startptr += i;
-		pack->bytesleft -= i;
+		pack->startPtr += i;
+		pack->bytesLeft -= i;
 		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_BYTES, i);
-		stats_bsent += i;
-		if (pack->bytesleft > 0) {
+		statsBytesSent += i;
+		if (pack->bytesLeft > 0) {
 			return;
 		}
 		free(pack->packet);
-		stats_psent++;
+		statsPacketsSent++;
 		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_PACKETS);
-		eptr->outputhead = pack->next;
-		if (eptr->outputhead == NULL) {
-			eptr->outputtail = &(eptr->outputhead);
+		eptr->outputPacketHead = pack->next;
+		if (eptr->outputPacketHead == NULL) {
+			eptr->outputPacketTail = &(eptr->outputPacketHead);
 		}
 		free(pack);
 
@@ -6273,11 +6289,11 @@ int matoclserv_canexit(void) {
 	static bool terminatorPacketSent = false;
 
 	for (const auto &eptr : matoclservList) {
-		if (eptr->outputhead != NULL) {
+		if (eptr->outputPacketHead != NULL) {
 			return 0;
 		}
 
-		if (!eptr->chunkdelayedops.empty()) {
+		if (!eptr->delayedChunkOperations.empty()) {
 			return 0;
 		}
 
@@ -6311,21 +6327,21 @@ int matoclserv_canexit(void) {
 
 void matoclserv_desc(std::vector<pollfd> &pdesc) {
 	if (exiting == 0) {
-		pdesc.push_back({lsock, POLLIN, 0});
-		lsockpdescpos = pdesc.size() - 1;
+		pdesc.push_back({masterSocket, POLLIN, 0});
+		masterSocketDescPos = pdesc.size() - 1;
 	} else {
-		lsockpdescpos = -1;
+		masterSocketDescPos = -1;
 	}
 
 	for (const auto &eptr : matoclservList) {
-		pdesc.push_back({eptr->sock, 0, 0});
-		eptr->pdescpos = pdesc.size() - 1;
+		pdesc.push_back({eptr->socket, 0, 0});
+		eptr->pDescPos = pdesc.size() - 1;
 
 		if (exiting == 0) {
 			pdesc.back().events |= POLLIN;
 		}
 
-		if (eptr->outputhead != NULL) {
+		if (eptr->outputPacketHead != NULL) {
 			pdesc.back().events |= POLLOUT;
 		}
 	}
@@ -6333,38 +6349,38 @@ void matoclserv_desc(std::vector<pollfd> &pdesc) {
 
 
 void matoclserv_serve(const std::vector<pollfd> &pdesc) {
-	uint32_t now=eventloop_time();
+	uint32_t now = eventloop_time();
 	packetstruct *pptr;
 	packetstruct *paptr;
 
-	if (lsockpdescpos >= 0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
-		int ns = tcpaccept(lsock);
+	if (masterSocketDescPos >= 0 && (pdesc[masterSocketDescPos].revents & POLLIN)) {
+		int ns = tcpaccept(masterSocket);
 		if (ns < 0) {
 			safs_silent_errlog(LOG_NOTICE,"main master server module: accept error");
 		} else {
 			tcpnonblock(ns);
 			tcpnodelay(ns);
 			auto eptr = std::make_unique<matoclserventry>();
-			eptr->sock = ns;
-			eptr->pdescpos = -1;
-			tcpgetpeer(ns,&(eptr->peerip),&(eptr->peerport));
+			eptr->socket = ns;
+			eptr->pDescPos = -1;
+			tcpgetpeer(ns, &(eptr->peerIpAddress), &(eptr->peerPort));
 			eptr->registered = ClientState::kUnregistered;
-			eptr->iolimits = false;
+			eptr->ioLimitsEnabled = false;
 			eptr->version = 0;
 			eptr->mode = ClientConnectionMode::HEADER;
-			eptr->lastread = now;
-			eptr->lastwrite = now;
-			eptr->inputpacket.next = NULL;
-			eptr->inputpacket.bytesleft = 8;
-			eptr->inputpacket.startptr = eptr->hdrbuff;
-			eptr->inputpacket.packet = NULL;
+			eptr->lastReadTimestamp = now;
+			eptr->lastWriteTimestamp = now;
+			eptr->inputPacket.next = NULL;
+			eptr->inputPacket.bytesLeft = 8;
+			eptr->inputPacket.startPtr = eptr->headerBuffer;
+			eptr->inputPacket.packet = NULL;
 			eptr->adminTask = AdminTask::kNone;
-			eptr->outputhead = NULL;
-			eptr->outputtail = &(eptr->outputhead);
+			eptr->outputPacketHead = NULL;
+			eptr->outputPacketTail = &(eptr->outputPacketHead);
 
-			eptr->chunkdelayedops.clear();
-			eptr->sesdata = NULL;
-			memset(eptr->passwordrnd, 0, 32);
+			eptr->delayedChunkOperations.clear();
+			eptr->sessionData = NULL;
+			memset(eptr->randomPassword, 0, 32);
 
 			matoclservList.push_front(std::move(eptr));
 		}
@@ -6372,14 +6388,14 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 
 // read
 	for (const auto &eptr : matoclservList) {
-		if (eptr->pdescpos >= 0) {
-			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
+		if (eptr->pDescPos >= 0) {
+			if (pdesc[eptr->pDescPos].revents & (POLLERR | POLLHUP)) {
 				eptr->mode = ClientConnectionMode::KILL;
 			}
 
-			if ((pdesc[eptr->pdescpos].revents & POLLIN) &&
+			if ((pdesc[eptr->pDescPos].revents & POLLIN) &&
 			    eptr->mode != ClientConnectionMode::KILL) {
-				eptr->lastread = now;
+				eptr->lastReadTimestamp = now;
 				matoclserv_read(eptr.get());
 			}
 		}
@@ -6387,37 +6403,39 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 
 // write
 	for (const auto &eptr : matoclservList) {
-		if (eptr->lastwrite + 2 < now && eptr->registered != ClientState::kOldTools &&
-		    eptr->outputhead == NULL) {
+		if (eptr->lastWriteTimestamp + 2 < now && eptr->registered != ClientState::kOldTools &&
+		    eptr->outputPacketHead == NULL) {
 			// 4 byte length because of 'msgid'
 			uint8_t *ptr = matoclserv_createpacket(eptr.get(), ANTOAN_NOP, 4);
 			*((uint32_t *)ptr) = 0;
 		}
 
-		if (eptr->pdescpos >= 0) {
-			if ((((pdesc[eptr->pdescpos].events & POLLOUT) == 0 && (eptr->outputhead)) ||
-			     (pdesc[eptr->pdescpos].revents & POLLOUT)) &&
+		if (eptr->pDescPos >= 0) {
+			if ((((pdesc[eptr->pDescPos].events & POLLOUT) == 0 && (eptr->outputPacketHead)) ||
+			     (pdesc[eptr->pDescPos].revents & POLLOUT)) &&
 			    eptr->mode != ClientConnectionMode::KILL) {
-				eptr->lastwrite = now;
+				eptr->lastWriteTimestamp = now;
 				matoclserv_write(eptr.get());
 			}
 		}
 
-		if (eptr->lastread + 10 < now && exiting == 0) { eptr->mode = ClientConnectionMode::KILL; }
+		if (eptr->lastReadTimestamp + 10 < now && exiting == 0) {
+			eptr->mode = ClientConnectionMode::KILL;
+		}
 	}
 
 // close
 	for (auto eptrIt = matoclservList.begin(); eptrIt != matoclservList.end();) {
 		auto *eptr = eptrIt->get();
 		if (eptr->mode == ClientConnectionMode::KILL) {
-			matocl_beforedisconnect(eptr);
-			tcpclose(eptr->sock);
+			matocl_before_disconnect(eptr);
+			tcpclose(eptr->socket);
 
-			if (eptr->inputpacket.packet) {
-				free(eptr->inputpacket.packet);
+			if (eptr->inputPacket.packet) {
+				free(eptr->inputPacket.packet);
 			}
 
-			pptr = eptr->outputhead;
+			pptr = eptr->outputPacketHead;
 			while (pptr) {
 				if (pptr->packet) {
 					free(pptr->packet);
@@ -6527,7 +6545,7 @@ void matoclserv_become_master() {
 	}
 
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 10, 0, matocl_session_check);
-	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, matocl_session_statsmove);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, matocl_session_stats_rotate);
 	return;
 }
 
@@ -6604,8 +6622,8 @@ void matoclserv_reload() {
 
 	safs::log_info("main master server module: socket address has changed, now listen on {}:{}",
 	               ListenHost, ListenPort);
-	tcpclose(lsock);
-	lsock = newlsock;
+	tcpclose(masterSocket);
+	masterSocket = newlsock;
 }
 
 int matoclserv_network_init() {
@@ -6625,21 +6643,21 @@ int matoclserv_network_init() {
 	}
 
 	exiting = 0;
-	lsock = tcpsocket();
-	if (lsock < 0) {
+	masterSocket = tcpsocket();
+	if (masterSocket < 0) {
 		safs::log_err("main master server module: can't create socket");
 		return -1;
 	}
 
-	tcpnonblock(lsock);
-	tcpnodelay(lsock);
-	tcpreuseaddr(lsock);
+	tcpnonblock(masterSocket);
+	tcpnodelay(masterSocket);
+	tcpreuseaddr(masterSocket);
 
-	if (tcpsetacceptfilter(lsock) < 0 && errno != ENOTSUP) {
+	if (tcpsetacceptfilter(masterSocket) < 0 && errno != ENOTSUP) {
 		safs::log_info("main master server module: can't set accept filter");
 	}
 
-	if (tcpstrlisten(lsock, ListenHost.c_str(), ListenPort.c_str(), 100) < 0) {
+	if (tcpstrlisten(masterSocket, ListenHost.c_str(), ListenPort.c_str(), 100) < 0) {
 		safs::log_err("main master server module: can't listen on {}:{}", ListenHost, ListenPort);
 		return -1;
 	}
@@ -6663,7 +6681,7 @@ int matoclserv_network_init() {
 
 void matoclserv_session_unload() {
 	for (const auto& sessionPtr : sessionVector) {
-		sessionPtr->openedfiles.clear();
+		sessionPtr->openFilesSet.clear();
 	}
 
 	sessionVector.clear();
