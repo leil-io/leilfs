@@ -37,7 +37,7 @@ public:
 	~ChunkFileCreator();
 
 	void create();
-	void write(uint32_t offset, uint32_t size, uint32_t crc, const uint8_t* buffer);
+	void write(const uint8_t* buffer, uint32_t numBlocks, std::vector<uint32_t> &crc);
 	void commit();
 
 	uint64_t chunkId() const { return chunk_id_; }
