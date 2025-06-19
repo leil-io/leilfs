@@ -42,8 +42,7 @@ public:
 	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 16;
 	static constexpr uint16_t kDefaultMaxBlocksPerHddReadJob = 8;
 
-	NetworkWorkerThread(uint32_t nwWorkerThreadId, std::vector<int> &bgJobPoolWakeUpFds,
-	                    std::vector<JobPool *> bgJobPools);
+	NetworkWorkerThread(uint32_t nwWorkerThreadId);
 	NetworkWorkerThread(const NetworkWorkerThread &) = delete;
 
 	// main loop
@@ -64,8 +63,7 @@ private:
 	std::list<ChunkserverEntry> csservEntries;
 
 	uint32_t nwWorkerThreadId_;
-	std::vector<int> bgJobPoolWakeUpFds_;
-	std::vector<JobPool *> bgJobPools_;
+	std::vector<JobPool*> jobPoolsCurrentlyUsed;
 	static const uint32_t JOB_FD_PDESC_POS = 1;
 	std::vector<struct pollfd> pdesc;
 	int notify_pipe[2];

@@ -19,6 +19,7 @@
 
 #include "common/platform.h"
 
+ #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver/network_worker_thread.h"
 
 #include <cerrno>
@@ -53,14 +54,10 @@ constexpr int getConnectTimeout(int cnt) {
 	               : kTimeoutEven * (1 << (cnt >> 1));
 }
 
-NetworkWorkerThread::NetworkWorkerThread(uint32_t nwWorkerThreadId,
-                                         std::vector<int> &bgJobPoolWakeUpFds,
-                                         std::vector<JobPool *> bgJobPools)
+NetworkWorkerThread::NetworkWorkerThread(uint32_t nwWorkerThreadId)
     : name_("nw_" + std::to_string(nwWorkerThreadId)),
       doTerminate(false),
-      nwWorkerThreadId_(nwWorkerThreadId),
-      bgJobPoolWakeUpFds_(bgJobPoolWakeUpFds),
-      bgJobPools_(bgJobPools) {
+      nwWorkerThreadId_(nwWorkerThreadId) {
 	TRACETHIS();
 	eassert(pipe(notify_pipe) != -1);
 #ifdef F_SETPIPE_SZ
@@ -124,7 +121,16 @@ void NetworkWorkerThread::preparePollFds() {
 	TRACETHIS();
 	pdesc.clear();
 	pdesc.emplace_back(pollfd(notify_pipe[0], POLLIN, 0));
-	for (auto &wakeUpFd : bgJobPoolWakeUpFds_) { pdesc.emplace_back(pollfd(wakeUpFd, POLLIN, 0)); }
+
+	{
+		std::lock_guard gDisksJobPoolLock(gDisksJobPoolsMutex);
+
+		jobPoolsCurrentlyUsed.clear();
+		for (auto &[jobPool, wakeupFDs] : gDisksJobPools) {
+			pdesc.emplace_back(pollfd(wakeupFDs[nwWorkerThreadId_], POLLIN, 0));
+			jobPoolsCurrentlyUsed.push_back(jobPool);
+		}
+	}
 
 	std::unique_lock lock(csservheadLock);
 	for (auto& entry : csservEntries) {
@@ -189,9 +195,9 @@ void NetworkWorkerThread::servePoll() {
 	uint64_t usecnow = eventloop_utime();
 	ChunkserverEntry::State lstate;
 
-	for (size_t i = 0; i < bgJobPools_.size(); i++) {
+	for (size_t i = 0; i < jobPoolsCurrentlyUsed.size(); i++) {
 		if (pdesc[i + 1].revents & POLLIN) {
-			bgJobPools_[i]->processCompletedJobs(nwWorkerThreadId_);
+			jobPoolsCurrentlyUsed[i]->processCompletedJobs(nwWorkerThreadId_);
 		}
 	}
 

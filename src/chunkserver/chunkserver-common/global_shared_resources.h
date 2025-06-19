@@ -94,3 +94,7 @@ inline uint32_t gNrOfNetworkWorkers = 0;
 inline uint32_t gNrOfWorkersPerDrive = 0;
 
 inline uint32_t gBgjobsCountPerDrive = 0;
+
+inline std::mutex gDisksJobPoolsMutex;
+
+inline std::list<std::pair<JobPool*, std::vector<int>>> gDisksJobPools;

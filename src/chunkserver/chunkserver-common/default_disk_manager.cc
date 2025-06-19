@@ -19,8 +19,10 @@
 #include "common/platform.h"
 
 #include "chunkserver-common/default_disk_manager.h"
+#include "chunkserver-common/jobpool.h"
 
 #include <fstream>
+#include <mutex>
 
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/global_shared_resources.h"
@@ -28,6 +30,35 @@
 #include "common/exceptions.h"
 #include "config/cfg.h"
 #include "devtools/TracePrinter.h"
+#include "disk_interface.h"
+
+void DefaultDiskManager::registerDiskForChunkOperations(IDisk *disk) {
+	std::vector<int> jobPoolWakeUpFds(gNrOfNetworkWorkers);
+	static std::atomic_uint16_t disksRegisteredCounter(0);
+	disk->setWorkerPool(new JobPool("disk" + std::to_string(disksRegisteredCounter++) + "_",
+	                                gNrOfWorkersPerDrive, gBgjobsCountPerDrive, gNrOfNetworkWorkers,
+	                                jobPoolWakeUpFds));
+
+	std::lock_guard gDisksJobPoolsLock(gDisksJobPoolsMutex);
+	gDisksJobPools.emplace_back(disk->getWorkerPool(), jobPoolWakeUpFds);
+}
+
+
+void DefaultDiskManager::unregisterDiskForChunkOperations(IDisk *disk) {
+	std::unique_lock gDisksJobPoolsLock(gDisksJobPoolsMutex);
+	auto it = std::find_if(gDisksJobPools.begin(), gDisksJobPools.end(),
+	                       [disk](const auto &pair) { return pair.first == disk->getWorkerPool(); });
+	if (it == gDisksJobPools.end()) {
+		safs::log_err("unregisterDiskForChunkOperations: Disk {} not found in job pools",
+		                   disk->metaPath().c_str());
+		return;
+	} else {
+		gDisksJobPools.erase(it);
+	}
+	gDisksJobPoolsLock.unlock();
+
+	delete disk->getWorkerPool();
+}
 
 int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 	TRACETHIS();
@@ -138,6 +169,9 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 	}
 
 	gDisks.emplace_back(currentDisk);
+	if (gNrOfNetworkWorkers > 0) { // We have already parsed the cfg file
+		registerDiskForChunkOperations(currentDisk);
+	}
 	gResetTester = true;
 
 	return 2;

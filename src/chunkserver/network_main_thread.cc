@@ -93,9 +93,9 @@ void mainNetworkThreadReload(void) {
 
 	cfg_warning_on_value_change("NR_OF_NETWORK_WORKERS", gNrOfNetworkWorkers);
 	cfg_warning_on_value_change("NR_OF_HDD_WORKERS_PER_NETWORK_WORKER",
-	                            gNrOfHddWorkersPerNetworkWorker);
+	                            gNrOfWorkersPerDrive);
 	cfg_warning_on_value_change("BGJOBSCNT_PER_NETWORK_WORKER",
-	                            gBgjobsCountPerNetworkWorker);
+	                            gBgjobsCountPerDrive);
 
 	try {
 		replicationBandwidthLimitReload();
@@ -223,10 +223,10 @@ int mainNetworkThreadInit(void) {
 	gNrOfNetworkWorkers = cfg_get_minvalue<uint32_t>(
 	    "NR_OF_NETWORK_WORKERS",
 	    NetworkWorkerThread::kDefaultNumberOfNetworkWorkers, 1);
-	gNrOfHddWorkersPerNetworkWorker = cfg_get_minvalue<uint32_t>(
+	gNrOfWorkersPerDrive = cfg_get_minvalue<uint32_t>(
 	    "NR_OF_HDD_WORKERS_PER_NETWORK_WORKER",
 	    NetworkWorkerThread::kDefaultNumberOfHddWorkersPerNetworkWorker, 1);
-	gBgjobsCountPerNetworkWorker = cfg_get_minvalue<uint32_t>(
+	gBgjobsCountPerDrive = cfg_get_minvalue<uint32_t>(
 	    "BGJOBSCNT_PER_NETWORK_WORKER",
 	    NetworkWorkerThread::kDefaultMaxBackgroundJobsPerNetworkWorker, 10);
 
@@ -274,24 +274,8 @@ int mainNetworkThreadInit(void) {
 }
 
 int mainNetworkThreadInitThreads(void) {
-	std::unique_lock disksLock(gDisksMutex);
-	std::vector<std::vector<int>> globalBgJobPoolWakeUpFds(gDisks.size(),
-	                                                       std::vector<int>(gNrOfNetworkWorkers));
-	globalBgJobPools.resize(gDisks.size());
-	for (size_t i = 0; i < gDisks.size(); i++) {
-		gDisks[i]->setWorkerPool(new JobPool("disk" + std::to_string(i) + "_",
-		                                     gNrOfHddWorkersPerNetworkWorker, 4096,
-		                                     gNrOfNetworkWorkers, globalBgJobPoolWakeUpFds[i]));
-		globalBgJobPools[i] = static_cast<JobPool *>(gDisks[i]->getWorkerPool());
-	}
-	disksLock.unlock();
-
 	for (unsigned i = 0; i < gNrOfNetworkWorkers; ++i) {
-		std::vector<int> bgJobPoolWakeUpFds(gDisks.size());
-		for (size_t j = 0; j < gDisks.size(); j++) {
-			bgJobPoolWakeUpFds[j] = globalBgJobPoolWakeUpFds[j][i];
-		}
-		networkThreadObjects.emplace_back(i, bgJobPoolWakeUpFds, globalBgJobPools);
+		networkThreadObjects.emplace_back(i);
 	}
 
 	for (auto obj = networkThreadObjects.begin(); obj != networkThreadObjects.end(); ++obj) {

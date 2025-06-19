@@ -274,5 +274,5 @@ private:
 	/// when the collection is accessed for reading or modifying.
 	DiskChunks chunks_;
 
-	JobPool *workerPool_;
+	JobPool *workerPool_ = nullptr;
 };

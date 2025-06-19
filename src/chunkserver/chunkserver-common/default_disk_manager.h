@@ -85,6 +85,10 @@ public:
 	/// Usually when gResetTester changes or after a reload.
 	void resetDiskIteratorForTests() override;
 
+	void registerDiskForChunkOperations(IDisk *disk) override;
+
+	void unregisterDiskForChunkOperations(IDisk *disk) override;
+
 private:
 	/// Next disk index for GC. Helps in the round-robin strategy.
 	uint32_t nextDiskIndexForGC_ = 0;

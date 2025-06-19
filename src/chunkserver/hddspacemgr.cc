@@ -284,6 +284,12 @@ void hddCheckDisks() {
 
 	std::unique_lock disksUniqueLock(gDisksMutex);
 
+	for (auto &disk : gDisks) {
+		if (disk->getWorkerPool() == nullptr && gNrOfWorkersPerDrive > 0) {
+			gDiskManager->registerDiskForChunkOperations(disk.get());
+		}
+	}
+
 	if (gDiskActions == 0) {
 		return;
 	}
@@ -305,6 +311,7 @@ void hddCheckDisks() {
 				/* fallthrough */
 			case IDisk::ScanState::kWorking:
 				hddSendDataToMaster(disk.get(), true);
+				gDiskManager->unregisterDiskForChunkOperations(disk.get());
 				changed = 1;
 				disk->setWasRemovedFromConfig(false);
 				break;
@@ -2524,6 +2531,9 @@ void hddTerminate(void) {
 	// were executed.
 	gChunksMap.clear();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
+	for (auto &disk : gDisks) {
+		gDiskManager->unregisterDiskForChunkOperations(disk.get());
+	}
 	gDisks.clear();
 }
 

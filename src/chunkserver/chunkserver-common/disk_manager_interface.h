@@ -70,4 +70,8 @@ public:
 
 	/// Resets the helper disk iterator for tests.
 	virtual void resetDiskIteratorForTests() = 0;
+
+	virtual void registerDiskForChunkOperations(IDisk *disk) = 0;
+
+	virtual void unregisterDiskForChunkOperations(IDisk *disk) = 0;
 };
