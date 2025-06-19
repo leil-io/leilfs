@@ -63,9 +63,6 @@ static uint16_t mylistenport;
 // from config
 static char *ListenHost;
 static char *ListenPort;
-static uint32_t gNrOfNetworkWorkers;
-static uint32_t gNrOfHddWorkersPerNetworkWorker;
-static uint32_t gBgjobsCountPerNetworkWorker;
 
 void chunkReplicatorReload() {
 	unsigned rep_total = cfg_get_minmaxvalue<unsigned>("REPLICATION_TOTAL_TIMEOUT_MS",

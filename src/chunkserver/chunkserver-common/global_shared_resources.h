@@ -88,3 +88,9 @@ inline std::atomic_bool gAdviseNoCache = false;
 inline IoStat gIoStat;
 
 inline PluginManager pluginManager;
+
+inline uint32_t gNrOfNetworkWorkers = 0;
+
+inline uint32_t gNrOfWorkersPerDrive = 0;
+
+inline uint32_t gBgjobsCountPerDrive = 0;
