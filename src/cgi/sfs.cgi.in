@@ -48,10 +48,6 @@ SAU_MATOCL_HOSTNAME = 1552
 SAU_CLTOMA_MOUNT_INFO_LIST = 1609
 SAU_MATOCL_MOUNT_INFO_LIST = 1610
 
-SAUNAFS_VERSION_WITH_QUOTAS = (2, 5, 0)
-SAUNAFS_VERSION_WITH_CUSTOM_GOALS = (2, 5, 3)
-SAUNAFS_VERSION_WITH_LIST_OF_SHADOWS = (2, 5, 5)
-
 cgitb.enable()
 
 fields = cgi.FieldStorage()
@@ -200,19 +196,15 @@ def make_sau_message(type, version, data):
 
 
 def cltoma_list_goals():
-    if masterversion < SAUNAFS_VERSION_WITH_CUSTOM_GOALS:
-        # For old servers just return the default 10 goals
-        return [(i, str(i), str(i) + "*_") for i in range(1, 10)]
-    else:
-        # For new servers, use SAU_CLTOMA_LIST_GOALS to fetch the list of goal definitions
-        request = make_sau_message(SAU_CLTOMA_LIST_GOALS, 0, b"\1")
-        response = send_and_receive(
-            masterhost, masterport, request, SAU_MATOCL_LIST_GOALS, 0)
-        goals = deserialize(response, List(Primitive("H") + 2 * String))
-        if response:
-            raise RuntimeError(
-                "malformed SAU_MATOCL_LIST_GOALS response (too long by {0} bytes)".format(len(response)))
-        return goals
+    # For new servers, use SAU_CLTOMA_LIST_GOALS to fetch the list of goal definitions
+    request = make_sau_message(SAU_CLTOMA_LIST_GOALS, 0, b"\1")
+    response = send_and_receive(
+        masterhost, masterport, request, SAU_MATOCL_LIST_GOALS, 0)
+    goals = deserialize(response, List(Primitive("H") + 2 * String))
+    if response:
+        raise RuntimeError(
+            "malformed SAU_MATOCL_LIST_GOALS response (too long by {0} bytes)".format(len(response)))
+    return goals
 
 
 def cltoma_mount_info_list():
@@ -473,11 +465,7 @@ try:
     cmd, length = struct.unpack(">LL", header)
     data = myrecv(s, length)
     if cmd == MATOCL_INFO:
-        if length == 52:
-            masterversion = (1, 4, 0)
-        elif length == 60:
-            masterversion = (1, 5, 0)
-        elif length == 68 or length == 80:
+        if length == 68 or length == 80:
             masterversion = struct.unpack(">HBB", data[:4])
 except Exception:
     print("Content-Type: text/html; charset=UTF-8")
@@ -621,45 +609,20 @@ if "sections" in fields:
 else:
     sectionset = set(("IN",))
 
-if masterversion < (1, 5, 14):
-    sectiondef = {
-        "IN": "Info",
-        "CS": "Chunk Servers",
-        "HD": "Hard Disks",
-        "ML": "Mount List",
-        "MC": "Master Charts",
-        "CC": "Chunk Servers Charts",
-        "HELP": "Help"
-    }
-    sectionorder = ["IN", "CS", "HD", "ML", "MC", "CC", "HELP"]
-elif masterversion < SAUNAFS_VERSION_WITH_CUSTOM_GOALS:
-    sectiondef = {
-        "IN": "Info",
-        "CS": "Servers",
-        "HD": "Disks",
-        "EX": "Config",
-        "MS": "Mounts",
-        "MO": "Operations",
-        "MC": "Master Charts",
-        "CC": "Server Charts",
-        "HELP": "Help"
-    }
-    sectionorder = ["IN", "CS", "HD", "EX", "MS", "MO", "MC", "CC", "HELP"]
-else:
-    sectiondef = {
-        "IN": "Info",
-        "CH": "Chunks",
-        "CS": "Servers",
-        "HD": "Disks",
-        "EX": "Config",
-        "MS": "Mounts",
-        "MO": "Operations",
-        "MC": "Master Charts",
-        "CC": "Server Charts",
-        "HELP": "Help"
-    }
-    sectionorder = ["IN", "CH", "CS", "HD",
-                    "EX", "MS", "MO", "MC", "CC", "HELP"]
+sectiondef = {
+    "IN": "Info",
+    "CH": "Chunks",
+    "CS": "Servers",
+    "HD": "Disks",
+    "EX": "Config",
+    "MS": "Mounts",
+    "MO": "Operations",
+    "MC": "Master Charts",
+    "CC": "Server Charts",
+    "HELP": "Help"
+}
+sectionorder = ["IN", "CH", "CS", "HD",
+                "EX", "MS", "MO", "MC", "CC", "HELP"]
 
 
 print("Content-Type: text/html; charset=UTF-8")
@@ -808,14 +771,10 @@ if "IN" in sectionset:
             out.append("""		<th>directories</th>""")
             out.append("""		<th>files</th>""")
             out.append("""		<th>chunks</th>""")
-            if masterversion >= (1, 6, 10):
-                out.append(
-                    """		<th><a style="cursor:default" title="chunks from 'regular' hdd space and 'marked for removal' hdd space">all chunk copies</a></th>""")
-                out.append(
-                    """		<th><a style="cursor:default" title="only chunks from 'regular' hdd space">regular chunk copies</a></th>""")
-            else:
-                out.append("""		<th>chunk copies</th>""")
-                out.append("""		<th>copies to delete</th>""")
+            out.append(
+                """		<th><a style="cursor:default" title="chunks from 'regular' hdd space and 'marked for removal' hdd space">all chunk copies</a></th>""")
+            out.append(
+                """		<th><a style="cursor:default" title="only chunks from 'regular' hdd space">regular chunk copies</a></th>""")
             out.append("""	</tr>""")
             out.append("""	<tr>""")
             out.append("""		<td align="center">%u.%u.%u</td>""" % (v1, v2, v3))
@@ -906,118 +865,110 @@ if "IN" in sectionset:
 
     print("""<br/>""")
 
-    if masterversion >= (1, 5, 13):
-        try:
-            out = []
-            s = socket.socket()
-            s.connect((masterhost, masterport))
-            if masterversion >= (1, 6, 10):
-                mysend(s, struct.pack(">LLB", CLTOMA_CHUNKS_MATRIX, 1, 0))
-            else:
-                mysend(s, struct.pack(">LL", CLTOMA_CHUNKS_MATRIX, 0))
-            header = myrecv(s, 8)
-            cmd, length = struct.unpack(">LL", header)
-            if cmd == MATOCL_CHUNKS_MATRIX and length == 484:
-                matrix = []
-                for i in range(11):
-                    data = myrecv(s, 44)
-                    matrix.append(list(struct.unpack(">LLLLLLLLLLL", data)))
-                out.append(
-                    """<table class="FR" cellspacing="0" summary="Chunks state matrix">""")
-                if masterversion >= (1, 6, 10):
-                    out.append(
-                        """	<tr><th colspan="13">All chunks state matrix </th></tr>""")
+    try:
+        out = []
+        s = socket.socket()
+        s.connect((masterhost, masterport))
+        mysend(s, struct.pack(">LLB", CLTOMA_CHUNKS_MATRIX, 1, 0))
+        header = myrecv(s, 8)
+        cmd, length = struct.unpack(">LL", header)
+        if cmd == MATOCL_CHUNKS_MATRIX and length == 484:
+            matrix = []
+            for i in range(11):
+                data = myrecv(s, 44)
+                matrix.append(list(struct.unpack(">LLLLLLLLLLL", data)))
+            out.append(
+                """<table class="FR" cellspacing="0" summary="Chunks state matrix">""")
+            out.append(
+                """	<tr><th colspan="13">All chunks state matrix </th></tr>""")
+            out.append("""	<tr>""")
+            out.append(
+                """		<th rowspan="2" class="PERC4">needed<br/>copies</th>""")
+            out.append(
+                """		<th colspan="12" class="PERC96">valid copies (non-XOR chunks only)</th>""")
+            out.append("""	</tr>""")
+            out.append("""	<tr>""")
+            out.append("""		<th class="PERC8">0</th>""")
+            out.append("""		<th class="PERC8">1</th>""")
+            out.append("""		<th class="PERC8">2</th>""")
+            out.append("""		<th class="PERC8">3</th>""")
+            out.append("""		<th class="PERC8">4</th>""")
+            out.append("""		<th class="PERC8">5</th>""")
+            out.append("""		<th class="PERC8">6</th>""")
+            out.append("""		<th class="PERC8">7</th>""")
+            out.append("""		<th class="PERC8">8</th>""")
+            out.append("""		<th class="PERC8">9</th>""")
+            out.append("""		<th class="PERC8">10+</th>""")
+            out.append("""		<th class="PERC8">all</th>""")
+            out.append("""	</tr>""")
+            classsum = 7 * [0]
+            sumlist = 11 * [0]
+            for neededCopies in range(11):
+                out.append("""	<tr>""")
+                if neededCopies == 10:
+                    out.append("""		<td align="center">10+</td>""")
                 else:
-                    out.append(
-                        """	<tr><th colspan="13">Chunk state matrix</th></tr>""")
-                out.append("""	<tr>""")
-                out.append(
-                    """		<th rowspan="2" class="PERC4">needed<br/>copies</th>""")
-                out.append(
-                    """		<th colspan="12" class="PERC96">valid copies (non-XOR chunks only)</th>""")
-                out.append("""	</tr>""")
-                out.append("""	<tr>""")
-                out.append("""		<th class="PERC8">0</th>""")
-                out.append("""		<th class="PERC8">1</th>""")
-                out.append("""		<th class="PERC8">2</th>""")
-                out.append("""		<th class="PERC8">3</th>""")
-                out.append("""		<th class="PERC8">4</th>""")
-                out.append("""		<th class="PERC8">5</th>""")
-                out.append("""		<th class="PERC8">6</th>""")
-                out.append("""		<th class="PERC8">7</th>""")
-                out.append("""		<th class="PERC8">8</th>""")
-                out.append("""		<th class="PERC8">9</th>""")
-                out.append("""		<th class="PERC8">10+</th>""")
-                out.append("""		<th class="PERC8">all</th>""")
-                out.append("""	</tr>""")
-                classsum = 7 * [0]
-                sumlist = 11 * [0]
-                for neededCopies in range(11):
-                    out.append("""	<tr>""")
-                    if neededCopies == 10:
-                        out.append("""		<td align="center">10+</td>""")
-                    else:
-                        out.append("""		<td align="center">%u</td>""" %
-                                   neededCopies)
-                    for vc in range(11):
-                        if neededCopies == 0:
-                            if vc == 0:
-                                cl = "DELETEREADY"
-                                clidx = 6
-                            else:
-                                cl = "DELETEPENDING"
-                                clidx = 5
-                        elif vc == 0:
-                            cl = "MISSING"
-                            clidx = 0
-                        elif vc > neededCopies:
-                            cl = "OVERGOAL"
-                            clidx = 4
-                        elif vc < neededCopies:
-                            if vc == 1:
-                                cl = "ENDANGERED"
-                                clidx = 1
-                            else:
-                                cl = "UNDERGOAL"
-                                clidx = 2
-                        else:
-                            cl = "NORMAL"
-                            clidx = 3
-                        if matrix[neededCopies][vc] > 0:
-                            out.append(
-                                """		<td align="right"><span class="%s">%u</span></td>""" % (cl, matrix[neededCopies][vc]))
-                            classsum[clidx] += matrix[neededCopies][vc]
-                        else:
-                            out.append("""		<td align="center">-</td>""")
-                    if neededCopies == 0:
-                        out.append(
-                            """		<td align="right"><span class="IGNORE">%u</span></td>""" % sum(matrix[neededCopies]))
-                    else:
-                        out.append("""		<td align="right">%u</td>""" %
-                                   sum(matrix[neededCopies]))
-                    out.append("""	</tr>""")
-                    if neededCopies > 0:
-                        sumlist = [
-                            a + b for (a, b) in zip(sumlist, matrix[neededCopies])]
-                out.append("""	<tr>""")
-                out.append("""		<td align="center">all 1+</td>""")
+                    out.append("""		<td align="center">%u</td>""" %
+                                neededCopies)
                 for vc in range(11):
-                    out.append("""		<td align="right">%u</td>""" % sumlist[vc])
-                out.append("""		<td align="right">%u</td>""" % sum(sumlist))
+                    if neededCopies == 0:
+                        if vc == 0:
+                            cl = "DELETEREADY"
+                            clidx = 6
+                        else:
+                            cl = "DELETEPENDING"
+                            clidx = 5
+                    elif vc == 0:
+                        cl = "MISSING"
+                        clidx = 0
+                    elif vc > neededCopies:
+                        cl = "OVERGOAL"
+                        clidx = 4
+                    elif vc < neededCopies:
+                        if vc == 1:
+                            cl = "ENDANGERED"
+                            clidx = 1
+                        else:
+                            cl = "UNDERGOAL"
+                            clidx = 2
+                    else:
+                        cl = "NORMAL"
+                        clidx = 3
+                    if matrix[neededCopies][vc] > 0:
+                        out.append(
+                            """		<td align="right"><span class="%s">%u</span></td>""" % (cl, matrix[neededCopies][vc]))
+                        classsum[clidx] += matrix[neededCopies][vc]
+                    else:
+                        out.append("""		<td align="center">-</td>""")
+                if neededCopies == 0:
+                    out.append(
+                        """		<td align="right"><span class="IGNORE">%u</span></td>""" % sum(matrix[neededCopies]))
+                else:
+                    out.append("""		<td align="right">%u</td>""" %
+                                sum(matrix[neededCopies]))
                 out.append("""	</tr>""")
-                out.append("""	<tr><td colspan="13">""" + " / ".join(["""<span class="%sBOX"><!-- --></span>&nbsp;-&nbsp;%s (<span class="%s">%u</span>)""" % (cl, desc, cl, classsum[clidx]) for clidx, cl, desc in [(0, "MISSING", "missing"), (
-                    1, "ENDANGERED", "endangered"), (2, "UNDERGOAL", "undergoal"), (3, "NORMAL", "stable"), (4, "OVERGOAL", "overgoal"), (5, "DELETEPENDING", "pending&nbsp;deletion"), (6, "DELETEREADY", "ready&nbsp;to&nbsp;be&nbsp;removed")]]) + """</td></tr>""")
-                out.append("""</table>""")
-            s.close()
-            print("\n".join(out))
-        except Exception:
-            print("""<table class="FR" cellspacing="0" summary="Exception">""")
-            print("""<tr><td align="left"><pre>""")
-            traceback.print_exc(file=sys.stdout)
-            print("""</pre></td></tr>""")
-            print("""</table>""")
+                if neededCopies > 0:
+                    sumlist = [
+                        a + b for (a, b) in zip(sumlist, matrix[neededCopies])]
+            out.append("""	<tr>""")
+            out.append("""		<td align="center">all 1+</td>""")
+            for vc in range(11):
+                out.append("""		<td align="right">%u</td>""" % sumlist[vc])
+            out.append("""		<td align="right">%u</td>""" % sum(sumlist))
+            out.append("""	</tr>""")
+            out.append("""	<tr><td colspan="13">""" + " / ".join(["""<span class="%sBOX"><!-- --></span>&nbsp;-&nbsp;%s (<span class="%s">%u</span>)""" % (cl, desc, cl, classsum[clidx]) for clidx, cl, desc in [(0, "MISSING", "missing"), (
+                1, "ENDANGERED", "endangered"), (2, "UNDERGOAL", "undergoal"), (3, "NORMAL", "stable"), (4, "OVERGOAL", "overgoal"), (5, "DELETEPENDING", "pending&nbsp;deletion"), (6, "DELETEREADY", "ready&nbsp;to&nbsp;be&nbsp;removed")]]) + """</td></tr>""")
+            out.append("""</table>""")
+        s.close()
+        print("\n".join(out))
+    except Exception:
+        print("""<table class="FR" cellspacing="0" summary="Exception">""")
+        print("""<tr><td align="left"><pre>""")
+        traceback.print_exc(file=sys.stdout)
+        print("""</pre></td></tr>""")
+        print("""</table>""")
 
-        print("""<br/>""")
+    print("""<br/>""")
 
     try:
         out = []
@@ -1245,56 +1196,55 @@ if "CH" in sectionset:
     print("""<br/>""")
 
 if "CS" in sectionset:
-    if masterversion >= SAUNAFS_VERSION_WITH_LIST_OF_SHADOWS:
-        out = []
-        try:
-            SHorder = int(fields.getvalue("SHorder"))
-        except Exception:
+    out = []
+    try:
+        SHorder = int(fields.getvalue("SHorder"))
+    except Exception:
+        SHorder = 1
+    try:
+        SHrev = bool(int(fields.getvalue("SHrev")))
+    except Exception:
+        SHrev = False
+
+    try:
+        out.append(
+            """<table class="FR" cellspacing="0" summary="Metadata Servers">""")
+        out.append("""	<tr><th colspan="8">Metadata Servers</th></tr>""")
+        out.append("""	<tr>""")
+        out.append("""		<th>#</th>""")
+        out.append("""		<th><a href="%s">host</a></th>""" %
+                    (createorderlink("SH", 1)))
+        out.append("""		<th><a href="%s">IP</a></th>""" %
+                    (createorderlink("SH", 2)))
+        out.append("""		<th><a href="%s">client<br/>port</a></th>""" %
+                    (createorderlink("SH", 3)))
+        out.append("""		<th><a href="%s">version</a></th>""" %
+                    (createorderlink("SH", 4)))
+        out.append("""		<th><a href="%s">personality</a></th>""" %
+                    (createorderlink("SH", 5)))
+        out.append("""		<th><a href="%s">state</a></th>""" %
+                    (createorderlink("SH", 6)))
+        out.append("""		<th><a href="%s">metadata<br/>version</a></th>""" %
+                    (createorderlink("SH", 7)))
+        out.append("""	</tr>""")
+        if SHorder < 1 or SHorder > 7:
             SHorder = 1
-        try:
-            SHrev = bool(int(fields.getvalue("SHrev")))
-        except Exception:
-            SHrev = False
 
-        try:
-            out.append(
-                """<table class="FR" cellspacing="0" summary="Metadata Servers">""")
-            out.append("""	<tr><th colspan="8">Metadata Servers</th></tr>""")
-            out.append("""	<tr>""")
-            out.append("""		<th>#</th>""")
-            out.append("""		<th><a href="%s">host</a></th>""" %
-                       (createorderlink("SH", 1)))
-            out.append("""		<th><a href="%s">IP</a></th>""" %
-                       (createorderlink("SH", 2)))
-            out.append("""		<th><a href="%s">client<br/>port</a></th>""" %
-                       (createorderlink("SH", 3)))
-            out.append("""		<th><a href="%s">version</a></th>""" %
-                       (createorderlink("SH", 4)))
-            out.append("""		<th><a href="%s">personality</a></th>""" %
-                       (createorderlink("SH", 5)))
-            out.append("""		<th><a href="%s">state</a></th>""" %
-                       (createorderlink("SH", 6)))
-            out.append("""		<th><a href="%s">metadata<br/>version</a></th>""" %
-                       (createorderlink("SH", 7)))
-            out.append("""	</tr>""")
-            if SHorder < 1 or SHorder > 7:
-                SHorder = 1
-
-            rows = cltoma_metadataservers_list()
-            rows = sorted(rows, reverse=SHrev, key=lambda x: x[SHorder - 1])
-            i = 1
-            for row in rows:
-                out.append(make_table_row('<td>', '</td>', (i,) + row))
-                i += 1
-            out.append("""</table>""")
-            print("\n".join(out))
-        except Exception:
-            print("""<table class="FR" cellspacing="0" summary="Exception">""")
-            print("""<tr><td align="left"><pre>""")
-            traceback.print_exc(file=sys.stdout)
-            print("""</pre></td></tr>""")
-            print("""</table>""")
-        print("""<br/>""")
+        rows = cltoma_metadataservers_list()
+        rows = sorted(rows, reverse=SHrev, key=lambda x: x[SHorder - 1])
+        i = 1
+        for row in rows:
+            out.append(make_table_row('<td>', '</td>', (i,) + row))
+            i += 1
+        out.append("""</table>""")
+        print("\n".join(out))
+    except Exception:
+        print("""<table class="FR" cellspacing="0" summary="Exception">""")
+        print("""<tr><td align="left"><pre>""")
+        traceback.print_exc(file=sys.stdout)
+        print("""</pre></td></tr>""")
+        print("""</table>""")
+    print("""<br/>""")
 
     out = []
 
@@ -1322,16 +1272,12 @@ if "CS" in sectionset:
                    (createorderlink("CS", 3)))
         out.append("""		<th rowspan="2"><a href="%s">version</a></th>""" %
                    (createorderlink("CS", 4)))
-        if masterversion >= SAUNAFS_VERSION_WITH_CUSTOM_GOALS:
-            out.append("""		<th rowspan="2"><a href="%s">label</a></th>""" %
-                       (createorderlink("CS", 24)))
-            column_count += 1
+        out.append("""		<th rowspan="2"><a href="%s">label</a></th>""" %
+                    (createorderlink("CS", 24)))
+        column_count += 1
         out.append("""		<th colspan="4">'regular' hdd space</th>""")
-        if masterversion >= (1, 6, 10):
-            out.append(
-                """		<th colspan="4">'marked for removal' hdd space</th>""")
-        else:
-            out.append("""		<th colspan="4">'to be empty' hdd space</th>""")
+        out.append(
+            """		<th colspan="4">'marked for removal' hdd space</th>""")
         out.append("""	</tr>""")
         out.append("""	<tr>""")
         out.append("""		<th><a href="%s">chunks</a></th>""" %
@@ -1354,10 +1300,7 @@ if "CS" in sectionset:
 
         s = socket.socket()
         s.connect((masterhost, masterport))
-        if masterversion >= SAUNAFS_VERSION_WITH_CUSTOM_GOALS:
-            mysend(s, struct.pack(">LLLB", SAU_CLTOMA_CSERV_LIST, 5, 0, 0))
-        else:
-            mysend(s, struct.pack(">LL", CLTOMA_CSERV_LIST, 0))
+        mysend(s, struct.pack(">LLLB", SAU_CLTOMA_CSERV_LIST, 5, 0, 0))
         header = myrecv(s, 8)
         cmd, length = struct.unpack(">LL", header)
         data = myrecv(s, length)
@@ -1432,8 +1375,7 @@ if "CS" in sectionset:
             else:
                 out.append("""		<td align="right">%u</td><td align="left">%s</td><td align="center">%s</td><td align="center">%u</td><td align="center">%u.%u.%u</td>""" %
                            (i, host, strip, port, v1, v2, v3))
-                if masterversion >= SAUNAFS_VERSION_WITH_CUSTOM_GOALS:
-                    out.append("""		<td class="LEFT">%s</td>""" % label)
+                out.append("""		<td class="LEFT">%s</td>""" % label)
                 out.append("""		<td align="right">%u</td><td align="right"><a style="cursor:default" title="%s B">%sB</a></td><td align="right"><a style="cursor:default" title="%s B">%sB</a></td>""" %
                            (chunks, decimal_number(used), humanize_number(used, "&nbsp;"), decimal_number(total), humanize_number(total, "&nbsp;")))
                 if (total > 0):
@@ -1465,79 +1407,77 @@ if "CS" in sectionset:
 
     print("""<br/>""")
 
-    if masterversion >= (1, 6, 5):
-        out = []
+    out = []
+    try:
+        MBorder = int(fields.getvalue("MBorder"))
+    except Exception:
+        MBorder = 0
+    try:
+        MBrev = int(fields.getvalue("MBrev"))
+    except Exception:
+        MBrev = 0
 
-        try:
-            MBorder = int(fields.getvalue("MBorder"))
-        except Exception:
-            MBorder = 0
-        try:
-            MBrev = int(fields.getvalue("MBrev"))
-        except Exception:
-            MBrev = 0
+    try:
+        out.append(
+            """<table class="FR" cellspacing="0" summary="Metadata Backup loggers">""")
+        out.append(
+            """	<tr><th colspan="4">Metadata Backup Loggers</th></tr>""")
+        out.append("""	<tr>""")
+        out.append("""		<th>#</th>""")
+        out.append("""		<th><a href="%s">host</a></th>""" %
+                    (createorderlink("MB", 1)))
+        out.append("""		<th><a href="%s">IP</a></th>""" %
+                    (createorderlink("MB", 2)))
+        out.append("""		<th><a href="%s">version</a></th>""" %
+                    (createorderlink("MB", 3)))
+        out.append("""	</tr>""")
 
-        try:
-            out.append(
-                """<table class="FR" cellspacing="0" summary="Metadata Backup loggers">""")
-            out.append(
-                """	<tr><th colspan="4">Metadata Backup Loggers</th></tr>""")
-            out.append("""	<tr>""")
-            out.append("""		<th>#</th>""")
-            out.append("""		<th><a href="%s">host</a></th>""" %
-                       (createorderlink("MB", 1)))
-            out.append("""		<th><a href="%s">IP</a></th>""" %
-                       (createorderlink("MB", 2)))
-            out.append("""		<th><a href="%s">version</a></th>""" %
-                       (createorderlink("MB", 3)))
-            out.append("""	</tr>""")
+        s = socket.socket()
+        s.connect((masterhost, masterport))
+        mysend(s, struct.pack(">LL", CLTOMA_MLOG_LIST, 0))
+        header = myrecv(s, 8)
+        cmd, length = struct.unpack(">LL", header)
+        if cmd == MATOCL_MLOG_LIST and (length % 8) == 0:
+            data = myrecv(s, length)
+            n = int(length / 8)
+            servers = []
+            for i in range(n):
+                d = data[i * 8:(i + 1) * 8]
+                v1, v2, v3, ip1, ip2, ip3, ip4 = struct.unpack(
+                    ">HBBBBBB", d)
+                strip = "%u.%u.%u.%u" % (ip1, ip2, ip3, ip4)
+                try:
+                    host = (socket.gethostbyaddr(strip))[0]
+                except Exception:
+                    host = "(unresolved)"
+                if MBorder == 1:
+                    sf = host
+                elif MBorder == 2 or MBorder == 0:
+                    sf = (ip1, ip2, ip3, ip4)
+                elif MBorder == 3:
+                    sf = (v1, v2, v3)
+                servers.append((sf, host, strip, v1, v2, v3))
+            servers.sort()
+            if MBrev:
+                servers.reverse()
+            i = 1
+            for sf, host, strip, v1, v2, v3 in servers:
+                out.append("""	<tr class="C%u">""" % (((i - 1) % 2) + 1))
+                out.append("""		<td align="right">%u</td><td align="left">%s</td><td align="center">%s</td><td align="center">%u.%u.%u</td>""" %
+                            (i, host, strip, v1, v2, v3))
+                out.append("""	</tr>""")
+                i += 1
+        out.append("""</table>""")
+        s.close()
+        print("\n".join(out))
+    except Exception:
+        print("""<table class="FR" cellspacing="0" summary="Exception">""")
+        print("""<tr><td align="left"><pre>""")
+        traceback.print_exc(file=sys.stdout)
+        print("""</pre></td></tr>""")
+        print("""</table>""")
 
-            s = socket.socket()
-            s.connect((masterhost, masterport))
-            mysend(s, struct.pack(">LL", CLTOMA_MLOG_LIST, 0))
-            header = myrecv(s, 8)
-            cmd, length = struct.unpack(">LL", header)
-            if cmd == MATOCL_MLOG_LIST and (length % 8) == 0:
-                data = myrecv(s, length)
-                n = int(length / 8)
-                servers = []
-                for i in range(n):
-                    d = data[i * 8:(i + 1) * 8]
-                    v1, v2, v3, ip1, ip2, ip3, ip4 = struct.unpack(
-                        ">HBBBBBB", d)
-                    strip = "%u.%u.%u.%u" % (ip1, ip2, ip3, ip4)
-                    try:
-                        host = (socket.gethostbyaddr(strip))[0]
-                    except Exception:
-                        host = "(unresolved)"
-                    if MBorder == 1:
-                        sf = host
-                    elif MBorder == 2 or MBorder == 0:
-                        sf = (ip1, ip2, ip3, ip4)
-                    elif MBorder == 3:
-                        sf = (v1, v2, v3)
-                    servers.append((sf, host, strip, v1, v2, v3))
-                servers.sort()
-                if MBrev:
-                    servers.reverse()
-                i = 1
-                for sf, host, strip, v1, v2, v3 in servers:
-                    out.append("""	<tr class="C%u">""" % (((i - 1) % 2) + 1))
-                    out.append("""		<td align="right">%u</td><td align="left">%s</td><td align="center">%s</td><td align="center">%u.%u.%u</td>""" %
-                               (i, host, strip, v1, v2, v3))
-                    out.append("""	</tr>""")
-                    i += 1
-            out.append("""</table>""")
-            s.close()
-            print("\n".join(out))
-        except Exception:
-            print("""<table class="FR" cellspacing="0" summary="Exception">""")
-            print("""<tr><td align="left"><pre>""")
-            traceback.print_exc(file=sys.stdout)
-            print("""</pre></td></tr>""")
-            print("""</table>""")
-
-        print("""<br/>""")
+    print("""<br/>""")
 
 if "HD" in sectionset:
     out = []
@@ -1571,7 +1511,7 @@ if "HD" in sectionset:
         mysend(s, struct.pack(">LL", CLTOMA_CSERV_LIST, 0))
         header = myrecv(s, 8)
         cmd, length = struct.unpack(">LL", header)
-        if cmd == MATOCL_CSERV_LIST and masterversion >= (1, 5, 13) and (length % 54) == 0:
+        if cmd == MATOCL_CSERV_LIST and (length % 54) == 0:
             data = myrecv(s, length)
             n = int(length / 54)
             servers = []
@@ -1581,15 +1521,6 @@ if "HD" in sectionset:
                     ">BBBBBBBBHQQLQQLL", d)
                 if disconnected == 0:
                     hostlist.append((v1, v2, v3, ip1, ip2, ip3, ip4, port))
-        elif cmd == MATOCL_CSERV_LIST and masterversion < (1, 5, 13) and (length % 50) == 0:
-            data = myrecv(s, length)
-            n = int(length / 50)
-            servers = []
-            for i in range(n):
-                d = data[i * 50:(i + 1) * 50]
-                ip1, ip2, ip3, ip4, port, used, total, chunks, tdused, tdtotal, tdchunks, errcnt = struct.unpack(
-                    ">BBBBHQQLQQLL", d)
-                hostlist.append((1, 5, 0, ip1, ip2, ip3, ip4, port))
         s.close()
 
         # get hdd lists one by one
@@ -1781,17 +1712,11 @@ if "HD" in sectionset:
             i = 1
             for sf, path, flags, errchunkid, errtime, used, total, chunkscnt, rbw, wbw, rtime, wtime, fsynctime, rops, wops, fsyncops, rbytes, wbytes, rsum, wsum in hdd:
                 if flags == 1:
-                    if masterversion >= (1, 6, 10):
-                        status = 'marked for removal'
-                    else:
-                        status = 'to be empty'
+                    status = 'marked for removal'
                 elif flags == 2:
                     status = 'damaged'
                 elif flags == 3:
-                    if masterversion >= (1, 6, 10):
-                        status = 'damaged, marked for removal'
-                    else:
-                        status = 'damaged, to be empty'
+                    status = 'damaged, marked for removal'
                 elif flags == 4 or flags == 6:
                     status = 'scanning'
                 elif flags == 5 or flags == 7:
@@ -1863,7 +1788,7 @@ if "EX" in sectionset:
     try:
         out.append("""<table class="FR" cellspacing="0" summary="Exports">""")
         out.append("""	<tr><th colspan="%u">Exports</th></tr>""" %
-                   (19 if masterversion >= SAUNAFS_VERSION_WITH_QUOTAS else 18 if masterversion >= (1, 6, 26) else 14))
+                   (19))
         out.append("""	<tr>""")
         out.append("""		<th rowspan="2">#</th>""")
         out.append("""		<th colspan="2">ip&nbsp;range</th>""")
@@ -1881,14 +1806,12 @@ if "EX" in sectionset:
                    (createorderlink("EX", 8)))
         out.append("""		<th rowspan="2"><a href="%s">ignore&nbsp;gid</a></th>""" %
                    (createorderlink("EX", 9)))
-        if masterversion >= SAUNAFS_VERSION_WITH_QUOTAS:
-            out.append("""		<th rowspan="2"><a href="%s">quota&nbsp;admin</a></th>""" %
-                       (createorderlink("EX", 10)))
+        out.append("""		<th rowspan="2"><a href="%s">quota&nbsp;admin</a></th>""" %
+                    (createorderlink("EX", 10)))
         out.append("""		<th colspan="2">map&nbsp;root</th>""")
         out.append("""		<th colspan="2">map&nbsp;users</th>""")
-        if masterversion >= (1, 6, 26):
-            out.append("""		<th colspan="2">goal&nbsp;limit</th>""")
-            out.append("""		<th colspan="2">trashtime&nbsp;limit</th>""")
+        out.append("""		<th colspan="2">goal&nbsp;limit</th>""")
+        out.append("""		<th colspan="2">trashtime&nbsp;limit</th>""")
         out.append("""	</tr>""")
         out.append("""	<tr>""")
         out.append("""		<th><a href="%s">from</a></th>""" %
@@ -1903,26 +1826,22 @@ if "EX" in sectionset:
                    (createorderlink("EX", 13)))
         out.append("""		<th><a href="%s">gid</a></th>""" %
                    (createorderlink("EX", 14)))
-        if masterversion >= (1, 6, 26):
-            out.append("""		<th><a href="%s">min</a></th>""" %
-                       (createorderlink("EX", 15)))
-            out.append("""		<th><a href="%s">max</a></th>""" %
-                       (createorderlink("EX", 16)))
-            out.append("""		<th><a href="%s">min</a></th>""" %
-                       (createorderlink("EX", 17)))
-            out.append("""		<th><a href="%s">max</a></th>""" %
-                       (createorderlink("EX", 18)))
+        out.append("""		<th><a href="%s">min</a></th>""" %
+                    (createorderlink("EX", 15)))
+        out.append("""		<th><a href="%s">max</a></th>""" %
+                    (createorderlink("EX", 16)))
+        out.append("""		<th><a href="%s">min</a></th>""" %
+                    (createorderlink("EX", 17)))
+        out.append("""		<th><a href="%s">max</a></th>""" %
+                    (createorderlink("EX", 18)))
         out.append("""	</tr>""")
 
         s = socket.socket()
         s.connect((masterhost, masterport))
-        if masterversion >= (1, 6, 26):
-            mysend(s, struct.pack(">LLB", CLTOMA_EXPORTS_INFO, 1, 1))
-        else:
-            mysend(s, struct.pack(">LL", CLTOMA_EXPORTS_INFO, 0))
+        mysend(s, struct.pack(">LLB", CLTOMA_EXPORTS_INFO, 1, 1))
         header = myrecv(s, 8)
         cmd, length = struct.unpack(">LL", header)
-        if cmd == MATOCL_EXPORTS_INFO and masterversion >= (1, 5, 14):
+        if cmd == MATOCL_EXPORTS_INFO:
             data = myrecv(s, length)
             servers = []
             pos = 0
@@ -1934,34 +1853,15 @@ if "EX" in sectionset:
                 pos += 12
                 path = data[pos:pos + pleng].decode('utf-8')
                 pos += pleng
-                if masterversion >= (1, 6, 26):
-                    v1, v2, v3, exportflags, sesflags, rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime = struct.unpack(
-                        ">HBBBBLLLLBBLL", data[pos:pos + 32])
-                    pos += 32
-                    if mingoal <= 1 and maxgoal >= 20:
-                        mingoal = LT_COMP_NONE
-                        maxgoal = LT_COMP_NONE
-                    if mintrashtime == 0 and maxtrashtime == 0xFFFFFFFF:
-                        mintrashtime = LT_COMP_NONE
-                        maxtrashtime = LT_COMP_NONE
-                elif masterversion >= (1, 6, 1):
-                    v1, v2, v3, exportflags, sesflags, rootuid, rootgid, mapalluid, mapallgid = struct.unpack(
-                        ">HBBBBLLLL", data[pos:pos + 22])
+                v1, v2, v3, exportflags, sesflags, rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime = struct.unpack(
+                    ">HBBBBLLLLBBLL", data[pos:pos + 32])
+                pos += 32
+                if mingoal <= 1 and maxgoal >= 20:
                     mingoal = LT_COMP_NONE
                     maxgoal = LT_COMP_NONE
+                if mintrashtime == 0 and maxtrashtime == 0xFFFFFFFF:
                     mintrashtime = LT_COMP_NONE
                     maxtrashtime = LT_COMP_NONE
-                    pos += 22
-                else:
-                    v1, v2, v3, exportflags, sesflags, rootuid, rootgid = struct.unpack(
-                        ">HBBBBLL", data[pos:pos + 14])
-                    mapalluid = 0
-                    mapallgid = 0
-                    mingoal = LT_COMP_NONE
-                    maxgoal = LT_COMP_NONE
-                    mintrashtime = LT_COMP_NONE
-                    maxtrashtime = LT_COMP_NONE
-                    pos += 14
                 ver = "%d.%d.%d" % (v1, v2, v3)
                 if path == '.':
                     meta = 1
@@ -2050,9 +1950,8 @@ if "EX" in sectionset:
                            ("no" if sesflags & 2 else "yes"))
                 out.append("""		<td align="center">%s</td>""" %
                            ("-" if meta else "yes" if sesflags & 4 else "no"))
-                if masterversion >= SAUNAFS_VERSION_WITH_QUOTAS:
-                    out.append("""		<td align="center">%s</td>""" %
-                               ("-" if meta else "yes" if sesflags & 8 else "no"))
+                out.append("""		<td align="center">%s</td>""" %
+                            ("-" if meta else "yes" if sesflags & 8 else "no"))
                 if meta:
                     out.append("""		<td align="center">-</td>""")
                     out.append("""		<td align="center">-</td>""")
@@ -2065,21 +1964,20 @@ if "EX" in sectionset:
                 else:
                     out.append("""		<td align="right">%u</td>""" % mapalluid)
                     out.append("""		<td align="right">%u</td>""" % mapallgid)
-                if masterversion >= (1, 6, 26):
-                    if mingoal is not LT_COMP_NONE and maxgoal is not LT_COMP_NONE:
-                        out.append("""		<td align="right">%u</td>""" % mingoal)
-                        out.append("""		<td align="right">%u</td>""" % maxgoal)
-                    else:
-                        out.append("""		<td align="center">-</td>""")
-                        out.append("""		<td align="center">-</td>""")
-                    if mintrashtime is not LT_COMP_NONE and maxtrashtime is not LT_COMP_NONE:
-                        out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
-                            timeduration_to_fullstr(mintrashtime), timeduration_to_shortstr(mintrashtime)))
-                        out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
-                            timeduration_to_fullstr(maxtrashtime), timeduration_to_shortstr(maxtrashtime)))
-                    else:
-                        out.append("""		<td align="center">-</td>""")
-                        out.append("""		<td align="center">-</td>""")
+                if mingoal is not LT_COMP_NONE and maxgoal is not LT_COMP_NONE:
+                    out.append("""		<td align="right">%u</td>""" % mingoal)
+                    out.append("""		<td align="right">%u</td>""" % maxgoal)
+                else:
+                    out.append("""		<td align="center">-</td>""")
+                    out.append("""		<td align="center">-</td>""")
+                if mintrashtime is not LT_COMP_NONE and maxtrashtime is not LT_COMP_NONE:
+                    out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
+                        timeduration_to_fullstr(mintrashtime), timeduration_to_shortstr(mintrashtime)))
+                    out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
+                        timeduration_to_fullstr(maxtrashtime), timeduration_to_shortstr(maxtrashtime)))
+                else:
+                    out.append("""		<td align="center">-</td>""")
+                    out.append("""		<td align="center">-</td>""")
                 out.append("""	</tr>""")
                 i += 1
         out.append("""</table>""")
@@ -2189,67 +2087,6 @@ if "ML" in sectionset:
         mysend(s, struct.pack(">LL", CLTOMA_SESSION_LIST, 0))
         header = myrecv(s, 8)
         cmd, length = struct.unpack(">LL", header)
-        if cmd == MATOCL_SESSION_LIST and masterversion <= (1, 5, 13) and (length % 136) == 0:
-            data = myrecv(s, length)
-            n = int(length / 136)
-            servers = []
-            for i in range(n):
-                d = data[i * 136:(i + 1) * 136]
-                addrdata = d[0:8]
-                stats_c = []
-                stats_l = []
-                ip1, ip2, ip3, ip4, spare, v1, v2, v3 = struct.unpack(
-                    ">BBBBBBBB", addrdata)
-                ipnum = "%d.%d.%d.%d" % (ip1, ip2, ip3, ip4)
-                if v1 == 0 and v2 == 0:
-                    if v3 == 2:
-                        ver = "1.3.x"
-                    elif v3 == 3:
-                        ver = "1.4.x"
-                    else:
-                        ver = "unknown"
-                else:
-                    ver = "%d.%d.%d" % (v1, v2, v3)
-                for i in range(16):
-                    stats_c.append(struct.unpack(">L", d[i * 4 + 8:i * 4 + 12]))
-                    stats_l.append(struct.unpack(">L", d[i * 4 + 72:i * 4 + 76]))
-                try:
-                    host = (socket.gethostbyaddr(ipnum))[0]
-                except Exception:
-                    host = "(unresolved)"
-                if MLorder == 1:
-                    sf = host
-                elif MLorder == 2 or MLorder == 0:
-                    sf = (ip1, ip2, ip3, ip4)
-                elif MLorder == 3:
-                    sf = (v1, v2, v3)
-                elif MLorder >= 100 and MLorder <= 115:
-                    sf = stats_c[MLorder - 100][0] + stats_l[MLorder - 100][0]
-                else:
-                    sf = 0
-                servers.append((sf, host, ipnum, ver, stats_c, stats_l))
-            servers.sort()
-            if MLrev:
-                servers.reverse()
-            i = 1
-            for sf, host, ipnum, ver, stats_c, stats_l in servers:
-                out.append("""	<tr class="C%u">""" % (((i - 1) % 2) * 2 + 1))
-                out.append("""		<td align="right" rowspan="2">%u</td>""" % i)
-                out.append("""		<td align="left" rowspan="2">%s</td>""" % host)
-                out.append(
-                    """		<td align="center" rowspan="2">%s</td>""" % ipnum)
-                out.append(
-                    """		<td align="center" rowspan="2">%s</td>""" % ver)
-                for st in range(16):
-                    out.append("""		<td align="right">%u</td>""" %
-                               (stats_c[st]))
-                out.append("""	</tr>""")
-                out.append("""	<tr class="C%u">""" % (((i - 1) % 2) * 2 + 2))
-                for st in range(16):
-                    out.append("""		<td align="right">%u</td>""" %
-                               (stats_l[st]))
-                out.append("""	</tr>""")
-                i += 1
         out.append("""</table>""")
         s.close()
         print("\n".join(out))
@@ -2279,7 +2116,7 @@ if "MS" in sectionset:
         out.append(
             """<table class="FR" cellspacing="0" summary="Active mounts">""")
         out.append("""	<tr><th colspan="%u">Active mounts (parameters)</th></tr>""" %
-                   (19 if masterversion >= (2, 5, 0) else 18 if masterversion >= (1, 6, 26) else 14))
+                   (19))
         out.append("""	<tr>""")
         out.append("""		<th rowspan="2">#</th>""")
         out.append("""		<th rowspan="2"><a href="%s">session&nbsp;id</a></th>""" %
@@ -2300,14 +2137,12 @@ if "MS" in sectionset:
                    (createorderlink("MS", 8)))
         out.append("""		<th rowspan="2"><a href="%s">ignore&nbsp;gid</a></th>""" %
                    (createorderlink("MS", 9)))
-        if masterversion >= (2, 5, 0):
-            out.append("""		<th rowspan="2"><a href="%s">quota&nbsp;admin</a></th>""" %
-                       (createorderlink("MS", 10)))
+        out.append("""		<th rowspan="2"><a href="%s">quota&nbsp;admin</a></th>""" %
+                    (createorderlink("MS", 10)))
         out.append("""		<th colspan="2">map&nbsp;root</th>""")
         out.append("""		<th colspan="2">map&nbsp;users</th>""")
-        if masterversion >= (1, 6, 26):
-            out.append("""		<th colspan="2">goal&nbsp;limits</th>""")
-            out.append("""		<th colspan="2">trashtime&nbsp;limits</th>""")
+        out.append("""		<th colspan="2">goal&nbsp;limits</th>""")
+        out.append("""		<th colspan="2">trashtime&nbsp;limits</th>""")
         out.append("""	</tr>""")
         out.append("""	<tr>""")
         out.append("""		<th><a href="%s">uid</a></th>""" %
@@ -2318,37 +2153,26 @@ if "MS" in sectionset:
                    (createorderlink("MS", 13)))
         out.append("""		<th><a href="%s">gid</a></th>""" %
                    (createorderlink("MS", 14)))
-        if masterversion >= (1, 6, 26):
-            out.append("""		<th><a href="%s">min</a></th>""" %
-                       (createorderlink("MS", 15)))
-            out.append("""		<th><a href="%s">max</a></th>""" %
-                       (createorderlink("MS", 16)))
-            out.append("""		<th><a href="%s">min</a></th>""" %
-                       (createorderlink("MS", 17)))
-            out.append("""		<th><a href="%s">max</a></th>""" %
-                       (createorderlink("MS", 18)))
+        out.append("""		<th><a href="%s">min</a></th>""" %
+                    (createorderlink("MS", 15)))
+        out.append("""		<th><a href="%s">max</a></th>""" %
+                    (createorderlink("MS", 16)))
+        out.append("""		<th><a href="%s">min</a></th>""" %
+                    (createorderlink("MS", 17)))
+        out.append("""		<th><a href="%s">max</a></th>""" %
+                    (createorderlink("MS", 18)))
         out.append("""	</tr>""")
 
         s = socket.socket()
         s.connect((masterhost, masterport))
-        if masterversion >= (1, 6, 26):
-            mysend(s, struct.pack(">LLB", CLTOMA_SESSION_LIST, 1, 1))
-        else:
-            mysend(s, struct.pack(">LL", CLTOMA_SESSION_LIST, 0))
+        mysend(s, struct.pack(">LLB", CLTOMA_SESSION_LIST, 1, 1))
         header = myrecv(s, 8)
         cmd, length = struct.unpack(">LL", header)
-        if cmd == MATOCL_SESSION_LIST and masterversion >= (1, 5, 14):
+        if cmd == MATOCL_SESSION_LIST:
             data = myrecv(s, length)
             servers = []
-            if masterversion < (1, 6, 21):
-                statscnt = 16
-                pos = 0
-            elif masterversion == (1, 6, 21):
-                statscnt = 21
-                pos = 0
-            else:
-                statscnt = struct.unpack(">H", data[0:2])[0]
-                pos = 2
+            statscnt = struct.unpack(">H", data[0:2])[0]
+            pos = 2
             while pos < length:
                 sessionid, ip1, ip2, ip3, ip4, v1, v2, v3, ileng = struct.unpack(
                     ">LBBBBHBBL", data[pos:pos + 16])
@@ -2362,34 +2186,15 @@ if "MS" in sectionset:
                 pos += 4
                 path = data[pos:pos + pleng].decode('utf-8')
                 pos += pleng
-                if masterversion >= (1, 6, 26):
-                    sesflags, rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime = struct.unpack(
-                        ">BLLLLBBLL", data[pos:pos + 27])
-                    pos += 27
-                    if mingoal <= 1 and maxgoal >= 20:
-                        mingoal = LT_COMP_NONE
-                        maxgoal = LT_COMP_NONE
-                    if mintrashtime == 0 and maxtrashtime == 0xFFFFFFFF:
-                        mintrashtime = LT_COMP_NONE
-                        maxtrashtime = LT_COMP_NONE
-                elif masterversion >= (1, 6, 1):
-                    sesflags, rootuid, rootgid, mapalluid, mapallgid = struct.unpack(
-                        ">BLLLL", data[pos:pos + 17])
+                sesflags, rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime = struct.unpack(
+                    ">BLLLLBBLL", data[pos:pos + 27])
+                pos += 27
+                if mingoal <= 1 and maxgoal >= 20:
                     mingoal = LT_COMP_NONE
                     maxgoal = LT_COMP_NONE
+                if mintrashtime == 0 and maxtrashtime == 0xFFFFFFFF:
                     mintrashtime = LT_COMP_NONE
                     maxtrashtime = LT_COMP_NONE
-                    pos += 17
-                else:
-                    sesflags, rootuid, rootgid = struct.unpack(
-                        ">BLL", data[pos:pos + 9])
-                    mapalluid = 0
-                    mapallgid = 0
-                    mingoal = LT_COMP_NONE
-                    maxgoal = LT_COMP_NONE
-                    mintrashtime = LT_COMP_NONE
-                    maxtrashtime = LT_COMP_NONE
-                    pos += 9
                 pos += 8 * statscnt		# skip stats
                 if path == '.':
                     meta = 1
@@ -2495,13 +2300,12 @@ if "MS" in sectionset:
                     out.append("""		<td align="center">yes</td>""")
                 else:
                     out.append("""		<td align="center">no</td>""")
-                if masterversion >= (2, 5, 0):
-                    if meta:
-                        out.append("""		<td align="center">-</td>""")
-                    elif sesflags & 8:
-                        out.append("""		<td align="center">yes</td>""")
-                    else:
-                        out.append("""		<td align="center">no</td>""")
+                if meta:
+                    out.append("""		<td align="center">-</td>""")
+                elif sesflags & 8:
+                    out.append("""		<td align="center">yes</td>""")
+                else:
+                    out.append("""		<td align="center">no</td>""")
                 if meta:
                     out.append("""		<td align="center">-</td>""")
                     out.append("""		<td align="center">-</td>""")
@@ -2514,21 +2318,20 @@ if "MS" in sectionset:
                 else:
                     out.append("""		<td align="right">%u</td>""" % mapalluid)
                     out.append("""		<td align="right">%u</td>""" % mapallgid)
-                if masterversion >= (1, 6, 26):
-                    if mingoal is not LT_COMP_NONE and maxgoal is not LT_COMP_NONE:
-                        out.append("""		<td align="right">%u</td>""" % mingoal)
-                        out.append("""		<td align="right">%u</td>""" % maxgoal)
-                    else:
-                        out.append("""		<td align="center">-</td>""")
-                        out.append("""		<td align="center">-</td>""")
-                    if mintrashtime is not LT_COMP_NONE and maxtrashtime is not LT_COMP_NONE:
-                        out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
-                            timeduration_to_fullstr(mintrashtime), timeduration_to_shortstr(mintrashtime)))
-                        out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
-                            timeduration_to_fullstr(maxtrashtime), timeduration_to_shortstr(maxtrashtime)))
-                    else:
-                        out.append("""		<td align="center">-</td>""")
-                        out.append("""		<td align="center">-</td>""")
+                if mingoal is not LT_COMP_NONE and maxgoal is not LT_COMP_NONE:
+                    out.append("""		<td align="right">%u</td>""" % mingoal)
+                    out.append("""		<td align="right">%u</td>""" % maxgoal)
+                else:
+                    out.append("""		<td align="center">-</td>""")
+                    out.append("""		<td align="center">-</td>""")
+                if mintrashtime is not LT_COMP_NONE and maxtrashtime is not LT_COMP_NONE:
+                    out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
+                        timeduration_to_fullstr(mintrashtime), timeduration_to_shortstr(mintrashtime)))
+                    out.append("""		<td align="right"><a style="cursor:default" title="%s">%s</a></td>""" % (
+                        timeduration_to_fullstr(maxtrashtime), timeduration_to_shortstr(maxtrashtime)))
+                else:
+                    out.append("""		<td align="center">-</td>""")
+                    out.append("""		<td align="center">-</td>""")
                 out.append("""	</tr>""")
                 out.append("""	<tr class="collapsible-row" style="display: none;">""")
                 out.append("""		<td colspan="19" align="left">""")
@@ -2620,18 +2423,11 @@ if "MO" in sectionset:
         mysend(s, struct.pack(">LL", CLTOMA_SESSION_LIST, 0))
         header = myrecv(s, 8)
         cmd, length = struct.unpack(">LL", header)
-        if cmd == MATOCL_SESSION_LIST and masterversion >= (1, 5, 14):
+        if cmd == MATOCL_SESSION_LIST:
             data = myrecv(s, length)
             servers = []
-            if masterversion < (1, 6, 21):
-                statscnt = 16
-                pos = 0
-            elif masterversion == (1, 6, 21):
-                statscnt = 21
-                pos = 0
-            else:
-                statscnt = struct.unpack(">H", data[0:2])[0]
-                pos = 2
+            statscnt = struct.unpack(">H", data[0:2])[0]
+            pos = 2
             while pos < length:
                 sessionid, ip1, ip2, ip3, ip4, v1, v2, v3, ileng = struct.unpack(
                     ">LBBBBHBBL", data[pos:pos + 16])
@@ -2645,10 +2441,7 @@ if "MO" in sectionset:
                 path = data[pos:pos + pleng].decode('utf-8')
                 pos += pleng
                 # sesflags,rootuid,rootgid,mapalluid,mapallgid = struct.unpack(">BLLLL",data[pos:pos+17])
-                if masterversion >= (1, 6, 0):
-                    pos += 17
-                else:
-                    pos += 9
+                pos += 17
                 if statscnt < 16:
                     stats_c = struct.unpack(
                         ">" + "L" * statscnt, data[pos:pos + 4 * statscnt]) + (0,) * (16 - statscnt)
