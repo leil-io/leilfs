@@ -141,9 +141,9 @@ public:
 	                uint32_t size);
 
 	/// Writes a Chunk block
-	int writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
-	                    uint32_t offsetInBlock, uint32_t size, uint32_t crc,
-	                    uint8_t *crcData, const uint8_t *buffer) override;
+	int writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum, uint32_t offsetInBlock,
+	                    uint32_t size, uint32_t crc, uint8_t *crcData, const uint8_t *buffer,
+	                    bool isFromReplication = false) override;
 
 	/// Writes to device custom blockSize from blockBuffer
 	int writeChunkData(IChunk *chunk, uint8_t *blockBuffer, int32_t blockSize,
