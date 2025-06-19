@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include "chunkserver-common/jobpool.h"
 #include "chunkserver-common/disk_interface.h"
 
 inline uint32_t gEmptyBlockCrc;
@@ -206,8 +207,8 @@ public:
 	/// Setter for lastErrorIndex_
 	void setLastErrorIndex(uint32_t newLastErrorIndex) override;
 
-	void setWorkerPool(void *workerPoolPtr) override;
-	void *getWorkerPool() const override;
+	void setWorkerPool(JobPool *workerPoolPtr) override;
+	JobPool *getWorkerPool() const override;
 private:
 	/// Internal helper to sync both FDs (metadata and data)
 	int fsyncFD(IChunk *chunk, bool isForMetadata);
@@ -273,5 +274,5 @@ private:
 	/// when the collection is accessed for reading or modifying.
 	DiskChunks chunks_;
 
-	void *workerPool_;
+	JobPool *workerPool_;
 };

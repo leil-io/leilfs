@@ -30,6 +30,7 @@
 #include "common/crc.h"
 #include "common/exceptions.h"
 #include "devtools/TracePrinter.h"
+#include "jobpool.h"
 
 void initializeEmptyBlockCrcForDisks() {
 	uint8_t *emptyBlockCrcBuffer = reinterpret_cast<uint8_t *>(&gEmptyBlockCrc);
@@ -474,9 +475,10 @@ void FDDisk::setMetaPath(const std::string &newMetaPath) {
 	metaPath_ = newMetaPath;
 }
 
-void FDDisk::setWorkerPool(void *workerPoolPtr) {
+void FDDisk::setWorkerPool(JobPool *workerPoolPtr) {
 	workerPool_ = workerPoolPtr;
 }
-void *FDDisk::getWorkerPool() const {
+
+JobPool *FDDisk::getWorkerPool() const {
 	return workerPool_;
 }

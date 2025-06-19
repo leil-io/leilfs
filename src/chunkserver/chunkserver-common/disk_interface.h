@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include "chunkserver-common/jobpool.h"
 #include "chunkserver-common/chunk_signature.h"
 #include "chunkserver-common/disk_chunks.h"
 #include "chunkserver-common/disk_utils.h"
@@ -329,6 +330,6 @@ public:
 	/// Setter for lastErrorIndex
 	virtual void setLastErrorIndex(uint32_t newLastErrorIndex) = 0;
 
-	virtual void setWorkerPool(void *workerPoolPtr) = 0;
-	virtual void *getWorkerPool() const = 0;
+	virtual void setWorkerPool(JobPool *workerPoolPtr) = 0;
+	virtual JobPool *getWorkerPool() const = 0;
 };
