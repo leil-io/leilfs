@@ -124,15 +124,9 @@ void ReadPlanExecutor::startPrefetchOperation(ExecuteParams &params, ChunkPartTy
 				throw RecoverableReadException("Chunkserver communication timed out");
 			}
 			std::vector<uint8_t> message;
-			if (ctwa.chunkserver_version >= kFirstECVersion) {
-				cltocs::prefetch::serialize(message, chunk_id_, chunk_version_, chunk_type,
-				                            op.request_offset, op.request_size);
-			} else if (ctwa.chunkserver_version >= kFirstXorVersion) {
-				assert((int)chunk_type.getSliceType() < Goal::Slice::Type::kECFirst);
-				cltocs::prefetch::serialize(message, chunk_id_, chunk_version_,
-				                            (legacy::ChunkPartType)chunk_type, op.request_offset,
-				                            op.request_size);
-			}
+			
+			cltocs::prefetch::serialize(message, chunk_id_, chunk_version_, chunk_type,
+										op.request_offset, op.request_size);
 			if (message.size() > 0) {
 				int32_t ret =
 				    tcptowrite(fd, message.data(), message.size(), connect_timeout.remaining_ms());
