@@ -1593,16 +1593,8 @@ void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
 }
 
 void MetadataBackendFile::store_fd(FILE *fd) {
-	#if SAUNAFS_VERSHEX >= SAUNAFS_VERSION(2, 9, 0)
 	const char hdr[] = SFSSIGNATURE "M 2.9";
 	const uint8_t metadataVersion = kMetadataVersionWithLockIds;
-#elif SAUNAFS_VERSHEX >= SAUNAFS_VERSION(1, 6, 29)
-	const char hdr[] = SFSSIGNATURE "M 2.0";
-	const uint8_t metadataVersion = kMetadataVersionWithSections;
-#else
-	const char hdr[] = SFSSIGNATURE "M 1.6";
-	const uint8_t metadataVersion = kMetadataVersionSaunaFS;
-#endif
 
 	if (fwrite(&hdr, 1, sizeof(hdr) - 1, fd) != sizeof(hdr) - 1) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
