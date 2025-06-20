@@ -1558,11 +1558,7 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
 	    sizeof(attruid) + sizeof(attrgid) + sizeof(attratime) + sizeof(attrmtime);
 	constexpr uint32_t kPacketSizeWithSugid = kPacketSize + sizeof(sugidclearmode);
 
-	if (masterversion < 0x010619) {
-		wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSize);
-	} else {
-		wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSizeWithSugid);
-	}
+	wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSizeWithSugid);
 	if (wptr == nullptr) {
 		return SAUNAFS_ERROR_IO;
 	}
@@ -1576,9 +1572,7 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
 	put32bit(&wptr,attrgid);
 	put32bit(&wptr,attratime);
 	put32bit(&wptr,attrmtime);
-	if (masterversion>=0x010619) {
-		put8bit(&wptr,sugidclearmode);
-	}
+	put8bit(&wptr,sugidclearmode);
 
 	rptr = fs_sendandreceive(rec, MATOCL_FUSE_SETATTR, &answerLength);
 
@@ -2546,8 +2540,6 @@ uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
-
 	constexpr uint32_t kPacketHeaderSize =
 	    sizeof(inode) + sizeof(opened) + sizeof(uid) + sizeof(gid) + sizeof(nleng) + sizeof(mode);
 
@@ -2598,8 +2590,6 @@ uint8_t fs_listxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, 
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
-
 	constexpr uint32_t kPacketSize =
 	    sizeof(inode) + sizeof(opened) + sizeof(uid) + sizeof(gid) + sizeof(uint8_t) + sizeof(mode);
 
@@ -2647,8 +2637,6 @@ uint8_t fs_setxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
-
 	if (mode >= XATTR_SMODE_REMOVE) { return SAUNAFS_ERROR_EINVAL; }
 
 	constexpr uint32_t kPacketHeaderSize = sizeof(inode) + sizeof(opened) + sizeof(uid) +
@@ -2691,8 +2679,6 @@ uint8_t fs_removexattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid
 	uint32_t answerLength;
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
-
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
 
 	constexpr uint32_t kPacketHeaderSize = sizeof(inode) + sizeof(opened) + sizeof(uid) +
 	                                       sizeof(gid) + sizeof(nleng) + sizeof(uint32_t) +
