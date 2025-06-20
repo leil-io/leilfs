@@ -516,7 +516,7 @@ public:
 };
 
 
-const PacketSerializer* PacketSerializer::getSerializer(PacketHeader::Type type, uint32_t version) {
+const PacketSerializer* PacketSerializer::getSerializer(PacketHeader::Type type, [[maybe_unused]] uint32_t version) {
 	sassert((type >= PacketHeader::kMinSauPacketType && type <= PacketHeader::kMaxSauPacketType)
 			|| type <= PacketHeader::kMaxOldPacketType);
 	if (type <= PacketHeader::kMaxOldPacketType) {
@@ -524,10 +524,6 @@ const PacketSerializer* PacketSerializer::getSerializer(PacketHeader::Type type,
 		return &singleton;
 	} else {
 		static SaunaFsPacketSerializer singleton;
-		if (version < kFirstECVersion) {
-			static SaunaFsStdXorPacketSerializer singleton_stdxor;
-			return &singleton_stdxor;
-		}
 		return &singleton;
 	}
 }
@@ -1719,12 +1715,6 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			if (length == kBlobSizeWithSessionIdAndVersion) { get32bit(&rptr, eptr->version); }
 		}
 
-		if (eptr->version<0x010500 && !toolsNoACL) {
-			safs_pretty_syslog(LOG_NOTICE,"got register packet from mount older than 1.5 - rejecting");
-			eptr->mode = KILL;
-			return;
-		}
-
 		if (sessionid == 0) {           // new session
 			status = SAUNAFS_STATUS_OK; // exports_check(eptr->peerip,(const uint8_t*)"",NULL,NULL,&sesflags);      // check privileges for '/' w/o password
 			eptr->sesdata = matoclserv_new_session(0, toolsNoACL);
@@ -1948,10 +1938,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 
 			wptr = matoclserv_createpacket(eptr, MATOCL_FUSE_REGISTER,
 			                               (status == SAUNAFS_STATUS_OK)
-			                                   ? ((eptr->version >= saunafsVersion(1, 6, 26))   ? 35
-			                                      : (eptr->version >= saunafsVersion(1, 6, 21)) ? 25
-			                                      : (eptr->version >= saunafsVersion(1, 6, 1))  ? 21
-			                                                                                   : 13)
+			                                   ? (35)
 			                                   : sizeof(status));
 
 			if (status != SAUNAFS_STATUS_OK) {
@@ -1959,31 +1946,21 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 				return;
 			}
 			sessionid = eptr->sesdata->sessionid;
-			if (eptr->version == saunafsVersion(1, 6, 21)) {
-				put32bit(&wptr, 0);
-			} else if (eptr->version >= saunafsVersion(1, 6, 22)) {
-				put16bit(&wptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
-				put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MINOR);
-				put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MICRO);
-			}
+			put16bit(&wptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
+			put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MINOR);
+			put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MICRO);
 			put32bit(&wptr, sessionid);
 			put8bit(&wptr, sesflags);
 			put32bit(&wptr, rootuid);
 			put32bit(&wptr, rootgid);
-			if (eptr->version>=saunafsVersion(1, 6, 1)) {
-				put32bit(&wptr,mapalluid);
-				put32bit(&wptr,mapallgid);
-			}
-			if (eptr->version >= saunafsVersion(1, 6, 26)) {
-				put8bit(&wptr, mingoal);
-				put8bit(&wptr, maxgoal);
-				put32bit(&wptr, mintrashtime);
-				put32bit(&wptr, maxtrashtime);
-			}
-			if (eptr->version >= saunafsVersion(1, 6, 30)) {
-				eptr->iolimits = true;
-				matoclserv_send_iolimits_cfg(eptr);
-			}
+			put32bit(&wptr,mapalluid);
+			put32bit(&wptr,mapallgid);
+			put8bit(&wptr, mingoal);
+			put8bit(&wptr, maxgoal);
+			put32bit(&wptr, mintrashtime);
+			put32bit(&wptr, maxtrashtime);
+			eptr->iolimits = true;
+			matoclserv_send_iolimits_cfg(eptr);
 			eptr->registered = ClientState::kRegistered;
 			return;
 		case REGISTER_NEWMETASESSION:
@@ -2066,28 +2043,22 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 
 			wptr = matoclserv_createpacket(eptr, MATOCL_FUSE_REGISTER,
 			                               (status == SAUNAFS_STATUS_OK)
-			                                   ? ((eptr->version >= saunafsVersion(1, 6, 26))   ? 19
-			                                      : (eptr->version >= saunafsVersion(1, 6, 21)) ? 9
-			                                                                                    : 5)
+			                                   ? (19)
 			                                   : sizeof(status));
 			if (status!=SAUNAFS_STATUS_OK) {
 				put8bit(&wptr,status);
 				return;
 			}
 			sessionid = eptr->sesdata->sessionid;
-			if (eptr->version >= saunafsVersion(1, 6, 21)) {
-				put16bit(&wptr,SAUNAFS_PACKAGE_VERSION_MAJOR);
-				put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MINOR);
-				put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MICRO);
-			}
+			put16bit(&wptr,SAUNAFS_PACKAGE_VERSION_MAJOR);
+			put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MINOR);
+			put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MICRO);
 			put32bit(&wptr,sessionid);
 			put8bit(&wptr,sesflags);
-			if (eptr->version >= saunafsVersion(1, 6, 26)) {
-				put8bit(&wptr,mingoal);
-				put8bit(&wptr,maxgoal);
-				put32bit(&wptr,mintrashtime);
-				put32bit(&wptr,maxtrashtime);
-			}
+			put8bit(&wptr,mingoal);
+			put8bit(&wptr,maxgoal);
+			put32bit(&wptr,mintrashtime);
+			put32bit(&wptr,maxtrashtime);
 			eptr->registered = ClientState::kRegistered;
 			return;
 		case REGISTER_RECONNECT:
@@ -2122,7 +2093,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			if (status != SAUNAFS_STATUS_OK) { return; }
 
 			if (rcode == REGISTER_RECONNECT) {
-				if (eptr->version >= saunafsVersion(1, 6, 30) && eptr->sesdata->rootinode != 0) {
+				if (eptr->sesdata->rootinode != 0) {
 					eptr->iolimits = true;
 					matoclserv_send_iolimits_cfg(eptr);
 				}
@@ -2856,14 +2827,8 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 	uint16_t mode, umask;
 
 	if (header.type == CLTOMA_FUSE_MKDIR) {
-		if (eptr->version >= saunafsVersion(1, 6, 25)) {
-			deserializeAllLegacyPacketDataNoHeader(data, header.length,
-					messageId, inode, name, mode, uid, gid, copysgid);
-		} else {
-			deserializeAllLegacyPacketDataNoHeader(data, header.length,
-					messageId, inode, name, mode, uid, gid);
-			copysgid = false;
-		}
+		deserializeAllLegacyPacketDataNoHeader(data, header.length,
+				messageId, inode, name, mode, uid, gid, copysgid);
 		umask = 0;
 	} else if (header.type == SAU_CLTOMA_FUSE_MKDIR) {
 		cltoma::fuseMkdir::deserialize(data, header.length, messageId,
@@ -3095,7 +3060,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 		                   inode_dst, HString((char*)name_dst, nleng_dst), &inode, &attr);
 	}
 
-	if (eptr->version >= 0x010615 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		constexpr uint32_t kSuccessAnswerSize = sizeof(msgid) + sizeof(inode) + attr.size();
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_RENAME, kSuccessAnswerSize);
 	} else {
@@ -3104,7 +3069,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr,const uint8_t *data,uint32_t l
 
 	put32bit(&ptr,msgid);
 
-	if (eptr->version >= 0x010615 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		putINode(&ptr, inode);
 		memcpy(ptr, attr.data(), attr.size());
 	} else {
@@ -3334,7 +3299,7 @@ void matoclserv_fuse_open(matoclserventry *eptr,const uint8_t *data,uint32_t len
 		}
 	}
 
-	if (eptr->version>=0x010609 && status==SAUNAFS_STATUS_OK) {
+	if (status==SAUNAFS_STATUS_OK) {
 		allowcache = dcm_open(inode,eptr->sesdata->sessionid);
 		if (allowcache==0) {
 			attr[1]&=(0xFF^(MATTR_ALLOWDATACACHE<<4));
@@ -3346,7 +3311,7 @@ void matoclserv_fuse_open(matoclserventry *eptr,const uint8_t *data,uint32_t len
 
 	put32bit(&ptr, msgid);
 
-	if (eptr->version >= 0x010609 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		memcpy(ptr, attr.data(), attr.size());
 	} else {
 		put8bit(&ptr, status);
@@ -3450,7 +3415,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	serializer->deserializeFuseWriteChunk(receivedData, messageId, inode, chunkIndex, lockId);
 
 	uint32_t min_server_version
-		= header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK ? kFirstXorVersion : 0;
+		= header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK ? kEC2Version : 0;
 
 	// Original Legacy (1.6.27) does not use lock ID's
 	bool useDummyLockId = (header.type == CLTOMA_FUSE_WRITE_CHUNK);
@@ -3597,34 +3562,10 @@ void matoclserv_fuse_check(matoclserventry *eptr,const uint8_t *data,uint32_t le
 		put32bit(&ptr,msgid);
 		put8bit(&ptr,status);
 	} else {
-		if (eptr->version >= 0x010617) {
-			ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
-			                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
-			put32bit(&ptr, msgid);
-			for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkcount[i]); }
-		} else {
-			uint8_t j = 0;
-			for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) {
-				if (chunkcount[i] > 0) { j++; }
-			}
-
-			ptr =
-			    matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
-			                            sizeof(msgid) + ((sizeof(uint8_t) + sizeof(uint16_t)) * j));
-
-			put32bit(&ptr, msgid);
-
-			for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) {
-				if (chunkcount[i] > 0) {
-					put8bit(&ptr, i);
-					if (chunkcount[i] <= 65535) {
-						put16bit(&ptr, chunkcount[i]);
-					} else {
-						put16bit(&ptr, 65535);
-					}
-				}
-			}
-		}
+		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
+										sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
+		put32bit(&ptr, msgid);
+		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkcount[i]); }
 	}
 }
 
@@ -4651,29 +4592,9 @@ void matoclserv_fuse_getacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 		status = fs_getacl(context, inode, acl);
 	}
 	if (status == SAUNAFS_STATUS_OK) {
-		if (eptr->version >= kRichACLVersion) {
-			FSNode *node = fsnodes_id_to_node(inode);
-			uint32_t owner_id = node ? node->uid : RichACL::Ace::kInvalidId;
-			matocl::fuseGetAcl::serialize(reply, messageId, owner_id, acl);
-		} else {
-			std::pair<bool, AccessControlList> posix_acl;
-			if (type == AclType::kDefault) {
-				posix_acl = acl.convertToDefaultPosixACL();
-			} else {
-				// default behavior for unknown acl type.
-				posix_acl = acl.convertToPosixACL();
-			}
-			if (posix_acl.first) {
-				if (eptr->version >= kACL11Version) {
-					matocl::fuseGetAcl::serialize(reply, messageId, posix_acl.second);
-				} else {
-					legacy::AccessControlList legacy_acl = posix_acl.second;
-					matocl::fuseGetAcl::serialize(reply, messageId, legacy_acl);
-				}
-			} else {
-				status = SAUNAFS_ERROR_ENOATTR;
-			}
-		}
+		FSNode *node = fsnodes_id_to_node(inode);
+		uint32_t owner_id = node ? node->uid : RichACL::Ace::kInvalidId;
+		matocl::fuseGetAcl::serialize(reply, messageId, owner_id, acl);
 	}
 	if (status != SAUNAFS_STATUS_OK) {
 		matocl::fuseGetAcl::serialize(reply, messageId, status);
