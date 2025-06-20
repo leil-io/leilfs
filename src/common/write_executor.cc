@@ -73,18 +73,7 @@ void WriteExecutor::addInitPacket() {
 		[](const ChunkTypeWithAddress& first, const ChunkTypeWithAddress &second) {
 			return first.chunkserver_version > second.chunkserver_version;
 	});
-	if (!chain_.empty() && chain_.front().chunkserver_version < kFirstECVersion &&
-	    (int)chunkType_.getSliceType() < Goal::Slice::Type::kECFirst) {
-		std::vector<NetworkAddress> legacy_chain;
-		legacy_chain.reserve(chain_.size());
-		for (const auto &link : chain_) {
-			legacy_chain.push_back(link.address);
-		}
-		cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_,
-		                             static_cast<legacy::ChunkPartType>(chunkType_), legacy_chain);
-	} else {
-		cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_, chain_);
-	}
+	cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_, chain_);
 	increaseUnconfirmedPacketCount();
 	isRunning_ = true;
 }
