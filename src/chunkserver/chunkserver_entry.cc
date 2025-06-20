@@ -522,15 +522,8 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 		if (type == SAU_CLTOCS_READ) {
 			PacketVersion v;
 			deserializePacketVersionNoHeader(data, length, v);
-			if (v == cltocs::read::kECChunks) {
-				cltocs::read::deserialize(data, length, chunkId, chunkVersion,
-				                          chunkType, offset, size);
-			} else {
-				legacy::ChunkPartType legacy_type;
-				cltocs::read::deserialize(data, length, chunkId, chunkVersion,
-				                          legacy_type, offset, size);
-				chunkType = legacy_type;
-			}
+			cltocs::read::deserialize(data, length, chunkId, chunkVersion,
+										chunkType, offset, size);
 		} else {
 			deserializeAllLegacyPacketDataNoHeader(data, length, chunkId,
 			                                       chunkVersion, offset, size);
@@ -575,15 +568,8 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 	PacketVersion v;
 	try {
 		deserializePacketVersionNoHeader(data, length, v);
-		if (v == cltocs::prefetch::kECChunks) {
-			cltocs::prefetch::deserialize(data, length, chunkId, chunkVersion,
-			                              chunkType, offset, size);
-		} else {
-			legacy::ChunkPartType legacy_type;
-			cltocs::prefetch::deserialize(data, length, chunkId, chunkVersion,
-			                              legacy_type, offset, size);
-			chunkType = legacy_type;
-		}
+		cltocs::prefetch::deserialize(data, length, chunkId, chunkVersion,
+										chunkType, offset, size);
 	} catch (IncorrectDeserializationException &) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
@@ -646,30 +632,9 @@ void ChunkserverEntry::writeFinishedCallback(uint8_t status, void *entry) {
 void serializeCltocsWriteInit(std::vector<uint8_t> &buffer, uint64_t chunkId,
                               uint32_t chunkVersion, ChunkPartType chunkType,
                               const std::vector<ChunkTypeWithAddress> &chain,
-                              uint32_t target_version) {
-	if (target_version >= kFirstECVersion) {
-		cltocs::writeInit::serialize(buffer, chunkId, chunkVersion, chunkType,
-		                             chain);
-	} else if (target_version >= kFirstXorVersion) {
-		assert((int)chunkType.getSliceType() < Goal::Slice::Type::kECFirst);
-		std::vector<NetworkAddress> legacy_chain;
-		legacy_chain.reserve(chain.size());
-		for (const auto &entry : chain) {
-			legacy_chain.push_back(entry.address);
-		}
-		cltocs::writeInit::serialize(buffer, chunkId, chunkVersion,
-		                             (legacy::ChunkPartType)chunkType,
-		                             legacy_chain);
-	} else {
-		assert(slice_traits::isStandard(chunkType));
-		LegacyVector<NetworkAddress> legacy_chain;
-		legacy_chain.reserve(chain.size());
-		for (const auto &entry : chain) {
-			legacy_chain.push_back(entry.address);
-		}
-		serializeLegacyPacket(buffer, CLTOCS_WRITE, chunkId, chunkVersion,
-		                      legacy_chain);
-	}
+                              [[maybe_unused]] uint32_t target_version) {
+	cltocs::writeInit::serialize(buffer, chunkId, chunkVersion, chunkType,
+									chain);
 }
 
 void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
@@ -677,36 +642,11 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	TRACETHIS();
 	std::vector<ChunkTypeWithAddress> chain;
 
-	sassert(type == SAU_CLTOCS_WRITE_INIT || type == CLTOCS_WRITE);
+	sassert(type == SAU_CLTOCS_WRITE_INIT);
 	try {
-		if (type == SAU_CLTOCS_WRITE_INIT) {
-			PacketVersion v;
-			deserializePacketVersionNoHeader(data, length, v);
-			if (v == cltocs::writeInit::kECChunks) {
-				cltocs::writeInit::deserialize(data, length, chunkId,
-				                               chunkVersion, chunkType, chain);
-			} else {
-				std::vector<NetworkAddress> legacy_chain;
-				legacy::ChunkPartType legacy_type;
-				cltocs::writeInit::deserialize(data, length, chunkId,
-				                               chunkVersion, legacy_type,
-				                               legacy_chain);
-				chunkType = legacy_type;
-				for (const auto &address : legacy_chain) {
-					chain.emplace_back(address, chunkType, kFirstXorVersion);
-				}
-			}
-		} else {
-			LegacyVector<NetworkAddress> legacyChain;
-			deserializeAllLegacyPacketDataNoHeader(data, length, chunkId,
-			                                       chunkVersion, legacyChain);
-			for (const auto &address : legacyChain) {
-				chain.emplace_back(address,
-				                   slice_traits::standard::ChunkPartType(),
-				                   kStdVersion);
-			}
-			chunkType = slice_traits::standard::ChunkPartType();
-		}
+		PacketVersion v;
+		deserializePacketVersionNoHeader(data, length, v);
+		cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType, chain);
 		messageSerializer = MessageSerializer::getSerializer(type);
 	} catch (IncorrectDeserializationException &ex) {
 		safs_pretty_syslog(
@@ -924,20 +864,6 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 	state = State::Idle;
 }
 
-void ChunkserverEntry::sauGetChunkBlocksFinishedLegacyCallback(uint8_t status,
-                                                               void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry*>(entry);
-	eptr->getBlocksJobId = 0;
-	std::vector<uint8_t> buffer;
-	cstocs::getChunkBlocksStatus::serialize(
-	    buffer, eptr->chunkId, eptr->chunkVersion,
-	    (legacy::ChunkPartType)eptr->chunkType, eptr->getBlocksJobResult,
-	    status);
-	eptr->createAttachedPacket(buffer);
-	eptr->state = State::Idle;
-}
-
 void ChunkserverEntry::sauGetChunkBlocksFinishedCallback(uint8_t status,
                                                          void *entry) {
 	TRACETHIS();
@@ -966,22 +892,10 @@ void ChunkserverEntry::getChunkBlocksFinishedCallback(uint8_t status,
 void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, length, v);
-	if (v == cstocs::getChunkBlocks::kECChunks) {
-		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
-		                                    chunkType);
-
-		getBlocksJobId = job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedCallback, this,
-		                                chunkId, chunkVersion, chunkType, &getBlocksJobResult);
-
-	} else {
-		legacy::ChunkPartType legacy_type;
-		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
-		                                    legacy_type);
-		chunkType = legacy_type;
-		getBlocksJobId =
-		    job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedLegacyCallback, this, chunkId,
-		                   chunkVersion, chunkType, &getBlocksJobResult);
-	}
+	cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
+										chunkType);
+	getBlocksJobId = job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedCallback, this,
+									chunkId, chunkVersion, chunkType, &getBlocksJobResult);
 	state = State::GetBlock;
 }
 
@@ -1081,15 +995,8 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 		PacketVersion vers;
 		deserializePacketVersionNoHeader(data, length, vers);
 		ChunkWithVersionAndType chunk;
-		if (vers == cltocs::testChunk::kECChunks) {
-			cltocs::testChunk::deserialize(data, length, chunk.id,
-			                               chunk.version, chunk.type);
-		} else {
-			legacy::ChunkPartType legacy_type;
-			cltocs::testChunk::deserialize(data, length, chunk.id,
-			                               chunk.version, legacy_type);
-			chunk.type = legacy_type;
-		}
+		cltocs::testChunk::deserialize(data, length, chunk.id,
+										chunk.version, chunk.type);
 		hddAddChunkToTestQueue(chunk);
 	} catch (IncorrectDeserializationException &e) {
 		safs_pretty_syslog(
