@@ -386,22 +386,14 @@ void MasterConn::requestMetadataDump() {
 }
 
 void MasterConn::handleChangelogApplyError(uint8_t status) {
-	if (masterVersion <= saunafsVersion(2, 5, 0)) {
-		safs::log_info("Dropping in-memory metadata and starting download from master");
-		forceMetadataDownload();
-	} else {
-		safs::log_info("Waiting for master to produce up-to-date metadata image");
-		errorStatus = status;
-		requestMetadataDump();
-	}
+	safs::log_info("Waiting for master to produce up-to-date metadata image");
+	errorStatus = status;
+	requestMetadataDump();
 }
 
 #ifndef METALOGGER
 void MasterConn::sendMatoClPort() {
 	static std::string previousPort;
-
-	if (masterVersion < SAUNAFS_VERSION(2, 5, 5)) { return; }
-
 	std::string portStr = cfg_getstring("MATOCL_LISTEN_PORT", "9421");
 	static uint16_t port = 0;
 
