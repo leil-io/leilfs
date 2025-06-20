@@ -58,15 +58,7 @@ uint32_t ChunkReplicator::getChunkBlocks(uint64_t chunk_id, uint32_t chunk_versi
 	sassert(fd >= 0);
 
 	std::vector<uint8_t> output_buffer;
-	if (type_with_address.chunkserver_version >= kFirstECVersion) {
-		cstocs::getChunkBlocks::serialize(output_buffer, chunk_id, chunk_version, chunk_type);
-	} else if (type_with_address.chunkserver_version >= kFirstXorVersion) {
-		assert((int)chunk_type.getSliceType() < Goal::Slice::Type::kECFirst);
-		cstocs::getChunkBlocks::serialize(output_buffer, chunk_id, chunk_version, (legacy::ChunkPartType)chunk_type);
-	} else {
-		assert(slice_traits::isStandard(chunk_type));
-		serializeLegacyPacket(output_buffer, CSTOCS_GET_CHUNK_BLOCKS, chunk_id, chunk_version);
-	}
+	cstocs::getChunkBlocks::serialize(output_buffer, chunk_id, chunk_version, chunk_type);
 	tcptowrite(fd, output_buffer.data(), output_buffer.size(), 1000);
 
 	std::vector<uint8_t> input_buffer;
@@ -87,15 +79,8 @@ uint32_t ChunkReplicator::getChunkBlocks(uint64_t chunk_id, uint32_t chunk_versi
 	if (header.type == SAU_CSTOCS_GET_CHUNK_BLOCKS_STATUS) {
 		PacketVersion v;
 		deserializePacketVersionNoHeader(input_buffer, v);
-		if (v == cstocs::getChunkBlocksStatus::kECChunks) {
-			cstocs::getChunkBlocksStatus::deserialize(input_buffer, rx_chunk_id, rx_chunk_version, rx_chunk_type,
-				nr_of_blocks, status);
-		} else {
-			legacy::ChunkPartType legacy_type;
-			cstocs::getChunkBlocksStatus::deserialize(input_buffer, rx_chunk_id, rx_chunk_version, legacy_type,
-				nr_of_blocks, status);
-			rx_chunk_type = legacy_type;
-		}
+		cstocs::getChunkBlocksStatus::deserialize(input_buffer, rx_chunk_id, rx_chunk_version, rx_chunk_type,
+			nr_of_blocks, status);
 	} else {
 		deserializeAllLegacyPacketDataNoHeader(input_buffer.data(), input_buffer.size(),
 				rx_chunk_id, rx_chunk_version, nr_of_blocks, status);
