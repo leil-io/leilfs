@@ -1978,15 +1978,6 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 			standard_servers.push_back(part.server());
 		}
 
-		if (destination_version >= kFirstXorVersion && destination_version < kFirstECVersion
-			&& slice_traits::isXor(part_to_recover) && matocsserv_get_version(part.server()) < kFirstXorVersion) {
-			continue;
-		}
-
-		if (destination_version < kFirstXorVersion && !slice_traits::isStandard(part.type)) {
-			continue;
-		}
-
 		all_servers.push_back(part.server());
 		all_parts.push_back(part.type);
 		calc.addPart(part.type, matocsserv_get_label(part.server()));
@@ -1997,16 +1988,13 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 		return false;
 	}
 
-	if (destination_version >= kFirstECVersion ||
-	    (destination_version >= kFirstXorVersion && slice_traits::isXor(part_to_recover))) {
-		matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version,
-		                                   part_to_recover, all_servers,
-		                                   all_parts);
-		stats_replications++;
-		metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
-		c->needverincrease = 1;
-		return true;
-	}
+	matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version,
+										part_to_recover, all_servers,
+										all_parts);
+	stats_replications++;
+	metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
+	c->needverincrease = 1;
+	return true;
 
 	return false;
 }
