@@ -649,7 +649,7 @@ void matoclserv_store_sessions() {
 			put32bit(&ptr, sessionPtr->sessionId);
 			put32bit(&ptr, sessionInfoLength);
 			put32bit(&ptr, sessionPtr->peerIpAddress);
-			put32bit(&ptr, sessionPtr->rootInode);
+			putINode(&ptr, sessionPtr->rootInode);
 			put8bit(&ptr, sessionPtr->flags);
 			put8bit(&ptr, sessionPtr->minGoal);
 			put8bit(&ptr, sessionPtr->maxGoal);
@@ -892,7 +892,7 @@ int matoclserv_insert_open_file(Session *currentSession, inode_t inode) {
 /// @param inode The inode of the open file
 /// If the session exists, the open file will be added to the list of open files of the session.
 /// Otherwise, a new session will be created and the open file will be added to the new session.
-void matoclserv_add_open_file(uint32_t sessionId, uint32_t inode) {
+void matoclserv_add_open_file(uint32_t sessionId, inode_t inode) {
 	for (const auto& sessionPtr : sessionVector) {
 		if (sessionPtr->sessionId == sessionId) {
 			if (!sessionPtr->openFilesSet.contains(inode)) {
@@ -915,7 +915,7 @@ void matoclserv_add_open_file(uint32_t sessionId, uint32_t inode) {
 /// Removes an open file from a given session.
 /// @param sessionId The IF of the session
 /// @param inode The inode of the open file
-void matoclserv_remove_open_file(uint32_t sessionId, uint32_t inode) {
+void matoclserv_remove_open_file(uint32_t sessionId, inode_t inode) {
 	for (const auto& sessionPtr : sessionVector) {
 		if (sessionPtr->sessionId == sessionId) {
 			if (sessionPtr->openFilesSet.contains(inode)) {
@@ -1158,7 +1158,7 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
 	uint32_t messageId = 0;
 	uint64_t fileLength = 0;
 	uint8_t operationType = 0;
-	uint32_t inode = 0;
+	inode_t inode = 0;
 	uint32_t uid = 0;
 	uint32_t gid = 0;
 	uint32_t auid = 0;
