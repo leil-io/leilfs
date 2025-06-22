@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "common/argon2kdf.h"
 #include "common/cwrap.h"
 #include "common/datapack.h"
 #include "common/event_loop.h"
@@ -50,6 +51,9 @@ struct exports {
 	uint32_t fromip,toip;
 	uint32_t minversion;
 	uint8_t passworddigest[16];
+	const uint8_t *rawpassword;
+	bool argon2pass;
+	bool passwordDigestCalculated;
 	unsigned alldirs:1;
 	unsigned needpassword:1;
 	unsigned meta:1;
@@ -230,15 +234,20 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 					ok=0;
 					nopass=1;
 				} else {
-					md5_init(&md5c);
-					md5_update(&md5c,rndcode,16);
-					md5_update(&md5c,e->passworddigest,16);
-					md5_update(&md5c,rndcode+16,16);
-					md5_final(entrydigest,&md5c);
-					if (memcmp(entrydigest,passcode,16)!=0) {
-						ok=0;
-						nopass=1;
-					}
+					if (e->argon2pass && !verify_argon2_digest(passcode, e->rawpassword, std::strlen(reinterpret_cast<const char*>(e->rawpassword)))) {
+						ok = 0;
+						nopass = 1;
+					} else if (!e->argon2pass && e->passwordDigestCalculated) {
+						md5_init(&md5c);
+						md5_update(&md5c,rndcode,16);
+						md5_update(&md5c,e->passworddigest,16);
+						md5_update(&md5c,rndcode+16,16);
+						md5_final(entrydigest,&md5c);
+						if (memcmp(entrydigest,passcode,16) != 0) {
+							ok=0;
+							nopass=1;
+						}
+ 					}
 				}
 			}
 		}
@@ -290,6 +299,9 @@ static void exports_freelist(exports *arec) {
 		arec = arec->next;
 		if (drec->path) {
 			free((uint8_t *)(drec->path));
+		}
+		if (drec->rawpassword) {
+			free((uint8_t *)(drec->rawpassword));
 		}
 		free(drec);
 	}
@@ -711,6 +723,15 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 					arec->alldirs = 1;
 				}
 				o=1;
+			} else if (strncmp(p,"argon2pass",10)==0) {
+				if (arec->passwordDigestCalculated) {
+					safs_pretty_syslog(LOG_WARNING,"sfsexports: argon2pass and md5pass are mutually exclusive in line: %" PRIu32,lineno);
+					return -1;
+				}
+				o=1;
+				arec->argon2pass = 1;
+				arec->needpassword = 1;
+				arec->passwordDigestCalculated = true;
 			}
 			break;
 		case 'c':
@@ -764,6 +785,10 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 					arec->sesflags |= SESFLAG_MAPALL;
 				}
 			} else if (strncmp(p,"md5pass=",8)==0) {
+				if(arec->argon2pass) {
+					safs_pretty_syslog(LOG_WARNING,"sfsexports: md5pass and argon2pass are mutually exclusive in line: %" PRIu32,lineno);
+					return -1;
+				}
 				char *ptr = p+8;
 				uint32_t i=0;
 				o=1;
@@ -791,6 +816,7 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 						}
 						ptr++;
 					}
+					arec->passwordDigestCalculated = true;
 					arec->needpassword=1;
 				} else {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect md5pass definition (%s) in line: %" PRIu32,p,lineno);
@@ -846,6 +872,12 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 			break;
 		case 'p':
 			if (strncmp(p,"password=",9)==0) {
+				// Store raw password
+				arec-> rawpassword = (const uint8_t*) malloc(strlen(p+9)+1);
+				passert(arec->rawpassword);
+				memcpy((uint8_t*)arec->rawpassword,p+9,strlen(p+9));
+				
+				// Calculate password digest for md5
 				md5_init(&ctx);
 				md5_update(&ctx,(uint8_t*)(p+9),strlen(p+9));
 				md5_final(arec->passworddigest,&ctx);
@@ -885,6 +917,9 @@ static int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	arec->mapalluid = 999;
 	arec->mapallgid = 999;
 	arec->next = NULL;
+	arec->argon2pass = false;
+	arec->passwordDigestCalculated = false;
+	arec->rawpassword = nullptr;
 
 	p = line;
 	while (*p==' ' || *p=='\t') {

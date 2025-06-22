@@ -1,6 +1,7 @@
 {
   "builtin-baseline": "0b4805abfa6ad4c5a4f7fe7d067fdab8449fb915",
   "dependencies": [
+    "argon2",
     "boost-dll",
     "boost-filesystem",
     "boost-iostreams",

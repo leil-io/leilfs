@@ -43,6 +43,7 @@ RUN set -e ; \
           flex \
           krb5-user \
           libacl1-dev \
+		  libargon2-dev \
           libblkid-dev \
           libboost-filesystem-dev \
           libboost-iostreams-dev \

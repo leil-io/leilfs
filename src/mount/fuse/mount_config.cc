@@ -50,6 +50,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfspassword=%s", password, 0),
 	SFS_OPT("askpassword", passwordask, 1),
 	SFS_OPT("sfsmd5pass=%s", md5pass, 0),
+	SFS_OPT("sfsargon2pass=%s", argon2pass, 0),
 	SFS_OPT("sfsrlimitnofile=%u", nofile, 0),
 	SFS_OPT("sfsnice=%d", nice, 0),
 #ifdef SFS_USE_MEMLOCK
@@ -230,6 +231,9 @@ void usage(const char *progname) {
 "    -o sfspassword=PASSWORD     authenticate to sfsmaster with password\n"
 "    -o sfsmd5pass=MD5           authenticate to sfsmaster using directly "
 				"given md5 (only if sfspassword is not defined)\n"
+"    -o sfsargon2pass=0|1        authenticate to sfsmaster using and Argon2id "
+				"hash of given value on sfspassword (only if sfsmd5pass is "
+				"not defined) (default %d)\n"
 "    -p   --password             similar to '-o sfspassword=PASSWORD', but "
 				"show prompt and ask user for password\n"
 "    -o askpassword              show prompt and ask user for password\n"
@@ -362,6 +366,7 @@ void usage(const char *progname) {
 				"master-communication sleep interval, up to maxwaitretrytime; smaller N "
 				"converges faster—ideal for critical fast-reconnect scenarios (default: %u)\n"
 "\n",
+		SaunaClient::FsInitParams::kDefaultArgon2Password,
 		SaunaClient::FsInitParams::kDefaultCacheExpirationTime,
 		SaunaClient::FsInitParams::kDefaultReadBuffersExpirationTime,
 		SaunaClient::FsInitParams::kDefaultReadaheadMaxWindowSize,

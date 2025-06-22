@@ -66,6 +66,7 @@ struct sfsopts_ {
 	char *subfolder;
 	char *password;
 	char *md5pass;
+	int argon2pass;
 	unsigned nofile;
 	signed nice;
 #ifdef SFS_USE_MEMLOCK
@@ -133,6 +134,7 @@ struct sfsopts_ {
 		subfolder(NULL),
 		password(NULL),
 		md5pass(NULL),
+		argon2pass(SaunaClient::FsInitParams::kDefaultArgon2Password),
 		nofile(0),
 		nice(-19),
 #ifdef SFS_USE_MEMLOCK

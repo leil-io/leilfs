@@ -61,6 +61,7 @@ void drop_readdir_session(uint64_t opendirSessionID);
 
 struct FsInitParams {
 	static constexpr const char *kDefaultSubfolder = DEFAULT_MOUNTED_SUBFOLDER;
+	static constexpr bool     kDefaultArgon2Password = false;
 	static constexpr bool     kDefaultDoNotRememberPassword = false;
 	static constexpr bool     kDefaultDelayedInit = false;
 	static constexpr unsigned kDefaultIoRetries = 30;
@@ -179,7 +180,8 @@ struct FsInitParams {
 	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
-	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
+	             message_suppression_period(kDefaultMessageSuppressionPeriod),
+	             argon2_password(kDefaultArgon2Password) {
 	}
 
 	FsInitParams(const std::string &bind_host, const std::string &host, const std::string &port, const std::string &mountpoint)
@@ -227,7 +229,8 @@ struct FsInitParams {
 	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
-	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
+	             message_suppression_period(kDefaultMessageSuppressionPeriod),
+	             argon2_password(kDefaultArgon2Password) {
 	}
 
 	std::string bind_host;
@@ -297,6 +300,7 @@ struct FsInitParams {
 	bool direct_io;
 	int log_notifications_area;
 	unsigned message_suppression_period;
+	bool argon2_password;
 
 	std::string io_limits_config_file;
 };

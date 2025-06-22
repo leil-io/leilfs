@@ -129,8 +129,7 @@ static void sfs_fsinit(void *userdata, struct fuse_conn_info *conn) {
 
 static bool setup_password(std::vector<uint8_t> &md5pass) {
 	md5ctx ctx;
-
-	if (gMountOptions.password) {
+	if (gMountOptions.password && !gMountOptions.argon2pass) {
 		md5pass.resize(16);
 		md5_init(&ctx);
 		md5_update(&ctx, (uint8_t *)(gMountOptions.password), strlen(gMountOptions.password));
@@ -225,7 +224,18 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.verbose = true;
 	params.meta = gMountOptions.meta;
 	params.subfolder = gMountOptions.subfolder;
-	params.password_digest = std::move(md5pass);
+	if (gMountOptions.password && gMountOptions.argon2pass) {
+		// copy raw password bytes into the vector
+		size_t len = std::strlen(gMountOptions.password);
+		params.password_digest.assign(
+		    // begin iterator
+		    reinterpret_cast<const uint8_t *>(gMountOptions.password),
+		    // end iterator (just past last byte of the C‐string)
+		    reinterpret_cast<const uint8_t *>(gMountOptions.password) + len);
+	} else {
+		// already have a digest in md5pass
+		params.password_digest = std::move(md5pass);
+	}
 	params.do_not_remember_password = gMountOptions.donotrememberpassword;
 	params.delayed_init = gMountOptions.delayedinit;
 	params.report_reserved_period = gMountOptions.reportreservedperiod;
@@ -272,6 +282,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.use_quota_in_volume_size = gMountOptions.usequotainvolumesize;
 	params.max_wait_retry_time = gMountOptions.maxwaitretrytime;
 	params.mastercomm_sleep_time_divisor = gMountOptions.mastercommsleeptimedivisor;
+	params.argon2_password = gMountOptions.argon2pass;
 
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);

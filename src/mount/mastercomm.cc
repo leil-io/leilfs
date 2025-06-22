@@ -48,6 +48,7 @@
   #include <pwd.h>
 #endif
 
+#include "common/argon2kdf.h"
 #include "common/datapack.h"
 #include "common/exception.h"
 #include "common/exit_status.h"
@@ -161,6 +162,7 @@ struct InitParams {
 	std::string port;
 	bool meta;
 	bool do_not_remember_password;
+	bool argon2_password;
 	std::string mountpoint;
 	std::string subfolder;
 	std::vector<uint8_t> password_digest;
@@ -172,6 +174,7 @@ struct InitParams {
 		port = params.port;
 		meta = params.meta;
 		do_not_remember_password = params.do_not_remember_password;
+		argon2_password = params.argon2_password;
 		mountpoint = params.mountpoint;
 		subfolder = params.subfolder;
 		password_digest = params.password_digest;
@@ -606,11 +609,15 @@ int fs_connect(bool verbose) {
 			free(regbuff);
 			return -1;
 		}
-		md5_init(&ctx);
-		md5_update(&ctx,regbuff,16);
-		md5_update(&ctx, gInitParams.password_digest.data(), gInitParams.password_digest.size());
-		md5_update(&ctx,regbuff+16,16);
-		md5_final(digest,&ctx);
+		if (gInitParams.argon2_password) {
+			make_argon2_digest(digest, gInitParams.password_digest.data(), gInitParams.password_digest.size());
+		} else {
+			md5_init(&ctx);
+			md5_update(&ctx,regbuff,16);
+			md5_update(&ctx, gInitParams.password_digest.data(), gInitParams.password_digest.size());
+			md5_update(&ctx,regbuff+16,16);
+			md5_final(digest,&ctx);
+		}
 	}
 	wptr = regbuff;
 	put32bit(&wptr,CLTOMA_FUSE_REGISTER);

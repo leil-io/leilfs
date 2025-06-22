@@ -39,6 +39,7 @@ common_packages=(
 	gnupg2
 	kmod
 	lcov
+	libargon2-dev     # required for Argon2 password hashing
 	make
 	nfs4-acl-tools
 	pkg-config
