@@ -74,7 +74,7 @@ install(TARGETS big-session-metadata-benchmark RUNTIME DESTINATION ${BIN_SUBDIR}
 
 # sfs-test-fdb Checks if the expected FDB database is operable
 add_executable(sfs-test-fdb sfs_test_fdb.cc)
-target_link_libraries(sfs-test-fdb fdb_c)
+target_link_libraries(sfs-test-fdb slogger fdb)
 install(TARGETS sfs-test-fdb RUNTIME DESTINATION ${BIN_SUBDIR})
 
 add_library(slow_chunk_scan SHARED slow_chunk_scan.c)
