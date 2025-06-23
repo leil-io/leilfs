@@ -180,14 +180,15 @@ private:
 	/// Guarded by `gChunksMapMutex`.
 	std::unique_ptr<CondVarWithWaitCount> condVar_ = nullptr;
 
-	IDisk *owner_ = nullptr;    ///< The Disk which owns this Chunk.
-	uint64_t id_;               ///< The ID of the chunk.
-	uint32_t version_ = 0;      ///< The version of the chunk.
-	ChunkPartType type_;        ///< The type of the chunk (ec:5, xor:2, etc.).
-	int32_t metaFD_ = -1;       ///< Metadata file descriptor
-	int32_t dataFD_ = -1;       ///< Data file descriptor
-	uint16_t blocks_ = 0;       ///< Number of blocks in the chunk
-	uint16_t refCount_ = 0;     ///< Used to properly release the chunk
+	IDisk *owner_ = nullptr;     ///< The Disk which owns this Chunk.
+	uint64_t id_;                ///< The ID of the chunk.
+	uint32_t version_ = 0;       ///< The version of the chunk.
+	bool isVersionSet_ = false;  ///< Tells if the version was set at least once
+	ChunkPartType type_;         ///< The type of the chunk (ec:5, xor:2, etc.).
+	int32_t metaFD_ = -1;        ///< Metadata file descriptor
+	int32_t dataFD_ = -1;        ///< Data file descriptor
+	uint16_t blocks_ = 0;        ///< Number of blocks in the chunk
+	uint16_t refCount_ = 0;      ///< Used to properly release the chunk
 	uint16_t blockExpectedToBeReadNext_ = 0;  ///< Read ahead helper
 	uint8_t validAttr_ = 0;   ///< Tells if the attributes were recently updated
 	uint8_t wasChanged_ = 0;  ///< Tells if it was changed from last flush
