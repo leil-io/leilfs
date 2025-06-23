@@ -25,14 +25,7 @@
 #include "protocol/packet.h"
 #include "common/serialization_macros.h"
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, setVersion, SAU_MATOCS_SET_VERSION, kStandardAndXorChunks,
-		uint64_t,  chunkId,
-		legacy::ChunkPartType, chunkType,
-		uint32_t,  chunkVersion,
-		uint32_t,  newVersion)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, setVersion, SAU_MATOCS_SET_VERSION, kECChunks,
 		uint64_t,  chunkId,
@@ -40,41 +33,21 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t,  chunkVersion,
 		uint32_t,  newVersion)
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, deleteChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, deleteChunk, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, deleteChunk, SAU_MATOCS_DELETE_CHUNK, kStandardAndXorChunks,
-		uint64_t,  chunkId,
-		legacy::ChunkPartType, chunkType,
-		uint32_t,  chunkVersion)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, deleteChunk, SAU_MATOCS_DELETE_CHUNK, kECChunks,
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType,
 		uint32_t,  chunkVersion)
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, createChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, createChunk, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, createChunk, SAU_MATOCS_CREATE_CHUNK, kStandardAndXorChunks,
-		uint64_t,  chunkId,
-		legacy::ChunkPartType, chunkType,
-		uint32_t,  chunkVersion)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, createChunk, SAU_MATOCS_CREATE_CHUNK, kECChunks,
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType,
 		uint32_t,  chunkVersion)
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, truncateChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, truncateChunk, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, truncateChunk, SAU_MATOCS_TRUNCATE, kStandardAndXorChunks,
-		uint64_t,  chunkId,
-		legacy::ChunkPartType, chunkType,
-		uint32_t,  length, // if xor chunk - length of chunk part
-		uint32_t,  newVersion,
-		uint32_t,  oldVersion)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, truncateChunk, SAU_MATOCS_TRUNCATE, kECChunks,
 		uint64_t,  chunkId,
@@ -83,15 +56,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t,  newVersion,
 		uint32_t,  oldVersion)
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, duplicateChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, duplicateChunk, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, duplicateChunk, SAU_MATOCS_DUPLICATE_CHUNK, kStandardAndXorChunks,
-		uint64_t, newChunkId,
-		uint32_t, newchunkVersion,
-		legacy::ChunkPartType, chunkType,
-		uint64_t, oldChunkId,
-		uint32_t, oldChunkVersion)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, duplicateChunk, SAU_MATOCS_DUPLICATE_CHUNK, kECChunks,
 		uint64_t, newChunkId,
@@ -100,16 +65,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint64_t, oldChunkId,
 		uint32_t, oldChunkVersion)
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, duptruncChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, duptruncChunk, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, duptruncChunk, SAU_MATOCS_DUPTRUNC_CHUNK, kStandardAndXorChunks,
-		uint64_t, newChunkId,
-		uint32_t, newchunkVersion,
-		legacy::ChunkPartType, chunkType,
-		uint64_t, oldChunkId,
-		uint32_t, oldChunkVersion,
-		uint32_t, length) // if xor chunk - length of chunk part
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, duptruncChunk, SAU_MATOCS_DUPTRUNC_CHUNK, kECChunks,
 		uint64_t, newChunkId,
@@ -119,14 +75,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, oldChunkVersion,
 		uint32_t, length) // if xor chunk - length of chunk part
 
-SAUNAFS_DEFINE_PACKET_VERSION(matocs, replicateChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, replicateChunk, kECChunks, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocs, replicateChunk, SAU_MATOCS_REPLICATE_CHUNK, kStandardAndXorChunks,
-		uint64_t,  chunkId,
-		uint32_t,  chunkVersion,
-		legacy::ChunkPartType, chunkType,
-		std::vector<legacy::ChunkTypeWithAddress>, sources)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, replicateChunk, SAU_MATOCS_REPLICATE_CHUNK, kECChunks,
 		uint64_t,  chunkId,
@@ -136,12 +85,6 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 
 namespace matocs {
 namespace replicateChunk {
-
-inline void deserializePartial(const std::vector<uint8_t>& source,
-		uint64_t& chunkId, uint32_t& chunkVersion, legacy::ChunkPartType& chunkType, const uint8_t*& sources) {
-	verifyPacketVersionNoHeader(source, kStandardAndXorChunks);
-	deserializeAllPacketDataNoHeader(source, chunkId, chunkVersion, chunkType, sources);
-}
 
 inline void deserializePartial(const std::vector<uint8_t>& source,
 		uint64_t& chunkId, uint32_t& chunkVersion, ChunkPartType& chunkType, const uint8_t*& sources) {
