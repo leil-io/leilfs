@@ -2176,14 +2176,6 @@ uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_
 		} else if (packetVersion == matocl::fuseReadChunk::kECChunks_ResponsePacketVersion) {
 			matocl::fuseReadChunk::deserialize(message, fileLength,
 					chunkId, chunkVersion, chunkservers);
-		} else if (packetVersion == matocl::fuseReadChunk::kResponsePacketVersion) {
-			std::vector<legacy::ChunkTypeWithAddress> legacy_chunkservers;
-			matocl::fuseReadChunk::deserialize(message, fileLength,
-					chunkId, chunkVersion, legacy_chunkservers);
-			chunkservers.clear();
-			for (const auto &part : legacy_chunkservers) {
-				chunkservers.push_back(ChunkTypeWithAddress(part.address, ChunkPartType(part.chunkType), kFirstXorVersion));
-			}
 		} else {
 			safs_pretty_syslog(LOG_NOTICE, "SAU_MATOCL_FUSE_READ_CHUNK - wrong packet version");
 			setDisconnect(true);
@@ -2236,14 +2228,6 @@ uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, u
 		} else if (packetVersion == matocl::fuseWriteChunk::kECChunks_ResponsePacketVersion) {
 			matocl::fuseWriteChunk::deserialize(message,
 					fileLength, chunkId, chunkVersion, lockId, chunkservers);
-		} else if (packetVersion == matocl::fuseWriteChunk::kResponsePacketVersion) {
-			std::vector<legacy::ChunkTypeWithAddress> legacy_chunkservers;
-			matocl::fuseWriteChunk::deserialize(message,
-					fileLength, chunkId, chunkVersion, lockId, legacy_chunkservers);
-			chunkservers.clear();
-			for (const auto &part : legacy_chunkservers) {
-				chunkservers.push_back(ChunkTypeWithAddress(part.address, ChunkPartType(part.chunkType), kFirstXorVersion));
-			}
 		} else {
 			safs_pretty_syslog(LOG_NOTICE, "SAU_MATOCL_FUSE_WRITE_CHUNK - wrong packet version");
 			setDisconnect(true);
