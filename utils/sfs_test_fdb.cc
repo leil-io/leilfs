@@ -136,12 +136,12 @@ int main(int argc, char **argv) {
 	// Initialize the logging system
 	safs::setup_logs();
 
-	safs::log_info("Starting FoundationDB test application...");
-
 	// Default path
 	std::string clusterFile = "/etc/foundationdb/fdb.cluster";
 
 	if (argc == 2) { clusterFile = std::string(argv[1]); }
+
+	safs::log_info("Starting FoundationDB test application. Using cluster file: {}", clusterFile);
 
 	// Create the FoundationDB context, which selects the API version, initializes the network
 	// thread and connects to the cluster specified by the cluster file.

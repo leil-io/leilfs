@@ -114,21 +114,47 @@ kv::GetRangeResult Transaction::getRange(
 
 	static constexpr int kBytesLimit = 0;
 
-	FDBFuture *future = fdb_transaction_get_range(
-	    tr_.get(), begin.getKey().data(),
-		static_cast<int>(begin.getKey().size()),
-	    begin.isInclusive() ? 1 : 0,
-		begin.getOffset(),
-		end.getKey().data(),
-	    static_cast<int>(end.getKey().size()),
-		end.isInclusive() ? 1 : 0,
-		end.getOffset(),
-		limit,
-	    kBytesLimit,  // No bytes limit in this implementation
-	    streamingMode,
-		iteration,
-		static_cast<fdb_bool_t>(snapshot),
-	    static_cast<fdb_bool_t>(reverse));
+	auto selectRangeCall = [&]() {
+		if (begin.isInclusive()) {
+			if (end.isInclusive()) {
+				// [ begin, end ]
+				return fdb_transaction_get_range(
+				    tr_.get(),
+				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
+				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
+				    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+				    static_cast<fdb_bool_t>(reverse));
+			} else {
+				// [ begin, end )
+				return fdb_transaction_get_range(
+				    tr_.get(),
+				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
+				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()),
+				    limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+				    static_cast<fdb_bool_t>(reverse));
+			}
+		} else {
+			if (end.isInclusive()) {
+				// ( begin, end ]
+				return fdb_transaction_get_range(
+				    tr_.get(),
+				    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
+				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
+				    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+				    static_cast<fdb_bool_t>(reverse));
+			} else {
+				// ( begin, end )
+				return fdb_transaction_get_range(
+				    tr_.get(),
+				    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
+				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()),
+				    limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+				    static_cast<fdb_bool_t>(reverse));
+			}
+		}
+	};
+
+	FDBFuture *future = selectRangeCall();
 
 	auto error = fdb_future_block_until_ready(future);
 

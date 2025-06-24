@@ -82,9 +82,6 @@ else
 	exit 1
 fi
 
-# Stop FoundationDB service if running after the installation
-systemctl stop foundationdb || true
-
 # Clean up temporary workspace
 echo "Removing temporary workspace..."
 rm -r "${workspace:?}"
