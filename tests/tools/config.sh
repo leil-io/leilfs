@@ -29,7 +29,6 @@ fi
 : ${SAUNAFS_DISKS:=}
 : ${SAUNAFS_LOOP_DISKS:=}
 : ${TEMP_DIR:=/tmp/SaunaFS-autotests}
-: ${LEGACY_DIR:=/tmp/SaunaFS-autotests-legacy}
 : ${SAUNAFSXX_DIR_BASE:=/tmp/SaunaFS-autotests-old}
 : ${SAUNAFS_ROOT:=/usr/local}
 : ${FIRST_PORT_TO_USE:=9600}

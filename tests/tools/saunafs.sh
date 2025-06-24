@@ -3,7 +3,6 @@
 # If out_var provided an associative array with name $out_var
 # is created and it contains information about the filestystem
 setup_local_empty_saunafs() {
-	local use_legacy=${USE_LEGACY:-}
 	local use_saunafsXX=${START_WITH_LEGACY_SAUNAFS:-}
 	local use_ramdisk=${USE_RAMDISK:-}
 	local use_zoned_disks=${USE_ZONED_DISKS:-}
@@ -47,11 +46,6 @@ setup_local_empty_saunafs() {
 
 	use_new_goal_config="true"
 	local oldpath="$PATH"
-	if [[ $use_legacy ]]; then
-		use_new_goal_config="false"
-		export PATH="$LEGACY_DIR/bin:$LEGACY_DIR/sbin:$PATH"
-		build_legacy
-	fi
 
 	if [[ $use_saunafsXX ]]; then
 		SAUNAFSXX_DIR=${SAUNAFSXX_DIR_BASE}/install/usr
@@ -116,11 +110,7 @@ setup_local_empty_saunafs() {
 	fi
 
 	# Wait for chunkservers (use saunafs-admin only for SaunaFS -- MooseFS doesn't support it)
-	if [[ ! $use_legacy ]]; then
-		saunafs_wait_for_all_ready_chunkservers
-	else
-		sleep 3 # A reasonable fallback
-	fi
+	saunafs_wait_for_all_ready_chunkservers
 
 	# Return array containing information about the installation
 	local out_var=$1

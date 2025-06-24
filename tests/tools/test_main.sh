@@ -12,7 +12,6 @@ done
 . $(which set_saunafs_constants.sh)
 . tools/stack_trace.sh
 . tools/assert.sh
-. tools/legacy.sh
 . tools/string.sh
 . tools/nullblk_zoned.sh
 . tools/saunafs.sh

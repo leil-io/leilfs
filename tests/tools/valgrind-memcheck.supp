@@ -94,25 +94,3 @@
    fun:__db_close
    fun:__db_close_pp
 }
-
-{
-   For ShortSystemTests.test_legacy_ec_upgrade: Uninitialized values used in std::sort in old SaunaFS version (3.11)
-   Memcheck:Cond
-   ...
-   src:matocsserv.cc:362
-   src:chunks.cc:1933
-   src:chunks.cc:2585
-   src:chunks.cc:2668
-   src:event_loop.cc:249
-   src:main.cc:1022
-}
-
-{
-   For ShortSystemTests.test_legacy_ec_upgrade: Uninitialized values used in std::stable_sort in old SaunaFS version (3.11)
-   Memcheck:Cond
-   fun:_ZNSt15__tuple_compareISt5tupleIJllhEES1_Lm2ELm3EE6__lessERKS1_S4_
-   fun:_ZNSt15__tuple_compareISt5tupleIJllhEES1_Lm1ELm3EE6__lessERKS1_S4_
-   fun:_ZNSt15__tuple_compareISt5tupleIJllhEES1_Lm0ELm3EE6__lessERKS1_S4_
-   fun:_ZStltIJllhEJllhEEbRKSt5tupleIJDpT_EERKS0_IJDpT0_EE
-   src:get_servers_for_new_chunk.cc:69
-}
