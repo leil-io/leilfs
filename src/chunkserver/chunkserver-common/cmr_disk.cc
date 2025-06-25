@@ -430,7 +430,7 @@ void CmrDisk::punchHoles(IChunk *chunk, const uint8_t *buffer, uint32_t offset,
 int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
                              uint32_t offsetInBlock, uint32_t size,
                              uint32_t crc, uint8_t *crcData,
-                             const uint8_t *buffer) {
+                             const uint8_t *buffer, bool isFromReplication) {
 	assert(chunk);
 	LOG_AVG_TILL_END_OF_SCOPE0("writeChunkBlock");
 	TRACETHIS3(chunk->id(), offsetInBlock, size);
@@ -450,7 +450,7 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 		return SAUNAFS_ERROR_WRONGOFFSET;
 	}
 
-	if (gCheckCrcWhenWriting) {
+	if (gCheckCrcWhenWriting && !isFromReplication) {
 		if (crc != mycrc32(0, buffer, size)) { return SAUNAFS_ERROR_CRC; }
 	}
 

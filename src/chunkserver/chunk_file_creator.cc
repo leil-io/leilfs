@@ -76,8 +76,8 @@ void ChunkFileCreator::write(uint32_t offset, uint32_t size, uint32_t crc,
 	int blocknum = offset / SFSBLOCKSIZE;
 	offset = offset % SFSBLOCKSIZE;
 	auto *crcData = gOpenChunks.getResource(chunk_->metaFD()).crcData();
-	int status = chunk_->owner()->writeChunkBlock(chunk_, 0, blocknum, offset,
-	                                              size, crc, crcData, buffer);
+	int status = chunk_->owner()->writeChunkBlock(chunk_, 0, blocknum, offset, size, crc, crcData,
+	                                              buffer, true);
 	if (status != SAUNAFS_STATUS_OK) {
 		throw Exception("failed to write chunk", status);
 	}

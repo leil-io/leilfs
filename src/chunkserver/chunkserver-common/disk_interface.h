@@ -222,7 +222,7 @@ public:
 	virtual int writeChunkBlock(IChunk *chunk, uint32_t version,
 	                            uint16_t blocknum, uint32_t offsetInBlock,
 	                            uint32_t size, uint32_t crc, uint8_t *crcData,
-	                            const uint8_t *buffer) = 0;
+	                            const uint8_t *buffer, bool isFromReplication = false) = 0;
 
 	/// Writes the Chunk header into the device
 	///
