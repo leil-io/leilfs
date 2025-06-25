@@ -48,3 +48,4 @@ constexpr uint32_t kACL11Version = saunafsVersion(3, 11, 0);
 constexpr uint32_t kRichACLVersion = saunafsVersion(3, 12, 0);
 constexpr uint32_t kEC2Version = saunafsVersion(3, 13, 0);
 constexpr uint32_t kFirstVersionWithPathByInodeHiddenFile = saunafsVersion(4, 8, 0);
+constexpr uint32_t kFirstVersionWithUseQuotaInVolumeSize = saunafsVersion(4, 9, 0);
