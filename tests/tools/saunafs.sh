@@ -5,6 +5,7 @@
 setup_local_empty_saunafs() {
 	local use_legacy=${USE_LEGACY:-}
 	local use_saunafsXX=${START_WITH_LEGACY_SAUNAFS:-}
+	local metadata_backend=${METADATA_BACKEND:-FILE}
 	local use_ramdisk=${USE_RAMDISK:-}
 	local use_zoned_disks=${USE_ZONED_DISKS:-}
 	local zone_size_mb=${ZONE_SIZE_MB:-256}
@@ -28,6 +29,8 @@ setup_local_empty_saunafs() {
 	declare -gA saunafs_info_
 	saunafs_info_[chunkserver_count]=$number_of_chunkservers
 	saunafs_info_[admin_password]=${ADMIN_PASSWORD:-password}
+
+	init_metadata_backend
 
 	# Enable always ramdisk for zoned devices
 	if parse_true "${use_zoned_disks}"; then
@@ -129,6 +132,16 @@ setup_local_empty_saunafs() {
 	for key in "${!saunafs_info_[@]}"; do
 		eval "$out_var['$key']='${saunafs_info_[$key]}'"
 	done
+}
+
+init_metadata_backend() {
+	case ${metadata_backend} in
+		"FDB")
+			declare -g USE_FDB="${metadata_backend}"
+			export USE_FDB
+			start_fdb_cluster
+			;;
+	esac
 }
 
 saunafs_admin_command() {
@@ -349,6 +362,7 @@ create_sfsmaster_master_cfg_() {
 	echo "${MASTER_EXTRA_CONFIG-}" | tr '|' '\n'
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
+	echo "METADATA_BACKEND = ${metadata_backend}"
 }
 
 create_sfsmaster_shadow_cfg_() {
@@ -373,6 +387,7 @@ create_sfsmaster_shadow_cfg_() {
 	echo "${MASTER_EXTRA_CONFIG-}" | tr '|' '\n'
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
+	echo "METADATA_BACKEND = ${metadata_backend}"
 }
 
 saunafs_make_conf_for_shadow() {

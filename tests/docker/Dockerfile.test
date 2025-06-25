@@ -17,6 +17,7 @@ RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
 	apt-get update && apt-get install tini && \
     ./tests/install-packages.sh;
 
+COPY ./tests/ci_build/install-foundationdb.sh ./tests/ci_build/
 COPY ./tests/setup_machine.sh ./tests/
 
 # Run the setup-test-machine.sh script
