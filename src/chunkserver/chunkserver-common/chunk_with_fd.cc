@@ -36,7 +36,9 @@ std::string FDChunk::fullMetaFilename() const {
 }
 
 const std::string FDChunk::metaFilename() const {
-	if (version_ == 0) {
+	// If version is not set, return an empty string.
+	// This is remain consistent with some checks.
+	if (!isVersionSet_) {
 		return "";
 	}
 	return generateFilenameForVersion(version_, true);
@@ -48,7 +50,9 @@ std::string FDChunk::fullDataFilename() const {
 }
 
 const std::string FDChunk::dataFilename() const {
-	if (version_ == 0) {
+	// If version is not set, return an empty string.
+	// This is remain consistent with some checks.
+	if (!isVersionSet_) {
 		return "";
 	}
 	return generateFilenameForVersion(version_, false);
@@ -137,7 +141,10 @@ void FDChunk::setBlockCountFromDataFileSize(off_t fileSize) {
 	blocks_ = fileSize / SFSBLOCKSIZE;
 }
 
-void FDChunk::setVersion(uint32_t _version) { version_ = _version; }
+void FDChunk::setVersion(uint32_t _version) {
+	version_ = _version;
+	isVersionSet_ = true;
+}
 
 int32_t FDChunk::metaFD() const { return metaFD_; }
 
