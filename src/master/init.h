@@ -67,7 +67,7 @@ inline const std::vector<RunTab> runTabs = {
     // has to be before 'fs_init' and 'matoclserv_networkinit'
     RunTab{dcm_init, "data cache manager"},
     // has to be before 'fs_init'
-    RunTab{matoclserv_sessionsinit, "load stored sessions"},
+    RunTab{matoclserv_sessions_init, "load stored sessions"},
     RunTab{exports_init, "exports manager"},
     RunTab{topology_init, "net topology module"},
     // the lambda is used to select the correct fs_init overload
@@ -76,7 +76,7 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{masterconn_init, "communication with master server"},
     RunTab{matomlserv_init, "communication with metalogger"},
     RunTab{matocsserv_init, "communication with chunkserver"},
-    RunTab{matoclserv_networkinit, "communication with clients"}};
+    RunTab{matoclserv_network_init, "communication with clients"}};
 
 /// Functions to call delayed after the initialization is correct
 inline const std::vector<RunTab> lateRunTabs = {};
