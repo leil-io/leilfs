@@ -1995,8 +1995,6 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 	metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
 	c->needverincrease = 1;
 	return true;
-
-	return false;
 }
 
 void ChunkWorker::deleteInvalidChunkParts(Chunk *c) {

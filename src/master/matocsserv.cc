@@ -378,7 +378,12 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 			             kRandomEngine);
 		}
 
-		uint32_t min_version = std::max({kEC2Version, min_server_version});
+		uint32_t min_version = std::max({
+			slice_traits::isXor(slice) ? kEC2Version : 0,
+			slice_traits::isEC(slice) ? kEC2Version : 0,
+			slice_traits::isEC(slice) && slice_traits::ec::isEC2(slice) ? kEC2Version : 0,
+			min_server_version
+		});
 
 		int count_full_parts = 0;
 		for (int i = 0; i < slice.size(); ++i) {
