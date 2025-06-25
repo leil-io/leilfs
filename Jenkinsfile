@@ -355,7 +355,7 @@ pipeline {
                                 docker rm $(docker stop $(docker ps -a -q --filter ancestor=saunafs-test --format="{{.ID}}")) || true
                                 '''
                             sh """
-                                docker image rm ${env.REGISTRY_IMAGE_NAME}:${GIT_COMMIT} || true
+                                docker image rm ${env.REGISTRY_IMAGE_NAME} || true
                                 docker image rm saunafs-test:latest || true
                                 """
                         }
