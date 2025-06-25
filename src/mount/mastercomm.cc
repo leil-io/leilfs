@@ -3164,11 +3164,12 @@ uint8_t fs_makesnapshot(inode_t src_inode, inode_t dst_inode, const std::string 
 uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, inode_t inode,
                           std::vector<QuotaEntry> &quotaEntries) {
 	threc *rec = fs_get_my_threc();
-	if (masterversion < saunafsVersion(4, 9, 0)) {
+	if (masterversion < kFirstVersionWithUseQuotaInVolumeSize) {
 		safs::log_warn(
 		    "fs_get_self_quota: Operation not supported for current master version: {}, for this operation "
-		    "master version should be 4.9.0 or higher",
-		    saunafsVersionToString(masterversion));
+		    "master version should be {} or higher",
+		    saunafsVersionToString(masterversion),
+		    saunafsVersionToString(kFirstVersionWithUseQuotaInVolumeSize));
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
 	auto message = cltoma::fuseGetSelfQuota::build(rec->packetId, uid, gid, inode);
