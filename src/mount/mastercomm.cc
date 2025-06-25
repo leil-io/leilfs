@@ -1092,7 +1092,7 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (masterversion >= saunafsVersion(5, 0, 0) && !disconnect && gChangedTweaksValue) {
+			if (masterversion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect && gChangedTweaksValue) {
 				gChangedTweaksValue = false;
 				std::string mountInfoStr;
 				{
