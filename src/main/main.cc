@@ -644,6 +644,7 @@ FileLock::LockStatus FileLock::wdlock(RunMode runmode, uint32_t timeout) {
 		return LockStatus::kFail;
 	} else if (runmode==RunMode::kTest) {
 		fprintf(stderr, STR(APPNAME) " is not running\n");
+		return LockStatus::kTest;
 	} else if (runmode==RunMode::kIsAlive) {
 		return LockStatus::kSuccess;
 	}
