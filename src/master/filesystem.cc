@@ -399,15 +399,6 @@ void fs_unload() {
 }
 
 int fs_init(bool doLoad) {
-	if (gMetadataBackend == nullptr) {
-		gMetadataBackend = std::make_unique<MetadataBackendFile>();
-
-		if (!gMetadataBackend) {
-			safs::log_err("Failed to initialize metadata backend");
-			throw Exception("Failed to initialize metadata backend");
-		}
-	}
-
 	fs_read_config_file();
 	if (!gMetadataLockfile) {
 		gMetadataLockfile.reset(new Lockfile(kMetadataFilename + std::string(".lock")));
