@@ -96,9 +96,8 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	if (valuePresent != 0) {
 		value.assign(valueRead, valueRead + valueLength);
 	} else {
-		// TODO(GUILLEX): Fix the weird cast
 		safs::log_info("Transaction::get: key not found: {}",
-		               std::string(reinterpret_cast<const char *>(key.data()), key.size()));
+		               std::string_view(reinterpret_cast<const char *>(key.data()), key.size()));
 		value.clear();
 		return std::nullopt;
 	}

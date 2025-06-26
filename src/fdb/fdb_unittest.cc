@@ -30,11 +30,16 @@
 class FDBKVEngineTest : public ::testing::Test {
 protected:
 	static void SetUpTestSuite() {
-		fdbContext = fdb::FDBContext::create({"/etc/foundationdb/fdb.cluster"});
-		ASSERT_TRUE(fdbContext != nullptr);
+		try {
+			fdbContext = fdb::FDBContext::create({"/etc/foundationdb/fdb.cluster"});
+			ASSERT_TRUE(fdbContext != nullptr);
 
-		fdbDB = fdbContext->getDB();
-		ASSERT_TRUE(fdbDB != nullptr);
+			fdbDB = fdbContext->getDB();
+			ASSERT_TRUE(fdbDB != nullptr);
+		} catch (const std::exception &e) {
+			safs::log_err("Failed to set up FDB client: {}", e.what());
+			FAIL() << "FDB client setup failed";
+		}
 	}
 
 	static void TearDownTestSuite() {
