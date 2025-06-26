@@ -45,15 +45,14 @@
 #include <master/matoclserv.h>
 #include <master/matomlserv.h>
 #include <master/metadata_backend_common.h>
-#include <master/metadata_dumper.h>
+#include <master/metadata_dumper_file.h>
 #include <master/restore.h>
 #include <slogger/slogger.h>
 #include "protocol/SFSCommunication.h"
 
 MetadataBackendFile::MetadataBackendFile()
 #if !defined(METARESTORE) && !defined(METALOGGER)
-    : dumper_(std::make_unique<MetadataDumper>(kMetadataFilename,
-                                               kMetadataTmpFilename))
+    : dumper_(std::make_unique<MetadataDumperFile>(kMetadataFilename, kMetadataTmpFilename))
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 {
 	safs::log_info("Metadata backend: {}", backendType());
@@ -210,7 +209,7 @@ void MetadataBackendFile::load_changelogs() {
 	} catch (const FilesystemException &ex) {
 		throw FilesystemException("error loading changelogs: " + ex.message());
 	}
-	gMetadataBackend->fs_storeall(MetadataDumper::DumpType::kForegroundDump);
+	gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
 	metadataserver::setPersonality(personality);
 }
 
@@ -258,7 +257,7 @@ void MetadataBackendFile::load_changelog(const std::string &path) {
 	}
 }
 
-uint8_t MetadataBackendFile::fs_storeall(MetadataDumper::DumpType dumpType) {
+uint8_t MetadataBackendFile::fs_storeall(DumpType dumpType) {
 	if (gMetadata == nullptr) {
 		// Periodic dump in shadow master or a request from saunafs-admin
 		safs_pretty_syslog(LOG_INFO,
@@ -282,7 +281,7 @@ uint8_t MetadataBackendFile::fs_storeall(MetadataDumper::DumpType dumpType) {
 	    dumpType, fs_checksum(ChecksumMode::kGetCurrent));
 	uint8_t status = SAUNAFS_STATUS_OK;
 
-	if (dumpType == MetadataDumper::kForegroundDump) {
+	if (dumpType == DumpType::kForegroundDump) {
 		cstream_t fd(fopen(kMetadataTmpFilename, "w"));
 		if (fd == nullptr) {
 			safs_pretty_syslog(LOG_ERR, "can't open metadata file");
@@ -409,7 +408,7 @@ uint64_t MetadataBackendFile::changelogGetLastLogVersion(const std::string& fnam
 	return lastLogVersion;
 }
 
-bool xattr_load(MetadataLoader::Options options) {
+static bool xattr_load(MetadataLoader::Options options) {
 	const uint8_t *ptr;
 	inode_t inode;
 	uint8_t anleng;
@@ -550,8 +549,8 @@ static bool fs_load_generic(const std::shared_ptr<MemoryMappedFile> &metadataFil
  * @param init A flag to indicate whether to initialize the static variable.
  * @return 0 on success, 1 if last edge mark is found, -1 if unknown node type.
  */
-int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &sectionOffset,
-                 int ignoreFlag, bool init = false) {
+static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile,
+                           size_t &sectionOffset, int ignoreFlag, bool init = false) {
 	static const int8_t kError = -1;
 	static const int8_t kSuccess = 0;
 	static const int8_t kLastEdge = 1;
@@ -718,7 +717,8 @@ int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_
  * @param sectionOffset A reference to point to the next node attribute.
  * @return 0 on success, 1 if last node mark is found, -1 if unknown node type.
  */
-int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size_t &sectionOffset) {
+static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile,
+                           size_t &sectionOffset) {
 	static const int8_t kError = -1;
 	static const int8_t kSuccess = 0;
 	static const int8_t kLastNode = 1;
@@ -824,7 +824,7 @@ int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> & metadataFile, size
 	return kSuccess;
 }
 
-int fs_lostnode(FSNode *p) {
+static int fs_lostnode(FSNode *p) {
 	uint8_t artname[40];
 	uint32_t i, l;
 	i = 0;
@@ -845,7 +845,7 @@ int fs_lostnode(FSNode *p) {
 	return -1;
 }
 
-int fs_checknodes(int ignoreflag) {
+static int fs_checknodes(int ignoreflag) {
 	uint32_t i;
 	FSNode *p;
 	for (i = 0; i < NODEHASHSIZE; i++) {
@@ -869,7 +869,7 @@ int fs_checknodes(int ignoreflag) {
 	return 1;
 }
 
-bool fs_loadnodes(MetadataLoader::Options options) {
+static bool fs_loadnodes(MetadataLoader::Options options) {
 	int8_t status;
 	do {
 		status = fs_parseNode(options.metadataFile, options.offset);
@@ -880,7 +880,7 @@ bool fs_loadnodes(MetadataLoader::Options options) {
 	return true;
 }
 
-bool fs_loadedges(MetadataLoader::Options options) {
+static bool fs_loadedges(MetadataLoader::Options options) {
 	int8_t status;
 	fs_parseEdge(options.metadataFile, options.offset, options.ignoreFlag, true);
 	do {
@@ -991,7 +991,7 @@ static const std::vector<MetadataSection> kMetadataSections = {
                     [](const MetadataLoader::Options &) { return true; }, true, true),
 };
 
-bool isEndOfMetadata(const uint8_t *sectionPtr) {
+static bool isEndOfMetadata(const uint8_t *sectionPtr) {
 	static constexpr std::string_view kMetadataTrailer("[" SFSSIGNATURE " EOF MARKER]");
 	static constexpr std::string_view kMetadataLegacyTrailer("[MFS EOF MARKER]");
 	return ((memcmp(sectionPtr, kMetadataTrailer.data(),
@@ -1000,8 +1000,7 @@ bool isEndOfMetadata(const uint8_t *sectionPtr) {
 	              ::kMetadataSectionHeaderSize) == kOpSuccess));
 }
 
-int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile,
-            int ignoreflag) {
+static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ignoreflag) {
 	static constexpr uint8_t kMetadataHeaderOffset = 8;
 
 	/// Skip File Signature
@@ -1127,7 +1126,7 @@ bool isNewMetadataFile([[maybe_unused]]const uint8_t *headerPtr) {
 			safs_pretty_syslog(LOG_NOTICE, "empty filesystem created");
 			// after creating new filesystem always create "back" file for using
 			// in metarestore
-			gMetadataBackend->fs_storeall(MetadataDumper::kForegroundDump);
+			gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
 			return true;
 		}
 	}
@@ -1135,7 +1134,7 @@ bool isNewMetadataFile([[maybe_unused]]const uint8_t *headerPtr) {
 	return false;
 }
 
-bool checkMetadataSignature(const std::shared_ptr<MemoryMappedFile> &metadataFile) {
+static bool checkMetadataSignature(const std::shared_ptr<MemoryMappedFile> &metadataFile) {
 	static constexpr std::string_view kMetadataHeaderNewV2_9(SFSSIGNATURE "M 2.9");
 	static constexpr std::string_view kMetadataHeaderOldV2_9(SAUSIGNATURE "M 2.9");
 	static constexpr std::string_view kMetadataHeaderLegacy("LIZM 2.9");

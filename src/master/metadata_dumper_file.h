@@ -29,39 +29,33 @@
 #include <vector>
 
 #include "common/time_utils.h"
+#include "master/metadata_dumper_interface.h"
 
-class MetadataDumper {
+class MetadataDumperFile : public IMetadataDumper {
 public:
-	enum DumpType {
-		kForegroundDump,
-		kBackgroundDump
-	};
+	MetadataDumperFile(const std::string &metadataFilename, const std::string &metadataTmpFilename);
 
-	MetadataDumper(
-			const std::string& metadataFilename,
-			const std::string& metadataTmpFilename);
+	bool dumpSucceeded() const override;
+	bool inProgress() const override;
+	bool useMetarestore() const override;
 
-	bool dumpSucceeded() const;
-	bool inProgress() const;
-	bool useMetarestore() const;
-
-	void setMetarestorePath(const std::string& path);
-	void setUseMetarestore(bool val);
+	void setMetarestorePath(const std::string& path) override;
+	void setUseMetarestore(bool val) override;
 
 	/// returns true and modifies dumpType (to FOREGROUND_DUMP) if we return as a child
-	bool start(DumpType& dumpType, uint64_t checksum);
+	bool start(DumpType& dumpType, uint64_t checksum) override;
 
 	// for poll
-	void pollDesc(std::vector<pollfd> &pdesc);
-	void pollServe(const std::vector<pollfd> &pdesc);
+	void pollDesc(std::vector<pollfd> &pdesc) override;
+	void pollServe(const std::vector<pollfd> &pdesc) override;
 
 	/// waits until the metadumper finishes
-	void waitUntilFinished();
+	void waitUntilFinished() override;
 
+private:
 	/// waits until the metadumper finishes but not longer than timeout
 	void waitUntilFinished(SteadyDuration timeout);
 
-protected:
 	void dumpingFinished();
 
 	/// how long can the decimal representation of a(n) (u)int64 be
