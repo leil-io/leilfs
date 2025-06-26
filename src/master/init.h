@@ -36,6 +36,8 @@
 #include "master/matoclserv.h"
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
+#include "master/metadata_backend_file.h"
+#include "master/metadata_backend_interface.h"
 #include "master/personality.h"
 #include "master/topology.h"
 #include "metrics/metrics.h"
@@ -49,6 +51,20 @@ inline int prometheus_init() {
 	}
 	metrics::init(cfg_getstr("PROMETHEUS_HOST", "0.0.0.0:9499"));
 	eventloop_destructregister(metrics::destroy);
+	return 0;
+}
+
+inline int metadata_backend_init() {
+	if (gMetadataBackend == nullptr) {
+		try {
+			gMetadataBackend = std::make_unique<MetadataBackendFile>();
+		} catch (const std::exception &e) {
+			constexpr auto kErrorMessage = "Failed to initialize metadata backend";
+			safs::log_err("{}: {}", kErrorMessage, e.what());
+			throw Exception(kErrorMessage);
+		}
+	}
+
 	return 0;
 }
 
@@ -70,6 +86,7 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{matoclserv_sessions_init, "load stored sessions"},
     RunTab{exports_init, "exports manager"},
     RunTab{topology_init, "net topology module"},
+    RunTab{metadata_backend_init, "metadata backend initialization"},
     // the lambda is used to select the correct fs_init overload
     RunTab{[]() { return fs_init(); }, "file system manager"},
     RunTab{chartsdata_init, "charts module"},
