@@ -16,125 +16,157 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// This app connects to the specified FoundationDB cluster file, inserts
-// a key-value pair, retrieves it and checks if the value is present.
-// It is a simple test to check if the FoundationDB client library is
-// communicating correctly with the cluster.
+// This app connects to the specified FoundationDB cluster file and performs basic operations.
+// It is a simple test to check if the FoundationDB client library is communicating correctly with
+// the cluster.
 
 #include <unistd.h>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
-#include <thread>
 #include <vector>
 
-#define FDB_API_VERSION 730
-#include <foundationdb/fdb_c.h>
-#include <foundationdb/fdb_c_types.h>
-
-constexpr fdb_error_t kNoError = 0;
+#include "fdb/fdb_context.h"
+#include "fdb/fdb_kv_engine.h"
+#include "kv/ikv_engine.h"
+#include "slogger/slogger.h"
 
 namespace {
+
 void usage(char *progName) {
 	std::cerr << "Usage: " << progName << " <cluster_file>\n";
 	std::cerr << "Default path: /etc/foundationdb/fdb.cluster\n";
 	exit(1);
 }
 
-void checkError(fdb_error_t errorNumber) {
-	if (errorNumber != kNoError) {
-		std::cerr << "FDB error: " << fdb_get_error(errorNumber) << "\n";
-		exit(errorNumber);
+void testSetAndGet(kv::IKVEngine *kvEngine) {
+	std::vector<uint8_t> key{'f', 'o', 'o'};
+	std::vector<uint8_t> value{'b', 'a', 'r'};
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->set(key, value);
+		if (!transaction->commit()) {
+			safs::log_err("Error: Failed to commit transaction for key '{}'.",
+			              std::string(key.begin(), key.end()));
+			return;
+		}
+	}
+
+	auto transaction = kvEngine->createReadWriteTransaction();
+	auto retrievedValue = transaction->get(key);
+
+	if (!retrievedValue.has_value()) {
+		safs::log_err("Error: Value for key '{}' not found.", std::string(key.begin(), key.end()));
+		return;
+	}
+
+	if (retrievedValue.value() != value) {
+		safs::log_err("Error: Retrieved value does not match expected value.");
+		return;
+	}
+
+	safs::log_info("Value retrieved successfully: {} = {}", std::string(key.begin(), key.end()),
+	               std::string(retrievedValue.value().begin(), retrievedValue.value().end()));
+
+	// Clear the key from the database
+	auto clearTransaction = kvEngine->createReadWriteTransaction();
+	clearTransaction->remove(key);
+	if (clearTransaction->commit()) {
+		safs::log_info("Key '{}' cleared successfully.", std::string(key.begin(), key.end()));
+	} else {
+		safs::log_err("Error: Failed to clear key '{}'.", std::string(key.begin(), key.end()));
 	}
 }
 
-void runNetworkThread() { checkError(fdb_run_network()); }
+void testGetRange(kv::IKVEngine *kvEngine) {
+	constexpr int kNumKeys = 10;
 
-void setValue(FDBDatabase *database, size_t keySize, const uint8_t *key, size_t valueSize,
-              const uint8_t *value) {
-	FDBTransaction *transaction{};
-	checkError(fdb_database_create_transaction(database, &transaction));
-	fdb_transaction_set(transaction, key, static_cast<int>(keySize), value,
-	                    static_cast<int>(valueSize));
-	FDBFuture *commitFuture = fdb_transaction_commit(transaction);
-	checkError(fdb_future_block_until_ready(commitFuture));
-	fdb_future_destroy(commitFuture);
-	fdb_transaction_destroy(transaction);
-}
+	// Set up a transaction to insert multiple keys
+	auto setTr = kvEngine->createReadWriteTransaction();
 
-std::vector<uint8_t> getValue(FDBDatabase *database, size_t keySize, const uint8_t *key) {
-	FDBTransaction *transaction = nullptr;
-	checkError(fdb_database_create_transaction(database, &transaction));
-	static constexpr fdb_bool_t kUseSnapshot{0};
-	FDBFuture *getValueFuture =
-	    fdb_transaction_get(transaction, key, static_cast<int>(keySize), kUseSnapshot);
-	checkError(fdb_future_block_until_ready(getValueFuture));
-
-	fdb_bool_t valuePresent{};
-	const uint8_t *valueRead{};
-	int valueLength{};
-	checkError(fdb_future_get_value(getValueFuture, &valuePresent, &valueRead, &valueLength));
-
-	std::vector<uint8_t> result;
-
-	if (valuePresent != 0) { result.assign(valueRead, valueRead + valueLength); }
-
-	fdb_future_destroy(getValueFuture);
-	fdb_transaction_destroy(transaction);
-
-	return result;
-}
-
-void cleanupFDB(FDBDatabase *database, std::jthread &networkThread) {
-	if (database != nullptr) {
-		fdb_database_destroy(database);
+	for (int i = 0; i < kNumKeys; ++i) {
+		std::string key = "key_" + std::to_string(i);
+		std::string value = "value_" + std::to_string(i);
+		setTr->set(kv::Key(key.begin(), key.end()), kv::Value(value.begin(), value.end()));
 	}
 
-	if (networkThread.joinable()) {
-		checkError(fdb_stop_network());
+	if (!setTr->commit()) {
+		safs::log_err("Error: Failed to commit transaction for setting keys.");
+		return;
+	}
+
+	// Retrieve and print the range of keys
+
+	auto transaction = kvEngine->createReadWriteTransaction();
+	std::string startKey = "key_2";
+	std::string endKey = "key_9";
+	kv::KeySelector startSelector(kv::Key(startKey.begin(), startKey.end()), true, 0);
+	kv::KeySelector endSelector(kv::Key(endKey.begin(), endKey.end()), true, 0);
+
+	auto rangeResult = transaction->getRange(startSelector, endSelector, kNumKeys);
+
+	if (rangeResult.getPairs().empty()) {
+		safs::log_err("Error: No keys found in range {} - {}.", startKey, endKey);
+		return;
+	}
+
+	// From key_2 (inclusive) to key_9 (inclusive)
+	constexpr size_t kExpectedCount = 8;
+
+	if (rangeResult.getPairs().size() != kExpectedCount) {
+		safs::log_err("Error: Expected {} keys in range, but found {}.", kExpectedCount,
+		              rangeResult.getPairs().size());
+		return;
+	}
+
+	safs::log_info("Keys in range {} - {}:", startKey, endKey);
+	for (const auto &pair : rangeResult.getPairs()) {
+		safs::log_info("  {} = {}", std::string(pair.key.begin(), pair.key.end()),
+		               std::string(pair.value.begin(), pair.value.end()));
 	}
 }
+
 }  // namespace
 
 int main(int argc, char **argv) {
 	if (argc > 2) { usage(argv[0]); }
+
+	// Initialize the logging system
+	safs::setup_logs();
 
 	// Default path
 	std::string clusterFile = "/etc/foundationdb/fdb.cluster";
 
 	if (argc == 2) { clusterFile = std::string(argv[1]); }
 
-	// Set up network
-	checkError(fdb_select_api_version(FDB_API_VERSION));
-	checkError(fdb_setup_network());
+	safs::log_info("Starting FoundationDB test application. Using cluster file: {}", clusterFile);
 
-	// Run network thread
-	std::jthread networkThread([] { runNetworkThread(); });
+	// Create the FoundationDB context, which selects the API version, initializes the network
+	// thread and connects to the cluster specified by the cluster file.
+	// The object must survive until the end of the program.
+	auto fdbContext = fdb::FDBContext::create({clusterFile});
 
-	FDBDatabase *database = nullptr;
-	checkError(fdb_create_database(clusterFile.c_str(), &database));
-
-	std::cout << "Connected to FoundationDB cluster: " << clusterFile << "\n";
-
-	std::vector<uint8_t> key{'f', 'o', 'o'};
-	std::vector<uint8_t> value{'b', 'a', 'r'};
-
-	// Create a transaction to insert a key-value pair (foo, bar)
-	setValue(database, key.size(), key.data(), value.size(), value.data());
-	// Create a transaction to retrieve the value for key "foo"
-	auto retrievedValue = getValue(database, key.size(), key.data());
-
-	if (retrievedValue != value) {
-		std::cerr << "Error: Retrieved value does not match expected value.\n";
-		cleanupFDB(database, networkThread);
+	if (!fdbContext) {
+		safs::log_err("Failed to create FDBContext: cluster: {}", clusterFile);
 		return 1;
 	}
 
-	std::cout << "Value retrieved successfully: foo = "
-	          << std::string(retrievedValue.begin(), retrievedValue.end()) << "\n";
+	// Obtain the connection to the FoundationDB database.
+	std::shared_ptr<fdb::DB> fdbDB = fdbContext->getDB();
 
-	cleanupFDB(database, networkThread);
+	if (!fdbDB) {
+		safs::log_err("Failed to connect to FoundationDB cluster at {}", clusterFile);
+		return 1;
+	}
+
+	// Create the key-value engine using the FoundationDB database instance.
+	// This engine will be used to perform read and write operations through transactions.
+	auto kvEngine = std::make_unique<fdb::FDBKVEngine>(fdbDB);
+
+	testSetAndGet(kvEngine.get());
+	testGetRange(kvEngine.get());
 
 	return 0;
 }
