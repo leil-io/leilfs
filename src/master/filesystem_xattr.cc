@@ -86,25 +86,28 @@ void xattr_recalculate_checksum() {
 }
 
 void xattr_removeinode(inode_t inode) {
-	xattr_inode_entry *ih, **ihp;
+	xattr_inode_entry *ih;
 
-	ihp = &(gMetadata->xattr_inode_hash[xattr_inode_hash_fn(inode)]);
-	while ((ih = *ihp)) {
+	auto hash = xattr_inode_hash_fn(inode);
+	auto start = gMetadata->xattr_inode_hash[hash].begin();
+	auto end = gMetadata->xattr_inode_hash[hash].end();
+
+	for (auto attributeIterator = start; attributeIterator != end;) {
+		ih = attributeIterator->get();
 		if (ih->inode == inode) {
 			while (ih->data_head) {
 				xattr_removeentry(ih->data_head);
 			}
-			*ihp = ih->next;
-			free(ih);
+			attributeIterator = gMetadata->xattr_inode_hash[hash].erase(attributeIterator);
 		} else {
-			ihp = &(ih->next);
+			++attributeIterator;
 		}
 	}
 }
 
 uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 			const uint8_t *attrvalue, uint8_t mode) {
-	xattr_inode_entry *ih;
+	xattr_inode_entry *ih = nullptr;
 	xattr_data_entry *xa;
 	uint32_t hash, ihash;
 
@@ -120,7 +123,14 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 	}
 
 	ihash = xattr_inode_hash_fn(inode);
-	for (ih = gMetadata->xattr_inode_hash[ihash]; ih && ih->inode != inode; ih = ih->next) {
+	auto start = gMetadata->xattr_inode_hash[ihash].begin();
+	auto end = gMetadata->xattr_inode_hash[ihash].end();
+
+	for (auto attributeIterator = start; attributeIterator != end; ++attributeIterator) {
+		ih = attributeIterator->get();
+		if (ih->inode == inode) {
+			break;
+		}
 	}
 
 	hash = xattr_data_hash_fn(inode, anleng, attrname);
@@ -204,16 +214,15 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 		ih->anleng += anleng + 1U;
 		ih->avleng += avleng;
 	} else {
-		ih = (xattr_inode_entry *)malloc(sizeof(xattr_inode_entry));
-		passert(ih);
-		ih->inode = inode;
-		xa->nextinode = NULL;
-		xa->previnode = &(ih->data_head);
-		ih->data_head = xa;
-		ih->anleng = anleng + 1U;
-		ih->avleng = avleng;
-		ih->next = gMetadata->xattr_inode_hash[ihash];
-		gMetadata->xattr_inode_hash[ihash] = ih;
+		auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
+		passert(xattrInodeEntry);
+		xattrInodeEntry->inode = inode;
+		xa->nextinode = nullptr;
+		xa->previnode = &(xattrInodeEntry->data_head);
+		xattrInodeEntry->data_head = xa;
+		xattrInodeEntry->anleng = anleng + 1U;
+		xattrInodeEntry->avleng = avleng;
+		gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
 	}
 	xa->checksum = 0;
 	xattr_update_checksum(xa);
@@ -242,8 +251,12 @@ uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 uint8_t xattr_listattr_leng(inode_t inode, void **xanode, uint32_t *xasize) {
 	xattr_inode_entry *ih;
 	xattr_data_entry *xa;
+	auto hash = xattr_inode_hash_fn(inode);
+	auto start = gMetadata->xattr_inode_hash[hash].begin();
+	auto end =  gMetadata->xattr_inode_hash[hash].end();
 
-	for (ih = gMetadata->xattr_inode_hash[xattr_inode_hash_fn(inode)]; ih; ih = ih->next) {
+	for (auto attributeIterator = start; attributeIterator != end;) {
+		ih = attributeIterator->get();
 		if (ih->inode == inode) {
 			*xanode = ih;
 			for (xa = ih->data_head; xa; xa = xa->nextinode) {

@@ -34,12 +34,15 @@
 #include "master/locks.h"
 #include "master/task_manager.h"
 
+using xattr_inode_entry_pointer = std::unique_ptr<xattr_inode_entry>;
+using xattr_inode_entry_list = std::list<xattr_inode_entry_pointer>;
+
 /** Metadata of the filesystem.
  *  All the static variables managed by function in this file which form metadata of the filesystem.
  */
 struct FilesystemMetadata {
 public:
-	xattr_inode_entry *xattr_inode_hash[XATTR_INODE_HASH_SIZE];
+	std::array<xattr_inode_entry_list, XATTR_INODE_HASH_SIZE> xattr_inode_hash;
 	xattr_data_entry *xattr_data_hash[XATTR_DATA_HASH_SIZE];
 	// TODO(Guillex): Check implications of using 64 bits for inode_t in this structure.
 	IdPoolDetainer<inode_t, uint32_t> inode_pool;
@@ -103,7 +106,7 @@ public:
 	~FilesystemMetadata() {
 		// Free memory allocated in xattr_inode_hash hashmap
 		for (uint32_t i = 0; i < XATTR_INODE_HASH_SIZE; ++i) {
-			freeListConnectedUsingNext(xattr_inode_hash[i]);
+			xattr_inode_hash[i].clear();
 		}
 
 		// Free memory allocated in xattr_data_hash hashmap

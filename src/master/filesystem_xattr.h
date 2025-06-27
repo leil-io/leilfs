@@ -54,7 +54,6 @@ struct xattr_inode_entry {
 	uint32_t anleng;
 	uint32_t avleng;
 	struct xattr_data_entry *data_head;
-	struct xattr_inode_entry *next;
 };
 
 #ifndef METARESTORE

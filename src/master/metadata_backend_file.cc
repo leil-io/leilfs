@@ -242,7 +242,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 	uint8_t anleng;
 	uint32_t avleng;
 	xattr_data_entry *xa;
-	xattr_inode_entry *ih;
+	xattr_inode_entry *ih = nullptr;
 	uint32_t hash, ihash;
 
 	while (true) {
@@ -275,9 +275,14 @@ static bool xattr_load(MetadataLoader::Options options) {
 		}
 
 		ihash = xattr_inode_hash_fn(inode);
-		ih = gMetadata->xattr_inode_hash[ihash];
-		while (ih && ih->inode != inode) {
-			ih = ih->next;
+		auto start = gMetadata->xattr_inode_hash[ihash].begin();
+		auto end = gMetadata->xattr_inode_hash[ihash].end();
+
+		for (auto attributeIterator = start; attributeIterator != end; attributeIterator++) {
+			ih = attributeIterator->get();
+			if (ih->inode == inode) {
+				break;
+			}
 		}
 
 		if (ih && ih->anleng + anleng + 1 > SFS_XATTR_LIST_MAX) {
@@ -323,16 +328,15 @@ static bool xattr_load(MetadataLoader::Options options) {
 			ih->anleng += anleng + 1U;
 			ih->avleng += avleng;
 		} else {
-			ih = (xattr_inode_entry *)malloc(sizeof(xattr_inode_entry));
-			passert(ih);
-			ih->inode = inode;
-			xa->nextinode = NULL;
-			xa->previnode = &(ih->data_head);
-			ih->data_head = xa;
-			ih->anleng = anleng + 1U;
-			ih->avleng = avleng;
-			ih->next = gMetadata->xattr_inode_hash[ihash];
-			gMetadata->xattr_inode_hash[ihash] = ih;
+			auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
+			passert(xattrInodeEntry);
+			xattrInodeEntry->inode = inode;
+			xa->nextinode = nullptr;
+			xa->previnode = &(xattrInodeEntry->data_head);
+			xattrInodeEntry->data_head = xa;
+			xattrInodeEntry->anleng = anleng + 1U;
+			xattrInodeEntry->avleng = avleng;
+			gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
 		}
 	}
 }
