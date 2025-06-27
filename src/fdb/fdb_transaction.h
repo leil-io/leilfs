@@ -53,7 +53,7 @@ public:
 	/// @param end The ending key for the range.
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	kv::GetRangeResult getRange(const kv::KeySelector &start, const kv::KeySelector &end,
-	                            size_t limit = kv::kDefaultGetRangeLimit) override;
+	                            int limit = kv::kDefaultGetRangeLimit) override;
 
 	/// Sets a value for a given key.
 	/// @param key The key to set the value for.

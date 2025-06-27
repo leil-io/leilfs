@@ -27,7 +27,7 @@ std::optional<kv::Value> FDBTransaction::get(const kv::Key &key) {
 }
 
 kv::GetRangeResult FDBTransaction::getRange(const kv::KeySelector &start,
-                                            const kv::KeySelector &end, size_t limit) {
+                                            const kv::KeySelector &end, int limit) {
 	if (!tr_) { return {{}, false}; }
 
 	return tr_.getRange(start, end, limit);

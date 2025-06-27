@@ -72,7 +72,7 @@ private:
 	bool hasMore_{false};              ///< True if more results are available beyond this range.
 };
 
-constexpr size_t kDefaultGetRangeLimit = 1000;
+constexpr int kDefaultGetRangeLimit = 1000;
 
 /// Interface for read-only transactions in the key-value store.
 /// Provides methods to retrieve values and ranges of keys.
@@ -89,7 +89,7 @@ public:
 	/// @param end The ending key for the range.
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	virtual GetRangeResult getRange(const KeySelector &start, const KeySelector &end,
-	                                size_t limit = kDefaultGetRangeLimit) = 0;
+	                                int limit = kDefaultGetRangeLimit) = 0;
 };
 
 /// Interface for read-write transactions in the key-value store.

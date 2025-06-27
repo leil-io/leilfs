@@ -81,12 +81,12 @@ void testSetAndGet(kv::IKVEngine *kvEngine) {
 }
 
 void testGetRange(kv::IKVEngine *kvEngine) {
-	constexpr size_t kNumKeys = 10;
+	constexpr int kNumKeys = 10;
 
 	// Set up a transaction to insert multiple keys
 	auto setTr = kvEngine->createReadWriteTransaction();
 
-	for (size_t i = 0; i < kNumKeys; ++i) {
+	for (int i = 0; i < kNumKeys; ++i) {
 		std::string key = "key_" + std::to_string(i);
 		std::string value = "value_" + std::to_string(i);
 		setTr->set(kv::Key(key.begin(), key.end()), kv::Value(value.begin(), value.end()));
@@ -112,8 +112,8 @@ void testGetRange(kv::IKVEngine *kvEngine) {
 		return;
 	}
 
-	// From key_2 (inclusive) to key_9 (always exclusive in FDB)
-	constexpr size_t kExpectedCount = 7;
+	// From key_2 (inclusive) to key_9 (inclusive)
+	constexpr size_t kExpectedCount = 8;
 
 	if (rangeResult.getPairs().size() != kExpectedCount) {
 		safs::log_err("Error: Expected {} keys in range, but found {}.", kExpectedCount,

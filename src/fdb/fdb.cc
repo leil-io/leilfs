@@ -106,7 +106,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 }
 
 kv::GetRangeResult Transaction::getRange(
-    const kv::KeySelector &begin, const kv::KeySelector &end, size_t limit, int iteration /* = 0 */,
+    const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration /* = 0 */,
     bool snapshot /* = false */, bool reverse /* = false */,
     FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
 	if (!tr_) { return {{}, false}; }
@@ -123,34 +123,31 @@ kv::GetRangeResult Transaction::getRange(
 				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
 				    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
 				    static_cast<fdb_bool_t>(reverse));
-			} else {
-				// [ begin, end )
-				return fdb_transaction_get_range(
-				    tr_.get(),
-				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
-				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()),
-				    limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-				    static_cast<fdb_bool_t>(reverse));
 			}
-		} else {
-			if (end.isInclusive()) {
-				// ( begin, end ]
-				return fdb_transaction_get_range(
-				    tr_.get(),
-				    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
-				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
-				    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-				    static_cast<fdb_bool_t>(reverse));
-			} else {
-				// ( begin, end )
-				return fdb_transaction_get_range(
-				    tr_.get(),
-				    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
-				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()),
-				    limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-				    static_cast<fdb_bool_t>(reverse));
-			}
+			// [ begin, end )
+			return fdb_transaction_get_range(
+			    tr_.get(),
+			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
+			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()), limit,
+			    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+			    static_cast<fdb_bool_t>(reverse));
 		}
+
+		if (end.isInclusive()) {
+			// ( begin, end ]
+			return fdb_transaction_get_range(
+			    tr_.get(),
+			    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
+			    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
+			    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+			    static_cast<fdb_bool_t>(reverse));
+		}
+		// ( begin, end )
+		return fdb_transaction_get_range(
+		    tr_.get(), FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
+		    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()), limit,
+		    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+		    static_cast<fdb_bool_t>(reverse));
 	};
 
 	FDBFuture *future = selectRangeCall();

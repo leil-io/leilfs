@@ -152,7 +152,7 @@ public:
 	/// @return GetRangeResult with key-value pairs and whether more results are available.
 	/// @note If the transaction is not valid, it returns an empty GetRangeResult
 	kv::GetRangeResult getRange(const kv::KeySelector &begin, const kv::KeySelector &end,
-	                            size_t limit, int iteration = 0, bool snapshot = false,
+	                            int limit, int iteration = 0, bool snapshot = false,
 	                            bool reverse = false,
 	                            FDBStreamingMode streamingMode = FDB_STREAMING_MODE_SERIAL);
 
