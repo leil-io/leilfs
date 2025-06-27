@@ -608,7 +608,7 @@ void matomlserv_changelog_apply_error(matomlserventry *eptr, const uint8_t *data
 				"SAU_MLTOMA_CHANGELOG_APPLY_ERROR, status: %s - storing metadata",
 				saunafs_error_string(recvStatus));
 		gShadowQueue.addRequest(eptr);
-		gMetadataBackend->fs_storeall(MetadataDumper::kBackgroundDump);
+		gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);
 		if (recvStatus == SAUNAFS_ERROR_BADMETADATACHECKSUM) {
 			fs_start_checksum_recalculation();
 		}

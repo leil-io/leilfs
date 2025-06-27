@@ -26,7 +26,7 @@
 
 #include <common/exceptions.h>
 #include <master/filesystem_node_types.h>
-#include <master/metadata_dumper.h>
+#include <master/metadata_dumper_interface.h>
 
 // Metadata related exceptions
 SAUNAFS_CREATE_EXCEPTION_CLASS(MetadataCheckException, Exception);
@@ -140,10 +140,10 @@ public:
 	/// Performs the actual metadata dump to persistent location.
 	/// @param dumpType -- type of the dump (foreground, background, etc.).
 	/// @return false in case of error.
-	virtual uint8_t fs_storeall(MetadataDumper::DumpType dumpType) = 0;
+	virtual uint8_t fs_storeall(DumpType dumpType) = 0;
 
 	// TODO(guillex): Use a generic MetadaDumper later
-	virtual MetadataDumper *dumper() = 0;
+	virtual IMetadataDumper *dumper() = 0;
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 };
 

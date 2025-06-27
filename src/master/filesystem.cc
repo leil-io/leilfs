@@ -44,7 +44,6 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_file.h"
 #include "master/metadata_backend_interface.h"
-#include "master/metadata_dumper.h"
 #include "master/restore.h"
 #include "slogger/slogger.h"
 
@@ -128,7 +127,7 @@ void fs_periodic_storeall() {
 		return;
 	}
 
-	gMetadataBackend->fs_storeall(MetadataDumper::kBackgroundDump);  // ignore error
+	gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);  // ignore error
 }
 
 void fs_term(void) {
@@ -141,8 +140,7 @@ void fs_term(void) {
 	if (gMetadata != nullptr && gSaveMetadataAtExit) {
 		for (;;) {
 			metadataStored =
-			    (gMetadataBackend->fs_storeall(
-			         MetadataDumper::kForegroundDump) == SAUNAFS_STATUS_OK);
+			    (gMetadataBackend->fs_storeall(DumpType::kForegroundDump) == SAUNAFS_STATUS_OK);
 			if (metadataStored) {
 				break;
 			}

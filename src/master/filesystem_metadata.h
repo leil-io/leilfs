@@ -32,7 +32,6 @@
 #include "master/filesystem_xattr.h"
 #include "master/id_pool_detainer.h"
 #include "master/locks.h"
-#include "master/metadata_dumper.h"
 #include "master/task_manager.h"
 
 /** Metadata of the filesystem.
@@ -155,7 +154,6 @@ extern bool gDisableEmptyFoldersMetadataOnFullDisk;
 
 #ifndef METARESTORE
 extern std::map<int, Goal> gGoalDefinitions;
-extern MetadataDumper metadataDumper;
 extern bool gAtimeDisabled;
 extern bool gMagicAutoFileRepair;
 #endif

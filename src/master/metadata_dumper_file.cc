@@ -21,7 +21,7 @@
 #include "common/platform.h"
 #include "slogger/slogger.h"
 
-#include "master/metadata_dumper.h"
+#include "master/metadata_dumper_file.h"
 
 #include <string>
 
@@ -38,36 +38,34 @@ static bool createPipe(int pipefds[2]) {
 	return true;
 }
 
-MetadataDumper::MetadataDumper(
-		const std::string& metadataFilename,
-		const std::string& metadataTmpFilename)
-		: useMetarestore_(false),
-		  dumpingSucceeded_(true),
-		  dumpingProcessFd_(-1),
-		  dumpingProcessPollFdsPos_(-1),
-		  dumpingProcessOutputEmpty_(true),
-		  metadataFilename_(metadataFilename),
-		  metadataTmpFilename_(metadataTmpFilename) {
-}
+MetadataDumperFile::MetadataDumperFile(const std::string &metadataFilename,
+                                       const std::string &metadataTmpFilename)
+    : useMetarestore_(false),
+      dumpingSucceeded_(true),
+      dumpingProcessFd_(-1),
+      dumpingProcessPollFdsPos_(-1),
+      dumpingProcessOutputEmpty_(true),
+      metadataFilename_(metadataFilename),
+      metadataTmpFilename_(metadataTmpFilename) {}
 
-bool MetadataDumper::dumpSucceeded() const {
+bool MetadataDumperFile::dumpSucceeded() const {
 	return dumpingSucceeded_;
 }
 
-bool MetadataDumper::inProgress() const {
+bool MetadataDumperFile::inProgress() const {
 	return dumpingProcessFd_ != -1;
 }
 
-bool MetadataDumper::useMetarestore() const {
+bool MetadataDumperFile::useMetarestore() const {
 	return useMetarestore_;
 }
 
 
-void MetadataDumper::setMetarestorePath(const std::string& path) {
+void MetadataDumperFile::setMetarestorePath(const std::string& path) {
 	metarestorePath_ = path;
 }
 
-void MetadataDumper::setUseMetarestore(bool useMetarestore) {
+void MetadataDumperFile::setUseMetarestore(bool useMetarestore) {
 	useMetarestore_ = useMetarestore;
 }
 
@@ -97,8 +95,8 @@ void MetadataDumper::setUseMetarestore(bool useMetarestore) {
  *    execMetarestore() modifies dumpType to kForegroundDump for the child.
  */
 
-bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum) {
-	if (dumpType == kForegroundDump) {
+bool MetadataDumperFile::start(DumpType &dumpType, uint64_t checksum) {
+	if (dumpType == DumpType::kForegroundDump) {
 		return false;
 	}
 
@@ -122,7 +120,7 @@ bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum
 	// can't communicate with child? foreground dump
 	if (!createPipe(pipeFd)) {
 		safs_pretty_syslog(LOG_ERR, "couldn't communicate with child, foreground dump");
-		dumpType = kForegroundDump;
+		dumpType = DumpType::kForegroundDump;
 		dumpingSucceeded_ = false;
 		return false;
 	}
@@ -133,7 +131,7 @@ bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum
 		case -1:
 			// on fork error store metadata in foreground
 			safs_pretty_errlog(LOG_ERR, "fork failed");
-			dumpType = kForegroundDump;
+			dumpType = DumpType::kForegroundDump;
 			close(pipeFd[0]); // ignore close errors
 			close(pipeFd[1]);
 			return false;
@@ -172,7 +170,7 @@ bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum
 			if (useMetarestore_ && !dumpingSucceeded_) {
 				safs_pretty_syslog(LOG_NOTICE, "something previously failed, dump by master");
 			}
-			dumpType = kForegroundDump; // child process stores metadata in its foreground
+			dumpType = DumpType::kForegroundDump; // child process stores metadata in its foreground
 			return true;
 		default:
 			dumpingProcessOutputEmpty_ = true;
@@ -184,7 +182,7 @@ bool MetadataDumper::start(MetadataDumper::DumpType& dumpType, uint64_t checksum
 }
 
 // for poll
-void MetadataDumper::pollDesc(std::vector<pollfd> &pdesc) {
+void MetadataDumperFile::pollDesc(std::vector<pollfd> &pdesc) {
 	if (dumpingProcessFd_ != -1) {
 		pdesc.push_back({dumpingProcessFd_,POLLIN,0});
 		dumpingProcessPollFdsPos_ = pdesc.size() - 1;
@@ -193,7 +191,7 @@ void MetadataDumper::pollDesc(std::vector<pollfd> &pdesc) {
 	}
 }
 
-void MetadataDumper::pollServe(const std::vector<pollfd> &pdesc) {
+void MetadataDumperFile::pollServe(const std::vector<pollfd> &pdesc) {
 	if (dumpingProcessPollFdsPos_ == -1) {
 		return;
 	}
@@ -223,7 +221,7 @@ void MetadataDumper::pollServe(const std::vector<pollfd> &pdesc) {
 	}
 }
 
-void MetadataDumper::dumpingFinished() {
+void MetadataDumperFile::dumpingFinished() {
 	if (close(dumpingProcessFd_) == -1) {
 		safs_pretty_errlog(LOG_ERR, "pipe close failed");
 	}
@@ -234,7 +232,7 @@ void MetadataDumper::dumpingFinished() {
 	}
 }
 
-void MetadataDumper::waitUntilFinished(SteadyDuration timeout) {
+void MetadataDumperFile::waitUntilFinished(SteadyDuration timeout) {
 	// pollDesc uses at most one pollfd
 	std::vector<pollfd> pfd;
 	Timeout stopwatch(timeout);
@@ -258,7 +256,7 @@ void MetadataDumper::waitUntilFinished(SteadyDuration timeout) {
 	}
 }
 
-void MetadataDumper::waitUntilFinished() {
+void MetadataDumperFile::waitUntilFinished() {
 	// let's say a year is enough
 	waitUntilFinished(std::chrono::hours(24 * 365));
 }
