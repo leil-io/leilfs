@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <vector>
 
 #define XATTR_INODE_HASH_SIZE 65536
 #define XATTR_DATA_HASH_SIZE 524288
@@ -33,18 +34,17 @@ struct xattr_data_entry {
 	inode_t inode;
 	uint8_t anleng;
 	uint32_t avleng;
-	uint8_t *attrname;
-	uint8_t *attrvalue;
+	std::vector<uint8_t> attributeName;
+	std::vector<uint8_t> attributeValue;
 	uint64_t checksum;
 	struct xattr_data_entry **previnode, *nextinode;
 	struct xattr_data_entry **prev, *next;
 
-	xattr_data_entry() : attrname(nullptr), attrvalue(nullptr) {
-	}
+	xattr_data_entry() = default;
 
 	~xattr_data_entry() {
-		free(attrname);
-		free(attrvalue);
+		attributeName.clear();
+		attributeValue.clear();
 	}
 };
 void free(xattr_data_entry *);  // disable freeing using free at link time :)

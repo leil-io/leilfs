@@ -29,8 +29,8 @@ static uint64_t xattr_checksum(const xattr_data_entry *xde) {
 		return 0;
 	}
 	uint64_t seed = 645819511511147ULL;
-	hashCombine(seed, xde->inode, ByteArray(xde->attrname, xde->anleng),
-	            ByteArray(xde->attrvalue, xde->avleng));
+	hashCombine(seed, xde->inode, ByteArray(xde->attributeName.data(), xde->anleng),
+	            ByteArray(xde->attributeValue.data(), xde->avleng));
 	return seed;
 }
 
@@ -126,7 +126,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 	hash = xattr_data_hash_fn(inode, anleng, attrname);
 	for (xa = gMetadata->xattr_data_hash[hash]; xa; xa = xa->next) {
 		if (xa->inode == inode && xa->anleng == anleng &&
-		    memcmp(xa->attrname, attrname, anleng) == 0) {
+		    memcmp(xa->attributeName.data(), attrname, anleng) == 0) {
 			passert(ih);
 			if (mode == XATTR_SMODE_CREATE_ONLY) {  // create only
 				return SAUNAFS_ERROR_EEXIST;
@@ -148,15 +148,15 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 				return SAUNAFS_STATUS_OK;
 			}
 			ih->avleng -= xa->avleng;
-			if (xa->attrvalue) {
-				free(xa->attrvalue);
+			if (!xa->attributeValue.empty()) {
+				xa->attributeValue.clear();
 			}
 			if (avleng > 0) {
-				xa->attrvalue = (uint8_t *)malloc(avleng);
-				passert(xa->attrvalue);
-				memcpy(xa->attrvalue, attrvalue, avleng);
+				xa->attributeValue.resize(avleng);
+				passert(xa->attributeValue.data());
+				memcpy(xa->attributeValue.data(), attrvalue, avleng);
 			} else {
-				xa->attrvalue = NULL;
+				xa->attributeValue.clear();
 			}
 			xa->avleng = avleng;
 			ih->avleng += avleng;
@@ -175,16 +175,16 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 
 	xa = new xattr_data_entry;
 	xa->inode = inode;
-	xa->attrname = (uint8_t *)malloc(anleng);
-	passert(xa->attrname);
-	memcpy(xa->attrname, attrname, anleng);
+	xa->attributeName.resize(anleng);
+	passert(xa->attributeName.data());
+	memcpy(xa->attributeName.data(), attrname, anleng);
 	xa->anleng = anleng;
 	if (avleng > 0) {
-		xa->attrvalue = (uint8_t *)malloc(avleng);
-		passert(xa->attrvalue);
-		memcpy(xa->attrvalue, attrvalue, avleng);
+		xa->attributeValue.resize(avleng);
+		passert(xa->attributeValue.data());
+		memcpy(xa->attributeValue.data(), attrvalue, avleng);
 	} else {
-		xa->attrvalue = NULL;
+		xa->attributeValue.clear();
 	}
 	xa->avleng = avleng;
 	xa->next = gMetadata->xattr_data_hash[hash];
@@ -227,11 +227,11 @@ uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 	for (xa = gMetadata->xattr_data_hash[xattr_data_hash_fn(inode, anleng, attrname)]; xa;
 	     xa = xa->next) {
 		if (xa->inode == inode && xa->anleng == anleng &&
-		    memcmp(xa->attrname, attrname, anleng) == 0) {
+		    memcmp(xa->attributeName.data(), attrname, anleng) == 0) {
 			if (xa->avleng > SFS_XATTR_SIZE_MAX) {
 				return SAUNAFS_ERROR_ERANGE;
 			}
-			*attrvalue = xa->attrvalue;
+			*attrvalue = xa->attributeValue.data();
 			*avleng = xa->avleng;
 			return SAUNAFS_STATUS_OK;
 		}
@@ -267,7 +267,7 @@ void xattr_listattr_data(void *xanode, uint8_t *xabuff) {
 	l = 0;
 	if (ih) {
 		for (xa = ih->data_head; xa; xa = xa->nextinode) {
-			memcpy(xabuff + l, xa->attrname, xa->anleng);
+			memcpy(xabuff + l, xa->attributeName.data(), xa->anleng);
 			l += xa->anleng;
 			xabuff[l++] = 0;
 		}

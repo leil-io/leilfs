@@ -88,7 +88,7 @@ bool ChecksumBackgroundUpdater::isXattrIncluded(xattr_data_entry *xde) {
 		ret = true;
 	}
 	if (step_ == ChecksumRecalculatingStep::kXattrs &&
-	    xattr_data_hash_fn(xde->inode, xde->anleng, xde->attrname) < position_) {
+	    xattr_data_hash_fn(xde->inode, xde->anleng, xde->attributeName.data()) < position_) {
 		ret = true;
 	}
 	if (ret) {

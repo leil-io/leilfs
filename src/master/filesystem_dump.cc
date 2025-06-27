@@ -184,8 +184,8 @@ void xattr_dump() {
 	for (i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
 		for (xa = gMetadata->xattr_data_hash[i]; xa; xa = xa->next) {
 			printf("X|i:%10" PRIiNode "|n:%s|v:%s\n", xa->inode,
-			       fsnodes_escape_name(std::string((char*)xa->attrname, xa->anleng)).c_str(),
-			       fsnodes_escape_name(std::string((char*)xa->attrvalue, xa->avleng)).c_str());
+			       fsnodes_escape_name(std::string((char*)xa->attributeName.data(), xa->anleng)).c_str(),
+			       fsnodes_escape_name(std::string((char*)xa->attributeValue.data(), xa->avleng)).c_str());
 		}
 	}
 }

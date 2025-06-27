@@ -290,22 +290,22 @@ static bool xattr_load(MetadataLoader::Options options) {
 
 		xa = new xattr_data_entry;
 		xa->inode = inode;
-		xa->attrname = (uint8_t *)malloc(anleng);
-		passert(xa->attrname);
-		memcpy(xa->attrname, ptr, anleng);
+		xa->attributeName.resize(anleng);
+		passert(xa->attributeName.data());
+		memcpy(xa->attributeName.data(), ptr, anleng);
 		ptr+=anleng;
 		xa->anleng = anleng;
 		if (avleng > 0) {
-			xa->attrvalue = (uint8_t *)malloc(avleng);
-			passert(xa->attrvalue);
-			memcpy(xa->attrvalue, ptr, avleng);
+			xa->attributeValue.resize(avleng);
+			passert(xa->attributeValue.data());
+			memcpy(xa->attributeValue.data(), ptr, avleng);
 			ptr+=avleng;
 		} else {
-			xa->attrvalue = NULL;
+			xa->attributeValue.clear();
 		}
 		options.offset = options.metadataFile->offset(ptr);
 		xa->avleng = avleng;
-		hash = xattr_data_hash_fn(inode, xa->anleng, xa->attrname);
+		hash = xattr_data_hash_fn(inode, xa->anleng, xa->attributeName.data());
 		xa->next = gMetadata->xattr_data_hash[hash];
 		if (xa->next) {
 			xa->next->prev = &(xa->next);
@@ -1267,14 +1267,12 @@ void MetadataBackendFile::xattr_store(FILE *fd) {
 				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 				return;
 			}
-			if (fwrite(xa->attrname, 1, xa->anleng, fd) !=
-			    (size_t)(xa->anleng)) {
+			if (fwrite(xa->attributeName.data(), 1, xa->anleng, fd) != (size_t)(xa->anleng)) {
 				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 				return;
 			}
 			if (xa->avleng > 0) {
-				if (fwrite(xa->attrvalue, 1, xa->avleng, fd) !=
-				    (size_t)(xa->avleng)) {
+				if (fwrite(xa->attributeValue.data(), 1, xa->avleng, fd) != (size_t)(xa->avleng)) {
 					safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 					return;
 				}
