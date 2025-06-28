@@ -22,6 +22,7 @@
 
 #include "filesystem_node.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
@@ -637,15 +638,18 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 	} else {
 		node->gid = gid;
 	}
+
 	uint32_t nodepos = NODEHASHPOS(node->id);
-	node->next = gMetadata->nodehash[nodepos];
-	gMetadata->nodehash[nodepos] = node;
+	gMetadata->nodehash[nodepos].push_front(node);
+
 	fsnodes_update_checksum(node);
 	fsnodes_link(ts, parent, node, name);
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
+
 	if (type == FSNode::kFile) {
 		fsnodes_quota_update(node, {{QuotaResource::kSize, +fsnodes_get_size(node)}});
 	}
+
 	return node;
 }
 
@@ -1303,14 +1307,13 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 	}
 	// remove from idhash
 	uint32_t nodepos = NODEHASHPOS(toremove->id);
-	FSNode **ptr = &(gMetadata->nodehash[nodepos]);
-	while (*ptr) {
-		if (*ptr == toremove) {
-			*ptr = toremove->next;
-			break;
-		}
-		ptr = &((*ptr)->next);
-	}
+	auto start = gMetadata->nodehash[nodepos].begin();
+	auto end = gMetadata->nodehash[nodepos].end();
+
+	auto found = std::find_if(start, end, [&](const auto &node) {
+		return node == toremove;
+	});
+
 	if (gChecksumBackgroundUpdater.isNodeIncluded(toremove)) {
 		removeFromChecksum(gChecksumBackgroundUpdater.fsNodesChecksum, toremove->checksum);
 	}
@@ -1349,6 +1352,9 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 	dcm_modify(toremove->id, 0);
 #endif
 	FSNode::destroy(toremove);
+	if (found != gMetadata->nodehash[nodepos].end()) {
+		gMetadata->nodehash[nodepos].erase(found);
+	}
 }
 
 void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &child_name, FSNode *child) {

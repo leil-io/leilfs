@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <list>
 #include <vector>
 
 #define XATTR_INODE_HASH_SIZE 65536
@@ -37,7 +38,6 @@ struct xattr_data_entry {
 	std::vector<uint8_t> attributeName;
 	std::vector<uint8_t> attributeValue;
 	uint64_t checksum;
-	struct xattr_data_entry **previnode, *nextinode;
 	struct xattr_data_entry **prev, *next;
 
 	xattr_data_entry() = default;
@@ -53,7 +53,7 @@ struct xattr_inode_entry {
 	inode_t inode;
 	uint32_t anleng;
 	uint32_t avleng;
-	struct xattr_data_entry *data_head;
+	std::list<xattr_data_entry *> xattrDataList;
 };
 
 #ifndef METARESTORE
@@ -83,7 +83,7 @@ static inline uint32_t xattr_inode_hash_fn(inode_t inode) {
 }
 
 void xattr_checksum_add_to_background(xattr_data_entry *xde);
-void xattr_listattr_data(void *xanode, uint8_t *xabuff);
+void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xabuff);
 void xattr_recalculate_checksum();
 void xattr_removeinode(inode_t inode);
 

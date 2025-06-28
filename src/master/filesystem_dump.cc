@@ -119,11 +119,9 @@ void fs_dumpnode(FSNode *f) {
 }
 
 void fs_dumpnodes() {
-	uint32_t i;
-	FSNode *p;
-	for (i = 0; i < NODEHASHSIZE; i++) {
-		for (p = gMetadata->nodehash[i]; p; p = p->next) {
-			fs_dumpnode(p);
+	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
+		for (const auto &node : gMetadata->nodehash[i]) {
+			fs_dumpnode(node);
 		}
 	}
 }

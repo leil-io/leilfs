@@ -2867,14 +2867,13 @@ uint8_t fs_get_chunkid(const FsContext &context, inode_t inode, uint32_t index,
 #endif
 
 void fs_add_files_to_chunks() {
-	FSNode *f;
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (f = gMetadata->nodehash[i]; f; f = f->next) {
-			if (f->type == FSNode::kFile || f->type == FSNode::kTrash ||
-			    f->type == FSNode::kReserved) {
-				for (const auto &chunkid : static_cast<FSNodeFile*>(f)->chunks) {
+		for (const auto &node : gMetadata->nodehash[i]) {
+			if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
+			    node->type == FSNode::kReserved) {
+				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
 					if (chunkid > 0) {
-						chunk_add_file(chunkid, f->goal);
+						chunk_add_file(chunkid, node->goal);
 					}
 				}
 			}

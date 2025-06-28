@@ -37,6 +37,8 @@
 using xattr_inode_entry_pointer = std::unique_ptr<xattr_inode_entry>;
 using xattr_inode_entry_list = std::list<xattr_inode_entry_pointer>;
 
+using FSNodePointerList = std::list<FSNode*>;
+
 /** Metadata of the filesystem.
  *  All the static variables managed by function in this file which form metadata of the filesystem.
  */
@@ -50,7 +52,7 @@ public:
 	TrashPathContainer trash;
 	ReservedPathContainer reserved;
 	FSNodeDirectory *root;
-	FSNode *nodehash[NODEHASHSIZE];
+	std::array<FSNodePointerList, NODEHASHSIZE> nodehash;
 	TaskManager task_manager;
 	FileLocks flock_locks;
 	FileLocks posix_locks;
@@ -116,12 +118,10 @@ public:
 
 		// Free memory allocated in nodehash hashmap
 		for (uint32_t i = 0; i < NODEHASHSIZE; ++i) {
-			FSNode *node = nodehash[i];
-			while (node != nullptr) {
-				FSNode *next = node->next;
+			for (const auto &node : nodehash[i]) {
 				FSNode::destroy(node);
-				node = next;
 			}
+			nodehash[i].clear();
 		}
 	}
 

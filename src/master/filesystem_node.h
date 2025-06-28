@@ -31,13 +31,14 @@
 namespace detail {
 
 inline FSNode *fsnodes_id_to_node_internal(inode_t id) {
-	FSNode *p;
 	uint32_t nodepos = NODEHASHPOS(id);
-	for (p = gMetadata->nodehash[nodepos]; p; p = p->next) {
-		if (p->id == id) {
-			return p;
+
+	for (const auto& node : gMetadata->nodehash[nodepos]) {
+		if (node->id == id) {
+			return node;
 		}
 	}
+
 	return nullptr;
 }
 

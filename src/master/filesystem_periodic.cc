@@ -275,9 +275,8 @@ void fs_background_checksum_recalculation_a_bit() {
 	case ChecksumRecalculatingStep::kNodes:
 		// Nodes are in a hashtable, therefore they can be recalculated in multiple steps.
 		while (gChecksumBackgroundUpdater.getPosition() < NODEHASHSIZE) {
-			for (FSNode *node =
-			             gMetadata->nodehash[gChecksumBackgroundUpdater.getPosition()];
-			     node; node = node->next) {
+			auto checkSumPosition = gChecksumBackgroundUpdater.getPosition();
+			for (const auto &node : gMetadata->nodehash[checkSumPosition]) {
 				fsnodes_checksum_add_to_background(node);
 				++recalculated;
 			}
@@ -341,8 +340,6 @@ void fs_process_file_test() {
 	static inode_t unavailtrashfiles = 0;
 	static inode_t unavailreservedfiles = 0;
 
-	FSNode *f;
-
 	if (gFileTestLoopIndex == 0) {
 		if (unavailfiles > 0) {
 			safs::log_err("Currently unavailable files: {}", unavailfiles);
@@ -392,12 +389,12 @@ void fs_process_file_test() {
 			return;
 		}
 
-		for (f = gMetadata->nodehash[gFileTestLoopIndex]; f; f = f->next) {
+		for (const auto &node : gMetadata->nodehash[gFileTestLoopIndex]) {
 			node_error_flag = 0;
 
-			if (f->type == FSNode::kFile || f->type == FSNode::kTrash ||
-			    f->type == FSNode::kReserved) {
-				for (const auto &chunkid : static_cast<FSNodeFile *>(f)->chunks) {
+			if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
+			    node->type == FSNode::kReserved) {
+				for (const auto &chunkid : static_cast<FSNodeFile *>(node)->chunks) {
 					if (chunkid == 0) {
 						continue;
 					}
@@ -426,20 +423,20 @@ void fs_process_file_test() {
 				}
 			}
 
-			if (f->type == FSNode::kDirectory) {
+			if (node->type == FSNode::kDirectory) {
 				for (const auto &entry :
-				     static_cast<FSNodeDirectory *>(f)->entries) {
-					FSNode *node = entry.second;
+				     static_cast<FSNodeDirectory *>(node)->entries) {
+					FSNode *childNode = entry.second;
 
-					if (!node) {
+					if (!childNode) {
 						// the node points to invalid memory
 						node_error_flag |=
 						        static_cast<int>(kStructureError);
 					} else {
 						auto parentInChildPtr = std::find_if(
-						    node->parent.begin(), node->parent.end(),
-						    [f](const std::pair<inode_t, const hstorage::Handle *> &p) {
-							    return p.first == f->id;
+						    childNode->parent.begin(), childNode->parent.end(),
+						    [node](const std::pair<inode_t, const hstorage::Handle *> &p) {
+							    return p.first == node->id;
 						    });
 						// the node doesn't have a parent entry pointing to the
 						// current directory
@@ -451,7 +448,7 @@ void fs_process_file_test() {
 			}
 
 			if (node_error_flag == 0) {
-				auto it = gDefectiveNodes.find(f->id);
+				auto it = gDefectiveNodes.find(node->id);
 				if (it != gDefectiveNodes.end()) {
 					gDefectiveNodes.erase(it);
 				}
@@ -459,17 +456,17 @@ void fs_process_file_test() {
 			}
 
 			if (node_error_flag & kChunkUnavailable) {
-				if (f->type == FSNode::kTrash) {
+				if (node->type == FSNode::kTrash) {
 					unavailtrashfiles++;
-				} else if (f->type == FSNode::kReserved) {
+				} else if (node->type == FSNode::kReserved) {
 					unavailreservedfiles++;
 				} else {
-					unavailfiles += f->parent.size();
+					unavailfiles += node->parent.size();
 				}
 
-				auto it = gDefectiveNodes.find(f->id);
+				auto it = gDefectiveNodes.find(node->id);
 				if (it == gDefectiveNodes.end()) {
-					std::string name = get_node_info(f);
+					std::string name = get_node_info(node);
 					safs::log_trace("Chunks unavailable in {}",
 					                   name);
 				}
@@ -478,18 +475,18 @@ void fs_process_file_test() {
 				ugfiles++;
 			}
 			if (node_error_flag & kStructureError) {
-				auto it = gDefectiveNodes.find(f->id);
+				auto it = gDefectiveNodes.find(node->id);
 				if (it == gDefectiveNodes.end()) {
-					std::string name = get_node_info(f);
+					std::string name = get_node_info(node);
 					safs_pretty_syslog(LOG_ERR, "Structure error in %s",
 					                   name.c_str());
 				}
 			}
 
 			if (gDefectiveNodes.size() < kMaxNodeEntries) {
-				gDefectiveNodes[f->id] = node_error_flag;
+				gDefectiveNodes[node->id] = node_error_flag;
 			} else {
-				auto it = gDefectiveNodes.find(f->id);
+				auto it = gDefectiveNodes.find(node->id);
 				if (it != gDefectiveNodes.end()) {
 					(*it).second = node_error_flag;
 				}

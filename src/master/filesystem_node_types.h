@@ -122,12 +122,10 @@ struct FSNode {
 	ParentsCompactVector parent; /*!< Parent nodes ids + handles of entries of this node in those
 	               parents. To reduce memory usage ids are stored instead of pointers to FSNode. */
 
-	FSNode   *next; /*!< Next field used for storing FSNode in hash map. */
 	uint64_t checksum; /*!< Node checksum. */
 
 	FSNode(uint8_t t) {
 		type = t;
-		next = nullptr;
 		checksum = 0;
 	}
 

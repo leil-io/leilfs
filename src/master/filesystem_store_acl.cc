@@ -52,10 +52,10 @@ static void fs_store_acl(inode_t id, const RichACL &acl, FILE *fd) {
 
 void fs_store_acls(FILE *fd) {
 	for (uint32_t i = 0; i < NODEHASHSIZE; ++i) {
-		for (FSNode *p = gMetadata->nodehash[i]; p; p = p->next) {
-			const RichACL *node_acl = gMetadata->acl_storage.get(p->id);
+		for (const auto &node : gMetadata->nodehash[i]) {
+			const RichACL *node_acl = gMetadata->acl_storage.get(node->id);
 			if (node_acl) {
-				fs_store_acl(p->id, *node_acl, fd);
+				fs_store_acl(node->id, *node_acl, fd);
 			}
 		}
 	}

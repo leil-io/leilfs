@@ -241,9 +241,9 @@ static bool xattr_load(MetadataLoader::Options options) {
 	inode_t inode;
 	uint8_t anleng;
 	uint32_t avleng;
-	xattr_data_entry *xa;
-	xattr_inode_entry *ih = nullptr;
-	uint32_t hash, ihash;
+	xattr_data_entry *xattrEntry = nullptr;
+	xattr_inode_entry *xattrInodeEntry = nullptr;
+	uint32_t hash;
 
 	while (true) {
 		try {
@@ -274,18 +274,18 @@ static bool xattr_load(MetadataLoader::Options options) {
 			return false;
 		}
 
-		ihash = xattr_inode_hash_fn(inode);
+		auto ihash = xattr_inode_hash_fn(inode);
 		auto start = gMetadata->xattr_inode_hash[ihash].begin();
 		auto end = gMetadata->xattr_inode_hash[ihash].end();
 
 		for (auto attributeIterator = start; attributeIterator != end; attributeIterator++) {
-			ih = attributeIterator->get();
-			if (ih->inode == inode) {
+			xattrInodeEntry = attributeIterator->get();
+			if (xattrInodeEntry->inode == inode) {
 				break;
 			}
 		}
 
-		if (ih && ih->anleng + anleng + 1 > SFS_XATTR_LIST_MAX) {
+		if (xattrInodeEntry && xattrInodeEntry->anleng + anleng + 1 > SFS_XATTR_LIST_MAX) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: name list too long");
 			if (options.ignoreFlag) {
 				continue;
@@ -293,47 +293,42 @@ static bool xattr_load(MetadataLoader::Options options) {
 			return false;
 		}
 
-		xa = new xattr_data_entry;
-		xa->inode = inode;
-		xa->attributeName.resize(anleng);
-		passert(xa->attributeName.data());
-		memcpy(xa->attributeName.data(), ptr, anleng);
-		ptr+=anleng;
-		xa->anleng = anleng;
-		if (avleng > 0) {
-			xa->attributeValue.resize(avleng);
-			passert(xa->attributeValue.data());
-			memcpy(xa->attributeValue.data(), ptr, avleng);
-			ptr+=avleng;
-		} else {
-			xa->attributeValue.clear();
-		}
-		options.offset = options.metadataFile->offset(ptr);
-		xa->avleng = avleng;
-		hash = xattr_data_hash_fn(inode, xa->anleng, xa->attributeName.data());
-		xa->next = gMetadata->xattr_data_hash[hash];
-		if (xa->next) {
-			xa->next->prev = &(xa->next);
-		}
-		xa->prev = gMetadata->xattr_data_hash + hash;
-		gMetadata->xattr_data_hash[hash] = xa;
+		xattrEntry = new xattr_data_entry;
+		xattrEntry->inode = inode;
+		xattrEntry->attributeName.resize(anleng);
+		passert(xattrEntry->attributeName.data());
+		memcpy(xattrEntry->attributeName.data(), ptr, anleng);
+		ptr += anleng;
+		xattrEntry->anleng = anleng;
 
-		if (ih) {
-			xa->nextinode = ih->data_head;
-			if (xa->nextinode) {
-				xa->nextinode->previnode = &(xa->nextinode);
-			}
-			xa->previnode = &(ih->data_head);
-			ih->data_head = xa;
-			ih->anleng += anleng + 1U;
-			ih->avleng += avleng;
+		if (avleng > 0) {
+			xattrEntry->attributeValue.resize(avleng);
+			passert(xattrEntry->attributeValue.data());
+			memcpy(xattrEntry->attributeValue.data(), ptr, avleng);
+			ptr += avleng;
+		} else {
+			xattrEntry->attributeValue.clear();
+		}
+
+		options.offset = options.metadataFile->offset(ptr);
+		xattrEntry->avleng = avleng;
+		hash = xattr_data_hash_fn(inode, xattrEntry->anleng, xattrEntry->attributeName.data());
+		xattrEntry->next = gMetadata->xattr_data_hash[hash];
+		if (xattrEntry->next) {
+			xattrEntry->next->prev = &(xattrEntry->next);
+		}
+		xattrEntry->prev = gMetadata->xattr_data_hash + hash;
+		gMetadata->xattr_data_hash[hash] = xattrEntry;
+
+		if (xattrInodeEntry) {
+			xattrInodeEntry->xattrDataList.push_back(xattrEntry);
+			xattrInodeEntry->anleng += anleng + 1U;
+			xattrInodeEntry->avleng += avleng;
 		} else {
 			auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
 			passert(xattrInodeEntry);
 			xattrInodeEntry->inode = inode;
-			xa->nextinode = nullptr;
-			xa->previnode = &(xattrInodeEntry->data_head);
-			xattrInodeEntry->data_head = xa;
+			xattrInodeEntry->xattrDataList.push_back(xattrEntry);
 			xattrInodeEntry->anleng = anleng + 1U;
 			xattrInodeEntry->avleng = avleng;
 			gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
@@ -635,8 +630,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			sessionIds--;
 		}
 
-		fsnodes_quota_update(node,
-		                     {{QuotaResource::kSize, +fsnodes_get_size(node)}});
+		fsnodes_quota_update(node, {{QuotaResource::kSize, +fsnodes_get_size(node)}});
 		gMetadata->filenodes++;
 		break;
 	default:
@@ -647,8 +641,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		return kError;
 	}
 	uint32_t nodeIndex = NODEHASHPOS(node->id);
-	node->next = gMetadata->nodehash[nodeIndex];
-	gMetadata->nodehash[nodeIndex] = node;
+	gMetadata->nodehash[nodeIndex].push_front(node);
 	gMetadata->inode_pool.markAsAcquired(node->id);
 	gMetadata->nodes++;
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
@@ -677,16 +670,14 @@ static int fs_lostnode(FSNode *p) {
 	return -1;
 }
 
-static int fs_checknodes(int ignoreflag) {
-	uint32_t i;
-	FSNode *p;
-	for (i = 0; i < NODEHASHSIZE; i++) {
-		for (p = gMetadata->nodehash[i]; p; p = p->next) {
-			if (p->parent.empty() && p != gMetadata->root &&
-			    (p->type != FSNode::kTrash) && (p->type != FSNode::kReserved)) {
-				safs_pretty_syslog(LOG_ERR, "found orphaned inode: %" PRIiNode, p->id);
+int fs_checknodes(int ignoreflag) {
+	for (auto i = 0; i < NODEHASHSIZE; i++) {
+		for (const auto &node : gMetadata->nodehash[i]) {
+			if (node->parent.empty() && node != gMetadata->root &&
+			    (node->type != FSNode::kTrash) && (node->type != FSNode::kReserved)) {
+				safs_pretty_syslog(LOG_ERR, "found orphaned inode: %" PRIiNode, node->id);
 				if (ignoreflag) {
-					if (fs_lostnode(p) < 0) {
+					if (fs_lostnode(node) < 0) {
 						return -1;
 					}
 				} else {
@@ -920,19 +911,19 @@ void fs_new(void) {
 	gMetadata->maxnodeid = SPECIAL_INODE_ROOT;
 	gMetadata->metaversion = 1;
 	gMetadata->nextsessionid = 1;
-	gMetadata->root =
-	    static_cast<FSNodeDirectory *>(FSNode::create(FSNode::kDirectory));
+	auto *rootDirectory = FSNode::create(FSNode::kDirectory);
+	gMetadata->root = static_cast<FSNodeDirectory *>(rootDirectory);
 	gMetadata->root->id = SPECIAL_INODE_ROOT;
-	gMetadata->root->ctime = gMetadata->root->mtime = gMetadata->root->atime =
-	    eventloop_time();
+	gMetadata->root->atime = eventloop_time();
+	gMetadata->root->mtime = gMetadata->root->atime;
+	gMetadata->root->ctime = gMetadata->root->mtime;
 	gMetadata->root->goal = DEFAULT_GOAL;
 	gMetadata->root->trashtime = kDefaultTrashTime;
 	gMetadata->root->mode = 0777;
 	gMetadata->root->uid = 0;
 	gMetadata->root->gid = 0;
 	nodepos = NODEHASHPOS(gMetadata->root->id);
-	gMetadata->root->next = gMetadata->nodehash[nodepos];
-	gMetadata->nodehash[nodepos] = gMetadata->root;
+	gMetadata->nodehash[nodepos].push_front(gMetadata->root);
 	gMetadata->inode_pool.markAsAcquired(gMetadata->root->id);
 	chunk_newfs();
 	gMetadata->nodes = 1;
@@ -1132,14 +1123,12 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 }
 
 void MetadataBackendFile::storenodes(FILE *fd) {
-	uint32_t i;
-	FSNode *p;
-	for (i = 0; i < NODEHASHSIZE; i++) {
-		for (p = gMetadata->nodehash[i]; p; p = p->next) {
-			storenode(p, fd);
+	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
+		for (const auto &node : gMetadata->nodehash[i]) {
+			storenode(node, fd);
 		}
 	}
-	storenode(NULL, fd);  // end marker
+	storenode(nullptr, fd);  // end marker
 }
 
 //Edges

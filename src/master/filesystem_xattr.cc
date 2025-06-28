@@ -49,11 +49,10 @@ static void xattr_update_checksum(xattr_data_entry *xde) {
 	addToChecksum(gMetadata->xattrChecksum, xde->checksum);
 }
 
-static inline void xattr_removeentry(xattr_data_entry *xa) {
-	*(xa->previnode) = xa->nextinode;
-	if (xa->nextinode) {
-		xa->nextinode->previnode = xa->previnode;
-	}
+static inline void xattr_removeentry(xattr_inode_entry *entry, xattr_data_entry *xa) {
+	// Remove the data from the xattr_inode_entry
+	entry->xattrDataList.remove(xa);
+
 	*(xa->prev) = xa->next;
 	if (xa->next) {
 		xa->next->prev = xa->prev;
@@ -95,8 +94,8 @@ void xattr_removeinode(inode_t inode) {
 	for (auto attributeIterator = start; attributeIterator != end;) {
 		ih = attributeIterator->get();
 		if (ih->inode == inode) {
-			while (ih->data_head) {
-				xattr_removeentry(ih->data_head);
+			while (!ih->xattrDataList.empty()) {
+				xattr_removeentry(ih, ih->xattrDataList.front());
 			}
 			attributeIterator = gMetadata->xattr_inode_hash[hash].erase(attributeIterator);
 		} else {
@@ -107,9 +106,9 @@ void xattr_removeinode(inode_t inode) {
 
 uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 			const uint8_t *attrvalue, uint8_t mode) {
-	xattr_inode_entry *ih = nullptr;
-	xattr_data_entry *xa;
-	uint32_t hash, ihash;
+	xattr_inode_entry *xattrInodeEntry = nullptr;
+	xattr_data_entry *xattrDataEntry;
+	uint32_t hash;
 
 	if (avleng > SFS_XATTR_SIZE_MAX) {
 		return SAUNAFS_ERROR_ERANGE;
@@ -122,55 +121,63 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	ihash = xattr_inode_hash_fn(inode);
+	auto ihash = xattr_inode_hash_fn(inode);
 	auto start = gMetadata->xattr_inode_hash[ihash].begin();
 	auto end = gMetadata->xattr_inode_hash[ihash].end();
 
 	for (auto attributeIterator = start; attributeIterator != end; ++attributeIterator) {
-		ih = attributeIterator->get();
-		if (ih->inode == inode) {
+		xattrInodeEntry = attributeIterator->get();
+		if (xattrInodeEntry->inode == inode) {
 			break;
 		}
 	}
 
 	hash = xattr_data_hash_fn(inode, anleng, attrname);
-	for (xa = gMetadata->xattr_data_hash[hash]; xa; xa = xa->next) {
-		if (xa->inode == inode && xa->anleng == anleng &&
-		    memcmp(xa->attributeName.data(), attrname, anleng) == 0) {
-			passert(ih);
+	for (xattrDataEntry = gMetadata->xattr_data_hash[hash]; xattrDataEntry;
+	     xattrDataEntry = xattrDataEntry->next) {
+		if (xattrDataEntry->inode == inode && xattrDataEntry->anleng == anleng &&
+		    memcmp(xattrDataEntry->attributeName.data(), attrname, anleng) == 0) {
+			passert(xattrInodeEntry);
+
 			if (mode == XATTR_SMODE_CREATE_ONLY) {  // create only
 				return SAUNAFS_ERROR_EEXIST;
 			}
+
 			if (mode == XATTR_SMODE_REMOVE) {  // remove
-				ih->anleng -= anleng + 1U;
-				ih->avleng -= xa->avleng;
-				xattr_removeentry(xa);
-				if (ih->data_head == NULL) {
-					if (ih->anleng != 0 || ih->avleng != 0) {
+				xattrInodeEntry->anleng -= anleng + 1U;
+				xattrInodeEntry->avleng -= xattrDataEntry->avleng;
+				xattr_removeentry(xattrInodeEntry, xattrDataEntry);
+
+				if (xattrInodeEntry->xattrDataList.empty()) {
+					if (xattrInodeEntry->anleng != 0 || xattrInodeEntry->avleng != 0) {
 						safs_pretty_syslog(LOG_WARNING,
 						       "xattr non zero lengths on remove "
 						       "(inode:%" PRIiNode ",anleng:%" PRIu32
 						       ",avleng:%" PRIu32 ")",
-						       ih->inode, ih->anleng, ih->avleng);
+						       xattrInodeEntry->inode, xattrInodeEntry->anleng, xattrInodeEntry->avleng);
 					}
 					xattr_removeinode(inode);
 				}
 				return SAUNAFS_STATUS_OK;
 			}
-			ih->avleng -= xa->avleng;
-			if (!xa->attributeValue.empty()) {
-				xa->attributeValue.clear();
+
+			xattrInodeEntry->avleng -= xattrDataEntry->avleng;
+
+			if (!xattrDataEntry->attributeValue.empty()) {
+				xattrDataEntry->attributeValue.clear();
 			}
+
 			if (avleng > 0) {
-				xa->attributeValue.resize(avleng);
-				passert(xa->attributeValue.data());
-				memcpy(xa->attributeValue.data(), attrvalue, avleng);
+				xattrDataEntry->attributeValue.resize(avleng);
+				passert(xattrDataEntry->attributeValue.data());
+				memcpy(xattrDataEntry->attributeValue.data(), attrvalue, avleng);
 			} else {
-				xa->attributeValue.clear();
+				xattrDataEntry->attributeValue.clear();
 			}
-			xa->avleng = avleng;
-			ih->avleng += avleng;
-			xattr_update_checksum(xa);
+
+			xattrDataEntry->avleng = avleng;
+			xattrInodeEntry->avleng += avleng;
+			xattr_update_checksum(xattrDataEntry);
 			return SAUNAFS_STATUS_OK;
 		}
 	}
@@ -179,53 +186,51 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 		return SAUNAFS_ERROR_ENOATTR;
 	}
 
-	if (ih && ih->anleng + anleng + 1 > SFS_XATTR_LIST_MAX) {
+	if (xattrInodeEntry && xattrInodeEntry->anleng + anleng + 1 > SFS_XATTR_LIST_MAX) {
 		return SAUNAFS_ERROR_ERANGE;
 	}
 
-	xa = new xattr_data_entry;
-	xa->inode = inode;
-	xa->attributeName.resize(anleng);
-	passert(xa->attributeName.data());
-	memcpy(xa->attributeName.data(), attrname, anleng);
-	xa->anleng = anleng;
-	if (avleng > 0) {
-		xa->attributeValue.resize(avleng);
-		passert(xa->attributeValue.data());
-		memcpy(xa->attributeValue.data(), attrvalue, avleng);
-	} else {
-		xa->attributeValue.clear();
-	}
-	xa->avleng = avleng;
-	xa->next = gMetadata->xattr_data_hash[hash];
-	if (xa->next) {
-		xa->next->prev = &(xa->next);
-	}
-	xa->prev = gMetadata->xattr_data_hash + hash;
-	gMetadata->xattr_data_hash[hash] = xa;
+	xattrDataEntry = new xattr_data_entry;
+	xattrDataEntry->inode = inode;
+	xattrDataEntry->attributeName.resize(anleng);
+	passert(xattrDataEntry->attributeName.data());
+	memcpy(xattrDataEntry->attributeName.data(), attrname, anleng);
+	xattrDataEntry->anleng = anleng;
 
-	if (ih) {
-		xa->nextinode = ih->data_head;
-		if (xa->nextinode) {
-			xa->nextinode->previnode = &(xa->nextinode);
-		}
-		xa->previnode = &(ih->data_head);
-		ih->data_head = xa;
-		ih->anleng += anleng + 1U;
-		ih->avleng += avleng;
+	if (avleng > 0) {
+		xattrDataEntry->attributeValue.resize(avleng);
+		passert(xattrDataEntry->attributeValue.data());
+		memcpy(xattrDataEntry->attributeValue.data(), attrvalue, avleng);
+	} else {
+		xattrDataEntry->attributeValue.clear();
+	}
+
+	xattrDataEntry->avleng = avleng;
+	xattrDataEntry->next = gMetadata->xattr_data_hash[hash];
+
+	if (xattrDataEntry->next) {
+		xattrDataEntry->next->prev = &(xattrDataEntry->next);
+	}
+
+	xattrDataEntry->prev = gMetadata->xattr_data_hash + hash;
+	gMetadata->xattr_data_hash[hash] = xattrDataEntry;
+
+	if (xattrInodeEntry) {
+		xattrInodeEntry->xattrDataList.push_back(xattrDataEntry);
+		xattrInodeEntry->anleng += anleng + 1U;
+		xattrInodeEntry->avleng += avleng;
 	} else {
 		auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
 		passert(xattrInodeEntry);
 		xattrInodeEntry->inode = inode;
-		xa->nextinode = nullptr;
-		xa->previnode = &(xattrInodeEntry->data_head);
-		xattrInodeEntry->data_head = xa;
+		xattrInodeEntry->xattrDataList.push_back(xattrDataEntry);
 		xattrInodeEntry->anleng = anleng + 1U;
 		xattrInodeEntry->avleng = avleng;
 		gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
 	}
-	xa->checksum = 0;
-	xattr_update_checksum(xa);
+
+	xattrDataEntry->checksum = 0;
+	xattr_update_checksum(xattrDataEntry);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -249,18 +254,17 @@ uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 }
 
 uint8_t xattr_listattr_leng(inode_t inode, void **xanode, uint32_t *xasize) {
-	xattr_inode_entry *ih;
-	xattr_data_entry *xa;
+	xattr_inode_entry *xattrInodeEntry;
 	auto hash = xattr_inode_hash_fn(inode);
 	auto start = gMetadata->xattr_inode_hash[hash].begin();
 	auto end =  gMetadata->xattr_inode_hash[hash].end();
 
 	for (auto attributeIterator = start; attributeIterator != end;) {
-		ih = attributeIterator->get();
-		if (ih->inode == inode) {
-			*xanode = ih;
-			for (xa = ih->data_head; xa; xa = xa->nextinode) {
-				*xasize += xa->anleng + 1U;
+		xattrInodeEntry = attributeIterator->get();
+		if (xattrInodeEntry->inode == inode) {
+			*xanode = xattrInodeEntry;
+			for (const auto &xattrDataEntry : xattrInodeEntry->xattrDataList) {
+				*xasize += xattrDataEntry->anleng + 1U;
 			}
 			if (*xasize > SFS_XATTR_LIST_MAX) {
 				return SAUNAFS_ERROR_ERANGE;
@@ -268,21 +272,21 @@ uint8_t xattr_listattr_leng(inode_t inode, void **xanode, uint32_t *xasize) {
 			return SAUNAFS_STATUS_OK;
 		}
 	}
-	*xanode = NULL;
+
+	*xanode = nullptr;
 	return SAUNAFS_STATUS_OK;
 }
 
-void xattr_listattr_data(void *xanode, uint8_t *xabuff) {
-	xattr_inode_entry *ih = (xattr_inode_entry *)xanode;
-	xattr_data_entry *xa;
-	uint32_t l;
+void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xabuff) {
+	auto *xattrEntry = static_cast<xattr_inode_entry *>(xattrInodeEntry);
 
-	l = 0;
-	if (ih) {
-		for (xa = ih->data_head; xa; xa = xa->nextinode) {
-			memcpy(xabuff + l, xa->attributeName.data(), xa->anleng);
-			l += xa->anleng;
-			xabuff[l++] = 0;
+	uint32_t entryLength = 0;
+	if (xattrEntry) {
+		passert(xabuff);
+		for (const auto &xattrDataEntry : xattrEntry->xattrDataList) {
+			memcpy(xabuff + entryLength, xattrDataEntry->attributeName.data(), xattrDataEntry->anleng);
+			entryLength += xattrDataEntry->anleng;
+			xabuff[entryLength++] = 0;
 		}
 	}
 }
