@@ -25,7 +25,6 @@
 #include <linux/falloc.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
-#include <sys/types.h>
 #include <filesystem>
 
 #include "chunkserver-common/chunk_interface.h"
@@ -38,7 +37,6 @@
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
 #include "errors/saunafs_error_codes.h"
-#include "protocol/SFSCommunication.h"
 
 CmrDisk::CmrDisk(const std::string &_metaPath, const std::string &_dataPath,
                  bool _isMarkedForRemoval, bool _isZonedDevice)
@@ -375,10 +373,10 @@ int CmrDisk::writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
 	return size;
 }
 
-int CmrDisk::writeBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-	                       uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
-	                       bool isNewBlock, const char *errorMsg) {
-	(void)isNewBlock;
+int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
+                                    uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+                                    bool areNewBlocks, const char *errorMsg) {
+	(void)areNewBlocks;
 
 	uint32_t size = numBlocks * SFSBLOCKSIZE;
 	{
@@ -388,8 +386,8 @@ int CmrDisk::writeBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t s
 
 		if (ret != size) {
 			hddAddErrorAndPreserveErrno(chunk);
-			safs_silent_errlog(LOG_WARNING, "%s: file:%s - write error",
-			                   errorMsg, chunk->fullMetaFilename().c_str());
+			safs::log_warn("{}: file:{} - write error", errorMsg,
+			               chunk->fullMetaFilename().c_str());
 			hddReportDamagedChunk(chunk->id(), chunk->type());
 			updater.markWriteAsFailed();
 			return -1;
@@ -608,7 +606,7 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
                               uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
                               const uint8_t *buffer, bool isFromReplication) {
 	assert(chunk);
-	LOG_AVG_TILL_END_OF_SCOPE0("writeChunkBlock");
+	LOG_AVG_TILL_END_OF_SCOPE0("writeChunkBlocks");
 	TRACETHIS3(chunk->id(), startBlock, numBlocks);
 
 	if (chunk->version() != version && version > 0) {
@@ -617,7 +615,7 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 	if (startBlock + numBlocks > chunk->maxBlocksInFile()) {
 		return -SAUNAFS_ERROR_BNUMTOOBIG;
 	}
-	if (numBlocks > SFSBLOCKSINCHUNK || crc.size() != numBlocks) {
+	if (numBlocks > SFSBLOCKSINCHUNK || crc.size() != static_cast<size_t>(numBlocks)) {
 		return -SAUNAFS_ERROR_WRONGSIZE;
 	}
 
@@ -652,8 +650,8 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 		areNewBlocks = true;
 	}
 
-	int written = writeBlocksAndCrcs(chunk, buffer, startBlock, numBlocks, crcBuff.data(), crcData,
-	                                 areNewBlocks, "writeChunkBlocks");
+	int written = writeFullBlocksAndCrcs(chunk, buffer, startBlock, numBlocks, crcBuff.data(),
+	                                     crcData, areNewBlocks, "writeChunkBlocks");
 	if (written < 0) { return -SAUNAFS_ERROR_IO; }
 
 	return numBlocks * SFSBLOCKSIZE;

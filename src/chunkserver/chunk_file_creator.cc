@@ -70,18 +70,19 @@ void ChunkFileCreator::create() {
 	}
 }
 
-void ChunkFileCreator::write(const uint8_t *buffer, uint32_t numBlocks,
+void ChunkFileCreator::write(const uint8_t *buffer, uint16_t startBlock, uint16_t numBlocks,
                              std::vector<uint32_t> &crc) {
 	assert(is_open_ && !is_commited_ && chunk_);
 	auto *crcData = gOpenChunks.getResource(chunk_->metaFD()).crcData();
-	int status =
-	    chunk_->owner()->writeChunkBlocks(chunk_, 0, 0, numBlocks, crc, crcData, buffer, true);
-	if (status != static_cast<int>(numBlocks * SFSBLOCKSIZE)) {
-		if (status < 0) {
-			throw Exception("failed to write chunk", -status);
-		} else {
-			throw Exception("failed to write chunk", SAUNAFS_ERROR_IO);
+	int writtenBytes = chunk_->owner()->writeChunkBlocks(chunk_, 0, startBlock, numBlocks, crc,
+	                                                     crcData, buffer, true);
+	if (writtenBytes != static_cast<int>(numBlocks * SFSBLOCKSIZE)) {
+		if (writtenBytes < 0) {
+			int status = -writtenBytes;
+			throw Exception("failed to write chunk", status);
 		}
+
+		throw Exception("failed to write chunk", SAUNAFS_ERROR_IO);
 	}
 }
 

@@ -132,9 +132,9 @@ public:
 	                            uint16_t blockNum, bool isNewBlock,
 	                            const char *errorMsg) override;
 	/// Writes the data and the CRC for a number of full blocks
-	int writeBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-	                       uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
-	                       bool isNewBlock, const char *errorMsg) override;
+	int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
+	                           uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+	                           bool areNewBlocks, const char *errorMsg) override;
 
 	/// If supported, deallocates space (creates a hole) in the byte range
 	/// starting at offset and continuing for size bytes.

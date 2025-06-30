@@ -195,7 +195,9 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 			uint32_t crc = mycrc32(0, dataBlock, SFSBLOCKSIZE);
 			crcData.push_back(crc);
 		}
-		fileCreator.write(static_cast<const uint8_t*>(buffer.data()), nrOfBlocks, crcData);
+		fileCreator.write(static_cast<const uint8_t *>(buffer.data()),
+		                  static_cast<uint16_t>(firstBlock), static_cast<uint16_t>(nrOfBlocks),
+		                  crcData);
 	}
 
 	fileCreator.commit();
