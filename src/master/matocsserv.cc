@@ -1022,7 +1022,8 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	// Send the answer with the status
 	if (eptr->version >= kFirstVersionWithClusterId) {
 		OutputPacket outPacket;
-		matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK);
+		matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
+		                                gClusterId);
 		eptr->outputPackets.push_back(std::move(outPacket));
 	}
 }

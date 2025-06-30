@@ -41,6 +41,7 @@
 #include "common/loop_watchdog.h"
 #include "common/network_address.h"
 #include "common/output_packet.h"
+#include "common/saunafs_version.h"
 #include "common/sockets.h"
 #include "config/cfg.h"
 #include "protocol/SFSCommunication.h"
@@ -141,16 +142,23 @@ void MasterConn::sendRegister() {
 
 void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	uint8_t status{};
-	matocs::registerHost::deserialize(data, status);
+	uint32_t version{};
+	std::string clusterId;
+	matocs::registerHost::deserialize(data, status, version, clusterId);
 
 	if (status != SAUNAFS_STATUS_OK) {
-		safs::log_err("MasterConn: registration to {} failed with status: {}", address_.toString(),
-		              saunafs_error_string(status));
+		safs::log_err(
+		    "MasterConn: registration to {} failed with status: {}, version: {}, clusterId: {}",
+		    address_.toString(), saunafs_error_string(status), saunafsVersionToString(version),
+		    clusterId);
 		setMode(ConnectionMode::KILL);
 		return;
 	}
 
-	safs::log_info("MasterConn: registered to MDS: {}", address_.toString());
+	version_ = version;
+
+	safs::log_info("MasterConn: registered to MDS: {}, version: {}, clusterId: {}",
+	               address_.toString(), saunafsVersionToString(version), clusterId);
 
 	registrationStatus_ = RegistrationStatus::kHostRegistered;
 

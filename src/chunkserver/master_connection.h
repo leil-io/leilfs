@@ -30,6 +30,7 @@
 
 #include "common/network_address.h"
 #include "common/output_packet.h"
+#include "common/saunafs_version.h"
 #include "common/time_utils.h"
 #include "protocol/input_packet.h"
 
@@ -202,10 +203,11 @@ public:
 	const std::string &clusterId() const { return clusterId_; }
 
 private:
-	std::string masterHostStr_;         ///< Hostname of the master server.
-	std::string masterPortStr_;         ///< Port of the master server.
-	std::string clusterId_;             ///< Cluster ID for this connection.
-	std::shared_ptr<JobPool> jobPool_;  ///< Shared reference to the JobPool.
+	std::string masterHostStr_;                  ///< Hostname of the master server.
+	std::string masterPortStr_;                  ///< Port of the master server.
+	uint32_t version_{saunafsVersion(0, 0, 0)};  ///< Version of the master server.
+	std::string clusterId_;                      ///< Cluster ID for this connection.
+	std::shared_ptr<JobPool> jobPool_;           ///< Shared reference to the JobPool.
 
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	/// Registration status to this MDS.

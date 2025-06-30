@@ -28,7 +28,9 @@
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, registerHost, SAU_MATOCS_REGISTER_HOST, 0,
-		uint8_t, status)
+		uint8_t, status,
+		uint32_t, version,
+		std::string, clusterId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
