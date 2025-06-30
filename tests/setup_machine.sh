@@ -32,7 +32,9 @@ tool_exists() {
 }
 
 minimum_number_of_args=2
-if [[ ( ( "${1}" != "setup" ) && ( "${1}" != "setup-force" ) ) || ( ${#} -lt ${minimum_number_of_args} ) ]]; then
+if [[ $# -lt ${minimum_number_of_args} ]] || \
+	[[ "${1}" != "setup" && "${1}" != "setup-force" ]];
+then
 	usage >&2
 fi
 

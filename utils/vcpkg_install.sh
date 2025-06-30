@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -xeu -o pipefail
 
-# Set the baseline for the verioning
-vcpkg x-update-baseline --add-initial-baseline
+# Set the baseline for the versioning
+# vcpkg x-update-baseline --add-initial-baseline
 
 # Install dependencies specified in vcpkg.json
 # vcpkg install

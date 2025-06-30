@@ -44,6 +44,9 @@
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <thread>
+#include <future>
+#include <atomic>
 
 #include "common/crc.h"
 #include "common/cwrap.h"
@@ -651,85 +654,82 @@ FileLock::LockStatus FileLock::wdlock(RunMode runmode, uint32_t timeout) {
 	return LockStatus::kSuccess;
 }
 
+// Thread-based daemon alternative
+class ThreadedDaemon {
+public:
+    static bool initialize(std::function<int()> main_function) {
+        if (gRunAsDaemon) {
+            // Instead of fork, run in background thread with proper signal handling
+            std::promise<int> init_promise;
+            auto init_future = init_promise.get_future();
+
+            daemon_thread_ = std::thread([&init_promise, main_function]() {
+                try {
+                    // Setup daemon environment without fork
+                    setupDaemonEnvironment();
+                    int result = main_function();
+                    init_promise.set_value(result);
+                } catch (...) {
+                    init_promise.set_exception(std::current_exception());
+                }
+            });
+
+            // Wait for initialization result
+            auto status = init_future.wait_for(std::chrono::seconds(30));
+            if (status == std::future_status::timeout) {
+                safs::log_err("Daemon initialization timeout");
+                return false;
+            }
+
+            try {
+                int result = init_future.get();
+                if (result != 0) {
+                    daemon_thread_.join();
+                    return false;
+                }
+                // Detach the daemon thread to run independently
+                daemon_thread_.detach();
+                return true;
+            } catch (...) {
+                daemon_thread_.join();
+                return false;
+            }
+        } else {
+            return main_function() == 0;
+        }
+    }
+
+private:
+    static void setupDaemonEnvironment() {
+        setsid();
+        setpgid(0, getpid());
+
+        // Redirect standard streams without fork
+        close(STDIN_FILENO);
+        int null_fd = open("/dev/null", O_RDWR, 0);
+        if (null_fd != STDIN_FILENO) {
+            dup2(null_fd, STDIN_FILENO);
+            close(null_fd);
+        }
+
+        close(STDOUT_FILENO);
+        dup2(STDIN_FILENO, STDOUT_FILENO);
+        close(STDERR_FILENO);
+        dup2(STDIN_FILENO, STDERR_FILENO);
+    }
+
+    static std::thread daemon_thread_;
+};
+
+std::thread ThreadedDaemon::daemon_thread_;
+
+// Replace makedaemon() function
 void makedaemon() {
-	int f;
-	uint8_t pipebuff[1000];
-	ssize_t r;
-	size_t happy;
-	int piped[2];
-
-	fflush(stdout);
-	fflush(stderr);
-	if (pipe(piped)<0) {
-		safs::log_error_code(errno, "pipe error in makedaemon");
-		exit(SAUNAFS_EXIT_STATUS_ERROR);
-	}
-	f = fork();
-	if (f<0) {
-		safs::log_error_code(errno, "first fork error in makedaemon");
-		exit(SAUNAFS_EXIT_STATUS_ERROR);
-	}
-	if (f>0) {
-		auto returnValue = wait(&f);       // just get child status - prevents child from being zombie during initialization stage
-		if (returnValue == -1) {
-			safs::log_error_code(errno, "wait returned error in makedaemon");
-		}
-		if (f) {
-			safs::log_err("child returned non-successful status in makedaemon: {}", f);
-			exit(SAUNAFS_EXIT_STATUS_ERROR);
-		}
-		close(piped[1]);
-		while ((r=read(piped[0],pipebuff,1000))) {
-			if (r>0) {
-				if (pipebuff[r-1]==0) { // zero as a last char in the pipe means error
-					if (r>1) {
-						happy = fwrite(pipebuff,1,r-1,stderr);
-						(void)happy;
-					}
-					safs::log_err("zero as last char on pipe in makedaemon");
-					exit(SAUNAFS_EXIT_STATUS_ERROR);
-				}
-				happy = fwrite(pipebuff,1,r,stderr);
-				(void)happy;
-			} else {
-				safs::log_error_code(errno, "error reading pipe in makedaemon");
-				exit(SAUNAFS_EXIT_STATUS_ERROR);
-			}
-		}
-		exit(SAUNAFS_EXIT_STATUS_SUCCESS);
-	}
-	setsid();
-	setpgid(0,getpid());
-	f = fork();
-	if (f<0) {
-		safs::log_error_code(errno, "second fork error in makedaemon");
-		if (write(piped[1],"fork error\n",11)!=11) {
-			safs::log_error_code(errno, "could not write to pipe in makedaemon");
-		}
-		close(piped[1]);
-		exit(SAUNAFS_EXIT_STATUS_ERROR);
-	}
-	if (f>0) {
-		exit(SAUNAFS_EXIT_STATUS_SUCCESS);
-	}
-	set_signal_handlers(1);
-
-	close(STDIN_FILENO);
-	sassert(open("/dev/null", O_RDWR, 0)==STDIN_FILENO);
-	close(STDOUT_FILENO);
-	sassert(dup(STDIN_FILENO)==STDOUT_FILENO);
-	close(STDERR_FILENO);
-	sassert(dup(piped[1])==STDERR_FILENO);
-	close(piped[1]);
-
-	// close all inherited file descriptors
-	int open_max = sysconf(_SC_OPEN_MAX);
-	for (int i = 3; i < open_max; i++) {
-		if (i == signalpipe[0] || i == signalpipe[1]) {
-			continue;
-		}
-		close(i);
-	}
+    // Use thread-based approach instead of fork
+    if (!ThreadedDaemon::initialize([]() { return 0; })) {
+        safs::log_err("Failed to initialize threaded daemon");
+        exit(SAUNAFS_EXIT_STATUS_ERROR);
+    }
 }
 
 void close_msg_channel() {

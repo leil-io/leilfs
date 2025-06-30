@@ -27,13 +27,18 @@
 #include <unistd.h>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "common/time_utils.h"
 #include "master/metadata_dumper_interface.h"
 
+// Forward declaration for threaded metadata dumper
+class ThreadedMetadataDumper;
+
 class MetadataDumperFile : public IMetadataDumper {
 public:
 	MetadataDumperFile(const std::string &metadataFilename, const std::string &metadataTmpFilename);
+	~MetadataDumperFile(); // Add explicit destructor declaration
 
 	bool dumpSucceeded() const override;
 	bool inProgress() const override;
@@ -79,4 +84,7 @@ private:
 	std::string metarestorePath_;
 	std::string metadataFilename_;
 	std::string metadataTmpFilename_;
+
+	/// Thread-based metadata dumper to replace fork usage
+	std::unique_ptr<ThreadedMetadataDumper> threaded_dumper_;
 };

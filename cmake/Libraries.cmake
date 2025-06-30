@@ -69,7 +69,7 @@ else()
 endif()
 
 # Find Boost
-find_package(Boost CONFIG REQUIRED COMPONENTS filesystem iostreams program_options system)
+find_package(Boost CONFIG REQUIRED COMPONENTS filesystem iostreams program_options system process)
 
 # Find Thrift
 find_package(Thrift COMPONENTS library)

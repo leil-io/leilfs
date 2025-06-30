@@ -8,6 +8,10 @@
 #include "uraftstatus.h"
 
 #include <unistd.h>
+#include <memory>
+
+// Forward declaration for thread-based command executor
+class ThreadedCommandExecutor;
 
 /*! \brief Management of SaunaFS metadata server based on uRaft algorithm.
  *
@@ -63,13 +67,14 @@ protected:
 	void  checkCommandStatus(const boost::system::error_code &error);
 	void  checkNodeStatus(const boost::system::error_code &error);
 
-	bool  runSlowCommand(const std::string &cmd);
 	bool  checkSlowCommand(int &status);
 	bool  stopSlowCommand();
 	void  setSlowCommandTimeout(int timeout);
 
-	bool  runCommand(const std::vector<std::string> &cmd, std::string &result, int timeout);
-	int   readString(int fd, std::string &result, int timeout);
+	// Thread-based command execution methods
+	bool runSlowCommand(const std::string &cmd);
+	bool runCommand(const std::vector<std::string> &cmd, std::string &result, int timeout);
+	int readString(int fd, std::string &result, const int timeout);
 
 private:
 	void startFloatingIpManager();
@@ -78,6 +83,7 @@ private:
 protected:
 	boost::asio::deadline_timer check_cmd_status_timer_,check_node_status_timer_;
 	boost::asio::deadline_timer cmd_timeout_timer_;
+	std::unique_ptr<ThreadedCommandExecutor> command_executor_;  // Move after timers
 	pid_t                       command_pid_;
 	int                         command_type_;  /// Last run command type.
 	Timer                       command_timer_;

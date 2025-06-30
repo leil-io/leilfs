@@ -12,17 +12,150 @@
 #include <unistd.h>
 #include <cstdio>
 #include <memory>
+#include <thread>
+#include <future>
+#include <atomic>
+#include <chrono>
 
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 #include <boost/bind.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/version.hpp>
+#include <boost/process.hpp>
+
+// Thread-based command executor to replace fork usage
+class ThreadedCommandExecutor {
+public:
+    ThreadedCommandExecutor() : running_(false) {}
+
+    ~ThreadedCommandExecutor() {
+        if (command_thread_.joinable()) {
+            stop();
+        }
+    }
+
+    bool execute(const std::string& command, int timeout_ms = 0) {
+        if (running_) {
+            return false;
+        }
+
+        running_ = true;
+        success_ = false;
+
+        command_thread_ = std::thread([this, command, timeout_ms]() {
+            try {
+                namespace bp = boost::process;
+
+                if (timeout_ms > 0) {
+                    // Execute with timeout
+                    bp::child process(command, bp::std_out > bp::null, bp::std_err > bp::null);
+
+                    auto start = std::chrono::steady_clock::now();
+                    while (process.running()) {
+                        auto elapsed = std::chrono::steady_clock::now() - start;
+                        if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeout_ms) {
+                            process.terminate();
+                            break;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+
+                    process.wait();
+                    success_ = (process.exit_code() == 0);
+                } else {
+                    // Execute without timeout
+                    int result = std::system(command.c_str());
+                    success_ = (WIFEXITED(result) && WEXITSTATUS(result) == 0);
+                }
+            } catch (...) {
+                success_ = false;
+            }
+            running_ = false;
+        });
+
+        return true;
+    }
+
+    bool executeWithOutput(const std::vector<std::string>& cmd, std::string& result, int timeout_ms) {
+        if (running_) {
+            return false;
+        }
+
+        running_ = true;
+        success_ = false;
+        result.clear();
+
+        try {
+            namespace bp = boost::process;
+
+            std::string command = cmd[0];
+            std::vector<std::string> args(cmd.begin() + 1, cmd.end());
+
+            bp::ipstream pipe_stream;
+            bp::child process(command, bp::args(args), bp::std_out > pipe_stream, bp::std_err > bp::null);
+
+            // Read output
+            std::string line;
+            while (pipe_stream && std::getline(pipe_stream, line) && !line.empty()) {
+                result += line + "\n";
+            }
+
+            // Wait with timeout
+            auto start = std::chrono::steady_clock::now();
+            while (process.running()) {
+                auto elapsed = std::chrono::steady_clock::now() - start;
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeout_ms) {
+                    process.terminate();
+                    running_ = false;
+                    return false;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+
+            process.wait();
+            success_ = (process.exit_code() == 0);
+            running_ = false;
+            return success_;
+
+        } catch (...) {
+            running_ = false;
+            return false;
+        }
+    }
+
+    void stop() {
+        if (command_thread_.joinable()) {
+            command_thread_.join();
+        }
+        running_ = false;
+    }
+
+    bool isRunning() const {
+        return running_;
+    }
+
+    bool getResult() const {
+        return success_;
+    }
+
+    void waitForCompletion() {
+        if (command_thread_.joinable()) {
+            command_thread_.join();
+        }
+    }
+
+private:
+    std::thread command_thread_;
+    std::atomic<bool> running_;
+    std::atomic<bool> success_;
+};
 
 uRaftController::uRaftController(boost::asio::io_service &ios)
 	: uRaftStatus(ios),
 	  check_cmd_status_timer_(ios),
 	  check_node_status_timer_(ios),
-	  cmd_timeout_timer_(ios) {
+	  cmd_timeout_timer_(ios),
+	  command_executor_(std::make_unique<ThreadedCommandExecutor>()) {
 	command_pid_  = -1;
 	command_type_ = kCmdNone;
 	force_demote_ = false;
@@ -268,24 +401,7 @@ bool uRaftController::stopSlowCommand() {
 bool uRaftController::runSlowCommand(const std::string &cmd) {
 	command_timer_.reset();
 
-#if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_prepare);
-#endif
-
-	command_pid_ = fork();
-	if (command_pid_ == -1) {
-		return false;
-	}
-	if (command_pid_ == 0) {
-		execlp("/bin/sh", "/bin/sh", "-c", cmd.c_str(), NULL);
-		exit(1);
-	}
-
-#if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_parent);
-#endif
-
-	return true;
+	return command_executor_->execute(cmd);
 }
 
 /*! \brief Start new program.
@@ -296,55 +412,7 @@ bool uRaftController::runSlowCommand(const std::string &cmd) {
  * \return true if there was no error and program did finish in timeout time.
  */
 bool uRaftController::runCommand(const std::vector<std::string> &cmd, std::string &result, int timeout) {
-	pid_t pid;
-	int   pipe_fd[2];
-
-	if (pipe(pipe_fd) == -1) {
-		return false;
-	}
-
-#if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_prepare);
-#endif
-
-	pid = fork();
-	if (pid == -1) {
-		close(pipe_fd[0]);
-		close(pipe_fd[1]);
-		return false;
-	}
-
-	if (pid == 0) {
-		close(pipe_fd[0]);
-		dup2(pipe_fd[1], 1);
-
-		std::vector<const char *> argv(cmd.size() + 1, 0);
-		for (int i = 0; i < (int)cmd.size(); i++) {
-			argv[i] = cmd[i].c_str();
-		}
-
-		execvp(argv[0], (char * const *)&argv[0]);
-		exit(1);
-	}
-
-#if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_parent);
-#endif
-
-	close(pipe_fd[1]);
-
-	int r = readString(pipe_fd[0], result, timeout);
-
-	close(pipe_fd[0]);
-
-	if (r <= 0) {
-		kill(pid, SIGKILL);
-	}
-
-	int status;
-	waitpid(pid, &status, 0);
-
-	return r > 0;
+	return command_executor_->executeWithOutput(cmd, result, timeout);
 }
 
 /*! Read string from file descriptor
