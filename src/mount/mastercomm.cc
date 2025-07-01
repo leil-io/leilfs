@@ -477,13 +477,13 @@ void fs_register_config() {
 }
 
 int fs_connect(bool verbose) {
-	uint32_t i,j;
-	uint8_t *wptr,*regbuff;
-	md5ctx ctx;
-	uint8_t digest[16];
-	const uint8_t *rptr;
+	uint32_t messageValueIterator;
+	uint8_t *messageToMaster,*registrationMessageBuffer;
+	md5ctx md5PassCtx;
+	uint8_t passwordDigest[16];
+	const uint8_t *messageFromMaster;
 	uint8_t havepassword;
-	uint32_t pleng,ileng;
+	uint32_t subfolderPathLengthBytes,mountPointPathLegthBytes;
 	uint8_t sesflags;
 	uint32_t rootuid,rootgid,mapalluid,mapallgid;
 	uint8_t mingoal,maxgoal;
@@ -496,18 +496,18 @@ int fs_connect(bool verbose) {
 	}
 
 	havepassword = !gInitParams.password_digest.empty();
-	ileng=gInitParams.mountpoint.size() + 1;
+	mountPointPathLegthBytes=gInitParams.mountpoint.size() + 1;
 	if (gInitParams.meta) {
-		pleng=0;
-		regbuff = (uint8_t*) malloc(8+64+9+ileng+16);
+		subfolderPathLengthBytes=0;
+		registrationMessageBuffer = (uint8_t*) malloc(8+64+9+mountPointPathLegthBytes+16);
 	} else {
-		pleng=gInitParams.subfolder.size() + 1;
-		regbuff = (uint8_t*) malloc(8+64+13+pleng+ileng+16);
+		subfolderPathLengthBytes=gInitParams.subfolder.size() + 1;
+		registrationMessageBuffer = (uint8_t*) malloc(8+64+13+subfolderPathLengthBytes+mountPointPathLegthBytes+16);
 	}
 
 	fd = tcpsocket();
 	if (fd<0) {
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
 	if (tcpnodelay(fd)<0) {
@@ -526,7 +526,7 @@ int fs_connect(bool verbose) {
 			}
 			tcpclose(fd);
 			fd=-1;
-			free(regbuff);
+			free(registrationMessageBuffer);
 			return -1;
 		}
 	}
@@ -538,17 +538,17 @@ int fs_connect(bool verbose) {
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
 	if (havepassword) {
-		wptr = regbuff;
-		put32bit(&wptr,CLTOMA_FUSE_REGISTER);
-		put32bit(&wptr,65);
-		memcpy(wptr,FUSE_REGISTER_BLOB_ACL,64);
-		wptr+=64;
-		put8bit(&wptr,REGISTER_GETRANDOM);
-		if (tcptowrite(fd,regbuff,8+65,1000)!=8+65) {
+		messageToMaster = registrationMessageBuffer;
+		put32bit(&messageToMaster,CLTOMA_FUSE_REGISTER);
+		put32bit(&messageToMaster,65);
+		memcpy(messageToMaster,FUSE_REGISTER_BLOB_ACL,64);
+		messageToMaster+=64;
+		put8bit(&messageToMaster,REGISTER_GETRANDOM);
+		if (tcptowrite(fd,registrationMessageBuffer,8+65,1000)!=8+65) {
 			if (verbose) {
 				fprintf(stderr,"error sending data to sfsmaster\n");
 			} else {
@@ -556,10 +556,10 @@ int fs_connect(bool verbose) {
 			}
 			tcpclose(fd);
 			fd=-1;
-			free(regbuff);
+			free(registrationMessageBuffer);
 			return -1;
 		}
-		if (tcptoread(fd,regbuff,8,1000)!=8) {
+		if (tcptoread(fd,registrationMessageBuffer,8,1000)!=8) {
 			if (verbose) {
 				fprintf(stderr,"error receiving data from sfsmaster\n");
 			} else {
@@ -567,12 +567,12 @@ int fs_connect(bool verbose) {
 			}
 			tcpclose(fd);
 			fd=-1;
-			free(regbuff);
+			free(registrationMessageBuffer);
 			return -1;
 		}
-		rptr = regbuff;
-		get32bit(&rptr, i);
-		if (i!=MATOCL_FUSE_REGISTER) {
+		messageFromMaster = registrationMessageBuffer;
+		get32bit(&messageFromMaster, messageValueIterator);
+		if (messageValueIterator!=MATOCL_FUSE_REGISTER) {
 			if (verbose) {
 				fprintf(stderr,"got incorrect answer from sfsmaster\n");
 			} else {
@@ -580,11 +580,11 @@ int fs_connect(bool verbose) {
 			}
 			tcpclose(fd);
 			fd=-1;
-			free(regbuff);
+			free(registrationMessageBuffer);
 			return -1;
 		}
-		get32bit(&rptr, i);
-		if (i!=32) {
+		get32bit(&messageFromMaster, messageValueIterator);
+		if (messageValueIterator!=32) {
 			if (verbose) {
 				fprintf(stderr,"got incorrect answer from sfsmaster\n");
 			} else {
@@ -592,10 +592,10 @@ int fs_connect(bool verbose) {
 			}
 			tcpclose(fd);
 			fd=-1;
-			free(regbuff);
+			free(registrationMessageBuffer);
 			return -1;
 		}
-		if (tcptoread(fd,regbuff,32,1000)!=32) {
+		if (tcptoread(fd,registrationMessageBuffer,32,1000)!=32) {
 			if (verbose) {
 				fprintf(stderr,"error receiving data from sfsmaster\n");
 			} else {
@@ -603,47 +603,47 @@ int fs_connect(bool verbose) {
 			}
 			tcpclose(fd);
 			fd=-1;
-			free(regbuff);
+			free(registrationMessageBuffer);
 			return -1;
 		}
-		md5_init(&ctx);
-		md5_update(&ctx,regbuff,16);
-		md5_update(&ctx, gInitParams.password_digest.data(), gInitParams.password_digest.size());
-		md5_update(&ctx,regbuff+16,16);
-		md5_final(digest,&ctx);
+		md5_init(&md5PassCtx);
+		md5_update(&md5PassCtx,registrationMessageBuffer,16);
+		md5_update(&md5PassCtx, gInitParams.password_digest.data(), gInitParams.password_digest.size());
+		md5_update(&md5PassCtx,registrationMessageBuffer+16,16);
+		md5_final(passwordDigest,&md5PassCtx);
 	}
-	wptr = regbuff;
-	put32bit(&wptr,CLTOMA_FUSE_REGISTER);
+	messageToMaster = registrationMessageBuffer;
+	put32bit(&messageToMaster,CLTOMA_FUSE_REGISTER);
 	if (gInitParams.meta) {
 		if (havepassword) {
-			put32bit(&wptr,64+9+ileng+16);
+			put32bit(&messageToMaster,64+9+mountPointPathLegthBytes+16);
 		} else {
-			put32bit(&wptr,64+9+ileng);
+			put32bit(&messageToMaster,64+9+mountPointPathLegthBytes);
 		}
 	} else {
 		if (havepassword) {
-			put32bit(&wptr,64+13+ileng+pleng+16);
+			put32bit(&messageToMaster,64+13+mountPointPathLegthBytes+subfolderPathLengthBytes+16);
 		} else {
-			put32bit(&wptr,64+13+ileng+pleng);
+			put32bit(&messageToMaster,64+13+mountPointPathLegthBytes+subfolderPathLengthBytes);
 		}
 	}
-	memcpy(wptr,FUSE_REGISTER_BLOB_ACL,64);
-	wptr+=64;
-	put8bit(&wptr,(gInitParams.meta)?REGISTER_NEWMETASESSION:REGISTER_NEWSESSION);
-	put16bit(&wptr,SAUNAFS_PACKAGE_VERSION_MAJOR);
-	put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MINOR);
-	put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MICRO);
-	put32bit(&wptr,ileng);
-	memcpy(wptr,gInitParams.mountpoint.c_str(),ileng);
-	wptr+=ileng;
+	memcpy(messageToMaster,FUSE_REGISTER_BLOB_ACL,64);
+	messageToMaster+=64;
+	put8bit(&messageToMaster,(gInitParams.meta)?REGISTER_NEWMETASESSION:REGISTER_NEWSESSION);
+	put16bit(&messageToMaster,SAUNAFS_PACKAGE_VERSION_MAJOR);
+	put8bit(&messageToMaster,SAUNAFS_PACKAGE_VERSION_MINOR);
+	put8bit(&messageToMaster,SAUNAFS_PACKAGE_VERSION_MICRO);
+	put32bit(&messageToMaster,mountPointPathLegthBytes);
+	memcpy(messageToMaster,gInitParams.mountpoint.c_str(),mountPointPathLegthBytes);
+	messageToMaster+=mountPointPathLegthBytes;
 	if (!gInitParams.meta) {
-		put32bit(&wptr,pleng);
-		memcpy(wptr,gInitParams.subfolder.c_str(),pleng);
+		put32bit(&messageToMaster,subfolderPathLengthBytes);
+		memcpy(messageToMaster,gInitParams.subfolder.c_str(),subfolderPathLengthBytes);
 	}
 	if (havepassword) {
-		memcpy(wptr+pleng,digest,16);
+		memcpy(messageToMaster+subfolderPathLengthBytes,passwordDigest,16);
 	}
-	if (tcptowrite(fd,regbuff,8+64+(gInitParams.meta?9:13)+ileng+pleng+(havepassword?16:0),1000)!=(int32_t)(8+64+(gInitParams.meta?9:13)+ileng+pleng+(havepassword?16:0))) {
+	if (tcptowrite(fd,registrationMessageBuffer,8+64+(gInitParams.meta?9:13)+mountPointPathLegthBytes+subfolderPathLengthBytes+(havepassword?16:0),1000)!=(int32_t)(8+64+(gInitParams.meta?9:13)+mountPointPathLegthBytes+subfolderPathLengthBytes+(havepassword?16:0))) {
 		if (verbose) {
 			fprintf(stderr,"error sending data to sfsmaster: %s\n",strerr(tcpgetlasterror()));
 		} else {
@@ -651,10 +651,10 @@ int fs_connect(bool verbose) {
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
-	if (tcptoread(fd,regbuff,8,1000)!=8) {
+	if (tcptoread(fd,registrationMessageBuffer,8,1000)!=8) {
 		int tcplasterr = tcpgetlasterror();
 		const auto* errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
 		if (verbose) {
@@ -664,12 +664,12 @@ int fs_connect(bool verbose) {
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
-	rptr = regbuff;
-	get32bit(&rptr, i);
-	if (i!=MATOCL_FUSE_REGISTER) {
+	messageFromMaster = registrationMessageBuffer;
+	get32bit(&messageFromMaster, messageValueIterator);
+	if (messageValueIterator!=MATOCL_FUSE_REGISTER) {
 		if (verbose) {
 			fprintf(stderr,"got incorrect answer from sfsmaster\n");
 		} else {
@@ -677,11 +677,11 @@ int fs_connect(bool verbose) {
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
-	get32bit(&rptr, i);
-	if (!(i==1 || (gInitParams.meta && (i==5 || i==9 || i==19)) || (gInitParams.meta==0 && (i==13 || i==21 || i==25 || i==35)))) {
+	get32bit(&messageFromMaster, messageValueIterator);
+	if (!(messageValueIterator == 1 || (gInitParams.meta && (messageValueIterator == 5 || messageValueIterator == 9 || messageValueIterator == 19)) || (gInitParams.meta == 0 && (messageValueIterator == 13 || messageValueIterator == 21 || messageValueIterator == 25 || messageValueIterator == 35)))) {
 		if (verbose) {
 			fprintf(stderr,"got incorrect answer from sfsmaster\n");
 		} else {
@@ -689,10 +689,10 @@ int fs_connect(bool verbose) {
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
-	if (tcptoread(fd,regbuff,i,1000)!=(int32_t)i) {
+	if (tcptoread(fd,registrationMessageBuffer,messageValueIterator,1000)!=(int32_t)messageValueIterator) {
 		if (verbose) {
 			fprintf(stderr,"error receiving data from sfsmaster: %s\n",strerr(tcpgetlasterror()));
 		} else {
@@ -700,37 +700,37 @@ int fs_connect(bool verbose) {
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
-	rptr = regbuff;
-	if (i==1) {
+	messageFromMaster = registrationMessageBuffer;
+	if (messageValueIterator==1) {
 		if (verbose) {
-			fprintf(stderr,"sfsmaster register error: %s\n",saunafs_error_string(rptr[0]));
+			fprintf(stderr,"sfsmaster register error: %s\n",saunafs_error_string(messageFromMaster[0]));
 		} else {
-			safs_pretty_syslog(LOG_WARNING,"sfsmaster register error: %s",saunafs_error_string(rptr[0]));
+			safs_pretty_syslog(LOG_WARNING,"sfsmaster register error: %s",saunafs_error_string(messageFromMaster[0]));
 		}
 		tcpclose(fd);
 		fd=-1;
-		free(regbuff);
+		free(registrationMessageBuffer);
 		return -1;
 	}
-	if (i==9 || i==19 || i==25 || i==35) {
-		get32bit(&rptr, masterversion);
+	if (messageValueIterator==9 || messageValueIterator==19 || messageValueIterator==25 || messageValueIterator==35) {
+		get32bit(&messageFromMaster, masterversion);
 	} else {
 		masterversion = 0;
 	}
-	get32bit(&rptr, sessionid);
-	sesflags = get8bit(&rptr);
+	get32bit(&messageFromMaster, sessionid);
+	sesflags = get8bit(&messageFromMaster);
 #ifdef _WIN32
 	*sessionFlags = sesflags;
 #endif
 	if (!gInitParams.meta) {
-		get32bit(&rptr, rootuid);
-		get32bit(&rptr, rootgid);
-		if (i==21 || i==25 || i==35) {
-			get32bit(&rptr, mapalluid);
-			get32bit(&rptr, mapallgid);
+		get32bit(&messageFromMaster, rootuid);
+		get32bit(&messageFromMaster, rootgid);
+		if (messageValueIterator==21 || messageValueIterator==25 || messageValueIterator==35) {
+			get32bit(&messageFromMaster, mapalluid);
+			get32bit(&messageFromMaster, mapallgid);
 		} else {
 			mapalluid = 0;
 			mapallgid = 0;
@@ -741,19 +741,19 @@ int fs_connect(bool verbose) {
 		mapalluid = 0;
 		mapallgid = 0;
 	}
-	if (i==19 || i==35) {
-		mingoal = get8bit(&rptr);
-		maxgoal = get8bit(&rptr);
-		get32bit(&rptr, mintrashtime);
-		get32bit(&rptr, maxtrashtime);
+	if (messageValueIterator==19 || messageValueIterator==35) {
+		mingoal = get8bit(&messageFromMaster);
+		maxgoal = get8bit(&messageFromMaster);
+		get32bit(&messageFromMaster, mintrashtime);
+		get32bit(&messageFromMaster, maxtrashtime);
 	} else {
 		mingoal = 0;
 		maxgoal = 0;
 		mintrashtime = 0;
 		maxtrashtime = 0;
 	}
-	free(regbuff);
-	lastwrite=time(NULL);
+	free(registrationMessageBuffer);
+	lastwrite=time(nullptr);
 	if (!verbose) {
 		safs_pretty_syslog(LOG_NOTICE,"registered to master with new session (id #%" PRIu32 ")", sessionid);
 	}
@@ -762,49 +762,49 @@ int fs_connect(bool verbose) {
 	}
 	if (verbose) {
 		fprintf(stderr,"sfsmaster accepted connection with parameters: ");
-		j=0;
-		for (i=0 ; i<8 ; i++) {
-			if (sesflags&(1<<i)) {
-				fprintf(stderr,"%s%s",j?",":"",sesflagposstrtab[i]);
-				j=1;
-			} else if (sesflagnegstrtab[i]) {
-				fprintf(stderr,"%s%s",j?",":"",sesflagnegstrtab[i]);
-				j=1;
+		bool clientHasSessionFlags=false;
+		for (int sesFlagsIndex=0 ; sesFlagsIndex<8 ; sesFlagsIndex++) {
+			if (sesflags&(1<<sesFlagsIndex)) {
+				fprintf(stderr,"%s%s",clientHasSessionFlags?",":"",sesflagposstrtab[sesFlagsIndex]);
+				clientHasSessionFlags=true;
+			} else if (sesflagnegstrtab[sesFlagsIndex]) {
+				fprintf(stderr,"%s%s",clientHasSessionFlags?",":"",sesflagnegstrtab[sesFlagsIndex]);
+				clientHasSessionFlags=true;
 			}
 		}
-		if (j==0) {
+		if (!clientHasSessionFlags) {
 			fprintf(stderr,"-");
 		}
 		if (!gInitParams.meta) {
 #ifndef _WIN32
-			struct passwd pwd,*pw;
-			struct group grp,*gr;
-			char pwdgrpbuff[16384];
+			struct passwd userEntry,*userInfo;
+			struct group groupEntry,*groupInfo;
+			char userGroupBuffer[16384];
 
 			fprintf(stderr," ; root mapped to ");
-			getpwuid_r(rootuid,&pwd,pwdgrpbuff,16384,&pw);
-			if (pw) {
-				fprintf(stderr,"%s:",pw->pw_name);
+			getpwuid_r(rootuid,&userEntry,userGroupBuffer,16384,&userInfo);
+			if (userInfo) {
+				fprintf(stderr,"%s:",userInfo->pw_name);
 			} else {
 				fprintf(stderr,"%" PRIu32 ":",rootuid);
 			}
-			getgrgid_r(rootgid,&grp,pwdgrpbuff,16384,&gr);
-			if (gr) {
-				fprintf(stderr,"%s",gr->gr_name);
+			getgrgid_r(rootgid,&groupEntry,userGroupBuffer,16384,&groupInfo);
+			if (groupInfo) {
+				fprintf(stderr,"%s",groupInfo->gr_name);
 			} else {
 				fprintf(stderr,"%" PRIu32,rootgid);
 			}
 			if (sesflags&SESFLAG_MAPALL) {
 				fprintf(stderr," ; users mapped to ");
-				pw = getpwuid(mapalluid);
-				if (pw) {
-					fprintf(stderr,"%s:",pw->pw_name);
+				userInfo = getpwuid(mapalluid);
+				if (userInfo) {
+					fprintf(stderr,"%s:",userInfo->pw_name);
 				} else {
 					fprintf(stderr,"%" PRIu32 ":",mapalluid);
 				}
-				gr = getgrgid(mapallgid);
-				if (gr) {
-					fprintf(stderr,"%s",gr->gr_name);
+				groupInfo = getgrgid(mapallgid);
+				if (groupInfo) {
+					fprintf(stderr,"%s",groupInfo->gr_name);
 				} else {
 					fprintf(stderr,"%" PRIu32,mapallgid);
 				}
