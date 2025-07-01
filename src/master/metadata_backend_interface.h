@@ -25,15 +25,9 @@
 #include <cstdint>
 
 #include <common/exceptions.h>
+#include <master/exceptions.h>
 #include <master/filesystem_node_types.h>
 #include <master/metadata_dumper_interface.h>
-
-// Metadata related exceptions
-SAUNAFS_CREATE_EXCEPTION_CLASS(MetadataCheckException, Exception);
-SAUNAFS_CREATE_EXCEPTION_CLASS(MetadataException, Exception);
-SAUNAFS_CREATE_EXCEPTION_CLASS(MetadataFsConsistencyException,
-                               MetadataException);
-SAUNAFS_CREATE_EXCEPTION_CLASS(MetadataConsistencyException, MetadataException);
 
 // Constants
 constexpr uint16_t kEdgeNameMaxSize = 65535;
@@ -41,18 +35,16 @@ constexpr uint8_t kEdgeHeaderSize =
     sizeof(FSNode::id) + sizeof(FSNode::id) + sizeof(kEdgeNameMaxSize);
 
 constexpr uint8_t kNodeHeaderSize =
-    sizeof(FSNode::type) + sizeof(FSNode::id) + sizeof(FSNode::goal) +
-    sizeof(FSNode::mode) + sizeof(FSNode::uid) + sizeof(FSNode::gid) +
-    sizeof(FSNode::atime) + sizeof(FSNode::mtime) + sizeof(FSNode::ctime) +
-    sizeof(FSNode::trashtime);
+    sizeof(FSNode::type) + sizeof(FSNode::id) + sizeof(FSNode::goal) + sizeof(FSNode::mode) +
+    sizeof(FSNode::uid) + sizeof(FSNode::gid) + sizeof(FSNode::atime) + sizeof(FSNode::mtime) +
+    sizeof(FSNode::ctime) + sizeof(FSNode::trashtime);
 // FSNodeFile is the longer type of FSNode, so we use it as the buffer size
 constexpr uint8_t kFileSpecificHeaderSize =
     sizeof(FSNodeFile::length) + sizeof(uint32_t) + sizeof(uint16_t);
 constexpr uint32_t kChunksBucketSize = 65536;
 constexpr uint16_t kMaxSessionSize = 65535;
 constexpr uint32_t kFileSpecificExtraSize =
-    (sizeof(uint64_t) * kChunksBucketSize) +
-    (sizeof(uint32_t) * kMaxSessionSize);
+    (sizeof(uint64_t) * kChunksBucketSize) + (sizeof(uint32_t) * kMaxSessionSize);
 
 // TODO (Baldor): Review the need for these constants below
 constexpr uint8_t kMetadataVersionLegacy = 0x15;
@@ -61,15 +53,13 @@ constexpr uint8_t kMetadataVersionWithSections = 0x20;
 constexpr uint8_t kMetadataVersionWithLockIds = 0x29;
 constexpr int8_t kOpSuccess = 0;
 constexpr int8_t kOpFailure = -1;
-constexpr char const MetadataStructureReadErrorMsg[] =
-    "error reading metadata (structure)";
+constexpr char const MetadataStructureReadErrorMsg[] = "error reading metadata (structure)";
 
 // Global variables
 inline uint8_t gEdgeStoreBuffer[kEdgeHeaderSize + kEdgeNameMaxSize];
-inline uint8_t gNodeStoreBuffer[kNodeHeaderSize + kFileSpecificHeaderSize +
-                                kFileSpecificExtraSize];
+inline uint8_t gNodeStoreBuffer[kNodeHeaderSize + kFileSpecificHeaderSize + kFileSpecificExtraSize];
 
-// Number of changelog file versions
+// Number of metadata file versions to keep
 inline uint32_t gStoredPreviousBackMetaCopies;
 
 class IMetadataBackend {
@@ -101,17 +91,6 @@ public:
 	/// @param fname -- path hint to the metadata file, directory or database
 	///                 (to be defined by the concrete implementation)
 	virtual void loadall(const std::string &fname, int ignoreflag) = 0;
-
-	/// Returns version of the first entry in a changelog.
-	/// @param file -- path to the changelog file
-	/// @return 0 in case of any error.
-	virtual uint64_t changelogGetFirstLogVersion(const std::string& fname) = 0;
-	/// Returns version of the last entry in a changelog.
-	/// @param file -- path to the changelog file
-	/// @return 0 in case of any error.
-	virtual uint64_t changelogGetLastLogVersion(const std::string& fname) = 0;
-#else   // #ifndef METALOGGER
-	virtual uint64_t findLastLogVersion() = 0;
 #endif  // #ifndef METALOGGER
 
 // Available for master and shadow only
@@ -119,11 +98,6 @@ public:
 	/// Broadcasts information about status of the freshly finished
 	/// metadata save process to interested modules.
 	virtual void broadcast_metadata_saved(uint8_t status) = 0;
-
-	/// Load and apply changelogs.
-	virtual void load_changelogs() = 0;
-	/// Load and apply given changelog file.
-	virtual void load_changelog(const std::string &path) = 0;
 
 	/// Commits the metadata dump by rotating the metadata according the the
 	/// concrete implementation.

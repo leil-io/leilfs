@@ -1287,7 +1287,7 @@ int masterconn_init(void) {
 #endif /* #ifdef METALOGGER */
 
 #ifdef METALOGGER
-	eptr->lastLogVersion = gMetadataBackend->findLastLogVersion();
+	eptr->lastLogVersion = findLastLogVersion();
 #endif /* #ifdef METALOGGER */
 	if (eptr->initConnect() < 0) { return -1; }
 	eventloop_pollregister(masterconn_desc, masterconn_serve);

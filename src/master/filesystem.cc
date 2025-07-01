@@ -265,13 +265,29 @@ int fs_loadall(void) {
 	}
 
 	bool autoRecovery = fs_can_do_auto_recovery();
+
 	if (autoRecovery || (metadataserver::getPersonality() == metadataserver::Personality::kShadow)) {
-		safs_pretty_syslog_attempt(LOG_INFO, "%s - applying changelogs from %s",
-				(autoRecovery ? "AUTO_RECOVERY enabled" : "running in shadow mode"),
-				fs::getCurrentWorkingDirectoryNoThrow().c_str());
-		gMetadataBackend->load_changelogs();
-		safs_pretty_syslog(LOG_INFO, "all needed changelogs applied successfully");
+		safs::log_info("{} - applying changelogs from {}",
+		               (autoRecovery ? "AUTO_RECOVERY enabled" : "running in shadow mode"),
+		               fs::getCurrentWorkingDirectoryNoThrow().c_str());
+
+		// Save the current personality
+		metadataserver::Personality personality = metadataserver::getPersonality();
+		// Force shadow personality to avoid permission issues and possible changes broadcasting
+		metadataserver::setPersonality(metadataserver::Personality::kShadow);
+
+		// Load the changelogs
+		load_changelogs();
+		safs::log_info("all needed changelogs applied successfully");
+
+		// Dump the new metadata
+		gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+		safs::log_info("Metadata dumped successfully after applying changelogs");
+
+		// Restore the original personality
+		metadataserver::setPersonality(personality);
 	}
+
 	return 0;
 }
 
@@ -421,6 +437,7 @@ int fs_init(bool doLoad) {
 			throw;
 		}
 	}
+
 	changelog_init(kChangelogFilename, 0, 50);
 
 	if (doLoad || (metadataserver::isMaster())) {

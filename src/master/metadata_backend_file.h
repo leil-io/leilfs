@@ -44,28 +44,12 @@ public:
 	/// Load complete metadata from the given file.
 	/// @param fname -- path to the metadata file.
 	void loadall(const std::string &fname, int ignoreflag) override;
-
-	/// Returns version of the first entry in a changelog.
-	/// @param file -- path to the changelog file
-	/// @return 0 in case of any error.
-	uint64_t changelogGetFirstLogVersion(const std::string &fname) override;
-	/// Returns version of the last entry in a changelog.
-	/// @param file -- path to the changelog file
-	/// @return 0 in case of any error.
-	uint64_t changelogGetLastLogVersion(const std::string& fname) override;
-#else   // #ifndef METALOGGER
-	uint64_t findLastLogVersion() override;
 #endif  // #ifndef METALOGGER
 
 #if !defined(METARESTORE) && !defined(METALOGGER)
 	/// Broadcasts information about status of the freshly finished
 	/// metadata save process to interested modules.
 	void broadcast_metadata_saved(uint8_t status) override;
-
-	/// Load and apply changelogs.
-	void load_changelogs() override;
-	/// Load and apply given changelog file.
-	void load_changelog(const std::string &path) override;
 
 	/// Commits the metadata dump by rotating the metadata files and renaming
 	/// the temporary file.
