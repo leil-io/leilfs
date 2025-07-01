@@ -41,6 +41,7 @@
 #include "common/loop_watchdog.h"
 #include "common/network_address.h"
 #include "common/output_packet.h"
+#include "common/saunafs_version.h"
 #include "common/sockets.h"
 #include "config/cfg.h"
 #include "protocol/SFSCommunication.h"
@@ -77,6 +78,14 @@ void MasterConn::reloadConfig() {
 	auto newMasterHostStr_ = cfg_getstring("MASTER_HOST", "sfsmaster");
 	auto newMasterPortStr_ = cfg_getstring("MASTER_PORT", "9420");
 
+	auto newClusterId = cfg_getstring("CLUSTER_ID", "default");
+
+	if (newClusterId != clusterId_) {
+		safs::log_warn(
+		    "MasterConn: Non-reloadable CLUSTER_ID changed from {} to {} during reload. Using the original value until restart.",
+		    clusterId_, newClusterId);
+	}
+
 	if (newMasterHostStr_ == masterHostStr_ && newMasterPortStr_ == masterPortStr_) {
 		return;  // no change
 	}
@@ -98,7 +107,7 @@ void MasterConn::reloadConfig() {
 			setMode(ConnectionMode::KILL);
 		}
 	} else {
-		safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
+		safs::log_warn("MasterConn: can't resolve master host/port ({}:{})",
 		               masterHostStr_, masterPortStr_);
 	}
 }
@@ -118,26 +127,62 @@ void MasterConn::sendConfig() {
 }
 
 void MasterConn::sendRegister() {
-	uint32_t myip;
-	uint16_t myport;
-	uint64_t usedspace, totalspace;
-	uint64_t tdusedspace, tdtotalspace;
-	uint32_t chunkcount, tdchunkcount;
+	assert(registrationStatus_ == RegistrationStatus::kUnregistered);
 
-	myip = mainNetworkThreadGetListenIp();
-	myport = mainNetworkThreadGetListenPort();
-	createAttachedPacket(cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX));
+	uint32_t myip = mainNetworkThreadGetListenIp();
+	uint16_t myport = mainNetworkThreadGetListenPort();
+
+	createAttachedPacket(
+	    cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_));
+
+	safs::log_info("MasterConn: registering to MDS: {}", address_.toString());
+
+	registrationStatus_ = RegistrationStatus::kRegistrationRequested;
+}
+
+void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
+	uint8_t status{};
+	uint32_t version{};
+	std::string clusterId;
+	matocs::registerHost::deserialize(data, status, version, clusterId);
+
+	if (status != SAUNAFS_STATUS_OK) {
+		safs::log_err(
+		    "MasterConn: registration to {} failed with status: {}, version: {}, clusterId: {}",
+		    address_.toString(), saunafs_error_string(status), saunafsVersionToString(version),
+		    clusterId);
+		setMode(ConnectionMode::KILL);
+		return;
+	}
+
+	version_ = version;
+
+	safs::log_info("MasterConn: registered to MDS: {}, version: {}, clusterId: {}",
+	               address_.toString(), saunafsVersionToString(version), clusterId);
+
+	registrationStatus_ = RegistrationStatus::kHostRegistered;
 
 	hddForeachChunkInBulks([this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
 	});
 
-	hddGetTotalSpace(&usedspace, &totalspace, &chunkcount, &tdusedspace, &tdtotalspace,
-	                 &tdchunkcount);
-	auto registerSpace = cstoma::registerSpace::build(usedspace, totalspace, chunkcount,
-	                                                  tdusedspace, tdtotalspace, tdchunkcount);
+	uint64_t usedSpace;
+	uint64_t totalSpace;
+	uint64_t toDelUsedSpace;
+	uint64_t toDelTotalSpace;
+	uint32_t chunkCount;
+	uint32_t toDelChunkCount;
+
+	hddGetTotalSpace(&usedSpace, &totalSpace, &chunkCount, &toDelUsedSpace, &toDelTotalSpace,
+	                 &toDelChunkCount);
+	auto registerSpace = cstoma::registerSpace::build(
+	    usedSpace, totalSpace, chunkCount, toDelUsedSpace, toDelTotalSpace, toDelChunkCount);
 	createAttachedPacket(std::move(registerSpace));
+
+	registrationStatus_ = RegistrationStatus::kChunksRegistered;
+
 	sendRegisterLabel();
+
 	sendConfig();
 }
 
@@ -160,7 +205,7 @@ int MasterConn::initConnect() {
 			address_.port = mport;
 			isMasterAddressValid_ = true;
 		} else {
-			safs::log_warn("master connection module: can't resolve master host/port ({}:{})",
+			safs::log_warn("MasterConn: can't resolve master host/port ({}:{})",
 			               masterHostStr_, masterPortStr_);
 			return -1;
 		}
@@ -169,12 +214,12 @@ int MasterConn::initConnect() {
 	socketFD_ = tcpsocket();
 
 	if (socketFD_ < 0) {
-		safs::log_error_code(errno, "master connection module: create socket error");
+		safs::log_error_code(errno, "MasterConn: create socket error");
 		return -1;
 	}
 
 	if (tcpnonblock(socketFD_) < 0) {
-		safs::log_error_code(errno, "master connection module: set nonblock error");
+		safs::log_error_code(errno, "MasterConn: set nonblock error");
 		tcpclose(socketFD_);
 		socketFD_ = -1;
 		return -1;
@@ -182,7 +227,7 @@ int MasterConn::initConnect() {
 
 	if (bindHostAddress_.ip > 0) {
 		if (tcpnumbind(socketFD_, bindHostAddress_.ip, 0) < 0) {
-			safs::log_error_code(errno, "master connection module: can't bind socket to given ip");
+			safs::log_error_code(errno, "MasterConn: can't bind socket to given ip");
 			tcpclose(socketFD_);
 			socketFD_ = -1;
 			return -1;
@@ -192,7 +237,7 @@ int MasterConn::initConnect() {
 	int status = tcpnumconnect(socketFD_, address_.ip, address_.port);
 
 	if (status < 0) {
-		safs::log_error_code(errno, "master connection module: connect failed");
+		safs::log_error_code(errno, "MasterConn: connect failed");
 		tcpclose(socketFD_);
 		socketFD_ = -1;
 		isMasterAddressValid_ = false;
@@ -200,11 +245,11 @@ int MasterConn::initConnect() {
 	}
 
 	if (status == 0) {
-		safs::log_info("connected to Master immediately");
+		safs::log_info("MasterConn: connected to Master immediately: {}", address_.toString());
 		onConnected();
 	} else {
 		mode_ = ConnectionMode::CONNECTING;
-		safs::log_info("connecting to Master");
+		safs::log_info("MasterConn: connecting to Master: {}", address_.toString());
 	}
 
 	return 0;
@@ -214,13 +259,13 @@ void MasterConn::connectTest() {
 	int status = tcpgetstatus(socketFD_);
 
 	if (status) {
-		safs::log_error_code(errno, "connection failed");
+		safs::log_error_code(errno, "MasterConn: connection failed");
 		tcpclose(socketFD_);
 		socketFD_ = -1;
 		mode_ = ConnectionMode::FREE;
 		isMasterAddressValid_ = false;
 	} else {
-		safs::log_info("connected to Master");
+		safs::log_info("MasterConn: connected to Master: {}", address_.toString());
 		onConnected();
 	}
 }
@@ -266,7 +311,7 @@ void MasterConn::handlePollErrors(const std::vector<pollfd> &pdesc) {
 		if (mode_ == ConnectionMode::CONNECTING) {
 			connectTest();
 		} else {
-			mode_ = ConnectionMode::KILL;
+			setMode(ConnectionMode::KILL);
 		}
 	}
 }
@@ -293,7 +338,7 @@ void MasterConn::servePoll(const std::vector<pollfd> &pdesc) {
 
 			// Check if the connection has not been used for a while and should be closed
 			if ((mode_ == ConnectionMode::CONNECTED) && lastRead_.elapsed_ms() > gTimeout_ms) {
-				mode_ = ConnectionMode::KILL;
+				setMode(ConnectionMode::KILL);
 			}
 
 			// Keep the connection alive by sending a NOP packet
@@ -318,15 +363,15 @@ void MasterConn::readFromSocket() {
 		ssize_t ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
 
 		if (ret == 0) {
-			safs::log_info("connection reset by Master");
-			mode_ = ConnectionMode::KILL;
+			safs::log_info("MasterConn: connection reset by Master: {}", address_.toString());
+			setMode(ConnectionMode::KILL);
 			return;
 		}
 
 		if (ret < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "read from Master error");
-				mode_ = ConnectionMode::KILL;
+				safs::log_error_code(errno, "MasterConn: read error from {}", address_.toString());
+				setMode(ConnectionMode::KILL);
 			}
 			return;
 		}
@@ -336,8 +381,8 @@ void MasterConn::readFromSocket() {
 		try {
 			inputPacket_.increaseBytesRead(ret);
 		} catch (InputPacketTooLongException &ex) {
-			safs::log_warn("reading from master: {}", ex.what());
-			mode_ = ConnectionMode::KILL;
+			safs::log_warn("MasterConn: reading from master: {}", ex.what());
+			setMode(ConnectionMode::KILL);
 			return;
 		}
 
@@ -369,8 +414,9 @@ void MasterConn::writeToSocket() {
 
 		if (bytesWritten < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "write to Master error");
-				mode_ = ConnectionMode::KILL;
+				safs::log_error_code(errno, "MasterConn: write to Master error: {}",
+				                     address_.toString());
+				setMode(ConnectionMode::KILL);
 			}
 			return;
 		}
@@ -415,16 +461,18 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_DUPTRUNC_CHUNK:
 		duplicateTruncateChunk(message);
 		break;
+	case SAU_MATOCS_REGISTER_HOST:
+		onRegistered(message);
+		break;
 	default:
-		safs::log_info("got unknown message (type: {})", header.type);
-		mode_ = ConnectionMode::KILL;
+		safs::log_info("MasterConn: got unknown message (type: {}): {}", header.type,
+		               address_.toString());
+		setMode(ConnectionMode::KILL);
 	}
 } catch (IncorrectDeserializationException &e) {
-	safs::log_info(
-	    "chunkserver <-> master module: got inconsistent message "
-	    "(type:{}, length:{}), {}",
-	    header.type, uint32_t(message.size()), e.what());
-	mode_ = ConnectionMode::KILL;
+	safs::log_info("MasterConn: got inconsistent message (type:{}, length:{}), {}, {}", header.type,
+	               uint32_t(message.size()), e.what(), address_.toString());
+	setMode(ConnectionMode::KILL);
 }
 
 // Chunk operations

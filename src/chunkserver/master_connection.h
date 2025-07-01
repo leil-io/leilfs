@@ -30,6 +30,7 @@
 
 #include "common/network_address.h"
 #include "common/output_packet.h"
+#include "common/saunafs_version.h"
 #include "common/time_utils.h"
 #include "protocol/input_packet.h"
 
@@ -52,14 +53,25 @@ enum class ConnectionMode : std::uint8_t {
 	KILL         /// Connection has been dropped, a reconnection will be attempted.
 };
 
+/// @brief Enum representing the registration status of a connection to the Metadata Server (MDS).
+enum class RegistrationStatus : std::uint8_t {
+	kUnregistered,           ///< Initial state, not registered yet.
+	kRegistrationRequested,  ///< Registration has been requested but not yet confirmed.
+	kHostRegistered,         ///< Registration has been confirmed.
+	kChunksRegistered,       ///< Chunks have been registered with the MDS.
+};
+
 /// @brief Class representing a connection to a Metadata Server (MDS).
 ///
 /// Currently, only one active MDS (known as Master) is supported.
 class MasterConn {
 public:
 	explicit MasterConn(const std::string &masterHostStr, const std::string &masterPortStr,
-	                    const std::shared_ptr<JobPool> &jobPool)
-	    : masterHostStr_(masterHostStr), masterPortStr_(masterPortStr), jobPool_(jobPool) {}
+	                    const std::string &clusterId, const std::shared_ptr<JobPool> &jobPool)
+	    : masterHostStr_(masterHostStr),
+	      masterPortStr_(masterPortStr),
+	      clusterId_(clusterId),
+	      jobPool_(jobPool) {}
 
 	// Disable unneeded copying and moving of the connection objects.
 	MasterConn(const MasterConn &) = delete;
@@ -95,6 +107,8 @@ public:
 	void sendConfig();
 
 	void sendRegister();
+
+	void onRegistered(const std::vector<uint8_t> &data);
 
 	int initConnect();
 
@@ -148,7 +162,15 @@ public:
 
 	ConnectionMode mode() const { return mode_; }
 
-	void setMode(ConnectionMode newMode) { mode_ = newMode; }
+	RegistrationStatus registrationStatus() const { return registrationStatus_; }
+
+	void setMode(ConnectionMode newMode) {
+		mode_ = newMode;
+
+		if (mode_ == ConnectionMode::KILL) {  // The socket will be closed soon.
+			registrationStatus_ = RegistrationStatus::kUnregistered;
+		}
+	}
 
 	const NetworkAddress &address() const { return address_; }
 
@@ -178,12 +200,18 @@ public:
 		bytesOut_ = 0;
 	}
 
+	const std::string &clusterId() const { return clusterId_; }
+
 private:
-	std::string masterHostStr_;         ///< Hostname of the master server.
-	std::string masterPortStr_;         ///< Port of the master server.
-	std::shared_ptr<JobPool> jobPool_;  ///< Shared reference to the JobPool.
+	std::string masterHostStr_;                  ///< Hostname of the master server.
+	std::string masterPortStr_;                  ///< Port of the master server.
+	uint32_t version_{saunafsVersion(0, 0, 0)};  ///< Version of the master server.
+	std::string clusterId_;                      ///< Cluster ID for this connection.
+	std::shared_ptr<JobPool> jobPool_;           ///< Shared reference to the JobPool.
 
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
+	/// Registration status to this MDS.
+	RegistrationStatus registrationStatus_{RegistrationStatus::kUnregistered};
 	int socketFD_{-1};                           ///< Socket file descriptor for this connection.
 	int32_t pDescPos_{-1};                       ///< Position in the pollfd array.
 	Timer lastRead_;                             ///< Time since the last read operation.

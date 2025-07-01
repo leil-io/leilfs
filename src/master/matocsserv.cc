@@ -50,6 +50,7 @@
 #include "common/sockets.h"
 #include "common/time_utils.h"
 #include "config/cfg.h"
+#include "errors/saunafs_error_codes.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
@@ -964,35 +965,67 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 }
 
 void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t servip,
-		uint16_t servport, uint32_t timeout) {
+                              uint16_t servport, uint32_t timeout, const std::string &clusterId) {
 	eptr->version  = version;
 	eptr->servip   = servip;
 	eptr->servport = servport;
 	eptr->timeout  = timeout;
+
+	if (eptr->version >= kFirstVersionWithClusterId) {
+		if (clusterId.empty()) {
+			safs::log_err("SAU_CSTOMA_REGISTER_HOST received empty cluster ID");
+			eptr->mode = KILL;
+			return;
+		}
+
+		if (clusterId != gClusterId) {
+			safs::log_err(
+			    "SAU_CSTOMA_REGISTER_HOST received mismatched cluster ID: expected {}, got {}",
+			    gClusterId, clusterId);
+			eptr->mode = KILL;
+			return;
+		}
+	}
+
 	if (eptr->timeout<10) {
 		safs_pretty_syslog(LOG_NOTICE, "SAU_CSTOMA_REGISTER communication timeout too small (%"
 				PRIu32 " milliseconds - should be at least 10 milliseconds)", eptr->timeout);
 		eptr->mode=KILL;
 		return;
 	}
+
 	if (eptr->servip==0) {
 		tcpgetpeer(eptr->sock,&(eptr->servip),NULL);
 	}
+
 	if (eptr->servstrip) {
 		free(eptr->servstrip);
 	}
+
 	eptr->servstrip = matocsserv_makestrip(eptr->servip);
+
 	if (isLoopbackAddress(eptr->servip)) {
 		safs::log_warn("Chunkserver loopback IP addresses are experimental; consider assigning a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
 	}
+
 	if (csdb_new_connection(eptr->servip,eptr->servport,eptr)<0) {
 		safs_pretty_syslog(LOG_WARNING,"chunk-server already connected !!!");
 		eptr->mode=KILL;
 		return;
 	}
+
 	eptr->csdb = csdb_find(eptr->servip, eptr->servport);
+
 	safs_pretty_syslog(LOG_NOTICE, "chunkserver register begin (packet version: 5) - ip: %s, port: %"
 			PRIu16, eptr->servstrip, eptr->servport);
+
+	// Send the answer with the status
+	if (eptr->version >= kFirstVersionWithClusterId) {
+		OutputPacket outPacket;
+		matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
+		                                gClusterId);
+		eptr->outputPackets.push_back(std::move(outPacket));
+	}
 }
 
 void register_space(matocsserventry* eptr) {
@@ -1024,13 +1057,23 @@ void matocsserv_space(matocsserventry *eptr,const uint8_t *data,uint32_t length)
 	}
 }
 
-void matocsserv_sau_register_host(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+void matocsserv_sau_register_host(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint32_t version;
 	uint32_t servip;
 	uint16_t servport;
 	uint32_t timeout;
-	cstoma::registerHost::deserialize(data, servip, servport, timeout, version);
-	matocsserv_register_host(eptr, version, servip, servport, timeout);
+	std::string clusterId;
+
+	PacketVersion packetVersion;
+	deserializePacketVersionNoHeader(data, packetVersion);
+
+	if (packetVersion == cstoma::registerHost::kWithClusterId) {
+		cstoma::registerHost::deserialize(data, servip, servport, timeout, version, clusterId);
+	} else {
+		cstoma::registerHost::deserialize(data, servip, servport, timeout, version);
+	}
+
+	matocsserv_register_host(eptr, version, servip, servport, timeout, clusterId);
 }
 
 void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uint8_t>& data) {

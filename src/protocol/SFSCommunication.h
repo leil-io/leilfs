@@ -361,6 +361,10 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CSTOMA_REGISTER_HOST (1000U + 100U)
 /// ip:32 port:16 timeout:32 vershex:32
 
+// 0x0497
+#define SAU_MATOCS_REGISTER_HOST (1000U + 175U)
+/// status:8
+
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
 /// version==0 chunks:(N * [chunkid:64 chunkversion:32 chunktype:8])

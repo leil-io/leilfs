@@ -44,6 +44,8 @@
 
 SAUNAFS_CREATE_EXCEPTION_CLASS_MSG(NoMetadataException, Exception, "no metadata");
 
+inline std::string gClusterId;  ///< Unique cluster identifier
+
 uint8_t fs_cancel_job(uint32_t job_id);
 uint32_t fs_reserve_job_id();
 

@@ -50,12 +50,23 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, chunkNew, SAU_CSTOMA_CHUNK_NEW, kECChunks,
 		std::vector<ChunkWithVersionAndType>, chunks)
 
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, registerHost, kWithoutClusterId, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, registerHost, kWithClusterId, 1)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		cstoma, registerHost, SAU_CSTOMA_REGISTER_HOST, 0,
+		cstoma, registerHost, SAU_CSTOMA_REGISTER_HOST, kWithoutClusterId,
 		uint32_t, ip,
 		uint16_t, port,
 		uint32_t, timeout,
 		uint32_t, csVersion)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		cstoma, registerHost, SAU_CSTOMA_REGISTER_HOST, kWithClusterId,
+		uint32_t, ip,
+		uint16_t, port,
+		uint32_t, timeout,
+		uint32_t, csVersion,
+		std::string, clusterId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, registerChunks, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, registerChunks, kStandardChunksOnly, 1)

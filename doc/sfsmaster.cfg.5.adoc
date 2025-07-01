@@ -39,6 +39,9 @@ the other way around is forbidden. +
 by HA cluster, server runs in 'shadow' mode as long as its not remotely
 promoted to 'master'.
 
+*CLUSTER_ID*:: Uniquely identifies this namespace.
+Prevents accidental connections to wrong metadata or chunkservers. (default is 'default')
+
 *DATA_PATH*:: where to store metadata files and lock file
 
 *WORKING_USER*:: user to run daemon as
