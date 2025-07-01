@@ -373,6 +373,34 @@ int CmrDisk::writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
 	return size;
 }
 
+int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
+                                    uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+                                    bool areNewBlocks, const char *errorMsg) {
+	(void)areNewBlocks;
+
+	uint32_t size = numBlocks * SFSBLOCKSIZE;
+	{
+		DiskWriteStatsUpdater updater(chunk->owner(), size);
+
+		auto ret = pwrite(chunk->dataFD(), buffer, size, chunk->getBlockOffset(startBlock));
+
+		if (ret != size) {
+			hddAddErrorAndPreserveErrno(chunk);
+			safs::log_warn("{}: file:{} - write error", errorMsg,
+			               chunk->fullMetaFilename().c_str());
+			hddReportDamagedChunk(chunk->id(), chunk->type());
+			updater.markWriteAsFailed();
+			return -1;
+		}
+	}
+
+	punchHoles(chunk, buffer, chunk->getBlockOffset(startBlock), size);
+
+	memcpy(crcData + startBlock * kCrcSize, crcBuff, kCrcSize * numBlocks);
+
+	return size;
+}
+
 void CmrDisk::punchHoles(IChunk *chunk, const uint8_t *buffer, uint32_t offset,
                          uint32_t size) {
 #if defined(SAUNAFS_HAVE_FALLOCATE) && \
@@ -572,6 +600,61 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 	}
 
 	return SAUNAFS_STATUS_OK;
+}
+
+int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock,
+                              uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
+                              const uint8_t *buffer, bool isFromReplication) {
+	assert(chunk);
+	LOG_AVG_TILL_END_OF_SCOPE0("writeChunkBlocks");
+	TRACETHIS3(chunk->id(), startBlock, numBlocks);
+
+	if (chunk->version() != version && version > 0) {
+		return -SAUNAFS_ERROR_WRONGVERSION;
+	}
+	if (startBlock + numBlocks > chunk->maxBlocksInFile()) {
+		return -SAUNAFS_ERROR_BNUMTOOBIG;
+	}
+	if (numBlocks > SFSBLOCKSINCHUNK || crc.size() != static_cast<size_t>(numBlocks)) {
+		return -SAUNAFS_ERROR_WRONGSIZE;
+	}
+
+	if (gCheckCrcWhenWriting && !isFromReplication) {
+		for (uint16_t i = 0; i < numBlocks; ++i) {
+			if (crc[i] != mycrc32(0, buffer + i * SFSBLOCKSIZE, SFSBLOCKSIZE)) {
+				return -SAUNAFS_ERROR_CRC;
+			}
+		}
+	}
+
+	chunk->setWasChanged(1U);
+	bool areNewBlocks = false;
+
+	std::vector<uint8_t> crcBuff(kCrcSize * numBlocks);
+
+	uint8_t *crcBuffPointer = crcBuff.data();
+	for (auto &crcValue : crc) {
+		put32bit(&crcBuffPointer, crcValue);
+	}
+
+	const uint16_t prevBlocks = chunk->blocks();
+	if (startBlock >= chunk->blocks()) {
+		// Fill new blocks' CRCs with empty data
+		for (uint16_t i = prevBlocks; i < startBlock; i++) {
+			memcpy(crcData + i * kCrcSize, &gEmptyBlockCrc, kCrcSize);
+		}
+	}
+	if (startBlock + numBlocks > chunk->blocks()) {
+		// New blocks are added
+		chunk->setBlocks(startBlock + numBlocks);
+		areNewBlocks = true;
+	}
+
+	int written = writeFullBlocksAndCrcs(chunk, buffer, startBlock, numBlocks, crcBuff.data(),
+	                                     crcData, areNewBlocks, "writeChunkBlocks");
+	if (written < 0) { return -SAUNAFS_ERROR_IO; }
+
+	return numBlocks * SFSBLOCKSIZE;
 }
 
 int CmrDisk::writeChunkData(IChunk *chunk, uint8_t *blockBuffer,

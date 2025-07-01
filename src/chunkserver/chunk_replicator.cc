@@ -188,13 +188,16 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 				planner.buildPlan());
 		executor.executePlan(buffer, locations, connector_, timeout.remaining_ms(), wave_timeout_ms_, timeout);
 
+		std::vector<uint32_t> crcData;
 		for (int i = 0; i < nrOfBlocks; ++i) {
 			uint32_t offset = i * SFSBLOCKSIZE;
 			const uint8_t* dataBlock = buffer.data() + offset;
 			uint32_t crc = mycrc32(0, dataBlock, SFSBLOCKSIZE);
-			uint32_t offsetInChunk = offset + firstBlock * SFSBLOCKSIZE;
-			fileCreator.write(offsetInChunk, SFSBLOCKSIZE, crc, dataBlock);
+			crcData.push_back(crc);
 		}
+		fileCreator.write(static_cast<const uint8_t *>(buffer.data()),
+		                  static_cast<uint16_t>(firstBlock), static_cast<uint16_t>(nrOfBlocks),
+		                  crcData);
 	}
 
 	fileCreator.commit();
