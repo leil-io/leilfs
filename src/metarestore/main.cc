@@ -37,6 +37,7 @@
 #include "common/cwrap.h"
 #include "common/rotate_files.h"
 #include "common/setup.h"
+#include "master/changelog.h"
 #include "master/chunks.h"
 #include "master/filesystem.h"
 #include "master/hstring_memstorage.h"
@@ -160,8 +161,8 @@ void meta_version_on_disk(std::string path) {
 		try {
 			if (fs::exists(fullFileName)) {
 				oldExists = true;
-				uint64_t first = gMetadataBackend->changelogGetFirstLogVersion(fullFileName);
-				uint64_t last = gMetadataBackend->changelogGetLastLogVersion(fullFileName);
+				uint64_t first = changelogGetFirstLogVersion(fullFileName);
+				uint64_t last = changelogGetLastLogVersion(fullFileName);
 				if (last >= first  && first <= metadata_version) {
 					if (last >= metadata_version) {
 						metadata_version = last + 1;
@@ -370,9 +371,9 @@ int main(int argc,char **argv) {
 		while ((dp = readdir(dd)) != NULL) {
 			if (changelog_checkname(dp->d_name)) {
 				filenames.push_back(datapath + "/" + dp->d_name);
-				firstlv = gMetadataBackend->changelogGetFirstLogVersion(filenames.back());
+				firstlv = changelogGetFirstLogVersion(filenames.back());
 				try {
-					lastlv = gMetadataBackend->changelogGetLastLogVersion(filenames.back());
+					lastlv = changelogGetLastLogVersion(filenames.back());
 				} catch (const Exception& ex) {
 					safs_pretty_syslog(LOG_WARNING, "%s", ex.what());
 					lastlv = 0;
@@ -419,9 +420,9 @@ int main(int argc,char **argv) {
 		std::vector<std::string> filenames;
 
 		for (pos=0 ; (int32_t)pos<argc ; pos++) {
-			firstlv = gMetadataBackend->changelogGetFirstLogVersion(argv[pos]);
+			firstlv = changelogGetFirstLogVersion(argv[pos]);
 			try {
-				lastlv = gMetadataBackend->changelogGetLastLogVersion(argv[pos]);
+				lastlv = changelogGetLastLogVersion(argv[pos]);
 			} catch (const Exception& ex) {
 				safs_pretty_syslog(LOG_WARNING, "%s", ex.what());
 				lastlv = 0;

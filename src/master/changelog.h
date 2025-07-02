@@ -53,3 +53,25 @@ void changelog_disable_flush();
 
 /// Enables flushing the current changelog after each \p changelog call
 void changelog_enable_flush();
+
+#ifndef METALOGGER
+/// Returns version of the first entry in a changelog.
+/// @param file -- path to the changelog file
+/// @return 0 in case of any error.
+uint64_t changelogGetFirstLogVersion(const std::string &fname);
+
+/// Returns version of the last entry in a changelog.
+/// @param file -- path to the changelog file
+/// @return 0 in case of any error.
+uint64_t changelogGetLastLogVersion(const std::string &fname);
+#else   // #ifndef METALOGGER
+uint64_t findLastLogVersion();
+#endif  // #ifndef METALOGGER
+
+#if !defined(METARESTORE) && !defined(METALOGGER)
+/// Load and apply changelogs.
+void load_changelogs();
+
+/// Load and apply given changelog file.
+void load_changelog(const std::string &path);
+#endif  // !defined(METARESTORE) && !defined(METALOGGER)
