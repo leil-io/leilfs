@@ -205,7 +205,7 @@ sau_t *sau_init_with_params(struct sau_init_params *params) {
 	}
 	if (params->password != nullptr) {
 		md5ctx md5_ctx;
-		init_params.password_digest.resize(16);
+		init_params.password_digest.resize(kDefaultMd5DigestSize);
 		md5_init(&md5_ctx);
 		md5_update(&md5_ctx,(uint8_t *)(params->password),
 		           strlen(params->password));
