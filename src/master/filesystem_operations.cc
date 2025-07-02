@@ -105,7 +105,7 @@ void fs_changelog(uint32_t ts, const char *format, ...) {
 		entryLength++;
 	}
 
-	uint64_t version = gMetadata->metaversion++;
+	uint64_t version = gMetadata->metadataVersion++;
 	changelog(version, entry);
 	matomlserv_broadcast_logstring(version, (uint8_t *)entry, tsLength + entryLength);
 #endif
@@ -225,7 +225,7 @@ uint8_t fs_settrashpath(const FsContext &context, inode_t inode, const std::stri
 		fs_changelog(context.ts(), "SETPATH(%" PRIiNode ",%s)", p->id,
 		             fsnodes_escape_name(path).c_str());
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -251,7 +251,7 @@ uint8_t fs_undel(const FsContext &context, inode_t inode) {
 			fs_changelog(context.ts(), "UNDEL(%" PRIiNode ")", p->id);
 		}
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -277,25 +277,25 @@ uint8_t fs_purge(const FsContext &context, inode_t inode) {
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "PURGE(%" PRIiNode ")", purged_inode);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return SAUNAFS_STATUS_OK;
 }
 
 #ifndef METARESTORE
-void fs_info(uint64_t *totalspace, uint64_t *availspace, uint64_t *trspace,
-             inode_t *trnodes, uint64_t *respace, inode_t *renodes,
-             inode_t *inodes, inode_t *dnodes, inode_t *fnodes,
-             inode_t *lnodes) {
-	matocsserv_getspace(totalspace, availspace);
-	*trspace = gMetadata->trashspace;
-	*trnodes = gMetadata->trashnodes;
-	*respace = gMetadata->reservedspace;
-	*renodes = gMetadata->reservednodes;
+void fs_info(uint64_t *totalSpace, uint64_t *availableSpace, uint64_t *trashSpace,
+             inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
+             inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
+             inode_t *linkNodes) {
+	matocsserv_getspace(totalSpace, availableSpace);
+	*trashSpace = gMetadata->trashSpace;
+	*trashNodes = gMetadata->trashNodes;
+	*reservedSpace = gMetadata->reservedSpace;
+	*reservedNodes = gMetadata->reservedNodes;
 	*inodes = gMetadata->nodes;
-	*dnodes = gMetadata->dirnodes;
-	*fnodes = gMetadata->filenodes;
-	*lnodes = gMetadata->linknodes;
+	*directoryNodes = gMetadata->dirNodes;
+	*fileNodes = gMetadata->fileNodes;
+	*linkNodes = gMetadata->linkNodes;
 }
 
 uint8_t fs_getrootinode(inode_t *rootinode, const uint8_t *path) {
@@ -339,8 +339,8 @@ void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availsp
 	FSNode *rn;
 	statsrecord sr;
 	if (context.rootinode() == SPECIAL_INODE_ROOT) {
-		*trspace = gMetadata->trashspace;
-		*respace = gMetadata->reservedspace;
+		*trspace = gMetadata->trashSpace;
+		*respace = gMetadata->reservedSpace;
 		rn = gMetadata->root;
 	} else {
 		*trspace = 0;
@@ -365,7 +365,7 @@ void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availsp
 uint8_t fs_apply_checksum(const std::string &version, uint64_t checksum) {
 	std::string versionString = saunafsVersionToString(SAUNAFS_VERSHEX);
 	uint64_t computedChecksum = fs_checksum(ChecksumMode::kGetCurrent);
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	if (!gDisableChecksumVerification && (version == versionString)) {
 		if (checksum != computedChecksum) {
 			return SAUNAFS_ERROR_BADMETADATACHECKSUM;
@@ -382,7 +382,7 @@ uint8_t fs_apply_access(uint32_t ts, inode_t inode) {
 	}
 	p->atime = ts;
 	fsnodes_update_checksum(p);
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -645,7 +645,7 @@ uint8_t fs_apply_trunc(uint32_t ts, inode_t inode, uint32_t indx, uint64_t chunk
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	p->chunks[indx] = nchunkid;
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(p);
 	return SAUNAFS_STATUS_OK;
 }
@@ -658,7 +658,7 @@ uint8_t fs_set_nextchunkid(const FsContext &context, uint64_t nextChunkId) {
 			fs_changelog(context.ts(), "NEXTCHUNKID(%" PRIu64 ")", nextChunkId);
 		}
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -673,7 +673,7 @@ uint8_t fs_end_setlength(uint64_t chunkid) {
 #endif
 
 uint8_t fs_apply_unlock(uint64_t chunkid) {
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return chunk_unlock(chunkid);
 }
 
@@ -822,7 +822,7 @@ uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uin
 	}
 	if (setmask & SET_MODE_FLAG) {
 		p->mode = (attrmode & 07777) | (p->mode & 0xF000);
-		gMetadata->acl_storage.setMode(p->id, p->mode, p->type == FSNode::kDirectory);
+		gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNode::kDirectory);
 	}
 	if (setmask & (SET_UID_FLAG | SET_GID_FLAG)) {
 		fsnodes_change_uid_gid(p, ((setmask & SET_UID_FLAG) ? attruid : p->uid),
@@ -859,7 +859,7 @@ uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, u
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	p->mode = mode | (p->mode & 0xF000);
-	gMetadata->acl_storage.setMode(p->id, p->mode, p->type == FSNode::kDirectory);
+	gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNode::kDirectory);
 	if (p->uid != uid || p->gid != gid) {
 		fsnodes_change_uid_gid(p, uid, gid);
 	}
@@ -867,7 +867,7 @@ uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, u
 	p->mtime = mtime;
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -883,7 +883,7 @@ uint8_t fs_apply_length(uint32_t ts, inode_t inode, uint64_t length, bool eraseF
 	p->mtime = ts;
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -981,7 +981,7 @@ uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name
 		if (*inode != p->id) {
 			return SAUNAFS_ERROR_MISMATCH;
 		}
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 #ifndef METARESTORE
 	++gFsStatsArray[FsStats::Symlink];
@@ -1127,7 +1127,7 @@ uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name,
 		// if inode!=p->id then requested inode number was already acquired
 		return SAUNAFS_ERROR_MISMATCH;
 	}
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1196,7 +1196,7 @@ uint8_t fs_recursive_remove(const FsContext &context, inode_t parent,
 	std::string node_name;
 
 	fsnodes_getpath(static_cast<FSNodeDirectory*>(wd_tmp), child, node_name);
-	return gMetadata->task_manager.submitTask(job_id, context.ts(), kInitialTaskBatchSize,
+	return gMetadata->taskManager.submitTask(job_id, context.ts(), kInitialTaskBatchSize,
 	                                          task, RemoveTask::generateDescription(node_name),
 	                                          callback);
 }
@@ -1263,7 +1263,7 @@ uint8_t fs_apply_unlink(uint32_t ts, inode_t parent, const HString &name,
 		return SAUNAFS_ERROR_ENOTEMPTY;
 	}
 	fsnodes_unlink(ts, static_cast<FSNodeDirectory*>(wd), name, child);
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1362,7 +1362,7 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 		             fsnodes_escape_name(name_src).c_str(), dwd->id,
 		             fsnodes_escape_name(name_dst).c_str(), se_child->id);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 #ifndef METARESTORE
 	++gFsStatsArray[FsStats::Rename];
@@ -1410,7 +1410,7 @@ uint8_t fs_link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 		fs_changelog(context.ts(), "LINK(%" PRIiNode ",%" PRIiNode ",%s)", sp->id, dwd->id,
 		             fsnodes_escape_name(name_dst).c_str());
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 #ifndef METARESTORE
 	++gFsStatsArray[FsStats::Link];
@@ -1449,7 +1449,7 @@ uint8_t fs_append(const FsContext &context, inode_t inode, inode_t inode_src) {
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "APPEND(%" PRIiNode ",%" PRIiNode ")", p->id, sp->id);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -1480,7 +1480,7 @@ int fs_posixlock_probe(const FsContext &context, inode_t inode, uint64_t start, 
 		return status;
 	}
 
-	FileLocks &locks = gMetadata->posix_locks;
+	FileLocks &locks = gMetadata->posixLocks;
 	const FileLocks::Lock *collision;
 
 	collision = locks.findCollision(inode, static_cast<FileLocks::Lock::Type>(op), start, end,
@@ -1559,13 +1559,13 @@ int fs_flock_op(const FsContext &context, inode_t inode, uint64_t owner, uint32_
 		uint32_t reqid, uint32_t msgid, uint16_t op, bool nonblocking,
 		std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
-	int ret = fs_lock_op(context, gMetadata->flock_locks, inode, 0, 1, owner, sessionid,
+	int ret = fs_lock_op(context, gMetadata->flockLocks, inode, 0, 1, owner, sessionid,
 			reqid, msgid, op, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
 				(uint8_t)safs_locks::Type::kFlock, inode, owner, sessionid, op);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return ret;
 }
@@ -1574,13 +1574,13 @@ int fs_posixlock_op(const FsContext &context, inode_t inode, uint64_t start, uin
 		uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t op,
 		bool nonblocking, std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
-	int ret = fs_lock_op(context, gMetadata->posix_locks, inode, start, end, owner, sessionid,
+	int ret = fs_lock_op(context, gMetadata->posixLocks, inode, start, end, owner, sessionid,
 			reqid, msgid, op, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
 				(uint8_t)safs_locks::Type::kPosix, inode, start, end, owner, sessionid, op);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return ret;
 }
@@ -1594,8 +1594,8 @@ int fs_locks_clear_session(const FsContext &context, uint8_t type, inode_t inode
 
 	ChecksumUpdater cu(context.ts());
 
-	FileLocks *locks = type == (uint8_t)safs_locks::Type::kFlock ? &gMetadata->flock_locks
-	                                                             : &gMetadata->posix_locks;
+	FileLocks *locks = type == (uint8_t)safs_locks::Type::kFlock ? &gMetadata->flockLocks
+	                                                             : &gMetadata->posixLocks;
 
 	locks->removePending(inode, [sessionid](const FileLocks::Lock &lock) {
 		return lock.owner().sessionid == sessionid;
@@ -1616,7 +1616,7 @@ int fs_locks_clear_session(const FsContext &context, uint8_t type, inode_t inode
 		fs_changelog(context.ts(), "CLRLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu32 ")", type, inode,
 		             sessionid);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 
 	return SAUNAFS_STATUS_OK;
@@ -1627,9 +1627,9 @@ int fs_locks_list_all(const FsContext &context, uint8_t type, bool pending, uint
 	(void)context;
 	FileLocks *locks;
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
-		locks = &gMetadata->flock_locks;
+		locks = &gMetadata->flockLocks;
 	} else if (type == (uint8_t)safs_locks::Type::kPosix) {
-		locks = &gMetadata->posix_locks;
+		locks = &gMetadata->posixLocks;
 	} else {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -1649,9 +1649,9 @@ int fs_locks_list_inode(const FsContext &context, uint8_t type, bool pending, in
 	FileLocks *locks;
 
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
-		locks = &gMetadata->flock_locks;
+		locks = &gMetadata->flockLocks;
 	} else if (type == (uint8_t)safs_locks::Type::kPosix) {
-		locks = &gMetadata->posix_locks;
+		locks = &gMetadata->posixLocks;
 	} else {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -1681,11 +1681,11 @@ int fs_locks_unlock_inode(const FsContext &context, uint8_t type, inode_t inode,
 	ChecksumUpdater cu(context.ts());
 
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
-		gMetadata->flock_locks.unlock(inode);
-		fs_manage_lock_try_lock_pending(gMetadata->flock_locks, inode, 0, 1, applied);
+		gMetadata->flockLocks.unlock(inode);
+		fs_manage_lock_try_lock_pending(gMetadata->flockLocks, inode, 0, 1, applied);
 	} else if (type == (uint8_t)safs_locks::Type::kPosix) {
-		gMetadata->posix_locks.unlock(inode);
-		fs_manage_lock_try_lock_pending(gMetadata->posix_locks, inode, 0,
+		gMetadata->posixLocks.unlock(inode);
+		fs_manage_lock_try_lock_pending(gMetadata->posixLocks, inode, 0,
 		                                std::numeric_limits<uint64_t>::max(), applied);
 	} else {
 		return SAUNAFS_ERROR_EINVAL;
@@ -1694,7 +1694,7 @@ int fs_locks_unlock_inode(const FsContext &context, uint8_t type, inode_t inode,
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "FLCKINODE(%" PRIu8 ",%" PRIiNode ")", type, inode);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 
 	return SAUNAFS_STATUS_OK;
@@ -1707,9 +1707,9 @@ int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t own
 	FileLocks *locks;
 
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
-		locks = &gMetadata->flock_locks;
+		locks = &gMetadata->flockLocks;
 	} else if (type == (uint8_t)safs_locks::Type::kPosix) {
-		locks = &gMetadata->posix_locks;
+		locks = &gMetadata->posixLocks;
 	} else {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -1731,7 +1731,7 @@ int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t own
 			     "RMPLOCK(%" PRIu8 ",%" PRIu64",%" PRIu32 ",%" PRIiNode ",%" PRIu64")",
 			     type, ownerid, sessionid, inode, reqid);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 
 	return SAUNAFS_STATUS_OK;
@@ -1883,7 +1883,7 @@ uint8_t fs_acquire(const FsContext &context, inode_t inode, uint32_t sessionid) 
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -1913,7 +1913,7 @@ uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) 
 		if (context.isPersonalityMaster()) {
 			fs_changelog(context.ts(), "RELEASE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
 		} else {
-			gMetadata->metaversion++;
+			gMetadata->metadataVersion++;
 		}
 		return SAUNAFS_STATUS_OK;
 	}
@@ -1927,16 +1927,16 @@ uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) 
 uint32_t fs_newsessionid(void) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
-	fs_changelog(ts, "SESSION():%" PRIu32, gMetadata->nextsessionid);
-	return gMetadata->nextsessionid++;
+	fs_changelog(ts, "SESSION():%" PRIu32, gMetadata->nextSessionId);
+	return gMetadata->nextSessionId++;
 }
 #endif
 uint8_t fs_apply_session(uint32_t sessionid) {
-	if (sessionid != gMetadata->nextsessionid) {
+	if (sessionid != gMetadata->nextSessionId) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
-	gMetadata->metaversion++;
-	gMetadata->nextsessionid++;
+	gMetadata->metadataVersion++;
+	gMetadata->nextSessionId++;
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2081,7 +2081,7 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 		             "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
 		             inode, indx, *opflag, *lockid, nchunkid);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	p->mtime = context.ts();
 	fsnodes_update_ctime(p, context.ts());
@@ -2135,7 +2135,7 @@ void fs_incversion(uint64_t chunkid) {
 #endif
 
 uint8_t fs_apply_incversion(uint64_t chunkid) {
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return chunk_increase_version(chunkid);
 }
 
@@ -2230,7 +2230,7 @@ uint8_t fs_apply_repair(uint32_t ts, inode_t inode, uint32_t indx, uint32_t nver
 		fsnodes_add_sub_stats(parent, &nsr, &psr);
 	}
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	p->mtime = ts;
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
@@ -2359,7 +2359,7 @@ uint8_t fs_setgoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_
 #else
 	goal_name = "goal id: " + std::to_string(goal);
 #endif
-	return gMetadata->task_manager.submitTask(context.ts(), kInitialTaskBatchSize,
+	return gMetadata->taskManager.submitTask(context.ts(), kInitialTaskBatchSize,
 						  task, SetGoalTask::generateDescription(node_name, goal_name),
 						  callback);
 }
@@ -2393,7 +2393,7 @@ uint8_t fs_apply_setgoal(const FsContext &context, inode_t inode, uint8_t goal, 
 	SetGoalTask task(context.uid(), goal, smode);
 	uint32_t my_result = task.setGoal(p, context.ts());
 
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	if (master_result != my_result) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
@@ -2432,7 +2432,7 @@ uint8_t fs_settrashtime(const FsContext &context, inode_t inode, uint32_t trasht
 	std::string node_name;
 	FSNodeDirectory *parent = fsnodes_get_first_parent(p);
 	fsnodes_getpath(parent, p, node_name);
-	return gMetadata->task_manager.submitTask(context.ts(), kInitialTaskBatchSize,
+	return gMetadata->taskManager.submitTask(context.ts(), kInitialTaskBatchSize,
 	                                          task, SetTrashtimeTask::generateDescription(node_name, trashtime),
 	                                          callback);
 }
@@ -2464,7 +2464,7 @@ uint8_t fs_apply_settrashtime(const FsContext &context, inode_t inode, uint32_t 
 	SetTrashtimeTask task(context.uid(), trashtime, smode);
 	uint32_t my_result = task.setTrashtime(p, context.ts());
 
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	if (master_result != my_result) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
@@ -2506,7 +2506,7 @@ uint8_t fs_seteattr(const FsContext &context, inode_t inode, uint8_t eattr, uint
 		                           "):%" PRIiNode ",%" PRIiNode ",%" PRIiNode,
 		             p->id, context.uid(), eattr, smode, si, nci, nsi);
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 		if ((*sinodes != si) || (*ncinodes != nci) || (*nsinodes != nsi)) {
 			return SAUNAFS_ERROR_MISMATCH;
 		}
@@ -2532,7 +2532,7 @@ uint8_t fs_listxattr_leng(const FsContext &context, inode_t inode, uint8_t opene
 	}
 
 	*xasize = sizeof(kAclXattrs);
-	return xattr_listattr_leng(p->id, xanode, xasize);
+	return get_xattrs_length_for_inode(p->id, xanode, xasize);
 }
 
 void fs_listxattr_data(void *xanode, uint8_t *xabuff) {
@@ -2620,7 +2620,7 @@ uint8_t fs_apply_setxattr(uint32_t ts, inode_t inode, uint32_t anleng, const uin
 		return status;
 	}
 	fsnodes_update_ctime(p, ts);
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(p);
 	return status;
 }
@@ -2649,7 +2649,7 @@ uint8_t fs_deleteacl(const FsContext &context, inode_t inode, AclType type) {
 			fs_changelog(context.ts(), "DELETEACL(%" PRIiNode ",%c)", p->id, acl_type[std::min(3, (int)type)]);
 		}
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -2675,7 +2675,7 @@ uint8_t fs_setacl(const FsContext &context, inode_t inode, const RichACL &acl) {
 			fs_changelog(context.ts(), "SETRICHACL(%" PRIiNode ",%s)", p->id, acl_string.c_str());
 		}
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -2700,7 +2700,7 @@ uint8_t fs_setacl(const FsContext &context, inode_t inode, AclType type, const A
 						 (type == AclType::kAccess ? 'a' : 'd'), acl_string.c_str());
 		}
 	} else {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 
@@ -2740,7 +2740,7 @@ uint8_t fs_apply_setacl(uint32_t ts, inode_t inode, char aclType, const char *ac
 	}
 	uint8_t status = fsnodes_setacl(p, aclTypeEnum, std::move(acl), ts);
 	if (status == SAUNAFS_STATUS_OK) {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -2758,7 +2758,7 @@ uint8_t fs_apply_setrichacl(uint32_t ts, inode_t inode, const std::string &acl_s
 	}
 	uint8_t status = fsnodes_setacl(p, std::move(acl), ts);
 	if (status == SAUNAFS_STATUS_OK) {
-		gMetadata->metaversion++;
+		gMetadata->metadataVersion++;
 	}
 	return status;
 }
@@ -2868,7 +2868,7 @@ uint8_t fs_get_chunkid(const FsContext &context, inode_t inode, uint32_t index,
 
 void fs_add_files_to_chunks() {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodehash[i]) {
+		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
 			    node->type == FSNode::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
@@ -2885,7 +2885,7 @@ uint64_t fs_getversion() {
 	if (!gMetadata) {
 		throw NoMetadataException();
 	}
-	return gMetadata->metaversion;
+	return gMetadata->metadataVersion;
 }
 
 #ifndef METARESTORE
@@ -2898,11 +2898,11 @@ const Goal &fs_get_goal_definition(uint8_t goalId) {
 }
 
 std::vector<JobInfo> fs_get_current_tasks_info() {
-	return gMetadata->task_manager.getCurrentJobsInfo();
+	return gMetadata->taskManager.getCurrentJobsInfo();
 }
 
 uint8_t fs_cancel_job(uint32_t job_id) {
-	if (gMetadata->task_manager.cancelJob(job_id)) {
+	if (gMetadata->taskManager.cancelJob(job_id)) {
 		return SAUNAFS_STATUS_OK;
 	} else {
 		return SAUNAFS_ERROR_EINVAL;
@@ -2910,7 +2910,7 @@ uint8_t fs_cancel_job(uint32_t job_id) {
 }
 
 uint32_t fs_reserve_job_id() {
-	return gMetadata->task_manager.reserveJobId();
+	return gMetadata->taskManager.reserveJobId();
 }
 
 uint8_t fs_getchunksinfo(const FsContext& context, uint32_t current_ip, inode_t inode,

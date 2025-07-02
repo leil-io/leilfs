@@ -33,7 +33,7 @@ namespace detail {
 inline FSNode *fsnodes_id_to_node_internal(inode_t id) {
 	uint32_t nodepos = NODEHASHPOS(id);
 
-	for (const auto& node : gMetadata->nodehash[nodepos]) {
+	for (const auto& node : gMetadata->nodeHash[nodepos]) {
 		if (node->id == id) {
 			return node;
 		}

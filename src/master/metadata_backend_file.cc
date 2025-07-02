@@ -239,10 +239,9 @@ uint8_t MetadataBackendFile::fs_storeall(DumpType dumpType) {
 static bool xattr_load(MetadataLoader::Options options) {
 	const uint8_t *ptr;
 	inode_t inode;
-	uint8_t anleng;
-	uint32_t avleng;
-	xattr_inode_entry *xattrInodeEntry = nullptr;
-	uint32_t hash;
+	uint8_t attributeNameLength;
+	uint32_t attributeValueLength;
+	XAttributeInodeEntry *xattrInodeEntry = nullptr;
 
 	while (true) {
 		try {
@@ -251,21 +250,23 @@ static bool xattr_load(MetadataLoader::Options options) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: can't read xattr");
 			return false;
 		}
+
 		getINode(&ptr, inode);
-		anleng = get8bit(&ptr);
-		get32bit(&ptr, avleng);
+		attributeNameLength = get8bit(&ptr);
+		get32bit(&ptr, attributeValueLength);
 		options.offset = options.metadataFile->offset(ptr);
-		if (inode == 0) {
-			return true;
-		}
-		if (anleng == 0) {
+
+		if (inode == 0) { return true; }
+
+		if (attributeNameLength == 0) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: empty name");
 			if (options.ignoreFlag) {
 				continue;
 			}
 			return false;
 		}
-		if (avleng > SFS_XATTR_SIZE_MAX) {
+
+		if (attributeValueLength > SFS_XATTR_SIZE_MAX) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: value oversized");
 			if (options.ignoreFlag) {
 				continue;
@@ -273,9 +274,9 @@ static bool xattr_load(MetadataLoader::Options options) {
 			return false;
 		}
 
-		auto ihash = xattr_inode_hash_fn(inode);
-		auto start = gMetadata->xattr_inode_hash[ihash].begin();
-		auto end = gMetadata->xattr_inode_hash[ihash].end();
+		auto inodeHash = get_xattr_inode_hash(inode);
+		auto start = gMetadata->xattrInodeHash[inodeHash].begin();
+		auto end = gMetadata->xattrInodeHash[inodeHash].end();
 
 		for (auto attributeIterator = start; attributeIterator != end; attributeIterator++) {
 			xattrInodeEntry = attributeIterator->get();
@@ -284,7 +285,8 @@ static bool xattr_load(MetadataLoader::Options options) {
 			}
 		}
 
-		if (xattrInodeEntry && xattrInodeEntry->anleng + anleng + 1 > SFS_XATTR_LIST_MAX) {
+		if (xattrInodeEntry != nullptr &&
+		    xattrInodeEntry->attributeNameLength + attributeNameLength + 1 > SFS_XATTR_LIST_MAX) {
 			safs_pretty_syslog(LOG_ERR, "loading xattr: name list too long");
 			if (options.ignoreFlag) {
 				continue;
@@ -292,42 +294,44 @@ static bool xattr_load(MetadataLoader::Options options) {
 			return false;
 		}
 
-		auto xattrEntry = std::make_unique<xattr_data_entry>();
+		auto xattrEntry = std::make_unique<XAttributeDataEntry>();
 		xattrEntry->inode = inode;
-		xattrEntry->attributeName.resize(anleng);
+		xattrEntry->attributeName.resize(attributeNameLength);
+		xattrEntry->attributeNameLength = attributeNameLength;
 		passert(xattrEntry->attributeName.data());
-		memcpy(xattrEntry->attributeName.data(), ptr, anleng);
-		ptr += anleng;
-		xattrEntry->anleng = anleng;
+		memcpy(xattrEntry->attributeName.data(), ptr, attributeNameLength);
+		ptr += attributeNameLength;
 
-		if (avleng > 0) {
-			xattrEntry->attributeValue.resize(avleng);
+		if (attributeValueLength > 0) {
+			xattrEntry->attributeValue.resize(attributeValueLength);
 			passert(xattrEntry->attributeValue.data());
-			memcpy(xattrEntry->attributeValue.data(), ptr, avleng);
-			ptr += avleng;
+			memcpy(xattrEntry->attributeValue.data(), ptr, attributeValueLength);
+			ptr += attributeValueLength;
 		} else {
 			xattrEntry->attributeValue.clear();
 		}
 
 		options.offset = options.metadataFile->offset(ptr);
-		xattrEntry->avleng = avleng;
+		xattrEntry->attributeValueLength = attributeValueLength;
 
-		hash = xattr_data_hash_fn(inode, xattrEntry->anleng, xattrEntry->attributeName.data());
-		gMetadata->xattr_data_hash[hash].push_back(std::move(xattrEntry));
-		auto xattrEntryPointer = gMetadata->xattr_data_hash[hash].back().get();
+		auto dataHash = get_xattr_data_hash(inode, xattrEntry->attributeNameLength,
+		                                    xattrEntry->attributeName.data());
+
+		gMetadata->xattrDataHash[dataHash].push_back(std::move(xattrEntry));
+		auto xattrEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
 
 		if (xattrInodeEntry) {
 			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
-			xattrInodeEntry->anleng += anleng + 1U;
-			xattrInodeEntry->avleng += avleng;
+			xattrInodeEntry->attributeNameLength += attributeNameLength + 1U;
+			xattrInodeEntry->attributeValueLength += attributeValueLength;
 		} else {
-			auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
+			auto xattrInodeEntry = std::make_unique<XAttributeInodeEntry>();
 			passert(xattrInodeEntry);
 			xattrInodeEntry->inode = inode;
 			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
-			xattrInodeEntry->anleng = anleng + 1U;
-			xattrInodeEntry->avleng = avleng;
-			gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
+			xattrInodeEntry->attributeNameLength = attributeNameLength + 1U;
+			xattrInodeEntry->attributeValueLength = attributeValueLength;
+			gMetadata->xattrInodeHash[inodeHash].push_front(std::move(xattrInodeEntry));
 		}
 	}
 }
@@ -418,13 +422,12 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		if (child->type == FSNode::kTrash) {
 			gMetadata->trash.insert(
 			    {TrashPathKey(child), hstorage::Handle(name)});
-			gMetadata->trashspace += static_cast<FSNodeFile *>(child)->length;
-			gMetadata->trashnodes++;
+			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
+			gMetadata->trashNodes++;
 		} else if (child->type == FSNode::kReserved) {
 			gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
-			gMetadata->reservedspace +=
-			    static_cast<FSNodeFile *>(child)->length;
-			gMetadata->reservednodes++;
+			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
+			gMetadata->reservedNodes++;
 		} else {
 			safs_pretty_syslog(LOG_ERR,
 			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
@@ -577,7 +580,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 
 	switch (type) {
 	case FSNode::kDirectory:
-		gMetadata->dirnodes++;
+		gMetadata->dirNodes++;
 		break;
 	case FSNode::kSocket:
 	case FSNode::kFifo:  /// No extra info to Parse
@@ -595,7 +598,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			static_cast<FSNodeSymlink *>(node)->path = HString(pSrc, pSrc + nodeNameLength);
 			pSrc += nodeNameLength;
 		}
-		gMetadata->linknodes++;
+		gMetadata->linkNodes++;
 		break;
 	case FSNode::kFile:
 	case FSNode::kTrash:
@@ -627,7 +630,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 
 		fsnodes_quota_update(node, {{QuotaResource::kSize, +fsnodes_get_size(node)}});
-		gMetadata->filenodes++;
+		gMetadata->fileNodes++;
 		break;
 	default:
 		safs_pretty_syslog(LOG_ERR, "loading node: unrecognized node type: %c",
@@ -637,8 +640,8 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		return kError;
 	}
 	uint32_t nodeIndex = NODEHASHPOS(node->id);
-	gMetadata->nodehash[nodeIndex].push_front(node);
-	gMetadata->inode_pool.markAsAcquired(node->id);
+	gMetadata->nodeHash[nodeIndex].push_front(node);
+	gMetadata->inodePool.markAsAcquired(node->id);
 	gMetadata->nodes++;
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
 	sectionOffset = metadataFile->offset(pSrc);
@@ -668,7 +671,7 @@ static int fs_lostnode(FSNode *p) {
 
 int fs_checknodes(int ignoreflag) {
 	for (auto i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodehash[i]) {
+		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->parent.empty() && node != gMetadata->root &&
 			    (node->type != FSNode::kTrash) && (node->type != FSNode::kReserved)) {
 				safs_pretty_syslog(LOG_ERR, "found orphaned inode: %" PRIiNode, node->id);
@@ -716,11 +719,11 @@ static bool fs_loadquotas(MetadataLoader::Options options) {
 		std::vector<QuotaEntry> entries;
 		fs_load_generic(options.metadataFile, options.offset, entries);
 		for (const auto &entry : entries) {
-			gMetadata->quota_database.set(
+			gMetadata->quotaDatabase.set(
 			    entry.entryKey.owner.ownerType, entry.entryKey.owner.ownerId,
 			    entry.entryKey.rigor, entry.entryKey.resource, entry.limit);
 		}
-		gMetadata->quota_checksum = gMetadata->quota_database.checksum();
+		gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 	} catch (Exception &ex) {
 		safs_pretty_syslog(LOG_ERR, "loading quotas: %s", ex.what());
 		if (!options.ignoreFlag || ex.status() != SAUNAFS_STATUS_OK) {
@@ -732,8 +735,8 @@ static bool fs_loadquotas(MetadataLoader::Options options) {
 
 static bool fs_loadlocks(MetadataLoader::Options options) {
 	try {
-		gMetadata->flock_locks.load(options.metadataFile, options.offset);
-		gMetadata->posix_locks.load(options.metadataFile, options.offset);
+		gMetadata->flockLocks.load(options.metadataFile, options.offset);
+		gMetadata->posixLocks.load(options.metadataFile, options.offset);
 	} catch (Exception &ex) {
 		safs_pretty_syslog(LOG_ERR, "loading locks: %s", ex.what());
 		if (!options.ignoreFlag || ex.status() != SAUNAFS_STATUS_OK) {
@@ -779,7 +782,7 @@ bool fs_loadfree(MetadataLoader::Options options) {
 		}
 		getINode(&ptr, inode);
 		get32bit(&ptr, timestamp);
-		gMetadata->inode_pool.detain(inode, timestamp, true);
+		gMetadata->inodePool.detain(inode, timestamp, true);
 		freeNodesToLoad--;
 		freeNodesNumber--;
 	}
@@ -825,9 +828,9 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 	/// Skip File Signature
 	const uint8_t *metadataHeaderPtr= metadataFile->seek(kMetadataHeaderOffset);
 
-	getINode(&metadataHeaderPtr, gMetadata->maxnodeid);
-	gMetadata->metaversion = get64bit(&metadataHeaderPtr);
-	get32bit(&metadataHeaderPtr, gMetadata->nextsessionid);
+	getINode(&metadataHeaderPtr, gMetadata->maxInodeId);
+	gMetadata->metadataVersion = get64bit(&metadataHeaderPtr);
+	get32bit(&metadataHeaderPtr, gMetadata->nextSessionId);
 
 	size_t offsetBegin = metadataFile->offset(metadataHeaderPtr);
 
@@ -904,9 +907,9 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 
 void fs_new(void) {
 	uint32_t nodepos;
-	gMetadata->maxnodeid = SPECIAL_INODE_ROOT;
-	gMetadata->metaversion = 1;
-	gMetadata->nextsessionid = 1;
+	gMetadata->maxInodeId = SPECIAL_INODE_ROOT;
+	gMetadata->metadataVersion = 1;
+	gMetadata->nextSessionId = 1;
 	auto *rootDirectory = FSNode::create(FSNode::kDirectory);
 	gMetadata->root = static_cast<FSNodeDirectory *>(rootDirectory);
 	gMetadata->root->id = SPECIAL_INODE_ROOT;
@@ -919,12 +922,12 @@ void fs_new(void) {
 	gMetadata->root->uid = 0;
 	gMetadata->root->gid = 0;
 	nodepos = NODEHASHPOS(gMetadata->root->id);
-	gMetadata->nodehash[nodepos].push_front(gMetadata->root);
-	gMetadata->inode_pool.markAsAcquired(gMetadata->root->id);
+	gMetadata->nodeHash[nodepos].push_front(gMetadata->root);
+	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
 	chunk_newfs();
 	gMetadata->nodes = 1;
-	gMetadata->dirnodes = 1;
-	gMetadata->filenodes = 0;
+	gMetadata->dirNodes = 1;
+	gMetadata->fileNodes = 0;
 	fs_checksum(ChecksumMode::kForceRecalculate);
 	fsnodes_quota_update(gMetadata->root, {{QuotaResource::kInodes, +1}});
 }
@@ -997,8 +1000,8 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	    "metadata file %s read (%" PRIiNode " inodes including %" PRIiNode
 	    " directory inodes, %" PRIiNode " file inodes, %" PRIiNode
 	    " symlink inodes and %" PRIu32 " chunks)",
-	    metadataFile->filename().c_str(), gMetadata->nodes, gMetadata->dirnodes,
-	    gMetadata->filenodes, gMetadata->linknodes, chunk_count());
+	    metadataFile->filename().c_str(), gMetadata->nodes, gMetadata->dirNodes,
+	    gMetadata->fileNodes, gMetadata->linkNodes, chunk_count());
 #else
 	safs::log_info("metadata file {} read", metadataFile_);
 #endif
@@ -1120,7 +1123,7 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 
 void MetadataBackendFile::storenodes(FILE *fd) {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodehash[i]) {
+		for (const auto &node : gMetadata->nodeHash[i]) {
 			storenode(node, fd);
 		}
 	}
@@ -1198,7 +1201,7 @@ void MetadataBackendFile::storefree(FILE *fd) {
 
 	uint8_t wbuff[kFreeFullBatchSize], *ptr;
 
-	inode_t totalFreeNodes = gMetadata->inode_pool.detainedCount();
+	inode_t totalFreeNodes = gMetadata->inodePool.detainedCount();
 
 	ptr = wbuff;
 	putINode(&ptr, totalFreeNodes);
@@ -1211,7 +1214,7 @@ void MetadataBackendFile::storefree(FILE *fd) {
 	uint32_t batchCursor = 0;
 	ptr = wbuff;
 
-	for (const auto &n : gMetadata->inode_pool) {
+	for (const auto &n : gMetadata->inodePool) {
 		if (batchCursor == kFreeBatchSize) {
 			if (fwrite(wbuff, 1, kFreeFullBatchSize, fd) != kFreeFullBatchSize) {
 				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
@@ -1238,36 +1241,44 @@ void MetadataBackendFile::storefree(FILE *fd) {
 // XAttr
 
 void MetadataBackendFile::xattr_store(FILE *fd) {
-	constexpr uint32_t kHdrSize =
-	    kinode_t_size + sizeof(xattr_data_entry::anleng) + sizeof(xattr_data_entry::avleng);
-	uint8_t hdrbuff[kHdrSize];
+	constexpr uint32_t kHdrSize = kinode_t_size + sizeof(XAttributeDataEntry::attributeNameLength) +
+	                              sizeof(XAttributeDataEntry::attributeValueLength);
+	uint8_t headerBuffer[kHdrSize];
 	uint8_t *ptr;
 
 	for (auto i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
-		for (const auto &xa : gMetadata->xattr_data_hash[i]) {
-			ptr = hdrbuff;
-			putINode(&ptr, xa->inode);
-			put8bit(&ptr, xa->anleng);
-			put32bit(&ptr, xa->avleng);
-			if (fwrite(hdrbuff, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
-				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+		for (const auto &xattrDataEntry : gMetadata->xattrDataHash[i]) {
+			ptr = headerBuffer;
+			putINode(&ptr, xattrDataEntry->inode);
+			put8bit(&ptr, xattrDataEntry->attributeNameLength);
+			put32bit(&ptr, xattrDataEntry->attributeValueLength);
+
+			if (fwrite(headerBuffer, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
+				safs::log_info("{}: fwrite error failed writing header", __func__);
 				return;
 			}
-			if (fwrite(xa->attributeName.data(), 1, xa->anleng, fd) != (size_t)(xa->anleng)) {
-				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+
+			auto attributeNameData = xattrDataEntry->attributeName.data();
+			auto nameLength = xattrDataEntry->attributeNameLength;
+			if (fwrite(attributeNameData, 1, nameLength, fd) != (size_t)(nameLength)) {
+				safs::log_info("{}: fwrite error failed writing attribute name", __func__);
 				return;
 			}
-			if (xa->avleng > 0) {
-				if (fwrite(xa->attributeValue.data(), 1, xa->avleng, fd) != (size_t)(xa->avleng)) {
-					safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+
+			auto attributeValueData = xattrDataEntry->attributeValue.data();
+			auto valueLength = xattrDataEntry->attributeValueLength;
+			if (xattrDataEntry->attributeValueLength > 0) {
+				if (fwrite(attributeValueData, 1, valueLength, fd) != (size_t)(valueLength)) {
+					safs::log_info("{}: fwrite error failed writing attribute value", __func__);
 					return;
 				}
 			}
 		}
 	}
-	memset(hdrbuff, 0, kHdrSize);
-	if (fwrite(hdrbuff, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
-		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+
+	memset(headerBuffer, 0, kHdrSize);
+	if (fwrite(headerBuffer, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
+		safs::log_info("{}: fwrite error failed writing header for end marker", __func__);
 		return;
 	}
 }
@@ -1288,15 +1299,15 @@ static void fs_store_generic(FILE *fd, Args &&...args) {
 
 void MetadataBackendFile::storequotas(FILE *fd) {
 	const std::vector<QuotaEntry> &entries =
-	    gMetadata->quota_database.getEntries();
+	    gMetadata->quotaDatabase.getEntries();
 	fs_store_generic(fd, entries);
 }
 
 // Locks
 
 void MetadataBackendFile::storelocks(FILE *fd) {
-	gMetadata->flock_locks.store(fd);
-	gMetadata->posix_locks.store(fd);
+	gMetadata->flockLocks.store(fd);
+	gMetadata->posixLocks.store(fd);
 }
 
 // Full FS
@@ -1319,9 +1330,9 @@ int MetadataBackendFile::process_section(const char *label, uint8_t (&hdr)[kSect
 }
 
 void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
-	constexpr uint8_t kHeaderSize = sizeof(FilesystemMetadata::maxnodeid) +
-	                                sizeof(FilesystemMetadata::metaversion) +
-	                                sizeof(FilesystemMetadata::nextsessionid);
+	constexpr uint8_t kHeaderSize = sizeof(FilesystemMetadata::maxInodeId) +
+	                                sizeof(FilesystemMetadata::metadataVersion) +
+	                                sizeof(FilesystemMetadata::nextSessionId);
 	uint8_t header[kHeaderSize];
 
 	uint8_t sectionHeader[kSectionSize];
@@ -1330,9 +1341,9 @@ void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
 	off_t offend;
 
 	ptr = header;
-	putINode(&ptr, gMetadata->maxnodeid);
-	put64bit(&ptr, gMetadata->metaversion);
-	put32bit(&ptr, gMetadata->nextsessionid);
+	putINode(&ptr, gMetadata->maxInodeId);
+	put64bit(&ptr, gMetadata->metadataVersion);
+	put32bit(&ptr, gMetadata->nextSessionId);
 
 	if (fwrite(header, 1, kHeaderSize, fd) != kHeaderSize) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");

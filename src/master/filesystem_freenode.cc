@@ -25,14 +25,14 @@
 #include "master/filesystem_metadata.h"
 
 inode_t fsnodes_get_next_id(uint32_t ts, inode_t req_inode) {
-	if(req_inode == 0 || !gMetadata->inode_pool.markAsAcquired(req_inode,ts)) {
-		req_inode = gMetadata->inode_pool.acquire(ts);
+	if(req_inode == 0 || !gMetadata->inodePool.markAsAcquired(req_inode,ts)) {
+		req_inode = gMetadata->inodePool.acquire(ts);
 	}
 	if (req_inode == 0) {
 		mabort("Out of free inode numbers");
 	}
-	if (req_inode > gMetadata->maxnodeid) {
-		gMetadata->maxnodeid = req_inode;
+	if (req_inode > gMetadata->maxInodeId) {
+		gMetadata->maxInodeId = req_inode;
 	}
 
 	return req_inode;
@@ -40,6 +40,6 @@ inode_t fsnodes_get_next_id(uint32_t ts, inode_t req_inode) {
 
 uint8_t fs_apply_freeinodes(uint32_t /*ts*/, inode_t /*freeinodes*/) {
 	// left for compatibility when reading from old metadata change log
-	gMetadata->metaversion++;
+	gMetadata->metadataVersion++;
 	return 0;
 }

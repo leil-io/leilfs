@@ -31,35 +31,33 @@
 #define XATTR_DATA_HASH_SIZE 524288
 #define XATTRCHECKSUMSEED 29857986791741783ULL
 
-struct xattr_data_entry {
+struct XAttributeDataEntry {
 	inode_t inode;
-	uint8_t anleng;
-	uint32_t avleng;
+	uint8_t attributeNameLength;
+	uint32_t attributeValueLength;
 	std::vector<uint8_t> attributeName;
 	std::vector<uint8_t> attributeValue;
 	uint64_t checksum;
 
-	xattr_data_entry() = default;
+	XAttributeDataEntry() = default;
 
-	~xattr_data_entry() {
+	~XAttributeDataEntry() {
 		attributeName.clear();
 		attributeValue.clear();
 	}
 };
-void free(xattr_data_entry *);  // disable freeing using free at link time :)
 
-struct xattr_inode_entry {
+struct XAttributeInodeEntry {
 	inode_t inode;
-	uint32_t anleng;
-	uint32_t avleng;
-	std::list<xattr_data_entry *> xattrDataList;
+	uint32_t attributeNameLength;
+	uint32_t attributeValueLength;
+	std::list<XAttributeDataEntry *> xattrDataList;
 };
 
 #ifndef METARESTORE
-static inline int xattr_namecheck(uint8_t anleng, const uint8_t *attrname) {
-	uint32_t i;
-	for (i = 0; i < anleng; i++) {
-		if (attrname[i] == '\0') {
+static inline int xattr_namecheck(uint8_t attributeNameLength, const uint8_t *attributeName) {
+	for (uint32_t i = 0; i < attributeNameLength; i++) {
+		if (attributeName[i] == '\0') {
 			return -1;
 		}
 	}
@@ -67,27 +65,31 @@ static inline int xattr_namecheck(uint8_t anleng, const uint8_t *attrname) {
 }
 #endif /* METARESTORE */
 
-static inline uint32_t xattr_data_hash_fn(inode_t inode, uint8_t anleng, const uint8_t *attrname) {
+static inline uint32_t get_xattr_data_hash(inode_t inode, uint8_t attributeNameLength,
+                                           const uint8_t *attributeName) {
 	uint32_t hash = inode * 5381U;
-	while (anleng) {
-		hash = (hash * 33U) + (*attrname);
-		attrname++;
-		anleng--;
+	while (attributeNameLength) {
+		hash = (hash * 33U) + (*attributeName);
+		attributeName++;
+		attributeNameLength--;
 	}
 	return (hash & (XATTR_DATA_HASH_SIZE - 1));
 }
 
-static inline uint32_t xattr_inode_hash_fn(inode_t inode) {
+static inline uint32_t get_xattr_inode_hash(inode_t inode) {
 	return ((inode * 0x72B5F387U) & (XATTR_INODE_HASH_SIZE - 1));
 }
 
-void xattr_checksum_add_to_background(xattr_data_entry *xde);
-void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xabuff);
+void xattr_checksum_add_to_background(XAttributeDataEntry *xattrDataEntry);
+void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xattrDataBuffer);
 void xattr_recalculate_checksum();
 void xattr_removeinode(inode_t inode);
 
-uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
-			uint8_t **attrvalue);
-uint8_t xattr_listattr_leng(inode_t inode, void **xanode, uint32_t *xasize);
-uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
-			const uint8_t *attrvalue, uint8_t mode);
+uint8_t xattr_getattr(inode_t inode, uint8_t attributeNameLength, const uint8_t *attributeName,
+                      uint32_t *attributeValueLength, uint8_t **attributeValue);
+
+uint8_t get_xattrs_length_for_inode(inode_t inode, void **xattrInodePointer, uint32_t *xattrSize);
+
+uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t *attributeName,
+                      uint32_t attributeValueLength, const uint8_t *attributeValueBuffer,
+                      uint8_t mode);

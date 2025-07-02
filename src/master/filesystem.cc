@@ -157,7 +157,7 @@ void fs_term(void) {
 		// which tells that the lockfile is not left because of a crash, but because we have been
 		// asked to stop without saving metadata. Include information about version of metadata
 		// which can be recovered using our changelogs.
-		auto message = "quick_stop: " + std::to_string(gMetadata->metaversion) + "\n";
+		auto message = "quick_stop: " + std::to_string(gMetadata->metadataVersion) + "\n";
 		gMetadataLockfile->writeMessage(message);
 	} else {
 		// We will leave the lockfile present to indicate, that our metadata.sfs file should not be

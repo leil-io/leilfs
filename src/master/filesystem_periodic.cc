@@ -84,11 +84,11 @@ static const size_t kMaxNodeEntries = 1000000;
 static DefectiveNodesMap gDefectiveNodes;
 
 void fs_background_task_manager_work() {
-	if (gMetadata->task_manager.workAvailable()) {
+	if (gMetadata->taskManager.workAvailable()) {
 		uint32_t ts = eventloop_time();
 		ChecksumUpdater cu(ts);
-		gMetadata->task_manager.processJobs(ts, gTasksBatchSize);
-		if (gMetadata->task_manager.workAvailable()) {
+		gMetadata->taskManager.processJobs(ts, gTasksBatchSize);
+		if (gMetadata->taskManager.workAvailable()) {
 			eventloop_make_next_poll_nonblocking();
 		}
 	}
@@ -276,7 +276,7 @@ void fs_background_checksum_recalculation_a_bit() {
 		// Nodes are in a hashtable, therefore they can be recalculated in multiple steps.
 		while (gChecksumBackgroundUpdater.getPosition() < NODEHASHSIZE) {
 			auto checkSumPosition = gChecksumBackgroundUpdater.getPosition();
-			for (const auto &node : gMetadata->nodehash[checkSumPosition]) {
+			for (const auto &node : gMetadata->nodeHash[checkSumPosition]) {
 				fsnodes_checksum_add_to_background(node);
 				++recalculated;
 			}
@@ -293,7 +293,7 @@ void fs_background_checksum_recalculation_a_bit() {
 		// Xattrs are in a hashtable, therefore they can be recalculated in multiple steps.
 		while (gChecksumBackgroundUpdater.getPosition() < XATTR_DATA_HASH_SIZE) {
 			auto checksumPosition = gChecksumBackgroundUpdater.getPosition();
-			for (const auto &xde : gMetadata->xattr_data_hash[checksumPosition]) {
+			for (const auto &xde : gMetadata->xattrDataHash[checksumPosition]) {
 				xattr_checksum_add_to_background(xde.get());
 				++recalculated;
 			}
@@ -387,7 +387,7 @@ void fs_process_file_test() {
 			return;
 		}
 
-		for (const auto &node : gMetadata->nodehash[gFileTestLoopIndex]) {
+		for (const auto &node : gMetadata->nodeHash[gFileTestLoopIndex]) {
 			node_error_flag = 0;
 
 			if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||

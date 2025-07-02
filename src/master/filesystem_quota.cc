@@ -72,7 +72,7 @@ uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &resu
 	if (context.uid() != 0 && !(context.sesflags() & SESFLAG_ALLCANCHANGEQUOTA)) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	results = gMetadata->quota_database.getEntriesWithStats();
+	results = gMetadata->quotaDatabase.getEntriesWithStats();
 
 	for (auto &entry : results) {
 		if (entry.entryKey.owner.ownerType != QuotaOwnerType::kInode ||
@@ -130,7 +130,7 @@ uint8_t fs_quota_get(const FsContext &context,
 				return SAUNAFS_ERROR_EINVAL;
 			}
 		}
-		auto result = gMetadata->quota_database.get(owner.ownerType, owner.ownerId);
+		auto result = gMetadata->quotaDatabase.get(owner.ownerType, owner.ownerId);
 		if (result) {
 			for (auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard, QuotaRigor::kUsed}) {
 				if (owner.ownerType == QuotaOwnerType::kInode && rigor == QuotaRigor::kUsed) {
@@ -244,10 +244,10 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 
 	for (const QuotaEntry &entry : entries) {
 		const QuotaOwner &owner = entry.entryKey.owner;
-		gMetadata->quota_database.set(owner.ownerType, owner.ownerId, entry.entryKey.rigor,
+		gMetadata->quotaDatabase.set(owner.ownerType, owner.ownerId, entry.entryKey.rigor,
 		                              entry.entryKey.resource, entry.limit);
-		gMetadata->quota_database.removeEmpty(owner.ownerType, owner.ownerId);
-		gMetadata->quota_checksum = gMetadata->quota_database.checksum();
+		gMetadata->quotaDatabase.removeEmpty(owner.ownerType, owner.ownerId);
+		gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 		fs_changelog(ts, "SETQUOTA(%c,%c,%c,%" PRIiNode ",%" PRIu64 ")",
 		             rigor_name[(int)entry.entryKey.rigor],
 		             resource_name[(int)entry.entryKey.resource], owner_name[(int)owner.ownerType],
@@ -272,10 +272,10 @@ uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, inode_t ow
 	if (!valid) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	gMetadata->metaversion++;
-	gMetadata->quota_database.set(quotaOwnerType, owner_id, quotaRigor, quotaResource, limit);
-	gMetadata->quota_database.removeEmpty(quotaOwnerType, owner_id);
-	gMetadata->quota_checksum = gMetadata->quota_database.checksum();
+	gMetadata->metadataVersion++;
+	gMetadata->quotaDatabase.set(quotaOwnerType, owner_id, quotaRigor, quotaResource, limit);
+	gMetadata->quotaDatabase.removeEmpty(quotaOwnerType, owner_id);
+	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -344,7 +344,7 @@ static bool fsnodes_test_dir_quota_noparents(FSNode *node,
 	}
 
 	const QuotaDatabase::Limits *entry =
-	    gMetadata->quota_database.get(QuotaOwnerType::kInode, node->id);
+	    gMetadata->quotaDatabase.get(QuotaOwnerType::kInode, node->id);
 	if (!entry) {
 		return false;
 	}
@@ -377,8 +377,8 @@ static bool fsnodes_test_dir_quota_noparents(FSNode *node,
 
 bool fsnodes_quota_exceeded_ug(uint32_t uid, uint32_t gid,
 		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
-	return gMetadata->quota_database.exceeds(QuotaOwnerType::kUser, uid, QuotaRigor::kHard, resource_list) ||
-	       gMetadata->quota_database.exceeds(QuotaOwnerType::kGroup, gid, QuotaRigor::kHard, resource_list);
+	return gMetadata->quotaDatabase.exceeds(QuotaOwnerType::kUser, uid, QuotaRigor::kHard, resource_list) ||
+	       gMetadata->quotaDatabase.exceeds(QuotaOwnerType::kGroup, gid, QuotaRigor::kHard, resource_list);
 }
 
 bool fsnodes_quota_exceeded_ug(FSNode *node,
@@ -468,16 +468,16 @@ void fsnodes_quota_update(FSNode *node,
 		if (resource.second == 0) {
 			continue;
 		}
-		gMetadata->quota_database.update(QuotaOwnerType::kUser, node->uid, QuotaRigor::kUsed,
+		gMetadata->quotaDatabase.update(QuotaOwnerType::kUser, node->uid, QuotaRigor::kUsed,
 		                                 resource.first, resource.second);
-		gMetadata->quota_database.update(QuotaOwnerType::kGroup, node->gid, QuotaRigor::kUsed,
+		gMetadata->quotaDatabase.update(QuotaOwnerType::kGroup, node->gid, QuotaRigor::kUsed,
 		                                 resource.first, resource.second);
 	}
 }
 
 void fsnodes_quota_remove(QuotaOwnerType owner_type, uint32_t owner_id) {
-	gMetadata->quota_database.remove(owner_type, owner_id);
-	gMetadata->quota_checksum = gMetadata->quota_database.checksum();
+	gMetadata->quotaDatabase.remove(owner_type, owner_id);
+	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 }
 
 void fsnodes_quota_adjust_space(FSNode * /*node*/, uint64_t & /*total_space*/,

@@ -120,7 +120,7 @@ void fs_dumpnode(FSNode *f) {
 
 void fs_dumpnodes() {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodehash[i]) {
+		for (const auto &node : gMetadata->nodeHash[i]) {
 			fs_dumpnode(node);
 		}
 	}
@@ -170,17 +170,22 @@ void fs_dumpedges(FSNodeDirectory *parent) {
 }
 
 void fs_dumpfree() {
-	for (const auto &n : gMetadata->inode_pool) {
+	for (const auto &n : gMetadata->inodePool) {
 		printf("I|i:%10" PRIiNode "|f:%10" PRIu32 "\n", n.id, n.ts);
 	}
 }
 
 void xattr_dump() {
 	for (auto i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
-		for (const auto &xa : gMetadata->xattr_data_hash[i]) {
-			printf("X|i:%10" PRIiNode "|n:%s|v:%s\n", xa->inode,
-			       fsnodes_escape_name(std::string((char*)xa->attributeName.data(), xa->anleng)).c_str(),
-			       fsnodes_escape_name(std::string((char*)xa->attributeValue.data(), xa->avleng)).c_str());
+		for (const auto &xattrDataEntry : gMetadata->xattrDataHash[i]) {
+			printf(
+			    "X|i:%10" PRIiNode "|n:%s|v:%s\n", xattrDataEntry.get()->inode,
+			    fsnodes_escape_name(std::string((char *)xattrDataEntry.get()->attributeName.data(),
+			                                    xattrDataEntry.get()->attributeNameLength))
+			        .c_str(),
+			    fsnodes_escape_name(std::string((char *)xattrDataEntry.get()->attributeValue.data(),
+			                                    xattrDataEntry.get()->attributeValueLength))
+			        .c_str());
 		}
 	}
 }

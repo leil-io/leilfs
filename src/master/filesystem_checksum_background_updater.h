@@ -79,7 +79,7 @@ public:
 	bool isNodeIncluded(FSNode *node);
 
 	// is xattr already included in the background checksum?
-	bool isXattrIncluded(xattr_data_entry *xde);
+	bool isXattrIncluded(XAttributeDataEntry *xattrDataEntry);
 
 	void setSpeedLimit(uint32_t value);
 
