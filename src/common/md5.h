@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+constexpr size_t kDefaultMd5DigestSize = 16;
+
 typedef struct _md5ctx {
 	uint32_t state[4];
 	uint32_t count[2];
@@ -34,9 +36,9 @@ typedef struct _md5ctx {
 } md5ctx;
 
 void md5_init(md5ctx *ctx);
-void md5_update(md5ctx *ctx,const uint8_t *buff,uint32_t leng);
-void md5_final(uint8_t digest[16],md5ctx *ctx);
-std::array<uint8_t, 16> md5_challenge_response(const std::array<uint8_t, 32>& challenge,
-		std::string data);
+void md5_update(md5ctx *ctx, const uint8_t *buff, uint32_t leng);
+void md5_final(uint8_t digest[kDefaultMd5DigestSize], md5ctx *ctx);
+std::array<uint8_t, kDefaultMd5DigestSize> md5_challenge_response(
+    const std::array<uint8_t, 32> &challenge, std::string data);
 
 int md5_parse(std::vector<uint8_t> &password_digest, const char *in_md5_data);
