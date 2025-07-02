@@ -38,7 +38,6 @@ struct xattr_data_entry {
 	std::vector<uint8_t> attributeName;
 	std::vector<uint8_t> attributeValue;
 	uint64_t checksum;
-	struct xattr_data_entry **prev, *next;
 
 	xattr_data_entry() = default;
 

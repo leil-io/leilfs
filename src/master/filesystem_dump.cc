@@ -176,11 +176,8 @@ void fs_dumpfree() {
 }
 
 void xattr_dump() {
-	uint32_t i;
-	xattr_data_entry *xa;
-
-	for (i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
-		for (xa = gMetadata->xattr_data_hash[i]; xa; xa = xa->next) {
+	for (auto i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
+		for (const auto &xa : gMetadata->xattr_data_hash[i]) {
 			printf("X|i:%10" PRIiNode "|n:%s|v:%s\n", xa->inode,
 			       fsnodes_escape_name(std::string((char*)xa->attributeName.data(), xa->anleng)).c_str(),
 			       fsnodes_escape_name(std::string((char*)xa->attributeValue.data(), xa->avleng)).c_str());

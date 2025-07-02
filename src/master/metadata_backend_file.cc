@@ -241,7 +241,6 @@ static bool xattr_load(MetadataLoader::Options options) {
 	inode_t inode;
 	uint8_t anleng;
 	uint32_t avleng;
-	xattr_data_entry *xattrEntry = nullptr;
 	xattr_inode_entry *xattrInodeEntry = nullptr;
 	uint32_t hash;
 
@@ -293,7 +292,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 			return false;
 		}
 
-		xattrEntry = new xattr_data_entry;
+		auto xattrEntry = std::make_unique<xattr_data_entry>();
 		xattrEntry->inode = inode;
 		xattrEntry->attributeName.resize(anleng);
 		passert(xattrEntry->attributeName.data());
@@ -312,23 +311,20 @@ static bool xattr_load(MetadataLoader::Options options) {
 
 		options.offset = options.metadataFile->offset(ptr);
 		xattrEntry->avleng = avleng;
+
 		hash = xattr_data_hash_fn(inode, xattrEntry->anleng, xattrEntry->attributeName.data());
-		xattrEntry->next = gMetadata->xattr_data_hash[hash];
-		if (xattrEntry->next) {
-			xattrEntry->next->prev = &(xattrEntry->next);
-		}
-		xattrEntry->prev = gMetadata->xattr_data_hash + hash;
-		gMetadata->xattr_data_hash[hash] = xattrEntry;
+		gMetadata->xattr_data_hash[hash].push_back(std::move(xattrEntry));
+		auto xattrEntryPointer = gMetadata->xattr_data_hash[hash].back().get();
 
 		if (xattrInodeEntry) {
-			xattrInodeEntry->xattrDataList.push_back(xattrEntry);
+			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
 			xattrInodeEntry->anleng += anleng + 1U;
 			xattrInodeEntry->avleng += avleng;
 		} else {
 			auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
 			passert(xattrInodeEntry);
 			xattrInodeEntry->inode = inode;
-			xattrInodeEntry->xattrDataList.push_back(xattrEntry);
+			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
 			xattrInodeEntry->anleng = anleng + 1U;
 			xattrInodeEntry->avleng = avleng;
 			gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
@@ -1242,16 +1238,13 @@ void MetadataBackendFile::storefree(FILE *fd) {
 // XAttr
 
 void MetadataBackendFile::xattr_store(FILE *fd) {
-	uint32_t i;
-	xattr_data_entry *xa;
-
 	constexpr uint32_t kHdrSize =
 	    kinode_t_size + sizeof(xattr_data_entry::anleng) + sizeof(xattr_data_entry::avleng);
 	uint8_t hdrbuff[kHdrSize];
 	uint8_t *ptr;
 
-	for (i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
-		for (xa = gMetadata->xattr_data_hash[i]; xa; xa = xa->next) {
+	for (auto i = 0; i < XATTR_DATA_HASH_SIZE; i++) {
+		for (const auto &xa : gMetadata->xattr_data_hash[i]) {
 			ptr = hdrbuff;
 			putINode(&ptr, xa->inode);
 			put8bit(&ptr, xa->anleng);

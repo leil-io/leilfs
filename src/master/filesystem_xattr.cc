@@ -53,15 +53,22 @@ static inline void xattr_removeentry(xattr_inode_entry *entry, xattr_data_entry 
 	// Remove the data from the xattr_inode_entry
 	entry->xattrDataList.remove(xa);
 
-	*(xa->prev) = xa->next;
-	if (xa->next) {
-		xa->next->prev = xa->prev;
-	}
 	if (gChecksumBackgroundUpdater.isXattrIncluded(xa)) {
 		removeFromChecksum(gChecksumBackgroundUpdater.xattrChecksum, xa->checksum);
 	}
 	removeFromChecksum(gMetadata->xattrChecksum, xa->checksum);
-	delete xa;
+
+	// Delete the entry from the hash bucket
+	auto hash = xattr_data_hash_fn(entry->inode, xa->anleng, xa->attributeName.data());
+	auto start = gMetadata->xattr_data_hash[hash].begin();
+	auto end = gMetadata->xattr_data_hash[hash].end();
+
+	auto entryIt = std::find_if(
+	    start, end, [xa](const std::unique_ptr<xattr_data_entry> &ptr) { return ptr.get() == xa; });
+
+	if (entryIt != end) {
+		gMetadata->xattr_data_hash[hash].remove(*entryIt);
+	}
 }
 
 void xattr_checksum_add_to_background(xattr_data_entry *xde) {
@@ -77,8 +84,8 @@ void xattr_checksum_add_to_background(xattr_data_entry *xde) {
 void xattr_recalculate_checksum() {
 	gMetadata->xattrChecksum = XATTRCHECKSUMSEED;
 	for (int i = 0; i < XATTR_DATA_HASH_SIZE; ++i) {
-		for (xattr_data_entry *xde = gMetadata->xattr_data_hash[i]; xde; xde = xde->next) {
-			xde->checksum = xattr_checksum(xde);
+		for (const auto &xde : gMetadata->xattr_data_hash[i]) {
+			xde->checksum = xattr_checksum(xde.get());
 			addToChecksum(gMetadata->xattrChecksum, xde->checksum);
 		}
 	}
@@ -107,7 +114,6 @@ void xattr_removeinode(inode_t inode) {
 uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 			const uint8_t *attrvalue, uint8_t mode) {
 	xattr_inode_entry *xattrInodeEntry = nullptr;
-	xattr_data_entry *xattrDataEntry;
 	uint32_t hash;
 
 	if (avleng > SFS_XATTR_SIZE_MAX) {
@@ -133,8 +139,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 	}
 
 	hash = xattr_data_hash_fn(inode, anleng, attrname);
-	for (xattrDataEntry = gMetadata->xattr_data_hash[hash]; xattrDataEntry;
-	     xattrDataEntry = xattrDataEntry->next) {
+	for (const auto &xattrDataEntry : gMetadata->xattr_data_hash[hash]) {
 		if (xattrDataEntry->inode == inode && xattrDataEntry->anleng == anleng &&
 		    memcmp(xattrDataEntry->attributeName.data(), attrname, anleng) == 0) {
 			passert(xattrInodeEntry);
@@ -146,7 +151,8 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 			if (mode == XATTR_SMODE_REMOVE) {  // remove
 				xattrInodeEntry->anleng -= anleng + 1U;
 				xattrInodeEntry->avleng -= xattrDataEntry->avleng;
-				xattr_removeentry(xattrInodeEntry, xattrDataEntry);
+
+				xattr_removeentry(xattrInodeEntry, xattrDataEntry.get());
 
 				if (xattrInodeEntry->xattrDataList.empty()) {
 					if (xattrInodeEntry->anleng != 0 || xattrInodeEntry->avleng != 0) {
@@ -177,7 +183,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 
 			xattrDataEntry->avleng = avleng;
 			xattrInodeEntry->avleng += avleng;
-			xattr_update_checksum(xattrDataEntry);
+			xattr_update_checksum(xattrDataEntry.get());
 			return SAUNAFS_STATUS_OK;
 		}
 	}
@@ -190,7 +196,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 		return SAUNAFS_ERROR_ERANGE;
 	}
 
-	xattrDataEntry = new xattr_data_entry;
+	auto xattrDataEntry = std::make_unique<xattr_data_entry>();
 	xattrDataEntry->inode = inode;
 	xattrDataEntry->attributeName.resize(anleng);
 	passert(xattrDataEntry->attributeName.data());
@@ -206,47 +212,41 @@ uint8_t xattr_setattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, ui
 	}
 
 	xattrDataEntry->avleng = avleng;
-	xattrDataEntry->next = gMetadata->xattr_data_hash[hash];
+	xattrDataEntry->checksum = 0;
+	xattr_update_checksum(xattrDataEntry.get());
 
-	if (xattrDataEntry->next) {
-		xattrDataEntry->next->prev = &(xattrDataEntry->next);
-	}
-
-	xattrDataEntry->prev = gMetadata->xattr_data_hash + hash;
-	gMetadata->xattr_data_hash[hash] = xattrDataEntry;
+	gMetadata->xattr_data_hash[hash].push_back(std::move(xattrDataEntry));
+	auto *xattrDataEntryPointer = gMetadata->xattr_data_hash[hash].back().get();
 
 	if (xattrInodeEntry) {
-		xattrInodeEntry->xattrDataList.push_back(xattrDataEntry);
+		xattrInodeEntry->xattrDataList.push_back(xattrDataEntryPointer);
 		xattrInodeEntry->anleng += anleng + 1U;
 		xattrInodeEntry->avleng += avleng;
 	} else {
 		auto xattrInodeEntry = std::make_unique<xattr_inode_entry>();
 		passert(xattrInodeEntry);
 		xattrInodeEntry->inode = inode;
-		xattrInodeEntry->xattrDataList.push_back(xattrDataEntry);
+		xattrInodeEntry->xattrDataList.push_back(xattrDataEntryPointer);
 		xattrInodeEntry->anleng = anleng + 1U;
 		xattrInodeEntry->avleng = avleng;
 		gMetadata->xattr_inode_hash[ihash].push_front(std::move(xattrInodeEntry));
 	}
 
-	xattrDataEntry->checksum = 0;
-	xattr_update_checksum(xattrDataEntry);
 	return SAUNAFS_STATUS_OK;
 }
 
 uint8_t xattr_getattr(inode_t inode, uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
 			uint8_t **attrvalue) {
-	xattr_data_entry *xa;
 
-	for (xa = gMetadata->xattr_data_hash[xattr_data_hash_fn(inode, anleng, attrname)]; xa;
-	     xa = xa->next) {
-		if (xa->inode == inode && xa->anleng == anleng &&
-		    memcmp(xa->attributeName.data(), attrname, anleng) == 0) {
-			if (xa->avleng > SFS_XATTR_SIZE_MAX) {
+	auto hash = xattr_data_hash_fn(inode, anleng, attrname);
+	for (const auto &xattrDataEntry : gMetadata->xattr_data_hash[hash]) {
+		if (xattrDataEntry->inode == inode && xattrDataEntry->anleng == anleng &&
+		    memcmp(xattrDataEntry->attributeName.data(), attrname, anleng) == 0) {
+			if (xattrDataEntry->avleng > SFS_XATTR_SIZE_MAX) {
 				return SAUNAFS_ERROR_ERANGE;
 			}
-			*attrvalue = xa->attributeValue.data();
-			*avleng = xa->avleng;
+			*attrvalue = xattrDataEntry->attributeValue.data();
+			*avleng = xattrDataEntry->avleng;
 			return SAUNAFS_STATUS_OK;
 		}
 	}

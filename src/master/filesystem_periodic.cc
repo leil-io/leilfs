@@ -292,11 +292,9 @@ void fs_background_checksum_recalculation_a_bit() {
 	case ChecksumRecalculatingStep::kXattrs:
 		// Xattrs are in a hashtable, therefore they can be recalculated in multiple steps.
 		while (gChecksumBackgroundUpdater.getPosition() < XATTR_DATA_HASH_SIZE) {
-			for (xattr_data_entry *xde =
-			             gMetadata->xattr_data_hash[gChecksumBackgroundUpdater
-			                                                .getPosition()];
-			     xde; xde = xde->next) {
-				xattr_checksum_add_to_background(xde);
+			auto checksumPosition = gChecksumBackgroundUpdater.getPosition();
+			for (const auto &xde : gMetadata->xattr_data_hash[checksumPosition]) {
+				xattr_checksum_add_to_background(xde.get());
 				++recalculated;
 			}
 			gChecksumBackgroundUpdater.incPosition();

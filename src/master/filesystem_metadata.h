@@ -37,6 +37,9 @@
 using xattr_inode_entry_pointer = std::unique_ptr<xattr_inode_entry>;
 using xattr_inode_entry_list = std::list<xattr_inode_entry_pointer>;
 
+using xattr_data_entry_pointer = std::unique_ptr<xattr_data_entry>;
+using xattr_data_entry_list = std::list<xattr_data_entry_pointer>;
+
 using FSNodePointerList = std::list<FSNode*>;
 
 /** Metadata of the filesystem.
@@ -45,7 +48,7 @@ using FSNodePointerList = std::list<FSNode*>;
 struct FilesystemMetadata {
 public:
 	std::array<xattr_inode_entry_list, XATTR_INODE_HASH_SIZE> xattr_inode_hash;
-	xattr_data_entry *xattr_data_hash[XATTR_DATA_HASH_SIZE];
+	std::array<xattr_data_entry_list, XATTR_DATA_HASH_SIZE> xattr_data_hash;
 	// TODO(Guillex): Check implications of using 64 bits for inode_t in this structure.
 	IdPoolDetainer<inode_t, uint32_t> inode_pool;
 	AclStorage acl_storage;
@@ -113,7 +116,7 @@ public:
 
 		// Free memory allocated in xattr_data_hash hashmap
 		for (uint32_t i = 0; i < XATTR_DATA_HASH_SIZE; ++i) {
-			deleteListConnectedUsingNext(xattr_data_hash[i]);
+			xattr_data_hash[i].clear();
 		}
 
 		// Free memory allocated in nodehash hashmap
