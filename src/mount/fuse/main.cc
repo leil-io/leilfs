@@ -131,7 +131,7 @@ static bool setup_password(std::vector<uint8_t> &md5pass) {
 	md5ctx ctx;
 
 	if (gMountOptions.password) {
-		md5pass.resize(16);
+		md5pass.resize(kDefaultMd5DigestSize);
 		md5_init(&ctx);
 		md5_update(&ctx, (uint8_t *)(gMountOptions.password), strlen(gMountOptions.password));
 		md5_final(md5pass.data(), &ctx);
