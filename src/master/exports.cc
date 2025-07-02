@@ -49,7 +49,7 @@ struct exports {
 	const uint8_t *path;    // without '/' at the begin and at the end
 	uint32_t fromip,toip;
 	uint32_t minversion;
-	uint8_t passworddigest[16];
+	uint8_t *passworddigest;
 	unsigned alldirs:1;
 	unsigned needpassword:1;
 	unsigned meta:1;
@@ -158,7 +158,7 @@ void exports_info_data(uint8_t versmode,uint8_t *buff) {
 
 uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 		const uint8_t *path, const uint8_t rndcode[32],
-		const uint8_t passcode[16], uint8_t *sesflags,
+		const uint8_t *passcode, uint8_t *sesflags,
 		uint32_t *rootuid, uint32_t *rootgid, uint32_t *mapalluid,
 		uint32_t *mapallgid, uint8_t *mingoal, uint8_t *maxgoal,
 		uint32_t *mintrashtime, uint32_t *maxtrashtime) {
@@ -167,7 +167,7 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 	uint8_t rndstate;
 	int ok,nopass;
 	md5ctx md5c;
-	uint8_t entrydigest[16];
+	std::vector<uint8_t> entrydigest(kDefaultMd5DigestSize);
 	exports *e,*f;
 
 	//syslog(LOG_NOTICE,"check exports for: %u.%u.%u.%u:%s",
@@ -231,11 +231,11 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 					nopass=1;
 				} else {
 					md5_init(&md5c);
-					md5_update(&md5c,rndcode,16);
-					md5_update(&md5c,e->passworddigest,16);
-					md5_update(&md5c,rndcode+16,16);
-					md5_final(entrydigest,&md5c);
-					if (memcmp(entrydigest,passcode,16)!=0) {
+					md5_update(&md5c, rndcode, kDefaultMd5DigestSize);
+					md5_update(&md5c, e->passworddigest, kDefaultMd5DigestSize);
+					md5_update(&md5c, rndcode + kDefaultMd5DigestSize, kDefaultMd5DigestSize);
+					md5_final(entrydigest.data(), &md5c);
+					if (memcmp(entrydigest.data(),passcode,kDefaultMd5DigestSize)!=0) {
 						ok=0;
 						nopass=1;
 					}
@@ -290,6 +290,9 @@ static void exports_freelist(exports *arec) {
 		arec = arec->next;
 		if (drec->path) {
 			free((uint8_t *)(drec->path));
+		}
+		if (drec->passworddigest) {
+			free((uint8_t *)(drec->passworddigest));
 		}
 		free(drec);
 	}
@@ -764,6 +767,7 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 					arec->sesflags |= SESFLAG_MAPALL;
 				}
 			} else if (strncmp(p,"md5pass=",8)==0) {
+				arec->passworddigest = (uint8_t *)malloc(kDefaultMd5DigestSize);
 				char *ptr = p+8;
 				uint32_t i=0;
 				o=1;
@@ -773,7 +777,7 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 				}
 				if (*ptr==0 && i==32) {
 					ptr = p+8;
-					for (i=0 ; i<16 ; i++) {
+					for (i = 0; i < kDefaultMd5DigestSize; i++) {
 						if (*ptr>='0' && *ptr<='9') {
 							arec->passworddigest[i]=(*ptr-'0')<<4;
 						} else if (*ptr>='a' && *ptr<='f') {
@@ -846,6 +850,7 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 			break;
 		case 'p':
 			if (strncmp(p,"password=",9)==0) {
+				arec->passworddigest = (uint8_t *)malloc(kDefaultMd5DigestSize);
 				md5_init(&ctx);
 				md5_update(&ctx,(uint8_t*)(p+9),strlen(p+9));
 				md5_final(arec->passworddigest,&ctx);
@@ -885,6 +890,7 @@ static int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	arec->mapalluid = 999;
 	arec->mapallgid = 999;
 	arec->next = NULL;
+	arec->passworddigest = nullptr;
 
 	p = line;
 	while (*p==' ' || *p=='\t') {
