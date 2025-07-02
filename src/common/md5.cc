@@ -95,9 +95,13 @@ static void md5_decode (uint32_t *output,const uint8_t *input,uint32_t len) {
 }
 
 static void md5_transform (uint32_t state[4],const uint8_t block[64]) {
-	uint32_t a=state[0], b=state[1], c=state[2], d=state[3], x[16];
+	uint32_t a=state[0];
+	uint32_t b=state[1];
+	uint32_t c=state[2];
+	uint32_t d=state[3];
+	uint32_t x[kDefaultMd5DigestSize];
 
-	md5_decode(x,block,16);
+	md5_decode(x,block,kDefaultMd5DigestSize);
 
 	FF (a, b, c, d, x[ 0], S11, 0xd76aa478); /* 1 */
 	FF (d, a, b, c, x[ 1], S12, 0xe8c7b756); /* 2 */
@@ -212,7 +216,7 @@ void md5_update (md5ctx *ctx,const uint8_t *buff,uint32_t leng) {
 	memcpy((char*)(ctx->buffer+indx),(const char*)(buff+i),leng-i);
 }
 
-void md5_final (uint8_t digest[16],md5ctx *ctx) {
+void md5_final(uint8_t digest[kDefaultMd5DigestSize], md5ctx *ctx) {
 	uint8_t bits[8];
 	uint32_t indx,padleng;
 
@@ -225,22 +229,22 @@ void md5_final (uint8_t digest[16],md5ctx *ctx) {
 	memset((char*)ctx,0,sizeof(md5ctx));
 }
 
-std::array<uint8_t, 16> md5_challenge_response(const std::array<uint8_t, 32>& challenge,
-		std::string data) {
+std::array<uint8_t, kDefaultMd5DigestSize> md5_challenge_response(
+    const std::array<uint8_t, 32> &challenge, std::string data) {
 	md5ctx ctx;
 	md5_init(&ctx);
-	md5_update(&ctx, challenge.data(), 16);
+	md5_update(&ctx, challenge.data(), kDefaultMd5DigestSize);
 	md5_update(&ctx, (uint8_t*)(data.c_str()), data.size());
-	md5_update(&ctx, challenge.data() + 16, 16);
-	std::array<uint8_t, 16> digest;
+	md5_update(&ctx, challenge.data() + kDefaultMd5DigestSize, kDefaultMd5DigestSize);
+	std::array<uint8_t, kDefaultMd5DigestSize> digest;
 	md5_final(digest.data(), &ctx);
 	return digest;
 }
 
 int md5_parse(std::vector<uint8_t> &password_digest, const char *in_md5_data) {
-	password_digest.resize(16);
+	password_digest.resize(kDefaultMd5DigestSize);
 	const uint8_t *p = (const uint8_t *)in_md5_data;
-	for (int i = 0; i < 16; ++i) {
+	for (size_t i = 0; i < kDefaultMd5DigestSize; ++i) {
 		if (*p >= '0' && *p <= '9') {
 			password_digest[i] = (*p - '0') << 4;
 		} else if (*p >= 'a' && *p <= 'f') {
