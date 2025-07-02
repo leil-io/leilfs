@@ -138,6 +138,7 @@ void mallocTrimThread(const std::stop_token& stop, unsigned mallocTrimePeriod_ms
 #endif
 
 using ReaddirSessions = std::map<std::uint64_t, ReaddirSession>;
+constexpr uint32_t kMaxReadTryCount = 10;
 
 /// Used to mitigate helgrind warnings when exceptions are thrown
 /// from multiple threads
@@ -2431,31 +2432,38 @@ ReadCache::Result read(Context &ctx,
 
 	uint32_t ssize = alignedSize;
 
-	err = read_data(static_cast<ReadRecord *>(fileinfo->data), off, size, alignedOffset, ssize, ret);
-	ssize = ret.requestSize(alignedOffset, ssize);
-	if (err != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
-				ino,
-				(uint64_t)size,
-				(uint64_t)off,
-				saunafs_error_string(err));
-		throw RequestException(err);
-	} else {
-		uint32_t replyOffset = off - alignedOffset;
-		if (ssize > replyOffset) {
-			ssize -= replyOffset;
-			if (ssize > size) {
-				ssize = size;
-			}
-		} else {
-			ssize = 0;
+	uint32_t tryCount = 0;
+	do {
+		// Make sure the result is empty before reading
+		ret.release();
+
+		err = read_data(static_cast<ReadRecord *>(fileinfo->data), off, size, alignedOffset, ssize,
+		                ret);
+		tryCount++;
+	} while (tryCount <= kMaxReadTryCount && err == SAUNAFS_STATUS_OK &&
+	         !ret.isValid(alignedOffset));
+
+	if (!ret.isValid(alignedOffset) || err != SAUNAFS_STATUS_OK) {
+		if (err == SAUNAFS_STATUS_OK) {
+			err = SAUNAFS_ERROR_IO; // if the result is not valid, return EIO
 		}
-		oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): OK (%lu)",
-				ino,
-				(uint64_t)size,
-				(uint64_t)off,
-				(unsigned long int)ssize);
+
+		oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): %s", (unsigned long int)ino,
+		             (uint64_t)size, (uint64_t)off, saunafs_error_string(err));
+		throw RequestException(err);
 	}
+
+	ssize = ret.requestSize(alignedOffset, ssize);
+
+	uint32_t replyOffset = off - alignedOffset;
+	if (ssize > replyOffset) {
+		ssize -= replyOffset;
+		if (ssize > size) { ssize = size; }
+	} else {
+		ssize = 0;
+	}
+	oplog_printf(ctx, "read (%lu,%" PRIu64 ",%" PRIu64 "): OK (%lu)", (unsigned long int)ino,
+	             (uint64_t)size, (uint64_t)off, (unsigned long int)ssize);
 	return ret;
 }
 
