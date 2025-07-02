@@ -492,7 +492,7 @@ int fs_connect(bool verbose) {
 	uint32_t messageValueIterator;
 	uint8_t *messageToMaster,*registrationMessageBuffer;
 	md5ctx md5PassCtx;
-	uint8_t passwordDigest[16];
+	std::vector<uint8_t> passwordDigest;
 	const uint8_t *messageFromMaster;
 	uint8_t havepassword;
 	uint32_t subfolderPathLengthBytes,mountPointPathLegthBytes;
@@ -502,7 +502,7 @@ int fs_connect(bool verbose) {
 	uint32_t mintrashtime,maxtrashtime;
 	const char *sesflagposstrtab[]={SESFLAG_POS_STRINGS};
 	const char *sesflagnegstrtab[]={SESFLAG_NEG_STRINGS};
-	uint32_t passwordDigestLength = sizeof(passwordDigest);
+	uint32_t passwordDigestLength = gInitParams.password_digest.size();
 	uint32_t fuseRegisterBlobAclPacketSizeValueLength = sizeof(fuseRegisterBlobAclLength);
 	uint32_t fuseRegisterBlobAclTotalPacketLength = fuseRegisterBlobAclLength + 1;
 	uint32_t fuseRegisterSessionTypeSize = 1U;
@@ -518,6 +518,8 @@ int fs_connect(bool verbose) {
 	}
 
 	havepassword = !gInitParams.password_digest.empty();
+	passwordDigestLength = gInitParams.password_digest.size();
+	passwordDigest.resize(passwordDigestLength);
 	mountPointPathLegthBytes=gInitParams.mountpoint.size() + 1;
 	if (gInitParams.meta) {
 		subfolderPathLengthBytes=0;
@@ -641,7 +643,7 @@ int fs_connect(bool verbose) {
 		md5_update(&md5PassCtx,registrationMessageBuffer,passwordDigestLength);
 		md5_update(&md5PassCtx, gInitParams.password_digest.data(), gInitParams.password_digest.size());
 		md5_update(&md5PassCtx,registrationMessageBuffer+passwordDigestLength,passwordDigestLength);
-		md5_final(passwordDigest,&md5PassCtx);
+		md5_final(passwordDigest.data(),&md5PassCtx);
 	}
 	messageToMaster = registrationMessageBuffer;
 	put32bit(&messageToMaster,CLTOMA_FUSE_REGISTER);
@@ -672,7 +674,7 @@ int fs_connect(bool verbose) {
 		memcpy(messageToMaster,gInitParams.subfolder.c_str(),subfolderPathLengthBytes);
 	}
 	if (havepassword) {
-		memcpy(messageToMaster+subfolderPathLengthBytes,passwordDigest,passwordDigestLength);
+		memcpy(messageToMaster+subfolderPathLengthBytes,passwordDigest.data(),passwordDigestLength);
 	}
 	if (tcptowrite(fd, registrationMessageBuffer,
 	               cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength +
