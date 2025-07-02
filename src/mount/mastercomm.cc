@@ -92,6 +92,18 @@ struct threc {
 #define NO_DATA_RECEIVED_FROM_MASTER NULL
 #define RECEIVE_TIMEOUT 10
 
+constexpr size_t kDefaultTcpCommTimeoutMSeconds = 1000;
+constexpr uint32_t fuseRegisterBlobAclLength = sizeof(FUSE_REGISTER_BLOB_ACL) - 1;
+constexpr uint32_t cltomaFuseRegisterHeaderLength = sizeof(CLTOMA_FUSE_REGISTER);
+constexpr size_t saunafsVersionMajorSize = 2U;
+constexpr size_t saunafsVersionMinorSize = 1U;
+constexpr size_t saunafsVersionMicroSize = 1U;
+
+constexpr uint32_t kSecondsPerMinute = 60;
+constexpr uint32_t kSecondsPerHour   = 60 * kSecondsPerMinute;
+constexpr uint32_t kSecondsPerDay    = 24 * kSecondsPerHour;
+constexpr uint32_t kSecondsPerWeek   = 7 * kSecondsPerDay;
+
 static threc *threchead=NULL;
 
 static int fd;
@@ -490,6 +502,16 @@ int fs_connect(bool verbose) {
 	uint32_t mintrashtime,maxtrashtime;
 	const char *sesflagposstrtab[]={SESFLAG_POS_STRINGS};
 	const char *sesflagnegstrtab[]={SESFLAG_NEG_STRINGS};
+	uint32_t passwordDigestLength = sizeof(passwordDigest);
+	uint32_t fuseRegisterBlobAclPacketSizeValueLength = sizeof(fuseRegisterBlobAclLength);
+	uint32_t fuseRegisterBlobAclTotalPacketLength = fuseRegisterBlobAclLength + 1;
+	uint32_t fuseRegisterSessionTypeSize = 1U;
+	uint32_t fuseRegisterSubfolderLength =
+	    (gInitParams.meta) ? 0 : sizeof(subfolderPathLengthBytes);
+	uint32_t fuseRegisterPacketInfoLength =
+	    fuseRegisterSessionTypeSize + sizeof(mountPointPathLegthBytes) + saunafsVersionMajorSize +
+	    saunafsVersionMinorSize + saunafsVersionMicroSize + fuseRegisterSubfolderLength;
+	uint32_t masterResponseRegisterPacketLength = 32U;
 
 	if (fs_resolve(verbose ,gInitParams.bind_host, gInitParams.host, gInitParams.port) < 0) {
 		return -1;
@@ -499,10 +521,10 @@ int fs_connect(bool verbose) {
 	mountPointPathLegthBytes=gInitParams.mountpoint.size() + 1;
 	if (gInitParams.meta) {
 		subfolderPathLengthBytes=0;
-		registrationMessageBuffer = (uint8_t*) malloc(8+64+9+mountPointPathLegthBytes+16);
+		registrationMessageBuffer = (uint8_t*) malloc(cltomaFuseRegisterHeaderLength+fuseRegisterBlobAclPacketSizeValueLength+fuseRegisterBlobAclLength+fuseRegisterPacketInfoLength+mountPointPathLegthBytes+passwordDigestLength);
 	} else {
 		subfolderPathLengthBytes=gInitParams.subfolder.size() + 1;
-		registrationMessageBuffer = (uint8_t*) malloc(8+64+13+subfolderPathLengthBytes+mountPointPathLegthBytes+16);
+		registrationMessageBuffer = (uint8_t*) malloc(cltomaFuseRegisterHeaderLength+fuseRegisterBlobAclPacketSizeValueLength+fuseRegisterBlobAclLength+fuseRegisterPacketInfoLength+subfolderPathLengthBytes+mountPointPathLegthBytes+passwordDigestLength);
 	}
 
 	fd = tcpsocket();
@@ -544,11 +566,16 @@ int fs_connect(bool verbose) {
 	if (havepassword) {
 		messageToMaster = registrationMessageBuffer;
 		put32bit(&messageToMaster,CLTOMA_FUSE_REGISTER);
-		put32bit(&messageToMaster,65);
-		memcpy(messageToMaster,FUSE_REGISTER_BLOB_ACL,64);
-		messageToMaster+=64;
+		put32bit(&messageToMaster,fuseRegisterBlobAclTotalPacketLength);
+		memcpy(messageToMaster,FUSE_REGISTER_BLOB_ACL,fuseRegisterBlobAclLength);
+		messageToMaster+=fuseRegisterBlobAclLength;
 		put8bit(&messageToMaster,REGISTER_GETRANDOM);
-		if (tcptowrite(fd,registrationMessageBuffer,8+65,1000)!=8+65) {
+		if (tcptowrite(fd, registrationMessageBuffer,
+		               cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength +
+		                   fuseRegisterBlobAclTotalPacketLength,
+		               kDefaultTcpCommTimeoutMSeconds) !=
+		    (int32_t)(cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength +
+		              fuseRegisterBlobAclTotalPacketLength)) {
 			if (verbose) {
 				fprintf(stderr,"error sending data to sfsmaster\n");
 			} else {
@@ -559,7 +586,10 @@ int fs_connect(bool verbose) {
 			free(registrationMessageBuffer);
 			return -1;
 		}
-		if (tcptoread(fd,registrationMessageBuffer,8,1000)!=8) {
+		if (tcptoread(fd, registrationMessageBuffer,
+		              cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength,
+		              kDefaultTcpCommTimeoutMSeconds) !=
+		    (int32_t)(cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength)) {
 			if (verbose) {
 				fprintf(stderr,"error receiving data from sfsmaster\n");
 			} else {
@@ -584,7 +614,7 @@ int fs_connect(bool verbose) {
 			return -1;
 		}
 		get32bit(&messageFromMaster, messageValueIterator);
-		if (messageValueIterator!=32) {
+		if (messageValueIterator!=masterResponseRegisterPacketLength) {
 			if (verbose) {
 				fprintf(stderr,"got incorrect answer from sfsmaster\n");
 			} else {
@@ -595,7 +625,8 @@ int fs_connect(bool verbose) {
 			free(registrationMessageBuffer);
 			return -1;
 		}
-		if (tcptoread(fd,registrationMessageBuffer,32,1000)!=32) {
+		if (tcptoread(fd, registrationMessageBuffer, masterResponseRegisterPacketLength,
+		              kDefaultTcpCommTimeoutMSeconds) != (int32_t)masterResponseRegisterPacketLength) {
 			if (verbose) {
 				fprintf(stderr,"error receiving data from sfsmaster\n");
 			} else {
@@ -607,28 +638,28 @@ int fs_connect(bool verbose) {
 			return -1;
 		}
 		md5_init(&md5PassCtx);
-		md5_update(&md5PassCtx,registrationMessageBuffer,16);
+		md5_update(&md5PassCtx,registrationMessageBuffer,passwordDigestLength);
 		md5_update(&md5PassCtx, gInitParams.password_digest.data(), gInitParams.password_digest.size());
-		md5_update(&md5PassCtx,registrationMessageBuffer+16,16);
+		md5_update(&md5PassCtx,registrationMessageBuffer+passwordDigestLength,passwordDigestLength);
 		md5_final(passwordDigest,&md5PassCtx);
 	}
 	messageToMaster = registrationMessageBuffer;
 	put32bit(&messageToMaster,CLTOMA_FUSE_REGISTER);
 	if (gInitParams.meta) {
 		if (havepassword) {
-			put32bit(&messageToMaster,64+9+mountPointPathLegthBytes+16);
+			put32bit(&messageToMaster,fuseRegisterBlobAclLength+fuseRegisterPacketInfoLength+mountPointPathLegthBytes+passwordDigestLength);
 		} else {
-			put32bit(&messageToMaster,64+9+mountPointPathLegthBytes);
+			put32bit(&messageToMaster,fuseRegisterBlobAclLength+fuseRegisterPacketInfoLength+mountPointPathLegthBytes);
 		}
 	} else {
 		if (havepassword) {
-			put32bit(&messageToMaster,64+13+mountPointPathLegthBytes+subfolderPathLengthBytes+16);
+			put32bit(&messageToMaster,fuseRegisterBlobAclLength+fuseRegisterPacketInfoLength+mountPointPathLegthBytes+subfolderPathLengthBytes+passwordDigestLength);
 		} else {
-			put32bit(&messageToMaster,64+13+mountPointPathLegthBytes+subfolderPathLengthBytes);
+			put32bit(&messageToMaster,fuseRegisterBlobAclLength+fuseRegisterPacketInfoLength+mountPointPathLegthBytes+subfolderPathLengthBytes);
 		}
 	}
-	memcpy(messageToMaster,FUSE_REGISTER_BLOB_ACL,64);
-	messageToMaster+=64;
+	memcpy(messageToMaster,FUSE_REGISTER_BLOB_ACL,fuseRegisterBlobAclLength);
+	messageToMaster+=fuseRegisterBlobAclLength;
 	put8bit(&messageToMaster,(gInitParams.meta)?REGISTER_NEWMETASESSION:REGISTER_NEWSESSION);
 	put16bit(&messageToMaster,SAUNAFS_PACKAGE_VERSION_MAJOR);
 	put8bit(&messageToMaster,SAUNAFS_PACKAGE_VERSION_MINOR);
@@ -641,9 +672,18 @@ int fs_connect(bool verbose) {
 		memcpy(messageToMaster,gInitParams.subfolder.c_str(),subfolderPathLengthBytes);
 	}
 	if (havepassword) {
-		memcpy(messageToMaster+subfolderPathLengthBytes,passwordDigest,16);
+		memcpy(messageToMaster+subfolderPathLengthBytes,passwordDigest,passwordDigestLength);
 	}
-	if (tcptowrite(fd,registrationMessageBuffer,8+64+(gInitParams.meta?9:13)+mountPointPathLegthBytes+subfolderPathLengthBytes+(havepassword?16:0),1000)!=(int32_t)(8+64+(gInitParams.meta?9:13)+mountPointPathLegthBytes+subfolderPathLengthBytes+(havepassword?16:0))) {
+	if (tcptowrite(fd, registrationMessageBuffer,
+	               cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength +
+	                   fuseRegisterBlobAclLength + fuseRegisterPacketInfoLength +
+	                   mountPointPathLegthBytes + subfolderPathLengthBytes +
+	                   (havepassword ? passwordDigestLength : 0),
+	               kDefaultTcpCommTimeoutMSeconds) !=
+	    (int32_t)(cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength +
+	              fuseRegisterBlobAclLength + fuseRegisterPacketInfoLength +
+	              mountPointPathLegthBytes + subfolderPathLengthBytes +
+	              (havepassword ? passwordDigestLength : 0))) {
 		if (verbose) {
 			fprintf(stderr,"error sending data to sfsmaster: %s\n",strerr(tcpgetlasterror()));
 		} else {
@@ -654,7 +694,10 @@ int fs_connect(bool verbose) {
 		free(registrationMessageBuffer);
 		return -1;
 	}
-	if (tcptoread(fd,registrationMessageBuffer,8,1000)!=8) {
+	if (tcptoread(fd, registrationMessageBuffer,
+	              cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength,
+	              kDefaultTcpCommTimeoutMSeconds) !=
+	    (int32_t)(cltomaFuseRegisterHeaderLength + fuseRegisterBlobAclPacketSizeValueLength)) {
 		int tcplasterr = tcpgetlasterror();
 		const auto* errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
 		if (verbose) {
@@ -692,7 +735,8 @@ int fs_connect(bool verbose) {
 		free(registrationMessageBuffer);
 		return -1;
 	}
-	if (tcptoread(fd,registrationMessageBuffer,messageValueIterator,1000)!=(int32_t)messageValueIterator) {
+	if (tcptoread(fd, registrationMessageBuffer, messageValueIterator,
+	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageValueIterator) {
 		if (verbose) {
 			fprintf(stderr,"error receiving data from sfsmaster: %s\n",strerr(tcpgetlasterror()));
 		} else {
@@ -763,7 +807,7 @@ int fs_connect(bool verbose) {
 	if (verbose) {
 		fprintf(stderr,"sfsmaster accepted connection with parameters: ");
 		bool clientHasSessionFlags=false;
-		for (int sesFlagsIndex=0 ; sesFlagsIndex<8 ; sesFlagsIndex++) {
+		for (uint32_t sesFlagsIndex=0 ; sesFlagsIndex<sizeof(sesflags) ; sesFlagsIndex++) {
 			if (sesflags&(1<<sesFlagsIndex)) {
 				fprintf(stderr,"%s%s",clientHasSessionFlags?",":"",sesflagposstrtab[sesFlagsIndex]);
 				clientHasSessionFlags=true;
@@ -843,24 +887,24 @@ int fs_connect(bool verbose) {
 			if (mingoal > GoalId::kMin || maxgoal < GoalId::kMax) {
 				fprintf(stderr," ; setgoal limited to (%u:%u)",mingoal,maxgoal);
 			}
-			if (mintrashtime>0 || maxtrashtime<UINT32_C(0xFFFFFFFF)) {
+			if (mintrashtime>0 || maxtrashtime<std::numeric_limits<uint32_t>::max()) {
 				fprintf(stderr," ; settrashtime limited to (");
 				if (mintrashtime>0) {
-					if (mintrashtime>604800) {
-						fprintf(stderr,"%uw",mintrashtime/604800);
-						mintrashtime %= 604800;
+					if (mintrashtime>kSecondsPerWeek) {
+						fprintf(stderr,"%uw",mintrashtime/kSecondsPerWeek);
+						mintrashtime %= kSecondsPerWeek;
 					}
-					if (mintrashtime>86400) {
-						fprintf(stderr,"%ud",mintrashtime/86400);
-						mintrashtime %= 86400;
+					if (mintrashtime>kSecondsPerDay) {
+						fprintf(stderr,"%ud",mintrashtime/kSecondsPerDay);
+						mintrashtime %= kSecondsPerDay;
 					}
-					if (mintrashtime>3600) {
-						fprintf(stderr,"%uh",mintrashtime/3600);
-						mintrashtime %= 3600;
+					if (mintrashtime>kSecondsPerHour) {
+						fprintf(stderr,"%uh",mintrashtime/kSecondsPerHour);
+						mintrashtime %= kSecondsPerHour;
 					}
-					if (mintrashtime>60) {
-						fprintf(stderr,"%um",mintrashtime/60);
-						mintrashtime %= 60;
+					if (mintrashtime>kSecondsPerMinute) {
+						fprintf(stderr,"%um",mintrashtime/kSecondsPerMinute);
+						mintrashtime %= kSecondsPerMinute;
 					}
 					if (mintrashtime>0) {
 						fprintf(stderr,"%us",mintrashtime);
@@ -870,21 +914,21 @@ int fs_connect(bool verbose) {
 				}
 				fprintf(stderr,":");
 				if (maxtrashtime>0) {
-					if (maxtrashtime>604800) {
-						fprintf(stderr,"%uw",maxtrashtime/604800);
-						maxtrashtime %= 604800;
+					if (maxtrashtime>kSecondsPerWeek) {
+						fprintf(stderr,"%uw",maxtrashtime/kSecondsPerWeek);
+						maxtrashtime %= kSecondsPerWeek;
 					}
-					if (maxtrashtime>86400) {
-						fprintf(stderr,"%ud",maxtrashtime/86400);
-						maxtrashtime %= 86400;
+					if (maxtrashtime>kSecondsPerDay) {
+						fprintf(stderr,"%ud",maxtrashtime/kSecondsPerDay);
+						maxtrashtime %= kSecondsPerDay;
 					}
-					if (maxtrashtime>3600) {
-						fprintf(stderr,"%uh",maxtrashtime/3600);
-						maxtrashtime %= 3600;
+					if (maxtrashtime>kSecondsPerHour) {
+						fprintf(stderr,"%uh",maxtrashtime/kSecondsPerHour);
+						maxtrashtime %= kSecondsPerHour;
 					}
-					if (maxtrashtime>60) {
-						fprintf(stderr,"%um",maxtrashtime/60);
-						maxtrashtime %= 60;
+					if (maxtrashtime>kSecondsPerMinute) {
+						fprintf(stderr,"%um",maxtrashtime/kSecondsPerMinute);
+						maxtrashtime %= kSecondsPerMinute;
 					}
 					if (maxtrashtime>0) {
 						fprintf(stderr,"%us",maxtrashtime);
