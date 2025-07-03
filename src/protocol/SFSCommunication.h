@@ -359,11 +359,12 @@ enum class SugidClearMode : uint8_t {
 
 // 0x044C
 #define SAU_CSTOMA_REGISTER_HOST (1000U + 100U)
-/// ip:32 port:16 timeout:32 vershex:32
+/// version==0 ip:32 port:16 timeout:32 vershex:32
+/// version==1 ip:32 port:16 timeout:32 vershex:32 clusterid:STDSTRING
 
 // 0x0497
 #define SAU_MATOCS_REGISTER_HOST (1000U + 175U)
-/// status:8
+/// status:8 version:32 clusterid:STDSTRING
 
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
@@ -379,7 +380,7 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CSTOMA_REGISTER_LABEL (1000U + 103U)
 /// label:STDSTRING
 
-// 0x0450
+// 0x0458
 #define SAU_CSTOMA_REGISTER_CONFIG (1000U + 112U)
 /// config:STDSTRING
 
@@ -1429,16 +1430,6 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCL_CHUNKS_HEALTH (1000U + 527U)
 /// regularonly:8 data:(ChunksAvailabilityState ChunksReplicationState)
 
-// 0x05F6
-#define SAU_CLTOMA_CHUNKS_HEALTH (1000U + 526U)
-/// regularonly:8
-
-// 0x05F7
-#define SAU_MATOCL_CHUNKS_HEALTH (1000U + 527U)
-// G - All goals count. Goal 1-9 + xor2-10 + goal 0 = 19
-// C - All columns count. Chunks with 0-11+ missing/redundant parts = 12
-/// regularonly:8 tables:(availability:[G * safe:64, G * endangered:64, G * lost:64], replication:G * [C * chunks:64], G * [C * chunks:64])
-
 // 0x05F8
 #define SAU_MATOCL_IOLIMITS_CONFIG (1000U + 528U)
 /// cfgversion:32 period:32 subsystem:STDSTRING groups:(vector<STDSTRING>)
@@ -1731,19 +1722,19 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCL_FUSE_GETTRASH (1000U + 602U)
 /// msgid:32 entries:(vector<NamedInodeEntry>)
 
-// 0x0637
+// 0x06A9
 #define SAU_CLTOMA_SESSION_FILES (1000U + 705U)
 /// -
 
-// 0x0638
+// 0x06AA
 #define SAU_MATOCL_SESSION_FILES (1000U + 706U)
 // N * [ sessionid:32 peerid:32 files:32 ]
 
-// 0x0639
+// 0x06AB
 #define SAU_CLTOMA_DELETE_SESSION (1000U + 707U)
 // sessionid:32
 
-// 0x063A
+// 0x06AC
 #define SAU_MATOCL_DELETE_SESSION (1000U + 708U)
 /// status:8
 
