@@ -987,8 +987,8 @@ static bool checkMetadataSignature(const std::shared_ptr<MemoryMappedFile> &meta
 	return true;
 }
 
-void MetadataBackendFile::loadall(const std::string &fname, int ignoreflag) {
-	auto metadataFile = std::make_shared<MemoryMappedFile>(fname);
+void MetadataBackendFile::loadall(int ignoreflag) {
+	auto metadataFile = std::make_shared<MemoryMappedFile>(metadataFile_);
 	if (!checkMetadataSignature(metadataFile)) { return; }
 	if (fs_load(metadataFile, ignoreflag) != kOpSuccess) {
 		throw MetadataConsistencyException(MetadataStructureReadErrorMsg);
@@ -1009,7 +1009,7 @@ void MetadataBackendFile::loadall(const std::string &fname, int ignoreflag) {
 	    metadataFile->filename().c_str(), gMetadata->nodes, gMetadata->dirnodes,
 	    gMetadata->filenodes, gMetadata->linknodes, chunk_count());
 #else
-	safs_pretty_syslog(LOG_INFO, "metadata file %s read", fname.c_str());
+	safs::log_info("metadata file {} read", metadataFile_);
 #endif
 }
 
@@ -1439,6 +1439,53 @@ void MetadataBackendFile::store_fd(FILE *fd) {
 }
 
 #endif  // #ifndef METALOGGER
+
+void MetadataBackendFile::init() {
+	if (fs::exists(kMetadataTmpFilename)) {
+		throw MetadataFsConsistencyException(
+		    "temporary metadata file (" + std::string(kMetadataTmpFilename) + ") exists,"
+		    " metadata directory is in dirty state");
+	}
+
+	std::string metadataFile;
+	bool metadataFileExists = fs::exists(kMetadataFilename);
+	bool legacyMetadataFileExists = fs::exists(kMetadataLegacyFilename);
+
+	if (metadataFileExists) { metadataFile = kMetadataFilename; }
+
+	if (metadataFileExists && legacyMetadataFileExists) {
+		metadataFile = kMetadataFilename;
+		safs_pretty_syslog(LOG_WARNING,
+		                   "There are two metadata files in the data path: %s and %s."
+		                   " Please remove the legacy one (%s) to avoid damage to your storage.",
+		                   kMetadataFilename, kMetadataLegacyFilename, kMetadataLegacyFilename);
+	}
+
+	if (!metadataFileExists && legacyMetadataFileExists) {
+		metadataFile = kMetadataLegacyFilename;
+		safs_pretty_syslog(
+		    LOG_WARNING,
+		    "Only Legacy metadata file %s found and will be loaded instead."
+		    " You should delete legacy metadata %s on next restart after new metadata %s is created ",
+		    metadataFile.c_str(), kMetadataLegacyFilename, kMetadataFilename);
+	}
+
+	metadataFile_ = metadataFile;
+
+#if !defined(METALOGGER) && !defined(METARESTORE)
+	if (!metadataserver::isMaster() && metadataFile_.empty()) {
+		metadataFile_ = kMetadataFilename;
+	}
+
+	if (metadataserver::isMaster() && !metadataFileExists && !legacyMetadataFileExists) {
+		std::string currentPath = fs::getCurrentWorkingDirectoryNoThrow();
+		throw FilesystemException(
+		    "can't open metadata file " + currentPath + "/" + kMetadataFilename +
+		    ": if this is a new installation create empty metadata by copying " + currentPath +
+		    "/" + kMetadataFilename + ".empty to " + currentPath + "/" + kMetadataFilename);
+	}
+#endif
+}
 
 uint64_t MetadataBackendFile::getVersion(const std::string& file) {
 	int fd;

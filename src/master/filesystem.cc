@@ -227,41 +227,10 @@ void fs_erase_message_from_lockfile() {
 int fs_loadall(void) {
 	fs_strinit();
 	chunk_strinit();
-	if (fs::exists(kMetadataTmpFilename)) {
-		throw MetadataFsConsistencyException(
-		    "temporary metadata file (" + std::string(kMetadataTmpFilename) + ") exists,"
-		    " metadata directory is in dirty state");
-	}
-	std::string metadataFile;
-	bool metadataFileExists = fs::exists(kMetadataFilename);
-	bool legacyMetadataFileExists = fs::exists(kMetadataLegacyFilename);
-	if (metadataFileExists) {
-		metadataFile = kMetadataFilename;
-	}
-	if(metadataFileExists && legacyMetadataFileExists) {
-		metadataFile = kMetadataFilename;
-		safs_pretty_syslog(LOG_WARNING, "There are two metadata files in the data path: %s and %s."
-		                   " Please remove the legacy one (%s) to avoid damage to your storage.",
-		                   kMetadataFilename, kMetadataLegacyFilename, kMetadataLegacyFilename);
-	}
-	if (!metadataFileExists && legacyMetadataFileExists) {
-		metadataFile = kMetadataLegacyFilename;
-		safs_pretty_syslog(LOG_WARNING, "Only Legacy metadata file %s found and will be loaded instead."
-		                   " You should delete legacy metadata %s on next restart after new metadata %s is created ",
-		                   metadataFile.c_str(), kMetadataLegacyFilename, kMetadataFilename);
-	}
-	if (metadataserver::isMaster() && !metadataFileExists && !legacyMetadataFileExists) {
-		fs_unlock();
-		std::string currentPath = fs::getCurrentWorkingDirectoryNoThrow();
-		throw FilesystemException("can't open metadata file "+ currentPath + "/" + kMetadataFilename
-					+ ": if this is a new installation create empty metadata by copying "
-					+ currentPath + "/" + kMetadataFilename + ".empty to " + currentPath
-					+ "/" + kMetadataFilename);
-	}
 
 	{
 		auto scopedTimer = util::ScopedTimer("metadata load time");
-		gMetadataBackend->loadall(metadataFile, 0);
+		gMetadataBackend->loadall(0);
 	}
 
 	bool autoRecovery = fs_can_do_auto_recovery();
@@ -422,17 +391,20 @@ int fs_init(bool doLoad) {
 	}
 
 	if (!gMetadataLockfile) {
-		gMetadataLockfile.reset(new Lockfile(kMetadataFilename + std::string(".lock")));
+		gMetadataLockfile = std::make_unique<Lockfile>(kMetadataFilename + std::string(".lock"));
 	}
+
 	if (!gMetadataLockfile->isLocked()) {
 		try {
-			gMetadataLockfile->lock((fs_can_do_auto_recovery() || !metadataserver::isMaster()) ?
-					Lockfile::StaleLock::kSwallow : Lockfile::StaleLock::kReject);
-		} catch (const LockfileException& e) {
+			gMetadataLockfile->lock((fs_can_do_auto_recovery() || !metadataserver::isMaster())
+			                            ? Lockfile::StaleLock::kSwallow
+			                            : Lockfile::StaleLock::kReject);
+		} catch (const LockfileException &e) {
 			if (e.reason() == LockfileException::Reason::kStaleLock) {
 				throw LockfileException(
-						std::string(e.what()) + ", consider running `sfsmetarestore -a' to fix problems with your datadir.",
-						LockfileException::Reason::kStaleLock);
+				    std::string(e.what()) +
+				        ", consider running `sfsmetarestore -a' to fix problems with your datadir.",
+				    LockfileException::Reason::kStaleLock);
 			}
 			throw;
 		}
@@ -443,18 +415,23 @@ int fs_init(bool doLoad) {
 	if (doLoad || (metadataserver::isMaster())) {
 		fs_loadall();
 	}
+
 	eventloop_reloadregister(fs_reload);
 	metadataserver::registerFunctionCalledOnPromotion(fs_become_master);
 	auto metadataDumpPeriod = cfg_getint32("METADATA_DUMP_PERIOD_SECONDS", 3600);
+
 	if (metadataDumpPeriod > 0) {  /// 0 means disabled periodic metadata dumps
 		eventloop_timeregister(TIMEMODE_RUN_LATE, metadataDumpPeriod, 0,
 		                       fs_periodic_storeall);
 	}
+
 	if (metadataserver::isMaster()) {
 		fs_become_master();
 	}
+
 	eventloop_pollregister(metadataPollDesc, metadataPollServe);
 	eventloop_destructregister(fs_term);
+
 	return 0;
 }
 
@@ -466,8 +443,9 @@ int fs_init() {
 }
 
 #else   // METARESTORE mode
-int fs_init(const char *fname,int ignoreflag, bool noLock) {
+int fs_init(const char *fname, int ignoreflag, bool noLock) {
 	gMetadataBackend = std::make_unique<MetadataBackendFile>();
+	dynamic_cast<MetadataBackendFile *>(gMetadataBackend.get())->setMetadataFile(fname);
 
 	if (!noLock) {
 		gMetadataLockfile.reset(new Lockfile(fs::dirname(fname) + "/" + kMetadataFilename + ".lock"));
@@ -475,7 +453,7 @@ int fs_init(const char *fname,int ignoreflag, bool noLock) {
 	}
 	fs_strinit();
 	chunk_strinit();
-	gMetadataBackend->loadall(fname,ignoreflag);
+	gMetadataBackend->loadall(ignoreflag);
 	return 0;
 }
 #endif  // #ifndef METARESTORE

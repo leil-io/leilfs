@@ -58,6 +58,7 @@ inline int metadata_backend_init() {
 	if (gMetadataBackend == nullptr) {
 		try {
 			gMetadataBackend = std::make_unique<MetadataBackendFile>();
+			gMetadataBackend->init();
 		} catch (const std::exception &e) {
 			constexpr auto kErrorMessage = "Failed to initialize metadata backend";
 			safs::log_err("{}: {}", kErrorMessage, e.what());
