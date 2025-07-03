@@ -40,11 +40,7 @@ struct XAttributeDataEntry {
 	uint64_t checksum;
 
 	XAttributeDataEntry() = default;
-
-	~XAttributeDataEntry() {
-		attributeName.clear();
-		attributeValue.clear();
-	}
+	~XAttributeDataEntry() = default;
 };
 
 struct XAttributeInodeEntry {

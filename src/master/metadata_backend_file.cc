@@ -238,16 +238,18 @@ uint8_t MetadataBackendFile::fs_storeall(DumpType dumpType) {
 
 static bool xattr_load(MetadataLoader::Options options) {
 	const uint8_t *ptr;
-	inode_t inode;
-	uint8_t attributeNameLength;
-	uint32_t attributeValueLength;
+	inode_t inode = 0;
+	uint8_t attributeNameLength = 0;
+	uint32_t attributeValueLength = 0;
 	XAttributeInodeEntry *xattrInodeEntry = nullptr;
 
 	while (true) {
+		xattrInodeEntry = nullptr;  // Reset pointer to avoid stale values
+
 		try {
 			ptr = options.metadataFile->seek(options.offset);
 		} catch (const std::exception &e) {
-			safs_pretty_syslog(LOG_ERR, "loading xattr: can't read xattr");
+			safs::log_err("loading xattr: can't read xattr");
 			return false;
 		}
 
@@ -259,7 +261,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 		if (inode == 0) { return true; }
 
 		if (attributeNameLength == 0) {
-			safs_pretty_syslog(LOG_ERR, "loading xattr: empty name");
+			safs::log_err("loading xattr: empty name");
 			if (options.ignoreFlag) {
 				continue;
 			}
@@ -267,7 +269,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 		}
 
 		if (attributeValueLength > SFS_XATTR_SIZE_MAX) {
-			safs_pretty_syslog(LOG_ERR, "loading xattr: value oversized");
+			safs::log_err("loading xattr: value oversized");
 			if (options.ignoreFlag) {
 				continue;
 			}
@@ -287,7 +289,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 
 		if (xattrInodeEntry != nullptr &&
 		    xattrInodeEntry->attributeNameLength + attributeNameLength + 1 > SFS_XATTR_LIST_MAX) {
-			safs_pretty_syslog(LOG_ERR, "loading xattr: name list too long");
+			safs::log_err("loading xattr: name list too long");
 			if (options.ignoreFlag) {
 				continue;
 			}
@@ -320,7 +322,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 		gMetadata->xattrDataHash[dataHash].push_back(std::move(xattrEntry));
 		auto xattrEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
 
-		if (xattrInodeEntry) {
+		if (xattrInodeEntry != nullptr) {
 			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
 			xattrInodeEntry->attributeNameLength += attributeNameLength + 1U;
 			xattrInodeEntry->attributeValueLength += attributeValueLength;

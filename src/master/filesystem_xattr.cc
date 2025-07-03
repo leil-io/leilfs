@@ -80,7 +80,7 @@ static inline void xattr_removeentry(XAttributeInodeEntry *entry,
 	    });
 
 	if (entryIt != end) {
-		gMetadata->xattrDataHash[hash].remove(*entryIt);
+		gMetadata->xattrDataHash[hash].erase(entryIt);
 	}
 }
 
