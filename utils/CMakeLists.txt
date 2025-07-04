@@ -72,10 +72,12 @@ install(TARGETS readdir-unlink-test RUNTIME DESTINATION ${BIN_SUBDIR})
 add_executable(big-session-metadata-benchmark big_session_metadata_benchmark.cc)
 install(TARGETS big-session-metadata-benchmark RUNTIME DESTINATION ${BIN_SUBDIR})
 
-# sfs-test-fdb Checks if the expected FDB database is operable
-add_executable(sfs-test-fdb sfs_test_fdb.cc)
-target_link_libraries(sfs-test-fdb slogger fdb)
-install(TARGETS sfs-test-fdb RUNTIME DESTINATION ${BIN_SUBDIR})
+if(ENABLE_FOUNDATIONDB)
+  # sfs-test-fdb Checks if the expected FDB database is operable
+  add_executable(sfs-test-fdb sfs_test_fdb.cc)
+  target_link_libraries(sfs-test-fdb slogger fdb)
+  install(TARGETS sfs-test-fdb RUNTIME DESTINATION ${BIN_SUBDIR})
+endif()
 
 add_library(slow_chunk_scan SHARED slow_chunk_scan.c)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
