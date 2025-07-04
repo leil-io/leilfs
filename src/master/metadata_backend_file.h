@@ -29,6 +29,11 @@ class MetadataBackendFile : public IMetadataBackend {
 public:
 	MetadataBackendFile();
 
+	/// Initializes the metadata backend.
+	/// This method should be called before any other methods of the backend.
+	/// This concrete implementation finds the metadata file to use.
+	void init() override;
+
 	/// Returns version of a metadata file.
 	/// Throws MetadataCheckException if the file is corrupted, ie. contains
 	/// wrong header or end marker.
@@ -37,13 +42,16 @@ public:
 
 	std::string backendType() override { return "MetadataBackendFile"; }
 
+	void setMetadataFile(const std::string &metadataFile) {
+		metadataFile_ = metadataFile;
+	}
+
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.
 	void store_fd(FILE *fd) override;
 
-	/// Load complete metadata from the given file.
-	/// @param fname -- path to the metadata file.
-	void loadall(const std::string &fname, int ignoreflag) override;
+	/// Load complete metadata.
+	void loadall(int ignoreflag) override;
 #endif  // #ifndef METALOGGER
 
 #if !defined(METARESTORE) && !defined(METALOGGER)
@@ -121,4 +129,6 @@ private:
 
 	std::unique_ptr<IMetadataDumper> dumper_;
 #endif  // #ifndef METARESTORE
+
+	std::string metadataFile_;
 };

@@ -73,6 +73,10 @@ public:
 	IMetadataBackend& operator=(const IMetadataBackend&) = delete;
 	IMetadataBackend& operator=(IMetadataBackend&&) = delete;
 
+	/// Initializes the metadata backend.
+	/// This method should be called before any other methods of the backend.
+	virtual void init() = 0;
+
 	/// Returns the current metadata version
 	virtual uint64_t getVersion(const std::string& file) = 0;
 
@@ -87,10 +91,8 @@ public:
 	/// gradually from this interface.
 	virtual void store_fd(FILE *fd) = 0;
 
-	/// Load complete metadata from the given file.
-	/// @param fname -- path hint to the metadata file, directory or database
-	///                 (to be defined by the concrete implementation)
-	virtual void loadall(const std::string &fname, int ignoreflag) = 0;
+	/// Load complete metadata.
+	virtual void loadall(int ignoreflag) = 0;
 #endif  // #ifndef METALOGGER
 
 // Available for master and shadow only
