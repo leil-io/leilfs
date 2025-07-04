@@ -43,7 +43,7 @@
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_stats.h"
-#include "chunkserver/output_buffer.h"
+#include "chunkserver/io_buffers.h"
 #include "common/charts.h"
 #include "common/datapack.h"
 #include "common/event_loop.h"

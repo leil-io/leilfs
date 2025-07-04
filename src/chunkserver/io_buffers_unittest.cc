@@ -24,7 +24,7 @@
 #include <cstdlib>
 #include <random>
 
-#include "chunkserver/output_buffer.h"
+#include "chunkserver/io_buffers.h"
 #include "common/crc.h"
 
 const ssize_t testHeaderSize = 1;

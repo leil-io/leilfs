@@ -25,7 +25,7 @@
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
-#include "chunkserver/output_buffer.h"
+#include "chunkserver/io_buffers.h"
 #include "common/chunk_part_type.h"
 #include "common/chunk_with_version_and_type.h"
 #include "protocol/chunks_with_type.h"
