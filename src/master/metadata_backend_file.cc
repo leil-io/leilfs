@@ -249,7 +249,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 		try {
 			ptr = options.metadataFile->seek(options.offset);
 		} catch (const std::exception &e) {
-			safs::log_err("loading xattr: can't read xattr");
+			safs::log_exception(e, "loading xattr: can't read xattr");
 			return false;
 		}
 
@@ -277,11 +277,8 @@ static bool xattr_load(MetadataLoader::Options options) {
 		}
 
 		auto inodeHash = get_xattr_inode_hash(inode);
-		auto start = gMetadata->xattrInodeHash[inodeHash].begin();
-		auto end = gMetadata->xattrInodeHash[inodeHash].end();
-
-		for (auto attributeIterator = start; attributeIterator != end; attributeIterator++) {
-			xattrInodeEntry = attributeIterator->get();
+		for (const auto &xattrEntry : gMetadata->xattrInodeHash[inodeHash]) {
+			xattrInodeEntry = xattrEntry.get();
 			if (xattrInodeEntry->inode == inode) {
 				break;
 			}
@@ -299,7 +296,6 @@ static bool xattr_load(MetadataLoader::Options options) {
 		auto xattrEntry = std::make_unique<XAttributeDataEntry>();
 		xattrEntry->inode = inode;
 		xattrEntry->attributeName.resize(attributeNameLength);
-		xattrEntry->attributeNameLength = attributeNameLength;
 		passert(xattrEntry->attributeName.data());
 		memcpy(xattrEntry->attributeName.data(), ptr, attributeNameLength);
 		ptr += attributeNameLength;
@@ -314,25 +310,21 @@ static bool xattr_load(MetadataLoader::Options options) {
 		}
 
 		options.offset = options.metadataFile->offset(ptr);
-		xattrEntry->attributeValueLength = attributeValueLength;
 
-		auto dataHash = get_xattr_data_hash(inode, xattrEntry->attributeNameLength,
+		auto dataHash = get_xattr_data_hash(inode, xattrEntry->attributeName.size(),
 		                                    xattrEntry->attributeName.data());
 
 		gMetadata->xattrDataHash[dataHash].push_back(std::move(xattrEntry));
-		auto xattrEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
+		auto *xattrEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
 
 		if (xattrInodeEntry != nullptr) {
 			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
 			xattrInodeEntry->attributeNameLength += attributeNameLength + 1U;
 			xattrInodeEntry->attributeValueLength += attributeValueLength;
 		} else {
-			auto xattrInodeEntry = std::make_unique<XAttributeInodeEntry>();
-			passert(xattrInodeEntry);
-			xattrInodeEntry->inode = inode;
+			auto xattrInodeEntry =
+			    XAttributeInodeEntry::create(inode, attributeNameLength + 1U, attributeValueLength);
 			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
-			xattrInodeEntry->attributeNameLength = attributeNameLength + 1U;
-			xattrInodeEntry->attributeValueLength = attributeValueLength;
 			gMetadata->xattrInodeHash[inodeHash].push_front(std::move(xattrInodeEntry));
 		}
 	}
@@ -676,15 +668,13 @@ int fs_checknodes(int ignoreflag) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->parent.empty() && node != gMetadata->root &&
 			    (node->type != FSNode::kTrash) && (node->type != FSNode::kReserved)) {
-				safs_pretty_syslog(LOG_ERR, "found orphaned inode: %" PRIiNode, node->id);
+				safs::log_err("found orphaned inode: %" PRIiNode, node->id);
 				if (ignoreflag) {
 					if (fs_lostnode(node) < 0) {
 						return -1;
 					}
 				} else {
-					safs_pretty_syslog(LOG_ERR,
-					                   "use sfsmetarestore (option -i) to "
-					                   "attach this node to root dir\n");
+					safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
 					return -1;
 				}
 			}
@@ -1243,8 +1233,10 @@ void MetadataBackendFile::storefree(FILE *fd) {
 // XAttr
 
 void MetadataBackendFile::xattr_store(FILE *fd) {
-	constexpr uint32_t kHdrSize = kinode_t_size + sizeof(XAttributeDataEntry::attributeNameLength) +
-	                              sizeof(XAttributeDataEntry::attributeValueLength);
+	constexpr uint8_t kXAttributeNameLengthSize = 0;
+	constexpr uint32_t kXAttributeValueLengthSize = 0;
+	constexpr uint32_t kHdrSize = kinode_t_size + sizeof(kXAttributeNameLengthSize) +
+	                              sizeof(kXAttributeValueLengthSize);
 	uint8_t headerBuffer[kHdrSize];
 	uint8_t *ptr;
 
@@ -1252,24 +1244,24 @@ void MetadataBackendFile::xattr_store(FILE *fd) {
 		for (const auto &xattrDataEntry : gMetadata->xattrDataHash[i]) {
 			ptr = headerBuffer;
 			putINode(&ptr, xattrDataEntry->inode);
-			put8bit(&ptr, xattrDataEntry->attributeNameLength);
-			put32bit(&ptr, xattrDataEntry->attributeValueLength);
+			put8bit(&ptr, xattrDataEntry->attributeName.size());
+			put32bit(&ptr, static_cast<uint32_t>(xattrDataEntry->attributeValue.size()));
 
 			if (fwrite(headerBuffer, 1, kHdrSize, fd) != (size_t)(kHdrSize)) {
 				safs::log_info("{}: fwrite error failed writing header", __func__);
 				return;
 			}
 
-			auto attributeNameData = xattrDataEntry->attributeName.data();
-			auto nameLength = xattrDataEntry->attributeNameLength;
+			auto *attributeNameData = xattrDataEntry->attributeName.data();
+			auto nameLength = xattrDataEntry->attributeName.size();
 			if (fwrite(attributeNameData, 1, nameLength, fd) != (size_t)(nameLength)) {
 				safs::log_info("{}: fwrite error failed writing attribute name", __func__);
 				return;
 			}
 
-			auto attributeValueData = xattrDataEntry->attributeValue.data();
-			auto valueLength = xattrDataEntry->attributeValueLength;
-			if (xattrDataEntry->attributeValueLength > 0) {
+			auto *attributeValueData = xattrDataEntry->attributeValue.data();
+			auto valueLength = xattrDataEntry->attributeValue.size();
+			if (valueLength > 0) {
 				if (fwrite(attributeValueData, 1, valueLength, fd) != (size_t)(valueLength)) {
 					safs::log_info("{}: fwrite error failed writing attribute value", __func__);
 					return;

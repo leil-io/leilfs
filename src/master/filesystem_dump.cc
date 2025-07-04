@@ -181,10 +181,10 @@ void xattr_dump() {
 			printf(
 			    "X|i:%10" PRIiNode "|n:%s|v:%s\n", xattrDataEntry.get()->inode,
 			    fsnodes_escape_name(std::string((char *)xattrDataEntry.get()->attributeName.data(),
-			                                    xattrDataEntry.get()->attributeNameLength))
+			                                    xattrDataEntry.get()->attributeName.size()))
 			        .c_str(),
 			    fsnodes_escape_name(std::string((char *)xattrDataEntry.get()->attributeValue.data(),
-			                                    xattrDataEntry.get()->attributeValueLength))
+			                                    xattrDataEntry.get()->attributeValue.size()))
 			        .c_str());
 		}
 	}

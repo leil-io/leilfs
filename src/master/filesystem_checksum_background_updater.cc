@@ -89,7 +89,7 @@ bool ChecksumBackgroundUpdater::isXattrIncluded(XAttributeDataEntry *xattrDataEn
 	}
 
 	if (step_ == ChecksumRecalculatingStep::kXattrs &&
-	    get_xattr_data_hash(xattrDataEntry->inode, xattrDataEntry->attributeNameLength,
+	    get_xattr_data_hash(xattrDataEntry->inode, xattrDataEntry->attributeName.size(),
 	                        xattrDataEntry->attributeName.data()) < position_) {
 		ret = true;
 	}

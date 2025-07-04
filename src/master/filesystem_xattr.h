@@ -25,7 +25,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <list>
+#include <memory>
 #include <vector>
+
+#include "common/massert.h"
+#include "common/type_defs.h"
 
 #define XATTR_INODE_HASH_SIZE 65536
 #define XATTR_DATA_HASH_SIZE 524288
@@ -33,8 +37,6 @@
 
 struct XAttributeDataEntry {
 	inode_t inode;
-	uint8_t attributeNameLength;
-	uint32_t attributeValueLength;
 	std::vector<uint8_t> attributeName;
 	std::vector<uint8_t> attributeValue;
 	uint64_t checksum;
@@ -48,6 +50,16 @@ struct XAttributeInodeEntry {
 	uint32_t attributeNameLength;
 	uint32_t attributeValueLength;
 	std::list<XAttributeDataEntry *> xattrDataList;
+
+	static std::unique_ptr<XAttributeInodeEntry> create(inode_t inode, uint32_t attributeNameLength,
+	                                                    uint32_t attributeValueLength) {
+		auto entry = std::make_unique<XAttributeInodeEntry>();
+		passert(entry);
+		entry->inode = inode;
+		entry->attributeNameLength = attributeNameLength;
+		entry->attributeValueLength = attributeValueLength;
+		return entry;
+	}
 };
 
 #ifndef METARESTORE
