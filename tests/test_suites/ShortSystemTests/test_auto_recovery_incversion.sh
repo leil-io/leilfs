@@ -26,7 +26,9 @@ assert_success rm "$chunk"
 
 # Truncate file (this will generate INCVERSION change) and remember the metadata
 truncate -s 1 dir/file
-assert_awk_finds '/INCVERSION/' "$(cat "${info[master_data_path]}"/changelog.sfs)"
+# New changelog names are dynamic; cat all possible changelog files for this master.
+# The INCVERSION entry should be in one of them (likely the .LIVE or most recent).
+assert_awk_finds '/INCVERSION/' "$(cat "${info[master_data_path]}"/changelog.sfs.* 2>/dev/null)"
 echo b > something_more  # To make sure that after INCVERSION we are able to apply other changes
 if is_windows_system; then
 	# On Windows, we need to wait for the metadata to be dumped

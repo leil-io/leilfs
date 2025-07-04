@@ -24,7 +24,13 @@ only_file_in_trash() {
 }
 
 trash="${info[mount1]}/trash"
-changelog_file="${info[master_data_path]}"/changelog.sfs
+# changelog_file variable is removed; use glob pattern for accessing logs.
+# master_cl_glob="${info[master_data_path]}/changelog.sfs.*" # Define if used multiple times, or inline
+# Assuming CLUSTER_ID and HOSTNAME are available or can be defaulted for master0 (implicit target)
+CLUSTER_ID=${info[cluster_id]:-testcluster}
+HOSTNAME=${info[hostname]:-$(hostname -s)}
+master_cl_pattern_specific="${info[master_data_path]}/changelog.sfs.${CLUSTER_ID}.*${HOSTNAME}"
+
 
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
@@ -49,7 +55,8 @@ stat_after_recovery=$(stat_basic_info a/b/c/test)
 assert_equals "$stat_before_rm" "$stat_after_recovery"
 
 # check if creating files was issued before undelete in changelog
-create_count=$(cat $changelog_file | grep -B 3 UNDEL | grep CREATE | wc -l)
+# Use the pattern that matches all changelogs for this specific master instance
+create_count=$(cat ${master_cl_pattern_specific}* 2>/dev/null | grep -B 3 UNDEL | grep CREATE | wc -l)
 assert_equals "$create_count" "3"
 
 assert_eventually "saunafs_shadow_synchronized 1"

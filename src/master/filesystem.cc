@@ -46,6 +46,8 @@
 #include "master/metadata_backend_interface.h"
 #include "master/restore.h"
 #include "slogger/slogger.h"
+#include "common/system_utils.h" // For get_local_hostname
+#include "common/cwrap.h"        // For fs::getCurrentWorkingDirectoryNoThrow
 
 FilesystemMetadata* gMetadata = nullptr;
 std::unique_ptr<Lockfile> gMetadataLockfile;
@@ -421,7 +423,18 @@ int fs_init(bool doLoad) {
 			throw;
 		}
 	}
-	changelog_init(kChangelogFilename, 0, 50);
+
+	// New changelog_init call
+	std::string data_path = fs::getCurrentWorkingDirectoryNoThrow();
+	std::string hostname = sauna_fs::system_utils::get_local_hostname();
+	if (hostname.empty()) {
+		safs_pretty_syslog(LOG_WARNING, "Failed to get hostname for changelog naming; using 'unknown_host'.");
+		hostname = "unknown_host";
+	}
+	// Min/Max backlogs numbers (0 and 50) are passed here for config validation consistency if needed,
+	// though changelog.cc now reads BACK_LOGS directly from cfg.
+	// These values were the previous hardcoded limits passed to the old changelog_init.
+	changelog_init(data_path, gClusterId, hostname, kChangelogFilename, false /*is_metalogger*/, 0, 50);
 
 	if (doLoad || (metadataserver::isMaster())) {
 		fs_loadall();

@@ -3,6 +3,10 @@ add_definitions(-DAPPNAME=sfsmaster -DAPP_EXAMPLES_SUBDIR="${SFSMASTER_EXAMPLES_
 
 collect_sources(MASTER)
 
+# changelog_filename.cc should be picked up by collect_sources(MASTER)
+# changelog_filename_unittest.cc should be picked up by test collection mechanism
+# changelog_unittest.cc should be picked up by test collection mechanism
+
 if(NOT DB_FOUND)
   list(REMOVE_ITEM MASTER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/hstring_bdbstorage.cc")
 endif()

@@ -96,13 +96,19 @@ metadata_generate_trash_ops() {
 		mv "$SFS_META_MOUNT_PATH"/trash/*untrashed_file "$SFS_META_MOUNT_PATH"/trash/undel
 		mv "$SFS_META_MOUNT_PATH"/trash/*trashed_file_1 "$SFS_META_MOUNT_PATH"/trash/undel
 		rm "$SFS_META_MOUNT_PATH"/trash/*trashed_file_2
+		# Construct glob pattern for current master's changelogs
+		# Assumes SAUNAFS_MASTER0_DATAPATH, SAUNAFS_MASTER0_CLUSTER_ID, SAUNAFS_MASTER0_HOSTNAME are set by caller
+		local master_data_path="${SAUNAFS_MASTER0_DATAPATH}"
+		local cl_pattern="${master_data_path}/changelog.sfs.${SAUNAFS_MASTER0_CLUSTER_ID:-*}*${SAUNAFS_MASTER0_HOSTNAME:-*}"
+
 		# Wait for generation of PURGE for trashed_file_4
-		assert_eventually 'grep PURGE\(${trashed_file_4_inode} "${CHANGELOG}"'
+		assert_eventually "grep 'PURGE(${trashed_file_4_inode})' ${cl_pattern} 2>/dev/null"
 		# Wait for generation of RELEASE for reserved trashed_file_5
-		assert_eventually 'grep RELEASE\(${trashed_file_5_inode} "${CHANGELOG}"'
-		local changelog=$(cat ${CHANGELOG})
-		assert_awk_finds '/SETPATH/' "$changelog"
-		assert_awk_finds '/UNDEL/' "$changelog"
+		assert_eventually "grep 'RELEASE(${trashed_file_5_inode})' ${cl_pattern} 2>/dev/null"
+
+		local changelog_content=$(cat ${cl_pattern} 2>/dev/null)
+		assert_awk_finds '/SETPATH/' "$changelog_content"
+		assert_awk_finds '/UNDEL/' "$changelog_content"
 	fi
 }
 
@@ -340,12 +346,21 @@ generate_changelog() {
 		version=1
 		print("1: 1|SESSION():1")
 		for (i = 2; i<2000000; ++i) {
+			# The content format "id: timestamp|COMMAND" remains the same.
+			# The timestamp here is fixed to 1 for simplicity in this generator.
+			# Real first ID of a log file will be its first entry's ID.
+			# Real timestamp in log line will be the actual epoch seconds.
 			print(i": 1|CREATE(1,f"i",f,420,9,9,0):"i)
 		}
 	}' < /dev/null
 }
 
-# get_changes <dir> -- prints all the changes that can be found in changelog in the given directory
+# get_changes <dir> -- prints all unique, numerically sorted log entries from all changelogs in the given directory
 get_changes() {
-	find "$1" -regextype posix-egrep -regex '.*/changelog.sfs([.][0-9]+)?$' | xargs sort -n -u
+	# Find all files that could be changelogs (master or metalogger, live or finalized)
+	# The new names are like:
+	# changelog.sfs.cluster.firstID.lastID.beginUTC.endUTC.host
+	# changelog_ml.sfs.cluster.firstID.UNDEF.beginUTC.LIVE.ml.host
+	# A simple glob on the prefix should find them.
+	find "$1" -type f \( -name "changelog.sfs.*" -o -name "changelog_ml.sfs.*" \) -print0 | xargs -0 cat -- | sort -n -u
 }

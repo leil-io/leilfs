@@ -58,6 +58,11 @@
 ## (Default: 60)
 # MASTER_TIMEOUT = 60
 
+## Uniquely identifies the cluster this metalogger belongs to.
+## This MUST match the CLUSTER_ID of the master server(s).
+## (Default: default)
+# CLUSTER_ID = default
+
 ## Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or config
 ## value LOG_LEVEL to determine logging level.
 ## Valid log levels are

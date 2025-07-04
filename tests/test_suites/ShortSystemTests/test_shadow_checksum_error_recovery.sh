@@ -7,8 +7,22 @@ CHUNKSERVERS=1 \
 
 touch "${info[mount0]}"/file
 
+# Define pattern for the .LIVE changelog file
+# Assume info[cluster_id] and info[hostname] are available or use defaults for master0
+CLUSTER_ID=${info[cluster_id]:-testcluster}
+HOSTNAME=${info[hostname]:-$(hostname -s)} # This should be master0's hostname
+live_cl_pattern="${info[master_data_path]}/changelog.sfs.${CLUSTER_ID}.*.UNDEF.*.LIVE.${HOSTNAME}"
+
 # Corrupt the changelog, start a shadow master and see if it can deal with it.
-sed -i 's/file/fool/g' "${info[master_data_path]}"/changelog.sfs
+current_live_file=$(ls ${live_cl_pattern} 2>/dev/null | head -n 1)
+if [ -n "$current_live_file" ] && [ -f "$current_live_file" ]; then
+	echo "Corrupting changelog: $current_live_file"
+	sed -i 's/file/fool/g' "$current_live_file"
+else
+	echo "ERROR: Could not find unique .LIVE changelog file matching pattern ${live_cl_pattern} to corrupt."
+	# This is a critical failure for this test's logic, so exit
+	exit 1
+fi
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
 

@@ -73,8 +73,11 @@ this typically doesn’t affect daily operations, if a stale lock appears and
 auto-recovery`) try to restore from changelog, this will fail.
 
 To fix this, manually revert new LENGTH operations to the old format by
-removing the third argument in the changelog.sfs files located in the
-`DATA_PATH` (typically `/var/lib/saunafs/`).
+removing the third argument in the changelog files located in the
+`DATA_PATH` (typically `/var/lib/saunafs/`). Changelog files now have a
+dynamic naming format (e.g.,
+`changelog.sfs.<cluster_id>.<first_id>.<last_id>.<begin_utc>Z.<end_utc>Z.<hostname>`)
+and you will need to identify the relevant ones.
 
 Example: This line must be converted from:
 

@@ -11,9 +11,21 @@ CHUNKSERVERS=1 \
 	DEBUG_LOG_DISABLE_FAIL_ON="master.mismatch" \
 	setup_local_empty_saunafs info
 
+# Define pattern for the .LIVE changelog file for master0
+CLUSTER_ID=${info[cluster_id]:-testcluster}
+HOSTNAME=${info[hostname]:-$(hostname -s)} # This should be master0's hostname
+live_cl_pattern="${info[master_data_path]}/changelog.sfs.${CLUSTER_ID}.*.UNDEF.*.LIVE.${HOSTNAME}"
+
 # Do some change and corrupt the changelog
 touch "${info[mount0]}"/file
-sed -i 's/file/fool/g' "${info[master_data_path]}"/changelog.sfs
+current_live_file=$(ls ${live_cl_pattern} 2>/dev/null | head -n 1)
+if [ -n "$current_live_file" ] && [ -f "$current_live_file" ]; then
+	echo "Corrupting changelog (1st time): $current_live_file"
+	sed -i 's/file/fool/g' "$current_live_file"
+else
+	echo "ERROR: Could not find unique .LIVE changelog file (1st time) matching pattern ${live_cl_pattern} to corrupt."
+	exit 1
+fi
 
 # Start a shadow master and see if it can deal with the corrupted changelog
 saunafs_master_n 1 start
@@ -32,8 +44,18 @@ assert_awk_finds_no '/master.mltoma_changelog_apply_error: delay/' "$log"
 
 # Stop the shadow master, generate new changes, break them.
 saunafs_master_n 1 stop
-touch "${info[mount0]}"/file2
-sed -i 's/file2/fool2/g' "${info[master_data_path]}"/changelog.sfs
+touch "${info[mount0]}"/file2 # This creates a new entry in master0's changelog
+# The .LIVE file might have rotated or changed due to previous operations or time. Re-find it.
+current_live_file=$(ls ${live_cl_pattern} 2>/dev/null | head -n 1)
+if [ -n "$current_live_file" ] && [ -f "$current_live_file" ]; then
+	echo "Corrupting changelog (2nd time): $current_live_file"
+	sed -i 's/file2/fool2/g' "$current_live_file"
+else
+	echo "ERROR: Could not find unique .LIVE changelog file (2nd time) matching pattern ${live_cl_pattern} to corrupt."
+	# Adding ls output for debugging in case of failure
+	ls -la "${info[master_data_path]}"
+	exit 1
+fi
 
 # Start the shadow master again; it shouldn't synchronize within first seconds because of
 # METADATA_SAVE_REQUEST_MIN_PERIOD. Let's verify if the synchronization needs at least 7 seconds.

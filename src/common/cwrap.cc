@@ -127,4 +127,22 @@ std::string getCurrentWorkingDirectoryNoThrow() {
 	return currentPath;
 }
 
+std::vector<std::string> listdir(const std::string& path) {
+    std::vector<std::string> result;
+    cdirectory_t dir(opendir(path.c_str()));
+    if (dir == nullptr) {
+        throw FilesystemException(std::string("opendir failed for path '") + path + "': " + errorString(errno));
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir.get())) != nullptr) {
+        std::string name = entry->d_name;
+        if (name != "." && name != "..") {
+            result.push_back(name);
+        }
+    }
+    // closedir is handled by cdirectory_t destructor
+    return result;
+}
+
 }

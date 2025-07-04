@@ -28,12 +28,22 @@
 constexpr uint32_t kMaxLogLineSize = 200000;
 
 /// Initializes changelog module.
-/// \param changelogFilename - base name of changelog files, e.g. "changelog_ml.sfs"
-/// \param minBackLogsNumber - minimum allowed value of BACK_LOGS config entry
-/// \param maxBackLogsNumber - maximum allowed value of BACK_LOGS config entry
+/// \param base_data_path_val Path to the directory where changelogs are stored.
+/// \param cluster_id_val The cluster ID.
+/// \param hostname_val The local hostname.
+/// \param base_log_name_val Base name of the log file (e.g., "changelog.sfs" or "changelog_ml.sfs").
+/// \param is_metalogger_val True if this is a metalogger.
+/// \param min_back_logs_val Minimum allowed value of BACK_LOGS config entry.
+/// \param max_back_logs_val Maximum allowed value of BACK_LOGS config entry.
 /// \throws InitializeException
-void changelog_init(std::string changelogFilename,
-		uint32_t minBackLogsNumber, uint32_t maxBackLogsNumber);
+void changelog_init(
+    const std::string& base_data_path_val,
+    const std::string& cluster_id_val,
+    const std::string& hostname_val,
+    const std::string& base_log_name_val,
+    bool is_metalogger_val,
+    uint32_t min_back_logs_val,
+    uint32_t max_back_logs_val);
 
 /// Return the value of \p BACK_LOGS config entry
 uint32_t changelog_get_back_logs_config_value();

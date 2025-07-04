@@ -49,10 +49,12 @@
 #include "common/saunafs_version.h"
 #include "common/sockets.h"
 #include "common/time_utils.h"
-#include "config/cfg.h"
+#include "config/cfg.h" // For cfg_getstring, cfg_getuint32
 #include "errors/saunafs_error_codes.h"
 #include "master/changelog.h"
 #include "master/metadata_backend_common.h"
+#include "common/system_utils.h" // For get_local_hostname
+#include "common/cwrap.h"        // For fs::getCurrentWorkingDirectoryNoThrow
 #include "master/metadata_backend_interface.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/matoml.h"
@@ -1277,7 +1279,19 @@ int masterconn_init(void) {
 	eptr->loadConfig();
 
 #ifdef METALOGGER
-	changelog_init(kChangelogMlFilename, 5, 1000);  // may throw
+    // New changelog_init call for Metalogger
+    std::string data_path = fs::getCurrentWorkingDirectoryNoThrow();
+    std::string hostname = sauna_fs::system_utils::get_local_hostname();
+    if (hostname.empty()) {
+		safs_pretty_syslog(LOG_WARNING, "Metalogger: Failed to get hostname for changelog naming; using 'unknown_host'.");
+		hostname = "unknown_host";
+	}
+    // Read CLUSTER_ID from metalogger's own config file.
+    // Defaulting to "default_ml_cluster" if not found, though it should be configured.
+    std::string cluster_id = cfg_getstring("CLUSTER_ID", "default_ml_cluster");
+                                           // Ensure "CLUSTER_ID" matches the key in sfsmetalogger.cfg
+
+	changelog_init(data_path, cluster_id, hostname, kChangelogMlFilename, true /*is_metalogger*/, 5, 1000);  // may throw
 	changelog_disable_flush();                      // metalogger does it once a second
 	auto metadataDownloadFreq =
 	    cfg_getuint32("META_DOWNLOAD_FREQ", MasterConn::kCfgDefaultMetaDownloadFreq);

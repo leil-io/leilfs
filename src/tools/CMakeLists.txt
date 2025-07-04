@@ -9,3 +9,8 @@ else()
 endif()
 target_link_libraries(saunafs sfscommon)
 install(TARGETS saunafs DESTINATION ${BIN_SUBDIR})
+
+# Test utility for changelog integration tests
+add_executable(changelog_test_util changelog_test_util.cc)
+target_link_libraries(changelog_test_util sfscommon master) # master for changelog.h/cc, sfscommon for utils
+# No install command for this utility

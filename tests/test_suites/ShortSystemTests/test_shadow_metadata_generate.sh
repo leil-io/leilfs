@@ -16,8 +16,11 @@ CHUNKSERVERS=3 \
 # Save path of meta-mount in SFS_META_MOUNT_PATH for metadata generators
 export SFS_META_MOUNT_PATH=${info[mount1]}
 
-# Save path of changelog.sfs in CHANGELOG to make it possible to verify generated changes
-export CHANGELOG="${info[master_data_path]}"/changelog.sfs
+# CHANGELOG env variable pointing to a single file is no longer used.
+# Instead, set specific variables for metadata_generate_all if it needs to find changelogs.
+export SAUNAFS_MASTER0_DATAPATH="${info[master_data_path]}"
+export SAUNAFS_MASTER0_CLUSTER_ID="${info[cluster_id]:-testcluster}"
+export SAUNAFS_MASTER0_HOSTNAME="${info[hostname]:-$(hostname -s)}"
 
 saunafs_master_n 1 start
 

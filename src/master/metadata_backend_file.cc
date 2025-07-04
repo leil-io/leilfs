@@ -35,7 +35,10 @@
 #include <common/setup.h>
 #include <common/type_defs.h>
 #include <master/changelog.h>
+#include <master/changelog_filename.h> // Added
 #include <master/chunks.h>
+#include <algorithm> // Added for std::sort
+#include <filesystem> // Added for std::filesystem::path (requires C++17)
 #include <master/filesystem.h>
 #include <master/filesystem_metadata.h>
 #include <master/filesystem_node.h>
@@ -163,53 +166,130 @@ void MetadataBackendFile::load_changelogs() {
 	metadataserver::Personality personality = metadataserver::getPersonality();
 	metadataserver::setPersonality(metadataserver::Personality::kShadow);
 	/*
-	 * We need to load 3 changelog files in extreme case.
-	 * If we are being run as Shadow we need to download two
-	 * changelog files:
-	 * 1 - current changelog => "changelog.sfs.1"
-	 * 2 - previous changelog in case Shadow connects during metadata dump,
-	 *     that is "changelog.sfs.2"
-	 * Beside this we received changelog lines that we stored in
-	 * yet another changelog file => "changelog.sfs"
+	 * During recovery or shadow sync, the system needs to find and apply relevant changelogs.
+	 * Changelog files now have unique names incorporating cluster ID, host, IDs, and timestamps.
+	 * The system will list files in the data directory, parse those matching the
+	 * changelog pattern for this host, sort them by their first entry ID,
+	 * and then apply them in sequence if they contain newer entries than the current metadata.
+	 * This includes any current '.LIVE' file for this host.
 	 *
-	 * If we are master we only really care for:
-	 * "changelog.sfs.1" and "changelog.sfs" files.
+	 * The old logic for loading "changelog.sfs", "changelog.sfs.1", "changelog.sfs.2"
+	 * is replaced by this discovery mechanism.
 	 */
-	static const std::string changelogs[]{
-	    std::string(kChangelogFilename) + ".2",
-	    std::string(kChangelogFilename) + ".1", kChangelogFilename};
-	restore_setverblevel(gVerbosity);
-	bool oldExists = false;
-	try {
-		for (const std::string &s : changelogs) {
-			std::string fullFileName =
-			    fs::getCurrentWorkingDirectoryNoThrow() + "/" + s;
-			if (fs::exists(s)) {
-				oldExists = true;
-				uint64_t first = changelogGetFirstLogVersion(s);
-				uint64_t last = changelogGetLastLogVersion(s);
-				if (last >= first) {
-					if (last >= fs_getversion()) {
-						load_changelog(s);
-					}
-				} else {
-					throw InitializeException(
-					    "changelog " + fullFileName +
-					    " inconsistent, "
-					    "use sfsmetarestore to recover the filesystem; "
-					    "current fs version: " +
-					    std::to_string(fs_getversion()) +
-					    ", first change in the file: " + std::to_string(first));
-				}
-			} else if (oldExists && s != kChangelogFilename) {
-				safs_pretty_syslog(LOG_WARNING, "changelog `%s' missing",
-				                   fullFileName.c_str());
-			}
-		}
-	} catch (const FilesystemException &ex) {
-		throw FilesystemException("error loading changelogs: " + ex.message());
-	}
-	gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+
+	// TODO: Implement new discovery and loading logic for changelogs based on the new naming scheme.
+	// This will involve:
+	// 1. Listing files in DATA_PATH.
+	// 2. Filtering for files matching the new changelog pattern for the current host and cluster.
+	// 3. Parsing these filenames to extract components (especially FIRST_ID).
+	// 4. Sorting the identified changelog files by FIRST_ID.
+    // New logic for discovering and loading changelogs:
+    std::string current_data_path = fs::getCurrentWorkingDirectoryNoThrow();
+    safs_pretty_syslog(LOG_INFO, "Scanning for changelogs in: %s for cluster: %s", current_data_path.c_str(), gClusterId.c_str());
+
+    std::vector<sauna_fs::ChangelogNameComponents> found_logs_components;
+    std::string live_file_path_to_process;
+
+    try {
+        std::vector<std::string> files_in_dir = fs::listdir(current_data_path);
+        for (const auto& filename_part : files_in_dir) {
+            // Try parsing as either master or metalogger - sfsmetarestore might be pointed at either.
+            // However, this function is in MetadataBackendFile, usually for master/shadow.
+            // For now, assume we are looking for standard changelogs (not _ml).
+            // sfsmetarestore might need more complex logic to handle both or take type as input.
+            if (filename_part.rfind(kChangelogFilename, 0) != 0) { // Must start with "changelog.sfs"
+                continue;
+            }
+
+            try {
+                sauna_fs::ChangelogNameComponents comps = sauna_fs::changelog_filename::parse_filename(filename_part);
+
+                // Ensure it matches the current cluster and is not a metalogger file (unless this logic is expanded)
+                if (comps.cluster_id == gClusterId && comps.base_prefix == kChangelogFilename) {
+                    if (comps.live_status == sauna_fs::ChangelogLiveStatus::LIVE) {
+                        if (!live_file_path_to_process.empty()) {
+                            safs_pretty_syslog(LOG_WARNING, "Multiple .LIVE changelogs found in %s for cluster %s. Using first one found: %s",
+                                               current_data_path.c_str(), gClusterId.c_str(), live_file_path_to_process.c_str());
+                            // Potentially pick the newest one based on some criteria if truly multiple are found
+                        } else {
+                            live_file_path_to_process = join_path(current_data_path, filename_part);
+                        }
+                    } else if (comps.live_status == sauna_fs::ChangelogLiveStatus::FINALIZED) {
+                        // Store full path in a temporary field for sorting/loading
+                        comps.suffix_hostname = join_path(current_data_path, filename_part); // Re-using suffix_hostname temporarily for full path
+                        found_logs_components.push_back(comps);
+                    }
+                }
+            } catch (const std::runtime_error& e) {
+                // Not a valid new-style changelog name, or parse error, ignore.
+                safs_pretty_syslog(LOG_DEBUG,"Ignoring file while scanning for changelogs: %s - Parse error: %s", filename_part.c_str(), e.what());
+            }
+        }
+    } catch (const fs::FilesystemException& e) {
+        throw FilesystemException("Error listing directory for changelogs " + current_data_path + ": " + e.what());
+    }
+
+    // Sort finalized logs by first_id_val
+    std::sort(found_logs_components.begin(), found_logs_components.end(),
+        [](const sauna_fs::ChangelogNameComponents& a, const sauna_fs::ChangelogNameComponents& b) {
+            if (a.first_id_val != b.first_id_val) {
+                return a.first_id_val < b.first_id_val;
+            }
+            // If first_id is same, sort by last_id (though this shouldn't typically happen for distinct files)
+            return a.last_id_val < b.last_id_val;
+        });
+
+    restore_setverblevel(gVerbosity);
+
+    for (const auto& comps : found_logs_components) {
+        const std::string& full_path = comps.suffix_hostname; // Recall: reused for full path
+        // Check if this log is relevant based on its version range and current metadata version
+        uint64_t file_first_id = comps.first_id_val;
+        uint64_t file_last_id = comps.last_id_val;
+
+        if (file_last_id == 0) { // Should not happen for finalized logs from parser
+             safs_pretty_syslog(LOG_WARNING, "Skipping finalized changelog with invalid last_id: %s", full_path.c_str());
+             continue;
+        }
+
+        if (file_last_id >= fs_getversion()) { // If any part of the log is newer
+             safs_pretty_syslog(LOG_INFO, "Applying finalized changelog: %s (File IDs: %" PRIu64 "-%" PRIu64 ", MetaVer: %" PRIu64 ")",
+                               full_path.c_str(), file_first_id, file_last_id, fs_getversion());
+            load_changelog(full_path); // This existing function reads line by line and applies if entry_id >= fs_getversion()
+        } else {
+            safs_pretty_syslog(LOG_INFO, "Skipping older finalized changelog: %s (File IDs: %" PRIu64 "-%" PRIu64 ", MetaVer: %" PRIu64 ")",
+                               full_path.c_str(), file_first_id, file_last_id, fs_getversion());
+        }
+    }
+
+    // Process the .LIVE file last, if any
+    if (!live_file_path_to_process.empty()) {
+        // It's possible the .LIVE file's content is already covered by a finalized log if a crash happened mid-rotation.
+        // load_changelog skips entries older than fs_getversion(), so it's safe to call.
+        // We might want to get its first_id to see if it's relevant.
+        uint64_t live_first_id = 0;
+        uint64_t live_last_id = 0; // Not strictly needed here but good to know
+        std::string live_filename_only = std::filesystem::path(live_file_path_to_process).filename().string();
+        try {
+             sauna_fs::ChangelogNameComponents live_comps = sauna_fs::changelog_filename::parse_filename(live_filename_only);
+             live_first_id = live_comps.first_id_val;
+        } catch(const std::runtime_error& e) {
+            safs_pretty_syslog(LOG_WARNING, "Could not parse LIVE filename %s to check version relevance: %s. Attempting to load anyway.", live_filename_only.c_str(), e.what());
+        }
+
+        // A more robust check would be to also get last_id from live file content if possible
+        // For now, if live_first_id is relevant or if we couldn't parse it (so apply defensively)
+        if (live_first_id == 0 || live_first_id > fs_getversion() || (live_last_id = changelogGetLastLogVersion(live_file_path_to_process)) >= fs_getversion() ) {
+             safs_pretty_syslog(LOG_INFO, "Applying .LIVE changelog: %s (LiveFile FirstID: %" PRIu64 ", LastContentID: %" PRIu64 ", MetaVer: %" PRIu64 ")",
+                               live_file_path_to_process.c_str(), live_first_id, live_last_id, fs_getversion());
+            load_changelog(live_file_path_to_process);
+        } else {
+            safs_pretty_syslog(LOG_INFO, "Skipping .LIVE changelog as it appears older or empty: %s (LiveFile FirstID: %" PRIu64 ", LastContentID: %" PRIu64 ", MetaVer: %" PRIu64 ")",
+                               live_file_path_to_process.c_str(), live_first_id, live_last_id, fs_getversion());
+        }
+    }
+
+	gMetadataBackend->fs_storeall(DumpType::kForegroundDump); // Save metadata after applying all logs
 	metadataserver::setPersonality(personality);
 }
 

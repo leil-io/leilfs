@@ -97,4 +97,12 @@ std::string getCurrentWorkingDirectory();
  */
 std::string getCurrentWorkingDirectoryNoThrow();
 
+/*! \brief List contents of a directory.
+ *
+ * \param path - path to directory to be listed.
+ * \return Vector of strings containing names of files and directories.
+ * \throw FilesystemException if listing failed.
+ */
+std::vector<std::string> listdir(const std::string& path);
+
 }

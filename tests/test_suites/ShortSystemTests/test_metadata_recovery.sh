@@ -19,8 +19,11 @@ CHUNKSERVERS=3 \
 # Save path of meta-mount in SFS_META_MOUNT_PATH for metadata generators
 export SFS_META_MOUNT_PATH=${info[mount1]}
 
-# Save path of changelog.sfs in CHANGELOG to make it possible to verify generated changes
-export CHANGELOG="${info[master_data_path]}"/changelog.sfs
+# CHANGELOG env variable pointing to a single file is no longer used.
+# Instead, set specific variables for metadata_generate_all if it needs to find changelogs.
+export SAUNAFS_MASTER0_DATAPATH="${info[master_data_path]}"
+export SAUNAFS_MASTER0_CLUSTER_ID="${info[cluster_id]:-testcluster}"
+export SAUNAFS_MASTER0_HOSTNAME="${info[hostname]:-$(hostname -s)}"
 
 saunafs_metalogger_daemon start
 
@@ -38,7 +41,11 @@ sleep 3
 cd
 saunafs_master_daemon kill
 # leave only files written by metalogger
-rm ${info[master_data_path]}/{changelog,metadata,sessions}.*
+# This means removing master's metadata, sessions, and specific master changelogs.
+# Metalogger files (e.g. metadata_ml.sfs, changelog_ml.sfs.*) should remain.
+rm -f ${info[master_data_path]}/metadata.sfs* \
+      ${info[master_data_path]}/sessions.sfs* \
+      ${info[master_data_path]}/changelog.sfs.*
 sfsmetarestore -a -d "${info[master_data_path]}"
 saunafs_master_daemon start
 

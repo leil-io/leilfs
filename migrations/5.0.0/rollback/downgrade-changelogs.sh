@@ -134,7 +134,7 @@ create_initial_backup() {
 apply_fixes() {
 	# Apply fixes to the installation
 	log_message "Applying fixes to the installation..."
-	# Fix the LENGTH function in changelog.sfs files
+	# Fix the LENGTH function in changelog files (new filenames are dynamic but contain 'changelog' and 'sfs')
 	find "${MASTER_DATA_DIR}" -type f -name "*changelog*sfs*" | while IFS= read -r file; do
 		log_message "Editing $file with sed."
 		if ! sed -i 's/LENGTH(\([^,]*,[^,]*\),[^)]*)/LENGTH(\1)/g' "${file}"; then

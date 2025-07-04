@@ -2,6 +2,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 collect_sources(COMMON)
 
+# epoch_utils.cc should be picked up by collect_sources(COMMON)
+# epoch_utils_unittest.cc should be picked up by the test collection mechanism (e.g. create_unittest)
+# system_utils.cc should be picked up by collect_sources(COMMON)
+# system_utils_unittest.cc should be picked up by the test collection mechanism
+
 if(MINGW)
 list(REMOVE_ITEM COMMON_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/lockfile.cc")
 list(REMOVE_ITEM COMMON_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/memory_mapped_file.cc")
