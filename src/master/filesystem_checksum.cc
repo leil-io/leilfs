@@ -119,7 +119,7 @@ static void fsnodes_recalculate_checksum() {
 	gMetadata->fsNodesChecksum = NODECHECKSUMSEED;  // arbitrary number
 	// nodes
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (FSNode *node = gMetadata->nodehash[i]; node; node = node->next) {
+		for (const auto& node : gMetadata->nodeHash[i]) {
 			node->checksum = fsnodes_checksum(node, true);
 			addToChecksum(gMetadata->fsNodesChecksum, node->checksum);
 		}
@@ -128,17 +128,17 @@ static void fsnodes_recalculate_checksum() {
 
 uint64_t fs_checksum(ChecksumMode mode) {
 	uint64_t checksum = 0x1251;
-	hashCombine(checksum, gMetadata->maxnodeid);
-	hashCombine(checksum, gMetadata->metaversion);
-	hashCombine(checksum, gMetadata->nextsessionid);
+	hashCombine(checksum, gMetadata->maxInodeId);
+	hashCombine(checksum, gMetadata->metadataVersion);
+	hashCombine(checksum, gMetadata->nextSessionId);
 	if (mode == ChecksumMode::kForceRecalculate) {
 		fsnodes_recalculate_checksum();
 		xattr_recalculate_checksum();
-		gMetadata->quota_checksum = gMetadata->quota_database.checksum();
+		gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 	}
 	hashCombine(checksum, gMetadata->fsNodesChecksum);
 	hashCombine(checksum, gMetadata->xattrChecksum);
-	hashCombine(checksum, gMetadata->quota_checksum);
+	hashCombine(checksum, gMetadata->quotaChecksum);
 	hashCombine(checksum, chunk_checksum(mode));
 	return checksum;
 }

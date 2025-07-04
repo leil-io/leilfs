@@ -22,6 +22,7 @@
 
 #include "filesystem_node.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
@@ -589,13 +590,13 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 	FSNode *node = FSNode::create(type);
 	gMetadata->nodes++;
 	if (type == FSNode::kDirectory) {
-		gMetadata->dirnodes++;
+		gMetadata->dirNodes++;
 	}
 	if (type == FSNode::kFile) {
-		gMetadata->filenodes++;
+		gMetadata->fileNodes++;
 	}
 	if (type == FSNode::kSymlink) {
-		gMetadata->linknodes++;
+		gMetadata->linkNodes++;
 	}
 	/* create node */
 	node->id = fsnodes_get_next_id(ts, req_inode);
@@ -615,12 +616,12 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 	}
 	// If desired, node inherits permissions from parent's default ACL
 	const RichACL *parent_acl = (inheritacl == AclInheritance::kInheritAcl)
-	                       ? gMetadata->acl_storage.get(parent->id) : nullptr;
+	                       ? gMetadata->aclStorage.get(parent->id) : nullptr;
 	if (parent_acl) {
 		RichACL acl;
 		uint16_t mode = node->mode;
 		if (RichACL::inheritInode(*parent_acl, mode, acl, umask, type == FSNode::kDirectory)) {
-			gMetadata->acl_storage.set(node->id, std::move(acl));
+			gMetadata->aclStorage.set(node->id, std::move(acl));
 		}
 		// Set effective permissions as the intersection of mode and ACL
 		node->mode &= mode | ~0777;
@@ -637,15 +638,18 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 	} else {
 		node->gid = gid;
 	}
+
 	uint32_t nodepos = NODEHASHPOS(node->id);
-	node->next = gMetadata->nodehash[nodepos];
-	gMetadata->nodehash[nodepos] = node;
+	gMetadata->nodeHash[nodepos].push_front(node);
+
 	fsnodes_update_checksum(node);
 	fsnodes_link(ts, parent, node, name);
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
+
 	if (type == FSNode::kFile) {
 		fsnodes_quota_update(node, {{QuotaResource::kSize, +fsnodes_get_size(node)}});
 	}
+
 	return node;
 }
 
@@ -1194,11 +1198,11 @@ uint8_t fsnodes_appendchunks(uint32_t ts, FSNodeFile *dst, FSNodeFile *src) {
 	uint64_t length =
 	    (static_cast<uint64_t>(dst_chunks) << SFSCHUNKBITS) + src->length;
 	if (dst->type == FSNode::kTrash) {
-		gMetadata->trashspace -= dst->length;
-		gMetadata->trashspace += length;
+		gMetadata->trashSpace -= dst->length;
+		gMetadata->trashSpace += length;
 	} else if (dst->type == FSNode::kReserved) {
-		gMetadata->reservedspace -= dst->length;
-		gMetadata->reservedspace += length;
+		gMetadata->reservedSpace -= dst->length;
+		gMetadata->reservedSpace += length;
 	}
 	dst->length = length;
 	fsnodes_get_stats(dst, &nsr);
@@ -1242,11 +1246,11 @@ void fsnodes_setlength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks
 	statsrecord psr, nsr;
 	fsnodes_get_stats(obj, &psr);
 	if (obj->type == FSNode::kTrash) {
-		gMetadata->trashspace -= obj->length;
-		gMetadata->trashspace += length;
+		gMetadata->trashSpace -= obj->length;
+		gMetadata->trashSpace += length;
 	} else if (obj->type == FSNode::kReserved) {
-		gMetadata->reservedspace -= obj->length;
-		gMetadata->reservedspace += length;
+		gMetadata->reservedSpace -= obj->length;
+		gMetadata->reservedSpace += length;
 	}
 	obj->length = length;
 
@@ -1303,28 +1307,27 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 	}
 	// remove from idhash
 	uint32_t nodepos = NODEHASHPOS(toremove->id);
-	FSNode **ptr = &(gMetadata->nodehash[nodepos]);
-	while (*ptr) {
-		if (*ptr == toremove) {
-			*ptr = toremove->next;
-			break;
-		}
-		ptr = &((*ptr)->next);
-	}
+	auto start = gMetadata->nodeHash[nodepos].begin();
+	auto end = gMetadata->nodeHash[nodepos].end();
+
+	auto found = std::find_if(start, end, [&](const auto &node) {
+		return node == toremove;
+	});
+
 	if (gChecksumBackgroundUpdater.isNodeIncluded(toremove)) {
 		removeFromChecksum(gChecksumBackgroundUpdater.fsNodesChecksum, toremove->checksum);
 	}
 	removeFromChecksum(gMetadata->fsNodesChecksum, toremove->checksum);
 	// and free
 	gMetadata->nodes--;
-	gMetadata->acl_storage.erase(toremove->id);
+	gMetadata->aclStorage.erase(toremove->id);
 	if (toremove->type == FSNode::kDirectory) {
-		gMetadata->dirnodes--;
+		gMetadata->dirNodes--;
 	}
 	if (toremove->type == FSNode::kFile || toremove->type == FSNode::kTrash ||
 	    toremove->type == FSNode::kReserved) {
 		fsnodes_quota_update(toremove, {{QuotaResource::kSize, -fsnodes_get_size(toremove)}});
-		gMetadata->filenodes--;
+		gMetadata->fileNodes--;
 		for (uint32_t i = 0; i < static_cast<FSNodeFile*>(toremove)->chunks.size(); ++i) {
 			uint64_t chunkid = static_cast<FSNodeFile*>(toremove)->chunks[i];
 			if (chunkid > 0) {
@@ -1338,9 +1341,9 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 		}
 	}
 	if (toremove->type == FSNode::kSymlink) {
-		gMetadata->linknodes--;
+		gMetadata->linkNodes--;
 	}
-	gMetadata->inode_pool.release(toremove->id, ts, true);
+	gMetadata->inodePool.release(toremove->id, ts, true);
 	xattr_removeinode(toremove->id);
 	fsnodes_quota_update(toremove, {{QuotaResource::kInodes, -1}});
 	fsnodes_quota_remove(QuotaOwnerType::kInode, toremove->id);
@@ -1349,6 +1352,9 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
 	dcm_modify(toremove->id, 0);
 #endif
 	FSNode::destroy(toremove);
+	if (found != gMetadata->nodeHash[nodepos].end()) {
+		gMetadata->nodeHash[nodepos].erase(found);
+	}
 }
 
 void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &child_name, FSNode *child) {
@@ -1377,16 +1383,16 @@ void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &child_n
 
 			gMetadata->trash.insert({TrashPathKey(child), hstorage::Handle(path)});
 
-			gMetadata->trashspace += file_node->length;
-			gMetadata->trashnodes++;
+			gMetadata->trashSpace += file_node->length;
+			gMetadata->trashNodes++;
 		} else if (!file_node->sessionid.empty()) {
 			child->type = FSNode::kReserved;
 			fsnodes_update_checksum(child);
 
 			gMetadata->reserved.insert({child->id, hstorage::Handle(path)});
 
-			gMetadata->reservedspace += file_node->length;
-			gMetadata->reservednodes++;
+			gMetadata->reservedSpace += file_node->length;
+			gMetadata->reservedNodes++;
 		} else {
 			fsnodes_remove_node(ts, child);
 		}
@@ -1398,14 +1404,14 @@ void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &child_n
 int fsnodes_purge(uint32_t ts, FSNode *p) {
 	if (p->type == FSNode::kTrash) {
 		FSNodeFile *file_node = static_cast<FSNodeFile*>(p);
-		gMetadata->trashspace -= file_node->length;
-		gMetadata->trashnodes--;
+		gMetadata->trashSpace -= file_node->length;
+		gMetadata->trashNodes--;
 
 		if (!file_node->sessionid.empty()) {
 			file_node->type = FSNode::kReserved;
 			fsnodes_update_checksum(file_node);
-			gMetadata->reservedspace += file_node->length;
-			gMetadata->reservednodes++;
+			gMetadata->reservedSpace += file_node->length;
+			gMetadata->reservedNodes++;
 			hstorage::Handle name_handle = std::move(gMetadata->trash.at(TrashPathKey(p)));
 			gMetadata->trash.erase(TrashPathKey(p));
 
@@ -1424,8 +1430,8 @@ int fsnodes_purge(uint32_t ts, FSNode *p) {
 	} else if (p->type == FSNode::kReserved) {
 		FSNodeFile *file_node = static_cast<FSNodeFile*>(p);
 
-		gMetadata->reservedspace -= file_node->length;
-		gMetadata->reservednodes--;
+		gMetadata->reservedSpace -= file_node->length;
+		gMetadata->reservedNodes--;
 
 		gMetadata->reserved.erase(file_node->id);
 
@@ -1518,8 +1524,8 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 			node->ctime = ts;
 			fsnodes_update_checksum(node);
 			fsnodes_link(ts, p, node, name);
-			gMetadata->trashspace -= node->length;
-			gMetadata->trashnodes--;
+			gMetadata->trashSpace -= node->length;
+			gMetadata->trashNodes--;
 			return SAUNAFS_STATUS_OK;
 		} else {
 			if (is_new == 0) {
@@ -1727,9 +1733,9 @@ void fsnodes_seteattr_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t
 		}
 		if (neweattr != (node->mode >> 12)) {
 			node->mode = (node->mode & 0xFFF) | (((uint16_t)neweattr) << 12);
-			const RichACL *node_acl = gMetadata->acl_storage.get(node->id);
+			const RichACL *node_acl = gMetadata->aclStorage.get(node->id);
 			if (node_acl) {
-				gMetadata->acl_storage.setMode(node->id, node->mode, node->type == FSNode::kDirectory);
+				gMetadata->aclStorage.setMode(node->id, node->mode, node->type == FSNode::kDirectory);
 			}
 			(*sinodes)++;
 			fsnodes_update_ctime(node, ts);
@@ -1749,32 +1755,32 @@ void fsnodes_seteattr_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t
 
 uint8_t fsnodes_deleteacl(FSNode *p, AclType type, uint32_t ts) {
 	if (type == AclType::kRichACL) {
-		gMetadata->acl_storage.erase(p->id);
+		gMetadata->aclStorage.erase(p->id);
 	} else if (type == AclType::kDefault) {
 		if (p->type != FSNode::kDirectory) {
 			return SAUNAFS_ERROR_ENOTSUP;
 		}
-		const RichACL *node_acl = gMetadata->acl_storage.get(p->id);
+		const RichACL *node_acl = gMetadata->aclStorage.get(p->id);
 		if (node_acl) {
 			RichACL new_acl = *node_acl;
 			new_acl.createExplicitInheritance();
 			new_acl.removeInheritOnly(true);
 			if (new_acl.size() == 0) {
-				gMetadata->acl_storage.erase(p->id);
+				gMetadata->aclStorage.erase(p->id);
 			} else {
-				gMetadata->acl_storage.set(p->id, std::move(new_acl));
+				gMetadata->aclStorage.set(p->id, std::move(new_acl));
 			}
 		}
 	} else if (type == AclType::kAccess) {
-		const RichACL *node_acl = gMetadata->acl_storage.get(p->id);
+		const RichACL *node_acl = gMetadata->aclStorage.get(p->id);
 		if (node_acl) {
 			RichACL new_acl = *node_acl;
 			new_acl.createExplicitInheritance();
 			new_acl.removeInheritOnly(false);
 			if (new_acl.size() == 0) {
-				gMetadata->acl_storage.erase(p->id);
+				gMetadata->aclStorage.erase(p->id);
 			} else {
-				gMetadata->acl_storage.set(p->id, std::move(new_acl));
+				gMetadata->aclStorage.set(p->id, std::move(new_acl));
 			}
 		}
 	} else {
@@ -1787,7 +1793,7 @@ uint8_t fsnodes_deleteacl(FSNode *p, AclType type, uint32_t ts) {
 
 #ifndef METARESTORE
 uint8_t fsnodes_getacl(FSNode *p, RichACL &acl) {
-	const RichACL *richacl = gMetadata->acl_storage.get(p->id);
+	const RichACL *richacl = gMetadata->aclStorage.get(p->id);
 	if (!richacl) {
 		return SAUNAFS_ERROR_ENOATTR;
 	}
@@ -1805,7 +1811,7 @@ uint8_t fsnodes_setacl(FSNode *p, const RichACL &acl, uint32_t ts) {
 	uint16_t mode = p->mode;
 	if (RichACL::equivMode(acl, mode, p->type == FSNode::kDirectory)) {
 		p->mode = (p->mode & ~0777) | (mode & 0777);
-		gMetadata->acl_storage.erase(p->id);
+		gMetadata->aclStorage.erase(p->id);
 	} else {
 		if (!acl.isAutoSetMode()) {
 			p->mode = (p->mode & ~0777) | (acl.getMode() & 0777);
@@ -1815,7 +1821,7 @@ uint8_t fsnodes_setacl(FSNode *p, const RichACL &acl, uint32_t ts) {
 			new_acl.setFlags(new_acl.getFlags() & ~RichACL::kAutoSetMode);
 			new_acl.setMode(p->mode, p->type == FSNode::kDirectory);
 		}
-		gMetadata->acl_storage.set(p->id, std::move(new_acl));
+		gMetadata->aclStorage.set(p->id, std::move(new_acl));
 	}
 
 	fsnodes_update_ctime(p, ts);
@@ -1832,7 +1838,7 @@ uint8_t fsnodes_setacl(FSNode *p, AclType type, const AccessControlList &acl, ui
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
 
-	const RichACL *node_acl = gMetadata->acl_storage.get(p->id);
+	const RichACL *node_acl = gMetadata->aclStorage.get(p->id);
 	RichACL new_acl;
 
 	if (node_acl) {
@@ -1848,7 +1854,7 @@ uint8_t fsnodes_setacl(FSNode *p, AclType type, const AccessControlList &acl, ui
 		new_acl.appendPosixACL(acl, p->type == FSNode::kDirectory);
 		p->mode = (p->mode & ~0777) | (new_acl.getMode() & 0777);
 	}
-	gMetadata->acl_storage.set(p->id, std::move(new_acl));
+	gMetadata->aclStorage.set(p->id, std::move(new_acl));
 
 	fsnodes_update_ctime(p, ts);
 	fsnodes_update_checksum(p);
@@ -1881,7 +1887,7 @@ int fsnodes_access(const FsContext &context, FSNode *node, uint8_t modemask) {
 	if ((context.sesflags() & SESFLAG_NOMASTERPERMCHECK) || context.uid() == 0) {
 		return 1;
 	}
-	const RichACL *node_acl = gMetadata->acl_storage.get(node->id);
+	const RichACL *node_acl = gMetadata->aclStorage.get(node->id);
 	if (node_acl) {
 		assert((node->mode & 0777) == node_acl->getMode());
 

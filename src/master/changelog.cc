@@ -335,7 +335,7 @@ void load_changelog(const std::string &path) {
 	std::ifstream changelog(path);
 	std::string line;
 	size_t end = 0;
-	sassert(gMetadata->metaversion > 0);
+	sassert(gMetadata->metadataVersion > 0);
 
 	uint64_t first = 0;
 	uint64_t id = 0;

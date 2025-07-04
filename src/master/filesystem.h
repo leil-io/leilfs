@@ -215,9 +215,9 @@ void fs_disable_checksum_verification(bool value);
 
 // Functions which modify metadata or return some information.
 // To be used by the master server with personality == kMaster
-void fs_info(uint64_t *totalspace, uint64_t *availspace, uint64_t *trspace, inode_t *trnodes,
-             uint64_t *respace, inode_t *renodes, inode_t *inodes, inode_t *dnodes, inode_t *fnodes,
-             inode_t *lnodes);
+void fs_info(uint64_t *totalSpace, uint64_t *availableSpace, uint64_t *trashSpace,
+             inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes, inode_t *inodes,
+             inode_t *directoryNodes, inode_t *fileNodes, inode_t *linkNodes);
 uint32_t fs_getdirpath_size(inode_t inode);
 void fs_getdirpath_data(inode_t inode, uint8_t *buff, uint32_t size);
 uint8_t fs_getrootinode(inode_t *rootinode, const uint8_t *path);

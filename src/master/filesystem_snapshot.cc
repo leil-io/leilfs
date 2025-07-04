@@ -81,7 +81,7 @@ uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_
 		initial_batch_size = gInitialSnapshotTaskBatch;
 	}
 	initial_batch_size = std::min(initial_batch_size, gSnapshotTaskBatchLimit);
-	return gMetadata->task_manager.submitTask(job_id, context.ts(), initial_batch_size,
+	return gMetadata->taskManager.submitTask(job_id, context.ts(), initial_batch_size,
 						  task, SnapshotTask::generateDescription(src_path, dst_path),
 						  callback);
 }

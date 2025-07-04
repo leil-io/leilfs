@@ -40,7 +40,7 @@ public:
 	}
 
 	~ChecksumUpdater() {
-		if (gMetadata->metaversion > lastEntry_ + period_) {
+		if (gMetadata->metadataVersion > lastEntry_ + period_) {
 			writeToChangelog(ts_);
 		}
 	}
@@ -51,7 +51,7 @@ public:
 
 protected:
 	static void writeToChangelog(uint32_t ts) {
-		lastEntry_ = gMetadata->metaversion;
+		lastEntry_ = gMetadata->metadataVersion;
 		if (metadataserver::isMaster() && !gChecksumBackgroundUpdater.inProgress()) {
 			std::string versionString = saunafsVersionToString(SAUNAFS_VERSHEX);
 			uint64_t checksum = fs_checksum(ChecksumMode::kGetCurrent);

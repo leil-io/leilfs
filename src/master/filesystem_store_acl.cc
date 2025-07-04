@@ -52,10 +52,10 @@ static void fs_store_acl(inode_t id, const RichACL &acl, FILE *fd) {
 
 void fs_store_acls(FILE *fd) {
 	for (uint32_t i = 0; i < NODEHASHSIZE; ++i) {
-		for (FSNode *p = gMetadata->nodehash[i]; p; p = p->next) {
-			const RichACL *node_acl = gMetadata->acl_storage.get(p->id);
+		for (const auto &node : gMetadata->nodeHash[i]) {
+			const RichACL *node_acl = gMetadata->aclStorage.get(node->id);
 			if (node_acl) {
-				fs_store_acl(p->id, *node_acl, fd);
+				fs_store_acl(node->id, *node_acl, fd);
 			}
 		}
 	}
@@ -111,7 +111,7 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
 
-		const RichACL *node_acl = gMetadata->acl_storage.get(p->id);
+		const RichACL *node_acl = gMetadata->aclStorage.get(p->id);
 		if (node_acl != nullptr) {
 			RichACL new_acl = *node_acl;
 			if (default_acl) {
@@ -125,7 +125,7 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 				new_acl.appendPosixACL(posix_acl, p->type == FSNode::kDirectory);
 				p->mode = (p->mode & ~0777) | (new_acl.getMode() & 0777);
 			}
-			gMetadata->acl_storage.set(p->id, std::move(new_acl));
+			gMetadata->aclStorage.set(p->id, std::move(new_acl));
 		}
 	} catch (Exception &ex) {
 		safs_pretty_syslog(LOG_ERR, "loading acl: %s", ex.what());
@@ -192,7 +192,7 @@ static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataF
 			new_acl.appendDefaultPosixACL(posix_acl);
 		}
 		if (new_acl.size() > 0) {
-			gMetadata->acl_storage.set(p->id, std::move(new_acl));
+			gMetadata->aclStorage.set(p->id, std::move(new_acl));
 		}
 		return 0;
 	} catch (Exception &ex) {
@@ -279,7 +279,7 @@ int fs_load_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &o
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
-		gMetadata->acl_storage.set(p->id, std::move(acl));
+		gMetadata->aclStorage.set(p->id, std::move(acl));
 		return 0;
 	} catch (Exception &ex) {
 		safs_pretty_syslog(LOG_ERR, "loading acl: %s", ex.what());

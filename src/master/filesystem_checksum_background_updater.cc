@@ -82,20 +82,24 @@ bool ChecksumBackgroundUpdater::isNodeIncluded(FSNode *node) {
 	return ret;
 }
 
-bool ChecksumBackgroundUpdater::isXattrIncluded(xattr_data_entry *xde) {
+bool ChecksumBackgroundUpdater::isXattrIncluded(XAttributeDataEntry *xattrDataEntry) {
 	auto ret = false;
 	if (step_ > ChecksumRecalculatingStep::kXattrs) {
 		ret = true;
 	}
+
 	if (step_ == ChecksumRecalculatingStep::kXattrs &&
-	    xattr_data_hash_fn(xde->inode, xde->anleng, xde->attrname) < position_) {
+	    get_xattr_data_hash(xattrDataEntry->inode, xattrDataEntry->attributeName.size(),
+	                        xattrDataEntry->attributeName.data()) < position_) {
 		ret = true;
 	}
+
 	if (ret) {
 		safs::log_trace("master.fs.checksum.changing_recalculated_xattr");
 	} else {
 		safs::log_trace("master.fs.checksum.changing_not_recalculated_xattr");
 	}
+
 	return ret;
 }
 

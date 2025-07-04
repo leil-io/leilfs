@@ -34,114 +34,76 @@
 #include "master/locks.h"
 #include "master/task_manager.h"
 
+using XAttributeInodeEntryPointer = std::unique_ptr<XAttributeInodeEntry>;
+using XAttributeInodeEntryList = std::list<XAttributeInodeEntryPointer>;
+
+using XAttributeDataEntryPointer = std::unique_ptr<XAttributeDataEntry>;
+using XAttributeDataEntryList = std::list<XAttributeDataEntryPointer>;
+
+using FSNodePointerList = std::list<FSNode*>;
+
 /** Metadata of the filesystem.
  *  All the static variables managed by function in this file which form metadata of the filesystem.
  */
 struct FilesystemMetadata {
 public:
-	xattr_inode_entry *xattr_inode_hash[XATTR_INODE_HASH_SIZE];
-	xattr_data_entry *xattr_data_hash[XATTR_DATA_HASH_SIZE];
+	std::array<XAttributeInodeEntryList, XATTR_INODE_HASH_SIZE> xattrInodeHash;
+	std::array<XAttributeDataEntryList, XATTR_DATA_HASH_SIZE> xattrDataHash;
 	// TODO(Guillex): Check implications of using 64 bits for inode_t in this structure.
-	IdPoolDetainer<inode_t, uint32_t> inode_pool;
-	AclStorage acl_storage;
+	IdPoolDetainer<inode_t, uint32_t> inodePool;
+	AclStorage aclStorage;
 	TrashPathContainer trash;
 	ReservedPathContainer reserved;
-	FSNodeDirectory *root;
-	FSNode *nodehash[NODEHASHSIZE];
-	TaskManager task_manager;
-	FileLocks flock_locks;
-	FileLocks posix_locks;
+	FSNodeDirectory *root{};
+	std::array<FSNodePointerList, NODEHASHSIZE> nodeHash;
+	TaskManager taskManager;
+	FileLocks flockLocks;
+	FileLocks posixLocks;
 
-	inode_t maxnodeid;
-	uint32_t nextsessionid;
-	inode_t nodes;
-	uint64_t metaversion;
-	uint64_t trashspace;
-	uint64_t reservedspace;
-	inode_t trashnodes;
-	inode_t reservednodes;
-	inode_t filenodes;
-	inode_t dirnodes;
-	inode_t linknodes;
+	inode_t maxInodeId{};
+	uint32_t nextSessionId{};
+	inode_t nodes{};
+	uint64_t metadataVersion{};
+	uint64_t trashSpace{};
+	uint64_t reservedSpace{};
+	inode_t trashNodes{};
+	inode_t reservedNodes{};
+	inode_t fileNodes{};
+	inode_t dirNodes{};
+	inode_t linkNodes{};
 
-	QuotaDatabase quota_database;
+	QuotaDatabase quotaDatabase;
 
-	uint64_t fsNodesChecksum;
-	uint64_t xattrChecksum;
-	uint64_t quota_checksum;
+	uint64_t fsNodesChecksum{};
+	uint64_t xattrChecksum{};
+	uint64_t quotaChecksum{quotaDatabase.checksum()};
 
 	FilesystemMetadata()
-	    : xattr_inode_hash{},
-	      xattr_data_hash{},
-	      inode_pool{SFS_INODE_REUSE_DELAY, 12,
-	                 MAX_REGULAR_INODE, MAX_REGULAR_INODE,
-	                 32 * 8 * 1024, 8 * 1024, 10},
-	      trash{},
-	      reserved{},
-	      root{},
-	      nodehash{},
-	      task_manager{},
-	      flock_locks{},
-	      posix_locks{},
-	      maxnodeid{},
-	      nextsessionid{},
-	      nodes{},
-	      metaversion{},
-	      trashspace{},
-	      reservedspace{},
-	      trashnodes{},
-	      reservednodes{},
-	      filenodes{},
-	      dirnodes{},
-	      linknodes{},
-	      quota_database{},
-	      fsNodesChecksum{},
-	      xattrChecksum{},
-	      quota_checksum{quota_database.checksum()} {
-	}
+	    : inodePool{SFS_INODE_REUSE_DELAY,
+	                12,
+	                MAX_REGULAR_INODE,
+	                MAX_REGULAR_INODE,
+	                32 * 8 * 1024,
+	                8 * 1024,
+	                10} {}
 
 	~FilesystemMetadata() {
 		// Free memory allocated in xattr_inode_hash hashmap
 		for (uint32_t i = 0; i < XATTR_INODE_HASH_SIZE; ++i) {
-			freeListConnectedUsingNext(xattr_inode_hash[i]);
+			xattrInodeHash[i].clear();
 		}
 
 		// Free memory allocated in xattr_data_hash hashmap
 		for (uint32_t i = 0; i < XATTR_DATA_HASH_SIZE; ++i) {
-			deleteListConnectedUsingNext(xattr_data_hash[i]);
+			xattrDataHash[i].clear();
 		}
 
 		// Free memory allocated in nodehash hashmap
 		for (uint32_t i = 0; i < NODEHASHSIZE; ++i) {
-			FSNode *node = nodehash[i];
-			while (node != nullptr) {
-				FSNode *next = node->next;
+			for (const auto &node : nodeHash[i]) {
 				FSNode::destroy(node);
-				node = next;
 			}
-		}
-	}
-
-private:
-	// Frees a C-style list with elements connected using e->next pointer and allocated using
-	// malloc
-	template <typename T>
-	void freeListConnectedUsingNext(T *&list) {
-		while (list != nullptr) {
-			T *next = list->next;
-			free(list);
-			list = next;
-		}
-	}
-
-	// Frees a C-style list with elements connected using e->next pointer and allocated using
-	// new
-	template <typename T>
-	void deleteListConnectedUsingNext(T *&list) {
-		while (list != nullptr) {
-			T *next = list->next;
-			delete list;
-			list = next;
+			nodeHash[i].clear();
 		}
 	}
 };
