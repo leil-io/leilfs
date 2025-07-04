@@ -75,6 +75,7 @@ RUN mkdir -p /saunafs/build && ls /saunafs && \
     -DENABLE_CLIENT_LIB=ON \
     -DENABLE_URAFT=ON \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DENABLE_FOUNDATIONDB=ON \
     ..;
 
 # TODO: Use CMake presets

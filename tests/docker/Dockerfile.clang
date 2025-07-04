@@ -56,6 +56,7 @@ RUN mkdir -p /saunafs/build && ls /saunafs && \
     -DENABLE_TESTS=1 \
     -DENABLE_NFS_GANESHA=1 \
     -DENABLE_CLIENT_LIB=ON \
+    -DENABLE_FOUNDATIONDB=ON \
     ..;
 
 # TODO: Use CMake presets

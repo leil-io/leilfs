@@ -81,6 +81,7 @@ jobs:
                   -DCODE_COVERAGE=OFF \
                   -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON \
                   -DENABLE_WERROR=ON \
+                  -DENABLE_FOUNDATIONDB=ON \
                   "${GITHUB_WORKSPACE}"
                   make -j"$(nproc)" install
 

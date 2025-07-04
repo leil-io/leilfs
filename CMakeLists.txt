@@ -56,6 +56,7 @@ option(ENABLE_COMPILE_COMMANDS  "Enable generation of compile_commands.json"    
 option(ENABLE_PROMETHEUS        "Enable prometheus metrics"                              ON)
 # Experimental
 option(ENABLE_INODE64           "Enable 64 bits for inode numbers and quantities"        OFF)
+option(ENABLE_FOUNDATIONDB      "Enable FoundationDB experimental support"               OFF)
 
 option(GENERATE_GIT_INFO "Generate git info from current repository (for version commands)" ON)
 
@@ -148,6 +149,7 @@ message(STATUS "USE_LEGACY_READ_MESSAGES: ${USE_LEGACY_READ_MESSAGES}")
 message(STATUS "ENABLE_NFS_GANESHA: ${ENABLE_NFS_GANESHA}")
 message(STATUS "ENABLE_COMPILE_COMMANDS: ${CMAKE_EXPORT_COMPILE_COMMANDS}")
 message(STATUS "ENABLE_INODE64: ${ENABLE_INODE64}")
+message(STATUS "ENABLE_FOUNDATIONDB: ${ENABLE_FOUNDATIONDB}")
 
 if(ENABLE_INODE64)
   add_definitions(-DSAUNAFS_USE_INODE64)
@@ -420,7 +422,9 @@ if(NOT MINGW)
   endif()
   add_subdirectory(src/chunkserver)
   add_subdirectory(src/kv)
-  add_subdirectory(src/fdb)
+  if(ENABLE_FOUNDATIONDB)
+    add_subdirectory(src/fdb)
+  endif()
   add_subdirectory(src/master)
   add_subdirectory(src/metadump)
   add_subdirectory(src/metalogger)
