@@ -60,12 +60,7 @@ struct PacketStruct {
 	uint32_t bytesLeft = 0;
 	std::vector<uint8_t> packet;
 
-	/// Aligned buffer for write operations.
-	/// This buffer is used to ensure that the data is aligned to the disk block
-	/// size (4 KiB). This is needed if DirectIO is required.
-	AlignedVectorForIO alignedBuffer;
-	/// Flag indicating whether the aligned buffer is in use.
-	bool useAlignedMemory = false;
+	std::shared_ptr<InputBuffer> inputBuffer;
 
 	std::shared_ptr<OutputBuffer> outputBuffer;
 };
@@ -153,6 +148,8 @@ struct ChunkserverEntry {
 	/// - have been acked by the next chunkserver from the chain, but are still
 	///   being written by us.
 	std::set<uint32_t> partiallyCompletedWrites;
+	/// Pointer to the input buffer in use.
+	InputBuffer *inputBufferInUse = nullptr;
 
 	/* read */
 	uint16_t maxBlocksPerHddReadJob; ///< Number of blocks to read from the device in one read job.
@@ -218,6 +215,10 @@ struct ChunkserverEntry {
 	/// Creates an attached packet from the given vector.
 	/// The function takes ownership of the vector.
 	void createAttachedPacket(std::vector<uint8_t> &packet);
+
+	void prepareInputBufferForWrite(uint32_t type, bool isForward);
+
+	InputBuffer* getInputBufferForWrite(uint32_t type, bool isForward);
 
 	/// Creates an attached packet with the given type and operation size.
 	///
@@ -359,6 +360,8 @@ struct ChunkserverEntry {
 	static void delayedDiscardCallback(uint8_t status, void *entry);
 	/// Callback for when a write operation finishes.
 	static void writeFinishedCallback(uint8_t status, void *entry);
+	/// Callback for when a job_open associated to a write operation finishes.
+	static void openWriteFinishedCallback(uint8_t status, void *entry);
 	/// Callback for legacy chunk block retrieval completion.
 	static void sauGetChunkBlocksFinishedLegacyCallback(uint8_t status,
 	                                                    void *entry);
@@ -367,6 +370,8 @@ struct ChunkserverEntry {
 	/// Callback for chunk block retrieval completion.
 	static void getChunkBlocksFinishedCallback(uint8_t status, void *entry);
 
+	/// Serializes and attaches a write status message to the output packets list.
+	void createAttachedWriteStatus(uint8_t status, uint32_t writeId);
 	/// Retrieves chunk blocks from the given information.
 	void getChunkBlocks(const uint8_t *data, uint32_t length);
 
