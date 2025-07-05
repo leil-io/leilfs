@@ -859,6 +859,25 @@ int hddChunkWriteBlock(uint64_t chunkId, uint32_t version,
 	return status;
 }
 
+int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                            uint16_t startBlock, uint16_t numBlocks, std::vector<uint32_t> &crcList,
+                            const uint8_t *buffer) {
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
+
+	if (chunk == ChunkNotFound) {
+		safs::log_err("hddChunkWriteFullBlocks: ChunkNotFound; chunkId {}, version {}, type {}",
+		              chunkId, version, chunkType.toString());
+		return -SAUNAFS_ERROR_NOCHUNK;
+	}
+
+	auto *crcData = gOpenChunks.getResource(chunk->metaFD()).crcData();
+	int status = chunk->owner()->writeChunkBlocks(chunk, version, startBlock, numBlocks, crcList,
+	                                              crcData, buffer);
+	hddChunkRelease(chunk);
+
+	return status;
+}
+
 /* chunk info */
 
 int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
