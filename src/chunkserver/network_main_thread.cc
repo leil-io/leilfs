@@ -106,6 +106,10 @@ void mainNetworkThreadReload(void) {
 	}
 	chunkReplicatorReload();
 
+	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
+	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,
+	    NetworkWorkerThread::kMinBlocksPerHddWriteJob,
+	    NetworkWorkerThread::kMaxBlocksPerHddWriteJob);
 	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint16_t>(
 	    "MAX_BLOCKS_PER_HDD_READ_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddReadJob, 1);
 	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
@@ -233,6 +237,10 @@ int mainNetworkThreadInit(void) {
 	    "BGJOBSCNT_PER_NETWORK_WORKER",
 	    NetworkWorkerThread::kDefaultMaxBackgroundJobsPerNetworkWorker, 10);
 
+	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
+	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,
+	    NetworkWorkerThread::kMinBlocksPerHddWriteJob,
+	    NetworkWorkerThread::kMaxBlocksPerHddWriteJob);
 	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint16_t>(
 	    "MAX_BLOCKS_PER_HDD_READ_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddReadJob, 1);
 	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
