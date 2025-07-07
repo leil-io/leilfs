@@ -25,6 +25,13 @@
 ## (default is 0: disabled or let glibc decide)
 # LIMIT_GLIBC_MALLOC_ARENAS = 0
 
+
+## Interval in seconds at which the chunkserver will attempt to release unused
+## memory back to the OS using malloc_trim(). This can help reduce the process's
+## memory footprint by returning free memory to the system more frequently.
+## (Default: 3600, Minimum: 1)
+# MALLOC_TRIM_INTERVAL = 3600
+
 ## Nice level to run daemon with (default is -19 if possible).
 # NICE_LEVEL = -19
 
