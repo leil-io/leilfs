@@ -21,7 +21,10 @@
 #include "common/platform.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
+#include <thread>
 
 using EventLoopTimerHandle = void *;
 
@@ -39,7 +42,17 @@ public:
 	/// RunTab for the init.h file
 	static int init();
 
+	/// For clean shutdown
+	static void shutdown();
+
+	static uint32_t effectiveInterval() {
+		return effectiveInterval_.load(std::memory_order_relaxed);
+	}
+
 private:
+	/// Background thread function for memory trimming
+	static void trimThreadFunc(std::stop_token stoken);
+
 	static constexpr uint32_t kMinMallocTrimIntervalSeconds = 1;
 	static constexpr uint32_t kDefaultMallocTrimIntervalSeconds = 3600;
 
@@ -47,4 +60,9 @@ private:
 	static EventLoopTimerHandle eventLoopHandle_;  ///< Handle for the registered function
 
 	static std::atomic_uint32_t effectiveInterval_;  ///< Interval in seconds for malloc_trim
+
+	// Threading
+	static std::jthread trimThread_;
+	static std::condition_variable_any trimCv_;
+	static std::mutex trimMutex_;
 };
