@@ -170,11 +170,11 @@ windows_server_aux(){
 	local server_command=$1
 	local command=$2
 	if [[ "$command" == "reload" ]]; then
-		kill -s SIGHUP $(pgrep -f "$server_command")
+		kill -s SIGHUP $(pgrep -f "$server_command") || true
 	elif [[ "$command" == "kill" ]]; then
-		kill -s SIGKILL $(pgrep -f "$server_command")
+		kill -s SIGKILL $(pgrep -f "$server_command") || true
 	elif [[ "$command" == "stop" ]] || [[ "$command" == "restart" ]]; then
-		kill -s SIGTERM $(pgrep -f "$server_command")
+		kill -s SIGTERM $(pgrep -f "$server_command") || true
 	fi
 	$server_command $command | cat
 }
