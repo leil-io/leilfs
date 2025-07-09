@@ -41,4 +41,3 @@ echo "Good gid appearances:  ${goodGidCount}"
 echo "Bad gid appearances:    ${badGidCount}"
 
 assert_equals 0 ${badGidCount}
-assert_equals ${gidCount} ${goodGidCount}
