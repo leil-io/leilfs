@@ -29,8 +29,9 @@
 ## Interval in seconds at which the chunkserver will attempt to release unused
 ## memory back to the OS using malloc_trim(). This can help reduce the process's
 ## memory footprint by returning free memory to the system more frequently.
-## (Default: 3600, Minimum: 1)
-# MALLOC_TRIM_INTERVAL = 3600
+## Set to 0 to disable memory trimming entirely.
+## (Default: 0, 0 = disabled)
+# MALLOC_TRIM_INTERVAL = 0
 
 ## Nice level to run daemon with (default is -19 if possible).
 # NICE_LEVEL = -19

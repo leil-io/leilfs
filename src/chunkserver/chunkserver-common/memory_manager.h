@@ -26,12 +26,19 @@
 #include <mutex>
 #include <thread>
 
-using EventLoopTimerHandle = void *;
-
 /// \brief MemoryManager class handles memory management tasks.
 ///  The initial implementation focuses on trimming unused memory and managing the trim interval.
-class MemoryManager {
+class MemoryManager final {
 public:
+	// This class is not meant to be instantiated or copied.
+	// The interface is provided by static methods.
+	MemoryManager() = delete;
+	MemoryManager(const MemoryManager &) = delete;
+	MemoryManager(MemoryManager &&) = delete;
+	MemoryManager &operator=(const MemoryManager &) = delete;
+	MemoryManager &operator=(MemoryManager &&) = delete;
+	~MemoryManager() = delete;
+
 	/// Does the actual memory trimming.
 	/// This function is registered in the event loop and called periodically.
 	static void trimMemory();
@@ -53,12 +60,10 @@ private:
 	/// Background thread function for memory trimming
 	static void trimThreadFunc(std::stop_token stoken);
 
-	static constexpr uint32_t kMinMallocTrimIntervalSeconds = 1;
-	static constexpr uint32_t kDefaultMallocTrimIntervalSeconds = 3600;
+	static constexpr uint32_t kDisableTrimmingInterval = 0;
+	static constexpr uint32_t kDefaultMallocTrimIntervalSeconds = kDisableTrimmingInterval;
 
-	static bool initialized_;  ///< Whether the trimMemory function was registered in the event loop
-	static EventLoopTimerHandle eventLoopHandle_;  ///< Handle for the registered function
-
+	static bool isThreadRunning_;  ///< Whether the trim thread is currently running
 	static std::atomic_uint32_t effectiveInterval_;  ///< Interval in seconds for malloc_trim
 
 	// Threading

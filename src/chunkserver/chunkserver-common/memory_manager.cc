@@ -34,8 +34,7 @@
 
 std::atomic_uint32_t MemoryManager::effectiveInterval_{
     MemoryManager::kDefaultMallocTrimIntervalSeconds};
-bool MemoryManager::initialized_ = false;
-EventLoopTimerHandle MemoryManager::eventLoopHandle_ = nullptr;
+bool MemoryManager::isThreadRunning_ = false;
 std::jthread MemoryManager::trimThread_;
 std::condition_variable_any MemoryManager::trimCv_;
 std::mutex MemoryManager::trimMutex_;
@@ -43,8 +42,15 @@ std::mutex MemoryManager::trimMutex_;
 // MemoryManager functions
 
 void MemoryManager::trimThreadFunc(std::stop_token stoken) {
+	pthread_setname_np(pthread_self(), "malloc_trim");
+
 	while (!stoken.stop_requested()) {
 		uint32_t interval = MemoryManager::effectiveInterval();
+
+		// If interval is 0, the feature is disabled, exit the thread
+		if (interval == kDisableTrimmingInterval) {
+			break;
+		}
 
 		// Wait for the interval or until stop is requested or config changes (reload)
 		std::unique_lock lock(MemoryManager::trimMutex_);
@@ -74,24 +80,47 @@ void MemoryManager::trimMemory() {
 }
 
 void MemoryManager::reload() {
-	auto interval = cfg_get_minvalue<uint32_t>(
-	    "MALLOC_TRIM_INTERVAL", kDefaultMallocTrimIntervalSeconds, kMinMallocTrimIntervalSeconds);
+	auto interval = cfg_getuint32("MALLOC_TRIM_INTERVAL", kDefaultMallocTrimIntervalSeconds);
 
-	if (interval == effectiveInterval_.load() && initialized_) { return; }
+	// interval == 0 here will mean to disable the trimming, including the thread
+	uint32_t currentInterval = effectiveInterval_.load();
+	bool wasThreadRunning = isThreadRunning_;
+
+	if (interval == currentInterval && wasThreadRunning == (interval > 0)) {
+		return;
+	}
 
 	effectiveInterval_.store(interval, std::memory_order_relaxed);
 
-	// Notify the thread in case the interval changed
-	trimCv_.notify_all();
+	// Handle thread lifecycle based on interval
+	if (interval == kDisableTrimmingInterval) {
+		// Stop the thread if it's running
+		if (isThreadRunning_ && trimThread_.joinable()) {
+			trimThread_.request_stop();
+			trimCv_.notify_all();
+			trimThread_.join();
+			isThreadRunning_ = false;
+			safs::log_info("Memory trimming disabled - thread stopped");
+		}
+	} else {
+		// Start the thread if it's not running
+		if (!isThreadRunning_) {
+			trimThread_ = std::jthread(MemoryManager::trimThreadFunc);
+			isThreadRunning_ = true;
+			safs::log_info("Memory trimming enabled - thread started");
+		} else {
+			// Thread is already running, just notify about interval change
+			trimCv_.notify_all();
+		}
+	}
 
-	safs::log_info("Effective MALLOC_TRIM_INTERVAL: {} seconds", interval);
-
-	if (!initialized_) { initialized_ = true; }
+	if (interval > kDisableTrimmingInterval) {
+		safs::log_info("Effective MALLOC_TRIM_INTERVAL: {} seconds", interval);
+	}
 }
 
 int MemoryManager::init() {
 	reload();
-	trimThread_ = std::jthread(MemoryManager::trimThreadFunc);
 	eventloop_reloadregister(MemoryManager::reload);
 	eventloop_destructregister(MemoryManager::shutdown);
 
@@ -103,5 +132,6 @@ void MemoryManager::shutdown() {
 		trimThread_.request_stop();
 		trimCv_.notify_all();
 		trimThread_.join();
+		isThreadRunning_ = false;
 	}
 }

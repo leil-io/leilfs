@@ -1,10 +1,10 @@
-timeout_set "3 minutes"
+timeout_set "1 minute"
 
 CHUNKSERVERS=3 \
 	MASTER_CUSTOM_GOALS="1 ec21: \$ec(2,1)" \
 	AUTO_SHADOW_MASTER="NO" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
-	CHUNKSERVER_EXTRA_CONFIG="MAGIC_DEBUG_LOG = $TEMP_DIR/log|LOG_FLUSH_ON=DEBUG" \
+	CHUNKSERVER_EXTRA_CONFIG="MALLOC_TRIM_INTERVAL=0|MAGIC_DEBUG_LOG = $TEMP_DIR/log|LOG_FLUSH_ON=DEBUG" \
 	setup_local_empty_saunafs info
 
 cd "${info[mount0]}"
@@ -42,19 +42,19 @@ generateAndValidateFiles
 
 ### Test MALLOC_TRIM_INTERVAL configuration and functionality ###
 
-trimInterval=5  # 5 seconds for quick testing
+trimInterval=3  # 3 seconds for quick testing
 
 # Get initial memory values for chunkserver 0
 cs0Pid=$(saunafs_chunkserver_daemon 0 test | tr -d '\0' | awk '{print $NF}')
 residentMemoryCS0=$(getResidentMemoryForPid ${cs0Pid})
 echo "CS0 PID: ${cs0Pid} - Initial resident memory: ${residentMemoryCS0} KB"
 
-# Configure MALLOC_TRIM_INTERVAL and restart chunkserver
+# Configure MALLOC_TRIM_INTERVAL and reload chunkserver
 echo "MALLOC_TRIM_INTERVAL = ${trimInterval}" >> "${info[chunkserver0_cfg]}"
 saunafs_chunkserver_daemon 0 reload
 
 # Let the chunkserver reload
-sleep 5
+sleep $(timeout_rescale_seconds 3)
 
 # Check if the trim interval was set correctly
 effectiveTrimInterval=$(getMallocTrimIntervalFromLog)
@@ -62,8 +62,9 @@ assert_equals ${trimInterval} ${effectiveTrimInterval}
 echo "MALLOC_TRIM_INTERVAL set to ${effectiveTrimInterval} seconds for chunkserver 0"
 
 # Wait for at least one trim cycle plus buffer time
-echo "Waiting for memory trim to occur (waiting $((trimInterval + 2)) seconds)..."
-sleep $((trimInterval + 2))
+sleepTime=$(timeout_rescale_seconds $((trimInterval + 2)))
+echo "Waiting for memory trim to occur (waiting ${sleepTime} seconds)..."
+sleep "${sleepTime}"
 
 # Check if memory trimming actually occurred
 if checkMemoryTrimmedFromLog; then
@@ -77,43 +78,21 @@ cs0PidAfter=$(saunafs_chunkserver_daemon 0 test | tr -d '\0' | awk '{print $NF}'
 residentMemoryCS0After=$(getResidentMemoryForPid ${cs0PidAfter})
 echo "CS0 PID: ${cs0PidAfter} - Resident memory after trim period: ${residentMemoryCS0After} KB"
 
-### Test with different chunkserver (chunkserver 1) ###
+### Test disabling the feature #
 
-# Test chunkserver 1 with a different trim interval
-trimInterval2=3
-cs1Pid=$(saunafs_chunkserver_daemon 1 test | tr -d '\0' | awk '{print $NF}')
-residentMemoryCS1=$(getResidentMemoryForPid ${cs1Pid})
-echo "CS1 PID: ${cs1Pid} - Initial resident memory: ${residentMemoryCS1} KB"
-
-# Clear log again for clean testing
+# Clear the log
 > "${TEMP_DIR}/log"
 
-# Configure different MALLOC_TRIM_INTERVAL for chunkserver 1
-echo "MALLOC_TRIM_INTERVAL = ${trimInterval2}" >> "${info[chunkserver1_cfg]}"
-saunafs_chunkserver_daemon 1 reload
+echo "Disabling MALLOC_TRIM_INTERVAL by setting it to 0 in the configuration"
+# Modify MALLOC_TRIM_INTERVAL and reload chunkserver
+trimInterval=0
+sed -i s/"^MALLOC_TRIM_INTERVAL = .*"/"MALLOC_TRIM_INTERVAL = ${trimInterval}"/g "${info[chunkserver0_cfg]}"
+saunafs_chunkserver_daemon 0 reload
 
 # Let the chunkserver reload
-sleep 5
+echo "Waiting for chunkserver to reload"
+sleep $(timeout_rescale_seconds 3)
 
-# Verify the new interval is set
-effectiveTrimInterval2=$(getMallocTrimIntervalFromLog)
-assert_equals ${trimInterval2} ${effectiveTrimInterval2}
-echo "MALLOC_TRIM_INTERVAL set to ${effectiveTrimInterval2} seconds for chunkserver 1"
-
-### Test minimum value constraint ###
-
-# Test that the minimum value (1 second) is enforced
-trimIntervalMin=1
-echo "MALLOC_TRIM_INTERVAL = 0" >> "${info[chunkserver2_cfg]}"
-
-# Clear log for minimum test
-> "${TEMP_DIR}/log}"
-
-saunafs_chunkserver_daemon 2 reload
-
-# Let the chunkserver reload
-sleep 5
-
-effectiveTrimIntervalMin=$(getMallocTrimIntervalFromLog)
-assert_equals ${trimIntervalMin} ${effectiveTrimIntervalMin}
-echo "Minimum MALLOC_TRIM_INTERVAL (${effectiveTrimIntervalMin} seconds) correctly enforced"
+# Check that the thread was stopped
+assert_success grep -q "Memory trimming disabled" "${TEMP_DIR}/log"
+echo "Memory trimming thread was stopped"
