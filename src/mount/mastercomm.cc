@@ -93,7 +93,6 @@ struct threc {
 #define RECEIVE_TIMEOUT 10
 
 constexpr size_t kDefaultTcpCommTimeoutMSeconds = 1000;
-constexpr uint8_t kCltomaFuseRegisterHeaderLength = sizeof(CLTOMA_FUSE_REGISTER);
 constexpr uint32_t kFuseRegisterBlobAclTotalPacketLength = REGISTER_BLOB_SIZE + 1;
 constexpr uint32_t kFuseRegisterBlobAclLength = REGISTER_BLOB_SIZE;
 constexpr uint32_t kMasterResponseRegisterPacketLength = 32U;
@@ -103,6 +102,10 @@ constexpr uint32_t kSecondsPerMinute = 60;
 constexpr uint32_t kSecondsPerHour = 60 * kSecondsPerMinute;
 constexpr uint32_t kSecondsPerDay = 24 * kSecondsPerHour;
 constexpr uint32_t kSecondsPerWeek = 7 * kSecondsPerDay;
+
+const uint8_t cltomaFuseRegisterHeaderLength = sizeof(CLTOMA_FUSE_REGISTER);
+const uint32_t registerTotalHeaderInfoLength =
+    cltomaFuseRegisterHeaderLength + kFuseRegisterBlobAclPacketSizeValueLength;
 
 static threc *threchead=NULL;
 
@@ -488,6 +491,7 @@ void fs_register_config() {
 	fs_send_custom(message);
 }
 
+// Format and print the master’s goal and trash-time limits in human-readable form.
 void fs_trashtime_values_checks(uint8_t mingoal, uint8_t maxgoal, uint32_t &mintrashtime,
                                 uint32_t &maxtrashtime) {
 	if (mingoal > 0 && maxgoal > 0) {
@@ -554,23 +558,27 @@ void fs_trashtime_values_checks(uint8_t mingoal, uint8_t maxgoal, uint32_t &mint
 			}
 			infoToPrint << ")";
 		}
-		fprintf(stderr, "%s\n", infoToPrint.str().c_str());
-		safs_pretty_syslog(LOG_INFO, "%s", infoToPrint.str().c_str());
+		fprintf(stderr, "%s", infoToPrint.str().c_str());
 	}
 }
 
-void fs_session_flags_users_groups_checks(const char *sesflagposstrtab[],
-                                          const char *sesflagnegstrtab[], uint8_t sesflags,
-                                          uint32_t rootuid, uint32_t rootgid, uint32_t mapalluid,
-                                          uint32_t mapallgid) {
+// Print the session flags and user/group mappings for the current session.
+void fs_session_flags_users_groups_checks(uint8_t sesflags, uint32_t rootuid, uint32_t rootgid,
+                                          uint32_t mapalluid, uint32_t mapallgid) {
+	constexpr uint32_t kUserGroupBufferDefaultSize = 16384;
+	const char *sessionFlagsPositiveStrTab[] = {SESFLAG_POS_STRINGS};
+	const char *sessionFlagsNegativeStrTab[] = {SESFLAG_NEG_STRINGS};
 	bool clientHasSessionFlags = false;
 	std::stringstream infoToPrint;
+
 	for (uint32_t sesFlagsIndex = 0; sesFlagsIndex < sizeof(sesflags); sesFlagsIndex++) {
 		if (sesflags & (1 << sesFlagsIndex)) {
-			infoToPrint << (clientHasSessionFlags ? "," : "") << sesflagposstrtab[sesFlagsIndex];
+			infoToPrint << (clientHasSessionFlags ? "," : "")
+			            << sessionFlagsPositiveStrTab[sesFlagsIndex];
 			clientHasSessionFlags = true;
-		} else if (sesflagnegstrtab[sesFlagsIndex]) {
-			infoToPrint << (clientHasSessionFlags ? "," : "") << sesflagnegstrtab[sesFlagsIndex];
+		} else if (sessionFlagsNegativeStrTab[sesFlagsIndex]) {
+			infoToPrint << (clientHasSessionFlags ? "," : "")
+			            << sessionFlagsNegativeStrTab[sesFlagsIndex];
 			clientHasSessionFlags = true;
 		}
 	}
@@ -581,17 +589,19 @@ void fs_session_flags_users_groups_checks(const char *sesflagposstrtab[],
 #ifndef _WIN32
 		struct passwd userEntry, *userInfo;
 		struct group groupEntry, *groupInfo;
-		char userGroupBuffer[16384];
+		std::vector<char> userGroupBuffer(kUserGroupBufferDefaultSize);
 
 		infoToPrint << " ; root mapped to ";
-		getpwuid_r(rootuid, &userEntry, userGroupBuffer, 16384, &userInfo);
+		getpwuid_r(rootuid, &userEntry, userGroupBuffer.data(), kUserGroupBufferDefaultSize,
+		           &userInfo);
 		if (userInfo) {
 			infoToPrint << userInfo->pw_name << ":";
 		} else {
 			infoToPrint << rootuid << ":";
 		}
 
-		getgrgid_r(rootgid, &groupEntry, userGroupBuffer, 16384, &groupInfo);
+		getgrgid_r(rootgid, &groupEntry, userGroupBuffer.data(), kUserGroupBufferDefaultSize,
+		           &groupInfo);
 		if (groupInfo) {
 			infoToPrint << groupInfo->gr_name;
 		} else {
@@ -641,8 +651,7 @@ void fs_session_flags_users_groups_checks(const char *sesflagposstrtab[],
 			nonRootAllowedToUseMeta() = false;
 		}
 	}
-	fprintf(stderr, "%s\n", infoToPrint.str().c_str());
-	safs_pretty_syslog(LOG_INFO, "%s", infoToPrint.str().c_str());
+	fprintf(stderr, "%s", infoToPrint.str().c_str());
 }
 
 int fs_open_master_connection(bool verbose) {
@@ -654,7 +663,7 @@ int fs_open_master_connection(bool verbose) {
 		if (verbose) {
 			fprintf(stderr, "can't set TCP_NODELAY\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "can't set TCP_NODELAY");
+			safs::log_warn("can't set TCP_NODELAY");
 		}
 	}
 
@@ -663,10 +672,9 @@ int fs_open_master_connection(bool verbose) {
 			if (verbose) {
 				fprintf(stderr, "can't bind socket to given ip (\"%s\")\n", srcstrip);
 			} else {
-				safs_pretty_syslog(LOG_WARNING, "can't bind socket to given ip (\"%s\")", srcstrip);
+				safs::log_warn("can't bind socket to given ip (\"{}\")", srcstrip);
 			}
 			tcpclose(socket);
-			socket = -1;
 			return -1;
 		}
 	}
@@ -676,27 +684,25 @@ int fs_open_master_connection(bool verbose) {
 			fprintf(stderr, "can't connect to sfsmaster (\"%s\":\"%" PRIu16 "\")\n", masterstrip,
 			        masterport);
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "can't connect to sfsmaster (\"%s\":\"%" PRIu16 "\")",
-			                   masterstrip, masterport);
+			safs::log_warn("can't connect to sfsmaster (\"{}\":\"{}\")", masterstrip, masterport);
 		}
 		tcpclose(socket);
-		socket = -1;
 		return -1;
 	}
 	return socket;
 }
 
-int fs_register_with_get_random(uint32_t &messageValueIterator, uint8_t *messageToMaster,
-                                const uint8_t *messageFromMaster,
-                                std::vector<std::uint8_t> &registrationMessageBuffer,
-                                std::vector<uint8_t> &passwordDigest, uint32_t passwordDigestLength,
-                                md5ctx &md5PassCtx, bool verbose) {
+int fs_register_with_get_random(std::vector<std::uint8_t> &registrationMessageBuffer,
+                                std::vector<uint8_t> &passwordDigest, bool verbose) {
+	md5ctx md5PassCtx;
+	uint32_t messageValueIterator;
+	uint32_t passwordDigestLength = passwordDigest.size();
+	uint8_t *messageToMaster = registrationMessageBuffer.data();
+	const uint8_t *messageFromMaster = registrationMessageBuffer.data();
+
 	// Register message with REGISTER_GETRANDOM request and response lengths
-	const uint32_t registerWithGetRandomRequestLength = kCltomaFuseRegisterHeaderLength +
-	                                                    kFuseRegisterBlobAclPacketSizeValueLength +
-	                                                    kFuseRegisterBlobAclTotalPacketLength;
-	const uint32_t registerWithGetRandomResponseLength =
-	    kCltomaFuseRegisterHeaderLength + kFuseRegisterBlobAclPacketSizeValueLength;
+	const uint32_t registerWithGetRandomRequestLength =
+	    registerTotalHeaderInfoLength + kFuseRegisterBlobAclTotalPacketLength;
 
 	messageToMaster = registrationMessageBuffer.data();
 	put32bit(&messageToMaster, CLTOMA_FUSE_REGISTER);
@@ -711,20 +717,19 @@ int fs_register_with_get_random(uint32_t &messageValueIterator, uint8_t *message
 		if (verbose) {
 			fprintf(stderr, "error sending data to sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "error sending data to sfsmaster");
+			safs::log_warn("error sending data to sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
 		return -1;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), registerWithGetRandomResponseLength,
-	              kDefaultTcpCommTimeoutMSeconds) !=
-	    (int32_t)(registerWithGetRandomResponseLength)) {
+	if (tcptoread(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
+	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)(registerTotalHeaderInfoLength)) {
 		if (verbose) {
 			fprintf(stderr, "error receiving data from sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "error receiving data from sfsmaster");
+			safs::log_warn("error receiving data from sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -737,7 +742,7 @@ int fs_register_with_get_random(uint32_t &messageValueIterator, uint8_t *message
 		if (verbose) {
 			fprintf(stderr, "got incorrect answer from sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "got incorrect answer from sfsmaster");
+			safs::log_warn("got incorrect answer from sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -749,7 +754,7 @@ int fs_register_with_get_random(uint32_t &messageValueIterator, uint8_t *message
 		if (verbose) {
 			fprintf(stderr, "got incorrect answer from sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "got incorrect answer from sfsmaster");
+			safs::log_warn("got incorrect answer from sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -761,7 +766,7 @@ int fs_register_with_get_random(uint32_t &messageValueIterator, uint8_t *message
 		if (verbose) {
 			fprintf(stderr, "error receiving data from sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "error receiving data from sfsmaster");
+			safs::log_warn("error receiving data from sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -777,29 +782,35 @@ int fs_register_with_get_random(uint32_t &messageValueIterator, uint8_t *message
 	return 0;
 }
 
-int fs_register_with_new_session(
-    uint32_t &messageValueIterator, uint8_t *messageToMaster, const uint8_t *messageFromMaster,
-    std::vector<std::uint8_t> &registrationMessageBuffer, std::vector<uint8_t> &passwordDigest,
-    uint32_t passwordDigestLength, uint32_t mountPointPathLength, uint32_t subfolderPathLength,
-    const uint32_t fuseRegisterPacketInfoLength, uint8_t havepassword, uint8_t &sesflags,
-    uint32_t &rootuid, uint32_t &rootgid, uint32_t &mapalluid, uint32_t &mapallgid,
-    uint8_t &mingoal, uint8_t &maxgoal, uint32_t &mintrashtime, uint32_t &maxtrashtime,
-    bool verbose) {
-	// Constants for session parameters registration lengths
-	const uint32_t newMetaSessionDataLengthLegacy = 5;
-	const uint32_t newMetaSessionDataLengthWithPackageVersion = 9;
-	const uint32_t newMetaSessionDataLengthWithGoalsAndTrashtimes = 19;
+int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageBuffer,
+                                 std::vector<uint8_t> &passwordDigest,
+                                 const uint32_t fuseRegisterPacketInfoLength, uint8_t havepassword,
+                                 uint8_t &sesflags, uint32_t &rootuid, uint32_t &rootgid,
+                                 uint32_t &mapalluid, uint32_t &mapallgid, uint8_t &mingoal,
+                                 uint8_t &maxgoal, uint32_t &mintrashtime, uint32_t &maxtrashtime,
+                                 bool verbose) {
+	uint32_t messageValueIterator;
+	uint8_t *messageToMaster = registrationMessageBuffer.data();
+	const uint8_t *messageFromMaster = registrationMessageBuffer.data();
+	uint32_t mountPointPathLength = gInitParams.mountpoint.size() + 1;
+	uint32_t subfolderPathLength = gInitParams.meta ? 0 : gInitParams.subfolder.size() + 1;
+	uint32_t passwordDigestLength = passwordDigest.size();
 
-	const uint32_t newSessionDataLengthWithPackageVersion = 13;
-	const uint32_t newSessionDataLengthWithMapAllUidGid = 21;
-	const uint32_t newSessionDataLengthGoalsAndTrashtimes = 25;
-	const uint32_t newSessionDataLengthWithIoLimits = 35;
+	// Constants for session parameters registration lengths
+	constexpr uint32_t kNewMetaSessionDataLengthLegacy = 5;
+	constexpr uint32_t kNewMetaSessionDataLengthWithPackageVersion = 9;
+	constexpr uint32_t kNewMetaSessionDataLengthWithGoalsAndTrashtimes = 19;
+
+	constexpr uint32_t kNewSessionDataLengthWithPackageVersion = 13;
+	constexpr uint32_t kNewSessionDataLengthWithMapAllUidGid = 21;
+	constexpr uint32_t kNewSessionDataLengthGoalsAndTrashtimes = 25;
+	constexpr uint32_t kNewSessionDataLengthWithIoLimits = 35;
 
 	// Register message with REGISTER_NEWMETASESSION or REGISTER_NEWSESSION request length
 	const uint32_t fuseRegisterPacketInfoLegth =
 	    kFuseRegisterBlobAclLength + fuseRegisterPacketInfoLength + mountPointPathLength +
 	    subfolderPathLength + (havepassword ? passwordDigestLength : 0);
-	const uint32_t fuseRegisterNewSessionRequestLength = kCltomaFuseRegisterHeaderLength +
+	const uint32_t fuseRegisterNewSessionRequestLength = cltomaFuseRegisterHeaderLength +
 	                                                     kFuseRegisterBlobAclPacketSizeValueLength +
 	                                                     fuseRegisterPacketInfoLegth;
 
@@ -831,25 +842,21 @@ int fs_register_with_new_session(
 		if (verbose) {
 			fprintf(stderr, "error sending data to sfsmaster: %s\n", strerr(tcpgetlasterror()));
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "error sending data to sfsmaster: %s",
-			                   strerr(tcpgetlasterror()));
+			safs::log_warn("error sending data to sfsmaster: {}", strerr(tcpgetlasterror()));
 		}
 		tcpclose(fd);
 		fd = -1;
 		return -1;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(),
-	              kCltomaFuseRegisterHeaderLength + kFuseRegisterBlobAclPacketSizeValueLength,
-	              kDefaultTcpCommTimeoutMSeconds) !=
-	    (int32_t)(kCltomaFuseRegisterHeaderLength + kFuseRegisterBlobAclPacketSizeValueLength)) {
+	if (tcptoread(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
+	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)(registerTotalHeaderInfoLength)) {
 		int tcplasterr = tcpgetlasterror();
 		const auto *errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
 		if (verbose) {
 			fprintf(stderr, "error receiving data from sfsmaster: %s\n", errorMessage);
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "error receiving data from sfsmaster: %s",
-			                   errorMessage);
+			safs::log_warn("error receiving data from sfsmaster: {}", errorMessage);
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -862,7 +869,7 @@ int fs_register_with_new_session(
 		if (verbose) {
 			fprintf(stderr, "got incorrect answer from sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "got incorrect answer from sfsmaster");
+			safs::log_warn("got incorrect answer from sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -870,20 +877,21 @@ int fs_register_with_new_session(
 	}
 
 	get32bit(&messageFromMaster, messageValueIterator);
-	if (!(messageValueIterator == 1 ||
-	      (gInitParams.meta &&
-	       (messageValueIterator == newMetaSessionDataLengthLegacy ||
-	        messageValueIterator == newMetaSessionDataLengthWithPackageVersion ||
-	        messageValueIterator == newMetaSessionDataLengthWithGoalsAndTrashtimes)) ||
-	      (gInitParams.meta == 0 &&
-	       (messageValueIterator == newSessionDataLengthWithPackageVersion ||
-	        messageValueIterator == newSessionDataLengthWithMapAllUidGid ||
-	        messageValueIterator == newSessionDataLengthGoalsAndTrashtimes ||
-	        messageValueIterator == newSessionDataLengthWithIoLimits)))) {
+	bool validNewMetaSessionDataLegth =
+	    messageValueIterator == kNewMetaSessionDataLengthLegacy ||
+	    messageValueIterator == kNewMetaSessionDataLengthWithPackageVersion ||
+	    messageValueIterator == kNewMetaSessionDataLengthWithGoalsAndTrashtimes;
+	bool validNewSessionDataLegth =
+	    messageValueIterator == kNewSessionDataLengthWithPackageVersion ||
+	    messageValueIterator == kNewSessionDataLengthWithMapAllUidGid ||
+	    messageValueIterator == kNewSessionDataLengthGoalsAndTrashtimes ||
+	    messageValueIterator == kNewSessionDataLengthWithIoLimits;
+	if (!(messageValueIterator == 1 || (gInitParams.meta && validNewMetaSessionDataLegth) ||
+	      (gInitParams.meta == 0 && validNewSessionDataLegth))) {
 		if (verbose) {
 			fprintf(stderr, "got incorrect answer from sfsmaster\n");
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "got incorrect answer from sfsmaster");
+			safs::log_warn("got incorrect answer from sfsmaster");
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -895,8 +903,7 @@ int fs_register_with_new_session(
 		if (verbose) {
 			fprintf(stderr, "error receiving data from sfsmaster: %s\n", strerr(tcpgetlasterror()));
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "error receiving data from sfsmaster: %s",
-			                   strerr(tcpgetlasterror()));
+			safs::log_warn("error receiving data from sfsmaster: {}", strerr(tcpgetlasterror()));
 		}
 		tcpclose(fd);
 		fd = -1;
@@ -909,18 +916,18 @@ int fs_register_with_new_session(
 			fprintf(stderr, "sfsmaster register error: %s\n",
 			        saunafs_error_string(messageFromMaster[0]));
 		} else {
-			safs_pretty_syslog(LOG_WARNING, "sfsmaster register error: %s",
-			                   saunafs_error_string(messageFromMaster[0]));
+			safs::log_warn("sfsmaster register error: {}",
+			               saunafs_error_string(messageFromMaster[0]));
 		}
 		tcpclose(fd);
 		fd = -1;
 		return -1;
 	}
 
-	if (messageValueIterator == newMetaSessionDataLengthWithPackageVersion ||
-	    messageValueIterator == newMetaSessionDataLengthWithGoalsAndTrashtimes ||
-	    messageValueIterator == newSessionDataLengthGoalsAndTrashtimes ||
-	    messageValueIterator == newSessionDataLengthWithIoLimits) {
+	if (messageValueIterator == kNewMetaSessionDataLengthWithPackageVersion ||
+	    messageValueIterator == kNewMetaSessionDataLengthWithGoalsAndTrashtimes ||
+	    messageValueIterator == kNewSessionDataLengthGoalsAndTrashtimes ||
+	    messageValueIterator == kNewSessionDataLengthWithIoLimits) {
 		get32bit(&messageFromMaster, masterversion);
 	} else {
 		masterversion = 0;
@@ -934,9 +941,9 @@ int fs_register_with_new_session(
 	if (!gInitParams.meta) {
 		get32bit(&messageFromMaster, rootuid);
 		get32bit(&messageFromMaster, rootgid);
-		if (messageValueIterator == newSessionDataLengthWithMapAllUidGid ||
-		    messageValueIterator == newSessionDataLengthGoalsAndTrashtimes ||
-		    messageValueIterator == newSessionDataLengthWithIoLimits) {
+		if (messageValueIterator == kNewSessionDataLengthWithMapAllUidGid ||
+		    messageValueIterator == kNewSessionDataLengthGoalsAndTrashtimes ||
+		    messageValueIterator == kNewSessionDataLengthWithIoLimits) {
 			get32bit(&messageFromMaster, mapalluid);
 			get32bit(&messageFromMaster, mapallgid);
 		} else {
@@ -950,8 +957,8 @@ int fs_register_with_new_session(
 		mapallgid = 0;
 	}
 
-	if (messageValueIterator == newMetaSessionDataLengthWithGoalsAndTrashtimes ||
-	    messageValueIterator == newSessionDataLengthWithIoLimits) {
+	if (messageValueIterator == kNewMetaSessionDataLengthWithGoalsAndTrashtimes ||
+	    messageValueIterator == kNewSessionDataLengthWithIoLimits) {
 		mingoal = get8bit(&messageFromMaster);
 		maxgoal = get8bit(&messageFromMaster);
 		get32bit(&messageFromMaster, mintrashtime);
@@ -968,13 +975,9 @@ int fs_register_with_new_session(
 }
 
 int fs_connect(bool verbose) {
-	uint32_t messageValueIterator;
-	uint8_t *messageToMaster;
 	std::vector<std::uint8_t> registrationMessageBuffer;
-	md5ctx md5PassCtx;
 	uint32_t passwordDigestLength = gInitParams.password_digest.size();
 	std::vector<uint8_t> passwordDigest(passwordDigestLength);
-	const uint8_t *messageFromMaster;
 	uint8_t havepassword = !gInitParams.password_digest.empty();
 	uint32_t mountPointPathLength = gInitParams.mountpoint.size() + 1;
 	uint32_t subfolderPathLength = gInitParams.meta ? 0 : gInitParams.subfolder.size() + 1;
@@ -985,27 +988,25 @@ int fs_connect(bool verbose) {
 	uint32_t mapallgid = 0;
 	uint8_t mingoal = 0;
 	uint8_t maxgoal = 0;
-	uint32_t mintrashtime, maxtrashtime;
-	const char *sesflagposstrtab[] = {SESFLAG_POS_STRINGS};
-	const char *sesflagnegstrtab[] = {SESFLAG_NEG_STRINGS};
+	uint32_t mintrashtime = 0;
+	uint32_t maxtrashtime = 0;
 
 	// Base constants for registration message from client to master and
 	// response from master to client size calculations
-	const size_t saunafsVersionMajorLength = 2U;
-	const size_t saunafsVersionMinorLength = 1U;
-	const size_t saunafsVersionMicroLength = 1U;
-	const uint32_t fuseRegisterSessionTypeLength = 1U;
+	constexpr size_t kSaunafsVersionMajorLength = 2U;
+	constexpr size_t kSaunafsVersionMinorLength = 1U;
+	constexpr size_t kSaunafsVersionMicroLength = 1U;
+	constexpr uint32_t kFuseRegisterSessionTypeLength = 1U;
 	const uint32_t fuseRegisterSubfolderLength =
 	    (gInitParams.meta) ? 0 : sizeof(subfolderPathLength);
 
 	// Constants for total packet size calculation results for registration
 	// message from client to master and response from master to client
 	const uint32_t fuseRegisterPacketInfoLength =
-	    fuseRegisterSessionTypeLength + sizeof(mountPointPathLength) + saunafsVersionMajorLength +
-	    saunafsVersionMinorLength + saunafsVersionMicroLength + fuseRegisterSubfolderLength;
+	    kFuseRegisterSessionTypeLength + sizeof(mountPointPathLength) + kSaunafsVersionMajorLength +
+	    kSaunafsVersionMinorLength + kSaunafsVersionMicroLength + fuseRegisterSubfolderLength;
 	const uint32_t fuseRegisterTotalPacketLength =
-	    kCltomaFuseRegisterHeaderLength + kFuseRegisterBlobAclPacketSizeValueLength +
-	    kFuseRegisterBlobAclLength + fuseRegisterPacketInfoLength +
+	    registerTotalHeaderInfoLength + kFuseRegisterBlobAclLength + fuseRegisterPacketInfoLength +
 	    (gInitParams.meta ? 0 : subfolderPathLength) + mountPointPathLength + passwordDigestLength;
 
 	if (fs_resolve(verbose, gInitParams.bind_host, gInitParams.host, gInitParams.port) < 0) {
@@ -1013,31 +1014,23 @@ int fs_connect(bool verbose) {
 	}
 
 	registrationMessageBuffer.resize(fuseRegisterTotalPacketLength);
-	messageToMaster = registrationMessageBuffer.data();
-	messageFromMaster = registrationMessageBuffer.data();
 
 	fd = fs_open_master_connection(verbose);
 	if (fd < 0) { return -1; }
 
 	if (havepassword &&
-	    fs_register_with_get_random(messageValueIterator, messageToMaster, messageFromMaster,
-	                                registrationMessageBuffer, passwordDigest, passwordDigestLength,
-	                                md5PassCtx, verbose) < 0) {
+	    fs_register_with_get_random(registrationMessageBuffer, passwordDigest, verbose) < 0) {
 		return -1;
 	}
 
-	if (fs_register_with_new_session(
-	        messageValueIterator, messageToMaster, messageFromMaster, registrationMessageBuffer,
-	        passwordDigest, passwordDigestLength, mountPointPathLength, subfolderPathLength,
-	        fuseRegisterPacketInfoLength, havepassword, sesflags, rootuid, rootgid, mapalluid,
-	        mapallgid, mingoal, maxgoal, mintrashtime, maxtrashtime, verbose) < 0) {
+	if (fs_register_with_new_session(registrationMessageBuffer, passwordDigest,
+	                                 fuseRegisterPacketInfoLength, havepassword, sesflags, rootuid,
+	                                 rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime,
+	                                 maxtrashtime, verbose) < 0) {
 		return -1;
 	}
 
-	if (!verbose) {
-		safs_pretty_syslog(LOG_NOTICE, "registered to master with new session (id #%" PRIu32 ")",
-		                   sessionid);
-	}
+	if (!verbose) { safs::log_info("registered to master with new session (id #{})", sessionid); }
 
 	if (gInitParams.do_not_remember_password) {
 		std::fill(gInitParams.password_digest.begin(), gInitParams.password_digest.end(), 0);
@@ -1045,8 +1038,7 @@ int fs_connect(bool verbose) {
 
 	if (verbose) {
 		fprintf(stderr, "sfsmaster accepted connection with parameters: ");
-		fs_session_flags_users_groups_checks(sesflagposstrtab, sesflagnegstrtab, sesflags, rootuid,
-		                                     rootgid, mapalluid, mapallgid);
+		fs_session_flags_users_groups_checks(sesflags, rootuid, rootgid, mapalluid, mapallgid);
 		fs_trashtime_values_checks(mingoal, maxgoal, mintrashtime, maxtrashtime);
 		fprintf(stderr, "\n");
 	}
