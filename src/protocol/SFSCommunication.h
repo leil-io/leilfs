@@ -1643,12 +1643,12 @@ enum class SugidClearMode : uint8_t {
 
 // 0x62F
 #define SAU_CLTOMA_WHOLE_PATH_LOOKUP (1000U + 583U)
-/// msgid:32 inode:32 name:NAME uid:32 gid:32
+/// msgid:32 inode:32 name:STRING32 uid:32 gid:32
 
 // 0x630
 #define SAU_MATOCL_WHOLE_PATH_LOOKUP (1000U + 584U)
-/// msgid:32 status:8
-/// msgid:32 inode:32 attr:35B
+/// version==0 msgid:32 status:8
+/// version==1 msgid:32 inode:32 attr:35B
 
 // 0x631
 #define SAU_CLTOMA_RECURSIVE_REMOVE (1000U + 585U)

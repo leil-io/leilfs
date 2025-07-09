@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -eu
 
-if (( $# != 1 )); then
-	echo "Usage: $0 path/to/SFSCommunication.h"
+if (( $# != 2 )); then
+	echo "Usage: $0 path/to/SFSCommunication.h wireshark_version"
 	exit 1
 fi
+
+WIRESHARK_VERSION="${2}"
 
 input_file=$(readlink -m "$1")
 cd "$(dirname "$0")"
@@ -19,4 +21,4 @@ cd "$(dirname "$0")"
 } > includes.h
 
 # Generate the packet-saunafs.c file
-python3 make_dissector.py < "$input_file" > packet-saunafs.c
+python3 make_dissector.py < "$input_file" > packet-saunafs.c "${WIRESHARK_VERSION}"
