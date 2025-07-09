@@ -318,14 +318,14 @@ static bool xattr_load(MetadataLoader::Options options) {
 		auto *xattrEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
 
 		if (xattrInodeEntry != nullptr) {
-			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
+			xattrInodeEntry->xattrDataEntries.push_back(xattrEntryPointer);
 			xattrInodeEntry->attributeNameLength += attributeNameLength + 1U;
 			xattrInodeEntry->attributeValueLength += attributeValueLength;
 		} else {
 			auto xattrInodeEntry =
 			    XAttributeInodeEntry::create(inode, attributeNameLength + 1U, attributeValueLength);
-			xattrInodeEntry->xattrDataList.push_back(xattrEntryPointer);
-			gMetadata->xattrInodeHash[inodeHash].push_front(std::move(xattrInodeEntry));
+			xattrInodeEntry->xattrDataEntries.push_back(xattrEntryPointer);
+			gMetadata->xattrInodeHash[inodeHash].push_back(std::move(xattrInodeEntry));
 		}
 	}
 }
@@ -633,8 +633,10 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		sectionOffset = metadataFile->offset(pSrc);
 		return kError;
 	}
-	uint32_t nodeIndex = NODEHASHPOS(node->id);
-	gMetadata->nodeHash[nodeIndex].push_front(node);
+
+	uint32_t nodeHashIndex = NODEHASHPOS(node->id);
+	gMetadata->nodeHash[nodeHashIndex].push_back(node);
+
 	gMetadata->inodePool.markAsAcquired(node->id);
 	gMetadata->nodes++;
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
@@ -898,10 +900,10 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 #ifndef METARESTORE
 
 void fs_new(void) {
-	uint32_t nodepos;
 	gMetadata->maxInodeId = SPECIAL_INODE_ROOT;
 	gMetadata->metadataVersion = 1;
 	gMetadata->nextSessionId = 1;
+
 	auto *rootDirectory = FSNode::create(FSNode::kDirectory);
 	gMetadata->root = static_cast<FSNodeDirectory *>(rootDirectory);
 	gMetadata->root->id = SPECIAL_INODE_ROOT;
@@ -913,13 +915,17 @@ void fs_new(void) {
 	gMetadata->root->mode = 0777;
 	gMetadata->root->uid = 0;
 	gMetadata->root->gid = 0;
-	nodepos = NODEHASHPOS(gMetadata->root->id);
-	gMetadata->nodeHash[nodepos].push_front(gMetadata->root);
+
+	auto hashRootIndex = NODEHASHPOS(gMetadata->root->id);
+	gMetadata->nodeHash[hashRootIndex].push_back(gMetadata->root);
 	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
+
 	chunk_newfs();
+
 	gMetadata->nodes = 1;
 	gMetadata->dirNodes = 1;
 	gMetadata->fileNodes = 0;
+
 	fs_checksum(ChecksumMode::kForceRecalculate);
 	fsnodes_quota_update(gMetadata->root, {{QuotaResource::kInodes, +1}});
 }

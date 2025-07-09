@@ -35,27 +35,27 @@
 #include "master/task_manager.h"
 
 using XAttributeInodeEntryPointer = std::unique_ptr<XAttributeInodeEntry>;
-using XAttributeInodeEntryList = std::list<XAttributeInodeEntryPointer>;
+using XAttributeInodeEntryVector = std::vector<XAttributeInodeEntryPointer>;
 
 using XAttributeDataEntryPointer = std::unique_ptr<XAttributeDataEntry>;
-using XAttributeDataEntryList = std::list<XAttributeDataEntryPointer>;
+using XAttributeDataEntryVector = std::vector<XAttributeDataEntryPointer>;
 
-using FSNodePointerList = std::list<FSNode*>;
+using FSNodePointerVector = std::vector<FSNode*>;
 
 /** Metadata of the filesystem.
  *  All the static variables managed by function in this file which form metadata of the filesystem.
  */
 struct FilesystemMetadata {
 public:
-	std::array<XAttributeInodeEntryList, XATTR_INODE_HASH_SIZE> xattrInodeHash;
-	std::array<XAttributeDataEntryList, XATTR_DATA_HASH_SIZE> xattrDataHash;
+	std::array<XAttributeInodeEntryVector, XATTR_INODE_HASH_SIZE> xattrInodeHash;
+	std::array<XAttributeDataEntryVector, XATTR_DATA_HASH_SIZE> xattrDataHash;
 	// TODO(Guillex): Check implications of using 64 bits for inode_t in this structure.
 	IdPoolDetainer<inode_t, uint32_t> inodePool;
 	AclStorage aclStorage;
 	TrashPathContainer trash;
 	ReservedPathContainer reserved;
 	FSNodeDirectory *root{};
-	std::array<FSNodePointerList, NODEHASHSIZE> nodeHash;
+	std::array<FSNodePointerVector, NODEHASHSIZE> nodeHash;
 	TaskManager taskManager;
 	FileLocks flockLocks;
 	FileLocks posixLocks;
