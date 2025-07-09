@@ -292,7 +292,7 @@ def cltoma_metadataservers_list():
     for (addr, port, v1, v2, v3) in servers:
         # for shadow masters, addr is int (4 bytes) -- convert it to string.
         # for the active master we use "masterhost" to connect with it and we don't know the real IP
-        ip = addr_to_host(addr) if isinstance(addr, int) else "-"
+        ip = addr_to_host(addr) if isinstance(addr, int) else masterhost
         version = "%u.%u.%u" % (v1, v2, v3)
         if port == 0:
             # shadow didn't register its port yet
@@ -1382,7 +1382,11 @@ if "CS" in sectionset:
                 pos = pos + 54
             strip = "%u.%u.%u.%u" % (ip1, ip2, ip3, ip4)
             try:
-                host = (socket.gethostbyaddr(strip))[0]
+                host, aliases, _ = (socket.gethostbyaddr(strip))
+                all_hosts = [host] + aliases
+                port_suffix = f"{port % 100:02d}"
+                prefix = f"cs{port_suffix}-"
+                host = next((name for name in all_hosts if name.startswith(prefix)), host)
             except Exception:
                 host = "(unresolved)"
             if CSorder == 1:
