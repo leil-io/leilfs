@@ -22,6 +22,7 @@
 
 #include <vector>
 
+#include "chunkserver-common/memory_manager.h"
 #include "chunkserver/chartsdata.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
@@ -35,6 +36,7 @@ inline const std::vector<RunTab> earlyRunTabs = {};
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
     RunTab{rnd_init, "random generator"},
+    RunTab{MemoryManager::init, "memory manager"},
     RunTab{initDiskManager, "disk manager"},  // Always before "plugin manager"
     RunTab{loadPlugins, "plugin manager"}, RunTab{hddInit, "hdd space manager"},
     // Has to be before "masterconn"

@@ -44,6 +44,11 @@ it may also lead to contention and reduced parallelism in multi-threaded
 applications. Use it in constrained memory environments, recommended values are
 4 or 8. (default is 0: disabled or let glibc decide)
 
+*MALLOC_TRIM_INTERVAL*:: interval in seconds at which the chunkserver will attempt
+to release unused memory back to the OS using malloc_trim(). This can help reduce
+the process's memory footprint by returning free memory to the system more
+frequently. Set to 0 to disable memory trimming entirely. (default is 0, 0 = disabled)
+
 *NICE_LEVEL*:: nice level to run daemon with (default is -19 if possible; note:
 process must be started as root to increase priority)
 
