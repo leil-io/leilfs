@@ -1,5 +1,110 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.0.0) (2025-07-10)
+ - feat(cmake): Make FDB optional (#478)
+ - feat(mds): Separate changelogs from metadata backend (#471)
+ - feat(mds,chunkserver): Add CLUSTER_ID config var (#452)
+ - feat!(mds,chunkserver): Send Master info at registration
+ - feat: Write more blocks at once when replicating (#469)
+ - feat(mds): Select correct FDB version at install (#470)
+ - feat: Add new kv and fdb libs (#459)
+ - fix(fdb): Improve exception handling in FDBContext
+ - feat(master): Make MetadataDumper extensible (#467)
+ - feat(master): Give own RunTab to init metadata backend (#466)
+ - feat: Add initial scripts for FoundationDB (#332)
+ - feat: Avoid calculate CRC twice for replications (#461)
+ - fix: Fix CS restart while replicating (#460)
+ - fix(main): Fix test starting master when it's not running. (#464)
+ - feat(chunkserver): Reduce strings RAM usage (#454)
+ - fix: Fix master reload crash (#450)
+ - fix: Update documentation for uraft config file (#446)
+ - feat: Readcache buffers pool (#437)
+ - fix: Modify maxReadAheadRequests default value (#410)
+ - feat(chunkserver): Allow reading always bigger blocks (#447)
+ - feat!(master): Avoid overlapping scheduled deletions (#445)
+ - feat: Show trash and reserved on path by inode
+ - fix: Add check for safer path by inode on master
+ - feat(chunkserver): Implement listeners for JobPool (#444)
+ - feat: Speedup replication/rebalance (#436)
+ - feat: Ask for bigger batches when replicating
+ - feat: Make replication buffer thread_local
+ - feat: Avoid saving space for unneeded parts
+ - feat: Balance replication sources across all CSs
+ - fix(chunkserver): Fix NetworkWorkerThread names (#442)
+ - feat(chunkserver): Use eventfd in JobPool (#439)
+ - feat(chunkserver): Make struct masterconn a class (#427)
+ - feat(chunkserver): Create JobPool before connections
+ - feat(chunkserver): Decentralize MasterConn stats
+ - feat(chunkserver): Add own options to MasterConn
+ - feat(chunkserver): Use shared_ptr for gJobPool
+ - feat(chunkserver): Make struct masterconn a class
+ - fix(uRaft): Prevent electors from starting MDS (#423)
+ - feat!: Remove sfstools symbolic links commands (#435)
+ - fix(master): Correct default listen host and port (#438)
+ - feat(tools)!: Remove default timeout from some saunafs operations (#433)
+ - feat(tools)!: Remove deprecated commands from saunafs (#385)
+ - fix(master): Remove unavailable log spam (#424)
+ - feat!: Remove deprecated sfscachefiles option (#420)
+ - fix(mount): Make readdir safe on session close (#429)
+ - fix: Remove deprecated master option MATOCU (#409)
+ - fix: Refactor saunafs-admin command (#417)
+ - feat(all): Unify inode numbers type (#341)
+ - fix(mount): Use inode_t in StatfsCacheKey
+ - fix(master): Use inode_t in GoalStatistics
+ - fix(quotas): Use inode_t in QuotaOwner::ownerId
+ - fix(master): Add GETINODE to restore changelogs
+ - fix(tools): Fix print_number calls in tools
+ - fix(mds): Fix build after rebase
+ - fix(mds): Fix metadata save/load to file
+ - feat(all): Add the option ENABLE_INODE64 to cmake
+ - feat(all): Reduce magic numbers
+ - feat(all): Add the getINode type aware function
+ - feat(all): Increase type safety of get32bit
+ - feat(all): Add the putINode function
+ - feat(all): Add the PRIiNode macro
+ - feat(ganesha): Improve wire_to_host for 64 bits inodes
+ - feat(all): Unify inode numbers type
+ - feat: Enhance statfs cache handling (#430)
+ - feat: Update migration script and add documentation (#428)
+ - fix(restore.cc): Correctly convert int to uint8_t in changelog restore (#425)
+ - feat(admin): Add mount info list command
+ - feat(cgi): Display mount information in monitoring
+ - fix(chunkserver): Make masterconn a smart pointer
+ - fix(chunkserver): Avoid direct mutex lock/unlock (#418)
+ - feat(mount): New chunk-based write algorithm (#158)
+ - fix: Corrected file descriptor lock release
+ - fix: Relax constraints in malloc tests (#411)
+ - feat(mount): Add reconnection related options (#400)
+ - perf: Skip metadata dump during chunk registration (#406)
+ - fix(chunkserver): Improve main network thread term (#404)
+ - fix: Extend reach of collectGarbage
+ - fix: Make ReadCache::Entry::timer atomic
+ - fix: Fix possible unnecessary wait
+ - fix: Substitute dangerous massert
+ - fix: Fix rcvpPtr being null
+ - fix(chunkserver): Fix locking and helgrind warns (#399)
+ - fix(chunkserver): Enforce lock order
+ - fix(chunkserver): Fix chunk locked for long time
+ - fix(chunkserver): Protect status in OutputBuffer (#398)
+ - fix(chunkserver): Improve write buffers alignment (#396)
+ - fix(main)!: Change test output from stderr to stdout (#386)
+ - feat(master)!: Remove deprecated functions (#388)
+ - fix(chunkserver): Wait for GC before terminate (#390)
+ - fix: Avoid unprotected access to chunk members
+ - fix: Protect chunks structure in hddGetTotalSpace
+ - fix: Fix race condition in max_wait_time
+ - fix: Fix test_optimizing_partial_stripes
+ - fix(tools): Fix saunafs command folder resolution (#376)
+ - build: Set GIT_* definitions to N/A if no git info generated (#374)
+ - fix(chunkserver): Release chunk on failing read
+ - fix(chunkserver): Improve suppression for clang
+ - fix(chunkserver): Remove unlock before notify
+ - fix(clang): Fix error when prometheus is disabled (#368)
+ - fix(main): Remove valgrind warning with clang (#365)
+ - fix!: Fix long parallel writings
+ - fix: chunkserver-common linking errors in GCC-13 (#358)
+ - fix(cmake): Fix typo in jemalloc configuration (#356)
+
 * SaunaFS (4.10.0) (2025-05-28)
  - fix(mount): Remove unnecessary waits on reads (#402)
  - fix: Fix client recover when master disconnects (#383)
