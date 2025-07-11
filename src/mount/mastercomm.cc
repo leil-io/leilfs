@@ -131,7 +131,6 @@ static pthread_t rpthid,npthid;
 static std::mutex fdMutex, recMutex;
 
 static uint32_t sessionid;
-static uint32_t masterversion;
 
 static char masterstrip[17];
 static uint32_t masterip=0;

@@ -49,6 +49,7 @@
 #include "common/datapack.h"
 #include "common/errno_defs.h"
 #include "common/lru_cache.h"
+#include "common/saunafs_version.h"
 #include "errors/sfserr.h"
 #include "common/richacl_converter.h"
 #include "slogger/slogger.h"
@@ -3670,6 +3671,17 @@ void fs_init(FsInitParams &params) {
 			params.max_readahead_requests,
 			params.prefetch_xor_stripes,
 			std::max(params.bandwidth_overuse, 1.));
+
+	if (!params.use_inode_based_write_algorithm &&
+	    masterversion < kFirstVersionWithChunkBasedWriteAlgorithm) {
+		fprintf(stderr,
+		        "Metadata server version v%s is too old, using inode-based write algorithm"
+		        "(sfsuseinodebasedwritealgorithm=1). "
+		        "Required minimum version for chunk based algorithm is v%s.\n",
+		        saunafsVersionToString(masterversion).c_str(),
+		        saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm).c_str());
+		params.use_inode_based_write_algorithm = true;
+	}
 
 	gUseInodeBasedWriteAlgorithm = params.use_inode_based_write_algorithm;
 	write_data_init(
