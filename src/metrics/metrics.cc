@@ -49,6 +49,18 @@
 
 namespace metrics {
 
+#ifndef HAVE_PROMETHEUS
+
+void destroy() {}
+
+void init(const char* /* unused */) {
+	safs::log_err(
+	    "could not setup prometheus server: Prometheus isn't compiled with "
+	    "this program");
+}
+}
+#else
+
 std::unique_ptr<std::jthread>
     gMetricsMainThread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
@@ -58,14 +70,6 @@ void destroy() {
 	}
 }
 
-#ifndef HAVE_PROMETHEUS
-void init(const char* /* unused */) {
-	safs::log_err(
-	    "could not setup prometheus server: Prometheus isn't compiled with "
-	    "this program");
-}
-}
-#else
 
 constexpr auto THREAD_SLEEP_TIME_MS = 100;
 
