@@ -61,6 +61,11 @@ static void xattr_update_checksum(XAttributeDataEntry *xattrDataEntry) {
 
 static inline void xattr_removeentry(XAttributeInodeEntry *entry,
                                      XAttributeDataEntry *xattrDataEntry) {
+	if (xattrDataEntry == nullptr || entry == nullptr) {
+		safs::log_err("{}: xattrDataEntry or entry is nullptr", __func__);
+		return;
+	}
+
 	// Remove the data from the xattr_inode_entry
 	entry->xattrDataEntries.erase(
 	    std::remove(entry->xattrDataEntries.begin(), entry->xattrDataEntries.end(), xattrDataEntry),

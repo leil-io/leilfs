@@ -916,7 +916,7 @@ void fs_new(void) {
 	gMetadata->root->uid = 0;
 	gMetadata->root->gid = 0;
 
-	auto hashRootIndex = NODEHASHPOS(gMetadata->root->id);
+	uint32_t hashRootIndex = NODEHASHPOS(gMetadata->root->id);
 	gMetadata->nodeHash[hashRootIndex].push_back(gMetadata->root);
 	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
 

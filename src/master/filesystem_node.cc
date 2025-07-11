@@ -1328,10 +1328,9 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *node) {
 			uint64_t chunkid = static_cast<FSNodeFile*>(node)->chunks[i];
 			if (chunkid > 0) {
 				if (chunk_delete_file(chunkid, node->goal) != SAUNAFS_STATUS_OK) {
-					safs_pretty_syslog(LOG_ERR,
-					                   "structure error - chunk %016" PRIX64
-					                   " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",
-					                   chunkid, node->id, i);
+					safs::log_err(
+					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
+					    chunkid, node->id, i);
 				}
 			}
 		}
@@ -1358,7 +1357,9 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *node) {
 	FSNode::destroy(node);
 
 	if (nodeIterator != gMetadata->nodeHash[nodeHashIndex].end()) {
-		gMetadata->nodeHash[nodeHashIndex].erase(nodeIterator);
+		auto lastElement = gMetadata->nodeHash[nodeHashIndex].end() - 1;
+		std::iter_swap(nodeIterator, lastElement); // Swap with last element to avoid erase: O(1)
+		gMetadata->nodeHash[nodeHashIndex].pop_back(); // Remove the last element: O(1)
 	}
 }
 
