@@ -565,7 +565,6 @@ void fs_trashtime_values_checks(uint8_t mingoal, uint8_t maxgoal, uint32_t &mint
 // Print the session flags and user/group mappings for the current session.
 void fs_session_flags_users_groups_checks(uint8_t sesflags, uint32_t rootuid, uint32_t rootgid,
                                           uint32_t mapalluid, uint32_t mapallgid) {
-	constexpr uint32_t kUserGroupBufferDefaultSize = 16384;
 	const char *sessionFlagsPositiveStrTab[] = {SESFLAG_POS_STRINGS};
 	const char *sessionFlagsNegativeStrTab[] = {SESFLAG_NEG_STRINGS};
 	bool clientHasSessionFlags = false;
@@ -587,6 +586,7 @@ void fs_session_flags_users_groups_checks(uint8_t sesflags, uint32_t rootuid, ui
 
 	if (!gInitParams.meta) {
 #ifndef _WIN32
+		constexpr uint32_t kUserGroupBufferDefaultSize = 16384;
 		struct passwd userEntry, *userInfo;
 		struct group groupEntry, *groupInfo;
 		std::vector<char> userGroupBuffer(kUserGroupBufferDefaultSize);
