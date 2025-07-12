@@ -50,4 +50,5 @@ constexpr uint32_t kEC2Version = saunafsVersion(3, 13, 0);
 constexpr uint32_t kFirstVersionWithPathByInodeHiddenFile = saunafsVersion(4, 8, 0);
 constexpr uint32_t kFirstVersionWithUseQuotaInVolumeSize = saunafsVersion(4, 9, 0);
 constexpr uint32_t kFirstVersionWithMountInfoOnMonitoring = saunafsVersion(5, 0, 0);
+constexpr uint32_t kFirstVersionWithChunkBasedWriteAlgorithm = saunafsVersion(5, 0, 0);
 constexpr uint32_t kFirstVersionWithClusterId = saunafsVersion(5, 0, 0);
