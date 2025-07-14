@@ -27,6 +27,11 @@
 #include <unistd.h>
 #include <string>
 #include <vector>
+#include <thread>
+#include <future>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
 
 #include "common/time_utils.h"
 #include "master/metadata_dumper_interface.h"
@@ -34,6 +39,7 @@
 class MetadataDumperFile : public IMetadataDumper {
 public:
 	MetadataDumperFile(const std::string &metadataFilename, const std::string &metadataTmpFilename);
+	~MetadataDumperFile();
 
 	bool dumpSucceeded() const override;
 	bool inProgress() const override;
@@ -45,7 +51,7 @@ public:
 	/// returns true and modifies dumpType (to FOREGROUND_DUMP) if we return as a child
 	bool start(DumpType& dumpType, uint64_t checksum) override;
 
-	// for poll
+	// for poll - adapted for thread-based approach
 	void pollDesc(std::vector<pollfd> &pdesc) override;
 	void pollServe(const std::vector<pollfd> &pdesc) override;
 
@@ -56,6 +62,10 @@ private:
 	/// waits until the metadumper finishes but not longer than timeout
 	void waitUntilFinished(SteadyDuration timeout);
 
+	/// thread function that executes metarestore
+	void executeMetarestore(uint64_t checksum, const std::string& changelogFilename);
+
+	/// marks dumping as finished and cleans up resources
 	void dumpingFinished();
 
 	/// how long can the decimal representation of a(n) (u)int64 be
@@ -65,16 +75,21 @@ private:
 	bool useMetarestore_;
 
 	/// if last dump was unsuccessful, now dump by master
-	bool dumpingSucceeded_;
+	std::atomic<bool> dumpingSucceeded_;
 
-	/// fd of the reading end of the pipe (connected to stdout of the dumping process)
-	int dumpingProcessFd_;
+	/// thread-safe communication for dumping process
+	std::unique_ptr<std::thread> dumpingThread_;
+	std::promise<bool> dumpingPromise_;
+	std::future<bool> dumpingFuture_;
 
-	/// pos in `pollfd`s array
-	int32_t dumpingProcessPollFdsPos_;
+	/// synchronization primitives
+	mutable std::mutex stateMutex_;
+	std::condition_variable dumpingCompleted_;
+	std::atomic<bool> threadInProgress_;
 
-	/// the dumping process has written something
-	bool dumpingProcessOutputEmpty_;
+	/// output capture
+	std::atomic<bool> dumpingProcessOutputEmpty_;
+	std::string lastOutput_;
 
 	std::string metarestorePath_;
 	std::string metadataFilename_;
