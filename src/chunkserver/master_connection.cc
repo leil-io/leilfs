@@ -132,35 +132,55 @@ void MasterConn::sendRegister() {
 	uint32_t myip = mainNetworkThreadGetListenIp();
 	uint16_t myport = mainNetworkThreadGetListenPort();
 
-	createAttachedPacket(
-	    cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_));
+	if (isVersionLessThan5_) {  // Preserve compatibility with masters < 5.0
+		createAttachedPacket(
+		    cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX));
 
-	safs::log_info("MasterConn: registering to MDS: {}", address_.toString());
+		safs::log_warn("MasterConn: using old master registration to {}", address_.toString());
 
-	registrationStatus_ = RegistrationStatus::kRegistrationRequested;
+		registrationStatus_ = RegistrationStatus::kHostRegistered;
+
+		onRegistered({});
+	} else {
+		createAttachedPacket(
+		    cstoma::registerHost::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_));
+
+		safs::log_info("MasterConn: registering to MDS: {}", address_.toString());
+
+		registrationStatus_ = RegistrationStatus::kRegistrationRequested;
+	}
 }
 
 void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
-	uint8_t status{};
-	uint32_t version{};
-	std::string clusterId;
-	matocs::registerHost::deserialize(data, status, version, clusterId);
+	if (isVersionLessThan5_) {
+		(void)data;  // Not used
+		version_ = saunafsVersion(0, 0, 0);  // The version is unknown at this point
+	} else {
+		uint8_t status{};
+		uint32_t version{};
+		std::string clusterId;
+		matocs::registerHost::deserialize(data, status, version, clusterId);
 
-	if (status != SAUNAFS_STATUS_OK) {
-		safs::log_err(
-		    "MasterConn: registration to {} failed with status: {}, version: {}, clusterId: {}",
-		    address_.toString(), saunafs_error_string(status), saunafsVersionToString(version),
-		    clusterId);
-		setMode(ConnectionMode::KILL);
-		return;
+		if (status != SAUNAFS_STATUS_OK) {
+			safs::log_err(
+			    "MasterConn: registration to {} failed with status: {}, version: {}, clusterId: {}",
+			    address_.toString(), saunafs_error_string(status), saunafsVersionToString(version),
+			    clusterId);
+			setMode(ConnectionMode::KILL);
+			return;
+		}
+
+		version_ = version;
+
+		safs::log_info("MasterConn: registered to MDS: {}, version: {}, clusterId: {}",
+		               address_.toString(), saunafsVersionToString(version), clusterId);
+
+		registrationStatus_ = RegistrationStatus::kHostRegistered;
 	}
 
-	version_ = version;
-
-	safs::log_info("MasterConn: registered to MDS: {}, version: {}, clusterId: {}",
-	               address_.toString(), saunafsVersionToString(version), clusterId);
-
-	registrationStatus_ = RegistrationStatus::kHostRegistered;
+	// Reset registration parameters for future reconnections to use the new protocol first
+	isVersionLessThan5_ = false;
+	registrationAttempts_ = 0;
 
 	hddForeachChunkInBulks([this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
@@ -184,6 +204,25 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	sendRegisterLabel();
 
 	sendConfig();
+}
+
+void MasterConn::handleRegistrationAttempt() {
+	if (registrationAttempts_ < kMaxRegistrationAttemptsToBeConsideredOldMaster) {
+		if (registrationStatus_ == RegistrationStatus::kRegistrationRequested) {
+			safs::log_warn(
+			    "MasterConn: Master server did not answer the registration request; make sure Master is at least version {} (attempt {}/{})",
+			    saunafsVersionToString(kFirstVersionWithClusterId), registrationAttempts_ + 1,
+			    kMaxRegistrationAttemptsToBeConsideredOldMaster);
+			++registrationAttempts_;
+		}
+
+		// Reconnection will be retried as usual
+	} else {
+		safs::log_warn("MasterConn: reached max registration attempts, considering old master");
+		// Assume the master is not answering because it is an old version
+		// The old protocol will be tried on the next reconnection
+		isVersionLessThan5_ = true;
+	}
 }
 
 int MasterConn::initConnect() {
@@ -364,6 +403,7 @@ void MasterConn::readFromSocket() {
 
 		if (ret == 0) {
 			safs::log_info("MasterConn: connection reset by Master: {}", address_.toString());
+			handleRegistrationAttempt();
 			setMode(ConnectionMode::KILL);
 			return;
 		}

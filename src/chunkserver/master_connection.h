@@ -209,6 +209,12 @@ private:
 	std::string clusterId_;                      ///< Cluster ID for this connection.
 	std::shared_ptr<JobPool> jobPool_;           ///< Shared reference to the JobPool.
 
+	// For compatibility with old masters (version < 5.0)
+	void handleRegistrationAttempt();
+	static constexpr uint8_t kMaxRegistrationAttemptsToBeConsideredOldMaster = 3;
+	uint32_t registrationAttempts_{0};  ///< Number of registration attempts.
+	bool isVersionLessThan5_{false};    ///< Indicates if the master server is an old version.
+
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	/// Registration status to this MDS.
 	RegistrationStatus registrationStatus_{RegistrationStatus::kUnregistered};
