@@ -639,8 +639,8 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 		node->gid = gid;
 	}
 
-	uint32_t nodepos = NODEHASHPOS(node->id);
-	gMetadata->nodeHash[nodepos].push_front(node);
+	uint32_t nodeHashIndex = NODEHASHPOS(node->id);
+	gMetadata->nodeHash[nodeHashIndex].push_back(node);
 
 	fsnodes_update_checksum(node);
 	fsnodes_link(ts, parent, node, name);
@@ -1301,59 +1301,65 @@ void fsnodes_change_uid_gid(FSNode *p, uint32_t uid, uint32_t gid) {
 	}
 }
 
-static inline void fsnodes_remove_node(uint32_t ts, FSNode *toremove) {
-	if (!toremove->parent.empty()) {
+static inline void fsnodes_remove_node(uint32_t ts, FSNode *node) {
+	if (!node->parent.empty()) {
 		return;
 	}
-	// remove from idhash
-	uint32_t nodepos = NODEHASHPOS(toremove->id);
-	auto start = gMetadata->nodeHash[nodepos].begin();
-	auto end = gMetadata->nodeHash[nodepos].end();
 
-	auto found = std::find_if(start, end, [&](const auto &node) {
-		return node == toremove;
-	});
-
-	if (gChecksumBackgroundUpdater.isNodeIncluded(toremove)) {
-		removeFromChecksum(gChecksumBackgroundUpdater.fsNodesChecksum, toremove->checksum);
+	if (gChecksumBackgroundUpdater.isNodeIncluded(node)) {
+		removeFromChecksum(gChecksumBackgroundUpdater.fsNodesChecksum, node->checksum);
 	}
-	removeFromChecksum(gMetadata->fsNodesChecksum, toremove->checksum);
+
+	removeFromChecksum(gMetadata->fsNodesChecksum, node->checksum);
+
 	// and free
 	gMetadata->nodes--;
-	gMetadata->aclStorage.erase(toremove->id);
-	if (toremove->type == FSNode::kDirectory) {
+	gMetadata->aclStorage.erase(node->id);
+
+	if (node->type == FSNode::kDirectory) {
 		gMetadata->dirNodes--;
 	}
-	if (toremove->type == FSNode::kFile || toremove->type == FSNode::kTrash ||
-	    toremove->type == FSNode::kReserved) {
-		fsnodes_quota_update(toremove, {{QuotaResource::kSize, -fsnodes_get_size(toremove)}});
+
+	if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
+	    node->type == FSNode::kReserved) {
+		fsnodes_quota_update(node, {{QuotaResource::kSize, -fsnodes_get_size(node)}});
 		gMetadata->fileNodes--;
-		for (uint32_t i = 0; i < static_cast<FSNodeFile*>(toremove)->chunks.size(); ++i) {
-			uint64_t chunkid = static_cast<FSNodeFile*>(toremove)->chunks[i];
+		for (uint32_t i = 0; i < static_cast<FSNodeFile*>(node)->chunks.size(); ++i) {
+			uint64_t chunkid = static_cast<FSNodeFile*>(node)->chunks[i];
 			if (chunkid > 0) {
-				if (chunk_delete_file(chunkid, toremove->goal) != SAUNAFS_STATUS_OK) {
-					safs_pretty_syslog(LOG_ERR, "structure error - chunk %016" PRIX64
-					                " not found (inode: %" PRIiNode
-					                " ; index: %" PRIu32 ")",
-					       chunkid, toremove->id, i);
+				if (chunk_delete_file(chunkid, node->goal) != SAUNAFS_STATUS_OK) {
+					safs::log_err(
+					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
+					    chunkid, node->id, i);
 				}
 			}
 		}
 	}
-	if (toremove->type == FSNode::kSymlink) {
+
+	if (node->type == FSNode::kSymlink) {
 		gMetadata->linkNodes--;
 	}
-	gMetadata->inodePool.release(toremove->id, ts, true);
-	xattr_removeinode(toremove->id);
-	fsnodes_quota_update(toremove, {{QuotaResource::kInodes, -1}});
-	fsnodes_quota_remove(QuotaOwnerType::kInode, toremove->id);
+
+	gMetadata->inodePool.release(node->id, ts, true);
+	xattr_removeinode(node->id);
+	fsnodes_quota_update(node, {{QuotaResource::kInodes, -1}});
+	fsnodes_quota_remove(QuotaOwnerType::kInode, node->id);
 #ifndef METARESTORE
-	fsnodes_periodic_remove(toremove->id);
-	dcm_modify(toremove->id, 0);
+	fsnodes_periodic_remove(node->id);
+	dcm_modify(node->id, 0);
 #endif
-	FSNode::destroy(toremove);
-	if (found != gMetadata->nodeHash[nodepos].end()) {
-		gMetadata->nodeHash[nodepos].erase(found);
+
+	// remove node from nodeHash
+	uint32_t nodeHashIndex = NODEHASHPOS(node->id);
+	auto nodeIterator = std::find(gMetadata->nodeHash[nodeHashIndex].begin(),
+	                              gMetadata->nodeHash[nodeHashIndex].end(), node);
+
+	FSNode::destroy(node);
+
+	if (nodeIterator != gMetadata->nodeHash[nodeHashIndex].end()) {
+		auto lastElement = gMetadata->nodeHash[nodeHashIndex].end() - 1;
+		std::iter_swap(nodeIterator, lastElement); // Swap with last element to avoid erase: O(1)
+		gMetadata->nodeHash[nodeHashIndex].pop_back(); // Remove the last element: O(1)
 	}
 }
 

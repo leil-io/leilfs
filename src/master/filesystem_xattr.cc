@@ -20,6 +20,8 @@
 
 #include "common/platform.h"
 
+#include <algorithm>
+
 #include <common/hashfn.h>
 #include <master/filesystem_metadata.h>
 #include <master/filesystem_xattr.h>
@@ -59,8 +61,15 @@ static void xattr_update_checksum(XAttributeDataEntry *xattrDataEntry) {
 
 static inline void xattr_removeentry(XAttributeInodeEntry *entry,
                                      XAttributeDataEntry *xattrDataEntry) {
+	if (xattrDataEntry == nullptr || entry == nullptr) {
+		safs::log_err("{}: xattrDataEntry or entry is nullptr", __func__);
+		return;
+	}
+
 	// Remove the data from the xattr_inode_entry
-	entry->xattrDataList.remove(xattrDataEntry);
+	entry->xattrDataEntries.erase(
+	    std::remove(entry->xattrDataEntries.begin(), entry->xattrDataEntries.end(), xattrDataEntry),
+	    entry->xattrDataEntries.end());
 
 	if (gChecksumBackgroundUpdater.isXattrIncluded(xattrDataEntry)) {
 		removeFromChecksum(gChecksumBackgroundUpdater.xattrChecksum, xattrDataEntry->checksum);
@@ -114,8 +123,8 @@ void xattr_removeinode(inode_t inode) {
 	for (auto attributeIterator = start; attributeIterator != end;) {
 		xattrInodeEntry = attributeIterator->get();
 		if (xattrInodeEntry->inode == inode) {
-			while (!xattrInodeEntry->xattrDataList.empty()) {
-				xattr_removeentry(xattrInodeEntry, xattrInodeEntry->xattrDataList.front());
+			while (!xattrInodeEntry->xattrDataEntries.empty()) {
+				xattr_removeentry(xattrInodeEntry, xattrInodeEntry->xattrDataEntries.front());
 			}
 			attributeIterator = gMetadata->xattrInodeHash[hash].erase(attributeIterator);
 		} else {
@@ -164,7 +173,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 
 				xattr_removeentry(xattrInodeEntry, xattrDataEntry.get());
 
-				if (xattrInodeEntry->xattrDataList.empty()) {
+				if (xattrInodeEntry->xattrDataEntries.empty()) {
 					if (xattrInodeEntry->attributeNameLength != 0 ||
 					    xattrInodeEntry->attributeValueLength != 0) {
 						safs::log_warn("xattr non zero lengths on remove (inode:%" PRIiNode
@@ -227,14 +236,14 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 	auto *xattrDataEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
 
 	if (xattrInodeEntry) {
-		xattrInodeEntry->xattrDataList.push_back(xattrDataEntryPointer);
+		xattrInodeEntry->xattrDataEntries.push_back(xattrDataEntryPointer);
 		xattrInodeEntry->attributeNameLength += attributeNameLength + 1U;
 		xattrInodeEntry->attributeValueLength += attributeValueLength;
 	} else {
 		auto xattrInodeEntry =
 		    XAttributeInodeEntry::create(inode, attributeNameLength + 1U, attributeValueLength);
-		xattrInodeEntry->xattrDataList.push_back(xattrDataEntryPointer);
-		gMetadata->xattrInodeHash[inodeHash].push_front(std::move(xattrInodeEntry));
+		xattrInodeEntry->xattrDataEntries.push_back(xattrDataEntryPointer);
+		gMetadata->xattrInodeHash[inodeHash].push_back(std::move(xattrInodeEntry));
 	}
 
 	return SAUNAFS_STATUS_OK;
@@ -269,7 +278,7 @@ uint8_t get_xattrs_length_for_inode(inode_t inode, void **xattrInodePointer, uin
 	for (const auto &xattrInodeEntry : gMetadata->xattrInodeHash[hash]) {
 		if (xattrInodeEntry->inode == inode) {
 			*xattrInodePointer = xattrInodeEntry.get();
-			for (const auto &xattrDataEntry : xattrInodeEntry->xattrDataList) {
+			for (const auto &xattrDataEntry : xattrInodeEntry->xattrDataEntries) {
 				*xattrSize += xattrDataEntry->attributeName.size() + 1U;
 			}
 			if (*xattrSize > SFS_XATTR_LIST_MAX) {
@@ -289,7 +298,7 @@ void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xattrDataBuffer) {
 	uint32_t entryLength = 0;
 	if (xattrEntry) {
 		passert(xattrDataBuffer);
-		for (const auto &xattrDataEntry : xattrEntry->xattrDataList) {
+		for (const auto &xattrDataEntry : xattrEntry->xattrDataEntries) {
 			memcpy(xattrDataBuffer + entryLength, xattrDataEntry->attributeName.data(),
 			       xattrDataEntry->attributeName.size());
 			entryLength += xattrDataEntry->attributeName.size();

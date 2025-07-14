@@ -24,7 +24,6 @@
 
 #include <cstdint>
 #include <cstdlib>
-#include <list>
 #include <memory>
 #include <vector>
 
@@ -49,7 +48,7 @@ struct XAttributeInodeEntry {
 	inode_t inode;
 	uint32_t attributeNameLength;
 	uint32_t attributeValueLength;
-	std::list<XAttributeDataEntry *> xattrDataList;
+	std::vector<XAttributeDataEntry *> xattrDataEntries;
 
 	static std::unique_ptr<XAttributeInodeEntry> create(inode_t inode, uint32_t attributeNameLength,
 	                                                    uint32_t attributeValueLength) {
