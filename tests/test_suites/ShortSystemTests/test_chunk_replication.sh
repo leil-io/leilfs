@@ -1,7 +1,7 @@
 : ${test_timeout:="5 minutes"}
 : ${replication_timeout:="90 seconds"}
 : ${number_of_chunkservers:=12}
-: ${goals="2 3 4 5 6 7 8 9 xor2 xor3 xor4 xor5 xor6 xor7 xor8 xor9"}
+: ${goals="2 3 4 5 6 7 8 9 ec21 ec22 ec31 ec32 ec33 ec43 ec44"}
 : ${verify_file_content=YES}
 
 # Returns list of all chunks in the following format:
@@ -17,6 +17,7 @@ timeout_set "$test_timeout"
 CHUNKSERVERS=$number_of_chunkservers \
 	USE_RAMDISK=YES \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MASTER_CUSTOM_GOALS="20 ec31: \$ec(3,1)" \
 	MASTER_EXTRA_CONFIG="CHUNKS_LOOP_MIN_TIME = 1`
 			`|CHUNKS_LOOP_MAX_CPU = 90`
 			`|CHUNKS_WRITE_REP_LIMIT = 10`

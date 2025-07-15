@@ -2,6 +2,7 @@ timeout_set 1 minute
 
 CHUNKSERVERS=4 \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MASTER_CUSTOM_GOALS="20 ec31: \$ec(3,1)" \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
@@ -9,7 +10,7 @@ pseudorandom_init
 
 cd "${info[mount0]}"
 mkdir dir
-saunafs setgoal xor3 dir
+saunafs setgoal ec31 dir
 cd dir
 
 for i in {0..19} ; do

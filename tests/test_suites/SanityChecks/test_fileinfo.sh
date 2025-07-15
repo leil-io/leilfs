@@ -10,16 +10,14 @@ awkscript='
 	printf("UNKNOWN LINE: %s\n", $0)
 	exit
 }
-/part 1\/[1-9] of xor/ {
+/part [1-9]\/[2-9] of ec\(2,1\)/ {
 	split($3, server, ":")
-	sub(/xor/, "", $7)
-	printf "CS%s/chunks%s/chunk_xor_parity_of_%s_%s%s\n", server[2], dir, $7, chunkid, meta_extension
+	printf "CS%s/chunks%s/chunk_ec2_%d_of_2_1_%s%s\n", server[2], dir, $5, chunkid, meta_extension
 	next
 }
-/part [2-9]\/[2-9] of xor/ {
+/part [1-9]\/[2-9] of ec\(3,1\)/ {
 	split($3, server, ":")
-	sub(/xor/, "", $7)
-	printf "CS%s/chunks%s/chunk_xor_%d_of_%d_%s%s\n", server[2], dir, $5-1, $7, chunkid, meta_extension
+	printf "CS%s/chunks%s/chunk_ec2_%d_of_3_1_%s%s\n", server[2], dir, $5, chunkid, meta_extension
 	next
 }
 /part [1-9]\/[2-9] of ec\(3,2\)/ {
@@ -36,13 +34,14 @@ awkscript='
 
 CHUNKSERVERS=5 \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MASTER_CUSTOM_GOALS="20 ec31: \$ec(3,1)" \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
 cd "${info[mount0]}"
 
 files=()
-for goal in 1 2 3 xor2 xor3 ec32; do
+for goal in 1 2 3 ec21 ec31 ec32; do
 	file="file_goal_$goal"
 	touch "$file"
 	saunafs_command setgoal "$goal" "$file"

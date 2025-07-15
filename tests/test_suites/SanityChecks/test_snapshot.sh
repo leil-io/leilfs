@@ -1,13 +1,14 @@
 CHUNKSERVERS=4 \
-	USE_RAMDISK=YES \
+	MASTER_CUSTOM_GOALS="20 ec31: \$ec(3,1)" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsdirentrycacheto=0" \
+	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
-# Create small files of goals 2 and xor3
+# Create small files of goals 2 and ec31
 cd "${info[mount0]}"
 touch file{1..2}
 saunafs_command setgoal 2 file1
-saunafs_command setgoal xor3 file2
+saunafs_command setgoal ec31 file2
 FILE_SIZE=1M file-generate file1
 FILE_SIZE=1M file-generate file2
 assert_success file-validate file*
