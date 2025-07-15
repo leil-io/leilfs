@@ -70,6 +70,10 @@ the master server after disconnection (default is 5)
 to process operations on chunks, like create, duplicate, replicate and truncate
 (default is 10, minimum is 2)
 
+*MASTER_REPLICATION_NR_OF_WORKERS*:: number of threads that the connection to
+master may use to process replications operations on chunks.
+(default is 5, minimum in 1)
+
 *BIND_HOST*:: local address to use for connecting with the master server
 (default is ***, i.e. default local address)
 
