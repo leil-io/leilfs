@@ -119,7 +119,7 @@ uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uin
 uint8_t fs_readlink(const FsContext &context, inode_t inode, std::string &path);
 void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availspace,
                uint64_t *trashspace, uint64_t *reservedspace, inode_t *inodes);
-uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name, uint8_t type,
+uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name, FSNodeType type,
                  uint16_t mode, uint16_t umask, uint32_t rdev, inode_t *inode, Attributes &attr);
 uint8_t fs_mkdir(const FsContext &context, inode_t parent, const HString &name, uint16_t mode,
                  uint16_t umask, uint8_t copysgid, inode_t *inode, Attributes &attr);
@@ -172,8 +172,8 @@ uint8_t fs_getchunksinfo(const FsContext &context, uint32_t current_ip, inode_t 
 
 // Functions which apply changes from changelog, only for shadow master and metarestore
 uint8_t fs_apply_checksum(const std::string &version, uint64_t checksum);
-uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name, uint8_t type, uint32_t mode,
-                        uint32_t uid, uint32_t gid, uint32_t rdev, inode_t inode);
+uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name, FSNodeType type,
+                        uint32_t mode, uint32_t uid, uint32_t gid, uint32_t rdev, inode_t inode);
 uint8_t fs_apply_access(uint32_t ts, inode_t inode);
 uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, uint32_t gid,
                       uint32_t atime, uint32_t mtime);

@@ -59,12 +59,30 @@
 
 #define MAX_INDEX 0x7FFFFFFF
 
-enum class AclInheritance { kInheritAcl, kDontInheritAcl };
+enum class AclInheritance : std::uint8_t {
+	kInheritAcl,
+	kDontInheritAcl
+};
 
 // Arguments for verify_session
-enum class SessionType { kNotMeta, kOnlyMeta, kAny };
-enum class OperationMode { kReadWrite, kReadOnly };
-enum class ExpectedNodeType { kFile, kDirectory, kNotDirectory, kFileOrDirectory, kAny };
+enum class SessionType : std::uint8_t {
+	kNotMeta,
+	kOnlyMeta,
+	kAny
+};
+
+enum class OperationMode : std::uint8_t {
+	kReadWrite,
+	kReadOnly
+};
+
+enum class ExpectedNodeType : std::uint8_t {
+	kFile,
+	kDirectory,
+	kNotDirectory,
+	kFileOrDirectory,
+	kAny
+};
 
 using TrashtimeMap = std::unordered_map<uint32_t, uint32_t>;
 using GoalStatistics = std::array<inode_t, GoalId::kMax + 1>;
@@ -81,6 +99,19 @@ struct statsrecord {
 	uint64_t realsize;
 };
 
+enum class FSNodeType : std::uint8_t {
+	kFile = TYPE_FILE,
+	kDirectory = TYPE_DIRECTORY,
+	kSymlink = TYPE_SYMLINK,
+	kFifo = TYPE_FIFO,
+	kBlockDev = TYPE_BLOCKDEV,
+	kCharDev = TYPE_CHARDEV,
+	kSocket = TYPE_SOCKET,
+	kTrash = TYPE_TRASH,
+	kReserved = TYPE_RESERVED,
+	kUnknown = TYPE_UNKNOWN
+};
+
 /*! \brief Node containing common meta data for each file system object (file or directory).
  *
  * Node size = 64B
@@ -93,24 +124,11 @@ struct statsrecord {
  * 4G files will occupy 600GB
  */
 struct FSNode {
-	enum {
-		kFile = TYPE_FILE,
-		kDirectory = TYPE_DIRECTORY,
-		kSymlink = TYPE_SYMLINK,
-		kFifo = TYPE_FIFO,
-		kBlockDev = TYPE_BLOCKDEV,
-		kCharDev = TYPE_CHARDEV,
-		kSocket = TYPE_SOCKET,
-		kTrash = TYPE_TRASH,
-		kReserved = TYPE_RESERVED,
-		kUnknown = TYPE_UNKNOWN
-	};
-
 	inode_t id; /*!< Unique number identifying node. */
 	uint32_t ctime; /*!< Change time. */
 	uint32_t mtime; /*!< Modification time. */
 	uint32_t atime; /*!< Access time. */
-	uint8_t type; /*!< Node type. (file, directory, symlink, ...) */
+	FSNodeType type; /*!< Node type. (file, directory, symlink, ...) */
 	uint8_t goal; /*!< Goal id. */
 	uint16_t mode;  /*!< Only 12 lowest bits are used for mode, in unix standard upper 4 are used
 	                 for object type, but since there is field "type" this bits can be used as
@@ -124,7 +142,7 @@ struct FSNode {
 
 	uint64_t checksum; /*!< Node checksum. */
 
-	FSNode(uint8_t t) {
+	FSNode(FSNodeType t) {
 		type = t;
 		checksum = 0;
 	}
@@ -133,7 +151,7 @@ struct FSNode {
 	 * \param type Type of node to create.
 	 * \return Pointer to created node.
 	 */
-	static FSNode *create(uint8_t type);
+	static FSNode *create(FSNodeType type);
 
 	/*! \brief Static function used for erasing node (uses node's type
 	 * for correct invocation of destructors).
@@ -155,8 +173,8 @@ struct FSNodeFile : public FSNode {
 	compact_vector<uint32_t> sessionid;
 	compact_vector<uint64_t, uint32_t> chunks;
 
-	explicit FSNodeFile(uint8_t t) : FSNode(t) {
-		assert(t == kFile || t == kTrash || t == kReserved);
+	explicit FSNodeFile(FSNodeType t) : FSNode(t) {
+		assert(t == FSNodeType::kFile || t == FSNodeType::kTrash || t == FSNodeType::kReserved);
 	}
 
 	uint32_t chunkCount() const {
@@ -178,7 +196,7 @@ struct FSNodeSymlink : public FSNode {
 	hstorage::Handle path;
 	uint16_t path_length{};
 
-	explicit FSNodeSymlink() : FSNode(kSymlink) {
+	explicit FSNodeSymlink() : FSNode(FSNodeType::kSymlink) {
 	}
 };
 
@@ -189,7 +207,7 @@ struct FSNodeSymlink : public FSNode {
 struct FSNodeDevice : public FSNode {
 	uint32_t rdev;
 
-	FSNodeDevice(uint8_t device_type) : FSNode(device_type), rdev() {
+	FSNodeDevice(FSNodeType device_type) : FSNode(device_type), rdev() {
 	}
 };
 
@@ -226,7 +244,7 @@ struct FSNodeDirectory : public FSNode {
 	uint16_t entries_hash;
 	uint16_t lowerCaseEntriesHash;
 
-	FSNodeDirectory() : FSNode(kDirectory) {
+	FSNodeDirectory() : FSNode(FSNodeType::kDirectory) {
 		memset(&stats, 0, sizeof(stats));
 		nlink = 2;
 		entries_hash = 0;

@@ -30,6 +30,7 @@
 #include "common/type_defs.h"
 #include "errors/saunafs_error_codes.h"
 #include "master/filesystem.h"
+#include "master/filesystem_node_types.h"
 #include "master/filesystem_operations.h"
 #include "master/filesystem_snapshot.h"
 #include "protocol/SFSCommunication.h"
@@ -284,7 +285,8 @@ int do_create(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return fs_apply_create(ts, parent, HString((const char*)name), type, mode, uid, gid, rdev, inode);
+	return fs_apply_create(ts, parent, HString((const char *)name), static_cast<FSNodeType>(type),
+	                       mode, uid, gid, rdev, inode);
 }
 
 int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {

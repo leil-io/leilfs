@@ -115,14 +115,14 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 		if (node_acl != nullptr) {
 			RichACL new_acl = *node_acl;
 			if (default_acl) {
-				if (p->type != FSNode::kDirectory) {
+				if (p->type != FSNodeType::kDirectory) {
 					throw Exception(
 						"Trying to set default acl for non-directory inode: " +
 						std::to_string(inode));
 				}
 				new_acl.appendDefaultPosixACL(posix_acl);
 			} else {
-				new_acl.appendPosixACL(posix_acl, p->type == FSNode::kDirectory);
+				new_acl.appendPosixACL(posix_acl, p->type == FSNodeType::kDirectory);
 				p->mode = (p->mode & ~0777) | (new_acl.getMode() & 0777);
 			}
 			gMetadata->aclStorage.set(p->id, std::move(new_acl));
@@ -184,10 +184,10 @@ static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataF
 		RichACL new_acl;
 		if (extended_acl) {
 			auto posix_acl = AccessControlList{*extended_acl};
-			new_acl.appendPosixACL(posix_acl, p->type == FSNode::kDirectory);
+			new_acl.appendPosixACL(posix_acl, p->type == FSNodeType::kDirectory);
 			p->mode = (p->mode & ~0777) | (new_acl.getMode() & 0777);
 		}
-		if (default_acl && p->type == FSNode::kDirectory) {
+		if (default_acl && p->type == FSNodeType::kDirectory) {
 			auto posix_acl = AccessControlList{*default_acl};
 			new_acl.appendDefaultPosixACL(posix_acl);
 		}

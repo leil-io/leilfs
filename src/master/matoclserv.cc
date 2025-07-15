@@ -74,6 +74,7 @@
 #include "master/exports.h"
 #include "master/filesystem.h"
 #include "master/filesystem_node.h"
+#include "master/filesystem_node_types.h"
 #include "master/filesystem_operations.h"
 #include "master/filesystem_periodic.h"
 #include "master/filesystem_snapshot.h"
@@ -2476,7 +2477,7 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 
 	auto foundContextRootInodeResult = [&](inode_t rootInode) {
 		for (const auto &result : results) {
-			if (result.entryKey.owner.ownerType == QuotaOwnerType::kInode && 
+			if (result.entryKey.owner.ownerType == QuotaOwnerType::kInode &&
 				result.entryKey.owner.ownerId == rootInode) {
 				return true;
 			}
@@ -2958,8 +2959,8 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
 
-		status = fs_mknod(context, inode, HString(std::move(name)), type, mode, umask, rdev,
-		                  &newinode, attr);
+		status = fs_mknod(context, inode, HString(std::move(name)), static_cast<FSNodeType>(type),
+		                  mode, umask, rdev, &newinode, attr);
 	}
 
 	MessageBuffer reply;
@@ -6059,7 +6060,7 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 					break;
 				case SAU_CLTOMA_FUSE_GET_SELF_QUOTA:
 					matoclserv_sau_get_self_quota(eptr, data, length);
-					break;	
+					break;
 				case SAU_CLTOMA_CSERV_LIST:
 					matoclserv_sau_cserv_list(eptr, data, length);
 					break;

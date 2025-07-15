@@ -22,10 +22,11 @@
 
 #include "master/metadata_backend_file.h"
 
-#include <fcntl.h> // for open and O_RDONLY
+#include <fcntl.h>  // for open and O_RDONLY
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <cstdint>
 #include <memory>
-#include <sys/mman.h>
 
 #include <common/cwrap.h>
 #include <common/event_loop.h>
@@ -38,6 +39,7 @@
 #include <master/filesystem.h>
 #include <master/filesystem_metadata.h>
 #include <master/filesystem_node.h>
+#include <master/filesystem_node_types.h>
 #include <master/filesystem_operations.h>
 #include <master/filesystem_quota.h>
 #include <master/filesystem_store_acl.h>
@@ -413,21 +415,18 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		return kError;
 	}
 	if (!parentId) {
-		if (child->type == FSNode::kTrash) {
+		if (child->type == FSNodeType::kTrash) {
 			gMetadata->trash.insert(
 			    {TrashPathKey(child), hstorage::Handle(name)});
 			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->trashNodes++;
-		} else if (child->type == FSNode::kReserved) {
+		} else if (child->type == FSNodeType::kReserved) {
 			gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
 			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->reservedNodes++;
 		} else {
-			safs_pretty_syslog(LOG_ERR,
-			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
-			                   " error: bad child type (%c)\n",
-			                   parentId, fsnodes_escape_name(name).c_str(),
-			                   childId, child->type);
+			safs::log_err("loading edge: {}, {}->{} error: bad child type ({})", parentId,
+			              fsnodes_escape_name(name), childId, static_cast<char>(child->type));
 			return kError;
 		}
 	} else {
@@ -441,7 +440,7 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			if (ignoreFlag) {
 				parent =
 				    fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
-				if (!parent || parent->type != FSNode::kDirectory) {
+				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
 					    "loading edge: %" PRIiNode ",%s->%" PRIiNode
@@ -463,16 +462,13 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 				return kError;
 			}
 		}
-		if (parent->type != FSNode::kDirectory) {
-			safs_pretty_syslog(LOG_ERR,
-			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
-			                   " error: bad parent type (%c)",
-			                   parentId, fsnodes_escape_name(name).c_str(),
-			                   childId, parent->type);
+		if (parent->type != FSNodeType::kDirectory) {
+			safs::log_err("loading edge: {}, {}->{} error: bad parent type ({})", parentId,
+			              fsnodes_escape_name(name), childId, static_cast<char>(parent->type));
 			if (ignoreFlag) {
 				parent =
 				    fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
-				if (!parent || parent->type != FSNode::kDirectory) {
+				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
 					    "loading edge: %" PRIiNode ",%s->%" PRIiNode
@@ -520,7 +516,7 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 
 		child->parent.push_back({parent->id, handlePtr});
-		if (child->type == FSNode::kDirectory) {
+		if (child->type == FSNodeType::kDirectory) {
 			parent->nlink++;
 		}
 
@@ -542,16 +538,17 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	static const int8_t kError = -1;
 	static const int8_t kSuccess = 0;
 	static const int8_t kLastNode = 1;
-	uint8_t type;
-	FSNode *node;
+
 	const uint8_t *pSrc = metadataFile->seek(sectionOffset);
-	type = get8bit(&pSrc);
-	if (!type) {
+	uint8_t typeU8 = get8bit(&pSrc);
+
+	if (!typeU8) {
 		sectionOffset = metadataFile->offset(pSrc);
 		return kLastNode;
 	}
 
-	node = FSNode::create(type);
+	auto type = static_cast<FSNodeType>(typeU8);
+	FSNode *node = FSNode::create(type);
 	passert(node);
 	getINode(&pSrc, node->id);
 	node->goal = get8bit(&pSrc);
@@ -573,19 +570,19 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	constexpr uint32_t kChunkSize = (1 << 16);
 
 	switch (type) {
-	case FSNode::kDirectory:
+	case FSNodeType::kDirectory:
 		gMetadata->dirNodes++;
 		break;
-	case FSNode::kSocket:
-	case FSNode::kFifo:  /// No extra info to Parse
+	case FSNodeType::kSocket:
+	case FSNodeType::kFifo:  /// No extra info to Parse
 		break;
-	case FSNode::kBlockDev:
-	case FSNode::kCharDev:
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
 		uint32_t tempRDev;
 		get32bit(&pSrc, tempRDev);
 		static_cast<FSNodeDevice *>(node)->rdev = tempRDev;
 		break;
-	case FSNode::kSymlink:
+	case FSNodeType::kSymlink:
 		get32bit(&pSrc, nodeNameLength);
 		static_cast<FSNodeSymlink *>(node)->path_length = nodeNameLength;
 		if (nodeNameLength > 0) {
@@ -594,9 +591,9 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 		gMetadata->linkNodes++;
 		break;
-	case FSNode::kFile:
-	case FSNode::kTrash:
-	case FSNode::kReserved:
+	case FSNodeType::kFile:
+	case FSNodeType::kTrash:
+	case FSNodeType::kReserved:
 		nodeFile->length = get64bit(&pSrc);
 		get32bit(&pSrc, chunkAmount);
 		sessionIds = get16bit(&pSrc);
@@ -627,8 +624,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		gMetadata->fileNodes++;
 		break;
 	default:
-		safs_pretty_syslog(LOG_ERR, "loading node: unrecognized node type: %c",
-		                   type);
+		safs::log_err("loading node: unrecognized node type: {}", static_cast<char>(type));
 		fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
 		sectionOffset = metadataFile->offset(pSrc);
 		return kError;
@@ -669,7 +665,7 @@ int fs_checknodes(int ignoreflag) {
 	for (auto i = 0; i < NODEHASHSIZE; i++) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->parent.empty() && node != gMetadata->root &&
-			    (node->type != FSNode::kTrash) && (node->type != FSNode::kReserved)) {
+			    (node->type != FSNodeType::kTrash) && (node->type != FSNodeType::kReserved)) {
 				safs::log_err("found orphaned inode: %" PRIiNode, node->id);
 				if (ignoreflag) {
 					if (fs_lostnode(node) < 0) {
@@ -886,7 +882,7 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 		                   "error reading metadata (root node not found)");
 		return kOpFailure;
 	}
-	if (gMetadata->root->type != FSNode::kDirectory) {
+	if (gMetadata->root->type != FSNodeType::kDirectory) {
 		safs_pretty_syslog(
 		    LOG_ERR, "error reading metadata (root node not a directory)");
 		return kOpFailure;
@@ -904,7 +900,7 @@ void fs_new(void) {
 	gMetadata->metadataVersion = 1;
 	gMetadata->nextSessionId = 1;
 
-	auto *rootDirectory = FSNode::create(FSNode::kDirectory);
+	auto *rootDirectory = FSNode::create(FSNodeType::kDirectory);
 	gMetadata->root = static_cast<FSNodeDirectory *>(rootDirectory);
 	gMetadata->root->id = SPECIAL_INODE_ROOT;
 	gMetadata->root->atime = eventloop_time();
@@ -1016,8 +1012,9 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 		fputc(0, fd);
 		return;
 	}
+
 	ptr = gNodeStoreBuffer;
-	put8bit(&ptr, f->type);
+	put8bit(&ptr, static_cast<uint8_t>(f->type));
 	putINode(&ptr, f->id);
 	put8bit(&ptr, f->goal);
 	put16bit(&ptr, f->mode);
@@ -1031,17 +1028,17 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 	auto *node_file = static_cast<FSNodeFile *>(f);
 
 	switch (f->type) {
-	case FSNode::kDirectory:
-	case FSNode::kSocket:
-	case FSNode::kFifo:
+	case FSNodeType::kDirectory:
+	case FSNodeType::kSocket:
+	case FSNodeType::kFifo:
 		if (fwrite(gNodeStoreBuffer, 1, kNodeHeaderSize, fd) !=
 		    (size_t)(kNodeHeaderSize)) {
 			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 			return;
 		}
 		break;
-	case FSNode::kBlockDev:
-	case FSNode::kCharDev:
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
 		put32bit(&ptr, static_cast<FSNodeDevice *>(f)->rdev);
 		if (fwrite(gNodeStoreBuffer, 1, kNodeHeaderSize + 4, fd) !=
 		    (size_t)(kNodeHeaderSize + 4)) {
@@ -1049,7 +1046,7 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 			return;
 		}
 		break;
-	case FSNode::kSymlink:
+	case FSNodeType::kSymlink:
 		name = (std::string) static_cast<FSNodeSymlink *>(f)->path;
 		// Safe cast, the length should always fit
 		put32bit(&ptr, static_cast<uint32_t>(name.length()));
@@ -1064,9 +1061,9 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 			return;
 		}
 		break;
-	case FSNode::kFile:
-	case FSNode::kTrash:
-	case FSNode::kReserved:
+	case FSNodeType::kFile:
+	case FSNodeType::kTrash:
+	case FSNodeType::kReserved:
 		put64bit(&ptr, node_file->length);
 		ch = node_file->chunkCount();
 		put32bit(&ptr, ch);
@@ -1116,6 +1113,11 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 			return;
 		}
+		break;
+	default:
+		safs::log_err("MetadataBackendFile::storenode: unexpected node type {}",
+		              static_cast<char>(f->type));
+		break;
 	}
 }
 
@@ -1177,7 +1179,7 @@ void MetadataBackendFile::storeedgelist(const ReservedPathContainer &data, FILE 
 void MetadataBackendFile::storeedges_rec(FSNodeDirectory *f, FILE *fd) {
 	storeedgelist(f, fd);
 	for (const auto &entry : f->entries) {
-		if (entry.second->type == FSNode::kDirectory) {
+		if (entry.second->type == FSNodeType::kDirectory) {
 			storeedges_rec(static_cast<FSNodeDirectory *>(entry.second), fd);
 		}
 	}

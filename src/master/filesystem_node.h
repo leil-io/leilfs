@@ -51,25 +51,26 @@ inline void fsnodes_check_node_type(const NodeType *node) {
 
 template<>
 inline void fsnodes_check_node_type(const FSNodeFile *node) {
-	assert(node && (node->type == FSNode::kFile || node->type == FSNode::kTrash || node->type == FSNode::kReserved));
+	assert(node && (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+	                node->type == FSNodeType::kReserved));
 	(void)node;
 }
 
 template<>
 inline void fsnodes_check_node_type(const FSNodeDirectory *node) {
-	assert(node && node->type == FSNode::kDirectory);
+	assert(node && node->type == FSNodeType::kDirectory);
 	(void)node;
 }
 
 template<>
 inline void fsnodes_check_node_type(const FSNodeSymlink *node) {
-	assert(node && node->type == FSNode::kSymlink);
+	assert(node && node->type == FSNodeType::kSymlink);
 	(void)node;
 }
 
 template<>
 inline void fsnodes_check_node_type(const FSNodeDevice *node) {
-	assert(node && (node->type == FSNode::kBlockDev || node->type == FSNode::kCharDev));
+	assert(node && (node->type == FSNodeType::kBlockDev || node->type == FSNodeType::kCharDev));
 	(void)node;
 }
 
@@ -98,7 +99,7 @@ inline NodeType *fsnodes_id_to_node(inode_t id) {
 }
 
 inline void fsnodes_update_ctime(FSNode *node, uint32_t ctime) {
-	if (node->type == FSNode::kTrash && node->ctime != ctime) {
+	if (node->type == FSNodeType::kTrash && node->ctime != ctime) {
 		auto old_key = TrashPathKey(node);
 		node->ctime = ctime;
 		auto it = gMetadata->trash.find(old_key);
@@ -143,9 +144,10 @@ void fsnodes_change_uid_gid(FSNode *p, uint32_t uid, uint32_t gid);
 int fsnodes_nameisused(FSNodeDirectory *node, const HString &name);
 bool fsnodes_inode_quota_exceeded(uint32_t uid, uint32_t gid);
 
-FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *node, const HString &name, uint8_t type,
-                            uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
-                            uint8_t copysgid, AclInheritance inheritacl, inode_t req_inode = 0);
+FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *node, const HString &name,
+                            FSNodeType type, uint16_t mode, uint16_t umask, uint32_t uid,
+                            uint32_t gid, uint8_t copysgid, AclInheritance inheritacl,
+                            inode_t req_inode = 0);
 
 void fsnodes_add_stats(FSNodeDirectory *parent, statsrecord *sr);
 int fsnodes_sticky_access(FSNode *parent, FSNode *node, uint32_t uid);

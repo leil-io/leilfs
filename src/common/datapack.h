@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <type_traits>
 
 #include <common/type_defs.h>
 
@@ -70,6 +71,13 @@ static inline void put16bit(uint8_t **ptr,uint16_t val) {
 static inline void put8bit(uint8_t **ptr,uint8_t val) {
 	(*ptr)[0]=(val)&0xFF;
 	(*ptr)++;
+}
+
+// Overload for enum classes with underlying uint8_t
+template <typename E>
+    requires std::is_enum_v<E> && std::is_same_v<std::underlying_type_t<E>, uint8_t>
+static inline void put8bit(uint8_t **ptr, E val) {
+	put8bit(ptr, static_cast<uint8_t>(val));
 }
 
 static inline uint64_t get64bit(const uint8_t **ptr) {

@@ -60,9 +60,8 @@ int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (child->type == FSNode::kDirectory &&
-	    !static_cast<FSNodeDirectory*>(child)->entries.empty()) {
-
+	if (child->type == FSNodeType::kDirectory &&
+	    !static_cast<FSNodeDirectory *>(child)->entries.empty()) {
 		SubtaskContainer subtasks;
 		subtasks.reserve(
 			  static_cast<const FSNodeDirectory*>(child)->entries.size());
@@ -70,16 +69,14 @@ int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 				static_cast<FSNodeDirectory*>(child)->entries) {
 			subtasks.push_back(static_cast<HString>(*entry.first));
 		}
-		auto task = new RemoveTask(std::move(subtasks),
-					    child->id, context_);
+		auto *task = new RemoveTask(std::move(subtasks), child->id, context_);
 		work_queue.push_front(*task);
 		if (++repeat_counter_ >= kMaxRepeatCounter) {
 			// something keeps adding files to a folder which is being deleted
 			return SAUNAFS_ERROR_ENOTEMPTY;
 		}
 	} else {
-		++gFsStatsArray[child->type == FSNode::kDirectory ?
-		                FsStats::Rmdir : FsStats::Unlink];
+		++gFsStatsArray[child->type == FSNodeType::kDirectory ? FsStats::Rmdir : FsStats::Unlink];
 		doUnlink(ts, wd, child);
 		++current_subtask_;
 		repeat_counter_ = 0;

@@ -29,13 +29,14 @@
 #include "common/attributes.h"
 #include "common/event_loop.h"
 #include "errors/saunafs_error_codes.h"
-#include "filesystem_metadata.h"
 #include "master/changelog.h"
 #include "master/chunks.h"
 #include "master/filesystem.h"
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_checksum_updater.h"
+#include "master/filesystem_metadata.h"
 #include "master/filesystem_node.h"
+#include "master/filesystem_node_types.h"
 #include "master/filesystem_quota.h"
 #include "master/fs_context.h"
 #include "master/locks.h"
@@ -166,13 +167,13 @@ uint8_t fs_getdetachedattr(inode_t rootinode, uint8_t sesflags, inode_t inode, A
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kTrash && p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (dtype == DTYPE_TRASH && p->type == FSNode::kReserved) {
+	if (dtype == DTYPE_TRASH && p->type == FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (dtype == DTYPE_RESERVED && p->type == FSNode::kTrash) {
+	if (dtype == DTYPE_RESERVED && p->type == FSNodeType::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
 	fsnodes_fill_attr(p, NULL, p->uid, p->gid, p->uid, p->gid, sesflags, attr);
@@ -189,7 +190,7 @@ uint8_t fs_gettrashpath(inode_t rootinode, uint8_t sesflags, inode_t inode, std:
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kTrash) {
+	if (p->type != FSNodeType::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
 	path = (std::string)gMetadata->trash.at(TrashPathKey(p));
@@ -208,7 +209,7 @@ uint8_t fs_settrashpath(const FsContext &context, inode_t inode, const std::stri
 	                                        inode, &p);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
-	} else if (p->type != FSNode::kTrash) {
+	} else if (p->type != FSNodeType::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	} else if (path.length() == 0) {
 		return SAUNAFS_ERROR_EINVAL;
@@ -241,7 +242,7 @@ uint8_t fs_undel(const FsContext &context, inode_t inode) {
 	                                        inode, &p);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
-	} else if (p->type != FSNode::kTrash) {
+	} else if (p->type != FSNodeType::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
 
@@ -267,7 +268,7 @@ uint8_t fs_purge(const FsContext &context, inode_t inode) {
 	                                        inode, &p);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
-	} else if (p->type != FSNode::kTrash) {
+	} else if (p->type != FSNodeType::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
 	// This should be equal to inode, because p is not a directory
@@ -326,7 +327,7 @@ uint8_t fs_getrootinode(inode_t *rootinode, const uint8_t *path) {
 		if (!child) {
 			return SAUNAFS_ERROR_ENOENT;
 		}
-		if (child->type != FSNode::kDirectory) {
+		if (child->type != FSNodeType::kDirectory) {
 			return SAUNAFS_ERROR_ENOTDIR;
 		}
 		parent = static_cast<FSNodeDirectory*>(child);
@@ -347,7 +348,7 @@ void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availsp
 		*respace = 0;
 		rn = fsnodes_id_to_node(context.rootinode());
 	}
-	if (!rn || rn->type != FSNode::kDirectory) {
+	if (!rn || rn->type != FSNodeType::kDirectory) {
 		*totalspace = 0;
 		*availspace = 0;
 		*inodes = 0;
@@ -513,10 +514,10 @@ uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
 
 	while (current_inode != context.rootinode()) {
 		if (!current_node || current_node->parent.empty()) {
-			if (current_node->parent.empty() &&
-			    (current_node->type == FSNode::kReserved || current_node->type == FSNode::kTrash)) {
+			if (current_node->parent.empty() && (current_node->type == FSNodeType::kReserved ||
+			                                     current_node->type == FSNodeType::kTrash)) {
 				current_name =
-				    current_node->type == FSNode::kTrash
+				    current_node->type == FSNodeType::kTrash
 				        ? gMetadata->trash.at(TrashPathKey(current_node)).get() + " (trash)"
 				        : gMetadata->reserved.at(current_inode).get() + " (reserved)";
 				fullPath = current_name;
@@ -623,7 +624,8 @@ uint8_t fs_apply_trunc(uint32_t ts, inode_t inode, uint32_t indx, uint64_t chunk
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	if (indx > MAX_INDEX) {
@@ -790,7 +792,7 @@ uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uin
 			}
 			break;
 		case SugidClearMode::kExt:
-			if (p->type != FSNode::kDirectory) {
+			if (p->type != FSNodeType::kDirectory) {
 				if (p->mode & 010) {  // when group exec is set - clear both bits
 					p->mode &= 0171777;
 					attrmode &= 01777;
@@ -801,7 +803,7 @@ uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uin
 			}
 			break;
 		case SugidClearMode::kSfs:
-			if (p->type != FSNode::kDirectory) {  // similar to EXT3, but unprivileged users
+			if (p->type != FSNodeType::kDirectory) {  // similar to EXT3, but unprivileged users
 				                          // also clear suid/sgid bits on
 				                          // directories
 				if (p->mode & 010) {
@@ -822,7 +824,7 @@ uint8_t fs_setattr(const FsContext &context, inode_t inode, uint8_t setmask, uin
 	}
 	if (setmask & SET_MODE_FLAG) {
 		p->mode = (attrmode & 07777) | (p->mode & 0xF000);
-		gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNode::kDirectory);
+		gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNodeType::kDirectory);
 	}
 	if (setmask & (SET_UID_FLAG | SET_GID_FLAG)) {
 		fsnodes_change_uid_gid(p, ((setmask & SET_UID_FLAG) ? attruid : p->uid),
@@ -859,7 +861,7 @@ uint8_t fs_apply_attr(uint32_t ts, inode_t inode, uint32_t mode, uint32_t uid, u
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	p->mode = mode | (p->mode & 0xF000);
-	gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNode::kDirectory);
+	gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNodeType::kDirectory);
 	if (p->uid != uid || p->gid != gid) {
 		fsnodes_change_uid_gid(p, uid, gid);
 	}
@@ -876,7 +878,8 @@ uint8_t fs_apply_length(uint32_t ts, inode_t inode, uint64_t length, bool eraseF
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	fsnodes_setlength(static_cast<FSNodeFile *>(p), length, eraseFurtherChunks);
@@ -914,7 +917,7 @@ uint8_t fs_readlink(const FsContext &context, inode_t inode, std::string &path) 
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (p->type != FSNode::kSymlink) {
+	if (p->type != FSNodeType::kSymlink) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
@@ -959,7 +962,7 @@ uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name
 		return SAUNAFS_ERROR_QUOTA;
 	}
 	FSNodeSymlink *p = static_cast<FSNodeSymlink *>(fsnodes_create_node(
-	    context.ts(), static_cast<FSNodeDirectory *>(wd), name, FSNode::kSymlink, 0777, 0,
+	    context.ts(), static_cast<FSNodeDirectory *>(wd), name, FSNodeType::kSymlink, 0777, 0,
 	    context.uid(), context.gid(), 0, AclInheritance::kDontInheritAcl, *inode));
 	p->path = HString(path);
 	p->path_length = path.length();
@@ -992,7 +995,7 @@ uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name
 
 #ifndef METARESTORE
 uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name,
-		uint8_t type, uint16_t mode, uint16_t umask, uint32_t rdev, inode_t *inode,
+		FSNodeType type, uint16_t mode, uint16_t umask, uint32_t rdev, inode_t *inode,
 		Attributes &attr) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
@@ -1005,8 +1008,8 @@ uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name,
 		return status;
 	}
 
-	if (type != FSNode::kFile && type != FSNode::kSocket && type != FSNode::kFifo &&
-	    type != FSNode::kBlockDev && type != FSNode::kCharDev) {
+	if (type != FSNodeType::kFile && type != FSNodeType::kSocket && type != FSNodeType::kFifo &&
+	    type != FSNodeType::kBlockDev && type != FSNodeType::kCharDev) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
@@ -1031,15 +1034,15 @@ uint8_t fs_mknod(const FsContext &context, inode_t parent, const HString &name,
 	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
 	p = fsnodes_create_node(ts, static_cast<FSNodeDirectory*>(wd), name, type, mode, umask, context.uid(), context.gid(), 0,
 	                        AclInheritance::kInheritAcl);
-	if (type == FSNode::kBlockDev || type == FSNode::kCharDev) {
+	if (type == FSNodeType::kBlockDev || type == FSNodeType::kCharDev) {
 		static_cast<FSNodeDevice*>(p)->rdev = rdev;
 	}
 	*inode = p->id;
 	fsnodes_fill_attr(p, wd, context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(), attr);
 	fs_changelog(ts,
 	             "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
-	             wd->id, fsnodes_escape_name(name).c_str(), type, p->mode & 07777, context.uid(), context.gid(),
-	             rdev, p->id);
+	             wd->id, fsnodes_escape_name(name).c_str(), static_cast<char>(type),
+	             p->mode & 07777, context.uid(), context.gid(), rdev, p->id);
 	++gFsStatsArray[FsStats::Mknod];
 	metrics::Counter::increment(metrics::Counter::Master::FS_MKNOD);
 	fsnodes_update_checksum(p);
@@ -1085,32 +1088,35 @@ uint8_t fs_mkdir(const FsContext &context, inode_t parent, const HString &name, 
 
 	static_cast<FSNodeDirectory *>(wd)->case_insensitive =
 	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
-	p = fsnodes_create_node(ts, static_cast<FSNodeDirectory *>(wd), name, FSNode::kDirectory, mode,
-	                        umask, context.uid(), context.gid(), copysgid, AclInheritance::kInheritAcl);
+	p = fsnodes_create_node(ts, static_cast<FSNodeDirectory *>(wd), name, FSNodeType::kDirectory,
+	                        mode, umask, context.uid(), context.gid(), copysgid,
+	                        AclInheritance::kInheritAcl);
 	*inode = p->id;
-	fsnodes_fill_attr(p, wd, context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(), attr);
-	fs_changelog(ts, "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
-	             wd->id, fsnodes_escape_name(name).c_str(), FSNode::kDirectory, p->mode & 07777,
-	             context.uid(), context.gid(), 0, p->id);
+	fsnodes_fill_attr(p, wd, context.uid(), context.gid(), context.auid(), context.agid(),
+	                  context.sesflags(), attr);
+	fs_changelog(
+	    ts, "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode, wd->id,
+	    fsnodes_escape_name(name).c_str(), static_cast<char>(FSNodeType::kDirectory),
+	    p->mode & 07777, context.uid(), context.gid(), 0, p->id);
 	++gFsStatsArray[FsStats::Mkdir];
 	metrics::Counter::increment(metrics::Counter::Master::FS_MKDIR);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
 
-uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name,
-		uint8_t type, uint32_t mode, uint32_t uid, uint32_t gid, uint32_t rdev,
-		inode_t inode) {
+uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name, FSNodeType type,
+                        uint32_t mode, uint32_t uid, uint32_t gid, uint32_t rdev, inode_t inode) {
 	FSNode *wd, *p;
-	if (type != FSNode::kFile && type != FSNode::kSocket && type != FSNode::kFifo &&
-	    type != FSNode::kBlockDev && type != FSNode::kCharDev && type != FSNode::kDirectory) {
+	if (type != FSNodeType::kFile && type != FSNodeType::kSocket && type != FSNodeType::kFifo &&
+	    type != FSNodeType::kBlockDev && type != FSNodeType::kCharDev &&
+	    type != FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	wd = fsnodes_id_to_node(parent);
 	if (!wd) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (wd->type != FSNode::kDirectory) {
+	if (wd->type != FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_ENOTDIR;
 	}
 	if (fsnodes_nameisused(static_cast<FSNodeDirectory*>(wd), name)) {
@@ -1119,7 +1125,7 @@ uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name,
 	// we pass requested inode number here
 	p = fsnodes_create_node(ts, static_cast<FSNodeDirectory*>(wd), name, type, mode, 0, uid, gid, 0,
 	                        AclInheritance::kInheritAcl, inode);
-	if (type == FSNode::kBlockDev || type == FSNode::kCharDev) {
+	if (type == FSNodeType::kBlockDev || type == FSNodeType::kCharDev) {
 		static_cast<FSNodeDevice*>(p)->rdev = rdev;
 		fsnodes_update_checksum(p);
 	}
@@ -1158,7 +1164,7 @@ uint8_t fs_unlink(const FsContext &context, inode_t parent, const HString &name)
 	if (!fsnodes_sticky_access(wd, child, context.uid())) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if (child->type == FSNode::kDirectory) {
+	if (child->type == FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	fs_changelog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, wd->id,
@@ -1227,7 +1233,7 @@ uint8_t fs_rmdir(const FsContext &context, inode_t parent, const HString &name) 
 	if (!fsnodes_sticky_access(wd, child, context.uid())) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if (child->type != FSNode::kDirectory) {
+	if (child->type != FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_ENOTDIR;
 	}
 	if (!static_cast<FSNodeDirectory*>(child)->entries.empty()) {
@@ -1249,7 +1255,7 @@ uint8_t fs_apply_unlink(uint32_t ts, inode_t parent, const HString &name,
 	if (!wd) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (wd->type != FSNode::kDirectory) {
+	if (wd->type != FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_ENOTDIR;
 	}
 	FSNode *child = fsnodes_lookup(static_cast<FSNodeDirectory*>(wd), name);
@@ -1259,7 +1265,8 @@ uint8_t fs_apply_unlink(uint32_t ts, inode_t parent, const HString &name,
 	if (child->id != inode) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
-	if (child->type == FSNode::kDirectory && !static_cast<FSNodeDirectory*>(child)->entries.empty()) {
+	if (child->type == FSNodeType::kDirectory &&
+	    !static_cast<FSNodeDirectory *>(child)->entries.empty()) {
 		return SAUNAFS_ERROR_ENOTEMPTY;
 	}
 	fsnodes_unlink(ts, static_cast<FSNodeDirectory*>(wd), name, child);
@@ -1303,13 +1310,13 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 		*inode = se_child->id;
 	}
 	std::array<int64_t, 2> quota_delta = {{1, 1}};
-	if (se_child->type == FSNode::kDirectory) {
+	if (se_child->type == FSNodeType::kDirectory) {
 		if (fsnodes_isancestor(static_cast<FSNodeDirectory*>(se_child), dwd)) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
 		const statsrecord &stats = static_cast<FSNodeDirectory*>(se_child)->stats;
 		quota_delta = {{(int64_t)stats.inodes, (int64_t)stats.size}};
-	} else if (se_child->type == FSNode::kFile) {
+	} else if (se_child->type == FSNodeType::kFile) {
 		quota_delta[(int)QuotaResource::kSize] = fsnodes_get_size(se_child);
 	}
 	if (fsnodes_namecheck(name_dst) < 0) {
@@ -1322,18 +1329,19 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 	}
 
 	if (de_child) {
-		if (de_child->type == FSNode::kDirectory && !static_cast<FSNodeDirectory*>(de_child)->entries.empty()) {
+		if (de_child->type == FSNodeType::kDirectory &&
+		    !static_cast<FSNodeDirectory *>(de_child)->entries.empty()) {
 			return SAUNAFS_ERROR_ENOTEMPTY;
 		}
 		if (context.canCheckPermissions() &&
 		    !fsnodes_sticky_access(dwd, de_child, context.uid())) {
 			return SAUNAFS_ERROR_EPERM;
 		}
-		if (de_child->type == TYPE_DIRECTORY) {
+		if (de_child->type == FSNodeType::kDirectory) {
 			const statsrecord &stats = static_cast<FSNodeDirectory*>(de_child)->stats;
 			quota_delta[(int)QuotaResource::kInodes] -= stats.inodes;
 			quota_delta[(int)QuotaResource::kSize] -= stats.size;
-		} else if (de_child->type == TYPE_FILE) {
+		} else if (de_child->type == FSNodeType::kFile) {
 			quota_delta[(int)QuotaResource::kInodes] -= 1;
 			quota_delta[(int)QuotaResource::kSize] -= fsnodes_get_size(static_cast<FSNodeFile*>(de_child));
 		} else {
@@ -1390,7 +1398,7 @@ uint8_t fs_link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (sp->type == FSNode::kTrash || sp->type == FSNode::kReserved) {
+	if (sp->type == FSNodeType::kTrash || sp->type == FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
 	if (fsnodes_namecheck(name_dst) < 0) {
@@ -1872,7 +1880,8 @@ uint8_t fs_acquire(const FsContext &context, inode_t inode, uint32_t sessionid) 
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	if (std::find(p->sessionid.begin(), p->sessionid.end(), sessionid) != p->sessionid.end()) {
@@ -1894,13 +1903,14 @@ uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) 
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	auto it = std::find(p->sessionid.begin(), p->sessionid.end(), sessionid);
 	if (it != p->sessionid.end()) {
 		p->sessionid.erase(it);
-		if (p->type == FSNode::kReserved && p->sessionid.empty()) {
+		if (p->type == FSNodeType::kReserved && p->sessionid.empty()) {
 			fsnodes_purge(context.ts(), p);
 		} else {
 			fsnodes_update_checksum(p);
@@ -1969,7 +1979,8 @@ uint8_t fs_readchunk(inode_t inode, uint32_t indx, uint64_t *chunkid, uint64_t *
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	if (indx > MAX_INDEX) {
@@ -2106,7 +2117,8 @@ uint8_t fs_writeend(inode_t inode, uint64_t length, uint64_t chunkid, uint32_t l
 		if (!p) {
 			return SAUNAFS_ERROR_ENOENT;
 		}
-		if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+		if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+		    p->type != FSNodeType::kReserved) {
 			return SAUNAFS_ERROR_EPERM;
 		}
 		if (length > p->length) {
@@ -2202,7 +2214,8 @@ uint8_t fs_apply_repair(uint32_t ts, inode_t inode, uint32_t indx, uint32_t nver
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (p->type != FSNode::kFile && p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
+	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	if (indx > MAX_INDEX) {
@@ -2338,8 +2351,8 @@ uint8_t fs_setgoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (p->type != FSNode::kDirectory && p->type != FSNode::kFile &&
-	    p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kDirectory && p->type != FSNodeType::kFile &&
+	    p->type != FSNodeType::kTrash && p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	sassert(context.hasUidGidData());
@@ -2384,8 +2397,8 @@ uint8_t fs_apply_setgoal(const FsContext &context, inode_t inode, uint8_t goal, 
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (p->type != FSNode::kDirectory && p->type != FSNode::kFile &&
-	    p->type != FSNode::kTrash && p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kDirectory && p->type != FSNodeType::kFile &&
+	    p->type != FSNodeType::kTrash && p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	sassert(context.hasUidGidData());
@@ -2418,8 +2431,8 @@ uint8_t fs_settrashtime(const FsContext &context, inode_t inode, uint32_t trasht
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (p->type != FSNode::kDirectory && p->type != FSNode::kFile && p->type != FSNode::kTrash &&
-	    p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kDirectory && p->type != FSNodeType::kFile &&
+	    p->type != FSNodeType::kTrash && p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	sassert(context.hasUidGidData());
@@ -2455,8 +2468,8 @@ uint8_t fs_apply_settrashtime(const FsContext &context, inode_t inode, uint32_t 
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (p->type != FSNode::kDirectory && p->type != FSNode::kFile && p->type != FSNode::kTrash &&
-	    p->type != FSNode::kReserved) {
+	if (p->type != FSNodeType::kDirectory && p->type != FSNodeType::kFile &&
+	    p->type != FSNodeType::kTrash && p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	sassert(context.hasUidGidData());
@@ -2768,7 +2781,7 @@ uint32_t fs_getdirpath_size(inode_t inode) {
 	FSNode *node;
 	node = fsnodes_id_to_node(inode);
 	if (node) {
-		if (node->type != FSNode::kDirectory) {
+		if (node->type != FSNodeType::kDirectory) {
 			return 15;  // "(not directory)"
 		} else {
 			FSNodeDirectory *parent = nullptr;
@@ -2788,7 +2801,7 @@ void fs_getdirpath_data(inode_t inode, uint8_t *buff, uint32_t size) {
 	FSNode *node;
 	node = fsnodes_id_to_node(inode);
 	if (node) {
-		if (node->type != FSNode::kDirectory) {
+		if (node->type != FSNodeType::kDirectory) {
 			if (size >= 15) {
 				memcpy(buff, "(not directory)", 15);
 				return;
@@ -2869,8 +2882,8 @@ uint8_t fs_get_chunkid(const FsContext &context, inode_t inode, uint32_t index,
 void fs_add_files_to_chunks() {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
-			if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
-			    node->type == FSNode::kReserved) {
+			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+			    node->type == FSNodeType::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
 					if (chunkid > 0) {
 						chunk_add_file(chunkid, node->goal);

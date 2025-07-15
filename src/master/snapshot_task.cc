@@ -33,7 +33,7 @@ int SnapshotTask::cloneNodeTest(FSNode *src_node, FSNode *dst_node, FSNodeDirect
 	    fsnodes_quota_exceeded_dir(dst_parent, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
-	if (src_node->type == FSNode::kFile &&
+	if (src_node->type == FSNodeType::kFile &&
 	    (fsnodes_quota_exceeded_ug(src_node, {{QuotaResource::kSize, 1}}) ||
 	     fsnodes_quota_exceeded_dir(dst_parent, {{QuotaResource::kSize, 1}}))) {
 		return SAUNAFS_ERROR_QUOTA;
@@ -45,7 +45,7 @@ int SnapshotTask::cloneNodeTest(FSNode *src_node, FSNode *dst_node, FSNodeDirect
 		if (dst_node->type != src_node->type) {
 			return SAUNAFS_ERROR_EPERM;
 		}
-		if (src_node->type != FSNode::kDirectory && !can_overwrite_) {
+		if (src_node->type != FSNodeType::kDirectory && !can_overwrite_) {
 			return SAUNAFS_ERROR_EEXIST;
 		}
 	}
@@ -57,22 +57,25 @@ FSNode *SnapshotTask::cloneToExistingNode(uint32_t ts, FSNode *src_node,
 	assert(src_node->type == dst_node->type);
 
 	switch (src_node->type) {
-	case FSNode::kDirectory:
+	case FSNodeType::kDirectory:
 		cloneDirectoryData(static_cast<const FSNodeDirectory *>(src_node),
 		                   static_cast<FSNodeDirectory *>(dst_node));
 		break;
-	case FSNode::kFile:
+	case FSNodeType::kFile:
 		dst_node = cloneToExistingFileNode(ts, static_cast<FSNodeFile *>(src_node),
 		                                   dst_parent, static_cast<FSNodeFile *>(dst_node));
 		break;
-	case FSNode::kSymlink:
+	case FSNodeType::kSymlink:
 		cloneSymlinkData(static_cast<FSNodeSymlink *>(src_node),
 		                 static_cast<FSNodeSymlink *>(dst_node), dst_parent);
 		break;
-	case FSNode::kBlockDev:
-	case FSNode::kCharDev:
-		static_cast<FSNodeDevice *>(dst_node)->rdev =
-		        static_cast<FSNodeDevice *>(src_node)->rdev;
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
+		static_cast<FSNodeDevice *>(dst_node)->rdev = static_cast<FSNodeDevice *>(src_node)->rdev;
+		break;
+	default:
+		// No additional data to clone for these types
+		break;
 	}
 
 	dst_node->mode = src_node->mode;
@@ -97,22 +100,25 @@ FSNode *SnapshotTask::cloneToNewNode(uint32_t ts, FSNode *src_node, FSNodeDirect
 	dst_node->mtime = src_node->mtime;
 
 	switch (src_node->type) {
-	case FSNode::kDirectory:
+	case FSNodeType::kDirectory:
 		cloneDirectoryData(static_cast<const FSNodeDirectory *>(src_node),
 		                   static_cast<FSNodeDirectory *>(dst_node));
 		break;
-	case FSNode::kFile:
+	case FSNodeType::kFile:
 		cloneChunkData(static_cast<FSNodeFile *>(src_node),
 		               static_cast<FSNodeFile *>(dst_node), dst_parent);
 		break;
-	case FSNode::kSymlink:
+	case FSNodeType::kSymlink:
 		cloneSymlinkData(static_cast<FSNodeSymlink *>(src_node),
 		                 static_cast<FSNodeSymlink *>(dst_node), dst_parent);
 		break;
-	case FSNode::kBlockDev:
-	case FSNode::kCharDev:
-		static_cast<FSNodeDevice *>(dst_node)->rdev =
-		        static_cast<FSNodeDevice *>(src_node)->rdev;
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
+		static_cast<FSNodeDevice *>(dst_node)->rdev = static_cast<FSNodeDevice *>(src_node)->rdev;
+		break;
+	default:
+		// No additional data to clone for these types
+		break;
 	}
 
 	return dst_node;
@@ -128,7 +134,7 @@ FSNodeFile *SnapshotTask::cloneToExistingFileNode(uint32_t ts, FSNodeFile *src_n
 
 	fsnodes_unlink(ts, dst_parent, current_subtask_->second, dst_node);
 	dst_node = static_cast<FSNodeFile *>(fsnodes_create_node(
-	        ts, dst_parent, current_subtask_->second, FSNode::kFile, src_node->mode, 0,
+	        ts, dst_parent, current_subtask_->second, FSNodeType::kFile, src_node->mode, 0,
 	        src_node->uid, src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_));
 
 	cloneChunkData(src_node, dst_node, dst_parent);
@@ -210,10 +216,11 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	FSNode *src_node = fsnodes_id_to_node(current_subtask_->first);
 	FSNodeDirectory *dst_parent = fsnodes_id_to_node<FSNodeDirectory>(dst_parent_inode_);
 
-	if (!src_node || src_node->type == FSNode::kTrash || src_node->type == FSNode::kReserved) {
+	if (!src_node || src_node->type == FSNodeType::kTrash ||
+	    src_node->type == FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (!dst_parent || dst_parent->type != FSNode::kDirectory) {
+	if (!dst_parent || dst_parent->type != FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 

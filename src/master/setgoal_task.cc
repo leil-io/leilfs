@@ -39,7 +39,7 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	uint8_t result = setGoal(node, ts);
 
 	if (result != kNoAction) {
-		if (node->type == FSNode::kDirectory && (smode_ & SMODE_RMASK) &&
+		if (node->type == FSNodeType::kDirectory && (smode_ & SMODE_RMASK) &&
 		    !static_cast<const FSNodeDirectory *>(node)->entries.empty()) {
 			std::vector<inode_t> inode_list;
 			inode_list.reserve(static_cast<const FSNodeDirectory *>(node)->entries.size());
@@ -68,13 +68,13 @@ bool SetGoalTask::isFinished() const {
 }
 
 uint8_t SetGoalTask::setGoal(FSNode *node, uint32_t ts) {
-	if (node->type == FSNode::kFile || node->type == FSNode::kDirectory ||
-	    node->type == FSNode::kTrash || node->type == FSNode::kReserved) {
+	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kDirectory ||
+	    node->type == FSNodeType::kTrash || node->type == FSNodeType::kReserved) {
 		if ((node->mode & (EATTR_NOOWNER << 12)) == 0 && uid_ != 0 && node->uid != uid_) {
 			return SetGoalTask::kNotPermitted;
 		} else {
 			if ((smode_ & SMODE_TMASK) == SMODE_SET && node->goal != goal_) {
-				if (node->type != FSNode::kDirectory) {
+				if (node->type != FSNodeType::kDirectory) {
 					fsnodes_changefilegoal(static_cast<FSNodeFile *>(node), goal_);
 				} else {
 					node->goal = goal_;

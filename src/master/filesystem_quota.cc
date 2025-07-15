@@ -81,7 +81,7 @@ uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &resu
 		}
 
 		FSNodeDirectory *node = fsnodes_id_to_node<FSNodeDirectory>(entry.entryKey.owner.ownerId);
-		if (!node || node->type != FSNode::kDirectory) {
+		if (!node || node->type != FSNodeType::kDirectory) {
 			continue;
 		}
 
@@ -119,7 +119,7 @@ uint8_t fs_quota_get(const FsContext &context,
 				break;
 			case QuotaOwnerType::kInode:
 				node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
-				if (!node || node->type != FSNode::kDirectory) {
+				if (!node || node->type != FSNodeType::kDirectory) {
 					return SAUNAFS_ERROR_EINVAL;
 				}
 				if (node->uid != context.uid() || (node->gid != context.gid() && !(context.sesflags() & SESFLAG_IGNOREGID))) {
@@ -339,7 +339,7 @@ static FSNode *fsnodes_find_common_ancestor(FSNodeDirectory *a, FSNodeDirectory 
 
 static bool fsnodes_test_dir_quota_noparents(FSNode *node,
 		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
-	if (!node || node->type != FSNode::kDirectory) {
+	if (!node || node->type != FSNodeType::kDirectory) {
 		return false;
 	}
 
@@ -400,7 +400,7 @@ bool fsnodes_quota_exceeded_dir(FSNode *node,
 		return true;
 	}
 
-	if (node->type == FSNode::kDirectory) {
+	if (node->type == FSNodeType::kDirectory) {
 		// Directory can have only one parent, so we get rid of recursion.
 		while(!node->parent.empty()) {
 			FSNodeDirectory *parent =
