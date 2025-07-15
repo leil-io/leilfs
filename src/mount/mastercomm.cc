@@ -557,7 +557,7 @@ void fs_trashtime_values_checks(uint8_t mingoal, uint8_t maxgoal, uint32_t &mint
 			}
 			infoToPrint << ")";
 		}
-		fprintf(stderr, "%s", infoToPrint.str().c_str());
+		fprintf(stdout, "%s", infoToPrint.str().c_str());
 	}
 }
 
@@ -650,7 +650,7 @@ void fs_session_flags_users_groups_checks(uint8_t sesflags, uint32_t rootuid, ui
 			nonRootAllowedToUseMeta() = false;
 		}
 	}
-	fprintf(stderr, "%s", infoToPrint.str().c_str());
+	fprintf(stdout, "%s", infoToPrint.str().c_str());
 }
 
 int fs_open_master_connection(bool verbose) {
@@ -1036,10 +1036,10 @@ int fs_connect(bool verbose) {
 	}
 
 	if (verbose) {
-		fprintf(stderr, "sfsmaster accepted connection with parameters: ");
+		fprintf(stdout, "sfsmaster accepted connection with parameters: ");
 		fs_session_flags_users_groups_checks(sesflags, rootuid, rootgid, mapalluid, mapallgid);
 		fs_trashtime_values_checks(mingoal, maxgoal, mintrashtime, maxtrashtime);
-		fprintf(stderr, "\n");
+		fprintf(stdout, "\n");
 	}
 	return 0;
 }
