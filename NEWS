@@ -1,5 +1,11 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.0.2) (2025-07-15)
+ - fix(chunkserver): Fallback to old registration if needed (#489)
+
+* SaunaFS (5.0.1) (2025-07-12)
+ - fix: Check master version for write algorithm (#488)
+
 * SaunaFS (5.0.0) (2025-07-10)
  - feat(cmake): Make FDB optional (#478)
  - feat(mds): Separate changelogs from metadata backend (#471)
