@@ -26,10 +26,10 @@
 #include <gtest/gtest.h>
 
 TEST(SerializableRangeTests, MakeSerializableRange) {
-	std::string a = "lubie placuszki";
-	std::string b = "ala ma kota";
+	std::string a = "i like pancakes";
+	std::string b = "Ala has a cat";
 	std::string c = "";
-	std::string d = "feniks fs";
+	std::string d = "phoenix fs";
 	typedef std::vector<std::string> Vector;
 	Vector numbers = {a, b, c, d};
 	std::vector<uint8_t> actualBuffer, expectedBuffer;
