@@ -26,6 +26,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <tuple>
+#include <type_traits>
 
 #include "common/integer_sequence.h"
 
@@ -115,6 +116,13 @@ HASH_PRIMITIVE64(long)
 HASH_PRIMITIVE64(unsigned long)
 HASH_PRIMITIVE64(long long)
 HASH_PRIMITIVE64(unsigned long long)
+
+// Generic specialization for enum types with underlying uint8_t
+template <typename E>
+    requires std::is_enum_v<E> && std::is_same_v<std::underlying_type_t<E>, uint8_t>
+inline uint64_t hash(E val) {
+	return hash<uint8_t>(static_cast<uint8_t>(val));
+}
 
 // takes the hash, not an arbitrary object instance
 static inline void hashCombineRaw(uint64_t& seed, uint64_t hash) {

@@ -35,10 +35,11 @@ static uint64_t fsnodes_checksum(FSNode *node, bool full_update = false) {
 		return 0;
 	}
 	uint64_t seed = 0x4660fe60565ba616;  // random number
-	hashCombine(seed, node->type, node->id, node->goal, node->mode, node->uid, node->gid,
-	            node->atime, node->mtime, node->ctime, node->trashtime);
+	hashCombine(seed, node->type, node->id, node->goal, node->mode, node->uid,
+	            node->gid, node->atime, node->mtime, node->ctime, node->trashtime);
+
 	switch (node->type) {
-	case FSNode::kDirectory:
+	case FSNodeType::kDirectory:
 		if (full_update) {
 			static_cast<FSNodeDirectory*>(node)->entries_hash = 0;
 			for (const auto &entry : *static_cast<FSNodeDirectory *>(node)) {
@@ -59,19 +60,19 @@ static uint64_t fsnodes_checksum(FSNode *node, bool full_update = false) {
 		hashCombine(seed, static_cast<const FSNodeDirectory*>(node)->entries_hash);
 		hashCombine(seed, static_cast<const FSNodeDirectory*>(node)->lowerCaseEntriesHash);
 		break;
-	case FSNode::kSocket:
-	case FSNode::kFifo:
+	case FSNodeType::kSocket:
+	case FSNodeType::kFifo:
 		break;
-	case FSNode::kBlockDev:
-	case FSNode::kCharDev:
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
 		hashCombine(seed, static_cast<const FSNodeDevice*>(node)->rdev);
 		break;
-	case FSNode::kSymlink:
+	case FSNodeType::kSymlink:
 		hashCombine(seed, static_cast<const FSNodeSymlink*>(node)->path.hash());
 		break;
-	case FSNode::kFile:
-	case FSNode::kTrash:
-	case FSNode::kReserved:
+	case FSNodeType::kFile:
+	case FSNodeType::kTrash:
+	case FSNodeType::kReserved: {
 		hashCombine(seed, static_cast<const FSNodeFile*>(node)->length);
 		// first chunk's id
 		if (static_cast<const FSNodeFile*>(node)->length == 0 || static_cast<const FSNodeFile*>(node)->chunks.size() == 0) {
@@ -86,6 +87,11 @@ static uint64_t fsnodes_checksum(FSNode *node, bool full_update = false) {
 		} else {
 			hashCombine(seed, static_cast<const FSNodeFile*>(node)->chunks[lastchunk]);
 		}
+		break;
+	}
+	default:
+		safs::log_err("fsnodes_checksum: unexpected node type {}", static_cast<char>(node->type));
+		break;
 	}
 	return seed;
 }

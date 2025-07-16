@@ -54,7 +54,7 @@ uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (src_node->type == FSNode::kDirectory) {
+	if (src_node->type == FSNodeType::kDirectory) {
 		if (src_node == dst_parent_node ||
 		    fsnodes_isancestor(static_cast<FSNodeDirectory *>(src_node), dst_parent_node)) {
 			return SAUNAFS_ERROR_EINVAL;

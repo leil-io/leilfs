@@ -99,13 +99,13 @@ static std::string get_node_info(FSNode *node) {
 	if (node == nullptr) {
 		return name;
 	}
-	if (node->type == FSNode::kTrash) {
+	if (node->type == FSNodeType::kTrash) {
 		name = "file in trash " + std::to_string(node->id) + ": " +
 		       (std::string)gMetadata->trash.at(TrashPathKey(node));
-	} else if (node->type == FSNode::kReserved) {
+	} else if (node->type == FSNodeType::kReserved) {
 		name = "reserved file " + std::to_string(node->id) + ": " +
 		       (std::string)gMetadata->reserved.at(node->id);
-	} else if (node->type == FSNode::kFile) {
+	} else if (node->type == FSNodeType::kFile) {
 		name = "file " + std::to_string(node->id) + ": ";
 		bool first = true;
 		for (const auto &[parentId, _] : node->parent) {
@@ -120,7 +120,7 @@ static std::string get_node_info(FSNode *node) {
 			}
 			first = false;
 		}
-	} else if (node->type == FSNode::kDirectory) {
+	} else if (node->type == FSNodeType::kDirectory) {
 		name = "directory " + std::to_string(node->id) + ": ";
 		std::string path;
 		FSNodeDirectory *parent = nullptr;
@@ -177,8 +177,8 @@ void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, ino
 			continue;
 		}
 
-		if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
-		    node->type == FSNode::kReserved) {
+		if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+		    node->type == FSNodeType::kReserved) {
 			FSNodeFile *file_node = static_cast<FSNodeFile *>(node);
 			for (std::size_t j = 0; j < file_node->chunks.size(); ++j) {
 				auto chunkid = file_node->chunks[j];
@@ -206,12 +206,12 @@ void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, ino
 		}
 
 		if (entry.second & kChunkUnavailable) {
-			assert(node->type == FSNode::kFile || node->type == FSNode::kTrash ||
-			       node->type == FSNode::kReserved);
+			assert(node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+			       node->type == FSNodeType::kReserved);
 			std::string name = get_node_info(node);
-			if (node->type == FSNode::kTrash) {
+			if (node->type == FSNodeType::kTrash) {
 				report << "-";
-			} else if (node->type == FSNode::kReserved) {
+			} else if (node->type == FSNodeType::kReserved) {
 				report << "+";
 			} else {
 				report << "*";
@@ -390,8 +390,8 @@ void fs_process_file_test() {
 		for (const auto &node : gMetadata->nodeHash[gFileTestLoopIndex]) {
 			node_error_flag = 0;
 
-			if (node->type == FSNode::kFile || node->type == FSNode::kTrash ||
-			    node->type == FSNode::kReserved) {
+			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+			    node->type == FSNodeType::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile *>(node)->chunks) {
 					if (chunkid == 0) {
 						continue;
@@ -421,7 +421,7 @@ void fs_process_file_test() {
 				}
 			}
 
-			if (node->type == FSNode::kDirectory) {
+			if (node->type == FSNodeType::kDirectory) {
 				for (const auto &entry :
 				     static_cast<FSNodeDirectory *>(node)->entries) {
 					FSNode *childNode = entry.second;
@@ -454,9 +454,9 @@ void fs_process_file_test() {
 			}
 
 			if (node_error_flag & kChunkUnavailable) {
-				if (node->type == FSNode::kTrash) {
+				if (node->type == FSNodeType::kTrash) {
 					unavailtrashfiles++;
-				} else if (node->type == FSNode::kReserved) {
+				} else if (node->type == FSNodeType::kReserved) {
 					unavailreservedfiles++;
 				} else {
 					unavailfiles += node->parent.size();
@@ -547,7 +547,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 			continue;
 		}
 
-		assert(node->type == FSNode::kTrash);
+		assert(node->type == FSNodeType::kTrash);
 
 		auto node_id = node->id;
 		fsnodes_purge(ts, node);
@@ -582,7 +582,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 			continue;
 		}
 
-		assert(node->type == FSNode::kReserved);
+		assert(node->type == FSNodeType::kReserved);
 
 		auto node_id = node->id;
 		fsnodes_purge(ts, node);

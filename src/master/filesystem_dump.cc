@@ -28,10 +28,10 @@
 
 void fs_dumpedge(FSNodeDirectory *parent, FSNode *child, const std::string &name) {
 	if (parent == NULL) {
-		if (child->type == FSNode::kTrash) {
+		if (child->type == FSNodeType::kTrash) {
 			printf("E|p:     TRASH|c:%10" PRIiNode "|n:%s\n", child->id,
 			       fsnodes_escape_name(name).c_str());
-		} else if (child->type == FSNode::kReserved) {
+		} else if (child->type == FSNodeType::kReserved) {
 			printf("E|p:  RESERVED|c:%10" PRIiNode "|n:%s\n", child->id,
 			       fsnodes_escape_name(name).c_str());
 		} else {
@@ -50,32 +50,34 @@ void fs_dumpnode(FSNode *f) {
 
 	c = '?';
 	switch (f->type) {
-	case FSNode::kDirectory:
+	case FSNodeType::kDirectory:
 		c = 'D';
 		break;
-	case FSNode::kSocket:
+	case FSNodeType::kSocket:
 		c = 'S';
 		break;
-	case FSNode::kFifo:
+	case FSNodeType::kFifo:
 		c = 'F';
 		break;
-	case FSNode::kBlockDev:
+	case FSNodeType::kBlockDev:
 		c = 'B';
 		break;
-	case FSNode::kCharDev:
+	case FSNodeType::kCharDev:
 		c = 'C';
 		break;
-	case FSNode::kSymlink:
+	case FSNodeType::kSymlink:
 		c = 'L';
 		break;
-	case FSNode::kFile:
+	case FSNodeType::kFile:
 		c = '-';
 		break;
-	case FSNode::kTrash:
+	case FSNodeType::kTrash:
 		c = 'T';
 		break;
-	case FSNode::kReserved:
+	case FSNodeType::kReserved:
 		c = 'R';
+		break;
+	case FSNodeType::kUnknown:
 		break;
 	}
 
@@ -84,12 +86,13 @@ void fs_dumpnode(FSNode *f) {
 	       c, f->id, f->goal, (uint16_t)(f->mode >> 12), (uint16_t)(f->mode & 0xFFF), f->uid,
 	       f->gid, f->atime, f->mtime, f->ctime, f->trashtime);
 
-	if (f->type == FSNode::kBlockDev || f->type == FSNode::kCharDev) {
+	if (f->type == FSNodeType::kBlockDev || f->type == FSNodeType::kCharDev) {
 		printf("|d:%5" PRIu32 ",%5" PRIu32 "\n", static_cast<FSNodeDevice*>(f)->rdev >> 16,
 		       static_cast<FSNodeDevice*>(f)->rdev & 0xFFFF);
-	} else if (f->type == FSNode::kSymlink) {
+	} else if (f->type == FSNodeType::kSymlink) {
 		printf("|p:%s\n", fsnodes_escape_name((std::string)static_cast<FSNodeSymlink*>(f)->path).c_str());
-	} else if (f->type == FSNode::kFile || f->type == FSNode::kTrash || f->type == FSNode::kReserved) {
+	} else if (f->type == FSNodeType::kFile || f->type == FSNodeType::kTrash ||
+	           f->type == FSNodeType::kReserved) {
 		FSNodeFile *node_file = static_cast<FSNodeFile*>(f);
 		printf("|l:%20" PRIu64 "|c:(", node_file->length);
 		ch = node_file->chunkCount();
@@ -155,14 +158,14 @@ void fs_dumpedges(FSNodeDirectory *parent) {
 	fs_dumpedgelist(parent);
 	for (const auto &entry : parent->entries) {
 		FSNode *child = entry.second;
-		if (child->type == FSNode::kDirectory) {
+		if (child->type == FSNodeType::kDirectory) {
 			fs_dumpedges(static_cast<FSNodeDirectory*>(child));
 		}
 	}
 	if (parent->case_insensitive) {
 		for (const auto &entry : parent->lowerCaseEntries) {
 			FSNode *child = entry.second;
-			if (child->type == FSNode::kDirectory) {
+			if (child->type == FSNodeType::kDirectory) {
 				fs_dumpedges(static_cast<FSNodeDirectory *>(child));
 			}
 		}
