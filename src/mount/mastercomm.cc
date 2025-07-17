@@ -60,6 +60,7 @@
 #include "mount/exports.h"
 #include "mount/notification_area_logging.h"
 #include "mount/stats.h"
+#include "mount/writedata.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
@@ -131,6 +132,7 @@ static pthread_t rpthid,npthid;
 static std::mutex fdMutex, recMutex;
 
 static uint32_t sessionid;
+static uint32_t masterversion;
 
 static char masterstrip[17];
 static uint32_t masterip=0;
@@ -140,6 +142,8 @@ static uint32_t srcip=0;
 
 static uint8_t fterm;
 static std::atomic<bool> gIsKilled(false);
+
+static SaunaClient::FsInitParams gSaunaFSInitParams;
 
 typedef std::unordered_map<PacketHeader::Type, PacketHandler*> PerTypePacketHandlers;
 static PerTypePacketHandlers perTypePacketHandlers;
@@ -195,6 +199,70 @@ struct InitParams {
 };
 
 static InitParams gInitParams;
+
+void wrap_write_init(bool isFromMainThread) {
+	bool useInodeBasedWriteAlgorithm = gSaunaFSInitParams.use_inode_based_write_algorithm;
+
+	// Dangerous case, using chunk based algorithm by params and master does not support it.
+	if (!gSaunaFSInitParams.use_inode_based_write_algorithm &&
+	    masterversion < kFirstVersionWithChunkBasedWriteAlgorithm) {
+		if (isFromMainThread) {
+			fprintf(stderr,
+			        "Metadata server version v%s is too old, using inode based write algorithm"
+			        "(sfsuseinodebasedwritealgorithm=1). "
+			        "Required minimum version for chunk based write algorithm is v%s.\n",
+			        saunafsVersionToString(masterversion).c_str(),
+			        saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm).c_str());
+		} else {
+			safs::log_warn(
+			    "Metadata server version v{} is too old, using inode based write algorithm"
+			    "(sfsuseinodebasedwritealgorithm=1). "
+			    "Required minimum version for chunk based write algorithm is v{}.",
+			    saunafsVersionToString(masterversion),
+			    saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm));
+		}
+		useInodeBasedWriteAlgorithm = true;
+
+		if (isChunkBasedWriteAlgorithmInitialized()) {
+			massert(!getUseInodeBasedWriteAlgorithm(),
+			        "Inode based write algorithm should not be in use.");
+			write_data_term();
+		}
+	}
+
+	// If we were using inode based algorithm before but new connected master allows chunk based
+	// algorithm and it is intended by params, then we should use it.
+	if (isChunkBasedWriteAlgorithmInitialized() && getUseInodeBasedWriteAlgorithm() &&
+	    !gSaunaFSInitParams.use_inode_based_write_algorithm &&
+	    masterversion >= kFirstVersionWithChunkBasedWriteAlgorithm) {
+		if (isFromMainThread) {
+			fprintf(stderr,
+			        "New metadata server supports chunk based write algorithm "
+			        "(current master version: %s, required: %s).\n",
+			        saunafsVersionToString(masterversion).c_str(),
+			        saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm).c_str());
+		} else {
+			safs::log_warn(
+			    "New metadata server supports chunk based write algorithm "
+			    "(current master version: {}, required: {}).",
+			    saunafsVersionToString(masterversion),
+			    saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm));
+		}
+
+		massert(getUseInodeBasedWriteAlgorithm() && isChunkBasedWriteAlgorithmInitialized(),
+		        "Inode based write algorithm initialization status changed unexpectedly.");
+		write_data_term();
+	}
+
+	setUseInodeBasedWriteAlgorithm(useInodeBasedWriteAlgorithm);
+
+	// Won't do anything if already initialized
+	write_data_init(gSaunaFSInitParams.write_cache_size, gSaunaFSInitParams.io_retries,
+	                gSaunaFSInitParams.write_workers, gSaunaFSInitParams.write_window_size,
+	                gSaunaFSInitParams.chunkserver_write_timeout_ms,
+	                gSaunaFSInitParams.cache_per_inode_percentage,
+	                gSaunaFSInitParams.write_wave_timeout_ms);
+}
 
 uint32_t getSafeSleepTimeDivisor() {
 	uint32_t safeSleepTimeDivisor = mastercommSleepTimeDivisor.load();
@@ -1349,6 +1417,7 @@ void* fs_receive_thread(void *) {
 					sessionlost=0;
 					fdLock.unlock();
 					fs_register_config();
+					wrap_write_init(false);
 					fdLock.lock();
 				}
 			} else {        // if other problem occurred then try to resolve hostname and portname then try to reconnect using the same session id
@@ -1467,6 +1536,7 @@ int fs_init_master_connection(SaunaClient::FsInitParams &params
 	master_statsptr_init();
 
 	gInitParams = params;
+	gSaunaFSInitParams = params;
 	std::fill(params.password_digest.begin(), params.password_digest.end(), 0);
 
 	fd = -1;
@@ -1485,6 +1555,8 @@ int fs_init_master_connection(SaunaClient::FsInitParams &params
 	int connectResult = fs_connect(params.verbose);
 	if (connectResult == 0) {
 		fs_register_config();
+
+		wrap_write_init(true);
 	}
 	return connectResult;
 }
