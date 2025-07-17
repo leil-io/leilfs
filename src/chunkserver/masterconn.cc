@@ -58,16 +58,24 @@ static const uint64_t kSendStatusDelay = 5;
 
 //  JobPool shared between all connections to MDSs
 static std::shared_ptr<JobPool> gJobPool;
+static std::shared_ptr<JobPool> gReplicationJobPool;
 
 //  Singleton for the MasterConn instance (will become a list of connections in the future)
 static std::unique_ptr<MasterConn> gMasterConnSingleton = nullptr;
 
 static int gJobFD{-1};  ///< File descriptor for the job pool notifications
 static int32_t gJobFDpDescPos{-1};  ///< Position in the pollfd array for the job pool notifications
+static int gReplicationJobFD{-1}; ///< File descriptor for the replication job pool notifications
+/// Position in the pollfd array for the replication job pool notifications
+static int32_t gReplicationJobFDpDescPos{-1};
 
 constexpr uint32_t kDefaultNumberOfWorkers = 10;
 constexpr uint32_t kMinNumberOfWorkers = 2;
 static uint32_t gNumberOfWorkers = kDefaultNumberOfWorkers;
+
+constexpr uint32_t kDefaultReplicationNumberOfWorkers = 5;
+constexpr uint32_t kMinReplicationNumberOfWorkers = 1;
+static uint32_t gReplicationNumberOfWorkers = kDefaultReplicationNumberOfWorkers;
 
 static void* gReconnectHook;
 
@@ -137,7 +145,8 @@ void masterconn_term(void) {
 	eptr->releaseResources();
 	gMasterConnSingleton.reset();
 
-	//  Now reset the last reference to the job pool.
+	//  Now reset the last reference to the job pools.
+	gReplicationJobPool.reset();
 	gJobPool.reset();
 }
 
@@ -149,10 +158,17 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 
 	// Add the descriptor for listening for background jobs finishing.
 	gJobFDpDescPos = -1;
+	gReplicationJobFDpDescPos = -1;
 
 	if (eptr->mode() == ConnectionMode::CONNECTED) {
-		pdesc.emplace_back(gJobFD, POLLIN, 0);
-		gJobFDpDescPos = static_cast<int32_t>(pdesc.size() - 1);
+		if(gJobFD >= 0) {
+			pdesc.emplace_back(gJobFD, POLLIN, 0);
+			gJobFDpDescPos = static_cast<int32_t>(pdesc.size() - 1);
+		}
+		if(gReplicationJobFD >= 0) {
+			pdesc.emplace_back(gReplicationJobFD, POLLIN, 0);
+			gReplicationJobFDpDescPos = static_cast<int32_t>(pdesc.size() - 1);
+		}
 	}
 
 	eptr->providePollDescriptors(pdesc);
@@ -179,9 +195,13 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	eptr->handlePollErrors(pdesc);
 	
 	// Check if there are any background jobs to process.
-	if ((eptr->mode() == ConnectionMode::CONNECTED) && gJobFDpDescPos >= 0 &&
-	    (pdesc[gJobFDpDescPos].revents & POLLIN)) {
-		gJobPool->processCompletedJobs();
+	if (eptr->mode() == ConnectionMode::CONNECTED) {
+		if (gJobFDpDescPos >= 0 && (pdesc[gJobFDpDescPos].revents & POLLIN)) {
+			gJobPool->processCompletedJobs();
+		}
+		if (gReplicationJobFDpDescPos >= 0 && (pdesc[gReplicationJobFDpDescPos].revents & POLLIN)) {
+			gReplicationJobPool->processCompletedJobs();
+		}
 	}
 
 	// For each connection to master (currently only one), process its socket.
@@ -189,13 +209,15 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 
 	// Update general statistics
 	if (eptr->mode() == ConnectionMode::CONNECTED) {
-		uint32_t jobscnt = gJobPool->getJobCount();
-		stats_maxjobscnt = std::max(jobscnt, stats_maxjobscnt);
+		uint32_t totalJobCount = 0;
+		totalJobCount += (gJobPool->getJobCount() + gReplicationJobPool->getJobCount());
+		stats_maxjobscnt = std::max(totalJobCount, stats_maxjobscnt);
 	}
 
 	// If the connection is in KILL mode, disable the job pool and close the socket.
 	if (eptr->mode() == ConnectionMode::KILL) {
 		gJobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
+		gReplicationJobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
 		tcpclose(eptr->socketFD());
 		eptr->resetPackets();
 		eptr->setMode(ConnectionMode::FREE);
@@ -270,8 +292,8 @@ int masterconn_init(void) {
 	if (!masterconn_load_label()) { return -1; }
 
 	// Create the connections (only one at this point)
-	gMasterConnSingleton =
-	    std::make_unique<MasterConn>(gMasterHost, gMasterPort, clusterId, gJobPool);
+	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, clusterId,
+	                                                    gJobPool, gReplicationJobPool);
 	MasterConn *eptr = gMasterConnSingleton.get();
 	passert(eptr);
 
@@ -314,6 +336,33 @@ int masterconn_init_threads(void) {
 	}
 
 	safs::log_info("master connection: {} background workers created", gNumberOfWorkers);
+
+	gReplicationNumberOfWorkers = cfg_get_minvalue<uint32_t>("MASTER_REPLICATION_NR_OF_WORKERS",
+		kDefaultReplicationNumberOfWorkers, kMinReplicationNumberOfWorkers);
+
+	try {
+		// Create the ReplicationJobPool instance with the specified number of workers, it would be
+		// serving only this master network thread, thus the number of listeners is 1.
+		std::vector<int> replicationJobPoolFDs(1);
+		gReplicationJobPool =
+		    std::make_shared<JobPool>("ma_repl", gReplicationNumberOfWorkers,
+		                              kMaxBackgroundJobsCount, 1, replicationJobPoolFDs);
+		gReplicationJobFD = replicationJobPoolFDs[0];
+	} catch (const std::exception &e) {
+		safs::log_err("masterconn_init_threads: Failed to create ReplicationJobPool instance: {}",
+		              e.what());
+		return -1;
+	}
+
+	if (gReplicationJobPool == nullptr) {
+		safs::log_err(
+		    "masterconn_init_threads: replicationJobPool is null. Unable to create "
+		    "replication worker threads.");
+		return -1;
+	}
+
+	safs::log_info("master connection: {} replication background workers created",
+	               gReplicationNumberOfWorkers);
 
 	return 0;
 }

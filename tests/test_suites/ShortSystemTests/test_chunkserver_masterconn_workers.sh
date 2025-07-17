@@ -25,13 +25,22 @@ function generateAndValidateFiles() {
 }
 
 function getActualWorkers() {
-	grep -oP '(?<=master connection: )[0-9]+' "${TEMP_DIR}/log" | tail -n 1
+	grep -oP '(?<=master connection: )[0-9]+(?= background workers created)' "${TEMP_DIR}/log" | \
+	tail -n 1
+}
+
+function getActualReplicationWorkers() {
+	grep -oP '(?<=master connection: )[0-9]+' "${TEMP_DIR}/log" | \
+	tail -n 1
 }
 
 lastChunkserver=2
 
 # Minimum workers
 minimumWorkers=2
+
+# Default replication workers
+defaultReplicationWorkers=5
 
 ## Set number of workers to 0 by configuration in all chunkservers and restart
 for cs in $(seq 0 ${lastChunkserver}); do
@@ -47,6 +56,7 @@ generateAndValidateFiles
 ## Even if set to 0, the minimum number of workers is 2 in the code
 actualWorkers=$(getActualWorkers)
 assert_equals "${minimumWorkers}" "${actualWorkers}"
+assert_equals "${defaultReplicationWorkers}" "$(getActualReplicationWorkers)"
 
 # High number of workers
 highWorkers=50

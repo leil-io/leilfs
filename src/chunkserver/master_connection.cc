@@ -51,6 +51,8 @@
 #include "protocol/packet.h"
 #include "slogger/slogger.h"
 
+static constexpr uint32_t kMaxBackgroundJobsThreshold = (kMaxBackgroundJobsCount * 9) / 10;
+
 MasterConn::~MasterConn() {
 	if (socketFD_ >= 0) { tcpclose(socketFD_); }
 }
@@ -327,7 +329,8 @@ void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc) {
 	if (mode_ == ConnectionMode::FREE || socketFD_ < 0) { return; }
 
 	if (mode_ == ConnectionMode::CONNECTED) {
-		if (jobPool_->getJobCount() < (kMaxBackgroundJobsCount * 9) / 10) {
+		if (jobPool_->getJobCount() < kMaxBackgroundJobsThreshold ||
+		    replicationJobPool_->getJobCount() < kMaxBackgroundJobsThreshold) {
 			pdesc.emplace_back(socketFD_, POLLIN, 0);
 			pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 		}
@@ -395,8 +398,11 @@ void MasterConn::readFromSocket() {
 	watchdog.start();
 
 	while (mode_ != ConnectionMode::KILL) {
-		// If the job pool is too busy, do not read more data.
-		if (jobPool_->getJobCount() >= (kMaxBackgroundJobsCount * 9) / 10) { return; }
+		// If any job pool is too busy, do not read more data.
+		if (jobPool_->getJobCount() >= kMaxBackgroundJobsThreshold ||
+		    replicationJobPool_->getJobCount() >= kMaxBackgroundJobsThreshold) {
+			return;
+		}
 
 		uint32_t bytesToRead = inputPacket_.bytesToBeRead();
 		ssize_t ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
@@ -643,11 +649,12 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 		// Disk scan in progress - replication is not possible
 		sauJobFinished(SAUNAFS_ERROR_WAITING, outputPacket);
 	} else {
-		if (jobPool_) {
-			job_replicate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
-			              chunkType, sourcesBufferSize, sourcesBuffer);
+		if (replicationJobPool_) {
+			// If replication job pool is available, use it to handle the replication job
+			job_replicate(*replicationJobPool_, sauJobFinished(this), outputPacket, chunkId,
+			              chunkVersion, chunkType, sourcesBufferSize, sourcesBuffer);
 		} else {
-			safs::log_err("MasterConn::replicateChunk: jobPool is null.");
+			safs::log_err("MasterConn::replicateChunk: replicationJobPool is null.");
 			delete outputPacket;
 		}
 	}

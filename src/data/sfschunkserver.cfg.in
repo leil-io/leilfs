@@ -68,6 +68,11 @@
 ## (Default: 10, Minimum: 2)
 # MASTER_NR_OF_WORKERS = 10
 
+## Number of threads that the connection to master may use to process replications operations on
+## chunks.
+## (Default: 5, Minimum: 1)
+# MASTER_REPLICATION_NR_OF_WORKERS = 5
+
 ## IP address to listen on for client (sfsmount) connections:
 # CSSERV_LISTEN_HOST = *
 
