@@ -524,7 +524,7 @@ namespace {
 struct ChunksMetadata {
 	// chunks
 	std::vector<std::unique_ptr<ChunkBucket>> chunkBuckets;
-	Chunk *chfreehead;
+	std::vector<Chunk *> availableChunks;
 	Chunk *chunkhash[kChunkHashSize];
 	uint64_t lastchunkid;
 	Chunk *lastchunkptr;
@@ -536,7 +536,6 @@ struct ChunksMetadata {
 	uint32_t checksumRecalculationPosition;
 
 	ChunksMetadata() :
-			chfreehead{},
 			chunkhash{},
 			lastchunkid{},
 			lastchunkptr{},
@@ -732,13 +731,13 @@ uint64_t chunk_checksum(ChecksumMode mode) {
 	return checksum;
 }
 
-static inline Chunk *chunk_malloc() {
-	Chunk *ret;
-	if (gChunksMetadata->chfreehead) {
-		ret = gChunksMetadata->chfreehead;
-		gChunksMetadata->chfreehead = ret->next;
-		ret->clear();
-		return ret;
+static inline Chunk *getNewChunk() {
+	Chunk *chunk = nullptr;
+	if (!gChunksMetadata->availableChunks.empty()) {
+		chunk = gChunksMetadata->availableChunks.back();
+		gChunksMetadata->availableChunks.pop_back();
+		chunk->clear();
+		return chunk;
 	}
 
 	if (gChunksMetadata->chunkBuckets.empty() ||
@@ -749,32 +748,34 @@ static inline Chunk *chunk_malloc() {
 	}
 
 	auto &currentBucket = gChunksMetadata->chunkBuckets.back();
-	ret = &(currentBucket->bucket[currentBucket->firstAvailableChunk]);
+	chunk = &(currentBucket->bucket[currentBucket->firstAvailableChunk]);
 	currentBucket->firstAvailableChunk++;
-	ret->clear();
-	return ret;
+	chunk->clear();
+	return chunk;
 }
 
 #ifndef METARESTORE
-static inline void chunk_free(Chunk *p) {
-	p->next = gChunksMetadata->chfreehead;
-	gChunksMetadata->chfreehead = p;
-	p->inEndangeredQueue = 0;
+static inline void makeChunkAvailable(Chunk *chunk) {
+	chunk->next = nullptr;
+	if (!gChunksMetadata->availableChunks.empty()) {
+		chunk->next = gChunksMetadata->availableChunks.back();
+	}
+	gChunksMetadata->availableChunks.push_back(chunk);
+	chunk->inEndangeredQueue = 0;
 }
 #endif /* METARESTORE */
 
-Chunk *chunk_new(uint64_t chunkid, uint32_t chunkversion) {
+Chunk *allocateNewChunk(uint64_t chunkid, uint32_t chunkversion) {
 	uint32_t chunkpos = chunkHashPos(chunkid);
-	Chunk *newchunk;
-	newchunk = chunk_malloc();
-	newchunk->next = gChunksMetadata->chunkhash[chunkpos];
-	gChunksMetadata->chunkhash[chunkpos] = newchunk;
-	newchunk->chunkid = chunkid;
-	newchunk->version = chunkversion;
+	Chunk *chunk = getNewChunk();
+	chunk->next = gChunksMetadata->chunkhash[chunkpos];
+	gChunksMetadata->chunkhash[chunkpos] = chunk;
+	chunk->chunkid = chunkid;
+	chunk->version = chunkversion;
 	gChunksMetadata->lastchunkid = chunkid;
-	gChunksMetadata->lastchunkptr = newchunk;
-	chunk_update_checksum(newchunk);
-	return newchunk;
+	gChunksMetadata->lastchunkptr = chunk;
+	chunk_update_checksum(chunk);
+	return chunk;
 }
 
 #ifndef METARESTORE
@@ -861,7 +862,7 @@ void chunk_delete(Chunk *c) {
 		gChunksMetadata->lastchunkptr=NULL;
 	}
 	c->freeStats();
-	chunk_free(c);
+	makeChunkAvailable(c);
 }
 
 uint32_t chunk_count(void) {
@@ -1082,7 +1083,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 		if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
 			return SAUNAFS_ERROR_NOCHUNKSERVERS;
 		}
-		c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+		c = allocateNewChunk(gChunksMetadata->nextchunkid++, 1);
 		c->interrupted = 0;
 		c->operation = Chunk::CREATE;
 		chunk_add_file_int(c,goal);
@@ -1158,7 +1159,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 				return SAUNAFS_ERROR_QUOTA;
 			}
 			assert(oc->isWritable());
-			c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+			c = allocateNewChunk(gChunksMetadata->nextchunkid++, 1);
 			c->interrupted = 0;
 			c->operation = Chunk::DUPLICATE;
 			chunk_delete_file_int(oc,goal);
@@ -1244,7 +1245,7 @@ uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length
 		}
 
 		assert(oc->isWritable());
-		c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+		c = allocateNewChunk(gChunksMetadata->nextchunkid++, 1);
 		c->interrupted = 0;
 		c->operation = Chunk::DUPTRUNC;
 		chunk_delete_file_int(oc,goal);
@@ -1272,7 +1273,7 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 		bool doIncreaseVersion, uint64_t *newChunkId) {
 	Chunk *c;
 	if (oldChunkId == 0) { // new chunk
-		c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+		c = allocateNewChunk(gChunksMetadata->nextchunkid++, 1);
 		chunk_add_file_int(c, goal);
 	} else {
 		Chunk *oc = chunk_find(oldChunkId);
@@ -1290,7 +1291,7 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 				c->version++;
 			}
 		} else {
-			c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+			c = allocateNewChunk(gChunksMetadata->nextchunkid++, 1);
 			chunk_delete_file_int(oc, goal);
 			chunk_add_file_int(c, goal);
 		}
@@ -1533,7 +1534,7 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 		if (chunkid>=gChunksMetadata->nextchunkid) {
 			fs_set_nextchunkid(FsContext::getForMaster(eventloop_time()), chunkid + 1);
 		}
-		c = chunk_new(chunkid, new_version);
+		c = allocateNewChunk(chunkid, new_version);
 		c->lockedto = (uint32_t)eventloop_time()+UNUSED_DELETE_TIMEOUT;
 		c->lockid = 0;
 		chunk_update_checksum(c);
@@ -1593,7 +1594,7 @@ void chunk_damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunk_t
 		if (chunkid >= gChunksMetadata->nextchunkid) {
 			gChunksMetadata->nextchunkid = chunkid + 1;
 		}
-		c = chunk_new(chunkid, 0);
+		c = allocateNewChunk(chunkid, 0);
 	}
 	auto server_csid = matocsserv_get_csdb(ptr)->csid;
 	for (auto &part : c->parts) {
@@ -2720,7 +2721,7 @@ bool chunksLoadFromFile(MetadataLoader::Options options) {
 			get32bit(&ptr, lockId);
 		}
 		if (chunkId > 0) {
-			Chunk * chunk = chunk_new(chunkId, version);
+			Chunk *chunk = allocateNewChunk(chunkId, version);
 			chunk->lockedto = lockedTo;
 			chunk->lockid = lockId;
 			continue;
