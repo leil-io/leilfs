@@ -769,6 +769,14 @@ static fsal_status_t findFileDescriptor(struct SaunaFSFd *saunafsFd,
 	                 state, openflags, openFunction, closeFunction, hasLock,
 	                 closeFileDescriptor, openForLocks, &canReuseOpenedFd);
 
+	// Ensure we have a valid file descriptor before dereferencing
+	if (FSAL_IS_ERROR(status) || usableFd == NULL) {
+		// Initialize saunafsFd to a safe state
+		saunafsFd->openflags = FSAL_O_CLOSED;
+		saunafsFd->fd = NULL;
+		return status;
+	}
+
 	*saunafsFd = *usableFd;
 	return status;
 }
@@ -1621,6 +1629,17 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	}
 
 	fileinfo = saunafsFd.fd;
+	
+	// Defensive check: ensure we have a valid file descriptor before proceeding
+	if (fileinfo == NULL) {
+		LogCrit(COMPONENT_FSAL, "Lock operation called with NULL file descriptor");
+		
+		if (closeFd) { closeFileDescriptor(container_of(objectHandle, struct SaunaFSHandle, handle), &saunafsFd); }
+		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+		
+		return fsalstat(ERR_FSAL_FAULT, EFAULT);
+	}
+	
 	sau_set_lock_owner(fileinfo, (uint64_t)owner);
 
 	if (lockOperation == FSAL_OP_LOCKT) {
@@ -1635,7 +1654,7 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	if (retval < 0) {
 		lastError = sau_last_err();
 
-		if (closeFd) { sau_release(export->fsInstance, fileinfo); }
+		if (closeFd && fileinfo != NULL) { sau_release(export->fsInstance, fileinfo); }
 
 		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
 
@@ -1657,7 +1676,7 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		}
 	}
 
-	if (closeFd) {
+	if (closeFd && fileinfo != NULL) {
 		sau_release(export->fsInstance, fileinfo);
 	}
 
