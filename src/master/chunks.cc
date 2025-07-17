@@ -515,16 +515,15 @@ uint64_t Chunk::allFullChunkCopies[CHUNK_MATRIX_SIZE][CHUNK_MATRIX_SIZE];
 #endif
 
 #define CHUNK_BUCKET_SIZE 20000
-struct chunk_bucket {
-	Chunk bucket[CHUNK_BUCKET_SIZE];
-	uint32_t firstfree;
-	chunk_bucket *next;
+struct ChunkBucket {
+	std::array<Chunk, CHUNK_BUCKET_SIZE> bucket;
+	uint32_t firstAvailableChunk{};
 };
 
 namespace {
 struct ChunksMetadata {
 	// chunks
-	chunk_bucket *cbhead;
+	std::vector<std::unique_ptr<ChunkBucket>> chunkBuckets;
 	Chunk *chfreehead;
 	Chunk *chunkhash[kChunkHashSize];
 	uint64_t lastchunkid;
@@ -537,7 +536,6 @@ struct ChunksMetadata {
 	uint32_t checksumRecalculationPosition;
 
 	ChunksMetadata() :
-			cbhead{},
 			chfreehead{},
 			chunkhash{},
 			lastchunkid{},
@@ -549,11 +547,7 @@ struct ChunksMetadata {
 	}
 
 	~ChunksMetadata() {
-		chunk_bucket *cbn;
-		for (chunk_bucket *cb = cbhead; cb; cb = cbn) {
-			cbn = cb->next;
-			delete cb;
-		}
+		chunkBuckets.clear();
 	}
 };
 } // anonymous namespace
@@ -739,7 +733,6 @@ uint64_t chunk_checksum(ChecksumMode mode) {
 }
 
 static inline Chunk *chunk_malloc() {
-	chunk_bucket *cb;
 	Chunk *ret;
 	if (gChunksMetadata->chfreehead) {
 		ret = gChunksMetadata->chfreehead;
@@ -747,14 +740,17 @@ static inline Chunk *chunk_malloc() {
 		ret->clear();
 		return ret;
 	}
-	if (gChunksMetadata->cbhead==NULL || gChunksMetadata->cbhead->firstfree==CHUNK_BUCKET_SIZE) {
-		cb = new chunk_bucket;
-		cb->next = gChunksMetadata->cbhead;
-		cb->firstfree = 0;
-		gChunksMetadata->cbhead = cb;
+
+	if (gChunksMetadata->chunkBuckets.empty() ||
+	    gChunksMetadata->chunkBuckets.back()->firstAvailableChunk == CHUNK_BUCKET_SIZE) {
+		auto chunkBucket = std::make_unique<ChunkBucket>();
+		chunkBucket->firstAvailableChunk = 0;
+		gChunksMetadata->chunkBuckets.push_back(std::move(chunkBucket));
 	}
-	ret = (gChunksMetadata->cbhead->bucket)+(gChunksMetadata->cbhead->firstfree);
-	gChunksMetadata->cbhead->firstfree++;
+
+	auto &currentBucket = gChunksMetadata->chunkBuckets.back();
+	ret = &(currentBucket->bucket[currentBucket->firstAvailableChunk]);
+	currentBucket->firstAvailableChunk++;
 	ret->clear();
 	return ret;
 }
@@ -2784,12 +2780,12 @@ void chunk_store(FILE *fd) {
 	}
 }
 
-void chunk_unload(void) {
+void chunk_unload() {
 	delete gChunksMetadata;
 	gChunksMetadata = nullptr;
 }
 
-void chunk_newfs(void) {
+void chunk_newfs() {
 #ifndef METARESTORE
 	Chunk::count = 0;
 #endif
@@ -2803,10 +2799,9 @@ void chunk_become_master() {
 	gChunkWorker = std::unique_ptr<ChunkWorker>(new ChunkWorker());
 	gChunkLoopEventHandle = eventloop_timeregister_ms(ChunksLoopPeriod, chunk_jobs_main);
 	eventloop_eachloopregister(chunk_jobs_process_bit);
-	return;
 }
 
-void chunk_reload(void) {
+void chunk_reload() {
 	uint32_t repl;
 	uint32_t looptime;
 
