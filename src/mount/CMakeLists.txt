@@ -21,6 +21,7 @@ collect_sources(MOUNT)
 
 shared_add_library(mount ${MOUNT_SOURCES})
 shared_target_link_libraries(mount sfscommon ${ADDITIONAL_LIBS})
+shared_target_set_properties(mount UNITY_BUILD "OFF" UNITY_BUILD_UNIQUE_ID "CLIENT_UNITY")
 
 create_unittest(mount ${MOUNT_TESTS})
 link_unittest(mount mount sfscommon)

@@ -64,6 +64,8 @@ option(GENERATE_GIT_INFO "Generate git info from current repository (for version
 # directory. Tools like clangd and vscode use this file for proper analysis.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ${ENABLE_COMPILE_COMMANDS})
 
+set(CMAKE_UNITY_BUILD ON)
+
 find_program(CCACHE_FOUND ccache)
 message(STATUS "ENABLE_CCACHE: ${ENABLE_CCACHE}")
 message(STATUS "CCACHE_FOUND: ${CCACHE_FOUND}")

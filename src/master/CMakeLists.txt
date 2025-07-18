@@ -38,6 +38,7 @@ endif()
 if(DB_FOUND)
   target_link_libraries(master ${DB_LIBRARY})
 endif()
+set_target_properties(master PROPERTIES UNITY_BUILD "OFF")
 create_unittest(master ${MASTER_TESTS})
 link_unittest(master master sfscommon)
 

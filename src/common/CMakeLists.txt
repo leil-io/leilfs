@@ -20,6 +20,7 @@ endif()
 shared_add_library(sfscommon ${COMMON_SOURCES})
 shared_target_link_libraries(sfscommon STATIC sfserr SHARED sfserr_pic)
 shared_target_link_libraries(sfscommon STATIC slogger SHARED slogger_pic)
+shared_target_set_properties(sfscommon UNITY_BUILD "OFF")
 
 if (HAVE_CRCUTIL)
   # Use crcutil Library

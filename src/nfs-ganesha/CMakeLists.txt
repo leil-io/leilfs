@@ -23,6 +23,7 @@ include_directories(${CMAKE_SOURCE_DIR}/external/${NFS_GANESHA_DIR_NAME}/src/inc
 include_directories(${CMAKE_SOURCE_DIR}/external/${NTIRPC_DIR_NAME}/ntirpc)
 
 add_library(fsalsaunafs MODULE ${NFS_GANESHA_PLUGIN_MAIN} ${NFS_GANESHA_PLUGIN_SOURCES})
+set_target_properties(fsalsaunafs PROPERTIES UNITY_BUILD "OFF")
 
 target_include_directories(fsalsaunafs PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>"

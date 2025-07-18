@@ -22,6 +22,7 @@ add_library(metarestore ${METARESTORE_SOURCES} ${METARESTORE_MASTER_SOURCES} ${M
   ../master/changelog.cc)
 
 target_link_libraries(metarestore metrics sfscommon)
+set_target_properties(metarestore PROPERTIES UNITY_BUILD OFF)
 if(JUDY_LIBRARY)
   target_link_libraries(metarestore ${JUDY_LIBRARY})
 endif()
@@ -30,4 +31,5 @@ create_unittest(metarestore ${METARESTORE_TESTS})
 
 add_executable(sfsmetarestore ${METARESTORE_MAIN})
 target_link_libraries(sfsmetarestore metarestore sfscommon ${PAM_LIBRARIES})
+set_target_properties(sfsmetarestore PROPERTIES UNITY_BUILD OFF)
 install(TARGETS sfsmetarestore RUNTIME DESTINATION ${SBIN_SUBDIR})
