@@ -62,6 +62,11 @@ ssize_t saunafs_read(sau_t *instance, struct user_cred *cred,
                      fileinfo_t *fileinfo, off_t offset, size_t size,
                      char *buffer) {
 	sau_context_t *context __attribute__((cleanup(sau_destroy_context))) = NULL;
+
+	if (fileinfo == NULL) {
+		return -1;
+	}
+
 	context = createContext(instance, cred);
 
 	if (context == NULL) {
@@ -75,6 +80,11 @@ ssize_t saunafs_write(sau_t *instance, struct user_cred *cred,
                       fileinfo_t *fileinfo, off_t offset, size_t size,
                       const char *buffer) {
 	sau_context_t *context __attribute__((cleanup(sau_destroy_context))) = NULL;
+
+	if (fileinfo == NULL) {
+		return -1;
+	}
+
 	context = createContext(instance, cred);
 
 	if (context == NULL) {
@@ -87,6 +97,11 @@ ssize_t saunafs_write(sau_t *instance, struct user_cred *cred,
 int saunafs_flush(sau_t *instance, struct user_cred *cred,
                   fileinfo_t *fileinfo) {
 	sau_context_t *context __attribute__((cleanup(sau_destroy_context))) = NULL;
+
+	if (fileinfo == NULL) {
+		return -1;
+	}
+
 	context = createContext(instance, cred);
 
 	if (context == NULL) {
@@ -289,6 +304,11 @@ int saunafs_getacl(sau_t *instance, struct user_cred *cred, sau_inode_t inode,
 int saunafs_setlock(sau_t *instance, struct user_cred *cred,
                     fileinfo_t *fileinfo, const sau_lock_info_t *lock) {
 	sau_context_t *context __attribute__((cleanup(sau_destroy_context))) = NULL;
+
+	if (fileinfo == NULL) {
+		return -1;
+	}
+
 	context = createContext(instance, cred);
 
 	if (context == NULL) {
@@ -300,7 +320,13 @@ int saunafs_setlock(sau_t *instance, struct user_cred *cred,
 
 int saunafs_getlock(sau_t *instance, struct user_cred *cred,
                     fileinfo_t *fileinfo, sau_lock_info_t *lock) {
-	sau_context_t *context = createContext(instance, cred);
+	sau_context_t *context __attribute__((cleanup(sau_destroy_context))) = NULL;
+
+	if (fileinfo == NULL) {
+		return -1;
+	}
+
+	context = createContext(instance, cred);
 
 	if (context == NULL) {
 		return -1;
