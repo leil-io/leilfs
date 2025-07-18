@@ -52,10 +52,6 @@ static int set_goal(const char *fname, const std::string &goal, uint8_t mode) {
 		return -1;
 	}
 
-	fmt::println(
-	    stderr,
-	    "Warning: -l option will be the default behavior in 5.0.0 and the option removed. If you wish for timeouts, use the `timeout` command");
-
 	try {
 		auto request = cltoma::fuseSetGoal::build(messageId, inode, uid, goal, mode);
 		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SETGOAL,
