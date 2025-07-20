@@ -6203,12 +6203,14 @@ void matoclserv_read(matoclserventry *eptr) {
 		}
 
 		if (eptr->mode == ClientConnectionMode::HEADER) {
-			ptr = eptr->headerBuffer + 4;
+			ptr = eptr->headerBuffer;
+			get32bit(&ptr, type);
 			get32bit(&ptr, size);
 			if (size > 0) {
 				if (size > MaxPacketSize) {
-					safs::log_warn("main master server module: packet too long ({}/{})", size,
-					               MaxPacketSize);
+					safs::log_warn(
+					    "main master server module: packet {} received from peer {}:{} is too long ({}/{})",
+					    type, ipToString(eptr->peerIpAddress), eptr->peerPort, size, MaxPacketSize);
 					eptr->mode = ClientConnectionMode::KILL;
 					return;
 				}
