@@ -831,6 +831,10 @@ get_data_path() {
 	echo $(cat $1 | sed -e 's/*//' -e 's/zonefs://' | cut -d '|' -f 2)
 }
 
+get_current_master_sessions_file() {
+  echo "${saunafs_info_[master${saunafs_info_[current_master]}_data_path]}/sessions.sfs"
+}
+
 # print absolute paths of all chunk files on selected server, one per line
 find_chunkserver_chunks() {
 	local chunkserver_number=$1
