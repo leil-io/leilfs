@@ -826,6 +826,8 @@ int main(int argc,char **argv) {
 	std::string cfgfile = default_cfgfile;
 	std::string pidfile;
 
+	printf("Hello world!");
+
 	prepareEnvironment();
 	mycrc32_init();
 
