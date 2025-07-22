@@ -512,6 +512,11 @@ uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
 	                                        initial_inode, &current_node);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
+	if (current_inode == SPECIAL_INODE_ROOT) {
+		fullPath = "";
+		return SAUNAFS_STATUS_OK;
+	}
+
 	while (current_inode != context.rootinode()) {
 		if (!current_node || current_node->parent.empty()) {
 			if (current_node->parent.empty() && (current_node->type == FSNodeType::kReserved ||

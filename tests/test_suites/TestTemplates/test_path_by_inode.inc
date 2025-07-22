@@ -48,6 +48,36 @@ assert_equals "data5" "$(cat folder/file2)"
 assert_equals "data6" "$(cat folder/folder2/file3)"
 assert_equals "data7" "$(cat file4)"
 
+# check if root inode is accessible with the .saunafs_path_by_inode
+# special file with id 1 and real underlying id on the filesystem
+# when mounting client on a sfssubfolder created before
+cd ..
+saunafs_mount_unmount 0
+echo "sfssubfolder=folder/folder2" >> "${info[mount0_cfg]}"
+assert_success saunafs_mount_start 0
+cd "${info[mount0]}"
+
+assert_equals "" "$(cat .saunafs_path_by_inode/1)"
+assert_equals "" "$(cat .saunafs_path_by_inode/5)"
+
+# check that accessing a file path by inode inside the 
+# mounted subfolder will return the corresponding path
+# without including the subfolder as part of it.
+assert_equals "file3" "$(cat .saunafs_path_by_inode/6)"
+
+# check that it is not possible to access the path by inode
+# result of inodes outside the mounted subfolder that were
+# created before or after it.
+assert_failure cat .saunafs_path_by_inode/4 # corresponding to folder/file2
+assert_failure cat .saunafs_path_by_inode/7 # corresponding to file4
+
+# mount client back to initial root folder
+cd ..
+saunafs_mount_unmount 0
+echo "sfssubfolder=/" >> "${info[mount0_cfg]}"
+assert_success saunafs_mount_start 0
+cd "${info[mount0]}"
+
 # check removing files by their path
 # first check the case when the file was deleted but
 # is still on the filesystem trash
