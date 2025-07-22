@@ -85,10 +85,11 @@ jobs:
                   "${GITHUB_WORKSPACE}"
                   make -j"$(nproc)" install
 
-            - name: Allow core dumps
+            - name: Enable systemd core dumps
               run: |
-                ulimit -c unlimited
-                echo '/tmp/core.%e.%p' | sudo tee /proc/sys/kernel/core_pattern
+                sudo mkdir -p /etc/systemd/coredump.conf.d
+                echo -e "[Coredump]\nStorage=external\nProcessSizeMax=2G" | sudo tee /etc/systemd/coredump.conf.d/coredump.conf
+                sudo systemctl daemon-reexec
 
             - name: Run Unit Tests suite
               run: |
@@ -99,47 +100,61 @@ jobs:
                   sudo chmod o+xr /home/runner/
                   sudo chown saunafstest:saunafstest /mnt/saunafstest_loop_*
                   sudo chown saunafstest:saunafstest /mnt/hd{b,c,d}
-                  chmod +x "${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
-                  "${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
+                  SCRIPT="${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
+                  chmod +x "${SCRIPT}"
+                  sudo bash -c "ulimit -c unlimited && exec '${SCRIPT}'"
 
-            - name: Generate backtrace with gdb
+            - name: Analyze core dump with coredumpctl
               if: failure()
               run: |
-                sudo apt-get update && sudo apt-get install -y gdb || true
+                echo "===== Searching for recent core dumps for ganesha.nfsd ====="
+                echo "Recent coredumps:"
+                coredumpctl --no-pager list | tail -n 5 || true
 
-                GANESHA_BIN="/usr/bin/ganesha.nfsd"
+                COREDUMP_INFO=$(coredumpctl --no-pager list ganesha.nfsd | tail -n 1 || true)
 
-                found_core=0
-                for corefile in /tmp/core.*; do
-                  if [ -f "$corefile" ]; then
-                    found_core=1
-                    echo "Processing $corefile with $GANESHA_BIN"
-
-                    gdb -batch -ex "set pagination off" \
-                        -ex "thread apply all bt full" \
-                        -ex "quit" \
-                        "$GANESHA_BIN" "$corefile" > "${corefile}.backtrace.txt" || echo "GDB failed on $corefile"
-
-                    echo "===== Backtrace excerpt from ${corefile}.backtrace.txt ====="
-                    head -n 100 "${corefile}.backtrace.txt"
-                    echo "============================================================="
-                  fi
-                done
-
-                if [ "$found_core" -eq 0 ]; then
-                  echo "No core files found in /tmp"
+                if [ -z "$COREDUMP_INFO" ]; then
+                  echo "No core dump found for ganesha.nfsd"
+                  exit 0
                 fi
 
-            - name: Upload GDB backtrace
-              if: failure()
-              uses: actions/upload-artifact@v4
-              with:
-                name: gdb-backtrace
-                path: /tmp/core.*.backtrace.txt
+                PID=$(echo "$COREDUMP_INFO" | awk '{print $5}')
+                echo "Found core dump for ganesha.nfsd with PID: $PID"
 
-            - name: Upload core dump
+                # Dump the core
+                CORE_PATH="/tmp/core.ganesha-nfsd.${PID}"
+                echo "Dumping core to: $CORE_PATH"
+                if ! sudo coredumpctl dump "$PID" --output="$CORE_PATH"; then
+                  echo "Error: coredumpctl failed to dump core for PID $PID"
+                  exit 1
+                fi
+
+                # Find the binary
+                BIN_PATH=$(coredumpctl info "$PID" | grep 'Executable:' | awk '{print $2}')
+                echo "Executable path: $BIN_PATH"
+
+                if [ ! -f "$BIN_PATH" ]; then
+                  echo "Binary not found at $BIN_PATH"
+                  exit 1
+                fi
+
+                # Generate backtrace
+                BACKTRACE_FILE="${CORE_PATH}.backtrace.txt"
+                echo "Generating backtrace to $BACKTRACE_FILE"
+                if ! gdb -batch -ex "thread apply all bt full" -ex "info registers" -ex "quit" \
+                  "$BIN_PATH" "$CORE_PATH" > "$BACKTRACE_FILE" 2> "${BACKTRACE_FILE}.stderr"; then
+                    echo "Error: gdb failed to generate backtrace. See ${BACKTRACE_FILE}.stderr for details."
+                    exit 1
+                fi
+
+                echo "===== Core Dump Backtrace (first 200 lines) ====="
+                head -n 200 "$BACKTRACE_FILE"
+
+            - name: Upload core dump and backtrace
               if: failure()
               uses: actions/upload-artifact@v4
               with:
-                name: core-dump
-                path: /tmp/core.*
+                name: core-dump-ganesha
+                path: |
+                  /tmp/core.ganesha-nfsd.*
+                if-no-files-found: warn
