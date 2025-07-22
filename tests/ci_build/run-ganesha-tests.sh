@@ -29,4 +29,5 @@ sudo mkdir -p /usr/lib/x86_64-linux-gnu/ganesha
 sudo ln -sf ${SAUNAFS_ROOT}/lib/ganesha/libfsalsaunafs.so /usr/lib/x86_64-linux-gnu/ganesha/libfsalsaunafs.so
 sudo --preserve-env=SAUNAFS_TEST_TIMEOUT_MULTIPLIER \
 "${SAUNAFS_ROOT}/bin/saunafs-tests" --gtest_color=yes \
---gtest_filter="${test_filter}" --gtest_output=xml:"${TEST_OUTPUT_DIR}/ganesha_test_results.xml"
+--gtest_filter="GaneshaTests.*nfs_suite" --gtest_repeat=100
+#--gtest_filter="${test_filter}" --gtest_output=xml:"${TEST_OUTPUT_DIR}/ganesha_test_results.xml"
