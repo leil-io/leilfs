@@ -172,6 +172,9 @@ void sau_destroy_context(sau_context_t **ctx) {
 }
 
 void sau_set_lock_owner(sau_fileinfo_t *fileinfo, uint64_t lock_owner) {
+	if (fileinfo == NULL) {
+		return;
+	}
 	Client::FileInfo *fi = (Client::FileInfo *)fileinfo;
 	fi->lock_owner = lock_owner;
 }
@@ -411,6 +414,10 @@ ssize_t sau_write(sau_t *instance, sau_context_t *ctx, sau_fileinfo *fileinfo,
 }
 
 int sau_release(sau_t *instance, sau_fileinfo *fileinfo) {
+	if (fileinfo == NULL) {
+		gLastErrorCode = SAUNAFS_ERROR_EBADF;
+		return -1;
+	}
 	Client &client = *(Client *)instance;
 	std::error_code ec;
 	client.release((Client::FileInfo *)fileinfo, ec);
@@ -419,6 +426,10 @@ int sau_release(sau_t *instance, sau_fileinfo *fileinfo) {
 }
 
 int sau_flush(sau_t *instance, sau_context_t *ctx, sau_fileinfo *fileinfo) {
+	if (fileinfo == NULL) {
+		gLastErrorCode = SAUNAFS_ERROR_EBADF;
+		return -1;
+	}
 	Client &client = *(Client *)instance;
 	Client::Context &context = *(Client::Context *)ctx;
 	std::error_code ec;
@@ -1063,6 +1074,10 @@ void sau_destroy_chunks_info(sau_chunk_info_t *buffer) {
 int sau_setlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
               const sau_lock_info *lock, sau_lock_register_interrupt_t handler,
               void *priv) {
+	if (fileinfo == NULL) {
+		gLastErrorCode = SAUNAFS_ERROR_EBADF;
+		return -1;
+	}
 	Client &client = *(Client *)instance;
 	Client::Context &context = *(Client::Context *)ctx;
 	Client::FileInfo *fi = (Client::FileInfo *)fileinfo;
@@ -1092,6 +1107,10 @@ int sau_setlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
 
 int sau_getlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
               sau_lock_info *lock) {
+	if (fileinfo == NULL) {
+		gLastErrorCode = SAUNAFS_ERROR_EBADF;
+		return -1;
+	}
 	Client &client = *(Client *)instance;
 	Client::Context &context = *(Client::Context *)ctx;
 	Client::FileInfo *fi = (Client::FileInfo *)fileinfo;
