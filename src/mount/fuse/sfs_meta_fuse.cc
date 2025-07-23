@@ -96,29 +96,29 @@ inode_t sfs_meta_name_to_inode(const char *name) {
 	}
 }
 
-static void sfs_meta_type_to_stat(inode_t inode,uint8_t type, struct stat *stbuf) {
+static void sfs_meta_type_to_stat(inode_t inode,FSNodeType type, struct stat *stbuf) {
 	memset(stbuf,0,sizeof(struct stat));
 	stbuf->st_ino = inode;
 	switch (type) {
-	case TYPE_DIRECTORY:
+	case FSNodeType::kDirectory:
 		stbuf->st_mode = S_IFDIR;
 		break;
-	case TYPE_SYMLINK:
+	case FSNodeType::kSymlink:
 		stbuf->st_mode = S_IFLNK;
 		break;
-	case TYPE_FILE:
+	case FSNodeType::kFile:
 		stbuf->st_mode = S_IFREG;
 		break;
-	case TYPE_FIFO:
+	case FSNodeType::kFifo:
 		stbuf->st_mode = S_IFIFO;
 		break;
-	case TYPE_SOCKET:
+	case FSNodeType::kSocket:
 		stbuf->st_mode = S_IFSOCK;
 		break;
-	case TYPE_BLOCKDEV:
+	case FSNodeType::kBlockDev:
 		stbuf->st_mode = S_IFBLK;
 		break;
-	case TYPE_CHARDEV:
+	case FSNodeType::kCharDev:
 		stbuf->st_mode = S_IFCHR;
 		break;
 	default:
@@ -159,12 +159,12 @@ static void sfs_meta_stat(inode_t inode, struct stat *stbuf) {
 
 static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
-	uint8_t attrtype;
+	FSNodeType attrtype;
 	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink;
 	uint64_t attrlength;
 	const uint8_t *ptr;
 	ptr = attr.data();
-	attrtype = get8bit(&ptr);
+	attrtype = static_cast<FSNodeType>(get8bit(&ptr));
 	attrmode = get16bit(&ptr);
 	get32bit(&ptr, attruid);
 	get32bit(&ptr, attrgid);
@@ -174,7 +174,7 @@ static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat 
 	get32bit(&ptr, attrnlink);
 	attrlength = get64bit(&ptr);
 	stbuf->st_ino = inode;
-	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_RESERVED) {
+	if (attrtype==FSNodeType::kFile || attrtype==FSNodeType::kTrash || attrtype==FSNodeType::kReserved) {
 		stbuf->st_mode = S_IFREG | (attrmode & 07777);
 	} else {
 		stbuf->st_mode = 0;
@@ -397,14 +397,14 @@ static uint32_t dir_metaentries_size(inode_t ino) {
 struct MetaStat {
 	std::string name;
 	inode_t inode;
-	char type;
+	FSNodeType type;
 };
 
 static constexpr std::array<MetaStat, 4> rootDirEntries() {
-		auto rootDir = MetaStat(".", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
-		auto upDir = MetaStat("..", SPECIAL_INODE_ROOT, TYPE_DIRECTORY);
-		auto trash = MetaStat(SPECIAL_FILE_NAME_META_TRASH, SPECIAL_INODE_META_TRASH, TYPE_DIRECTORY);
-		auto reserved = MetaStat(SPECIAL_FILE_NAME_META_RESERVED, SPECIAL_INODE_META_RESERVED, TYPE_DIRECTORY);
+		auto rootDir = MetaStat(".", SPECIAL_INODE_ROOT, FSNodeType::kDirectory);
+		auto upDir = MetaStat("..", SPECIAL_INODE_ROOT, FSNodeType::kDirectory);
+		auto trash = MetaStat(SPECIAL_FILE_NAME_META_TRASH, SPECIAL_INODE_META_TRASH, FSNodeType::kDirectory);
+		auto reserved = MetaStat(SPECIAL_FILE_NAME_META_RESERVED, SPECIAL_INODE_META_RESERVED, FSNodeType::kDirectory);
 		std::array<MetaStat, 4> entries = {rootDir, upDir, trash, reserved};
 		return entries;
 }
@@ -417,73 +417,73 @@ static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// trash
 		l = strlen(SPECIAL_FILE_NAME_META_TRASH);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_TRASH,l);
 		buff+=l;
 		putINode(&buff,SPECIAL_INODE_META_TRASH);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// reserved
 		l = strlen(SPECIAL_FILE_NAME_META_RESERVED);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_RESERVED,l);
 		buff+=l;
 		putINode(&buff,SPECIAL_INODE_META_RESERVED);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		return;
 	case SPECIAL_INODE_META_TRASH:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_META_TRASH);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// undel
 		l = strlen(SPECIAL_FILE_NAME_META_UNDEL);
 		put8bit(&buff,l);
 		memcpy(buff,SPECIAL_FILE_NAME_META_UNDEL,l);
 		buff+=l;
 		putINode(&buff,SPECIAL_INODE_META_UNDEL);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		return;
 	case SPECIAL_INODE_META_UNDEL:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_META_UNDEL);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_META_TRASH);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		return;
 	case SPECIAL_INODE_META_RESERVED:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_META_RESERVED);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		// ..
 		put8bit(&buff,2);
 		put8bit(&buff,'.');
 		put8bit(&buff,'.');
 		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff,FSNodeType::kDirectory);
 		return;
 	}
 }
@@ -538,7 +538,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 				buff+=9+nleng;
 			}
 			putINode(&buff,inode);
-			put8bit(&buff,TYPE_FILE);
+			put8bit(&buff,FSNodeType::kFile);
 		} else {
 			safs_pretty_syslog(LOG_WARNING,"dir data malformed (trash)");
 			dbuff=eptr;
@@ -649,7 +649,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 	size_t opos,oleng;
 	uint8_t nleng;
 	inode_t inode;
-	uint8_t type;
+	FSNodeType type;
 	struct stat stbuf;
 
 	if (off<0) {
@@ -687,7 +687,7 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, st
 			off+=nleng+6;
 			if (ptr+5<=eptr) {
 				getINode(&ptr, inode);
-				type = get8bit(&ptr);
+				type = static_cast<FSNodeType>(get8bit(&ptr));
 				sfs_meta_type_to_stat(inode,type,&stbuf);
 				c = name[nleng];
 				name[nleng]=0;

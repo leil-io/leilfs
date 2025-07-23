@@ -103,6 +103,34 @@
 #define TYPE_RESERVED         'r'
 #define TYPE_UNKNOWN          '?'
 
+#ifdef __cplusplus
+enum class FSNodeType : uint8_t {
+	kFile = TYPE_FILE,
+	kDirectory = TYPE_DIRECTORY,
+	kSymlink = TYPE_SYMLINK,
+	kFifo = TYPE_FIFO,
+	kBlockDev = TYPE_BLOCKDEV,
+	kCharDev = TYPE_CHARDEV,
+	kSocket = TYPE_SOCKET,
+	kTrash = TYPE_TRASH,
+	kReserved = TYPE_RESERVED,
+	kUnknown = TYPE_UNKNOWN
+};
+#else
+typedef enum {
+	kFile = TYPE_FILE,
+	kDirectory = TYPE_DIRECTORY,
+	kSymlink = TYPE_SYMLINK,
+	kFifo = TYPE_FIFO,
+	kBlockDev = TYPE_BLOCKDEV,
+	kCharDev = TYPE_CHARDEV,
+	kSocket = TYPE_SOCKET,
+	kTrash = TYPE_TRASH,
+	kReserved = TYPE_RESERVED,
+	kUnknown = TYPE_UNKNOWN
+} FSNodeType;
+#endif
+
 // mode mask:  "modemask" field in "CLTOMA_FUSE_ACCESS"
 #define MODE_MASK_R            4
 #define MODE_MASK_W            2

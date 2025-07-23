@@ -99,19 +99,6 @@ struct statsrecord {
 	uint64_t realsize;
 };
 
-enum class FSNodeType : std::uint8_t {
-	kFile = TYPE_FILE,
-	kDirectory = TYPE_DIRECTORY,
-	kSymlink = TYPE_SYMLINK,
-	kFifo = TYPE_FIFO,
-	kBlockDev = TYPE_BLOCKDEV,
-	kCharDev = TYPE_CHARDEV,
-	kSocket = TYPE_SOCKET,
-	kTrash = TYPE_TRASH,
-	kReserved = TYPE_RESERVED,
-	kUnknown = TYPE_UNKNOWN
-};
-
 /*! \brief Node containing common meta data for each file system object (file or directory).
  *
  * Node size = 64B
