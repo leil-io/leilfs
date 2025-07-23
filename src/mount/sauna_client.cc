@@ -3672,22 +3672,6 @@ void fs_init(FsInitParams &params) {
 			params.prefetch_xor_stripes,
 			std::max(params.bandwidth_overuse, 1.));
 
-	if (!params.use_inode_based_write_algorithm &&
-	    masterversion < kFirstVersionWithChunkBasedWriteAlgorithm) {
-		fprintf(stderr,
-		        "Metadata server version v%s is too old, using inode-based write algorithm"
-		        "(sfsuseinodebasedwritealgorithm=1). "
-		        "Required minimum version for chunk based algorithm is v%s.\n",
-		        saunafsVersionToString(masterversion).c_str(),
-		        saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm).c_str());
-		params.use_inode_based_write_algorithm = true;
-	}
-
-	gUseInodeBasedWriteAlgorithm = params.use_inode_based_write_algorithm;
-	write_data_init(
-	    params.write_cache_size, params.io_retries, params.write_workers,
-	    params.write_window_size, params.chunkserver_write_timeout_ms,
-	    params.cache_per_inode_percentage, params.write_wave_timeout_ms);
 #ifdef _WIN32
 	set_debug_mode(params.debug_mode);
 #endif

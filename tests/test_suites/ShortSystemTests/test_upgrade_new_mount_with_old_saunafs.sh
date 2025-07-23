@@ -1,4 +1,4 @@
-timeout_set 45 seconds
+timeout_set 1 minute
 
 # Test checks if both legacy, and new SaunaFS mount
 # work with legacy versions of master and chunkservers
@@ -25,7 +25,7 @@ assert_success saunafsXX saunafs setgoal 2 dir0
 cd dir0
 
 function generate_file {
-	FILE_SIZE=12345678 BLOCK_SIZE=12345 file-generate $1
+	FILE_SIZE=123456789 BLOCK_SIZE=56789 file-generate $1
 }
 
 # Test if reading and writing on old SaunaFS works:

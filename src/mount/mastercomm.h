@@ -48,8 +48,6 @@ inline std::mutex acquiredFileMutex;
 using AcquiredFileMap = std::map<inode_t, uint32_t>;
 inline AcquiredFileMap acquiredFiles;
 
-inline uint32_t masterversion;
-
 void fs_getmasterlocation(uint8_t loc[14]);
 uint32_t fs_getsrcip(void);
 
