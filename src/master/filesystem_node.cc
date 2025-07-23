@@ -1989,7 +1989,7 @@ uint8_t fsnodes_get_node_for_operation(const FsContext &context, ExpectedNodeTyp
 		if (!rn || rn->type != FSNodeType::kDirectory) {
 			return SAUNAFS_ERROR_ENOENT;
 		}
-		if (inode == SPECIAL_INODE_ROOT) {
+		if (inode == SPECIAL_INODE_ROOT || inode == context.rootinode()) {
 			p = rn;
 		} else {
 			p = fsnodes_id_to_node(inode);
