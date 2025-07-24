@@ -22,23 +22,20 @@
 #include "common/platform.h"
 
 #include <string.h>
-#include "common/stat32.h"
 #include <sys/types.h>
 #include <unistd.h>
 
 #include <string>
-#include <unordered_set>
-#include <utility>
 #include <vector>
 
 #include "common/chunk_with_address_and_label.h"
 #include "common/exception.h"
+#include "common/stat_defs.h"
 #include "common/type_defs.h"
 #include "mount/group_cache.h"
 #include "mount/mount_info.h"
-#include "mount/sauna_client_context.h"
 #include "mount/readdata_cache.h"
-#include "common/stat_defs.h"
+#include "mount/sauna_client_context.h"
 #include "protocol/chunkserver_list_entry.h"
 #include "protocol/lock_info.h"
 #include "protocol/named_inode_entry.h"

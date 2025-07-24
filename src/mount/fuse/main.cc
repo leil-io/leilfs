@@ -41,6 +41,7 @@
 #include "mount/g_io_limiters.h"
 #include "mount/mastercomm.h"
 #include "mount/masterproxy.h"
+#include "mount/mount_info.h"
 #include "mount/option_casing_normalization.h"
 #include "mount/readdata.h"
 #include "mount/stats.h"
@@ -291,7 +292,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 
 	struct fuse_session *se;
 	if (gMountOptions.meta) {
-		sfs_meta_init(gMountOptions.debug, gMountOptions.entrycacheto, gMountOptions.attrcacheto);
+		sfs_meta_init(gMountOptions.entrycacheto, gMountOptions.attrcacheto);
 		se = fuse_session_new(args, &sfs_meta_oper, sizeof(sfs_meta_oper), (void *)conn_opts);
 	} else {
 		se = fuse_session_new(args, &sfs_oper, sizeof(sfs_oper), (void *)conn_opts);
