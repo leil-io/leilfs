@@ -771,7 +771,7 @@ static fsal_status_t findFileDescriptor(struct SaunaFSFd *saunafsFd,
 
 	// Ensure we have a valid file descriptor before dereferencing
 	if (FSAL_IS_ERROR(status) || usableFd == NULL) {
-		// Initialize saunafsFd to a safe state
+		// Initialize SaunaFS file descriptor to a safe state
 		saunafsFd->openflags = FSAL_O_CLOSED;
 		saunafsFd->fd = NULL;
 		return status;
@@ -1655,7 +1655,6 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		lastError = sau_last_err();
 
 		if (closeFd && fileinfo != NULL) { sau_release(export->fsInstance, fileinfo); }
-
 		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
 
 		LogFullDebug(COMPONENT_FSAL, "Returning error %d", lastError);
