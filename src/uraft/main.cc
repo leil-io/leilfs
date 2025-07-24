@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
 		return EXIT_FAILURE;
 	}
 
-	boost::asio::io_service  io_service;
+	boost::asio::io_context  io_service;
 	uRaftController          server(io_service);
 #if (BOOST_VERSION >= 104700)
 	boost::asio::signal_set  signals(io_service, SIGINT, SIGTERM);
@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
 		server.set_options(opt);
 		makePidFile(pidfile);
 #if (BOOST_VERSION >= 104700)
-		signals.async_wait(boost::bind(&boost::asio::io_service::stop, &io_service));
+		signals.async_wait(boost::bind(&boost::asio::io_context::stop, &io_service));
 #endif
 		server.init();
 

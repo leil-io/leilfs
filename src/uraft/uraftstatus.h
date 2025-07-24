@@ -12,7 +12,7 @@
  */
 class uRaftStatusConnection : public std::enable_shared_from_this<uRaftStatusConnection> {
 public:
-	uRaftStatusConnection(boost::asio::io_service &ios);
+	uRaftStatusConnection(boost::asio::io_context &ios);
 
 	void init();
 	boost::asio::ip::tcp::socket& socket();
@@ -37,7 +37,7 @@ public:
 	};
 
 public:
-	uRaftStatus(boost::asio::io_service &ios);
+	uRaftStatus(boost::asio::io_context &ios);
 	virtual ~uRaftStatus();
 
 	//! Initialize server.

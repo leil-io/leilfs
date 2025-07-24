@@ -88,7 +88,7 @@ protected:
 	};
 
 public:
-	uRaft(boost::asio::io_service &ios);
+	uRaft(boost::asio::io_context &ios);
 	virtual ~uRaft();
 
 	//! Initialization of uRaft internal data.
@@ -160,7 +160,7 @@ protected:
 	int scanLocalInterfaces();
 
 protected:
-	boost::asio::io_service                 &io_service_;
+	boost::asio::io_context                 &io_service_;
 	boost::asio::ip::udp::socket            socket_;
 	boost::asio::deadline_timer             election_timer_,heartbeat_timer_;
 	boost::asio::deadline_timer             loyalty_agreement_timer_;

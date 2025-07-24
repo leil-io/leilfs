@@ -4,7 +4,7 @@
 #include <iostream>
 #include <boost/format.hpp>
 
-uRaftStatusConnection::uRaftStatusConnection(boost::asio::io_service &ios)
+uRaftStatusConnection::uRaftStatusConnection(boost::asio::io_context &ios)
 	: data_(),
 	  socket_(ios) {
 }
@@ -22,7 +22,7 @@ boost::asio::ip::tcp::socket &uRaftStatusConnection::socket() {
 	return socket_;
 }
 
-uRaftStatus::uRaftStatus(boost::asio::io_service &ios)
+uRaftStatus::uRaftStatus(boost::asio::io_context &ios)
 	: uRaft(ios),
 	  acceptor_(ios),
 	  socket_(ios) {

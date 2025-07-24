@@ -38,7 +38,7 @@ public:
 	};
 
 public:
-	uRaftController(boost::asio::io_service &);
+	uRaftController(boost::asio::io_context &);
 	virtual ~uRaftController();
 
 	//! Initialize data.

@@ -18,7 +18,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/version.hpp>
 
-uRaftController::uRaftController(boost::asio::io_service &ios)
+uRaftController::uRaftController(boost::asio::io_context &ios)
 	: uRaftStatus(ios),
 	  check_cmd_status_timer_(ios),
 	  check_node_status_timer_(ios),
@@ -269,7 +269,7 @@ bool uRaftController::runSlowCommand(const std::string &cmd) {
 	command_timer_.reset();
 
 #if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_prepare);
+	io_service_.notify_fork(boost::asio::io_context::fork_prepare);
 #endif
 
 	command_pid_ = fork();
@@ -282,7 +282,7 @@ bool uRaftController::runSlowCommand(const std::string &cmd) {
 	}
 
 #if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_parent);
+	io_service_.notify_fork(boost::asio::io_context::fork_parent);
 #endif
 
 	return true;
@@ -304,7 +304,7 @@ bool uRaftController::runCommand(const std::vector<std::string> &cmd, std::strin
 	}
 
 #if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_prepare);
+	io_service_.notify_fork(boost::asio::io_context::fork_prepare);
 #endif
 
 	pid = fork();
@@ -328,7 +328,7 @@ bool uRaftController::runCommand(const std::vector<std::string> &cmd, std::strin
 	}
 
 #if (BOOST_VERSION >= 104700)
-	io_service_.notify_fork(boost::asio::io_service::fork_parent);
+	io_service_.notify_fork(boost::asio::io_context::fork_parent);
 #endif
 
 	close(pipe_fd[1]);
