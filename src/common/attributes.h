@@ -32,6 +32,7 @@
 
 typedef std::array<uint8_t, 35> Attributes;
 
+#ifndef _WIN32
 constexpr int saunaFileTypeToPosix(unsigned char type) {
 	switch (type) {
 	case TYPE_BLOCKDEV:
@@ -80,3 +81,4 @@ struct PosixFileAttributes {
 		return fileStat;
 	}
 };
+#endif
