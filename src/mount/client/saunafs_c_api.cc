@@ -172,7 +172,7 @@ void sau_destroy_context(sau_context_t **ctx) {
 }
 
 void sau_set_lock_owner(sau_fileinfo_t *fileinfo, uint64_t lock_owner) {
-	if (fileinfo == NULL) {
+	if (fileinfo == nullptr) {
 		return;
 	}
 	Client::FileInfo *fi = (Client::FileInfo *)fileinfo;
@@ -414,7 +414,7 @@ ssize_t sau_write(sau_t *instance, sau_context_t *ctx, sau_fileinfo *fileinfo,
 }
 
 int sau_release(sau_t *instance, sau_fileinfo *fileinfo) {
-	if (fileinfo == NULL) {
+	if (fileinfo == nullptr) {
 		gLastErrorCode = SAUNAFS_ERROR_EBADF;
 		return -1;
 	}
@@ -426,7 +426,7 @@ int sau_release(sau_t *instance, sau_fileinfo *fileinfo) {
 }
 
 int sau_flush(sau_t *instance, sau_context_t *ctx, sau_fileinfo *fileinfo) {
-	if (fileinfo == NULL) {
+	if (fileinfo == nullptr) {
 		gLastErrorCode = SAUNAFS_ERROR_EBADF;
 		return -1;
 	}
@@ -477,7 +477,7 @@ int sau_readdir(sau_t *instance, sau_context_t *ctx,
 	std::error_code ec;
 
 	if (max_entries > 0) {
-		buf->name = NULL;
+		buf->name = nullptr;
 	} else {
 		gLastErrorCode = SAUNAFS_ERROR_EINVAL;
 		return -1;
@@ -949,7 +949,7 @@ int sau_get_chunks_info(sau_t *instance, sau_context_t *ctx, sau_inode_t inode,
 	Client::Context &context = *(Client::Context *)ctx;
 
 	if (buffer_size > 0) {
-		buffer->parts = NULL;
+		buffer->parts = nullptr;
 	} else {
 		gLastErrorCode = SAUNAFS_ERROR_EINVAL;
 		return -1;
@@ -981,7 +981,7 @@ int sau_get_chunks_info(sau_t *instance, sau_context_t *ctx, sau_inode_t inode,
 
 	auto totalSize = parts_table_size + strings_size;
 	uint8_t *data_buffer = (uint8_t *)std::malloc(totalSize);
-	if (data_buffer == NULL) {
+	if (data_buffer == nullptr) {
 		gLastErrorCode = SAUNAFS_ERROR_OUTOFMEMORY;
 		return -1;
 	}
@@ -1074,7 +1074,7 @@ void sau_destroy_chunks_info(sau_chunk_info_t *buffer) {
 int sau_setlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
               const sau_lock_info *lock, sau_lock_register_interrupt_t handler,
               void *priv) {
-	if (fileinfo == NULL) {
+	if (fileinfo == nullptr) {
 		gLastErrorCode = SAUNAFS_ERROR_EBADF;
 		return -1;
 	}
@@ -1107,7 +1107,7 @@ int sau_setlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
 
 int sau_getlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
               sau_lock_info *lock) {
-	if (fileinfo == NULL) {
+	if (fileinfo == nullptr) {
 		gLastErrorCode = SAUNAFS_ERROR_EBADF;
 		return -1;
 	}
