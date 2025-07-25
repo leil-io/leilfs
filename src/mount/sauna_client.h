@@ -26,10 +26,12 @@
 #include <unistd.h>
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "common/chunk_with_address_and_label.h"
 #include "common/exception.h"
+#include "common/stat32.h"
 #include "common/stat_defs.h"
 #include "common/type_defs.h"
 #include "mount/group_cache.h"
