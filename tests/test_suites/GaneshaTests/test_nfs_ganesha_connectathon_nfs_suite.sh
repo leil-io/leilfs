@@ -63,11 +63,11 @@ sudo /usr/bin/ganesha.nfsd -f ${info[mount0]}/ganesha.conf
 check_rpc_service
 sudo mount -vvvv localhost:/data $TEMP_DIR/mnt/ganesha
 
-# Run connectathon nfs suite
-cd $TEMP_DIR/mnt/ganesha
+mkdir ${TEMP_DIR}/mnt/ganesha/cthon_tests
+export NFSTESTDIR="${TEMP_DIR}/mnt/ganesha/cthon_tests"
 
-mkdir cthon_tests
-export NFSTESTDIR=$TEMP_DIR/mnt/ganesha/cthon_tests
+# Run connectathon nfs suite
+cd ${TEMP_DIR}
 
 git clone https://github.com/leil-io/cthon04.git
 cd cthon04
