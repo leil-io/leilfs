@@ -22,17 +22,15 @@
 #include "fsal_convert.h"
 #include "pnfs_utils.h"
 
-#include "saunafs_internal.h"
+#include "nfs-ganesha/saunafs_internal.h"
 
 sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 	if (cred == NULL) {
 		return sau_create_user_context(0, 0, 0, 0);
 	}
 
-	uid_t uid = (cred->caller_uid == op_ctx->export_perms.anonymous_uid)
-	        ? 0 : cred->caller_uid;
-	gid_t gid = (cred->caller_gid == op_ctx->export_perms.anonymous_gid)
-	        ? 0 : cred->caller_gid;
+	uid_t uid = (cred->caller_uid == op_ctx->export_perms.anonymous_uid) ? 0 : cred->caller_uid;
+	gid_t gid = (cred->caller_gid == op_ctx->export_perms.anonymous_gid) ? 0 : cred->caller_gid;
 
 	sau_context_t *ctx = sau_create_user_context(uid, gid, 0, 0);
 	if (!ctx) {

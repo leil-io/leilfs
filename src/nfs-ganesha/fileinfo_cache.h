@@ -41,8 +41,7 @@ typedef struct FileInfoEntry FileInfoEntry_t;
  * \return                        pointer to FileInfoCache_t structure
  * \post                          Destroy with destroyFileInfoCache function
  */
-FileInfoCache_t *createFileInfoCache(unsigned maxEntries,
-                                     int minTimeoutMilliseconds);
+FileInfoCache_t *createFileInfoCache(unsigned maxEntries, int minTimeoutMilliseconds);
 
 /*!
  * \brief Reset cache parameters
@@ -70,8 +69,7 @@ void destroyFileInfoCache(FileInfoCache_t *cache);
  * \post Set fileinfo to a valid pointer after opening a file with
  *       sau_attach_fileinfo
  */
-FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache,
-                                      sau_inode_t inode);
+FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache, sau_inode_t inode);
 
 /*!
  * \brief Release fileinfo from cache

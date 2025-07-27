@@ -24,9 +24,9 @@
 #include "fsal_convert.h"
 #include "nfs_exports.h"
 
-#include "saunafs_fsal_types.h"
-#include "context_wrap.h"
-#include "saunafs_internal.h"
+#include "nfs-ganesha/context_wrap.h"
+#include "nfs-ganesha/saunafs_fsal_types.h"
+#include "nfs-ganesha/saunafs_internal.h"
 
 /* Flags to determine if ACLs are supported */
 #define NFSv4_ACL_SUPPORT (!op_ctx_export_has_option(EXPORT_OPTION_DISABLE_ACL))
@@ -98,16 +98,14 @@ static void release(struct fsal_export *exportHandle) {
  * @returns: FSAL status
  */
 fsal_status_t lookup_path(struct fsal_export *exportHandle, const char *path,
-                          struct fsal_obj_handle **handle,
-                          struct fsal_attrlist *attributes) {
+                          struct fsal_obj_handle **handle, struct fsal_attrlist *attributes) {
 	static const char *rootDirPath = "/";
 
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *objectHandle = NULL;
 	const char *realPath = NULL;
 
-	LogFullDebug(COMPONENT_FSAL, "export_id=%" PRIu16 " path=%s",
-	             exportHandle->export_id, path);
+	LogFullDebug(COMPONENT_FSAL, "export_id=%" PRIu16 " path=%s", exportHandle->export_id, path);
 
 	export = container_of(exportHandle, struct SaunaFSExport, export);
 
@@ -150,8 +148,8 @@ fsal_status_t lookup_path(struct fsal_export *exportHandle, const char *path,
 	}
 
 	sau_entry_t entry;
-	int status = saunafs_lookup(export->fsInstance, &op_ctx->creds,
-	                            SPECIAL_INODE_ROOT, realPath, &entry);
+	int status =
+	    saunafs_lookup(export->fsInstance, &op_ctx->creds, SPECIAL_INODE_ROOT, realPath, &entry);
 
 	if (status < 0) {
 		return fsalLastError();
@@ -237,18 +235,16 @@ void fs_free_state(struct state_t *state) {
  *
  * @returns: a state structure.
  */
-struct state_t *allocate_state(struct fsal_export *export,
-                               enum state_type stateType,
+struct state_t *allocate_state(struct fsal_export *export, enum state_type stateType,
                                struct state_t *relatedState) {
 	(void )export; /* Not used */
 	struct state_t *state = NULL;
 	struct SaunaFSFd *fileDescriptor = NULL;
 
-	state = init_state(gsh_calloc(1, sizeof(struct SaunaFSStateFd)),
-	                   fs_free_state, stateType, relatedState);
+	state = init_state(gsh_calloc(1, sizeof(struct SaunaFSStateFd)), fs_free_state, stateType,
+	                   relatedState);
 
-	fileDescriptor =
-		&container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
+	fileDescriptor = &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
 
 	init_fsal_fd(&fileDescriptor->fsalFd, FSAL_FD_STATE, op_ctx->fsal_export);
 	fileDescriptor->fd = NULL;
@@ -277,8 +273,7 @@ struct state_t *allocate_state(struct fsal_export *export,
  *
  * @returns: FSAL type.
  */
-static fsal_status_t wire_to_host(struct fsal_export *export,
-                                  fsal_digesttype_t protocol,
+static fsal_status_t wire_to_host(struct fsal_export *export, fsal_digesttype_t protocol,
                                   struct gsh_buffdesc *buffer, int flags) {
 	(void) protocol;
 	(void) export;
@@ -303,8 +298,7 @@ static fsal_status_t wire_to_host(struct fsal_export *export,
 	}
 
 	if (buffer->len != sizeof(sau_inode_t)) {
-		LogMajor(COMPONENT_FSAL,
-		         "Size mismatch for handle. Should be %zu, got %zu",
+		LogMajor(COMPONENT_FSAL, "Size mismatch for handle. Should be %zu, got %zu",
 		         sizeof(sau_inode_t), buffer->len);
 		return fsalstat(ERR_FSAL_SERVERFAULT, 0);
 	}
@@ -328,8 +322,7 @@ static fsal_status_t wire_to_host(struct fsal_export *export,
  *                            key has to be placed at the beginning of the
  *                            buffer.
  */
-fsal_status_t host_to_key(struct fsal_export *export,
-                          struct gsh_buffdesc *buffer) {
+fsal_status_t host_to_key(struct fsal_export *export, struct gsh_buffdesc *buffer) {
 	(void) export;
 	struct SaunaFSHandleKey *key = buffer->addr;
 	/*
@@ -360,8 +353,7 @@ fsal_status_t host_to_key(struct fsal_export *export,
  *
  * @returns: FSAL status
  */
-fsal_status_t create_handle(struct fsal_export *exportHandle,
-                            struct gsh_buffdesc *buffer,
+fsal_status_t create_handle(struct fsal_export *exportHandle, struct gsh_buffdesc *buffer,
                             struct fsal_obj_handle **publicHandle,
                             struct fsal_attrlist *attributes) {
 	struct SaunaFSExport *export = NULL;
@@ -377,8 +369,7 @@ fsal_status_t create_handle(struct fsal_export *exportHandle,
 	}
 
 	sau_attr_reply_t result;
-	int status =
-	    saunafs_getattr(export->fsInstance, &op_ctx->creds, *inode, &result);
+	int status = saunafs_getattr(export->fsInstance, &op_ctx->creds, *inode, &result);
 
 	if (status < 0) {
 		return fsalLastError();
@@ -444,8 +435,8 @@ static attrmask_t fs_supported_attrs(struct fsal_export *export) {
  *
  * @return the fsal_obj_handle.
  */
-void get_fsal_obj_hdl(struct fsal_export * export, struct fsal_fd * fd,
-	                  struct fsal_obj_handle * *handle) {
+void get_fsal_obj_hdl(struct fsal_export *export, struct fsal_fd *fd,
+                      struct fsal_obj_handle **handle) {
 	(void)export; /* Not used */
 	struct SaunaFSFd *saunafsFd = NULL;
 	struct SaunaFSHandle *myself = NULL;

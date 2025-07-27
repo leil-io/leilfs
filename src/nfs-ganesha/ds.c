@@ -26,10 +26,10 @@
 #include "../FSAL/fsal_private.h"
 #include "nfs_exports.h"
 
-#include "context_wrap.h"
-#include "fileinfo_cache.h"
-#include "saunafs_fsal_types.h"
-#include "saunafs_internal.h"
+#include "nfs-ganesha/context_wrap.h"
+#include "nfs-ganesha/fileinfo_cache.h"
+#include "nfs-ganesha/saunafs_fsal_types.h"
+#include "nfs-ganesha/saunafs_internal.h"
 
 /**
  * @brief Remove count expired instances from cache.
@@ -72,11 +72,9 @@ static void dsh_release(struct fsal_ds_handle *const dataServerHandle) {
 	struct SaunaFSExport *export;
 	struct DataServerHandle *dataServer;
 
-	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export,
-	                      struct SaunaFSExport, export);
+	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export, struct SaunaFSExport, export);
 
-	dataServer =
-	    container_of(dataServerHandle, struct DataServerHandle, handle);
+	dataServer = container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	assert(export->cache);
 
@@ -98,8 +96,7 @@ static void dsh_release(struct fsal_ds_handle *const dataServerHandle) {
  *
  * @returns: nfsstat4 status returned after opening the file
  */
-static nfsstat4 openfile(struct SaunaFSExport *export,
-                         struct DataServerHandle *dataServer) {
+static nfsstat4 openfile(struct SaunaFSExport *export, struct DataServerHandle *dataServer) {
 	if (export == NULL) {
 		return NFS4ERR_IO;
 	}
@@ -124,8 +121,7 @@ static nfsstat4 openfile(struct SaunaFSExport *export,
 		return NFS4_OK;
 	}
 
-	fileHandle =
-	    saunafs_open(export->fsInstance, NULL, dataServer->inode, O_RDWR);
+	fileHandle = saunafs_open(export->fsInstance, NULL, dataServer->inode, O_RDWR);
 
 	if (fileHandle == NULL) {
 		eraseFileInfoCache(export->cache, dataServer->cacheHandle);
@@ -158,9 +154,8 @@ static nfsstat4 openfile(struct SaunaFSExport *export,
  *
  * @returns: An NFSv4.1 status code.
  */
-static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle,
-                         const stateid4 *stateid, const offset4 offset,
-                         const count4 requestedLength, void *const buffer,
+static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle, const stateid4 *stateid,
+                         const offset4 offset, const count4 requestedLength, void *const buffer,
                          count4 *const suppliedLength, bool *const eof) {
 	(void) stateid;
 
@@ -168,11 +163,9 @@ static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle,
 	struct DataServerHandle *dataServer = NULL;
 	fileinfo_t *fileHandle = NULL;
 
-	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export,
-	                      struct SaunaFSExport, export);
+	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export, struct SaunaFSExport, export);
 
-	dataServer =
-	    container_of(dataServerHandle, struct DataServerHandle, handle);
+	dataServer = container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
 	             "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64
@@ -186,8 +179,8 @@ static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle,
 	}
 
 	fileHandle = extractFileInfo(dataServer->cacheHandle);
-	ssize_t bytes = saunafs_read(export->fsInstance, NULL, fileHandle, offset,
-	                             requestedLength, buffer);
+	ssize_t bytes =
+	    saunafs_read(export->fsInstance, NULL, fileHandle, offset, requestedLength, buffer);
 
 	if (bytes < 0) {
 		return nfs4LastError();
@@ -221,13 +214,10 @@ static nfsstat4 dsh_read(struct fsal_ds_handle *const dataServerHandle,
  *
  * @returns: An NFSv4.1 status code.
  */
-static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle,
-                          const stateid4 *stateid, const offset4 offset,
-                          const count4 writeLength, const void *buffer,
-                          const stable_how4 stability,
-                          count4 *const writtenLength,
-                          verifier4 *const writeVerifier,
-                          stable_how4 *const stabilityGot) {
+static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle, const stateid4 *stateid,
+                          const offset4 offset, const count4 writeLength, const void *buffer,
+                          const stable_how4 stability, count4 *const writtenLength,
+                          verifier4 *const writeVerifier, stable_how4 *const stabilityGot) {
 	(void) stateid;
 	(void) writeVerifier;
 
@@ -237,11 +227,9 @@ static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle,
 	fileinfo_t *fileHandle = NULL;
 	int status = 0;
 
-	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export,
-	                      struct SaunaFSExport, export);
+	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export, struct SaunaFSExport, export);
 
-	dataServer =
-	    container_of(dataServerHandle, struct DataServerHandle, handle);
+	dataServer = container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
 	             "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64
@@ -254,8 +242,8 @@ static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle,
 	}
 
 	fileHandle = extractFileInfo(dataServer->cacheHandle);
-	ssize_t bytes = saunafs_write(export->fsInstance, NULL, fileHandle, offset,
-	                              writeLength, buffer);
+	ssize_t bytes =
+	    saunafs_write(export->fsInstance, NULL, fileHandle, offset, writeLength, buffer);
 
 	if (bytes < 0) {
 		return nfs4LastError();
@@ -285,20 +273,17 @@ static nfsstat4 dsh_write(struct fsal_ds_handle *const dataServerHandle,
  *
  * @returns: An NFSv4.1 status code.
  */
-static nfsstat4 dsh_commit(struct fsal_ds_handle *const dataServerHandle,
-                           const offset4 offset, const count4 count,
-                           verifier4 *const writeVerifier) {
+static nfsstat4 dsh_commit(struct fsal_ds_handle *const dataServerHandle, const offset4 offset,
+                           const count4 count, verifier4 *const writeVerifier) {
 	struct SaunaFSExport *export = NULL;
 	struct DataServerHandle *dataServer = NULL;
 	fileinfo_t *fileHandle = NULL;
 
 	memset(writeVerifier, 0, NFS4_VERIFIER_SIZE);
 
-	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export,
-	                      struct SaunaFSExport, export);
+	export = container_of(op_ctx->ctx_pnfs_ds->mds_fsal_export, struct SaunaFSExport, export);
 
-	dataServer =
-	    container_of(dataServerHandle, struct DataServerHandle, handle);
+	dataServer = container_of(dataServerHandle, struct DataServerHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
 	             "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64
@@ -349,8 +334,7 @@ static nfsstat4 dsh_commit(struct fsal_ds_handle *const dataServerHandle,
 static nfsstat4 dsh_read_plus(struct fsal_ds_handle *const dataServerHandle,
                               const stateid4 *stateid, const offset4 offset,
                               const count4 requestedLength, void *const buffer,
-                              const count4 suppliedLength, bool *const eof,
-                              struct io_info *info) {
+                              const count4 suppliedLength, bool *const eof, struct io_info *info) {
 	(void) dataServerHandle;
 	(void) stateid;
 	(void) offset;
@@ -380,8 +364,7 @@ static nfsstat4 dsh_read_plus(struct fsal_ds_handle *const dataServerHandle,
  */
 static nfsstat4 make_ds_handle(struct fsal_pnfs_ds *const pnfsDataServer,
                                const struct gsh_buffdesc *const buffer,
-                               struct fsal_ds_handle **const handle,
-                               int flags) {
+                               struct fsal_ds_handle **const handle, int flags) {
 	(void) pnfsDataServer;
 
 	struct DSWire *dataServerWire = NULL;
@@ -427,8 +410,7 @@ static nfsstat4 make_ds_handle(struct fsal_pnfs_ds *const pnfsDataServer,
  *
  * @returns: NFSv4.1 error codes: NFS4_OK, NFS4ERR_ACCESS, NFS4ERR_WRONGSEC
  */
-static nfsstat4 ds_permissions(struct fsal_pnfs_ds *const pnfsDataServer,
-                               struct svc_req *request) {
+static nfsstat4 ds_permissions(struct fsal_pnfs_ds *const pnfsDataServer, struct svc_req *request) {
 	(void) pnfsDataServer;
 	(void) request;
 

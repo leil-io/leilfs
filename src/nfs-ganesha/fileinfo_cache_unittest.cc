@@ -20,7 +20,7 @@
    02110-1301 USA
 */
 
-#include "fileinfo_cache.h"
+#include "nfs-ganesha/fileinfo_cache.h"
 
 #include <gtest/gtest.h>
 
@@ -105,7 +105,7 @@ TEST(FileInfoCache, Reset) {
 	auto *entry1 = acquireFileInfoCache(cache, 1);
 	releaseFileInfoCache(cache, entry1);
 
-	auto expired = popExpiredFileInfoCache(cache);
+	auto *expired = popExpiredFileInfoCache(cache);
 	ASSERT_EQ(expired, nullptr);
 
 	resetFileInfoCacheParameters(cache, 0, 0);

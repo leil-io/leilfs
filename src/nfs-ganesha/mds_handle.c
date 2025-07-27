@@ -32,20 +32,16 @@
  *
  * This function is called by nfs41_op_layoutget.
  * It may be called multiple times, to satisfy a request with multiple segments.
- * The FSAL may track state (what portion of the request has been or remains
- * to be satisfied or any other information it wishes) in the bookkeeper member
- * of res. Each segment may have FSAL-specific information associated with its
- * segid.
- * This segid will be supplied to the FSAL when the segment is committed or
- * returned.
+ * The FSAL may track state (what portion of the request has been or remains to be satisfied
+ * or any other information it wishes) in the bookkeeper member of res.
+ * Each segment may have FSAL-specific information associated with its segid.
+ * This segid will be supplied to the FSAL when the segment is committed or returned.
  *
  * When the granting the last segment it intends to grant, the FSAL must set the
  * last_segment flag in res.
  *
- * @param[in] objectHandle      The handle of the file on which the layout is
- *                              requested
- * @param[out] xdrStream        An XDR stream to which the FSAL must encode the
- *                              layout
+ * @param[in] objectHandle      The handle of the file on which the layout is requested
+ * @param[out] xdrStream        An XDR stream to which the FSAL must encode the layout
  *                              specific portion of the granted layout segment
  * @param[in] arguments         Input arguments of the function
  * @param[in,out] output        In/out and output arguments of the function
@@ -70,15 +66,13 @@ static nfsstat4 layoutget(struct fsal_obj_handle *objectHandle, XDR *xdrStream,
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
 	if (arguments->type != LAYOUT4_NFSV4_1_FILES) {
-		LogMajor(COMPONENT_PNFS, "Unsupported layout type: %x",
-		         arguments->type);
+		LogMajor(COMPONENT_PNFS, "Unsupported layout type: %x", arguments->type);
 
 		return NFS4ERR_UNKNOWN_LAYOUTTYPE;
 	}
 
-	LogDebug(COMPONENT_PNFS, "will issue layout offset: %" PRIu64
-	         " length: %" PRIu64, output->segment.offset,
-	         output->segment.length);
+	LogDebug(COMPONENT_PNFS, "will issue layout offset: %" PRIu64 " length: %" PRIu64,
+	         output->segment.offset, output->segment.length);
 
 	deviceid.device_id2 = handle->export->export.export_id;
 	deviceid.devid = handle->inode;
@@ -108,31 +102,25 @@ static nfsstat4 layoutget(struct fsal_obj_handle *objectHandle, XDR *xdrStream,
  * layouts corresponding to a given stateid on last close, lease expiry, or
  * a layoutreturn with a return-type of FSID or ALL. Whether it is called in
  * the former or latter case is indicated by the synthetic flag in the arg
- * structure, with synthetic being true in the case of last-close or lease
- * expiry.
+ * structure, with synthetic being true in the case of last-close or lease expiry.
  *
- * If arg->dispose is true, all resources associated with the layout must be
- * freed.
+ * If arg->dispose is true, all resources associated with the layout must be freed.
  *
  * @param[in] objectHandle      The object on which a segment is to be returned
- * @param[in] xdrStream         In the case of a non-synthetic return, this is
- *                              an XDR stream corresponding to the layout
- *                              type-specific argument to LAYOUTRETURN. In the
- *                              case of a synthetic or bulk return, this is a
- *                              NULL pointer.
+ * @param[in] xdrStream         In the case of a non-synthetic return, this is an XDR stream
+ *                              corresponding to the layout type-specific argument to LAYOUTRETURN.
+ *                              In the case of a synthetic or bulk return, this is a NULL pointer.
  * @param[in] arguments         Input arguments of the function
  *
  * @returns: Valid error codes in RFC 5661, p. 367.
  */
-static nfsstat4 layoutreturn(struct fsal_obj_handle *objectHandle,
-                             XDR *xdrStream,
+static nfsstat4 layoutreturn(struct fsal_obj_handle *objectHandle, XDR *xdrStream,
                              const struct fsal_layoutreturn_arg *arguments) {
 	(void) objectHandle;
 	(void) xdrStream;
 
 	if (arguments->lo_type != LAYOUT4_NFSV4_1_FILES) {
-		LogDebug(COMPONENT_PNFS, "Unsupported layout type: %x",
-		         arguments->lo_type);
+		LogDebug(COMPONENT_PNFS, "Unsupported layout type: %x", arguments->lo_type);
 
 		return NFS4ERR_UNKNOWN_LAYOUTTYPE;
 	}
@@ -151,8 +139,7 @@ static nfsstat4 layoutreturn(struct fsal_obj_handle *objectHandle,
  */
 bool isOffsetChangedByClient(const struct fsal_layoutcommit_arg *arguments,
                              struct sau_attr_reply previousReply) {
-	return arguments->new_offset &&
-	       previousReply.attr.st_size < (long)arguments->last_write + 1;
+	return arguments->new_offset && previousReply.attr.st_size < (long)arguments->last_write + 1;
 }
 
 /**
@@ -169,8 +156,7 @@ bool hasRecentModificationTime(const struct fsal_layoutcommit_arg *arguments,
 	return arguments->time_changed &&
 	       (arguments->new_time.seconds > previousReply.attr.st_mtim.tv_sec ||
 	        (arguments->new_time.seconds == previousReply.attr.st_mtim.tv_sec &&
-	         arguments->new_time.nseconds >
-	             previousReply.attr.st_mtim.tv_nsec));
+	         arguments->new_time.nseconds > previousReply.attr.st_mtim.tv_nsec));
 }
 
 /**
@@ -184,16 +170,14 @@ bool hasRecentModificationTime(const struct fsal_layoutcommit_arg *arguments,
  * or new_size until after the last call to FSAL_layoutcommit.
  *
  * @param[in] objectHandle      The object on which to commit
- * @param[in] xdrStream         An XDR stream containing the layout
- *                              type-specific portion of the LAYOUTCOMMIT
- *                              arguments
+ * @param[in] xdrStream         An XDR stream containing the layout type-specific portion of the
+ *                              LAYOUTCOMMIT arguments
  * @param[in] arguments         Input arguments of the function
  * @param[in,out] output        In/out and output arguments of the function
  *
  * @returns: Valid error codes in RFC 5661, p. 366.
  */
-static nfsstat4 layoutcommit(struct fsal_obj_handle *objectHandle,
-                             XDR *xdrStream,
+static nfsstat4 layoutcommit(struct fsal_obj_handle *objectHandle, XDR *xdrStream,
                              const struct fsal_layoutcommit_arg *arguments,
                              struct fsal_layoutcommit_res *output) {
 	(void) xdrStream;
@@ -210,14 +194,12 @@ static nfsstat4 layoutcommit(struct fsal_obj_handle *objectHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	int retvalue = saunafs_getattr(export->fsInstance, &op_ctx->creds,
-	                               handle->inode, &previousReply);
+	int retvalue =
+	    saunafs_getattr(export->fsInstance, &op_ctx->creds, handle->inode, &previousReply);
 
 	if (retvalue < 0) {
-		LogCrit(COMPONENT_PNFS, "Error '%s' in attempt to get "
-		        "attributes of file %lli.",
-		        sau_error_string(sau_last_err()),
-		        (long long)handle->inode);
+		LogCrit(COMPONENT_PNFS, "Error '%s' in attempt to get attributes of file %lli.",
+		        sau_error_string(sau_last_err()), (long long)handle->inode);
 
 		return nfs4LastError();
 	}
@@ -236,20 +218,19 @@ static nfsstat4 layoutcommit(struct fsal_obj_handle *objectHandle,
 
 	if (hasRecentModificationTime(arguments, previousReply)) {
 		posixAttributes.st_mtim.tv_sec = arguments->new_time.seconds;
-		posixAttributes.st_mtim.tv_sec = arguments->new_time.nseconds;
+		posixAttributes.st_mtim.tv_nsec = arguments->new_time.nseconds;
 		mask |= SAU_SET_ATTR_MTIME;
 		mask = (unsigned int)mask | SAU_SET_ATTR_MTIME;
 	}
 
 	sau_attr_reply_t reply;
-	retvalue =
-	    saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode,
-	                    &posixAttributes, (int)mask, &reply);
+	retvalue = saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode, &posixAttributes,
+	                           (int)mask, &reply);
 
 	if (retvalue < 0) {
-		LogCrit(COMPONENT_PNFS, "Error '%s' in attempt to set attributes "
-		        "of file %lli.", sau_error_string(sau_last_err()),
-		        (long long)handle->inode);
+		LogCrit(COMPONENT_PNFS, "Error '%s' in attempt to set attributes of file %lli.",
+		        sau_error_string(sau_last_err()), (long long)handle->inode);
+
 		return nfs4LastError();
 	}
 

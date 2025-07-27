@@ -23,11 +23,10 @@
 
 #include "fsal_api.h"
 
-#include "fileinfo_cache.h"
 #include "mount/client/saunafs_c_api.h"
+#include "nfs-ganesha/fileinfo_cache.h"
 
-#define SAUNAFS_VERSION(major, minor, micro) \
-                (0x010000 * major + 0x0100 * minor + micro)
+#define SAUNAFS_VERSION(major, minor, micro) (0x010000 * major + 0x0100 * minor + micro)
 #define kDisconnectedChunkServerVersion SAUNAFS_VERSION(256, 0, 0)
 
 #define SFS_NAME_MAX 255
@@ -76,8 +75,8 @@ inline void bswap_sau_inode_t(sau_inode_t *inode) {
  *
  * @brief SaunaFS Main global module object.
  *
- * SaunaFSModule contains the global module object, the
- * operations vector and parameters of the filesystem info.
+ * SaunaFSModule contains the global module object, the operations vector and parameters
+ * of the filesystem info.
  */
 struct SaunaFSModule {
 	struct fsal_module fsal;
@@ -99,18 +98,18 @@ struct SaunaFSHandle;
  * to the master server, the cache used and the pNFS support.
  */
 struct SaunaFSExport {
-	struct fsal_export export;  /* Export object */
-	struct SaunaFSHandle *root; /* root handle of export */
+	struct fsal_export export;  /// Export object
+	struct SaunaFSHandle *root; /// root handle of export
 
-	sau_t *fsInstance;            /* Filesystem instance */
-	sau_init_params_t parameters; /* Initial parameters */
-	FileInfoCache_t *cache;       /* Export cache */
+	sau_t *fsInstance;            /// Filesystem instance
+	sau_init_params_t parameters; /// Initial parameters
+	FileInfoCache_t *cache;       /// Export cache
 
-	bool pnfsMdsEnabled; /* pNFS Metadata Server enabled */
-	bool pnfsDsEnabled;  /* pNFS Data Server enabled */
+	bool pnfsMdsEnabled; /// pNFS Metadata Server enabled
+	bool pnfsDsEnabled;  /// pNFS Data Server enabled
 
-	uint32_t cacheTimeout;     /* Timeout for entries at cache */
-	uint32_t cacheMaximumSize; /* Maximum size of cache */
+	uint32_t cacheTimeout;     /// Timeout for entries at cache
+	uint32_t cacheMaximumSize; /// Maximum size of cache
 };
 
 /**
@@ -122,8 +121,8 @@ struct SaunaFSExport {
  * file descriptor and its flags associated like open and share mode.
  */
 struct SaunaFSFd {
-	struct fsal_fd fsalFd;   /* The open and share mode plus fd management */
-	struct sau_fileinfo *fd; /* SaunaFS file descriptor */
+	struct fsal_fd fsalFd;   /// The open and share mode plus fd management
+	struct sau_fileinfo *fd; /// SaunaFS file descriptor
 };
 
 /**
@@ -132,15 +131,15 @@ struct SaunaFSFd {
  * @brief Associates a single NFSv4 state structure with a file descriptor.
  */
 struct SaunaFSStateFd {
-	/* state MUST be first to use default free_state */
-	struct state_t state; /* Structure representing a single NFSv4 state */
-	struct SaunaFSFd saunafsFd; /* SaunaFS file descriptor */
+	/// state MUST be first to use default free_state
+	struct state_t state; /// Structure representing a single NFSv4 state
+	struct SaunaFSFd saunafsFd; /// SaunaFS file descriptor
 };
 
 struct SaunaFSHandleKey {
-	uint16_t moduleId; /* module id */
-	uint16_t exportId; /* export id */
-	sau_inode_t inode; /* inode */
+	uint16_t moduleId; /// module id
+	uint16_t exportId; /// export id
+	sau_inode_t inode; /// inode
 };
 
 /**
@@ -148,16 +147,16 @@ struct SaunaFSHandleKey {
  *
  * @brief SaunaFS FSAL handle.
  *
- * SaunaFSHandle contains information related with the public structure of the
- * filesystem and its operations.
+ * SaunaFSHandle contains information related with the public structure of the filesystem and
+ * its operations.
  */
 struct SaunaFSHandle {
-	struct fsal_obj_handle handle; /* Public handle */
-	struct SaunaFSFd fd;           /* SaunaFS FSAL file descriptor */
-	sau_inode_t inode;             /* inode of file */
-	struct SaunaFSHandleKey key;   /* Handle key */
-	struct SaunaFSExport *export;  /* Export to which the handle belongs */
-	struct fsal_share share;       /* The ref counted share reservation state */
+	struct fsal_obj_handle handle; /// Public handle
+	struct SaunaFSFd fd;           /// SaunaFS FSAL file descriptor
+	sau_inode_t inode;             /// inode of file
+	struct SaunaFSHandleKey key;   /// Handle key
+	struct SaunaFSExport *export;  /// Export to which the handle belongs
+	struct fsal_share share;       /// The ref counted share reservation state
 };
 
 struct DSWire {
