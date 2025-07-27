@@ -1605,6 +1605,23 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle, struct state_t *sta
 
 	saunafsFd = container_of(outFileDescriptor, struct SaunaFSFd, fsalFd);
 	fileinfo = saunafsFd->fd;
+
+	// Defensive check: ensure we have a valid file descriptor before proceeding
+	if (fileinfo == NULL) {
+		LogCrit(COMPONENT_FSAL, "Lock operation called with NULL file descriptor");
+
+		status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+		LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+		if (state == NULL) {
+			// We did I/O without a state so we need to release the temp share reservation acquired.
+			// Release the share reservation now by updating the counters.
+			update_share_counters_locked(objectHandle, &handle->share, openflags, FSAL_O_CLOSED);
+		}
+
+		return fsalstat(ERR_FSAL_FAULT, EFAULT);
+	}
+
 	sau_set_lock_owner(fileinfo, (uint64_t)owner);
 
 	if (lockOperation == FSAL_OP_LOCKT) {
