@@ -45,7 +45,7 @@ if is_windows_system; then
 else
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 0 | wc -l' '5 seconds'
 fi
-assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies:' | wc -l)
+assert_eventually_prints 20 "saunafs checkfile ${info[mount0]}/* | grep 'with 2 copies:' | wc -l" "3 seconds"
 
 # Replication shouldn't be started for few more seconds.
 sleep 10
@@ -58,4 +58,4 @@ if is_windows_system; then
 else
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 1 | wc -l' '20 seconds'
 fi
-assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 3 copies:' | wc -l)
+assert_eventually_prints 20 "saunafs checkfile ${info[mount0]}/* | grep 'with 3 copies:' | wc -l" "3 seconds"
