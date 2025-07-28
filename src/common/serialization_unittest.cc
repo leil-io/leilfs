@@ -26,7 +26,7 @@
 #include "unittests/serialization.h"
 
 TEST(SerializationTests, SerializeString) {
-	serializeTest<std::string>("jajeczniczka ze szczypiorkiem");
+	serializeTest<std::string>("scrambled eggs with chives");
 }
 
 TEST(SerializationTests, SerializeUint32Vector) {
@@ -34,7 +34,7 @@ TEST(SerializationTests, SerializeUint32Vector) {
 }
 
 TEST(SerializationTests, SerializeStringVector) {
-	serializeTest(std::vector<std::string>{"jajeczniczka", "ze", "szczypiorkiem"});
+	serializeTest(std::vector<std::string>{"scrambled", "eggs", "with", "chives"});
 }
 
 TEST(SerializationTests, SerializeMapOfMapsOfSets) {
@@ -58,7 +58,7 @@ struct MyStringAllocator : public std::allocator<std::string> {
 };
 TEST(SerializationTests, SerializeVectorWithCustomAllocator) {
 	serializeTest<std::vector<std::string, MyStringAllocator>>(
-			std::vector<std::string, MyStringAllocator>{"dwa", "jajka", "na", "kielbasie"});
+			std::vector<std::string, MyStringAllocator>{"two", "eggs", "on", "sausage"});
 }
 
 TEST(SerializationTests, DeserializeStringNonEmptyVariable) {
@@ -71,7 +71,7 @@ TEST(SerializationTests, DeserializeStringNonEmptyVariable) {
 
 TEST(SerializationTests, SerializeUniquePtr) {
 	SAUNAFS_DEFINE_INOUT_PAIR(std::unique_ptr<std::string>, ptr,
-			new std::string("wyrob czekoladopodobny"), nullptr);
+			new std::string("chocolate-like product"), nullptr);
 
 	std::vector<uint8_t> buffer;
 	ASSERT_NO_THROW(serialize(buffer, ptrIn));
@@ -104,11 +104,11 @@ TEST(SerializationTests, SerializeStringArray) {
 
 TEST(SerializationTests, SerializeSet) {
 	serializeTest<std::set<std::string>>(
-			std::set<std::string>{"lubie", "dajmy", "na", "to", "-", "placuszki"});
+			std::set<std::string>{"I", "like", "to", "eat", "-", "pancakes"});
 }
 
 TEST(SerializationTests, SerializeMap) {
 	serializeTest<std::map<std::string, std::string>>(
 			std::map<std::string, std::string>{
-					{"lubie", "dajmy"}, {"na", "to"}, {"-", "placuszki"}});
+					{"I", "like"}, {"to", "eat"}, {"-", "pancakes"}});
 }

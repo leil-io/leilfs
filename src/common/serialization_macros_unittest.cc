@@ -32,9 +32,9 @@
 
 #define SAU_STATIC_ASSERT(cond) static_assert(cond, #cond)
 
-SAU_STATIC_ASSERT(MORE_THEN_ONE_ARG(0, 1, "ala")                 == 0);
-SAU_STATIC_ASSERT(MORE_THEN_ONE_ARG(0, 1, "ala", "ma")           == 1);
-SAU_STATIC_ASSERT(MORE_THEN_ONE_ARG(0, 1, "ala", "ma", "costam") == 1);
+SAU_STATIC_ASSERT(MORE_THEN_ONE_ARG(0, 1, "that")                 == 0);
+SAU_STATIC_ASSERT(MORE_THEN_ONE_ARG(0, 1, "that", "me")           == 1);
+SAU_STATIC_ASSERT(MORE_THEN_ONE_ARG(0, 1, "that", "me", "something") == 1);
 
 SAU_STATIC_ASSERT(COUNT_ARGS(a, b, c) == 3);
 SAU_STATIC_ASSERT(COUNT_ARGS(a, b)    == 2);
@@ -79,8 +79,8 @@ SERIALIZABLE_CLASS_BODY(
 	}
 SERIALIZABLE_CLASS_END;
 TEST(SerializableClassTests, Serialize) {
-	std::vector<std::string> tmpVector {"kogo", "ma", "ala", "?"};
-	Class tmpC {1, 20, 300, "ala ma kota", tmpVector};
+	std::vector<std::string> tmpVector {"Who", "has", "a", "cat", "?"};
+	Class tmpC {1, 20, 300, "Alice has a cat", tmpVector};
 
 	SAUNAFS_DEFINE_INOUT_PAIR(Class, c, tmpC, Class());
 	ASSERT_NE(cIn, cOut);
@@ -111,7 +111,7 @@ TEST(PacketSerializationTests, SerializeAndDeserialize) {
 	ASSERT_EQ(3210U, somebodyToSomebodyElse::communicate::kNonEmptyVersion);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 65432, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 36, 0);
-	SAUNAFS_DEFINE_INOUT_PAIR(LegacyString<uint8_t>, name, "kobyla ma maly bok", "");
+	SAUNAFS_DEFINE_INOUT_PAIR(LegacyString<uint8_t>, name, "mare has a small side", "");
 	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, nodeType, 0xF1, 0x00);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint16_t, mode, 0725, 0000);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint16_t, umask, 0351, 0000);
