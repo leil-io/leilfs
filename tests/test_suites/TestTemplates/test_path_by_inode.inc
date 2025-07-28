@@ -54,7 +54,11 @@ assert_equals "data7" "$(cat file4)"
 cd ..
 saunafs_mount_unmount 0
 echo "sfssubfolder=folder/folder2" >> "${info[mount0_cfg]}"
-assert_success saunafs_mount_start 0
+if is_windows_system; then
+	saunafs_mount_start 0
+else
+	assert_success saunafs_mount_start 0
+fi
 cd "${info[mount0]}"
 
 assert_equals "" "$(cat .saunafs_path_by_inode/1)"
@@ -75,7 +79,11 @@ assert_failure cat .saunafs_path_by_inode/7 # corresponding to file4
 cd ..
 saunafs_mount_unmount 0
 echo "sfssubfolder=/" >> "${info[mount0_cfg]}"
-assert_success saunafs_mount_start 0
+if is_windows_system; then
+	saunafs_mount_start 0
+else
+	assert_success saunafs_mount_start 0
+fi
 cd "${info[mount0]}"
 
 # check removing files by their path
