@@ -484,7 +484,7 @@ public:
 	/// @brief Returns whether the header size is the expected one.
 	bool isHeaderSizeValid() const;
 
-private:
+protected:
 	const size_t headerSize_;  ///< The size of the header.
 	const size_t numBlocks_;   ///< The number of blocks.
 
