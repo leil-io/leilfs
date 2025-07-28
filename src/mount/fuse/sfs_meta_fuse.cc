@@ -61,18 +61,6 @@ struct pathbuf {
 	std::mutex lock;
 };
 
-#define READDIR_BUFFSIZE 50000
-
-#define NAME_MAX 255
-#define PATH_SIZE_LIMIT 1024
-
-#define META_ROOT_MODE 0555
-
-#define PKGVERSION \
-		((SAUNAFS_PACKAGE_VERSION_MAJOR)*1000000 + \
-		(SAUNAFS_PACKAGE_VERSION_MINOR)*1000 + \
-		(SAUNAFS_PACKAGE_VERSION_MICRO))
-
 #define IS_SPECIAL_INODE(inode) ((inode)>=SPECIAL_INODE_BASE || (inode)==SPECIAL_INODE_ROOT)
 
 static double entry_cache_timeout = 0.0;

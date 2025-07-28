@@ -49,8 +49,6 @@
 #error FUSE_ROOT_ID is not equal to SPECIAL_INODE_ROOT
 #endif
 
-#define READDIR_BUFFSIZE 50000
-
 /**
  * Function checking if types are equal, ignoring constness
  */
