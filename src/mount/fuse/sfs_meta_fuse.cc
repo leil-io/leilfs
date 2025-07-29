@@ -65,9 +65,9 @@ struct DirectoryBuffer {
 	std::mutex lock;
 };
 
-struct pathbuf {
-	int changed;
-	char *p;
+struct PathBuffer {
+	bool changed;
+	std::string path;
 	size_t size;
 	std::mutex lock;
 };
@@ -631,7 +631,7 @@ void sfs_meta_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *
 }
 
 void sfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
-	pathbuf *pathinfo;
+	auto pathinfo = std::make_unique<PathBuffer>();
 	const uint8_t *path;
 	int status;
 
@@ -648,126 +648,124 @@ void sfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 		return;
 	}
 
-	status = fs_gettrashpath(ino,&path);
+	status = fs_gettrashpath(ino, &path);
 	status = saunafs_error_conv(status);
 
 	if (status) {
 		fuse_reply_err(req, status);
 	} else {
-		pathinfo = new pathbuf();
-
-		pathinfo->changed = 0;
-		pathinfo->size = strlen((char*)path) + 1;
-		if (!(pathinfo->p = (char*)malloc(pathinfo->size))) {
-			safs_pretty_syslog(LOG_EMERG, "out of memory");
-			delete pathinfo;
-			return;
-		}
-		memcpy(pathinfo->p, path, pathinfo->size - 1);
-		pathinfo->p[pathinfo->size - 1] = '\n';
+		pathinfo->changed = false;
+		pathinfo->size = strlen((char *)path) + 1;
+		pathinfo->path = std::string((char *)path);
+		pathinfo->path.append("\n"); 
 		fi->direct_io = 1;
-		fi->fh = (unsigned long)pathinfo;
+		fi->fh = reinterpret_cast<uintptr_t>(pathinfo.release());
 
-		if (fuse_reply_open(req, fi) == -ENOENT) {
-			fi->fh = 0;
-			free(pathinfo->p);
-			delete pathinfo;
-		}
+		if (fuse_reply_open(req, fi) == -ENOENT) { fi->fh = 0; }
 	}
 }
 
 void sfs_meta_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
-	if (ino==SPECIAL_INODE_MASTERINFO) {
-		fuse_reply_err(req,0);
+	if (ino == SPECIAL_INODE_MASTERINFO) {
+		fuse_reply_err(req, 0);
 		return;
 	}
-	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
+
+	auto pathinfo = std::unique_ptr<PathBuffer>(reinterpret_cast<PathBuffer *>(fi->fh));
+
 	std::unique_lock lock(pathinfo->lock);
 	if (pathinfo->changed) {
-		if (pathinfo->p[pathinfo->size-1]=='\n') {
-			pathinfo->p[pathinfo->size-1]=0;
+		if (pathinfo->path.back() == '\n') {
+			pathinfo->path.pop_back();
 		} else {
-			pathinfo->p = (char*) realloc(pathinfo->p,pathinfo->size+1);
-			pathinfo->p[pathinfo->size]=0;
+			pathinfo->path.resize(pathinfo->size + 1);
+			pathinfo->path.back() = '\0';
 		}
-		fs_settrashpath(ino,(uint8_t*)pathinfo->p);
+		fs_settrashpath(ino, reinterpret_cast<const uint8_t *>(pathinfo->path.c_str()));
 	}
 	lock.unlock();
-	free(pathinfo->p);
-	delete pathinfo;
+
 	fi->fh = 0;
-	fuse_reply_err(req,0);
+	fuse_reply_err(req, 0);
 }
 
-void sfs_meta_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi) {
-	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
-	if (ino==SPECIAL_INODE_MASTERINFO) {
+void sfs_meta_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                   struct fuse_file_info *fi) {
+#ifdef MASTERINFO_WITH_VERSION
+	constexpr off_t kMasterInfoSize =
+	    14;  // size of the master info buffer with version information.
+#else
+	constexpr off_t kMasterInfoSize =
+	    10;  // size of the master info buffer without version information.
+#endif
+	auto pathinfo = reinterpret_cast<PathBuffer *>(fi->fh);
+
+	if (ino == SPECIAL_INODE_MASTERINFO) {
 		uint8_t masterinfo[14];
 		fs_getmasterlocation(masterinfo);
 		masterproxy_getlocation(masterinfo);
-#ifdef MASTERINFO_WITH_VERSION
-		if (off>=14) {
-			fuse_reply_buf(req,NULL,0);
-		} else if (off+size>14) {
-			fuse_reply_buf(req,(char*)(masterinfo+off),14-off);
-#else
-		if (off>=10) {
-			fuse_reply_buf(req,NULL,0);
-		} else if (off+size>10) {
-			fuse_reply_buf(req,(char*)(masterinfo+off),10-off);
-#endif
+
+		if (off >= kMasterInfoSize) {
+			fuse_reply_buf(req, nullptr, 0);
+		} else if (off + size > kMasterInfoSize) {
+			fuse_reply_buf(req, (char *)(masterinfo + off), kMasterInfoSize - off);
 		} else {
-			fuse_reply_buf(req,(char*)(masterinfo+off),size);
+			fuse_reply_buf(req, (char *)(masterinfo + off), size);
 		}
 		return;
 	}
-	if (pathinfo==NULL) {
-		fuse_reply_err(req,EBADF);
+
+	if (pathinfo == nullptr) {
+		fuse_reply_err(req, EBADF);
 		return;
 	}
+
 	std::unique_lock lock(pathinfo->lock);
-	if (off<0) {
+	if (off < 0) {
 		lock.unlock();
-		fuse_reply_err(req,EINVAL);
+		fuse_reply_err(req, EINVAL);
 		return;
 	}
-	if ((size_t)off>pathinfo->size) {
-		fuse_reply_buf(req, NULL, 0);
+
+	if ((size_t)off > pathinfo->size) {
+		fuse_reply_buf(req, nullptr, 0);
 	} else if (off + size > pathinfo->size) {
-		fuse_reply_buf(req, (pathinfo->p)+off,(pathinfo->size)-off);
+		fuse_reply_buf(req, (pathinfo->path.c_str()) + off, (pathinfo->size) - off);
 	} else {
-		fuse_reply_buf(req, (pathinfo->p)+off,size);
+		fuse_reply_buf(req, (pathinfo->path.c_str()) + off, size);
 	}
 }
 
-void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
-	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
-	if (ino==SPECIAL_INODE_MASTERINFO) {
-		fuse_reply_err(req,EACCES);
+void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off,
+                    struct fuse_file_info *fi) {
+	auto pathinfo = reinterpret_cast<PathBuffer *>(fi->fh);
+	if (ino == SPECIAL_INODE_MASTERINFO) {
+		fuse_reply_err(req, EACCES);
 		return;
 	}
-	if (pathinfo==NULL) {
-		fuse_reply_err(req,EBADF);
+
+	if (pathinfo == nullptr) {
+		fuse_reply_err(req, EBADF);
 		return;
 	}
+
 	if (off + size > PATH_SIZE_LIMIT) {
-		fuse_reply_err(req,EINVAL);
+		fuse_reply_err(req, EINVAL);
 		return;
 	}
+
 	std::unique_lock lock(pathinfo->lock);
-	if (pathinfo->changed==0) {
-		pathinfo->size = 0;
+	if (pathinfo->changed == 0) { pathinfo->size = 0; }
+
+	if (off + size > pathinfo->size) {
+		pathinfo->size = off + size;
+		pathinfo->path.resize(off + size, '\0');
 	}
-	if (off+size > pathinfo->size) {
-		size_t s = pathinfo->size;
-		pathinfo->p = (char*) realloc(pathinfo->p,off+size);
-		pathinfo->size = off+size;
-		memset(pathinfo->p+s,0,off+size-s);
-	}
-	memcpy((pathinfo->p)+off,buf,size);
+
+	std::memcpy(pathinfo->path.data() + off, buf, size);
 	pathinfo->changed = 1;
 	lock.unlock();
-	fuse_reply_write(req,size);
+	fuse_reply_write(req, size);
 }
 
 void sfs_meta_init(double entry_cache_timeout_in, double attr_cache_timeout_in) {
