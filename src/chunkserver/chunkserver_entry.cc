@@ -43,7 +43,7 @@
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_stats.h"
-#include "chunkserver/output_buffer.h"
+#include "chunkserver/io_buffers.h"
 #include "common/charts.h"
 #include "common/datapack.h"
 #include "common/event_loop.h"
@@ -62,6 +62,18 @@
 
 constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 constexpr uint8_t kConnectRetries = 10;
+
+constexpr uint8_t kSauWriteDataPreffixSize = cltocs::writeData::kPrefixSize;
+// For forwarding: size of SAU_CLTOCS_WRITE_DATA prefix plus the packet header.
+constexpr uint8_t kSauWriteDataPreffixSizeForward =
+    cltocs::writeData::kPrefixSize + PacketHeader::kSize;
+
+// opChunkId (uint64_t), writeId (uint32_t), blocknum (uint16_t), offset16 (uint16_t), opSize
+// (uint32_t), crc (uint32_t)
+constexpr uint8_t kWriteDataPreffixSize = sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint16_t) +
+                                          sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint32_t);
+// For forwarding: size of SAU_CLTOCS_WRITE_DATA prefix plus the packet header.
+constexpr uint8_t kWriteDataPreffixSizeForward = kWriteDataPreffixSize + PacketHeader::kSize;
 
 class MessageSerializer {
 public:
@@ -162,11 +174,13 @@ void ChunkserverEntry::attachPacket(std::unique_ptr<PacketStruct> &&packet) {
 void ChunkserverEntry::preserveInputPacket() {
 	TRACETHIS();
 
-	if (inputPacket.useAlignedMemory) {
-		writePacket->alignedBuffer = std::move(inputPacket.alignedBuffer);
-	} else {
-		writePacket->packet = std::move(inputPacket.packet);
+	// If the writePacket had already an InputBuffer, we need to put it back
+	// to the pool, so it can be reused later.
+	if (writePacket->inputBuffer) {
+		getWriteInputBufferPool().put(std::move(writePacket->inputBuffer));
 	}
+
+	writePacket->inputBuffer = std::move(inputPacket.inputBuffer);
 }
 
 void ChunkserverEntry::createAttachedPacket(std::vector<uint8_t> &packet) {
@@ -302,6 +316,9 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 
 	eptr->pendingDelayedJobs--;
 	if (eptr->pendingDelayedJobs == 0) {
+		if (eptr->writePacket->inputBuffer != nullptr) {
+			getWriteInputBufferPool().put(std::move(eptr->writePacket->inputBuffer));
+		}
 		eptr->state = State::Closed;
 	}
 }
@@ -603,44 +620,126 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 
 // bg writing
 
+void ChunkserverEntry::createAttachedWriteStatus(uint8_t status, uint32_t writeId) {
+	sassert(messageSerializer != nullptr);
+	std::vector<uint8_t> buffer;
+	messageSerializer->serializeCstoclWriteStatus(buffer, chunkId, writeId, status);
+	createAttachedPacket(buffer);
+}
+
 void ChunkserverEntry::writeFinishedCallback(uint8_t status, void *entry) {
 	TRACETHIS();
 	auto *eptr = static_cast<ChunkserverEntry *>(entry);
 	eptr->writeJobId = 0;
 	sassert(eptr->messageSerializer != nullptr);
+
+	if (eptr->writeJobWriteId == 0) {
+		safs::log_warn(
+		    "Inconsistent state in writeFinishedCallback: writeJobWriteId: {}, chunkId: {}, status: {}.",
+		    eptr->writeJobWriteId, eptr->chunkId, status);
+	}
+
+	auto statusWithWriteIdToReply = eptr->writePacket->inputBuffer->getStatuses();
+	eptr->writePacket->inputBuffer->setFinished();
+	getWriteInputBufferPool().put(std::move(eptr->writePacket->inputBuffer));
+
+	for (const auto &[status, writeId] : statusWithWriteIdToReply) {
+		if (status != SAUNAFS_STATUS_OK) {
+			eptr->createAttachedWriteStatus(status, writeId);
+			eptr->state = State::WriteFinish;
+			return;
+		}
+
+		// We can consider that the write was successful
+		if (eptr->state == State::WriteLast) {
+			eptr->createAttachedWriteStatus(status, writeId);
+		} else {
+			if (eptr->partiallyCompletedWrites.count(writeId) > 0) {
+				// found - it means that it was added by status_receive, ie. next
+				// chunkserver from a chain finished writing before our worker
+				eptr->createAttachedWriteStatus(status, writeId);
+				eptr->partiallyCompletedWrites.erase(writeId);
+			} else {
+				// not found - so add it
+				eptr->partiallyCompletedWrites.insert(writeId);
+			}
+		}
+	}
+
+	eptr->checkNextPacket();
+}
+
+void ChunkserverEntry::openWriteFinishedCallback(uint8_t status, void *entry) {
+	TRACETHIS();
+	auto *eptr = static_cast<ChunkserverEntry *>(entry);
+	eptr->writeJobId = 0;
+	sassert(eptr->messageSerializer != nullptr);
+
+	if (eptr->writeJobWriteId != 0) {
+		safs::log_warn(
+		    "Inconsistent state in openWriteFinishedCallback: writeJobWriteId: {}, chunkId: {}, status: {}.",
+		    eptr->writeJobWriteId, eptr->chunkId, status);
+	}
+	// We should assume that writeJobWriteId is 0 here, because this callback
+	// is called after job_open, which should have set writeJobWriteId to 0.
+
 	if (status != SAUNAFS_STATUS_OK) {
-		std::vector<uint8_t> buffer;
-		eptr->messageSerializer->serializeCstoclWriteStatus(
-		    buffer, eptr->chunkId, eptr->writeJobWriteId, status);
-		eptr->createAttachedPacket(buffer);
+		eptr->createAttachedWriteStatus(status, eptr->writeJobWriteId);
 		eptr->state = State::WriteFinish;
 		return;
 	}
-	if (eptr->writeJobWriteId == 0) {
-		eptr->isChunkOpen = 1;
-	}
+
+	eptr->isChunkOpen = 1;
+
+	// We can consider that the write was successful
 	if (eptr->state == State::WriteLast) {
-		std::vector<uint8_t> buffer;
-		eptr->messageSerializer->serializeCstoclWriteStatus(
-		    buffer, eptr->chunkId, eptr->writeJobWriteId, status);
-		eptr->createAttachedPacket(buffer);
+		eptr->createAttachedWriteStatus(status, eptr->writeJobWriteId);
 	} else {
 		if (eptr->partiallyCompletedWrites.count(eptr->writeJobWriteId) > 0) {
 			// found - it means that it was added by status_receive, ie. next
 			// chunkserver from a chain finished writing before our worker
-			sassert(eptr->messageSerializer != nullptr);
-			std::vector<uint8_t> buffer;
-			eptr->messageSerializer->serializeCstoclWriteStatus(
-			    buffer, eptr->chunkId, eptr->writeJobWriteId,
-			    SAUNAFS_STATUS_OK);
-			eptr->createAttachedPacket(buffer);
+			eptr->createAttachedWriteStatus(status, eptr->writeJobWriteId);
 			eptr->partiallyCompletedWrites.erase(eptr->writeJobWriteId);
 		} else {
 			// not found - so add it
 			eptr->partiallyCompletedWrites.insert(eptr->writeJobWriteId);
 		}
 	}
+
 	eptr->checkNextPacket();
+}
+
+void ChunkserverEntry::prepareInputBufferForWrite(uint32_t type, bool isForward) {
+	if (inputPacket.inputBuffer != nullptr) {
+		safs::log_warn(
+		    "prepareInputBufferForWrite called with non-null inputBuffer, type: {}, isForward: {}. Reusing existing buffer.",
+		    type, isForward);
+		return;
+	}
+
+	if (type == SAU_CLTOCS_WRITE_DATA) {
+		inputPacket.inputBuffer = getWriteInputBufferPool().get(
+		    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize,
+		    maxBlocksPerHddWriteJob);
+	} else {
+		// CLTOCS_WRITE_DATA
+		inputPacket.inputBuffer = getWriteInputBufferPool().get(
+		    isForward ? kWriteDataPreffixSizeForward : kWriteDataPreffixSize,
+		    maxBlocksPerHddWriteJob);
+	}
+}
+
+InputBuffer *ChunkserverEntry::getInputBufferForWrite(uint32_t type, bool isForward) {
+	// Let's check if we already have an input buffer in the write packet.
+	if (writePacket->inputBuffer != nullptr &&
+	    writePacket->inputBuffer->canReceiveNewWriteOperationAndLock()) {
+		writePacket->inputBuffer->addNewWriteOperation();
+		return writePacket->inputBuffer.get();
+	}
+
+	prepareInputBufferForWrite(type, isForward);
+	inputPacket.inputBuffer->addNewWriteOperation();
+	return inputPacket.inputBuffer.get();
 }
 
 void serializeCltocsWriteInit(std::vector<uint8_t> &buffer, uint64_t chunkId,
@@ -738,9 +837,10 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	} else {
 		state = State::WriteLast;
 	}
+
 	stats_hlopw++;
 	writeJobWriteId = 0;
-	writeJobId = job_open(*workerJobPool, writeFinishedCallback, this, chunkId, chunkType);
+	writeJobId = job_open(*workerJobPool, openWriteFinishedCallback, this, chunkId, chunkType);
 }
 
 void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
@@ -752,7 +852,6 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	uint32_t opOffset;
 	uint32_t opSize;
 	uint32_t crc;
-	const uint8_t* dataToWrite;
 
 	sassert(type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA);
 	try {
@@ -765,15 +864,14 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 			return;
 		}
 		if (type == SAU_CLTOCS_WRITE_DATA) {
-			cltocs::writeData::deserializePrefix(data, length, opChunkId,
+			cltocs::writeData::deserializePrefix(data, kSauWriteDataPreffixSize, opChunkId,
 			                                     writeId, blocknum, opOffset,
 			                                     opSize, crc);
-			dataToWrite = data + cltocs::writeData::kPrefixSize;
 		} else {
 			uint16_t offset16;
-			deserializeAllLegacyPacketDataNoHeader(data, length, opChunkId,
+			deserializeAllLegacyPacketDataNoHeader(data, kWriteDataPreffixSize, opChunkId,
 			                                       writeId, blocknum, offset16,
-			                                       opSize, crc, dataToWrite);
+			                                       opSize, crc);
 			opOffset = offset16;
 			sassert(chunkType == slice_traits::standard::ChunkPartType());
 		}
@@ -787,8 +885,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	uint8_t status = SAUNAFS_STATUS_OK;
-	uint32_t dataSize = data + length - dataToWrite;
-	if (dataSize != opSize) {
+	if (!inputBufferInUse->isHeaderSizeValid()) {
 		status = SAUNAFS_ERROR_WRONGSIZE;
 	} else if (opChunkId != chunkId) {
 		status = SAUNAFS_ERROR_WRONGCHUNKID;
@@ -803,10 +900,16 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 
-	preserveInputPacket();
-	writeJobWriteId = writeId;
-	writeJobId = job_write(*workerJobPool, writeFinishedCallback, this, opChunkId, chunkVersion,
-	                       chunkType, blocknum, opOffset, opSize, crc, dataToWrite);
+	inputBufferInUse->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
+	inputBufferInUse->endUpdateAndUnlock(true);
+
+	// No write jobs in progress, so we can start a new one
+	if (writeJobId == 0) {
+		preserveInputPacket();
+		writeJobWriteId = writeId;
+		writeJobId = job_write(*workerJobPool, writeFinishedCallback, this, opChunkId, chunkVersion,
+		                       chunkType, writePacket->inputBuffer.get());
+	}
 }
 
 void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
@@ -920,7 +1023,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		tcpclose(fwdSocket);
 		fwdSocket = kInvalidSocket;
 	}
-	inputPacket.useAlignedMemory = false;
+	inputBufferInUse = nullptr;
 	state = State::Idle;
 }
 
@@ -1124,6 +1227,17 @@ void ChunkserverEntry::closeJobs() {
 	} else if (writeJobId > 0) {
 		workerJobPool->disableJob(writeJobId);
 		workerJobPool->changeCallback(writeJobId, delayedCloseCallback, this);
+
+		if (inputBufferInUse != nullptr) {
+			// If we were updating the input buffer, we need to end the update
+			inputBufferInUse->endUpdateAndUnlock(false);
+			inputBufferInUse = nullptr;
+		}
+
+		if (inputPacket.inputBuffer != nullptr) {
+			getWriteInputBufferPool().put(std::move(inputPacket.inputBuffer));
+		}
+
 		pendingDelayedJobs++;
 		state = State::CloseWait;
 	} else if (getBlocksJobId > 0) {
@@ -1271,8 +1385,20 @@ void ChunkserverEntry::checkNextPacket() {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;
 
-		if (inputPacket.useAlignedMemory) {
-			gotPacket(type, inputPacket.alignedBuffer.data() + kIOAlignedOffset, opSize);
+		if (type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA) {
+			if (inputBufferInUse != inputPacket.inputBuffer.get()) {
+				safs::log_warn(
+				    "Inconsistent state in checkNextPacket: inputBufferInUse != inputPacket.inputBuffer");
+			}
+
+			if (state == State::WriteForward) {
+				gotPacket(
+				    type,
+				    inputBufferInUse->getStartLastWriteOperationHeader() + PacketHeader::kSize,
+				    opSize);
+			} else {
+				gotPacket(type, inputBufferInUse->getStartLastWriteOperationHeader(), opSize);
+			}
 		} else {
 			gotPacket(type, inputPacket.packet.data(), opSize);
 		}
@@ -1466,31 +1592,29 @@ void ChunkserverEntry::forward() {
 
 		// Check if we can use aligned memory directly
 		if (header.type == CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_DATA) {
-			if (inputPacket.alignedBuffer.size() < kIOAlignedPacketSize) {
-				inputPacket.alignedBuffer.resize(kIOAlignedPacketSize);
-				passert(inputPacket.alignedBuffer.data());
-			}
-			std::copy(headerBuffer, headerBuffer + PacketHeader::kSize,
-			          inputPacket.alignedBuffer.data() + kIOAlignedOffset - PacketHeader::kSize);
-			inputPacket.startPtr = inputPacket.alignedBuffer.data() + kIOAlignedOffset;
+			inputBufferInUse = getInputBufferForWrite(header.type, true);
+			inputBufferInUse->copyIntoBuffer(InputBuffer::BufferType::Header, headerBuffer,
+			                                 PacketHeader::kSize);
+			inputPacket.startPtr = const_cast<uint8_t *>(
+			    inputBufferInUse->getStartLastWriteOperationHeader() + PacketHeader::kSize);
+
 			inputPacket.bytesLeft = header.length;
-			inputPacket.useAlignedMemory = true;
 		} else {
 			inputPacket.packet.resize(totalPacketLength);
 			passert(inputPacket.packet.data());
 			std::copy(headerBuffer, headerBuffer + PacketHeader::kSize, inputPacket.packet.begin());
 			inputPacket.startPtr = inputPacket.packet.data() + PacketHeader::kSize;
 			inputPacket.bytesLeft = header.length;
-			inputPacket.useAlignedMemory = false;
+			inputBufferInUse = nullptr;
 		}
 
 		if (header.type == CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_DATA ||
 		    header.type == SAU_CLTOCS_WRITE_END) {
 			fwdBytesLeft = PacketHeader::kSize;
 			// Use the correct buffer for forwarding
-			if (inputPacket.useAlignedMemory && header.type != SAU_CLTOCS_WRITE_END) {
+			if (inputBufferInUse != nullptr) {
 				fwdStartPtr =
-				    inputPacket.alignedBuffer.data() + kIOAlignedOffset - PacketHeader::kSize;
+				    const_cast<uint8_t *>(inputBufferInUse->getStartLastWriteOperationHeader());
 			} else {
 				fwdStartPtr = inputPacket.packet.data();
 			}
@@ -1500,7 +1624,12 @@ void ChunkserverEntry::forward() {
 	}
 
 	if (inputPacket.bytesLeft > 0) {
-		bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+		if (inputBufferInUse != nullptr) {
+			// Case SAU_CLTOCS_WRITE_DATA or CLTOCS_WRITE_DATA
+			bytesReadOrWritten = inputBufferInUse->readFromSocket(sock, inputPacket.bytesLeft);
+		} else {
+			bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+		}
 		if (bytesReadOrWritten == 0) {
 			state = State::Close;
 			return;
@@ -1514,6 +1643,7 @@ void ChunkserverEntry::forward() {
 		}
 
 		stats_bytesin += bytesReadOrWritten;
+		// Note startPtr could point to anywhere in some cases
 		inputPacket.startPtr += bytesReadOrWritten;
 		inputPacket.bytesLeft -= bytesReadOrWritten;
 		if (fwdStartPtr != nullptr) {
@@ -1523,7 +1653,12 @@ void ChunkserverEntry::forward() {
 
 	if (fwdBytesLeft > 0) {
 		sassert(fwdStartPtr != nullptr);
-		bytesReadOrWritten = ::write(fwdSocket, fwdStartPtr, fwdBytesLeft);
+		if (inputBufferInUse) {
+			// Case SAU_CLTOCS_WRITE_DATA or CLTOCS_WRITE_DATA
+			bytesReadOrWritten = inputBufferInUse->writeToSocket(fwdSocket, fwdBytesLeft);
+		} else {
+			bytesReadOrWritten = ::write(fwdSocket, fwdStartPtr, fwdBytesLeft);
+		}
 		if (bytesReadOrWritten == 0) {
 			fwdError();
 			return;
@@ -1536,17 +1671,18 @@ void ChunkserverEntry::forward() {
 			return;
 		}
 		stats_bytesout += bytesReadOrWritten;
+		// Note fwdStartPtr could point to anywhere in some cases
 		fwdStartPtr += bytesReadOrWritten;
 		fwdBytesLeft -= bytesReadOrWritten;
 	}
 
-	if (inputPacket.bytesLeft == 0 && fwdBytesLeft == 0 && writeJobId == 0) {
+	if (inputPacket.bytesLeft == 0 && fwdBytesLeft == 0 &&
+	    (writeJobId == 0 || inputBufferInUse == writePacket->inputBuffer.get())) {
 		PacketHeader header;
 		try {
 			deserializePacketHeader(headerBuffer, sizeof(headerBuffer), header);
 		} catch (IncorrectDeserializationException &) {
-			safs_pretty_syslog(LOG_WARNING,
-			                   "(forward) Received malformed network packet");
+			safs_pretty_syslog(LOG_WARNING, "(forward) Received malformed network packet");
 			state = State::Close;
 			return;
 		}
@@ -1555,8 +1691,9 @@ void ChunkserverEntry::forward() {
 		inputPacket.startPtr = headerBuffer;
 
 		uint8_t *packetData{nullptr};
-		if (inputPacket.useAlignedMemory) {
-			packetData = inputPacket.alignedBuffer.data() + kIOAlignedOffset;
+		if (inputBufferInUse != nullptr) {
+			packetData = const_cast<uint8_t *>(
+			    inputBufferInUse->getStartLastWriteOperationHeader() + PacketHeader::kSize);
 		} else {
 			packetData = inputPacket.packet.data() + PacketHeader::kSize;
 		}
@@ -1608,18 +1745,14 @@ void ChunkserverEntry::readFromSocket() {
 			}
 
 			if (type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA) {
-				// Allocate memory only if needed. Reuse it most of the time.
-				if (inputPacket.alignedBuffer.size() < kIOAlignedPacketSize) {
-					inputPacket.alignedBuffer.reserve(kIOAlignedPacketSize);
-					passert(inputPacket.alignedBuffer.data());
-				}
-				inputPacket.startPtr = inputPacket.alignedBuffer.data() + kIOAlignedOffset;
-				inputPacket.useAlignedMemory = true;
+				inputBufferInUse = getInputBufferForWrite(type, false);
+				inputPacket.startPtr =
+				    const_cast<uint8_t *>(inputBufferInUse->getStartLastWriteOperationHeader());
 			} else {
 				inputPacket.packet.resize(opSize);
 				passert(inputPacket.packet.data());
 				inputPacket.startPtr = inputPacket.packet.data();
-				inputPacket.useAlignedMemory = false;
+				inputBufferInUse = nullptr;
 			}
 		}
 		inputPacket.bytesLeft = opSize;
@@ -1628,7 +1761,12 @@ void ChunkserverEntry::readFromSocket() {
 
 	if (mode == Mode::Data) {
 		if (inputPacket.bytesLeft > 0) {
-			bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+			if (inputBufferInUse != nullptr) {
+				// Case SAU_CLTOCS_WRITE_DATA or CLTOCS_WRITE_DATA
+				bytesRead = inputBufferInUse->readFromSocket(sock, inputPacket.bytesLeft);
+			} else {
+				bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
+			}
 			if (bytesRead == 0) {
 				state = State::Close;
 				return;
@@ -1641,14 +1779,13 @@ void ChunkserverEntry::readFromSocket() {
 				return;
 			}
 			stats_bytesin += bytesRead;
+			// Note startPtr could point to anywhere in some cases
 			inputPacket.startPtr += bytesRead;
 			inputPacket.bytesLeft -= bytesRead;
 
-			if (inputPacket.bytesLeft > 0) {
-				return;
-			}
+			if (inputPacket.bytesLeft > 0) { return; }
 		}
-		if (writeJobId == 0) {
+		if (writeJobId == 0 || inputBufferInUse == writePacket->inputBuffer.get()) {
 			ptr = headerBuffer;
 			get32bit(&ptr, type);
 			get32bit(&ptr, opSize);
@@ -1657,8 +1794,8 @@ void ChunkserverEntry::readFromSocket() {
 			inputPacket.bytesLeft = PacketHeader::kSize;
 			inputPacket.startPtr = headerBuffer;
 
-			if (inputPacket.useAlignedMemory) {
-				gotPacket(type, inputPacket.alignedBuffer.data() + kIOAlignedOffset, opSize);
+			if (inputBufferInUse != nullptr) {
+				gotPacket(type, inputBufferInUse->getStartLastWriteOperationHeader(), opSize);
 			} else {
 				gotPacket(type, inputPacket.packet.data(), opSize);
 			}

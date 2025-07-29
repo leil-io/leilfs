@@ -22,7 +22,7 @@
 
 #include "common/platform.h"
 
-#include "chunkserver/output_buffer.h"
+#include "chunkserver/io_buffers.h"
 #include "common/pcqueue.h"
 
 #include <cstdint>
@@ -277,8 +277,7 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                   uint32_t chunkVersion, ChunkPartType chunkType, uint16_t blockNum,
-                   uint32_t offset, uint32_t size, uint32_t crc, const uint8_t *buffer,
+                   uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
                    uint32_t listenerId = 0);
 
 /// @brief Adds a get blocks job to the JobPool.
