@@ -58,6 +58,12 @@ constexpr size_t kDirEntryStride = 6;
 // such as inode, type, and any additional metadata.
 constexpr size_t kDirEntryExtraFieldsSize = 9;
 
+// Block size used for filesystem statistics and block calculations (in bytes)
+constexpr size_t kBlockSize = 512;
+
+// Maximum file permission bits (all permission bits, sticky/setuid/setgid)
+constexpr mode_t kMaxFilePermissions = 07777;
+
 struct DirectoryBuffer {
 	bool wasRead = false;
 	std::vector<uint8_t> buffer;
@@ -80,9 +86,10 @@ static double attr_cache_timeout = 1.0;
 static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
-	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink;
+	uint32_t attruid, attrgid, attratime, attrmtime, attrctime, attrnlink;
 	uint64_t attrlength;
 	const uint8_t *ptr;
+
 	ptr = attr.data();
 	attrtype = get8bit(&ptr);
 	attrmode = get16bit(&ptr);
@@ -94,13 +101,15 @@ static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat 
 	get32bit(&ptr, attrnlink);
 	attrlength = get64bit(&ptr);
 	stbuf->st_ino = inode;
-	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_RESERVED) {
-		stbuf->st_mode = S_IFREG | (attrmode & 07777);
+
+	if (attrtype == TYPE_FILE || attrtype == TYPE_TRASH || attrtype == TYPE_RESERVED) {
+		stbuf->st_mode = S_IFREG | (attrmode & kMaxFilePermissions);
 	} else {
 		stbuf->st_mode = 0;
 	}
+
 	stbuf->st_size = attrlength;
-	stbuf->st_blocks = (attrlength+511)/512;
+	stbuf->st_blocks = (attrlength + kBlockSize - 1) / kBlockSize;
 	stbuf->st_uid = attruid;
 	stbuf->st_gid = attrgid;
 	stbuf->st_atime = attratime;
@@ -110,25 +119,25 @@ static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat 
 }
 
 void sfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
-	uint64_t totalspace,availspace,trashspace,reservedspace;
+	uint64_t totalspace, availspace, trashspace, reservedspace;
 	inode_t inodes;
 	struct statvfs stfsbuf;
-	memset(&stfsbuf,0,sizeof(stfsbuf));
+	memset(&stfsbuf, 0, sizeof(stfsbuf));
 
 	(void)ino;
-	fs_statfs(&totalspace,&availspace,&trashspace,&reservedspace,&inodes);
+	fs_statfs(&totalspace, &availspace, &trashspace, &reservedspace, &inodes);
 
 	stfsbuf.f_namemax = NAME_MAX;
-	stfsbuf.f_frsize = 512;
-	stfsbuf.f_bsize = 512;
-	stfsbuf.f_blocks = trashspace/512+reservedspace/512;
-	stfsbuf.f_bfree = reservedspace/512;
-	stfsbuf.f_bavail = reservedspace/512;
-	stfsbuf.f_files = 1000000000+PKGVERSION;
-	stfsbuf.f_ffree = 1000000000+PKGVERSION;
-	stfsbuf.f_favail = 1000000000+PKGVERSION;
+	stfsbuf.f_frsize = kBlockSize;
+	stfsbuf.f_bsize = kBlockSize;
+	stfsbuf.f_blocks = trashspace / kBlockSize + reservedspace / kBlockSize;
+	stfsbuf.f_bfree = reservedspace / kBlockSize;
+	stfsbuf.f_bavail = reservedspace / kBlockSize;
+	stfsbuf.f_files = 1000000000 + PKGVERSION;
+	stfsbuf.f_ffree = 1000000000 + PKGVERSION;
+	stfsbuf.f_favail = 1000000000 + PKGVERSION;
 
-	fuse_reply_statfs(req,&stfsbuf);
+	fuse_reply_statfs(req, &stfsbuf);
 }
 
 void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
