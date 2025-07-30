@@ -51,20 +51,20 @@ assert_success file-validate new_mount_old_master_file
 # Test if all files produced so far are readable on legacy mount:
 cd "${info[mount0]}/from_new_mount"
 assert_success file-validate new_mount_old_master_file
+cd ${TEMP_DIR} # Change to temp directory to avoid issues with CWD on mount during master restart
 
 saunafsXX_master_daemon stop
 
 # Force the master to create new sessions (and clients to connect instead of reconnect)
 rm $(get_current_master_sessions_file)
 
-# Don't know why, but we have to bypass the saunafs_master_daemon function
-assert_success sfsmaster -c "${info[master0_cfg]}" start
+assert_success saunafs_master_daemon start
 
 saunafs_wait_for_all_ready_chunkservers
 
 # Ensure that we can still read and write files from new and old SaunaFS mounts
 
-# We were at "${info[mount0]}/from_new_mount"
+cd "${info[mount0]}/from_new_mount"
 assert_success file-validate new_mount_old_master_file
 
 cd "../from_old_mount"

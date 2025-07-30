@@ -28,7 +28,7 @@ assert_success rm "$chunk"
 truncate -s 1 dir/file
 assert_awk_finds '/INCVERSION/' "$(cat "${info[master_data_path]}"/changelog.sfs)"
 echo b > something_more  # To make sure that after INCVERSION we are able to apply other changes
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	# On Windows, we need to wait for the metadata to be dumped
 	sleep 0.5
 fi
