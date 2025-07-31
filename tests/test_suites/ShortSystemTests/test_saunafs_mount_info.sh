@@ -18,7 +18,7 @@ compare_dates() {
 USE_RAMDISK=YES \
     setup_local_empty_saunafs info
 
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
     # Get the PID and username of the sfsmount process on Windows
     tasklist_output=$(tasklist.exe /FI "IMAGENAME eq sfsmount.exe" 2>&1)
     sfsmount_pid=$(echo "$tasklist_output" | awk '/sfsmount.exe/ {print $2}')
@@ -41,7 +41,7 @@ mount_info=$(cat "${info[mount0]}/.saunafs_mount_info")
 # Check if the contents match the expected values
 actual_started_date=$(echo "$mount_info" | egrep "STARTED DATE" | awk '{print $3}')
 compare_dates "$expected_started_date" "$actual_started_date" 5
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
     assert_success $(echo "$mount_info" | grep -q "$expected_sid")
 else
     assert_success $(echo "$mount_info" | grep -q "$expected_uid")

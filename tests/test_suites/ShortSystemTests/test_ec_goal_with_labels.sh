@@ -44,7 +44,7 @@ assert_equals 3 "$(count_chunks_on_chunkservers {6..8})"
 assert_equals 3 "$(count_chunks_on_chunkservers {0..11})"
 
 saunafs setgoal ec33_hdd dir/file
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints '6 ec3_3' 'chunks_state' '4 minutes'
 else
 	assert_eventually_prints '6 ec3_3' 'chunks_state' '2 minutes'
@@ -53,7 +53,7 @@ assert_equals 3 "$(count_chunks_on_chunkservers {3..5})"
 assert_equals 6 "$(count_chunks_on_chunkservers {0..11})"
 
 saunafs setgoal ec22_mix dir/file
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints '4 ec2_2' 'chunks_state' '4 minutes'
 else
 	assert_eventually_prints '4 ec2_2' 'chunks_state' '2 minutes'
@@ -63,7 +63,7 @@ assert_equals 2 "$(count_chunks_on_chunkservers {6..8})"
 
 saunafs setgoal ec36_mix dir/file
 saunafs fileinfo dir/*
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints '9 ec3_6' 'chunks_state' '4 minutes'
 else
 	assert_eventually_prints '9 ec3_6' 'chunks_state' '2 minutes'

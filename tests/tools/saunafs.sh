@@ -30,6 +30,12 @@ setup_local_empty_saunafs() {
 	saunafs_info_[chunkserver_count]=$number_of_chunkservers
 	saunafs_info_[admin_password]=${ADMIN_PASSWORD:-password}
 
+	if is_windows_system; then
+		saunafs_info_[is_windows_system]=1
+	else
+		saunafs_info_[is_windows_system]=0
+	fi
+
 	init_metadata_backend
 
 	# Enable always ramdisk for zoned devices
@@ -109,7 +115,7 @@ setup_local_empty_saunafs() {
 	if [[ $auto_shadow_master == YES && $number_of_masterservers == 1 ]]; then
 		add_metadata_server_ auto "shadow"
 		saunafs_master_n auto start ${shadow_start_param}
-		if ! is_windows_system; then
+		if ! [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 			assert_eventually 'saunafs_shadow_synchronized auto'
 		fi
 	fi
@@ -145,7 +151,7 @@ init_metadata_backend() {
 }
 
 saunafs_admin_command() {
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		${SAFS_ADMIN_COMMAND} "$@" | tr -d '\r'
 	else
 		saunafs-admin "$@"
@@ -154,7 +160,7 @@ saunafs_admin_command() {
 }
 
 saunafs_command() {
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		${SAFS_SAUNAFS_COMMAND} "$@" | tr -d '\r'
 	else
 		saunafs "$@"
@@ -183,7 +189,7 @@ windows_server_aux(){
 saunafs_chunkserver_daemon() {
 	local id=$1
 	shift
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		windows_server_aux "sfschunkserver -c ${saunafs_info_[chunkserver${id}_cfg]}" "$@"
 	else
 		sfschunkserver -c "${saunafs_info_[chunkserver${id}_cfg]}" "$@" | cat
@@ -192,7 +198,7 @@ saunafs_chunkserver_daemon() {
 }
 
 saunafs_master_daemon() {
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		windows_server_aux "sfsmaster -c ${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}" "$@"
 	else
 		sfsmaster -c "${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}" "$@" | cat
@@ -204,7 +210,7 @@ saunafs_master_daemon() {
 saunafs_master_n() {
 	local id=$1
 	shift
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		windows_server_aux "sfsmaster -c ${saunafs_info_[master${id}_cfg]}" "$@"
 	else
 		sfsmaster -c "${saunafs_info_[master${id}_cfg]}" "$@" | cat
@@ -214,7 +220,7 @@ saunafs_master_n() {
 
 # saunafs_metalogger_daemon start|stop|restart|kill|tests|isalive|...
 saunafs_metalogger_daemon() {
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		windows_server_aux "sfsmetalogger -c ${saunafs_info_[metalogger_cfg]}" "$@"
 	else
 		sfsmetalogger -c "${saunafs_info_[metalogger_cfg]}" "$@" | cat
@@ -226,7 +232,7 @@ saunafs_metalogger_daemon() {
 saunafs_mount_unmount_async() {
 	local mount_id=$1
 	local mount_dir=${saunafs_info_[mount${mount_id}]}
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		${saunafs_info_[umountcall${mount_id}]}
 	else
 		saunafs_fusermount -u ${mount_dir}
@@ -254,7 +260,7 @@ saunafs_mount_start() {
 	if [[ $mount_cmd ]]; then
 		configure_mount_ ${mount_id} ${mount_cmd}
 	fi
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		${saunafs_info_[mntcall${mount_id}]}
 	else
 		do_mount_ ${mount_id}
@@ -773,7 +779,7 @@ add_mount_() {
 	local user_id=$2
 	local group_id=$3
 
-	if is_windows_system; then
+	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
 		windows_prepare_mount_ $mount_id $user_id $group_id
 	else
 		unix_prepare_mount_ $mount_id
