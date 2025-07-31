@@ -25,7 +25,6 @@
 #include <fuse.h>
 #include <fuse_lowlevel.h>
 
-#include "mount/fuse/sfs_fuselib/metadata.h"
 #include "protocol/SFSCommunication.h"
 
 void sfs_statfs(fuse_req_t req, fuse_ino_t ino);
