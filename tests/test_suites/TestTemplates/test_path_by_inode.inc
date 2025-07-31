@@ -54,7 +54,7 @@ assert_equals "data7" "$(cat file4)"
 cd ..
 saunafs_mount_unmount 0
 echo "sfssubfolder=folder/folder2" >> "${info[mount0_cfg]}"
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	saunafs_mount_start 0
 else
 	assert_success saunafs_mount_start 0
@@ -79,7 +79,7 @@ assert_failure cat .saunafs_path_by_inode/7 # corresponding to file4
 cd ..
 saunafs_mount_unmount 0
 echo "sfssubfolder=/" >> "${info[mount0_cfg]}"
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	saunafs_mount_start 0
 else
 	assert_success saunafs_mount_start 0

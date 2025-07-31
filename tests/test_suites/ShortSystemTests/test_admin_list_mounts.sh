@@ -5,7 +5,7 @@ MOUNTS=4 \
 mounts=$(saunafs_admin_command list-mounts --porcelain --verbose localhost "${info[matocl]}")
 expect_equals "4" $(wc -l <<< "$mounts")
 for i in {1..4}; do
-	if is_windows_system; then
+	if [[ ${info[is_windows_system]} -eq 1 ]]; then
 		expect_equals \
 			"$i $(echo -n $i | tr '[1-9]' '[F-N]'): $SAUNAFS_VERSION / 0 0 999 999 no yes no no no 1 40 - -" \
 			"$(sed -n "${i}p" <<< "$mounts" | cut -d' ' -f 1,3-)"

@@ -36,7 +36,7 @@ saunafs_wait_for_ready_chunkservers 5
 
 # All chunks has 4 missing copies but 2 chunkservers are disconnected,
 # so only two new copies should be created
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '15 seconds'
 else
 	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '5 seconds'
@@ -47,7 +47,7 @@ sleep 10
 assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 3 copies:' | wc -l)
 
 # Expect two more copies of each chunk to migrate to the two empty servers
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '60 seconds'
 else
 	assert_eventually_prints 20 'saunafs checkfile "${info[mount0]}"/* | grep "with 3 copies:" | wc -l' '20 seconds'

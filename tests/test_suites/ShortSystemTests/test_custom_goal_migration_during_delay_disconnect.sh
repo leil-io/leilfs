@@ -40,7 +40,7 @@ saunafs setgoal raid_goal "${info[mount0]}"/* > /dev/null
 
 # Chunks should be replicated only on 'raid' server.
 # Replication to other servers is delayed because of disconnected chunkserver 2.
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 0 | wc -l' '25 seconds'
 else
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 0 | wc -l' '5 seconds'
@@ -53,7 +53,7 @@ assert_equals 20 $(saunafs checkfile "${info[mount0]}"/* | grep 'with 2 copies:'
 assert_equals 0 $(find_chunkserver_metadata_chunks 1 | wc -l)
 
 # Expect one copy of each chunk to migrate to the last unlabeled server.
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 1 | wc -l' '100 seconds'
 else
 	assert_eventually_prints 20 'find_chunkserver_metadata_chunks 1 | wc -l' '20 seconds'

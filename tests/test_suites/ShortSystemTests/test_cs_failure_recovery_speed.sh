@@ -14,7 +14,7 @@ wait_if_windows
 
 # Stop one of chunkservers which has one copy of each chunk and
 # immediately start overwriting all the chunks.
-if is_windows_system; then
+if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	saunafs_chunkserver_daemon 0 stop
 else
 	kill -s SIGSTOP "$(saunafs_chunkserver_daemon 0 test | sed 's/.*pid: //')"
