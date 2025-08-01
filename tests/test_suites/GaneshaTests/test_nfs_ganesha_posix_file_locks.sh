@@ -1,0 +1,93 @@
+timeout_set 1 minute
+
+USE_RAMDISK=YES \
+	setup_local_empty_saunafs info
+
+test_error_cleanup() {
+	cd ${TEMP_DIR}
+	sudo umount -l ${TEMP_DIR}/mnt/ganesha
+	sudo pkill -9 ganesha.nfsd
+}
+
+create_ganesha_pid_file
+
+mkdir -p ${TEMP_DIR}/mnt/ganesha
+
+cat <<EOF > ${TEMP_DIR}/ganesha.conf
+NFSV4 {
+	Grace_Period = 5;
+	Lease_Lifetime = 5;
+}
+EXPORT
+{
+	Attr_Expiration_Time = 10;
+	Export_Id = 2;
+	Path = /;
+	Pseudo = /;
+	Access_Type = RW;
+	FSAL {
+		Name = SaunaFS;
+		hostname = localhost;
+		port = ${saunafs_info_[matocl]};
+	}
+	Protocols = 4;
+}
+EOF
+
+sudo /usr/bin/ganesha.nfsd -f "${TEMP_DIR}/ganesha.conf"
+
+check_rpc_service
+sudo mount -vvvv localhost:/ "${TEMP_DIR}/mnt/ganesha"
+
+mkdir "${TEMP_DIR}/mnt/ganesha/dir"
+FILE_SIZE="100M" assert_success file-generate "${TEMP_DIR}/mnt/ganesha/dir/file_100M"
+
+opcount=0
+
+function assert_operation_performed() {
+	opcount=$((opcount + 1))
+	assert_eventually_prints "$1" "sed -n ${opcount}p ${TEMP_DIR}/posixlock.log"
+}
+
+function writelock() {
+	posixlockcmd $1 w $2 $3 >> "${TEMP_DIR}/posixlock.log" &
+	assert_operation_performed "write open:   $1"
+}
+
+function unlock() {
+	kill -s SIGUSR1 $1
+}
+
+declare -a writelocks
+
+# Go to the Ganesha mount point
+cd "${TEMP_DIR}/mnt/ganesha"
+
+# Lock byte range [0, 5]
+writelock "dir/file_100M" 0 5
+writelocks[1]=$!
+assert_operation_performed "write lock:   dir/file_100M"
+
+# Lock byte range [10, 20]
+writelock "dir/file_100M" 10 20
+writelocks[2]=$!
+assert_operation_performed "write lock:   dir/file_100M"
+
+# Unlock byte range [0, 5]
+unlock ${writelocks[1]}
+assert_operation_performed "write unlock: dir/file_100M"
+
+# Unlock byte range [10, 20]
+unlock ${writelocks[2]}
+assert_operation_performed "write unlock: dir/file_100M"
+
+# Lock byte range [0, 0] is equivalent to locking the whole file
+writelock "dir/file_100M" 0 0
+writelocks[3]=$!
+assert_operation_performed "write lock:   dir/file_100M"
+
+# Unlock byte range [0, 0]
+unlock ${writelocks[3]}
+assert_operation_performed "write unlock: dir/file_100M"
+
+test_error_cleanup
