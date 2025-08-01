@@ -73,6 +73,7 @@ public:
 		std::vector<uint8_t> buffer;
 		std::atomic<Timer> timer;
 		std::atomic<int> refcount = 0;
+		std::atomic<bool> isPendingNotify = false;
 		std::atomic<Size> requested_size;
 		std::atomic<bool> done = false;
 		boost::intrusive::set_member_hook<> set_member_hook;

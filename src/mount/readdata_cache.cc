@@ -320,7 +320,7 @@ ReadCache::EntrySet::iterator ReadCache::erase(EntrySet::iterator it) {
 	Entry *e = std::addressof(*it);
 	auto ret = entries_.erase(it);
 	lru_.erase(lru_.iterator_to(*e));
-	if (e->refcount > 0) {
+	if (e->refcount > 0 || e->isPendingNotify) {
 		reserved_entries_.push_back(*e);
 	} else {
 		assert(e->refcount == 0);
@@ -342,7 +342,7 @@ void ReadCache::clearReserved(unsigned count) {
 	std::unique_lock<std::mutex> usedMemoryLock(gReadCacheMemoryMutex, std::defer_lock);
 	while (!reserved_entries_.empty() && count-- > 0) {
 		Entry *e = std::addressof(reserved_entries_.front());
-		if (e->refcount == 0) {
+		if (e->refcount == 0 && !e->isPendingNotify) {
 			usedMemoryLock.lock();
 			decreaseUsedReadCacheMemory(e->buffer.size());
 			usedMemoryLock.unlock();
