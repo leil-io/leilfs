@@ -123,6 +123,16 @@ ReadCache::Size ReadCache::Result::copyToBuffer(uint8_t *output, Offset real_off
 	uint64_t offset = real_offset;
 	Size bytes_left = real_size;
 	for (const auto &entry_ptr : entries) {
+		if (entry_ptr->inEntriesPool) {
+			safs::log_err(
+			    "(ReadCache::Result::copyToBuffer) Copying entry that is in the entries "
+			    "pool, this should not happen, refcount: {}, offset: {}, size: {}",
+			    entry_ptr->refcount.load(), entry_ptr->offset, entry_ptr->buffer.size());
+
+			// This should not happen, but if it does, we just return 0
+			return 0;
+		}
+
 		const ReadCache::Entry &entry = *entry_ptr;
 		if (bytes_left <= 0) { break; }
 		// Special case: Read request was past the end of the file
@@ -152,6 +162,14 @@ void ReadCache::Result::release() {
 }
 
 void ReadCache::Result::add(Entry &entry) {
+	if (entry.inEntriesPool) {
+		safs::log_err(
+		    "(ReadCache::Result::add) Adding entry that is in the entries pool, this should "
+		    "not happen, refcount: {}, offset: {}, size: {}",
+		    entry.refcount.load(), entry.offset, entry.buffer.size());
+		return;
+	}
+
 	entry.acquire();
 	assert(entries.empty() || endOffset() >= entry.offset);
 	entries.push_back(std::addressof(entry));
@@ -420,6 +438,7 @@ ReadCache::Entry *ReadCacheEntriesPool::getEntry(size_t offset, size_t size) {
 	entry->refcount = 0;
 	entry->requested_size = size;
 	entry->done = false;
+	entry->inEntriesPool = false;
 
 	return entry;
 }
@@ -428,6 +447,7 @@ void ReadCacheEntriesPool::putEntry(ReadCache::Entry *entry) {
 	assert(entry != nullptr);
 	std::unique_lock<std::mutex> lock(mutex_);
 	entriesMap_[entry->buffer.size()].emplace_front(entry);
+	entry->inEntriesPool = true;
 }
 
 void ReadCacheEntriesPool::cleanerThreadFunc_(std::stop_token stopToken) {

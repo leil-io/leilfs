@@ -24,6 +24,7 @@
 
 #include "common/small_vector.h"
 #include "common/time_utils.h"
+#include "slogger/slogger.h"
 
 #include <atomic>
 #include <cassert>
@@ -74,6 +75,7 @@ public:
 		std::atomic<Timer> timer;
 		std::atomic<int> refcount = 0;
 		std::atomic<bool> isPendingNotify = false;
+		std::atomic<bool> inEntriesPool = false;
 		std::atomic<Size> requested_size;
 		std::atomic<bool> done = false;
 		boost::intrusive::set_member_hook<> set_member_hook;
@@ -157,6 +159,17 @@ public:
 			uint64_t offset = real_offset;
 			Size bytes_left = real_size;
 			for (const auto &entry_ptr : entries) {
+				if (entry_ptr->inEntriesPool) {
+					safs::log_err(
+					    "(ReadCache::Result::toIoVec) Serializing entry that is in the entries "
+					    "pool, this should not happen, refcount: {}, offset: {}, size: {}",
+					    entry_ptr->refcount.load(), entry_ptr->offset, entry_ptr->buffer.size());
+
+					// This should not happen, but if it does, we just return 0
+					output.clear();
+					return 0;
+				}
+
 				const ReadCache::Entry &entry = *entry_ptr;
 				if (bytes_left <= 0) { break; }
 				// Special case: Read request was past the end of the file
