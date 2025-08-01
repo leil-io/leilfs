@@ -34,6 +34,7 @@
 #include "common/special_inode_defs.h"
 #include "common/time_utils.h"
 #include "mount/fuse/lock_conversion.h"
+#include "mount/fuse/sfs_fuselib/metadata.h"
 #include "mount/group_cache.h"
 #include "mount/sauna_client.h"
 #include "mount/sauna_client_context.h"
@@ -48,8 +49,6 @@
 #if SPECIAL_INODE_ROOT != FUSE_ROOT_ID
 #error FUSE_ROOT_ID is not equal to SPECIAL_INODE_ROOT
 #endif
-
-#define READDIR_BUFFSIZE 50000
 
 /**
  * Function checking if types are equal, ignoring constness

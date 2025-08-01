@@ -47,31 +47,37 @@
 
 static_assert(FUSE_ROOT_ID == SPECIAL_INODE_ROOT, "invalid value of FUSE_ROOT_ID");
 
-struct dirbuf {
-	bool wasread;
-	uint8_t *p;
-	size_t size;
+// Number of bytes used for metadata fields (inode + file type) after the name in a directory
+constexpr size_t kDirEntryMetaSize = sizeof(inode_t) + 1;
+
+// Total number of bytes reserved at the start of a directory entry for extra fields,
+// such as a formatted inode string and separator before the name. This includes:
+//  - 2 * sizeof(inode_t) for hexadecimal inode string representation
+//  - 1 character for the '|' separator
+constexpr size_t kDirEntryHexPreffixSize = 2 * sizeof(inode_t) + 1;
+
+// Total stride (name length + metadata) to advance to the next directory entry
+constexpr size_t kDirEntryStride = kDirEntryMetaSize + 1;
+
+// Block size used for filesystem statistics and block calculations (in bytes)
+constexpr size_t kBlockSize = 512;
+
+// Maximum file permission bits (all permission bits, sticky/setuid/setgid)
+constexpr mode_t kMaxFilePermissions = 07777;
+
+constexpr uint64_t kStatfsFilesBase = 1000'000'000 + PKGVERSION;
+
+struct DirectoryBuffer {
+	bool wasRead = false;
+	std::vector<uint8_t> buffer;
 	std::mutex lock;
 };
 
-struct pathbuf {
-	int changed;
-	char *p;
-	size_t size;
+struct PathBuffer {
+	bool changed;
+	std::string path;
 	std::mutex lock;
 };
-
-#define READDIR_BUFFSIZE 50000
-
-#define NAME_MAX 255
-#define PATH_SIZE_LIMIT 1024
-
-#define META_ROOT_MODE 0555
-
-#define PKGVERSION \
-		((SAUNAFS_PACKAGE_VERSION_MAJOR)*1000000 + \
-		(SAUNAFS_PACKAGE_VERSION_MINOR)*1000 + \
-		(SAUNAFS_PACKAGE_VERSION_MICRO))
 
 #define IS_SPECIAL_INODE(inode) ((inode)>=SPECIAL_INODE_BASE || (inode)==SPECIAL_INODE_ROOT)
 
@@ -81,9 +87,10 @@ static double attr_cache_timeout = 1.0;
 static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
-	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink;
+	uint32_t attruid, attrgid, attratime, attrmtime, attrctime, attrnlink;
 	uint64_t attrlength;
 	const uint8_t *ptr;
+
 	ptr = attr.data();
 	attrtype = get8bit(&ptr);
 	attrmode = get16bit(&ptr);
@@ -95,13 +102,15 @@ static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat 
 	get32bit(&ptr, attrnlink);
 	attrlength = get64bit(&ptr);
 	stbuf->st_ino = inode;
-	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_RESERVED) {
-		stbuf->st_mode = S_IFREG | (attrmode & 07777);
+
+	if (attrtype == TYPE_FILE || attrtype == TYPE_TRASH || attrtype == TYPE_RESERVED) {
+		stbuf->st_mode = S_IFREG | (attrmode & kMaxFilePermissions);
 	} else {
 		stbuf->st_mode = 0;
 	}
+
 	stbuf->st_size = attrlength;
-	stbuf->st_blocks = (attrlength+511)/512;
+	stbuf->st_blocks = (attrlength + kBlockSize - 1) / kBlockSize;
 	stbuf->st_uid = attruid;
 	stbuf->st_gid = attrgid;
 	stbuf->st_atime = attratime;
@@ -111,25 +120,25 @@ static void sfs_attr_to_stat(inode_t inode, const Attributes &attr, struct stat 
 }
 
 void sfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
-	uint64_t totalspace,availspace,trashspace,reservedspace;
+	uint64_t totalspace, availspace, trashspace, reservedspace;
 	inode_t inodes;
 	struct statvfs stfsbuf;
-	memset(&stfsbuf,0,sizeof(stfsbuf));
+	memset(&stfsbuf, 0, sizeof(stfsbuf));
 
 	(void)ino;
-	fs_statfs(&totalspace,&availspace,&trashspace,&reservedspace,&inodes);
+	fs_statfs(&totalspace, &availspace, &trashspace, &reservedspace, &inodes);
 
 	stfsbuf.f_namemax = NAME_MAX;
-	stfsbuf.f_frsize = 512;
-	stfsbuf.f_bsize = 512;
-	stfsbuf.f_blocks = trashspace/512+reservedspace/512;
-	stfsbuf.f_bfree = reservedspace/512;
-	stfsbuf.f_bavail = reservedspace/512;
-	stfsbuf.f_files = 1000000000+PKGVERSION;
-	stfsbuf.f_ffree = 1000000000+PKGVERSION;
-	stfsbuf.f_favail = 1000000000+PKGVERSION;
+	stfsbuf.f_frsize = kBlockSize;
+	stfsbuf.f_bsize = kBlockSize;
+	stfsbuf.f_blocks = trashspace / kBlockSize + reservedspace / kBlockSize;
+	stfsbuf.f_bfree = reservedspace / kBlockSize;
+	stfsbuf.f_bavail = reservedspace / kBlockSize;
+	stfsbuf.f_files = kStatfsFilesBase;
+	stfsbuf.f_ffree = kStatfsFilesBase;
+	stfsbuf.f_favail = kStatfsFilesBase;
 
-	fuse_reply_statfs(req,&stfsbuf);
+	fuse_reply_statfs(req, &stfsbuf);
 }
 
 void sfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
@@ -294,7 +303,7 @@ void sfs_meta_rename(fuse_req_t req, fuse_ino_t parent, const char *name, fuse_i
 	fuse_reply_err(req, status);
 }
 
-static uint32_t dir_metaentries_size(inode_t ino) {
+static uint32_t getDirMetaEntriesSize(inode_t ino) {
 	// 2 could be name length + type
 	constexpr uint32_t kFixedEntrySize = kinode_t_size + 2;
 
@@ -315,201 +324,200 @@ static uint32_t dir_metaentries_size(inode_t ino) {
 	return 0;
 }
 
-static void dir_metaentries_fill(uint8_t *buff, inode_t ino) {
-	uint8_t l;
+static void fillDirMetaEntries(uint8_t *buff, inode_t ino) {
+	uint8_t nameLength;
 	switch (ino) {
 	case SPECIAL_INODE_ROOT:
 		// .
-		put8bit(&buff,1);
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 1);
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_ROOT);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// ..
-		put8bit(&buff,2);
-		put8bit(&buff,'.');
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 2);
+		put8bit(&buff, '.');
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_ROOT);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// trash
-		l = strlen(SPECIAL_FILE_NAME_META_TRASH);
-		put8bit(&buff,l);
-		memcpy(buff,SPECIAL_FILE_NAME_META_TRASH,l);
-		buff+=l;
-		putINode(&buff,SPECIAL_INODE_META_TRASH);
-		put8bit(&buff,TYPE_DIRECTORY);
+		nameLength = strlen(SPECIAL_FILE_NAME_META_TRASH);
+		put8bit(&buff, nameLength);
+		memcpy(buff, SPECIAL_FILE_NAME_META_TRASH, nameLength);
+		buff += nameLength;
+		putINode(&buff, SPECIAL_INODE_META_TRASH);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// reserved
-		l = strlen(SPECIAL_FILE_NAME_META_RESERVED);
-		put8bit(&buff,l);
-		memcpy(buff,SPECIAL_FILE_NAME_META_RESERVED,l);
-		buff+=l;
-		putINode(&buff,SPECIAL_INODE_META_RESERVED);
-		put8bit(&buff,TYPE_DIRECTORY);
+		nameLength = strlen(SPECIAL_FILE_NAME_META_RESERVED);
+		put8bit(&buff, nameLength);
+		memcpy(buff, SPECIAL_FILE_NAME_META_RESERVED, nameLength);
+		buff += nameLength;
+		putINode(&buff, SPECIAL_INODE_META_RESERVED);
+		put8bit(&buff, TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_TRASH:
 		// .
-		put8bit(&buff,1);
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_META_TRASH);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 1);
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_META_TRASH);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// ..
-		put8bit(&buff,2);
-		put8bit(&buff,'.');
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 2);
+		put8bit(&buff, '.');
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_ROOT);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// undel
-		l = strlen(SPECIAL_FILE_NAME_META_UNDEL);
-		put8bit(&buff,l);
-		memcpy(buff,SPECIAL_FILE_NAME_META_UNDEL,l);
-		buff+=l;
-		putINode(&buff,SPECIAL_INODE_META_UNDEL);
-		put8bit(&buff,TYPE_DIRECTORY);
+		nameLength = strlen(SPECIAL_FILE_NAME_META_UNDEL);
+		put8bit(&buff, nameLength);
+		memcpy(buff, SPECIAL_FILE_NAME_META_UNDEL, nameLength);
+		buff += nameLength;
+		putINode(&buff, SPECIAL_INODE_META_UNDEL);
+		put8bit(&buff, TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_UNDEL:
 		// .
-		put8bit(&buff,1);
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_META_UNDEL);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 1);
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_META_UNDEL);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// ..
-		put8bit(&buff,2);
-		put8bit(&buff,'.');
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_META_TRASH);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 2);
+		put8bit(&buff, '.');
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_META_TRASH);
+		put8bit(&buff, TYPE_DIRECTORY);
 		return;
 	case SPECIAL_INODE_META_RESERVED:
 		// .
-		put8bit(&buff,1);
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_META_RESERVED);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 1);
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_META_RESERVED);
+		put8bit(&buff, TYPE_DIRECTORY);
 		// ..
-		put8bit(&buff,2);
-		put8bit(&buff,'.');
-		put8bit(&buff,'.');
-		putINode(&buff,SPECIAL_INODE_ROOT);
-		put8bit(&buff,TYPE_DIRECTORY);
+		put8bit(&buff, 2);
+		put8bit(&buff, '.');
+		put8bit(&buff, '.');
+		putINode(&buff, SPECIAL_INODE_ROOT);
+		put8bit(&buff, TYPE_DIRECTORY);
 		return;
 	}
 }
 
-static uint32_t dir_dataentries_size(const uint8_t *dbuff,uint32_t dsize) {
-	uint8_t nleng;
-	uint32_t eleng;
+static uint32_t getDirDataEntriesSize(const uint8_t *dataBuffer, size_t dataSize) {
+	uint8_t nameLength;
+	uint32_t totalSize = 0;
 	const uint8_t *eptr;
-	eleng=0;
-	if (dbuff==NULL || dsize==0) {
-		return 0;
-	}
-	eptr = dbuff+dsize;
-	while (dbuff<eptr) {
-		nleng = dbuff[0];
-		dbuff+=5+nleng;
-		if (nleng>255-9) {
-			eleng+=6+255;
+
+	if (dataBuffer == nullptr || dataSize == 0) { return 0; }
+
+	eptr = dataBuffer + dataSize;
+	while (dataBuffer < eptr) {
+		nameLength = dataBuffer[0];
+		dataBuffer += kDirEntryMetaSize + nameLength;
+		if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
+			totalSize += kDirEntryStride + NAME_MAX;
 		} else {
-			eleng+=6+nleng+9;
+			totalSize += kDirEntryStride + nameLength + kDirEntryHexPreffixSize;
 		}
 	}
-	return eleng;
+
+	return totalSize;
 }
 
-static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t dsize) {
-	const char *name;
+static void convertDirDataEntries(uint8_t *buff, const uint8_t *dataBuffer, uint32_t dataSize) {
+	const uint8_t *name;
 	inode_t inode;
-	uint8_t nleng;
-	uint8_t inoleng;
+	uint8_t nameLength;
+	uint8_t inodeLength;
 	const uint8_t *eptr;
-	eptr = dbuff+dsize;
-	while (dbuff<eptr) {
-		nleng = dbuff[0];
-		if (dbuff+nleng+5<=eptr) {
-			dbuff++;
-			if (nleng>255-9) {
-				inoleng = 255;
+	eptr = dataBuffer + dataSize;
+
+	while (dataBuffer < eptr) {
+		nameLength = dataBuffer[0];
+
+		if (dataBuffer + nameLength + kDirEntryMetaSize <= eptr) {
+			dataBuffer++;
+
+			if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
+				inodeLength = NAME_MAX;
 			} else {
-				inoleng = nleng+9;
+				inodeLength = nameLength + kDirEntryHexPreffixSize;
 			}
-			put8bit(&buff,inoleng);
-			name = (const char*)dbuff;
-			dbuff+=nleng;
-			getINode(&dbuff, inode);
-			sprintf((char*)buff,"%08" PRIXiNode "|",inode);
-			if (nleng>255-9) {
-				memcpy(buff+9,name,255-9);
-				buff+=255;
+
+			put8bit(&buff, inodeLength);
+			name = dataBuffer;
+			dataBuffer += nameLength;
+			getINode(&dataBuffer, inode);
+			sprintf((char *)buff, "%0*" PRIXiNode "|", 2 * (int)sizeof(inode_t), inode);
+
+			if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
+				memcpy(buff + kDirEntryHexPreffixSize, name, NAME_MAX - kDirEntryHexPreffixSize);
+				buff += NAME_MAX;
 			} else {
-				memcpy(buff+9,name,nleng);
-				buff+=9+nleng;
+				memcpy(buff + kDirEntryHexPreffixSize, name, nameLength);
+				buff += kDirEntryHexPreffixSize + nameLength;
 			}
-			putINode(&buff,inode);
-			put8bit(&buff,TYPE_FILE);
+
+			putINode(&buff, inode);
+			put8bit(&buff, TYPE_FILE);
 		} else {
-			safs_pretty_syslog(LOG_WARNING,"dir data malformed (trash)");
-			dbuff=eptr;
+			safs::log_warn("dir data malformed (trash)");
+			dataBuffer = eptr;
 		}
 	}
 }
 
-
-static void dirbuf_meta_fill(dirbuf *b, inode_t ino) {
+static void fillDirectoryBufferMeta(DirectoryBuffer *dirbuf, inode_t ino) {
 	int status;
-	uint32_t msize, dsize = 0, dcsize;
-	const uint8_t *dbuff = nullptr;
+	uint32_t metaEntriesSize, entriesSize = 0, dataEntriesSize;
+	const uint8_t *bufData = nullptr;
 
-	b->p = NULL;
-	b->size = 0;
-	msize = dir_metaentries_size(ino);
+	dirbuf->buffer.clear();
+	metaEntriesSize = getDirMetaEntriesSize(ino);
 
 	if (ino == SPECIAL_INODE_META_TRASH) {
-		status = fs_gettrash(&dbuff, &dsize);
-		if (status != SAUNAFS_STATUS_OK)
-			return;
-		dcsize = dir_dataentries_size(dbuff,dsize);
+		status = fs_gettrash(&bufData, &entriesSize);
+		if (status != SAUNAFS_STATUS_OK) { return; }
+		dataEntriesSize = getDirDataEntriesSize(bufData, entriesSize);
 	} else if (ino == SPECIAL_INODE_META_RESERVED) {
-		status = fs_getreserved(&dbuff, &dsize);
-		if (status != SAUNAFS_STATUS_OK)
-			return;
-		dcsize = dir_dataentries_size(dbuff, dsize);
+		status = fs_getreserved(&bufData, &entriesSize);
+		if (status != SAUNAFS_STATUS_OK) { return; }
+		dataEntriesSize = getDirDataEntriesSize(bufData, entriesSize);
 	} else {
-		dcsize = 0;
+		dataEntriesSize = 0;
 	}
 
-	if (msize + dcsize == 0)
-		return;
+	if (metaEntriesSize + dataEntriesSize == 0) { return; }
 
-	if (!(b->p = (uint8_t*)malloc(msize + dcsize))) {
-		safs_pretty_syslog(LOG_EMERG, "out of memory");
+	try {
+		dirbuf->buffer.resize(metaEntriesSize + dataEntriesSize);
+	} catch (const std::bad_alloc &e) {
+		safs::log_critical("fillDirectoryBufferMeta: Memory allocation failed: {}", e.what());
 		return;
 	}
 
-	if (msize > 0)
-		dir_metaentries_fill(b->p, ino);
+	if (metaEntriesSize > 0) { fillDirMetaEntries(dirbuf->buffer.data(), ino); }
 
-	if (dcsize > 0)
-		dir_dataentries_convert(b->p + msize, dbuff, dsize);
-
-	b->size = msize + dcsize;
+	if (dataEntriesSize > 0) {
+		convertDirDataEntries(dirbuf->buffer.data() + metaEntriesSize, bufData, entriesSize);
+	}
 }
 
 void sfs_meta_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
-	dirbuf *dirinfo;
+	constexpr auto isValidMetaMountInode = [](inode_t inode) {
+		return inode == SPECIAL_INODE_ROOT || inode == SPECIAL_INODE_META_TRASH ||
+		       inode == SPECIAL_INODE_META_UNDEL || inode == SPECIAL_INODE_META_RESERVED;
+	};
 
-	if (ino == SPECIAL_INODE_ROOT || ino == SPECIAL_INODE_META_TRASH ||
-	    ino == SPECIAL_INODE_META_UNDEL || ino == SPECIAL_INODE_META_RESERVED) {
+	if (isValidMetaMountInode(ino)) {
+		auto *dirinfo = new DirectoryBuffer();
+		dirinfo->buffer.clear();
+		dirinfo->wasRead = false;
+		fi->fh = reinterpret_cast<uintptr_t>(dirinfo);
 
-		dirinfo = new dirbuf();
-
-		dirinfo->p = NULL;
-		dirinfo->size = 0;
-		dirinfo->wasread = false;
-		fi->fh = (unsigned long)dirinfo;
-
-		if (fuse_reply_open(req,fi) == -ENOENT) {
-			fi->fh = 0;
-			free(dirinfo->p);
+		if (fuse_reply_open(req, fi) != 0) {
 			delete dirinfo;
+			fi->fh = 0;
 		}
 	} else {
 		fuse_reply_err(req, ENOTDIR);
@@ -546,83 +554,90 @@ void replyDirReadRoot(fuse_req_t request, off_t offset, size_t maxsize) {
 	fuse_reply_buf(request, buffer.data(), size);
 }
 
-void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi) {
-	dirbuf *dirinfo = (dirbuf *)((unsigned long)(fi->fh));
-	char buffer[READDIR_BUFFSIZE];
-	char *name,c;
-	const uint8_t *ptr,*eptr;
-	uint8_t end;
-	size_t opos,oleng;
-	uint8_t nleng;
+void fillDirEntryBuffer(fuse_req_t req, DirectoryBuffer *dirinfo, off_t &off, char *dirEntryBuffer,
+                        size_t &size, size_t &writePos) {
+	char *entryName;
+	char nameTerminator;
+	size_t entryLength;
 	inode_t inode;
 	uint8_t type;
 	struct stat stbuf;
+	uint8_t nameLength;
+	uint8_t done = 0;
 
-	if (off<0) {
-		fuse_reply_err(req,EINVAL);
+	size = std::min<size_t>(size, READDIR_BUFFSIZE);
+	const uint8_t *entryPtr = reinterpret_cast<const uint8_t *>(dirinfo->buffer.data()) + off;
+	const uint8_t *endPtr =
+	    reinterpret_cast<const uint8_t *>(dirinfo->buffer.data()) + dirinfo->buffer.size();
+
+	while (entryPtr < endPtr && done == 0) {
+		nameLength = entryPtr[0];
+		entryPtr++;
+		entryName = (char *)entryPtr;
+		entryPtr += nameLength;
+		off += nameLength + kDirEntryStride;
+		if (entryPtr + kDirEntryMetaSize <= endPtr) {
+			getINode(&entryPtr, inode);
+			type = get8bit(&entryPtr);
+			resetStat(inode, type, stbuf);
+			nameTerminator = entryName[nameLength];
+			entryName[nameLength] = 0;
+			entryLength = fuse_add_direntry(req, dirEntryBuffer + writePos, size - writePos,
+			                                entryName, &stbuf, off);
+			entryName[nameLength] = nameTerminator;
+			if (writePos + entryLength > size) {
+				done = 1;
+			} else {
+				writePos += entryLength;
+			}
+		}
+	}
+}
+
+void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                      struct fuse_file_info *fi) {
+	auto *dirinfo = reinterpret_cast<DirectoryBuffer *>(fi->fh);
+	if (dirinfo == nullptr) {
+		fuse_reply_err(req, ENOENT);
+		return;
+	}
+
+	if (off < 0) {
+		fuse_reply_err(req, EINVAL);
 		return;
 	}
 	std::lock_guard lock(dirinfo->lock);
-	if (!dirinfo->wasread || (dirinfo->wasread && off==0)) {
-		if (dirinfo->p!=NULL) {
-			free(dirinfo->p);
-		}
+	if (!dirinfo->wasRead || (dirinfo->wasRead && off == 0)) {
 		if (ino == SPECIAL_INODE_ROOT) {
 			replyDirReadRoot(req, off, size);
 			return;
 		}
-		dirbuf_meta_fill(dirinfo, ino);
-//              safs_pretty_syslog(LOG_WARNING,"inode: %lu , dirinfo->p: %p , dirinfo->size: %lu",(unsigned long)ino,dirinfo->p,(unsigned long)dirinfo->size);
+		fillDirectoryBufferMeta(dirinfo, ino);
 	}
-	dirinfo->wasread=true;
+	dirinfo->wasRead = true;
 
-	if (off>=(off_t)(dirinfo->size)) {
-		fuse_reply_buf(req, NULL, 0);
+	if (off >= (off_t)(dirinfo->buffer.size())) {
+		fuse_reply_buf(req, nullptr, 0);
 	} else {
-		size = std::min<size_t>(size, READDIR_BUFFSIZE);
-		ptr = (const uint8_t*)(dirinfo->p)+off;
-		eptr = (const uint8_t*)(dirinfo->p)+dirinfo->size;
-		opos = 0;
-		end = 0;
-
-		while (ptr<eptr && end==0) {
-			nleng = ptr[0];
-			ptr++;
-			name = (char*)ptr;
-			ptr+=nleng;
-			off+=nleng+6;
-			if (ptr+5<=eptr) {
-				getINode(&ptr, inode);
-				type = get8bit(&ptr);
-				resetStat(inode, type, stbuf);
-				c = name[nleng];
-				name[nleng]=0;
-				oleng = fuse_add_direntry(req, buffer + opos, size - opos, name, &stbuf, off);
-				name[nleng] = c;
-				if (opos+oleng>size) {
-					end=1;
-				} else {
-					opos+=oleng;
-				}
-			}
-		}
-		fuse_reply_buf(req,buffer,opos);
+		char dirEntryBuffer[READDIR_BUFFSIZE];
+		size_t writePos = 0;
+		fillDirEntryBuffer(req, dirinfo, off, dirEntryBuffer, size, writePos);
+		fuse_reply_buf(req, dirEntryBuffer, writePos);
 	}
 }
 
 void sfs_meta_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 	(void)ino;
-	dirbuf *dirinfo = (dirbuf *)((unsigned long)(fi->fh));
+	auto *dirinfo = reinterpret_cast<DirectoryBuffer *>(fi->fh);
 	dirinfo->lock.lock();
 	dirinfo->lock.unlock();
-	free(dirinfo->p);
 	delete dirinfo;
 	fi->fh = 0;
-	fuse_reply_err(req,0);
+	fuse_reply_err(req, 0);
 }
 
 void sfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
-	pathbuf *pathinfo;
+	auto *pathinfo = new PathBuffer();
 	const uint8_t *path;
 	int status;
 
@@ -639,126 +654,125 @@ void sfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 		return;
 	}
 
-	status = fs_gettrashpath(ino,&path);
+	status = fs_gettrashpath(ino, &path);
 	status = saunafs_error_conv(status);
 
 	if (status) {
 		fuse_reply_err(req, status);
 	} else {
-		pathinfo = new pathbuf();
-
-		pathinfo->changed = 0;
-		pathinfo->size = strlen((char*)path) + 1;
-		if (!(pathinfo->p = (char*)malloc(pathinfo->size))) {
-			safs_pretty_syslog(LOG_EMERG, "out of memory");
-			delete pathinfo;
-			return;
-		}
-		memcpy(pathinfo->p, path, pathinfo->size - 1);
-		pathinfo->p[pathinfo->size - 1] = '\n';
+		pathinfo->changed = false;
+		pathinfo->path = std::string(reinterpret_cast<const char *>(path));
+		pathinfo->path.append("\n");
 		fi->direct_io = 1;
-		fi->fh = (unsigned long)pathinfo;
+		fi->fh = reinterpret_cast<uintptr_t>(pathinfo);
 
-		if (fuse_reply_open(req, fi) == -ENOENT) {
-			fi->fh = 0;
-			free(pathinfo->p);
+		if (fuse_reply_open(req, fi) != 0) {
 			delete pathinfo;
+			fi->fh = 0;
 		}
 	}
 }
 
 void sfs_meta_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
-	if (ino==SPECIAL_INODE_MASTERINFO) {
-		fuse_reply_err(req,0);
+	if (ino == SPECIAL_INODE_MASTERINFO) {
+		fuse_reply_err(req, 0);
 		return;
 	}
-	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
+
+	auto *pathinfo = reinterpret_cast<PathBuffer *>(fi->fh);
+
 	std::unique_lock lock(pathinfo->lock);
 	if (pathinfo->changed) {
-		if (pathinfo->p[pathinfo->size-1]=='\n') {
-			pathinfo->p[pathinfo->size-1]=0;
+		if (pathinfo->path.back() == '\n') {
+			pathinfo->path.pop_back();
 		} else {
-			pathinfo->p = (char*) realloc(pathinfo->p,pathinfo->size+1);
-			pathinfo->p[pathinfo->size]=0;
+			pathinfo->path.resize(pathinfo->path.size() + 1);
+			pathinfo->path.back() = '\0';
 		}
-		fs_settrashpath(ino,(uint8_t*)pathinfo->p);
+		fs_settrashpath(ino, reinterpret_cast<const uint8_t *>(pathinfo->path.c_str()));
 	}
 	lock.unlock();
-	free(pathinfo->p);
 	delete pathinfo;
 	fi->fh = 0;
-	fuse_reply_err(req,0);
+	fuse_reply_err(req, 0);
 }
 
-void sfs_meta_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi) {
-	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
-	if (ino==SPECIAL_INODE_MASTERINFO) {
+void sfs_meta_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
+                   struct fuse_file_info *fi) {
+#ifdef MASTERINFO_WITH_VERSION
+	// size of the master info buffer with version information.
+	constexpr off_t kMasterInfoSize = 14;
+#else
+	// size of the master info buffer without version information.
+	constexpr off_t kMasterInfoSize = 10;
+#endif
+	auto * pathinfo = reinterpret_cast<PathBuffer *>(fi->fh);
+
+	if (ino == SPECIAL_INODE_MASTERINFO) {
 		uint8_t masterinfo[14];
 		fs_getmasterlocation(masterinfo);
 		masterproxy_getlocation(masterinfo);
-#ifdef MASTERINFO_WITH_VERSION
-		if (off>=14) {
-			fuse_reply_buf(req,NULL,0);
-		} else if (off+size>14) {
-			fuse_reply_buf(req,(char*)(masterinfo+off),14-off);
-#else
-		if (off>=10) {
-			fuse_reply_buf(req,NULL,0);
-		} else if (off+size>10) {
-			fuse_reply_buf(req,(char*)(masterinfo+off),10-off);
-#endif
+
+		if (off >= kMasterInfoSize) {
+			fuse_reply_buf(req, nullptr, 0);
+		} else if (off + size > kMasterInfoSize) {
+			fuse_reply_buf(req, reinterpret_cast<char *>(masterinfo + off), kMasterInfoSize - off);
 		} else {
-			fuse_reply_buf(req,(char*)(masterinfo+off),size);
+			fuse_reply_buf(req, reinterpret_cast<char *>(masterinfo + off), size);
 		}
 		return;
 	}
-	if (pathinfo==NULL) {
-		fuse_reply_err(req,EBADF);
+
+	if (pathinfo == nullptr) {
+		fuse_reply_err(req, EBADF);
 		return;
 	}
+
 	std::unique_lock lock(pathinfo->lock);
-	if (off<0) {
+	if (off < 0) {
 		lock.unlock();
-		fuse_reply_err(req,EINVAL);
+		fuse_reply_err(req, EINVAL);
 		return;
 	}
-	if ((size_t)off>pathinfo->size) {
-		fuse_reply_buf(req, NULL, 0);
-	} else if (off + size > pathinfo->size) {
-		fuse_reply_buf(req, (pathinfo->p)+off,(pathinfo->size)-off);
+
+	if ((size_t)off > pathinfo->path.size()) {
+		fuse_reply_buf(req, nullptr, 0);
+	} else if (off + size > pathinfo->path.size()) {
+		fuse_reply_buf(req, (pathinfo->path.c_str()) + off, (pathinfo->path.size()) - off);
 	} else {
-		fuse_reply_buf(req, (pathinfo->p)+off,size);
+		fuse_reply_buf(req, (pathinfo->path.c_str()) + off, size);
 	}
 }
 
-void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
-	pathbuf *pathinfo = (pathbuf *)((unsigned long)(fi->fh));
-	if (ino==SPECIAL_INODE_MASTERINFO) {
-		fuse_reply_err(req,EACCES);
+void sfs_meta_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off,
+                    struct fuse_file_info *fi) {
+	auto * pathinfo = reinterpret_cast<PathBuffer *>(fi->fh);
+	if (ino == SPECIAL_INODE_MASTERINFO) {
+		fuse_reply_err(req, EACCES);
 		return;
 	}
-	if (pathinfo==NULL) {
-		fuse_reply_err(req,EBADF);
+
+	if (pathinfo == nullptr) {
+		fuse_reply_err(req, EBADF);
 		return;
 	}
+
 	if (off + size > PATH_SIZE_LIMIT) {
-		fuse_reply_err(req,EINVAL);
+		fuse_reply_err(req, EINVAL);
 		return;
 	}
+
 	std::unique_lock lock(pathinfo->lock);
-	if (pathinfo->changed==0) {
-		pathinfo->size = 0;
+	if (pathinfo->changed == false) { pathinfo->path.clear(); }
+
+	if (off + size > pathinfo->path.size()) {
+		pathinfo->path.resize(off + size, '\0');
 	}
-	if (off+size > pathinfo->size) {
-		size_t s = pathinfo->size;
-		pathinfo->p = (char*) realloc(pathinfo->p,off+size);
-		pathinfo->size = off+size;
-		memset(pathinfo->p+s,0,off+size-s);
-	}
-	memcpy((pathinfo->p)+off,buf,size);
-	pathinfo->changed = 1;
+
+	std::memcpy(pathinfo->path.data() + off, buf, size);
+	pathinfo->changed = true;
 	lock.unlock();
-	fuse_reply_write(req,size);
+	fuse_reply_write(req, size);
 }
 
 void sfs_meta_init(double entry_cache_timeout_in, double attr_cache_timeout_in) {
