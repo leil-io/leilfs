@@ -49,6 +49,15 @@ function assert_operation_performed() {
 	assert_eventually_prints "$1" "sed -n ${opcount}p ${TEMP_DIR}/posixlock.log"
 }
 
+function assert_operation_not_performed() {
+	assert_eventually_prints "" "sed -n ${1}p ${TEMP_DIR}/posixlock.log"
+}
+
+function readlock() {
+	posixlockcmd $1 r $2 $3 >> "${TEMP_DIR}/posixlock.log" &
+	assert_operation_performed "read  open:   $1"
+}
+
 function writelock() {
 	posixlockcmd $1 w $2 $3 >> "${TEMP_DIR}/posixlock.log" &
 	assert_operation_performed "write open:   $1"
@@ -58,32 +67,54 @@ function unlock() {
 	kill -s SIGUSR1 $1
 }
 
+declare -a readlocks
 declare -a writelocks
 
 # Go to the Ganesha mount point
 cd "${TEMP_DIR}/mnt/ganesha"
 
-# Lock byte range [0, 5]
-writelock "dir/file_100M" 0 5
+readlock "dir/file_100M" 0 100
+readlocks[1]=$!
+assert_operation_performed "read  lock:   dir/file_100M"
+
+readlock "dir/file_100M" 0 100
+readlocks[2]=$!
+
+assert_operation_performed "read  lock:   dir/file_100M"
+
+# Lock byte range [200, 300]
+writelock "dir/file_100M" 200 100
 writelocks[1]=$!
 assert_operation_performed "write lock:   dir/file_100M"
 
-# Lock byte range [10, 20]
-writelock "dir/file_100M" 10 20
+unlock ${readlocks[1]}
+assert_operation_performed "read  unlock: dir/file_100M"
+
+# Lock byte range [50, 150]
+writelock "dir/file_100M" 50 100
 writelocks[2]=$!
+
+unlock ${readlocks[2]}
+assert_operation_performed "read  unlock: dir/file_100M"
+
 assert_operation_performed "write lock:   dir/file_100M"
-
-# Unlock byte range [0, 5]
-unlock ${writelocks[1]}
-assert_operation_performed "write unlock: dir/file_100M"
-
-# Unlock byte range [10, 20]
-unlock ${writelocks[2]}
-assert_operation_performed "write unlock: dir/file_100M"
 
 # Lock byte range [0, 0] is equivalent to locking the whole file
 writelock "dir/file_100M" 0 0
 writelocks[3]=$!
+
+# It's not possible to acquire the lock because range [50, 150] is locked
+assert_operation_not_performed $((opcount+1))
+
+# Unlock byte range [200, 300]
+unlock ${writelocks[1]}
+assert_operation_performed "write unlock: dir/file_100M"
+
+# Unlock byte range [50, 150]
+unlock ${writelocks[2]}
+assert_operation_performed "write unlock: dir/file_100M"
+
+# Now, it's possible to lock the whole file
 assert_operation_performed "write lock:   dir/file_100M"
 
 # Unlock byte range [0, 0]
