@@ -27,6 +27,7 @@
 #include "common/md5.h"
 #include "common/small_vector.h"
 #include "mount/client/iovec_traits.h"
+#include "mount/fuse/lock_conversion.h"
 
 #include "client.h"
 
@@ -1084,7 +1085,8 @@ int sau_setlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
 	gLastErrorCode = 0;
 
 	safs_locks::FlockWrapper flock_wrapper;
-	flock_wrapper.l_type = lock->l_type;
+	// Convert the lock type to the correct POSIX equivalent
+	flock_wrapper.l_type = safs_locks::posixOpConv(lock->l_type, true);
 	flock_wrapper.l_start = lock->l_start;
 	flock_wrapper.l_len = lock->l_len;
 	flock_wrapper.l_pid = lock->l_pid;
