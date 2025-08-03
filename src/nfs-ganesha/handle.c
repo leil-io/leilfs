@@ -1644,13 +1644,24 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	
 	sau_set_lock_owner(fileinfo, (uint64_t)owner);
 
-	// Enhanced retry mechanism for transient lock errors
-	int maxRetries = 5; // Increased from 3 to 5 retries
+	// Enhanced retry mechanism for transient lock errors with aggressive parameters for race conditions
+	int maxRetries = 8; // Increased to 8 retries for better coverage of transient errors
 	int retryCount = 0;
-	struct timespec retryDelay = {0, 5000000}; // 5ms initial delay (reduced from 10ms)
+	
+	// Different retry parameters based on lock operation type
+	struct timespec retryDelay;
+	if (lockOperation == FSAL_OP_LOCK) {
+		// F_LOCK operations need longer initial delay to handle parent/child handoff race
+		retryDelay.tv_sec = 0;
+		retryDelay.tv_nsec = 15000000; // 15ms initial delay for lock acquisition
+	} else {
+		// Other operations use shorter delay
+		retryDelay.tv_sec = 0;
+		retryDelay.tv_nsec = 5000000; // 5ms initial delay
+	}
 
-	LogFullDebug(COMPONENT_FSAL, "Starting lock operation: op=%d type=%d start=%" PRIu64 " len=%" PRIu64 " owner=%p",
-	             lockOperation, lockInfo.l_type, lockInfo.l_start, lockInfo.l_len, owner);
+	LogFullDebug(COMPONENT_FSAL, "Starting lock operation: op=%d type=%d start=%" PRIu64 " len=%" PRIu64 " owner=%p retries=%d",
+	             lockOperation, lockInfo.l_type, lockInfo.l_start, lockInfo.l_len, owner, maxRetries);
 
 	while (retryCount <= maxRetries) {
 		if (lockOperation == FSAL_OP_LOCKT) {
@@ -1665,7 +1676,11 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		if (retval >= 0) {
 			// Success, log and break out of retry loop
 			if (retryCount > 0) {
-				LogMajor(COMPONENT_FSAL, "Lock operation succeeded after %d retries", retryCount);
+				LogMajor(COMPONENT_FSAL, "Lock operation succeeded after %d retries (op=%d type=%d)", 
+				         retryCount, lockOperation, lockInfo.l_type);
+			} else {
+				LogFullDebug(COMPONENT_FSAL, "Lock operation succeeded on first attempt (op=%d type=%d)", 
+				             lockOperation, lockInfo.l_type);
 			}
 			break;
 		}
@@ -1681,10 +1696,13 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 				case SAUNAFS_ERROR_CANTCONNECT:
 				case SAUNAFS_ERROR_DISCONNECTED:
 				case SAUNAFS_ERROR_TEMP_NOTPOSSIBLE:
-				case SAUNAFS_ERROR_TIMEOUT:          // Added: Network/operation timeout
-				case SAUNAFS_ERROR_WAITING:          // Added: Operation waiting/in progress
-				case SAUNAFS_ERROR_CHUNKBUSY:        // Added: Resource temporarily busy
-				case SAUNAFS_ERROR_LOCKED:           // Added: Resource temporarily locked
+				case SAUNAFS_ERROR_TIMEOUT:          // Network/operation timeout
+				case SAUNAFS_ERROR_WAITING:          // Operation waiting/in progress
+				case SAUNAFS_ERROR_CHUNKBUSY:        // Resource temporarily busy
+				case SAUNAFS_ERROR_LOCKED:           // Resource temporarily locked
+				case SAUNAFS_ERROR_NOTDONE:          // Operation not completed
+				case SAUNAFS_ERROR_NOCHUNKSERVERS:   // No chunk servers available
+				case SAUNAFS_ERROR_OUTOFMEMORY:      // Temporary memory issue
 					shouldRetry = true;
 					break;
 				default:
@@ -1694,19 +1712,30 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		}
 
 		if (!shouldRetry) {
-			LogMajor(COMPONENT_FSAL, "Lock operation failed with non-retryable error %d (%s) after %d retries",
-			         lastError, saunafs_error_string(lastError), retryCount);
+			LogMajor(COMPONENT_FSAL, "Lock operation failed with non-retryable error %d (%s) after %d retries (op=%d type=%d)",
+			         lastError, saunafs_error_string(lastError), retryCount, lockOperation, lockInfo.l_type);
 			break;
 		}
 
 		retryCount++;
-		LogMajor(COMPONENT_FSAL, "Lock operation failed with transient error %d (%s), retrying %d/%d",
-		         lastError, saunafs_error_string(lastError), retryCount, maxRetries);
+		LogMajor(COMPONENT_FSAL, "Lock operation failed with transient error %d (%s), retrying %d/%d after %ldms delay",
+		         lastError, saunafs_error_string(lastError), retryCount, maxRetries, 
+		         retryDelay.tv_nsec / 1000000 + retryDelay.tv_sec * 1000);
 
-		// Sleep with exponential backoff (5ms, 10ms, 20ms, 40ms, 80ms)
+		// Sleep with controlled exponential backoff
 		nanosleep(&retryDelay, NULL);
-		retryDelay.tv_nsec *= 2;
-		if (retryDelay.tv_nsec >= 1000000000) { // Cap at 1 second
+		
+		// Exponential backoff with different scaling for different operations
+		if (lockOperation == FSAL_OP_LOCK) {
+			// Slower progression for F_LOCK: 15ms, 25ms, 40ms, 65ms, 105ms, 170ms, 275ms, 445ms
+			retryDelay.tv_nsec = retryDelay.tv_nsec * 16 / 10; // 1.6x multiplier
+		} else {
+			// Standard progression for others: 5ms, 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms
+			retryDelay.tv_nsec *= 2;
+		}
+		
+		// Cap at 1 second
+		if (retryDelay.tv_nsec >= 1000000000) {
 			retryDelay.tv_sec = 1;
 			retryDelay.tv_nsec = 0;
 		}
@@ -1716,8 +1745,8 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		if (closeFd && fileinfo != NULL) { sau_release(export->fsInstance, fileinfo); }
 		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
 
-		LogMajor(COMPONENT_FSAL, "Lock operation failed after %d retries, returning error %d (%s)", 
-		         retryCount, lastError, saunafs_error_string(lastError));
+		LogMajor(COMPONENT_FSAL, "Lock operation failed after %d retries, returning error %d (%s) (op=%d type=%d)", 
+		         retryCount, lastError, saunafs_error_string(lastError), lockOperation, lockInfo.l_type);
 		return saunafsToFsalError(lastError);
 	}
 
