@@ -1644,10 +1644,13 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	
 	sau_set_lock_owner(fileinfo, (uint64_t)owner);
 
-	// Retry mechanism for transient lock errors
-	int maxRetries = 3;
+	// Enhanced retry mechanism for transient lock errors
+	int maxRetries = 5; // Increased from 3 to 5 retries
 	int retryCount = 0;
-	struct timespec retryDelay = {0, 10000000}; // 10ms initial delay
+	struct timespec retryDelay = {0, 5000000}; // 5ms initial delay (reduced from 10ms)
+
+	LogFullDebug(COMPONENT_FSAL, "Starting lock operation: op=%d type=%d start=%" PRIu64 " len=%" PRIu64 " owner=%p",
+	             lockOperation, lockInfo.l_type, lockInfo.l_start, lockInfo.l_len, owner);
 
 	while (retryCount <= maxRetries) {
 		if (lockOperation == FSAL_OP_LOCKT) {
@@ -1660,7 +1663,10 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		}
 
 		if (retval >= 0) {
-			// Success, break out of retry loop
+			// Success, log and break out of retry loop
+			if (retryCount > 0) {
+				LogMajor(COMPONENT_FSAL, "Lock operation succeeded after %d retries", retryCount);
+			}
 			break;
 		}
 
@@ -1675,6 +1681,10 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 				case SAUNAFS_ERROR_CANTCONNECT:
 				case SAUNAFS_ERROR_DISCONNECTED:
 				case SAUNAFS_ERROR_TEMP_NOTPOSSIBLE:
+				case SAUNAFS_ERROR_TIMEOUT:          // Added: Network/operation timeout
+				case SAUNAFS_ERROR_WAITING:          // Added: Operation waiting/in progress
+				case SAUNAFS_ERROR_CHUNKBUSY:        // Added: Resource temporarily busy
+				case SAUNAFS_ERROR_LOCKED:           // Added: Resource temporarily locked
 					shouldRetry = true;
 					break;
 				default:
@@ -1684,14 +1694,16 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		}
 
 		if (!shouldRetry) {
-			LogFullDebug(COMPONENT_FSAL, "Lock operation failed with non-retryable error %d after %d retries", lastError, retryCount);
+			LogMajor(COMPONENT_FSAL, "Lock operation failed with non-retryable error %d (%s) after %d retries",
+			         lastError, saunafs_error_string(lastError), retryCount);
 			break;
 		}
 
 		retryCount++;
-		LogFullDebug(COMPONENT_FSAL, "Lock operation failed with transient error %d, retrying %d/%d", lastError, retryCount, maxRetries);
+		LogMajor(COMPONENT_FSAL, "Lock operation failed with transient error %d (%s), retrying %d/%d",
+		         lastError, saunafs_error_string(lastError), retryCount, maxRetries);
 
-		// Sleep with exponential backoff (10ms, 20ms, 40ms)
+		// Sleep with exponential backoff (5ms, 10ms, 20ms, 40ms, 80ms)
 		nanosleep(&retryDelay, NULL);
 		retryDelay.tv_nsec *= 2;
 		if (retryDelay.tv_nsec >= 1000000000) { // Cap at 1 second
@@ -1704,7 +1716,8 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		if (closeFd && fileinfo != NULL) { sau_release(export->fsInstance, fileinfo); }
 		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
 
-		LogFullDebug(COMPONENT_FSAL, "Lock operation failed after %d retries, returning error %d", retryCount, lastError);
+		LogMajor(COMPONENT_FSAL, "Lock operation failed after %d retries, returning error %d (%s)", 
+		         retryCount, lastError, saunafs_error_string(lastError));
 		return saunafsToFsalError(lastError);
 	}
 
