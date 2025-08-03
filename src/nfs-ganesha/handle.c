@@ -16,7 +16,9 @@
    You should have received a copy of the GNU General Public License
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
-#include "config.h"
+
+#include <time.h>
+
 #include "fsal_types.h"
 
 #ifdef LINUX
@@ -1642,22 +1644,67 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	
 	sau_set_lock_owner(fileinfo, (uint64_t)owner);
 
-	if (lockOperation == FSAL_OP_LOCKT) {
-		retval = saunafs_getlock(export->fsInstance, &op_ctx->creds, fileinfo,
-		                         &lockInfo);
-	}
-	else {
-		retval = saunafs_setlock(export->fsInstance, &op_ctx->creds, fileinfo,
-		                         &lockInfo);
+	// Retry mechanism for transient lock errors
+	int maxRetries = 3;
+	int retryCount = 0;
+	struct timespec retryDelay = {0, 10000000}; // 10ms initial delay
+
+	while (retryCount <= maxRetries) {
+		if (lockOperation == FSAL_OP_LOCKT) {
+			retval = saunafs_getlock(export->fsInstance, &op_ctx->creds, fileinfo,
+			                         &lockInfo);
+		}
+		else {
+			retval = saunafs_setlock(export->fsInstance, &op_ctx->creds, fileinfo,
+			                         &lockInfo);
+		}
+
+		if (retval >= 0) {
+			// Success, break out of retry loop
+			break;
+		}
+
+		lastError = sau_last_err();
+
+		// Check if this is a transient error that should be retried
+		bool shouldRetry = false;
+		if (retryCount < maxRetries) {
+			switch (lastError) {
+				case SAUNAFS_ERROR_IO:
+				case SAUNAFS_ERROR_DELAYED:
+				case SAUNAFS_ERROR_CANTCONNECT:
+				case SAUNAFS_ERROR_DISCONNECTED:
+				case SAUNAFS_ERROR_TEMP_NOTPOSSIBLE:
+					shouldRetry = true;
+					break;
+				default:
+					// Non-transient error, don't retry
+					break;
+			}
+		}
+
+		if (!shouldRetry) {
+			LogFullDebug(COMPONENT_FSAL, "Lock operation failed with non-retryable error %d after %d retries", lastError, retryCount);
+			break;
+		}
+
+		retryCount++;
+		LogFullDebug(COMPONENT_FSAL, "Lock operation failed with transient error %d, retrying %d/%d", lastError, retryCount, maxRetries);
+
+		// Sleep with exponential backoff (10ms, 20ms, 40ms)
+		nanosleep(&retryDelay, NULL);
+		retryDelay.tv_nsec *= 2;
+		if (retryDelay.tv_nsec >= 1000000000) { // Cap at 1 second
+			retryDelay.tv_sec = 1;
+			retryDelay.tv_nsec = 0;
+		}
 	}
 
 	if (retval < 0) {
-		lastError = sau_last_err();
-
 		if (closeFd && fileinfo != NULL) { sau_release(export->fsInstance, fileinfo); }
 		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
 
-		LogFullDebug(COMPONENT_FSAL, "Returning error %d", lastError);
+		LogFullDebug(COMPONENT_FSAL, "Lock operation failed after %d retries, returning error %d", retryCount, lastError);
 		return saunafsToFsalError(lastError);
 	}
 
