@@ -103,7 +103,11 @@ protected:
 
 // Test job addition
 TEST_F(JobPoolTest, AddJob) {
+	// Create a JobPool instance without workers to disable automatic job dispatching
+	auto jobPool = std::make_unique<JobPool>("TestPool", 0, 5, kNrListeners, wakeupDescVec);
+
 	jobPool->addJob(JobPool::ChunkOperation::Read, mockJobCallback, &counters[0], mockProcessJob);
+
 	EXPECT_EQ(jobPool->getJobCount(), 1U);
 }
 
