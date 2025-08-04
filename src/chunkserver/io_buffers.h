@@ -569,3 +569,9 @@ inline ReplicatorBufferPool &getReplicateBuffersPool() {
 	static ReplicatorBufferPool replicateBuffersPool;
 	return replicateBuffersPool;
 }
+
+inline void releaseOldIoBuffers(uint32_t expirationTime_ms) {
+	getReadOutputBufferPool().releaseOldBuffers(expirationTime_ms);
+	getWriteInputBufferPool().releaseOldBuffers(expirationTime_ms);
+	getReplicateBuffersPool().releaseOldBuffers(expirationTime_ms);
+}
