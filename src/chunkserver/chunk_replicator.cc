@@ -33,6 +33,7 @@
 #include "common/read_plan_executor.h"
 #include "common/saunafs_version.h"
 #include "common/sockets.h"
+#include "io_buffers.h"
 #include "protocol/cstocs.h"
 
 static ConnectionPool gPool;
@@ -149,55 +150,54 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 	SliceRecoveryPlanner planner;
 	ReadPlanExecutor::ChunkTypeLocations locations;
 	SliceRecoveryPlanner::PartsContainer available_parts;
-#ifdef SAUNAFS_HAVE_THREAD_LOCAL
-	static thread_local std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
-#else
-	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> buffer;
-#endif
+	auto buffer = getReplicateBuffersPool().get(kReplicatorBufferHeaderSize, batchSize);
 
-	for (const auto& source : sources) {
-		available_parts.push_back(source.chunk_type);
+	try {
+		for (const auto &source : sources) {
+			available_parts.push_back(source.chunk_type);
 
-		if (locations.count(source.chunk_type)) {
-			continue;
-		}
-		locations[source.chunk_type] = source;
-	}
-
-	fileCreator.create();
-	const SteadyDuration max_wait_time = std::chrono::milliseconds(total_timeout_ms_);
-	Timeout timeout{max_wait_time};
-	for (int firstBlock = 0; firstBlock < blocks; firstBlock += batchSize) {
-		int nrOfBlocks = std::min(blocks - firstBlock, batchSize);
-
-		planner.prepare(fileCreator.chunkType(), firstBlock, nrOfBlocks, available_parts);
-		if (!planner.isReadingPossible()) {
-			throw Exception("No copies to read from");
+			if (locations.count(source.chunk_type)) { continue; }
+			locations[source.chunk_type] = source;
 		}
 
-		// Wait for limit to be assigned
-		uint8_t status = replicationBandwidthLimiter().wait(nrOfBlocks * SFSBLOCKSIZE, max_wait_time);
-		if (status != SAUNAFS_STATUS_OK) {
-			throw Exception("Replication limiting error", status);
-		}
+		fileCreator.create();
+		const SteadyDuration max_wait_time = std::chrono::milliseconds(total_timeout_ms_);
+		Timeout timeout{max_wait_time};
+		for (int firstBlock = 0; firstBlock < blocks; firstBlock += batchSize) {
+			int nrOfBlocks = std::min(blocks - firstBlock, batchSize);
 
-		// Build and execute the plan
-		buffer.clear();
-		ReadPlanExecutor executor(chunkserverStats_,
-				fileCreator.chunkId(), fileCreator.chunkVersion(),
-				planner.buildPlan());
-		executor.executePlan(buffer, locations, connector_, timeout.remaining_ms(), wave_timeout_ms_, timeout);
+			planner.prepare(fileCreator.chunkType(), firstBlock, nrOfBlocks, available_parts);
+			if (!planner.isReadingPossible()) { throw Exception("No copies to read from"); }
 
-		std::vector<uint32_t> crcData;
-		for (int i = 0; i < nrOfBlocks; ++i) {
-			uint32_t offset = i * SFSBLOCKSIZE;
-			const uint8_t* dataBlock = buffer.data() + offset;
-			uint32_t crc = mycrc32(0, dataBlock, SFSBLOCKSIZE);
-			crcData.push_back(crc);
+			// Wait for limit to be assigned
+			uint8_t status =
+			    replicationBandwidthLimiter().wait(nrOfBlocks * SFSBLOCKSIZE, max_wait_time);
+			if (status != SAUNAFS_STATUS_OK) {
+				throw Exception("Replication limiting error", status);
+			}
+
+			// Build and execute the plan
+			buffer->clear();
+			ReadPlanExecutor executor(chunkserverStats_, fileCreator.chunkId(),
+			                          fileCreator.chunkVersion(), planner.buildPlan());
+			executor.executePlan(buffer->getBlockBuffer(), locations, connector_,
+			                     timeout.remaining_ms(), wave_timeout_ms_, timeout);
+
+			std::vector<uint32_t> crcData;
+			for (int i = 0; i < nrOfBlocks; ++i) {
+				uint32_t offset = i * SFSBLOCKSIZE;
+				const uint8_t *dataBlock = buffer->data() + offset;
+				uint32_t crc = mycrc32(0, dataBlock, SFSBLOCKSIZE);
+				crcData.push_back(crc);
+			}
+			fileCreator.write(static_cast<const uint8_t *>(buffer->data()),
+			                  static_cast<uint16_t>(firstBlock), static_cast<uint16_t>(nrOfBlocks),
+			                  crcData);
 		}
-		fileCreator.write(static_cast<const uint8_t *>(buffer.data()),
-		                  static_cast<uint16_t>(firstBlock), static_cast<uint16_t>(nrOfBlocks),
-		                  crcData);
+		getReplicateBuffersPool().put(std::move(buffer));
+	} catch (...) {
+		getReplicateBuffersPool().put(std::move(buffer));
+		throw;
 	}
 
 	fileCreator.commit();
