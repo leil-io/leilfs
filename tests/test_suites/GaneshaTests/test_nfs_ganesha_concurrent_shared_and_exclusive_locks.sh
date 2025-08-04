@@ -78,8 +78,8 @@ cd "${TEMP_DIR}/mnt/ganesha"
 # Acquire 3 shared locks on [100, 200]
 for i in "${lockIndexes[@]}"; do
 	readlock "dir/file_test" 100 100
-    sharedLocks[$i]=$!
-    assert_operation_performed "read  lock:   dir/file_test"
+	sharedLocks[$i]=$!
+	assert_operation_performed "read  lock:   dir/file_test"
 done
 
 # Attempt exclusive lock on [100, 200] (should block/fail)
@@ -89,7 +89,7 @@ assert_operation_not_performed $((operations+1)) # Should not acquire
 
 # Release shared locks
 for i in "${lockIndexes[@]}"; do
-    unlock "${sharedLocks[$i]}"
+	unlock "${sharedLocks[$i]}"
 	assert_operation_performed "read  unlock: dir/file_test"
 done
 

@@ -1085,7 +1085,7 @@ int sau_setlk(sau_t *instance, sau_context_t *ctx, sau_fileinfo_t *fileinfo,
 	gLastErrorCode = 0;
 
 	safs_locks::FlockWrapper flock_wrapper;
-	// Convert the lock type to the correct POSIX equivalent
+	// Convert the POSIX lock type to the internal safs_locks equivalent
 	flock_wrapper.l_type = safs_locks::posixOpConv(lock->l_type, true);
 	flock_wrapper.l_start = lock->l_start;
 	flock_wrapper.l_len = lock->l_len;
