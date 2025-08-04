@@ -125,6 +125,7 @@ uint32_t getBytesToBeReadFromCS(uint32_t index, uint32_t offset, uint32_t size,
 
 RequestConditionVariablePair *ReadaheadRequests::append(
     ReadaheadRequestPtr readaheadRequestPtr) {
+	readaheadRequestPtr->entry->isPendingNotify = true;
 	pendingRequests_.emplace_back(readaheadRequestPtr);
 	return &pendingRequests_.back();
 }
@@ -199,8 +200,19 @@ void ReadaheadRequests::discardAllPendingRequests() {
 		    req.requestPtr->entry->refcount <= 1) {
 			req.requestPtr->state = ReadaheadRequestState::kDiscarded;
 		}
+		req.requestPtr->entry->isPendingNotify = false;
 	}
 	pendingRequests_.clear();
+}
+
+ReadaheadRequests::~ReadaheadRequests() {
+	if (!pendingRequests_.empty()) {
+		safs::log_warn(
+		    "ReadaheadRequests destructor called with pending requests, "
+		    "this should not happen, pending requests: {}",
+		    toString().str());
+		discardAllPendingRequests();
+	}
 }
 
 bool ReadaheadOperationsManager::request(

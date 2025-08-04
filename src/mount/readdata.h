@@ -93,6 +93,7 @@ struct RequestConditionVariablePair {
 	// inodeLock: LOCKED
 	void notify() {
 		cvPtr->notify_all();
+		requestPtr->entry->isPendingNotify = false;
 	}
 };
 
@@ -185,6 +186,14 @@ struct ReadaheadRequests {
 	 * inodeLock: LOCKED
 	 */
 	void discardAllPendingRequests();
+
+	/** \brief Make sure pending requests are no longer being waited for.
+	 *
+	 * This is necessary to avoid those entries being not properly released in some unexpected
+	 * situations, because when the destruction comes, the pending requests are not supposed to
+	 * exist anymore.
+	 */
+	~ReadaheadRequests();
 
 private:
 	using RequestsContainer = std::list<RequestConditionVariablePair>;
