@@ -20,8 +20,13 @@
 
 #include "common/platform.h"
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <queue>
+
+#include "common/time_utils.h"
+#include "slogger/slogger.h"
 
 /**
  * BuffersPool is a thread-safe pool of buffers.
@@ -67,7 +72,7 @@ public:
 		}
 
 		auto &buffers = it->second;
-		auto buffer = buffers.front();
+		auto buffer = buffers.front().getBuffer();
 
 		buffers.pop();
 		buffer->clear();
@@ -96,14 +101,48 @@ public:
 
 		if (currentNumberOfBlocks_ + numBlocks <= kMaxNumberOfBlocks) {
 			buffer->clear();
-			buffers.push(std::move(buffer));
+			buffers.emplace(std::move(buffer));
 			currentNumberOfBlocks_ += numBlocks;
 		}
 		// To make sure the deallocation is not done under the lock.
 		lock.unlock();
 	}
 
+	/**
+	 * Release entries older than expirationTime_ms milliseconds.
+	 * @param expirationTime_ms Time threshold to release entries from (in ms).
+	 */
+	void releaseOldBuffers(uint32_t expirationTime_ms) {
+		std::unique_lock lock(mutex_);
+		std::vector<std::shared_ptr<T>> buffersToRelease;
+		for (auto &[_, buffers] : buffersMap_) {
+			// Queue behavior ensures older entries are at the front
+			while (!buffers.empty() && buffers.front().expired(expirationTime_ms)) {
+				auto buffer = buffers.front().getBuffer();
+				buffers.pop();
+				buffersToRelease.emplace_back(std::move(buffer));
+			}
+		}
+		// To make sure the releasing is performed outside the lock
+		lock.unlock();
+
+		// Destructor of the vector should release the last copy of the buffers
+	}
+
 private:
+	struct BufferPoolEntry {
+		std::shared_ptr<T> entry_;
+		Timer timer_;
+
+		BufferPoolEntry(std::shared_ptr<T> &&entry) : entry_(std::move(entry)) {}
+
+		bool expired(uint32_t expirationTime_ms) const {
+			return timer_.elapsed_ms() >= expirationTime_ms;
+		}
+
+		std::shared_ptr<T> &&getBuffer() { return std::move(entry_); }
+	};
+
 	/// How many operations should pass between two log messages.
 	static constexpr size_t kLogAfterEveryXTimes = 1000;
 	/// Number of operations since last log message.
@@ -113,7 +152,7 @@ private:
 	/// Current number of buffers in the pool.
 	size_t currentNumberOfBlocks_ = 0;
 	/// Buffers pool map: a queue of buffers for each type of buffer.
-	std::map<std::pair<size_t, size_t>, std::queue<std::shared_ptr<T>>> buffersMap_;
+	std::map<std::pair<size_t, size_t>, std::queue<BufferPoolEntry>> buffersMap_;
 	/// Mutex to protect the pool.
 	std::mutex mutex_;
 };
