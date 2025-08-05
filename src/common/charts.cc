@@ -1837,6 +1837,7 @@ int charts_fake_compress(uint8_t *src,uint32_t srcsize,uint8_t *dst,uint32_t *ds
 
 
 uint32_t charts_make_csv(uint32_t number) {
+	const int kNumberRangeModulus = 10;
 	uint32_t type, range;
 	uint32_t tm_year, tm_mon, tm_day, tm_hour, tm_min, tm_sec;
 	uint64_t c1dispdata[LENG];
@@ -1850,7 +1851,7 @@ uint32_t charts_make_csv(uint32_t number) {
 	tm_year = tm_mon = tm_day = tm_hour = tm_min = tm_sec = 0;
 
 	type = number / 10;
-	range = number % RANGES;
+	range = number % kNumberRangeModulus;
 	charts_filltab(c1dispdata, range, type, 1);
 	charts_filltab(c2dispdata, range, type, 2);
 	charts_filltab(c3dispdata, range, type, 3);
