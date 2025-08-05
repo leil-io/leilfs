@@ -2446,6 +2446,7 @@ void hddDisksThread() {
 
 void hddFreeResourcesThread() {
 	static const int kDelayedStep = 2;
+	static const uint32_t kOldIoBuffersExpirationTimeMs = kDelayedStep * 1000;
 	static const int kMaxFreeUnused = 1024;
 	TRACETHIS();
 
@@ -2455,6 +2456,9 @@ void hddFreeResourcesThread() {
 		gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex,
 		                       kMaxFreeUnused);
 		ChunkTrashManager::collectGarbage();
+		/// Release buffers older than kDelayedStep seconds
+		releaseOldIoBuffers(kOldIoBuffersExpirationTimeMs);
+
 		sleep(kDelayedStep);
 	}
 }

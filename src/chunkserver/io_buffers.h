@@ -507,8 +507,47 @@ protected:
 	std::vector<WriteInfo> writeInfo_;
 };
 
+/// @brief The size of the header for the replicator buffer.
+/// The 0 is picked for simplicity, main goal is to make it a single value.
+constexpr size_t kReplicatorBufferHeaderSize = 0;
+
+/**
+ * @class ReplicatorBuffer
+ * @brief Wraps an IO aligned buffer for the replicator to fit the BuffersPool interface.
+ */
+class ReplicatorBuffer {
+public:
+	/// @brief Constructs a ReplicatorBuffer with the given number of blocks.
+	/// @param headerSize The size of the header (not used, but required for compatibility).
+	/// @param numBlocks The number of blocks the buffer can hold.
+	ReplicatorBuffer(size_t headerSize, size_t numBlocks) : numBlocks_(numBlocks) {
+		(void)headerSize;
+	}
+
+	/// @brief Clears the buffer.
+	void clear() { blockBuffer_.clear(); }
+
+	/// @brief Returns the actual block buffer.
+	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> &getBlockBuffer() {
+		return blockBuffer_;
+	}
+
+	/// @brief Returns the start of the block buffer.
+	const uint8_t *data() const { return blockBuffer_.data(); }
+
+	/// @brief Returns the type of the buffer.
+	std::pair<size_t, size_t> type() const { return {kReplicatorBufferHeaderSize, numBlocks_}; }
+
+private:
+	const size_t numBlocks_;  ///< The number of blocks.
+
+	/// The buffer for the block data.
+	std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>> blockBuffer_{};
+};
+
 using OutputBufferPool = BuffersPool<OutputBuffer>;
 using InputBufferPool = BuffersPool<InputBuffer>;
+using ReplicatorBufferPool = BuffersPool<ReplicatorBuffer>;
 
 /// @brief Returns the read output buffer pool.
 /// It is a singleton.
@@ -522,4 +561,17 @@ inline OutputBufferPool &getReadOutputBufferPool() {
 inline InputBufferPool &getWriteInputBufferPool() {
 	static InputBufferPool writeInputBuffersPool;
 	return writeInputBuffersPool;
+}
+
+/// @brief Returns the replicate buffer pool.
+/// It is a singleton.
+inline ReplicatorBufferPool &getReplicateBuffersPool() {
+	static ReplicatorBufferPool replicateBuffersPool;
+	return replicateBuffersPool;
+}
+
+inline void releaseOldIoBuffers(uint32_t expirationTime_ms) {
+	getReadOutputBufferPool().releaseOldBuffers(expirationTime_ms);
+	getWriteInputBufferPool().releaseOldBuffers(expirationTime_ms);
+	getReplicateBuffersPool().releaseOldBuffers(expirationTime_ms);
 }
