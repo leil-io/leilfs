@@ -120,6 +120,8 @@ public:
 			while (!buffers.empty() && buffers.front().expired(expirationTime_ms)) {
 				auto buffer = buffers.front().getBuffer();
 				buffers.pop();
+				auto [_, numBlocks] = buffer->type();
+				currentNumberOfBlocks_ -= numBlocks;
 				buffersToRelease.emplace_back(std::move(buffer));
 			}
 		}
