@@ -543,6 +543,33 @@ create_emulated_zoned_devices_for_cs_number_() {
 	done
 }
 
+disable_chunkserver_disk() {
+	chunkserver_id=$1
+	disk_id=$2
+	hdd_file="${saunafs_info_[chunkserver${chunkserver_id}_hdd]}"
+	line_num=$((disk_id + 1))
+	sed -i "${line_num}s/^/# /" "$hdd_file"
+	saunafs_chunkserver_daemon "${chunkserver_id}" reload || {
+		echo "Failed to reload chunkserver ${chunkserver_id} after disabling disk ${disk_id}"
+		return 1
+	}
+	echo "Disabled disk ${disk_id} for chunkserver ${chunkserver_id}"
+}
+
+reenable_chunkserver_disk() {
+	chunkserver_id=$1
+	disk_id=$2
+	hdd_file="${saunafs_info_[chunkserver${chunkserver_id}_hdd]}"
+	line_num=$((disk_id + 1))
+	# Remove "# " at the start of the line
+	sed -i "${line_num}s/^# //" "$hdd_file"
+	saunafs_chunkserver_daemon "${chunkserver_id}" reload || {
+		echo "Failed to reload chunkserver ${chunkserver_id} after re-enabling disk ${disk_id}"
+		return 1
+	}
+	echo "Re-enabled disk ${disk_id} for chunkserver ${chunkserver_id}"
+}
+
 create_sfshdd_cfg_() {
 	local n=$disks_per_chunkserver
 	local zoned_prefix=""
@@ -584,6 +611,13 @@ create_sfshdd_cfg_() {
 create_chunkserver_label_entry_() {
 	local csid=$1
 	tr '|' "\n" <<<"${CHUNKSERVER_LABELS-}" | awk -F: '$1~/(^|,)'$csid'(,|$)/ {print "LABEL = "$2}'
+}
+
+add_lines_sfschunkserver_cfg_() {
+	lines=$1
+	chunkserver_id=$2
+	lines_with_newline=$(echo "${lines}" | tr '|' '\n')
+	echo "${lines_with_newline}" >> "${saunafs_info_[chunkserver${chunkserver_id}_cfg]}"
 }
 
 create_sfschunkserver_cfg_() {
@@ -1026,4 +1060,35 @@ function is_zoned_device() {
 	else
 		echo false
 	fi
+}
+
+# Checks no iobuffers are in use in the chunkservers.
+# Adds around 15s to the test.
+sfschunkserver_check_no_buffer_in_use() {
+	# Make sure some time passes to get dead csentries cleaned up
+	sleep 10
+
+	chunkserver_count=${saunafs_info_[chunkserver_count]}
+	# Add the MAGIC_DEBUG_LOG option to the chunkservers and reload
+	for ((i=0; i<chunkserver_count; ++i)); do
+		add_lines_sfschunkserver_cfg_ "MAGIC_DEBUG_LOG=${TEMP_DIR}/log|`
+			`LOG_LEVEL=debug|LOG_FLUSH_ON=DEBUG|HDD_TEST_FREQ=10000" ${i}
+		saunafs_chunkserver_daemon ${i} reload
+	done
+
+	sleep 5
+
+	# Assert that the last 5 seconds of log contains chunkserver_count lines with:
+	# "Current total buffer blocks per operation: read 0, write 0, replicate 0"
+	# Plus, the last chunkserver_count lines should be unique disregarding the timestamp.
+	# The difference should be the CS pid. This means that the buffers were released correctly.
+	last_total_entries=$(
+		grep '(releaseOldIoBuffers) Current total' "${TEMP_DIR}/log" | tail -n \
+			${chunkserver_count} | awk '{for(i=4;i<=NF;++i) printf "%s%s", $i, (i<NF?" ":"\n")}'
+	)
+	full_zeroes=$(echo "${last_total_entries}" | grep -c 'read 0, write 0, replicate 0')
+	unique_count=$(echo "${last_total_entries}" | sort | uniq | wc -l)
+
+	assert_equals "${chunkserver_count}" "${full_zeroes}"
+	assert_equals "${chunkserver_count}" "${unique_count}"
 }
