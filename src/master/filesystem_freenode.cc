@@ -31,8 +31,8 @@ inode_t fsnodes_get_next_id(uint32_t ts, inode_t req_inode) {
 	if (req_inode == 0) {
 		mabort("Out of free inode numbers");
 	}
-	if (req_inode > gMetadata->maxInodeId) {
-		gMetadata->maxInodeId = req_inode;
+	if (req_inode > gMetadata->maxInodeId().getValue()) {
+		gMetadata->maxInodeId().setValue(req_inode);
 	}
 
 	return req_inode;

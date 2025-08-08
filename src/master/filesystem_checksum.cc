@@ -134,9 +134,9 @@ static void fsnodes_recalculate_checksum() {
 
 uint64_t fs_checksum(ChecksumMode mode) {
 	uint64_t checksum = 0x1251;
-	hashCombine(checksum, gMetadata->maxInodeId);
+	hashCombine(checksum, gMetadata->maxInodeId().getValue());
 	hashCombine(checksum, gMetadata->metadataVersion);
-	hashCombine(checksum, gMetadata->nextSessionId);
+	hashCombine(checksum, gMetadata->nextSessionId().getValue());
 	if (mode == ChecksumMode::kForceRecalculate) {
 		fsnodes_recalculate_checksum();
 		xattr_recalculate_checksum();

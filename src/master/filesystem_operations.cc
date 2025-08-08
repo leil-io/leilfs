@@ -108,6 +108,7 @@ void fs_changelog(uint32_t ts, const char *format, ...) {
 
 	uint64_t version = gMetadata->metadataVersion++;
 	changelog(version, entry);
+	getChangelogSignal().emit({.version=version, .entry=entry});
 	matomlserv_broadcast_logstring(version, (uint8_t *)entry, tsLength + entryLength);
 #endif
 }
@@ -1942,16 +1943,18 @@ uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) 
 uint32_t fs_newsessionid(void) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
-	fs_changelog(ts, "SESSION():%" PRIu32, gMetadata->nextSessionId);
-	return gMetadata->nextSessionId++;
+	const uint32_t current = gMetadata->nextSessionId().getValue();
+	fs_changelog(ts, "SESSION():%" PRIu32, current);
+	gMetadata->nextSessionId().increment();
+	return current;
 }
 #endif
 uint8_t fs_apply_session(uint32_t sessionid) {
-	if (sessionid != gMetadata->nextSessionId) {
+	if (sessionid != gMetadata->nextSessionId().getValue()) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	gMetadata->metadataVersion++;
-	gMetadata->nextSessionId++;
+	gMetadata->nextSessionId().increment();
 	return SAUNAFS_STATUS_OK;
 }
 
