@@ -85,6 +85,7 @@ src/chunkserver/plugins/ice_disk_energy_manager
 tests/ci_build/run-smr-tests.sh
 tests/test_suites/SMRTests
 tests/test_suites/ICETests
+tests/test_suites/WindowsClientTests
 
 # Windows #
 ###########
