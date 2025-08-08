@@ -114,6 +114,9 @@ public:
 
 	/// Commits the transaction, making all changes permanent.
 	virtual bool commit() = 0;
+
+	/// Returns the committed version of the transaction, if available.
+	virtual std::optional<int64_t> getCommittedVersion() const = 0;
 };
 
 }  // namespace kv
