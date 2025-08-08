@@ -1852,6 +1852,10 @@ uint32_t charts_make_csv(uint32_t number) {
 
 	type = number / 10;
 	range = number % kNumberRangeModulus;
+	if (range >= RANGES) {
+		safs::log_warn("wrong range for chart {}", number);
+		return 0;
+	}
 	charts_filltab(c1dispdata, range, type, 1);
 	charts_filltab(c2dispdata, range, type, 2);
 	charts_filltab(c3dispdata, range, type, 3);
