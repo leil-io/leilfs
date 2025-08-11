@@ -35,6 +35,7 @@
 
 #include "common/datapack.h"
 #include "common/massert.h"
+#include "common/saunafs_version.h"
 #include "common/special_inode_defs.h"
 #include "common/type_defs.h"
 #include "mount/exports.h"
@@ -65,7 +66,12 @@ constexpr size_t kBlockSize = 512;
 // Maximum file permission bits (all permission bits, sticky/setuid/setgid)
 constexpr mode_t kMaxFilePermissions = 07777;
 
-constexpr uint64_t kStatfsFilesBase = 1000'000'000 + PKGVERSION;
+// Maximum number of requested entries to buffer in a trash/reserved directory
+// reading operation. This is used to limit the number of entries
+// processed at once, to avoid excessive memory usage.
+constexpr uint64_t kMaxEntriesToCache = 100000;
+
+constexpr uint64_t kStatfsFilesBase = 1'000'000'000 + PKGVERSION;
 
 struct DirectoryBuffer {
 	bool wasRead = false;
@@ -403,17 +409,14 @@ static void fillDirMetaEntries(uint8_t *buff, inode_t ino) {
 	}
 }
 
-static uint32_t getDirDataEntriesSize(const uint8_t *dataBuffer, size_t dataSize) {
+static uint32_t getDirDataEntriesSize(const std::vector<NamedInodeEntry> &entries) {
 	uint8_t nameLength;
 	uint32_t totalSize = 0;
-	const uint8_t *eptr;
 
-	if (dataBuffer == nullptr || dataSize == 0) { return 0; }
+	if (entries.empty()) { return 0; }
 
-	eptr = dataBuffer + dataSize;
-	while (dataBuffer < eptr) {
-		nameLength = dataBuffer[0];
-		dataBuffer += kDirEntryMetaSize + nameLength;
+	for (const auto &entry : entries) {
+		nameLength = entry.name.size();
 		if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
 			totalSize += kDirEntryStride + NAME_MAX;
 		} else {
@@ -424,82 +427,38 @@ static uint32_t getDirDataEntriesSize(const uint8_t *dataBuffer, size_t dataSize
 	return totalSize;
 }
 
-static void convertDirDataEntries(uint8_t *buff, const uint8_t *dataBuffer, uint32_t dataSize) {
-	const uint8_t *name;
-	inode_t inode;
-	uint8_t nameLength;
-	uint8_t inodeLength;
-	const uint8_t *eptr;
-	eptr = dataBuffer + dataSize;
+static void convertDirDataEntries(uint8_t *buff, const std::vector<NamedInodeEntry> &entries) {
+	const uint8_t *name{};
+	uint8_t nameLength{};
+	uint8_t inodeLength{};
 
-	while (dataBuffer < eptr) {
-		nameLength = dataBuffer[0];
+	for (const auto &entry : entries) {
+		nameLength = entry.name.size();
 
-		if (dataBuffer + nameLength + kDirEntryMetaSize <= eptr) {
-			dataBuffer++;
-
-			if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
-				inodeLength = NAME_MAX;
-			} else {
-				inodeLength = nameLength + kDirEntryHexPreffixSize;
-			}
-
-			put8bit(&buff, inodeLength);
-			name = dataBuffer;
-			dataBuffer += nameLength;
-			getINode(&dataBuffer, inode);
-			sprintf((char *)buff, "%0*" PRIXiNode "|", 2 * (int)sizeof(inode_t), inode);
-
-			if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
-				memcpy(buff + kDirEntryHexPreffixSize, name, NAME_MAX - kDirEntryHexPreffixSize);
-				buff += NAME_MAX;
-			} else {
-				memcpy(buff + kDirEntryHexPreffixSize, name, nameLength);
-				buff += kDirEntryHexPreffixSize + nameLength;
-			}
-
-			putINode(&buff, inode);
-			put8bit(&buff, TYPE_FILE);
+		if (nameLength > NAME_MAX - kDirEntryHexPreffixSize) {
+			inodeLength = NAME_MAX;
 		} else {
-			safs::log_warn("dir data malformed (trash)");
-			dataBuffer = eptr;
+			inodeLength = nameLength + kDirEntryHexPreffixSize;
 		}
-	}
-}
 
-static void fillDirectoryBufferMeta(DirectoryBuffer *dirbuf, inode_t ino) {
-	int status;
-	uint32_t metaEntriesSize, entriesSize = 0, dataEntriesSize;
-	const uint8_t *bufData = nullptr;
+		put8bit(&buff, inodeLength);
+		name = reinterpret_cast<const uint8_t *>(entry.name.data());
+		sprintf((char *)buff, "%0*" PRIXiNode "|", 2 * (int)sizeof(inode_t), entry.inode);
 
-	dirbuf->buffer.clear();
-	metaEntriesSize = getDirMetaEntriesSize(ino);
+		uint8_t sizeOfTrailingNamePiece =
+		    std::min(nameLength, static_cast<uint8_t>(NAME_MAX - kDirEntryHexPreffixSize));
+		memcpy(buff + kDirEntryHexPreffixSize, name, sizeOfTrailingNamePiece);
 
-	if (ino == SPECIAL_INODE_META_TRASH) {
-		status = fs_gettrash(&bufData, &entriesSize);
-		if (status != SAUNAFS_STATUS_OK) { return; }
-		dataEntriesSize = getDirDataEntriesSize(bufData, entriesSize);
-	} else if (ino == SPECIAL_INODE_META_RESERVED) {
-		status = fs_getreserved(&bufData, &entriesSize);
-		if (status != SAUNAFS_STATUS_OK) { return; }
-		dataEntriesSize = getDirDataEntriesSize(bufData, entriesSize);
-	} else {
-		dataEntriesSize = 0;
-	}
+		// Replace '/' with '|' in the name part of the entry
+		for (size_t i = 0; i < sizeOfTrailingNamePiece; i++) {
+			if (buff[kDirEntryHexPreffixSize + i] == '/') {
+				buff[kDirEntryHexPreffixSize + i] = '|';
+			}
+		}
 
-	if (metaEntriesSize + dataEntriesSize == 0) { return; }
-
-	try {
-		dirbuf->buffer.resize(metaEntriesSize + dataEntriesSize);
-	} catch (const std::bad_alloc &e) {
-		safs::log_critical("fillDirectoryBufferMeta: Memory allocation failed: {}", e.what());
-		return;
-	}
-
-	if (metaEntriesSize > 0) { fillDirMetaEntries(dirbuf->buffer.data(), ino); }
-
-	if (dataEntriesSize > 0) {
-		convertDirDataEntries(dirbuf->buffer.data() + metaEntriesSize, bufData, entriesSize);
+		buff += sizeOfTrailingNamePiece + kDirEntryHexPreffixSize;
+		putINode(&buff, entry.inode);
+		put8bit(&buff, TYPE_FILE);
 	}
 }
 
@@ -594,6 +553,53 @@ void fillDirEntryBuffer(fuse_req_t req, DirectoryBuffer *dirinfo, off_t &off, ch
 	}
 }
 
+void getDirectoryEntriesLimited(DirectoryBuffer *dirinfo, inode_t ino, off_t byteOffset,
+                                size_t maxByteSize) {
+	uint8_t status = 0;
+	uint32_t entriesSize = 0;
+	uint32_t metaEntriesSize = 0;
+	uint32_t dataEntriesSize = 0;
+	std::vector<uint8_t> bufData;
+
+	// Check if the directory has already been read and cached
+	if (dirinfo->wasRead) { return; }
+
+	if (byteOffset == 0) {
+		metaEntriesSize = getDirMetaEntriesSize(ino);
+		if (metaEntriesSize > 0 && byteOffset < metaEntriesSize) {
+			std::vector<uint8_t> metaBuf(metaEntriesSize);
+			fillDirMetaEntries(metaBuf.data(), ino);
+			size_t start = byteOffset;
+			size_t toCopy = std::min(maxByteSize, metaEntriesSize - start);
+			bufData.insert(bufData.end(), metaBuf.begin() + start,
+			               metaBuf.begin() + start + toCopy);
+		}
+	}
+
+	// Offset is in data entries
+	entriesSize = kMaxEntriesToCache;
+
+	std::vector<NamedInodeEntry> entries;
+	if (ino == SPECIAL_INODE_META_TRASH) {
+		status = fs_gettrash(0, entriesSize, entries);
+	} else if (ino == SPECIAL_INODE_META_RESERVED) {
+		status = fs_getreserved(0, entriesSize, entries);
+	}
+
+	dataEntriesSize = getDirDataEntriesSize(entries);
+
+	if (status != SAUNAFS_STATUS_OK || dataEntriesSize == 0) {
+		dirinfo->buffer = bufData;
+		return;
+	}
+
+	bufData.resize(dataEntriesSize + (byteOffset == 0 ? metaEntriesSize : 0));
+	convertDirDataEntries(bufData.data() + (byteOffset == 0 ? metaEntriesSize : 0), entries);
+
+	dirinfo->buffer = bufData;
+	dirinfo->wasRead = true;
+}
+
 void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                       struct fuse_file_info *fi) {
 	auto *dirinfo = reinterpret_cast<DirectoryBuffer *>(fi->fh);
@@ -606,24 +612,24 @@ void sfs_meta_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 		fuse_reply_err(req, EINVAL);
 		return;
 	}
-	std::lock_guard lock(dirinfo->lock);
-	if (!dirinfo->wasRead || (dirinfo->wasRead && off == 0)) {
-		if (ino == SPECIAL_INODE_ROOT) {
-			replyDirReadRoot(req, off, size);
-			return;
-		}
-		fillDirectoryBufferMeta(dirinfo, ino);
-	}
-	dirinfo->wasRead = true;
 
-	if (off >= (off_t)(dirinfo->buffer.size())) {
-		fuse_reply_buf(req, nullptr, 0);
-	} else {
-		char dirEntryBuffer[READDIR_BUFFSIZE];
-		size_t writePos = 0;
-		fillDirEntryBuffer(req, dirinfo, off, dirEntryBuffer, size, writePos);
-		fuse_reply_buf(req, dirEntryBuffer, writePos);
+	std::lock_guard lock(dirinfo->lock);
+	if (ino == SPECIAL_INODE_ROOT) {
+		replyDirReadRoot(req, off, size);
+		return;
 	}
+
+	getDirectoryEntriesLimited(dirinfo, ino, off, size);
+
+	if (dirinfo->buffer.empty() || size == 0) {
+		fuse_reply_buf(req, nullptr, 0);
+		return;
+	}
+
+	char dirEntryBuffer[READDIR_BUFFSIZE];
+	size_t writePos = 0;
+	fillDirEntryBuffer(req, dirinfo, off, dirEntryBuffer, size, writePos);
+	fuse_reply_buf(req, dirEntryBuffer, writePos);
 }
 
 void sfs_meta_releasedir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
