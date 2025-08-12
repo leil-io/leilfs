@@ -33,3 +33,4 @@ done
 . tools/continuous_test.sh
 . tools/logs.sh
 . tools/ganesha.sh
+. tools/tlscerts.sh

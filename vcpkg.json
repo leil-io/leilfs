@@ -9,6 +9,7 @@
     "bzip2",
     "fmt",
     "gtest",
+    "openssl",
     "prometheus-cpp",
     "spdlog"
   ],

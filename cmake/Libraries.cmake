@@ -172,3 +172,7 @@ if (PROMETHEUS_CPP_ENABLE_PULL)
 else()
     message(STATUS "Did not find Prometheus C++ Client Library (but not needed)")
 endif()
+
+# Find OpenSSL
+find_package(OpenSSL REQUIRED)
+message(STATUS "OpenSSL: includes=${OPENSSL_INCLUDE_DIR}, libs=${OPENSSL_LIBRARIES}")

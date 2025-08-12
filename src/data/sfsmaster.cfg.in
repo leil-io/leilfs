@@ -337,3 +337,19 @@
 ## storage space is depleted.
 ## (Default: 1)
 # CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED = 1
+
+## Path to the TLS certificate file the master server will use for TLS connections.
+## Example: /etc/saunafs/ssl/master.crt
+## (There is no default)
+# TLS_CERT_FILE =
+
+## Path to the TLS private key file the master server will use for TLS connections.
+## Example: /etc/saunafs/ssl/master.key
+## (There is no default)
+# TLS_KEY_FILE =
+
+## Path to the trusted CA certificate file which is used to authenticate
+## connecting applications.
+## Example: /etc/saunafs/ssl/ca.crt
+## (There is no default)
+# TLS_SERVER_CA_CERT_FILE =

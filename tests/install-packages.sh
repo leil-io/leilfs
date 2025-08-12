@@ -89,6 +89,7 @@ apt_packages=(
 	libjudy-dev
 	libpam0g-dev
 	libspdlog-dev
+	libssl-dev
 	libsystemd-dev
 	libthrift-dev
 	libtirpc-dev

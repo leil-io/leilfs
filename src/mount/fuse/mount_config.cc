@@ -105,6 +105,9 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("usequotainvolumesize=%d", usequotainvolumesize, 0),
 	SFS_OPT("maxwaitretrytime=%u", maxwaitretrytime, 0),
 	SFS_OPT("mastercommsleeptimedivisor=%u", mastercommsleeptimedivisor, 0),
+	SFS_OPT("tlscertfile=%s", tlscertfile, 0),
+	SFS_OPT("tlskeyfile=%s", tlskeyfile, 0),
+	SFS_OPT("tlsservercacertfile=%s", tlsservercacertfile, 0),
 
 	SFS_OPT("enablefilelocks=%u", filelocks, 0),
 	SFS_OPT("nonempty", nonemptymount, 1),
@@ -209,6 +212,12 @@ void initialize_opts_name_values() {
 	    std::to_string(gMountOptions.mastercommsleeptimedivisor);
 	gOptsNameValues["enablefilelocks"] = std::to_string(gMountOptions.filelocks);
 	gOptsNameValues["nonempty"] = std::to_string(gMountOptions.nonemptymount);
+	gOptsNameValues["tlscertfile"] =
+	    gMountOptions.tlscertfile ? std::string(gMountOptions.tlscertfile) : "";
+	gOptsNameValues["tlskeyfile"] =
+	    gMountOptions.tlskeyfile ? std::string(gMountOptions.tlskeyfile) : "";
+	gOptsNameValues["tlsservercacertfile"] =
+	    gMountOptions.tlsservercacertfile ? std::string(gMountOptions.tlsservercacertfile) : "";
 
 	gMountInfo.setMountOptions(gOptsNameValues);
 }
@@ -362,6 +371,12 @@ void usage(const char *progname) {
 "    -o mastercommsleeptimedivisor=N  number of retries between each time increase of the "
 				"master-communication sleep interval, up to maxwaitretrytime; smaller N "
 				"converges faster—ideal for critical fast-reconnect scenarios (default: %u)\n"
+"    -o tlscertfile=PATH         path to the TLS certificate file the client will use "
+				"for TLS connections (default: %s)\n"
+"    -o tlskeyfile=PATH          path to the TLS private key file the client will use "
+				"for TLS connections (default: %s)\n"
+"    -o tlsservercacertfile=PATH  path to the file with trusted CA certificate which is "
+				"used to authenticate the master server (default: %s)\n"
 "\n",
 		SaunaClient::FsInitParams::kDefaultCacheExpirationTime,
 		SaunaClient::FsInitParams::kDefaultReadBuffersExpirationTime,
@@ -402,7 +417,10 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultStatfsCacheTo,
 		SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize,
 		SaunaClient::FsInitParams::kDefaultMaxWaitRetryTime,
-		SaunaClient::FsInitParams::kDefaultMasterCommSleepTimeDivisor
+		SaunaClient::FsInitParams::kDefaultMasterCommSleepTimeDivisor,
+		SaunaClient::FsInitParams::kDefaultTlsCertFile.data(),
+		SaunaClient::FsInitParams::kDefaultTlsKeyFile.data(),
+		SaunaClient::FsInitParams::kDefaultTlsServerCACertFile.data()
 	);
 	printf(
 "CMODE can be set to:\n"
