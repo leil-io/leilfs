@@ -195,13 +195,14 @@ const std::string& set_syslog_ident() {
 }
 
 void main_reload() {
-	// Reload SYSLOG_IDENT
-	safs_pretty_syslog(LOG_NOTICE, "Changing SYSLOG_IDENT to %s",
-			cfg_get("SYSLOG_IDENT", STR(APPNAME)).c_str());
-	set_syslog_ident();
-
 	// Reload MAGIC_DEBUG_LOG
 	safs::setup_logs();
+
+	// Reload SYSLOG_IDENT
+	safs_pretty_syslog(LOG_NOTICE, "Changing SYSLOG_IDENT to %s",
+	                   cfg_get("SYSLOG_IDENT", STR(APPNAME)).c_str());
+	set_syslog_ident();
+
 	safs_silent_syslog(LOG_DEBUG, "main.reload");
 }
 
