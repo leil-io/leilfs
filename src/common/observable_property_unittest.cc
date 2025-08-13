@@ -19,8 +19,10 @@
 #include "common/platform.h"
 
 #include <gtest/gtest.h>
+#include <cstdint>
 
 #include "common/observable_property.h"
+#include "common/type_defs.h"
 
 TEST(SignalSlotTest, BasicSignalWithNoParameters) {
 	Signal<> signal;
@@ -164,4 +166,76 @@ TEST(SignalSlotTest, ComplexTypeSignal) {
 
 	EXPECT_EQ(receivedData.id, 123);
 	EXPECT_EQ(receivedData.name, "test_name");
+}
+
+// ObservableIntegralProperty tests
+
+TEST(SignalSlotTest, ObservableIntegralPropertyIncrementDecrement) {
+	ObservableIntegralProperty<int> property("test_int", 10);
+
+	EXPECT_EQ(property.getValue(), 10);
+
+	property.increment();
+	EXPECT_EQ(property.getValue(), 11);
+
+	property.decrement();
+	EXPECT_EQ(property.getValue(), 10);
+
+	property.increment(5);
+	EXPECT_EQ(property.getValue(), 15);
+
+	property.decrement(3);
+	EXPECT_EQ(property.getValue(), 12);
+}
+
+TEST(SignalSlotTest, ObservableIntegralPropertyBounds) {
+	// Unsigned
+
+	ObservableIntegralProperty<uint8_t> ui8("test_uint8_t", 0);
+	EXPECT_EQ(ui8.getValue(), 0);
+
+	// Decrements
+	EXPECT_THROW(ui8.decrement(), std::underflow_error);
+	EXPECT_THROW(--ui8, std::underflow_error);
+	ui8.setValue(5);
+	EXPECT_THROW(ui8.decrement(6), std::underflow_error);
+
+	// Increments
+	ui8.setValue(1);
+	EXPECT_THROW(ui8.increment(std::numeric_limits<uint8_t>::max()), std::overflow_error);
+	ui8.setValue(std::numeric_limits<uint8_t>::max());
+	EXPECT_THROW(++ui8, std::overflow_error);
+
+	// Signed
+
+	int16_t initialValue = 0;
+	ObservableIntegralProperty<int16_t> i16("test_int16_t", initialValue);
+	EXPECT_EQ(i16.getValue(), initialValue);
+
+	// Increments
+	EXPECT_NO_THROW(++i16);
+	EXPECT_NO_THROW(i16.increment(5));
+	EXPECT_EQ(i16.getValue(), initialValue + 6);
+	EXPECT_THROW(i16.increment(std::numeric_limits<int16_t>::max()), std::overflow_error);
+	i16.setValue(initialValue);
+	EXPECT_NO_THROW(i16.increment(std::numeric_limits<int16_t>::max()));
+	EXPECT_EQ(i16.getValue(), std::numeric_limits<int16_t>::max());
+
+	// Decrements
+	i16.setValue(initialValue);
+	EXPECT_NO_THROW(--i16);
+	EXPECT_NO_THROW(i16.decrement(5));
+	EXPECT_EQ(i16.getValue(), initialValue - 6);
+	// Notice that ::min here is a negative number
+	EXPECT_THROW(i16.increment(std::numeric_limits<int16_t>::min()), std::underflow_error);
+	i16.setValue(initialValue);
+	EXPECT_NO_THROW(i16.increment(std::numeric_limits<int16_t>::min()));
+	EXPECT_EQ(i16.getValue(), std::numeric_limits<int16_t>::min());
+}
+
+TEST(SignalSlotTest, ObservableIntegralPropertyTypeSize) {
+	EXPECT_EQ(ObservableIntegralProperty<uint8_t>::typeSize(), sizeof(uint8_t));
+	EXPECT_EQ(ObservableIntegralProperty<int32_t>::typeSize(), sizeof(int32_t));
+	EXPECT_EQ(ObservableIntegralProperty<short>::typeSize(), sizeof(short));
+	EXPECT_EQ(ObservableIntegralProperty<inode_t>::typeSize(), sizeof(inode_t));
 }

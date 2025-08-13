@@ -22,7 +22,10 @@
 
 #include <concepts>
 #include <functional>
+#include <limits>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -105,4 +108,90 @@ private:
 	std::string name_;   ///< Property name, could be used as key for database or logging
 	T value_;            ///< Current value of the property
 	SignalType signal_;  ///< Signal to notify observers about changes
+};
+
+/// @brief Adds support for incrementing and decrementing integral properties.
+template <typename T>
+    requires std::integral<T>
+class ObservableIntegralProperty : public ObservableProperty<T> {
+public:
+	ObservableIntegralProperty(std::string name, T initialValue)
+	    : ObservableProperty<T>(std::move(name), initialValue) {}
+
+	/// Increments the property value by the specified amount, with overflow check.
+	void increment(T amount = 1) {
+		if (amount == 0) { return; }
+
+		T current = this->getValue();
+
+		if constexpr (std::is_unsigned_v<T>) {
+			// Unsigned: only non-negative amounts; check for overflow on addition.
+			if (current > std::numeric_limits<T>::max() - amount) {
+				throw std::overflow_error("Integral property overflow on increment.");
+			}
+			this->setValue(static_cast<T>(current + amount));
+		} else {
+			if (amount > 0) {
+				// Overflow check: current + amount > max -> current > max - amount
+				if (current > static_cast<T>(std::numeric_limits<T>::max() - amount)) {
+					throw std::overflow_error("Integral property overflow on increment.");
+				}
+			} else {  // amount < 0 -> effectively a decrement by -amount
+				// Underflow check: current + amount < min -> current < min - amount (amount
+				// negative)
+				if (current < static_cast<T>(std::numeric_limits<T>::min() - amount)) {
+					throw std::underflow_error(
+					    "Integral property underflow on increment with negative amount.");
+				}
+			}
+
+			this->setValue(static_cast<T>(current + amount));
+		}
+	}
+
+	/// Decrements the property value by the specified amount, with underflow check.
+	void decrement(T amount = 1) {
+		if (amount == 0) { return; }
+
+		T current = this->getValue();
+
+		if constexpr (std::is_unsigned_v<T>) {
+			// Only non-negative amounts are meaningful for unsigned types
+			if (current < amount) {
+				throw std::underflow_error("Integral property underflow on decrement.");
+			}
+			this->setValue(static_cast<T>(current - amount));
+		} else {
+			if (amount > 0) {
+				// Underflow check: current - amount < min -> current < min + amount
+				if (current < static_cast<T>(std::numeric_limits<T>::min() + amount)) {
+					throw std::underflow_error("Integral property underflow on decrement.");
+				}
+			} else {  // amount < 0 -> effectively an increment by -amount
+				// Overflow check: current - amount > max  <=> current > max + amount (amount
+				// negative)
+				if (current > static_cast<T>(std::numeric_limits<T>::max() + amount)) {
+					throw std::overflow_error(
+					    "Integral property overflow on decrement with negative amount.");
+				}
+			}
+
+			this->setValue(static_cast<T>(current - amount));
+		}
+	}
+
+	/// Pre-increments the property value by one.
+	ObservableIntegralProperty<T> &operator++() {
+		increment(1);
+		return *this;
+	}
+
+	/// Pre-decrements the property value by one.
+	ObservableIntegralProperty<T> &operator--() {
+		decrement(1);
+		return *this;
+	}
+
+	/// Convenience function to returns the type size in bytes.
+	static constexpr size_t typeSize() { return sizeof(T); }
 };
