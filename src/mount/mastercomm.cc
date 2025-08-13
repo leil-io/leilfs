@@ -1237,6 +1237,7 @@ void* fs_nop_thread(void *arg) {
 	int32_t inodesleng;
 	int now;
 	inode_t inodeswritecnt = 0;
+	bool lastDisconnectedStatus = disconnect || (fd < 0);
 	(void)arg;
 
 #ifdef ENABLE_EXIT_ON_USR1
@@ -1304,7 +1305,8 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (masterversion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect && gChangedTweaksValue) {
+			if (masterversion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect &&
+			    (gChangedTweaksValue || lastDisconnectedStatus)) {
 				gChangedTweaksValue = false;
 				std::string mountInfoStr;
 				{
@@ -1329,6 +1331,7 @@ void* fs_nop_thread(void *arg) {
 			}
 		}
 
+		lastDisconnectedStatus = disconnect || (fd < 0);
 		fdLock.unlock();
 
 		sleep(1);
