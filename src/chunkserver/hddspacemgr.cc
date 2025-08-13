@@ -103,6 +103,20 @@ constexpr uint32_t startingOffsetOfBlock(uint32_t blocknum) { return blocknum * 
 
 inline std::atomic_bool gCheckCrcWhenReading{true};
 
+static std::mutex gDisksToBeDeletedWithPendingChunksMutex;
+static std::vector<std::pair<std::unique_ptr<IDisk>, std::vector<ChunkWithType>>>
+    gDisksToBeDeletedWithPendingChunks;
+static std::vector<std::pair<IDisk *, std::vector<ChunkWithType>>>
+    gNewDisksToBeDeletedWithPendingChunks;
+
+/// @enum SendDataToMasterMode
+/// @brief Represents the reason of sending data to the master server.
+enum class SendDataToMasterMode : uint8_t {
+	ForDiskRemoval,
+	ForDamagedDisk,
+	ForNewChunk
+};
+
 void hddGetDamagedChunks(std::vector<ChunkWithType>& chunks,
                          std::size_t limit) {
 	TRACETHIS();
@@ -223,7 +237,55 @@ static IChunk *hddChunkCreate(IDisk *disk, uint64_t chunkId,
 	return chunk;
 }
 
-void hddSendDataToMaster(IDisk *disk, bool isForRemoval) {
+void hddReleaseDisksToBeDeleted() {
+	std::lock_guard diskToBeDeletedLock(gDisksToBeDeletedWithPendingChunksMutex);
+	std::unique_lock chunksMapLock(gChunksMapMutex, std::defer_lock);
+
+	std::vector<IDisk *> disksToDelete;
+	for (auto &diskToDelWithPendingChunks : gDisksToBeDeletedWithPendingChunks) {
+		auto *disk = diskToDelWithPendingChunks.first.get();
+		auto &pendingChunks = diskToDelWithPendingChunks.second;
+
+		while (!pendingChunks.empty()) {
+			auto &chunkIdentifier = pendingChunks.back();
+			bool isChunkPending = true;
+
+			chunksMapLock.lock();
+			auto chunkIter =
+			    gChunksMap.find(makeChunkKey(chunkIdentifier.id, chunkIdentifier.type));
+			if (chunkIter == gChunksMap.end() || chunkIter->second->owner() != disk) {
+				// Chunk not found or not owned by this disk
+				isChunkPending = false;
+			}
+			chunksMapLock.unlock();
+
+			if (!isChunkPending) {
+				// Remove the chunk from the disk's pending chunks
+				pendingChunks.pop_back();
+			} else {
+				// Stop if we found a chunk that is still present
+				break;
+			}
+		}
+
+		if (pendingChunks.empty()) {
+			// No pending chunks, we can delete the disk
+			disksToDelete.push_back(disk);
+		}
+	}
+
+	for (auto *disk : disksToDelete) {
+		safs::log_info("({}) Deleting disk {} with no pending chunks", __func__,
+		               disk->getPaths().c_str());
+		gDisksToBeDeletedWithPendingChunks.erase(
+		    std::remove_if(gDisksToBeDeletedWithPendingChunks.begin(),
+		                   gDisksToBeDeletedWithPendingChunks.end(),
+		                   [disk](const auto &pair) { return pair.first.get() == disk; }),
+		    gDisksToBeDeletedWithPendingChunks.end());
+	}
+}
+
+void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 	TRACETHIS();
 	bool markedForDeletion = disk->isMarkedForDeletion();
 
@@ -236,7 +298,7 @@ void hddSendDataToMaster(IDisk *disk, bool isForRemoval) {
 	// outside the loop.
 	std::vector<IChunk *> chunksToRemove;
 
-	if (isForRemoval) {
+	if (mode != SendDataToMasterMode::ForNewChunk) {
 		chunksToRemove.reserve(disk->chunks().size());
 	}
 
@@ -244,7 +306,7 @@ void hddSendDataToMaster(IDisk *disk, bool isForRemoval) {
 		IChunk *chunk = chunkEntry.second.get();
 
 		if (chunk->owner() == disk) {
-			if (isForRemoval) {
+			if (mode != SendDataToMasterMode::ForNewChunk) {
 				chunksToRemove.push_back(chunk);
 			} else {
 				hddReportNewChunkToMaster(chunk->id(), chunk->version(),
@@ -253,6 +315,7 @@ void hddSendDataToMaster(IDisk *disk, bool isForRemoval) {
 		}
 	}
 
+	std::vector<ChunkWithType> pendingChunks;
 	for (auto chunk : chunksToRemove) {
 		hddReportLostChunk(chunk->id(), chunk->type());
 
@@ -261,8 +324,19 @@ void hddSendDataToMaster(IDisk *disk, bool isForRemoval) {
 			chunk->owner()->chunks().remove(chunk);
 			gChunksMap.erase(chunkToKey(*chunk));
 		} else if (chunk->state() == ChunkState::Locked) {
+			// Some hdd worker is doing something with this chunk,
+			// so we just mark it for deletion.
 			chunk->setState(ChunkState::ToBeDeleted);
+			if (mode == SendDataToMasterMode::ForDiskRemoval) {
+				pendingChunks.emplace_back(chunk->id(), chunk->type());
+			}
 		}
+	}
+
+	if (mode == SendDataToMasterMode::ForDiskRemoval) {
+		// Only for disk removal we need to store pending chunks: those disks are supposed to be
+		// deleted after all pending chunks are removed.
+		gNewDisksToBeDeletedWithPendingChunks.emplace_back(disk, std::move(pendingChunks));
 	}
 }
 
@@ -288,8 +362,6 @@ void hddCheckDisks() {
 		return;
 	}
 
-	std::vector<IDisk *> disksToRemove;
-
 	for (auto &disk : gDisks) {
 		if (disk->wasRemovedFromConfig()) {
 			switch (disk->scanState()) {
@@ -304,7 +376,7 @@ void hddCheckDisks() {
 				disk->setScanState(IDisk::ScanState::kWorking);
 				/* fallthrough */
 			case IDisk::ScanState::kWorking:
-				hddSendDataToMaster(disk.get(), true);
+				hddSendDataToMaster(disk.get(), SendDataToMasterMode::ForDiskRemoval);
 				changed = 1;
 				disk->setWasRemovedFromConfig(false);
 				break;
@@ -317,22 +389,28 @@ void hddCheckDisks() {
 				safs_pretty_syslog(LOG_NOTICE, "Disk %s successfully removed",
 				                   disk->getPaths().c_str());
 
-				disksToRemove.push_back(disk.get());
 				gResetTester = true;
 			}
 		}
 	}
 
-	for (const auto &diskToDel : disksToRemove) {
+	std::unique_lock diskToBeDeletedLock(gDisksToBeDeletedWithPendingChunksMutex);
+	for (auto &diskToDelWithPendingChunks : gNewDisksToBeDeletedWithPendingChunks) {
 		for (auto it = gDisks.begin(); it != gDisks.end(); ++it) {
-			if (diskToDel == it->get()) {
+			if (diskToDelWithPendingChunks.first == it->get()) {
+				if (!diskToDelWithPendingChunks.second.empty()) {
+					// Pending chunks
+					gDisksToBeDeletedWithPendingChunks.emplace_back(
+					    std::move(*it), std::move(diskToDelWithPendingChunks.second));
+				}
 				gDisks.erase(it);
 				break;
 			}
 		}
 	}
+	diskToBeDeletedLock.unlock();
 
-	disksToRemove.clear();
+	gNewDisksToBeDeletedWithPendingChunks.clear();
 
 	for (auto &disk : gDisks) {
 		if (disk->isDamaged() || disk->wasRemovedFromConfig()) {
@@ -352,7 +430,7 @@ void hddCheckDisks() {
 			changed = 1;
 			break;
 		case IDisk::ScanState::kSendNeeded:
-			hddSendDataToMaster(disk.get(), false);
+			hddSendDataToMaster(disk.get(), SendDataToMasterMode::ForNewChunk);
 			disk->setScanState(IDisk::ScanState::kWorking);
 			disk->refreshDataDiskUsage();
 			disk->setNeedRefresh(false);
@@ -373,7 +451,7 @@ void hddCheckDisks() {
 				safs_pretty_syslog(
 				    LOG_WARNING, "%u errors occurred in %u seconds on disk: %s",
 				    err, kLastErrorTime, disk->getPaths().c_str());
-				hddSendDataToMaster(disk.get(), true);
+				hddSendDataToMaster(disk.get(), SendDataToMasterMode::ForDamagedDisk);
 				disk->setIsDamaged(true);
 				changed = 1;
 			} else {
@@ -2456,6 +2534,7 @@ void hddFreeResourcesThread() {
 		gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex,
 		                       kMaxFreeUnused);
 		ChunkTrashManager::collectGarbage();
+		hddReleaseDisksToBeDeleted();
 		/// Release buffers older than kDelayedStep seconds
 		releaseOldIoBuffers(kOldIoBuffersExpirationTimeMs);
 
@@ -2548,6 +2627,9 @@ void hddTerminate(void) {
 	gChunksMap.clear();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
 	gDisks.clear();
+	// Destroy the disks-to-be-deleted related structures
+	gNewDisksToBeDeletedWithPendingChunks.clear();
+	gDisksToBeDeletedWithPendingChunks.clear();
 }
 
 void hddReload(void) {
