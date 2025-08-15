@@ -1,5 +1,27 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.1.0) (2025-08-14)
+ - build: Fix master not building on gcc12 when prometheus missing (#401)
+ - build(uraft): Update boost functions to work with boost 1.87 (#310)
+ - build: Fix Windows build after refactor of fsconnect (#486)
+ - feat: Add a dedicated jobPool for replications (#491)
+ - feat(common): Add initial signal-slots support (#507)
+ - feat(cs): Release old iobuffers (#519)
+ - feat(cs): Write several blocks per hdd write job (#504)
+ - fix(cgi): Fix multi chunkservers table (#375)
+ - fix(charts): Fix wrong range value for CSV (#520)
+ - fix(chunkserver): Use malloc_trim to reduce RAM usage (#481)
+ - fix: Fix write algorithm in delayed init mode (#496)
+ - fix(ganesha): Fix lock type conversion in setlk (#517)
+ - fix(ganesha): Prevent segfault in lock operations (#505)
+ - fix(mds): Add init function to metadata backends (#475)
+ - fix(mount): Fix path by inode consistency (#503)
+ - fix(mount): Fix readahead under high latency (#514)
+ - fix(mount): Redirect info messages to stdout (#493)
+ - fix(protocol): Fix some protocol inconsistencies (#477)
+ - fix(tools): Remove warning regarding -l option in setgoal (#498)
+ - fix(wireshark): Fix wireshark plugin build (#350)
+
 * SaunaFS (5.0.2) (2025-07-15)
  - fix(chunkserver): Fallback to old registration if needed (#489)
 
