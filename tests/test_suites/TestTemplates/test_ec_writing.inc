@@ -41,3 +41,5 @@ for i in $(seq 1 $thread_count); do
 	verifying_loop_thread "$dir" $i only_generated_files &
 done
 wait
+
+sfschunkserver_check_no_buffer_in_use

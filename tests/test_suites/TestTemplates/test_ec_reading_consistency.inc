@@ -46,3 +46,5 @@ if [ ${FAULTY_CHUNKSERVERS:-} ]; then
 	stop_chunkservers_restarting_thread
 fi
 wait
+
+sfschunkserver_check_no_buffer_in_use

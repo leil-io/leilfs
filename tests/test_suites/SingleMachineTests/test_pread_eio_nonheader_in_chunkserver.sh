@@ -1,3 +1,5 @@
+timeout_set 1 minute
+
 # Create an installation with 3 chunkservers, 1 disk each.
 # CS 0 has a disk which will fail during the test when reading bigger files.
 USE_RAMDISK=YES \
@@ -55,3 +57,5 @@ for f in goal2/*; do
 	assert_eventually_prints "" "saunafs fileinfo '$f' | grep ':${info[chunkserver0_port]}'"
 	assert_eventually_prints 2 "saunafs fileinfo '$f' | grep copy | wc -l"
 done
+
+sfschunkserver_check_no_buffer_in_use
