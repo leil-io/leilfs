@@ -34,18 +34,6 @@ constexpr uint16_t kEdgeNameMaxSize = 65535;
 constexpr uint8_t kEdgeHeaderSize =
     sizeof(FSNode::id) + sizeof(FSNode::id) + sizeof(kEdgeNameMaxSize);
 
-constexpr uint8_t kNodeHeaderSize =
-    sizeof(FSNode::type) + sizeof(FSNode::id) + sizeof(FSNode::goal) + sizeof(FSNode::mode) +
-    sizeof(FSNode::uid) + sizeof(FSNode::gid) + sizeof(FSNode::atime) + sizeof(FSNode::mtime) +
-    sizeof(FSNode::ctime) + sizeof(FSNode::trashtime);
-// FSNodeFile is the longer type of FSNode, so we use it as the buffer size
-constexpr uint8_t kFileSpecificHeaderSize =
-    sizeof(FSNodeFile::length) + sizeof(uint32_t) + sizeof(uint16_t);
-constexpr uint32_t kChunksBucketSize = 65536;
-constexpr uint16_t kMaxSessionSize = 65535;
-constexpr uint32_t kFileSpecificExtraSize =
-    (sizeof(uint64_t) * kChunksBucketSize) + (sizeof(uint32_t) * kMaxSessionSize);
-
 // TODO (Baldor): Review the need for these constants below
 constexpr uint8_t kMetadataVersionLegacy = 0x15;
 constexpr uint8_t kMetadataVersionSaunaFS = 0x16;
@@ -57,7 +45,7 @@ constexpr char const MetadataStructureReadErrorMsg[] = "error reading metadata (
 
 // Global variables
 inline uint8_t gEdgeStoreBuffer[kEdgeHeaderSize + kEdgeNameMaxSize];
-inline uint8_t gNodeStoreBuffer[kNodeHeaderSize + kFileSpecificHeaderSize + kFileSpecificExtraSize];
+inline uint8_t gNodeStoreBuffer[FSNodeFile::kMaxBufferSize];
 
 // Number of metadata file versions to keep
 inline uint32_t gStoredPreviousBackMetaCopies;

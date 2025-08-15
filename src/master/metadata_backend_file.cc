@@ -25,6 +25,7 @@
 #include <fcntl.h>  // for open and O_RDONLY
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -515,12 +516,12 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			parent->lowerCaseEntriesHash ^= (*it).first->hash();
 		}
 
-		child->parent.push_back({parent->id, handlePtr});
+		child->parents.push_back({parent->id, handlePtr});
 		if (child->type == FSNodeType::kDirectory) {
 			parent->nlink++;
 		}
 
-		statsrecord sr;
+		StatsRecord sr;
 		fsnodes_get_stats(child, &sr);
 		fsnodes_add_stats(parent, &sr);
 	}
@@ -535,9 +536,9 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
  */
 static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile,
                            size_t &sectionOffset) {
-	static const int8_t kError = -1;
-	static const int8_t kSuccess = 0;
-	static const int8_t kLastNode = 1;
+	static constexpr int8_t kError = -1;
+	static constexpr int8_t kSuccess = 0;
+	static constexpr int8_t kLastNode = 1;
 
 	const uint8_t *pSrc = metadataFile->seek(sectionOffset);
 	uint8_t typeU8 = get8bit(&pSrc);
@@ -550,76 +551,41 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	auto type = static_cast<FSNodeType>(typeU8);
 	FSNode *node = FSNode::create(type);
 	passert(node);
-	getINode(&pSrc, node->id);
-	node->goal = get8bit(&pSrc);
-	node->mode = get16bit(&pSrc);
-	get32bit(&pSrc, node->uid);
-	get32bit(&pSrc, node->gid);
-	get32bit(&pSrc, node->atime);
-	get32bit(&pSrc, node->mtime);
-	get32bit(&pSrc, node->ctime);
-	get32bit(&pSrc, node->trashtime);
+
+	// Move the pointer back by 1 byte (type), because deserialize will read it
+	pSrc--;
+
+	// Deserialize the node
+	node->deserialize(&pSrc);
+
+	// Update the offset for next nodes
 	sectionOffset = metadataFile->offset(pSrc);
+
+#ifndef METARESTORE
 	auto *nodeFile = static_cast<FSNodeFile *>(node);
-
-	uint32_t nodeNameLength;
-	uint32_t chunkAmount;
-	uint16_t sessionIds;
-
-	uint32_t index;
-	constexpr uint32_t kChunkSize = (1 << 16);
+#endif
 
 	switch (type) {
 	case FSNodeType::kDirectory:
 		gMetadata->dirNodes++;
 		break;
 	case FSNodeType::kSocket:
-	case FSNodeType::kFifo:  /// No extra info to Parse
-		break;
+	case FSNodeType::kFifo:
 	case FSNodeType::kBlockDev:
 	case FSNodeType::kCharDev:
-		uint32_t tempRDev;
-		get32bit(&pSrc, tempRDev);
-		static_cast<FSNodeDevice *>(node)->rdev = tempRDev;
+		// Nothing extra to do
 		break;
 	case FSNodeType::kSymlink:
-		get32bit(&pSrc, nodeNameLength);
-		static_cast<FSNodeSymlink *>(node)->path_length = nodeNameLength;
-		if (nodeNameLength > 0) {
-			static_cast<FSNodeSymlink *>(node)->path = HString(pSrc, pSrc + nodeNameLength);
-			pSrc += nodeNameLength;
-		}
 		gMetadata->linkNodes++;
 		break;
 	case FSNodeType::kFile:
 	case FSNodeType::kTrash:
 	case FSNodeType::kReserved:
-		nodeFile->length = get64bit(&pSrc);
-		get32bit(&pSrc, chunkAmount);
-		sessionIds = get16bit(&pSrc);
-
-		nodeFile->chunks.resize(chunkAmount);
-
-		index = 0;
-		while (chunkAmount > kChunkSize) {
-			for (uint32_t i = 0; i < kChunkSize; i++) {
-				nodeFile->chunks[index++] = get64bit(&pSrc);
-			}
-			chunkAmount -= kChunkSize;
-		}
-		for (uint32_t i = 0; i < chunkAmount; i++) {
-			nodeFile->chunks[index++] = get64bit(&pSrc);
-		}
-		while (sessionIds) {
-			uint32_t sessionId;
-			get32bit(&pSrc, sessionId);
-			nodeFile->sessionid.push_back(sessionId);
 #ifndef METARESTORE
+		for (const auto &sessionId : nodeFile->sessionIds) {
 			matoclserv_add_open_file(sessionId, node->id);
-#endif
-			sessionIds--;
 		}
-
+#endif
 		fsnodes_quota_update(node, {{QuotaResource::kSize, +fsnodes_get_size(node)}});
 		gMetadata->fileNodes++;
 		break;
@@ -664,7 +630,7 @@ static int fs_lostnode(FSNode *p) {
 int fs_checknodes(int ignoreflag) {
 	for (auto i = 0; i < NODEHASHSIZE; i++) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
-			if (node->parent.empty() && node != gMetadata->root &&
+			if (node->parents.empty() && node != gMetadata->root &&
 			    (node->type != FSNodeType::kTrash) && (node->type != FSNodeType::kReserved)) {
 				safs::log_err("found orphaned inode: %" PRIiNode, node->id);
 				if (ignoreflag) {
@@ -1004,121 +970,95 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 //Nodes
 
 void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
-	uint8_t *ptr, *chptr;
-	uint32_t i, indx, ch, sessionids;
-	std::string name;
-
-	if (f == NULL) {  // last node
+	if (f == nullptr) {  // last node
 		fputc(0, fd);
 		return;
 	}
 
-	ptr = gNodeStoreBuffer;
-	put8bit(&ptr, static_cast<uint8_t>(f->type));
-	putINode(&ptr, f->id);
-	put8bit(&ptr, f->goal);
-	put16bit(&ptr, f->mode);
-	put32bit(&ptr, f->uid);
-	put32bit(&ptr, f->gid);
-	put32bit(&ptr, f->atime);
-	put32bit(&ptr, f->mtime);
-	put32bit(&ptr, f->ctime);
-	put32bit(&ptr, f->trashtime);
+	auto serializedSize = f->serializedSize();
 
-	auto *node_file = static_cast<FSNodeFile *>(f);
+	if (serializedSize == 0) {
+		safs::log_err("FSNode with serializedSize == 0");
+		return;
+	}
 
-	switch (f->type) {
-	case FSNodeType::kDirectory:
-	case FSNodeType::kSocket:
-	case FSNodeType::kFifo:
-		if (fwrite(gNodeStoreBuffer, 1, kNodeHeaderSize, fd) !=
-		    (size_t)(kNodeHeaderSize)) {
-			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
-			return;
-		}
-		break;
-	case FSNodeType::kBlockDev:
-	case FSNodeType::kCharDev:
-		put32bit(&ptr, static_cast<FSNodeDevice *>(f)->rdev);
-		if (fwrite(gNodeStoreBuffer, 1, kNodeHeaderSize + 4, fd) !=
-		    (size_t)(kNodeHeaderSize + 4)) {
-			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
-			return;
-		}
-		break;
-	case FSNodeType::kSymlink:
-		name = (std::string) static_cast<FSNodeSymlink *>(f)->path;
-		// Safe cast, the length should always fit
-		put32bit(&ptr, static_cast<uint32_t>(name.length()));
-		if (fwrite(gNodeStoreBuffer, 1, kNodeHeaderSize + 4, fd) !=
-		    (size_t)(kNodeHeaderSize + 4)) {
-			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
-			return;
-		}
-		if (fwrite(name.c_str(), 1, name.length(), fd) !=
-		    (size_t)(static_cast<FSNodeSymlink *>(f)->path_length)) {
-			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
-			return;
-		}
-		break;
-	case FSNodeType::kFile:
-	case FSNodeType::kTrash:
-	case FSNodeType::kReserved:
-		put64bit(&ptr, node_file->length);
-		ch = node_file->chunkCount();
-		put32bit(&ptr, ch);
-		sessionids =
-		    std::min<int>(node_file->sessionid.size(), kMaxSessionSize);
-		put16bit(&ptr, sessionids);
+	uint8_t *ptr = gNodeStoreBuffer;
 
-		if (fwrite(gNodeStoreBuffer, 1,
-		           kNodeHeaderSize + kFileSpecificHeaderSize,
-		           fd) != (size_t)(kNodeHeaderSize + kFileSpecificHeaderSize)) {
-			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+	if (serializedSize <= FSNodeFile::kMaxBufferSize) {  // Relatively small FSNode
+		f->serialize(&ptr);
+
+		if (fwrite(gNodeStoreBuffer, 1, serializedSize, fd) != serializedSize) {
+			safs::log_err("fwrite error");
+			return;
+		}
+	} else {  // Large FSNodeFile not fitting into gNodeStoreBuffer
+		f->serializeCommon(&ptr);  // Common FSNode members
+
+		// Only FSNodeFile are expected to reach this point
+		auto *fileNode = dynamic_cast<FSNodeFile *>(f);
+		passert(fileNode);
+
+		put64bit(&ptr, fileNode->length);
+		uint32_t chunkAmount = fileNode->chunkCount();
+		put32bit(&ptr, chunkAmount);
+		auto sessionsCount =
+		    std::min<size_t>(fileNode->sessionIds.size(), FSNodeFile::kMaxSessionSize);
+		put16bit(&ptr, static_cast<uint16_t>(sessionsCount));
+
+		if (fwrite(gNodeStoreBuffer, 1, FSNodeFile::kFileHeaderSize, fd) !=
+		FSNodeFile::kFileHeaderSize) {
+			safs::log_err("fwrite error");
 			return;
 		}
 
-		indx = 0;
-		while (ch > kChunksBucketSize) {
+		// Write the chunk ids in batches of maximum kChunksBucketSize
+
+		uint32_t indx = 0;
+		uint8_t *chptr = ptr;
+
+		while (chunkAmount >= FSNodeFile::kChunksBucketSize) {
 			chptr = ptr;
-			for (i = 0; i < kChunksBucketSize; i++) {
-				put64bit(&chptr, node_file->chunks[indx]);
+			for (uint32_t i = 0; i < FSNodeFile::kChunksBucketSize; i++) {
+				put64bit(&chptr, fileNode->chunks[indx]);
 				indx++;
 			}
-			if (fwrite(ptr, 1, 8 * kChunksBucketSize, fd) !=
-			    (size_t)(8 * kChunksBucketSize)) {
-				safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+
+			if (fwrite(ptr, 1, sizeof(uint64_t) * FSNodeFile::kChunksBucketSize, fd) !=
+			    sizeof(uint64_t) * FSNodeFile::kChunksBucketSize) {
+				safs::log_err("fwrite error");
 				return;
 			}
-			ch -= kChunksBucketSize;
+
+			chunkAmount -= FSNodeFile::kChunksBucketSize;
 		}
 
+		// Write remaining chunks
 		chptr = ptr;
-		for (i = 0; i < ch; i++) {
-			put64bit(&chptr, node_file->chunks[indx]);
+
+		for (uint32_t i = 0; i < chunkAmount; i++) {
+			put64bit(&chptr, fileNode->chunks[indx]);
 			indx++;
 		}
 
-		sessionids = 0;
-		for (const auto &sid : node_file->sessionid) {
-			if (sessionids >= kMaxSessionSize) {
+		// Write session IDs
+		uint32_t includedSessions = 0;
+
+		for (const auto &sid : fileNode->sessionIds) {
+			if (includedSessions >= FSNodeFile::kMaxSessionSize) {
 				break;
 			}
 			put32bit(&chptr, sid);
-			sessionids++;
+			includedSessions++;
 		}
 
-		if (fwrite(ptr, 1, 8 * ch + 4 * sessionids, fd) !=
-		    (size_t)(8 * ch + 4 * sessionids)) {
-			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
+		auto fwriteSize = (sizeof(uint64_t) * chunkAmount) + (sizeof(uint32_t) * includedSessions);
+
+		if (fwrite(ptr, 1, fwriteSize, fd) != fwriteSize) {
+			safs::log_err("fwrite error");
 			return;
 		}
-		break;
-	default:
-		safs::log_err("MetadataBackendFile::storenode: unexpected node type {}",
-		              static_cast<char>(f->type));
-		break;
 	}
+
 }
 
 void MetadataBackendFile::storenodes(FILE *fd) {

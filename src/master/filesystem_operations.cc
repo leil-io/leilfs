@@ -338,7 +338,7 @@ uint8_t fs_getrootinode(inode_t *rootinode, const uint8_t *path) {
 void fs_statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availspace,
                uint64_t *trspace, uint64_t *respace, inode_t *inodes) {
 	FSNode *rn;
-	statsrecord sr;
+	StatsRecord sr;
 	if (context.rootinode() == SPECIAL_INODE_ROOT) {
 		*trspace = gMetadata->trashSpace;
 		*respace = gMetadata->reservedSpace;
@@ -435,13 +435,13 @@ uint8_t fs_lookup(const FsContext &context, inode_t parent, const HString &name,
 				*inode = SPECIAL_INODE_ROOT;
 				fsnodes_fill_attr(wd, wd, context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(), attr);
 			} else {
-				if (!wd->parent.empty()) {
-					if (wd->parent[0].first == context.rootinode()) {
+				if (!wd->parents.empty()) {
+					if (wd->parents[0].first == context.rootinode()) {
 						*inode = SPECIAL_INODE_ROOT;
 					} else {
-						*inode = wd->parent[0].first;
+						*inode = wd->parents[0].first;
 					}
-					FSNode *pp = fsnodes_id_to_node(wd->parent[0].first);
+					FSNode *pp = fsnodes_id_to_node(wd->parents[0].first);
 					fsnodes_fill_attr(pp, wd, context.uid(), context.gid(), context.auid(),
 					                  context.agid(), context.sesflags(), attr);
 				} else {
@@ -518,8 +518,8 @@ uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
 	}
 
 	while (current_inode != context.rootinode()) {
-		if (!current_node || current_node->parent.empty()) {
-			if (current_node->parent.empty() && (current_node->type == FSNodeType::kReserved ||
+		if (!current_node || current_node->parents.empty()) {
+			if (current_node->parents.empty() && (current_node->type == FSNodeType::kReserved ||
 			                                     current_node->type == FSNodeType::kTrash)) {
 				current_name =
 				    current_node->type == FSNodeType::kTrash
@@ -530,7 +530,7 @@ uint8_t fs_full_path_by_inode(const FsContext &context, inode_t initial_inode,
 			}
 			return SAUNAFS_ERROR_ENOENT;
 		}
-		auto [parentId, nameHandle] = current_node->parent[0];
+		auto [parentId, nameHandle] = current_node->parents[0];
 		if (!nameHandle) { return SAUNAFS_ERROR_ENOENT; }
 		status = fsnodes_get_node_for_operation(context, ExpectedNodeType::kAny, MODE_MASK_R,
 		                                        parentId, &parent_node);
@@ -972,8 +972,8 @@ uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name
 	p->path = HString(path);
 	p->path_length = path.length();
 	fsnodes_update_checksum(p);
-	statsrecord sr;
-	memset(&sr, 0, sizeof(statsrecord));
+	StatsRecord sr;
+	memset(&sr, 0, sizeof(StatsRecord));
 	sr.length = path.length();
 	fsnodes_add_stats(static_cast<FSNodeDirectory *>(wd), &sr);
 	if (attr != NULL) {
@@ -1319,7 +1319,7 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 		if (fsnodes_isancestor(static_cast<FSNodeDirectory*>(se_child), dwd)) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
-		const statsrecord &stats = static_cast<FSNodeDirectory*>(se_child)->stats;
+		const StatsRecord &stats = static_cast<FSNodeDirectory*>(se_child)->stats;
 		quota_delta = {{(int64_t)stats.inodes, (int64_t)stats.size}};
 	} else if (se_child->type == FSNodeType::kFile) {
 		quota_delta[(int)QuotaResource::kSize] = fsnodes_get_size(se_child);
@@ -1343,7 +1343,7 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 			return SAUNAFS_ERROR_EPERM;
 		}
 		if (de_child->type == FSNodeType::kDirectory) {
-			const statsrecord &stats = static_cast<FSNodeDirectory*>(de_child)->stats;
+			const StatsRecord &stats = static_cast<FSNodeDirectory*>(de_child)->stats;
 			quota_delta[(int)QuotaResource::kInodes] -= stats.inodes;
 			quota_delta[(int)QuotaResource::kSize] -= stats.size;
 		} else if (de_child->type == FSNodeType::kFile) {
@@ -1889,10 +1889,10 @@ uint8_t fs_acquire(const FsContext &context, inode_t inode, uint32_t sessionid) 
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if (std::find(p->sessionid.begin(), p->sessionid.end(), sessionid) != p->sessionid.end()) {
+	if (std::find(p->sessionIds.begin(), p->sessionIds.end(), sessionid) != p->sessionIds.end()) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	p->sessionid.push_back(sessionid);
+	p->sessionIds.push_back(sessionid);
 	fsnodes_update_checksum(p);
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
@@ -1912,10 +1912,10 @@ uint8_t fs_release(const FsContext &context, inode_t inode, uint32_t sessionid) 
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	auto it = std::find(p->sessionid.begin(), p->sessionid.end(), sessionid);
-	if (it != p->sessionid.end()) {
-		p->sessionid.erase(it);
-		if (p->type == FSNodeType::kReserved && p->sessionid.empty()) {
+	auto it = std::find(p->sessionIds.begin(), p->sessionIds.end(), sessionid);
+	if (it != p->sessionIds.end()) {
+		p->sessionIds.erase(it);
+		if (p->type == FSNodeType::kReserved && p->sessionIds.empty()) {
 			fsnodes_purge(context.ts(), p);
 		} else {
 			fsnodes_update_checksum(p);
@@ -2035,7 +2035,7 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 #endif
 
 	const bool quota_exceeded = fsnodes_quota_exceeded(p, {{QuotaResource::kSize, 1}});
-	statsrecord psr;
+	StatsRecord psr;
 	fsnodes_get_stats(p, &psr);
 
 	/* resize chunks structure */
@@ -2081,11 +2081,10 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 	}
 	p->chunks[indx] = nchunkid;
 	*chunkid = nchunkid;
-	statsrecord nsr;
+	StatsRecord nsr;
 	fsnodes_get_stats(p, &nsr);
-	for (const auto &[parentId, _] : p->parent) {
-		FSNodeDirectory *parent =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+	for (const auto &[parentId, _] : p->parents) {
+		auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 		fsnodes_add_sub_stats(parent, &nsr, &psr);
 	}
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
@@ -2162,7 +2161,7 @@ uint8_t fs_repair(const FsContext &context, inode_t inode,
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	uint32_t nversion, indx;
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 	FSNode *p;
 
 	*notchanged = 0;
@@ -2199,7 +2198,7 @@ uint8_t fs_repair(const FsContext &context, inode_t inode,
 		}
 	}
 	fsnodes_get_stats(p, &nsr);
-	for (const auto &[parentId, _] : p->parent) {
+	for (const auto &[parentId, _] : p->parents) {
 		FSNodeDirectory *parent =
 		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 		fsnodes_add_sub_stats(parent, &nsr, &psr);
@@ -2213,7 +2212,7 @@ uint8_t fs_repair(const FsContext &context, inode_t inode,
 uint8_t fs_apply_repair(uint32_t ts, inode_t inode, uint32_t indx, uint32_t nversion) {
 	FSNodeFile *p;
 	uint8_t status;
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 
 	p = fsnodes_id_to_node<FSNodeFile>(inode);
 	if (!p) {
@@ -2242,9 +2241,8 @@ uint8_t fs_apply_repair(uint32_t ts, inode_t inode, uint32_t indx, uint32_t nver
 		status = chunk_set_version(p->chunks[indx], nversion);
 	}
 	fsnodes_get_stats(p, &nsr);
-	for (const auto &[parentId, _] : p->parent) {
-		FSNodeDirectory *parent =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+	for (const auto &[parentId, _] : p->parents) {
+		auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 		fsnodes_add_sub_stats(parent, &nsr, &psr);
 	}
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
@@ -2790,9 +2788,8 @@ uint32_t fs_getdirpath_size(inode_t inode) {
 			return 15;  // "(not directory)"
 		} else {
 			FSNodeDirectory *parent = nullptr;
-			if (!node->parent.empty()) {
-				parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-				    node->parent[0].first);
+			if (!node->parents.empty()) {
+				parent = fsnodes_id_to_node_verify<FSNodeDirectory>(node->parents[0].first);
 			}
 			return 1 + fsnodes_getpath_size(parent, node);
 		}
@@ -2814,9 +2811,8 @@ void fs_getdirpath_data(inode_t inode, uint8_t *buff, uint32_t size) {
 		} else {
 			if (size > 0) {
 				FSNodeDirectory *parent = nullptr;
-				if (!node->parent.empty()) {
-					parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-					    node->parent[0].first);
+				if (!node->parents.empty()) {
+					parent = fsnodes_id_to_node_verify<FSNodeDirectory>(node->parents[0].first);
 				}
 
 				buff[0] = '/';
@@ -2837,7 +2833,7 @@ uint8_t fs_get_dir_stats(const FsContext &context, inode_t inode,
                          inode_t *links, uint32_t *chunks, uint64_t *length,
                          uint64_t *size, uint64_t *rsize) {
 	FSNode *p;
-	statsrecord sr;
+	StatsRecord sr;
 
 	uint8_t status = verify_session(context, OperationMode::kReadOnly, SessionType::kAny);
 	if (status != SAUNAFS_STATUS_OK) {

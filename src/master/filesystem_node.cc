@@ -77,32 +77,11 @@ FSNode *FSNode::create(FSNodeType type) {
 }
 
 void FSNode::destroy(FSNode *node) {
-	for (auto const &[_, handlePtr] : node->parent) {
+	for (auto const &[_, handlePtr] : node->parents) {
 		delete handlePtr;
 	}
-	switch (node->type) {
-	case FSNodeType::kFile:
-	case FSNodeType::kTrash:
-	case FSNodeType::kReserved:
-		delete static_cast<FSNodeFile *>(node);
-		break;
-	case FSNodeType::kDirectory:
-		delete static_cast<FSNodeDirectory *>(node);
-		break;
-	case FSNodeType::kSymlink:
-		delete static_cast<FSNodeSymlink *>(node);
-		break;
-	case FSNodeType::kFifo:
-	case FSNodeType::kSocket:
-		delete node;
-		break;
-	case FSNodeType::kBlockDev:
-	case FSNodeType::kCharDev:
-		delete static_cast<FSNodeDevice *>(node);
-		break;
-	default:
-		assert(!"invalid node type");
-	}
+
+	delete node;
 }
 
 // number of blocks in the last chunk before EOF
@@ -233,20 +212,18 @@ int fsnodes_nameisused(FSNodeDirectory *node, const HString &name) {
 
 /*! \brief Returns true iff \param ancestor is ancestor of \param node. */
 bool fsnodes_isancestor(FSNodeDirectory *ancestor, FSNode *node) {
-	for (const auto &[parentId, _] : node->parent) {
-		FSNodeDirectory *dir_node =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+	for (const auto &[parentId, _] : node->parents) {
+		auto *dir_node = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 
 		while(dir_node) {
 			if (ancestor == dir_node) {
 				return true;
 			}
 
-			assert(dir_node->parent.size() <= 1);
+			assert(dir_node->parents.size() <= 1);
 
-			if (!dir_node->parent.empty()) {
-				dir_node = fsnodes_id_to_node_verify<FSNodeDirectory>(
-				    dir_node->parent[0].first);
+			if (!dir_node->parents.empty()) {
+				dir_node = fsnodes_id_to_node_verify<FSNodeDirectory>(dir_node->parents[0].first);
 			} else {
 				dir_node = nullptr;
 			}
@@ -270,7 +247,7 @@ bool fsnodes_isancestor_or_node_reserved_or_trash(FSNodeDirectory *ancestor, FSN
 
 // stats
 
-void fsnodes_get_stats(FSNode *node, statsrecord *sr) {
+void fsnodes_get_stats(FSNode *node, StatsRecord *sr) {
 	switch (node->type) {
 	case FSNodeType::kDirectory:
 		*sr = static_cast<FSNodeDirectory*>(node)->stats;
@@ -312,7 +289,7 @@ void fsnodes_get_stats(FSNode *node, statsrecord *sr) {
 }
 
 int64_t fsnodes_get_size(FSNode *node) {
-	statsrecord sr;
+	StatsRecord sr;
 	fsnodes_get_stats(node, &sr);
 	return sr.size;
 }
@@ -320,17 +297,16 @@ int64_t fsnodes_get_size(FSNode *node) {
 FSNodeDirectory *fsnodes_get_first_parent(FSNode *node) {
 	assert(node);
 	FSNodeDirectory *parent;
-	if (!node->parent.empty()) {
-		parent =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(node->parent[0].first);
+	if (!node->parents.empty()) {
+		parent = fsnodes_id_to_node_verify<FSNodeDirectory>(node->parents[0].first);
 	} else {
 		parent = gMetadata->root;
 	}
 	return parent;
 }
 
-static inline void fsnodes_sub_stats(FSNodeDirectory *parent, statsrecord *sr) {
-	statsrecord *psr;
+static inline void fsnodes_sub_stats(FSNodeDirectory *parent, StatsRecord *sr) {
+	StatsRecord *psr;
 	if (parent) {
 		psr = &parent->stats;
 		psr->inodes -= sr->inodes;
@@ -342,17 +318,16 @@ static inline void fsnodes_sub_stats(FSNodeDirectory *parent, statsrecord *sr) {
 		psr->size -= sr->size;
 		psr->realsize -= sr->realsize;
 		if (parent != gMetadata->root) {
-			for (auto const &[parentId, _] : parent->parent) {
-				FSNodeDirectory *node =
-				    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+			for (auto const &[parentId, _] : parent->parents) {
+				auto *node = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 				fsnodes_sub_stats(node, sr);
 			}
 		}
 	}
 }
 
-void fsnodes_add_stats(FSNodeDirectory *parent, statsrecord *sr) {
-	statsrecord *psr;
+void fsnodes_add_stats(FSNodeDirectory *parent, StatsRecord *sr) {
+	StatsRecord *psr;
 	if (parent) {
 		psr = &parent->stats;
 		psr->inodes += sr->inodes;
@@ -364,17 +339,16 @@ void fsnodes_add_stats(FSNodeDirectory *parent, statsrecord *sr) {
 		psr->size += sr->size;
 		psr->realsize += sr->realsize;
 		if (parent != gMetadata->root) {
-			for (auto const &[parentId, _] : parent->parent) {
-				FSNodeDirectory *node =
-				    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+			for (auto const &[parentId, _] : parent->parents) {
+				auto *node = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 				fsnodes_add_stats(node, sr);
 			}
 		}
 	}
 }
 
-void fsnodes_add_sub_stats(FSNodeDirectory *parent, statsrecord *newsr, statsrecord *prevsr) {
-	statsrecord sr;
+void fsnodes_add_sub_stats(FSNodeDirectory *parent, StatsRecord *newsr, StatsRecord *prevsr) {
+	StatsRecord sr;
 	sr.inodes = newsr->inodes - prevsr->inodes;
 	sr.dirs = newsr->dirs - prevsr->dirs;
 	sr.files = newsr->files - prevsr->files;
@@ -443,7 +417,7 @@ void fsnodes_fill_attr(FSNode *node, FSNode *parent, uint32_t uid, uint32_t gid,
 	put32bit(&ptr, node->atime);
 	put32bit(&ptr, node->mtime);
 	put32bit(&ptr, node->ctime);
-	nlink = node->parent.size();
+	nlink = node->parents.size();
 	switch (node->type) {
 	case FSNodeType::kFile:
 	case FSNodeType::kTrash:
@@ -515,7 +489,7 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 		}
 	}
 
-	statsrecord sr;
+	StatsRecord sr;
 
 	fsnodes_get_stats(node, &sr);
 	fsnodes_sub_stats(parent, &sr);
@@ -531,15 +505,15 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 	}
 
 	auto it = std::find_if(
-	    node->parent.begin(), node->parent.end(),
+	    node->parents.begin(), node->parents.end(),
 	    [parent, currentName](const std::pair<inode_t, const hstorage::Handle *> &p) {
 		    return p.first == parent->id &&
 		           (parent->case_insensitive ? HString::hstringToLowerCase(p.second->get())
 		                                     : p.second->get()) == currentName;
 	    });
 
-	if (it != node->parent.end()) {
-		node->parent.erase(it);
+	if (it != node->parents.end()) {
+		node->parents.erase(it);
 	}
 
 	// Delete the handle after the check in the parent vector in the son is
@@ -566,13 +540,13 @@ void fsnodes_link(uint32_t ts, FSNodeDirectory *parent, FSNode *child, const HSt
 		parent->lowerCaseEntriesHash ^= lowerCaseName.hash();
 	}
 
-	child->parent.push_back({parent->id, handlePtr});
+	child->parents.push_back({parent->id, handlePtr});
 
 	if (child->type == FSNodeType::kDirectory) {
 		parent->nlink++;
 	}
 
-	statsrecord sr;
+	StatsRecord sr;
 	fsnodes_get_stats(child, &sr);
 	fsnodes_add_stats(parent, &sr);
 	if (ts > 0) {
@@ -667,11 +641,10 @@ uint32_t fsnodes_getpath_size(FSNodeDirectory *parent, FSNode *child) {
 	name = parent->getChildName(child);
 	size = name.length();
 
-	while (parent != gMetadata->root && !parent->parent.empty()) {
+	while (parent != gMetadata->root && !parent->parents.empty()) {
 		child = parent;
-		assert(child->parent.size() == 1);
-		parent =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(child->parent[0].first);
+		assert(child->parents.size() == 1);
+		parent = fsnodes_id_to_node_verify<FSNodeDirectory>(child->parents[0].first);
 		name = parent->getChildName(child);
 		size += name.length() + 1;
 	}
@@ -698,11 +671,10 @@ void fsnodes_getpath_data(FSNodeDirectory *parent, FSNode *child, uint8_t *path,
 	if (size > 0) {
 		path[--size] = '/';
 	}
-	while (parent != gMetadata->root && !parent->parent.empty()) {
+	while (parent != gMetadata->root && !parent->parents.empty()) {
 		child = parent;
-		assert(child->parent.size() == 1);
-		parent =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(child->parent[0].first);
+		assert(child->parents.size() == 1);
+		parent = fsnodes_id_to_node_verify<FSNodeDirectory>(child->parents[0].first);
 		name = parent->getChildName(child);
 		if (size >= name.length()) {
 			size -= name.length();
@@ -906,15 +878,14 @@ void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t 
 			put8bit(&dbuff, static_cast<uint8_t>(FSNodeType::kDirectory));
 		}
 	} else {
-		if (!p->parent.empty() && p->parent[0].first != rootinode) {
-			putINode(&dbuff, p->parent[0].first);
+		if (!p->parents.empty() && p->parents[0].first != rootinode) {
+			putINode(&dbuff, p->parents[0].first);
 		} else {
 			putINode(&dbuff, SPECIAL_INODE_ROOT);
 		}
 		if (withattr) {
-			if (!p->parent.empty()) {
-				FSNode *parent =
-				    fsnodes_id_to_node_verify<FSNode>(p->parent[0].first);
+			if (!p->parents.empty()) {
+				auto *parent = fsnodes_id_to_node_verify<FSNode>(p->parents[0].first);
 				fsnodes_fill_attr(parent, p, uid, gid, auid, agid,
 				                  sesflags, attr);
 				::memcpy(dbuff, attr.data(), attr.size());
@@ -977,7 +948,7 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 	if (first_entry == 0 && number_of_entries >= 1) {
 		inode = p->id != rootinode ? p->id : SPECIAL_INODE_ROOT;
 		parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-		    p->parent.empty() ? SPECIAL_INODE_ROOT : p->parent[0].first);
+		    p->parents.empty() ? SPECIAL_INODE_ROOT : p->parents[0].first);
 		fsnodes_fill_attr(p, parent, uid, gid, auid, agid, sesflags, attr);
 		dir_entries.emplace_back(std::move(inode), std::string("."), std::move(attr));
 
@@ -989,21 +960,20 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 		if (p->id == rootinode) {
 			inode = SPECIAL_INODE_ROOT;
 			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    p->parent.empty() ? SPECIAL_INODE_ROOT : p->parent[0].first);
+			    p->parents.empty() ? SPECIAL_INODE_ROOT : p->parents[0].first);
 			fsnodes_fill_attr(p, parent, uid, gid, auid, agid, sesflags, attr);
 		} else {
-			if (!p->parent.empty() && p->parent[0].first != rootinode) {
-				inode = p->parent[0].first;
+			if (!p->parents.empty() && p->parents[0].first != rootinode) {
+				inode = p->parents[0].first;
 			} else {
 				inode = SPECIAL_INODE_ROOT;
 			}
 
 			FSNodeDirectory *grandparent;
 			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    p->parent.empty() ? SPECIAL_INODE_ROOT : p->parent[0].first);
+			    p->parents.empty() ? SPECIAL_INODE_ROOT : p->parents[0].first);
 			grandparent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    parent->parent.empty() ? SPECIAL_INODE_ROOT
-			                           : parent->parent[0].first);
+			    parent->parents.empty() ? SPECIAL_INODE_ROOT : parent->parents[0].first);
 			fsnodes_fill_attr(parent, grandparent, uid, gid, auid, agid, sesflags,
 			                  attr);
 		}
@@ -1062,7 +1032,7 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 	if (first_entry == kDotEntryIndex && number_of_entries >= 1) {
 		inode = p->id != rootinode ? p->id : SPECIAL_INODE_ROOT;
 		parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-		    p->parent.empty() ? SPECIAL_INODE_ROOT : p->parent[0].first);
+		    p->parents.empty() ? SPECIAL_INODE_ROOT : p->parents[0].first);
 		fsnodes_fill_attr(p, parent, uid, gid, auid, agid, sesflags, attr);
 		dir_entries.emplace_back(kDotEntryIndex, kDotDotEntryIndex, std::move(inode), std::string("."), std::move(attr));
 
@@ -1074,21 +1044,20 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 		if (p->id == rootinode) {
 			inode = SPECIAL_INODE_ROOT;
 			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    p->parent.empty() ? SPECIAL_INODE_ROOT : p->parent[0].first);
+			    p->parents.empty() ? SPECIAL_INODE_ROOT : p->parents[0].first);
 			fsnodes_fill_attr(p, parent, uid, gid, auid, agid, sesflags, attr);
 		} else {
-			if (!p->parent.empty() && p->parent[0].first != rootinode) {
-				inode = p->parent[0].first;
+			if (!p->parents.empty() && p->parents[0].first != rootinode) {
+				inode = p->parents[0].first;
 			} else {
 				inode = SPECIAL_INODE_ROOT;
 			}
 
 			FSNodeDirectory *grandparent;
 			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    p->parent.empty() ? SPECIAL_INODE_ROOT : p->parent[0].first);
+			    p->parents.empty() ? SPECIAL_INODE_ROOT : p->parents[0].first);
 			grandparent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    parent->parent.empty() ? SPECIAL_INODE_ROOT
-			                           : parent->parent[0].first);
+			    parent->parents.empty() ? SPECIAL_INODE_ROOT : parent->parents[0].first);
 			fsnodes_fill_attr(parent, grandparent, uid, gid, auid, agid, sesflags,
 			                  attr);
 		}
@@ -1179,7 +1148,7 @@ uint8_t fsnodes_appendchunks(uint32_t ts, FSNodeFile *dst, FSNodeFile *src) {
 		return SAUNAFS_ERROR_INDEXTOOBIG;
 	}
 
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 	fsnodes_get_stats(dst, &psr);
 
 	uint32_t result_chunks = src_chunks + dst_chunks;
@@ -1210,9 +1179,8 @@ uint8_t fsnodes_appendchunks(uint32_t ts, FSNodeFile *dst, FSNodeFile *src) {
 	dst->length = length;
 	fsnodes_get_stats(dst, &nsr);
 	fsnodes_quota_update(dst, {{QuotaResource::kSize, nsr.size - psr.size}});
-	for (const auto &[parentId, _] : dst->parent) {
-		FSNodeDirectory *parent_node =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+	for (const auto &[parentId, _] : dst->parents) {
+		auto *parent_node = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 		fsnodes_add_sub_stats(parent_node, &nsr, &psr);
 	}
 	dst->mtime = ts;
@@ -1225,15 +1193,14 @@ uint8_t fsnodes_appendchunks(uint32_t ts, FSNodeFile *dst, FSNodeFile *src) {
 
 void fsnodes_changefilegoal(FSNodeFile *obj, uint8_t goal) {
 	uint8_t old_goal = obj->goal;
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 
 	fsnodes_get_stats(obj, &psr);
 	obj->goal = goal;
 	nsr = psr;
 	nsr.realsize = file_realsize(obj, nsr.chunks, nsr.size);
-	for (const auto &[parentId, _] : obj->parent) {
-		FSNodeDirectory *parent_node =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+	for (const auto &[parentId, _] : obj->parents) {
+		auto *parent_node = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 		fsnodes_add_sub_stats(parent_node, &nsr, &psr);
 	}
 	for (const auto &chunkid : obj->chunks) {
@@ -1246,7 +1213,7 @@ void fsnodes_changefilegoal(FSNodeFile *obj, uint8_t goal) {
 
 void fsnodes_setlength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) {
 	uint32_t chunks;
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 	fsnodes_get_stats(obj, &psr);
 	if (obj->type == FSNodeType::kTrash) {
 		gMetadata->trashSpace -= obj->length;
@@ -1281,9 +1248,8 @@ void fsnodes_setlength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks
 
 	fsnodes_get_stats(obj, &nsr);
 	fsnodes_quota_update(obj, {{QuotaResource::kSize, nsr.size - psr.size}});
-	for (const auto &[parentId, _] : obj->parent) {
-		FSNodeDirectory *parent_node =
-		    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+	for (const auto &[parentId, _] : obj->parents) {
+		auto *parent_node = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 		fsnodes_add_sub_stats(parent_node, &nsr, &psr);
 	}
 	fsnodes_update_checksum(obj);
@@ -1307,7 +1273,7 @@ void fsnodes_change_uid_gid(FSNode *p, uint32_t uid, uint32_t gid) {
 }
 
 static inline void fsnodes_remove_node(uint32_t ts, FSNode *node) {
-	if (!node->parent.empty()) {
+	if (!node->parents.empty()) {
 		return;
 	}
 
@@ -1371,22 +1337,22 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *node) {
 void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &child_name, FSNode *child) {
 	std::string path;
 
-	if (child->parent.size() == 1) {  // last link
+	if (child->parents.size() == 1) {  // last link
 		if (child->type == FSNodeType::kFile &&
 		    (child->trashtime > 0 ||
-		     !static_cast<FSNodeFile*>(child)->sessionid.empty())) {  // go to trash or reserved ? - get path
+		     !static_cast<FSNodeFile*>(child)->sessionIds.empty())) {  // go to trash or reserved ? - get path
 			fsnodes_getpath(parent, child, path);
 		}
 	}
 
 	fsnodes_remove_edge(ts, parent, child_name, child);
-	if (!child->parent.empty()) {
+	if (!child->parents.empty()) {
 		return;
 	}
 
 	// last link
 	if (child->type == FSNodeType::kFile) {
-		FSNodeFile *file_node = static_cast<FSNodeFile*>(child);
+		auto *file_node = static_cast<FSNodeFile*>(child);
 		if (child->trashtime > 0) {
 			child->type = FSNodeType::kTrash;
 			child->ctime = ts;
@@ -1396,7 +1362,7 @@ void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &child_n
 
 			gMetadata->trashSpace += file_node->length;
 			gMetadata->trashNodes++;
-		} else if (!file_node->sessionid.empty()) {
+		} else if (!file_node->sessionIds.empty()) {
 			child->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(child);
 
@@ -1418,7 +1384,7 @@ int fsnodes_purge(uint32_t ts, FSNode *p) {
 		gMetadata->trashSpace -= file_node->length;
 		gMetadata->trashNodes--;
 
-		if (!file_node->sessionid.empty()) {
+		if (!file_node->sessionIds.empty()) {
 			file_node->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(file_node);
 			gMetadata->reservedSpace += file_node->length;
