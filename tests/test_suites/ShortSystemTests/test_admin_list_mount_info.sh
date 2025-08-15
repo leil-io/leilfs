@@ -2,38 +2,63 @@ MOUNTS=4 \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
-# Pause briefly to give the master server time
-# to update the mountpoint info data from each
-# active client.
+# wait for master server to populate mount info for each mountpoint
 sleep 3
 
-# run the admin command with the list-mount-info option
-mounts=$(saunafs_admin_command list-mount-info localhost "${info[matocl]}")
+check_mount_infos() {
+	declare -A expected_map
+	declare -A actual_map
 
-# 1) make sure we got one “Session ID:” header per mount
-session_count=$(grep -c "^Session ID:" <<<"$mounts")
-expect_equals "4" "$session_count"
+	# get mount infos from master server using corresponding admin command
+	local mounts
+	mounts=$(saunafs_admin_command list-mount-info localhost "${info[matocl]}")
 
-# 2) build array of expected mount‐info files
-expected_infos=()
-for i in $(seq $((session_count-1)) -1 0); do
-  expected_infos+=( "$(< "${info[mount$i]}/.saunafs_mount_info")" )
-done
+	# count sessions
+	local session_count
+	session_count=$(grep -c "^Session ID:" <<<"$mounts")
+	expect_equals "4" "$session_count"
 
-# 3) collect each blank‐line paragraph as one “record” with awk
-actual_infos=()
-for idx in $(seq 1 "$session_count"); do
-  # grab the idx-th paragraph (records are separated by empty lines)
-  para=$(awk -v RS='' -v ORS='' "NR==$idx{print; exit}" <<<"$mounts")
-  # strip off the first line ("Session ID: …")
-  mi=${para#*$'\n'}
-  actual_infos+=( "$mi" )
-done
+	# ---- Build expected map ----
+	# This map will contain the content from each mount info file on
+	# each mountpoint.
+	for i in $(seq $((session_count-1)) -1 0); do
+		local content
+		content="$(< "${info[mount$i]}/.saunafs_mount_info")"
+		# The file doesn't have Session ID, so add it for comparison
+		local session_id=$((i+1))
+		expected_map["$session_id"]="Session ID: $session_id"$'\n'"$content"
+	done
 
-# 4) compare lengths
-expect_equals "${#expected_infos[@]}" "${#actual_infos[@]}"
+	# ---- Build actual map ----
+	# This map will contain the content from each mount info block
+	# returned by the admin command, which directly requests this
+	# values from the master server.
+	for idx in $(seq 1 "$session_count"); do
+		local block
+		block=$(awk -v RS='' -v ORS='' "NR==$idx{print; exit}" <<<"$mounts")
+		local sid
+		sid=$(grep -m1 "^Session ID:" <<<"$block" | awk '{print $3}')
+		actual_map["$sid"]="$block"
+	done
 
-# 5) compare each block
-for i in "${!expected_infos[@]}"; do
-  expect_equals "${expected_infos[i]}" "${actual_infos[i]}"
-done
+	# ---- Compare maps ----
+	expect_equals "${#expected_map[@]}" "${#actual_map[@]}"
+
+	for sid in "${!expected_map[@]}"; do
+		if [[ -z "${actual_map[$sid]}" ]]; then
+			echo "Missing Session ID in actual: $sid" >&2
+			return 1
+		fi
+		expect_equals "${expected_map[$sid]}" "${actual_map[$sid]}"
+	done
+}
+
+check_mount_infos
+
+# check mount infos are the same after master server restart
+assert_success saunafs_master_daemon stop
+sleep 5
+assert_success saunafs_master_daemon start
+sleep 3
+
+check_mount_infos
