@@ -166,15 +166,16 @@ void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
 	}
 }
 
-void JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
+std::queue<uint32_t> JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
 	// Check if the listenerId is valid
+	std::queue<uint32_t> disabledJobIds;
 	if (listenerId >= listenerInfos_.size()) {
 		safs::log_warn("JobPool: disableJobs: Invalid listenerId {}, returning",
 		               listenerId);
-		return;
+		return disabledJobIds;
 	}
 
-	if (jobIds.empty()) { return; }  // to save the locking
+	if (jobIds.empty()) { return disabledJobIds; }  // to save the locking
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex);
 	for (auto jobId : jobIds) {
@@ -182,9 +183,11 @@ void JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
 		if (jobIterator != listenerInfo.jobHash.end()) {
 			if (jobIterator->second->state == JobPool::State::Enabled) {
 				jobIterator->second->state = JobPool::State::Disabled;
+				disabledJobIds.push(jobId);
 			}
 		}
 	}
+	return disabledJobIds;
 }
 
 void JobPool::processCompletedJobs(uint32_t listenerId) {
@@ -227,12 +230,11 @@ void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
 	}
 }
 
-void JobPool::changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra,
+void JobPool::changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback, void *extra,
                              uint32_t listenerId) {
 	// Check if the listenerId is valid
 	if (listenerId >= listenerInfos_.size()) {
-		safs::log_warn("JobPool: changeCallback: Invalid listenerId {}, returning",
-		               listenerId);
+		safs::log_warn("JobPool: changeCallback: Invalid listenerId {}, returning", listenerId);
 		return;
 	}
 
@@ -240,7 +242,7 @@ void JobPool::changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, 
 	for (auto jobId : jobIds) {
 		auto jobIterator = listenerInfo.jobHash.find(jobId);
 		if (jobIterator != listenerInfo.jobHash.end()) {
-			jobIterator->second->callback = std::move(callback);
+			jobIterator->second->callback = callback;
 			jobIterator->second->extra = extra;
 		}
 	}

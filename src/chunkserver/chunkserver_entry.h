@@ -426,6 +426,9 @@ struct ChunkserverEntry {
 	/// Checks if it is a read operation and tries to finish it.
 	void outputCheckReadFinished();
 
+	/// Checks if it is ready to be closed, and if so set the state to Closed.
+	void checkAndApplyClosed();
+
 	/// Closes all active jobs and updates the state.
 	///
 	/// This function disables and changes the callback for any active read,
