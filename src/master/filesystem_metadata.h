@@ -33,6 +33,7 @@
 #include "master/acl_storage.h"
 #include "master/filesystem_checksum_background_updater.h"
 #include "master/filesystem_node_types.h"
+#include "master/filesystem_trash_reserved_files.h"
 #include "master/filesystem_xattr.h"
 #include "master/hstring_storage.h"
 #include "master/id_generator_interface.h"
@@ -58,8 +59,11 @@ public:
 	// TODO(Guillex): Check implications of using 64 bits for inode_t in this structure.
 	IdPoolDetainer<inode_t, uint32_t> inodePool;
 	AclStorage aclStorage;
+	TrashReservedToIdContainer trashReservedToId;
 	TrashPathContainer trash;
+	HandleIndexContainer trashHandlesIndex;
 	ReservedPathContainer reserved;
+	HandleIndexContainer reservedHandlesIndex;
 	FSNodeDirectory *root{};
 	std::array<FSNodePointerVector, NODEHASHSIZE> nodeHash;
 	TaskManager taskManager;

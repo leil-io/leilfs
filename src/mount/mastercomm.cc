@@ -2566,16 +2566,16 @@ uint8_t fs_gettrash(const uint8_t **dbuff,uint32_t *dbuffsize) {
 	return ret;
 }
 
-uint8_t fs_getreserved(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOffset max_entries,
-	               std::vector<NamedInodeEntry> &entries) {
+template <typename OffsetT, typename EntryT>
+uint8_t fs_getreserved(OffsetT off, uint32_t max_entries, std::vector<EntryT> &entries) {
 	threc *rec = fs_get_my_threc();
 	auto message = cltoma::fuseGetReserved::build(rec->packetId, off, max_entries);
-	if (!fs_saucreatepacket(rec, message)) {
-		return SAUNAFS_ERROR_IO;
-	}
+	if (!fs_saucreatepacket(rec, message)) { return SAUNAFS_ERROR_IO; }
+
 	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GETRESERVED, message)) {
 		return SAUNAFS_ERROR_IO;
 	}
+
 	try {
 		PacketVersion dummy_packet_version;
 		uint32_t dummy_message_id;
@@ -2588,16 +2588,17 @@ uint8_t fs_getreserved(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInod
 	}
 }
 
-uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOffset max_entries,
-	            std::vector<NamedInodeEntry> &entries) {
+template uint8_t fs_getreserved<SaunaClient::NamedInodeOffset, NamedInodeEntry>(
+    SaunaClient::NamedInodeOffset, uint32_t, std::vector<NamedInodeEntry> &);
+template uint8_t fs_getreserved<uint64_t, HandleInodeEntry>(uint64_t, uint32_t,
+                                                            std::vector<HandleInodeEntry> &);
+
+template <typename OffsetT, typename EntryT>
+uint8_t fs_gettrash(OffsetT off, uint32_t max_entries, std::vector<EntryT> &entries) {
 	threc *rec = fs_get_my_threc();
 	auto message = cltoma::fuseGetTrash::build(rec->packetId, off, max_entries);
-	if (!fs_saucreatepacket(rec, message)) {
-		return SAUNAFS_ERROR_IO;
-	}
-	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GETTRASH, message)) {
-		return SAUNAFS_ERROR_IO;
-	}
+	if (!fs_saucreatepacket(rec, message)) { return SAUNAFS_ERROR_IO; }
+	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GETTRASH, message)) { return SAUNAFS_ERROR_IO; }
 	try {
 		PacketVersion dummy_packet_version;
 		uint32_t dummy_message_id;
@@ -2609,6 +2610,11 @@ uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOf
 		return SAUNAFS_ERROR_IO;
 	}
 }
+
+template uint8_t fs_gettrash<SaunaClient::NamedInodeOffset, NamedInodeEntry>(
+    SaunaClient::NamedInodeOffset, uint32_t, std::vector<NamedInodeEntry> &);
+template uint8_t fs_gettrash<uint64_t, HandleInodeEntry>(uint64_t, uint32_t,
+                                                         std::vector<HandleInodeEntry> &);
 
 uint8_t fs_getdetachedattr(inode_t inode, Attributes &attr) {
 	uint8_t *wptr;

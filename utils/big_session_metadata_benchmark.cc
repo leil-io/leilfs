@@ -32,7 +32,7 @@ void showHelpMessageAndExit(char *progName, int status) {
 	    << "Usage:\n"
 	       "    "
 	    << progName
-	    << " <TESTING_PATH> <NUMBER_OF_FILES> [--rev|--rand]\n\n"
+	    << " <TESTING_PATH> <NUMBER_OF_FILES> [--rev|--rand|--create-delete-only]\n\n"
 	       "    Performs the following operations:\n"
 	       "       - create a folder "
 	       "'big_sessions_metadata_benchmark_<TIMESTAMP>' in the provided "
@@ -47,7 +47,8 @@ void showHelpMessageAndExit(char *progName, int status) {
 	       "        --rev     Reverse the order of closing and deleting the "
 	       "files.\n"
 	       "        --rand    Randomize the order of closing and deleting the "
-	       "files.\n\n"
+	       "files.\n"
+	       "        --create-delete-only  Only create and delete files.\n\n"
 	       "    Note: NUMBER_OF_FILES must be positive.\n"
 	    << std::endl;
 	exit(status);
@@ -62,12 +63,15 @@ int main(int argc, char **argv) {
 	int numberOfFiles = atoi(argv[2]);
 	bool reverseLastOperations = false;
 	bool randomizeLastOperations = false;
+	bool onlyCreateDeleteFiles = false;
 
 	if (argc == 4) {
 		if (strcmp(argv[3], "--rev") == 0) {
 			reverseLastOperations = true;
 		} else if (strcmp(argv[3], "--rand") == 0) {
 			randomizeLastOperations = true;
+		} else if (strcmp(argv[3], "--create-delete-only") == 0) {
+			onlyCreateDeleteFiles = true;
 		} else {
 			showHelpMessageAndExit(argv[0], 1);
 		}
@@ -111,6 +115,13 @@ int main(int argc, char **argv) {
 			          << " seconds.\n";
 			chunkStart = chunkEnd;
 		}
+
+		if (onlyCreateDeleteFiles) {
+			if (close(testFilesFds[i]) == -1) {
+				std::cerr << "Failed to close file '" << filePath << "'." << std::endl;
+				return 1;
+			}
+		}
 	}
 	auto afterOpen = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsedTime = afterOpen - start;
@@ -125,17 +136,19 @@ int main(int argc, char **argv) {
 		std::shuffle(filesOrder.begin(), filesOrder.end(), rng);
 	}
 
-	// to make sure the reversing or randomizing is not included
-	afterOpen = std::chrono::high_resolution_clock::now();
+	if (!onlyCreateDeleteFiles) {
+		// to make sure the reversing or randomizing is not included
+		afterOpen = std::chrono::high_resolution_clock::now();
 
-	for (int i = 0; i < numberOfFiles; i++) {
-		// closing the filesOrder[i]-th file
-		auto fd = testFilesFds[filesOrder[i]];
+		for (int i = 0; i < numberOfFiles; i++) {
+			// closing the filesOrder[i]-th file
+			auto fd = testFilesFds[filesOrder[i]];
 
-		if (close(fd) == -1) {
-			std::cerr << "Failed to close file '" << folderPath << "/file_"
-			          << filesOrder[i] << "'." << std::endl;
-			return 1;
+			if (close(fd) == -1) {
+				std::cerr << "Failed to close file '" << folderPath << "/file_" << filesOrder[i]
+				          << "'." << std::endl;
+				return 1;
+			}
 		}
 	}
 

@@ -40,6 +40,7 @@
 #include "common/serialized_goal.h"
 #include "protocol/chunkserver_list_entry.h"
 #include "protocol/directory_entry.h"
+#include "protocol/handle_inode_entry.h"
 #include "protocol/lock_info.h"
 #include "protocol/named_inode_entry.h"
 #include "protocol/mount_info_entry.h"
@@ -462,15 +463,27 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint64_t, first_entry_index, //TODO remove (not needed)
 		std::vector<DirectoryEntry>, dir_entry)
 
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetReserved, kResponseNamedInodeEntry, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetReserved, kResponseHandleInodeEntry, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocl, fuseGetReserved, SAU_MATOCL_FUSE_GETRESERVED, 0,
+		matocl, fuseGetReserved, SAU_MATOCL_FUSE_GETRESERVED, kResponseNamedInodeEntry,
 		uint32_t, msgid,
 		std::vector<NamedInodeEntry>, entries)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, fuseGetReserved, SAU_MATOCL_FUSE_GETRESERVED, kResponseHandleInodeEntry,
+		uint32_t, msgid,
+		std::vector<HandleInodeEntry>, entries)
 
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetTrash, kResponseNamedInodeEntry, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetTrash, kResponseHandleInodeEntry, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocl, fuseGetTrash, SAU_MATOCL_FUSE_GETTRASH, 0,
+		matocl, fuseGetTrash, SAU_MATOCL_FUSE_GETTRASH, kResponseNamedInodeEntry,
 		uint32_t, msgid,
 		std::vector<NamedInodeEntry>, entries)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, fuseGetTrash, SAU_MATOCL_FUSE_GETTRASH, kResponseHandleInodeEntry,
+		uint32_t, msgid,
+		std::vector<HandleInodeEntry>, entries)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, listTasks, SAU_MATOCL_LIST_TASKS, 0,

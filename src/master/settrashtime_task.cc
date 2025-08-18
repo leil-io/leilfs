@@ -101,11 +101,7 @@ uint8_t SetTrashtimeTask::setTrashtime(FSNode *node, uint32_t ts) {
 			if (set) {
 				node->ctime = ts;
 				if (node->type == FSNodeType::kTrash) {
-					hstorage::Handle path =
-					        std::move(gMetadata->trash.at(old_trash_key));
-					gMetadata->trash.erase(old_trash_key);
-					gMetadata->trash.insert(
-					        {TrashPathKey(node), std::move(path)});
+					updateTrashFromOldEntry(gMetadata->trash, node, old_trash_key);
 				}
 				fsnodes_update_checksum(node);
 				return SetTrashtimeTask::kChanged;
