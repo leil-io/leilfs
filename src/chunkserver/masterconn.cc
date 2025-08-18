@@ -189,11 +189,11 @@ void masterconn_send_status() {
 
 void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_serve");
-	
+
 	MasterConn *eptr = gMasterConnSingleton.get();
 
 	eptr->handlePollErrors(pdesc);
-	
+
 	// Check if there are any background jobs to process.
 	if (eptr->mode() == ConnectionMode::CONNECTED) {
 		if (gJobFDpDescPos >= 0 && (pdesc[gJobFDpDescPos].revents & POLLIN)) {
@@ -219,7 +219,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		gJobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
 		gReplicationJobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
 		tcpclose(eptr->socketFD());
-		eptr->resetPackets();
+		eptr->resetInputPackets();
 		eptr->setMode(ConnectionMode::FREE);
 	}
 }

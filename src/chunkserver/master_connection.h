@@ -158,7 +158,7 @@ public:
 
 	void releaseResources();
 
-	void resetPackets();
+	void resetInputPackets();
 
 	// Inline getters and setters
 
