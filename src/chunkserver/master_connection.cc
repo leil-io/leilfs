@@ -690,5 +690,5 @@ void MasterConn::releaseResources() {
 
 void MasterConn::resetPackets() {
 	inputPacket_.reset();
-	outputPackets_.clear();
+	// outputPackets_.clear();
 }
