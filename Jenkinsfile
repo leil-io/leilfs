@@ -136,6 +136,12 @@ def slackGoodMessage(userMsg) {
     }
 }
 
+if(env.BRANCH_NAME?.equals("dev")) {
+    properties([disableConcurrentBuilds()])
+} else {
+    properties([disableConcurrentBuilds(abortPrevious: true)])
+}
+
 pipeline {
     agent none
 
