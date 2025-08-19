@@ -43,6 +43,8 @@
 inline std::atomic_bool gIsDisconnectedFromMaster;
 #endif
 
+inline std::atomic<uint32_t> masterVersion;
+
 inline std::mutex acquiredFileMutex;
 // <inode, cnt> and sorted by inode
 using AcquiredFileMap = std::map<inode_t, uint32_t>;
