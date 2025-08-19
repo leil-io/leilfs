@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <string>
+
+#include "common/datapack.h"
 
 /*! \brief String class keeping an additional field - precomputed hash.
  *
@@ -72,6 +75,24 @@ public:
 		std::string str = input.c_str();
 		std::transform(str.begin(), str.end(), str.begin(), ::tolower);
 		return HString(str);
+	}
+
+	/// Serializes the length as uint32_t and then the string without adding extra null terminator
+	static void serialize(uint8_t **destination, const HString &hstring) {
+		put32bit(destination, uint32_t(hstring.length()));
+		::memcpy(*destination, hstring.data(), hstring.length());
+		*destination += hstring.length();
+	}
+
+	/// Deserializes the length as uint32_t and then the string
+	static void deserialize(const uint8_t **source, HString &hstring) {
+		uint32_t length{};
+		get32bit(source, length);
+		hstring.resize(length);
+		::memcpy(hstring.data(), *source, length);
+		*source += length;
+
+		hstring.computeHash();
 	}
 
 private:

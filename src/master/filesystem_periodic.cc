@@ -108,10 +108,9 @@ static std::string get_node_info(FSNode *node) {
 	} else if (node->type == FSNodeType::kFile) {
 		name = "file " + std::to_string(node->id) + ": ";
 		bool first = true;
-		for (const auto &[parentId, _] : node->parent) {
+		for (const auto &[parentId, _] : node->parents) {
 			std::string path;
-			FSNodeDirectory *parent =
-			    fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+			auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
 			fsnodes_getpath(parent, node, path);
 			if (!first) {
 				name += "|" + path;
@@ -124,9 +123,8 @@ static std::string get_node_info(FSNode *node) {
 		name = "directory " + std::to_string(node->id) + ": ";
 		std::string path;
 		FSNodeDirectory *parent = nullptr;
-		if (!node->parent.empty()) {
-			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(
-			    node->parent.front().first);
+		if (!node->parents.empty()) {
+			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(node->parents.front().first);
 		}
 		fsnodes_getpath(parent, node, path);
 		name += path;
@@ -422,23 +420,20 @@ void fs_process_file_test() {
 			}
 
 			if (node->type == FSNodeType::kDirectory) {
-				for (const auto &entry :
-				     static_cast<FSNodeDirectory *>(node)->entries) {
+				for (const auto &entry : static_cast<FSNodeDirectory *>(node)->entries) {
 					FSNode *childNode = entry.second;
 
 					if (!childNode) {
 						// the node points to invalid memory
-						node_error_flag |=
-						        static_cast<int>(kStructureError);
+						node_error_flag |= static_cast<int>(kStructureError);
 					} else {
 						auto parentInChildPtr = std::find_if(
-						    childNode->parent.begin(), childNode->parent.end(),
+						    childNode->parents.begin(), childNode->parents.end(),
 						    [node](const std::pair<inode_t, const hstorage::Handle *> &p) {
 							    return p.first == node->id;
 						    });
-						// the node doesn't have a parent entry pointing to the
-						// current directory
-						if (parentInChildPtr == node->parent.end()) {
+						// the node doesn't have a parent entry pointing to the current directory
+						if (parentInChildPtr == childNode->parents.end()) {
 							node_error_flag |= static_cast<int>(kStructureError);
 						}
 					}
@@ -459,7 +454,7 @@ void fs_process_file_test() {
 				} else if (node->type == FSNodeType::kReserved) {
 					unavailreservedfiles++;
 				} else {
-					unavailfiles += node->parent.size();
+					unavailfiles += node->parents.size();
 				}
 
 				auto it = gDefectiveNodes.find(node->id);

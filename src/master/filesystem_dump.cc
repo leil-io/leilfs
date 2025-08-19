@@ -108,7 +108,7 @@ void fs_dumpnode(FSNode *f) {
 		}
 		printf(")|r:(");
 		i = 0;
-		for(const auto &sessionid : node_file->sessionid) {
+		for(const auto &sessionid : node_file->sessionIds) {
 			if (i > 0) {
 				printf(",");
 			}

@@ -144,7 +144,7 @@ FSNodeFile *SnapshotTask::cloneToExistingFileNode(uint32_t ts, FSNodeFile *src_n
 
 void SnapshotTask::cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_node,
 		FSNodeDirectory *dst_parent) {
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 
 	fsnodes_get_stats(dst_node, &psr);
 
@@ -190,7 +190,7 @@ void SnapshotTask::cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDir
 
 void SnapshotTask::cloneSymlinkData(FSNodeSymlink *src_node, FSNodeSymlink *dst_node,
 		FSNodeDirectory *dst_parent) {
-	statsrecord psr, nsr;
+	StatsRecord psr, nsr;
 
 	fsnodes_get_stats(dst_node, &psr);
 

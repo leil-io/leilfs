@@ -135,7 +135,7 @@ uint8_t fsnodes_get_node_for_operation(const FsContext &context, ExpectedNodeTyp
 uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node);
 
 int fsnodes_namecheck(const std::string &name);
-void fsnodes_get_stats(FSNode *node, statsrecord *sr);
+void fsnodes_get_stats(FSNode *node, StatsRecord *sr);
 bool fsnodes_isancestor_or_node_reserved_or_trash(FSNodeDirectory *f, FSNode *p);
 int fsnodes_access(const FsContext &context, FSNode *node, uint8_t modemask);
 
@@ -149,7 +149,7 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *node, const HString &n
                             uint32_t gid, uint8_t copysgid, AclInheritance inheritacl,
                             inode_t req_inode = 0);
 
-void fsnodes_add_stats(FSNodeDirectory *parent, statsrecord *sr);
+void fsnodes_add_stats(FSNodeDirectory *parent, StatsRecord *sr);
 int fsnodes_sticky_access(FSNode *parent, FSNode *node, uint32_t uid);
 void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &node_name, FSNode *node);
 bool fsnodes_isancestor(FSNodeDirectory *f, FSNode *p);
@@ -176,7 +176,7 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 void fsnodes_checkfile(FSNodeFile *p, uint32_t chunkcount[CHUNK_MATRIX_SIZE]);
 
 bool fsnodes_has_tape_goal(FSNode *node);
-void fsnodes_add_sub_stats(FSNodeDirectory *parent, statsrecord *newsr, statsrecord *prevsr);
+void fsnodes_add_sub_stats(FSNodeDirectory *parent, StatsRecord *newsr, StatsRecord *prevsr);
 
 void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
                                GoalStatistics &dgtab);

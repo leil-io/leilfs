@@ -2505,7 +2505,7 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 
 		if (inode == context.rootinode() && !foundContextRootInodeResult(inode)) {
 			auto ino = fsnodes_id_to_node(inode);
-			statsrecord rootInodeStatRec;
+			StatsRecord rootInodeStatRec;
 			fsnodes_get_stats(ino, &rootInodeStatRec);
 			results.emplace_back(QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
 			                                              QuotaRigor::kUsed, QuotaResource::kSize},
