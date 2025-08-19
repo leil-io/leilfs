@@ -71,14 +71,16 @@ saunafs_ha_master() {
 
 load_and_validate_elector_mode() {
 	if [ -f "${SAUNAFS_URAFT_CONFIG}" ]; then
-		# Check for commented lines first
-		if grep -q '^#\s*URAFT_ELECTOR_MODE' "${SAUNAFS_URAFT_CONFIG}"; then
-			log "Error: URAFT_ELECTOR_MODE is present but commented out in ${SAUNAFS_URAFT_CONFIG}"
-			return 1
-		fi
-
 		# Get only uncommented lines
-		URAFT_ELECTOR_MODE=$(grep '^[^#]*URAFT_ELECTOR_MODE' "${SAUNAFS_URAFT_CONFIG}" | sed 's/.*=\s*//')
+		URAFT_ELECTOR_MODE=$(grep '^[[:space:]]*URAFT_ELECTOR_MODE[[:space:]]*=' "${SAUNAFS_URAFT_CONFIG}" | \
+			sed 's/^[[:space:]]*URAFT_ELECTOR_MODE[[:space:]]*=[[:space:]]*//' | \
+			sed 's/[[:space:]]*$//' | \
+			tail -1)  # Take the last occurrence if multiple exist
+
+		# Set ${URAFT_ELECTOR_MODE}="0" (default value) when ${URAFT_ELECTOR_MODE} is empty or unset
+		if [[ -z "${URAFT_ELECTOR_MODE}" ]]; then
+			URAFT_ELECTOR_MODE="0"
+		fi
 	else
 		print_missing_config "${SAUNAFS_URAFT_CONFIG}"
 	fi
