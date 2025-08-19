@@ -235,7 +235,8 @@ ssize_t FDDisk::writeCrc(IChunk *chunk, uint8_t *crcData) {
 
 int FDDisk::fsyncChunk(IChunk *chunk) {
 	const int metaResult = fsyncFD(chunk, true);
-	const int dataResult = fsyncFD(chunk, false);
+	// There is no need to fsync data parts on zoned devices due to the required DIRECT_IO
+	const int dataResult = isZonedDevice_ ? SAUNAFS_STATUS_OK : fsyncFD(chunk, false);
 
 	if (metaResult != SAUNAFS_STATUS_OK || dataResult != SAUNAFS_STATUS_OK) {
 		return SAUNAFS_ERROR_IO;
