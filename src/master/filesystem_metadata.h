@@ -59,6 +59,7 @@ public:
 	ReservedPathContainer reserved;
 	FSNodeDirectory *root{};
 	std::array<FSNodePointerVector, NODEHASHSIZE> nodeHash;
+	Signal<FSNode *> nodeChangedSignal;  ///< Signal emitted when a node changes
 	TaskManager taskManager;
 	FileLocks flockLocks;
 	FileLocks posixLocks;
@@ -115,6 +116,16 @@ public:
 	static constexpr uint8_t kHeaderSize = sizeof(metadataVersion) +
 	                                       ObservableIntegralProperty<inode_t>::typeSize() +
 	                                       ObservableIntegralProperty<uint32_t>::typeSize();
+
+	/// Adds the node to the hash and emits the signal if not from scan
+	void addNode(FSNode *node, bool isFromScan = false) {
+		uint32_t nodeHashIndex = NODEHASHPOS(node->id);
+		nodeHash[nodeHashIndex].push_back(node);
+
+		if (!isFromScan) {
+			nodeChangedSignal.emit(node);
+		}
+	}
 
 private:
 	ObservableIntegralProperty<inode_t> maxInodeId_{"META_MAX_INODE_ID", 0};

@@ -616,8 +616,7 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 		node->gid = gid;
 	}
 
-	uint32_t nodeHashIndex = NODEHASHPOS(node->id);
-	gMetadata->nodeHash[nodeHashIndex].push_back(node);
+	gMetadata->addNode(node);
 
 	fsnodes_update_checksum(node);
 	fsnodes_link(ts, parent, node, name);
