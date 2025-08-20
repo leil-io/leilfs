@@ -25,7 +25,17 @@
 #include <cstdint>
 #include <string>
 
+#include "common/observable_property.h"
+
 constexpr uint32_t kMaxLogLineSize = 200000;
+
+struct ChangelogEvent {
+	uint64_t version;
+	std::string entry;
+};
+
+/// Accessor for the global changelog signal to avoid the warning about non-const global
+Signal<ChangelogEvent> &getChangelogSignal();
 
 /// Initializes changelog module.
 /// \param changelogFilename - base name of changelog files, e.g. "changelog_ml.sfs"

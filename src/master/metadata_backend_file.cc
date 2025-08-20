@@ -4,6 +4,7 @@
    Copyright 2013-2015 Skytechnology sp. z o.o.
    Copyright 2023      Leil Storage OÜ
 
+   This file is part of SaunaFS.
 
    SaunaFS is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -31,6 +32,7 @@
 
 #include <common/cwrap.h>
 #include <common/event_loop.h>
+#include <common/observable_property.h>
 #include <common/rotate_files.h>
 #include <common/saunafs_version.h>
 #include <common/setup.h>
@@ -784,9 +786,13 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 	/// Skip File Signature
 	const uint8_t *metadataHeaderPtr= metadataFile->seek(kMetadataHeaderOffset);
 
-	getINode(&metadataHeaderPtr, gMetadata->maxInodeId);
+	inode_t maxInodeId{};
+	getINode(&metadataHeaderPtr, maxInodeId);
+	gMetadata->maxInodeId().setValue(maxInodeId);
 	gMetadata->metadataVersion = get64bit(&metadataHeaderPtr);
-	get32bit(&metadataHeaderPtr, gMetadata->nextSessionId);
+	uint32_t session{};
+	get32bit(&metadataHeaderPtr, session);
+	gMetadata->nextSessionId().setValue(session);
 
 	size_t offsetBegin = metadataFile->offset(metadataHeaderPtr);
 
@@ -862,9 +868,9 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 #ifndef METARESTORE
 
 void fs_new(void) {
-	gMetadata->maxInodeId = SPECIAL_INODE_ROOT;
+	gMetadata->maxInodeId().setValue(SPECIAL_INODE_ROOT);
 	gMetadata->metadataVersion = 1;
-	gMetadata->nextSessionId = 1;
+	gMetadata->nextSessionId().setValue(1);
 
 	auto *rootDirectory = FSNode::create(FSNodeType::kDirectory);
 	gMetadata->root = static_cast<FSNodeDirectory *>(rootDirectory);
@@ -1272,10 +1278,7 @@ int MetadataBackendFile::process_section(const char *label, uint8_t (&hdr)[kSect
 }
 
 void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
-	constexpr uint8_t kHeaderSize = sizeof(FilesystemMetadata::maxInodeId) +
-	                                sizeof(FilesystemMetadata::metadataVersion) +
-	                                sizeof(FilesystemMetadata::nextSessionId);
-	uint8_t header[kHeaderSize];
+	uint8_t header[FilesystemMetadata::kHeaderSize];
 
 	uint8_t sectionHeader[kSectionSize];
 	uint8_t *ptr;
@@ -1283,11 +1286,11 @@ void MetadataBackendFile::store(FILE *fd, uint8_t fver) {
 	off_t offend;
 
 	ptr = header;
-	putINode(&ptr, gMetadata->maxInodeId);
+	putINode(&ptr, gMetadata->maxInodeId().getValue());
 	put64bit(&ptr, gMetadata->metadataVersion);
-	put32bit(&ptr, gMetadata->nextSessionId);
+	put32bit(&ptr, gMetadata->nextSessionId().getValue());
 
-	if (fwrite(header, 1, kHeaderSize, fd) != kHeaderSize) {
+	if (fwrite(header, 1, FilesystemMetadata::kHeaderSize, fd) != FilesystemMetadata::kHeaderSize) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return;
 	}

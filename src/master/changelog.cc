@@ -47,6 +47,11 @@
 #include "master/restore.h"
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 
+Signal<ChangelogEvent> &getChangelogSignal() {
+	static Signal<ChangelogEvent> gChangelogSignal;
+	return gChangelogSignal;
+}
+
 /// Base name of a changelog file.
 /// Something like "changelog.sfs" or "changelog_ml.sfs"
 static std::string gChangelogFilename;

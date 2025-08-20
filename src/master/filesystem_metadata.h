@@ -22,10 +22,13 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
 #include <map>
 
-#include "common/special_inode_defs.h"
+#include "common/observable_property.h"
 #include "common/quota_database.h"
+#include "common/special_inode_defs.h"
+#include "common/type_defs.h"
 #include "master/acl_storage.h"
 #include "master/filesystem_checksum_background_updater.h"
 #include "master/filesystem_node_types.h"
@@ -45,7 +48,7 @@ using FSNodePointerVector = std::vector<FSNode*>;
 /** Metadata of the filesystem.
  *  All the static variables managed by function in this file which form metadata of the filesystem.
  */
-struct FilesystemMetadata {
+class FilesystemMetadata {
 public:
 	std::array<XAttributeInodeEntryVector, XATTR_INODE_HASH_SIZE> xattrInodeHash;
 	std::array<XAttributeDataEntryVector, XATTR_DATA_HASH_SIZE> xattrDataHash;
@@ -56,12 +59,11 @@ public:
 	ReservedPathContainer reserved;
 	FSNodeDirectory *root{};
 	std::array<FSNodePointerVector, NODEHASHSIZE> nodeHash;
+	Signal<FSNode *> nodeChangedSignal;  ///< Signal emitted when a node changes
 	TaskManager taskManager;
 	FileLocks flockLocks;
 	FileLocks posixLocks;
 
-	inode_t maxInodeId{};
-	uint32_t nextSessionId{};
 	inode_t nodes{};
 	uint64_t metadataVersion{};
 	uint64_t trashSpace{};
@@ -106,6 +108,28 @@ public:
 			nodeHash[i].clear();
 		}
 	}
+
+	ObservableIntegralProperty<inode_t> &maxInodeId() { return maxInodeId_; }
+
+	ObservableIntegralProperty<uint32_t> &nextSessionId() { return nextSessionId_; }
+
+	static constexpr uint8_t kHeaderSize = sizeof(metadataVersion) +
+	                                       ObservableIntegralProperty<inode_t>::typeSize() +
+	                                       ObservableIntegralProperty<uint32_t>::typeSize();
+
+	/// Adds the node to the hash and emits the signal if not from scan
+	void addNode(FSNode *node, bool isFromScan = false) {
+		uint32_t nodeHashIndex = NODEHASHPOS(node->id);
+		nodeHash[nodeHashIndex].push_back(node);
+
+		if (!isFromScan) {
+			nodeChangedSignal.emit(node);
+		}
+	}
+
+private:
+	ObservableIntegralProperty<inode_t> maxInodeId_{"META_MAX_INODE_ID", 0};
+	ObservableIntegralProperty<uint32_t> nextSessionId_{"META_NEXT_SESSION", 0};
 };
 
 extern FilesystemMetadata *gMetadata;
