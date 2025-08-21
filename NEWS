@@ -1,5 +1,8 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.0.3) (2025-08-21)
+ - fix(uRaft): Handle missing URAFT_ELECTOR_MODE (#537)
+
 * SaunaFS (5.0.2) (2025-07-15)
  - fix(chunkserver): Fallback to old registration if needed (#489)
 
