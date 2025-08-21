@@ -1,5 +1,8 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.1.1) (2025-08-21)
+ - fix(uRaft): Handle missing URAFT_ELECTOR_MODE (#537)
+
 * SaunaFS (5.1.0) (2025-08-14)
  - build: Fix master not building on gcc12 when prometheus missing (#401)
  - build(uraft): Update boost functions to work with boost 1.87 (#310)
@@ -21,6 +24,9 @@ This file lists noteworthy changes in SaunaFS.
  - fix(protocol): Fix some protocol inconsistencies (#477)
  - fix(tools): Remove warning regarding -l option in setgoal (#498)
  - fix(wireshark): Fix wireshark plugin build (#350)
+
+* SaunaFS (5.0.3) (2025-08-21)
+ - fix(uRaft): Handle missing URAFT_ELECTOR_MODE (#537)
 
 * SaunaFS (5.0.2) (2025-07-15)
  - fix(chunkserver): Fallback to old registration if needed (#489)
