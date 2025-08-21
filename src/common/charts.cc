@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <csignal>
 #include <string>
 
 #include "common/crc.h"
@@ -1996,4 +1997,27 @@ void charts_get_png(uint8_t *buff) {
 		charts_fill_crc(buff,sizeof(png_header)+compsize+sizeof(png_tailer));
 	}
 	compsize=0;
+}
+
+int initializeTimerSignalHandlers(void (*handler)(int)) {
+	struct sigaction signalAction{};
+	sigemptyset(&signalAction.sa_mask);
+	signalAction.sa_handler = handler;
+	signalAction.sa_flags = SA_RESTART;  // Automatically restart interrupted system calls
+
+	// Handle SIGPROF (ITIMER_PROF - signal 27)
+	if (sigaction(SIGPROF, &signalAction, nullptr) == -1) {
+		safs::log_err("{}: failed to install SIGPROF handler using sigaction with error {}",
+		              __func__, strerror(errno));
+		return -1;
+	}
+
+	// Handle SIGVTALRM (ITIMER_VIRTUAL - signal 26)
+	if (sigaction(SIGVTALRM, &signalAction, nullptr) == -1) {
+		safs::log_err("{}: failed to install SIGVTALRM handler using sigaction with error {}",
+		              __func__, strerror(errno));
+		return -1;
+	}
+
+	return 0;
 }

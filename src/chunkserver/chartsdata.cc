@@ -28,6 +28,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -138,6 +139,13 @@ static const estatdef estatdefs[]=ESTATDEFS
 
 static struct itimerval it_set;
 
+// Signal handler that prevents process termination from timer signals
+static void timerSignalHandler(int /*signal*/) {
+	// Reset both timers to prevent future signals from killing the process
+	setitimer(ITIMER_PROF, &it_set, nullptr);
+	setitimer(ITIMER_VIRTUAL, &it_set, nullptr);
+}
+
 inline uint32_t toMicroSeconds(struct itimerval &itimer) {
     return itimer.it_value.tv_sec * 1000000 + itimer.it_value.tv_usec;
 }
@@ -198,7 +206,7 @@ void chartsdata_refresh(void) {
 		procTime.it_value.tv_usec = 999999 - procTime.it_value.tv_usec;
 	} else {
 		procTime.it_value.tv_sec = 0;
-		userTime.it_value.tv_usec = 0;
+		procTime.it_value.tv_usec = 0;
 	}
 
 	userTimeMicroSeconds = toMicroSeconds(userTime);
@@ -275,6 +283,13 @@ int chartsdata_init(void) {
 	it_set.it_interval.tv_usec = 0;
 	it_set.it_value.tv_sec = 999;
 	it_set.it_value.tv_usec = 999999;
+
+	// Install timer signal handlers for SIGVTALRM and SIGPROF
+	if (initializeTimerSignalHandlers(timerSignalHandler) != 0) {
+		safs::log_err("{} failed to initialize timer signal handlers", __func__);
+		return -1;
+	}
+
 	setitimer(ITIMER_VIRTUAL, &it_set, &userTime); // user time
 	setitimer(ITIMER_PROF, &it_set, &procTime);    // user time + system time
 
