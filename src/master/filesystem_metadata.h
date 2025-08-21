@@ -33,6 +33,7 @@
 #include "master/filesystem_checksum_background_updater.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_xattr.h"
+#include "master/hstring_storage.h"
 #include "master/id_pool_detainer.h"
 #include "master/locks.h"
 #include "master/task_manager.h"
@@ -59,7 +60,6 @@ public:
 	ReservedPathContainer reserved;
 	FSNodeDirectory *root{};
 	std::array<FSNodePointerVector, NODEHASHSIZE> nodeHash;
-	Signal<FSNode *> nodeChangedSignal;  ///< Signal emitted when a node changes
 	TaskManager taskManager;
 	FileLocks flockLocks;
 	FileLocks posixLocks;
@@ -79,6 +79,17 @@ public:
 	uint64_t fsNodesChecksum{};
 	uint64_t xattrChecksum{};
 	uint64_t quotaChecksum{quotaDatabase.checksum()};
+
+	// Signals
+
+	/// Signal emitted when a node changes (added, modified, but not removed)
+	Signal<FSNode *> nodeChangedSignal;
+
+	/// Signal emitted when an edge changes (added, modified, but not removed)
+	Signal<FSNodeDirectory *, FSNode *, hstorage::Handle *> edgeChangedSignal;
+
+	/// Signal emitted when an edge is removed
+	Signal<inode_t, inode_t> edgeRemovedSignal;
 
 	FilesystemMetadata()
 	    : inodePool{SFS_INODE_REUSE_DELAY,

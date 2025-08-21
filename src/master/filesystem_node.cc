@@ -523,24 +523,26 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 	assert(node->type != FSNodeType::kTrash);
 	node->ctime = ts;
 	fsnodes_update_checksum(node);
+
+	gMetadata->edgeRemovedSignal.emit(parent->id, node->id);
 }
 
 void fsnodes_link(uint32_t ts, FSNodeDirectory *parent, FSNode *child, const HString &name) {
 	// Needs to be freed in fsnodes_remove_edge
-	hstorage::Handle *handlePtr = new hstorage::Handle(name);
+	auto *handlePtr = new hstorage::Handle(name);
 	parent->entries.insert({handlePtr, child});
 	parent->entries_hash ^= name.hash();
 
 	if (parent->case_insensitive) {
 		HString lowerCaseName = HString::hstringToLowerCase(name);
 		// Needs to be freed in fsnodes_remove_edge
-		auto lowercaseHandlePtr =
-		    new hstorage::Handle(std::string(lowerCaseName.c_str()));
+		auto *lowercaseHandlePtr = new hstorage::Handle(std::string(lowerCaseName.c_str()));
 		parent->lowerCaseEntries.insert({lowercaseHandlePtr, child});
 		parent->lowerCaseEntriesHash ^= lowerCaseName.hash();
 	}
 
 	child->parents.push_back({parent->id, handlePtr});
+	gMetadata->edgeChangedSignal.emit(parent, child, handlePtr);
 
 	if (child->type == FSNodeType::kDirectory) {
 		parent->nlink++;
