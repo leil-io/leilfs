@@ -3,6 +3,7 @@
 #include "common/platform.h"
 
 #include "common/id_pool.h"
+#include "common/observable_property.h"
 
 #if defined(SAUNAFS_HAVE_JUDY) && defined(SAUNAFS_HAVE_WORKING_JUDY1)
 #include <Judy.h>
@@ -374,6 +375,7 @@ public:
 			std::size_t nid = *bucket.data.begin();
 			if (bucket.data.unset(nid)) {
 				--detained_count_;
+				detainedRemovedSignal.emit(IdType(nid));
 			}
 
 			if (bucket.data.empty()) {
@@ -459,6 +461,7 @@ public:
 		for(auto it = detention_.begin(); it != detention_.end(); ++it) {
 			if (it->data.unset(nid)) {
 				--detained_count_;
+				detainedRemovedSignal.emit(IdType(nid));
 				if (it->data.empty()) {
 					detention_.erase(it);
 				}
@@ -545,6 +548,7 @@ public:
 
 			++count;
 			--detained_count_;
+			detainedRemovedSignal.emit(IdType(nid));
 			base::release(IdType(nid));
 
 			if (bucket.data.empty()) {
@@ -583,6 +587,11 @@ public:
 
 	using base::maxSize;
 
+	/// Notifies external observers about new detained id
+	Signal<IdType, TimeType> detainedAddedSignal;
+	/// Notifies external observers about released detained id
+	Signal<IdType> detainedRemovedSignal;
+
 protected:
 	void insert(const IdType &id, const TimeType &ts) {
 		if (detention_.empty() || (detention_.back().ts + bucket_time_) < ts) {
@@ -592,6 +601,7 @@ protected:
 
 		if (detention_.back().data.set(id)) {
 			detained_count_++;
+			detainedAddedSignal.emit(id, ts);
 		}
 	}
 
@@ -608,6 +618,7 @@ protected:
 
 			--count;
 			--detained_count_;
+			detainedRemovedSignal.emit(IdType(nid));
 			base::release(IdType(nid));
 
 			if (bucket.data.empty()) {
