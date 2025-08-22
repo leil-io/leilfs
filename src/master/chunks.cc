@@ -730,6 +730,10 @@ static void chunk_recalculate_checksum() {
 	}
 }
 
+static inline void emit_chunk_changed(const Chunk *c) {
+	gChunkChangedSignal.emit(c->chunkid, c->version, c->lockedto, c->lockid);
+}
+
 uint64_t chunk_checksum(ChecksumMode mode) {
 	uint64_t checksum = 46586918175221;
 	addToChecksum(checksum, gChunksMetadata->nextchunkid);
@@ -801,6 +805,7 @@ void chunk_emergency_increase_version(Chunk *c) {
 	c->version++;
 	chunk_update_checksum(c);
 	fs_incversion(c->chunkid);
+	emit_chunk_changed(c);
 }
 
 void chunk_finalize_failed_operation(Chunk *c) {
@@ -1008,6 +1013,7 @@ int chunk_unlock(uint64_t chunkid) {
 	// Don't remove lockid to safely accept retransmission of FUSE_CHUNK_UNLOCK message
 	c->lockedto = 0;
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1192,6 +1198,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 	}
 	c->lockid = *lockid;
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1270,6 +1277,7 @@ uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length
 	c->lockedto=(uint32_t)eventloop_time()+LOCKTIMEOUT;
 	c->lockid = lockid;
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 #endif // ! METARESTORE
@@ -1304,6 +1312,7 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 	c->lockedto = ts + LOCKTIMEOUT;
 	c->lockid = lockid;
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	*newChunkId = c->chunkid;
 	return SAUNAFS_STATUS_OK;
 }
@@ -1376,6 +1385,7 @@ int chunk_repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t co
 	c->needverincrease=1;
 	c->updateStats();
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return 1;
 }
 #endif
@@ -1389,6 +1399,7 @@ int chunk_set_version(uint64_t chunkid,uint32_t version) {
 	}
 	c->version = version;
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1401,6 +1412,7 @@ int chunk_increase_version(uint64_t chunkid) {
 	}
 	c->version++;
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1543,6 +1555,7 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 		c->lockedto = (uint32_t)eventloop_time()+UNUSED_DELETE_TIMEOUT;
 		c->lockid = 0;
 		chunk_update_checksum(c);
+		emit_chunk_changed(c);
 	}
 	auto server_csid = matocsserv_get_csdb(ptr)->csid;
 	for (auto &part : c->parts) {
@@ -2709,6 +2722,13 @@ void chunk_dump(void) {
 }
 
 #endif
+
+void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
+                                          uint32_t lockedTo, uint32_t lockId) {
+	Chunk *chunk = chunk_new(chunkId, chunkVersion);
+	chunk->lockedto = lockedTo;
+	chunk->lockid = lockId;
+}
 
 bool chunksLoadFromFile(MetadataLoader::Options options) {
 	const uint8_t *ptr = options.metadataFile->seek(options.offset);

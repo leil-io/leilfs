@@ -22,12 +22,14 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
 #include <cstdio>
 
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
 #include "common/chunk_with_address_and_label.h"
 #include "common/chunks_availability_state.h"
+#include "common/observable_property.h"
 #include "common/time_utils.h"
 #include "master/checksum.h"
 #include "master/metadata_loader.h"
@@ -38,6 +40,10 @@ extern bool gAvoidSameIpChunkservers;
 
 extern Timeout gTimeoutSinceLastChunkRegistration;
 
+inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
+
+void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
+                                          uint32_t lockedTo, uint32_t lockId);
 int chunk_increase_version(uint64_t chunkid);
 int chunk_set_version(uint64_t chunkid,uint32_t version);
 int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);
