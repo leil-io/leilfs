@@ -55,6 +55,7 @@
 
 #if defined(SAUNAFS_HAVE_SETITIMER)
 #  include <sys/time.h>
+#  include <csignal>
 #  ifndef ITIMER_REAL
 #    define ITIMER_REAL 0
 #  endif
@@ -143,6 +144,14 @@ static const estatdef estatdefs[]=ESTATDEFS
 
 #ifdef CPU_USAGE
 static struct itimerval it_set;
+
+// Signal handler that prevents process termination from timer signals
+static void timerSignalHandler(int /*signal*/) {
+	// Reset both timers to prevent future signals from killing the process
+	setitimer(ITIMER_PROF, &it_set, nullptr);
+	setitimer(ITIMER_VIRTUAL, &it_set, nullptr);
+}
+
 #endif
 
 #ifdef MEMORY_USAGE
@@ -189,7 +198,7 @@ void chartsdata_refresh(void) {
 		pc.it_value.tv_usec = 999999-pc.it_value.tv_usec;
 	} else {
 		pc.it_value.tv_sec = 0;
-		uc.it_value.tv_usec = 0;
+		pc.it_value.tv_usec = 0;
 	}
 
 	ucusec = uc.it_value.tv_sec*1000000U+uc.it_value.tv_usec;
@@ -267,6 +276,13 @@ int chartsdata_init (void) {
 	it_set.it_interval.tv_usec = 0;
 	it_set.it_value.tv_sec = 999;
 	it_set.it_value.tv_usec = 999999;
+
+	// Install timer signal handlers for SIGVTALRM and SIGPROF
+	if (initializeTimerSignalHandlers(timerSignalHandler) != 0) {
+		safs::log_err("{} failed to initialize timer signal handlers", __func__);
+		return -1;
+	}
+
 	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
 	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
 #endif

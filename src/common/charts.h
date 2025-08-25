@@ -143,3 +143,10 @@ void charts_add (uint64_t *data,uint32_t datats);
 void charts_store (void);
 int charts_init (const uint32_t *calcs,const statdef *stats,const estatdef *estats,const char *filename);
 void charts_term (void);
+
+/**
+ * @brief Initializes timer signal handlers for SIGPROF and SIGVTALRM
+ * @param handler Signal handler function to install
+ * @return 0 on success, -1 on error
+ */
+int initializeTimerSignalHandlers(void (*handler)(int));
