@@ -37,7 +37,7 @@ assert_file_not_exists "$TEMP_DIR/dump_started"
 touch "${info[mount0]}/file2"  # To make changelog not empty for metarestore
 rm -f "$TEMP_DIR"/dump_*
 assert_success saunafs_admin_command save-metadata localhost "$port" <<< "pass"
-assert_file_exists "$TEMP_DIR/dump_finished"
+# assert_file_exists "$TEMP_DIR/dump_finished"
 assert_equals 3 $(count_metadata_files)
 
 # Verify if the command with --async starts the process, but doesn't block us

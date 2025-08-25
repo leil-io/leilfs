@@ -32,13 +32,14 @@
 
 #include <common/cwrap.h>
 #include <common/event_loop.h>
+#include <common/exceptions.h>
 #include <common/observable_property.h>
 #include <common/rotate_files.h>
 #include <common/saunafs_version.h>
-#include <common/setup.h>
 #include <common/type_defs.h>
 #include <master/changelog.h>
 #include <master/chunks.h>
+#include <master/exceptions.h>
 #include <master/filesystem.h>
 #include <master/filesystem_metadata.h>
 #include <master/filesystem_node.h>
@@ -49,15 +50,10 @@
 #include <master/matoclserv.h>
 #include <master/matomlserv.h>
 #include <master/metadata_backend_common.h>
-#include <master/metadata_dumper_file.h>
-#include <master/restore.h>
 #include <slogger/slogger.h>
 #include "protocol/SFSCommunication.h"
 
 MetadataBackendFile::MetadataBackendFile()
-#if !defined(METARESTORE) && !defined(METALOGGER)
-    : dumper_(std::make_unique<MetadataDumperFile>(kMetadataFilename, kMetadataTmpFilename))
-#endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 {
 	safs::log_info("Metadata backend: {}", backendType());
 }
@@ -163,77 +159,53 @@ void MetadataBackendFile::broadcast_metadata_saved(uint8_t status) {
 	matoclserv_broadcast_metadata_saved(status);
 }
 
-uint8_t MetadataBackendFile::fs_storeall(DumpType dumpType) {
+uint8_t MetadataBackendFile::fs_storeall() {
 	if (gMetadata == nullptr) {
 		// Periodic dump in shadow master or a request from saunafs-admin
-		safs_pretty_syslog(LOG_INFO,
-		                   "Can't save metadata because no metadata is loaded");
+		safs::log_info("Can't save metadata because no metadata is loaded");
 		return SAUNAFS_ERROR_NOTPOSSIBLE;
-	}
-	if (dumper()->inProgress()) {
-		safs_pretty_syslog(LOG_ERR,
-		                   "previous metadata save process hasn't finished yet "
-		                   "- do not start another one");
-		return SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
 	}
 
 	// We are going to do some changes in the data dir right now
 	fs_erase_message_from_lockfile();
 	changelog_rotate();
 	matomlserv_broadcast_logrotate();
-	// child == true says that we forked
-	// bg may be changed to dump in foreground in case of a fork error
-	bool child = dumper()->start(dumpType, fs_checksum(ChecksumMode::kGetCurrent));
+
 	uint8_t status = SAUNAFS_STATUS_OK;
 
-	if (dumpType == DumpType::kForegroundDump) {
-		cstream_t fd(fopen(kMetadataTmpFilename, "w"));
-		if (fd == nullptr) {
-			safs_pretty_syslog(LOG_ERR, "can't open metadata file");
-			// try to save in alternative location - just in case
-			emergency_saves();
-			if (child) {
-				exit(1);
-			}
-			broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-			return SAUNAFS_ERROR_IO;
-		}
+	cstream_t fd(fopen(kMetadataTmpFilename, "w"));
+	if (fd == nullptr) {
+		safs::log_err("can't open metadata file");
+		// try to save in alternative location - just in case
+		emergency_saves();
 
-		store_fd(fd.get());
-
-		if (ferror(fd.get()) != 0) {
-			safs_pretty_syslog(LOG_ERR, "can't write metadata");
-			fd.reset();
-			unlink(kMetadataTmpFilename);
-			// try to save in alternative location - just in case
-			emergency_saves();
-			if (child) {
-				exit(1);
-			}
-			broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-			return SAUNAFS_ERROR_IO;
-		} else {
-			if (fflush(fd.get()) == EOF) {
-				safs_pretty_errlog(LOG_ERR, "metadata fflush failed");
-			} else if (fsync(fileno(fd.get())) == -1) {
-				safs_pretty_errlog(LOG_ERR, "metadata fsync failed");
-			}
-			fd.reset();
-			if (!child) {
-				// rename backups if no child was created, otherwise this is
-				// handled by pollServe
-				status = commit_metadata_dump() ? SAUNAFS_STATUS_OK
-				                                : SAUNAFS_ERROR_IO;
-			}
-		}
-		if (child) {
-			printf("OK\n");  // give sfsmetarestore another chance
-			safs::log_info("Child process for metadata dumping finished (pid: {})", getpid());
-			exit(0);
-		}
-		broadcast_metadata_saved(status);
+		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
+		return SAUNAFS_ERROR_IO;
 	}
-	sassert(!child);
+
+	store_fd(fd.get());
+
+	if (ferror(fd.get()) != 0) {
+		safs::log_err("can't write metadata");
+		fd.reset();
+		unlink(kMetadataTmpFilename);
+		// try to save in alternative location - just in case
+		emergency_saves();
+
+		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
+		return SAUNAFS_ERROR_IO;
+	}
+
+	if (fflush(fd.get()) == EOF) {
+		safs::log_err("metadata fflush failed");
+	} else if (fsync(fileno(fd.get())) == -1) {
+		safs::log_err("metadata fsync failed");
+	}
+	fd.reset();
+	status = commit_metadata_dump() ? SAUNAFS_STATUS_OK : SAUNAFS_ERROR_IO;
+
+	broadcast_metadata_saved(status);
+
 	return status;
 }
 
@@ -911,10 +883,9 @@ bool isNewMetadataFile([[maybe_unused]]const uint8_t *headerPtr) {
 		if ((memcmp(headerPtr, kMetadataHeaderNew.data(), kMetadataHeaderSize) == kOpSuccess) ||
 		    (memcmp(headerPtr, kMetadataHeaderOld.data(), kMetadataHeaderSize) == kOpSuccess)){
 			fs_new();
-			safs_pretty_syslog(LOG_NOTICE, "empty filesystem created");
-			// after creating new filesystem always create "back" file for using
-			// in metarestore
-			gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+			safs::log_info("empty filesystem created");
+			// after creating new filesystem always create "back" file for using in metarestore
+			gMetadataBackend->fs_storeall();
 			return true;
 		}
 	}

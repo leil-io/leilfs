@@ -77,9 +77,7 @@ public:
 	/// Performs the actual metadata dump to persistent location.
 	/// @param dumpType -- type of the dump (foreground, background, etc.).
 	/// @return false in case of error.
-	uint8_t fs_storeall(DumpType dumpType) override;
-
-	IMetadataDumper *dumper() override { return dumper_.get(); }
+	uint8_t fs_storeall() override;
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 
 private:
@@ -127,8 +125,6 @@ private:
 
 #if !defined(METARESTORE) && !defined(METALOGGER)
 	int emergency_storeall(const std::string &fname);
-
-	std::unique_ptr<IMetadataDumper> dumper_;
 #endif  // #ifndef METARESTORE
 
 	std::string metadataFile_;

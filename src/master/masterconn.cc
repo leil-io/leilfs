@@ -33,7 +33,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -52,6 +51,7 @@
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
 #include "master/changelog.h"
+#include <master/exceptions.h>
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "protocol/SFSCommunication.h"

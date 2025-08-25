@@ -88,59 +88,12 @@ void fs_unlock() {
 
 #ifndef METARESTORE
 
-static void metadataPollDesc(std::vector<pollfd> &pdesc) {
-	gMetadataBackend->dumper()->pollDesc(pdesc);
-}
-
-static void metadataPollServe(const std::vector<pollfd> &pdesc) {
-	auto *dumper = gMetadataBackend->dumper();
-
-	bool metadataDumpInProgress = dumper->inProgress();
-	dumper->pollServe(pdesc);
-
-	if (metadataDumpInProgress && !dumper->inProgress()) {
-		if (dumper->dumpSucceeded()) {
-			if (gMetadataBackend->commit_metadata_dump()) {
-				gMetadataBackend->broadcast_metadata_saved(SAUNAFS_STATUS_OK);
-			} else {
-				gMetadataBackend->broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-			}
-		} else {
-			gMetadataBackend->broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-			if (dumper->useMetarestore()) {
-				// master should recalculate its checksum
-				safs_pretty_syslog(LOG_WARNING, "dumping metadata failed, recalculating checksum");
-				fs_start_checksum_recalculation();
-			}
-			unlink(kMetadataTmpFilename);
-		}
-	}
-}
-
-void fs_periodic_storeall() {
-	// Prevent metadata dump while chunks registration is in progress to prevent slowing down
-	// the chunks registration process
-	auto isChunkRegistrationInProgress = !gTimeoutSinceLastChunkRegistration.expired();
-	if (isChunkRegistrationInProgress) {
-		safs::log_info(
-		    "periodic metadata dump was skipped while chunks registration is in progress");
-		return;
-	}
-
-	gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);  // ignore error
-}
-
 void fs_term(void) {
-	auto *dumper = gMetadataBackend->dumper();
-
-	if (dumper->inProgress()) {
-		dumper->waitUntilFinished();
-	}
 	bool metadataStored = false;
 	if (gMetadata != nullptr && gSaveMetadataAtExit) {
 		for (;;) {
 			metadataStored =
-			    (gMetadataBackend->fs_storeall(DumpType::kForegroundDump) == SAUNAFS_STATUS_OK);
+			    (gMetadataBackend->fs_storeall() == SAUNAFS_STATUS_OK);
 			if (metadataStored) {
 				break;
 			}
@@ -250,7 +203,7 @@ int fs_loadall(void) {
 		safs::log_info("all needed changelogs applied successfully");
 
 		// Dump the new metadata
-		gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+		gMetadataBackend->fs_storeall();
 		safs::log_info("Metadata dumped successfully after applying changelogs");
 
 		// Restore the original personality
@@ -334,10 +287,6 @@ static void fs_read_config_file() {
 	ChecksumUpdater::setPeriod(cfg_getint32("METADATA_CHECKSUM_INTERVAL", 50));
 	gChecksumBackgroundUpdater.setSpeedLimit(
 			cfg_getint32("METADATA_CHECKSUM_RECALCULATION_SPEED", 100));
-	auto *dumper = gMetadataBackend->dumper();
-	dumper->setMetarestorePath(cfg_get(
-	    "SFSMETARESTORE_PATH", std::string(SBIN_PATH "/sfsmetarestore")));
-	dumper->setUseMetarestore(cfg_getint32("MAGIC_PREFER_BACKGROUND_DUMP", 0));
 
 	// Set deprecated values first, then override them if newer version is found
 	gOperationsDelayInit = cfg_getuint32("REPLICATIONS_DELAY_INIT", 300);
@@ -418,18 +367,11 @@ int fs_init(bool doLoad) {
 
 	eventloop_reloadregister(fs_reload);
 	metadataserver::registerFunctionCalledOnPromotion(fs_become_master);
-	auto metadataDumpPeriod = cfg_getint32("METADATA_DUMP_PERIOD_SECONDS", 3600);
-
-	if (metadataDumpPeriod > 0) {  /// 0 means disabled periodic metadata dumps
-		eventloop_timeregister(TIMEMODE_RUN_LATE, metadataDumpPeriod, 0,
-		                       fs_periodic_storeall);
-	}
 
 	if (metadataserver::isMaster()) {
 		fs_become_master();
 	}
 
-	eventloop_pollregister(metadataPollDesc, metadataPollServe);
 	eventloop_destructregister(fs_term);
 
 	return 0;

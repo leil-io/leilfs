@@ -5444,13 +5444,13 @@ void matoclserv_admin_save_metadata(matoclserventry* eptr, const uint8_t* data, 
 	if (eptr->registered == ClientState::kAdmin) {
 		safs::log_info("saving metadata image requested using saunafs-admin by {}",
 		               ipToString(eptr->peerIpAddress));
-		uint8_t status = gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);
+		uint8_t status = gMetadataBackend->fs_storeall();
 
 		if (status != SAUNAFS_STATUS_OK || asynchronous) {
-			matoclserv_createpacket(eptr, matocl::adminSaveMetadata::build(status));
+			eptr->adminTask = AdminTask::kSaveMetadata;
 		} else {
 			// Mark the client; we will reply after metadata save process is finished
-			eptr->adminTask = AdminTask::kSaveMetadata;
+			matoclserv_createpacket(eptr, matocl::adminSaveMetadata::build(status));
 		}
 	} else {
 		safs::log_info("SAU_CLTOMA_ADMIN_SAVE_METADATA: available only for registered admins");

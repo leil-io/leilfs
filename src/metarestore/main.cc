@@ -35,10 +35,12 @@
 #include <vector>
 
 #include "common/cwrap.h"
+#include "common/exceptions.h"
 #include "common/rotate_files.h"
 #include "common/setup.h"
 #include "master/changelog.h"
 #include "master/chunks.h"
+#include "master/exceptions.h"
 #include "master/filesystem.h"
 #include "master/hstring_memstorage.h"
 #include "master/hstring_storage.h"

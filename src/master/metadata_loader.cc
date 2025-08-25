@@ -18,9 +18,8 @@
 
 #include "common/platform.h"
 
+#include <master/exceptions.h>
 #include <master/metadata_loader.h>
-
-#include <master/metadata_backend_interface.h>
 #include <slogger/slogger.h>
 
 bool MetadataLoader::loadSection(const MetadataSection &section,

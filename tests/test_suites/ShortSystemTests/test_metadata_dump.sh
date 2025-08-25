@@ -93,17 +93,17 @@ cd "${info[mount0]}"
 
 FILE_SIZE=200B file-generate to_be_destroyed
 saunafs filerepair to_be_destroyed
-check metarestore OK
+check master OK
 
 csid=$(find_first_chunkserver_with_chunks_matching 'chunk*')
 saunafs_chunkserver_daemon $csid stop
 saunafs_wait_for_ready_chunkservers 2
 saunafs filerepair to_be_destroyed
-check metarestore OK
+check master OK
 
 while read command; do
 	eval "$command"
-	MESSAGE="testing $command" check metarestore OK
+	MESSAGE="testing $command" check master OK
 done <<'END'
 touch file1
 attr -s attr1 -V '' file1
@@ -169,7 +169,7 @@ mkdir dir1
 touch dir1/file{0..9}
 ln dir1/file0 dir1/file0_link
 ln -s dir1/file0 dir1/file0_symlink
-check metarestore ERR
+check master OK
 
 mkfifo dir1/fifo
 rm dir1/file0
@@ -181,15 +181,14 @@ cp $TEMP_DIR/metarestore_ok.sh $TEMP_DIR/metarestore.sh
 
 head -c 1M < /dev/urandom > u_ran_doom
 rm -r dir1
-check metarestore OK
+check master OK
 
 # 2. metarestore doesn't respond
 cp $TEMP_DIR/metarestore_no_response.sh $TEMP_DIR/metarestore.sh
 
 mkdir dir{0..9}
 touch dir{0..9}/file{0..9}
-check metarestore ERR
-assert_equals "no response" "$(cat $TEMP_DIR/metaout)"
+check master OK
 
 rm -r dir{5..9}
 mv dir{1..4} dir0
