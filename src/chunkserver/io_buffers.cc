@@ -36,7 +36,9 @@ OutputBuffer::OutputBuffer(size_t headerSize, size_t numBlocks)
       numBlocks_(numBlocks),
       blockBuffer_(numBlocks * SFSBLOCKSIZE, disk::kIoBlockSize),
       crcBuffer_(numBlocks * kCrcSize),
-      headerBuffer_(numBlocks * headerSize) {}
+      headerBuffer_(numBlocks * headerSize) {
+	gCurrentTotalOutputBufferBlocks += numBlocks_;
+}
 
 OutputBuffer::WriteStatus OutputBuffer::writeOutToAFileDescriptor(int outputFileDescriptor) {
 	// Let's write block by block
@@ -156,7 +158,9 @@ InputBuffer::InputBuffer(size_t headerSize, size_t numBlocks)
 	: headerSize_(headerSize),
 	  numBlocks_(numBlocks),
 	  blockBuffer_(numBlocks * SFSBLOCKSIZE, disk::kIoBlockSize),
-	  headerBuffer_(numBlocks * headerSize) {}
+	  headerBuffer_(numBlocks * headerSize) {
+	gCurrentTotalInputBufferBlocks += numBlocks_;
+}
 
 ssize_t InputBuffer::readFromSocket(int sock, size_t bytesToRead) {
 	ssize_t bytesRead = 0;
@@ -435,4 +439,33 @@ void InputBuffer::setFinished() { state_.store(WriteState::Finished); }
 
 bool InputBuffer::isHeaderSizeValid() const {
 	return headerBuffer_.totalBytesPutInBuffer() == writeInfo_.size() * headerSize_;
+}
+
+void releaseOldIoBuffers(uint32_t expirationTime_ms) {
+	auto initialTotalOutputBufferBlocks = gCurrentTotalOutputBufferBlocks.load();
+	auto initialTotalInputBufferBlocks = gCurrentTotalInputBufferBlocks.load();
+	auto initialTotalReplicatorBufferBlocks = gCurrentTotalReplicatorBufferBlocks.load();
+
+	getReadOutputBufferPool().releaseOldBuffers(expirationTime_ms);
+	getWriteInputBufferPool().releaseOldBuffers(expirationTime_ms);
+	getReplicateBuffersPool().releaseOldBuffers(expirationTime_ms);
+
+	// Calculate the number of released blocks. Please note that the number of released
+	// could be negative because some buffers could be added to the pools in the meantime.
+	int releasedOutputBuffers =
+	    initialTotalOutputBufferBlocks - gCurrentTotalOutputBufferBlocks.load();
+	int releasedInputBuffers =
+	    initialTotalInputBufferBlocks - gCurrentTotalInputBufferBlocks.load();
+	int releasedReplicatorBuffers =
+	    initialTotalReplicatorBufferBlocks - gCurrentTotalReplicatorBufferBlocks.load();
+	// Log the number of released buffers.
+	safs::log_debug("({}) Released buffer blocks per operation: read {}, write {}, replicate {}",
+	                __func__, releasedOutputBuffers, releasedInputBuffers,
+	                releasedReplicatorBuffers);
+
+	// Log the current amount of blocks buffers per operation.
+	safs::log_debug(
+	    "({}) Current total buffer blocks per operation: read {}, write {}, replicate {}",
+	    __func__, gCurrentTotalOutputBufferBlocks.load(), gCurrentTotalInputBufferBlocks.load(),
+	    gCurrentTotalReplicatorBufferBlocks.load());
 }

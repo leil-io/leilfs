@@ -368,10 +368,15 @@ void ChunkserverEntry::prepareDiscardReadJobs() {
 	while (!pendingReadJobIds.empty()) {
 		// pendingReadJobIds and pendingReadDataPackets should have the related elements in the
 		// correct order
-		toDiscardReadJobIds.push_back(pendingReadJobIds.front());
-		pendingReadJobIds.pop_front();
+		if (pendingReadDataPackets.front()->outputBuffer->getStatus() == kNotSaunafsStatus) {
+			toDiscardReadJobIds.push_back(pendingReadJobIds.front());
+			toDiscardReadDataPackets.emplace_back(std::move(pendingReadDataPackets.front()));
+		} else {
+			// Already processed packets, can be moved to the pool
+			getReadOutputBufferPool().put(std::move(pendingReadDataPackets.front()->outputBuffer));
+		}
 
-		toDiscardReadDataPackets.emplace_back(std::move(pendingReadDataPackets.front()));
+		pendingReadJobIds.pop_front();
 		pendingReadDataPackets.pop_front();
 	}
 	assert(pendingReadJobIds.empty());

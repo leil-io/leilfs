@@ -34,6 +34,10 @@
 
 constexpr uint8_t kNotSaunafsStatus = 255;
 
+inline std::atomic<uint32_t> gCurrentTotalOutputBufferBlocks = 0;
+inline std::atomic<uint32_t> gCurrentTotalInputBufferBlocks = 0;
+inline std::atomic<uint32_t> gCurrentTotalReplicatorBufferBlocks = 0;
+
 /// @class Buffer
 /// @brief Manages a data buffer.
 template <typename ContainerType = std::vector<uint8_t>>
@@ -222,8 +226,10 @@ public:
 	/// @param numBlocks The number of blocks.
 	explicit OutputBuffer(size_t headerSize, size_t numBlocks);
 
-	/// @brief Default destructor.
-	~OutputBuffer() = default;
+	/// @brief Destructor only decreases the global counter of output buffers blocks.
+	~OutputBuffer() {
+		gCurrentTotalOutputBufferBlocks -= numBlocks_;
+	}
 
 	/// @brief Checks the CRC of the data inside the block buffer.
 	/// @param bytes The number of bytes to check.
@@ -390,8 +396,10 @@ public:
 	/// @param numBlocks The number of blocks.
 	explicit InputBuffer(size_t headerSize, size_t numBlocks);
 
-	/// @brief Default destructor.
-	~InputBuffer() = default;
+	/// @brief Destructor only decreases the global counter of input buffers blocks.
+	~InputBuffer() {
+		gCurrentTotalInputBufferBlocks -= numBlocks_;
+	}
 
 	/// @brief Reads at most `bytesToRead` bytes from the socket.
 	/// It puts the data into the header buffer if not already filled considering the
@@ -522,6 +530,12 @@ public:
 	/// @param numBlocks The number of blocks the buffer can hold.
 	ReplicatorBuffer(size_t headerSize, size_t numBlocks) : numBlocks_(numBlocks) {
 		(void)headerSize;
+		gCurrentTotalReplicatorBufferBlocks += numBlocks_;
+	}
+
+	/// @brief Destructor only decreases the global counter of replicator buffers blocks.
+	~ReplicatorBuffer() {
+		gCurrentTotalReplicatorBufferBlocks -= numBlocks_;
 	}
 
 	/// @brief Clears the buffer.
@@ -570,8 +584,4 @@ inline ReplicatorBufferPool &getReplicateBuffersPool() {
 	return replicateBuffersPool;
 }
 
-inline void releaseOldIoBuffers(uint32_t expirationTime_ms) {
-	getReadOutputBufferPool().releaseOldBuffers(expirationTime_ms);
-	getWriteInputBufferPool().releaseOldBuffers(expirationTime_ms);
-	getReplicateBuffersPool().releaseOldBuffers(expirationTime_ms);
-}
+void releaseOldIoBuffers(uint32_t expirationTime_ms);
