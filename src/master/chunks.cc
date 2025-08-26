@@ -801,6 +801,15 @@ void chunk_emergency_increase_version(Chunk *c) {
 	fs_incversion(c->chunkid);
 }
 
+void chunk_finalize_failed_operation(Chunk *c) {
+	if (c->operation == Chunk::CREATE) {
+		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_CHUNKLOST, true);
+	} else {
+		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_NOTDONE);
+	}
+	c->operation = Chunk::NONE;
+}
+
 void chunk_handle_disconnected_copies(Chunk *c) {
 	auto it = std::remove_if(c->parts.begin(), c->parts.end(), [](const ChunkPart &part) {
 		return csdb_find(part.csid)->eptr == nullptr;
@@ -823,8 +832,7 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 			if (c->isWritable()) {
 				chunk_emergency_increase_version(c);
 			} else {
-				matoclserv_chunk_status(c->chunkid,SAUNAFS_ERROR_NOTDONE);
-				c->operation = Chunk::NONE;
+				chunk_finalize_failed_operation(c);
 			}
 		}
 	}
@@ -1754,8 +1762,7 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,ma
 				c->needverincrease = 0;
 			}
 		} else {
-			matoclserv_chunk_status(c->chunkid,SAUNAFS_ERROR_NOTDONE);
-			c->operation = Chunk::NONE;
+			chunk_finalize_failed_operation(c);
 		}
 	}
 }
