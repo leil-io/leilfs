@@ -285,6 +285,15 @@ void ChunkserverEntry::retryConnect() {
 	}
 }
 
+void ChunkserverEntry::checkAndApplyClosed() {
+	if (pendingDelayedJobs == 0 && toDiscardReadJobIds.empty()) {
+		if (writePacket->inputBuffer != nullptr) {
+			getWriteInputBufferPool().put(std::move(writePacket->inputBuffer));
+		}
+		state = State::Closed;
+	}
+}
+
 // common - delayed close
 void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 	TRACETHIS();
@@ -293,34 +302,16 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 	if (eptr->writeJobId > 0 && eptr->writeJobWriteId == 0 &&
 	    status == SAUNAFS_STATUS_OK) {  // this was job_open
 		eptr->isChunkOpen = 1;
-	} else if (!eptr->pendingReadJobIds.empty() &&
-	           status == SAUNAFS_STATUS_OK) {  // this could be job_open
-
-		while (!eptr->pendingReadDataPackets.empty() &&
-		       eptr->pendingReadDataPackets.front()->outputBuffer->getStatus() !=
-		           kNotSaunafsStatus) {
-			getReadOutputBufferPool().put(
-			    std::move(eptr->pendingReadDataPackets.front()->outputBuffer));
-			eptr->pendingReadDataPackets.pop_front();
-			eptr->pendingReadJobIds.pop_front();
-		}
-
-		eptr->isChunkOpen = 1;
 	}
 
-	if (eptr->isChunkOpen && eptr->pendingReadJobIds.empty()) {
+	if (eptr->isChunkOpen) {
 		job_close(*eptr->workerJobPool, kEmptyCallback, kEmptyExtra, eptr->chunkId,
 		          eptr->chunkType);
 		eptr->isChunkOpen = 0;
 	}
 
 	eptr->pendingDelayedJobs--;
-	if (eptr->pendingDelayedJobs == 0) {
-		if (eptr->writePacket->inputBuffer != nullptr) {
-			getWriteInputBufferPool().put(std::move(eptr->writePacket->inputBuffer));
-		}
-		eptr->state = State::Closed;
-	}
+	eptr->checkAndApplyClosed();
 }
 
 void ChunkserverEntry::delayedDiscardCallback(uint8_t status, void *entry) {
@@ -336,10 +327,7 @@ void ChunkserverEntry::delayedDiscardCallback(uint8_t status, void *entry) {
 		eptr->toDiscardReadJobIds.pop_front();
 	}
 
-	eptr->pendingDelayedJobs--;
-	if (eptr->pendingDelayedJobs == 0) {
-		eptr->state = State::Closed;
-	}
+	eptr->checkAndApplyClosed();
 }
 
 // bg reading
@@ -349,12 +337,20 @@ void ChunkserverEntry::readDiscardCallback(uint8_t status, void *entry) {
 	(void) status;
 	auto *eptr = static_cast<ChunkserverEntry *>(entry);
 
-	while (!eptr->toDiscardReadDataPackets.empty() &&
-	       eptr->toDiscardReadDataPackets.front()->outputBuffer->getStatus() != kNotSaunafsStatus) {
-		getReadOutputBufferPool().put(
-		    std::move(eptr->toDiscardReadDataPackets.front()->outputBuffer));
-		eptr->toDiscardReadDataPackets.pop_front();
-		eptr->toDiscardReadJobIds.pop_front();
+	// jobId <--> related packet, maintaining the order
+	assert(eptr->toDiscardReadJobIds.size() == eptr->toDiscardReadDataPackets.size());
+
+	auto jobsIt = eptr->toDiscardReadJobIds.begin();
+	for (auto packetsIt = eptr->toDiscardReadDataPackets.begin();
+	     packetsIt != eptr->toDiscardReadDataPackets.end();) {
+		if ((*packetsIt)->outputBuffer->getStatus() != kNotSaunafsStatus) {
+			getReadOutputBufferPool().put(std::move((*packetsIt)->outputBuffer));
+			packetsIt = eptr->toDiscardReadDataPackets.erase(packetsIt);
+			jobsIt = eptr->toDiscardReadJobIds.erase(jobsIt);
+		} else {
+			packetsIt++;
+			jobsIt++;
+		}
 	}
 }
 
@@ -363,22 +359,29 @@ void ChunkserverEntry::prepareDiscardReadJobs() {
 	// - change state of packets not taken by any hdd worker
 	// - change callback in already taken ones
 	// - move packets from pending to toDiscard lists
-	workerJobPool->disableJobs(pendingReadJobIds);
+
+	// The jobs which are not going to be processed: all but the ones in progress
+	auto disabledJobIds = workerJobPool->disableJobs(pendingReadJobIds);
 	workerJobPool->changeCallback(pendingReadJobIds, readDiscardCallback, this);
 	while (!pendingReadJobIds.empty()) {
 		// pendingReadJobIds and pendingReadDataPackets should have the related elements in the
 		// correct order
-		if (pendingReadDataPackets.front()->outputBuffer->getStatus() == kNotSaunafsStatus) {
+		if (pendingReadDataPackets.front()->outputBuffer->getStatus() == kNotSaunafsStatus &&
+		    (disabledJobIds.empty() || disabledJobIds.front() != pendingReadJobIds.front())) {
 			toDiscardReadJobIds.push_back(pendingReadJobIds.front());
 			toDiscardReadDataPackets.emplace_back(std::move(pendingReadDataPackets.front()));
 		} else {
 			// Already processed packets, can be moved to the pool
 			getReadOutputBufferPool().put(std::move(pendingReadDataPackets.front()->outputBuffer));
+			if (!disabledJobIds.empty() && disabledJobIds.front() == pendingReadJobIds.front()) {
+				disabledJobIds.pop();
+			}
 		}
 
 		pendingReadJobIds.pop_front();
 		pendingReadDataPackets.pop_front();
 	}
+	assert(disabledJobIds.empty());
 	assert(pendingReadJobIds.empty());
 	assert(pendingReadDataPackets.empty());
 }
@@ -396,7 +399,6 @@ void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 		// - close chunk
 		// - change state
 		eptr->prepareDiscardReadJobs();
-		readDiscardCallback(status, eptr);
 
 		std::vector<uint8_t> buffer;
 		eptr->messageSerializer->serializeCstoclReadStatus(
@@ -508,7 +510,8 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 			             pendingReadDataPackets.back()->outputBuffer.get(), !isChunkOpen);
 
 			if (readJobId == 0) {
-				getReadOutputBufferPool().put(std::move(pendingReadDataPackets.back()->outputBuffer));
+				getReadOutputBufferPool().put(
+				    std::move(pendingReadDataPackets.back()->outputBuffer));
 				pendingReadDataPackets.pop_back();
 				state = State::Close;
 				return;
@@ -1211,25 +1214,25 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 
 void ChunkserverEntry::outputCheckReadFinished() {
 	TRACETHIS();
-	if (state == State::Read && !pendingReadDataPackets.empty()) {
+	if (state == State::Read && (!pendingReadDataPackets.empty() || size > 0)) {
 		readContinue(maxParallelHddReadJobs);
 	}
 }
 
 void ChunkserverEntry::closeJobs() {
 	TRACETHIS();
+
+	if (!pendingReadJobIds.empty()) {
+		isChunkOpen = 1;
+		prepareDiscardReadJobs();
+	}
 	if (!toDiscardReadJobIds.empty()) {
 		// Already disabled jobs
 		workerJobPool->changeCallback(toDiscardReadJobIds, delayedDiscardCallback, this);
-		pendingDelayedJobs += toDiscardReadJobIds.size();
 		state = State::CloseWait;
 	}
-	if (!pendingReadJobIds.empty()) {
-		workerJobPool->disableJobs(pendingReadJobIds);
-		workerJobPool->changeCallback(pendingReadJobIds, delayedCloseCallback, this);
-		pendingDelayedJobs += pendingReadJobIds.size();
-		state = State::CloseWait;
-	} else if (writeJobId > 0) {
+
+	if (writeJobId > 0) {
 		workerJobPool->disableJob(writeJobId);
 		workerJobPool->changeCallback(writeJobId, delayedCloseCallback, this);
 
@@ -1255,7 +1258,7 @@ void ChunkserverEntry::closeJobs() {
 			job_close(*workerJobPool, kEmptyCallback, kEmptyExtra, chunkId, chunkType);
 			isChunkOpen = 0;
 		}
-		if (pendingDelayedJobs == 0) { // no delayed jobs
+		if (pendingDelayedJobs == 0 && toDiscardReadJobIds.empty()) { // no delayed jobs
 			state = State::Closed;
 		}
 	}

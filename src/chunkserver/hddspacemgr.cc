@@ -735,10 +735,11 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 		chunk->owner()->prefetchChunkBlocks(
 		    *chunk, firstBlockToRead,
 		    blocksToBeReadAhead + block - firstBlockToRead);
-		OutputBuffer buffer = OutputBuffer(kIgnoreHeaderSize, block - firstBlockToRead);
+		auto buffer = getReadOutputBufferPool().get(kIgnoreHeaderSize, block - firstBlockToRead);
 		for (uint16_t b = firstBlockToRead; b < block; ++b) {
-			hddReadCrcAndBlock(chunk, b, &buffer, false);
+			hddReadCrcAndBlock(chunk, b, buffer.get(), false);
 		}
+		getReadOutputBufferPool().put(std::move(buffer));
 	} else {
 		chunk->owner()->prefetchChunkBlocks(*chunk, block, blocksToBeReadAhead);
 	}

@@ -131,7 +131,8 @@ public:
 	///
 	/// @param jobIds The list of jobs by IDs to be disabled.
 	/// @param listenerId The ID of the listener associated with the jobs.
-	void disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId = 0);
+	/// @return A queue of job IDs that were successfully disabled.
+	std::queue<uint32_t> disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId = 0);
 
 	/// @brief Checks the status of jobs in the JobPool and calls their callbacks.
 	///
@@ -152,7 +153,7 @@ public:
 	/// @param callback The new callback function.
 	/// @param extra Additional data to be passed to the new callback.
 	/// @param listenerId The ID of the listener associated with the jobs.
-	void changeCallback(std::list<uint32_t> &jobIds, JobCallback callback, void *extra,
+	void changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback, void *extra,
 	                    uint32_t listenerId = 0);
 
 private:

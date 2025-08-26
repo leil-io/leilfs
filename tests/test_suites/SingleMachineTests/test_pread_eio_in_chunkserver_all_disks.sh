@@ -52,3 +52,5 @@ for f in goal2/*; do
 	assert_eventually_prints "" "saunafs fileinfo '$f' | grep ':${info[chunkserver0_port]}'" "60 sec"
 	assert_eventually_prints 2 "saunafs fileinfo '$f' | grep copy | wc -l" "60 sec"
 done
+
+sfschunkserver_check_no_buffer_in_use
