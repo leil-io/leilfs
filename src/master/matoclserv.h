@@ -37,7 +37,10 @@ void matoclserv_stats(uint64_t stats[5]);
 /// Sends the status of a delayed operation associated with a chunk over the network.
 /// @param chunkId The ID of the chunk associated with the delayed operation
 /// @param status  The status of the operation, (e.g., SAUNAFS_STATUS_OK, SAUNAFS_ERROR_NOTDONE)
-void matoclserv_chunk_status(uint64_t chunkId, uint8_t status);
+/// @param isFailedCreateOperation True if the operation was a failed create operation, false
+/// otherwise
+void matoclserv_chunk_status(uint64_t chunkId, uint8_t status,
+                             bool isFailedCreateOperation = false);
 
 /// Adds an open file to the list of open files for a given session.
 /// @param sessionId The ID of the session to which the open file will be added

@@ -2159,6 +2159,53 @@ uint8_t fs_apply_incversion(uint64_t chunkid) {
 }
 
 #ifndef METARESTORE
+uint8_t fs_remove_chunk_from_file(const FsContext &context, inode_t inode, uint64_t chunkId) {
+	uint32_t ts = eventloop_time();
+	ChecksumUpdater cu(ts);
+	StatsRecord psr, nsr;
+	FSNode *p;
+
+	if (chunkId == 0) { return SAUNAFS_ERROR_NOCHUNK; }
+
+	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kAny);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	status =
+	    fsnodes_get_node_for_operation(context, ExpectedNodeType::kFile, MODE_MASK_W, inode, &p);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	auto *node_file = dynamic_cast<FSNodeFile *>(p);
+	fsnodes_get_stats(p, &psr);
+	auto it = std::ranges::find(node_file->chunks, chunkId);
+	uint32_t indx = (it == node_file->chunks.end()) ? node_file->chunks.size()
+	                                                : std::distance(node_file->chunks.begin(), it);
+
+	// not found
+	if (indx == node_file->chunks.size()) { return SAUNAFS_ERROR_NOCHUNK; }
+
+	status = chunk_delete_file(chunkId, p->goal);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	node_file->chunks[indx] = 0;
+	p->mtime = ts;
+	fsnodes_update_ctime(p, ts);
+
+	// Log the repair operation with new version 0 (indicating deletion)
+	uint32_t nversion = 0;
+	fs_changelog(ts, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode, indx, nversion);
+
+	fsnodes_get_stats(p, &nsr);
+	for (const auto &[parentId, _] : p->parents) {
+		auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+		fsnodes_add_sub_stats(parent, &nsr, &psr);
+	}
+	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
+	fsnodes_update_checksum(p);
+	return SAUNAFS_STATUS_OK;
+}
+#endif /* #ifndef METARESTORE */
+
+#ifndef METARESTORE
 uint8_t fs_repair(const FsContext &context, inode_t inode,
 		uint8_t correct_only, uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) {
 	uint32_t ts = eventloop_time();

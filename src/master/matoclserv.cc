@@ -1150,7 +1150,7 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
 	return status;
 }
 
-void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
+void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCreateOperation) {
 	DelayedChunkOperation *operation;
 	const PacketSerializer *serializer;
 
@@ -1208,6 +1208,9 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status) {
 	switch (operationType) {
 	case FUSE_WRITE:
 		if (status != SAUNAFS_STATUS_OK) {
+			if (isFailedCreateOperation) {
+				fs_remove_chunk_from_file(context, inode, chunkId);
+			}
 			serializer->serializeFuseWriteChunk(reply, messageId, status);
 			matoclserv_createpacket(eptr, std::move(reply));
 		} else {
