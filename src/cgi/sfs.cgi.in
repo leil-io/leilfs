@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-import cgi
-import cgitb
+import os
 import re
 import socket
 import struct
@@ -52,6 +51,202 @@ SAUNAFS_VERSION_WITH_QUOTAS = (2, 5, 0)
 SAUNAFS_VERSION_WITH_CUSTOM_GOALS = (2, 5, 3)
 SAUNAFS_VERSION_WITH_LIST_OF_SHADOWS = (2, 5, 5)
 SAUNAFS_VERSION_WITH_MOUNT_INFO_IN_MONITORING = (5, 0, 0)
+
+# CGI Module Compatibility Layer
+# ================================
+# The Python cgi module was deprecated in Python 3.8+ and removed in Python 3.13.
+# This code provides a fallback implementation to maintain compatibility across Python versions.
+
+# Check for cgi module availability across Python versions
+# This replaces try/except ImportError with explicit version checking
+if sys.version_info >= (3, 13):
+    # Python 3.13 removed cgi module, use fallback implementation
+    cgi_available = False
+else:
+    # Pre-3.8, check if cgi module exists
+    try:
+        import importlib.util
+        cgi_available = importlib.util.find_spec("cgi") is not None
+    except (ImportError, AttributeError):
+        # Fallback for very old Python versions that don't have importlib.util
+        try:
+            import cgi
+            cgi_available = True
+        except ImportError:
+            cgi_available = False
+
+if cgi_available:
+    # Use standard library cgi module when available
+    # pylint: disable=import-error
+    import cgi
+    import cgitb
+    # pylint: enable=import-error
+else:
+    # Custom CGI Implementation
+    # =========================
+    # Provides cgi.FieldStorage-compatible interface when standard library is unavailable
+
+    import signal
+    import traceback
+    import types
+    import urllib.parse
+    from html import escape
+    from datetime import datetime
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Custom exception handler that outputs HTML-formatted errors for CGI"""
+        print("Content-Type: text/html; charset=UTF-8\n")
+        print("<html><head><title>Error</title></head><body><h1>Error</h1><pre>")
+        print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("\nRequest Details:")
+        print(f"Remote Address: {os.environ.get('REMOTE_ADDR', 'Unknown')}")
+        print(f"Request Method: {os.environ.get('REQUEST_METHOD', 'Unknown')}")
+        print(f"Query String: {os.environ.get('QUERY_STRING', 'None')}")
+        print("\nError Details:")
+        print(escape("".join(traceback.format_exception(exc_type, exc_value, exc_traceback))))
+        print("</pre></body></html>")
+        sys.exit(1)
+
+    def timeout_handler(signum, frame):
+        """Timeout handler that raises an exception on SIGALRM"""
+        raise TimeoutError("Request timed out")
+
+    class FieldStorage:
+        """
+        Custom implementation of cgi.FieldStorage with security improvements.
+
+        Features:
+        - Input validation and size limits to prevent DoS attacks
+        - UTF-8 encoding handling with error recovery
+        - Compatible interface with standard cgi.FieldStorage
+        """
+
+        # Security limits to prevent abuse
+        MAX_CONTENT_LENGTH = 1024 * 1024 # 1 MB limit
+        MAX_KEY_LENGTH = 256
+        MAX_FIELD_SIZE = 8192 # 8KB per field
+        MAX_FIELDS = 100 # maximum number of fields per request
+        REQUEST_TIMEOUT = 30
+
+        def __init__(self):
+            """Initialize and parse both GET (query string) and POST data"""
+            self.data = {}
+            self._field_count = 0
+
+            # Parse GET parameters from QUERY_STRING environment variable
+            self.query = os.environ.get('QUERY_STRING', '')
+            if self.query:
+                try:
+                    # Parse query string with built-in security limits
+                    self._add_fields(urllib.parse.parse_qs(
+                        self.query, keep_blank_values=True, max_num_fields=self.MAX_FIELDS))
+                except ValueError:
+                    pass # Ignore invalid query string format
+
+            # Parse POST parameters from stdin
+            if os.environ.get('REQUEST_METHOD', '').upper() == 'POST':
+                # Avoid to hang indefinitely on malformed requests
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(self.REQUEST_TIMEOUT)
+                try:
+                    # Validate Content-Length header to prevent oversized requests
+                    content_length = int(os.environ.get('CONTENT_LENGTH', '0'))
+                    if 0 < content_length <= self.MAX_CONTENT_LENGTH:
+                        # Read POST data from stdin (CGI standard)
+                        post_data = sys.stdin.buffer.read(content_length)
+                        self._add_fields(urllib.parse.parse_qs(
+                            post_data, keep_blank_values=True, max_num_fields=self.MAX_FIELDS))
+                except (ValueError, UnicodeDecodeError, OSError, TimeoutError):
+                    # Silently ignore malformed POST data or read errors
+                    pass
+                finally:
+                    signal.alarm(0) # Disable alarm
+
+        def _add_fields(self, parsed):
+            """
+            Add parsed fields to internal storage with security validation.
+
+            Args:
+                parsed: Dictionary from urllib.parse.parse_qs()
+            """
+            for key, values in parsed.items():
+                if self._field_count >= self.MAX_FIELDS:
+                    break
+
+                try:
+                    # Sanitize field name (key)
+                    key_str = key.decode('utf-8', errors='ignore') if isinstance(key, bytes) else str(key)
+                    key_str = key_str[:self.MAX_KEY_LENGTH] # Enforce key length limit
+
+                    # Sanitize field values
+                    value_list = []
+                    for value in values:
+                        # Handle both bytes and string inputs
+                        value_str = value.decode('utf-8', errors='ignore') if isinstance(value, bytes) else str(value)
+                        value_str = value_str[:self.MAX_FIELD_SIZE] # limit value length
+                        value_list.append(value_str)
+
+                    # Store sanitized data
+                    self.data[key_str] = value_list
+                    self._field_count += 1
+                except (UnicodeDecodeError, AttributeError):
+                    continue # Skip malformed fields that can't be processed
+
+        def getvalue(self, key, default=""):
+            """
+            Get the last value for a key (mimics standard cgi.FieldStorage behavior).
+
+            Args:
+                key: Field name to retrieve
+                default: Default value if field not found
+
+            Returns:
+                String value of the field or default
+            """
+            if key in self.data and self.data[key]:
+                return self.data[key][-1]
+            return str(default) if default is not None else ""
+
+        def getlist(self, key):
+            """
+            Get all values for a key as a list.
+
+            Args:
+                key: Field name to retrieve
+
+            Returns:
+                List of all values for the field (empty list if not found)
+            """
+            return self.data.get(key, [])
+
+        def keys(self):
+            """Return all field names"""
+            return self.data.keys()
+
+        def __contains__(self, key):
+            """Support 'in' operator for field existence checks"""
+            return key in self.data
+
+        def __getitem__(self, key):
+            """Support dictionary-style access: fields[key]"""
+            return self.getvalue(key)
+
+        def __iter__(self):
+            """Support iteration over field names"""
+            return iter(self.data.keys())
+
+    # Create a fake cgitb module for compatibility
+    class CGITBModule:
+        @staticmethod
+        def enable():
+            sys.excepthook = handle_exception
+
+    # Create the fake cgi module namespace
+    cgi = types.ModuleType('cgi')
+    cgi.FieldStorage = FieldStorage
+
+    # Create the fake cgitb module
+    cgitb = CGITBModule()
 
 cgitb.enable()
 
