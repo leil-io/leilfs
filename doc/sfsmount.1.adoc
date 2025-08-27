@@ -195,7 +195,7 @@ Define write window size (in blocks) for each chunk (default: 15).
 Try to lock memory (must be enabled at build time).
 
 *-o sfsdonotrememberpassword*::
-So not remember password in memory - more secure, but when session is lost then
+Do not remember password in memory - more secure, but when session is lost then
 new session is created without password.
 
 *-o sfsioretries=*'N'::
