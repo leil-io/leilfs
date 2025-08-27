@@ -1254,6 +1254,7 @@ void fsnodes_setlength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks
 		fsnodes_add_sub_stats(parent_node, &nsr, &psr);
 	}
 	fsnodes_update_checksum(obj);
+	gMetadata->nodeChangedSignal.emit(obj);
 }
 
 void fsnodes_change_uid_gid(FSNode *p, uint32_t uid, uint32_t gid) {
