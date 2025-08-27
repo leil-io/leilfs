@@ -11,4 +11,4 @@ mapfile -t files < <(find "${SAUNAFS_ROOT}/share/sfscgi/" -name '*.cgi')
 files+=("${SAUNAFS_ROOT}/sbin/saunafs-cgiserver")
 
 # Validate all found files using pylint
-expect_empty "$(${pylintexec} -E --ignored-modules=cgi,cgitb "${files[@]}" || true)"
+expect_empty "$(${pylintexec} -E "${files[@]}" || true)"
