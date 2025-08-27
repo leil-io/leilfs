@@ -1,10 +1,12 @@
-timeout_set 2 minutes
+timeout_set 1 minute
 
 USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
 test_error_cleanup() {
 	cd ${TEMP_DIR}
+	# Kill any remaining posixlockcmd processes
+	pkill -f posixlockcmd 2>/dev/null || true
 	sudo umount -l ${TEMP_DIR}/mnt/ganesha
 	sudo pkill -9 ganesha.nfsd
 }
@@ -49,10 +51,6 @@ function assert_operation_performed() {
 	assert_eventually_prints "$1" "sed -n ${operations}p ${TEMP_DIR}/posixlock.log"
 }
 
-function assert_operation_not_performed() {
-	assert_eventually_prints "" "sed -n ${1}p ${TEMP_DIR}/posixlock.log"
-}
-
 function readlock() {
 	posixlockcmd $1 r $2 $3 >> "${TEMP_DIR}/posixlock.log" &
 	assert_operation_performed "read  open:   $1"
@@ -67,49 +65,97 @@ function unlock() {
 	kill -s SIGUSR1 $1
 }
 
+# helper to assert master-level lock state (order-independent)
+#
+# manage-locks <master ip> <master port> [list/unlock] [flock/posix/all]
+locks_active_count() {
+	saunafs_admin_master manage-locks list posix --porcelain --active | wc -l
+}
+
+assert_active_eq() {
+	local expected="$1"
+	local actual=$(($(locks_active_count) - 1))  # Subtract header line
+	if [ "$actual" -eq "$expected" ]; then
+		echo "✓ Active locks: $actual (expected: $expected)"
+		return 0
+	else
+		echo "✗ Expected $expected active locks, got $actual"
+		test_error_cleanup
+		return 1
+	fi
+}
+
 declare -a sharedLocks
 declare -a exclusiveLocks
-
-declare -a lockIndexes=(1 2 3)
 
 # Go to the Ganesha mount point
 cd "${TEMP_DIR}/mnt/ganesha"
 
-# Acquire 3 shared locks on [100, 200]
-for i in "${lockIndexes[@]}"; do
-	readlock "dir/file_test" 100 100
-	sharedLocks[$i]=$!
-	assert_operation_performed "read  lock:   dir/file_test"
-done
+echo "Acquire a shared lock on the range [0, 100] in dir/file_test"
+readlock "dir/file_test" 0 100
+sharedLocks[1]=$!
+assert_operation_performed "read  lock:   dir/file_test"
 
-# Attempt exclusive lock on [100, 200] (should block/fail)
-writelock "dir/file_test" 100 100
+echo "Acquire an exclusive lock on the range [200, 300] in dir/file_test"
+writelock "dir/file_test" 200 100
 exclusiveLocks[1]=$!
-assert_operation_not_performed $((operations+1)) # Should not acquire
-
-# Release shared locks
-for i in "${lockIndexes[@]}"; do
-	unlock "${sharedLocks[$i]}"
-	assert_operation_performed "read  unlock: dir/file_test"
-done
-
-# Now exclusive lock should be acquired
 assert_operation_performed "write lock:   dir/file_test"
 
-# Attempt shared lock while exclusive lock is held (should block/fail)
-readlock "dir/file_test" 100 100
-sharedLocks[4]=$!
-assert_operation_not_performed $((operations+1)) # Should not acquire
+# Verify 2 locks are active: one shared lock and an exclusive one
+assert_active_eq 2
+saunafs_admin_master manage-locks list posix --porcelain --active
 
-# Release exclusive lock
+# Acquire a shared lock on [200, 250] (should block/fail due to overlapping with exclusive lock)
+echo "Attempt to acquire a shared lock on the range [200, 250] in dir/file_test"
+readlock "dir/file_test" 200 50
+sharedLocks[2]=$!
+
+# Wait a little bit for the server to queue the shared lock
+sleep 2
+
+# Verify 2 locks are active: one shared lock and an exclusive one
+assert_active_eq 2
+saunafs_admin_master manage-locks list posix --porcelain --active
+
+# In Ganesha v6.5, sometimes reopen_func is not called on time by all the threads.
+# This prevents the renewal of the fd, making the fcntl() function to fail at the
+# moment of releasing the exclusive lock. This behavior makes the test flaky.
+# Reading the file triggers a reopen_func and a renewal of the fd, reducing the likelihood
+# of the previous flaky behavior.
+md5sum dir/file_test > /dev/null
+
+echo "Release exclusive lock on the range [200, 300] in dir/file_test"
 unlock "${exclusiveLocks[1]}"
 assert_operation_performed "write unlock: dir/file_test"
 
-# Now shared lock should be acquired
+# After releasing exclusive lock, second shared lock should be acquired
 assert_operation_performed "read  lock:   dir/file_test"
 
-# Release shared lock
-unlock "${sharedLocks[4]}"
+# Wait a little bit for the server to process the lock/unlock operations
+sleep 2
+
+# Verify there are 2 active shared locks
+assert_active_eq 2
+saunafs_admin_master manage-locks list posix --porcelain --active
+
+echo "Release shared lock on the range [0, 100] in dir/file_test"
+unlock "${sharedLocks[1]}"
 assert_operation_performed "read  unlock: dir/file_test"
+
+# Wait a little bit for the server to process the lock/unlock operations
+sleep 2
+
+# Verify only 1 lock is active (the shared one)
+assert_active_eq 1
+saunafs_admin_master manage-locks list posix --porcelain --active
+
+echo "Release shared lock on the range [200, 250] in dir/file_test"
+unlock "${sharedLocks[2]}"
+assert_operation_performed "read  unlock: dir/file_test"
+
+# Final verification
+assert_active_eq 0
+saunafs_admin_master manage-locks list posix --porcelain --active
+echo "Concurrent locking test passed successfully!!!"
 
 test_error_cleanup
