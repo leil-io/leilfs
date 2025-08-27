@@ -218,7 +218,8 @@ struct ReadRecord {
 	ReadaheadRequests readaheadRequests; // inodeLock
 	std::atomic<uint8_t> refreshCounter = 0;
 	std::atomic<uint16_t> requestsNotDone = 0;
-	bool expired = false; //gMutex
+	bool expired = false; // gMutex
+	Timer lastPrefetch = Timer(); // gMutex
 
 	ReadRecord(inode_t inode)
 	    : cache(gCacheExpirationTime_ms),
@@ -298,6 +299,21 @@ public:
 	bool request(ReadRecord *rrec, off_t fuseOffset, size_t fuseSize,
 	             uint64_t offset, uint32_t size, ReadCache::Result &result,
 	             RequestConditionVariablePair *&rcvpPtr);
+	
+	/** \brief Prefetch some data to the given ```ReadRecord```.
+	 * 
+	 * The data is prefetched only if it is not already in cache or being
+	 * requested. It is not going to schedule more requests than the one that could
+	 * satisfy this prefetch operation.
+	 * 
+	 * inodeLock: LOCKED
+	 * 
+	 * \param rrec The pointer to the read data of the given inode.
+	 * \param offset Starting offset of the prefetch request after aligning it to
+	 * block size.
+	 * \param size Size of the prefetch request after aligning it to block size.
+	 */
+	void prefetch(ReadRecord *rrec, uint64_t offset, uint32_t size);
 
 	/** \brief Check if the underlying container of scheduled requests is empty.
 	 *
@@ -410,3 +426,4 @@ void read_data_init(uint32_t retries, uint32_t chunkserverRoundTripTime_ms,
                     uint32_t read_workers, uint32_t max_readahead_requests,
                     bool prefetchXorStripes, double bandwidth_overuse);
 void read_data_term();
+void read_prefetch(inode_t inode, uint64_t offset, uint32_t size);

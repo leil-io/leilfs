@@ -66,6 +66,12 @@ constexpr uint32_t kMinTryCounterToShowReadErrorMessage = 9;
 constexpr int64_t kDelayedOpsTimeout_us = 166667;
 constexpr int64_t kMinDelayedOpsSleepTime_us = 50000;
 
+static std::atomic_bool gUsingReadPrefetch = false;
+static constexpr uint32_t kInactiveReadRecordsTimeout_ms = 10000;  // 10s
+static std::mutex gInodesWithFailedReadsMutex;
+static std::map<inode_t, Timer> gInodesWithFailedReads;
+static constexpr uint32_t kInodesWithFailedReadsTimeout_ms = 60000;  // 1 minute
+
 enum class ReadStats : uint8_t {
 	SERVED_READ_BYTES,       ///< Total number of bytes read (served from cache or requested)
 	REQ_READ_BYTES,          ///< Total number of bytes actually read from chunkservers
@@ -258,22 +264,21 @@ ReadaheadRequests::~ReadaheadRequests() {
 	}
 }
 
-bool ReadaheadOperationsManager::request(
-    ReadRecord *rrec, off_t fuseOffset, size_t fuseSize, uint64_t offset,
-    uint32_t size, ReadCache::Result &result,
-    RequestConditionVariablePair *&rcvpPtr) {
+bool ReadaheadOperationsManager::request(ReadRecord *rrec, off_t fuseOffset, size_t fuseSize,
+                                         uint64_t offset, uint32_t size, ReadCache::Result &result,
+                                         RequestConditionVariablePair *&rcvpPtr) {
 	bool isSequential = true;
 	// Feed the adviser with original FUSE offset and size (before alignment)
 	rrec->readahead_adviser.feed(fuseOffset, fuseSize, isSequential);
 
-	rrec->cache.query(offset, size, result, false);
+	rrec->cache.query(fuseOffset, fuseSize, result, false);
 
 	uint64_t recommendedSize = round_up_to_blocksize(std::max<uint64_t>(
 	    size, std::min<uint32_t>(rrec->readahead_adviser.window(),
 	                             maxWindowConsideringMaxReadCacheSize)));
 
-	if (!result.empty() && result.frontOffset() <= offset &&
-	    offset + size <= result.endOffset()) {
+	if (!result.empty() && result.frontOffset() <= static_cast<uint64_t>(fuseOffset) &&
+	    fuseOffset + fuseSize <= result.endOffset()) {
 		// this query can be directly served from cache
 		statsAdd(ReadStats::READ_FROM_CACHE);
 		statsAdd(ReadStats::CACHE_HITS_BYTES, fuseSize);
@@ -339,6 +344,41 @@ bool ReadaheadOperationsManager::request(
 	}
 
 	return mustWait;
+}
+
+void ReadaheadOperationsManager::prefetch(ReadRecord *rrec, uint64_t offset, uint32_t size) {
+	ReadCache::Result dummyResult;
+	rrec->cache.query(offset, size, dummyResult, false);
+	if (!dummyResult.empty() && dummyResult.frontOffset() <= offset &&
+	    offset + size <= dummyResult.endOffset()) {
+		// Data is already in cache
+		return;
+	}
+	RequestConditionVariablePair *rcvpPtr = nullptr;
+	uint64_t cachedOffset = dummyResult.empty() ? offset : dummyResult.endOffset();
+
+	// check if this data is already in process
+	uint64_t maximumRequestedOffset = rrec->readaheadRequests.continuousOffsetRequested(
+	    cachedOffset, offset + size, dummyResult, rcvpPtr);
+	if (maximumRequestedOffset == offset + size) {
+		// this query can be directly served after succeeding at some
+		// pending read requests
+		return;
+	}
+
+	// Remaining size to be prefetched
+	massert(offset + size > maximumRequestedOffset,
+	        "Remaining size to be prefetched should be greater than 0");
+	size = offset + size - maximumRequestedOffset;
+	rrec->cache.query(maximumRequestedOffset, size, dummyResult, true);
+
+	// Let's check if we very recently finished the request we've been waiting
+	// for
+	if (dummyResult.back()->done) { return; }
+
+	// Add the request with very low priority, 10 seconds from now
+	constexpr int64_t kVeryLowPriority_us = 10000000;
+	addRequest_(rrec, dummyResult.back(), kVeryLowPriority_us);
 }
 
 Request ReadaheadOperationsManager::nextRequest() {
@@ -427,6 +467,7 @@ inline ChunkConnectorUsingPool gChunkConnector(gReadConnectionPool);
 inline ReadaheadOperationsManager gReadaheadOperationsManager;
 inline std::mutex gMutex;
 
+inline ReadRecords gInactiveReadRecords;
 inline ReadRecords gActiveReadRecords;
 inline pthread_t delayedOpsThread;
 inline std::vector<pthread_t> readOpsThreads;
@@ -465,14 +506,18 @@ bool read_data_get_prefetchxorstripes() {
 	return gPrefetchXorStripes;
 }
 
-inline void clear_active_read_records() {
+inline void clear_read_records() {
 	std::unique_lock gMutexLock(gMutex);
 
 	for (ReadRecords::value_type& readRecord : gActiveReadRecords) {
 		delete readRecord.second;
 	}
+	for (ReadRecords::value_type& readRecord : gInactiveReadRecords) {
+		delete readRecord.second;
+	}
 
 	gActiveReadRecords.clear();
+	gInactiveReadRecords.clear();
 }
 
 void* read_data_delayed_ops(void *arg) {
@@ -502,7 +547,7 @@ void* read_data_delayed_ops(void *arg) {
 			if (readRecordIt->second->expired) {
 				assert(readRecordIt->second->readaheadRequests.empty());
 				if (readRecordIt->second->requestsNotDone == 0) {
-					// If there are no requests inqueued/in process then delete the ReadRecord
+					// If there are no requests enqueued/in process then delete the ReadRecord
 					delete readRecordIt->second;
 					readRecordIt = gActiveReadRecords.erase(readRecordIt);
 				} else {
@@ -515,6 +560,43 @@ void* read_data_delayed_ops(void *arg) {
 				toCollectGarbage.push_back(readRecordIt->second);
 
 				++readRecordIt;
+			}
+		}
+
+		if (gUsingReadPrefetch) {
+			readRecordIt = gInactiveReadRecords.begin();
+			while (readRecordIt != gInactiveReadRecords.end()) {
+				if (readRecordIt->second->refreshCounter < REFRESHTICKS) {
+					++(readRecordIt->second->refreshCounter);
+				}
+
+				if (readRecordIt->second->lastPrefetch.elapsed_ms() >
+				    kInactiveReadRecordsTimeout_ms) {
+					if (readRecordIt->second->requestsNotDone == 0) {
+						// If there are no requests enqueued/in process then delete the ReadRecord
+						delete readRecordIt->second;
+						readRecordIt = gInactiveReadRecords.erase(readRecordIt);
+					} else {
+						// Otherwise just try to clear the cache
+						std::unique_lock inodeLock(readRecordIt->second->mutex);
+						readRecordIt->second->cache.clear();
+						++readRecordIt;
+					}
+				} else {
+					toCollectGarbage.push_back(readRecordIt->second);
+
+					++readRecordIt;
+				}
+			}
+
+			std::lock_guard iwfrLock(gInodesWithFailedReadsMutex);
+			auto iwfrIt = gInodesWithFailedReads.begin();
+			while (iwfrIt != gInodesWithFailedReads.end()) {
+				if (iwfrIt->second.elapsed_ms() > kInodesWithFailedReadsTimeout_ms) {
+					iwfrIt = gInodesWithFailedReads.erase(iwfrIt);
+				} else {
+					++iwfrIt;
+				}
 			}
 		}
 
@@ -633,8 +715,18 @@ void* read_worker(void *arg) {
 }
 
 ReadRecord *read_data_new(inode_t inode) {
-	ReadRecord *rrec = new ReadRecord(inode);
 	std::unique_lock gMutexLock(gMutex);
+	if (gUsingReadPrefetch) {
+		auto it = gInactiveReadRecords.find(inode);
+		if (it != gInactiveReadRecords.end()) {
+			// Move it from inactive to active
+			ReadRecord *rrec = it->second;
+			gInactiveReadRecords.erase(it);
+			gActiveReadRecords.emplace(inode, rrec);
+			return rrec;
+		}
+	}
+	ReadRecord *rrec = new ReadRecord(inode);
 
 	gActiveReadRecords.emplace(inode, rrec);
 
@@ -674,7 +766,7 @@ void read_data_init(uint32_t retries,
 	// and is used throughout the program. It is created during initialization and should
 	// remain valid until the program terminates.
 	gReadCacheEntriesPool = std::make_unique<ReadCacheEntriesPool>(read_buffers_expiration_time_ms);
-	clear_active_read_records();
+	clear_read_records();
 
 	readStatsInit();
 
@@ -733,9 +825,10 @@ void read_data_term(void) {
 		pthread_join(thread, NULL);
 	}
 
-	clear_active_read_records();
+	clear_read_records();
 	gMemoryInfo.reset();
 	gReadCacheEntriesPool.reset();
+	gInodesWithFailedReads.clear();
 }
 
 void read_inode_ops(inode_t inode) { // attributes of inode have been changed - force reconnect and clear cache
@@ -782,6 +875,13 @@ static void print_error_msg(ChunkReader& reader, uint32_t try_counter, const Exc
 		                   "read file error, inode: %" PRIiNode ", index: %u, chunk: failed to locate - %s "
 		                   "(try counter: %u)", reader.inode(), reader.index(),
 		                   ex.what(), try_counter);
+	}
+}
+
+static void addInodeToFailedReads(inode_t inode) {
+	if (gUsingReadPrefetch) {
+		std::lock_guard iwfrLock(gInodesWithFailedReadsMutex);
+		gInodesWithFailedReads[inode] = Timer();
 	}
 }
 
@@ -859,6 +959,7 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset, uint64_t bytes_to_
 			decreaseUsedReadCacheMemory(total_read_cache_bytes_to_reserve);
 			usedMemoryLock.unlock();
 
+			addInodeToFailedReads(rrec->inode);
 			if (ex.status() == SAUNAFS_ERROR_ENOENT) {
 				return SAUNAFS_ERROR_EBADF;  // stale handle
 			} else {
@@ -876,6 +977,7 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset, uint64_t bytes_to_
 				decreaseUsedReadCacheMemory(total_read_cache_bytes_to_reserve);
 				usedMemoryLock.unlock();
 
+				addInodeToFailedReads(rrec->inode);
 				return SAUNAFS_ERROR_IO;
 			} else {
 				if (try_counter > kMinTryCounterToShowReadErrorMessage) {
@@ -980,4 +1082,43 @@ int read_data(ReadRecord *rrec, off_t fuseOffset, size_t fuseSize,
 	ret = std::move(result);
 	statsAdd(ReadStats::SERVED_READ_BYTES, fuseSize);
 	return SAUNAFS_STATUS_OK;
+}
+
+void read_prefetch(inode_t inode, uint64_t offset, uint32_t size) {
+	std::unique_lock iwfrLock(gInodesWithFailedReadsMutex);
+	if (gInodesWithFailedReads.find(inode) != gInodesWithFailedReads.end()) {
+		// previous read failed, do not prefetch
+		return;
+	}
+	iwfrLock.unlock();
+
+	// Determine if it is present in the active read records
+	std::unique_lock gMutexLock(gMutex);
+	if (gActiveReadRecords.contains(inode)) {
+		// Do not prefetch on some inode being read
+		return;
+	}
+
+	// Create it if not already present
+	ReadRecord *rrec;
+	auto it = gInactiveReadRecords.find(inode);
+	if (it != gInactiveReadRecords.end()) {
+		rrec = it->second;
+	} else {
+		rrec = new ReadRecord(inode);
+		gInactiveReadRecords.emplace(inode, rrec);
+	}
+	rrec->lastPrefetch = Timer();
+	gMutexLock.unlock();
+
+	std::unique_lock inodeLock(rrec->mutex);
+	if (!rrec->readahead_adviser.shouldUseReadahead()) {
+		// Feed the adviser with a sequential access pattern
+		for (int i = 0; i < ReadaheadAdviser::kOppositeRequestThreshold; i++) {
+			rrec->readahead_adviser.updateShouldUseReadahead(true);
+		}
+	}
+
+	// Do the prefetch: queue the requests to the readahead operations manager
+	gReadaheadOperationsManager.prefetch(rrec, offset, size);
 }
