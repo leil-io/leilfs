@@ -36,7 +36,9 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#ifndef _WIN32
 #include <csignal>
+#endif
 #include <string>
 
 #include "common/crc.h"
@@ -1999,6 +2001,7 @@ void charts_get_png(uint8_t *buff) {
 	compsize=0;
 }
 
+#ifndef _WIN32
 int initializeTimerSignalHandlers(void (*handler)(int)) {
 	struct sigaction signalAction{};
 	sigemptyset(&signalAction.sa_mask);
@@ -2021,3 +2024,4 @@ int initializeTimerSignalHandlers(void (*handler)(int)) {
 
 	return 0;
 }
+#endif
