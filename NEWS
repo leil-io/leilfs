@@ -1,5 +1,8 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.1.2) (2025-08-21)
+ - Revert "Write several blocks per hdd write job" from 5.1.0
+
 * SaunaFS (5.1.1) (2025-08-21)
  - fix(uRaft): Handle missing URAFT_ELECTOR_MODE (#537)
 
