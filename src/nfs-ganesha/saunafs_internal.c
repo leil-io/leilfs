@@ -46,7 +46,7 @@ sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 
 			memcpy(garray + 1, cred->caller_garray, size);
 			sau_update_groups(instance, ctx, garray, cred->caller_glen + 1);
-			free(garray);
+			gsh_free(garray);
 		}
 	}
 
