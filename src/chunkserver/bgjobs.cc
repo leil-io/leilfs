@@ -437,7 +437,7 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 				auto numBlocks = op.endBlock - op.startBlock + 1;
 				auto bytesWritten = hddChunkWriteFullBlocks(
 				    chunkId, chunkVersion, chunkType, op.startBlock, numBlocks, op.crcs, op.buffer);
-				
+
 				if (bytesWritten != numBlocks * SFSBLOCKSIZE) {
 					if (bytesWritten < 0) {
 						statuses.push_back(-bytesWritten);
