@@ -151,12 +151,8 @@
 ## (Default: 50)
 # POLL_TIMEOUT_MS = 50
 
-## Maximum number of blocks written to the device in a single write job. If
-## possible, will try to make a single pwrite call. (Default: 16, Minimum: 1, Maximum: 64)
-# MAX_BLOCKS_PER_HDD_WRITE_JOB = 16
-
 ## Maximum number of blocks read from the device in a single read job. If possible,
-## will try to make a single pread call. (Default: 8, Minimum: 1)
+## will try to make a single pread call. (Default is 8)
 # MAX_BLOCKS_PER_HDD_READ_JOB = 8
 
 ## Maximum number of read jobs processed in parallel per client connection.
