@@ -719,13 +719,11 @@ void ChunkserverEntry::prepareInputBufferForWrite(uint32_t type, bool isForward)
 
 	if (type == SAU_CLTOCS_WRITE_DATA) {
 		inputPacket.inputBuffer = getWriteInputBufferPool().get(
-		    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize,
-		    maxBlocksPerHddWriteJob);
+		    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize, 1);
 	} else {
 		// CLTOCS_WRITE_DATA
 		inputPacket.inputBuffer = getWriteInputBufferPool().get(
-		    isForward ? kWriteDataPreffixSizeForward : kWriteDataPreffixSize,
-		    maxBlocksPerHddWriteJob);
+		    isForward ? kWriteDataPreffixSizeForward : kWriteDataPreffixSize, 1);
 	}
 }
 

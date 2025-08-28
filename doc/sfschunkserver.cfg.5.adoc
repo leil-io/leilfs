@@ -131,13 +131,8 @@ operation will wait for events. In the chunkservers, the same value is applied
 for the events loop and for the network worker threads. Smaller values could
 reduce latency at the cost of CPU usage (default: 50)
 
-*MAX_BLOCKS_PER_HDD_WRITE_JOB*:: maximum number of blocks written to the device
-in a single write job. If possible, will try to make a single pwrite call
-(default is 16, minimum is 1, maximum is 64)
-
 *MAX_BLOCKS_PER_HDD_READ_JOB*:: maximum number of blocks read from the device
-in a single read job. If possible, will try to make a single pread call
-(default is 8, minimum is 1)
+in a single read job. If possible, will try to make a single pread call (default is 8)
 
 *MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY*:: maximum number of read jobs processed
 in parallel per client connection (default is 16)
