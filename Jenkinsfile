@@ -199,7 +199,7 @@ pipeline {
                         checkout scm
                         script {
                             sh """
-                                docker buildx build --tag saunafs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
+                                docker buildx build --tag saunafs-clang-build:latest -f tests/docker/Dockerfile.clang $WORKSPACE
                                 """
                         }
                     }
