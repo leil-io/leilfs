@@ -261,9 +261,12 @@ void InputBuffer::clear() {
 }
 
 void InputBuffer::addNewWriteOperation() {
-	// Move the unflushed data in the block buffer to the next position aligned with SFSBLOCKSIZE.
+	// Move the unflushed data pointers in the block buffer to the next position 
+	// aligned with SFSBLOCKSIZE.
 	blockBuffer_.moveUnflushedDataLastIndex(writeInfo_.size() * SFSBLOCKSIZE -
 	                                        blockBuffer_.totalBytesPutInBuffer());
+	blockBuffer_.moveUnflushedDataFirstIndex(blockBuffer_.bytesInABuffer());
+
 	writeInfo_.emplace_back(0, 0, 0, 0, 0);
 }
 
