@@ -47,8 +47,8 @@
 #include "master/restore.h"
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 
-Signal<ChangelogEvent> &getChangelogSignal() {
-	static Signal<ChangelogEvent> gChangelogSignal;
+Signal<const ChangelogEvent &> &getChangelogSignal() {
+	static Signal<const ChangelogEvent &> gChangelogSignal;
 	return gChangelogSignal;
 }
 
