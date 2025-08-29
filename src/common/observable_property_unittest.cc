@@ -188,6 +188,186 @@ TEST(SignalSlotTest, ObservableIntegralPropertyIncrementDecrement) {
 	EXPECT_EQ(property.getValue(), 12);
 }
 
+TEST(SignalSlotTest, MemberFunctionSlot_NoArgs_NonConst_And_Const) {
+	struct NoArgsHandler {
+		int nonConstCount = 0;
+		mutable int constCount = 0;
+
+		void handle() { nonConstCount++; }
+		void handleConst() const { constCount++; }
+	} handler;
+
+	Signal<> signal;
+
+	// Connect non-const member function
+	signal.connect(&handler, &NoArgsHandler::handle);
+
+	signal.emit();
+	EXPECT_EQ(handler.nonConstCount, 1);
+	EXPECT_EQ(handler.constCount, 0);
+
+	// Connect const member function (requires pointer to const object)
+	const NoArgsHandler *constHandlerPtr = &handler;
+	signal.connect(constHandlerPtr, &NoArgsHandler::handleConst);
+
+	EXPECT_EQ(handler.nonConstCount, 1);
+	EXPECT_EQ(handler.constCount, 0);
+
+	signal.emit();
+	EXPECT_EQ(handler.nonConstCount, 2);
+	EXPECT_EQ(handler.constCount, 1);
+
+	signal.connect(&handler, &NoArgsHandler::handle);
+
+	signal.emit();
+	EXPECT_EQ(handler.nonConstCount, 4);  // Called twice now
+	EXPECT_EQ(handler.constCount, 2);
+}
+
+TEST(SignalSlotTest, MemberFunctionSlot_WithArgs_NonConst_And_Const) {
+	struct NonConstReceiver {
+		int i = 0;
+		std::string s;
+		bool b = false;
+		void onArgs(int inputInt, const std::string &inputString, bool inputBool) {
+			i = inputInt;
+			s = inputString;
+			b = inputBool;
+		}
+
+		void onArbitraryChangingArgs(int inputInt, const std::string &inputString, bool inputBool) {
+			i = inputInt * 2;
+			s = inputString + "_modified";
+			b = !inputBool;
+		}
+	} nonConstReceiver;
+
+	struct ConstReceiver {
+		mutable int i = 0;
+		mutable std::string s;
+		mutable bool b = false;
+		void onArgsConst(int inputInt, const std::string &inputString, bool inputBool) const {
+			i = inputInt;
+			s = inputString;
+			b = inputBool;
+		}
+	} constReceiver;
+
+	Signal<int, const std::string &, bool> signal;
+
+	signal.connect(&nonConstReceiver, &NonConstReceiver::onArgs);
+	const ConstReceiver *constReceiverPtr = &constReceiver;
+	signal.connect(constReceiverPtr, &ConstReceiver::onArgsConst);
+
+	int expectedInt = 7;
+	std::string expectedStr = "seven";
+	bool expectedBool = true;
+
+	signal.emit(expectedInt, expectedStr, expectedBool);
+
+	EXPECT_EQ(nonConstReceiver.i, expectedInt);
+	EXPECT_EQ(nonConstReceiver.s, expectedStr);
+	EXPECT_TRUE(nonConstReceiver.b);
+
+	EXPECT_EQ(constReceiver.i, expectedInt);
+	EXPECT_EQ(constReceiver.s, expectedStr);
+	EXPECT_TRUE(constReceiver.b);
+
+	expectedInt = 3;
+	expectedStr = "three";
+
+	signal.connect(&nonConstReceiver, &NonConstReceiver::onArbitraryChangingArgs);
+	signal.emit(expectedInt, "three", expectedBool);
+
+	EXPECT_EQ(nonConstReceiver.i, expectedInt * 2);
+	EXPECT_EQ(nonConstReceiver.s, expectedStr + "_modified");
+	EXPECT_EQ(nonConstReceiver.b, !expectedBool);
+}
+
+TEST(SignalSlotTest, ObservableProperty_ConnectMember_ByConstRef_NonConstAndConst) {
+	struct Observer {
+		int lastOld = 0;
+		int lastNew = 0;
+		void onChange(const int &oldValue, const int &newValue) {
+			lastOld = oldValue;
+			lastNew = newValue;
+		}
+	} obs;
+
+	struct ConstObserver {
+		mutable int lastOld = 0;
+		mutable int lastNew = 0;
+		void onChangeConst(const int &oldValue, const int &newValue) const {
+			lastOld = oldValue;
+			lastNew = newValue;
+		}
+	} cobs;
+
+	ObservableProperty<int> prop("member_ref_int", 1);
+
+	prop.connect(&obs, &Observer::onChange);
+	const ConstObserver *pcobs = &cobs;
+	prop.connect(pcobs, &ConstObserver::onChangeConst);
+
+	const int kUpdatedValue = 10;
+	prop.setValue(kUpdatedValue);
+
+	EXPECT_EQ(obs.lastOld, 1);
+	EXPECT_EQ(obs.lastNew, kUpdatedValue);
+	EXPECT_EQ(cobs.lastOld, 1);
+	EXPECT_EQ(cobs.lastNew, kUpdatedValue);
+
+	const int kSomeOtherValue = 20;
+	prop.setValue(kSomeOtherValue);
+
+	EXPECT_EQ(obs.lastOld, kUpdatedValue);
+	EXPECT_EQ(obs.lastNew, kSomeOtherValue);
+	EXPECT_EQ(cobs.lastOld, kUpdatedValue);
+	EXPECT_EQ(cobs.lastNew, kSomeOtherValue);
+}
+
+TEST(SignalSlotTest, ObservableProperty_ConnectMember_ByValue_NonConstAndConst) {
+	struct ObserverV {
+		int lastOld = 0;
+		int lastNew = 0;
+		void onChange(int oldValue, int newValue) {
+			lastOld = oldValue;
+			lastNew = newValue;
+		}
+	} obs;
+
+	struct ConstObserverV {
+		mutable int lastOld = 0;
+		mutable int lastNew = 0;
+		void onChangeConst(int oldValue, int newValue) const {
+			lastOld = oldValue;
+			lastNew = newValue;
+		}
+	} cobs;
+
+	ObservableProperty<int> prop("member_val_int", 5);
+
+	prop.connect(&obs, &ObserverV::onChange);
+	const ConstObserverV *pcobs = &cobs;
+	prop.connect(pcobs, &ConstObserverV::onChangeConst);
+
+	const int kNewValue = 8;
+	prop.setValue(kNewValue);
+
+	EXPECT_EQ(obs.lastOld, 5);
+	EXPECT_EQ(obs.lastNew, kNewValue);
+	EXPECT_EQ(cobs.lastOld, 5);
+	EXPECT_EQ(cobs.lastNew, kNewValue);
+
+	const int kAnotherValue = 15;
+	prop.setValue(kAnotherValue);
+
+	EXPECT_EQ(obs.lastOld, kNewValue);
+	EXPECT_EQ(obs.lastNew, kAnotherValue);
+	EXPECT_EQ(cobs.lastOld, kNewValue);
+	EXPECT_EQ(cobs.lastNew, kAnotherValue);
+}
+
 TEST(SignalSlotTest, ObservableIntegralPropertyBounds) {
 	// Unsigned
 

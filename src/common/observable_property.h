@@ -43,6 +43,18 @@ public:
 	/// @param slot The function to be called when the signal is emitted
 	void connect(SlotType slot) { slots_.push_back(std::move(slot)); }
 
+	/// Adds a new observer (slot) bound to a member function on an object.
+	template <typename T>
+	void connect(T *object, void (T::*method)(Args...)) {
+		slots_.emplace_back([object, method](Args... args) { (object->*method)(args...); });
+	}
+
+	/// Adds a new observer (slot) bound to a const member function on an object.
+	template <typename T>
+	void connect(const T *object, void (T::*method)(Args...) const) {
+		slots_.emplace_back([object, method](Args... args) { (object->*method)(args...); });
+	}
+
 	/// Emits the signal, calling all connected slots with the provided arguments.
 	/// @param args Arguments to pass to the connected slots
 	/// @note All slots are called in the order they were connected.
@@ -98,6 +110,42 @@ public:
 	/// @note The slot receives the old and new values of the property.
 	/// @note The slot can be a lambda or any callable that matches the signature.
 	void connect(SlotType slot) { signal_.connect(std::move(slot)); }
+
+	/// Overloads to connect member functions directly to this property's signal.
+	/// These are thin pass-throughs to the underlying Signal to keep the API ergonomic,
+	/// so callers don't need to reach for getSignal().connect(...).
+	///
+	/// Non-const receiver overload taking const-ref parameters
+	template <typename Obj>
+	void connect(Obj *object, void (Obj::*method)(const T &, const T &)) {
+		signal_.connect(object, method);
+	}
+
+	/// Const receiver overload taking const-ref parameters
+	template <typename Obj>
+	void connect(const Obj *object, void (Obj::*method)(const T &, const T &) const) {
+		signal_.connect(object, method);
+	}
+
+	/// Adapters for member functions that take values (T, T) rather than const references.
+	/// Signal emits (const T&, const T&), so these overloads bridge the signature by
+	/// copying the values when invoking the member method.
+	///
+	/// Non-const receiver overload taking values
+	template <typename Obj>
+	void connect(Obj *object, void (Obj::*method)(T, T)) {
+		signal_.connect([object, method](const T &oldValue, const T &newValue) {
+			(object->*method)(oldValue, newValue);
+		});
+	}
+
+	/// Const receiver overload taking values
+	template <typename Obj>
+	void connect(const Obj *object, void (Obj::*method)(T, T) const) {
+		signal_.connect([object, method](const T &oldValue, const T &newValue) {
+			(object->*method)(oldValue, newValue);
+		});
+	}
 
 	/// Convenience method for slots that don't need the old/new values
 	void connectSimple(const std::function<void()> &slot) {
