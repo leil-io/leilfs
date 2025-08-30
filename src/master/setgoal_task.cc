@@ -78,6 +78,7 @@ uint8_t SetGoalTask::setGoal(FSNode *node, uint32_t ts) {
 					fsnodes_changefilegoal(static_cast<FSNodeFile *>(node), goal_);
 				} else {
 					node->goal = goal_;
+					gMetadata->nodeChangedSignal.emit(node);
 				}
 				fsnodes_update_ctime(node, ts);
 				fsnodes_update_checksum(node);

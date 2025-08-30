@@ -1210,6 +1210,7 @@ void fsnodes_changefilegoal(FSNodeFile *obj, uint8_t goal) {
 		}
 	}
 	fsnodes_update_checksum(obj);
+	gMetadata->nodeChangedSignal.emit(obj);
 }
 
 void fsnodes_setlength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) {
@@ -1616,6 +1617,7 @@ void fsnodes_setgoal_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t 
 					(*sinodes)++;
 				} else {
 					node->goal = goal;
+					gMetadata->nodeChangedSignal.emit(node);
 					(*sinodes)++;
 				}
 				fsnodes_update_ctime(node, ts);
