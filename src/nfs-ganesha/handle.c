@@ -49,6 +49,13 @@ static void release(struct fsal_obj_handle *objectHandle) {
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
 	if (handle->handle.type == REGULAR_FILE) {
+		fsal_status_t status = close_fsal_fd(objectHandle, &handle->fd.fsalFd, false);
+
+		if (FSAL_IS_ERROR(status)) {
+			LogCrit(COMPONENT_FSAL, "Could not close handle 0x%p, status %s error %s(%d)",
+			        objectHandle, fsal_err_txt(status), strerror(status.minor), status.minor);
+		}
+
 		destroy_fsal_fd(&handle->fd.fsalFd);
 	}
 
@@ -417,7 +424,7 @@ static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle, struct s
 	fsalFd = &saunafsFd->fsalFd;
 
 	// Indicate we want to do fd work (can't fail since not reclaiming)
-	(void)fsal_start_fd_work(fsalFd, false);
+	fsal_start_fd_work_no_reclaim(fsalFd);
 
 	oldOpenflags = saunafsFd->fsalFd.openflags;
 
@@ -509,6 +516,15 @@ static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle, struct s
 		return status;
 	}
 
+	// Inserts to fd_lru only if open succeeds
+	if (oldOpenflags == FSAL_O_CLOSED) {
+		// This is actually an open, need to increment appropriate counter and insert into LRU.
+		insert_fd_lru(fsalFd);
+	} else {
+		// Bump up the FD in fd_lru as it was already in fd lru.
+		bump_fd_lru(fsalFd);
+	}
+
 	fsal2posix_openflags(openflags, &posixFlags);
 
 	if (createmode >= FSAL_EXCLUSIVE || attributes) {
@@ -542,6 +558,11 @@ static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle, struct s
 	}
 
 	if (FSAL_IS_ERROR(status)) {
+		if (oldOpenflags == FSAL_O_CLOSED) {
+			// Now that we have decided to close this FD, let's clean it off from fd_lru and
+			// ensure counters are decremented.
+			remove_fd_lru(fsalFd);
+		}
 		// close fd
 		(void)closeFileDescriptor(handle, saunafsFd);
 	}
