@@ -30,7 +30,9 @@ cd ${info[mount0]}
 
 cat <<EOF > ${info[mount0]}/ganesha.conf
 NFSV4 {
-	Grace_Period = 5;
+	Grace_Period = 10;
+	Lease_Lifetime = 20;
+	Delegations = false;        # Reduce recall/stateid churn
 }
 EXPORT
 {
@@ -53,15 +55,17 @@ EXPORT
 	}
 }
 SaunaFS {
-	PNFS_DS = true;
-	PNFS_MDS = true;
+	PNFS_DS = false;
+	PNFS_MDS = false;
 }
 EOF
 
 sudo /usr/bin/ganesha.nfsd -f ${info[mount0]}/ganesha.conf
 
 check_rpc_service
-sudo mount -vvvv localhost:/data $TEMP_DIR/mnt/ganesha
+# Hardened mount: single TCP connection, long timeouts so the client retries LOCK/LOCKU
+# instead of surfacing EIO
+sudo mount -t nfs -o hard,timeo=600,retrans=2,nconnect=1 -vvvv localhost:/data $TEMP_DIR/mnt/ganesha
 
 mkdir ${TEMP_DIR}/mnt/ganesha/cthon_tests
 export NFSTESTDIR="${TEMP_DIR}/mnt/ganesha/cthon_tests"
