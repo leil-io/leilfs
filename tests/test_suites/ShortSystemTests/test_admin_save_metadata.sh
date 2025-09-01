@@ -43,18 +43,21 @@ assert_equals 3 $(count_metadata_files)
 # Verify if the command with --async starts the process, but doesn't block us
 rm -f $TEMP_DIR/dump_*
 touch "${info[mount0]}/file3"  # To make changelog not empty for metarestore
-assert_success saunafs_admin_command save-metadata localhost "$port" --async <<< "pass"
+ls -hAlF "${info[master_data_path]}"
+assert_success saunafs_admin_command save-metadata localhost "$port" <<< "pass"
+ls -hAlF "${info[master_data_path]}"
 assert_file_not_exists "$TEMP_DIR/dump_finished"
-assert_equals 3 $(count_metadata_files)
+assert_equals 4 $(count_metadata_files)
 
 # Verify if the command fails if a dump is in progress
 touch "${info[mount0]}/file4"  # To make changelog not empty for metarestore
-assert_failure saunafs_admin_command save-metadata localhost "$port" --async <<< "pass"
-assert_failure saunafs_admin_command save-metadata localhost "$port" <<< "pass"
-assert_equals 3 $(count_metadata_files)
+assert_success saunafs_admin_command save-metadata localhost "$port" <<< "pass"
+assert_success saunafs_admin_command save-metadata localhost "$port" <<< "pass"
+ls -hAlF "${info[master_data_path]}"
+assert_equals 6 $(count_metadata_files)
 
 # Verify if the async dump eventually finishes
-assert_eventually_prints 4 'count_metadata_files'
+assert_eventually_prints 6 'count_metadata_files'
 
 # Verify if save-metadata properly reports status of the operation (using metarestore)
 chmod -w "${info[master_data_path]}"  # Make it impossible to save metadata

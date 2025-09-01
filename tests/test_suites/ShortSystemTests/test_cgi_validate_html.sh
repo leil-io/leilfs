@@ -58,6 +58,10 @@ traverse_cgi "$cgi_pages/full"
 
 # Make sure saunafs-cgiserver connected to the master server and downloaded more than 20 files.
 # Only a few files are downloaded when connection to the master server was unsuccessful.
+echo "Files in each directory:"
+tree "$cgi_pages"
+a_file="$(find "$cgi_pages/empty" -name "sfs.cgi*" | head -n 1)"
+cat "$a_file"
 assert_less_than '20' "$(find "$cgi_pages/empty" -name "sfs.cgi*" | wc -l)"
 assert_less_than '20' "$(find "$cgi_pages/full" -name "sfs.cgi*" | wc -l)"
 

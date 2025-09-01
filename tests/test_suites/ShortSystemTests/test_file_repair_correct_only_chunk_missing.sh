@@ -1,3 +1,4 @@
+timeout_set 1 minutes
 USE_RAMDISK=YES \
 	CHUNKSERVERS=5 \
 	MASTER_CUSTOM_GOALS="10 ec : \$ec(3,2)"\

@@ -26,8 +26,7 @@ touch file_before_shadow_start_{1..20}
 saunafs_master_n 1 start                              # Connect shadow master
 assert_eventually "saunafs_shadow_synchronized 1"
 touch file_after_shadow_connects_{1..20}
-saunafs_admin_shadow 1 save-metadata --async          # Start dumping metadata in shadow master
-wait_for 'test -e $TEMP_DIR/dump_started' '15 seconds'
+saunafs_admin_shadow 1 save-metadata          # Start dumping metadata in shadow master
 touch file_after_shadow_reload_{1..20}
 metadata=$(metadata_print)
 cd

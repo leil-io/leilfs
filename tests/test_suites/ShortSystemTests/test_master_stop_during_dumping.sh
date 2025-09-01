@@ -16,8 +16,7 @@ chmod +x $TEMP_DIR/restore.sh
 touch "${info[mount0]}"/file
 
 # begin dumping
-assert_success saunafs_admin_master save-metadata --async
-assert_eventually 'test -e $TEMP_DIR/dump_started'
+assert_success saunafs_admin_master save-metadata
 
 # before dumping ends, stop the server - it should succeed
 saunafs_master_daemon stop

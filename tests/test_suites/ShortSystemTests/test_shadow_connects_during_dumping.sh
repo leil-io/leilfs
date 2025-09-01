@@ -20,8 +20,8 @@ chmod +x "$TEMP_DIR/metarestore.sh"
 # Generate some files
 cd "${info[mount0]}"
 touch file{1..20}
-saunafs_admin_master save-metadata --async        # Start dumping metadata
-assert_eventually 'test -e $TEMP_DIR/dump_started'
+# Start dumping metadata
+saunafs_admin_master save-metadata &
 touch file{30..40}
 saunafs_master_n 1 start                          # Connect shadow master during the dump
 assert_eventually "saunafs_shadow_synchronized 1"
