@@ -180,9 +180,9 @@ void stats_inc(uint8_t id, std::vector<uint64_t *> &statsptr, uint64_t inc) {
 	}
 }
 
-void stats_dec(uint8_t id, std::vector<uint64_t *> &statsptr) {
+void stats_dec(uint8_t id, std::vector<uint64_t *> &statsptr, uint64_t dec) {
 	if (id < statsptr.size()) {
 		std::lock_guard lock(glock);
-		(*statsptr[id])--;
+		(*statsptr[id]) -= dec;
 	}
 }
