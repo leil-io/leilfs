@@ -31,10 +31,81 @@ jobs:
             #- name: Setup a new (or from cache) vcpkg
             #  uses: lukka/run-vcpkg@v11
 
-            - name: Install nfs-ganesha v4.3 from Ubuntu repository
+            - name: Build and install Ganesha v6.5
               run: |
-                  sudo apt update
-                  sudo apt install -y nfs-common nfs-ganesha nfs-ganesha-vfs
+                set -eux
+                # Install build dependencies
+                sudo apt update
+                sudo apt install -y --no-install-recommends \
+                    acl \
+                    asciidoc \
+                    bison \
+                    build-essential \
+                    byacc \
+                    cmake \
+                    dbus \
+                    docbook \
+                    docbook-xml \
+                    doxygen \
+                    fio \
+                    flex \
+                    krb5-user \
+                    libacl1-dev \
+                    libblkid-dev \
+                    libboost-filesystem-dev \
+                    libboost-iostreams-dev \
+                    libboost-program-options-dev \
+                    libboost-system-dev \
+                    libcap-dev \
+                    libdbus-1-dev \
+                    libgssapi-krb5-2 \
+                    libjemalloc-dev \
+                    libjudy-dev \
+                    libkrb5-dev \
+                    libkrb5support0 \
+                    libnfsidmap-dev \
+                    libnsl-dev \
+                    libsqlite3-dev \
+                    libtirpc-dev \
+                    liburcu-dev \
+                    nfs-common \
+                    pkg-config \
+                    pv \
+                    wget \
+                    unzip \
+                    rpcbind
+
+                # Clone and build ntirpc
+                cd $GITHUB_WORKSPACE
+                wget https://github.com/nfs-ganesha/ntirpc/archive/v6.3.zip
+                unzip v6.3.zip
+                cd ntirpc-6.3
+                mkdir build
+                cmake -B build . -DCMAKE_INSTALL_PREFIX=/usr
+                sudo cmake --build build --target install
+
+                # Clone and build Ganesha v6.5
+                cd $GITHUB_WORKSPACE
+                wget https://github.com/nfs-ganesha/nfs-ganesha/archive/V6.5.zip
+                unzip V6.5.zip
+                ln -s $GITHUB_WORKSPACE/ntirpc-6.3 $GITHUB_WORKSPACE/nfs-ganesha-6.5/src/libntirpc
+                cd nfs-ganesha-6.5
+                mkdir $GITHUB_WORKSPACE/ganesha-build
+                cmake -B $GITHUB_WORKSPACE/ganesha-build src \
+                    -DCMAKE_INSTALL_PREFIX=/usr \
+                    -DUSE_FSAL_CEPH=OFF \
+                    -DUSE_FSAL_GLUSTER=OFF \
+                    -DUSE_FSAL_GPFS=OFF \
+                    -DUSE_FSAL_KVSFS=OFF \
+                    -DUSE_FSAL_LIZARDFS=OFF \
+                    -DUSE_FSAL_LUSTRE=OFF \
+                    -DUSE_FSAL_PROXY_V3=OFF \
+                    -DUSE_FSAL_PROXY_V4=OFF \
+                    -DUSE_FSAL_RGW=OFF \
+                    -DUSE_FSAL_XFS=OFF \
+                    -DUSE_GSS=OFF \
+                    -DUSE_SYSTEM_NTIRPC=ON
+                sudo cmake --build $GITHUB_WORKSPACE/ganesha-build --target install
 
             - name: Set up Python
               uses: actions/setup-python@v4

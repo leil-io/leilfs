@@ -1,25 +1,27 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /*
 
    Copyright 2017 Skytechnology sp. z o.o.
    Copyright 2023 Leil Storage OÜ
 
-   This file is part of SaunaFS.
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU Lesser General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
 
-   SaunaFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   SaunaFS is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-   GNU General Public License for more details.
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   Lesser General Public License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+   You should have received a copy of the GNU Lesser General Public
+   License along with this library; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+   02110-1301 USA
 */
 
-#include "fileinfo_cache.h"
-#include "saunafs_fsal_types.h"
+#include "nfs-ganesha/fileinfo_cache.h"
+#include "nfs-ganesha/saunafs_fsal_types.h"
 
 #include <abstract_mem.h>
 #include <avltree.h>
@@ -46,7 +48,7 @@ struct FileInfoCache {
 
 	int entry_count;
 
-	unsigned max_entries;
+	unsigned int max_entries;
 	int min_timeout_ms;
 
 	pthread_mutex_t lock;
@@ -54,6 +56,7 @@ struct FileInfoCache {
 
 static uint64_t get_time_ms() {
 	struct timespec time_;
+
 	timespec_get(&time_, TIME_UTC);
 
 	return (uint64_t)time_.tv_sec * kMillisecondsInOneSecond +
@@ -62,10 +65,8 @@ static uint64_t get_time_ms() {
 
 static int cacheEntryCompareFunction(const struct avltree_node *nodeA,
                                      const struct avltree_node *nodeB) {
-	FileInfoEntry_t *entryA =
-	    avltree_container_of(nodeA, FileInfoEntry_t, tree_hook);
-	FileInfoEntry_t *entryB =
-	    avltree_container_of(nodeB, FileInfoEntry_t, tree_hook);
+	FileInfoEntry_t *entryA = avltree_container_of(nodeA, FileInfoEntry_t, tree_hook);
+	FileInfoEntry_t *entryB = avltree_container_of(nodeB, FileInfoEntry_t, tree_hook);
 
 	if (entryA->inode < entryB->inode) {
 		return -1;
@@ -85,9 +86,9 @@ static int cacheEntryCompareFunction(const struct avltree_node *nodeA,
 	return 0;
 }
 
-FileInfoCache_t *createFileInfoCache(unsigned maxEntries,
-                                     int minTimeoutMilliseconds) {
+FileInfoCache_t *createFileInfoCache(unsigned maxEntries, int minTimeoutMilliseconds) {
 	FileInfoCache_t *cache = gsh_calloc(1, sizeof(FileInfoCache_t));
+
 	cache->max_entries = maxEntries;
 	cache->min_timeout_ms = minTimeoutMilliseconds;
 	PTHREAD_MUTEX_init(&cache->lock, NULL);
@@ -114,14 +115,12 @@ void destroyFileInfoCache(FileInfoCache_t *cache) {
 		return;
 	}
 
-	while ((entry = glist_first_entry(&cache->used_list, FileInfoEntry_t,
-	                                  list_hook))) {
+	while ((entry = glist_first_entry(&cache->used_list, FileInfoEntry_t, list_hook))) {
 		glist_del(&entry->list_hook);
 		gsh_free(entry);
 	}
 
-	while ((entry = glist_first_entry(&cache->lru_list, FileInfoEntry_t,
-	                                  list_hook))) {
+	while ((entry = glist_first_entry(&cache->lru_list, FileInfoEntry_t, list_hook))) {
 		glist_del(&entry->list_hook);
 		gsh_free(entry);
 	}
@@ -129,8 +128,7 @@ void destroyFileInfoCache(FileInfoCache_t *cache) {
 	gsh_free(cache);
 }
 
-FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache,
-                                      sau_inode_t inode) {
+FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache, sau_inode_t inode) {
 	FileInfoEntry_t key;
 	FileInfoEntry_t *entry = NULL;
 
@@ -138,8 +136,7 @@ FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache,
 	key.lookup = true;
 	PTHREAD_MUTEX_lock(&cache->lock);
 
-	struct avltree_node *node =
-	    avltree_lookup(&key.tree_hook, &cache->entry_lookup);
+	struct avltree_node *node = avltree_lookup(&key.tree_hook, &cache->entry_lookup);
 
 	if (node) {
 		entry = avltree_container_of(node, FileInfoEntry_t, tree_hook);
@@ -148,8 +145,7 @@ FileInfoEntry_t *acquireFileInfoCache(FileInfoCache_t *cache,
 		glist_del(&entry->list_hook);
 		glist_add(&cache->used_list, &entry->list_hook);
 		avltree_remove(node, &cache->entry_lookup);
-	}
-	else {
+	} else {
 		entry = gsh_calloc(1, sizeof(FileInfoEntry_t));
 		glist_add(&cache->used_list, &entry->list_hook);
 		cache->entry_count++;
@@ -188,8 +184,7 @@ void eraseFileInfoCache(FileInfoCache_t *cache, FileInfoEntry_t *entry) {
 FileInfoEntry_t *popExpiredFileInfoCache(FileInfoCache_t *cache) {
 	PTHREAD_MUTEX_lock(&cache->lock);
 
-	FileInfoEntry_t *entry =
-	    glist_first_entry(&cache->lru_list, FileInfoEntry_t, list_hook);
+	FileInfoEntry_t *entry = glist_first_entry(&cache->lru_list, FileInfoEntry_t, list_hook);
 
 	if (!entry) {
 		PTHREAD_MUTEX_unlock(&cache->lock);
@@ -204,8 +199,7 @@ FileInfoEntry_t *popExpiredFileInfoCache(FileInfoCache_t *cache) {
 		glist_del(&entry->list_hook);
 		avltree_remove(&entry->tree_hook, &cache->entry_lookup);
 		cache->entry_count--;
-	}
-	else {
+	} else {
 		entry = NULL;
 	}
 

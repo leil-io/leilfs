@@ -33,9 +33,6 @@ create_ganesha_pid_file
 cd ${info[mount0]}
 
 cat <<EOF > ${info[mount0]}/ganesha.conf
-NFS_KRB5 {
-	Active_krb5=false;
-}
 NFSV4 {
 	Grace_Period = 5;
 }
@@ -76,7 +73,7 @@ cd ${TEMP_DIR}/mnt/ganesha
 
 # Run fio sequential mix of read and write on top of Ganesha Client
 fio --name=fiotest_seq_mix_read_write --directory=${TEMP_DIR}/mnt/ganesha \
-    --size=200M --rw=rw --numjobs=5 --ioengine=psync --group_reporting    \
+    --size=200M --rw=rw --numjobs=5 --ioengine=libaio --group_reporting    \
     --bs=4M --direct=1 --iodepth=1
 
 echo ""

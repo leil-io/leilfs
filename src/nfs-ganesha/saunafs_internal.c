@@ -1,23 +1,36 @@
-/**
- * @file   saunafs_internal.c
- * @author Crash <crash@leil.io>
- *
- * @brief Function definitions for SaunaFS FSAL
- */
+// SPDX-License-Identifier: LGPL-3.0-or-later
+/*
+
+   Copyright 2023 Leil Storage OÜ
+
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU Lesser General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   Lesser General Public License for more details.
+
+   You should have received a copy of the GNU Lesser General Public
+   License along with this library; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+   02110-1301 USA
+*/
+
 #include "fsal_convert.h"
 #include "pnfs_utils.h"
 
-#include "saunafs_internal.h"
+#include "nfs-ganesha/saunafs_internal.h"
 
 sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 	if (cred == NULL) {
 		return sau_create_user_context(0, 0, 0, 0);
 	}
 
-	uid_t uid = (cred->caller_uid == op_ctx->export_perms.anonymous_uid)
-	        ? 0 : cred->caller_uid;
-	gid_t gid = (cred->caller_gid == op_ctx->export_perms.anonymous_gid)
-	        ? 0 : cred->caller_gid;
+	uid_t uid = (cred->caller_uid == op_ctx->export_perms.anonymous_uid) ? 0 : cred->caller_uid;
+	gid_t gid = (cred->caller_gid == op_ctx->export_perms.anonymous_gid) ? 0 : cred->caller_gid;
 
 	sau_context_t *ctx = sau_create_user_context(uid, gid, 0, 0);
 	if (!ctx) {
@@ -25,14 +38,15 @@ sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 	}
 
 	if (cred->caller_glen > 0) {
-		gid_t *garray = malloc((cred->caller_glen + 1) * sizeof(gid_t));
+		gid_t *garray = gsh_malloc((cred->caller_glen + 1) * sizeof(gid_t));
 
 		if (garray != NULL) {
 			garray[0] = gid;
 			size_t size = sizeof(gid_t) * cred->caller_glen;
+
 			memcpy(garray + 1, cred->caller_garray, size);
 			sau_update_groups(instance, ctx, garray, cred->caller_glen + 1);
-			free(garray);
+			gsh_free(garray);
 		}
 	}
 

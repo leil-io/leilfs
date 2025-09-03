@@ -1,22 +1,25 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /*
+
    Copyright 2017 Skytechnology sp. z o.o.
    Copyright 2023 Leil Storage OÜ
 
-   This file is part of SaunaFS.
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU Lesser General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
 
-   SaunaFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   SaunaFS is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-   GNU General Public License for more details.
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+   Lesser General Public License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+   You should have received a copy of the GNU Lesser General Public
+   License along with this library; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+   02110-1301 USA.
  */
-#include "config.h"
+
 #include "fsal_types.h"
 
 #ifdef LINUX
@@ -28,15 +31,17 @@
 #include "fsal_convert.h"
 #include "FSAL/fsal_commonlib.h"
 
+#include "config.h"
 #include "errors/saunafs_error_codes.h"
-#include "context_wrap.h"
-#include "saunafs_internal.h"
+#include "nfs-ganesha/context_wrap.h"
+#include "nfs-ganesha/saunafs_fsal_types.h"
+#include "nfs-ganesha/saunafs_internal.h"
 
 /**
  * @brief Clean up a filehandle.
  *
- * This function cleans up private resources associated with a filehandle and
- * deallocates it.
+ * This function cleans up private resources associated with a filehandle
+ * and deallocates it.
  *
  * Implement this method or you will leak. Refcount (if used) should be 1.
  *
@@ -45,6 +50,17 @@
 static void release(struct fsal_obj_handle *objectHandle) {
 	struct SaunaFSHandle *handle = NULL;
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+
+	if (handle->handle.type == REGULAR_FILE) {
+		fsal_status_t status = close_fsal_fd(objectHandle, &handle->fd.fsalFd, false);
+
+		if (FSAL_IS_ERROR(status)) {
+			LogCrit(COMPONENT_FSAL, "Could not close handle 0x%p, status %s error %s(%d)",
+			        objectHandle, fsal_err_txt(status), strerror(status.minor), status.minor);
+		}
+
+		destroy_fsal_fd(&handle->fd.fsalFd);
+	}
 
 	if (handle != handle->export->root) {
 		deleteHandle(handle);
@@ -76,8 +92,7 @@ static fsal_status_t lookup(struct fsal_obj_handle *dirHandle, const char *path,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	directory = container_of(dirHandle, struct SaunaFSHandle, handle);
 
-	int status = saunafs_lookup(export->fsInstance, &op_ctx->creds,
-	                            directory->inode, path, &node);
+	int status = saunafs_lookup(export->fsInstance, &op_ctx->creds, directory->inode, path, &node);
 
 	if (status < 0) {
 		return fsalLastError();
@@ -96,21 +111,23 @@ static fsal_status_t lookup(struct fsal_obj_handle *dirHandle, const char *path,
 /**
  * @brief Read a directory.
  *
- * This function reads directory entries from the FSAL and supplies them to a callback.
+ * This function reads directory entries from the FSAL and supplies them to
+ * a callback.
  *
  * @param [in]  dirHandle          Directory to read
- * @param [in]  whence             Point at which to start reading. NULL to start at beginning
+ * @param [in]  whence             Point at which to start reading. NULL to
+ *                                 start at beginning
  * @param [in]  dirState           Opaque pointer to be passed to callback
  * @param [in]  readdirCb          Callback to receive names
- * @param [in]  attributesMask     Indicate which attributes the caller is interested in
+ * @param [in]  attributesMask     Indicate which attributes the caller is
+ *                                 interested in
  * @param [out] eof                true if the last entry was reached
  *
  * @returns: FSAL status
  */
-static fsal_status_t readdir_(struct fsal_obj_handle *dirHandle,
-                              fsal_cookie_t *whence, void *dirState,
-                              fsal_readdir_cb readdirCb,
-                              attrmask_t attributesMask, bool *eof) {
+static fsal_status_t readdir_(struct fsal_obj_handle *dirHandle, fsal_cookie_t *whence,
+                              void *dirState, fsal_readdir_cb readdirCb, attrmask_t attributesMask,
+                              bool *eof) {
 	static const int batchSize = 100;
 	struct sau_direntry buffer[batchSize];
 
@@ -145,18 +162,16 @@ static fsal_status_t readdir_(struct fsal_obj_handle *dirHandle,
 		size_t totalEntries = 0;
 		size_t entry = 0;
 
-		status = sau_readdir(export->fsInstance, context, saunafsFd,
-		                     direntryOffset, batchSize, buffer, &totalEntries);
+		status = sau_readdir(export->fsInstance, context, saunafsFd, direntryOffset, batchSize,
+		                     buffer, &totalEntries);
 
 		if (status < 0) {
 			return fsalLastError();
 		}
 
 		result = DIR_CONTINUE;
-		for (entry = 0; entry < totalEntries && result != DIR_TERMINATE;
-		     ++entry) {
-			if (strcmp(buffer[entry].name, ".")  == 0 ||
-			    strcmp(buffer[entry].name, "..") == 0) {
+		for (entry = 0; entry < totalEntries && result != DIR_TERMINATE; ++entry) {
+			if (strcmp(buffer[entry].name, ".") == 0 || strcmp(buffer[entry].name, "..") == 0) {
 				continue;
 			}
 
@@ -167,8 +182,8 @@ static fsal_status_t readdir_(struct fsal_obj_handle *dirHandle,
 
 			direntryOffset = buffer[entry].next_entry_offset;
 
-			result = readdirCb(buffer[entry].name, &handle->handle,
-			                   &attributes, dirState, direntryOffset + 1);
+			result = readdirCb(buffer[entry].name, &handle->handle, &attributes, dirState,
+			                   direntryOffset + 1);
 
 			fsal_release_attrs(&attributes);
 		}
@@ -216,8 +231,8 @@ static fsal_status_t getattrs(struct fsal_obj_handle *objectHandle,
 	LogFullDebug(COMPONENT_FSAL, " export = %" PRIu16 " inode = %" PRIiNode,
 	             export->export.export_id, handle->inode);
 
-	int status = saunafs_getattr(export->fsInstance, &op_ctx->creds,
-	                             handle->inode, &posixAttributes);
+	int status =
+	    saunafs_getattr(export->fsInstance, &op_ctx->creds, handle->inode, &posixAttributes);
 
 	if (status < 0) {
 		if (attributes->request_mask & ATTR_RDATTR_ERR) {
@@ -231,8 +246,7 @@ static fsal_status_t getattrs(struct fsal_obj_handle *objectHandle,
 #ifdef ENABLE_NFS_ACL_SUPPORT
 	if (attributes->request_mask & (attrmask_t)ATTR_ACL) {
 		fsal_status_t status =
-		    getACL(export, handle->inode, posixAttributes.attr.st_uid,
-		           &attributes->acl);
+		    getACL(export, handle->inode, posixAttributes.attr.st_uid, &attributes->acl);
 
 		if (!FSAL_IS_ERROR(status)) {
 			attributes->valid_mask |= (attrmask_t)ATTR_ACL;
@@ -256,18 +270,16 @@ static fsal_status_t getattrs(struct fsal_obj_handle *objectHandle,
  *
  * @returns: FSAL status
  */
-static fsal_status_t handle_to_wire(const struct fsal_obj_handle *objectHandle,
-                                    uint32_t outputType,
+static fsal_status_t handle_to_wire(const struct fsal_obj_handle *objectHandle, uint32_t outputType,
                                     struct gsh_buffdesc *buffer) {
 	(void)outputType;
 
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
 	sau_inode_t inode = handle->inode;
+
 	if (buffer->len < sizeof(sau_inode_t)) {
-		LogMajor(COMPONENT_FSAL,
-		         "Space too small for handle. Need  %zu, have %zu",
+		LogMajor(COMPONENT_FSAL, "Space too small for handle. Need  %zu, have %zu",
 		         sizeof(sau_inode_t), buffer->len);
 		return fsalstat(ERR_FSAL_TOOSMALL, 0);
 	}
@@ -284,66 +296,22 @@ static fsal_status_t handle_to_wire(const struct fsal_obj_handle *objectHandle,
  * Indicate the unique part of the handle that should be used for hashing.
  *
  * @param [in]  objectHandle     Handle whose key is to be got
- * @param [out] buffer           Address and length giving sub-region of handle
- *                               to be used as key.
+ * @param [out] buffer           Address and length giving sub-region of handle to be used as key.
  *
  * @returns: FSAL status
  */
-static void handle_to_key(struct fsal_obj_handle *objectHandle,
-                          struct gsh_buffdesc *buffer) {
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+static void handle_to_key(struct fsal_obj_handle *objectHandle, struct gsh_buffdesc *buffer) {
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
 	buffer->addr = &handle->key;
 	buffer->len = sizeof(struct SaunaFSHandleKey);
 }
 
 /**
- * @brief Open a SaunaFS file descriptor.
- *
- * @param [in] handle            SaunaFS internal object handle
- * @param [in] openflags         Mode for open
- * @param [in] saunafsFd         SaunaFS file descriptor to open
- * @param [in] noAccessCheck     Whether the caller checked access or not
- *
- * @returns: FSAL status
- */
-static fsal_status_t openFileDescriptor(struct SaunaFSHandle *handle,
-                                        fsal_openflags_t openflags,
-                                        struct SaunaFSFd *saunafsFd,
-                                        bool noAccessCheck) {
-	struct SaunaFSExport *export = NULL;
-	int posixFlags = 0;
-
-	fsal2posix_openflags(openflags, &posixFlags);
-	if (noAccessCheck) {
-		posixFlags |= O_CREAT;
-	}
-
-	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
-
-	LogFullDebug(COMPONENT_FSAL,
-	             "fd = %p fd->fd = %p openflags = %x, posix_flags = %x",
-	             saunafsFd, saunafsFd->fd, openflags, posixFlags);
-
-	assert(saunafsFd->fd == NULL && saunafsFd->openflags == FSAL_O_CLOSED &&
-	       openflags != 0);
-
-	saunafsFd->fd = saunafs_open(export->fsInstance, &op_ctx->creds,
-	                             handle->inode, posixFlags);
-
-	if (!saunafsFd->fd) {
-		LogFullDebug(COMPONENT_FSAL, "open failed with %s",
-		             sau_error_string(sau_last_err()));
-		return fsalLastError();
-	}
-
-	saunafsFd->openflags = openflags;
-	return fsalstat(ERR_FSAL_NO_ERROR, 0);
-}
-
-/**
  * @brief Close a SaunaFS file descriptor.
+ *
+ * This function closes a file. This should return ERR_FSAL_NOT_OPENED if
+ * the global FD for this obj was not open.
  *
  * @param [in] handle         SaunaFS internal object handle
  * @param [in] saunafsFd      SaunaFS file descriptor to open
@@ -352,18 +320,73 @@ static fsal_status_t openFileDescriptor(struct SaunaFSHandle *handle,
  */
 static fsal_status_t closeFileDescriptor(struct SaunaFSHandle *handle,
                                          struct SaunaFSFd *saunafsFd) {
-	if (saunafsFd->fd != NULL && saunafsFd->openflags != FSAL_O_CLOSED) {
+	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
+
+	if (saunafsFd->fd != NULL && saunafsFd->fsalFd.openflags != FSAL_O_CLOSED) {
 		int status = sau_release(handle->export->fsInstance, saunafsFd->fd);
 
 		saunafsFd->fd = NULL;
-		saunafsFd->openflags = FSAL_O_CLOSED;
+		saunafsFd->fsalFd.openflags = FSAL_O_CLOSED;
 
-		if (status < 0) {
-			return fsalLastError();
+		if (status < 0) { return fsalLastError(); }
+	} else {
+		status = fsalstat(ERR_FSAL_NOT_OPENED, 0);
+	}
+
+	return status;
+}
+
+/**
+ * @brief Function to open or reopen a fsal_fd.
+ *
+ * @param[in]  objectHandle     File on which to operate
+ * @param[in]  openflags        New mode for open
+ * @param[out] fsalFd           File descriptor that is to be used
+ *
+ * @return FSAL status.
+ */
+fsal_status_t reopen_func(struct fsal_obj_handle *objectHandle, fsal_openflags_t openflags,
+                          struct fsal_fd *fsalFd) {
+	struct SaunaFSHandle *handle = NULL;
+	struct SaunaFSFd *fileDescriptor = NULL;
+	struct sau_fileinfo *saunafsFD = NULL;
+	struct SaunaFSExport *export = NULL;
+	int posixFlags = 0;
+	fsal_status_t status = {ERR_FSAL_NO_ERROR, 0};
+
+	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	fileDescriptor = container_of(fsalFd, struct SaunaFSFd, fsalFd);
+
+	fsal2posix_openflags(openflags, &posixFlags);
+
+	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
+
+	LogFullDebug(COMPONENT_FSAL, "fd = %p fd->fd = %p openflags = %x, posixFlags = %x",
+	             fileDescriptor, fileDescriptor->fd, openflags, posixFlags);
+
+	assert(fileDescriptor->fd == NULL &&
+	       fileDescriptor->fsalFd.openflags == FSAL_O_CLOSED && openflags != 0);
+
+	saunafsFD = saunafs_open(export->fsInstance, &op_ctx->creds, handle->inode, posixFlags);
+
+	if (saunafsFD == NULL) {
+		LogFullDebug(COMPONENT_FSAL, "open failed with %s", sau_error_string(sau_last_err()));
+		return fsalLastError();
+	}
+
+	if (fileDescriptor->fd != NULL && fileDescriptor->fsalFd.openflags != FSAL_O_CLOSED) {
+		int retvalue = sau_release(handle->export->fsInstance, fileDescriptor->fd);
+
+		if (retvalue < 0) {
+			LogFullDebug(COMPONENT_FSAL, "close failed with %s", sau_error_string(sau_last_err()));
+			status = fsalLastError();
 		}
 	}
 
-	return fsalstat(ERR_FSAL_NO_ERROR, 0);
+	fileDescriptor->fd = saunafsFD;
+	fileDescriptor->fsalFd.openflags = FSAL_O_NFS_FLAGS(openflags);
+
+	return status;
 }
 
 /**
@@ -375,129 +398,190 @@ static fsal_status_t closeFileDescriptor(struct SaunaFSHandle *handle,
  * @param [in] createmode                    Mode for create
  * @param [in] verifier                      Verifier to use for exclusive create
  * @param [in] attributes                    Attributes to set on created file
- * @param [in,out] callerPermissionCheck     The caller must do a permission check
- * @param [in] afterMknode                   The file is opened after performing
- *                                           a makenode operation
  *
  * @returns: FSAL status
  */
-static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle,
-                                  struct state_t *state,
-                                  fsal_openflags_t openflags,
-                                  enum fsal_create_mode createmode,
-                                  fsal_verifier_t verifier,
-                                  struct fsal_attrlist *attributes,
-                                  bool *callerPermissionCheck,
-                                  bool afterMknode) {
+static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle, struct state_t *state,
+                                  fsal_openflags_t openflags, enum fsal_create_mode createmode,
+                                  fsal_verifier_t verifier, struct fsal_attrlist *attributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
 	struct SaunaFSFd *saunafsFd = NULL;
+	struct fsal_fd *fsalFd = NULL;
 	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
 	int posixFlags = 0;
+
+	fsal_openflags_t oldOpenflags = 0;
+	bool truncated = openflags & FSAL_O_TRUNC;
 
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 
-	PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-
 	if (state != NULL) {
-		saunafsFd =
-		    &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
-
-		// Prepare to take the share reservation, but only if we
-		// are called with a valid state
-
-		// Check share reservation conflicts
-		status = check_share_conflict(&handle->share, openflags, false);
-
-		if (FSAL_IS_ERROR(status)) {
-			PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-			return status;
-		}
-
-		// Take the share reservation now by updating the counters
-		update_share_counters(&handle->share, FSAL_O_CLOSED, openflags);
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-	}
-	else {
+		saunafsFd = &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
+	} else {
 		// We need to use the global file descriptor to continue
 		saunafsFd = &handle->fd;
 	}
 
-	status = openFileDescriptor(handle, openflags, saunafsFd, afterMknode);
-	if (FSAL_IS_ERROR(status)) {
-		if (state != NULL) {
-			// On error we need to release our share reservation
-			// and undo the update of the share counters
-			PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-			update_share_counters(&handle->share, openflags, FSAL_O_CLOSED);
-			PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+	fsalFd = &saunafsFd->fsalFd;
+
+	// Indicate we want to do fd work (can't fail since not reclaiming)
+	fsal_start_fd_work_no_reclaim(fsalFd);
+
+	oldOpenflags = saunafsFd->fsalFd.openflags;
+
+	if (state != NULL) {
+		// Prepare to take the share reservation, but only if we are called with a valid state
+		// (if state is NULL the caller is a stateless create such as NFS v3 CREATE and we're just
+		// going to ignore share reservation stuff).
+
+		// Now that we have the mutex, and no I/O is in progress so we have exclusive access to the
+		// share's fsal_fd, we can look at its openflags. We also need to work the share reservation
+		// so take the obj_lock.
+		// NOTE: This is the ONLY sequence where both a work_mutex and the obj_lock are taken, so
+		// there is no opportunity for ABBA deadlock.
+
+		// Note that we do hold the obj_lock over an open and a close which is longer than normal,
+		// but the previous iteration of the code held the obj lock (read granted) over whole
+		// I/O operations. We don't block over I/O because we've assured that no I/O is in progress
+		// or can start before proceeding past the above while loop.
+		PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
+
+		// Now check the new share.
+		status = check_share_conflict(&handle->share, openflags, false);
+
+		if (FSAL_IS_ERROR(status)) {
+			LogDebug(COMPONENT_FSAL, "check_share_conflict returned %s", fsal_err_txt(status));
+
+			if (state != NULL) {
+				if (!FSAL_IS_ERROR(status)) {
+					// Success, establish the new share.
+					update_share_counters(&handle->share, oldOpenflags, openflags);
+				}
+
+				/* Release obj_lock. */
+				PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+			}
+
+			// Indicate we are done with fd work and signal any waiters.
+			fsal_complete_fd_work(fsalFd);
 
 			return status;
 		}
+	}
 
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+	// Check for a genuine no-op open. That means we aren't trying to create, the file is already
+	// open in the same mode with the same deny flags, and we aren't trying to truncate.
+	// In this case we want to avoid bouncing the fd. In the case of JUST changing the deny mode or
+	// a replayed exclusive create, we might bounce the fd when we could have avoided that, but
+	// those scenarios are much less common.
+	if (FSAL_O_NFS_FLAGS(openflags) == FSAL_O_NFS_FLAGS(oldOpenflags) &&
+	    truncated == false && createmode == FSAL_NO_CREATE) {
+		LogFullDebug(COMPONENT_FSAL, "no-op reopen2 saunafsFd->fd = %p openflags = %x",
+		             saunafsFd->fd, openflags);
+
+		if (state != NULL) {
+			if (!FSAL_IS_ERROR(status)) {
+				// Success, establish the new share.
+				update_share_counters(&handle->share, oldOpenflags, openflags);
+			}
+
+			// Release obj_lock.
+			PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+		}
+
+		// Indicate we are done with fd work and signal any waiters.
+		fsal_complete_fd_work(fsalFd);
+
 		return status;
+	}
+
+	// No share conflict, re-open the share fd
+	status = reopen_func(objectHandle, openflags, fsalFd);
+
+	if (FSAL_IS_ERROR(status)) {
+		LogDebug(COMPONENT_FSAL, "reopen_func returned %s", fsal_err_txt(status));
+
+		if (state != NULL) {
+			if (!FSAL_IS_ERROR(status)) {
+				// Success, establish the new share.
+				update_share_counters(&handle->share, oldOpenflags, openflags);
+			}
+
+			// Release obj_lock.
+			PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+		}
+
+		// Indicate we are done with fd work and signal any waiters.
+		fsal_complete_fd_work(fsalFd);
+
+		return status;
+	}
+
+	// Inserts to fd_lru only if open succeeds
+	if (oldOpenflags == FSAL_O_CLOSED) {
+		// This is actually an open, need to increment appropriate counter and insert into LRU.
+		insert_fd_lru(fsalFd);
+	} else {
+		// Bump up the FD in fd_lru as it was already in fd lru.
+		bump_fd_lru(fsalFd);
 	}
 
 	fsal2posix_openflags(openflags, &posixFlags);
-	bool truncated = (posixFlags & O_TRUNC) != 0;
 
-	bool validFile = (createmode >= FSAL_EXCLUSIVE || truncated || attributes);
+	if (createmode >= FSAL_EXCLUSIVE || attributes) {
+		// NOTE: won't come in here when called from saunafs_reopen2...
+		//       truncated might be set, but attrs_out will be NULL.
+		//       We don't need to look at truncated since other callers
+		//       are interested in attrs_out.
 
-	if (validFile) {
-		struct sau_attr_reply safs_attrs;
-
-		int retvalue = saunafs_getattr(export->fsInstance, &op_ctx->creds,
-		                               handle->inode, &safs_attrs);
+		// Refresh the attributes
+		struct sau_attr_reply attributesValues;
+		int retvalue =
+		    saunafs_getattr(export->fsInstance, &op_ctx->creds, handle->inode, &attributesValues);
 
 		if (retvalue == 0) {
 			LogFullDebug(COMPONENT_FSAL, "New size = %" PRIx64,
-			             (int64_t)safs_attrs.attr.st_size);
-		}
-		else {
+			             (int64_t)attributesValues.attr.st_size);
+		} else {
 			status = fsalLastError();
 		}
 
-		if (!FSAL_IS_ERROR(status)) {
-			// Now check verifier for exclusive
-			if (createmode >= FSAL_EXCLUSIVE &&
-			    createmode != FSAL_EXCLUSIVE_9P &&
-			    !check_verifier_stat(&safs_attrs.attr, verifier, false)) {
-				// Verifier didn't match, return EEXIST
-				status = fsalstat(posix2fsal_error(EEXIST), EEXIST);
-			}
+		if (!FSAL_IS_ERROR(status) && createmode >= FSAL_EXCLUSIVE &&
+		    createmode != FSAL_EXCLUSIVE_9P &&
+		    !check_verifier_stat(&attributesValues.attr, verifier, false)) {
+			// Verifier didn't match, return EEXIST
+			status = fsalstat(posix2fsal_error(EEXIST), EEXIST);
 		}
 
 		if (!FSAL_IS_ERROR(status) && attributes) {
-			posix2fsal_attributes_all(&safs_attrs.attr, attributes);
+			posix2fsal_attributes_all(&attributesValues.attr, attributes);
 		}
 	}
 
-	if (state == NULL) {
+	if (FSAL_IS_ERROR(status)) {
+		if (oldOpenflags == FSAL_O_CLOSED) {
+			// Now that we have decided to close this FD, let's clean it off from fd_lru and
+			// ensure counters are decremented.
+			remove_fd_lru(fsalFd);
+		}
+		// close fd
+		(void)closeFileDescriptor(handle, saunafsFd);
+	}
+
+	if (state != NULL) {
+		if (!FSAL_IS_ERROR(status)) {
+			// Success, establish the new share.
+			update_share_counters(&handle->share, oldOpenflags, openflags);
+		}
+
+		// Release obj_lock.
 		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-
-		// If success, we haven't done any permission check so ask the
-		// caller to do so
-		*callerPermissionCheck = !FSAL_IS_ERROR(status);
-
-		// If no state, return status
-		return status;
 	}
 
-	if (!FSAL_IS_ERROR(status)) {
-		// Return success. We haven't done any permission check so ask
-		// the caller to do so.
-		*callerPermissionCheck = true;
-		return status;
-	}
-
-	closeFileDescriptor(handle, saunafsFd);
-
-	// Release our share reservation and undo the update of the share counters
-	PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-	update_share_counters(&handle->share, openflags, FSAL_O_CLOSED);
-	PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+	// Indicate we are done with fd work and signal any waiters.
+	fsal_complete_fd_work(fsalFd);
 
 	return status;
 }
@@ -511,19 +595,12 @@ static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle,
  * @param [in] name                          Name of the file
  * @param [in] verifier                      Verifier to use for exclusive create
  * @param [in] attributes                    Attributes to set on created file
- * @param [in,out] callerPermissionCheck     The caller must do a permission check
- * @param [in] afterMknode                   The file is opened after performing
- *                                           a makenode operation
  *
  * @returns: FSAL status
  */
-static fsal_status_t openByName(struct fsal_obj_handle *objectHandle,
-                                struct state_t *state,
-                                fsal_openflags_t openflags,
-                                const char *name,
-                                fsal_verifier_t verifier,
-                                struct fsal_attrlist *attributes,
-                                bool *callerPermissionCheck) {
+static fsal_status_t openByName(struct fsal_obj_handle *objectHandle, struct state_t *state,
+                                fsal_openflags_t openflags, const char *name,
+                                fsal_verifier_t verifier, struct fsal_attrlist *attributes) {
 	struct fsal_obj_handle *temp = NULL;
 	fsal_status_t status;
 
@@ -531,18 +608,31 @@ static fsal_status_t openByName(struct fsal_obj_handle *objectHandle,
 	status = objectHandle->obj_ops->lookup(objectHandle, name, &temp, NULL);
 
 	if (FSAL_IS_ERROR(status)) {
-		LogFullDebug(COMPONENT_FSAL, "lookup returned %s",
-		             fsal_err_txt(status));
+		LogFullDebug(COMPONENT_FSAL, "lookup returned %s", fsal_err_txt(status));
 		return status;
 	}
 
-	status = openByHandle(temp, state, openflags, FSAL_NO_CREATE, verifier,
-	                      attributes, callerPermissionCheck, false);
+	if (temp->type != REGULAR_FILE) {
+		if (temp->type == DIRECTORY) {
+			// Trying to open2 a directory
+			status = fsalstat(ERR_FSAL_ISDIR, 0);
+		} else {
+			// Trying to open2 any other non-regular file
+			status = fsalstat(ERR_FSAL_SYMLINK, 0);
+		}
+
+		// Release the object we found by lookup
+		temp->obj_ops->release(temp);
+		LogFullDebug(COMPONENT_FSAL, "open2 returning %s", fsal_err_txt(status));
+
+		return status;
+	}
+
+	status = openByHandle(temp, state, openflags, FSAL_NO_CREATE, verifier, attributes);
 
 	if (FSAL_IS_ERROR(status)) {
 		temp->obj_ops->release(temp);
-		LogFullDebug(COMPONENT_FSAL, "open returned %s",
-		             fsal_err_txt(status));
+		LogFullDebug(COMPONENT_FSAL, "open returned %s", fsal_err_txt(status));
 	}
 
 	return status;
@@ -552,9 +642,9 @@ static fsal_status_t openByName(struct fsal_obj_handle *objectHandle,
  * @brief Open a file descriptor for read or write and possibly create.
  *
  * Extended API functions.
- * With these new operations, the FSAL becomes responsible for managing share
- * reservations. The FSAL is also granted more control over the state of a "file
- * descriptor" and has more control of what a "file descriptor" even is.
+ * With these new operations, the FSAL becomes responsible for managing
+ * share reservations. The FSAL is also granted more control over the state of
+ * a "file descriptor" and has more control of what a "file descriptor" even is.
  * Ultimately, it is whatever the FSAL needs in order to manage the share
  * reservations and lock state.
 
@@ -566,33 +656,31 @@ static fsal_status_t openByName(struct fsal_obj_handle *objectHandle,
  * @param [in]  state                        state_t to use for this operation
  * @param [in]  openflags                    Mode for open
  * @param [in]  createmode                   Mode for create
- * @param [in]  name                         Name for file if being created or
- *                                           opened
+ * @param [in]  name                         Name for file if being created or opened
  * @param [in]  attributesToSet              Attributes to set on created file
- * @param [in]  verifier                     Verifier to use for exclusive
- *                                           create
+ * @param [in]  verifier                     Verifier to use for exclusive create
  * @param [in,out] createdObject             Newly created object
- * @param [in,out] attributes                Optional attributes for newly
-                                             created object
- * @param [in,out] callerPermissionCheck     The caller must do a permission
- *                                           check
+ * @param [in,out] attributes                Optional attributes for newly created object
+ * @param [in,out] callerPermissionCheck     The caller must do a permission check
+ * @param[in,out] parentPreAttributes        Optional attributes for parent dir before the operation.
+ *                                           Should be atomic.
+ * @param[in,out] parentPostAttributes       Optional attributes for parent dir after the operation.
+ *                                           Should be atomic.
  *
  * @returns: FSAL status
  */
-static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
-                           struct state_t *state, fsal_openflags_t openflags,
-                           enum fsal_create_mode createmode, const char *name,
-                           struct fsal_attrlist *attributesToSet,
-                           fsal_verifier_t verifier,
-                           struct fsal_obj_handle **createdObject,
-                           struct fsal_attrlist *attributes,
-                           bool *callerPermissionCheck) {
+static fsal_status_t open2(struct fsal_obj_handle *objectHandle, struct state_t *state,
+                           fsal_openflags_t openflags, enum fsal_create_mode createmode,
+                           const char *name, struct fsal_attrlist *attributesToSet,
+                           fsal_verifier_t verifier, struct fsal_obj_handle **createdObject,
+                           struct fsal_attrlist *attributes, bool *callerPermissionCheck,
+                           struct fsal_attrlist *parentPreAttributes,
+                           struct fsal_attrlist *parentPostAttributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
 	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
 
-	LogAttrlist(COMPONENT_FSAL, NIV_FULL_DEBUG, "attrs ", attributesToSet,
-	            false);
+	LogAttrlist(COMPONENT_FSAL, NIV_FULL_DEBUG, "attrs ", attributesToSet, false);
 
 	if (createmode >= FSAL_EXCLUSIVE) {
 		// Now fixup attrs for verifier if exclusive create
@@ -600,13 +688,15 @@ static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
 	}
 
 	if (name == NULL) {
-		return openByHandle(objectHandle, state, openflags, createmode,
-		                    verifier, attributes, callerPermissionCheck, false);
+		status = openByHandle(objectHandle, state, openflags, createmode, verifier, attributes);
+		*callerPermissionCheck = FSAL_IS_SUCCESS(status);
+		return status;
 	}
 
+	*callerPermissionCheck = (createmode == FSAL_NO_CREATE);
+
 	if (createmode == FSAL_NO_CREATE) {
-		return openByName(objectHandle, state, openflags, name, verifier,
-		                  attributes, callerPermissionCheck);
+		return openByName(objectHandle, state, openflags, name, verifier, attributes);
 	}
 
 	// Create file
@@ -615,20 +705,17 @@ static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
 
 	// Fetch the mode attribute to use in the openat system call
 	mode_t unix_mode = fsal2unix_mode(attributesToSet->mode) &
-	        ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
+	                   ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
 
 	// Don't set the mode if we later set the attributes
 	FSAL_UNSET_MASK(attributesToSet->valid_mask, (attrmask_t)ATTR_MODE);
 
 	struct sau_entry posixAttributes;
-	int retval =
-	    saunafs_mknode(export->fsInstance, &op_ctx->creds, handle->inode, name,
-	                   unix_mode, 0, &posixAttributes);
+	int retval = saunafs_mknode(export->fsInstance, &op_ctx->creds, handle->inode, name, unix_mode,
+	                            0, &posixAttributes);
 
-	if (retval < 0 && sau_last_err() == SAUNAFS_ERROR_EEXIST &&
-	    createmode == FSAL_UNCHECKED) {
-		return openByName(objectHandle, state, openflags, name, verifier,
-		                  attributes, callerPermissionCheck);
+	if (retval < 0 && sau_last_err() == SAUNAFS_ERROR_EEXIST && createmode == FSAL_UNCHECKED) {
+		return openByName(objectHandle, state, openflags, name, verifier, attributes);
 	}
 
 	if (retval < 0) { return fsalLastError(); }
@@ -636,15 +723,13 @@ static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
 	// File has been created by us.
 	*callerPermissionCheck = false;
 
-	struct SaunaFSHandle *newHandle =
-	    allocateHandle(&posixAttributes.attr, export);
+	struct SaunaFSHandle *newHandle = allocateHandle(&posixAttributes.attr, export);
 
 	if (newHandle == NULL) {
 		(*createdObject)->obj_ops->release(*createdObject);
 		*createdObject = NULL;
 
-		retval = saunafs_unlink(export->fsInstance, &op_ctx->creds,
-		                        handle->inode, name);
+		retval = saunafs_unlink(export->fsInstance, &op_ctx->creds, handle->inode, name);
 
 		if (retval < 0) { return fsalLastError(); }
 
@@ -654,14 +739,12 @@ static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
 	*createdObject = &newHandle->handle;
 
 	if (attributesToSet->valid_mask != 0) {
-		status = (*createdObject)->obj_ops->setattr2(*createdObject, false,
-		                                             state, attributesToSet);
+		status = (*createdObject)->obj_ops->setattr2(*createdObject, false, state, attributesToSet);
 		if (FSAL_IS_ERROR(status)) {
 			(*createdObject)->obj_ops->release(*createdObject);
 			*createdObject = NULL;
 
-			retval = saunafs_unlink(export->fsInstance, &op_ctx->creds,
-			                        handle->inode, name);
+			retval = saunafs_unlink(export->fsInstance, &op_ctx->creds, handle->inode, name);
 
 			if (retval < 0) { return fsalLastError(); }
 
@@ -669,16 +752,14 @@ static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
 		}
 
 		if (attributes != NULL) {
-			status =
-			    (*createdObject)->obj_ops->getattrs(*createdObject, attributes);
+			status = (*createdObject)->obj_ops->getattrs(*createdObject, attributes);
 
 			if (FSAL_IS_ERROR(status) &&
 			    (attributes->request_mask & ATTR_RDATTR_ERR) == 0) {
 				(*createdObject)->obj_ops->release(*createdObject);
 				*createdObject = NULL;
 
-				retval = saunafs_unlink(export->fsInstance, &op_ctx->creds,
-				                        handle->inode, name);
+				retval = saunafs_unlink(export->fsInstance, &op_ctx->creds, handle->inode, name);
 
 				if (retval < 0) { return fsalLastError(); }
 
@@ -693,128 +774,45 @@ static fsal_status_t open2(struct fsal_obj_handle *objectHandle,
 		posix2fsal_attributes_all(&posixAttributes.attr, attributes);
 	}
 
-	return openByHandle(*createdObject, state, openflags, createmode, verifier,
-	                    NULL, callerPermissionCheck, true);
-}
-
-/**
- * @brief Function to open an fsal_obj_handle's global file descriptor.
- *
- * @param[in]  objectHandle       File on which to operate
- * @param[in]  openflags          Mode for open
- * @param[out] fileDescriptor     File descriptor that is to be used
- *
- * @return FSAL status.
- */
-static fsal_status_t openFunction(struct fsal_obj_handle *objectHandle,
-                                  fsal_openflags_t openflags,
-                                  struct fsal_fd *fileDescriptor) {
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
-	return openFileDescriptor(handle, openflags,
-	                          (struct SaunaFSFd *)fileDescriptor, true);
-}
-
-/**
- * @brief Function to close an fsal_obj_handle's global file descriptor.
- *
- * @param[in] objectHandle       File on which to operate
- * @param[in] fileDescriptor     File handle to close
- *
- * @return FSAL status.
- */
-static fsal_status_t closeFunction(struct fsal_obj_handle *objectHandle,
-                                   struct fsal_fd *fileDescriptor) {
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
-	return closeFileDescriptor(handle, (struct SaunaFSFd *)fileDescriptor);
-}
-
-/**
- * @brief Find a usable file descriptor for a regular file.
- *
- * This function is a wrapper that initializes the needed variables before calling
- * fsal_find_fd function passing the expected attributes.
- *
- * @param[in,out] fileDescriptor       Usable file descriptor found
- * @param[in] objectHandle             File on which to operate
- * @param[in] bypass                   If state doesn't indicate a share reservation, bypass any deny read
- * @param[in] state                    state_t to use for this operation
- * @param[in] openflags                Mode for open
- * @param[out] hasLock                 Indicates that objectHandle->obj_lock is held read
- * @param[out] closeFileDescriptor     Indicates that file descriptor must be closed
- * @param[out] openForLocks            Indicates file is open for locks
- *
- * @return FSAL status.
- */
-static fsal_status_t findFileDescriptor(struct SaunaFSFd *saunafsFd,
-                                        struct fsal_obj_handle *objectHandle,
-                                        bool bypass, struct state_t *state,
-                                        fsal_openflags_t openflags,
-                                        bool *hasLock,
-                                        bool *closeFileDescriptor,
-                                        bool openForLocks) {
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
-
-	struct SaunaFSFd emptyFd = {0, NULL};
-	struct SaunaFSFd *usableFd = &emptyFd;
-
-	fsal_status_t status;
-
-	bool canReuseOpenedFd = false;
-	status =
-	    fsal_find_fd((struct fsal_fd **)&usableFd, objectHandle,
-	                 (struct fsal_fd *)&handle->fd, &handle->share, bypass,
-	                 state, openflags, openFunction, closeFunction, hasLock,
-	                 closeFileDescriptor, openForLocks, &canReuseOpenedFd);
-
-	// Ensure we have a valid file descriptor before dereferencing
-	if (FSAL_IS_ERROR(status) || usableFd == NULL) {
-		// Initialize SaunaFS file descriptor to a safe state
-		saunafsFd->openflags = FSAL_O_CLOSED;
-		saunafsFd->fd = NULL;
-		return status;
-	}
-
-	*saunafsFd = *usableFd;
-	return status;
+	return openByHandle(*createdObject, state, openflags, createmode, verifier, NULL);
 }
 
 /**
  * @brief Read data from a file.
  *
- * This function reads data from the given file. The FSAL must be able to perform the read
- * whether a state is presented or not.
+ * This function reads data from the given file. The FSAL must be able to
+ * perform the read whether a state is presented or not.
  *
- * This function also is expected to handle properly bypassing or not share reservations.
- * This is an (optionally) asynchronous call. When the I/O is complete, the done callback
- * is called with the results.
+ * This function also is expected to handle properly bypassing or not share
+ * reservations. This is an (optionally) asynchronous call. When the I/O is
+ * complete, the done callback is called with the results.
  *
  * @param [in]     objectHandle     File on which to operate
- * @param [in]     bypass           If state doesn't indicate a share reservation, bypass any deny read
+ * @param [in]     bypass           If state doesn't indicate a share reservation,
+ *                                  bypass any deny read
  * @param [in,out] doneCb           Callback to call when I/O is done
  * @param [in,out] readArg          Info about read, passed back in callback
  * @param [in,out] callerArg        Opaque arg from the caller for callback
  */
-static void read2(struct fsal_obj_handle *objectHandle, bool bypass,
-                  fsal_async_cb doneCb, struct fsal_io_arg *readArg,
-                  void *callerArg) {
+static void read2(struct fsal_obj_handle *objectHandle, bool bypass, fsal_async_cb doneCb,
+                  struct fsal_io_arg *readArg, void *callerArg) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
-	struct SaunaFSFd saunafsFd;
-	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
 
-	bool hasLock = false;
-	bool closeFd = false;
+	struct SaunaFSFd *saunafsFd = NULL;
+	struct SaunaFSFd emptyFileDescriptor = {FSAL_FD_INIT, NULL};
+
+	struct fsal_fd *outFileDescriptor = NULL;
+	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
+	fsal_status_t status2;
+
 	ssize_t bytes = 0;
 	uint64_t offset = readArg->offset;
 
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL,
-	             "export = %" PRIu16 " inode = %" PRIiNode " offset=%" PRIu64,
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode " offset=%" PRIu64,
 	             export->export.export_id, handle->inode, offset);
 
 	if (readArg->info != NULL) {
@@ -823,24 +821,24 @@ static void read2(struct fsal_obj_handle *objectHandle, bool bypass,
 		return;
 	}
 
-	status =
-	    findFileDescriptor(&saunafsFd, objectHandle, bypass, readArg->state,
-	                       FSAL_O_READ, &hasLock, &closeFd, false);
+	// Indicate a desire to start io and get a usable file descriptor
+	status = fsal_start_io(&outFileDescriptor, objectHandle, &handle->fd.fsalFd,
+	                       &emptyFileDescriptor.fsalFd, readArg->state, FSAL_O_READ, false, NULL,
+	                       bypass, &handle->share);
 
 	if (FSAL_IS_ERROR(status)) {
-		if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
-
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+		LogFullDebug(COMPONENT_FSAL, "fsal_start_io failed returning %s", fsal_err_txt(status));
 
 		doneCb(objectHandle, status, readArg, callerArg);
 		return;
 	}
 
+	saunafsFd = container_of(outFileDescriptor, struct SaunaFSFd, fsalFd);
+
 	readArg->io_amount = 0;
 	for (int i = 0; i < readArg->iov_count; i++) {
-		bytes = saunafs_read(export->fsInstance, &op_ctx->creds, saunafsFd.fd,
-		                     offset, readArg->iov[i].iov_len,
-		                     readArg->iov[i].iov_base);
+		bytes = saunafs_read(export->fsInstance, &op_ctx->creds, saunafsFd->fd, offset,
+		                     readArg->iov[i].iov_len, readArg->iov[i].iov_base);
 
 		if (bytes == 0) {
 			readArg->end_of_file = true;
@@ -849,9 +847,17 @@ static void read2(struct fsal_obj_handle *objectHandle, bool bypass,
 		if (bytes < 0) {
 			status = fsalLastError();
 
-			if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+			status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+			LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-			if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+			if (readArg->state == NULL) {
+				// We did I/O without a state so we need to release the temp share
+				// reservation acquired.
+
+				// Release the share reservation now by updating the counters.
+				update_share_counters_locked(objectHandle, &handle->share, FSAL_O_READ,
+				                             FSAL_O_CLOSED);
+			}
 
 			doneCb(objectHandle, status, readArg, callerArg);
 			return;
@@ -861,9 +867,15 @@ static void read2(struct fsal_obj_handle *objectHandle, bool bypass,
 		offset += bytes;
 	}
 
-	if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+	status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+	LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-	if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+	if (readArg->state == NULL) {
+		// We did I/O without a state so we need to release the temp share reservation acquired.
+
+		// Release the share reservation now by updating the counters.
+		update_share_counters_locked(objectHandle, &handle->share, FSAL_O_READ, FSAL_O_CLOSED);
+	}
 
 	doneCb(objectHandle, status, readArg, callerArg);
 }
@@ -877,16 +889,21 @@ static void read2(struct fsal_obj_handle *objectHandle, bool bypass,
  * @param [in]     attributesToSet     Attributes to set on newly created object
  * @param [out]    createdObject       Newly created object
  * @param [in,out] attributes          Optional attributes for newly created object
+ * @param[in,out] parentPreAttributes  Optional attributes for parent dir before the operation.
+ *                                     Should be atomic.
+ * @param[in,out] parentPostAttributes Optional attributes for parent dir after the operation.
+ *                                     Should be atomic.
  *
  * \see fsal_api.h for more information
  *
  * @returns: FSAL status
  */
-static fsal_status_t mkdir_(struct fsal_obj_handle *directoryHandle,
-                            const char *name,
+static fsal_status_t mkdir_(struct fsal_obj_handle *directoryHandle, const char *name,
                             struct fsal_attrlist *attributesToSet,
                             struct fsal_obj_handle **createdObject,
-                            struct fsal_attrlist *attributes) {
+                            struct fsal_attrlist *attributes,
+                            struct fsal_attrlist *parentPreAttributes,
+                            struct fsal_attrlist *parentPostAttributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *directory = NULL;
 	struct SaunaFSHandle *handle = NULL;
@@ -896,17 +913,15 @@ static fsal_status_t mkdir_(struct fsal_obj_handle *directoryHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %"
-	             PRIiNode " mode = %" PRIo32 " name = %s",
-	             export->export.export_id, directory->inode,
-	             attributesToSet->mode, name);
+	LogFullDebug(COMPONENT_FSAL,
+	             "export = %" PRIu16 " parent_inode = %" PRIiNode " mode = %" PRIo32 " name = %s",
+	             export->export.export_id, directory->inode, attributesToSet->mode, name);
 
 	mode_t unix_mode = fsal2unix_mode(attributesToSet->mode) &
-	        ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
+	                   ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
 
-	int retvalue =
-	    saunafs_mkdir(export->fsInstance, &op_ctx->creds, directory->inode,
-	                  name, unix_mode, &directoryEntry);
+	int retvalue = saunafs_mkdir(export->fsInstance, &op_ctx->creds, directory->inode, name,
+	                             unix_mode, &directoryEntry);
 
 	if (retvalue < 0) {
 		return fsalLastError();
@@ -918,28 +933,23 @@ static fsal_status_t mkdir_(struct fsal_obj_handle *directoryHandle,
 	FSAL_UNSET_MASK(attributesToSet->valid_mask, (attrmask_t)ATTR_MODE);
 
 	if (attributesToSet->valid_mask) {
-		status = (*createdObject)->obj_ops->setattr2(*createdObject, false,
-		                                             NULL, attributesToSet);
+		status = (*createdObject)->obj_ops->setattr2(*createdObject, false, NULL, attributesToSet);
 
 		if (FSAL_IS_ERROR(status)) {
-			LogFullDebug(COMPONENT_FSAL, "setattr2 status=%s",
-			             fsal_err_txt(status));
+			LogFullDebug(COMPONENT_FSAL, "setattr2 status=%s", fsal_err_txt(status));
 
 			// Release the handle we just allocate
 			(*createdObject)->obj_ops->release(*createdObject);
 			*createdObject = NULL;
-		}
-		else if (attributes != NULL) {
-			// We ignore errors here. The mkdir and setattr succeeded,
-			// so we don't want to return error if the getattrs fails.
+		} else if (attributes != NULL) {
+			// We ignore errors here. The mkdir and setattr succeeded, so we don't want to return
+			// error if the getattrs fails.
 			// We'll just return no attributes in that case.
 			(*createdObject)->obj_ops->getattrs(*createdObject, attributes);
 		}
-	}
-	else if (attributes != NULL) {
-		// Since we haven't set any attributes other than what
-		// was set on create, just use the stat results we used
-		// to create the fsal_obj_handle.
+	} else if (attributes != NULL) {
+		// Since we haven't set any attributes other than what was set on create, just use the
+		// stat results we used to create the fsal_obj_handle.
 		posix2fsal_attributes_all(&directoryEntry.attr, attributes);
 	}
 
@@ -959,8 +969,9 @@ static fsal_status_t mkdir_(struct fsal_obj_handle *directoryHandle,
  * @returns: FSAL status
  */
 static fsal_status_t link_(struct fsal_obj_handle *objectHandle,
-                           struct fsal_obj_handle *destinationDirHandle,
-                           const char *name) {
+                           struct fsal_obj_handle *destinationDirHandle, const char *name,
+                           struct fsal_attrlist *destdirPreAttributes,
+                           struct fsal_attrlist *destdirPostAttributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
 	struct SaunaFSHandle *destinationHandle = NULL;
@@ -968,18 +979,15 @@ static fsal_status_t link_(struct fsal_obj_handle *objectHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	destinationHandle =
-	    container_of(destinationDirHandle, struct SaunaFSHandle, handle);
+	destinationHandle = container_of(destinationDirHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %"
-	             PRIu16 " inode = %" PRIiNode " dest_inode = %" PRIiNode
-	             " name = %s", export->export.export_id,
-	             handle->inode, destinationHandle->inode, name);
+	LogFullDebug(COMPONENT_FSAL,
+	             "export = %" PRIu16 " inode = %" PRIiNode " dest_inode = %" PRIiNode " name = %s",
+	             export->export.export_id, handle->inode, destinationHandle->inode, name);
 
 	sau_entry_t entry;
-	int retvalue =
-	    saunafs_link(export->fsInstance, &op_ctx->creds, handle->inode,
-	                 destinationHandle->inode, name, &entry);
+	int retvalue = saunafs_link(export->fsInstance, &op_ctx->creds, handle->inode,
+	                            destinationHandle->inode, name, &entry);
 
 	if (retvalue < 0) {
 		return fsalLastError();
@@ -998,14 +1006,24 @@ static fsal_status_t link_(struct fsal_obj_handle *objectHandle,
  * @param [in] oldName             Original name
  * @param [in] newParentHandle     Destination directory
  * @param [in] newName             New name
+ * @param[in,out] oldParentPreAttributes  Optional attributes for olddParent
+ *                                      before the operation. Should be atomic.
+ * @param[in,out] oldParentPostAttributes Optional attributes for oldParent
+ *                                      after the operation. Should be atomic.
+ * @param[in,out] newParentPreAttributes  Optional attributes for newParent
+ *                                      before the operation. Should be atomic.
+ * @param[in,out] newParentPostAttributes Optional attributes for newParent
+ *                                      after the operation. Should be atomic.
  *
  * @returns: FSAL status
  */
 static fsal_status_t rename_(struct fsal_obj_handle *objectHandle,
-                             struct fsal_obj_handle *oldParentHandle,
-                             const char *oldName,
-                             struct fsal_obj_handle *newParentHandle,
-                             const char *newName) {
+                             struct fsal_obj_handle *oldParentHandle, const char *oldName,
+                             struct fsal_obj_handle *newParentHandle, const char *newName,
+                             struct fsal_attrlist *oldParentPreAttributes,
+                             struct fsal_attrlist *oldParentPostAttributes,
+                             struct fsal_attrlist *newParentPreAttributes,
+                             struct fsal_attrlist *newParentPostAttributes) {
 	(void)objectHandle;
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *oldDir = NULL;
@@ -1015,13 +1033,13 @@ static fsal_status_t rename_(struct fsal_obj_handle *objectHandle,
 	oldDir = container_of(oldParentHandle, struct SaunaFSHandle, handle);
 	newDir = container_of(newParentHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " old_inode=%" PRIiNode
-	             " new_inode=%" PRIiNode " old_name=%s new_name=%s",
-	             export->export.export_id, oldDir->inode,
-	             newDir->inode, oldName, newName);
+	LogFullDebug(COMPONENT_FSAL,
+	             "export=%" PRIu16 " old_inode=%" PRIiNode " new_inode=%" PRIiNode
+	             " old_name=%s new_name=%s",
+	             export->export.export_id, oldDir->inode, newDir->inode, oldName, newName);
 
-	int status = saunafs_rename(export->fsInstance, &op_ctx->creds,
-	                            oldDir->inode, oldName, newDir->inode, newName);
+	int status = saunafs_rename(export->fsInstance, &op_ctx->creds, oldDir->inode, oldName,
+	                            newDir->inode, newName);
 
 	if (status < 0) {
 		return fsalLastError();
@@ -1033,18 +1051,22 @@ static fsal_status_t rename_(struct fsal_obj_handle *objectHandle,
 /**
  * @brief Remove a name from a directory.
  *
- * This function removes a name from a directory and possibly deletes the file
- * so named.
+ * This function removes a name from a directory and possibly deletes the file so named.
  *
- * @param [in] directoryHandle     The directory from which to remove the name
- * @param [in] objectHandle        The object being removed
- * @param [in] name                The name to remove
+ * @param [in] directoryHandle         The directory from which to remove the name
+ * @param [in] objectHandle            The object being removed
+ * @param [in] name                    The name to remove
+ * @param[in,out] parentPreAttributes  Optional attributes for parent dir before the operation.
+ *                                     Should be atomic.
+ * @param[in,out] parentPostAttributes Optional attributes for parent dir after the operation.
+ *                                     Should be atomic.
  *
  * @returns: FSAL status
  */
 static fsal_status_t unlink_(struct fsal_obj_handle *directoryHandle,
-                             struct fsal_obj_handle *objectHandle,
-                             const char *name) {
+                             struct fsal_obj_handle *objectHandle, const char *name,
+                             struct fsal_attrlist *parentPreAttributes,
+                             struct fsal_attrlist *parentPostAttributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *directory = NULL;
 	int status = 0;
@@ -1052,23 +1074,19 @@ static fsal_status_t unlink_(struct fsal_obj_handle *directoryHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %"
-	             PRIiNode " name = %s type = %s", export->export.export_id,
-	             directory->inode, name,
+	LogFullDebug(COMPONENT_FSAL,
+	             "export = %" PRIu16 " parent_inode = %" PRIiNode " name = %s type = %s",
+	             export->export.export_id, directory->inode, name,
 	             object_file_type_to_str(objectHandle->type));
 
 	if (objectHandle->type != DIRECTORY) {
-		status = saunafs_unlink(export->fsInstance, &op_ctx->creds,
-		                        directory->inode, name);
+		status = saunafs_unlink(export->fsInstance, &op_ctx->creds, directory->inode, name);
 	}
 	else {
-		status = saunafs_rmdir(export->fsInstance, &op_ctx->creds,
-		                       directory->inode, name);
+		status = saunafs_rmdir(export->fsInstance, &op_ctx->creds, directory->inode, name);
 	}
 
-	if (status < 0) {
-		return fsalLastError();
-	}
+	if (status < 0) { return fsalLastError(); }
 
 	return fsalstat(ERR_FSAL_NO_ERROR, 0);
 }
@@ -1076,46 +1094,32 @@ static fsal_status_t unlink_(struct fsal_obj_handle *directoryHandle,
 /**
  * @brief Close a file.
  *
- * This function closes a file. This should return ERR_FSAL_NOT_OPENED if the
- * global FD for this obj was not open.
- *
  * @param [in] objectHandle     File to close
  *
  * @returns: FSAL status
  */
 static fsal_status_t close_(struct fsal_obj_handle *objectHandle) {
-	fsal_status_t status;
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIiNode,
-	             handle->key.exportId, handle->inode);
+	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIiNode, handle->key.exportId,
+	             handle->inode);
 
-	PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-
-	if (handle->fd.openflags == FSAL_O_CLOSED) {
-		status = fsalstat(ERR_FSAL_NOT_OPENED, 0);
-	}
-	else {
-		status = closeFileDescriptor(handle, &handle->fd);
-	}
-
-	PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-
-	return status;
+	return close_fsal_fd(objectHandle, &handle->fd.fsalFd, false);
 }
 
 /**
  * @brief Write data to a file.
  *
- * This function writes data to a file. The FSAL must be able to perform the
- * write whether a state is presented or not. This function also is expected
- * to handle properly bypassing or not share reservations.
- * Even with bypass == true, it will enforce a mandatory (NFSv4) deny_write if
- * an appropriate state is not passed).
+ * This function writes data to a file. The FSAL must be able to perform
+ * the write whether a state is presented or not. This function also is
+ * expected to handle properly bypassing or not share reservations.
+ *
+ * Even with bypass == true, it will enforce a mandatory (NFSv4) deny_write
+ * if an appropriate state is not passed).
 
- * The FSAL is expected to enforce sync if necessary. This is an (optionally)
- * asynchronous call. When the I/O is complete, the done_cb callback is called.
+ * The FSAL is expected to enforce sync if necessary. This is an
+ * (optionally) asynchronous call. When the I/O is complete, the done_cb
+ * callback is called.
  *
  * @param [in]     objectHandle     File on which to operate
  * @param [in]     bypass           If state doesn't indicate a share reservation,
@@ -1124,16 +1128,17 @@ static fsal_status_t close_(struct fsal_obj_handle *objectHandle) {
  * @param [in,out] writeArg         Info about write, passed back in callback
  * @param [in,out] callerArg        Opaque arg from the caller for callback
  */
-static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
-                   fsal_async_cb doneCb, struct fsal_io_arg *writeArg,
-                   void *callerArg) {
+static void write2(struct fsal_obj_handle *objectHandle, bool bypass, fsal_async_cb doneCb,
+                   struct fsal_io_arg *writeArg, void *callerArg) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
-	struct SaunaFSFd saunafsFd;
+
+	struct SaunaFSFd *saunafsFd = NULL;
+	struct SaunaFSFd emptyFileDescriptor = {FSAL_FD_INIT, NULL};
+	struct fsal_fd *outFileDescriptor = NULL;
 
 	fsal_status_t status;
-	bool hasLock = false;
-	bool closeFd = false;
+	fsal_status_t status2;
 
 	ssize_t bytes = 0;
 	uint64_t offset = writeArg->offset;
@@ -1141,42 +1146,49 @@ static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIiNode
-	             " offset=%" PRIu64, export->export.export_id,
-	             handle->inode, offset);
+	LogFullDebug(COMPONENT_FSAL, "export=%" PRIu16 " inode=%" PRIiNode " offset=%" PRIu64,
+	             export->export.export_id, handle->inode, offset);
 
 	if (writeArg->info) {
-		doneCb(objectHandle, fsalstat(ERR_FSAL_NOTSUPP, 0), writeArg,
-		       callerArg);
+		doneCb(objectHandle, fsalstat(ERR_FSAL_NOTSUPP, 0), writeArg, callerArg);
 		return;
 	}
 
-	status =
-	    findFileDescriptor(&saunafsFd, objectHandle, bypass, writeArg->state,
-	                       FSAL_O_WRITE, &hasLock, &closeFd, false);
+	// Indicate a desire to start io and get a usable file descriptor
+	status = fsal_start_io(&outFileDescriptor, objectHandle, &handle->fd.fsalFd,
+	                       &emptyFileDescriptor.fsalFd, writeArg->state, FSAL_O_WRITE, false, NULL,
+	                       bypass, &handle->share);
 
 	if (FSAL_IS_ERROR(status)) {
-		if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
-
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+		LogFullDebug(COMPONENT_FSAL, "fsal_start_io failed returning %s", fsal_err_txt(status));
 
 		doneCb(objectHandle, status, writeArg, callerArg);
 		return;
 	}
 
+	saunafsFd = container_of(outFileDescriptor, struct SaunaFSFd, fsalFd);
+
 	for (int i = 0; i < writeArg->iov_count; i++) {
-		bytes = saunafs_write(export->fsInstance, &op_ctx->creds, saunafsFd.fd,
-		                      offset, writeArg->iov[i].iov_len,
-		                      writeArg->iov[i].iov_base);
+		bytes = saunafs_write(export->fsInstance, &op_ctx->creds, saunafsFd->fd, offset,
+		                      writeArg->iov[i].iov_len, writeArg->iov[i].iov_base);
 
 		if (bytes == 0) {
 			break;
 		}
 		if (bytes < 0) {
 			status = fsalLastError();
-			if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+			status2 = fsal_complete_io(objectHandle, outFileDescriptor);
 
-			if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+			LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+			if (writeArg->state == NULL) {
+				// We did I/O without a state so we need to release the temp share reservation
+				// acquired.
+
+				// Release the share reservation now by updating the counters.
+				update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE,
+				                             FSAL_O_CLOSED);
+			}
 
 			doneCb(objectHandle, status, writeArg, callerArg);
 			return;
@@ -1187,8 +1199,7 @@ static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
 	}
 
 	if (writeArg->fsal_stable) {
-		int retvalue =
-		    saunafs_fsync(export->fsInstance, &op_ctx->creds, saunafsFd.fd);
+		int retvalue = saunafs_fsync(export->fsInstance, &op_ctx->creds, saunafsFd->fd);
 
 		if (retvalue < 0) {
 			status = fsalLastError();
@@ -1196,9 +1207,16 @@ static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
 		}
 	}
 
-	if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+	status2 = fsal_complete_io(objectHandle, outFileDescriptor);
 
-	if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+	LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+	if (writeArg->state == NULL) {
+		// We did I/O without a state so we need to release the temp share reservation acquired.
+
+		// Release the share reservation now by updating the counters.
+		update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE, FSAL_O_CLOSED);
+	}
 
 	doneCb(objectHandle, status, writeArg, callerArg);
 }
@@ -1206,10 +1224,11 @@ static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
 /**
  * @brief Commit written data.
  *
- * This function flushes possibly buffered data to a file. This method differs
- * from commit due to the need to interact with share reservations and the fact
- * that the FSAL manages the state of "file descriptors". The FSAL must be able
- * to perform this operation without being passed a specific state.
+ * This function flushes possibly buffered data to a file. This method
+ * differs from commit due to the need to interact with share reservations
+ * and the fact that the FSAL manages the state of "file descriptors". The
+ * FSAL must be able to perform this operation without being passed a
+ * specific state.
  *
  * @param [in] objectHandle     File on which to operate
  * @param [in] offset           Start of range to commit
@@ -1217,63 +1236,55 @@ static void write2(struct fsal_obj_handle *objectHandle, bool bypass,
  *
  * @returns: FSAL status
  */
-static fsal_status_t commit2(struct fsal_obj_handle *objectHandle, off_t offset,
-                             size_t length) {
+static fsal_status_t commit2(struct fsal_obj_handle *objectHandle, off_t offset, size_t length) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
 
-	struct SaunaFSFd emptyFd = {0, NULL};
-	struct SaunaFSFd *saunafsFd = &emptyFd;
-
 	fsal_status_t status;
-	bool hasLock = false;
-	bool closeFd = false;
+	fsal_status_t status2;
+
+	struct SaunaFSFd emptyFd = {FSAL_FD_INIT, NULL};
+	struct SaunaFSFd *saunafsFd = NULL;
+	struct fsal_fd *outFileDescriptor = NULL;
 
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode
-	             " offset = %lli len = %zu", export->export.export_id,
-	             handle->inode, (long long)offset, length);
+	LogFullDebug(COMPONENT_FSAL,
+	             "export = %" PRIu16 " inode = %" PRIiNode " offset = %lli len = %zu",
+	             export->export.export_id, handle->inode, (long long)offset, length);
 
-	status = fsal_reopen_obj(objectHandle, false, false, FSAL_O_WRITE,
-	                         (struct fsal_fd *)&handle->fd, &handle->share,
-	                         openFunction, closeFunction,
-	                         (struct fsal_fd **)&saunafsFd, &hasLock, &closeFd);
+	// Make sure file is open in appropriate mode.
+	// Do not check share reservation.
+	status = fsal_start_global_io(&outFileDescriptor, objectHandle, &handle->fd.fsalFd,
+	                              &emptyFd.fsalFd, FSAL_O_ANY, false, NULL);
 
-	if (!FSAL_IS_ERROR(status)) {
-		int retvalue =
-		    saunafs_fsync(export->fsInstance, &op_ctx->creds, saunafsFd->fd);
+	if (FSAL_IS_ERROR(status)) { return status; }
 
-		if (retvalue < 0) {
-			status = fsalLastError();
-		}
-	}
+	saunafsFd = container_of(outFileDescriptor, struct SaunaFSFd, fsalFd);
 
-	if (closeFd) {
-		int retvalue = sau_release(export->fsInstance, saunafsFd->fd);
+	int retvalue = saunafs_fsync(export->fsInstance, &op_ctx->creds, saunafsFd->fd);
 
-		if (retvalue < 0) {
-			status = fsalLastError();
-		}
-	}
+	if (retvalue < 0) { status = fsalLastError(); }
 
-	if (hasLock) {
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-	}
+	status2 = fsal_complete_io(objectHandle, outFileDescriptor);
 
+	LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+	// We did not do share reservation stuff...
 	return status;
 }
 
 /**
  * @brief Set attributes on an object.
  *
- * This function sets attributes on an object. Which attributes are set is determined
- * by attrib_set->mask. The FSAL must manage bypass or not of share reservations, and
- * a state may be passed.
+ * This function sets attributes on an object. Which attributes are set is
+ * determined by attrib_set->mask. The FSAL must manage bypass or not of share
+ * reservations, and a state may be passed.
 
- * The caller is expected to invoke fsal_release_attrs to release any resources held
- * by the set attributes. The FSAL layer MAY have added an inherited ACL.
+ * The caller is expected to invoke fsal_release_attrs to release any
+ * resources held by the set attributes. The FSAL layer MAY have added an
+ * inherited ACL.
  *
  * @param [in] objectHandle     File on which to operate
  * @param [in] bypass           If state doesn't indicate a share reservation,
@@ -1284,14 +1295,12 @@ static fsal_status_t commit2(struct fsal_obj_handle *objectHandle, off_t offset,
  * @returns: FSAL status
  */
 static fsal_status_t setattr2(struct fsal_obj_handle *objectHandle, bool bypass,
-                              struct state_t *state,
-                              struct fsal_attrlist *attributes) {
+                              struct state_t *state, struct fsal_attrlist *attributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
 
-	bool hasLock = false;
-	bool closeFd = false;
 	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
+	bool hasShare = false;
 
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
@@ -1299,42 +1308,40 @@ static fsal_status_t setattr2(struct fsal_obj_handle *objectHandle, bool bypass,
 	LogAttrlist(COMPONENT_FSAL, NIV_FULL_DEBUG, "attrs ", attributes, false);
 
 	if (FSAL_TEST_MASK(attributes->valid_mask, (attrmask_t)ATTR_MODE)) {
-		attributes->mode &=
-		        ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
+		attributes->mode &= ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
 	}
 
 	if (FSAL_TEST_MASK(attributes->valid_mask, (attrmask_t)ATTR_SIZE)) {
 		if (objectHandle->type != REGULAR_FILE) {
-			LogFullDebug(COMPONENT_FSAL,
-			             "Setting size on non-regular file");
+			LogFullDebug(COMPONENT_FSAL, "Setting size on non-regular file");
 			return fsalstat(ERR_FSAL_INVAL, EINVAL);
 		}
 
-		bool canReuseOpenedFd = false;
-		status = fsal_find_fd(NULL, objectHandle, NULL, &handle->share,
-		                      bypass, state, FSAL_O_RDWR, NULL, NULL,
-		                      &hasLock, &closeFd, false,
-		                      &canReuseOpenedFd);
+		if (state == NULL) {
+			// Check share reservation and if OK, update the counters.
+			status = check_share_conflict_and_update_locked(objectHandle, &handle->share,
+			                                                FSAL_O_CLOSED, FSAL_O_WRITE, bypass);
 
-		if (FSAL_IS_ERROR(status)) {
-			LogFullDebug(COMPONENT_FSAL, "fsal_find_fd status = %s",
-			             fsal_err_txt(status));
+			if (FSAL_IS_ERROR(status)) {
+				LogDebug(COMPONENT_FSAL, "check_share_conflict failed with %s",
+				         fsal_err_txt(status));
 
-			if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+				return status;
+			}
 
-			return status;
+			hasShare = true;
 		}
 	}
 
 	struct stat posixAttributes;
 	uint mask = 0;
+
 	memset(&posixAttributes, 0, sizeof(posixAttributes));
 
 	if (FSAL_TEST_MASK(attributes->valid_mask, (attrmask_t)ATTR_SIZE)) {
 		mask |= SAU_SET_ATTR_SIZE;
 		posixAttributes.st_size = (__off_t)(attributes->filesize);
-		LogFullDebug(COMPONENT_FSAL, "setting size to %lld",
-		             (long long)posixAttributes.st_size);
+		LogFullDebug(COMPONENT_FSAL, "setting size to %lld", (long long)posixAttributes.st_size);
 	}
 
 	if (FSAL_TEST_MASK(attributes->valid_mask, (attrmask_t)ATTR_MODE)) {
@@ -1371,27 +1378,29 @@ static fsal_status_t setattr2(struct fsal_obj_handle *objectHandle, bool bypass,
 	}
 
 	sau_attr_reply_t reply;
-	int retvalue =
-	    saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode,
-	                    &posixAttributes, mask, &reply);
+	int retvalue = saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode,
+	                               &posixAttributes, mask, &reply);
 
 	if (retvalue < 0) {
 		status = fsalLastError();
 
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+		if (hasShare) {
+			// Release the share reservation now by updating the counters.
+			update_share_counters_locked(objectHandle, &handle->share, FSAL_O_RDWR, FSAL_O_CLOSED);
+		}
 
 		return status;
 	}
 
 #ifdef ENABLE_NFS_ACL_SUPPORT
 	if (FSAL_TEST_MASK(attributes->valid_mask, (attrmask_t)ATTR_ACL)) {
-		status =
-		    setACL(export, handle->inode, attributes->acl, reply.attr.st_mode);
+		status = setACL(export, handle->inode, attributes->acl, reply.attr.st_mode);
 	}
 #endif
 
-	if (hasLock) {
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+	if (hasShare) {
+		// Release the share reservation now by updating the counters.
+		update_share_counters_locked(objectHandle, &handle->share, FSAL_O_RDWR, FSAL_O_CLOSED);
 	}
 
 	return status;
@@ -1400,37 +1409,32 @@ static fsal_status_t setattr2(struct fsal_obj_handle *objectHandle, bool bypass,
 /**
  * @brief Manage closing a file when a state is no longer needed.
  *
- * When the upper layers are ready to dispense with a state, this method is called
- * to allow the FSAL to close any file descriptors or release any other resources
- * associated with the state. A call to free_state should be assumed to follow soon.
+ * When the upper layers are ready to dispense with a state, this method is
+ * called to allow the FSAL to close any file descriptors or release any
+ * other resources associated with the state. A call to free_state should
+ * be assumed to follow soon.
  *
  * @param [in] objectHandle     File on which to operate
  * @param [in] state            state_t to use for this operation
  *
  * @returns: FSAL status
  */
-static fsal_status_t close2(struct fsal_obj_handle *objectHandle,
-                            struct state_t *state) {
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+static fsal_status_t close2(struct fsal_obj_handle *objectHandle, struct state_t *state) {
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode,
-	             handle->key.exportId, handle->inode);
+	struct SaunaFSFd *fileDescriptor =
+	    &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
 
-	if (state->state_type == STATE_TYPE_SHARE ||
-	    state->state_type == STATE_TYPE_NLM_SHARE ||
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode, handle->key.exportId,
+	             handle->inode);
+
+	if (state->state_type == STATE_TYPE_SHARE || state->state_type == STATE_TYPE_NLM_SHARE ||
 	    state->state_type == STATE_TYPE_9P_FID) {
-		// This is a share state, we must update the share counters
-		// This can block over an I/O operation
-		PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-
-		update_share_counters(&handle->share, handle->fd.openflags,
-		                      FSAL_O_CLOSED);
-
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
+		update_share_counters_locked(objectHandle, &handle->share, handle->fd.fsalFd.openflags,
+		                             FSAL_O_CLOSED);
 	}
 
-	return closeFileDescriptor(handle, &handle->fd);
+	return close_fsal_fd(objectHandle, &fileDescriptor->fsalFd, false);
 }
 
 /**
@@ -1444,16 +1448,21 @@ static fsal_status_t close2(struct fsal_obj_handle *objectHandle,
  * @param [in] attributesToSet      Attributes to set on newly created object
  * @param [out] createdObject       Newly created object
  * @param [in,out] attributes       Optional attributes for newly created object
+ * @param[in,out] parentPreAttributes  Optional attributes for parent dir before the operation.
+ *                                     Should be atomic.
+ * @param[in,out] parentPostAttributes Optional attributes for parent dir after the operation.
+ *                                     Should be atomic.
  *
  * \see fsal_api.h for more information
  *
  * @returns: FSAL status
  */
-static fsal_status_t symlink_(struct fsal_obj_handle *directoryHandle,
-                              const char *name, const char *symbolicLinkPath,
-                              struct fsal_attrlist *attributesToSet,
+static fsal_status_t symlink_(struct fsal_obj_handle *directoryHandle, const char *name,
+                              const char *symbolicLinkPath, struct fsal_attrlist *attributesToSet,
                               struct fsal_obj_handle **createdObject,
-                              struct fsal_attrlist *attributes) {
+                              struct fsal_attrlist *attributes,
+                              struct fsal_attrlist *parentPreAttributes,
+                              struct fsal_attrlist *parentPostAttributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *directory = NULL;
 	struct sau_entry entry;
@@ -1461,13 +1470,11 @@ static fsal_status_t symlink_(struct fsal_obj_handle *directoryHandle,
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %"
-	             PRIiNode " name = %s", export->export.export_id,
-	             directory->inode, name);
+	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " parent_inode = %" PRIiNode " name = %s",
+	             export->export.export_id, directory->inode, name);
 
-	int retvalue =
-	    saunafs_symlink(export->fsInstance, &op_ctx->creds, symbolicLinkPath,
-	                    directory->inode, name, &entry);
+	int retvalue = saunafs_symlink(export->fsInstance, &op_ctx->creds, symbolicLinkPath,
+	                               directory->inode, name, &entry);
 
 	if (retvalue < 0) {
 		return fsalLastError();
@@ -1482,22 +1489,18 @@ static fsal_status_t symlink_(struct fsal_obj_handle *directoryHandle,
 	if (attributesToSet->valid_mask) {
 		fsal_status_t status;
 
-		// Now per support_ex API, if there are any other attributes set,
-		// go ahead and get them set now
-		status = (*createdObject)->obj_ops->setattr2(*createdObject,
-		                                             false, NULL,
-		                                             attributesToSet);
+		// Now per support_ex API, if there are any other attributes set, go ahead and get them set
+		// now
+		status = (*createdObject)->obj_ops->setattr2(*createdObject, false, NULL, attributesToSet);
 
 		if (FSAL_IS_ERROR(status)) {
 			// Release the handle we just allocated
-			LogFullDebug(COMPONENT_FSAL, "setattr2 status = %s",
-			             fsal_err_txt(status));
+			LogFullDebug(COMPONENT_FSAL, "setattr2 status = %s", fsal_err_txt(status));
 
 			(*createdObject)->obj_ops->release(*createdObject);
 			*createdObject = NULL;
 		}
-	}
-	else if (attributes != NULL) {
+	} else if (attributes != NULL) {
 		posix2fsal_attributes_all(&entry.attr, attributes);
 	}
 
@@ -1523,11 +1526,10 @@ static fsal_status_t symlink_(struct fsal_obj_handle *directoryHandle,
  *
  * @returns: FSAL status
  */
-fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
-                       struct state_t *state, void *owner,
-                       fsal_lock_op_t lockOperation,
-                       fsal_lock_param_t *requestedLock,
+fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle, struct state_t *state, void *owner,
+                       fsal_lock_op_t lockOperation, fsal_lock_param_t *requestedLock,
                        fsal_lock_param_t *conflictingLock) {
+	struct SaunaFSHandle *handle = NULL;
 	struct SaunaFSExport *export = NULL;
 
 	sau_err_t lastError = 0;
@@ -1535,20 +1537,22 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	sau_lock_info_t lockInfo;
 
 	fsal_status_t status = {0, 0};
+	fsal_status_t status2 = {0, 0};
 	int retval = 0;
 
-	struct SaunaFSFd saunafsFd;
+	struct SaunaFSFd *saunafsFd = NULL;
 	fsal_openflags_t openflags = FSAL_O_RDWR;
 
-	bool hasLock = false;
-	bool closeFd = false;
+	struct SaunaFSFd emptyFileDescriptor = { FSAL_FD_INIT, NULL };
+	struct fsal_fd *outFileDescriptor = NULL;
 	bool bypass = false;
 
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
+	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "op:%d type:%d start:%" PRIu64 " length:%"
-	             PRIu64 " ", lockOperation, requestedLock->lock_type,
-	             requestedLock->lock_start, requestedLock->lock_length);
+	LogFullDebug(COMPONENT_FSAL, "Locking: op:%d type:%d start:%" PRIu64 " length:%" PRIu64 " ",
+	             lockOperation, requestedLock->lock_type, requestedLock->lock_start,
+	             requestedLock->lock_length);
 
 	if (objectHandle == NULL) {
 		LogCrit(COMPONENT_FSAL, "objectHandle arg is NULL.");
@@ -1560,25 +1564,26 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 		return fsalstat(ERR_FSAL_FAULT, 0);
 	}
 
+	if (conflictingLock == NULL && lockOperation == FSAL_OP_LOCKT) {
+		LogDebug(COMPONENT_FSAL, "conflictingLock argument can't be NULL for operation LOCKT");
+		return fsalstat(ERR_FSAL_FAULT, 0);
+	}
+
 	if (lockOperation == FSAL_OP_LOCKT) {
 		// We may end up using global fd, don't fail on a deny mode
 		bypass = true;
 		openflags = FSAL_O_ANY;
-	}
-	else if (lockOperation == FSAL_OP_LOCK) {
+	} else if (lockOperation == FSAL_OP_LOCK) {
 		if (requestedLock->lock_type == FSAL_LOCK_R) {
 			openflags = FSAL_O_READ;
-		}
-		else if (requestedLock->lock_type == FSAL_LOCK_W) {
+		} else if (requestedLock->lock_type == FSAL_LOCK_W) {
 			openflags = FSAL_O_WRITE;
 		}
-	}
-	else if (lockOperation == FSAL_OP_UNLOCK) {
+	} else if (lockOperation == FSAL_OP_UNLOCK) {
 		openflags = FSAL_O_ANY;
-	}
-	else {
-		LogFullDebug(COMPONENT_FSAL, "ERROR: Lock operation requested "
-		                             "was not TEST, READ, or WRITE.");
+	} else {
+		LogFullDebug(COMPONENT_FSAL,
+		             "ERROR: Lock operation requested was not TEST, READ, or WRITE.");
 
 		return fsalstat(ERR_FSAL_NOTSUPP, 0);
 	}
@@ -1590,15 +1595,10 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 
 	if (requestedLock->lock_type == FSAL_LOCK_R) {
 		lockInfo.l_type = F_RDLCK;
-	}
-	else if (requestedLock->lock_type == FSAL_LOCK_W) {
+	} else if (requestedLock->lock_type == FSAL_LOCK_W) {
 		lockInfo.l_type = F_WRLCK;
-	}
-	else {
-		LogFullDebug(COMPONENT_FSAL,
-		             "ERROR: The requested lock type was not "
-		             "read or write.");
-
+	} else {
+		LogFullDebug(COMPONENT_FSAL, "ERROR: The requested lock type was not read or write.");
 		return fsalstat(ERR_FSAL_NOTSUPP, 0);
 	}
 
@@ -1610,54 +1610,67 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 	lockInfo.l_len = requestedLock->lock_length;
 	lockInfo.l_start = requestedLock->lock_start;
 
-	// Get a usable file descriptor
-	status = findFileDescriptor(&saunafsFd, objectHandle, bypass, state,
-	                            openflags, &hasLock, &closeFd, true);
-
-	// IF find_fd returned DELAY, then fd caching in mdcache is
-	// turned off, which means that the consecutive attempt is very likely
-	// to succeed immediately.
-	if (status.major == ERR_FSAL_DELAY) {
-		status = findFileDescriptor(&saunafsFd, objectHandle, bypass, state,
-		                            openflags, &hasLock, &closeFd, true);
+	// Prevent locking an unintended range in case requested lock length is too large and mapped
+	// to negative values, as POSIX locks can accept negative l_len values.
+	if (lockInfo.l_len < 0) {
+		LogCrit(COMPONENT_FSAL,
+		        "Requested lock length is out of range - lockInfo.l_len(%lu), "
+		        "requested length(%" PRIu64 ")",
+		        lockInfo.l_len, requestedLock->lock_length);
+		return fsalstat(ERR_FSAL_BAD_RANGE, 0);
 	}
 
+	// Indicate a desire to start io and get a usable file descriptor
+	status = fsal_start_io(&outFileDescriptor, objectHandle, &handle->fd.fsalFd,
+	                       &emptyFileDescriptor.fsalFd, state, openflags, true, NULL, bypass,
+	                       &handle->share);
+
 	if (FSAL_IS_ERROR(status)) {
-		LogCrit(COMPONENT_FSAL, "Unable to find fd for lock operation");
+		LogCrit(COMPONENT_FSAL, "fsal_start_io failed returning %s", fsal_err_txt(status));
 
 		return status;
 	}
 
-	fileinfo = saunafsFd.fd;
-	
+	saunafsFd = container_of(outFileDescriptor, struct SaunaFSFd, fsalFd);
+	fileinfo = saunafsFd->fd;
+
 	// Defensive check: ensure we have a valid file descriptor before proceeding
 	if (fileinfo == NULL) {
 		LogCrit(COMPONENT_FSAL, "Lock operation called with NULL file descriptor");
-		
-		if (closeFd) { closeFileDescriptor(container_of(objectHandle, struct SaunaFSHandle, handle), &saunafsFd); }
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
-		
+
+		status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+		LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+		if (state == NULL) {
+			// We did I/O without a state so we need to release the temp share reservation acquired.
+			// Release the share reservation now by updating the counters.
+			update_share_counters_locked(objectHandle, &handle->share, openflags, FSAL_O_CLOSED);
+		}
+
 		return fsalstat(ERR_FSAL_FAULT, EFAULT);
 	}
-	
+
 	sau_set_lock_owner(fileinfo, (uint64_t)owner);
 
 	if (lockOperation == FSAL_OP_LOCKT) {
-		retval = saunafs_getlock(export->fsInstance, &op_ctx->creds, fileinfo,
-		                         &lockInfo);
-	}
-	else {
-		retval = saunafs_setlock(export->fsInstance, &op_ctx->creds, fileinfo,
-		                         &lockInfo);
+		retval = saunafs_getlock(export->fsInstance, &op_ctx->creds, fileinfo, &lockInfo);
+	} else {
+		retval = saunafs_setlock(export->fsInstance, &op_ctx->creds, fileinfo, &lockInfo);
 	}
 
 	if (retval < 0) {
 		lastError = sau_last_err();
-
-		if (closeFd && fileinfo != NULL) { sau_release(export->fsInstance, fileinfo); }
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
-
 		LogFullDebug(COMPONENT_FSAL, "Returning error %d", lastError);
+
+		status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+		LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+		if (state == NULL) {
+			// We did I/O without a state so we need to release the temp share reservation acquired.
+			// Release the share reservation now by updating the counters.
+			update_share_counters_locked(objectHandle, &handle->share, openflags, FSAL_O_CLOSED);
+		}
+
 		return saunafsToFsalError(lastError);
 	}
 
@@ -1667,33 +1680,34 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
 			conflictingLock->lock_length = lockInfo.l_len;
 			conflictingLock->lock_start = lockInfo.l_start;
 			conflictingLock->lock_type = lockInfo.l_type;
-		}
-		else {
+		} else {
 			conflictingLock->lock_length = 0;
 			conflictingLock->lock_start = 0;
 			conflictingLock->lock_type = FSAL_NO_LOCK;
 		}
 	}
 
-	if (closeFd && fileinfo != NULL) {
-		sau_release(export->fsInstance, fileinfo);
+	status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+	LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
+
+	if (state == NULL) {
+		// We did I/O without a state so we need to release the temp share reservation acquired.
+		// Release the share reservation now by updating the counters.
+		update_share_counters_locked(objectHandle, &handle->share, openflags, FSAL_O_CLOSED);
 	}
 
-	if (hasLock) {
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-	}
-
-	return fsalstat(ERR_FSAL_NO_ERROR, 0);
+	return status;
 }
 
 /**
  * @brief Re-open a file that may be already opened.
  *
- * This function supports changing the access mode of a share reservation and
- * thus should only be called with a share state. The st_lock must be held.
+ * This function supports changing the access mode of a share reservation
+ * and thus should only be called with a share state. The st_lock must be
+ * held.
  *
- * This MAY be used to open a file the first time if there is no need for open
- * by name or create semantics. One example would be 9P lopen.
+ * This MAY be used to open a file the first time if there is no need for
+ * open by name or create semantics. One example would be 9P lopen.
  *
  * @param [in] objectHandle     File on which to operate
  * @param [in] state            state_t to use for this operation
@@ -1701,57 +1715,9 @@ fsal_status_t lock_op2(struct fsal_obj_handle *objectHandle,
  *
  * @returns: FSAL status
  */
-static fsal_status_t reopen2(struct fsal_obj_handle *objectHandle,
-                             struct state_t *state,
+static fsal_status_t reopen2(struct fsal_obj_handle *objectHandle, struct state_t *state,
                              fsal_openflags_t openflags) {
-	struct SaunaFSHandle *handle = NULL;
-	struct SaunaFSFd *sharedFd = NULL;
-	fsal_status_t status;
-
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
-	sharedFd = &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
-
-	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode,
-	             handle->key.exportId, handle->inode);
-
-	struct SaunaFSFd saunafsFd = { FSAL_O_CLOSED, NULL };
-
-	// This can block over an I/O operation
-	PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-
-	fsal_openflags_t oldOpenflags = sharedFd->openflags;
-
-	// We can conflict with old share, so go ahead and check now
-	status = check_share_conflict(&handle->share, openflags, false);
-
-	if (FSAL_IS_ERROR(status)) {
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-		return status;
-	}
-
-	// Set up the new share so we can drop the lock and not have a
-	// conflicting share be asserted, updating the share counters
-	update_share_counters(&handle->share, oldOpenflags, openflags);
-
-	PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-
-	status = openFileDescriptor(handle, openflags, &saunafsFd, true);
-
-	if (!FSAL_IS_ERROR(status)) {
-		closeFileDescriptor(handle, sharedFd);
-		*sharedFd = saunafsFd;
-	}
-	else {
-		// We had a failure on open - we need to revert the share.
-		// This can block over an I/O operation
-		PTHREAD_RWLOCK_wrlock(&objectHandle->obj_lock);
-
-		update_share_counters(&handle->share, openflags, oldOpenflags);
-
-		PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock);
-	}
-
-	return status;
+	return openByHandle(objectHandle, state, openflags, FSAL_NO_CREATE, NULL, NULL);
 }
 
 /**
@@ -1765,16 +1731,21 @@ static fsal_status_t reopen2(struct fsal_obj_handle *objectHandle,
  * @param [in] attributesToSet     Attributes to set on newly created object
  * @param [in] createdObject       Newly created object
  * @param [in] attributes          Optional attributes for newly created object
+ * @param[in,out] parentPreAttributes  Optional attributes for parent dir before the operation.
+ *                                     Should be atomic.
+ * @param[in,out] parentPostAttributes Optional attributes for parent dir after the operation.
+ *                                     Should be atomic.
  *
  * \see fsal_api.h for more information
  *
  * @returns: FSAL status
  */
-static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle,
-                            const char *name, object_file_type_t nodeType,
-                            struct fsal_attrlist *attributesToSet,
+static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle, const char *name,
+                            object_file_type_t nodeType, struct fsal_attrlist *attributesToSet,
                             struct fsal_obj_handle **createdObject,
-                            struct fsal_attrlist *attributes) {
+                            struct fsal_attrlist *attributes,
+                            struct fsal_attrlist *parentPreAttributes,
+                            struct fsal_attrlist *parentPostAttributes) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *directory = NULL;
 	struct SaunaFSHandle *handle = NULL;
@@ -1786,23 +1757,20 @@ static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle,
 	directory = container_of(directoryHandle, struct SaunaFSHandle, handle);
 
 	LogFullDebug(COMPONENT_FSAL,
-	             "export = %" PRIu16 " parent_inode = %" PRIiNode " mode = %"
-	             PRIo32 " name = %s", export->export.export_id,
-	             directory->inode, attributesToSet->mode, name);
+	             "export = %" PRIu16 " parent_inode = %" PRIiNode " mode = %" PRIo32 " name = %s",
+	             export->export.export_id, directory->inode, attributesToSet->mode, name);
 
 	unixMode = fsal2unix_mode(attributesToSet->mode) &
-	        ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
+	           ~op_ctx->fsal_export->exp_ops.fs_umask(op_ctx->fsal_export);
 
 	switch (nodeType) {
 	case BLOCK_FILE:
 		unixMode |= S_IFBLK;
-		unixDev = makedev(attributesToSet->rawdev.major,
-		                  attributesToSet->rawdev.minor);
+		unixDev = makedev(attributesToSet->rawdev.major, attributesToSet->rawdev.minor);
 		break;
 	case CHARACTER_FILE:
 		unixMode |= S_IFCHR;
-		unixDev = makedev(attributesToSet->rawdev.major,
-		                  attributesToSet->rawdev.minor);
+		unixDev = makedev(attributesToSet->rawdev.major, attributesToSet->rawdev.minor);
 		break;
 	case FIFO_FILE:
 		unixMode |= S_IFIFO;
@@ -1811,15 +1779,13 @@ static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle,
 		unixMode |= S_IFSOCK;
 		break;
 	default:
-		LogMajor(COMPONENT_FSAL, "Invalid node type in FSAL_mknode: %d",
-		         nodeType);
+		LogMajor(COMPONENT_FSAL, "Invalid node type in FSAL_mknode: %d", nodeType);
 
 		return fsalstat(ERR_FSAL_INVAL, EINVAL);
 	}
 
-	int retvalue =
-	    saunafs_mknode(export->fsInstance, &op_ctx->creds, directory->inode,
-	                   name, unixMode, unixDev, &entry);
+	int retvalue = saunafs_mknode(export->fsInstance, &op_ctx->creds, directory->inode, name,
+	                              unixMode, unixDev, &entry);
 
 	if (retvalue < 0) {
 		return fsalLastError();
@@ -1834,20 +1800,16 @@ static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle,
 	if (attributesToSet->valid_mask) {
 		fsal_status_t status;
 		// Setting attributes for the created object
-		status = (*createdObject)->obj_ops->setattr2(*createdObject,
-		                                             false, NULL,
-		                                             attributesToSet);
+		status = (*createdObject)->obj_ops->setattr2(*createdObject, false, NULL, attributesToSet);
 
 		if (FSAL_IS_ERROR(status)) {
-			LogFullDebug(COMPONENT_FSAL, "setattr2 status = %s",
-			             fsal_err_txt(status));
+			LogFullDebug(COMPONENT_FSAL, "setattr2 status = %s", fsal_err_txt(status));
 
 			// Release the handle we just allocated
 			(*createdObject)->obj_ops->release(*createdObject);
 			*createdObject = NULL;
 		}
-	}
-	else if (attributes != NULL) {
+	} else if (attributes != NULL) {
 		// Since we haven't set any attributes other than what was set on create,
 		// just use the stat results we used to create the fsal_obj_handle
 		posix2fsal_attributes_all(&entry.attr, attributes);
@@ -1861,24 +1823,25 @@ static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle,
  * @brief Read the content of a link.
  *
  * File object operations.
- * This function reads the content of a symbolic link. The FSAL will allocate a
- * buffer and store its address and the link length in the link_content
- * gsh_buffdesc. The caller must free this buffer with gsh_free.
+ * This function reads the content of a symbolic link. The FSAL will
+ * allocate a buffer and store its address and the link length in the
+ * link_content gsh_buffdesc. The caller must free this buffer with
+ * gsh_free.
  *
  * The symlink content passed back must be null terminated and the length
  * indicated in the buffer description must include the terminator.
  *
  * @param [in]  objectHandle  Link to read
- * @param [out] buffer        Buffer descriptor to which the FSAL will store the
- *                            address of the buffer holding the link and the
- *                            link length
- * @param [out] refresh       true if the content are to be retrieved from the
- *                            underlying filesystem rather than cache
+ * @param [out] buffer        Buffer descriptor to which the FSAL will
+ *                            store the address of the buffer holding the link
+ *                            and the link length
+ * @param [out] refresh       true if the content are to be retrieved from
+ *                            the underlying filesystem rather than cache
  *
  * @returns: FSAL status
  */
-static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle,
-                               struct gsh_buffdesc *buffer, bool refresh) {
+static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle, struct gsh_buffdesc *buffer,
+                               bool refresh) {
 	(void)refresh;
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
@@ -1894,15 +1857,12 @@ static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle,
 	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode,
 	             export->export.export_id, handle->inode);
 
-	int size =
-	    saunafs_readlink(export->fsInstance, &op_ctx->creds, handle->inode,
-	                     result, SAUNAFS_MAX_READLINK_LENGTH);
+	int size = saunafs_readlink(export->fsInstance, &op_ctx->creds, handle->inode, result,
+	                            SAUNAFS_MAX_READLINK_LENGTH);
 
 	// saunafs_readlink() returns the size of the read link if succeed.
-	// Otherwise returns -1 to indicate an error occurred
-	if (size < 0) {
-		return fsalLastError();
-	}
+	// Otherwise returns -1 to indicate an error occurred.
+	if (size < 0) { return fsalLastError(); }
 
 	size = MIN(size, SAUNAFS_MAX_READLINK_LENGTH);
 	buffer->addr = gsh_strldup(result, size, &buffer->len);
@@ -1921,12 +1881,11 @@ static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle,
  *
  * @returns: Flags representing current open status
  */
-static fsal_openflags_t status2(struct fsal_obj_handle *objectHandle,
-                                struct state_t *state) {
+static fsal_openflags_t status2(struct fsal_obj_handle *objectHandle, struct state_t *state) {
 	(void)objectHandle;
-	struct SaunaFSFd *saunafsFd = NULL;
-	saunafsFd = &container_of(state, struct SaunaFSStateFd, state)->saunafsFd;
-	return saunafsFd->openflags;
+	struct SaunaFSFd *sfsFd = &((struct SaunaFSStateFd *)state)->saunafsFd;
+
+	return sfsFd->fsalFd.openflags;
 }
 
 /**
@@ -1948,8 +1907,7 @@ static fsal_status_t merge(struct fsal_obj_handle *originalHandle,
                            struct fsal_obj_handle *toMergeHandle) {
 	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
 
-	if (originalHandle->type == REGULAR_FILE &&
-	    toMergeHandle->type == REGULAR_FILE) {
+	if (originalHandle->type == REGULAR_FILE && toMergeHandle->type == REGULAR_FILE) {
 		// We need to merge the share reservations on this file.
 		// This could result in ERR_FSAL_SHARE_DENIED.
 		struct SaunaFSHandle *original = NULL;
@@ -1976,90 +1934,114 @@ static fsal_status_t merge(struct fsal_obj_handle *originalHandle,
  *
  * @returns: FSAL status
  */
-static fsal_status_t fallocate(struct fsal_obj_handle *objectHandle,
-                               struct state_t *state, uint64_t offset,
-                               uint64_t length, bool allocate) {
+static fsal_status_t fallocate(struct fsal_obj_handle *objectHandle, struct state_t *state,
+                               uint64_t offset, uint64_t length, bool allocate) {
 	struct SaunaFSExport *export = NULL;
 	struct SaunaFSHandle *handle = NULL;
-	struct SaunaFSFd saunafsFd;
 
-	fsal_status_t status;
-	bool hasLock = false;
-	bool closeFd = false;
+	fsal_status_t status = {0, 0};
+	fsal_status_t status2 = {0, 0};
+
+	struct SaunaFSFd *fileDescriptor = NULL;
+	struct SaunaFSFd emptyFileDescriptor = { FSAL_FD_INIT, NULL };
+	struct fsal_fd *outFileDescriptor = NULL;
 
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	status = findFileDescriptor(&saunafsFd, objectHandle, false, state,
-	                            FSAL_O_WRITE, &hasLock, &closeFd, false);
+	// Indicate a desire to start io and get a usable file descriptor
+	status = fsal_start_io(&outFileDescriptor, objectHandle, &handle->fd.fsalFd,
+	                       &emptyFileDescriptor.fsalFd, state, FSAL_O_WRITE, false, NULL, false,
+	                       &handle->share);
 
 	if (FSAL_IS_ERROR(status)) {
-		if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
-
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+		LogFullDebug(COMPONENT_FSAL, "fsal_start_io failed returning %s", fsal_err_txt(status));
 
 		return status;
 	}
 
 	struct stat posixAttributes;
+
 	memset(&posixAttributes, 0, sizeof(posixAttributes));
 
-	posixAttributes.st_mode =
-	    allocate ? 0 : FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
+	posixAttributes.st_mode = allocate ? 0 : FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE;
 
 	// Get stat to obtain the current size
 	sau_attr_reply_t currentStats;
 	sau_attr_reply_t reply;
 
-	int retvalue = saunafs_getattr(export->fsInstance, &op_ctx->creds,
-	                               handle->inode, &currentStats);
+	int retvalue =
+	    saunafs_getattr(export->fsInstance, &op_ctx->creds, handle->inode, &currentStats);
 
 	if (retvalue < 0) {
-		if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+		status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+		LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-		if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+		if (state == NULL) {
+			// We did I/O without a state so we need to release the temp share reservation acquired.
+
+			// Release the share reservation now by updating the counters.
+			update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE, FSAL_O_CLOSED);
+		}
 
 		return fsalLastError();
 	}
 
+	fileDescriptor = container_of(outFileDescriptor, struct SaunaFSFd, fsalFd);
+
 	if (allocate) {
+		// Allocate
 		if (offset + length > currentStats.attr.st_size) {
 			posixAttributes.st_size = offset + length;
 
-			retvalue = saunafs_setattr(export->fsInstance, &op_ctx->creds,
-			                           handle->inode, &posixAttributes,
-			                           SAU_SET_ATTR_SIZE, &reply);
+			retvalue = saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode,
+			                           &posixAttributes, SAU_SET_ATTR_SIZE, &reply);
 
 			if (retvalue < 0) {
-				if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+				status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+				LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-				if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+				if (state == NULL) {
+					// We did I/O without a state so we need to release the
+					// temp share reservation acquired.
+
+					// Release the share reservation now by updating the counters.
+					update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE,
+					                             FSAL_O_CLOSED);
+				}
 
 				return fsalLastError();
 			}
 
-			retvalue =
-			    saunafs_fsync(export->fsInstance, &op_ctx->creds, saunafsFd.fd);
+			retvalue = saunafs_fsync(export->fsInstance, &op_ctx->creds, fileDescriptor->fd);
 
 			if (retvalue < 0) { status = fsalLastError(); }
 		}
-	}
-	else if (allocate == false) { // Deallocate
+	} else if (allocate == false) {
+		// Deallocate
 		// Initialize the zero-buffer
 		void *buffer = malloc(length);
 
 		memset(buffer, 0, length);
 
 		// Write the interval [offset..offset + length] with zeros
-		ssize_t bytes = saunafs_write(export->fsInstance, &op_ctx->creds,
-		                              saunafsFd.fd, offset, length, buffer);
+		ssize_t bytes = saunafs_write(export->fsInstance, &op_ctx->creds, fileDescriptor->fd,
+		                              offset, length, buffer);
 
 		free(buffer);
 
 		if (bytes < 0) {
-			if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+			status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+			LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-			if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+			if (state == NULL) {
+				// We did I/O without a state so we need to release the temp share reservation
+				// acquired.
+
+				// Release the share reservation now by updating the counters.
+				update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE,
+				                             FSAL_O_CLOSED);
+			}
 
 			return fsalLastError();
 		}
@@ -2067,29 +2049,54 @@ static fsal_status_t fallocate(struct fsal_obj_handle *objectHandle,
 		// Set the original size because deallocation must not change file size
 		posixAttributes.st_size = currentStats.attr.st_size;
 
-		retvalue =
-		    saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode,
-		                    &posixAttributes, SAU_SET_ATTR_SIZE, &reply);
+		retvalue = saunafs_setattr(export->fsInstance, &op_ctx->creds, handle->inode,
+		                           &posixAttributes, SAU_SET_ATTR_SIZE, &reply);
 
 		if (retvalue < 0) {
-			if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+			status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+			LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-			if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+			if (state == NULL) {
+				// We did I/O without a state so we need to release the temp share reservation
+				// acquired.
+
+				// Release the share reservation now by updating the counters.
+				update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE,
+				                             FSAL_O_CLOSED);
+			}
 
 			return fsalLastError();
 		}
 
-		retvalue =
-		    saunafs_fsync(export->fsInstance, &op_ctx->creds, saunafsFd.fd);
+		retvalue = saunafs_fsync(export->fsInstance, &op_ctx->creds, fileDescriptor->fd);
 
 		if (retvalue < 0) { status = fsalLastError(); }
 	}
 
-	if (closeFd) { closeFileDescriptor(handle, &saunafsFd); }
+	status2 = fsal_complete_io(objectHandle, outFileDescriptor);
+	LogFullDebug(COMPONENT_FSAL, "fsal_complete_io returned %s", fsal_err_txt(status2));
 
-	if (hasLock) { PTHREAD_RWLOCK_unlock(&objectHandle->obj_lock); }
+	if (state == NULL) {
+		// We did I/O without a state so we need to release the temp share reservation acquired.
+
+		// Release the share reservation now by updating the counters.
+		update_share_counters_locked(objectHandle, &handle->share, FSAL_O_WRITE, FSAL_O_CLOSED);
+	}
 
 	return status;
+}
+
+/**
+ * @brief Function to close a file for a given handle.
+ *
+ * @param[in]  objectHandle     File on which to operate
+ * @param[in]  fd               File descriptor to be closed
+ *
+ * @return FSAL status.
+ */
+static fsal_status_t close_func(struct fsal_obj_handle *objectHandle, struct fsal_fd *fd) {
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	return closeFileDescriptor(handle, (struct SaunaFSFd *)fd);
 }
 
 /**
@@ -2103,31 +2110,27 @@ static fsal_status_t fallocate(struct fsal_obj_handle *objectHandle,
  *
  * @returns: FSAL status
  */
-static fsal_status_t getxattrs(struct fsal_obj_handle *objectHandle,
-                               xattrkey4 *xattributeName,
+static fsal_status_t getxattrs(struct fsal_obj_handle *objectHandle, xattrkey4 *xattributeName,
                                xattrvalue4 *xattributeValue) {
 	struct SaunaFSExport *export = NULL;
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
 	size_t curr_size = 0;
-	int retvalue = saunafs_getxattr(
-	    export->fsInstance, &op_ctx->creds, handle->inode,
-	    xattributeName->utf8string_val, xattributeValue->utf8string_len,
-	    &curr_size, (uint8_t *)xattributeValue->utf8string_val);
+	int retvalue = saunafs_getxattr(export->fsInstance, &op_ctx->creds, handle->inode,
+	                                xattributeName->utf8string_val, xattributeValue->utf8string_len,
+	                                &curr_size, (uint8_t *)xattributeValue->utf8string_val);
 
 	if (retvalue < 0) {
-		LogFullDebug(COMPONENT_FSAL, "GETXATTRS failed returned rc = %d ",
-		             retvalue);
+		LogFullDebug(COMPONENT_FSAL, "GETXATTRS failed returned rc = %d ", retvalue);
 		return saunafsToFsalError(retvalue);
 	}
 
 	if (curr_size && curr_size <= xattributeValue->utf8string_len) {
 		// Updating the real size
 		xattributeValue->utf8string_len = curr_size;
-		// Make sure utf8string is NUL terminated
+		// Make sure utf8string is NULL terminated
 		xattributeValue->utf8string_val[curr_size] = '\0';
 	}
 
@@ -2146,21 +2149,15 @@ static fsal_status_t getxattrs(struct fsal_obj_handle *objectHandle,
  *
  * @returns: FSAL status
  */
-static fsal_status_t setxattrs(struct fsal_obj_handle *objectHandle,
-                               setxattr_option4 option,
-                               xattrkey4 *xattributeName,
-                               xattrvalue4 *xattributeValue) {
-	struct SaunaFSExport *export = NULL;
-	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
+static fsal_status_t setxattrs(struct fsal_obj_handle *objectHandle, setxattr_option4 option,
+                               xattrkey4 *xattributeName, xattrvalue4 *xattributeValue) {
+	struct SaunaFSExport *export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	int retvalue =
-	    saunafs_setxattr(export->fsInstance, &op_ctx->creds, handle->inode,
-	                     xattributeName->utf8string_val,
-	                     (const uint8_t *)xattributeValue->utf8string_val,
-	                     xattributeValue->utf8string_len, option);
+	int retvalue = saunafs_setxattr(
+	    export->fsInstance, &op_ctx->creds, handle->inode, xattributeName->utf8string_val,
+	    (const uint8_t *)xattributeValue->utf8string_val, xattributeValue->utf8string_len, option);
 
 	if (retvalue < 0) {
 		LogDebug(COMPONENT_FSAL, "SETXATTRS returned rc %d", retvalue);
@@ -2179,33 +2176,31 @@ static fsal_status_t setxattrs(struct fsal_obj_handle *objectHandle,
  * @param [in]     maximumNameSize      Input maximum number of bytes for names
  * @param [in,out] cookie               In/out cookie
  * @param [out]    eof                  Output eof set if no more extended attributes
- * @param [out]    xattributesNames     Output list of extended attribute names this
- *                                      buffer size is double the size of maximumNameSize
- *                                      to allow for component4 overhead
+ * @param [out]    xattributesNames     Output list of extended attribute names this buffer size is
+ *                                      double the size of maximumNameSize to allow
+ *                                      for component4 overhead
  *
  * @returns: FSAL status
  */
-static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle,
-                                count4 maximumNameSize, nfs_cookie4 *cookie,
-                                bool_t *eof, xattrlist4 *xattributesNames) {
+static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle, count4 maximumNameSize,
+                                nfs_cookie4 *cookie, bool_t *eof, xattrlist4 *xattributesNames) {
 	char *buffer = NULL;
 	fsal_status_t status = fsalstat(ERR_FSAL_NO_ERROR, 0);
 
 	struct SaunaFSExport *export = NULL;
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	LogFullDebug(COMPONENT_FSAL, "in cookie %llu length %d",
-	             (unsigned long long)*cookie, maximumNameSize);
+	LogFullDebug(COMPONENT_FSAL, "in cookie %llu length %d", (unsigned long long)*cookie,
+	             maximumNameSize);
 
 	// Size of list of extended attributes
 	size_t curr_size = 0;
 
 	// First time, the function is called to get the size of xattr list
-	int retvalue = saunafs_listxattr(export->fsInstance, &op_ctx->creds,
-	                                 handle->inode, 0, &curr_size, NULL);
+	int retvalue =
+	    saunafs_listxattr(export->fsInstance, &op_ctx->creds, handle->inode, 0, &curr_size, NULL);
 
 	if (retvalue < 0) {
 		LogDebug(COMPONENT_FSAL, "LISTXATTRS returned rc %d", retvalue);
@@ -2216,10 +2211,9 @@ static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle,
 	if (curr_size && curr_size < maximumNameSize) {
 		buffer = gsh_malloc(curr_size);
 
-		// Second time, the function is called to retrieve the xattr list
-		retvalue =
-		    saunafs_listxattr(export->fsInstance, &op_ctx->creds, handle->inode,
-		                      curr_size, &curr_size, buffer);
+		// Second time the function is called to retrieve the xattr list
+		retvalue = saunafs_listxattr(export->fsInstance, &op_ctx->creds, handle->inode, curr_size,
+		                             &curr_size, buffer);
 
 		if (retvalue < 0) {
 			LogDebug(COMPONENT_FSAL, "LISTXATTRS returned rc %d", retvalue);
@@ -2228,8 +2222,8 @@ static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle,
 		}
 
 		// Setting retrieved extended attributes to Ganesha
-		status = fsal_listxattr_helper(buffer, curr_size, maximumNameSize,
-		                               cookie, eof, xattributesNames);
+		status = fsal_listxattr_helper(buffer, curr_size, maximumNameSize, cookie, eof,
+		                               xattributesNames);
 
 		// Releasing allocated buffer
 		gsh_free(buffer);
@@ -2248,17 +2242,14 @@ static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle,
  *
  * @returns: FSAL status
  */
-static fsal_status_t removexattrs(struct fsal_obj_handle *objectHandle,
-                                  xattrkey4 *xattributeName) {
+static fsal_status_t removexattrs(struct fsal_obj_handle *objectHandle, xattrkey4 *xattributeName) {
 	struct SaunaFSExport *export = NULL;
 	export = container_of(op_ctx->fsal_export, struct SaunaFSExport, export);
 
-	struct SaunaFSHandle *handle = NULL;
-	handle = container_of(objectHandle, struct SaunaFSHandle, handle);
+	struct SaunaFSHandle *handle = container_of(objectHandle, struct SaunaFSHandle, handle);
 
-	int retvalue =
-	    saunafs_removexattr(export->fsInstance, &op_ctx->creds, handle->inode,
-	                        xattributeName->utf8string_val);
+	int retvalue = saunafs_removexattr(export->fsInstance, &op_ctx->creds, handle->inode,
+	                                   xattributeName->utf8string_val);
 
 	if (retvalue < 0) {
 		LogFullDebug(COMPONENT_FSAL, "REMOVEXATTR returned rc %d", retvalue);
@@ -2289,6 +2280,8 @@ void handleOperationsInit(struct fsal_obj_ops *ops) {
 	ops->close2 = close2;
 	ops->symlink = symlink_;
 	ops->lock_op2 = lock_op2;
+	ops->close_func = close_func;
+	ops->reopen_func = reopen_func;
 	ops->reopen2 = reopen2;
 	ops->mknode = mknode;
 	ops->readlink = readlink_;
@@ -2313,23 +2306,26 @@ void handleOperationsInit(struct fsal_obj_ops *ops) {
  *
  * @returns: saunafs_handle instance or NULL.
  */
-struct SaunaFSHandle *allocateHandle(const struct stat *attribute,
-                                     struct SaunaFSExport *export) {
-	struct SaunaFSHandle *result = NULL;
-	result = gsh_calloc(1, sizeof(struct SaunaFSHandle));
+struct SaunaFSHandle *allocateHandle(const struct stat *attribute, struct SaunaFSExport *export) {
+	struct SaunaFSHandle *result = gsh_calloc(1, sizeof(struct SaunaFSHandle));
 
 	result->inode = attribute->st_ino;
-	result->key.moduleId = FSAL_ID_EXPERIMENTAL;
+	result->key.moduleId = FSAL_ID_SAUNAFS;
 	result->key.exportId = export->export.export_id;
 	result->key.inode = attribute->st_ino;
 
-	fsal_obj_handle_init(&result->handle, &export->export,
-	                     posix2fsal_type(attribute->st_mode));
+	fsal_obj_handle_init(&result->handle, &export->export, posix2fsal_type(attribute->st_mode),
+	                     true);
 
 	result->handle.obj_ops = &SaunaFS.handleOperations;
 	result->handle.fsid = posix2fsal_fsid(attribute->st_dev);
 	result->handle.fileid = attribute->st_ino;
 	result->export = export;
+
+	if (result->handle.type == REGULAR_FILE) {
+		init_fsal_fd(&result->fd.fsalFd, FSAL_FD_GLOBAL, op_ctx->fsal_export);
+	}
+
 	return result;
 }
 
@@ -2339,6 +2335,6 @@ struct SaunaFSHandle *allocateHandle(const struct stat *attribute,
  * @param[in] object     Handle to release
  */
 void deleteHandle(struct SaunaFSHandle *object) {
-	fsal_obj_handle_fini(&object->handle);
+	fsal_obj_handle_fini(&object->handle, true);
 	gsh_free(object);
 }

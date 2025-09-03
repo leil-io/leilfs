@@ -111,6 +111,12 @@ events.
 
 Join us and be part of the discussion.
 
+## Licensing
+
+Most of the software is licensed under GPLv3, except the Ganesha FSAL, which is
+licensed LGPLv3 and located under `src/nfs-ganesha/`. See the [FSAL LICENSE
+file](src/nfs-ganesha/LICENSE) for more info.
+
 ### Other ways to contact us
 | Method                     | Link                                                          |
 |----------------------------|---------------------------------------------------------------|

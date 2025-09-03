@@ -1,42 +1,41 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /*
 
    Copyright 2017 Skytechnology sp. z o.o.
    Copyright 2023 Leil Storage OÜ
 
-   This file is part of SaunaFS.
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU Lesser General Public
+   License as published by the Free Software Foundation; either
+   version 3 of the License, or (at your option) any later version.
 
-   SaunaFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   SaunaFS is distributed in the hope that it will be useful,
+   This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-   GNU General Public License for more details.
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   Lesser General Public License for more details.
 
-   You should have received a copy of the GNU General Public License
-   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
- */
+   You should have received a copy of the GNU Lesser General Public
+   License along with this library; if not, write to the Free Software
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+   02110-1301 USA
+*/
 
-#include "context_wrap.h"
-#include "saunafs_internal.h"
+#include "nfs-ganesha/context_wrap.h"
+#include "nfs-ganesha/saunafs_internal.h"
 
 const uint ByteMaxValue = 0xFF;
 
 /**
  * @brief Convert a given ACL in FSAL format to the corresponding SaunaFS ACL.
  * The mode is used to create a default ACL and set POSIX permission flags.
- * The new ACL is filled with the ACEs from the original ACL to have the same
- * permissions and flags.
+ * The new ACL is filled with the ACEs from the original ACL to have the same permissions and flags.
  *
  * @param[in] fsalACL     FSAL ACL
- * @param[in] mode        Mode used to create the acl and set POSIX permission
- *                        flags
+ * @param[in] mode        Mode used to create the acl and set POSIX permission flags
  *
  * @returns: SaunaFS ACL
  */
-sau_acl_t *convertFsalACLToSaunafsACL(const fsal_acl_t *fsalACL,
-                                      unsigned int mode) {
+sau_acl_t *convertFsalACLToSaunafsACL(const fsal_acl_t *fsalACL, unsigned int mode) {
 	sau_acl_t *saunafsACL = NULL;
 
 	if (!fsalACL || (!fsalACL->aces && fsalACL->naces > 0)) {
@@ -51,20 +50,17 @@ sau_acl_t *convertFsalACLToSaunafsACL(const fsal_acl_t *fsalACL,
 	for (unsigned int i = 0; i < fsalACL->naces; ++i) {
 		fsal_ace_t *fsalACE = fsalACL->aces + i;
 
-		if (!(IS_FSAL_ACE_ALLOW(*fsalACE) ||
-		      IS_FSAL_ACE_DENY(*fsalACE))) {
-			continue;
-		}
+		if (!(IS_FSAL_ACE_ALLOW(*fsalACE) || IS_FSAL_ACE_DENY(*fsalACE))) { continue; }
 
 		sau_acl_ace_t ace;
+
 		ace.flags = fsalACE->flag & ByteMaxValue;
 		ace.mask  = fsalACE->perm;
 		ace.type  = fsalACE->type;
 
 		if (IS_FSAL_ACE_GROUP_ID(*fsalACE)) {
 			ace.id = GET_FSAL_ACE_GROUP(*fsalACE);
-		}
-		else {
+		} else {
 			ace.id = GET_FSAL_ACE_USER(*fsalACE);
 		}
 
@@ -81,8 +77,7 @@ sau_acl_t *convertFsalACLToSaunafsACL(const fsal_acl_t *fsalACL,
 				ace.id = SAU_ACL_EVERYONE_SPECIAL_ID;
 				break;
 			default:
-				LogFullDebug(COMPONENT_FSAL,
-				             "Invalid FSAL ACE special id type (%d)",
+				LogFullDebug(COMPONENT_FSAL, "Invalid FSAL ACE special id type (%d)",
 				             (int)GET_FSAL_ACE_USER(*fsalACE));
 				continue;
 			}
@@ -129,15 +124,13 @@ fsal_acl_t *convertSaunafsACLToFsalACL(const sau_acl_t *saunafsACL) {
 
 		fsalACE->type  = saunafsACE.type;
 		fsalACE->flag  = saunafsACE.flags & ByteMaxValue;
-		fsalACE->iflag = (saunafsACE.flags & (unsigned)SAU_ACL_SPECIAL_WHO)
-		                      ? FSAL_ACE_IFLAG_SPECIAL_ID
-		                      : 0;
+		fsalACE->iflag =
+		    (saunafsACE.flags & (unsigned)SAU_ACL_SPECIAL_WHO) ? FSAL_ACE_IFLAG_SPECIAL_ID : 0;
 		fsalACE->perm = saunafsACE.mask;
 
 		if (IS_FSAL_ACE_GROUP_ID(*fsalACE)) {
 			fsalACE->who.gid = saunafsACE.id;
-		}
-		else {
+		} else {
 			fsalACE->who.uid = saunafsACE.id;
 		}
 
@@ -154,8 +147,7 @@ fsal_acl_t *convertSaunafsACLToFsalACL(const sau_acl_t *saunafsACL) {
 				break;
 			default:
 				fsalACE->who.uid = FSAL_ACE_NORMAL_WHO;
-				LogWarn(COMPONENT_FSAL,
-				        "Invalid SaunaFS ACE special id type (%u)",
+				LogWarn(COMPONENT_FSAL, "Invalid SaunaFS ACE special id type (%u)",
 				        (unsigned int)saunafsACE.id);
 			}
 		}
@@ -184,14 +176,11 @@ fsal_status_t getACL(struct SaunaFSExport *export, inode_t inode, uint32_t owner
 	}
 
 	sau_acl_t *saunafsACL = NULL;
-	int status =
-	    saunafs_getacl(export->fsInstance, &op_ctx->creds, inode, &saunafsACL);
+	int status = saunafs_getacl(export->fsInstance, &op_ctx->creds, inode, &saunafsACL);
 
 	if (status < 0) {
-		LogFullDebug(COMPONENT_FSAL,
-		             "getacl status = %s export=%" PRIu16 " inode=%" PRIiNode,
-		             sau_error_string(sau_last_err()), export->export.export_id,
-		             inode);
+		LogFullDebug(COMPONENT_FSAL, "getacl status = %s export=%" PRIu16 " inode=%" PRIiNode,
+		             sau_error_string(sau_last_err()), export->export.export_id, inode);
 
 		return fsalLastError();
 	}
@@ -203,8 +192,8 @@ fsal_status_t getACL(struct SaunaFSExport *export, inode_t inode, uint32_t owner
 
 	if (*acl == NULL) {
 		LogFullDebug(COMPONENT_FSAL,
-		             "Failed to convert saunafs acl to nfs4 acl, export=%"
-		             PRIu16 " inode=%" PRIiNode,
+		             "Failed to convert saunafs acl to nfs4 acl, export=%" PRIu16
+		             " inode=%" PRIiNode,
 		             export->export.export_id, inode);
 		return fsalstat(ERR_FSAL_FAULT, 0);
 	}
@@ -221,8 +210,7 @@ fsal_status_t getACL(struct SaunaFSExport *export, inode_t inode, uint32_t owner
  * @param[in] export      SaunaFS export instance
  * @param[in] inode       Inode of the file
  * @param[in] acl         FSAL ACL to set
- * @param[in] mode        Mode used to create the acl and set POSIX permission
- *                        flags
+ * @param[in] mode        Mode used to create the acl and set POSIX permission flags
  *
  * @returns: FSAL status.
  */
@@ -239,8 +227,7 @@ fsal_status_t setACL(struct SaunaFSExport *export, inode_t inode, const fsal_acl
 		return fsalstat(ERR_FSAL_FAULT, 0);
 	}
 
-	int status =
-	    saunafs_setacl(export->fsInstance, &op_ctx->creds, inode, saunafsACL);
+	int status = saunafs_setacl(export->fsInstance, &op_ctx->creds, inode, saunafsACL);
 	sau_destroy_acl(saunafsACL);
 
 	if (status < 0) {
