@@ -34,7 +34,9 @@ for ec in 3 4 7 9; do
 	for i in {399..200}; do
 		truncate -s ${i}K "${info[mount$((2 + i % 3))]}/$file"
 	done
+	echo "Truncate done for ec=$ec, waiting for dd processes to finish..."
 	wait # Wait for all dd processes to finish
+	echo "All dd processes finished for ec=$ec"
 
 	# Now file should be equal to the source file. Let's validate it!
 	MESSAGE="Testing ec(${ec},2)" assert_success file-validate "$file"
