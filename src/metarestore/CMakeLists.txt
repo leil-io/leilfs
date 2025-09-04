@@ -5,6 +5,8 @@ add_definitions(-DAPPNAME=sfsmetarestore -DAPP_EXAMPLES_SUBDIR="${USR_SHARE_DOC}
 collect_sources(METARESTORE)
 
 file(GLOB METARESTORE_MASTER_SOURCES ../master/filesystem*.cc)
+# Exclude possible matching unit tests files in the previous glob
+list(FILTER METARESTORE_MASTER_SOURCES EXCLUDE REGEX ".*unittest.*")
 
 if(DB_FOUND)
   file(GLOB METARESTORE_HSTRING_SOURCES ../master/hstring_*storage.cc)
@@ -13,6 +15,8 @@ else()
 endif()
 
 file(GLOB METARESTORE_BACKEND_SOURCES ../master/metadata_backend*.cc)
+# Exclude possible matching unit tests files in the previous glob
+list(FILTER METARESTORE_BACKEND_SOURCES EXCLUDE REGEX ".*unittest.*")
 
 add_library(metarestore ${METARESTORE_SOURCES} ${METARESTORE_MASTER_SOURCES} ${METARESTORE_HSTRING_SOURCES}
   ${METARESTORE_BACKEND_SOURCES}
