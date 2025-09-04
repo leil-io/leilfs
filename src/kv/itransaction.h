@@ -20,12 +20,17 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace kv {
 
 using Key = std::vector<uint8_t>;
 using Value = std::vector<uint8_t>;
+
+inline std::vector<uint8_t> toU8Vector(const std::string &str) {
+	return {str.begin(), str.end()};
+}
 
 /// Represents a key-value pair in the key-value store.
 /// Keys and values are stored as vectors of bytes.
