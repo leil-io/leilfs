@@ -56,6 +56,7 @@
 #include "mount/mastercomm.h"
 #include "mount/mount_info.h"
 #include "mount/readdata.h"
+#include "mount/stats.h"
 #include "mount/tweaks.h"
 #include "mount/notification_area_logging.h"
 #include "mount/write_cache_block.h"
@@ -65,6 +66,64 @@
 #define IDLE_CONNECTION_TIMEOUT 6
 #define NO_INODEDATA nullptr
 #define NO_CHUNKDATA nullptr
+
+enum class WriteStats : uint8_t {
+	CACHED_BYTES,            ///< Total number of bytes written to cache
+	FREE_CACHE_AVG_kb,       ///< Average number of free cache KB in last few seconds
+	TOTAL_FLUSH_TIME_ms,     ///< Total time spent waiting for flush to complete
+	ACTIVE_WORKERS_TIME_ms,  ///< Sum of time write workers were actively writing
+	STATNODES
+};
+
+// Around 2s of history with usual granularity (kTicksPerSecond = 10)
+constexpr uint32_t kFCBHistorySize = 20;
+static std::list<uint64_t> gFCBHistory;
+std::atomic<uint64_t> gCachedBytes = 0;
+static std::vector<uint64_t *> statsPtr(static_cast<uint8_t>(WriteStats::STATNODES));
+
+static void writeStatsInit() {
+	statsnode *s = stats_get_subnode(nullptr, "write_details", 0);
+	auto init_stat = [&](WriteStats stat, const char *name) {
+		statsPtr[static_cast<uint8_t>(stat)] = stats_get_counterptr(stats_get_subnode(s, name, 0));
+	};
+
+	init_stat(WriteStats::CACHED_BYTES, "cached_bytes");
+	init_stat(WriteStats::FREE_CACHE_AVG_kb, "free_cache_avg_kb");
+	init_stat(WriteStats::TOTAL_FLUSH_TIME_ms, "total_flush_time_ms");
+	init_stat(WriteStats::ACTIVE_WORKERS_TIME_ms, "active_workers_time_ms");
+}
+
+static void statsAdd(WriteStats type, int64_t value = 1) {
+	if (value < 0) {
+		::stats_dec(static_cast<uint8_t>(type), statsPtr, static_cast<uint64_t>(-value));
+		return;
+	}
+	::stats_inc(static_cast<uint8_t>(type), statsPtr, static_cast<uint64_t>(value));
+}
+
+static void updateStats(uint32_t freeCacheBlocks) {
+	// Update FCB average
+	gFCBHistory.push_back(freeCacheBlocks);
+
+	if (gFCBHistory.size() > kFCBHistorySize) {
+		gFCBHistory.pop_front();
+	}
+
+	int64_t prevAvg = *statsPtr[static_cast<uint8_t>(WriteStats::FREE_CACHE_AVG_kb)];
+	int64_t newAvg = 0;
+	for (const auto &v : gFCBHistory) {
+		newAvg += v;
+	}
+	newAvg *= (SFSBLOCKSIZE / 1024);  // in KB
+	newAvg /= gFCBHistory.size();
+
+	if (prevAvg != newAvg) {
+		statsAdd(WriteStats::FREE_CACHE_AVG_kb, newAvg - prevAvg);
+	}
+
+	// Update cached bytes
+	statsAdd(WriteStats::CACHED_BYTES, gCachedBytes.exchange(0));
+}
 
 static bool gUseInodeBasedWriteAlgorithm = false;
 
@@ -316,6 +375,10 @@ void *delayed_queue_worker(void *) {
 				++it;
 			}
 		}
+
+		// Update the write stats
+		updateStats(freecacheblocks);
+
 		lock.unlock();
 		usleep(timeout.remaining_us());
 	}
@@ -678,7 +741,9 @@ void *write_worker(void *) {
 
 		// process the job
 		LOG_AVG_TILL_END_OF_SCOPE0("write_worker#working");
+		Timer writeTimer;
 		inodeDataWriter.processJob((inodedata *)data);
+		statsAdd(WriteStats::ACTIVE_WORKERS_TIME_ms, writeTimer.elapsed_ms());
 	}
 	return NULL;
 }
@@ -700,6 +765,8 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	freecacheblocks = cacheblockcount;
 	gCachePerInodePercentage = cachePerInodePercentage;
+
+	writeStatsInit();
 
 	jobsQueue = std::make_unique<ProducerConsumerQueue>(0, deleterByType<inodedata>);
 
@@ -783,6 +850,8 @@ int write_blocks(inodedata *id, uint64_t offset, uint32_t size, const uint8_t *d
 			if (write_block(id, chindx, pos, from, SFSBLOCKSIZE, data) < 0) {
 				return SAUNAFS_ERROR_IO;
 			}
+
+			gCachedBytes += (SFSBLOCKSIZE - from);
 			size -= (SFSBLOCKSIZE - from);
 			data += (SFSBLOCKSIZE - from);
 			from = 0;
@@ -795,6 +864,8 @@ int write_blocks(inodedata *id, uint64_t offset, uint32_t size, const uint8_t *d
 			if (write_block(id, chindx, pos, from, from + size, data) < 0) {
 				return SAUNAFS_ERROR_IO;
 			}
+
+			gCachedBytes += size;
 			size = 0;
 		}
 	}
@@ -860,6 +931,7 @@ void *write_data_new(inode_t inode) {
 }
 
 static int write_data_flush(void *vid, Glock &lock) {
+	Timer flushTimer;
 	inodedata *id = (inodedata *)vid;
 	if (id == NULL) { return SAUNAFS_ERROR_IO; }
 
@@ -869,6 +941,7 @@ static int write_data_flush(void *vid, Glock &lock) {
 	// Wait for the data to be flushed
 	while (id->inqueue) { id->flushcond.wait(lock); }
 	write_data_flushwaiting_decrease(id, lock);
+	statsAdd(WriteStats::TOTAL_FLUSH_TIME_ms, flushTimer.elapsed_ms());
 	return id->status;
 }
 
@@ -1366,6 +1439,10 @@ void *delayed_queue_worker(void *) {
 			}
 		}
 		globalLock.unlock();
+
+		// Update the write stats
+		updateStats(freecacheblocks);
+
 		usleep(timeout.remaining_us());
 	}
 	return NULL;
@@ -1742,7 +1819,9 @@ void *write_worker(void *) {
 
 		// process the job
 		LOG_AVG_TILL_END_OF_SCOPE0("write_worker#working");
+		Timer writeTimer;
 		chunkJobWriter.processJob((ChunkData *)data);
+		statsAdd(WriteStats::ACTIVE_WORKERS_TIME_ms, writeTimer.elapsed_ms());
 	}
 	return NULL;
 }
@@ -1764,6 +1843,8 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	freecacheblocks = cacheblockcount;
 	gCachePerInodePercentage = cachePerInodePercentage;
+
+	writeStatsInit();
 
 	jobsQueue = std::make_unique<ProducerConsumerQueue>(0, deleterByType<ChunkData>);
 
@@ -1871,6 +1952,8 @@ int write_blocks(inodedata *id, uint64_t offset, uint32_t size, const uint8_t *d
 				chunkData->writesCount--;
 				return SAUNAFS_ERROR_IO;
 			}
+
+			gCachedBytes += (SFSBLOCKSIZE - from);
 			size -= (SFSBLOCKSIZE - from);
 			data += (SFSBLOCKSIZE - from);
 			from = 0;
@@ -1884,6 +1967,8 @@ int write_blocks(inodedata *id, uint64_t offset, uint32_t size, const uint8_t *d
 				chunkData->writesCount--;
 				return SAUNAFS_ERROR_IO;
 			}
+
+			gCachedBytes += size;
 			size = 0;
 		}
 		chunkData->writesCount--;
@@ -1971,6 +2056,7 @@ void *write_data_new(inode_t inode) {
 
 /* globalLock: LOCKED */
 static int write_data_flush(void *vid, Lock &globalLock) {
+	Timer flushTimer;
 	inodedata *id = (inodedata *)vid;
 	if (id == NO_INODEDATA) { return SAUNAFS_ERROR_IO; }
 	globalLock.unlock();
@@ -1998,6 +2084,7 @@ static int write_data_flush(void *vid, Lock &globalLock) {
 	inodeLock.unlock();
 
 	globalLock.lock();
+	statsAdd(WriteStats::TOTAL_FLUSH_TIME_ms, flushTimer.elapsed_ms());
 	return id->status;
 }
 
