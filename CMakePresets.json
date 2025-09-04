@@ -102,6 +102,7 @@
             "name": "release",
             "binaryDir": "${sourceDir}/build/saunafs/release",
             "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_INSTALL_PREFIX": "/",
                 "ENABLE_TESTS": "OFF",
                 "ENABLE_WERROR": "OFF",
