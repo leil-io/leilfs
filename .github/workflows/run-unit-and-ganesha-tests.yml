@@ -6,6 +6,7 @@ on:
     push:
         branches:
             - dev
+            - nfs-ganesha-v7.1
 
 jobs:
     Run-Unit-Tests-and-Ganesha:
@@ -31,7 +32,7 @@ jobs:
             #- name: Setup a new (or from cache) vcpkg
             #  uses: lukka/run-vcpkg@v11
 
-            - name: Build and install Ganesha v6.5
+            - name: Build and install Ganesha v7.1
               run: |
                 set -eux
                 # Install build dependencies
@@ -49,6 +50,7 @@ jobs:
                     doxygen \
                     fio \
                     flex \
+                    git \
                     krb5-user \
                     libacl1-dev \
                     libblkid-dev \
@@ -75,23 +77,24 @@ jobs:
                     unzip \
                     rpcbind
 
-                # Clone and build ntirpc
+                # Clone and build ntirpc v7.1
                 cd $GITHUB_WORKSPACE
-                wget https://github.com/nfs-ganesha/ntirpc/archive/v6.3.zip
-                unzip v6.3.zip
-                cd ntirpc-6.3
+                git clone https://github.com/nfs-ganesha/ntirpc.git
+                cd ntirpc
+                git checkout v7.1
+                git submodule update --init
                 mkdir build
-                cmake -B build . -DCMAKE_INSTALL_PREFIX=/usr
+                cmake -B build . -DCMAKE_INSTALL_PREFIX=/usr -DUSE_MONITORING=OFF
                 sudo cmake --build build --target install
 
-                # Clone and build Ganesha v6.5
+                # Clone and build Ganesha v7.1
                 cd $GITHUB_WORKSPACE
-                wget https://github.com/nfs-ganesha/nfs-ganesha/archive/V6.5.zip
-                unzip V6.5.zip
-                ln -s $GITHUB_WORKSPACE/ntirpc-6.3 $GITHUB_WORKSPACE/nfs-ganesha-6.5/src/libntirpc
-                cd nfs-ganesha-6.5
-                mkdir $GITHUB_WORKSPACE/ganesha-build
-                cmake -B $GITHUB_WORKSPACE/ganesha-build src \
+                git clone https://github.com/nfs-ganesha/nfs-ganesha.git
+                cd nfs-ganesha
+                git checkout V7.1
+                git submodule update --init
+                mkdir build
+                cmake -B build src \
                     -DCMAKE_INSTALL_PREFIX=/usr \
                     -DUSE_FSAL_CEPH=OFF \
                     -DUSE_FSAL_GLUSTER=OFF \
@@ -104,8 +107,9 @@ jobs:
                     -DUSE_FSAL_RGW=OFF \
                     -DUSE_FSAL_XFS=OFF \
                     -DUSE_GSS=OFF \
+                    -DUSE_MONITORING=OFF \
                     -DUSE_SYSTEM_NTIRPC=ON
-                sudo cmake --build $GITHUB_WORKSPACE/ganesha-build --target install
+                sudo cmake --build build --target install
 
             - name: Set up Python
               uses: actions/setup-python@v4
