@@ -18,13 +18,16 @@
 
 #pragma once
 
+#include "common/platform.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+
 #define FDB_API_VERSION 730
 
 #include <foundationdb/fdb_c.h>
 #include <foundationdb/fdb_c_types.h>
-
-#include <memory>
-#include <string>
 
 #include "kv/itransaction.h"
 
@@ -169,6 +172,10 @@ public:
 	/// @return True if the commit was successful, false otherwise.
 	bool commit();
 
+	/// Gets the committed version of the transaction.
+	/// @return The committed version, if available.
+	std::optional<int64_t> getCommittedVersion() const { return committedVersion_; }
+
 private:
 	/// Custom deleter for FDBTransaction (C struct), to ensure proper cleanup.
 	struct FDBTransactionDeleter {
@@ -182,6 +189,9 @@ private:
 	std::unique_ptr<FDBTransaction, FDBTransactionDeleter> tr_;
 	/// The error code of the last operation.
 	fdb_error_t error_{1};
+
+	/// The commit version of the transaction, if applicable.
+	std::optional<int64_t> committedVersion_;
 };
 
 }  // namespace fdb

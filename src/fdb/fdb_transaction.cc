@@ -51,4 +51,8 @@ bool FDBTransaction::commit() {
 	return tr_.commit();
 }
 
+std::optional<int64_t> FDBTransaction::getCommittedVersion() const {
+	return tr_.getCommittedVersion();
+}
+
 }  // namespace fdb

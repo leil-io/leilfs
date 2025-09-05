@@ -16,10 +16,13 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "common/platform.h"
+
 #include "fdb/fdb.h"
-#include <foundationdb/fdb_c_types.h>
 
 #include <cstdint>
+
+#include <foundationdb/fdb_c_types.h>
 
 #include "slogger/slogger.h"
 
@@ -223,7 +226,20 @@ bool Transaction::commit() {
 		return false;
 	}
 
+	int64_t version{};
+	fdb_error_t versionError = fdb_transaction_get_committed_version(tr_.get(), &version);
+
+	if (versionError != 0) {
+		safs::log_err("Transaction::commit: fdb_transaction_get_committed_version: error: {}",
+		              fdb_get_error(versionError));
+		fdb_future_destroy(future);
+		return false;
+	}
+
+	committedVersion_ = version;
+
 	fdb_future_destroy(future);
+
 	return true;
 }
 

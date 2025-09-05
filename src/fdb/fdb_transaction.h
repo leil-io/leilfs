@@ -67,6 +67,9 @@ public:
 	/// Commits the transaction, making all changes permanent.
 	bool commit() override;
 
+	/// Returns the committed version of the transaction, if available.
+	std::optional<int64_t> getCommittedVersion() const override;
+
 	/// Returns the error code of the last operation.
 	fdb_error_t error() const { return error_; }
 
