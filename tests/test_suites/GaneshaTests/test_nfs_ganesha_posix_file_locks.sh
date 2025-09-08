@@ -112,7 +112,7 @@ saunafs_admin_master manage-locks list posix --porcelain --active
 echo "Release the exclusive lock on the range [200, 300] in dir/file_100M"
 unlock ${writelocks[1]}
 
-echo "Release the exclusive lock on the range [50, 200] in dir/file_100M"
+echo "Release the exclusive lock on the range [50, 150] in dir/file_100M"
 unlock ${writelocks[2]}
 
 echo "Acquire an exclusive lock for the file dir/file_100M"
