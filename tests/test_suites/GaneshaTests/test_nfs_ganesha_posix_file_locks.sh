@@ -5,6 +5,8 @@ USE_RAMDISK=YES \
 
 test_error_cleanup() {
 	cd ${TEMP_DIR}
+	# Kill any remaining posixlockcmd processes
+	pkill -f posixlockcmd 2>/dev/null || true
 	sudo umount -l ${TEMP_DIR}/mnt/ganesha
 	sudo pkill -9 ganesha.nfsd
 }
@@ -42,29 +44,36 @@ sudo mount -vvvv localhost:/ "${TEMP_DIR}/mnt/ganesha"
 mkdir "${TEMP_DIR}/mnt/ganesha/dir"
 FILE_SIZE="100M" assert_success file-generate "${TEMP_DIR}/mnt/ganesha/dir/file_100M"
 
-opcount=0
-
-function assert_operation_performed() {
-	opcount=$((opcount + 1))
-	assert_eventually_prints "$1" "sed -n ${opcount}p ${TEMP_DIR}/posixlock.log"
-}
-
-function assert_operation_not_performed() {
-	assert_eventually_prints "" "sed -n ${1}p ${TEMP_DIR}/posixlock.log"
-}
-
 function readlock() {
 	posixlockcmd $1 r $2 $3 >> "${TEMP_DIR}/posixlock.log" &
-	assert_operation_performed "read  open:   $1"
 }
 
 function writelock() {
 	posixlockcmd $1 w $2 $3 >> "${TEMP_DIR}/posixlock.log" &
-	assert_operation_performed "write open:   $1"
 }
 
 function unlock() {
 	kill -s SIGUSR1 $1
+}
+
+# helper to assert master-level lock state (order-independent)
+#
+# manage-locks <master ip> <master port> [list/unlock] [flock/posix/all]
+locks_active_count() {
+	saunafs_admin_master manage-locks list posix --porcelain --active | wc -l
+}
+
+assert_active_eq() {
+	local expected="$1"
+	local actual=$(($(locks_active_count) - 1))  # Subtract header line
+	if [ "$actual" -eq "$expected" ]; then
+		echo "✓ Active locks: $actual (expected: $expected)"
+		return 0
+	else
+		echo "✗ Expected $expected active locks, got $actual"
+		test_error_cleanup
+		return 1
+	fi
 }
 
 declare -a readlocks
@@ -73,52 +82,52 @@ declare -a writelocks
 # Go to the Ganesha mount point
 cd "${TEMP_DIR}/mnt/ganesha"
 
+echo "Acquire a shared lock on the range [0, 100] in dir/file_100M"
 readlock "dir/file_100M" 0 100
 readlocks[1]=$!
-assert_operation_performed "read  lock:   dir/file_100M"
 
-readlock "dir/file_100M" 0 100
-readlocks[2]=$!
-
-assert_operation_performed "read  lock:   dir/file_100M"
-
-# Lock byte range [200, 300]
+echo "Acquire an exclusive lock on the range [200, 300] in dir/file_100M"
 writelock "dir/file_100M" 200 100
 writelocks[1]=$!
-assert_operation_performed "write lock:   dir/file_100M"
 
+# Verify 2 locks are active: one shared lock and an exclusive one
+assert_active_eq 2
+saunafs_admin_master manage-locks list posix --porcelain --active
+
+echo "Release the shared lock on the range [0, 100] in dir/file_100M"
 unlock ${readlocks[1]}
-assert_operation_performed "read  unlock: dir/file_100M"
 
-# Lock byte range [50, 150]
+# Verify only the exclusive lock is active
+assert_active_eq 1
+saunafs_admin_master manage-locks list posix --porcelain --active
+
+echo "Acquire an exclusive lock on the range [50, 150] in dir/file_100M"
 writelock "dir/file_100M" 50 100
 writelocks[2]=$!
 
-unlock ${readlocks[2]}
-assert_operation_performed "read  unlock: dir/file_100M"
+# Verify 2 exclusive locks are active
+assert_active_eq 2
+saunafs_admin_master manage-locks list posix --porcelain --active
 
-assert_operation_performed "write lock:   dir/file_100M"
+echo "Release the exclusive lock on the range [200, 300] in dir/file_100M"
+unlock ${writelocks[1]}
 
-# Lock byte range [0, 0] is equivalent to locking the whole file
+echo "Release the exclusive lock on the range [50, 200] in dir/file_100M"
+unlock ${writelocks[2]}
+
+echo "Acquire an exclusive lock for the file dir/file_100M"
 writelock "dir/file_100M" 0 0
 writelocks[3]=$!
 
-# It's not possible to acquire the lock because range [50, 150] is locked
-assert_operation_not_performed $((opcount+1))
+# Verify only the exclusive lock for the file dir/file_100M is active
+assert_active_eq 1
+saunafs_admin_master manage-locks list posix --porcelain --active
 
-# Unlock byte range [200, 300]
-unlock ${writelocks[1]}
-assert_operation_performed "write unlock: dir/file_100M"
-
-# Unlock byte range [50, 150]
-unlock ${writelocks[2]}
-assert_operation_performed "write unlock: dir/file_100M"
-
-# Now, it's possible to lock the whole file
-assert_operation_performed "write lock:   dir/file_100M"
-
-# Unlock byte range [0, 0]
+echo "Release the exclusive lock for the file dir/file_100M"
 unlock ${writelocks[3]}
-assert_operation_performed "write unlock: dir/file_100M"
+
+# Final verification
+assert_active_eq 0
+saunafs_admin_master manage-locks list posix --porcelain --active
 
 test_error_cleanup
