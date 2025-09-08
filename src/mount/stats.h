@@ -41,6 +41,7 @@ statsnode* stats_get_subnode(statsnode *node, const char *name, uint8_t absolute
 uint64_t* stats_get_counterptr(statsnode *node);
 void stats_reset_all(void);
 void stats_show_all(char **buff, uint32_t *leng);
+uint64_t stats_get_length();
 void stats_term(void);
 void stats_inc(uint8_t id, std::vector<uint64_t *> &statsptr, uint64_t inc = 1);
 void stats_dec(uint8_t id, std::vector<uint64_t *> &statsptr, uint64_t dec = 1);

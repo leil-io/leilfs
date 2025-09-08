@@ -22,6 +22,7 @@
 
 #include "mount/client_common.h"
 #include "mount/special_inode.h"
+#include "mount/stats.h"
 
 using namespace SaunaClient;
 
@@ -44,6 +45,7 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	struct stat o_stbuf;
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(inode_, attr, &o_stbuf);
+	o_stbuf.st_size = stats_get_length();
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
 	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: STATS): OK (3600,%s)",
