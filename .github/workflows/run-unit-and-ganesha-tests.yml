@@ -77,24 +77,15 @@ jobs:
                     unzip \
                     rpcbind
 
-                # Clone and build ntirpc v7.1
-                cd $GITHUB_WORKSPACE
-                git clone https://github.com/nfs-ganesha/ntirpc.git
-                cd ntirpc
-                git checkout v7.1
-                git submodule update --init
-                mkdir build
-                cmake -B build . -DCMAKE_INSTALL_PREFIX=/usr -DUSE_MONITORING=OFF
-                sudo cmake --build build --target install
-
                 # Clone and build Ganesha v7.1
                 cd $GITHUB_WORKSPACE
                 git clone https://github.com/nfs-ganesha/nfs-ganesha.git
                 cd nfs-ganesha
                 git checkout V7.1
-                git submodule update --init
+                git submodule update --recursive --init
                 mkdir build
                 cmake -B build src \
+                    -DCMAKE_C_FLAGS="-Wno-unused-function" \
                     -DCMAKE_INSTALL_PREFIX=/usr \
                     -DUSE_FSAL_CEPH=OFF \
                     -DUSE_FSAL_GLUSTER=OFF \
@@ -107,8 +98,7 @@ jobs:
                     -DUSE_FSAL_RGW=OFF \
                     -DUSE_FSAL_XFS=OFF \
                     -DUSE_GSS=OFF \
-                    -DUSE_MONITORING=OFF \
-                    -DUSE_SYSTEM_NTIRPC=ON
+                    -DUSE_MONITORING=OFF
                 sudo cmake --build build --target install
 
             - name: Set up Python
