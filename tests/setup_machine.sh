@@ -115,6 +115,7 @@ if ! [[ -f /etc/sudoers.d/saunafstest ]] || \
 		ALL ALL = NOPASSWD: /bin/rm -rf /tmp/saunafs_error_dir
 		saunafstest ALL = NOPASSWD: /bin/sh -c echo\ 1\ >\ /proc/sys/vm/drop_caches
 		saunafstest ALL = NOPASSWD: /usr/bin/cat .oplog
+		saunafstest ALL = NOPASSWD: /usr/bin/tee .stats
 	END
 	chmod 0440 /etc/sudoers.d/saunafstest
 fi
