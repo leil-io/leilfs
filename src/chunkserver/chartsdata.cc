@@ -139,13 +139,6 @@ static const estatdef estatdefs[]=ESTATDEFS
 
 static struct itimerval it_set;
 
-// Signal handler that prevents process termination from timer signals
-static void timerSignalHandler(int /*signal*/) {
-	// Reset both timers to prevent future signals from killing the process
-	setitimer(ITIMER_PROF, &it_set, nullptr);
-	setitimer(ITIMER_VIRTUAL, &it_set, nullptr);
-}
-
 inline uint32_t toMicroSeconds(struct itimerval &itimer) {
     return itimer.it_value.tv_sec * 1000000 + itimer.it_value.tv_usec;
 }
@@ -276,7 +269,7 @@ void chartsdata_store(void) {
 	charts_store();
 }
 
-int chartsdata_init(void) {
+int chartsdata_init() {
 	struct itimerval userTime, procTime;
 
 	it_set.it_interval.tv_sec = 0;
@@ -284,19 +277,11 @@ int chartsdata_init(void) {
 	it_set.it_value.tv_sec = 999;
 	it_set.it_value.tv_usec = 999999;
 
-	// Install timer signal handlers for SIGVTALRM and SIGPROF
-	if (initializeTimerSignalHandlers(timerSignalHandler) != 0) {
-		safs::log_err("{} failed to initialize timer signal handlers", __func__);
-		return -1;
-	}
-
 	setitimer(ITIMER_VIRTUAL, &it_set, &userTime); // user time
 	setitimer(ITIMER_PROF, &it_set, &procTime);    // user time + system time
 
-	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_MINUTE, 0,
-	                       chartsdata_refresh);
-	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_HOUR, 0,
-	                       chartsdata_store);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_MINUTE, 0, chartsdata_refresh);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_HOUR, 0, chartsdata_store);
 	eventloop_destructregister(chartsdata_term);
 	return charts_init(calcdefs, statdefs, estatdefs, CHARTS_FILENAME);
 }

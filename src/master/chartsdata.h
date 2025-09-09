@@ -25,4 +25,4 @@
 #include <cstdint>
 
 uint64_t chartsdata_memusage(void);
-int chartsdata_init (void);
+int chartsdata_init ();

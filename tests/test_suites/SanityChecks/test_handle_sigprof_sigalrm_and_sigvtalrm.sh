@@ -35,13 +35,17 @@ assert_eventually "saunafs_shadow_synchronized 1"
 touch "${info[mount0]}"/test_file_before_signals
 assert_eventually "saunafs_shadow_synchronized 1"
 
-# Test SIGPROF and SIGVTALRM on shadow master
+# Add a metalogger
+saunafs_metalogger_daemon start
+
+# Test SIGPROF, SIGVTALRM and SIGALRM on shadow master
 shadow_pid=$(saunafs_master_n 1 test | sed 's/.*: //')
 assert_matches "^[0-9]+$" "$shadow_pid"
 
 echo "Testing shadow master signal handling (PID: ${shadow_pid})"
 validate_signal_handling "shadow_master" "${shadow_pid}" "SIGPROF"
 validate_signal_handling "shadow_master" "${shadow_pid}" "SIGVTALRM"
+validate_signal_handling "shadow_master" "${shadow_pid}" "SIGALRM"
 
 # Test signals on primary master
 master_pid=$(saunafs_master_daemon test | sed 's/.*: //')
@@ -50,6 +54,7 @@ assert_matches "^[0-9]+$" "$master_pid"
 echo "Testing primary master signal handling (PID: ${master_pid})"
 validate_signal_handling "primary_master" "${master_pid}" "SIGPROF"
 validate_signal_handling "primary_master" "${master_pid}" "SIGVTALRM"
+validate_signal_handling "primary_master" "${master_pid}" "SIGALRM"
 
 # Test signals on chunkserver
 chunkserver_pid=$(saunafs_chunkserver_daemon 0 test | sed 's/.*pid: //')
@@ -58,6 +63,16 @@ assert_matches "^[0-9]+$" "$chunkserver_pid"
 echo "Testing chunkserver signal handling (PID: ${chunkserver_pid})"
 validate_signal_handling "chunkserver" "${chunkserver_pid}" "SIGPROF"
 validate_signal_handling "chunkserver" "${chunkserver_pid}" "SIGVTALRM"
+validate_signal_handling "chunkserver" "${chunkserver_pid}" "SIGALRM"
+
+# Test signals on metalogger
+metalogger_pid=$(saunafs_metalogger_daemon test | sed 's/.*: //')
+assert_matches "^[0-9]+$" "$metalogger_pid"
+
+echo "Testing metalogger signal handling (PID: ${metalogger_pid})"
+validate_signal_handling "metalogger" "${metalogger_pid}" "SIGPROF"
+validate_signal_handling "metalogger" "${metalogger_pid}" "SIGVTALRM"
+validate_signal_handling "metalogger" "${metalogger_pid}" "SIGALRM"
 
 # Verify all components are still functional after signal testing
 echo "Verifying system functionality after signal testing..."

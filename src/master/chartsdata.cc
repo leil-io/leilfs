@@ -144,14 +144,6 @@ static const estatdef estatdefs[]=ESTATDEFS
 
 #ifdef CPU_USAGE
 static struct itimerval it_set;
-
-// Signal handler that prevents process termination from timer signals
-static void timerSignalHandler(int /*signal*/) {
-	// Reset both timers to prevent future signals from killing the process
-	setitimer(ITIMER_PROF, &it_set, nullptr);
-	setitimer(ITIMER_VIRTUAL, &it_set, nullptr);
-}
-
 #endif
 
 #ifdef MEMORY_USAGE
@@ -263,9 +255,9 @@ void chartsdata_store(void) {
 	charts_store();
 }
 
-int chartsdata_init (void) {
+int chartsdata_init() {
 #ifdef CPU_USAGE
-	struct itimerval uc,pc;
+	struct itimerval uc, pc;
 #endif
 #ifdef MEMORY_USAGE
 	struct rusage ru;
@@ -277,17 +269,11 @@ int chartsdata_init (void) {
 	it_set.it_value.tv_sec = 999;
 	it_set.it_value.tv_usec = 999999;
 
-	// Install timer signal handlers for SIGVTALRM and SIGPROF
-	if (initializeTimerSignalHandlers(timerSignalHandler) != 0) {
-		safs::log_err("{} failed to initialize timer signal handlers", __func__);
-		return -1;
-	}
-
-	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
-	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
+	setitimer(ITIMER_VIRTUAL, &it_set, &uc);  // user time
+	setitimer(ITIMER_PROF, &it_set, &pc);     // user time + system time
 #endif
 #ifdef MEMORY_USAGE
-	getrusage(RUSAGE_SELF,&ru);
+	getrusage(RUSAGE_SELF, &ru);
 #  ifdef __APPLE__
 	memusage = ru.ru_maxrss;
 #  else
@@ -295,8 +281,8 @@ int chartsdata_init (void) {
 #  endif
 #endif
 
-	eventloop_timeregister(TIMEMODE_RUN_LATE,60,0,chartsdata_refresh);
-	eventloop_timeregister(TIMEMODE_RUN_LATE,3600,0,chartsdata_store);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 60, 0, chartsdata_refresh);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, chartsdata_store);
 	eventloop_destructregister(chartsdata_term);
-	return charts_init(calcdefs,statdefs,estatdefs,CHARTS_FILENAME);
+	return charts_init(calcdefs, statdefs, estatdefs, CHARTS_FILENAME);
 }
