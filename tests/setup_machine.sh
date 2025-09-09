@@ -196,7 +196,11 @@ if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# FoundationDB' /etc/sudoer
 fi
 
 echo ; echo 'Install FoundationDB'
-"$script_dir/ci_build/install-foundationdb.sh"
+if grep -q Microsoft /proc/version && ! grep -q microsoft-standard /proc/version; then
+	echo "Running on WSL1: skipping FoundationDB installation."
+else
+	"$script_dir/ci_build/install-foundationdb.sh"
+fi
 
 echo ; echo 'Fixing GIDs of users'
 for name in saunafstest saunafstest_{0..9}; do
