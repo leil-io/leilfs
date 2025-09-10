@@ -1,7 +1,7 @@
 test_timeout="30 seconds"
 replication_timeout="15 seconds"
 number_of_chunkservers=5
-goals="3 xor3"
+goals="3 ec31"
 verify_file_content=NO
 
 source $(readlink -m test_suites/ShortSystemTests/test_chunk_replication.sh)

@@ -11,13 +11,13 @@ CHUNKSERVERS=10 \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
-# List of file sizes which will be tested for each xor level
+# List of file sizes which will be tested for each ec2 level
 sizes=(100 200 300 1000 2000 3000 10000 20000 30000 100000 200000 300000 \
 	$((SAUNAFS_BLOCK_SIZE - 1)) $((8 * SAUNAFS_BLOCK_SIZE)) $((50 * SAUNAFS_BLOCK_SIZE + 7)) \
 	$((SAUNAFS_CHUNK_SIZE - 500)) $((SAUNAFS_CHUNK_SIZE + 500)) \
 )
 
-# List of xor levels which will be tested
+# List of ec2 levels which will be tested
 levels=(2 3 4 7 9)
 
 # For each ec level and each file size generate file of this size (using file-generate) and

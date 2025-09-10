@@ -1,8 +1,9 @@
 CHUNKSERVERS=$NUMBER_OF_CHUNKSERVERS \
-	USE_RAMDISK=YES \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MASTER_CUSTOM_GOALS="20 ec31: \$ec(3,1)" \
 	MASTER_EXTRA_CONFIG="CHUNKS_LOOP_TIME = 1|CHUNKS_LOOP_MAX_CPU = 90|OPERATIONS_DELAY_INIT = 0|`
 	`ACCEPTABLE_DIFFERENCE = 10.0|REDUNDANCY_LEVEL = 10|CHUNKS_REBALANCING_BETWEEN_LABELS = 1" \
+	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
 cd "${info[mount0]}"
@@ -12,13 +13,16 @@ verify_file_goal() {
 	file=$1;
 	goal=$(saunafs getgoal "$file" | awk '{print $NF}')
 
-	if [[ $goal =~ xor([2-9]|10) ]]; then
-		level=${BASH_REMATCH[1]}
-		# Check if all parts are present:
-		for i in $(seq $((level+1))); do
-			saunafs fileinfo "$file" | grep "part $i/$((level+1)) of $goal$" > /dev/null \
-					|| { echo "$file: missing part $i of $goal"; return; };
-		done
+	if [[ $goal =~ ec([0-9]+)([0-9]+) ]]; then
+        data_parts=${BASH_REMATCH[1]}
+        parity_parts=${BASH_REMATCH[2]}
+        total_parts=$((data_parts + parity_parts))
+        
+        # Check if all EC parts are present:
+        for i in $(seq $total_parts); do
+            saunafs fileinfo "$file" | grep "part $i/$total_parts of ec($data_parts,$parity_parts)" > /dev/null \
+                    || { echo "$file: missing part $i of $goal"; return; };
+        done
 	elif [[ $goal =~ ([1-9]) ]]; then
 		level=${BASH_REMATCH[1]}
 

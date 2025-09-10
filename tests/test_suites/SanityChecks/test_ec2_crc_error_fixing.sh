@@ -1,6 +1,7 @@
 CHUNKSERVERS=4 \
 	USE_RAMDISK="yes" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=never" \
+	MASTER_CUSTOM_GOALS="20 ec31: \$ec(3,1)" \
 	MASTER_EXTRA_CONFIG="CHUNKS_LOOP_MIN_TIME = 1`
 			`|CHUNKS_LOOP_MAX_CPU = 90`
 			`|OPERATIONS_DELAY_INIT = 0" \
@@ -17,12 +18,12 @@ get_damaged_area() {
 # Create a file
 cd "${info[mount0]}"
 touch file
-saunafs setgoal xor3 file
+saunafs setgoal ec31 file
 FILE_SIZE=1234567 file-generate file
 assert_equals 4 $(saunafs fileinfo file | grep -c copy)
 
 # Locate part 1 of its chunk and remember correct content of the area to be damaged
-chunk=$(find_all_chunks -name "*xor_1_*.dat")
+chunk=$(find_all_chunks -name "*ec2_1_of_3_1*.dat")
 assert_equals 1 $(wc -l <<< "$chunk")
 correct_data=$(get_damaged_area "$chunk")
 
