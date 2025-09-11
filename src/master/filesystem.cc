@@ -34,6 +34,7 @@
 #include "master/changelog.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
+#include "master/deferred_metadata_dump_task.h"
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operations.h"
@@ -234,6 +235,7 @@ int fs_loadall(void) {
 	}
 
 	bool autoRecovery = fs_can_do_auto_recovery();
+	bool deferDump = main_has_extra_argument("defer-metadata-dump", CaseSensitivity::kIgnore);
 
 	if (autoRecovery || (metadataserver::getPersonality() == metadataserver::Personality::kShadow)) {
 		safs::log_info("{} - applying changelogs from {}",
@@ -249,9 +251,29 @@ int fs_loadall(void) {
 		load_changelogs();
 		safs::log_info("all needed changelogs applied successfully");
 
-		// Dump the new metadata
-		gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
-		safs::log_info("Metadata dumped successfully after applying changelogs");
+		if (deferDump) {
+			safs::log_info("Deferring metadata dump option detected");
+
+			// Schedule one-time deferred metadata dump task using TaskManager
+			uint32_t delayedTime = eventloop_time() + 30;  // 30 seconds delay
+
+			auto *metadataBackendPtr = gMetadataBackend.get();
+			auto metadataDumpTask = std::make_unique<DeferredMetadataDumpTask>(metadataBackendPtr);
+
+			gMetadata->taskManager.submitTask(delayedTime, 1, metadataDumpTask.release(),
+				DeferredMetadataDumpTask::generateDescription(),
+				[](int status) {
+					if (status == SAUNAFS_STATUS_OK) {
+						safs::log_info("Deferred metadata dump completed successfully");
+					} else {
+						safs::log_err("Deferred metadata dump failed with status: {}", status);
+					}
+				});
+		} else {
+			// Original behavior: dump the new metadata immediately
+			gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+			safs::log_info("Metadata dumped successfully after applying changelogs");
+		}
 
 		// Restore the original personality
 		metadataserver::setPersonality(personality);

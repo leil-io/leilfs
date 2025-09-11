@@ -174,7 +174,10 @@ saunafs_promote() {
 		log "metadata is on disk instead of ram"
 		saunafs_master stop
 		unlink "${METADATA_LOCK}"
-		saunafs_master -o initial-personality=master -o auto-recovery restart
+		saunafs_master -o initial-personality=master \
+					-o auto-recovery \
+					-o defer-metadata-dump \
+					restart
 		if [[ $? != 0 ]]; then
 			log "promotion to master failed"
 			exit $SAUNAFS_URAFT_ERROR
