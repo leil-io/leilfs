@@ -22,6 +22,7 @@
 
 #include "mount/client_common.h"
 #include "mount/special_inode.h"
+#include "mount/stats.h"
 
 using namespace SaunaClient;
 
@@ -54,6 +55,7 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	e.attr_timeout = 3600.0;
 	e.entry_timeout = 3600.0;
 	attr_to_stat(inode_, attr, &e.attr);
+	e.attr.st_size = stats_get_length();
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
 	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: STATS): OK (%.1f,%" PRIiNode ",%.1f,%s)",

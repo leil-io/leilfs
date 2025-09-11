@@ -36,9 +36,16 @@ const Attributes InodeMasterInfo::attr =
 #endif
 const inode_t InodeMasterInfo::inode_ = SPECIAL_INODE_MASTERINFO;
 
-// 0x01A4 == 0b110100100 == 0644
-const Attributes InodeStats::attr =
-	  {{'f', 0x01,0xA4, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
+// Win: 0x01B6 == 0b110110110 == 0666
+// Other OSs: 0x01A4 == 0b110100100 == 0644
+const Attributes InodeStats::attr = [] {
+	Attributes attrs{{'f', 0x01, 0xA4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	                  0,   0,    0,    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0}};
+#ifdef _WIN32
+	attrs[2] = 0xB6;
+#endif
+	return attrs;
+}();
 const inode_t InodeStats::inode_ = SPECIAL_INODE_STATS;
 
 // Win: 0x0124 == 0b100100100 == 0444

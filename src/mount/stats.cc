@@ -32,6 +32,8 @@ static statsnode *firstnode = NULL;
 static uint32_t allactiveplengs = 0;
 static uint32_t activenodes = 0;
 static std::mutex glock;
+// Overhead for ": %" PRIu64 "\n" (2 for ": " + 20 for uint64_t + 1 for '\n')
+constexpr uint32_t per_line_overhead = 23;
 
 statsnode* stats_get_subnode(statsnode *node, const char *name, uint8_t absolute) {
 	std::lock_guard lock(glock);
@@ -143,9 +145,14 @@ static inline uint32_t stats_print_total(char *buff, uint32_t maxleng) {
 void stats_show_all(char **buff, uint32_t *leng) {
 	std::lock_guard lock(glock);
 
-	uint32_t rl = allactiveplengs + 23 * activenodes + 1;
+	uint32_t rl = allactiveplengs + per_line_overhead * activenodes + 1;
 	*buff = (char*) malloc(rl);
 	*leng = *buff ? stats_print_total(*buff,rl) : 0;
+}
+
+uint64_t stats_get_length() {
+	std::lock_guard lock(glock);
+	return allactiveplengs + per_line_overhead * activenodes + 1;
 }
 
 void stats_free(statsnode *n) {
