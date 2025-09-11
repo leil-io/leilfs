@@ -24,10 +24,7 @@
 
 DeferredMetadataDumpTask::DeferredMetadataDumpTask(IMetadataBackend *backend) : backend_(backend) {}
 
-int DeferredMetadataDumpTask::execute(uint32_t timeStamp, intrusive_list<Task> &work_queue) {
-	(void)timeStamp;   // Suppress unused parameter warning
-	(void)work_queue;  // Task doesn't create subtasks
-
+int DeferredMetadataDumpTask::execute(uint32_t /*timeStamp*/, intrusive_list<Task> & /*subTasks*/) {
 	safs::log_info("Executing deferred metadata dump");
 
 	try {

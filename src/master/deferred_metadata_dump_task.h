@@ -27,7 +27,7 @@ class DeferredMetadataDumpTask : public TaskManager::Task {
 public:
 	DeferredMetadataDumpTask(IMetadataBackend *backend);
 
-	int execute(uint32_t timeStamp, intrusive_list<Task> &work_queue) override;
+	int execute(uint32_t /*timeStamp*/, intrusive_list<Task> &/*subTasks*/) override;
 	bool isFinished() const override;
 
 	static std::string generateDescription() { return "Deferred metadata dump (post-failover)"; }
