@@ -25,4 +25,4 @@
 #define SECONDS_IN_ONE_MINUTE 60
 #define SECONDS_IN_ONE_HOUR   3600
 
-int chartsdata_init(void);
+int chartsdata_init();
