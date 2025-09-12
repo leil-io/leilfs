@@ -28,7 +28,7 @@
 #include "common/slice_traits.h"
 
 FDChunk::FDChunk(uint64_t chunkId, ChunkPartType type, ChunkState state)
-    : id_(chunkId), type_(type), state_(state) {}
+    : id_(chunkId), state_(state), type_(type) {}
 
 std::string FDChunk::fullMetaFilename() const {
 	return owner_->metaPath() + Subfolder::getSubfolderNameGivenChunkId(id_) +
