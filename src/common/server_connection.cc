@@ -140,18 +140,20 @@ MessageBuffer ServerConnection::sendAndReceive(
 	return receiveRequestGeneric(fd, expectedType, receiveMode, timeout);
 }
 
-void ServerConnection::connect(const NetworkAddress& server) {
+void ServerConnection::connect(const NetworkAddress &server) {
 	fd_ = tcpsocket();
+	int tcpLastError = 0;
 	if (fd_ < 0) {
-		throw ConnectionException(
-				"Can't create socket: " + std::string(strerr(tcpgetlasterror())));
+		tcpLastError = tcpgetlasterror();
+		throw ConnectionException("Can't create socket: " + std::string(strerr(tcpLastError)));
 	}
 	tcpnonblock(fd_);
 	if (tcpnumtoconnect(fd_, server.ip, server.port, timeout_) != 0) {
+		tcpLastError = tcpgetlasterror();
 		tcpclose(fd_);
 		fd_ = -1;
-		throw ConnectionException(
-				"Can't connect to " + server.toString() + ": " + strerr(tcpgetlasterror()));
+		throw ConnectionException("Can't connect to " + server.toString() + ": " +
+		                          strerr(tcpLastError));
 	}
 }
 
