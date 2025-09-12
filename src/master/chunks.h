@@ -103,6 +103,7 @@ int chunk_invalidate_goal_cache();
 #endif
 
 bool chunksLoadFromFile(MetadataLoader::Options);
+bool chunksLoadFromFileParallel(MetadataLoader::Options);
 void chunk_store(FILE *fd);
 void chunk_unload(void);
 void chunk_newfs(void);

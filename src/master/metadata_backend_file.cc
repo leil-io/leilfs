@@ -763,7 +763,7 @@ static const std::vector<MetadataSection> kMetadataSections = {
     MetadataSection("ACLS 1.2", "Access Control Lists", fs_load_acls),
     MetadataSection("QUOT 1.1", "Quotas", fs_loadquotas),
     MetadataSection("FLCK 1.0", "File Locks", fs_loadlocks),
-    MetadataSection("CHNK 1.0", "Chunks", chunksLoadFromFile),
+    MetadataSection("CHNK 1.0", "Chunks", chunksLoadFromFileParallel),
     /// Legacy Sections (won't be loaded):
     MetadataSection("QUOT 1.0", "Quotas",
                     [](const MetadataLoader::Options &) { return true; }, true, true),

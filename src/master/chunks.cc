@@ -56,6 +56,7 @@
 #include "common/small_vector.h"
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
+#include "master/chunks_parallel_loader.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
 #include "master/get_servers_for_new_chunk.h"
@@ -2732,6 +2733,31 @@ bool chunksLoadFromFile(MetadataLoader::Options options) {
 		options.offset = options.metadataFile->offset(ptr);
 		return (version == 0 && lockedTo == 0);
 	}
+}
+
+bool chunksLoadFromFileParallel(MetadataLoader::Options options) {
+	auto startOffset = options.offset;
+	auto finalOffset = startOffset + options.sectionLength;
+
+	const uint8_t *ptr = options.metadataFile->seek(startOffset);
+	gChunksMetadata->nextchunkid = get64bit(&ptr);
+	options.offset = options.metadataFile->offset(ptr);
+
+	auto chunkCreator = [](uint64_t chunkId, uint32_t chunkVersion) {
+		return chunk_new(chunkId, chunkVersion);
+	};
+
+	auto chunkSetter = [](Chunk *chunk, uint32_t lockedTo, uint32_t lockId) {
+		chunk->lockedto = lockedTo;
+		chunk->lockid = lockId;
+	};
+
+	auto status = ParallelChunkLoader::loadChunksParallel(options, chunkCreator, chunkSetter);
+
+	// Update MetadataLoader::Options final offset
+	options.offset = finalOffset;
+
+	return status;
 }
 
 void chunk_store(FILE *fd) {
