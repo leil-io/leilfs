@@ -22,21 +22,19 @@
 
 #include <master/metadata_backend_interface.h>
 #include <slogger/slogger.h>
+#include <common/scoped_timer.h>
 
-bool MetadataLoader::loadSection(const MetadataSection &section,
-                                 Options options) {
+bool MetadataLoader::loadSection(const MetadataSection &section, Options options) {
 	try {
+		auto message = fmt::format("Section loaded successfully ({})", section.name.data());
+		util::ScopedTimer timer(message);
 		if (section.load(options)) {
-			safs_pretty_syslog(LOG_INFO, "Section loaded successfully (%s)",
-			                   section.name.data());
 			return true;
-		} else {
-			safs_pretty_syslog(LOG_ERR, "error reading section (%s)",
-			                   section.name.data());
 		}
+
+		safs::log_err("error reading section ({})", section.name);
 	} catch (const std::exception &e) {
-		safs_pretty_syslog(LOG_ERR, "Exception while processing section (%s)",
-		                   section.name.data());
+		safs::log_err("Exception while processing section ({})", section.name);
 		throw MetadataConsistencyException(e.what());
 	}
 	return false;
