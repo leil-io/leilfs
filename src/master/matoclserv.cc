@@ -1150,7 +1150,8 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
 	return status;
 }
 
-void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCreateOperation) {
+void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCreateOperation,
+                             bool isExtraChunk) {
 	DelayedChunkOperation *operation;
 	const PacketSerializer *serializer;
 
@@ -1195,7 +1196,10 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 	}
 
 	if (!eptr) {
-		safs_pretty_syslog(LOG_WARNING,"got chunk status, but don't want it");
+		if (!isExtraChunk) {
+			safs_pretty_syslog(LOG_WARNING, "got chunk status, but don't want it");
+			return;
+		}
 		return;
 	}
 	if (status == SAUNAFS_STATUS_OK) { dcm_modify(inode, eptr->sessionData->sessionId); }

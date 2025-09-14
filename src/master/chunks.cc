@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <random>
 #include <unordered_map>
 
@@ -54,6 +55,7 @@
 #include "common/saunafs_version.h"
 #include "common/slice_traits.h"
 #include "common/small_vector.h"
+#include "errors/saunafs_error_codes.h"
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
 #include "master/chunkserver_db.h"
@@ -62,6 +64,7 @@
 #include "master/goal_cache.h"
 #include "metrics/metrics.h"
 #include "protocol/SFSCommunication.h"
+#include "protocol/matocs.h"
 
 #ifdef METARESTORE
 #  include <ctime>
@@ -89,6 +92,13 @@ constexpr uint32_t kChunkHashMask = kChunkHashSize - 1;
 constexpr uint32_t chunkHashPos(uint64_t chunkid) {
 	return static_cast<uint32_t>(chunkid) & kChunkHashMask;
 }
+
+constexpr uint8_t kExtraChunksThreshold = 100; // how many extra chunks we want to have per goal
+constexpr uint8_t kMinChunksToCreateThreshold = 10; // minimum number of chunks to create at once
+
+static std::map<uint8_t, std::set<uint64_t>> gValidExtraChunksPerGoal;
+static std::map<uint8_t, std::set<uint64_t>> gBeingCreatedChunksPerGoal;
+static std::map<uint64_t, uint8_t> gExtraChunksToGoal;
 
 #define CHECKSUMSEED 78765491511151883ULL
 
@@ -738,6 +748,10 @@ uint64_t chunk_checksum(ChecksumMode mode) {
 	return checksum;
 }
 
+uint64_t chunk_next_chunk_id() {
+	return gChunksMetadata->nextchunkid;
+}
+
 static inline Chunk *chunk_malloc() {
 	chunk_bucket *cb;
 	Chunk *ret;
@@ -803,7 +817,16 @@ void chunk_emergency_increase_version(Chunk *c) {
 
 void chunk_finalize_failed_operation(Chunk *c) {
 	if (c->operation == Chunk::CREATE) {
-		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_CHUNKLOST, true);
+		bool isExtraChunk = false;
+		auto it = gExtraChunksToGoal.find(c->chunkid);
+		if (it != gExtraChunksToGoal.end()) {
+			uint8_t goal = it->second;
+			gExtraChunksToGoal.erase(it);
+			gBeingCreatedChunksPerGoal[goal].erase(c->chunkid);
+			isExtraChunk = true;
+		}
+
+		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_CHUNKLOST, true, isExtraChunk);
 	} else {
 		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_NOTDONE);
 	}
@@ -835,6 +858,13 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 				chunk_finalize_failed_operation(c);
 			}
 		}
+	} else if (lost_copy_found && gExtraChunksToGoal.contains(c->chunkid) && !c->isWritable()) {
+		// Chunk is not being created (no operation in progress)
+		// Chunk is lost - we should not keep it in extra chunks set
+		auto it = gExtraChunksToGoal.find(c->chunkid);
+		uint8_t goal = it->second;
+		gExtraChunksToGoal.erase(it);
+		gValidExtraChunksPerGoal[goal].erase(c->chunkid);
 	}
 }
 #endif
@@ -1059,6 +1089,140 @@ int chunk_get_partstomodify(uint64_t chunkid, int &recover, int &remove) {
 	return SAUNAFS_STATUS_OK;
 }
 
+uint8_t chunk_create_chunks_if_needed(uint8_t goal, uint32_t min_server_version) {
+	auto currentExtraChunks =
+	    gValidExtraChunksPerGoal[goal].size() + gBeingCreatedChunksPerGoal[goal].size();
+	if (currentExtraChunks >= kExtraChunksThreshold) {
+		// There are already some chunks with this goal or chunks being created
+		return SAUNAFS_STATUS_OK;
+	}
+
+	auto serversWithChunkTypes = matocsserv_getservers_for_new_chunk(goal, min_server_version);
+	if (serversWithChunkTypes.empty()) {
+		uint16_t uscount, tscount;
+		double minusage, maxusage;
+		matocsserv_usagedifference(&minusage, &maxusage, &uscount, &tscount);
+		if ((uscount > 0) &&
+		    (eventloop_time() >
+		     (starttime + 600))) {  // if there are chunkservers and it's at least one minute after
+			                        // start then it means that there is no space left
+			return SAUNAFS_ERROR_NOSPACE;
+		} else {
+			return SAUNAFS_ERROR_NOCHUNKSERVERS;
+		}
+	}
+
+	ChunkCopiesCalculator calculator(fs_get_goal_definition(goal));
+	for (const auto &server_with_type : serversWithChunkTypes) {
+		calculator.addPart(server_with_type.second, MediaLabel::kWildcard);
+	}
+	calculator.evalRedundancyLevel();
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+
+	// Creating some chunks should be safe
+	auto extraChunksToCreate = std::max(2 * (kExtraChunksThreshold - currentExtraChunks),
+	                                    static_cast<size_t>(kMinChunksToCreateThreshold));
+
+	std::vector<uint64_t> chunksIdsToCreate;
+	for (size_t i = 0; i < extraChunksToCreate; ++i) {
+		auto *c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+		for (const auto &server_with_type : serversWithChunkTypes) {
+			c->parts.push_back(ChunkPart(matocsserv_get_csdb(server_with_type.first)->csid,
+			                             ChunkPart::BUSY, c->version, server_with_type.second));
+		}
+		c->interrupted = 0;
+		c->operation = Chunk::CREATE;
+		c->updateStats();
+		chunksIdsToCreate.push_back(c->chunkid);
+		gBeingCreatedChunksPerGoal[goal].insert(c->chunkid);
+		gExtraChunksToGoal[c->chunkid] = goal;
+	}
+
+	for (const auto &server_with_type : serversWithChunkTypes) {
+		std::vector<ChunkCreateOp> ops;
+		for (const auto &chunkid : chunksIdsToCreate) {
+			ops.emplace_back(chunkid, server_with_type.second, 1);
+		}
+		matocsserv_send_multicreatechunk(server_with_type.first, ops);
+	}
+	return SAUNAFS_STATUS_OK;
+}
+
+uint8_t chunk_get_new_chunk(uint8_t goal, uint32_t min_server_version, Chunk *&c, uint8_t *opflag,
+                            uint64_t *nchunkid) {
+	auto status = chunk_create_chunks_if_needed(goal, min_server_version);
+	if (status != SAUNAFS_STATUS_OK) {
+		return status;
+	}
+
+	if (!gValidExtraChunksPerGoal[goal].empty()) {
+		// There are some already created chunks with this goal
+		while (!gValidExtraChunksPerGoal[goal].empty()) {
+			auto chundIdIt = gValidExtraChunksPerGoal[goal].begin();
+			c = chunk_find(*chundIdIt);
+			if (c == nullptr) {
+				safs::log_warn("chunk_get_new_chunk: could not find chunkid {} (supposed valid)",
+				               *chundIdIt);
+				gExtraChunksToGoal.erase(gExtraChunksToGoal.find(*chundIdIt));
+				gValidExtraChunksPerGoal[goal].erase(chundIdIt);
+				continue;
+			}
+
+			if (!c->isWritable() || c->operation != Chunk::NONE || c->fileCount() != 0) {
+				safs::log_warn(
+				    "chunk_get_new_chunk: chunkid {} (supposed valid) is not writable/idle/unused",
+				    *chundIdIt);
+				gExtraChunksToGoal.erase(gExtraChunksToGoal.find(*chundIdIt));
+				gValidExtraChunksPerGoal[goal].erase(chundIdIt);
+				continue;
+			}
+
+			// Chunk should be valid (really valid)
+			gExtraChunksToGoal.erase(gExtraChunksToGoal.find(*chundIdIt));
+			gValidExtraChunksPerGoal[goal].erase(chundIdIt);
+			chunk_add_file_int(c, goal);
+			*opflag = 0;
+			*nchunkid = c->chunkid;
+			return SAUNAFS_STATUS_OK;
+		}
+
+		// No valid chunks found, default to looking for being created chunks
+	}
+
+	status = chunk_create_chunks_if_needed(goal, min_server_version);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	while (!gBeingCreatedChunksPerGoal[goal].empty()) {
+		auto chundIdIt = gBeingCreatedChunksPerGoal[goal].begin();
+		c = chunk_find(*chundIdIt);
+		if (c == nullptr) {
+			safs::log_warn("chunk_get_new_chunk: could not find chunkid {} (supposed being created)",
+							*chundIdIt);
+			gExtraChunksToGoal.erase(gExtraChunksToGoal.find(*chundIdIt));
+			gBeingCreatedChunksPerGoal[goal].erase(chundIdIt);
+			continue;
+		}
+
+		if (!c->isWritable() || c->operation != Chunk::CREATE || c->fileCount() != 0) {
+			safs::log_warn(
+				"chunk_get_new_chunk: chunkid {} (supposed being created) is not writable/being created/unused",
+				*chundIdIt);
+			gExtraChunksToGoal.erase(gExtraChunksToGoal.find(*chundIdIt));
+			gBeingCreatedChunksPerGoal[goal].erase(chundIdIt);
+			continue;
+		}
+
+		// Chunk is being created
+		gExtraChunksToGoal.erase(gExtraChunksToGoal.find(*chundIdIt));
+		gBeingCreatedChunksPerGoal[goal].erase(chundIdIt);
+		chunk_add_file_int(c, goal);
+		*opflag = 1;
+		*nchunkid = c->chunkid;
+		return SAUNAFS_STATUS_OK;
+	}
+	return SAUNAFS_ERROR_CHUNKLOST; // should not happen
+}
+
 uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 		bool usedummylockid, bool quota_exceeded, uint8_t *opflag, uint64_t *nchunkid,
 		uint32_t min_server_version = 0) {
@@ -1067,38 +1231,10 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 		if (quota_exceeded) {
 			return SAUNAFS_ERROR_QUOTA;
 		}
-		auto serversWithChunkTypes = matocsserv_getservers_for_new_chunk(goal, min_server_version);
-		if (serversWithChunkTypes.empty()) {
-			uint16_t uscount,tscount;
-			double minusage,maxusage;
-			matocsserv_usagedifference(&minusage,&maxusage,&uscount,&tscount);
-			if ((uscount > 0) && (eventloop_time() > (starttime+600))) { // if there are chunkservers and it's at least one minute after start then it means that there is no space left
-				return SAUNAFS_ERROR_NOSPACE;
-			} else {
-				return SAUNAFS_ERROR_NOCHUNKSERVERS;
-			}
+		auto status = chunk_get_new_chunk(goal, min_server_version, c, opflag, nchunkid);
+		if (status != SAUNAFS_STATUS_OK) {
+			return status;
 		}
-		ChunkCopiesCalculator calculator(fs_get_goal_definition(goal));
-		for (const auto &server_with_type : serversWithChunkTypes) {
-			calculator.addPart(server_with_type.second, MediaLabel::kWildcard);
-		}
-		calculator.evalRedundancyLevel();
-		if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
-			return SAUNAFS_ERROR_NOCHUNKSERVERS;
-		}
-		c = chunk_new(gChunksMetadata->nextchunkid++, 1);
-		c->interrupted = 0;
-		c->operation = Chunk::CREATE;
-		chunk_add_file_int(c,goal);
-		for (const auto &server_with_type : serversWithChunkTypes) {
-			c->parts.push_back(ChunkPart(matocsserv_get_csdb(server_with_type.first)->csid,
-			                             ChunkPart::BUSY, c->version, server_with_type.second));
-			matocsserv_send_createchunk(server_with_type.first, c->chunkid, server_with_type.second,
-			                            c->version);
-		}
-		c->updateStats();
-		*opflag=1;
-		*nchunkid = c->chunkid;
 	} else {
 		Chunk *oc = chunk_find(ochunkid);
 		if (oc==NULL) {
@@ -1276,7 +1412,8 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 		bool doIncreaseVersion, uint64_t *newChunkId) {
 	Chunk *c;
 	if (oldChunkId == 0) { // new chunk
-		c = chunk_new(gChunksMetadata->nextchunkid++, 1);
+		c = chunk_new(*newChunkId, 1);
+		gChunksMetadata->nextchunkid = std::max(gChunksMetadata->nextchunkid, *newChunkId + 1);
 		chunk_add_file_int(c, goal);
 	} else {
 		Chunk *oc = chunk_find(oldChunkId);
@@ -1410,6 +1547,7 @@ uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet) {
 		safs_pretty_syslog(LOG_WARNING,"was asked to increase the next chunk id to %" PRIu64 ", but it was"
 				"already set to a bigger value %" PRIu64 ". Ignoring.",
 				nextChunkIdToBeSet, gChunksMetadata->nextchunkid);
+		safs::log_warn("DAVE: chunk_set_next_chunkid");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 }
@@ -1757,7 +1895,16 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,ma
 			if (c->interrupted) {
 				chunk_emergency_increase_version(c);
 			} else {
-				matoclserv_chunk_status(c->chunkid,SAUNAFS_STATUS_OK);
+				bool isExtraChunk = false;
+				if (gExtraChunksToGoal.contains(c->chunkid)) {
+					auto goal = gExtraChunksToGoal[c->chunkid];
+					gBeingCreatedChunksPerGoal[goal].erase(c->chunkid);
+					gValidExtraChunksPerGoal[goal].insert(c->chunkid);
+					isExtraChunk = true;
+				}
+
+				matoclserv_chunk_status(c->chunkid,SAUNAFS_STATUS_OK, false, isExtraChunk);
+
 				c->operation = Chunk::NONE;
 				c->needverincrease = 0;
 			}
@@ -2474,7 +2621,7 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 	}
 
 	// step 6. delete unused chunk
-	if (c->fileCount() == 0) {
+	if (c->fileCount() == 0 && !gExtraChunksToGoal.contains(c->chunkid)) {
 		deleteAllChunkParts(c);
 		return;
 	}

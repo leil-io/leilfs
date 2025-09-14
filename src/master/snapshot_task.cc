@@ -242,6 +242,7 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	fsnodes_update_checksum(dst_parent);
 	emitChangelog(ts, dst_node->id);
 	if (dst_inode_ != 0 && dst_inode_ != dst_node->id) {
+		safs::log_warn("DAVE: cloneNode");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	return SAUNAFS_STATUS_OK;

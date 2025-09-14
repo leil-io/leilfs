@@ -439,6 +439,10 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:8 chunkversion:32
 /// version==1 chunkid:64 chunktype:16 chunkversion:32
 
+// 0x0459
+#define SAU_MATOCS_MULTI_CREATE_CHUNK (1000U + 113U)
+/// version==0 operations:(vector<ChunkCreateOp>)
+
 // 0x006F
 #define CSTOMA_CREATE (PROTO_BASE+111)
 /// chunkid:64 status:8

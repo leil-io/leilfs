@@ -136,6 +136,8 @@ public:
 
 	void createChunk(const std::vector<uint8_t> &data);
 
+	void multiCreateChunk(const std::vector<uint8_t> &data);
+
 	void deleteChunk(const std::vector<uint8_t> &data);
 
 	void setChunkVersion(const std::vector<uint8_t> &data);

@@ -26,6 +26,9 @@
 #include "protocol/packet.h"
 #include "common/serialization_macros.h"
 
+SAUNAFS_DEFINE_SERIALIZABLE_CLASS(ChunkCreateOp, uint64_t, chunkId, ChunkPartType, chunkType,
+                                  uint32_t, chunkVersion);
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, registerHost, SAU_MATOCS_REGISTER_HOST, 0,
 		uint8_t, status,
@@ -72,6 +75,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType,
 		uint32_t,  chunkVersion)
+
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, multiCreateChunk, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocs, multiCreateChunk, SAU_MATOCS_MULTI_CREATE_CHUNK, kECChunks,
+		std::vector<ChunkCreateOp>, operations)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, truncateChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, truncateChunk, kECChunks, 1)

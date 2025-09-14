@@ -650,6 +650,7 @@ uint8_t fs_apply_trunc(uint32_t ts, inode_t inode, uint32_t indx, uint64_t chunk
 		return status;
 	}
 	if (chunkid != nchunkid) {
+		safs::log_warn("DAVE: fs_apply_trunc");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	p->chunks[indx] = nchunkid;
@@ -988,6 +989,7 @@ uint8_t fs_symlink(const FsContext &context, inode_t parent, const HString &name
 		             context.uid(), context.gid(), p->id);
 	} else {
 		if (*inode != p->id) {
+			safs::log_warn("DAVE: fs_symlink");
 			return SAUNAFS_ERROR_MISMATCH;
 		}
 		gMetadata->metadataVersion++;
@@ -1137,6 +1139,7 @@ uint8_t fs_apply_create(uint32_t ts, inode_t parent, const HString &name, FSNode
 	}
 	if (inode != p->id) {
 		// if inode!=p->id then requested inode number was already acquired
+		safs::log_warn("DAVE: fs_apply_create");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	gMetadata->metadataVersion++;
@@ -1269,6 +1272,7 @@ uint8_t fs_apply_unlink(uint32_t ts, inode_t parent, const HString &name,
 		return SAUNAFS_ERROR_ENOENT;
 	}
 	if (child->id != inode) {
+		safs::log_warn("DAVE: fs_apply_unlink");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	if (child->type == FSNodeType::kDirectory &&
@@ -1311,6 +1315,7 @@ uint8_t fs_rename(const FsContext &context, inode_t parent_src, const HString &n
 	}
 	if ((context.personality() != metadataserver::Personality::kMaster) &&
 	    (se_child->id != *inode)) {
+		safs::log_warn("DAVE: fs_rename");
 		return SAUNAFS_ERROR_MISMATCH;
 	} else {
 		*inode = se_child->id;
@@ -1951,6 +1956,7 @@ uint32_t fs_newsessionid(void) {
 #endif
 uint8_t fs_apply_session(uint32_t sessionid) {
 	if (sessionid != gMetadata->nextSessionId().getValue()) {
+		safs::log_warn("DAVE: fs_newsessionid");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	gMetadata->metadataVersion++;
@@ -2017,6 +2023,7 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 	uint64_t ochunkid, nchunkid;
 	FSNode *node;
 	FSNodeFile *p;
+	auto oldNextChunkId = chunk_next_chunk_id();
 
 	uint8_t status = verify_session(context, OperationMode::kReadWrite, SessionType::kNotMeta);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -2063,6 +2070,7 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 #ifndef METARESTORE
 		status = chunk_multi_modify(ochunkid, lockid, p->goal, usedummylockid,
 		                            quota_exceeded, opflag, &nchunkid, min_server_version);
+		// safs::log_warn("DAVE: fs_writechunk, {} {}", nchunkid, *chunkid);
 #else
 		(void)usedummylockid;
 		(void)min_server_version;
@@ -2071,6 +2079,10 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 #endif
 	} else {
 		bool increaseVersion = (*opflag != 0);
+		if (ochunkid == 0) {
+			nchunkid = *chunkid;
+		}
+		// safs::log_warn("DAVE: fs_writechunk, {} {}", nchunkid, *chunkid);
 		status = chunk_apply_modification(context.ts(), ochunkid, *lockid, p->goal,
 		                                  increaseVersion, &nchunkid);
 	}
@@ -2080,6 +2092,7 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 	}
 	if (context.isPersonalityShadow() && nchunkid != *chunkid) {
 		fsnodes_update_checksum(p);
+		// safs::log_warn("DAVE: fs_writechunk, {} {}", nchunkid, *chunkid);
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 	p->chunks[indx] = nchunkid;
@@ -2095,6 +2108,10 @@ uint8_t fs_writechunk(const FsContext &context, inode_t inode, uint32_t indx, bo
 		*length = p->length;
 	}
 	if (context.isPersonalityMaster()) {
+		auto currentNextChunkId = chunk_next_chunk_id();
+		if (oldNextChunkId != currentNextChunkId) {
+			fs_changelog(context.ts(), "NEXTCHUNKID(%" PRIu64 ")", currentNextChunkId);
+		}
 		fs_changelog(context.ts(),
 		             "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
 		             inode, indx, *opflag, *lockid, nchunkid);
@@ -2461,6 +2478,7 @@ uint8_t fs_apply_setgoal(const FsContext &context, inode_t inode, uint8_t goal, 
 
 	gMetadata->metadataVersion++;
 	if (master_result != my_result) {
+		safs::log_warn("DAVE: fs_apply_setgoal");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 
@@ -2532,6 +2550,7 @@ uint8_t fs_apply_settrashtime(const FsContext &context, inode_t inode, uint32_t 
 
 	gMetadata->metadataVersion++;
 	if (master_result != my_result) {
+		safs::log_warn("DAVE: fs_apply_settrashtime");
 		return SAUNAFS_ERROR_MISMATCH;
 	}
 
@@ -2574,6 +2593,7 @@ uint8_t fs_seteattr(const FsContext &context, inode_t inode, uint8_t eattr, uint
 	} else {
 		gMetadata->metadataVersion++;
 		if ((*sinodes != si) || (*ncinodes != nci) || (*nsinodes != nsi)) {
+			safs::log_warn("DAVE: fs_seteattr");
 			return SAUNAFS_ERROR_MISMATCH;
 		}
 	}

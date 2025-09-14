@@ -29,6 +29,7 @@
 #include "common/media_label.h"
 #include "master/get_servers_for_new_chunk.h"
 #include "protocol/chunkserver_list_entry.h"
+#include "protocol/matocs.h"
 
 /// A struct representing a chunkserver.
 struct matocsserventry;
@@ -108,6 +109,7 @@ int matocsserv_send_deletechunk(matocsserventry* e,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
 int matocsserv_send_createchunk(matocsserventry* e,
 		uint64_t chunkid, ChunkPartType chunkType, uint32_t version);
+int matocsserv_send_multicreatechunk(matocsserventry *eptr, std::vector<ChunkCreateOp> &operations);
 int matocsserv_send_setchunkversion(matocsserventry* e,
 		uint64_t chunkId, uint32_t newVersion, uint32_t chunkVersion, ChunkPartType chunkType);
 int matocsserv_send_duplicatechunk(matocsserventry* e,

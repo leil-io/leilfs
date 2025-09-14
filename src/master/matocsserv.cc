@@ -598,6 +598,21 @@ int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkId, ChunkPa
 	return 0;
 }
 
+int matocsserv_send_multicreatechunk(matocsserventry *eptr, std::vector<ChunkCreateOp> &operations) {
+	if (eptr->mode != KILL) {
+		eptr->outputPackets.push_back(OutputPacket());
+		if (eptr->version < kFirstVersionWithMultiChunkCreate) {
+			// Not supported, using single create for each operation
+			for (const auto &op : operations) {
+				matocsserv_send_createchunk(eptr, op.chunkId, op.chunkType, op.chunkVersion);
+			}
+		} else {
+			matocs::multiCreateChunk::serialize(eptr->outputPackets.back().packet, operations);
+		}
+	}
+	return 0;
+}
+
 void matocsserv_got_createchunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();

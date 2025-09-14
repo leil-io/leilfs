@@ -52,3 +52,4 @@ constexpr uint32_t kFirstVersionWithUseQuotaInVolumeSize = saunafsVersion(4, 9, 
 constexpr uint32_t kFirstVersionWithMountInfoOnMonitoring = saunafsVersion(5, 0, 0);
 constexpr uint32_t kFirstVersionWithChunkBasedWriteAlgorithm = saunafsVersion(5, 0, 0);
 constexpr uint32_t kFirstVersionWithClusterId = saunafsVersion(5, 0, 0);
+constexpr uint32_t kFirstVersionWithMultiChunkCreate = saunafsVersion(5, 2, 0);

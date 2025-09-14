@@ -489,6 +489,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_CREATE_CHUNK:
 		createChunk(message);
 		break;
+	case SAU_MATOCS_MULTI_CREATE_CHUNK:
+		multiCreateChunk(message);
+		break;
 	case SAU_MATOCS_DELETE_CHUNK:
 		deleteChunk(message);
 		break;
@@ -536,6 +539,27 @@ void MasterConn::createChunk(const std::vector<uint8_t> &data) {
 	} else {
 		safs::log_err("MasterConn::createChunk: jobPool is null.");
 		delete outputPacket;
+	}
+}
+
+void MasterConn::multiCreateChunk(const std::vector<uint8_t> &data) {
+	std::vector<ChunkCreateOp> operations;
+
+	matocs::multiCreateChunk::deserialize(data, operations);
+	for (auto &op : operations) {
+		// safs::log_warn("MasterConn::multiCreateChunk: chunkId={}, chunkType={}, chunkVersion={}",
+		//                op.chunkId, op.chunkType.toString(), op.chunkVersion);
+		auto *outputPacket = new OutputPacket;
+		cstoma::createChunk::serialize(outputPacket->packet, op.chunkId, op.chunkType,
+		                               SAUNAFS_STATUS_OK);
+		if (jobPool_) {
+			job_create(*jobPool_, sauJobFinished(this), outputPacket, op.chunkId, op.chunkVersion,
+			           op.chunkType);
+		} else {
+			safs::log_err("MasterConn::multiCreateChunk: jobPool is null.");
+			delete outputPacket;
+			break;
+		}
 	}
 }
 
