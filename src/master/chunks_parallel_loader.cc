@@ -77,7 +77,7 @@ bool ParallelChunkLoader::loadChunksParallel(MetadataLoader::Options options,
 std::vector<ChunkLoadData> ParallelChunkLoader::loadChunkBatch(
     const std::shared_ptr<MemoryMappedFile> &file, size_t offset, size_t length, bool loadLockIds,
     size_t batchId) {
-	safs::log_debug("Thread {} loading batch: offset={}, length={}", batchId, offset, length);
+	safs::log_info("Thread {} loading batch: offset={}, length={}", batchId, offset, length);
 
 	std::vector<ChunkLoadData> chunksData;
 	chunksData.reserve(kDefaultBatchSize);
@@ -98,7 +98,7 @@ std::vector<ChunkLoadData> ParallelChunkLoader::loadChunkBatch(
 		throw;
 	}
 
-	safs::log_debug("Thread {} completed: {} chunk data entries loaded", batchId, chunksData.size());
+	safs::log_info("Thread {} completed: {} chunk data entries loaded", batchId, chunksData.size());
 	return chunksData;
 }
 
