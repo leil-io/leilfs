@@ -35,6 +35,7 @@
 #include <common/observable_property.h>
 #include <common/rotate_files.h>
 #include <common/saunafs_version.h>
+#include <common/scoped_timer.h>
 #include <common/setup.h>
 #include <common/type_defs.h>
 #include <master/changelog.h>
@@ -822,8 +823,7 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 		size_t sectionOffset = sectionMarkers[section.name].first;
 		uint64_t sectionLength = sectionMarkers[section.name].second;
 		if (section.isLegacy) {
-			safs_pretty_syslog(LOG_WARNING, "legacy section found (%s)",
-			                   section.name.data());
+			safs::log_warn("legacy section found ({})", section.name.data());
 			continue;
 		}
 		auto options = MetadataLoader::Options{metadataFile, sectionOffset,
@@ -845,18 +845,18 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 	if (!success) {
 		return kOpFailure;
 	}
-	safs_pretty_syslog_attempt(
-	    LOG_INFO, "checking filesystem consistency of the metadata file");
+	safs::log_info("checking filesystem consistency of the metadata file");
 	fflush(stderr);
+
+	util::ScopedTimer timer("checking filesystem consistency of the metadata file took");
+
 	gMetadata->root = fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
 	if (gMetadata->root == nullptr) {
-		safs_pretty_syslog(LOG_ERR,
-		                   "error reading metadata (root node not found)");
+		safs::log_err("error reading metadata (root node not found)");
 		return kOpFailure;
 	}
 	if (gMetadata->root->type != FSNodeType::kDirectory) {
-		safs_pretty_syslog(
-		    LOG_ERR, "error reading metadata (root node not a directory)");
+		safs::log_err("error reading metadata (root node not a directory)");
 		return kOpFailure;
 	}
 	if (fs_checknodes(ignoreflag) < 0) {
@@ -953,19 +953,22 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	if (fs_load(metadataFile, ignoreflag) != kOpSuccess) {
 		throw MetadataConsistencyException(MetadataStructureReadErrorMsg);
 	}
-	safs_pretty_syslog_attempt(LOG_INFO, "connecting files and chunks");
-	fs_add_files_to_chunks();
+	safs::log_info("connecting files and chunks");
+	{
+		util::ScopedTimer timer("connecting files and chunks took");
+		fs_add_files_to_chunks();
+	}
 	unlink(kMetadataTmpFilename);
-	safs_pretty_syslog_attempt(LOG_INFO,
-	                           "calculating checksum of the metadata");
-	fs_checksum(ChecksumMode::kForceRecalculate);
+	safs::log_info("calculating checksum of the metadata");
+	{
+		util::ScopedTimer timer("calculating checksum of the metadata took");
+		fs_checksum(ChecksumMode::kForceRecalculate);
+	}
 
 #ifndef METARESTORE
-	safs_pretty_syslog(
-	    LOG_INFO,
-	    "metadata file %s read (%" PRIiNode " inodes including %" PRIiNode
-	    " directory inodes, %" PRIiNode " file inodes, %" PRIiNode
-	    " symlink inodes and %" PRIu32 " chunks)",
+	safs::log_info(
+	    "metadata file {} read ({} inodes including {} directory inodes, {} file inodes, "
+	    "{} symlink inodes and {} chunks)",
 	    metadataFile->filename().c_str(), gMetadata->nodes, gMetadata->dirNodes,
 	    gMetadata->fileNodes, gMetadata->linkNodes, chunk_count());
 #else
