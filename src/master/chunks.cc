@@ -84,13 +84,6 @@
 #define MINCHUNKSLOOPCPU    10
 #define MAXCHUNKSLOOPCPU    90
 
-constexpr uint8_t kChunkHashBits = 22;
-constexpr int32_t kChunkHashSize = (1 << kChunkHashBits);
-constexpr uint32_t kChunkHashMask = kChunkHashSize - 1;
-constexpr uint32_t chunkHashPos(uint64_t chunkid) {
-	return static_cast<uint32_t>(chunkid) & kChunkHashMask;
-}
-
 #define CHECKSUMSEED 78765491511151883ULL
 
 #ifndef METARESTORE

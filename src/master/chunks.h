@@ -38,6 +38,13 @@ extern bool gAvoidSameIpChunkservers;
 
 extern Timeout gTimeoutSinceLastChunkRegistration;
 
+constexpr uint8_t kChunkHashBits = 22;
+constexpr int32_t kChunkHashSize = (1 << kChunkHashBits);
+constexpr uint32_t kChunkHashMask = kChunkHashSize - 1;
+constexpr uint32_t chunkHashPos(uint64_t chunkid) {
+	return static_cast<uint32_t>(chunkid) & kChunkHashMask;
+}
+
 int chunk_increase_version(uint64_t chunkid);
 int chunk_set_version(uint64_t chunkid,uint32_t version);
 int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);

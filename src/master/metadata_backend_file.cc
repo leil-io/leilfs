@@ -51,6 +51,7 @@
 #include <master/matomlserv.h>
 #include <master/metadata_backend_common.h>
 #include <master/metadata_dumper_file.h>
+#include <master/parallel_file_chunk_connector.h>
 #include <master/restore.h>
 #include <slogger/slogger.h>
 #include "protocol/SFSCommunication.h"
@@ -956,7 +957,7 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	safs::log_info("connecting files and chunks");
 	{
 		util::ScopedTimer timer("connecting files and chunks took");
-		fs_add_files_to_chunks();
+		ParallelFileChunkConnector::connectFilesToChunks();
 	}
 	unlink(kMetadataTmpFilename);
 	safs::log_info("calculating checksum of the metadata");
