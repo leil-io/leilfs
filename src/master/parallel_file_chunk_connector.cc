@@ -52,9 +52,34 @@ void ParallelFileChunkConnector::processFileBatch(const std::vector<FSNodeFile *
                                                   size_t batchId) {
 	safs::log_info("Thread {} processing {} files", batchId, files.size());
 
-	for (auto *file : files) { connectFileToChunksBatched(file); }
+	std::vector<std::pair<uint64_t, uint8_t>> chunkGoalPairs;
 
-	safs::log_info("Thread {} completed processing {} files", batchId, files.size());
+	chunkGoalPairs.reserve(files.size());
+
+	auto startTime = std::chrono::steady_clock::now();
+	size_t totalChunks = 0;
+
+	std::set<uint32_t> chunkHashes;
+
+	for (auto *file : files) {
+		totalChunks += file->chunks.size();
+		//connectFileToChunksBatched(file);
+		for (uint64_t chunkId : file->chunks) {
+			if (chunkId > 0) {
+				chunkGoalPairs.emplace_back(chunkId, file->goal);
+			}
+			chunkHashes.insert(chunkHashPos(chunkId));
+		}
+	}
+
+	std::vector<int> results = chunk_add_files_bulk(chunkGoalPairs, chunkHashes);
+
+	auto endTime = std::chrono::steady_clock::now();
+	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+	safs::log_info("Thread {} completed: {} files, {} chunks, {}ms ({} chunks/sec)", batchId,
+	               files.size(), totalChunks, duration.count(),
+	               (totalChunks * 1000) / std::max(duration.count(), 1L));
 }
 
 std::vector<FSNodeFile *> ParallelFileChunkConnector::collectFileNodes() {
@@ -74,26 +99,29 @@ std::vector<FSNodeFile *> ParallelFileChunkConnector::collectFileNodes() {
 }
 
 void ParallelFileChunkConnector::connectFileToChunksBatched(FSNodeFile *file) {
-	// Group chunks by hash bucket for better cache locality
-	std::unordered_map<uint32_t, std::vector<uint64_t>> chunksByHashBucket;
+	//safs::log_info("{}: Starting bulk chunk addition of {}", chunkGoalPairs.size());
+	std::vector<std::pair<uint64_t, uint8_t>> chunkGoalPairs;
 	std::unordered_set<uint64_t> processedChunks;
 
-	// Reserve space to avoid reallocations
+	chunkGoalPairs.reserve(file->chunks.size());
 	processedChunks.reserve(file->chunks.size());
 
-	// Group chunks by hash bucket
+	// Collect unique chunks
 	for (uint64_t chunkId : file->chunks) {
 		if (chunkId > 0 && processedChunks.insert(chunkId).second) {
-			uint32_t hashPos = chunkHashPos(chunkId);
-			chunksByHashBucket[hashPos].push_back(chunkId);
+			chunkGoalPairs.emplace_back(chunkId, file->goal);
 		}
 	}
 
-	// Process chunks bucket by bucket for better cache locality
-	for (const auto &[hashPos, chunkIds] : chunksByHashBucket) {
-		// All chunks in this bucket will access the same hash table entry
-		for (uint64_t chunkId : chunkIds) {
-			chunk_add_file(chunkId, file->goal);
+	// Single bulk operation instead of multiple individual calls
+	safs::log_info("{}: Starting bulk chunk addition of {}", __func__, chunkGoalPairs.size());
+	//std::vector<int> results = chunk_add_files_bulk(chunkGoalPairs);
+
+	// Report possible errors
+	/*for (size_t i = 0; i < results.size(); ++i) {
+		if (results[i] != SAUNAFS_STATUS_OK) {
+			safs::log_warn("Failed to add file to chunk {}: error {}", chunkGoalPairs[i].first,
+			               results[i]);
 		}
-	}
+	}*/
 }

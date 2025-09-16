@@ -957,13 +957,59 @@ int chunk_delete_file(uint64_t chunkid,uint8_t goal) {
 }
 
 int chunk_add_file(uint64_t chunkid,uint8_t goal) {
-	Chunk *c;
-	c = chunk_find(chunkid);
-	if (c==NULL) {
+	auto *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) {
 		safs::log_err("chunk_add_file: could not find chunkid {}", chunkid);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
-	return chunk_add_file_int(c,goal);
+	return chunk_add_file_int(chunk, goal);
+}
+
+std::vector<int> chunk_add_files_bulk(const VectorChunkGoalPair &chunkGoalPairs,
+                                      const std::set<uint32_t> &chunkHashes) {
+	std::vector<int> results(chunkGoalPairs.size(), SAUNAFS_ERROR_NOCHUNK);
+
+	if (chunkGoalPairs.empty()) { return results; }
+
+	std::vector<Chunk*> candidatesChunks;
+	candidatesChunks.reserve(chunkGoalPairs.size());
+
+	// Populate the chunks candidates
+	for (auto chunkHash : chunkHashes) {
+		for (Chunk *chunk = gChunksMetadata->chunkhash[chunkHash]; chunk != nullptr;
+		     chunk = chunk->next) {
+			candidatesChunks.push_back(chunk);
+		}
+	}
+
+	// Sort candidates chunk by chunkId to make the search more efficient
+	sort(candidatesChunks.begin(), candidatesChunks.end(), [](const Chunk* lhs, const Chunk* rhs) {
+        return lhs->chunkid < rhs->chunkid;
+    });
+
+	for (const auto &chunkGoalPair : chunkGoalPairs) {
+		Chunk dummy;
+		dummy.chunkid = chunkGoalPair.first;
+		auto goal = chunkGoalPair.second;
+
+		auto chunkIterator = std::ranges::lower_bound(
+		    candidatesChunks, &dummy,
+		    [](const Chunk *lhs, const Chunk *rhs) { return lhs->chunkid < rhs->chunkid; });
+
+		if (chunkIterator != candidatesChunks.end()) {  // Chunk was found
+#ifndef METARESTORE
+			safs::log_info("{}: Chunk with id {} found!!!", __func__, dummy.chunkid);
+			chunk_handle_disconnected_copies(*chunkIterator);
+#endif
+			chunk_add_file_int(*chunkIterator, goal);
+			// results[idx] = chunk_add_file_int(*chunkIterator, goal);
+		} else {
+			// Keep SAUNAFS_ERROR_NOCHUNK as already initialized
+			safs::log_err("{}: could not find chunkid {}", __func__, dummy.chunkid);
+		}
+	}
+
+	return results;
 }
 
 int chunk_can_unlock(uint64_t chunkid, uint32_t lockid) {
