@@ -76,6 +76,8 @@ void fs_changelog(uint32_t ts, const char *format, ...)
     __attribute__((__format__(__printf__, 2, 3)));
 void fs_add_files_to_chunks();
 
+void fs_add_files_to_chunks_with_sqrt();
+
 uint64_t fs_getversion();
 uint8_t fs_repair(inode_t rootinode, uint8_t sesflags, inode_t inode, uint32_t uid, uint32_t gid,
                   uint8_t correct_only, uint32_t *notchanged, uint32_t *erased, uint32_t *repaired);

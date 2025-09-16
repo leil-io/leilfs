@@ -2945,6 +2945,23 @@ void fs_add_files_to_chunks() {
 	}
 }
 
+void fs_add_files_to_chunks_with_sqrt() {
+	std::vector<FSNodeFile *> fileNodes;
+	fileNodes.reserve(gMetadata->fileNodes);  // Pre-allocate based on known count
+
+	for (uint32_t i = 0; i < NODEHASHSIZE; ++i) {
+		for (const auto &node : gMetadata->nodeHash[i]) {
+			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+			    node->type == FSNodeType::kReserved) {
+				fileNodes.push_back(static_cast<FSNodeFile *>(node));
+			}
+		}
+	}
+
+	safs::log_info("{}: Connecting {} files to chunks", __func__, fileNodes.size());
+	chunk_add_files_bulk(fileNodes);
+}
+
 uint64_t fs_getversion() {
 	if (!gMetadata) {
 		throw NoMetadataException();

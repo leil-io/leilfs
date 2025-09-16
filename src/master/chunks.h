@@ -31,6 +31,7 @@
 #include "common/time_utils.h"
 #include "master/checksum.h"
 #include "master/metadata_loader.h"
+#include "master/filesystem_node_types.h"
 
 struct matocsserventry;
 
@@ -51,9 +52,8 @@ int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);
 int chunk_delete_file(uint64_t chunkid,uint8_t goal);
 int chunk_add_file(uint64_t chunkid,uint8_t goal);
 
-using VectorChunkGoalPair = std::vector<std::pair<uint64_t, uint8_t>>;
-std::vector<int> chunk_add_files_bulk(const VectorChunkGoalPair &chunkGoalPairs,
-                                      const std::set<uint32_t> &chunkHashes);
+//using VectorChunkGoalPair = std::vector<std::pair<uint64_t, uint8_t>>;
+void chunk_add_files_bulk(const std::vector<FSNodeFile *> &fileNodes);
 
 int chunk_unlock(uint64_t chunkid);
 uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lockid, uint8_t goal,

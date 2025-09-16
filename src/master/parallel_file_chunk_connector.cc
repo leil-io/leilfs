@@ -72,7 +72,7 @@ void ParallelFileChunkConnector::processFileBatch(const std::vector<FSNodeFile *
 		}
 	}
 
-	std::vector<int> results = chunk_add_files_bulk(chunkGoalPairs, chunkHashes);
+	// std::vector<int> results = chunk_add_files_bulk(chunkGoalPairs, chunkHashes);
 
 	auto endTime = std::chrono::steady_clock::now();
 	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);

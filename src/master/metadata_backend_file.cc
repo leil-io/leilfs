@@ -957,7 +957,8 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	safs::log_info("connecting files and chunks");
 	{
 		util::ScopedTimer timer("connecting files and chunks took");
-		ParallelFileChunkConnector::connectFilesToChunks();
+		fs_add_files_to_chunks_with_sqrt();
+		//ParallelFileChunkConnector::connectFilesToChunks();
 	}
 	unlink(kMetadataTmpFilename);
 	safs::log_info("calculating checksum of the metadata");

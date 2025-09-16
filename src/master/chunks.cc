@@ -965,51 +965,60 @@ int chunk_add_file(uint64_t chunkid,uint8_t goal) {
 	return chunk_add_file_int(chunk, goal);
 }
 
-std::vector<int> chunk_add_files_bulk(const VectorChunkGoalPair &chunkGoalPairs,
-                                      const std::set<uint32_t> &chunkHashes) {
-	std::vector<int> results(chunkGoalPairs.size(), SAUNAFS_ERROR_NOCHUNK);
+void chunk_add_files_bulk(const std::vector<FSNodeFile *> &fileNodes) {
+	if (fileNodes.empty()) { return; }
 
-	if (chunkGoalPairs.empty()) { return results; }
+	constexpr uint32_t MaxSqrtSize = 2050; // ~sqrt(kChunkHashSize)
+	std::array<std::vector<Chunk*>, MaxSqrtSize> candidatesChunks;
 
-	std::vector<Chunk*> candidatesChunks;
-	candidatesChunks.reserve(chunkGoalPairs.size());
+	auto initialCapacity = kChunkHashSize / MaxSqrtSize;
+	for (uint32_t i = 0; i < MaxSqrtSize; i++) {
+		candidatesChunks[i].reserve(initialCapacity);
+		candidatesChunks[i].clear();
+	}
 
 	// Populate the chunks candidates
-	for (auto chunkHash : chunkHashes) {
-		for (Chunk *chunk = gChunksMetadata->chunkhash[chunkHash]; chunk != nullptr;
-		     chunk = chunk->next) {
-			candidatesChunks.push_back(chunk);
+	for (int i = 0; i < kChunkHashSize; ++i) {
+		int currentIndex = i / MaxSqrtSize;
+		for (Chunk *chunkPtr = gChunksMetadata->chunkhash[i]; chunkPtr; chunkPtr = chunkPtr->next) {
+			candidatesChunks[currentIndex].push_back(chunkPtr);
 		}
 	}
 
 	// Sort candidates chunk by chunkId to make the search more efficient
-	sort(candidatesChunks.begin(), candidatesChunks.end(), [](const Chunk* lhs, const Chunk* rhs) {
-        return lhs->chunkid < rhs->chunkid;
-    });
+	for (uint32_t i = 0; i < MaxSqrtSize; i++) {
+		std::sort(candidatesChunks[i].begin(), candidatesChunks[i].end(),
+		          [](const Chunk *lhs, const Chunk *rhs) { return lhs->chunkid < rhs->chunkid; });
+	}
 
-	for (const auto &chunkGoalPair : chunkGoalPairs) {
-		Chunk dummy;
-		dummy.chunkid = chunkGoalPair.first;
-		auto goal = chunkGoalPair.second;
+	for (auto *file : fileNodes) {
+		for (auto chunkId : file->chunks) {
+			auto chunkBucketIndex = chunkHashPos(chunkId) / MaxSqrtSize;
 
-		auto chunkIterator = std::ranges::lower_bound(
-		    candidatesChunks, &dummy,
-		    [](const Chunk *lhs, const Chunk *rhs) { return lhs->chunkid < rhs->chunkid; });
+			Chunk dummy;
+			dummy.chunkid = chunkId;
+			auto goal = file->goal;
 
-		if (chunkIterator != candidatesChunks.end()) {  // Chunk was found
-#ifndef METARESTORE
-			safs::log_info("{}: Chunk with id {} found!!!", __func__, dummy.chunkid);
-			chunk_handle_disconnected_copies(*chunkIterator);
-#endif
-			chunk_add_file_int(*chunkIterator, goal);
-			// results[idx] = chunk_add_file_int(*chunkIterator, goal);
-		} else {
-			// Keep SAUNAFS_ERROR_NOCHUNK as already initialized
-			safs::log_err("{}: could not find chunkid {}", __func__, dummy.chunkid);
+			auto chunkIterator = std::ranges::lower_bound(
+				candidatesChunks[chunkBucketIndex], &dummy,
+				[](const Chunk *lhs, const Chunk *rhs) { return lhs->chunkid < rhs->chunkid; });
+
+			if (chunkIterator != candidatesChunks[chunkBucketIndex].end()) {  // Chunk was found
+	#ifndef METARESTORE
+				chunk_handle_disconnected_copies(*chunkIterator);
+	#endif
+				chunk_add_file_int(*chunkIterator, goal);
+			} else {
+				// Report error
+				safs::log_err("{}: could not find chunkid {}", __func__, dummy.chunkid);
+			}
 		}
 	}
 
-	return results;
+	// Clear the Sqrt structure
+	for (uint32_t i = 0; i < MaxSqrtSize; i++) {
+		candidatesChunks[i].clear();
+	}
 }
 
 int chunk_can_unlock(uint64_t chunkid, uint32_t lockid) {
