@@ -29,6 +29,10 @@
 
 #include "saunafs_error_codes.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #ifndef EDQUOT
 # define EDQUOT ENOSPC
 #endif
@@ -89,6 +93,24 @@ int saunafs_error_conv(uint8_t status) {
 	}
 }
 
+#ifdef _WIN32
+static std::string windows_error_to_string(int error_code) {
+	char buffer[256];
+	DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+	                              nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+	                              buffer, sizeof(buffer), nullptr);
+
+	if (length > 0) {
+		while (length > 0 && (buffer[length - 1] == '\r' || buffer[length - 1] == '\n')) {
+			buffer[--length] = '\0';
+		}
+		return buffer;
+	}
+
+	return "Error code: " + std::to_string(error_code);
+}
+#endif
+
 const char *strerr(int error_code) {
 	static std::unordered_map<int, std::string> error_description;
 	static std::mutex error_description_mutex;
@@ -99,7 +121,14 @@ const char *strerr(int error_code) {
 		return it->second.c_str();
 	}
 
-	const char *error_string = strerror(error_code);
+	std::string error_string;
+
+#ifdef _WIN32
+	error_string = windows_error_to_string(error_code);
+#else
+	error_string = std::strerror(error_code);
+#endif
+
 	auto insert_it = error_description.insert({error_code, std::string(error_string)}).first;
 	return insert_it->second.c_str();
 }
