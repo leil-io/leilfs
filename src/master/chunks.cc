@@ -523,7 +523,7 @@ struct ChunksMetadata {
 	// chunks
 	std::vector<std::unique_ptr<ChunkBucket>> chunkBuckets;
 	std::vector<Chunk *> availableChunks;
-	std::vector<Chunk *> chunkhash[kChunkHashSize];
+	std::vector<std::pair<uint64_t, Chunk *>> chunkhash[kChunkHashSize];
 	uint64_t lastchunkid;
 	Chunk *lastchunkptr;
 
@@ -692,7 +692,7 @@ ChecksumRecalculationStatus chunks_update_checksum_a_bit(uint32_t speedLimit) {
 	uint32_t recalculated = 0;
 	auto &checksumPosition = gChunksMetadata->checksumRecalculationPosition;
 	while (checksumPosition < kChunkHashSize) {
-		for (auto *chunk : gChunksMetadata->chunkhash[checksumPosition]) {
+		for (auto &[_, chunk] : gChunksMetadata->chunkhash[checksumPosition]) {
 			chunk_checksum_add_to_background(chunk);
 			++recalculated;
 		}
@@ -717,7 +717,7 @@ ChecksumRecalculationStatus chunks_update_checksum_a_bit(uint32_t speedLimit) {
 static void chunk_recalculate_checksum() {
 	gChunksMetadata->chunksChecksum = CHECKSUMSEED;
 	for (int i = 0; i < kChunkHashSize; ++i) {
-		for (auto *chunk : gChunksMetadata->chunkhash[i]) {
+		for (auto &[_, chunk] : gChunksMetadata->chunkhash[i]) {
 			chunk->checksum = chunk_checksum(chunk);
 			addToChecksum(gChunksMetadata->chunksChecksum, chunk->checksum);
 		}
@@ -767,7 +767,7 @@ static inline void makeChunkAvailable(Chunk *chunk) {
 Chunk *allocateNewChunk(uint64_t chunkid, uint32_t chunkversion) {
 	uint32_t chunkpos = chunkHashPos(chunkid);
 	Chunk *chunk = getNewChunk();
-	gChunksMetadata->chunkhash[chunkpos].push_back(chunk);
+	gChunksMetadata->chunkhash[chunkpos].emplace_back(chunkid, chunk);
 	chunk->chunkid = chunkid;
 	chunk->version = chunkversion;
 	gChunksMetadata->lastchunkid = chunkid;
@@ -840,8 +840,8 @@ Chunk *chunk_find(uint64_t chunkid) {
 		return gChunksMetadata->lastchunkptr;
 	}
 
-	for (auto *chunk : gChunksMetadata->chunkhash[chunkpos]) {
-		if (chunk->chunkid == chunkid) {
+	for (auto &[currentChunkId, chunk] : gChunksMetadata->chunkhash[chunkpos]) {
+		if (currentChunkId == chunkid) {
 			gChunksMetadata->lastchunkid = chunkid;
 			gChunksMetadata->lastchunkptr = chunk;
 #ifndef METARESTORE
@@ -1662,7 +1662,7 @@ Chunk *getCurrentChunkInBucket(uint32_t currentBucket, uint32_t currentBucketInd
 	// If currentBucketIndex is out of bounds, return nullptr
 	if (currentBucketIndex >= currentBucketSize) { return nullptr; }
 
-	return gChunksMetadata->chunkhash[currentBucket][currentBucketIndex];
+	return gChunksMetadata->chunkhash[currentBucket][currentBucketIndex].second;
 }
 
 /*
@@ -1680,7 +1680,7 @@ void chunk_clean_zombie_servers_a_bit() {
 	while (current_position < kChunkHashSize) {
 		const auto& currentBucket = gChunksMetadata->chunkhash[current_position];
 		for (; gCurrentChunkInZombieLoopIndex < currentBucket.size();
-		     gCurrentChunkInZombieLoop = currentBucket[gCurrentChunkInZombieLoopIndex++]) {
+		     gCurrentChunkInZombieLoop = currentBucket[gCurrentChunkInZombieLoopIndex++].second) {
 			chunk_handle_disconnected_copies(gCurrentChunkInZombieLoop);
 			if (watchdog.expired()) {
 				eventloop_make_next_poll_nonblocking();
@@ -2564,7 +2564,8 @@ bool ChunkWorker::deleteUnusedChunks() {
 
 		if (stack_.node->fileCount() == 0 && stack_.node->parts.empty()) {
 			assert(currentBucketSize == 0 ||
-			       gChunksMetadata->chunkhash[currentBucket][currentBucketIndex] == stack_.node);
+			       gChunksMetadata->chunkhash[currentBucket][currentBucketIndex].second ==
+			           stack_.node);
 
 			// If the chunk is not the last one in the current bucket
 			if (currentBucketIndex + 1 < currentBucketSize) {
@@ -2572,7 +2573,7 @@ bool ChunkWorker::deleteUnusedChunks() {
 				std::swap(gChunksMetadata->chunkhash[currentBucket][currentBucketIndex],
 						  gChunksMetadata->chunkhash[currentBucket][currentBucketSize - 1]);
 
-				stack_.node = gChunksMetadata->chunkhash[currentBucket][currentBucketIndex];
+				stack_.node = gChunksMetadata->chunkhash[currentBucket][currentBucketIndex].second;
 			}  // If stack_.node is the last chunk in the bucket and is equal to
 			//  gCurrentChunkInZombieLoop or the current chunks bucket is empty
 			else if (stack_.node == gCurrentChunkInZombieLoop || currentBucketSize == 0) {
@@ -2582,7 +2583,7 @@ bool ChunkWorker::deleteUnusedChunks() {
 
 			// Remove the chunk from gChunksMetadata
 			if (!gChunksMetadata->chunkhash[currentBucket].empty()) {
-				auto *chunk = gChunksMetadata->chunkhash[currentBucket].back();
+				auto *chunk = gChunksMetadata->chunkhash[currentBucket].back().second;
 				gChunksMetadata->chunkhash[currentBucket].pop_back();
 				chunk_delete(chunk);
 			}
@@ -2591,7 +2592,8 @@ bool ChunkWorker::deleteUnusedChunks() {
 			if (currentBucketIndex + 1 < currentBucketSize) {
 				// Move to the next chunk in the current bucket
 				stack_.current_bucket_index++;
-				stack_.node = gChunksMetadata->chunkhash[currentBucket][currentBucketIndex + 1];
+				stack_.node =
+				    gChunksMetadata->chunkhash[currentBucket][currentBucketIndex + 1].second;
 			}
 			else {
 				stack_.node = nullptr;
@@ -2730,9 +2732,9 @@ constexpr uint32_t kSerializedChunkSizeWithLockId = 20;
 
 void chunk_dump(void) {
 	for (auto i = 0; i < kChunkHashSize; i++) {
-		for (auto *chunk : gChunksMetadata->chunkhash[i]) {
+		for (auto &[currentChunkId, chunk] : gChunksMetadata->chunkhash[i]) {
 			printf("*|i:%016" PRIX64 "|v:%08" PRIX32 "|g:%" PRIu8 "|t:%10" PRIu32 "\n",
-			       chunk->chunkid, chunk->version, chunk->highestIdGoal(), chunk->lockedto);
+			       currentChunkId, chunk->version, chunk->highestIdGoal(), chunk->lockedto);
 		}
 	}
 }
@@ -2773,7 +2775,6 @@ void chunk_store(FILE *fd) {
 	uint32_t i,j;
 
 // chunkdata
-	uint64_t chunkid;
 	uint32_t version;
 	uint32_t lockedto, lockid;
 	ptr = hdr;
@@ -2784,12 +2785,11 @@ void chunk_store(FILE *fd) {
 	j=0;
 	ptr = storebuff;
 	for (i = 0; i < kChunkHashSize; i++) {
-		for (auto *chunk : gChunksMetadata->chunkhash[i]) {
+		for (auto &[currentChunkId, chunk] : gChunksMetadata->chunkhash[i]) {
 #ifndef METARESTORE
 			chunk_handle_disconnected_copies(chunk);
 #endif
-			chunkid = chunk->chunkid;
-			put64bit(&ptr,chunkid);
+			put64bit(&ptr, currentChunkId);
 			version = chunk->version;
 			put32bit(&ptr,version);
 			lockedto = chunk->lockedto;
