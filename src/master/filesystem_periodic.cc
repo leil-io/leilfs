@@ -274,7 +274,7 @@ void fs_background_checksum_recalculation_a_bit() {
 		// Nodes are in a hashtable, therefore they can be recalculated in multiple steps.
 		while (gChecksumBackgroundUpdater.getPosition() < NODEHASHSIZE) {
 			auto checkSumPosition = gChecksumBackgroundUpdater.getPosition();
-			for (const auto &node : gMetadata->nodeHash[checkSumPosition]) {
+			for (const auto &[_, node] : gMetadata->nodeHash[checkSumPosition]) {
 				fsnodes_checksum_add_to_background(node);
 				++recalculated;
 			}
@@ -385,7 +385,7 @@ void fs_process_file_test() {
 			return;
 		}
 
-		for (const auto &node : gMetadata->nodeHash[gFileTestLoopIndex]) {
+		for (const auto &[_, node] : gMetadata->nodeHash[gFileTestLoopIndex]) {
 			node_error_flag = 0;
 
 			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||

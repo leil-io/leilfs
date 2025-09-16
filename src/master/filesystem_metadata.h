@@ -43,7 +43,7 @@ using XAttributeInodeEntryVector = std::vector<XAttributeInodeEntryPointer>;
 using XAttributeDataEntryPointer = std::unique_ptr<XAttributeDataEntry>;
 using XAttributeDataEntryVector = std::vector<XAttributeDataEntryPointer>;
 
-using FSNodePointerVector = std::vector<FSNode*>;
+using FSNodePointerVector = std::vector<std::pair<inode_t, FSNode*>>;
 
 /** Metadata of the filesystem.
  *  All the static variables managed by function in this file which form metadata of the filesystem.
@@ -102,7 +102,7 @@ public:
 
 		// Free memory allocated in nodehash hashmap
 		for (uint32_t i = 0; i < NODEHASHSIZE; ++i) {
-			for (const auto &node : nodeHash[i]) {
+			for (const auto &[_, node] : nodeHash[i]) {
 				FSNode::destroy(node);
 			}
 			nodeHash[i].clear();
@@ -120,7 +120,7 @@ public:
 	/// Adds the node to the hash and emits the signal if not from scan
 	void addNode(FSNode *node, bool isFromScan = false) {
 		uint32_t nodeHashIndex = NODEHASHPOS(node->id);
-		nodeHash[nodeHashIndex].push_back(node);
+		nodeHash[nodeHashIndex].emplace_back(node->id, node);
 
 		if (!isFromScan) {
 			nodeChangedSignal.emit(node);

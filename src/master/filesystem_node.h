@@ -34,10 +34,8 @@ inline FSNode *fsnodes_id_to_node_internal(inode_t id) {
 	// Find the node with the given id
 	uint32_t nodeHashIndex = NODEHASHPOS(id);
 
-	for (const auto &node : gMetadata->nodeHash[nodeHashIndex]) {
-		if (node->id == id) {
-			return node;
-		}
+	for (const auto &[currentNodeId, node] : gMetadata->nodeHash[nodeHashIndex]) {
+		if (currentNodeId == id) { return node; }
 	}
 
 	return nullptr;

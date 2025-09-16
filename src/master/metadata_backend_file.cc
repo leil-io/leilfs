@@ -600,7 +600,7 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	}
 
 	uint32_t nodeHashIndex = NODEHASHPOS(node->id);
-	gMetadata->nodeHash[nodeHashIndex].push_back(node);
+	gMetadata->nodeHash[nodeHashIndex].emplace_back(node->id, node);
 
 	gMetadata->inodePool.markAsAcquired(node->id);
 	gMetadata->nodes++;
@@ -632,10 +632,10 @@ static int fs_lostnode(FSNode *p) {
 
 int fs_checknodes(int ignoreflag) {
 	for (auto i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodeHash[i]) {
+		for (const auto &[currentNodeId, node] : gMetadata->nodeHash[i]) {
 			if (node->parents.empty() && node != gMetadata->root &&
 			    (node->type != FSNodeType::kTrash) && (node->type != FSNodeType::kReserved)) {
-				safs::log_err("found orphaned inode: %" PRIiNode, node->id);
+				safs::log_err("found orphaned inode: %" PRIiNode, currentNodeId);
 				if (ignoreflag) {
 					if (fs_lostnode(node) < 0) {
 						return -1;
@@ -885,7 +885,7 @@ void fs_new(void) {
 	gMetadata->root->gid = 0;
 
 	uint32_t hashRootIndex = NODEHASHPOS(gMetadata->root->id);
-	gMetadata->nodeHash[hashRootIndex].push_back(gMetadata->root);
+	gMetadata->nodeHash[hashRootIndex].emplace_back(gMetadata->root->id, gMetadata->root);
 	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
 
 	chunk_newfs();
@@ -1072,9 +1072,7 @@ void MetadataBackendFile::storenode(FSNode *f, FILE *fd) {
 
 void MetadataBackendFile::storenodes(FILE *fd) {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodeHash[i]) {
-			storenode(node, fd);
-		}
+		for (const auto &[_, node] : gMetadata->nodeHash[i]) { storenode(node, fd); }
 	}
 	storenode(nullptr, fd);  // end marker
 }

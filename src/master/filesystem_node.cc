@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <type_traits>
+#include <utility>
 
 #include "common/attributes.h"
 #include "common/massert.h"
@@ -1321,8 +1322,9 @@ static inline void fsnodes_remove_node(uint32_t ts, FSNode *node) {
 
 	// remove node from nodeHash
 	uint32_t nodeHashIndex = NODEHASHPOS(node->id);
-	auto nodeIterator = std::find(gMetadata->nodeHash[nodeHashIndex].begin(),
-	                              gMetadata->nodeHash[nodeHashIndex].end(), node);
+	auto nodeIterator =
+	    std::find(gMetadata->nodeHash[nodeHashIndex].begin(),
+	              gMetadata->nodeHash[nodeHashIndex].end(), std::make_pair(node->id, node));
 
 	FSNode::destroy(node);
 

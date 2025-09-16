@@ -125,7 +125,7 @@ static void fsnodes_recalculate_checksum() {
 	gMetadata->fsNodesChecksum = NODECHECKSUMSEED;  // arbitrary number
 	// nodes
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto& node : gMetadata->nodeHash[i]) {
+		for (const auto& [_, node] : gMetadata->nodeHash[i]) {
 			node->checksum = fsnodes_checksum(node, true);
 			addToChecksum(gMetadata->fsNodesChecksum, node->checksum);
 		}

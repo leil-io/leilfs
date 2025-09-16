@@ -123,7 +123,7 @@ void fs_dumpnode(FSNode *f) {
 
 void fs_dumpnodes() {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodeHash[i]) {
+		for (const auto &[_, node] : gMetadata->nodeHash[i]) {
 			fs_dumpnode(node);
 		}
 	}

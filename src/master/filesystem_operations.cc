@@ -2932,7 +2932,7 @@ uint8_t fs_get_chunkid(const FsContext &context, inode_t inode, uint32_t index,
 
 void fs_add_files_to_chunks() {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
-		for (const auto &node : gMetadata->nodeHash[i]) {
+		for (const auto &[_, node] : gMetadata->nodeHash[i]) {
 			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			    node->type == FSNodeType::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
