@@ -2937,7 +2937,7 @@ void fs_add_files_to_chunks() {
 			    node->type == FSNodeType::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
 					if (chunkid > 0) {
-						chunk_add_file(chunkid, node->goal);
+						chunk_add_file_modified(chunkid, node->goal);
 					}
 				}
 			}

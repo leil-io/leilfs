@@ -521,6 +521,7 @@ struct ChunksMetadata {
 	chunk_bucket *cbhead;
 	Chunk *chfreehead;
 	Chunk *chunkhash[kChunkHashSize];
+	std::array<Chunk *, kChunkHashSize> lastVisitedChunk;
 	uint64_t lastchunkid;
 	Chunk *lastchunkptr;
 
@@ -767,6 +768,7 @@ Chunk *chunk_new(uint64_t chunkid, uint32_t chunkversion) {
 	newchunk = chunk_malloc();
 	newchunk->next = gChunksMetadata->chunkhash[chunkpos];
 	gChunksMetadata->chunkhash[chunkpos] = newchunk;
+	gChunksMetadata->lastVisitedChunk[chunkpos] = newchunk;
 	newchunk->chunkid = chunkid;
 	newchunk->version = chunkversion;
 	gChunksMetadata->lastchunkid = chunkid;
@@ -850,6 +852,38 @@ Chunk *chunk_find(uint64_t chunkid) {
 		}
 	}
 	return NULL;
+}
+
+Chunk *chunk_find_starting_at_last_visited_chunk(uint64_t chunkId) {
+	uint32_t chunkpos = chunkHashPos(chunkId);
+	Chunk *chunkit = gChunksMetadata->lastVisitedChunk[chunkpos];
+
+	if (gChunksMetadata->lastchunkid == chunkId) {
+		return gChunksMetadata->lastchunkptr;
+	}
+
+	for (; chunkit != nullptr; chunkit = chunkit->next) {
+		if (chunkit->chunkid == chunkId) {
+			gChunksMetadata->lastchunkid = chunkId;
+			gChunksMetadata->lastchunkptr = chunkit;
+			gChunksMetadata->lastVisitedChunk[chunkpos] = chunkit;
+
+			if (chunkit->next == nullptr) { // Last chunk in the bucket
+				// Next search will have to start from the beginning of the bucket
+				gChunksMetadata->lastVisitedChunk[chunkpos] = gChunksMetadata->chunkhash[chunkpos];
+			}
+#ifndef METARESTORE
+			chunk_handle_disconnected_copies(chunkit);
+#endif // METARESTORE
+			return chunkit;
+		}
+	}
+
+	gChunksMetadata->lastVisitedChunk[chunkpos] = gChunksMetadata->chunkhash[chunkpos];
+
+	// If the chunk is not found, then fall back to the regular search
+	// starting from the beginning of the bucket
+	return chunk_find(chunkId);
 }
 
 #ifndef METARESTORE
@@ -958,6 +992,15 @@ int chunk_delete_file(uint64_t chunkid,uint8_t goal) {
 
 int chunk_add_file(uint64_t chunkid,uint8_t goal) {
 	auto *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) {
+		safs::log_err("chunk_add_file: could not find chunkid {}", chunkid);
+		return SAUNAFS_ERROR_NOCHUNK;
+	}
+	return chunk_add_file_int(chunk, goal);
+}
+
+int chunk_add_file_modified(uint64_t chunkid, uint8_t goal) {
+	auto *chunk = chunk_find_starting_at_last_visited_chunk(chunkid);
 	if (chunk == nullptr) {
 		safs::log_err("chunk_add_file: could not find chunkid {}", chunkid);
 		return SAUNAFS_ERROR_NOCHUNK;

@@ -51,6 +51,7 @@ int chunk_set_version(uint64_t chunkid,uint32_t version);
 int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);
 int chunk_delete_file(uint64_t chunkid,uint8_t goal);
 int chunk_add_file(uint64_t chunkid,uint8_t goal);
+int chunk_add_file_modified(uint64_t chunkid, uint8_t goal);
 
 //using VectorChunkGoalPair = std::vector<std::pair<uint64_t, uint8_t>>;
 void chunk_add_files_bulk(const std::vector<FSNodeFile *> &fileNodes);
