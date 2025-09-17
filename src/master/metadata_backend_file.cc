@@ -526,7 +526,7 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 
 		StatsRecord sr;
 		fsnodes_get_stats(child, &sr);
-		fsnodes_add_stats(parent, &sr);
+		fsnodes_add_stats_no_acc(parent, &sr);
 	}
 	return kSuccess;
 }

@@ -348,6 +348,21 @@ void fsnodes_add_stats(FSNodeDirectory *parent, StatsRecord *sr) {
 	}
 }
 
+void fsnodes_add_stats_no_acc(FSNodeDirectory *parent, StatsRecord *sr) {
+	StatsRecord *psr;
+	if (parent) {
+		psr = &parent->stats;
+		psr->inodes += sr->inodes;
+		psr->dirs += sr->dirs;
+		psr->files += sr->files;
+		psr->links += sr->links;
+		psr->chunks += sr->chunks;
+		psr->length += sr->length;
+		psr->size += sr->size;
+		psr->realsize += sr->realsize;
+	}
+}
+
 void fsnodes_add_sub_stats(FSNodeDirectory *parent, StatsRecord *newsr, StatsRecord *prevsr) {
 	StatsRecord sr;
 	sr.inodes = newsr->inodes - prevsr->inodes;

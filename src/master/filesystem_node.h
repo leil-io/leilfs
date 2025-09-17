@@ -148,6 +148,7 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *node, const HString &n
                             inode_t req_inode = 0);
 
 void fsnodes_add_stats(FSNodeDirectory *parent, StatsRecord *sr);
+void fsnodes_add_stats_no_acc(FSNodeDirectory *parent, StatsRecord *sr);
 int fsnodes_sticky_access(FSNode *parent, FSNode *node, uint32_t uid);
 void fsnodes_unlink(uint32_t ts, FSNodeDirectory *parent, const HString &node_name, FSNode *node);
 bool fsnodes_isancestor(FSNodeDirectory *f, FSNode *p);
