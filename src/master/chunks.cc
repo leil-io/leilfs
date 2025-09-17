@@ -670,10 +670,10 @@ static void chunk_update_checksum(Chunk *ch) {
 	removeFromChecksum(gChunksMetadata->chunksChecksum, ch->checksum);
 	ch->checksum = chunk_checksum(ch);
 	if (chunkHashPos(ch->chunkid) < gChunksMetadata->checksumRecalculationPosition) {
-		safs::log_trace("master.fs.checksum.changing_recalculated_chunk");
+		// safs::log_trace("master.fs.checksum.changing_recalculated_chunk");
 		addToChecksum(gChunksMetadata->chunksChecksumRecalculated, ch->checksum);
 	} else {
-		safs::log_trace("master.fs.checksum.changing_not_recalculated_chunk");
+		// safs::log_trace("master.fs.checksum.changing_not_recalculated_chunk");
 	}
 	addToChecksum(gChunksMetadata->chunksChecksum, ch->checksum);
 }
