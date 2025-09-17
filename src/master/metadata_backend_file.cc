@@ -382,6 +382,7 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	static const int8_t kSuccess = 0;
 	static const int8_t kLastEdge = 1;
 	static inode_t currentParentId;
+	static FSNodeDirectory* currentParentNode;
 	if (init) {
 		currentParentId = 0;
 		return kSuccess;
@@ -434,7 +435,13 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		// 	return kError;
 		// }
 	} else {
-		FSNodeDirectory *parent = fsnodes_id_to_node<FSNodeDirectory>(parentId);
+		FSNodeDirectory *parent;
+		if (currentParentId != parentId){
+			parent = fsnodes_id_to_node<FSNodeDirectory>(parentId);
+			currentParentNode = parent;
+		} else {
+			parent = currentParentNode;
+		}
 		if (!parent) {
 			safs_pretty_syslog(LOG_ERR,
 			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
