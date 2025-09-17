@@ -836,14 +836,14 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 
 Chunk *chunk_find(uint64_t chunkid) {
 	uint32_t chunkpos = chunkHashPos(chunkid);
-	if (gChunksMetadata->lastchunkid==chunkid) {
-		return gChunksMetadata->lastchunkptr;
-	}
+	// if (gChunksMetadata->lastchunkid==chunkid) {
+	// 	return gChunksMetadata->lastchunkptr;
+	// }
 
 	for (auto &[currentChunkId, chunk] : gChunksMetadata->chunkhash[chunkpos]) {
 		if (currentChunkId == chunkid) {
-			gChunksMetadata->lastchunkid = chunkid;
-			gChunksMetadata->lastchunkptr = chunk;
+			// gChunksMetadata->lastchunkid = chunkid;
+			// gChunksMetadata->lastchunkptr = chunk;
 #ifndef METARESTORE
 			chunk_handle_disconnected_copies(chunk);
 #endif // METARESTORE
