@@ -30,12 +30,12 @@ void MemStorage::copy(Handle &handle, const Handle &other) {
 	}
 	handle.data() = encode(copied, hash(other));
 
-#if !defined(NDEBUG) || defined(SAUNAFS_TEST_POINTER_OBFUSCATION)
-	if (!debug_ptr_) {
-		debug_ptr_ = new std::set<char *>();
-	}
-	debug_ptr_->insert(copied);
-#endif
+// #if !defined(NDEBUG) || defined(SAUNAFS_TEST_POINTER_OBFUSCATION)
+// 	if (!debug_ptr_) {
+// 		debug_ptr_ = new std::set<char *>();
+// 	}
+// 	debug_ptr_->insert(copied);
+// #endif
 }
 
 /*
@@ -52,12 +52,12 @@ void MemStorage::bind(Handle &handle, const HString &str) {
 	memcpy(copied, str.c_str(), size);
 	handle.data() = encode(copied, str.hash());
 
-#if !defined(NDEBUG) || defined(SAUNAFS_TEST_POINTER_OBFUSCATION)
-	if (!debug_ptr_) {
-		debug_ptr_ = new std::set<char *>();
-	}
-	debug_ptr_->insert(copied);
-#endif
+// #if !defined(NDEBUG) || defined(SAUNAFS_TEST_POINTER_OBFUSCATION)
+// 	if (!debug_ptr_) {
+// 		debug_ptr_ = new std::set<char *>();
+// 	}
+// 	debug_ptr_->insert(copied);
+// #endif
 }
 
 /**
@@ -69,17 +69,17 @@ MemStorage::ValueType MemStorage::encode(const char *ptr, HashType hash) {
 }
 
 void MemStorage::unbind(Handle &handle) {
-#if !defined(NDEBUG) || defined(SAUNAFS_TEST_POINTER_OBFUSCATION)
-	char *ptr = c_str(handle);
-	if (ptr) {
-		if (!debug_ptr_) {
-			debug_ptr_ = new std::set<char *>();
-		}
-		auto it = debug_ptr_->find(ptr);
-		assert(it != debug_ptr_->end());
-		debug_ptr_->erase(it);
-	}
-#endif
+// #if !defined(NDEBUG) || defined(SAUNAFS_TEST_POINTER_OBFUSCATION)
+// 	char *ptr = c_str(handle);
+// 	if (ptr) {
+// 		if (!debug_ptr_) {
+// 			debug_ptr_ = new std::set<char *>();
+// 		}
+// 		auto it = debug_ptr_->find(ptr);
+// 		assert(it != debug_ptr_->end());
+// 		debug_ptr_->erase(it);
+// 	}
+// #endif
 	free(c_str(handle));
 }
 

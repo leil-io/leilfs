@@ -420,20 +420,20 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		return kError;
 	}
 	if (!parentId) {
-		// if (child->type == FSNodeType::kTrash) {
-		// 	gMetadata->trash.insert(
-		// 	    {TrashPathKey(child), hstorage::Handle(name)});
-		// 	gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
-		// 	gMetadata->trashNodes++;
-		// } else if (child->type == FSNodeType::kReserved) {
-		// 	gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
-		// 	gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
-		// 	gMetadata->reservedNodes++;
-		// } else {
-		// 	safs::log_err("loading edge: {}, {}->{} error: bad child type ({})", parentId,
-		// 	              fsnodes_escape_name(name), childId, static_cast<char>(child->type));
-		// 	return kError;
-		// }
+		if (child->type == FSNodeType::kTrash) {
+			gMetadata->trash.insert(
+			    {TrashPathKey(child), hstorage::Handle(name)});
+			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
+			gMetadata->trashNodes++;
+		} else if (child->type == FSNodeType::kReserved) {
+			gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
+			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
+			gMetadata->reservedNodes++;
+		} else {
+			safs::log_err("loading edge: {}, {}->{} error: bad child type ({})", parentId,
+			              fsnodes_escape_name(name), childId, static_cast<char>(child->type));
+			return kError;
+		}
 	} else {
 		FSNodeDirectory *parent;
 		if (currentParentId != parentId){
