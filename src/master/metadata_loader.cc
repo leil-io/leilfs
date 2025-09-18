@@ -20,23 +20,24 @@
 
 #include <master/metadata_loader.h>
 
+#include <common/time_utils.h>
 #include <master/metadata_backend_interface.h>
 #include <slogger/slogger.h>
 
 bool MetadataLoader::loadSection(const MetadataSection &section,
                                  Options options) {
 	try {
+		Timer timer;
 		if (section.load(options)) {
-			safs_pretty_syslog(LOG_INFO, "Section loaded successfully (%s)",
-			                   section.name.data());
+			auto message = fmt::format("Section loaded successfully ({}): {}s", section.name.data(),
+			                           timer.elapsed_s());
+			safs::log_info("{}", message);
 			return true;
-		} else {
-			safs_pretty_syslog(LOG_ERR, "error reading section (%s)",
-			                   section.name.data());
 		}
+
+		safs::log_err("error reading section ({})", section.name);
 	} catch (const std::exception &e) {
-		safs_pretty_syslog(LOG_ERR, "Exception while processing section (%s)",
-		                   section.name.data());
+		safs::log_err("Exception while processing section ({})", section.name);
 		throw MetadataConsistencyException(e.what());
 	}
 	return false;
