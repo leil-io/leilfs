@@ -6,16 +6,27 @@ master_cfg="PERSONALITY=ha-cluster-managed"
 master_cfg+="|MAGIC_DEBUG_LOG = ${master_log_file}|LOG_FLUSH_ON=DEBUG"
 
 CHUNKSERVERS=3 \
-    USE_RAMDISK="YES" \
+	USE_RAMDISK="YES" \
 	MASTER_EXTRA_CONFIG="${master_cfg}" \
 	MASTER_START_PARAM="-o ha-cluster-managed -o initial-personality=master" \
 	SHADOW_START_PARAM="-o ha-cluster-managed -o initial-personality=shadow" \
-    setup_local_empty_saunafs info
+	setup_local_empty_saunafs info
 
 saunafs_master_daemon_ha () {
 	local command=$1
 	shift
 	saunafs_master_daemon ${command} -o ha-cluster-managed $@
+}
+
+# Function to get birth time with nanosecond precision
+get_birth_time_timestamp() {
+	local file_path="$1"
+	local stat_info=$(stat "${file_path}")
+	# Generate birth timestamp with the format "HH:MM:SS.nnnnnnnnn"
+	local birth_time=$(echo "${stat_info}" | grep 'Birth' | awk '{print $3}')
+	# Format the birth timestamp to an integer with the format "HHMMSSnnnnnnnnn"
+	local timestamp=$(echo "${birth_time}" | sed 's/[^0-9]*//g')
+	echo "${timestamp}"
 }
 
 cd "${info[mount0]}"
@@ -33,6 +44,12 @@ assert_success saunafs_master_daemon_ha stop
 # Verify that starting sfsmaster with default values does not trigger a deferred metadata dump
 log=$(cat "${master_log_file}")
 assert_awk_finds_no '/Executing deferred metadata dump/' "${log}"
+
+# Message for the usual metadata dump
+assert_awk_finds '/Metadata dumped successfully after applying changelogs/' "${log}"
+
+# Save birth timestamp of metadata.sfs after stopping the initial master
+birth_timestamp_after_stop=$(get_birth_time_timestamp "${info[master_data_path]}/metadata.sfs")
 
 # Restart the master server, this time using `-o defer-metadata-dump` option
 assert_success saunafs_master_daemon_ha start -o initial-personality=master \
@@ -61,6 +78,16 @@ assert_equals "data_during_background_dump" "$(cat test_dir/background_dump_file
 echo "Waiting for deferred metadata dump to complete..."
 log=$(cat "${master_log_file}")
 assert_awk_finds '/Deferred metadata dump completed successfully/' "${log}"
+
+# Save birth timestamp of metadata.sfs after starting the master
+birth_timestamp_after_start=$(get_birth_time_timestamp "${info[master_data_path]}/metadata.sfs")
+
+# Validate the file was actually updated
+assert_less_than "${birth_timestamp_after_stop}" "${birth_timestamp_after_start}"
+echo "Verified: metadata.sfs was updated by deferred dump"
+echo "  Birthtime after stop: ${birth_timestamp_after_stop}"
+echo "  Birthtime after start:  ${birth_timestamp_after_start}"
+echo "  Difference: $((birth_timestamp_after_start - birth_timestamp_after_stop))"
 
 echo "Verifying data integrity after deferred dump completion..."
 

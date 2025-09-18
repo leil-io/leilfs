@@ -254,21 +254,19 @@ int fs_loadall(void) {
 		if (deferDump) {
 			safs::log_info("Deferring metadata dump option detected");
 
-			// Schedule one-time deferred metadata dump task using TaskManager
-			uint32_t delayedTime = eventloop_time() + 30;  // 30 seconds delay
-
 			auto *metadataBackendPtr = gMetadataBackend.get();
 			auto metadataDumpTask = std::make_unique<DeferredMetadataDumpTask>(metadataBackendPtr);
 
-			gMetadata->taskManager.submitTask(delayedTime, 1, metadataDumpTask.release(),
-				DeferredMetadataDumpTask::generateDescription(),
-				[](int status) {
-					if (status == SAUNAFS_STATUS_OK) {
-						safs::log_info("Deferred metadata dump completed successfully");
-					} else {
-						safs::log_err("Deferred metadata dump failed with status: {}", status);
-					}
-				});
+			// Schedule one-time deferred metadata dump task using TaskManager
+			gMetadata->taskManager.submitTask(
+			    0, 1, metadataDumpTask.release(), DeferredMetadataDumpTask::generateDescription(),
+			    [](int status) {
+				    if (status == SAUNAFS_STATUS_OK) {
+					    safs::log_info("Deferred metadata dump completed successfully");
+				    } else {
+					    safs::log_err("Deferred metadata dump failed with status: {}", status);
+				    }
+			    });
 		} else {
 			// Original behavior: dump the new metadata immediately
 			gMetadataBackend->fs_storeall(DumpType::kForegroundDump);

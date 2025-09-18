@@ -51,5 +51,13 @@ int DeferredMetadataDumpTask::execute(uint32_t /*timeStamp*/, intrusive_list<Tas
 }
 
 bool DeferredMetadataDumpTask::isFinished() const {
+	// This task is executed only once and triggers a background dump that relies on fork.
+	// Unlike other tasks (e.g., SetGoalTask, SetTrashtimeTask) that iterate through collections
+	// and track progress via iterators, this task's responsibility ends immediately after
+	// calling fs_storeall(DumpType::kBackgroundDump).
+	//
+	// The actual metadata dumping happens asynchronously in a forked child process,
+	// which is monitored separately through the metadata dumper's polling mechanism.
+	// Therefore, the task is considered finished as soon as fs_storeall() returns.
 	return true;  // Single execution task
 }
