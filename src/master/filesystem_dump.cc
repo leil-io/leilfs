@@ -131,11 +131,11 @@ void fs_dumpnodes() {
 
 void fs_dumpedgelist(FSNodeDirectory *parent) {
 	for (const auto &entry : parent->entries) {
-		fs_dumpedge(parent, entry.second, (std::string)(*entry.first));
+		fs_dumpedge(parent, entry.node, (std::string)(*entry.handle));
 	}
 	if (parent->case_insensitive) {
 		for (const auto &entry : parent->lowerCaseEntries) {
-			fs_dumpedge(parent, entry.second, (std::string)(*entry.first));
+			fs_dumpedge(parent, entry.node, (std::string)(*entry.handle));
 		}
 	}
 }
@@ -157,14 +157,14 @@ void fs_dumpedgelist(const ReservedPathContainer &data) {
 void fs_dumpedges(FSNodeDirectory *parent) {
 	fs_dumpedgelist(parent);
 	for (const auto &entry : parent->entries) {
-		FSNode *child = entry.second;
+		FSNode *child = entry.node;
 		if (child->type == FSNodeType::kDirectory) {
 			fs_dumpedges(static_cast<FSNodeDirectory*>(child));
 		}
 	}
 	if (parent->case_insensitive) {
 		for (const auto &entry : parent->lowerCaseEntries) {
-			FSNode *child = entry.second;
+			FSNode *child = entry.node;
 			if (child->type == FSNodeType::kDirectory) {
 				fs_dumpedges(static_cast<FSNodeDirectory *>(child));
 			}

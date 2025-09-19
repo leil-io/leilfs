@@ -44,7 +44,7 @@ static uint64_t fsnodes_checksum(FSNode *node, bool full_update = false) {
 			static_cast<FSNodeDirectory*>(node)->entries_hash = 0;
 			for (const auto &entry : *static_cast<FSNodeDirectory *>(node)) {
 				static_cast<FSNodeDirectory *>(node)->entries_hash ^=
-				    entry.first->hash();
+				    entry.handleHash;
 			}
 
 			// Case insensitive
@@ -53,7 +53,7 @@ static uint64_t fsnodes_checksum(FSNode *node, bool full_update = false) {
 				for (const auto &entry :
 				     static_cast<FSNodeDirectory *>(node)->lowerCaseEntries) {
 					static_cast<FSNodeDirectory *>(node)
-					    ->lowerCaseEntriesHash ^= entry.first->hash();
+					    ->lowerCaseEntriesHash ^= entry.handleHash;
 				}
 			}
 		}

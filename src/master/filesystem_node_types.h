@@ -213,6 +213,7 @@ public:
 };
 
 constexpr FSNode *kUnknownNode = nullptr;
+constexpr hstorage::Handle *kUnknownHandle = nullptr;
 
 /*! \brief Node used for storing file object.
  *
@@ -379,6 +380,15 @@ public:
 	}
 };
 
+struct HandleNodePtrPair {
+	hstorage::Handle *handle;
+	FSNode *node;
+	uint16_t handleHash;
+
+	HandleNodePtrPair(uint64_t handleHash_, hstorage::Handle *handle_, FSNode *node_)
+	    : handle(handle_), node(node_), handleHash(handleHash_) {}
+};
+
 /*! \brief Node used for storing directory.
  *
  * Node size = 64 + 56 + 16 * entries_count
@@ -386,19 +396,15 @@ public:
  */
 class FSNodeDirectory : public FSNode {
 public:
+
 	struct HandleCompare {
-		bool operator()(const std::pair<hstorage::Handle *, FSNode *> &a,
-		                const std::pair<hstorage::Handle *, FSNode *> &b) const {
-			return std::make_pair(a.first->data(), a.second) <
-			       std::make_pair(b.first->data(), b.second);
+		bool operator()(const HandleNodePtrPair &a, const HandleNodePtrPair &b) const {
+			return std::make_pair(a.handleHash, a.node) < std::make_pair(b.handleHash, b.node);
 		}
 	};
 
-	using EntriesContainer =
-	    __gnu_pbds::tree<std::pair<hstorage::Handle *, FSNode *>,
-	                     __gnu_pbds::null_type, HandleCompare,
-	                     __gnu_pbds::rb_tree_tag,
-	                     __gnu_pbds::tree_order_statistics_node_update>;
+	using EntriesContainer = __gnu_pbds::tree<HandleNodePtrPair, __gnu_pbds::null_type,
+	      HandleCompare, __gnu_pbds::rb_tree_tag, __gnu_pbds::tree_order_statistics_node_update > ;
 
 	using iterator = EntriesContainer::iterator;
 	using const_iterator = EntriesContainer::const_iterator;
@@ -428,25 +434,25 @@ public:
 		if (case_insensitive) {
 			HString lowerCaseNameHandle = HString::hstringToLowerCase(name);
 			name_hash = (hstorage::Handle::HashType)lowerCaseNameHandle.hash();
-			auto tmp_handle = hstorage::Handle(name_hash << hstorage::Handle::kHashShift);
-			auto pair_to_find = std::make_pair(&tmp_handle, kUnknownNode);
+			auto pair_to_find = HandleNodePtrPair(name_hash,
+			                                      kUnknownHandle, kUnknownNode);
 			auto lowerCaseIt = lowerCaseEntries.lower_bound(pair_to_find);
 
 			for (; lowerCaseIt != lowerCaseEntries.end(); ++lowerCaseIt) {
-				if ((*lowerCaseIt).first->hash() != name_hash) { break; }
-				if (*((*lowerCaseIt).first) == lowerCaseNameHandle) {
-					auto it = find((*lowerCaseIt).second);
+				if ((*lowerCaseIt).handleHash != name_hash) { break; }
+				if (*((*lowerCaseIt).handle) == lowerCaseNameHandle) {
+					auto it = find((*lowerCaseIt).node);
 					return it;
 				}
 			}
 		} else {
-			auto tmp_handle = hstorage::Handle(name_hash << hstorage::Handle::kHashShift);
-			auto pair_to_find = std::make_pair(&tmp_handle, kUnknownNode);
+			auto pair_to_find = HandleNodePtrPair(name_hash,
+			                                      kUnknownHandle, kUnknownNode);
 			auto it = entries.lower_bound(pair_to_find);
 
 			for (; it != entries.end(); ++it) {
-				if ((*it).first->hash() != name_hash) { break; }
-				if (*((*it).first) == name) { return it; }
+				if ((*it).handleHash != name_hash) { break; }
+				if (*((*it).handle) == name) { return it; }
 			}
 		}
 
@@ -459,13 +465,13 @@ public:
 		if (case_insensitive) {
 			HString lowerCaseNameHandle = HString::hstringToLowerCase(name);
 			name_hash = (hstorage::Handle::HashType)lowerCaseNameHandle.hash();
-			auto tmp_handle = hstorage::Handle(name_hash << hstorage::Handle::kHashShift);
-			auto pair_to_find = std::make_pair(&tmp_handle, kUnknownNode);
+			auto pair_to_find = HandleNodePtrPair(name_hash,
+			                                      kUnknownHandle, kUnknownNode);
 			auto lowerCaseIt = lowerCaseEntries.lower_bound(pair_to_find);
 
 			for (; lowerCaseIt != lowerCaseEntries.end(); ++lowerCaseIt) {
-				if ((*lowerCaseIt).first->hash() != name_hash) { break; }
-				if (*((*lowerCaseIt).first) == lowerCaseNameHandle) { return lowerCaseIt; }
+				if ((*lowerCaseIt).handleHash != name_hash) { break; }
+				if (*((*lowerCaseIt).handle) == lowerCaseNameHandle) { return lowerCaseIt; }
 			}
 		}
 
@@ -481,12 +487,12 @@ public:
 	iterator find(const FSNode *node) {
 		HString name = HString(getChildName(node));
 		uint64_t name_hash = (hstorage::Handle::HashType)name.hash();
-		auto tmp_handle = hstorage::Handle(name_hash << hstorage::Handle::kHashShift);
-		auto pair_to_find = std::make_pair(&tmp_handle, kUnknownNode);
+		auto pair_to_find = HandleNodePtrPair(name_hash << hstorage::Handle::kHashShift,
+			                                      kUnknownHandle, kUnknownNode);
 		auto it = entries.lower_bound(pair_to_find);
 		for (; it != entries.end(); ++it) {
-			if ((*it).first->hash() != name_hash) { break; }
-			if (*((*it).first) == name) { return it; }
+			if ((*it).handleHash != name_hash) { break; }
+			if (*((*it).handle) == name) { return it; }
 		}
 		return entries.end();
 	}

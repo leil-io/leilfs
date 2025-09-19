@@ -78,7 +78,7 @@ inline void fsnodes_check_node_type(const FSNodeDevice *node) {
 inline FSNode *fsnodes_lookup(FSNodeDirectory *node, const HString &name) {
 	auto it = node->find(name);
 	if (it != node->end()) {
-		return (*it).second;
+		return (*it).node;
 	}
 
 	return nullptr;

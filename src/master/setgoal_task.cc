@@ -44,7 +44,7 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 			std::vector<inode_t> inode_list;
 			inode_list.reserve(static_cast<const FSNodeDirectory *>(node)->entries.size());
 			for (const auto &entry : static_cast<const FSNodeDirectory *>(node)->entries) {
-				inode_list.push_back(entry.second->id);
+				inode_list.push_back(entry.node->id);
 			}
 			auto task = new SetGoalTask(std::move(inode_list), uid_, goal_, smode_, stats_);
 			work_queue.push_front(*task);

@@ -514,19 +514,18 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 
 		hstorage::Handle *handlePtr = new hstorage::Handle(name);
-		auto it = parent->entries.insert({handlePtr, child}).first;
-		parent->entries_hash ^= (*it).first->hash();
+		parent->entries.insert(HandleNodePtrPair(handlePtr->hash(), handlePtr, child));
+		parent->entries_hash ^= handlePtr->hash();
 
 		if (parent->case_insensitive) {
 			HString lowerCaseName = HString::hstringToLowerCase(HString(name));
 			auto lowercaseHandlePtr = new hstorage::Handle(lowerCaseName);
-			auto it =
-			    parent->lowerCaseEntries.insert({lowercaseHandlePtr, child})
-			        .first;
-			parent->lowerCaseEntriesHash ^= (*it).first->hash();
+			parent->lowerCaseEntries.insert(
+			    HandleNodePtrPair(lowercaseHandlePtr->hash(), lowercaseHandlePtr, child));
+			parent->lowerCaseEntriesHash ^= lowercaseHandlePtr->hash();
 		}
 
-		child->parents.push_back({parent->id, handlePtr});
+		child->parents.push_back({parentId, handlePtr});
 		if (child->type == FSNodeType::kDirectory) {
 			parent->nlink++;
 		}
@@ -1112,7 +1111,7 @@ void MetadataBackendFile::storeedge(FSNodeDirectory *parent, FSNode *child,
 
 void MetadataBackendFile::storeedgelist(FSNodeDirectory *parent, FILE *fd) {
 	for (const auto &entry : parent->entries) {
-		storeedge(parent, entry.second, (std::string)(*entry.first), fd);
+		storeedge(parent, entry.node, (std::string)(*entry.handle), fd);
 	}
 }
 
@@ -1133,8 +1132,8 @@ void MetadataBackendFile::storeedgelist(const ReservedPathContainer &data, FILE 
 void MetadataBackendFile::storeedges_rec(FSNodeDirectory *f, FILE *fd) {
 	storeedgelist(f, fd);
 	for (const auto &entry : f->entries) {
-		if (entry.second->type == FSNodeType::kDirectory) {
-			storeedges_rec(static_cast<FSNodeDirectory *>(entry.second), fd);
+		if (entry.node->type == FSNodeType::kDirectory) {
+			storeedges_rec(static_cast<FSNodeDirectory *>(entry.node), fd);
 		}
 	}
 }

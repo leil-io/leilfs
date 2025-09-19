@@ -490,15 +490,15 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 
 	auto dir_it = parent->find(name);
 	assert(dir_it != parent->end());
-	assert((*dir_it).second == node);
-	auto handlePtrToErase = dir_it->first;
+	assert((*dir_it).node == node);
+	auto handlePtrToErase = dir_it->handle;
 	if (dir_it != parent->end()) {
 		parent->entries.erase(dir_it);
 		parent->entries_hash ^= name.hash();
 
 		if (parent->case_insensitive) {
 			auto lowerCaseIt = parent->find_lowercase_container(name);
-			delete lowerCaseIt->first;
+			delete lowerCaseIt->handle; // delete handle
 			parent->lowerCaseEntries.erase(lowerCaseIt);
 			HString lowerCaseName = HString::hstringToLowerCase(name);
 			parent->lowerCaseEntriesHash ^= lowerCaseName.hash();
@@ -544,15 +544,15 @@ void fsnodes_remove_edge(uint32_t ts, FSNodeDirectory *parent, const HString &na
 void fsnodes_link(uint32_t ts, FSNodeDirectory *parent, FSNode *child, const HString &name) {
 	// Needs to be freed in fsnodes_remove_edge
 	hstorage::Handle *handlePtr = new hstorage::Handle(name);
-	parent->entries.insert({handlePtr, child});
+	parent->entries.insert(HandleNodePtrPair(handlePtr->hash(), handlePtr, child));
 	parent->entries_hash ^= name.hash();
 
 	if (parent->case_insensitive) {
 		HString lowerCaseName = HString::hstringToLowerCase(name);
 		// Needs to be freed in fsnodes_remove_edge
-		auto lowercaseHandlePtr =
-		    new hstorage::Handle(std::string(lowerCaseName.c_str()));
-		parent->lowerCaseEntries.insert({lowercaseHandlePtr, child});
+		auto lowercaseHandlePtr = new hstorage::Handle(std::string(lowerCaseName.c_str()));
+		parent->lowerCaseEntries.insert(
+		    HandleNodePtrPair(lowercaseHandlePtr->hash(), lowercaseHandlePtr, child));
 		parent->lowerCaseEntriesHash ^= lowerCaseName.hash();
 	}
 
@@ -853,7 +853,7 @@ uint32_t fsnodes_getdirsize(const FSNodeDirectory *p, uint8_t withattr) {
 	uint32_t result = ((withattr) ? 40 : 6) * 2 + 3;  // for '.' and '..'
 	std::string name;
 	for (const auto &entry : p->entries) {
-		name = (std::string)(*entry.first);
+		name = (std::string)(*entry.handle);
 		result += ((withattr) ? 40 : 6) + name.length();
 	}
 	return result;
@@ -929,18 +929,18 @@ void fsnodes_getdirdata(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t 
 	// entries
 	std::string name;
 	for (const auto &entry : p->entries) {
-		name = (std::string)(*entry.first);
+		name = (std::string)(*entry.handle);
 		dbuff[0] = name.size();
 		dbuff++;
 		memcpy(dbuff, name.c_str(), name.length());
 		dbuff += name.length();
-		putINode(&dbuff, entry.second->id);
+		putINode(&dbuff, entry.node->id);
 		if (withattr) {
-			fsnodes_fill_attr(entry.second, p, uid, gid, auid, agid, sesflags, attr);
+			fsnodes_fill_attr(entry.node, p, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(dbuff, attr.data(), attr.size());
 			dbuff += attr.size();
 		} else {
-			put8bit(&dbuff, static_cast<uint8_t>(entry.second->type));
+			put8bit(&dbuff, static_cast<uint8_t>(entry.node->type));
 		}
 	}
 }
@@ -1006,9 +1006,9 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 	std::string name;
 	auto it = p->find_nth(first_entry - 2);
 	while (it != p->end() && number_of_entries > 0) {
-		name = (std::string)(*(*it).first);
-		inode = (*it).second->id;
-		fsnodes_fill_attr((*it).second, p, uid, gid, auid, agid, sesflags, attr);
+		name = (std::string)(*(*it).handle);
+		inode = (*it).node->id;
+		fsnodes_fill_attr((*it).node, p, uid, gid, auid, agid, sesflags, attr);
 
 		dir_entries.emplace_back(std::move(inode), std::move(name), std::move(attr));
 
@@ -1080,7 +1080,7 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 		uint64_t next_index = kUnusedEntryIndex;
 		if (!p->entries.empty()) {
 			auto first_dirent_it = p->find_nth(0);
-			next_index = (*first_dirent_it).first->data() & ~SIGN_BIT_64;
+			next_index = (*first_dirent_it).handle->data() & ~SIGN_BIT_64;
 		}
 		dir_entries.emplace_back(kDotDotEntryIndex, next_index, std::move(inode), std::string(".."), std::move(attr));
 
@@ -1098,34 +1098,34 @@ void fsnodes_getdir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid
 	// We're trying to find the first entry in the directory that has index
 	// equal to first_entry. We don't know the second part of the pair, so we
 	// use kUnknownNode as a placeholder, and it is also the minimum possible.
-	auto pair_to_find = std::make_pair(&first_index, kUnknownNode);
+	auto pair_to_find = HandleNodePtrPair(first_index.hash(), &first_index, kUnknownNode);
 	auto it = p->entries.lower_bound(pair_to_find);
-	if (it != p->entries.end() && (*it).first->data() != first_entry) {
+	if (it != p->entries.end() && (*it).handle->data() != first_entry) {
 		// We assume that we received hash that had its most significant bit
 		// stripped so we try new find with this supposedly stripped bit set
 		// again.
 		first_index.unlink();  // do not try to unbind the resource under this
 		                       // possibly-fake handle in destructor
 		first_index = hstorage::Handle(first_entry | SIGN_BIT_64);
-		pair_to_find = std::make_pair(&first_index, kUnknownNode);
+		pair_to_find = HandleNodePtrPair(first_index.hash(), &first_index, kUnknownNode);
 		it = p->entries.lower_bound(pair_to_find);
 		if (it != p->entries.end() &&
-		    (*it).first->data() != (first_entry | SIGN_BIT_64)) {
+		    (*it).handle->data() != (first_entry | SIGN_BIT_64)) {
 			it = p->entries.end();
 		}
 	}
-	pair_to_find.first->unlink();
+	pair_to_find.handle->unlink();
 	first_index.unlink(); // do not try to unbind the resource under this possibly-fake handle in destructor
 	while (it != p->entries.end() && number_of_entries > 0) {
-		name = static_cast<std::string>(*(*it).first);
-		inode = (*it).second->id;
-		fsnodes_fill_attr((*it).second, p, uid, gid, auid, agid, sesflags, attr);
+		name = static_cast<std::string>(*(*it).handle);
+		inode = (*it).node->id;
+		fsnodes_fill_attr((*it).node, p, uid, gid, auid, agid, sesflags, attr);
 
-		first_entry = (*it).first->data() & ~SIGN_BIT_64;
+		first_entry = (*it).handle->data() & ~SIGN_BIT_64;
 
 		uint64_t next_index = kUnusedEntryIndex;
 		if (++it != p->entries.end()) {
-			next_index = (*it).first->data() & ~SIGN_BIT_64;
+			next_index = (*it).handle->data() & ~SIGN_BIT_64;
 		}
 
 		dir_entries.emplace_back(first_entry, next_index, std::move(inode), std::move(name), std::move(attr));
@@ -1577,7 +1577,7 @@ void fsnodes_getgoal_recursive(FSNode *node, uint8_t gmode, GoalStatistics &fgta
 		if (gmode == GMODE_RECURSIVE) {
 			const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 			for (const auto &entry : dir_node->entries) {
-				fsnodes_getgoal_recursive(entry.second, gmode, fgtab, dgtab);
+				fsnodes_getgoal_recursive(entry.node, gmode, fgtab, dgtab);
 			}
 		}
 	}
@@ -1593,7 +1593,7 @@ void fsnodes_gettrashtime_recursive(FSNode *node, uint8_t gmode,
 		if (gmode == GMODE_RECURSIVE) {
 			const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 			for (const auto &entry : dir_node->entries) {
-				fsnodes_gettrashtime_recursive(entry.second, gmode, fileTrashtimes, dirTrashtimes);
+				fsnodes_gettrashtime_recursive(entry.node, gmode, fileTrashtimes, dirTrashtimes);
 			}
 		}
 	}
@@ -1610,7 +1610,7 @@ void fsnodes_geteattr_recursive(FSNode *node, uint8_t gmode, uint32_t feattrtab[
 		if (gmode == GMODE_RECURSIVE) {
 			const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 			for (const auto &entry : dir_node->entries) {
-				fsnodes_geteattr_recursive(entry.second, gmode, feattrtab, deattrtab);
+				fsnodes_geteattr_recursive(entry.node, gmode, feattrtab, deattrtab);
 			}
 		}
 	}
@@ -1640,7 +1640,7 @@ void fsnodes_setgoal_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t 
 		}
 		if (node->type == FSNodeType::kDirectory && (smode & SMODE_RMASK)) {
 			for (const auto &entry : static_cast<const FSNodeDirectory*>(node)->entries) {
-				fsnodes_setgoal_recursive(entry.second, ts, uid, goal, smode, sinodes,
+				fsnodes_setgoal_recursive(entry.node, ts, uid, goal, smode, sinodes,
 				                          ncinodes, nsinodes);
 			}
 		}
@@ -1694,7 +1694,7 @@ void fsnodes_settrashtime_recursive(FSNode *node, uint32_t ts, uint32_t uid, uin
 		}
 		if (node->type == FSNodeType::kDirectory && (smode & SMODE_RMASK)) {
 			for(const auto &entry : static_cast<const FSNodeDirectory*>(node)->entries) {
-				fsnodes_settrashtime_recursive(entry.second, ts, uid, trashtime, smode,
+				fsnodes_settrashtime_recursive(entry.node, ts, uid, trashtime, smode,
 				                               sinodes, ncinodes, nsinodes);
 			}
 		}
@@ -1742,7 +1742,7 @@ void fsnodes_seteattr_recursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t
 	if (node->type == FSNodeType::kDirectory && (smode & SMODE_RMASK)) {
 		const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 		for (const auto &entry : dir_node->entries) {
-			fsnodes_seteattr_recursive(entry.second, ts, uid, eattr, smode, sinodes,
+			fsnodes_seteattr_recursive(entry.node, ts, uid, eattr, smode, sinodes,
 			                           ncinodes, nsinodes);
 		}
 	}

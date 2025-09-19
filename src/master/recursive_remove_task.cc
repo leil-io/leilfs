@@ -67,7 +67,7 @@ int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 			  static_cast<const FSNodeDirectory*>(child)->entries.size());
 		for (const auto &entry :
 				static_cast<FSNodeDirectory*>(child)->entries) {
-			subtasks.push_back(static_cast<HString>(*entry.first));
+			subtasks.push_back(static_cast<HString>(*entry.handle));
 		}
 		auto *task = new RemoveTask(std::move(subtasks), child->id, context_);
 		work_queue.push_front(*task);

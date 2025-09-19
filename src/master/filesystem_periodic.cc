@@ -421,7 +421,7 @@ void fs_process_file_test() {
 
 			if (node->type == FSNodeType::kDirectory) {
 				for (const auto &entry : static_cast<FSNodeDirectory *>(node)->entries) {
-					FSNode *childNode = entry.second;
+					FSNode *childNode = entry.node;
 
 					if (!childNode) {
 						// the node points to invalid memory
