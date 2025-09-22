@@ -69,9 +69,9 @@ test_end() {
 		remove_all_emulated_zoned_disks
 	fi
 
-	if [[ ${USE_FDB:-} ]]; then
+	# Stop FDB cluster if fdbmonitor is running
+	if pgrep fdbmonitor > /dev/null 2>&1; then
 		stop_fdb_cluster
-		echo "FoundationDB cluster has been stopped."
 	fi
 
 	local errors=$(cat "$test_result_file")

@@ -29,6 +29,13 @@ setup_local_empty_saunafs() {
 	declare -gA saunafs_info_
 	saunafs_info_[chunkserver_count]=$number_of_chunkservers
 	saunafs_info_[admin_password]=${ADMIN_PASSWORD:-password}
+	saunafs_info_[metadata_backend]="${metadata_backend}"
+
+	declare -g mds_command="sfsmaster"
+
+	if [[ ${metadata_backend} != "FILE" ]]; then
+		mds_command="sfsmds"
+	fi
 
 	if is_windows_system; then
 		saunafs_info_[is_windows_system]=1
@@ -112,7 +119,9 @@ setup_local_empty_saunafs() {
 	export PATH="$oldpath"
 
 	# Add shadow master if not present (and not disabled); wait for it to synchronize
-	if [[ $auto_shadow_master == YES && $number_of_masterservers == 1 ]]; then
+	if [[ $auto_shadow_master == YES && \
+	      $number_of_masterservers == 1 && \
+	      ${saunafs_info_[metadata_backend]} == "FILE" ]]; then
 		add_metadata_server_ auto "shadow"
 		saunafs_master_n auto start ${shadow_start_param}
 		if ! [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
@@ -141,10 +150,8 @@ setup_local_empty_saunafs() {
 }
 
 init_metadata_backend() {
-	case ${metadata_backend} in
+	case ${saunafs_info_[metadata_backend]} in
 		"FDB")
-			declare -g USE_FDB="${metadata_backend}"
-			export USE_FDB
 			start_fdb_cluster
 			;;
 	esac
@@ -199,9 +206,9 @@ saunafs_chunkserver_daemon() {
 
 saunafs_master_daemon() {
 	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
-		windows_server_aux "sfsmaster -c ${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}" "$@"
+		windows_server_aux "${mds_command} -c ${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}" "$@"
 	else
-		sfsmaster -c "${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}" "$@" | cat
+		${mds_command} -c "${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}" "$@" | cat
 	fi
 	return ${PIPESTATUS[0]}
 }
@@ -211,9 +218,9 @@ saunafs_master_n() {
 	local id=$1
 	shift
 	if [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
-		windows_server_aux "sfsmaster -c ${saunafs_info_[master${id}_cfg]}" "$@"
+		windows_server_aux "${mds_command} -c ${saunafs_info_[master${id}_cfg]}" "$@"
 	else
-		sfsmaster -c "${saunafs_info_[master${id}_cfg]}" "$@" | cat
+		${mds_command} -c "${saunafs_info_[master${id}_cfg]}" "$@" | cat
 	fi
 	return ${PIPESTATUS[0]}
 }
@@ -368,7 +375,7 @@ create_sfsmaster_master_cfg_() {
 	echo "${MASTER_EXTRA_CONFIG-}" | tr '|' '\n'
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
-	echo "METADATA_BACKEND = ${metadata_backend}"
+	echo "METADATA_BACKEND = ${saunafs_info_[metadata_backend]}"
 }
 
 create_sfsmaster_shadow_cfg_() {
@@ -393,7 +400,7 @@ create_sfsmaster_shadow_cfg_() {
 	echo "${MASTER_EXTRA_CONFIG-}" | tr '|' '\n'
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
-	echo "METADATA_BACKEND = ${metadata_backend}"
+	echo "METADATA_BACKEND = ${saunafs_info_[metadata_backend]}"
 }
 
 saunafs_make_conf_for_shadow() {
@@ -449,13 +456,18 @@ add_metadata_server_() {
 	create_sfsmaster_master_cfg_ >"$masterserver_master_cfg"
 	create_sfsmaster_shadow_cfg_ >"$masterserver_shadow_cfg"
 
-	if [[ "$personality" == "master" ]]; then
+	if [[ "${saunafs_info_[metadata_backend]}" == "FILE" ]]; then
+		if [[ "$personality" == "master" ]]; then
+			cp "$masterserver_master_cfg" "$masterserver_cfg"
+			echo -n 'SFSM NEW' >"$masterserver_data_path/metadata.sfs"
+		elif [[ "$personality" == "shadow" ]]; then
+			cp "$masterserver_shadow_cfg" "$masterserver_cfg"
+		else
+			test_fail "Wrong personality $personality"
+		fi
+	elif [[ "${saunafs_info_[metadata_backend]}" == "FDB" ]]; then
 		cp "$masterserver_master_cfg" "$masterserver_cfg"
-		echo -n 'SFSM NEW' >"$masterserver_data_path/metadata.sfs"
-	elif [[ "$personality" == "shadow" ]]; then
-		cp "$masterserver_shadow_cfg" "$masterserver_cfg"
-	else
-		test_fail "Wrong personality $personality"
+		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
 	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg
