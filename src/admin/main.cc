@@ -25,15 +25,18 @@
 #include <ostream>
 
 #include "admin/chunk_health_command.h"
+#include "admin/delete_sessions_command.h"
+#include "admin/dump_config_command.h"
 #include "admin/info_command.h"
 #include "admin/io_limits_status_command.h"
 #include "admin/list_chunkservers_command.h"
 #include "admin/list_defective_files_command.h"
-#include "admin/list_disks_command.h"
 #include "admin/list_disk_groups_command.h"
+#include "admin/list_disks_command.h"
 #include "admin/list_goals_command.h"
 #include "admin/list_metadataservers_command.h"
 #include "admin/list_mounts_command.h"
+#include "admin/list_sessions_command.h"
 #include "admin/list_tasks_command.h"
 #include "admin/magic_recalculate_metadata_checksum_command.h"
 #include "admin/manage_locks_command.h"
@@ -42,17 +45,14 @@
 #include "admin/promote_shadow_command.h"
 #include "admin/ready_chunkservers_count_command.h"
 #include "admin/reload_config_command.h"
-#include "admin/dump_config_command.h"
 #include "admin/save_metadata_command.h"
 #include "admin/stop_master_without_saving_metadata.h"
 #include "admin/stop_task_command.h"
-#include "admin/delete_sessions_command.h"
-#include "admin/list_sessions_command.h"
-#include "common/human_readable_format.h"
-#include "protocol/SFSCommunication.h"
-#include "errors/sfserr.h"
 #include "common/sockets.h"
-#include <common/version.h>
+#include "common/version.h"
+
+using CommandPtr = std::shared_ptr<SaunaFsAdminCommand>;
+using CommandList = std::vector<CommandPtr>;
 
 int printVersion() {
 	std::cout << "SaunaFS Admin Tool\n\n";
@@ -60,7 +60,7 @@ int printVersion() {
 	return 0;
 }
 
-void printCommandHelp(const SaunaFsAdminCommand* command) {
+void printCommandHelp(const CommandPtr &command) {
 	command->usage();
 	if (!command->supportedOptions().empty()) {
 		std::cerr << "  Possible command-line options:\n";
@@ -73,13 +73,13 @@ void printCommandHelp(const SaunaFsAdminCommand* command) {
 }
 
 int printHelp(const std::string& programName,
-	const std::vector<const SaunaFsAdminCommand*>& commands, bool _printVersion = false) {
+	const CommandList& commands, bool _printVersion = false) {
 	if (_printVersion) { printVersion(); }
 	std::cerr << std::endl;
 	std::cerr << "Usage:\n";
 	std::cerr << "    " << programName << " COMMAND [OPTIONS...] [ARGUMENTS...]\n\n";
 	std::cerr << "Available COMMANDs:\n\n";
-	for (const auto command : commands) {
+	for (const auto &command : commands) {
 		if (command->name().substr(0, 6) == "magic-") {
 			// Treat magic-* commands as undocumented
 			continue;
@@ -90,31 +90,31 @@ int printHelp(const std::string& programName,
 }
 
 int main(int argc, const char** argv) {
-	std::vector<const SaunaFsAdminCommand*> allCommands = {
-			new ChunksHealthCommand(),
-			new InfoCommand(),
-			new IoLimitsStatusCommand(),
-			new ListChunkserversCommand(),
-			new ListDefectiveFilesCommand(),
-			new ListDisksCommand(),
-			new ListDiskGroupsCommand(),
-			new ListGoalsCommand(),
-			new ListMountsCommand(),
-			new ListMetadataserversCommand(),
-			new ListTasksCommand(),
-			new ManageLocksCommand(),
-			new MetadataserverStatusCommand(),
-			new ReadyChunkserversCountCommand(),
-			new PromoteShadowCommand(),
-			new MetadataserverStopWithoutSavingMetadataCommand(),
-			new ReloadConfigCommand(),
-			new SaveMetadataCommand(),
-			new StopTaskCommand(),
-			new MagicRecalculateMetadataChecksumCommand(),
-			new ListSessionsCommand(),
-			new DeleteSessionsCommand(),
-			new DumpConfigurationCommand(),
-			new MountInfoListCommand(),
+	CommandList allCommands = {
+			std::make_shared<ChunksHealthCommand>(),
+			std::make_shared<InfoCommand>(),
+			std::make_shared<IoLimitsStatusCommand>(),
+			std::make_shared<ListChunkserversCommand>(),
+			std::make_shared<ListDefectiveFilesCommand>(),
+			std::make_shared<ListDisksCommand>(),
+			std::make_shared<ListDiskGroupsCommand>(),
+			std::make_shared<ListGoalsCommand>(),
+			std::make_shared<ListMountsCommand>(),
+			std::make_shared<ListMetadataserversCommand>(),
+			std::make_shared<ListTasksCommand>(),
+			std::make_shared<ManageLocksCommand>(),
+			std::make_shared<MetadataserverStatusCommand>(),
+			std::make_shared<ReadyChunkserversCountCommand>(),
+			std::make_shared<PromoteShadowCommand>(),
+			std::make_shared<MetadataserverStopWithoutSavingMetadataCommand>(),
+			std::make_shared<ReloadConfigCommand>(),
+			std::make_shared<SaveMetadataCommand>(),
+			std::make_shared<StopTaskCommand>(),
+			std::make_shared<MagicRecalculateMetadataChecksumCommand>(),
+			std::make_shared<ListSessionsCommand>(),
+			std::make_shared<DeleteSessionsCommand>(),
+			std::make_shared<DumpConfigurationCommand>(),
+			std::make_shared<MountInfoListCommand>(),
 	};
 
 	std::string command_name;
@@ -125,7 +125,7 @@ int main(int argc, const char** argv) {
 #ifdef _WIN32
 		socketinit();
 #endif
-		std::string command_name = argv[1];
+		command_name = argv[1];
 		if (command_name == "-v" || command_name == "--version") {
 			return printVersion();
 		}
@@ -162,7 +162,7 @@ int main(int argc, const char** argv) {
 		if (command_name.empty()) {
 			printHelp(argv[0], allCommands, false);
 		} else {
-			for (const auto command : allCommands) {
+			for (const auto &command : allCommands) {
 				if (command->name() == command_name) {
 					printCommandHelp(command);
 					break;
@@ -177,7 +177,7 @@ int main(int argc, const char** argv) {
 #ifdef _WIN32
 		socketrelease();
 #endif
-		std::cerr << "Error: " << ex.what() << std::endl;
+		std::cerr << "Error: " << ex.what() << "\n";
 		return 1;
 	}
 }
