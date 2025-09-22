@@ -2930,14 +2930,14 @@ uint8_t fs_get_chunkid(const FsContext &context, inode_t inode, uint32_t index,
 }
 #endif
 
-void fs_add_files_to_chunks() {
+void fs_add_files_to_chunks(bool isMetadataLoading) {
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			    node->type == FSNodeType::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
 					if (chunkid > 0) {
-						chunk_add_file(chunkid, node->goal);
+						chunk_add_file(chunkid, node->goal, isMetadataLoading);
 					}
 				}
 			}

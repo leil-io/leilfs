@@ -667,7 +667,7 @@ static void chunk_checksum_add_to_background(Chunk *ch) {
 	addToChecksum(gChunksMetadata->chunksChecksum, ch->checksum);
 }
 
-static void chunk_update_checksum(Chunk *ch) {
+static void chunk_update_checksum(Chunk *ch, bool isMetadataLoading = false) {
 	if (!ch) {
 		return;
 	}
@@ -678,9 +678,11 @@ static void chunk_update_checksum(Chunk *ch) {
 	removeFromChecksum(gChunksMetadata->chunksChecksum, ch->checksum);
 	ch->checksum = chunk_checksum(ch);
 	if (chunkHashPos(ch->chunkid) < gChunksMetadata->checksumRecalculationPosition) {
-		safs::log_trace("master.fs.checksum.changing_recalculated_chunk");
+		if (!isMetadataLoading) {
+			safs::log_trace("master.fs.checksum.changing_recalculated_chunk");
+		}
 		addToChecksum(gChunksMetadata->chunksChecksumRecalculated, ch->checksum);
-	} else {
+	} else if (!isMetadataLoading) {
 		safs::log_trace("master.fs.checksum.changing_not_recalculated_chunk");
 	}
 	addToChecksum(gChunksMetadata->chunksChecksum, ch->checksum);
@@ -941,14 +943,14 @@ static inline int chunk_delete_file_int(Chunk *c, uint8_t goal) {
 }
 
 /// updates chunk's goal after a file with goal `goal' has been added
-static inline int chunk_add_file_int(Chunk *c, uint8_t goal) {
+static inline int chunk_add_file_int(Chunk *c, uint8_t goal, bool isMetadataLoading = false) {
 	try {
 		c->addFileWithGoal(goal);
 	} catch (Exception& ex) {
 		safs_pretty_syslog(LOG_WARNING, "chunk_add_file_int: %s", ex.what());
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
-	chunk_update_checksum(c);
+	chunk_update_checksum(c, isMetadataLoading);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -962,14 +964,14 @@ int chunk_delete_file(uint64_t chunkid,uint8_t goal) {
 	return chunk_delete_file_int(c,goal);
 }
 
-int chunk_add_file(uint64_t chunkid,uint8_t goal) {
+int chunk_add_file(uint64_t chunkid, uint8_t goal, bool isMetadataLoading) {
 	Chunk *c;
 	c = chunk_find(chunkid);
 	if (c==NULL) {
 		safs::log_err("chunk_add_file: could not find chunkid {}", chunkid);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
-	return chunk_add_file_int(c,goal);
+	return chunk_add_file_int(c, goal, isMetadataLoading);
 }
 
 int chunk_can_unlock(uint64_t chunkid, uint32_t lockid) {
