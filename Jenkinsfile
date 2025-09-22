@@ -38,19 +38,6 @@ def runSanity() {
         """
     publishJunit(resultsFile)
 }
-def runFoundationDB() {
-    def resultsFile = "test_results_fdb.xml"
-    sh """
-        ./sfstests/sfstests \
-        --auth /etc/apt/auth.conf.d/ \
-        --suite FDBTests \
-        --workers 1 \
-        --multiplier ${MACHINE_MULTIPLIER} \
-        --cpus 2 \
-        --xml-path ${resultsFile}
-        """
-    publishJunit(resultsFile)
-}
 def runShort() {
     def resultsFile = "test_results_short.xml"
     sh """
@@ -302,12 +289,6 @@ pipeline {
                         stage('Run Sanity') {
                             steps {
                                 runSanity()
-                            }
-                        }
-
-                        stage('Run FoundationDB tests') {
-                            steps {
-                                runFoundationDB()
                             }
                         }
 

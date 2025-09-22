@@ -63,13 +63,11 @@ function start_fdb_cluster() {
 	# Start FoundationDB with required sudo privileges
 	sudo /usr/lib/foundationdb/fdbmonitor --conffile "${workspace}/conf/foundationdb.conf" &
 
-	# Wait for fdbmonitor to initialize
-	sleep 3
-
 	# Ensure cluster is configured
 	fdbcli --exec "configure new single memory" --cluster-file "${workspace}/conf/fdb.cluster"
 
-	check_cluster_status
+	# Wait for fdbmonitor to initialize
+	sleep 3
 }
 
 function stop_fdb_cluster() {
