@@ -19,16 +19,20 @@
 
 #include "common/platform.h"
 
-#include <condition_variable>
+#include "common/type_defs.h"
+
 #include <mutex>
 #include <string>
 
+struct PidPathEntry {
+	pid_t pid;
+	std::string path;
+	bool operator<(const PidPathEntry &other) const { return pid < other.pid; }
+};
+
 struct InodePathInfo {
-    std::string pathByInode;
-    inode_t inode = 0; 
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool locked = false;
+	std::set<PidPathEntry> contextPidToPath;
+	std::mutex mtx;
 };
 
 inline InodePathInfo gInodePathInfo;

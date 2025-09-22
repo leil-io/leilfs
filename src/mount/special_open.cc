@@ -116,7 +116,15 @@ static void open(const Context &ctx, FileInfo *fi) {
 		            saunafs_error_string(SAUNAFS_ERROR_EACCES));
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
-	fi->fh = reinterpret_cast<uintptr_t>(gInodePathInfo.pathByInode.c_str());
+
+	PidPathEntry searchEntry{ctx.pid, ""};
+	auto it = gInodePathInfo.contextPidToPath.find(searchEntry);
+	if (it != gInodePathInfo.contextPidToPath.end()) {
+		fi->fh = reinterpret_cast<uintptr_t>(&(*it));
+	} else {
+		fi->fh = 0;
+	}
+
 	fi->direct_io = 1;
 	fi->keep_cache = 0;
 	oplog_printf(ctx, "open (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): OK (1,0)",

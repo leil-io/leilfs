@@ -214,8 +214,10 @@ static std::vector<uint8_t> read(const Context &ctx,
 	if (debug_mode) {
 		printDebugReadInfo(ctx, SPECIAL_INODE_PATH_BY_INODE, size, off);
 	}
-	uint32_t ssize = gInodePathInfo.pathByInode.size();
-	uint8_t *buff = reinterpret_cast<uint8_t*>(fi->fh);
+
+	auto entry = reinterpret_cast<PidPathEntry *>(fi->fh);
+	uint32_t ssize = entry ? entry->path.size() : 0;
+	const uint8_t *buff = entry ? reinterpret_cast<const uint8_t *>(entry->path.data()) : nullptr;
 	if (off >= static_cast<off_t>(ssize)) {
 		printReadOplogNoData(ctx,
 		                    SPECIAL_INODE_PATH_BY_INODE,
