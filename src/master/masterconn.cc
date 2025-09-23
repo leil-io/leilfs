@@ -609,7 +609,7 @@ void MasterConn::downloadNext() {
 				 */
 				if (state == State::kDownloading) {
 					try {
-						fs_loadall();
+						fs_loadall(false);
 						lastLogVersion = fs_getversion() - 1;
 						safs::log_info("synced at version = {}", lastLogVersion);
 						state = State::kSynchronized;

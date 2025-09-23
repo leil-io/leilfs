@@ -63,7 +63,7 @@ uint8_t fs_start_checksum_recalculation();
 void fs_load_changelogs();
 
 /// Load whole filesystem information.
-int fs_loadall();
+int fs_loadall(bool isFromInit);
 
 // Functions which create/apply (depending on the given context) changes to the metadata.
 // Common for metarestore and master server (both personalities)

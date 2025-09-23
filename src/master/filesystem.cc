@@ -207,8 +207,13 @@ void fs_term(const char *fname, bool noLock) {
 }
 #endif
 
-void fs_strinit(void) {
-	gMetadata = new FilesystemMetadata;
+void fs_strinit(bool isFromInit) {
+	if (isFromInit) {
+		if (gMetadata == nullptr) { gMetadata = new FilesystemMetadata; }
+	} else {
+		// Could be called from masterconn in Shadow mode
+		gMetadata = new FilesystemMetadata;
+	}
 }
 
 /* executed in master mode */
@@ -262,8 +267,8 @@ void executeMetadataDump() {
 	}
 }
 
-int fs_loadall(void) {
-	fs_strinit();
+int fs_loadall(bool isFromInit = true) {
+	fs_strinit(isFromInit);
 	chunk_strinit();
 
 	{
@@ -450,7 +455,7 @@ int fs_init(bool doLoad) {
 	changelog_init(kChangelogFilename, 0, 50);
 
 	if (doLoad || (metadataserver::isMaster())) {
-		fs_loadall();
+		fs_loadall(true);
 	}
 
 	eventloop_reloadregister(fs_reload);
@@ -488,7 +493,7 @@ int fs_init(const char *fname, int ignoreflag, bool noLock) {
 		gMetadataLockfile.reset(new Lockfile(fs::dirname(fname) + "/" + kMetadataFilename + ".lock"));
 		gMetadataLockfile->lock(Lockfile::StaleLock::kSwallow);
 	}
-	fs_strinit();
+	fs_strinit(true);
 	chunk_strinit();
 	gMetadataBackend->loadall(ignoreflag);
 	return 0;
