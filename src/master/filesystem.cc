@@ -34,6 +34,7 @@
 #include "master/changelog.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
+#include "master/deferred_metadata_dump_task.h"
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operations.h"
@@ -224,6 +225,43 @@ void fs_erase_message_from_lockfile() {
 	}
 }
 
+/// @brief Executes a metadata dump operation, either immediately or deferred.
+///
+/// This function checks for the "defer-metadata-dump" option. If present, it schedules
+/// a deferred metadata dump task using the TaskManager, logging the outcome upon completion.
+/// Otherwise, it performs an immediate metadata dump after applying changelogs.
+///
+/// The deferred dump uses the global metadata backend and submits a one-time task.
+/// The immediate dump invokes the metadata backend's fs_storeall() function with a foreground dump
+/// type.
+///
+/// Logging is performed to indicate the success or failure of the operation.
+void executeMetadataDump() {
+	bool deferDump = main_has_extra_argument("defer-metadata-dump", CaseSensitivity::kIgnore);
+
+	if (deferDump) {
+		safs::log_info("Deferring metadata dump option detected");
+
+		auto *metadataBackendPtr = gMetadataBackend.get();
+		auto metadataDumpTask = std::make_unique<DeferredMetadataDumpTask>(metadataBackendPtr);
+
+		// Schedule one-time deferred metadata dump task using TaskManager
+		gMetadata->taskManager.submitTask(
+		    0, 1, metadataDumpTask.release(), DeferredMetadataDumpTask::generateDescription(),
+		    [](int status) {
+			    if (status == SAUNAFS_STATUS_OK) {
+				    safs::log_info("Deferred metadata dump completed successfully");
+			    } else {
+				    safs::log_err("Deferred metadata dump failed with status: {}", status);
+			    }
+		    });
+	} else {
+		// Original behavior: dump the new metadata immediately
+		gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+		safs::log_info("Metadata dumped successfully after applying changelogs");
+	}
+}
+
 int fs_loadall(void) {
 	fs_strinit();
 	chunk_strinit();
@@ -250,8 +288,7 @@ int fs_loadall(void) {
 		safs::log_info("all needed changelogs applied successfully");
 
 		// Dump the new metadata
-		gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
-		safs::log_info("Metadata dumped successfully after applying changelogs");
+		executeMetadataDump();
 
 		// Restore the original personality
 		metadataserver::setPersonality(personality);
