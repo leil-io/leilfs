@@ -1,6 +1,9 @@
 configure_file(sfsmaster.cfg.in sfsmaster.cfg)
 configure_file(sfschunkserver.cfg.in sfschunkserver.cfg)
 configure_file(sfsmetalogger.cfg.in sfsmetalogger.cfg)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/sfsmds.cfg.in)
+  configure_file(sfsmds.cfg.in sfsmds.cfg)
+endif()
 configure_file(postinst.in postinst)
 set(POSTINST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/postinst PARENT_SCOPE)
 
@@ -16,6 +19,9 @@ install(FILES saunafs-uraft.cfg                             DESTINATION ${URAFT_
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsmaster.cfg      DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfschunkserver.cfg DESTINATION ${CHUNKSERVER_EXAMPLES_SUBDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsmetalogger.cfg  DESTINATION ${METALOGGER_EXAMPLES_SUBDIR})
+if(EXISTS ${CMAKE_CURRENT_BINARY_DIR}/sfsmds.cfg)
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsmds.cfg       DESTINATION ${SFSMDS_EXAMPLES_SUBDIR})
+endif()
 
 install(FILES saunafs.completion DESTINATION etc/bash_completion.d RENAME saunafs)
 
