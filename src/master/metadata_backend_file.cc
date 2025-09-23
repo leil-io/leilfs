@@ -382,8 +382,10 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	static const int8_t kSuccess = 0;
 	static const int8_t kLastEdge = 1;
 	static inode_t currentParentId;
+	static FSNodeDirectory* currentParentNode;
 	if (init) {
 		currentParentId = 0;
+		currentParentNode = nullptr;
 		return kSuccess;
 	}
 	const auto* pSrc = metadataFile->seek(sectionOffset);
@@ -434,7 +436,13 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			return kError;
 		}
 	} else {
-		FSNodeDirectory *parent = fsnodes_id_to_node<FSNodeDirectory>(parentId);
+		FSNodeDirectory *parent;
+		if (currentParentId != parentId){
+			parent = fsnodes_id_to_node<FSNodeDirectory>(parentId);
+			currentParentNode = parent;
+		} else {
+			parent = currentParentNode;
+		}
 		if (!parent) {
 			safs_pretty_syslog(LOG_ERR,
 			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
@@ -506,20 +514,30 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			currentParentId = parentId;
 		}
 
-		hstorage::Handle *handlePtr = new hstorage::Handle(name);
-		auto it = parent->entries.insert({handlePtr, child}).first;
-		parent->entries_hash ^= (*it).first->hash();
+		auto *handlePtr = new hstorage::Handle(name);
+		if (parent->entries.insert({handlePtr, child}).second) {
+			// On successful insert update the hash
+			parent->entries_hash ^= handlePtr->hash();
+		} else {
+			// insert failed → nobody owns handlePtr → delete it
+			delete handlePtr;
+			return kError;
+		}
 
 		if (parent->case_insensitive) {
 			HString lowerCaseName = HString::hstringToLowerCase(HString(name));
-			auto lowercaseHandlePtr = new hstorage::Handle(lowerCaseName);
-			auto it =
-			    parent->lowerCaseEntries.insert({lowercaseHandlePtr, child})
-			        .first;
-			parent->lowerCaseEntriesHash ^= (*it).first->hash();
+			auto *lowercaseHandlePtr = new hstorage::Handle(lowerCaseName);
+			if (parent->lowerCaseEntries.insert({lowercaseHandlePtr, child}).second) {
+				// On successful insert update the hash
+				parent->lowerCaseEntriesHash ^= lowercaseHandlePtr->hash();
+			} else {
+				// insert failed → nobody owns lowercaseHandlePtr → delete it
+				delete lowercaseHandlePtr;
+				return kError;
+			}
 		}
 
-		child->parents.push_back({parent->id, handlePtr});
+		child->parents.push_back({parentId, handlePtr});
 		if (child->type == FSNodeType::kDirectory) {
 			parent->nlink++;
 		}

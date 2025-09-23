@@ -42,7 +42,7 @@ int chunk_increase_version(uint64_t chunkid);
 int chunk_set_version(uint64_t chunkid,uint32_t version);
 int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);
 int chunk_delete_file(uint64_t chunkid,uint8_t goal);
-int chunk_add_file(uint64_t chunkid,uint8_t goal);
+int chunk_add_file(uint64_t chunkid, uint8_t goal, bool isMetadataLoading = false);
 int chunk_unlock(uint64_t chunkid);
 uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lockid, uint8_t goal,
 		bool doIncreaseVersion, uint64_t *newChunkId);
