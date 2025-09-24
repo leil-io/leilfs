@@ -42,6 +42,8 @@ extern Timeout gTimeoutSinceLastChunkRegistration;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
+ObservableIntegralProperty<uint64_t> &nextChunkIdProperty();
+void chunk_set_next_chunk_id(uint64_t nextChunkIdToBeSet);
 void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
                                           uint32_t lockedTo, uint32_t lockId);
 int chunk_increase_version(uint64_t chunkid);

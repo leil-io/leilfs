@@ -35,7 +35,7 @@ struct ChangelogEvent {
 };
 
 /// Accessor for the global changelog signal to avoid the warning about non-const global
-Signal<ChangelogEvent> &getChangelogSignal();
+Signal<const ChangelogEvent &> &getChangelogSignal();
 
 /// Initializes changelog module.
 /// \param changelogFilename - base name of changelog files, e.g. "changelog_ml.sfs"
