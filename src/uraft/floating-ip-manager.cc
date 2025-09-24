@@ -73,8 +73,8 @@ bool HAFloatingIPManager::restoreFloatingIp() {
 
 void HAFloatingIPManager::startEventListener() {
 	if (!listenerThread.joinable()) {
-		listenerThread =
-		    std::jthread(&HAFloatingIPManager::eventListenerThread, this);
+		listenerThread = std::jthread(
+			[this](const ::std::stop_token &stop_token) { eventListenerThread(stop_token); });
 		_isFloatingIpAlive = true;
 	}
 }

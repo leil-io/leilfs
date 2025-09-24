@@ -24,7 +24,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#elif linux
+#elif __linux__
 #include <sys/sysinfo.h>
 #endif
 
