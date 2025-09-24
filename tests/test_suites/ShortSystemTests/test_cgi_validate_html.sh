@@ -8,6 +8,7 @@ CHUNKSERVERS=3 \
 	USE_RAMDISK="YES" \
 	CHUNKSERVER_LABELS="0,1:de|2:us" \
 	MASTER_CUSTOM_GOALS="11 11: de de|12 12: us us|13 13: us de|18 18: us _ _|19 19: _ us de" \
+	MASTER_EXTRA_CONFIG="METADATA_DUMP_PERIOD_SECONDS = 0" \
 	MOUNT_0_EXTRA_CONFIG="sfscachemode=NEVER,sfsreportreservedperiod=1,sfsdirentrycacheto=0" \
 	MOUNT_1_EXTRA_CONFIG="sfsmeta" \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
