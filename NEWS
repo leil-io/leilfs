@@ -1,5 +1,25 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.2.0) (2025-09-25)
+ - docs: Typo in sfsmount manual page (so -> do) (#548)
+ - feat(common): Add ObservableIntegralProperty template (#526)
+ - feat(cs): Release old iobuffers (#519)
+ - feat(cs): Write several blocks per hdd write job
+ - feat(master): Refactor the FSNode family (#531)
+ - feat(master): Use properties and signals in medatada (#541)
+ - feat(meta): Improve read trash meta mount (#525)
+ - feat: Memory charts for chunkservers (#522)
+ - fix(cgi): Prevent fatal error on Python 3.13+ (#549)
+ - fix(chunkserver): Avoid fsync data parts on zoned devices (#539)
+ - fix(cs): Fix release of read jobs and CS reloads (#523)
+ - fix(cs): Fix release reads (#546)
+ - fix(mount): Fix mount info on master reconnection (#527)
+ - fix(mount): Fix readahead under high latency (#514)
+ - fix: Fix Windows compilation issues about charts (#555)
+ - fix: Fix upgrade master switch write algo test (#513)
+ - fix: Fix writes during crashes/stops (#550)
+ - fix: Handle SIGPROF and SIGVTALRM signals (#544)
+
 * SaunaFS (5.1.2) (2025-08-21)
  - Revert "Write several blocks per hdd write job" from 5.1.0
 
