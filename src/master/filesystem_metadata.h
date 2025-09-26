@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 
 #include "common/observable_property.h"
 #include "common/quota_database.h"
@@ -34,6 +35,7 @@
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_xattr.h"
 #include "master/hstring_storage.h"
+#include "master/id_generator_interface.h"
 #include "master/id_pool_detainer.h"
 #include "master/locks.h"
 #include "master/task_manager.h"
@@ -148,6 +150,8 @@ extern ChecksumBackgroundUpdater gChecksumBackgroundUpdater;
 extern bool gDisableChecksumVerification;
 extern uint32_t gTestStartTime;
 extern bool gDisableEmptyFoldersMetadataOnFullDisk;
+
+inline std::unique_ptr<IIdGenerator> gInodeIdGenerator = nullptr;
 
 #ifndef METARESTORE
 extern std::map<int, Goal> gGoalDefinitions;

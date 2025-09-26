@@ -31,6 +31,7 @@
 #include "master/datacachemgr.h"
 #include "master/exports.h"
 #include "master/filesystem.h"
+#include "master/filesystem_freenode.h"
 #include "master/hstorage_init.h"
 #include "master/masterconn.h"
 #include "master/matoclserv.h"
@@ -59,6 +60,7 @@ inline int metadata_backend_init() {
 		try {
 			gMetadataBackend = std::make_unique<MetadataBackendFile>();
 			gMetadataBackend->init();
+			gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
 		} catch (const std::exception &e) {
 			constexpr auto kErrorMessage = "Failed to initialize metadata backend";
 			safs::log_err("{}: {}", kErrorMessage, e.what());

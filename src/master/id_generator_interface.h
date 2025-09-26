@@ -1,9 +1,7 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA
-   Copyright 2013-2014 EditShare
-   Copyright 2013-2015 Skytechnology sp. z o.o.
    Copyright 2023      Leil Storage OÜ
 
+   This file is part of SaunaFS.
 
    SaunaFS is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -25,18 +23,24 @@
 #include <cstdint>
 
 #include "common/type_defs.h"
-#include "master/id_generator_interface.h"
 
-/// Inode id generator using the inode pool from gMetadata.
-/// Provides the usual behavior but now implements the IIdGenerator interface to allow custom
-/// polymorphic generators.
-class IdGeneratorWithDetainer : public IIdGenerator {
+/// Interface for id generators
+class IIdGenerator {
 public:
-	IdGeneratorWithDetainer() = default;
+	/// Default constructor
+	IIdGenerator() = default;
 
-	bool initialize() override {
-		return true;  // nothing to initialize in this implementation
-	}
+	/// Virtual destructor
+	virtual ~IIdGenerator() = default;
+
+	// Not needed copy/move constructors/assignments
+	IIdGenerator(const IIdGenerator &) = delete;
+	IIdGenerator &operator=(const IIdGenerator &) = delete;
+	IIdGenerator(IIdGenerator &&) = delete;
+	IIdGenerator &operator=(IIdGenerator &&) = delete;
+
+	/// Overload to implement custom initialization if needed for concrete generators
+	virtual bool initialize() = 0;
 
 	/// Get next free inode number.
 	///
@@ -44,6 +48,5 @@ public:
 	/// @param requestedId  Requested id: >0 - specific id, 0 - get any free id
 	///
 	/// @return 0 - no more free ids, >0 - allocated id (may differ from requested if already taken)
-	/// @note This implementation uses the inode pool from gMetadata to provide the usual behavior.
-	inode_t getNextId(uint32_t timeStamp, inode_t requestedId) override;
+	virtual inode_t getNextId(uint32_t timeStamp, inode_t requestedId) = 0;
 };

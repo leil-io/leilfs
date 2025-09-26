@@ -578,7 +578,7 @@ FSNode *fsnodes_create_node(uint32_t ts, FSNodeDirectory *parent, const HString 
 		gMetadata->linkNodes++;
 	}
 	/* create node */
-	node->id = fsnodes_get_next_id(ts, req_inode);
+	node->id = gInodeIdGenerator->getNextId(ts, req_inode);
 
 	node->ctime = node->mtime = node->atime = ts;
 	if (type == FSNodeType::kDirectory || type == FSNodeType::kFile) {

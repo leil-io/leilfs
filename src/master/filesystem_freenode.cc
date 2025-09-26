@@ -22,20 +22,21 @@
 
 #include "master/filesystem_freenode.h"
 
+#include "common/type_defs.h"
 #include "master/filesystem_metadata.h"
 
-inode_t fsnodes_get_next_id(uint32_t ts, inode_t req_inode) {
-	if(req_inode == 0 || !gMetadata->inodePool.markAsAcquired(req_inode,ts)) {
-		req_inode = gMetadata->inodePool.acquire(ts);
-	}
-	if (req_inode == 0) {
-		mabort("Out of free inode numbers");
-	}
-	if (req_inode > gMetadata->maxInodeId().getValue()) {
-		gMetadata->maxInodeId().setValue(req_inode);
+inode_t IdGeneratorWithDetainer::getNextId(uint32_t timeStamp, inode_t requestedId) {
+	if (requestedId == 0 || !gMetadata->inodePool.markAsAcquired(requestedId, timeStamp)) {
+		requestedId = gMetadata->inodePool.acquire(timeStamp);
 	}
 
-	return req_inode;
+	if (requestedId == 0) { mabort("Out of free inode numbers"); }
+
+	if (requestedId > gMetadata->maxInodeId().getValue()) {
+		gMetadata->maxInodeId().setValue(requestedId);
+	}
+
+	return requestedId;
 }
 
 uint8_t fs_apply_freeinodes(uint32_t /*ts*/, inode_t /*freeinodes*/) {

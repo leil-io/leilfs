@@ -48,6 +48,10 @@
 #include "master/restore.h"
 #include "slogger/slogger.h"
 
+#ifdef METARESTORE
+#include "master/filesystem_freenode.h"
+#endif
+
 FilesystemMetadata* gMetadata = nullptr;
 std::unique_ptr<Lockfile> gMetadataLockfile;
 
@@ -270,6 +274,8 @@ void executeMetadataDump() {
 int fs_loadall(bool isFromInit = true) {
 	fs_strinit(isFromInit);
 	chunk_strinit();
+
+	gInodeIdGenerator->initialize();
 
 	{
 		auto scopedTimer = util::ScopedTimer("metadata load time");
@@ -495,6 +501,7 @@ int fs_init(const char *fname, int ignoreflag, bool noLock) {
 	}
 	fs_strinit(true);
 	chunk_strinit();
+	gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
 	gMetadataBackend->loadall(ignoreflag);
 	return 0;
 }
