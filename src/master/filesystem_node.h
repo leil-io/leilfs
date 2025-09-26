@@ -25,6 +25,7 @@
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_node_types.h"
 #include "master/fs_context.h"
+#include "protocol/handle_inode_entry.h"
 #include "protocol/directory_entry.h"
 #include "protocol/named_inode_entry.h"
 
@@ -104,9 +105,7 @@ inline void fsnodes_update_ctime(FSNode *node, uint32_t ctime) {
 		node->ctime = ctime;
 		auto it = gMetadata->trash.find(old_key);
 		if (it != gMetadata->trash.end()) {
-			hstorage::Handle path = std::move((*it).second);
-			gMetadata->trash.erase(it);
-			gMetadata->trash.insert({TrashPathKey(node), std::move(path)});
+			updateTrashFromOldEntry(gMetadata->trash, node, old_key);
 		}
 	} else {
 		node->ctime = ctime;
@@ -121,6 +120,9 @@ void fsnodes_getdetacheddata(const TrashPathContainer &data, uint32_t off, uint3
 uint32_t fsnodes_getdetachedsize(const ReservedPathContainer &data);
 void fsnodes_getdetacheddata(const ReservedPathContainer &data, uint8_t *dbuff);
 void fsnodes_getdetacheddata(const ReservedPathContainer &data, uint32_t off, uint32_t max_entries, std::vector<NamedInodeEntry> &entries);
+void fsnodes_getdetacheddata(const HandleIndexContainer &data, uint64_t handleOffset,
+                             uint32_t maxEntries, std::vector<HandleInodeEntry> &entries,
+                             bool fromTrash);
 void fsnodes_getpath(FSNodeDirectory *parent, FSNode *child, std::string &path);
 void fsnodes_fill_attr(FSNode *node, FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid,
 	uint32_t agid, uint8_t sesflags, Attributes &attr);

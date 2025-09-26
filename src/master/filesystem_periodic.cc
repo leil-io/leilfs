@@ -537,7 +537,9 @@ static void fs_do_emptytrash(uint32_t ts) {
 		FSNodeFile *node = fsnodes_id_to_node_verify<FSNodeFile>((*it).first.id);
 
 		if (!node) {
-			gMetadata->trash.erase(it);
+			std::string pathName = (*it).second.get();
+			removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
+			                 gMetadata->trashReservedToId, node);
 			it = gMetadata->trash.begin();
 			continue;
 		}
@@ -572,7 +574,8 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		FSNodeFile *node = fsnodes_id_to_node_verify<FSNodeFile>((*it).first);
 
 		if (!node) {
-			gMetadata->reserved.erase(it);
+			removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+			                    gMetadata->trashReservedToId, node);
 			it = gMetadata->reserved.begin();
 			continue;
 		}

@@ -397,15 +397,27 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetDir, SAU_CLTOMA_FUSE_GETDIR, 
 		uint64_t, first_entry,
 		uint64_t, number_of_entries)
 
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetReserved, SAU_CLTOMA_FUSE_GETRESERVED, 0,
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetReserved, kClientPositionOffset, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetReserved, kClientHandleOffset, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetReserved, SAU_CLTOMA_FUSE_GETRESERVED, kClientPositionOffset,
 		uint32_t, msgid,
 		uint32_t, off,
 		uint32_t, max_entries)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetReserved, SAU_CLTOMA_FUSE_GETRESERVED, kClientHandleOffset,
+		uint32_t, msgid,
+		uint64_t, handleOffset,
+		uint32_t, maxEntries)
 
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetTrash, SAU_CLTOMA_FUSE_GETTRASH, 0,
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetTrash, kClientPositionOffset, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetTrash, kClientHandleOffset, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetTrash, SAU_CLTOMA_FUSE_GETTRASH, kClientPositionOffset,
 		uint32_t, msgid,
 		uint32_t, off,
 		uint32_t, max_entries)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetTrash, SAU_CLTOMA_FUSE_GETTRASH, kClientHandleOffset,
+		uint32_t, msgid,
+		uint64_t, handleOffset,
+		uint32_t, maxEntries)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, listTasks, SAU_CLTOMA_LIST_TASKS, 0,

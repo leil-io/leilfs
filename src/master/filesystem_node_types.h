@@ -36,17 +36,6 @@
 #include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 
-#if defined(SAUNAFS_HAVE_64BIT_JUDY) &&               \
-    (!defined(DISABLE_JUDY_FOR_TRASHPATHCONTAINER) || \
-     !defined(DISABLE_JUDY_FOR_RESERVEDPATHCONTAINER))
-#include "common/judy_map.h"
-#endif
-#if !defined(SAUNAFS_HAVE_64BIT_JUDY) ||            \
-    defined(DISABLE_JUDY_FOR_TRASHPATHCONTAINER) || \
-    defined(DISABLE_JUDY_FOR_RESERVEDPATHCONTAINER)
-#include <map>
-#endif
-
 #include <ext/pb_ds/assoc_container.hpp>
 #include <ext/pb_ds/tree_policy.hpp>
 
@@ -89,7 +78,6 @@ enum class ExpectedNodeType : std::uint8_t {
 	kAny
 };
 
-using TrashtimeMap = std::unordered_map<uint32_t, uint32_t>;
 using GoalStatistics = std::array<inode_t, GoalId::kMax + 1>;
 using ParentsCompactVector = compact_vector<std::pair<inode_t, const hstorage::Handle *>, uint32_t>;
 
@@ -535,42 +523,3 @@ public:
 		FSNode::deserialize(source);
 	}
 };
-
-struct TrashPathKey {
-	explicit TrashPathKey(const FSNode *node) :
-#ifdef WORDS_BIGENDIAN
-	    timestamp(std::min((uint64_t)node->ctime + node->trashtime, (uint64_t)UINT32_MAX)),
-	    id(node->id)
-#else
-	    id(node->id),
-	    timestamp(std::min((uint64_t)node->ctime + node->trashtime, (uint64_t)UINT32_MAX))
-#endif
-	{}
-
-	bool operator<(const TrashPathKey &other) const {
-		return std::make_pair(timestamp, id) < std::make_pair(other.timestamp, other.id);
-	}
-
-#ifdef WORDS_BIGENDIAN
-	uint32_t timestamp;
-	// inode_t id;
-	uint32_t id;
-#else
-	// TODO(Guillex): the type should be inode_t, but there is an issue with Judy
-	// inode_t id;
-	uint32_t id;
-	uint32_t timestamp;
-#endif
-};
-
-#if defined(SAUNAFS_HAVE_64BIT_JUDY) && !defined(DISABLE_JUDY_FOR_TRASHPATHCONTAINER)
-using TrashPathContainer = judy_map<TrashPathKey, hstorage::Handle>;
-#else
-using TrashPathContainer = std::map<TrashPathKey, hstorage::Handle>;
-#endif
-
-#if defined(SAUNAFS_HAVE_64BIT_JUDY) && !defined(DISABLE_JUDY_FOR_RESERVEDPATHCONTAINER)
-using ReservedPathContainer = judy_map<inode_t, hstorage::Handle>;
-#else
-using ReservedPathContainer = std::map<inode_t, hstorage::Handle>;
-#endif

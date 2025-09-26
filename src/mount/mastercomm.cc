@@ -132,7 +132,6 @@ static pthread_t rpthid,npthid;
 static std::mutex fdMutex, recMutex;
 
 static uint32_t sessionid;
-static uint32_t masterversion;
 
 static char masterstrip[17];
 static uint32_t masterip=0;
@@ -155,7 +154,7 @@ void fs_getmasterlocation(uint8_t loc[14]) {
 	put32bit(&loc,masterip);
 	put16bit(&loc,masterport);
 	put32bit(&loc,sessionid);
-	put32bit(&loc,masterversion);
+	put32bit(&loc,masterVersion.load());
 }
 
 uint32_t fs_getsrcip() {
@@ -205,20 +204,20 @@ void wrap_write_init(bool isFromMainThread) {
 
 	// Dangerous case, using chunk based algorithm by params and master does not support it.
 	if (!gSaunaFSInitParams.use_inode_based_write_algorithm &&
-	    masterversion < kFirstVersionWithChunkBasedWriteAlgorithm) {
+	    masterVersion < kFirstVersionWithChunkBasedWriteAlgorithm) {
 		if (isFromMainThread) {
 			fprintf(stderr,
 			        "Metadata server version v%s is too old, using inode based write algorithm"
 			        "(sfsuseinodebasedwritealgorithm=1). "
 			        "Required minimum version for chunk based write algorithm is v%s.\n",
-			        saunafsVersionToString(masterversion).c_str(),
+			        saunafsVersionToString(masterVersion).c_str(),
 			        saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm).c_str());
 		} else {
 			safs::log_warn(
 			    "Metadata server version v{} is too old, using inode based write algorithm"
 			    "(sfsuseinodebasedwritealgorithm=1). "
 			    "Required minimum version for chunk based write algorithm is v{}.",
-			    saunafsVersionToString(masterversion),
+			    saunafsVersionToString(masterVersion),
 			    saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm));
 		}
 		useInodeBasedWriteAlgorithm = true;
@@ -234,18 +233,18 @@ void wrap_write_init(bool isFromMainThread) {
 	// algorithm and it is intended by params, then we should use it.
 	if (isChunkBasedWriteAlgorithmInitialized() && getUseInodeBasedWriteAlgorithm() &&
 	    !gSaunaFSInitParams.use_inode_based_write_algorithm &&
-	    masterversion >= kFirstVersionWithChunkBasedWriteAlgorithm) {
+	    masterVersion >= kFirstVersionWithChunkBasedWriteAlgorithm) {
 		if (isFromMainThread) {
 			fprintf(stderr,
 			        "New metadata server supports chunk based write algorithm "
 			        "(current master version: %s, required: %s).\n",
-			        saunafsVersionToString(masterversion).c_str(),
+			        saunafsVersionToString(masterVersion).c_str(),
 			        saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm).c_str());
 		} else {
 			safs::log_warn(
 			    "New metadata server supports chunk based write algorithm "
 			    "(current master version: {}, required: {}).",
-			    saunafsVersionToString(masterversion),
+			    saunafsVersionToString(masterVersion),
 			    saunafsVersionToString(kFirstVersionWithChunkBasedWriteAlgorithm));
 		}
 
@@ -995,9 +994,9 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 	    messageValueIterator == kNewMetaSessionDataLengthWithGoalsAndTrashtimes ||
 	    messageValueIterator == kNewSessionDataLengthGoalsAndTrashtimes ||
 	    messageValueIterator == kNewSessionDataLengthWithIoLimits) {
-		get32bit(&messageFromMaster, masterversion);
+		get32bit(&messageFromMaster, masterVersion);
 	} else {
-		masterversion = 0;
+		masterVersion = 0;
 	}
 
 	get32bit(&messageFromMaster, sessionid);
@@ -1305,7 +1304,7 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (masterversion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect &&
+			if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect &&
 			    (gChangedTweaksValue || lastDisconnectedStatus)) {
 				gChangedTweaksValue = false;
 				std::string mountInfoStr;
@@ -1777,7 +1776,7 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
 	    sizeof(attruid) + sizeof(attrgid) + sizeof(attratime) + sizeof(attrmtime);
 	constexpr uint32_t kPacketSizeWithSugid = kPacketSize + sizeof(sugidclearmode);
 
-	if (masterversion < 0x010619) {
+	if (masterVersion < 0x010619) {
 		wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSize);
 	} else {
 		wptr = fs_createpacket(rec, CLTOMA_FUSE_SETATTR, kPacketSizeWithSugid);
@@ -1795,7 +1794,7 @@ uint8_t fs_setattr(inode_t inode, uint32_t uid, uint32_t gid, uint8_t setmask, u
 	put32bit(&wptr,attrgid);
 	put32bit(&wptr,attratime);
 	put32bit(&wptr,attrmtime);
-	if (masterversion>=0x010619) {
+	if (masterVersion>=0x010619) {
 		put8bit(&wptr,sugidclearmode);
 	}
 
@@ -2567,16 +2566,16 @@ uint8_t fs_gettrash(const uint8_t **dbuff,uint32_t *dbuffsize) {
 	return ret;
 }
 
-uint8_t fs_getreserved(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOffset max_entries,
-	               std::vector<NamedInodeEntry> &entries) {
+template <typename OffsetT, typename EntryT>
+uint8_t fs_getreserved(OffsetT off, uint32_t max_entries, std::vector<EntryT> &entries) {
 	threc *rec = fs_get_my_threc();
 	auto message = cltoma::fuseGetReserved::build(rec->packetId, off, max_entries);
-	if (!fs_saucreatepacket(rec, message)) {
-		return SAUNAFS_ERROR_IO;
-	}
+	if (!fs_saucreatepacket(rec, message)) { return SAUNAFS_ERROR_IO; }
+
 	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GETRESERVED, message)) {
 		return SAUNAFS_ERROR_IO;
 	}
+
 	try {
 		PacketVersion dummy_packet_version;
 		uint32_t dummy_message_id;
@@ -2589,16 +2588,17 @@ uint8_t fs_getreserved(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInod
 	}
 }
 
-uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOffset max_entries,
-	            std::vector<NamedInodeEntry> &entries) {
+template uint8_t fs_getreserved<SaunaClient::NamedInodeOffset, NamedInodeEntry>(
+    SaunaClient::NamedInodeOffset, uint32_t, std::vector<NamedInodeEntry> &);
+template uint8_t fs_getreserved<uint64_t, HandleInodeEntry>(uint64_t, uint32_t,
+                                                            std::vector<HandleInodeEntry> &);
+
+template <typename OffsetT, typename EntryT>
+uint8_t fs_gettrash(OffsetT off, uint32_t max_entries, std::vector<EntryT> &entries) {
 	threc *rec = fs_get_my_threc();
 	auto message = cltoma::fuseGetTrash::build(rec->packetId, off, max_entries);
-	if (!fs_saucreatepacket(rec, message)) {
-		return SAUNAFS_ERROR_IO;
-	}
-	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GETTRASH, message)) {
-		return SAUNAFS_ERROR_IO;
-	}
+	if (!fs_saucreatepacket(rec, message)) { return SAUNAFS_ERROR_IO; }
+	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_GETTRASH, message)) { return SAUNAFS_ERROR_IO; }
 	try {
 		PacketVersion dummy_packet_version;
 		uint32_t dummy_message_id;
@@ -2610,6 +2610,11 @@ uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOf
 		return SAUNAFS_ERROR_IO;
 	}
 }
+
+template uint8_t fs_gettrash<SaunaClient::NamedInodeOffset, NamedInodeEntry>(
+    SaunaClient::NamedInodeOffset, uint32_t, std::vector<NamedInodeEntry> &);
+template uint8_t fs_gettrash<uint64_t, HandleInodeEntry>(uint64_t, uint32_t,
+                                                         std::vector<HandleInodeEntry> &);
 
 uint8_t fs_getdetachedattr(inode_t inode, Attributes &attr) {
 	uint8_t *wptr;
@@ -2765,7 +2770,7 @@ uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+	if (masterVersion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
 
 	constexpr uint32_t kPacketHeaderSize =
 	    sizeof(inode) + sizeof(opened) + sizeof(uid) + sizeof(gid) + sizeof(nleng) + sizeof(mode);
@@ -2817,7 +2822,7 @@ uint8_t fs_listxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, 
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+	if (masterVersion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
 
 	constexpr uint32_t kPacketSize =
 	    sizeof(inode) + sizeof(opened) + sizeof(uid) + sizeof(gid) + sizeof(uint8_t) + sizeof(mode);
@@ -2866,7 +2871,7 @@ uint8_t fs_setxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, u
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+	if (masterVersion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
 
 	if (mode >= XATTR_SMODE_REMOVE) { return SAUNAFS_ERROR_EINVAL; }
 
@@ -2911,7 +2916,7 @@ uint8_t fs_removexattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid
 	uint8_t ret;
 	threc *rec = fs_get_my_threc();
 
-	if (masterversion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
+	if (masterVersion < saunafsVersion(1, 6, 29)) { return SAUNAFS_ERROR_ENOTSUP; }
 
 	constexpr uint32_t kPacketHeaderSize = sizeof(inode) + sizeof(opened) + sizeof(uid) +
 	                                       sizeof(gid) + sizeof(nleng) + sizeof(uint32_t) +
@@ -3045,11 +3050,11 @@ uint8_t fs_setacl(inode_t inode, uint32_t uid, uint32_t gid, AclType type,
 
 uint8_t fs_fullpath(inode_t inode, uint32_t uid, uint32_t gid, std::string &fullPath) {
 	threc *rec = fs_get_my_threc();
-	if (masterversion < kFirstVersionWithPathByInodeHiddenFile) {
+	if (masterVersion < kFirstVersionWithPathByInodeHiddenFile) {
 		safs::log_warn(
 		    "fs_fullpath: Operation not supported for current master version: {}, for this operation "
 		    "master version should be {} or higher",
-		    saunafsVersionToString(masterversion),
+		    saunafsVersionToString(masterVersion),
 		    saunafsVersionToString(kFirstVersionWithPathByInodeHiddenFile));
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
@@ -3383,11 +3388,11 @@ uint8_t fs_makesnapshot(inode_t src_inode, inode_t dst_inode, const std::string 
 uint8_t fs_get_self_quota(uint32_t uid, uint32_t gid, inode_t inode,
                           std::vector<QuotaEntry> &quotaEntries) {
 	threc *rec = fs_get_my_threc();
-	if (masterversion < kFirstVersionWithUseQuotaInVolumeSize) {
+	if (masterVersion < kFirstVersionWithUseQuotaInVolumeSize) {
 		safs::log_warn(
 		    "fs_get_self_quota: Operation not supported for current master version: {}, for this operation "
 		    "master version should be {} or higher",
-		    saunafsVersionToString(masterversion),
+		    saunafsVersionToString(masterVersion),
 		    saunafsVersionToString(kFirstVersionWithUseQuotaInVolumeSize));
 		return SAUNAFS_ERROR_ENOTSUP;
 	}

@@ -34,14 +34,17 @@
 #ifdef _WIN32
 #include "mount/acquired_files_last_time_used.h"
 #endif
-#include "protocol/packet.h"
-#include "protocol/lock_info.h"
 #include "protocol/directory_entry.h"
+#include "protocol/handle_inode_entry.h"
+#include "protocol/lock_info.h"
 #include "protocol/named_inode_entry.h"
+#include "protocol/packet.h"
 
 #ifdef _WIN32
 inline std::atomic_bool gIsDisconnectedFromMaster;
 #endif
+
+inline std::atomic<uint32_t> masterVersion;
 
 inline std::mutex acquiredFileMutex;
 // <inode, cnt> and sorted by inode
@@ -112,11 +115,11 @@ uint8_t fs_setacl(inode_t inode, uint32_t uid, uint32_t gid, AclType type,
 uint8_t fs_fullpath(inode_t inode, uint32_t uid, uint32_t gid, std::string &fullPath);
 
 uint8_t fs_getreserved(const uint8_t **dbuff, uint32_t *dbuffsize);
-uint8_t fs_getreserved(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOffset max_entries,
-                       std::vector<NamedInodeEntry> &entries);
+template <typename OffsetT, typename EntryT>
+uint8_t fs_getreserved(OffsetT off, uint32_t max_entries, std::vector<EntryT> &entries);
 uint8_t fs_gettrash(const uint8_t **dbuff, uint32_t *dbuffsize);
-uint8_t fs_gettrash(SaunaClient::NamedInodeOffset off, SaunaClient::NamedInodeOffset max_entries,
-                    std::vector<NamedInodeEntry> &entries);
+template <typename OffsetT, typename EntryT>
+uint8_t fs_gettrash(OffsetT off, uint32_t max_entries, std::vector<EntryT> &entries);
 uint8_t fs_getdetachedattr(inode_t inode, Attributes &attr);
 uint8_t fs_gettrashpath(inode_t inode, const uint8_t **path);
 uint8_t fs_settrashpath(inode_t inode, const uint8_t *path);

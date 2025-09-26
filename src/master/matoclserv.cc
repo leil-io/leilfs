@@ -4525,13 +4525,30 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const uint8_t *data, uint32
 
 void matoclserv_fuse_gettrash(matoclserventry *eptr, const PacketHeader &header,
                               const uint8_t *data) {
-	uint32_t off, max_entries, msg_id;
-	cltoma::fuseGetTrash::deserialize(data, header.length, msg_id, off, max_entries);
-	std::vector<NamedInodeEntry> entries;
-	fs_readtrash(off,
-	             std::min<uint32_t>(max_entries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
-	             entries);
-	matoclserv_createpacket(eptr, matocl::fuseGetTrash::build(msg_id, entries));
+	uint32_t maxEntries, msgId;
+	PacketVersion version;
+	deserializePacketVersionNoHeader(data, header.length, version);
+
+	if (version == cltoma::fuseGetTrash::kClientPositionOffset) {
+		uint32_t off;
+		cltoma::fuseGetTrash::deserialize(data, header.length, msgId, off, maxEntries);
+		std::vector<NamedInodeEntry> entries;
+		fs_readtrash(
+		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
+		    entries);
+		matoclserv_createpacket(eptr, matocl::fuseGetTrash::build(msgId, entries));
+	} else if (version == cltoma::fuseGetTrash::kClientHandleOffset) {
+		uint64_t off;
+		cltoma::fuseGetTrash::deserialize(data, header.length, msgId, off, maxEntries);
+		std::vector<HandleInodeEntry> entries;
+		fs_readtrash(
+		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
+		    entries);
+		matoclserv_createpacket(eptr, matocl::fuseGetTrash::build(msgId, entries));
+	} else {
+		throw IncorrectDeserializationException(
+		    "Unknown packet version for matoclserv_fuse_gettrash: " + std::to_string(version));
+	}
 }
 
 void matoclserv_fuse_getdetachedattr(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -4750,13 +4767,30 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const uint8_t *data, uin
 
 void matoclserv_fuse_getreserved(matoclserventry *eptr, const PacketHeader &header,
                                  const uint8_t *data) {
-	uint32_t off, max_entries, msg_id;
-	cltoma::fuseGetReserved::deserialize(data, header.length, msg_id, off, max_entries);
-	std::vector<NamedInodeEntry> entries;
-	fs_readreserved(
-	    off, std::min<uint32_t>(max_entries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
-	    entries);
-	matoclserv_createpacket(eptr, matocl::fuseGetReserved::build(msg_id, entries));
+	uint32_t maxEntries, msgId;
+	PacketVersion version;
+	deserializePacketVersionNoHeader(data, header.length, version);
+
+	if (version == cltoma::fuseGetReserved::kClientPositionOffset) {
+		uint32_t off;
+		cltoma::fuseGetReserved::deserialize(data, header.length, msgId, off, maxEntries);
+		std::vector<NamedInodeEntry> entries;
+		fs_readreserved(
+		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
+		    entries);
+		matoclserv_createpacket(eptr, matocl::fuseGetReserved::build(msgId, entries));
+	} else if (version == cltoma::fuseGetReserved::kClientHandleOffset) {
+		uint64_t off;
+		cltoma::fuseGetReserved::deserialize(data, header.length, msgId, off, maxEntries);
+		std::vector<HandleInodeEntry> entries;
+		fs_readreserved(
+		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
+		    entries);
+		matoclserv_createpacket(eptr, matocl::fuseGetReserved::build(msgId, entries));
+	} else {
+		throw IncorrectDeserializationException(
+		    "Unknown packet version for matoclserv_fuse_gettreserved: " + std::to_string(version));
+	}
 }
 
 void matoclserv_fuse_deleteacl(matoclserventry *eptr, const uint8_t *data, uint32_t length) {

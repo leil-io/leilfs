@@ -422,12 +422,13 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 	}
 	if (!parentId) {
 		if (child->type == FSNodeType::kTrash) {
-			gMetadata->trash.insert(
-			    {TrashPathKey(child), hstorage::Handle(name)});
+			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
+			              gMetadata->trashReservedToId, child, name);
 			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->trashNodes++;
 		} else if (child->type == FSNodeType::kReserved) {
-			gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
+			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+			                 gMetadata->trashReservedToId, child, name);
 			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->reservedNodes++;
 		} else {
