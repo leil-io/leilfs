@@ -39,6 +39,12 @@ void FDBTransaction::set(const kv::Key &key, const kv::Value &value) {
 	tr_.set(key, value);
 }
 
+void FDBTransaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
+	if (!tr_) { return; }
+
+	tr_.atomicAdd(key, delta);
+}
+
 void FDBTransaction::remove(const kv::Key &key) {
 	if (!tr_) { return; }
 

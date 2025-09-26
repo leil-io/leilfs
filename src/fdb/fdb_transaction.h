@@ -60,6 +60,11 @@ public:
 	/// @param value The value to set for the key.
 	void set(const kv::Key &key, const kv::Value &value) override;
 
+	/// Atomically adds a delta value to the existing value for a given key.
+	/// @param key The key to add the delta to.
+	/// @param delta The delta value to add (must be little-endian).
+	void atomicAdd(const kv::Key &key, const kv::Value &delta) override;
+
 	/// Removes a key from the database.
 	/// @param key The key to remove.
 	void remove(const kv::Key &key) override;
