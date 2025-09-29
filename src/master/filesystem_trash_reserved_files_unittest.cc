@@ -97,7 +97,7 @@ TEST_F(FilesystemTrashReservedTests, AddAndRemoveReservedEntryFromContainers) {
 	ASSERT_EQ(reservedReservedToId.counter, 1U);
 
 	// Remove from reserved
-	removeReservedEntry(reserved, reservedHandlesIndex, reservedReservedToId, node);
+	removeReservedEntry(reserved, reservedHandlesIndex, reservedReservedToId, node->id);
 
 	ASSERT_EQ(reserved.size(), 0U);
 	ASSERT_EQ(reservedHandlesIndex.size(), 0U);

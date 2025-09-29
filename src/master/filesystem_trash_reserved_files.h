@@ -147,8 +147,14 @@ inline void addTrashEntry(TrashPathContainer &trash, HandleIndexContainer &trash
 inline void removeTrashEntry(TrashPathContainer &trash, HandleIndexContainer &trashHandlesIndex,
                              TrashReservedToIdContainer &trashReservedToId, FSNode *node) {
 	TrashPathKey key(node);
-	uint64_t handleHash = trash.at(key).data();
-	uint64_t pathId = trashReservedToId.getOrAdd(handleHash);
+	auto handleHashIt = trash.find(key);
+	if (handleHashIt == trash.end()) { return; }
+
+	uint64_t handleHash = (*handleHashIt).second.data();
+	auto pathIdIt = trashReservedToId.nameToId.find(handleHash);
+	if (pathIdIt == trashReservedToId.nameToId.end()) { return; }
+
+	uint64_t pathId = pathIdIt->second;
 	trashHandlesIndex.erase(HandleIndexKey(pathId));
 	trashReservedToId.erase(handleHash);
 	trash.erase(key);
@@ -166,12 +172,18 @@ inline void addReservedEntry(ReservedPathContainer &reserved,
 
 inline void removeReservedEntry(ReservedPathContainer &reserved,
                                 HandleIndexContainer &reservedHandlesIndex,
-                                TrashReservedToIdContainer &trashReservedToId, FSNode *node) {
-	uint64_t handleHash = reserved.at(node->id).data();
-	uint64_t pathId = trashReservedToId.getOrAdd(handleHash);
+                                TrashReservedToIdContainer &trashReservedToId, inode_t inode) {
+	auto handleHashIt = reserved.find(inode);
+	if (handleHashIt == reserved.end()) { return; }
+
+	uint64_t handleHash = (*handleHashIt).second.data();
+	auto pathIdIt = trashReservedToId.nameToId.find(handleHash);
+	if (pathIdIt == trashReservedToId.nameToId.end()) { return; }
+
+	uint64_t pathId = pathIdIt->second;
 	reservedHandlesIndex.erase(HandleIndexKey(pathId));
 	trashReservedToId.erase(handleHash);
-	reserved.erase(node->id);
+	reserved.erase(inode);
 }
 
 inline void moveTrashToReservedEntry(TrashPathContainer &trash,
@@ -180,8 +192,14 @@ inline void moveTrashToReservedEntry(TrashPathContainer &trash,
                                      HandleIndexContainer &reservedHandlesIndex,
                                      TrashReservedToIdContainer &trashReservedToId, FSNode *node) {
 	TrashPathKey key(node);
-	uint64_t handleHash = trash.at(key).data();
-	uint64_t idFromName = trashReservedToId.getOrAdd(handleHash);
+	auto handleHashIt = trash.find(key);
+	if (handleHashIt == trash.end()) { return; }
+
+	uint64_t handleHash = (*handleHashIt).second.data();
+	auto pathIdIt = trashReservedToId.nameToId.find(handleHash);
+	if (pathIdIt == trashReservedToId.nameToId.end()) { return; }
+
+	uint64_t idFromName = pathIdIt->second;
 
 	trashHandlesIndex.erase(HandleIndexKey(idFromName));
 	hstorage::Handle nameHandle = std::move(trash.at(key));
@@ -194,18 +212,29 @@ inline void moveTrashToReservedEntry(TrashPathContainer &trash,
 inline void updateTrashNameEntry(TrashPathContainer &trash, HandleIndexContainer &trashHandlesIndex,
                                  TrashReservedToIdContainer &trashReservedToId, FSNode *node,
                                  const std::string &newPath) {
-	uint64_t oldHash = trash[TrashPathKey(node)].data();
-	trashHandlesIndex.erase(HandleIndexKey(trashReservedToId.getOrAdd(oldHash)));
+	TrashPathKey key(node);
+	auto handleHashIt = trash.find(key);
+	if (handleHashIt == trash.end()) { return; }
+
+	uint64_t oldHash = (*handleHashIt).second.data();
+	auto oldPathIdIt = trashReservedToId.nameToId.find(oldHash);
+	if (oldPathIdIt == trashReservedToId.nameToId.end()) { return; }
+
+	uint64_t oldPathId = oldPathIdIt->second;
+	trashHandlesIndex.erase(HandleIndexKey(oldPathId));
 	trashReservedToId.erase(oldHash);
 
-	trash[TrashPathKey(node)] = HString(newPath);
-	uint64_t newHash = trash[TrashPathKey(node)].data();
+	trash[key] = HString(newPath);
+	uint64_t newHash = trash[key].data();
 	trashHandlesIndex.insert({HandleIndexKey(trashReservedToId.getOrAdd(newHash)), node->id});
 }
 
 inline void updateTrashFromOldEntry(TrashPathContainer &trash, FSNode *node,
                                     const TrashPathKey &oldKey) {
-	hstorage::Handle path = std::move(trash.at(oldKey));
+	auto handleHashIt = trash.find(oldKey);
+	if (handleHashIt == trash.end()) { return; }
+
+	hstorage::Handle path = std::move((*handleHashIt).second);
 	trash.erase(oldKey);
 	trash.insert({TrashPathKey(node), std::move(path)});
 }

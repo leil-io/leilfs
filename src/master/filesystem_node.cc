@@ -1442,7 +1442,7 @@ int fsnodes_purge(uint32_t ts, FSNode *p) {
 		gMetadata->reservedNodes--;
 
 		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-		                    gMetadata->trashReservedToId, p);
+		                    gMetadata->trashReservedToId, p->id);
 
 		file_node->ctime = ts;
 		fsnodes_update_checksum(file_node);
@@ -1528,7 +1528,7 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 				                 gMetadata->trashReservedToId, node);
 			} else {
 				removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-				                    gMetadata->trashReservedToId, node);
+				                    gMetadata->trashReservedToId, node->id);
 			}
 
 			node->type = FSNodeType::kFile;
