@@ -154,6 +154,9 @@ init_metadata_backend() {
 		"FDB")
 			start_fdb_cluster
 			;;
+		*)
+			start_fdb_cluster
+			;;
 	esac
 }
 
@@ -468,6 +471,9 @@ add_metadata_server_() {
 	elif [[ "${saunafs_info_[metadata_backend]}" == "FDB" ]]; then
 		cp "$masterserver_master_cfg" "$masterserver_cfg"
 		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
+	fi
+	if [[ -n "${FDB_CLUSTER_FILE}" ]]; then
+		echo "FDB_CLUSTER_FILE = ${FDB_CLUSTER_FILE}" >>"${masterserver_cfg}"
 	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg

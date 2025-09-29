@@ -15,10 +15,10 @@ public:
 	ChangelogDb(ChangelogDb&&) = delete;
 	ChangelogDb& operator=(ChangelogDb&&) = delete;
 
-	void put(uint64_t version, const std::string &entry);
-	void flush();
-	uint64_t getFirstLogVersion();
-	uint64_t getLastLogVersion();
+	void put(uint64_t version, const std::string &entry) const;
+	static void flush();
+	uint64_t getFirstLogVersion() const;
+	uint64_t getLastLogVersion() const;
 private:
 	// Pimpl idiom
 	struct ChangelogDbImpl;

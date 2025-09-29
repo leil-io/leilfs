@@ -1,3 +1,5 @@
+timeout_set 2 minutes
+
 master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
 master_cfg+="|AUTO_RECOVERY = 1"
 master_cfg+="|DISABLE_METADATA_CHECKSUM_VERIFICATION = 1"
@@ -12,8 +14,7 @@ CHUNKSERVERS=2 \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota" \
 	CHUNKSERVER_EXTRA_CONFIG="HDD_TEST_FREQ = 10000" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
-	MASTER_BACKEND=FDB \
-	FOUNDATIONDB_CLUSTER_FILE=
+	FDB_CLUSTER_FILE="/tmp/saunafs-fdb-test/conf/fdb.cluster" \
 	setup_local_empty_saunafs info
 
 # Remember version of the metadata file. We expect it not to change when generating data.
