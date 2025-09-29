@@ -51,6 +51,22 @@ std::shared_ptr<FDBContext> FDBContext::create(FDBConfig &&config) {
 FDBContext::FDBContext(FDBConfig &&config) : config_(std::move(config)) {
 	try {
 		check_fdb_op(DB::selectAPIVersion(FDB_API_VERSION), "Failed to set API Version");
+
+		// Configure external client settings if provided (needed on multi-version setups)
+		if (const char* extLib = std::getenv("FDB_EXTERNAL_CLIENT_LIBRARY"); extLib && *extLib) {
+			check_fdb_op(DB::setNetworkOption(FDB_NET_OPTION_EXTERNAL_CLIENT_LIBRARY, extLib),
+			            "Failed to set FDB external client library");
+		}
+		if (const char* extDir = std::getenv("FDB_EXTERNAL_CLIENT_DIRECTORY"); extDir && *extDir) {
+			check_fdb_op(DB::setNetworkOption(FDB_NET_OPTION_EXTERNAL_CLIENT_DIRECTORY, extDir),
+			            "Failed to set FDB external client directory");
+		}
+		if (const char* clusterFile = std::getenv("FDB_CLUSTER_FILE"); clusterFile && *clusterFile) {
+			// Allow setting cluster file path globally via network option
+			check_fdb_op(DB::setNetworkOption(FDB_NET_OPTION_CLUSTER_FILE, clusterFile),
+			            "Failed to set FDB cluster file via network option");
+		}
+
 		check_fdb_op(DB::setupNetwork(), "Failed to setup network thread");
 
 		networkThread_ = std::thread([] {

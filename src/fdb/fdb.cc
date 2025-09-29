@@ -20,13 +20,15 @@
 
 #include "fdb/fdb.h"
 
-#include <cstdint>
-
 #include <foundationdb/fdb_c_types.h>
 
 #include "slogger/slogger.h"
+#include <cstdlib>
 
 namespace fdb {
+
+namespace {
+}
 
 const uint8_t *toU8(std::string_view str) {
 	return reinterpret_cast<const uint8_t *>(str.data());
@@ -74,14 +76,17 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	FDBFuture *future =
 	    fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()), snapshot);
 
-	error_ = fdb_future_block_until_ready(future);
-
-	if (error_ != 0) {
-		safs::log_err("Transaction::get: fdb_future_block_until_ready: error: {}",
-		              fdb_get_error(error_));
+ // Block until future is ready (let FDB handle backoff internally)
+{
+	fdb_error_t blockErr = fdb_future_block_until_ready(future);
+	if (blockErr != 0) {
+		safs::log_err("Transaction::get: fdb_future_block_until_ready error: {}", fdb_get_error(blockErr));
+		error_ = blockErr;
+		fdb_future_destroy(future);
 		return std::nullopt;
 	}
-	
+}
+
 	fdb_bool_t valuePresent{};
 	const uint8_t *valueRead{};
 	int valueLength{};
@@ -122,16 +127,16 @@ kv::GetRangeResult Transaction::getRange(
 				// [ begin, end ]
 				return fdb_transaction_get_range(
 				    tr_.get(),
-				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
-				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
+				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), static_cast<int>(begin.getKey().size())),
+				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), static_cast<int>(end.getKey().size())), limit,
 				    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
 				    static_cast<fdb_bool_t>(reverse));
 			}
 			// [ begin, end )
 			return fdb_transaction_get_range(
 			    tr_.get(),
-			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
-			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()), limit,
+			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), static_cast<int>(begin.getKey().size())),
+			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), static_cast<int>(end.getKey().size())), limit,
 			    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
 			    static_cast<fdb_bool_t>(reverse));
 		}
@@ -140,35 +145,37 @@ kv::GetRangeResult Transaction::getRange(
 			// ( begin, end ]
 			return fdb_transaction_get_range(
 			    tr_.get(),
-			    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
-			    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
+			    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), static_cast<int>(begin.getKey().size())),
+			    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), static_cast<int>(end.getKey().size())), limit,
 			    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
 			    static_cast<fdb_bool_t>(reverse));
 		}
 		// ( begin, end )
 		return fdb_transaction_get_range(
-		    tr_.get(), FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
-		    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()), limit,
+		    tr_.get(), FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), static_cast<int>(begin.getKey().size())),
+		    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), static_cast<int>(end.getKey().size())), limit,
 		    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
 		    static_cast<fdb_bool_t>(reverse));
 	};
 
 	FDBFuture *future = selectRangeCall();
 
-	auto error = fdb_future_block_until_ready(future);
-
-	if (error != 0) {
-		safs::log_err("Transaction::getRange: fdb_future_block_until_ready: error: {}",
-		              fdb_get_error(error));
-		fdb_future_destroy(future);
-		return {{}, false};
+ // Block until future is ready
+	{
+		fdb_error_t blockErr = fdb_future_block_until_ready(future);
+		if (blockErr != 0) {
+			safs::log_err("Transaction::getRange: fdb_future_block_until_ready error: {}", fdb_get_error(blockErr));
+			error_ = blockErr;
+			fdb_future_destroy(future);
+			return {{}, false};
+		}
 	}
 
 	const FDBKeyValue *keyValues;
 	int count = 0;
 	fdb_bool_t more = 0;
 
-	error = fdb_future_get_keyvalue_array(future, &keyValues, &count, &more);
+ fdb_error_t error = fdb_future_get_keyvalue_array(future, &keyValues, &count, &more);
 
 	if (error != 0) {
 		safs::log_err("Transaction::getRange: fdb_future_get_keyvalue_array: error: {}",
@@ -178,7 +185,7 @@ kv::GetRangeResult Transaction::getRange(
 	}
 
 	std::vector<kv::KeyValuePair> pairs;
-	pairs.reserve(count);
+	pairs.reserve(static_cast<decltype(pairs)::size_type>(count));
 
 	for (int i = 0; i < count; ++i) {
 		kv::Key key(keyValues[i].key, keyValues[i].key + keyValues[i].key_length);
@@ -225,17 +232,28 @@ bool Transaction::commit() {
 
 	FDBFuture *future = fdb_transaction_commit(tr_.get());
 
-	error_ = fdb_future_block_until_ready(future);
+	// Block until commit future is ready
+	{
+		fdb_error_t blockErr = fdb_future_block_until_ready(future);
+		if (blockErr != 0) {
+			safs::log_err("Transaction::commit: fdb_future_block_until_ready error: {}", fdb_get_error(blockErr));
+			error_ = blockErr;
+			fdb_future_destroy(future);
+			return false;
+		}
+	}
 
-	if (error_ != 0) {
-		safs::log_err("Transaction::commit: error: {}", fdb_get_error(error_));
+	// Check commit result
+	fdb_error_t commitErr = fdb_future_get_error(future);
+	if (commitErr != 0) {
+		safs::log_err("Transaction::commit: fdb_future_get_error: {}", fdb_get_error(commitErr));
+		error_ = commitErr;
 		fdb_future_destroy(future);
 		return false;
 	}
 
 	int64_t version{};
 	fdb_error_t versionError = fdb_transaction_get_committed_version(tr_.get(), &version);
-
 	if (versionError != 0) {
 		safs::log_err("Transaction::commit: fdb_transaction_get_committed_version: error: {}",
 		              fdb_get_error(versionError));
@@ -244,9 +262,7 @@ bool Transaction::commit() {
 	}
 
 	committedVersion_ = version;
-
 	fdb_future_destroy(future);
-
 	return true;
 }
 

@@ -33,9 +33,9 @@ setup_local_empty_saunafs() {
 
 	declare -g mds_command="sfsmaster"
 
-	if [[ ${metadata_backend} != "FILE" ]]; then
-		mds_command="sfsmds"
-	fi
+#	if [[ ${metadata_backend} != "FILE" ]]; then
+#		mds_command="sfsmds"
+#	fi
 
 	if is_windows_system; then
 		saunafs_info_[is_windows_system]=1

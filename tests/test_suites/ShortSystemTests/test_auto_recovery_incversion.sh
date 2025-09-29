@@ -2,12 +2,18 @@ master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
 master_cfg+="|AUTO_RECOVERY = 1"
 master_cfg+="|DISABLE_METADATA_CHECKSUM_VERIFICATION = 1"
 
+
+#export ASAN_OPTIONS=suppressions=$(pwd)/asan_suppressions.txt
+#export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-20
+
 CHUNKSERVERS=2 \
 	USE_RAMDISK=YES \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota" \
 	CHUNKSERVER_EXTRA_CONFIG="HDD_TEST_FREQ = 10000" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
+	MASTER_BACKEND=FDB \
+	FOUNDATIONDB_CLUSTER_FILE=
 	setup_local_empty_saunafs info
 
 # Remember version of the metadata file. We expect it not to change when generating data.
@@ -33,6 +39,10 @@ if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	sleep 0.5
 fi
 metadata=$(metadata_print)
+echo "[BALDOR]"
+ls -hAlF "${info[master_data_path]}"
+tree "${info[master_data_path]}"
+echo "[FIN]"
 
 # Simulate crash of the master
 cd

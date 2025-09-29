@@ -23,11 +23,15 @@ add_library(metarestore ${METARESTORE_SOURCES} ${METARESTORE_MASTER_SOURCES} ${M
   ../master/acl_storage.cc ../master/chunks.cc ../common/quota_database.cc ../master/chunk_goal_counters.cc
   ../master/restore.cc ../master/locks.cc ../master/task_manager.cc ../master/snapshot_task.cc
   ../master/metadata_loader.cc ../master/setgoal_task.cc ../master/settrashtime_task.cc
-  ../master/changelog.cc)
+  ../master/changelog.cc ../master/changelog_db_fdb.cc)
 
 target_link_libraries(metarestore metrics sfscommon)
 if(JUDY_LIBRARY)
   target_link_libraries(metarestore ${JUDY_LIBRARY})
+endif()
+
+if(ENABLE_FOUNDATIONDB)
+  target_link_libraries(metarestore fdb)
 endif()
 
 create_unittest(metarestore ${METARESTORE_TESTS})

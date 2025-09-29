@@ -34,6 +34,7 @@
 #include "common/exceptions.h"
 #include "common/rotate_files.h"
 #include "config/cfg.h"
+#include "master/changelog_db.h"
 #include "master/metadata_backend_common.h"
 #include "slogger/slogger.h"
 
@@ -65,6 +66,7 @@ static uint32_t gMaxBackLogsNumber = 50;
 static uint32_t gBackLogsNumber;
 static FILE *fd = nullptr;
 static bool gFlush = true;
+static std::shared_ptr<ChangelogDb> gDB = std::make_shared<ChangelogDb>();
 
 void changelog_rotate() {
 	if (fd) {
@@ -85,6 +87,11 @@ void changelog(uint64_t version, const char* entry) {
 			safs_pretty_syslog(LOG_NOTICE, "lost metadata change %" PRIu64 ": %s", version, entry);
 		}
 	}
+
+	if (!gDB) {
+		gDB = std::make_shared<ChangelogDb>();
+	}
+	gDB->put(version, std::string(entry));
 
 	if (fd) {
 		fprintf(fd,"%" PRIu64 ": %s\n", version, entry);
@@ -124,6 +131,9 @@ void changelog_flush(void) {
 	if (fd) {
 		fflush(fd);
 	}
+	if (gDB) {
+		gDB->flush();
+	}
 }
 
 void changelog_disable_flush(void) {
@@ -156,6 +166,13 @@ uint64_t changelogGetFirstLogVersion(const std::string &fname) {
 		p++;
 	}
 	if (p >= s || buff[p] != ':') { return 0; }
+
+	safs::log_info("[BALDOR] TRACE: changelogGetFirstLogVersion: {}", fv);
+	if (gDB) {
+		safs::log_info("[BALDOR] TRACE: changelogGetFirstLogVersionFromDB: {}", gDB->getFirstLogVersion());
+	} else {
+		safs::log_info("[BALDOR] TRACE: changelogGetFirstLogVersionFromDB: gDB is nullptr");
+	}
 	return fv;
 }
 
@@ -197,6 +214,13 @@ uint64_t changelogGetLastLogVersion(const std::string &fname) {
 	}
 	if (munmap((void *)fileContent, fileSize)) {
 		safs_pretty_errlog(LOG_WARNING, "munmap(%s) failed", fname.c_str());
+	}
+
+	safs::log_info("[BALDOR] TRACE: changelogGetLastLogVersion: {}", lastLogVersion);
+	if (gDB) {
+		safs::log_info("[BALDOR] TRACE: changelogGetLastLogVersionFromDB: {}", gDB->getFirstLogVersion());
+	} else {
+		safs::log_info("[BALDOR] TRACE: changelogGetLastLogVersionFromDB: gDB is nullptr");
 	}
 	return lastLogVersion;
 }
@@ -279,6 +303,13 @@ uint64_t findLastLogVersion() {
 
 	close(fd);
 
+	safs::log_info("[BALDOR] TRACE: findLastLogVersion: {}", lastlogversion);
+	if (gDB) {
+		safs::log_info("[BALDOR] TRACE: findLastLogVersionFromDb: {}", gDB->getFirstLogVersion());
+	} else {
+		safs::log_info("[BALDOR] TRACE: findLastLogVersionFromDb: gDB is nullptr");
+	}
+
 	return lastlogversion;
 }
 
@@ -351,7 +382,8 @@ void load_changelog(const std::string &path) {
 		if (id < fs_getversion()) {
 			++skippedEntries;
 			continue;
-		} else if (!first) {
+		}
+		if (!first) {
 			first = id;
 		}
 		++appliedEntries;

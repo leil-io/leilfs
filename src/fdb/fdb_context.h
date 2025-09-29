@@ -38,6 +38,7 @@ struct FDBConfig {
 class FDBContext {
 public:
 	/// Creates a shared pointer to an FDBContext instance.
+	__attribute__((no_sanitize("address")))
 	static std::shared_ptr<FDBContext> create(FDBConfig &&config);
 
 	/// Not needed constructors and assignment operators.
@@ -58,6 +59,7 @@ public:
 private:
 	/// Initializes the FoundationDB client library and starts the network thread.
 	/// @param config Configuration for the FoundationDB client.
+	__attribute__((no_sanitize("address")))
 	explicit FDBContext(FDBConfig &&config);
 
 	/// The thread that runs the FoundationDB network loop.

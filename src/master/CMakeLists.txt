@@ -38,6 +38,11 @@ endif()
 if(DB_FOUND)
   target_link_libraries(master ${DB_LIBRARY})
 endif()
+
+if(ENABLE_FOUNDATIONDB)
+  target_link_libraries(master fdb)
+endif()
+
 create_unittest(master ${MASTER_TESTS})
 link_unittest(master master sfscommon)
 
