@@ -166,12 +166,12 @@ inline void addReservedEntry(ReservedPathContainer &reserved,
 
 inline void removeReservedEntry(ReservedPathContainer &reserved,
                                 HandleIndexContainer &reservedHandlesIndex,
-                                TrashReservedToIdContainer &trashReservedToId, FSNode *node) {
-	uint64_t handleHash = reserved.at(node->id).data();
+                                TrashReservedToIdContainer &trashReservedToId, inode_t inode) {
+	uint64_t handleHash = reserved.at(inode).data();
 	uint64_t pathId = trashReservedToId.getOrAdd(handleHash);
 	reservedHandlesIndex.erase(HandleIndexKey(pathId));
 	trashReservedToId.erase(handleHash);
-	reserved.erase(node->id);
+	reserved.erase(inode);
 }
 
 inline void moveTrashToReservedEntry(TrashPathContainer &trash,

@@ -575,7 +575,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 
 		if (!node) {
 			removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-			                    gMetadata->trashReservedToId, node);
+			                    gMetadata->trashReservedToId, (*it).first);
 			it = gMetadata->reserved.begin();
 			continue;
 		}
