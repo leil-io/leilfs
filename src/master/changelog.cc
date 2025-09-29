@@ -66,7 +66,7 @@ static uint32_t gMaxBackLogsNumber = 50;
 static uint32_t gBackLogsNumber;
 static FILE *fd = nullptr;
 static bool gFlush = true;
-static std::shared_ptr<ChangelogDb> gDB = std::make_shared<ChangelogDb>();
+static std::shared_ptr<ChangelogDb> gDB = nullptr;
 
 void changelog_rotate() {
 	if (fd) {
@@ -88,17 +88,14 @@ void changelog(uint64_t version, const char* entry) {
 		}
 	}
 
-	if (!gDB) {
-		gDB = std::make_shared<ChangelogDb>();
-	}
-	gDB->put(version, std::string(entry));
-
 	if (fd) {
 		fprintf(fd,"%" PRIu64 ": %s\n", version, entry);
 		if (gFlush) {
 			fflush(fd);
 		}
 	}
+
+	gDB->put(version, entry);
 }
 
 static void changelog_reload(void) {
@@ -109,6 +106,7 @@ static void changelog_reload(void) {
 void changelog_init(std::string changelogFilename,
 		uint32_t minBackLogsNumber, uint32_t maxBackLogsNumber) {
 	gChangelogFilename = std::move(changelogFilename);
+	gDB = std::make_shared<ChangelogDb>();
 	gMinBackLogsNumber = minBackLogsNumber;
 	gMaxBackLogsNumber = maxBackLogsNumber;
 	gBackLogsNumber = cfg_getuint32("BACK_LOGS", 50);

@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <atomic>
+#include <boost/asio/placeholders.hpp>
 #include <condition_variable>
 #include <deque>
 #include <format>
@@ -11,9 +12,11 @@
 #include <string>
 #include <thread>
 
+#include "config/cfg.h"
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "master/changelog_db.h"
+#include "mount/client/client_error_code.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -37,6 +40,8 @@ kv::Value toValue(const std::string &strValue) { return {strValue.begin(), strVa
 std::shared_ptr<fdb::FDBContext> getSharedContext() {
 	safs::log_info("Initializing FDB context");
 	static const std::shared_ptr<fdb::FDBContext> context = fdb::FDBContext::create({});
+	static int times = 1;
+	safs::log_info("FDB init called {} times", times++);
 	return context;
 }
 
@@ -46,9 +51,10 @@ struct ChangelogDb::ChangelogDbImpl {
 	std::shared_ptr<fdb::FDBContext> context;
 	std::shared_ptr<fdb::DB> db;
 	std::string prefix{"changelog/"};
+	bool kAsync = false;     // Write asynchronously
 
 	// Async writer
-	std::thread worker;
+	std::jthread worker;
 	std::mutex mtx;
 	std::condition_variable cv;
 	std::deque<std::pair<uint64_t, std::string>> queue;
@@ -67,6 +73,8 @@ struct ChangelogDb::ChangelogDbImpl {
 				return;
 			}
 
+			kAsync = cfg_get("CHANGELOG_DB_ASYNC", "NO") == "YES";
+
 			db = context->getDB();
 			if (!db) {
 				safs::log_warn("FDB DB unavailable - changelog writes disabled");
@@ -76,11 +84,14 @@ struct ChangelogDb::ChangelogDbImpl {
 			// Load the last written version
 			loadLastVersion();
 
-			// Start background worker
-			worker = std::thread([this]() {
-				pthread_setname_np(pthread_self(), "changelog_fdb");
-				this->run();
-			});
+			if (kAsync) {
+				// Start background worker
+				safs::log_info("Starting FDB changelog writer thread");
+				worker = std::jthread([this]() {
+					pthread_setname_np(pthread_self(), "changelog_fdb");
+					this->run();
+				});
+			}
 
 		} catch (const std::exception &e) {
 			safs::log_err("FDB initialization failed: {}", e.what());
@@ -100,19 +111,33 @@ struct ChangelogDb::ChangelogDbImpl {
 	ChangelogDbImpl(ChangelogDbImpl &&other) = delete;
 	ChangelogDbImpl &operator=(ChangelogDbImpl &&other) = delete;
 
+	void put(uint64_t version, const std::string &entry) {
+		if (kAsync) {
+			enqueue(version, entry);
+		} else {
+			writeOne(version, entry);
+		}
+	}
+
+private:
+
 	void enqueue(uint64_t version, std::string entry) {
 		safs::log_info("Enqueueing FDB changelog version {}", version);
 		const std::unique_lock<std::mutex> lock(mtx);
 		if (queue.size() >= kMaxQueueSize) {
 			safs::log_err("FDB changelog queue full ({}), dropping version {}", kMaxQueueSize,
-			              version);
+						  version);
 			return;
 		}
 		queue.emplace_back(version, std::move(entry));
 		cv.notify_one();
 	}
 
-private:
+	void writeOne(uint64_t version, std::string entry) {
+		safs::log_info("Writing FDB changelog version {}", version);
+		writeBatch({{version, std::move(entry)}});
+	}
+
 	void loadLastVersion() {
 		fdb::Transaction transaction(db.get());
 		auto result = transaction.get(toKey(prefix + INDEX_KEY), /*snapshot=*/true);
@@ -127,15 +152,21 @@ private:
 	}
 
 	void run() {
+		safs::log_info("FDB changelog writer thread running");
 		std::vector<std::pair<uint64_t, std::string>> batch;
 		batch.reserve(kBatchSize);
 
 		while (!stop.load(std::memory_order_relaxed)) {
+			safs::log_info("FDB changelog writer thread loop running");
 			// Collect batch
 			{
 				std::unique_lock<std::mutex> lock(mtx);
-				cv.wait(lock,
-				        [&] { return stop.load(std::memory_order_relaxed) || !queue.empty(); });
+				safs::log_info("FDB changelog writer thread waiting for queue");
+				cv.wait(lock, [&] {
+					safs::log_info("FDB changelog writer thread cv lambda waiting for queue");
+					return stop.load(std::memory_order_relaxed) || !queue.empty();
+				});
+				safs::log_info("FDB changelog writer thread queue not empty");
 
 				if (stop && queue.empty()) { break; }
 
@@ -155,6 +186,7 @@ private:
 	}
 
 	void writeBatch(const std::vector<std::pair<uint64_t, std::string>> &batch) {
+		safs::log_info("FDB changelog writer thread writing batch of {} entries", batch.size());
 		if (batch.empty()) { return; }
 
 		fdb::Transaction transaction(db.get());
@@ -181,6 +213,7 @@ private:
 
 		// Update in-memory version only after successful commit
 		lastVersion = maxVersion;
+		safs::log_info("FDB changelog writer thread updated index to {}", lastVersion.load());
 	}
 };
 
@@ -195,7 +228,7 @@ void ChangelogDb::put(uint64_t version, const std::string &entry) const {
 		return;
 	}
 	try {
-		impl->enqueue(version, entry);
+		impl->put(version, entry);
 	} catch (const std::exception &e) {
 		safs::log_exception(e, "Failed to enqueue changelog v={}", version);
 	}
