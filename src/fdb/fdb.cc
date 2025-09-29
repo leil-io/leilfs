@@ -207,6 +207,13 @@ void Transaction::set(const kv::Key &key, const kv::Value &value) {
 	                    static_cast<int>(value.size()));
 }
 
+void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
+	if (!tr_) { return; }
+
+	fdb_transaction_atomic_op(tr_.get(), key.data(), static_cast<int>(key.size()), delta.data(),
+	                          static_cast<int>(delta.size()), FDB_MUTATION_TYPE_ADD);
+}
+
 void Transaction::remove(const kv::Key &key) {
 	if (!tr_) { return; }
 

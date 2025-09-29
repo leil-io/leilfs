@@ -21,6 +21,7 @@
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
+#include "kv/itransaction.h"
 
 #include <gtest/gtest.h>
 
@@ -137,4 +138,38 @@ TEST_F(FDBKVEngineTest, GetRange) {
 	testGetRange(kvEngine.get(), kStart, kEnd, true, false, kNumKeys);
 	testGetRange(kvEngine.get(), kStart, kEnd, false, true, kNumKeys);
 	testGetRange(kvEngine.get(), kStart, kEnd, false, false, kNumKeys);
+}
+
+TEST_F(FDBKVEngineTest, AtomicAdd) {
+	kv::Key key{'c', 'o', 'u', 'n', 't'};
+	constexpr int64_t initialValue = 10;
+	constexpr int64_t delta = 5;
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		kv::Value value = kv::toU8VectorLittleEndian(initialValue);
+		transaction->set(key, value);
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		kv::Value value = kv::toU8VectorLittleEndian(delta);
+		transaction->atomicAdd(key, value);
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	auto transaction = kvEngine->createReadWriteTransaction();
+	auto result = transaction->get(key);
+
+	ASSERT_TRUE(result.has_value()) << "Value for key 'count' not found.";
+
+	ASSERT_TRUE(result.value().size() == sizeof(initialValue))
+	    << "Value size mismatch for key 'count'.";
+
+	auto finalValue = kv::fromU8VectorLittleEndianToInt<int64_t>(result.value());
+	ASSERT_EQ(finalValue, initialValue + delta)
+	    << "Final value does not match expected value after atomicAdd.";
+
+	safs::log_info("Atomic add successful: final value for 'count' is {}", finalValue);
 }
