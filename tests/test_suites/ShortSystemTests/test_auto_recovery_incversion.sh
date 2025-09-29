@@ -15,6 +15,7 @@ CHUNKSERVERS=2 \
 	CHUNKSERVER_EXTRA_CONFIG="HDD_TEST_FREQ = 10000" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
 	FDB_CLUSTER_FILE="/tmp/saunafs-fdb-test/conf/fdb.cluster" \
+	CHANGELOG_DB_ASYNC=YES \
 	setup_local_empty_saunafs info
 
 # Remember version of the metadata file. We expect it not to change when generating data.

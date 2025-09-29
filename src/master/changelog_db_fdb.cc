@@ -19,6 +19,32 @@
 #include "mount/client/client_error_code.h"
 #include "slogger/slogger.h"
 
+namespace detail {
+
+inline void set_thread_name(std::string_view name) {
+#if defined(__linux__)
+	pthread_setname_np(pthread_self(), name.data());
+#elif defined(__APPLE__)
+	// macOS only allows setting current thread name, 64 char max
+	pthread_setname_np(name.data());
+#elif defined(_WIN32)
+	// Wide string required
+	std::wstring wname{name.begin(), name.end()};
+	HRESULT hr = SetThreadDescription(GetCurrentThread(), wname.c_str());
+	(void)hr; // ignore failure
+#else
+	(void)name; // no-op
+#endif
+}
+
+struct ThreadNamer {
+	explicit ThreadNamer(std::string_view name) {
+		set_thread_name(name);
+	}
+};
+
+} // namespace detail
+
 namespace {
 
 constexpr const char *INDEX_KEY = "__last_version__";
@@ -39,7 +65,9 @@ kv::Value toValue(const std::string &strValue) { return {strValue.begin(), strVa
 // Thread-safe singleton FDB context
 std::shared_ptr<fdb::FDBContext> getSharedContext() {
 	safs::log_info("Initializing FDB context");
-	static const std::shared_ptr<fdb::FDBContext> context = fdb::FDBContext::create({});
+	static const std::shared_ptr<fdb::FDBContext> context = fdb::FDBContext::create({
+		write_mode = fdb::WriteMode::Sync
+	});
 	static int times = 1;
 	safs::log_info("FDB init called {} times", times++);
 	return context;
@@ -74,6 +102,8 @@ struct ChangelogDb::ChangelogDbImpl {
 			}
 
 			kAsync = cfg_get("CHANGELOG_DB_ASYNC", "NO") == "YES";
+			auto envKAsync = std::getenv("CHANGELOG_DB_ASYNC");
+			if (envKAsync) { kAsync = std::string_view(envKAsync) == "YES"; }
 
 			db = context->getDB();
 			if (!db) {
@@ -87,9 +117,9 @@ struct ChangelogDb::ChangelogDbImpl {
 			if (kAsync) {
 				// Start background worker
 				safs::log_info("Starting FDB changelog writer thread");
-				worker = std::jthread([this]() {
-					pthread_setname_np(pthread_self(), "changelog_fdb");
-					this->run();
+				worker = std::jthread([this](std::stop_token stopToken) {
+					detail::ThreadNamer threadName("changelog_fdb");
+					this->run(stopToken);
 				});
 			}
 
@@ -151,12 +181,12 @@ private:
 		}
 	}
 
-	void run() {
+	void run(std::stop_token stopToken) {
 		safs::log_info("FDB changelog writer thread running");
 		std::vector<std::pair<uint64_t, std::string>> batch;
 		batch.reserve(kBatchSize);
 
-		while (!stop.load(std::memory_order_relaxed)) {
+		while (!stopToken.stop_requested()) {
 			safs::log_info("FDB changelog writer thread loop running");
 			// Collect batch
 			{
@@ -164,11 +194,11 @@ private:
 				safs::log_info("FDB changelog writer thread waiting for queue");
 				cv.wait(lock, [&] {
 					safs::log_info("FDB changelog writer thread cv lambda waiting for queue");
-					return stop.load(std::memory_order_relaxed) || !queue.empty();
+					return stopToken.stop_requested() || !queue.empty();
 				});
 				safs::log_info("FDB changelog writer thread queue not empty");
 
-				if (stop && queue.empty()) { break; }
+				if (stopToken.stop_requested() && queue.empty()) { break; }
 
 				// Drain up to kBatchSize items
 				while (!queue.empty() && batch.size() < kBatchSize) {
