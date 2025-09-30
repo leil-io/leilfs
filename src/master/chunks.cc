@@ -1999,6 +1999,7 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 
 	uint32_t destination_version = matocsserv_get_version(destination_server);
 
+	// Implies destination_version >= kFirstECVersion
 	assert(destination_version >= getMinChunkserverVersion(c, part_to_recover));
 	for (const auto &part : c->parts) {
 		if (!part.is_valid() || part.is_busy() || matocsserv_replication_read_counter(part.server()) >= MaxReadRepl) {
@@ -2007,15 +2008,6 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 
 		if (slice_traits::isStandard(part.type)) {
 			standard_servers.push_back(part.server());
-		}
-
-		if (destination_version >= kFirstXorVersion && destination_version < kFirstECVersion
-			&& slice_traits::isXor(part_to_recover) && matocsserv_get_version(part.server()) < kFirstXorVersion) {
-			continue;
-		}
-
-		if (destination_version < kFirstXorVersion && !slice_traits::isStandard(part.type)) {
-			continue;
 		}
 
 		all_servers.push_back(part.server());
@@ -2028,18 +2020,12 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 		return false;
 	}
 
-	if (destination_version >= kFirstECVersion ||
-	    (destination_version >= kFirstXorVersion && slice_traits::isXor(part_to_recover))) {
-		matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version,
-		                                   part_to_recover, all_servers,
-		                                   all_parts);
-		stats_replications++;
-		metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
-		c->needverincrease = 1;
-		return true;
-	}
-
-	return false;
+	matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version, part_to_recover,
+	                                   all_servers, all_parts);
+	stats_replications++;
+	metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
+	c->needverincrease = 1;
+	return true;
 }
 
 void ChunkWorker::deleteInvalidChunkParts(Chunk *c) {

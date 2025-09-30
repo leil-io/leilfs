@@ -68,13 +68,6 @@ constexpr uint8_t kSauWriteDataPreffixSize = cltocs::writeData::kPrefixSize;
 constexpr uint8_t kSauWriteDataPreffixSizeForward =
     cltocs::writeData::kPrefixSize + PacketHeader::kSize;
 
-// opChunkId (uint64_t), writeId (uint32_t), blocknum (uint16_t), offset16 (uint16_t), opSize
-// (uint32_t), crc (uint32_t)
-constexpr uint8_t kWriteDataPreffixSize = sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint16_t) +
-                                          sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint32_t);
-// For forwarding: size of SAU_CLTOCS_WRITE_DATA prefix plus the packet header.
-constexpr uint8_t kWriteDataPreffixSizeForward = kWriteDataPreffixSize + PacketHeader::kSize;
-
 class MessageSerializer {
 public:
 	static MessageSerializer *getSerializer(PacketHeader::Type type);
@@ -90,31 +83,6 @@ public:
 	                                        uint64_t chunkId, uint32_t writeId,
 	                                        uint8_t status) = 0;
 	virtual ~MessageSerializer() {}
-};
-
-class LegacyMessageSerializer : public MessageSerializer {
-public:
-	void serializePrefixOfCstoclReadData(std::vector<uint8_t> &buffer,
-	                                     uint64_t chunkId, uint32_t offset,
-	                                     uint32_t size) override {
-		// This prefix requires CRC (uint32_t) and data (size * uint8_t) to be
-		// appended
-		uint32_t extraSpace = sizeof(uint32_t) + size;
-		serializeLegacyPacketPrefix(buffer, extraSpace, CSTOCL_READ_DATA,
-		                            chunkId, offset, size);
-	}
-
-	void serializeCstoclReadStatus(std::vector<uint8_t> &buffer,
-	                               uint64_t chunkId, uint8_t status) override {
-		serializeLegacyPacket(buffer, CSTOCL_READ_STATUS, chunkId, status);
-	}
-
-	void serializeCstoclWriteStatus(std::vector<uint8_t> &buffer,
-	                                uint64_t chunkId, uint32_t writeId,
-	                                uint8_t status) override {
-		serializeLegacyPacket(buffer, CSTOCL_WRITE_STATUS, chunkId, writeId,
-		                      status);
-	}
 };
 
 class SaunaFsMessageSerializer : public MessageSerializer {
@@ -138,13 +106,8 @@ public:
 };
 
 MessageSerializer *MessageSerializer::getSerializer(PacketHeader::Type type) {
-	sassert((type >= PacketHeader::kMinSauPacketType &&
-	         type <= PacketHeader::kMaxSauPacketType) ||
-	        type <= PacketHeader::kMaxOldPacketType);
-	if (type <= PacketHeader::kMaxOldPacketType) {
-		static LegacyMessageSerializer singleton;
-		return &singleton;
-	}
+	sassert(type >= PacketHeader::kMinSauPacketType &&
+	         type <= PacketHeader::kMaxSauPacketType);
 
 	static SaunaFsMessageSerializer singleton;
 	return &singleton;
@@ -542,27 +505,14 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 	TRACETHIS2(type, length);
 
 	// Deserialize request
-	sassert(type == SAU_CLTOCS_READ || type == CLTOCS_READ);
+	sassert(type == SAU_CLTOCS_READ);
 	try {
-		if (type == SAU_CLTOCS_READ) {
-			PacketVersion v;
-			deserializePacketVersionNoHeader(data, length, v);
-			if (v == cltocs::read::kECChunks) {
-				cltocs::read::deserialize(data, length, chunkId, chunkVersion,
-				                          chunkType, offset, size);
-			} else {
-				legacy::ChunkPartType legacy_type;
-				cltocs::read::deserialize(data, length, chunkId, chunkVersion,
-				                          legacy_type, offset, size);
-				chunkType = legacy_type;
-			}
-		} else {
-			deserializeAllLegacyPacketDataNoHeader(data, length, chunkId,
-			                                       chunkVersion, offset, size);
-			chunkType = slice_traits::standard::ChunkPartType();
-		}
+		PacketVersion v;
+		deserializePacketVersionNoHeader(data, length, v);
+		sassert(v == cltocs::read::kECChunks);
+		cltocs::read::deserialize(data, length, chunkId, chunkVersion, chunkType, offset, size);
 		messageSerializer = MessageSerializer::getSerializer(type);
-	} catch (IncorrectDeserializationException&) {
+	} catch (Exception &) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
 		    "read_init: Cannot deserialize READ message (type:%" PRIX32
@@ -600,16 +550,9 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 	PacketVersion v;
 	try {
 		deserializePacketVersionNoHeader(data, length, v);
-		if (v == cltocs::prefetch::kECChunks) {
-			cltocs::prefetch::deserialize(data, length, chunkId, chunkVersion,
-			                              chunkType, offset, size);
-		} else {
-			legacy::ChunkPartType legacy_type;
-			cltocs::prefetch::deserialize(data, length, chunkId, chunkVersion,
-			                              legacy_type, offset, size);
-			chunkType = legacy_type;
-		}
-	} catch (IncorrectDeserializationException &) {
+		sassert(v == cltocs::prefetch::kECChunks);
+		cltocs::prefetch::deserialize(data, length, chunkId, chunkVersion, chunkType, offset, size);
+	} catch (Exception &) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
 		    "prefetch: Cannot deserialize PREFETCH message (type:%" PRIX32
@@ -725,16 +668,9 @@ void ChunkserverEntry::prepareInputBufferForWrite(uint32_t type, bool isForward)
 		return;
 	}
 
-	if (type == SAU_CLTOCS_WRITE_DATA) {
-		inputPacket.inputBuffer = getWriteInputBufferPool().get(
-		    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize,
-		    maxBlocksPerHddWriteJob);
-	} else {
-		// CLTOCS_WRITE_DATA
-		inputPacket.inputBuffer = getWriteInputBufferPool().get(
-		    isForward ? kWriteDataPreffixSizeForward : kWriteDataPreffixSize,
-		    maxBlocksPerHddWriteJob);
-	}
+	inputPacket.inputBuffer = getWriteInputBufferPool().get(
+	    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize,
+	    maxBlocksPerHddWriteJob);
 }
 
 InputBuffer *ChunkserverEntry::getInputBufferForWrite(uint32_t type, bool isForward) {
@@ -750,33 +686,10 @@ InputBuffer *ChunkserverEntry::getInputBufferForWrite(uint32_t type, bool isForw
 	return inputPacket.inputBuffer.get();
 }
 
-void serializeCltocsWriteInit(std::vector<uint8_t> &buffer, uint64_t chunkId,
-                              uint32_t chunkVersion, ChunkPartType chunkType,
-                              const std::vector<ChunkTypeWithAddress> &chain,
-                              uint32_t target_version) {
-	if (target_version >= kFirstECVersion) {
-		cltocs::writeInit::serialize(buffer, chunkId, chunkVersion, chunkType,
-		                             chain);
-	} else if (target_version >= kFirstXorVersion) {
-		assert((int)chunkType.getSliceType() < Goal::Slice::Type::kECFirst);
-		std::vector<NetworkAddress> legacy_chain;
-		legacy_chain.reserve(chain.size());
-		for (const auto &entry : chain) {
-			legacy_chain.push_back(entry.address);
-		}
-		cltocs::writeInit::serialize(buffer, chunkId, chunkVersion,
-		                             (legacy::ChunkPartType)chunkType,
-		                             legacy_chain);
-	} else {
-		assert(slice_traits::isStandard(chunkType));
-		LegacyVector<NetworkAddress> legacy_chain;
-		legacy_chain.reserve(chain.size());
-		for (const auto &entry : chain) {
-			legacy_chain.push_back(entry.address);
-		}
-		serializeLegacyPacket(buffer, CLTOCS_WRITE, chunkId, chunkVersion,
-		                      legacy_chain);
-	}
+void serializeCltocsWriteInit(std::vector<uint8_t> &buffer, uint64_t chunkId, uint32_t chunkVersion,
+                              ChunkPartType chunkType,
+                              const std::vector<ChunkTypeWithAddress> &chain) {
+	cltocs::writeInit::serialize(buffer, chunkId, chunkVersion, chunkType, chain);
 }
 
 void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
@@ -784,38 +697,14 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	TRACETHIS();
 	std::vector<ChunkTypeWithAddress> chain;
 
-	sassert(type == SAU_CLTOCS_WRITE_INIT || type == CLTOCS_WRITE);
+	sassert(type == SAU_CLTOCS_WRITE_INIT);
 	try {
-		if (type == SAU_CLTOCS_WRITE_INIT) {
-			PacketVersion v;
-			deserializePacketVersionNoHeader(data, length, v);
-			if (v == cltocs::writeInit::kECChunks) {
-				cltocs::writeInit::deserialize(data, length, chunkId,
-				                               chunkVersion, chunkType, chain);
-			} else {
-				std::vector<NetworkAddress> legacy_chain;
-				legacy::ChunkPartType legacy_type;
-				cltocs::writeInit::deserialize(data, length, chunkId,
-				                               chunkVersion, legacy_type,
-				                               legacy_chain);
-				chunkType = legacy_type;
-				for (const auto &address : legacy_chain) {
-					chain.emplace_back(address, chunkType, kFirstXorVersion);
-				}
-			}
-		} else {
-			LegacyVector<NetworkAddress> legacyChain;
-			deserializeAllLegacyPacketDataNoHeader(data, length, chunkId,
-			                                       chunkVersion, legacyChain);
-			for (const auto &address : legacyChain) {
-				chain.emplace_back(address,
-				                   slice_traits::standard::ChunkPartType(),
-				                   kStdVersion);
-			}
-			chunkType = slice_traits::standard::ChunkPartType();
-		}
+		PacketVersion v;
+		deserializePacketVersionNoHeader(data, length, v);
+		sassert(v == cltocs::writeInit::kECChunks);
+		cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType, chain);
 		messageSerializer = MessageSerializer::getSerializer(type);
-	} catch (IncorrectDeserializationException &ex) {
+	} catch (Exception &) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
 		    "Received malformed WRITE_INIT message (length: %" PRIu32 ")",
@@ -827,10 +716,8 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	if (!chain.empty()) {
 		// Create a chain -- connect to the next chunkserver
 		fwdServer = chain[0].address;
-		uint32_t target_version = chain[0].chunkserver_version;
 		chain.erase(chain.begin());
-		serializeCltocsWriteInit(fwdInitPacket, chunkId, chunkVersion,
-		                         chunkType, chain, target_version);
+		serializeCltocsWriteInit(fwdInitPacket, chunkId, chunkVersion, chunkType, chain);
 		fwdStartPtr = fwdInitPacket.data();
 		fwdBytesLeft = fwdInitPacket.size();
 		connectRetryCounter = 0;
@@ -861,7 +748,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	uint32_t opSize;
 	uint32_t crc;
 
-	sassert(type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA);
+	sassert(type == SAU_CLTOCS_WRITE_DATA);
 	try {
 		const auto *serializer = MessageSerializer::getSerializer(type);
 		if (messageSerializer != serializer) {
@@ -871,18 +758,8 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 			state = State::Close;
 			return;
 		}
-		if (type == SAU_CLTOCS_WRITE_DATA) {
-			cltocs::writeData::deserializePrefix(data, kSauWriteDataPreffixSize, opChunkId,
-			                                     writeId, blocknum, opOffset,
-			                                     opSize, crc);
-		} else {
-			uint16_t offset16;
-			deserializeAllLegacyPacketDataNoHeader(data, kWriteDataPreffixSize, opChunkId,
-			                                       writeId, blocknum, offset16,
-			                                       opSize, crc);
-			opOffset = offset16;
-			sassert(chunkType == slice_traits::standard::ChunkPartType());
-		}
+		cltocs::writeData::deserializePrefix(data, kSauWriteDataPreffixSize, opChunkId, writeId,
+		                                     blocknum, opOffset, opSize, crc);
 	} catch (IncorrectDeserializationException &) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
@@ -927,7 +804,7 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 	uint32_t writeId;
 	uint8_t status;
 
-	sassert(type == SAU_CSTOCL_WRITE_STATUS || type == CSTOCL_WRITE_STATUS);
+	sassert(type == SAU_CSTOCL_WRITE_STATUS);
 	sassert(messageSerializer != nullptr);
 	try {
 		const auto *serializer = MessageSerializer::getSerializer(type);
@@ -938,15 +815,8 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 			state = State::Close;
 			return;
 		}
-		if (type == SAU_CSTOCL_WRITE_STATUS) {
-			std::vector<uint8_t> message(data, data + length);
-			cstocl::writeStatus::deserialize(message, opChunkId, writeId,
-			                                 status);
-		} else {
-			deserializeAllLegacyPacketDataNoHeader(data, length, opChunkId,
-			                                       writeId, status);
-			sassert(chunkType == slice_traits::standard::ChunkPartType());
-		}
+		std::vector<uint8_t> message(data, data + length);
+		cstocl::writeStatus::deserialize(message, opChunkId, writeId, status);
 	} catch (IncorrectDeserializationException &) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
@@ -1035,20 +905,6 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 	state = State::Idle;
 }
 
-void ChunkserverEntry::sauGetChunkBlocksFinishedLegacyCallback(uint8_t status,
-                                                               void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry*>(entry);
-	eptr->getBlocksJobId = 0;
-	std::vector<uint8_t> buffer;
-	cstocs::getChunkBlocksStatus::serialize(
-	    buffer, eptr->chunkId, eptr->chunkVersion,
-	    (legacy::ChunkPartType)eptr->chunkType, eptr->getBlocksJobResult,
-	    status);
-	eptr->createAttachedPacket(buffer);
-	eptr->state = State::Idle;
-}
-
 void ChunkserverEntry::sauGetChunkBlocksFinishedCallback(uint8_t status,
                                                          void *entry) {
 	TRACETHIS();
@@ -1062,46 +918,21 @@ void ChunkserverEntry::sauGetChunkBlocksFinishedCallback(uint8_t status,
 	eptr->state = State::Idle;
 }
 
-void ChunkserverEntry::getChunkBlocksFinishedCallback(uint8_t status,
-                                                      void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-	eptr->getBlocksJobId = 0;
-	std::vector<uint8_t> buffer;
-	serializeLegacyPacket(buffer, CSTOCS_GET_CHUNK_BLOCKS_STATUS, eptr->chunkId,
-	                      eptr->chunkVersion, eptr->getBlocksJobResult, status);
-	eptr->createAttachedPacket(buffer);
-	eptr->state = State::Idle;
-}
-
 void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
-	PacketVersion v;
-	deserializePacketVersionNoHeader(data, length, v);
-	if (v == cstocs::getChunkBlocks::kECChunks) {
-		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
-		                                    chunkType);
-
-		getBlocksJobId = job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedCallback, this,
-		                                chunkId, chunkVersion, chunkType, &getBlocksJobResult);
-
-	} else {
-		legacy::ChunkPartType legacy_type;
-		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion,
-		                                    legacy_type);
-		chunkType = legacy_type;
-		getBlocksJobId =
-		    job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedLegacyCallback, this, chunkId,
-		                   chunkVersion, chunkType, &getBlocksJobResult);
+	try {
+		PacketVersion v;
+		deserializePacketVersionNoHeader(data, length, v);
+		sassert(v == cstocs::getChunkBlocks::kECChunks);
+		cstocs::getChunkBlocks::deserialize(data, length, chunkId, chunkVersion, chunkType);
+	} catch (Exception &) {
+		safs::log_info("Received malformed SAU_CSTOCS_GET_CHUNK_BLOCKS message (length: {})",
+		               length);
+		state = State::Close;
+		return;
 	}
-	state = State::GetBlock;
-}
 
-void ChunkserverEntry::getChunkBlocks(const uint8_t *data, uint32_t length) {
-	deserializeAllLegacyPacketDataNoHeader(data, length, chunkId,
-	                                       chunkVersion);
-	chunkType = slice_traits::standard::ChunkPartType();
-	getBlocksJobId = job_get_blocks(*workerJobPool, getChunkBlocksFinishedCallback, this, chunkId,
-	                                chunkVersion, chunkType, &(getBlocksJobResult));
+	getBlocksJobId = job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedCallback, this,
+	                                chunkId, chunkVersion, chunkType, &getBlocksJobResult);
 	state = State::GetBlock;
 }
 
@@ -1192,17 +1023,10 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 		PacketVersion vers;
 		deserializePacketVersionNoHeader(data, length, vers);
 		ChunkWithVersionAndType chunk;
-		if (vers == cltocs::testChunk::kECChunks) {
-			cltocs::testChunk::deserialize(data, length, chunk.id,
-			                               chunk.version, chunk.type);
-		} else {
-			legacy::ChunkPartType legacy_type;
-			cltocs::testChunk::deserialize(data, length, chunk.id,
-			                               chunk.version, legacy_type);
-			chunk.type = legacy_type;
-		}
+		sassert(vers == cltocs::testChunk::kECChunks);
+		cltocs::testChunk::deserialize(data, length, chunk.id, chunk.version, chunk.type);
 		hddAddChunkToTestQueue(chunk);
-	} catch (IncorrectDeserializationException &e) {
+	} catch (Exception &e) {
 		safs_pretty_syslog(
 		    LOG_NOTICE,
 		    "SAU_CLTOCS_TEST_CHUNK - bad packet: %s (length: %" PRIu32 ")",
@@ -1282,19 +1106,14 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 		case ANTOAN_PING:
 			ping(data, length);
 			break;
-		case CLTOCS_READ:
 		case SAU_CLTOCS_READ:
 			readInit(data, type, length);
 			break;
 		case SAU_CLTOCS_PREFETCH:
 			prefetch(data, type, length);
 			break;
-		case CLTOCS_WRITE:
 		case SAU_CLTOCS_WRITE_INIT:
 			writeInit(data, type, length);
-			break;
-		case CSTOCS_GET_CHUNK_BLOCKS:
-			getChunkBlocks(data, length);
 			break;
 		case SAU_CSTOCS_GET_CHUNK_BLOCKS:
 			sauGetChunkBlocks(data, length);
@@ -1323,7 +1142,6 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 		}
 	} else if (state == State::WriteLast) {
 		switch (type) {
-		case CLTOCS_WRITE_DATA:
 		case SAU_CLTOCS_WRITE_DATA:
 			writeData(data, type, length);
 			break;
@@ -1340,11 +1158,9 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 		}
 	} else if (state == State::WriteForward) {
 		switch (type) {
-		case CLTOCS_WRITE_DATA:
 		case SAU_CLTOCS_WRITE_DATA:
 			writeData(data, type, length);
 			break;
-		case CSTOCL_WRITE_STATUS:
 		case SAU_CSTOCL_WRITE_STATUS:
 			writeStatus(data, type, length);
 			break;
@@ -1361,7 +1177,6 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 		}
 	} else if (state == State::WriteFinish) {
 		switch (type) {
-		case CLTOCS_WRITE_DATA:
 		case SAU_CLTOCS_WRITE_DATA:
 		case SAU_CLTOCS_WRITE_END:
 			return;
@@ -1393,7 +1208,7 @@ void ChunkserverEntry::checkNextPacket() {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;
 
-		if (type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA) {
+		if (type == SAU_CLTOCS_WRITE_DATA) {
 			if (inputBufferInUse != inputPacket.inputBuffer.get()) {
 				safs::log_warn(
 				    "Inconsistent state in checkNextPacket: inputBufferInUse != inputPacket.inputBuffer");
@@ -1599,7 +1414,7 @@ void ChunkserverEntry::forward() {
 		uint32_t totalPacketLength = PacketHeader::kSize + header.length;
 
 		// Check if we can use aligned memory directly
-		if (header.type == CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_DATA) {
+		if (header.type == SAU_CLTOCS_WRITE_DATA) {
 			inputBufferInUse = getInputBufferForWrite(header.type, true);
 			inputBufferInUse->copyIntoBuffer(InputBuffer::BufferType::Header, headerBuffer,
 			                                 PacketHeader::kSize);
@@ -1616,8 +1431,7 @@ void ChunkserverEntry::forward() {
 			inputBufferInUse = nullptr;
 		}
 
-		if (header.type == CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_DATA ||
-		    header.type == SAU_CLTOCS_WRITE_END) {
+		if (header.type == SAU_CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_END) {
 			fwdBytesLeft = PacketHeader::kSize;
 			// Use the correct buffer for forwarding
 			if (inputBufferInUse != nullptr) {
@@ -1633,7 +1447,7 @@ void ChunkserverEntry::forward() {
 
 	if (inputPacket.bytesLeft > 0) {
 		if (inputBufferInUse != nullptr) {
-			// Case SAU_CLTOCS_WRITE_DATA or CLTOCS_WRITE_DATA
+			// Case SAU_CLTOCS_WRITE_DATA
 			bytesReadOrWritten = inputBufferInUse->readFromSocket(sock, inputPacket.bytesLeft);
 		} else {
 			bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
@@ -1662,7 +1476,7 @@ void ChunkserverEntry::forward() {
 	if (fwdBytesLeft > 0) {
 		sassert(fwdStartPtr != nullptr);
 		if (inputBufferInUse) {
-			// Case SAU_CLTOCS_WRITE_DATA or CLTOCS_WRITE_DATA
+			// Case SAU_CLTOCS_WRITE_DATA
 			bytesReadOrWritten = inputBufferInUse->writeToSocket(fwdSocket, fwdBytesLeft);
 		} else {
 			bytesReadOrWritten = ::write(fwdSocket, fwdStartPtr, fwdBytesLeft);
@@ -1752,7 +1566,7 @@ void ChunkserverEntry::readFromSocket() {
 				return;
 			}
 
-			if (type == SAU_CLTOCS_WRITE_DATA || type == CLTOCS_WRITE_DATA) {
+			if (type == SAU_CLTOCS_WRITE_DATA) {
 				inputBufferInUse = getInputBufferForWrite(type, false);
 				inputPacket.startPtr =
 				    const_cast<uint8_t *>(inputBufferInUse->getStartLastWriteOperationHeader());
@@ -1770,7 +1584,7 @@ void ChunkserverEntry::readFromSocket() {
 	if (mode == Mode::Data) {
 		if (inputPacket.bytesLeft > 0) {
 			if (inputBufferInUse != nullptr) {
-				// Case SAU_CLTOCS_WRITE_DATA or CLTOCS_WRITE_DATA
+				// Case SAU_CLTOCS_WRITE_DATA
 				bytesRead = inputBufferInUse->readFromSocket(sock, inputPacket.bytesLeft);
 			} else {
 				bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
