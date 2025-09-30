@@ -16,34 +16,34 @@
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "master/changelog_db.h"
-#include "mount/client/client_error_code.h"
 #include "slogger/slogger.h"
 
-namespace detail {
+namespace {
 
-inline void set_thread_name(std::string_view name) {
+void set_thread_name(std::string_view name) {
 #if defined(__linux__)
-	pthread_setname_np(pthread_self(), name.data());
+	constexpr int kMaxThreadNameLen = 16;  // Linux cap
+	const  std::string truncated(name.substr(0, kMaxThreadNameLen));
+	pthread_setname_np(pthread_self(), truncated.data());
 #elif defined(__APPLE__)
-	// macOS only allows setting current thread name, 64 char max
-	pthread_setname_np(name.data());
+	constexpr int kMaxThreadNameLen = 64;  // macOS cap
+	const  std::string truncated(name.substr(0, kMaxThreadNameLen));
+	pthread_setname_np(truncated.data());
 #elif defined(_WIN32)
 	// Wide string required
 	std::wstring wname{name.begin(), name.end()};
 	HRESULT hr = SetThreadDescription(GetCurrentThread(), wname.c_str());
-	(void)hr; // ignore failure
+	(void)hr;  // ignore failure
 #else
-	(void)name; // no-op
+	(void)name;  // no-op
 #endif
 }
 
 struct ThreadNamer {
-	explicit ThreadNamer(std::string_view name) {
-		set_thread_name(name);
-	}
+	explicit ThreadNamer(std::string_view name) { set_thread_name(name); }
 };
 
-} // namespace detail
+}  // namespace
 
 namespace {
 
@@ -77,7 +77,7 @@ struct ChangelogDb::ChangelogDbImpl {
 	std::shared_ptr<fdb::FDBContext> context;
 	std::shared_ptr<fdb::DB> db;
 	std::string prefix{"changelog/"};
-	bool kAsync = false;     // Write asynchronously
+	bool kAsync = false;  // Write asynchronously
 
 	// Async writer
 	std::jthread worker;
@@ -114,9 +114,9 @@ struct ChangelogDb::ChangelogDbImpl {
 
 			if (kAsync) {
 				// Start background worker
-				safs::log_info("Starting FDB changelog writer thread");
+				// NOLINTNEXTLINE(performance-unnecessary-value-param)
 				worker = std::jthread([this](std::stop_token stopToken) {
-					detail::ThreadNamer threadName("changelog_fdb");
+					[[maybe_unused]] const ThreadNamer threadName("changelog_fdb");
 					this->run(stopToken);
 				});
 			}
@@ -148,13 +148,12 @@ struct ChangelogDb::ChangelogDbImpl {
 	}
 
 private:
-
 	void enqueue(uint64_t version, std::string entry) {
 		safs::log_info("Enqueueing FDB changelog version {}", version);
 		const std::unique_lock<std::mutex> lock(mtx);
 		if (queue.size() >= kMaxQueueSize) {
 			safs::log_err("FDB changelog queue full ({}), dropping version {}", kMaxQueueSize,
-						  version);
+			              version);
 			return;
 		}
 		queue.emplace_back(version, std::move(entry));
@@ -179,22 +178,18 @@ private:
 		}
 	}
 
-	void run(std::stop_token stopToken) {
+	void run(const std::stop_token &stopToken) {
 		safs::log_info("FDB changelog writer thread running");
 		std::vector<std::pair<uint64_t, std::string>> batch;
 		batch.reserve(kBatchSize);
 
 		while (!stopToken.stop_requested()) {
-			safs::log_info("FDB changelog writer thread loop running");
 			// Collect batch
 			{
 				std::unique_lock<std::mutex> lock(mtx);
-				safs::log_info("FDB changelog writer thread waiting for queue");
 				cv.wait(lock, [&] {
-					safs::log_info("FDB changelog writer thread cv lambda waiting for queue");
 					return stopToken.stop_requested() || !queue.empty();
 				});
-				safs::log_info("FDB changelog writer thread queue not empty");
 
 				if (stopToken.stop_requested() && queue.empty()) { break; }
 
