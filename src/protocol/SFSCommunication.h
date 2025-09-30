@@ -390,27 +390,10 @@ enum class SugidClearMode : uint8_t {
 /// usedspace:64 totalspace:64 tdusedspace:64 tdtotalspace:64
 /// usedspace:64 totalspace:64 chunkcount:32 tdusedspace:64 tdtotalspace:64 tdchunkcount:32
 
-// 0x0066
-#define CSTOMA_CHUNK_DAMAGED (PROTO_BASE+102)
-/// chunks:(N * [chunkid:64])
-
 // 0x0450
 #define SAU_CSTOMA_CHUNK_DAMAGED (1000U + 104U)
 /// version==0 chunks:(N * [chunkid:64 chunktype:8])
 /// version==1 chunks:(N * [chunkid:64 chunktype:16])
-
-// 0x0067
-// #define MATOCS_STRUCTURE_LOG (PROTO_BASE+103)
-// version:32 logdata:string (N*[ char:8 ])
-// 0xFF:8 version:64 logdata:string (N*[ char:8 ])
-
-// 0x0068
-// #define MATOCS_STRUCTURE_LOG_ROTATE (PROTO_BASE+104)
-// -
-
-// 0x0069
-#define CSTOMA_CHUNK_LOST (PROTO_BASE+105)
-/// chunks:(N * [chunkid:64])
 
 // 0x0451
 #define SAU_CSTOMA_CHUNK_LOST (1000U + 105U)
@@ -421,81 +404,45 @@ enum class SugidClearMode : uint8_t {
 #define CSTOMA_ERROR_OCCURRED (PROTO_BASE+106)
 /// -
 
-// 0x006B
-#define CSTOMA_CHUNK_NEW (PROTO_BASE+107)
-/// chunks:(N * [chunkid:64 chunkversion:32])
-
 // 0x0453
 #define SAU_CSTOMA_CHUNK_NEW (1000U + 107U)
 /// version==0 chunks:(N * [chunkid:64 chunkversion:32 chunktype:8])
 /// version==1 chunks:(N * [chunkid:64 chunkversion:32 chunktype:16])
-
-// 0x006E
-#define MATOCS_CREATE (PROTO_BASE+110)
-/// chunkid:64 chunkversion:32
 
 // 0x0456
 #define SAU_MATOCS_CREATE_CHUNK (1000U + 110U)
 /// version==0 chunkid:64 chunktype:8 chunkversion:32
 /// version==1 chunkid:64 chunktype:16 chunkversion:32
 
-// 0x006F
-#define CSTOMA_CREATE (PROTO_BASE+111)
-/// chunkid:64 status:8
-
 // 0x0457
 #define SAU_CSTOMA_CREATE_CHUNK (1000U + 111U)
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
-
-// 0x0078
-#define MATOCS_DELETE (PROTO_BASE+120)
-/// chunkid:64 chunkversion:32
 
 // 0x0460
 #define SAU_MATOCS_DELETE_CHUNK (1000U + 120U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8
 /// version==1 chunkid:64 chunkversion:32 chunktype:16
 
-// 0x0079
-#define CSTOMA_DELETE (PROTO_BASE+121)
-/// chunkid:64 status:8
-
 // 0x0461
 #define SAU_CSTOMA_DELETE_CHUNK (1000U + 121U)
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
-
-// 0x0082
-#define MATOCS_DUPLICATE (PROTO_BASE+130)
-/// chunkid:64 chunkversion:32 oldchunkid:64 oldchunkversion:32
 
 // 0x046A
 #define SAU_MATOCS_DUPLICATE_CHUNK (1000U + 130U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 oldchunkid:64 oldchunkversion:32
 /// version==1 chunkid:64 chunkversion:32 chunktype:16 oldchunkid:64 oldchunkversion:32
 
-// 0x0083
-#define CSTOMA_DUPLICATE (PROTO_BASE+131)
-/// chunkid:64 status:8
-
 // 0x046B
 #define SAU_CSTOMA_DUPLICATE_CHUNK (1000U + 131U)
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
 
-// 0x008C
-#define MATOCS_SET_VERSION (PROTO_BASE + 140)
-/// chunkid:64 chunkversion:32 oldchunkversion:32
-
 // 0x0474
 #define SAU_MATOCS_SET_VERSION (1000U + 140U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 newchunkversion:32
 /// version==1 chunkid:64 chunkversion:32 chunktype:16 newchunkversion:32
-
-// 0x008D
-#define CSTOMA_SET_VERSION (PROTO_BASE + 141)
-/// chunkid:64 status:8
 
 // 0x0475
 #define SAU_CSTOMA_SET_VERSION (1000U + 141U)
@@ -512,30 +459,6 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:8 status:8 chunkversion:32
 /// version==1 chunkid:64 chunktype:16 status:8 chunkversion:32
 
-// 0x0098 (no longer in use)
-#define MATOCS_CHUNKOP (PROTO_BASE+152)
-/// chunkid:64 chunkversion:32 newchunkversion:32 copychunkid:64 copychunkversion:32 chunklength:32
-// all chunk operations
-// newchunkversion>0 && chunklength==0xFFFFFFFF && copychunkid==0              -> change version
-// newchunkversion>0 && chunklength==0xFFFFFFFF && copycnunkid>0               -> duplicate
-// newchunkversion>0 && chunklength>=0 && chunklength<=SFSCHUNKSIZE && copychunkid==0 -> truncate
-// newchunkversion>0 && chunklength>=0 && chunklength<=SFSCHUNKSIZE && copychunkid>0  -> duplicate and truncate
-// newchunkversion==0 && chunklength==0                                        -> delete
-// newchunkversion==0 && chunklength==1                                        -> create
-// newchunkversion==0 && chunklength==2                                        -> test
-
-// 0x0099 (no longer in use)
-#define CSTOMA_CHUNKOP (PROTO_BASE+153)
-/// chunkid:64 chunkversion:32 newchunkversion:32 copychunkid:64 copychunkversion:32 chunklength:32 status:8
-
-// 0x00A0
-#define MATOCS_TRUNCATE (PROTO_BASE+160)
-/// chunkid:64 chunklength:32 chunkversion:32 oldchunkversion:32
-
-// 0x00A1
-#define CSTOMA_TRUNCATE (PROTO_BASE+161)
-/// chunkid:64 status:8
-
 // 0x0488
 #define SAU_MATOCS_TRUNCATE (PROTO_BASE + 1000U + 160U)
 /// version==0 chunkid:64 chunktype:8 chunklength:32 newchunkversion:32 chunkversion:32
@@ -546,18 +469,10 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
 
-// 0x00AA
-#define MATOCS_DUPTRUNC (PROTO_BASE+170)
-/// chunkid:64 chunkversion:32 oldchunkid:64 oldchunkversion:32 chunklength:32
-
 // 0x0492
 #define SAU_MATOCS_DUPTRUNC_CHUNK (1000U + 170U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 oldchunkid:64 oldchunkversion:32 chunklength:32
 /// version==1 chunkid:64 chunkversion:32 chunktype:16 oldchunkid:64 oldchunkversion:32 chunklength:32
-
-// 0x00AB
-#define CSTOMA_DUPTRUNC (PROTO_BASE+171)
-/// chunkid:64 status:8
 
 // 0x0493
 #define SAU_CSTOMA_DUPTRUNC_CHUNK (1000U + 171U)
