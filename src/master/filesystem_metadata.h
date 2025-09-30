@@ -155,7 +155,7 @@ extern bool gDisableChecksumVerification;
 extern uint32_t gTestStartTime;
 extern bool gDisableEmptyFoldersMetadataOnFullDisk;
 
-inline std::unique_ptr<IIdGenerator> gInodeIdGenerator = nullptr;
+inline std::unique_ptr<IIdGenerator<inode_t>> gInodeIdGenerator = nullptr;
 
 #ifndef METARESTORE
 extern std::map<int, Goal> gGoalDefinitions;
