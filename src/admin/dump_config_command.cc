@@ -111,7 +111,6 @@ const static std::unordered_map<std::string, std::string> defaultOptionsMaster =
     {"ENDANGERED_CHUNKS_MAX_CAPACITY", "1048576"},
     {"ACCEPTABLE_DIFFERENCE", "0.1"},
     {"CHUNKS_REBALANCING_BETWEEN_LABELS", "0"},
-    {"REJECT_OLD_CLIENTS", "0"},
     {"GLOBALIOLIMITS_FILENAME", ""},
     {"GLOBALIOLIMITS_RENEGOTIATION_PERIOD_SECONDS", "0.1"},
     {"GLOBALIOLIMITS_ACCUMULATE_MS", "250"},

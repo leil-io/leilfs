@@ -191,11 +191,6 @@
 ## (Default: 86400)
 # SESSION_SUSTAIN_TIME = 86400
 
-## Reject sfsmounts older than 1.6.0 (Boolean, 0 or 1).
-## Note that sfsexports access control is NOT used for those old clients.
-## (Default is 0)
-# REJECT_OLD_CLIENTS = 0
-
 # GLOBALIOLIMITS_FILENAME = @ETC_PATH@/sfsglobaliolimits.cfg
 
 ## How often mountpoints will request bandwidth allocations under constant,
