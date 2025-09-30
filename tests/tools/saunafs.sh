@@ -475,6 +475,9 @@ add_metadata_server_() {
 	if [[ -n "${FDB_CLUSTER_FILE}" ]]; then
 		echo "FDB_CLUSTER_FILE = ${FDB_CLUSTER_FILE}" >>"${masterserver_cfg}"
 	fi
+	if [[ -n "${CHANGELOG_DB_ASYNC}" ]]; then
+		echo "CHANGELOG_DB_ASYNC = ${CHANGELOG_DB_ASYNC}" >>"${masterserver_cfg}"
+	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg
 	saunafs_info_[master${masterserver_id}_master_cfg]=$masterserver_master_cfg

@@ -20,15 +20,12 @@
 
 #include "fdb/fdb.h"
 
+#include <cstdlib>
 #include <foundationdb/fdb_c_types.h>
 
 #include "slogger/slogger.h"
-#include <cstdlib>
 
 namespace fdb {
-
-namespace {
-}
 
 const uint8_t *toU8(std::string_view str) {
 	return reinterpret_cast<const uint8_t *>(str.data());

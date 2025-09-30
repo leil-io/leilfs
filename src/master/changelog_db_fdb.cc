@@ -65,9 +65,7 @@ kv::Value toValue(const std::string &strValue) { return {strValue.begin(), strVa
 // Thread-safe singleton FDB context
 std::shared_ptr<fdb::FDBContext> getSharedContext() {
 	safs::log_info("Initializing FDB context");
-	static const std::shared_ptr<fdb::FDBContext> context = fdb::FDBContext::create({
-		write_mode = fdb::WriteMode::Sync
-	});
+	static const std::shared_ptr<fdb::FDBContext> context = fdb::FDBContext::create({});
 	static int times = 1;
 	safs::log_info("FDB init called {} times", times++);
 	return context;

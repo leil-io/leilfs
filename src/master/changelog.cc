@@ -68,6 +68,17 @@ static FILE *fd = nullptr;
 static bool gFlush = true;
 static std::shared_ptr<ChangelogDb> gDB = nullptr;
 
+// Initialize external changelog DB. Must succeed before master proceeds.
+int changelog_db_init() {
+	try {
+		if (!gDB) { gDB = std::make_shared<ChangelogDb>(); }
+		return 0;
+	} catch (const std::exception &e) {
+		safs::log_exception(e, "Failed to initialize changelog DB");
+		return -1;
+	}
+}
+
 void changelog_rotate() {
 	if (fd) {
 		fclose(fd);
@@ -95,6 +106,10 @@ void changelog(uint64_t version, const char* entry) {
 		}
 	}
 
+	if (!gDB) {
+		safs::log_info("changelog: Changelog DB not initialized");
+		throw  std::runtime_error("changelog: Changelog DB not initialized");
+	}
 	gDB->put(version, entry);
 }
 
@@ -106,7 +121,6 @@ static void changelog_reload(void) {
 void changelog_init(std::string changelogFilename,
 		uint32_t minBackLogsNumber, uint32_t maxBackLogsNumber) {
 	gChangelogFilename = std::move(changelogFilename);
-	gDB = std::make_shared<ChangelogDb>();
 	gMinBackLogsNumber = minBackLogsNumber;
 	gMaxBackLogsNumber = maxBackLogsNumber;
 	gBackLogsNumber = cfg_getuint32("BACK_LOGS", 50);
@@ -129,9 +143,12 @@ void changelog_flush(void) {
 	if (fd) {
 		fflush(fd);
 	}
-	if (gDB) {
-		gDB->flush();
+
+	if (!gDB) {
+		safs::log_info("changelog_flush: Changelog DB not initialized");
+		throw  std::runtime_error("changelog_flush: Changelog DB not initialized");
 	}
+	gDB->flush();
 }
 
 void changelog_disable_flush(void) {
@@ -165,6 +182,10 @@ uint64_t changelogGetFirstLogVersion(const std::string &fname) {
 	}
 	if (p >= s || buff[p] != ':') { return 0; }
 
+	if (!gDB) {
+		safs::log_info("changelogGetFirstLogVersion: Changelog DB not initialized");
+		throw  std::runtime_error("changelogGetFirstLogVersion: Changelog DB not initialized");
+	}
 	safs::log_info("[BALDOR] TRACE: changelogGetFirstLogVersion: {}", fv);
 	if (gDB) {
 		safs::log_info("[BALDOR] TRACE: changelogGetFirstLogVersionFromDB: {}", gDB->getFirstLogVersion());
@@ -214,6 +235,10 @@ uint64_t changelogGetLastLogVersion(const std::string &fname) {
 		safs_pretty_errlog(LOG_WARNING, "munmap(%s) failed", fname.c_str());
 	}
 
+	if (!gDB) {
+		safs::log_info("changelogGetLastLogVersion: Changelog DB not initialized");
+		throw  std::runtime_error("changelogGetLastLogVersion: Changelog DB not initialized");
+	}
 	safs::log_info("[BALDOR] TRACE: changelogGetLastLogVersion: {}", lastLogVersion);
 	if (gDB) {
 		safs::log_info("[BALDOR] TRACE: changelogGetLastLogVersionFromDB: {}", gDB->getFirstLogVersion());
@@ -301,6 +326,10 @@ uint64_t findLastLogVersion() {
 
 	close(fd);
 
+	if (!gDB) {
+		safs::log_info("findLastLogVersion: Changelog DB not initialized");
+		throw  std::runtime_error("findLastLogVersion: Changelog DB not initialized");
+	}
 	safs::log_info("[BALDOR] TRACE: findLastLogVersion: {}", lastlogversion);
 	if (gDB) {
 		safs::log_info("[BALDOR] TRACE: findLastLogVersionFromDb: {}", gDB->getFirstLogVersion());

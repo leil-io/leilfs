@@ -27,6 +27,7 @@
 #include "common/random.h"
 #include "common/run_tab.h"
 #include "config/cfg.h"
+#include "master/changelog.h"
 #include "master/chartsdata.h"
 #include "master/datacachemgr.h"
 #include "master/exports.h"
@@ -52,6 +53,16 @@ inline int prometheus_init() {
 	}
 	metrics::init(cfg_getstr("PROMETHEUS_HOST", "0.0.0.0:9499"));
 	eventloop_destructregister(metrics::destroy);
+	return 0;
+}
+
+inline int changelog_backend_init() {
+	// Ensure DB (FDB-backed) is up before any FS/changelog ops.
+	if (changelog_db_init() != 0) {
+		constexpr auto kErrorMessage = "Failed to initialize changelog DB";
+		safs::log_err("{}", kErrorMessage);
+		throw Exception(kErrorMessage);
+	}
 	return 0;
 }
 
@@ -82,7 +93,9 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{hstorage_init, "name storage"},
     // has to be second
     RunTab{metadataserver::personality_init, "personality"},
-    RunTab{rnd_init, "random generator"},
+	RunTab{rnd_init, "random generator"},
+	// Ensure DB/changelog is ready before sessions/fs use it
+	RunTab{changelog_backend_init, "changelog backend initialization"},
     // has to be before 'fs_init' and 'matoclserv_networkinit'
     RunTab{dcm_init, "data cache manager"},
     // has to be before 'fs_init'

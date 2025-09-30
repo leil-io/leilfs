@@ -45,6 +45,10 @@ Signal<const ChangelogEvent &> &getChangelogSignal();
 void changelog_init(std::string changelogFilename,
 		uint32_t minBackLogsNumber, uint32_t maxBackLogsNumber);
 
+/// Initialize changelog db backend
+/// \returns 0 on success, -1 on failure
+int changelog_db_init();
+
 /// Return the value of \p BACK_LOGS config entry
 uint32_t changelog_get_back_logs_config_value();
 
