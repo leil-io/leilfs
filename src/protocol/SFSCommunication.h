@@ -570,18 +570,6 @@ enum class SugidClearMode : uint8_t {
 
 // CHUNKSERVER <-> CLIENT/CHUNKSERVER
 
-// 0x00C8
-#define CLTOCS_READ (PROTO_BASE+200)
-/// chunkid:64 chunkversion:32 offset:32 size:32
-
-// 0x00C9
-#define CSTOCL_READ_STATUS (PROTO_BASE+201)
-/// chunkid:64 status:8
-
-// 0x00CA
-#define CSTOCL_READ_DATA (PROTO_BASE+202)
-/// chunkid:64 offset:32 size:32 crc:32 data:BYTES[size]
-
 // 0x04B0
 #define SAU_CLTOCS_READ (1000U + 200U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 offset:32 size:32
@@ -600,34 +588,18 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 offset:32 size:32
 /// version==1 chunkid:64 chunkversion:32 chunktype:16 offset:32 size:32
 
-// 0x00D2
-#define CLTOCS_WRITE (PROTO_BASE+210)
-/// chunkid:64 chunkversion:32 chain:(N * [ip:32 port:16])
-
 // 0x04BA
 #define SAU_CLTOCS_WRITE_INIT (1000U + 210U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 chain:(N * [ip:32 port:16])
 /// version==1 chunkid:64 chunkversion:32 chunktype:16 chain:(N * [ip:32 port:16])
 
-// 0x00D3
-#define CSTOCL_WRITE_STATUS (PROTO_BASE+211)
-/// chunkid:64 writeid:32 status:8
-
 // 0x04BB
 #define SAU_CSTOCL_WRITE_STATUS (1000U + 211U)
 /// chunkid:64 writeid:32 status:8
 
-// 0x00D4
-#define CLTOCS_WRITE_DATA (PROTO_BASE+212)
-/// chunkid:64 writeid:32 blocknum:16 offset:16 size:32 crc:32 data:BYTES[size]
-
 // 0x04BC
 #define SAU_CLTOCS_WRITE_DATA (1000U + 212U)
 /// chunkid:64 writeid:32 blocknum:16 offset:32 size:32 crc:32 data:BYTES[size]
-
-// 0x00D5
-#define CLTOCS_WRITE_FINISH (PROTO_BASE+213)
-/// chunkid:64 chunkversion:32
 
 // 0x04BD
 #define SAU_CLTOCS_WRITE_END (1000U + 213U)
@@ -639,14 +611,6 @@ enum class SugidClearMode : uint8_t {
 /// version==1 chunkid:64 chunkversion:32 chunktype:16
 
 //CHUNKSERVER <-> CHUNKSERVER
-
-// 0x00FA
-#define CSTOCS_GET_CHUNK_BLOCKS (PROTO_BASE+250)
-/// chunkid:64 chunkversion:32
-
-// 0x00FB
-#define CSTOCS_GET_CHUNK_BLOCKS_STATUS (PROTO_BASE+251)
-/// chunkid:64 chunkversion:32 blocks:16 status:8
 
 // 0x04E2
 #define SAU_CSTOCS_GET_CHUNK_BLOCKS (1000U + 250U)

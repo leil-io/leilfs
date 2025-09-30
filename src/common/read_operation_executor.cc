@@ -60,17 +60,9 @@ ReadOperationExecutor::ReadOperationExecutor(
 
 void ReadOperationExecutor::sendReadRequest(const Timeout& timeout) {
 	std::vector<uint8_t> message;
-	if (server_version_ >= kFirstECVersion) {
-		cltocs::read::serialize(message, chunkId_, chunkVersion_, chunkType_,
-			readOperation_.request_offset, readOperation_.request_size);
-	} else if (server_version_ >= kFirstXorVersion) {
-		cltocs::read::serialize(message, chunkId_, chunkVersion_, (legacy::ChunkPartType)chunkType_,
-			readOperation_.request_offset, readOperation_.request_size);
-	} else {
-		serializeLegacyPacket(message, CLTOCS_READ,
-			chunkId_, chunkVersion_, readOperation_.request_offset,
-			readOperation_.request_size);
-	}
+	sassert(server_version_ >= kFirstECVersion);
+	cltocs::read::serialize(message, chunkId_, chunkVersion_, chunkType_,
+	                        readOperation_.request_offset, readOperation_.request_size);
 
 	int32_t ret = tcptowrite(fd_,
 			message.data(),
@@ -167,9 +159,9 @@ void ReadOperationExecutor::processHeaderReceived() {
 		ss << " sent by chunkserver too long (" << packetHeader_.length << " bytes)";
 		throw ChunkserverConnectionException(ss.str(), server_);
 	}
-	if (packetHeader_.type == SAU_CSTOCL_READ_DATA || packetHeader_.type == CSTOCL_READ_DATA) {
+	if (packetHeader_.type == SAU_CSTOCL_READ_DATA) {
 		setState(kReceivingReadDataMessage);
-	} else if (packetHeader_.type == SAU_CSTOCL_READ_STATUS || packetHeader_.type == CSTOCL_READ_STATUS) {
+	} else if (packetHeader_.type == SAU_CSTOCL_READ_STATUS) {
 		setState(kReceivingReadStatusMessage);
 	} else {
 		std::stringstream ss;
@@ -185,13 +177,9 @@ void ReadOperationExecutor::processReadDataMessageReceived() {
 	uint64_t readChunkId;
 	uint32_t readOffset;
 	uint32_t readSize;
-	if (server_version_ >= kFirstXorVersion) {
-		cstocl::readData::deserializePrefix(messageBuffer_, readChunkId, readOffset, readSize,
-			currentlyReadBlockCrc_);
-	} else {
-		deserializeLegacyPacketPrefixNoHeader(messageBuffer_.data(), messageBuffer_.size(),
-			readChunkId, readOffset, readSize, currentlyReadBlockCrc_);
-	}
+	sassert(server_version_ >= kFirstXorVersion);
+	cstocl::readData::deserializePrefix(messageBuffer_, readChunkId, readOffset, readSize,
+	                                    currentlyReadBlockCrc_);
 
 	if (readChunkId != chunkId_) {
 		std::stringstream ss;
@@ -221,12 +209,8 @@ void ReadOperationExecutor::processReadStatusMessageReceived() {
 	uint8_t readStatus;
 	uint64_t readChunkId;
 
-	if (server_version_ >= kFirstXorVersion) {
-		cstocl::readStatus::deserialize(messageBuffer_, readChunkId, readStatus);
-	} else {
-		deserializeAllLegacyPacketDataNoHeader(messageBuffer_.data(), messageBuffer_.size(),
-			readChunkId, readStatus);
-	}
+	sassert(server_version_ >= kFirstXorVersion);
+	cstocl::readStatus::deserialize(messageBuffer_, readChunkId, readStatus);
 
 	if (readChunkId != chunkId_) {
 		std::stringstream ss;
@@ -287,8 +271,8 @@ void ReadOperationExecutor::setState(ReadOperationState newState) {
 		break;
 	case kReceivingReadDataMessage:
 		sassert(state_ == kReceivingHeader);
-		messageBuffer_.resize(server_version_ >= kFirstXorVersion
-			? cstocl::readData::kPrefixSize : cstocl::readData::kLegacyPrefixSize);
+		sassert(server_version_ >= kFirstXorVersion);
+		messageBuffer_.resize(cstocl::readData::kPrefixSize);
 		destination_ = messageBuffer_.data();
 		bytesLeft_ = messageBuffer_.size();
 		break;

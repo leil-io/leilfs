@@ -59,22 +59,14 @@ uint32_t ChunkReplicator::getChunkBlocks(uint64_t chunk_id, uint32_t chunk_versi
 	sassert(fd >= 0);
 
 	std::vector<uint8_t> output_buffer;
-	if (type_with_address.chunkserver_version >= kFirstECVersion) {
-		cstocs::getChunkBlocks::serialize(output_buffer, chunk_id, chunk_version, chunk_type);
-	} else if (type_with_address.chunkserver_version >= kFirstXorVersion) {
-		assert((int)chunk_type.getSliceType() < Goal::Slice::Type::kECFirst);
-		cstocs::getChunkBlocks::serialize(output_buffer, chunk_id, chunk_version, (legacy::ChunkPartType)chunk_type);
-	} else {
-		assert(slice_traits::isStandard(chunk_type));
-		serializeLegacyPacket(output_buffer, CSTOCS_GET_CHUNK_BLOCKS, chunk_id, chunk_version);
-	}
+	sassert(type_with_address.chunkserver_version >= kFirstECVersion);
+	cstocs::getChunkBlocks::serialize(output_buffer, chunk_id, chunk_version, chunk_type);
 	tcptowrite(fd, output_buffer.data(), output_buffer.size(), 1000);
 
 	std::vector<uint8_t> input_buffer;
 	PacketHeader header;
 	receivePacket(header, input_buffer, fd, 1000);
-	if (header.type != SAU_CSTOCS_GET_CHUNK_BLOCKS_STATUS
-			&& header.type != CSTOCS_GET_CHUNK_BLOCKS_STATUS) {
+	if (header.type != SAU_CSTOCS_GET_CHUNK_BLOCKS_STATUS) {
 		close(fd);
 		throw Exception("Unexpected response for chunk get blocks request");
 	}
