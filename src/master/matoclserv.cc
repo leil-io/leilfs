@@ -257,7 +257,6 @@ static int starting;  ///< Flag indicating whether the server is starting (1) or
 // from config
 static std::string ListenHost;
 static std::string ListenPort;
-static uint32_t RejectOld;
 static uint32_t SessionSustainTime;
 
 static uint32_t gIoLimitsAccumulate_ms;
@@ -1816,9 +1815,6 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 	uint8_t status;
 
 	constexpr uint32_t kBlobSize = REGISTER_BLOB_SIZE;
-	constexpr uint32_t kBlobSizeWithVersion = kBlobSize + sizeof(matoclserventry::version);
-	constexpr uint32_t kBlobSizeWithSessionIdAndVersion =
-	    kBlobSizeWithVersion + sizeof(Session::sessionId);
 
 	if (starting) {
 		eptr->mode = ClientConnectionMode::KILL;
@@ -1837,109 +1833,21 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 
 	// Unregistered no ACL clients and tools
 	if (eptr->registered == ClientState::kUnregistered && (clientsNoACL || toolsNoACL)) {
-		if (RejectOld) {
-			safs::log_info("CLTOMA_FUSE_REGISTER/NOACL - rejected (option REJECT_OLD_CLIENTS is set)");
-			eptr->mode = ClientConnectionMode::KILL;
-			return;
-		}
-		if (toolsNoACL) {
-			if (length != kBlobSize && length != kBlobSizeWithVersion) {
-				safs::log_info("CLTOMA_FUSE_REGISTER/NOACL-TOOLS - wrong size ({}/{}|{})", length,
-				               kBlobSize, kBlobSizeWithVersion);
-				eptr->mode = ClientConnectionMode::KILL;
-				return;
-			}
-		} else {  // clientsNoACL
-			if (length != kBlobSizeWithVersion && length != kBlobSizeWithSessionIdAndVersion) {
-				safs::log_info("CLTOMA_FUSE_REGISTER/NOACL-MOUNT - wrong size ({}/{}|{})", length,
-				               kBlobSizeWithVersion, kBlobSizeWithSessionIdAndVersion);
-				eptr->mode = ClientConnectionMode::KILL;
-				return;
-			}
-		}
-
-		rptr = data + kBlobSize;
-
-		if (toolsNoACL) {
-			sessionId = 0;
-			if (length == kBlobSizeWithVersion) { get32bit(&rptr, eptr->version); }
-		} else {
-			get32bit(&rptr, sessionId);
-			if (length == kBlobSizeWithSessionIdAndVersion) { get32bit(&rptr, eptr->version); }
-		}
-
-		if (eptr->version < 0x010500 && !toolsNoACL) {
-			safs::log_info("got register packet from mount older than 1.5 - rejecting");
-			eptr->mode = ClientConnectionMode::KILL;
-			return;
-		}
-
-		if (sessionId == 0) {           // new session
-			status = SAUNAFS_STATUS_OK; // exports_check(eptr->peerip,(const uint8_t*)"",NULL,NULL,&sesflags);      // check privileges for '/' w/o password
-			eptr->sessionData = matoclserv_new_session(0, toolsNoACL);
-
-			if (eptr->sessionData == nullptr) {
-				safs::log_info("can't allocate session record");
-				eptr->mode = ClientConnectionMode::KILL;
-				return;
-			}
-
-			eptr->sessionData->rootInode = SPECIAL_INODE_ROOT;
-			eptr->sessionData->flags = 0;
-			eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
-			eptr->sessionData->peerPort = eptr->peerPort;
-		} else {  // reconnect or tools
-			eptr->sessionData = matoclserv_find_session(sessionId);
-			if (eptr->sessionData == nullptr) {      // in old model if session doesn't exist then create it
-				eptr->sessionData = matoclserv_new_session(0, 0);
-
-				if (eptr->sessionData == nullptr) {
-					safs::log_info("can't allocate session record");
-					eptr->mode = ClientConnectionMode::KILL;
-					return;
-				}
-
-				eptr->sessionData->rootInode = SPECIAL_INODE_ROOT;
-				eptr->sessionData->flags = 0;
-				eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
-				eptr->sessionData->peerPort = eptr->peerPort;
-				status = SAUNAFS_STATUS_OK;
-			} else if (eptr->sessionData->peerIpAddress == 0) {  // created by "filesystem"
-				eptr->sessionData->peerIpAddress = eptr->peerIpAddress;
-				eptr->sessionData->peerPort = eptr->peerPort;
-				status = SAUNAFS_STATUS_OK;
-			} else if (eptr->sessionData->peerIpAddress == eptr->peerIpAddress) {
-				status = SAUNAFS_STATUS_OK;
-			} else {
-				status = SAUNAFS_ERROR_EACCES;
-			}
-		}
-
-		// answer
-
-		if (toolsNoACL) {
-			wptr = matoclserv_createpacket(eptr, MATOCL_FUSE_REGISTER, sizeof(status));
-		} else {
-			wptr = matoclserv_createpacket(
-			    eptr, MATOCL_FUSE_REGISTER,
-			    (status != SAUNAFS_STATUS_OK) ? sizeof(status) : sizeof(sessionId));
-		}
-
-		if (status != SAUNAFS_STATUS_OK) {
-			put8bit(&wptr, status);
-			return;
-		}
-
-		if (toolsNoACL) {
-			put8bit(&wptr, status);
-		} else {
-			sessionId = eptr->sessionData->sessionId;
-			put32bit(&wptr, sessionId);
-		}
-
-		eptr->registered = (toolsNoACL) ? ClientState::kOldTools : ClientState::kRegistered;
+		safs::log_info("CLTOMA_FUSE_REGISTER/NOACL - rejected");
+		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
+
+	auto checkMinimumVersion = [](matoclserventry *eptr) {
+		if (eptr->version < kFirstECVersion) {
+			safs::log_info("Got register packet from client ({}) older than {} - rejecting",
+			               saunafsVersionToString(eptr->version),
+			               saunafsVersionToString(kFirstECVersion));
+			eptr->mode = ClientConnectionMode::KILL;
+			return false;
+		}
+		return true;
+	};
 
 	// clients with ACL support and new tools
 	if (clientsWithACL) {
@@ -2003,6 +1911,11 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				return;
 			}
 			get32bit(&rptr, eptr->version);
+
+			if (!checkMinimumVersion(eptr)) {
+				return;
+			}
+
 			get32bit(&rptr, infoLength);
 			if (length < kRegisterNewSessionMinSize + infoLength) {
 				safs::log_info("CLTOMA_FUSE_REGISTER/ACL.2 - wrong size ({}/>={} + infoLength({}))",
@@ -2090,43 +2003,30 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			// answer
 
 			wptr = matoclserv_createpacket(eptr, MATOCL_FUSE_REGISTER,
-			                               (status == SAUNAFS_STATUS_OK)
-			                                   ? ((eptr->version >= saunafsVersion(1, 6, 26))   ? 35
-			                                      : (eptr->version >= saunafsVersion(1, 6, 21)) ? 25
-			                                      : (eptr->version >= saunafsVersion(1, 6, 1))  ? 21
-			                                                                                   : 13)
-			                                   : sizeof(status));
+			                               (status == SAUNAFS_STATUS_OK) ? 35 : sizeof(status));
 
 			if (status != SAUNAFS_STATUS_OK) {
 				put8bit(&wptr, status);
 				return;
 			}
 			sessionId = eptr->sessionData->sessionId;
-			if (eptr->version == saunafsVersion(1, 6, 21)) {
-				put32bit(&wptr, 0);
-			} else if (eptr->version >= saunafsVersion(1, 6, 22)) {
-				put16bit(&wptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
-				put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MINOR);
-				put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MICRO);
-			}
+
+			put16bit(&wptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
+			put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MINOR);
+			put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MICRO);
 			put32bit(&wptr, sessionId);
 			put8bit(&wptr, sessionFlags);
 			put32bit(&wptr, rootUid);
 			put32bit(&wptr, rootGid);
-			if (eptr->version>=saunafsVersion(1, 6, 1)) {
-				put32bit(&wptr, mapAllUid);
-				put32bit(&wptr, mapAllGid);
-			}
-			if (eptr->version >= saunafsVersion(1, 6, 26)) {
-				put8bit(&wptr, minGoal);
-				put8bit(&wptr, maxGoal);
-				put32bit(&wptr, minTrashTime);
-				put32bit(&wptr, maxTrashTime);
-			}
-			if (eptr->version >= saunafsVersion(1, 6, 30)) {
-				eptr->ioLimitsEnabled = true;
-				matoclserv_send_iolimits_cfg(eptr);
-			}
+			put32bit(&wptr, mapAllUid);
+			put32bit(&wptr, mapAllGid);
+			put8bit(&wptr, minGoal);
+			put8bit(&wptr, maxGoal);
+			put32bit(&wptr, minTrashTime);
+			put32bit(&wptr, maxTrashTime);
+
+			eptr->ioLimitsEnabled = true;
+			matoclserv_send_iolimits_cfg(eptr);
 			eptr->registered = ClientState::kRegistered;
 			return;
 		case REGISTER_NEWMETASESSION:
@@ -2138,6 +2038,11 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 
 			get32bit(&rptr, eptr->version);
+
+			if (!checkMinimumVersion(eptr)) {
+				return;
+			}
+
 			get32bit(&rptr, infoLength);
 
 			if (length != kRegisterNewMetaSessionMinSize + infoLength &&
@@ -2203,29 +2108,23 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			// answer
 
 			wptr = matoclserv_createpacket(eptr, MATOCL_FUSE_REGISTER,
-			                               (status == SAUNAFS_STATUS_OK)
-			                                   ? ((eptr->version >= saunafsVersion(1, 6, 26))   ? 19
-			                                      : (eptr->version >= saunafsVersion(1, 6, 21)) ? 9
-			                                                                                    : 5)
-			                                   : sizeof(status));
+			                               (status == SAUNAFS_STATUS_OK) ? 19 : sizeof(status));
 			if (status!=SAUNAFS_STATUS_OK) {
 				put8bit(&wptr,status);
 				return;
 			}
 			sessionId = eptr->sessionData->sessionId;
-			if (eptr->version >= saunafsVersion(1, 6, 21)) {
-				put16bit(&wptr,SAUNAFS_PACKAGE_VERSION_MAJOR);
-				put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MINOR);
-				put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MICRO);
-			}
+
+			put16bit(&wptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
+			put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MINOR);
+			put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MICRO);
 			put32bit(&wptr, sessionId);
 			put8bit(&wptr, sessionFlags);
-			if (eptr->version >= saunafsVersion(1, 6, 26)) {
-				put8bit(&wptr, minGoal);
-				put8bit(&wptr, maxGoal);
-				put32bit(&wptr, minTrashTime);
-				put32bit(&wptr, maxTrashTime);
-			}
+			put8bit(&wptr, minGoal);
+			put8bit(&wptr, maxGoal);
+			put32bit(&wptr, minTrashTime);
+			put32bit(&wptr, maxTrashTime);
+
 			eptr->registered = ClientState::kRegistered;
 			return;
 		case REGISTER_RECONNECT:
@@ -2238,6 +2137,11 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 			get32bit(&rptr, sessionId);
 			get32bit(&rptr, eptr->version);
+
+			if (!checkMinimumVersion(eptr)) {
+				return;
+			}
+
 			eptr->sessionData = matoclserv_find_session(sessionId);
 			if (eptr->sessionData == nullptr || eptr->sessionData->peerIpAddress == 0) {
 				status = SAUNAFS_ERROR_BADSESSIONID;
@@ -2259,14 +2163,16 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			if (status != SAUNAFS_STATUS_OK) { return; }
 
 			if (rcode == REGISTER_RECONNECT) {
-				if (eptr->version >= saunafsVersion(1, 6, 30) &&
-				    eptr->sessionData->rootInode != 0) {
+				if (eptr->sessionData->rootInode != 0) {
 					eptr->ioLimitsEnabled = true;
 					matoclserv_send_iolimits_cfg(eptr);
 				}
 				eptr->registered = ClientState::kRegistered;
 			} else {
 				eptr->registered = ClientState::kOldTools;
+				safs::log_info("Registered old tools from {}:{}, rejecting ...",
+				               ipToString(eptr->peerIpAddress), eptr->peerPort);
+				eptr->mode = ClientConnectionMode::KILL;  // old tools disconnect after register
 			}
 			return;
 		case REGISTER_CLOSESESSION:
@@ -2528,56 +2434,6 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 	matoclserv_createpacket(eptr, std::move(reply));
 }
 
-void matoclserv_fuse_lookup(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	inode_t inode;
-	uint32_t uid,gid;
-	uint8_t nleng;
-	const uint8_t *name;
-	inode_t newinode;
-	Attributes attr;
-	uint32_t msgid;
-	uint8_t *ptr;
-	uint8_t status;
-	constexpr uint32_t kExpectedPacketSize =
-	    sizeof(msgid) + sizeof(inode) + sizeof(uid) + sizeof(gid) + sizeof(nleng);
-	if (length < kExpectedPacketSize) {
-		safs::log_info("CLTOMA_FUSE_LOOKUP - wrong size ({})", length);
-		eptr->mode = ClientConnectionMode::KILL;
-		return;
-	}
-	get32bit(&data, msgid);
-	getINode(&data, inode);
-	nleng = get8bit(&data);
-	if (length != kExpectedPacketSize + nleng) {
-		safs::log_info("CLTOMA_FUSE_LOOKUP - wrong size ({}:nleng={})", length, nleng);
-		eptr->mode = ClientConnectionMode::KILL;
-		return;
-	}
-	name = data;
-	data += nleng;
-	get32bit(&data, uid);
-	get32bit(&data, gid);
-	status = matoclserv_check_group_cache(eptr, gid);
-	if (status == SAUNAFS_STATUS_OK) {
-		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_lookup(context,inode,HString((char*)name, nleng),&newinode,attr);
-	}
-
-	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
-	constexpr uint32_t kSuccessAnswerSize = sizeof(msgid) + sizeof(newinode) + attr.size();
-	uint8_t answerSize = (status != SAUNAFS_STATUS_OK) ? kFailedAnswerSize : kSuccessAnswerSize;
-
-	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_LOOKUP, answerSize);
-	put32bit(&ptr,msgid);
-	if (status!=SAUNAFS_STATUS_OK) {
-		put8bit(&ptr,status);
-	} else {
-		putINode(&ptr,newinode);
-		memcpy(ptr, attr.data(), attr.size());
-	}
-	eptr->sessionData->currHourOperationsStats[3]++;
-}
-
 void matoclserv_fuse_getattr(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
 	uint32_t uid,gid;
@@ -2690,9 +2546,7 @@ void matoclserv_fuse_setattr(matoclserventry *eptr, const uint8_t *data, uint32_
 }
 
 void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	sassert(header.type == CLTOMA_FUSE_TRUNCATE
-			|| header.type == SAU_CLTOMA_FUSE_TRUNCATE
-			|| header.type == SAU_CLTOMA_FUSE_TRUNCATE_END);
+	sassert(header.type == SAU_CLTOMA_FUSE_TRUNCATE || header.type == SAU_CLTOMA_FUSE_TRUNCATE_END);
 
 	// Deserialize the request
 	std::vector<uint8_t> request(data, data + header.length);
@@ -2742,10 +2596,7 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 	}
 
 	// In case of SAUNAFS_ERROR_NOTPOSSIBLE we have to tell the client to write the chunk before truncating
-	if (status == SAUNAFS_ERROR_NOTPOSSIBLE && header.type == CLTOMA_FUSE_TRUNCATE) {
-		// Old client requested to truncate xor chunk. We can't do this!
-		status = SAUNAFS_ERROR_ENOTSUP;
-	} else if (status == SAUNAFS_ERROR_NOTPOSSIBLE && header.type == SAU_CLTOMA_FUSE_TRUNCATE) {
+	if (status == SAUNAFS_ERROR_NOTPOSSIBLE && header.type == SAU_CLTOMA_FUSE_TRUNCATE) {
 		// New client requested to truncate xor chunk. He has to do it himself.
 		uint64_t fileLength;
 		uint8_t opflag;
@@ -2944,11 +2795,7 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 	uint8_t type;
 	uint16_t mode, umask;
 
-	if (header.type == CLTOMA_FUSE_MKNOD) {
-		deserializeAllLegacyPacketDataNoHeader(data, header.length,
-				messageId, inode, name, type, mode, uid, gid, rdev);
-		umask = 0;
-	} else if (header.type == SAU_CLTOMA_FUSE_MKNOD) {
+	if (header.type == SAU_CLTOMA_FUSE_MKNOD) {
 		cltoma::fuseMknod::deserialize(data, header.length,
 				messageId, inode, name, type, mode, umask, uid, gid, rdev);
 	} else {
@@ -2967,14 +2814,10 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 	}
 
 	MessageBuffer reply;
-	if (status == SAUNAFS_STATUS_OK && header.type == CLTOMA_FUSE_MKNOD) {
-		serializeLegacyPacket(reply, MATOCL_FUSE_MKNOD, messageId, newinode, attr);
-	} else if (status == SAUNAFS_STATUS_OK && header.type == SAU_CLTOMA_FUSE_MKNOD) {
+	if (status == SAUNAFS_STATUS_OK) {
 		matocl::fuseMknod::serialize(reply, messageId, newinode, attr);
-	} else if (header.type == SAU_CLTOMA_FUSE_MKNOD) {
-		matocl::fuseMknod::serialize(reply, messageId, status);
 	} else {
-		serializeLegacyPacket(reply, MATOCL_FUSE_MKNOD, messageId, status);
+		matocl::fuseMknod::serialize(reply, messageId, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
 	if (eptr->sessionData) {
@@ -2989,17 +2832,7 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 	bool copysgid;
 	uint16_t mode, umask;
 
-	if (header.type == CLTOMA_FUSE_MKDIR) {
-		if (eptr->version >= saunafsVersion(1, 6, 25)) {
-			deserializeAllLegacyPacketDataNoHeader(data, header.length,
-					messageId, inode, name, mode, uid, gid, copysgid);
-		} else {
-			deserializeAllLegacyPacketDataNoHeader(data, header.length,
-					messageId, inode, name, mode, uid, gid);
-			copysgid = false;
-		}
-		umask = 0;
-	} else if (header.type == SAU_CLTOMA_FUSE_MKDIR) {
+	if (header.type == SAU_CLTOMA_FUSE_MKDIR) {
 		cltoma::fuseMkdir::deserialize(data, header.length, messageId,
 				inode, name, mode, umask, uid, gid, copysgid);
 	} else {
@@ -3018,14 +2851,10 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 	}
 
 	MessageBuffer reply;
-	if (status == SAUNAFS_STATUS_OK && header.type == CLTOMA_FUSE_MKDIR) {
-		serializeLegacyPacket(reply, MATOCL_FUSE_MKDIR, messageId, newinode, attr);
-	} else if (status == SAUNAFS_STATUS_OK && header.type == SAU_CLTOMA_FUSE_MKDIR) {
+	if (status == SAUNAFS_STATUS_OK) {
 		matocl::fuseMkdir::serialize(reply, messageId, newinode, attr);
-	} else if (header.type == SAU_CLTOMA_FUSE_MKDIR) {
-		matocl::fuseMkdir::serialize(reply, messageId, status);
 	} else {
-		serializeLegacyPacket(reply, MATOCL_FUSE_MKDIR, messageId, status);
+		matocl::fuseMkdir::serialize(reply, messageId, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
 	if (eptr->sessionData) {
@@ -3488,7 +3317,7 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 }
 
 void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	sassert(header.type == CLTOMA_FUSE_READ_CHUNK || header.type == SAU_CLTOMA_FUSE_READ_CHUNK);
+	sassert(header.type == SAU_CLTOMA_FUSE_READ_CHUNK);
 	uint8_t status;
 	uint64_t chunkid;
 	uint64_t fleng;
@@ -3564,7 +3393,7 @@ void matoclserv_chunks_info(matoclserventry *eptr, const uint8_t *data, uint32_t
 }
 
 void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	sassert(header.type == CLTOMA_FUSE_WRITE_CHUNK || header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK);
+	sassert(header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK);
 	uint8_t status;
 	inode_t inode;
 	uint32_t chunkIndex;
@@ -3580,10 +3409,10 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	std::vector<uint8_t> receivedData(data, data + header.length);
 	serializer->deserializeFuseWriteChunk(receivedData, messageId, inode, chunkIndex, lockId);
 
-	uint32_t min_server_version = header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK ? kFirstXorVersion : 0;
+	uint32_t min_server_version = kFirstXorVersion;
 
 	// Original Legacy (1.6.27) does not use lock ID's
-	bool useDummyLockId = (header.type == CLTOMA_FUSE_WRITE_CHUNK);
+	bool useDummyLockId = false;
 	status = fs_writechunk(matoclserv_get_context(eptr), inode, chunkIndex, useDummyLockId,
 			&lockId, &chunkId, &opflag, &fileLength, min_server_version);
 
@@ -3888,9 +3717,7 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	uint32_t msgid;
 	uint8_t gmode;
 
-	if (header.type == CLTOMA_FUSE_GETGOAL) {
-		deserializeAllLegacyPacketDataNoHeader(data, header.length, msgid, inode, gmode);
-	} else if (header.type == SAU_CLTOMA_FUSE_GETGOAL) {
+	if (header.type == SAU_CLTOMA_FUSE_GETGOAL) {
 		cltoma::fuseGetGoal::deserialize(data, header.length, msgid, inode, gmode);
 	} else {
 		throw IncorrectDeserializationException(
@@ -3904,34 +3731,14 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	if (status == SAUNAFS_STATUS_OK) {
 		const std::map<int, Goal>& goalDefinitions = fs_get_goal_definitions();
 		std::vector<FuseGetGoalStats> sauReply;
-		LegacyVector<std::pair<uint8_t, inode_t>> legacyReplyFiles, legacyReplyDirectories;
 		for (const auto &goal : goalDefinitions) {
 			if (fgtab[goal.first] || dgtab[goal.first]) {
 				sauReply.emplace_back(goal.second.getName(), fgtab[goal.first], dgtab[goal.first]);
 			}
-			if (fgtab[goal.first] > 0) {
-				legacyReplyFiles.emplace_back(goal.first, fgtab[goal.first]);
-			}
-			if (dgtab[goal.first] > 0) {
-				legacyReplyDirectories.emplace_back(goal.first, dgtab[goal.first]);
-			}
 		}
-		if (header.type == SAU_CLTOMA_FUSE_GETGOAL) {
-			matocl::fuseGetGoal::serialize(reply, msgid, sauReply);
-		} else {
-			serializeLegacyPacket(reply, MATOCL_FUSE_GETGOAL,
-					msgid,
-					uint8_t(legacyReplyFiles.size()),
-					uint8_t(legacyReplyDirectories.size()),
-					legacyReplyFiles,
-					legacyReplyDirectories);
-		}
+		matocl::fuseGetGoal::serialize(reply, msgid, sauReply);
 	} else {
-		if (header.type == SAU_CLTOMA_FUSE_GETGOAL) {
-			matocl::fuseGetGoal::serialize(reply, msgid, status);
-		} else {
-			serializeLegacyPacket(reply, MATOCL_FUSE_GETGOAL, msgid, status);
-		}
+		matocl::fuseGetGoal::serialize(reply, msgid, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
 }
@@ -3939,6 +3746,7 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 void matoclserv_fuse_setgoal_wake_up(uint32_t session_id, uint32_t msgid, uint32_t type,
 				     std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 				     uint32_t status) {
+	sassert(type == SAU_CLTOMA_FUSE_SETGOAL);
 	matoclserventry *eptr = matoclserv_find_connection(session_id);
 	if (!eptr) {
 		return;
@@ -3951,18 +3759,9 @@ void matoclserv_fuse_setgoal_wake_up(uint32_t session_id, uint32_t msgid, uint32
 		notchanged = (*setgoal_stats)[SetGoalTask::kNotChanged];
 		notpermitted = (*setgoal_stats)[SetGoalTask::kNotPermitted];
 
-		if (type == SAU_CLTOMA_FUSE_SETGOAL) {
-			matocl::fuseSetGoal::serialize(reply, msgid, changed, notchanged, notpermitted);
-		} else {
-			serializeLegacyPacket(reply, MATOCL_FUSE_SETGOAL,
-					msgid, changed, notchanged, notpermitted);
-		}
+		matocl::fuseSetGoal::serialize(reply, msgid, changed, notchanged, notpermitted);
 	} else {
-		if (type == SAU_CLTOMA_FUSE_SETGOAL) {
-			matocl::fuseSetGoal::serialize(reply, msgid, status);
-		} else {
-			serializeLegacyPacket(reply, MATOCL_FUSE_SETGOAL, msgid, status);
-		}
+		matocl::fuseSetGoal::serialize(reply, msgid, status);
 	}
 	matoclserv_createpacket(eptr, std::move(reply));
 }
@@ -3974,10 +3773,7 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 	uint8_t goalId = 0, smode;
 	uint8_t status = SAUNAFS_STATUS_OK;
 
-	if (header.type == CLTOMA_FUSE_SETGOAL) {
-		deserializeAllLegacyPacketDataNoHeader(data, header.length,
-				msgid, inode, uid, goalId, smode);
-	} else if (header.type == SAU_CLTOMA_FUSE_SETGOAL) {
+	if (header.type == SAU_CLTOMA_FUSE_SETGOAL) {
 		std::string goalName;
 		cltoma::fuseSetGoal::deserialize(data, header.length,
 				msgid, inode, uid, goalName, smode);
@@ -4346,11 +4142,8 @@ void matoclserv_fuse_snapshot_wake_up(uint32_t type, uint32_t session_id, uint32
 	}
 
 	MessageBuffer buffer;
-	if (type == SAU_CLTOMA_FUSE_SNAPSHOT) {
-		matocl::snapshot::serialize(buffer, msgid, status);
-	} else {
-		serializeLegacyPacket(buffer, MATOCL_FUSE_SNAPSHOT, msgid, status);
-	}
+	sassert(type == SAU_CLTOMA_FUSE_SNAPSHOT);
+	matocl::snapshot::serialize(buffer, msgid, status);
 	matoclserv_createpacket(eptr, std::move(buffer));
 }
 
@@ -4366,11 +4159,7 @@ void matoclserv_fuse_snapshot(matoclserventry *eptr, PacketHeader header, const 
 	uint32_t initial_batch_size = 0;
 	LegacyString<uint8_t> name_dst;
 
-	if (header.type == CLTOMA_FUSE_SNAPSHOT) {
-		deserializeAllLegacyPacketDataNoHeader(data, header.length,
-				msgid, inode, inode_dst, name_dst, uid, gid, canoverwrite);
-		job_id = fs_reserve_job_id();
-	} else if (header.type == SAU_CLTOMA_FUSE_SNAPSHOT) {
+	if (header.type == SAU_CLTOMA_FUSE_SNAPSHOT) {
 		cltoma::snapshot::deserialize(data, header.length, msgid, job_id, inode,
 		                              inode_dst, name_dst, uid, gid, canoverwrite,
 		                              ignore_missing_src, initial_batch_size);
@@ -5873,9 +5662,6 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case CLTOMA_FUSE_ACCESS:
 				    matoclserv_fuse_access(eptr, data, length);
 				    break;
-				case CLTOMA_FUSE_LOOKUP:
-				    matoclserv_fuse_lookup(eptr, data, length);
-				    break;
 				case CLTOMA_FUSE_GETATTR:
 				    matoclserv_fuse_getattr(eptr, data, length);
 				    break;
@@ -5888,11 +5674,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case CLTOMA_FUSE_SYMLINK:
 				    matoclserv_fuse_symlink(eptr, data, length);
 				    break;
-				case CLTOMA_FUSE_MKNOD:
 				case SAU_CLTOMA_FUSE_MKNOD:
 					matoclserv_fuse_mknod(eptr, PacketHeader(type, length), data);
 					break;
-				case CLTOMA_FUSE_MKDIR:
 				case SAU_CLTOMA_FUSE_MKDIR:
 					matoclserv_fuse_mkdir(eptr, PacketHeader(type, length), data);
 					break;
@@ -5918,14 +5702,12 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    matoclserv_fuse_open(eptr, data, length);
 				    break;
 				case SAU_CLTOMA_FUSE_READ_CHUNK:
-				case CLTOMA_FUSE_READ_CHUNK:
 					matoclserv_fuse_read_chunk(eptr, PacketHeader(type, length), data);
 					break;
 				case SAU_CLTOMA_CHUNKS_INFO:
 					matoclserv_chunks_info(eptr, data, length);
 					break;
 				case SAU_CLTOMA_FUSE_WRITE_CHUNK:
-				case CLTOMA_FUSE_WRITE_CHUNK:
 					matoclserv_fuse_write_chunk(eptr, PacketHeader(type, length), data);
 					break;
 				case SAU_CLTOMA_FUSE_WRITE_CHUNK_END:
@@ -5969,11 +5751,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case CLTOMA_FUSE_SETTRASHTIME:
 					matoclserv_fuse_settrashtime(eptr, PacketHeader(type, length), data);
 					break;
-				case CLTOMA_FUSE_GETGOAL:
 				case SAU_CLTOMA_FUSE_GETGOAL:
 					matoclserv_fuse_getgoal(eptr, PacketHeader(type, length), data);
 					break;
-				case CLTOMA_FUSE_SETGOAL:
 				case SAU_CLTOMA_FUSE_SETGOAL:
 					matoclserv_fuse_setgoal(eptr, PacketHeader(type, length), data);
 					break;
@@ -5985,13 +5765,11 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    break;
 				case SAU_CLTOMA_FUSE_TRUNCATE_END:
 				case SAU_CLTOMA_FUSE_TRUNCATE:
-				case CLTOMA_FUSE_TRUNCATE:
 					matoclserv_fuse_truncate(eptr, PacketHeader(type, length), data);
 					break;
 				case CLTOMA_FUSE_REPAIR:
 				    matoclserv_fuse_repair(eptr, data, length);
 				    break;
-				case CLTOMA_FUSE_SNAPSHOT:
 				case SAU_CLTOMA_FUSE_SNAPSHOT:
 					matoclserv_fuse_snapshot(eptr, PacketHeader(type, length), data);
 					break;
@@ -6108,61 +5886,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    eptr->mode=ClientConnectionMode::KILL;
 			}
 		} else if (eptr->registered == ClientState::kOldTools) {        // old sfstools
-			if (eptr->sessionData == nullptr) {
-				safs::log_err("registered connection (tools) without sesdata !!!");
-				eptr->mode=ClientConnectionMode::KILL;
-				return;
-			}
-			switch (type) {
-				// extra (external tools)
-				case CLTOMA_FUSE_REGISTER:
-				    matoclserv_fuse_register(eptr, data, length);
-				    break;
-				case CLTOMA_FUSE_READ_CHUNK: // used in saunafs fileinfo
-					matoclserv_fuse_read_chunk(eptr, PacketHeader(type, length), data);
-					break;
-				case CLTOMA_FUSE_CHECK:
-					matoclserv_fuse_check(eptr, data, length);
-					break;
-				case CLTOMA_FUSE_GETTRASHTIME:
-					matoclserv_fuse_gettrashtime(eptr, data, length);
-					break;
-				case CLTOMA_FUSE_SETTRASHTIME:
-					matoclserv_fuse_settrashtime(eptr, PacketHeader(type, length), data);
-					break;
-				case CLTOMA_FUSE_GETGOAL:
-					matoclserv_fuse_getgoal(eptr, PacketHeader(type, length), data);
-					break;
-				case CLTOMA_FUSE_SETGOAL:
-					matoclserv_fuse_setgoal(eptr, PacketHeader(type, length), data);
-					break;
-				case CLTOMA_FUSE_APPEND:
-				    matoclserv_fuse_append(eptr, data, length);
-				    break;
-				case CLTOMA_FUSE_GETDIRSTATS:
-				    matoclserv_fuse_getdirstats(eptr, data, length);
-				    break;
-				case CLTOMA_FUSE_TRUNCATE:
-					matoclserv_fuse_truncate(eptr, PacketHeader(type, length), data);
-					break;
-				case CLTOMA_FUSE_REPAIR:
-				    matoclserv_fuse_repair(eptr, data, length);
-				    break;
-				case CLTOMA_FUSE_SNAPSHOT:
-					matoclserv_fuse_snapshot(eptr, PacketHeader(type, length), data);
-					break;
-				case CLTOMA_FUSE_GETEATTR:
-				    matoclserv_fuse_geteattr(eptr, data, length);
-				    break;
-				case CLTOMA_FUSE_SETEATTR:
-				    matoclserv_fuse_seteattr(eptr, data, length);
-				    break;
-				default:
-				    safs::log_info(
-				        "main master server module: got unknown message from saunafs "
-				        "<COMMAND> tools (type:{})", type);
-				    eptr->mode = ClientConnectionMode::KILL;
-			}
+			safs::log_err("registered old tools connection !!!");
+			eptr->mode=ClientConnectionMode::KILL;
+			return;
 		}
 	} catch (IncorrectDeserializationException& e) {
 		safs::log_info(
@@ -6605,7 +6331,6 @@ void matoclserv_reload() {
 		}
 	}
 
-	RejectOld = cfg_getuint32("REJECT_OLD_CLIENTS", 0);
 	SessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
 
 	if (SessionSustainTime > 7 * 86400) {
@@ -6682,8 +6407,6 @@ int matoclserv_network_init() {
 
 	free(host);  // to avoid memory leak allocated by strdup in cfg_getstr() function
 	free(port);  // to avoid memory leak allocated by strdup in cfg_getstr() function
-
-	RejectOld = cfg_getuint32("REJECT_OLD_CLIENTS", 0);
 
 	if (matoclserv_iolimits_reload() != 0) {
 		return -1;

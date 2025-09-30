@@ -687,15 +687,6 @@ enum class SugidClearMode : uint8_t {
 #define MATOCL_FUSE_ACCESS (PROTO_BASE+405)
 /// msgid:32 status:8
 
-// 0x0196
-#define CLTOMA_FUSE_LOOKUP (PROTO_BASE+406)
-/// msgid:32 inode:32 name:NAME uid:32 gid:32
-
-// 0x0197
-#define MATOCL_FUSE_LOOKUP (PROTO_BASE+407)
-/// msgid:32 status:8
-/// msgid:32 inode:32 attr:35B
-
 // 0x0198
 #define CLTOMA_FUSE_GETATTR (PROTO_BASE+408)
 /// msgid:32 inode:32
@@ -736,37 +727,18 @@ enum class SugidClearMode : uint8_t {
 /// msgid:32 status:8
 /// msgid:32 inode:32 attr:35B
 
-// 0x01A0
-#define CLTOMA_FUSE_MKNOD (PROTO_BASE+416)
-/// msgid:32 inode:32 name:NAME nodetype:8 mode:16 uid:32 gid:32 rdev:32
-
 // 0x0588
 #define SAU_CLTOMA_FUSE_MKNOD (1000U + 416U)
 /// msgid:32 inode:32 name:NAME nodetype:8 mode:16 umask:16 uid:32 gid:32 rdev:32
-
-// 0x01A1
-#define MATOCL_FUSE_MKNOD (PROTO_BASE+417)
-/// msgid:32 status:8
-/// msgid:32 inode:32 attr:35B
 
 // 0x0589
 #define SAU_MATOCL_FUSE_MKNOD (1000U + 417U)
 /// version==0 msgid:32 status:8
 /// version==1 msgid:32 inode:32 attr:35B
 
-// 0x01A2
-#define CLTOMA_FUSE_MKDIR (PROTO_BASE+418)
-/// msgid:32 inode:32 name:NAME mode:16 uid:32 gid:32 copysgid:8
-/// msgid:32 inode:32 name:NAME mode:16 uid:32 gid:32 // version < 1.6.25
-
 // 0x058A
 #define SAU_CLTOMA_FUSE_MKDIR (1000U + 418U)
 /// msgid:32 inode:32 name:NAME mode:16 umask:16 uid:32 gid:32 copysgid:8
-
-// 0x01A3
-#define MATOCL_FUSE_MKDIR (PROTO_BASE+419)
-/// msgid:32 status:8
-/// msgid:32 inode:32 attr:35B
 
 // 0x058B
 #define SAU_MATOCL_FUSE_MKDIR (1000U + 419U)
@@ -830,10 +802,6 @@ enum class SugidClearMode : uint8_t {
 // since 1.6.9 if no error:
 /// msgid:32 attr:35B
 
-// 0x01B0
-#define CLTOMA_FUSE_READ_CHUNK (PROTO_BASE+432)
-/// msgid:32 inode:32 chunkindex:32
-
 // 0x01B1
 #define MATOCL_FUSE_READ_CHUNK (PROTO_BASE+433)
 /// msgid:32 status:8
@@ -849,10 +817,6 @@ enum class SugidClearMode : uint8_t {
 /// version==0 msgid:32 status:8
 /// version==1 msgid:32 filelength:64 chunkid:64 chunkversion:32 locations:(N * [ip:32 port:16 chunktype:8])
 /// version==2 msgid:32 filelength:64 chunkid:64 chunkversion:32 locations:(N * [ip:32 port:16 chunktype:16])
-
-// 0x01B2
-#define CLTOMA_FUSE_WRITE_CHUNK (PROTO_BASE+434) /* it creates, duplicates or sets new version of chunk if necessary */
-/// msgid:32 inode:32 chunkindex:32
 
 // 0x01B3
 #define MATOCL_FUSE_WRITE_CHUNK (PROTO_BASE+435)
@@ -924,16 +888,6 @@ enum class SugidClearMode : uint8_t {
 /// msgid:32 status:8
 /// msgid:32 changed:32 notchanged:32 notpermitted:32
 
-
-// 0x01BE
-#define CLTOMA_FUSE_GETGOAL (PROTO_BASE+446)
-/// msgid:32 inode:32 gmode:8
-
-// 0x01BF
-#define MATOCL_FUSE_GETGOAL (PROTO_BASE+447)
-/// msgid:32 status:8
-/// msgid:32 gdirs:8 gfiles:8 data:(gdirs * [goal:8 dirs:32] gfiles * [goal:8 files:32])
-
 // 0x05A6
 #define SAU_CLTOMA_FUSE_GETGOAL (1000U + 446U)
 /// msgid:32 inode:32 gmode:8
@@ -942,15 +896,6 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCL_FUSE_GETGOAL (1000U + 447U)
 /// version==0 msgid:32 status:8
 /// version==1 msgid:32 data:(std::vector<FuseGetGoalStats>)
-
-// 0x01C0
-#define CLTOMA_FUSE_SETGOAL (PROTO_BASE+448)
-/// msgid:32 inode:32 uid:32 goal:8 smode:8
-
-// 0x01C1
-#define MATOCL_FUSE_SETGOAL (PROTO_BASE+449)
-/// msgid:32 status:8
-/// msgid:32 changed:32 notchanged:32 notpermitted:32
 
 // 0x05A8
 #define SAU_CLTOMA_FUSE_SETGOAL (1000U + 448U)
@@ -1021,11 +966,6 @@ enum class SugidClearMode : uint8_t {
 // msgid:32 status:8
 // msgid:32 inodes:32 dirs:32 files:32 ugfiles:32 mfiles:32 chunks:32 ugchunks:32 mchunks:32 length:64 size:64 gsize:64
 
-// 0x01D0
-#define CLTOMA_FUSE_TRUNCATE (PROTO_BASE+464)
-/// msgid:32 inode:32 uid:32 gid:32 filelength:64
-/// msgid:32 inode:32 opened:8 uid:32 gid:32 filelength:64
-
 // 0x05B8
 #define SAU_CLTOMA_FUSE_TRUNCATE (1000U + 464U)
 /// msgid:32 inode:32 opened:8 uid:32 gid:32 filelength:64
@@ -1049,14 +989,6 @@ enum class SugidClearMode : uint8_t {
 #define MATOCL_FUSE_REPAIR (PROTO_BASE+467)
 /// msgid:32 status:8
 /// msgid:32 notchanged:32 erased:32 repaired:32
-
-// 0x01D4
-#define CLTOMA_FUSE_SNAPSHOT (PROTO_BASE+468)
-/// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gid:32 canoverwrite:8
-
-// 0x01D5
-#define MATOCL_FUSE_SNAPSHOT (PROTO_BASE+469)
-/// msgid:32 status:8
 
 // 0x01D6
 #define CLTOMA_FUSE_GETRESERVED (PROTO_BASE+470)

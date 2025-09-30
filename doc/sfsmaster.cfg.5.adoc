@@ -169,9 +169,6 @@ chunkservers that doesn't trigger chunk rebalancing (default is 0.1, i.e. 10%).
 chunks between servers with different labels (default is 0, i.e. chunks will be
 moved only between servers with the same label).
 
-*REJECT_OLD_CLIENTS*:: Reject **sfsmount**s older than 1.6.0 (0 or 1, default
-is 0). Note that *sfsexports* access control is NOT used for those old clients.
-
 *GLOBALIOLIMITS_FILENAME*:: Configuration of global I/O limits (default is no
 I/O limiting)
 
