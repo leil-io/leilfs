@@ -41,19 +41,17 @@ FROM test-setup AS test-build
 
 # Enable additional basic tools
 ENV PATH="/usr/lib/ccache:${PATH}"
-
-WORKDIR /
-RUN git clone https://github.com/microsoft/vcpkg.git /vcpkg;
-WORKDIR /vcpkg
-COPY vcpkg.json .
-RUN git pull;
-RUN ./bootstrap-vcpkg.sh;
-RUN --mount=type=cache,target=/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/vcpkg/packages/,sharing=locked ./vcpkg install;
-
-ENV VCPKG_ROOT="/vcpkg/"
+ENV VCPKG_ROOT="/saunafs/vcpkg/"
 ENV PATH="${VCPKG_ROOT}:${PATH}"
 
 WORKDIR /saunafs
+RUN mkdir -p .git/modules/vcpkg
+COPY .git/modules/vcpkg .git/modules/vcpkg
+COPY vcpkg/ vcpkg
+COPY vcpkg.json .
+RUN vcpkg/bootstrap-vcpkg.sh;
+RUN --mount=type=cache,target=/saunafs/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/saunafs/vcpkg/packages/,sharing=locked vcpkg/vcpkg install;
+
 COPY CMakeLists.txt .
 COPY cmake ./cmake
 COPY config.h.in .
@@ -64,11 +62,10 @@ COPY doc ./doc
 COPY tests ./tests
 COPY COPYING .
 COPY README.md .
-RUN cp /vcpkg/vcpkg.json .;
 
 RUN mkdir -p /saunafs/build && ls /saunafs && \
     cd /saunafs/build && cmake \
-	-DCMAKE_TOOLCHAIN_FILE="/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+	-DCMAKE_TOOLCHAIN_FILE="/saunafs/vcpkg/scripts/buildsystems/vcpkg.cmake" \
     -DENABLE_TESTS=1 \
     -DENABLE_DOCS=1 \
     -DENABLE_NFS_GANESHA=1 \
