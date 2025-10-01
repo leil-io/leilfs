@@ -1,6 +1,8 @@
+.git
+# Required for docker
+!.git/modules/vcpkg
 *~
 .DS_Store
-.git
 
 # Vim files #
 #############
