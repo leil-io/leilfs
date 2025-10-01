@@ -1997,10 +1997,10 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 	std::vector<ChunkPartType> all_parts;
 	ChunkCopiesCalculator calc(c->getGoal());
 
-	uint32_t destination_version = matocsserv_get_version(destination_server);
+	// Implies matocsserv_get_version(destination_server) >= kFirstECVersion
+	assert(matocsserv_get_version(destination_server) >=
+	       getMinChunkserverVersion(c, part_to_recover));
 
-	// Implies destination_version >= kFirstECVersion
-	assert(destination_version >= getMinChunkserverVersion(c, part_to_recover));
 	for (const auto &part : c->parts) {
 		if (!part.is_valid() || part.is_busy() || matocsserv_replication_read_counter(part.server()) >= MaxReadRepl) {
 			continue;
