@@ -113,18 +113,6 @@ MessageSerializer *MessageSerializer::getSerializer(PacketHeader::Type type) {
 	return &singleton;
 }
 
-std::unique_ptr<PacketStruct> ChunkserverEntry::createDetachedPacketWithOutputBuffer(
-    const std::vector<uint8_t> &packetPrefix, uint32_t numBlocks) {
-	TRACETHIS();
-
-	std::unique_ptr<PacketStruct> outPacket = std::make_unique<PacketStruct>();
-	passert(outPacket);
-
-	outPacket->outputBuffer = getReadOutputBufferPool().get(packetPrefix.size(), numBlocks);
-
-	return outPacket;
-}
-
 ChunkserverEntry::~ChunkserverEntry() {
 	if (sock >= 0) { tcpclose(sock); }
 	if (fwdSocket >= 0) { tcpclose(fwdSocket); }
@@ -133,6 +121,13 @@ ChunkserverEntry::~ChunkserverEntry() {
 // Packet/connection related
 
 void ChunkserverEntry::attachPacket(std::unique_ptr<PacketStruct> &&packet) {
+	outputPackets.push_back(std::move(packet));
+}
+
+void ChunkserverEntry::attachBuffer(std::shared_ptr<OutputBuffer> &&buffer) {
+	auto packet = std::make_unique<PacketStruct>();
+	passert(packet);
+	packet->outputBuffer = std::move(buffer);
 	outputPackets.push_back(std::move(packet));
 }
 
@@ -271,14 +266,13 @@ void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
 
 void ChunkserverEntry::delayedDiscardCallback(uint8_t status, void *entry) {
 	TRACETHIS();
-	(void) status;
-	auto *eptr = static_cast<ChunkserverEntry*>(entry);
+	(void)status;
+	auto *eptr = static_cast<ChunkserverEntry *>(entry);
 
-	while (!eptr->toDiscardReadDataPackets.empty() &&
-	       eptr->toDiscardReadDataPackets.front()->outputBuffer->getStatus() != kNotSaunafsStatus) {
-		getReadOutputBufferPool().put(
-		    std::move(eptr->toDiscardReadDataPackets.front()->outputBuffer));
-		eptr->toDiscardReadDataPackets.pop_front();
+	while (!eptr->toDiscardReadDataBuffers.empty() &&
+	       eptr->toDiscardReadDataBuffers.front()->getStatus() != kNotSaunafsStatus) {
+		getReadOutputBufferPool().put(std::move(eptr->toDiscardReadDataBuffers.front()));
+		eptr->toDiscardReadDataBuffers.pop_front();
 		eptr->toDiscardReadJobIds.pop_front();
 	}
 
@@ -289,21 +283,21 @@ void ChunkserverEntry::delayedDiscardCallback(uint8_t status, void *entry) {
 
 void ChunkserverEntry::readDiscardCallback(uint8_t status, void *entry) {
 	TRACETHIS();
-	(void) status;
+	(void)status;
 	auto *eptr = static_cast<ChunkserverEntry *>(entry);
 
 	// jobId <--> related packet, maintaining the order
-	assert(eptr->toDiscardReadJobIds.size() == eptr->toDiscardReadDataPackets.size());
+	assert(eptr->toDiscardReadJobIds.size() == eptr->toDiscardReadDataBuffers.size());
 
 	auto jobsIt = eptr->toDiscardReadJobIds.begin();
-	for (auto packetsIt = eptr->toDiscardReadDataPackets.begin();
-	     packetsIt != eptr->toDiscardReadDataPackets.end();) {
-		if ((*packetsIt)->outputBuffer->getStatus() != kNotSaunafsStatus) {
-			getReadOutputBufferPool().put(std::move((*packetsIt)->outputBuffer));
-			packetsIt = eptr->toDiscardReadDataPackets.erase(packetsIt);
+	for (auto buffersIt = eptr->toDiscardReadDataBuffers.begin();
+	     buffersIt != eptr->toDiscardReadDataBuffers.end();) {
+		if ((*buffersIt)->getStatus() != kNotSaunafsStatus) {
+			getReadOutputBufferPool().put(std::move(*buffersIt));
+			buffersIt = eptr->toDiscardReadDataBuffers.erase(buffersIt);
 			jobsIt = eptr->toDiscardReadJobIds.erase(jobsIt);
 		} else {
-			packetsIt++;
+			buffersIt++;
 			jobsIt++;
 		}
 	}
@@ -319,26 +313,26 @@ void ChunkserverEntry::prepareDiscardReadJobs() {
 	auto disabledJobIds = workerJobPool->disableJobs(pendingReadJobIds);
 	workerJobPool->changeCallback(pendingReadJobIds, readDiscardCallback, this);
 	while (!pendingReadJobIds.empty()) {
-		// pendingReadJobIds and pendingReadDataPackets should have the related elements in the
+		// pendingReadJobIds and pendingReadDataBuffers should have the related elements in the
 		// correct order
-		if (pendingReadDataPackets.front()->outputBuffer->getStatus() == kNotSaunafsStatus &&
+		if (pendingReadDataBuffers.front()->getStatus() == kNotSaunafsStatus &&
 		    (disabledJobIds.empty() || disabledJobIds.front() != pendingReadJobIds.front())) {
 			toDiscardReadJobIds.push_back(pendingReadJobIds.front());
-			toDiscardReadDataPackets.emplace_back(std::move(pendingReadDataPackets.front()));
+			toDiscardReadDataBuffers.emplace_back(std::move(pendingReadDataBuffers.front()));
 		} else {
 			// Already processed packets, can be moved to the pool
-			getReadOutputBufferPool().put(std::move(pendingReadDataPackets.front()->outputBuffer));
+			getReadOutputBufferPool().put(std::move(pendingReadDataBuffers.front()));
 			if (!disabledJobIds.empty() && disabledJobIds.front() == pendingReadJobIds.front()) {
 				disabledJobIds.pop();
 			}
 		}
 
 		pendingReadJobIds.pop_front();
-		pendingReadDataPackets.pop_front();
+		pendingReadDataBuffers.pop_front();
 	}
 	assert(disabledJobIds.empty());
 	assert(pendingReadJobIds.empty());
-	assert(pendingReadDataPackets.empty());
+	assert(pendingReadDataBuffers.empty());
 }
 
 void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
@@ -373,7 +367,7 @@ void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 	}
 }
 
-std::unique_ptr<PacketStruct> ChunkserverEntry::prepareReadDataPacket(
+std::shared_ptr<OutputBuffer> ChunkserverEntry::prepareReadDataPacket(
     std::vector<uint8_t> &readDataPrefix, uint32_t jobSize, uint32_t jobOffset) {
 	const uint32_t numBlocks = (jobSize + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
@@ -381,7 +375,7 @@ std::unique_ptr<PacketStruct> ChunkserverEntry::prepareReadDataPacket(
 	messageSerializer->serializePrefixOfCstoclReadData(
 	    readDataPrefix, chunkId, offset, std::min<uint32_t>(jobSize, SFSBLOCKSIZE - jobOffset));
 
-	auto packet = createDetachedPacketWithOutputBuffer(readDataPrefix, numBlocks);
+	auto buffer = getReadOutputBufferPool().get(readDataPrefix.size(), numBlocks);
 
 	for (uint32_t i = 0; i < numBlocks; i++) {
 		if (i > 0) {  // first block is already serialized
@@ -390,32 +384,29 @@ std::unique_ptr<PacketStruct> ChunkserverEntry::prepareReadDataPacket(
 			    readDataPrefix, chunkId, offset - jobOffset + (i * SFSBLOCKSIZE), SFSBLOCKSIZE);
 		}
 
-		if (packet->outputBuffer->copyIntoBuffer(OutputBuffer::BufferType::Header,
-		                                         readDataPrefix) !=
+		if (buffer->copyIntoBuffer(OutputBuffer::BufferType::Header, readDataPrefix) !=
 		    static_cast<ssize_t>(readDataPrefix.size())) {
-			if (packet->outputBuffer) {
-				getReadOutputBufferPool().put(std::move(packet->outputBuffer));
-			}
+			if (buffer) { getReadOutputBufferPool().put(std::move(buffer)); }
 
 			return kInvalidPacket;
 		}
 	}
 
-	return packet;
+	return buffer;
 }
 
 void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 	TRACETHIS2(offset, size);
 
-	while (!pendingReadDataPackets.empty() &&
-	       pendingReadDataPackets.front()->outputBuffer->getStatus() == SAUNAFS_STATUS_OK) {
-		attachPacket(std::move(pendingReadDataPackets.front()));
-		pendingReadDataPackets.pop_front();
+	while (!pendingReadDataBuffers.empty() &&
+	       pendingReadDataBuffers.front()->getStatus() == SAUNAFS_STATUS_OK) {
+		attachBuffer(std::move(pendingReadDataBuffers.front()));
+		pendingReadDataBuffers.pop_front();
 		workerJobPool->changeCallback(pendingReadJobIds.front(), kEmptyCallback, kEmptyExtra);
 		pendingReadJobIds.pop_front();
 	}
 
-	if (pendingReadDataPackets.empty() && size == 0) {  // everything has been read
+	if (pendingReadDataBuffers.empty() && size == 0) {  // everything has been read
 		std::vector<uint8_t> buffer;
 		messageSerializer->serializeCstoclReadStatus(
 		    buffer, chunkId, SAUNAFS_STATUS_OK);
@@ -431,7 +422,7 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 	} else {
 		std::vector<uint8_t> readDataPrefix;
 
-		while (size > 0 && pendingReadDataPackets.size() < callMaxParallelHddReadJobs) {
+		while (size > 0 && pendingReadDataBuffers.size() < callMaxParallelHddReadJobs) {
 			const uint32_t totalRequestSize = size;
 			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
 			const uint32_t thisPartSize = std::min<uint32_t>(
@@ -439,13 +430,13 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 			const uint16_t totalRequestBlocks =
 			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
-			auto packet = prepareReadDataPacket(readDataPrefix, thisPartSize, thisPartOffset);
-			if (packet == kInvalidPacket) {
+			auto buffer = prepareReadDataPacket(readDataPrefix, thisPartSize, thisPartOffset);
+			if (buffer == kInvalidPacket) {
 				state = State::Close;
 				return;
 			}
 
-			pendingReadDataPackets.emplace_back(std::move(packet));
+			pendingReadDataBuffers.emplace_back(std::move(buffer));
 
 			uint32_t readAheadBlocks = 0;
 			uint32_t maxReadBehindBlocks = 0;
@@ -462,12 +453,11 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 			uint32_t readJobId =
 			    job_read(*workerJobPool, readFinishedCallback, this, chunkId, chunkVersion,
 			             chunkType, offset, thisPartSize, maxReadBehindBlocks, readAheadBlocks,
-			             pendingReadDataPackets.back()->outputBuffer.get(), !isChunkOpen);
+			             pendingReadDataBuffers.back().get(), !isChunkOpen);
 
 			if (readJobId == 0) {
-				getReadOutputBufferPool().put(
-				    std::move(pendingReadDataPackets.back()->outputBuffer));
-				pendingReadDataPackets.pop_back();
+				getReadOutputBufferPool().put(std::move(pendingReadDataBuffers.back()));
+				pendingReadDataBuffers.pop_back();
 				state = State::Close;
 				return;
 			}
@@ -626,7 +616,7 @@ void ChunkserverEntry::startNextWriteJob() {
 void ChunkserverEntry::writeCurrentInputPacket() {
 	TRACETHIS();
 
-	writeDataBuffers.emplace_back(std::move(inputPacket.inputBuffer));
+	writeDataBuffers.emplace_back(std::move(inputBuffer));
 	if (!isWriteJobBeingProcessed()) {
 		startNextWriteJob();
 	}
@@ -702,19 +692,19 @@ void ChunkserverEntry::openWriteFinishedCallback(uint8_t status, void *entry) {
 }
 
 void ChunkserverEntry::prepareInputBufferForWrite(bool isForward) {
-	if (inputPacket.inputBuffer != nullptr && inputPacket.inputBuffer->isFull()) {
+	if (inputBuffer != nullptr && inputBuffer->isFull()) {
 		safs::log_warn("({}) Called with full inputBuffer, isForward: {}. Writing existing buffer.",
 		               __func__, isForward);
 		writeCurrentInputPacket();
 	}
 
-	if (inputPacket.inputBuffer == nullptr) {
-		inputPacket.inputBuffer = getWriteInputBufferPool().get(
+	if (inputBuffer == nullptr) {
+		inputBuffer = getWriteInputBufferPool().get(
 		    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize,
 		    maxBlocksPerHddWriteJob);
 	}
 
-	inputPacket.inputBuffer->addNewWriteOperation();
+	inputBuffer->addNewWriteOperation();
 }
 
 void serializeCltocsWriteInit(std::vector<uint8_t> &buffer, uint64_t chunkId, uint32_t chunkVersion,
@@ -792,7 +782,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	uint8_t status = SAUNAFS_STATUS_OK;
-	if (!inputPacket.inputBuffer->isHeaderSizeValid()) {
+	if (!inputBuffer->isHeaderSizeValid()) {
 		status = SAUNAFS_ERROR_WRONGSIZE;
 	} else if (opChunkId != chunkId) {
 		status = SAUNAFS_ERROR_WRONGCHUNKID;
@@ -807,10 +797,10 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 
-	inputPacket.inputBuffer->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
+	inputBuffer->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
 
 	// No write jobs in progress or current input buffer is full - write it
-	if (!isWriteJobBeingProcessed() || inputPacket.inputBuffer->isFull()) {
+	if (!isWriteJobBeingProcessed() || inputBuffer->isFull()) {
 		writeCurrentInputPacket();
 	}
 }
@@ -896,9 +886,9 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		fwdSocket = kInvalidSocket;
 	}
 
-	if (inputPacket.inputBuffer != nullptr) {
+	if (inputBuffer != nullptr) {
 		safs::log_info("Received WRITE_END message while there is still non-null input buffer. Returning it to pool.");
-		getWriteInputBufferPool().put(std::move(inputPacket.inputBuffer));
+		getWriteInputBufferPool().put(std::move(inputBuffer));
 	}
 
 	state = State::Idle;
@@ -1034,7 +1024,7 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 
 void ChunkserverEntry::outputCheckReadFinished() {
 	TRACETHIS();
-	if (state == State::Read && (!pendingReadDataPackets.empty() || size > 0)) {
+	if (state == State::Read && (!pendingReadDataBuffers.empty() || size > 0)) {
 		readContinue(maxParallelHddReadJobs);
 	}
 }
@@ -1056,9 +1046,9 @@ void ChunkserverEntry::closeJobs() {
 		workerJobPool->disableJob(writeJobId);
 		workerJobPool->changeCallback(writeJobId, delayedCloseCallback, this);
 
-		if (inputPacket.inputBuffer != nullptr) {
+		if (inputBuffer != nullptr) {
 			/// Drop the input buffer, it won't be used anymore
-			getWriteInputBufferPool().put(std::move(inputPacket.inputBuffer));
+			getWriteInputBufferPool().put(std::move(inputBuffer));
 		}
 
 		pendingDelayedJobs++;
@@ -1346,10 +1336,10 @@ void ChunkserverEntry::forward() {
 		// Check if we can use aligned memory directly
 		if (header.type == SAU_CLTOCS_WRITE_DATA) {
 			prepareInputBufferForWrite(true);
-			inputPacket.inputBuffer->copyIntoBuffer(InputBuffer::BufferType::Header, headerBuffer,
-			                                        PacketHeader::kSize);
+			inputBuffer->copyIntoBuffer(InputBuffer::BufferType::Header, headerBuffer,
+			                            PacketHeader::kSize);
 			inputPacket.startPtr = const_cast<uint8_t *>(
-			    inputPacket.inputBuffer->getStartLastWriteOperationHeader() + PacketHeader::kSize);
+			    inputBuffer->getStartLastWriteOperationHeader() + PacketHeader::kSize);
 
 			inputPacket.bytesLeft = header.length;
 		} else {
@@ -1364,8 +1354,8 @@ void ChunkserverEntry::forward() {
 			fwdBytesLeft = PacketHeader::kSize;
 			// Use the correct buffer for forwarding
 			if (header.type == SAU_CLTOCS_WRITE_DATA) {
-				fwdStartPtr = const_cast<uint8_t *>(
-				    inputPacket.inputBuffer->getStartLastWriteOperationHeader());
+				fwdStartPtr =
+				    const_cast<uint8_t *>(inputBuffer->getStartLastWriteOperationHeader());
 			} else {
 				fwdStartPtr = inputPacket.packet.data();
 			}
@@ -1376,7 +1366,7 @@ void ChunkserverEntry::forward() {
 
 	if (inputPacket.bytesLeft > 0) {
 		if (isLastHeaderTypeWriteData()) {
-			bytesReadOrWritten = inputPacket.inputBuffer->readFromSocket(sock, inputPacket.bytesLeft);
+			bytesReadOrWritten = inputBuffer->readFromSocket(sock, inputPacket.bytesLeft);
 		} else {
 			bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
 		}
@@ -1405,7 +1395,7 @@ void ChunkserverEntry::forward() {
 	if (fwdBytesLeft > 0) {
 		sassert(fwdStartPtr != nullptr);
 		if (isLastHeaderTypeWriteData()) {
-			bytesReadOrWritten = inputPacket.inputBuffer->writeToSocket(fwdSocket, fwdBytesLeft);
+			bytesReadOrWritten = inputBuffer->writeToSocket(fwdSocket, fwdBytesLeft);
 		} else {
 			bytesReadOrWritten = ::write(fwdSocket, fwdStartPtr, fwdBytesLeft);
 		}
@@ -1442,8 +1432,8 @@ void ChunkserverEntry::forward() {
 
 		uint8_t *packetData{nullptr};
 		if (isLastHeaderTypeWriteData()) {
-			packetData = const_cast<uint8_t *>(
-			    inputPacket.inputBuffer->getStartLastWriteOperationHeader() + PacketHeader::kSize);
+			packetData = const_cast<uint8_t *>(inputBuffer->getStartLastWriteOperationHeader() +
+			                                   PacketHeader::kSize);
 		} else {
 			packetData = inputPacket.packet.data() + PacketHeader::kSize;
 		}
@@ -1494,8 +1484,8 @@ void ChunkserverEntry::readFromSocket() {
 
 			if (type == SAU_CLTOCS_WRITE_DATA) {
 				prepareInputBufferForWrite(false);
-				inputPacket.startPtr = const_cast<uint8_t *>(
-				    inputPacket.inputBuffer->getStartLastWriteOperationHeader());
+				inputPacket.startPtr =
+				    const_cast<uint8_t *>(inputBuffer->getStartLastWriteOperationHeader());
 			} else {
 				inputPacket.packet.resize(opSize);
 				passert(inputPacket.packet.data());
@@ -1509,7 +1499,7 @@ void ChunkserverEntry::readFromSocket() {
 	if (mode == Mode::Data) {
 		if (inputPacket.bytesLeft > 0) {
 			if (isLastHeaderTypeWriteData()) {
-				bytesRead = inputPacket.inputBuffer->readFromSocket(sock, inputPacket.bytesLeft);
+				bytesRead = inputBuffer->readFromSocket(sock, inputPacket.bytesLeft);
 			} else {
 				bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
 			}
@@ -1542,7 +1532,7 @@ void ChunkserverEntry::readFromSocket() {
 		inputPacket.startPtr = headerBuffer;
 
 		if (isLastHeaderTypeWriteData()) {
-			gotPacket(type, inputPacket.inputBuffer->getStartLastWriteOperationHeader(), opSize);
+			gotPacket(type, inputBuffer->getStartLastWriteOperationHeader(), opSize);
 		} else {
 			gotPacket(type, inputPacket.packet.data(), opSize);
 		}

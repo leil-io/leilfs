@@ -60,8 +60,6 @@ struct PacketStruct {
 	uint32_t bytesLeft = 0;
 	std::vector<uint8_t> packet;
 
-	std::shared_ptr<InputBuffer> inputBuffer;
-
 	std::shared_ptr<OutputBuffer> outputBuffer;
 };
 
@@ -142,6 +140,7 @@ struct ChunkserverEntry {
 	/* write */
 	uint32_t writeJobId = 0; ///< ID of the current write job being processed
 	uint32_t writeJobWriteId = 0; ///< Specific write operation from client
+	std::shared_ptr<InputBuffer> inputBuffer = nullptr; ///< Buffer for the current write job
 	/// writeJobWriteId's which:
 	/// - have been completed by our worker, but need ack from the next
 	///   chunkserver from the chain.
@@ -153,13 +152,13 @@ struct ChunkserverEntry {
 
 	/* read */
 	uint16_t maxBlocksPerHddReadJob; ///< Number of blocks to read from the device in one read job.
-	uint16_t maxParallelHddReadJobs; ///< Maximum size of pendingReadDataPackets.
+	uint16_t maxParallelHddReadJobs; ///< Maximum size of pendingReadDataBuffers.
 
-	/// List of read data packets waiting for the HDD worker to finish, and then be sent.
-	std::list<std::unique_ptr<PacketStruct>> pendingReadDataPackets;
+	/// List of output buffers waiting for the HDD worker to finish, and then be sent.
+	std::list<std::shared_ptr<OutputBuffer>> pendingReadDataBuffers;
 	std::list<uint32_t> pendingReadJobIds; ///< Job IDs for pending read operations.
-	/// List of read data packets within a failing read operation, which are to be discarded.
-	std::list<std::unique_ptr<PacketStruct>> toDiscardReadDataPackets;
+	/// List of output buffers within a failing read operation, which are to be discarded.
+	std::list<std::shared_ptr<OutputBuffer>> toDiscardReadDataBuffers;
 	std::list<uint32_t> toDiscardReadJobIds; ///< Job IDs for read operations to discard.
 
 	/* get blocks */
@@ -239,6 +238,9 @@ struct ChunkserverEntry {
 	/// Attaches a packet to the output packet list (taking ownership).
 	inline void attachPacket(std::unique_ptr<PacketStruct> &&packet);
 
+	/// Attaches an output buffer to the output packet list (taking ownership).
+	inline void attachBuffer(std::shared_ptr<OutputBuffer> &&buffer);
+
 	/// Creates an attached packet from the given vector.
 	/// The function takes ownership of the vector.
 	void createAttachedPacket(std::vector<uint8_t> &packet);
@@ -252,11 +254,6 @@ struct ChunkserverEntry {
 	/// @param operationSize The size of the operation.
 	/// @return Pointer to the created packet data.
 	uint8_t *createAttachedPacket(uint32_t type, uint32_t operationSize);
-
-	/// Creates a detached packet with an output buffer.
-	/// @see OutputBufferPool
-	static std::unique_ptr<PacketStruct> createDetachedPacketWithOutputBuffer(
-	    const std::vector<uint8_t> &packetPrefix, uint32_t numBlocks);
 
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.
@@ -339,16 +336,16 @@ struct ChunkserverEntry {
 	void readInit(const uint8_t *data, PacketHeader::Type type,
 	              PacketHeader::Length length);
 
-	/// Prepares a read data packet.
+	/// Prepares a read data buffer.
 	///
-	/// Creates the packet to be used in the read operation and assigns the OutputBuffer to it.
-	/// The packet is then provided with the headers of the blocks to be read.
+	/// Creates the OutputBuffer to be used in the read operation.
+	/// It is then provided with the headers of the blocks to be read.
 	///
 	/// @param readDataPrefix A buffer to store the read data prefix.
 	/// @param jobSize The size of the job.
 	/// @param jobOffset The offset of the job.
-	/// @return A unique pointer to the prepared packet.
-	std::unique_ptr<PacketStruct> prepareReadDataPacket(std::vector<uint8_t> &readDataPrefix,
+	/// @return A shared pointer to the prepared OutputBuffer.
+	std::shared_ptr<OutputBuffer> prepareReadDataPacket(std::vector<uint8_t> &readDataPrefix,
 	                                                    uint32_t jobSize, uint32_t jobOffset);
 
 	/// Continues a previously started read operation.
