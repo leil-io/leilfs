@@ -1,60 +1,34 @@
 
-#include "common/platform.h"
+#include "common/platform.h"  // NOLINT
 
 #include <pthread.h>
 #include <atomic>
-#include <boost/asio/placeholders.hpp>
-#include <condition_variable>
-#include <deque>
 #include <format>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 
-#include "config/cfg.h"
 #include "fdb/fdb.h"
+#include "fdb/fdb_codecs.h"
 #include "fdb/fdb_context.h"
+#include "fdb/fdb_schema.h"
 #include "master/changelog_db.h"
 #include "slogger/slogger.h"
 
 namespace {
 
-void set_thread_name(std::string_view name) {
-#if defined(__linux__)
-	constexpr int kMaxThreadNameLen = 16;  // Linux cap
-	const  std::string truncated(name.substr(0, kMaxThreadNameLen));
-	pthread_setname_np(pthread_self(), truncated.data());
-#elif defined(__APPLE__)
-	constexpr int kMaxThreadNameLen = 64;  // macOS cap
-	const  std::string truncated(name.substr(0, kMaxThreadNameLen));
-	pthread_setname_np(truncated.data());
-#elif defined(_WIN32)
-	// Wide string required
-	std::wstring wname{name.begin(), name.end()};
-	HRESULT hr = SetThreadDescription(GetCurrentThread(), wname.c_str());
-	(void)hr;  // ignore failure
-#else
-	(void)name;  // no-op
-#endif
+std::string encodeChangelogEntry(const uint64_t version) {
+	return fdb::utils::composeKey({fdb::schema::CHANGELOG, fdb::schema::CHANGELOG_DATA_ENTRY},
+	                              version);
 }
 
-struct ThreadNamer {
-	explicit ThreadNamer(std::string_view name) { set_thread_name(name); }
-};
-
-}  // namespace
-
-namespace {
-
-constexpr const char *INDEX_KEY = "__last_version__";
-
-// Format version as a zero-padded key for lexicographic ordering
-std::string makeKey(const std::string &prefix, uint64_t version) {
-	return std::format("{}{:020}", prefix, version);
+std::string encodeChangelogIndex() {
+	static auto changelogIndex =
+	    fdb::utils::composeKey({fdb::schema::CHANGELOG}, fdb::schema::CHANGELOG_META_INDEX);
+	return changelogIndex;
 }
 
-// Helper conversions
+// // Helper conversions
 kv::Key toKey(const std::string &strKey) { return {strKey.begin(), strKey.end()}; }
 
 // as kv::Key and kv::Value are the same type, only one function is needed
@@ -77,14 +51,8 @@ struct ChangelogDb::ChangelogDbImpl {
 	std::shared_ptr<fdb::FDBContext> context;
 	std::shared_ptr<fdb::DB> db;
 	std::string prefix{"changelog/"};
-	bool kAsync = false;  // Write asynchronously
+	std::string entriesPrefix;
 
-	// Async writer
-	std::jthread worker;
-	std::mutex mtx;
-	std::condition_variable cv;
-	std::deque<std::pair<uint64_t, std::string>> queue;
-	std::atomic<bool> stop{false};
 	std::atomic<uint64_t> lastVersion{0};
 
 	static constexpr size_t kMaxQueueSize = 10000;
@@ -93,15 +61,15 @@ struct ChangelogDb::ChangelogDbImpl {
 	ChangelogDbImpl() {
 		safs::log_info("Initializing FDB changelog backend");
 		try {
+			entriesPrefix = fdb::utils::encodePrefix({
+			    fdb::schema::CHANGELOG,
+			    fdb::schema::CHANGELOG_DATA_ENTRY,
+			});
 			context = getSharedContext();
 			if (!context) {
 				safs::log_warn("FDB context unavailable - changelog writes disabled");
 				return;
 			}
-
-			kAsync = cfg_get("CHANGELOG_DB_ASYNC", "NO") == "YES";
-			auto envKAsync = std::getenv("CHANGELOG_DB_ASYNC");
-			if (envKAsync) { kAsync = std::string_view(envKAsync) == "YES"; }
 
 			db = context->getDB();
 			if (!db) {
@@ -112,54 +80,15 @@ struct ChangelogDb::ChangelogDbImpl {
 			// Load the last written version
 			loadLastVersion();
 
-			if (kAsync) {
-				// Start background worker
-				// NOLINTNEXTLINE(performance-unnecessary-value-param)
-				worker = std::jthread([this](std::stop_token stopToken) {
-					[[maybe_unused]] const ThreadNamer threadName("changelog_fdb");
-					this->run(stopToken);
-				});
-			}
-
 		} catch (const std::exception &e) {
 			safs::log_err("FDB initialization failed: {}", e.what());
 			db = nullptr;
 		}
 	}
 
-	~ChangelogDbImpl() {
-		stop = true;
-		cv.notify_all();
-		if (worker.joinable()) { worker.join(); }
-	}
-
-	// Deleted copy constructor and assignment operator
-	ChangelogDbImpl(const ChangelogDbImpl &other) = delete;
-	ChangelogDbImpl &operator=(const ChangelogDbImpl &other) = delete;
-	ChangelogDbImpl(ChangelogDbImpl &&other) = delete;
-	ChangelogDbImpl &operator=(ChangelogDbImpl &&other) = delete;
-
-	void put(uint64_t version, const std::string &entry) {
-		if (kAsync) {
-			enqueue(version, entry);
-		} else {
-			writeOne(version, entry);
-		}
-	}
+	void put(uint64_t version, const std::string &entry) { writeOne(version, entry); }
 
 private:
-	void enqueue(uint64_t version, std::string entry) {
-		safs::log_info("Enqueueing FDB changelog version {}", version);
-		const std::unique_lock<std::mutex> lock(mtx);
-		if (queue.size() >= kMaxQueueSize) {
-			safs::log_err("FDB changelog queue full ({}), dropping version {}", kMaxQueueSize,
-			              version);
-			return;
-		}
-		queue.emplace_back(version, std::move(entry));
-		cv.notify_one();
-	}
-
 	void writeOne(uint64_t version, std::string entry) {
 		safs::log_info("Writing FDB changelog version {}", version);
 		writeBatch({{version, std::move(entry)}});
@@ -167,7 +96,8 @@ private:
 
 	void loadLastVersion() {
 		fdb::Transaction transaction(db.get());
-		auto result = transaction.get(toKey(prefix + INDEX_KEY), /*snapshot=*/true);
+		auto result = transaction.get(toKey(encodeChangelogIndex()),
+		                              /*snapshot=*/true);
 
 		if (result.has_value()) {
 			lastVersion = std::stoull(toString(*result));
@@ -175,36 +105,6 @@ private:
 		} else {
 			lastVersion = 0;
 			safs::log_warn("FDB changelog is empty, starting from version 0");
-		}
-	}
-
-	void run(const std::stop_token &stopToken) {
-		safs::log_info("FDB changelog writer thread running");
-		std::vector<std::pair<uint64_t, std::string>> batch;
-		batch.reserve(kBatchSize);
-
-		while (!stopToken.stop_requested()) {
-			// Collect batch
-			{
-				std::unique_lock<std::mutex> lock(mtx);
-				cv.wait(lock, [&] {
-					return stopToken.stop_requested() || !queue.empty();
-				});
-
-				if (stopToken.stop_requested() && queue.empty()) { break; }
-
-				// Drain up to kBatchSize items
-				while (!queue.empty() && batch.size() < kBatchSize) {
-					batch.push_back(std::move(queue.front()));
-					queue.pop_front();
-				}
-			}
-
-			if (batch.empty()) { continue; }
-
-			// Write batch in single transaction
-			writeBatch(batch);
-			batch.clear();
 		}
 	}
 
@@ -218,13 +118,13 @@ private:
 
 		// Set all entries in transaction
 		for (const auto &[version, entry] : batch) {
-			const std::string key = makeKey(prefix, version);
+			const std::string key = encodeChangelogEntry(version);
 			transaction.set(toKey(key), toValue(entry));
 			maxVersion = std::max(maxVersion, version);
 		}
 
 		// Update index
-		transaction.set(toKey(prefix + INDEX_KEY), toValue(std::to_string(maxVersion)));
+		transaction.set(toKey(encodeChangelogIndex()), toValue(std::to_string(maxVersion)));
 
 		// Commit
 		if (!transaction.commit()) {
@@ -272,28 +172,28 @@ uint64_t ChangelogDb::getFirstLogVersion() const {
 	try {
 		fdb::Transaction transaction(impl->db.get());
 
-		// Get first key in range
-		const std::string startKey = impl->prefix;
-		const std::string endKey = impl->prefix + "\xff";
+		const auto [rangeBeginKey, rangeEndKey] = fdb::utils::makePrefixRange(impl->entriesPrefix);
+		auto range = transaction.getRange(
+		    kv::KeySelector(kv::toU8Vector(rangeBeginKey), /*inclusive=*/true, 0),
+		    kv::KeySelector(kv::toU8Vector(rangeEndKey), /*inclusive=*/false, 0),
+		    /*limit=*/1, 0, true, false, FDB_STREAMING_MODE_SMALL);
 
-		auto range = transaction.getRange(kv::KeySelector(toKey(startKey), true, 0),
-		                                  kv::KeySelector(toKey(endKey), false, 0),
-		                                  /*limit=*/1, 0, true, false, FDB_STREAMING_MODE_SMALL);
-
-		const auto &pairs = range.getPairs();
-
-		if (pairs.empty()) { return 0; }
+		const auto &keyValuePairs = range.getPairs();
+		if (keyValuePairs.empty()) { return 0; }
 
 		// Extract version from the key: "changelog/00000000000000001234"
-		const std::string keyStr = toString(pairs[0].key);
+		const auto &firstKeyVector = keyValuePairs.front().key;
+		const size_t prefixLength = impl->entriesPrefix.size();
 
-		// Skip index_key if present
-		if (keyStr.find(INDEX_KEY) != std::string::npos) { return 0; }
+		// Expect layout: [prefix][BE64(version)]
+		if (firstKeyVector.size() != prefixLength + fdb::utils::BE64_SIZE) { return 0; }
 
-		// Parse version from padded suffix
-		if (keyStr.size() <= impl->prefix.size()) { return 0; }
-
-		return std::stoull(keyStr.substr(impl->prefix.size()));
+		// NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
+		const std::string_view versionBytes(
+		    reinterpret_cast<const char *>(firstKeyVector.data()) + prefixLength,
+		    fdb::utils::BE64_SIZE);
+		// NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
+		return fdb::utils::decodeBE64(versionBytes);
 
 	} catch (const std::exception &e) {
 		safs::log_exception(e, "getFirstLogVersion failed");
@@ -311,12 +211,19 @@ uint64_t ChangelogDb::getLastLogVersion() const {
 	try {
 		// Fast path: read from index
 		fdb::Transaction transaction(impl->db.get());
-		auto result = transaction.get(toKey(impl->prefix + INDEX_KEY), /*snapshot=*/true);
 
-		if (!result.has_value()) { return 0; }
+		const std::string indexKey = encodeChangelogIndex();
+		auto optionalValue = transaction.get(toKey(indexKey), /*snapshot=*/true);
+		if (!!optionalValue) { return 0; }
 
-		return std::stoull(toString(*result));
+		const auto &valueVector = *optionalValue;
 
+		if (valueVector.empty()) { return 0; }
+
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+		const std::string_view versionByte(reinterpret_cast<const char *>(valueVector.data()),
+		                                   fdb::utils::BE64_SIZE);
+		return fdb::utils::decodeBE64(versionByte);
 	} catch (const std::exception &e) {
 		safs::log_exception(e, "getLastLogVersion failed");
 		return 0;

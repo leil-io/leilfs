@@ -116,6 +116,14 @@ inline std::string cfg_get(const char* name, const std::string defaultValue) {
 	return cfg_getstring(name, defaultValue);
 }
 
+// Read config prioritizing environment if available
+inline std::string cfg_env_get(const char *name, const std::string &defaultValue) {
+	if (const char *envValue = std::getenv(name)) {
+		return {envValue};
+	}
+	return cfg_get(name, defaultValue);
+}
+
 template <class T>
 T cfg_get_minvalue(const char* name, T defaultValue, T minValue) {
 	T configValue = cfg_get(name, defaultValue);

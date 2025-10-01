@@ -44,14 +44,6 @@ inline void check_fdb_op(auto &&cmd, std::string msg) {
 	check_fdb_err(err, msg);
 }
 
-// Read config prioritizing environment vars
-inline std::string read_config(const char *key, const std::string &defaultValue) {
-	if (auto envValue = std::string(std::getenv(key)); !envValue.empty()) {
-		return envValue;
-	}
-	return cfg_get(key, defaultValue);
-}
-
 std::shared_ptr<FDBContext> FDBContext::create(FDBConfig &&config) {
 	return std::shared_ptr<FDBContext>(new FDBContext(std::move(config)));
 }
@@ -70,7 +62,7 @@ FDBContext::FDBContext(FDBConfig &&config) : config_(std::move(config)) {
 			            "Failed to set FDB external client directory");
 		}
 
-		const auto clusterFile = read_config("FDB_CLUSTER_FILE", config_.clusterFile);
+		const auto clusterFile = cfg_env_get("FDB_CLUSTER_FILE", config_.clusterFile);
 		if (!clusterFile.empty()) {
 			// Allow setting cluster file path globally via network option
 			check_fdb_op(DB::setNetworkOption(FDB_NET_OPTION_CLUSTER_FILE, clusterFile),
