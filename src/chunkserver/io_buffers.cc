@@ -91,7 +91,7 @@ bool OutputBuffer::checkCRC(size_t bytes, uint32_t crc, uint32_t startingOffset)
 
 ssize_t OutputBuffer::copyIntoBuffer(BufferType type, IChunk *chunk, size_t len, off_t offset) {
 	if (type != BufferType::Block) {
-		safs::log_warn("(OutputBuffer) Invalid buffer type, using block buffer");
+		safs::log_warn("(OutputBuffer::{}) Invalid buffer type, using block buffer", __func__);
 		type = BufferType::Block;
 	}
 
@@ -107,7 +107,7 @@ ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const void *mem, size_t le
 	case BufferType::Header:
 		return headerBuffer_.copyIntoBuffer(mem, len);
 	default:
-		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		safs::log_warn("(OutputBuffer::{}) Invalid buffer type", __func__);
 		return 0;
 	}
 }
@@ -121,7 +121,7 @@ ssize_t OutputBuffer::copyIntoBuffer(BufferType type, const std::vector<uint8_t>
 	case BufferType::Header:
 		return headerBuffer_.copyIntoBuffer(mem.data(), mem.size());
 	default:
-		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		safs::log_warn("(OutputBuffer::{}) Invalid buffer type", __func__);
 		return 0;
 	}
 }
@@ -135,7 +135,7 @@ ssize_t OutputBuffer::copyValueIntoBuffer(BufferType type, uint8_t value, size_t
 	case BufferType::Header:
 		return headerBuffer_.copyValueIntoBuffer(value, len);
 	default:
-		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		safs::log_warn("(OutputBuffer::{}) Invalid buffer type", __func__);
 		return 0;
 	}
 }
@@ -149,7 +149,7 @@ const uint8_t *OutputBuffer::rawData(BufferType type) const {
 	case BufferType::Header:
 		return headerBuffer_.paddedIndex(0);
 	default:
-		safs::log_warn("(OutputBuffer) Invalid buffer type");
+		safs::log_warn("(OutputBuffer::{}) Invalid buffer type", __func__);
 		return 0;
 	}
 }
@@ -222,7 +222,7 @@ ssize_t InputBuffer::copyIntoBuffer(BufferType type, const void *mem, size_t len
 	case BufferType::Header:
 		return headerBuffer_.copyIntoBuffer(mem, len);
 	default:
-		safs::log_warn("(InputBuffer::copyIntoBuffer) Invalid buffer type");
+		safs::log_warn("(InputBuffer::{}) Invalid buffer type", __func__);
 		return 0;
 	}
 }
@@ -234,15 +234,14 @@ const uint8_t *InputBuffer::rawData(BufferType type) const {
 	case BufferType::Header:
 		return headerBuffer_.paddedIndex(0);
 	default:
-		safs::log_warn("(InputBuffer::rawData) Invalid buffer type");
+		safs::log_warn("(InputBuffer::{}) Invalid buffer type", __func__);
 		return 0;
 	}
 }
 
 const uint8_t *InputBuffer::getStartLastWriteOperationHeader() {
 	if (writeInfo_.empty()) {
-		safs::log_warn(
-		    "InputBuffer::getStartLastWriteOperationHeader called without any write operations.");
+		safs::log_warn("({}) Called without any write operations.", __func__);
 		return nullptr;
 	}
 
@@ -256,8 +255,7 @@ void InputBuffer::clear() {
 	crcData_.clear();
 	headerBuffer_.clear();
 	writeInfo_.clear();
-
-	state_.store(WriteState::Available);
+	isBeingUpdated_ = false;
 }
 
 void InputBuffer::addNewWriteOperation() {
@@ -268,13 +266,14 @@ void InputBuffer::addNewWriteOperation() {
 	blockBuffer_.moveUnflushedDataFirstIndex(blockBuffer_.bytesInABuffer());
 
 	writeInfo_.emplace_back(0, 0, 0, 0, 0);
+	isBeingUpdated_ = true;
 }
 
 void InputBuffer::setupLastWriteOperation(uint16_t blockNum, uint32_t offset, uint32_t size,
                                           uint32_t writeId, uint32_t crc) {
 	if (writeInfo_.empty()) {
-		safs::log_warn(
-		    "InputBuffer::setupLastWriteOperation called without addNewWriteOperation. Adding an empty write operation.");
+		safs::log_warn("({}) Called without operations. Adding an empty write operation.",
+		               __func__);
 		addNewWriteOperation();
 	}
 
@@ -284,8 +283,7 @@ void InputBuffer::setupLastWriteOperation(uint16_t blockNum, uint32_t offset, ui
 	lastWriteInfo.size = size;
 	lastWriteInfo.writeId = writeId;
 	crcData_.push_back(crc);
-
-	state_.store(WriteState::BeingUpdatedInqueue);
+	isBeingUpdated_ = false;
 }
 
 std::vector<WriteOperation> InputBuffer::getWriteOperations() const {
@@ -322,8 +320,8 @@ std::vector<WriteOperation> InputBuffer::getWriteOperations() const {
 
 void InputBuffer::applyStatuses(std::vector<uint8_t> &statuses) {
 	if (statuses.size() > writeInfo_.size()) {
-		safs::log_warn(
-		    "InputBuffer::applyStatuses called with more statuses than writeInfo_. Truncating the statuses.");
+		safs::log_warn("({}) Called with more statuses than writeInfo_. Truncating the statuses.",
+		               __func__);
 		statuses.resize(writeInfo_.size());
 	}
 
@@ -340,108 +338,24 @@ std::vector<std::pair<uint8_t, uint32_t>> InputBuffer::getStatuses() const {
 	return statusWriteJobIdPairs;
 }
 
-bool InputBuffer::canReceiveNewWriteOperationAndLock() {
-	std::lock_guard lock(mutex_);
-	if (writeInfo_.size() >= numBlocks_) { return false; }
-	// So writeInfo_.size() < numBlocks_
-
-	if (state_.load() == WriteState::Available) {
-		state_.store(WriteState::BeingUpdated);
-		return true;
-	}
-
-	if (state_.load() == WriteState::Inqueue) {
-		state_.store(WriteState::BeingUpdatedInqueue);
-		return true;
-	}
-
-	return false;
-}
-
-void InputBuffer::endUpdateAndUnlock(bool isGracefulEndUpdate) {
-	std::unique_lock lock(mutex_);
-
-	WriteState currentState = state_.load();
-
-	if (currentState == WriteState::BeingUpdated) {
-		state_.store(WriteState::Available);
-	} else if (currentState == WriteState::BeingUpdatedInqueue) {
-		state_.store(WriteState::Inqueue);
-		// Always notify when transitioning from BeingUpdatedInqueue to Inqueue
-		// as there might be threads waiting for this state change
-		startWriteCV_.notify_all();
-	} else {
-		if (isGracefulEndUpdate) {
-			// Defensive programming: if we're in an unexpected state, still notify
-			// to prevent potential deadlocks, but log a warning
-			safs::log_warn(
-			    "InputBuffer::endUpdateAndUnlock: unexpected state {}, notifying anyway to prevent deadlock.",
-			    static_cast<int>(currentState));
-		} else {
-			safs::log_trace(
-			    "InputBuffer::endUpdateAndUnlock: state at close {}, notifying anyway to prevent deadlock.",
-			    static_cast<int>(currentState));
-		}
-		startWriteCV_.notify_all();
-	}
-}
-
-bool InputBuffer::waitForEndUpdateIfNecessary() {
-	std::unique_lock lock(mutex_);
-
-	// Wait specifically for the Inqueue state, which indicates the buffer is ready for processing
-	// This handles the case where we need to wait for BeingUpdatedInqueue -> Inqueue transition
-	// Use wait_for with timeout as defensive programming against potential deadlocks
-	constexpr auto kMaxWaitTime = std::chrono::seconds(30);
-
-	bool conditionMet = startWriteCV_.wait_for(lock, kMaxWaitTime, [this] {
-		WriteState currentState = state_.load();
-		return currentState == WriteState::Inqueue || currentState == WriteState::Available ||
-		       currentState == WriteState::Finished;
-	});
-
-	WriteState currentState = state_.load();
-
-	// If we timed out, log error and return false
-	if (!conditionMet) {
-		safs::log_err(
-		    "InputBuffer::waitForEndUpdateIfNecessary: timed out after {}s waiting for state transition, current state: {}. This indicates a potential deadlock or state corruption.",
-		    kMaxWaitTime.count(), static_cast<int>(currentState));
-		return false;
-	}
-
-	// Handle different valid states after waiting
-	if (currentState == WriteState::Inqueue) {
-		// Expected state: buffer is ready for processing
-		state_.store(WriteState::InProgress);
-		return true;
-	}
-
-	if (currentState == WriteState::Available) {
-		// Buffer became available (no work to do)
-		safs::log_warn(
-		    "InputBuffer::waitForEndUpdateIfNecessary: buffer became available while waiting, no work to process.");
-		return false;
-	}
-
-	if (currentState == WriteState::Finished) {
-		// Buffer was already finished by another thread
-		safs::log_warn(
-		    "InputBuffer::waitForEndUpdateIfNecessary: buffer already finished by another thread.");
-		return false;
-	}
-
-	// Unexpected state
-	safs::log_warn(
-	    "InputBuffer::waitForEndUpdateIfNecessary: unexpected state after waiting, current state: {}.",
-	    static_cast<int>(currentState));
-	return false;
-}
-
-void InputBuffer::setFinished() { state_.store(WriteState::Finished); }
-
 bool InputBuffer::isHeaderSizeValid() const {
 	return headerBuffer_.totalBytesPutInBuffer() == writeInfo_.size() * headerSize_;
+}
+
+uint32_t InputBuffer::getLastWriteId() const {
+	if (writeInfo_.empty()) {
+		safs::log_warn("({}) Called without any write operations. Returning 0.", __func__);
+		return 0;
+	}
+	return writeInfo_.back().writeId;
+}
+
+bool InputBuffer::isFull() const {
+	return writeInfo_.size() == numBlocks_;
+}
+
+bool InputBuffer::isBeingUpdated() const {
+	return isBeingUpdated_;
 }
 
 void releaseOldIoBuffers(uint32_t expirationTime_ms) {

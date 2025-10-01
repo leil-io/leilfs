@@ -229,10 +229,6 @@ TEST(OutputBufferTests, outputBufferSeveralBlocksInBufferTest) {
 class InputBufferTests : public InputBuffer {
 public:
 	InputBufferTests() : InputBuffer(testHeaderSize, testNumBlocks) {}
-
-	void setState(const InputBuffer::WriteState &state) { state_ = state; }
-
-	InputBuffer::WriteState getState() const { return state_.load(); }
 };
 
 // InputBuffer tests
@@ -507,8 +503,6 @@ TEST(InputBufferTests, inputBufferGeneralTest) {
 	std::condition_variable cv;
 	std::atomic<bool> consumerThreadIsWaiting = false;
 
-	bool expectedWaitForEndUpdateReturn = true;
-
 	// Consumer thread
 	auto consumerThread = std::thread([&]() {
 		{
@@ -518,51 +512,41 @@ TEST(InputBufferTests, inputBufferGeneralTest) {
 			consumerThreadIsWaiting = false;
 		}
 
-		ASSERT_EQ(expectedWaitForEndUpdateReturn, inputBuffer.waitForEndUpdateIfNecessary());
-		inputBuffer.setFinished();
+		std::vector<uint8_t> statuses(dataSizes.size(), SAUNAFS_ERROR_IO);
+		inputBuffer.applyStatuses(statuses);
 	});
 
 	// Make sure the consumer thread is waiting for the wake up call
 	while (!consumerThreadIsWaiting) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
 
 	for (size_t i = 0; i < dataSizes.size(); ++i) {
-		ASSERT_EQ(inputBuffer.canReceiveNewWriteOperationAndLock(), true);
+		inputBuffer.addNewWriteOperation();
+		inputBuffer.readFromSocket(auxPipeFileDescriptors[1], dataSizes[i] + 1);
+		inputBuffer.setupLastWriteOperation(i, offsets[i], dataSizes[i], i + 1, i + 1);
+		ASSERT_EQ(consumerThreadIsWaiting.load(), true);
 
 		if (i == dataSizes.size() - 1) {
 			// Last operation, let's wake up the consumer thread
-			expectedWaitForEndUpdateReturn = true;
 			std::unique_lock lock(mtx);
 			cv.notify_all();
 			lock.unlock();
-
-			// We have just woken up the consumer thread, so it should not be waiting anymore
-			while (consumerThreadIsWaiting) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			}
-		}
-
-		inputBuffer.addNewWriteOperation();
-		ASSERT_EQ(consumerThreadIsWaiting.load(), i != dataSizes.size() - 1);
-		inputBuffer.readFromSocket(auxPipeFileDescriptors[1], dataSizes[i] + 1);
-		ASSERT_EQ(consumerThreadIsWaiting.load(), i != dataSizes.size() - 1);
-		
-		inputBuffer.setupLastWriteOperation(i, offsets[i], dataSizes[i], i + 1, i + 1);
-		ASSERT_EQ(consumerThreadIsWaiting.load(), i != dataSizes.size() - 1);
-		inputBuffer.endUpdateAndUnlock(true);
-		if (i != dataSizes.size() - 1) {
-			ASSERT_EQ(inputBuffer.getState(), InputBuffer::WriteState::Inqueue);
 		}
 	}
 
-	while(inputBuffer.getState() != InputBuffer::WriteState::Finished) {
+	auto statuses = inputBuffer.getStatuses();
+	for (uint32_t tryCount = 0; tryCount < 10; tryCount++) {
+		statuses = inputBuffer.getStatuses();
+		auto it = std::find_if(statuses.begin(), statuses.end(), [](auto statusIDPair) {
+			return statusIDPair.first != static_cast<uint8_t>(SAUNAFS_ERROR_IO);
+		});
+		if (it == statuses.end()) { break; }
+
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 
-	ASSERT_EQ(inputBuffer.getState(), InputBuffer::WriteState::Finished);
+	for (const auto &[status, _] : statuses) { ASSERT_EQ(SAUNAFS_ERROR_IO, status); }
 
-	if (consumerThread.joinable()) {
-		consumerThread.join();
-	}
+	if (consumerThread.joinable()) { consumerThread.join(); }
 
 	close(auxPipeFileDescriptors[0]);
 	close(auxPipeFileDescriptors[1]);
