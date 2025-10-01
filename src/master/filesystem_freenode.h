@@ -30,7 +30,7 @@
 /// Inode id generator using the inode pool from gMetadata.
 /// Provides the usual behavior but now implements the IIdGenerator interface to allow custom
 /// polymorphic generators.
-class IdGeneratorWithDetainer : public IIdGenerator {
+class IdGeneratorWithDetainer : public IIdGenerator<inode_t> {
 public:
 	IdGeneratorWithDetainer() = default;
 

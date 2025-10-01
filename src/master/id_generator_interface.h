@@ -20,11 +20,11 @@
 
 #include "common/platform.h"
 
+#include <concepts>
 #include <cstdint>
 
-#include "common/type_defs.h"
-
-/// Interface for id generators
+/// Generic interface for id generators
+template<std::unsigned_integral T>
 class IIdGenerator {
 public:
 	/// Default constructor
@@ -48,5 +48,5 @@ public:
 	/// @param requestedId  Requested id: >0 - specific id, 0 - get any free id
 	///
 	/// @return 0 - no more free ids, >0 - allocated id (may differ from requested if already taken)
-	virtual inode_t getNextId(uint32_t timeStamp, inode_t requestedId) = 0;
+	virtual T getNextId(uint32_t timeStamp, T requestedId) = 0;
 };
