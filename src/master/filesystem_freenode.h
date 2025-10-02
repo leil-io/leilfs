@@ -34,9 +34,8 @@ class IdGeneratorWithDetainer : public IIdGenerator<inode_t> {
 public:
 	IdGeneratorWithDetainer() = default;
 
-	bool initialize() override {
-		return true;  // nothing to initialize in this implementation
-	}
+	/// Nothing to initialize in this implementation
+	bool initialize() override { return true; }
 
 	/// Get next free inode number.
 	///
@@ -46,4 +45,8 @@ public:
 	/// @return 0 - no more free ids, >0 - allocated id (may differ from requested if already taken)
 	/// @note This implementation uses the inode pool from gMetadata to provide the usual behavior.
 	inode_t getNextId(uint32_t timeStamp, inode_t requestedId) override;
+
+	/// Gets next free id and prepares/obtains the next one.
+	/// Uses the inode pool detainer from gMetadata to provide the usual behavior.
+	inode_t getNextId() override { return getNextId(0, 0); }
 };

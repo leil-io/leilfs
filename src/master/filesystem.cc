@@ -41,6 +41,7 @@
 #include "master/filesystem_periodic.h"
 #include "master/filesystem_snapshot.h"
 #include "master/goal_config_loader.h"
+#include "master/id_generator_incremental.h"
 #include "master/matoclserv.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_file.h"
@@ -220,6 +221,12 @@ void fs_strinit(bool isFromInit) {
 	}
 }
 
+static void ensureChunkIdGenerator() {
+	if (!gChunkIdGenerator) {
+		gChunkIdGenerator = std::make_unique<IdGeneratorIncremental<uint64_t>>();
+	}
+}
+
 /* executed in master mode */
 #ifndef METARESTORE
 
@@ -273,8 +280,11 @@ void executeMetadataDump() {
 
 int fs_loadall(bool isFromInit = true) {
 	fs_strinit(isFromInit);
+
+	ensureChunkIdGenerator();
 	chunk_strinit();
 
+	gChunkIdGenerator->initialize();
 	gInodeIdGenerator->initialize();
 
 	{
@@ -500,6 +510,7 @@ int fs_init(const char *fname, int ignoreflag, bool noLock) {
 		gMetadataLockfile->lock(Lockfile::StaleLock::kSwallow);
 	}
 	fs_strinit(true);
+	ensureChunkIdGenerator();
 	chunk_strinit();
 	gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
 	gMetadataBackend->loadall(ignoreflag);
