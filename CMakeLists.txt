@@ -387,7 +387,7 @@ set(MAIN_SRC ${CMAKE_SOURCE_DIR}/src/main/main.cc)
 if(ZLIB_FOUND)
   include_directories(${ZLIB_INCLUDE_DIRS})
 endif()
-include_directories(src) # Allow paths relative to src, eg. #include common/crc.h
+include_directories(${CMAKE_SOURCE_DIR}/src) # Allow paths relative to src, eg. #include common/crc.h
 link_directories(${LINK_DIRECTORIES} ${FUSE_LIBRARY_DIR})
 
 set(ICON_RESOURCE_FILE "")
