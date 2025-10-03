@@ -34,8 +34,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <random>
 #include <unordered_map>
+#include <utility>
 
 #include "common/chunk_copies_calculator.h"
 #include "common/chunk_version_with_todel_flag.h"
@@ -60,8 +62,10 @@
 #include "master/filesystem.h"
 #include "master/get_servers_for_new_chunk.h"
 #include "master/goal_cache.h"
+#include "master/id_generator_incremental.h"
 #include "metrics/metrics.h"
 #include "protocol/SFSCommunication.h"
+#include "slogger/slogger.h"
 
 #ifdef METARESTORE
 #  include <ctime>
@@ -554,11 +558,21 @@ struct ChunksMetadata {
 		}
 	}
 
-	ObservableIntegralProperty<uint64_t> &nextChunkId() { return nextChunkId_; }
+	/// Gets the id that will be assigned to the next created chunk without incrementing it.
+	static uint64_t getNextChunkId() {
+		return gChunkIdGenerator->getCurrentId();
+	}
 
-private:
-	/// serial id of the next chunk to be created
-	ObservableIntegralProperty<uint64_t> nextChunkId_{"META_NEXT_CHUNK_ID", 1};
+	/// Gets the id that will be assigned to the next created chunk and increments it.
+	static uint64_t getAndIncrementNextChunkId() {
+		return gChunkIdGenerator->getNextId();
+	}
+
+	/// Sets the id that will be assigned to the next created chunk.
+	/// Useful when loading metadata from disk and on special occasions.
+	static bool setNextChunkId(uint64_t nextId) {
+		return gChunkIdGenerator->setCurrentId(nextId);
+	}
 };
 } // anonymous namespace
 
@@ -740,7 +754,7 @@ static inline void emit_chunk_changed(const Chunk *c) {
 
 uint64_t chunk_checksum(ChecksumMode mode) {
 	uint64_t checksum = 46586918175221;
-	addToChecksum(checksum, gChunksMetadata->nextChunkId().getValue());
+	addToChecksum(checksum, ChunksMetadata::getNextChunkId());
 	if (mode == ChecksumMode::kForceRecalculate) {
 		chunk_recalculate_checksum();
 	}
@@ -1098,8 +1112,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 		if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
 			return SAUNAFS_ERROR_NOCHUNKSERVERS;
 		}
-		c = chunk_new(gChunksMetadata->nextChunkId().getValue(), 1);
-		gChunksMetadata->nextChunkId().increment();
+		c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
 		c->interrupted = 0;
 		c->operation = Chunk::CREATE;
 		chunk_add_file_int(c,goal);
@@ -1175,8 +1188,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 				return SAUNAFS_ERROR_QUOTA;
 			}
 			assert(oc->isWritable());
-			c = chunk_new(gChunksMetadata->nextChunkId().getValue(), 1);
-			gChunksMetadata->nextChunkId().increment();
+			c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
 			c->interrupted = 0;
 			c->operation = Chunk::DUPLICATE;
 			chunk_delete_file_int(oc,goal);
@@ -1263,8 +1275,7 @@ uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length
 		}
 
 		assert(oc->isWritable());
-		c = chunk_new(gChunksMetadata->nextChunkId().getValue(), 1);
-		gChunksMetadata->nextChunkId().increment();
+		c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
 		c->interrupted = 0;
 		c->operation = Chunk::DUPTRUNC;
 		chunk_delete_file_int(oc,goal);
@@ -1293,8 +1304,7 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 		bool doIncreaseVersion, uint64_t *newChunkId) {
 	Chunk *c;
 	if (oldChunkId == 0) { // new chunk
-		c = chunk_new(gChunksMetadata->nextChunkId().getValue(), 1);
-		gChunksMetadata->nextChunkId().increment();
+		c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
 		chunk_add_file_int(c, goal);
 	} else {
 		Chunk *oc = chunk_find(oldChunkId);
@@ -1312,8 +1322,7 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 				c->version++;
 			}
 		} else {
-			c = chunk_new(gChunksMetadata->nextChunkId().getValue(), 1);
-			gChunksMetadata->nextChunkId().increment();
+			c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
 			chunk_delete_file_int(oc, goal);
 			chunk_add_file_int(c, goal);
 		}
@@ -1426,15 +1435,16 @@ int chunk_increase_version(uint64_t chunkid) {
 }
 
 uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet) {
-	if (nextChunkIdToBeSet >= gChunksMetadata->nextChunkId().getValue()) {
-		gChunksMetadata->nextChunkId().setValue(nextChunkIdToBeSet);
+	if (nextChunkIdToBeSet >= ChunksMetadata::getNextChunkId()) {
+		ChunksMetadata::setNextChunkId(nextChunkIdToBeSet);
 		return SAUNAFS_STATUS_OK;
-	} else {
-		safs_pretty_syslog(LOG_WARNING,"was asked to increase the next chunk id to %" PRIu64 ", but it was"
-				"already set to a bigger value %" PRIu64 ". Ignoring.",
-				nextChunkIdToBeSet, gChunksMetadata->nextChunkId().getValue());
-		return SAUNAFS_ERROR_MISMATCH;
 	}
+
+	safs::log_warn(
+	    "chunk_set_next_chunkid: failed to set next chunk id from {} to value {}. Ignoring.",
+	    ChunksMetadata::getNextChunkId(), nextChunkIdToBeSet);
+
+	return SAUNAFS_ERROR_MISMATCH;
 }
 
 #ifndef METARESTORE
@@ -1557,7 +1567,8 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 	c = chunk_find(chunkid);
 	if (c==NULL) {
 		// chunkserver has nonexistent chunk, so create it for future deletion
-		if (chunkid >= gChunksMetadata->nextChunkId().getValue()) {
+		if (chunkid >= ChunksMetadata::getNextChunkId() &&
+		    gChunkIdGenerator->isStrictlyMonotonic()) {
 			fs_set_nextchunkid(FsContext::getForMaster(eventloop_time()), chunkid + 1);
 		}
 		c = chunk_new(chunkid, new_version);
@@ -1617,10 +1628,16 @@ void chunk_damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunk_t
 	Chunk *c;
 	c = chunk_find(chunkid);
 	if (c == NULL) {
-		// syslog(LOG_WARNING,"chunkserver has nonexistent chunk (%016" PRIX64 "), so create it for future deletion",chunkid);
-		if (chunkid >= gChunksMetadata->nextChunkId().getValue()) {
-			gChunksMetadata->nextChunkId().setValue(chunkid + 1);
+		safs::log_warn(
+		    "Chunkserver has nonexistent chunk ({:016X}), creating it for future deletion",
+		    chunkid);
+
+		if (chunkid >= ChunksMetadata::getNextChunkId() &&
+		    gChunkIdGenerator->isStrictlyMonotonic()) {
+			// Ensure nextChunkId is always greater than any known id
+			ChunksMetadata::setNextChunkId(chunkid + 1);
 		}
+
 		c = chunk_new(chunkid, 0);
 	}
 	auto server_csid = matocsserv_get_csdb(ptr)->csid;
@@ -2718,15 +2735,6 @@ void chunk_dump(void) {
 
 #endif
 
-ObservableIntegralProperty<uint64_t> &nextChunkIdProperty() {
-	return gChunksMetadata->nextChunkId();
-}
-
-void chunk_set_next_chunk_id(uint64_t nextChunkIdToBeSet) {
-	passert(gChunksMetadata);
-	gChunksMetadata->nextChunkId().setValue(nextChunkIdToBeSet);
-}
-
 void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
                                           uint32_t lockedTo, uint32_t lockId) {
 	Chunk *chunk = chunk_new(chunkId, chunkVersion);
@@ -2736,7 +2744,12 @@ void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersio
 
 bool chunksLoadFromFile(MetadataLoader::Options options) {
 	const uint8_t *ptr = options.metadataFile->seek(options.offset);
-	gChunksMetadata->nextChunkId().setValue(get64bit(&ptr));
+	uint64_t nextChunkId = get64bit(&ptr);
+	if (!ChunksMetadata::setNextChunkId(nextChunkId)) {
+		safs::log_warn(
+		    "Failed to set next chunk ID from metadata file, stored value: {} is less than current: {}",
+		    nextChunkId, ChunksMetadata::getNextChunkId());
+	}
 	options.offset = options.metadataFile->offset(ptr);
 
 	while (true) {
@@ -2772,7 +2785,7 @@ void chunk_store(FILE *fd) {
 	uint32_t version;
 	uint32_t lockedto, lockid;
 	ptr = hdr;
-	put64bit(&ptr, gChunksMetadata->nextChunkId().getValue());
+	put64bit(&ptr, ChunksMetadata::getNextChunkId());
 	if (fwrite(hdr,1,8,fd)!=(size_t)8) {
 		return;
 	}
@@ -2819,7 +2832,7 @@ void chunk_newfs(void) {
 #ifndef METARESTORE
 	Chunk::count = 0;
 #endif
-	gChunksMetadata->nextChunkId().setValue(1);
+	ChunksMetadata::setNextChunkId(1);
 }
 
 #ifndef METARESTORE

@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
@@ -32,6 +33,7 @@
 #include "common/observable_property.h"
 #include "common/time_utils.h"
 #include "master/checksum.h"
+#include "master/id_generator_interface.h"
 #include "master/metadata_loader.h"
 
 struct matocsserventry;
@@ -42,8 +44,8 @@ extern Timeout gTimeoutSinceLastChunkRegistration;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
-ObservableIntegralProperty<uint64_t> &nextChunkIdProperty();
-void chunk_set_next_chunk_id(uint64_t nextChunkIdToBeSet);
+inline std::unique_ptr<IIdGeneratorWithState<uint64_t>> gChunkIdGenerator = nullptr;
+
 void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
                                           uint32_t lockedTo, uint32_t lockId);
 int chunk_increase_version(uint64_t chunkid);
