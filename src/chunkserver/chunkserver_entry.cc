@@ -1228,6 +1228,29 @@ bool ChunkserverEntry::readData(int socket, PacketStruct &packet) {
 	return true;
 }
 
+void ChunkserverEntry::processPacket(PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode,
+                                     bool fromForward) {
+	sassert(targetMode == Mode::Data);
+	bool mustForward = (state == State::WriteForward && !fromForward);
+
+	auto [type, length] = getTypeAndLengthFromHeader(headerBuf);
+
+	targetMode = Mode::Header;
+	packet.bytesLeft = PacketHeader::kSize;
+	packet.startPtr = headerBuf;
+
+	uint32_t offsetFromSkipHeaderInForward = mustForward ? PacketHeader::kSize : 0;
+	const uint8_t *packetData{nullptr};
+	if (!fromForward && isLastHeaderTypeWriteData()) {
+		packetData =
+		    inputBuffer->getStartLastWriteOperationHeader() + offsetFromSkipHeaderInForward;
+	} else {
+		packetData = packet.packet.data() + offsetFromSkipHeaderInForward;
+	}
+
+	gotPacket(type, packetData, length);
+}
+
 void ChunkserverEntry::fwdConnected() {
 	TRACETHIS();
 	int status = tcpgetstatus(fwdSocket);
@@ -1242,9 +1265,6 @@ void ChunkserverEntry::fwdConnected() {
 
 void ChunkserverEntry::fwdRead() {
 	TRACETHIS();
-	uint32_t type;
-	uint32_t opSize;
-	const uint8_t *ptr;
 
 	if (fwdMode == Mode::Header &&
 	    !readHeader(fwdSocket, fwdInputPacket, fwdHeaderBuffer, fwdMode)) {
@@ -1254,15 +1274,7 @@ void ChunkserverEntry::fwdRead() {
 	if (fwdMode == Mode::Data) {
 		if (!readData(fwdSocket, fwdInputPacket)) { return; }
 
-		ptr = fwdHeaderBuffer;
-		get32bit(&ptr, type);
-		get32bit(&ptr, opSize);
-
-		fwdMode = Mode::Header;
-		fwdInputPacket.bytesLeft = PacketHeader::kSize;
-		fwdInputPacket.startPtr = fwdHeaderBuffer;
-
-		gotPacket(type, fwdInputPacket.packet.data(), opSize);
+		processPacket(fwdInputPacket, fwdHeaderBuffer, fwdMode, true);
 	}
 }
 
@@ -1335,54 +1347,20 @@ void ChunkserverEntry::forward() {
 	}
 
 	if (inputPacket.bytesLeft == 0 && fwdOutputPacket.bytesLeft == 0) {
-		PacketHeader header;
-		try {
-			deserializePacketHeader(headerBuffer, sizeof(headerBuffer), header);
-		} catch (IncorrectDeserializationException &) {
-			safs::log_warn("({}) Received malformed network packet", __func__);
-			state = State::Close;
-			return;
-		}
-		mode = Mode::Header;
-		inputPacket.bytesLeft = PacketHeader::kSize;
-		inputPacket.startPtr = headerBuffer;
-
-		uint8_t *packetData{nullptr};
-		if (isLastHeaderTypeWriteData()) {
-			packetData = const_cast<uint8_t *>(inputBuffer->getStartLastWriteOperationHeader() +
-			                                   PacketHeader::kSize);
-		} else {
-			packetData = inputPacket.packet.data() + PacketHeader::kSize;
-		}
-		gotPacket(header.type, packetData, header.length);
+		processPacket(inputPacket, headerBuffer, mode, false);
 		fwdOutputPacket.startPtr = nullptr;
 	}
 }
 
 void ChunkserverEntry::readFromSocket() {
 	TRACETHIS();
-	uint32_t type;
-	uint32_t opSize;
-	const uint8_t *ptr;
 
 	if (mode == Mode::Header && !readHeader(sock, inputPacket, headerBuffer, mode)) { return; }
 
 	if (mode == Mode::Data) {
 		if (!readData(sock, inputPacket)) { return; }
 
-		ptr = headerBuffer;
-		get32bit(&ptr, type);
-		get32bit(&ptr, opSize);
-
-		mode = Mode::Header;
-		inputPacket.bytesLeft = PacketHeader::kSize;
-		inputPacket.startPtr = headerBuffer;
-
-		if (isLastHeaderTypeWriteData()) {
-			gotPacket(type, inputBuffer->getStartLastWriteOperationHeader(), opSize);
-		} else {
-			gotPacket(type, inputPacket.packet.data(), opSize);
-		}
+		processPacket(inputPacket, headerBuffer, mode, false);
 	}
 }
 

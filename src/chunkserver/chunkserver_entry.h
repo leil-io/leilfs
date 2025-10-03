@@ -270,6 +270,14 @@ struct ChunkserverEntry {
 	/// @return True if the data was read successfully, false otherwise.
 	bool readData(int socket, PacketStruct &packet);
 
+	/// Processes a packet based on its type and the current mode.
+	/// @param packet The packet structure to process.
+	/// @param headerBuf The buffer containing the packet header.
+	/// @param targetMode The mode to set after processing the packet.
+	/// @param fromForward Indicates if the packet is being processed from a forward operation.
+	void processPacket(PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode,
+	                   bool fromForward);
+
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.
 	///
