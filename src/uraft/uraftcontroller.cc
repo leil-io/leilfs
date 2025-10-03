@@ -67,34 +67,40 @@ void uRaftController::set_options(const uRaftController::Options &opt) {
 void uRaftController::nodePromote() {
 	syslog(LOG_NOTICE, "Starting metadata server switch to master mode");
 
-	if (command_pid_ >= 0 && command_type_ != kCmdPromote) {
-		syslog(LOG_ERR, "Trying to switch metadata server to master during switch to slave");
-		stopFloatingIpManager();
-		demoteLeader();
-		set_block_promotion(true);
-		return;
-	}
+	// Prevent concurrent transitions
 	if (command_pid_ >= 0) {
+		if (command_type_ == kCmdDemote) {
+			syslog(LOG_WARNING, "Cannot promote during active demotion - ignoring request");
+			force_demote_ = false;
+			return;
+		}
+		// Already promoting
+		syslog(LOG_DEBUG, "Promotion already in progress");
 		return;
 	}
 
 	setSlowCommandTimeout(opt_.promote_timeout);
 	if (runSlowCommand("saunafs-uraft-helper promote")) {
 		command_type_ = kCmdPromote;
-		startFloatingIpManager();
+		// Floating IP Manager will be started after promotion completes successfully
 	}
 }
 
 void uRaftController::nodeDemote() {
 	syslog(LOG_NOTICE, "Starting metadata server switch to slave mode");
 
-	if (command_pid_ >= 0 && command_type_ != kCmdDemote) {
-		syslog(LOG_ERR, "Trying to switch metadata server to slave during switch to master");
-		force_demote_ = true;
-		set_block_promotion(true);
-		return;
-	}
+	// Stop Floating IP Manager immediately when starting demotion
+	stopFloatingIpManager();
+
 	if (command_pid_ >= 0) {
+		if (command_type_ == kCmdPromote) {
+			syslog(LOG_WARNING,
+			       "Demotion requested during promotion - will force after completion");
+			force_demote_ = true;
+			set_block_promotion(true);
+			return;
+		}
+		syslog(LOG_DEBUG, "Demotion already in progress");
 		return;
 	}
 
@@ -102,7 +108,6 @@ void uRaftController::nodeDemote() {
 	if (runSlowCommand("saunafs-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
 		set_block_promotion(true);
-		stopFloatingIpManager();
 	}
 }
 
@@ -157,18 +162,36 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 	int  status;
 	if (checkSlowCommand(status)) {
 		cmd_timeout_timer_.cancel();
+
+		// Check if command completed successfully
+		bool commandSucceeded = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+
 		if (command_type_ == kCmdDemote) {
-			syslog(LOG_NOTICE, "Metadata server switch to slave mode done");
+			if (commandSucceeded) {
+				syslog(LOG_NOTICE, "Metadata server switch to slave mode succeeded");
+			} else {
+				syslog(LOG_ERR, "Demotion failed with exit code: %d", WEXITSTATUS(status));
+			}
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
 			set_block_promotion(false);
 		} else if (command_type_ == kCmdPromote) {
-			syslog(LOG_NOTICE, "Metadata server switch to master mode done");
-			node_alive_ = true;
+			if (commandSucceeded) {
+				syslog(LOG_NOTICE, "Metadata server switch to master mode done");
+				node_alive_ = true;
+
+				// Start floating IP only after successful promotion
+				startFloatingIpManager();
+			} else {
+				syslog(LOG_ERR, "Promotion failed with exit code: %d", WEXITSTATUS(status));
+				handlePromotionFailure();
+			}
+
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
+
 			if (force_demote_) {
-				syslog(LOG_WARNING, "Staring forced switch to slave mode");
+				syslog(LOG_WARNING, "Starting forced switch to slave mode");
 				nodeDemote();
 				force_demote_ = false;
 			}
@@ -228,9 +251,20 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 
 void uRaftController::setSlowCommandTimeout(int timeout) {
 	cmd_timeout_timer_.expires_from_now(boost::posix_time::millisec(timeout));
-	cmd_timeout_timer_.async_wait([this](const boost::system::error_code & error) {
+	cmd_timeout_timer_.async_wait([this, timeout](const boost::system::error_code & error) {
 		if (!error) {
-			syslog(LOG_ERR, "Metadata server mode switching timeout");
+			syslog(LOG_ERR, "Metadata server mode switching timeout after %d ms", timeout);
+
+			// Cleanup based on operation type
+			if (command_type_ == kCmdPromote) {
+				syslog(LOG_WARNING, "Promotion timeout - attempting cleanup");
+				handlePromotionFailure();
+			} else if (command_type_ == kCmdDemote) {
+				syslog(LOG_WARNING, "Demotion timeout - killing stuck command");
+			} else if (command_type_ == kCmdStatusDead) {
+				syslog(LOG_WARNING, "Dead handler timeout - killing stuck command");
+			}
+
 			stopSlowCommand();
 		}
 	});
@@ -416,4 +450,19 @@ void uRaftController::stopFloatingIpManager() {
 		haFloatingIpManager->stop();
 		haFloatingIpManager.reset();
 	}
+}
+
+void uRaftController::cleanupDirtyPromotion() {
+	std::vector<std::string> cleanup = {"saunafs-uraft-helper", "cleanup"};
+	std::string result;
+
+	if (!runCommand(cleanup, result, 5000)) {
+		syslog(LOG_ERR, "Failed to cleanup dirty state: %s", result.c_str());
+	}
+}
+
+void uRaftController::handlePromotionFailure() {
+	set_block_promotion(true);
+	demoteLeader();
+	cleanupDirtyPromotion();
 }

@@ -75,6 +75,9 @@ private:
 	void startFloatingIpManager();
 	void stopFloatingIpManager();
 
+	void cleanupDirtyPromotion();
+	void handlePromotionFailure();
+
 protected:
 	boost::asio::deadline_timer check_cmd_status_timer_,check_node_status_timer_;
 	boost::asio::deadline_timer cmd_timeout_timer_;
