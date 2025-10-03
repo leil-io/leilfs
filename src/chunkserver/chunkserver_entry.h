@@ -63,8 +63,6 @@ struct PacketStruct {
 	std::shared_ptr<OutputBuffer> outputBuffer;
 };
 
-class MessageSerializer;
-
 /**
  * @brief Represents a single connection to a chunkserver.
  *
@@ -175,12 +173,6 @@ struct ChunkserverEntry {
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType(); // R
 	uint32_t offset = 0; ///< R: Offset within the chunk for the operation.
 	uint32_t size = 0; ///< R: Size of the current operation.
-
-	/// Pointer to the concrete serializer singleton.
-	/// Serializers could be of type:
-	/// - LegacyMessageSerializer: for legacy messages
-	/// - SaunaFsMessageSerializer: for new messages
-	MessageSerializer* messageSerializer = nullptr; // R+W
 
 	LOG_AVG_TYPE readOperationTimer;
 
@@ -382,18 +374,11 @@ struct ChunkserverEntry {
 	static void writeFinishedCallback(uint8_t status, void *entry);
 	/// Callback for when a job_open associated to a write operation finishes.
 	static void openWriteFinishedCallback(uint8_t status, void *entry);
-	/// Callback for legacy chunk block retrieval completion.
-	static void sauGetChunkBlocksFinishedLegacyCallback(uint8_t status,
-	                                                    void *entry);
 	/// Callback for chunk block retrieval completion.
 	static void sauGetChunkBlocksFinishedCallback(uint8_t status, void *entry);
-	/// Callback for chunk block retrieval completion.
-	static void getChunkBlocksFinishedCallback(uint8_t status, void *entry);
 
 	/// Serializes and attaches a write status message to the output packets list.
-	void createAttachedWriteStatus(uint8_t status, uint32_t writeId);
-	/// Retrieves chunk blocks from the given information.
-	void getChunkBlocks(const uint8_t *data, uint32_t length);
+	void createAttachedWriteStatus(uint64_t targetChunkId, uint8_t status, uint32_t writeId);
 
 	/// Retrieves chunk blocks from the given information using the new way.
 	void sauGetChunkBlocks(const uint8_t *data, uint32_t length);

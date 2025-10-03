@@ -68,51 +68,6 @@ constexpr uint8_t kSauWriteDataPreffixSize = cltocs::writeData::kPrefixSize;
 constexpr uint8_t kSauWriteDataPreffixSizeForward =
     cltocs::writeData::kPrefixSize + PacketHeader::kSize;
 
-class MessageSerializer {
-public:
-	static MessageSerializer *getSerializer(PacketHeader::Type type);
-
-	virtual void serializePrefixOfCstoclReadData(std::vector<uint8_t> &buffer,
-	                                             uint64_t chunkId,
-	                                             uint32_t offset,
-	                                             uint32_t size) = 0;
-	virtual void serializeCstoclReadStatus(std::vector<uint8_t> &buffer,
-	                                       uint64_t chunkId,
-	                                       uint8_t status) = 0;
-	virtual void serializeCstoclWriteStatus(std::vector<uint8_t> &buffer,
-	                                        uint64_t chunkId, uint32_t writeId,
-	                                        uint8_t status) = 0;
-	virtual ~MessageSerializer() {}
-};
-
-class SaunaFsMessageSerializer : public MessageSerializer {
-public:
-	void serializePrefixOfCstoclReadData(std::vector<uint8_t> &buffer,
-	                                     uint64_t chunkId, uint32_t offset,
-	                                     uint32_t size) override {
-		cstocl::readData::serializePrefix(buffer, chunkId, offset, size);
-	}
-
-	void serializeCstoclReadStatus(std::vector<uint8_t> &buffer,
-	                               uint64_t chunkId, uint8_t status) override {
-		cstocl::readStatus::serialize(buffer, chunkId, status);
-	}
-
-	void serializeCstoclWriteStatus(std::vector<uint8_t> &buffer,
-	                                uint64_t chunkId, uint32_t writeId,
-	                                uint8_t status) override {
-		cstocl::writeStatus::serialize(buffer, chunkId, writeId, status);
-	}
-};
-
-MessageSerializer *MessageSerializer::getSerializer(PacketHeader::Type type) {
-	sassert(type >= PacketHeader::kMinSauPacketType &&
-	         type <= PacketHeader::kMaxSauPacketType);
-
-	static SaunaFsMessageSerializer singleton;
-	return &singleton;
-}
-
 ChunkserverEntry::~ChunkserverEntry() {
 	if (sock >= 0) { tcpclose(sock); }
 	if (fwdSocket >= 0) { tcpclose(fwdSocket); }
@@ -169,12 +124,9 @@ uint8_t *ChunkserverEntry::createAttachedPacket(uint32_t type,
 
 void ChunkserverEntry::fwdError() {
 	TRACETHIS();
-	sassert(messageSerializer != nullptr);
-	std::vector<uint8_t> buffer;
-	uint8_t status = (state == State::Connecting ? SAUNAFS_ERROR_CANTCONNECT
-	                                             : SAUNAFS_ERROR_DISCONNECTED);
-	messageSerializer->serializeCstoclWriteStatus(buffer, chunkId, 0, status);
-	createAttachedPacket(buffer);
+	uint8_t status =
+	    (state == State::Connecting ? SAUNAFS_ERROR_CANTCONNECT : SAUNAFS_ERROR_DISCONNECTED);
+	createAttachedWriteStatus(chunkId, status, 0);
 	state = State::WriteFinish;
 }
 
@@ -350,8 +302,7 @@ void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
 		eptr->prepareDiscardReadJobs();
 
 		std::vector<uint8_t> buffer;
-		eptr->messageSerializer->serializeCstoclReadStatus(
-		    buffer, eptr->chunkId, status);
+		cstocl::readStatus::serialize(buffer, eptr->chunkId, status);
 		eptr->createAttachedPacket(buffer);
 
 		if (eptr->isChunkOpen) {
@@ -372,15 +323,15 @@ std::shared_ptr<OutputBuffer> ChunkserverEntry::prepareReadDataPacket(
 	const uint32_t numBlocks = (jobSize + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
 	readDataPrefix.clear();
-	messageSerializer->serializePrefixOfCstoclReadData(
-	    readDataPrefix, chunkId, offset, std::min<uint32_t>(jobSize, SFSBLOCKSIZE - jobOffset));
+	cstocl::readData::serializePrefix(readDataPrefix, chunkId, offset,
+	                                  std::min<uint32_t>(jobSize, SFSBLOCKSIZE - jobOffset));
 
 	auto buffer = getReadOutputBufferPool().get(readDataPrefix.size(), numBlocks);
 
 	for (uint32_t i = 0; i < numBlocks; i++) {
 		if (i > 0) {  // first block is already serialized
 			readDataPrefix.clear();
-			messageSerializer->serializePrefixOfCstoclReadData(
+			cstocl::readData::serializePrefix(
 			    readDataPrefix, chunkId, offset - jobOffset + (i * SFSBLOCKSIZE), SFSBLOCKSIZE);
 		}
 
@@ -408,8 +359,7 @@ void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
 
 	if (pendingReadDataBuffers.empty() && size == 0) {  // everything has been read
 		std::vector<uint8_t> buffer;
-		messageSerializer->serializeCstoclReadStatus(
-		    buffer, chunkId, SAUNAFS_STATUS_OK);
+		cstocl::readStatus::serialize(buffer, chunkId, SAUNAFS_STATUS_OK);
 		createAttachedPacket(buffer);
 		sassert(isChunkOpen);
 
@@ -493,7 +443,6 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 		deserializePacketVersionNoHeader(data, length, v);
 		sassert(v == cltocs::read::kECChunks);
 		cltocs::read::deserialize(data, length, chunkId, chunkVersion, chunkType, offset, size);
-		messageSerializer = MessageSerializer::getSerializer(type);
 	} catch (Exception &) {
 		safs::log_info("({}) Cannot deserialize READ message (type:{:X}, length:{})", __func__,
 		               type, length);
@@ -503,14 +452,11 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 	// Check if the request is valid
 	std::vector<uint8_t> instantResponseBuffer;
 	if (size == 0) {
-		messageSerializer->serializeCstoclReadStatus(
-		    instantResponseBuffer, chunkId, SAUNAFS_STATUS_OK);
+		cstocl::readStatus::serialize(instantResponseBuffer, chunkId, SAUNAFS_STATUS_OK);
 	} else if (size > SFSCHUNKSIZE) {
-		messageSerializer->serializeCstoclReadStatus(
-		    instantResponseBuffer, chunkId, SAUNAFS_ERROR_WRONGSIZE);
+		cstocl::readStatus::serialize(instantResponseBuffer, chunkId, SAUNAFS_ERROR_WRONGSIZE);
 	} else if (offset >= SFSCHUNKSIZE || offset + size > SFSCHUNKSIZE) {
-		messageSerializer->serializeCstoclReadStatus(
-		    instantResponseBuffer, chunkId, SAUNAFS_ERROR_WRONGOFFSET);
+		cstocl::readStatus::serialize(instantResponseBuffer, chunkId, SAUNAFS_ERROR_WRONGOFFSET);
 	}
 	if (!instantResponseBuffer.empty()) {
 		createAttachedPacket(instantResponseBuffer);
@@ -556,14 +502,14 @@ bool ChunkserverEntry::isLastHeaderTypeWriteData() {
 
 void ChunkserverEntry::updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId) {
 	if (status != SAUNAFS_STATUS_OK) {
-		createAttachedWriteStatus(status, writeId);
+		createAttachedWriteStatus(chunkId, status, writeId);
 		state = State::WriteFinish;
 		return;
 	}
 
 	// We can consider that the write was successful
 	if (state == State::WriteLast) {
-		createAttachedWriteStatus(status, writeId);
+		createAttachedWriteStatus(chunkId, status, writeId);
 		return;
 	}
 
@@ -571,7 +517,7 @@ void ChunkserverEntry::updateUsingWriteStatusAndReply(uint8_t status, uint32_t w
 	if (partiallyCompletedWrites.count(writeId) > 0) {
 		// found - it means that it was added by status_receive, ie. next
 		// chunkserver from a chain finished writing before our worker
-		createAttachedWriteStatus(status, writeId);
+		createAttachedWriteStatus(chunkId, status, writeId);
 		partiallyCompletedWrites.erase(writeId);
 	} else {
 		// not found - so add it
@@ -639,17 +585,16 @@ void ChunkserverEntry::checkNextPacket() {
 
 // Write operations
 
-void ChunkserverEntry::createAttachedWriteStatus(uint8_t status, uint32_t writeId) {
-	sassert(messageSerializer != nullptr);
+void ChunkserverEntry::createAttachedWriteStatus(uint64_t targetChunkId, uint8_t status,
+                                                 uint32_t writeId) {
 	std::vector<uint8_t> buffer;
-	messageSerializer->serializeCstoclWriteStatus(buffer, chunkId, writeId, status);
+	cstocl::writeStatus::serialize(buffer, targetChunkId, writeId, status);
 	createAttachedPacket(buffer);
 }
 
 void ChunkserverEntry::writeFinishedCallback(uint8_t status, void *entry) {
 	TRACETHIS();
 	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-	sassert(eptr->messageSerializer != nullptr);
 
 	if (eptr->isOpenWriteJobBeingProcessed()) {
 		safs::log_warn("({}) Inconsistent state: writeJobWriteId: {}, chunkId: {}, status: {}.",
@@ -672,7 +617,6 @@ void ChunkserverEntry::writeFinishedCallback(uint8_t status, void *entry) {
 void ChunkserverEntry::openWriteFinishedCallback(uint8_t status, void *entry) {
 	TRACETHIS();
 	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-	sassert(eptr->messageSerializer != nullptr);
 
 	if (!eptr->isOpenWriteJobBeingProcessed()) {
 		safs::log_warn("Inconsistent state in {}: writeJobWriteId: {}, chunkId: {}, status: {}.",
@@ -724,7 +668,6 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		deserializePacketVersionNoHeader(data, length, v);
 		sassert(v == cltocs::writeInit::kECChunks);
 		cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType, chain);
-		messageSerializer = MessageSerializer::getSerializer(type);
 	} catch (Exception &) {
 		safs::log_info("Received malformed WRITE_INIT message (length: {})", length);
 		state = State::Close;
@@ -739,11 +682,9 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		fwdStartPtr = fwdInitPacket.data();
 		fwdBytesLeft = fwdInitPacket.size();
 		connectRetryCounter = 0;
+
 		if (initConnection() < kInitConnectionOK) {
-			std::vector<uint8_t> buffer;
-			messageSerializer->serializeCstoclWriteStatus(
-			    buffer, chunkId, 0, SAUNAFS_ERROR_CANTCONNECT);
-			createAttachedPacket(buffer);
+			createAttachedWriteStatus(chunkId, SAUNAFS_ERROR_CANTCONNECT, 0);
 			state = State::WriteFinish;
 			return;
 		}
@@ -767,12 +708,6 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 
 	sassert(type == SAU_CLTOCS_WRITE_DATA);
 	try {
-		const auto *serializer = MessageSerializer::getSerializer(type);
-		if (messageSerializer != serializer) {
-			safs::log_info("Received WRITE_DATA message incompatible with WRITE_INIT");
-			state = State::Close;
-			return;
-		}
 		cltocs::writeData::deserializePrefix(data, kSauWriteDataPreffixSize, opChunkId, writeId,
 		                                     blocknum, opOffset, opSize, crc);
 	} catch (IncorrectDeserializationException &) {
@@ -789,10 +724,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
-		std::vector<uint8_t> buffer;
-		messageSerializer->serializeCstoclWriteStatus(buffer, opChunkId,
-		                                              writeId, status);
-		createAttachedPacket(buffer);
+		createAttachedWriteStatus(opChunkId, status, writeId);
 		state = State::WriteFinish;
 		return;
 	}
@@ -813,14 +745,7 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 	uint8_t status;
 
 	sassert(type == SAU_CSTOCL_WRITE_STATUS);
-	sassert(messageSerializer != nullptr);
 	try {
-		const auto *serializer = MessageSerializer::getSerializer(type);
-		if (messageSerializer != serializer) {
-			safs::log_info("Received WRITE_DATA message incompatible with WRITE_INIT");
-			state = State::Close;
-			return;
-		}
 		std::vector<uint8_t> message(data, data + length);
 		cstocl::writeStatus::deserialize(message, opChunkId, writeId, status);
 	} catch (IncorrectDeserializationException &) {
@@ -840,7 +765,6 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 	TRACETHIS();
 	uint64_t opChunkId;
-	messageSerializer = nullptr;
 
 	try {
 		cltocs::writeEnd::deserialize(data, length, opChunkId);
