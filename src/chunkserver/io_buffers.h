@@ -375,15 +375,6 @@ struct WriteOperation {
  */
 class InputBuffer {
 public:
-	enum class WriteState : uint8_t {
-		Available,     ///< Just created, can receive new write operations.
-		Inqueue,       ///< In the JobPool queue, waiting for processing.
-		InProgress,    ///< Currently being processed, i.e. writing to the disk.
-		BeingUpdated,  ///< The buffer is being updated, i.e. new blocks are being added.
-		BeingUpdatedInqueue,  ///< The buffer is being updated, but it is in the JobPool queue.
-		Finished              ///< The buffer is finished, all write operations are done.
-	};
-
 	/// @enum BufferType
 	/// @brief Represents the type of buffer.
 	enum class BufferType : uint8_t {
@@ -465,45 +456,23 @@ public:
 	/// @return The vector of statuses along with write IDs.
 	std::vector<std::pair<uint8_t, uint32_t>> getStatuses() const;
 
-	/// @brief Checks if the buffer can receive a new write operation and locks it.
-	/// Sets the state to WriteState::BeingUpdatedInqueue or WriteState::BeingUpdated.
-	/// @return True if the buffer can receive a new write operation, false otherwise.
-	bool canReceiveNewWriteOperationAndLock();
-
-	/// @brief Ends the update of the buffer and unlocks it.
-	/// It sets the state to WriteState::Inqueue or WriteState::Available,
-	/// and notifies the JobPool workers that could be waiting for the end of the update.
-	/// Should be called after the last write operation is set up or the csentry is being closed.
-	/// @param isGracefulEndUpdate If `isGracefulEndUpdate` is true, it prints a warning if the
-	/// buffer is not in WriteState::BeingUpdatedInqueue or WriteState::BeingUpdated.
-	void endUpdateAndUnlock(bool isGracefulEndUpdate);
-
-	/// @brief Waits for the end of the update and returns true if the state is consistent.
-	/// If the state is not consistent, it returns false and prints a warning.
-	/// This function is used to ensure that the buffer is in a consistent state before
-	/// performing the operations it holds. It sets the state to WriteState::InProgress when
-	/// successful.
-	/// @return True if the state is consistent, false otherwise.
-	bool waitForEndUpdateIfNecessary();
-
-	/// @brief Sets the state to WriteState::Finished.
-	void setFinished();
-
 	/// @brief Returns whether the header size is the expected one.
 	bool isHeaderSizeValid() const;
+
+	/// @brief Returns the write ID of the last write operation.
+	uint32_t getLastWriteId() const;
+
+	/// @brief Returns whether the buffer is full, i.e. has numBlocks_ write operations.
+	bool isFull() const;
+
+	/// @brief Returns whether the buffer is currently being updated (reading from socket).
+	bool isBeingUpdated() const;
 
 protected:
 	const size_t headerSize_;  ///< The size of the header.
 	const size_t numBlocks_;   ///< The number of blocks.
 
-	/// Protects the `state` member variable used for custom thread synchronization.
-	mutable std::mutex mutex_;
-
-	/// Condition variable to wait for the end of the update.
-	std::condition_variable startWriteCV_;
-
-	/// Status of the buffer's related read operation.
-	std::atomic<WriteState> state_{WriteState::Available};
+	bool isBeingUpdated_{false};
 
 	/// The buffer for the block data.
 	Buffer<std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>>> blockBuffer_;

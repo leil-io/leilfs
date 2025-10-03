@@ -404,10 +404,6 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
                    uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
                    uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
-		if (!inputBuffer->waitForEndUpdateIfNecessary()) {
-			return SAUNAFS_ERROR_NOTDONE;
-		}
-
 		auto writeOperations = inputBuffer->getWriteOperations();
 		if (writeOperations.empty()) {
 			safs::log_warn("job_write: No write operations found for chunk id {}", chunkId);
