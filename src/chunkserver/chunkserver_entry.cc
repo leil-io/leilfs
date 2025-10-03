@@ -502,11 +502,19 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 
 // Write helpers
 
-bool ChunkserverEntry::isLastHeaderTypeWriteData() {
+/// @brief Returns a pair of type and length obtained from a header pointer.
+/// @param headerPtr The pointer to the header (must point to at least 8 bytes).
+/// @return A pair where the first element is the type and the second is the length.
+static std::pair<uint32_t, uint32_t> getTypeAndLengthFromHeader(const uint8_t *headerPtr) {
 	uint32_t type;
-	const uint8_t *ptr = headerBuffer;
-	get32bit(&ptr, type);
-	return type == SAU_CLTOCS_WRITE_DATA;
+	uint32_t length;
+	get32bit(&headerPtr, type);
+	get32bit(&headerPtr, length);
+	return {type, length};
+}
+
+bool ChunkserverEntry::isLastHeaderTypeWriteData() {
+	return getTypeAndLengthFromHeader(headerBuffer).first == SAU_CLTOCS_WRITE_DATA;
 }
 
 void ChunkserverEntry::updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId) {
@@ -688,8 +696,8 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		fwdServer = chain[0].address;
 		chain.erase(chain.begin());
 		serializeCltocsWriteInit(fwdInitPacket, chunkId, chunkVersion, chunkType, chain);
-		fwdStartPtr = fwdInitPacket.data();
-		fwdBytesLeft = fwdInitPacket.size();
+		fwdOutputPacket.startPtr = fwdInitPacket.data();
+		fwdOutputPacket.bytesLeft = fwdInitPacket.size();
 		connectRetryCounter = 0;
 
 		if (initConnection() < kInitConnectionOK) {
@@ -1091,6 +1099,42 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 	}
 }
 
+bool ChunkserverEntry::processRWBytes(int bytesRW, PacketStruct &packet, bool shouldForwardError,
+                                      const char *callerName, bool isRead) {
+	if (bytesRW == 0) {
+		if (shouldForwardError) {
+			fwdError();
+		} else {
+			state = State::Close;
+		}
+
+		return false;
+	}
+
+	if (bytesRW < 0) {
+		if (errno != EAGAIN) {
+			safs::log_error_code(errno, "({}) {} error", callerName, isRead ? "read" : "write");
+
+			if (shouldForwardError) {
+				fwdError();
+			} else {
+				state = State::Close;
+			}
+		}
+		return false;
+	}
+
+	if (isRead) {
+		stats_bytesin += bytesRW;
+	} else {
+		stats_bytesout += bytesRW;
+	}
+	packet.startPtr += bytesRW;
+	packet.bytesLeft -= bytesRW;
+
+	return true;
+}
+
 void ChunkserverEntry::fwdConnected() {
 	TRACETHIS();
 	int status = tcpgetstatus(fwdSocket);
@@ -1186,8 +1230,8 @@ void ChunkserverEntry::fwdWrite() {
 	TRACETHIS();
 	int32_t bytesWritten;
 
-	if (fwdBytesLeft > 0) {
-		bytesWritten = ::write(fwdSocket, fwdStartPtr, fwdBytesLeft);
+	if (fwdOutputPacket.bytesLeft > 0) {
+		bytesWritten = ::write(fwdSocket, fwdOutputPacket.startPtr, fwdOutputPacket.bytesLeft);
 		if (bytesWritten == 0) {
 			fwdError();
 			return;
@@ -1202,13 +1246,13 @@ void ChunkserverEntry::fwdWrite() {
 		}
 
 		stats_bytesout += bytesWritten;
-		fwdStartPtr += bytesWritten;
-		fwdBytesLeft -= bytesWritten;
+		fwdOutputPacket.startPtr += bytesWritten;
+		fwdOutputPacket.bytesLeft -= bytesWritten;
 	}
 
-	if (fwdBytesLeft == 0) {
+	if (fwdOutputPacket.bytesLeft == 0) {
 		fwdInitPacket.clear();
-		fwdStartPtr = nullptr;
+		fwdOutputPacket.startPtr = nullptr;
 		fwdMode = Mode::Header;
 		fwdInputPacket.bytesLeft = PacketHeader::kSize;
 		fwdInputPacket.startPtr = fwdHeaderBuffer;
@@ -1280,13 +1324,13 @@ void ChunkserverEntry::forward() {
 		}
 
 		if (header.type == SAU_CLTOCS_WRITE_DATA || header.type == SAU_CLTOCS_WRITE_END) {
-			fwdBytesLeft = PacketHeader::kSize;
+			fwdOutputPacket.bytesLeft = PacketHeader::kSize;
 			// Use the correct buffer for forwarding
 			if (header.type == SAU_CLTOCS_WRITE_DATA) {
-				fwdStartPtr =
+				fwdOutputPacket.startPtr =
 				    const_cast<uint8_t *>(inputBuffer->getStartLastWriteOperationHeader());
 			} else {
-				fwdStartPtr = inputPacket.packet.data();
+				fwdOutputPacket.startPtr = inputPacket.packet.data();
 			}
 		}
 
@@ -1316,17 +1360,18 @@ void ChunkserverEntry::forward() {
 		// Note startPtr could point to anywhere in some cases
 		inputPacket.startPtr += bytesReadOrWritten;
 		inputPacket.bytesLeft -= bytesReadOrWritten;
-		if (fwdStartPtr != nullptr) {
-			fwdBytesLeft += bytesReadOrWritten;
+		if (fwdOutputPacket.startPtr != nullptr) {
+			fwdOutputPacket.bytesLeft += bytesReadOrWritten;
 		}
 	}
 
-	if (fwdBytesLeft > 0) {
-		sassert(fwdStartPtr != nullptr);
+	if (fwdOutputPacket.bytesLeft > 0) {
+		sassert(fwdOutputPacket.startPtr != nullptr);
 		if (isLastHeaderTypeWriteData()) {
-			bytesReadOrWritten = inputBuffer->writeToSocket(fwdSocket, fwdBytesLeft);
+			bytesReadOrWritten = inputBuffer->writeToSocket(fwdSocket, fwdOutputPacket.bytesLeft);
 		} else {
-			bytesReadOrWritten = ::write(fwdSocket, fwdStartPtr, fwdBytesLeft);
+			bytesReadOrWritten =
+			    ::write(fwdSocket, fwdOutputPacket.startPtr, fwdOutputPacket.bytesLeft);
 		}
 
 		if (bytesReadOrWritten == 0) {
@@ -1341,12 +1386,12 @@ void ChunkserverEntry::forward() {
 			return;
 		}
 		stats_bytesout += bytesReadOrWritten;
-		// Note fwdStartPtr could point to anywhere in some cases
-		fwdStartPtr += bytesReadOrWritten;
-		fwdBytesLeft -= bytesReadOrWritten;
+		// Note fwdOutputPacket.startPtr could point to anywhere in some cases
+		fwdOutputPacket.startPtr += bytesReadOrWritten;
+		fwdOutputPacket.bytesLeft -= bytesReadOrWritten;
 	}
 
-	if (inputPacket.bytesLeft == 0 && fwdBytesLeft == 0) {
+	if (inputPacket.bytesLeft == 0 && fwdOutputPacket.bytesLeft == 0) {
 		PacketHeader header;
 		try {
 			deserializePacketHeader(headerBuffer, sizeof(headerBuffer), header);
@@ -1367,7 +1412,7 @@ void ChunkserverEntry::forward() {
 			packetData = inputPacket.packet.data() + PacketHeader::kSize;
 		}
 		gotPacket(header.type, packetData, header.length);
-		fwdStartPtr = nullptr;
+		fwdOutputPacket.startPtr = nullptr;
 	}
 }
 

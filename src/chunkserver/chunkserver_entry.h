@@ -127,8 +127,7 @@ struct ChunkserverEntry {
 	uint8_t fwdHeaderBuffer[PacketHeader::kSize]{};  ///< fwd packet header buff
 	/// Stores the data of the incoming packet for processing
 	PacketStruct inputPacket;
-	uint8_t *fwdStartPtr = nullptr; ///< used for forwarding inputpacket data
-	uint32_t fwdBytesLeft = 0; ///< used for forwarding inputpacket data
+	PacketStruct fwdOutputPacket; ///< used for forwarding inputpacket data
 	PacketStruct fwdInputPacket; ///< used for receiving status from fwdSocket
 	std::vector<uint8_t> fwdInitPacket; ///< used only for write initialization
 
@@ -246,6 +245,16 @@ struct ChunkserverEntry {
 	/// @param operationSize The size of the operation.
 	/// @return Pointer to the created packet data.
 	uint8_t *createAttachedPacket(uint32_t type, uint32_t operationSize);
+
+	/// Processes read or write bytes from the socket.
+	/// @param bytesRW The number of bytes read or written.
+	/// @param packet The packet structure being processed.
+	/// @param shouldForwardError Indicates if the error should be forwarded.
+	/// @param callerName The name of the calling function for logging purposes.
+	/// @param isRead Indicates if the operation is a read (true) or write (false).
+	/// @return True if the operation was successful, false otherwise.
+	bool processRWBytes(int bytesRW, PacketStruct &packet, bool shouldForwardError,
+	                    const char *callerName, bool isRead);
 
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.
