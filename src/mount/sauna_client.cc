@@ -951,8 +951,10 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 			throw RequestException(status);
 		}
 		status = SAUNAFS_STATUS_OK;
-		PidPathEntry entry{ctx.pid, fullPath};
-		gInodePathInfo.contextPidToPath.insert(entry);
+		if (ctx.pid > 0) {
+			PidPathEntry entry{ctx.pid, fullPath};
+			gInodePathInfo.contextPidToPath.insert(entry);
+		}
 		attr[0] = TYPE_FILE;
 		inode = parent;
 		icacheflag = 0;
