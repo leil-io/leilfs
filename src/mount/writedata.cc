@@ -1269,7 +1269,9 @@ using InodeDataMap = std::map<inode_t, inodedata *>;
 static InodeDataMap inodedataMap;
 
 // <inode, <lockid, endoffset>> and sorted by inode
-static std::map<inode_t, std::pair<uint64_t, uint64_t>> truncateLocatorsData;
+using TruncateLocatorsDataMap = std::map<inode_t, std::pair<uint64_t, uint64_t>>;
+static std::mutex truncateLocatorsDataMutex;
+static TruncateLocatorsDataMap truncateLocatorsData;
 static uint32_t gWriteWindowSize;
 static uint32_t gChunkserverTimeout_ms;
 
@@ -1344,7 +1346,7 @@ void write_free_inodedata(inodedata *fid, Lock &) {
 /* chunk */
 
 /* inodeLock: LOCKED*/
-ChunkData *write_get_chunkdata(uint32_t chunkIndex, inodedata *id, Lock &inodeLock) {
+ChunkData *write_get_chunkdata(uint32_t chunkIndex, inodedata *id) {
 	auto chunkDataListIt =
 	    std::find_if(id->chunkDataList.begin(), id->chunkDataList.end(),
 	                 [&](ChunkDataPtr &chunkData) { return chunkData->chunkIndex == chunkIndex; });
@@ -1352,22 +1354,15 @@ ChunkData *write_get_chunkdata(uint32_t chunkIndex, inodedata *id, Lock &inodeLo
 	id->chunkDataList.emplace_front(new ChunkData(chunkIndex, id));
 	auto &chunkData = id->chunkDataList.front();
 	id->emptyChunkDataList = false;
-	inodeLock.unlock();
 
-	Lock globalLock(gMutex);
+	Lock truncateLocatorsDataLock(truncateLocatorsDataMutex);
 	auto it = truncateLocatorsData.find(id->inode);
 	if (it != truncateLocatorsData.end()) {
 		auto [lockid, endoffset] = it->second;
-		globalLock.unlock();
-
-		inodeLock.lock();
 		chunkData->locator =
 		    std::make_unique<TruncateWriteChunkLocator>(id->inode, chunkIndex, lockid, endoffset);
-		inodeLock.unlock();
-		globalLock.lock();
 	}
-	globalLock.unlock();
-	inodeLock.lock();
+	truncateLocatorsDataLock.unlock();
 	return chunkData.get();
 }
 
@@ -1944,7 +1939,7 @@ int write_blocks(inodedata *id, uint64_t offset, uint32_t size, const uint8_t *d
 	uint32_t from = offset & SFSBLOCKMASK;
 	Lock inodeLock(id->mutex);
 	while (size > 0) {
-		ChunkData *chunkData = write_get_chunkdata(chindx, id, inodeLock);
+		ChunkData *chunkData = write_get_chunkdata(chindx, id);
 		chunkData->writesCount++;
 
 		if (size > SFSBLOCKSIZE - from) {
@@ -2189,19 +2184,21 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 
 		// Something has to be written, so pass our lock to writing threads
 		sassert(id->totalCachedBlocks == 0);
-		inodeLock.unlock();
 
-		globalLock.lock();
+		Lock truncateLocatorsDataLock(truncateLocatorsDataMutex);
 		truncateLocatorsData[id->inode] = {lockId, endOffset};
-		globalLock.unlock();
+		truncateLocatorsDataLock.unlock();
 
+		inodeLock.unlock();
 		// And now pass block of zeros to writing threads
 		std::vector<uint8_t> zeros(endOffset - length, 0);
 		err = write_blocks(id, length, zeros.size(), zeros.data());
 
 		inodeLock.lock();
 		if (err != 0) {
+			truncateLocatorsDataLock.lock();
 			truncateLocatorsData.erase(id->inode);
+			truncateLocatorsDataLock.unlock();
 			write_data_flushwaiting_decrease(id, inodeLock);
 			write_data_lcnt_decrease(id, inodeLock);
 			return err;
@@ -2211,11 +2208,14 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 		globalLock.lock();
 		// Wait for writing threads to finish
 		err = write_data_flush(id, globalLock);
-
-		truncateLocatorsData.erase(id->inode);
 		globalLock.unlock();
 
 		inodeLock.lock();
+
+		truncateLocatorsDataLock.lock();
+		truncateLocatorsData.erase(id->inode);
+		truncateLocatorsDataLock.unlock();
+
 		if (err != 0) {
 			// unlock the chunk here?
 			write_data_flushwaiting_decrease(id, inodeLock);
