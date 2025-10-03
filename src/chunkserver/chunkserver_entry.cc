@@ -1228,6 +1228,27 @@ bool ChunkserverEntry::readData(int socket, PacketStruct &packet) {
 	return true;
 }
 
+bool ChunkserverEntry::writePacket(int socket, PacketStruct &packet) {
+	bool toForward = (socket == fwdSocket);
+	bool isWriteInit = (state == State::WriteInit);
+
+	if (packet.bytesLeft == 0) { return true; }
+
+	int bytesWritten{0};
+	if (!isWriteInit && toForward && isLastHeaderTypeWriteData()) {
+		bytesWritten = inputBuffer->writeToSocket(socket, packet.bytesLeft);
+	} else {
+		sassert(packet.startPtr != nullptr);
+		bytesWritten = ::write(socket, packet.startPtr, packet.bytesLeft);
+	}
+
+	if (!processRWBytes(bytesWritten, packet, toForward, __func__, false)) { return false; }
+
+	if (packet.bytesLeft > 0) { return false; }
+
+	return true;
+}
+
 void ChunkserverEntry::processPacket(PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode,
                                      bool fromForward) {
 	sassert(targetMode == Mode::Data);
@@ -1280,27 +1301,8 @@ void ChunkserverEntry::fwdRead() {
 
 void ChunkserverEntry::fwdWrite() {
 	TRACETHIS();
-	int32_t bytesWritten;
 
-	if (fwdOutputPacket.bytesLeft > 0) {
-		bytesWritten = ::write(fwdSocket, fwdOutputPacket.startPtr, fwdOutputPacket.bytesLeft);
-		if (bytesWritten == 0) {
-			fwdError();
-			return;
-		}
-
-		if (bytesWritten < 0) {
-			if (errno != EAGAIN) {
-				safs::log_info_with_error_code(errno, "({}) write error", __func__);
-				fwdError();
-			}
-			return;
-		}
-
-		stats_bytesout += bytesWritten;
-		fwdOutputPacket.startPtr += bytesWritten;
-		fwdOutputPacket.bytesLeft -= bytesWritten;
-	}
+	if (!writePacket(fwdSocket, fwdOutputPacket)) { return; }
 
 	if (fwdOutputPacket.bytesLeft == 0) {
 		fwdInitPacket.clear();
@@ -1314,37 +1316,12 @@ void ChunkserverEntry::fwdWrite() {
 
 void ChunkserverEntry::forward() {
 	TRACETHIS();
-	ssize_t bytesReadOrWritten{0};
 
 	if (mode == Mode::Header && !readHeader(sock, inputPacket, headerBuffer, mode)) { return; }
 
 	if (!readData(sock, inputPacket)) { return; }
 
-	if (fwdOutputPacket.bytesLeft > 0) {
-		sassert(fwdOutputPacket.startPtr != nullptr);
-		if (isLastHeaderTypeWriteData()) {
-			bytesReadOrWritten = inputBuffer->writeToSocket(fwdSocket, fwdOutputPacket.bytesLeft);
-		} else {
-			bytesReadOrWritten =
-			    ::write(fwdSocket, fwdOutputPacket.startPtr, fwdOutputPacket.bytesLeft);
-		}
-
-		if (bytesReadOrWritten == 0) {
-			fwdError();
-			return;
-		}
-		if (bytesReadOrWritten < 0) {
-			if (errno != EAGAIN) {
-				safs::log_info_with_error_code(errno, "({}) write error", __func__);
-				fwdError();
-			}
-			return;
-		}
-		stats_bytesout += bytesReadOrWritten;
-		// Note fwdOutputPacket.startPtr could point to anywhere in some cases
-		fwdOutputPacket.startPtr += bytesReadOrWritten;
-		fwdOutputPacket.bytesLeft -= bytesReadOrWritten;
-	}
+	if (!writePacket(fwdSocket, fwdOutputPacket)) { return; }
 
 	if (inputPacket.bytesLeft == 0 && fwdOutputPacket.bytesLeft == 0) {
 		processPacket(inputPacket, headerBuffer, mode, false);
@@ -1367,7 +1344,6 @@ void ChunkserverEntry::readFromSocket() {
 void ChunkserverEntry::writeToSocket() {
 	TRACETHIS();
 	PacketStruct *pack = nullptr;
-	int32_t bytesWritten;
 
 	for (;;) {
 		if (outputPackets.empty()) { return; }
@@ -1389,25 +1365,8 @@ void ChunkserverEntry::writeToSocket() {
 			} else if (ret == OutputBuffer::WriteStatus::Again) {
 				return;
 			}
-		} else {
-			bytesWritten = ::write(sock, pack->startPtr, pack->bytesLeft);
-			if (bytesWritten == 0) {
-				state = State::Close;
-				return;
-			}
-			if (bytesWritten < 0) {
-				if (errno != EAGAIN) {
-					safs::log_info_with_error_code(errno, "({}) write error", __func__);
-					state = State::Close;
-				}
-				return;
-			}
-			stats_bytesout += bytesWritten;
-			pack->startPtr += bytesWritten;
-			pack->bytesLeft -= bytesWritten;
-			if (pack->bytesLeft > 0) {
-				return;
-			}
+		} else if (!writePacket(sock, *pack)) {
+			return;
 		}
 		// packet has been sent
 		if (pack->outputBuffer) {

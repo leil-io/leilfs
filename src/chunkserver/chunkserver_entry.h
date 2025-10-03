@@ -270,6 +270,12 @@ struct ChunkserverEntry {
 	/// @return True if the data was read successfully, false otherwise.
 	bool readData(int socket, PacketStruct &packet);
 
+	/// Writes the packet data to the socket.
+	/// @param socket The socket to write to.
+	/// @param packet The packet structure containing the data to write.
+	/// @return True if the data was written successfully, false otherwise.
+	bool writePacket(int socket, PacketStruct &packet);
+
 	/// Processes a packet based on its type and the current mode.
 	/// @param packet The packet structure to process.
 	/// @param headerBuf The buffer containing the packet header.
