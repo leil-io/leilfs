@@ -264,6 +264,12 @@ struct ChunkserverEntry {
 	/// @return True if the header was read successfully, false otherwise.
 	bool readHeader(int socket, PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode);
 
+	/// Reads data from the socket into the packet structure.
+	/// @param socket The socket to read from.
+	/// @param packet The packet structure to fill.
+	/// @return True if the data was read successfully, false otherwise.
+	bool readData(int socket, PacketStruct &packet);
+
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.
 	///

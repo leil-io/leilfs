@@ -1204,6 +1204,30 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 	return true;
 }
 
+bool ChunkserverEntry::readData(int socket, PacketStruct &packet) {
+	bool fromForward = (socket == fwdSocket);
+	bool mustForward = (state == State::WriteForward && !fromForward);
+	sassert((mode == Mode::Data && !fromForward) || (fwdMode == Mode::Data && fromForward));
+
+	if (packet.bytesLeft == 0) { return true; }
+
+	int bytesRead{0};
+	if (!fromForward && isLastHeaderTypeWriteData()) {
+		bytesRead = inputBuffer->readFromSocket(socket, packet.bytesLeft);
+	} else {
+		bytesRead = ::read(socket, packet.startPtr, packet.bytesLeft);
+	}
+
+	if (!processRWBytes(bytesRead, packet, fromForward, __func__, true)) { return false; }
+
+	if (mustForward && fwdOutputPacket.startPtr != nullptr) {
+		fwdOutputPacket.bytesLeft += bytesRead;
+	}
+	if (!mustForward && packet.bytesLeft > 0) { return false; }
+
+	return true;
+}
+
 void ChunkserverEntry::fwdConnected() {
 	TRACETHIS();
 	int status = tcpgetstatus(fwdSocket);
@@ -1218,7 +1242,6 @@ void ChunkserverEntry::fwdConnected() {
 
 void ChunkserverEntry::fwdRead() {
 	TRACETHIS();
-	int32_t bytesRead;
 	uint32_t type;
 	uint32_t opSize;
 	const uint8_t *ptr;
@@ -1229,26 +1252,8 @@ void ChunkserverEntry::fwdRead() {
 	}
 
 	if (fwdMode == Mode::Data) {
-		if (fwdInputPacket.bytesLeft > 0) {
-			bytesRead = read(fwdSocket, fwdInputPacket.startPtr, fwdInputPacket.bytesLeft);
-			if (bytesRead == 0) {
-				fwdError();
-				return;
-			}
-			if (bytesRead < 0) {
-				if (errno != EAGAIN) {
-					safs::log_info_with_error_code(errno, "({}) read error", __func__);
-					fwdError();
-				}
-				return;
-			}
-			stats_bytesin += bytesRead;
-			fwdInputPacket.startPtr += bytesRead;
-			fwdInputPacket.bytesLeft -= bytesRead;
-			if (fwdInputPacket.bytesLeft > 0) {
-				return;
-			}
-		}
+		if (!readData(fwdSocket, fwdInputPacket)) { return; }
+
 		ptr = fwdHeaderBuffer;
 		get32bit(&ptr, type);
 		get32bit(&ptr, opSize);
@@ -1301,33 +1306,7 @@ void ChunkserverEntry::forward() {
 
 	if (mode == Mode::Header && !readHeader(sock, inputPacket, headerBuffer, mode)) { return; }
 
-	if (inputPacket.bytesLeft > 0) {
-		if (isLastHeaderTypeWriteData()) {
-			bytesReadOrWritten = inputBuffer->readFromSocket(sock, inputPacket.bytesLeft);
-		} else {
-			bytesReadOrWritten = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
-		}
-
-		if (bytesReadOrWritten == 0) {
-			state = State::Close;
-			return;
-		}
-		if (bytesReadOrWritten < 0) {
-			if (errno != EAGAIN) {
-				safs::log_info_with_error_code(errno, "({}) read error", __func__);
-				state = State::Close;
-			}
-			return;
-		}
-
-		stats_bytesin += bytesReadOrWritten;
-		// Note startPtr could point to anywhere in some cases
-		inputPacket.startPtr += bytesReadOrWritten;
-		inputPacket.bytesLeft -= bytesReadOrWritten;
-		if (fwdOutputPacket.startPtr != nullptr) {
-			fwdOutputPacket.bytesLeft += bytesReadOrWritten;
-		}
-	}
+	if (!readData(sock, inputPacket)) { return; }
 
 	if (fwdOutputPacket.bytesLeft > 0) {
 		sassert(fwdOutputPacket.startPtr != nullptr);
@@ -1382,7 +1361,6 @@ void ChunkserverEntry::forward() {
 
 void ChunkserverEntry::readFromSocket() {
 	TRACETHIS();
-	int32_t bytesRead;
 	uint32_t type;
 	uint32_t opSize;
 	const uint8_t *ptr;
@@ -1390,31 +1368,7 @@ void ChunkserverEntry::readFromSocket() {
 	if (mode == Mode::Header && !readHeader(sock, inputPacket, headerBuffer, mode)) { return; }
 
 	if (mode == Mode::Data) {
-		if (inputPacket.bytesLeft > 0) {
-			if (isLastHeaderTypeWriteData()) {
-				bytesRead = inputBuffer->readFromSocket(sock, inputPacket.bytesLeft);
-			} else {
-				bytesRead = ::read(sock, inputPacket.startPtr, inputPacket.bytesLeft);
-			}
-
-			if (bytesRead == 0) {
-				state = State::Close;
-				return;
-			}
-			if (bytesRead < 0) {
-				if (errno != EAGAIN) {
-					safs::log_info_with_error_code(errno, "({}) read error", __func__);
-					state = State::Close;
-				}
-				return;
-			}
-			stats_bytesin += bytesRead;
-			// Note startPtr could point to anywhere in some cases
-			inputPacket.startPtr += bytesRead;
-			inputPacket.bytesLeft -= bytesRead;
-
-			if (inputPacket.bytesLeft > 0) { return; }
-		}
+		if (!readData(sock, inputPacket)) { return; }
 
 		ptr = headerBuffer;
 		get32bit(&ptr, type);
