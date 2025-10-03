@@ -256,6 +256,14 @@ struct ChunkserverEntry {
 	bool processRWBytes(int bytesRW, PacketStruct &packet, bool shouldForwardError,
 	                    const char *callerName, bool isRead);
 
+	/// Reads the packet header from the socket.
+	/// @param socket The socket to read from.
+	/// @param packet The packet structure to fill.
+	/// @param headerBuf The buffer to store the header.
+	/// @param targetMode The mode to set after reading the header.
+	/// @return True if the header was read successfully, false otherwise.
+	bool readHeader(int socket, PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode);
+
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.
 	///
