@@ -54,10 +54,6 @@ set(MANPAGES
     sfstopology.cfg.5
 )
 
-# Create custom directory to store the a2x logs
-set(A2X_LOGS_DIR ${CMAKE_CURRENT_BINARY_DIR}/a2x)
-execute_process(COMMAND mkdir -p ${A2X_LOGS_DIR})
-
 foreach(MANPAGE ${MANPAGES})
     get_filename_component(MANPAGE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE}.adoc ABSOLUTE)
     set(GENERATED_MANPAGE_PATH ${CMAKE_CURRENT_BINARY_DIR}/${MANPAGE})
@@ -67,12 +63,10 @@ foreach(MANPAGE ${MANPAGES})
         set(ASCIIDOCTOR_VERBOSE_ARGS)
     endif()
     if(EXISTS ${MANPAGE_SRC})
-        set(MANPAGE_SRC_SYMLINK ${CMAKE_CURRENT_BINARY_DIR}/${MANPAGE}.txt)
         add_custom_command(
                 OUTPUT ${GENERATED_MANPAGE_PATH}
-                COMMAND ${CMAKE_COMMAND} -E create_symlink ${MANPAGE_SRC} ${MANPAGE_SRC_SYMLINK}
                 COMMAND ${ASCIIDOCTOR_BINARY} ${ASCIIDOCTOR_VERBOSE_ARGS} -b manpage
-                    -o ${GENERATED_MANPAGE_PATH} ${MANPAGE_SRC_SYMLINK}
+                    -o ${GENERATED_MANPAGE_PATH} ${MANPAGE_SRC}
                 DEPENDS ${MANPAGE_SRC}
                 COMMENT "Generating manpage ${MANPAGE}"
                 VERBATIM

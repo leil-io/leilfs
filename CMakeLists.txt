@@ -54,10 +54,10 @@ option(ENABLE_CCACHE            "Enable ccache during compilation"              
 option(ENABLE_NFS_ACL_SUPPORT   "Enable nfs-ganesha ACL support"                         ON)
 option(ENABLE_COMPILE_COMMANDS  "Enable generation of compile_commands.json"             ON)
 option(ENABLE_PROMETHEUS        "Enable prometheus metrics"                              ON)
+option(ASCIIDOCTOR_AUTO_SETUP   "Permit CMake to self-install asciidoctor gem when absent" ON)
 # Experimental
 option(ENABLE_INODE64           "Enable 64 bits for inode numbers and quantities"        OFF)
 option(ENABLE_FOUNDATIONDB      "Enable FoundationDB experimental support"               OFF)
-
 option(GENERATE_GIT_INFO "Generate git info from current repository (for version commands)" ON)
 
 # If enabled (default), the file compile_commands.json is generated in the build
@@ -121,6 +121,7 @@ set(DEFAULT_MOUNTED_SUBFOLDER    "/"                        CACHE STRING "Defaul
 set(DEFAULT_SFSMOUNT_CONFIG_PATH "${ETC_PATH}/sfsmount.cfg" CACHE STRING "Default full path to sfsmount configuration file")
 set(SAUNAFS_BLOCKS_IN_CHUNK     "1024"                     CACHE STRING "Number of blocks in one chunk")
 set(SAUNAFS_BLOCK_SIZE          "65536"                    CACHE STRING "Number of bytes in one block")
+set(ASCIIDOCTOR_VERSION         "2.0.23"                   CACHE STRING "Pinned asciidoctor gem version")
 
 message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 message(STATUS "CMAKE_INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
