@@ -137,12 +137,12 @@ int ChunkserverEntry::initConnection() {
 	// place to get a connection from it
 	fwdSocket = tcpsocket();
 	if (fwdSocket < 0) {
-		safs::log_error_code(errno, "create socket, error");
+		safs::log_warn_with_error_code(errno, "create socket, error");
 		return kInitConnectionFailed;
 	}
 
 	if (tcpnonblock(fwdSocket) < 0) {
-		safs::log_error_code(errno, "set nonblock, error");
+		safs::log_warn_with_error_code(errno, "set nonblock, error");
 		tcpclose(fwdSocket);
 		fwdSocket = kInvalidSocket;
 		return kInitConnectionFailed;
@@ -150,7 +150,7 @@ int ChunkserverEntry::initConnection() {
 
 	status = tcpnumconnect(fwdSocket, fwdServer.ip, fwdServer.port);
 	if (status < 0) {
-		safs::log_error_code(errno, "connect failed, error");
+		safs::log_warn_with_error_code(errno, "connect failed, error");
 		tcpclose(fwdSocket);
 		fwdSocket = kInvalidSocket;
 		return kInitConnectionFailed;
@@ -1090,7 +1090,7 @@ void ChunkserverEntry::fwdConnected() {
 	TRACETHIS();
 	int status = tcpgetstatus(fwdSocket);
 	if (status) {
-		safs::log_error_code(errno, "connection failed, error");
+		safs::log_warn_with_error_code(errno, "connection failed, error");
 		fwdError();
 		return;
 	}
@@ -1113,7 +1113,7 @@ void ChunkserverEntry::fwdRead() {
 		}
 		if (bytesRead < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "({}) read error", __func__);
+				safs::log_info_with_error_code(errno, "({}) read error", __func__);
 				fwdError();
 			}
 			return;
@@ -1153,7 +1153,7 @@ void ChunkserverEntry::fwdRead() {
 			}
 			if (bytesRead < 0) {
 				if (errno != EAGAIN) {
-					safs::log_error_code(errno, "({}) read error", __func__);
+					safs::log_info_with_error_code(errno, "({}) read error", __func__);
 					fwdError();
 				}
 				return;
@@ -1190,7 +1190,7 @@ void ChunkserverEntry::fwdWrite() {
 
 		if (bytesWritten < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "({}) write error", __func__);
+				safs::log_info_with_error_code(errno, "({}) write error", __func__);
 				fwdError();
 			}
 			return;
@@ -1225,7 +1225,7 @@ void ChunkserverEntry::forward() {
 
 		if (bytesReadOrWritten < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "({}) read error", __func__);
+				safs::log_info_with_error_code(errno, "({}) read error", __func__);
 				state = State::Close;
 			}
 			return;
@@ -1301,7 +1301,7 @@ void ChunkserverEntry::forward() {
 		}
 		if (bytesReadOrWritten < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "({}) read error", __func__);
+				safs::log_info_with_error_code(errno, "({}) read error", __func__);
 				state = State::Close;
 			}
 			return;
@@ -1330,7 +1330,7 @@ void ChunkserverEntry::forward() {
 		}
 		if (bytesReadOrWritten < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "({}) write error", __func__);
+				safs::log_info_with_error_code(errno, "({}) write error", __func__);
 				fwdError();
 			}
 			return;
@@ -1382,7 +1382,7 @@ void ChunkserverEntry::readFromSocket() {
 		}
 		if (bytesRead < 0) {
 			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "({}) read error", __func__);
+				safs::log_info_with_error_code(errno, "({}) read error", __func__);
 				state = State::Close;
 			}
 			return;
@@ -1434,7 +1434,7 @@ void ChunkserverEntry::readFromSocket() {
 			}
 			if (bytesRead < 0) {
 				if (errno != EAGAIN) {
-					safs::log_error_code(errno, "({}) read error", __func__);
+					safs::log_info_with_error_code(errno, "({}) read error", __func__);
 					state = State::Close;
 				}
 				return;
@@ -1482,7 +1482,7 @@ void ChunkserverEntry::writeToSocket() {
 					"New bytes in pack->outputBuffer after sending some data");
 			stats_bytesout += (bytesInBufferBefore - bytesInBufferAfter);
 			if (ret == OutputBuffer::WriteStatus::Error) {
-				safs::log_error_code(errno, "({}) write error", __func__);
+				safs::log_info_with_error_code(errno, "({}) write error", __func__);
 				state = State::Close;
 				return;
 			} else if (ret == OutputBuffer::WriteStatus::Again) {
@@ -1496,7 +1496,7 @@ void ChunkserverEntry::writeToSocket() {
 			}
 			if (bytesWritten < 0) {
 				if (errno != EAGAIN) {
-					safs::log_error_code(errno, "({}) write error", __func__);
+					safs::log_info_with_error_code(errno, "({}) write error", __func__);
 					state = State::Close;
 				}
 				return;
