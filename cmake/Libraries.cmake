@@ -43,8 +43,7 @@ if(ENABLE_JEMALLOC)
 endif()
 
 # Find extra binaries
-find_program(A2X_BINARY a2x)
-message(STATUS "a2x: ${A2X_BINARY}")
+include(FindAsciidoctor REQUIRED)
 
 # Find Zlib
 find_package(ZLIB)

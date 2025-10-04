@@ -51,7 +51,7 @@ set(CPACK_DEBIAN_DEBUGINFO_PACKAGE ON)
 
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 ## TODO(Baldor): Set dependencies for the package
-#set(CPACK_DEBIAN_PACKAGE_DEPENDS "asciidoc, debhelper, cmake, libfuse3-dev, pkg-config, zlib1g-dev, libspdlog-dev, libfmt-dev, libboost-system-dev, libboost-program-options-dev, python3")
+#set(CPACK_DEBIAN_PACKAGE_DEPENDS "asciidoctor, debhelper, cmake, libfuse3-dev, pkg-config, zlib1g-dev, libspdlog-dev, libfmt-dev, libboost-system-dev, libboost-program-options-dev, python3")
 set(CPACK_DEBIAN_ENABLE_COMPONENT_DEPENDS ON)
 
 # Remove the Unspecified package

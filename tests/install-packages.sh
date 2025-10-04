@@ -19,7 +19,6 @@ fi
 
 common_packages=(
 	acl
-	asciidoc
 	attr
 	automake
 	bash-completion
@@ -52,6 +51,7 @@ common_packages=(
 	pv
 	rsync
 	rsyslog
+	ruby
 	socat
 	sudo
 	tidy
@@ -219,4 +219,3 @@ case "${release}" in
 		echo "Installation of clang19 SKIPPED, only in apt systems clang19 is installed automatically"
 		set -x
 esac
-
