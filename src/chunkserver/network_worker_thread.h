@@ -40,8 +40,8 @@ public:
 	static constexpr uint32_t kDefaultNumberOfHddWorkersPerNetworkWorker = 16;
 	static constexpr uint32_t kDefaultMaxBackgroundJobsPerNetworkWorker = 4000;
 
-	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 16;
-	static constexpr uint16_t kDefaultMaxBlocksPerHddReadJob = 8;
+	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 1;
+	static constexpr uint16_t kDefaultMaxBlocksPerHddReadJob = 16;
 
 	static constexpr uint16_t kDefaultMaxBlocksPerHddWriteJob = 16;
 	static constexpr uint16_t kMinBlocksPerHddWriteJob = 1;

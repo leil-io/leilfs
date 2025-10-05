@@ -137,10 +137,10 @@ in a single write job. If possible, will try to make a single pwrite call
 
 *MAX_BLOCKS_PER_HDD_READ_JOB*:: maximum number of blocks read from the device
 in a single read job. If possible, will try to make a single pread call
-(default is 8, minimum is 1)
+(default is 16, minimum is 1)
 
 *MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY*:: maximum number of read jobs processed
-in parallel per client connection (default is 16)
+in parallel per client connection (default is 1)
 
 *READ_AHEAD_KB*:: additional number of kilobytes which should be passed to
 posix_fadvise(POSIX_FADV_WILLNEED) before reading data from a chunk (default is
