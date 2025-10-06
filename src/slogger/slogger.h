@@ -139,6 +139,34 @@ inline void log_error_code(int error_code, const FormatType &format, Args &&...a
 }
 
 /**
+ * @brief Log an warning message with the given error code and format string appended.
+ *
+ * @param error_code The error code to log, expected to be errno.
+ * @param format The format string for the log message.
+ * @param args The arguments to format the log message.
+ */
+template <typename FormatType, typename... Args>
+inline void log_warn_with_error_code(int error_code, const FormatType &format, Args &&...args) {
+	auto extended_format =
+	    fmt::format("{} (errno: {}, message: {})", format, error_code, std::strerror(error_code));
+	safs::log_warn(extended_format, std::forward<Args>(args)...);
+}
+
+/**
+ * @brief Log an info message with the given error code and format string appended.
+ *
+ * @param error_code The error code to log, expected to be errno.
+ * @param format The format string for the log message.
+ * @param args The arguments to format the log message.
+ */
+template <typename FormatType, typename... Args>
+inline void log_info_with_error_code(int error_code, const FormatType &format, Args &&...args) {
+	auto extended_format =
+	    fmt::format("{} (errno: {}, message: {})", format, error_code, std::strerror(error_code));
+	safs::log_info(extended_format, std::forward<Args>(args)...);
+}
+
+/**
  * @brief Log an exception error message with the given exception message and type
  *
  * @param error_code The exception to log, expected to be std::exception or a sub-class.
