@@ -98,7 +98,12 @@ namespace InodePathByInode {
 static void release(FileInfo *fi) {
 	std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
 	auto entry = reinterpret_cast<PidPathEntry *>(fi->fh);
-	if (entry) { gInodePathInfo.contextPidToPath.erase(*entry); }
+	if (entry) {
+		auto it = gInodePathInfo.contextPidToPath.find(*entry);
+		if (it != gInodePathInfo.contextPidToPath.end() && --(it->second) <= 0) {
+			gInodePathInfo.contextPidToPath.erase(it);
+		}
+	}
 	fi->fh = 0;
 	oplog_printf("release (%" PRIiNode ") (internal node: PATH_BY_INODE_FILE): OK", inode_);
 }

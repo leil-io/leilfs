@@ -953,7 +953,7 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 		status = SAUNAFS_STATUS_OK;
 		if (ctx.pid > 0) {
 			PidPathEntry entry{ctx.pid, fullPath};
-			gInodePathInfo.contextPidToPath.insert(entry);
+			gInodePathInfo.contextPidToPath[entry]++;
 		}
 		attr[0] = TYPE_FILE;
 		inode = parent;
