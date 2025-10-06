@@ -107,6 +107,6 @@ void ChunkTrashManager::reloadConfig() {
 	}
 
 	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", static_cast<u_short>(0));
-	safs::log_info("Chunk trash manager is {}", isEnabled ? "enabled" : "disabled");
+	safs::log_debug("Chunk trash manager is {}", isEnabled ? "enabled" : "disabled");
 	impl->reloadConfig();
 }

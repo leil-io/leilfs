@@ -47,7 +47,7 @@ void ChunkTrashManagerImpl::reloadConfig() {
 	    cfg_get("CHUNK_TRASH_GC_BATCH_SIZE", kDefaultTrashGarbageCollectorBulkSize);
 	garbageCollectorSpaceRecoveryStep = cfg_get("CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE",
 	                                            kDefaultGarbageCollectorSpaceRecoveryStep);
-	safs::log_info(
+	safs::log_debug(
 	    "Reloaded chunk trash manager configuration: "
 	    "CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB={}, "
 	    "CHUNK_TRASH_EXPIRATION_SECONDS={}, "
