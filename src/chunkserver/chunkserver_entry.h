@@ -150,14 +150,10 @@ struct ChunkserverEntry {
 
 	/* read */
 	uint16_t maxBlocksPerHddReadJob; ///< Number of blocks to read from the device in one read job.
-	uint16_t maxParallelHddReadJobs; ///< Maximum size of pendingReadDataBuffers.
 
 	/// List of output buffers waiting for the HDD worker to finish, and then be sent.
-	std::list<std::shared_ptr<OutputBuffer>> pendingReadDataBuffers;
-	std::list<uint32_t> pendingReadJobIds; ///< Job IDs for pending read operations.
-	/// List of output buffers within a failing read operation, which are to be discarded.
-	std::list<std::shared_ptr<OutputBuffer>> toDiscardReadDataBuffers;
-	std::list<uint32_t> toDiscardReadJobIds; ///< Job IDs for read operations to discard.
+	std::shared_ptr<OutputBuffer> readDataBuffer;
+	uint32_t readJobId; ///< Job IDs for pending read operations.
 
 	/* get blocks */
 	uint32_t getBlocksJobId = 0; ///< Current job ID for retrieving chunk blocks
@@ -166,7 +162,6 @@ struct ChunkserverEntry {
 	/// List of write data buffers waiting to be written to the chunk.
 	std::list<std::shared_ptr<InputBuffer>> writeDataBuffers;
 
-	uint16_t pendingDelayedJobs = 0; ///< Number of remaining delayed jobs running
 	uint8_t isChunkOpen = 0;
 	uint64_t chunkId = 0; // R+W
 	uint32_t chunkVersion = 0; // R+W
@@ -177,12 +172,11 @@ struct ChunkserverEntry {
 	LOG_AVG_TYPE readOperationTimer;
 
 	ChunkserverEntry(int socket, JobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
-	                 uint16_t maxParallelHddReadJobs, uint16_t maxBlocksPerHddWriteJob)
+	                 uint16_t maxBlocksPerHddWriteJob)
 	    : workerJobPool(workerJobPool),
 	      sock(socket),
 	      maxBlocksPerHddWriteJob(maxBlocksPerHddWriteJob),
-	      maxBlocksPerHddReadJob(maxBlocksPerHddReadJob),
-	      maxParallelHddReadJobs(maxParallelHddReadJobs) {
+	      maxBlocksPerHddReadJob(maxBlocksPerHddReadJob) {
 		inputPacket.bytesLeft = PacketHeader::kSize;
 		inputPacket.startPtr = headerBuffer;
 	}
@@ -232,6 +226,12 @@ struct ChunkserverEntry {
 
 	/// Attaches an output buffer to the output packet list (taking ownership).
 	inline void attachBuffer(std::shared_ptr<OutputBuffer> &&buffer);
+
+	/// Checks if there is a read job being processed.
+	inline bool isReadJobBeingProcessed();
+
+	/// Sets that no read job is being processed.
+	inline void setNoReadJobBeingProcessed();
 
 	/// Creates an attached packet from the given vector.
 	/// The function takes ownership of the vector.
@@ -348,7 +348,7 @@ struct ChunkserverEntry {
 	///
 	/// @param callMaxParallelHddReadJobs The maximum number of parallel HDD read for this call.
 	/// @see ChunkserverEntry::readInit
-	void readContinue(uint16_t callMaxParallelHddReadJobs);
+	void readContinue();
 
 	/// Requests a data prefetch operation.
 	/// Prefetch in this context means reading data from the disk and storing it
@@ -429,7 +429,7 @@ struct ChunkserverEntry {
 	void outputCheckReadFinished();
 
 	/// Checks if it is ready to be closed, and if so set the state to Closed.
-	void checkAndApplyClosed();
+	void applyClosed();
 
 	/// Closes all active jobs and updates the state.
 	///
