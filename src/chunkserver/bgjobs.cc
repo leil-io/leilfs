@@ -68,7 +68,6 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
 		}
 		wakeupFDs[i] = listenerInfos_[i].notifierFD;
 
-		listenerInfos_[i].statusQueue = std::make_unique<ProducerConsumerQueue>();
 		listenerInfos_[i].nextJobId = 1;
 	}
 
@@ -89,11 +88,10 @@ JobPool::~JobPool() {
 	}
 
 	for (size_t i = 0; i < listenerInfos_.size(); ++i) {
-		if (!listenerInfos_[i].statusQueue->isEmpty()) { processCompletedJobs(i); }
+		if (!listenerInfos_[i].statusQueue.empty()) { processCompletedJobs(i); }
 	}
 
 	jobsQueue.reset();
-	for (auto &listenerInfo : listenerInfos_) { listenerInfo.statusQueue.reset(); }
 
 	workerThreads.clear();
 
@@ -307,12 +305,12 @@ void JobPool::sendStatus(uint32_t jobId, uint8_t status, uint32_t listenerId) {
 	auto &listenerInfo = listenerInfos_[listenerId];
 	std::lock_guard statusLock(listenerInfo.notifierMutex);
 
-	if (listenerInfo.statusQueue->isEmpty()) {
+	if (listenerInfo.statusQueue.empty()) {
 		static constexpr eventfd_t dummyValue = 1;  // Dummy value to wake up the eventfd
 		eassert(::eventfd_write(listenerInfo.notifierFD, dummyValue) == 0 &&
 		        "JobPool: SendStatus: Failed to write to eventfd");
 	}
-	listenerInfo.statusQueue->put(jobId, status, nullptr, 1);
+	listenerInfo.statusQueue.emplace(jobId, status);
 }
 
 bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId) {
@@ -324,12 +322,11 @@ bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerI
 	}
 
 	auto &listenerInfo = listenerInfos_[listenerId];
-	uint32_t qstatus = 0;
 	std::lock_guard statusLock(listenerInfo.notifierMutex);
 
-	listenerInfo.statusQueue->get(&jobId, &qstatus, nullptr, nullptr);
-	status = qstatus;
-	if (listenerInfo.statusQueue->isEmpty()) {
+	std::tie(jobId, status) = listenerInfo.statusQueue.front();
+	listenerInfo.statusQueue.pop();
+	if (listenerInfo.statusQueue.empty()) {
 		eventfd_t dummyEvent;  // Only to clear the eventfd
 		eassert(::eventfd_read(listenerInfo.notifierFD, &dummyEvent) == 0 &&
 		        "JobPool: ReceiveStatus: Failed to read from eventfd");

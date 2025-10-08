@@ -189,10 +189,10 @@ private:
 
 	/// @brief Structure to hold information about a listener.
 	struct ListenerInfo {
-		int notifierFD;                                      /// File descriptor for notifications.
-		std::mutex notifierMutex;                            /// Mutex for event notifications.
-		std::mutex jobsMutex;                                /// Mutex for job operations.
-		std::unique_ptr<ProducerConsumerQueue> statusQueue;  /// Queue for job statuses.
+		int notifierFD;            /// File descriptor for notifications.
+		std::mutex notifierMutex;  /// Mutex for event notifications.
+		std::mutex jobsMutex;      /// Mutex for job operations.
+		std::queue<std::pair<uint32_t, uint8_t>> statusQueue;        /// Queue for job statuses.
 		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
 		uint32_t nextJobId;                                          /// Next job ID to be assigned.
 	};
