@@ -46,6 +46,7 @@
 #include "master/matoclserv_sessions.h"
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
+#include "master/matontserv.h"
 #include "master/recursive_remove_task.h"
 #include "master/task_manager.h"
 #include "metrics/metrics.h"
@@ -106,6 +107,7 @@ void FilesystemOperationsBase::fs_changelog(uint32_t ts, const char *format, ...
 	changelog(version, entry);
 	getChangelogSignal().emit({.version=version, .entry=entry});
 	matomlserv_broadcast_logstring(version, (uint8_t *)entry, tsLength + entryLength);
+	matontserv_broadcast_message(version, std::string(entry, tsLength + entryLength));
 #endif
 }
 

@@ -318,6 +318,11 @@
 
 ##### EXPERIMENTAL:
 
+## Port to listen on for notifier connections.
+## Set to 0 to disable the notifier service.
+## (Default: 0)
+# MATONT_LISTEN_PORT = 0
+
 ## Option to enable Prometheus support and metric collection. Set to either 1
 ## to enable, or 0 to disable.
 ## (Default: 0)

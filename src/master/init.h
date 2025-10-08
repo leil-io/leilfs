@@ -38,6 +38,7 @@
 #include "master/matoclserv_sessions.h"
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
+#include "master/matontserv.h"
 #include "master/metadata_backend_file.h"
 #include "master/metadata_backend_interface.h"
 #include "master/personality.h"
@@ -97,6 +98,7 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{masterconn_init, "communication with master server"},
     RunTab{matomlserv_init, "communication with metalogger"},
     RunTab{matocsserv_init, "communication with chunkserver"},
+    RunTab{matontserv_init, "communication with notifier"},
     RunTab{matoclserv_network_init, "communication with clients"}};
 
 /// Functions to call delayed after the initialization is correct
