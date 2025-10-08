@@ -21,36 +21,11 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
-#include <stdexcept>
 #include <vector>
 
+#include "kv/kv_utils.h"
+
 namespace kv {
-
-using Key = std::vector<uint8_t>;
-using Value = std::vector<uint8_t>;
-
-/// Converts string, string_view and const char* to a vector of uint8_t.
-inline std::vector<uint8_t> toU8Vector(std::string_view str) { return {str.begin(), str.end()}; }
-
-/// Converts integral types to a vector of uint8_t.
-template <typename T>
-	requires(std::is_integral_v<T>)
-inline std::vector<uint8_t> toU8VectorLittleEndian(T value) {
-	std::vector<uint8_t> bytes(sizeof(value));
-	for (size_t i = 0; i < sizeof(T); ++i) {
-		bytes[i] = static_cast<uint8_t>((value >> (8 * i)) & 0xFF);
-	}
-	return bytes;
-}
-
-template <typename T>
-    requires(std::is_integral_v<T>)
-T fromU8VectorLittleEndianToInt(const Value &value) {
-	if (value.size() > sizeof(T)) { throw std::invalid_argument("Invalid value size"); }
-	T result = 0;
-	for (size_t i = 0; i < value.size(); ++i) { result |= static_cast<T>(value[i]) << (8 * i); }
-	return result;
-}
 
 /// Represents a key-value pair in the key-value store.
 /// Keys and values are stored as vectors of bytes.
