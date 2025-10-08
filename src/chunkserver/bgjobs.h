@@ -131,8 +131,8 @@ public:
 	///
 	/// @param jobIds The list of jobs by IDs to be disabled.
 	/// @param listenerId The ID of the listener associated with the jobs.
-	/// @return A queue of job IDs that were successfully disabled.
-	std::queue<uint32_t> disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId = 0);
+	/// @return A list of job IDs that were successfully disabled.
+	std::list<uint32_t> disableJobs(const std::list<uint32_t> &jobIds, uint32_t listenerId = 0);
 
 	/// @brief Checks the status of jobs in the JobPool and calls their callbacks.
 	///
