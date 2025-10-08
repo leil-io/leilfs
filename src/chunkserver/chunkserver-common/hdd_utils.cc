@@ -200,9 +200,8 @@ int hddIOEnd(IChunk *chunk) {
 	}
 
 	if (chunk->refCount() <= 0) {
-		safs_silent_syslog(LOG_WARNING,
-		                   "hddIOEnd: refcount = 0 - "
-		                   "This should never happen!");
+		safs::log_warn("({}) refcount = 0 - This should never happen! (chunkId: {})", __func__,
+		               chunk->id());
 		errno = 0;
 
 		return SAUNAFS_STATUS_OK;
