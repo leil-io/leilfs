@@ -166,9 +166,9 @@ void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
 	}
 }
 
-std::queue<uint32_t> JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t listenerId) {
+std::list<uint32_t> JobPool::disableJobs(const std::list<uint32_t> &jobIds, uint32_t listenerId) {
 	// Check if the listenerId is valid
-	std::queue<uint32_t> disabledJobIds;
+	std::list<uint32_t> disabledJobIds;
 	if (listenerId >= listenerInfos_.size()) {
 		safs::log_warn("JobPool: disableJobs: Invalid listenerId {}, returning",
 		               listenerId);
@@ -183,7 +183,7 @@ std::queue<uint32_t> JobPool::disableJobs(std::list<uint32_t> &jobIds, uint32_t 
 		if (jobIterator != listenerInfo.jobHash.end()) {
 			if (jobIterator->second->state == JobPool::State::Enabled) {
 				jobIterator->second->state = JobPool::State::Disabled;
-				disabledJobIds.push(jobId);
+				disabledJobIds.push_back(jobId);
 			}
 		}
 	}
