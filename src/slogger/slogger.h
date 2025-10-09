@@ -24,7 +24,6 @@
 
 #include <expected>
 
-#include "common/syslog_defs.h"
 #include "errors/saunafs_error_codes.h"
 
 #ifndef _WIN32
