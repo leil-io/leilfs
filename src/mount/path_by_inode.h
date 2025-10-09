@@ -31,7 +31,9 @@ struct PidPathEntry {
 };
 
 struct InodePathInfo {
-	std::set<PidPathEntry> contextPidToPath;
+	// This will store for each PID for a path by inode request, how many times that path was
+	// requested This helps to manage multiple requests triggered from same PID
+	std::map<PidPathEntry, uint64_t> contextPidToPath;
 	std::mutex mtx;
 };
 

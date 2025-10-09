@@ -120,7 +120,7 @@ static void open(const Context &ctx, FileInfo *fi) {
 	PidPathEntry searchEntry{ctx.pid, ""};
 	auto it = gInodePathInfo.contextPidToPath.find(searchEntry);
 	if (it != gInodePathInfo.contextPidToPath.end()) {
-		fi->fh = reinterpret_cast<uintptr_t>(&(*it));
+		fi->fh = reinterpret_cast<uintptr_t>(&(it->first));
 	} else {
 		fi->fh = 0;
 	}
