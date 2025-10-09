@@ -22,7 +22,7 @@
 
 #include <gtest/gtest.h>
 
-TEST(KVUtilsTest, ToU8Vector) {
+TEST(KVUtilsTest, ToBytes) {
 	const char *text = "Hello, World!";
 	std::string textString{text};
 	std::string_view textStringView{text, strlen(text)};
@@ -32,24 +32,24 @@ TEST(KVUtilsTest, ToU8Vector) {
 	std::memcpy(expected.data(), text, strlen(text));
 
 	// Passing a plain char *
-	auto result = kv::toU8Vector(text);
+	auto result = kv::toBytes(text);
 	EXPECT_EQ(result, expected);
 
 	// Passing a std::string
-	result = kv::toU8Vector(textString);
+	result = kv::toBytes(textString);
 	EXPECT_EQ(result, expected);
 
 	// Passing a std::string_view
-	result = kv::toU8Vector(textStringView);
+	result = kv::toBytes(textStringView);
 	EXPECT_EQ(result, expected);
 }
 
-TEST(KVUtilsTest, ToU8VectorLittleEndian) {
+TEST(KVUtilsTest, ToBytesLE) {
 	// Test uint8_t (single byte - endianness doesn't matter)
 	{
 		constexpr uint8_t kTestValue = 0x42;
 		kv::Value expected = {kTestValue};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -59,7 +59,7 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr uint8_t kLowByte = 0x34;
 		constexpr uint8_t kHighByte = 0x12;
 		kv::Value expected = {kLowByte, kHighByte};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -71,7 +71,7 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr uint8_t kByte2 = 0x34;
 		constexpr uint8_t kByte3 = 0x12;
 		kv::Value expected = {kByte0, kByte1, kByte2, kByte3};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -87,7 +87,7 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr uint8_t kByte6 = 0x34;
 		constexpr uint8_t kByte7 = 0x12;
 		kv::Value expected = {kByte0, kByte1, kByte2, kByte3, kByte4, kByte5, kByte6, kByte7};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -96,7 +96,7 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr int16_t kTestValue = -1;  // 0xFFFF in two's complement
 		constexpr uint8_t kByte = 0xFF;
 		kv::Value expected = {kByte, kByte};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -106,7 +106,7 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr uint8_t kLowByte = 0x00;
 		constexpr uint8_t kHighByte = 0xFF;
 		kv::Value expected = {kLowByte, kHighByte, kHighByte, kHighByte};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -115,7 +115,7 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr uint32_t kTestValue = 0;
 		constexpr uint8_t kZeroByte = 0x00;
 		kv::Value expected = {kZeroByte, kZeroByte, kZeroByte, kZeroByte};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -124,17 +124,17 @@ TEST(KVUtilsTest, ToU8VectorLittleEndian) {
 		constexpr uint16_t kTestValue = 0xFFFF;
 		constexpr uint8_t kMaxByte = 0xFF;
 		kv::Value expected = {kMaxByte, kMaxByte};
-		auto result = kv::toU8VectorLittleEndian(kTestValue);
+		auto result = kv::toBytesLE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 }
 
-TEST(KVUtilsTest, ToU8VectorBigEndian) {
+TEST(KVUtilsTest, ToBytesBE) {
 	// Test uint8_t (single byte - endianness doesn't matter)
 	{
 		constexpr uint8_t kTestValue = 0x42;
 		kv::Value expected = {kTestValue};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -144,7 +144,7 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr uint8_t kHighByte = 0x12;
 		constexpr uint8_t kLowByte = 0x34;
 		kv::Value expected = {kHighByte, kLowByte};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -156,7 +156,7 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr uint8_t kByte2 = 0x56;
 		constexpr uint8_t kByte3 = 0x78;
 		kv::Value expected = {kByte0, kByte1, kByte2, kByte3};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -172,7 +172,7 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr uint8_t kByte6 = 0xDE;
 		constexpr uint8_t kByte7 = 0xF0;
 		kv::Value expected = {kByte0, kByte1, kByte2, kByte3, kByte4, kByte5, kByte6, kByte7};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -181,7 +181,7 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr int16_t kTestValue = -1;  // 0xFFFF in two's complement
 		constexpr uint8_t kByte = 0xFF;
 		kv::Value expected = {kByte, kByte};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -191,7 +191,7 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr uint8_t kHighByte = 0xFF;
 		constexpr uint8_t kLowByte = 0x00;
 		kv::Value expected = {kHighByte, kHighByte, kHighByte, kLowByte};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -200,7 +200,7 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr uint32_t kTestValue = 0;
 		constexpr uint8_t kZeroByte = 0x00;
 		kv::Value expected = {kZeroByte, kZeroByte, kZeroByte, kZeroByte};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 
@@ -209,17 +209,17 @@ TEST(KVUtilsTest, ToU8VectorBigEndian) {
 		constexpr uint16_t kTestValue = 0xFFFF;
 		constexpr uint8_t kMaxByte = 0xFF;
 		kv::Value expected = {kMaxByte, kMaxByte};
-		auto result = kv::toU8VectorBigEndian(kTestValue);
+		auto result = kv::toBytesBE(kTestValue);
 		EXPECT_EQ(result, expected);
 	}
 }
 
-TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
+TEST(KVUtilsTest, FromBytesLE) {
 	// Test uint8_t (single byte)
 	{
 		constexpr uint8_t kExpected = 0x42;
 		kv::Value value = {kExpected};
-		auto result = kv::fromU8VectorLittleEndianToInt<uint8_t>(value);
+		auto result = kv::fromBytesLE<uint8_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -229,7 +229,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 		constexpr uint8_t kLowByte = 0x34;
 		constexpr uint8_t kHighByte = 0x12;
 		kv::Value value = {kLowByte, kHighByte};
-		auto result = kv::fromU8VectorLittleEndianToInt<uint16_t>(value);
+		auto result = kv::fromBytesLE<uint16_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -241,7 +241,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 		constexpr uint8_t kByte2 = 0x34;
 		constexpr uint8_t kByte3 = 0x12;
 		kv::Value value = {kByte0, kByte1, kByte2, kByte3};
-		auto result = kv::fromU8VectorLittleEndianToInt<uint32_t>(value);
+		auto result = kv::fromBytesLE<uint32_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -257,7 +257,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 		constexpr uint8_t kByte6 = 0x34;
 		constexpr uint8_t kByte7 = 0x12;
 		kv::Value value = {kByte0, kByte1, kByte2, kByte3, kByte4, kByte5, kByte6, kByte7};
-		auto result = kv::fromU8VectorLittleEndianToInt<uint64_t>(value);
+		auto result = kv::fromBytesLE<uint64_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -267,7 +267,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 		constexpr uint8_t kByte0 = 0x34;
 		constexpr uint8_t kByte1 = 0x12;
 		kv::Value value = {kByte0, kByte1};  // Only 2 bytes for uint32_t
-		auto result = kv::fromU8VectorLittleEndianToInt<uint32_t>(value);
+		auto result = kv::fromBytesLE<uint32_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -276,7 +276,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 		constexpr uint32_t kExpected = 0;
 		constexpr uint8_t kZeroByte = 0x00;
 		kv::Value value = {kZeroByte, kZeroByte, kZeroByte, kZeroByte};
-		auto result = kv::fromU8VectorLittleEndianToInt<uint32_t>(value);
+		auto result = kv::fromBytesLE<uint32_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -285,7 +285,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 		constexpr uint16_t kExpected = 0xFFFF;
 		constexpr uint8_t kMaxByte = 0xFF;
 		kv::Value value = {kMaxByte, kMaxByte};
-		auto result = kv::fromU8VectorLittleEndianToInt<uint16_t>(value);
+		auto result = kv::fromBytesLE<uint16_t>(value);
 		EXPECT_EQ(result, kExpected);
 	}
 
@@ -293,7 +293,7 @@ TEST(KVUtilsTest, FromU8VectorLittleEndianToInt) {
 	{
 		constexpr uint8_t kByte = 0x12;
 		kv::Value value = {kByte, kByte, kByte};  // 3 bytes for uint16_t (2 bytes)
-		EXPECT_THROW(kv::fromU8VectorLittleEndianToInt<uint16_t>(value), std::invalid_argument);
+		EXPECT_THROW(kv::fromBytesLE<uint16_t>(value), std::invalid_argument);
 	}
 }
 

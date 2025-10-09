@@ -28,19 +28,20 @@
 
 namespace kv {
 
-using Key = std::vector<uint8_t>;
-using Value = std::vector<uint8_t>;
+using Bytes = std::vector<uint8_t>;
+using Key = Bytes;
+using Value = Bytes;
 
 /// Converts string, string_view and const char* to a vector of uint8_t.
-inline std::vector<uint8_t> toU8Vector(std::string_view str) { return {str.begin(), str.end()}; }
+inline Bytes toBytes(std::string_view str) { return {str.begin(), str.end()}; }
 
 /// Converts integral types to a vector of uint8_t encoded in little-endian order.
 template <typename T>
     requires(std::is_integral_v<T>)
-inline std::vector<uint8_t> toU8VectorLittleEndian(T value) {
+inline Bytes toBytesLE(T value) {
 	if constexpr (std::endian::native == std::endian::big) { value = std::byteswap(value); }
 
-	std::vector<uint8_t> result(sizeof(T));
+	Bytes result(sizeof(T));
 	std::memcpy(result.data(), &value, sizeof(T));
 	return result;
 }
@@ -48,17 +49,17 @@ inline std::vector<uint8_t> toU8VectorLittleEndian(T value) {
 /// Converts integral types to a vector of uint8_t encoded in big-endian order.
 template <typename T>
     requires(std::is_integral_v<T>)
-inline std::vector<uint8_t> toU8VectorBigEndian(T value) {
+inline Bytes toBytesBE(T value) {
 	if constexpr (std::endian::native == std::endian::little) { value = std::byteswap(value); }
 
-	std::vector<uint8_t> result(sizeof(T));
+	Bytes result(sizeof(T));
 	std::memcpy(result.data(), &value, sizeof(T));
 	return result;
 }
 
 template <typename T>
     requires(std::is_integral_v<T>)
-T fromU8VectorLittleEndianToInt(const Value &value) {
+T fromBytesLE(const Value &value) {
 	if (value.size() > sizeof(T)) { throw std::invalid_argument("Invalid value size"); }
 	T result = 0;
 	for (size_t i = 0; i < value.size(); ++i) { result |= static_cast<T>(value[i]) << (8 * i); }
