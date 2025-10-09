@@ -22,10 +22,11 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
 #include <map>
 #include <string>
 
-#include "slogger/slogger.h"
+#include "slogger/slogger_interface.h"
 
 #define _CONFIG_MAKE_PROTOTYPE(fname,type) type cfg_get##fname(const char *name,const type def)
 
