@@ -71,7 +71,7 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
 		listenerInfos_[i].nextJobId = 1;
 	}
 
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(maxJobs);
+	jobsQueue = std::make_unique<ProducerConsumerQueue>(1, maxJobs);
 
 	for (uint8_t i = 0; i < workers; ++i) {
 		workerThreads.emplace_back(&JobPool::workerThread, this, name_, i);

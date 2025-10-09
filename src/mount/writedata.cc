@@ -369,7 +369,7 @@ void *delayed_queue_worker(void *) {
 		while (it != delayedQueue.end()) {
 			if (it->inodeData == NULL) { return NULL; }
 			if (--it->ticksLeft <= 0) {
-				jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(it->inodeData), 0);
+				jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(it->inodeData), 1);
 				it = delayedQueue.erase(it);
 			} else {
 				++it;
@@ -391,12 +391,12 @@ void write_delayed_enqueue(inodedata *id, uint32_t seconds, Glock &lock) {
 	if (seconds > 0) {
 		delayed_queue_put(id, seconds, lock);
 	} else {
-		jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(id), 0);
+		jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(id), 1);
 	}
 }
 
 void write_enqueue(inodedata *id, Glock &) {
-	jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(id), 0);
+	jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(id), 1);
 }
 
 void write_job_delayed_end(inodedata *id, int status, int seconds, Glock &lock) {
@@ -768,7 +768,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	writeStatsInit();
 
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(0, deleterByType<inodedata>);
+	jobsQueue = std::make_unique<ProducerConsumerQueue>(1, 0, deleterByType<inodedata>);
 
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr, 0x100000);
@@ -791,7 +791,7 @@ void write_data_term(void) {
 		Glock lock(gMutex);
 		delayed_queue_put(nullptr, 0, lock);
 	}
-	for (i = 0; i < write_worker_th.size(); i++) { jobsQueue->put(0, 0, NULL, 0); }
+	for (i = 0; i < write_worker_th.size(); i++) { jobsQueue->put(0, 0, nullptr, 1); }
 	for (i = 0; i < write_worker_th.size(); i++) { pthread_join(write_worker_th[i], NULL); }
 	pthread_join(delayed_queue_worker_th, NULL);
 	jobsQueue.reset();
@@ -1427,7 +1427,7 @@ void *delayed_queue_worker(void *) {
 			if (it->chunkData == NO_CHUNKDATA) { return NULL; }
 			if (--it->ticksLeft <= 0) {
 				auto *data = reinterpret_cast<uint8_t *>(it->chunkData);
-				jobsQueue->put(0, 0, data, 0);
+				jobsQueue->put(0, 0, data, 1);
 				it = delayedQueue.erase(it);
 			} else {
 				++it;
@@ -1450,17 +1450,17 @@ void write_delayed_enqueue(ChunkData *chunkData, uint32_t seconds, Lock &globalL
 	if (seconds > 0) {
 		delayed_queue_put(chunkData, seconds, globalLock);
 	} else {
-		jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(chunkData), 0);
+		jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(chunkData), 1);
 	}
 }
 
 void write_enqueue(ChunkData *chunkData, Lock &) {
-	jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(chunkData), 0);
+	jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(chunkData), 1);
 }
 
 /* globalLock: LOCKED*/
 void write_enqueue(std::vector<ChunkData *> &chunks, Lock &) {
-	for (auto chunk : chunks) { jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(chunk), 0); }
+	for (auto chunk : chunks) { jobsQueue->put(0, 0, reinterpret_cast<uint8_t *>(chunk), 1); }
 }
 
 /* globalLock: LOCKED*/
@@ -1841,7 +1841,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	writeStatsInit();
 
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(0, deleterByType<ChunkData>);
+	jobsQueue = std::make_unique<ProducerConsumerQueue>(1, 0, deleterByType<ChunkData>);
 
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr, 0x100000);
@@ -1863,7 +1863,7 @@ void write_data_term(void) {
 		Lock globalLock(gMutex);
 		delayed_queue_put(NO_CHUNKDATA, 0, globalLock);
 	}
-	for (i = 0; i < write_worker_th.size(); i++) { jobsQueue->put(0, 0, NO_CHUNKDATA, 0); }
+	for (i = 0; i < write_worker_th.size(); i++) { jobsQueue->put(0, 0, NO_CHUNKDATA, 1); }
 	for (i = 0; i < write_worker_th.size(); i++) { pthread_join(write_worker_th[i], NULL); }
 	pthread_join(delayed_queue_worker_th, NULL);
 	jobsQueue.reset();
