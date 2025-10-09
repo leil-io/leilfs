@@ -71,7 +71,8 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
 		listenerInfos_[i].nextJobId = 1;
 	}
 
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(1, maxJobs);
+	// Initialize the job queue with a maximum size and two priority levels
+	jobsQueue = std::make_unique<ProducerConsumerQueue>(2, maxJobs);
 
 	for (uint8_t i = 0; i < workers; ++i) {
 		workerThreads.emplace_back(&JobPool::workerThread, this, name_, i);
@@ -80,7 +81,8 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
 
 JobPool::~JobPool() {
 	for (uint8_t i = 0; i < workers; ++i) {
-		jobsQueue->put(0, JobPool::ChunkOperation::Exit, nullptr, 1);
+		// Use priority 1 to ensure exit jobs are processed after all other jobs
+		jobsQueue->put(0, JobPool::ChunkOperation::Exit, nullptr, 1, 1);
 	}
 
 	for (auto &thread : workerThreads) {
@@ -118,8 +120,10 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	job->state = JobPool::State::Enabled;
 	job->listenerId = listenerId;
 	listenerInfo.jobHash[jobId] = std::move(job);
-	jobsQueue->put(jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()),
-	               1);
+	// Use higher priority (0) for Open and GetBlocks operations
+	jobsQueue->put(
+	    jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()), 1,
+	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks) ? 0 : 1);
 	return jobId;
 }
 
