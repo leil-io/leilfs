@@ -65,7 +65,7 @@ bool KVConnectorFDB::init() {
 uint64_t KVConnectorFDB::getPropertyValueUInt64(std::string_view propertyName,
                                                 uint64_t defaultValue) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
-	auto value = transaction->get(kv::toU8Vector(propertyName));
+	auto value = transaction->get(kv::toBytes(propertyName));
 
 	if (value.has_value()) {
 		const uint8_t *data = value.value().data();
@@ -107,7 +107,7 @@ void KVConnectorFDB::onDetainedRemoved(inode_t inodeId) {
 
 void KVConnectorFDB::onNextSessionIdChanged(uint32_t /*oldSessionId*/, uint32_t newSessionId) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
-	kv::Key sessionKey{kv::toU8Vector(gMetadata->nextSessionId().getName())};
+	kv::Key sessionKey{kv::toBytes(gMetadata->nextSessionId().getName())};
 	kv::Value sessionValue;
 	serialize(sessionValue, newSessionId);
 	transaction->set(sessionKey, sessionValue);
@@ -116,7 +116,7 @@ void KVConnectorFDB::onNextSessionIdChanged(uint32_t /*oldSessionId*/, uint32_t 
 }
 
 void KVConnectorFDB::onChangelogEvent(const ChangelogEvent &event) {
-	static kv::Key versionKey{kv::toU8Vector(kMetaVersionKey)};
+	static kv::Key versionKey{kv::toBytes(kMetaVersionKey)};
 	kv::Value serializedVersion;
 	serialize(serializedVersion, event.version);
 	auto transaction = kvEngine_->createReadWriteTransaction();

@@ -147,14 +147,14 @@ TEST_F(FDBKVEngineTest, AtomicAdd) {
 
 	{
 		auto transaction = kvEngine->createReadWriteTransaction();
-		kv::Value value = kv::toU8VectorLittleEndian(initialValue);
+		kv::Value value = kv::toBytesLE(initialValue);
 		transaction->set(key, value);
 		ASSERT_TRUE(transaction->commit());
 	}
 
 	{
 		auto transaction = kvEngine->createReadWriteTransaction();
-		kv::Value value = kv::toU8VectorLittleEndian(delta);
+		kv::Value value = kv::toBytesLE(delta);
 		transaction->atomicAdd(key, value);
 		ASSERT_TRUE(transaction->commit());
 	}
@@ -167,7 +167,7 @@ TEST_F(FDBKVEngineTest, AtomicAdd) {
 	ASSERT_TRUE(result.value().size() == sizeof(initialValue))
 	    << "Value size mismatch for key 'count'.";
 
-	auto finalValue = kv::fromU8VectorLittleEndianToInt<int64_t>(result.value());
+	auto finalValue = kv::fromBytesLE<int64_t>(result.value());
 	ASSERT_EQ(finalValue, initialValue + delta)
 	    << "Final value does not match expected value after atomicAdd.";
 
