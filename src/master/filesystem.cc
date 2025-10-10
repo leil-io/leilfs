@@ -42,7 +42,7 @@
 #include "master/filesystem_snapshot.h"
 #include "master/goal_config_loader.h"
 #include "master/id_generator_incremental.h"
-#include "master/matoclserv.h"
+#include "master/matoclserv_sessions.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_file.h"
 #include "master/metadata_backend_interface.h"
