@@ -38,6 +38,9 @@ inline void deleterDummy(uint8_t * /*unused*/) {}
 /// @class ProducerConsumerQueue
 /// @brief A thread-safe queue for producer-consumer scenarios.
 ///
+/// Can be configured to support several priority levels. Final interface is queue-like,
+/// but preferring higher priority items and preserving order within each priority level.
+///
 /// This class provides a thread-safe queue implementation that allows multiple
 /// producers and consumers to add and remove items concurrently. It uses a
 /// mutex and condition variables to ensure thread safety and to manage the
@@ -83,11 +86,12 @@ public:
 	/// @brief Constructs a ProducerConsumerQueue with a specified maximum size
 	/// and deleter.
 	///
+	/// @param priorityLevels The number of priority levels. Default is 1 (no priorities).
 	/// @param maxSize The maximum number of elements the queue can hold.
 	/// Default is 0 (unlimited).
 	/// @param deleter A callable type that defines how to delete the data
 	/// stored in the queue. Default is deleterDummy.
-	explicit ProducerConsumerQueue(uint32_t maxSize = 0,
+	explicit ProducerConsumerQueue(uint8_t priorityLevels = 1, uint32_t maxSize = 0,
 	                               Deleter deleter = deleterDummy);
 
 	/// @brief Destructor for the ProducerConsumerQueue.
@@ -120,8 +124,11 @@ public:
 	/// @param jobType The job type associated with the element.
 	/// @param data A pointer to the data to be added.
 	/// @param length The length of the data to be added.
+	/// @param priority The priority level of the element (0 is the highest
+	/// priority). Default is 0.
 	/// @return true if the element was added successfully, false otherwise.
-	bool put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length);
+	bool put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
+	         uint8_t priority = 0);
 
 	/// @brief Tries to add an element to the queue without blocking.
 	///
@@ -129,9 +136,11 @@ public:
 	/// @param jobType The job type associated with the element.
 	/// @param data A pointer to the data to be added.
 	/// @param length The length of the data to be added.
+	/// @param priority The priority level of the element (0 is the highest
+	/// priority). Default is 0.
 	/// @return true if the element was added successfully, false otherwise.
-	bool tryPut(uint32_t jobId, uint32_t jobType, uint8_t *data,
-	            uint32_t length);
+	bool tryPut(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
+	            uint8_t priority = 0);
 
 	/// @brief Removes an element from the queue.
 	///
@@ -156,6 +165,15 @@ public:
 	            uint32_t *length);
 
 private:
+	/// @brief Adds an element to the queue assuming non-fullness.
+	/// mutex_: LOCKED
+	inline void put_(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
+	                 uint8_t priority);
+
+	/// @brief Removes an element from the queue assuming non-emptiness.
+	/// mutex_: LOCKED
+	inline void get_(uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length);
+
 	/// @brief Represents an entry in the queue.
 	struct QueueEntry {
 		uint32_t jobId;    ///< The job ID associated with the entry.
@@ -173,22 +191,27 @@ private:
 		           uint32_t length)
 		    : jobId(jobId), jobType(jobType), data(data), length(length) {}
 
-		// Remove unneeded constructors and assignment operators to avoid misuse
+		// Remove default constructor to avoid uninitialized entries.
 		QueueEntry() = delete;
-		QueueEntry(const QueueEntry &) = delete;
-		QueueEntry &operator=(const QueueEntry &) = delete;
-		QueueEntry(QueueEntry &&) = delete;
-		QueueEntry &operator=(QueueEntry &&) = delete;
+
+		// Allowing copy and move semantics for QueueEntry is not desirable, but required
+		// for queuesByPriority_ vector of std::queue.
+		QueueEntry(const QueueEntry &) = default;
+		QueueEntry(QueueEntry &&) = default;
+		QueueEntry &operator=(const QueueEntry &) = default;
+		QueueEntry &operator=(QueueEntry &&) = default;
 
 		/// @brief Destructor for the QueueEntry.
 		~QueueEntry() = default;
 	};
 
-	///< The underlying queue storing the entries.
-	std::queue<QueueEntry> queue_;
+	///< The underlying queues storing the entries.
+	std::vector<std::queue<QueueEntry>> queuesByPriority_;
 	///< The maximum number of elements the queue can hold.
 	uint32_t maxSize_;
 	///< The current number of elements in the queue.
+	uint32_t currentElements_;
+	///< The current amount of data in the queue.
 	uint32_t currentSize_;
 	///< Mutex for synchronizing access to the queue.
 	mutable std::mutex mutex_;
