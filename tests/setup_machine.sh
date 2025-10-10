@@ -50,7 +50,6 @@ umask 0022
 "$script_dir/install-packages.sh"
 
 python_packages=(
-	asciidoc
 	black
 	devscripts
 	flask
