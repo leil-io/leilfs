@@ -62,14 +62,27 @@ bool KVConnectorFDB::init() {
 	return true;
 }
 
-uint64_t KVConnectorFDB::getPropertyValueUInt64(std::string_view propertyName,
-                                                uint64_t defaultValue) {
+uint64_t KVConnectorFDB::get64bitBE(const kv::Key &key, uint64_t defaultValue) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
-	auto value = transaction->get(kv::toBytes(propertyName));
+	auto value = transaction->get(key);
 
 	if (value.has_value()) {
 		const uint8_t *data = value.value().data();
 		return get64bit(&data);
+	}
+
+	return defaultValue;
+}
+
+uint32_t KVConnectorFDB::get32bitBE(const kv::Key &key, uint32_t defaultValue) {
+	auto transaction = kvEngine_->createReadWriteTransaction();
+	auto value = transaction->get(key);
+
+	if (value.has_value()) {
+		uint32_t result;  // NOLINT(cppcoreguidelines-init-variables)
+		const uint8_t *data = value.value().data();
+		get32bit(&data, result);
+		return result;
 	}
 
 	return defaultValue;

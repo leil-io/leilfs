@@ -47,12 +47,17 @@ public:
 	/// Returns the KV engine instance
 	virtual kv::IKVEngine *getKVEngine() = 0;
 
-	/// Retrieves a uint64_t property value from the underlying KV store.
-	/// @param propertyName Matches the key in the KV store
-	/// @param defaultValue Returned if the property is not found or on error
-	/// @return The property value or defaultValue
-	virtual uint64_t getPropertyValueUInt64(std::string_view propertyName,
-	                                        uint64_t defaultValue) = 0;
+	/// Gets 64 bits integer in Big Endian byte order from the KV store.
+	/// @param key -- the key to get the value for
+	/// @param defaultValue -- the default value to return if the key does not exist
+	/// @return the value associated with the key, or defaultValue if the key does not exist
+	virtual uint64_t get64bitBE(const kv::Key &key, uint64_t defaultValue) = 0;
+
+	/// Gets 32 bits integer in Big Endian byte order from the KV store.
+	/// @param key -- the key to get the value for
+	/// @param defaultValue -- the default value to return if the key does not exist
+	/// @return the value associated with the key, or defaultValue if the key does not exist
+	virtual uint32_t get32bitBE(const kv::Key &key, uint32_t defaultValue) = 0;
 
 	// Event handlers for usual metadata operations
 

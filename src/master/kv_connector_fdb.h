@@ -35,9 +35,17 @@ public:
 	/// Returns the pointer to the concrete KV engine instance (FDB in this case)
 	kv::IKVEngine *getKVEngine() override { return kvEngine_.get(); }
 
-	/// Concrete implementation on top of FDB
-	/// @see KVConnectorInterface::getPropertyValueUInt64
-	uint64_t getPropertyValueUInt64(std::string_view propertyName, uint64_t defaultValue) override;
+	/// Gets 64 bits integer in Big Endian byte order from the KV store.
+	/// @param key -- the key to get the value for
+	/// @param defaultValue -- the default value to return if the key does not exist
+	/// @return the value associated with the key, or defaultValue if the key does not exist
+	uint64_t get64bitBE(const kv::Key &key, uint64_t defaultValue) override;
+
+	/// Gets 32 bits integer in Big Endian byte order from the KV store.
+	/// @param key -- the key to get the value for
+	/// @param defaultValue -- the default value to return if the key does not exist
+	/// @return the value associated with the key, or defaultValue if the key does not exist
+	uint32_t get32bitBE(const kv::Key &key, uint32_t defaultValue) override;
 
 	// Event handlers for usual metadata operations
 	// The handlers provide the concrete implementation on top of FDB.
