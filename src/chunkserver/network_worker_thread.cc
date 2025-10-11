@@ -157,7 +157,7 @@ void NetworkWorkerThread::preparePollFds() {
 				entry.fwdPDescPos = pdesc.size() - 1;
 				break;
 			case ChunkserverEntry::State::WriteInit:
-				if (entry.fwdBytesLeft > 0) {
+				if (entry.fwdOutputPacket.bytesLeft > 0) {
 					pdesc.emplace_back(pollfd(entry.fwdSocket, POLLOUT, 0));
 					entry.fwdPDescPos = pdesc.size() - 1;
 				}
@@ -165,7 +165,7 @@ void NetworkWorkerThread::preparePollFds() {
 			case ChunkserverEntry::State::WriteForward:
 				pdesc.emplace_back(pollfd(entry.fwdSocket, POLLIN, 0));
 				entry.fwdPDescPos = pdesc.size() - 1;
-				if (entry.fwdBytesLeft > 0) {
+				if (entry.fwdOutputPacket.bytesLeft > 0) {
 					pdesc.back().events |= POLLOUT;
 				}
 
