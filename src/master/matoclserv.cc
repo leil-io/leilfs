@@ -86,6 +86,7 @@
 #include "master/masterconn.h"
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
+#include "master/matontserv.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/personality.h"
@@ -1026,6 +1027,11 @@ void matoclserv_mlog_list(matoclserventry *eptr, const uint8_t *data, uint32_t l
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_MLOG_LIST, matomlserv_mloglist_size());
 	matomlserv_mloglist_data(ptr);
+}
+
+void matoclserv_inotifier_list(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	cltoma::inotifierList::deserialize(data, length);
+	matoclserv_createpacket(eptr, matocl::inotifierList::build(matontserv_inotifiers()));
 }
 
 void matoclserv_metadataservers_list(matoclserventry* eptr, const uint8_t* data, uint32_t length) {
@@ -4847,6 +4853,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case SAU_CLTOMA_METADATASERVERS_LIST:
 					matoclserv_metadataservers_list(eptr, data, length);
 					break;
+				case SAU_CLTOMA_INOTIFIER_LIST:
+					matoclserv_inotifier_list(eptr, data, length);
+					break;
 				case SAU_CLTOMA_METADATASERVER_STATUS:
 					matoclserv_metadataserver_status(eptr, data, length);
 					break;
@@ -5098,6 +5107,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    break;
 				case CLTOMA_CSSERV_REMOVESERV:
 				    matoclserv_cserv_removeserv(eptr, data, length);
+				    break;
+				case SAU_CLTOMA_INOTIFIER_LIST:
+				    matoclserv_inotifier_list(eptr, data, length);
 				    break;
 				case SAU_CLTOMA_IOLIMIT:
 				    matoclserv_iolimit(eptr, data, length);

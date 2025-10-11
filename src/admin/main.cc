@@ -34,6 +34,7 @@
 #include "admin/list_disk_groups_command.h"
 #include "admin/list_disks_command.h"
 #include "admin/list_goals_command.h"
+#include "admin/list_inotifiers_command.h"
 #include "admin/list_metadataservers_command.h"
 #include "admin/list_mounts_command.h"
 #include "admin/list_sessions_command.h"
@@ -101,6 +102,7 @@ int main(int argc, const char** argv) {
 			std::make_shared<ListGoalsCommand>(),
 			std::make_shared<ListMountsCommand>(),
 			std::make_shared<ListMetadataserversCommand>(),
+			std::make_shared<ListInotifiersCommand>(),
 			std::make_shared<ListTasksCommand>(),
 			std::make_shared<ManageLocksCommand>(),
 			std::make_shared<MetadataserverStatusCommand>(),

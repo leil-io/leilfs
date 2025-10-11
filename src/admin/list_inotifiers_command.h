@@ -1,6 +1,7 @@
 /*
    Copyright 2023      Leil Storage OÜ
 
+   This file is part of SaunaFS.
 
    SaunaFS is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -8,25 +9,22 @@
 
    SaunaFS is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
-
 #pragma once
 
 #include "common/platform.h"
 
-#include <cstdint>
+#include "admin/saunafs_admin_command.h"
 
-#include "common/inotifier_list_entry.h"
-
-void matontserv_broadcast_message(uint64_t version, std::string message);
-
-int matontserv_init(void);
-
-int matontserv_canexit(void);
-
-std::vector<INotifierListEntry> matontserv_inotifiers();
+class ListInotifiersCommand : public SaunaFsAdminCommand {
+public:
+	std::string name() const override;
+	void usage() const override;
+	SupportedOptions supportedOptions() const override;
+	void run(const Options& options) const override;
+};

@@ -1247,6 +1247,13 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCL_METADATASERVERS_LIST (1000U + 523U)
 // masterversion:32 data:(N * [ ip:32 hostname:STDSTRING version:32])
 
+// 0x005F4 [EXPERIMENTAL]
+#define SAU_CLTOMA_INOTIFIER_LIST (1000U + 524U)
+
+// 0x005F5 [EXPERIMENTAL]
+#define SAU_MATOCL_INOTIFIER_LIST (1000U + 525U)
+// N * [ip:32 version:32]
+
 // 0x05F6
 #define SAU_CLTOMA_CHUNKS_HEALTH (1000U + 526U)
 /// regularonly:8

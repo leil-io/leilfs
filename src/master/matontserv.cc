@@ -182,6 +182,12 @@ void matontserv_desc(std::vector<pollfd> &pdesc) {
 	}
 }
 
+std::vector<INotifierListEntry> matontserv_inotifiers() {
+	std::vector<INotifierListEntry> ret;
+	for (auto &entry : matontservList) { ret.emplace_back(entry.serviceIp, entry.version); }
+	return ret;
+}
+
 void matontserv_register(MatontservEntry *eptr, const uint8_t *data, uint32_t length) {
 	if (eptr->version > 0) {
 		safs::log_warn("got register message from registered notifier !!!");
@@ -197,7 +203,6 @@ void matontserv_register(MatontservEntry *eptr, const uint8_t *data, uint32_t le
 		if (rversion < 1) {
 			safs::log_info("NTTOMA_REGISTER - wrong version ({})",
 			                   rversion);
-			eptr->mode = NotifierConnectionMode::KILL;
 			return;
 		}
 
