@@ -127,8 +127,7 @@ struct ChunkserverEntry {
 	uint8_t fwdHeaderBuffer[PacketHeader::kSize]{};  ///< fwd packet header buff
 	/// Stores the data of the incoming packet for processing
 	PacketStruct inputPacket;
-	uint8_t *fwdStartPtr = nullptr; ///< used for forwarding inputpacket data
-	uint32_t fwdBytesLeft = 0; ///< used for forwarding inputpacket data
+	PacketStruct fwdOutputPacket; ///< used for forwarding inputpacket data
 	PacketStruct fwdInputPacket; ///< used for receiving status from fwdSocket
 	std::vector<uint8_t> fwdInitPacket; ///< used only for write initialization
 
@@ -246,6 +245,44 @@ struct ChunkserverEntry {
 	/// @param operationSize The size of the operation.
 	/// @return Pointer to the created packet data.
 	uint8_t *createAttachedPacket(uint32_t type, uint32_t operationSize);
+
+	/// Processes read or write bytes from the socket.
+	/// @param bytesRW The number of bytes read or written.
+	/// @param packet The packet structure being processed.
+	/// @param shouldForwardError Indicates if the error should be forwarded.
+	/// @param callerName The name of the calling function for logging purposes.
+	/// @param isRead Indicates if the operation is a read (true) or write (false).
+	/// @return True if the operation was successful, false otherwise.
+	bool processRWBytes(int bytesRW, PacketStruct &packet, bool shouldForwardError,
+	                    const char *callerName, bool isRead);
+
+	/// Reads the packet header from the socket.
+	/// @param socket The socket to read from.
+	/// @param packet The packet structure to fill.
+	/// @param headerBuf The buffer to store the header.
+	/// @param targetMode The mode to set after reading the header.
+	/// @return True if the header was read successfully, false otherwise.
+	bool readHeader(int socket, PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode);
+
+	/// Reads data from the socket into the packet structure.
+	/// @param socket The socket to read from.
+	/// @param packet The packet structure to fill.
+	/// @return True if the data was read successfully, false otherwise.
+	bool readData(int socket, PacketStruct &packet);
+
+	/// Writes the packet data to the socket.
+	/// @param socket The socket to write to.
+	/// @param packet The packet structure containing the data to write.
+	/// @return True if the data was written successfully, false otherwise.
+	bool writePacket(int socket, PacketStruct &packet);
+
+	/// Processes a packet based on its type and the current mode.
+	/// @param packet The packet structure to process.
+	/// @param headerBuf The buffer containing the packet header.
+	/// @param targetMode The mode to set after processing the packet.
+	/// @param fromForward Indicates if the packet is being processed from a forward operation.
+	void processPacket(PacketStruct &packet, uint8_t *headerBuf, Mode &targetMode,
+	                   bool fromForward);
 
 	/// Handles forwarding errors by setting the appropriate error status and
 	/// transitioning the connection state to `WriteFinish`.
