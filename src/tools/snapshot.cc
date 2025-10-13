@@ -38,9 +38,13 @@
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
 
+// This import should be placed after other includes to avoid Windows dependency issues
+// with winsock2.h and windows.h included in tools/tools_common_functions.h
+#include "common/args_stat_encoding.h"
+
 static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeout (10 days)
 #ifdef _WIN32
-static struct stat kDefaultEmptyStat = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static saunafs_stat_t kDefaultEmptyStat = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 #endif
 
 static void snapshot_usage() {
@@ -134,10 +138,10 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 	for (uint32_t i = 0; i < srcelements; i++) {
 		lookup_srcnames.push_back(std::string(srcnames[i]));
 	}
-	struct stat sst = kDefaultEmptyStat;
-	struct stat dst = kDefaultEmptyStat;
+	saunafs_stat_t sst = kDefaultEmptyStat;
+	saunafs_stat_t dst = kDefaultEmptyStat;
 #else
-	struct stat sst, dst;
+	saunafs_stat_t sst, dst;
 #endif
 	int status;
 	uint32_t i, l;
@@ -151,8 +155,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 	}
 #endif
 
-
-	if (stat(lookup_dstname.c_str(), &dst) < 0) {  // dst does not exist
+	if (stat_portable(lookup_dstname.c_str(), &dst) < 0) {  // dst does not exist
 		if (errno != ENOENT) {
 			printf("%s: stat error: %s\n", dstname, strerr(errno));
 			return -1;
@@ -162,7 +165,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 			return -1;
 		}
 #ifdef _WIN32
-		if (stat(lookup_srcnames[0].c_str(), &sst) < 0) {
+		if (stat_portable(lookup_srcnames[0].c_str(), &sst) < 0) {
 			printf("%s: stat error: %s\n", srcnames[0], strerr(errno));
 			return -1;
 		}
@@ -176,7 +179,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 			printf("%s: dirname error\n", dstname);
 			return -1;
 		}
-		if (stat(dir, &dst) < 0) {
+		if (stat_portable(dir, &dst) < 0) {
 			printf("%s: stat error: %s\n", dir, strerr(errno));
 			return -1;
 		}
@@ -219,7 +222,7 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 				return -1;
 			}
 #ifdef _WIN32
-			if (stat(lookup_srcnames[0].c_str(), &sst) < 0) {
+			if (stat_portable(lookup_srcnames[0].c_str(), &sst) < 0) {
 				printf("%s: stat error: %s\n", srcnames[0], strerr(errno));
 				return -1;
 			}
@@ -251,9 +254,8 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 			status = 0;
 			for (i = 0; i < srcelements; i++) {
 #ifdef _WIN32
-				if (stat(lookup_srcnames[i].c_str(), &sst) < 0) {
-					printf("%s: stat error: %lu\n", srcnames[i],
-					       GetLastError());
+				if (stat_portable(lookup_srcnames[i].c_str(), &sst) < 0) {
+					printf("%s: stat error: %lu\n", srcnames[i], GetLastError());
 					status = -1;
 					continue;
 				}

@@ -44,6 +44,10 @@
 #include "protocol/matocl.h"
 #include "tools/tools_common_functions.h"
 
+// This import should be placed after other includes to avoid Windows dependency issues
+// with winsock2.h and windows.h
+#include "common/args_stat_encoding.h"
+
 struct master_info_t {
 	uint32_t ip;
 	uint16_t port;
@@ -126,12 +130,10 @@ static bool contains_master_info_name_end(const char *name) {
 static int read_master_info(const char *name, master_info_t *info) {
 	static constexpr int kMasterInfoSize = 14;
 	uint8_t buffer[kMasterInfoSize];
-	struct stat stb;
+	saunafs_stat_t stb;
 	int sd;
 
-	if (stat(name, &stb) < 0) {
-		return -1;
-	}
+	if (stat_portable(name, &stb) < 0) { return -1; }
 
 	if ((stb.st_ino != SPECIAL_INODE_MASTERINFO &&
 	     !contains_master_info_name_end(name)) ||
@@ -266,7 +268,7 @@ void get_next_path_iteration(std::string &path) {
 
 int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unused]] bool needrwfs) {
 	char rpath[PATH_MAX + 1];
-	struct stat stb;
+	saunafs_stat_t stb;
 	[[maybe_unused]] struct statvfs stvfsb;
 	master_info_t master_info;
 
@@ -297,7 +299,7 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 #else
 	wsl_to_windows_path(rpath, sizeof(rpath));
 #endif
-	if (stat(rpath, &stb) != 0) {
+	if (stat_portable(rpath, &stb) != 0) {
 		printf("%s: (%s) stat error: %s\n", name, rpath, strerr(errno));
 		return -1;
 	}
@@ -322,8 +324,8 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 	for (;;) {
 		inode_t rpath_inode;
 
-		if (stat(rpath, &stb) != 0) {
-			printf("%s: (%s) stat error: %s\n", name, rpath, strerr(errno));
+		if (stat_portable(rpath, &stb) != 0) {
+			printf("%s: (%s) stat error: %s\n", name, rpath, strerror(errno));
 			return -1;
 		}
 		rpath_inode = stb.st_ino;
@@ -415,8 +417,8 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 		}
 #endif
 		dirname_inplace(rpath);
-		if (stat(rpath, &stb) != 0) {
-			printf("%s: (%s) stat error: %s\n", name, rpath, strerr(errno));
+		if (stat_portable(rpath, &stb) != 0) {
+			printf("%s: (%s) stat error: %s\n", name, rpath, strerror(errno));
 			return -1;
 		}
 
