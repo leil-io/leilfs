@@ -43,7 +43,9 @@ if(ENABLE_JEMALLOC)
 endif()
 
 # Find extra binaries
-include(FindAsciidoctor)
+if(NOT WIN32)
+  include(FindAsciidoctor)
+endif()
 
 # Find Zlib
 find_package(ZLIB)
