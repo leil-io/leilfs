@@ -41,6 +41,7 @@
 #include "master/fs_context.h"
 #include "master/locks.h"
 #include "master/matoclserv.h"
+#include "master/matoclserv_sessions.h"
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
 #include "master/recursive_remove_task.h"

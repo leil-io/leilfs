@@ -42,25 +42,9 @@ void matoclserv_stats(uint64_t stats[5]);
 void matoclserv_chunk_status(uint64_t chunkId, uint8_t status,
                              bool isFailedCreateOperation = false);
 
-/// Adds an open file to the list of open files for a given session.
-/// @param sessionId The ID of the session to which the open file will be added
-/// @param inode The inode of the open file to add
-void matoclserv_add_open_file(uint32_t sessionId, inode_t inode);
-
-/// Removes an open file from the list of open files for a given session.
-/// @param sessionId The ID of the session from which the open file will be removed
-/// @param inode The inode of the open file to remove
-void matoclserv_remove_open_file(uint32_t sessionId, inode_t inode);
-
-/// Loads and initializes the sessions.
-int matoclserv_sessions_init();
-
 /// Initializes the network configuration and register the eventloop callbacks.
 /// @return 0 on success, negative value on error
 int matoclserv_network_init();
-
-/// Clears the sessions.
-void matoclserv_session_unload();
 
 /// Notify interested clients about the status of metadata saving process.
 /// @param status Status of the metadata saving process

@@ -35,6 +35,7 @@
 #include "master/hstorage_init.h"
 #include "master/masterconn.h"
 #include "master/matoclserv.h"
+#include "master/matoclserv_sessions.h"
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
 #include "master/metadata_backend_file.h"

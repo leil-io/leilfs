@@ -48,6 +48,7 @@
 #include <master/filesystem_quota.h>
 #include <master/filesystem_store_acl.h>
 #include <master/matoclserv.h>
+#include <master/matoclserv_sessions.h>
 #include <master/matomlserv.h>
 #include <master/metadata_backend_common.h>
 #include <master/metadata_dumper_file.h>

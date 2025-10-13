@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include "master/matoclserv.h"
+#include "master/matoclserv_sessions.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -108,8 +109,6 @@ enum DelayedChunkOperationType : std::uint32_t {
 	FUSE_TRUNCATE_END    /// Reply to FUSE_TRUNCATE_END is delayed
 };
 
-#define SESSION_STATS 16
-
 const uint32_t kMaxNumberOfChunkCopies = 100U;
 constexpr uint8_t kClientInactivityTimeout = 10;
 
@@ -131,62 +130,6 @@ struct DelayedChunkOperation {
 	uint8_t type;           ///< Delayed operation type: FUSE_WRITE, FUSE_TRUNCATE,
 	                        ///< FUSE_TRUNCATE_BEGIN or FUSE_TRUNCATE_END
 	const PacketSerializer* serializer;  ///< Packet serializer for the operation
-};
-
-struct Session {
-	using GroupCache = GenericLruCache<uint32_t, FsContext::GroupsContainer, 1024>;
-	using OpenFilesSet = std::set<inode_t>;
-
-	uint32_t sessionId;      ///< Session ID
-	std::string info;        ///< Mount point path
-	std::string mountInfo;   ///< Mount information shown in the CGI, e.g., arguments, mount options
-	std::string config;      ///< Session configuration
-	uint32_t peerIpAddress;  ///< Peer IP address
-	uint16_t peerPort{};     ///< Peer port
-	uint8_t newSession;      ///< Indicates if this is a new session (1) or a reconnect (0)
-	uint8_t flags;           ///< Session flags. See more details in SFSCommunication.h
-	uint8_t minGoal;         ///< Minimum goal allowed for this session
-	uint8_t maxGoal;         ///< Maximum goal allowed for this session
-	uint32_t minTrashTime;   ///< Minimum time in seconds to keep files in trash
-	uint32_t maxTrashTime;   ///< Maximum time in seconds to keep files in trash
-	uint32_t rootUid;        ///< Remapped UID of the user who created the session
-	uint32_t rootGid;        ///< Remapped GID of the user who created the session
-	uint32_t mapAllUid;    ///< UID to map all non-root users to when the session has SESFLAG_MAPALL
-	                       ///< flag set)
-	uint32_t mapAllGid;    ///< GID to map all non-root users to when the session has SESFLAG_MAPALL
-	                       ///< flag set)
-	inode_t rootInode;     ///< Special Root Inode with value = 1
-	uint32_t disconnectedTimestamp;  ///< Last connected timestamp for this session
-	                                 ///< A value = 0 means a client is connected
-	                                 ///< A value > 0 means the last disconnection timestamp
-	uint32_t connections;  ///< Number of active connections. A value of 0 means no connections
-	std::array<uint32_t, SESSION_STATS> currHourOperationsStats; ///< Current hour operations stats
-	std::array<uint32_t, SESSION_STATS> prevHourOperationsStats; ///< Previous hour operations stats
-	GroupCache groupsCache;     ///< Cache for groups ID for this session
-	OpenFilesSet openFilesSet;  ///< Set of open files for this session
-
-	Session()
-	    : sessionId(),
-	      info(),
-	      peerIpAddress(),
-	      newSession(),
-	      flags(),
-	      minGoal(GoalId::kMin),
-	      maxGoal(GoalId::kMax),
-	      minTrashTime(),
-	      maxTrashTime(std::numeric_limits<uint32_t>::max()),
-	      rootUid(),
-	      rootGid(),
-	      mapAllUid(),
-	      mapAllGid(),
-	      rootInode(SPECIAL_INODE_ROOT),
-	      disconnectedTimestamp(),
-	      connections(),
-	      currHourOperationsStats(),
-	      prevHourOperationsStats(),
-	      groupsCache(),
-	      openFilesSet() {
-	}
 };
 
 struct packetstruct {
@@ -246,7 +189,6 @@ struct matoclserventry {
 	std::vector<std::unique_ptr<DelayedChunkOperation>> delayedChunkOperations;
 };
 
-static std::vector<std::unique_ptr<Session>> sessionVector;
 static std::list<std::unique_ptr<matoclserventry>> matoclservList;
 
 static int masterSocket;             ///< Master socket for accepting new connections
@@ -257,7 +199,6 @@ static int starting;  ///< Flag indicating whether the server is starting (1) or
 // from config
 static std::string ListenHost;
 static std::string ListenPort;
-static uint32_t SessionSustainTime;
 
 static uint32_t gIoLimitsAccumulate_ms;
 static double gIoLimitsRefreshTime;
@@ -562,379 +503,6 @@ matoclserventry *matoclserv_find_connection(uint32_t sessionId) {
 		}
 	}
 	return nullptr;
-}
-
-/// Creates a new session.
-/// @param newSession Indicates if this is a new session
-/// @param noNewId Indicates if a new session ID should be generated
-/// @return Pointer to the newly created session
-Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
-	auto sessionPtr = std::make_unique<Session>();
-	passert(sessionPtr.get());
-
-	auto newSessionIdNotNeeded = (newSession == 0 && noNewId);
-	sessionPtr->sessionId = (newSessionIdNotNeeded) ? 0 : fs_newsessionid();
-	sessionPtr->newSession = newSession;
-	sessionPtr->connections = 1;
-	sessionVector.push_back(std::move(sessionPtr));
-	return sessionVector.back().get();
-}
-
-/// Returns the session for a given ID.
-/// @param sessionId The session ID to search for
-/// @return Pointer to the session if found, nullptr otherwise
-Session* matoclserv_find_session(uint32_t sessionId) {
-	if (sessionId == 0) { return nullptr; }
-
-	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionId == sessionId) {
-			if (sessionPtr->newSession >= 2) {
-				sessionPtr->newSession -= 2;
-			}
-			sessionPtr->connections++;
-			sessionPtr->disconnectedTimestamp = 0;
-			return sessionPtr.get();
-		}
-	}
-	return nullptr;
-}
-
-/// Closes a session by its ID.
-/// @param sessionId The session ID to close
-void matoclserv_close_session(uint32_t sessionId) {
-	if (sessionId == 0) { return; }
-
-	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionId == sessionId) {
-			if (sessionPtr->connections == 1 && sessionPtr->newSession < 2) {
-				sessionPtr->newSession += 2;
-			}
-		}
-	}
-}
-
-/// Stores all sessions to a file.
-void matoclserv_store_sessions() {
-	uint32_t sessionInfoLength;
-	constexpr uint32_t kSessionSerializedSize =
-	    sizeof(Session::sessionId) + sizeof(sessionInfoLength) + sizeof(Session::peerIpAddress) +
-	    sizeof(Session::rootInode) + sizeof(Session::flags) + sizeof(Session::minGoal) +
-	    sizeof(Session::maxGoal) + sizeof(Session::minTrashTime) + sizeof(Session::maxTrashTime) +
-	    sizeof(Session::rootUid) + sizeof(Session::rootGid) + sizeof(Session::mapAllUid) +
-	    sizeof(Session::mapAllGid);
-	constexpr uint32_t kBufferSize = kSessionSerializedSize + (SESSION_STATS * 8);
-	std::vector<uint8_t> fsesrecord(kBufferSize); // 4+4+4+4+1+1+1+4+4+4+4+4+4+SESSION_STATS*4+SESSION_STATS*4
-
-	FILE *fd = fopen(kSessionsTmpFilename, "w");
-	if (fd == nullptr) {
-		safs_silent_errlog(LOG_WARNING,"can't store sessions, open error");
-		return;
-	}
-
-	memcpy(fsesrecord.data(), SFSSIGNATURE "S \001\006\004", 8);
-	uint8_t *ptr = fsesrecord.data() + 8;
-	put16bit(&ptr,SESSION_STATS);
-
-	if (fwrite(fsesrecord.data(), 10, 1, fd) != 1) {
-		safs_pretty_syslog(LOG_WARNING,"can't store sessions, fwrite error");
-		fclose(fd);
-		return;
-	}
-
-	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->newSession == 1) {
-			ptr = fsesrecord.data();
-			sessionInfoLength = sessionPtr->info.size();
-
-			put32bit(&ptr, sessionPtr->sessionId);
-			put32bit(&ptr, sessionInfoLength);
-			put32bit(&ptr, sessionPtr->peerIpAddress);
-			putINode(&ptr, sessionPtr->rootInode);
-			put8bit(&ptr, sessionPtr->flags);
-			put8bit(&ptr, sessionPtr->minGoal);
-			put8bit(&ptr, sessionPtr->maxGoal);
-			put32bit(&ptr, sessionPtr->minTrashTime);
-			put32bit(&ptr, sessionPtr->maxTrashTime);
-			put32bit(&ptr, sessionPtr->rootUid);
-			put32bit(&ptr, sessionPtr->rootGid);
-			put32bit(&ptr, sessionPtr->mapAllUid);
-			put32bit(&ptr, sessionPtr->mapAllGid);
-
-			for (auto i = 0; i < SESSION_STATS; i++) {
-				put32bit(&ptr, sessionPtr->currHourOperationsStats[i]);
-			}
-
-			for (auto i = 0; i < SESSION_STATS; i++) {
-				put32bit(&ptr, sessionPtr->prevHourOperationsStats[i]);
-			}
-
-			if (fwrite(fsesrecord.data(), kBufferSize, 1, fd) != 1) {
-				safs::log_warn("can't store sessions, fwrite error");
-				fclose(fd);
-				return;
-			}
-
-			if (sessionInfoLength > 0) {
-				if (fwrite(sessionPtr->info.data(), sessionInfoLength, 1, fd) != 1) {
-					safs::log_warn("can't store sessions, fwrite error");
-					fclose(fd);
-					return;
-				}
-			}
-		}
-	}
-
-	if (fclose(fd) != 0) {
-		safs_silent_errlog(LOG_WARNING,"can't store sessions, fclose error");
-		return;
-	}
-
-	if (rename(kSessionsTmpFilename, kSessionsFilename) < 0) {
-		safs_silent_errlog(LOG_WARNING, "can't store sessions, rename error");
-	}
-}
-
-#define MFSSIGNATURE "MFS"
-
-/// Loads all sessions from a file.
-/// @return 0 on success, -1 on error
-int matoclserv_load_sessions() {
-	uint32_t sessionInfoLength;
-	uint8_t headerBuffer[8];  // for signature and version. e.g. "SFS" " S 1.5"
-	std::vector<uint8_t> sessionBuffer;
-	const uint8_t *ptr;
-	uint8_t mapAllData;
-	uint8_t goalTrashData;
-	uint32_t statsInFile;
-	int bytesRead;
-
-	FILE *fd = fopen(kSessionsFilename, "r");
-
-	if (fd == nullptr) {
-		safs_silent_errlog(LOG_WARNING, "can't load sessions, fopen error");
-		if (errno == ENOENT) {  // it's ok if file does not exist
-			return 0;
-		}
-
-		return -1;
-	}
-
-	const size_t kSessionsHeaderSize = strlen(SFSSIGNATURE) + 5;
-
-	if (fread(headerBuffer, kSessionsHeaderSize, 1, fd) != 1) {
-		safs::log_warn("can't load sessions, fread error");
-		fclose(fd);
-		return -1;
-	}
-
-	// Guillex: Only "S \001\006\004" (last option) is expected
-	if (memcmp(headerBuffer, SFSSIGNATURE "S 1.5", kSessionsHeaderSize) == 0 ||
-	    memcmp(headerBuffer, MFSSIGNATURE "S 1.5", kSessionsHeaderSize) == 0) {
-		mapAllData = 0;
-		goalTrashData = 0;
-		statsInFile = 16;
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\001", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\001", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 0;
-		statsInFile = 16;
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\002", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\002", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 0;
-		statsInFile = 21;
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 0;
-		if (fread(headerBuffer, 2, 1, fd) != 1) {
-			safs::log_warn("can't load sessions, fread error");
-			fclose(fd);
-			return -1;
-		}
-		ptr = headerBuffer;
-		statsInFile = get16bit(&ptr);
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 1;
-		if (fread(headerBuffer, sizeof(uint16_t), 1, fd) != 1) {
-			safs::log_warn("can't load sessions, fread error");
-			fclose(fd);
-			return -1;
-		}
-		ptr = headerBuffer;
-		statsInFile = get16bit(&ptr);
-	} else {
-		safs::log_warn("can't load sessions, bad header");
-		fclose(fd);
-		return -1;
-	}
-
-	// Compile time constants
-	constexpr uint8_t kStatEntrySize =
-	    sizeof(std::remove_extent<decltype(Session::currHourOperationsStats)>::type::value_type) +
-	    sizeof(std::remove_extent<decltype(Session::prevHourOperationsStats)>::type::value_type);
-
-	constexpr uint32_t kCommonSize = sizeof(Session::sessionId) + sizeof(sessionInfoLength) +
-	                                 sizeof(Session::peerIpAddress) + sizeof(Session::rootInode) +
-	                                 sizeof(Session::flags) + sizeof(Session::rootUid) +
-	                                 sizeof(Session::rootGid);
-	constexpr uint32_t kExtraSizeWithMapAll =
-	    sizeof(Session::mapAllUid) + sizeof(Session::mapAllGid);
-	constexpr uint32_t kExtraSizeWithGoalTrash =
-	    sizeof(Session::minGoal) + sizeof(Session::maxGoal) + sizeof(Session::minTrashTime) +
-	    sizeof(Session::maxTrashTime);
-
-	// statsInFile is unknown at compile time, we need to use a runtime constant
-	const uint32_t kStatsSize = statsInFile * kStatEntrySize;
-
-	if (mapAllData == 0) {
-		sessionBuffer.resize(kCommonSize + kStatsSize);
-	} else if (goalTrashData == 0) {
-		sessionBuffer.resize(kCommonSize + kExtraSizeWithMapAll + kStatsSize);
-	} else {
-		sessionBuffer.resize(kCommonSize + kExtraSizeWithMapAll + kExtraSizeWithGoalTrash +
-		                  kStatsSize);
-	}
-
-	while (!feof(fd)) {
-		bytesRead = fread(sessionBuffer.data(), sessionBuffer.size(), 1, fd);
-
-		if (bytesRead == 1) {
-			ptr = sessionBuffer.data();
-			auto sessionPtr = std::make_unique<Session>();
-			passert(sessionPtr);
-			get32bit(&ptr, sessionPtr->sessionId);
-			get32bit(&ptr, sessionInfoLength);
-			get32bit(&ptr, sessionPtr->peerIpAddress);
-			getINode(&ptr, sessionPtr->rootInode);
-			sessionPtr->flags = get8bit(&ptr);
-			if (goalTrashData) {
-				sessionPtr->minGoal = get8bit(&ptr);
-				sessionPtr->maxGoal = get8bit(&ptr);
-				get32bit(&ptr, sessionPtr->minTrashTime);
-				get32bit(&ptr, sessionPtr->maxTrashTime);
-			}
-			get32bit(&ptr, sessionPtr->rootUid);
-			get32bit(&ptr, sessionPtr->rootGid);
-			if (mapAllData) {
-				get32bit(&ptr, sessionPtr->mapAllUid);
-				get32bit(&ptr, sessionPtr->mapAllGid);
-			}
-			sessionPtr->newSession = 1;
-			sessionPtr->disconnectedTimestamp = eventloop_time();
-			for (uint32_t i = 0; i < SESSION_STATS; i++) {
-				if (i < statsInFile) {
-					get32bit(&ptr, sessionPtr->currHourOperationsStats[i]);
-				} else {
-					sessionPtr->currHourOperationsStats[i] = 0;
-				}
-			}
-
-			if (statsInFile > SESSION_STATS) {
-				ptr += 4 * (statsInFile - SESSION_STATS);
-			}
-
-			for (uint32_t i = 0; i < SESSION_STATS; i++) {
-				if (i < statsInFile) {
-					get32bit(&ptr, sessionPtr->prevHourOperationsStats[i]);
-				} else {
-					sessionPtr->prevHourOperationsStats[i] = 0;
-				}
-			}
-
-			if (sessionInfoLength > 0) {
-				sessionPtr->info.resize(sessionInfoLength);
-				if (fread(sessionPtr->info.data(), sessionInfoLength, 1, fd) != 1) {
-					sessionPtr.reset();
-					safs::log_warn("can't load sessions, fread error");
-					fclose(fd);
-					return -1;
-				}
-			}
-
-			sessionVector.push_back(std::move(sessionPtr));
-		}
-
-		if (ferror(fd)) {
-			safs::log_warn("can't load sessions, fread error");
-			fclose(fd);
-			return -1;
-		}
-	}
-
-	safs::log_info("sessions have been loaded");
-	fclose(fd);
-	return 1;
-}
-#undef MFSSIGNATURE
-
-/// Inserts an open file to the list of open files for a given session.
-/// @param currentSession Pointer to the session
-/// @param inode The inode of the open file
-/// @return SAUNAFS_STATUS_OK if the file was successfully acquired, or an error code otherwise
-int matoclserv_insert_open_file(Session *currentSession, inode_t inode) {
-	if (currentSession->openFilesSet.contains(inode)) {
-		return SAUNAFS_STATUS_OK;  // file already acquired - nothing to do
-	}
-
-	int status = fs_acquire(FsContext::getForMaster(eventloop_time()), inode,
-	                        currentSession->sessionId);
-
-	if (status == SAUNAFS_STATUS_OK) { currentSession->openFilesSet.insert(inode); }
-
-	return status;
-}
-
-/// Adds an open file to the list of open files for a given session.
-/// @param sessionId The ID of the session
-/// @param inode The inode of the open file
-/// If the session exists, the open file will be added to the list of open files of the session.
-/// Otherwise, a new session will be created and the open file will be added to the new session.
-void matoclserv_add_open_file(uint32_t sessionId, inode_t inode) {
-	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionId == sessionId) {
-			if (!sessionPtr->openFilesSet.contains(inode)) {
-				sessionPtr->openFilesSet.insert(inode);
-			}
-			return;
-		}
-	}
-
-	// If session does not exist, create a new one
-	auto sessionPtr = std::make_unique<Session>();
-	passert(sessionPtr.get());
-	sessionPtr->sessionId = sessionId;
-	/* session created by filesystem - only for old clients (pre 1.5.13) */
-	sessionPtr->disconnectedTimestamp = eventloop_time();
-	sessionPtr->openFilesSet.insert(inode);
-	sessionVector.push_back(std::move(sessionPtr));
-}
-
-/// Removes an open file from a given session.
-/// @param sessionId The IF of the session
-/// @param inode The inode of the open file
-void matoclserv_remove_open_file(uint32_t sessionId, inode_t inode) {
-	for (const auto& sessionPtr : sessionVector) {
-		if (sessionPtr->sessionId == sessionId) {
-			if (sessionPtr->openFilesSet.contains(inode)) {
-				sessionPtr->openFilesSet.erase(inode);
-			}
-			return;
-		}
-	}
-
-	safs::log_err("sessions file is corrupted");
-}
-
-/// Resets the session timeouts for all sessions.
-void matoclserv_reset_session_timeouts() {
-	uint32_t now = eventloop_time();
-
-	for (auto& sessionPtr : sessionVector) {
-		sessionPtr->disconnectedTimestamp = now;
-	}
 }
 
 /// Creates a new output packet for a given session entry.
@@ -5230,7 +4798,7 @@ void matoclserv_admin_reload(matoclserventry* eptr, const uint8_t* data, uint32_
 std::string get_client_configs() {
 	std::map<std::string, std::string> client_configs;
 
-	for (const auto& sessionPtr : sessionVector) {
+	for (const auto& sessionPtr : gSessionsVector) {
 		if (sessionPtr->config.empty()) { continue; }
 		NetworkAddress addr(sessionPtr->peerIpAddress, sessionPtr->peerPort);
 		client_configs[addr.toString()] = sessionPtr->config;
@@ -5359,10 +4927,6 @@ void matocl_close_files(Session *currentSession) {
 	currentSession->openFilesSet.clear();
 }
 
-uint32_t session_number_of_files(Session *currentSession) {
-	return currentSession->openFilesSet.size();
-}
-
 void matoclserv_session_files(matoclserventry *eptr,
                               [[maybe_unused]] const uint8_t *data,
                               [[maybe_unused]] uint32_t length) {
@@ -5427,27 +4991,19 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 void matocl_session_check() {
 	uint32_t now = eventloop_time();
 
-	for (auto sessionIt = sessionVector.begin(); sessionIt != sessionVector.end();) {
+	for (auto sessionIt = gSessionsVector.begin(); sessionIt != gSessionsVector.end();) {
 		auto& sessionPtr = *sessionIt;
 		if (sessionPtr->connections == 0 &&
 		    ((sessionPtr->newSession > 1 && sessionPtr->disconnectedTimestamp < now) ||
 		     (sessionPtr->newSession == 1 &&
-		      sessionPtr->disconnectedTimestamp + SessionSustainTime < now) ||
+		      sessionPtr->disconnectedTimestamp + gSessionSustainTime < now) ||
 		     (sessionPtr->newSession == 0 && sessionPtr->disconnectedTimestamp + 7200 < now))) {
 			matocl_session_timedout(sessionPtr.get());
-			sessionIt = sessionVector.erase(sessionIt);
+			sessionIt = gSessionsVector.erase(sessionIt);
 		} else {
 			++sessionIt;
 		}
 	}
-}
-
-void matocl_session_stats_rotate() {
-	for (auto& sessionPtr : sessionVector) {
-		sessionPtr->prevHourOperationsStats = sessionPtr->currHourOperationsStats;
-		sessionPtr->currHourOperationsStats.fill(0);
-	}
-	matoclserv_store_sessions();
 }
 
 void matocl_before_disconnect(matoclserventry *eptr) {
@@ -6238,44 +5794,6 @@ void matoclserv_start_cond_check() {
 	}
 }
 
-int matoclserv_sessions_init() {
-	sessionVector.clear();
-
-	switch (matoclserv_load_sessions()) {
-		case 0: // no file
-		    safs::log_warn(
-		        "sessions file {}/{} not found; if it is not a fresh installation "
-		        "you have to restart all active mounts",
-		        fs::getCurrentWorkingDirectoryNoThrow().c_str(), kSessionsFilename);
-		    matoclserv_store_sessions();
-			break;
-		case 1: // file loaded
-		    safs::log_info("initialized sessions from file {}/{}",
-		                   fs::getCurrentWorkingDirectoryNoThrow().c_str(), kSessionsFilename);
-		    break;
-		default:
-		    safs::log_err("due to missing sessions ({}/{}) you have to restart all active mounts",
-		                  fs::getCurrentWorkingDirectoryNoThrow().c_str(), kSessionsFilename);
-		    break;
-	}
-
-	SessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
-
-	if (SessionSustainTime > 7 * 86400) {
-		SessionSustainTime = 7 * 86400;
-		safs::log_warn(
-		    "SESSION_SUSTAIN_TIME too big (more than week) - setting this value to one week");
-	}
-
-	if (SessionSustainTime < 60) {
-		SessionSustainTime = 60;
-		safs::log_warn(
-		    "SESSION_SUSTAIN_TIME too low (less than minute) - setting this value to one minute");
-	}
-
-	return 0;
-}
-
 int matoclserv_iolimits_reload() {
 	std::string configFile = cfg_getstring("GLOBALIOLIMITS_FILENAME", "");
 	gIoLimitsAccumulate_ms = cfg_get_minvalue("GLOBALIOLIMITS_ACCUMULATE_MS", 250U, 1U);
@@ -6331,16 +5849,16 @@ void matoclserv_reload() {
 		}
 	}
 
-	SessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
+	gSessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
 
-	if (SessionSustainTime > 7 * 86400) {
-		SessionSustainTime = 7 * 86400;
+	if (gSessionSustainTime > 7 * 86400) {
+		gSessionSustainTime = 7 * 86400;
 		safs::log_warn(
 		    "SESSION_SUSTAIN_TIME too big (more than week) - setting this value to one week");
 	}
 
-	if (SessionSustainTime < 60) {
-		SessionSustainTime = 60;
+	if (gSessionSustainTime < 60) {
+		gSessionSustainTime = 60;
 		safs::log_warn(
 		    "SESSION_SUSTAIN_TIME too low (less than minute) - setting this value to one minute");
 	}
@@ -6447,12 +5965,4 @@ int matoclserv_network_init() {
 	eventloop_wantexitregister(matoclserv_wantexit);
 	eventloop_canexitregister(matoclserv_canexit);
 	return 0;
-}
-
-void matoclserv_session_unload() {
-	for (const auto& sessionPtr : sessionVector) {
-		sessionPtr->openFilesSet.clear();
-	}
-
-	sessionVector.clear();
 }
