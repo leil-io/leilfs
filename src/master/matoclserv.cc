@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include "master/matoclserv.h"
+#include "master/matoclserv_serializer.h"
 #include "master/matoclserv_sessions.h"
 
 #include <errno.h>
@@ -101,21 +102,12 @@ enum class ClientConnectionMode : std::uint8_t {
 	DATA			/// Read data packet
 };
 
-// chunkDelayedOperation types
-enum DelayedChunkOperationType : std::uint32_t {
-	FUSE_WRITE,          /// Reply to FUSE_WRITE_CHUNK is delayed
-	FUSE_TRUNCATE,       /// Reply to FUSE_TRUNCATE which does not require writing is delayed
-	FUSE_TRUNCATE_BEGIN, /// Reply to FUSE_TRUNCATE which does require writing is delayed
-	FUSE_TRUNCATE_END    /// Reply to FUSE_TRUNCATE_END is delayed
-};
-
 const uint32_t kMaxNumberOfChunkCopies = 100U;
 constexpr uint8_t kClientInactivityTimeout = 10;
 
 struct matoclserventry;
 
 // locked chunks
-class PacketSerializer;
 
 struct DelayedChunkOperation {
 	uint64_t chunkId;       ///< Chunk ID
@@ -210,276 +202,6 @@ static uint32_t statsPacketsReceived = 0;
 static uint32_t statsPacketsSent = 0;
 static uint64_t statsBytesReceived = 0;
 static uint64_t statsBytesSent = 0;
-
-static void getStandardChunkCopies(const std::vector<ChunkTypeWithAddress>& allCopies,
-		std::vector<NetworkAddress>& standardCopies);
-
-class PacketSerializer {
-public:
-	static const PacketSerializer* getSerializer(PacketHeader::Type type, uint32_t version);
-	virtual ~PacketSerializer() {}
-
-	virtual bool isSaunaFsPacketSerializer() const = 0;
-
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const = 0;
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength, uint64_t chunkId, uint32_t chunkVersion,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const = 0;
-	virtual void deserializeFuseReadChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) const = 0;
-
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const = 0;
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength,
-			uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const = 0;
-	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const = 0;
-
-	virtual void serializeFuseWriteChunkEnd(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const = 0;
-	virtual void deserializeFuseWriteChunkEnd(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-			inode_t& inode, uint64_t& fileLength) const = 0;
-
-	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t type /* FUSE_TRUNCATE | FUSE_TRUNCATE_END*/,
-			uint32_t messageId, uint8_t status) const = 0;
-	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t type /* FUSE_TRUNCATE | FUSE_TRUNCATE_END*/,
-			uint32_t messageId, const Attributes& attributes) const = 0;
-	virtual void deserializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, bool& isOpened,
-			uint32_t& uid, uint32_t& gid, uint64_t& length) const = 0;
-};
-
-class LegacyPacketSerializer : public PacketSerializer {
-public:
-	virtual bool isSaunaFsPacketSerializer() const {
-		return false;
-	}
-
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const {
-		serializeLegacyPacket(packetBuffer, MATOCL_FUSE_READ_CHUNK, messageId, status);
-	}
-
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength, uint64_t chunkId, uint32_t chunkVersion,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const {
-		LegacyVector<NetworkAddress> standardChunkCopies;
-		getStandardChunkCopies(chunkCopies, standardChunkCopies);
-		serializeLegacyPacket(packetBuffer, MATOCL_FUSE_READ_CHUNK, messageId, fileLength,
-				chunkId, chunkVersion, standardChunkCopies);
-	}
-
-	virtual void deserializeFuseReadChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) const {
-		deserializeAllLegacyPacketDataNoHeader(packetBuffer, messageId, inode, chunkIndex);
-	}
-
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const {
-		serializeLegacyPacket(packetBuffer, MATOCL_FUSE_WRITE_CHUNK, messageId, status);
-	}
-
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength,
-			uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const {
-		sassert(lockId == 1);
-		LegacyVector<NetworkAddress> standardChunkCopies;
-		getStandardChunkCopies(chunkCopies, standardChunkCopies);
-		serializeLegacyPacket(packetBuffer, MATOCL_FUSE_WRITE_CHUNK, messageId, fileLength,
-						chunkId, chunkVersion, standardChunkCopies);
-	}
-
-	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const {
-		deserializeAllLegacyPacketDataNoHeader(packetBuffer, messageId, inode, chunkIndex);
-		lockId = 1;
-	}
-
-	virtual void serializeFuseWriteChunkEnd(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const {
-		serializeLegacyPacket(packetBuffer, MATOCL_FUSE_WRITE_CHUNK_END, messageId, status);
-	}
-
-	virtual void deserializeFuseWriteChunkEnd(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-			inode_t& inode, uint64_t& fileLength) const {
-		deserializeAllLegacyPacketDataNoHeader(packetBuffer,
-				messageId, chunkId, inode, fileLength);
-		lockId = 1;
-	}
-
-	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t type, uint32_t messageId, uint8_t status) const {
-		sassert(type == FUSE_TRUNCATE || type == FUSE_TRUNCATE_END);
-		if (type == FUSE_TRUNCATE) {
-			serializeLegacyPacket(packetBuffer, MATOCL_FUSE_TRUNCATE, messageId, status);
-		} else {
-			// this should never happen, so do anything
-			serializeLegacyPacket(packetBuffer, MATOCL_FUSE_TRUNCATE,
-					messageId, uint8_t(SAUNAFS_ERROR_ENOTSUP));
-		}
-	}
-
-	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t type, uint32_t messageId, const Attributes& attributes) const {
-		sassert(type == FUSE_TRUNCATE || type == FUSE_TRUNCATE_END);
-		if (type == FUSE_TRUNCATE) {
-			serializeLegacyPacket(packetBuffer, MATOCL_FUSE_TRUNCATE, messageId, attributes);
-		} else {
-			// this should never happen, so do anything
-			serializeLegacyPacket(packetBuffer, MATOCL_FUSE_TRUNCATE,
-					messageId, uint8_t(SAUNAFS_ERROR_ENOTSUP));
-		}
-
-	}
-
-	virtual void deserializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, bool& isOpened,
-			uint32_t& uid, uint32_t& gid, uint64_t& length) const {
-		deserializeAllLegacyPacketDataNoHeader(packetBuffer,
-				messageId, inode, isOpened, uid, gid, length);
-
-	}
-};
-
-class SaunaFsPacketSerializer : public PacketSerializer {
-public:
-	virtual bool isSaunaFsPacketSerializer() const {
-		return true;
-	}
-
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const {
-		matocl::fuseReadChunk::serialize(packetBuffer, messageId, status);
-	}
-
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength, uint64_t chunkId, uint32_t chunkVersion,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const {
-		matocl::fuseReadChunk::serialize(packetBuffer, messageId, fileLength, chunkId, chunkVersion,
-				chunkCopies);
-	}
-
-	virtual void deserializeFuseReadChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex) const {
-		cltoma::fuseReadChunk::deserialize(packetBuffer, messageId, inode, chunkIndex);
-	}
-
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const {
-		matocl::fuseWriteChunk::serialize(packetBuffer, messageId, status);
-	}
-
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength,
-			uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const {
-		matocl::fuseWriteChunk::serialize(packetBuffer, messageId,
-				fileLength, chunkId, chunkVersion, lockId, chunkCopies);
-	}
-
-	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, uint32_t& chunkIndex, uint32_t& lockId) const {
-		cltoma::fuseWriteChunk::deserialize(packetBuffer, messageId, inode, chunkIndex, lockId);
-	}
-
-	virtual void serializeFuseWriteChunkEnd(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint8_t status) const {
-		matocl::fuseWriteChunkEnd::serialize(packetBuffer, messageId, status);
-	}
-
-	virtual void deserializeFuseWriteChunkEnd(const std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
-			inode_t& inode, uint64_t& fileLength) const {
-		cltoma::fuseWriteChunkEnd::deserialize(packetBuffer,
-				messageId, chunkId, lockId, inode, fileLength);
-	}
-
-	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t type, uint32_t messageId, uint8_t status) const {
-		sassert(type == FUSE_TRUNCATE || type == FUSE_TRUNCATE_END);
-		if (type == FUSE_TRUNCATE) {
-			matocl::fuseTruncate::serialize(packetBuffer, messageId, status);
-		} else {
-			matocl::fuseTruncateEnd::serialize(packetBuffer, messageId, status);
-		}
-	}
-
-	virtual void serializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t type, uint32_t messageId, const Attributes& attributes) const {
-		sassert(type == FUSE_TRUNCATE || type == FUSE_TRUNCATE_END);
-		if (type == FUSE_TRUNCATE) {
-			matocl::fuseTruncate::serialize(packetBuffer, messageId, attributes);
-		} else {
-			matocl::fuseTruncateEnd::serialize(packetBuffer, messageId, attributes);
-		}
-
-	}
-
-	virtual void deserializeFuseTruncate(std::vector<uint8_t>& packetBuffer,
-			uint32_t& messageId, inode_t& inode, bool& isOpened,
-			uint32_t& uid, uint32_t& gid, uint64_t& length) const {
-		cltoma::fuseTruncate::deserialize(packetBuffer,
-				messageId, inode, isOpened, uid, gid, length);
-	}
-};
-
-class SaunaFsStdXorPacketSerializer : public SaunaFsPacketSerializer {
-public:
-	virtual void serializeFuseReadChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength, uint64_t chunkId, uint32_t chunkVersion,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const {
-		std::vector<legacy::ChunkTypeWithAddress> chunk_copies;
-		for (const auto &part : chunkCopies) {
-			if ((int)part.chunk_type.getSliceType() >= Goal::Slice::Type::kECFirst) {
-				continue;
-			}
-			chunk_copies.push_back(legacy::ChunkTypeWithAddress(part.address, (legacy::ChunkPartType)part.chunk_type));
-		}
-		matocl::fuseReadChunk::serialize(packetBuffer, messageId, fileLength, chunkId, chunkVersion,
-				chunk_copies);
-	}
-
-	virtual void serializeFuseWriteChunk(std::vector<uint8_t>& packetBuffer,
-			uint32_t messageId, uint64_t fileLength,
-			uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
-			const std::vector<ChunkTypeWithAddress>& chunkCopies) const {
-		std::vector<legacy::ChunkTypeWithAddress> chunk_copies;
-		for (const auto &part : chunkCopies) {
-			if ((int)part.chunk_type.getSliceType() >= Goal::Slice::Type::kECFirst) {
-				continue;
-			}
-			chunk_copies.push_back(legacy::ChunkTypeWithAddress(part.address, (legacy::ChunkPartType)part.chunk_type));
-		}
-		matocl::fuseWriteChunk::serialize(packetBuffer, messageId,
-				fileLength, chunkId, chunkVersion, lockId, chunk_copies);
-	}
-};
-
-
-const PacketSerializer* PacketSerializer::getSerializer(PacketHeader::Type type, uint32_t version) {
-	sassert((type >= PacketHeader::kMinSauPacketType && type <= PacketHeader::kMaxSauPacketType)
-			|| type <= PacketHeader::kMaxOldPacketType);
-	if (type <= PacketHeader::kMaxOldPacketType) {
-		static LegacyPacketSerializer singleton;
-		return &singleton;
-	}
-
-	static SaunaFsPacketSerializer singleton;
-	if (version < kFirstECVersion) {
-		static SaunaFsStdXorPacketSerializer singletonStdXor;
-		return &singletonStdXor;
-	}
-
-	return &singleton;
-}
 
 void matoclserv_stats(uint64_t stats[5]) {
 	stats[0] = statsPacketsReceived;
@@ -643,19 +365,6 @@ static inline FsContext matoclserv_get_context(matoclserventry *eptr, uint32_t u
 	matoclserv_ugid_remap(eptr, &uid, &gid);
 	return FsContext::getForMasterWithSession(eventloop_time(), eptr->sessionData->rootInode,
 	                                          eptr->sessionData->flags, uid, gid, auid, agid);
-}
-
-/// Extracts network addresses of standard chunk copies from a list of all chunk copies.
-/// @param allCopies List of all chunk copies with their addresses
-/// @param standardCopies Output vector to store the addresses of standard chunk copies
-static void getStandardChunkCopies(const std::vector<ChunkTypeWithAddress>& allCopies,
-		std::vector<NetworkAddress>& standardCopies) {
-	sassert(standardCopies.empty());
-	for (auto& chunkCopy : allCopies) {
-		if (slice_traits::isStandard(chunkCopy.chunk_type)) {
-			standardCopies.push_back(chunkCopy.address);
-		}
-	}
 }
 
 /// Removes unsupported EC parts from a given list of chunk parts.
