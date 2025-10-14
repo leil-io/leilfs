@@ -135,10 +135,13 @@ void KVConnectorFDB::onChangelogEvent(const ChangelogEvent &event) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
 	transaction->set(versionKey, serializedVersion);
 
+	transaction->set(kv::encodeKeyBE(kChangelogPrefix, event.version), kv::toBytes(event.entry));
 	if (!transaction->commit()) {
 		safs::log_err("Failed to store changelog entry: {}", event.entry);
 		return;
 	}
+	// TODO(Baldor): remove below debugging line or decrease log_level for it
+	safs::log_info("[BALDOR] Changelog entry: {}", event.entry);
 }
 
 void KVConnectorFDB::onNodeChanged(FSNode *node) {

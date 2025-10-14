@@ -18,6 +18,8 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#pragma once
+
 #include "common/platform.h"
 
 #include <sys/syslog.h>
@@ -33,6 +35,8 @@
 #include "master/filesystem.h"
 #include "master/filesystem_freenode.h"
 #include "master/hstorage_init.h"
+#include "master/kv_connector_fdb.h"
+#include "master/kv_connector_interface.h"
 #include "master/masterconn.h"
 #include "master/matoclserv.h"
 #include "master/matoclserv_sessions.h"
@@ -54,6 +58,20 @@ inline int prometheus_init() {
 	}
 	metrics::init(cfg_getstr("PROMETHEUS_HOST", "0.0.0.0:9499"));
 	eventloop_destructregister(metrics::destroy);
+	return 0;
+}
+
+inline int kv_connector_init() {
+	if (gKVConnector == nullptr) {
+		try {
+			gKVConnector = std::make_unique<KVConnectorFDB>();
+			return gKVConnector->init();
+		} catch (const std::exception &e) {
+			constexpr auto kErrorMessage = "Failed to initialize KV connector";
+			safs::log_err("{}: {}", kErrorMessage, e.what());
+			throw Exception(kErrorMessage);
+		}
+	}
 	return 0;
 }
 
@@ -91,6 +109,7 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{matoclserv_sessions_init, "load stored sessions"},
     RunTab{exports_init, "exports manager"},
     RunTab{topology_init, "net topology module"},
+	RunTab{kv_connector_init, "key-value backend connector"},
     RunTab{metadata_backend_init, "metadata backend initialization"},
     // the lambda is used to select the correct fs_init overload
     RunTab{[]() { return fs_init(); }, "file system manager"},

@@ -495,6 +495,7 @@ void MasterConn::metachangesLog(const uint8_t *data, uint32_t length) {
 	}
 #endif /* #ifndef METALOGGER */
 	changelog(version, changelogEntry);
+	getChangelogSignal().emit({version, changelogEntry});
 	lastLogVersion = version;
 }
 

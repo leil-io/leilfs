@@ -39,3 +39,4 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";   // Section FLCK 1.0
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";   // Section CHNK 1.0
+inline constexpr std::string_view kChangelogPrefix = "CHLG_";   // Section CHLG 1.0
