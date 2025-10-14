@@ -169,10 +169,12 @@ ssize_t InputBuffer::readFromSocket(int sock, size_t bytesToRead) {
 
 	if (bytesReadInHeaderBuffer < targetBytesInHeaderBuffer) {
 		// If the header buffer is not filled, we read to the header buffer.
-		bytesRead = headerBuffer_.readFromFD(
+		auto headerBytesRead = headerBuffer_.readFromFD(
 		    sock, std::min(targetBytesInHeaderBuffer - bytesReadInHeaderBuffer, bytesToRead));
 
-		if (bytesRead <= 0) { return bytesRead; }
+		if (headerBytesRead <= 0) { return headerBytesRead; }
+
+		bytesRead = headerBytesRead;
 	}
 	bytesReadInHeaderBuffer = headerBuffer_.totalBytesPutInBuffer();
 
@@ -182,7 +184,10 @@ ssize_t InputBuffer::readFromSocket(int sock, size_t bytesToRead) {
 		auto blockBytesRead = blockBuffer_.readFromFD(sock, bytesToRead - bytesRead);
 
 		if (blockBytesRead <= 0) {
-			return bytesRead;  // Return the number of bytes read so far.
+			if (bytesRead > 0) {
+				return bytesRead;  // Return the number of bytes read so far.
+			}
+			return blockBytesRead;  // Return the error code from reading the block buffer.
 		}
 
 		bytesRead += blockBytesRead;
@@ -193,12 +198,15 @@ ssize_t InputBuffer::readFromSocket(int sock, size_t bytesToRead) {
 ssize_t InputBuffer::writeToSocket(int sock, size_t bytesToWrite) {
 	ssize_t bytesWritten = 0;
 	size_t bytesInHeaderBuffer = headerBuffer_.bytesInABuffer();
+
 	if (bytesInHeaderBuffer > 0) {
 		// If the header buffer is not flushed, we write from the header buffer.
 		size_t headerBytesToWrite = std::min(bytesToWrite, bytesInHeaderBuffer);
-		bytesWritten = headerBuffer_.writeToFD(sock, headerBytesToWrite);
+		auto headerBytesWritten = headerBuffer_.writeToFD(sock, headerBytesToWrite);
 
-		if (bytesWritten <= 0) { return bytesWritten; }
+		if (headerBytesWritten <= 0) { return headerBytesWritten; }
+
+		bytesWritten = headerBytesWritten;
 	}
 	bytesInHeaderBuffer = headerBuffer_.bytesInABuffer();
 
@@ -207,7 +215,10 @@ ssize_t InputBuffer::writeToSocket(int sock, size_t bytesToWrite) {
 		auto blockBytesWritten = blockBuffer_.writeToFD(sock, bytesToWrite - bytesWritten);
 
 		if (blockBytesWritten <= 0) {
-			return bytesWritten;  // Return the number of bytes written so far.
+			if (bytesWritten > 0) {
+				return bytesWritten;  // Return the number of bytes written so far.
+			}
+			return blockBytesWritten;  // Return the error code from writing the block buffer.
 		}
 
 		bytesWritten += blockBytesWritten;

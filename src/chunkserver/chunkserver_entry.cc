@@ -175,10 +175,12 @@ void ChunkserverEntry::retryConnect() {
 
 	if (connectRetryCounter < kConnectRetries) {
 		if (initConnection() < kInitConnectionOK) {
+			safs::log_info("({}) Failed initializing connection.", __func__);
 			fwdError();
 			return;
 		}
 	} else {
+		safs::log_info("({}) Connect retry counter reached limit.", __func__);
 		fwdError();
 		return;
 	}
@@ -1103,6 +1105,7 @@ bool ChunkserverEntry::processRWBytes(int bytesRW, PacketStruct &packet, bool sh
                                       const char *callerName, bool isRead) {
 	if (bytesRW == 0) {
 		if (shouldForwardError) {
+			safs::log_info("({}) {} returned 0 bytes", callerName, isRead ? "read" : "write");
 			fwdError();
 		} else {
 			state = State::Close;
