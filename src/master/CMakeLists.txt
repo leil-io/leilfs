@@ -7,6 +7,10 @@ if(NOT DB_FOUND)
   list(REMOVE_ITEM MASTER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/hstring_bdbstorage.cc")
 endif()
 
+if(NOT ENABLE_FOUNDATIONDB)
+  list(REMOVE_ITEM MASTER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/kv_connector_fdb.cc")
+endif()
+
 option(DISABLE_JUDY_FOR_DEFECTIVENODESMAP       "Disable the use of judy for the defective inodes map."                OFF)
 option(DISABLE_JUDY_FOR_TRASHPATHCONTAINER      "Disable the use of judy for the trash path container."                OFF)
 option(DISABLE_JUDY_FOR_RESERVEDPATHCONTAINER   "Disable the use of judy for the reserved path container."             OFF)
