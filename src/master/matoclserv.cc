@@ -59,6 +59,7 @@
 #include "common/massert.h"
 #include "common/md5.h"
 #include "common/network_address.h"
+#include "common/output_packet.h"
 #include "common/random.h"
 #include "common/saunafs_statistics.h"
 #include "common/saunafs_version.h"
@@ -168,8 +169,7 @@ struct matoclserventry {
 	uint16_t peerPort;                ///< Peer port of the client
 	uint8_t headerBuffer[8];          ///< Buffer for packet header
 	packetstruct inputPacket;         ///< Input packet structure for reading data from the client
-	packetstruct *outputPacketHead;   ///< Pointer to the head of the output packet list
-	packetstruct **outputPacketTail;  ///< Pointer to the tail of the output packet list
+	std::list<OutputPacket> outputPackets;  ///< List of output packets
 
 	static constexpr uint8_t kPasswordSize = 32;
 	uint8_t randomPassword[kPasswordSize];  ///< Random password for authentication
@@ -233,42 +233,15 @@ matoclserventry *matoclserv_find_connection(uint32_t sessionId) {
 /// @param size The size of the packet data
 /// @return Pointer to the start of the packet data
 uint8_t *matoclserv_createpacket(matoclserventry *eptr, uint32_t type, uint32_t size) {
-	packetstruct *outpacket;
-
-	outpacket = (packetstruct *)malloc(sizeof(packetstruct));
-	passert(outpacket);
-
-	uint32_t packetSize = sizeof(type) + sizeof(size) + size;
-	outpacket->packet = (uint8_t *)malloc(packetSize);
-	passert(outpacket->packet);
-	outpacket->bytesLeft = packetSize;
-
-	uint8_t *ptr = outpacket->packet;
-	put32bit(&ptr, type);
-	put32bit(&ptr, size);
-	outpacket->startPtr = (uint8_t *)(outpacket->packet);
-	outpacket->next = nullptr;
-	*(eptr->outputPacketTail) = outpacket;
-	eptr->outputPacketTail = &(outpacket->next);
-	return ptr;
+	eptr->outputPackets.emplace_back(PacketHeader(type, size));
+	return eptr->outputPackets.back().packet.data() + PacketHeader::kSize;
 }
 
 /// Creates a new output packet for a given session entry.
 /// @param eptr Pointer to the client connection in the master
 /// @param buffer The message buffer containing the packet data
 void matoclserv_createpacket(matoclserventry *eptr, const MessageBuffer &buffer) {
-	packetstruct *outpacket = (packetstruct *)malloc(sizeof(packetstruct));
-	passert(outpacket);
-	outpacket->packet = (uint8_t *)malloc(buffer.size());
-	passert(outpacket->packet);
-
-	outpacket->bytesLeft = buffer.size();
-	// TODO unificate output packets and remove suboptimal memory copying
-	memcpy(outpacket->packet, buffer.data(), buffer.size());
-	outpacket->startPtr = outpacket->packet;
-	outpacket->next = nullptr;
-	*(eptr->outputPacketTail) = outpacket;
-	eptr->outputPacketTail = &(outpacket->next);
+	eptr->outputPackets.emplace_back(buffer);
 }
 
 /// Checks if user/group ID remapping is required for a given client connection.
@@ -5164,8 +5137,6 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 }
 
 void matoclserv_term() {
-	packetstruct *pptr,*pptrn;
-
 	safs::log_info("main master server module: closing {}:{}", ListenHost, ListenPort);
 	tcpclose(masterSocket);
 
@@ -5173,15 +5144,6 @@ void matoclserv_term() {
 		if (eptr->inputPacket.packet) {
 			free(eptr->inputPacket.packet);
 		}
-
-		for (pptr = eptr->outputPacketHead ; pptr ; pptr = pptrn) {
-			pptrn = pptr->next;
-			if (pptr->packet) {
-				free(pptr->packet);
-			}
-			free(pptr);
-		}
-
 		eptr->delayedChunkOperations.clear();
 	}
 
@@ -5279,15 +5241,14 @@ void matoclserv_read(matoclserventry *eptr) {
 
 void matoclserv_write(matoclserventry *eptr) {
 	SignalLoopWatchdog watchdog;
-	packetstruct *pack;
-	int32_t i;
+	int32_t bytesWritten;
 
 	watchdog.start();
-	for (;;) {
-		pack = eptr->outputPacketHead;
-		if (pack == nullptr) { return; }
-		i = write(eptr->socket, pack->startPtr, pack->bytesLeft);
-		if (i < 0) {
+	while (!eptr->outputPackets.empty()) {
+		OutputPacket &outputPacket = eptr->outputPackets.front();
+		bytesWritten = write(eptr->socket, outputPacket.packet.data() + outputPacket.bytesSent,
+		                     outputPacket.packet.size() - outputPacket.bytesSent);
+		if (bytesWritten < 0) {
 			if (errno != EAGAIN) {
 				safs_silent_errlog(LOG_NOTICE, "main master server module: (ip:%s) write error",
 				                   ipToString(eptr->peerIpAddress).c_str());
@@ -5295,21 +5256,17 @@ void matoclserv_write(matoclserventry *eptr) {
 			}
 			return;
 		}
-		pack->startPtr += i;
-		pack->bytesLeft -= i;
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_BYTES, i);
-		statsBytesSent += i;
-		if (pack->bytesLeft > 0) {
+		outputPacket.bytesSent += bytesWritten;
+		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_BYTES, bytesWritten);
+		statsBytesSent += bytesWritten;
+
+		if (outputPacket.bytesSent >= outputPacket.packet.size()) {
+			statsPacketsSent++;
+			metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_PACKETS);
+			eptr->outputPackets.pop_front();
+		} else {
 			return;
 		}
-		free(pack->packet);
-		statsPacketsSent++;
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_PACKETS);
-		eptr->outputPacketHead = pack->next;
-		if (eptr->outputPacketHead == nullptr) {
-			eptr->outputPacketTail = &(eptr->outputPacketHead);
-		}
-		free(pack);
 
 		if (watchdog.expired()) {
 			break;
@@ -5326,7 +5283,7 @@ int matoclserv_canexit() {
 	static bool terminatorPacketSent = false;
 
 	for (const auto &eptr : matoclservList) {
-		if (eptr->outputPacketHead != nullptr) {
+		if (!eptr->outputPackets.empty()) {
 			return 0;
 		}
 
@@ -5378,17 +5335,14 @@ void matoclserv_desc(std::vector<pollfd> &pdesc) {
 			pdesc.back().events |= POLLIN;
 		}
 
-		if (eptr->outputPacketHead != nullptr) {
+		if (!eptr->outputPackets.empty()) {
 			pdesc.back().events |= POLLOUT;
 		}
 	}
 }
 
-
 void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 	uint32_t now = eventloop_time();
-	packetstruct *pptr;
-	packetstruct *paptr;
 
 	if (masterSocketDescPos >= 0 && (pdesc[masterSocketDescPos].revents & POLLIN)) {
 		int ns = tcpaccept(masterSocket);
@@ -5412,8 +5366,6 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->inputPacket.startPtr = eptr->headerBuffer;
 			eptr->inputPacket.packet = nullptr;
 			eptr->adminTask = AdminTask::kNone;
-			eptr->outputPacketHead = nullptr;
-			eptr->outputPacketTail = &(eptr->outputPacketHead);
 
 			eptr->delayedChunkOperations.clear();
 			eptr->sessionData = nullptr;
@@ -5441,14 +5393,14 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 // write
 	for (const auto &eptr : matoclservList) {
 		if (eptr->lastWriteTimestamp + 2 < now && eptr->registered != ClientState::kOldTools &&
-		    eptr->outputPacketHead == nullptr) {
+		    eptr->outputPackets.empty()) {
 			// 4 byte length because of 'msgid'
 			uint8_t *ptr = matoclserv_createpacket(eptr.get(), ANTOAN_NOP, 4);
 			*((uint32_t *)ptr) = 0;
 		}
 
 		if (eptr->pDescPos >= 0) {
-			if ((((pdesc[eptr->pDescPos].events & POLLOUT) == 0 && (eptr->outputPacketHead)) ||
+			if ((((pdesc[eptr->pDescPos].events & POLLOUT) == 0 && !eptr->outputPackets.empty()) ||
 			     (pdesc[eptr->pDescPos].revents & POLLOUT)) &&
 			    eptr->mode != ClientConnectionMode::KILL) {
 				eptr->lastWriteTimestamp = now;
@@ -5471,16 +5423,6 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 
 			if (eptr->inputPacket.packet) {
 				free(eptr->inputPacket.packet);
-			}
-
-			pptr = eptr->outputPacketHead;
-			while (pptr) {
-				if (pptr->packet) {
-					free(pptr->packet);
-				}
-				paptr = pptr;
-				pptr = pptr->next;
-				free(paptr);
 			}
 
 			eptrIt = matoclservList.erase(eptrIt);
