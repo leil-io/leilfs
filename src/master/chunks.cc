@@ -60,6 +60,7 @@
 #include "master/chunk_goal_counters.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
 #include "master/goal_cache.h"
 #include "master/id_generator_incremental.h"
@@ -356,7 +357,7 @@ public:
 		Goal result;
 		int prev_goal = -1;
 		for (auto counter : goalCounters_) {
-			const Goal &goal = fs_get_goal_definition(counter.goal);
+			const Goal &goal = gFilesystemOperations->fs_get_goal_definition(counter.goal);
 			if (prev_goal != (int)counter.goal) {
 				result.mergeIn(goal);
 				prev_goal = counter.goal;
@@ -1104,7 +1105,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 				return SAUNAFS_ERROR_NOCHUNKSERVERS;
 			}
 		}
-		ChunkCopiesCalculator calculator(fs_get_goal_definition(goal));
+		ChunkCopiesCalculator calculator(gFilesystemOperations->fs_get_goal_definition(goal));
 		for (const auto &server_with_type : serversWithChunkTypes) {
 			calculator.addPart(server_with_type.second, MediaLabel::kWildcard);
 		}

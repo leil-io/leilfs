@@ -32,6 +32,7 @@
 #include "master/filesystem.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/filesystem_snapshot.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
@@ -402,12 +403,14 @@ int do_lock_op(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 
 	switch (static_cast<safs_locks::Type>(lock_type)) {
 	case safs_locks::Type::kFlock:
-		status = fs_flock_op(FsContext::getForRestore(ts), inode, owner, sessionid, 0, 0,
-				op, nonblocking, dummy_applied);
+		status =
+		    gFilesystemOperations->fs_flock_op(FsContext::getForRestore(ts), inode, owner,
+		                                       sessionid, 0, 0, op, nonblocking, dummy_applied);
 		break;
 	case safs_locks::Type::kPosix:
-		status = fs_posixlock_op(FsContext::getForRestore(ts), inode, start, end, owner, sessionid, 0, 0,
-				op, nonblocking, dummy_applied);
+		status = gFilesystemOperations->fs_posixlock_op(FsContext::getForRestore(ts), inode, start,
+		                                                end, owner, sessionid, 0, 0, op,
+		                                                nonblocking, dummy_applied);
 		break;
 	default:
 		safs_pretty_syslog(LOG_ERR, "Invalid lock type passed to restore: %u", lock_type);
@@ -439,8 +442,8 @@ int do_remove_pending_op(const char *filename, uint64_t lv, uint32_t ts, const c
 	GETU64(reqid, ptr);
 	EAT(ptr,filename,lv,')');
 
-	return fs_locks_remove_pending(FsContext::getForRestore(ts), lock_type, ownerid, sessionid,
-		inode, reqid);
+	return gFilesystemOperations->fs_locks_remove_pending(FsContext::getForRestore(ts), lock_type,
+	                                                      ownerid, sessionid, inode, reqid);
 }
 
 int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -456,7 +459,8 @@ int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const 
 	GETU32(sessionid, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return fs_locks_clear_session(FsContext::getForRestore(ts), lock_type, inode, sessionid, applied);
+	return gFilesystemOperations->fs_locks_clear_session(FsContext::getForRestore(ts), lock_type,
+	                                                     inode, sessionid, applied);
 }
 
 int do_lock_unlock_inode(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -470,7 +474,8 @@ int do_lock_unlock_inode(const char *filename, uint64_t lv, uint32_t ts, const c
 	GETINODE(inode, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return fs_locks_unlock_inode(FsContext::getForRestore(ts), lock_type, inode, applied);
+	return gFilesystemOperations->fs_locks_unlock_inode(FsContext::getForRestore(ts), lock_type,
+	                                                    inode, applied);
 }
 
 int do_purge(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {

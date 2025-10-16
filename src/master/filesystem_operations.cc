@@ -1488,23 +1488,25 @@ static int fsnodes_check_lock_permissions(const FsContext &context, inode_t inod
 	return fsnodes_get_node_for_operation(context, ExpectedNodeType::kAny, modemask, inode, &dummy);
 }
 
-int fs_posixlock_probe(const FsContext &context, inode_t inode, uint64_t start, uint64_t end,
-		uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t op,
-		safs_locks::FlockWrapper &info) {
+int FilesystemOperationsBase::fs_posixlock_probe(const FsContext &context, inode_t inode,
+                                                 uint64_t start, uint64_t end, uint64_t owner,
+                                                 uint32_t sessionid, uint32_t reqid, uint32_t msgid,
+                                                 uint16_t oper, safs_locks::FlockWrapper &info) {
 	uint8_t status;
 
-	if (op != safs_locks::kShared && op != safs_locks::kExclusive && op != safs_locks::kUnlock) {
+	if (oper != safs_locks::kShared && oper != safs_locks::kExclusive &&
+	    oper != safs_locks::kUnlock) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	if ((status = fsnodes_check_lock_permissions(context, inode, op)) != SAUNAFS_STATUS_OK) {
+	if ((status = fsnodes_check_lock_permissions(context, inode, oper)) != SAUNAFS_STATUS_OK) {
 		return status;
 	}
 
 	FileLocks &locks = gMetadata->posixLocks;
 	const FileLocks::Lock *collision;
 
-	collision = locks.findCollision(inode, static_cast<FileLocks::Lock::Type>(op), start, end,
+	collision = locks.findCollision(inode, static_cast<FileLocks::Lock::Type>(oper), start, end,
 			FileLocks::Owner{owner, sessionid, reqid, msgid});
 
 	if (collision == nullptr) {
@@ -1513,25 +1515,27 @@ int fs_posixlock_probe(const FsContext &context, inode_t inode, uint64_t start, 
 	} else {
 		info.l_type = static_cast<int>(collision->type);
 		info.l_start = collision->start;
-		info.l_len = std::min<uint64_t>(collision->end - collision->start, std::numeric_limits<int64_t>::max());
+		info.l_len = std::min<uint64_t>(collision->end - collision->start,
+		                                std::numeric_limits<int64_t>::max());
 		return SAUNAFS_ERROR_WAITING;
 	}
 }
 
-int fs_lock_op(const FsContext &context, FileLocks &locks, inode_t inode,
-		uint64_t start, uint64_t end, uint64_t owner, uint32_t sessionid,
-		uint32_t reqid, uint32_t msgid, uint16_t op, bool nonblocking,
-		std::vector<FileLocks::Owner> &applied) {
+int FilesystemOperationsBase::fs_lock_op(const FsContext &context, FileLocks &locks, inode_t inode,
+                                         uint64_t start, uint64_t end, uint64_t owner,
+                                         uint32_t sessionid, uint32_t reqid, uint32_t msgid,
+                                         uint16_t oper, bool nonblocking,
+                                         std::vector<FileLocks::Owner> &applied) {
 	uint8_t status;
 
-	if ((status = fsnodes_check_lock_permissions(context, inode, op)) != SAUNAFS_STATUS_OK) {
+	if ((status = fsnodes_check_lock_permissions(context, inode, oper)) != SAUNAFS_STATUS_OK) {
 		return status;
 	}
 
 	FileLocks::LockQueue queue;
 	bool success = false;
 
-	switch (op) {
+	switch (oper) {
 	case safs_locks::kShared:
 		success = locks.sharedLock(inode, start, end,
 				FileLocks::Owner{owner, sessionid, reqid, msgid}, nonblocking);
@@ -1563,7 +1567,7 @@ int fs_lock_op(const FsContext &context, FileLocks &locks, inode_t inode,
 	// and he issued shared lock for this same range. This converts exclusive lock
 	// to shared lock. In the result we may need to apply other shared pending locks
 	// for this range.
-	if (op == safs_locks::kExclusive) {
+	if (oper == safs_locks::kExclusive) {
 		return status;
 	}
 
@@ -1576,39 +1580,46 @@ int fs_lock_op(const FsContext &context, FileLocks &locks, inode_t inode,
 	return status;
 }
 
-int fs_flock_op(const FsContext &context, inode_t inode, uint64_t owner, uint32_t sessionid,
-		uint32_t reqid, uint32_t msgid, uint16_t op, bool nonblocking,
-		std::vector<FileLocks::Owner> &applied) {
+int FilesystemOperationsBase::fs_flock_op(const FsContext &context, inode_t inode, uint64_t owner,
+                                          uint32_t sessionid, uint32_t reqid, uint32_t msgid,
+                                          uint16_t oper, bool nonblocking,
+                                          std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
-	int ret = fs_lock_op(context, gMetadata->flockLocks, inode, 0, 1, owner, sessionid,
-			reqid, msgid, op, nonblocking, applied);
+	int ret = fs_lock_op(context, gMetadata->flockLocks, inode, 0, 1, owner, sessionid, reqid,
+	                     msgid, oper, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
-				(uint8_t)safs_locks::Type::kFlock, inode, owner, sessionid, op);
+		fs_changelog(context.ts(),
+		             "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
+		             (uint8_t)safs_locks::Type::kFlock, inode, owner, sessionid, oper);
+	} else {
+		gMetadata->metadataVersion++;
+	}
+
+	return ret;
+}
+
+int FilesystemOperationsBase::fs_posixlock_op(const FsContext &context, inode_t inode,
+                                              uint64_t start, uint64_t end, uint64_t owner,
+                                              uint32_t sessionid, uint32_t reqid, uint32_t msgid,
+                                              uint16_t oper, bool nonblocking,
+                                              std::vector<FileLocks::Owner> &applied) {
+	ChecksumUpdater cu(context.ts());
+	int ret = fs_lock_op(context, gMetadata->posixLocks, inode, start, end, owner, sessionid, reqid,
+	                     msgid, oper, nonblocking, applied);
+	if (context.isPersonalityMaster()) {
+		fs_changelog(context.ts(),
+		             "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32
+		             ",%" PRIu16 ")",
+		             (uint8_t)safs_locks::Type::kPosix, inode, start, end, owner, sessionid, oper);
 	} else {
 		gMetadata->metadataVersion++;
 	}
 	return ret;
 }
 
-int fs_posixlock_op(const FsContext &context, inode_t inode, uint64_t start, uint64_t end,
-		uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t op,
-		bool nonblocking, std::vector<FileLocks::Owner> &applied) {
-	ChecksumUpdater cu(context.ts());
-	int ret = fs_lock_op(context, gMetadata->posixLocks, inode, start, end, owner, sessionid,
-			reqid, msgid, op, nonblocking, applied);
-	if (context.isPersonalityMaster()) {
-		fs_changelog(context.ts(), "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
-				(uint8_t)safs_locks::Type::kPosix, inode, start, end, owner, sessionid, op);
-	} else {
-		gMetadata->metadataVersion++;
-	}
-	return ret;
-}
-
-int fs_locks_clear_session(const FsContext &context, uint8_t type, inode_t inode,
-		uint32_t sessionid, std::vector<FileLocks::Owner> &applied) {
-
+int FilesystemOperationsBase::fs_locks_clear_session(const FsContext &context, uint8_t type,
+                                                     inode_t inode, uint32_t sessionid,
+                                                     std::vector<FileLocks::Owner> &applied) {
 	if (type != (uint8_t)safs_locks::Type::kFlock && type != (uint8_t)safs_locks::Type::kPosix) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -1643,8 +1654,9 @@ int fs_locks_clear_session(const FsContext &context, uint8_t type, inode_t inode
 	return SAUNAFS_STATUS_OK;
 }
 
-int fs_locks_list_all(const FsContext &context, uint8_t type, bool pending, uint64_t start,
-		uint64_t max, std::vector<safs_locks::Info> &result) {
+int FilesystemOperationsBase::fs_locks_list_all(const FsContext &context, uint8_t type,
+                                                bool pending, uint64_t start, uint64_t max,
+                                                std::vector<safs_locks::Info> &outLocks) {
 	(void)context;
 	FileLocks *locks;
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
@@ -1656,16 +1668,18 @@ int fs_locks_list_all(const FsContext &context, uint8_t type, bool pending, uint
 	}
 
 	if (pending) {
-		locks->copyPendingToVector(start, max, result);
+		locks->copyPendingToVector(start, max, outLocks);
 	} else {
-		locks->copyActiveToVector(start, max, result);
+		locks->copyActiveToVector(start, max, outLocks);
 	}
 
 	return SAUNAFS_STATUS_OK;
 }
 
-int fs_locks_list_inode(const FsContext &context, uint8_t type, bool pending, inode_t inode,
-		uint64_t start, uint64_t max, std::vector<safs_locks::Info> &result) {
+int FilesystemOperationsBase::fs_locks_list_inode(const FsContext &context, uint8_t type,
+                                                  bool pending, inode_t inode, uint64_t start,
+                                                  uint64_t max,
+                                                  std::vector<safs_locks::Info> &outLocks) {
 	(void)context;
 	FileLocks *locks;
 
@@ -1678,16 +1692,17 @@ int fs_locks_list_inode(const FsContext &context, uint8_t type, bool pending, in
 	}
 
 	if (pending) {
-		locks->copyPendingToVector(inode, start, max, result);
+		locks->copyPendingToVector(inode, start, max, outLocks);
 	} else {
-		locks->copyActiveToVector(inode, start, max, result);
+		locks->copyActiveToVector(inode, start, max, outLocks);
 	}
 
 	return SAUNAFS_STATUS_OK;
 }
 
-static void fs_manage_lock_try_lock_pending(FileLocks &locks, inode_t inode, uint64_t start,
-		uint64_t end, std::vector<FileLocks::Owner> &applied) {
+void FilesystemOperationsBase::fs_manage_lock_try_lock_pending(
+    FileLocks &locks, inode_t inode, uint64_t start, uint64_t end,
+    std::vector<FileLocks::Owner> &applied) {
 	FileLocks::LockQueue queue;
 	locks.gatherCandidates(inode, start, end, queue);
 	for (auto &candidate : queue) {
@@ -1697,8 +1712,9 @@ static void fs_manage_lock_try_lock_pending(FileLocks &locks, inode_t inode, uin
 	}
 }
 
-int fs_locks_unlock_inode(const FsContext &context, uint8_t type, inode_t inode,
-		std::vector<FileLocks::Owner> &applied) {
+int FilesystemOperationsBase::fs_locks_unlock_inode(const FsContext &context, uint8_t type,
+                                                    inode_t inode,
+                                                    std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
 
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
@@ -1721,8 +1737,9 @@ int fs_locks_unlock_inode(const FsContext &context, uint8_t type, inode_t inode,
 	return SAUNAFS_STATUS_OK;
 }
 
-int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t ownerid,
-			uint32_t sessionid, inode_t inode, uint64_t reqid) {
+int FilesystemOperationsBase::fs_locks_remove_pending(const FsContext &context, uint8_t type,
+                                                      uint64_t ownerid, uint32_t sessionid,
+                                                      inode_t inode, uint64_t reqid) {
 	ChecksumUpdater cu(context.ts());
 
 	FileLocks *locks;
@@ -1735,17 +1752,10 @@ int fs_locks_remove_pending(const FsContext &context, uint8_t type, uint64_t own
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	locks->removePending(inode,
-			[ownerid, sessionid, reqid](const LockRange &range) {
-				const LockRange::Owner &owner = range.owner();
-				if (owner.owner == ownerid
-					&& owner.sessionid == sessionid
-					&& owner.reqid == reqid) {
-					return true;
-				}
-				return false;
-			}
-		);
+	locks->removePending(inode, [ownerid, sessionid, reqid](const LockRange &range) {
+		const LockRange::Owner &owner = range.owner();
+		return owner.owner == ownerid && owner.sessionid == sessionid && owner.reqid == reqid;
+	});
 
 	if (context.isPersonalityMaster()) {
 		fs_changelog(context.ts(),
@@ -2960,11 +2970,11 @@ uint64_t fs_getversion() {
 }
 
 #ifndef METARESTORE
-const std::map<int, Goal> &fs_get_goal_definitions() {
+const std::map<int, Goal> &FilesystemOperationsBase::fs_get_goal_definitions() const {
 	return gGoalDefinitions;
 }
 
-const Goal &fs_get_goal_definition(uint8_t goalId) {
+const Goal &FilesystemOperationsBase::fs_get_goal_definition(uint8_t goalId) const {
 	return gGoalDefinitions[goalId];
 }
 
