@@ -23,6 +23,7 @@
 
 #include "master/filesystem_node.h"
 #include "master/filesystem_operations.h"
+#include "master/filesystem_stats.h"
 
 bool RemoveTask::isFinished() const {
 	return current_subtask_ == subtask_.end();
@@ -76,7 +77,7 @@ int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 			return SAUNAFS_ERROR_ENOTEMPTY;
 		}
 	} else {
-		++gFsStatsArray[child->type == FSNodeType::kDirectory ? FsStats::Rmdir : FsStats::Unlink];
+		incrementFSStat(child->type == FSNodeType::kDirectory ? FsStats::Rmdir : FsStats::Unlink);
 		doUnlink(ts, wd, child);
 		++current_subtask_;
 		repeat_counter_ = 0;
