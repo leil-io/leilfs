@@ -64,7 +64,7 @@ inline int prometheus_init() {
 inline int kv_connector_init() {
 	if (gKVConnector == nullptr) {
 		try {
-			gKVConnector = std::make_unique<KVConnectorFDB>();
+			gKVConnector = std::make_shared<KVConnectorFDB>();
 			return gKVConnector->init();
 		} catch (const std::exception &e) {
 			constexpr auto kErrorMessage = "Failed to initialize KV connector";
