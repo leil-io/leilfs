@@ -36,7 +36,7 @@
 #include "common/charts.h"
 #include "common/event_loop.h"
 #include "master/chunks.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_stats.h"
 #include "master/matoclserv.h"
 
 #if defined(SAUNAFS_HAVE_GETRUSAGE) && defined(SAUNAFS_HAVE_STRUCT_RUSAGE_RU_MAXRSS)
@@ -159,7 +159,7 @@ uint64_t chartsdata_memusage(void) {
 
 void chartsdata_refresh(void) {
 	uint64_t data[CHARTS];
-	std::array<uint32_t, FsStats::Size> fsdata;
+	FsStatsArray fsdata;
 	uint32_t i,del,repl; //,bin,bout,opr,opw,dbr,dbw,dopr,dopw,repl;
 #ifdef CPU_USAGE
 	struct itimerval uc,pc;
@@ -236,8 +236,8 @@ void chartsdata_refresh(void) {
 	chunk_stats(&del,&repl);
 	data[CHARTS_DELCHUNK]=del;
 	data[CHARTS_REPLCHUNK]=repl;
-	fs_retrieve_stats(fsdata);
-	for (i = 0 ; i < FsStats::Size; ++i) {
+	retrieveFSStats(fsdata);
+	for (i = 0 ; i < kFsStatsSize; ++i) {
 		data[CHARTS_STATFS + i] = fsdata[i];
 	}
 	matoclserv_stats(data+CHARTS_PACKETSRCVD);
