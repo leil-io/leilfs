@@ -42,8 +42,6 @@ constexpr uint32_t kDefaultTrashTime = 94620;
 const std::map<int, Goal> &fs_get_goal_definitions();
 const Goal &fs_get_goal_definition(uint8_t goalId);
 
-void fs_broadcast_metadata_saved(uint8_t status);
-
 // Adds an entry to a changelog, updates filesystem.cc internal structures, prepends a
 // proper timestamp to changelog entry and broadcasts it to metaloggers and shadow masters
 void fs_changelog(uint32_t ts, const char *format, ...)
@@ -51,8 +49,6 @@ void fs_changelog(uint32_t ts, const char *format, ...)
 void fs_add_files_to_chunks(bool isMetadataLoading = true);
 
 uint64_t fs_getversion();
-uint8_t fs_repair(inode_t rootinode, uint8_t sesflags, inode_t inode, uint32_t uid, uint32_t gid,
-                  uint8_t correct_only, uint32_t *notchanged, uint32_t *erased, uint32_t *repaired);
 
 /*! \brief Perform a flock operation on filesystem
  * Possible operations:
