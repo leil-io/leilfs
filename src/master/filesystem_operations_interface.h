@@ -242,6 +242,7 @@ public:
 
 	virtual uint8_t fs_full_path_by_inode(const FsContext &context, inode_t inode,
 	                                      std::string &fullPath) = 0;
+	virtual std::string fs_full_path_by_inode(inode_t initial_inode) = 0;
 
 #endif
 	virtual void fs_add_files_to_chunks(bool isMetadataLoading = true) = 0;

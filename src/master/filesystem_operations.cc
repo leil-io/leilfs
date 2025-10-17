@@ -571,6 +571,31 @@ uint8_t FilesystemOperationsBase::fs_full_path_by_inode(const FsContext &context
 	return SAUNAFS_STATUS_OK;
 }
 
+std::string FilesystemOperationsBase::fs_full_path_by_inode(inode_t initial_inode) {
+	std::string fullPath = "";
+	inode_t current_inode = initial_inode;
+	FSNode *current_node = fsnodes_id_to_node(current_inode);
+	std::string current_name = "";
+
+	while (current_inode != SPECIAL_INODE_ROOT) {
+		if (!current_node) {
+			return "";
+		} else if (current_node->parents.empty()) {
+			break;
+		}
+		auto parent = current_node->parents[0].first;
+		auto parent_node = fsnodes_id_to_node<FSNodeDirectory>(parent);
+		if (!parent_node) { return ""; }
+		current_name = parent_node->getChildName(current_node);
+		fullPath = current_inode == initial_inode ? current_name : current_name + "/" + fullPath;
+		current_inode = parent;
+		current_node = parent_node;
+	}
+
+	fullPath = "/" + fullPath;
+	return fullPath;
+}
+
 uint8_t FilesystemOperationsBase::fs_getattr(const FsContext &context, inode_t inode,
                                              Attributes &attr) {
 	FSNode *p;

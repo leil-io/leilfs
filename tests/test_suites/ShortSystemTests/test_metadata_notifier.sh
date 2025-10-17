@@ -27,7 +27,18 @@ kill -s SIGKILL $NOTIFIER_PID
 cat "${info[mount0]}/notifier.log"
 
 # Assert expected substrings
-expected=("ACCESS(1)" "ACCESS(2)" "ACCESS(3)" "ACCESS(4)" "ACCESS(5)")
+expected=(
+    "ACCESS(1)"
+    "inode 1: type=d path=/"
+    "ACCESS(2)"
+    "inode 2: type=d path=/folder1"
+    "ACCESS(3)"
+    "inode 3: type=d path=/folder2"
+    "ACCESS(4)"
+    "inode 4: type=d path=/folder1/subfolder1"
+    "ACCESS(5)"
+    "inode 5: type=d path=/folder1/subfolder2"
+)
 for e in "${expected[@]}"; do
     assert_success grep -q "$e" "${info[mount0]}/notifier.log"
 done

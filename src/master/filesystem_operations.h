@@ -221,6 +221,7 @@ public:
 
 	uint8_t fs_full_path_by_inode(const FsContext &context, inode_t inode,
 	                              std::string &fullPath) override;
+	std::string fs_full_path_by_inode(inode_t initial_inode) override;
 
 #endif
 	void fs_add_files_to_chunks(bool isMetadataLoading = true) override;

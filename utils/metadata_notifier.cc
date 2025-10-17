@@ -1,36 +1,19 @@
-/*
-   Copyright 2023      Leil Storage OÜ
-
-   This file is part of SaunaFS.
-
-   SaunaFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   SaunaFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include "common/platform.h"
+
+#include <cstring>
+#include <iostream>
+#include <regex>
+#include <string>
+#include <vector>
+
+#include <netdb.h>
+#include <unistd.h>
 
 #include "common/datapack.h"
 #include "common/serialization.h"
 #include "common/sockets.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
-
-#include <cstring>
-#include <iostream>
-#include <string>
-#include <vector>
-
-#include <netdb.h>
-#include <unistd.h>
 
 constexpr uint8_t kHeaderSize = 8;
 constexpr uint32_t kCfgDefaultMasterTimeout = 60U;
@@ -69,6 +52,22 @@ packetstruct *createRegisterPacket(uint32_t type, uint32_t size) {
 	return outpacket;
 }
 
+packetstruct *createGetPathTypeInodePacket(uint64_t inode) {
+	packetstruct *outpacket = (packetstruct *)malloc(sizeof(packetstruct));
+	assert(outpacket);
+	uint32_t psize = 8 + sizeof(uint64_t);
+	outpacket->packet = (uint8_t *)malloc(psize);
+	assert(outpacket->packet);
+	outpacket->bytesleft = psize;
+	uint8_t *ptr = outpacket->packet;
+	put32bit(&ptr, NTTOMA_GET_PATH_TYPE_INODE);
+	put32bit(&ptr, 8);
+	put64bit(&ptr, inode);
+	outpacket->startptr = outpacket->packet;
+	outpacket->next = nullptr;
+	return outpacket;
+}
+
 void writeToSocket(int sock, packetstruct *pack) {
 	if (pack == nullptr) { return; }
 
@@ -94,8 +93,12 @@ void writeToSocket(int sock, packetstruct *pack) {
 }
 
 void sendRegister(int sock) {
-	packetstruct *packet =
-	    createRegisterPacket(NTTOMA_REGISTER, 1 + 4 + 2);
+	packetstruct *packet = createRegisterPacket(NTTOMA_REGISTER, 1 + 4 + 2);
+	writeToSocket(sock, packet);
+}
+
+void sendGetPathTypeInode(int sock, uint64_t inode) {
+	packetstruct *packet = createGetPathTypeInodePacket(inode);
 	writeToSocket(sock, packet);
 }
 
@@ -147,9 +150,10 @@ int main(int argc, char *argv[]) {
 	sendRegister(sockfd);
 	fprintf(stderr, "Register packet sent\n");
 
-	// Start listening for MATONT_METACHANGES_LOG packets
 	std::vector<uint8_t> recvBuffer;
 	recvBuffer.reserve(4096);
+	std::regex access_regex(R"(ACCESS\((\d+)\))");
+
 	while (true) {
 		uint8_t temp[4096];
 		ssize_t n = read(sockfd, temp, sizeof(temp));
@@ -163,34 +167,43 @@ int main(int argc, char *argv[]) {
 			get32bit(&parsePtr, packetType);
 			get32bit(&parsePtr, dataLen);
 
-			if (packetType != MATONT_METACHANGES_LOG) {
-				fprintf(stderr, "Unknown packet type: %u\n", packetType);
-				// Remove header to avoid infinite loop
-				recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + 8);
-				continue;
-			}
-
-			// Process the packet
 			if (recvBuffer.size() < 8 + dataLen) break;  // wait for full packet
 
-			// Deserialize packet body
 			parsePtr = ptr + 8;
-			uint8_t rver = *parsePtr++;
-			if (rver != 0xFF) {
-				fprintf(stderr, "Invalid packet format\n");
-				recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + 8 + dataLen);
-				continue;
+
+			if (packetType == MATONT_METACHANGES_LOG) {
+				uint8_t rver = *parsePtr++;
+				if (rver != 0xFF) {
+					fprintf(stderr, "Invalid packet format\n");
+					recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + 8 + dataLen);
+					continue;
+				}
+				uint64_t logVersion = 0;
+				memcpy(&logVersion, parsePtr, sizeof(logVersion));
+				parsePtr += sizeof(logVersion);
+
+				std::string str(reinterpret_cast<const char *>(parsePtr), dataLen - 9);
+
+				// Print log string
+				fprintf(stderr, "%s\n", str.c_str());
+
+				// If log string starts with ACCESS(<inode>), send request for path/type
+				std::smatch match;
+				if (std::regex_search(str, match, access_regex)) {
+					uint64_t inode = std::stoull(match[1].str());
+					sendGetPathTypeInode(sockfd, inode);
+				}
+			} else if (packetType == MATONT_GET_PATH_TYPE_INODE) {
+				// Response: inode:64 nodetype:8 path:STDSTRING
+				uint64_t inode = get64bit(&parsePtr);
+				uint8_t nodetype = *parsePtr++;
+				std::string path(reinterpret_cast<const char *>(parsePtr), dataLen - 9);
+				// Print inode, type, and path
+				fprintf(stderr, "inode %lu: type=%c path=%s\n", inode, static_cast<char>(nodetype), path.c_str());
+			} else {
+				fprintf(stderr, "Unknown packet type: %u\n", packetType);
 			}
-			uint64_t logVersion = 0;
-			memcpy(&logVersion, parsePtr, sizeof(logVersion));
-			parsePtr += sizeof(logVersion);
 
-			std::string str(reinterpret_cast<const char *>(parsePtr), dataLen - 9);
-
-			// Process packet
-			fprintf(stderr, "%s\n", str.c_str());
-
-			// Remove processed packet
 			recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + 8 + dataLen);
 		}
 	}

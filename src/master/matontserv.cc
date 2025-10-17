@@ -30,6 +30,8 @@
 #include "common/serialization.h"
 #include "common/sockets.h"
 #include "config/cfg.h"
+#include "master/filesystem_node.h"
+#include "master/filesystem_operations.h"
 #include "master/matontserv.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
@@ -225,6 +227,50 @@ void matontserv_register(MatontservEntry *eptr, const uint8_t *data, uint32_t le
 	}
 }
 
+void matontserv_get_path_type_inode(MatontservEntry *eptr, const uint8_t *data, uint32_t length) {
+	if (eptr->version == 0) {
+		safs::log_warn("got get_path_type_inode message from unregistered notifier !!!");
+		eptr->mode = NotifierConnectionMode::KILL;
+		return;
+	}
+
+	if (length < sizeof(uint64_t)) {
+		safs::log_info("NTTOMA_GET_PATH_TYPE_INODE - wrong size ({})", length);
+		return;
+	}
+
+	// Convert the received 64-bit inode value to the buildtime-configured inode_t type (may be
+	// uint32_t or uint64_t)
+	uint8_t *responseData;
+	uint64_t responseInode = get64bit(&data);
+
+	// Check if inode_t is uint32_t and responseInode does not fit
+	bool invalidInode = (sizeof(inode_t) == sizeof(uint32_t)) &&
+	                    (responseInode > std::numeric_limits<uint32_t>::max());
+
+	inode_t inode = static_cast<inode_t>(responseInode);
+	std::string pathByInode;
+	FSNode *node = invalidInode ? nullptr : fsnodes_id_to_node(inode);
+	if (node == nullptr) {
+		safs::log_info("NTTOMA_GET_PATH_TYPE_INODE - inode {} not found", responseInode);
+		// Send back an empty path
+		responseData = matontserv_addpacket(eptr, MATONT_GET_PATH_TYPE_INODE,
+		                                    sizeof(uint64_t) + sizeof(FSNodeType::kUnknown) + 1);
+		put64bit(&responseData, responseInode);
+		put8bit(&responseData, FSNodeType::kUnknown);
+		memcpy(responseData, "", 1);
+		return;
+	}
+
+	pathByInode = gFilesystemOperations->fs_full_path_by_inode(inode);
+	responseData =
+	    matontserv_addpacket(eptr, MATONT_GET_PATH_TYPE_INODE,
+	                         sizeof(responseInode) + sizeof(node->type) + pathByInode.size() + 1);
+	put64bit(&responseData, responseInode);
+	put8bit(&responseData, static_cast<uint8_t>(node->type));
+	memcpy(responseData, pathByInode.c_str(), pathByInode.size() + 1);
+}
+
 void matontserv_gotpacket(MatontservEntry *eptr, uint32_t type, const uint8_t *data,
                           uint32_t length) {
 	try {
@@ -237,6 +283,9 @@ void matontserv_gotpacket(MatontservEntry *eptr, uint32_t type, const uint8_t *d
 			break;
 		case NTTOMA_REGISTER:
 			matontserv_register(eptr, data, length);
+			break;
+		case NTTOMA_GET_PATH_TYPE_INODE:
+			matontserv_get_path_type_inode(eptr, data, length);
 			break;
 		default:
 			safs::log_info("master <-> notifiers module: got unknown message (type:{})",
