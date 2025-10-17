@@ -52,6 +52,7 @@
 #include "common/generic_lru_cache.h"
 #include "common/goal.h"
 #include "common/human_readable_format.h"
+#include "common/input_packet.h"
 #include "common/io_limits_config_loader.h"
 #include "common/io_limits_database.h"
 #include "common/legacy_vector.h"
@@ -93,6 +94,7 @@
 #include "protocol/SFSCommunication.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
+#include "protocol/packet.h"
 #include "slogger/slogger.h"
 
 #define MaxPacketSize 1000000
@@ -124,13 +126,6 @@ struct DelayedChunkOperation {
 	uint8_t type;           ///< Delayed operation type: FUSE_WRITE, FUSE_TRUNCATE,
 	                        ///< FUSE_TRUNCATE_BEGIN or FUSE_TRUNCATE_END
 	const PacketSerializer* serializer;  ///< Packet serializer for the operation
-};
-
-struct packetstruct {
-	struct packetstruct *next;
-	uint8_t *startPtr;
-	uint32_t bytesLeft;
-	uint8_t *packet;
 };
 
 ///< This looks to be the client type.
@@ -169,7 +164,7 @@ struct matoclserventry {
 	uint32_t peerIpAddress;           ///< Peer IP address of the client
 	uint16_t peerPort;                ///< Peer port of the client
 	uint8_t headerBuffer[8];          ///< Buffer for packet header
-	packetstruct inputPacket;         ///< Input packet structure for reading data from the client
+	InputPacket inputPacket{MaxPacketSize};  ///< InputPacket for reading data from the client
 	std::list<OutputPacket> outputPackets;  ///< List of output packets
 
 	static constexpr uint8_t kPasswordSize = 32;
@@ -5152,9 +5147,6 @@ void matoclserv_term() {
 	tcpclose(masterSocket);
 
 	for (const auto &eptr : matoclservList) {
-		if (eptr->inputPacket.packet) {
-			free(eptr->inputPacket.packet);
-		}
 		eptr->delayedChunkOperations.clear();
 	}
 
@@ -5165,12 +5157,11 @@ void matoclserv_term() {
 void matoclserv_read(matoclserventry *eptr) {
 	SignalLoopWatchdog watchdog;
 	int32_t bytesRead;
-	uint32_t type,size;
-	const uint8_t *ptr;
 
 	watchdog.start();
 	while (eptr->mode != ClientConnectionMode::KILL) {
-		bytesRead = read(eptr->socket, eptr->inputPacket.startPtr, eptr->inputPacket.bytesLeft);
+		bytesRead = read(eptr->socket, eptr->inputPacket.pointerToBeReadInto(),
+		                 eptr->inputPacket.bytesToBeRead());
 		if (bytesRead == 0) {
 			if (eptr->registered == ClientState::kRegistered) {       // show this message only for standard, registered clients
 				safs::log_info("connection with client (ip:{}) has been closed by peer",
@@ -5194,54 +5185,28 @@ void matoclserv_read(matoclserventry *eptr) {
 			}
 			return;
 		}
-		eptr->inputPacket.startPtr += bytesRead;
-		eptr->inputPacket.bytesLeft -= bytesRead;
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_BYTES, bytesRead);
-		statsBytesReceived += bytesRead;
-
-		if (eptr->inputPacket.bytesLeft > 0) {
+		try {
+			eptr->inputPacket.increaseBytesRead(bytesRead);
+		} catch (const InputPacketTooLongException &ex) {
+			safs::log_warn(
+			    "main master server module: packet received from peer {}:{} is too long: {}",
+			    ipToString(eptr->peerIpAddress), eptr->peerPort, ex.what());
+			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 
-		if (eptr->mode == ClientConnectionMode::HEADER) {
-			ptr = eptr->headerBuffer;
-			get32bit(&ptr, type);
-			get32bit(&ptr, size);
-			if (size > 0) {
-				if (size > MaxPacketSize) {
-					safs::log_warn(
-					    "main master server module: packet {} received from peer {}:{} is too long ({}/{})",
-					    type, ipToString(eptr->peerIpAddress), eptr->peerPort, size, MaxPacketSize);
-					eptr->mode = ClientConnectionMode::KILL;
-					return;
-				}
-				eptr->inputPacket.packet = (uint8_t*) malloc(size);
-				passert(eptr->inputPacket.packet);
-				eptr->inputPacket.bytesLeft = size;
-				eptr->inputPacket.startPtr = eptr->inputPacket.packet;
-				eptr->mode = ClientConnectionMode::DATA;
-				continue;
-			}
-			eptr->mode = ClientConnectionMode::DATA;
-		}
+		metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_BYTES, bytesRead);
+		statsBytesReceived += bytesRead;
 
-		if (eptr->mode==ClientConnectionMode::DATA) {
-			ptr = eptr->headerBuffer;
-			get32bit(&ptr, type);
-			get32bit(&ptr, size);
+		if (eptr->inputPacket.hasData()) {
+			auto header = eptr->inputPacket.getHeader();
+			const auto data = eptr->inputPacket.getData();
+			matoclserv_gotpacket(eptr, header.type, data.data(), data.size());
 
-			eptr->mode = ClientConnectionMode::HEADER;
-			eptr->inputPacket.bytesLeft = 8;
-			eptr->inputPacket.startPtr = eptr->headerBuffer;
-			matoclserv_gotpacket(eptr,type,eptr->inputPacket.packet,size);
 			statsPacketsReceived++;
 			metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_PACKETS);
 
-			if (eptr->inputPacket.packet) {
-				free(eptr->inputPacket.packet);
-			}
-			eptr->inputPacket.packet = nullptr;
-			break;
+			eptr->inputPacket.reset();
 		}
 
 		if (watchdog.expired()) {
@@ -5372,10 +5337,6 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->mode = ClientConnectionMode::HEADER;
 			eptr->lastReadTimestamp = now;
 			eptr->lastWriteTimestamp = now;
-			eptr->inputPacket.next = nullptr;
-			eptr->inputPacket.bytesLeft = 8;
-			eptr->inputPacket.startPtr = eptr->headerBuffer;
-			eptr->inputPacket.packet = nullptr;
 			eptr->adminTask = AdminTask::kNone;
 
 			eptr->delayedChunkOperations.clear();
@@ -5431,11 +5392,6 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 		if (eptr->mode == ClientConnectionMode::KILL) {
 			matocl_before_disconnect(eptr);
 			tcpclose(eptr->socket);
-
-			if (eptr->inputPacket.packet) {
-				free(eptr->inputPacket.packet);
-			}
-
 			eptrIt = matoclservList.erase(eptrIt);
 		} else {
 			++eptrIt;

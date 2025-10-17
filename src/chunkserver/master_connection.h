@@ -28,11 +28,11 @@
 #include <memory>
 #include <string>
 
+#include "common/input_packet.h"
 #include "common/network_address.h"
 #include "common/output_packet.h"
 #include "common/saunafs_version.h"
 #include "common/time_utils.h"
-#include "protocol/input_packet.h"
 
 static constexpr uint32_t kMaxPacketSize = 10000;
 static constexpr uint32_t kMaxBackgroundJobsCount = 1000;
