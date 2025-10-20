@@ -148,7 +148,7 @@ static uint64_t file_realsize(FSNodeFile *node, uint32_t nonzero_chunks, uint64_
 	(void)file_size;
 	return 0; // Doesn't really matter. Metarestore doesn't need this value
 #else
-	const Goal &goal = fs_get_goal_definition(node->goal);
+	const Goal &goal = gFilesystemOperations->fs_get_goal_definition(node->goal);
 
 	uint64_t full_size = 0;
 	for (const auto &slice : goal) {

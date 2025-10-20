@@ -54,6 +54,7 @@
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
@@ -319,7 +320,7 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 		uint8_t goal_id, uint32_t min_server_version) {
 	static std::array<ChunkCreationHistory, GoalId::kMax + 1> history;
 	GetServersForNewChunk getter;
-	const Goal &goal(fs_get_goal_definition(goal_id));
+	const Goal &goal(gFilesystemOperations->fs_get_goal_definition(goal_id));
 
 	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != KILL && eptr->totalspace > 0 &&

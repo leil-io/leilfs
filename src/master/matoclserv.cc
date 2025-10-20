@@ -79,6 +79,7 @@
 #include "master/filesystem_node.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/filesystem_periodic.h"
 #include "master/filesystem_snapshot.h"
 #include "master/masterconn.h"
@@ -636,7 +637,7 @@ void matoclserv_metadataserver_status(matoclserventry* eptr, const uint8_t* data
 /// response packet.
 void matoclserv_list_goals(matoclserventry* eptr) {
 	std::vector<SerializedGoal> serializedGoals;
-	const std::map<int, Goal>& goalsMap = fs_get_goal_definitions();
+	const std::map<int, Goal>& goalsMap = gFilesystemOperations->fs_get_goal_definitions();
 
 	for (const auto& goal : goalsMap) {
 		serializedGoals.emplace_back(goal.first, goal.second.getName(), to_string(goal.second));
@@ -2979,7 +2980,8 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 
 	MessageBuffer reply;
 	if (status == SAUNAFS_STATUS_OK) {
-		const std::map<int, Goal>& goalDefinitions = fs_get_goal_definitions();
+		const std::map<int, Goal> &goalDefinitions =
+		    gFilesystemOperations->fs_get_goal_definitions();
 		std::vector<FuseGetGoalStats> sauReply;
 		for (const auto &goal : goalDefinitions) {
 			if (fgtab[goal.first] || dgtab[goal.first]) {
@@ -3028,7 +3030,8 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 		cltoma::fuseSetGoal::deserialize(data, header.length,
 				msgid, inode, uid, goalName, smode);
 		// find a proper goalId,
-		const std::map<int, Goal> &goalDefinitions = fs_get_goal_definitions();
+		const std::map<int, Goal> &goalDefinitions =
+		    gFilesystemOperations->fs_get_goal_definitions();
 		bool goalFound = false;
 		for (const auto &goal : goalDefinitions) {
 			if (goal.second.getName() == goalName) {
@@ -3956,8 +3959,8 @@ void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	status = fs_flock_op(context, inode, owner, eptr->sessionData->sessionId, requestId, messageId,
-			op, nonblocking, applied);
+	status = gFilesystemOperations->fs_flock_op(context, inode, owner, eptr->sessionData->sessionId,
+	                                            requestId, messageId, op, nonblocking, applied);
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kFlock);
 
@@ -3997,8 +4000,9 @@ void matoclserv_fuse_getlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 		lock_end = (uint64_t)lock_info.l_start + (uint64_t)lock_info.l_len;
 	}
 
-	status = fs_posixlock_probe(context, inode, lock_info.l_start, lock_end, owner,
-			eptr->sessionData->sessionId, 0, message_id, lock_info.l_type, lock_info);
+	status = gFilesystemOperations->fs_posixlock_probe(context, inode, lock_info.l_start, lock_end,
+	                                                   owner, eptr->sessionData->sessionId, 0,
+	                                                   message_id, lock_info.l_type, lock_info);
 
 	// Standard states that lock of length 0 is a lock till EOF
 	if (lock_info.l_len == std::numeric_limits<int64_t>::max()) {
@@ -4050,8 +4054,9 @@ void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	status = fs_posixlock_op(context, inode, lock_info.l_start, lock_end,
-			owner, eptr->sessionData->sessionId, request_id, message_id, op, nonblocking, applied);
+	status = gFilesystemOperations->fs_posixlock_op(context, inode, lock_info.l_start, lock_end,
+	                                                owner, eptr->sessionData->sessionId, request_id,
+	                                                message_id, op, nonblocking, applied);
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kPosix);
 
@@ -4099,11 +4104,13 @@ void matoclserv_manage_locks_list(matoclserventry *eptr, const uint8_t *data, ui
 	if (version == cltoma::manageLocksList::kAll) {
 		cltoma::manageLocksList::deserialize(data, length, type, pending, start, max);
 		max = std::min(max, (uint64_t)SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
-		status = fs_locks_list_all(context, (uint8_t)type, pending, start, max, locks);
+		status = gFilesystemOperations->fs_locks_list_all(context, (uint8_t)type, pending, start,
+		                                                  max, locks);
 	} else if (version == cltoma::manageLocksList::kInode) {
 		cltoma::manageLocksList::deserialize(data, length, inode, type, pending, start, max);
 		max = std::min(max, (uint64_t)SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
-		status = fs_locks_list_inode(context, (uint8_t)type, pending, inode, start, max, locks);
+		status = gFilesystemOperations->fs_locks_list_inode(context, (uint8_t)type, pending, inode,
+		                                                    start, max, locks);
 	} else {
 		throw IncorrectDeserializationException(
 				"Unknown SAU_CLTOMA_MANAGE_LOCKS_LIST version: " + std::to_string(version));
@@ -4148,24 +4155,25 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 			end = std::numeric_limits<decltype(end)>::max();
 		}
 		if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
-			status = fs_flock_op(context, inode, owner, sessionid, 0, 0, safs_locks::kUnlock, true,
-			                     flocks_applied);
+			status = gFilesystemOperations->fs_flock_op(context, inode, owner, sessionid, 0, 0,
+			                                            safs_locks::kUnlock, true, flocks_applied);
 		}
 		if (status == SAUNAFS_STATUS_OK &&
 		    (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
-			status = fs_posixlock_op(context, inode, start, end, owner, sessionid, 0, 0,
-			                         safs_locks::kUnlock, true, posix_applied);
+			status = gFilesystemOperations->fs_posixlock_op(context, inode, start, end, owner,
+			                                                sessionid, 0, 0, safs_locks::kUnlock,
+			                                                true, posix_applied);
 		}
 	} else if (version == cltoma::manageLocksUnlock::kInode) {
 		cltoma::manageLocksUnlock::deserialize(data, length, type, inode);
 		if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
-			status = fs_locks_unlock_inode(context, (uint8_t)safs_locks::Type::kFlock, inode,
-			                               flocks_applied);
+			status = gFilesystemOperations->fs_locks_unlock_inode(
+			    context, (uint8_t)safs_locks::Type::kFlock, inode, flocks_applied);
 		}
 		if (status == SAUNAFS_STATUS_OK &&
 		    (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
-			status = fs_locks_unlock_inode(context, (uint8_t)safs_locks::Type::kPosix, inode,
-			                               posix_applied);
+			status = gFilesystemOperations->fs_locks_unlock_inode(
+			    context, (uint8_t)safs_locks::Type::kPosix, inode, posix_applied);
 		}
 	} else {
 		throw IncorrectDeserializationException("Unknown SAU_CLTOMA_MANAGE_LOCKS_UNLOCK version: " +
@@ -4216,8 +4224,9 @@ void matoclserv_fuse_locks_interrupt(matoclserventry *eptr, const uint8_t *data,
 	cltoma::fuseFlock::deserialize(data, length, messageId, interruptData);
 
 	// we do not reply, so there is not need for checking status of this fs_operation
-	fs_locks_remove_pending(context, type, interruptData.owner,
-			   eptr->sessionData->sessionId, interruptData.ino, interruptData.reqid);
+	gFilesystemOperations->fs_locks_remove_pending(context, type, interruptData.owner,
+	                                               eptr->sessionData->sessionId, interruptData.ino,
+	                                               interruptData.reqid);
 }
 
 void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -4584,14 +4593,16 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status) {
 void matocl_locks_release(const FsContext &context, inode_t inode, uint32_t sessionId) {
 	std::vector<FileLocks::Owner> applied;
 
-	fs_locks_clear_session(context, (uint8_t)safs_locks::Type::kFlock, inode, sessionId, applied);
+	gFilesystemOperations->fs_locks_clear_session(context, (uint8_t)safs_locks::Type::kFlock, inode,
+	                                              sessionId, applied);
 
 	for (auto candidate : applied) {
 		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kFlock);
 	}
 
 	applied.clear();
-	fs_locks_clear_session(context, (uint8_t)safs_locks::Type::kPosix, inode, sessionId, applied);
+	gFilesystemOperations->fs_locks_clear_session(context, (uint8_t)safs_locks::Type::kPosix, inode,
+	                                              sessionId, applied);
 
 	for (auto candidate : applied) {
 		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kPosix);

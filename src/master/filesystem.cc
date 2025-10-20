@@ -227,6 +227,12 @@ static void ensureChunkIdGenerator() {
 	}
 }
 
+static void initFSOperations() {
+	if (!gFilesystemOperations) {
+		gFilesystemOperations = std::make_unique<FilesystemOperationsBase>();
+	}
+}
+
 /* executed in master mode */
 #ifndef METARESTORE
 
@@ -448,6 +454,9 @@ int fs_init(bool doLoad) {
 		throw;
 	}
 
+	// Initialize the concrete filesystem operations before any FS call
+	initFSOperations();
+
 	if (!gMetadataLockfile) {
 		gMetadataLockfile = std::make_unique<Lockfile>(kMetadataFilename + std::string(".lock"));
 	}
@@ -505,10 +514,14 @@ int fs_init(const char *fname, int ignoreflag, bool noLock) {
 	gMetadataBackend = std::make_unique<MetadataBackendFile>();
 	dynamic_cast<MetadataBackendFile *>(gMetadataBackend.get())->setMetadataFile(fname);
 
+	// Initialize the concrete filesystem operations before any FS call
+	initFSOperations();
+
 	if (!noLock) {
 		gMetadataLockfile.reset(new Lockfile(fs::dirname(fname) + "/" + kMetadataFilename + ".lock"));
 		gMetadataLockfile->lock(Lockfile::StaleLock::kSwallow);
 	}
+
 	fs_strinit(true);
 	ensureChunkIdGenerator();
 	chunk_strinit();
