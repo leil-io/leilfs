@@ -1803,9 +1803,8 @@ void fs_readdir_data(const FsContext &context, uint8_t flags, void *dnode, uint8
 	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
 }
 
-template <typename SerializableDirentType>
-uint8_t fs_readdir(const FsContext &context, inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
-		std::vector<SerializableDirentType> &dir_entries) {
+uint8_t fs_readdir(const FsContext &context, inode_t inode, uint64_t first_entry,
+                   uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) {
 	uint8_t status = verify_session(context, OperationMode::kReadOnly, SessionType::kNotMeta);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
@@ -1823,7 +1822,6 @@ uint8_t fs_readdir(const FsContext &context, inode_t inode, uint64_t first_entry
 
 	fs_update_atime(dir, ts);
 
-	using legacy::fsnodes_getdir;
 	fsnodes_getdir(context.rootinode(),
 		       context.uid(), context.gid(), context.auid(), context.agid(), context.sesflags(),
 		       static_cast<FSNodeDirectory*>(dir),
@@ -1834,10 +1832,6 @@ uint8_t fs_readdir(const FsContext &context, inode_t inode, uint64_t first_entry
 
 	return SAUNAFS_STATUS_OK;
 }
-template uint8_t fs_readdir<legacy::DirectoryEntry>(const FsContext &context, inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
-		std::vector<legacy::DirectoryEntry> &dir_entries);
-template uint8_t fs_readdir<DirectoryEntry>(const FsContext &context, inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
-		std::vector<DirectoryEntry> &dir_entries);
 
 uint8_t fs_checkfile(const FsContext &context, inode_t inode,
                      uint32_t chunkcount[CHUNK_MATRIX_SIZE]) {

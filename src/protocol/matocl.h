@@ -437,6 +437,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 
 // SAU_MATOCL_FUSE_GETDIR
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetDir, kStatus, 0)
+// Not used: just kept to document the historical version numbering
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetDirLegacy, kLegacyResponse, 1)
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetDir, kResponseWithDirentIndex, 2)
 
@@ -450,12 +451,6 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseGetDir, SAU_MATOCL_FUSE_GETDIR, kStatus,
 		uint32_t, messageId,
 		uint8_t, status)
-
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocl, fuseGetDirLegacy, SAU_MATOCL_FUSE_GETDIR, kLegacyResponse,
-		uint32_t, message_id,
-		uint64_t, first_entry_index,
-		std::vector<legacy::DirectoryEntry>, dir_entry)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, fuseGetDir, SAU_MATOCL_FUSE_GETDIR, kResponseWithDirentIndex,

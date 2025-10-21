@@ -2401,8 +2401,6 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 
 	if (packet_version == cltoma::fuseGetDir::kClientAbleToProcessDirentIndex) {
 		cltoma::fuseGetDir::deserialize(data, header.length, message_id, inode, uid, gid, first_entry, number_of_entries);
-	} else if (packet_version == cltoma::fuseGetDirLegacy::kLegacyClient) {
-		cltoma::fuseGetDirLegacy::deserialize(data, header.length, message_id, inode, uid, gid, first_entry, number_of_entries);
 	} else {
 		throw IncorrectDeserializationException(
 				"Unknown SAU_CLTOMA_FUSE_GETDIR version: " + std::to_string(packet_version));
@@ -2422,15 +2420,6 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 				matocl::fuseGetDir::serialize(buffer, message_id, status);
 			} else {
 				matocl::fuseGetDir::serialize(buffer, message_id, first_entry, dir_entries);
-			}
-		} else if (packet_version == cltoma::fuseGetDirLegacy::kLegacyClient) {
-			std::vector<legacy::DirectoryEntry> dir_entries;
-			status = fs_readdir(context, inode, first_entry, number_of_entries, dir_entries); //<legacy::DirectoryEntry>
-
-			if (status != SAUNAFS_STATUS_OK) {
-				matocl::fuseGetDir::serialize(buffer, message_id, status);
-			} else {
-				matocl::fuseGetDirLegacy::serialize(buffer, message_id, first_entry, dir_entries);
 			}
 		} else {
 			throw IncorrectDeserializationException(

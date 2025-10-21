@@ -380,15 +380,10 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, uid,
 		uint32_t, gid)
 
+// Not used: just kept to document the historical version numbering
 SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetDirLegacy, kLegacyClient, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cltoma, fuseGetDir, kClientAbleToProcessDirentIndex, 1)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetDirLegacy, SAU_CLTOMA_FUSE_GETDIR, kLegacyClient,
-		uint32_t, message_id,
-		inode_t, inode,
-		uint32_t, uid,
-		uint32_t, gid,
-		uint64_t, first_entry,
-		uint64_t, number_of_entries)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseGetDir, SAU_CLTOMA_FUSE_GETDIR, kClientAbleToProcessDirentIndex,
 		uint32_t, message_id,
 		inode_t, inode,

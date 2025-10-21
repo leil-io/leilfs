@@ -2293,10 +2293,6 @@ uint8_t fs_getdir(inode_t inode, uint32_t uid, uint32_t gid, uint64_t first_entr
 			matocl::fuseGetDir::deserialize(message, message_id, first_entry,
 			                                dir_entries);
 			return SAUNAFS_STATUS_OK;
-		} else if (packet_version == matocl::fuseGetDirLegacy::kLegacyResponse) {
-			fs_got_inconsistent("SAU_MATOCL_FUSE_GETDIR", message.size(),
-			                    "legacy version " + std::to_string(packet_version) + " unsupported by this client");
-			return SAUNAFS_ERROR_IO;
 		} else {
 			fs_got_inconsistent("SAU_MATOCL_FUSE_GETDIR", message.size(),
 			                    "unknown version " + std::to_string(packet_version));
