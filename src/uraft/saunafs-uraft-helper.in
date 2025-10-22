@@ -331,7 +331,7 @@ saunafs_drop_ip() {
 		else
 			log "Successfully dropped floating IP: ${ipaddr}"
 		fi
-	else
+	elif [[ "$ipaddr" != "" ]]; then
 		log "Floating IP ${ipaddr} not present - nothing to drop"
 	fi
 
@@ -342,7 +342,7 @@ saunafs_drop_ip() {
 		else
 			log "Successfully dropped floating IP: ${ipaddr2}"
 		fi
-	else
+	elif [[ "$ipaddr2" != "" ]]; then
 		log "Floating IP ${ipaddr2} not present - nothing to drop"
 	fi
 }
