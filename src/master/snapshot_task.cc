@@ -25,7 +25,7 @@
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_node.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/filesystem_quota.h"
 
 int SnapshotTask::cloneNodeTest(FSNode *src_node, FSNode *dst_node, FSNodeDirectory *dst_parent) {
@@ -207,9 +207,10 @@ void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
 		return;
 	}
 
-	fs_changelog(ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
-	             current_subtask_->first, dst_parent_inode_, dst_inode,
-	             fsnodes_escape_name(current_subtask_->second).c_str(), can_overwrite_);
+	gFilesystemOperations->fs_changelog(
+	    ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
+	    current_subtask_->first, dst_parent_inode_, dst_inode,
+	    fsnodes_escape_name(current_subtask_->second).c_str(), can_overwrite_);
 }
 
 int SnapshotTask::cloneNode(uint32_t ts) {

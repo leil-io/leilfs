@@ -40,6 +40,7 @@
 #include "master/changelog.h"
 #include "master/chunks.h"
 #include "master/filesystem.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/hstring_memstorage.h"
 #include "master/hstring_storage.h"
 #include "master/metadata_backend_common.h"
@@ -351,12 +352,13 @@ int main(int argc,char **argv) {
 		safs_pretty_syslog(LOG_ERR, "error: can't read metadata from file: %s, %s", metadata.c_str(), e.what());
 		return 1;
 	}
-	if (fs_getversion() == 0) {
+	if (gFilesystemOperations->fs_getversion() == 0) {
 		safs_pretty_syslog(LOG_ERR, "invalid metadata version (0)");
 		return 1;
 	}
 	if (vl > 0) {
-		safs_pretty_syslog(LOG_NOTICE, "loaded metadata with version %" PRIu64 "", fs_getversion());
+		safs_pretty_syslog(LOG_NOTICE, "loaded metadata with version %" PRIu64 "",
+		                   gFilesystemOperations->fs_getversion());
 	}
 
 	if (autorestore) {
@@ -378,7 +380,12 @@ int main(int argc,char **argv) {
 					safs_pretty_syslog(LOG_WARNING, "%s", ex.what());
 					lastlv = 0;
 				}
-				skip = ((lastlv<fs_getversion() || firstlv==0) && forcealllogs==0)?1:0;
+
+				skip = ((lastlv < gFilesystemOperations->fs_getversion() || firstlv == 0) &&
+				        forcealllogs == 0)
+				           ? 1
+				           : 0;
+
 				if (vl>0) {
 					std::ostringstream oss;
 					if (skip) {
@@ -427,7 +434,12 @@ int main(int argc,char **argv) {
 				safs_pretty_syslog(LOG_WARNING, "%s", ex.what());
 				lastlv = 0;
 			}
-			skip = ((lastlv<fs_getversion() || firstlv==0) && forcealllogs==0)?1:0;
+
+			skip = ((lastlv < gFilesystemOperations->fs_getversion() || firstlv == 0) &&
+			        forcealllogs == 0)
+			           ? 1
+			           : 0;
+
 			if (vl>0) {
 				std::ostringstream oss;
 				if (skip) {

@@ -22,7 +22,7 @@
 #include "master/recursive_remove_task.h"
 
 #include "master/filesystem_node.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/filesystem_stats.h"
 
 bool RemoveTask::isFinished() const {
@@ -49,8 +49,8 @@ int RemoveTask::retrieveNodes(FSNodeDirectory *&wd, FSNode *&child) {
 }
 
 void RemoveTask::doUnlink(uint32_t ts, FSNodeDirectory *wd, FSNode *child) {
-	fs_changelog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
-		    fsnodes_escape_name(*current_subtask_).c_str(), child->id);
+	gFilesystemOperations->fs_changelog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
+	                                    fsnodes_escape_name(*current_subtask_).c_str(), child->id);
 	fsnodes_unlink(ts, wd, *current_subtask_, child);
 }
 

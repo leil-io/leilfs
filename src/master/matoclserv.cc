@@ -454,7 +454,7 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 	case FUSE_WRITE:
 		if (status != SAUNAFS_STATUS_OK) {
 			if (isFailedCreateOperation) {
-				fs_remove_chunk_from_file(context, inode, chunkId);
+				gFilesystemOperations->fs_remove_chunk_from_file(context, inode, chunkId);
 			}
 			serializer->serializeFuseWriteChunk(reply, messageId, status);
 			matoclserv_createpacket(eptr, std::move(reply));
@@ -463,7 +463,7 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 					chunkId, messageId, fileLength, lockId);
 		}
 		if (status != SAUNAFS_STATUS_OK) {
-			fs_writeend(0, 0, chunkId, 0); // ignore status - just do it.
+			gFilesystemOperations->fs_writeend(0, 0, chunkId, 0);  // ignore status - just do it.
 		}
 		return;
 	case FUSE_TRUNCATE_BEGIN:
@@ -476,12 +476,12 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 		return;
 	case FUSE_TRUNCATE:
 	case FUSE_TRUNCATE_END:
-		fs_end_setlength(chunkId);
+		gFilesystemOperations->fs_end_setlength(chunkId);
 		if (status != SAUNAFS_STATUS_OK) {
 			serializer->serializeFuseTruncate(reply, operationType, messageId, status);
 		} else {
 			Attributes attr;
-			fs_do_setlength(context, inode, fileLength, attr);
+			gFilesystemOperations->fs_do_setlength(context, inode, fileLength, attr);
 			serializer->serializeFuseTruncate(reply, operationType, messageId, attr);
 		}
 		matoclserv_createpacket(eptr, std::move(reply));
@@ -611,7 +611,7 @@ void matoclserv_metadataserver_status(matoclserventry* eptr, const uint8_t* data
 
 	uint64_t metadataVersion = 0;
 	try {
-		metadataVersion = fs_getversion();
+		metadataVersion = gFilesystemOperations->fs_getversion();
 	} catch (NoMetadataException &) {}
 
 	uint8_t status =
@@ -714,7 +714,7 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 				size += 1;  // for '.'
 			} else {
 				size += sizeof(pathLength);
-				size += fs_getdirpath_size(eaptr->sessionData->rootInode);
+				size += gFilesystemOperations->fs_getdirpath_size(eaptr->sessionData->rootInode);
 			}
 		}
 	}
@@ -743,10 +743,12 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 				putINode(&ptr, static_cast<inode_t>(1));
 				put8bit(&ptr, '.');
 			} else {
-				pathLength = fs_getdirpath_size(eaptr->sessionData->rootInode);
+				pathLength =
+				    gFilesystemOperations->fs_getdirpath_size(eaptr->sessionData->rootInode);
 				put32bit(&ptr, pathLength);
 				if (pathLength > 0) {
-					fs_getdirpath_data(eaptr->sessionData->rootInode, ptr, pathLength);
+					gFilesystemOperations->fs_getdirpath_data(eaptr->sessionData->rootInode, ptr,
+					                                          pathLength);
 					ptr += pathLength;
 				}
 			}
@@ -884,11 +886,11 @@ void matoclserv_info(matoclserventry *eptr, const uint8_t *data, uint32_t length
 	statistics.version = saunafsVersion(SAUNAFS_PACKAGE_VERSION_MAJOR,
 			SAUNAFS_PACKAGE_VERSION_MINOR, SAUNAFS_PACKAGE_VERSION_MICRO);
 
-	fs_info(&statistics.totalSpace, &statistics.availableSpace,
-	        &statistics.trashSpace, &statistics.trashNodes,
-	        &statistics.reservedSpace, &statistics.reservedNodes,
-	        &statistics.allNodes, &statistics.dirNodes, &statistics.fileNodes,
-	        &statistics.symlinkNodes);
+	gFilesystemOperations->fs_info(&statistics.totalSpace, &statistics.availableSpace,
+	                               &statistics.trashSpace, &statistics.trashNodes,
+	                               &statistics.reservedSpace, &statistics.reservedNodes,
+	                               &statistics.allNodes, &statistics.dirNodes,
+	                               &statistics.fileNodes, &statistics.symlinkNodes);
 
 	chunk_info(&statistics.chunks, &statistics.chunkCopies, &statistics.regularCopies);
 
@@ -1204,7 +1206,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 
 			if (status == SAUNAFS_STATUS_OK) {
-				status = fs_getrootinode(&rootInode, path);
+				status = gFilesystemOperations->fs_getrootinode(&rootInode, path);
 			}
 
 			if (status == SAUNAFS_STATUS_OK) {
@@ -1486,7 +1488,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 		inode_t openFileIno = *it;
 		if (!inodes_to_reserve.contains(openFileIno)) {
 			// erase files not belonging to the reserve inodes list provided
-			fs_release(context, openFileIno, eptr->sessionData->sessionId);
+			gFilesystemOperations->fs_release(context, openFileIno, eptr->sessionData->sessionId);
 			it = eptr->sessionData->openFilesSet.erase(it);
 		} else {
 			// skip files already in session
@@ -1497,8 +1499,8 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	}
 
 	for (const auto &inode_to_reserve : inodes_to_reserve) {
-		if (fs_acquire(context, inode_to_reserve, eptr->sessionData->sessionId) ==
-		    SAUNAFS_STATUS_OK) {
+		if (gFilesystemOperations->fs_acquire(context, inode_to_reserve,
+		                                      eptr->sessionData->sessionId) == SAUNAFS_STATUS_OK) {
 			// Insert reserved inodes into the opened files set
 			eptr->sessionData->openFilesSet.insert(inode_to_reserve);
 		}
@@ -1523,7 +1525,8 @@ void matoclserv_fuse_statfs(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	get32bit(&data, msgid);
 	FsContext context = matoclserv_get_context(eptr);
-	fs_statfs(context, &totalspace, &availspace, &trashspace, &reservedspace, &inodes);
+	gFilesystemOperations->fs_statfs(context, &totalspace, &availspace, &trashspace, &reservedspace,
+	                                 &inodes);
 
 	constexpr uint32_t kPacketSize = sizeof(msgid) + sizeof(totalspace) + sizeof(availspace) +
 	                                 sizeof(trashspace) + sizeof(reservedspace) + sizeof(inodes);
@@ -1565,7 +1568,7 @@ void matoclserv_fuse_access(matoclserventry *eptr, const uint8_t *data, uint32_t
 	if (status == SAUNAFS_STATUS_OK && inode != SPECIAL_INODE_PATH_BY_INODE &&
 	    inode != SPECIAL_INODE_FILE_BY_INODE) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_access(context, inode, modemask);
+		status = gFilesystemOperations->fs_access(context, inode, modemask);
 	}
 
 	constexpr uint8_t kAnswerSize = sizeof(msgid) + sizeof(status);
@@ -1588,7 +1591,8 @@ void matoclserv_sau_whole_path_lookup(matoclserventry *eptr, const uint8_t *data
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_whole_path_lookup(context, inode, path, &found_inode, attr);
+		status =
+		    gFilesystemOperations->fs_whole_path_lookup(context, inode, path, &found_inode, attr);
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
@@ -1611,7 +1615,7 @@ void matoclserv_sau_full_path_by_inode(matoclserventry *eptr, const uint8_t *dat
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_full_path_by_inode(context, inode, fullPath);
+		status = gFilesystemOperations->fs_full_path_by_inode(context, inode, fullPath);
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
@@ -1702,7 +1706,7 @@ void matoclserv_fuse_getattr(matoclserventry *eptr, const uint8_t *data, uint32_
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_getattr(context,inode,attr);
+		status = gFilesystemOperations->fs_getattr(context, inode, attr);
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
@@ -1768,8 +1772,9 @@ void matoclserv_fuse_setattr(matoclserventry *eptr, const uint8_t *data, uint32_
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_setattr(context, inode, setmask, attrmode, attruid, attrgid,
-							attratime, attrmtime, sugidclearmode, attr);
+		status =
+		    gFilesystemOperations->fs_setattr(context, inode, setmask, attrmode, attruid, attrgid,
+		                                      attratime, attrmtime, sugidclearmode, attr);
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
@@ -1818,11 +1823,12 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 				status = SAUNAFS_ERROR_WRONGLOCKID;
 			} else {
 				// let's check if chunk is still locked by us
-				status = fs_get_chunkid(context, inode, length / SFSCHUNKSIZE, &chunkId);
+				status = gFilesystemOperations->fs_get_chunkid(context, inode,
+				                                               length / SFSCHUNKSIZE, &chunkId);
 				if (status == SAUNAFS_STATUS_OK) {
 					status = chunk_can_unlock(chunkId, lockId);
 				}
-				fs_end_setlength(chunkId);
+				gFilesystemOperations->fs_end_setlength(chunkId);
 			}
 		}
 	} else {
@@ -1837,8 +1843,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 	// Try to do the truncate
 	Attributes attr;
 	if (status == SAUNAFS_STATUS_OK) {
-		status = fs_try_setlength(context, inode, opened, length,
-								  (type != FUSE_TRUNCATE_END), lockId, attr, &chunkId);
+		status = gFilesystemOperations->fs_try_setlength(
+		    context, inode, opened, length, (type != FUSE_TRUNCATE_END), lockId, attr, &chunkId);
 	}
 
 	// In case of SAUNAFS_ERROR_NOTPOSSIBLE we have to tell the client to write the chunk before truncating
@@ -1846,8 +1852,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		// New client requested to truncate xor chunk. He has to do it himself.
 		uint64_t fileLength;
 		uint8_t opflag;
-		fs_writechunk(context, inode, length / SFSCHUNKSIZE, false,
-				&lockId, &chunkId, &opflag, &fileLength);
+		gFilesystemOperations->fs_writechunk(context, inode, length / SFSCHUNKSIZE, false, &lockId,
+		                                     &chunkId, &opflag, &fileLength);
 		if (opflag) {
 			// But first we have to duplicate chunk :)
 			type = FUSE_TRUNCATE_BEGIN;
@@ -1887,7 +1893,7 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		return;
 	}
 	if (status == SAUNAFS_STATUS_OK) {
-		status = fs_do_setlength(context, inode, length, attr);
+		status = gFilesystemOperations->fs_do_setlength(context, inode, length, attr);
 	}
 	if (status == SAUNAFS_STATUS_OK) {
 		dcm_modify(inode, eptr->sessionData->sessionId);
@@ -1927,7 +1933,7 @@ void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32
 	getINode(&data, inode);
 
 	FsContext context = matoclserv_get_context(eptr);
-	status = fs_readlink(context, inode, path);
+	status = gFilesystemOperations->fs_readlink(context, inode, path);
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessAnswerSize = sizeof(msgid) + sizeof(uint32_t);
@@ -2010,8 +2016,9 @@ void matoclserv_fuse_symlink(matoclserventry *eptr, const uint8_t *data, uint32_
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_symlink(context, inode, HString((char *)name, nleng),
-	                    std::string((char *)path, pleng), &newinode, &attr);
+		status =
+		    gFilesystemOperations->fs_symlink(context, inode, HString((char *)name, nleng),
+		                                      std::string((char *)path, pleng), &newinode, &attr);
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
@@ -2055,8 +2062,9 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
 
-		status = fs_mknod(context, inode, HString(std::move(name)), static_cast<FSNodeType>(type),
-		                  mode, umask, rdev, &newinode, attr);
+		status = gFilesystemOperations->fs_mknod(context, inode, HString(std::move(name)),
+		                                         static_cast<FSNodeType>(type), mode, umask, rdev,
+		                                         &newinode, attr);
 	}
 
 	MessageBuffer reply;
@@ -2092,8 +2100,8 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
 
-		status = fs_mkdir(context, inode, HString(std::move(name)), mode, umask,
-						copysgid, &newinode, attr);
+		status = gFilesystemOperations->fs_mkdir(context, inode, HString(std::move(name)), mode,
+		                                         umask, copysgid, &newinode, attr);
 	}
 
 	MessageBuffer reply;
@@ -2147,7 +2155,7 @@ void matoclserv_fuse_unlink(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_unlink(context,inode, HString((char*)name, nleng));
+		status = gFilesystemOperations->fs_unlink(context, inode, HString((char *)name, nleng));
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_UNLINK, sizeof(msgid) + sizeof(status));
@@ -2180,9 +2188,11 @@ void matoclserv_fuse_recursive_remove(matoclserventry *eptr, const uint8_t *data
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
 
-		status = fs_recursive_remove(context, parent_inode, HString(name),
-					    std::bind(matoclserv_fuse_recursive_remove_wake_up,
-				      eptr->sessionData->sessionId, msgid, std::placeholders::_1), job_id);
+		status = gFilesystemOperations->fs_recursive_remove(
+		    context, parent_inode, HString(name),
+		    std::bind(matoclserv_fuse_recursive_remove_wake_up, eptr->sessionData->sessionId, msgid,
+		              std::placeholders::_1),
+		    job_id);
 	}
 	if (status != SAUNAFS_ERROR_WAITING) {
 		matoclserv_createpacket(eptr, matocl::recursiveRemove::build(msgid, status));
@@ -2228,7 +2238,7 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_rmdir(context,inode,HString((char*)name, nleng));
+		status = gFilesystemOperations->fs_rmdir(context, inode, HString((char *)name, nleng));
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_RMDIR, sizeof(msgid) + sizeof(status));
@@ -2298,8 +2308,9 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_rename(context, inode_src, HString((char*)name_src, nleng_src),
-		                   inode_dst, HString((char*)name_dst, nleng_dst), &inode, &attr);
+		status = gFilesystemOperations->fs_rename(
+		    context, inode_src, HString((char *)name_src, nleng_src), inode_dst,
+		    HString((char *)name_dst, nleng_dst), &inode, &attr);
 	}
 
 	if (eptr->version >= 0x010615 && status == SAUNAFS_STATUS_OK) {
@@ -2367,7 +2378,8 @@ void matoclserv_fuse_link(matoclserventry *eptr, const uint8_t *data, uint32_t l
 
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_link(context, inode, inode_dst, HString((char*)name_dst, nleng_dst), &newinode, &attr);
+		status = gFilesystemOperations->fs_link(
+		    context, inode, inode_dst, HString((char *)name_dst, nleng_dst), &newinode, &attr);
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
@@ -2414,7 +2426,8 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 
 		if (packet_version == cltoma::fuseGetDir::kClientAbleToProcessDirentIndex) {
 			std::vector<DirectoryEntry> dir_entries;
-			status = fs_readdir(context, inode, first_entry, number_of_entries, dir_entries); //<DirectoryEntry>
+			status = gFilesystemOperations->fs_readdir(
+			    context, inode, first_entry, number_of_entries, dir_entries);  //<DirectoryEntry>
 
 			if (status != SAUNAFS_STATUS_OK) {
 				matocl::fuseGetDir::serialize(buffer, message_id, status);
@@ -2475,7 +2488,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 	}
 
 	FsContext context = matoclserv_get_context(eptr, uid, gid);
-	status = fs_readdir_size(context, inode, flags, &custom, &dleng);
+	status = gFilesystemOperations->fs_readdir_size(context, inode, flags, &custom, &dleng);
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
 	const uint32_t kSuccessAnswerSize = sizeof(msgid) + dleng;  // Can't be constexpr
@@ -2488,7 +2501,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		fs_readdir_data(context, flags, custom, ptr);
+		gFilesystemOperations->fs_readdir_data(context, flags, custom, ptr);
 	}
 
 	eptr->sessionData->currHourOperationsStats[12]++;
@@ -2525,7 +2538,9 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
 		status = matoclserv_insert_open_file(eptr->sessionData, inode);
-		if (status == SAUNAFS_STATUS_OK) { status = fs_opencheck(context, inode, flags, attr); }
+		if (status == SAUNAFS_STATUS_OK) {
+			status = gFilesystemOperations->fs_opencheck(context, inode, flags, attr);
+		}
 	}
 
 	if (eptr->version >= 0x010609 && status == SAUNAFS_STATUS_OK) {
@@ -2566,7 +2581,7 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	std::vector<uint8_t> receivedData(data, data + header.length);
 	serializer->deserializeFuseReadChunk(receivedData, messageId, inode, index);
 
-	status = fs_readchunk(inode, index, &chunkid, &fleng);
+	status = gFilesystemOperations->fs_readchunk(inode, index, &chunkid, &fleng);
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
 	if (status == SAUNAFS_STATUS_OK) {
 		if (chunkid > 0) {
@@ -2615,8 +2630,8 @@ void matoclserv_chunks_info(matoclserventry *eptr, const uint8_t *data, uint32_t
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status =
-		    fs_getchunksinfo(context, eptr->peerIpAddress, inode, chunk_index, chunk_count, chunks);
+		status = gFilesystemOperations->fs_getchunksinfo(context, eptr->peerIpAddress, inode,
+		                                                 chunk_index, chunk_count, chunks);
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
@@ -2648,8 +2663,9 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 
 	// Original Legacy (1.6.27) does not use lock ID's
 	bool useDummyLockId = false;
-	status = fs_writechunk(matoclserv_get_context(eptr), inode, chunkIndex, useDummyLockId,
-			&lockId, &chunkId, &opflag, &fileLength, min_server_version);
+	status = gFilesystemOperations->fs_writechunk(matoclserv_get_context(eptr), inode, chunkIndex,
+	                                              useDummyLockId, &lockId, &chunkId, &opflag,
+	                                              &fileLength, min_server_version);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		serializer->serializeFuseWriteChunk(outMessage, messageId, status);
@@ -2674,7 +2690,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
 				chunkId, messageId, fileLength, lockId);
 		if (status != SAUNAFS_STATUS_OK) {
-			fs_writeend(0, 0, chunkId, 0);  // ignore status - just do it.
+			gFilesystemOperations->fs_writeend(0, 0, chunkId, 0);  // ignore status - just do it.
 		}
 	}
 
@@ -2705,7 +2721,7 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 	} else if (eptr->sessionData->flags & SESFLAG_READONLY) {
 		status = SAUNAFS_ERROR_EROFS;
 	} else {
-		status = fs_writeend(inode, fileLength, chunkId, lockId);
+		status = gFilesystemOperations->fs_writeend(inode, fileLength, chunkId, lockId);
 	}
 
 	dcm_modify(inode,eptr->sessionData->sessionId);
@@ -2744,8 +2760,8 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_repair(context, inode, correct_only, &chunksnotchanged, &chunkserased,
-		                   &chunksrepaired);
+		status = gFilesystemOperations->fs_repair(context, inode, correct_only, &chunksnotchanged,
+		                                          &chunkserased, &chunksrepaired);
 	}
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
@@ -2785,7 +2801,7 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_checkfile(matoclserv_get_context(eptr), inode, chunkcount);
+	status = gFilesystemOperations->fs_checkfile(matoclserv_get_context(eptr), inode, chunkcount);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_CHECK, sizeof(msgid) + sizeof(status));
@@ -2826,7 +2842,7 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 void matoclserv_fuse_request_task_id(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint32_t msgid, taskid;
 	cltoma::requestTaskId::deserialize(data, length, msgid);
-	taskid = fs_reserve_job_id();
+	taskid = gFilesystemOperations->fs_reserve_job_id();
 	MessageBuffer reply;
 	matocl::requestTaskId::serialize(reply, msgid, taskid);
 	matoclserv_createpacket(eptr, reply);
@@ -2855,8 +2871,8 @@ void matoclserv_fuse_gettrashtime(matoclserventry *eptr,const uint8_t *data,uint
 	getINode(&data, inode);
 	gmode = get8bit(&data);
 
-	status = fs_gettrashtime_prepare(matoclserv_get_context(eptr), inode, gmode, fileTrashtimes,
-	                                 dirTrashtimes);
+	status = gFilesystemOperations->fs_gettrashtime_prepare(matoclserv_get_context(eptr), inode,
+	                                                        gmode, fileTrashtimes, dirTrashtimes);
 	fileTrashtimesSize = fileTrashtimes.size();
 	dirTrashtimesSize = dirTrashtimes.size();
 
@@ -2877,7 +2893,7 @@ void matoclserv_fuse_gettrashtime(matoclserventry *eptr,const uint8_t *data,uint
 	} else {
 		put32bit(&ptr, fileTrashtimesSize);
 		put32bit(&ptr, dirTrashtimesSize);
-		fs_gettrashtime_store(fileTrashtimes, dirTrashtimes, ptr);
+		gFilesystemOperations->fs_gettrashtime_store(fileTrashtimes, dirTrashtimes, ptr);
 	}
 }
 
@@ -2935,10 +2951,10 @@ void matoclserv_fuse_settrashtime(matoclserventry *eptr, PacketHeader header, co
 	auto settrashtime_stats = std::make_shared<SetTrashtimeTask::StatsArray>();
 
 	if (status == SAUNAFS_STATUS_OK) {
-		status = fs_settrashtime(matoclserv_get_context(eptr, uid, 0), inode, trashtime,
-					 smode, settrashtime_stats,
-			   std::bind(matoclserv_fuse_settrashtime_wake_up, eptr->sessionData->sessionId,
-				     msgid, settrashtime_stats, std::placeholders::_1));
+		status = gFilesystemOperations->fs_settrashtime(
+		    matoclserv_get_context(eptr, uid, 0), inode, trashtime, smode, settrashtime_stats,
+		    std::bind(matoclserv_fuse_settrashtime_wake_up, eptr->sessionData->sessionId, msgid,
+		              settrashtime_stats, std::placeholders::_1));
 	}
 
 	if (status != SAUNAFS_ERROR_WAITING) {
@@ -2960,7 +2976,8 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	}
 
 	GoalStatistics fgtab{{0}}, dgtab{{0}}; // explicit value initialization to clear variables
-	uint8_t status = fs_getgoal(matoclserv_get_context(eptr), inode, gmode, fgtab, dgtab);
+	uint8_t status =
+	    gFilesystemOperations->fs_getgoal(matoclserv_get_context(eptr), inode, gmode, fgtab, dgtab);
 
 	MessageBuffer reply;
 	if (status == SAUNAFS_STATUS_OK) {
@@ -3050,9 +3067,10 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, 0);
-		status = fs_setgoal(context, inode, goalId, smode, setgoal_stats,
-			   std::bind(matoclserv_fuse_setgoal_wake_up, eptr->sessionData->sessionId,
-				     msgid, header.type, setgoal_stats, std::placeholders::_1));
+		status = gFilesystemOperations->fs_setgoal(
+		    context, inode, goalId, smode, setgoal_stats,
+		    std::bind(matoclserv_fuse_setgoal_wake_up, eptr->sessionData->sessionId, msgid,
+		              header.type, setgoal_stats, std::placeholders::_1));
 	}
 
 	if (status != SAUNAFS_ERROR_WAITING) {
@@ -3085,7 +3103,8 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	getINode(&data, inode);
 	gmode = get8bit(&data);
 
-	status = fs_geteattr(matoclserv_get_context(eptr), inode, gmode, feattrtab, deattrtab);
+	status = gFilesystemOperations->fs_geteattr(matoclserv_get_context(eptr), inode, gmode,
+	                                            feattrtab, deattrtab);
 	fn = 0;
 	dn = 0;
 
@@ -3151,8 +3170,8 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	eattr = get8bit(&data);
 	smode = get8bit(&data);
 
-	status = fs_seteattr(matoclserv_get_context(eptr, uid, 0), inode, eattr, smode, &changed,
-	                     &notchanged, &notpermitted);
+	status = gFilesystemOperations->fs_seteattr(matoclserv_get_context(eptr, uid, 0), inode, eattr,
+	                                            smode, &changed, &notchanged, &notpermitted);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessSize =
@@ -3233,7 +3252,7 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr, const uint8_t *data, uint32
 	} else if (anleng == 0) {
 		void *xanode;
 		uint32_t xasize;
-		status = fs_listxattr_leng(context, inode, opened, &xanode, &xasize);
+		status = gFilesystemOperations->fs_listxattr_leng(context, inode, opened, &xanode, &xasize);
 		const uint32_t kSuccessSize =
 		    sizeof(msgid) + sizeof(xasize) + ((mode == XATTR_GMODE_GET_DATA) ? xasize : 0);
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_GETXATTR,
@@ -3245,12 +3264,15 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr, const uint8_t *data, uint32
 			put8bit(&ptr, status);
 		} else {
 			put32bit(&ptr, xasize);
-			if (mode == XATTR_GMODE_GET_DATA && xasize > 0) { fs_listxattr_data(xanode, ptr); }
+			if (mode == XATTR_GMODE_GET_DATA && xasize > 0) {
+				gFilesystemOperations->fs_listxattr_data(xanode, ptr);
+			}
 		}
 	} else {
 		uint8_t *attrvalue;
 		uint32_t avleng;
-		status = fs_getxattr(context, inode, opened, anleng, attrname, &avleng, &attrvalue);
+		status = gFilesystemOperations->fs_getxattr(context, inode, opened, anleng, attrname,
+		                                            &avleng, &attrvalue);
 		const uint32_t kSuccessSize =
 		    sizeof(msgid) + sizeof(avleng) + ((mode == XATTR_GMODE_GET_DATA) ? avleng : 0);
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_GETXATTR,
@@ -3327,7 +3349,8 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr, const uint8_t *data, uint32
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_setxattr(context, inode, opened, anleng, attrname, avleng, attrvalue, mode);
+		status = gFilesystemOperations->fs_setxattr(context, inode, opened, anleng, attrname,
+		                                            avleng, attrvalue, mode);
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_SETXATTR, sizeof(msgid) + sizeof(status));
@@ -3364,7 +3387,7 @@ void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_append(context, inode, inode_src);
+		status = gFilesystemOperations->fs_append(context, inode, inode_src);
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_APPEND, sizeof(msgid) + sizeof(status));
@@ -3439,8 +3462,9 @@ void matoclserv_fuse_getdirstats_old(matoclserventry *eptr, const uint8_t *data,
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_get_dir_stats(matoclserv_get_context(eptr), inode, &inodes, &dirs, &files, &links,
-	                          &chunks, &leng, &size, &rsize);
+	status =
+	    gFilesystemOperations->fs_get_dir_stats(matoclserv_get_context(eptr), inode, &inodes, &dirs,
+	                                            &files, &links, &chunks, &leng, &size, &rsize);
 
 	constexpr uint8_t kDirStatsLegacyFullPayload =
 	    sizeof(msgid) + sizeof(inodes) + sizeof(dirs) + sizeof(files) + sizeof(links) +
@@ -3492,8 +3516,9 @@ void matoclserv_fuse_getdirstats(matoclserventry *eptr, const uint8_t *data, uin
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_get_dir_stats(matoclserv_get_context(eptr), inode, &inodes, &dirs, &files, &links,
-	                          &chunks, &leng, &size, &rsize);
+	status =
+	    gFilesystemOperations->fs_get_dir_stats(matoclserv_get_context(eptr), inode, &inodes, &dirs,
+	                                            &files, &links, &chunks, &leng, &size, &rsize);
 
 	constexpr uint8_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint8_t kSuccessSize = sizeof(msgid) + sizeof(inodes) + sizeof(dirs) + sizeof(files) +
@@ -3534,7 +3559,8 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const uint8_t *data, uint32
 
 	get32bit(&data, msgid);
 
-	status = fs_readtrash_size(eptr->sessionData->rootInode,eptr->sessionData->flags,&dleng);
+	status = gFilesystemOperations->fs_readtrash_size(eptr->sessionData->rootInode,
+	                                                  eptr->sessionData->flags, &dleng);
 
 	ptr = matoclserv_createpacket(
 	    eptr, MATOCL_FUSE_GETTRASH,
@@ -3545,7 +3571,8 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const uint8_t *data, uint32
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		fs_readtrash_data(eptr->sessionData->rootInode, eptr->sessionData->flags, ptr);
+		gFilesystemOperations->fs_readtrash_data(eptr->sessionData->rootInode,
+		                                         eptr->sessionData->flags, ptr);
 	}
 }
 
@@ -3559,7 +3586,7 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const PacketHeader &header,
 		uint32_t off;
 		cltoma::fuseGetTrash::deserialize(data, header.length, msgId, off, maxEntries);
 		std::vector<NamedInodeEntry> entries;
-		fs_readtrash(
+		gFilesystemOperations->fs_readtrash(
 		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
 		    entries);
 		matoclserv_createpacket(eptr, matocl::fuseGetTrash::build(msgId, entries));
@@ -3567,7 +3594,7 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const PacketHeader &header,
 		uint64_t off;
 		cltoma::fuseGetTrash::deserialize(data, header.length, msgId, off, maxEntries);
 		std::vector<HandleInodeEntry> entries;
-		fs_readtrash(
+		gFilesystemOperations->fs_readtrash(
 		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
 		    entries);
 		matoclserv_createpacket(eptr, matocl::fuseGetTrash::build(msgId, entries));
@@ -3603,8 +3630,8 @@ void matoclserv_fuse_getdetachedattr(matoclserventry *eptr, const uint8_t *data,
 		dtype = DTYPE_UNKNOWN;
 	}
 
-	status = fs_getdetachedattr(eptr->sessionData->rootInode, eptr->sessionData->flags, inode, attr,
-	                            dtype);
+	status = gFilesystemOperations->fs_getdetachedattr(
+	    eptr->sessionData->rootInode, eptr->sessionData->flags, inode, attr, dtype);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessSize = sizeof(msgid) + attr.size();
@@ -3641,7 +3668,8 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr, const uint8_t *data, ui
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_gettrashpath(eptr->sessionData->rootInode, eptr->sessionData->flags, inode, path);
+	status = gFilesystemOperations->fs_gettrashpath(eptr->sessionData->rootInode,
+	                                                eptr->sessionData->flags, inode, path);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	const uint32_t kSuccessSize = sizeof(msgid) + sizeof(uint32_t) + path.length() + 1;
@@ -3697,7 +3725,8 @@ void matoclserv_fuse_settrashpath(matoclserventry *eptr, const uint8_t *data, ui
 	data += pleng;
 	while (pleng > 0 && path[pleng - 1] == 0) { pleng--; }
 
-	status = fs_settrashpath(matoclserv_get_context(eptr), inode, std::string((char*)path, pleng));
+	status = gFilesystemOperations->fs_settrashpath(matoclserv_get_context(eptr), inode,
+	                                                std::string((char *)path, pleng));
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_SETTRASHPATH, sizeof(msgid) + sizeof(status));
 
@@ -3723,7 +3752,7 @@ void matoclserv_fuse_undel(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_undel(matoclserv_get_context(eptr), inode);
+	status = gFilesystemOperations->fs_undel(matoclserv_get_context(eptr), inode);
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_UNDEL, sizeof(msgid) + sizeof(status));
 
@@ -3749,7 +3778,7 @@ void matoclserv_fuse_purge(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = fs_purge(matoclserv_get_context(eptr), inode);
+	status = gFilesystemOperations->fs_purge(matoclserv_get_context(eptr), inode);
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_PURGE, sizeof(msgid) + sizeof(status));
 	put32bit(&ptr, msgid);
@@ -3774,7 +3803,8 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const uint8_t *data, uin
 
 	get32bit(&data, msgid);
 
-	status = fs_readreserved_size(eptr->sessionData->rootInode, eptr->sessionData->flags, &dleng);
+	status = gFilesystemOperations->fs_readreserved_size(eptr->sessionData->rootInode,
+	                                                     eptr->sessionData->flags, &dleng);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	const uint32_t kSuccessSize = sizeof(msgid) + dleng;
@@ -3787,7 +3817,8 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const uint8_t *data, uin
 	if (status!=SAUNAFS_STATUS_OK) {
 		put8bit(&ptr,status);
 	} else {
-		fs_readreserved_data(eptr->sessionData->rootInode, eptr->sessionData->flags, ptr);
+		gFilesystemOperations->fs_readreserved_data(eptr->sessionData->rootInode,
+		                                            eptr->sessionData->flags, ptr);
 	}
 }
 
@@ -3801,7 +3832,7 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const PacketHeader &head
 		uint32_t off;
 		cltoma::fuseGetReserved::deserialize(data, header.length, msgId, off, maxEntries);
 		std::vector<NamedInodeEntry> entries;
-		fs_readreserved(
+		gFilesystemOperations->fs_readreserved(
 		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
 		    entries);
 		matoclserv_createpacket(eptr, matocl::fuseGetReserved::build(msgId, entries));
@@ -3809,7 +3840,7 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const PacketHeader &head
 		uint64_t off;
 		cltoma::fuseGetReserved::deserialize(data, header.length, msgId, off, maxEntries);
 		std::vector<HandleInodeEntry> entries;
-		fs_readreserved(
+		gFilesystemOperations->fs_readreserved(
 		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
 		    entries);
 		matoclserv_createpacket(eptr, matocl::fuseGetReserved::build(msgId, entries));
@@ -3828,7 +3859,7 @@ void matoclserv_fuse_deleteacl(matoclserventry *eptr, const uint8_t *data, uint3
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_deleteacl(context, inode, type);
+		status = gFilesystemOperations->fs_deleteacl(context, inode, type);
 	}
 	matoclserv_createpacket(eptr, matocl::fuseDeleteAcl::build(messageId, status));
 }
@@ -3847,7 +3878,7 @@ void matoclserv_fuse_getacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_getacl(context, inode, acl);
+		status = gFilesystemOperations->fs_getacl(context, inode, acl);
 	}
 
 	if (status == SAUNAFS_STATUS_OK) {
@@ -4264,9 +4295,9 @@ void matoclserv_fuse_setacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
 		if (use_posix) {
-			status = fs_setacl(context, inode, type, posix_acl);
+			status = gFilesystemOperations->fs_setacl(context, inode, type, posix_acl);
 		} else {
-			status = fs_setacl(context, inode, rich_acl);
+			status = gFilesystemOperations->fs_setacl(context, inode, rich_acl);
 		}
 	}
 	matoclserv_createpacket(eptr, matocl::fuseSetAcl::build(messageId, status));
@@ -4597,7 +4628,7 @@ void matocl_close_files(Session *currentSession) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 
 	for (const auto &openFileInode : currentSession->openFilesSet) {
-		fs_release(context, openFileInode, currentSession->sessionId);
+		gFilesystemOperations->fs_release(context, openFileInode, currentSession->sessionId);
 		matocl_locks_release(context, openFileInode, currentSession->sessionId);
 	}
 
@@ -4687,7 +4718,7 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 	// unlock locked chunks
 	for (const auto &operation : eptr->delayedChunkOperations) {
 		if (operation->type == FUSE_TRUNCATE) {
-			fs_end_setlength(operation->chunkId);
+			gFilesystemOperations->fs_end_setlength(operation->chunkId);
 		}
 	}
 

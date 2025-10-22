@@ -24,7 +24,7 @@
 
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_node.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 
 int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	assert(current_inode_ != inode_list_.end());
@@ -55,8 +55,9 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		}
 		(*stats_)[result] += 1;
 		if (result == kChanged) {
-			fs_changelog(ts, "SETGOAL(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 ")",
-			             inode, uid_, goal_, smode_);
+			gFilesystemOperations->fs_changelog(
+			    ts, "SETGOAL(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 ")", inode, uid_, goal_,
+			    smode_);
 		}
 	}
 

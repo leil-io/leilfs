@@ -437,7 +437,8 @@ void fs_reload(void) {
 }
 
 void fs_unload() {
-	safs_pretty_syslog(LOG_WARNING, "unloading filesystem at %" PRIu64, fs_getversion());
+	safs_pretty_syslog(LOG_WARNING, "unloading filesystem at %" PRIu64,
+	                   gFilesystemOperations->fs_getversion());
 	restore_reset();
 	matoclserv_session_unload();
 	chunk_unload();

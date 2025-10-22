@@ -823,7 +823,7 @@ void chunk_emergency_increase_version(Chunk *c) {
 	c->operation = Chunk::SET_VERSION;
 	c->version++;
 	chunk_update_checksum(c);
-	fs_incversion(c->chunkid);
+	gFilesystemOperations->fs_incversion(c->chunkid);
 	emit_chunk_changed(c);
 }
 
@@ -1570,7 +1570,8 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 		// chunkserver has nonexistent chunk, so create it for future deletion
 		if (chunkid >= ChunksMetadata::getNextChunkId() &&
 		    gChunkIdGenerator->isStrictlyMonotonic()) {
-			fs_set_nextchunkid(FsContext::getForMaster(eventloop_time()), chunkid + 1);
+			gFilesystemOperations->fs_set_nextchunkid(FsContext::getForMaster(eventloop_time()),
+			                                          chunkid + 1);
 		}
 		c = chunk_new(chunkid, new_version);
 		c->lockedto = (uint32_t)eventloop_time()+UNUSED_DELETE_TIMEOUT;

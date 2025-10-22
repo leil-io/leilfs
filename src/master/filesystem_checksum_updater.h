@@ -26,7 +26,7 @@
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_checksum_background_updater.h"
 #include "master/filesystem_metadata.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 
 #ifndef METARESTORE
 
@@ -55,7 +55,8 @@ protected:
 		if (metadataserver::isMaster() && !gChecksumBackgroundUpdater.inProgress()) {
 			std::string versionString = saunafsVersionToString(SAUNAFS_VERSHEX);
 			uint64_t checksum = fs_checksum(ChecksumMode::kGetCurrent);
-			fs_changelog(ts, "CHECKSUM(%s):%" PRIu64, versionString.c_str(), checksum);
+			gFilesystemOperations->fs_changelog(ts, "CHECKSUM(%s):%" PRIu64, versionString.c_str(),
+			                                    checksum);
 		}
 	}
 

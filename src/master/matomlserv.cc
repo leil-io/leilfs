@@ -46,10 +46,10 @@
 #include "common/sockets.h"
 #include "config/cfg.h"
 #include "master/filesystem.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/metadata_backend_common.h"
-#include <master/metadata_backend_interface.h>
+#include "master/metadata_backend_interface.h"
 #include "master/personality.h"
-#include "metadata_backend_interface.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/matoml.h"
 #include "protocol/mltoma.h"
@@ -448,7 +448,7 @@ void matomlserv_register_shadow(matomlserventry *eptr, const uint8_t *data, uint
 		return;
 	}
 
-	uint64_t myMedatataVersion = fs_getversion();
+	uint64_t myMedatataVersion = gFilesystemOperations->fs_getversion();
 	uint64_t replyVersion;
 	if (myMedatataVersion > shadowMetadataVersion
 			&& old_changes_head != nullptr
@@ -1086,4 +1086,3 @@ int matomlserv_init(void) {
 	}
 	return 0;
 }
-
