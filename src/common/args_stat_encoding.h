@@ -30,6 +30,32 @@
 
 using saunafs_stat_t = struct _stat64;
 
+// This class is a RAII guard to restore console code pages on destruction on
+// Windows.
+// Used to temporarily set console code pages to UTF-8 and restore them later
+// to their original values.
+class ConsoleCodePageGuard {
+public:
+	explicit ConsoleCodePageGuard(uint32_t newCodePage) {
+		oldOutputCP_ = GetConsoleOutputCP();
+		oldInputCP_ = GetConsoleCP();
+		SetConsoleOutputCP(newCodePage);
+		SetConsoleCP(newCodePage);
+	}
+
+	~ConsoleCodePageGuard() {
+		SetConsoleOutputCP(oldOutputCP_);
+		SetConsoleCP(oldInputCP_);
+	}
+
+	ConsoleCodePageGuard(const ConsoleCodePageGuard &) = delete;
+	ConsoleCodePageGuard &operator=(const ConsoleCodePageGuard &) = delete;
+
+private:
+	uint32_t oldOutputCP_;
+	uint32_t oldInputCP_;
+};
+
 // Represents UTF-8 command-line arguments for Windows.
 // Keeps argvPtrs alive for the lifetime of the object.
 class Utf8CmdArguments {
