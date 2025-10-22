@@ -75,7 +75,7 @@ void uRaftController::nodePromote() {
 			return;
 		}
 		// Already promoting
-		syslog(LOG_DEBUG, "Promotion already in progress");
+		syslog(LOG_DEBUG, "Promotion already in progress (PID %d)", command_pid_);
 		return;
 	}
 
@@ -97,17 +97,15 @@ void uRaftController::nodeDemote() {
 			syslog(LOG_WARNING,
 			       "Demotion requested during promotion - will force after completion");
 			force_demote_ = true;
-			set_block_promotion(true);
 			return;
 		}
-		syslog(LOG_DEBUG, "Demotion already in progress");
+		syslog(LOG_DEBUG, "Demotion already in progress (PID %d)", command_pid_);
 		return;
 	}
 
 	setSlowCommandTimeout(opt_.demote_timeout);
 	if (runSlowCommand("saunafs-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
-		set_block_promotion(true);
 	}
 }
 
@@ -174,7 +172,6 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			}
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
-			set_block_promotion(false);
 		} else if (command_type_ == kCmdPromote) {
 			if (commandSucceeded) {
 				syslog(LOG_NOTICE, "Metadata server switch to master mode done");
@@ -234,7 +231,6 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 				syslog(LOG_NOTICE, "Metadata server is dead");
 				stopFloatingIpManager();
 				demoteLeader();
-				set_block_promotion(true);
 				setSlowCommandTimeout(opt_.dead_handler_timeout);
 				if (runSlowCommand("saunafs-uraft-helper dead")) {
 					command_type_ = kCmdStatusDead;
@@ -462,7 +458,6 @@ void uRaftController::cleanupDirtyPromotion() {
 }
 
 void uRaftController::handlePromotionFailure() {
-	set_block_promotion(true);
 	demoteLeader();
 	cleanupDirtyPromotion();
 }
