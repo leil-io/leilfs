@@ -9,7 +9,6 @@
             "name": "default",
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build/saunafs",
-            "installDir": "${sourceDir}/install/saunafs/",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CODE_COVERAGE": "OFF",
@@ -81,6 +80,7 @@
         {
             "name": "debug",
             "binaryDir": "${sourceDir}/build/saunafs/debug",
+            "installDir": "${sourceDir}/install/saunafs/",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             },
@@ -89,6 +89,7 @@
         {
             "name": "coverage",
             "binaryDir": "${sourceDir}/build/saunafs/coverage",
+            "installDir": "${sourceDir}/install/saunafs/",
             "cacheVariables": {
                 "CODE_COVERAGE": "ON"
             },
@@ -96,6 +97,7 @@
         },
         {
             "name": "test",
+            "installDir": "${sourceDir}/install/saunafs/",
             "inherits": "default"
         },
         {
@@ -216,6 +218,10 @@
                 {
                     "type": "build",
                     "name": "release"
+                },
+                {
+                    "type": "package",
+                    "name": "release"
                 }
             ]
         },
@@ -268,6 +274,10 @@
                 {
                     "type": "build",
                     "name": "release-vcpkg"
+                },
+                {
+                    "type": "package",
+                    "name": "release-vcpkg"
                 }
             ]
         },
@@ -296,6 +306,18 @@
                     "name": "test-vcpkg"
                 }
             ]
+        }
+    ],
+    "packagePresets": [
+        {
+            "name": "release",
+            "configurePreset": "release",
+            "generators": ["DEB"]
+        },
+        {
+            "name": "release-vcpkg",
+            "configurePreset": "release-vcpkg",
+            "generators": ["DEB"]
         }
     ]
 }
