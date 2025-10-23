@@ -28,7 +28,7 @@
 #include "common/massert.h"
 #include "common/type_defs.h"
 #include "config/cfg.h"
-#include "master/filesystem.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/metadata_backend_common.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
@@ -38,7 +38,7 @@ Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
 	passert(sessionPtr.get());
 
 	auto newSessionIdNotNeeded = (newSession == 0 && noNewId);
-	sessionPtr->sessionId = (newSessionIdNotNeeded) ? 0 : fs_newsessionid();
+	sessionPtr->sessionId = (newSessionIdNotNeeded) ? 0 : gFilesystemOperations->fs_newsessionid();
 	sessionPtr->newSession = newSession;
 	sessionPtr->connections = 1;
 	gSessionsVector.push_back(std::move(sessionPtr));
@@ -332,8 +332,8 @@ int matoclserv_insert_open_file(Session *currentSession, inode_t inode) {
 		return SAUNAFS_STATUS_OK;  // file already acquired - nothing to do
 	}
 
-	int status = fs_acquire(FsContext::getForMaster(eventloop_time()), inode,
-	                        currentSession->sessionId);
+	int status = gFilesystemOperations->fs_acquire(FsContext::getForMaster(eventloop_time()), inode,
+	                                               currentSession->sessionId);
 
 	if (status == SAUNAFS_STATUS_OK) { currentSession->openFilesSet.insert(inode); }
 

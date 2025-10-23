@@ -24,7 +24,7 @@
 
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_node.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 
 int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	assert(current_inode_ != inode_list_.end());
@@ -56,9 +56,9 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		}
 		(*stats_)[result] += 1;
 		if (result == kChanged) {
-			fs_changelog(ts,
-			             "SETTRASHTIME(%" PRIiNode ",%" PRIu32 ",%" PRIu32 ",%" PRIu8 ")",
-			             inode, uid_, trashtime_, smode_);
+			gFilesystemOperations->fs_changelog(
+			    ts, "SETTRASHTIME(%" PRIiNode ",%" PRIu32 ",%" PRIu32 ",%" PRIu8 ")", inode, uid_,
+			    trashtime_, smode_);
 		}
 	}
 	return SAUNAFS_STATUS_OK;

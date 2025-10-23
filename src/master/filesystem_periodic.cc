@@ -37,7 +37,7 @@
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_node.h"
-#include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/matoclserv.h"
 
 #define MSGBUFFSIZE 1000000
@@ -550,7 +550,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
-		fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
+		gFilesystemOperations->fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->trash.begin();
 
@@ -586,7 +586,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway
-		fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
+		gFilesystemOperations->fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->reserved.begin();
 

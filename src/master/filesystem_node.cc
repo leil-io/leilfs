@@ -1484,12 +1484,12 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 				assert(metadataserver::isMaster());
 #endif
 
-				fs_changelog(ts,
-				             "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32
-				             "):%" PRIiNode,
-				             p->id, fsnodes_escape_name(name).c_str(),
-				             static_cast<char>(FSNodeType::kDirectory), n->mode & 07777,
-				             (uint32_t)0, (uint32_t)0, (uint32_t)0, n->id);
+				gFilesystemOperations->fs_changelog(
+				    ts,
+				    "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
+				    p->id, fsnodes_escape_name(name).c_str(),
+				    static_cast<char>(FSNodeType::kDirectory), n->mode & 07777, (uint32_t)0,
+				    (uint32_t)0, (uint32_t)0, n->id);
 			}
 			p = static_cast<FSNodeDirectory*>(n);
 			assert(n->type == FSNodeType::kDirectory);

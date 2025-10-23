@@ -45,6 +45,7 @@
 #include <master/filesystem_node.h>
 #include <master/filesystem_node_types.h>
 #include <master/filesystem_operations.h>
+#include <master/filesystem_operations_interface.h>
 #include <master/filesystem_quota.h>
 #include <master/filesystem_store_acl.h>
 #include <master/matoclserv.h>
@@ -53,8 +54,8 @@
 #include <master/metadata_backend_common.h>
 #include <master/metadata_dumper_file.h>
 #include <master/restore.h>
+#include <protocol/SFSCommunication.h>
 #include <slogger/slogger.h>
-#include "protocol/SFSCommunication.h"
 
 MetadataBackendFile::MetadataBackendFile()
 #if !defined(METARESTORE) && !defined(METALOGGER)
@@ -976,7 +977,7 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	safs::log_info("connecting files and chunks");
 	{
 		util::ScopedTimer timer("connecting files and chunks took");
-		fs_add_files_to_chunks();
+		gFilesystemOperations->fs_add_files_to_chunks();
 	}
 	unlink(kMetadataTmpFilename);
 	safs::log_info("calculating checksum of the metadata");
