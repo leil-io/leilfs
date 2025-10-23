@@ -174,6 +174,7 @@ const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
     {"REPLICATION_TOTAL_TIMEOUT_MS", "60000"},
     {"REPLICATION_CONNECTION_TIMEOUT_MS", "1000"},
     {"REPLICATION_WAVE_TIMEOUT_MS", "500"},
+    {"PLUGINS_DIR", ""},
     {"CHUNK_TRASH_ENABLED", "0"},
     {"CHUNK_TRASH_EXPIRATION_SECONDS", "259200"},
     {"CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB", "0"},

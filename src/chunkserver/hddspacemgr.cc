@@ -2720,21 +2720,23 @@ int initDiskManager() {
 }
 
 int loadPlugins() {
-	std::string pluginsInstallDirPath = PLUGINS_PATH "/chunkserver";
-	std::string pluginsBuildDirPath = BUILD_PATH "/plugins/chunkserver";
+	const std::array<std::string, 5> pluginPaths = {
+	    cfg_getstring("PLUGINS_DIR", ""),              // Higher priority (user-defined)
+	    "/usr/local/lib/saunafs/plugins/chunkserver",  // Local install
+	    PLUGINS_PATH "/chunkserver",                   // Build-time defined path
+	    "/usr/lib/saunafs/plugins/chunkserver",        // Standard install
+	    BUILD_PATH "/plugins/chunkserver"              // Build tree (for development)
+	};
 
-	// Try to load plugins first from the installation directory
-	if (!pluginManager.loadPlugins(pluginsInstallDirPath)) {
-		safs_pretty_syslog(LOG_NOTICE,
-		                   "PluginManager: No plugins loaded from: %s",
-		                   pluginsInstallDirPath.c_str());
+	for (const auto &path : pluginPaths) {
+		if (path.empty()) { continue; }
 
-		// If no plugins were loaded from the installation directory,
-		// try to load them from the build directory (useful for development)
-		if (!pluginManager.loadPlugins(pluginsBuildDirPath)) {
-			safs_pretty_syslog(LOG_NOTICE,
-			                   "PluginManager: No plugins loaded from: %s",
-			                   pluginsBuildDirPath.c_str());
+		if (!pluginManager.loadPlugins(path)) {
+			safs::log_debug("PluginManager: No plugins loaded from: {}", path);
+		} else {
+			safs::log_info("PluginManager: Plugins loaded from: {}", path);
+			// stop after the first successful load, we don't want to load from multiple dirs
+			break;
 		}
 	}
 
