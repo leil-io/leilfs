@@ -173,6 +173,12 @@ the operation is considered failed and is immediately aborted (default: 1000)
 replication. After this timeout, next wave of read requests is sent to other
 chunkservers (default: 500)
 
+*PLUGINS_DIR*:: directory to search for Chunkserver plugins (absolute path).
+When set, the plugin manager will search this directory first. If not set, then
+it will search in usual plugin locations, like /usr/local/lib/saunafs/plugins/chunkserver,
+PLUGINS_PATH/chunkserver (PLUGINS_PATH is defined at build time), and
+/usr/lib/saunafs/plugins/chunkserver (default is empty string, i.e. disabled)
+
 *CHUNK_TRASH_ENABLED (EXPERIMENTAL)*:: enables or disables the chunk trash
 feature. When enabled, deleted chunks are moved to a trash directory instead of
 being immediately removed. (Default: 0)

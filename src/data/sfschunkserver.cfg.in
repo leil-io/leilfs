@@ -221,6 +221,15 @@
 ## 'off'
 # LOG_LEVEL = info
 
+## Directory to search for Chunkserver plugins (absolute path).
+## When set, the plugin manager will search this directory first.
+## If not set, then it will search in usual plugin locations, like:
+## /usr/local/lib/saunafs/plugins/chunkserver
+## @PLUGINS_PATH@/chunkserver (defined at build time)
+## /usr/lib/saunafs/plugins/chunkserver
+## (Default: empty string - disabled)
+# PLUGINS_DIR = ""
+
 ##### EXPERIMENTAL:
 
 ## Enables or disables the chunk trash feature. When enabled, deleted chunks are
