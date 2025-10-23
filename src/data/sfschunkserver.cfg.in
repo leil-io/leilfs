@@ -163,6 +163,13 @@
 ## (Default: 1)
 # MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY = 1
 
+## Maximum size of the buffers pool used for read, write and replicate operations,
+## in megabytes. Consider decreasing it if the system is running out of memory, or
+## increasing it to improve performance if there is enough memory available. Unused
+## buffers are regularly freed.
+## (Default: 512)
+# MAX_BUFFERS_POOL_SIZE_MB = 512
+
 ## additional number of kilobytes which should be passed to
 ## posix_fadvise(POSIX_FADV_WILLNEED) before reading data from a chunk
 ## (Default: 0), i.e. use posix_fadvise only with the amount of data that is

@@ -116,6 +116,9 @@ void mainNetworkThreadReload(void) {
 	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
 	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
 
+	size_t maxBuffersPoolSize_mb = cfg_get_minvalue<size_t>("MAX_BUFFERS_POOL_SIZE_MB", 512, 0);
+	setNewMaxIoBuffersPoolSize(maxBuffersPoolSize_mb);
+
 	gHDDReadAhead.setReadAhead_kB(
 			cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));
 	gHDDReadAhead.setMaxReadBehind_kB(
@@ -246,6 +249,9 @@ int mainNetworkThreadInit(void) {
 	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
 	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
 	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
+
+	size_t maxBuffersPoolSize_mb = cfg_get_minvalue<size_t>("MAX_BUFFERS_POOL_SIZE_MB", 512, 0);
+	setNewMaxIoBuffersPoolSize(maxBuffersPoolSize_mb);
 
 	gHDDReadAhead.setReadAhead_kB(
 			cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));

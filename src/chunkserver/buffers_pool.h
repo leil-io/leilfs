@@ -58,8 +58,8 @@ public:
 
 		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
 			safs::log_trace(
-			    "BuffersPool::get {} blocks, currentNumberOfBlocks_ = {}, kMaxNumberOfBlocks = {}",
-			    numBlocks, currentNumberOfBlocks_, kMaxNumberOfBlocks);
+			    "BuffersPool::get {} blocks, currentNumberOfBlocks_ = {}, maxNumberOfBlocks_ = {}",
+			    numBlocks, currentNumberOfBlocks_, maxNumberOfBlocks_);
 			operationsSinceLastLog_ = 0;
 		}
 		operationsSinceLastLog_++;
@@ -93,13 +93,13 @@ public:
 
 		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
 			safs::log_trace(
-			    "BuffersPool::put {} blocks, currentNumberOfBlocks_ = {}, kMaxNumberOfBlocks = {}",
-			    numBlocks, currentNumberOfBlocks_, kMaxNumberOfBlocks);
+			    "BuffersPool::put {} blocks, currentNumberOfBlocks_ = {}, maxNumberOfBlocks_ = {}",
+			    numBlocks, currentNumberOfBlocks_, maxNumberOfBlocks_);
 			operationsSinceLastLog_ = 0;
 		}
 		operationsSinceLastLog_++;
 
-		if (currentNumberOfBlocks_ + numBlocks <= kMaxNumberOfBlocks) {
+		if (currentNumberOfBlocks_ + numBlocks <= maxNumberOfBlocks_) {
 			buffer->clear();
 			buffers.emplace(std::move(buffer));
 			currentNumberOfBlocks_ += numBlocks;
@@ -131,6 +131,15 @@ public:
 		// Destructor of the vector should release the last copy of the buffers
 	}
 
+	/**
+	 * Sets the maximum number of blocks allowed in the pool.
+	 * @param maxBlocks The new maximum number of blocks.
+	 */
+	void setMaxNumberOfBlocks(size_t maxBlocks) {
+		std::lock_guard lock(mutex_);
+		maxNumberOfBlocks_ = maxBlocks;
+	}
+
 private:
 	struct BufferPoolEntry {
 		std::shared_ptr<T> entry_;
@@ -150,7 +159,7 @@ private:
 	/// Number of operations since last log message.
 	size_t operationsSinceLastLog_ = 0;
 	/// Maximum number of buffers in the pool.
-	static constexpr size_t kMaxNumberOfBlocks = 8192;
+	size_t maxNumberOfBlocks_ = 8192;
 	/// Current number of buffers in the pool.
 	size_t currentNumberOfBlocks_ = 0;
 	/// Buffers pool map: a queue of buffers for each type of buffer.
