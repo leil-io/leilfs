@@ -69,8 +69,7 @@ int main(int argc, char **argv) {
 	// Enable UTF-8 encoding for console I/O on Windows. This is necessary to properly
 	// handle Unicode characters in file paths and other strings on Windows systems,
 	// as the default console code page may not support UTF-8.
-	SetConsoleCP(CP_UTF8);
-	SetConsoleOutputCP(CP_UTF8);
+	ConsoleCodePageGuard codePageGuard(CP_UTF8);
 
 	Utf8CmdArguments args;
 	argc = args.getArgc();
