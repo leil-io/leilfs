@@ -301,15 +301,6 @@ int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	return gFilesystemOperations->fs_apply_session(cuid);
 }
 
-int do_freeinodes(const char *filename, uint64_t lv, uint32_t ts, const char* ptr) {
-	inode_t freeinodes;
-	EAT(ptr,filename,lv,'(');
-	EAT(ptr,filename,lv,')');
-	EAT(ptr,filename,lv,':');
-	GETINODE(freeinodes,ptr);
-	return fs_apply_freeinodes(ts,freeinodes);
-}
-
 int do_incversion(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	uint64_t chunkid;
 	(void)ts;
@@ -885,8 +876,6 @@ int restore_line(const char* filename, uint64_t lv, const char* line) {
 				status = do_lock_unlock_inode(filename,lv,ts,ptr+9);
 			} else if (strncmp(ptr, "FLCK", 4) == 0) {
 				status = do_lock_op(filename,lv,ts,ptr+4);
-			} else if (strncmp(ptr, "FREEINODES", 10) == 0) {
-				status = do_freeinodes(filename,lv,ts,ptr+10);
 			}
 			break;
 		case 'I':

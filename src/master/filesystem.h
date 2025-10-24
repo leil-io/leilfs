@@ -34,8 +34,6 @@ SAUNAFS_CREATE_EXCEPTION_CLASS_MSG(NoMetadataException, Exception, "no metadata"
 
 inline std::string gClusterId;  ///< Unique cluster identifier
 
-uint8_t fs_apply_freeinodes(uint32_t timestamp, inode_t freeinodes);
-
 uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results);
 uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
                      std::vector<QuotaEntry> &results);

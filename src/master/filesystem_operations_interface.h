@@ -255,7 +255,6 @@ public:
 	virtual uint8_t fs_apply_attr(uint32_t timestamp, inode_t inode, uint32_t mode, uint32_t uid,
 	                              uint32_t gid, uint32_t atime, uint32_t mtime) = 0;
 	virtual uint8_t fs_apply_session(uint32_t sessionid) = 0;
-	// virtual uint8_t fs_apply_freeinodes(uint32_t timestamp, inode_t freeinodes) = 0;
 	virtual uint8_t fs_apply_incversion(uint64_t chunkid) = 0;
 	virtual uint8_t fs_apply_length(uint32_t timestamp, inode_t inode, uint64_t length,
 	                                bool eraseFurtherChunks) = 0;
