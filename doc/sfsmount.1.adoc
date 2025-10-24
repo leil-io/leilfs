@@ -365,8 +365,11 @@ There is a bug with this though. See BUGS for more details.
 Due to a limit in the protocol, the metadata mount point can at most return the
 first 1 million trash/reserved files. To see more, you will need to either
 delete or undelete the existing files. Older versions of master (4.9.0 or
-earlier) will crash when reading a lot of files in trash/reserved. After around
-1 million files in trash/reserved, it becomes unsafe to read trash.
+earlier) will crash when reading a lot of files in trash/reserved. After more
+than 1 million files in trash/reserved, it becomes unsafe to read trash on
+those versions.
+
+This limit was fixed and removed in master and sfsmount version 5.3.0.
 
 == COPYRIGHT
 
