@@ -116,6 +116,9 @@ public:
 	virtual const Goal &fs_get_goal_definition(uint8_t goalId) const = 0;
 
 	virtual uint32_t fs_reserve_job_id() = 0;
+	virtual uint8_t fs_cancel_job(uint32_t job_id) = 0;
+	/// Return info about currently executed tasks
+	virtual std::vector<JobInfo> fs_get_current_tasks_info() = 0;
 
 	virtual uint8_t fs_access(const FsContext &context, inode_t inode, int modemask) = 0;
 	virtual uint8_t fs_lookup(const FsContext &context, inode_t parent, const HString &name,

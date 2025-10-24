@@ -3038,11 +3038,11 @@ const Goal &FilesystemOperationsBase::fs_get_goal_definition(uint8_t goalId) con
 	return gGoalDefinitions[goalId];
 }
 
-std::vector<JobInfo> fs_get_current_tasks_info() {
+std::vector<JobInfo> FilesystemOperationsBase::fs_get_current_tasks_info() {
 	return gMetadata->taskManager.getCurrentJobsInfo();
 }
 
-uint8_t fs_cancel_job(uint32_t job_id) {
+uint8_t FilesystemOperationsBase::fs_cancel_job(uint32_t job_id) {
 	if (gMetadata->taskManager.cancelJob(job_id)) {
 		return SAUNAFS_STATUS_OK;
 	} else {
