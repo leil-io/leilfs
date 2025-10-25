@@ -142,6 +142,11 @@ in a single read job. If possible, will try to make a single pread call
 *MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY*:: maximum number of read jobs processed
 in parallel per client connection (default is 1)
 
+*MAX_BUFFERS_POOL_SIZE_MB*:: maximum size of the buffers pool used for read, write
+and replicate operations, in megabytes. Consider decreasing it if the system is
+running out of memory, or increasing it to improve performance if there is enough
+memory available. Unused buffers are regularly freed (default is 512)
+
 *READ_AHEAD_KB*:: additional number of kilobytes which should be passed to
 posix_fadvise(POSIX_FADV_WILLNEED) before reading data from a chunk (default is
 0, i.e. use posix_fadvise only with the amount of data that is really needed;

@@ -554,3 +554,4 @@ inline ReplicatorBufferPool &getReplicateBuffersPool() {
 }
 
 void releaseOldIoBuffers(uint32_t expirationTime_ms);
+void setNewMaxIoBuffersPoolSize(size_t maxBuffersPoolSize_mb);

@@ -397,3 +397,17 @@ void releaseOldIoBuffers(uint32_t expirationTime_ms) {
 	    __func__, gCurrentTotalOutputBufferBlocks.load(), gCurrentTotalInputBufferBlocks.load(),
 	    gCurrentTotalReplicatorBufferBlocks.load());
 }
+
+void setNewMaxIoBuffersPoolSize(size_t maxBuffersPoolSize_mb) {
+	if (maxBuffersPoolSize_mb > (1 << 20)) {
+		safs::log_warn(
+		    "({}) Given maxBuffersPoolSize_mb {} is too large, capping to 1 TB.",
+		    __func__, maxBuffersPoolSize_mb);
+		maxBuffersPoolSize_mb = (1 << 20);
+	}
+
+	size_t maxBuffersPoolSize_blocks = (maxBuffersPoolSize_mb * 1024 * 1024) / SFSBLOCKSIZE;
+	getReadOutputBufferPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
+	getWriteInputBufferPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
+	getReplicateBuffersPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
+}

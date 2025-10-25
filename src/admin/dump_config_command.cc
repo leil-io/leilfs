@@ -168,6 +168,7 @@ const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
     {"MAX_BLOCKS_PER_HDD_WRITE_JOB", "16"},
     {"MAX_BLOCKS_PER_HDD_READ_JOB", "16"},
     {"MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY", "1"},
+    {"MAX_BUFFERS_POOL_SIZE_MB", "512"},
     {"MAX_READ_BEHIND_KB", "0"},
     {"PERFORM_FSYNC", "1"},
     {"STAT_CHUNKS_AT_DISK_SCAN", "1"},
