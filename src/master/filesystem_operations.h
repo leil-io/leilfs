@@ -100,6 +100,8 @@ public:
 	const Goal &fs_get_goal_definition(uint8_t goalId) const override;
 
 	uint32_t fs_reserve_job_id() override;
+	uint8_t fs_cancel_job(uint32_t job_id) override;
+	std::vector<JobInfo> fs_get_current_tasks_info() override;
 
 	uint8_t fs_access(const FsContext &context, inode_t inode, int modemask) override;
 	uint8_t fs_lookup(const FsContext &context, inode_t parent, const HString &name, inode_t *inode,

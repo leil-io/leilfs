@@ -176,10 +176,6 @@
 ## (Default: 0)
 # CHUNKS_REBALANCING_BETWEEN_LABELS = 0
 
-## Interval of freeing inodes being unused for longer than 24 hours in seconds.
-## (Default: 60)
-# FREE_INODES_PERIOD = 60
-
 ## Whether to update inode access time on every access,
 ## boolean value (0 or 1)
 ## (Default: 0)

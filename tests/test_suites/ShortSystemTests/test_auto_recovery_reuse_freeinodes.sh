@@ -2,7 +2,6 @@ timeout_set 1 minute
 
 master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
 master_cfg+="|AUTO_RECOVERY = 1"
-master_cfg+="|FREE_INODES_PERIOD = 1"
 master_cfg+="|DISABLE_METADATA_CHECKSUM_VERIFICATION = 1"
 
 CHUNKSERVERS=1 \
@@ -20,7 +19,7 @@ metadata_file="${info[master_data_path]}/metadata.sfs"
 # Remember version of the metadata file. We expect it not to change when generating data.
 metadata_version=$(metadata_get_version "$metadata_file")
 
-# Create and remove inodes, which later will be freed generating FREEINODES entry in changelog
+# Create and remove inodes to test that inode IDs are reused after deletion
 cd ${info[mount0]}
 touch file{00..99}
 assert_eventually '[[ $(grep RELEASE "$changelog_file" | wc -l) == 100 ]]'
@@ -46,7 +45,7 @@ fi
 touch "${info[mount0]}"/file{0000..099}
 assert_awk_finds    '/CREATE.*:20$/' "$(cat "$changelog_file")" # Make sure that inode 20 was reused
 
-# Simulate crash of the master server, auto recover metadata applying FREEINODES and check it
+# Simulate crash in master server, auto recover metadata and verify that there are no changes
 metadata=$(metadata_print "${info[mount0]}")
 saunafs_master_daemon kill
 assert_equals "$new_metadata_version" "$(metadata_get_version "$metadata_file")"

@@ -30,15 +30,9 @@
 #include "master/fs_context.h"
 #include "protocol/quota.h"
 
-struct JobInfo;
-
 SAUNAFS_CREATE_EXCEPTION_CLASS_MSG(NoMetadataException, Exception, "no metadata");
 
 inline std::string gClusterId;  ///< Unique cluster identifier
-
-uint8_t fs_cancel_job(uint32_t job_id);
-
-uint8_t fs_apply_freeinodes(uint32_t timestamp, inode_t freeinodes);
 
 uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results);
 uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
@@ -82,9 +76,6 @@ void fs_disable_checksum_verification(bool value);
 #else
 
 void fs_cs_disconnected(void);
-
-/// Return info about currently executed tasks
-std::vector<JobInfo> fs_get_current_tasks_info();
 
 // Disable saving metadata on exit
 void fs_disable_metadata_dump_on_exit();

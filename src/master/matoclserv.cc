@@ -4210,7 +4210,7 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 }
 
 void matoclserv_list_tasks(matoclserventry *eptr) {
-	std::vector<JobInfo> jobs_info = fs_get_current_tasks_info();
+	std::vector<JobInfo> jobs_info = gFilesystemOperations->fs_get_current_tasks_info();
 	matoclserv_createpacket(eptr, matocl::listTasks::build(jobs_info));
 }
 
@@ -4218,7 +4218,7 @@ void matoclserv_stop_task(matoclserventry *eptr, const uint8_t *data, uint32_t l
 	uint32_t job_id, msgid;
 	uint8_t status;
 	cltoma::stopTask::deserialize(data, length, msgid, job_id);
-	status = fs_cancel_job(job_id);
+	status = gFilesystemOperations->fs_cancel_job(job_id);
 	matoclserv_createpacket(eptr, matocl::stopTask::build(msgid, status));
 }
 

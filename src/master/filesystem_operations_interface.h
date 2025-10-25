@@ -116,6 +116,9 @@ public:
 	virtual const Goal &fs_get_goal_definition(uint8_t goalId) const = 0;
 
 	virtual uint32_t fs_reserve_job_id() = 0;
+	virtual uint8_t fs_cancel_job(uint32_t job_id) = 0;
+	/// Return info about currently executed tasks
+	virtual std::vector<JobInfo> fs_get_current_tasks_info() = 0;
 
 	virtual uint8_t fs_access(const FsContext &context, inode_t inode, int modemask) = 0;
 	virtual uint8_t fs_lookup(const FsContext &context, inode_t parent, const HString &name,
@@ -252,7 +255,6 @@ public:
 	virtual uint8_t fs_apply_attr(uint32_t timestamp, inode_t inode, uint32_t mode, uint32_t uid,
 	                              uint32_t gid, uint32_t atime, uint32_t mtime) = 0;
 	virtual uint8_t fs_apply_session(uint32_t sessionid) = 0;
-	// virtual uint8_t fs_apply_freeinodes(uint32_t timestamp, inode_t freeinodes) = 0;
 	virtual uint8_t fs_apply_incversion(uint64_t chunkid) = 0;
 	virtual uint8_t fs_apply_length(uint32_t timestamp, inode_t inode, uint64_t length,
 	                                bool eraseFurtherChunks) = 0;

@@ -38,9 +38,3 @@ inode_t IdGeneratorWithDetainer::getNextId(uint32_t timeStamp, inode_t requested
 
 	return requestedId;
 }
-
-uint8_t fs_apply_freeinodes(uint32_t /*ts*/, inode_t /*freeinodes*/) {
-	// left for compatibility when reading from old metadata change log
-	gMetadata->metadataVersion++;
-	return 0;
-}
