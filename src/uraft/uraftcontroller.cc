@@ -139,18 +139,8 @@ uint64_t uRaftController::nodeGetVersion() {
 }
 
 void uRaftController::nodeLeader(int id) {
-	if (id < 0) {
-		return;
-	}
-
-	std::string name = opt_.server[id];
-	std::string::size_type p = name.find(":");
-
-	if (p != std::string::npos) {
-		name = name.substr(0, p);
-	}
-
-	syslog(LOG_NOTICE, "Node '%s' is now a leader.", name.c_str());
+	auto leaderNode = nodeToString(id);
+	syslog(LOG_NOTICE, "Node '%s' is now a leader.", leaderNode.c_str());
 }
 
 /*! \brief Check promote/demote script status. */

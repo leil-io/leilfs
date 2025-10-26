@@ -4,6 +4,8 @@
 
 #include "uraft.h"
 
+#include <syslog.h>
+
 #if defined(SAUNAFS_HAVE_GETIFADDRS)
  #include <sys/types.h>
  #include <ifaddrs.h>
@@ -95,6 +97,8 @@ void uRaft::checkTerm(int /*id*/, const RpcHeader &data) {
 	if (data.term > state_.current_term) {
 		if (state_.president) {
 			assert(state_.type != kFollower);
+			syslog(LOG_NOTICE, "(%s): Higher term detected (%lu): Node %s starting new election",
+			       __func__, data.term, nodeToString(state_.id).c_str());
 			state_.current_term = data.term;
 			electionTimeout(boost::system::error_code());
 			return;
@@ -215,6 +219,8 @@ void uRaft::electionTimeout(const boost::system::error_code &error) {
 		startElectionTimer();
 	} else {
 		state_.type = kLeader;
+		syslog(LOG_NOTICE, "(%s): Election won with quorum: Promoting node %s to Leader", __func__,
+		       nodeToString(state_.id).c_str());
 		nodePromote();
 	}
 }
@@ -240,6 +246,10 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 				state_.voted_for = -1;
 				startElectionTimer();
 			}
+
+			syslog(LOG_WARNING,
+			       "(%s): Heartbeat quorum lost: Demoting current Leader %s to follower", __func__,
+			       nodeToString(state_.id).c_str());
 			state_.president = false;
 
 			nodeDemote();
@@ -257,6 +267,8 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 		if (!state_.president) {
 			if (voteCount(true) >= opt_.quorum) {
 				state_.president = true;
+				syslog(LOG_NOTICE, "(%s): Heartbeat quorum confirmed: Node %s is now active Leader",
+				       __func__, nodeToString(state_.id).c_str());
 				nodePromote();
 			}
 		}
@@ -441,6 +453,9 @@ void uRaft::demoteLeader() {
 	if (state_.type == kFollower) {
 		return;
 	}
+
+	syslog(LOG_NOTICE, "(%s): Manual demotion: Stepping down Leader %s to follower", __func__,
+	       nodeToString(state_.id).c_str());
 	state_.type      = kFollower;
 	state_.voted_for = -1;
 	state_.leader_id = -1;
@@ -506,4 +521,19 @@ int uRaft::scanLocalInterfaces() {
 #else
 	return -1;
 #endif
+}
+
+std::string uRaft::nodeToString(int id) {
+	if (id < 0 || id >= (int)opt_.server.size()) {
+		return "Invalid node ID";
+	}
+
+	std::string name = opt_.server[id];
+	std::string::size_type p = name.find(":");
+
+	if (p != std::string::npos) {
+		name = name.substr(0, p);
+	}
+
+	return name;
 }
