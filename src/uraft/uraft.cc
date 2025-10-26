@@ -236,14 +236,15 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 	state_.local_time++;
 	node_[state_.id].heartbeat = state_.local_time;
 
-	// Roll back from being the leader if there are less than quorum
-	// loyal nodes alive
+	// Roll back from being the leader if there are less than quorum loyal nodes alive
 	if (state_.president) {
 		assert(state_.type != kFollower);
 		if (voteCount(true) < opt_.quorum) {
 			if (state_.type == kLeader) {
 				state_.type      = kFollower;
 				state_.voted_for = -1;
+				state_.current_term = 0;  // Reset term to avoid former leader isolation deadlock
+				state_.leader_id    = -1; // Reset leader ID to elect a new leader in next election
 				startElectionTimer();
 			}
 
