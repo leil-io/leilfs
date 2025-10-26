@@ -159,6 +159,8 @@ protected:
 	int findMatchingAddress(const boost::asio::ip::address &addr, int &id);
 	int scanLocalInterfaces();
 
+	std::string nodeToString(int id);
+
 protected:
 	boost::asio::io_context                 &io_service_;
 	boost::asio::ip::udp::socket            socket_;
