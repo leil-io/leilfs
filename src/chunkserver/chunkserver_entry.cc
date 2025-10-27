@@ -42,9 +42,10 @@
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/hddspacemgr.h"
-#include "chunkserver/network_stats.h"
 #include "chunkserver/io_buffers.h"
+#include "chunkserver/network_stats.h"
 #include "common/charts.h"
+#include "common/chunk_connector.h"
 #include "common/datapack.h"
 #include "common/event_loop.h"
 #include "common/legacy_vector.h"
@@ -59,6 +60,11 @@
 #include "protocol/cstocs.h"
 #include "protocol/packet.h"
 #include "slogger/slogger.h"
+
+// Connection timeout in seconds
+constexpr uint32_t kDefaultConnectionTimeout_s = 3;
+// Connection pool for forward writes
+static ConnectionPool gForwardConnectionPool;
 
 constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 constexpr uint8_t kConnectRetries = 10;
@@ -133,8 +139,14 @@ void ChunkserverEntry::fwdError() {
 int ChunkserverEntry::initConnection() {
 	TRACETHIS();
 	int status;
-	// TODO(msulikowski) If we want to use a ConnectionPool, this is the right
-	// place to get a connection from it
+	fwdSocket = gForwardConnectionPool.getConnection(fwdServer);
+	if (fwdSocket >= 0) {
+		// reused connection
+		state = State::WriteInit;
+		return kInitConnectionOK;
+	}
+
+	// new connection
 	fwdSocket = tcpsocket();
 	if (fwdSocket < 0) {
 		safs::log_warn_with_error_code(errno, "create socket, error");
@@ -169,6 +181,8 @@ int ChunkserverEntry::initConnection() {
 
 void ChunkserverEntry::retryConnect() {
 	TRACETHIS();
+	// Not yet stable connection, retry
+	// No need to put connection back to pool, as it failed
 	tcpclose(fwdSocket);
 	fwdSocket = kInvalidSocket;
 	connectRetryCounter++;
@@ -823,9 +837,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 	}
 
 	if (fwdSocket > 0) {
-		// TODO(msulikowski) if we want to use a ConnectionPool, this the right
-		// place to put the connection to the pool.
-		tcpclose(fwdSocket);
+		gForwardConnectionPool.putConnection(fwdSocket, fwdServer, kDefaultConnectionTimeout_s);
 		fwdSocket = kInvalidSocket;
 	}
 
