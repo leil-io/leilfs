@@ -85,6 +85,7 @@ protected:
 	int                         command_type_;  /// Last run command type.
 	Timer                       command_timer_;
 	bool                        force_demote_;
+	bool                        force_promote_;
 	bool                        node_alive_;  /// Last is_alive node status.
 	Options                     opt_;
 	///< Smart pointer to the floating IP manager.
