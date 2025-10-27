@@ -28,23 +28,24 @@
 #include "common/chunk_with_address_and_label.h"
 #include "common/chunks_availability_state.h"
 #include "common/defective_file_info.h"
-#include "common/sessions_file.h"
+#include "common/inotifier_list_entry.h"
 #include "common/io_limits_database.h"
 #include "common/job_info.h"
 #include "common/legacy_acl.h"
-#include "common/metadataserver_list_entry.h"
 #include "common/legacy_string.h"
 #include "common/legacy_vector.h"
+#include "common/metadataserver_list_entry.h"
 #include "common/richacl.h"
 #include "common/serialization_macros.h"
 #include "common/serialized_goal.h"
+#include "common/sessions_file.h"
+#include "protocol/SFSCommunication.h"
 #include "protocol/chunkserver_list_entry.h"
 #include "protocol/directory_entry.h"
 #include "protocol/handle_inode_entry.h"
 #include "protocol/lock_info.h"
-#include "protocol/named_inode_entry.h"
 #include "protocol/mount_info_entry.h"
-#include "protocol/SFSCommunication.h"
+#include "protocol/named_inode_entry.h"
 #include "protocol/packet.h"
 #include "protocol/quota.h"
 
@@ -244,6 +245,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, metadataserversList, SAU_MATOCL_METADATASERVERS_LIST, 0,
 		uint32_t, masterVersion,
 		std::vector<MetadataserverListEntry>, shadowList)
+
+// SAU_MATOCL_INOTIFIER_LIST
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, inotifierList, SAU_MATOCL_INOTIFIER_LIST, 0,
+		std::vector<INotifierListEntry>, inotifierList)
 
 // SAU_MATOCL_CHUNKS_INFO
 namespace matocl {

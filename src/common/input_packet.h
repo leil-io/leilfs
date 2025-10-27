@@ -105,7 +105,7 @@ struct InputPacket {
 
 private:
 	/// Maximum accepted length of a message.
-	const uint32_t maxPacketSize_;
+	uint32_t maxPacketSize_;
 
 	/// PacketHeader read from network in its serialized form
 	uint8_t header_[PacketHeader::kSize];

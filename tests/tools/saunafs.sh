@@ -365,6 +365,7 @@ create_sfsmaster_master_cfg_() {
 	echo "TOPOLOGY_FILENAME = ${saunafs_info_[master_topology]}"
 	echo "CUSTOM_GOALS_FILENAME = ${saunafs_info_[master_custom_goals]}"
 	echo "DATA_PATH = $masterserver_data_path"
+	echo "MATONT_LISTEN_PORT = ${saunafs_info_[matont]}"
 	echo "MATOML_LISTEN_PORT = ${saunafs_info_[matoml]}"
 	echo "MATOCS_LISTEN_PORT = ${saunafs_info_[matocs]}"
 	echo "MATOCL_LISTEN_PORT = ${saunafs_info_[matocl]}"
@@ -388,6 +389,7 @@ create_sfsmaster_shadow_cfg_() {
 	echo "TOPOLOGY_FILENAME = ${saunafs_info_[master_topology]}"
 	echo "CUSTOM_GOALS_FILENAME = ${saunafs_info_[master_custom_goals]}"
 	echo "DATA_PATH = $masterserver_data_path"
+	echo "MATONT_LISTEN_PORT = $masterserver_matont_port"
 	echo "MATOML_LISTEN_PORT = $masterserver_matoml_port"
 	echo "MATOCS_LISTEN_PORT = $masterserver_matocs_port"
 	echo "MATOCL_LISTEN_PORT = $masterserver_matocl_port"
@@ -429,6 +431,7 @@ prepare_common_metadata_server_files_() {
 	saunafs_info_[master_exports]="$etcdir/sfsexports.cfg"
 	saunafs_info_[master_topology]="$etcdir/sfstopology.cfg"
 	saunafs_info_[master_custom_goals]="$etcdir/sfsgoals.cfg"
+	get_next_port_number "saunafs_info_[matont]"
 	get_next_port_number "saunafs_info_[matoml]"
 	get_next_port_number "saunafs_info_[matocl]"
 	get_next_port_number "saunafs_info_[matocs]"
@@ -439,6 +442,7 @@ add_metadata_server_() {
 	local masterserver_id=$1
 	local personality=$2
 
+	local masterserver_matont_port
 	local masterserver_matoml_port
 	local masterserver_matocl_port
 	local masterserver_matocs_port
@@ -448,6 +452,7 @@ add_metadata_server_() {
 	local masterserver_shadow_cfg=$etcdir/sfsmaster${masterserver_id}_shadow.cfg
 	local masterserver_cfg=$etcdir/sfsmaster${masterserver_id}.cfg
 
+	get_next_port_number masterserver_matont_port
 	get_next_port_number masterserver_matoml_port
 	get_next_port_number masterserver_matocl_port
 	get_next_port_number masterserver_matocs_port
@@ -474,6 +479,7 @@ add_metadata_server_() {
 	saunafs_info_[master${masterserver_id}_master_cfg]=$masterserver_master_cfg
 	saunafs_info_[master${masterserver_id}_cfg]=$masterserver_cfg
 	saunafs_info_[master${masterserver_id}_data_path]=$masterserver_data_path
+	saunafs_info_[master${masterserver_id}_matont]=$masterserver_matont_port
 	saunafs_info_[master${masterserver_id}_matoml]=$masterserver_matoml_port
 	saunafs_info_[master${masterserver_id}_matocl]=$masterserver_matocl_port
 	saunafs_info_[master${masterserver_id}_matocs]=$masterserver_matocs_port

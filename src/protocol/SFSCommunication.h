@@ -355,6 +355,28 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MLTOMA_DUMP_CONFIG (1000U + 70)
 /// config:STDSTRING
 
+// MASTER <-> NOTIFIER [EXPERIMENTAL]
+
+// 0x00C8 [EXPERIMENTAL]
+#define NTTOMA_REGISTER (PROTO_BASE+200)
+/// version:8 vershex:32 timeout:16
+
+// 0x00C9 [EXPERIMENTAL]
+#define MATONT_METACHANGES_LOG (PROTO_BASE+201)
+/// version:8 logversion:64 logdata:STRING
+
+// 0x00CA [EXPERIMENTAL]
+#define MATONT_END_SESSION (PROTO_BASE+202)
+/// -
+
+// 0x00CB [EXPERIMENTAL]
+#define NTTOMA_GET_PATH_TYPE_INODE (PROTO_BASE+203)
+/// inode:64
+
+// 0x00CC [EXPERIMENTAL]
+#define MATONT_GET_PATH_TYPE_INODE (PROTO_BASE+204)
+/// inode:64 nodetype:8 path:STDSTRING
+
 // CHUNKSERVER <-> MASTER
 
 // 0x044C
@@ -1232,6 +1254,13 @@ enum class SugidClearMode : uint8_t {
 // 0x05F3
 #define SAU_MATOCL_METADATASERVERS_LIST (1000U + 523U)
 // masterversion:32 data:(N * [ ip:32 hostname:STDSTRING version:32])
+
+// 0x005F4 [EXPERIMENTAL]
+#define SAU_CLTOMA_INOTIFIER_LIST (1000U + 524U)
+
+// 0x005F5 [EXPERIMENTAL]
+#define SAU_MATOCL_INOTIFIER_LIST (1000U + 525U)
+// N * [ip:32 version:32]
 
 // 0x05F6
 #define SAU_CLTOMA_CHUNKS_HEALTH (1000U + 526U)
