@@ -686,7 +686,7 @@ int do_setquota(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
 	GETU64(limit, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
+	return gFilesystemOperations->fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
 }
 
 int do_snapshot(const char* /*filename*/, uint64_t /*lv*/, uint32_t /*ts*/, const char* /*ptr*/) {

@@ -1666,7 +1666,7 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 		owners.emplace_back(QuotaOwnerType::kUser, uid);
 		owners.emplace_back(QuotaOwnerType::kGroup, gid);
 		owners.emplace_back(QuotaOwnerType::kInode, inode);
-		status = fs_quota_get(context, owners, results);
+		status = gFilesystemOperations->fs_quota_get(context, owners, results);
 
 		if (inode == context.rootinode() && !foundContextRootInodeResult(inode)) {
 			auto ino = fsnodes_id_to_node(inode);
@@ -1680,7 +1680,8 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 
 	MessageBuffer reply;
 	if (status == SAUNAFS_STATUS_OK) {
-		status = fs_quota_get_info(matoclserv_get_context(eptr), results, info);
+		status =
+		    gFilesystemOperations->fs_quota_get_info(matoclserv_get_context(eptr), results, info);
 	}
 	if (status == SAUNAFS_STATUS_OK) {
 		matocl::fuseGetSelfQuota::serialize(reply, messageId, results);
@@ -4317,7 +4318,7 @@ void matoclserv_fuse_setquota(matoclserventry *eptr, const uint8_t *data, uint32
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = fs_quota_set(context, entries);
+		status = gFilesystemOperations->fs_quota_set(context, entries);
 	}
 
 	MessageBuffer reply;
@@ -4338,7 +4339,7 @@ void matoclserv_fuse_getquota(matoclserventry *eptr, const uint8_t *data, uint32
 		status = matoclserv_check_group_cache(eptr, gid);
 		if (status == SAUNAFS_STATUS_OK) {
 			FsContext context = matoclserv_get_context(eptr, uid, gid);
-			status = fs_quota_get_all(context, results);
+			status = gFilesystemOperations->fs_quota_get_all(context, results);
 		}
 	} else if (version == cltoma::fuseGetQuota::kSelectedLimits) {
 		std::vector<QuotaOwner> owners;
@@ -4346,7 +4347,7 @@ void matoclserv_fuse_getquota(matoclserventry *eptr, const uint8_t *data, uint32
 		status = matoclserv_check_group_cache(eptr, gid);
 		if (status == SAUNAFS_STATUS_OK) {
 			FsContext context = matoclserv_get_context(eptr, uid, gid);
-			status = fs_quota_get(context, owners, results);
+			status = gFilesystemOperations->fs_quota_get(context, owners, results);
 		}
 	} else {
 		throw IncorrectDeserializationException(
@@ -4355,7 +4356,8 @@ void matoclserv_fuse_getquota(matoclserventry *eptr, const uint8_t *data, uint32
 
 	MessageBuffer reply;
 	if (status == SAUNAFS_STATUS_OK) {
-		status = fs_quota_get_info(matoclserv_get_context(eptr), results, info);
+		status =
+		    gFilesystemOperations->fs_quota_get_info(matoclserv_get_context(eptr), results, info);
 	}
 
 	if (status == SAUNAFS_STATUS_OK) {

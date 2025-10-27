@@ -29,6 +29,8 @@
 #include "master/filesystem_node_types.h"
 #include "protocol/quota.h"
 
+class FsContext;
+
 /*! \brief Test if resource change exceeds quota for users and groups.
  * \param uid User id.
  * \param gid Group id.
@@ -94,3 +96,15 @@ void fsnodes_quota_remove(QuotaOwnerType owner_type, uint32_t owner_id);
  * \param available_space Free space.
  */
 void fsnodes_quota_adjust_space(FSNode *node, uint64_t &total_space, uint64_t &available_space);
+
+namespace quotas {
+uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results);
+uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
+                     std::vector<QuotaEntry> &results);
+uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &entries);
+uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
+                          std::vector<std::string> &result);
+
+uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, inode_t ownerId,
+                          uint64_t limit);
+}  // namespace quotas

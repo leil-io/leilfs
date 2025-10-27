@@ -3056,6 +3056,11 @@ uint64_t FilesystemOperationsBase::fs_getversion() {
 	return gMetadata->metadataVersion;
 }
 
+uint8_t FilesystemOperationsBase::fs_apply_setquota(char rigor, char resource, char ownerType,
+                                                    inode_t ownerId, uint64_t limit) {
+	return quotas::fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
+}
+
 #ifndef METARESTORE
 const std::map<int, Goal> &FilesystemOperationsBase::fs_get_goal_definitions() const {
 	return gGoalDefinitions;
@@ -3133,4 +3138,25 @@ uint8_t FilesystemOperationsBase::fs_getchunksinfo(const FsContext &context, uin
 	return SAUNAFS_STATUS_OK;
 }
 
+uint8_t FilesystemOperationsBase::fs_quota_get_all(const FsContext &context,
+                                                   std::vector<QuotaEntry> &results) {
+	return quotas::fs_quota_get_all(context, results);
+}
+
+uint8_t FilesystemOperationsBase::fs_quota_get(const FsContext &context,
+                                               const std::vector<QuotaOwner> &owners,
+                                               std::vector<QuotaEntry> &results) {
+	return quotas::fs_quota_get(context, owners, results);
+}
+
+uint8_t FilesystemOperationsBase::fs_quota_set(const FsContext &context,
+                                               const std::vector<QuotaEntry> &entries) {
+	return quotas::fs_quota_set(context, entries);
+}
+
+uint8_t FilesystemOperationsBase::fs_quota_get_info(const FsContext &context,
+                                                    const std::vector<QuotaEntry> &entries,
+                                                    std::vector<std::string> &result) {
+	return quotas::fs_quota_get_info(context, entries, result);
+}
 #endif
