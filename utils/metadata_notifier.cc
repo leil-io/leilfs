@@ -1,3 +1,26 @@
+/*
+   Copyright 2023 Leil Storage OÜ
+
+   This file is part of SaunaFS.
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
+   Experimental: This is a utility binary for testing notifier connections to master
+   and its functionality for receiving changelog notifications.
+*/
+
 #include "common/platform.h"
 
 #include <cstring>
@@ -16,89 +39,77 @@
 #include "protocol/packet.h"
 
 constexpr uint8_t kHeaderSize = 8;
-constexpr uint32_t kCfgDefaultMasterTimeout = 60U;
+constexpr uint16_t kPacketVersionMajor = SAUNAFS_PACKAGE_VERSION_MAJOR;
+constexpr uint8_t kPacketVersionMinor = SAUNAFS_PACKAGE_VERSION_MINOR;
+constexpr uint8_t kPacketVersionMicro = SAUNAFS_PACKAGE_VERSION_MICRO;
+constexpr uint16_t kCfgDefaultMasterTimeout = 60U;
 constexpr int kInvalidFD = -1;
 
 /// Structure for the packet being sent or received.
-struct packetstruct {
-	struct packetstruct *next;
-	uint8_t *startptr;
-	uint32_t bytesleft;
-	uint8_t *packet;
+struct PacketStruct {
+	std::vector<uint8_t> buffer;
+	size_t startOffset = 0;
+	size_t bytesLeft = 0;
+
+	PacketStruct(uint32_t type, uint32_t size)
+	    : buffer(kHeaderSize + size), startOffset(0), bytesLeft(kHeaderSize + size) {
+		uint8_t *ptr = buffer.data();
+		put32bit(&ptr, type);
+		put32bit(&ptr, size);
+	}
 };
 
-packetstruct *createRegisterPacket(uint32_t type, uint32_t size) {
-	packetstruct *outpacket;
-	uint8_t *ptr;
-	uint32_t psize;
+PacketStruct createRegisterPacket() {
+	uint8_t rversion = 1;
+	constexpr uint32_t kRegisterPayloadSize =
+	    sizeof(rversion) + sizeof(kPacketVersionMajor) + sizeof(kPacketVersionMinor) +
+	    sizeof(kPacketVersionMicro) + sizeof(kCfgDefaultMasterTimeout);
+	PacketStruct packet(NTTOMA_REGISTER, kRegisterPayloadSize);
 
-	outpacket = (packetstruct *)malloc(sizeof(packetstruct));
-	assert(outpacket);
-	psize = size + 8;
-	outpacket->packet = (uint8_t *)malloc(psize);
-	assert(outpacket->packet);
-	outpacket->bytesleft = psize;
-	ptr = outpacket->packet;
-	put32bit(&ptr, type);
-	put32bit(&ptr, size);
-	outpacket->startptr = (uint8_t *)(outpacket->packet);
-	outpacket->next = nullptr;
-	put8bit(&ptr, 1);
-	put16bit(&ptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
-	put8bit(&ptr, SAUNAFS_PACKAGE_VERSION_MINOR);
-	put8bit(&ptr, SAUNAFS_PACKAGE_VERSION_MICRO);
+	uint8_t *ptr = packet.buffer.data() + kHeaderSize;
+	put8bit(&ptr, rversion);
+	put16bit(&ptr, kPacketVersionMajor);
+	put8bit(&ptr, kPacketVersionMinor);
+	put8bit(&ptr, kPacketVersionMicro);
 	put16bit(&ptr, kCfgDefaultMasterTimeout);
 
-	return outpacket;
+	return packet;
 }
 
-packetstruct *createGetPathTypeInodePacket(uint64_t inode) {
-	packetstruct *outpacket = (packetstruct *)malloc(sizeof(packetstruct));
-	assert(outpacket);
-	uint32_t psize = 8 + sizeof(uint64_t);
-	outpacket->packet = (uint8_t *)malloc(psize);
-	assert(outpacket->packet);
-	outpacket->bytesleft = psize;
-	uint8_t *ptr = outpacket->packet;
-	put32bit(&ptr, NTTOMA_GET_PATH_TYPE_INODE);
-	put32bit(&ptr, 8);
+PacketStruct createGetPathTypeInodePacket(uint64_t inode) {
+	PacketStruct packet(NTTOMA_GET_PATH_TYPE_INODE, sizeof(inode));
+	uint8_t *ptr = packet.buffer.data() + kHeaderSize;
 	put64bit(&ptr, inode);
-	outpacket->startptr = outpacket->packet;
-	outpacket->next = nullptr;
-	return outpacket;
+	return packet;
 }
 
-void writeToSocket(int sock, packetstruct *pack) {
-	if (pack == nullptr) { return; }
+void writeToSocket(int sock, PacketStruct &pack) {
+	size_t offset = pack.startOffset;
+	size_t bytesLeft = pack.bytesLeft;
 
-	while (pack->bytesleft > 0) {
-		int32_t writtenBytes = write(sock, pack->startptr, pack->bytesleft);
+	while (bytesLeft > 0) {
+		ssize_t writtenBytes = write(sock, pack.buffer.data() + offset, bytesLeft);
 
 		if (writtenBytes < 0) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK) {
 				fprintf(stderr, "write to Master error: %s\n", strerror(errno));
-				free(pack->packet);
-				free(pack);
 				return;
 			}
 			continue;
 		}
 
-		pack->startptr += writtenBytes;
-		pack->bytesleft -= writtenBytes;
+		offset += writtenBytes;
+		bytesLeft -= writtenBytes;
 	}
-
-	free(pack->packet);
-	free(pack);
 }
 
 void sendRegister(int sock) {
-	packetstruct *packet = createRegisterPacket(NTTOMA_REGISTER, 1 + 4 + 2);
+	PacketStruct packet = createRegisterPacket();
 	writeToSocket(sock, packet);
 }
 
 void sendGetPathTypeInode(int sock, uint64_t inode) {
-	packetstruct *packet = createGetPathTypeInodePacket(inode);
+	PacketStruct packet = createGetPathTypeInodePacket(inode);
 	writeToSocket(sock, packet);
 }
 
@@ -160,22 +171,23 @@ int main(int argc, char *argv[]) {
 		if (n <= 0) break;  // connection closed or error
 		recvBuffer.insert(recvBuffer.end(), temp, temp + n);
 
-		while (recvBuffer.size() >= 8) {
+		while (recvBuffer.size() >= kHeaderSize) {
 			const uint8_t *ptr = recvBuffer.data();
 			const uint8_t *parsePtr = ptr;
 			uint32_t packetType = 0, dataLen = 0;
 			get32bit(&parsePtr, packetType);
 			get32bit(&parsePtr, dataLen);
 
-			if (recvBuffer.size() < 8 + dataLen) break;  // wait for full packet
+			if (recvBuffer.size() < kHeaderSize + dataLen) break;  // wait for full packet
 
-			parsePtr = ptr + 8;
+			parsePtr = ptr + kHeaderSize;
 
 			if (packetType == MATONT_METACHANGES_LOG) {
 				uint8_t rver = *parsePtr++;
 				if (rver != 0xFF) {
 					fprintf(stderr, "Invalid packet format\n");
-					recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + 8 + dataLen);
+					recvBuffer.erase(recvBuffer.begin(),
+					                 recvBuffer.begin() + kHeaderSize + dataLen);
 					continue;
 				}
 				uint64_t logVersion = 0;
@@ -194,17 +206,17 @@ int main(int argc, char *argv[]) {
 					sendGetPathTypeInode(sockfd, inode);
 				}
 			} else if (packetType == MATONT_GET_PATH_TYPE_INODE) {
-				// Response: inode:64 nodetype:8 path:STDSTRING
 				uint64_t inode = get64bit(&parsePtr);
 				uint8_t nodetype = *parsePtr++;
 				std::string path(reinterpret_cast<const char *>(parsePtr), dataLen - 9);
 				// Print inode, type, and path
-				fprintf(stderr, "inode %lu: type=%c path=%s\n", inode, static_cast<char>(nodetype), path.c_str());
+				fprintf(stderr, "inode %lu: type=%c path=%s\n", inode, static_cast<char>(nodetype),
+				        path.c_str());
 			} else {
 				fprintf(stderr, "Unknown packet type: %u\n", packetType);
 			}
 
-			recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + 8 + dataLen);
+			recvBuffer.erase(recvBuffer.begin(), recvBuffer.begin() + kHeaderSize + dataLen);
 		}
 	}
 
