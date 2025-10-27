@@ -26,6 +26,7 @@ uRaftController::uRaftController(boost::asio::io_context &ios)
 	command_pid_  = -1;
 	command_type_ = kCmdNone;
 	force_demote_ = false;
+	force_promote_ = false;
 	node_alive_   = false;
 
 	opt_.check_node_status_period = 250;
@@ -70,8 +71,9 @@ void uRaftController::nodePromote() {
 	// Prevent concurrent transitions
 	if (command_pid_ >= 0) {
 		if (command_type_ == kCmdDemote) {
-			syslog(LOG_WARNING, "Cannot promote during active demotion - ignoring request");
-			force_demote_ = false;
+			syslog(LOG_WARNING,
+			       "Promotion requested during demotion - will force after completion");
+			force_promote_ = true;
 			return;
 		}
 		// Already promoting
@@ -160,8 +162,15 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			} else {
 				syslog(LOG_ERR, "Demotion failed with exit code: %d", WEXITSTATUS(status));
 			}
+
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
+
+			if (force_promote_) {
+				syslog(LOG_WARNING, "Starting forced switch to master mode");
+				nodePromote();
+				force_promote_ = false;
+			}
 		} else if (command_type_ == kCmdPromote) {
 			if (commandSucceeded) {
 				syslog(LOG_NOTICE, "Metadata server switch to master mode done");
