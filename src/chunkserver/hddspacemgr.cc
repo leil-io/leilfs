@@ -2722,10 +2722,10 @@ int initDiskManager() {
 int loadPlugins() {
 	const std::array<std::string, 5> pluginPaths = {
 	    cfg_getstring("PLUGINS_DIR", ""),              // Higher priority (user-defined)
-	    "/usr/local/lib/saunafs/plugins/chunkserver",  // Local install
 	    PLUGINS_PATH "/chunkserver",                   // Build-time defined path
-	    "/usr/lib/saunafs/plugins/chunkserver",        // Standard install
-	    BUILD_PATH "/plugins/chunkserver"              // Build tree (for development)
+	    BUILD_PATH "/plugins/chunkserver",             // Build tree (for development)
+	    "/usr/local/lib/saunafs/plugins/chunkserver",  // Local install
+	    "/usr/lib/saunafs/plugins/chunkserver"         // Standard install
 	};
 
 	for (const auto &path : pluginPaths) {

@@ -180,8 +180,8 @@ chunkservers (default: 500)
 
 *PLUGINS_DIR*:: directory to search for Chunkserver plugins (absolute path).
 When set, the plugin manager will search this directory first. If not set, then
-it will search in usual plugin locations, like /usr/local/lib/saunafs/plugins/chunkserver,
-PLUGINS_PATH/chunkserver (PLUGINS_PATH is defined at build time), and
+it will search in usual plugin locations, like PLUGINS_PATH/chunkserver (PLUGINS_PATH is 
+defined at build time), /usr/local/lib/saunafs/plugins/chunkserver, and
 /usr/lib/saunafs/plugins/chunkserver (default is empty string, i.e. disabled)
 
 *CHUNK_TRASH_ENABLED (EXPERIMENTAL)*:: enables or disables the chunk trash
