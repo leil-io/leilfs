@@ -4584,7 +4584,7 @@ void matoclserv_admin_recalculate_metadata_checksum(matoclserventry *eptr, const
 	if (eptr->registered == ClientState::kAdmin) {
 		safs::log_info("metadata checksum recalculation requested using saunafs-admin by {}",
 		               ipToString(eptr->peerIpAddress));
-		uint8_t status = fs_start_checksum_recalculation();
+		uint8_t status = gFilesystemOperations->fs_start_checksum_recalculation();
 
 		if (status != SAUNAFS_STATUS_OK || asynchronous) {
 			matoclserv_createpacket(eptr, matocl::adminRecalculateMetadataChecksum::build(status));

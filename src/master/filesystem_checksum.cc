@@ -132,6 +132,7 @@ static void fsnodes_recalculate_checksum() {
 	}
 }
 
+namespace checksum {
 uint64_t fs_checksum(ChecksumMode mode) {
 	uint64_t checksum = 0x1251;
 	hashCombine(checksum, gMetadata->maxInodeId().getValue());
@@ -159,3 +160,4 @@ uint8_t fs_start_checksum_recalculation() {
 	}
 }
 #endif
+}  // namespace checksum

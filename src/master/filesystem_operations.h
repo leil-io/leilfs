@@ -232,6 +232,12 @@ public:
 	uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
 	                          std::vector<std::string> &result) override;
 
+	// CHECKSUM
+
+	/// Starts recalculating metadata checksum in background.
+	/// @see IFilesystemOperations::fs_start_checksum_recalculation.
+	uint8_t fs_start_checksum_recalculation() override;
+
 #endif
 	void fs_add_files_to_chunks(bool isMetadataLoading = true) override;
 
@@ -264,6 +270,11 @@ public:
 
 	uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, inode_t ownerId,
 	                          uint64_t limit) override;
+
+	// CHECKSUM
+
+	/// Returns checksum of the loaded metadata.
+	uint64_t fs_checksum(ChecksumMode mode) override;
 
 	// Locks
 

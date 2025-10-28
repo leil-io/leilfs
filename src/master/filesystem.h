@@ -25,21 +25,10 @@
 #include <cstdint>
 
 #include "common/exception.h"
-#include "common/type_defs.h"
-#include "master/checksum.h"
-#include "master/fs_context.h"
-#include "protocol/quota.h"
 
 SAUNAFS_CREATE_EXCEPTION_CLASS_MSG(NoMetadataException, Exception, "no metadata");
 
 inline std::string gClusterId;  ///< Unique cluster identifier
-
-/// Returns checksum of the loaded metadata.
-uint64_t fs_checksum(ChecksumMode mode);
-
-/// Starts recalculating metadata checksum in background.
-/// \return SAUNAFS_STATUS_OK iff dump started successfully, otherwise cause of the failure.
-uint8_t fs_start_checksum_recalculation();
 
 /// Load whole filesystem information.
 int fs_loadall(bool isFromInit);

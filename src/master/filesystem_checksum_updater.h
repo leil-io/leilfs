@@ -54,7 +54,7 @@ protected:
 		lastEntry_ = gMetadata->metadataVersion;
 		if (metadataserver::isMaster() && !gChecksumBackgroundUpdater.inProgress()) {
 			std::string versionString = saunafsVersionToString(SAUNAFS_VERSHEX);
-			uint64_t checksum = fs_checksum(ChecksumMode::kGetCurrent);
+			uint64_t checksum = gFilesystemOperations->fs_checksum(ChecksumMode::kGetCurrent);
 			gFilesystemOperations->fs_changelog(ts, "CHECKSUM(%s):%" PRIu64, versionString.c_str(),
 			                                    checksum);
 		}

@@ -38,19 +38,20 @@
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operations.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/filesystem_periodic.h"
 #include "master/filesystem_snapshot.h"
 #include "master/goal_config_loader.h"
 #include "master/id_generator_incremental.h"
 #include "master/matoclserv_sessions.h"
 #include "master/metadata_backend_common.h"
-#include "master/metadata_backend_file.h"
 #include "master/metadata_backend_interface.h"
 #include "master/restore.h"
 #include "slogger/slogger.h"
 
 #ifdef METARESTORE
 #include "master/filesystem_freenode.h"
+#include "master/metadata_backend_file.h"
 #endif
 
 FilesystemMetadata* gMetadata = nullptr;
@@ -116,7 +117,7 @@ static void metadataPollServe(const std::vector<pollfd> &pdesc) {
 			if (dumper->useMetarestore()) {
 				// master should recalculate its checksum
 				safs_pretty_syslog(LOG_WARNING, "dumping metadata failed, recalculating checksum");
-				fs_start_checksum_recalculation();
+				gFilesystemOperations->fs_start_checksum_recalculation();
 			}
 			unlink(kMetadataTmpFilename);
 		}
