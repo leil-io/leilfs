@@ -69,93 +69,6 @@ static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<Qu
 	results.erase(it, results.end());
 }
 
-uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results) {
-	if (context.uid() != 0 && !(context.sesflags() & SESFLAG_ALLCANCHANGEQUOTA)) {
-		return SAUNAFS_ERROR_EPERM;
-	}
-	results = gMetadata->quotaDatabase.getEntriesWithStats();
-
-	for (auto &entry : results) {
-		if (entry.entryKey.owner.ownerType != QuotaOwnerType::kInode ||
-		    entry.entryKey.rigor != QuotaRigor::kUsed) {
-			continue;
-		}
-
-		FSNodeDirectory *node = fsnodes_id_to_node<FSNodeDirectory>(entry.entryKey.owner.ownerId);
-		if (!node || node->type != FSNodeType::kDirectory) {
-			continue;
-		}
-
-		switch (entry.entryKey.resource) {
-		case QuotaResource::kSize:
-			entry.limit = node->stats.size;
-			break;
-		case QuotaResource::kInodes:
-			entry.limit = node->stats.inodes;
-			break;
-		}
-	}
-
-	fs_remove_invisible_quota_entries(context.rootinode(), results);
-
-	return SAUNAFS_STATUS_OK;
-}
-
-uint8_t fs_quota_get(const FsContext &context,
-		const std::vector<QuotaOwner> &owners, std::vector<QuotaEntry> &results) {
-	std::vector<QuotaEntry> tmp;
-	FSNodeDirectory *node;
-	for (const QuotaOwner &owner : owners) {
-		if (context.uid() != 0 && !(context.sesflags() & SESFLAG_ALLCANCHANGEQUOTA)) {
-			switch (owner.ownerType) {
-			case QuotaOwnerType::kUser:
-				if (context.uid() != owner.ownerId) {
-					return SAUNAFS_ERROR_EPERM;
-				}
-				break;
-			case QuotaOwnerType::kGroup:
-				if (context.gid() != owner.ownerId && !(context.sesflags() & SESFLAG_IGNOREGID)) {
-					return SAUNAFS_ERROR_EPERM;
-				}
-				break;
-			case QuotaOwnerType::kInode:
-				node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
-				if (!node || node->type != FSNodeType::kDirectory) {
-					return SAUNAFS_ERROR_EINVAL;
-				}
-				if (node->uid != context.uid() || (node->gid != context.gid() && !(context.sesflags() & SESFLAG_IGNOREGID))) {
-					return SAUNAFS_ERROR_EPERM;
-				}
-				break;
-			default:
-				return SAUNAFS_ERROR_EINVAL;
-			}
-		}
-		auto result = gMetadata->quotaDatabase.get(owner.ownerType, owner.ownerId);
-		if (result) {
-			for (auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard, QuotaRigor::kUsed}) {
-				if (owner.ownerType == QuotaOwnerType::kInode && rigor == QuotaRigor::kUsed) {
-					node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
-					assert(node);
-					tmp.push_back({{owner, rigor, QuotaResource::kInodes},
-					               (uint64_t)node->stats.inodes});
-					tmp.push_back({{owner, rigor, QuotaResource::kSize},
-					               (uint64_t)node->stats.size});
-					continue;
-				}
-				for (auto resource : {QuotaResource::kInodes, QuotaResource::kSize}) {
-					tmp.push_back({{owner, rigor, resource}, (*result)[(int)rigor][(int)resource]});
-				}
-			}
-		}
-	}
-
-	fs_remove_invisible_quota_entries(context.rootinode(), tmp);
-	results = std::move(tmp);
-
-	return SAUNAFS_STATUS_OK;
-}
-
 static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) {
 	std::string::size_type size;
 	FSNode *p;
@@ -198,6 +111,89 @@ static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) 
 		}
 		p = parent;
 	}
+}
+
+namespace quotas {
+uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results) {
+	if (context.uid() != 0 && !(context.sesflags() & SESFLAG_ALLCANCHANGEQUOTA)) {
+		return SAUNAFS_ERROR_EPERM;
+	}
+	results = gMetadata->quotaDatabase.getEntriesWithStats();
+
+	for (auto &entry : results) {
+		if (entry.entryKey.owner.ownerType != QuotaOwnerType::kInode ||
+		    entry.entryKey.rigor != QuotaRigor::kUsed) {
+			continue;
+		}
+
+		FSNodeDirectory *node = fsnodes_id_to_node<FSNodeDirectory>(entry.entryKey.owner.ownerId);
+		if (!node || node->type != FSNodeType::kDirectory) { continue; }
+
+		switch (entry.entryKey.resource) {
+		case QuotaResource::kSize:
+			entry.limit = node->stats.size;
+			break;
+		case QuotaResource::kInodes:
+			entry.limit = node->stats.inodes;
+			break;
+		}
+	}
+
+	fs_remove_invisible_quota_entries(context.rootinode(), results);
+
+	return SAUNAFS_STATUS_OK;
+}
+
+uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
+                     std::vector<QuotaEntry> &results) {
+	std::vector<QuotaEntry> tmp;
+	FSNodeDirectory *node;
+	for (const QuotaOwner &owner : owners) {
+		if (context.uid() != 0 && !(context.sesflags() & SESFLAG_ALLCANCHANGEQUOTA)) {
+			switch (owner.ownerType) {
+			case QuotaOwnerType::kUser:
+				if (context.uid() != owner.ownerId) { return SAUNAFS_ERROR_EPERM; }
+				break;
+			case QuotaOwnerType::kGroup:
+				if (context.gid() != owner.ownerId && !(context.sesflags() & SESFLAG_IGNOREGID)) {
+					return SAUNAFS_ERROR_EPERM;
+				}
+				break;
+			case QuotaOwnerType::kInode:
+				node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
+				if (!node || node->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_EINVAL; }
+				if (node->uid != context.uid() ||
+				    (node->gid != context.gid() && !(context.sesflags() & SESFLAG_IGNOREGID))) {
+					return SAUNAFS_ERROR_EPERM;
+				}
+				break;
+			default:
+				return SAUNAFS_ERROR_EINVAL;
+			}
+		}
+		auto result = gMetadata->quotaDatabase.get(owner.ownerType, owner.ownerId);
+		if (result) {
+			for (auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard, QuotaRigor::kUsed}) {
+				if (owner.ownerType == QuotaOwnerType::kInode && rigor == QuotaRigor::kUsed) {
+					node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
+					assert(node);
+					tmp.push_back(
+					    {{owner, rigor, QuotaResource::kInodes}, (uint64_t)node->stats.inodes});
+					tmp.push_back(
+					    {{owner, rigor, QuotaResource::kSize}, (uint64_t)node->stats.size});
+					continue;
+				}
+				for (auto resource : {QuotaResource::kInodes, QuotaResource::kSize}) {
+					tmp.push_back({{owner, rigor, resource}, (*result)[(int)rigor][(int)resource]});
+				}
+			}
+		}
+	}
+
+	fs_remove_invisible_quota_entries(context.rootinode(), tmp);
+	results = std::move(tmp);
+
+	return SAUNAFS_STATUS_OK;
 }
 
 uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
@@ -254,8 +250,11 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 	}
 	return SAUNAFS_STATUS_OK;
 }
-#endif
+}  // namespace quotas
 
+#endif  // METARESTORE
+
+namespace quotas {
 uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, inode_t owner_id,
                           uint64_t limit) {
 	QuotaRigor quotaRigor = QuotaRigor::kSoft;
@@ -277,6 +276,7 @@ uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, inode_t ow
 	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 	return SAUNAFS_STATUS_OK;
 }
+}  // namespace quotas
 
 static int fsnodes_find_depth(FSNodeDirectory *a) {
 	assert(a);

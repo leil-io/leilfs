@@ -223,6 +223,15 @@ public:
 	                              std::string &fullPath) override;
 	std::string fs_full_path_by_inode(inode_t initial_inode) override;
 
+	// QUOTAS
+
+	uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results) override;
+	uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
+	                     std::vector<QuotaEntry> &results) override;
+	uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &entries) override;
+	uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
+	                          std::vector<std::string> &result) override;
+
 #endif
 	void fs_add_files_to_chunks(bool isMetadataLoading = true) override;
 
@@ -252,6 +261,9 @@ public:
 	uint8_t fs_apply_unlock(uint64_t chunkid) override;
 	uint8_t fs_apply_trunc(uint32_t timestamp, inode_t inode, uint32_t indx, uint64_t chunkid,
 	                       uint32_t lockid) override;
+
+	uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, inode_t ownerId,
+	                          uint64_t limit) override;
 
 	// Locks
 

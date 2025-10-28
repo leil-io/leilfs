@@ -34,16 +34,6 @@ SAUNAFS_CREATE_EXCEPTION_CLASS_MSG(NoMetadataException, Exception, "no metadata"
 
 inline std::string gClusterId;  ///< Unique cluster identifier
 
-uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results);
-uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
-                     std::vector<QuotaEntry> &results);
-uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &entries);
-uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
-                          std::vector<std::string> &result);
-
-uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, inode_t ownerId,
-                          uint64_t limit);
-
 /// Returns checksum of the loaded metadata.
 uint64_t fs_checksum(ChecksumMode mode);
 
