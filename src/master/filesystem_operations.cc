@@ -3061,6 +3061,10 @@ uint8_t FilesystemOperationsBase::fs_apply_setquota(char rigor, char resource, c
 	return quotas::fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
 }
 
+uint64_t FilesystemOperationsBase::fs_checksum(ChecksumMode mode) {
+	return checksum::fs_checksum(mode);
+}
+
 #ifndef METARESTORE
 const std::map<int, Goal> &FilesystemOperationsBase::fs_get_goal_definitions() const {
 	return gGoalDefinitions;
@@ -3158,5 +3162,9 @@ uint8_t FilesystemOperationsBase::fs_quota_get_info(const FsContext &context,
                                                     const std::vector<QuotaEntry> &entries,
                                                     std::vector<std::string> &result) {
 	return quotas::fs_quota_get_info(context, entries, result);
+}
+
+uint8_t FilesystemOperationsBase::fs_start_checksum_recalculation() {
+	return checksum::fs_start_checksum_recalculation();
 }
 #endif

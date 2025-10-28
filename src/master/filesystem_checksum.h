@@ -28,5 +28,10 @@
 void fsnodes_checksum_add_to_background(FSNode *node);
 void fsnodes_update_checksum(FSNode *node);
 
+// Namespace for in-memory checksum related functions
+namespace checksum {
 uint64_t fs_checksum(ChecksumMode mode);
+#ifndef METARESTORE
 uint8_t fs_start_checksum_recalculation();
+#endif
+}  // namespace checksum

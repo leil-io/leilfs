@@ -610,7 +610,7 @@ void matomlserv_changelog_apply_error(matomlserventry *eptr, const uint8_t *data
 		gShadowQueue.addRequest(eptr);
 		gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);
 		if (recvStatus == SAUNAFS_ERROR_BADMETADATACHECKSUM) {
-			fs_start_checksum_recalculation();
+			gFilesystemOperations->fs_start_checksum_recalculation();
 		}
 	} else {
 		safs_silent_syslog(LOG_DEBUG, "master.mltoma_changelog_apply_error: delay");

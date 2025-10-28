@@ -25,6 +25,7 @@
 
 #include "common/attributes.h"
 #include "common/goal.h"
+#include "master/checksum.h"
 #include "master/filesystem_node_types.h"
 #include "master/fs_context.h"
 #include "master/locks.h"
@@ -255,6 +256,12 @@ public:
 	virtual uint8_t fs_quota_get_info(const FsContext &context,
 	                                  const std::vector<QuotaEntry> &entries,
 	                                  std::vector<std::string> &result) = 0;
+
+	// CHECKSUM
+
+	/// Starts recalculating metadata checksum in background.
+	/// @return SAUNAFS_STATUS_OK if dump started successfully, otherwise cause of the failure.
+	virtual uint8_t fs_start_checksum_recalculation() = 0;
 #endif
 	virtual void fs_add_files_to_chunks(bool isMetadataLoading = true) = 0;
 
@@ -287,6 +294,11 @@ public:
 
 	virtual uint8_t fs_apply_setquota(char rigor, char resource, char ownerType, inode_t ownerId,
 	                                  uint64_t limit) = 0;
+
+	// CHECKSUM
+
+	/// Returns checksum of the loaded metadata.
+	virtual uint64_t fs_checksum(ChecksumMode mode) = 0;
 
 	// Lock operations
 

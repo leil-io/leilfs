@@ -476,7 +476,7 @@ int main(int argc,char **argv) {
 	}
 
 	int returnStatus = 0;
-	uint64_t checksum = fs_checksum(ChecksumMode::kForceRecalculate);
+	uint64_t checksum = gFilesystemOperations->fs_checksum(ChecksumMode::kForceRecalculate);
 	if (printhash) {
 		printf("%" PRIu64 "\n", checksum);
 	}
