@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include <array>
+#include <cstdint>
 
 #include "common/access_control_list.h"
 #include "common/acl_type.h"
@@ -37,12 +38,11 @@
 #include "protocol/packet.h"
 #include "protocol/quota.h"
 
-namespace cltoma { namespace updateCredentials {
-enum DefaultGroupsSize {
-	kDefaultGroupsSize = 16
-};
-typedef small_vector<uint32_t, kDefaultGroupsSize> GroupsContainer;
-} } // cltoma::updateCredentials
+namespace cltoma::updateCredentials {
+constexpr uint32_t kDefaultGroupsSize = 16;
+using GroupsContainer = small_vector<uint32_t, kDefaultGroupsSize>;
+}  // namespace cltoma::updateCredentials
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, updateCredentials, SAU_CLTOMA_UPDATE_CREDENTIALS, 0,
 		uint32_t, messageId,
 		uint32_t, index,
@@ -228,7 +228,8 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, adminRegister, SAU_CLTOMA_ADMIN_REGISTER_CHALLENGE, 0)
 
 // SAU_CLTOMA_ADMIN_REGISTER_RESPONSE
-typedef std::array<uint8_t, 16> SauCltomaAdminRegisterResponseData;
+constexpr size_t kAdminRegisterResponseDataSize = 16;
+using SauCltomaAdminRegisterResponseData = std::array<uint8_t, kAdminRegisterResponseDataSize>;
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, adminRegisterResponse, SAU_CLTOMA_ADMIN_REGISTER_RESPONSE, 0,
 		SauCltomaAdminRegisterResponseData, data)
@@ -314,7 +315,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_VERSION(cltoma, manageLocksList, kAll, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cltoma, manageLocksList, kInode, 1)
 
-#define SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT 1024
+constexpr uint64_t SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT = 1024;
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, manageLocksList, SAU_CLTOMA_MANAGE_LOCKS_LIST, kAll,

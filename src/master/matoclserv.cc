@@ -4125,12 +4125,12 @@ void matoclserv_manage_locks_list(matoclserventry *eptr, const uint8_t *data, ui
 
 	if (version == cltoma::manageLocksList::kAll) {
 		cltoma::manageLocksList::deserialize(data, length, type, pending, start, max);
-		max = std::min(max, (uint64_t)SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
+		max = std::min(max, SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
 		status = gFilesystemOperations->fs_locks_list_all(context, (uint8_t)type, pending, start,
 		                                                  max, locks);
 	} else if (version == cltoma::manageLocksList::kInode) {
 		cltoma::manageLocksList::deserialize(data, length, inode, type, pending, start, max);
-		max = std::min(max, (uint64_t)SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
+		max = std::min(max, SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
 		status = gFilesystemOperations->fs_locks_list_inode(context, (uint8_t)type, pending, inode,
 		                                                    start, max, locks);
 	} else {
