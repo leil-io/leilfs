@@ -1952,15 +1952,3 @@ uint8_t fsnodes_get_node_for_operation(const FsContext &context, ExpectedNodeTyp
 	}
 	return SAUNAFS_STATUS_OK;
 }
-
-#ifndef METARESTORE
-
-const std::map<int, Goal> &fsnodes_get_goal_definitions() {
-	return gGoalDefinitions;
-}
-
-const Goal &fsnodes_get_goal_definition(uint8_t goalId) {
-	return gGoalDefinitions[goalId];
-}
-
-#endif
