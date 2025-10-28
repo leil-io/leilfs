@@ -2320,7 +2320,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 		    HString((char *)name_dst, nleng_dst), &inode, &attr);
 	}
 
-	if (eptr->version >= 0x010615 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		constexpr uint32_t kSuccessAnswerSize = sizeof(msgid) + sizeof(inode) + attr.size();
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_RENAME, kSuccessAnswerSize);
 	} else {
@@ -2329,7 +2329,7 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	put32bit(&ptr, msgid);
 
-	if (eptr->version >= 0x010615 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		putINode(&ptr, inode);
 		memcpy(ptr, attr.data(), attr.size());
 	} else {
@@ -2550,7 +2550,7 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 		}
 	}
 
-	if (eptr->version >= 0x010609 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		allowcache = dcm_open(inode, eptr->sessionData->sessionId);
 		if (allowcache == 0) {
 			attr[1] &= (0xFF ^ (MATTR_ALLOWDATACACHE << 4));
@@ -2562,7 +2562,7 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 
 	put32bit(&ptr, msgid);
 
-	if (eptr->version >= 0x010609 && status == SAUNAFS_STATUS_OK) {
+	if (status == SAUNAFS_STATUS_OK) {
 		memcpy(ptr, attr.data(), attr.size());
 	} else {
 		put8bit(&ptr, status);
@@ -2815,34 +2815,10 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 		put32bit(&ptr,msgid);
 		put8bit(&ptr,status);
 	} else {
-		if (eptr->version >= 0x010617) {
-			ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
-			                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
-			put32bit(&ptr, msgid);
-			for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkcount[i]); }
-		} else {
-			uint8_t j = 0;
-			for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) {
-				if (chunkcount[i] > 0) { j++; }
-			}
-
-			ptr =
-			    matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
-			                            sizeof(msgid) + ((sizeof(uint8_t) + sizeof(uint16_t)) * j));
-
-			put32bit(&ptr, msgid);
-
-			for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) {
-				if (chunkcount[i] > 0) {
-					put8bit(&ptr, i);
-					if (chunkcount[i] <= 65535) {
-						put16bit(&ptr, chunkcount[i]);
-					} else {
-						put16bit(&ptr, 65535);
-					}
-				}
-			}
-		}
+		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
+		                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
+		put32bit(&ptr, msgid);
+		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkcount[i]); }
 	}
 }
 
