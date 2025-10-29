@@ -207,7 +207,7 @@ void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
 		return;
 	}
 
-	gFilesystemOperations->fs_changelog(
+	gFSOperations->fs_changelog(
 	    ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
 	    current_subtask_->first, dst_parent_inode_, dst_inode,
 	    fsnodes_escape_name(current_subtask_->second).c_str(), can_overwrite_);

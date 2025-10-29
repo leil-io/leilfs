@@ -208,7 +208,7 @@ int do_access(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,'(');
 	GETINODE(inode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_apply_access(ts,inode);
+	return gFSOperations->fs_apply_access(ts, inode);
 }
 
 int do_append(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -219,7 +219,7 @@ int do_append(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,',');
 	GETINODE(inode_src,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_append(FsContext::getForRestore(ts), inode, inode_src);
+	return gFSOperations->fs_append(FsContext::getForRestore(ts), inode, inode_src);
 }
 
 int do_acquire(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -230,7 +230,7 @@ int do_acquire(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	EAT(ptr,filename,lv,',');
 	GETU32(cuid,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_acquire(FsContext::getForRestore(ts), inode, cuid);
+	return gFSOperations->fs_acquire(FsContext::getForRestore(ts), inode, cuid);
 }
 
 int do_attr(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -249,7 +249,7 @@ int do_attr(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,',');
 	GETU32(mtime,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_apply_attr(ts, inode, mode, uid, gid, atime, mtime);
+	return gFSOperations->fs_apply_attr(ts, inode, mode, uid, gid, atime, mtime);
 }
 
 int do_checksum(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
@@ -260,7 +260,7 @@ int do_checksum(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU64(checksum,ptr);
-	return gFilesystemOperations->fs_apply_checksum((char *)&version, checksum);
+	return gFSOperations->fs_apply_checksum((char *)&version, checksum);
 }
 
 int do_create(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -286,9 +286,9 @@ int do_create(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFilesystemOperations->fs_apply_create(ts, parent, HString((const char *)name),
-	                                              static_cast<FSNodeType>(type), mode, uid, gid,
-	                                              rdev, inode);
+	return gFSOperations->fs_apply_create(ts, parent, HString((const char *)name),
+	                                      static_cast<FSNodeType>(type), mode, uid, gid, rdev,
+	                                      inode);
 }
 
 int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -298,7 +298,7 @@ int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU32(cuid,ptr);
-	return gFilesystemOperations->fs_apply_session(cuid);
+	return gFSOperations->fs_apply_session(cuid);
 }
 
 int do_incversion(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -307,7 +307,7 @@ int do_incversion(const char *filename, uint64_t lv, uint32_t ts, const char *pt
 	EAT(ptr,filename,lv,'(');
 	GETU64(chunkid,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_apply_incversion(chunkid);
+	return gFSOperations->fs_apply_incversion(chunkid);
 }
 
 int do_link(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -321,8 +321,8 @@ int do_link(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,',');
 	GETNAME(name,ptr,filename,lv,')');
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_link(FsContext::getForRestore(ts), inode, parent,
-	                                      HString((const char *)name), nullptr, nullptr);
+	return gFSOperations->fs_link(FsContext::getForRestore(ts), inode, parent,
+	                              HString((const char *)name), nullptr, nullptr);
 }
 
 int do_length(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -342,7 +342,7 @@ int do_length(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 		GETU32(eraseFurtherChunks, ptr);
 	}
 	EAT(ptr, filename, lv, ')');
-	return gFilesystemOperations->fs_apply_length(ts, inode, length, eraseFurtherChunks != 0);
+	return gFSOperations->fs_apply_length(ts, inode, length, eraseFurtherChunks != 0);
 }
 
 int do_move(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -361,9 +361,9 @@ int do_move(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFilesystemOperations->fs_rename(FsContext::getForRestore(ts), parent_src,
-	                                        HString((const char *)name_src), parent_dst,
-	                                        HString((const char *)name_dst), &inode, nullptr);
+	return gFSOperations->fs_rename(FsContext::getForRestore(ts), parent_src,
+	                                HString((const char *)name_src), parent_dst,
+	                                HString((const char *)name_dst), &inode, nullptr);
 }
 
 int do_lock_op(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -394,14 +394,13 @@ int do_lock_op(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 
 	switch (static_cast<safs_locks::Type>(lock_type)) {
 	case safs_locks::Type::kFlock:
-		status =
-		    gFilesystemOperations->fs_flock_op(FsContext::getForRestore(ts), inode, owner,
-		                                       sessionid, 0, 0, op, nonblocking, dummy_applied);
+		status = gFSOperations->fs_flock_op(FsContext::getForRestore(ts), inode, owner, sessionid,
+		                                    0, 0, op, nonblocking, dummy_applied);
 		break;
 	case safs_locks::Type::kPosix:
-		status = gFilesystemOperations->fs_posixlock_op(FsContext::getForRestore(ts), inode, start,
-		                                                end, owner, sessionid, 0, 0, op,
-		                                                nonblocking, dummy_applied);
+		status =
+		    gFSOperations->fs_posixlock_op(FsContext::getForRestore(ts), inode, start, end, owner,
+		                                   sessionid, 0, 0, op, nonblocking, dummy_applied);
 		break;
 	default:
 		safs_pretty_syslog(LOG_ERR, "Invalid lock type passed to restore: %u", lock_type);
@@ -433,8 +432,8 @@ int do_remove_pending_op(const char *filename, uint64_t lv, uint32_t ts, const c
 	GETU64(reqid, ptr);
 	EAT(ptr,filename,lv,')');
 
-	return gFilesystemOperations->fs_locks_remove_pending(FsContext::getForRestore(ts), lock_type,
-	                                                      ownerid, sessionid, inode, reqid);
+	return gFSOperations->fs_locks_remove_pending(FsContext::getForRestore(ts), lock_type, ownerid,
+	                                              sessionid, inode, reqid);
 }
 
 int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -450,8 +449,8 @@ int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const 
 	GETU32(sessionid, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return gFilesystemOperations->fs_locks_clear_session(FsContext::getForRestore(ts), lock_type,
-	                                                     inode, sessionid, applied);
+	return gFSOperations->fs_locks_clear_session(FsContext::getForRestore(ts), lock_type, inode,
+	                                             sessionid, applied);
 }
 
 int do_lock_unlock_inode(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -465,8 +464,8 @@ int do_lock_unlock_inode(const char *filename, uint64_t lv, uint32_t ts, const c
 	GETINODE(inode, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return gFilesystemOperations->fs_locks_unlock_inode(FsContext::getForRestore(ts), lock_type,
-	                                                    inode, applied);
+	return gFSOperations->fs_locks_unlock_inode(FsContext::getForRestore(ts), lock_type, inode,
+	                                            applied);
 }
 
 int do_purge(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -474,7 +473,7 @@ int do_purge(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,'(');
 	GETINODE(inode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_purge(FsContext::getForRestore(ts), inode);
+	return gFSOperations->fs_purge(FsContext::getForRestore(ts), inode);
 }
 
 int do_release(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -485,7 +484,7 @@ int do_release(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 	EAT(ptr,filename,lv,',');
 	GETU32(cuid,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_release(FsContext::getForRestore(ts), inode, cuid);
+	return gFSOperations->fs_release(FsContext::getForRestore(ts), inode, cuid);
 }
 
 int do_repair(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -499,7 +498,7 @@ int do_repair(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU32(version,ptr);
-	return gFilesystemOperations->fs_apply_repair(ts, inode, indx, version);
+	return gFSOperations->fs_apply_repair(ts, inode, indx, version);
 }
 
 int do_seteattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -524,8 +523,8 @@ int do_seteattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr)
 	GETINODE(nci,ptr);
 	EAT(ptr,filename,lv,',');
 	GETINODE(npi,ptr);
-	return gFilesystemOperations->fs_seteattr(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode,
-	                                          eattr, smode, &ci, &nci, &npi);
+	return gFSOperations->fs_seteattr(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, eattr,
+	                                  smode, &ci, &nci, &npi);
 }
 
 int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -545,12 +544,11 @@ int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	if (*(ptr) == ':') {
 		EAT(ptr, filename, lv, ':');
 		GETINODE(ci, ptr);
-		return gFilesystemOperations->fs_apply_setgoal(
-		    FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, goal, smode, ci);
+		return gFSOperations->fs_apply_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+		                                       inode, goal, smode, ci);
 	} else {
-		return gFilesystemOperations->fs_apply_setgoal(
-		    FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, goal, smode,
-		    SetGoalTask::kChanged);
+		return gFSOperations->fs_apply_setgoal(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+		                                       inode, goal, smode, SetGoalTask::kChanged);
 	}
 }
 
@@ -563,8 +561,8 @@ int do_setpath(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 	EAT(ptr,filename,lv,',');
 	GETPATH(path,pathsize,ptr,filename,lv,')');
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_settrashpath(FsContext::getForRestore(ts), inode,
-	                                              std::string((const char *)path));
+	return gFSOperations->fs_settrashpath(FsContext::getForRestore(ts), inode,
+	                                      std::string((const char *)path));
 }
 
 int do_settrashtime(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -585,12 +583,12 @@ int do_settrashtime(const char *filename, uint64_t lv, uint32_t ts, const char *
 	if ((*ptr) == ':') {
 		EAT(ptr, filename, lv, ':');
 		GETINODE(ci, ptr);
-		return gFilesystemOperations->fs_apply_settrashtime(
-		    FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, trashtime, smode, ci);
+		return gFSOperations->fs_apply_settrashtime(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+		                                            inode, trashtime, smode, ci);
 	} else {
-		return gFilesystemOperations->fs_apply_settrashtime(
-		    FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, trashtime, smode,
-		    SetTrashtimeTask::kChanged);
+		return gFSOperations->fs_apply_settrashtime(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+		                                            inode, trashtime, smode,
+		                                            SetTrashtimeTask::kChanged);
 	}
 }
 
@@ -609,8 +607,8 @@ int do_setxattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr)
 	EAT(ptr,filename,lv,',');
 	GETU32(mode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_apply_setxattr(ts, inode, strlen((char *)name), name,
-	                                                valueleng, value, mode);
+	return gFSOperations->fs_apply_setxattr(ts, inode, strlen((char *)name), name, valueleng, value,
+	                                        mode);
 }
 
 int do_deleteacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -633,7 +631,7 @@ int do_deleteacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr
 		safs_pretty_syslog(LOG_ERR, "%s:%" PRIu64 ": corrupted ACL type", filename, lv);
 		return -1;
 	}
-	return gFilesystemOperations->fs_deleteacl(FsContext::getForRestore(ts), inode, aclType);
+	return gFSOperations->fs_deleteacl(FsContext::getForRestore(ts), inode, aclType);
 }
 
 int do_setacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -650,8 +648,8 @@ int do_setacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	GETPATH(aclString, aclSize, ptr, filename, lv, ')');
 	EAT(ptr, filename, lv, ')');
 
-	return gFilesystemOperations->fs_apply_setacl(ts, inode, aclType,
-	                                              reinterpret_cast<const char *>(aclString));
+	return gFSOperations->fs_apply_setacl(ts, inode, aclType,
+	                                      reinterpret_cast<const char *>(aclString));
 }
 
 int do_setrichacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -665,8 +663,8 @@ int do_setrichacl(const char *filename, uint64_t lv, uint32_t ts, const char *pt
 	GETPATH(acl_string, acl_size, ptr, filename, lv, ')');
 	EAT(ptr, filename, lv, ')');
 
-	return gFilesystemOperations->fs_apply_setrichacl(ts, inode,
-	                                                  reinterpret_cast<const char *>(acl_string));
+	return gFSOperations->fs_apply_setrichacl(ts, inode,
+	                                          reinterpret_cast<const char *>(acl_string));
 }
 
 int do_setquota(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
@@ -686,7 +684,7 @@ int do_setquota(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
 	GETU64(limit, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return gFilesystemOperations->fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
+	return gFSOperations->fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
 }
 
 int do_snapshot(const char* /*filename*/, uint64_t /*lv*/, uint32_t /*ts*/, const char* /*ptr*/) {
@@ -733,9 +731,9 @@ int do_symlink(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFilesystemOperations->fs_symlink(FsContext::getForRestoreWithUidGid(ts, uid, gid),
-	                                         parent, HString((char *)name),
-	                                         std::string((char *)path), &inode, nullptr);
+	return gFSOperations->fs_symlink(FsContext::getForRestoreWithUidGid(ts, uid, gid), parent,
+	                                 HString((char *)name), std::string((char *)path), &inode,
+	                                 nullptr);
 }
 
 int do_undel(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -743,7 +741,7 @@ int do_undel(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,'(');
 	GETINODE(inode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_undel(FsContext::getForRestore(ts), inode);
+	return gFSOperations->fs_undel(FsContext::getForRestore(ts), inode);
 }
 
 int do_unlink(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -757,7 +755,7 @@ int do_unlink(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFilesystemOperations->fs_apply_unlink(ts, parent, HString((char *)name), inode);
+	return gFSOperations->fs_apply_unlink(ts, parent, HString((char *)name), inode);
 }
 
 int do_unlock(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -766,7 +764,7 @@ int do_unlock(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,'(');
 	GETU64(chunkid,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFilesystemOperations->fs_apply_unlock(chunkid);
+	return gFSOperations->fs_apply_unlock(chunkid);
 }
 
 int do_nextchunkid(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -774,7 +772,7 @@ int do_nextchunkid(const char* filename, uint64_t lv, uint32_t ts, const char* p
 	EAT(ptr, filename, lv, '(');
 	GETU64(nextChunkId, ptr);
 	EAT(ptr, filename, lv, ')');
-	return gFilesystemOperations->fs_set_nextchunkid(FsContext::getForRestore(ts), nextChunkId);
+	return gFSOperations->fs_set_nextchunkid(FsContext::getForRestore(ts), nextChunkId);
 }
 
 
@@ -796,7 +794,7 @@ int do_trunc(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU64(chunkid,ptr);
-	return gFilesystemOperations->fs_apply_trunc(ts, inode, indx, chunkid, lockid);
+	return gFSOperations->fs_apply_trunc(ts, inode, indx, chunkid, lockid);
 }
 
 int do_write(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -824,8 +822,8 @@ int do_write(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU64(chunkid,ptr);
-	return gFilesystemOperations->fs_writechunk(FsContext::getForRestore(ts), inode, indx, false,
-	                                            &lockid, &chunkid, &opflag, nullptr);
+	return gFSOperations->fs_writechunk(FsContext::getForRestore(ts), inode, indx, false, &lockid,
+	                                    &chunkid, &opflag, nullptr);
 }
 
 int restore_line(const char* filename, uint64_t lv, const char* line) {
@@ -1015,7 +1013,7 @@ uint8_t restore(const char* filename, uint64_t newLogVersion, const char *ptr, R
 		/*
 		 * This is first call to restore().
 		 */
-		nextFsVersion = gFilesystemOperations->fs_getversion();
+		nextFsVersion = gFSOperations->fs_getversion();
 		currentFsVersion = nextFsVersion - 1;
 		lastfn = "(no file)";
 	}
@@ -1051,7 +1049,7 @@ uint8_t restore(const char* filename, uint64_t newLogVersion, const char *ptr, R
 			if (status != SAUNAFS_STATUS_OK) { // other errors - stop processing data
 				return status;
 			}
-			nextFsVersion = gFilesystemOperations->fs_getversion();
+			nextFsVersion = gFSOperations->fs_getversion();
 			if ((newLogVersion + 1) != nextFsVersion) {
 				/*
 				 * restore_line() should bump nextFsVersion by exactly 1, but it didn't.

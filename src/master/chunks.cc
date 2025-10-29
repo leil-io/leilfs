@@ -357,7 +357,7 @@ public:
 		Goal result;
 		int prev_goal = -1;
 		for (auto counter : goalCounters_) {
-			const Goal &goal = gFilesystemOperations->fs_get_goal_definition(counter.goal);
+			const Goal &goal = gFSOperations->fs_get_goal_definition(counter.goal);
 			if (prev_goal != (int)counter.goal) {
 				result.mergeIn(goal);
 				prev_goal = counter.goal;
@@ -823,7 +823,7 @@ void chunk_emergency_increase_version(Chunk *c) {
 	c->operation = Chunk::SET_VERSION;
 	c->version++;
 	chunk_update_checksum(c);
-	gFilesystemOperations->fs_incversion(c->chunkid);
+	gFSOperations->fs_incversion(c->chunkid);
 	emit_chunk_changed(c);
 }
 
@@ -1105,7 +1105,7 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 				return SAUNAFS_ERROR_NOCHUNKSERVERS;
 			}
 		}
-		ChunkCopiesCalculator calculator(gFilesystemOperations->fs_get_goal_definition(goal));
+		ChunkCopiesCalculator calculator(gFSOperations->fs_get_goal_definition(goal));
 		for (const auto &server_with_type : serversWithChunkTypes) {
 			calculator.addPart(server_with_type.second, MediaLabel::kWildcard);
 		}
@@ -1570,8 +1570,8 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 		// chunkserver has nonexistent chunk, so create it for future deletion
 		if (chunkid >= ChunksMetadata::getNextChunkId() &&
 		    gChunkIdGenerator->isStrictlyMonotonic()) {
-			gFilesystemOperations->fs_set_nextchunkid(FsContext::getForMaster(eventloop_time()),
-			                                          chunkid + 1);
+			gFSOperations->fs_set_nextchunkid(FsContext::getForMaster(eventloop_time()),
+			                                  chunkid + 1);
 		}
 		c = chunk_new(chunkid, new_version);
 		c->lockedto = (uint32_t)eventloop_time()+UNUSED_DELETE_TIMEOUT;

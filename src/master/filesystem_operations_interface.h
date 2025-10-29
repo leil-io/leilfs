@@ -429,4 +429,4 @@ public:
 // This global unique_ptr is initialized once at startup (before any FS calls) and set to a single
 // concrete implementation for the process lifetime. It must not be reassigned and its dynamic type
 // remains stable, so callers may assume one immutable implementation.
-inline std::unique_ptr<IFilesystemOperations> gFilesystemOperations = nullptr;
+inline std::unique_ptr<IFilesystemOperations> gFSOperations = nullptr;

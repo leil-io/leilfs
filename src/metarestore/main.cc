@@ -352,13 +352,13 @@ int main(int argc,char **argv) {
 		safs_pretty_syslog(LOG_ERR, "error: can't read metadata from file: %s, %s", metadata.c_str(), e.what());
 		return 1;
 	}
-	if (gFilesystemOperations->fs_getversion() == 0) {
+	if (gFSOperations->fs_getversion() == 0) {
 		safs_pretty_syslog(LOG_ERR, "invalid metadata version (0)");
 		return 1;
 	}
 	if (vl > 0) {
 		safs_pretty_syslog(LOG_NOTICE, "loaded metadata with version %" PRIu64 "",
-		                   gFilesystemOperations->fs_getversion());
+		                   gFSOperations->fs_getversion());
 	}
 
 	if (autorestore) {
@@ -381,10 +381,10 @@ int main(int argc,char **argv) {
 					lastlv = 0;
 				}
 
-				skip = ((lastlv < gFilesystemOperations->fs_getversion() || firstlv == 0) &&
-				        forcealllogs == 0)
-				           ? 1
-				           : 0;
+				skip =
+				    ((lastlv < gFSOperations->fs_getversion() || firstlv == 0) && forcealllogs == 0)
+				        ? 1
+				        : 0;
 
 				if (vl>0) {
 					std::ostringstream oss;
@@ -435,8 +435,7 @@ int main(int argc,char **argv) {
 				lastlv = 0;
 			}
 
-			skip = ((lastlv < gFilesystemOperations->fs_getversion() || firstlv == 0) &&
-			        forcealllogs == 0)
+			skip = ((lastlv < gFSOperations->fs_getversion() || firstlv == 0) && forcealllogs == 0)
 			           ? 1
 			           : 0;
 
@@ -476,7 +475,7 @@ int main(int argc,char **argv) {
 	}
 
 	int returnStatus = 0;
-	uint64_t checksum = gFilesystemOperations->fs_checksum(ChecksumMode::kForceRecalculate);
+	uint64_t checksum = gFSOperations->fs_checksum(ChecksumMode::kForceRecalculate);
 	if (printhash) {
 		printf("%" PRIu64 "\n", checksum);
 	}

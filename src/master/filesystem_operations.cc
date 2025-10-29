@@ -960,7 +960,7 @@ static inline void fs_update_atime(FSNode *p, uint32_t ts) {
 	if (!gAtimeDisabled && p->atime != ts) {
 		p->atime = ts;
 		fsnodes_update_checksum(p);
-		gFilesystemOperations->fs_changelog(ts, "ACCESS(%" PRIiNode ")", p->id);
+		gFSOperations->fs_changelog(ts, "ACCESS(%" PRIiNode ")", p->id);
 	}
 }
 
@@ -2044,7 +2044,7 @@ uint8_t fs_auto_repair_if_needed(FSNodeFile *p, uint32_t chunkIndex) {
 	if (chunkId != 0 && chunk_has_only_invalid_copies(chunkId)) {
 		uint32_t notchanged, erased, repaired;
 		FsContext context = FsContext::getForMasterWithSession(0, SPECIAL_INODE_ROOT, 0, 0, 0, 0, 0);
-		gFilesystemOperations->fs_repair(context, p->id, 0, &notchanged, &erased, &repaired);
+		gFSOperations->fs_repair(context, p->id, 0, &notchanged, &erased, &repaired);
 		safs_pretty_syslog(LOG_NOTICE,
 		       "auto repair inode %" PRIiNode ", chunk %016" PRIX64
 		       ": "

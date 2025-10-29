@@ -186,8 +186,7 @@ uint8_t MetadataBackendFile::fs_storeall(DumpType dumpType) {
 	matomlserv_broadcast_logrotate();
 	// child == true says that we forked
 	// bg may be changed to dump in foreground in case of a fork error
-	bool child =
-	    dumper()->start(dumpType, gFilesystemOperations->fs_checksum(ChecksumMode::kGetCurrent));
+	bool child = dumper()->start(dumpType, gFSOperations->fs_checksum(ChecksumMode::kGetCurrent));
 	uint8_t status = SAUNAFS_STATUS_OK;
 
 	if (dumpType == DumpType::kForegroundDump) {
@@ -916,7 +915,7 @@ void fs_new(void) {
 	gMetadata->dirNodes = 1;
 	gMetadata->fileNodes = 0;
 
-	gFilesystemOperations->fs_checksum(ChecksumMode::kForceRecalculate);
+	gFSOperations->fs_checksum(ChecksumMode::kForceRecalculate);
 	fsnodes_quota_update(gMetadata->root, {{QuotaResource::kInodes, +1}});
 }
 
@@ -978,13 +977,13 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	safs::log_info("connecting files and chunks");
 	{
 		util::ScopedTimer timer("connecting files and chunks took");
-		gFilesystemOperations->fs_add_files_to_chunks();
+		gFSOperations->fs_add_files_to_chunks();
 	}
 	unlink(kMetadataTmpFilename);
 	safs::log_info("calculating checksum of the metadata");
 	{
 		util::ScopedTimer timer("calculating checksum of the metadata took");
-		gFilesystemOperations->fs_checksum(ChecksumMode::kForceRecalculate);
+		gFSOperations->fs_checksum(ChecksumMode::kForceRecalculate);
 	}
 
 #ifndef METARESTORE
