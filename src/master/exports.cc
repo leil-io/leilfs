@@ -37,52 +37,12 @@
 #include "common/datapack.h"
 #include "common/event_loop.h"
 #include "common/exceptions.h"
-#include "common/goal.h"
-#include "common/massert.h"
 #include "common/md5.h"
 #include "config/cfg.h"
-#include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
-struct exports {
-	uint32_t pleng;
-	const uint8_t *path;    // without '/' at the begin and at the end
-	uint32_t fromip,toip;
-	uint32_t minversion;
-	uint8_t *passworddigest;
-	unsigned alldirs:1;
-	unsigned needpassword:1;
-	unsigned meta:1;
-	unsigned rootredefined:1;
-	uint8_t sesflags;
-	uint8_t mingoal;
-	uint8_t maxgoal;
-	uint32_t mintrashtime;
-	uint32_t maxtrashtime;
-	uint32_t rootuid;
-	uint32_t rootgid;
-	uint32_t mapalluid;
-	uint32_t mapallgid;
-	struct exports *next;
-
-	uint32_t serialized_size(uint8_t versmode) const {
-		constexpr uint32_t kBaseSize = sizeof(fromip) + sizeof(toip) + sizeof(uint32_t) +
-		                               sizeof(uint8_t) + sizeof(minversion) + sizeof(uint8_t) +
-		                               sizeof(sesflags) + sizeof(rootuid) + sizeof(rootgid) +
-		                               sizeof(mapalluid) + sizeof(mapallgid);
-		constexpr uint32_t kExtraSizeWithVersMode =
-		    sizeof(mingoal) + sizeof(maxgoal) + sizeof(mintrashtime) + sizeof(maxtrashtime);
-
-		if (meta) {
-			return kBaseSize + ((versmode) ? kExtraSizeWithVersMode : 0);
-		}
-
-		return kBaseSize + ((versmode) ? kExtraSizeWithVersMode : 0) + pleng;
-	}
-};
-
-static exports *exports_records;
-static char *ExportsFileName;
+static std::vector<ExportEntry> exportRecords;
+static std::string ExportsFileName;
 
 static char* exports_strsep(char **stringp, const char *delim) {
 	char *s;
@@ -117,41 +77,40 @@ static char* exports_strsep(char **stringp, const char *delim) {
 uint32_t exports_info_size(uint8_t versmode) {
 	uint32_t size = 0;
 
-	for (auto *e = exports_records; e; e = e->next) {
-		size += e->serialized_size(versmode);
+	for (const auto &e : exportRecords) {
+		size += e.serialized_size(versmode);
 	}
 
 	return size;
 }
 
 void exports_info_data(uint8_t versmode,uint8_t *buff) {
-	exports *e;
-	for (e=exports_records ; e ; e=e->next) {
-		put32bit(&buff,e->fromip);
-		put32bit(&buff,e->toip);
-		if (e->meta) {
-			put32bit(&buff,1);
-			put8bit(&buff,'.');
+	for (const auto &e : exportRecords) {
+		put32bit(&buff, e.fromip);
+		put32bit(&buff, e.toip);
+		if (e.meta) {
+			put32bit(&buff, 1);
+			put8bit(&buff, '.');
 		} else {
-			put32bit(&buff,e->pleng+1);
-			put8bit(&buff,'/');
-			if (e->pleng>0) {
-				memcpy(buff,e->path,e->pleng);
-				buff+=e->pleng;
+			put32bit(&buff, e.pleng + 1);
+			put8bit(&buff, '/');
+			if (e.pleng > 0) {
+				memcpy(buff, e.path.data(), e.pleng);
+				buff += e.pleng;
 			}
 		}
-		put32bit(&buff,e->minversion);
-		put8bit(&buff,(e->alldirs?1:0)+(e->needpassword?2:0));
-		put8bit(&buff,e->sesflags);
-		put32bit(&buff,e->rootuid);
-		put32bit(&buff,e->rootgid);
-		put32bit(&buff,e->mapalluid);
-		put32bit(&buff,e->mapallgid);
+		put32bit(&buff, e.minversion);
+		put8bit(&buff, (e.alldirs ? 1 : 0) + (e.needpassword ? 2 : 0));
+		put8bit(&buff, e.sesflags);
+		put32bit(&buff, e.rootuid);
+		put32bit(&buff, e.rootgid);
+		put32bit(&buff, e.mapalluid);
+		put32bit(&buff, e.mapallgid);
 		if (versmode) {
-			put8bit(&buff,e->mingoal);
-			put8bit(&buff,e->maxgoal);
-			put32bit(&buff,e->mintrashtime);
-			put32bit(&buff,e->maxtrashtime);
+			put8bit(&buff, e.mingoal);
+			put8bit(&buff, e.maxgoal);
+			put32bit(&buff, e.mintrashtime);
+			put32bit(&buff, e.maxtrashtime);
 		}
 	}
 }
@@ -168,10 +127,7 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 	int ok,nopass;
 	md5ctx md5c;
 	std::vector<uint8_t> entrydigest(kDefaultMd5DigestSize);
-	exports *e,*f;
-
-	//syslog(LOG_NOTICE,"check exports for: %u.%u.%u.%u:%s",
-	//		(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,path);
+	ExportEntry *foundEntry = nullptr;
 
 	if (meta==0) {
 		p = path;
@@ -195,44 +151,39 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 			rndstate|=rndcode[i];
 		}
 	}
+
 	nopass=0;
-	f=NULL;
-	for (e=exports_records ; e ; e=e->next) {
+	for (auto &e : exportRecords) {
 		ok = 0;
-//              syslog(LOG_NOTICE,"entry: network:%u.%u.%u.%u-%u.%u.%u.%u",(e->fromip>>24)&0xFF,(e->fromip>>16)&0xFF,(e->fromip>>8)&0xFF,e->fromip&0xFF,(e->toip>>24)&0xFF,(e->toip>>16)&0xFF,(e->toip>>8)&0xFF,e->toip&0xFF);
-		if (ip>=e->fromip && ip<=e->toip && version>=e->minversion && meta==e->meta) {
-//                      syslog(LOG_NOTICE,"ip and version ok");
+		if (ip >= e.fromip && ip <= e.toip && version >= e.minversion && meta == e.meta) {
 			// path check
 			if (meta) {     // no path in META
 				ok=1;
 			} else {
-				if (e->pleng==0) {      // root dir
-//                                      syslog(LOG_NOTICE,"rootdir entry (pleng:%u)",pleng);
-					if (pleng==0) {
-						ok=1;
-					} else if (e->alldirs) {
-						ok=1;
+				if (e.pleng == 0) {  // root dir
+					if (pleng == 0) {
+						ok = 1;
+					} else if (e.alldirs) {
+						ok = 1;
 					}
 				} else {
-//                                      syslog(LOG_NOTICE,"entry path: %s (pleng:%u)",e->path,e->pleng);
-					if (pleng==e->pleng && memcmp(p,e->path,pleng)==0) {
-						ok=1;
-					} else if (e->alldirs && pleng>e->pleng && p[e->pleng]=='/' && memcmp(p,e->path,e->pleng)==0) {
-						ok=1;
+					if (pleng == e.pleng && memcmp(p, e.path.data(), pleng) == 0) {
+						ok = 1;
+					} else if (e.alldirs && pleng > e.pleng && p[e.pleng] == '/' &&
+					           memcmp(p, e.path.data(), e.pleng) == 0) {
+						ok = 1;
 					}
 				}
 			}
-//                      if (ok) {
-//                              syslog(LOG_NOTICE,"path ok");
-//                      }
-			if (ok && e->needpassword) {
+
+			if (ok && e.needpassword) {
 				if (rndstate==0 || rndcode==NULL || passcode==NULL) {
 					ok=0;
 					nopass=1;
 				} else {
 					md5_init(&md5c);
 					md5_update(&md5c, rndcode, kDefaultMd5DigestSize);
-					md5_update(&md5c, e->passworddigest, kDefaultMd5DigestSize);
+					md5_update(&md5c, e.passworddigest.data(), kDefaultMd5DigestSize);
 					md5_update(&md5c, rndcode + kDefaultMd5DigestSize, kDefaultMd5DigestSize);
 					md5_final(entrydigest.data(), &md5c);
 					if (memcmp(entrydigest.data(),passcode,kDefaultMd5DigestSize)!=0) {
@@ -243,25 +194,29 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 			}
 		}
 		if (ok) {
-//                      syslog(LOG_NOTICE,"entry accepted");
-			if (f==NULL) {
-				f=e;
+			if (foundEntry == nullptr) {
+				foundEntry = &e;
 			} else {
-				if ((e->sesflags&SESFLAG_READONLY)==0 && (f->sesflags&SESFLAG_READONLY)!=0) {   // prefer rw to ro
-					f=e;
-				} else if (e->rootuid==0 && f->rootuid!=0) {    // prefer root not restricted to restricted
-					f=e;
-				} else if ((e->sesflags&SESFLAG_ALLCANCHANGEQUOTA)!=0 && (f->sesflags&SESFLAG_ALLCANCHANGEQUOTA)==0) {        // prefer lines with more privileges
-					f=e;
-				} else if (e->needpassword==1 && f->needpassword==0) {  // prefer lines with passwords
-					f=e;
-				} else if (e->pleng > f->pleng) {       // prefer more accurate path
-					f=e;
+				if ((e.sesflags & SESFLAG_READONLY) == 0 &&
+					(foundEntry->sesflags & SESFLAG_READONLY) != 0) {  // prefer rw to ro
+					foundEntry = &e;
+				} else if (e.rootuid == 0 &&
+						   foundEntry->rootuid != 0) {  // prefer root not restricted to restricted
+					foundEntry = &e;
+				} else if ((e.sesflags & SESFLAG_ALLCANCHANGEQUOTA) != 0 &&
+						   (foundEntry->sesflags & SESFLAG_ALLCANCHANGEQUOTA) ==
+							   0) {  // prefer lines with more privileges
+					foundEntry = &e;
+				} else if (e.needpassword == 1 &&
+						   foundEntry->needpassword == 0) {  // prefer lines with passwords
+					foundEntry = &e;
+				} else if (e.pleng > foundEntry->pleng) {  // prefer more accurate path
+					foundEntry = &e;
 				}
 			}
 		}
 	}
-	if (f==NULL) {
+	if (foundEntry == nullptr) {
 		if (nopass) {
 			if (rndstate==0 || rndcode==NULL || passcode==NULL) {
 				return SAUNAFS_ERROR_NOPASSWORD;
@@ -271,31 +226,16 @@ uint8_t exports_check(uint32_t ip, uint32_t version, uint8_t meta,
 		}
 		return SAUNAFS_ERROR_EACCES;
 	}
-	*sesflags = f->sesflags;
-	*rootuid = f->rootuid;
-	*rootgid = f->rootgid;
-	*mapalluid = f->mapalluid;
-	*mapallgid = f->mapallgid;
-	*mingoal = f->mingoal;
-	*maxgoal = f->maxgoal;
-	*mintrashtime = f->mintrashtime;
-	*maxtrashtime = f->maxtrashtime;
+	*sesflags = foundEntry->sesflags;
+	*rootuid = foundEntry->rootuid;
+	*rootgid = foundEntry->rootgid;
+	*mapalluid = foundEntry->mapalluid;
+	*mapallgid = foundEntry->mapallgid;
+	*mingoal = foundEntry->mingoal;
+	*maxgoal = foundEntry->maxgoal;
+	*mintrashtime = foundEntry->mintrashtime;
+	*maxtrashtime = foundEntry->maxtrashtime;
 	return SAUNAFS_STATUS_OK;
-}
-
-static void exports_freelist(exports *arec) {
-	exports *drec;
-	while (arec) {
-		drec = arec;
-		arec = arec->next;
-		if (drec->path) {
-			free((uint8_t *)(drec->path));
-		}
-		if (drec->passworddigest) {
-			free((uint8_t *)(drec->passworddigest));
-		}
-		free(drec);
-	}
 }
 
 // format:
@@ -665,80 +605,79 @@ static int exports_parseuidgid(char *maproot,uint32_t lineno,uint32_t *ruid,uint
 	return -1;      // unreachable
 }
 
-static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
+static int exports_parseoptions(char *opts, uint32_t lineno, ExportEntry &entry) {
 	char *p;
 	int o;
 	md5ctx ctx;
 
 	while ((p=exports_strsep(&opts,","))) {
 		o=0;
-//              syslog(LOG_WARNING,"option: %s",p);
 		switch (*p) {
 		case 'r':
 			if (strcmp(p,"ro")==0) {
-				arec->sesflags |= SESFLAG_READONLY;
+				entry.sesflags |= SESFLAG_READONLY;
 				o=1;
 			} else if (strcmp(p,"readonly")==0) {
-				arec->sesflags |= SESFLAG_READONLY;
+				entry.sesflags |= SESFLAG_READONLY;
 				o=1;
 			} else if (strcmp(p,"rw")==0) {
-				arec->sesflags &= ~SESFLAG_READONLY;
+				entry.sesflags &= ~SESFLAG_READONLY;
 				o=1;
 			} else if (strcmp(p,"readwrite")==0) {
-				arec->sesflags &= ~SESFLAG_READONLY;
+				entry.sesflags &= ~SESFLAG_READONLY;
 				o=1;
 			}
 			break;
 		case 'i':
 			if (strcmp(p,"ignoregid")==0) {
-				if (arec->meta) {
+				if (entry.meta) {
 					safs_pretty_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					arec->sesflags |= SESFLAG_IGNOREGID;
+					entry.sesflags |= SESFLAG_IGNOREGID;
 				}
 				o=1;
 			}
 			break;
 		case 'a':
 			if (strcmp(p,"allcanchangequota")==0) {
-				if (arec->meta) {
+				if (entry.meta) {
 					safs_pretty_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					arec->sesflags |= SESFLAG_ALLCANCHANGEQUOTA;
+					entry.sesflags |= SESFLAG_ALLCANCHANGEQUOTA;
 				}
 				o=1;
 			} else if (strcmp(p,"alldirs")==0) {
-				if (arec->meta) {
+				if (entry.meta) {
 					safs_pretty_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					arec->alldirs = 1;
+					entry.alldirs = 1;
 				}
 				o=1;
 			}
 			break;
 		case 'c':
 			if (strcmp(p,"caseinsensitive")==0) {
-				arec->sesflags |= SESFLAG_CASEINSENSITIVE;
+				entry.sesflags |= SESFLAG_CASEINSENSITIVE;
 				o=1;
 			}
 			break;
 		case 'd':
 			if (strcmp(p,"dynamicip")==0) {
-				arec->sesflags |= SESFLAG_DYNAMICIP;
+				entry.sesflags |= SESFLAG_DYNAMICIP;
 				o=1;
 			}
 			break;
 		case 'n':
 			if (strcmp(p,"nomasterpermcheck")==0) {
-				if (arec->meta) {
+				if (entry.meta) {
 					safs_pretty_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					arec->sesflags |= SESFLAG_NOMASTERPERMCHECK;
+					entry.sesflags |= SESFLAG_NOMASTERPERMCHECK;
 				}
 				o=1;
 			} else if (strcmp(p,"nonrootmeta")==0) {
-				if (arec->meta) {
-					arec->sesflags |= SESFLAG_NONROOTMETA;
+				if (entry.meta) {
+					entry.sesflags |= SESFLAG_NONROOTMETA;
 				} else {
 					safs_pretty_syslog(LOG_WARNING,"non-meta option ignored: %s",p);
 				}
@@ -748,26 +687,27 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 		case 'm':
 			if (strncmp(p,"maproot=",8)==0) {
 				o=1;
-				if (arec->meta) {
+				if (entry.meta) {
 					safs_pretty_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					if (exports_parseuidgid(p+8,lineno,&arec->rootuid,&arec->rootgid)<0) {
+					if (exports_parseuidgid(p + 8, lineno, &entry.rootuid, &entry.rootgid) < 0) {
 						return -1;
 					}
-					arec->rootredefined = 1;
+					entry.rootredefined = 1;
 				}
 			} else if (strncmp(p,"mapall=",7)==0) {
 				o=1;
-				if (arec->meta) {
+				if (entry.meta) {
 					safs_pretty_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					if (exports_parseuidgid(p+7,lineno,&arec->mapalluid,&arec->mapallgid)<0) {
+					if (exports_parseuidgid(p + 7, lineno, &entry.mapalluid, &entry.mapallgid) <
+					    0) {
 						return -1;
 					}
-					arec->sesflags |= SESFLAG_MAPALL;
+					entry.sesflags |= SESFLAG_MAPALL;
 				}
 			} else if (strncmp(p,"md5pass=",8)==0) {
-				arec->passworddigest = (uint8_t *)malloc(kDefaultMd5DigestSize);
+				entry.passworddigest.resize(kDefaultMd5DigestSize);
 				char *ptr = p+8;
 				uint32_t i=0;
 				o=1;
@@ -779,70 +719,70 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 					ptr = p+8;
 					for (i = 0; i < kDefaultMd5DigestSize; i++) {
 						if (*ptr>='0' && *ptr<='9') {
-							arec->passworddigest[i]=(*ptr-'0')<<4;
+							entry.passworddigest[i] = (*ptr - '0') << 4;
 						} else if (*ptr>='a' && *ptr<='f') {
-							arec->passworddigest[i]=(*ptr-'a'+10)<<4;
+							entry.passworddigest[i] = (*ptr - 'a' + 10) << 4;
 						} else {
-							arec->passworddigest[i]=(*ptr-'A'+10)<<4;
+							entry.passworddigest[i] = (*ptr - 'A' + 10) << 4;
 						}
 						ptr++;
 						if (*ptr>='0' && *ptr<='9') {
-							arec->passworddigest[i]+=(*ptr-'0');
+							entry.passworddigest[i] += (*ptr - '0');
 						} else if (*ptr>='a' && *ptr<='f') {
-							arec->passworddigest[i]+=(*ptr-'a'+10);
+							entry.passworddigest[i] += (*ptr - 'a' + 10);
 						} else {
-							arec->passworddigest[i]+=(*ptr-'A'+10);
+							entry.passworddigest[i] += (*ptr - 'A' + 10);
 						}
 						ptr++;
 					}
-					arec->needpassword=1;
+					entry.needpassword = 1;
 				} else {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect md5pass definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
 			} else if (strncmp(p,"minversion=",11)==0) {
 				o=1;
-				if (exports_parseversion(p+11,&arec->minversion)<0) {
+				if (exports_parseversion(p + 11, &entry.minversion) < 0) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect minversion definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
 			} else if (strncmp(p,"mingoal=",8)==0) {
 				o=1;
-				if (exports_parsegoal(p+8,&arec->mingoal)<0) {
+				if (exports_parsegoal(p + 8, &entry.mingoal) < 0) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect mingoal definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
-				if (arec->mingoal>arec->maxgoal) {
+				if (entry.mingoal > entry.maxgoal) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: mingoal>maxgoal in definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
 			} else if (strncmp(p,"maxgoal=",8)==0) {
 				o=1;
-				if (exports_parsegoal(p+8,&arec->maxgoal)<0) {
+				if (exports_parsegoal(p + 8, &entry.maxgoal) < 0) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect maxgoal definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
-				if (arec->mingoal>arec->maxgoal) {
+				if (entry.mingoal > entry.maxgoal) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: maxgoal<mingoal in definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
 			} else if (strncmp(p,"mintrashtime=",13)==0) {
 				o=1;
-				if (exports_parsetime(p+13,&arec->mintrashtime)<0) {
+				if (exports_parsetime(p + 13, &entry.mintrashtime) < 0) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect mintrashtime definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
-				if (arec->mintrashtime>arec->maxtrashtime) {
+				if (entry.mintrashtime > entry.maxtrashtime) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: mintrashtime>maxtrashtime in definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
 			} else if (strncmp(p,"maxtrashtime=",13)==0) {
 				o=1;
-				if (exports_parsetime(p+13,&arec->maxtrashtime)<0) {
+				if (exports_parsetime(p + 13, &entry.maxtrashtime) < 0) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect maxtrashtime definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
-				if (arec->mintrashtime>arec->maxtrashtime) {
+				if (entry.mintrashtime > entry.maxtrashtime) {
 					safs_pretty_syslog(LOG_WARNING,"sfsexports: maxtrashtime<mintrashtime in definition (%s) in line: %" PRIu32,p,lineno);
 					return -1;
 				}
@@ -850,11 +790,11 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 			break;
 		case 'p':
 			if (strncmp(p,"password=",9)==0) {
-				arec->passworddigest = (uint8_t *)malloc(kDefaultMd5DigestSize);
+				entry.passworddigest.resize(kDefaultMd5DigestSize);
 				md5_init(&ctx);
 				md5_update(&ctx,(uint8_t*)(p+9),strlen(p+9));
-				md5_final(arec->passworddigest,&ctx);
-				arec->needpassword=1;
+				md5_final(entry.passworddigest.data(), &ctx);
+				entry.needpassword = 1;
 				o=1;
 			}
 			break;
@@ -866,31 +806,10 @@ static int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 	return 0;
 }
 
-static int exports_parseline(char *line,uint32_t lineno,exports *arec) {
+static int exports_parseline(char *line, uint32_t lineno, ExportEntry &entry) {
 	char *net,*path;
 	char *p;
 	uint32_t pleng;
-
-	arec->pleng = 0;
-	arec->path = NULL;
-	arec->fromip = 0;
-	arec->toip = 0;
-	arec->minversion = 0;
-	arec->alldirs = 0;
-	arec->needpassword = 0;
-	arec->meta = 0;
-	arec->rootredefined = 0;
-	arec->sesflags = SESFLAG_READONLY;
-	arec->mingoal = GoalId::kMin;
-	arec->maxgoal = GoalId::kMax;
-	arec->mintrashtime = 0;
-	arec->maxtrashtime = UINT32_C(0xFFFFFFFF);
-	arec->rootuid = 999;
-	arec->rootgid = 999;
-	arec->mapalluid = 999;
-	arec->mapallgid = 999;
-	arec->next = NULL;
-	arec->passworddigest = nullptr;
 
 	p = line;
 	while (*p==' ' || *p=='\t') {
@@ -906,7 +825,7 @@ static int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	}
 	*p=0;
 	p++;
-	if (exports_parsenet(net,&arec->fromip,&arec->toip)<0) {
+	if (exports_parsenet(net, &entry.fromip, &entry.toip) < 0) {
 		safs_pretty_syslog(LOG_WARNING,"sfsexports: incorrect ip/network definition in line: %" PRIu32,lineno);
 		return -1;
 	}
@@ -917,9 +836,9 @@ static int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	if (p[0]=='.' && (p[1]==0 || p[1]==' ' || p[1]=='\t')) {
 		path = NULL;
 		pleng = 0;
-		arec->rootuid = 0;
-		arec->rootgid = 0;
-		arec->meta = 1;
+		entry.rootuid = 0;
+		entry.rootgid = 0;
+		entry.meta = 1;
 		p++;
 	} else {
 		while (*p=='/') {
@@ -937,52 +856,45 @@ static int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	}
 	if (*p==0) {
 		// no options - use defaults
-		arec->pleng = pleng;
+		entry.pleng = pleng;
 		if (pleng>0) {
-			arec->path = (const uint8_t*) malloc(pleng+1);
-			passert(arec->path);
-			memcpy((uint8_t*)(arec->path),path,pleng);
-			((uint8_t*)(arec->path))[pleng]=0;
-		} else {
-			arec->path = NULL;
+			entry.path.assign(reinterpret_cast<uint8_t *>(path),
+			                  reinterpret_cast<uint8_t *>(path) + pleng);
+			entry.path.push_back(0);
 		}
-
 		return 0;
 	}
 	while (*p==' ' || *p=='\t') {
 		p++;
 	}
 
-	if (exports_parseoptions(p,lineno,arec)<0) {
+	if (exports_parseoptions(p, lineno, entry) < 0) {
 		return -1;
 	}
 
-	if ((arec->sesflags&SESFLAG_MAPALL) && (arec->rootredefined==0)) {
-		arec->rootuid = arec->mapalluid;
-		arec->rootgid = arec->mapallgid;
+	if ((entry.sesflags & SESFLAG_MAPALL) && (entry.rootredefined == 0)) {
+		entry.rootuid = entry.mapalluid;
+		entry.rootgid = entry.mapallgid;
 	}
 
-	arec->pleng = pleng;
+	entry.pleng = pleng;
 	if (pleng>0) {
-		arec->path = (const uint8_t*) malloc(pleng+1);
-		passert(arec->path);
-		memcpy((uint8_t*)(arec->path),path,pleng);
-		((uint8_t*)(arec->path))[pleng]=0;
-	} else {
-		arec->path = NULL;
+		entry.path.assign(reinterpret_cast<uint8_t *>(path),
+		                  reinterpret_cast<uint8_t *>(path) + pleng);
+		entry.path.push_back(0);
 	}
 
 	return 0;
 }
 
-static void exports_loadexports(void) {
+static void exports_loadexports() {
 	const size_t MAX_LINE_LEN = 10000;
 	FILE *fd;
 	char linebuff[MAX_LINE_LEN];
 	uint32_t s,lineno;
-	exports *newexports,**netail,*arec;
+	std::vector<ExportEntry> newExports;
 
-	fd = fopen(ExportsFileName,"r");
+	fd = fopen(ExportsFileName.c_str(), "r");
 	if (!fd) {
 		if (errno == ENOENT) {
 			std::string err_msg = std::string("exports "
@@ -998,11 +910,7 @@ static void exports_loadexports(void) {
 			throw InitializeException(err_msg);
 		}
 	}
-	newexports = NULL;
-	netail = &newexports;
-	lineno = 1;
-	arec = (exports*) malloc(sizeof(exports));
-	passert(arec);
+
 	for (lineno = 1; fgets(linebuff,MAX_LINE_LEN,fd); lineno++) {
 		if (linebuff[0]=='#')
 			continue;
@@ -1016,32 +924,24 @@ static void exports_loadexports(void) {
 		}
 		if (s>0) {
 			linebuff[s]=0;
-			if (exports_parseline(linebuff,lineno,arec)>=0) {
-				*netail = arec;
-				netail = &(arec->next);
-				arec = (exports*) malloc(sizeof(exports));
-				passert(arec);
+			ExportEntry entry;
+			if (exports_parseline(linebuff, lineno, entry) >= 0) {
+				newExports.push_back(std::move(entry));
 			}
 		}
 	}
-	free(arec);
 	if (ferror(fd)) {
 		fclose(fd);
-		exports_freelist(newexports);
 		throw InitializeException(
 				std::string("can't read exports configuration file (") + ExportsFileName + ")");
 	}
 	fclose(fd);
-	exports_freelist(exports_records);
-	exports_records = newexports;
-	safs_pretty_syslog(LOG_INFO,"initialized exports from file %s", ExportsFileName);
+	exportRecords = std::move(newExports);
+	safs_pretty_syslog(LOG_INFO, "initialized exports from file %s", ExportsFileName.c_str());
 }
 
-static void exports_load(void) {
-	if (ExportsFileName) {
-		free(ExportsFileName);
-	}
-	ExportsFileName = cfg_getstr("EXPORTS_FILENAME", ETC_PATH "/sfsexports.cfg");
+static void exports_load() {
+	ExportsFileName = cfg_getstring("EXPORTS_FILENAME", ETC_PATH "/sfsexports.cfg");
 	exports_loadexports();
 }
 
@@ -1053,18 +953,14 @@ static void exports_reload(void) {
 	}
 }
 
-void exports_term(void) {
-	exports_freelist(exports_records);
-	if (ExportsFileName) {
-		free(ExportsFileName);
-	}
+void exports_term() {
+	exportRecords.clear();
 }
 
-int exports_init(void) {
-	exports_records = NULL;
-	ExportsFileName = NULL;
+int exports_init() {
+	exportRecords.clear();
 	exports_load();
-	if (exports_records == NULL) {
+	if (exportRecords.empty()) {
 		// File was empty
 		throw InitializeException(std::string("no exports defined in ") + ExportsFileName);
 	}
