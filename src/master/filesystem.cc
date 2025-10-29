@@ -117,7 +117,7 @@ static void metadataPollServe(const std::vector<pollfd> &pdesc) {
 			if (dumper->useMetarestore()) {
 				// master should recalculate its checksum
 				safs_pretty_syslog(LOG_WARNING, "dumping metadata failed, recalculating checksum");
-				gFilesystemOperations->fs_start_checksum_recalculation();
+				gFSOperations->startChecksumRecalculation();
 			}
 			unlink(kMetadataTmpFilename);
 		}
@@ -229,9 +229,7 @@ static void ensureChunkIdGenerator() {
 }
 
 static void initFSOperations() {
-	if (!gFilesystemOperations) {
-		gFilesystemOperations = std::make_unique<FilesystemOperationsBase>();
-	}
+	if (!gFSOperations) { gFSOperations = std::make_unique<FilesystemOperationsBase>(); }
 }
 
 /* executed in master mode */
@@ -439,7 +437,7 @@ void fs_reload(void) {
 
 void fs_unload() {
 	safs_pretty_syslog(LOG_WARNING, "unloading filesystem at %" PRIu64,
-	                   gFilesystemOperations->fs_getversion());
+	                   gFSOperations->getMetadataVersion());
 	restore_reset();
 	matoclserv_session_unload();
 	chunk_unload();

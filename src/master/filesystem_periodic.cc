@@ -550,7 +550,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
-		gFilesystemOperations->fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
+		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->trash.begin();
 
@@ -586,7 +586,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway
-		gFilesystemOperations->fs_changelog(ts, "PURGE(%" PRIiNode ")", node_id);
+		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->reserved.begin();
 

@@ -320,7 +320,7 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 		uint8_t goal_id, uint32_t min_server_version) {
 	static std::array<ChunkCreationHistory, GoalId::kMax + 1> history;
 	GetServersForNewChunk getter;
-	const Goal &goal(gFilesystemOperations->fs_get_goal_definition(goal_id));
+	const Goal &goal(gFSOperations->getGoalDefinition(goal_id));
 
 	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != KILL && eptr->totalspace > 0 &&

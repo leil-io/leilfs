@@ -262,7 +262,7 @@ void matontserv_get_path_type_inode(MatontservEntry *eptr, const uint8_t *data, 
 		return;
 	}
 
-	pathByInode = gFilesystemOperations->fs_full_path_by_inode(inode);
+	pathByInode = gFSOperations->fullPathByInode(inode);
 	responseData =
 	    matontserv_addpacket(eptr, MATONT_GET_PATH_TYPE_INODE,
 	                         sizeof(responseInode) + sizeof(node->type) + pathByInode.size() + 1);

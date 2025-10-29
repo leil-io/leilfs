@@ -243,7 +243,7 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 		                              entry.entryKey.resource, entry.limit);
 		gMetadata->quotaDatabase.removeEmpty(owner.ownerType, owner.ownerId);
 		gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
-		gFilesystemOperations->fs_changelog(
+		gFSOperations->changeLog(
 		    ts, "SETQUOTA(%c,%c,%c,%" PRIiNode ",%" PRIu64 ")",
 		    rigor_name[(int)entry.entryKey.rigor], resource_name[(int)entry.entryKey.resource],
 		    owner_name[(int)owner.ownerType], inode_t{owner.ownerId}, uint64_t{entry.limit});
