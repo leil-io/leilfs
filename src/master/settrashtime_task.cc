@@ -56,7 +56,7 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		}
 		(*stats_)[result] += 1;
 		if (result == kChanged) {
-			gFSOperations->fs_changelog(
+			gFSOperations->changeLog(
 			    ts, "SETTRASHTIME(%" PRIiNode ",%" PRIu32 ",%" PRIu32 ",%" PRIu8 ")", inode, uid_,
 			    trashtime_, smode_);
 		}

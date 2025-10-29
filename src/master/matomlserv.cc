@@ -448,7 +448,7 @@ void matomlserv_register_shadow(matomlserventry *eptr, const uint8_t *data, uint
 		return;
 	}
 
-	uint64_t myMedatataVersion = gFSOperations->fs_getversion();
+	uint64_t myMedatataVersion = gFSOperations->getMetadataVersion();
 	uint64_t replyVersion;
 	if (myMedatataVersion > shadowMetadataVersion
 			&& old_changes_head != nullptr
@@ -610,7 +610,7 @@ void matomlserv_changelog_apply_error(matomlserventry *eptr, const uint8_t *data
 		gShadowQueue.addRequest(eptr);
 		gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);
 		if (recvStatus == SAUNAFS_ERROR_BADMETADATACHECKSUM) {
-			gFSOperations->fs_start_checksum_recalculation();
+			gFSOperations->startChecksumRecalculation();
 		}
 	} else {
 		safs_silent_syslog(LOG_DEBUG, "master.mltoma_changelog_apply_error: delay");

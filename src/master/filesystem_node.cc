@@ -148,7 +148,7 @@ static uint64_t file_realsize(FSNodeFile *node, uint32_t nonzero_chunks, uint64_
 	(void)file_size;
 	return 0; // Doesn't really matter. Metarestore doesn't need this value
 #else
-	const Goal &goal = gFSOperations->fs_get_goal_definition(node->goal);
+	const Goal &goal = gFSOperations->getGoalDefinition(node->goal);
 
 	uint64_t full_size = 0;
 	for (const auto &slice : goal) {
@@ -1484,12 +1484,12 @@ uint8_t fsnodes_undel(uint32_t ts, FSNodeFile *node) {
 				assert(metadataserver::isMaster());
 #endif
 
-				gFSOperations->fs_changelog(
-				    ts,
-				    "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
-				    p->id, fsnodes_escape_name(name).c_str(),
-				    static_cast<char>(FSNodeType::kDirectory), n->mode & 07777, (uint32_t)0,
-				    (uint32_t)0, (uint32_t)0, n->id);
+				gFSOperations->changeLog(ts,
+				                         "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32
+				                         ",%" PRIu32 "):%" PRIiNode,
+				                         p->id, fsnodes_escape_name(name).c_str(),
+				                         static_cast<char>(FSNodeType::kDirectory), n->mode & 07777,
+				                         (uint32_t)0, (uint32_t)0, (uint32_t)0, n->id);
 			}
 			p = static_cast<FSNodeDirectory*>(n);
 			assert(n->type == FSNodeType::kDirectory);

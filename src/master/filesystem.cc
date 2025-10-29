@@ -117,7 +117,7 @@ static void metadataPollServe(const std::vector<pollfd> &pdesc) {
 			if (dumper->useMetarestore()) {
 				// master should recalculate its checksum
 				safs_pretty_syslog(LOG_WARNING, "dumping metadata failed, recalculating checksum");
-				gFSOperations->fs_start_checksum_recalculation();
+				gFSOperations->startChecksumRecalculation();
 			}
 			unlink(kMetadataTmpFilename);
 		}
@@ -437,7 +437,7 @@ void fs_reload(void) {
 
 void fs_unload() {
 	safs_pretty_syslog(LOG_WARNING, "unloading filesystem at %" PRIu64,
-	                   gFSOperations->fs_getversion());
+	                   gFSOperations->getMetadataVersion());
 	restore_reset();
 	matoclserv_session_unload();
 	chunk_unload();

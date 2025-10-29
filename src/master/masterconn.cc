@@ -335,7 +335,7 @@ void MasterConn::sendRegister() {
 #ifndef METALOGGER
 	// shadow master registration
 	uint64_t metadataVersion = 0;
-	if (state == State::kSynchronized) { metadataVersion = gFSOperations->fs_getversion(); }
+	if (state == State::kSynchronized) { metadataVersion = gFSOperations->getMetadataVersion(); }
 	auto request = mltoma::registerShadow::build(
 	    SAUNAFS_VERSHEX, cfgMasterTimeout * kMillisecondsInSecond, metadataVersion);
 	createPacket(std::move(request));
@@ -433,7 +433,7 @@ void MasterConn::onRegistered(const uint8_t *data, uint32_t length) {
 		masterVersion = incommingMasterVersion;
 		sendMatoClPort();
 		if ((state == State::kSynchronized) &&
-		    (gFSOperations->fs_getversion() != masterMetadataVersion)) {
+		    (gFSOperations->getMetadataVersion() != masterMetadataVersion)) {
 			forceMetadataDownload();
 		}
 	} else {
@@ -612,7 +612,7 @@ void MasterConn::downloadNext() {
 				if (state == State::kDownloading) {
 					try {
 						fs_loadall(false);
-						lastLogVersion = gFSOperations->fs_getversion() - 1;
+						lastLogVersion = gFSOperations->getMetadataVersion() - 1;
 						safs::log_info("synced at version = {}", lastLogVersion);
 						state = State::kSynchronized;
 					} catch (Exception &ex) {
