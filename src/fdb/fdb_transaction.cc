@@ -18,12 +18,20 @@
 
 #include "fdb/fdb_transaction.h"
 
+#include "kv/ifuture.h"
+
 namespace fdb {
 
 std::optional<kv::Value> FDBTransaction::get(const kv::Key &key) {
 	if (!tr_) { return std::nullopt; }
 
 	return tr_.get(key);
+}
+
+std::unique_ptr<kv::IFuture> FDBTransaction::getAsync(const kv::Key &key) {
+	if (!tr_) { return nullptr; }
+
+	return tr_.getAsync(key);
 }
 
 kv::GetRangeResult FDBTransaction::getRange(const kv::KeySelector &start,

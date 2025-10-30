@@ -24,8 +24,7 @@
 #include <memory>
 #include <string>
 
-#define FDB_API_VERSION 730
-
+#include <fdb/fdb_api_version.h>  // Needs to be included before foundationdb/fdb_c.h
 #include <foundationdb/fdb_c.h>
 #include <foundationdb/fdb_c_types.h>
 
@@ -143,6 +142,13 @@ public:
 	/// Gets a value for a given key.
 	/// @param key The key to retrieve the value for.
 	std::optional<kv::Value> get(const kv::Key &key, bool snapshot = false);
+
+	/// Gets a value for a given key asynchronously.
+	/// @param key The key to retrieve the value for.
+	/// @param snapshot Whether to use a snapshot for the transaction.
+	/// @return A future that will contain the value when ready.
+	/// @note The transaction must remain alive until the future's get() method is called.
+	std::unique_ptr<kv::IFuture> getAsync(const kv::Key &key, bool snapshot = false);
 
 	/// Gets a range of keys and values.
 	/// @param begin The starting key for the range.

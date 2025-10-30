@@ -33,13 +33,11 @@ public:
 	/// @param tr The fdb::Transaction to wrap.
 	FDBTransaction(fdb::Transaction &&_tr) : tr_(std::move(_tr)), error_(0) {}
 
-	// Non-copyable, but movable (maybe to a queue of transactions).
+	// Non-copyable, non-movable (base class is non-movable)
 	FDBTransaction(const FDBTransaction &) = delete;
 	FDBTransaction &operator=(const FDBTransaction &) = delete;
-
-	/// Move constructor/assignment operator.
-	FDBTransaction(FDBTransaction &&) = default;
-	FDBTransaction &operator=(FDBTransaction &&) = default;
+	FDBTransaction(FDBTransaction &&) = delete;
+	FDBTransaction &operator=(FDBTransaction &&) = delete;
 
 	/// Default destructor. The members are RAII or simple.
 	~FDBTransaction() = default;
@@ -47,6 +45,12 @@ public:
 	/// Retrieves the value for a given key.
 	/// @param key The key to retrieve the value for.
 	std::optional<kv::Value> get(const kv::Key &key) override;
+
+	/// Retrieves the value for a given key asynchronously.
+	/// @param key The key to retrieve the value for.
+	/// @return A future that will contain the value when ready.
+	/// @note The transaction must remain alive until the future's get() method is called.
+	std::unique_ptr<kv::IFuture> getAsync(const kv::Key &key) override;
 
 	/// Retrieves a range of keys and values
 	/// @param start The starting key for the range.
