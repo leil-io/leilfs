@@ -524,7 +524,7 @@ int uRaft::scanLocalInterfaces() {
 }
 
 std::string uRaft::nodeToString(int id) {
-	if (id < 0 || id >= (int)opt_.server.size()) {
+	if (id < 0 || id >= static_cast<int>(opt_.server.size())) {
 		return "Invalid node ID";
 	}
 

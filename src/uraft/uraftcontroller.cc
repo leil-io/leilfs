@@ -25,8 +25,8 @@ uRaftController::uRaftController(boost::asio::io_context &ios)
 	  cmd_timeout_timer_(ios) {
 	command_pid_  = -1;
 	command_type_ = kCmdNone;
-	force_demote_ = false;
-	force_promote_ = false;
+	is_demote_pending_ = false;
+	is_promote_pending_ = false;
 	node_alive_   = false;
 
 	opt_.check_node_status_period = 250;
@@ -71,9 +71,10 @@ void uRaftController::nodePromote() {
 	// Prevent concurrent transitions
 	if (command_pid_ >= 0) {
 		if (command_type_ == kCmdDemote) {
-			syslog(LOG_WARNING,
-			       "Promotion requested during demotion - will force after completion");
-			force_promote_ = true;
+			syslog(
+			    LOG_WARNING,
+			    "Promotion requested during demotion - will be started after completing demotion");
+			is_promote_pending_ = true;
 			return;
 		}
 		// Already promoting
@@ -96,9 +97,10 @@ void uRaftController::nodeDemote() {
 
 	if (command_pid_ >= 0) {
 		if (command_type_ == kCmdPromote) {
-			syslog(LOG_WARNING,
-			       "Demotion requested during promotion - will force after completion");
-			force_demote_ = true;
+			syslog(
+			    LOG_WARNING,
+			    "Demotion requested during promotion - will be started after completing promotion");
+			is_demote_pending_ = true;
 			return;
 		}
 		syslog(LOG_DEBUG, "Demotion already in progress (PID %d)", command_pid_);
@@ -166,10 +168,10 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
 
-			if (force_promote_) {
-				syslog(LOG_WARNING, "Starting forced switch to master mode");
+			if (is_promote_pending_) {
+				syslog(LOG_WARNING, "Starting pending promotion to master mode");
 				nodePromote();
-				force_promote_ = false;
+				is_promote_pending_ = false;
 			}
 		} else if (command_type_ == kCmdPromote) {
 			if (commandSucceeded) {
@@ -186,10 +188,10 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
 
-			if (force_demote_) {
-				syslog(LOG_WARNING, "Starting forced switch to slave mode");
+			if (is_demote_pending_) {
+				syslog(LOG_WARNING, "Starting pending demotion to slave mode");
 				nodeDemote();
-				force_demote_ = false;
+				is_demote_pending_ = false;
 			}
 		} else if (command_type_ == kCmdStatusDead) {
 			syslog(LOG_NOTICE, "Waiting for new metadata server instance to be available");
@@ -447,6 +449,13 @@ void uRaftController::stopFloatingIpManager() {
 	}
 }
 
+/// @brief Clean up dirty metadata state after failed promotion.
+///
+/// This prevents subsequent promotion attempts from failing due to leftover files from crashed or
+/// timed-out promotion operations.
+///
+/// \note Uses a 5-second timeout for the cleanup operation.
+/// \note Logs errors if cleanup fails but does not throw exceptions.
 void uRaftController::cleanupDirtyPromotion() {
 	std::vector<std::string> cleanup = {"saunafs-uraft-helper", "cleanup"};
 	std::string result;
@@ -456,6 +465,16 @@ void uRaftController::cleanupDirtyPromotion() {
 	}
 }
 
+/// @brief Handle failed promotion attempts and restore cluster consistency.
+///
+/// This ensures that if a node wins a Raft election but cannot complete the promotion to
+/// SaunaFS master (e.g., due to corrupted metadata, resource exhaustion, or script failures),
+/// the cluster can recover by electing a different node as leader.
+///
+/// Without this recovery mechanism, the cluster could enter a deadlock where:
+/// - The failed node remains Raft leader but cannot serve as master.
+/// - Other nodes cannot win elections due to Raft term constraints.
+/// - Manual intervention becomes necessary to restore cluster operation.
 void uRaftController::handlePromotionFailure() {
 	demoteLeader();
 	cleanupDirtyPromotion();

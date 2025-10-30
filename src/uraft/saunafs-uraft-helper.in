@@ -201,22 +201,14 @@ saunafs_cleanup_dirty_state() {
 
 	log "Attempting to clean up dirty metadata state"
 
-	# Remove temporary metadata file
+	# Remove temporary metadata file created during metadata dump, if it exists
 	if [[ -f "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" ]]; then
-		log "Removing ${SAUNAFS_DATA_DIR}/metadata.sfs.tmp"
-		rm -f "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" || {
-			log "Failed to remove metadata.sfs.tmp"
-			return $SAUNAFS_URAFT_ERROR
-		}
-	fi
-
-	# Release stale metadata lock
-	if [[ -f "${SAUNAFS_DATA_DIR}/.sfsmaster.lock" ]]; then
-		# Check if lock is stale (no process holding it)
-		if ! fuser "${SAUNAFS_DATA_DIR}/.sfsmaster.lock" &>/dev/null; then
-			log "Removing ${SAUNAFS_DATA_DIR}/.sfsmaster.lock file"
-			rm -f "${SAUNAFS_DATA_DIR}/.sfsmaster.lock" || {
-				log "Failed to remove stale lock file"
+		# Check if temporary metadata file is stale (no process holding it).
+		# This could represent a leftover from a crashed operation during metadata dump.
+		if ! fuser "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" &>/dev/null; then
+			log "Removing ${SAUNAFS_DATA_DIR}/metadata.sfs.tmp"
+			rm -f "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" || {
+				log "Failed to remove metadata.sfs.tmp"
 				return $SAUNAFS_URAFT_ERROR
 			}
 		fi
@@ -324,26 +316,30 @@ saunafs_drop_ip() {
 	load_config
 
 	# Check if floating IP exists before trying to drop it
-	if is_ip_present "${ipaddr}" "${iface}"; then
-		log "Dropping floating IP: ${ipaddr} from interface: ${iface}"
-		if ! sudo ip -f inet addr delete $ipaddr/$netmask dev $iface; then
-			log "Warning: Failed to drop floating IP: ${ipaddr}"
+	if [[ -n "$ipaddr" ]]; then
+		if is_ip_present "${ipaddr}" "${iface}"; then
+			log "Dropping floating IP: ${ipaddr} from interface: ${iface}"
+			if ! sudo ip -f inet addr delete $ipaddr/$netmask dev $iface; then
+				log "Warning: Failed to drop floating IP: ${ipaddr}"
+			else
+				log "Successfully dropped floating IP: ${ipaddr}"
+			fi
 		else
-			log "Successfully dropped floating IP: ${ipaddr}"
+			log "Floating IP ${ipaddr} not present - nothing to drop"
 		fi
-	elif [[ "$ipaddr" != "" ]]; then
-		log "Floating IP ${ipaddr} not present - nothing to drop"
 	fi
 
-	if [[ "$ipaddr2" != "" ]] && is_ip_present "$ipaddr2" "$iface2"; then
-		log "Dropping floating IP: ${ipaddr2} from interface: ${iface2}"
-		if ! sudo ip -f inet addr delete $ipaddr2/$netmask2 dev $iface2; then
-			log "Warning: Failed to drop floating IP: ${ipaddr2}"
+	if [[ -n "$ipaddr2" ]]; then
+		if is_ip_present "$ipaddr2" "$iface2"; then
+			log "Dropping floating IP: ${ipaddr2} from interface: ${iface2}"
+			if ! sudo ip -f inet addr delete $ipaddr2/$netmask2 dev $iface2; then
+				log "Warning: Failed to drop floating IP: ${ipaddr2}"
+			else
+				log "Successfully dropped floating IP: ${ipaddr2}"
+			fi
 		else
-			log "Successfully dropped floating IP: ${ipaddr2}"
+			log "Floating IP ${ipaddr2} not present - nothing to drop"
 		fi
-	elif [[ "$ipaddr2" != "" ]]; then
-		log "Floating IP ${ipaddr2} not present - nothing to drop"
 	fi
 }
 
