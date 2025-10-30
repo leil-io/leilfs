@@ -23,12 +23,26 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
-#include <shellapi.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <string>
 #include <vector>
 
 using saunafs_stat_t = struct _stat64;
+
+// Converts a UTF-8 string to a wide string (UTF-16) on Windows.
+inline std::wstring utf8_to_wstring(const std::string &str) {
+	int wlen = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+
+	if (wlen <= 0) { return L""; }
+
+	std::wstring wstr(wlen, L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], wlen);
+
+	if (!wstr.empty() && wstr.back() == L'\0') { wstr.pop_back(); }
+
+	return wstr;
+}
 
 // This class is a RAII guard to restore console code pages on destruction on
 // Windows.
