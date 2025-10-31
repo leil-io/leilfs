@@ -77,3 +77,7 @@ compile_commands.json
 # Test setup #
 ##############
 tests/hdd*
+
+tests/docker/build-image.sh
+
+.junie

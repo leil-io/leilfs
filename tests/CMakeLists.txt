@@ -1,9 +1,13 @@
 # Create automatically generated list of test cases
-
+set(GENERATED_HEADERS
+  ${CMAKE_CURRENT_BINARY_DIR}/test_suites.h
+  ${CMAKE_CURRENT_BINARY_DIR}/test_cases.h
+)
 if ( NOT ( ENABLE_POLONAISE AND POLONAISE_FOUND ) )
   set ( filter_out "|" "grep" "-v" "polonaise" )
 endif ()
-add_custom_target(list_of_test_cases
+add_custom_command(
+  OUTPUT ${GENERATED_HEADERS}
   COMMAND ls ${CMAKE_CURRENT_SOURCE_DIR}/test_suites
     | xargs -IXXX echo "class XXX : public BashTestingSuite {};"
     > test_suites.h.tmp
@@ -21,10 +25,6 @@ add_custom_target(list_of_test_cases
 
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   VERBATIM)
-set_source_files_properties(saunafs-tests.cc PROPERTIES
-  OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_cases.h
-  OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_suites.h)
-
 # Create constants.sh file
 configure_file(set_saunafs_constants.sh.in set_saunafs_constants.sh @ONLY)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/set_saunafs_constants.sh DESTINATION ${BIN_SUBDIR})
@@ -32,8 +32,7 @@ install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/set_saunafs_constants.sh DESTINATIO
 # Build executable running all the test cases
 include_directories(${CMAKE_CURRENT_BINARY_DIR}) # test_cases.h is located here
 add_definitions(-DTEST_DATA_PATH=${CMAKE_CURRENT_SOURCE_DIR})
-add_executable(saunafs-tests saunafs-tests.cc)
-add_dependencies(saunafs-tests list_of_test_cases)
+add_executable(saunafs-tests saunafs-tests.cc ${GENERATED_HEADERS})
 target_link_libraries(saunafs-tests GTest::gtest GTest::gtest_main)
 target_link_libraries(saunafs-tests ${Boost_SYSTEM_LIBRARY} ${Boost_FILESYSTEM_LIBRARY})
 install(TARGETS saunafs-tests RUNTIME DESTINATION ${BIN_SUBDIR})

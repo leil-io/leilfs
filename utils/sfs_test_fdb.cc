@@ -30,7 +30,11 @@
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
 #include "kv/ikv_engine.h"
+#include "kv/kv_utils.h"
+#include "master/kv_common_keys.h"
 #include "slogger/slogger.h"
+#include <string>
+#include "common/datapack.h"
 
 namespace {
 
@@ -131,42 +135,99 @@ void testGetRange(kv::IKVEngine *kvEngine) {
 }  // namespace
 
 int main(int argc, char **argv) {
-	if (argc > 2) { usage(argv[0]); }
-
 	// Initialize the logging system
 	safs::setup_logs();
 
-	// Default path
+	// Defaults
 	std::string clusterFile = "/etc/foundationdb/fdb.cluster";
+	std::vector<std::string> args;
+	for (int i = 1; i < argc; ++i) { args.emplace_back(argv[i]); }
 
-	if (argc == 2) { clusterFile = std::string(argv[1]); }
+	if (!args.empty()) { clusterFile = args[0]; args.erase(args.begin()); }
+
+	if (clusterFile.empty()) { usage(argv[0]); }
 
 	safs::log_info("Starting FoundationDB test application. Using cluster file: {}", clusterFile);
 
-	// Create the FoundationDB context, which selects the API version, initializes the network
-	// thread and connects to the cluster specified by the cluster file.
-	// The object must survive until the end of the program.
 	auto fdbContext = fdb::FDBContext::create({clusterFile});
-
 	if (!fdbContext) {
 		safs::log_err("Failed to create FDBContext: cluster: {}", clusterFile);
 		return 1;
 	}
-
-	// Obtain the connection to the FoundationDB database.
 	std::shared_ptr<fdb::DB> fdbDB = fdbContext->getDB();
-
 	if (!fdbDB) {
 		safs::log_err("Failed to connect to FoundationDB cluster at {}", clusterFile);
 		return 1;
 	}
-
-	// Create the key-value engine using the FoundationDB database instance.
-	// This engine will be used to perform read and write operations through transactions.
 	auto kvEngine = std::make_unique<fdb::FDBKVEngine>(fdbDB);
 
-	testSetAndGet(kvEngine.get());
-	testGetRange(kvEngine.get());
+	// If no subcommand provided, run basic connectivity tests (backward compatible)
+	if (args.empty()) {
+		testSetAndGet(kvEngine.get());
+		testGetRange(kvEngine.get());
+		return 0;
+	}
 
-	return 0;
+	// Subcommands
+	const std::string cmd = args[0];
+	if (cmd == "get") {
+		if (args.size() != 2) { std::cerr << "get requires <key>\n"; return 2; }
+		kv::Key key(args[1].begin(), args[1].end());
+		auto tr = kvEngine->createReadWriteTransaction();
+		auto val = tr->get(key);
+		if (!val) { return 3; }
+		std::cout << std::string(val->begin(), val->end()) << std::endl;
+		return 0;
+	} else if (cmd == "set") {
+		if (args.size() != 3) { std::cerr << "set requires <key> <value>\n"; return 2; }
+		kv::Key key(args[1].begin(), args[1].end());
+		kv::Value value(args[2].begin(), args[2].end());
+		auto tr = kvEngine->createReadWriteTransaction();
+		tr->set(key, value);
+		return tr->commit() ? 0 : 4;
+	} else if (cmd == "get-meta-version") {
+		auto tr = kvEngine->createReadWriteTransaction();
+		auto val = tr->get(kv::toBytes(std::string(kMetaVersionKey)));
+		if (!val) { return 3; }
+		// FoundationDB atomic-add values are defined little-endian; read strictly LE
+		uint64_t v = kv::fromBytesLE<uint64_t>(*val);
+		std::cout << v << std::endl;
+		return 0;
+	} else if (cmd == "get-next-session") {
+		auto tr = kvEngine->createReadWriteTransaction();
+		auto val = tr->get(kv::toBytes(std::string(kMetaNextSessionKey)));
+		if (!val) { return 3; }
+		// Read strictly LE for consistency
+		uint32_t s = kv::fromBytesLE<uint32_t>(*val);
+		std::cout << s << std::endl;
+		return 0;
+	} else if (cmd == "seed-changelog") {
+		// Usage: seed-changelog <version> <payload> [<version> <payload> ...]
+		if (args.size() < 3 || (args.size() - 1) % 2 != 0) {
+			std::cerr << "seed-changelog requires pairs of <version> <payload>\n";
+			return 2;
+		}
+		auto tr = kvEngine->createReadWriteTransaction();
+		for (size_t i = 1; i + 1 < args.size(); i += 2) {
+			uint64_t ver = std::stoull(args[i]);
+			std::string payload = args[i + 1];
+			kv::Key key = kv::encodeKeyBE(std::string(kChangelogPrefix), ver);
+			kv::Value value = kv::toBytes(payload);
+			tr->set(key, value);
+		}
+		return tr->commit() ? 0 : 4;
+	} else if (cmd == "dump-meta-version-hex") {
+		auto tr = kvEngine->createReadWriteTransaction();
+		auto val = tr->get(kv::toBytes(std::string(kMetaVersionKey)));
+		if (!val) { return 3; }
+		static const char *kHex = "0123456789ABCDEF";
+		std::string hex;
+		hex.reserve(val->size() * 2);
+		for (auto b : *val) { hex.push_back(kHex[(b >> 4) & 0xF]); hex.push_back(kHex[b & 0xF]); }
+		std::cout << hex << std::endl;
+		return 0;
+	} else {
+		std::cerr << "Unknown command: " << cmd << "\n";
+		return 2;
+	}
 }

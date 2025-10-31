@@ -1,0 +1,193 @@
+{
+    "version": 10,
+    "$schema": "https://cmake.org/cmake/help/latest/_downloads/3e2d73bff478d88a7de0de736ba5e361/schema.json",
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 23,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "dev-common",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_CXX_EXTENSIONS": "OFF",
+                "CMAKE_CXX_STANDARD": "23",
+                "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+                "CMAKE_C_EXTENSIONS": "OFF",
+                "CMAKE_C_STANDARD": "23",
+                "CMAKE_C_STANDARD_REQUIRED": "ON",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CODE_COVERAGE": "OFF",
+                "ENABLE_CLIENT_LIB": "ON",
+                "ENABLE_DOCS": "ON",
+                "ENABLE_FOUNDATIONDB": "ON",
+                "ENABLE_INODE64": "OFF",
+                "ENABLE_NFS_GANESHA": "ON",
+                "ENABLE_POLONAISE": "OFF",
+                "ENABLE_TESTS": "ON",
+                "ENABLE_URAFT": "ON",
+                "ENABLE_WERROR": "ON",
+                "GSH_CAN_HOST_LOCAL_FS": "ON",
+                "SAUNAFS_TEST_POINTER_OBFUSCATION": "ON"
+            }
+        },
+        {
+            "name": "dev-strict-flags",
+            "hidden": true,
+            "environment": {
+                "CXXFLAGS": "-g -O1 -Wall -Wextra -Wpedantic -Wunused -Werror -fno-omit-frame-pointer"
+            }
+        },
+        {
+            "name": "dev-stricter-flags",
+            "hidden": true,
+            "environment": {
+                "CXXFLAGS": "-Wconversion -Wsign-conversion -Wshadow -fsanitize=address,undefined ",
+                "LDFLAGS": "-fsanitize=address,undefined"
+            }
+        },
+        {
+            "name": "dev-makefiles",
+            "hidden": true,
+            "displayName": "Unix Makefiles",
+            "generator": "Unix Makefiles"
+        },
+        {
+            "name": "dev-ninja-multi",
+            "hidden": true,
+            "displayName": "Ninja Multi-Config",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_CROSS_CONFIGS": "all"
+            }
+        },
+        {
+            "name": "dev-ninja",
+            "hidden": true,
+            "generator": "Ninja"
+        },
+        {
+            "name": "dev-vcpkg",
+            "hidden": true,
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "environment": {
+                "VCPKG_ROOT": "$penv{HOME}/vcpkg",
+                "PATH": "$env{VCPKG_ROOT}:$penv{PATH}"
+            }
+        },
+        {
+            "name": "dev-clang",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "dev-gcc",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
+            "name": "dev-debug",
+            "hidden": true,
+            "displayName": "Debug Config",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "dev-relwithdebinfo",
+            "hidden": true,
+            "displayName": "RelWithDebInfo Config",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        },
+        {
+            "name": "dev-release",
+            "hidden": true,
+            "displayName": "Release Config",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "dev-windows",
+            "hidden": true,
+            "displayName": "Windows-only configuration",
+            "description": "This build is only available on Windows",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "dev-xcode",
+            "hidden": true,
+            "generator": "Xcode",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "dev-default",
+            "displayName": "Default Dev Config",
+            "inherits": [
+                "dev-ninja-multi",
+                "dev-gcc",
+                "dev-relwithdebinfo",
+                "dev-vcpkg",
+                "dev-common"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "dev-default",
+            "displayName": "Default Dev Build",
+            "configurePreset": "dev-default"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "dev-default",
+            "displayName": "Default Dev Test",
+            "configurePreset": "dev-default",
+            "output": { "outputOnFailure": true },
+            "execution": { "noTestsAction": "error", "stopOnFailure": true },
+            "filter": {
+                "include": { "name": "*" }
+            }
+        }
+    ],
+    "packagePresets": [
+        {
+            "name": "dev-default",
+            "displayName": "Default Dev Package",
+            "configurePreset": "dev-default",
+            "generators": ["DEB", "RPM", "TGZ"]
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "dev-default",
+            "displayName": "Default Dev Workflow",
+            "steps": [
+                { "type":  "configure", "name": "dev-default" },
+                { "type":  "build", "name": "dev-default" },
+                { "type":  "test", "name": "dev-default" },
+                { "type":  "package", "name": "dev-default" }
+            ]
+        }
+    ]
+}

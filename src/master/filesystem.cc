@@ -36,6 +36,7 @@
 #include "master/datacachemgr.h"
 #include "master/deferred_metadata_dump_task.h"
 #include "master/filesystem_checksum_updater.h"
+#include "master/filesystem_freenode.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
@@ -447,6 +448,19 @@ void fs_unload() {
 }
 
 int fs_init(bool doLoad) {
+	// // Ensure metadata backend exists for unit tests or direct fs_init usage
+	// if (gMetadataBackend == nullptr) {
+	// 	try {
+	// 		gMetadataBackend = std::make_unique<MetadataBackendFile>();
+	// 		gMetadataBackend->init();
+	// 		if (!gInodeIdGenerator) {
+	// 			gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
+	// 		}
+	// 	} catch (const std::exception &e) {
+	// 		safs::log_err("Failed to initialize metadata backend in fs_init: {}", e.what());
+	// 		throw;
+	// 	}
+	// }
 	try {
 		fs_read_config_file();
 	} catch (Exception &ex) {

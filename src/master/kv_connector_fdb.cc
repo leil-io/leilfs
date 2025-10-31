@@ -67,8 +67,23 @@ uint64_t KVConnectorFDB::get64bitBE(const kv::Key &key, uint64_t defaultValue) {
 	auto value = transaction->get(key);
 
 	if (value.has_value()) {
-		const uint8_t *data = value.value().data();
-		return get64bit(&data);
+		// Tolerate mixed encodings during transition: try BE and LE, prefer smaller non-zero
+		uint64_t be = 0;
+		uint64_t le = 0;
+		if (value->size() >= sizeof(uint64_t)) {
+			const uint8_t *data = value->data();
+			be = get64bit(&data);
+			le = kv::fromBytesLE<uint64_t>(*value);
+		} else {
+			le = kv::fromBytesLE<uint64_t>(*value);
+		}
+		uint64_t chosen = 0;
+		if (le != 0 && (be == 0 || le < be)) {
+			chosen = le;
+		} else {
+			chosen = be;
+		}
+		return chosen == 0 ? defaultValue : chosen;
 	}
 
 	return defaultValue;
@@ -79,10 +94,23 @@ uint32_t KVConnectorFDB::get32bitBE(const kv::Key &key, uint32_t defaultValue) {
 	auto value = transaction->get(key);
 
 	if (value.has_value()) {
-		uint32_t result;  // NOLINT(cppcoreguidelines-init-variables)
-		const uint8_t *data = value.value().data();
-		get32bit(&data, result);
-		return result;
+		// Tolerate mixed encodings during transition: try BE and LE, prefer smaller non-zero
+		uint32_t be = 0;
+		uint32_t le = 0;
+		if (value->size() >= sizeof(uint32_t)) {
+			const uint8_t *data = value->data();
+			get32bit(&data, be);
+			le = kv::fromBytesLE<uint32_t>(*value);
+		} else {
+			le = kv::fromBytesLE<uint32_t>(*value);
+		}
+		uint32_t chosen = 0;
+		if (le != 0 && (be == 0 || le < be)) {
+			chosen = le;
+		} else {
+			chosen = be;
+		}
+		return chosen == 0 ? defaultValue : chosen;
 	}
 
 	return defaultValue;
@@ -121,8 +149,8 @@ void KVConnectorFDB::onDetainedRemoved(inode_t inodeId) {
 void KVConnectorFDB::onNextSessionIdChanged(uint32_t /*oldSessionId*/, uint32_t newSessionId) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
 	kv::Key sessionKey{kv::toBytes(gMetadata->nextSessionId().getName())};
-	kv::Value sessionValue;
-	serialize(sessionValue, newSessionId);
+	// Store NEXT_SESSION in little-endian to align with FDB atomic add semantics
+	kv::Value sessionValue = kv::toBytesLE<uint32_t>(newSessionId);
 	transaction->set(sessionKey, sessionValue);
 
 	if (!transaction->commit()) { safs::log_err("Failed to store session ID: {}", newSessionId); }
@@ -130,10 +158,13 @@ void KVConnectorFDB::onNextSessionIdChanged(uint32_t /*oldSessionId*/, uint32_t 
 
 void KVConnectorFDB::onChangelogEvent(const ChangelogEvent &event) {
 	static kv::Key versionKey{kv::toBytes(kMetaVersionKey)};
-	kv::Value serializedVersion;
-	serialize(serializedVersion, event.version);
+	kv::Value serializedVersion = kv::toBytesBE<uint64_t>(event.version);
 	auto transaction = kvEngine_->createReadWriteTransaction();
-	transaction->set(versionKey, serializedVersion);
+	// Legacy semantics: META_VERSION stores the next expected version (last applied + 1)
+	uint64_t nextVersion = event.version + 1;
+	// Store META_VERSION in little-endian for atomic-friendly semantics
+	kv::Value serializedNextVersion = kv::toBytesLE<uint64_t>(nextVersion);
+	transaction->set(versionKey, serializedNextVersion);
 
 	transaction->set(kv::encodeKeyBE(kChangelogPrefix, event.version), kv::toBytes(event.entry));
 	if (!transaction->commit()) {

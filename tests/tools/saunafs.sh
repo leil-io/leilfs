@@ -457,7 +457,7 @@ add_metadata_server_() {
 	get_next_port_number masterserver_matocl_port
 	get_next_port_number masterserver_matocs_port
 	get_next_port_number masterserver_matots_port
-	mkdir "$masterserver_data_path"
+	mkdir -p "$masterserver_data_path"
 	create_sfsmaster_master_cfg_ >"$masterserver_master_cfg"
 	create_sfsmaster_shadow_cfg_ >"$masterserver_shadow_cfg"
 

@@ -109,4 +109,6 @@ vcpkg_installed
 
 # CMake #
 ##############
-CMakeUserPresets.json
+CMakeUserPresets.json.old.bak
+
+.junie

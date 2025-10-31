@@ -43,6 +43,8 @@ if(DB_FOUND)
   target_link_libraries(master ${DB_LIBRARY})
 endif()
 target_link_libraries(master fdb)
+## Ensure new tests added post-configure are compiled without forcing a reconfigure.
+#list(APPEND MASTER_TESTS ${CMAKE_CURRENT_SOURCE_DIR}/changelog_equivalence_unittest.cc)
 create_unittest(master ${MASTER_TESTS})
 link_unittest(master master sfscommon)
 
