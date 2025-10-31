@@ -24,6 +24,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <cstdint>
 #include <shellapi.h>
 #include <string>
 #include <vector>
@@ -42,6 +43,22 @@ inline std::wstring utf8_to_wstring(const std::string &str) {
 	if (!wstr.empty() && wstr.back() == L'\0') { wstr.pop_back(); }
 
 	return wstr;
+}
+
+inline void print_unicode_console(const std::wstring &msg) {
+	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD written;
+	if (hConsole && hConsole != INVALID_HANDLE_VALUE) {
+		WriteConsoleW(hConsole, msg.c_str(), (DWORD)msg.size(), &written, nullptr);
+	}
+}
+
+inline void print_unicode_console_error(const std::wstring &msg) {
+	HANDLE hConsole = GetStdHandle(STD_ERROR_HANDLE);
+	DWORD written;
+	if (hConsole && hConsole != INVALID_HANDLE_VALUE) {
+		WriteConsoleW(hConsole, msg.c_str(), (DWORD)msg.size(), &written, nullptr);
+	}
 }
 
 // This class is a RAII guard to restore console code pages on destruction on
