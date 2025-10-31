@@ -21,6 +21,7 @@
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
+#include "kv/ifuture.h"
 #include "kv/itransaction.h"
 
 #include <gtest/gtest.h>
@@ -172,4 +173,53 @@ TEST_F(FDBKVEngineTest, AtomicAdd) {
 	    << "Final value does not match expected value after atomicAdd.";
 
 	safs::log_info("Atomic add successful: final value for 'count' is {}", finalValue);
+}
+
+TEST_F(FDBKVEngineTest, GetAsync) {
+	std::string_view keyStr = "async_key";
+	std::string_view valueStr = "async_value";
+	auto key = kv::toBytes(keyStr);
+	auto value = kv::toBytes(valueStr);
+
+	// First, set the value using a synchronous transaction
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->set(key, value);
+		ASSERT_TRUE(transaction->commit()) << "Failed to commit transaction for async test.";
+	}
+
+	// Now retrieve it asynchronously
+	auto transaction = kvEngine->createReadWriteTransaction();
+	auto future = transaction->getAsync(key);
+
+	ASSERT_TRUE(future != nullptr) << "Failed to create async future.";
+
+	// Retrieve the value from the future
+	int error = 0;
+	auto retrievedValue = future->get(&error);
+
+	ASSERT_EQ(error, 0) << "Error occurred while getting async value: " << error;
+	ASSERT_TRUE(retrievedValue.has_value()) << "Value for key '" << keyStr << "' not found.";
+	ASSERT_EQ(retrievedValue.value(), value)
+	    << "Retrieved async value does not match expected value.";
+
+	safs::log_info("Async value retrieved successfully: {} = {}", keyStr, valueStr);
+
+	// Test retrieving a non-existing key
+	std::string_view nonExistentKeyStr = "non_existent_key";
+	auto nonExistentKey = kv::toBytes(nonExistentKeyStr);
+
+	auto transaction2 = kvEngine->createReadWriteTransaction();
+	auto futureMissing = transaction2->getAsync(nonExistentKey);
+
+	ASSERT_TRUE(futureMissing != nullptr) << "Failed to create async future for non-existent key.";
+
+	int error2 = 0;
+	auto retrievedMissing = futureMissing->get(&error2);
+
+	ASSERT_EQ(error2, 0) << "Error occurred while getting non-existent key: " << error2;
+	ASSERT_FALSE(retrievedMissing.has_value()) << "Non-existent key should not have a value.";
+
+	safs::log_info("Non-existent key test passed: key '{}' correctly returned no value",
+	               nonExistentKeyStr);
 }

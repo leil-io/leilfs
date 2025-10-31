@@ -24,6 +24,7 @@
 
 #include <foundationdb/fdb_c_types.h>
 
+#include "fdb/fdb_future.h"
 #include "slogger/slogger.h"
 
 namespace fdb {
@@ -106,6 +107,15 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	}
 
 	return value;
+}
+
+std::unique_ptr<kv::IFuture> Transaction::getAsync(const kv::Key &key, bool snapshot) {
+	if (!tr_) { return nullptr; }
+
+	FDBFuture *future = fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()),
+	                                         static_cast<fdb_bool_t>(snapshot));
+
+	return std::make_unique<FDBFutureValue>(future);
 }
 
 kv::GetRangeResult Transaction::getRange(

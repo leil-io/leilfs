@@ -20,12 +20,15 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include "kv/kv_utils.h"
 
 namespace kv {
+
+class IFuture;
 
 /// Represents a key-value pair in the key-value store.
 /// Keys and values are stored as vectors of bytes.
@@ -80,9 +83,21 @@ class IReadOnlyTransaction {
 public:
 	virtual ~IReadOnlyTransaction() = default;
 
+	// Non-copyable, non-movable
+	IReadOnlyTransaction(const IReadOnlyTransaction &) = delete;
+	IReadOnlyTransaction &operator=(const IReadOnlyTransaction &) = delete;
+	IReadOnlyTransaction(IReadOnlyTransaction &&) = delete;
+	IReadOnlyTransaction &operator=(IReadOnlyTransaction &&) = delete;
+
 	/// Retrieves the value for a given key.
 	/// @param key The key to retrieve the value for.
 	virtual std::optional<Value> get(const Key &key) = 0;
+
+	/// Retrieves the value for a given key asynchronously.
+	/// @param key The key to retrieve the value for.
+	/// @return A future that will contain the value when ready.
+	/// @note The transaction must remain alive until the future's get() method is called.
+	virtual std::unique_ptr<IFuture> getAsync(const Key &key) = 0;
 
 	/// Retrieves a range of keys and values
 	/// @param start The starting key for the range.
@@ -90,6 +105,9 @@ public:
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	virtual GetRangeResult getRange(const KeySelector &start, const KeySelector &end,
 	                                int limit = kDefaultGetRangeLimit) = 0;
+
+protected:
+	IReadOnlyTransaction() = default;
 };
 
 /// Interface for read-write transactions in the key-value store.
@@ -97,6 +115,12 @@ public:
 class IReadWriteTransaction : public IReadOnlyTransaction {
 public:
 	virtual ~IReadWriteTransaction() override = default;
+
+	// Non-copyable, non-movable (also removes the clang-tidy warning)
+	IReadWriteTransaction(const IReadWriteTransaction &) = delete;
+	IReadWriteTransaction &operator=(const IReadWriteTransaction &) = delete;
+	IReadWriteTransaction(IReadWriteTransaction &&) = delete;
+	IReadWriteTransaction &operator=(IReadWriteTransaction &&) = delete;
 
 	/// Sets a value for a given key.
 	/// @param key The key to set the value for.
@@ -117,6 +141,9 @@ public:
 
 	/// Returns the committed version of the transaction, if available.
 	virtual std::optional<int64_t> getCommittedVersion() const = 0;
+
+protected:
+	IReadWriteTransaction() = default;
 };
 
 }  // namespace kv
