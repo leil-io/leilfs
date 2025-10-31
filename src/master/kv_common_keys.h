@@ -30,6 +30,16 @@ inline constexpr std::string_view kMetaNextSessionKey = "META_NEXT_SESSION";
 inline constexpr std::string_view kInodeRangeStartKey = "META_NEXT_INODE_RANGE";
 inline constexpr std::string_view kChunkRangeStartKey = "META_NEXT_CHUNK_RANGE";
 
+// Keys for filesystem statistics
+inline constexpr std::string_view kMetaNodesKey = "META_NODES";
+inline constexpr std::string_view kMetaTrashSpaceKey = "META_TRASH_SPACE";
+inline constexpr std::string_view kMetaReservedSpaceKey = "META_RESERVED_SPACE";
+inline constexpr std::string_view kMetaTrashNodesKey = "META_TRASH_NODES";
+inline constexpr std::string_view kMetaReservedNodesKey = "META_RESERVED_NODES";
+inline constexpr std::string_view kMetaFileNodesKey = "META_FILE_NODES";
+inline constexpr std::string_view kMetaDirNodesKey = "META_DIR_NODES";
+inline constexpr std::string_view kMetaLinkNodesKey = "META_LINK_NODES";
+
 // Metadata sections prefixes
 inline constexpr std::string_view kNodeKeyPrefix = "NODE_";    // Section NODE 1.0
 inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";    // Section EDGE 1.0
