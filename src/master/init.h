@@ -75,31 +75,31 @@ inline int metadata_backend_init() {
 
 /// Functions to call before normal startup
 inline const std::vector<RunTab> earlyRunTabs = {
-    RunTab{metadataserver::personality_validate, "validate personality"}};
+    RunTab{.function = metadataserver::personality_validate, .name = "validate personality"}};
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
-    RunTab{prometheus_init, "prometheus module"},
+    RunTab{.function = prometheus_init, .name = "prometheus module"},
     // has to be first
-    RunTab{hstorage_init, "name storage"},
+    RunTab{.function = hstorage_init, .name = "name storage"},
     // has to be second
-    RunTab{metadataserver::personality_init, "personality"},
-    RunTab{rnd_init, "random generator"},
+    RunTab{.function = metadataserver::personality_init, .name = "personality"},
+    RunTab{.function = rnd_init, .name = "random generator"},
     // has to be before 'fs_init' and 'matoclserv_networkinit'
-    RunTab{dcm_init, "data cache manager"},
+    RunTab{.function = dcm_init, .name = "data cache manager"},
     // has to be before 'fs_init'
-    RunTab{matoclserv_sessions_init, "load stored sessions"},
-    RunTab{exports_init, "exports manager"},
-    RunTab{topology_init, "net topology module"},
-    RunTab{metadata_backend_init, "metadata backend initialization"},
+    RunTab{.function = matoclserv_sessions_init, .name = "load stored sessions"},
+    RunTab{.function = exports_init, .name = "exports manager"},
+    RunTab{.function = topology_init, .name = "net topology module"},
+    RunTab{.function = metadata_backend_init, .name = "metadata backend initialization"},
     // the lambda is used to select the correct fs_init overload
-    RunTab{[]() { return fs_init(); }, "file system manager"},
-    RunTab{chartsdata_init, "charts module"},
-    RunTab{masterconn_init, "communication with master server"},
-    RunTab{matomlserv_init, "communication with metalogger"},
-    RunTab{matocsserv_init, "communication with chunkserver"},
-    RunTab{matontserv_init, "communication with notifier"},
-    RunTab{matoclserv_network_init, "communication with clients"}};
+    RunTab{.function = []() { return fs_init(); }, .name = "file system manager"},
+    RunTab{.function = chartsdata_init, .name = "charts module"},
+    RunTab{.function = masterconn_init, .name = "communication with master server"},
+    RunTab{.function = matomlserv_init, .name = "communication with metalogger"},
+    RunTab{.function = matocsserv_init, .name = "communication with chunkserver"},
+    RunTab{.function = matontserv_init, .name = "communication with notifier"},
+    RunTab{.function = matoclserv_network_init, .name = "communication with clients"}};
 
 /// Functions to call delayed after the initialization is correct
 inline const std::vector<RunTab> lateRunTabs = {};
