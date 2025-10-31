@@ -70,8 +70,10 @@ public:
 	FileLocks flockLocks;
 	FileLocks posixLocks;
 
-	inode_t nodes{};
 	uint64_t metadataVersion{};
+
+	// FS level statistics
+	inode_t nodes{};
 	uint64_t trashSpace{};
 	uint64_t reservedSpace{};
 	inode_t trashNodes{};
