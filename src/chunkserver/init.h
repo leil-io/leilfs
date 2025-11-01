@@ -35,17 +35,18 @@ inline const std::vector<RunTab> earlyRunTabs = {};
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
-    RunTab{rnd_init, "random generator"},
-    RunTab{MemoryManager::init, "memory manager"},
-    RunTab{initDiskManager, "disk manager"},  // Always before "plugin manager"
-    RunTab{loadPlugins, "plugin manager"}, RunTab{hddInit, "hdd space manager"},
+    RunTab{.function = rnd_init, .name = "random generator"},
+    RunTab{.function = MemoryManager::init, .name = "memory manager"},
+    RunTab{.function = initDiskManager, .name = "disk manager"},  // Always before "plugin manager"
+    RunTab{.function = loadPlugins, .name = "plugin manager"},
+    RunTab{.function = hddInit, .name = "hdd space manager"},
     // Has to be before "masterconn"
-    RunTab{mainNetworkThreadInit, "main server module"},
-    RunTab{masterconn_init_threads, "master connection module - threads"},
-    RunTab{masterconn_init, "master connection module"},
-    RunTab{chartsdata_init, "charts module"}};
+    RunTab{.function = mainNetworkThreadInit, .name = "main server module"},
+    RunTab{.function = masterconn_init_threads, .name = "master connection module - threads"},
+    RunTab{.function = masterconn_init, .name = "master connection module"},
+    RunTab{.function = chartsdata_init, .name = "charts module"}};
 
 /// Functions to call delayed after the initialization is correct
 inline const std::vector<RunTab> lateRunTabs = {
-    RunTab{hddLateInit, "hdd space manager - threads"},
-    RunTab{mainNetworkThreadInitThreads, "main server module - threads"}};
+    RunTab{.function = hddLateInit, .name = "hdd space manager - threads"},
+    RunTab{.function = mainNetworkThreadInitThreads, .name = "main server module - threads"}};
