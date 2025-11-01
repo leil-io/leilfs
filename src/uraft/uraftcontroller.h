@@ -75,13 +75,53 @@ private:
 	void startFloatingIpManager();
 	void stopFloatingIpManager();
 
+	/// @brief Clean up dirty metadata state after failed promotion.
+	///
+	/// This function is called when a promotion fails or times out, leaving the metadata server in
+	/// an inconsistent state. It invokes the saunafs-uraft-helper 'cleanup' command to remove
+	/// temporary metadata file (metadata.sfs.tmp) if no process is holding it.
+	///
+	/// This is a recovery operation to prevent deadlocks caused by incomplete metadata dumps from
+	/// incomplete promotion attempts.
+	///
+	/// \see handlePromotionFailure()
+	void cleanupDirtyPromotion();
+
+	/// @brief Handle failed promotion attempts and restore cluster consistency.
+	///
+	/// This prevents the cluster from getting stuck when a node wins an election but fails
+	/// to complete the promotion to master, ensuring the cluster can recover by electing
+	/// a different leader.
+	///
+	/// This function is invoked in two scenarios:
+	/// 1. When a promotion command exits with a non-zero status (checkCommandStatus).
+	/// 2. When a promotion times out (setSlowCommandTimeout).
+	///
+	/// It performs the following recovery steps:
+	/// - Demotes the node from Leader state in the Raft algorithm.
+	/// - Cleans up any dirty metadata state left by the failed promotion.
+	///
+	/// \see cleanupDirtyPromotion()
+	/// \see demoteLeader()
+	void handlePromotionFailure();
+
 protected:
-	boost::asio::deadline_timer check_cmd_status_timer_,check_node_status_timer_;
+	boost::asio::deadline_timer check_cmd_status_timer_;
+	boost::asio::deadline_timer check_node_status_timer_;
 	boost::asio::deadline_timer cmd_timeout_timer_;
-	pid_t                       command_pid_;
+	pid_t                       command_pid_;   /// Last run command pid.
 	int                         command_type_;  /// Last run command type.
 	Timer                       command_timer_;
-	bool                        force_demote_;
+	/// @brief Flag indicating a demotion request is pending.
+	/// Set to true when nodeDemote() is called while a promotion is in progress.
+	/// After the promotion completes, the pending demotion will be executed.
+	/// This prevents concurrent promotion/demotion race conditions.
+	bool                        is_demote_pending_;
+	/// @brief Flag indicating a promotion request is pending.
+	/// Set to true when nodePromote() is called while a demotion is in progress.
+	/// After the demotion completes, the pending promotion will be executed.
+	/// This prevents concurrent promotion/demotion race conditions.
+	bool                        is_promote_pending_;
 	bool                        node_alive_;  /// Last is_alive node status.
 	Options                     opt_;
 	///< Smart pointer to the floating IP manager.
