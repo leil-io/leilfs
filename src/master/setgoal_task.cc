@@ -23,7 +23,7 @@
 #include "master/setgoal_task.h"
 
 #include "master/filesystem_checksum.h"
-#include "master/filesystem_node.h"
+#include "master/filesystem_metadata.h"
 #include "master/filesystem_operations_interface.h"
 
 int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
@@ -31,7 +31,7 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 
 	inode_t inode = *current_inode_;
 	++current_inode_;
-	FSNode *node = fsnodes_id_to_node(inode);
+	FSNode *node = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 	if (!node) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -75,12 +75,13 @@ uint8_t SetGoalTask::setGoal(FSNode *node, uint32_t ts) {
 		} else {
 			if ((smode_ & SMODE_TMASK) == SMODE_SET && node->goal != goal_) {
 				if (node->type != FSNodeType::kDirectory) {
-					fsnodes_changefilegoal(static_cast<FSNodeFile *>(node), goal_);
+					gFSOperations->nodeOperations()->fsnodes_changefilegoal(
+					    static_cast<FSNodeFile *>(node), goal_);
 				} else {
 					node->goal = goal_;
 					gMetadata->nodeChangedSignal.emit(node);
 				}
-				fsnodes_update_ctime(node, ts);
+				gFSOperations->nodeOperations()->fsnodes_update_ctime(node, ts);
 				fsnodes_update_checksum(node);
 				return SetGoalTask::kChanged;
 			} else {

@@ -25,10 +25,8 @@
 
 #include "common/event_loop.h"
 #include "common/quota_database.h"
-#include "common/small_vector.h"
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
-#include "master/filesystem_node.h"
 #include "master/filesystem_operations_interface.h"
 
 template <class T>
@@ -51,18 +49,20 @@ static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<Qu
 		return;
 	}
 
-	FSNodeDirectory *root_node = fsnodes_id_to_node_verify<FSNodeDirectory>(root_inode);
+	FSNodeDirectory *root_node =
+	    gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(root_inode);
 
 	auto it = std::remove_if(results.begin(), results.end(), [root_node](const QuotaEntry &entry) {
 		if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode) {
-			FSNode *node = fsnodes_id_to_node(entry.entryKey.owner.ownerId);
+			FSNode *node =
+			    gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.entryKey.owner.ownerId);
 			if (!node) {
 				return true;
 			}
 			if (root_node->id == entry.entryKey.owner.ownerId) {
 				return false;
 			}
-			return !fsnodes_isancestor(root_node, node);
+			return !gFSOperations->nodeOperations()->fsnodes_isancestor(root_node, node);
 		}
 		return false;
 	});
@@ -82,7 +82,8 @@ static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) 
 	size = 0;
 	while (p != gMetadata->root && !p->parents.empty() && p->id != root_inode) {
 		// get first parent
-		auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(p->parents[0].first);
+		auto *parent = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+		    p->parents[0].first);
 		size += parent->getChildName(p).length() + 1;
 		p = parent;
 	}
@@ -95,7 +96,8 @@ static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) 
 
 	p = node;
 	while (p != gMetadata->root && !p->parents.empty()) {
-		auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(p->parents[0].first);
+		auto *parent = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+		    p->parents[0].first);
 		std::string name = parent->getChildName(p);
 		if (size >= name.length()) {
 			size -= name.length();
@@ -126,7 +128,9 @@ uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &resu
 			continue;
 		}
 
-		FSNodeDirectory *node = fsnodes_id_to_node<FSNodeDirectory>(entry.entryKey.owner.ownerId);
+		FSNodeDirectory *node =
+		    gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(
+		        entry.entryKey.owner.ownerId);
 		if (!node || node->type != FSNodeType::kDirectory) { continue; }
 
 		switch (entry.entryKey.resource) {
@@ -160,7 +164,8 @@ uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &ow
 				}
 				break;
 			case QuotaOwnerType::kInode:
-				node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
+				node = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(
+				    owner.ownerId);
 				if (!node || node->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_EINVAL; }
 				if (node->uid != context.uid() ||
 				    (node->gid != context.gid() && !(context.sesflags() & SESFLAG_IGNOREGID))) {
@@ -175,7 +180,8 @@ uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &ow
 		if (result) {
 			for (auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard, QuotaRigor::kUsed}) {
 				if (owner.ownerType == QuotaOwnerType::kInode && rigor == QuotaRigor::kUsed) {
-					node = fsnodes_id_to_node<FSNodeDirectory>(owner.ownerId);
+					node = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(
+					    owner.ownerId);
 					assert(node);
 					tmp.push_back(
 					    {{owner, rigor, QuotaResource::kInodes}, (uint64_t)node->stats.inodes});
@@ -204,7 +210,8 @@ uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry
 	for (const auto &entry : entries) {
 		info.clear();
 		if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode) {
-			FSNode *node = fsnodes_id_to_node(entry.entryKey.owner.ownerId);
+			FSNode *node =
+			    gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.entryKey.owner.ownerId);
 			if (node) {
 				fsnodes_getpath(context.rootinode(), node, info);
 			}
@@ -231,7 +238,8 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 		if(entry.entryKey.owner.ownerType != QuotaOwnerType::kInode) {
 			continue;
 		}
-		FSNode *node = fsnodes_id_to_node(entry.entryKey.owner.ownerId);
+		FSNode *node =
+		    gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.entryKey.owner.ownerId);
 		if(!node) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
@@ -282,7 +290,8 @@ static int fsnodes_find_depth(FSNodeDirectory *a) {
 	assert(a);
 	int depth = 1;
 	while (!a->parents.empty()) {
-		a = fsnodes_id_to_node_verify<FSNodeDirectory>(a->parents[0].first);
+		a = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+		    a->parents[0].first);
 		++depth;
 	}
 
@@ -309,12 +318,14 @@ static FSNode *fsnodes_find_common_ancestor(FSNodeDirectory *a, FSNodeDirectory 
 	if (depth_a > depth_b) {
 		for(;depth_a > depth_b;--depth_a) {
 			assert(a && !a->parents.empty());
-			a = fsnodes_id_to_node_verify<FSNodeDirectory>(a->parents[0].first);
+			a = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+			    a->parents[0].first);
 		}
 	} else if (depth_b > depth_a) {
 		for(;depth_b > depth_a;--depth_b) {
 			assert(b && !b->parents.empty());
-			b = fsnodes_id_to_node_verify<FSNodeDirectory>(b->parents[0].first);
+			b = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+			    b->parents[0].first);
 		}
 	}
 
@@ -325,8 +336,10 @@ static FSNode *fsnodes_find_common_ancestor(FSNodeDirectory *a, FSNodeDirectory 
 	while(!a->parents.empty()) {
 		assert(!b->parents.empty());
 
-		a = fsnodes_id_to_node_verify<FSNodeDirectory>(a->parents[0].first);
-		b = fsnodes_id_to_node_verify<FSNodeDirectory>(b->parents[0].first);
+		a = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+		    a->parents[0].first);
+		b = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+		    b->parents[0].first);
 
 		if (a == b) {
 			return a;
@@ -402,7 +415,9 @@ bool fsnodes_quota_exceeded_dir(FSNode *node,
 	if (node->type == FSNodeType::kDirectory) {
 		// Directory can have only one parent, so we get rid of recursion.
 		while(!node->parents.empty()) {
-			auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(node->parents[0].first);
+			auto *parent =
+			    gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+			        node->parents[0].first);
 			if (fsnodes_test_dir_quota_noparents(parent, resource_list)) {
 				return true;
 			}
@@ -410,7 +425,9 @@ bool fsnodes_quota_exceeded_dir(FSNode *node,
 		}
 	} else {
 		for (const auto &[parentId, _] : node->parents) {
-			auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
+			auto *parent =
+			    gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+			        parentId);
 			if (fsnodes_quota_exceeded_dir(parent, resource_list)) {
 				return true;
 			}
@@ -435,7 +452,8 @@ bool fsnodes_quota_exceeded_dir(FSNodeDirectory *node, FSNodeDirectory* prev_nod
 
 	// node is directory so it has only one parent.
 	while(!node->parents.empty()) {
-		auto *parent = fsnodes_id_to_node<FSNodeDirectory>(node->parents[0].first);
+		auto *parent = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(
+		    node->parents[0].first);
 
 		if (parent == common) {
 			return false;

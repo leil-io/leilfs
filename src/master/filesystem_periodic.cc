@@ -36,7 +36,6 @@
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
-#include "master/filesystem_node.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/matoclserv.h"
 
@@ -110,8 +109,10 @@ static std::string get_node_info(FSNode *node) {
 		bool first = true;
 		for (const auto &[parentId, _] : node->parents) {
 			std::string path;
-			auto *parent = fsnodes_id_to_node_verify<FSNodeDirectory>(parentId);
-			fsnodes_getpath(parent, node, path);
+			auto *parent =
+			    gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+			        parentId);
+			gFSOperations->nodeOperations()->fsnodes_getpath(parent, node, path);
 			if (!first) {
 				name += "|" + path;
 			} else {
@@ -124,13 +125,14 @@ static std::string get_node_info(FSNode *node) {
 		std::string path;
 		FSNodeDirectory *parent = nullptr;
 		if (!node->parents.empty()) {
-			parent = fsnodes_id_to_node_verify<FSNodeDirectory>(node->parents.front().first);
+			parent = gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeDirectory>(
+			    node->parents.front().first);
 		}
-		fsnodes_getpath(parent, node, path);
+		gFSOperations->nodeOperations()->fsnodes_getpath(parent, node, path);
 		name += path;
 	}
 
-	return fsnodes_escape_name(name);
+	return gFSOperations->nodeOperations()->fsnodes_escape_name(name);
 }
 
 std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_flags, uint64_t max_entries,
@@ -143,7 +145,7 @@ std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_fla
 	watchdog.start();
 	for (uint64_t i = 0; i < max_entries && it != gDefectiveNodes.end(); ++it) {
 		if (((*it).second & requested_flags) != 0) {
-			node = fsnodes_id_to_node<FSNode>((*it).first);
+			node = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNode>((*it).first);
 			std::string info = get_node_info(node);
 			defective_nodes_info.emplace_back(std::move(info), (*it).second);
 			++i;
@@ -168,7 +170,7 @@ void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, ino
 			break;
 		}
 
-		FSNode *node = fsnodes_id_to_node<FSNode>(entry.first);
+		FSNode *node = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNode>(entry.first);
 		if (!node) {
 			report << "Structure error in defective list, entry " << std::to_string(entry.first) << "\n";
 			errors++;
@@ -534,7 +536,8 @@ static void fs_do_emptytrash(uint32_t ts) {
 	auto it = gMetadata->trash.begin();
 	watchdog.start();
 	while (it != gMetadata->trash.end() && ((*it).first.timestamp < ts)) {
-		FSNodeFile *node = fsnodes_id_to_node_verify<FSNodeFile>((*it).first.id);
+		FSNodeFile *node =
+		    gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeFile>((*it).first.id);
 
 		if (!node) {
 			std::string pathName = (*it).second.get();
@@ -547,7 +550,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		assert(node->type == FSNodeType::kTrash);
 
 		auto node_id = node->id;
-		fsnodes_purge(ts, node);
+		gFSOperations->nodeOperations()->fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
 		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
@@ -571,7 +574,8 @@ static void fs_do_emptyreserved(uint32_t ts) {
 	auto it = gMetadata->reserved.begin();
 	watchdog.start();
 	while (it != gMetadata->reserved.end()) {
-		FSNodeFile *node = fsnodes_id_to_node_verify<FSNodeFile>((*it).first);
+		FSNodeFile *node =
+		    gFSOperations->nodeOperations()->fsnodes_id_to_node_verify<FSNodeFile>((*it).first);
 
 		if (!node) {
 			removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
@@ -583,7 +587,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		assert(node->type == FSNodeType::kReserved);
 
 		auto node_id = node->id;
-		fsnodes_purge(ts, node);
+		gFSOperations->nodeOperations()->fsnodes_purge(ts, node);
 
 		// Purge operation should be performed anyway
 		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);

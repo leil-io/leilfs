@@ -48,6 +48,13 @@ constexpr uint32_t kDefaultTrashTime = 94620;
 /// FilesystemOperationsKV.
 class FilesystemOperationsBase : public IFilesystemOperations {
 public:
+	/// Constructor
+	/// @param _nodeOps Concrete node operations implementation.
+	FilesystemOperationsBase(std::unique_ptr<IFilesystemNodeOperations> _nodeOps);
+
+	/// Returns the concrete node operations implementation.
+	IFilesystemNodeOperations *nodeOperations() override { return nodeOperations_.get(); }
+
 	/// Returns version of the loaded metadata.
 	uint64_t getMetadataVersion() override;
 
@@ -326,4 +333,7 @@ private:
 	/// Helper function used internally by `fs_locks_unlock_inode`.
 	static void manageLockTryLockPending(FileLocks &locks, inode_t inode, uint64_t start,
 	                                     uint64_t end, std::vector<FileLocks::Owner> &applied);
+
+	/// Node operations object
+	std::unique_ptr<IFilesystemNodeOperations> nodeOperations_;
 };

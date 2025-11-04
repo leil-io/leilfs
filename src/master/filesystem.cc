@@ -37,6 +37,7 @@
 #include "master/deferred_metadata_dump_task.h"
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
+#include "master/filesystem_node.h"
 #include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/filesystem_periodic.h"
@@ -229,7 +230,10 @@ static void ensureChunkIdGenerator() {
 }
 
 static void initFSOperations() {
-	if (!gFSOperations) { gFSOperations = std::make_unique<FilesystemOperationsBase>(); }
+	if (!gFSOperations) {
+		auto nodeOps = std::make_unique<FilesystemNodeOperationsBase>();
+		gFSOperations = std::make_unique<FilesystemOperationsBase>(std::move(nodeOps));
+	}
 }
 
 /* executed in master mode */
