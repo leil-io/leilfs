@@ -37,56 +37,66 @@ class FilesystemNodeOperationsBase : public IFilesystemNodeOperations {
 public:
 	FSNode *lookup(FSNodeDirectory *node, const HString &name) const override;
 
-	FSNode *createNode(uint32_t ts, FSNodeDirectory *parent, const HString &name, FSNodeType type,
-	                   uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid, uint8_t copysgid,
-	                   AclInheritance inheritacl, inode_t req_inode = 0) override;
-	void link(uint32_t ts, FSNodeDirectory *parent, FSNode *child, const HString &name) override;
-	void unlink(uint32_t ts, FSNodeDirectory *parent, const HString &node_name,
-	            FSNode *node) override;
-	void removeEdge(uint32_t ts, FSNodeDirectory *parent, const HString &node_name,
-	                FSNode *node) override;
+	FSNode *createNode(uint32_t timeStamp, FSNodeDirectory *parent, const HString &name,
+	                   FSNodeType type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
+	                   uint8_t copysgid, AclInheritance inheritAcl,
+	                   inode_t requestedINode = 0) override;
+	void link(uint32_t timeStamp, FSNodeDirectory *parent, FSNode *child,
+	          const HString &name) override;
+	void unlink(uint32_t timeStamp, FSNodeDirectory *parent, const HString &childName,
+	            FSNode *childNode) override;
+	void removeEdge(uint32_t timeStamp, FSNodeDirectory *parent, const HString &childName,
+	                FSNode *childNode) override;
 
 	void updateCTime(FSNode *node, uint32_t ctime) override;
 	void fillAttr(FSNode *node, FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid,
 	              uint32_t agid, uint8_t sesflags, Attributes &attr) override;
 	void fillAttr(const FsContext &context, FSNode *node, FSNode *parent,
 	              Attributes &attr) override;
-	void getStats(FSNode *node, StatsRecord *sr) override;
-	void addStats(FSNodeDirectory *parent, StatsRecord *sr) override;
-	void addSubStats(FSNodeDirectory *parent, StatsRecord *newsr, StatsRecord *prevsr) override;
-	void changeUidGid(FSNode *p, uint32_t uid, uint32_t gid) override;
+	void getStats(FSNode *node, StatsRecord *statsOut) override;
+	void addStats(FSNodeDirectory *parent, StatsRecord *stats) override;
+	void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
+	                 StatsRecord *previousStats) override;
+	void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) override;
 
 	void setLength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) override;
-	uint8_t appendChunks(uint32_t ts, FSNodeFile *dstobj, FSNodeFile *srcobj) override;
-	void changeFileGoal(FSNodeFile *obj, uint8_t goal) override;
+	uint8_t appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
+	                     FSNodeFile *srcNodeFile) override;
+	void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) override;
 #ifndef METARESTORE
-	void checkFile(FSNodeFile *p, uint32_t chunkcount[CHUNK_MATRIX_SIZE]) override;
+	void checkFile(FSNodeFile *nodeFile, uint32_t chunkCount[CHUNK_MATRIX_SIZE]) override;
 #endif
 	int64_t getSize(FSNode *node) override;
 
 #ifndef METARESTORE
-	uint32_t getDirSize(const FSNodeDirectory *p, uint8_t withattr) override;
-	void getDirData(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-	                uint8_t sesflags, FSNodeDirectory *p, uint8_t *dbuff,
-	                uint8_t withattr) override;
-	void getDir(inode_t rootinode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-	            uint8_t sesflags, FSNodeDirectory *p, uint64_t first_entry,
-	            uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) override;
+	uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) override;
+	void getDirData(inode_t rootINode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+	                uint8_t sesflags, FSNodeDirectory *nodeDir, uint8_t *outBuffer,
+	                uint8_t withAttr) override;
+
+	/// Get entries of directory node \a nodeDir.
+	/// @see IFilesystemNodeOperations::getDir
+	void getDir(inode_t rootINode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+	            uint8_t sesflags, FSNodeDirectory *nodeDir, uint64_t firstEntry,
+	            uint64_t numberOfEntries, std::vector<DirectoryEntry> &dirEntriesOut) override;
 #endif
 	int isNameUsed(FSNodeDirectory *node, const HString &name) override;
 
 	// Trash/Reserved operations
-	int purge(uint32_t ts, FSNode *p) override;
-	uint8_t undel(uint32_t ts, FSNodeFile *node) override;
+	int purge(uint32_t timeStamp, FSNode *node) override;
+	uint8_t undel(uint32_t timeStamp, FSNodeFile *node) override;
 #ifndef METARESTORE
 	uint32_t getDetachedSize(const TrashPathContainer &data) override;
-	void getDetachedData(const TrashPathContainer &data, uint8_t *dbuff) override;
-	void getDetachedData(const TrashPathContainer &data, uint32_t off, uint32_t max_entries,
+	void getDetachedData(const TrashPathContainer &data, uint8_t *outBuffer) override;
+	void getDetachedData(const TrashPathContainer &data, uint32_t offset, uint32_t maxEntries,
 	                     std::vector<NamedInodeEntry> &entries) override;
 	uint32_t getDetachedSize(const ReservedPathContainer &data) override;
-	void getDetachedData(const ReservedPathContainer &data, uint8_t *dbuff) override;
-	void getDetachedData(const ReservedPathContainer &data, uint32_t off, uint32_t max_entries,
+	void getDetachedData(const ReservedPathContainer &data, uint8_t *outBuffer) override;
+	void getDetachedData(const ReservedPathContainer &data, uint32_t offset, uint32_t maxEntries,
 	                     std::vector<NamedInodeEntry> &entries) override;
+
+	/// Returns entries from a HandleIndexContainer starting at a given handleOffset.
+	/// @see IFilesystemNodeOperations::getDetachedData
 	void getDetachedData(const HandleIndexContainer &data, uint64_t handleOffset,
 	                     uint32_t maxEntries, std::vector<HandleInodeEntry> &entries,
 	                     bool fromTrash) override;
@@ -99,12 +109,13 @@ public:
 	std::string escapeName(const std::string &name) override;
 
 	// ACL operations
-	uint8_t setAcl(FSNode *p, const RichACL &acl, uint32_t ts) override;
-	uint8_t setAcl(FSNode *p, AclType type, const AccessControlList &acl, uint32_t ts) override;
+	uint8_t setAcl(FSNode *node, const RichACL &acl, uint32_t timeStamp) override;
+	uint8_t setAcl(FSNode *node, AclType type, const AccessControlList &acl,
+	               uint32_t timeStamp) override;
 #ifndef METARESTORE
-	uint8_t getAcl(FSNode *p, RichACL &acl) override;
+	uint8_t getAcl(FSNode *node, RichACL &acl) override;
 #endif  // METARESTORE
-	uint8_t deleteAcl(FSNode *p, AclType type, uint32_t ts) override;
+	uint8_t deleteAcl(FSNode *node, AclType type, uint32_t timeStamp) override;
 
 	// Recursive operations
 #ifndef METARESTORE
@@ -115,14 +126,18 @@ public:
 	void getEAttrRecursive(FSNode *node, uint8_t gmode, uint32_t feattrtab[16],
 	                       uint32_t deattrtab[16]) override;
 #endif  // METARESTORE
-	void setgoalRecursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t goal, uint8_t smode,
-	                      inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
+	void setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t goal,
+	                      uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
+	                      inode_t *permissionDeniedINodesOut) override;
 
-	void setTrashTimeRecursive(FSNode *node, uint32_t ts, uint32_t uid, uint32_t trashtime,
-	                           uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
-	                           inode_t *nsinodes) override;
-	void setEAttrRecursive(FSNode *node, uint32_t ts, uint32_t uid, uint8_t eattr, uint8_t smode,
-	                       inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
+	void setTrashTimeRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint32_t trashtime,
+	                           uint8_t smode, inode_t *modifiedINodesOut,
+	                           inode_t *unchangedINodesOut,
+	                           inode_t *permissionDeniedINodesOut) override;
+
+	void setEAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t eattr,
+	                       uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
+	                       inode_t *permissionDeniedINodesOut) override;
 
 	// Access control operations
 	int access(const FsContext &context, FSNode *node, uint8_t modemask) override;
@@ -130,23 +145,33 @@ public:
 	int nameCheck(const std::string &name) override;
 	uint8_t verifySession(const FsContext &context, OperationMode operationMode,
 	                      SessionType sessionType) override;
+
+	/// Treating rootinode as the root of the hierarchy, converts (rootinode, inode) to FSNode*.
+	/// @see IFilesystemNodeOperations::getNodeForOperation
 	uint8_t getNodeForOperation(const FsContext &context, ExpectedNodeType expectedNodeType,
-	                            uint8_t modemask, inode_t inode, FSNode **ret,
-	                            FSNodeDirectory **ret_rn = nullptr) override;
+	                            uint8_t modemask, inode_t inode, FSNode **nodeOut,
+	                            FSNodeDirectory **rootDirOut = nullptr) override;
 
 	// Ancestry operations
-	bool isAncestor(FSNodeDirectory *f, FSNode *p) override;
-	bool isAncestorOrNodeReservedOrTrash(FSNodeDirectory *f, FSNode *p) override;
+
+	/// Returns true if \a ancestor is ancestor of \a node.
+	/// @see IFilesystemNodeOperations::isAncestor
+	bool isAncestor(FSNodeDirectory *ancestor, FSNode *node) override;
+
+	/// Returns true if \a node is reserved or in trash or \a ancestor is ancestor of \a node.
+	/// @see IFilesystemNodeOperations::isAncestorOrNodeReservedOrTrash
+	bool isAncestorOrNodeReservedOrTrash(FSNodeDirectory *ancestor, FSNode *node) override;
+
 	FSNodeDirectory *getFirstParent(FSNode *node) override;
 
 protected:
 	/// Internal node lookup operation - override in subclasses for custom storage
-	FSNode *idToNodeInternal(inode_t id) override;
+	FSNode *idToNodeInternal(inode_t inode) override;
 
 private:
 	// Private helpers
-	void fsnodes_sub_stats(FSNodeDirectory *parent, StatsRecord *sr);
-	void fsnodes_remove_node(uint32_t ts, FSNode *node);
+	void fsnodes_sub_stats(FSNodeDirectory *parent, StatsRecord *stats);
+	void fsnodes_remove_node(uint32_t timeStamp, FSNode *node);
 
 	uint32_t last_chunk_blocks(FSNodeFile *node);
 	bool last_chunk_nonempty(FSNodeFile *node);
