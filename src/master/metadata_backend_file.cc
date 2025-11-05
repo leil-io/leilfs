@@ -412,12 +412,11 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 
 	std::string name(pSrc, pSrc + edgeNameSize);
 	sectionOffset += edgeNameSize;
-	FSNode *child = fsnodes_id_to_node(childId);
+	FSNode *child = gFSOperations->nodeOperations()->fsnodes_id_to_node(childId);
 	if (!child) {
 		safs_pretty_syslog(
-		    LOG_ERR,
-		    "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: child not found",
-		    parentId, fsnodes_escape_name(name).c_str(), childId);
+		    LOG_ERR, "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: child not found",
+		    parentId, gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(), childId);
 		if (ignoreFlag) {
 			return kSuccess;
 		}
@@ -436,39 +435,40 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			gMetadata->reservedNodes++;
 		} else {
 			safs::log_err("loading edge: {}, {}->{} error: bad child type ({})", parentId,
-			              fsnodes_escape_name(name), childId, static_cast<char>(child->type));
+			              gFSOperations->nodeOperations()->fsnodes_escape_name(name), childId,
+			              static_cast<char>(child->type));
 			return kError;
 		}
 	} else {
 		FSNodeDirectory *parent;
 		if (currentParentId != parentId){
-			parent = fsnodes_id_to_node<FSNodeDirectory>(parentId);
+			parent = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(parentId);
 			currentParentNode = parent;
 		} else {
 			parent = currentParentNode;
 		}
 		if (!parent) {
-			safs_pretty_syslog(LOG_ERR,
-			                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
-			                   " error: parent not found",
-			                   parentId, fsnodes_escape_name(name).c_str(),
-			                   childId);
+			safs_pretty_syslog(
+			    LOG_ERR, "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: parent not found",
+			    parentId, gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(),
+			    childId);
 			if (ignoreFlag) {
-				parent =
-				    fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+				parent = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(
+				    SPECIAL_INODE_ROOT);
 				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
-					    "loading edge: %" PRIiNode ",%s->%" PRIiNode
-					    " root dir not found !!!",
-					    parentId, fsnodes_escape_name(name).c_str(), childId);
+					    "loading edge: %" PRIiNode ",%s->%" PRIiNode " root dir not found !!!",
+					    parentId,
+					    gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(),
+					    childId);
 					return kError;
 				}
-				safs_pretty_syslog(LOG_ERR,
-				                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
-				                   " attaching node to root dir",
-				                   parentId, fsnodes_escape_name(name).c_str(),
-				                   childId);
+				safs_pretty_syslog(
+				    LOG_ERR,
+				    "loading edge: %" PRIiNode ",%s->%" PRIiNode " attaching node to root dir",
+				    parentId, gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(),
+				    childId);
 				parentId = SPECIAL_INODE_ROOT;
 			} else {
 				safs_pretty_syslog(
@@ -480,23 +480,25 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 		if (parent->type != FSNodeType::kDirectory) {
 			safs::log_err("loading edge: {}, {}->{} error: bad parent type ({})", parentId,
-			              fsnodes_escape_name(name), childId, static_cast<char>(parent->type));
+			              gFSOperations->nodeOperations()->fsnodes_escape_name(name), childId,
+			              static_cast<char>(parent->type));
 			if (ignoreFlag) {
-				parent =
-				    fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+				parent = gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(
+				    SPECIAL_INODE_ROOT);
 				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
-					    "loading edge: %" PRIiNode ",%s->%" PRIiNode
-					    " root dir not found !!!",
-					    parentId, fsnodes_escape_name(name).c_str(), childId);
+					    "loading edge: %" PRIiNode ",%s->%" PRIiNode " root dir not found !!!",
+					    parentId,
+					    gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(),
+					    childId);
 					return kError;
 				}
-				safs_pretty_syslog(LOG_ERR,
-				                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
-				                   " attaching node to root dir",
-				                   parentId, fsnodes_escape_name(name).c_str(),
-				                   childId);
+				safs_pretty_syslog(
+				    LOG_ERR,
+				    "loading edge: %" PRIiNode ",%s->%" PRIiNode " attaching node to root dir",
+				    parentId, gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(),
+				    childId);
 				parentId = SPECIAL_INODE_ROOT;
 			} else {
 				safs_pretty_syslog(
@@ -508,11 +510,12 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 		if (currentParentId != parentId) {
 			if (parent->entries.size() > 0) {
-				safs_pretty_syslog(LOG_ERR,
-				                   "loading edge: %" PRIiNode ",%s->%" PRIiNode
-				                   " error: parent node sequence error",
-				                   parentId, fsnodes_escape_name(name).c_str(),
-				                   childId);
+				safs_pretty_syslog(
+				    LOG_ERR,
+				    "loading edge: %" PRIiNode ",%s->%" PRIiNode
+				    " error: parent node sequence error",
+				    parentId, gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str(),
+				    childId);
 				return kError;
 			}
 			currentParentId = parentId;
@@ -547,8 +550,8 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 
 		StatsRecord sr;
-		fsnodes_get_stats(child, &sr);
-		fsnodes_add_stats(parent, &sr);
+		gFSOperations->nodeOperations()->fsnodes_get_stats(child, &sr);
+		gFSOperations->nodeOperations()->fsnodes_add_stats(parent, &sr);
 	}
 	return kSuccess;
 }
@@ -611,7 +614,8 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			matoclserv_add_open_file(sessionId, node->id);
 		}
 #endif
-		fsnodes_quota_update(node, {{QuotaResource::kSize, +fsnodes_get_size(node)}});
+		fsnodes_quota_update(node, {{QuotaResource::kSize,
+		                             +gFSOperations->nodeOperations()->fsnodes_get_size(node)}});
 		gMetadata->fileNodes++;
 		break;
 	default:
@@ -643,8 +647,8 @@ static int fs_lostnode(FSNode *p) {
 			             p->id, i);
 		}
 		HString name((const char *)artname, l);
-		if (!fsnodes_nameisused(gMetadata->root, name)) {
-			fsnodes_link(0, gMetadata->root, p, name);
+		if (!gFSOperations->nodeOperations()->fsnodes_nameisused(gMetadata->root, name)) {
+			gFSOperations->nodeOperations()->fsnodes_link(0, gMetadata->root, p, name);
 			return 1;
 		}
 		i++;
@@ -872,7 +876,8 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 
 	util::ScopedTimer timer("checking filesystem consistency of the metadata file took");
 
-	gMetadata->root = fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+	gMetadata->root =
+	    gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(SPECIAL_INODE_ROOT);
 	if (gMetadata->root == nullptr) {
 		safs::log_err("error reading metadata (root node not found)");
 		return kOpFailure;
@@ -1135,14 +1140,14 @@ void MetadataBackendFile::storeedgelist(FSNodeDirectory *parent, FILE *fd) {
 
 void MetadataBackendFile::storeedgelist(const TrashPathContainer &data, FILE *fd) {
 	for (const auto &entry : data) {
-		FSNode *child = fsnodes_id_to_node(entry.first.id);
+		FSNode *child = gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.first.id);
 		storeedge(nullptr, child, (std::string)entry.second, fd);
 	}
 }
 
 void MetadataBackendFile::storeedgelist(const ReservedPathContainer &data, FILE *fd) {
 	for (const auto &entry : data) {
-		FSNode *child = fsnodes_id_to_node(entry.first);
+		FSNode *child = gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.first);
 		storeedge(nullptr, child, (std::string)entry.second, fd);
 	}
 }

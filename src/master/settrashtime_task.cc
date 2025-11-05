@@ -23,7 +23,7 @@
 #include "master/settrashtime_task.h"
 
 #include "master/filesystem_checksum.h"
-#include "master/filesystem_node.h"
+#include "master/filesystem_metadata.h"
 #include "master/filesystem_operations_interface.h"
 
 int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
@@ -31,7 +31,7 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 
 	inode_t inode = *current_inode_;
 	++current_inode_;
-	FSNode *node = fsnodes_id_to_node(inode);
+	FSNode *node = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 	if (!node) {
 		return SAUNAFS_ERROR_EINVAL;
 	}

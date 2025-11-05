@@ -26,7 +26,7 @@
 #include <vector>
 
 #include "master/filesystem_metadata.h"
-#include "master/filesystem_node.h"
+#include "master/filesystem_operations_interface.h"
 
 static void fs_store_marker(FILE *fd) {
 	static std::vector<uint8_t> buffer;
@@ -106,7 +106,7 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 		AccessControlList posix_acl;
 		deserialize(ptr, size, inode, posix_acl);
 		offsetBegin += size;
-		FSNode *p = fsnodes_id_to_node(inode);
+		FSNode *p = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
@@ -176,7 +176,7 @@ static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataF
 		std::unique_ptr<legacy::AccessControlList> default_acl;
 		deserialize(ptr, size, inode, extended_acl, default_acl);
 		offsetBegin += size;
-		FSNode *p = fsnodes_id_to_node(inode);
+		FSNode *p = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
@@ -275,7 +275,7 @@ int fs_load_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &o
 		RichACL acl;
 		deserialize(ptr, size, inode, acl);
 		offsetBegin += size;
-		FSNode *p = fsnodes_id_to_node(inode);
+		FSNode *p = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}

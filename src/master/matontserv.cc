@@ -250,7 +250,8 @@ void matontserv_get_path_type_inode(MatontservEntry *eptr, const uint8_t *data, 
 
 	inode_t inode = static_cast<inode_t>(responseInode);
 	std::string pathByInode;
-	FSNode *node = invalidInode ? nullptr : fsnodes_id_to_node(inode);
+	FSNode *node =
+	    invalidInode ? nullptr : gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 	if (node == nullptr) {
 		safs::log_info("NTTOMA_GET_PATH_TYPE_INODE - inode {} not found", responseInode);
 		// Send back an empty path

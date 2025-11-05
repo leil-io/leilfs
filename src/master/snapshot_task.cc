@@ -24,7 +24,6 @@
 #include "master/chunks.h"
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_metadata.h"
-#include "master/filesystem_node.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/filesystem_quota.h"
 
@@ -89,9 +88,9 @@ FSNode *SnapshotTask::cloneToExistingNode(uint32_t ts, FSNode *src_node,
 }
 
 FSNode *SnapshotTask::cloneToNewNode(uint32_t ts, FSNode *src_node, FSNodeDirectory *dst_parent) {
-	FSNode *dst_node = fsnodes_create_node(
-	        ts, dst_parent, current_subtask_->second, src_node->type, src_node->mode, 0,
-	        src_node->uid, src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_);
+	FSNode *dst_node = gFSOperations->nodeOperations()->fsnodes_create_node(
+	    ts, dst_parent, current_subtask_->second, src_node->type, src_node->mode, 0, src_node->uid,
+	    src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_);
 
 	dst_node->goal = src_node->goal;
 	dst_node->trashtime = src_node->trashtime;
@@ -132,10 +131,11 @@ FSNodeFile *SnapshotTask::cloneToExistingFileNode(uint32_t ts, FSNodeFile *src_n
 		return dst_node;
 	}
 
-	fsnodes_unlink(ts, dst_parent, current_subtask_->second, dst_node);
-	dst_node = static_cast<FSNodeFile *>(fsnodes_create_node(
-	        ts, dst_parent, current_subtask_->second, FSNodeType::kFile, src_node->mode, 0,
-	        src_node->uid, src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_));
+	gFSOperations->nodeOperations()->fsnodes_unlink(ts, dst_parent, current_subtask_->second,
+	                                                dst_node);
+	dst_node = static_cast<FSNodeFile *>(gFSOperations->nodeOperations()->fsnodes_create_node(
+	    ts, dst_parent, current_subtask_->second, FSNodeType::kFile, src_node->mode, 0,
+	    src_node->uid, src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_));
 
 	cloneChunkData(src_node, dst_node, dst_parent);
 
@@ -146,7 +146,7 @@ void SnapshotTask::cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_no
 		FSNodeDirectory *dst_parent) {
 	StatsRecord psr, nsr;
 
-	fsnodes_get_stats(dst_node, &psr);
+	gFSOperations->nodeOperations()->fsnodes_get_stats(dst_node, &psr);
 
 	dst_node->goal = src_node->goal;
 	dst_node->trashtime = src_node->trashtime;
@@ -164,8 +164,8 @@ void SnapshotTask::cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_no
 		}
 	}
 
-	fsnodes_get_stats(dst_node, &nsr);
-	fsnodes_add_sub_stats(dst_parent, &nsr, &psr);
+	gFSOperations->nodeOperations()->fsnodes_get_stats(dst_node, &nsr);
+	gFSOperations->nodeOperations()->fsnodes_add_sub_stats(dst_parent, &nsr, &psr);
 	fsnodes_quota_update(dst_node, {{QuotaResource::kSize, nsr.size - psr.size}});
 }
 
@@ -180,10 +180,8 @@ void SnapshotTask::cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDir
 		data.emplace_back(std::move(local_id), (HString)(*entry.first));
 	}
 	if (!data.empty()) {
-		auto task = new SnapshotTask(std::move(data), orig_inode_,
-		                                           dst_node->id, 0, can_overwrite_,
-		                                           ignore_missing_src_,
-		                                           emit_changelog_, enqueue_work_);
+		auto task = new SnapshotTask(std::move(data), orig_inode_, dst_node->id, 0, can_overwrite_,
+		                             ignore_missing_src_, emit_changelog_, enqueue_work_);
 		local_tasks_.push_back(*task);
 	}
 }
@@ -192,13 +190,13 @@ void SnapshotTask::cloneSymlinkData(FSNodeSymlink *src_node, FSNodeSymlink *dst_
 		FSNodeDirectory *dst_parent) {
 	StatsRecord psr, nsr;
 
-	fsnodes_get_stats(dst_node, &psr);
+	gFSOperations->nodeOperations()->fsnodes_get_stats(dst_node, &psr);
 
 	dst_node->path = src_node->path;
 	dst_node->path_length = src_node->path_length;
 
-	fsnodes_get_stats(dst_node, &nsr);
-	fsnodes_add_sub_stats(dst_parent, &nsr, &psr);
+	gFSOperations->nodeOperations()->fsnodes_get_stats(dst_node, &nsr);
+	gFSOperations->nodeOperations()->fsnodes_add_sub_stats(dst_parent, &nsr, &psr);
 }
 
 void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
@@ -207,14 +205,17 @@ void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
 		return;
 	}
 
-	gFSOperations->changeLog(ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
-	                         current_subtask_->first, dst_parent_inode_, dst_inode,
-	                         fsnodes_escape_name(current_subtask_->second).c_str(), can_overwrite_);
+	gFSOperations->changeLog(
+	    ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
+	    current_subtask_->first, dst_parent_inode_, dst_inode,
+	    gFSOperations->nodeOperations()->fsnodes_escape_name(current_subtask_->second).c_str(),
+	    can_overwrite_);
 }
 
 int SnapshotTask::cloneNode(uint32_t ts) {
-	FSNode *src_node = fsnodes_id_to_node(current_subtask_->first);
-	FSNodeDirectory *dst_parent = fsnodes_id_to_node<FSNodeDirectory>(dst_parent_inode_);
+	FSNode *src_node = gFSOperations->nodeOperations()->fsnodes_id_to_node(current_subtask_->first);
+	FSNodeDirectory *dst_parent =
+	    gFSOperations->nodeOperations()->fsnodes_id_to_node<FSNodeDirectory>(dst_parent_inode_);
 
 	if (!src_node || src_node->type == FSNodeType::kTrash ||
 	    src_node->type == FSNodeType::kReserved) {
@@ -224,7 +225,8 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	FSNode *dst_node = fsnodes_lookup(dst_parent, current_subtask_->second);
+	FSNode *dst_node =
+	    gFSOperations->nodeOperations()->fsnodes_lookup(dst_parent, current_subtask_->second);
 
 	int status = cloneNodeTest(src_node, dst_node, dst_parent);
 	if (status != SAUNAFS_STATUS_OK) {

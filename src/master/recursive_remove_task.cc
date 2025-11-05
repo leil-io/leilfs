@@ -21,7 +21,6 @@
 
 #include "master/recursive_remove_task.h"
 
-#include "master/filesystem_node.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/filesystem_stats.h"
 
@@ -30,28 +29,29 @@ bool RemoveTask::isFinished() const {
 }
 
 int RemoveTask::retrieveNodes(FSNodeDirectory *&wd, FSNode *&child) {
-	FSNode *wd_tmp = fsnodes_id_to_node(parent_);
+	FSNode *wd_tmp = gFSOperations->nodeOperations()->fsnodes_id_to_node(parent_);
 	if (!wd_tmp) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (!fsnodes_access(*context_, wd_tmp, MODE_MASK_W)) {
+	if (!gFSOperations->nodeOperations()->fsnodes_access(*context_, wd_tmp, MODE_MASK_W)) {
 		return SAUNAFS_ERROR_EACCES;
 	}
 	wd = static_cast<FSNodeDirectory*>(wd_tmp);
-	child = fsnodes_lookup(wd, *current_subtask_);
+	child = gFSOperations->nodeOperations()->fsnodes_lookup(wd, *current_subtask_);
 	if (!child) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (!fsnodes_sticky_access(wd, child, context_->uid())) {
+	if (!gFSOperations->nodeOperations()->fsnodes_sticky_access(wd, child, context_->uid())) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	return SAUNAFS_STATUS_OK;
 }
 
 void RemoveTask::doUnlink(uint32_t ts, FSNodeDirectory *wd, FSNode *child) {
-	gFSOperations->changeLog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
-	                         fsnodes_escape_name(*current_subtask_).c_str(), child->id);
-	fsnodes_unlink(ts, wd, *current_subtask_, child);
+	gFSOperations->changeLog(
+	    ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
+	    gFSOperations->nodeOperations()->fsnodes_escape_name(*current_subtask_).c_str(), child->id);
+	gFSOperations->nodeOperations()->fsnodes_unlink(ts, wd, *current_subtask_, child);
 }
 
 int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {

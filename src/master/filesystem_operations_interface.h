@@ -26,6 +26,7 @@
 #include "common/attributes.h"
 #include "common/goal.h"
 #include "master/checksum.h"
+#include "master/filesystem_node_operations_interface.h"
 #include "master/filesystem_node_types.h"
 #include "master/fs_context.h"
 #include "master/locks.h"
@@ -60,6 +61,9 @@ public:
 
 	/// Virtual destructor
 	virtual ~IFilesystemOperations() = default;
+
+	/// Returns the concrete node operations implementation.
+	virtual IFilesystemNodeOperations *nodeOperations() = 0;
 
 	/// Returns version of the loaded metadata.
 	virtual uint64_t getMetadataVersion() = 0;

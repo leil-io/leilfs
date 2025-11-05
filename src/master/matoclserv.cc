@@ -1665,9 +1665,9 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 		status = gFSOperations->quotaGet(context, owners, results);
 
 		if (inode == context.rootinode() && !foundContextRootInodeResult(inode)) {
-			auto ino = fsnodes_id_to_node(inode);
+			auto ino = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 			StatsRecord rootInodeStatRec;
-			fsnodes_get_stats(ino, &rootInodeStatRec);
+			gFSOperations->nodeOperations()->fsnodes_get_stats(ino, &rootInodeStatRec);
 			results.emplace_back(QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
 			                                              QuotaRigor::kUsed, QuotaResource::kSize},
 			                                rootInodeStatRec.size});
@@ -3853,7 +3853,7 @@ void matoclserv_fuse_getacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		if (eptr->version >= kRichACLVersion) {
-			FSNode *node = fsnodes_id_to_node(inode);
+			FSNode *node = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
 			uint32_t owner_id = node ? node->uid : RichACL::Ace::kInvalidId;
 			matocl::fuseGetAcl::serialize(reply, messageId, owner_id, acl);
 		} else {
