@@ -31,17 +31,17 @@ void fs_dumpedge(FSNodeDirectory *parent, FSNode *child, const std::string &name
 	if (parent == NULL) {
 		if (child->type == FSNodeType::kTrash) {
 			printf("E|p:     TRASH|c:%10" PRIiNode "|n:%s\n", child->id,
-			       gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str());
+			       gFSOperations->nodeOperations()->escapeName(name).c_str());
 		} else if (child->type == FSNodeType::kReserved) {
 			printf("E|p:  RESERVED|c:%10" PRIiNode "|n:%s\n", child->id,
-			       gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str());
+			       gFSOperations->nodeOperations()->escapeName(name).c_str());
 		} else {
 			printf("E|p:      NULL|c:%10" PRIiNode "|n:%s\n", child->id,
-			       gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str());
+			       gFSOperations->nodeOperations()->escapeName(name).c_str());
 		}
 	} else {
 		printf("E|p:%10" PRIiNode "|c:%10" PRIiNode "|n:%s\n", parent->id, child->id,
-		       gFSOperations->nodeOperations()->fsnodes_escape_name(name).c_str());
+		       gFSOperations->nodeOperations()->escapeName(name).c_str());
 	}
 }
 
@@ -91,10 +91,9 @@ void fs_dumpnode(FSNode *f) {
 		printf("|d:%5" PRIu32 ",%5" PRIu32 "\n", static_cast<FSNodeDevice*>(f)->rdev >> 16,
 		       static_cast<FSNodeDevice*>(f)->rdev & 0xFFFF);
 	} else if (f->type == FSNodeType::kSymlink) {
-		printf("|p:%s\n",
-		       gFSOperations->nodeOperations()
-		           ->fsnodes_escape_name((std::string) static_cast<FSNodeSymlink *>(f)->path)
-		           .c_str());
+		printf("|p:%s\n", gFSOperations->nodeOperations()
+		                      ->escapeName((std::string) static_cast<FSNodeSymlink *>(f)->path)
+		                      .c_str());
 	} else if (f->type == FSNodeType::kFile || f->type == FSNodeType::kTrash ||
 	           f->type == FSNodeType::kReserved) {
 		FSNodeFile *node_file = static_cast<FSNodeFile*>(f);
@@ -146,14 +145,14 @@ void fs_dumpedgelist(FSNodeDirectory *parent) {
 
 void fs_dumpedgelist(const TrashPathContainer &data) {
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.first.id);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first.id);
 		fs_dumpedge(nullptr, child, (std::string)entry.second);
 	}
 }
 
 void fs_dumpedgelist(const ReservedPathContainer &data) {
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->fsnodes_id_to_node(entry.first);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first);
 		fs_dumpedge(nullptr, child, (std::string)entry.second);
 	}
 }
@@ -187,14 +186,12 @@ void xattr_dump() {
 		for (const auto &xattrDataEntry : gMetadata->xattrDataHash[i]) {
 			printf("X|i:%10" PRIiNode "|n:%s|v:%s\n", xattrDataEntry.get()->inode,
 			       gFSOperations->nodeOperations()
-			           ->fsnodes_escape_name(
-			               std::string((char *)xattrDataEntry.get()->attributeName.data(),
-			                           xattrDataEntry.get()->attributeName.size()))
+			           ->escapeName(std::string((char *)xattrDataEntry.get()->attributeName.data(),
+			                                    xattrDataEntry.get()->attributeName.size()))
 			           .c_str(),
 			       gFSOperations->nodeOperations()
-			           ->fsnodes_escape_name(
-			               std::string((char *)xattrDataEntry.get()->attributeValue.data(),
-			                           xattrDataEntry.get()->attributeValue.size()))
+			           ->escapeName(std::string((char *)xattrDataEntry.get()->attributeValue.data(),
+			                                    xattrDataEntry.get()->attributeValue.size()))
 			           .c_str());
 		}
 	}
