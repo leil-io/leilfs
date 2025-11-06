@@ -1665,9 +1665,9 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 		status = gFSOperations->quotaGet(context, owners, results);
 
 		if (inode == context.rootinode() && !foundContextRootInodeResult(inode)) {
-			auto ino = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
+			auto ino = gFSOperations->nodeOperations()->idToNode(inode);
 			StatsRecord rootInodeStatRec;
-			gFSOperations->nodeOperations()->fsnodes_get_stats(ino, &rootInodeStatRec);
+			gFSOperations->nodeOperations()->getStats(ino, &rootInodeStatRec);
 			results.emplace_back(QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
 			                                              QuotaRigor::kUsed, QuotaResource::kSize},
 			                                rootInodeStatRec.size});
@@ -2783,7 +2783,7 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
-	uint32_t chunkcount[CHUNK_MATRIX_SIZE];
+	ChunkCountArray chunkCount;
 	uint32_t msgid;
 	uint8_t *ptr;
 	uint8_t status;
@@ -2800,7 +2800,7 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = gFSOperations->checkFile(matoclserv_get_context(eptr), inode, chunkcount);
+	status = gFSOperations->checkFile(matoclserv_get_context(eptr), inode, chunkCount);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_CHECK, sizeof(msgid) + sizeof(status));
@@ -2810,7 +2810,7 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
 		                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
 		put32bit(&ptr, msgid);
-		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkcount[i]); }
+		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkCount[i]); }
 	}
 }
 
@@ -3055,9 +3055,8 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
 	uint32_t msgid;
-	constexpr uint8_t kMaxEattr = 16;
-	uint32_t feattrtab[kMaxEattr];
-	uint32_t deattrtab[kMaxEattr];
+	ExtraAttributesArray fileEAttrTab;
+	ExtraAttributesArray dirEAttrTab;
 	uint8_t i, fn, dn, gmode;
 	uint8_t *ptr;
 	uint8_t status;
@@ -3076,15 +3075,15 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	getINode(&data, inode);
 	gmode = get8bit(&data);
 
-	status =
-	    gFSOperations->getEAttr(matoclserv_get_context(eptr), inode, gmode, feattrtab, deattrtab);
+	status = gFSOperations->getExtraAttr(matoclserv_get_context(eptr), inode, gmode, fileEAttrTab,
+	                                     dirEAttrTab);
 	fn = 0;
 	dn = 0;
 
 	if (status == SAUNAFS_STATUS_OK) {
-		for (i = 0; i < kMaxEattr; i++) {
-			if (feattrtab[i]) { fn++; }
-			if (deattrtab[i]) { dn++; }
+		for (i = 0; i < kMaxExtraAttributes; i++) {
+			if (fileEAttrTab[i]) { fn++; }
+			if (dirEAttrTab[i]) { dn++; }
 		}
 	}
 
@@ -3102,16 +3101,16 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	} else {
 		put8bit(&ptr, fn);
 		put8bit(&ptr, dn);
-		for (i = 0; i < kMaxEattr; i++) {
-			if (feattrtab[i]) {
+		for (i = 0; i < kMaxExtraAttributes; i++) {
+			if (fileEAttrTab[i]) {
 				put8bit(&ptr, i);
-				put32bit(&ptr, feattrtab[i]);
+				put32bit(&ptr, fileEAttrTab[i]);
 			}
 		}
-		for (i = 0; i < kMaxEattr; i++) {
-			if (deattrtab[i]) {
+		for (i = 0; i < kMaxExtraAttributes; i++) {
+			if (dirEAttrTab[i]) {
 				put8bit(&ptr, i);
-				put32bit(&ptr, deattrtab[i]);
+				put32bit(&ptr, dirEAttrTab[i]);
 			}
 		}
 	}
@@ -3143,8 +3142,8 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	eattr = get8bit(&data);
 	smode = get8bit(&data);
 
-	status = gFSOperations->setEAttr(matoclserv_get_context(eptr, uid, 0), inode, eattr, smode,
-	                                 &changed, &notchanged, &notpermitted);
+	status = gFSOperations->setExtraAttr(matoclserv_get_context(eptr, uid, 0), inode, eattr, smode,
+	                                     &changed, &notchanged, &notpermitted);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessSize =
@@ -3853,7 +3852,7 @@ void matoclserv_fuse_getacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		if (eptr->version >= kRichACLVersion) {
-			FSNode *node = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
+			FSNode *node = gFSOperations->nodeOperations()->idToNode(inode);
 			uint32_t owner_id = node ? node->uid : RichACL::Ace::kInvalidId;
 			matocl::fuseGetAcl::serialize(reply, messageId, owner_id, acl);
 		} else {

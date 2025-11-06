@@ -75,8 +75,8 @@ public:
 	               inode_t parent_dst, const HString &name_dst, inode_t *inode,
 	               Attributes *attr) override;
 	uint8_t release(const FsContext &context, inode_t inode, uint32_t sessionid) override;
-	uint8_t setEAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
-	                 inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
+	uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
+	                     inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
 	uint8_t setGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 	                std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 	                const std::function<void(int)> &callback) override;
@@ -143,15 +143,16 @@ public:
 	                uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) override;
 
 	uint8_t checkFile(const FsContext &context, inode_t inode,
-	                  uint32_t chunkcount[CHUNK_MATRIX_SIZE]) override;
+	                  ChunkCountArray &chunkCount) override;
 	uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
 	                  Attributes &attr) override;
 	uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                GoalStatistics &dgtab) override;
 	uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
 	                 const uint8_t *attrname, uint32_t *avleng, uint8_t **attrvalue) override;
-	uint8_t getEAttr(const FsContext &context, inode_t inode, uint8_t gmode, uint32_t feattrtab[16],
-	                 uint32_t deattrtab[16]) override;
+	uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
+	                     ExtraAttributesArray &fileEAttrTab,
+	                     ExtraAttributesArray &dirEAttrTab) override;
 	uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened, void **xanode,
 	                      uint32_t *xasize) override;
 	uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,

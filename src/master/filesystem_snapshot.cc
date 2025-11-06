@@ -40,25 +40,25 @@ uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_
 	ChecksumUpdater cu(context.ts());
 	FSNode *src_node = nullptr;
 	FSNode *dst_parent_node = nullptr;
-	uint8_t status = gFSOperations->nodeOperations()->verify_session(
+	uint8_t status = gFSOperations->nodeOperations()->verifySession(
 	    context, OperationMode::kReadWrite, SessionType::kNotMeta);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	status = gFSOperations->nodeOperations()->fsnodes_get_node_for_operation(
+	status = gFSOperations->nodeOperations()->getNodeForOperation(
 	    context, ExpectedNodeType::kDirectory, MODE_MASK_W, parent_dst, &dst_parent_node);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	status = gFSOperations->nodeOperations()->fsnodes_get_node_for_operation(
+	status = gFSOperations->nodeOperations()->getNodeForOperation(
 	    context, ExpectedNodeType::kAny, MODE_MASK_R, inode_src, &src_node);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
 	if (src_node->type == FSNodeType::kDirectory) {
 		if (src_node == dst_parent_node ||
-		    gFSOperations->nodeOperations()->fsnodes_isancestor(
-		        static_cast<FSNodeDirectory *>(src_node), dst_parent_node)) {
+		    gFSOperations->nodeOperations()->isAncestor(static_cast<FSNodeDirectory *>(src_node),
+		                                                dst_parent_node)) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
 	}
@@ -69,13 +69,12 @@ uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_
 	                                   static_cast<FSNodeDirectory *>(dst_parent_node)->id,
 	                                   0, can_overwrite, ignore_missing_src, true, true);
 	std::string src_path;
-	FSNodeDirectory *parent = gFSOperations->nodeOperations()->fsnodes_get_first_parent(src_node);
-	gFSOperations->nodeOperations()->fsnodes_getpath(parent, src_node, src_path);
+	FSNodeDirectory *parent = gFSOperations->nodeOperations()->getFirstParent(src_node);
+	gFSOperations->nodeOperations()->getPath(parent, src_node, src_path);
 
 	std::string dst_path;
-	FSNodeDirectory *grandparent =
-	    gFSOperations->nodeOperations()->fsnodes_get_first_parent(dst_parent_node);
-	gFSOperations->nodeOperations()->fsnodes_getpath(grandparent, dst_parent_node, dst_path);
+	FSNodeDirectory *grandparent = gFSOperations->nodeOperations()->getFirstParent(dst_parent_node);
+	gFSOperations->nodeOperations()->getPath(grandparent, dst_parent_node, dst_path);
 	if (dst_path.size() > 1) {
 		dst_path += "/";
 	}

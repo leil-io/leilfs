@@ -87,8 +87,9 @@ public:
 	                       inode_t parent_dst, const HString &name_dst, inode_t *inode,
 	                       Attributes *attr) = 0;
 	virtual uint8_t release(const FsContext &context, inode_t inode, uint32_t sessionid) = 0;
-	virtual uint8_t setEAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
-	                         inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) = 0;
+	virtual uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr,
+	                             uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
+	                             inode_t *nsinodes) = 0;
 	virtual uint8_t setGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 	                        std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 	                        const std::function<void(int)> &callback) = 0;
@@ -165,13 +166,14 @@ public:
 	                        std::vector<DirectoryEntry> &dir_entries) = 0;
 
 	virtual uint8_t checkFile(const FsContext &context, inode_t inode,
-	                          uint32_t chunkcount[CHUNK_MATRIX_SIZE]) = 0;
+	                          ChunkCountArray &chunkCount) = 0;
 	virtual uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
 	                          Attributes &attr) = 0;
 	virtual uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode,
 	                        GoalStatistics &fgtab, GoalStatistics &dgtab) = 0;
-	virtual uint8_t getEAttr(const FsContext &context, inode_t inode, uint8_t gmode,
-	                         uint32_t feattrtab[16], uint32_t deattrtab[16]) = 0;
+	virtual uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
+	                             ExtraAttributesArray &fileEAttrTab,
+	                             ExtraAttributesArray &dirEAttrTab) = 0;
 	virtual uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened,
 	                              void **xanode, uint32_t *xasize) = 0;
 	virtual uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened,

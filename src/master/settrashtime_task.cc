@@ -31,7 +31,7 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 
 	inode_t inode = *current_inode_;
 	++current_inode_;
-	FSNode *node = gFSOperations->nodeOperations()->fsnodes_id_to_node(inode);
+	FSNode *node = gFSOperations->nodeOperations()->idToNode(inode);
 	if (!node) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
