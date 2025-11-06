@@ -1091,11 +1091,10 @@ void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint3
 	}
 }
 
-void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile,
-                                             uint32_t chunkCount[CHUNK_MATRIX_SIZE]) {
+void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) {
 	uint8_t count;
 
-	for (int i = 0; i < CHUNK_MATRIX_SIZE; ++i) { chunkCount[i] = 0; }
+	chunkCount.fill(0);
 
 	for (const auto &chunkid : nodeFile->chunks) {
 		if (chunkid > 0) {

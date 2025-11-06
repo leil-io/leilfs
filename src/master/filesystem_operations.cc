@@ -1899,7 +1899,7 @@ uint8_t FilesystemOperationsBase::readdir(const FsContext &context, inode_t inod
 }
 
 uint8_t FilesystemOperationsBase::checkFile(const FsContext &context, inode_t inode,
-                                            uint32_t chunkcount[CHUNK_MATRIX_SIZE]) {
+                                            ChunkCountArray &chunkCount) {
 	FSNode *p;
 
 	uint8_t status =
@@ -1914,7 +1914,7 @@ uint8_t FilesystemOperationsBase::checkFile(const FsContext &context, inode_t in
 		return status;
 	}
 
-	nodeOperations_->checkFile(static_cast<FSNodeFile *>(p), chunkcount);
+	nodeOperations_->checkFile(static_cast<FSNodeFile *>(p), chunkCount);
 	return SAUNAFS_STATUS_OK;
 }
 

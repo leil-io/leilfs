@@ -64,7 +64,7 @@ public:
 	                     FSNodeFile *srcNodeFile) override;
 	void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) override;
 #ifndef METARESTORE
-	void checkFile(FSNodeFile *nodeFile, uint32_t chunkCount[CHUNK_MATRIX_SIZE]) override;
+	void checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) override;
 #endif
 	int64_t getSize(FSNode *node) override;
 

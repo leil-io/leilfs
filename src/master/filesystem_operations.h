@@ -143,7 +143,7 @@ public:
 	                uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) override;
 
 	uint8_t checkFile(const FsContext &context, inode_t inode,
-	                  uint32_t chunkcount[CHUNK_MATRIX_SIZE]) override;
+	                  ChunkCountArray &chunkCount) override;
 	uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
 	                  Attributes &attr) override;
 	uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode, GoalStatistics &fgtab,

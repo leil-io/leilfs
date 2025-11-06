@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,8 @@ struct StatsRecord;
 struct DirectoryEntry;
 struct HandleInodeEntry;
 struct NamedInodeEntry;
+
+using ChunkCountArray = std::array<uint32_t, CHUNK_MATRIX_SIZE>;
 
 /// Interface for filesystem node operations extensibility.
 ///
@@ -102,7 +105,7 @@ public:
 	                             FSNodeFile *srcNodeFile) = 0;
 	virtual void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) = 0;
 #ifndef METARESTORE
-	virtual void checkFile(FSNodeFile *nodeFile, uint32_t chunkCount[CHUNK_MATRIX_SIZE]) = 0;
+	virtual void checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) = 0;
 #endif
 	virtual int64_t getSize(FSNode *node) = 0;
 

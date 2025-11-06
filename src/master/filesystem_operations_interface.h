@@ -165,7 +165,7 @@ public:
 	                        std::vector<DirectoryEntry> &dir_entries) = 0;
 
 	virtual uint8_t checkFile(const FsContext &context, inode_t inode,
-	                          uint32_t chunkcount[CHUNK_MATRIX_SIZE]) = 0;
+	                          ChunkCountArray &chunkCount) = 0;
 	virtual uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
 	                          Attributes &attr) = 0;
 	virtual uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode,

@@ -2783,7 +2783,7 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
-	uint32_t chunkcount[CHUNK_MATRIX_SIZE];
+	ChunkCountArray chunkCount;
 	uint32_t msgid;
 	uint8_t *ptr;
 	uint8_t status;
@@ -2800,7 +2800,7 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = gFSOperations->checkFile(matoclserv_get_context(eptr), inode, chunkcount);
+	status = gFSOperations->checkFile(matoclserv_get_context(eptr), inode, chunkCount);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_CHECK, sizeof(msgid) + sizeof(status));
@@ -2810,7 +2810,7 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
 		                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
 		put32bit(&ptr, msgid);
-		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkcount[i]); }
+		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkCount[i]); }
 	}
 }
 
