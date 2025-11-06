@@ -170,16 +170,32 @@ protected:
 
 private:
 	// Private helpers
-	void fsnodes_sub_stats(FSNodeDirectory *parent, StatsRecord *stats);
-	void fsnodes_remove_node(uint32_t timeStamp, FSNode *node);
 
-	uint32_t last_chunk_blocks(FSNodeFile *node);
-	bool last_chunk_nonempty(FSNodeFile *node);
-	uint32_t file_chunks(FSNodeFile *node);
-	uint64_t file_size(FSNodeFile *node, uint32_t nonzero_chunks);
-	uint64_t file_realsize(FSNodeFile *node, uint32_t nonzero_chunks, uint64_t file_size);
+	void subStats(FSNodeDirectory *parent, StatsRecord *stats);
+	void removeNode(uint32_t timeStamp, FSNode *node);
+
+	/// Number of blocks in the last chunk before EOF
+	static uint32_t lastChunkBlocks(FSNodeFile *node);
+
+	/// Does the last chunk exist and contain non-zero data?
+	static bool isLastChunkNonEmpty(FSNodeFile *node);
+
+	/// Count chunks in a file, disregard sparse file holes
+	static uint32_t fileChunksCount(FSNodeFile *node);
+
+	/// Compute the "size" statistic for a file node
+	static uint64_t fileSize(FSNodeFile *node, uint32_t nonZeroChunks);
+
+	/// Compute the "realsize" statistic for a file node.
+	/// @param node file node (used e.g. to detect a partial last chunk and goal).
+	/// @param nonZeroChunks number of non-empty chunks (used for EC/XOR slice calculations).
+	/// @param logicalFileSize logical file "size" as returned by fileSize(...).
+	static uint64_t fileRealSize(FSNodeFile *node, uint32_t nonZeroChunks,
+	                             uint64_t logicalFileSize);
+
 #ifndef METARESTORE
-	uint32_t ec_chunk_realsize(uint32_t blocks, uint32_t data_part_count,
-	                           uint32_t parity_part_count);
+	/// Compute the disk space cost of all parts of a xor/ec chunk of given size
+	static uint32_t ecChunkRealSize(uint32_t blocks, uint32_t dataPartCount,
+	                                uint32_t parityPartCount);
 #endif
 };

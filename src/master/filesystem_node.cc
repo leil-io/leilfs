@@ -83,12 +83,9 @@ void FSNode::destroy(FSNode *node) {
 	delete node;
 }
 
-// ============================================================================
-// FilesystemNodeOperationsBase - Private helper methods
-// ============================================================================
+// Private helper methods
 
-// number of blocks in the last chunk before EOF
-uint32_t FilesystemNodeOperationsBase::last_chunk_blocks(FSNodeFile *node) {
+uint32_t FilesystemNodeOperationsBase::lastChunkBlocks(FSNodeFile *node) {
 	const uint64_t last_byte = node->length - 1;
 	const uint32_t last_byte_offset = last_byte % SFSCHUNKSIZE;
 	const uint32_t last_block = last_byte_offset / SFSBLOCKSIZE;
@@ -96,8 +93,7 @@ uint32_t FilesystemNodeOperationsBase::last_chunk_blocks(FSNodeFile *node) {
 	return block_count;
 }
 
-// does the last chunk exist and contain non-zero data?
-bool FilesystemNodeOperationsBase::last_chunk_nonempty(FSNodeFile *node) {
+bool FilesystemNodeOperationsBase::isLastChunkNonEmpty(FSNodeFile *node) {
 	std::size_t chunks = node->chunks.size();
 	if (chunks == 0) {
 		// no non-zero chunks, return now
@@ -115,42 +111,37 @@ bool FilesystemNodeOperationsBase::last_chunk_nonempty(FSNodeFile *node) {
 	return false;
 }
 
-// count chunks in a file, disregard sparse file holes
-uint32_t FilesystemNodeOperationsBase::file_chunks(FSNodeFile *node) {
+uint32_t FilesystemNodeOperationsBase::fileChunksCount(FSNodeFile *node) {
 	return std::accumulate(node->chunks.begin(), node->chunks.end(), (uint32_t)0,
 	                       [](uint32_t sum, uint64_t v) { return sum + (v != 0); });
 }
 
-// compute the "size" statistic for a file node
-uint64_t FilesystemNodeOperationsBase::file_size(FSNodeFile *node, uint32_t nonzero_chunks) {
-	uint64_t size = (uint64_t)nonzero_chunks * (SFSCHUNKSIZE + SFSHDRSIZE);
-	if (last_chunk_nonempty(node)) {
+uint64_t FilesystemNodeOperationsBase::fileSize(FSNodeFile *node, uint32_t nonZeroChunks) {
+	uint64_t size = (uint64_t)nonZeroChunks * (SFSCHUNKSIZE + SFSHDRSIZE);
+	if (isLastChunkNonEmpty(node)) {
 		size -= SFSCHUNKSIZE;
-		size += last_chunk_blocks(node) * SFSBLOCKSIZE;
+		size += lastChunkBlocks(node) * SFSBLOCKSIZE;
 	}
 	return size;
 }
 
 #ifndef METARESTORE
-// compute the disk space cost of all parts of a xor/ec chunk of given size
-uint32_t FilesystemNodeOperationsBase::ec_chunk_realsize(uint32_t blocks, uint32_t data_part_count,
-                                                         uint32_t parity_part_count) {
-	const uint32_t stripes = (blocks + data_part_count - 1) / data_part_count;
-	uint32_t size = blocks * SFSBLOCKSIZE;                 // file data
-	size += parity_part_count * stripes * SFSBLOCKSIZE;     // parity data
-	size += 4096 * (data_part_count + parity_part_count);  // headers of data and parity parts
+uint32_t FilesystemNodeOperationsBase::ecChunkRealSize(uint32_t blocks, uint32_t dataPartCount,
+                                                       uint32_t parityPartCount) {
+	const uint32_t stripes = (blocks + dataPartCount - 1) / dataPartCount;
+	uint32_t size = blocks * SFSBLOCKSIZE;             // file data
+	size += parityPartCount * stripes * SFSBLOCKSIZE;  // parity data
+	size += 4096 * (dataPartCount + parityPartCount);  // headers of data and parity parts
 	return size;
 }
 #endif
 
-// compute the "realsize" statistic for a file node
-// NOTICE: file_size takes into account chunk headers and doesn't takes nonzero_chunks
-uint64_t FilesystemNodeOperationsBase::file_realsize(FSNodeFile *node, uint32_t nonzero_chunks,
-                                                     uint64_t file_size) {
+uint64_t FilesystemNodeOperationsBase::fileRealSize(FSNodeFile *node, uint32_t nonZeroChunks,
+                                                    uint64_t logicalFileSize) {
 #ifdef METARESTORE
 	(void)node;
-	(void)nonzero_chunks;
-	(void)file_size;
+	(void)nonZeroChunks;
+	(void)logicalFileSize;
 	return 0; // Doesn't really matter. Metarestore doesn't need this value
 #else
 	const Goal &goal = gFSOperations->getGoalDefinition(node->goal);
@@ -158,18 +149,17 @@ uint64_t FilesystemNodeOperationsBase::file_realsize(FSNodeFile *node, uint32_t 
 	uint64_t full_size = 0;
 	for (const auto &slice : goal) {
 		if (slice_traits::isStandard(slice) || slice_traits::isTape(slice)) {
-			full_size += file_size * slice.getExpectedCopies();
+			full_size += logicalFileSize * slice.getExpectedCopies();
 		} else if (slice_traits::isXor(slice) || slice_traits::isEC(slice)) {
 			int data_part_count = slice_traits::getNumberOfDataParts(slice);
 			int parity_part_count = slice_traits::getNumberOfParityParts(slice);
 
 			uint32_t full_chunk_realsize =
-			    ec_chunk_realsize(SFSBLOCKSINCHUNK, data_part_count, parity_part_count);
-			uint64_t size = (uint64_t)nonzero_chunks * full_chunk_realsize;
-			if (last_chunk_nonempty(node)) {
+			    ecChunkRealSize(SFSBLOCKSINCHUNK, data_part_count, parity_part_count);
+			uint64_t size = (uint64_t)nonZeroChunks * full_chunk_realsize;
+			if (isLastChunkNonEmpty(node)) {
 				size -= full_chunk_realsize;
-				size +=
-				    ec_chunk_realsize(last_chunk_blocks(node), data_part_count, parity_part_count);
+				size += ecChunkRealSize(lastChunkBlocks(node), data_part_count, parity_part_count);
 			}
 			full_size += size;
 		} else {
@@ -298,11 +288,11 @@ void FilesystemNodeOperationsBase::getStats(FSNode *node, StatsRecord *statsOut)
 		statsOut->dirs = 0;
 		statsOut->files = 1;
 		statsOut->links = 0;
-		statsOut->chunks = file_chunks(static_cast<FSNodeFile *>(node));
+		statsOut->chunks = fileChunksCount(static_cast<FSNodeFile *>(node));
 		statsOut->length = static_cast<FSNodeFile *>(node)->length;
-		statsOut->size = file_size(static_cast<FSNodeFile *>(node), statsOut->chunks);
+		statsOut->size = fileSize(static_cast<FSNodeFile *>(node), statsOut->chunks);
 		statsOut->realsize =
-		    file_realsize(static_cast<FSNodeFile *>(node), statsOut->chunks, statsOut->size);
+		    fileRealSize(static_cast<FSNodeFile *>(node), statsOut->chunks, statsOut->size);
 		break;
 	case FSNodeType::kSymlink:
 		statsOut->inodes = 1;
@@ -343,7 +333,7 @@ FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(FSNode *node) {
 	return parent;
 }
 
-void FilesystemNodeOperationsBase::fsnodes_sub_stats(FSNodeDirectory *parent, StatsRecord *stats) {
+void FilesystemNodeOperationsBase::subStats(FSNodeDirectory *parent, StatsRecord *stats) {
 	StatsRecord *psr;
 	if (parent) {
 		psr = &parent->stats;
@@ -358,7 +348,7 @@ void FilesystemNodeOperationsBase::fsnodes_sub_stats(FSNodeDirectory *parent, St
 		if (parent != gMetadata->root) {
 			for (auto const &[parentId, _] : parent->parents) {
 				auto *node = idToNodeVerify<FSNodeDirectory>(parentId);
-				fsnodes_sub_stats(node, stats);
+				subStats(node, stats);
 			}
 		}
 	}
@@ -534,7 +524,7 @@ void FilesystemNodeOperationsBase::removeEdge(uint32_t timeStamp, FSNodeDirector
 	StatsRecord sr;
 
 	getStats(childNode, &sr);
-	fsnodes_sub_stats(parent, &sr);
+	subStats(parent, &sr);
 	parent->mtime = parent->ctime = timeStamp;
 	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
 
@@ -1179,7 +1169,7 @@ void FilesystemNodeOperationsBase::changeFileGoal(FSNodeFile *nodeFile, uint8_t 
 	getStats(nodeFile, &psr);
 	nodeFile->goal = goal;
 	nsr = psr;
-	nsr.realsize = file_realsize(nodeFile, nsr.chunks, nsr.size);
+	nsr.realsize = fileRealSize(nodeFile, nsr.chunks, nsr.size);
 	for (const auto &[parentId, _] : nodeFile->parents) {
 		auto *parent_node = idToNodeVerify<FSNodeDirectory>(parentId);
 		addSubStats(parent_node, &nsr, &psr);
@@ -1256,7 +1246,7 @@ void FilesystemNodeOperationsBase::changeUidGid(FSNode *node, uint32_t uid, uint
 	}
 }
 
-void FilesystemNodeOperationsBase::fsnodes_remove_node(uint32_t timeStamp, FSNode *node) {
+void FilesystemNodeOperationsBase::removeNode(uint32_t timeStamp, FSNode *node) {
 	if (!node->parents.empty()) {
 		return;
 	}
@@ -1357,10 +1347,10 @@ void FilesystemNodeOperationsBase::unlink(uint32_t timeStamp, FSNodeDirectory *p
 			gMetadata->reservedSpace += file_node->length;
 			gMetadata->reservedNodes++;
 		} else {
-			fsnodes_remove_node(timeStamp, childNode);
+			removeNode(timeStamp, childNode);
 		}
 	} else {
-		fsnodes_remove_node(timeStamp, childNode);
+		removeNode(timeStamp, childNode);
 	}
 }
 
@@ -1386,7 +1376,7 @@ int FilesystemNodeOperationsBase::purge(uint32_t timeStamp, FSNode *node) {
 			                 gMetadata->trashReservedToId, node);
 			node->ctime = timeStamp;
 			fsnodes_update_checksum(node);
-			fsnodes_remove_node(timeStamp, node);
+			removeNode(timeStamp, node);
 
 			return 1;
 		}
@@ -1401,7 +1391,7 @@ int FilesystemNodeOperationsBase::purge(uint32_t timeStamp, FSNode *node) {
 
 		file_node->ctime = timeStamp;
 		fsnodes_update_checksum(file_node);
-		fsnodes_remove_node(timeStamp, file_node);
+		removeNode(timeStamp, file_node);
 		return 1;
 	}
 	return -1;
