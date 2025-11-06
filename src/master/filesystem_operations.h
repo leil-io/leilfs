@@ -75,8 +75,8 @@ public:
 	               inode_t parent_dst, const HString &name_dst, inode_t *inode,
 	               Attributes *attr) override;
 	uint8_t release(const FsContext &context, inode_t inode, uint32_t sessionid) override;
-	uint8_t setEAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
-	                 inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
+	uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
+	                     inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
 	uint8_t setGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 	                std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 	                const std::function<void(int)> &callback) override;
@@ -150,9 +150,9 @@ public:
 	                GoalStatistics &dgtab) override;
 	uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
 	                 const uint8_t *attrname, uint32_t *avleng, uint8_t **attrvalue) override;
-	uint8_t getEAttr(const FsContext &context, inode_t inode, uint8_t gmode,
-	                 ExtendedAttributesArray &fileEAttrTab,
-	                 ExtendedAttributesArray &dirEAttrTab) override;
+	uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
+	                     ExtraAttributesArray &fileEAttrTab,
+	                     ExtraAttributesArray &dirEAttrTab) override;
 	uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened, void **xanode,
 	                      uint32_t *xasize) override;
 	uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,

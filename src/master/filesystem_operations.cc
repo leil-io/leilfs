@@ -2453,9 +2453,9 @@ void FilesystemOperationsBase::getTrashTimeStore(TrashtimeMap &fileTrashtimes,
 	}
 }
 
-uint8_t FilesystemOperationsBase::getEAttr(const FsContext &context, inode_t inode, uint8_t gmode,
-                                           ExtendedAttributesArray &fileEAttrTab,
-                                           ExtendedAttributesArray &dirEAttrTab) {
+uint8_t FilesystemOperationsBase::getExtraAttr(const FsContext &context, inode_t inode,
+                                               uint8_t gmode, ExtraAttributesArray &fileEAttrTab,
+                                               ExtraAttributesArray &dirEAttrTab) {
 	FSNode *p;
 
 	fileEAttrTab.fill(0);
@@ -2476,7 +2476,7 @@ uint8_t FilesystemOperationsBase::getEAttr(const FsContext &context, inode_t ino
 		return status;
 	}
 
-	nodeOperations_->getEAttrRecursive(p, gmode, fileEAttrTab, dirEAttrTab);
+	nodeOperations_->getExtraAttrRecursive(p, gmode, fileEAttrTab, dirEAttrTab);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2640,9 +2640,9 @@ uint8_t FilesystemOperationsBase::applySetTrashTime(const FsContext &context, in
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::setEAttr(const FsContext &context, inode_t inode, uint8_t eattr,
-                                           uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
-                                           inode_t *nsinodes) {
+uint8_t FilesystemOperationsBase::setExtraAttr(const FsContext &context, inode_t inode,
+                                               uint8_t eattr, uint8_t smode, inode_t *sinodes,
+                                               inode_t *ncinodes, inode_t *nsinodes) {
 	ChecksumUpdater cu(context.ts());
 	if (!SMODE_ISVALID(smode) ||
 	    (eattr & (~(EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NOECACHE | EATTR_NODATACACHE)))) {
@@ -2664,8 +2664,8 @@ uint8_t FilesystemOperationsBase::setEAttr(const FsContext &context, inode_t ino
 	inode_t nci = 0;
 	inode_t nsi = 0;
 	sassert(context.hasUidGidData());
-	nodeOperations_->setEAttrRecursive(p, context.ts(), context.uid(), eattr, smode, &si, &nci,
-	                                   &nsi);
+	nodeOperations_->setExtraAttrRecursive(p, context.ts(), context.uid(), eattr, smode, &si, &nci,
+	                                       &nsi);
 	if (context.isPersonalityMaster()) {
 		if ((smode & SMODE_RMASK) == 0 && nsi > 0 && si == 0 && nci == 0) {
 			return SAUNAFS_ERROR_EPERM;

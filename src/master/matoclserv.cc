@@ -3055,8 +3055,8 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
 	uint32_t msgid;
-	ExtendedAttributesArray fileEAttrTab;
-	ExtendedAttributesArray dirEAttrTab;
+	ExtraAttributesArray fileEAttrTab;
+	ExtraAttributesArray dirEAttrTab;
 	uint8_t i, fn, dn, gmode;
 	uint8_t *ptr;
 	uint8_t status;
@@ -3075,13 +3075,13 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	getINode(&data, inode);
 	gmode = get8bit(&data);
 
-	status = gFSOperations->getEAttr(matoclserv_get_context(eptr), inode, gmode, fileEAttrTab,
-	                                 dirEAttrTab);
+	status = gFSOperations->getExtraAttr(matoclserv_get_context(eptr), inode, gmode, fileEAttrTab,
+	                                     dirEAttrTab);
 	fn = 0;
 	dn = 0;
 
 	if (status == SAUNAFS_STATUS_OK) {
-		for (i = 0; i < kMaxExtendedAttributes; i++) {
+		for (i = 0; i < kMaxExtraAttributes; i++) {
 			if (fileEAttrTab[i]) { fn++; }
 			if (dirEAttrTab[i]) { dn++; }
 		}
@@ -3101,13 +3101,13 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	} else {
 		put8bit(&ptr, fn);
 		put8bit(&ptr, dn);
-		for (i = 0; i < kMaxExtendedAttributes; i++) {
+		for (i = 0; i < kMaxExtraAttributes; i++) {
 			if (fileEAttrTab[i]) {
 				put8bit(&ptr, i);
 				put32bit(&ptr, fileEAttrTab[i]);
 			}
 		}
-		for (i = 0; i < kMaxExtendedAttributes; i++) {
+		for (i = 0; i < kMaxExtraAttributes; i++) {
 			if (dirEAttrTab[i]) {
 				put8bit(&ptr, i);
 				put32bit(&ptr, dirEAttrTab[i]);
@@ -3142,8 +3142,8 @@ void matoclserv_fuse_seteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	eattr = get8bit(&data);
 	smode = get8bit(&data);
 
-	status = gFSOperations->setEAttr(matoclserv_get_context(eptr, uid, 0), inode, eattr, smode,
-	                                 &changed, &notchanged, &notpermitted);
+	status = gFSOperations->setExtraAttr(matoclserv_get_context(eptr, uid, 0), inode, eattr, smode,
+	                                     &changed, &notchanged, &notpermitted);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessSize =

@@ -1558,9 +1558,9 @@ void FilesystemNodeOperationsBase::getTrashTimeRecursive(FSNode *node, uint8_t g
 	}
 }
 
-void FilesystemNodeOperationsBase::getEAttrRecursive(FSNode *node, uint8_t gmode,
-                                                     ExtendedAttributesArray &fileEAttrTab,
-                                                     ExtendedAttributesArray &dirEAttrTab) {
+void FilesystemNodeOperationsBase::getExtraAttrRecursive(FSNode *node, uint8_t gmode,
+                                                         ExtraAttributesArray &fileEAttrTab,
+                                                         ExtraAttributesArray &dirEAttrTab) {
 	if (node->type != FSNodeType::kDirectory) {
 		fileEAttrTab[(node->mode >> 12) & (EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NODATACACHE)]++;
 	} else {
@@ -1568,7 +1568,7 @@ void FilesystemNodeOperationsBase::getEAttrRecursive(FSNode *node, uint8_t gmode
 		if (gmode == GMODE_RECURSIVE) {
 			const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 			for (const auto &entry : dir_node->entries) {
-				getEAttrRecursive(entry.second, gmode, fileEAttrTab, dirEAttrTab);
+				getExtraAttrRecursive(entry.second, gmode, fileEAttrTab, dirEAttrTab);
 			}
 		}
 	}
@@ -1665,7 +1665,7 @@ void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t 
 	}
 }
 
-void FilesystemNodeOperationsBase::setEAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid,
+void FilesystemNodeOperationsBase::setExtraAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid,
                                                      uint8_t eattr, uint8_t smode,
                                                      inode_t *modifiedINodesOut,
                                                      inode_t *unchangedINodesOut,
@@ -1708,7 +1708,7 @@ void FilesystemNodeOperationsBase::setEAttrRecursive(FSNode *node, uint32_t time
 	if (node->type == FSNodeType::kDirectory && (smode & SMODE_RMASK)) {
 		const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 		for (const auto &entry : dir_node->entries) {
-			setEAttrRecursive(entry.second, timeStamp, uid, eattr, smode, modifiedINodesOut,
+			setExtraAttrRecursive(entry.second, timeStamp, uid, eattr, smode, modifiedINodesOut,
 			                  unchangedINodesOut, permissionDeniedINodesOut);
 		}
 	}

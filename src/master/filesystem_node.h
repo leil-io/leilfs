@@ -123,8 +123,8 @@ public:
 	                      GoalStatistics &dgtab) override;
 	void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                           TrashtimeMap &dirTrashtimes) override;
-	void getEAttrRecursive(FSNode *node, uint8_t gmode, ExtendedAttributesArray &fileEAttrTab,
-	                       ExtendedAttributesArray &dirEAttrTab) override;
+	void getExtraAttrRecursive(FSNode *node, uint8_t gmode, ExtraAttributesArray &fileEAttrTab,
+	                           ExtraAttributesArray &dirEAttrTab) override;
 #endif  // METARESTORE
 	void setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t goal,
 	                      uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
@@ -135,9 +135,10 @@ public:
 	                           inode_t *unchangedINodesOut,
 	                           inode_t *permissionDeniedINodesOut) override;
 
-	void setEAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t eattr,
-	                       uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
-	                       inode_t *permissionDeniedINodesOut) override;
+	void setExtraAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t eattr,
+	                           uint8_t smode, inode_t *modifiedINodesOut,
+	                           inode_t *unchangedINodesOut,
+	                           inode_t *permissionDeniedINodesOut) override;
 
 	// Access control operations
 	int access(const FsContext &context, FSNode *node, uint8_t modemask) override;

@@ -521,8 +521,8 @@ int do_seteattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr)
 	GETINODE(nci,ptr);
 	EAT(ptr,filename,lv,',');
 	GETINODE(npi,ptr);
-	return gFSOperations->setEAttr(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, eattr,
-	                               smode, &ci, &nci, &npi);
+	return gFSOperations->setExtraAttr(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, eattr,
+	                                   smode, &ci, &nci, &npi);
 }
 
 int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
