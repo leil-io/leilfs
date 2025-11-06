@@ -150,8 +150,9 @@ public:
 	                GoalStatistics &dgtab) override;
 	uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
 	                 const uint8_t *attrname, uint32_t *avleng, uint8_t **attrvalue) override;
-	uint8_t getEAttr(const FsContext &context, inode_t inode, uint8_t gmode, uint32_t feattrtab[16],
-	                 uint32_t deattrtab[16]) override;
+	uint8_t getEAttr(const FsContext &context, inode_t inode, uint8_t gmode,
+	                 ExtendedAttributesArray &fileEAttrTab,
+	                 ExtendedAttributesArray &dirEAttrTab) override;
 	uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened, void **xanode,
 	                      uint32_t *xasize) override;
 	uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,

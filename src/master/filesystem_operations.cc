@@ -2454,11 +2454,13 @@ void FilesystemOperationsBase::getTrashTimeStore(TrashtimeMap &fileTrashtimes,
 }
 
 uint8_t FilesystemOperationsBase::getEAttr(const FsContext &context, inode_t inode, uint8_t gmode,
-                                           uint32_t feattrtab[16], uint32_t deattrtab[16]) {
+                                           ExtendedAttributesArray &fileEAttrTab,
+                                           ExtendedAttributesArray &dirEAttrTab) {
 	FSNode *p;
 
-	memset(feattrtab, 0, 16 * sizeof(uint32_t));
-	memset(deattrtab, 0, 16 * sizeof(uint32_t));
+	fileEAttrTab.fill(0);
+	dirEAttrTab.fill(0);
+
 	if (!GMODE_ISVALID(gmode)) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -2474,7 +2476,7 @@ uint8_t FilesystemOperationsBase::getEAttr(const FsContext &context, inode_t ino
 		return status;
 	}
 
-	nodeOperations_->getEAttrRecursive(p, gmode, feattrtab, deattrtab);
+	nodeOperations_->getEAttrRecursive(p, gmode, fileEAttrTab, dirEAttrTab);
 	return SAUNAFS_STATUS_OK;
 }
 

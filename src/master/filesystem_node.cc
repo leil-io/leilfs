@@ -1559,17 +1559,16 @@ void FilesystemNodeOperationsBase::getTrashTimeRecursive(FSNode *node, uint8_t g
 }
 
 void FilesystemNodeOperationsBase::getEAttrRecursive(FSNode *node, uint8_t gmode,
-                                                     uint32_t feattrtab[16],
-                                                     uint32_t deattrtab[16]) {
+                                                     ExtendedAttributesArray &fileEAttrTab,
+                                                     ExtendedAttributesArray &dirEAttrTab) {
 	if (node->type != FSNodeType::kDirectory) {
-		feattrtab[(node->mode >> 12) &
-		          (EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NODATACACHE)]++;
+		fileEAttrTab[(node->mode >> 12) & (EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NODATACACHE)]++;
 	} else {
-		deattrtab[(node->mode >> 12)]++;
+		dirEAttrTab[(node->mode >> 12)]++;
 		if (gmode == GMODE_RECURSIVE) {
 			const FSNodeDirectory *dir_node = static_cast<const FSNodeDirectory*>(node);
 			for (const auto &entry : dir_node->entries) {
-				getEAttrRecursive(entry.second, gmode, feattrtab, deattrtab);
+				getEAttrRecursive(entry.second, gmode, fileEAttrTab, dirEAttrTab);
 			}
 		}
 	}

@@ -123,8 +123,8 @@ public:
 	                      GoalStatistics &dgtab) override;
 	void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                           TrashtimeMap &dirTrashtimes) override;
-	void getEAttrRecursive(FSNode *node, uint8_t gmode, uint32_t feattrtab[16],
-	                       uint32_t deattrtab[16]) override;
+	void getEAttrRecursive(FSNode *node, uint8_t gmode, ExtendedAttributesArray &fileEAttrTab,
+	                       ExtendedAttributesArray &dirEAttrTab) override;
 #endif  // METARESTORE
 	void setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t goal,
 	                      uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,

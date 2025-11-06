@@ -171,7 +171,8 @@ public:
 	virtual uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode,
 	                        GoalStatistics &fgtab, GoalStatistics &dgtab) = 0;
 	virtual uint8_t getEAttr(const FsContext &context, inode_t inode, uint8_t gmode,
-	                         uint32_t feattrtab[16], uint32_t deattrtab[16]) = 0;
+	                         ExtendedAttributesArray &fileEAttrTab,
+	                         ExtendedAttributesArray &dirEAttrTab) = 0;
 	virtual uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened,
 	                              void **xanode, uint32_t *xasize) = 0;
 	virtual uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened,

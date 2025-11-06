@@ -43,6 +43,10 @@ struct NamedInodeEntry;
 
 using ChunkCountArray = std::array<uint32_t, CHUNK_MATRIX_SIZE>;
 
+// Extended attributes constants and type aliases
+static constexpr uint8_t kMaxExtendedAttributes = 16;
+using ExtendedAttributesArray = std::array<uint32_t, kMaxExtendedAttributes>;
+
 /// Interface for filesystem node operations extensibility.
 ///
 /// Classes implementing this interface can be used to override default filesystem node behavior.
@@ -174,8 +178,9 @@ public:
 	                              GoalStatistics &dgtab) = 0;
 	virtual void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                                   TrashtimeMap &dirTrashtimes) = 0;
-	virtual void getEAttrRecursive(FSNode *node, uint8_t gmode, uint32_t feattrtab[16],
-	                               uint32_t deattrtab[16]) = 0;
+	virtual void getEAttrRecursive(FSNode *node, uint8_t gmode,
+	                               ExtendedAttributesArray &fileEAttrTab,
+	                               ExtendedAttributesArray &dirEAttrTab) = 0;
 #endif
 	virtual void setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t goal,
 	                              uint8_t smode, inode_t *modifiedINodesOut,

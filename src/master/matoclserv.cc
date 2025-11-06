@@ -3055,9 +3055,8 @@ void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const u
 void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
 	uint32_t msgid;
-	constexpr uint8_t kMaxEattr = 16;
-	uint32_t feattrtab[kMaxEattr];
-	uint32_t deattrtab[kMaxEattr];
+	ExtendedAttributesArray fileEAttrTab;
+	ExtendedAttributesArray dirEAttrTab;
 	uint8_t i, fn, dn, gmode;
 	uint8_t *ptr;
 	uint8_t status;
@@ -3076,15 +3075,15 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	getINode(&data, inode);
 	gmode = get8bit(&data);
 
-	status =
-	    gFSOperations->getEAttr(matoclserv_get_context(eptr), inode, gmode, feattrtab, deattrtab);
+	status = gFSOperations->getEAttr(matoclserv_get_context(eptr), inode, gmode, fileEAttrTab,
+	                                 dirEAttrTab);
 	fn = 0;
 	dn = 0;
 
 	if (status == SAUNAFS_STATUS_OK) {
-		for (i = 0; i < kMaxEattr; i++) {
-			if (feattrtab[i]) { fn++; }
-			if (deattrtab[i]) { dn++; }
+		for (i = 0; i < kMaxExtendedAttributes; i++) {
+			if (fileEAttrTab[i]) { fn++; }
+			if (dirEAttrTab[i]) { dn++; }
 		}
 	}
 
@@ -3102,16 +3101,16 @@ void matoclserv_fuse_geteattr(matoclserventry *eptr, const uint8_t *data, uint32
 	} else {
 		put8bit(&ptr, fn);
 		put8bit(&ptr, dn);
-		for (i = 0; i < kMaxEattr; i++) {
-			if (feattrtab[i]) {
+		for (i = 0; i < kMaxExtendedAttributes; i++) {
+			if (fileEAttrTab[i]) {
 				put8bit(&ptr, i);
-				put32bit(&ptr, feattrtab[i]);
+				put32bit(&ptr, fileEAttrTab[i]);
 			}
 		}
-		for (i = 0; i < kMaxEattr; i++) {
-			if (deattrtab[i]) {
+		for (i = 0; i < kMaxExtendedAttributes; i++) {
+			if (dirEAttrTab[i]) {
 				put8bit(&ptr, i);
-				put32bit(&ptr, deattrtab[i]);
+				put32bit(&ptr, dirEAttrTab[i]);
 			}
 		}
 	}
