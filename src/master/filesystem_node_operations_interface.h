@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "common/attributes.h"
+#include "common/type_defs.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_trash_reserved_files.h"
 #include "master/fs_context.h"
@@ -46,6 +47,12 @@ using ChunkCountArray = std::array<uint32_t, CHUNK_MATRIX_SIZE>;
 // Extra attributes constants and type aliases
 static constexpr uint8_t kMaxExtraAttributes = 16;
 using ExtraAttributesArray = std::array<uint32_t, kMaxExtraAttributes>;
+
+// Directory entry serialization constants
+static constexpr size_t kDirEntryWithAttributesSize = kinode_t_size + kAttributesSize;
+static constexpr size_t kDirEntryWithoutAttributesSize = kinode_t_size + 1;
+static constexpr size_t kDotEntrySize = 2;      // name length (1 byte) + "." (1 byte)
+static constexpr size_t kDotDotEntrySize = 3;   // name length (1 byte) + ".." (2 bytes)
 
 /// Interface for filesystem node operations extensibility.
 ///
@@ -131,7 +138,7 @@ public:
 	                    uint8_t sesflags, FSNodeDirectory *nodeDir, uint64_t firstEntry,
 	                    uint64_t numberOfEntries, std::vector<DirectoryEntry> &dirEntriesOut) = 0;
 #endif
-	virtual int isNameUsed(FSNodeDirectory *node, const HString &name) = 0;
+	virtual bool isNameUsed(FSNodeDirectory *node, const HString &name) = 0;
 
 	// Trash/Reserved operations
 

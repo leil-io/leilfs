@@ -29,11 +29,6 @@
 #include <master/filesystem_node_types.h>
 #include <master/metadata_dumper_interface.h>
 
-// Constants
-constexpr uint16_t kEdgeNameMaxSize = 65535;
-constexpr uint8_t kEdgeHeaderSize =
-    sizeof(FSNode::id) + sizeof(FSNode::id) + sizeof(kEdgeNameMaxSize);
-
 // TODO (Baldor): Review the need for these constants below
 constexpr uint8_t kMetadataVersionLegacy = 0x15;
 constexpr uint8_t kMetadataVersionSaunaFS = 0x16;
@@ -44,7 +39,7 @@ constexpr int8_t kOpFailure = -1;
 constexpr char const MetadataStructureReadErrorMsg[] = "error reading metadata (structure)";
 
 // Global variables
-inline uint8_t gEdgeStoreBuffer[kEdgeHeaderSize + kEdgeNameMaxSize];
+inline uint8_t gEdgeStoreBuffer[FSNode::kEdgeHeaderSize + FSNode::kEdgeNameMaxSize];
 inline uint8_t gNodeStoreBuffer[FSNodeFile::kMaxBufferSize];
 
 // Number of metadata file versions to keep

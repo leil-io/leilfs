@@ -220,8 +220,8 @@ int fs_loadnode(FILE *fd) {
 
 	printf("%c|i:%10" PRIiNode "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
 	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
-	       c, nodeid, goal, (uint16_t)(mode >> 12), (uint16_t)(mode & 0xFFF), uid, gid, atimestamp,
-	       mtimestamp, ctimestamp, trashtime);
+	       c, nodeid, goal, (uint16_t)(mode >> EATTR_BIT_OFFSET), (uint16_t)(mode & 0xFFF), uid,
+	       gid, atimestamp, mtimestamp, ctimestamp, trashtime);
 
 	if (type==TYPE_BLOCKDEV || type==TYPE_CHARDEV) {
 		uint32_t rdev;

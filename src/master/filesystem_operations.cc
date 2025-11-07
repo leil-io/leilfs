@@ -809,7 +809,8 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context, inode_t inod
 	if (context.uid() != 0 && (context.sesflags() & SESFLAG_MAPALL) && (setmask & (SET_UID_FLAG | SET_GID_FLAG))) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if ((p->mode & (EATTR_NOOWNER << 12)) == 0 && context.uid() != 0 && context.uid() != p->uid) {
+	if ((p->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET)) == 0 && context.uid() != 0 &&
+	    context.uid() != p->uid) {
 		if (setmask & (SET_MODE_FLAG | SET_UID_FLAG | SET_GID_FLAG)) {
 			return SAUNAFS_ERROR_EPERM;
 		}

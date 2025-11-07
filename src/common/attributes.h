@@ -30,7 +30,8 @@
 #include <array>
 #include <cstdint>
 
-typedef std::array<uint8_t, 35> Attributes;
+constexpr size_t kAttributesSize = 35;
+using Attributes = std::array<uint8_t, kAttributesSize>;
 
 #ifndef _WIN32
 constexpr int saunaFileTypeToPosix(unsigned char type) {

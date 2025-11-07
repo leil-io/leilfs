@@ -142,6 +142,10 @@ public:
 	    sizeof(type) + sizeof(id) + sizeof(goal) + sizeof(mode) + sizeof(uid) + sizeof(gid) +
 	    sizeof(atime) + sizeof(mtime) + sizeof(ctime) + sizeof(trashtime);
 
+	static constexpr uint16_t kEdgeNameMaxSize = 65535;
+	static constexpr uint8_t kEdgeHeaderSize =
+	    sizeof(FSNode::id) + sizeof(FSNode::id) + sizeof(kEdgeNameMaxSize);
+
 	explicit FSNode(FSNodeType type_) : type(type_) {}
 
 	/*! \brief Static function used for creating proper node for given type.

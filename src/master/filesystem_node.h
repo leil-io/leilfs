@@ -80,7 +80,7 @@ public:
 	            uint8_t sesflags, FSNodeDirectory *nodeDir, uint64_t firstEntry,
 	            uint64_t numberOfEntries, std::vector<DirectoryEntry> &dirEntriesOut) override;
 #endif
-	int isNameUsed(FSNodeDirectory *node, const HString &name) override;
+	bool isNameUsed(FSNodeDirectory *node, const HString &name) override;
 
 	// Trash/Reserved operations
 	int purge(uint32_t timeStamp, FSNode *node) override;
