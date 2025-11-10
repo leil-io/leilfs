@@ -51,7 +51,7 @@
 #define EDGEHASHPOS(hash) ((hash) & (EDGEHASHSIZE - 1))
 #define EDGECHECKSUMSEED 1231241261
 
-#define MAX_INDEX 0x7FFFFFFF
+constexpr uint32_t kMaxChunkIndex = 0x7FFFFFFFU;
 
 enum class AclInheritance : std::uint8_t {
 	kInheritAcl,

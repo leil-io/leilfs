@@ -111,7 +111,7 @@ public:
 	                         StatsRecord *previousStats) = 0;
 	virtual void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) = 0;
 
-	virtual void setLength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) = 0;
+	virtual void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) = 0;
 	virtual uint8_t appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
 	                             FSNodeFile *srcNodeFile) = 0;
 	virtual void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) = 0;
@@ -181,8 +181,8 @@ public:
 
 	// Recursive operations
 #ifndef METARESTORE
-	virtual void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
-	                              GoalStatistics &dgtab) = 0;
+	virtual void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fileGoalsTab,
+	                              GoalStatistics &dirGoalsTab) = 0;
 	virtual void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                                   TrashtimeMap &dirTrashtimes) = 0;
 	virtual void getExtraAttrRecursive(FSNode *node, uint8_t gmode,
@@ -205,7 +205,7 @@ public:
 	                                   inode_t *permissionDeniedINodesOut) = 0;
 
 	// Access control operations
-	virtual int access(const FsContext &context, FSNode *node, uint8_t modemask) = 0;
+	virtual int access(const FsContext &context, FSNode *node, uint8_t modeMask) = 0;
 	virtual int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) = 0;
 	virtual int nameCheck(const std::string &name) = 0;
 	virtual uint8_t verifySession(const FsContext &context, OperationMode operationMode,
@@ -215,10 +215,10 @@ public:
 	/// ie:
 	/// if inode == rootinode, then returns root node
 	/// if inode != rootinode, then returns some node
-	/// Checks for permissions needed to perform the operation (defined by modemask).
+	/// Checks for permissions needed to perform the operation (defined by modeMask).
 	/// Can return a reserved node or a node from trash.
 	virtual uint8_t getNodeForOperation(const FsContext &context, ExpectedNodeType expectedNodeType,
-	                                    uint8_t modemask, inode_t inode, FSNode **nodeOut,
+	                                    uint8_t modeMask, inode_t inode, FSNode **nodeOut,
 	                                    FSNodeDirectory **rootDirOut = nullptr) = 0;
 
 	// Ancestry operations

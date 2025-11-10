@@ -59,7 +59,7 @@ public:
 	                 StatsRecord *previousStats) override;
 	void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) override;
 
-	void setLength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) override;
+	void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) override;
 	uint8_t appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
 	                     FSNodeFile *srcNodeFile) override;
 	void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) override;
@@ -119,8 +119,8 @@ public:
 
 	// Recursive operations
 #ifndef METARESTORE
-	void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
-	                      GoalStatistics &dgtab) override;
+	void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fileGoalsTab,
+	                      GoalStatistics &dirGoalsTab) override;
 	void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                           TrashtimeMap &dirTrashtimes) override;
 	void getExtraAttrRecursive(FSNode *node, uint8_t gmode, ExtraAttributesArray &fileEAttrTab,
@@ -141,7 +141,7 @@ public:
 	                           inode_t *permissionDeniedINodesOut) override;
 
 	// Access control operations
-	int access(const FsContext &context, FSNode *node, uint8_t modemask) override;
+	int access(const FsContext &context, FSNode *node, uint8_t modeMask) override;
 	int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) override;
 	int nameCheck(const std::string &name) override;
 	uint8_t verifySession(const FsContext &context, OperationMode operationMode,
@@ -150,7 +150,7 @@ public:
 	/// Treating rootinode as the root of the hierarchy, converts (rootinode, inode) to FSNode*.
 	/// @see IFilesystemNodeOperations::getNodeForOperation
 	uint8_t getNodeForOperation(const FsContext &context, ExpectedNodeType expectedNodeType,
-	                            uint8_t modemask, inode_t inode, FSNode **nodeOut,
+	                            uint8_t modeMask, inode_t inode, FSNode **nodeOut,
 	                            FSNodeDirectory **rootDirOut = nullptr) override;
 
 	// Ancestry operations

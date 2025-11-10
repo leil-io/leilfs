@@ -694,9 +694,7 @@ uint8_t FilesystemOperationsBase::applyTrunc(uint32_t timestamp, inode_t inode, 
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	if (indx > MAX_INDEX) {
-		return SAUNAFS_ERROR_INDEXTOOBIG;
-	}
+	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 	if (indx >= p->chunks.size()) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -2073,9 +2071,7 @@ uint8_t FilesystemOperationsBase::readChunk(inode_t inode, uint32_t indx, uint64
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if (indx > MAX_INDEX) {
-		return SAUNAFS_ERROR_INDEXTOOBIG;
-	}
+	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 #ifndef METARESTORE
 	if (gMagicAutoFileRepair) {
 		fs_auto_repair_if_needed(p, indx);
@@ -2113,9 +2109,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context, inode_t i
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (index > MAX_INDEX) {
-		return SAUNAFS_ERROR_INDEXTOOBIG;
-	}
+	if (index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 #ifndef METARESTORE
 	if (gMagicAutoFileRepair && context.isPersonalityMaster()) {
 		fs_auto_repair_if_needed(p, index);
@@ -2360,9 +2354,7 @@ uint8_t FilesystemOperationsBase::applyRepair(uint32_t timestamp, inode_t inode,
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if (indx > MAX_INDEX) {
-		return SAUNAFS_ERROR_INDEXTOOBIG;
-	}
+	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 	if (indx >= p->chunks.size()) {
 		return SAUNAFS_ERROR_NOCHUNK;
 		safs::log_err("fs_apply_repair: indx {} is greater than number of chunks ({}), inode {}", indx, p->chunks.size(), inode);
@@ -3040,9 +3032,7 @@ uint8_t FilesystemOperationsBase::getChunkId(const FsContext &context, inode_t i
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (index > MAX_INDEX) {
-		return SAUNAFS_ERROR_INDEXTOOBIG;
-	}
+	if (index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 	if (index < node_file->chunks.size()) {
 		*chunkid = node_file->chunks[index];
 	} else {
@@ -3125,9 +3115,7 @@ uint8_t FilesystemOperationsBase::getChunksInfo(const FsContext &context, uint32
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (chunk_index > MAX_INDEX) {
-		return SAUNAFS_ERROR_INDEXTOOBIG;
-	}
+	if (chunk_index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 
 	FSNodeFile *file_node = static_cast<FSNodeFile *>(p);
 

@@ -35,9 +35,6 @@
 #define STR_AUX(x) #x
 #define STR(x) STR_AUX(x)
 
-#define MAX_INDEX 0x7FFFFFFF
-#define MAX_CHUNKS_PER_FILE (MAX_INDEX+1)
-
 static inline char dispchar(uint8_t c) {
 	return (c>=32 && c<=126)?c:'.';
 }
