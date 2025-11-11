@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <type_traits>
@@ -101,12 +102,13 @@ uint64_t FilesystemNodeOperationsBase::fileSize(FSNodeFile *node, uint32_t nonZe
 #ifndef METARESTORE
 uint32_t FilesystemNodeOperationsBase::ecChunkRealSize(uint32_t blocks, uint32_t dataPartCount,
                                                        uint32_t parityPartCount) {
-	constexpr uint32_t kCrcSize = SFSBLOCKSINCHUNK * sizeof(uint32_t);  // CRC size per chunk
+	constexpr uint32_t kTotalCrcSizePerChunkPart = SFSBLOCKSINCHUNK * sizeof(uint32_t);
 
 	const uint32_t stripes = (blocks + dataPartCount - 1) / dataPartCount;
-	uint32_t size = blocks * SFSBLOCKSIZE;                 // file data
-	size += parityPartCount * stripes * SFSBLOCKSIZE;      // parity data
-	size += kCrcSize * (dataPartCount + parityPartCount);  // headers of data and parity parts
+	uint32_t size = blocks * SFSBLOCKSIZE;             // file data
+	size += parityPartCount * stripes * SFSBLOCKSIZE;  // parity data
+	// CRCs of data and parity parts
+	size += kTotalCrcSizePerChunkPart * (dataPartCount + parityPartCount);
 
 	return size;
 }
@@ -200,10 +202,10 @@ std::string FilesystemNodeOperationsBase::escapeName(const std::string &name) {
 	// This would take much more time than computation of exact result size.
 	// Hint: remember that std::string uses static allocation
 	// for small string sizes.
-	auto longCount = std::count_if(name.begin(), name.end(), [](char chr) {
+	auto longCount = static_cast<size_t>(std::count_if(name.begin(), name.end(), [](char chr) {
 		return chr < kControlCharThreshold || chr >= kHighByteThreshold || chr == ',' ||
 		       chr == '%' || chr == '(' || chr == ')';
-	});
+	}));
 
 	result.reserve(((kBytesPerEscapedChar - 1) * longCount) + name.length());
 
@@ -211,10 +213,9 @@ std::string FilesystemNodeOperationsBase::escapeName(const std::string &name) {
 		if (chr < kControlCharThreshold || chr >= kHighByteThreshold || chr == ',' || chr == '%' ||
 		    chr == '(' || chr == ')') {
 			result.push_back('%');
-			// Linter will complain about possible out-of-bounds access, but it is masked by
-			// kHexDigitMask and kHexDigitShift constants. So it will aleways be in range 0..15.
-			result.push_back(hexDigits[(chr >> kHexDigitShift) & kHexDigitMask]);  // NOLINT
-			result.push_back(hexDigits[chr & kHexDigitMask]);                      // NOLINT
+			// Guaranteed to be in range 0-15 due to masking with kHexDigitMask (0xF)
+			result.push_back(hexDigits[(chr >> kHexDigitShift) & kHexDigitMask]);
+			result.push_back(hexDigits[chr & kHexDigitMask]);
 		} else {
 			result.push_back(chr);
 		}
@@ -304,7 +305,7 @@ void FilesystemNodeOperationsBase::getStats(FSNode *node, StatsRecord *statsOut)
 int64_t FilesystemNodeOperationsBase::getSize(FSNode *node) {
 	StatsRecord stats;
 	getStats(node, &stats);
-	return static_cast<int64_t>(stats.size);
+	return stats.size;
 }
 
 FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(FSNode *node) {
@@ -656,7 +657,7 @@ FSNode *FilesystemNodeOperationsBase::createNode(uint32_t timeStamp, FSNodeDirec
 
 	node->uid = uid;  // owner
 
-	if ((parent->mode & S_ISGID) == S_ISGID) {  // set gid flag is set in the parent directory?
+	if ((parent->mode & S_ISGID) == S_ISGID) {  // Set-GID flag is set in the parent directory?
 		node->gid = parent->gid;
 		if (copysgid && type == FSNodeType::kDirectory) { node->mode |= S_ISGID; }
 	} else {
@@ -752,7 +753,8 @@ void FilesystemNodeOperationsBase::getPath(FSNodeDirectory *parent, FSNode *chil
 #ifndef METARESTORE
 constexpr uint32_t kOldPathContainerLimit = 1000000;
 
-// Constants for detached data handling
+// Constants for detached data handling (trash/reserved paths)
+
 constexpr uint32_t kDetachedMaxNameLength = 240;
 constexpr uint32_t kDetachedEllipsisLength = 5;  // length of "(...)"
 constexpr uint32_t kDetachedTruncatedLength = kDetachedMaxNameLength - kDetachedEllipsisLength;
@@ -926,13 +928,14 @@ void FilesystemNodeOperationsBase::getDetachedData(const ReservedPathContainer &
 
 uint32_t FilesystemNodeOperationsBase::getDirSize(const FSNodeDirectory *nodeDir,
                                                   uint8_t withAttr) {
-	uint32_t entrySize = (withAttr) ? kDirEntryWithAttributesSize : kDirEntryWithoutAttributesSize;
-	uint32_t result = (entrySize * 2) + kDotEntrySize + kDotDotEntrySize;  // for '.' and '..'
+	uint32_t entryBaseSize = kDetachedSizeByteLength + (withAttr ? kDirEntryWithAttributesSize
+	                                                             : kDirEntryWithoutAttributesSize);
+	uint32_t result = (entryBaseSize * 2) + kDotEntrySize + kDotDotEntrySize;  // for '.' and '..'
 	std::string name;
 
 	for (const auto &entry : nodeDir->entries) {
 		name = (std::string)(*entry.first);
-		result += entrySize + name.length();
+		result += entryBaseSize + name.length();
 	}
 
 	return result;
@@ -943,9 +946,9 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
                                               FSNodeDirectory *nodeDir, uint8_t *outBuffer,
                                               uint8_t withAttr) {
 	// '.' - self
-	outBuffer[0] = 1;  // name length
+	outBuffer[0] = kDotEntrySize;
 	outBuffer[1] = '.';
-	outBuffer += kDotEntrySize;
+	outBuffer += kDotEntrySize + kDetachedSizeByteLength;
 	if (nodeDir->id != rootINode) {
 		putINode(&outBuffer, nodeDir->id);
 	} else {
@@ -964,10 +967,10 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 	}
 
 	// '..' - parent
-	outBuffer[0] = 2;  // name length
+	outBuffer[0] = kDotDotEntrySize;
 	outBuffer[1] = '.';
 	outBuffer[2] = '.';
-	outBuffer += kDotDotEntrySize;
+	outBuffer += kDotDotEntrySize + kDetachedSizeByteLength;
 
 	if (nodeDir->id == rootINode) {  // root node should returns self as its parent
 		putINode(&outBuffer, SPECIAL_INODE_ROOT);
@@ -1049,8 +1052,8 @@ void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint3
 	static constexpr uint64_t kDotDotEntryIndex = (static_cast<uint64_t>(1) << hstorage::Handle::kHashShift);
 	static constexpr uint64_t kUnusedEntryIndex = (static_cast<uint64_t>(2) << hstorage::Handle::kHashShift);
 
-	FSNodeDirectory *parent{};
-	inode_t inode{};
+	FSNodeDirectory *parent;
+	inode_t inode;
 	Attributes attr;
 
 	// Handle the "." entry if starting from there and entries are requested
@@ -1059,8 +1062,7 @@ void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint3
 		parent = idToNodeVerify<FSNodeDirectory>(
 		    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
 		fillAttr(nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
-		dirEntriesOut.emplace_back(kDotEntryIndex, kDotDotEntryIndex, inode, std::string("."),
-		                           attr);
+		dirEntriesOut.emplace_back(kDotEntryIndex, kDotDotEntryIndex, inode, ".", attr);
 
 		firstEntry = kDotDotEntryIndex;
 		--numberOfEntries;
@@ -1092,7 +1094,7 @@ void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint3
 			auto firstDirentIt = nodeDir->find_nth(0);
 			nextIndex = (*firstDirentIt).first->data() & ~kSignBit64;
 		}
-		dirEntriesOut.emplace_back(kDotDotEntryIndex, nextIndex, inode, std::string(".."), attr);
+		dirEntriesOut.emplace_back(kDotDotEntryIndex, nextIndex, inode, "..", attr);
 
 		firstEntry = nextIndex;
 		--numberOfEntries;
@@ -1123,9 +1125,8 @@ void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint3
 		}
 	}
 
+	// Do not try to unbind the resource under this possibly-fake handle in destructor
 	pairToFind.first->unlink();
-	// do not try to unbind the resource under this possibly-fake handle in destructor
-	firstIndex.unlink();
 
 	// Iterate through the directory entries, collecting up to numberOfEntries entries
 	while (iter != nodeDir->entries.end() && numberOfEntries > 0) {
@@ -1145,7 +1146,7 @@ void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint3
 }
 
 void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) {
-	uint8_t count{};
+	uint8_t count;
 
 	chunkCount.fill(0);
 
@@ -1256,7 +1257,7 @@ void FilesystemNodeOperationsBase::changeFileGoal(FSNodeFile *nodeFile, uint8_t 
 
 void FilesystemNodeOperationsBase::setLength(FSNodeFile *nodeFile, uint64_t length,
                                              bool eraseFurtherChunks) {
-	uint32_t chunks{};
+	uint32_t chunks = 0;
 	StatsRecord previousStats;
 	StatsRecord newStats;
 	getStats(nodeFile, &previousStats);
@@ -1576,7 +1577,7 @@ uint8_t FilesystemNodeOperationsBase::undel(uint32_t timeStamp, FSNodeFile *node
 			gMetadata->trashSpace -= node->length;
 			gMetadata->trashNodes--;
 
-			return SAUNAFS_STATUS_OK;  // early return
+			return SAUNAFS_STATUS_OK;
 		}
 
 		// Directory handling (only runs for intermediate segments)
@@ -1735,31 +1736,31 @@ void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t 
 		    node->uid != uid) {
 			(*permissionDeniedINodesOut)++;
 		} else {
-			bool set = false;
+			bool wasSet = false;
 			auto oldTrashKey = TrashPathKey(node);
 
 			switch (smode & SMODE_TMASK) {
 			case SMODE_SET:
 				if (node->trashtime != trashtime) {
 					node->trashtime = trashtime;
-					set = true;
+					wasSet = true;
 				}
 				break;
 			case SMODE_INCREASE:
 				if (node->trashtime < trashtime) {
 					node->trashtime = trashtime;
-					set = true;
+					wasSet = true;
 				}
 				break;
 			case SMODE_DECREASE:
 				if (node->trashtime > trashtime) {
 					node->trashtime = trashtime;
-					set = true;
+					wasSet = true;
 				}
 				break;
 			}
 
-			if (set) {
+			if (wasSet) {
 				(*modifiedINodesOut)++;
 				node->ctime = timeStamp;
 
@@ -1854,6 +1855,7 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(FSNode *node, AclType type, uint
 		if (nodeAcl != nullptr) {
 			RichACL newAcl = *nodeAcl;
 			newAcl.createExplicitInheritance();
+
 			newAcl.removeInheritOnly(true);
 			if (newAcl.size() == 0) {
 				gMetadata->aclStorage.erase(node->id);
@@ -1867,6 +1869,7 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(FSNode *node, AclType type, uint
 			RichACL newAcl = *nodeAcl;
 			newAcl.createExplicitInheritance();
 			newAcl.removeInheritOnly(false);
+
 			if (newAcl.size() == 0) {
 				gMetadata->aclStorage.erase(node->id);
 			} else {
@@ -1886,9 +1889,12 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(FSNode *node, AclType type, uint
 #ifndef METARESTORE
 uint8_t FilesystemNodeOperationsBase::getAcl(FSNode *node, RichACL &acl) {
 	const RichACL *richAcl = gMetadata->aclStorage.get(node->id);
+
 	if (!richAcl) { return SAUNAFS_ERROR_ENOATTR; }
+
 	acl = *richAcl;
 	assert((node->mode & kStandardPermissionsMask) == richAcl->getMode());
+
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1907,11 +1913,14 @@ uint8_t FilesystemNodeOperationsBase::setAcl(FSNode *node, const RichACL &acl, u
 			node->mode = (node->mode & ~kStandardPermissionsMask) |
 			             (acl.getMode() & kStandardPermissionsMask);
 		}
+
 		RichACL newAcl = acl;
+
 		if (acl.isAutoSetMode()) {
 			newAcl.setFlags(newAcl.getFlags() & ~RichACL::kAutoSetMode);
 			newAcl.setMode(node->mode, node->type == FSNodeType::kDirectory);
 		}
+
 		gMetadata->aclStorage.set(node->id, std::move(newAcl));
 	}
 
@@ -2001,7 +2010,7 @@ int FilesystemNodeOperationsBase::access(const FsContext &context, FSNode *node,
 	constexpr uint8_t kGroupModeBits = 3;           // >> 3 for group bits
 	constexpr uint8_t kSingleClassPermissions = 7;  // & 7 to extract 3 bits
 
-	uint8_t nodeMode;  // NOLINT: will be assigned before use
+	uint8_t nodeMode;
 
 	// Determine which permission class applies to the requesting user
 	if (context.uid() == node->uid || (node->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET))) {
@@ -2065,8 +2074,8 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(const FsContext &conte
                                                           uint8_t modeMask, inode_t inode,
                                                           FSNode **nodeOut,
                                                           FSNodeDirectory **rootDirOut) {
-	FSNode *candidateNode;           // NOLINT: will be assigned before use
-	FSNodeDirectory *candidateRoot;  // NOLINT: will be assigned before use
+	FSNode *candidateNode;
+	FSNodeDirectory *candidateRoot;
 
 	// Node lookup
 

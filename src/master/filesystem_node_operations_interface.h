@@ -50,9 +50,9 @@ using ExtraAttributesArray = std::array<uint32_t, kMaxExtraAttributes>;
 
 // Directory entry serialization constants
 static constexpr size_t kDirEntryWithAttributesSize = kinode_t_size + kAttributesSize;
-static constexpr size_t kDirEntryWithoutAttributesSize = kinode_t_size + 1;
-static constexpr size_t kDotEntrySize = 2;      // name length (1 byte) + "." (1 byte)
-static constexpr size_t kDotDotEntrySize = 3;   // name length (1 byte) + ".." (2 bytes)
+static constexpr size_t kDirEntryWithoutAttributesSize = kinode_t_size + 1;  // +1 for node type
+static constexpr size_t kDotEntrySize = 1;      // "." (1 byte)
+static constexpr size_t kDotDotEntrySize = 2;   // ".." (2 bytes)
 
 /// Interface for filesystem node operations extensibility.
 ///

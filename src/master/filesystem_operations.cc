@@ -686,33 +686,44 @@ uint8_t FilesystemOperationsBase::applyTrunc(uint32_t timestamp, inode_t inode, 
                                              uint64_t chunkid, uint32_t lockid) {
 	uint64_t ochunkid, nchunkid;
 	uint8_t status;
-	FSNodeFile *p = nodeOperations_->idToNode<FSNodeFile>(inode);
+	auto *p = nodeOperations_->idToNode<FSNodeFile>(inode);
+
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
+
 	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
+
 	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
+
 	if (indx >= p->chunks.size()) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
+
 	ochunkid = p->chunks[indx];
+
 	if (ochunkid == 0) {
 		safs::log_err("fs_apply_trunc: node does not have a chunk at index {} chunks, inode {}", indx, inode);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
+
 	status = chunk_apply_modification(timestamp, ochunkid, lockid, p->goal, true, &nchunkid);
+
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
+
 	if (chunkid != nchunkid) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
+
 	p->chunks[indx] = nchunkid;
 	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(p);
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2347,39 +2358,50 @@ uint8_t FilesystemOperationsBase::applyRepair(uint32_t timestamp, inode_t inode,
 	StatsRecord psr, nsr;
 
 	p = nodeOperations_->idToNode<FSNodeFile>(inode);
+
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
+
 	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
+
 	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
+
 	if (indx >= p->chunks.size()) {
 		return SAUNAFS_ERROR_NOCHUNK;
 		safs::log_err("fs_apply_repair: indx {} is greater than number of chunks ({}), inode {}", indx, p->chunks.size(), inode);
 	}
+
 	if (p->chunks[indx] == 0) {
 		safs::log_err("fs_apply_repair: node chunks at index {} has no chunks, inode {}", indx, inode);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
+
 	nodeOperations_->getStats(p, &psr);
+
 	if (nversion == 0) {
 		status = chunk_delete_file(p->chunks[indx], p->goal);
 		p->chunks[indx] = 0;
 	} else {
 		status = chunk_set_version(p->chunks[indx], nversion);
 	}
+
 	nodeOperations_->getStats(p, &nsr);
+
 	for (const auto &[parentId, _] : p->parents) {
 		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(parentId);
 		nodeOperations_->addSubStats(parent, &nsr, &psr);
 	}
+
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
 	gMetadata->metadataVersion++;
 	p->mtime = timestamp;
 	nodeOperations_->updateCTime(p, timestamp);
 	fsnodes_update_checksum(p);
+
 	return status;
 }
 

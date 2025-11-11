@@ -30,7 +30,7 @@
 #include <array>
 #include <cstdint>
 
-constexpr size_t kAttributesSize = 35;
+inline constexpr size_t kAttributesSize = 35;
 using Attributes = std::array<uint8_t, kAttributesSize>;
 
 #ifndef _WIN32
