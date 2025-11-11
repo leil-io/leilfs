@@ -139,8 +139,7 @@ uint64_t FilesystemNodeOperationsBase::fileRealSize(FSNodeFile *node, uint32_t n
 			}
 			fullSize += size;
 		} else {
-			safs_pretty_syslog(LOG_ERR, "file_realsize: inode %" PRIiNode " has unknown goal 0x%" PRIx8, node->id,
-			       node->goal);
+			safs::log_err("file_realsize: inode {} has unknown goal {:#x}", node->id, node->goal);
 			return 0;
 		}
 	}
@@ -741,7 +740,7 @@ void FilesystemNodeOperationsBase::getPath(FSNodeDirectory *parent, FSNode *chil
 	uint32_t size = getPathSize(parent, child);
 
 	if (size > FSNode::kEdgeNameMaxSize) {
-		safs_pretty_syslog(LOG_WARNING, "path too long !!! - truncate");
+		safs::log_warn("path too long !!! - truncate");
 		size = FSNode::kEdgeNameMaxSize;
 	}
 
@@ -815,7 +814,7 @@ static inline void getDetachedDataGenericInternal(const T &data, uint8_t *dbuff)
 			// there's already an alternative in client library that allows
 			// buffered reads from trash/reserved.
 			safs::log_warn("getdetachedsize: path container size longer than {}, truncating",
-				  kOldPathContainerLimit);
+			               kOldPathContainerLimit);
 			break;
 		}
 
@@ -1187,10 +1186,8 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(uint32_t timeStamp, FSNodeFil
 		auto chunkId = srcNodeFile->chunks[i];
 		if (chunkId > 0) {
 			if (chunk_add_file(chunkId, destNodeFile->goal) != SAUNAFS_STATUS_OK) {
-				safs_pretty_syslog(LOG_ERR,
-				                   "structure error - chunk %016" PRIX64
-				                   " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",
-				                   chunkId, srcNodeFile->id, i);
+				safs::log_err("structure error - chunk {:016X} not found (inode: {} ; index: {})",
+				              chunkId, srcNodeFile->id, i);
 			}
 		}
 	}
@@ -1627,16 +1624,14 @@ void FilesystemNodeOperationsBase::getGoalRecursive(FSNode *node, uint8_t gmode,
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
-			safs_pretty_syslog(LOG_WARNING, "file inode %" PRIiNode ": unknown goal !!! - fixing",
-			       node->id);
+			safs::log_warn("file inode {}: unknown goal !!! - fixing", node->id);
 			changeFileGoal(static_cast<FSNodeFile *>(node), DEFAULT_GOAL);
 		}
 
 		fileGoalsTab[node->goal]++;
 	} else if (node->type == FSNodeType::kDirectory) {
 		if (!GoalId::isValid(node->goal)) {
-			safs_pretty_syslog(LOG_WARNING,
-			       "directory inode %" PRIiNode ": unknown goal !!! - fixing", node->id);
+			safs::log_warn("directory inode {}: unknown goal !!! - fixing", node->id);
 			node->goal = DEFAULT_GOAL;
 		}
 
