@@ -155,6 +155,8 @@
 #define EATTR_NODATACACHE      0x08
 
 #define EATTR_BITS             4
+// shift for extraattr in mode field
+#define EATTR_BIT_OFFSET       12
 
 #define EATTR_STRINGS \
 	"noowner", \

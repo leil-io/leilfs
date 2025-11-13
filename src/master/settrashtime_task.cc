@@ -73,7 +73,8 @@ uint8_t SetTrashtimeTask::setTrashtime(FSNode *node, uint32_t ts) {
 
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kDirectory ||
 	    node->type == FSNodeType::kTrash || node->type == FSNodeType::kReserved) {
-		if ((node->mode & (EATTR_NOOWNER << 12)) == 0 && uid_ != 0 && node->uid != uid_) {
+		if ((node->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET)) == 0 && uid_ != 0 &&
+		    node->uid != uid_) {
 			return SetTrashtimeTask::kNotPermitted;
 		} else {
 			set = 0;

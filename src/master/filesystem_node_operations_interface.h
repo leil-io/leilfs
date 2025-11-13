@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "common/attributes.h"
+#include "common/type_defs.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_trash_reserved_files.h"
 #include "master/fs_context.h"
@@ -46,6 +47,12 @@ using ChunkCountArray = std::array<uint32_t, CHUNK_MATRIX_SIZE>;
 // Extra attributes constants and type aliases
 static constexpr uint8_t kMaxExtraAttributes = 16;
 using ExtraAttributesArray = std::array<uint32_t, kMaxExtraAttributes>;
+
+// Directory entry serialization constants
+static constexpr size_t kDirEntryWithAttributesSize = kinode_t_size + kAttributesSize;
+static constexpr size_t kDirEntryWithoutAttributesSize = kinode_t_size + 1;  // +1 for node type
+static constexpr size_t kDotEntrySize = 1;      // "." (1 byte)
+static constexpr size_t kDotDotEntrySize = 2;   // ".." (2 bytes)
 
 /// Interface for filesystem node operations extensibility.
 ///
@@ -104,7 +111,7 @@ public:
 	                         StatsRecord *previousStats) = 0;
 	virtual void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) = 0;
 
-	virtual void setLength(FSNodeFile *obj, uint64_t length, bool eraseFurtherChunks) = 0;
+	virtual void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) = 0;
 	virtual uint8_t appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
 	                             FSNodeFile *srcNodeFile) = 0;
 	virtual void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) = 0;
@@ -131,7 +138,7 @@ public:
 	                    uint8_t sesflags, FSNodeDirectory *nodeDir, uint64_t firstEntry,
 	                    uint64_t numberOfEntries, std::vector<DirectoryEntry> &dirEntriesOut) = 0;
 #endif
-	virtual int isNameUsed(FSNodeDirectory *node, const HString &name) = 0;
+	virtual bool isNameUsed(FSNodeDirectory *node, const HString &name) = 0;
 
 	// Trash/Reserved operations
 
@@ -174,8 +181,8 @@ public:
 
 	// Recursive operations
 #ifndef METARESTORE
-	virtual void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fgtab,
-	                              GoalStatistics &dgtab) = 0;
+	virtual void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fileGoalsTab,
+	                              GoalStatistics &dirGoalsTab) = 0;
 	virtual void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                                   TrashtimeMap &dirTrashtimes) = 0;
 	virtual void getExtraAttrRecursive(FSNode *node, uint8_t gmode,
@@ -198,7 +205,7 @@ public:
 	                                   inode_t *permissionDeniedINodesOut) = 0;
 
 	// Access control operations
-	virtual int access(const FsContext &context, FSNode *node, uint8_t modemask) = 0;
+	virtual int access(const FsContext &context, FSNode *node, uint8_t modeMask) = 0;
 	virtual int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) = 0;
 	virtual int nameCheck(const std::string &name) = 0;
 	virtual uint8_t verifySession(const FsContext &context, OperationMode operationMode,
@@ -208,10 +215,10 @@ public:
 	/// ie:
 	/// if inode == rootinode, then returns root node
 	/// if inode != rootinode, then returns some node
-	/// Checks for permissions needed to perform the operation (defined by modemask).
+	/// Checks for permissions needed to perform the operation (defined by modeMask).
 	/// Can return a reserved node or a node from trash.
 	virtual uint8_t getNodeForOperation(const FsContext &context, ExpectedNodeType expectedNodeType,
-	                                    uint8_t modemask, inode_t inode, FSNode **nodeOut,
+	                                    uint8_t modeMask, inode_t inode, FSNode **nodeOut,
 	                                    FSNodeDirectory **rootDirOut = nullptr) = 0;
 
 	// Ancestry operations

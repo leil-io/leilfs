@@ -1106,9 +1106,9 @@ void MetadataBackendFile::storeedge(FSNodeDirectory *parent, FSNode *child,
                                     const std::string &name, FILE *fd) {
 	uint8_t *ptr;
 	if (child == nullptr) {  // last edge
-		memset(gEdgeStoreBuffer, 0, kEdgeHeaderSize);
-		if (fwrite(gEdgeStoreBuffer, 1, kEdgeHeaderSize, fd) !=
-		    (size_t)(kEdgeHeaderSize)) {
+		memset(gEdgeStoreBuffer, 0, FSNode::kEdgeHeaderSize);
+		if (fwrite(gEdgeStoreBuffer, 1, FSNode::kEdgeHeaderSize, fd) !=
+		    (size_t)(FSNode::kEdgeHeaderSize)) {
 			safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 			return;
 		}
@@ -1119,8 +1119,8 @@ void MetadataBackendFile::storeedge(FSNodeDirectory *parent, FSNode *child,
 	putINode(&ptr, child->id);
 	put16bit(&ptr, name.length());
 	memcpy(ptr, name.c_str(), name.length());
-	if (fwrite(gEdgeStoreBuffer, 1, kEdgeHeaderSize + name.length(), fd) !=
-	    (size_t)(kEdgeHeaderSize + name.length())) {
+	if (fwrite(gEdgeStoreBuffer, 1, FSNode::kEdgeHeaderSize + name.length(), fd) !=
+	    (size_t)(FSNode::kEdgeHeaderSize + name.length())) {
 		safs_pretty_syslog(LOG_NOTICE, "fwrite error");
 		return;
 	}

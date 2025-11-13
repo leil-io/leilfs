@@ -84,8 +84,8 @@ void fs_dumpnode(FSNode *f) {
 
 	printf("%c|i:%10" PRIiNode "|#:%" PRIu8 "|e:%1" PRIX16 "|m:%04" PRIo16 "|u:%10" PRIu32
 	       "|g:%10" PRIu32 "|a:%10" PRIu32 ",m:%10" PRIu32 ",c:%10" PRIu32 "|t:%10" PRIu32,
-	       c, f->id, f->goal, (uint16_t)(f->mode >> 12), (uint16_t)(f->mode & 0xFFF), f->uid,
-	       f->gid, f->atime, f->mtime, f->ctime, f->trashtime);
+	       c, f->id, f->goal, (uint16_t)(f->mode >> EATTR_BIT_OFFSET), (uint16_t)(f->mode & 0xFFF),
+	       f->uid, f->gid, f->atime, f->mtime, f->ctime, f->trashtime);
 
 	if (f->type == FSNodeType::kBlockDev || f->type == FSNodeType::kCharDev) {
 		printf("|d:%5" PRIu32 ",%5" PRIu32 "\n", static_cast<FSNodeDevice*>(f)->rdev >> 16,

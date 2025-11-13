@@ -51,7 +51,7 @@
 #define EDGEHASHPOS(hash) ((hash) & (EDGEHASHSIZE - 1))
 #define EDGECHECKSUMSEED 1231241261
 
-#define MAX_INDEX 0x7FFFFFFF
+constexpr uint32_t kMaxChunkIndex = 0x7FFFFFFFU;
 
 enum class AclInheritance : std::uint8_t {
 	kInheritAcl,
@@ -141,6 +141,10 @@ public:
 	static constexpr size_t kNodeHeaderSize =
 	    sizeof(type) + sizeof(id) + sizeof(goal) + sizeof(mode) + sizeof(uid) + sizeof(gid) +
 	    sizeof(atime) + sizeof(mtime) + sizeof(ctime) + sizeof(trashtime);
+
+	static constexpr uint16_t kEdgeNameMaxSize = 65535;
+	static constexpr uint8_t kEdgeHeaderSize =
+	    sizeof(FSNode::id) + sizeof(FSNode::id) + sizeof(kEdgeNameMaxSize);
 
 	explicit FSNode(FSNodeType type_) : type(type_) {}
 
