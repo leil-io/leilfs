@@ -4,6 +4,7 @@ USE_RAMDISK=YES \
 for i in {1..4}; do
 	# Start the metadata notifier which will log all the messages to a file
 	metadata-notifier localhost "${info[matont]}" > "${TEMP_DIR}/notifier_${i}.log" 2>&1 &
+	sleep 1 # Add a small delay to ensure the notifier starts properly and connects to master
 done
 
 pgrep -fa metadata-notifier
