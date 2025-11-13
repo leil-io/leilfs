@@ -20,14 +20,17 @@
 
 #include "common/platform.h"
 
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <sys/stat.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #include <cstdint>
 #include <shellapi.h>
-#include <string>
 #include <vector>
+#include <memory>
 
 using saunafs_stat_t = struct _stat64;
 
@@ -153,3 +156,29 @@ using saunafs_stat_t = struct stat;
 // On POSIX just call stat
 inline int stat_portable(const char *path, saunafs_stat_t *st) { return stat(path, st); }
 #endif
+
+// Reads the entire file into a std::string (UTF-8)
+inline bool read_file_to_string(const std::string &path, std::string &out) {
+#ifdef _WIN32
+	std::filesystem::path fsPath{utf8_to_wstring(path)};
+#else
+	std::filesystem::path fsPath{path};
+#endif
+	std::ifstream ifs(fsPath, std::ios::binary);
+	if (!ifs) { return false; }
+
+	ifs.seekg(0, std::ios::end);
+	std::streampos size = ifs.tellg();
+	if (size < 0) { return false; }
+	ifs.seekg(0, std::ios::beg);
+
+	out.clear();
+	if (size == 0) { return true; }
+
+	out.resize(static_cast<std::size_t>(size));
+	if (!ifs.read(out.data(), size)) {
+		out.clear();
+		return false;
+	}
+	return true;
+}
