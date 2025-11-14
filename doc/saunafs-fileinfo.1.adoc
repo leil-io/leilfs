@@ -16,14 +16,6 @@ saunafs-fileinfo - locate chunks
 belonging to specified file(s). It can be used on any file, included deleted
 ('trash').
 
-== OPTIONS
-
-*-l*::
-This option disables timeout set for this operation. (default timeout is 10 seconds)
-
-This behavior will be default and the option removed starting from 5.0.0. If you wish
-to have timeouts use the `timeout` command.
-
 == REPORTING BUGS
 
 Report bugs to the Github repository <https://github.com/leil/saunafs> as an

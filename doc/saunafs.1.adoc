@@ -11,13 +11,7 @@ saunafs - open prompt to perform SaunaFS-specific operations
 *saunafs getgoal* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
 
 [verse]
-*saunafs rgetgoal* [*-n*|*-h*|*-H*] 'OBJECT'...
-
-[verse]
 *saunafs setgoal* [*-r*] [*-n*|*-h*|*-H*] 'NAME' 'OBJECT'...
-
-[verse]
-*saunafs rsetgoal* [*-n*|*-h*|*-H*] [*+*|*-*]N 'OBJECT'...
 
 [verse]
 *saunafs setquota* (*-u* 'UID' | *-g* 'GID') 'SOFT-LIMIT-SIZE' 'HARD-LIMIT-SIZE'
@@ -31,13 +25,7 @@ saunafs - open prompt to perform SaunaFS-specific operations
 *saunafs gettrashtime* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
 
 [verse]
-*saunafs rgettrashtime* [*-n*|*-h*|*-H*] 'OBJECT'...
-
-[verse]
 *saunafs settrashtime* [*-r*] [*-n*|*-h*|*-H*] [*+*|*-*]SECONDS 'OBJECT'...
-
-[verse]
-*saunafs rsettrashtime* [*-n*|*-h*|*-H*] [*+*|*-*]SECONDS 'OBJECT'...
 
 [verse]
 *saunafs geteattr* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
@@ -139,7 +127,6 @@ SaunaFS. If not, see <http://www.gnu.org/licenses/>.
 sfsmount(1), saunafs-appendchunks(1), saunafs-checkfile(1),
 saunafs-deleattr(1), saunafs-dirinfo(1), saunafs-fileinfo(1),
 saunafs-filerepair(1), saunafs-geteattr(1), saunafs-getgoal(1),
-saunafs-gettrashtime(1), saunafs-makesnapshot(1), saunafs-rgetgoal(1),
-saunafs-rgettrashtime(1), saunafs-rsetgoal(1), saunafs-rsettrashtime(1),
-saunafs-seteattr(1), saunafs-setgoal(1), saunafs-settrashtime(1),
-saunafs-rremove(1), saunafs-repquota(1), saunafs-setquota(1), sfs(7)
+saunafs-gettrashtime(1), saunafs-makesnapshot(1), saunafs-seteattr(1),
+saunafs-setgoal(1), saunafs-settrashtime(1), saunafs-rremove(1),
+saunafs-repquota(1), saunafs-setquota(1), sfs(7)
