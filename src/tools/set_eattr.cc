@@ -192,6 +192,9 @@ static int gene_eattr_run(int argc, char **argv, uint8_t mode, void (*usage_func
 				return 1;
 			}
 			break;
+		case '?':
+			usage_func();
+			return 1;
 		}
 	}
 	argc -= optind;

@@ -177,6 +177,9 @@ int dir_info_run(int argc, char **argv) {
 		case 'H':
 			humode = 2;
 			break;
+		case '?':
+			dir_info_usage();
+			return 1;
 		}
 	}
 	argc -= optind;

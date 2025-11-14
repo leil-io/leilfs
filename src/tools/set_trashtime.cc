@@ -143,7 +143,7 @@ static int gene_set_trashtime_run(int argc, char **argv, int rflag) {
 	uint32_t trashtime = 86400;
 	uint8_t smode = SMODE_SET;
 
-	while ((ch = getopt(argc, argv, "rnhHl")) != -1) {
+	while ((ch = getopt(argc, argv, "rnhH")) != -1) {
 		switch (ch) {
 		case 'n':
 			humode = 0;
@@ -157,6 +157,9 @@ static int gene_set_trashtime_run(int argc, char **argv, int rflag) {
 		case 'r':
 			rflag = 1;
 			break;
+		case '?':
+			set_trashtime_usage();
+			return 1;
 		}
 	}
 	argc -= optind;

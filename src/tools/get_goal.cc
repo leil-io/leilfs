@@ -106,6 +106,9 @@ static int gene_get_goal_run(int argc, char **argv, int rflag) {
 		case 'r':
 			rflag = 1;
 			break;
+		case '?':
+			get_goal_usage();
+			return 1;
 		}
 	}
 	argc -= optind;

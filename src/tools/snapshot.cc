@@ -49,7 +49,7 @@ static saunafs_stat_t kDefaultEmptyStat = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 static void snapshot_usage() {
 	fprintf(stderr,
-	        "make snapshot (lazy copy)\n\nusage:\n saunafs makesnapshot [-ofl] src [src ...] dst\n");
+	        "make snapshot (lazy copy)\n\nusage:\n saunafs makesnapshot [-of] src [src ...] dst\n");
 	fprintf(stderr, " -o,-f - allow to overwrite existing objects\n");
 }
 
@@ -379,6 +379,9 @@ int snapshot_run(int argc, char **argv) {
 		case 's':
 			initial_batch_size = std::stoi(optarg);
 			break;
+		case '?':
+			snapshot_usage();
+			return 1;
 		}
 	}
 	argc -= optind;

@@ -263,8 +263,7 @@ int quota_rep_run(int argc, char **argv) {
 		case 'a':
 			reportAll = true;
 			break;
-		default:
-			fprintf(stderr, "invalid argument: %c", (char)ch);
+		case '?':
 			quota_rep_usage();
 			return 1;
 		}

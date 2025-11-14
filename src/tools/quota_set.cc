@@ -111,8 +111,7 @@ int quota_set_run(int argc, char **argv) {
 		case 'd':
 			per_directory_quota = true;
 			break;
-		default:
-			fprintf(stderr, "invalid argument: %c", (char)ch);
+		case '?':
 			quota_set_usage();
 			return 1;
 		}

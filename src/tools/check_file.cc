@@ -167,6 +167,9 @@ int check_file_run(int argc, char **argv) {
 		case 'H':
 			humode = 2;
 			break;
+		case '?':
+			check_file_usage();
+			return 1;
 		}
 	}
 	argc -= optind;
