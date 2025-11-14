@@ -577,25 +577,41 @@ uint8_t FilesystemOperationsBase::fullPathByInode(const FsContext &context, inod
 	return SAUNAFS_STATUS_OK;
 }
 
-std::string FilesystemOperationsBase::fullPathByInode(inode_t initial_inode) {
+std::string FilesystemOperationsBase::fullPathByInode(inode_t initialInode) {
 	std::string fullPath = "";
-	inode_t current_inode = initial_inode;
-	FSNode *current_node = nodeOperations_->idToNode(current_inode);
-	std::string current_name = "";
+	inode_t currentInode = initialInode;
+	FSNode *currentNode = nodeOperations_->idToNode(currentInode);
+	std::string currentName = "";
 
-	while (current_inode != SPECIAL_INODE_ROOT) {
-		if (!current_node) {
+	while (currentInode != SPECIAL_INODE_ROOT) {
+		if (!currentNode) {
 			return "";
-		} else if (current_node->parents.empty()) {
+		} else if (currentNode->parents.empty()) {
+			if (currentNode->type == FSNodeType::kReserved ||
+			    currentNode->type == FSNodeType::kTrash) {
+				std::string pathFromTrashOrReserved;
+				if (currentNode->type == FSNodeType::kTrash) {
+					const auto key = TrashPathKey(currentNode);
+					auto it = gMetadata->trash.find(key);
+					if (it == gMetadata->trash.end()) { return ""; }
+					pathFromTrashOrReserved = (*it).second.get() + " (trash)";
+				} else {
+					auto it = gMetadata->reserved.find(currentInode);
+					if (it == gMetadata->reserved.end()) { return ""; }
+					pathFromTrashOrReserved = (*it).second.get() + " (reserved)";
+				}
+				return "/" + pathFromTrashOrReserved;
+			}
 			break;
 		}
-		auto parent = current_node->parents[0].first;
-		auto parent_node = nodeOperations_->idToNode<FSNodeDirectory>(parent);
-		if (!parent_node) { return ""; }
-		current_name = parent_node->getChildName(current_node);
-		fullPath = current_inode == initial_inode ? current_name : current_name + "/" + fullPath;
-		current_inode = parent;
-		current_node = parent_node;
+
+		auto parent = currentNode->parents[0].first;
+		auto parentNode = nodeOperations_->idToNode<FSNodeDirectory>(parent);
+		if (!parentNode) { return ""; }
+		currentName = parentNode->getChildName(currentNode);
+		fullPath = currentInode == initialInode ? currentName : currentName + "/" + fullPath;
+		currentInode = parent;
+		currentNode = parentNode;
 	}
 
 	fullPath = "/" + fullPath;
