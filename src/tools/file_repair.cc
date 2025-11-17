@@ -160,6 +160,9 @@ int file_repair_run(int argc, char **argv) {
 		case 'c':
 			correct_only = 1;
 			break;
+		case '?':
+			file_repair_usage();
+			return 1;
 		}
 	}
 	argc -= optind;

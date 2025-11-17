@@ -73,7 +73,7 @@ static int append_file(const char *fname, const char *afname) {
 
 	uid = getUId();
 	gid = getGId();
-	
+
 	wptr = reqbuff;
 	put32bit(&wptr, CLTOMA_FUSE_APPEND);
 	put32bit(&wptr, kAppendFilePayload);
@@ -148,7 +148,11 @@ int append_file_run(int argc, char **argv) {
 	char *appendfname = nullptr;
 	int i, status;
 
-	while (getopt(argc, argv, "") != -1) {
+	while (int ch = getopt(argc, argv, "") != -1) {
+		if (ch == '?') {
+			append_file_usage();
+			return 1;
+		}
 	}
 	argc -= optind;
 	argv += optind;

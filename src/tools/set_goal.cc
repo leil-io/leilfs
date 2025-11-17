@@ -34,11 +34,10 @@ static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeou
 
 static void set_goal_usage() {
 	fprintf(stderr,
-	        "set objects goal (desired number of copies)\n\nusage:\n saunafs setgoal [-l] GOAL name "
+	        "set objects goal (desired number of copies)\n\nusage:\n saunafs setgoal GOAL name "
 	        "[name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();
-	fprintf(stderr, " -l - wait until setgoal will finish (otherwise there is 30s timeout) (will be default in 5.0.0)\n");
 	fprintf(stderr, " GOAL - set goal to given goal name\n");
 }
 
@@ -95,7 +94,7 @@ static int gene_set_goal_run(int argc, char **argv, int rflag) {
 	int ch, status;
 	std::string goal;
 
-	while ((ch = getopt(argc, argv, "rnhHl")) != -1) {
+	while ((ch = getopt(argc, argv, "rnhH")) != -1) {
 		switch (ch) {
 		case 'n':
 			humode = 0;
@@ -109,6 +108,9 @@ static int gene_set_goal_run(int argc, char **argv, int rflag) {
 		case 'r':
 			rflag = 1;
 			break;
+		case '?':
+			set_goal_usage();
+			return 1;
 		}
 	}
 	argc -= optind;

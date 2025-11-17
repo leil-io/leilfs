@@ -203,6 +203,9 @@ int get_eattr_run(int argc, char **argv) {
 		case 'r':
 			rflag = 1;
 			break;
+		case '?':
+			get_eattr_usage();
+			return 1;
 		}
 	}
 	argc -= optind;
