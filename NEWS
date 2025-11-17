@@ -1,5 +1,24 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.4.0) (2025-11-17)
+ - build(packaging): fix installDir in release presets (#639)
+ - build: Update vcpkg submodule (#606)
+ - docs(sfsmount): Update documentation regarding trash file limits (#644)
+ - feat(chunkserver): Add PLUGINS_DIR variable (#642)
+ - feat(kv,fdb): add async get operation support (#660)
+ - feat(master): Make available kvconnector (#621)
+ - feat: Add changelog notifier integration (#617)
+ - fix(master): Make IIdGenerator generic (#604)
+ - fix(packaging): Conditionally compile FDB modules (#627)
+ - fix(tools): Restore console code pages on Windows (#640)
+ - fix(uRaft): Handle promotion failures and deadlocks (#656)
+ - fix: Avoid trying to find asciidoctor on Windows (#622)
+ - fix: Fix special chars on Windows for saunafs tool (#625)
+ - fix: Improve path by inode consistency (#612)
+ - perf(cs): Configure buffers pool size (#643)
+ - perf(cs): Reuse forward write connections (#648)
+ - perf(cs): Streamline blocker operations
+
 * SaunaFS (5.3.0) (2025-10-20)
  - build(metarestore): Exclude unit tests from master (#567)
  - feat(common): Allow member functions as slots (#565)
