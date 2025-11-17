@@ -1,0 +1,310 @@
+/*
+   Copyright 2013-2015 Skytechnology sp. z o.o.
+   Copyright 2023      Leil Storage OÜ
+
+   This file is part of SaunaFS.
+
+   SaunaFS is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, version 3.
+
+   SaunaFS is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#pragma once
+
+#include "common/platform.h"
+
+#include <cstdint>
+#include <list>
+
+#include "chunkserver/chunkserver_entry.h"
+#include "chunkserver/io_buffers.h"
+#include "common/chunk_part_type.h"
+#include "common/slice_traits.h"
+#include "devtools/request_log.h"
+#include "protocol/cltocs.h"
+
+class JobPool;
+
+constexpr uint8_t kSauWriteDataPrefixSize = cltocs::writeData::kPrefixSize;
+// For forwarding: size of SAU_CLTOCS_WRITE_DATA prefix plus the packet header.
+constexpr uint8_t kSauWriteDataPrefixSizeForward =
+    cltocs::writeData::kPrefixSize + PacketHeader::kSize;
+
+/// @brief Base class for high-level chunk operations.
+class HighLevelOp {
+public:
+	HighLevelOp(ChunkserverEntry *parent) : parent_(parent) {}
+
+	/// Returns the number of pending delayed jobs.
+	inline uint16_t pendingDelayedJobs() const { return pendingDelayedJobs_; }
+
+	/// Returns whether the chunk is currently open.
+	inline bool isChunkOpen() const { return isChunkOpen_; }
+
+	/// Returns the ID of the chunk associated with the operation.
+	inline uint64_t chunkId() const { return chunkId_; }
+
+protected:
+	/// State of the parent ChunkserverEntry.
+	inline ChunkserverEntry::State &state();
+
+	/// Job pool of the network worker handling the parent ChunkserverEntry.
+	inline JobPool *workerJobPool();
+
+	/// Checks and applies closing on the parent ChunkserverEntry.
+	inline void checkAndApplyClosedOnParent();
+
+	/// Creates an attached packet on the parent ChunkserverEntry.
+	inline void createAttachedPacket(MessageBuffer &packet);
+
+	/// Attaches an output buffer to the parent ChunkserverEntry.
+	inline void attachBuffer(std::shared_ptr<OutputBuffer> &&buffer);
+
+	/// Creates and attach write status packet on the parent ChunkserverEntry.
+	inline void createAttachedWriteStatus(uint64_t targetChunkId, uint8_t status, uint32_t writeId);
+
+	uint64_t chunkId_ = 0;       ///< ID of the chunk associated with the operation
+	uint32_t chunkVersion_ = 0;  ///< Version of the chunk associated with the operation
+	/// Type of the chunk associated with the operation
+	ChunkPartType chunkType_ = slice_traits::standard::ChunkPartType();
+	uint16_t pendingDelayedJobs_ = 0;  ///< Number of remaining delayed jobs running
+	bool isChunkOpen_ = false;         ///< Indicates if the chunk is open.
+
+private:
+	ChunkserverEntry *parent_;
+};
+
+/// @brief High-level operation for retrieving the number of chunk blocks.
+class GetBlocksHighLevelOp : public HighLevelOp {
+public:
+	GetBlocksHighLevelOp(ChunkserverEntry *parent) : HighLevelOp(parent) {}
+
+	/// Sets up and enqueues the get blocks high level operation.
+	///
+	/// @param chunkId ID of the chunk.
+	/// @param chunkVersion Version of the chunk.
+	/// @param chunkType Type of the chunk.
+	void setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
+
+	/// Checks if the get blocks job is currently running.
+	bool isRunning();
+
+	/// Closes the get blocks job, assuming it is running.
+	void delayedClose();
+
+protected:
+	/// Callback after delayed close operations.
+	void delayedCloseCallback(uint8_t status, void * /*entry*/);
+
+	/// Callback for chunk block retrieval completion.
+	void getChunkBlocksCallback(uint8_t status, void * /*entry*/);
+
+	uint16_t getBlocksJobResult_ = 0;  ///< Result of the get blocks job
+	uint32_t getBlocksJobId_ = 0;      ///< Current job ID for retrieving chunk blocks
+};
+
+/// @brief High-level operation for reading data from a chunk.
+class ReadHighLevelOp : public HighLevelOp {
+public:
+	ReadHighLevelOp(ChunkserverEntry *parent, uint16_t maxBlocksPerHddReadJob,
+	                uint16_t maxParallelHddReadJobs)
+	    : HighLevelOp(parent),
+	      maxBlocksPerHddReadJob_(maxBlocksPerHddReadJob),
+	      maxParallelHddReadJobs_(maxParallelHddReadJobs) {}
+
+	/// Checks if it can continue reading more data, and continues if so.
+	void continueReadingIfPossible();
+
+	/// Sets up and starts the read high level operation.
+	/// @param chunkId ID of the chunk.
+	/// @param chunkVersion Version of the chunk.
+	/// @param chunkType Type of the chunk.
+	/// @param offset Offset within the chunk to start reading from.
+	/// @param size Size of data to read.
+	void setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType, uint32_t offset,
+	           uint32_t size);
+
+	/// Checks if there are jobs that need a delayed close.
+	/// Discards pending read jobs.
+	/// @return True if there are jobs that need a delayed close, false otherwise.
+	bool prepareForDelayedClose();
+
+	/// Performs the delayed close of already discarded read jobs.
+	void delayedClose();
+
+	/// Closes chunk if open.
+	void cleanup();
+
+protected:
+	/// Callback after delayed close operations.
+	void delayedCloseCallback(uint8_t status, void * /*entry*/);
+
+	/// Callback for when a discarded read operation finishes.
+	void readDiscardCallback(uint8_t status, void * /*entry*/);
+
+	/// Callback for when a read operation finishes.
+	void readFinishedCallback(uint8_t status, void * /*entry*/);
+
+	/// Prepares the discard of the current ongoing read operations.
+	///
+	/// It disables the jobs, changes the callback and moves the jobs from pending
+	/// to discard lists.
+	void prepareDiscardReadJobs();
+
+	/// Prepares a read data buffer.
+	///
+	/// Creates the OutputBuffer to be used in the read operation.
+	/// It is then provided with the headers of the blocks to be read.
+	///
+	/// @param readDataPrefix A buffer to store the read data prefix.
+	/// @param jobSize The size of the job.
+	/// @param jobOffset The offset of the job.
+	/// @return A shared pointer to the prepared OutputBuffer.
+	std::shared_ptr<OutputBuffer> prepareReadDataPacket(std::vector<uint8_t> &readDataPrefix,
+	                                                    uint32_t jobSize, uint32_t jobOffset);
+
+	/// Continues a previously started read operation.
+	///
+	/// Processes the remaining data to be read from the chunkserver. If all
+	/// data has been read, it sends a read status message and closes the chunk.
+	/// Otherwise, it prepares the next part of the read operation.
+	///
+	/// @param callMaxParallelHddReadJobs The maximum number of parallel HDD read for this call.
+	/// @see ChunkserverEntry::readInit
+	void readContinue(uint16_t callMaxParallelHddReadJobs);
+
+	/// Number of blocks to read from the device in one read job.
+	uint16_t maxBlocksPerHddReadJob_;
+	uint16_t maxParallelHddReadJobs_;  ///< Maximum size of pendingReadDataBuffers.
+
+	/// List of output buffers waiting for the HDD worker to finish, and then be sent.
+	std::list<std::shared_ptr<OutputBuffer>> pendingReadDataBuffers_;
+	std::list<uint32_t> pendingReadJobIds_;  ///< Job IDs for pending read operations.
+	/// List of output buffers within a failing read operation, which are to be discarded.
+	std::list<std::shared_ptr<OutputBuffer>> toDiscardReadDataBuffers_;
+	std::list<uint32_t> toDiscardReadJobIds_;  ///< Job IDs for read operations to discard.
+	uint32_t offset_ = 0;                      ///< Offset within the chunk for the operation.
+	uint32_t size_ = 0;                        ///< Size of the current operation.
+
+	LOG_AVG_TYPE readOperationTimer_;
+};
+
+/// @brief High-level operation for writing data to a chunk.
+class WriteHighLevelOp : public HighLevelOp {
+public:
+	WriteHighLevelOp(ChunkserverEntry *parent, uint16_t maxBlocksPerHddWriteJob)
+	    : HighLevelOp(parent), maxBlocksPerHddWriteJob_(maxBlocksPerHddWriteJob) {}
+
+	/// Sets up and starts the write high level operation.
+	/// Enqueues a job_open for the chunk.
+	/// @param chunkId ID of the chunk.
+	/// @param chunkVersion Version of the chunk.
+	/// @param chunkType Type of the chunk.
+	void setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
+
+	/// Prepares for new write data to be added to the input buffer.
+	/// @param mustForward Indicates if the data must be forwarded to another chunkserver.
+	/// @param headerBuffer Buffer containing the header of the write data packet.
+	void prepareForNewWriteData(bool mustForward, uint8_t *headerBuffer);
+
+	/// Checks if there is a write job being processed.
+	bool isWriteJobBeingProcessed();
+
+	/// Update the structures considering the write status generated by a self write or a chain
+	/// write. Schedules sending the write status to the client if needed.
+	void updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId);
+
+	/// Processes an already read write data block considering the provided parameters.
+	/// @param blocknum Block number in the chunk.
+	/// @param opOffset Offset in the block where the data starts.
+	/// @param opSize Size of the data to be written.
+	/// @param writeId Write identifier from client.
+	/// @param crc CRC of the block.
+	void processWriteDataBlock(uint16_t blocknum, uint32_t opOffset, uint32_t opSize,
+	                           uint32_t writeId, uint32_t crc);
+
+	/// Checks if the size of the last write operation header is valid.
+	bool isLastHeaderSizeValid();
+
+	/// Returns a pointer to the start of the last write operation header.
+	uint8_t *getLastOperationHeader();
+
+	/// Reads data into the input buffer from the socket.
+	/// @param sock Socket to read from.
+	/// @param bytesToRead Number of bytes to read.
+	/// @return Number of bytes read.
+	ssize_t readData(int sock, size_t bytesToRead);
+
+	/// Writes data from the input buffer to the socket.
+	/// @param sock Socket to write to.
+	/// @param bytesToWrite Number of bytes to write.
+	/// @return Number of bytes written.
+	ssize_t writeData(int sock, size_t bytesToWrite);
+
+	/// Checks if the write operation is completed.
+	bool isCompleted();
+
+	/// Performs a delayed close of the write operation.
+	/// Moves input buffer to its pool if not null.
+	void delayedClose();
+
+	/// Closes chunk if open.
+	void cleanup();
+
+protected:
+	/// Checks if there is an open write job being processed.
+	inline bool isOpenWriteJobBeingProcessed();
+
+	/// Sets that no write job is being processed.
+	inline void setNoWriteJobBeingProcessed();
+
+	/// Starts an open write job for the current chunk.
+	inline void startOpenWriteJob();
+
+	/// Starts the next write job: no write job is being processed and there is at least
+	/// one write data buffer waiting.
+	inline void startNextWriteJob();
+
+	/// Callback after delayed close operations.
+	void delayedCloseCallback(uint8_t status, void * /*entry*/);
+
+	/// Preserves the inputPacket buffer into writePackets (to avoid copying it).
+	/// Creates a new write if no running write job.
+	/// Used for write operations, where the data comes from the network.
+	inline void writeCurrentInputPacket();
+
+	/// Checks and processes the next packet in the input buffer.
+	void continueWritingIfPossible();
+
+	/// Callback for when a write operation finishes.
+	void writeFinishedCallback(uint8_t status, void * /*entry*/);
+
+	/// Callback for when a job_open associated to a write operation finishes.
+	void openWriteFinishedCallback(uint8_t status, void * /*entry*/);
+
+	/// Prepares the input buffer for a write operation.
+	void prepareInputBufferForWrite(bool isForward);
+
+	///< Number of blocks to write to the device in one write job.
+	uint16_t maxBlocksPerHddWriteJob_;
+
+	uint32_t writeJobId_ = 0;       ///< ID of the current write job being processed
+	uint32_t writeJobWriteId_ = 0;  ///< Specific write operation from client
+	std::shared_ptr<InputBuffer> inputBuffer_ = nullptr;  ///< Buffer for the current write job
+	/// writeJobWriteId's which:
+	/// - have been completed by our worker, but need ack from the next
+	///   chunkserver from the chain.
+	/// - have been acked by the next chunkserver from the chain, but are still
+	///   being written by us.
+	std::set<uint32_t> partiallyCompletedWrites_;
+	/// List of write data buffers waiting to be written to the chunk.
+	std::list<std::shared_ptr<InputBuffer>> writeDataBuffers_;
+};

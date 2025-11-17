@@ -51,9 +51,9 @@ public:
 	/// @enum State
 	/// @brief Represents the state of a job.
 	enum class State : uint8_t {
-		Disabled,  /// Job is disabled and will not be processed.
-		Enabled,   /// Job is enabled and ready to be processed.
-		InProgress /// Job is currently being processed.
+		Disabled,   /// Job is disabled and will not be processed.
+		Enabled,    /// Job is enabled and ready to be processed.
+		InProgress  /// Job is currently being processed.
 	};
 
 	/// @enum ChunkOperation
@@ -208,31 +208,28 @@ private:
 ///
 /// @param jobPool The JobPool instance.
 /// @param callback The callback function to be called upon job completion.
-/// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a close job to the JobPool.
 ///
 /// @param jobPool The JobPool instance.
 /// @param callback The callback function to be called upon job completion.
-/// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a read job to the JobPool.
 ///
 /// @param jobPool The JobPool instance.
 /// @param callback The callback function to be called upon job completion.
-/// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param version The version of the chunk.
 /// @param chunkType The type of the chunk.
@@ -244,7 +241,7 @@ uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 /// @param performHddOpen Whether to perform HDD open.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
                   OutputBuffer *outputBuffer, bool performHddOpen, uint32_t listenerId = 0);
@@ -266,7 +263,6 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 ///
 /// @param jobPool The JobPool instance.
 /// @param callback The callback function to be called upon job completion.
-/// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
@@ -277,7 +273,7 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 /// @param buffer The data buffer to write.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
                    uint32_t listenerId = 0);
 
@@ -285,16 +281,15 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 ///
 /// @param jobPool The JobPool instance.
 /// @param callback The callback function to be called upon job completion.
-/// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
 /// @param version The version of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param blocks The blocks to get.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
-                        uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
-                        uint16_t *blocks, uint32_t listenerId = 0);
+uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+                        uint32_t version, ChunkPartType chunkType, uint16_t *blocks,
+                        uint32_t listenerId = 0);
 
 /// @brief Adds a replicate job to the JobPool.
 ///

@@ -40,7 +40,7 @@
 
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver/bgjobs.h"
-#include "chunkserver/hdd_readahead.h"
+#include "chunkserver/chunk_high_level_ops.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/io_buffers.h"
 #include "chunkserver/network_stats.h"
@@ -69,10 +69,17 @@ static ConnectionPool gForwardConnectionPool;
 constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 constexpr uint8_t kConnectRetries = 10;
 
-constexpr uint8_t kSauWriteDataPreffixSize = cltocs::writeData::kPrefixSize;
-// For forwarding: size of SAU_CLTOCS_WRITE_DATA prefix plus the packet header.
-constexpr uint8_t kSauWriteDataPreffixSizeForward =
-    cltocs::writeData::kPrefixSize + PacketHeader::kSize;
+ChunkserverEntry::ChunkserverEntry(int socket, JobPool *workerJobPool,
+                                   uint16_t maxBlocksPerHddReadJob, uint16_t maxParallelHddReadJobs,
+                                   uint16_t maxBlocksPerHddWriteJob)
+    : workerJobPool(workerJobPool), sock(socket) {
+	inputPacket.bytesLeft = PacketHeader::kSize;
+	inputPacket.startPtr = headerBuffer;
+	writeHLO = std::make_unique<WriteHighLevelOp>(this, maxBlocksPerHddWriteJob);
+	readHLO =
+	    std::make_unique<ReadHighLevelOp>(this, maxBlocksPerHddReadJob, maxParallelHddReadJobs);
+	getBlocksHLO = std::make_unique<GetBlocksHighLevelOp>(this);
+}
 
 ChunkserverEntry::~ChunkserverEntry() {
 	if (sock >= 0) { tcpclose(sock); }
@@ -203,244 +210,12 @@ void ChunkserverEntry::retryConnect() {
 // common - delayed close
 
 void ChunkserverEntry::checkAndApplyClosed() {
-	if (pendingDelayedJobs == 0) {
-		while (!writeDataBuffers.empty()) {
-			getWriteInputBufferPool().put(std::move(writeDataBuffers.back()));
-			writeDataBuffers.pop_back();
-		}
+	if (writeHLO->pendingDelayedJobs() == 0 && readHLO->pendingDelayedJobs() == 0 &&
+	    getBlocksHLO->pendingDelayedJobs() == 0) {
+		writeHLO->cleanup();
+		readHLO->cleanup();
 
-		if (isChunkOpen) {
-			job_close(*workerJobPool, kEmptyCallback, kEmptyExtra, chunkId, chunkType);
-			isChunkOpen = 0;
-		}
 		state = State::Closed;
-	}
-}
-
-void ChunkserverEntry::delayedCloseCallback(uint8_t status, void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry*>(entry);
-	assert(eptr->state == State::CloseWait);
-
-	if (eptr->isOpenWriteJobBeingProcessed() && status == SAUNAFS_STATUS_OK) {
-		// this was job_open (write)
-		eptr->isChunkOpen = 1;
-		eptr->setNoWriteJobBeingProcessed();
-	}
-
-	assert(eptr->pendingDelayedJobs > 0);
-	eptr->pendingDelayedJobs--;
-	eptr->checkAndApplyClosed();
-}
-
-void ChunkserverEntry::delayedDiscardCallback(uint8_t status, void *entry) {
-	TRACETHIS();
-	(void)status;
-	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-	assert(eptr->state == State::CloseWait);
-
-	if (status == SAUNAFS_STATUS_OK) {
-		eptr->isChunkOpen = 1;
-	}
-
-	while (!eptr->toDiscardReadDataBuffers.empty() &&
-	       eptr->toDiscardReadDataBuffers.front()->getStatus() != kNotSaunafsStatus) {
-		getReadOutputBufferPool().put(std::move(eptr->toDiscardReadDataBuffers.front()));
-		eptr->toDiscardReadDataBuffers.pop_front();
-		eptr->toDiscardReadJobIds.pop_front();
-	}
-
-	assert(eptr->pendingDelayedJobs > 0);
-	eptr->pendingDelayedJobs--;
-	eptr->checkAndApplyClosed();
-}
-
-// Read related
-
-void ChunkserverEntry::readDiscardCallback(uint8_t status, void *entry) {
-	TRACETHIS();
-	(void)status;
-	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-
-	// jobId <--> related packet, maintaining the order
-	assert(eptr->toDiscardReadJobIds.size() == eptr->toDiscardReadDataBuffers.size());
-
-	auto jobsIt = eptr->toDiscardReadJobIds.begin();
-	for (auto buffersIt = eptr->toDiscardReadDataBuffers.begin();
-	     buffersIt != eptr->toDiscardReadDataBuffers.end();) {
-		if ((*buffersIt)->getStatus() != kNotSaunafsStatus) {
-			getReadOutputBufferPool().put(std::move(*buffersIt));
-			buffersIt = eptr->toDiscardReadDataBuffers.erase(buffersIt);
-			jobsIt = eptr->toDiscardReadJobIds.erase(jobsIt);
-		} else {
-			buffersIt++;
-			jobsIt++;
-		}
-	}
-}
-
-void ChunkserverEntry::prepareDiscardReadJobs() {
-	// We need to:
-	// - change state of packets not taken by any hdd worker
-	// - change callback in already taken ones
-	// - move packets from pending to toDiscard lists
-
-	// The jobs which are not going to be processed: all but the ones in progress
-	auto disabledJobIds = workerJobPool->disableJobs(pendingReadJobIds);
-	workerJobPool->changeCallback(pendingReadJobIds, readDiscardCallback, this);
-	workerJobPool->changeCallback(disabledJobIds, kEmptyCallback, kEmptyExtra);
-	while (!pendingReadJobIds.empty()) {
-		// pendingReadJobIds and pendingReadDataBuffers should have the related elements in the
-		// correct order
-		if (pendingReadDataBuffers.front()->getStatus() == kNotSaunafsStatus &&
-		    (disabledJobIds.empty() || disabledJobIds.front() != pendingReadJobIds.front())) {
-			toDiscardReadJobIds.push_back(pendingReadJobIds.front());
-			toDiscardReadDataBuffers.emplace_back(std::move(pendingReadDataBuffers.front()));
-		} else {
-			// Already processed packets, can be moved to the pool
-			getReadOutputBufferPool().put(std::move(pendingReadDataBuffers.front()));
-			if (!disabledJobIds.empty() && disabledJobIds.front() == pendingReadJobIds.front()) {
-				disabledJobIds.pop_front();
-			}
-		}
-
-		pendingReadJobIds.pop_front();
-		pendingReadDataBuffers.pop_front();
-	}
-	assert(disabledJobIds.empty());
-	assert(pendingReadJobIds.empty());
-	assert(pendingReadDataBuffers.empty());
-}
-
-void ChunkserverEntry::readFinishedCallback(uint8_t status, void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry*>(entry);
-
-	if (status == SAUNAFS_STATUS_OK) {
-		eptr->isChunkOpen = 1;
-		eptr->readContinue(eptr->maxParallelHddReadJobs);
-	} else {
-		// - prepare discard
-		// - send status
-		// - close chunk
-		// - change state
-		eptr->prepareDiscardReadJobs();
-
-		std::vector<uint8_t> buffer;
-		cstocl::readStatus::serialize(buffer, eptr->chunkId, status);
-		eptr->createAttachedPacket(buffer);
-
-		if (eptr->isChunkOpen) {
-			job_close(*eptr->workerJobPool, kEmptyCallback, kEmptyExtra, eptr->chunkId,
-			          eptr->chunkType);
-			eptr->isChunkOpen = 0;
-		}
-
-		// after sending status even if there was an error it's possible to
-		// receive new requests on the same connection
-		eptr->state = State::Idle;
-		LOG_AVG_STOP(readOperationTimer);
-	}
-}
-
-std::shared_ptr<OutputBuffer> ChunkserverEntry::prepareReadDataPacket(
-    std::vector<uint8_t> &readDataPrefix, uint32_t jobSize, uint32_t jobOffset) {
-	const uint32_t numBlocks = (jobSize + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
-
-	readDataPrefix.clear();
-	cstocl::readData::serializePrefix(readDataPrefix, chunkId, offset,
-	                                  std::min<uint32_t>(jobSize, SFSBLOCKSIZE - jobOffset));
-
-	auto buffer = getReadOutputBufferPool().get(readDataPrefix.size(), numBlocks);
-
-	for (uint32_t i = 0; i < numBlocks; i++) {
-		if (i > 0) {  // first block is already serialized
-			readDataPrefix.clear();
-			cstocl::readData::serializePrefix(
-			    readDataPrefix, chunkId, offset - jobOffset + (i * SFSBLOCKSIZE), SFSBLOCKSIZE);
-		}
-
-		if (buffer->copyIntoBuffer(OutputBuffer::BufferType::Header, readDataPrefix) !=
-		    static_cast<ssize_t>(readDataPrefix.size())) {
-			if (buffer) { getReadOutputBufferPool().put(std::move(buffer)); }
-
-			return kInvalidPacket;
-		}
-	}
-
-	return buffer;
-}
-
-void ChunkserverEntry::readContinue(uint16_t callMaxParallelHddReadJobs) {
-	TRACETHIS2(offset, size);
-
-	while (!pendingReadDataBuffers.empty() &&
-	       pendingReadDataBuffers.front()->getStatus() == SAUNAFS_STATUS_OK) {
-		attachBuffer(std::move(pendingReadDataBuffers.front()));
-		pendingReadDataBuffers.pop_front();
-		workerJobPool->changeCallback(pendingReadJobIds.front(), kEmptyCallback, kEmptyExtra);
-		pendingReadJobIds.pop_front();
-	}
-
-	if (pendingReadDataBuffers.empty() && size == 0) {  // everything has been read
-		std::vector<uint8_t> buffer;
-		cstocl::readStatus::serialize(buffer, chunkId, SAUNAFS_STATUS_OK);
-		createAttachedPacket(buffer);
-		sassert(isChunkOpen);
-
-		job_close(*workerJobPool, kEmptyCallback, kEmptyExtra, chunkId, chunkType);
-		isChunkOpen = 0;
-		// no error - do not disconnect - go direct to the IDLE state, ready for
-		// requests on the same connection
-		state = State::Idle;
-		LOG_AVG_STOP(readOperationTimer);
-	} else {
-		std::vector<uint8_t> readDataPrefix;
-
-		while (size > 0 && pendingReadDataBuffers.size() < callMaxParallelHddReadJobs) {
-			const uint32_t totalRequestSize = size;
-			const uint32_t thisPartOffset = offset % SFSBLOCKSIZE;
-			const uint32_t thisPartSize = std::min<uint32_t>(
-			    totalRequestSize, maxBlocksPerHddReadJob * SFSBLOCKSIZE - thisPartOffset);
-			const uint16_t totalRequestBlocks =
-			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
-
-			auto buffer = prepareReadDataPacket(readDataPrefix, thisPartSize, thisPartOffset);
-			if (buffer == kInvalidPacket) {
-				state = State::Close;
-				return;
-			}
-
-			pendingReadDataBuffers.emplace_back(std::move(buffer));
-
-			uint32_t readAheadBlocks = 0;
-			uint32_t maxReadBehindBlocks = 0;
-
-			if (!static_cast<bool>(isChunkOpen)) {
-				if (gHDDReadAhead.blocksToBeReadAhead() > 0) {
-					readAheadBlocks = totalRequestBlocks + gHDDReadAhead.blocksToBeReadAhead();
-				}
-				// Try not to influence slow streams too much:
-				maxReadBehindBlocks =
-				    std::min(totalRequestBlocks, gHDDReadAhead.maxBlocksToBeReadBehind());
-			}
-
-			uint32_t readJobId =
-			    job_read(*workerJobPool, readFinishedCallback, this, chunkId, chunkVersion,
-			             chunkType, offset, thisPartSize, maxReadBehindBlocks, readAheadBlocks,
-			             pendingReadDataBuffers.back().get(), !isChunkOpen);
-
-			if (readJobId == 0) {
-				getReadOutputBufferPool().put(std::move(pendingReadDataBuffers.back()));
-				pendingReadDataBuffers.pop_back();
-				state = State::Close;
-				return;
-			}
-			pendingReadJobIds.push_back(readJobId);
-
-			offset += thisPartSize;
-			size -= thisPartSize;
-		}
 	}
 }
 
@@ -460,6 +235,8 @@ void ChunkserverEntry::ping(const uint8_t *data, PacketHeader::Length length) {
 void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
                                 PacketHeader::Length length) {
 	TRACETHIS2(type, length);
+	uint32_t offset;
+	uint32_t size;
 
 	// Deserialize request
 	sassert(type == SAU_CLTOCS_READ);
@@ -488,16 +265,17 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 	// Process the request
-	stats_hlopr++;
 	state = State::Read;
-	LOG_AVG_START0(readOperationTimer, "csserv_read");
-	readContinue(1);
+	readHLO->setup(chunkId, chunkVersion, chunkType, offset, size);
 }
 
 void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
                                 PacketHeader::Length length) {
 	sassert(type == SAU_CLTOCS_PREFETCH);
 	PacketVersion v;
+	uint32_t offset;
+	uint32_t size;
+
 	try {
 		deserializePacketVersionNoHeader(data, length, v);
 		sassert(v == cltocs::prefetch::kECChunks);
@@ -533,161 +311,11 @@ bool ChunkserverEntry::isLastHeaderTypeWriteData() {
 	return getTypeAndLengthFromHeader(headerBuffer).first == SAU_CLTOCS_WRITE_DATA;
 }
 
-void ChunkserverEntry::updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId) {
-	if (status != SAUNAFS_STATUS_OK) {
-		createAttachedWriteStatus(chunkId, status, writeId);
-		state = State::WriteFinish;
-		return;
-	}
-
-	// We can consider that the write was successful
-	if (state == State::WriteLast) {
-		createAttachedWriteStatus(chunkId, status, writeId);
-		return;
-	}
-
-	// state is WriteForward or WriteFinish
-	if (partiallyCompletedWrites.count(writeId) > 0) {
-		// found - it means that it was added by status_receive, ie. next
-		// chunkserver from a chain finished writing before our worker
-		createAttachedWriteStatus(chunkId, status, writeId);
-		partiallyCompletedWrites.erase(writeId);
-	} else {
-		// not found - so add it
-		partiallyCompletedWrites.insert(writeId);
-	}
-}
-
-bool ChunkserverEntry::isOpenWriteJobBeingProcessed() {
-	return writeJobId != 0 && writeJobWriteId == 0;
-}
-
-bool ChunkserverEntry::isWriteJobBeingProcessed() {
-	return writeJobId != 0;
-}
-
-void ChunkserverEntry::setNoWriteJobBeingProcessed() {
-	writeJobId = 0;
-}
-
-void ChunkserverEntry::startOpenWriteJob() {
-	writeJobWriteId = 0;
-	writeJobId = job_open(*workerJobPool, openWriteFinishedCallback, this, chunkId, chunkType);
-}
-
-void ChunkserverEntry::startNextWriteJob() {
-	if (writeDataBuffers.empty()) {
-		safs::log_warn("({}) Called with no write data buffers.", __func__);
-		return;
-	}
-
-	if (isWriteJobBeingProcessed()) {
-		safs::log_warn("({}) Called with write job already in progress.", __func__);
-		return;
-	}
-
-	/// Start the next write job: it is always the first write data buffer
-	writeJobWriteId = writeDataBuffers.front()->getLastWriteId();
-	writeJobId = job_write(*workerJobPool, writeFinishedCallback, this, chunkId, chunkVersion,
-	                       chunkType, writeDataBuffers.front().get());
-}
-
-void ChunkserverEntry::writeCurrentInputPacket() {
-	TRACETHIS();
-
-	writeDataBuffers.emplace_back(std::move(inputBuffer));
-	if (!isWriteJobBeingProcessed()) {
-		startNextWriteJob();
-	}
-}
-
-void ChunkserverEntry::checkNextPacket() {
-	TRACETHIS();
-
-	if (!writeDataBuffers.empty()) {
-		// there is a write buffer ready to be written, there should not be any
-		// write jobs being processed.
-		startNextWriteJob();
-		return;
-	}
-
-	if (inputBuffer != nullptr && !inputBuffer->isBeingUpdated()) {
-		writeCurrentInputPacket();
-	}
-}
-
-// Write operations
-
 void ChunkserverEntry::createAttachedWriteStatus(uint64_t targetChunkId, uint8_t status,
                                                  uint32_t writeId) {
 	std::vector<uint8_t> buffer;
 	cstocl::writeStatus::serialize(buffer, targetChunkId, writeId, status);
 	createAttachedPacket(buffer);
-}
-
-void ChunkserverEntry::writeFinishedCallback(uint8_t status, void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-
-	if (eptr->isOpenWriteJobBeingProcessed()) {
-		safs::log_warn("({}) Inconsistent state: writeJobWriteId: {}, chunkId: {}, status: {}.",
-		               __func__, eptr->writeJobWriteId, eptr->chunkId, status);
-	}
-	eptr->setNoWriteJobBeingProcessed();
-
-	auto statusWithWriteIdToReply = eptr->writeDataBuffers.front()->getStatuses();
-	getWriteInputBufferPool().put(std::move(eptr->writeDataBuffers.front()));
-	eptr->writeDataBuffers.pop_front();
-
-	for (const auto &[status, writeId] : statusWithWriteIdToReply) {
-		eptr->updateUsingWriteStatusAndReply(status, writeId);
-		if (status != SAUNAFS_STATUS_OK) { return; }
-	}
-
-	eptr->checkNextPacket();
-}
-
-void ChunkserverEntry::openWriteFinishedCallback(uint8_t status, void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry *>(entry);
-
-	if (!eptr->isOpenWriteJobBeingProcessed()) {
-		safs::log_warn("Inconsistent state in {}: writeJobWriteId: {}, chunkId: {}, status: {}.",
-		               __func__, eptr->writeJobWriteId, eptr->chunkId, status);
-	}
-	eptr->setNoWriteJobBeingProcessed();
-
-	// We should assume that writeJobWriteId is 0 here, because this callback
-	// is called after job_open, which should have set writeJobWriteId to 0.
-
-	eptr->updateUsingWriteStatusAndReply(status, eptr->writeJobWriteId);
-	if (status != SAUNAFS_STATUS_OK) { return; }
-
-	eptr->isChunkOpen = 1;
-
-	eptr->checkNextPacket();
-}
-
-void ChunkserverEntry::prepareInputBufferForWrite(bool isForward) {
-	if (inputBuffer != nullptr && inputBuffer->isFull()) {
-		safs::log_warn("({}) Called with full inputBuffer, isForward: {}. Writing existing buffer.",
-		               __func__, isForward);
-		writeCurrentInputPacket();
-	}
-
-	if (inputBuffer == nullptr) {
-		inputBuffer = getWriteInputBufferPool().get(
-		    isForward ? kSauWriteDataPreffixSizeForward : kSauWriteDataPreffixSize,
-		    maxBlocksPerHddWriteJob);
-	}
-
-	inputBuffer->addNewWriteOperation();
-}
-
-void serializeCltocsWriteInit(std::vector<uint8_t> &buffer, uint64_t chunkId, uint32_t chunkVersion,
-                              ChunkPartType chunkType,
-                              const std::vector<ChunkTypeWithAddress> &chain) {
-	cltocs::writeInit::serialize(buffer, chunkId, chunkVersion, chunkType, chain);
 }
 
 void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
@@ -711,7 +339,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		// Create a chain -- connect to the next chunkserver
 		fwdServer = chain[0].address;
 		chain.erase(chain.begin());
-		serializeCltocsWriteInit(fwdInitPacket, chunkId, chunkVersion, chunkType, chain);
+		cltocs::writeInit::serialize(fwdInitPacket, chunkId, chunkVersion, chunkType, chain);
 		fwdOutputPacket.startPtr = fwdInitPacket.data();
 		fwdOutputPacket.bytesLeft = fwdInitPacket.size();
 		connectRetryCounter = 0;
@@ -725,8 +353,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		state = State::WriteLast;
 	}
 
-	stats_hlopw++;
-	startOpenWriteJob();
+	writeHLO->setup(chunkId, chunkVersion, chunkType);
 }
 
 void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
@@ -741,7 +368,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 
 	sassert(type == SAU_CLTOCS_WRITE_DATA);
 	try {
-		cltocs::writeData::deserializePrefix(data, kSauWriteDataPreffixSize, opChunkId, writeId,
+		cltocs::writeData::deserializePrefix(data, kSauWriteDataPrefixSize, opChunkId, writeId,
 		                                     blocknum, opOffset, opSize, crc);
 	} catch (IncorrectDeserializationException &) {
 		safs::log_info("Received malformed WRITE_DATA message (length: {})", length);
@@ -750,7 +377,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	uint8_t status = SAUNAFS_STATUS_OK;
-	if (!inputBuffer->isHeaderSizeValid()) {
+	if (!writeHLO->isLastHeaderSizeValid()) {
 		status = SAUNAFS_ERROR_WRONGSIZE;
 	} else if (opChunkId != chunkId) {
 		status = SAUNAFS_ERROR_WRONGCHUNKID;
@@ -762,12 +389,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 
-	inputBuffer->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
-
-	// No write jobs in progress or current input buffer is full - write it
-	if (!isWriteJobBeingProcessed() || inputBuffer->isFull()) {
-		writeCurrentInputPacket();
-	}
+	writeHLO->processWriteDataBlock(blocknum, opOffset, opSize, writeId, crc);
 }
 
 void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
@@ -792,7 +414,7 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 		writeId = 0;
 	}
 
-	updateUsingWriteStatusAndReply(status, writeId);
+	writeHLO->updateUsingWriteStatusAndReply(status, writeId);
 }
 
 void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
@@ -815,14 +437,11 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		return;
 	}
 
-	if (isWriteJobBeingProcessed() || !partiallyCompletedWrites.empty() || !outputPackets.empty()) {
+	if (!writeHLO->isCompleted() || !outputPackets.empty()) {
 		/*
 		 * WRITE_END received too early:
-		 * isWriteJobBeingProcessed -- hdd worker is working (writing some data)
-		 * !eptr->partiallyCompletedWrites.empty() -- there are write tasks
-		 * which have not been acked by our hdd worker EX-or next chunkserver
-		 * from a chain !outputPackets.empty() -- there is a status being
-		 * send
+		 * !writeHLO->isCompleted() -- some write data not yet processed
+		 * !outputPackets.empty() -- there is a status being sent
 		 */
 		// TODO(msulikowski) temporary syslog message. May be useful until this
 		// code is fully tested
@@ -831,35 +450,14 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		return;
 	}
 
-	if (isChunkOpen) {
-		job_close(*workerJobPool, nullptr, nullptr, chunkId, chunkType);
-		isChunkOpen = 0;
-	}
-
 	if (fwdSocket > 0) {
 		gForwardConnectionPool.putConnection(fwdSocket, fwdServer, kDefaultConnectionTimeout_s);
 		fwdSocket = kInvalidSocket;
 	}
 
-	if (inputBuffer != nullptr) {
-		safs::log_info("Received WRITE_END message while there is still non-null input buffer. Returning it to pool.");
-		getWriteInputBufferPool().put(std::move(inputBuffer));
-	}
-
+	// All went fine, cleanup
+	writeHLO->cleanup();
 	state = State::Idle;
-}
-
-void ChunkserverEntry::sauGetChunkBlocksFinishedCallback(uint8_t status,
-                                                         void *entry) {
-	TRACETHIS();
-	auto *eptr = static_cast<ChunkserverEntry*>(entry);
-	eptr->getBlocksJobId = 0;
-	std::vector<uint8_t> buffer;
-	cstocs::getChunkBlocksStatus::serialize(buffer, eptr->chunkId,
-	                                        eptr->chunkVersion, eptr->chunkType,
-	                                        eptr->getBlocksJobResult, status);
-	eptr->createAttachedPacket(buffer);
-	eptr->state = State::Idle;
 }
 
 void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
@@ -875,8 +473,7 @@ void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
 		return;
 	}
 
-	getBlocksJobId = job_get_blocks(*workerJobPool, sauGetChunkBlocksFinishedCallback, this,
-	                                chunkId, chunkVersion, chunkType, &getBlocksJobResult);
+	getBlocksHLO->setup(chunkId, chunkVersion, chunkType);
 	state = State::GetBlock;
 }
 
@@ -979,39 +576,32 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 
 void ChunkserverEntry::outputCheckReadFinished() {
 	TRACETHIS();
-	if (state == State::Read && (!pendingReadDataBuffers.empty() || size > 0)) {
-		readContinue(maxParallelHddReadJobs);
+	if (state == State::Read) {
+		readHLO->continueReadingIfPossible();
 	}
+}
+
+bool ChunkserverEntry::isChunkOpen() {
+	if (writeHLO->isChunkOpen() && readHLO->isChunkOpen()) {
+		safs::log_warn(
+		    "({}) Both write and read chunk handles are open for chunk {:016X} and {:016X}",
+		    __func__, writeHLO->chunkId(), readHLO->chunkId());
+	}
+
+	return writeHLO->isChunkOpen() || readHLO->isChunkOpen();
 }
 
 void ChunkserverEntry::closeJobs() {
 	TRACETHIS();
 
-	if (!pendingReadJobIds.empty()) {
-		prepareDiscardReadJobs();
-	}
-	if (!toDiscardReadJobIds.empty()) {
-		// Already disabled jobs
-		workerJobPool->changeCallback(toDiscardReadJobIds, delayedDiscardCallback, this);
-		pendingDelayedJobs += toDiscardReadJobIds.size();
+	if (readHLO->prepareForDelayedClose()) {
+		readHLO->delayedClose();
 		state = State::CloseWait;
-	}
-
-	if (isWriteJobBeingProcessed()) {
-		workerJobPool->disableJob(writeJobId);
-		workerJobPool->changeCallback(writeJobId, delayedCloseCallback, this);
-
-		if (inputBuffer != nullptr) {
-			/// Drop the input buffer, it won't be used anymore
-			getWriteInputBufferPool().put(std::move(inputBuffer));
-		}
-
-		pendingDelayedJobs++;
+	} else if (writeHLO->isWriteJobBeingProcessed()) {
+		writeHLO->delayedClose();
 		state = State::CloseWait;
-	} else if (getBlocksJobId > 0) {
-		workerJobPool->disableJob(getBlocksJobId);
-		workerJobPool->changeCallback(getBlocksJobId, delayedCloseCallback, this);
-		pendingDelayedJobs++;
+	} else if (getBlocksHLO->isRunning()) {
+		getBlocksHLO->delayedClose();
 		state = State::CloseWait;
 	} else {
 		// Not necessary to close chunk - checkAndApplyClosed will do it
@@ -1183,13 +773,9 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 	}
 
 	if (type == SAU_CLTOCS_WRITE_DATA) {
-		prepareInputBufferForWrite(mustForward);
-
-		if (mustForward) {
-			inputBuffer->copyIntoBuffer(InputBuffer::BufferType::Header, headerBuffer,
-			                            PacketHeader::kSize);
-		}
-		// Setting up packet.startPtr is not needed, inputBuffer will be used for reading data
+		writeHLO->prepareForNewWriteData(mustForward, headerBuffer);
+		// No need to set up packet.startPtr here; writeHLO's input buffer will be used to receive
+		// the data instead of packet's buffer.
 	} else {
 		if (mustForward) {
 			packet.packet.resize(PacketHeader::kSize + length);
@@ -1208,8 +794,7 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 		fwdOutputPacket.bytesLeft = PacketHeader::kSize;
 		// Use the correct buffer for forwarding
 		if (type == SAU_CLTOCS_WRITE_DATA) {
-			fwdOutputPacket.startPtr =
-			    const_cast<uint8_t *>(inputBuffer->getStartLastWriteOperationHeader());
+			fwdOutputPacket.startPtr = writeHLO->getLastOperationHeader();
 		} else {
 			fwdOutputPacket.startPtr = packet.packet.data();
 		}
@@ -1228,7 +813,7 @@ bool ChunkserverEntry::readData(int socket, PacketStruct &packet) {
 
 	int bytesRead{0};
 	if (!fromForward && isLastHeaderTypeWriteData()) {
-		bytesRead = inputBuffer->readFromSocket(socket, packet.bytesLeft);
+		bytesRead = writeHLO->readData(sock, packet.bytesLeft);
 	} else {
 		bytesRead = ::read(socket, packet.startPtr, packet.bytesLeft);
 	}
@@ -1251,7 +836,7 @@ bool ChunkserverEntry::writePacket(int socket, PacketStruct &packet) {
 
 	int bytesWritten{0};
 	if (!isWriteInit && toForward && isLastHeaderTypeWriteData()) {
-		bytesWritten = inputBuffer->writeToSocket(socket, packet.bytesLeft);
+		bytesWritten = writeHLO->writeData(socket, packet.bytesLeft);
 	} else {
 		sassert(packet.startPtr != nullptr);
 		bytesWritten = ::write(socket, packet.startPtr, packet.bytesLeft);
@@ -1278,8 +863,7 @@ void ChunkserverEntry::processPacket(PacketStruct &packet, uint8_t *headerBuf, M
 	uint32_t offsetFromSkipHeaderInForward = mustForward ? PacketHeader::kSize : 0;
 	const uint8_t *packetData{nullptr};
 	if (!fromForward && isLastHeaderTypeWriteData()) {
-		packetData =
-		    inputBuffer->getStartLastWriteOperationHeader() + offsetFromSkipHeaderInForward;
+		packetData = writeHLO->getLastOperationHeader() + offsetFromSkipHeaderInForward;
 	} else {
 		packetData = packet.packet.data() + offsetFromSkipHeaderInForward;
 	}
