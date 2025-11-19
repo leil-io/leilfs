@@ -22,21 +22,12 @@
 #include "chunkserver/chunkserver_entry.h"
 
 #include <fcntl.h>
-#include <netinet/in.h>
 #include <sys/types.h>
-#include <sys/uio.h>
-#include <syslog.h>
 #include <unistd.h>
 #include <cassert>
 #include <cerrno>
-#include <cinttypes>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
 #include <memory>
-#include <mutex>
-#include <set>
 
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver/bgjobs.h"
@@ -45,15 +36,12 @@
 #include "chunkserver/io_buffers.h"
 #include "chunkserver/network_stats.h"
 #include "common/charts.h"
-#include "common/chunk_connector.h"
+#include "common/connection_pool.h"
 #include "common/datapack.h"
 #include "common/event_loop.h"
-#include "common/legacy_vector.h"
 #include "common/massert.h"
-#include "common/saunafs_version.h"
 #include "common/sockets.h"
 #include "devtools/TracePrinter.h"
-#include "devtools/request_log.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cltocs.h"
 #include "protocol/cstocl.h"
@@ -66,8 +54,8 @@ constexpr uint32_t kDefaultConnectionTimeout_s = 3;
 // Connection pool for forward writes
 static ConnectionPool gForwardConnectionPool;
 
-constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
-constexpr uint8_t kConnectRetries = 10;
+static constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
+static constexpr uint8_t kConnectRetries = 10;
 
 ChunkserverEntry::ChunkserverEntry(int socket, JobPool *workerJobPool,
                                    uint16_t maxBlocksPerHddReadJob, uint16_t maxParallelHddReadJobs,
@@ -75,10 +63,10 @@ ChunkserverEntry::ChunkserverEntry(int socket, JobPool *workerJobPool,
     : workerJobPool(workerJobPool), sock(socket) {
 	inputPacket.bytesLeft = PacketHeader::kSize;
 	inputPacket.startPtr = headerBuffer;
-	writeHLO = std::make_unique<WriteHighLevelOp>(this, maxBlocksPerHddWriteJob);
-	readHLO =
+	writeHLO_ = std::make_unique<WriteHighLevelOp>(this, maxBlocksPerHddWriteJob);
+	readHLO_ =
 	    std::make_unique<ReadHighLevelOp>(this, maxBlocksPerHddReadJob, maxParallelHddReadJobs);
-	getBlocksHLO = std::make_unique<GetBlocksHighLevelOp>(this);
+	getBlocksHLO_ = std::make_unique<GetBlocksHighLevelOp>(this);
 }
 
 ChunkserverEntry::~ChunkserverEntry() {
@@ -210,10 +198,10 @@ void ChunkserverEntry::retryConnect() {
 // common - delayed close
 
 void ChunkserverEntry::checkAndApplyClosed() {
-	if (writeHLO->pendingDelayedJobs() == 0 && readHLO->pendingDelayedJobs() == 0 &&
-	    getBlocksHLO->pendingDelayedJobs() == 0) {
-		writeHLO->cleanup();
-		readHLO->cleanup();
+	if (writeHLO_->pendingDelayedJobs() == 0 && readHLO_->pendingDelayedJobs() == 0 &&
+	    getBlocksHLO_->pendingDelayedJobs() == 0) {
+		writeHLO_->cleanup();
+		readHLO_->cleanup();
 
 		state = State::Closed;
 	}
@@ -266,7 +254,7 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 	}
 	// Process the request
 	state = State::Read;
-	readHLO->setup(chunkId, chunkVersion, chunkType, offset, size);
+	readHLO_->setup(chunkId, chunkVersion, chunkType, offset, size);
 }
 
 void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
@@ -353,7 +341,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		state = State::WriteLast;
 	}
 
-	writeHLO->setup(chunkId, chunkVersion, chunkType);
+	writeHLO_->setup(chunkId, chunkVersion, chunkType);
 }
 
 void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
@@ -377,7 +365,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	uint8_t status = SAUNAFS_STATUS_OK;
-	if (!writeHLO->isLastHeaderSizeValid()) {
+	if (!writeHLO_->isLastHeaderSizeValid()) {
 		status = SAUNAFS_ERROR_WRONGSIZE;
 	} else if (opChunkId != chunkId) {
 		status = SAUNAFS_ERROR_WRONGCHUNKID;
@@ -389,7 +377,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 
-	writeHLO->processWriteDataBlock(blocknum, opOffset, opSize, writeId, crc);
+	writeHLO_->processWriteDataBlock(blocknum, opOffset, opSize, writeId, crc);
 }
 
 void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
@@ -414,7 +402,7 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 		writeId = 0;
 	}
 
-	writeHLO->updateUsingWriteStatusAndReply(status, writeId);
+	writeHLO_->updateUsingWriteStatusAndReply(status, writeId);
 }
 
 void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
@@ -437,10 +425,10 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		return;
 	}
 
-	if (!writeHLO->isCompleted() || !outputPackets.empty()) {
+	if (!writeHLO_->isCompleted() || !outputPackets.empty()) {
 		/*
 		 * WRITE_END received too early:
-		 * !writeHLO->isCompleted() -- some write data not yet processed
+		 * !writeHLO_->isCompleted() -- some write data not yet processed
 		 * !outputPackets.empty() -- there is a status being sent
 		 */
 		// TODO(msulikowski) temporary syslog message. May be useful until this
@@ -456,7 +444,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 	}
 
 	// All went fine, cleanup
-	writeHLO->cleanup();
+	writeHLO_->cleanup();
 	state = State::Idle;
 }
 
@@ -473,7 +461,7 @@ void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
 		return;
 	}
 
-	getBlocksHLO->setup(chunkId, chunkVersion, chunkType);
+	getBlocksHLO_->setup(chunkId, chunkVersion, chunkType);
 	state = State::GetBlock;
 }
 
@@ -577,31 +565,31 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 void ChunkserverEntry::outputCheckReadFinished() {
 	TRACETHIS();
 	if (state == State::Read) {
-		readHLO->continueReadingIfPossible();
+		readHLO_->continueReadingIfPossible();
 	}
 }
 
 bool ChunkserverEntry::isChunkOpen() {
-	if (writeHLO->isChunkOpen() && readHLO->isChunkOpen()) {
+	if (writeHLO_->isChunkOpen() && readHLO_->isChunkOpen()) {
 		safs::log_warn(
 		    "({}) Both write and read chunk handles are open for chunk {:016X} and {:016X}",
-		    __func__, writeHLO->chunkId(), readHLO->chunkId());
+		    __func__, writeHLO_->chunkId(), readHLO_->chunkId());
 	}
 
-	return writeHLO->isChunkOpen() || readHLO->isChunkOpen();
+	return writeHLO_->isChunkOpen() || readHLO_->isChunkOpen();
 }
 
 void ChunkserverEntry::closeJobs() {
 	TRACETHIS();
 
-	if (readHLO->prepareForDelayedClose()) {
-		readHLO->delayedClose();
+	if (readHLO_->prepareForDelayedClose()) {
+		readHLO_->delayedClose();
 		state = State::CloseWait;
-	} else if (writeHLO->isWriteJobBeingProcessed()) {
-		writeHLO->delayedClose();
+	} else if (writeHLO_->isWriteJobBeingProcessed()) {
+		writeHLO_->delayedClose();
 		state = State::CloseWait;
-	} else if (getBlocksHLO->isRunning()) {
-		getBlocksHLO->delayedClose();
+	} else if (getBlocksHLO_->isRunning()) {
+		getBlocksHLO_->delayedClose();
 		state = State::CloseWait;
 	} else {
 		// Not necessary to close chunk - checkAndApplyClosed will do it
@@ -773,8 +761,8 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 	}
 
 	if (type == SAU_CLTOCS_WRITE_DATA) {
-		writeHLO->prepareForNewWriteData(mustForward, headerBuffer);
-		// No need to set up packet.startPtr here; writeHLO's input buffer will be used to receive
+		writeHLO_->prepareForNewWriteData(mustForward, headerBuffer);
+		// No need to set up packet.startPtr here; writeHLO_'s input buffer will be used to receive
 		// the data instead of packet's buffer.
 	} else {
 		if (mustForward) {
@@ -794,7 +782,7 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 		fwdOutputPacket.bytesLeft = PacketHeader::kSize;
 		// Use the correct buffer for forwarding
 		if (type == SAU_CLTOCS_WRITE_DATA) {
-			fwdOutputPacket.startPtr = writeHLO->getLastOperationHeader();
+			fwdOutputPacket.startPtr = writeHLO_->getLastOperationHeader();
 		} else {
 			fwdOutputPacket.startPtr = packet.packet.data();
 		}
@@ -813,7 +801,7 @@ bool ChunkserverEntry::readData(int socket, PacketStruct &packet) {
 
 	int bytesRead{0};
 	if (!fromForward && isLastHeaderTypeWriteData()) {
-		bytesRead = writeHLO->readData(sock, packet.bytesLeft);
+		bytesRead = writeHLO_->readData(sock, packet.bytesLeft);
 	} else {
 		bytesRead = ::read(socket, packet.startPtr, packet.bytesLeft);
 	}
@@ -836,7 +824,7 @@ bool ChunkserverEntry::writePacket(int socket, PacketStruct &packet) {
 
 	int bytesWritten{0};
 	if (!isWriteInit && toForward && isLastHeaderTypeWriteData()) {
-		bytesWritten = writeHLO->writeData(socket, packet.bytesLeft);
+		bytesWritten = writeHLO_->writeData(socket, packet.bytesLeft);
 	} else {
 		sassert(packet.startPtr != nullptr);
 		bytesWritten = ::write(socket, packet.startPtr, packet.bytesLeft);
@@ -863,7 +851,7 @@ void ChunkserverEntry::processPacket(PacketStruct &packet, uint8_t *headerBuf, M
 	uint32_t offsetFromSkipHeaderInForward = mustForward ? PacketHeader::kSize : 0;
 	const uint8_t *packetData{nullptr};
 	if (!fromForward && isLastHeaderTypeWriteData()) {
-		packetData = writeHLO->getLastOperationHeader() + offsetFromSkipHeaderInForward;
+		packetData = writeHLO_->getLastOperationHeader() + offsetFromSkipHeaderInForward;
 	} else {
 		packetData = packet.packet.data() + offsetFromSkipHeaderInForward;
 	}

@@ -19,22 +19,20 @@
 
 #pragma once
 
-#include "bgjobs.h"
 #include "common/platform.h"
 
 #include <cstdint>
 #include <list>
 #include <memory>
-#include <set>
 #include <vector>
 
 #include "chunkserver-common/disk_utils.h"
+#include "chunkserver/bgjobs.h"
 #include "chunkserver/io_buffers.h"
 #include "common/aligned_allocator.h"
 #include "common/chunk_part_type.h"
 #include "common/network_address.h"
 #include "common/slice_traits.h"
-#include "devtools/request_log.h"
 #include "protocol/cltocs.h"
 
 class GetBlocksHighLevelOp;
@@ -137,13 +135,6 @@ struct ChunkserverEntry {
 
 	/// List of output packets waiting to be sent to the clients
 	std::list<std::unique_ptr<PacketStruct>> outputPackets;
-
-	/// Write operation related data
-	std::unique_ptr<WriteHighLevelOp> writeHLO;
-	/// Read operation related data
-	std::unique_ptr<ReadHighLevelOp> readHLO;
-	/// Get blocks operation related data
-	std::unique_ptr<GetBlocksHighLevelOp> getBlocksHLO;
 
 	uint64_t chunkId = 0; // R+W
 	uint32_t chunkVersion = 0; // R+W
@@ -371,4 +362,12 @@ struct ChunkserverEntry {
 	///
 	/// Called from the `NetworkWorkerThread` when a connection is closed.
 	void closeJobs();
+
+private:
+	/// Write operation related data
+	std::unique_ptr<WriteHighLevelOp> writeHLO_;
+	/// Read operation related data
+	std::unique_ptr<ReadHighLevelOp> readHLO_;
+	/// Get blocks operation related data
+	std::unique_ptr<GetBlocksHighLevelOp> getBlocksHLO_;
 };

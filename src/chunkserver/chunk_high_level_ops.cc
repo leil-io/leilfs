@@ -28,27 +28,8 @@
 #include "protocol/cstocl.h"
 #include "protocol/cstocs.h"
 
-ChunkserverEntry::State &HighLevelOp::state() { return parent_->state; }
-
-JobPool *HighLevelOp::workerJobPool() { return parent_->workerJobPool; }
-
-void HighLevelOp::checkAndApplyClosedOnParent() { parent_->checkAndApplyClosed(); }
-
-void HighLevelOp::createAttachedPacket(MessageBuffer &packet) {
-	parent_->createAttachedPacket(packet);
-}
-
-void HighLevelOp::attachBuffer(std::shared_ptr<OutputBuffer> &&buffer) {
-	parent_->attachBuffer(std::move(buffer));
-}
-
-void HighLevelOp::createAttachedWriteStatus(uint64_t targetChunkId, uint8_t status,
-                                            uint32_t writeId) {
-	parent_->createAttachedWriteStatus(targetChunkId, status, writeId);
-}
-
 void GetBlocksHighLevelOp::delayedCloseCallback(uint8_t /*status*/, void * /*entry*/) {
-	assert(state() == ChunkserverEntry::State::CloseWait);
+	assert(getParentState() == ChunkserverEntry::State::CloseWait);
 	assert(pendingDelayedJobs_ > 0);
 
 	pendingDelayedJobs_--;
@@ -61,7 +42,7 @@ void GetBlocksHighLevelOp::getChunkBlocksCallback(uint8_t status, void * /*entry
 	cstocs::getChunkBlocksStatus::serialize(buffer, chunkId_, chunkVersion_, chunkType_,
 	                                        getBlocksJobResult_, status);
 	createAttachedPacket(buffer);
-	state() = ChunkserverEntry::State::Idle;
+	setParentState(ChunkserverEntry::State::Idle);
 }
 
 void GetBlocksHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType) {
@@ -75,7 +56,7 @@ void GetBlocksHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkP
 	    chunkId_, chunkVersion_, chunkType_, &getBlocksJobResult_);
 }
 
-bool GetBlocksHighLevelOp::isRunning() { return getBlocksJobId_ > 0; }
+bool GetBlocksHighLevelOp::isRunning() const { return getBlocksJobId_ > 0; }
 
 void GetBlocksHighLevelOp::delayedClose() {
 	workerJobPool()->disableJob(getBlocksJobId_);
@@ -88,7 +69,7 @@ void GetBlocksHighLevelOp::delayedClose() {
 }
 
 void ReadHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
-	assert(state() == ChunkserverEntry::State::CloseWait);
+	assert(getParentState() == ChunkserverEntry::State::CloseWait);
 
 	if (status == SAUNAFS_STATUS_OK) { isChunkOpen_ = true; }
 
@@ -183,7 +164,7 @@ void ReadHighLevelOp::readFinishedCallback(uint8_t status, void * /*entry*/) {
 
 		// after sending status even if there was an error it's possible to
 		// receive new requests on the same connection
-		state() = ChunkserverEntry::State::Idle;
+		setParentState(ChunkserverEntry::State::Idle);
 		LOG_AVG_STOP(readOperationTimer_);
 	}
 }
@@ -235,7 +216,7 @@ void ReadHighLevelOp::readContinue(uint16_t callMaxParallelHddReadJobs) {
 		isChunkOpen_ = false;
 		// no error - do not disconnect - go direct to the IDLE state, ready for
 		// requests on the same connection
-		state() = ChunkserverEntry::State::Idle;
+		setParentState(ChunkserverEntry::State::Idle);
 		LOG_AVG_STOP(readOperationTimer_);
 	} else {
 		std::vector<uint8_t> readDataPrefix;
@@ -250,7 +231,7 @@ void ReadHighLevelOp::readContinue(uint16_t callMaxParallelHddReadJobs) {
 
 			auto buffer = prepareReadDataPacket(readDataPrefix, thisPartSize, thisPartOffset);
 			if (buffer == kInvalidPacket) {
-				state() = ChunkserverEntry::State::Close;
+				setParentState(ChunkserverEntry::State::Close);
 				return;
 			}
 
@@ -277,7 +258,7 @@ void ReadHighLevelOp::readContinue(uint16_t callMaxParallelHddReadJobs) {
 			if (readJobId == 0) {
 				getReadOutputBufferPool().put(std::move(pendingReadDataBuffers_.back()));
 				pendingReadDataBuffers_.pop_back();
-				state() = ChunkserverEntry::State::Close;
+				setParentState(ChunkserverEntry::State::Close);
 				return;
 			}
 			pendingReadJobIds_.push_back(readJobId);
@@ -329,11 +310,11 @@ void ReadHighLevelOp::cleanup() {
 	}
 }
 
-bool WriteHighLevelOp::isOpenWriteJobBeingProcessed() {
+bool WriteHighLevelOp::isOpenWriteJobBeingProcessed() const {
 	return writeJobId_ != 0 && writeJobWriteId_ == 0;
 }
 
-bool WriteHighLevelOp::isWriteJobBeingProcessed() { return writeJobId_ != 0; }
+bool WriteHighLevelOp::isWriteJobBeingProcessed() const { return writeJobId_ != 0; }
 
 void WriteHighLevelOp::setNoWriteJobBeingProcessed() { writeJobId_ = 0; }
 
@@ -348,12 +329,12 @@ void WriteHighLevelOp::startOpenWriteJob() {
 void WriteHighLevelOp::updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId) {
 	if (status != SAUNAFS_STATUS_OK) {
 		createAttachedWriteStatus(chunkId_, status, writeId);
-		state() = ChunkserverEntry::State::WriteFinish;
+		setParentState(ChunkserverEntry::State::WriteFinish);
 		return;
 	}
 
 	// We can consider that the write was successful
-	if (state() == ChunkserverEntry::State::WriteLast) {
+	if (getParentState() == ChunkserverEntry::State::WriteLast) {
 		createAttachedWriteStatus(chunkId_, status, writeId);
 		return;
 	}
@@ -371,7 +352,7 @@ void WriteHighLevelOp::updateUsingWriteStatusAndReply(uint8_t status, uint32_t w
 }
 
 void WriteHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
-	assert(state() == ChunkserverEntry::State::CloseWait);
+	assert(getParentState() == ChunkserverEntry::State::CloseWait);
 
 	if (isOpenWriteJobBeingProcessed() && status == SAUNAFS_STATUS_OK) {
 		// this was job_open (write)
@@ -499,7 +480,7 @@ void WriteHighLevelOp::processWriteDataBlock(uint16_t blocknum, uint32_t opOffse
 	if (!isWriteJobBeingProcessed() || inputBuffer_->isFull()) { writeCurrentInputPacket(); }
 }
 
-bool WriteHighLevelOp::isLastHeaderSizeValid() { return inputBuffer_->isHeaderSizeValid(); }
+bool WriteHighLevelOp::isLastHeaderSizeValid() const { return inputBuffer_->isHeaderSizeValid(); }
 
 uint8_t *WriteHighLevelOp::getLastOperationHeader() {
 	return const_cast<uint8_t *>(inputBuffer_->getStartLastWriteOperationHeader());
@@ -513,7 +494,7 @@ ssize_t WriteHighLevelOp::writeData(int sock, size_t bytesToWrite) {
 	return inputBuffer_->writeToSocket(sock, bytesToWrite);
 }
 
-bool WriteHighLevelOp::isCompleted() {
+bool WriteHighLevelOp::isCompleted() const {
 	// Conditions:
 	// - no write job being processed
 	// - no partially completed writes (forward case)
