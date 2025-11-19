@@ -1,4 +1,4 @@
-name: Run Unit and Ganesha Tests
+name: Run Ganesha Tests
 
 on:
     merge_group:
@@ -8,7 +8,7 @@ on:
             - dev
 
 jobs:
-    Run-Unit-Tests-and-Ganesha:
+    Run-Ganesha-Tests:
         runs-on: ubuntu-24.04
 
         env:
@@ -153,10 +153,6 @@ jobs:
                 sudo mkdir -p /etc/systemd/coredump.conf.d
                 echo -e "[Coredump]\nStorage=external\nProcessSizeMax=2G" | sudo tee /etc/systemd/coredump.conf.d/coredump.conf
                 sudo systemctl daemon-reexec
-
-            - name: Run Unit Tests suite
-              run: |
-                  "${GITHUB_WORKSPACE}/build/src/unittests/unittests" --gtest_color=yes
 
             - name: Run Ganesha suite
               run: |
