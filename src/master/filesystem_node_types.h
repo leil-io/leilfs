@@ -36,6 +36,7 @@
 #include "common/skip_list.h"
 #include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
+#include "slogger/slogger.h"
 
 #include "master/hstring_storage.h"
 
@@ -397,11 +398,10 @@ public:
 	EntriesContainer entries;  ///< Directory entries (entry: name + pointer to child node).
 	/// Directory entries with lower case name (entry: name + pointer to child node).
 	EntriesContainer lowerCaseEntries;
-	bool case_insensitive = false;  ///< Flag for case insensitive search.
+	bool caseInsensitive = false;  ///< Flag for case insensitive search.
 	StatsRecord stats;              ///< Directory statistics (including subdirectories).
 	uint32_t nlink{2};              ///< Number of directories linking to this directory.
 	uint16_t entries_hash{};
-	uint16_t lowerCaseEntriesHash{};
 
 	explicit FSNodeDirectory() : FSNode(FSNodeType::kDirectory) {
 		memset(&stats, 0, sizeof(stats));
@@ -416,7 +416,7 @@ public:
 	iterator find(const HString &name) {
 		uint64_t name_hash = (hstorage::Handle::HashType)name.hash();
 
-		if (case_insensitive) {
+		if (caseInsensitive) {
 			HString lowerCaseNameHandle = HString::hstringToLowerCase(name);
 			name_hash = (hstorage::Handle::HashType)lowerCaseNameHandle.hash();
 			auto tmp_handle = hstorage::Handle(name_hash << hstorage::Handle::kHashShift);
@@ -447,7 +447,7 @@ public:
 	iterator find_lowercase_container(const HString &name) {
 		uint64_t name_hash = (hstorage::Handle::HashType)name.hash();
 
-		if (case_insensitive) {
+		if (caseInsensitive) {
 			HString lowerCaseNameHandle = HString::hstringToLowerCase(name);
 			name_hash = (hstorage::Handle::HashType)lowerCaseNameHandle.hash();
 			auto tmp_handle = hstorage::Handle(name_hash << hstorage::Handle::kHashShift);
@@ -499,6 +499,101 @@ public:
 			if (parentId == this->id) { return hstring->get(); }
 		}
 		return {};
+	}
+
+	/*! \brief Returns the original stored child name for any-case input.
+	 *
+	 * This function is only meaningful for directories with the case-insensitive flag set.
+	 * If the directory is not case-insensitive, it will always return an empty string.
+	 *
+	 * The function works as follows:
+	 * - It takes any-case input (e.g., "FoO").
+	 * - It converts the input to lower case and looks up the corresponding entry in
+	 *   the lowerCaseEntries container (e.g., "foo").
+	 * - If a match is found, it returns the original stored name as it was first added
+	 *   to the parent directory (e.g., returns "Foo" if that was the original casing).
+	 * - If no match is found, or the directory is not case-insensitive, it returns an empty string.
+	 *
+	 * Example:
+	 *   - Directory contains an entry stored as "Foo".
+	 *   - getBaseStoredChildName("FoO") will return "Foo".
+	 *
+	 * \param anyCaseName Any-case name to look up.
+	 * \return The original stored child name (with original casing), or empty string if not found.
+	 */
+	std::string getBaseStoredChildName(const std::string &anyCaseName) {
+		if (!caseInsensitive) { return {}; }
+
+		// caseInsensitive path
+		HString inputH(anyCaseName);
+		HString lowerCaseNameHandle = HString::hstringToLowerCase(inputH);
+		uint64_t lowerCaseHash = (hstorage::Handle::HashType)lowerCaseNameHandle.hash();
+		hstorage::Handle tmp(lowerCaseHash << hstorage::Handle::kHashShift);
+		auto pairToFind = std::make_pair(&tmp, kUnknownNode);
+		auto lowerIt = lowerCaseEntries.lower_bound(pairToFind);
+
+		for (; lowerIt != lowerCaseEntries.end(); ++lowerIt) {
+			if ((*lowerIt).first->hash() != lowerCaseHash) { break; }
+			if (*((*lowerIt).first) == lowerCaseNameHandle) {
+				FSNode *child = (*lowerIt).second;
+				if (!child) { return {}; }
+				// ORIGINAL name from parents vector (first stored casing).
+				for (const auto &[parentId, hstring] : child->parents) {
+					if (parentId == this->id) { return std::string(hstring->get()); }
+				}
+
+				// Fallback: scan entries for pointer equality (should rarely be needed).
+				for (auto it = entries.begin(); it != entries.end(); ++it) {
+					if ((*it).second == child) {
+						safs::log_warn(
+						    "Inconsistent filesystem tree: fallback used in getBaseStoredChildName for directory id {}",
+						    this->id);
+						return std::string((*it).first->get());
+					}
+				}
+				return {};
+			}
+		}
+		return {};
+	}
+
+	/*!
+	 * \brief Updates lowerCaseEntries for all entries according to caseInsensitive flag.
+	 *
+	 * For case-insensitive directories, this populates lowerCaseEntries so that
+	 * lookups can be performed in a case-insensitive manner. If multiple entries
+	 * exist whose names differ only by case (e.g., "foo" and "Foo"), only one of
+	 * them will be present in lowerCaseEntries after this operation—the first one
+	 * encountered during iteration. This means only one will be found by a
+	 * case-insensitive lookup, and others will be hidden.
+	 */
+	void updateLowerCaseEntries() {
+		if (!caseInsensitive) {
+			// Clear and free all lowerCaseEntries
+			for (auto it = lowerCaseEntries.begin(); it != lowerCaseEntries.end();) {
+				delete it->first;
+				auto entryToErase = it++;
+				lowerCaseEntries.erase(entryToErase);
+			}
+
+			lowerCaseEntries.clear();
+			return;
+		}
+
+		// Populate lowerCaseEntries for all entries in entries
+		for (const auto &entry : entries) {
+			FSNode *child = entry.second;
+			HString lowerCaseName = HString::hstringToLowerCase(entry.first->get());
+
+			// Reuse find_lowercase_container to check if already present
+			auto lowerCaseIt = find_lowercase_container(lowerCaseName);
+			bool found = (lowerCaseIt != lowerCaseEntries.end());
+
+			if (!found) {
+				auto *lowercaseHandlePtr = new hstorage::Handle(lowerCaseName);
+				lowerCaseEntries.insert({lowercaseHandlePtr, child});
+			}
+		}
 	}
 
 	iterator begin() { return entries.begin(); }

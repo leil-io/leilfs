@@ -516,12 +516,11 @@ void FilesystemNodeOperationsBase::removeEdge(uint32_t timeStamp, FSNodeDirector
 		parent->entries.erase(dirIter);
 		parent->entries_hash ^= childName.hash();
 
-		if (parent->case_insensitive) {
+		if (parent->caseInsensitive) {
 			auto lowerCaseIt = parent->find_lowercase_container(childName);
 			delete lowerCaseIt->first;
 			parent->lowerCaseEntries.erase(lowerCaseIt);
 			HString lowerCaseName = HString::hstringToLowerCase(childName);
-			parent->lowerCaseEntriesHash ^= lowerCaseName.hash();
 		}
 	}
 
@@ -534,13 +533,13 @@ void FilesystemNodeOperationsBase::removeEdge(uint32_t timeStamp, FSNodeDirector
 
 	fsnodes_update_checksum(parent);
 	HString currentName = childName;
-	if (parent->case_insensitive) { currentName = HString::hstringToLowerCase(childName); }
+	if (parent->caseInsensitive) { currentName = HString::hstringToLowerCase(childName); }
 
 	auto iter = std::find_if(
 	    childNode->parents.begin(), childNode->parents.end(),
 	    [parent, currentName](const std::pair<inode_t, const hstorage::Handle *> &parentEntry) {
 		    return parentEntry.first == parent->id &&
-		           (parent->case_insensitive
+		           (parent->caseInsensitive
 		                ? HString::hstringToLowerCase(parentEntry.second->get())
 		                : parentEntry.second->get()) == currentName;
 	    });
@@ -564,12 +563,11 @@ void FilesystemNodeOperationsBase::link(uint32_t timeStamp, FSNodeDirectory *par
 	parent->entries.insert({handlePtr, child});
 	parent->entries_hash ^= name.hash();
 
-	if (parent->case_insensitive) {
+	if (parent->caseInsensitive) {
 		HString lowerCaseName = HString::hstringToLowerCase(name);
 		// Needs to be freed in fsnodes_remove_edge
 		auto *lowercaseHandlePtr = new hstorage::Handle(std::string(lowerCaseName.c_str()));
 		parent->lowerCaseEntries.insert({lowercaseHandlePtr, child});
-		parent->lowerCaseEntriesHash ^= lowerCaseName.hash();
 	}
 
 	child->parents.push_back({parent->id, handlePtr});
@@ -2143,6 +2141,16 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(const FsContext &conte
 
 	if (context.canCheckPermissions() && !access(context, candidateNode, modeMask)) {
 		return SAUNAFS_ERROR_EACCES;
+	}
+
+	// Case insensitive update check for the given context
+	if (context.hasSessionData() && candidateNode->type == FSNodeType::kDirectory) {
+		auto *dir = static_cast<FSNodeDirectory *>(candidateNode);
+		const bool sessionIsCaseInsensitive = (context.sesflags() & SESFLAG_CASEINSENSITIVE) != 0;
+		if (dir->caseInsensitive != sessionIsCaseInsensitive) {
+			dir->caseInsensitive = sessionIsCaseInsensitive;
+			dir->updateLowerCaseEntries();
+		}
 	}
 
 	*nodeOut = candidateNode;
