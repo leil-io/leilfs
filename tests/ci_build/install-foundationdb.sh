@@ -25,16 +25,16 @@ if [ "$(id -u)" -ne 0 ]; then
 	die "This script must be run as root. Please use sudo."
 fi
 
-FDB_VERSION_AVX2="7.3.63"
+# FDB_VERSION_AVX2="7.3.63"
 FDB_VERSION_NO_AVX2="7.3.62"
 
-fdb_version="${FDB_VERSION_AVX2}"
+fdb_version="${FDB_VERSION_NO_AVX2}"
 
 # Use a version without AVX2 requirement if the CPU does not support it (like some Proxmox VMs)
-if ! grep -q -w avx2 /proc/cpuinfo; then
-	fdb_version="${FDB_VERSION_NO_AVX2}"
-	echo "AVX2 not detected. Falling back to FoundationDB version ${fdb_version}."
-fi
+# if ! grep -q -w avx2 /proc/cpuinfo; then
+# 	fdb_version="${FDB_VERSION_NO_AVX2}"
+# 	echo "AVX2 not detected. Falling back to FoundationDB version ${fdb_version}."
+# fi
 
 # Check if FoundationDB is already installed by using fdbcli
 if command -v fdbcli &> /dev/null; then
