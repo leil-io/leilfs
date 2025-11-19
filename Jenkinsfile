@@ -14,7 +14,7 @@ def buildSfstests() {
 def buildImage(imageName) {
     sh """
         cd $WORKSPACE
-        mkdir build
+        mkdir -p build
         docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
         """
 }
@@ -180,6 +180,57 @@ pipeline {
         }
         stage('Build and test') {
             parallel {
+                stage('Build and run unittests (Ubuntu 24.04)') {
+                    agent {label 'unittests'}
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkout scm
+                            }
+                        }
+                        stage("Build and test") {
+                            steps {
+                                sh """
+                                    export PATH="/usr/lib/ccache:$PATH"
+                                    cd vcpkg
+                                    ./bootstrap-vcpkg.sh
+                                    cd ..
+                                    mkdir -p build
+                                    cd build
+                                    nice cmake \
+                                         -DCMAKE_TOOLCHAIN_FILE="../vcpkg/scripts/buildsystems/vcpkg.cmake" \
+                                         -DENABLE_CLIENT_LIB=ON \
+                                         -DENABLE_DOCS=ON \
+                                         -DENABLE_NFS_GANESHA=ON \
+                                         -DENABLE_POLONAISE=OFF \
+                                         -DENABLE_URAFT=ON \
+                                         -DGSH_CAN_HOST_LOCAL_FS=ON \
+                                         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                                         -DCMAKE_INSTALL_PREFIX="../install/saunafs/" \
+                                         -DENABLE_TESTS=ON \
+                                         -DCODE_COVERAGE=OFF \
+                                         -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON \
+                                         -DENABLE_WERROR=ON \
+                                         -DENABLE_FOUNDATIONDB=ON \
+                                    ..
+                                    cd src/unittests
+                                    nice make -j\$((\$(nproc) / 2))
+                                    # Make sure that failures do NOT fail the pipeline
+                                    ./unittests || true
+                                """
+                                publishJunit("build/src/unittests/*test_detail.xml")
+                            }
+                        }
+                    }
+                    post {
+                        failure {
+                            slackBadMessage(
+                                "Unit tests failed on ${BRANCH_NAME}",
+                                "Unit tests failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                            )
+                        }
+                    }
+                }
                 stage('Build with clang') {
                     agent {label 'build'}
                     steps {
