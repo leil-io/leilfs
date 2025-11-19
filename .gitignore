@@ -110,3 +110,7 @@ vcpkg_installed
 # CMake #
 ##############
 CMakeUserPresets.json
+
+# Copilot user instructions #
+##############
+.github/copilot-user-instructions.md
