@@ -30,7 +30,6 @@
 #include <cstdint>
 #include <shellapi.h>
 #include <vector>
-#include <memory>
 
 using saunafs_stat_t = struct _stat64;
 
@@ -48,21 +47,38 @@ inline std::wstring utf8_to_wstring(const std::string &str) {
 	return wstr;
 }
 
-inline void print_unicode_console(const std::wstring &msg) {
-	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD written;
-	if (hConsole && hConsole != INVALID_HANDLE_VALUE) {
-		WriteConsoleW(hConsole, msg.c_str(), (DWORD)msg.size(), &written, nullptr);
+// Prints a UTF-16 string to console or file, handling console vs pipe/file redirection.
+inline void winapi_print(const std::wstring &msg, bool is_error = false) {
+	HANDLE h = GetStdHandle(is_error ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
+	if (h == nullptr || h == INVALID_HANDLE_VALUE) return;
+
+	DWORD mode = 0;
+	BOOL isConsole = GetConsoleMode(h, &mode);
+
+	if (isConsole) {
+		// Console → Write UTF-16 directly
+		DWORD written;
+		WriteConsoleW(h, msg.c_str(), (DWORD)msg.size(), &written, nullptr);
+	} else {
+		// Pipe / file / redirection → must convert to UTF-8
+		int utf8len = WideCharToMultiByte(CP_UTF8, 0, msg.c_str(), (int)msg.size(), nullptr, 0,
+		                                  nullptr, nullptr);
+
+		if (utf8len <= 0) { return; }
+
+		std::string utf8(utf8len, '\0');
+
+		WideCharToMultiByte(CP_UTF8, 0, msg.c_str(), (int)msg.size(), utf8.data(), utf8len, nullptr,
+		                    nullptr);
+
+		DWORD written;
+		WriteFile(h, utf8.data(), (DWORD)utf8.size(), &written, nullptr);
 	}
 }
 
-inline void print_unicode_console_error(const std::wstring &msg) {
-	HANDLE hConsole = GetStdHandle(STD_ERROR_HANDLE);
-	DWORD written;
-	if (hConsole && hConsole != INVALID_HANDLE_VALUE) {
-		WriteConsoleW(hConsole, msg.c_str(), (DWORD)msg.size(), &written, nullptr);
-	}
-}
+inline void print_unicode_console(const std::wstring &msg) { winapi_print(msg, false); }
+
+inline void print_unicode_console_error(const std::wstring &msg) { winapi_print(msg, true); }
 
 // This class is a RAII guard to restore console code pages on destruction on
 // Windows.
