@@ -1,4 +1,4 @@
-name: Run Ganesha Tests
+name: Run Unit and Ganesha Tests
 
 on:
     merge_group:
@@ -8,7 +8,7 @@ on:
             - dev
 
 jobs:
-    Run-Ganesha-Tests:
+    Run-Unit-Tests-and-Ganesha:
         runs-on: ubuntu-24.04
 
         env:
@@ -30,6 +30,20 @@ jobs:
             # Reference for previous vcpkg setup: maybe we can fix it in the future
             #- name: Setup a new (or from cache) vcpkg
             #  uses: lukka/run-vcpkg@v11
+
+            - name: Free Disk Space (Ubuntu)
+              uses: jlumbroso/free-disk-space@main
+              with:
+                  # removes all the pre-cached tools (Node, Go, Python, Ruby, ...) that are
+                  # installed in the path specified by the $AGENT_TOOLSDIRECTORY environment variable
+                  tool-cache: false          # ~6GB
+                  android: true              # ~12GB
+                  dotnet: true               # ~4GB
+                  haskell: true              # ~6GB
+                  # large-packages is the most time consuming step, enable only if really needed
+                  large-packages: false      # ~5GB (Chrome, Firefox, etc)
+                  docker-images: false       # 0B
+                  swap-storage: false        # Keep swap enabled for safety
 
             - name: Build and install Ganesha v7.1
               run: |
@@ -153,6 +167,10 @@ jobs:
                 sudo mkdir -p /etc/systemd/coredump.conf.d
                 echo -e "[Coredump]\nStorage=external\nProcessSizeMax=2G" | sudo tee /etc/systemd/coredump.conf.d/coredump.conf
                 sudo systemctl daemon-reexec
+
+            - name: Run Unit Tests suite
+              run: |
+                  "${GITHUB_WORKSPACE}/build/src/unittests/unittests" --gtest_color=yes
 
             - name: Run Ganesha suite
               run: |
