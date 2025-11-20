@@ -222,7 +222,7 @@ public:
 
 	uint8_t fullPathByInode(const FsContext &context, inode_t inode,
 	                        std::string &fullPath) override;
-	std::string fullPathByInode(inode_t initial_inode) override;
+	std::string fullPathByInode(inode_t initialInode) override;
 
 	// QUOTAS
 

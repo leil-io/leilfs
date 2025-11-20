@@ -248,7 +248,7 @@ public:
 
 	virtual uint8_t fullPathByInode(const FsContext &context, inode_t inode,
 	                                std::string &fullPath) = 0;
-	virtual std::string fullPathByInode(inode_t initial_inode) = 0;
+	virtual std::string fullPathByInode(inode_t initialInode) = 0;
 
 	// QUOTAS
 

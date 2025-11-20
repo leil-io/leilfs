@@ -1,5 +1,6 @@
 CHUNKSERVERS=1 \
 	USE_RAMDISK=YES \
+	MASTER_EXTRA_CONFIG="EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 1000"\
 	setup_local_empty_saunafs info
 
 # Start the metadata notifier which will log all the messages to a file
@@ -24,6 +25,18 @@ for f in "${folders[@]}"; do
     sleep 1
 done
 
+# Remove a created file to generate an UNLINK notification
+saunafs settrashtime 10 folder1
+touch folder1/file1
+rm folder1/file1
+sleep 1 # wait for the notifier to process the unlink event
+
+# Remove a created file with no trash time to retrieve from reserved files
+saunafs settrashtime 0 folder1
+touch folder1/file2
+rm folder1/file2
+sleep 3 # wait for the notifier to process the unlink and purge events
+
 # Stop the notifier and print the log file
 kill -s SIGKILL $NOTIFIER_PID
 cat "${TEMP_DIR}/notifier.log"
@@ -40,6 +53,12 @@ expected=(
     "inode 4: type=d path=/folder1/subfolder1"
     "ACCESS(5)"
     "inode 5: type=d path=/folder1/subfolder2"
+    "UNLINK(2,file1):6"
+    "inode 6: type=t path=/folder1/file1 (trash)"
+    "UNLINK(2,file2):7"
+    "inode 7: type=r path=/folder1/file2 (reserved)"
+    "PURGE(7)"
+    "inode 7: type=? path="
 )
 for e in "${expected[@]}"; do
     assert_success grep -q "$e" "${TEMP_DIR}/notifier.log"
