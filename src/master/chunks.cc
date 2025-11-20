@@ -2041,7 +2041,7 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 	matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version, part_to_recover,
 	                                   all_servers, all_parts);
 	stats_replications++;
-	metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_CHUNK_REPLICATE);
 	c->needverincrease = 1;
 	return true;
 }
@@ -2057,7 +2057,7 @@ void ChunkWorker::deleteInvalidChunkParts(Chunk *c) {
 				}
 				part.state = ChunkPart::DEL;
 				stats_deletions++;
-				metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
+				metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_CHUNK_DELETE);
 				matocsserv_send_deletechunk(part.server(), c->chunkid, 0, part.type);
 				inforec_.done.del_invalid++;
 				deleteDone_++;
@@ -2078,7 +2078,7 @@ void ChunkWorker::deleteAllChunkParts(Chunk *c) {
 				c->deleteCopy(part);
 				c->needverincrease = 1;
 				stats_deletions++;
-				metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
+				metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_CHUNK_DELETE);
 				matocsserv_send_deletechunk(part.server(), c->chunkid, c->version,
 				                            part.type);
 				inforec_.done.del_unused++;
@@ -2258,7 +2258,7 @@ bool ChunkWorker::removeUnneededChunkPart(Chunk *c, Goal::Slice::Type slice_type
 		c->deleteCopy(*candidate);
 		c->needverincrease = 1;
 		stats_deletions++;
-		metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
+		metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_CHUNK_DELETE);
 		matocsserv_send_deletechunk(candidate->server(), c->chunkid, 0, candidate->type);
 
 		int overgoal_copies = calc.countPartsToMove(slice_type, slice_part).second;

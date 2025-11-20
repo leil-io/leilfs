@@ -384,7 +384,7 @@ void FilesystemOperationsBase::statfs(const FsContext &context, uint64_t *totals
 		*inodes = sr.inodes;
 	}
 	incrementFSStat(FsStats::Statfs);
-	metrics::Counter::increment(metrics::Counter::Master::FS_STATFS);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_STATFS);
 }
 #endif /* #ifndef METARESTORE */
 
@@ -457,7 +457,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context, inode_t paren
 			nodeOperations_->fillAttr(wd, wd, context.uid(), context.gid(), context.auid(),
 			                          context.agid(), context.sesflags(), attr);
 			incrementFSStat(FsStats::Lookup);
-			metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
+			metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_LOOKUP);
 			return SAUNAFS_STATUS_OK;
 		}
 		if (name.length() == 2 && name[1] == '.') {  // parent
@@ -482,7 +482,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context, inode_t paren
 				}
 			}
 			incrementFSStat(FsStats::Lookup);
-			metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
+			metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_LOOKUP);
 			return SAUNAFS_STATUS_OK;
 		}
 	}
@@ -496,7 +496,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context, inode_t paren
 	nodeOperations_->fillAttr(child, wd, context.uid(), context.gid(), context.auid(),
 	                          context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Lookup);
-	metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_LOOKUP);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -639,7 +639,7 @@ uint8_t FilesystemOperationsBase::getAttr(const FsContext &context, inode_t inod
 	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
 	                          context.sesflags(), attr);
 	incrementFSStat(FsStats::Getattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_GETATTR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_GETATTR);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -693,7 +693,7 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context, inode_t
 	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
 	                          context.sesflags(), attr);
 	incrementFSStat(FsStats::Setattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -805,7 +805,7 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context, inode_t 
 	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
 	                          context.sesflags(), attr);
 	incrementFSStat(FsStats::Setattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -943,7 +943,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context, inode_t inod
 	                          context.sesflags(), attr);
 	fsnodes_update_checksum(p);
 	incrementFSStat(FsStats::Setattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1023,7 +1023,7 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t ino
 	path = (std::string)static_cast<FSNodeSymlink*>(p)->path;
 	fs_update_atime(p, ts);
 	incrementFSStat(FsStats::Readlink);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READLINK);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_READLINK);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1085,7 +1085,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 	}
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Symlink);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SYMLINK);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_SYMLINK);
 #endif /* #ifndef METARESTORE */
 	return SAUNAFS_STATUS_OK;
 }
@@ -1141,7 +1141,7 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context, inode_t parent
 	          wd->id, nodeOperations_->escapeName(name).c_str(), static_cast<char>(type),
 	          p->mode & 07777, context.uid(), context.gid(), rdev, p->id);
 	incrementFSStat(FsStats::Mknod);
-	metrics::Counter::increment(metrics::Counter::Master::FS_MKNOD);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_MKNOD);
 	fsnodes_update_checksum(p);
 	return SAUNAFS_STATUS_OK;
 }
@@ -1196,7 +1196,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context, inode_t parent
 	          static_cast<char>(FSNodeType::kDirectory), p->mode & 07777, context.uid(),
 	          context.gid(), 0, p->id);
 	incrementFSStat(FsStats::Mkdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_MKDIR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_MKDIR);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1268,7 +1268,7 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context, inode_t paren
 	          nodeOperations_->escapeName(name).c_str(), child->id);
 	nodeOperations_->unlink(ts, static_cast<FSNodeDirectory *>(wd), name, child);
 	incrementFSStat(FsStats::Unlink);
-	metrics::Counter::increment(metrics::Counter::Master::FS_UNLINK);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_UNLINK);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1340,7 +1340,7 @@ uint8_t FilesystemOperationsBase::rmdir(const FsContext &context, inode_t parent
 	          nodeOperations_->escapeName(name).c_str(), child->id);
 	nodeOperations_->unlink(ts, static_cast<FSNodeDirectory *>(wd), name, child);
 	incrementFSStat(FsStats::Rmdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_RMDIR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_RMDIR);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1472,7 +1472,7 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context, inode_t paren
 	}
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Rename);
-	metrics::Counter::increment(metrics::Counter::Master::FS_RENAME);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_RENAME);
 #endif
 	return SAUNAFS_STATUS_OK;
 }
@@ -1518,7 +1518,7 @@ uint8_t FilesystemOperationsBase::link(const FsContext &context, inode_t inode_s
 	}
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Link);
-	metrics::Counter::increment(metrics::Counter::Master::FS_LINK);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_LINK);
 #endif
 	return SAUNAFS_STATUS_OK;
 }
@@ -1890,7 +1890,7 @@ void FilesystemOperationsBase::readdirData(const FsContext &context, uint8_t fla
 	    context.rootinode(), context.uid(), context.gid(), context.auid(), context.agid(),
 	    context.sesflags(), static_cast<FSNodeDirectory *>(p), dbuff, flags & GETDIR_FLAG_WITHATTR);
 	incrementFSStat(FsStats::Readdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_READDIR);
 }
 
 uint8_t FilesystemOperationsBase::readdir(const FsContext &context, inode_t inode,
@@ -1919,7 +1919,7 @@ uint8_t FilesystemOperationsBase::readdir(const FsContext &context, inode_t inod
 	                        first_entry, number_of_entries, dir_entries);
 
 	incrementFSStat(FsStats::Readdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_READDIR);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1974,7 +1974,7 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context, inode_t in
 	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
 	                          context.sesflags(), attr);
 	incrementFSStat(FsStats::Open);
-	metrics::Counter::increment(metrics::Counter::Master::FS_OPEN);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_OPEN);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -2110,7 +2110,7 @@ uint8_t FilesystemOperationsBase::readChunk(inode_t inode, uint32_t indx, uint64
 	*length = p->length;
 	fs_update_atime(p, ts);
 	incrementFSStat(FsStats::Read);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READ);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_READ);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -2211,7 +2211,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context, inode_t i
 	fsnodes_update_checksum(p);
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Write);
-	metrics::Counter::increment(metrics::Counter::Master::FS_WRITE);
+	metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_FS_WRITE);
 #endif
 	return SAUNAFS_STATUS_OK;
 }

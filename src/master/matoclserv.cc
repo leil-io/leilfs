@@ -5187,7 +5187,7 @@ void matoclserv_read(matoclserventry *eptr) {
 			return;
 		}
 
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_BYTES, bytesRead);
+		metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_NETWORK_CLIENT_RX_BYTES, bytesRead);
 		statsBytesReceived += bytesRead;
 
 		if (eptr->inputPacket.hasData()) {
@@ -5196,7 +5196,7 @@ void matoclserv_read(matoclserventry *eptr) {
 			matoclserv_gotpacket(eptr, header.type, data.data(), data.size());
 
 			statsPacketsReceived++;
-			metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_PACKETS);
+			metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_NETWORK_CLIENT_RX_PACKETS);
 
 			eptr->inputPacket.reset();
 		}
@@ -5225,12 +5225,12 @@ void matoclserv_write(matoclserventry *eptr) {
 			return;
 		}
 		outputPacket.bytesSent += bytesWritten;
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_BYTES, bytesWritten);
+		metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_NETWORK_CLIENT_TX_BYTES, bytesWritten);
 		statsBytesSent += bytesWritten;
 
 		if (outputPacket.bytesSent >= outputPacket.packet.size()) {
 			statsPacketsSent++;
-			metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_PACKETS);
+			metrics::gMasterMetrics.incrementMetric(metrics::MasterMetrics::COUNT_NETWORK_CLIENT_TX_PACKETS);
 			eptr->outputPackets.pop_front();
 		} else {
 			return;
