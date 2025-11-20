@@ -340,25 +340,25 @@ bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerI
 	return true;
 }
 
-uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   ChunkPartType chunkType, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddOpen(chunkId, chunkType);
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Open, std::move(callback), extra, processJob,
-	                      listenerId);
+	return jobPool.addJob(JobPool::ChunkOperation::Open, std::move(callback), kEmptyExtra,
+	                      processJob, listenerId);
 }
 
-uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    ChunkPartType chunkType, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddClose(chunkId, chunkType);
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Close, std::move(callback), extra, processJob,
-	                      listenerId);
+	return jobPool.addJob(JobPool::ChunkOperation::Close, std::move(callback), kEmptyExtra,
+	                      processJob, listenerId);
 }
 
-uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
                   OutputBuffer *outputBuffer, bool performHddOpen, uint32_t listenerId) {
@@ -386,8 +386,8 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, void *extra, 
 		}
 		return status;
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), extra, processJob,
-	                      listenerId);
+	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), kEmptyExtra,
+	                      processJob, listenerId);
 }
 
 uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
@@ -401,7 +401,7 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 	                      processJob, listenerId);
 }
 
-uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
+uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
                    uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
@@ -486,17 +486,17 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
 
 		return statuses.empty() ? static_cast<uint8_t>(SAUNAFS_STATUS_OK) : statuses.back();
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Write, std::move(callback), extra, processJob,
-	                      listenerId);
+	return jobPool.addJob(JobPool::ChunkOperation::Write, std::move(callback), kEmptyExtra,
+	                      processJob, listenerId);
 }
 
-uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
-                        uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
-                        uint16_t *blocks, uint32_t listenerId) {
+uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+                        uint32_t version, ChunkPartType chunkType, uint16_t *blocks,
+                        uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddChunkGetNumberOfBlocks(chunkId, chunkType, version, blocks);
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, std::move(callback), extra,
+	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, std::move(callback), kEmptyExtra,
 	                      processJob, listenerId);
 }
 

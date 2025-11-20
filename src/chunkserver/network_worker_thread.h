@@ -77,4 +77,3 @@ private:
 	std::vector<struct pollfd> pdesc;
 	int notify_pipe[2];
 };
-

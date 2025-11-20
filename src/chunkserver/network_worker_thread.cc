@@ -118,7 +118,7 @@ void NetworkWorkerThread::terminate() {
 	while (!csservEntries.empty()) {
 		auto& entry = csservEntries.back();
 
-		if (entry.isChunkOpen) {
+		if (entry.isChunkOpen()) {
 			hddClose(entry.chunkId, entry.chunkType);
 		}
 
