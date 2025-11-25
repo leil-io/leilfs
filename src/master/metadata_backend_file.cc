@@ -629,7 +629,14 @@ static int fs_lostnode(FSNode *p) {
 		}
 		HString name((const char *)artname, l);
 		if (!gFSOperations->nodeOperations()->isNameUsed(gMetadata->root, name)) {
-			gFSOperations->nodeOperations()->link(0, gMetadata->root, p, name);
+			auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+			    FilesystemOperationContext::TransactionType::kReadWrite);
+
+			gFSOperations->nodeOperations()->link(fsOpContext, 0, gMetadata->root, p, name);
+
+			// No need to commit the transaction here, the file backend doesn't use transactions for
+			// persistence, but we need to provide the context for API compatibility.
+
 			return 1;
 		}
 		i++;

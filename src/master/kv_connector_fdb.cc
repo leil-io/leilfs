@@ -25,10 +25,11 @@
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
 #include "kv/itransaction.h"
+#include "kv/kv_utils.h"
 #include "master/changelog.h"
+#include "master/filesystem_metadata.h"
 #include "master/kv_common_keys.h"
 #include "master/kv_connector_interface.h"
-#include "master/filesystem_metadata.h"
 
 bool KVConnectorFDB::init() {
 	std::string clusterFile = cfg_getstring("FDB_CLUSTER_FILE", "");
@@ -161,29 +162,32 @@ void KVConnectorFDB::onEdgeChanged(FSNodeDirectory *parent, FSNode *child,
                                    hstorage::Handle *handlePtr) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
 
+	// EDGE_<ParentId><Name>: <ChildId>. e.g.: EDGE_1999ChildName: 2535
+
 	// Key
-	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parent->id, child->id);
+	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parent->id);
+	kv::appendStr(key, handlePtr->get());
 
 	// Value
-	auto name = handlePtr->get();
-	kv::Value value(name.size());
-	std::memcpy(value.data(), name.data(), name.size());
+	kv::Value value(kv::toBytesBE(child->id));
 
 	transaction->set(key, value);
 
 	if (!transaction->commit()) {
-		safs::log_err("Failed to store edge: {} -> {} : {}", parent->id, child->id, name);
+		safs::log_err("Failed to store edge: {} -> {} : {}", parent->id, child->id,
+		              handlePtr->get());
 	}
 }
 
-void KVConnectorFDB::onEdgeRemoved(inode_t parentId, inode_t childId) {
+void KVConnectorFDB::onEdgeRemoved(inode_t parentId, const HString &edgeName) {
 	auto transaction = kvEngine_->createReadWriteTransaction();
 
-	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId, childId);
+	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
+	kv::appendStr(key, edgeName);
 
 	transaction->remove(key);
 
 	if (!transaction->commit()) {
-		safs::log_err("Failed to remove edge: {} -> {}", parentId, childId);
+		safs::log_err("Failed to remove edge: {} -> {}", parentId, edgeName);
 	}
 }

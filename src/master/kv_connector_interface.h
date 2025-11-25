@@ -93,5 +93,5 @@ public:
 	                           hstorage::Handle *handlePtr) = 0;
 
 	/// Reacts on edge removals.
-	virtual void onEdgeRemoved(inode_t parentId, inode_t childId) = 0;
+	virtual void onEdgeRemoved(inode_t parentId, const HString &edgeName) = 0;
 };

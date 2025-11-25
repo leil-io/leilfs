@@ -55,6 +55,15 @@ public:
 	/// Returns the concrete node operations implementation.
 	IFilesystemNodeOperations *nodeOperations() override { return nodeOperations_.get(); }
 
+	/// Creates a filesystem operation context for the specified transaction type.
+	/// This implementation (in-memory) returns a context without transactions.
+	/// @see IFilesystemOperations::createFilesystemOperationContext
+	FilesystemOperationContext createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType type) override {
+		(void)type;  // Unused parameter in this implementation
+		return {};
+	}
+
 	/// Returns version of the loaded metadata.
 	uint64_t getMetadataVersion() override;
 
@@ -110,28 +119,32 @@ public:
 	std::vector<JobInfo> getCurrentTasksInfo() override;
 
 	uint8_t access(const FsContext &context, inode_t inode, int modemask) override;
-	uint8_t lookup(const FsContext &context, inode_t parent, const HString &name, inode_t *inode,
-	               Attributes &attr) override;
+	uint8_t lookup(const FsContext &context,
+	               const FilesystemOperationContext &fsOpContext, inode_t parent, const HString &name,
+	               inode_t *inode, Attributes &attr) override;
 	uint8_t wholePathLookup(const FsContext &context, inode_t parent, const std::string &path,
 	                        inode_t *found_inode, Attributes &attr) override;
-	uint8_t getAttr(const FsContext &context, inode_t inode, Attributes &attr) override;
-	uint8_t trySetLength(const FsContext &context, inode_t inode, uint8_t opened, uint64_t length,
-	                     bool denyTruncatingParity, uint32_t lockid, Attributes &attr,
-	                     uint64_t *chunkid) override;
-	uint8_t doSetLength(const FsContext &context, inode_t inode, uint64_t length,
-	                    Attributes &attr) override;
+	uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                inode_t inode, Attributes &attr) override;
+	uint8_t trySetLength(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                     inode_t inode, uint8_t opened, uint64_t length, bool denyTruncatingParity,
+	                     uint32_t lockid, Attributes &attr, uint64_t *chunkid) override;
+	uint8_t doSetLength(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                    inode_t inode, uint64_t length, Attributes &attr) override;
 	uint8_t setAttr(const FsContext &context, inode_t inode, uint8_t setmask, uint16_t attrmode,
 	                uint32_t attruid, uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                SugidClearMode sugidclearmode, Attributes &attr) override;
 	uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) override;
 	void statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availspace,
 	            uint64_t *trashspace, uint64_t *reservedspace, inode_t *inodes) override;
-	uint8_t mknod(const FsContext &context, inode_t parent, const HString &name, FSNodeType type,
-	              uint16_t mode, uint16_t umask, uint32_t rdev, inode_t *inode,
-	              Attributes &attr) override;
+	uint8_t mknod(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	              inode_t parent, const HString &name, FSNodeType type, uint16_t mode,
+	              uint16_t umask, uint32_t rdev, inode_t *inode, Attributes &attr) override;
 	uint8_t mkdir(const FsContext &context, inode_t parent, const HString &name, uint16_t mode,
 	              uint16_t umask, uint8_t copysgid, inode_t *inode, Attributes &attr) override;
-	uint8_t removeChunkFromFile(const FsContext &context, inode_t inode, uint64_t chunkId) override;
+	uint8_t removeChunkFromFile(const FsContext &context,
+	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                            uint64_t chunkId) override;
 	uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	               uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) override;
 	uint8_t rmdir(const FsContext &context, inode_t parent, const HString &name) override;
@@ -141,6 +154,8 @@ public:
 	                    uint32_t *dbuffsize) override;
 	void readdirData(const FsContext &context, uint8_t flags, void *dnode, uint8_t *dbuff) override;
 
+	/// Reads a paginated list of entries from a directory.
+	/// @see IFilesystemOperations::readdir
 	uint8_t readdir(const FsContext &context, inode_t inode, uint64_t first_entry,
 	                uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) override;
 
@@ -150,13 +165,15 @@ public:
 	                  Attributes &attr) override;
 	uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                GoalStatistics &dgtab) override;
-	uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
-	                 const uint8_t *attrname, uint32_t *avleng, uint8_t **attrvalue) override;
+	uint8_t getXAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                 inode_t inode, uint8_t opened, uint8_t anleng, const uint8_t *attrname,
+	                 uint32_t *avleng, uint8_t **attrvalue) override;
 	uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                     ExtraAttributesArray &fileEAttrTab,
 	                     ExtraAttributesArray &dirEAttrTab) override;
-	uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened, void **xanode,
-	                      uint32_t *xasize) override;
+	uint8_t listXAttrLeng(const FsContext &context,
+	                      const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                      uint8_t opened, void **xanode, uint32_t *xasize) override;
 	uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
 	                 const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
 	                 uint8_t mode) override;
@@ -216,7 +233,8 @@ public:
 	uint8_t getDirStats(const FsContext &context, inode_t inode, inode_t *inodes, inode_t *dirs,
 	                    inode_t *files, inode_t *links, uint32_t *chunks, uint64_t *length,
 	                    uint64_t *size, uint64_t *rsize) override;
-	uint8_t getChunkId(const FsContext &context, inode_t inode, uint32_t index,
+	uint8_t getChunkId(const FsContext &context,
+	                   const FilesystemOperationContext &fsOpContext, inode_t inode, uint32_t index,
 	                   uint64_t *chunkid) override;
 
 	// SPECIAL - LOG EMERGENCY INCREASE VERSION FROM CHUNKS-MODULE

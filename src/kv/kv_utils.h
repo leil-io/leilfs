@@ -35,6 +35,11 @@ using Value = Bytes;
 /// Converts string, string_view and const char* to a vector of uint8_t.
 inline Bytes toBytes(std::string_view str) { return {str.begin(), str.end()}; }
 
+/// Appends a string or string_view to a vector of uint8_t.
+inline void appendStr(Bytes &destination, std::string_view str) {
+	destination.insert(destination.end(), str.begin(), str.end());
+}
+
 /// Converts integral types to a vector of uint8_t encoded in little-endian order.
 template <typename T>
     requires(std::is_integral_v<T>)
