@@ -32,8 +32,6 @@
 #include "chunkserver/buffers_pool.h"
 #include "common/aligned_allocator.h"
 
-constexpr uint8_t kNotSaunafsStatus = 255;
-
 inline std::atomic<uint32_t> gCurrentTotalOutputBufferBlocks = 0;
 inline std::atomic<uint32_t> gCurrentTotalInputBufferBlocks = 0;
 inline std::atomic<uint32_t> gCurrentTotalReplicatorBufferBlocks = 0;
@@ -284,16 +282,13 @@ public:
 	/// @brief Clears the buffer.
 	void clear();
 
-	/// @brief Returns the `status` in a thread-safe manner.
-	uint8_t getStatus() {
-		std::lock_guard<std::mutex> lock(mutex_);
-		return status;
-	}
+	/// @brief Returns the `isCallbackStarted` flag.
+	/// Whether the buffer's related callback has started processing or has been processed.
+	bool isCallbackStarted() const { return isCallbackStarted_; }
 
-	/// @brief Sets the `status` in a thread-safe manner.
-	void setStatus(uint8_t newStatus) {
-		std::lock_guard<std::mutex> lock(mutex_);
-		status = newStatus;
+	/// @brief Sets the `isProcessed` flag.
+	void setIsCallbackStarted(bool newIsCallbackStarted) {
+		isCallbackStarted_ = newIsCallbackStarted;
 	}
 
 private:
@@ -306,11 +301,8 @@ private:
 	/// The number of blocks.
 	const size_t numBlocks_;
 
-	/// Protects the `status` member variable used for custom thread synchronization.
-	std::mutex mutex_;
-
-	/// Status of the buffer's related read operation.
-	uint8_t status{kNotSaunafsStatus};
+	/// Whether the buffer's related callback has started processing or has been processed.
+	bool isCallbackStarted_{false};
 
 	/// The buffer for the block data.
 	Buffer<std::vector<uint8_t, AlignedAllocator<uint8_t, disk::kIoBlockSize>>> blockBuffer_;
@@ -370,8 +362,7 @@ struct WriteOperation {
  * supposed to have the same length, which must be provided during the buffer creation.
  *
  * The InputBuffer is prepared to be updated with new data read from the file descriptor while
- * being processed by the JobPool workers. The protection is done by the `state_` member variable
- * and the `mutex_` mutex.
+ * being processed by the JobPool workers.
  */
 class InputBuffer {
 public:

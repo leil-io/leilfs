@@ -151,9 +151,8 @@ public:
 	///
 	/// @param jobIds The list of jobs by IDs.
 	/// @param callback The new callback function.
-	/// @param extra Additional data to be passed to the new callback.
 	/// @param listenerId The ID of the listener associated with the jobs.
-	void changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback, void *extra,
+	void changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback,
 	                    uint32_t listenerId = 0);
 
 private:
