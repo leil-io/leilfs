@@ -232,7 +232,7 @@ void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
 	}
 }
 
-void JobPool::changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback, void *extra,
+void JobPool::changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback,
                              uint32_t listenerId) {
 	// Check if the listenerId is valid
 	if (listenerId >= listenerInfos_.size()) {
@@ -243,10 +243,7 @@ void JobPool::changeCallback(std::list<uint32_t> &jobIds, const JobCallback &cal
 	auto &listenerInfo = listenerInfos_[listenerId];
 	for (auto jobId : jobIds) {
 		auto jobIterator = listenerInfo.jobHash.find(jobId);
-		if (jobIterator != listenerInfo.jobHash.end()) {
-			jobIterator->second->callback = callback;
-			jobIterator->second->extra = extra;
-		}
+		if (jobIterator != listenerInfo.jobHash.end()) { jobIterator->second->callback = callback; }
 	}
 }
 
@@ -368,14 +365,12 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chun
 		if (performHddOpen) {
 			status = hddOpen(chunkId, chunkType);
 			if (status != SAUNAFS_STATUS_OK) {
-				outputBuffer->setStatus(status);
 				return status;
 			}
 		}
 
 		status = hddRead(chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
 		                 blocksToBeReadAhead, outputBuffer);
-		outputBuffer->setStatus(status);
 
 		if (performHddOpen && status != SAUNAFS_STATUS_OK) {
 			int ret = hddClose(chunkId, chunkType);
@@ -386,7 +381,7 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chun
 		}
 		return status;
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), kEmptyExtra,
+	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), outputBuffer,
 	                      processJob, listenerId);
 }
 

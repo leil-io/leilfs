@@ -152,13 +152,13 @@ public:
 
 protected:
 	/// Callback after delayed close operations.
-	void delayedCloseCallback(uint8_t status, void * /*entry*/);
+	void delayedCloseCallback(uint8_t status, void *buffer);
 
 	/// Callback for when a discarded read operation finishes.
-	void readDiscardCallback(uint8_t status, void * /*entry*/);
+	void readDiscardCallback(uint8_t status, void *buffer);
 
 	/// Callback for when a read operation finishes.
-	void readFinishedCallback(uint8_t status, void * /*entry*/);
+	void readFinishedCallback(uint8_t status, void *buffer);
 
 	/// Prepares the discard of the current ongoing read operations.
 	///

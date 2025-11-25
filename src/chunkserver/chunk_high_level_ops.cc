@@ -68,13 +68,16 @@ void GetBlocksHighLevelOp::delayedClose() {
 	pendingDelayedJobs_++;
 }
 
-void ReadHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
+void ReadHighLevelOp::delayedCloseCallback(uint8_t status, void *buffer) {
 	assert(getParentState() == ChunkserverEntry::State::CloseWait);
+	auto outputBuffer = static_cast<OutputBuffer *>(buffer);
+	passert(outputBuffer);
+	outputBuffer->setIsCallbackStarted(true);
 
 	if (status == SAUNAFS_STATUS_OK) { isChunkOpen_ = true; }
 
 	while (!toDiscardReadDataBuffers_.empty() &&
-	       toDiscardReadDataBuffers_.front()->getStatus() != kNotSaunafsStatus) {
+	       toDiscardReadDataBuffers_.front()->isCallbackStarted()) {
 		getReadOutputBufferPool().put(std::move(toDiscardReadDataBuffers_.front()));
 		toDiscardReadDataBuffers_.pop_front();
 		toDiscardReadJobIds_.pop_front();
@@ -85,8 +88,11 @@ void ReadHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
 	checkAndApplyClosedOnParent();
 }
 
-void ReadHighLevelOp::readDiscardCallback(uint8_t status, void * /*entry*/) {
+void ReadHighLevelOp::readDiscardCallback(uint8_t status, void *buffer) {
 	(void)status;
+	auto outputBuffer = static_cast<OutputBuffer *>(buffer);
+	passert(outputBuffer);
+	outputBuffer->setIsCallbackStarted(true);
 
 	// jobId <--> related packet, maintaining the order
 	assert(toDiscardReadJobIds_.size() == toDiscardReadDataBuffers_.size());
@@ -94,7 +100,7 @@ void ReadHighLevelOp::readDiscardCallback(uint8_t status, void * /*entry*/) {
 	auto jobsIt = toDiscardReadJobIds_.begin();
 	for (auto buffersIt = toDiscardReadDataBuffers_.begin();
 	     buffersIt != toDiscardReadDataBuffers_.end();) {
-		if ((*buffersIt)->getStatus() != kNotSaunafsStatus) {
+		if ((*buffersIt)->isCallbackStarted()) {
 			getReadOutputBufferPool().put(std::move(*buffersIt));
 			buffersIt = toDiscardReadDataBuffers_.erase(buffersIt);
 			jobsIt = toDiscardReadJobIds_.erase(jobsIt);
@@ -113,15 +119,14 @@ void ReadHighLevelOp::prepareDiscardReadJobs() {
 
 	// The jobs which are not going to be processed: all but the ones in progress
 	auto disabledJobIds = workerJobPool()->disableJobs(pendingReadJobIds_);
-	workerJobPool()->changeCallback(
-	    pendingReadJobIds_,
-	    [this](uint8_t status, void *entry) { this->readDiscardCallback(status, entry); },
-	    kEmptyExtra);
-	workerJobPool()->changeCallback(disabledJobIds, kEmptyCallback, kEmptyExtra);
+	workerJobPool()->changeCallback(pendingReadJobIds_, [this](uint8_t status, void *entry) {
+		this->readDiscardCallback(status, entry);
+	});
+	workerJobPool()->changeCallback(disabledJobIds, kEmptyCallback);
 	while (!pendingReadJobIds_.empty()) {
 		// pendingReadJobIds and pendingReadDataBuffers should have the related elements in the
 		// correct order
-		if (pendingReadDataBuffers_.front()->getStatus() == kNotSaunafsStatus &&
+		if (!pendingReadDataBuffers_.front()->isCallbackStarted() &&
 		    (disabledJobIds.empty() || disabledJobIds.front() != pendingReadJobIds_.front())) {
 			toDiscardReadJobIds_.push_back(pendingReadJobIds_.front());
 			toDiscardReadDataBuffers_.emplace_back(std::move(pendingReadDataBuffers_.front()));
@@ -142,7 +147,11 @@ void ReadHighLevelOp::prepareDiscardReadJobs() {
 	assert(pendingReadDataBuffers_.empty());
 }
 
-void ReadHighLevelOp::readFinishedCallback(uint8_t status, void * /*entry*/) {
+void ReadHighLevelOp::readFinishedCallback(uint8_t status, void *buffer) {
+	auto outputBuffer = static_cast<OutputBuffer *>(buffer);
+	passert(outputBuffer);
+	outputBuffer->setIsCallbackStarted(true);
+
 	if (status == SAUNAFS_STATUS_OK) {
 		isChunkOpen_ = true;
 		readContinue(maxParallelHddReadJobs_);
@@ -199,10 +208,9 @@ std::shared_ptr<OutputBuffer> ReadHighLevelOp::prepareReadDataPacket(
 
 void ReadHighLevelOp::readContinue(uint16_t callMaxParallelHddReadJobs) {
 	while (!pendingReadDataBuffers_.empty() &&
-	       pendingReadDataBuffers_.front()->getStatus() == SAUNAFS_STATUS_OK) {
+	       pendingReadDataBuffers_.front()->isCallbackStarted()) {
 		attachBuffer(std::move(pendingReadDataBuffers_.front()));
 		pendingReadDataBuffers_.pop_front();
-		workerJobPool()->changeCallback(pendingReadJobIds_.front(), kEmptyCallback, kEmptyExtra);
 		pendingReadJobIds_.pop_front();
 	}
 
@@ -295,10 +303,9 @@ bool ReadHighLevelOp::prepareForDelayedClose() {
 
 void ReadHighLevelOp::delayedClose() {
 	// Already disabled jobs
-	workerJobPool()->changeCallback(
-	    toDiscardReadJobIds_,
-	    [this](uint8_t status, void *entry) { this->delayedCloseCallback(status, entry); },
-	    kEmptyExtra);
+	workerJobPool()->changeCallback(toDiscardReadJobIds_, [this](uint8_t status, void *entry) {
+		this->delayedCloseCallback(status, entry);
+	});
 
 	pendingDelayedJobs_ += toDiscardReadJobIds_.size();
 }
