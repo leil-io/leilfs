@@ -33,11 +33,9 @@
 #include "common/datapack.h"
 #include "common/goal.h"
 #include "common/serializable_interface.h"
+#include "common/skip_list.h"
 #include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
-
-#include <ext/pb_ds/assoc_container.hpp>
-#include <ext/pb_ds/tree_policy.hpp>
 
 #include "master/hstring_storage.h"
 
@@ -373,8 +371,6 @@ public:
 
 /*! \brief Node used for storing directory.
  *
- * Node size = 64 + 56 + 16 * entries_count
- * Avg size (10 files) ~ 280B (28B per file)
  */
 class FSNodeDirectory : public FSNode {
 public:
@@ -386,11 +382,14 @@ public:
 		}
 	};
 
-	using EntriesContainer =
-	    __gnu_pbds::tree<std::pair<hstorage::Handle *, FSNode *>,
-	                     __gnu_pbds::null_type, HandleCompare,
-	                     __gnu_pbds::rb_tree_tag,
-	                     __gnu_pbds::tree_order_statistics_node_update>;
+	/// These parameters achieve good results in reducing memory consumption
+	/// Numerator of non-promotion probability P
+	static constexpr uint32_t kDefaultSkipListProbNum = 3;
+	/// Denominator of non-promotion probability P
+	static constexpr uint32_t kDefaultSkipListProbDen = 4; 
+
+	using EntriesContainer = SkipList<std::pair<hstorage::Handle *, FSNode *>, HandleCompare,
+	                                  kDefaultSkipListProbNum, kDefaultSkipListProbDen>;
 
 	using iterator = EntriesContainer::iterator;
 	using const_iterator = EntriesContainer::const_iterator;
