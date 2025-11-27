@@ -82,7 +82,11 @@
 #define MINLOOPTIME 1
 #define MAXLOOPTIME 7200
 #define MAXCPS 10000000
-#define MINCPS 500
+#if !defined(NDEBUG)
+    #define MINCPS 1
+#else
+    #define MINCPS 500
+#endif
 #define MINCHUNKSLOOPPERIOD 40
 #define MAXCHUNKSLOOPPERIOD 10000
 #define MINCHUNKSLOOPCPU    10
