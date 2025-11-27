@@ -45,7 +45,7 @@ jobs:
                   docker-images: false       # 0B
                   swap-storage: false        # Keep swap enabled for safety
 
-            - name: Build and install Ganesha v7.1
+            - name: Build and install Ganesha v9.2
               run: |
                 set -eux
                 # Install build dependencies
@@ -89,11 +89,11 @@ jobs:
                     unzip \
                     rpcbind
 
-                # Clone and build Ganesha v7.1
+                # Clone and build Ganesha v9.2
                 cd $GITHUB_WORKSPACE
                 git clone https://github.com/nfs-ganesha/nfs-ganesha.git
                 cd nfs-ganesha
-                git checkout V7.1
+                git checkout V9.2
                 git submodule update --recursive --init
                 mkdir build
                 cmake -B build src \

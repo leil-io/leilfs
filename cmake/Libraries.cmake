@@ -157,10 +157,12 @@ message(STATUS "ISAL PIC LIBRARY: ${ISAL_PIC_LIBRARY}")
 
 # Download nfs-ganesha
 if(ENABLE_NFS_GANESHA)
-  download_external(NFS_GANESHA "nfs-ganesha-7.1"
-                    "https://github.com/nfs-ganesha/nfs-ganesha/archive/V7.1.zip")
-  download_external(NTIRPC "ntirpc-7.1"
-                    "https://github.com/nfs-ganesha/ntirpc/archive/v7.1.zip")
+  set(NFS_GANESHA_VERSION "9.2")
+  download_external(NFS_GANESHA "nfs-ganesha-${NFS_GANESHA_VERSION}"
+                    "https://github.com/nfs-ganesha/nfs-ganesha/archive/V${NFS_GANESHA_VERSION}.zip")
+  set(NTIRPC_VERSION "7.2")
+  download_external(NTIRPC "ntirpc-${NTIRPC_VERSION}"
+                    "https://github.com/nfs-ganesha/ntirpc/archive/v${NTIRPC_VERSION}.zip")
 endif()
 
 # Find Prometheus
