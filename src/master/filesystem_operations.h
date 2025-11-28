@@ -95,6 +95,8 @@ public:
 	                   /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                   uint64_t *length, uint32_t min_server_version = 0) override;
 	uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) override;
+	uint8_t getCanonicalPath(const FsContext &context, const std::string &inputPath,
+	                         std::string &canonicalPath) override;
 
 #ifndef METARESTORE
 	/// Returns a map with all defined goals.

@@ -698,6 +698,55 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context, inode_t
 }
 #endif
 
+uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
+                                                   const std::string &inputPath,
+                                                   std::string &canonicalPath) {
+	bool caseInsensitiveFS = context.sesflags() & SESFLAG_CASEINSENSITIVE;
+	FSNode *currentNode = nodeOperations_->idToNode(context.rootinode());
+	std::string resultPath;
+
+	if (!currentNode || currentNode->type != FSNodeType::kDirectory) {
+		return SAUNAFS_ERROR_ENOTDIR;
+	}
+
+	auto it = inputPath.begin();
+	while (it != inputPath.end()) {
+		auto delim = std::find(it, inputPath.end(), '/');
+		if (it != delim) {
+			HString name(it, delim);
+			if (currentNode->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_ENOTDIR; }
+
+			auto *dir = static_cast<FSNodeDirectory *>(currentNode);
+			if (dir->caseInsensitive != caseInsensitiveFS) {
+				dir->caseInsensitive = caseInsensitiveFS;
+				dir->updateLowerCaseEntries();
+			}
+
+			// Case-insensitive: resolve canonical casing using getBaseStoredChildName
+			std::string baseName;
+			if (caseInsensitiveFS) {
+				baseName = dir->getBaseStoredChildName(name);
+				if (baseName.empty()) { return SAUNAFS_ERROR_ENOENT; }
+			} else {
+				baseName = name;
+			}
+
+			FSNode *child = nodeOperations_->lookup(dir, HString(baseName));
+			if (!child) { return SAUNAFS_ERROR_ENOENT; }
+
+			if (!resultPath.empty()) { resultPath += "/"; }
+			resultPath += baseName;
+			currentNode = child;
+		}
+
+		if (delim == inputPath.end()) { break; }
+		it = std::next(delim);
+	}
+
+	canonicalPath = resultPath;
+	return SAUNAFS_STATUS_OK;
+}
+
 uint8_t FilesystemOperationsBase::applyTrunc(uint32_t timestamp, inode_t inode, uint32_t indx,
                                              uint64_t chunkid, uint32_t lockid) {
 	uint64_t ochunkid, nchunkid;
@@ -1032,6 +1081,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
                                           const HString &name, const std::string &path,
                                           inode_t *inode, Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
+	std::string basePath;
 	FSNode *wd;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -1043,11 +1093,24 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-	if (path.length() == 0) {
+
+	// If filesystem is case-insensitive, get the canonical path for the symlink target
+	if (static_cast<FSNodeDirectory *>(wd)->caseInsensitive) {
+		status = getCanonicalPath(context, path, basePath);
+		if (status != SAUNAFS_STATUS_OK) {
+			// Unix-style symlinks allow dangling links, so if the path cannot be resolved,
+			// we just use the original path as-is
+			basePath = path;
+		}
+	} else {
+		basePath = path;
+	}
+
+	if (basePath.length() == 0) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	for (uint32_t i = 0; i < path.length(); i++) {
-		if (path[i] == 0) {
+	for (uint32_t i = 0; i < basePath.length(); i++) {
+		if (basePath[i] == 0) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
 	}
@@ -1063,12 +1126,12 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 	FSNodeSymlink *p = static_cast<FSNodeSymlink *>(nodeOperations_->createNode(
 	    context.ts(), static_cast<FSNodeDirectory *>(wd), name, FSNodeType::kSymlink, 0777, 0,
 	    context.uid(), context.gid(), 0, AclInheritance::kDontInheritAcl, *inode));
-	p->path = HString(path);
-	p->path_length = path.length();
+	p->path = HString(basePath);
+	p->path_length = basePath.length();
 	fsnodes_update_checksum(p);
 	StatsRecord sr;
 	memset(&sr, 0, sizeof(StatsRecord));
-	sr.length = path.length();
+	sr.length = basePath.length();
 	nodeOperations_->addStats(static_cast<FSNodeDirectory *>(wd), &sr);
 	if (attr != NULL) { nodeOperations_->fillAttr(context, p, wd, *attr); }
 	if (context.isPersonalityMaster()) {
@@ -1076,7 +1139,8 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 		*inode = p->id;
 		changeLog(context.ts(), "SYMLINK(%" PRIiNode ",%s,%s,%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 		          wd->id, nodeOperations_->escapeName(name).c_str(),
-		          nodeOperations_->escapeName(path).c_str(), context.uid(), context.gid(), p->id);
+		          nodeOperations_->escapeName(basePath).c_str(), context.uid(), context.gid(),
+		          p->id);
 	} else {
 		if (*inode != p->id) {
 			return SAUNAFS_ERROR_MISMATCH;
@@ -1127,7 +1191,7 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context, inode_t parent
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
-	static_cast<FSNodeDirectory *>(wd)->case_insensitive =
+	static_cast<FSNodeDirectory *>(wd)->caseInsensitive =
 	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
 	p = nodeOperations_->createNode(ts, static_cast<FSNodeDirectory *>(wd), name, type, mode, umask,
 	                                context.uid(), context.gid(), 0, AclInheritance::kInheritAcl);
@@ -1183,7 +1247,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context, inode_t parent
 		}
 	}
 
-	static_cast<FSNodeDirectory *>(wd)->case_insensitive =
+	static_cast<FSNodeDirectory *>(wd)->caseInsensitive =
 	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
 	p = nodeOperations_->createNode(ts, static_cast<FSNodeDirectory *>(wd), name,
 	                                FSNodeType::kDirectory, mode, umask, context.uid(),
@@ -1242,6 +1306,7 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context, inode_t paren
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *wd;
+	HString baseName = name;
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -1255,8 +1320,13 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context, inode_t paren
 		return status;
 	}
 
-	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
-	FSNode *child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(wd), name);
+	if (static_cast<FSNodeDirectory *>(wd)->caseInsensitive) {
+		std::string resolvedName = static_cast<FSNodeDirectory *>(wd)->getBaseStoredChildName(name);
+		if (!resolvedName.empty()) { baseName = HString(resolvedName); }
+	}
+
+	if (nodeOperations_->nameCheck(baseName) < 0) { return SAUNAFS_ERROR_EINVAL; }
+	FSNode *child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(wd), baseName);
 	if (!child) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
@@ -1265,8 +1335,8 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context, inode_t paren
 		return SAUNAFS_ERROR_EPERM;
 	}
 	changeLog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, wd->id,
-	          nodeOperations_->escapeName(name).c_str(), child->id);
-	nodeOperations_->unlink(ts, static_cast<FSNodeDirectory *>(wd), name, child);
+	          nodeOperations_->escapeName(baseName).c_str(), child->id);
+	nodeOperations_->unlink(ts, static_cast<FSNodeDirectory *>(wd), baseName, child);
 	incrementFSStat(FsStats::Unlink);
 	metrics::Counter::increment(metrics::Counter::Master::FS_UNLINK);
 	return SAUNAFS_STATUS_OK;
@@ -1376,72 +1446,78 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context, inode_t paren
                                          const HString &name_dst, inode_t *inode,
                                          Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
+	HString baseNameSrc = name_src;
+	HString baseNameDst = name_dst;
 	FSNode *swd;
 	FSNode *dwd;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 	status = nodeOperations_->getNodeForOperation(context, ExpectedNodeType::kDirectory,
 	                                              MODE_MASK_W, parent_dst, &dwd);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 	status = nodeOperations_->getNodeForOperation(context, ExpectedNodeType::kDirectory,
 	                                              MODE_MASK_W, parent_src, &swd);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	if (static_cast<FSNodeDirectory *>(swd)->caseInsensitive) {
+		std::string resolvedName =
+		    static_cast<FSNodeDirectory *>(swd)->getBaseStoredChildName(name_src);
+		if (!resolvedName.empty()) { baseNameSrc = HString(resolvedName); }
 	}
-	if (nodeOperations_->nameCheck(name_src) < 0) { return SAUNAFS_ERROR_EINVAL; }
-	FSNode *se_child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(swd), name_src);
-	if (!se_child) {
-		return SAUNAFS_ERROR_ENOENT;
+	if (static_cast<FSNodeDirectory *>(dwd)->caseInsensitive) {
+		std::string resolvedName =
+		    static_cast<FSNodeDirectory *>(dwd)->getBaseStoredChildName(name_dst);
+		if (!resolvedName.empty()) { baseNameDst = HString(resolvedName); }
 	}
+
+	if (nodeOperations_->nameCheck(baseNameSrc) < 0) { return SAUNAFS_ERROR_EINVAL; }
+	FSNode *sourceChildNode =
+	    nodeOperations_->lookup(static_cast<FSNodeDirectory *>(swd), baseNameSrc);
+	if (!sourceChildNode) { return SAUNAFS_ERROR_ENOENT; }
 	if (context.canCheckPermissions() &&
-	    !nodeOperations_->stickyAccess(swd, se_child, context.uid())) {
+	    !nodeOperations_->stickyAccess(swd, sourceChildNode, context.uid())) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	if ((context.personality() != metadataserver::Personality::kMaster) &&
-	    (se_child->id != *inode)) {
+	    (sourceChildNode->id != *inode)) {
 		return SAUNAFS_ERROR_MISMATCH;
 	} else {
-		*inode = se_child->id;
+		*inode = sourceChildNode->id;
 	}
 	std::array<int64_t, 2> quota_delta = {{1, 1}};
-	if (se_child->type == FSNodeType::kDirectory) {
-		if (nodeOperations_->isAncestor(static_cast<FSNodeDirectory *>(se_child), dwd)) {
+	if (sourceChildNode->type == FSNodeType::kDirectory) {
+		if (nodeOperations_->isAncestor(static_cast<FSNodeDirectory *>(sourceChildNode), dwd)) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
-		const StatsRecord &stats = static_cast<FSNodeDirectory*>(se_child)->stats;
+		const StatsRecord &stats = static_cast<FSNodeDirectory *>(sourceChildNode)->stats;
 		quota_delta = {{(int64_t)stats.inodes, (int64_t)stats.size}};
-	} else if (se_child->type == FSNodeType::kFile) {
-		quota_delta[(int)QuotaResource::kSize] = nodeOperations_->getSize(se_child);
+	} else if (sourceChildNode->type == FSNodeType::kFile) {
+		quota_delta[(int)QuotaResource::kSize] = nodeOperations_->getSize(sourceChildNode);
 	}
-	if (nodeOperations_->nameCheck(name_dst) < 0) { return SAUNAFS_ERROR_EINVAL; }
-	FSNode *de_child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(dwd), name_dst);
+	if (nodeOperations_->nameCheck(baseNameDst) < 0) { return SAUNAFS_ERROR_EINVAL; }
+	FSNode *destinationChildNode =
+	    nodeOperations_->lookup(static_cast<FSNodeDirectory *>(dwd), baseNameDst);
 
-	if (de_child == se_child) {
-		return SAUNAFS_STATUS_OK;
-	}
+	if (destinationChildNode == sourceChildNode) { return SAUNAFS_STATUS_OK; }
 
-	if (de_child) {
-		if (de_child->type == FSNodeType::kDirectory &&
-		    !static_cast<FSNodeDirectory *>(de_child)->entries.empty()) {
+	if (destinationChildNode) {
+		if (destinationChildNode->type == FSNodeType::kDirectory &&
+		    !static_cast<FSNodeDirectory *>(destinationChildNode)->entries.empty()) {
 			return SAUNAFS_ERROR_ENOTEMPTY;
 		}
 		if (context.canCheckPermissions() &&
-		    !nodeOperations_->stickyAccess(dwd, de_child, context.uid())) {
+		    !nodeOperations_->stickyAccess(dwd, destinationChildNode, context.uid())) {
 			return SAUNAFS_ERROR_EPERM;
 		}
-		if (de_child->type == FSNodeType::kDirectory) {
-			const StatsRecord &stats = static_cast<FSNodeDirectory*>(de_child)->stats;
+		if (destinationChildNode->type == FSNodeType::kDirectory) {
+			const StatsRecord &stats = static_cast<FSNodeDirectory *>(destinationChildNode)->stats;
 			quota_delta[(int)QuotaResource::kInodes] -= stats.inodes;
 			quota_delta[(int)QuotaResource::kSize] -= stats.size;
-		} else if (de_child->type == FSNodeType::kFile) {
+		} else if (destinationChildNode->type == FSNodeType::kFile) {
 			quota_delta[(int)QuotaResource::kInodes] -= 1;
 			quota_delta[(int)QuotaResource::kSize] -=
-			    nodeOperations_->getSize(static_cast<FSNodeFile *>(de_child));
+			    nodeOperations_->getSize(static_cast<FSNodeFile *>(destinationChildNode));
 		} else {
 			quota_delta[(int)QuotaResource::kInodes] -= 1;
 			quota_delta[(int)QuotaResource::kSize] -= 1;
@@ -1455,18 +1531,19 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context, inode_t paren
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
-	if (de_child) {
-		nodeOperations_->unlink(context.ts(), static_cast<FSNodeDirectory *>(dwd), name_dst,
-		                        de_child);
+	if (destinationChildNode) {
+		nodeOperations_->unlink(context.ts(), static_cast<FSNodeDirectory *>(dwd), baseNameDst,
+		                        destinationChildNode);
 	}
-	nodeOperations_->removeEdge(context.ts(), static_cast<FSNodeDirectory *>(swd), name_src,
-	                            se_child);
-	nodeOperations_->link(context.ts(), static_cast<FSNodeDirectory *>(dwd), se_child, name_dst);
-	if (attr) { nodeOperations_->fillAttr(context, se_child, dwd, *attr); }
+	nodeOperations_->removeEdge(context.ts(), static_cast<FSNodeDirectory *>(swd), baseNameSrc,
+	                            sourceChildNode);
+	nodeOperations_->link(context.ts(), static_cast<FSNodeDirectory *>(dwd), sourceChildNode,
+	                      baseNameDst);
+	if (attr) { nodeOperations_->fillAttr(context, sourceChildNode, dwd, *attr); }
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "MOVE(%" PRIiNode ",%s,%" PRIiNode ",%s):%" PRIiNode, swd->id,
-		          nodeOperations_->escapeName(name_src).c_str(), dwd->id,
-		          nodeOperations_->escapeName(name_dst).c_str(), se_child->id);
+		          nodeOperations_->escapeName(baseNameSrc).c_str(), dwd->id,
+		          nodeOperations_->escapeName(baseNameDst).c_str(), sourceChildNode->id);
 	} else {
 		gMetadata->metadataVersion++;
 	}

@@ -111,6 +111,13 @@ public:
 	                           /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                           uint64_t *length, uint32_t min_server_version = 0) = 0;
 	virtual uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) = 0;
+	/// Given a string representing a path, resolves and returns the canonical
+	/// name as actually stored in the filesystem, matching the true case and
+	/// spelling of each component. This is useful for implementing features
+	/// such as case-insensitive filesystem operations, where the input path
+	/// may differ in case or form from the stored names.
+	virtual uint8_t getCanonicalPath(const FsContext &context, const std::string &inputPath,
+	                                 std::string &canonicalPath) = 0;
 
 #ifndef METARESTORE
 	/// Returns a map with all defined goals.

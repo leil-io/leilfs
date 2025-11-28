@@ -47,6 +47,16 @@ only user primary group information)
 names as case-insensitive. When enabled, the client will not differentiate 
 between uppercase and lowercase characters in file and folder names.
 
+[NOTE]
+====
+System administrators are strongly advised **not** to allow simultaneous access
+to the same directory or subdirectory by multiple clients where some have the
+*caseinsensitive* option enabled and others do not, especially if these clients
+connect from different session IPs. This configuration can lead to filesystem
+inconsistencies and unpredictable behavior. For any given path or subfolder,
+ensure that all accessing clients either use this option or none do.
+====
+
 *dynamicip*:: allows reconnecting of already authenticated client from any IP
 address (the default is to check IP address on reconnect)
 
