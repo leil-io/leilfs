@@ -99,10 +99,16 @@ constexpr uint32_t kFuseRegisterBlobAclLength = REGISTER_BLOB_SIZE;
 constexpr uint32_t kMasterResponseRegisterPacketLength = 32U;
 constexpr uint32_t kFuseRegisterBlobAclPacketSizeValueLength =
     sizeof(kFuseRegisterBlobAclTotalPacketLength);
+constexpr uint32_t kFuseRegisterSessionTypeLength = 1U;
+
 constexpr uint32_t kSecondsPerMinute = 60;
 constexpr uint32_t kSecondsPerHour = 60 * kSecondsPerMinute;
 constexpr uint32_t kSecondsPerDay = 24 * kSecondsPerHour;
 constexpr uint32_t kSecondsPerWeek = 7 * kSecondsPerDay;
+
+constexpr size_t kSaunafsVersionMajorLength = 2U;
+constexpr size_t kSaunafsVersionMinorLength = 1U;
+constexpr size_t kSaunafsVersionMicroLength = 1U;
 
 const uint8_t cltomaFuseRegisterHeaderLength = sizeof(CLTOMA_FUSE_REGISTER);
 const uint32_t registerTotalHeaderInfoLength =
@@ -132,6 +138,21 @@ static pthread_t rpthid,npthid;
 static std::mutex fdMutex, recMutex;
 
 static uint32_t sessionid;
+
+constexpr uint32_t fuseRegisterReconnectDataLength =
+    sizeof(sessionid) + kSaunafsVersionMajorLength + kSaunafsVersionMinorLength +
+    kSaunafsVersionMicroLength;
+constexpr uint32_t fuseRegisterWithReconnectPacketInfoLength =
+    kFuseRegisterSessionTypeLength + fuseRegisterReconnectDataLength;
+constexpr uint32_t registerReconnectTotalPacketLength = registerTotalHeaderInfoLength +
+                                                        kFuseRegisterBlobAclLength +
+                                                        fuseRegisterWithReconnectPacketInfoLength;
+
+constexpr uint32_t fuseRegisterWithClosePacketInfoLength =
+    kFuseRegisterSessionTypeLength + sizeof(sessionid);
+constexpr uint32_t registerCloseSessionTotalPacketLength = registerTotalHeaderInfoLength +
+                                                           kFuseRegisterBlobAclLength +
+                                                           fuseRegisterWithClosePacketInfoLength;
 
 static char masterstrip[17];
 static uint32_t masterip=0;
@@ -389,11 +410,13 @@ static bool fs_threc_flush(threc *rec) {
 	}
 	std::unique_lock<std::mutex> lock(rec->mutex);
 	const int32_t size = rec->outputBuffer.size();
-	if (tcptowrite(fd, rec->outputBuffer.data(), size, 1000) != size) {
+
+	if (tcptowrite(fd, rec->outputBuffer.data(), size, kDefaultTcpCommTimeoutMSeconds) != size) {
 		safs_pretty_syslog(LOG_WARNING, "tcp send error: %s", strerr(tcpgetlasterror()));
 		disconnect = true;
 		return false;
 	}
+
 	rec->received = false;
 	rec->sent = true;
 	lock.unlock();
@@ -720,7 +743,7 @@ void fs_session_flags_users_groups_checks(uint8_t sesflags, uint32_t rootuid, ui
 	fprintf(stdout, "%s", infoToPrint.str().c_str());
 }
 
-int fs_open_master_connection(bool verbose) {
+int fs_open_master_connection(bool verbose = false) {
 	int socket = tcpsocket();
 
 	if (socket < 0) { return -1; }
@@ -1059,10 +1082,6 @@ int fs_connect(bool verbose) {
 
 	// Base constants for registration message from client to master and
 	// response from master to client size calculations
-	constexpr size_t kSaunafsVersionMajorLength = 2U;
-	constexpr size_t kSaunafsVersionMinorLength = 1U;
-	constexpr size_t kSaunafsVersionMicroLength = 1U;
-	constexpr uint32_t kFuseRegisterSessionTypeLength = 1U;
 	const uint32_t fuseRegisterSubfolderLength =
 	    (gInitParams.meta) ? 0 : sizeof(subfolderPathLength);
 
@@ -1112,113 +1131,110 @@ int fs_connect(bool verbose) {
 }
 
 void fs_reconnect() {
-	uint32_t i;
-	uint8_t *wptr,regbuff[8+64+9];
-	const uint8_t *rptr;
+	std::vector<std::uint8_t> registrationMessageBuffer(registerReconnectTotalPacketLength);
+	uint32_t currentMessageValue;
+	uint8_t *messageToMaster;
+	const uint8_t *messageFromMaster;
 
-	if (sessionid==0) {
-		safs_pretty_syslog(LOG_WARNING,"can't register: session not created");
+	if (sessionid == 0) {
+		safs::log_warn("can't register: session not created");
 		return;
 	}
 
-	fd = tcpsocket();
-	if (fd<0) {
-		return;
-	}
-	if (tcpnodelay(fd)<0) {
-		safs_pretty_syslog(LOG_WARNING,"can't set TCP_NODELAY: %s",strerr(tcpgetlasterror()));
-	}
-	if (srcip>0) {
-		if (tcpnumbind(fd,srcip,0)<0) {
-			safs_pretty_syslog(LOG_WARNING,"can't bind socket to given ip (\"%s\")",srcstrip);
-			tcpclose(fd);
-			fd=-1;
-			return;
-		}
-	}
-	if (tcpnumconnect(fd,masterip,masterport)<0) {
-		safs_pretty_syslog(LOG_WARNING,"can't connect to master (\"%s\":\"%" PRIu16 "\")",masterstrip,masterport);
-		tcpclose(fd);
-		fd=-1;
-		return;
-	}
+	fd = fs_open_master_connection();
+	if (fd < 0) { return; }
+
 	stats_inc(MASTER_CONNECTS, statsptr);
-	wptr = regbuff;
-	put32bit(&wptr,CLTOMA_FUSE_REGISTER);
-	put32bit(&wptr,73);
-	memcpy(wptr,FUSE_REGISTER_BLOB_ACL,64);
-	wptr+=64;
-	put8bit(&wptr,REGISTER_RECONNECT);
-	put32bit(&wptr,sessionid);
-	put16bit(&wptr,SAUNAFS_PACKAGE_VERSION_MAJOR);
-	put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MINOR);
-	put8bit(&wptr,SAUNAFS_PACKAGE_VERSION_MICRO);
-	if (tcptowrite(fd,regbuff,8+64+9,1000)!=8+64+9) {
-		safs_pretty_syslog(LOG_WARNING,"master: register error (write: %s)",strerr(tcpgetlasterror()));
+	messageToMaster = registrationMessageBuffer.data();
+	put32bit(&messageToMaster, CLTOMA_FUSE_REGISTER);
+	put32bit(&messageToMaster,
+	         kFuseRegisterBlobAclLength + fuseRegisterWithReconnectPacketInfoLength);
+	memcpy(messageToMaster, FUSE_REGISTER_BLOB_ACL, kFuseRegisterBlobAclLength);
+	messageToMaster += kFuseRegisterBlobAclLength;
+	put8bit(&messageToMaster, REGISTER_RECONNECT);
+	put32bit(&messageToMaster, sessionid);
+	put16bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MAJOR);
+	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MINOR);
+	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MICRO);
+
+	if (tcptowrite(fd, registrationMessageBuffer.data(), registerReconnectTotalPacketLength,
+	               kDefaultTcpCommTimeoutMSeconds) != registerReconnectTotalPacketLength) {
+		safs::log_warn("master: register error (write: {})", strerr(tcpgetlasterror()));
 		tcpclose(fd);
-		fd=-1;
+		fd = -1;
 		return;
 	}
-	stats_inc(MASTER_BYTESSENT, statsptr, 16 + 64);
+
+	stats_inc(MASTER_BYTESSENT, statsptr, 16 + kFuseRegisterBlobAclLength);
 	stats_inc(MASTER_PACKETSSENT, statsptr);
-	if (tcptoread(fd,regbuff,8,1000)!=8) {
-		safs_pretty_syslog(LOG_WARNING,"master: register error (read header: %s)",strerr(tcpgetlasterror()));
+
+	if (tcptoread(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
+	              kDefaultTcpCommTimeoutMSeconds) != registerTotalHeaderInfoLength) {
+		safs::log_warn("master: register error (read header: {})", strerr(tcpgetlasterror()));
 		tcpclose(fd);
-		fd=-1;
+		fd = -1;
 		return;
 	}
-	stats_inc(MASTER_BYTESRCVD, statsptr, 8);
-	rptr = regbuff;
-	get32bit(&rptr, i);
-	if (i!=MATOCL_FUSE_REGISTER) {
-		safs_pretty_syslog(LOG_WARNING,"master: register error (bad answer: %" PRIu32 ")",i);
+
+	stats_inc(MASTER_BYTESRCVD, statsptr, registerTotalHeaderInfoLength);
+	messageFromMaster = registrationMessageBuffer.data();
+	get32bit(&messageFromMaster, currentMessageValue);
+	if (currentMessageValue != MATOCL_FUSE_REGISTER) {
+		safs::log_warn("master: register error (bad answer: {})", currentMessageValue);
 		tcpclose(fd);
-		fd=-1;
+		fd = -1;
 		return;
 	}
-	get32bit(&rptr, i);
-	if (i!=1) {
-		safs_pretty_syslog(LOG_WARNING,"master: register error (bad length: %" PRIu32 ")",i);
+
+	get32bit(&messageFromMaster, currentMessageValue);
+	if (currentMessageValue != 1) {
+		safs::log_warn("master: register error (bad length: {})", currentMessageValue);
 		tcpclose(fd);
-		fd=-1;
+		fd = -1;
 		return;
 	}
-	if (tcptoread(fd,regbuff,i,1000)!=(int32_t)i) {
-		safs_pretty_syslog(LOG_WARNING,"master: register error (read data: %s)",strerr(tcpgetlasterror()));
+
+	if (tcptoread(fd, registrationMessageBuffer.data(), currentMessageValue,
+	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)currentMessageValue) {
+		safs::log_warn("master: register error (read data: {})", strerr(tcpgetlasterror()));
 		tcpclose(fd);
-		fd=-1;
+		fd = -1;
 		return;
 	}
-	stats_inc(MASTER_BYTESRCVD, statsptr, i);
+
+	stats_inc(MASTER_BYTESRCVD, statsptr, currentMessageValue);
 	stats_inc(MASTER_PACKETSRCVD, statsptr);
-	rptr = regbuff;
-	if (rptr[0]!=0) {
-		sessionlost=1;
-		safs_pretty_syslog(LOG_WARNING,"master: register status: %s",saunafs_error_string(rptr[0]));
+	messageFromMaster = registrationMessageBuffer.data();
+	if (messageFromMaster[0] != 0) {
+		sessionlost = 1;
+		safs::log_warn("master: register status: {}", saunafs_error_string(messageFromMaster[0]));
 		tcpclose(fd);
-		fd=-1;
+		fd = -1;
 		return;
 	}
-	lastwrite=time(NULL);
-	safs_pretty_syslog(LOG_NOTICE,"registered to master (session id #%" PRIu32 ")", sessionid);
+
+	lastwrite = time(nullptr);
+	safs::log_info("registered to master (session id #{})", sessionid);
 }
 
-void fs_close_session(void) {
-	uint8_t *wptr,regbuff[8+64+5];
+void fs_close_session() {
+	std::vector<std::uint8_t> registrationMessageBuffer;
+	uint8_t *messageToMaster;
 
-	if (sessionid==0) {
-		return;
-	}
+	if (sessionid == 0) { return; }
 
-	wptr = regbuff;
-	put32bit(&wptr,CLTOMA_FUSE_REGISTER);
-	put32bit(&wptr,69);
-	memcpy(wptr,FUSE_REGISTER_BLOB_ACL,64);
-	wptr+=64;
-	put8bit(&wptr,REGISTER_CLOSESESSION);
-	put32bit(&wptr,sessionid);
-	if (tcptowrite(fd,regbuff,8+64+5,1000)!=8+64+5) {
-		safs_pretty_syslog(LOG_WARNING,"master: close session error (write: %s)",strerr(tcpgetlasterror()));
+	registrationMessageBuffer.resize(registerCloseSessionTotalPacketLength);
+	messageToMaster = registrationMessageBuffer.data();
+	put32bit(&messageToMaster, CLTOMA_FUSE_REGISTER);
+	put32bit(&messageToMaster, kFuseRegisterBlobAclLength + fuseRegisterWithClosePacketInfoLength);
+	memcpy(messageToMaster, FUSE_REGISTER_BLOB_ACL, kFuseRegisterBlobAclLength);
+	messageToMaster += kFuseRegisterBlobAclLength;
+	put8bit(&messageToMaster, REGISTER_CLOSESESSION);
+	put32bit(&messageToMaster, sessionid);
+
+	if (tcptowrite(fd, registrationMessageBuffer.data(), registerCloseSessionTotalPacketLength,
+	               kDefaultTcpCommTimeoutMSeconds) != registerCloseSessionTotalPacketLength) {
+		safs::log_warn("master: close session error (write: {})", strerr(tcpgetlasterror()));
 	}
 }
 
@@ -1269,7 +1285,8 @@ void* fs_nop_thread(void *arg) {
 				put32bit(&ptr, ANTOAN_NOP);  // cmd
 				put32bit(&ptr, 4);           // length
 				put32bit(&ptr, 0);           // msg id
-				if (tcptowrite(fd, hdr, kHeaderSize, 1000) != kHeaderSize) {
+				if (tcptowrite(fd, hdr, kHeaderSize, kDefaultTcpCommTimeoutMSeconds) !=
+				    kHeaderSize) {
 					safs::log_warn("Failed to send ANTOAN_NOP to master");
 					disconnect = true;
 				} else {
@@ -1293,7 +1310,8 @@ void* fs_nop_thread(void *arg) {
 					putINode(&ptr, inode);
 				}
 
-				if (tcptowrite(fd, inodespacket, inodesleng, 1000) != inodesleng) {
+				if (tcptowrite(fd, inodespacket, inodesleng, kDefaultTcpCommTimeoutMSeconds) !=
+				    inodesleng) {
 					safs::log_warn("Failed to send CLTOMA_FUSE_RESERVED_INODES to master");
 					disconnect = true;
 				} else {
@@ -1319,8 +1337,8 @@ void* fs_nop_thread(void *arg) {
 				std::vector<uint8_t> mountInfoPacket(messageLength);
 				std::copy(message.begin(), message.end(), mountInfoPacket.begin());
 
-				if (tcptowrite(fd, mountInfoPacket.data(), messageLength, 1000) !=
-				    (int32_t)messageLength) {
+				if (tcptowrite(fd, mountInfoPacket.data(), messageLength,
+				               kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
 					safs::log_warn("Failed to send mount info to master");
 					disconnect = true;
 				} else {
@@ -1344,7 +1362,7 @@ bool fs_append_from_master(MessageBuffer& buffer, uint32_t size) {
 	const uint32_t oldSize = buffer.size();
 	buffer.resize(oldSize + size);
 	uint8_t *appendPointer = buffer.data() + oldSize;
-	int r = tcptoread(fd, appendPointer, size, RECEIVE_TIMEOUT * 1000);
+	int r = tcptoread(fd, appendPointer, size, RECEIVE_TIMEOUT * kDefaultTcpCommTimeoutMSeconds);
 	if (r == 0) {
 		safs_pretty_syslog(LOG_WARNING,"master: connection lost");
 		setDisconnect(true);
@@ -1430,7 +1448,7 @@ void* fs_receive_thread(void *) {
 		}
 		if (fd==-1) {
 			fdLock.unlock();
-			usleep(reconnectSleep_ms * 1000);
+			usleep(reconnectSleep_ms * kDefaultTcpCommTimeoutMSeconds);
 			// slowly increase timeout before each retry
 			if (reconnectSleep_ms < 5 * initialReconnectSleep_ms) {
 				reconnectSleep_ms += initialReconnectSleep_ms / 2;
