@@ -23,8 +23,11 @@
 #include "fdb/fdb_kv_engine.h"
 #include "kv/ifuture.h"
 #include "kv/itransaction.h"
+#include "kv/kv_utils.h"
 
 #include <gtest/gtest.h>
+#include <cstddef>
+#include <vector>
 
 /// Fixture for testing the FDBKVEngine.
 /// Initializes the FoundationDB context and database connection before running tests.
@@ -139,6 +142,94 @@ TEST_F(FDBKVEngineTest, GetRange) {
 	testGetRange(kvEngine.get(), kStart, kEnd, true, false, kNumKeys);
 	testGetRange(kvEngine.get(), kStart, kEnd, false, true, kNumKeys);
 	testGetRange(kvEngine.get(), kStart, kEnd, false, false, kNumKeys);
+}
+
+TEST_F(FDBKVEngineTest, GetRangeWithOffsets) {
+	// Set up a transaction to insert multiple keys
+	auto setTr = kvEngine->createReadWriteTransaction();
+
+	constexpr size_t kNumKeys = 20;  // Just an arbitrary number
+
+	for (size_t i = 0; i < kNumKeys; ++i) {
+		std::string key = "key_" + std::to_string(i);
+		std::string value = "value_" + std::to_string(i);
+		setTr->set(kv::toBytes(key), kv::toBytes(value));
+	}
+
+	ASSERT_TRUE(setTr->commit());
+
+	// Retrieve and print arbitrary ranges of keys using different offsets
+	constexpr size_t kPageSize = 5;
+
+	std::vector<std::string> resultsWithoutOffsets;
+	std::vector<std::string> resultsWithOffsets;
+
+	{
+		kv::KeySelector startSelector(kv::toBytes("key_"), true, 0);
+		kv::KeySelector endSelector(kv::toBytes("key_" + std::string(1, '\xff')), true, 0);
+
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto rangeResult = transaction->getRange(startSelector, endSelector, kNumKeys);
+
+		auto pairs = rangeResult.getPairs();
+
+		for (const auto &[key, value] : pairs) {
+			resultsWithoutOffsets.emplace_back(key.begin(), key.end());
+		}
+	}
+
+	std::string startKey = "key_0";
+	std::string endKey = "key_" + std::string(1, '\xff');
+
+	for (size_t offset = 0; offset < kNumKeys; offset += kPageSize) {
+		safs::log_info("Offset: {}", offset);
+		kv::KeySelector startSelector(kv::toBytes(startKey), true, static_cast<int>(offset));
+		kv::KeySelector endSelector(kv::toBytes(endKey), true, 0);
+
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto rangeResult = transaction->getRange(startSelector, endSelector, kPageSize);
+
+		auto pairs = rangeResult.getPairs();
+
+		for (const auto &[key, value] : pairs) {
+			safs::log_info("  {} = {}", std::string(key.begin(), key.end()),
+			               std::string(value.begin(), value.end()));
+			resultsWithOffsets.emplace_back(key.begin(), key.end());
+		}
+	}
+
+	ASSERT_EQ(resultsWithoutOffsets.size(), resultsWithOffsets.size());
+
+	for (size_t i = 0; i < resultsWithoutOffsets.size(); ++i) {
+		ASSERT_EQ(resultsWithoutOffsets[i], resultsWithOffsets[i]);
+	}
+
+	std::vector<std::string> elementsWithOffsets;
+	safs::log_info("Elements in [key_0 + kPageSize, key_17] for kPageSize = {}:", kPageSize);
+
+	{
+		// There are lexicographically 10 elements from key_0 to key_17:
+		// {key_0, key_1, key_10, key_11, key_12, key_13, key_14, key_15, key_16, key_17}
+		// With an offset of kPageSize=5, the range should contain the elements [key_13..key_17].
+		kv::KeySelector startSelector(kv::toBytes("key_0"), true, kPageSize);
+		kv::KeySelector endSelector(kv::toBytes("key_17"), true, 0);
+
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto rangeResult = transaction->getRange(startSelector, endSelector);
+
+		auto pairs = rangeResult.getPairs();
+
+		for (const auto &[key, value] : pairs) {
+			safs::log_info("  {} = {}", std::string(key.begin(), key.end()),
+			               std::string(value.begin(), value.end()));
+			elementsWithOffsets.emplace_back(key.begin(), key.end());
+		}
+	}
+
+	constexpr size_t kExpectedNumberOfElements = 5;
+	ASSERT_EQ(elementsWithOffsets.size(), kExpectedNumberOfElements);
+	ASSERT_EQ(elementsWithOffsets.front(), "key_13");  // Lexicographical order
+	ASSERT_EQ(elementsWithOffsets.back(), "key_17");
 }
 
 TEST_F(FDBKVEngineTest, AtomicAdd) {
