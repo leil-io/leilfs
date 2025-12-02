@@ -20,11 +20,7 @@ set(MANPAGES
     saunafs-migrations.7
     saunafs-probe.8          # not a source
     saunafs-repquota.1
-    saunafs-rgetgoal.1       # not a source
-    saunafs-rgettrashtime.1  # not a source
     saunafs-rremove.1
-    saunafs-rsetgoal.1       # not a source
-    saunafs-rsettrashtime.1  # not a source
     saunafs-seteattr.1       # not a source
     saunafs-setgoal.1        # not a source
     saunafs-setquota.1       # not a source
