@@ -126,44 +126,23 @@ kv::GetRangeResult Transaction::getRange(
 
 	static constexpr int kBytesLimit = 0;
 
-	auto selectRangeCall = [&]() {
-		if (begin.isInclusive()) {
-			if (end.isInclusive()) {
-				// [ begin, end ]
-				return fdb_transaction_get_range(
-				    tr_.get(),
-				    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
-				    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
-				    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-				    static_cast<fdb_bool_t>(reverse));
-			}
-			// [ begin, end )
-			return fdb_transaction_get_range(
-			    tr_.get(),
-			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(begin.getKey().data(), begin.getKey().size()),
-			    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()), limit,
-			    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-			    static_cast<fdb_bool_t>(reverse));
-		}
+	// For begin selectors: orEqual=0 means >= (inclusive), orEqual=1 means > (exclusive)
+	const fdb_bool_t beginOrEqual = begin.isInclusive() ? 0 : 1;
+	// FDB offsets are 1-based.
+	const int beginOffset = 1 + begin.getOffset();
 
-		if (end.isInclusive()) {
-			// ( begin, end ]
-			return fdb_transaction_get_range(
-			    tr_.get(),
-			    FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
-			    FDB_KEYSEL_FIRST_GREATER_THAN(end.getKey().data(), end.getKey().size()), limit,
-			    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-			    static_cast<fdb_bool_t>(reverse));
-		}
-		// ( begin, end )
-		return fdb_transaction_get_range(
-		    tr_.get(), FDB_KEYSEL_FIRST_GREATER_THAN(begin.getKey().data(), begin.getKey().size()),
-		    FDB_KEYSEL_FIRST_GREATER_OR_EQUAL(end.getKey().data(), end.getKey().size()), limit,
-		    kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-		    static_cast<fdb_bool_t>(reverse));
-	};
+	// For end selectors (which define an exclusive boundary in FDB):
+	// - To include end key in results: use orEqual=1
+	// - To exclude end key from results: use orEqual=0
+	const fdb_bool_t endOrEqual = end.isInclusive() ? 1 : 0;
+	// FDB offsets are 1-based.
+	const int endOffset = 1 + end.getOffset();
 
-	FDBFuture *future = selectRangeCall();
+	FDBFuture *future = fdb_transaction_get_range(
+	    tr_.get(), begin.getKey().data(), static_cast<int>(begin.getKey().size()), beginOrEqual,
+	    beginOffset, end.getKey().data(), static_cast<int>(end.getKey().size()), endOrEqual,
+	    endOffset, limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
+	    static_cast<fdb_bool_t>(reverse));
 
 	auto error = fdb_future_block_until_ready(future);
 
