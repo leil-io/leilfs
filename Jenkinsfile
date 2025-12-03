@@ -180,7 +180,7 @@ pipeline {
         }
         stage('Build and test') {
             parallel {
-                stage('Build and run unittests (Ubuntu 24.04)') {
+                stage('Run special tests (Ubuntu 24.04)') {
                     agent {label 'unittests'}
                     stages {
                         stage("Checkout source") {
@@ -188,7 +188,7 @@ pipeline {
                                 checkout scm
                             }
                         }
-                        stage("Build and test") {
+                        stage("Build and unit test") {
                             steps {
                                 sh """
                                     export PATH="/usr/lib/ccache:$PATH"
@@ -205,8 +205,8 @@ pipeline {
                                          -DENABLE_POLONAISE=OFF \
                                          -DENABLE_URAFT=ON \
                                          -DGSH_CAN_HOST_LOCAL_FS=ON \
+                                         -DCMAKE_INSTALL_PREFIX="/usr/local/" \
                                          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-                                         -DCMAKE_INSTALL_PREFIX="../install/saunafs/" \
                                          -DENABLE_TESTS=ON \
                                          -DCODE_COVERAGE=OFF \
                                          -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON \
@@ -216,9 +216,21 @@ pipeline {
                                     cd src/unittests
                                     nice make -j\$((\$(nproc) / 2))
                                     # Make sure that failures do NOT fail the pipeline
+                                    sudo systemctl restart foundationdb
                                     ./unittests || true
                                 """
                                 publishJunit("build/src/unittests/*test_detail.xml")
+                            }
+                        }
+                        stage("Build and run rebalancing tests") {
+                            steps {
+                                sh """
+                                    export PATH="/usr/lib/ccache:$PATH"
+                                    cd build
+                                    sudo nice make -j\$((\$(nproc) / 2)) install
+                                    saunafs-tests --gtest_filter="RebalancingTests*" --gtest_output="xml:./rebalance_test_detail.xml" || true
+                                """
+                                publishJunit("build/*test_detail.xml")
                             }
                         }
                     }
