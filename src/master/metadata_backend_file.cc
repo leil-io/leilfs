@@ -525,16 +525,6 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 			return kError;
 		}
 
-		if (parent->caseInsensitive) {
-			HString lowerCaseName = HString::hstringToLowerCase(HString(name));
-			auto *lowercaseHandlePtr = new hstorage::Handle(lowerCaseName);
-			if (!parent->lowerCaseEntries.insert({lowercaseHandlePtr, child}).second) {
-				// insert failed → nobody owns lowercaseHandlePtr → delete it
-				delete lowercaseHandlePtr;
-				return kError;
-			}
-		}
-
 		child->parents.push_back({parentId, handlePtr});
 		if (child->type == FSNodeType::kDirectory) {
 			parent->nlink++;
