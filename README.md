@@ -33,18 +33,32 @@ great fit. Contact us to learn more.
 * Backup
 * CCTV Storage
 * Enterprise File Sharing
-* Media and Video Post-Production (including proprietary Windows Client, Connect
+* Media and Video Post-Production (including proprietary HM-SMR, Windows Client, Connect
   and Navigator Apps, clustered performant Samba support)
 
 ### Feature List
 
-* Resilient architecture to ensure seamless operation organized into distinct components (Metadata servers, data servers, clients).
-* Continuous assured data integrity and verification with CRC data stored within each chunk’s metadata.
-* Robust redundancy and enhanced data durability with Reed-Solomon erasure coding when up to two nodes can disappear without service interruption.
-* Instant Copy-on-Write Snapshots to implement immutability.
-* Data preservation and recovery with instant snapshotting mechanism.
-* Fast metadata logging for  with support for access time attribute.
-* Seamless hardware refresh and expansion without downtime.
+* Resilient architecture: separated components for metadata servers (Master, Shadow, Metaloggers), data servers (Chunkservers), and clients. 
+* High Availability (HA): uRaft-based metadata failover with coordinated floating IP management for seamless continuity. 
+* Seamless hardware refresh and expansion: Nodes and drives can be added or replaced without interrupting client access. 
+* Data integrity: End-to-end data integrity with CRC verification per chunk and periodic validation operations. 
+* Robust redundancy: 
+  * Erasure Coding (EC): Reed-Solomon `EC(d, p)` for high durability, supporting simultaneous loss of up to `d` servers without data loss or service disruption. 
+  * Standard replication: Simple mirroring for improved locality and performance, especially for geographically distributed deployments. 
+  * Instant Copy-on-Write Snapshots: Fast and immutable snapshots enabling historical state access and safe filesystem-level rollback. 
+* Protocol interoperability: 
+  * S3 compatibility: Supported through Versity gateway. 
+  * NFS support: Full NFSv3/NFSv4 support through Ganesha plugin (FSAL). 
+  * Samba/CIFS support: High performance settings for shares on top of Linux native mount points. 
+* * Advanced ACL framework: Rich, NFSv4 and POSIX ACL support for precise access management. 
+* POSIX & flock advisory locking: Includes byte-range locks for concurrent collaborative access. 
+* Granular quota management: Limits by user, group, and directory with independent caps for size and inode count. 
+* Fast recursive deletion: Efficient removal of large directory trees via asynchronous task-manager operations. 
+* Flexible media strategy: HDD, SSD, and NVMe can coexist in the same cluster with labels and goal-based placement for tiering behavior. 
+* Periodic scrubbing for durability: 
+  * Metadata scans: Validates chunk availability and redundancy compliance. 
+  * Data scrubbing: CRC-based block checking ensures ongoing data correctness. 
+* Automatic data rebalancing: Reclaims space and redistributes chunks when disks or servers are added or removed. 
 
 ## Quick Start
 
