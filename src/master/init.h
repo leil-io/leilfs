@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <sys/syslog.h>
+#include <string>
 #include <vector>
 
 #include "common/event_loop.h"
@@ -40,6 +41,7 @@
 #include "master/matomlserv.h"
 #include "master/matontserv.h"
 #include "master/metadata_backend_file.h"
+#include "master/metadata_backend_forkless.h"
 #include "master/metadata_backend_interface.h"
 #include "master/personality.h"
 #include "master/session_manager.h"
@@ -59,15 +61,36 @@ inline int prometheus_init() {
 }
 
 inline int metadata_backend_init() {
+	std::string backendType = cfg_getstr("METADATA_BACKEND", "FILE");
+	safs::log_info("Initializing metadata backend of type: {}", backendType);
+
 	if (gMetadataBackend == nullptr) {
-		try {
-			gMetadataBackend = std::make_unique<MetadataBackendFile>();
-			gMetadataBackend->init();
-			gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
-		} catch (const std::exception &e) {
-			constexpr auto kErrorMessage = "Failed to initialize metadata backend";
-			safs::log_err("{}: {}", kErrorMessage, e.what());
-			throw Exception(kErrorMessage);
+		if (backendType == "FILE") {
+			try {
+				gMetadataBackend = std::make_unique<MetadataBackendFile>();
+				gMetadataBackend->init();
+				gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
+				safs::log_info("Initialized FILE metadata backend");
+			} catch (const std::exception &e) {
+				constexpr auto kErrorMessage = "Failed to initialize metadata backend";
+				safs::log_err("{}: {}", kErrorMessage, e.what());
+				throw Exception(kErrorMessage);
+			}
+		} else if (backendType == "FORKLESS") {
+			try {
+				gMetadataBackend = std::make_unique<MetadataBackendForkless>();
+				gMetadataBackend->init();
+				gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
+				safs::log_info("Initialized FORKLESS metadata backend");
+			} catch (const std::exception &e) {
+				constexpr auto kErrorMessage = "Failed to initialize metadata forkless backend";
+				safs::log_err("{}: {}", kErrorMessage, e.what());
+				throw Exception(kErrorMessage);
+			}
+		} else {
+			std::string errorMessage = "Unsupported METADATA_BACKEND type: " + backendType;
+			safs::log_err("{}", errorMessage);
+			throw Exception(errorMessage);
 		}
 	}
 
