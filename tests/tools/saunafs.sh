@@ -42,7 +42,7 @@ setup_local_empty_saunafs() {
 
 	declare -g mds_command="sfsmaster"
 
-	if [[ ${metadata_backend} != "FILE" ]]; then
+	if [[ ${metadata_backend} == "FDB" ]]; then
 		mds_command="sfsmds"
 	fi
 
@@ -158,7 +158,7 @@ setup_local_empty_saunafs() {
 
 init_metadata_backend() {
 	case ${saunafs_info_[metadata_backend]} in
-		"FDB")
+		"FDB"|"FORKLESS")
 			start_fdb_cluster
 			;;
 	esac
@@ -513,6 +513,9 @@ add_metadata_server_() {
 	elif [[ "${saunafs_info_[metadata_backend]}" == "FDB" ]]; then
 		create_sfsmds_cfg_ >"$masterserver_mds_cfg"
 		cp "$masterserver_mds_cfg" "$masterserver_cfg"
+	elif [[ "${saunafs_info_[metadata_backend]}" == "FORKLESS" ]]; then
+		cp "$masterserver_master_cfg" "$masterserver_cfg"
+		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
 	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg
