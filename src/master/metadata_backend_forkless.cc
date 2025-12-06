@@ -31,7 +31,9 @@
 #include <vector>
 
 #include "common/datapack.h"
+#include "common/scoped_timer.h"
 #include "common/serialization.h"
+#include "common/time_utils.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/changelog.h"
@@ -98,6 +100,7 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	(void)ignoreFlag;  // Unused parameter
 
+	Timer timer;
 	safs::log_info("Loading chunks from FoundationDB");
 
 	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
@@ -134,15 +137,14 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 			}
 		}
 
-		if (!pageResult.hasMore() || pageResult.getPairs().empty()) {
-			break;
-		}
+		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
 
 		lastKey = pageResult.getPairs().back().key;
 		startSelector = kv::KeySelector(lastKey, false, 0);
 	}
 
 	safs::log_info("Loaded {} chunks", chunkCount);
+	safs::log_info("Section loaded successfully (CHNK 1.0): {}s", timer.elapsed_s());
 
 	// Connect the signal handlers after initial loading
 
@@ -199,6 +201,18 @@ void MetadataBackendForkless::loadall(int ignoreflag) {
 
 	if (fsLoad(ignoreflag) != kOpSuccess) {
 		throw MetadataConsistencyException(MetadataStructureReadErrorMsg);
+	}
+
+	safs::log_info("connecting files and chunks");
+	{
+		util::ScopedTimer timer("connecting files and chunks took");
+		gFSOperations->addFilesToChunks();
+	}
+
+	safs::log_info("calculating checksum of the metadata");
+	{
+		util::ScopedTimer timer("calculating checksum of the metadata took");
+		gFSOperations->metadataChecksum(ChecksumMode::kForceRecalculate);
 	}
 
 #ifndef METARESTORE
