@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "common/datapack.h"
+#include "common/event_loop.h"
 #include "common/scoped_timer.h"
 #include "common/serialization.h"
 #include "common/time_utils.h"
@@ -51,13 +52,34 @@
 #include "master/metadata_dumper_file.h"
 #include "slogger/slogger.h"
 
+namespace {
+MetadataBackendForkless *gForklessBackend = nullptr;
+}
+
+// Add a static callback function
+static void flushMetadataCallback() {
+	if (gForklessBackend != nullptr) { gForklessBackend->flushPendingUpdates(); }
+}
+
 MetadataBackendForkless::MetadataBackendForkless()
 #if !defined(METARESTORE) && !defined(METALOGGER)
     : dumper_(std::make_unique<MetadataDumperFile>(kMetadataFilename, kMetadataTmpFilename))
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
 {
 	initSections();
+
+	// Set the global instance pointer
+	gForklessBackend = this;
+
 	safs::log_info("Metadata backend: {}", backendType());
+}
+
+MetadataBackendForkless::~MetadataBackendForkless() {
+	// Static callbacks (periodic flush timer, promotion handler) dereference
+	// gForklessBackend. Clear it on destruction so they never touch a deleted
+	// instance. Guard on identity so destroying an old backend cannot clobber a
+	// newer one that already claimed the pointer in its constructor.
+	if (gForklessBackend == this) { gForklessBackend = nullptr; }
 }
 
 #if !defined(METARESTORE) && !defined(METALOGGER)
@@ -90,6 +112,8 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 
 	// FDB backend does not need to dump anything, as all updates are performed in real-time.
 	// However, to honor the interface, we simulate a successful dump here
+	flushPendingUpdates();
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -150,27 +174,9 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 
 	gChunkChangedSignal.connect(
 	    [this](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
-		    auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
-
-		    // Key
-		    static constexpr size_t kChunkKeySize =
-		        kChunkKeyPrefix.size() + sizeof(chunkId) + sizeof(version);
-		    static kv::Key key(kChunkKeySize);
-		    std::memcpy(key.data(), kChunkKeyPrefix.data(), kChunkKeyPrefix.size());
-		    uint8_t *ptr = key.data() + kChunkKeyPrefix.size();
-		    put64bit(&ptr, chunkId);
-		    put32bit(&ptr, version);
-
-		    // Value
-		    kv::Value value(sizeof(lockedTo) + sizeof(lockId));
-		    ptr = value.data();
-		    put32bit(&ptr, lockedTo);
-		    put32bit(&ptr, lockId);
-
-		    transaction->set(key, value);
-
-		    if (!transaction->commit()) {
-			    safs::log_err("Failed to store chunk metadata: {} -> {}", chunkId, version);
+		    if (metadataWriter_) {
+			    metadataWriter_->enqueue(
+			        std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
 		    }
 	    });
 
@@ -230,6 +236,10 @@ void MetadataBackendForkless::store_fd(FILE *fd) {
 
 #endif  // #ifndef METALOGGER
 
+void MetadataBackendForkless::flushPendingUpdates() {
+	if (metadataWriter_) { metadataWriter_->flush(); }
+}
+
 void MetadataBackendForkless::initSections() {
 	/*metadataSections_.emplace_back("NODE 1.0", kNodeKeyPrefix,
 	                               [this](bool flag) { return loadNodes(flag); });
@@ -254,6 +264,12 @@ void MetadataBackendForkless::init() {
 		safs::log_err("Failed to initialize KV store");
 		throw std::runtime_error("Failed to initialize KV store");
 	}
+
+	// Initialize the metadata writer to handle metadata updates
+	metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine());
+
+	// Register periodic flush (every 1s) to ensure timely persistence
+	eventloop_timeregister_ms(1000, flushMetadataCallback);
 
 	uint64_t version = getVersion("");
 
