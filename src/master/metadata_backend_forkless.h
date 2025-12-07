@@ -23,6 +23,7 @@
 #include "kv/ikv_engine.h"
 #include "master/kv_connector_interface.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_writer_fdb.h"
 
 // Forward declarations to avoid heavy includes in the header
 struct ChangelogEvent;
@@ -39,6 +40,14 @@ struct MetadataSectionFDB {
 class MetadataBackendForkless : public IMetadataBackend {
 public:
 	MetadataBackendForkless();
+	~MetadataBackendForkless() override;
+
+	// This instance registers itself in the gForklessBackend global; copying or
+	// moving it would break that identity, so disable both.
+	MetadataBackendForkless(const MetadataBackendForkless &) = delete;
+	MetadataBackendForkless &operator=(const MetadataBackendForkless &) = delete;
+	MetadataBackendForkless(MetadataBackendForkless &&) = delete;
+	MetadataBackendForkless &operator=(MetadataBackendForkless &&) = delete;
 
 	/// Initializes the metadata backend.
 	/// This method should be called before any other methods of the backend.
@@ -88,6 +97,9 @@ public:
 	/// Returns a pointer to the underlying key-value engine.
 	kv::IKVEngine *getKVEngine() { return kvConnector_->getKVEngine(); }
 
+	/// Flush all pending batched updates
+	void flushPendingUpdates();
+
 private:
 	/// Initializes the vector of metadata sections for later loading
 	void initSections();
@@ -112,4 +124,7 @@ private:
 #if !defined(METARESTORE) && !defined(METALOGGER)
 	std::unique_ptr<IMetadataDumper> dumper_;
 #endif  // #ifndef METARESTORE
+
+	/// Metadata writer for all metadata updates
+	std::unique_ptr<MetadataWriterFDB> metadataWriter_;
 };
