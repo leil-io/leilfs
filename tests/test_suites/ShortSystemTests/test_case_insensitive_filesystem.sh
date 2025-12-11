@@ -60,17 +60,19 @@ echo "data" > FOldER2/fOLdeR3/folDEr4/fIlE4
 assert_equals "data" "$(cat folder2/folder3/folder4/file4)"
 assert_equals "data" "$(cat folder2/folder3/folder4/fIlE4)"
 
-# test hardlink case insensitive
-ln FOldER2/fOLdeR3/folDEr4/fIlE4 file4_hardlink
-assert_equals "data" "$(cat file4_HARDLINK)"
+if [[ ${info[is_windows_system]} -ne 1 ]]; then
+	# test hardlink case insensitive
+	ln FOldER2/fOLdeR3/folDEr4/fIlE4 file4_hardlink
+	assert_equals "data" "$(cat file4_HARDLINK)"
 
-# test symlink case insensitive
-ln -s FOldER2/fOLdeR3/folDEr4/fIlE4 file4_symlink
-assert_equals "data" "$(cat FILE4_SYMLINK)"
+	# test symlink case insensitive
+	ln -s FOldER2/fOLdeR3/folDEr4/fIlE4 file4_symlink
+	assert_equals "data" "$(cat FILE4_SYMLINK)"
 
-# test creating a broken symlink (target does not exist)
-ln -s NonExistent/Path/File broken_link
-assert_failure cat broken_link
+	# test creating a broken symlink (target does not exist)
+	ln -s NonExistent/Path/File broken_link
+	assert_failure cat broken_link
+fi
 
 # test removing case insensitive in mountpoint
 cd ..
@@ -93,13 +95,15 @@ echo "data" > file5
 assert_success cat file5
 assert_failure cat fiLE5
 
-# test hardlink after disabling case insensitive
-assert_failure cat file4_HARDLINK
-assert_equals "data" "$(cat file4_hardlink)"
+if [[ ${info[is_windows_system]} -ne 1 ]]; then
+	# test hardlink after disabling case insensitive
+	assert_failure cat file4_HARDLINK
+	assert_equals "data" "$(cat file4_hardlink)"
 
-# test symlink after disabling case insensitive
-assert_failure cat FILE4_SYMLINK
-assert_equals "data" "$(cat file4_symlink)"
+	# test symlink after disabling case insensitive
+	assert_failure cat FILE4_SYMLINK
+	assert_equals "data" "$(cat file4_symlink)"
+fi
 
 # create new file and check normal behavior
 touch TestFile
