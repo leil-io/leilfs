@@ -57,6 +57,9 @@ public:
 	/// @param file -- path to the metadata binary file (Ignored in FDB).
 	uint64_t getVersion(const std::string &file) override;
 
+	/// Returns the current metadata header signature
+	std::string getHeaderSignature() override;
+
 	std::string backendType() override { return "MetadataBackendForkless"; }
 
 #ifndef METALOGGER
@@ -103,6 +106,9 @@ public:
 private:
 	/// Initializes the vector of metadata sections for later loading
 	void initSections();
+
+	///  Initializes new metadata in FDB
+	void initializeNewMetadataHeader();
 
 	///  Registers observers/watchers on selected metadata properties
 	void createConnections();

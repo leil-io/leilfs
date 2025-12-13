@@ -63,6 +63,9 @@ public:
 	/// Returns the current metadata version
 	virtual uint64_t getVersion(const std::string& file) = 0;
 
+	/// Returns the current metadata header signature
+	virtual std::string getHeaderSignature() = 0;
+
 	/// Returns the concrete backend implementation type.
 	/// To be used from configuration to instantiate the correct backend.
 	virtual std::string backendType() = 0;
