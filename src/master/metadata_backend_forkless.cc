@@ -41,7 +41,9 @@
 #include "master/chunks.h"
 #include "master/filesystem.h"
 #include "master/filesystem_metadata.h"
+#include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
+#include "master/filesystem_quota.h"
 #include "master/kv_common_keys.h"
 #include "master/kv_connector_fdb.h"
 #include "master/kv_connector_interface.h"
@@ -60,6 +62,8 @@ MetadataBackendForkless *gForklessBackend = nullptr;
 static void flushMetadataCallback() {
 	if (gForklessBackend != nullptr) { gForklessBackend->flushPendingUpdates(); }
 }
+
+inline Signal initializeNewMetadataHeaderSignal;
 
 MetadataBackendForkless::MetadataBackendForkless()
 #if !defined(METARESTORE) && !defined(METALOGGER)
@@ -196,12 +200,82 @@ int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
 	return kOpSuccess;
 }
 
+#ifndef METARESTORE
+namespace {
+void fs_new() {
+	gMetadata->maxInodeId().setValue(SPECIAL_INODE_ROOT);
+	gMetadata->metadataVersion = 1;
+	gMetadata->nextSessionId().setValue(1);
+
+	auto *rootDirectory = FSNode::create(FSNodeType::kDirectory);
+	gMetadata->root = dynamic_cast<FSNodeDirectory *>(rootDirectory);
+	gMetadata->root->id = SPECIAL_INODE_ROOT;
+	gMetadata->root->atime = eventloop_time();
+	gMetadata->root->mtime = gMetadata->root->atime;
+	gMetadata->root->ctime = gMetadata->root->mtime;
+	gMetadata->root->goal = DEFAULT_GOAL;
+	gMetadata->root->trashtime = kDefaultTrashTime;
+	gMetadata->root->mode = 0777;
+	gMetadata->root->uid = 0;
+	gMetadata->root->gid = 0;
+
+	uint32_t hashRootIndex = NODEHASHPOS(gMetadata->root->id);
+	gMetadata->nodeHash[hashRootIndex].push_back(gMetadata->root);
+	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
+
+	chunk_newfs();
+
+	gMetadata->nodes = 1;
+	gMetadata->dirNodes = 1;
+	gMetadata->fileNodes = 0;
+
+	gFSOperations->metadataChecksum(ChecksumMode::kForceRecalculate);
+	fsnodes_quota_update(gMetadata->root, {{QuotaResource::kInodes, +1}});
+}
+}  // namespace
+#endif  // #ifndef METARESTORE
+
+namespace {
+bool isNewMetadataHeader([[maybe_unused]] const std::string& headerSignature) {
+	[[maybe_unused]] static constexpr std::string_view kMetadataHeaderNew(SFSSIGNATURE "M NEW");
+	[[maybe_unused]] static constexpr std::string_view kMetadataHeaderOld(SAUSIGNATURE "M NEW");
+#ifndef METARESTORE
+	if (metadataserver::isMaster()) {
+		if (headerSignature == kMetadataHeaderNew || headerSignature == kMetadataHeaderOld) {
+			fs_new();
+			safs::log_info("Detected new metadata header in FDB Backend");
+			initializeNewMetadataHeaderSignal.emit();
+			return true;
+		}
+	}
+#endif /* #ifndef METARESTORE */
+	return false;
+}
+
+bool checkMetadataSignature() {
+	static constexpr std::string_view kMetadataHeaderNewV2_9(SFSSIGNATURE "M 2.9");
+	static constexpr std::string_view kMetadataHeaderOldV2_9(SAUSIGNATURE "M 2.9");
+	static constexpr std::string_view kMetadataHeaderLegacy("LIZM 2.9");
+
+	const std::string headerSignature = gForklessBackend->getHeaderSignature();
+
+	if (isNewMetadataHeader(headerSignature)) { return false; }
+
+	if (headerSignature != kMetadataHeaderNewV2_9 && headerSignature != kMetadataHeaderOldV2_9 &&
+	    headerSignature != kMetadataHeaderLegacy) {
+		throw MetadataConsistencyException("wrong metadata header version");
+	}
+
+	return true;
+}
+}  // namespace
+
 void MetadataBackendForkless::loadall(int ignoreflag) {
 	safs::log_info("MetadataBackendForkless::loadall: ignoreflag: {}", ignoreflag);
 
 	// Load metadata global properties and check signature
 
-	// TODO(Guillex): implement signature check
+	if (!checkMetadataSignature()) { return; }
 
 	// Load the metadata sections
 
@@ -255,6 +329,19 @@ void MetadataBackendForkless::initSections() {
 	                               [this](bool flag) { return loadChunks(flag); });
 }
 
+void MetadataBackendForkless::initializeNewMetadataHeader() {
+	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+	transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M 2.9"));
+
+	if (!transaction->commit()) {
+		const auto *message = "Failed to initialize metadata header in FDB";
+		safs::log_err(message);
+		throw MetadataConsistencyException(message);
+	}
+
+	safs::log_info("Metadata header initialized successfully in FDB");
+}
+
 void MetadataBackendForkless::init() {
 	kvConnector_ = std::make_shared<KVConnectorFDB>();
 
@@ -273,12 +360,12 @@ void MetadataBackendForkless::init() {
 
 	uint64_t version = getVersion("");
 
-	if (version == 0 && gMetadata != nullptr) {  // Version does not exist, the metadata is new
+	if (version == 0) {  // Version does not exist, the metadata is new
 		safs::log_warn("Initializing new metadata");
 
 		auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
 
-		version = gMetadata->metadataVersion;
+		version = 1ULL;
 		kv::Value metadataVersionValue;
 		serialize(metadataVersionValue, version);
 
@@ -289,6 +376,9 @@ void MetadataBackendForkless::init() {
 		transaction->set(kv::toBytes(kMetaFormatKey), kv::toBytes("1.0"));
 		transaction->set(kv::toBytes(kMetaVersionKey), metadataVersionValue);
 		transaction->set(kv::toBytes(kMetaNextSessionKey), initialValue32BitsValue);
+
+		// Initialize metadata signature to "SFSSIGNATURE M NEW"
+		transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M NEW"));
 
 		if (!transaction->commit()) {
 			const auto *message = "Failed to initialize new metadata";
@@ -318,6 +408,21 @@ uint64_t MetadataBackendForkless::getVersion(const std::string & /*file*/) {
 	return 0;
 }
 
+std::string MetadataBackendForkless::getHeaderSignature() {
+	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+	kv::Key headerKey{kv::toBytes(kMetaHeaderKey)};
+
+	auto result = transaction->get(headerKey);
+
+	if (result != std::nullopt) {
+		const uint8_t *data = result.value().data();
+		std::string signature(reinterpret_cast<const char *>(data), result.value().size());
+		return signature;
+	}
+
+	return "";
+}
+
 void MetadataBackendForkless::createConnections() {
 	// gMetadata->nextSessionId().connect(kvConnector_.get(), &IKVConnector::onNextSessionIdChanged);
 
@@ -328,4 +433,6 @@ void MetadataBackendForkless::createConnections() {
 	// gMetadata->edgeChangedSignal.connect(kvConnector_.get(), &IKVConnector::onEdgeChanged);
 
 	// gMetadata->edgeRemovedSignal.connect(kvConnector_.get(), &IKVConnector::onEdgeRemoved);
+
+	initializeNewMetadataHeaderSignal.connect([this]() { initializeNewMetadataHeader(); });
 }
