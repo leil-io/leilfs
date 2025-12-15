@@ -19,6 +19,7 @@
  */
 
 #include "common/platform.h"
+#include "common/args_stat_encoding.h"
 #include "slogger/slogger.h"
 #include "config/cfg.h"
 
@@ -165,7 +166,12 @@ bool safs_add_log_stderr(int priority) {
 
 bool safs::add_log_file(const char *path, log_level::LogLevel level, int max_file_size, int max_file_count) {
 	try {
+#ifndef _WIN32
 		LoggerPtr logger = spdlog::rotating_logger_mt(path, path, max_file_size, max_file_count);
+#else
+		LoggerPtr logger =
+		    spdlog::rotating_logger_mt(path, utf8_to_wstring(path), max_file_size, max_file_count);
+#endif
 		logger->set_level((spdlog::level::level_enum)level);
 		// Format: DATE TIME [LEVEL] [PID:TID] : MESSAGE
 		logger->set_pattern("%D %H:%M:%S.%e [%l] [%P:%t] : %v");

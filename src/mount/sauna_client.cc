@@ -45,6 +45,7 @@
 #include "common/access_control_list.h"
 #include "common/acl_converter.h"
 #include "common/acl_type.h"
+#include "common/args_stat_encoding.h"
 #include "common/crc.h"
 #include "common/datapack.h"
 #include "common/errno_defs.h"
@@ -3636,15 +3637,16 @@ void fs_init(FsInitParams &params) {
 	try {
 		IoLimitsConfigLoader loader;
 		if (!params.io_limits_config_file.empty()) {
-			std::ifstream ifs(params.io_limits_config_file);
-			if (!ifs.is_open()) {
+			std::string fileContent;
+			if (!read_file_to_string(params.io_limits_config_file, fileContent)) {
 				const char *strError = std::strerror(errno);
 				safs::log_warn(
 				    "fs_init: cannot open I/O limits configuration file '{}': {}; using master-provided limits if available, otherwise no client-side limiting.",
 				    params.io_limits_config_file.c_str(), strError);
 			} else {
 				try {
-					loader.load(std::move(ifs));
+					std::istringstream iss(fileContent);
+					loader.load(std::move(iss));
 				} catch (const Exception &ex) {
 					safs::log_warn(
 					    "fs_init: failed to parse I/O limits configuration file '{}': {}; using master-provided limits if available, otherwise no client-side limiting.",

@@ -24,20 +24,39 @@
 
 #include <expected>
 
+#ifdef _WIN32
 #include "common/syslog_defs.h"
+#endif
 #include "errors/saunafs_error_codes.h"
+
+// Enable Unicode log file paths only on Windows
+#ifdef _WIN32
+#define SPDLOG_WCHAR_FILENAMES
+#define SPDLOG_WCHAR_TO_UTF8_SUPPORT
+#endif
 
 #ifndef _WIN32
 #define SPDLOG_ENABLE_SYSLOG
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #endif
 #include "common/small_vector.h"
-#include "spdlog/spdlog.h"
+
+// Suppress sign-compare warnings from spdlog when compiling with GCC on Windows
+#if defined(_WIN32) && defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
 #include "spdlog/sinks/rotating_file_sink.h"
 #ifndef _WIN32
 #include "spdlog/sinks/syslog_sink.h"
 #endif
 #include "spdlog/sinks/stdout_color_sinks.h"
+#include "spdlog/spdlog.h"
+
+#if defined(_WIN32) && defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 typedef std::shared_ptr<spdlog::logger> LoggerPtr;
 

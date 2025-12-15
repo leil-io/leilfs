@@ -20,6 +20,9 @@
 
 #include "common/platform.h"
 
+#ifdef _WIN32
+#include "common/args_stat_encoding.h"
+#endif
 #include "mount/mount_info.h"
 
 // Constructor
@@ -135,16 +138,18 @@ std::string get_current_user_sid() {
 
 	// Open the access token associated with the current process
 	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
-		std::wcerr << L"OpenProcessToken failed: " << GetLastError()
-		           << std::endl;
+		const DWORD lastError = GetLastError();
+		print_unicode_console_error(L"OpenProcessToken failed: " + std::to_wstring(lastError) +
+		                            L"\n");
 		return "";
 	}
 
 	// Get the size of the user information in the token
 	if (!GetTokenInformation(hToken, TokenUser, nullptr, 0, &dwSize) &&
 	    GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-		std::wcerr << L"GetTokenInformation failed: " << GetLastError()
-		           << std::endl;
+		const DWORD lastError = GetLastError();
+		print_unicode_console_error(L"GetTokenInformation failed: " + std::to_wstring(lastError) +
+		                            L"\n");
 		CloseHandle(hToken);
 		return "";
 	}
@@ -152,15 +157,16 @@ std::string get_current_user_sid() {
 	// Allocate memory for the user information
 	pTokenUser = (PTOKEN_USER)malloc(dwSize);
 	if (!pTokenUser) {
-		std::wcerr << L"Memory allocation failed" << std::endl;
+		print_unicode_console_error(L"Memory allocation failed\n");
 		CloseHandle(hToken);
 		return "";
 	}
 
 	// Retrieve the user information from the token
 	if (!GetTokenInformation(hToken, TokenUser, pTokenUser, dwSize, &dwSize)) {
-		std::wcerr << L"GetTokenInformation failed: " << GetLastError()
-		           << std::endl;
+		const DWORD lastError = GetLastError();
+		print_unicode_console_error(L"GetTokenInformation failed: " +
+		                            std::to_wstring(lastError) + L"\n");
 		free(pTokenUser);
 		CloseHandle(hToken);
 		return "";
@@ -168,8 +174,9 @@ std::string get_current_user_sid() {
 
 	// Convert the SID to a string
 	if (!ConvertSidToStringSid(pTokenUser->User.Sid, &pStringSid)) {
-		std::wcerr << L"ConvertSidToStringSid failed: " << GetLastError()
-		           << std::endl;
+		const DWORD lastError = GetLastError();
+		print_unicode_console_error(L"ConvertSidToStringSid failed: " +
+		                            std::to_wstring(lastError) + L"\n");
 		free(pTokenUser);
 		CloseHandle(hToken);
 		return "";

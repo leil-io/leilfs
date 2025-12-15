@@ -20,15 +20,65 @@
 
 #include "common/platform.h"
 
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <sys/stat.h>
 
 #ifdef _WIN32
-#include <shellapi.h>
 #include <windows.h>
-#include <string>
+#include <cstdint>
+#include <shellapi.h>
 #include <vector>
 
 using saunafs_stat_t = struct _stat64;
+
+// Converts a UTF-8 string to a wide string (UTF-16) on Windows.
+inline std::wstring utf8_to_wstring(const std::string &str) {
+	int wlen = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+
+	if (wlen <= 0) { return L""; }
+
+	std::wstring wstr(wlen, L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], wlen);
+
+	if (!wstr.empty() && wstr.back() == L'\0') { wstr.pop_back(); }
+
+	return wstr;
+}
+
+// Prints a UTF-16 string to console or file, handling console vs pipe/file redirection.
+inline void winapi_print(const std::wstring &msg, bool is_error = false) {
+	HANDLE h = GetStdHandle(is_error ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
+	if (h == nullptr || h == INVALID_HANDLE_VALUE) return;
+
+	DWORD mode = 0;
+	BOOL isConsole = GetConsoleMode(h, &mode);
+
+	if (isConsole) {
+		// Console → Write UTF-16 directly
+		DWORD written;
+		WriteConsoleW(h, msg.c_str(), (DWORD)msg.size(), &written, nullptr);
+	} else {
+		// Pipe / file / redirection → must convert to UTF-8
+		int utf8len = WideCharToMultiByte(CP_UTF8, 0, msg.c_str(), (int)msg.size(), nullptr, 0,
+		                                  nullptr, nullptr);
+
+		if (utf8len <= 0) { return; }
+
+		std::string utf8(utf8len, '\0');
+
+		WideCharToMultiByte(CP_UTF8, 0, msg.c_str(), (int)msg.size(), utf8.data(), utf8len, nullptr,
+		                    nullptr);
+
+		DWORD written;
+		WriteFile(h, utf8.data(), (DWORD)utf8.size(), &written, nullptr);
+	}
+}
+
+inline void print_unicode_console(const std::wstring &msg) { winapi_print(msg, false); }
+
+inline void print_unicode_console_error(const std::wstring &msg) { winapi_print(msg, true); }
 
 // This class is a RAII guard to restore console code pages on destruction on
 // Windows.
@@ -122,3 +172,29 @@ using saunafs_stat_t = struct stat;
 // On POSIX just call stat
 inline int stat_portable(const char *path, saunafs_stat_t *st) { return stat(path, st); }
 #endif
+
+// Reads the entire file into a std::string (UTF-8)
+inline bool read_file_to_string(const std::string &path, std::string &out) {
+#ifdef _WIN32
+	std::filesystem::path fsPath{utf8_to_wstring(path)};
+#else
+	std::filesystem::path fsPath{path};
+#endif
+	std::ifstream ifs(fsPath, std::ios::binary);
+	if (!ifs) { return false; }
+
+	ifs.seekg(0, std::ios::end);
+	std::streampos size = ifs.tellg();
+	if (size < 0) { return false; }
+	ifs.seekg(0, std::ios::beg);
+
+	out.clear();
+	if (size == 0) { return true; }
+
+	out.resize(static_cast<std::size_t>(size));
+	if (!ifs.read(out.data(), size)) {
+		out.clear();
+		return false;
+	}
+	return true;
+}
