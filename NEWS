@@ -1,5 +1,14 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.5.0) (2025-12-16)
+ - doc: Remove info about 5.0.0 deprecations (#673)
+ - feat(notifier): Add trash path by inode support (#674)
+ - feat: Upgrade SaunaFS FSAL to Ganesha v9.2 (#685)
+ - fix(cs): Fix test force read timeouts flakiness (#682)
+ - fix(tools): Quit on invalid option (#672)
+ - fix: Fix issues with case insensitiveness (#681)
+ - perf: Optimize memory usage with custom SkipList (#671)
+
 * SaunaFS (5.4.0) (2025-11-17)
  - build(packaging): fix installDir in release presets (#639)
  - build: Update vcpkg submodule (#606)
