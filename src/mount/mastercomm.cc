@@ -57,6 +57,7 @@
 #include "common/sockets.h"
 #include "common/type_defs.h"
 #include "errors/sfserr.h"
+#include "mount/g_io_limiters.h"
 #include "mount/exports.h"
 #include "mount/notification_area_logging.h"
 #include "mount/stats.h"
@@ -1322,29 +1323,33 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect &&
-			    (gChangedTweaksValue || lastDisconnectedStatus)) {
+			if (gChangedTweaksValue || lastDisconnectedStatus) {
 				gChangedTweaksValue = false;
-				std::string mountInfoStr;
-				{
-					std::lock_guard lock(gMountInfoMtx);
-					gMountInfo.buildMountInfoStr();
-					mountInfoStr = gMountInfo.getMountInfoStr();
-				}
-				auto message = cltoma::updateMountInfo::build(mountInfoStr);
 
-				uint32_t messageLength = message.size();
-				std::vector<uint8_t> mountInfoPacket(messageLength);
-				std::copy(message.begin(), message.end(), mountInfoPacket.begin());
+				if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect) {
+					std::string mountInfoStr;
+					{
+						std::lock_guard lock(gMountInfoMtx);
+						gMountInfo.buildMountInfoStr();
+						mountInfoStr = gMountInfo.getMountInfoStr();
+					}
+					auto message = cltoma::updateMountInfo::build(mountInfoStr);
 
-				if (tcptowrite(fd, mountInfoPacket.data(), messageLength,
-				               kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
-					safs::log_warn("Failed to send mount info to master");
-					disconnect = true;
-				} else {
-					stats_inc(MASTER_BYTESSENT, statsptr, messageLength);
-					stats_inc(MASTER_PACKETSSENT, statsptr);
+					uint32_t messageLength = message.size();
+					std::vector<uint8_t> mountInfoPacket(messageLength);
+					std::copy(message.begin(), message.end(), mountInfoPacket.begin());
+
+					if (tcptowrite(fd, mountInfoPacket.data(), messageLength,
+					               kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
+						safs::log_warn("Failed to send mount info to master");
+						disconnect = true;
+					} else {
+						stats_inc(MASTER_BYTESSENT, statsptr, messageLength);
+						stats_inc(MASTER_PACKETSSENT, statsptr);
+					}
 				}
+
+				if (gIOLimitsInitialized) { fsLoadMountIoLimits(); }
 			}
 		}
 

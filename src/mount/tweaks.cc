@@ -62,7 +62,7 @@ std::unique_ptr<Variable> makeVariable(std::atomic<T>& v) {
 
 class StringVariableImpl : public Variable {
 public:
-	StringVariableImpl(std::string &v, std::mutex &m) : value_(&v), mutex_(&m) {}
+	StringVariableImpl(std::string &value, std::mutex &mutex) : value_(&value), mutex_(&mutex) {}
 
 	void setValue(const std::string &value) override {
 		std::lock_guard<std::mutex> lock(*mutex_);
@@ -79,8 +79,8 @@ private:
 	std::mutex *mutex_;
 };
 
-std::unique_ptr<Variable> makeVariable(std::string &v, std::mutex &m) {
-	return std::unique_ptr<Variable>(new StringVariableImpl(v, m));
+std::unique_ptr<Variable> makeVariable(std::string &value, std::mutex &mutex) {
+	return std::make_unique<StringVariableImpl>(value, mutex);
 }
 
 class Tweaks::Impl {
@@ -117,7 +117,7 @@ void Tweaks::registerVariable(const std::string &name, std::string &variable, st
                               const std::string optionName) {
 	if (!gChangedTweaksValue) { gChangedTweaksValue = true; }
 
-	impl_->variables.push_back({name, makeVariable(variable, mutex), optionName});
+	impl_->variables.emplace_back(name, makeVariable(variable, mutex), optionName);
 }
 
 void Tweaks::setValue(const std::string& name, const std::string& value) {
