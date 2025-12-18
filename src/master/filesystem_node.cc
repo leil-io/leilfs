@@ -32,6 +32,7 @@
 #include "common/attributes.h"
 #include "common/massert.h"
 #include "common/slice_traits.h"
+#include "common/special_inode_defs.h"
 #include "common/type_defs.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
@@ -43,17 +44,6 @@
 #include "master/filesystem_quota.h"
 #include "master/fs_context.h"
 #include "slogger/slogger.h"
-
-constexpr size_t kMaxFileNameLength = 255;
-
-/// All permission bits (including setuid/setgid/sticky)
-constexpr uint16_t kPermissionsMask = 07777;
-/// Standard rwx permissions (excludes setuid/setgid/sticky)
-constexpr uint16_t kStandardPermissionsMask = 0777;
-constexpr uint16_t kExtraAttributesMask = 0xF000;  ///< Bits 12-15 for extra attributes
-
-/// Default undelete directory mode
-constexpr uint16_t kUndelDirectoryMode = 0755;
 
 // Private helper methods
 
@@ -152,7 +142,7 @@ uint64_t FilesystemNodeOperationsBase::fileRealSize(FSNodeFile *node, uint32_t n
 
 // Protected methods
 
-FSNode *FilesystemNodeOperationsBase::idToNodeInternal(inode_t inode) {
+FSNode *FilesystemNodeOperationsBase::idToNodeInternal(inode_t inode) const {
 	// Find the node with the given id
 	uint32_t nodeHashIndex = NODEHASHPOS(inode);
 
@@ -161,6 +151,48 @@ FSNode *FilesystemNodeOperationsBase::idToNodeInternal(inode_t inode) {
 	}
 
 	return nullptr;
+}
+
+FSNode *FilesystemNodeOperationsBase::idToNodeInternal(
+    const FilesystemOperationContext &fsOpContext, inode_t inode) const {
+	(void)fsOpContext;  // Unused parameter in this implementation
+	return idToNodeInternal(inode);
+}
+
+void FilesystemNodeOperationsBase::incrementNodeCounters(
+    const FilesystemOperationContext &fsOpContext, FSNodeType type) {
+	(void)fsOpContext;  // Unused parameter in this implementation
+
+	gMetadata->nodes++;
+
+	switch (type) {
+	case FSNodeType::kDirectory:
+		gMetadata->dirNodes++;
+		break;
+	case FSNodeType::kFile:
+		gMetadata->fileNodes++;
+		break;
+	case FSNodeType::kSymlink:
+		gMetadata->linkNodes++;
+		break;
+	default:
+		break;
+	}
+}
+
+void FilesystemNodeOperationsBase::preserveNode(const FilesystemOperationContext &fsOpContext,
+                                                FSNode *node) {
+	(void)fsOpContext;  // Unused parameter in this implementation
+	gMetadata->addNode(node);
+}
+
+void FilesystemNodeOperationsBase::preserveEdge(const FilesystemOperationContext &fsOpContext,
+                                                FSNodeDirectory *parent, FSNode *child,
+                                                hstorage::Handle *handlePtr) {
+	(void)fsOpContext;  // Unused parameter in this implementation
+
+	// Just to keep the previous behavior
+	gMetadata->edgeChangedSignal.emit(parent, child, handlePtr);
 }
 
 // Public methods
@@ -553,10 +585,11 @@ void FilesystemNodeOperationsBase::removeEdge(uint32_t timeStamp, FSNodeDirector
 	childNode->ctime = timeStamp;
 	fsnodes_update_checksum(childNode);
 
-	gMetadata->edgeRemovedSignal.emit(parent->id, childNode->id);
+	gMetadata->edgeRemovedSignal.emit(parent->id, childName);
 }
 
-void FilesystemNodeOperationsBase::link(uint32_t timeStamp, FSNodeDirectory *parent, FSNode *child,
+void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpContext,
+                                        uint32_t timeStamp, FSNodeDirectory *parent, FSNode *child,
                                         const HString &name) {
 	// Needs to be freed in fsnodes_remove_edge
 	auto *handlePtr = new hstorage::Handle(name);
@@ -571,7 +604,9 @@ void FilesystemNodeOperationsBase::link(uint32_t timeStamp, FSNodeDirectory *par
 	}
 
 	child->parents.push_back({parent->id, handlePtr});
-	gMetadata->edgeChangedSignal.emit(parent, child, handlePtr);
+
+	// Implementation specific (virtual) edge preservation (in-memory, FDB, etc.)
+	preserveEdge(fsOpContext, parent, child, handlePtr);
 
 	if (child->type == FSNodeType::kDirectory) {
 		parent->nlink++;
@@ -590,27 +625,14 @@ void FilesystemNodeOperationsBase::link(uint32_t timeStamp, FSNodeDirectory *par
 	}
 }
 
-FSNode *FilesystemNodeOperationsBase::createNode(uint32_t timeStamp, FSNodeDirectory *parent,
-                                                 const HString &name, FSNodeType type,
-                                                 uint16_t mode, uint16_t umask, uint32_t uid,
-                                                 uint32_t gid, uint8_t copysgid,
-                                                 AclInheritance inheritAcl,
-                                                 inode_t requestedINode) {
+FSNode *FilesystemNodeOperationsBase::createNode(
+    const FilesystemOperationContext &fsOpContext, uint32_t timeStamp, FSNodeDirectory *parent,
+    const HString &name, FSNodeType type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
+    uint8_t copysgid, AclInheritance inheritAcl, inode_t requestedINode) {
 	assert(type != FSNodeType::kTrash);
 
 	FSNode *node = FSNode::create(type);
-
-	// update metadata counters
-	gMetadata->nodes++;
-	if (type == FSNodeType::kDirectory) {
-		gMetadata->dirNodes++;
-	}
-	if (type == FSNodeType::kFile) {
-		gMetadata->fileNodes++;
-	}
-	if (type == FSNodeType::kSymlink) {
-		gMetadata->linkNodes++;
-	}
+	incrementNodeCounters(fsOpContext, type);  // Increment global metadata counters
 
 	// Ask for a node id
 	node->id = gInodeIdGenerator->getNextId(timeStamp, requestedINode);
@@ -662,10 +684,11 @@ FSNode *FilesystemNodeOperationsBase::createNode(uint32_t timeStamp, FSNodeDirec
 		node->gid = gid;
 	}
 
-	gMetadata->addNode(node);
+	// Implementation specific (virtual) node preservation (in-memory, FDB, etc.)
+	preserveNode(fsOpContext, node);
 
 	fsnodes_update_checksum(node);
-	link(timeStamp, parent, node, name);
+	link(fsOpContext, timeStamp, parent, node, name);
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
 
 	if (type == FSNodeType::kFile) {
@@ -1038,17 +1061,14 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 	}
 }
 
-void FilesystemNodeOperationsBase::getDir(inode_t rootINode, uint32_t uid, uint32_t gid,
+void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOpContext,
+                                          inode_t rootINode, uint32_t uid, uint32_t gid,
                                           uint32_t auid, uint32_t agid, uint8_t sesflags,
                                           FSNodeDirectory *nodeDir, uint64_t firstEntry,
                                           uint64_t numberOfEntries,
                                           std::vector<DirectoryEntry> &dirEntriesOut) {
-	static constexpr uint64_t kSignBit64 = (1ULL << 63ULL);
+	(void)fsOpContext;  // unused in this implementation
 	sassert(!(firstEntry & kSignBit64));
-	// special entryIndex values
-	static constexpr uint64_t kDotEntryIndex = 0;
-	static constexpr uint64_t kDotDotEntryIndex = (static_cast<uint64_t>(1) << hstorage::Handle::kHashShift);
-	static constexpr uint64_t kUnusedEntryIndex = (static_cast<uint64_t>(2) << hstorage::Handle::kHashShift);
 
 	FSNodeDirectory *parent;
 	inode_t inode;
@@ -1485,7 +1505,8 @@ int FilesystemNodeOperationsBase::purge(uint32_t timeStamp, FSNode *node) {
 	return -1;
 }
 
-uint8_t FilesystemNodeOperationsBase::undel(uint32_t timeStamp, FSNodeFile *node) {
+uint8_t FilesystemNodeOperationsBase::undel(
+    const FilesystemOperationContext &fsOpContext, uint32_t timeStamp, FSNodeFile *node) {
 	// Path validation
 
 	std::string pathStr;
@@ -1571,7 +1592,7 @@ uint8_t FilesystemNodeOperationsBase::undel(uint32_t timeStamp, FSNodeFile *node
 			node->type = FSNodeType::kFile;
 			node->ctime = timeStamp;
 			fsnodes_update_checksum(node);
-			link(timeStamp, currentParent, node, name);
+			link(fsOpContext, timeStamp, currentParent, node, name);
 			gMetadata->trashSpace -= node->length;
 			gMetadata->trashNodes--;
 
@@ -1592,7 +1613,7 @@ uint8_t FilesystemNodeOperationsBase::undel(uint32_t timeStamp, FSNodeFile *node
 
 		if (isNew) {
 			currentNode =
-			    createNode(timeStamp, currentParent, name, FSNodeType::kDirectory,
+			    createNode(fsOpContext, timeStamp, currentParent, name, FSNodeType::kDirectory,
 			               kUndelDirectoryMode, 0, 0, 0, 0, AclInheritance::kDontInheritAcl);
 
 #ifndef METARESTORE
@@ -2067,11 +2088,16 @@ uint8_t FilesystemNodeOperationsBase::verifySession(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemNodeOperationsBase::getNodeForOperation(const FsContext &context,
-                                                          ExpectedNodeType expectedNodeType,
-                                                          uint8_t modeMask, inode_t inode,
-                                                          FSNode **nodeOut,
-                                                          FSNodeDirectory **rootDirOut) {
+FSNodeDirectory *FilesystemNodeOperationsBase::getRootNode(
+    const FilesystemOperationContext &fsOpContext) {
+	(void)fsOpContext;  // unused parameter in this implementation
+	return gMetadata->root;
+}
+
+uint8_t FilesystemNodeOperationsBase::getNodeForOperation(
+    const FsContext &context, const FilesystemOperationContext &fsOpContext,
+    ExpectedNodeType expectedNodeType, uint8_t modeMask, inode_t inode, FSNode **nodeOut,
+    FSNodeDirectory **rootDirOut) {
 	FSNode *candidateNode;
 	FSNodeDirectory *candidateRoot;
 
@@ -2083,8 +2109,8 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(const FsContext &conte
 
 		if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 	} else if (context.rootinode() == SPECIAL_INODE_ROOT || (context.rootinode() == 0)) {
-		candidateRoot = gMetadata->root;
-		candidateNode = idToNode(inode);
+		candidateRoot = getRootNode(fsOpContext);
+		candidateNode = idToNode(fsOpContext, inode);
 
 		if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 
@@ -2093,7 +2119,7 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(const FsContext &conte
 			return SAUNAFS_ERROR_EPERM;
 		}
 	} else {
-		candidateRoot = idToNode<FSNodeDirectory>(context.rootinode());
+		candidateRoot = idToNode<FSNodeDirectory>(fsOpContext, context.rootinode());
 
 		if ((candidateRoot == nullptr) || candidateRoot->type != FSNodeType::kDirectory) {
 			return SAUNAFS_ERROR_ENOENT;
@@ -2102,7 +2128,7 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(const FsContext &conte
 		if (inode == SPECIAL_INODE_ROOT || inode == context.rootinode()) {
 			candidateNode = candidateRoot;
 		} else {
-			candidateNode = idToNode(inode);
+			candidateNode = idToNode(fsOpContext, inode);
 
 			if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 

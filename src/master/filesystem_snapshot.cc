@@ -40,21 +40,26 @@ uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_
 	ChecksumUpdater cu(context.ts());
 	FSNode *src_node = nullptr;
 	FSNode *dst_parent_node = nullptr;
+
 	uint8_t status = gFSOperations->nodeOperations()->verifySession(
 	    context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	FilesystemOperationContext fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	status = gFSOperations->nodeOperations()->getNodeForOperation(
-	    context, ExpectedNodeType::kDirectory, MODE_MASK_W, parent_dst, &dst_parent_node);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent_dst,
+	    &dst_parent_node);
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
 	status = gFSOperations->nodeOperations()->getNodeForOperation(
-	    context, ExpectedNodeType::kAny, MODE_MASK_R, inode_src, &src_node);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	    context, fsOpContext, ExpectedNodeType::kAny, MODE_MASK_R, inode_src, &src_node);
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
 	if (src_node->type == FSNodeType::kDirectory) {
 		if (src_node == dst_parent_node ||
 		    gFSOperations->nodeOperations()->isAncestor(static_cast<FSNodeDirectory *>(src_node),

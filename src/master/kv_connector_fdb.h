@@ -62,7 +62,7 @@ public:
 
 	void onEdgeChanged(FSNodeDirectory *parent, FSNode *child,
 	                   hstorage::Handle *handlePtr) override;
-	void onEdgeRemoved(inode_t parentId, inode_t childId) override;
+	void onEdgeRemoved(inode_t parentId, const HString &edgeName) override;
 
 private:
 	std::shared_ptr<fdb::FDBContext> fdbContext_;  ///< FDBContext needed by the engine

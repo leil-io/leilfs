@@ -28,6 +28,8 @@
 #include "master/hstring.h"
 #include "master/task_manager.h"
 
+class FilesystemOperationContext;
+
 /*! \brief Implementation of Snapshot Task to work with Task Manager.
  *
  * This class uses new approach to executing snapshots.
@@ -86,11 +88,13 @@ public:
 protected:
 	/*! \brief Test if node can be cloned. */
 	int cloneNodeTest(FSNode *src_node, FSNode *dst_node, FSNodeDirectory *dst_parent);
-	FSNode *cloneToExistingNode(uint32_t ts, FSNode *src_node, FSNodeDirectory *dst_parent,
-				    FSNode *dst_node);
-	FSNode *cloneToNewNode(uint32_t ts, FSNode *src_node, FSNodeDirectory *dst_parent);
-	FSNodeFile *cloneToExistingFileNode(uint32_t ts, FSNodeFile *src_node,
-	                                    FSNodeDirectory *dst_parent, FSNodeFile *dst_node);
+	FSNode *cloneToExistingNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
+	                            FSNode *src_node, FSNodeDirectory *dst_parent, FSNode *dst_node);
+	FSNode *cloneToNewNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
+	                       FSNode *src_node, FSNodeDirectory *dst_parent);
+	FSNodeFile *cloneToExistingFileNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
+	                                    FSNodeFile *src_node, FSNodeDirectory *dst_parent,
+	                                    FSNodeFile *dst_node);
 	void cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_node,
 	                    FSNodeDirectory *dst_parent);
 	void cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDirectory *dst_node);

@@ -28,6 +28,7 @@
 #include "master/checksum.h"
 #include "master/filesystem_node_operations_interface.h"
 #include "master/filesystem_node_types.h"
+#include "master/filesystem_operation_context.h"
 #include "master/fs_context.h"
 #include "master/locks.h"
 #include "master/setgoal_task.h"
@@ -64,6 +65,11 @@ public:
 
 	/// Returns the concrete node operations implementation.
 	virtual IFilesystemNodeOperations *nodeOperations() = 0;
+
+	/// Creates a filesystem operation context for the specified transaction type.
+	/// In-memory implementation should return a context without transactions.
+	virtual FilesystemOperationContext createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType type) = 0;
 
 	/// Returns version of the loaded metadata.
 	virtual uint64_t getMetadataVersion() = 0;
@@ -132,17 +138,21 @@ public:
 	virtual std::vector<JobInfo> getCurrentTasksInfo() = 0;
 
 	virtual uint8_t access(const FsContext &context, inode_t inode, int modemask) = 0;
-	virtual uint8_t lookup(const FsContext &context, inode_t parent, const HString &name,
-	                       inode_t *inode, Attributes &attr) = 0;
+	virtual uint8_t lookup(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t parent, const HString &name, inode_t *inode,
+	                       Attributes &attr) = 0;
 	virtual uint8_t wholePathLookup(const FsContext &context, inode_t parent,
 	                                const std::string &path, inode_t *found_inode,
 	                                Attributes &attr) = 0;
-	virtual uint8_t getAttr(const FsContext &context, inode_t inode, Attributes &attr) = 0;
-	virtual uint8_t trySetLength(const FsContext &context, inode_t inode, uint8_t opened,
-	                             uint64_t length, bool denyTruncatingParity, uint32_t lockid,
-	                             Attributes &attr, uint64_t *chunkid) = 0;
-	virtual uint8_t doSetLength(const FsContext &context, inode_t inode, uint64_t length,
-	                            Attributes &attr) = 0;
+	virtual uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, Attributes &attr) = 0;
+	virtual uint8_t trySetLength(const FsContext &context,
+	                             const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                             uint8_t opened, uint64_t length, bool denyTruncatingParity,
+	                             uint32_t lockid, Attributes &attr, uint64_t *chunkid) = 0;
+	virtual uint8_t doSetLength(const FsContext &context,
+	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                            uint64_t length, Attributes &attr) = 0;
 	virtual uint8_t setAttr(const FsContext &context, inode_t inode, uint8_t setmask,
 	                        uint16_t attrmode, uint32_t attruid, uint32_t attrgid,
 	                        uint32_t attratime, uint32_t attrmtime, SugidClearMode sugidclearmode,
@@ -150,14 +160,41 @@ public:
 	virtual uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) = 0;
 	virtual void statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availspace,
 	                    uint64_t *trashspace, uint64_t *reservedspace, inode_t *inodes) = 0;
-	virtual uint8_t mknod(const FsContext &context, inode_t parent, const HString &name,
-	                      FSNodeType type, uint16_t mode, uint16_t umask, uint32_t rdev,
-	                      inode_t *inode, Attributes &attr) = 0;
+
+	/// Creates a filesystem node (file, socket, FIFO, or device).
+	///
+	/// Creates a new node of the specified type in the given parent directory.
+	/// The function performs comprehensive validation including session verification,
+	/// node type checking, quota verification, and name uniqueness.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The extra operation context carrying a transaction in some
+	/// implementations.
+	/// @param parent The inode number of the parent directory.
+	/// @param name The name of the new node within the parent directory.
+	/// @param type The type of node to create (kFile, kSocket, kFifo, kBlockDev, or kCharDev).
+	/// @param mode The file mode/permissions for the new node.
+	/// @param umask The umask to apply when creating the node.
+	/// @param rdev The device number for block/character devices (ignored for other types).
+	/// @param inode Pointer to inode_t where the created node's inode number will be stored.
+	/// @param attr Reference to Attributes structure to be filled with the new node's attributes.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EINVAL if type is invalid or name verification fails
+	///         - SAUNAFS_ERROR_EEXIST if a node with the given name already exists in the parent
+	///         - SAUNAFS_ERROR_QUOTA if quota limits would be exceeded
+	///         - SAUNAFS_ERROR_EPERM if session permissions are insufficient
+	///         - Other error codes as returned by node operations
+	virtual uint8_t mknod(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      inode_t parent, const HString &name, FSNodeType type, uint16_t mode,
+	                      uint16_t umask, uint32_t rdev, inode_t *inode, Attributes &attr) = 0;
+
 	virtual uint8_t mkdir(const FsContext &context, inode_t parent, const HString &name,
 	                      uint16_t mode, uint16_t umask, uint8_t copysgid, inode_t *inode,
 	                      Attributes &attr) = 0;
-	virtual uint8_t removeChunkFromFile(const FsContext &context, inode_t inode,
-	                                    uint64_t chunkId) = 0;
+	virtual uint8_t removeChunkFromFile(const FsContext &context,
+	                                    const FilesystemOperationContext &fsOpContext,
+	                                    inode_t inode, uint64_t chunkId) = 0;
 	virtual uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	                       uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) = 0;
 	virtual uint8_t rmdir(const FsContext &context, inode_t parent, const HString &name) = 0;
@@ -168,6 +205,22 @@ public:
 	virtual void readdirData(const FsContext &context, uint8_t flags, void *dnode,
 	                         uint8_t *dbuff) = 0;
 
+	/// Reads a paginated list of entries from a directory.
+	///
+	/// Retrieves directory entries starting from a specified index, with support for
+	/// pagination. Verifies session validity and read permissions before accessing
+	/// the directory contents. Updates the directory's access time upon successful read.
+	///
+	/// @param context Session context containing user credentials (uid, gid), session
+	///                flags, and root inode information.
+	/// @param inode The inode number of the directory to read.
+	/// @param first_entry Starting index for pagination (offset into the directory listing).
+	/// @param number_of_entries Maximum number of entries to return.
+	/// @param[out] dir_entries Output vector populated with directory entries, each
+	///                         containing index, next_index, inode, name, and attributes.
+	/// @return SAUNAFS_STATUS_OK on success, or an appropriate error code on failure
+	///         (e.g., SAUNAFS_ERROR_ENOENT if directory not found,
+	///         SAUNAFS_ERROR_EACCES if permission denied).
 	virtual uint8_t readdir(const FsContext &context, inode_t inode, uint64_t first_entry,
 	                        uint64_t number_of_entries,
 	                        std::vector<DirectoryEntry> &dir_entries) = 0;
@@ -181,11 +234,13 @@ public:
 	virtual uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                             ExtraAttributesArray &fileEAttrTab,
 	                             ExtraAttributesArray &dirEAttrTab) = 0;
-	virtual uint8_t listXAttrLeng(const FsContext &context, inode_t inode, uint8_t opened,
-	                              void **xanode, uint32_t *xasize) = 0;
-	virtual uint8_t getXAttr(const FsContext &context, inode_t inode, uint8_t opened,
-	                         uint8_t anleng, const uint8_t *attrname, uint32_t *avleng,
-	                         uint8_t **attrvalue) = 0;
+	virtual uint8_t listXAttrLeng(const FsContext &context,
+	                              const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                              uint8_t opened, void **xanode, uint32_t *xasize) = 0;
+	virtual uint8_t getXAttr(const FsContext &context,
+	                         const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                         uint8_t opened, uint8_t anleng, const uint8_t *attrname,
+	                         uint32_t *avleng, uint8_t **attrvalue) = 0;
 	virtual uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened,
 	                         uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 	                         const uint8_t *attrvalue, uint8_t mode) = 0;
@@ -247,8 +302,9 @@ public:
 	virtual uint8_t getDirStats(const FsContext &context, inode_t inode, inode_t *inodes,
 	                            inode_t *dirs, inode_t *files, inode_t *links, uint32_t *chunks,
 	                            uint64_t *length, uint64_t *size, uint64_t *rsize) = 0;
-	virtual uint8_t getChunkId(const FsContext &context, inode_t inode, uint32_t index,
-	                           uint64_t *chunkid) = 0;
+	virtual uint8_t getChunkId(const FsContext &context,
+	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                           uint32_t index, uint64_t *chunkid) = 0;
 
 	// SPECIAL - LOG EMERGENCY INCREASE VERSION FROM CHUNKS-MODULE
 	virtual void increaseChunkVersion(uint64_t chunkid) = 0;
