@@ -1951,11 +1951,6 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 
 	do {
 		status = updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx, ino, request_size);
-		if (status == SAUNAFS_ERROR_GROUPNOTREGISTERED){
-			registerGroupsInMaster(ctx);
-			readdirSession->restarted=true;
-			status = updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx, ino, request_size);
-		}
 		if(status != SAUNAFS_STATUS_OK){
 			break;
 		}
