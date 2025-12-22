@@ -49,3 +49,14 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";   // Section FLCK 1.0
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";   // Section CHNK 1.0
+
+// Extra indexes for edges' reverse lookups/traversals
+
+/// Prefix for reverse index for directories
+/// Only one parent is allowed to maintain tree structure (preventing cycles or circular references)
+/// Format: DIR_PARENT_<ChildId>:<ParentId>
+inline constexpr std::string_view kDirParentKeyPrefix = "DIR_PARENT_";
+
+/// Prefix for reverse index for files and links (multiple parents allowed via hard links)
+/// Format: PARENT_<ChildId><ParentId>:<Empty value>
+inline constexpr std::string_view kParentKeyPrefix = "PARENT_";
