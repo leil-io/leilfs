@@ -347,38 +347,36 @@ void drop_readdir_session(uint64_t opendirSessionID) {
 	gReaddirSessions.erase(opendirSessionID);
 }
 
-static uint8_t updateNextReaddirEntryIndexIfMasterRestarted(ReaddirSession& readdirSession, uint64_t &nextEntryIndex,
-		Context &ctx, inode_t parentInode, uint64_t requestSize) {
-	if (!readdirSession.restarted) {
-		return SAUNAFS_STATUS_OK;
-	}
+static uint8_t updateNextReaddirEntryIndexIfMasterRestarted(ReaddirSession &readdirSession,
+                                                            uint64_t &nextEntryIndex, Context &ctx,
+                                                            inode_t parentInode,
+                                                            uint64_t requestSize) {
+	if (!readdirSession.restarted) { return SAUNAFS_STATUS_OK; }
 	std::vector<DirectoryEntry> dirEntries;
 	uint8_t status = 0;
 	nextEntryIndex = 0;
-	if(readdirSession.lastReadIno == 0){
-		readdirSession.restarted=false;
+
+	if (readdirSession.lastReadIno == 0) {
+		readdirSession.restarted = false;
 		return SAUNAFS_STATUS_OK;
 	}
+
 	while (true) {
 		dirEntries.clear();
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
-			status, ctx,
-			fs_getdir(parentInode, ctx.uid, ctx.gid, nextEntryIndex, requestSize, dirEntries)
-		);
-		if(status != SAUNAFS_STATUS_OK){
-			readdirSession.restarted=false;
+		    status, ctx,
+		    fs_getdir(parentInode, ctx.uid, ctx.gid, nextEntryIndex, requestSize, dirEntries));
+
+		if (status != SAUNAFS_STATUS_OK) {
+			readdirSession.restarted = false;
 			return status;
 		}
-		if (dirEntries.empty()) {
-			break;
-		}
+
+		if (dirEntries.empty()) { break; }
 		std::vector<DirectoryEntry>::const_iterator direntIt = find_if(
-				dirEntries.cbegin(),
-				dirEntries.cend(),
-				[&readdirSession](DirectoryEntry const& de) {
-					return (de.inode == readdirSession.lastReadIno);
-				}
-			);
+		    dirEntries.cbegin(), dirEntries.cend(), [&readdirSession](DirectoryEntry const &de) {
+			    return (de.inode == readdirSession.lastReadIno);
+		    });
 		if (direntIt != dirEntries.end()) {
 			nextEntryIndex = direntIt->index;
 			dirEntries.clear();
@@ -386,6 +384,7 @@ static uint8_t updateNextReaddirEntryIndexIfMasterRestarted(ReaddirSession& read
 		}
 		nextEntryIndex = dirEntries.back().next_index;
 	}
+
 	readdirSession.restarted = false;
 	return SAUNAFS_STATUS_OK;
 }
@@ -1950,10 +1949,11 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 	};
 
 	do {
-		status = updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx, ino, request_size);
-		if(status != SAUNAFS_STATUS_OK){
-			break;
-		}
+		status = updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx,
+		                                                      ino, request_size);
+
+		if (status != SAUNAFS_STATUS_OK) { break; }
+
 		clearDirEntries(__LINE__);
 		status = fs_getdir(ino, ctx.uid, ctx.gid, entry_index, request_size, dir_entries);
 
@@ -1963,7 +1963,6 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 			status = fs_getdir(ino, ctx.uid, ctx.gid, entry_index, request_size, dir_entries);
 		}
 	} while (readdirSession->restarted);
-
 
 	auto data_acquire_time = gDirEntryCache.updateTime();
 
