@@ -3628,6 +3628,15 @@ void fs_init(FsInitParams &params) {
 		throw std::runtime_error("Can't initialize connection with master server");
 	}
 	symlink_cache_init(params.symlink_cache_timeout_s);
+
+	{
+		std::unique_lock ioLimitsLock(gIOLimitsConfigFilePathMutex);
+		gIOLimitsConfigFilePath = params.io_limits_config_file;
+		ioLimitsLock.unlock();
+		gTweaks.registerVariable("IOLimitsFilePath", gIOLimitsConfigFilePath,
+		                         gIOLimitsConfigFilePathMutex, "sfsiolimits");
+	}
+
 	gGlobalIoLimiter();
 	fs_init_threads(params.io_retries, params.max_wait_retry_time,
 	                params.mastercomm_sleep_time_divisor);
@@ -3635,26 +3644,8 @@ void fs_init(FsInitParams &params) {
 
 	gLocalIoLimiter();
 	try {
-		IoLimitsConfigLoader loader;
-		if (!params.io_limits_config_file.empty()) {
-			std::string fileContent;
-			if (!read_file_to_string(params.io_limits_config_file, fileContent)) {
-				const char *strError = std::strerror(errno);
-				safs::log_warn(
-				    "fs_init: cannot open I/O limits configuration file '{}': {}; using master-provided limits if available, otherwise no client-side limiting.",
-				    params.io_limits_config_file.c_str(), strError);
-			} else {
-				try {
-					std::istringstream iss(fileContent);
-					loader.load(std::move(iss));
-				} catch (const Exception &ex) {
-					safs::log_warn(
-					    "fs_init: failed to parse I/O limits configuration file '{}': {}; using master-provided limits if available, otherwise no client-side limiting.",
-					    params.io_limits_config_file.c_str(), ex.what());
-				}
-			}
-		}
-		gMountLimiter().loadConfiguration(loader);
+		fsLoadMountIoLimits();
+		gIOLimitsInitialized = true;
 	} catch (Exception &ex) {
 		safs_pretty_syslog(LOG_ERR, "Can't initialize I/O limiting: %s", ex.what());
 		masterproxy_term();

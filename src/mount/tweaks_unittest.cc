@@ -70,3 +70,49 @@ TEST(TweaksTests, SetValue) {
 	t.setValue("bool", "true\n");
 	ASSERT_TRUE(b.load());
 }
+
+TEST(TweaksTests, StringVariableBasicUsage) {
+	std::string s = "initial";
+	std::mutex sMutex;
+
+	Tweaks t;
+	t.registerVariable("str", s, sMutex);
+
+	ASSERT_EQ("str\tinitial\n", t.getAllValues());
+	ASSERT_EQ("initial", t.getValue("str"));
+
+	t.setValue("str", "updated");
+
+	ASSERT_EQ("updated", t.getValue("str"));
+
+	{
+		std::lock_guard<std::mutex> lock(sMutex);
+		ASSERT_EQ("updated", s);
+	}
+}
+
+TEST(TweaksTests, MixedTypesIncludingString) {
+	std::atomic<uint32_t> u32(1);
+	std::atomic<bool> b(false);
+	std::string s = "foo";
+	std::mutex sMutex;
+
+	Tweaks t;
+	t.registerVariable("u32", u32);
+	t.registerVariable("bool", b);
+	t.registerVariable("str", s, sMutex);
+
+	t.setValue("u32", "42");
+	t.setValue("bool", "true");
+	t.setValue("str", "bar");
+
+	ASSERT_EQ(42U, u32.load());
+	ASSERT_TRUE(b.load());
+
+	{
+		std::lock_guard<std::mutex> lock(sMutex);
+		ASSERT_EQ("bar", s);
+	}
+
+	ASSERT_EQ("bar", t.getValue("str"));
+}

@@ -42,6 +42,10 @@ public:
 	/// Adds a new uint64_t variable.
 	void registerVariable(const std::string& name, std::atomic<uint64_t>& variable, const std::string optionName = "");
 
+	/// Adds a new string variable.
+	void registerVariable(const std::string &name, std::string &variable, std::mutex &mutex,
+	                      const std::string optionName = "");
+
 	/// Changes value of all variables with the given name.
 	void setValue(const std::string& name, const std::string& value);
 

@@ -22,9 +22,41 @@
 
 #include "common/platform.h"
 
+#include "common/args_stat_encoding.h"
 #include "common/io_limiting.h"
 #include "mount/global_io_limiter.h"
+
+// Mount iolimits configuration file path
+inline std::string gIOLimitsConfigFilePath;
+inline std::mutex gIOLimitsConfigFilePathMutex;
+inline std::atomic<bool> gIOLimitsInitialized{false};
 
 ioLimiting::MountLimiter& gMountLimiter();
 ioLimiting::LimiterProxy& gLocalIoLimiter();
 ioLimiting::LimiterProxy& gGlobalIoLimiter();
+
+inline void fsLoadMountIoLimits() {
+	std::unique_lock ioLimitsLock(gIOLimitsConfigFilePathMutex);
+	IoLimitsConfigLoader loader;
+
+	if (!gIOLimitsConfigFilePath.empty()) {
+		std::string fileContent;
+		if (!read_file_to_string(gIOLimitsConfigFilePath, fileContent)) {
+			const char *strError = std::strerror(errno);
+			safs::log_warn(
+			    "iolimits: cannot open I/O limits configuration file '{}': {}; using master-provided limits if available, otherwise no client-side limiting.",
+			    gIOLimitsConfigFilePath, strError);
+		} else {
+			try {
+				std::istringstream iss(fileContent);
+				loader.load(std::move(iss));
+			} catch (const Exception &ex) {
+				safs::log_warn(
+				    "iolimits: failed to parse I/O limits configuration file '{}': {}; using master-provided limits if available, otherwise no client-side limiting.",
+				    gIOLimitsConfigFilePath, ex.what());
+			}
+		}
+	}
+
+	gMountLimiter().loadConfiguration(loader);
+}
