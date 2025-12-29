@@ -189,9 +189,36 @@ public:
 	                      inode_t parent, const HString &name, FSNodeType type, uint16_t mode,
 	                      uint16_t umask, uint32_t rdev, inode_t *inode, Attributes &attr) = 0;
 
-	virtual uint8_t mkdir(const FsContext &context, inode_t parent, const HString &name,
-	                      uint16_t mode, uint16_t umask, uint8_t copysgid, inode_t *inode,
-	                      Attributes &attr) = 0;
+	/// Creates a new directory in the filesystem.
+	///
+	/// Creates a new directory with the specified name in the given parent directory.
+	/// The function performs comprehensive validation including session verification,
+	/// write permission checking, quota verification, name uniqueness, and optional
+	/// disk space checks. The directory inherits ACLs from the parent if applicable.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The extra operation context carrying a transaction in some
+	/// implementations.
+	/// @param parent The inode number of the parent directory.
+	/// @param name The name of the new directory within the parent directory.
+	/// @param mode The file mode/permissions for the new directory.
+	/// @param umask The umask to apply when creating the directory.
+	/// @param copysgid If non-zero, copies the SGID bit from parent directory.
+	/// @param inode Pointer to inode_t where the created directory's inode number will be stored.
+	/// @param attr Reference to Attributes to be filled with the new directory's attributes.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EINVAL if name verification fails
+	///         - SAUNAFS_ERROR_ENOTDIR if parent is not a directory
+	///         - SAUNAFS_ERROR_EEXIST if a node with the given name already exists in the parent
+	///         - SAUNAFS_ERROR_QUOTA if quota limits would be exceeded
+	///         - SAUNAFS_ERROR_NOSPACE if disk space is depleted (when
+	///         gDisableEmptyFoldersMetadataOnFullDisk is enabled)
+	///         - SAUNAFS_ERROR_EPERM if session permissions are insufficient
+	///         - Other error codes as returned by node operations
+	virtual uint8_t mkdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      inode_t parent, const HString &name, uint16_t mode, uint16_t umask,
+	                      uint8_t copysgid, inode_t *inode, Attributes &attr) = 0;
 	virtual uint8_t removeChunkFromFile(const FsContext &context,
 	                                    const FilesystemOperationContext &fsOpContext,
 	                                    inode_t inode, uint64_t chunkId) = 0;
