@@ -124,12 +124,13 @@ jobs:
                   cd $GITHUB_WORKSPACE/tests
                   sudo ./setup_machine.sh setup /mnt/hdb /mnt/hdc /mnt/hdd
 
-            - name: Cache vcpkg downloads
+            - name: Cache vcpkg
               uses: actions/cache@v4
               with:
                 path: |
+                  ~/vcpkg
                   ~/.cache/vcpkg
-                key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+                key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json', 'utils/vcpkg_setup.sh') }}
                 restore-keys: |
                   ${{ runner.os }}-vcpkg-
 
