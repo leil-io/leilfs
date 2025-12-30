@@ -6,6 +6,7 @@
     "boost-iostreams",
     "boost-program-options",
     "boost-system",
+    "bzip2",
     "fmt",
     "gtest",
     "prometheus-cpp",
@@ -279,10 +280,6 @@
     {
       "name": "boost-winapi",
       "version": "1.86.0"
-    },
-    {
-      "name": "bzip2",
-      "version": "1.0.8"
     },
     {
       "name": "civetweb",
