@@ -1270,39 +1270,36 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::mkdir(const FsContext &context, inode_t parent,
-                                        const HString &name, uint16_t mode, uint16_t umask,
-                                        uint8_t copysgid, inode_t *inode, Attributes &attr) {
-	uint32_t ts = eventloop_time();
-	ChecksumUpdater cu(ts);
-	FSNode *wd, *p;
+uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
+                                        const FilesystemOperationContext &fsOpContext,
+                                        inode_t parent, const HString &name, uint16_t mode,
+                                        uint16_t umask, uint8_t copysgid, inode_t *inode,
+                                        Attributes &attr) {
+	uint32_t timeStamp = eventloop_time();
+	ChecksumUpdater checksumUpdater(timeStamp);
+	FSNode *workNode;
+	FSNode *newNode;
 	*inode = 0;
 	attr.fill(0);
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(
-	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent, &wd);
+	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent, &workNode);
 
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	if (nodeOperations_->isNameUsed(static_cast<FSNodeDirectory *>(wd), name)) {
-		return SAUNAFS_ERROR_EEXIST;
-	}
+	auto *workDir = static_cast<FSNodeDirectory *>(workNode);
+
+	if (nodeOperations_->isNameUsed(workDir, name)) { return SAUNAFS_ERROR_EEXIST; }
 
 	if (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
-	    fsnodes_quota_exceeded_dir(wd, {{QuotaResource::kInodes, 1}})) {
+	    fsnodes_quota_exceeded_dir(workNode, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
@@ -1313,20 +1310,24 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context, inode_t parent
 		}
 	}
 
-	static_cast<FSNodeDirectory *>(wd)->caseInsensitive =
-	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
-	p = nodeOperations_->createNode(fsOpContext, ts, static_cast<FSNodeDirectory *>(wd), name,
-	                                FSNodeType::kDirectory, mode, umask, context.uid(),
-	                                context.gid(), copysgid, AclInheritance::kInheritAcl);
-	*inode = p->id;
-	nodeOperations_->fillAttr(p, wd, context.uid(), context.gid(), context.auid(), context.agid(),
-	                          context.sesflags(), attr);
-	changeLog(ts, "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
-	          wd->id, nodeOperations_->escapeName(name).c_str(),
-	          static_cast<char>(FSNodeType::kDirectory), p->mode & 07777, context.uid(),
-	          context.gid(), 0, p->id);
+	workDir->caseInsensitive = context.sesflags() & SESFLAG_CASEINSENSITIVE;
+
+	newNode = nodeOperations_->createNode(fsOpContext, timeStamp, workDir, name,
+	                                      FSNodeType::kDirectory, mode, umask, context.uid(),
+	                                      context.gid(), copysgid, AclInheritance::kInheritAcl);
+	*inode = newNode->id;
+	nodeOperations_->fillAttr(newNode, workDir, context.uid(), context.gid(), context.auid(),
+	                          context.agid(), context.sesflags(), attr);
+
+	changeLog(timeStamp,
+	          "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
+	          workDir->id, nodeOperations_->escapeName(name).c_str(),
+	          static_cast<char>(FSNodeType::kDirectory), newNode->mode & kPermissionsMask,
+	          context.uid(), context.gid(), 0, newNode->id);
+
 	incrementFSStat(FsStats::Mkdir);
 	metrics::Counter::increment(metrics::Counter::Master::FS_MKDIR);
+
 	return SAUNAFS_STATUS_OK;
 }
 #endif

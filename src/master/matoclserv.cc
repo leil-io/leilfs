@@ -2127,9 +2127,21 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
 
-		status = gFSOperations->mkdir(context, inode, HString(std::move(name)), mode, umask,
+		status = gFSOperations->mkdir(context, fsOpContext, inode, HString(name), mode, umask,
 		                              copysgid, &newinode, attr);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err(
+				    "matoclserv_fuse_mkdir: transaction failed to commit: parent inode {}, name {}",
+				    inode, name);
+
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	MessageBuffer reply;

@@ -140,8 +140,11 @@ public:
 	uint8_t mknod(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t parent, const HString &name, FSNodeType type, uint16_t mode,
 	              uint16_t umask, uint32_t rdev, inode_t *inode, Attributes &attr) override;
-	uint8_t mkdir(const FsContext &context, inode_t parent, const HString &name, uint16_t mode,
-	              uint16_t umask, uint8_t copysgid, inode_t *inode, Attributes &attr) override;
+	/// Creates a new directory in the filesystem.
+	/// @see IFilesystemOperations::mkdir
+	uint8_t mkdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	              inode_t parent, const HString &name, uint16_t mode, uint16_t umask,
+	              uint8_t copysgid, inode_t *inode, Attributes &attr) override;
 	uint8_t removeChunkFromFile(const FsContext &context,
 	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint64_t chunkId) override;
