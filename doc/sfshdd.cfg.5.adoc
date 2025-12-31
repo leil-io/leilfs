@@ -17,10 +17,31 @@ parts contain information about the chunks, while data parts are only aligned
 data. It is possible to store the metadata parts in a different directory, or
 even in a separate drive, by splitting both paths using ' | ':
 
+----
 /path/to/metadata | /path/to/data
+----
 
 This way, the metadata parts can be stored, for instance, in NVMe and the data
 parts in HDD.
+
+=== HOST-MANAGED SMR SPECIFICS
+
+With the proprietary chunkserver plugin for Host-Managed SMR drives, use the
+`zonefs:` prefix with the following syntax:
+
+----
+[*]zonefs:/path/to/metadata | /path/to/data
+----
+
+For example:
+
+----
+zonefs:/mnt/nvme1 | /mnt/host-managed-smr1
+----
+
+Note that the `/path/to/metadata` should always be on a non-SMR drive. The
+optional `*` has the same meaning as described above and marks the drive for
+removal.
 
 == REPORTING BUGS
 
