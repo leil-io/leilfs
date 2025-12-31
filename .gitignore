@@ -98,6 +98,7 @@ tests/test_suites/FDBTests
 src/mount/windows
 create-win-release.bat
 deliver-win-release.bat
+sign-windows-client-binary.ps1
 
 # Test setup #
 ##############
