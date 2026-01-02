@@ -340,6 +340,12 @@ int64_t FilesystemNodeOperationsBase::getSize(FSNode *node) {
 	return stats.size;
 }
 
+uint64_t FilesystemNodeOperationsBase::getNumberOfParents(
+    const FilesystemOperationContext &fsOpContext, const FSNode *node) {
+	(void)fsOpContext;  // unused in this implementation
+	return node->parents.size();
+}
+
 FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(FSNode *node) {
 	assert(node);
 
@@ -535,8 +541,10 @@ void FilesystemNodeOperationsBase::fillAttr(const FsContext &context, FSNode *no
 	         context.sesflags(), attr);
 }
 
-void FilesystemNodeOperationsBase::removeEdge(uint32_t timeStamp, FSNodeDirectory *parent,
+void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &fsOpContext,
+                                              uint32_t timeStamp, FSNodeDirectory *parent,
                                               const HString &childName, FSNode *childNode) {
+	(void)fsOpContext;  // Unused in this implementation
 	assert(parent);
 
 	auto dirIter = parent->find(childName);
@@ -1061,6 +1069,12 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 	}
 }
 
+uint64_t FilesystemNodeOperationsBase::getNumberOfDirEntries(
+    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) {
+	(void)fsOpContext;  // unused in this implementation
+	return nodeDir->entries.size();
+}
+
 void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOpContext,
                                           inode_t rootINode, uint32_t uid, uint32_t gid,
                                           uint32_t auid, uint32_t agid, uint8_t sesflags,
@@ -1412,11 +1426,12 @@ void FilesystemNodeOperationsBase::removeNode(uint32_t timeStamp, FSNode *node) 
 	}
 }
 
-void FilesystemNodeOperationsBase::unlink(uint32_t timeStamp, FSNodeDirectory *parent,
+void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOpContext,
+                                          uint32_t timeStamp, FSNodeDirectory *parent,
                                           const HString &childName, FSNode *childNode) {
 	std::string path;
 
-	if (childNode->parents.size() == 1) {  // last link
+	if (getNumberOfParents(fsOpContext, childNode) == 1) {  // last link
 		// go to trash or reserved ? - get path
 		if (childNode->type == FSNodeType::kFile &&
 		    (childNode->trashtime > 0 ||
@@ -1425,8 +1440,9 @@ void FilesystemNodeOperationsBase::unlink(uint32_t timeStamp, FSNodeDirectory *p
 		}
 	}
 
-	removeEdge(timeStamp, parent, childName, childNode);
-	if (!childNode->parents.empty()) { return; }
+	removeEdge(fsOpContext, timeStamp, parent, childName, childNode);
+
+	if (getNumberOfParents(fsOpContext, childNode) != 0) { return; }
 
 	// last link
 	if (childNode->type == FSNodeType::kFile) {

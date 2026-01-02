@@ -80,9 +80,13 @@ public:
 	uint8_t link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 	             const HString &name_dst, inode_t *inode, Attributes *attr) override;
 	uint8_t purge(const FsContext &context, inode_t inode) override;
-	uint8_t rename(const FsContext &context, inode_t parent_src, const HString &name_src,
-	               inode_t parent_dst, const HString &name_dst, inode_t *inode,
-	               Attributes *attr) override;
+
+	/// Renames (moves) a filesystem node from one location to another.
+	/// @see IFilesystemOperations::rename
+	uint8_t rename(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	               inode_t parent_src, const HString &name_src, inode_t parent_dst,
+	               const HString &name_dst, inode_t *inode, Attributes *attr) override;
+
 	uint8_t release(const FsContext &context, inode_t inode, uint32_t sessionid) override;
 	uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
 	                     inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
@@ -150,7 +154,12 @@ public:
 	                            uint64_t chunkId) override;
 	uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	               uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) override;
-	uint8_t rmdir(const FsContext &context, inode_t parent, const HString &name) override;
+
+	/// Removes an empty directory from the filesystem.
+	/// @see IFilesystemOperations::rmdir
+	uint8_t rmdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	              inode_t parent, const HString &name) override;
+
 	uint8_t recursiveRemove(const FsContext &context, inode_t parent, const HString &name,
 	                        const std::function<void(int)> &callback, uint32_t job_id) override;
 	uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags, void **dnode,
@@ -180,7 +189,12 @@ public:
 	uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
 	                 const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
 	                 uint8_t mode) override;
-	uint8_t unlink(const FsContext &context, inode_t parent, const HString &name) override;
+
+	/// Removes (unlinks) a file or non-directory node from the filesystem.
+	/// @see IFilesystemOperations::unlink
+	uint8_t unlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	               inode_t parent, const HString &name) override;
+
 	uint8_t getChunksInfo(const FsContext &context, uint32_t current_ip, inode_t inode,
 	                      uint32_t chunk_index, uint32_t chunk_count,
 	                      std::vector<ChunkWithAddressAndLabel> &chunks) override;

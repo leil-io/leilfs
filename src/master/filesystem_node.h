@@ -46,10 +46,16 @@ public:
 	                   AclInheritance inheritAcl, inode_t requestedINode = 0) override;
 	void link(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	          FSNodeDirectory *parent, FSNode *child, const HString &name) override;
-	void unlink(uint32_t timeStamp, FSNodeDirectory *parent, const HString &childName,
-	            FSNode *childNode) override;
-	void removeEdge(uint32_t timeStamp, FSNodeDirectory *parent, const HString &childName,
-	                FSNode *childNode) override;
+
+	/// Unlink the child node from the parent directory.
+	/// @see IFilesystemNodeOperations::unlink
+	void unlink(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	            FSNodeDirectory *parent, const HString &childName, FSNode *childNode) override;
+
+	/// Remove the edge between parent and child nodes.
+	/// @see IFilesystemNodeOperations::removeEdge
+	void removeEdge(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                FSNodeDirectory *parent, const HString &childName, FSNode *childNode) override;
 
 	void updateCTime(FSNode *node, uint32_t ctime) override;
 	void fillAttr(FSNode *node, FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid,
@@ -58,6 +64,7 @@ public:
 	              Attributes &attr) override;
 	void getStats(FSNode *node, StatsRecord *statsOut) override;
 	void addStats(FSNodeDirectory *parent, StatsRecord *stats) override;
+	void subStats(FSNodeDirectory *parent, StatsRecord *stats) override;
 	void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
 	                 StatsRecord *previousStats) override;
 	void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) override;
@@ -71,11 +78,23 @@ public:
 #endif
 	int64_t getSize(FSNode *node) override;
 
+	/// Returns the number of parents of the given node.
+	/// @see IFilesystemNodeOperations::getNumberOfParents
+	/// @note fsOpContext is unused in this in-memory implementation.
+	uint64_t getNumberOfParents(const FilesystemOperationContext &fsOpContext,
+	                            const FSNode *node) override;
+
 #ifndef METARESTORE
 	uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) override;
 	void getDirData(inode_t rootINode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
 	                uint8_t sesflags, FSNodeDirectory *nodeDir, uint8_t *outBuffer,
 	                uint8_t withAttr) override;
+
+	/// Returns the number of entries in the given directory.
+	/// @see IFilesystemNodeOperations::getNumberOfDirEntries
+	/// @note fsOpContext is unused in this in-memory implementation.
+	uint64_t getNumberOfDirEntries(const FilesystemOperationContext &fsOpContext,
+	                               const FSNodeDirectory *nodeDir) override;
 
 	/// Get entries of directory node \a nodeDir.
 	/// @see IFilesystemNodeOperations::getDir
@@ -199,7 +218,6 @@ protected:
 private:
 	// Private helpers
 
-	void subStats(FSNodeDirectory *parent, StatsRecord *stats);
 	void removeNode(uint32_t timeStamp, FSNode *node);
 
 	/// Number of blocks in the last chunk before EOF

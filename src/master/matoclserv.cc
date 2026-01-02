@@ -2195,7 +2195,20 @@ void matoclserv_fuse_unlink(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->unlink(context, inode, HString((char *)name, nleng));
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->unlink(context, fsOpContext, inode, HString((char *)name, nleng));
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err(
+				    "matoclserv_fuse_unlink: transaction failed to commit: parent inode {}, name {}",
+				    inode, std::string(reinterpret_cast<const char*>(name), nleng));
+
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_UNLINK, sizeof(msgid) + sizeof(status));
@@ -2278,7 +2291,20 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->rmdir(context, inode, HString((char *)name, nleng));
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->rmdir(context, fsOpContext, inode, HString((char *)name, nleng));
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err(
+				    "matoclserv_fuse_rmdir: transaction failed to commit: parent inode {}, name {}",
+				    inode, std::string(reinterpret_cast<const char*>(name), nleng));
+
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_RMDIR, sizeof(msgid) + sizeof(status));
@@ -2348,9 +2374,22 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status =
-		    gFSOperations->rename(context, inode_src, HString((char *)name_src, nleng_src),
-		                          inode_dst, HString((char *)name_dst, nleng_dst), &inode, &attr);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->rename(context, fsOpContext, inode_src,
+		                               HString((char *)name_src, nleng_src), inode_dst,
+		                               HString((char *)name_dst, nleng_dst), &inode, &attr);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err(
+				    "matoclserv_fuse_rename: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
+				    inode_src, std::string(reinterpret_cast<const char*>(name_src), nleng_src),
+				    inode_dst, std::string(reinterpret_cast<const char*>(name_dst), nleng_dst));
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	if (status == SAUNAFS_STATUS_OK) {

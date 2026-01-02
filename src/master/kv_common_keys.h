@@ -60,3 +60,8 @@ inline constexpr std::string_view kDirParentKeyPrefix = "DIR_PARENT_";
 /// Prefix for reverse index for files and links (multiple parents allowed via hard links)
 /// Format: PARENT_<ChildId><ParentId>:<Empty value>
 inline constexpr std::string_view kParentKeyPrefix = "PARENT_";
+
+/// Prefix for counting directory nodes without querying all entries
+/// Format: DIR_NODES_COUNT_<ParentId>:<DirEntriesCount>.
+/// DirEntriesCount is stored as little-endian uint64_t for atomic updates.
+inline constexpr std::string_view kDirNodesCountPrefix = "DIR_NODES_COUNT_";
