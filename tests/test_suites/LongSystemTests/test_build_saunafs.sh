@@ -26,11 +26,23 @@ assert_success git clone "https://github.com/leil-io/saunafs.git"
 
 echo "DEBUG 3"
 
-cd saunafs
+echo "SOURCE_DIR: ${SOURCE_DIR}"
+echo "SOURCE_DIR: ${TEMP_DIR}"
+cp -r "${SOURCE_DIR}" "${TEMP_DIR}" || true
+SAUNAFS_FOLDER=$(basename "${SOURCE_DIR}")
+cd "${TEMP_DIR}/${SAUNAFS_FOLDER}" || exit 1
 
+rm -rf build
 mkdir -p build
 echo "DEBUG 4"
 cd build
 echo "DEBUG 5"
-assert_success cmake .. -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+echo "VCPKG_ROOT: ${VCPKG_ROOT}"
+
+assert_success cmake .. \
+    -G 'Unix Makefiles' \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_TOOLCHAIN_FILE="../vcpkg/scripts/buildsystems/vcpkg.cmake"
+
 assert_success make -j${PARALLEL_JOBS}
