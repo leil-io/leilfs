@@ -169,8 +169,15 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			command_pid_  = -1;
 
 			if (is_promote_pending_) {
-				syslog(LOG_WARNING, "Starting pending promotion to master mode");
-				nodePromote();
+				// Only execute pending promotion if node is still Leader. This prevents
+				// synchronization issues between uRaft state and SaunaFS state.
+				if (state_.type == kLeader) {
+					syslog(LOG_WARNING, "Starting pending promotion to master mode to the Leader");
+					nodePromote();
+				} else {
+					syslog(LOG_WARNING, "Canceling pending promotion (no longer Leader, state=%d)",
+					       state_.type);
+				}
 				is_promote_pending_ = false;
 			}
 		} else if (command_type_ == kCmdPromote) {
@@ -178,8 +185,16 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 				syslog(LOG_NOTICE, "Metadata server switch to master mode done");
 				node_alive_ = true;
 
-				// Start floating IP only after successful promotion
-				startFloatingIpManager();
+				if (state_.type == kLeader) {
+					// Start floating IP only if promoted node is still Leader
+					startFloatingIpManager();
+				} else {
+					syslog(LOG_ERR,
+					       "Promotion completed but no longer uRaft Leader (state=%d) - reverting",
+					       state_.type);
+					// Immediately demote to fix inconsistency
+					nodeDemote();
+				}
 			} else {
 				syslog(LOG_ERR, "Promotion failed with exit code: %d", WEXITSTATUS(status));
 				handlePromotionFailure();
@@ -189,8 +204,14 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			command_pid_  = -1;
 
 			if (is_demote_pending_) {
-				syslog(LOG_WARNING, "Starting pending demotion to slave mode");
-				nodeDemote();
+				// Only demote if node is no longer Leader
+				if (state_.type != kLeader) {
+					syslog(LOG_WARNING,
+					       "Starting pending demotion to slave mode: no longer the Leader");
+					nodeDemote();
+				} else {
+					syslog(LOG_WARNING, "Cancelling pending demotion: still Leader)");
+				}
 				is_demote_pending_ = false;
 			}
 		} else if (command_type_ == kCmdStatusDead) {
