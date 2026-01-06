@@ -56,6 +56,9 @@ public:
 	//! called by uRaft when it needs to know metadata version.
 	virtual uint64_t nodeGetVersion();
 
+	//! Returns true when this node runs in elector mode.
+	bool isElectorNode() const override;
+
 	//! called by uRaft with new leader id.
 	virtual void     nodeLeader(int id);
 

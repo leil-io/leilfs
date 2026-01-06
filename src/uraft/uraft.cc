@@ -282,7 +282,17 @@ void uRaft::rpcAppend(int id, const RpcRequest &data) {
 	assert(state_.type != kLeader);
 	assert(data.term >= state_.current_term);
 
-	if (id != state_.leader_id) {
+	if (isElectorNode()) {
+		// Electors preserve the highest data version from the Leader in every heartbeat,
+		// as they do not have a local metadata server to fetch it from.
+		// This ensures that electors always have the latest metadata version sent by the Leader and
+		// will not vote for candidates with outdated versions.
+		state_.data_version = std::max(state_.data_version, data.data_version);
+	}
+
+	if (id != state_.leader_id && !isElectorNode()) {
+		// When the Leader changes, metadata nodes (non-electors) update their data version from
+		// their local metadata server through the nodeGetVersion() function.
 		state_.data_version = nodeGetVersion();
 	}
 
@@ -318,7 +328,10 @@ void uRaft::rpcAppendResponse(int id, const RpcResponse &data) {
 void uRaft::rpcReqVote(int id, const RpcRequest &data) {
 	RpcResponse res;
 
-	if (state_.voted_for < 0) {
+	if (state_.voted_for < 0 && !isElectorNode()) {
+		// Only metadata nodes (non-electors) update their data version from local metadata server.
+		// Electors have no local metadata server, so they preserve the highest version ever seen
+		// through heartbeats in rpcAppend().
 		state_.data_version = nodeGetVersion();
 	}
 

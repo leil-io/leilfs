@@ -43,7 +43,7 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	("LOCAL_MASTER_MATOCL_PORT", po::value<int>()->default_value(9421), "local master matocl port")
 	("LOCAL_MASTER_CHECK_PERIOD", po::value<int>()->default_value(250), "local master check status period")
 	("URAFT_ELECTOR_MODE", po::value<int>()->default_value(0), "run in elector mode")
-	("URAFT_GETVERSION_TIMEOUT", po::value<int>()->default_value(50), "getversion timeout (ms)")
+	("URAFT_GETVERSION_TIMEOUT", po::value<int>()->default_value(100), "getversion timeout (ms)")
 	("URAFT_PROMOTE_TIMEOUT", po::value<int>()->default_value(1000000000), "promote timeout (ms)")
 	("URAFT_DEMOTE_TIMEOUT", po::value<int>()->default_value(1000000000), "demote timeout (ms)")
 	("URAFT_DEAD_HANDLER_TIMEOUT", po::value<int>()->default_value(1000000000), "metadata server dead handler timeout (ms)")

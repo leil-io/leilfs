@@ -111,7 +111,7 @@ expected to be fast, such as:
 
 If this timeout is too low, the daemon may repeatedly log timeouts and keep a node blocked for
 promotions (`blocked_promote=1`), +
-preventing elections. (default: 200).
+preventing elections. (default: 100).
 
 *URAFT_PROMOTE_TIMEOUT*:: *[advanced]* Timeout in milliseconds for promotion
 (`saunafs-uraft-helper promote`).

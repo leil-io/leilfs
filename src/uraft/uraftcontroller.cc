@@ -32,7 +32,7 @@ uRaftController::uRaftController(boost::asio::io_context &ios)
 	opt_.check_node_status_period = 250;
 	opt_.check_cmd_status_period  = 100;
 	opt_.check_floating_ip_period = 500;
-	opt_.getversion_timeout       = 50;
+	opt_.getversion_timeout       = 100;
 	opt_.promote_timeout          = 1000000;
 	opt_.demote_timeout           = 1000000;
 	opt_.dead_handler_timeout     = 1000000;
@@ -118,28 +118,31 @@ uint64_t uRaftController::nodeGetVersion() {
 		return 0;
 	}
 
-	uint64_t    res;
+	std::string versionStr;
+	std::vector<std::string> params = {"saunafs-uraft-helper", "metadata-version",
+	                                   opt_.local_master_server,
+	                                   boost::lexical_cast<std::string>(opt_.local_master_port)};
 
-	try {
-		std::string version;
-
-		std::vector<std::string> params = {
-			"saunafs-uraft-helper", "metadata-version", opt_.local_master_server,
-			boost::lexical_cast<std::string>(opt_.local_master_port)
-		};
-
-		if (!runCommand(params, version, opt_.getversion_timeout)) {
-			syslog(LOG_WARNING, "Get metadata version timeout.");
-			return state_.data_version;
-		}
-
-		res = boost::lexical_cast<uint64_t>(version.c_str());
-	} catch (...) {
-		syslog(LOG_ERR, "Invalid metadata version value.");
-		res = state_.data_version;
+	if (!runCommand(params, versionStr, opt_.getversion_timeout)) {
+		syslog(LOG_WARNING, "Get metadata version timeout - metadata server may be hung");
+		// Return 0 instead of cached version to prevent stale node from being elected
+		return 0;
 	}
 
-	return res;
+	try {
+		auto version = boost::lexical_cast<uint64_t>(versionStr.c_str());
+		return version;
+	} catch (...) {
+		syslog(LOG_ERR,
+		       "Invalid metadata version output (got: '%s') - metadata server appears hung",
+		       versionStr.substr(0, 100).c_str());
+		// Return 0 to prevent unhealthy node from being elected
+		return 0;
+	}
+}
+
+bool uRaftController::isElectorNode() const {
+	return opt_.elector_mode != 0;
 }
 
 void uRaftController::nodeLeader(int id) {

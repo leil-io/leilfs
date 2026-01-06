@@ -131,6 +131,14 @@ public:
 	 */
 	virtual uint64_t nodeGetVersion();
 
+	/*! \brief Returns true when this node runs in elector mode, false otherwise.
+	 *
+	 * Electors do not have a local metadata server, so some version-related logic may need to
+	 * behave differently.
+	 * \note This function is overridden in uRaftController class, which implements elector mode.
+	 */
+	virtual bool isElectorNode() const = 0;
+
 protected:
 	void checkTerm(int id, const RpcHeader &data);
 	bool validPacket(const uint8_t *data, size_t size);
