@@ -5,10 +5,23 @@ target_link_libraries(saunafs-admin-lib sfscommon)
 create_unittest(saunafs-admin-lib ${SAUNAFS_ADMIN_TESTS})
 link_unittest(saunafs-admin-lib sfscommon)
 
+set(ADMIN_RC_FILE "")
+if(MINGW)
+  include(WindowsVersion)
+  sfs_configure_version_rc(
+    "${CMAKE_CURRENT_BINARY_DIR}/saunafs-admin-version.rc"
+    "SaunaFS Admin"
+    "Administrative Tool for SaunaFS"
+    "saunafs-admin"
+    "saunafs-admin.exe"
+  )
+  set(ADMIN_RC_FILE "${CMAKE_CURRENT_BINARY_DIR}/saunafs-admin-version.rc")
+endif()
+
 if(ICON_RESOURCE_FILE STREQUAL "")
-  add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN})
+  add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN} ${ADMIN_RC_FILE})
 else()
-  add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN} ${ICON_RESOURCE_FILE})
+  add_executable(saunafs-admin ${SAUNAFS_ADMIN_MAIN} ${ICON_RESOURCE_FILE} ${ADMIN_RC_FILE})
 endif()
 target_link_libraries(saunafs-admin saunafs-admin-lib)
 install(TARGETS saunafs-admin RUNTIME DESTINATION ${BIN_SUBDIR})
