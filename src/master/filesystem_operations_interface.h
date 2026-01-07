@@ -89,9 +89,49 @@ public:
 	virtual uint8_t link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 	                     const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
 	virtual uint8_t purge(const FsContext &context, inode_t inode) = 0;
-	virtual uint8_t rename(const FsContext &context, inode_t parent_src, const HString &name_src,
-	                       inode_t parent_dst, const HString &name_dst, inode_t *inode,
-	                       Attributes *attr) = 0;
+
+	/// Renames (moves) a filesystem node from one location to another.
+	///
+	/// This method performs an atomic rename operation, moving a node from the source
+	/// location (parent_src/name_src) to the destination location (parent_dst/name_dst).
+	/// If a node already exists at the destination, it will be unlinked first (subject
+	/// to validation). The operation handles various constraints including:
+	/// - Directory ancestry checks (cannot move a directory into its own subtree)
+	/// - Quota validation (checks if the operation would exceed quota limits)
+	/// - Sticky bit permissions on both source and destination
+	/// - Case-insensitive filesystem support
+	/// - Non-empty directory collision prevention
+	///
+	/// The actual rename is performed by: unlinking the destination (if exists),
+	/// removing the edge from source parent, and creating a new link in the destination parent.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The extra operation context carrying a transaction in some
+	/// implementations.
+	/// @param parent_src The inode number of the source parent directory.
+	/// @param name_src The name of the node in the source directory.
+	/// @param parent_dst The inode number of the destination parent directory.
+	/// @param name_dst The desired name in the destination directory.
+	/// @param[in,out] inode Pointer to inode_t. On input (for shadow/metarestore), the expected
+	///                      inode to verify. On output, contains the inode of the renamed node.
+	/// @param[out] attr Optional pointer to Attributes to be filled with the node's attributes
+	///                  after the rename operation.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EINVAL if name validation fails or trying to move directory into
+	///           its own subtree
+	///         - SAUNAFS_ERROR_ENOENT if source node doesn't exist
+	///         - SAUNAFS_ERROR_EPERM if sticky bit access check fails
+	///         - SAUNAFS_ERROR_ENOTEMPTY if destination is a non-empty directory
+	///         - SAUNAFS_ERROR_QUOTA if quota limits would be exceeded
+	///         - SAUNAFS_ERROR_MISMATCH if inode doesn't match (shadow/metarestore only)
+	///         - Other error codes as returned by node operations
+	///
+	/// @note If source and destination are the same, returns SAUNAFS_STATUS_OK immediately.
+	/// @note Logs the operation as "MOVE" in the changelog for master personality.
+	virtual uint8_t rename(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t parent_src, const HString &name_src, inode_t parent_dst,
+	                       const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
 	virtual uint8_t release(const FsContext &context, inode_t inode, uint32_t sessionid) = 0;
 	virtual uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr,
 	                             uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
@@ -224,7 +264,40 @@ public:
 	                                    inode_t inode, uint64_t chunkId) = 0;
 	virtual uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	                       uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) = 0;
-	virtual uint8_t rmdir(const FsContext &context, inode_t parent, const HString &name) = 0;
+
+	/// Removes an empty directory from the filesystem.
+	///
+	/// This method removes a directory if and only if it is empty (contains no entries).
+	/// The operation performs comprehensive validation including:
+	/// - Session verification (must be a non-meta session)
+	/// - Write permission check on the parent directory
+	/// - Name validation
+	/// - Node existence and type verification (must be a directory)
+	/// - Sticky bit access control
+	/// - Empty directory check (must have 0 entries)
+	///
+	/// If all checks pass, the directory is unlinked from its parent, which may move it
+	/// to trash or delete it permanently depending on trashtime and session state.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The extra operation context carrying a transaction in some
+	///                    implementations.
+	/// @param parent The inode number of the parent directory containing the directory to remove.
+	/// @param name The name of the directory to remove.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EINVAL if name validation fails
+	///         - SAUNAFS_ERROR_ENOENT if the directory doesn't exist
+	///         - SAUNAFS_ERROR_ENOTDIR if the node exists but is not a directory
+	///         - SAUNAFS_ERROR_ENOTEMPTY if the directory contains entries
+	///         - SAUNAFS_ERROR_EPERM if sticky bit access check fails
+	///         - Other error codes as returned by node operations
+	///
+	/// @note Logs the operation as "UNLINK" (not "RMDIR") in the changelog.
+	/// @note The actual deletion is performed by calling unlink() on the node operations.
+	virtual uint8_t rmdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      inode_t parent, const HString &name) = 0;
+
 	virtual uint8_t recursiveRemove(const FsContext &context, inode_t parent, const HString &name,
 	                                const std::function<void(int)> &callback, uint32_t job_id) = 0;
 	virtual uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags,
@@ -271,7 +344,41 @@ public:
 	virtual uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened,
 	                         uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
 	                         const uint8_t *attrvalue, uint8_t mode) = 0;
-	virtual uint8_t unlink(const FsContext &context, inode_t parent, const HString &name) = 0;
+
+	/// Removes (unlinks) a file or non-directory node from the filesystem.
+	///
+	/// This method removes a non-directory node (regular file, symlink, socket, FIFO, or device)
+	/// from the specified parent directory. The operation performs comprehensive validation:
+	/// - Session verification (must be a non-meta session)
+	/// - Write permission check on the parent directory
+	/// - Case-insensitive name resolution (if applicable)
+	/// - Name validation
+	/// - Node existence verification
+	/// - Sticky bit access control
+	/// - Directory rejection (cannot unlink directories - use rmdir instead)
+	///
+	/// If all checks pass, the node is unlinked. If this is the last link to the node,
+	/// it may be moved to trash (if trashtime > 0), moved to reserved (if has open sessions),
+	/// or deleted permanently.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The extra operation context carrying a transaction in some
+	///                    implementations.
+	/// @param parent The inode number of the parent directory containing the node.
+	/// @param name The name of the node to unlink.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EINVAL if name validation fails
+	///         - SAUNAFS_ERROR_ENOENT if the node doesn't exist
+	///         - SAUNAFS_ERROR_EPERM if the node is a directory or sticky bit access check fails
+	///         - Other error codes as returned by node operations
+	///
+	/// @note This operation only works on non-directory nodes. Use rmdir() for directories.
+	/// @note Logs the operation as "UNLINK" in the changelog.
+	/// @note Supports case-insensitive filesystems with automatic name resolution.
+	virtual uint8_t unlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t parent, const HString &name) = 0;
+
 	virtual uint8_t getChunksInfo(const FsContext &context, uint32_t current_ip, inode_t inode,
 	                              uint32_t chunk_index, uint32_t chunk_count,
 	                              std::vector<ChunkWithAddressAndLabel> &chunks) = 0;

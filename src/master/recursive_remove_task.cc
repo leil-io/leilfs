@@ -51,7 +51,15 @@ void RemoveTask::doUnlink(uint32_t ts, FSNodeDirectory *wd, FSNode *child) {
 	gFSOperations->changeLog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
 	                         gFSOperations->nodeOperations()->escapeName(*current_subtask_).c_str(),
 	                         child->id);
-	gFSOperations->nodeOperations()->unlink(ts, wd, *current_subtask_, child);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	gFSOperations->nodeOperations()->unlink(fsOpContext, ts, wd, *current_subtask_, child);
+
+	// commit the transaction
+	if (fsOpContext.hasReadWriteTransaction() && !fsOpContext.getReadWriteTransaction()->commit()) {
+		throw std::runtime_error("Failed to commit unlink transaction");
+	}
 }
 
 int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {

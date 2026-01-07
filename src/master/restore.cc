@@ -360,9 +360,24 @@ int do_move(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFSOperations->rename(FsContext::getForRestore(ts), parent_src,
-	                             HString((const char *)name_src), parent_dst,
-	                             HString((const char *)name_dst), &inode, nullptr);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->rename(FsContext::getForRestore(ts), fsOpContext, parent_src,
+	                                   HString((const char *)name_src), parent_dst,
+	                                   HString((const char *)name_dst), &inode, nullptr);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err(
+			    "do_move: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
+			    parent_src, (char *)name_src, parent_dst, (char *)name_dst);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_lock_op(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {

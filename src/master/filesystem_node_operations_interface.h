@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -137,9 +138,47 @@ public:
 	                           inode_t requestedINode = 0) = 0;
 	virtual void link(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                  FSNodeDirectory *parent, FSNode *child, const HString &name) = 0;
-	virtual void unlink(uint32_t timeStamp, FSNodeDirectory *parent, const HString &childName,
-	                    FSNode *childNode) = 0;
-	virtual void removeEdge(uint32_t timeStamp, FSNodeDirectory *parent, const HString &childName,
+
+	/// Removes the last link to a node from the filesystem.
+	///
+	/// This method handles the removal of the edge between parent and child, and manages
+	/// the final disposal of the node if this was its last parent link. Depending on the
+	/// node's configuration and state, the node may be:
+	/// - Moved to trash (if trashtime > 0)
+	/// - Moved to reserved (if still has open sessions)
+	/// - Permanently deleted (if neither condition applies)
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param timeStamp The current timestamp for the operation.
+	/// @param parent The parent directory containing the child.
+	/// @param childName The name of the child entry in the parent directory.
+	/// @param childNode The child node to unlink.
+	///
+	/// @note Directories can only have one parent, but files may have multiple hard links.
+	///       The node is only removed/trashed when the last link is removed.
+	/// @note This method calls removeEdge() to handle the edge removal and parent updates.
+	virtual void unlink(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                    FSNodeDirectory *parent, const HString &childName, FSNode *childNode) = 0;
+
+	/// Removes an edge (directory entry) between a parent directory and a child node.
+	///
+	/// This method removes the directory entry from the parent, updates the child's parent list,
+	/// adjusts parent directory statistics (size, timestamps, nlink), and handles case-insensitive
+	/// filesystems. Unlike unlink(), this method only removes the link itself and does NOT handle
+	/// the final disposal of nodes (moving to trash/reserved or deletion).
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param timeStamp The current timestamp for updating mtime/ctime.
+	/// @param parent The parent directory containing the edge.
+	/// @param childName The name of the child entry to remove.
+	/// @param childNode The child node being unlinked from the parent.
+	///
+	/// @note This is called by unlink() as part of the unlinking process.
+	/// @note After removing the edge, the child may still exist if it has other parent links.
+	/// @note Parent directory's nlink is decremented only if the child is a directory.
+	/// @note Emits an edgeRemovedSignal after the edge is removed.
+	virtual void removeEdge(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                        FSNodeDirectory *parent, const HString &childName,
 	                        FSNode *childNode) = 0;
 
 	virtual void updateCTime(FSNode *node, uint32_t ctime) = 0;
@@ -149,6 +188,7 @@ public:
 	                      Attributes &attr) = 0;
 	virtual void getStats(FSNode *node, StatsRecord *statsOut) = 0;
 	virtual void addStats(FSNodeDirectory *parent, StatsRecord *stats) = 0;
+	virtual void subStats(FSNodeDirectory *parent, StatsRecord *stats) = 0;
 	virtual void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
 	                         StatsRecord *previousStats) = 0;
 	virtual void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) = 0;
@@ -162,11 +202,33 @@ public:
 #endif
 	virtual int64_t getSize(FSNode *node) = 0;
 
+	/// Returns the number of parents of the given node, possibly reusing the transaction
+	/// inside fsOpContext.
+	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
+	/// @param node The node whose parents are to be counted.
+	/// @return The number of parents of the node.
+	/// @note Directories can't have multiple parents to keep a tree structure, but files can have
+	///       multiple hard links.
+	/// @note In-memory backend: could return node->parents.size() directly.
+	/// @note KV backend: should use kDirParentKeyPrefix or kParentKeyPrefix according to node type.
+	virtual uint64_t getNumberOfParents(const FilesystemOperationContext &fsOpContext,
+	                                    const FSNode *node) = 0;
+
 #ifndef METARESTORE
 	virtual uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) = 0;
 	virtual void getDirData(inode_t rootINode, uint32_t uid, uint32_t gid, uint32_t auid,
 	                        uint32_t agid, uint8_t sesflags, FSNodeDirectory *nodeDir,
 	                        uint8_t *outBuffer, uint8_t withAttr) = 0;
+
+	/// Returns the number of entries in the given directory, possibly reusing the transaction
+	/// inside fsOpContext.
+	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
+	/// @param nodeDir The directory node whose entries are to be counted.
+	/// @return The number of entries in the directory.
+	/// @note In-memory backend: could return entries.size() directly.
+	/// @note KV backend: gets atomic counter at kDirNodesCountPrefix_<inode> for O(1) access.
+	virtual uint64_t getNumberOfDirEntries(const FilesystemOperationContext &fsOpContext,
+	                                       const FSNodeDirectory *nodeDir) = 0;
 
 	/// @brief Get entries of directory node using pagination.
 	///

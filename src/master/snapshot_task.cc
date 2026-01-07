@@ -136,7 +136,8 @@ FSNodeFile *SnapshotTask::cloneToExistingFileNode(const FilesystemOperationConte
 		return dst_node;
 	}
 
-	gFSOperations->nodeOperations()->unlink(ts, dst_parent, current_subtask_->second, dst_node);
+	gFSOperations->nodeOperations()->unlink(fsOpContext, ts, dst_parent, current_subtask_->second,
+	                                        dst_node);
 
 	dst_node = static_cast<FSNodeFile *>(gFSOperations->nodeOperations()->createNode(
 	    fsOpContext, ts, dst_parent, current_subtask_->second, FSNodeType::kFile, src_node->mode, 0,
