@@ -862,6 +862,7 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 			if (c->isWritable()) {
 				chunk_emergency_increase_version(c);
 			} else {
+				safs::log_warn("GigaCronos:  chunk_handle_disconnected_copies: ChunkLost,c->operation {},chunkid {} ",uint64_t(c->operation), c->chunkid);
 				chunk_finalize_failed_operation(c);
 			}
 		}

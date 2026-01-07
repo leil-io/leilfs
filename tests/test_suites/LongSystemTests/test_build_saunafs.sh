@@ -11,34 +11,24 @@ MINIMUM_PARALLEL_JOBS=4
 MAXIMUM_PARALLEL_JOBS=16
 PARALLEL_JOBS=$(get_nproc_clamped_between ${MINIMUM_PARALLEL_JOBS} ${MAXIMUM_PARALLEL_JOBS})
 
-echo "DEBUG 1"
-
 cd ${info[mount0]}
 
 mkdir work
 saunafs setgoal ec43 work
 
-echo "DEBUG 2"
-
 cd work
 
-assert_success git clone "https://github.com/leil-io/saunafs.git"
+# assert_success git clone "https://github.com/leil-io/saunafs.git"
 
-echo "DEBUG 3"
+cp -r "${SOURCE_DIR}" ./ || true
 
-echo "SOURCE_DIR: ${SOURCE_DIR}"
-echo "SOURCE_DIR: ${TEMP_DIR}"
-cp -r "${SOURCE_DIR}" "${TEMP_DIR}" || true
 SAUNAFS_FOLDER=$(basename "${SOURCE_DIR}")
-cd "${TEMP_DIR}/${SAUNAFS_FOLDER}" || exit 1
+cd "${SAUNAFS_FOLDER}" || exit 1
 
 rm -rf build
 mkdir -p build
-echo "DEBUG 4"
-cd build
-echo "DEBUG 5"
 
-echo "VCPKG_ROOT: ${VCPKG_ROOT}"
+cd build
 
 assert_success cmake .. \
     -G 'Unix Makefiles' \
