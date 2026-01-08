@@ -235,7 +235,7 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	}
 
 	FSNode *dst_node =
-	    gFSOperations->nodeOperations()->lookup(dst_parent, current_subtask_->second);
+	    gFSOperations->nodeOperations()->lookup(fsOpContext, dst_parent, current_subtask_->second);
 
 	int status = cloneNodeTest(src_node, dst_node, dst_parent);
 	if (status != SAUNAFS_STATUS_OK) {

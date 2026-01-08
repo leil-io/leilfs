@@ -343,6 +343,10 @@ uint8_t FilesystemOperationsBase::getRootInode(inode_t *rootinode, const uint8_t
 
 	name = path;
 	parent = gMetadata->root;
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	for (;;) {
 		while (*name == '/') {
 			name++;
@@ -357,7 +361,8 @@ uint8_t FilesystemOperationsBase::getRootInode(inode_t *rootinode, const uint8_t
 		}
 		hname = HString((const char*)name, nleng);
 		if (nodeOperations_->nameCheck(hname) < 0) { return SAUNAFS_ERROR_EINVAL; }
-		FSNode *child = nodeOperations_->lookup(parent, hname);
+
+		FSNode *child = nodeOperations_->lookup(fsOpContext, parent, hname);
 		if (!child) {
 			return SAUNAFS_ERROR_ENOENT;
 		}
@@ -505,7 +510,8 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	FSNode *child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(workDir), name);
+	FSNode *child =
+	    nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(workDir), name);
 
 	if (!child) {
 		return SAUNAFS_ERROR_ENOENT;
@@ -730,6 +736,7 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 #endif
 
 uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
+                                                   const FilesystemOperationContext &fsOpContext,
                                                    const std::string &inputPath,
                                                    std::string &canonicalPath) {
 	bool caseInsensitiveFS = context.sesflags() & SESFLAG_CASEINSENSITIVE;
@@ -762,7 +769,7 @@ uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
 				baseName = name;
 			}
 
-			FSNode *child = nodeOperations_->lookup(dir, HString(baseName));
+			FSNode *child = nodeOperations_->lookup(fsOpContext, dir, HString(baseName));
 			if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
 			if (!resultPath.empty()) { resultPath += "/"; }
@@ -1136,7 +1143,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 
 	// If filesystem is case-insensitive, get the canonical path for the symlink target
 	if (static_cast<FSNodeDirectory *>(wd)->caseInsensitive) {
-		status = getCanonicalPath(context, path, basePath);
+		status = getCanonicalPath(context, fsOpContext, path, basePath);
 		if (status != SAUNAFS_STATUS_OK) {
 			// Unix-style symlinks allow dangling links, so if the path cannot be resolved,
 			// we just use the original path as-is
@@ -1155,7 +1162,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 		}
 	}
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
-	if (nodeOperations_->isNameUsed(static_cast<FSNodeDirectory *>(wd), name)) {
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 	if (context.isPersonalityMaster() &&
@@ -1232,7 +1239,8 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
 	// Check if name is already used in the parent directory (lookup)
-	if (nodeOperations_->isNameUsed(static_cast<FSNodeDirectory *>(parentNode), name)) {
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(parentNode),
+	                                name)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
@@ -1296,7 +1304,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 
 	auto *workDir = static_cast<FSNodeDirectory *>(workNode);
 
-	if (nodeOperations_->isNameUsed(workDir, name)) { return SAUNAFS_ERROR_EEXIST; }
+	if (nodeOperations_->isNameUsed(fsOpContext, workDir, name)) { return SAUNAFS_ERROR_EEXIST; }
 
 	if (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
 	    fsnodes_quota_exceeded_dir(workNode, {{QuotaResource::kInodes, 1}})) {
@@ -1349,12 +1357,14 @@ uint8_t FilesystemOperationsBase::applyCreate(uint32_t timestamp, inode_t parent
 	if (wd->type != FSNodeType::kDirectory) {
 		return SAUNAFS_ERROR_ENOTDIR;
 	}
-	if (nodeOperations_->isNameUsed(static_cast<FSNodeDirectory *>(wd), name)) {
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		FilesystemOperationContext::TransactionType::kReadWrite);
+
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
 
 	// we pass requested inode number here
 	p = nodeOperations_->createNode(fsOpContext, timestamp, static_cast<FSNodeDirectory *>(wd),
@@ -1400,7 +1410,7 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context,
 
 	if (nodeOperations_->nameCheck(baseName) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	FSNode *child = nodeOperations_->lookup(workDir, baseName);
+	FSNode *child = nodeOperations_->lookup(fsOpContext, workDir, baseName);
 
 	if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
@@ -1444,7 +1454,8 @@ uint8_t FilesystemOperationsBase::recursiveRemove(const FsContext &context, inod
 		return status;
 	}
 
-	FSNode *child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(wd_tmp), name);
+	FSNode *child =
+	    nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(wd_tmp), name);
 	if (!child) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
@@ -1480,7 +1491,7 @@ uint8_t FilesystemOperationsBase::rmdir(const FsContext &context,
 
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	FSNode *child = nodeOperations_->lookup(workDir, name);
+	FSNode *child = nodeOperations_->lookup(fsOpContext, workDir, name);
 
 	if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
@@ -1517,7 +1528,11 @@ uint8_t FilesystemOperationsBase::applyUnlink(uint32_t timestamp, inode_t parent
 
 	if (workDir->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_ENOTDIR; }
 
-	FSNode *child = nodeOperations_->lookup(static_cast<FSNodeDirectory *>(workDir), name);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	FSNode *child =
+	    nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(workDir), name);
 
 	if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
@@ -1527,9 +1542,6 @@ uint8_t FilesystemOperationsBase::applyUnlink(uint32_t timestamp, inode_t parent
 	    !static_cast<FSNodeDirectory *>(child)->entries.empty()) {
 		return SAUNAFS_ERROR_ENOTEMPTY;
 	}
-
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
 
 	nodeOperations_->unlink(fsOpContext, timestamp, static_cast<FSNodeDirectory *>(workDir), name,
 	                        child);
@@ -1590,7 +1602,7 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 
 	if (nodeOperations_->nameCheck(baseNameSrc) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	FSNode *sourceChildNode = nodeOperations_->lookup(sourceWorkDir, baseNameSrc);
+	FSNode *sourceChildNode = nodeOperations_->lookup(fsOpContext, sourceWorkDir, baseNameSrc);
 
 	if (!sourceChildNode) { return SAUNAFS_ERROR_ENOENT; }
 
@@ -1621,7 +1633,7 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 
 	if (nodeOperations_->nameCheck(baseNameDst) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	FSNode *destinationChildNode = nodeOperations_->lookup(destWorkDir, baseNameDst);
+	FSNode *destinationChildNode = nodeOperations_->lookup(fsOpContext, destWorkDir, baseNameDst);
 
 	if (destinationChildNode == sourceChildNode) { return SAUNAFS_STATUS_OK; }
 
@@ -1717,7 +1729,7 @@ uint8_t FilesystemOperationsBase::link(const FsContext &context, inode_t inode_s
 
 	if (nodeOperations_->nameCheck(name_dst) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	if (nodeOperations_->isNameUsed(static_cast<FSNodeDirectory *>(dwd), name_dst)) {
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(dwd), name_dst)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 

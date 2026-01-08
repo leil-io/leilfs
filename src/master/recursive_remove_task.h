@@ -28,6 +28,8 @@
 #include "master/hstring.h"
 #include "master/task_manager.h"
 
+class FilesystemOperationContext;
+
 /*! \brief Implementation of Recursive Remove Task that works with Task Manager.
  *
  * RemoveTask class is used for removing files and directories with
@@ -68,10 +70,12 @@ public:
 	}
 
 private:
-	int retrieveNodes(FSNodeDirectory *&wd, FSNode *&child);
+	int retrieveNodes(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *&wd,
+	                  FSNode *&child);
 
 	/*! \brief Execute unlink operation to remove node. */
-	void doUnlink(uint32_t ts, FSNodeDirectory *wd, FSNode *child);
+	void doUnlink(const FilesystemOperationContext &fsOpContext, uint32_t ts, FSNodeDirectory *wd,
+	              FSNode *child);
 
 private:
 	static const uint32_t kMaxRepeatCounter = 3;
