@@ -1625,3 +1625,10 @@ enum class SugidClearMode : uint8_t {
 // 0x025E
 #define CSTOCL_ADMIN_LIST_DISK_GROUPS (PROTO_BASE + 603)
 /// config:STDSTRING
+
+// CLIENT <-> MASTER TLS SUPPORT
+#define SAU_CLTOMA_STARTTLS (1000U + 800)
+/// -
+
+#define SAU_CLTOMA_ENDTLS (1000U + 801)
+/// -

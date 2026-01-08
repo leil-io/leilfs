@@ -81,6 +81,18 @@ Authenticate to SaunaFS master with 'PASSWORD'.
 Authenticate to SaunaFS master using directly given 'MD5' (only if
 *sfspassword* option is not specified).
 
+*-o tlscertfile=*'PATH'::
+Path to the TLS certificate file the client will use for TLS connections
+(there is no default value).
+
+*-o tlskeyfile=*'PATH'::
+Path to the TLS private key file the client will use for TLS connections
+(there is no default value).
+
+*-o tlsservercacertfile=*'PATH'::
+Path to the trusted CA certificate which is used to authenticate
+to the master (there is no default value).
+
 *-o sfsdelayedinit*::
 Connection with master is done in background - with this option mount can be
 run without network (good for being run from fstab / init scripts etc.).

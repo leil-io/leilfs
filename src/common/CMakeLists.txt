@@ -21,6 +21,9 @@ shared_add_library(sfscommon ${COMMON_SOURCES})
 shared_target_link_libraries(sfscommon STATIC sfserr SHARED sfserr_pic)
 shared_target_link_libraries(sfscommon STATIC slogger SHARED slogger_pic)
 
+# ---- OpenSSL library ----
+shared_target_link_libraries(sfscommon OpenSSL::SSL OpenSSL::Crypto)
+
 if (HAVE_CRCUTIL)
   # Use crcutil Library
   include_directories(SYSTEM ${CRCUTIL_INCLUDE_DIRS}) # skip compiler warnings for external crcutil headers

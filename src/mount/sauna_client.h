@@ -33,6 +33,7 @@
 #include "common/exception.h"
 #include "common/stat32.h"
 #include "common/stat_defs.h"
+#include "common/tls_session.h"
 #include "common/type_defs.h"
 #include "mount/group_cache.h"
 #include "mount/mount_info.h"
@@ -132,6 +133,12 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultAclCacheSize = 1000;
 	static constexpr bool     kDefaultVerbose = false;
 	static constexpr bool     kDirectIO = false;
+
+	// TLS related parameters
+	static constexpr std::string_view kDefaultTlsCertFile = TlsSession::kNoFile;
+	static constexpr std::string_view kDefaultTlsKeyFile = TlsSession::kNoFile;
+	static constexpr std::string_view kDefaultTlsServerCACertFile = TlsSession::kNoFile;
+
 	// Thank you, GCC 4.6, for no delegating constructors
 	FsInitParams()
 	             : bind_host(), host(), port(), meta(false), mountpoint(), subfolder(kDefaultSubfolder),
@@ -178,7 +185,10 @@ struct FsInitParams {
 	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
-	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
+	             message_suppression_period(kDefaultMessageSuppressionPeriod),
+	             tls_cert_file(kDefaultTlsCertFile),
+	             tls_key_file(kDefaultTlsKeyFile),
+	             tls_server_ca_cert_file(kDefaultTlsServerCACertFile) {
 	}
 
 	FsInitParams(const std::string &bind_host, const std::string &host, const std::string &port, const std::string &mountpoint)
@@ -218,7 +228,7 @@ struct FsInitParams {
 	             ignore_utimens_update(kDefaultIgnoreUtimensUpdate),
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
-#endif 
+#endif
 	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
 	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
@@ -226,7 +236,10 @@ struct FsInitParams {
 	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
-	             message_suppression_period(kDefaultMessageSuppressionPeriod) {
+	             message_suppression_period(kDefaultMessageSuppressionPeriod),
+	             tls_cert_file(kDefaultTlsCertFile),
+	             tls_key_file(kDefaultTlsKeyFile),
+	             tls_server_ca_cert_file(kDefaultTlsServerCACertFile) {
 	}
 
 	std::string bind_host;
@@ -296,6 +309,11 @@ struct FsInitParams {
 	bool direct_io;
 	int log_notifications_area;
 	unsigned message_suppression_period;
+
+	// TLS related parameters
+	std::string tls_cert_file;
+	std::string tls_key_file;
+	std::string tls_server_ca_cert_file;
 
 	std::string io_limits_config_file;
 };

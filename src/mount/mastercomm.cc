@@ -55,6 +55,7 @@
 #include "common/md5.h"
 #include "common/saunafs_version.h"
 #include "common/sockets.h"
+#include "common/tls_session.h"
 #include "common/type_defs.h"
 #include "errors/sfserr.h"
 #include "mount/g_io_limiters.h"
@@ -88,6 +89,20 @@ struct threc {
 		pthread_mutex_destroy(mutex.native_handle());
 	}
 };
+
+/// Context of the TLS channel used for communication with SFS master.
+///
+/// If no TLS is used, this is `nullptr`.
+std::unique_ptr<TlsSession> tlsSession;
+int lastHandshakeError = 0;
+
+/// TLS related parameters
+/// These are usually initialized as TlsSession::kNoFile on client startup (see
+/// FsInitParams)
+bool gIsTlsEnabled = false;
+std::string tlsCertFile = "";
+std::string tlsKeyFile = "";
+std::string tlsServerCaCertFile = "";
 
 #define DEFAULT_OUTPUT_BUFFSIZE 0x1000
 #define DEFAULT_INPUT_BUFFSIZE 0x10000
@@ -220,6 +235,76 @@ struct InitParams {
 };
 
 static InitParams gInitParams;
+
+/// Starts or continues a TLS handshake.
+/// \return true if the handshake completed successfully, false otherwise.
+bool fs_tlshandshake() {
+	sassert(tlsSession != nullptr);
+
+#ifndef _WIN32
+	// Temporarily ignore SIGPIPE only during SSL_connect.
+	// This is necessary when the master server does not support TLS,
+	// as a signal may be sent to the process during the connection attempt.
+	struct sigaction old_action, ignore_action;
+	ignore_action.sa_handler = SIG_IGN;
+	sigemptyset(&ignore_action.sa_mask);
+	ignore_action.sa_flags = 0;
+	sigaction(SIGPIPE, &ignore_action, &old_action);
+#endif
+
+	int ret = SSL_connect(tlsSession->session());
+
+#ifndef _WIN32
+	// Restore the previous SIGPIPE handler.
+	sigaction(SIGPIPE, &old_action, nullptr);
+#endif
+
+	if (ret == 1) {
+		// Handshake completed successfully
+		return true;
+	}
+
+	int err = SSL_get_error(tlsSession->session(), ret);
+
+	lastHandshakeError = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		// Non-fatal, handshake can be retried later
+		safs::log_info("TLS handshake in progress (client): {}", opensslErrorString(err));
+		return false;
+	}
+
+	// Fatal error
+	safs::log_warn("TLS handshake failed (client): {}", opensslErrorString(err));
+	return false;
+}
+
+inline int fs_write(int fd, const void *buf, size_t count, int timeout_ms) {
+	if (tlsSession) { return SSL_write(tlsSession->session(), buf, static_cast<int>(count)); }
+
+	return tcptowrite(fd, buf, count, timeout_ms);
+}
+
+inline int fs_read(int fd, void *buf, size_t count, int timeout_ms) {
+	if (tlsSession) { return SSL_read(tlsSession->session(), buf, static_cast<int>(count)); }
+
+	return tcptoread(fd, buf, count, timeout_ms);
+}
+
+void fs_close(void) {
+	if (tlsSession != nullptr) {
+		int ret = SSL_shutdown(tlsSession->session());
+		if (ret < 0) {
+			safs::log_warn("TLS shutdown failed: {}",
+			               opensslErrorString(SSL_get_error(tlsSession->session(), ret)));
+		}
+		tlsSession.reset();
+		safs::log_info("TLS session closed.");
+	}
+
+	tcpclose(fd);
+	fd = -1;
+}
 
 void wrap_write_init(bool isFromMainThread) {
 	bool useInodeBasedWriteAlgorithm = gSaunaFSInitParams.use_inode_based_write_algorithm;
@@ -412,8 +497,19 @@ static bool fs_threc_flush(threc *rec) {
 	std::unique_lock<std::mutex> lock(rec->mutex);
 	const int32_t size = rec->outputBuffer.size();
 
-	if (tcptowrite(fd, rec->outputBuffer.data(), size, kDefaultTcpCommTimeoutMSeconds) != size) {
-		safs_pretty_syslog(LOG_WARNING, "tcp send error: %s", strerr(tcpgetlasterror()));
+	int writtenBytes = fs_write(fd, rec->outputBuffer.data(), size, kDefaultTcpCommTimeoutMSeconds);
+	if (writtenBytes != size) {
+		if (tlsSession) {
+			if (writtenBytes < 0) {
+				int err = SSL_get_error(tlsSession->session(), writtenBytes);
+				safs::log_warn("tls send error: {}", opensslErrorString(err));
+			} else {
+				safs::log_warn("tls send error: short write ({} of {})", writtenBytes, size);
+			}
+		} else {
+			safs::log_warn("tcp send error: %s", strerr(tcpgetlasterror()));
+		}
+
 		disconnect = true;
 		return false;
 	}
@@ -801,7 +897,7 @@ int fs_register_with_get_random(std::vector<std::uint8_t> &registrationMessageBu
 	messageToMaster += kFuseRegisterBlobAclLength;
 	put8bit(&messageToMaster, REGISTER_GETRANDOM);
 
-	if (tcptowrite(fd, registrationMessageBuffer.data(), registerWithGetRandomRequestLength,
+	if (fs_write(fd, registrationMessageBuffer.data(), registerWithGetRandomRequestLength,
 	               kDefaultTcpCommTimeoutMSeconds) !=
 	    (int32_t)(registerWithGetRandomRequestLength)) {
 		if (verbose) {
@@ -809,20 +905,20 @@ int fs_register_with_get_random(std::vector<std::uint8_t> &registrationMessageBu
 		} else {
 			safs::log_warn("error sending data to sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
+	if (fs_read(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
 	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)(registerTotalHeaderInfoLength)) {
 		if (verbose) {
 			fprintf(stderr, "error receiving data from sfsmaster\n");
 		} else {
 			safs::log_warn("error receiving data from sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
@@ -834,8 +930,8 @@ int fs_register_with_get_random(std::vector<std::uint8_t> &registrationMessageBu
 		} else {
 			safs::log_warn("got incorrect answer from sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
@@ -846,20 +942,20 @@ int fs_register_with_get_random(std::vector<std::uint8_t> &registrationMessageBu
 		} else {
 			safs::log_warn("got incorrect answer from sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), kMasterResponseRegisterPacketLength,
+	if (fs_read(fd, registrationMessageBuffer.data(), kMasterResponseRegisterPacketLength,
 	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)kMasterResponseRegisterPacketLength) {
 		if (verbose) {
 			fprintf(stderr, "error receiving data from sfsmaster\n");
 		} else {
 			safs::log_warn("error receiving data from sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
@@ -926,30 +1022,57 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 		memcpy(messageToMaster + subfolderPathLength, passwordDigest.data(), passwordDigestLength);
 	}
 
-	if (tcptowrite(fd, registrationMessageBuffer.data(), fuseRegisterNewSessionRequestLength,
-	               kDefaultTcpCommTimeoutMSeconds) !=
-	    (int32_t)(fuseRegisterNewSessionRequestLength)) {
+	int writtenBytes =
+	    fs_write(fd, registrationMessageBuffer.data(), fuseRegisterNewSessionRequestLength,
+	             kDefaultTcpCommTimeoutMSeconds);
+	if (writtenBytes != (int32_t)(fuseRegisterNewSessionRequestLength)) {
 		if (verbose) {
-			fprintf(stderr, "error sending data to sfsmaster: %s\n", strerr(tcpgetlasterror()));
+			if (tlsSession) {
+				fprintf(stderr, "error sending data to sfsmaster: %s\n",
+				        writtenBytes < 0
+				            ? opensslErrorString(SSL_get_error(tlsSession->session(), writtenBytes))
+				                  .c_str()
+				            : "incomplete write");
+			} else {
+				fprintf(stderr, "error sending data to sfsmaster: %s\n", strerr(tcpgetlasterror()));
+			}
 		} else {
-			safs::log_warn("error sending data to sfsmaster: {}", strerr(tcpgetlasterror()));
+			if (tlsSession) {
+				safs::log_warn("error sending data to sfsmaster: {}",
+				               writtenBytes < 0 ? opensslErrorString(SSL_get_error(
+				                                      tlsSession->session(), writtenBytes))
+				                                : "incomplete write");
+			} else {
+				safs::log_warn("error sending data to sfsmaster: {}", strerr(tcpgetlasterror()));
+			}
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
-	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)(registerTotalHeaderInfoLength)) {
-		int tcplasterr = tcpgetlasterror();
-		const auto *errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
+	int readBytes = fs_read(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
+	                        kDefaultTcpCommTimeoutMSeconds);
+	if (readBytes != static_cast<int32_t>(registerTotalHeaderInfoLength)) {
+		std::string errorMessage = "";
+		if (tlsSession) {
+			if (readBytes < 0) {
+				errorMessage = opensslErrorString(SSL_get_error(tlsSession->session(), readBytes));
+			} else {
+				errorMessage = "TLS recv error: short read";
+			}
+		} else {
+			int tcplasterr = tcpgetlasterror();
+			errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
+		}
+
 		if (verbose) {
-			fprintf(stderr, "error receiving data from sfsmaster: %s\n", errorMessage);
+			fprintf(stderr, "error receiving data from sfsmaster: %s\n", errorMessage.c_str());
 		} else {
 			safs::log_warn("error receiving data from sfsmaster: {}", errorMessage);
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
@@ -961,8 +1084,8 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 		} else {
 			safs::log_warn("got incorrect answer from sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
@@ -983,20 +1106,33 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 		} else {
 			safs::log_warn("got incorrect answer from sfsmaster");
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), messageValueIterator,
-	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageValueIterator) {
-		if (verbose) {
-			fprintf(stderr, "error receiving data from sfsmaster: %s\n", strerr(tcpgetlasterror()));
+	readBytes = fs_read(fd, registrationMessageBuffer.data(), messageValueIterator,
+	                        kDefaultTcpCommTimeoutMSeconds);
+	if (readBytes != static_cast<int32_t>(messageValueIterator)) {
+		std::string errorMessage = "";
+		if (tlsSession) {
+			if (readBytes < 0) {
+				errorMessage = opensslErrorString(SSL_get_error(tlsSession->session(), readBytes));
+			} else {
+				errorMessage = "TLS recv error: short read";
+			}
 		} else {
-			safs::log_warn("error receiving data from sfsmaster: {}", strerr(tcpgetlasterror()));
+			int tcplasterr = tcpgetlasterror();
+			errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		if (verbose) {
+			fprintf(stderr, "error receiving data from sfsmaster: %s\n", errorMessage.c_str());
+		} else {
+			safs::log_warn("error receiving data from sfsmaster: {}", errorMessage);
+		}
+
+		fs_close();
 		return -1;
 	}
 
@@ -1009,8 +1145,8 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 			safs::log_warn("sfsmaster register error: {}",
 			               saunafs_error_string(messageFromMaster[0]));
 		}
-		tcpclose(fd);
-		fd = -1;
+
+		fs_close();
 		return -1;
 	}
 
@@ -1064,6 +1200,64 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 	return 0;
 }
 
+bool fs_starttls_connection() {
+	try {
+		tlsSession = std::make_unique<TlsSession>(fd, false, tlsKeyFile, tlsCertFile,
+		                                          tlsServerCaCertFile, gInitParams.host);
+		safs::log_info("initiating TLS handshake with SFS master");
+
+		auto startTlsRequest = cltoma::startTls::build();
+		ssize_t ret = tcptowrite(fd, startTlsRequest.data(), startTlsRequest.size(),
+		                         kDefaultTcpCommTimeoutMSeconds);
+		if (ret < 0) {
+			safs::log_err("cannot transmit startTls request to SFS master");
+			fs_close();
+			return false;
+		} else if (ret != static_cast<int>(startTlsRequest.size())) {
+			safs::log_err(
+			    "cannot transmit startTls request to SFS master: send(len={} ) returned {}",
+			    startTlsRequest.size(), ret);
+			fs_close();
+			return false;
+		}
+
+		if (!fs_tlshandshake()) {
+			fs_close();
+			return false;
+		}
+		safs::log_info("TLS handshake with SFS master completed successfully");
+	} catch (const std::exception &e) {
+		safs::log_err("TLS setup error: {}", e.what());
+		fs_close();
+		return false;
+	}
+
+	return true;
+}
+
+bool fs_endtls_connection() {
+	try {
+		if (tlsSession) {
+			auto endTlsRequest = cltoma::endTls::build();
+			ssize_t ret = fs_write(fd, endTlsRequest.data(), endTlsRequest.size(),
+			                       kDefaultTcpCommTimeoutMSeconds);
+			if (ret < 0) {
+				safs::log_warn("Failed to send TLS termination request to master: {}",
+				               opensslErrorString(SSL_get_error(tlsSession->session(), ret)));
+				return false;
+			} else {
+				safs::log_info("Sent TLS termination request to master.");
+			}
+		}
+
+	} catch (const std::exception &e) {
+		safs::log_warn("TLS termination error: {}", e.what());
+		return false;
+	}
+
+	return true;
+}
+
 int fs_connect(bool verbose) {
 	std::vector<std::uint8_t> registrationMessageBuffer;
 	uint32_t passwordDigestLength = gInitParams.password_digest.size();
@@ -1103,6 +1297,8 @@ int fs_connect(bool verbose) {
 
 	fd = fs_open_master_connection(verbose);
 	if (fd < 0) { return -1; }
+
+	if (gIsTlsEnabled && !fs_starttls_connection()) { return -1; }
 
 	if (havepassword &&
 	    fs_register_with_get_random(registrationMessageBuffer, passwordDigest, verbose) < 0) {
@@ -1145,6 +1341,8 @@ void fs_reconnect() {
 	fd = fs_open_master_connection();
 	if (fd < 0) { return; }
 
+	if (gIsTlsEnabled && !fs_starttls_connection()) { return; }
+
 	stats_inc(MASTER_CONNECTS, statsptr);
 	messageToMaster = registrationMessageBuffer.data();
 	put32bit(&messageToMaster, CLTOMA_FUSE_REGISTER);
@@ -1158,22 +1356,45 @@ void fs_reconnect() {
 	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MINOR);
 	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MICRO);
 
-	if (tcptowrite(fd, registrationMessageBuffer.data(), registerReconnectTotalPacketLength,
-	               kDefaultTcpCommTimeoutMSeconds) != registerReconnectTotalPacketLength) {
-		safs::log_warn("master: register error (write: {})", strerr(tcpgetlasterror()));
-		tcpclose(fd);
-		fd = -1;
+	int writtenBytes = fs_write(fd, registrationMessageBuffer.data(),
+	                            registerReconnectTotalPacketLength, kDefaultTcpCommTimeoutMSeconds);
+	if (writtenBytes != static_cast<int32_t>(registerReconnectTotalPacketLength)) {
+		if (tlsSession) {
+			if (writtenBytes < 0) {
+				int err = SSL_get_error(tlsSession->session(), writtenBytes);
+				safs::log_warn("register error (TLS write: {})", opensslErrorString(err));
+			} else {
+				safs::log_warn("register error (TLS short write: {} of {})", writtenBytes,
+				               registerReconnectTotalPacketLength);
+			}
+		} else {
+			safs::log_warn("register error (write: {})", strerr(tcpgetlasterror()));
+		}
+
+		fs_close();
 		return;
 	}
 
 	stats_inc(MASTER_BYTESSENT, statsptr, 16 + kFuseRegisterBlobAclLength);
 	stats_inc(MASTER_PACKETSSENT, statsptr);
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
-	              kDefaultTcpCommTimeoutMSeconds) != registerTotalHeaderInfoLength) {
-		safs::log_warn("master: register error (read header: {})", strerr(tcpgetlasterror()));
-		tcpclose(fd);
-		fd = -1;
+	int readBytes = fs_read(fd, registrationMessageBuffer.data(), registerTotalHeaderInfoLength,
+	                        kDefaultTcpCommTimeoutMSeconds);
+	if (readBytes != static_cast<int32_t>(registerTotalHeaderInfoLength)) {
+		std::string errorMessage = "";
+		if (tlsSession) {
+			if (readBytes < 0) {
+				errorMessage = opensslErrorString(SSL_get_error(tlsSession->session(), readBytes));
+			} else {
+				errorMessage = "TLS recv error: short read";
+			}
+		} else {
+			int tcplasterr = tcpgetlasterror();
+			errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
+		}
+
+		safs::log_warn("register error (read header: {})", errorMessage);
+		fs_close();
 		return;
 	}
 
@@ -1181,25 +1402,35 @@ void fs_reconnect() {
 	messageFromMaster = registrationMessageBuffer.data();
 	get32bit(&messageFromMaster, currentMessageValue);
 	if (currentMessageValue != MATOCL_FUSE_REGISTER) {
-		safs::log_warn("master: register error (bad answer: {})", currentMessageValue);
-		tcpclose(fd);
-		fd = -1;
+		safs::log_warn("register error (bad answer: {})", currentMessageValue);
+		fs_close();
 		return;
 	}
 
 	get32bit(&messageFromMaster, currentMessageValue);
 	if (currentMessageValue != 1) {
-		safs::log_warn("master: register error (bad length: {})", currentMessageValue);
-		tcpclose(fd);
-		fd = -1;
+		safs::log_warn("register error (bad length: {})", currentMessageValue);
+		fs_close();
 		return;
 	}
 
-	if (tcptoread(fd, registrationMessageBuffer.data(), currentMessageValue,
-	              kDefaultTcpCommTimeoutMSeconds) != (int32_t)currentMessageValue) {
-		safs::log_warn("master: register error (read data: {})", strerr(tcpgetlasterror()));
-		tcpclose(fd);
-		fd = -1;
+	readBytes = fs_read(fd, registrationMessageBuffer.data(), currentMessageValue,
+	                        kDefaultTcpCommTimeoutMSeconds);
+	if (readBytes != static_cast<int32_t>(currentMessageValue)) {
+		std::string errorMessage = "";
+		if (tlsSession) {
+			if (readBytes < 0) {
+				errorMessage = opensslErrorString(SSL_get_error(tlsSession->session(), readBytes));
+			} else {
+				errorMessage = "TLS recv error: short read";
+			}
+		} else {
+			int tcplasterr = tcpgetlasterror();
+			errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
+		}
+
+		safs::log_warn("register error (read data: {})", errorMessage);
+		fs_close();
 		return;
 	}
 
@@ -1209,8 +1440,7 @@ void fs_reconnect() {
 	if (messageFromMaster[0] != 0) {
 		sessionlost = 1;
 		safs::log_warn("master: register status: {}", saunafs_error_string(messageFromMaster[0]));
-		tcpclose(fd);
-		fd = -1;
+		fs_close();
 		return;
 	}
 
@@ -1233,10 +1463,17 @@ void fs_close_session() {
 	put8bit(&messageToMaster, REGISTER_CLOSESESSION);
 	put32bit(&messageToMaster, sessionid);
 
-	if (tcptowrite(fd, registrationMessageBuffer.data(), registerCloseSessionTotalPacketLength,
-	               kDefaultTcpCommTimeoutMSeconds) != registerCloseSessionTotalPacketLength) {
-		safs::log_warn("master: close session error (write: {})", strerr(tcpgetlasterror()));
+	int writtenBytes =
+	    fs_write(fd, registrationMessageBuffer.data(), registerCloseSessionTotalPacketLength,
+	             kDefaultTcpCommTimeoutMSeconds);
+	if (writtenBytes != static_cast<int32_t>(registerCloseSessionTotalPacketLength)) {
+		safs::log_warn("master: close session error (write: {})",
+		               tlsSession
+		                   ? opensslErrorString(SSL_get_error(tlsSession->session(), writtenBytes))
+		                   : strerr(tcpgetlasterror()));
 	}
+
+	if (tlsSession) { fs_endtls_connection(); }
 }
 
 #ifdef ENABLE_EXIT_ON_USR1
@@ -1286,7 +1523,8 @@ void* fs_nop_thread(void *arg) {
 				put32bit(&ptr, ANTOAN_NOP);  // cmd
 				put32bit(&ptr, 4);           // length
 				put32bit(&ptr, 0);           // msg id
-				if (tcptowrite(fd, hdr, kHeaderSize, kDefaultTcpCommTimeoutMSeconds) !=
+
+				if (fs_write(fd, hdr, kHeaderSize, kDefaultTcpCommTimeoutMSeconds) !=
 				    kHeaderSize) {
 					safs::log_warn("Failed to send ANTOAN_NOP to master");
 					disconnect = true;
@@ -1311,7 +1549,7 @@ void* fs_nop_thread(void *arg) {
 					putINode(&ptr, inode);
 				}
 
-				if (tcptowrite(fd, inodespacket, inodesleng, kDefaultTcpCommTimeoutMSeconds) !=
+				if (fs_write(fd, inodespacket, inodesleng, kDefaultTcpCommTimeoutMSeconds) !=
 				    inodesleng) {
 					safs::log_warn("Failed to send CLTOMA_FUSE_RESERVED_INODES to master");
 					disconnect = true;
@@ -1333,14 +1571,14 @@ void* fs_nop_thread(void *arg) {
 						gMountInfo.buildMountInfoStr();
 						mountInfoStr = gMountInfo.getMountInfoStr();
 					}
-					auto message = cltoma::updateMountInfo::build(mountInfoStr);
 
+					auto message = cltoma::updateMountInfo::build(mountInfoStr);
 					uint32_t messageLength = message.size();
 					std::vector<uint8_t> mountInfoPacket(messageLength);
 					std::copy(message.begin(), message.end(), mountInfoPacket.begin());
 
-					if (tcptowrite(fd, mountInfoPacket.data(), messageLength,
-					               kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
+					if (fs_write(fd, mountInfoPacket.data(), messageLength,
+					             kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
 						safs::log_warn("Failed to send mount info to master");
 						disconnect = true;
 					} else {
@@ -1360,24 +1598,38 @@ void* fs_nop_thread(void *arg) {
 	}
 }
 
-bool fs_append_from_master(MessageBuffer& buffer, uint32_t size) {
-	if (size == 0) {
-		return true;
-	}
+bool fs_append_from_master(MessageBuffer &buffer, uint32_t size) {
+	if (size == 0) { return true; }
 	const uint32_t oldSize = buffer.size();
 	buffer.resize(oldSize + size);
 	uint8_t *appendPointer = buffer.data() + oldSize;
-	int r = tcptoread(fd, appendPointer, size, RECEIVE_TIMEOUT * kDefaultTcpCommTimeoutMSeconds);
-	if (r == 0) {
-		safs_pretty_syslog(LOG_WARNING,"master: connection lost");
+
+	int readBytes =
+	    fs_read(fd, appendPointer, size, RECEIVE_TIMEOUT * kDefaultTcpCommTimeoutMSeconds);
+	if (readBytes == 0) {
+		safs_pretty_syslog(LOG_WARNING, "master: connection lost");
 		setDisconnect(true);
 		return false;
 	}
-	if (r != (int)size) {
-		safs_pretty_syslog(LOG_WARNING,"master: tcp recv error: %s",strerr(tcpgetlasterror()));
+
+	if (readBytes != static_cast<int>(size)) {
+		std::string errorMessage = "";
+		if (tlsSession) {
+			if (readBytes < 0) {
+				errorMessage = opensslErrorString(SSL_get_error(tlsSession->session(), readBytes));
+			} else {
+				errorMessage = "TLS recv error: short read";
+			}
+		} else {
+			int tcplasterr = tcpgetlasterror();
+			errorMessage = (tcplasterr != 0) ? strerr(tcplasterr) : strerr(TCPNORESPONSE);
+		}
+
+		safs_pretty_syslog(LOG_WARNING, "master: recv error: %s", errorMessage.c_str());
 		setDisconnect(true);
 		return false;
 	}
+
 	stats_inc(MASTER_BYTESRCVD, statsptr, size);
 	return true;
 }
@@ -1417,8 +1669,7 @@ void* fs_receive_thread(void *) {
 			return NULL;
 		}
 		if (disconnect) {
-			tcpclose(fd);
-			fd=-1;
+			fs_close();
 			disconnect = false;
 			// send to any threc status error and unlock them
 			std::unique_lock<std::mutex>recLock(recMutex);
@@ -1569,6 +1820,12 @@ int fs_init_master_connection(SaunaClient::FsInitParams &params
 	sessionid = 0;
 	disconnect = false;
 
+    // TLS parameters
+	gIsTlsEnabled = params.tls_key_file != TlsSession::kNoFile && params.tls_cert_file != TlsSession::kNoFile;
+	tlsKeyFile = params.tls_key_file;
+	tlsCertFile = params.tls_cert_file;
+	tlsServerCaCertFile = params.tls_server_ca_cert_file;
+
 	if (params.delayed_init) {
 		return 1;
 	}
@@ -1593,7 +1850,7 @@ void fs_init_threads(uint32_t retries, uint32_t maxWaitTimeForRetry, uint32_t sl
 	maxWaitRetryTime = maxWaitTimeForRetry;
 	mastercommSleepTimeDivisor = sleepTimeDivisor;
 	fterm = 0;
-	
+
 	std::unique_lock mountInfoLock(gMountInfoMtx);
 	gTweaks.registerVariable("MaxRetriesMasterComm", maxretries, "maxretriesmastercomm");
 	gTweaks.registerVariable("MaxWaitRetryTimeMasterComm", maxWaitRetryTime, "maxwaitretrytime");
@@ -1633,9 +1890,8 @@ void fs_term(void) {
 	acquiredFiles.clear();
 	af_lock.unlock();
 	fd_lock.lock();
-	if (fd>=0) {
-		tcpclose(fd);
-	}
+
+	if (fd >= 0) { fs_close(); }
 }
 
 static void fs_got_inconsistent(const std::string& type, uint32_t size, const std::string& what) {
@@ -3079,8 +3335,8 @@ uint8_t fs_fullpath(inode_t inode, uint32_t uid, uint32_t gid, std::string &full
 	}
 	auto message =
 	    cltoma::fullPathByInode::build(rec->packetId, inode, uid, gid);
-	if (!fs_saucreatepacket(rec, message)) { 
-		return SAUNAFS_ERROR_IO; 
+	if (!fs_saucreatepacket(rec, message)) {
+		return SAUNAFS_ERROR_IO;
 	}
 	if (!fs_sausendandreceive(rec, SAU_MATOCL_FULL_PATH_BY_INODE, message)) {
 		return SAUNAFS_ERROR_IO;

@@ -67,6 +67,7 @@
 #include "common/serialized_goal.h"
 #include "common/sessions_file.h"
 #include "common/sockets.h"
+#include "common/tls_session.h"
 #include "common/type_defs.h"
 #include "common/user_groups.h"
 #include "config/cfg.h"
@@ -106,7 +107,8 @@
 enum class ClientConnectionMode : std::uint8_t {
 	KILL,			/// Connection is terminated,
 	HEADER,			/// Read header
-	DATA			/// Read data packet
+	DATA,			/// Read data packet
+	HANDSHAKE		/// TLS handshake in progress
 };
 
 const uint32_t kMaxNumberOfChunkCopies = 100U;
@@ -170,6 +172,11 @@ struct matoclserventry {
 	InputPacket inputPacket{MaxPacketSize};  ///< InputPacket for reading data from the client
 	std::list<OutputPacket> outputPackets;  ///< List of output packets
 
+	/// Context of the TLS channel used for communication with client.
+	///
+	/// If no TLS is used, this is `nullptr`.
+	std::unique_ptr<TlsSession> tlsSession;
+	int lastHandshakeError = 0;
 	static constexpr uint8_t kPasswordSize = 32;
 	uint8_t randomPassword[kPasswordSize];  ///< Random password for authentication
 	Session *sessionData;                   ///< Pointer to the session data for this client
@@ -493,6 +500,55 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 		return;
 	default:
 		safs_pretty_syslog(LOG_WARNING,"got chunk status, but operation type is unknown");
+	}
+}
+
+/// Starts/continues a TLS handshake (non-blocking)
+/// @param eptr Pointer to the client connection in the master
+void matoclserv_tlshandshake(matoclserventry *eptr) {
+	sassert(eptr->mode == ClientConnectionMode::HANDSHAKE);
+
+	int ret = SSL_accept(eptr->tlsSession->session());
+
+	if (ret == 1) {
+		safs::log_info("TLS handshake completed with client from {}:{}",
+		               ipToString(eptr->peerIpAddress), eptr->peerPort);
+		eptr->mode = ClientConnectionMode::HEADER;
+		return;
+	}
+
+	int err = SSL_get_error(eptr->tlsSession->session(), ret);
+	eptr->lastHandshakeError = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		safs::log_info("TLS handshake in progress with client from {}:{}: {}",
+		               ipToString(eptr->peerIpAddress), eptr->peerPort, opensslErrorString(err));
+		return;  // retry later
+	}
+
+	eptr->mode = ClientConnectionMode::KILL;
+	safs::log_err("TLS handshake failed: {}", opensslErrorString(err));
+}
+
+/// Initiate a TLS connection with the mount.
+/// @param eptr Pointer to the client connection in the master
+void matoclserv_starttls(matoclserventry *eptr) {
+	// Initialize a TLS session for the peer.
+	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
+	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
+	std::string trustFile = cfg_getstring("TLS_SERVER_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+
+	try {
+		eptr->tlsSession =
+		    std::make_unique<TlsSession>(eptr->socket, true, keyFile, certFile, trustFile);
+		safs::log_info("Starting TLS session with client from {}:{}",
+		               ipToString(eptr->peerIpAddress), eptr->peerPort);
+		eptr->mode = ClientConnectionMode::HANDSHAKE;
+		matoclserv_tlshandshake(eptr);
+	} catch (const std::exception &e) {
+		eptr->mode = ClientConnectionMode::KILL;
+		safs::log_err("Failed to start TLS session with client from {}:{}: {}",
+		              ipToString(eptr->peerIpAddress), eptr->peerPort, e.what());
 	}
 }
 
@@ -4803,6 +4859,13 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 		return;
 	}
 
+	if (metadataserver::isMaster()) {
+		if (type == SAU_CLTOMA_STARTTLS) {
+			matoclserv_starttls(eptr);
+			return;
+		}
+	}
+
 	try {
 		if (!metadataserver::isMaster()) {     // shadow
 			switch (type) {
@@ -5198,6 +5261,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case SAU_CLTOMA_CSERV_LIST:
 					matoclserv_sau_cserv_list(eptr, data, length);
 					break;
+				case SAU_CLTOMA_ENDTLS:
+					eptr->tlsSession.reset();
+					break;
 				default:
 				    safs::log_info(
 				        "main master server module: got unknown message from sfsmount (type:{})",
@@ -5235,31 +5301,49 @@ void matoclserv_read(matoclserventry *eptr) {
 
 	watchdog.start();
 	while (eptr->mode != ClientConnectionMode::KILL) {
-		bytesRead = read(eptr->socket, eptr->inputPacket.pointerToBeReadInto(),
-		                 eptr->inputPacket.bytesToBeRead());
+		if (eptr->tlsSession != nullptr && eptr->mode != ClientConnectionMode::HANDSHAKE) {
+			bytesRead =
+			    SSL_read(eptr->tlsSession->session(), eptr->inputPacket.pointerToBeReadInto(),
+			             eptr->inputPacket.bytesToBeRead());
+		} else {
+			bytesRead = read(eptr->socket, eptr->inputPacket.pointerToBeReadInto(),
+			                 eptr->inputPacket.bytesToBeRead());
+		}
+
 		if (bytesRead == 0) {
-			if (eptr->registered == ClientState::kRegistered) {       // show this message only for standard, registered clients
+			if (eptr->registered == ClientState::kRegistered) {
 				safs::log_info("connection with client (ip:{}) has been closed by peer",
 				               ipToString(eptr->peerIpAddress));
 			}
+
 			eptr->mode = ClientConnectionMode::KILL;
 			return;
 		}
 
 		if (bytesRead < 0) {
-			if (errno != EAGAIN) {
-#ifdef ECONNRESET
-				if (errno != ECONNRESET) {
-#endif
-					safs_silent_errlog(LOG_NOTICE, "main master server module: (ip:%s) read error",
-					                   ipToString(eptr->peerIpAddress).c_str());
-#ifdef ECONNRESET
+			if (eptr->tlsSession != nullptr && eptr->mode != ClientConnectionMode::HANDSHAKE) {
+				int err = SSL_get_error(eptr->tlsSession->session(), bytesRead);
+				if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+					eptr->mode = ClientConnectionMode::KILL;
 				}
+				return;
+			} else {
+				if (errno != EAGAIN) {
+#ifdef ECONNRESET
+					if (errno != ECONNRESET) {
 #endif
-				eptr->mode = ClientConnectionMode::KILL;
+						safs_silent_errlog(LOG_NOTICE,
+						                   "main master server module: (ip:%s) read error",
+						                   ipToString(eptr->peerIpAddress).c_str());
+#ifdef ECONNRESET
+					}
+#endif
+					eptr->mode = ClientConnectionMode::KILL;
+				}
+				return;
 			}
-			return;
 		}
+
 		try {
 			eptr->inputPacket.increaseBytesRead(bytesRead);
 		} catch (const InputPacketTooLongException &ex) {
@@ -5297,16 +5381,31 @@ void matoclserv_write(matoclserventry *eptr) {
 	watchdog.start();
 	while (!eptr->outputPackets.empty()) {
 		OutputPacket &outputPacket = eptr->outputPackets.front();
-		bytesWritten = write(eptr->socket, outputPacket.packet.data() + outputPacket.bytesSent,
-		                     outputPacket.packet.size() - outputPacket.bytesSent);
-		if (bytesWritten < 0) {
-			if (errno != EAGAIN) {
-				safs_silent_errlog(LOG_NOTICE, "main master server module: (ip:%s) write error",
-				                   ipToString(eptr->peerIpAddress).c_str());
-				eptr->mode = ClientConnectionMode::KILL;
+
+		if (eptr->tlsSession != nullptr) {
+			bytesWritten = SSL_write(eptr->tlsSession->session(),
+			                         outputPacket.packet.data() + outputPacket.bytesSent,
+			                         outputPacket.packet.size() - outputPacket.bytesSent);
+			if (bytesWritten < 0) {
+				int err = SSL_get_error(eptr->tlsSession->session(), bytesWritten);
+				if (err != SSL_ERROR_WANT_WRITE && err != SSL_ERROR_WANT_READ) {
+					eptr->mode = ClientConnectionMode::KILL;
+				}
+				return;
 			}
-			return;
+		} else {
+			bytesWritten = write(eptr->socket, outputPacket.packet.data() + outputPacket.bytesSent,
+			                     outputPacket.packet.size() - outputPacket.bytesSent);
+			if (bytesWritten < 0) {
+				if (errno != EAGAIN) {
+					safs_silent_errlog(LOG_NOTICE, "main master server module: (ip:%s) write error",
+					                   ipToString(eptr->peerIpAddress).c_str());
+					eptr->mode = ClientConnectionMode::KILL;
+				}
+				return;
+			}
 		}
+
 		outputPacket.bytesSent += bytesWritten;
 		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_BYTES, bytesWritten);
 		statsBytesSent += bytesWritten;
@@ -5382,12 +5481,20 @@ void matoclserv_desc(std::vector<pollfd> &pdesc) {
 		pdesc.push_back({eptr->socket, 0, 0});
 		eptr->pDescPos = pdesc.size() - 1;
 
-		if (exiting == 0) {
-			pdesc.back().events |= POLLIN;
-		}
+		if (eptr->mode == ClientConnectionMode::HANDSHAKE) {
+			int lastHandshakeError = eptr->lastHandshakeError;
+			if (lastHandshakeError == SSL_ERROR_WANT_READ) {
+				pdesc.back().events |= POLLIN;
+			} else if (lastHandshakeError == SSL_ERROR_WANT_WRITE) {
+				pdesc.back().events |= POLLOUT;
+			} else {
+				// Default: allow both if unknown
+				pdesc.back().events |= POLLIN | POLLOUT;
+			}
+		} else {
+			if (exiting == 0) { pdesc.back().events |= POLLIN; }
 
-		if (!eptr->outputPackets.empty()) {
-			pdesc.back().events |= POLLOUT;
+			if (!eptr->outputPackets.empty()) { pdesc.back().events |= POLLOUT; }
 		}
 	}
 }
@@ -5413,6 +5520,7 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->lastReadTimestamp = now;
 			eptr->lastWriteTimestamp = now;
 			eptr->adminTask = AdminTask::kNone;
+			eptr->tlsSession = nullptr;
 
 			eptr->delayedChunkOperations.clear();
 			eptr->sessionData = nullptr;
@@ -5432,7 +5540,11 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			if ((pdesc[eptr->pDescPos].revents & POLLIN) &&
 			    eptr->mode != ClientConnectionMode::KILL) {
 				eptr->lastReadTimestamp = now;
-				matoclserv_read(eptr.get());
+				if (eptr->mode == ClientConnectionMode::HANDSHAKE) {
+					matoclserv_tlshandshake(eptr.get());
+				} else {
+					matoclserv_read(eptr.get());
+				}
 			}
 		}
 	}
@@ -5451,7 +5563,11 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 			     (pdesc[eptr->pDescPos].revents & POLLOUT)) &&
 			    eptr->mode != ClientConnectionMode::KILL) {
 				eptr->lastWriteTimestamp = now;
-				matoclserv_write(eptr.get());
+				if (eptr->mode == ClientConnectionMode::HANDSHAKE) {
+					matoclserv_tlshandshake(eptr.get());
+				} else {
+					matoclserv_write(eptr.get());
+				}
 			}
 		}
 
@@ -5466,6 +5582,7 @@ void matoclserv_serve(const std::vector<pollfd> &pdesc) {
 		auto *eptr = eptrIt->get();
 		if (eptr->mode == ClientConnectionMode::KILL) {
 			matocl_before_disconnect(eptr);
+			eptr->tlsSession.reset();
 			tcpclose(eptr->socket);
 			eptrIt = matoclservList.erase(eptrIt);
 		} else {
