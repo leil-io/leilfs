@@ -93,25 +93,57 @@ private:
 	/// @brief Handle failed promotion attempts and restore cluster consistency.
 	///
 	/// This prevents the cluster from getting stuck when a node wins an election but fails
-	/// to complete the promotion to master, ensuring the cluster can recover by electing
-	/// a different leader.
+	/// to complete the promotion to master. The controller will step down in uRaft so another
+	/// node can take over, and will schedule a safe demotion of the local metadata server after
+	/// the promotion command completes.
 	///
 	/// This function is invoked in two scenarios:
 	/// 1. When a promotion command exits with a non-zero status (checkCommandStatus).
 	/// 2. When a promotion times out (setSlowCommandTimeout).
 	///
 	/// It performs the following recovery steps:
-	/// - Demotes the node from Leader state in the Raft algorithm.
 	/// - Cleans up any dirty metadata state left by the failed promotion.
+	/// - Demotes the node from Leader/Candidate state in the uRaft algorithm (Raft-only step-down).
+	/// - Schedules a demotion of the local metadata server after the promotion command finishes,
+	///   to avoid promote/demote command-state races.
+	/// - Enables a temporary promotion backoff (blocks new promotions for a bounded time) to avoid
+	///   tight promote/fail loops under unhealthy local state.
 	///
 	/// \see cleanupDirtyPromotion()
 	/// \see demoteLeader()
+	/// \see startPromotionBackoff()
+	/// \see computePromotionBackoffMs()
 	void handlePromotionFailure();
+
+	/// @brief Start or reset the promotion backoff state.
+	///
+	/// When enabled, backoff blocks uRaft leader promotion by calling set_block_promotion(true)
+	/// and keeps it blocked until the backoff timer expires (or until reset is requested).
+	///
+	/// \param reset If true, clears the failure streak, disables backoff, and cancels the timer.
+	void startPromotionBackoff(bool reset);
+
+	/// @brief Compute the current promotion backoff duration in milliseconds.
+	///
+	/// The duration grows exponentially with the promotion failure streak and is capped to a
+	/// bounded maximum to avoid long recovery delays.
+	///
+	/// \return Backoff duration in milliseconds (0 means no backoff should be applied).
+	int computePromotionBackoffMs() const;
 
 protected:
 	boost::asio::deadline_timer check_cmd_status_timer_;
 	boost::asio::deadline_timer check_node_status_timer_;
 	boost::asio::deadline_timer cmd_timeout_timer_;
+
+	/// @brief Timer used to implement promotion backoff after failed promotions.
+	boost::asio::deadline_timer promotion_backoff_timer_;
+	/// @brief Number of consecutive promotion failures used to compute exponential backoff.
+	/// This value is reset on successful promotion.
+	int promotion_failure_streak_ = 0;
+	/// @brief True while promotion backoff is active (promotions are temporarily blocked).
+	bool promotion_backoff_active_ = false;
+
 	pid_t                       command_pid_;   /// Last run command pid.
 	int                         command_type_;  /// Last run command type.
 	Timer                       command_timer_;

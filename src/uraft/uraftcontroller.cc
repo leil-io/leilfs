@@ -18,11 +18,14 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/version.hpp>
 
+constexpr int kCommandTimeoutMs = 5000;  ///< Default command timeout in milliseconds.
+
 uRaftController::uRaftController(boost::asio::io_context &ios)
 	: uRaftStatus(ios),
 	  check_cmd_status_timer_(ios),
 	  check_node_status_timer_(ios),
-	  cmd_timeout_timer_(ios) {
+	  cmd_timeout_timer_(ios),
+	  promotion_backoff_timer_(ios) {
 	command_pid_  = -1;
 	command_type_ = kCmdNone;
 	is_demote_pending_ = false;
@@ -66,6 +69,11 @@ void uRaftController::set_options(const uRaftController::Options &opt) {
 }
 
 void uRaftController::nodePromote() {
+	if (promotion_backoff_active_) {
+		syslog(LOG_WARNING, "Skipping promotion: backoff active");
+		return;
+	}
+
 	syslog(LOG_NOTICE, "Starting metadata server switch to master mode");
 
 	// Prevent concurrent transitions
@@ -186,6 +194,7 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 		} else if (command_type_ == kCmdPromote) {
 			if (commandSucceeded) {
 				syslog(LOG_NOTICE, "Metadata server switch to master mode done");
+				startPromotionBackoff(/*reset=*/true);
 				node_alive_ = true;
 
 				if (state_.type == kLeader) {
@@ -248,10 +257,13 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 			syslog(LOG_WARNING, "Isalive timeout.");
 		}
 
+		// Always reconcile promotion blocking
+		const bool block_promotion = (!is_alive) || promotion_backoff_active_;
+		set_block_promotion(block_promotion);
+
 		if (is_alive != node_alive_) {
 			if (is_alive) {
 				syslog(LOG_NOTICE, "Metadata server is alive");
-				set_block_promotion(false);
 			} else {
 				syslog(LOG_NOTICE, "Metadata server is dead");
 				stopFloatingIpManager();
@@ -484,7 +496,7 @@ void uRaftController::cleanupDirtyPromotion() {
 	std::vector<std::string> cleanup = {"saunafs-uraft-helper", "cleanup"};
 	std::string result;
 
-	if (!runCommand(cleanup, result, 5000)) {
+	if (!runCommand(cleanup, result, kCommandTimeoutMs)) {
 		syslog(LOG_ERR, "Failed to cleanup dirty state: %s", result.c_str());
 	}
 }
@@ -500,6 +512,58 @@ void uRaftController::cleanupDirtyPromotion() {
 /// - Other nodes cannot win elections due to Raft term constraints.
 /// - Manual intervention becomes necessary to restore cluster operation.
 void uRaftController::handlePromotionFailure() {
-	demoteLeader();
+	// Promotion failed while kCmdPromote is active (we're inside checkCommandStatus).
+	// Do NOT call nodeDemote() here: that would run a demote script while promotion is still
+	// active, racing the controller command state machine and causing double scheduling.
+	//
+	// Instead we:
+	// - clean up promotion leftovers,
+	// - step down in uRaft (Raft-only) so a different node can become Leader/President,
+	// - request a pending demotion that will be executed once kCmdPromote is cleared,
+	// - enable a bounded backoff to avoid a tight promote/fail loop.
 	cleanupDirtyPromotion();
+
+	// Raft-only: stop being Leader/Candidate so another node can win.
+	demoteLeader();
+
+	// Controller-owned: schedule demotion after kCmdPromote is cleared.
+	// checkCommandStatus() already has logic to run pending demotion after promotion finishes.
+	is_demote_pending_ = true;
+
+	startPromotionBackoff(/*reset=*/false);
+}
+
+int uRaftController::computePromotionBackoffMs() const {
+	// 1s * 2^(streak-1), capped at 60s
+	constexpr int kMaxPromotionBackoffMs = 60000;
+	if (promotion_failure_streak_ <= 0) { return 0; }
+	const int capped = std::min(promotion_failure_streak_ - 1, 6);  // 1,2,4,8,16,32,64
+	const int promotionBackoffTimeMs = 1000 * (1 << capped);
+	return std::min(promotionBackoffTimeMs, kMaxPromotionBackoffMs);
+}
+
+void uRaftController::startPromotionBackoff(bool reset) {
+	if (reset) {
+		promotion_failure_streak_ = 0;
+		promotion_backoff_active_ = false;
+		promotion_backoff_timer_.cancel();
+		return;
+	}
+
+	promotion_failure_streak_++;
+	const int backoff_ms = computePromotionBackoffMs();
+	if (backoff_ms <= 0) { return; }
+
+	promotion_backoff_active_ = true;
+	set_block_promotion(true);
+	syslog(LOG_WARNING, "Promotion backoff enabled (%d ms), streak=%d", backoff_ms,
+	       promotion_failure_streak_);
+
+	promotion_backoff_timer_.expires_from_now(boost::posix_time::millisec(backoff_ms));
+	promotion_backoff_timer_.async_wait([this](const boost::system::error_code &ec) {
+		if (ec) { return; }
+		promotion_backoff_active_ = false;
+		syslog(LOG_WARNING, "Promotion backoff expired");
+		// We will update block_leader_promotion_ in the next checkNodeStatus() call.
+	});
 }
