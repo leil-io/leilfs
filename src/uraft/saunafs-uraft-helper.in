@@ -299,48 +299,61 @@ saunafs_isalive() {
 	fi
 }
 
+assign_floating_ip() {
+	local ip="${1}"
+	local netmask="${2}"
+	local iface="${3}"
+
+	if [[ -z "${ip}" ]]; then
+		return 0
+	fi
+
+	if is_ip_present "${ip}" "${iface}"; then
+		log "Floating IP ${ip} already present on interface: ${iface} - skipping assignment"
+		return 0
+	fi
+
+	log "Assigning floating IP: ${ip} to interface: ${iface}"
+	if sudo ip -f inet addr add "${ip}/${netmask}" dev "${iface}"; then
+		local iface_base="${iface%%:*}" # handle interface aliases (e.g., eth0:0 -> eth0)
+		arping -q -U -c5 -w1 "${ip}" -I "${iface_base}"
+		log "Successfully assigned floating IP: ${ip}"
+	else
+		log "Error: Failed to assign floating IP: ${ip}"
+	fi
+}
+
 saunafs_assign_ip() {
 	load_config
-	sudo ip -f inet addr add $ipaddr/$netmask dev $iface
-	iface_base=$(echo $iface | cut -f1 -d':') # for alias handling
-	arping -q -U -c5 -w1 $ipaddr -I $iface_base
+	assign_floating_ip "${ipaddr}" "${netmask}" "${iface}"
+	assign_floating_ip "${ipaddr2}" "${netmask2}" "${iface2}"
+}
 
-	if [[ "$ipaddr2" != "" ]]; then
-		sudo ip -f inet addr add $ipaddr2/$netmask2 dev $iface2
-		iface_base2=$(echo $iface2 | cut -f1 -d':') # for alias handling
-		arping -q -U -c5 -w1 $ipaddr2 -I $iface_base2
+drop_floating_ip() {
+	local ip="${1}"
+	local netmask="${2}"
+	local iface="${3}"
+
+	if [[ -z "${ip}" ]]; then
+		return 0
+	fi
+
+	if is_ip_present "${ip}" "${iface}"; then
+		log "Dropping floating IP: ${ip} from interface: ${iface}"
+		if ! sudo ip -f inet addr delete "${ip}/${netmask}" dev "${iface}"; then
+			log "Warning: Failed to drop floating IP: ${ip}"
+		else
+			log "Successfully dropped floating IP: ${ip}"
+		fi
+	else
+		log "Floating IP ${ip} not present - nothing to drop"
 	fi
 }
 
 saunafs_drop_ip() {
 	load_config
-
-	# Check if floating IP exists before trying to drop it
-	if [[ -n "$ipaddr" ]]; then
-		if is_ip_present "${ipaddr}" "${iface}"; then
-			log "Dropping floating IP: ${ipaddr} from interface: ${iface}"
-			if ! sudo ip -f inet addr delete $ipaddr/$netmask dev $iface; then
-				log "Warning: Failed to drop floating IP: ${ipaddr}"
-			else
-				log "Successfully dropped floating IP: ${ipaddr}"
-			fi
-		else
-			log "Floating IP ${ipaddr} not present - nothing to drop"
-		fi
-	fi
-
-	if [[ -n "$ipaddr2" ]]; then
-		if is_ip_present "$ipaddr2" "$iface2"; then
-			log "Dropping floating IP: ${ipaddr2} from interface: ${iface2}"
-			if ! sudo ip -f inet addr delete $ipaddr2/$netmask2 dev $iface2; then
-				log "Warning: Failed to drop floating IP: ${ipaddr2}"
-			else
-				log "Successfully dropped floating IP: ${ipaddr2}"
-			fi
-		else
-			log "Floating IP ${ipaddr2} not present - nothing to drop"
-		fi
-	fi
+	drop_floating_ip "${ipaddr}" "${netmask}" "${iface}"
+	drop_floating_ip "${ipaddr2}" "${netmask2}" "${iface2}"
 }
 
 saunafs_dead() {
