@@ -620,6 +620,10 @@ static int fs_lostnode(FSNode *p) {
 	uint8_t artname[40];
 	uint32_t i, l;
 	i = 0;
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	do {
 		if (i == 0) {
 			l = snprintf((char *)artname, 40, "lost_node_%" PRIiNode, p->id);
@@ -627,10 +631,10 @@ static int fs_lostnode(FSNode *p) {
 			l = snprintf((char *)artname, 40, "lost_node_%" PRIiNode ".%" PRIu32,
 			             p->id, i);
 		}
+
 		HString name((const char *)artname, l);
-		if (!gFSOperations->nodeOperations()->isNameUsed(gMetadata->root, name)) {
-			auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-			    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		if (!gFSOperations->nodeOperations()->isNameUsed(fsOpContext, gMetadata->root, name)) {
 
 			gFSOperations->nodeOperations()->link(fsOpContext, 0, gMetadata->root, p, name);
 

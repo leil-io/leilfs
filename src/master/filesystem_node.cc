@@ -197,7 +197,9 @@ void FilesystemNodeOperationsBase::preserveEdge(const FilesystemOperationContext
 
 // Public methods
 
-FSNode *FilesystemNodeOperationsBase::lookup(FSNodeDirectory *node, const HString &name) const {
+FSNode *FilesystemNodeOperationsBase::lookup(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+    const HString &name) const {
 	auto iter = node->find(name);
 	if (iter != node->end()) { return (*iter).second; }
 
@@ -256,8 +258,9 @@ std::string FilesystemNodeOperationsBase::escapeName(const std::string &name) {
 	return result;
 }
 
-bool FilesystemNodeOperationsBase::isNameUsed(FSNodeDirectory *node, const HString &name) {
-	return lookup(node, name) != nullptr;
+bool FilesystemNodeOperationsBase::isNameUsed(const FilesystemOperationContext &fsOpContext,
+                                              FSNodeDirectory *node, const HString &name) {
+	return lookup(fsOpContext, node, name) != nullptr;
 }
 
 bool FilesystemNodeOperationsBase::isAncestor(FSNodeDirectory *ancestor, FSNode *node) {
@@ -1594,7 +1597,7 @@ uint8_t FilesystemNodeOperationsBase::undel(
 		HString name(path, partLength);
 
 		if (partLength == pathLength) {  // last name
-			if (isNameUsed(currentParent, name)) { return SAUNAFS_ERROR_EEXIST; }
+			if (isNameUsed(fsOpContext, currentParent, name)) { return SAUNAFS_ERROR_EEXIST; }
 
 			// remove from trash and link to new parent
 			if (node->type == FSNodeType::kTrash) {
@@ -1617,7 +1620,7 @@ uint8_t FilesystemNodeOperationsBase::undel(
 
 		// Directory handling (only runs for intermediate segments)
 		if (!isNew) {
-			currentNode = lookup(currentParent, name);
+			currentNode = lookup(fsOpContext, currentParent, name);
 			if (currentNode == nullptr) {
 				isNew = true;
 			} else {

@@ -38,7 +38,10 @@ public:
 	/// Returns the root node of the filesystem.
 	FSNodeDirectory *getRootNode(const FilesystemOperationContext &fsOpContext) override;
 
-	FSNode *lookup(FSNodeDirectory *node, const HString &name) const override;
+	/// Looks up a child node by name within a directory.
+	/// @see IFilesystemNodeOperations::lookup
+	FSNode *lookup([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	               FSNodeDirectory *node, const HString &name) const override;
 
 	FSNode *createNode(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                   FSNodeDirectory *parent, const HString &name, FSNodeType type, uint16_t mode,
@@ -103,7 +106,10 @@ public:
 	            FSNodeDirectory *nodeDir, uint64_t firstEntry, uint64_t numberOfEntries,
 	            std::vector<DirectoryEntry> &dirEntriesOut) override;
 #endif
-	bool isNameUsed(FSNodeDirectory *node, const HString &name) override;
+	/// Checks if a name is already used in the given directory.
+	/// @see IFilesystemNodeOperations::isNameUsed
+	bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+	                const HString &name) override;
 
 	// Trash/Reserved operations
 	int purge(uint32_t timeStamp, FSNode *node) override;

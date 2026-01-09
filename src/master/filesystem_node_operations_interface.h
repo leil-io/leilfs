@@ -129,7 +129,16 @@ public:
 
 	// Main node operations
 
-	virtual FSNode *lookup(FSNodeDirectory *node, const HString &name) const = 0;
+	/// Looks up a child node by name within a directory.
+	///
+	/// Searches for a directory entry with the specified name in the given directory node.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The directory node in which to search for the child.
+	/// @param name The name of the child node to look up.
+	/// @return Pointer to the child node if found, nullptr otherwise.
+	virtual FSNode *lookup([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                       FSNodeDirectory *node, const HString &name) const = 0;
 
 	virtual FSNode *createNode(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                           FSNodeDirectory *parent, const HString &name, FSNodeType type,
@@ -263,7 +272,18 @@ public:
 	                    FSNodeDirectory *nodeDir, uint64_t firstEntry, uint64_t numberOfEntries,
 	                    std::vector<DirectoryEntry> &dirEntriesOut) = 0;
 #endif
-	virtual bool isNameUsed(FSNodeDirectory *node, const HString &name) = 0;
+	/// Checks if a name is already used in the given directory.
+	///
+	/// Determines whether a directory entry with the specified name exists in the given
+	/// directory node. This is a convenience method that internally calls lookup() and
+	/// checks if the result is not null.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The directory node to search in.
+	/// @param name The name to check for existence.
+	/// @return true if the name exists in the directory, false otherwise.
+	virtual bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+	                        const HString &name) = 0;
 
 	// Trash/Reserved operations
 
