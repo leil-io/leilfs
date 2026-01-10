@@ -141,6 +141,13 @@ public:
 
 protected:
 	void checkTerm(int id, const RpcHeader &data);
+
+	/*! \brief Checks if a received packet is structurally valid.
+	 *
+	 * \param data Pointer to the received packet data.
+	 * \param size Size of the received packet data.
+	 * \return true if the packet is valid, false otherwise.
+	 */
 	bool validPacket(const uint8_t *data, size_t size);
 	int  findNodeID(const boost::asio::ip::udp::endpoint &addr);
 	int  voteCount(bool count_loyal);

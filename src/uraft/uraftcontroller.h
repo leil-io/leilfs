@@ -48,19 +48,19 @@ public:
 	void set_options(const Options &opt);
 
 	//! called by uRaft when node is becoming leader.
-	virtual void     nodePromote();
+	void nodePromote() override;
 
 	//! called by uRaft when node is not longer a leader.
-	virtual void     nodeDemote();
+	void nodeDemote() override;
 
 	//! called by uRaft when it needs to know metadata version.
-	virtual uint64_t nodeGetVersion();
+	uint64_t nodeGetVersion() override;
 
 	//! Returns true when this node runs in elector mode.
 	bool isElectorNode() const override;
 
 	//! called by uRaft with new leader id.
-	virtual void     nodeLeader(int id);
+	void nodeLeader(int id) override;
 
 protected:
 	void  checkCommandStatus(const boost::system::error_code &error);

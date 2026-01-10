@@ -111,21 +111,31 @@ void uRaft::checkTerm(int /*id*/, const RpcHeader &data) {
 	}
 }
 
-/*! \brief Checks if packet is valid.
+/*! \brief Checks if a received packet is structurally valid.
  *
- * Packet with lower term than current is discarded by Raft algorithm. So we can consider it as
- * invalid.
+ * This function validates only the packet shape (RPC type and expected message size).
+ * It deliberately does NOT discard packets with a term lower than the local `state_.current_term`.
+ *
+ * Rationale:
+ * In Raft, a follower should respond to stale RPCs (e.g. RequestVote/AppendEntries with
+ * older terms) with `success/result = false` and include its current term in the response.
+ * This allows candidates that are behind (for example after a restart) to learn the higher
+ * term immediately, step down if needed, and catch up without waiting to increment term
+ * across many election timeouts.
+ *
+ * Dropping lower-term RPCs at the packet-validation layer can significantly increase convergence
+ * time, because it prevents the sender from observing the receiver’s higher term.
+ * This is especially noticeable where metadata servers restart and then, elections are delayed
+ * until the restarted node catches up its term via timeouts.
+ *
+ * \note Term handling is therefore performed inside the RPC handlers.
  */
 bool uRaft::validPacket(const uint8_t *data, size_t size) {
 	static unsigned packet_size[kRpcLast] = {sizeof(RpcRequest), sizeof(RpcRequest),
 	                                        sizeof(RpcResponse), sizeof(RpcResponse)
 	                                        };
 
-	if (data[0] >= kRpcLast || size != packet_size[data[0]]) {
-		return false;
-	}
-
-	return reinterpret_cast<const RpcHeader *>(data)->term >= state_.current_term;
+	return (data[0] < kRpcLast && size == packet_size[data[0]]);
 }
 
 void uRaft::startElectionTimer() {
@@ -280,7 +290,19 @@ void uRaft::rpcAppend(int id, const RpcRequest &data) {
 	RpcResponse res;
 
 	assert(state_.type != kLeader);
-	assert(data.term >= state_.current_term);
+
+	// Reply false if term is older than current term, but still send current term back to the
+	// sender to let it catch up its term and step down if needed.
+	if (data.term < state_.current_term) {
+		RpcResponse res{};
+		res.type = kRpcAEResponse;
+		res.term = state_.current_term;
+		res.result = 0;
+		res.req_time = data.time;
+		res.data_version = state_.data_version;
+		socketSend(boost::asio::buffer(&res, sizeof(res)), sender_endpoint_);
+		return;
+	}
 
 	if (isElectorNode()) {
 		// Electors preserve the highest data version from the Leader in every heartbeat,
@@ -314,6 +336,9 @@ void uRaft::rpcAppend(int id, const RpcRequest &data) {
 
 /*! \brief Handling of RPC Append Response packet. */
 void uRaft::rpcAppendResponse(int id, const RpcResponse &data) {
+	// Stale response
+	if (data.term < state_.current_term) { return; }
+
 	if (state_.type != kLeader) {
 		return;
 	}
@@ -356,6 +381,9 @@ void uRaft::rpcReqVote(int id, const RpcRequest &data) {
 
 /*! \brief Handling of RPC Request Vote Response packet. */
 void uRaft::rpcReqVoteResponse(int id, const RpcResponse &data) {
+	// Stale response
+	if (data.term < state_.current_term) { return; }
+
 	if (state_.type != kCandidate) {
 		return;
 	}
