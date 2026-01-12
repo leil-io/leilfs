@@ -41,7 +41,8 @@ public:
 	/// Looks up a child node by name within a directory.
 	/// @see IFilesystemNodeOperations::lookup
 	FSNode *lookup([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
-	               FSNodeDirectory *node, const HString &name) const override;
+	               FSNodeDirectory *node, const HString &name,
+	               bool isCaseInsensitive = false) const override;
 
 	FSNode *createNode(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                   FSNodeDirectory *parent, const HString &name, FSNodeType type, uint16_t mode,
@@ -109,7 +110,7 @@ public:
 	/// Checks if a name is already used in the given directory.
 	/// @see IFilesystemNodeOperations::isNameUsed
 	bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
-	                const HString &name) override;
+	                const HString &name, bool isCaseInsensitive = false) override;
 
 	// Trash/Reserved operations
 	int purge(uint32_t timeStamp, FSNode *node) override;

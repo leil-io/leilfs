@@ -510,8 +510,8 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	FSNode *child =
-	    nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(workDir), name);
+	FSNode *child = nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(workDir),
+	                                        name, context.isCaseInsensitive());
 
 	if (!child) {
 		return SAUNAFS_ERROR_ENOENT;
@@ -739,7 +739,7 @@ uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
                                                    const FilesystemOperationContext &fsOpContext,
                                                    const std::string &inputPath,
                                                    std::string &canonicalPath) {
-	bool caseInsensitiveFS = context.sesflags() & SESFLAG_CASEINSENSITIVE;
+	bool caseInsensitiveFS = context.isCaseInsensitive();
 	FSNode *currentNode = nodeOperations_->idToNode(context.rootinode());
 	std::string resultPath;
 
@@ -1161,10 +1161,14 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 			return SAUNAFS_ERROR_EINVAL;
 		}
 	}
+
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
-	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name)) {
+
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name,
+	                                context.isCaseInsensitive())) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
+
 	if (context.isPersonalityMaster() &&
 	    (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
 	     fsnodes_quota_exceeded_dir(wd, {{QuotaResource::kInodes, 1}}))) {
@@ -1239,8 +1243,10 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
 	// Check if name is already used in the parent directory (lookup)
-	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(parentNode),
-	                                name)) {
+	bool isCaseInsensitive = context.isCaseInsensitive();
+
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(parentNode), name,
+	                                isCaseInsensitive)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
@@ -1250,8 +1256,7 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
-	static_cast<FSNodeDirectory *>(parentNode)->caseInsensitive =
-	    context.sesflags() & SESFLAG_CASEINSENSITIVE;
+	static_cast<FSNodeDirectory *>(parentNode)->caseInsensitive = isCaseInsensitive;
 
 	// Create node linked to parent directory
 	newNode = nodeOperations_->createNode(
@@ -1304,7 +1309,11 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 
 	auto *workDir = static_cast<FSNodeDirectory *>(workNode);
 
-	if (nodeOperations_->isNameUsed(fsOpContext, workDir, name)) { return SAUNAFS_ERROR_EEXIST; }
+	bool isCaseInsensitive = context.isCaseInsensitive();
+
+	if (nodeOperations_->isNameUsed(fsOpContext, workDir, name, isCaseInsensitive)) {
+		return SAUNAFS_ERROR_EEXIST;
+	}
 
 	if (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
 	    fsnodes_quota_exceeded_dir(workNode, {{QuotaResource::kInodes, 1}})) {
@@ -1318,7 +1327,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 		}
 	}
 
-	workDir->caseInsensitive = context.sesflags() & SESFLAG_CASEINSENSITIVE;
+	workDir->caseInsensitive = isCaseInsensitive;
 
 	newNode = nodeOperations_->createNode(fsOpContext, timeStamp, workDir, name,
 	                                      FSNodeType::kDirectory, mode, umask, context.uid(),
@@ -1361,6 +1370,7 @@ uint8_t FilesystemOperationsBase::applyCreate(uint32_t timestamp, inode_t parent
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		FilesystemOperationContext::TransactionType::kReadWrite);
 
+	// For metadata restore operations, use default case-sensitive behavior
 	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
@@ -1729,7 +1739,8 @@ uint8_t FilesystemOperationsBase::link(const FsContext &context, inode_t inode_s
 
 	if (nodeOperations_->nameCheck(name_dst) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(dwd), name_dst)) {
+	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(dwd), name_dst,
+	                                context.isCaseInsensitive())) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
