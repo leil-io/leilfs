@@ -28,6 +28,7 @@ uRaft::uRaft(boost::asio::io_context &ios)
 	opt_.heartbeat_period       = 20;
 	opt_.id                     = -1;
 	opt_.port                   = 9425;
+	opt_.quorum_loss_grace_heartbeats = 5;
 
 	state_.id           = 0;
 	state_.type         = kFollower;
@@ -97,10 +98,14 @@ void uRaft::checkTerm(int /*id*/, const RpcHeader &data) {
 	if (data.term > state_.current_term) {
 		if (state_.president) {
 			assert(state_.type != kFollower);
-			syslog(LOG_NOTICE, "(%s): Higher term detected (%lu): Node %s starting new election",
+			syslog(LOG_NOTICE, "(%s): Higher term detected (%lu): stepping down Leader %s",
 			       __func__, data.term, nodeToString(state_.id).c_str());
 			state_.current_term = data.term;
-			electionTimeout(boost::system::error_code());
+			state_.type = kFollower;
+			state_.president = false;
+			state_.voted_for = -1;
+			state_.leader_id = -1;
+			startElectionTimer();
 			return;
 		}
 
@@ -246,11 +251,31 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 	state_.local_time++;
 	node_[state_.id].heartbeat = state_.local_time;
 
+	int loyal_votes = -1;
+	bool has_quorum = false;
+
+	if (state_.type == kLeader) {
+		loyal_votes = voteCount(true);
+		has_quorum = loyal_votes >= opt_.quorum;
+	}
+
 	// Roll back from being the leader if there are less than quorum
 	// loyal nodes alive
 	if (state_.president) {
 		assert(state_.type != kFollower);
-		if (voteCount(true) < opt_.quorum) {
+		if (!has_quorum) {
+			quorum_loss_streak_++;
+
+			syslog(LOG_WARNING,
+			       "(%s): Reported quorum loss: %d out of %d before demoting Leader %s", __func__,
+			       quorum_loss_streak_, opt_.quorum_loss_grace_heartbeats,
+			       nodeToString(state_.id).c_str());
+
+			if (quorum_loss_streak_ < opt_.quorum_loss_grace_heartbeats) {
+				sendHeartbeat();  // Heartbeat still needs to be sent
+				return;  // Quorum hysteresis: tolerate transient loss
+			}
+
 			if (state_.type == kLeader) {
 				state_.type      = kFollower;
 				state_.voted_for = -1;
@@ -258,14 +283,16 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 			}
 
 			syslog(LOG_WARNING,
-			       "(%s): Heartbeat quorum lost: Demoting current Leader %s to follower", __func__,
-			       nodeToString(state_.id).c_str());
+			       "(%s): Heartbeat quorum lost: %d out of %d nodes voted for Leader; "
+			       "demoting Leader %s to follower",
+			       __func__, loyal_votes, opt_.quorum, nodeToString(state_.id).c_str());
 			state_.president = false;
-
+			quorum_loss_streak_ = 0;
 			nodeDemote();
 
 			return;
 		}
+		quorum_loss_streak_ = 0;
 	}
 
 	if (state_.type == kCandidate) {
@@ -275,7 +302,7 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 	if (state_.type == kLeader) {
 		sendHeartbeat();
 		if (!state_.president) {
-			if (voteCount(true) >= opt_.quorum) {
+			if (has_quorum) {
 				state_.president = true;
 				syslog(LOG_NOTICE, "(%s): Heartbeat quorum confirmed: Node %s is now active Leader",
 				       __func__, nodeToString(state_.id).c_str());

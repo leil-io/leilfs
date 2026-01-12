@@ -25,6 +25,8 @@ public:
 		int                      election_timeout_max;
 		int                      heartbeat_period;
 		int                      quorum;  /// Minimum number of votes to get to become the leader.
+		/// Number of heartbeats to wait before considering quorum lost.
+		int quorum_loss_grace_heartbeats;
 	};
 
 protected:
@@ -189,4 +191,7 @@ protected:
 	bool                                    block_leader_promotion_;  /// If true this node cannot be promoted to leader.
 
 	Options                                 opt_;
+
+	/// Number of consecutive heartbeats with lost quorum before demoting leader.
+	int quorum_loss_streak_ = 0;
 };

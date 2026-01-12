@@ -254,7 +254,8 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 				syslog(LOG_ERR, "Invalid metadata server status.");
 			}
 		} else {
-			syslog(LOG_WARNING, "Isalive timeout.");
+			syslog(LOG_WARNING, "(%s): Isalive timeout reported after %d ms.", __func__,
+			       opt_.getversion_timeout);
 		}
 
 		// Always reconcile promotion blocking
@@ -268,6 +269,7 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 				syslog(LOG_NOTICE, "Metadata server is dead");
 				stopFloatingIpManager();
 				demoteLeader();
+				set_block_promotion(true);
 				setSlowCommandTimeout(opt_.dead_handler_timeout);
 				if (runSlowCommand("saunafs-uraft-helper dead")) {
 					command_type_ = kCmdStatusDead;
