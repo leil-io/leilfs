@@ -1498,6 +1498,8 @@ void* fs_nop_thread(void *arg) {
 		mabort("Can't set handler for SIGUSR1");
 	}
 #endif
+
+	uint64_t lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
 	for (;;) {
 		now = time(NULL);
 		std::unique_lock<std::mutex> fdLock(fdMutex);
@@ -1561,8 +1563,9 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (gChangedTweaksValue || lastDisconnectedStatus) {
-				gChangedTweaksValue = false;
+			if (gTweaks.getGlobalLastChangeEpoch() > lastTweaksGlobalEpoch ||
+			    lastDisconnectedStatus) {
+				lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
 
 				if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect) {
 					std::string mountInfoStr;

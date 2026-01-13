@@ -18,31 +18,35 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "common/platform.h"
 #include "mount/tweaks.h"
+#include "common/platform.h"
 
+#include <atomic>
 #include <list>
+#include <memory>
+#include <mutex>
 #include <sstream>
+#include <string>
 
 class Variable {
 public:
 	virtual ~Variable() {}
-	virtual void setValue(const std::string& value) = 0;
+	virtual void setValue(const std::string &value) = 0;
 	virtual std::string getValue() const = 0;
 };
 
 template <typename T>
 class VariableImpl : public Variable {
 public:
-	VariableImpl(std::atomic<T>& v) : value_(&v) {}
+	VariableImpl(std::atomic<T> &v) : value_(&v) {}
 
-	void setValue(const std::string& value) override {
+	void setValue(const std::string &value) override {
 		std::stringstream ss(value);
 		T t;
+
 		ss >> std::boolalpha >> t;
-		if (!ss.fail()) {
-			value_->store(t);
-		}
+
+		if (!ss.fail()) { value_->store(t, std::memory_order_release); }
 	}
 
 	std::string getValue() const override {
@@ -52,11 +56,11 @@ public:
 	}
 
 private:
-	std::atomic<T>* value_;
+	std::atomic<T> *value_;
 };
 
 template <typename T>
-std::unique_ptr<Variable> makeVariable(std::atomic<T>& v) {
+std::unique_ptr<Variable> makeVariable(std::atomic<T> &v) {
 	return std::unique_ptr<Variable>(new VariableImpl<T>(v));
 }
 
@@ -85,74 +89,93 @@ std::unique_ptr<Variable> makeVariable(std::string &value, std::mutex &mutex) {
 
 class Tweaks::Impl {
 public:
-	std::list<std::tuple<std::string, std::unique_ptr<Variable>, std::string>> variables;
+	struct VariableEntry {
+		std::string name;
+		std::unique_ptr<Variable> var;
+		std::string optionName;
+		std::atomic<uint64_t> lastChangeEpoch;
+
+		VariableEntry(std::string n, std::unique_ptr<Variable> v, std::string o, uint64_t e)
+		    : name(std::move(n)), var(std::move(v)), optionName(std::move(o)), lastChangeEpoch(e) {}
+
+		VariableEntry(const VariableEntry &) = delete;
+		VariableEntry &operator=(const VariableEntry &) = delete;
+		VariableEntry(VariableEntry &&) = delete;
+		VariableEntry &operator=(VariableEntry &&) = delete;
+	};
+
+	std::list<VariableEntry> variables;
+	std::atomic<uint64_t> globalEpoch{0};
 };
 
 Tweaks::Tweaks() : impl_(new Impl) {}
 
 Tweaks::~Tweaks() {}
 
-void Tweaks::registerVariable(const std::string& name, std::atomic<bool>& variable, const std::string optionName) {
-	if (!gChangedTweaksValue) {
-		gChangedTweaksValue = true;
-	}
-	impl_->variables.push_back({name, makeVariable(variable), optionName});
+void Tweaks::registerVariable(const std::string &name, std::atomic<bool> &variable,
+                              const std::string optionName) {
+	uint64_t newEpoch = impl_->globalEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+	impl_->variables.emplace_back(name, makeVariable(variable), optionName, newEpoch);
 }
 
-void Tweaks::registerVariable(const std::string& name, std::atomic<uint32_t>& variable, const std::string optionName) {
-	if (!gChangedTweaksValue) {
-		gChangedTweaksValue = true;
-	}
-	impl_->variables.push_back({name, makeVariable(variable), optionName});
+void Tweaks::registerVariable(const std::string &name, std::atomic<uint32_t> &variable,
+                              const std::string optionName) {
+	uint64_t newEpoch = impl_->globalEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+	impl_->variables.emplace_back(name, makeVariable(variable), optionName, newEpoch);
 }
 
-void Tweaks::registerVariable(const std::string& name, std::atomic<uint64_t>& variable, const std::string optionName) {
-	if (!gChangedTweaksValue) {
-		gChangedTweaksValue = true;
-	}
-	impl_->variables.push_back({name, makeVariable(variable), optionName});
+void Tweaks::registerVariable(const std::string &name, std::atomic<uint64_t> &variable,
+                              const std::string optionName) {
+	uint64_t newEpoch = impl_->globalEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+	impl_->variables.emplace_back(name, makeVariable(variable), optionName, newEpoch);
 }
 
 void Tweaks::registerVariable(const std::string &name, std::string &variable, std::mutex &mutex,
                               const std::string optionName) {
-	if (!gChangedTweaksValue) { gChangedTweaksValue = true; }
-
-	impl_->variables.emplace_back(name, makeVariable(variable, mutex), optionName);
+	uint64_t newEpoch = impl_->globalEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+	impl_->variables.emplace_back(name, makeVariable(variable, mutex), optionName, newEpoch);
 }
 
-void Tweaks::setValue(const std::string& name, const std::string& value) {
-	if (!gChangedTweaksValue) {
-		gChangedTweaksValue = true;
-	}
-	for (auto& nameAndVariable : impl_->variables) {
-		if (std::get<0>(nameAndVariable) == name) {
-			std::get<1>(nameAndVariable)->setValue(value);
+void Tweaks::setValue(const std::string &name, const std::string &value) {
+	for (auto &entry : impl_->variables) {
+		if (entry.name == name) {
+			entry.var->setValue(value);
+			uint64_t newEpoch = impl_->globalEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+			entry.lastChangeEpoch.store(newEpoch, std::memory_order_release);
+			break;
 		}
 	}
 }
 
-std::string Tweaks::getValue(const std::string& name) const {
-	for (const auto& nameAndVariable : impl_->variables) {
-		if (std::get<0>(nameAndVariable) == name) {
-			return std::get<1>(nameAndVariable)->getValue();
-		}
+std::string Tweaks::getValue(const std::string &name) const {
+	for (const auto &nameAndVariable : impl_->variables) {
+		if (nameAndVariable.name == name) { return nameAndVariable.var->getValue(); }
 	}
 	return std::string();
 }
 
-std::string Tweaks::getValueByOptionName(const std::string& optionName) const {
-	for (const auto& nameAndVariable : impl_->variables) {
-		if (std::get<2>(nameAndVariable) == optionName) {
-			return std::get<1>(nameAndVariable)->getValue();
-		}
+std::string Tweaks::getValueByOptionName(const std::string &optionName) const {
+	for (const auto &nameAndVariable : impl_->variables) {
+		if (nameAndVariable.optionName == optionName) { return nameAndVariable.var->getValue(); }
 	}
 	return std::string();
 }
 
 std::string Tweaks::getAllValues() const {
 	std::stringstream ss;
-	for (const auto& nameAndVariable : impl_->variables) {
-		ss << std::get<0>(nameAndVariable) << "\t" << std::get<1>(nameAndVariable)->getValue() << "\n";
+	for (const auto &nameAndVariable : impl_->variables) {
+		ss << nameAndVariable.name << "\t" << nameAndVariable.var->getValue() << "\n";
 	}
 	return ss.str();
+}
+
+uint64_t Tweaks::getGlobalLastChangeEpoch() const {
+	return impl_->globalEpoch.load(std::memory_order_acquire);
+}
+
+uint64_t Tweaks::getVarLastChangeEpochByName(const std::string &name) const {
+	for (const auto &entry : impl_->variables) {
+		if (entry.name == name) { return entry.lastChangeEpoch.load(std::memory_order_acquire); }
+	}
+	return 0;
 }
