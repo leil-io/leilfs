@@ -1500,6 +1500,8 @@ void* fs_nop_thread(void *arg) {
 #endif
 
 	uint64_t lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
+	uint64_t lastIOLimitsEpoch = gTweaks.getVarLastChangeEpochByName("IOLimitsFilePath");
+
 	for (;;) {
 		now = time(NULL);
 		std::unique_lock<std::mutex> fdLock(fdMutex);
@@ -1563,10 +1565,9 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (gTweaks.getGlobalLastChangeEpoch() > lastTweaksGlobalEpoch ||
+			const uint64_t currentTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
+			if (currentTweaksGlobalEpoch > lastTweaksGlobalEpoch ||
 			    lastDisconnectedStatus) {
-				lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
-
 				if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect) {
 					std::string mountInfoStr;
 					{
@@ -1590,7 +1591,16 @@ void* fs_nop_thread(void *arg) {
 					}
 				}
 
-				if (gIOLimitsInitialized) { fsLoadMountIoLimits(); }
+				if (gIOLimitsInitialized) {
+					const uint64_t currentIOLimitsEpoch =
+					    gTweaks.getVarLastChangeEpochByName("IOLimitsFilePath");
+					if (currentIOLimitsEpoch > lastIOLimitsEpoch) {
+						fsLoadMountIoLimits();
+						lastIOLimitsEpoch = currentIOLimitsEpoch;
+					}
+				}
+
+				lastTweaksGlobalEpoch = currentTweaksGlobalEpoch;
 			}
 		}
 
