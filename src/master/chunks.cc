@@ -829,6 +829,7 @@ void chunk_emergency_increase_version(Chunk *c) {
 	chunk_update_checksum(c);
 	gFSOperations->increaseChunkVersion(c->chunkid);
 	emit_chunk_changed(c);
+	
 }
 
 void chunk_finalize_failed_operation(Chunk *c) {
@@ -860,8 +861,10 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 			c->interrupted = 1;
 		} else {
 			if (c->isWritable()) {
+				safs::log_warn("GigaCronos: chunk_handle_disconnected_copies- verincrease: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}", c->chunkid ,uint32_t(c->operation), c->countMissingParts(), c->countRedundantParts());
 				chunk_emergency_increase_version(c);
 			} else {
+				safs::log_warn("GigaCronos: chunk_handle_disconnected_copies- finalize: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}", c->chunkid ,uint32_t(c->operation), c->countMissingParts(), c->countRedundantParts());
 				chunk_finalize_failed_operation(c);
 			}
 		}
@@ -1801,6 +1804,7 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,ma
 	if (!any_copy_busy) {
 		if (c->isWritable()) {
 			if (c->interrupted) {
+				safs::log_warn("GigaCronos: chunk_operation_status- verincrease: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}", c->chunkid ,uint32_t(c->operation), c->countMissingParts(), c->countRedundantParts());
 				chunk_emergency_increase_version(c);
 			} else {
 				matoclserv_chunk_status(c->chunkid,SAUNAFS_STATUS_OK);
@@ -1808,6 +1812,7 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,ma
 				c->needverincrease = 0;
 			}
 		} else {
+			safs::log_warn("GigaCronos: chunk_operation_status- finalize: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}", c->chunkid ,uint32_t(c->operation), c->countMissingParts(), c->countRedundantParts());
 			chunk_finalize_failed_operation(c);
 		}
 	}

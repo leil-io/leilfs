@@ -1659,7 +1659,7 @@ std::string readlink(Context &ctx, inode_t ino) {
 		return std::string((char*)path);
 	}
 	stats_inc(OP_READLINK);
-	status = fs_readlink(ino,&path);
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, fs_readlink(ino,&path));
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "readlink (%" PRIiNode "): %s",
 				ino,
@@ -1967,6 +1967,9 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 	auto data_acquire_time = gDirEntryCache.updateTime();
 
 	if(status != SAUNAFS_STATUS_OK) {
+		if(status == SAUNAFS_ERROR_GROUPNOTREGISTERED){
+			safs::log_warn("GigaCronos: readdir SAUNAFS_ERROR_GROUPNOTREGISTERED line:{}",__LINE__ );
+		}
 		throw RequestException(status);
 	}
 
@@ -2306,7 +2309,8 @@ void open(Context &ctx, inode_t ino, FileInfo *fi) {
 
 static void update_credentials(Context::IdType index, const GroupCache::Groups &groups) {
 	uint8_t status = fs_update_credentials(index, groups);
-	if (status != SAUNAFS_STATUS_OK) {
+	if (status != SAUNAFS_STATUS_OK) {	
+		safs::log_warn("GigaCronos: update_credentials_failed");
 		throw RequestException(status);
 	}
 }
@@ -3112,7 +3116,7 @@ void setxattr(Context &ctx, inode_t ino, const char *name, const char *value,
 	mode = 0;
 #endif
 	(void)position;
-	status = choose_xattr_handler(name)->setxattr(ctx, ino, name, nleng, value, size, mode);
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, choose_xattr_handler(name)->setxattr(ctx, ino, name, nleng, value, size, mode));
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
 				ino,
@@ -3329,7 +3333,7 @@ void removexattr(Context &ctx, inode_t ino, const char *name) {
 				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
-	status = choose_xattr_handler(name)->removexattr(ctx, ino, name, nleng);
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, choose_xattr_handler(name)->removexattr(ctx, ino, name, nleng));
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
 				ino,
@@ -3370,7 +3374,7 @@ void getlk(Context &ctx, inode_t ino, FileInfo* fi, struct safs_locks::FlockWrap
 	}
 
 	// communicate with master
-	status = fs_getlk(ino, fi->lock_owner, lock);
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, fs_getlk(ino, fi->lock_owner, lock));
 
 	if (status) {
 		throw RequestException(status);
@@ -3502,7 +3506,8 @@ std::string getgoal(Context &ctx, inode_t ino) {
 	}
 
 	std::string goal;
-	uint8_t status = fs_getgoal(ino, goal);
+	uint8_t status;
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, fs_getgoal(ino, goal));
 	if (status != SAUNAFS_STATUS_OK) {
 		throw RequestException(status);
 	}
@@ -3517,7 +3522,8 @@ void setgoal(Context &ctx, inode_t ino, const std::string &goal_name, uint8_t sm
 		throw RequestException(EINVAL);
 	}
 
-	uint8_t status = fs_setgoal(ino, ctx.uid, goal_name, smode);
+	uint8_t status; 
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, fs_setgoal(ino, ctx.uid, goal_name, smode));
 	if (status != SAUNAFS_STATUS_OK) {
 		throw RequestException(status);
 	}

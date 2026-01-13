@@ -3,7 +3,7 @@ timeout_set 3 hours
 source test_utils/test_consistency_utils.sh
 
 CHUNKSERVERS=3
-MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsioretries=100" \
+MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsioretries=100,sfsdebug" \
 	setup_local_empty_saunafs info
 dir="${info[mount0]}/dir"
 mkdir "$dir"
