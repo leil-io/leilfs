@@ -45,6 +45,30 @@ protected:
 	    kRpcLast
 	};
 
+	/// @brief Policy controlling side effects when stepping down to follower.
+	///
+	/// The policy selects whether stepping down is a Raft-only state transition, or whether it
+	/// also triggers a demotion of the local metadata server (via nodeDemote()) when stepping
+	/// down from an active Leader (President).
+	///
+	/// Typical usage:
+	/// - kRaftOnly:
+	///   Step down in Raft (become follower, restart election timer) without invoking nodeDemote().
+	///   Use this when the controller owns metadata-side effects, e.g.:
+	///   - manual demotion via demoteLeader() (promotion failure recovery),
+	///   - local "metadata dead" handling where VIP release / restarts are scheduled elsewhere.
+	///
+	/// - kDemoteIfPresident:
+	///   Step down in Raft and, if we were President, also call nodeDemote() so the local metadata
+	///   server is not left in master mode while we are no longer eligible to lead. Use this for
+	///   Raft-driven stepdowns, e.g.:
+	///   - observing a higher term in received RPCs (checkTerm),
+	///   - quorum loss while being President (heartbeat).
+	enum class StepDownPolicy : uint8_t {
+		kRaftOnly,          // Update Raft state and restart election timer
+		kDemoteIfPresident  // Additionally call nodeDemote() if we were president
+	};
+
 	static const int kMaxPacketLength = 1024;
 
 	//! Information about node.
@@ -143,6 +167,23 @@ public:
 
 protected:
 	void checkTerm(int id, const RpcHeader &data);
+
+	/// @brief Step down to follower state (optionally updating term and demoting metadata).
+	///
+	/// This is the shared implementation used by different "step down" triggers:
+	/// - observing a higher term (checkTerm),
+	/// - quorum loss while being President (heartbeat),
+	/// - manual demotion (demoteLeader).
+	///
+	/// The caller chooses the StepDownPolicy:
+	/// - kRaftOnly: only updates Raft state and restarts the election timer.
+	/// - kDemoteIfPresident: if the node was President, also calls nodeDemote() so the local
+	///   metadata server is not left in master mode while stepping down in Raft.
+	///
+	/// @param policy StepDownPolicy used to control side effects.
+	/// @param newTerm Optional new term; if non-zero and greater than current, updates
+	/// current_term. This is used for stepping down when observing a higher term.
+	void stepDownToFollower(StepDownPolicy policy, uint64_t newTerm = 0);
 
 	/*! \brief Checks if a received packet is structurally valid.
 	 *

@@ -20,12 +20,17 @@
 
 constexpr int kCommandTimeoutMs = 5000;  ///< Default command timeout in milliseconds.
 
+// Delay used both as a grace period for transient failures and as the retry interval while the
+// metadata server remains dead (single knob).
+constexpr int kDeadRecoveryDelayMs = 2000;
+
 uRaftController::uRaftController(boost::asio::io_context &ios)
 	: uRaftStatus(ios),
 	  check_cmd_status_timer_(ios),
 	  check_node_status_timer_(ios),
 	  cmd_timeout_timer_(ios),
-	  promotion_backoff_timer_(ios) {
+	  promotion_backoff_timer_(ios),
+	  dead_recovery_timer_(ios) {
 	command_pid_  = -1;
 	command_type_ = kCmdNone;
 	is_demote_pending_ = false;
@@ -79,10 +84,13 @@ void uRaftController::nodePromote() {
 	// Prevent concurrent transitions
 	if (command_pid_ >= 0) {
 		if (command_type_ == kCmdDemote) {
-			syslog(
-			    LOG_WARNING,
-			    "Promotion requested during demotion - will be started after completing demotion");
-			is_promote_pending_ = true;
+			// Make nodePromote() idempotent with respect to pending promotions
+			if (!is_promote_pending_) {
+				syslog(
+				    LOG_WARNING,
+				    "Promotion requested during demotion - will be started after completing demotion");
+				is_promote_pending_ = true;
+			}
 			return;
 		}
 		// Already promoting
@@ -105,10 +113,13 @@ void uRaftController::nodeDemote() {
 
 	if (command_pid_ >= 0) {
 		if (command_type_ == kCmdPromote) {
-			syslog(
-			    LOG_WARNING,
-			    "Demotion requested during promotion - will be started after completing promotion");
-			is_demote_pending_ = true;
+			// Make nodeDemote() idempotent with respect to pending demotions
+			if (!is_demote_pending_) {
+				syslog(
+				    LOG_WARNING,
+				    "Demotion requested during promotion - will be started after completing promotion");
+				is_demote_pending_ = true;
+			}
 			return;
 		}
 		syslog(LOG_DEBUG, "Demotion already in progress (PID %d)", command_pid_);
@@ -183,7 +194,7 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 				// Only execute pending promotion if node is still Leader. This prevents
 				// synchronization issues between uRaft state and SaunaFS state.
 				if (state_.type == kLeader) {
-					syslog(LOG_WARNING, "Starting pending promotion to master mode to the Leader");
+					syslog(LOG_WARNING, "Starting pending promotion to master mode for the Leader");
 					nodePromote();
 				} else {
 					syslog(LOG_WARNING, "Canceling pending promotion (no longer Leader, state=%d)",
@@ -195,7 +206,6 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			if (commandSucceeded) {
 				syslog(LOG_NOTICE, "Metadata server switch to master mode done");
 				startPromotionBackoff(/*reset=*/true);
-				node_alive_ = true;
 
 				if (state_.type == kLeader) {
 					// Start floating IP only if promoted node is still Leader
@@ -204,11 +214,12 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 					syslog(LOG_ERR,
 					       "Promotion completed but no longer uRaft Leader (state=%d) - reverting",
 					       state_.type);
-					// Immediately demote to fix inconsistency
+					// Request demotion to fix inconsistency (may be deferred)
 					nodeDemote();
 				}
 			} else {
-				syslog(LOG_ERR, "Promotion failed with exit code: %d", WEXITSTATUS(status));
+				syslog(LOG_ERR, "Promotion failed with exit code: %d",
+				       WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 				handlePromotionFailure();
 			}
 
@@ -222,12 +233,17 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 					       "Starting pending demotion to slave mode: no longer the Leader");
 					nodeDemote();
 				} else {
-					syslog(LOG_WARNING, "Cancelling pending demotion: still Leader)");
+					syslog(LOG_WARNING, "Canceling pending demotion: still Leader");
 				}
 				is_demote_pending_ = false;
 			}
 		} else if (command_type_ == kCmdStatusDead) {
-			syslog(LOG_NOTICE, "Waiting for new metadata server instance to be available");
+			if (commandSucceeded) {
+				syslog(LOG_NOTICE, "Dead-metadata handler completed");
+			} else {
+				syslog(LOG_ERR, "Dead-metadata handler failed with exit code: %d",
+				       WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+			}
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
 		}
@@ -265,15 +281,15 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 		if (is_alive != node_alive_) {
 			if (is_alive) {
 				syslog(LOG_NOTICE, "Metadata server is alive");
+				cancelDeadRecovery();
 			} else {
 				syslog(LOG_NOTICE, "Metadata server is dead");
-				stopFloatingIpManager();
-				demoteLeader();
-				set_block_promotion(true);
-				setSlowCommandTimeout(opt_.dead_handler_timeout);
-				if (runSlowCommand("saunafs-uraft-helper dead")) {
-					command_type_ = kCmdStatusDead;
-				}
+				// Controller-owned dead handling:
+				// 1) Raft-only step-down (no implicit nodeDemote()) so another node can take over.
+				// 2) Run the helper's 'dead' command to release floating IPs without restarting sfsmaster.
+				stepDownToFollower(StepDownPolicy::kRaftOnly);
+				startDeadMetadataHandler();
+				scheduleDeadRecovery();
 			}
 			node_alive_ = is_alive;
 		}
@@ -282,6 +298,58 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 	check_node_status_timer_.expires_from_now(boost::posix_time::millisec(opt_.check_node_status_period));
 	check_node_status_timer_.async_wait(boost::bind(&uRaftController::checkNodeStatus, this,
 	                                    boost::asio::placeholders::error));
+}
+
+void uRaftController::startDeadMetadataHandler() {
+	// Ensure floating IP manager stops trying to restore IPs.
+	stopFloatingIpManager();
+
+	// Prevent concurrent transitions; caller should already ensure kCmdNone.
+	if (command_pid_ >= 0) {
+		syslog(LOG_WARNING,
+		       "Dead-metadata handler requested while another command is running (type=%d pid=%d)",
+		       command_type_, command_pid_);
+		return;
+	}
+
+	setSlowCommandTimeout(opt_.dead_handler_timeout);
+	if (runSlowCommand("saunafs-uraft-helper dead")) {
+		command_type_ = kCmdStatusDead;
+	}
+}
+
+void uRaftController::cancelDeadRecovery() {
+	dead_recovery_pending_ = false;
+	dead_recovery_timer_.cancel();
+}
+
+void uRaftController::scheduleDeadRecovery() {
+	// Idempotent: don't stack multiple recovery timers
+	if (dead_recovery_pending_) { return; }
+	dead_recovery_pending_ = true;
+
+	dead_recovery_timer_.expires_from_now(boost::posix_time::millisec(kDeadRecoveryDelayMs));
+	dead_recovery_timer_.async_wait([this](const boost::system::error_code &ec) {
+		if (ec) { return; }
+
+		// If metadata recovered, stop dead recovery process
+		if (node_alive_) {
+			cancelDeadRecovery();
+			return;
+		}
+
+		// If another command is running, retry after the same delay
+		if (command_pid_ >= 0 || command_type_ != kCmdNone) {
+			cancelDeadRecovery();
+			scheduleDeadRecovery();
+			return;
+		}
+
+		// Still dead and safe to act: restart shadow via demote path
+		syslog(LOG_WARNING, "Metadata still dead: restarting shadow via demote");
+		dead_recovery_pending_ = false;
+		nodeDemote();
+	});
 }
 
 void uRaftController::setSlowCommandTimeout(int timeout) {
@@ -484,6 +552,8 @@ void uRaftController::stopFloatingIpManager() {
 	if (haFloatingIpManager) {
 		haFloatingIpManager->stop();
 		haFloatingIpManager.reset();
+	} else {
+		syslog(LOG_INFO, "Floating IP Manager is not running, nothing to stop");
 	}
 }
 
@@ -539,7 +609,7 @@ int uRaftController::computePromotionBackoffMs() const {
 	// 1s * 2^(streak-1), capped at 60s
 	constexpr int kMaxPromotionBackoffMs = 60000;
 	if (promotion_failure_streak_ <= 0) { return 0; }
-	const int capped = std::min(promotion_failure_streak_ - 1, 6);  // 1,2,4,8,16,32,64
+	const int capped = std::min(promotion_failure_streak_ - 1, 6);  // cap exponent at 6
 	const int promotionBackoffTimeMs = 1000 * (1 << capped);
 	return std::min(promotionBackoffTimeMs, kMaxPromotionBackoffMs);
 }

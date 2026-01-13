@@ -100,20 +100,26 @@ void uRaft::checkTerm(int /*id*/, const RpcHeader &data) {
 			assert(state_.type != kFollower);
 			syslog(LOG_NOTICE, "(%s): Higher term detected (%lu): stepping down Leader %s",
 			       __func__, data.term, nodeToString(state_.id).c_str());
-			state_.current_term = data.term;
-			state_.type = kFollower;
-			state_.president = false;
-			state_.voted_for = -1;
-			state_.leader_id = -1;
-			startElectionTimer();
-			return;
 		}
-
-		if (state_.type != kFollower) startElectionTimer();
-		state_.type         = kFollower;
-		state_.voted_for    = -1;
-		state_.current_term = data.term;
+		stepDownToFollower(StepDownPolicy::kDemoteIfPresident, data.term);
 	}
+}
+
+void uRaft::stepDownToFollower(StepDownPolicy policy, uint64_t newTerm) {
+	const bool wasPresident = state_.president;
+
+	if (newTerm > 0U) { state_.current_term = newTerm; }
+
+	state_.type = kFollower;
+	state_.president = false;
+	state_.voted_for = -1;
+	state_.leader_id = -1;
+
+	quorum_loss_streak_ = 0;
+
+	if (wasPresident && policy == StepDownPolicy::kDemoteIfPresident) { nodeDemote(); }
+
+	startElectionTimer();
 }
 
 /*! \brief Checks if a received packet is structurally valid.
@@ -276,20 +282,12 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 				return;  // Quorum hysteresis: tolerate transient loss
 			}
 
-			if (state_.type == kLeader) {
-				state_.type      = kFollower;
-				state_.voted_for = -1;
-				startElectionTimer();
-			}
-
 			syslog(LOG_WARNING,
 			       "(%s): Heartbeat quorum lost: %d out of %d nodes voted for Leader; "
 			       "demoting Leader %s to follower",
 			       __func__, loyal_votes, opt_.quorum, nodeToString(state_.id).c_str());
-			state_.president = false;
-			quorum_loss_streak_ = 0;
-			nodeDemote();
 
+			stepDownToFollower(StepDownPolicy::kDemoteIfPresident);
 			return;
 		}
 		quorum_loss_streak_ = 0;
@@ -524,12 +522,8 @@ void uRaft::demoteLeader() {
 
 	syslog(LOG_NOTICE, "(%s): Manual demotion: Stepping down Leader %s to follower", __func__,
 	       nodeToString(state_.id).c_str());
-	state_.type      = kFollower;
-	state_.voted_for = -1;
-	state_.leader_id = -1;
-	state_.president = false;
 
-	startElectionTimer();
+	stepDownToFollower(StepDownPolicy::kRaftOnly);
 }
 
 void uRaft::set_block_promotion(bool block) {

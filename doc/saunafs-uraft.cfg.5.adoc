@@ -330,14 +330,6 @@ The most common causes are repeated `isalive` timeouts or repeated `dead` status
 *Leader churn / ping-pong leadership*::
 Increase election timeouts and quorum-loss grace, and ensure voting nodes have stable connectivity.
 
-*QUORUM_LOSS_GRACE_HEARTBEATS*:: *[advanced]* Number of consecutive missed heartbeats allowed before
-quorum is considered lost.
-
-This parameter defines how many heartbeats may be missed in a row before the system declares quorum
-loss and demotes the current Leader. Increasing this value helps tolerate short-lived network
-glitches or transient latency spikes, reducing unnecessary demotions and improving overall
-cluster stability. The default value is 5.
-
 == REPORTING BUGS
 
 Report bugs to the GitHub repository <https://github.com/leil-io/saunafs> as an issue.
