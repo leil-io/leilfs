@@ -896,136 +896,127 @@ void access(Context &ctx, inode_t ino, int mask) {
 }
 
 EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
-	EntryParam e;
-	uint64_t maxfleng;
-	inode_t inode;
-	uint32_t nleng;
-	Attributes attr;
-	char attrstr[256];
-	uint8_t mattr;
-	uint8_t icacheflag;
-	int status;
-
 	if (debug_mode) {
 #ifdef _WIN32
-		if (parent != SPECIAL_INODE_ROOT ||
-		    strcmp(name, SPECIAL_FILE_NAME_OPLOG) != 0) {
+		if (parent != SPECIAL_INODE_ROOT || strcmp(name, SPECIAL_FILE_NAME_OPLOG) != 0) {
 			oplog_printf(ctx, "lookup (%" PRIiNode ",%s) ...", parent, name);
 		}
 #else
 		oplog_printf(ctx, "lookup (%" PRIiNode ",%s) ...", parent, name);
 #endif
 	}
-	nleng = strlen(name);
-	if (nleng > SFS_NAME_MAX) {
+
+	uint32_t nameLen = strlen(name);
+	if (nameLen > SFS_NAME_MAX) {
 		stats_inc(OP_LOOKUP);
-		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name, saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name,
+		             saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
 	}
+
+	constexpr uint32_t kAttrStrSize = 256;
+	char attrStr[kAttrStrSize];
 	if (parent == SPECIAL_INODE_ROOT) {
-		if (nleng == 2 && name[0] == '.' && name[1] == '.') {
-			nleng = 1;
+		if (std::string_view(name, nameLen) == "..") {
+			nameLen = 1;
 		}
 
-		inode_t ino = getSpecialInodeByName(name);
-		if (IS_SPECIAL_INODE(ino)) {
-			return special_lookup(ino, ctx, parent, name, attrstr);
+		inode_t inode = getSpecialInodeByName(name);
+		if (IS_SPECIAL_INODE(inode)) { 
+			return special_lookup(inode, ctx, parent, name, attrStr);
 		}
 	}
+
+	inode_t inode;
+	Attributes attr;
+	bool cacheHit = false;
+	int status;
 	if (parent == SPECIAL_INODE_FILE_BY_INODE) {
-		char *endptr = nullptr;
-		inode = strtol(name, &endptr, 10);
-		if (endptr == nullptr || *endptr != '\0') {
+		char *endPtr = nullptr;
+		inode = strtol(name, &endPtr, 10);
+		if (endPtr == nullptr || *endPtr != '\0') {
 			throw RequestException(SAUNAFS_ERROR_EINVAL);
 		}
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_getattr(inode, ctx.uid, ctx.gid, attr));
-		icacheflag = 0;
 	} else if (parent == SPECIAL_INODE_PATH_BY_INODE) {
-		char *endptr = nullptr;
-		inode = strtol(name, &endptr, 10);
-		if (endptr == nullptr || *endptr != '\0') {
+		char *endPtr = nullptr;
+		inode = strtol(name, &endPtr, 10);
+		if (endPtr == nullptr || *endPtr != '\0') {
 			throw RequestException(SAUNAFS_ERROR_EINVAL);
 		}
 		std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
-		std::string fullPath = "";
+		std::string fullPath;
 		int lookupStatus = SAUNAFS_STATUS_OK;
 		int getattrStatus = SAUNAFS_STATUS_OK;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(lookupStatus, ctx,
-		fs_fullpath(inode, ctx.uid, ctx.gid, fullPath));
+			fs_fullpath(inode, ctx.uid, ctx.gid, fullPath));
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(getattrStatus, ctx,
 			fs_getattr(inode, ctx.uid, ctx.gid, attr));
 		if (lookupStatus != SAUNAFS_STATUS_OK || getattrStatus != SAUNAFS_STATUS_OK) {
-			status = lookupStatus != SAUNAFS_STATUS_OK ? lookupStatus : getattrStatus;
+			status = (lookupStatus != SAUNAFS_STATUS_OK) ? lookupStatus : getattrStatus;
 			lock.unlock();
 			throw RequestException(status);
 		}
 		status = SAUNAFS_STATUS_OK;
 		if (ctx.pid > 0) {
-			PidPathEntry entry{ctx.pid, fullPath};
+			PidPathEntry entry{ .pid = ctx.pid, .path = fullPath };
 			gInodePathInfo.contextPidToPath[entry]++;
 		}
 		attr[0] = TYPE_FILE;
 		inode = parent;
-		icacheflag = 0;
-	} else if (usedircache && gDirEntryCache.lookup(ctx,parent,std::string(name,nleng),inode,attr)) {
-		if (debug_mode) {
-			safs::log_debug("lookup: sending data from dircache");
-		}
+	} else if (usedircache &&
+	           gDirEntryCache.lookup(ctx, parent, std::string(name, nameLen), inode, attr)) {
+		if (debug_mode) { safs::log_debug("lookup: sending data from dircache"); }
 		stats_inc(OP_DIRCACHE_LOOKUP);
-		status = 0;
-		icacheflag = 1;
-	} else {
+		status = SAUNAFS_STATUS_OK;
+		cacheHit = true;
+	} else {  // dentry miss
 		stats_inc(OP_LOOKUP);
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_lookup(parent, std::string(name, nleng), ctx.uid, ctx.gid, &inode, attr));
-		icacheflag = 0;
+			fs_lookup(parent, std::string(name, nameLen), ctx.uid, ctx.gid, &inode, attr));
 	}
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name, saunafs_error_string(status));
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name,
+		             saunafs_error_string(status));
 		throw RequestException(status);
 	}
-	if (attr[0]==TYPE_FILE) {
-		maxfleng = write_data_getmaxfleng(inode);
-	} else {
-		maxfleng = 0;
-	}
+	uint64_t maxFileLen = (attr[0] == TYPE_FILE) ? write_data_getmaxfleng(inode) : 0;
+	EntryParam e;
 	e.ino = inode;
-	mattr = attr_get_mattr(attr);
-	e.attr_timeout = (mattr&MATTR_NOACACHE)?0.0:attr_cache_timeout;
-	e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:((attr[0]==TYPE_DIRECTORY)?direntry_cache_timeout:entry_cache_timeout);
-	attr_to_stat(inode,attr,&e.attr);
-	if (maxfleng>(uint64_t)(e.attr.st_size)) {
-		update_attr_size(attr, maxfleng);
-		e.attr.st_size=maxfleng;
+	uint8_t modeAttr = attr_get_mattr(attr);
+	e.attr_timeout = (modeAttr & MATTR_NOACACHE) ? 0.0 : attr_cache_timeout;
+	if (modeAttr & MATTR_NOECACHE) {
+		e.entry_timeout = 0.0;
+	} else {
+		e.entry_timeout =
+		    (attr[0] == TYPE_DIRECTORY) ? direntry_cache_timeout : entry_cache_timeout;
+	}
+	attr_to_stat(inode, attr, &e.attr);
+	if (maxFileLen > static_cast<uint64_t>(e.attr.st_size)) {
+		update_attr_size(attr, maxFileLen);
+		e.attr.st_size = static_cast<__off_t>(maxFileLen);
 	}
 
 	// If lookup succeeded and data did not come from cache, then cache it.
-	// Files with at least one hardlink are impossible to keep track of, so it is
-	// better to don't track them.
-	if (!icacheflag && !(e.attr.st_nlink > 1 && attr[0] == TYPE_FILE)) {
-		auto data_acquire_time = gDirEntryCache.updateTime();
-
+	// Files with at least one hardlink are impossible to keep track of, so better not track them.
+	if (!cacheHit && (attr[0] != TYPE_FILE || e.attr.st_nlink <= 1)) {
 		std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
-		gDirEntryCache.updateTime();
-
-		gDirEntryCache.insert(ctx, parent, e.ino, std::string(name), attr,
-		                      data_acquire_time);
+		uint64_t data_acquire_time = gDirEntryCache.updateTime();
+		gDirEntryCache.insert(ctx, parent, e.ino, std::string(name), attr, data_acquire_time);
 		if (gDirEntryCache.size() > gDirEntryCacheMaxSize) {
-			gDirEntryCache.removeOldest(gDirEntryCache.size() -
-			                            gDirEntryCacheMaxSize);
+			gDirEntryCache.removeOldest(gDirEntryCache.size() - gDirEntryCacheMaxSize);
 		}
 	}
-
-	makeattrstr(attrstr,256,&e.attr);
+	makeattrstr(attrStr, kAttrStrSize, &e.attr);
 	oplog_printf(ctx, "lookup (%" PRIiNode ",%s)%s: OK (%.1f,%" PRIiNode ",%.1f,%s)",
 			parent,
 			name,
-			icacheflag?" (using open dir cache)":"",
+			cacheHit ? " (using open dir cache)" : "",
 			e.entry_timeout,
 			e.ino,
 			e.attr_timeout,
-			attrstr);
+			attrStr);
 	return e;
 }
 
