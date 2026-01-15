@@ -311,14 +311,77 @@ void MasterConn::connectTest() {
 	}
 }
 
-void MasterConn::onConnected() {
-	tcpnodelay(socketFD_);
-	mode_ = ConnectionMode::CONNECTED;
-	inputPacket_.reset();
+void MasterConn::tlsHandshake() {
+	sassert(mode_ == ConnectionMode::HANDSHAKE);
 
-	sendRegister();
+	int ret = SSL_connect(tlsSession_->session());
+
+	if (ret == 1) {
+		safs::log_info("TLS handshake completed with master from {}:{}", ipToString(address_.ip),
+		               address_.port);
+		lastRead_.reset();
+		setMode(ConnectionMode::CONNECTED);
+		sendRegister();
+		return;
+	}
+
+	int err = SSL_get_error(tlsSession_->session(), ret);
+	lastHandshakeError_ = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		safs::log_info("TLS handshake in progress with master from {}:{}: {}",
+		               ipToString(address_.ip), address_.port, opensslErrorString(err));
+		return;  // retry later
+	}
+
+	setMode(ConnectionMode::KILL);
+	safs::log_err("TLS handshake failed: {}", opensslErrorString(err));
+}
+
+void MasterConn::onConnected() {
+	assert(mode_ == ConnectionMode::CONNECTING);
+	tcpnodelay(socketFD_);
+	inputPacket_.reset();
 	lastRead_.reset();
 	lastWrite_.reset();
+
+	tlsKeyFile_ = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
+	tlsCertFile_ = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
+	tlsCaCertFile_ = cfg_getstring("TLS_SERVER_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+
+	if (isTlsEnabled()) {
+		try {
+			// Initialize a TLS session for the peer.
+			tlsSession_ = std::make_unique<TlsSession>(socketFD_, false, tlsKeyFile_, tlsCertFile_,
+			                                           tlsCaCertFile_, masterHostStr_);
+			safs::log_info("initiating TLS handshake with SFS master");
+
+			auto startTlsRequest = cstoma::startTls::build();
+			ssize_t ret = ::write(socketFD_, startTlsRequest.data(), startTlsRequest.size());
+			if (ret < 0) {
+				safs::log_error_code(errno, "cannot transmit startTls request to SFS master");
+				setMode(ConnectionMode::KILL);
+				return;
+			} else if (ret != static_cast<int>(startTlsRequest.size())) {
+				safs::log_err(
+				    "cannot transmit startTls request to SFS master: send(len={} ) returned {}",
+				    startTlsRequest.size(), ret);
+				setMode(ConnectionMode::KILL);
+				return;
+			}
+
+			// Proceed to the handshake.
+			setMode(ConnectionMode::HANDSHAKE);
+			tlsHandshake();
+		} catch (const Exception &ex) {
+			safs::log_err("MasterConn: TLS handshake setup failed: {}", ex.what());
+			setMode(ConnectionMode::KILL);
+			return;
+		}
+	} else {
+		setMode(ConnectionMode::CONNECTED);
+		sendRegister();
+	}
 }
 
 // Polling
@@ -334,6 +397,23 @@ void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc) {
 			pdesc.emplace_back(socketFD_, POLLIN, 0);
 			pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 		}
+	}
+
+	if (mode_ == ConnectionMode::HANDSHAKE) {
+		short event = 0;
+		switch (lastHandshakeError_) {
+		case SSL_ERROR_WANT_READ:
+			event = POLLIN;
+			break;
+		case SSL_ERROR_WANT_WRITE:
+			event = POLLOUT;
+			break;
+		default:
+			event = POLLIN | POLLOUT;
+			break;
+		}
+		pdesc.emplace_back(socketFD_, event, 0);
+		pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 	}
 
 	if (((mode_ == ConnectionMode::CONNECTED) && !outputPackets_.empty()) ||
@@ -366,6 +446,14 @@ void MasterConn::servePoll(const std::vector<pollfd> &pdesc) {
 		}
 	} else {
 		if (pDescPos_ >= 0) {
+			// Check if there is a TLS handshake in progress
+			if (mode_ == ConnectionMode::HANDSHAKE &&
+			    (pdesc[pDescPos_].revents & (POLLIN | POLLOUT))) {
+				lastRead_.reset();
+				lastWrite_.reset();
+				tlsHandshake();
+			}
+
 			// Check if there is data to read from this connection
 			if ((mode_ == ConnectionMode::CONNECTED) && (pdesc[pDescPos_].revents & POLLIN)) {
 				lastRead_.reset();
@@ -405,21 +493,50 @@ void MasterConn::readFromSocket() {
 		}
 
 		uint32_t bytesToRead = inputPacket_.bytesToBeRead();
-		ssize_t ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
 
-		if (ret == 0) {
-			safs::log_info("MasterConn: connection reset by Master: {}", address_.toString());
-			handleRegistrationAttempt();
-			setMode(ConnectionMode::KILL);
-			return;
-		}
+		ssize_t ret = -1;
+		if (tlsSession_) {
+			ret = ::SSL_read(tlsSession_->session(), inputPacket_.pointerToBeReadInto(),
+			                 static_cast<int>(bytesToRead));
 
-		if (ret < 0) {
-			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "MasterConn: read error from {}", address_.toString());
+			if (ret <= 0) {
+				int err = ::SSL_get_error(tlsSession_->session(), static_cast<int>(ret));
+				if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+					// Handshake/record layer needs more I/O; poll will drive it.
+					return;
+				}
+
+				if (ret == 0) {
+					safs::log_info("MasterConn(TLS): connection reset by Master: {}",
+					               address_.toString());
+					handleRegistrationAttempt();
+					setMode(ConnectionMode::KILL);
+					return;
+				}
+
+				safs::log_err("MasterConn(TLS): read error from {}: {}", address_.toString(),
+				              opensslErrorString(err));
 				setMode(ConnectionMode::KILL);
+				return;
 			}
-			return;
+		} else {
+			ret = ::read(socketFD_, inputPacket_.pointerToBeReadInto(), bytesToRead);
+
+			if (ret == 0) {
+				safs::log_info("MasterConn: connection reset by Master: {}", address_.toString());
+				handleRegistrationAttempt();
+				setMode(ConnectionMode::KILL);
+				return;
+			}
+
+			if (ret < 0) {
+				if (errno != EAGAIN) {
+					safs::log_error_code(errno, "MasterConn: read error from {}",
+					                     address_.toString());
+					setMode(ConnectionMode::KILL);
+				}
+				return;
+			}
 		}
 
 		bytesIn_ += ret;
@@ -455,16 +572,33 @@ void MasterConn::writeToSocket() {
 
 	while (!outputPackets_.empty()) {
 		OutputPacket &pack = outputPackets_.front();
-		bytesWritten = ::write(socketFD_, pack.packet.data() + pack.bytesSent,
-		                       pack.packet.size() - pack.bytesSent);
 
-		if (bytesWritten < 0) {
-			if (errno != EAGAIN) {
-				safs::log_error_code(errno, "MasterConn: write to Master error: {}",
-				                     address_.toString());
+		if (mode_ == ConnectionMode::CONNECTED && tlsSession_) {
+			bytesWritten = ::SSL_write(tlsSession_->session(), pack.packet.data() + pack.bytesSent,
+			                           static_cast<int>(pack.packet.size() - pack.bytesSent));
+			if (bytesWritten <= 0) {
+				int err = ::SSL_get_error(tlsSession_->session(), static_cast<int>(bytesWritten));
+				if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+					// Need more I/O; return and let poll drive readiness.
+					return;
+				}
+				safs::log_err("MasterConn(TLS): write error to {}: {}", address_.toString(),
+				              opensslErrorString(err));
 				setMode(ConnectionMode::KILL);
+				return;
 			}
-			return;
+		} else {
+			bytesWritten = ::write(socketFD_, pack.packet.data() + pack.bytesSent,
+			                       pack.packet.size() - pack.bytesSent);
+
+			if (bytesWritten < 0) {
+				if (errno != EAGAIN) {
+					safs::log_error_code(errno, "MasterConn: write to Master error: {}",
+					                     address_.toString());
+					setMode(ConnectionMode::KILL);
+				}
+				return;
+			}
 		}
 
 		bytesOut_ += bytesWritten;
@@ -683,8 +817,21 @@ void MasterConn::sauJobFinished(uint8_t status, void *packet) {
 
 void MasterConn::releaseResources() {
 	if (mode_ != ConnectionMode::FREE && mode_ != ConnectionMode::CONNECTING) {
-		tcpclose(socketFD_);
-		inputPacket_.reset();
+		if (tlsSession_ != nullptr) {
+			int ret = SSL_shutdown(tlsSession_->session());
+			if (ret < 0) {
+				safs::log_warn("TLS shutdown failed: {}",
+				               opensslErrorString(SSL_get_error(tlsSession_->session(), ret)));
+			}
+			tlsSession_.reset();
+			safs::log_info("TLS session closed.");
+		}
+
+		if (socketFD_ >= 0) {
+			tcpclose(socketFD_);
+			socketFD_ = -1;
+			inputPacket_.reset();
+		}
 	}
 }
 

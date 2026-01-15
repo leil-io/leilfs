@@ -33,6 +33,7 @@
 #include "common/output_packet.h"
 #include "common/saunafs_version.h"
 #include "common/time_utils.h"
+#include "common/tls_session.h"
 
 static constexpr uint32_t kMaxPacketSize = 10000;
 static constexpr uint32_t kMaxBackgroundJobsCount = 1000;
@@ -50,7 +51,8 @@ enum class ConnectionMode : std::uint8_t {
 	FREE,        /// There is no socket for the connection yet.
 	CONNECTING,  /// Connection is being established.
 	CONNECTED,   /// Connection is active.
-	KILL         /// Connection has been dropped, a reconnection will be attempted.
+	KILL,        /// Connection has been dropped, a reconnection will be attempted.
+	HANDSHAKE    /// TLS handshake is in progress.
 };
 
 /// @brief Enum representing the registration status of a connection to the Metadata Server (MDS).
@@ -115,6 +117,8 @@ public:
 	int initConnect();
 
 	void connectTest();
+
+	void tlsHandshake();
 
 	void onConnected();
 
@@ -204,6 +208,8 @@ public:
 
 	const std::string &clusterId() const { return clusterId_; }
 
+	bool isTlsEnabled() const { return !tlsCertFile_.empty() && !tlsKeyFile_.empty(); }
+
 private:
 	std::string masterHostStr_;                     ///< Hostname of the master server.
 	std::string masterPortStr_;                     ///< Port of the master server.
@@ -235,4 +241,10 @@ private:
 	// Statistics
 	uint64_t bytesIn_ = 0;   ///< Number of bytes read from the master.
 	uint64_t bytesOut_ = 0;  ///< Number of bytes sent to the master.
+
+	std::unique_ptr<TlsSession> tlsSession_{nullptr};  ///< Context of the TLS channel used for communication with master.
+	std::string tlsCertFile_;                          ///< Path to the TLS certificate file.
+	std::string tlsKeyFile_;                           ///< Path to the TLS private key file.
+	std::string tlsCaCertFile_;                        ///< Path to the TLS CA certificate file.
+	int lastHandshakeError_{0};                        ///< Last error code from TLS handshake.
 };

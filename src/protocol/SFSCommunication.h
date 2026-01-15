@@ -507,6 +507,10 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CSTOMA_STATUS (1000U + 172U)
 /// load:8
 
+// 0x0495
+#define SAU_CSTOMA_STARTTLS (1000U + 173U)
+/// -
+
 // CHUNKSERVER <-> CLIENT/CHUNKSERVER
 
 // 0x04B0

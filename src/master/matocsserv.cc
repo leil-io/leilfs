@@ -50,6 +50,7 @@
 #include "common/slice_traits.h"
 #include "common/sockets.h"
 #include "common/time_utils.h"
+#include "common/tls_session.h"
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
 #include "master/chunks.h"
@@ -69,7 +70,8 @@ constexpr uint32_t kMaxPacketSize = 500'000'000;
 // matocsserventry.mode
 enum class ChunkserverConnectionMode : std::uint8_t {
 	KILL,			/// Connection is terminated
-	CONNECTED		/// Connection is active
+	CONNECTED,		/// Connection is active
+	HANDSHAKE		/// TLS handshake in progress
 };
 
 double gLoadFactorPenalty = 0.;
@@ -130,6 +132,12 @@ struct matocsserventry {
 	uint16_t wrepcounter;
 	uint16_t delcounter;
 	uint8_t load_factor;
+
+	/// Context of the TLS channel used for communication with chunkserver.
+	///
+	/// If no TLS is used, this is `nullptr`.
+	std::unique_ptr<TlsSession> tlsSession;
+	int lastHandshakeError{0};
 
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
@@ -1078,6 +1086,56 @@ void matocsserv_error_occurred(matocsserventry *eptr, const uint8_t *data, uint3
 	eptr->errorcounter++;
 }
 
+/// Starts/continues a TLS handshake (non-blocking)
+/// @param eptr Pointer to the chunkserver connection in the master
+void matocsserv_tlshandshake(matocsserventry *eptr) {
+	sassert(eptr->mode == ChunkserverConnectionMode::HANDSHAKE);
+
+	int ret = SSL_accept(eptr->tlsSession->session());
+
+	if (ret == 1) {
+		safs::log_info("TLS handshake completed with chunkserver from {}:{}",
+		               eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::CONNECTED;
+		return;
+	}
+
+	int err = SSL_get_error(eptr->tlsSession->session(), ret);
+	eptr->lastHandshakeError = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		safs::log_info("TLS handshake in progress with chunkserver from {}:{}: {}",
+		               eptr->serviceStrIp, eptr->servport, opensslErrorString(err));
+		return;  // retry later
+	}
+
+	eptr->mode = ChunkserverConnectionMode::KILL;
+	safs::log_err("TLS handshake failed: {}", opensslErrorString(err));
+}
+
+/// Initiate a TLS connection with the chunkserver.
+/// @param eptr Pointer to the chunkserver connection in the master
+void matocsserv_starttls(matocsserventry *eptr) {
+	// Initialize a TLS session for the peer.
+	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
+	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
+	std::string trustFile =
+	    cfg_getstring("TLS_SERVER_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+
+	try {
+		eptr->tlsSession =
+		    std::make_unique<TlsSession>(eptr->sock, true, keyFile, certFile, trustFile);
+		safs::log_info("Starting TLS session with chunkserver from {}:{}", eptr->serviceStrIp,
+		               eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::HANDSHAKE;
+		matocsserv_tlshandshake(eptr);
+	} catch (const std::exception &e) {
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		safs::log_err("Failed to start TLS session with chunkserver from {}:{}: {}",
+		              eptr->serviceStrIp, eptr->servport, e.what());
+	}
+}
+
 void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const MessageBuffer& data) {
 	uint32_t length = data.size();
 	try {
@@ -1145,6 +1203,9 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 			case SAU_CSTOMA_STATUS:
 				matocsserv_sau_status(eptr, data);
 				break;
+			case SAU_CSTOMA_STARTTLS:
+				matocsserv_starttls(eptr);
+				break;
 			default:
 				safs::log_info("master <-> chunkservers module: got unknown message "
 						"(type:{})", header.type);
@@ -1162,6 +1223,17 @@ void matocsserv_term() {
 	safs::log_info("master <-> chunkservers module: closing {}:{}", gListenHost, gListenPort);
 	tcpclose(lsock);
 
+	for (const auto &eptr : matocsservList) {
+		if (eptr->tlsSession != nullptr) {
+			int ret = SSL_shutdown(eptr->tlsSession->session());
+			if (ret < 0) {
+				safs::log_warn("TLS shutdown failed: {}",
+				               opensslErrorString(SSL_get_error(eptr->tlsSession->session(), ret)));
+			}
+			eptr->tlsSession.reset();
+		}
+	}
+
 	matocsservList.clear();
 }
 
@@ -1171,7 +1243,17 @@ void matocsserv_read(matocsserventry *eptr) {
 	watchdog.start();
 	while (eptr->mode != ChunkserverConnectionMode::KILL) {
 		uint32_t bytesToRead = eptr->inputPacket.bytesToBeRead();
-		ssize_t ret = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+		ssize_t ret;
+
+		if (eptr->tlsSession != nullptr && eptr->mode != ChunkserverConnectionMode::HANDSHAKE) {
+			ret =
+			    SSL_read(eptr->tlsSession->session(), eptr->inputPacket.pointerToBeReadInto(),
+			             eptr->inputPacket.bytesToBeRead());
+		} else {
+			ret = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(),
+			                 eptr->inputPacket.bytesToBeRead());
+		}
+
 		if (ret == 0) {
 			safs::log_info("connection with CS({}) has been closed by peer", eptr->serviceStrIp);
 			eptr->mode = ChunkserverConnectionMode::KILL;
@@ -1179,10 +1261,20 @@ void matocsserv_read(matocsserventry *eptr) {
 		}
 
 		if (ret < 0) {
-			int err = errno;
-			if (err != EAGAIN) {
-				safs::log_info("read from CS({}) error: {}", eptr->serviceStrIp, strerr(err));
-				eptr->mode = ChunkserverConnectionMode::KILL;
+			if (eptr->tlsSession != nullptr && eptr->mode != ChunkserverConnectionMode::HANDSHAKE) {
+				int err = SSL_get_error(eptr->tlsSession->session(), ret);
+				if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+					safs::log_info("read from CS({}) error: {}", eptr->serviceStrIp,
+					               opensslErrorString(err));
+					eptr->mode = ChunkserverConnectionMode::KILL;
+				}
+				return;
+			} else {
+				int err = errno;
+				if (err != EAGAIN) {
+					safs::log_info("read from CS({}) error: {}", eptr->serviceStrIp, strerr(err));
+					eptr->mode = ChunkserverConnectionMode::KILL;
+				}
 			}
 			return;
 		}
@@ -1216,20 +1308,37 @@ void matocsserv_write(matocsserventry *eptr) {
 
 	watchdog.start();
 	while (!eptr->outputPackets.empty()) {
-		OutputPacket& pack = eptr->outputPackets.front();
-		ssize_t i = write(eptr->sock, pack.packet.data() + pack.bytesSent,
-				pack.packet.size() - pack.bytesSent);
-		if (i < 0) {
-			int err = errno;
-			if (err != EAGAIN) {
-				safs::log_info("write to CS({}) error: {}", eptr->serviceStrIp.c_str(),
-				               strerr(err));
-				eptr->mode = ChunkserverConnectionMode::KILL;
+		OutputPacket &pack = eptr->outputPackets.front();
+		ssize_t bytesWritten;
+
+		if (eptr->tlsSession != nullptr) {
+			bytesWritten = SSL_write(eptr->tlsSession->session(),
+			                         pack.packet.data() + pack.bytesSent,
+			                         pack.packet.size() - pack.bytesSent);
+			if (bytesWritten < 0) {
+				int err = SSL_get_error(eptr->tlsSession->session(), bytesWritten);
+				if (err != SSL_ERROR_WANT_WRITE && err != SSL_ERROR_WANT_READ) {
+					safs::log_info("write to CS({}) error: {}", eptr->serviceStrIp,
+					               opensslErrorString(err));
+					eptr->mode = ChunkserverConnectionMode::KILL;
+				}
+				return;
 			}
-			return;
+		} else {
+			bytesWritten = write(eptr->sock, pack.packet.data() + pack.bytesSent,
+			                     pack.packet.size() - pack.bytesSent);
+			if (bytesWritten < 0) {
+				int err = errno;
+				if (err != EAGAIN) {
+					safs::log_info("write to CS({}) error: {}", eptr->serviceStrIp.c_str(),
+					               strerr(err));
+					eptr->mode = ChunkserverConnectionMode::KILL;
+				}
+				return;
+			}
 		}
 
-		pack.bytesSent += i;
+		pack.bytesSent += bytesWritten;
 		if (pack.packet.size() != pack.bytesSent) {
 			return;
 		}
@@ -1243,14 +1352,29 @@ void matocsserv_write(matocsserventry *eptr) {
 }
 
 void matocsserv_desc(std::vector<pollfd> &pdesc) {
-	pdesc.push_back({lsock,POLLIN,0});
-	lsockpdescpos = pdesc.size()-1;
+	pdesc.push_back({lsock, POLLIN, 0});
+	lsockpdescpos = pdesc.size() - 1;
 
 	for (const auto &eptr : matocsservList) {
-		pdesc.push_back({eptr->sock,POLLIN,0});
+		pdesc.push_back({eptr->sock, POLLIN, 0});
 		eptr->pdescpos = pdesc.size() - 1;
-		if (!eptr->outputPackets.empty()) {
-			pdesc.back().events |= POLLOUT;
+
+		if (eptr->mode == ChunkserverConnectionMode::HANDSHAKE) {
+			short events = 0;
+			switch (eptr->lastHandshakeError) {
+			case SSL_ERROR_WANT_READ:
+				events = POLLIN;
+				break;
+			case SSL_ERROR_WANT_WRITE:
+				events = POLLOUT;
+				break;
+			default:
+				events = POLLIN | POLLOUT;
+				break;
+			}
+			pdesc.back().events = events;
+		} else {
+			if (!eptr->outputPackets.empty()) { pdesc.back().events |= POLLOUT; }
 		}
 	}
 }
@@ -1296,6 +1420,7 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->delcounter = 0;
 			eptr->csdb = nullptr;
 			eptr->load_factor = 0;
+			eptr->tlsSession = nullptr;
 
 			matocsservList.emplace_back(std::move(eptr));
 			chunk_server_unlabelled_connected();
@@ -1310,16 +1435,21 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 				eptr->mode = ChunkserverConnectionMode::KILL;
 			}
 
-			if ((pdesc[eptr->pdescpos].revents & POLLIN) &&
-			    eptr->mode != ChunkserverConnectionMode::KILL) {
+			if (eptr->mode == ChunkserverConnectionMode::HANDSHAKE) {
 				eptr->lastread.reset();
-				matocsserv_read(eptr.get());
-			}
+				matocsserv_tlshandshake(eptr.get());
+			} else {
+				if ((pdesc[eptr->pdescpos].revents & POLLIN) &&
+				    eptr->mode != ChunkserverConnectionMode::KILL) {
+					eptr->lastread.reset();
+					matocsserv_read(eptr.get());
+				}
 
-			if ((pdesc[eptr->pdescpos].revents & POLLOUT) &&
-			    eptr->mode != ChunkserverConnectionMode::KILL) {
-				eptr->lastwrite.reset();
-				matocsserv_write(eptr.get());
+				if ((pdesc[eptr->pdescpos].revents & POLLOUT) &&
+				    eptr->mode != ChunkserverConnectionMode::KILL) {
+					eptr->lastwrite.reset();
+					matocsserv_write(eptr.get());
+				}
 			}
 		}
 

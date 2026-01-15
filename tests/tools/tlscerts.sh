@@ -48,7 +48,8 @@ generate_certs() {
 		rm -f \
 			ca.key ca.crt ca.srl \
 			server.key server.csr server.crt server_ext.cnf \
-			client.key client.csr client.crt
+			client.key client.csr client.crt \
+			cs.key cs.csr cs.crt
 
 		# 1. Create CA key and certificate
 		openssl genrsa -out ca.key 4096
@@ -103,6 +104,23 @@ EOF
 			-CAkey ca.key \
 			-CAcreateserial \
 			-out client.crt \
+			-days "$CERT_DAYS" \
+			-sha256
+
+		# 7. Create chunkserver key and CSR
+		openssl genrsa -out cs.key 4096
+		openssl req -new \
+			-key cs.key \
+			-out cs.csr \
+			-subj "/CN=Test Chunkserver"
+
+		# 8. Sign chunkserver CSR with CA
+		openssl x509 -req \
+			-in cs.csr \
+			-CA ca.crt \
+			-CAkey ca.key \
+			-CAcreateserial \
+			-out cs.crt \
 			-days "$CERT_DAYS" \
 			-sha256
 

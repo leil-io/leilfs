@@ -261,3 +261,19 @@
 ## [ADVANCED] The number of files to remove from the trash in a single GC cycle,
 ## in case the disk is full and space needs to be recovered. (Default: 100)
 # CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE = 100
+
+## Path to the TLS certificate file the chunk server will use for TLS connections.
+## Example: /etc/saunafs/ssl/cs.crt
+## (There is no default)
+# TLS_CERT_FILE =
+
+## Path to the TLS private key file the chunk server will use for TLS connections.
+## Example: /etc/saunafs/ssl/cs.key
+## (There is no default)
+# TLS_KEY_FILE =
+
+## Path to the trusted CA certificate file which is used to authenticate
+## to master server.
+## Example: /etc/saunafs/ssl/ca.crt
+## (There is no default)
+# TLS_SERVER_CA_CERT_FILE =
