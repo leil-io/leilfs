@@ -195,8 +195,8 @@ static int exiting;   ///< Flag indicating whether the server is exiting (1) or 
 static int starting;  ///< Flag indicating whether the server is starting (1) or not (0)
 
 // from config
-static std::string ListenHost;
-static std::string ListenPort;
+static std::string gListenHost;
+static std::string gListenPort;
 
 static uint32_t gIoLimitsAccumulate_ms;
 static double gIoLimitsRefreshTime;
@@ -1235,7 +1235,8 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
-			info = (const char*)rptr;
+
+			info = reinterpret_cast<const char*>(rptr);
 			rptr += infoLength;
 			get32bit(&rptr, pathLength);
 			if (length != kRegisterNewSessionMinSize + infoLength + pathLength &&
@@ -1365,7 +1366,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				return;
 			}
 
-			info = (const char*)rptr;
+			info = reinterpret_cast<const char*>(rptr);
 			rptr += infoLength;
 
 			if (length == kRegisterNewMetaSessionMinSize + 16 + infoLength) {
@@ -2082,8 +2083,9 @@ void matoclserv_fuse_symlink(matoclserventry *eptr, const uint8_t *data, uint32_
 	status = matoclserv_check_group_cache(eptr, gid);
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->symlink(context, inode, HString((char *)name, nleng),
-		                                std::string((char *)path, pleng), &newinode, &attr);
+		status = gFSOperations->symlink(
+		    context, inode, HString(reinterpret_cast<const char *>(name), nleng),
+		    std::string(reinterpret_cast<const char *>(path), pleng), &newinode, &attr);
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
@@ -2254,7 +2256,8 @@ void matoclserv_fuse_unlink(matoclserventry *eptr, const uint8_t *data, uint32_t
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 
-		status = gFSOperations->unlink(context, fsOpContext, inode, HString((char *)name, nleng));
+		status = gFSOperations->unlink(context, fsOpContext, inode,
+		                               HString(reinterpret_cast<const char *>(name), nleng));
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
@@ -2350,7 +2353,8 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr, const uint8_t *data, uint32_t 
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 
-		status = gFSOperations->rmdir(context, fsOpContext, inode, HString((char *)name, nleng));
+		status = gFSOperations->rmdir(context, fsOpContext, inode,
+		                              HString(reinterpret_cast<const char *>(name), nleng));
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
@@ -2433,9 +2437,10 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 
-		status = gFSOperations->rename(context, fsOpContext, inode_src,
-		                               HString((char *)name_src, nleng_src), inode_dst,
-		                               HString((char *)name_dst, nleng_dst), &inode, &attr);
+		status = gFSOperations->rename(
+		    context, fsOpContext, inode_src,
+		    HString(reinterpret_cast<const char *>(name_src), nleng_src), inode_dst,
+		    HString(reinterpret_cast<const char *>(name_dst), nleng_dst), &inode, &attr);
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
@@ -2514,7 +2519,8 @@ void matoclserv_fuse_link(matoclserventry *eptr, const uint8_t *data, uint32_t l
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
 		status = gFSOperations->link(context, inode, inode_dst,
-		                             HString((char *)name_dst, nleng_dst), &newinode, &attr);
+		                             HString(reinterpret_cast<const char *>(name_dst), nleng_dst),
+		                             &newinode, &attr);
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
@@ -3834,7 +3840,7 @@ void matoclserv_fuse_settrashpath(matoclserventry *eptr, const uint8_t *data, ui
 	while (pleng > 0 && path[pleng - 1] == 0) { pleng--; }
 
 	status = gFSOperations->setTrashPath(matoclserv_get_context(eptr), inode,
-	                                     std::string((char *)path, pleng));
+	                                     std::string(reinterpret_cast<const char *>(path), pleng));
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_SETTRASHPATH, sizeof(msgid) + sizeof(status));
 
@@ -5284,7 +5290,7 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 }
 
 void matoclserv_term() {
-	safs::log_info("main master server module: closing {}:{}", ListenHost, ListenPort);
+	safs::log_info("main master server module: closing {}:{}", gListenHost, gListenPort);
 	tcpclose(masterSocket);
 
 	for (const auto &eptr : matoclservList) {
@@ -5675,21 +5681,15 @@ void matoclserv_reload() {
 
 	matoclserv_iolimits_reload();
 
-	std::string oldListenHost = ListenHost;
-	std::string oldListenPort = ListenPort;
+	std::string oldListenHost = gListenHost;
+	std::string oldListenPort = gListenPort;
 
-	auto host = cfg_getstr("MATOCL_LISTEN_HOST","*");
-	auto port = cfg_getstr("MATOCL_LISTEN_PORT","9421");
+	gListenHost = cfg_getstring("MATOCL_LISTEN_HOST","*");
+	gListenPort = cfg_getstring("MATOCL_LISTEN_PORT","9421");
 
-	ListenHost = host;
-	ListenPort = port;
-
-	free(host); // to avoid memory leak allocated by strdup in cfg_getstr() function
-	free(port); // to avoid memory leak allocated by strdup in cfg_getstr() function
-
-	if (oldListenHost == ListenHost && oldListenPort == ListenPort) {
+	if (oldListenHost == gListenHost && oldListenPort == gListenPort) {
 		safs::log_info("main master server module: socket address hasn't changed ({}:{})",
-		               ListenHost, ListenPort);
+		               gListenHost, gListenPort);
 		return;
 	}
 
@@ -5697,8 +5697,8 @@ void matoclserv_reload() {
 	if (newlsock < 0) {
 		safs::log_warn(
 		    "main master server module: socket address has changed, but can't create new socket");
-		ListenHost = oldListenHost;
-		ListenPort = oldListenPort;
+		gListenHost = oldListenHost;
+		gListenPort = oldListenPort;
 		return;
 	}
 
@@ -5710,31 +5710,25 @@ void matoclserv_reload() {
 		safs_silent_errlog(LOG_NOTICE, "main master server module: can't set accept filter");
 	}
 
-	if (tcpstrlisten(newlsock, ListenHost.c_str(), ListenPort.c_str(), 100) < 0) {
+	if (tcpstrlisten(newlsock, gListenHost.c_str(), gListenPort.c_str(), 100) < 0) {
 		safs::log_err(
 		    "main master server module: socket address has changed, but can't listen on socket ({}:{})",
-		    ListenHost, ListenPort);
-		ListenHost = oldListenHost;
-		ListenPort = oldListenPort;
+		    gListenHost, gListenPort);
+		gListenHost = oldListenHost;
+		gListenPort = oldListenPort;
 		tcpclose(newlsock);
 		return;
 	}
 
 	safs::log_info("main master server module: socket address has changed, now listen on {}:{}",
-	               ListenHost, ListenPort);
+	               gListenHost, gListenPort);
 	tcpclose(masterSocket);
 	masterSocket = newlsock;
 }
 
 int matoclserv_network_init() {
-	auto host = cfg_getstr("MATOCL_LISTEN_HOST", "*");
-	auto port = cfg_getstr("MATOCL_LISTEN_PORT", "9421");
-
-	ListenHost = host;
-	ListenPort = port;
-
-	free(host);  // to avoid memory leak allocated by strdup in cfg_getstr() function
-	free(port);  // to avoid memory leak allocated by strdup in cfg_getstr() function
+	gListenHost = cfg_getstring("MATOCL_LISTEN_HOST", "*");
+	gListenPort = cfg_getstring("MATOCL_LISTEN_PORT", "9421");
 
 	if (matoclserv_iolimits_reload() != 0) {
 		return -1;
@@ -5755,12 +5749,12 @@ int matoclserv_network_init() {
 		safs::log_info("main master server module: can't set accept filter");
 	}
 
-	if (tcpstrlisten(masterSocket, ListenHost.c_str(), ListenPort.c_str(), 100) < 0) {
-		safs::log_err("main master server module: can't listen on {}:{}", ListenHost, ListenPort);
+	if (tcpstrlisten(masterSocket, gListenHost.c_str(), gListenPort.c_str(), 100) < 0) {
+		safs::log_err("main master server module: can't listen on {}:{}", gListenHost, gListenPort);
 		return -1;
 	}
 
-	safs::log_info("main master server module: listen on {}:{}", ListenHost, ListenPort);
+	safs::log_info("main master server module: listen on {}:{}", gListenHost, gListenPort);
 
 	matoclservList.clear();
 
