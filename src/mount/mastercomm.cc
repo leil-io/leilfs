@@ -1498,6 +1498,10 @@ void* fs_nop_thread(void *arg) {
 		mabort("Can't set handler for SIGUSR1");
 	}
 #endif
+
+	uint64_t lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
+	uint64_t lastIOLimitsEpoch = gTweaks.getVarLastChangeEpochByName("IOLimitsFilePath");
+
 	for (;;) {
 		now = time(NULL);
 		std::unique_lock<std::mutex> fdLock(fdMutex);
@@ -1561,9 +1565,9 @@ void* fs_nop_thread(void *arg) {
 				free(inodespacket);
 			}
 
-			if (gChangedTweaksValue || lastDisconnectedStatus) {
-				gChangedTweaksValue = false;
-
+			const uint64_t currentTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
+			if (currentTweaksGlobalEpoch > lastTweaksGlobalEpoch ||
+			    lastDisconnectedStatus) {
 				if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect) {
 					std::string mountInfoStr;
 					{
@@ -1587,7 +1591,16 @@ void* fs_nop_thread(void *arg) {
 					}
 				}
 
-				if (gIOLimitsInitialized) { fsLoadMountIoLimits(); }
+				if (gIOLimitsInitialized) {
+					const uint64_t currentIOLimitsEpoch =
+					    gTweaks.getVarLastChangeEpochByName("IOLimitsFilePath");
+					if (currentIOLimitsEpoch > lastIOLimitsEpoch) {
+						fsLoadMountIoLimits();
+						lastIOLimitsEpoch = currentIOLimitsEpoch;
+					}
+				}
+
+				lastTweaksGlobalEpoch = currentTweaksGlobalEpoch;
 			}
 		}
 

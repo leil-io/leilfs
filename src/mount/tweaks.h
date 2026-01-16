@@ -56,10 +56,35 @@ public:
 	/// Returns values of all the registered variables.
 	std::string getAllValues() const;
 
+	/// Returns the global epoch counter.
+	///
+	/// The global epoch is a monotonically increasing counter that is
+	/// incremented on every successful call to setValue() or registerVariable()
+	/// on the Tweaks instance, regardless of whether the underlying value actually
+	/// changed. It represents an update event, not strictly a value
+	/// transition.
+	///
+	/// The initial epoch value is 0. The first call to setValue() will
+	/// increment it to 1.
+	///
+	/// This method is thread-safe and lock-free.
+	uint64_t getGlobalLastChangeEpoch() const;
+
+	/// Returns the last change epoch of a variable identified by name.
+	///
+	/// The returned epoch corresponds to the global epoch value at the time
+	/// setValue() or registerVariabbll() was last called for the specified
+	/// variable. Epochs are updated on every setValue() call, even if the
+	/// value is set to the same value as before.
+	///
+	/// If no variable with the given name exists, this method returns 0.
+	///
+	/// This method is thread-safe and lock-free.
+	uint64_t getVarLastChangeEpochByName(const std::string &name) const;
+
 private:
 	class Impl;
 	std::unique_ptr<Impl> impl_;
 };
 
-inline std::atomic_bool gChangedTweaksValue;
 inline Tweaks gTweaks;
