@@ -117,16 +117,14 @@ void xattr_removeinode(inode_t inode) {
 	XAttributeInodeEntry *xattrInodeEntry = nullptr;
 
 	auto hash = get_xattr_inode_hash(inode);
-	auto start = gMetadata->xattrInodeHash[hash].begin();
-	auto end = gMetadata->xattrInodeHash[hash].end();
-
-	for (auto attributeIterator = start; attributeIterator != end;) {
+	auto &bucket = gMetadata->xattrInodeHash[hash];
+	for (auto attributeIterator = bucket.begin(); attributeIterator != bucket.end();) {
 		xattrInodeEntry = attributeIterator->get();
 		if (xattrInodeEntry->inode == inode) {
 			while (!xattrInodeEntry->xattrDataEntries.empty()) {
 				xattr_removeentry(xattrInodeEntry, xattrInodeEntry->xattrDataEntries.front());
 			}
-			attributeIterator = gMetadata->xattrInodeHash[hash].erase(attributeIterator);
+			attributeIterator = bucket.erase(attributeIterator);
 		} else {
 			++attributeIterator;
 		}
