@@ -136,9 +136,13 @@ public:
 	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param node The directory node in which to search for the child.
 	/// @param name The name of the child node to look up.
+	/// @param isCaseInsensitive Whether the lookup should perform case-insensitive matching.
+	///                          When true, lookups will match names regardless of case.
+	///                          When false, lookups will be case-sensitive.
 	/// @return Pointer to the child node if found, nullptr otherwise.
 	virtual FSNode *lookup([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
-	                       FSNodeDirectory *node, const HString &name) const = 0;
+	                       FSNodeDirectory *node, const HString &name,
+	                       bool isCaseInsensitive = false) const = 0;
 
 	virtual FSNode *createNode(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                           FSNodeDirectory *parent, const HString &name, FSNodeType type,
@@ -281,9 +285,12 @@ public:
 	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param node The directory node to search in.
 	/// @param name The name to check for existence.
+	/// @param isCaseInsensitive Whether the lookup should perform case-insensitive matching.
+	///                          When true, lookups will match names regardless of case.
+	///                          When false, lookups will be case-sensitive.
 	/// @return true if the name exists in the directory, false otherwise.
 	virtual bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
-	                        const HString &name) = 0;
+	                        const HString &name, bool isCaseInsensitive = false) = 0;
 
 	// Trash/Reserved operations
 

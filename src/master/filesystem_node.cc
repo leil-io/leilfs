@@ -199,7 +199,17 @@ void FilesystemNodeOperationsBase::preserveEdge(const FilesystemOperationContext
 
 FSNode *FilesystemNodeOperationsBase::lookup(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
-    const HString &name) const {
+    const HString &name, bool isCaseInsensitive) const {
+	// In-memory implementation: parameter intentionally unused to preserve legacy
+	// behavior. This relies on the directory's caseInsensitive flag via find().
+	// That flag is updated in getNodeForOperation when a directory node is accessed,
+	// but may not reflect the current session's case-sensitivity for directories
+	// previously accessed under different sessions. Alternative backend
+	// implementations can override this method to use the isCaseInsensitive
+	// parameter directly for consistent session-based lookups without relying on
+	// mutable directory state.
+	(void)isCaseInsensitive;
+
 	auto iter = node->find(name);
 	if (iter != node->end()) { return (*iter).second; }
 
@@ -259,8 +269,9 @@ std::string FilesystemNodeOperationsBase::escapeName(const std::string &name) {
 }
 
 bool FilesystemNodeOperationsBase::isNameUsed(const FilesystemOperationContext &fsOpContext,
-                                              FSNodeDirectory *node, const HString &name) {
-	return lookup(fsOpContext, node, name) != nullptr;
+                                              FSNodeDirectory *node, const HString &name,
+                                              bool isCaseInsensitive) {
+	return lookup(fsOpContext, node, name, isCaseInsensitive) != nullptr;
 }
 
 bool FilesystemNodeOperationsBase::isAncestor(FSNodeDirectory *ancestor, FSNode *node) {

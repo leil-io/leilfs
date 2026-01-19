@@ -247,6 +247,15 @@ public:
 	}
 
 	/**
+	 * Returns true if the session is case-insensitive.
+	 * Returns false if there's no session data (restore/shadow contexts)
+	 * or if the case-insensitive flag is not set.
+	 */
+	bool isCaseInsensitive() const {
+		return hasSessionData_ && (sesflags_ & SESFLAG_CASEINSENSITIVE) != 0;
+	}
+
+	/**
 	 * Returns timestamp.
 	 * This is a timestamp of any operations performed in this context.
 	 */
@@ -368,4 +377,3 @@ private:
 			  agid_(agid) {
 	}
 };
-
