@@ -199,11 +199,97 @@ public:
 	                      uint32_t agid, uint8_t sesflags, Attributes &attr) = 0;
 	virtual void fillAttr(const FsContext &context, FSNode *node, FSNode *parent,
 	                      Attributes &attr) = 0;
+
+	/// Retrieves statistics for a filesystem node.
+	///
+	/// For directories, this returns cached statistics that represent the aggregate of all
+	/// descendants (files, subdirectories, chunks, sizes, etc.). The cached stats enable O(1)
+	/// retrieval for operations like `saunafs dirinfo` without requiring expensive tree traversals.
+	///
+	/// For non-directory nodes (files, symlinks, devices), statistics are calculated on-the-fly
+	/// from the node's current state (chunk count, size, etc.) without using any cache.
+	///
+	/// @param node The filesystem node for which to retrieve statistics.
+	/// @param[out] statsOut Pointer to a StatsRecord structure that will be filled with the
+	///                      node's statistics. For directories, the returned stats must include:
+	///                      - All descendant nodes' aggregated stats
+	///                      - The directory itself (+1 to inodes and dirs counts)
 	virtual void getStats(FSNode *node, StatsRecord *statsOut) = 0;
+
+	/// Adds statistics to a directory and recursively propagates the changes to all ancestors.
+	///
+	/// This function must update the cached statistics of a directory by adding the provided stats,
+	/// then recursively propagate the same changes up through all parent directories to the root.
+	/// This maintains the invariant that each directory's cached stats represent the aggregate
+	/// of all its descendants.
+	///
+	/// The recursive propagation must ensure that ancestor directories (grandparents,
+	/// great-grandparents, etc.) are automatically updated, allowing any directory to report total
+	/// statistics for its entire subtree in O(1) time via getStats().
+	///
+	/// @param parent The parent directory whose statistics should be updated. Propagation should
+	///               stop at the root node. For files with hard links, this must be called for each
+	///               parent directory.
+	/// @param stats Pointer to a StatsRecord containing the statistics to add. These values must be
+	///              added to the parent's cached stats and propagated to all ancestors.
+	///
+	/// @note Implementations must call this when:
+	///       - A new node is created and linked into the filesystem (after link())
+	///       - A node is moved from trash/reserved back into the active filesystem (after undel())
+	/// @note For files with multiple hard links, this must be called for each parent directory.
+	/// @note Recursion must stop at the root node.
 	virtual void addStats(FSNodeDirectory *parent, StatsRecord *stats) = 0;
+
+	/// Subtracts statistics from a directory and recursively propagates to all ancestors.
+	///
+	/// This function must update the cached statistics of a directory by subtracting the provided
+	/// stats, then recursively propagate the same changes up through all parent directories to the
+	/// root. This is the inverse operation of addStats() and must be used when nodes are removed
+	/// from the filesystem tree.
+	///
+	/// The recursive propagation must ensure that all ancestor directories have their cached
+	/// statistics decremented appropriately, maintaining the invariant that each directory's stats
+	/// represent the aggregate of all its descendants.
+	///
+	/// @param parent The parent directory whose statistics should be updated. Propagation should
+	///               stop at the root node. For files with hard links, this must be called for each
+	///               parent directory from which the link is removed.
+	/// @param stats Pointer to a StatsRecord containing the statistics to subtract. These values
+	///              must be subtracted from the parent's cached stats and propagated to all
+	///              ancestors.
+	///
+	/// @note For files with multiple hard links, only call this for the specific parent(s) being
+	///       unlinked.
+	/// @note Recursion must stop at the root node.
+	/// @note Implementations should handle underflow gracefully (stats should not become negative).
 	virtual void subStats(FSNodeDirectory *parent, StatsRecord *stats) = 0;
+
+	/// Updates directory statistics by propagating the delta between old and new stats.
+	///
+	/// This function must efficiently update cached statistics when a node's stats change (e.g.,
+	/// file size changes, goal/replication changes, chunks added). Implementations should compute
+	/// the delta (newStats - previousStats) and propagate only the difference up through all
+	/// ancestors in a single traversal.
+	///
+	/// This optimization reduces the number of recursive tree walks and operations needed when
+	/// modifying existing nodes, compared to calling subStats() followed by addStats() separately.
+	///
+	/// @param parent The parent directory whose statistics should be updated. Propagation should
+	///               stop at the root node. For files with hard links, this must be called for each
+	///               parent directory.
+	/// @param newStats Pointer to a StatsRecord containing the node's new (modified) statistics.
+	/// @param previousStats Pointer to a StatsRecord containing the node's previous statistics
+	///                      (before modification). Callers typically obtain this by calling
+	///                      getStats() before making changes to the node.
+	///
+	/// @note For files with multiple hard links, this must be called for each parent directory.
+	/// @note Implementations should do: delta = newStats - previousStats, then propagate delta.
+	/// @note If the delta is zero (no change), implementations may skip propagation (optimization).
+	/// @note Recursion must stop at the root node.
+	/// @note Implementations must handle both positive and negative deltas correctly.
 	virtual void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
 	                         StatsRecord *previousStats) = 0;
+
 	virtual void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) = 0;
 
 	virtual void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) = 0;

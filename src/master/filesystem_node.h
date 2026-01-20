@@ -66,11 +66,24 @@ public:
 	              uint32_t agid, uint8_t sesflags, Attributes &attr) override;
 	void fillAttr(const FsContext &context, FSNode *node, FSNode *parent,
 	              Attributes &attr) override;
+
+	/// Retrieves statistics for a filesystem node.
+	/// @see IFilesystemNodeOperations::getStats
 	void getStats(FSNode *node, StatsRecord *statsOut) override;
+
+	/// Adds statistics to a directory and recursively propagates to all ancestors.
+	/// @see IFilesystemNodeOperations::addStats
 	void addStats(FSNodeDirectory *parent, StatsRecord *stats) override;
+
+	/// Subtracts statistics from a directory and recursively propagates to all ancestors.
+	/// @see IFilesystemNodeOperations::subStats
 	void subStats(FSNodeDirectory *parent, StatsRecord *stats) override;
+
+	/// Updates directory statistics by propagating the delta between old and new stats.
+	/// @see IFilesystemNodeOperations::addSubStats
 	void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
 	                 StatsRecord *previousStats) override;
+
 	void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) override;
 
 	void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) override;
