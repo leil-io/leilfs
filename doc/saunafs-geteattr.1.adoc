@@ -46,7 +46,7 @@ from being cached in kernel.
 
 == REPORTING BUGS
 
-Report bugs to the Github repository <https://github.com/leil/saunafs> as an
+Report bugs to the GitHub repository <https://github.com/leil-io/saunafs> as an
 issue.
 
 == COPYRIGHT
