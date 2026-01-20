@@ -25,6 +25,8 @@ public:
 		int                      election_timeout_max;
 		int                      heartbeat_period;
 		int                      quorum;  /// Minimum number of votes to get to become the leader.
+		/// Number of heartbeats to wait before considering quorum lost.
+		int quorum_loss_grace_heartbeats;
 	};
 
 protected:
@@ -41,6 +43,30 @@ protected:
 	    kRpcAEResponse,      /*!< RPC Append Entries Response. */
 	    kRpcRVResponse,      /*!< RPC Request Vote Response. */
 	    kRpcLast
+	};
+
+	/// @brief Policy controlling side effects when stepping down to follower.
+	///
+	/// The policy selects whether stepping down is a Raft-only state transition, or whether it
+	/// also triggers a demotion of the local metadata server (via nodeDemote()) when stepping
+	/// down from an active Leader (President).
+	///
+	/// Typical usage:
+	/// - kRaftOnly:
+	///   Step down in Raft (become follower, restart election timer) without invoking nodeDemote().
+	///   Use this when the controller owns metadata-side effects, e.g.:
+	///   - manual demotion via demoteLeader() (promotion failure recovery),
+	///   - local "metadata dead" handling where VIP release / restarts are scheduled elsewhere.
+	///
+	/// - kDemoteIfPresident:
+	///   Step down in Raft and, if we were President, also call nodeDemote() so the local metadata
+	///   server is not left in master mode while we are no longer eligible to lead. Use this for
+	///   Raft-driven stepdowns, e.g.:
+	///   - observing a higher term in received RPCs (checkTerm),
+	///   - quorum loss while being President (heartbeat).
+	enum class StepDownPolicy : uint8_t {
+		kRaftOnly,          // Update Raft state and restart election timer
+		kDemoteIfPresident  // Additionally call nodeDemote() if we were president
 	};
 
 	static const int kMaxPacketLength = 1024;
@@ -131,8 +157,40 @@ public:
 	 */
 	virtual uint64_t nodeGetVersion();
 
+	/*! \brief Returns true when this node runs in elector mode, false otherwise.
+	 *
+	 * Electors do not have a local metadata server, so some version-related logic may need to
+	 * behave differently.
+	 * \note This function is overridden in uRaftController class, which implements elector mode.
+	 */
+	virtual bool isElectorNode() const = 0;
+
 protected:
 	void checkTerm(int id, const RpcHeader &data);
+
+	/// @brief Step down to follower state (optionally updating term and demoting metadata).
+	///
+	/// This is the shared implementation used by different "step down" triggers:
+	/// - observing a higher term (checkTerm),
+	/// - quorum loss while being President (heartbeat),
+	/// - manual demotion (demoteLeader).
+	///
+	/// The caller chooses the StepDownPolicy:
+	/// - kRaftOnly: only updates Raft state and restarts the election timer.
+	/// - kDemoteIfPresident: if the node was President, also calls nodeDemote() so the local
+	///   metadata server is not left in master mode while stepping down in Raft.
+	///
+	/// @param policy StepDownPolicy used to control side effects.
+	/// @param newTerm Optional new term; if non-zero and greater than current, updates
+	/// current_term. This is used for stepping down when observing a higher term.
+	void stepDownToFollower(StepDownPolicy policy, uint64_t newTerm = 0);
+
+	/*! \brief Checks if a received packet is structurally valid.
+	 *
+	 * \param data Pointer to the received packet data.
+	 * \param size Size of the received packet data.
+	 * \return true if the packet is valid, false otherwise.
+	 */
 	bool validPacket(const uint8_t *data, size_t size);
 	int  findNodeID(const boost::asio::ip::udp::endpoint &addr);
 	int  voteCount(bool count_loyal);
@@ -174,4 +232,7 @@ protected:
 	bool                                    block_leader_promotion_;  /// If true this node cannot be promoted to leader.
 
 	Options                                 opt_;
+
+	/// Number of consecutive heartbeats with lost quorum before demoting leader.
+	int quorum_loss_streak_ = 0;
 };

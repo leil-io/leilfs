@@ -48,16 +48,19 @@ public:
 	void set_options(const Options &opt);
 
 	//! called by uRaft when node is becoming leader.
-	virtual void     nodePromote();
+	void nodePromote() override;
 
 	//! called by uRaft when node is not longer a leader.
-	virtual void     nodeDemote();
+	void nodeDemote() override;
 
 	//! called by uRaft when it needs to know metadata version.
-	virtual uint64_t nodeGetVersion();
+	uint64_t nodeGetVersion() override;
+
+	//! Returns true when this node runs in elector mode.
+	bool isElectorNode() const override;
 
 	//! called by uRaft with new leader id.
-	virtual void     nodeLeader(int id);
+	void nodeLeader(int id) override;
 
 protected:
 	void  checkCommandStatus(const boost::system::error_code &error);
@@ -75,6 +78,27 @@ private:
 	void startFloatingIpManager();
 	void stopFloatingIpManager();
 
+	/// @brief Run the controller-owned "dead metadata" handler.
+	///
+	/// This invokes the helper's 'dead' command to release floating IPs without restarting
+	/// the metadata process. It is used when local health checks report that metadata is dead,
+	/// so the VIP is immediately released while follow-up recovery is scheduled separately.
+	void startDeadMetadataHandler();
+
+	/// @brief Schedule a delayed dead recovery attempt (restart shadow).
+	///
+	/// The recovery is implemented as a single-delay retry loop: after the timer fires, it
+	/// either performs the recovery action if safe (no other command running), or reschedules
+	/// itself with the same delay. In case the metadata is alive again and the demotion is not
+	/// performed, the timer is canceled.
+	void scheduleDeadRecovery();
+
+	/// @brief Cancel pending dead recovery attempts.
+	///
+	/// Clears the pending flag and cancels the recovery timer so no further demote/restart
+	/// actions are attempted after metadata is observed alive again.
+	void cancelDeadRecovery();
+
 	/// @brief Clean up dirty metadata state after failed promotion.
 	///
 	/// This function is called when a promotion fails or times out, leaving the metadata server in
@@ -90,25 +114,62 @@ private:
 	/// @brief Handle failed promotion attempts and restore cluster consistency.
 	///
 	/// This prevents the cluster from getting stuck when a node wins an election but fails
-	/// to complete the promotion to master, ensuring the cluster can recover by electing
-	/// a different leader.
+	/// to complete the promotion to master. The controller will step down in uRaft so another
+	/// node can take over, and will schedule a safe demotion of the local metadata server after
+	/// the promotion command completes.
 	///
 	/// This function is invoked in two scenarios:
 	/// 1. When a promotion command exits with a non-zero status (checkCommandStatus).
 	/// 2. When a promotion times out (setSlowCommandTimeout).
 	///
 	/// It performs the following recovery steps:
-	/// - Demotes the node from Leader state in the Raft algorithm.
 	/// - Cleans up any dirty metadata state left by the failed promotion.
+	/// - Demotes the node from Leader/Candidate state in the uRaft algorithm (Raft-only step-down).
+	/// - Schedules a demotion of the local metadata server after the promotion command finishes,
+	///   to avoid promote/demote command-state races.
+	/// - Enables a temporary promotion backoff (blocks new promotions for a bounded time) to avoid
+	///   tight promote/fail loops under unhealthy local state.
 	///
 	/// \see cleanupDirtyPromotion()
 	/// \see demoteLeader()
+	/// \see startPromotionBackoff()
+	/// \see computePromotionBackoffMs()
 	void handlePromotionFailure();
+
+	/// @brief Start or reset the promotion backoff state.
+	///
+	/// When enabled, backoff blocks uRaft leader promotion by calling set_block_promotion(true)
+	/// and keeps it blocked until the backoff timer expires (or until reset is requested).
+	///
+	/// \param reset If true, clears the failure streak, disables backoff, and cancels the timer.
+	void startPromotionBackoff(bool reset);
+
+	/// @brief Compute the current promotion backoff duration in milliseconds.
+	///
+	/// The duration grows exponentially with the promotion failure streak and is capped to a
+	/// bounded maximum to avoid long recovery delays.
+	///
+	/// \return Backoff duration in milliseconds (0 means no backoff should be applied).
+	int computePromotionBackoffMs() const;
 
 protected:
 	boost::asio::deadline_timer check_cmd_status_timer_;
 	boost::asio::deadline_timer check_node_status_timer_;
 	boost::asio::deadline_timer cmd_timeout_timer_;
+
+	/// @brief Timer used to implement promotion backoff after failed promotions.
+	boost::asio::deadline_timer promotion_backoff_timer_;
+	/// @brief Number of consecutive promotion failures used to compute exponential backoff.
+	/// This value is reset on successful promotion.
+	int promotion_failure_streak_ = 0;
+	/// @brief True while promotion backoff is active (promotions are temporarily blocked).
+	bool promotion_backoff_active_ = false;
+
+	/// @brief Timer used to schedule delayed recovery after detecting dead metadata.
+	boost::asio::deadline_timer dead_recovery_timer_;
+	/// @brief True while a dead recovery timer is scheduled (prevents stacking retries).
+	bool dead_recovery_pending_ = false;
+
 	pid_t                       command_pid_;   /// Last run command pid.
 	int                         command_type_;  /// Last run command type.
 	Timer                       command_timer_;
