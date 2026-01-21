@@ -79,7 +79,8 @@ public:
 
 	/// Subtracts statistics from a directory and recursively propagates to all ancestors.
 	/// @see IFilesystemNodeOperations::subStats
-	void subStats(FSNodeDirectory *parent, StatsRecord *stats) override;
+	void subStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	              StatsRecord *stats) override;
 
 	/// Updates directory statistics by propagating the delta between old and new stats.
 	/// @see IFilesystemNodeOperations::addSubStats

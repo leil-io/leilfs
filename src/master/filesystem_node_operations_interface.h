@@ -255,6 +255,7 @@ public:
 	/// statistics decremented appropriately, maintaining the invariant that each directory's stats
 	/// represent the aggregate of all its descendants.
 	///
+	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param parent The parent directory whose statistics should be updated. Propagation should
 	///               stop at the root node. For files with hard links, this must be called for each
 	///               parent directory from which the link is removed.
@@ -266,7 +267,8 @@ public:
 	///       unlinked.
 	/// @note Recursion must stop at the root node.
 	/// @note Implementations should handle underflow gracefully (stats should not become negative).
-	virtual void subStats(FSNodeDirectory *parent, StatsRecord *stats) = 0;
+	virtual void subStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                      StatsRecord *stats) = 0;
 
 	/// Updates directory statistics by propagating the delta between old and new stats.
 	///

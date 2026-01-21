@@ -371,7 +371,8 @@ FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(FSNode *node) {
 	return gMetadata->root;
 }
 
-void FilesystemNodeOperationsBase::subStats(FSNodeDirectory *parent, StatsRecord *stats) {
+void FilesystemNodeOperationsBase::subStats(const FilesystemOperationContext &fsOpContext,
+                                            FSNodeDirectory *parent, StatsRecord *stats) {
 	if (parent != nullptr) {
 		StatsRecord *parentStats = &parent->stats;
 		parentStats->inodes -= stats->inodes;
@@ -385,8 +386,8 @@ void FilesystemNodeOperationsBase::subStats(FSNodeDirectory *parent, StatsRecord
 
 		if (parent != gMetadata->root) {
 			for (auto const &[parentId, _] : parent->parents) {
-				auto *node = idToNodeVerify<FSNodeDirectory>(parentId);
-				subStats(node, stats);
+				auto *node = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+				subStats(fsOpContext, node, stats);
 			}
 		}
 	}
@@ -584,10 +585,11 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	}
 
 	StatsRecord childStats;
-
 	getStats(fsOpContext, childNode, &childStats);
-	subStats(parent, &childStats);
+	subStats(fsOpContext, parent, &childStats);
+
 	parent->mtime = parent->ctime = timeStamp;
+
 	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
 
 	fsnodes_update_checksum(parent);
