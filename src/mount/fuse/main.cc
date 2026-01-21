@@ -642,13 +642,6 @@ int main(int argc, char *argv[]) try {
 	if (!gMountOptions.writecachesize)
 		gMountOptions.writecachesize = 128;
 
-	if (gMountOptions.cachePerInodePercentage < 1) {
-		fprintf(stderr, "cache per inode percentage too low (%u %%) - "
-				"increased to 1%%\n",
-		        gMountOptions.cachePerInodePercentage);
-		gMountOptions.cachePerInodePercentage = 1;
-	}
-
 	if (gMountOptions.cachePerInodePercentage > 100) {
 		fprintf(stderr, "cache per inode percentage too big (%u %%) - "
 				"decreased to 100%%\n",

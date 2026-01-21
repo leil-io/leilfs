@@ -31,8 +31,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <memory>
 #include <mutex>
+#include <queue>
 #include <vector>
 
 #include "common/chunk_connector.h"
@@ -43,6 +47,7 @@
 #include "common/goal.h"
 #include "common/massert.h"
 #include "common/message_receive_buffer.h"
+#include "common/type_defs.h"
 #include "errors/sfserr.h"
 #include "common/multi_buffer_writer.h"
 #include "common/pcqueue.h"
@@ -75,6 +80,17 @@ enum class WriteStats : uint8_t {
 	ACTIVE_WORKERS_TIME_ms,  ///< Sum of time write workers were actively writing
 	STATNODES
 };
+
+enum CacheLabel{
+	COLD,
+	HOT
+};
+
+/* Cache constants*/
+static constexpr int64_t kMinBlocksPerInode = 256;
+static constexpr int64_t kHotPercentage = 25;
+static constexpr int64_t kEmergencyPercentage = 3;
+static constexpr int64_t kMaxHotInodes = 2;
 
 // Around 2s of history with usual granularity (kTicksPerSecond = 10)
 constexpr uint32_t kFCBHistorySize = 20;
@@ -168,6 +184,9 @@ struct inodedata {
 	std::atomic_bool recentlyUnlockNoticeReceived = false;
 	uint32_t minimumBlocksToWrite;
 	std::list<WriteCacheBlock> dataChain;
+	uint64_t releasedCachedBlocks = 0;
+	uint64_t tempCacheRequests = 0;
+	CacheLabel cacheLabel;
 	int alterations_in_chain;  // number of adherent blocks with different chunk ids in chain
 	std::condition_variable flushcond;  // wait for !inqueue (flush)
 	std::condition_variable writecond;  // wait for flushwaiting==0 (write)
@@ -256,6 +275,7 @@ struct inodedata {
 			alterations_in_chain--;
 		}
 		dataChain.pop_front();
+		releasedCachedBlocks++;
 	}
 
 	void registerAlterationsInChain(int delta) { alterations_in_chain += delta; }
@@ -307,6 +327,7 @@ typedef std::unique_lock<std::mutex> Glock;
 static std::condition_variable fcbcond;
 static uint32_t fcbwaiting = 0;
 static int64_t freecacheblocks;
+static uint32_t totalCacheBlocks;
 
 // <inode, respective inodedata> and sorted by inode
 using InodeDataMap = std::map<inode_t, inodedata *>;
@@ -327,6 +348,41 @@ static std::list<DelayedQueueEntry> delayedQueue;
 static ConnectionPool gChunkserverConnectionPool;
 static ChunkConnectorUsingPool gChunkConnector(gChunkserverConnectionPool);
 
+/* globalLock: LOCKED */
+void write_cacheManagerUpdate() {
+	std::priority_queue<std::pair<int64_t, inodedata *>> Pq;
+	for (auto ino : inodedataMap) {
+		ino.second->cacheLabel = CacheLabel::COLD;
+		ino.second->releasedCachedBlocks = ino.second->releasedCachedBlocks >> 1;
+		ino.second->tempCacheRequests = ino.second->tempCacheRequests >> 1;
+		Pq.push(
+		    {-int64_t((ino.second->tempCacheRequests + 1) * (ino.second->releasedCachedBlocks + 1) /
+		              (ino.second->dataChain.size() + 1)),
+		     ino.second});
+		if (Pq.size() > kMaxHotInodes) { Pq.pop(); }
+	}
+	while (!Pq.empty()) {
+		Pq.top().second->cacheLabel = CacheLabel::HOT;
+		Pq.pop();
+	}
+}
+
+/* globalLock: LOCKED*/
+bool write_canWriteInCache(inodedata *inoD) {
+	if (gCachePerInodePercentage > 0) {
+		return inoD->dataChain.size() * 100 <= gCachePerInodePercentage * (freecacheblocks + inoD->dataChain.size());
+	}
+	
+	if (inoD->dataChain.size() < kMinBlocksPerInode) { return true; }
+
+	if (inoD->cacheLabel == CacheLabel::HOT &&
+	    inoD->dataChain.size() * 100 < totalCacheBlocks * kHotPercentage) {
+		return true;
+	}
+	if (freecacheblocks * 100 > totalCacheBlocks * kEmergencyPercentage) { return true; }
+	return false;
+}
+
 void write_cb_release_blocks(uint32_t count, Glock &) {
 	freecacheblocks += count;
 	if (fcbwaiting > 0 && freecacheblocks > 0) { fcbcond.notify_all(); }
@@ -337,11 +393,11 @@ void write_cb_acquire_blocks(uint32_t count, Glock &) { freecacheblocks -= count
 void write_cb_wait_for_block(inodedata *id, Glock &glock) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_cb_wait_for_block");
 	fcbwaiting++;
-	uint64_t dataChainSize = id->dataChain.size();
+	id->tempCacheRequests++;
 	while (freecacheblocks <= 0
 	       // dataChainSize / (dataChainSize + freecacheblocks) > gCachePerInodePercentage / 100
 	       // really means "0 > 0"
-	       || dataChainSize * 100 > (dataChainSize + freecacheblocks) * gCachePerInodePercentage) {
+	       || !write_canWriteInCache(id)) {
 		fcbcond.wait(glock);
 	}
 	fcbwaiting--;
@@ -392,7 +448,9 @@ void write_enqueue(inodedata *id, Glock &);
 void *delayed_queue_worker(void *) {
 	pthread_setname_np(pthread_self(), "delQueueWriter");
 
+	uint8_t count=0;
 	for (;;) {
+		count= (count+1)%5;
 		Timeout timeout(std::chrono::microseconds(1000000 / DelayedQueueEntry::kTicksPerSecond));
 		Glock lock(gMutex);
 		auto it = delayedQueue.begin();
@@ -405,7 +463,9 @@ void *delayed_queue_worker(void *) {
 				++it;
 			}
 		}
-
+		if(!count && !gCachePerInodePercentage){
+			write_cacheManagerUpdate();
+		}
 		// Update the write stats
 		updateStats(freecacheblocks);
 
@@ -832,8 +892,11 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	gWriteWaveTimeout = waveTimeout;
 	if (cacheblockcount < 10) { cacheblockcount = 10; }
 
-	freecacheblocks = cacheblockcount;
-	gCachePerInodePercentage = cachePerInodePercentage;
+	totalCacheBlocks = cacheblockcount;
+	freecacheblocks = totalCacheBlocks;
+	if(cachePerInodePercentage){
+		gCachePerInodePercentage = cachePerInodePercentage;
+	}
 
 	writeStatsInit();
 
@@ -1180,7 +1243,10 @@ struct inodedata {
 	std::condition_variable writecond;  // wait for flushwaiting==0 (write): using inodeLock
 	std::list<ChunkDataPtr> chunkDataList;
 	std::atomic_bool emptyChunkDataList = true;
-	std::atomic<uint64_t> totalCachedBlocks = 0;
+	std::atomic<uint64_t> cachedBlocks = 0;
+	std::atomic<uint64_t> releasedCachedBlocks = 0;
+	std::atomic<uint64_t> tempCacheRequests = 0;
+	std::atomic<CacheLabel> cacheLabel;
 	std::mutex mutex;
 	Timer lastWriteToDataChain;     // inodeLock
 	Timer lastWriteToChunkservers;  // inodeLock
@@ -1284,14 +1350,15 @@ struct ChunkData {
 	/* inodeLock: LOCKED */
 	void pushToChain(WriteCacheBlock &&block) {
 		dataChain.emplace_back(std::move(block));
-		parent_->totalCachedBlocks++;
+		parent_->cachedBlocks++;
 	}
 
 	/* inodeLock: LOCKED */
 	void popFromChain() {
 		assert(dataChain.size() > 0);
 		dataChain.pop_front();
-		parent_->totalCachedBlocks--;
+		parent_->cachedBlocks--;
+		parent_->releasedCachedBlocks++;
 	}
 
 	/* inodeLock: LOCKED */
@@ -1305,7 +1372,7 @@ struct ChunkData {
 
 	/* inodeLock: LOCKED */
 	void clear() {
-		parent_->totalCachedBlocks -= dataChain.size();
+		parent_->cachedBlocks -= dataChain.size();
 		dataChain.clear();
 	}
 
@@ -1335,6 +1402,7 @@ static std::mutex fcbcondMutex;
 static std::condition_variable fcbcond;
 static std::atomic<uint32_t> fcbwaiting = 0;
 static std::atomic<int64_t> freecacheblocks;
+static uint32_t totalCacheBlocks;
 
 // <inode, respective inodedata> and sorted by inode
 using InodeDataMap = std::map<inode_t, inodedata *>;
@@ -1359,15 +1427,92 @@ static std::list<DelayedQueueEntry> delayedQueue;
 static ConnectionPool gChunkserverConnectionPool;
 static ChunkConnectorUsingPool gChunkConnector(gChunkserverConnectionPool);
 
+static constexpr int64_t MilisecondsToDeath = 5000;
+
+struct Register {
+	std::queue<std::pair<uint64_t, uint64_t>> Que;
+	__int128_t sum{0};
+	__int128_t ponderedSum{0};
+	__int128_t lastRead{0};
+	void removeIfNeeded(uint64_t now) {
+		while (!Que.empty() && now - Que.front().second > MilisecondsToDeath) {
+			sum -= Que.front().first;
+			ponderedSum -= __int128_t(Que.front().first) * Que.front().second;
+			Que.pop();
+		}
+	}
+	__int128_t speedMetric(uint64_t now) {
+		return lastRead = std::max(__int128_t(0), ponderedSum - (sum * (now - MilisecondsToDeath)));
+	}
+	void addEntry(uint64_t now, uint64_t byte_size) {
+		sum += byte_size;
+		ponderedSum += __int128_t(byte_size) * now;
+		Que.push({byte_size, now});
+	}
+	bool isEmpty() const { return Que.empty(); }
+};
+
+static __int128_t totalCacheManagerScore{0};
+static std::map<uint64_t, Register> historyRegisters;
+static std::mutex writeCacheManagerMutex;
+
+void write_cacheManagerWriteEvent(inodedata *inoD, uint64_t byte_size) {
+	std::lock_guard lock(fcbcondMutex);
+	uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now().time_since_epoch())
+		.count();
+	auto &reg = historyRegisters[inoD->inode];
+	totalCacheManagerScore-=reg.lastRead;
+	reg.removeIfNeeded(now);
+	reg.addEntry(now, byte_size);
+	totalCacheManagerScore+=reg.speedMetric(now);
+}
+
+void write_cacheManagerUpdate() {
+	std::lock_guard lock(fcbcondMutex);
+	uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                   std::chrono::steady_clock::now().time_since_epoch())
+	                   .count();
+	totalCacheManagerScore = 0;
+	std::vector<uint64_t> toDel;
+	for (auto &entry : historyRegisters) {
+		entry.second.removeIfNeeded(now);
+		if (entry.second.isEmpty()) {
+			toDel.push_back(entry.first);
+			continue;
+		}
+		totalCacheManagerScore += entry.second.speedMetric(now);
+	}
+	for (auto entryId : toDel) { historyRegisters.erase(entryId); }
+}
+
+bool write_canWriteInCache(inodedata *inoD) {
+	uint64_t cacheBlocksInstance =inoD->cachedBlocks;
+	if (gCachePerInodePercentage > 0) {
+		return cacheBlocksInstance * 100 <= gCachePerInodePercentage * (freecacheblocks + cacheBlocksInstance);
+	}
+	if (inoD->cachedBlocks < kMinBlocksPerInode) { return true; }	
+	if (historyRegisters.contains(inoD->inode)) {
+		auto &reg = historyRegisters[inoD->inode];
+		if (cacheBlocksInstance * (totalCacheManagerScore+1) < (reg.lastRead+1) * totalCacheBlocks) {
+			return true;
+		}
+	}
+	return false;
+}
+
+
 /* globalLock: UNLOCKED*/
 void write_cb_release_blocks(uint32_t count) {
+	static std::atomic<uint64_t> notifyAllCounter = {0};
+	uint64_t old_counter = notifyAllCounter.fetch_add(1, std::memory_order_relaxed);
 	freecacheblocks += count;
 	if (fcbwaiting > 0 && freecacheblocks > 0) {
 		Lock fcbcondLock(fcbcondMutex);
-		if (count == 1) {
-			fcbcond.notify_one();
-		} else {
+		if (count > 1 || (old_counter + 1) % 100 == 0) {
 			fcbcond.notify_all();
+		} else {
+			fcbcond.notify_one();
 		}
 	}
 }
@@ -1379,13 +1524,9 @@ void write_cb_acquire_blocks(uint32_t count) { freecacheblocks -= count; }
 void write_cb_wait_for_block(inodedata *id) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_cb_wait_for_block");
 	fcbwaiting++;
-	uint64_t totalCachedBlocks = id->totalCachedBlocks;
+	id->tempCacheRequests++;
 	Lock fcbcondLock(fcbcondMutex);
-	while (freecacheblocks <= 0
-	       // totalCachedBlocks / (totalCachedBlocks + freecacheblocks) >
-	       // gCachePerInodePercentage / 100 really means "0 > 0"
-	       || totalCachedBlocks * 100 >
-	              (totalCachedBlocks + freecacheblocks) * gCachePerInodePercentage) {
+	while (freecacheblocks <= 0 || !write_canWriteInCache(id)) {
 		fcbcond.wait(fcbcondLock);
 	}
 	fcbwaiting--;
@@ -1509,7 +1650,7 @@ void *delayed_queue_worker(void *) {
 			}
 		}
 		globalLock.unlock();
-
+		if (!gCachePerInodePercentage) { write_cacheManagerUpdate(); }
 		// Update the write stats
 		updateStats(freecacheblocks);
 
@@ -1899,7 +2040,7 @@ void ChunkJobWriter::returnJournalToDataChain(std::list<WriteCacheBlock> &&journ
 		write_cb_acquire_blocks(journal.size());
 		inodeLock.lock();
 
-		chunkData_->getParent()->totalCachedBlocks += journal.size();
+		chunkData_->getParent()->cachedBlocks += journal.size();
 		chunkData_->dataChain.splice(chunkData_->dataChain.begin(), std::move(journal));
 	}
 }
@@ -1965,8 +2106,11 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	gWriteWaveTimeout = waveTimeout;
 	if (cacheblockcount < 10) { cacheblockcount = 10; }
 
-	freecacheblocks = cacheblockcount;
-	gCachePerInodePercentage = cachePerInodePercentage;
+	totalCacheBlocks = cacheblockcount;
+	freecacheblocks = totalCacheBlocks;
+	if(cachePerInodePercentage){
+		gCachePerInodePercentage = cachePerInodePercentage;
+	}
 
 	writeStatsInit();
 
@@ -2116,6 +2260,9 @@ int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *data, s
 	status = id->status;
 	id->maxfleng = std::max(id->maxfleng, currentSize);
 	if (status == SAUNAFS_STATUS_OK) {
+		if(!gCachePerInodePercentage){
+		write_cacheManagerWriteEvent(id, size);
+		}
 		if (offset + size > id->maxfleng) {  // move fleng
 			id->maxfleng = offset + size;
 		}
@@ -2314,7 +2461,7 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 		id->maxfleng = endOffset;
 
 		// Something has to be written, so pass our lock to writing threads
-		sassert(id->totalCachedBlocks == 0);
+		sassert(id->cachedBlocks == 0);
 
 		Lock truncateLocatorsDataLock(truncateLocatorsDataMutex);
 		truncateLocatorsData[id->inode] = {lockId, endOffset};
