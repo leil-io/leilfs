@@ -64,10 +64,13 @@
 #include "protocol/packet.h"
 #include "slogger/slogger.h"
 
-#define MaxPacketSize 500000000
+constexpr uint32_t kMaxPacketSize = 500'000'000;
 
 // matocsserventry.mode
-enum{KILL, CONNECTED};
+enum class ChunkserverConnectionMode : std::uint8_t {
+	KILL,			/// Connection is terminated
+	CONNECTED		/// Connection is active
+};
 
 double gLoadFactorPenalty = 0.;
 bool gPrioritizeDataParts = true;
@@ -81,16 +84,36 @@ constexpr auto kTimeoutForChunkRegistration = std::chrono::seconds(15);
 // there is no chunks registration.
 Timeout gTimeoutSinceLastChunkRegistration(std::chrono::seconds(1));
 
-struct matocsserventry {
-	matocsserventry() : inputPacket(MaxPacketSize) {}
+// Max pending connections in accept queue
+constexpr int kMaxListenBacklog = 100;
 
-	uint8_t mode;
+// Default CS timeout (ms)
+constexpr uint32_t kDefaultChunkserverTimeoutMs = 60'000;
+
+// Bytes per GiB
+constexpr double kBytesPerGiB = 1024.0 * 1024.0 * 1024.0;
+
+// Minimum allowed register timeout (ms)
+constexpr uint32_t kMinRegisterTimeoutMs = 10;
+
+// Keep-alive timeout divisor
+constexpr uint32_t kDefaultKeepAliveTimeoutDivisor = 3;
+
+// CSTOMA_SPACE packet sizes
+constexpr uint32_t kSpacePktUsedTotal = 16;           // usedspace(8) + totalspace(8)
+constexpr uint32_t kSpacePktWithToDelSpace = 32;      // + todelusedspace(8) + todeltotalspace(8)
+constexpr uint32_t kSpacePktWithCountsAndToDel = 40;  // + chunkscount(4) + todelchunkscount(4)
+
+struct matocsserventry {
+	matocsserventry() : inputPacket(kMaxPacketSize) {}
+
+	ChunkserverConnectionMode mode;
 	int sock;
 	int32_t pdescpos;
 	Timer lastread,lastwrite;
 	InputPacket inputPacket;
 	std::list<OutputPacket> outputPackets;
-	char *servstrip;                // human readable version of servip
+	std::string serviceStrIp;       // human readable version of servip
 	uint32_t version;
 	uint32_t servip;                // ip to connect to
 	uint16_t servport;              // port to connect to
@@ -119,12 +142,6 @@ struct matocsserventry {
 
 		return first_usage < second_usage;
 	}
-
-	~matocsserventry() {
-		if (servstrip != nullptr) {
-			free(servstrip);
-		}
-	}
 };
 
 static std::list<std::unique_ptr<matocsserventry>> matocsservList;
@@ -132,26 +149,32 @@ static int lsock;
 static int32_t lsockpdescpos;
 
 // from config
-static char *ListenHost;
-static char *ListenPort;
+static std::string gListenHost;
+static std::string gListenPort;
 
-void matocsserv_getserverdata(const matocsserventry* s, ChunkserverListEntry &result) {
-	if (s) {
-		result = *s;
-	}
+void matocsserv_getserverdata(const matocsserventry *eptr, ChunkserverListEntry &result) {
+	if (eptr) { result = *eptr; }
 }
 
-csdbentry *matocsserv_get_csdb(matocsserventry* s) {
-	assert(s);
-	return s->csdb;
+csdbentry *matocsserv_get_csdb(matocsserventry *eptr) {
+	assert(eptr);
+	return eptr->csdb;
 }
 
 /* replications DB */
 
-#define REPHASHSIZE 256
-#define REPHASHFN(chid,ver) (((chid)^(ver)^((chid)>>8))%(REPHASHSIZE))
+// Replication hash parameters
+constexpr uint32_t kReplicationHashSize = 256;
 
-struct repsrc {
+// Simple, fast hash for (chunkId, version) pairing.
+// Uses XOR mix and a right-shift to spread bits, then maps into the bucket range.
+inline uint32_t replicationHash(uint64_t chunkId, uint32_t version) noexcept {
+	const uint64_t mix = chunkId ^ static_cast<uint64_t>(version) ^ (chunkId >> 8);
+
+	return static_cast<uint32_t>(mix % kReplicationHashSize);
+}
+
+struct ReplicaSourceEntry {
 	matocsserventry *src;
 };
 
@@ -160,21 +183,20 @@ struct repdst {
 	uint32_t chunkVersion;
 	ChunkPartType chunkType;
 	matocsserventry *destinationCs;
-	std::list<std::unique_ptr<repsrc>> replicaSourceList;
+	std::list<std::unique_ptr<ReplicaSourceEntry>> replicaSourceList;
 };
 
-static std::list<std::unique_ptr<repdst>> rephash[REPHASHSIZE];
+static std::list<std::unique_ptr<repdst>> rephash[kReplicationHashSize];
 
 void matocsserv_replication_init() {
 	uint32_t hash;
-	for (hash = 0; hash < REPHASHSIZE; hash++) {
-		rephash[hash].clear();
-	}
+
+	for (hash = 0; hash < kReplicationHashSize; hash++) { rephash[hash].clear(); }
 }
 
 int matocsserv_replication_find(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                                 matocsserventry *dst) {
-	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
+	uint32_t hash = replicationHash(chunkId, chunkVersion);
 	for (const auto &replica : rephash[hash]) {
 		if (replica->chunkId == chunkId
 				&& replica->chunkVersion == chunkVersion
@@ -193,9 +215,9 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 		return;
 	}
 
-	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
+	uint32_t hash = replicationHash(chunkId, chunkVersion);
 
-	std::unique_ptr<repsrc> replicaSource;
+	std::unique_ptr<ReplicaSourceEntry> replicaSource;
 
 	auto replica = std::make_unique<repdst>();
 	replica->chunkId = chunkId;
@@ -204,7 +226,7 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 	replica->destinationCs = destination;
 
 	for (uint8_t i = 0 ; i < srccnt ; i++) {
-		replicaSource = std::make_unique<repsrc>();
+		replicaSource = std::make_unique<ReplicaSourceEntry>();
 		replicaSource->src = src[i];
 		replica->replicaSourceList.push_back(std::move(replicaSource));
 		static_cast<matocsserventry *>(src[i])->rrepcounter++;
@@ -216,7 +238,7 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 
 void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                                 matocsserventry *destination) {
-	uint32_t hash = REPHASHFN(chunkId, chunkVersion);
+	uint32_t hash = replicationHash(chunkId, chunkVersion);
 
 	for (auto replicaIt = rephash[hash].begin(); replicaIt != rephash[hash].end();) {
 		auto &replica = *replicaIt;
@@ -278,10 +300,10 @@ void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *us
 	double space;
 	uint32_t chunkserversWithAvailableSpace = 0;
 	uint32_t chunkserversAvailable = 0;
-	constexpr uint32_t kMaxChunkservers = 65535;
+	constexpr uint32_t kMaxChunkservers = 65'535;
 
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != KILL) {
+		if (eptr->mode != ChunkserverConnectionMode::KILL) {
 			if (eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace) {
 				space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
 				minspace = std::min(minspace, space);
@@ -290,29 +312,34 @@ void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *us
 			}
 			chunkserversAvailable++;
 		}
+
 		if (chunkserversAvailable >= kMaxChunkservers) { break; }
 	}
 
 	if (usablescount) { *usablescount = chunkserversWithAvailableSpace; }
+
 	if (totalscount) { *totalscount = chunkserversAvailable; }
 
 	if (minusage) { *minusage = minspace; }
+
 	if (maxusage) { *maxusage = maxspace; }
 }
 
 std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
 	std::vector<ServerWithUsage> result;
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != KILL
+		if (eptr->mode != ChunkserverConnectionMode::KILL
 				&& eptr->totalspace > 0
 				&& eptr->usedspace <= eptr->totalspace) {
 			double usage = double(eptr->usedspace) / double(eptr->totalspace);
 			result.emplace_back(eptr.get(), usage, eptr->label);
 		}
 	}
+
 	std::sort(result.begin(), result.end(), [](const ServerWithUsage &u1, const ServerWithUsage &u2){
 		return matocsserventry::lessUsedAndLoaded(u1.server, u2.server);
 	});
+
 	return result;
 }
 
@@ -323,7 +350,7 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	const Goal &goal(gFSOperations->getGoalDefinition(goal_id));
 
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != KILL && eptr->totalspace > 0 &&
+		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0 &&
 		    eptr->usedspace <= eptr->totalspace &&
 		    (eptr->totalspace - eptr->usedspace) >= SFSCHUNKSIZE) {
 
@@ -392,9 +419,11 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 			servers = getter.chooseServersForLabels(
 			        history[goal_id], slice[shuffle[i]],
 			        min_version, used_servers);
+
 			if (servers.empty()) {
 				continue;
 			}
+
 			++count_full_parts;
 			for (const auto &server : servers) {
 				slice_ret.push_back(std::make_pair(
@@ -420,21 +449,24 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 	temporarily_unavailable = 0;
 	servers.clear();
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode == KILL
+		if (eptr->mode == ChunkserverConnectionMode::KILL
 				|| eptr->totalspace == 0
 				|| eptr->usedspace > eptr->totalspace
 				|| (eptr->totalspace - eptr->usedspace) <= (eptr->totalspace / 100)) {
 			// Skip full and disconnected chunkservers
 			continue;
 		}
+
 		if (eptr->version < min_chunkserver_version) {
 			continue;
 		}
+
 		bool matchesRequestedLabel = false;
 		if (label != MediaLabel::kWildcard && eptr->label == label) {
 			++total_matching;
 			matchesRequestedLabel = true;
 		}
+
 		if (eptr->wrepcounter < replication_write_limit) {
 			servers.push_back(eptr.get());
 			if (matchesRequestedLabel) {
@@ -462,9 +494,9 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 	}
 }
 
-const MediaLabel& matocsserv_get_label(matocsserventry* e) {
-	assert(e);
-	return e->label;
+const MediaLabel& matocsserv_get_label(matocsserventry* eptr) {
+	assert(eptr);
+	return eptr->label;
 }
 
 double matocsserv_get_usage(matocsserventry* eptr) {
@@ -479,7 +511,7 @@ void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
 	uint64_t tspace = 0;
 	uint64_t uspace = 0;
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode!=KILL && eptr->totalspace>0) {
+		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0) {
 			tspace += eptr->totalspace;
 			uspace += eptr->usedspace;
 		}
@@ -490,20 +522,20 @@ void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
 
 const char* matocsserv_getstrip(matocsserventry *eptr) {
 	static const char *empty = "???";
-	if (eptr->mode!=KILL && eptr->servstrip) {
-		return eptr->servstrip;
+	if (eptr->mode != ChunkserverConnectionMode::KILL && !eptr->serviceStrIp.empty()) {
+		return eptr->serviceStrIp.c_str();
 	}
 	return empty;
 }
 
-uint32_t matocsserv_get_servip(matocsserventry *e) {
-	assert(e);
-	return e->servip;
+uint32_t matocsserv_get_servip(matocsserventry *eptr) {
+	assert(eptr);
+	return eptr->servip;
 }
 
 int matocsserv_getlocation(matocsserventry *eptr,uint32_t *servip,uint16_t *servport,
 		MediaLabel* label) {
-	if (eptr->mode!=KILL) {
+	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		*servip = eptr->servip;
 		*servport = eptr->servport;
 		*label = eptr->label;
@@ -525,67 +557,53 @@ uint16_t matocsserv_deletion_counter(matocsserventry *eptr) {
 	return eptr->delcounter;
 }
 
-char* matocsserv_makestrip(uint32_t ip) {
-	uint8_t *ptr,pt[4];
-	uint32_t l,i;
-	char *optr;
-	ptr = pt;
-	put32bit(&ptr,ip);
-	l=0;
-	for (i=0 ; i<4 ; i++) {
-		if (pt[i]>=100) {
-			l+=3;
-		} else if (pt[i]>=10) {
-			l+=2;
-		} else {
-			l+=1;
-		}
-	}
-	l+=4;
-	optr = (char*) malloc(l);
-	passert(optr);
-	snprintf(optr,l,"%" PRIu8 ".%" PRIu8 ".%" PRIu8 ".%" PRIu8,pt[0],pt[1],pt[2],pt[3]);
-	optr[l-1]=0;
-	return optr;
-}
-
 uint8_t* matocsserv_createpacket(matocsserventry *eptr,uint32_t type,uint32_t size) {
 	eptr->outputPackets.emplace_back(PacketHeader(type, size));
 	return eptr->outputPackets.back().packet.data() + PacketHeader::kSize;
 }
 
 /* for future use */
-void matocsserv_got_chunk_checksum(matocsserventry *eptr,const uint8_t *data,uint32_t length) {
+void matocsserv_got_chunk_checksum(matocsserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint64_t chunkid;
-	uint32_t version,checksum;
+	uint32_t version, checksum;
 	uint8_t status;
-	if (length!=8+4+1 && length!=8+4+4) {
-		safs_pretty_syslog(LOG_NOTICE,"CSTOAN_CHUNK_CHECKSUM - wrong size (%" PRIu32 "/13|16)",length);
-		eptr->mode=KILL;
-		return ;
+	constexpr uint32_t kChecksumPacketSizeStatusOnly =
+	    sizeof(chunkid) + sizeof(version) + sizeof(status);
+	constexpr uint32_t kChecksumPacketSizeWithChecksum =
+	    sizeof(chunkid) + sizeof(version) + sizeof(checksum);
+
+	if (length != kChecksumPacketSizeStatusOnly && length != kChecksumPacketSizeWithChecksum) {
+		safs::log_info("CSTOAN_CHUNK_CHECKSUM - wrong size ({}/13|16)", length);
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
 	}
+
 	passert(data);
 	chunkid = get64bit(&data);
 	get32bit(&data, version);
-	if (length==8+4+1) {
+
+	if (length == kChecksumPacketSizeStatusOnly) {
 		status = get8bit(&data);
-		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 " calculate checksum status: %s",
-		       eptr->servstrip, eptr->servport, chunkid, saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X} calculate checksum status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkid, saunafs_error_string(status));
 	} else {
 		get32bit(&data, checksum);
-		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 " calculate checksum: %08" PRIX32,eptr->servstrip,eptr->servport,chunkid,checksum);
+		safs::log_info("({}:{}) chunk: {:016X} calculate checksum: {:08X}", eptr->serviceStrIp,
+		               eptr->servport, chunkid, checksum);
 	}
+
 	(void)version;
 }
 
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
 		uint32_t chunkVersion) {
-	if (eptr->mode != KILL) {
+	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.push_back(OutputPacket());
 		sassert(eptr->version >= kFirstECVersion);
 		matocs::createChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
 				chunkVersion);
 	}
+
 	return 0;
 }
 
@@ -601,15 +619,16 @@ void matocsserv_got_createchunk_status(matocsserventry *eptr, const std::vector<
 	cstoma::createChunk::deserialize(data, chunkId, chunkType, status);
 
 	chunk_got_create_status(eptr, chunkId, chunkType, status);
+
 	if (status != 0) {
-		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 " creation status: %s",
-				eptr->servstrip, eptr->servport, chunkId, saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X} creation status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkId, saunafs_error_string(status));
 	}
 }
 
 int matocsserv_send_deletechunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
 		ChunkPartType chunkType) {
-	if (eptr->mode != KILL) {
+	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.push_back(OutputPacket());
 		sassert(eptr->version >= kFirstECVersion);
 		matocs::deleteChunk::serialize(eptr->outputPackets.back().packet,
@@ -633,8 +652,8 @@ void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<
 	chunk_got_delete_status(eptr, chunkId, chunkType, status);
 	eptr->delcounter--;
 	if (status != 0) {
-		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 " deletion status: %s",
-				eptr->servstrip, eptr->servport, chunkId, saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X} deletion status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkId, saunafs_error_string(status));
 	}
 }
 
@@ -644,16 +663,15 @@ int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, 
 		return -1;
 	}
 	if (sourcePointers.size() != sourceTypes.size()) {
-		safs_pretty_syslog(LOG_ERR, "Inconsistent arguments for sau_replicatechunk (%u != %u)",
-				static_cast<unsigned>(sourcePointers.size()),
-				static_cast<unsigned>(sourceTypes.size()));
+		safs::log_err("Inconsistent arguments for sau_replicatechunk ({} != {})",
+		              sourcePointers.size(), sourceTypes.size());
 		return -1;
 	}
-	if (eptr->mode == KILL) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL) {
 		return 0;
 	}
 	for (auto source : sourcePointers) {
-		if (source->mode == KILL) {
+		if (source->mode == ChunkserverConnectionMode::KILL) {
 			return 0;
 		}
 	}
@@ -689,14 +707,14 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 	matocsserv_replication_end(chunkId, chunkVersion, chunkType, eptr);
 	chunk_got_replicate_status(eptr, chunkId, chunkVersion, chunkType, status);
 	if (status != 0 && status != SAUNAFS_ERROR_WAITING) {
-		safs_pretty_syslog(LOG_NOTICE, "(%s:%" PRIu16 ") chunk: %016" PRIX64 " replication status: %s",
-				eptr->servstrip, eptr->servport, chunkId, saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X} replication status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkId, saunafs_error_string(status));
 	}
 }
 
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
 		uint32_t chunkVersion, ChunkPartType chunkType) {
-	if (eptr->mode != KILL) {
+	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.emplace_back();
 		sassert(eptr->version >= kFirstECVersion);
 		matocs::setVersion::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
@@ -719,14 +737,14 @@ void matocsserv_got_setchunkversion_status(matocsserventry *eptr,
 
 	chunk_got_setversion_status(eptr, chunkId, chunkType, status);
 	if (status != 0) {
-		safs_pretty_syslog(LOG_NOTICE, "(%s:%" PRIu16 ") chunk: %016" PRIX64 " set version status: %s",
-				eptr->servstrip, eptr->servport, chunkId, saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X} set version status: {}",
+				eptr->serviceStrIp, eptr->servport, chunkId, saunafs_error_string(status));
 	}
 }
 
 int matocsserv_send_duplicatechunk(matocsserventry* eptr, uint64_t newChunkId, uint32_t newChunkVersion,
 		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion) {
-	if (eptr->mode == KILL) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL) {
 		return 0;
 	}
 
@@ -751,15 +769,15 @@ void matocsserv_got_duplicatechunk_status(matocsserventry* eptr, const std::vect
 
 	chunk_got_duplicate_status(eptr, chunkId, chunkType, status);
 	if (status != 0) {
-		safs_pretty_syslog(LOG_NOTICE, "(%s:%" PRIu16 ") chunk: %016" PRIX64 ", type: %" PRIu8
-				" duplication status: %s", eptr->servstrip, eptr->servport,
-				chunkId, chunkType.getId(), saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X}, type: {} duplication status: {}",
+		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
+		               saunafs_error_string(status));
 	}
 }
 
 void matocsserv_send_truncatechunk(matocsserventry* eptr, uint64_t chunkid, ChunkPartType chunkType, uint32_t length,
 		uint32_t newVersion,uint32_t oldVersion) {
-	if (eptr->mode == KILL) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL) {
 		return;
 	}
 
@@ -787,15 +805,15 @@ void matocsserv_got_sau_truncatechunk_status(matocsserventry *eptr,
 
 	chunk_got_truncate_status(eptr, chunkId, chunkType, status);
 	if (status!=0) {
-		safs_pretty_syslog(LOG_NOTICE,"(%s:%" PRIu16 ") chunk: %016" PRIX64 ", type: %08" PRIX32
-				" truncate status: %s", eptr->servstrip, eptr->servport, chunkId,
-				chunkType.getId(), saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X}, type: {:08X} truncate status: {}",
+		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
+		               saunafs_error_string(status));
 	}
 }
 
 int matocsserv_send_duptruncchunk(matocsserventry* eptr, uint64_t newChunkId, uint32_t newChunkVersion,
 		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkLength) {
-	if (eptr->mode == KILL) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL) {
 		return 0;
 	}
 
@@ -821,9 +839,9 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 
 	chunk_got_duptrunc_status(eptr, chunkId, chunkType, status);
 	if (status != 0) {
-		safs_pretty_syslog(LOG_NOTICE, "(%s:%" PRIu16 ") chunk: %016" PRIX64 ", type: %" PRIu8
-				" duplication with truncate status: %s", eptr->servstrip, eptr->servport,
-				chunkId, chunkType.getId(), saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X}, type: {} duplication with truncate status: {}",
+		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
+		               saunafs_error_string(status));
 	}
 }
 
@@ -838,14 +856,14 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		safs::log_err(
 		    "SAU_CSTOMA_REGISTER_HOST received too old version: {} (minimum supported version is {})",
 		    saunafsVersionToString(eptr->version), saunafsVersionToString(kFirstECVersion));
-		eptr->mode = KILL;
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
 
 	if (eptr->version >= kFirstVersionWithClusterId) {
 		if (clusterId.empty()) {
 			safs::log_err("SAU_CSTOMA_REGISTER_HOST received empty cluster ID");
-			eptr->mode = KILL;
+			eptr->mode = ChunkserverConnectionMode::KILL;
 			return;
 		}
 
@@ -853,42 +871,37 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 			safs::log_err(
 			    "SAU_CSTOMA_REGISTER_HOST received mismatched cluster ID: expected {}, got {}",
 			    gClusterId, clusterId);
-			eptr->mode = KILL;
+			eptr->mode = ChunkserverConnectionMode::KILL;
 			return;
 		}
 	}
 
-	if (eptr->timeout<10) {
-		safs_pretty_syslog(LOG_NOTICE, "SAU_CSTOMA_REGISTER communication timeout too small (%"
-				PRIu32 " milliseconds - should be at least 10 milliseconds)", eptr->timeout);
-		eptr->mode=KILL;
+	if (eptr->timeout < kMinRegisterTimeoutMs) {
+		safs::log_info(
+		    "SAU_CSTOMA_REGISTER communication timeout too small ({} milliseconds - should be at least 10 milliseconds)",
+		    eptr->timeout);
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
 
-	if (eptr->servip==0) {
-		tcpgetpeer(eptr->sock,&(eptr->servip),NULL);
-	}
+	if (eptr->servip == 0) { tcpgetpeer(eptr->sock, &(eptr->servip), nullptr); }
 
-	if (eptr->servstrip) {
-		free(eptr->servstrip);
-	}
-
-	eptr->servstrip = matocsserv_makestrip(eptr->servip);
+	eptr->serviceStrIp = ipToString(eptr->servip);
 
 	if (isLoopbackAddress(eptr->servip)) {
 		safs::log_warn("Chunkserver loopback IP addresses are experimental; consider assigning a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
 	}
 
-	if (csdb_new_connection(eptr->servip,eptr->servport,eptr)<0) {
-		safs_pretty_syslog(LOG_WARNING,"chunk-server already connected !!!");
-		eptr->mode=KILL;
+	if (csdb_new_connection(eptr->servip, eptr->servport, eptr) < 0) {
+		safs::log_warn("chunk-server already connected !!!");
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
 
 	eptr->csdb = csdb_find(eptr->servip, eptr->servport);
 
-	safs_pretty_syslog(LOG_NOTICE, "chunkserver register begin (packet version: 5) - ip: %s, port: %"
-			PRIu16, eptr->servstrip, eptr->servport);
+	safs::log_info("chunkserver register begin (packet version: 5) - ip: {}, port: {}",
+	               eptr->serviceStrIp, eptr->servport);
 
 	// Send the answer with the status
 	if (eptr->version >= kFirstVersionWithClusterId) {
@@ -900,31 +913,34 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 }
 
 void register_space(matocsserventry* eptr) {
-	double us = (double)(eptr->usedspace) / (double)(1024 * 1024 * 1024);
-	double ts = (double)(eptr->totalspace) / (double)(1024 * 1024 * 1024);
-	safs_pretty_syslog(LOG_NOTICE, "chunkserver register end (packet version: 5) - ip: %s, port: %"
-			PRIu16 ", usedspace: %" PRIu64 " (%.2f GiB), totalspace: %" PRIu64 " (%.2f GiB)",
-			eptr->servstrip, eptr->servport, eptr->usedspace, us, eptr->totalspace, ts);
+	double us = (double)(eptr->usedspace) / kBytesPerGiB;
+	double ts = (double)(eptr->totalspace) / kBytesPerGiB;
+	safs::log_info(
+	    "chunkserver register end (packet version: 5) - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
+	    eptr->serviceStrIp, eptr->servport, eptr->usedspace, us, eptr->totalspace, ts);
 }
 
-void matocsserv_space(matocsserventry *eptr,const uint8_t *data,uint32_t length) {
-	if (length!=16 && length!=32 && length!=40) {
-		safs_pretty_syslog(LOG_NOTICE,"CSTOMA_SPACE - wrong size (%" PRIu32 "/16|32|40)",length);
-		eptr->mode=KILL;
+void matocsserv_space(matocsserventry *eptr, const uint8_t *data, uint32_t length) {
+	if (length != kSpacePktUsedTotal && length != kSpacePktWithToDelSpace &&
+	    length != kSpacePktWithCountsAndToDel) {
+		safs::log_info("CSTOMA_SPACE - wrong size ({}/{}|{}|{})", length, kSpacePktUsedTotal,
+		               kSpacePktWithToDelSpace, kSpacePktWithCountsAndToDel);
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
+
 	passert(data);
 	eptr->usedspace = get64bit(&data);
 	eptr->totalspace = get64bit(&data);
-	if (length==40) {
-		get32bit(&data, eptr->chunkscount);
-	}
-	if (length>=32) {
+
+	// Optional counts present only in the 40-byte variant
+	if (length == kSpacePktWithCountsAndToDel) { get32bit(&data, eptr->chunkscount); }
+
+	// To-delete space fields present in 32- and 40-byte variants
+	if (length >= kSpacePktWithToDelSpace) {
 		eptr->todelusedspace = get64bit(&data);
 		eptr->todeltotalspace = get64bit(&data);
-		if (length==40) {
-			get32bit(&data, eptr->todelchunkscount);
-		}
+		if (length == kSpacePktWithCountsAndToDel) { get32bit(&data, eptr->todelchunkscount); }
 	}
 }
 
@@ -972,21 +988,26 @@ void matocsserv_sau_register_label(matocsserventry *eptr, const std::vector<uint
 	std::string label;
 	cstoma::registerLabel::deserialize(data, label);
 	if (!MediaLabelManager::isLabelValid(label)) {
-		safs_pretty_syslog(LOG_NOTICE,"SAU_CSTOMA_REGISTER_LABEL - wrong label '%s' of chunkserver "
-				"(ip: %s, port %" PRIu16 ")", label.c_str(), eptr->servstrip, eptr->servport);
-		eptr->mode = KILL;
+		safs::log_info(
+		    "SAU_CSTOMA_REGISTER_LABEL - wrong label '{}' of chunkserver "
+		    "(ip: {}, port {})",
+		    label.c_str(), eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
+
 	if (eptr->csdb == nullptr) {
-		safs_pretty_syslog(LOG_NOTICE,"SAU_CSTOMA_REGISTER_LABEL - setting label is possible for registered connections only "
-		                  "(ip: %s, port %" PRIu16 ")", eptr->servstrip, eptr->servport);
-		eptr->mode = KILL;
+		safs::log_info(
+		    "SAU_CSTOMA_REGISTER_LABEL - setting label is possible for registered connections only "
+		    "(ip: {}, port {})",
+		    eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
+
 	if (label != static_cast<std::string>(eptr->label)) {
-		safs_pretty_syslog(LOG_NOTICE, "chunkserver (ip: %s, port %" PRIu16 ") "
-				"changed its label from '%s' to '%s'",
-				eptr->servstrip, eptr->servport, static_cast<std::string>(eptr->label).c_str(), label.c_str());
+		safs::log_info("chunkserver (ip: {}, port {}) changed its label from '{}' to '{}'",
+		    eptr->serviceStrIp, eptr->servport, static_cast<std::string>(eptr->label), label);
 		chunk_server_label_changed(eptr->label, MediaLabel(label));
 		eptr->label = MediaLabel(label);
 		eptr->csdb->label = eptr->label;
@@ -998,13 +1019,10 @@ void matocsserv_sau_register_config(matocsserventry *eptr,
 	std::string config;
 	cstoma::registerConfig::deserialize(data, config);
 	if (eptr->csdb == nullptr) {
-		safs_pretty_syslog(
-				LOG_NOTICE,
-				"SAU_CSTOMA_REGISTER_CONFIG - setting config is possible for registered connections only (ip: %s, port %" PRIu16 ")",
-				eptr->servstrip,
-				eptr->servport
-				);
-		eptr->mode = KILL;
+		safs::log_info(
+		    "SAU_CSTOMA_REGISTER_CONFIG - setting config is possible for registered connections only (ip: {}, port {})",
+		    eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
 	eptr->csdb->config = std::move(config);
@@ -1050,11 +1068,11 @@ void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t>&
 	}
 }
 
-void matocsserv_error_occurred(matocsserventry *eptr,const uint8_t *data,uint32_t length) {
+void matocsserv_error_occurred(matocsserventry *eptr, const uint8_t *data, uint32_t length) {
 	(void)data;
-	if (length!=0) {
-		safs_pretty_syslog(LOG_NOTICE,"CSTOMA_ERROR_OCCURRED - wrong size (%" PRIu32 "/0)",length);
-		eptr->mode=KILL;
+	if (length != 0) {
+		safs::log_info("CSTOMA_ERROR_OCCURRED - wrong size ({}/0)", length);
+		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
 	eptr->errorcounter++;
@@ -1128,46 +1146,43 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 				matocsserv_sau_status(eptr, data);
 				break;
 			default:
-				safs_pretty_syslog(LOG_NOTICE,"master <-> chunkservers module: got unknown message "
-						"(type:%" PRIu32 ")", header.type);
-				eptr->mode=KILL;
+				safs::log_info("master <-> chunkservers module: got unknown message "
+						"(type:{})", header.type);
+				eptr->mode = ChunkserverConnectionMode::KILL;
 				break;
 		}
 	} catch (IncorrectDeserializationException& e) {
-		safs_pretty_syslog(LOG_NOTICE,
-				"master <-> chunkservers module: got inconsistent message "
-				"(type:%" PRIu32 ", length:%" PRIu32"), %s", header.type, length, e.what());
-		eptr->mode = KILL;
+		safs::log_info("master <-> chunkservers module: got inconsistent message "
+				"(type:{}, length:{}), {}", header.type, length, e.what());
+		eptr->mode = ChunkserverConnectionMode::KILL;
 	}
 }
 
 void matocsserv_term() {
-	safs_pretty_syslog(LOG_INFO,"master <-> chunkservers module: closing %s:%s",ListenHost,ListenPort);
+	safs::log_info("master <-> chunkservers module: closing {}:{}", gListenHost, gListenPort);
 	tcpclose(lsock);
 
 	matocsservList.clear();
-
-	free(ListenHost);
-	free(ListenPort);
 }
 
 void matocsserv_read(matocsserventry *eptr) {
 	SignalLoopWatchdog watchdog;
 
 	watchdog.start();
-	while (eptr->mode != KILL) {
+	while (eptr->mode != ChunkserverConnectionMode::KILL) {
 		uint32_t bytesToRead = eptr->inputPacket.bytesToBeRead();
 		ssize_t ret = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
 		if (ret == 0) {
-			safs_pretty_syslog(LOG_NOTICE, "connection with CS(%s) has been closed by peer",
-					eptr->servstrip);
-			eptr->mode = KILL;
+			safs::log_info("connection with CS({}) has been closed by peer", eptr->serviceStrIp);
+			eptr->mode = ChunkserverConnectionMode::KILL;
 			return;
 		}
+
 		if (ret < 0) {
-			if (errno != EAGAIN) {
-				safs_silent_errlog(LOG_NOTICE, "read from CS(%s) error", eptr->servstrip);
-				eptr->mode = KILL;
+			int err = errno;
+			if (err != EAGAIN) {
+				safs::log_info("read from CS({}) error: {}", eptr->serviceStrIp, strerr(err));
+				eptr->mode = ChunkserverConnectionMode::KILL;
 			}
 			return;
 		}
@@ -1175,14 +1190,16 @@ void matocsserv_read(matocsserventry *eptr) {
 		try {
 			eptr->inputPacket.increaseBytesRead(ret);
 		} catch (InputPacketTooLongException& ex) {
-			safs_pretty_syslog(LOG_WARNING, "reading from CS(%s): %s", eptr->servstrip, ex.what());
-			eptr->mode = KILL;
+			safs::log_warn("reading from CS({}): {}", eptr->serviceStrIp, ex.what());
+			eptr->mode = ChunkserverConnectionMode::KILL;
 			return;
 		}
+
 		if (ret == bytesToRead && !eptr->inputPacket.hasData()) {
 			// there might be more data to read in socket's buffer
 			continue;
 		}
+
 		if (!eptr->inputPacket.hasData()) { return; }
 
 		matocsserv_gotpacket(eptr, eptr->inputPacket.getHeader(), eptr->inputPacket.getData());
@@ -1202,17 +1219,21 @@ void matocsserv_write(matocsserventry *eptr) {
 		OutputPacket& pack = eptr->outputPackets.front();
 		ssize_t i = write(eptr->sock, pack.packet.data() + pack.bytesSent,
 				pack.packet.size() - pack.bytesSent);
-		if (i<0) {
-			if (errno!=EAGAIN) {
-				safs_silent_errlog(LOG_NOTICE,"write to CS(%s) error",eptr->servstrip);
-				eptr->mode = KILL;
+		if (i < 0) {
+			int err = errno;
+			if (err != EAGAIN) {
+				safs::log_info("write to CS({}) error: {}", eptr->serviceStrIp.c_str(),
+				               strerr(err));
+				eptr->mode = ChunkserverConnectionMode::KILL;
 			}
 			return;
 		}
+
 		pack.bytesSent += i;
 		if (pack.packet.size() != pack.bytesSent) {
 			return;
 		}
+
 		eptr->outputPackets.pop_front();
 
 		if (watchdog.expired()) {
@@ -1237,29 +1258,31 @@ void matocsserv_desc(std::vector<pollfd> &pdesc) {
 void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 	uint32_t peerip;
 	std::unique_ptr<matocsserventry> eptr;
-	int ns;
+	int newSocket;
 
-	if (lsockpdescpos>=0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
-		ns=tcpaccept(lsock);
-		if (ns<0) {
-			safs_silent_errlog(LOG_NOTICE,"master<->CS socket: accept error");
+	if (lsockpdescpos >= 0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
+		newSocket = tcpaccept(lsock);
+
+		if (newSocket < 0) {
+			int err = errno;
+			safs::log_info("master<->CS socket: accept error: {}", strerr(err));
 		} else if (metadataserver::isMaster()) {
-			tcpnonblock(ns);
-			tcpnodelay(ns);
+			tcpnonblock(newSocket);
+			tcpnodelay(newSocket);
 			eptr = std::make_unique<matocsserventry>();
 			passert(eptr);
-			eptr->sock = ns;
+			eptr->sock = newSocket;
 			eptr->pdescpos = -1;
-			eptr->mode = CONNECTED;
+			eptr->mode = ChunkserverConnectionMode::CONNECTED;
 			eptr->lastread.reset();
 			eptr->lastwrite.reset();
 
 			tcpgetpeer(eptr->sock, &peerip, nullptr);
-			eptr->servstrip = matocsserv_makestrip(peerip);
+			eptr->serviceStrIp = ipToString(peerip);
 			eptr->version = 0;
 			eptr->servip = 0;
 			eptr->servport = 0;
-			eptr->timeout = 60000;
+			eptr->timeout = kDefaultChunkserverTimeoutMs;
 			eptr->label = MediaLabel::kWildcard;
 			eptr->usedspace = 0;
 			eptr->totalspace = 0;
@@ -1277,46 +1300,56 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			matocsservList.emplace_back(std::move(eptr));
 			chunk_server_unlabelled_connected();
 		} else {
-			tcpclose(ns);
+			tcpclose(newSocket);
 		}
 	}
+
 	for (const auto &eptr : matocsservList) {
-		if (eptr->pdescpos>=0) {
-			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
-				eptr->mode = KILL;
+		if (eptr->pdescpos >= 0) {
+			if (pdesc[eptr->pdescpos].revents & (POLLERR | POLLHUP)) {
+				eptr->mode = ChunkserverConnectionMode::KILL;
 			}
-			if ((pdesc[eptr->pdescpos].revents & POLLIN) && eptr->mode!=KILL) {
+
+			if ((pdesc[eptr->pdescpos].revents & POLLIN) &&
+			    eptr->mode != ChunkserverConnectionMode::KILL) {
 				eptr->lastread.reset();
 				matocsserv_read(eptr.get());
 			}
-			if ((pdesc[eptr->pdescpos].revents & POLLOUT) && eptr->mode!=KILL) {
+
+			if ((pdesc[eptr->pdescpos].revents & POLLOUT) &&
+			    eptr->mode != ChunkserverConnectionMode::KILL) {
 				eptr->lastwrite.reset();
 				matocsserv_write(eptr.get());
 			}
 		}
+
 		if (eptr->lastread.elapsed_ms() > eptr->timeout) {
-			eptr->mode = KILL;
+			eptr->mode = ChunkserverConnectionMode::KILL;
 		}
-		if (eptr->lastwrite.elapsed_ms() > (eptr->timeout/3) && eptr->outputPackets.empty()) {
+
+		if (eptr->lastwrite.elapsed_ms() > (eptr->timeout / kDefaultKeepAliveTimeoutDivisor) &&
+		    eptr->outputPackets.empty()) {
 			matocsserv_createpacket(eptr.get(), ANTOAN_NOP, 0);
 		}
 	}
 
 	for (auto entriesIterator = matocsservList.begin(); entriesIterator != matocsservList.end();) {
 		auto *eptr = entriesIterator->get();
-		if (eptr->mode == KILL) {
-			double us = (double)(eptr->usedspace) / (double)(1024 * 1024 * 1024);
-			double ts = (double)(eptr->totalspace) / (double)(1024 * 1024 * 1024);
-			safs_pretty_syslog(LOG_NOTICE,
-					"chunkserver disconnected - ip: %s, port: %" PRIu16
-					", usedspace: %" PRIu64 " (%.2f GiB), totalspace: %" PRIu64
-					" (%.2f GiB)", eptr->servstrip, eptr->servport, eptr->usedspace,
-					us, eptr->totalspace, ts);
+		if (eptr->mode == ChunkserverConnectionMode::KILL) {
+			double usedSpace = (double)(eptr->usedspace) / kBytesPerGiB;
+			double totalSpace = (double)(eptr->totalspace) / kBytesPerGiB;
+
+			safs::log_info(
+			    "chunkserver disconnected - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
+			    eptr->serviceStrIp, eptr->servport, eptr->usedspace, usedSpace, eptr->totalspace,
+			    totalSpace);
+
 			matocsserv_replication_disconnected(eptr);
+
 			chunk_server_disconnected(eptr, eptr->label);
-			if (eptr->csdb) {
-				csdb_lost_connection(eptr->servip,eptr->servport);
-			}
+
+			if (eptr->csdb) { csdb_lost_connection(eptr->servip, eptr->servport); }
+
 			tcpclose(eptr->sock);
 
 			entriesIterator = matocsservList.erase(entriesIterator);
@@ -1327,10 +1360,10 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 }
 
 void matocsserv_reload() {
-	char *oldListenHost = ListenHost;
-	char *oldListenPort = ListenPort;
-	ListenHost = cfg_getstr("MATOCS_LISTEN_HOST","*");
-	ListenPort = cfg_getstr("MATOCS_LISTEN_PORT","9420");
+	std::string oldListenHost = gListenHost;
+	std::string oldListenPort = gListenPort;
+	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST","*");
+	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
 
 	auto previousValue = gPrioritizeDataParts;
@@ -1338,57 +1371,64 @@ void matocsserv_reload() {
 	    static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
 
 	if (previousValue != gPrioritizeDataParts) {
-		safs_pretty_syslog(LOG_NOTICE,
-		                   "master <-> chunkservers module: "
-		                   "PRIORITIZE_DATA_PARTS has changed to %d",
-		                   static_cast<int>(gPrioritizeDataParts));
+		safs::log_info(
+		    "master <-> chunkservers module: "
+		    "PRIORITIZE_DATA_PARTS has changed to {}",
+		    static_cast<int>(gPrioritizeDataParts));
 	}
 
-	if (strcmp(oldListenHost,ListenHost)==0 && strcmp(oldListenPort,ListenPort)==0) {
-		free(oldListenHost);
-		free(oldListenPort);
-		safs_pretty_syslog(LOG_NOTICE,"master <-> chunkservers module: socket address hasn't changed (%s:%s)",ListenHost,ListenPort);
+	if (oldListenHost == gListenHost && oldListenPort == gListenPort) {
+		safs::log_info("master <-> chunkservers module: socket address hasn't changed ({}:{})",
+		               gListenHost, gListenPort);
 		return;
 	}
 
 	int newlsock = tcpsocket();
-	if (newlsock<0) {
-		safs_pretty_errlog(LOG_WARNING,"master <-> chunkservers module: socket address has changed, but can't create new socket");
-		free(ListenHost);
-		free(ListenPort);
-		ListenHost = oldListenHost;
-		ListenPort = oldListenPort;
+	if (newlsock < 0) {
+		int err = errno;
+		safs::log_warn(
+		    "master <-> chunkservers module: socket address has changed, but can't create new socket: {}",
+		    strerr(err));
+		gListenHost = oldListenHost;
+		gListenPort = oldListenPort;
 		return;
 	}
+
 	tcpnonblock(newlsock);
 	tcpnodelay(newlsock);
 	tcpreuseaddr(newlsock);
-	if (tcpsetacceptfilter(newlsock)<0 && errno!=ENOTSUP) {
-		safs_silent_errlog(LOG_NOTICE,"master <-> chunkservers module: can't set accept filter");
+
+	int err = errno;
+	if (tcpsetacceptfilter(newlsock) < 0 && err != ENOTSUP) {
+		safs::log_info("master <-> chunkservers module: can't set accept filter: {}", strerr(err));
 	}
-	if (tcpstrlisten(newlsock,ListenHost,ListenPort,100)<0) {
-		safs_pretty_errlog(LOG_ERR,"master <-> chunkservers module: socket address has changed, but can't listen on socket (%s:%s)",ListenHost,ListenPort);
-		free(ListenHost);
-		free(ListenPort);
-		ListenHost = oldListenHost;
-		ListenPort = oldListenPort;
+
+	if (tcpstrlisten(newlsock, gListenHost.c_str(), gListenPort.c_str(), kMaxListenBacklog) < 0) {
+		int err = errno;
+		safs::log_err(
+		    "master <-> chunkservers module: socket address has changed, but can't listen on socket ({}:{}): {}",
+		    gListenHost, gListenPort, strerr(err));
+		gListenHost = oldListenHost;
+		gListenPort = oldListenPort;
 		tcpclose(newlsock);
 		return;
 	}
-	safs_pretty_syslog(LOG_NOTICE,"master <-> chunkservers module: socket address has changed, now listen on %s:%s",ListenHost,ListenPort);
-	free(oldListenHost);
-	free(oldListenPort);
+
+	safs::log_info(
+	    "master <-> chunkservers module: socket address has changed, now listen on {}:{}",
+	    gListenHost, gListenPort);
+
 	tcpclose(lsock);
 	lsock = newlsock;
 }
 
-uint32_t matocsserv_get_version(matocsserventry *e) {
-	return e->version;
+uint32_t matocsserv_get_version(matocsserventry *eptr) {
+	return eptr->version;
 }
 
 int matocsserv_init() {
-	ListenHost = cfg_getstr("MATOCS_LISTEN_HOST","*");
-	ListenPort = cfg_getstr("MATOCS_LISTEN_PORT","9420");
+	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST","*");
+	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
 	gPrioritizeDataParts = static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
 
@@ -1406,13 +1446,13 @@ int matocsserv_init() {
 		safs::log_info("master <-> chunkservers module: can't set accept filter");
 	}
 
-	if (tcpstrlisten(lsock, ListenHost, ListenPort, 100) < 0) {
-		safs::log_err("master <-> chunkservers module: can't listen on {}:{}", ListenHost,
-		              ListenPort);
+	if (tcpstrlisten(lsock, gListenHost.c_str(), gListenPort.c_str(), kMaxListenBacklog) < 0) {
+		safs::log_err("master <-> chunkservers module: can't listen on {}:{}", gListenHost,
+		              gListenPort);
 		return -1;
 	}
 
-	safs::log_info("master <-> chunkservers module: listen on {}:{}", ListenHost, ListenPort);
+	safs::log_info("master <-> chunkservers module: listen on {}:{}", gListenHost, gListenPort);
 
 	matocsserv_replication_init();
 
