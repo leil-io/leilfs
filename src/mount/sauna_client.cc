@@ -69,6 +69,7 @@
 #include "mount/mastercomm.h"
 #include "mount/masterproxy.h"
 #include "mount/mount_info.h"
+#include "mount/negative_cache.h"
 #include "mount/notification_area_logging.h"
 #include "mount/oplog.h"
 #include "mount/readdata.h"
@@ -896,6 +897,19 @@ void access(Context &ctx, inode_t ino, int mask) {
 }
 
 EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
+	if (gNegativeCache.lookup(parent, name)) {
+		if (debug_mode) {
+			safs::log_debug("lookup: ({},{}) negative cache hit, skipping master lookup",
+							parent, name);
+		}
+		// Negative cache hit, early return
+		// Kernel may cache negative entries for entry_timeout seconds
+		EntryParam e{};
+		e.ino = 0;
+		e.entry_timeout = NegativeCache::getGlobalTimeoutMs() / 1000.0;
+		return e;
+	}
+
 	if (debug_mode) {
 #ifdef _WIN32
 		if (parent != SPECIAL_INODE_ROOT || strcmp(name, SPECIAL_FILE_NAME_OPLOG) != 0) {
@@ -979,6 +993,16 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name,
 		             saunafs_error_string(status));
+
+		// Negative cache entry miss, adding to negative cache, return early
+		// Kernel may cache negative entries for entry_timeout seconds
+		if (status == SAUNAFS_ERROR_ENOENT && gNegativeCache.isMaxSizeAndTimeoutMsSet()) {
+			gNegativeCache.add(parent, name);
+			EntryParam e{};
+			e.ino = 0;
+			e.entry_timeout = NegativeCache::getGlobalTimeoutMs() / 1000.0;
+			return e;
+		}
 		throw RequestException(status);
 	}
 	uint64_t maxFileLen = (attr[0] == TYPE_FILE) ? write_data_getmaxfleng(inode) : 0;
@@ -3546,6 +3570,7 @@ std::vector<ChunkserverListEntry> getchunkservers() {
 }
 
 void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsigned direntry_cache_size_,
+		unsigned negative_cache_timeout_, unsigned negative_cache_size_,
 		double entry_cache_timeout_, double attr_cache_timeout_, int mkdir_copy_sgid_,
 		SugidClearMode sugid_clear_mode_, bool use_rwlock_,
 		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io,
@@ -3570,6 +3595,10 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	debug_mode = debug_mode_;
 	keep_cache = keep_cache_;
 	direntry_cache_timeout = direntry_cache_timeout_;
+	NegativeCache::setGlobalTimeoutMs(negative_cache_timeout_);
+	gNegativeCache.setTimeoutMs(NegativeCache::getGlobalTimeoutMs());
+	NegativeCache::setGlobalMaxSize(negative_cache_size_);
+	gNegativeCache.setMaxSize(NegativeCache::getGlobalMaxSize());
 	entry_cache_timeout = entry_cache_timeout_;
 	attr_cache_timeout = attr_cache_timeout_;
 	mkdir_copy_sgid = mkdir_copy_sgid_;
@@ -3606,6 +3635,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("DirectIO", gDirectIo, "sfsdirectio");
 	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush, "sfsignoreflush");
+	gTweaks.registerVariable("NegativeCacheTimeout", gNegativeCacheTimeoutMs, "sfsnegativecachetimeout");
+	gTweaks.registerVariable("NegativeCacheMaxSize", gNegativeCacheMaxSize, "sfsnegativecachesize");
 	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout, "statfscachetimeout");
 	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize, "usequotainvolumesize");
 #ifdef _WIN32
@@ -3695,6 +3726,7 @@ void fs_init(FsInitParams &params) {
 	);
 
 	init(params.debug_mode, params.keep_cache, params.direntry_cache_timeout, params.direntry_cache_size,
+		params.negative_cache_timeout, params.negative_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,
 		params.sugid_clear_mode, params.use_rw_lock,
 		params.acl_cache_timeout, params.acl_cache_size, params.direct_io,
