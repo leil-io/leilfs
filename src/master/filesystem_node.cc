@@ -392,7 +392,8 @@ void FilesystemNodeOperationsBase::subStats(FSNodeDirectory *parent, StatsRecord
 	}
 }
 
-void FilesystemNodeOperationsBase::addStats(FSNodeDirectory *parent, StatsRecord *stats) {
+void FilesystemNodeOperationsBase::addStats(const FilesystemOperationContext &fsOpContext,
+                                            FSNodeDirectory *parent, StatsRecord *stats) {
 	if (parent != nullptr) {
 		StatsRecord *parentStats = &parent->stats;
 		parentStats->inodes += stats->inodes;
@@ -406,14 +407,15 @@ void FilesystemNodeOperationsBase::addStats(FSNodeDirectory *parent, StatsRecord
 
 		if (parent != gMetadata->root) {
 			for (auto const &[parentId, _] : parent->parents) {
-				auto *node = idToNodeVerify<FSNodeDirectory>(parentId);
-				addStats(node, stats);
+				auto *node = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+				addStats(fsOpContext, node, stats);
 			}
 		}
 	}
 }
 
-void FilesystemNodeOperationsBase::addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
+void FilesystemNodeOperationsBase::addSubStats(const FilesystemOperationContext &fsOpContext,
+                                               FSNodeDirectory *parent, StatsRecord *newStats,
                                                StatsRecord *previousStats) {
 	StatsRecord resultStats;
 	resultStats.inodes = newStats->inodes - previousStats->inodes;
@@ -424,7 +426,7 @@ void FilesystemNodeOperationsBase::addSubStats(FSNodeDirectory *parent, StatsRec
 	resultStats.length = newStats->length - previousStats->length;
 	resultStats.size = newStats->size - previousStats->size;
 	resultStats.realsize = newStats->realsize - previousStats->realsize;
-	addStats(parent, &resultStats);
+	addStats(fsOpContext, parent, &resultStats);
 }
 
 void FilesystemNodeOperationsBase::fillAttr(FSNode *node, FSNode *parent, uint32_t uid,
@@ -639,7 +641,7 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 
 	StatsRecord childStats;
 	getStats(fsOpContext, child, &childStats);
-	addStats(parent, &childStats);
+	addStats(fsOpContext, parent, &childStats);
 
 	if (timeStamp > 0) {
 		parent->mtime = parent->ctime = timeStamp;
@@ -1264,8 +1266,8 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 
 	// Update stats for all parent directories
 	for (const auto &[parentId, _] : destNodeFile->parents) {
-		auto *parentNode = idToNodeVerify<FSNodeDirectory>(parentId);
-		addSubStats(parentNode, &newStats, &previousStats);
+		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		addSubStats(fsOpContext, parentNode, &newStats, &previousStats);
 	}
 
 	// Update timestamps and checksums
@@ -1293,8 +1295,8 @@ void FilesystemNodeOperationsBase::changeFileGoal(const FilesystemOperationConte
 	newStats.realsize = fileRealSize(nodeFile, newStats.chunks, newStats.size);
 
 	for (const auto &[parentId, _] : nodeFile->parents) {
-		auto *parentNode = idToNodeVerify<FSNodeDirectory>(parentId);
-		addSubStats(parentNode, &newStats, &previousStats);
+		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		addSubStats(fsOpContext, parentNode, &newStats, &previousStats);
 	}
 
 	for (const auto &chunkId : nodeFile->chunks) {
@@ -1350,8 +1352,8 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 	fsnodes_quota_update(nodeFile, {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
 	for (const auto &[parentId, _] : nodeFile->parents) {
-		auto *parentNode = idToNodeVerify<FSNodeDirectory>(parentId);
-		addSubStats(parentNode, &newStats, &previousStats);
+		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		addSubStats(fsOpContext, parentNode, &newStats, &previousStats);
 	}
 
 	fsnodes_update_checksum(nodeFile);

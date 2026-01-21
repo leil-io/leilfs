@@ -229,6 +229,7 @@ public:
 	/// great-grandparents, etc.) are automatically updated, allowing any directory to report total
 	/// statistics for its entire subtree in O(1) time via getStats().
 	///
+	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param parent The parent directory whose statistics should be updated. Propagation should
 	///               stop at the root node. For files with hard links, this must be called for each
 	///               parent directory.
@@ -240,7 +241,8 @@ public:
 	///       - A node is moved from trash/reserved back into the active filesystem (after undel())
 	/// @note For files with multiple hard links, this must be called for each parent directory.
 	/// @note Recursion must stop at the root node.
-	virtual void addStats(FSNodeDirectory *parent, StatsRecord *stats) = 0;
+	virtual void addStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                      StatsRecord *stats) = 0;
 
 	/// Subtracts statistics from a directory and recursively propagates to all ancestors.
 	///
@@ -276,6 +278,7 @@ public:
 	/// This optimization reduces the number of recursive tree walks and operations needed when
 	/// modifying existing nodes, compared to calling subStats() followed by addStats() separately.
 	///
+	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param parent The parent directory whose statistics should be updated. Propagation should
 	///               stop at the root node. For files with hard links, this must be called for each
 	///               parent directory.
@@ -289,8 +292,8 @@ public:
 	/// @note If the delta is zero (no change), implementations may skip propagation (optimization).
 	/// @note Recursion must stop at the root node.
 	/// @note Implementations must handle both positive and negative deltas correctly.
-	virtual void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
-	                         StatsRecord *previousStats) = 0;
+	virtual void addSubStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                         StatsRecord *newStats, StatsRecord *previousStats) = 0;
 
 	virtual void changeUidGid(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                          uint32_t uid, uint32_t gid) = 0;

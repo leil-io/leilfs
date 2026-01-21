@@ -1191,7 +1191,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 	StatsRecord sr;
 	memset(&sr, 0, sizeof(StatsRecord));
 	sr.length = basePath.length();
-	nodeOperations_->addStats(static_cast<FSNodeDirectory *>(wd), &sr);
+	nodeOperations_->addStats(fsOpContext, static_cast<FSNodeDirectory *>(wd), &sr);
 	if (attr != NULL) { nodeOperations_->fillAttr(context, p, wd, *attr); }
 	if (context.isPersonalityMaster()) {
 		assert(*inode == 0);
@@ -2458,8 +2458,8 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	StatsRecord nsr;
 	nodeOperations_->getStats(fsOpContext, p, &nsr);
 	for (const auto &[parentId, _] : p->parents) {
-		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(parentId);
-		nodeOperations_->addSubStats(parent, &nsr, &psr);
+		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
 	if (length) {
@@ -2571,8 +2571,8 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 
 	nodeOperations_->getStats(fsOpContext, p, &nsr);
 	for (const auto &[parentId, _] : p->parents) {
-		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(parentId);
-		nodeOperations_->addSubStats(parent, &nsr, &psr);
+		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
 	fsnodes_update_checksum(p);
@@ -2627,8 +2627,8 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 	}
 	nodeOperations_->getStats(fsOpContext, p, &nsr);
 	for (const auto &[parentId, _] : p->parents) {
-		FSNodeDirectory *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(parentId);
-		nodeOperations_->addSubStats(parent, &nsr, &psr);
+		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
 	fsnodes_update_checksum(p);
@@ -2680,8 +2680,8 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 	nodeOperations_->getStats(fsOpContext, p, &nsr);
 
 	for (const auto &[parentId, _] : p->parents) {
-		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(parentId);
-		nodeOperations_->addSubStats(parent, &nsr, &psr);
+		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
 
 	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});

@@ -172,7 +172,7 @@ void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
 	}
 
 	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &nsr);
-	gFSOperations->nodeOperations()->addSubStats(dst_parent, &nsr, &psr);
+	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
 	fsnodes_quota_update(dst_node, {{QuotaResource::kSize, nsr.size - psr.size}});
 }
 
@@ -204,7 +204,7 @@ void SnapshotTask::cloneSymlinkData(const FilesystemOperationContext &fsOpContex
 	dst_node->path_length = src_node->path_length;
 
 	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &nsr);
-	gFSOperations->nodeOperations()->addSubStats(dst_parent, &nsr, &psr);
+	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
 }
 
 void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {

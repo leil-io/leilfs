@@ -534,7 +534,7 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 
 		StatsRecord sr;
 		gFSOperations->nodeOperations()->getStats(fsOpContext, child, &sr);
-		gFSOperations->nodeOperations()->addStats(parent, &sr);
+		gFSOperations->nodeOperations()->addStats(fsOpContext, parent, &sr);
 	}
 	return kSuccess;
 }

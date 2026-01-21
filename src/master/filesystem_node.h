@@ -74,7 +74,8 @@ public:
 
 	/// Adds statistics to a directory and recursively propagates to all ancestors.
 	/// @see IFilesystemNodeOperations::addStats
-	void addStats(FSNodeDirectory *parent, StatsRecord *stats) override;
+	void addStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	              StatsRecord *stats) override;
 
 	/// Subtracts statistics from a directory and recursively propagates to all ancestors.
 	/// @see IFilesystemNodeOperations::subStats
@@ -82,8 +83,8 @@ public:
 
 	/// Updates directory statistics by propagating the delta between old and new stats.
 	/// @see IFilesystemNodeOperations::addSubStats
-	void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
-	                 StatsRecord *previousStats) override;
+	void addSubStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                 StatsRecord *newStats, StatsRecord *previousStats) override;
 
 	void changeUidGid(const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t uid,
 	                  uint32_t gid) override;
