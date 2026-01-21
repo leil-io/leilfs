@@ -76,6 +76,8 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsentrycacheto=%lf", entrycacheto, 0),
 	SFS_OPT("sfsdirectio=%d", directio, 0),
 	SFS_OPT("sfsdirentrycacheto=%lf", direntrycacheto, 0),
+	SFS_OPT("sfsnegativecachetimeout=%u", negativecachetimeout, 0),
+	SFS_OPT("sfsnegativecachesize=%u", negativecachesize, 0),
 	SFS_OPT("sfsaclcacheto=%lf", aclcacheto, 0),
 	SFS_OPT("sfsreportreservedperiod=%u", reportreservedperiod, 0),
 	SFS_OPT("sfsiolimits=%s", iolimits, 0),
@@ -168,6 +170,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsentrycacheto"] = std::to_string(gMountOptions.entrycacheto);
 	gOptsNameValues["sfsdirectio"] = std::to_string(gMountOptions.directio);
 	gOptsNameValues["sfsdirentrycacheto"] = std::to_string(gMountOptions.direntrycacheto);
+	gOptsNameValues["sfsnegativecachetimeout"] = std::to_string(gMountOptions.negativecachetimeout);
+	gOptsNameValues["sfsnegativecachesize"] = std::to_string(gMountOptions.negativecachesize);
 	gOptsNameValues["sfsaclcacheto"] = std::to_string(gMountOptions.aclcacheto);
 	gOptsNameValues["sfsreportreservedperiod"] = std::to_string(gMountOptions.reportreservedperiod);
 	gOptsNameValues["sfsiolimits"] =
@@ -317,6 +321,14 @@ void usage(const char *progname) {
 				"(default: %.2f)\n"
 "    -o sfsdirentrycachesize=N   define directory entry cache size in number "
 				"of entries (default: %u)\n"
+"    -o sfsnegativecachetimeout=MSEC  set negative cache timeout to determine "
+				"how long client remembers a failed lookup. When equal to 0 "
+    			"disabled for both internal and Linux kernel-level negative caching. " 
+				"If changed in .saunafs_tweaks clears the whole cache (default: %u)\n"
+"    -o sfsnegativecachesize=N   define internal negative cache max size in number of entries. "
+				"Prevents network requests if the kernel evicts entries early. "
+				"When equal to 0 disabled for both internal and Linux kernel-level negative caching. "
+				"If changed in .saunafs_tweaks clears the whole cache (default: %u)\n"
 "    -o sfsaclcacheto=SEC        set ACL cache timeout in seconds (default: %.2f)\n"
 "    -o sfsreportreservedperiod=SEC  set reporting reserved inodes interval in "
 				"seconds (default: %u)\n"
@@ -392,6 +404,8 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultEntryCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultDirentryCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultDirentryCacheSize,
+		SaunaClient::FsInitParams::kDefaultNegativeCacheTo,
+		SaunaClient::FsInitParams::kDefaultNegativeCacheSize,
 		SaunaClient::FsInitParams::kDefaultAclCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultReportReservedPeriod,
 		SaunaClient::FsInitParams::kDefaultRoundTime,
