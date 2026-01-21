@@ -306,7 +306,9 @@ bool FilesystemNodeOperationsBase::isAncestorOrNodeReservedOrTrash(FSNodeDirecto
 
 // stats
 
-void FilesystemNodeOperationsBase::getStats(FSNode *node, StatsRecord *statsOut) {
+void FilesystemNodeOperationsBase::getStats(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    StatsRecord *statsOut) {
 	switch (node->type) {
 	case FSNodeType::kDirectory:
 		*statsOut = static_cast<FSNodeDirectory *>(node)->stats;
@@ -348,9 +350,10 @@ void FilesystemNodeOperationsBase::getStats(FSNode *node, StatsRecord *statsOut)
 	}
 }
 
-int64_t FilesystemNodeOperationsBase::getSize(FSNode *node) {
+int64_t FilesystemNodeOperationsBase::getSize(const FilesystemOperationContext &fsOpContext,
+                                              FSNode *node) {
 	StatsRecord stats;
-	getStats(node, &stats);
+	getStats(fsOpContext, node, &stats);
 	return stats.size;
 }
 
@@ -580,7 +583,7 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 
 	StatsRecord childStats;
 
-	getStats(childNode, &childStats);
+	getStats(fsOpContext, childNode, &childStats);
 	subStats(parent, &childStats);
 	parent->mtime = parent->ctime = timeStamp;
 	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
@@ -635,7 +638,7 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	}
 
 	StatsRecord childStats;
-	getStats(child, &childStats);
+	getStats(fsOpContext, child, &childStats);
 	addStats(parent, &childStats);
 
 	if (timeStamp > 0) {
@@ -714,7 +717,7 @@ FSNode *FilesystemNodeOperationsBase::createNode(
 	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
 
 	if (type == FSNodeType::kFile) {
-		fsnodes_quota_update(node, {{QuotaResource::kSize, +getSize(node)}});
+		fsnodes_quota_update(node, {{QuotaResource::kSize, +getSize(fsOpContext, node)}});
 	}
 
 	return node;
@@ -1206,7 +1209,8 @@ void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile, ChunkCountArr
 }
 #endif
 
-uint8_t FilesystemNodeOperationsBase::appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
+uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationContext &fsOpContext,
+                                                   uint32_t timeStamp, FSNodeFile *destNodeFile,
                                                    FSNodeFile *srcNodeFile) {
 	if (srcNodeFile->chunks.empty()) { return SAUNAFS_STATUS_OK; }
 
@@ -1219,7 +1223,7 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(uint32_t timeStamp, FSNodeFil
 
 	StatsRecord previousStats;
 	StatsRecord newStats;
-	getStats(destNodeFile, &previousStats);
+	getStats(fsOpContext, destNodeFile, &previousStats);
 
 	uint32_t resultChunks = srcChunks + dstChunks;
 	destNodeFile->chunks.resize(resultChunks, 0);
@@ -1252,7 +1256,7 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(uint32_t timeStamp, FSNodeFil
 	}
 
 	destNodeFile->length = length;
-	getStats(destNodeFile, &newStats);
+	getStats(fsOpContext, destNodeFile, &newStats);
 
 	// Update quotas based on the change in file size
 	fsnodes_quota_update(destNodeFile,
@@ -1276,12 +1280,13 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(uint32_t timeStamp, FSNodeFil
 	return SAUNAFS_STATUS_OK;
 }
 
-void FilesystemNodeOperationsBase::changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) {
+void FilesystemNodeOperationsBase::changeFileGoal(const FilesystemOperationContext &fsOpContext,
+                                                  FSNodeFile *nodeFile, uint8_t goal) {
 	uint8_t oldGoal = nodeFile->goal;
 	StatsRecord previousStats;
 	StatsRecord newStats;
 
-	getStats(nodeFile, &previousStats);
+	getStats(fsOpContext, nodeFile, &previousStats);
 	nodeFile->goal = goal;
 
 	newStats = previousStats;
@@ -1301,12 +1306,13 @@ void FilesystemNodeOperationsBase::changeFileGoal(FSNodeFile *nodeFile, uint8_t 
 	gMetadata->nodeChangedSignal.emit(nodeFile);
 }
 
-void FilesystemNodeOperationsBase::setLength(FSNodeFile *nodeFile, uint64_t length,
+void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &fsOpContext,
+                                             FSNodeFile *nodeFile, uint64_t length,
                                              bool eraseFurtherChunks) {
 	uint32_t chunks = 0;
 	StatsRecord previousStats;
 	StatsRecord newStats;
-	getStats(nodeFile, &previousStats);
+	getStats(fsOpContext, nodeFile, &previousStats);
 
 	if (nodeFile->type == FSNodeType::kTrash) {
 		gMetadata->trashSpace -= nodeFile->length;
@@ -1339,7 +1345,7 @@ void FilesystemNodeOperationsBase::setLength(FSNodeFile *nodeFile, uint64_t leng
 		if (chunks < nodeFile->chunks.size()) { nodeFile->chunks.resize(chunks); }
 	}
 
-	getStats(nodeFile, &newStats);
+	getStats(fsOpContext, nodeFile, &newStats);
 
 	fsnodes_quota_update(nodeFile, {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
@@ -1353,7 +1359,8 @@ void FilesystemNodeOperationsBase::setLength(FSNodeFile *nodeFile, uint64_t leng
 	gMetadata->nodeChangedSignal.emit(nodeFile);
 }
 
-void FilesystemNodeOperationsBase::changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) {
+void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext &fsOpContext,
+                                                FSNode *node, uint32_t uid, uint32_t gid) {
 	int64_t size = 0;
 
 	// Decrease quota for old owner
@@ -1361,7 +1368,7 @@ void FilesystemNodeOperationsBase::changeUidGid(FSNode *node, uint32_t uid, uint
 
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		size = getSize(node);
+		size = getSize(fsOpContext, node);
 		fsnodes_quota_update(node, {{QuotaResource::kSize, -size}});
 	}
 
@@ -1378,7 +1385,8 @@ void FilesystemNodeOperationsBase::changeUidGid(FSNode *node, uint32_t uid, uint
 	}
 }
 
-void FilesystemNodeOperationsBase::removeNode(uint32_t timeStamp, FSNode *node) {
+void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &fsOpContext,
+                                              uint32_t timeStamp, FSNode *node) {
 	if (!node->parents.empty()) {
 		return;
 	}
@@ -1399,7 +1407,7 @@ void FilesystemNodeOperationsBase::removeNode(uint32_t timeStamp, FSNode *node) 
 
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		fsnodes_quota_update(node, {{QuotaResource::kSize, -getSize(node)}});
+		fsnodes_quota_update(node, {{QuotaResource::kSize, -getSize(fsOpContext, node)}});
 		gMetadata->fileNodes--;
 		for (uint32_t i = 0; i < static_cast<FSNodeFile*>(node)->chunks.size(); ++i) {
 			uint64_t chunkid = static_cast<FSNodeFile*>(node)->chunks[i];
@@ -1481,14 +1489,15 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 			gMetadata->reservedSpace += fileNode->length;
 			gMetadata->reservedNodes++;
 		} else {
-			removeNode(timeStamp, childNode);
+			removeNode(fsOpContext, timeStamp, childNode);
 		}
 	} else {
-		removeNode(timeStamp, childNode);
+		removeNode(fsOpContext, timeStamp, childNode);
 	}
 }
 
-int FilesystemNodeOperationsBase::purge(uint32_t timeStamp, FSNode *node) {
+int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpContext,
+                                        uint32_t timeStamp, FSNode *node) {
 	if (node->type == FSNodeType::kTrash) {
 		auto *fileNode = static_cast<FSNodeFile *>(node);
 		gMetadata->trashSpace -= fileNode->length;
@@ -1512,7 +1521,7 @@ int FilesystemNodeOperationsBase::purge(uint32_t timeStamp, FSNode *node) {
 		                 gMetadata->trashReservedToId, node);
 		node->ctime = timeStamp;
 		fsnodes_update_checksum(node);
-		removeNode(timeStamp, node);
+		removeNode(fsOpContext, timeStamp, node);
 
 		return 1;  // Return 1 to indicate the node was successfully deleted
 	}
@@ -1528,7 +1537,7 @@ int FilesystemNodeOperationsBase::purge(uint32_t timeStamp, FSNode *node) {
 
 		fileNode->ctime = timeStamp;
 		fsnodes_update_checksum(fileNode);
-		removeNode(timeStamp, fileNode);
+		removeNode(fsOpContext, timeStamp, fileNode);
 		return 1;
 	}
 
@@ -1668,14 +1677,15 @@ uint8_t FilesystemNodeOperationsBase::undel(
 
 #ifndef METARESTORE
 
-void FilesystemNodeOperationsBase::getGoalRecursive(FSNode *node, uint8_t gmode,
+void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationContext &fsOpContext,
+                                                    FSNode *node, uint8_t gmode,
                                                     GoalStatistics &fileGoalsTab,
                                                     GoalStatistics &dirGoalsTab) {
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
 			safs::log_warn("file inode {}: unknown goal !!! - fixing", node->id);
-			changeFileGoal(static_cast<FSNodeFile *>(node), DEFAULT_GOAL);
+			changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), DEFAULT_GOAL);
 		}
 
 		fileGoalsTab[node->goal]++;
@@ -1691,7 +1701,7 @@ void FilesystemNodeOperationsBase::getGoalRecursive(FSNode *node, uint8_t gmode,
 			const auto *dirNode = static_cast<const FSNodeDirectory *>(node);
 
 			for (const auto &entry : dirNode->entries) {
-				getGoalRecursive(entry.second, gmode, fileGoalsTab, dirGoalsTab);
+				getGoalRecursive(fsOpContext, entry.second, gmode, fileGoalsTab, dirGoalsTab);
 			}
 		}
 	}
@@ -1737,7 +1747,8 @@ void FilesystemNodeOperationsBase::getExtraAttrRecursive(FSNode *node, uint8_t g
 
 #endif  // METARESTORE
 
-void FilesystemNodeOperationsBase::setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid,
+void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationContext &fsOpContext,
+                                                    FSNode *node, uint32_t timeStamp, uint32_t uid,
                                                     uint8_t goal, uint8_t smode,
                                                     inode_t *modifiedINodesOut,
                                                     inode_t *unchangedINodesOut,
@@ -1750,7 +1761,7 @@ void FilesystemNodeOperationsBase::setgoalRecursive(FSNode *node, uint32_t timeS
 		} else {
 			if ((smode & SMODE_TMASK) == SMODE_SET && node->goal != goal) {
 				if (node->type != FSNodeType::kDirectory) {
-					changeFileGoal(static_cast<FSNodeFile *>(node), goal);
+					changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), goal);
 					(*modifiedINodesOut)++;
 				} else {
 					node->goal = goal;
@@ -1767,8 +1778,8 @@ void FilesystemNodeOperationsBase::setgoalRecursive(FSNode *node, uint32_t timeS
 
 		if (node->type == FSNodeType::kDirectory && (smode & SMODE_RMASK)) {
 			for (const auto &entry : static_cast<const FSNodeDirectory*>(node)->entries) {
-				setgoalRecursive(entry.second, timeStamp, uid, goal, smode, modifiedINodesOut,
-				                 unchangedINodesOut, permissionDeniedINodesOut);
+				setgoalRecursive(fsOpContext, entry.second, timeStamp, uid, goal, smode,
+				                 modifiedINodesOut, unchangedINodesOut, permissionDeniedINodesOut);
 			}
 		}
 	}

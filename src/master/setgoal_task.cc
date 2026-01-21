@@ -31,12 +31,15 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 
 	inode_t inode = *current_inode_;
 	++current_inode_;
-	FSNode *node = gFSOperations->nodeOperations()->idToNode(inode);
-	if (!node) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
 
-	uint8_t result = setGoal(node, ts);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
+
+	if (!node) { return SAUNAFS_ERROR_EINVAL; }
+
+	uint8_t result = setGoal(fsOpContext, node, ts);
 
 	if (result != kNoAction) {
 		if (node->type == FSNodeType::kDirectory && (smode_ & SMODE_RMASK) &&
@@ -67,7 +70,8 @@ bool SetGoalTask::isFinished() const {
 	return current_inode_ == inode_list_.end();
 }
 
-uint8_t SetGoalTask::setGoal(FSNode *node, uint32_t ts) {
+uint8_t SetGoalTask::setGoal(const FilesystemOperationContext &fsOpContext, FSNode *node,
+                             uint32_t ts) {
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kDirectory ||
 	    node->type == FSNodeType::kTrash || node->type == FSNodeType::kReserved) {
 		if ((node->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET)) == 0 && uid_ != 0 &&
@@ -76,8 +80,8 @@ uint8_t SetGoalTask::setGoal(FSNode *node, uint32_t ts) {
 		} else {
 			if ((smode_ & SMODE_TMASK) == SMODE_SET && node->goal != goal_) {
 				if (node->type != FSNodeType::kDirectory) {
-					gFSOperations->nodeOperations()->changeFileGoal(static_cast<FSNodeFile *>(node),
-					                                                goal_);
+					gFSOperations->nodeOperations()->changeFileGoal(
+					    fsOpContext, static_cast<FSNodeFile *>(node), goal_);
 				} else {
 					node->goal = goal_;
 					gMetadata->nodeChangedSignal.emit(node);

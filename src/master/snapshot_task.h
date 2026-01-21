@@ -95,12 +95,12 @@ protected:
 	FSNodeFile *cloneToExistingFileNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
 	                                    FSNodeFile *src_node, FSNodeDirectory *dst_parent,
 	                                    FSNodeFile *dst_node);
-	void cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_node,
-	                    FSNodeDirectory *dst_parent);
+	void cloneChunkData(const FilesystemOperationContext &fsOpContext, const FSNodeFile *src_node,
+	                    FSNodeFile *dst_node, FSNodeDirectory *dst_parent);
 	void cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDirectory *dst_node);
 	void cloneDirectoryData(FSNodeDirectory *src_node, FSNodeDirectory *dst_node);
-	void cloneSymlinkData(FSNodeSymlink *src_node, FSNodeSymlink *dst_node,
-	                      FSNodeDirectory *dst_parent);
+	void cloneSymlinkData(const FilesystemOperationContext &fsOpContext, FSNodeSymlink *src_node,
+	                      FSNodeSymlink *dst_node, FSNodeDirectory *dst_parent);
 
 	/*! \brief Emit metadata changelog.
 	 *

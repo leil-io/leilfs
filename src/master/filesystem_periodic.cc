@@ -535,8 +535,10 @@ static void fs_do_emptytrash(uint32_t ts) {
 	auto it = gMetadata->trash.begin();
 	watchdog.start();
 	while (it != gMetadata->trash.end() && ((*it).first.timestamp < ts)) {
-		FSNodeFile *node =
-		    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>((*it).first.id);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+		FSNodeFile *node = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>(
+		    fsOpContext, (*it).first.id);
 
 		if (!node) {
 			std::string pathName = (*it).second.get();
@@ -549,7 +551,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		assert(node->type == FSNodeType::kTrash);
 
 		auto node_id = node->id;
-		gFSOperations->nodeOperations()->purge(ts, node);
+		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
 		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
@@ -573,7 +575,10 @@ static void fs_do_emptyreserved(uint32_t ts) {
 	auto it = gMetadata->reserved.begin();
 	watchdog.start();
 	while (it != gMetadata->reserved.end()) {
-		FSNodeFile *node = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>((*it).first);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+		auto *node =
+		    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>(fsOpContext, (*it).first);
 
 		if (!node) {
 			removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
@@ -585,7 +590,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		assert(node->type == FSNodeType::kReserved);
 
 		auto node_id = node->id;
-		gFSOperations->nodeOperations()->purge(ts, node);
+		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
 
 		// Purge operation should be performed anyway
 		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);

@@ -373,13 +373,15 @@ static bool fs_load_generic(const std::shared_ptr<MemoryMappedFile> &metadataFil
 
 /**
  * @brief Parse an edge from the metadata file.
+ * @param fsOpContext The filesystem operation context (transaction).
  * @param metadataFile A reference to the memory mapped metadata file.
  * @param sectionOffset A reference to point to the next edge attribute.
  * @param ignoreFlag A flag to indicate whether to ignore the error.
  * @param init A flag to indicate whether to initialize the static variable.
  * @return 0 on success, 1 if last edge mark is found, -1 if unknown node type.
  */
-static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile,
+static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
+                           const std::shared_ptr<MemoryMappedFile> &metadataFile,
                            size_t &sectionOffset, int ignoreFlag, bool init = false) {
 	static const int8_t kError = -1;
 	static const int8_t kSuccess = 0;
@@ -531,19 +533,21 @@ static int8_t fs_parseEdge(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 
 		StatsRecord sr;
-		gFSOperations->nodeOperations()->getStats(child, &sr);
+		gFSOperations->nodeOperations()->getStats(fsOpContext, child, &sr);
 		gFSOperations->nodeOperations()->addStats(parent, &sr);
 	}
 	return kSuccess;
 }
 
 /**
- * @brief
- * @param pSrc A pointer to the data storing all nodes.
+ * @brief Parse a node from the metadata file.
+ * @param fsOpContext The filesystem operation context (transaction).
+ * @param metadataFile A reference to the memory mapped metadata file.
  * @param sectionOffset A reference to point to the next node attribute.
  * @return 0 on success, 1 if last node mark is found, -1 if unknown node type.
  */
-static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile,
+static int8_t fs_parseNode(const FilesystemOperationContext &fsOpContext,
+                           const std::shared_ptr<MemoryMappedFile> &metadataFile,
                            size_t &sectionOffset) {
 	static constexpr int8_t kError = -1;
 	static constexpr int8_t kSuccess = 0;
@@ -596,7 +600,8 @@ static int8_t fs_parseNode(const std::shared_ptr<MemoryMappedFile> &metadataFile
 		}
 #endif
 		fsnodes_quota_update(
-		    node, {{QuotaResource::kSize, +gFSOperations->nodeOperations()->getSize(node)}});
+		    node,
+		    {{QuotaResource::kSize, +gFSOperations->nodeOperations()->getSize(fsOpContext, node)}});
 		gMetadata->fileNodes++;
 		break;
 	default:
@@ -669,9 +674,11 @@ int fs_checknodes(int ignoreflag) {
 }
 
 static bool fs_loadnodes(MetadataLoader::Options options) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	int8_t status;
 	do {
-		status = fs_parseNode(options.metadataFile, options.offset);
+		status = fs_parseNode(fsOpContext, options.metadataFile, options.offset);
 		if (status < 0) {
 			return false;
 		}
@@ -680,10 +687,13 @@ static bool fs_loadnodes(MetadataLoader::Options options) {
 }
 
 static bool fs_loadedges(MetadataLoader::Options options) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	int8_t status;
-	fs_parseEdge(options.metadataFile, options.offset, options.ignoreFlag, true);
+	fs_parseEdge(fsOpContext, options.metadataFile, options.offset, options.ignoreFlag, true);
 	do {
-		status = fs_parseEdge(options.metadataFile, options.offset, options.ignoreFlag);
+		status =
+		    fs_parseEdge(fsOpContext, options.metadataFile, options.offset, options.ignoreFlag);
 		if (status < 0) {
 			return false;
 		}

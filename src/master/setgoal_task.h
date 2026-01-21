@@ -24,6 +24,8 @@
 #include "master/filesystem_node_types.h"
 #include "master/task_manager.h"
 
+class FilesystemOperationContext;
+
 class SetGoalTask : public TaskManager::Task {
 public:
 	enum {
@@ -67,7 +69,7 @@ public:
 		return "Setting goal (" + goal + "): " + target;
 	}
 
-	uint8_t setGoal(FSNode *node, uint32_t ts);
+	uint8_t setGoal(const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t ts);
 
 private:
 	std::vector<inode_t> inode_list_;
@@ -81,4 +83,3 @@ private:
 			                    [kNotChanged] - number of inodes with not changed goal
 			                  [kNotPermitted] - number of inodes with permission denied */
 };
-

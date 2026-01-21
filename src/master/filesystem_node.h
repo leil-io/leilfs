@@ -69,7 +69,8 @@ public:
 
 	/// Retrieves statistics for a filesystem node.
 	/// @see IFilesystemNodeOperations::getStats
-	void getStats(FSNode *node, StatsRecord *statsOut) override;
+	void getStats([[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+	              StatsRecord *statsOut) override;
 
 	/// Adds statistics to a directory and recursively propagates to all ancestors.
 	/// @see IFilesystemNodeOperations::addStats
@@ -84,16 +85,19 @@ public:
 	void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
 	                 StatsRecord *previousStats) override;
 
-	void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) override;
+	void changeUidGid(const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t uid,
+	                  uint32_t gid) override;
 
-	void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) override;
-	uint8_t appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
-	                     FSNodeFile *srcNodeFile) override;
-	void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) override;
+	void setLength(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	               uint64_t length, bool eraseFurtherChunks) override;
+	uint8_t appendChunks(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                     FSNodeFile *destNodeFile, FSNodeFile *srcNodeFile) override;
+	void changeFileGoal(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                    uint8_t goal) override;
 #ifndef METARESTORE
 	void checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) override;
 #endif
-	int64_t getSize(FSNode *node) override;
+	int64_t getSize(const FilesystemOperationContext &fsOpContext, FSNode *node) override;
 
 	/// Returns the number of parents of the given node.
 	/// @see IFilesystemNodeOperations::getNumberOfParents
@@ -126,7 +130,8 @@ public:
 	                const HString &name, bool isCaseInsensitive = false) override;
 
 	// Trash/Reserved operations
-	int purge(uint32_t timeStamp, FSNode *node) override;
+	int purge(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	          FSNode *node) override;
 	uint8_t undel(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	              FSNodeFile *node) override;
 #ifndef METARESTORE
@@ -163,15 +168,17 @@ public:
 
 	// Recursive operations
 #ifndef METARESTORE
-	void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fileGoalsTab,
+	void getGoalRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                      uint8_t gmode, GoalStatistics &fileGoalsTab,
 	                      GoalStatistics &dirGoalsTab) override;
 	void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                           TrashtimeMap &dirTrashtimes) override;
 	void getExtraAttrRecursive(FSNode *node, uint8_t gmode, ExtraAttributesArray &fileEAttrTab,
 	                           ExtraAttributesArray &dirEAttrTab) override;
 #endif  // METARESTORE
-	void setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t goal,
-	                      uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
+	void setgoalRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                      uint32_t timeStamp, uint32_t uid, uint8_t goal, uint8_t smode,
+	                      inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
 	                      inode_t *permissionDeniedINodesOut) override;
 
 	void setTrashTimeRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint32_t trashtime,
@@ -238,7 +245,8 @@ protected:
 private:
 	// Private helpers
 
-	void removeNode(uint32_t timeStamp, FSNode *node);
+	void removeNode(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                FSNode *node);
 
 	/// Number of blocks in the last chunk before EOF
 	static uint32_t lastChunkBlocks(FSNodeFile *node);

@@ -209,12 +209,14 @@ public:
 	/// For non-directory nodes (files, symlinks, devices), statistics are calculated on-the-fly
 	/// from the node's current state (chunk count, size, etc.) without using any cache.
 	///
+	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param node The filesystem node for which to retrieve statistics.
 	/// @param[out] statsOut Pointer to a StatsRecord structure that will be filled with the
 	///                      node's statistics. For directories, the returned stats must include:
 	///                      - All descendant nodes' aggregated stats
 	///                      - The directory itself (+1 to inodes and dirs counts)
-	virtual void getStats(FSNode *node, StatsRecord *statsOut) = 0;
+	virtual void getStats([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                      FSNode *node, StatsRecord *statsOut) = 0;
 
 	/// Adds statistics to a directory and recursively propagates the changes to all ancestors.
 	///
@@ -290,16 +292,19 @@ public:
 	virtual void addSubStats(FSNodeDirectory *parent, StatsRecord *newStats,
 	                         StatsRecord *previousStats) = 0;
 
-	virtual void changeUidGid(FSNode *node, uint32_t uid, uint32_t gid) = 0;
+	virtual void changeUidGid(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                          uint32_t uid, uint32_t gid) = 0;
 
-	virtual void setLength(FSNodeFile *nodeFile, uint64_t length, bool eraseFurtherChunks) = 0;
-	virtual uint8_t appendChunks(uint32_t timeStamp, FSNodeFile *destNodeFile,
-	                             FSNodeFile *srcNodeFile) = 0;
-	virtual void changeFileGoal(FSNodeFile *nodeFile, uint8_t goal) = 0;
+	virtual void setLength(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                       uint64_t length, bool eraseFurtherChunks) = 0;
+	virtual uint8_t appendChunks(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                             FSNodeFile *destNodeFile, FSNodeFile *srcNodeFile) = 0;
+	virtual void changeFileGoal(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                            uint8_t goal) = 0;
 #ifndef METARESTORE
 	virtual void checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) = 0;
 #endif
-	virtual int64_t getSize(FSNode *node) = 0;
+	virtual int64_t getSize(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
 
 	/// Returns the number of parents of the given node, possibly reusing the transaction
 	/// inside fsOpContext.
@@ -380,7 +385,8 @@ public:
 
 	// Trash/Reserved operations
 
-	virtual int purge(uint32_t timeStamp, FSNode *node) = 0;
+	virtual int purge(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
+	                  FSNode *node) = 0;
 	virtual uint8_t undel(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                      FSNodeFile *node) = 0;
 #ifndef METARESTORE
@@ -420,7 +426,8 @@ public:
 
 	// Recursive operations
 #ifndef METARESTORE
-	virtual void getGoalRecursive(FSNode *node, uint8_t gmode, GoalStatistics &fileGoalsTab,
+	virtual void getGoalRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                              uint8_t gmode, GoalStatistics &fileGoalsTab,
 	                              GoalStatistics &dirGoalsTab) = 0;
 	virtual void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                                   TrashtimeMap &dirTrashtimes) = 0;
@@ -428,9 +435,9 @@ public:
 	                                   ExtraAttributesArray &fileEAttrTab,
 	                                   ExtraAttributesArray &dirEAttrTab) = 0;
 #endif
-	virtual void setgoalRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t goal,
-	                              uint8_t smode, inode_t *modifiedINodesOut,
-	                              inode_t *unchangedINodesOut,
+	virtual void setgoalRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                              uint32_t timeStamp, uint32_t uid, uint8_t goal, uint8_t smode,
+	                              inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
 	                              inode_t *permissionDeniedINodesOut) = 0;
 
 	virtual void setTrashTimeRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid,
