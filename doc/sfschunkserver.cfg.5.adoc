@@ -224,7 +224,7 @@ Path to the TLS certificate file the chunk server will use for TLS connections
 Path to the TLS private key file the chunk server will use for TLS connections
 (there is no default value).
 
-*TLS_SERVER_CA_CERT_FILE (EXPERIMENTAL)*::
+*TLS_CA_CERT_FILE (EXPERIMENTAL)*::
 Path to the trusted CA certificate which is used to authenticate through TLS
 to the master server (there is no default value).
 

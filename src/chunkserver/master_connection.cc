@@ -347,7 +347,7 @@ void MasterConn::onConnected() {
 
 	tlsKeyFile_ = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
 	tlsCertFile_ = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
-	tlsCaCertFile_ = cfg_getstring("TLS_SERVER_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+	tlsCaCertFile_ = cfg_getstring("TLS_CA_CERT_FILE", std::string(TlsSession::kNoFile));
 
 	if (isTlsEnabled()) {
 		try {

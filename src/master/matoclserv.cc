@@ -536,7 +536,7 @@ void matoclserv_starttls(matoclserventry *eptr) {
 	// Initialize a TLS session for the peer.
 	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
 	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
-	std::string trustFile = cfg_getstring("TLS_SERVER_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+	std::string trustFile = cfg_getstring("TLS_CA_CERT_FILE", std::string(TlsSession::kNoFile));
 
 	try {
 		eptr->tlsSession =
