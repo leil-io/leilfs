@@ -2152,9 +2152,8 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_mknod: transaction failed to commit: parent inode {}, name {}",
-				    parentInode, edgeName);
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, parentInode, edgeName);
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2204,9 +2203,8 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_mkdir: transaction failed to commit: parent inode {}, name {}",
-				    inode, name);
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, inode, name);
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2272,9 +2270,9 @@ void matoclserv_fuse_unlink(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_unlink: transaction failed to commit: parent inode {}, name {}",
-				    inode, std::string(reinterpret_cast<const char*>(name), nleng));
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, inode,
+				              std::string(reinterpret_cast<const char *>(name), nleng));
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2369,9 +2367,9 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_rmdir: transaction failed to commit: parent inode {}, name {}",
-				    inode, std::string(reinterpret_cast<const char*>(name), nleng));
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, inode,
+				              std::string(reinterpret_cast<const char *>(name), nleng));
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2456,9 +2454,10 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
 				safs::log_err(
-				    "matoclserv_fuse_rename: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
-				    inode_src, std::string(reinterpret_cast<const char*>(name_src), nleng_src),
-				    inode_dst, std::string(reinterpret_cast<const char*>(name_dst), nleng_dst));
+				    "{}: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
+				    __func__, inode_src,
+				    std::string(reinterpret_cast<const char *>(name_src), nleng_src), inode_dst,
+				    std::string(reinterpret_cast<const char *>(name_dst), nleng_dst));
 				status = SAUNAFS_ERROR_IO;
 			}
 		}
@@ -3119,9 +3118,8 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err(
-			    "matoclserv_fuse_getgoal: transaction failed to commit: inode {}, gmode {}", inode,
-			    static_cast<uint32_t>(gmode));
+			safs::log_err("{}: transaction failed to commit: inode {}, gmode {}", __func__, inode,
+			              static_cast<uint32_t>(gmode));
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -3543,9 +3541,8 @@ void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_append: transaction failed to commit: inode {}, source inode {}",
-				    inode, inode_src);
+				safs::log_err("{}: transaction failed to commit: inode {}, source inode {}",
+				              __func__, inode, inode_src);
 				status = SAUNAFS_ERROR_IO;
 			}
 		}
@@ -3943,7 +3940,7 @@ void matoclserv_fuse_purge(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("matoclserv_fuse_purge: transaction failed to commit: inode {}", inode);
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}

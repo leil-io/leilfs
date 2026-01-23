@@ -227,9 +227,8 @@ int do_append(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err(
-			    "do_append: transaction failed to commit: inode {}, source inode {}",
-			    inode, inode_src);
+			safs::log_err("{}: transaction failed to commit: inode {}, source inode {}", __func__,
+			              inode, inode_src);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -273,8 +272,8 @@ int do_attr(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
 			safs::log_err(
-			    "do_attr: transaction failed to commit: inode {}, mode {}, uid {}, gid {}, atime {}, mtime {}",
-			    inode, mode, uid, gid, atime, mtime);
+			    "{}: transaction failed to commit: inode {}, mode {}, uid {}, gid {}, atime {}, mtime {}",
+			    __func__, inode, mode, uid, gid, atime, mtime);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -381,8 +380,8 @@ int do_length(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
 			safs::log_err(
-			    "do_length: transaction failed to commit: inode {}, length {}, eraseFurtherChunks {}",
-			    inode, length, eraseFurtherChunks);
+			    "{}: transaction failed to commit: inode {}, length {}, eraseFurtherChunks {}",
+			    __func__, inode, length, eraseFurtherChunks);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -417,8 +416,8 @@ int do_move(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
 			safs::log_err(
-			    "do_move: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
-			    parent_src, (char *)name_src, parent_dst, (char *)name_dst);
+			    "{}: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
+			    __func__, parent_src, (char *)name_src, parent_dst, (char *)name_dst);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -540,7 +539,7 @@ int do_purge(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("do_purge: transaction failed to commit: inode {}", inode);
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -564,7 +563,7 @@ int do_release(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("do_release: transaction failed to commit: inode {}, cuid {}", inode,
+			safs::log_err("{}: transaction failed to commit: inode {}, cuid {}", __func__, inode,
 			              cuid);
 			status = SAUNAFS_ERROR_IO;
 		}
@@ -592,9 +591,8 @@ int do_repair(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err(
-			    "do_repair: transaction failed to commit: inode {}, chunk index {}, version {}",
-			    inode, indx, version);
+			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}, version {}",
+			              __func__, inode, indx, version);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}
@@ -931,9 +929,8 @@ int do_write(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err(
-			    "do_write: transaction failed to commit: inode {}, chunk index {}, chunk id {}",
-			    inode, indx, chunkid);
+			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}, chunk id {}",
+			              __func__, inode, indx, chunkid);
 			status = SAUNAFS_ERROR_IO;
 		}
 	}

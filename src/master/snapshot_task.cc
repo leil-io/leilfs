@@ -261,8 +261,8 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	if (fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
 			safs::log_err(
-			    "SnapshotTask::cloneNode: transaction failed to commit: source inode {}, destination parent inode {}, name {}",
-			    current_subtask_->first, dst_parent_inode_, current_subtask_->second);
+			    "{}: transaction failed to commit: source inode {}, destination parent inode {}, name {}",
+			    __func__, current_subtask_->first, dst_parent_inode_, current_subtask_->second);
 			return SAUNAFS_ERROR_IO;
 		}
 	}
