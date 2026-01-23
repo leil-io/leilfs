@@ -20,7 +20,7 @@
 
 #include <optional>
 
-#include "kv/kv_utils.h"
+#include "kv/kv_types.h"
 
 namespace kv {
 

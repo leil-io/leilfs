@@ -84,11 +84,13 @@ public:
 	// Common for metarestore and master server (both personalities)
 
 	virtual uint8_t acquire(const FsContext &context, inode_t inode, uint32_t sessionid) = 0;
-	virtual uint8_t append(const FsContext &context, inode_t inode, inode_t inode_src) = 0;
+	virtual uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t inode, inode_t inode_src) = 0;
 	virtual uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) = 0;
 	virtual uint8_t link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
 	                     const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
-	virtual uint8_t purge(const FsContext &context, inode_t inode) = 0;
+	virtual uint8_t purge(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      inode_t inode) = 0;
 
 	/// Renames (moves) a filesystem node from one location to another.
 	///
@@ -132,7 +134,8 @@ public:
 	virtual uint8_t rename(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t parent_src, const HString &name_src, inode_t parent_dst,
 	                       const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
-	virtual uint8_t release(const FsContext &context, inode_t inode, uint32_t sessionid) = 0;
+	virtual uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, uint32_t sessionid) = 0;
 	virtual uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr,
 	                             uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
 	                             inode_t *nsinodes) = 0;
@@ -152,8 +155,9 @@ public:
 	virtual uint8_t symlink(const FsContext &context, inode_t parent, const HString &name,
 	                        const std::string &path, inode_t *inode, Attributes *attr) = 0;
 	virtual uint8_t undel(const FsContext &context, inode_t inode) = 0;
-	virtual uint8_t writeChunk(const FsContext &context, inode_t inode, uint32_t index,
-	                           bool usedummylockid,
+	virtual uint8_t writeChunk(const FsContext &context,
+	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                           uint32_t index, bool usedummylockid,
 	                           /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                           uint64_t *length, uint32_t min_server_version = 0) = 0;
 	virtual uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) = 0;
@@ -200,8 +204,9 @@ public:
 	                        uint32_t attratime, uint32_t attrmtime, SugidClearMode sugidclearmode,
 	                        Attributes &attr) = 0;
 	virtual uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) = 0;
-	virtual void statfs(const FsContext &context, uint64_t *totalspace, uint64_t *availspace,
-	                    uint64_t *trashspace, uint64_t *reservedspace, inode_t *inodes) = 0;
+	virtual void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                    uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
+	                    uint64_t *reservedspace, inode_t *inodes) = 0;
 
 	/// Creates a filesystem node (file, socket, FIFO, or device).
 	///
@@ -331,8 +336,9 @@ public:
 	                          ChunkCountArray &chunkCount) = 0;
 	virtual uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
 	                          Attributes &attr) = 0;
-	virtual uint8_t getGoal(const FsContext &context, inode_t inode, uint8_t gmode,
-	                        GoalStatistics &fgtab, GoalStatistics &dgtab) = 0;
+	virtual uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
+	                        GoalStatistics &dgtab) = 0;
 	virtual uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                             ExtraAttributesArray &fileEAttrTab,
 	                             ExtraAttributesArray &dirEAttrTab) = 0;
@@ -405,7 +411,8 @@ public:
 	virtual uint8_t endSetLength(uint64_t chunkid) = 0;
 	virtual uint8_t readChunk(inode_t inode, uint32_t indx, uint64_t *chunkid,
 	                          uint64_t *length) = 0;
-	virtual uint8_t writeEnd(inode_t inode, uint64_t length, uint64_t chunkid, uint32_t lockid) = 0;
+	virtual uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                         uint64_t length, uint64_t chunkid, uint32_t lockid) = 0;
 	virtual void getTrashTimeStore(TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes,
 	                               uint8_t *buff) = 0;
 	virtual void listXAttrData(void *xanode, uint8_t *xabuff) = 0;
@@ -472,14 +479,15 @@ public:
 	                            FSNodeType type, uint32_t mode, uint32_t uid, uint32_t gid,
 	                            uint32_t rdev, inode_t inode) = 0;
 	virtual uint8_t applyAccess(uint32_t timestamp, inode_t inode) = 0;
-	virtual uint8_t applyAttr(uint32_t timestamp, inode_t inode, uint32_t mode, uint32_t uid,
-	                          uint32_t gid, uint32_t atime, uint32_t mtime) = 0;
+	virtual uint8_t applyAttr(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                          inode_t inode, uint32_t mode, uint32_t uid, uint32_t gid,
+	                          uint32_t atime, uint32_t mtime) = 0;
 	virtual uint8_t applySession(uint32_t sessionid) = 0;
 	virtual uint8_t applyIncreaseChunkVersion(uint64_t chunkid) = 0;
-	virtual uint8_t applyLength(uint32_t timestamp, inode_t inode, uint64_t length,
-	                            bool eraseFurtherChunks) = 0;
-	virtual uint8_t applyRepair(uint32_t timestamp, inode_t inode, uint32_t indx,
-	                            uint32_t nversion) = 0;
+	virtual uint8_t applyLength(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                            inode_t inode, uint64_t length, bool eraseFurtherChunks) = 0;
+	virtual uint8_t applyRepair(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                            inode_t inode, uint32_t indx, uint32_t nversion) = 0;
 	virtual uint8_t applySetXAttr(uint32_t timestamp, inode_t inode, uint32_t anleng,
 	                              const uint8_t *attrname, uint32_t avleng,
 	                              const uint8_t *attrvalue, uint32_t mode) = 0;

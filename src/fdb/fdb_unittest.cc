@@ -27,6 +27,7 @@
 
 #include <gtest/gtest.h>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 /// Fixture for testing the FDBKVEngine.
@@ -313,4 +314,113 @@ TEST_F(FDBKVEngineTest, GetAsync) {
 
 	safs::log_info("Non-existent key test passed: key '{}' correctly returned no value",
 	               nonExistentKeyStr);
+}
+
+/// Tests extractIntegralLEFromFuture with various integral types and scenarios.
+TEST_F(FDBKVEngineTest, ExtractIntegralLEFromFuture) {
+	// Test with int64_t
+	{
+		std::string_view keyStr = "integral_key_int64";
+		auto key = kv::toBytes(keyStr);
+		constexpr int64_t expectedValue = 42;
+
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(expectedValue));
+		ASSERT_TRUE(txn->commit()) << "Failed to commit transaction for int64_t test.";
+
+		auto txn2 = kvEngine->createReadOnlyTransaction();
+		auto future = txn2->getAsync(key);
+		ASSERT_TRUE(future != nullptr) << "Failed to create async future for int64_t test.";
+
+		auto extractedValue = kv::extractIntegralLEFromFuture<int64_t>(future, keyStr);
+		ASSERT_EQ(extractedValue, expectedValue) << "Extracted int64_t value does not match.";
+	}
+
+	// Test with uint64_t
+	{
+		std::string_view keyStr = "integral_key_uint64";
+		auto key = kv::toBytes(keyStr);
+		constexpr uint64_t expectedValue = 0xDEADBEEFCAFEBABE;
+
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(expectedValue));
+		ASSERT_TRUE(txn->commit()) << "Failed to commit transaction for uint64_t test.";
+
+		auto txn2 = kvEngine->createReadOnlyTransaction();
+		auto future = txn2->getAsync(key);
+		ASSERT_TRUE(future != nullptr) << "Failed to create async future for uint64_t test.";
+
+		auto extractedValue = kv::extractIntegralLEFromFuture<uint64_t>(future, keyStr);
+		ASSERT_EQ(extractedValue, expectedValue) << "Extracted uint64_t value does not match.";
+	}
+
+	// Test with int32_t
+	{
+		std::string_view keyStr = "integral_key_int32";
+		auto key = kv::toBytes(keyStr);
+		constexpr int32_t expectedValue = -12345;
+
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(expectedValue));
+		ASSERT_TRUE(txn->commit()) << "Failed to commit transaction for int32_t test.";
+
+		auto txn2 = kvEngine->createReadOnlyTransaction();
+		auto future = txn2->getAsync(key);
+		ASSERT_TRUE(future != nullptr) << "Failed to create async future for int32_t test.";
+
+		auto extractedValue = kv::extractIntegralLEFromFuture<int32_t>(future, keyStr);
+		ASSERT_EQ(extractedValue, expectedValue) << "Extracted int32_t value does not match.";
+	}
+
+	// Test parallel extraction of multiple values
+	{
+		constexpr int64_t value1 = 100;
+		constexpr int64_t value2 = 200;
+		constexpr int64_t value3 = 300;
+
+		auto key1 = kv::toBytes("parallel_key_1");
+		auto key2 = kv::toBytes("parallel_key_2");
+		auto key3 = kv::toBytes("parallel_key_3");
+
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key1, kv::toBytesLE(value1));
+		txn->set(key2, kv::toBytesLE(value2));
+		txn->set(key3, kv::toBytesLE(value3));
+		ASSERT_TRUE(txn->commit()) << "Failed to commit transaction for parallel test.";
+
+		// Issue all async reads in parallel
+		auto txn2 = kvEngine->createReadOnlyTransaction();
+		auto future1 = txn2->getAsync(key1);
+		auto future2 = txn2->getAsync(key2);
+		auto future3 = txn2->getAsync(key3);
+
+		ASSERT_TRUE(future1 != nullptr && future2 != nullptr && future3 != nullptr)
+		    << "Failed to create async futures for parallel test.";
+
+		// Extract all values
+		auto extracted1 = kv::extractIntegralLEFromFuture<int64_t>(future1, "parallel_key_1");
+		auto extracted2 = kv::extractIntegralLEFromFuture<int64_t>(future2, "parallel_key_2");
+		auto extracted3 = kv::extractIntegralLEFromFuture<int64_t>(future3, "parallel_key_3");
+
+		ASSERT_EQ(extracted1, value1) << "Parallel extraction 1 failed.";
+		ASSERT_EQ(extracted2, value2) << "Parallel extraction 2 failed.";
+		ASSERT_EQ(extracted3, value3) << "Parallel extraction 3 failed.";
+	}
+
+	// Test error case: missing key should throw exception
+	{
+		std::string_view nonExistentKeyStr = "non_existent_integral_key";
+		auto nonExistentKey = kv::toBytes(nonExistentKeyStr);
+
+		auto txn = kvEngine->createReadOnlyTransaction();
+		auto future = txn->getAsync(nonExistentKey);
+		ASSERT_TRUE(future != nullptr) << "Failed to create async future for missing key test.";
+
+		EXPECT_THROW(
+		    { kv::extractIntegralLEFromFuture<int64_t>(future, nonExistentKeyStr); },
+		    std::runtime_error)
+		    << "Expected exception for missing key was not thrown.";
+	}
+
+	safs::log_info("All extractIntegralLEFromFuture tests passed successfully.");
 }

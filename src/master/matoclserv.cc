@@ -475,7 +475,7 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 					chunkId, messageId, fileLength, lockId);
 		}
 		if (status != SAUNAFS_STATUS_OK) {
-			gFSOperations->writeEnd(0, 0, chunkId, 0);  // ignore status - just do it.
+			gFSOperations->writeEnd(fsOpContext, 0, 0, chunkId, 0);  // ignore status - just do it.
 		}
 		return;
 	case FUSE_TRUNCATE_BEGIN:
@@ -1547,13 +1547,17 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	}
 
 	FsContext context = FsContext::getForMaster(eventloop_time());
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	changelog_disable_flush();
 	auto it = eptr->sessionData->openFilesSet.begin();
+
 	while (it != eptr->sessionData->openFilesSet.end()) {
 		inode_t openFileIno = *it;
 		if (!inodes_to_reserve.contains(openFileIno)) {
 			// erase files not belonging to the reserve inodes list provided
-			gFSOperations->release(context, openFileIno, eptr->sessionData->sessionId);
+			gFSOperations->release(context, fsOpContext, openFileIno, eptr->sessionData->sessionId);
 			it = eptr->sessionData->openFilesSet.erase(it);
 		} else {
 			// skip files already in session
@@ -1589,8 +1593,13 @@ void matoclserv_fuse_statfs(matoclserventry *eptr, const uint8_t *data, uint32_t
 	}
 
 	get32bit(&data, msgid);
+
 	FsContext context = matoclserv_get_context(eptr);
-	gFSOperations->statfs(context, &totalspace, &availspace, &trashspace, &reservedspace, &inodes);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
+	gFSOperations->statfs(context, fsOpContext, &totalspace, &availspace, &trashspace,
+	                      &reservedspace, &inodes);
 
 	constexpr uint32_t kPacketSize = sizeof(msgid) + sizeof(totalspace) + sizeof(availspace) +
 	                                 sizeof(trashspace) + sizeof(reservedspace) + sizeof(inodes);
@@ -1726,9 +1735,11 @@ void matoclserv_sau_get_self_quota(matoclserventry *eptr, const uint8_t *data, u
 		status = gFSOperations->quotaGet(context, owners, results);
 
 		if (inode == context.rootinode() && !foundContextRootInodeResult(inode)) {
-			auto ino = gFSOperations->nodeOperations()->idToNode(inode);
+			auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+			    FilesystemOperationContext::TransactionType::kReadOnly);
+			auto *ino = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
 			StatsRecord rootInodeStatRec;
-			gFSOperations->nodeOperations()->getStats(ino, &rootInodeStatRec);
+			gFSOperations->nodeOperations()->getStats(fsOpContext, ino, &rootInodeStatRec);
 			results.emplace_back(QuotaEntry{QuotaEntryKey{QuotaOwner{QuotaOwnerType::kInode, inode},
 			                                              QuotaRigor::kUsed, QuotaResource::kSize},
 			                                rootInodeStatRec.size});
@@ -1919,8 +1930,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		// New client requested to truncate xor chunk. He has to do it himself.
 		uint64_t fileLength;
 		uint8_t opflag;
-		gFSOperations->writeChunk(context, inode, length / SFSCHUNKSIZE, false, &lockId, &chunkId,
-		                          &opflag, &fileLength);
+		gFSOperations->writeChunk(context, fsOpContext, inode, length / SFSCHUNKSIZE, false,
+		                          &lockId, &chunkId, &opflag, &fileLength);
 		if (opflag) {
 			// But first we have to duplicate chunk :)
 			type = FUSE_TRUNCATE_BEGIN;
@@ -2141,9 +2152,8 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_mknod: transaction failed to commit: parent inode {}, name {}",
-				    parentInode, edgeName);
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, parentInode, edgeName);
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2193,9 +2203,8 @@ void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uin
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_mkdir: transaction failed to commit: parent inode {}, name {}",
-				    inode, name);
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, inode, name);
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2261,9 +2270,9 @@ void matoclserv_fuse_unlink(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_unlink: transaction failed to commit: parent inode {}, name {}",
-				    inode, std::string(reinterpret_cast<const char*>(name), nleng));
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, inode,
+				              std::string(reinterpret_cast<const char *>(name), nleng));
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2358,9 +2367,9 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
-				safs::log_err(
-				    "matoclserv_fuse_rmdir: transaction failed to commit: parent inode {}, name {}",
-				    inode, std::string(reinterpret_cast<const char*>(name), nleng));
+				safs::log_err("{}: transaction failed to commit: parent inode {}, name {}",
+				              __func__, inode,
+				              std::string(reinterpret_cast<const char *>(name), nleng));
 
 				status = SAUNAFS_ERROR_IO;
 			}
@@ -2445,9 +2454,10 @@ void matoclserv_fuse_rename(matoclserventry *eptr, const uint8_t *data, uint32_t
 		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.getReadWriteTransaction()->commit()) {
 				safs::log_err(
-				    "matoclserv_fuse_rename: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
-				    inode_src, std::string(reinterpret_cast<const char*>(name_src), nleng_src),
-				    inode_dst, std::string(reinterpret_cast<const char*>(name_dst), nleng_dst));
+				    "{}: transaction failed to commit: src inode {}, src name {}, dst inode {}, dst name {}",
+				    __func__, inode_src,
+				    std::string(reinterpret_cast<const char *>(name_src), nleng_src), inode_dst,
+				    std::string(reinterpret_cast<const char *>(name_dst), nleng_dst));
 				status = SAUNAFS_ERROR_IO;
 			}
 		}
@@ -2802,11 +2812,14 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 
 	uint32_t min_server_version = kFirstXorVersion;
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	// Original Legacy (1.6.27) does not use lock ID's
 	bool useDummyLockId = false;
-	status =
-	    gFSOperations->writeChunk(matoclserv_get_context(eptr), inode, chunkIndex, useDummyLockId,
-	                              &lockId, &chunkId, &opflag, &fileLength, min_server_version);
+	status = gFSOperations->writeChunk(matoclserv_get_context(eptr), fsOpContext, inode, chunkIndex,
+	                                   useDummyLockId, &lockId, &chunkId, &opflag, &fileLength,
+	                                   min_server_version);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		serializer->serializeFuseWriteChunk(outMessage, messageId, status);
@@ -2831,7 +2844,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
 				chunkId, messageId, fileLength, lockId);
 		if (status != SAUNAFS_STATUS_OK) {
-			gFSOperations->writeEnd(0, 0, chunkId, 0);  // ignore status - just do it.
+			gFSOperations->writeEnd(fsOpContext, 0, 0, chunkId, 0);  // ignore status - just do it.
 		}
 	}
 
@@ -2862,7 +2875,9 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 	} else if (eptr->sessionData->flags & SESFLAG_READONLY) {
 		status = SAUNAFS_ERROR_EROFS;
 	} else {
-		status = gFSOperations->writeEnd(inode, fileLength, chunkId, lockId);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+		status = gFSOperations->writeEnd(fsOpContext, inode, fileLength, chunkId, lockId);
 	}
 
 	dcm_modify(inode,eptr->sessionData->sessionId);
@@ -3092,11 +3107,25 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 				"Unknown packet type for matoclserv_fuse_getgoal: " + std::to_string(header.type));
 	}
 
+	// getGoal could attempt to change the stored goal if invalid.
+	// So we need a read-write transaction.
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	GoalStatistics fgtab{{0}}, dgtab{{0}}; // explicit value initialization to clear variables
 	uint8_t status =
-	    gFSOperations->getGoal(matoclserv_get_context(eptr), inode, gmode, fgtab, dgtab);
+	    gFSOperations->getGoal(matoclserv_get_context(eptr), fsOpContext, inode, gmode, fgtab, dgtab);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, gmode {}", __func__, inode,
+			              static_cast<uint32_t>(gmode));
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
 
 	MessageBuffer reply;
+
 	if (status == SAUNAFS_STATUS_OK) {
 		const std::map<int, Goal> &goalDefinitions = gFSOperations->getAllGoalDefinitions();
 		std::vector<FuseGetGoalStats> sauReply;
@@ -3109,6 +3138,7 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	} else {
 		matocl::fuseGetGoal::serialize(reply, msgid, status);
 	}
+
 	matoclserv_createpacket(eptr, std::move(reply));
 }
 
@@ -3504,7 +3534,18 @@ void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->append(context, inode, inode_src);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->append(context, fsOpContext, inode, inode_src);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}, source inode {}",
+				              __func__, inode, inode_src);
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_APPEND, sizeof(msgid) + sizeof(status));
@@ -3892,7 +3933,17 @@ void matoclserv_fuse_purge(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = gFSOperations->purge(matoclserv_get_context(eptr), inode);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	status = gFSOperations->purge(matoclserv_get_context(eptr), fsOpContext, inode);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_PURGE, sizeof(msgid) + sizeof(status));
 	put32bit(&ptr, msgid);
@@ -4739,9 +4790,11 @@ void matocl_locks_release(const FsContext &context, inode_t inode, uint32_t sess
 
 void matocl_close_files(Session *currentSession) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
 
 	for (const auto &openFileInode : currentSession->openFilesSet) {
-		gFSOperations->release(context, openFileInode, currentSession->sessionId);
+		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		matocl_locks_release(context, openFileInode, currentSession->sessionId);
 	}
 

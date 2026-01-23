@@ -67,7 +67,7 @@ FSNode *SnapshotTask::cloneToExistingNode(const FilesystemOperationContext &fsOp
 		                                   dst_parent, static_cast<FSNodeFile *>(dst_node));
 		break;
 	case FSNodeType::kSymlink:
-		cloneSymlinkData(static_cast<FSNodeSymlink *>(src_node),
+		cloneSymlinkData(fsOpContext, static_cast<FSNodeSymlink *>(src_node),
 		                 static_cast<FSNodeSymlink *>(dst_node), dst_parent);
 		break;
 	case FSNodeType::kBlockDev:
@@ -107,11 +107,11 @@ FSNode *SnapshotTask::cloneToNewNode(const FilesystemOperationContext &fsOpConte
 		                   static_cast<FSNodeDirectory *>(dst_node));
 		break;
 	case FSNodeType::kFile:
-		cloneChunkData(static_cast<FSNodeFile *>(src_node),
+		cloneChunkData(fsOpContext, static_cast<FSNodeFile *>(src_node),
 		               static_cast<FSNodeFile *>(dst_node), dst_parent);
 		break;
 	case FSNodeType::kSymlink:
-		cloneSymlinkData(static_cast<FSNodeSymlink *>(src_node),
+		cloneSymlinkData(fsOpContext, static_cast<FSNodeSymlink *>(src_node),
 		                 static_cast<FSNodeSymlink *>(dst_node), dst_parent);
 		break;
 	case FSNodeType::kBlockDev:
@@ -143,16 +143,17 @@ FSNodeFile *SnapshotTask::cloneToExistingFileNode(const FilesystemOperationConte
 	    fsOpContext, ts, dst_parent, current_subtask_->second, FSNodeType::kFile, src_node->mode, 0,
 	    src_node->uid, src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_));
 
-	cloneChunkData(src_node, dst_node, dst_parent);
+	cloneChunkData(fsOpContext, src_node, dst_node, dst_parent);
 
 	return dst_node;
 }
 
-void SnapshotTask::cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_node,
-		FSNodeDirectory *dst_parent) {
+void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
+                                  const FSNodeFile *src_node, FSNodeFile *dst_node,
+                                  FSNodeDirectory *dst_parent) {
 	StatsRecord psr, nsr;
 
-	gFSOperations->nodeOperations()->getStats(dst_node, &psr);
+	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &psr);
 
 	dst_node->goal = src_node->goal;
 	dst_node->trashtime = src_node->trashtime;
@@ -170,8 +171,8 @@ void SnapshotTask::cloneChunkData(const FSNodeFile *src_node, FSNodeFile *dst_no
 		}
 	}
 
-	gFSOperations->nodeOperations()->getStats(dst_node, &nsr);
-	gFSOperations->nodeOperations()->addSubStats(dst_parent, &nsr, &psr);
+	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &nsr);
+	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
 	fsnodes_quota_update(dst_node, {{QuotaResource::kSize, nsr.size - psr.size}});
 }
 
@@ -192,17 +193,18 @@ void SnapshotTask::cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDir
 	}
 }
 
-void SnapshotTask::cloneSymlinkData(FSNodeSymlink *src_node, FSNodeSymlink *dst_node,
-		FSNodeDirectory *dst_parent) {
+void SnapshotTask::cloneSymlinkData(const FilesystemOperationContext &fsOpContext,
+                                    FSNodeSymlink *src_node, FSNodeSymlink *dst_node,
+                                    FSNodeDirectory *dst_parent) {
 	StatsRecord psr, nsr;
 
-	gFSOperations->nodeOperations()->getStats(dst_node, &psr);
+	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &psr);
 
 	dst_node->path = src_node->path;
 	dst_node->path_length = src_node->path_length;
 
-	gFSOperations->nodeOperations()->getStats(dst_node, &nsr);
-	gFSOperations->nodeOperations()->addSubStats(dst_parent, &nsr, &psr);
+	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &nsr);
+	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
 }
 
 void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
@@ -259,8 +261,8 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	if (fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {
 			safs::log_err(
-			    "SnapshotTask::cloneNode: transaction failed to commit: source inode {}, destination parent inode {}, name {}",
-			    current_subtask_->first, dst_parent_inode_, current_subtask_->second);
+			    "{}: transaction failed to commit: source inode {}, destination parent inode {}, name {}",
+			    __func__, current_subtask_->first, dst_parent_inode_, current_subtask_->second);
 			return SAUNAFS_ERROR_IO;
 		}
 	}

@@ -21,16 +21,16 @@
 #include "common/platform.h"
 
 #include <bit>
-#include <cstdint>
 #include <cstring>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
-namespace kv {
+#include "kv/ifuture.h"
+#include "kv/kv_types.h"
 
-using Bytes = std::vector<uint8_t>;
-using Key = Bytes;
-using Value = Bytes;
+namespace kv {
 
 /// Converts string, string_view and const char* to a vector of uint8_t.
 inline Bytes toBytes(std::string_view str) { return {str.begin(), str.end()}; }
@@ -97,6 +97,30 @@ Key encodeKeyBE(std::string_view prefix, Args... values) {
 	(encodeValue(values), ...);
 
 	return key;
+}
+
+/// Extracts an integral value encoded in little-endian format from an async future result.
+/// Throws std::runtime_error if the key is not found or an error occurs.
+/// @param future The future containing the async get operation result.
+/// @param key The key name used for error reporting.
+/// @return The decoded integral value in native byte order.
+template <typename T>
+    requires(std::is_integral_v<T>)
+T extractIntegralLEFromFuture(std::unique_ptr<kv::IFuture> &future, std::string_view key) {
+	int error = 0;
+	auto result = future->get(&error);
+
+	if (error == 0 && result.has_value()) { return kv::fromBytesLE<T>(result.value()); }
+
+	if (error == 0 && !result.has_value()) {
+		std::ostringstream oss;
+		oss << "Key not found in future result for key '" << key << "'";
+		throw std::runtime_error(oss.str());
+	}
+
+	std::ostringstream oss;
+	oss << "Failed to extract value from future for key '" << key << "': error code " << error;
+	throw std::runtime_error(oss.str());
 }
 
 }  // namespace kv
