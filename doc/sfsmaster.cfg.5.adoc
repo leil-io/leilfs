@@ -286,7 +286,7 @@ Path to the TLS certificate file the master server will use for TLS connections
 Path to the TLS private key file the master server will use for TLS connections
 (there is no default value).
 
-*TLS_SERVER_CA_CERT_FILE*::
+*TLS_CA_CERT_FILE*::
 Path to the trusted CA certificate which is used to authenticate
 the TLS connection (there is no default value).
 

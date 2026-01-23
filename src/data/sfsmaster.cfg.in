@@ -352,4 +352,4 @@
 ## connecting applications.
 ## Example: /etc/saunafs/ssl/ca.crt
 ## (There is no default)
-# TLS_SERVER_CA_CERT_FILE =
+# TLS_CA_CERT_FILE =
