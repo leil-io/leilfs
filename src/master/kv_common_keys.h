@@ -65,7 +65,7 @@ inline constexpr std::string_view kEdgeLowerKeyPrefix = "LOWER_EDGE_";
 inline constexpr std::string_view kDirParentKeyPrefix = "DIR_PARENT_";
 
 /// Prefix for reverse index for files and links (multiple parents allowed via hard links)
-/// Format: PARENT_<ChildId><ParentId>:<Empty value>
+/// Format: PARENT_<ChildId><ParentId><EdgeName>:<EmptyValue>
 inline constexpr std::string_view kParentKeyPrefix = "PARENT_";
 
 /// Prefix for counting directory nodes without querying all entries
