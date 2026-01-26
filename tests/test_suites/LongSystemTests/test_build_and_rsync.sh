@@ -43,6 +43,6 @@ cd "${info[mount0]}"
 for goal in 1 2 3 xor2; do
 	mkdir "goal_$goal"
 	saunafs setgoal "$goal" "goal_$goal"
-	test_worker "goal_$goal" &
+	test_worker "goal_$goal"
 done
 wait
