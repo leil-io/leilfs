@@ -198,7 +198,12 @@ uint8_t FilesystemOperationsBase::getDetachedAttr(inode_t rootinode, uint8_t ses
 	if (dtype == DTYPE_RESERVED && p->type == FSNodeType::kTrash) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	nodeOperations_->fillAttr(p, NULL, p->uid, p->gid, p->uid, p->gid, sesflags, attr);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
+	nodeOperations_->fillAttr(fsOpContext, p, NULL, p->uid, p->gid, p->uid, p->gid, sesflags, attr);
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -475,8 +480,8 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 			} else {
 				*inode = workDir->id;
 			}
-			nodeOperations_->fillAttr(workDir, workDir, context.uid(), context.gid(), context.auid(),
-			                          context.agid(), context.sesflags(), attr);
+			nodeOperations_->fillAttr(fsOpContext, workDir, workDir, context.uid(), context.gid(),
+			                          context.auid(), context.agid(), context.sesflags(), attr);
 			incrementFSStat(FsStats::Lookup);
 			metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
 			return SAUNAFS_STATUS_OK;
@@ -485,8 +490,9 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 		if (name.length() == 2 && name[1] == '.') {  // parent
 			if (workDir->id == context.rootinode()) {
 				*inode = SPECIAL_INODE_ROOT;
-				nodeOperations_->fillAttr(workDir, workDir, context.uid(), context.gid(), context.auid(),
-				                          context.agid(), context.sesflags(), attr);
+				nodeOperations_->fillAttr(fsOpContext, workDir, workDir, context.uid(),
+				                          context.gid(), context.auid(), context.agid(),
+				                          context.sesflags(), attr);
 			} else {
 				if (!workDir->parents.empty()) {
 					if (workDir->parents[0].first == context.rootinode()) {
@@ -495,12 +501,14 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 						*inode = workDir->parents[0].first;
 					}
 					FSNode *pp = nodeOperations_->idToNode(workDir->parents[0].first);
-					nodeOperations_->fillAttr(pp, workDir, context.uid(), context.gid(), context.auid(),
-					                          context.agid(), context.sesflags(), attr);
+					nodeOperations_->fillAttr(fsOpContext, pp, workDir, context.uid(),
+					                          context.gid(), context.auid(), context.agid(),
+					                          context.sesflags(), attr);
 				} else {
 					*inode = SPECIAL_INODE_ROOT;  // rn->id;
-					nodeOperations_->fillAttr(effectiveRootDir, workDir, context.uid(), context.gid(), context.auid(),
-					                          context.agid(), context.sesflags(), attr);
+					nodeOperations_->fillAttr(fsOpContext, effectiveRootDir, workDir, context.uid(),
+					                          context.gid(), context.auid(), context.agid(),
+					                          context.sesflags(), attr);
 				}
 			}
 			incrementFSStat(FsStats::Lookup);
@@ -519,8 +527,8 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 	}
 
 	*inode = child->id;
-	nodeOperations_->fillAttr(child, workDir, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, child, workDir, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	incrementFSStat(FsStats::Lookup);
 	metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
@@ -672,10 +680,12 @@ uint8_t FilesystemOperationsBase::getAttr(const FsContext &context,
 		return status;
 	}
 
-	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
-	                          context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
+	                          context.agid(), context.sesflags(), attr);
+
 	incrementFSStat(FsStats::Getattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_GETATTR);
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -728,8 +738,8 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 			}
 		}
 	}
-	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
-	                          context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
+	                          context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
@@ -892,8 +902,8 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	p->mtime = ts;
 	nodeOperations_->updateCTime(p, ts);
 	fsnodes_update_checksum(p);
-	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
-	                          context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
+	                          context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
@@ -1031,8 +1041,8 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context, inode_t inod
 	changeLog(ts, "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", p->id,
 	          p->mode & 07777, p->uid, p->gid, p->atime, p->mtime);
 	nodeOperations_->updateCTime(p, ts);
-	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
-	                          context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
+	                          context.agid(), context.sesflags(), attr);
 	fsnodes_update_checksum(p);
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
@@ -1192,7 +1202,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 	memset(&sr, 0, sizeof(StatsRecord));
 	sr.length = basePath.length();
 	nodeOperations_->addStats(fsOpContext, static_cast<FSNodeDirectory *>(wd), &sr);
-	if (attr != NULL) { nodeOperations_->fillAttr(context, p, wd, *attr); }
+	if (attr != NULL) { nodeOperations_->fillAttr(context, fsOpContext, p, wd, *attr); }
 	if (context.isPersonalityMaster()) {
 		assert(*inode == 0);
 		*inode = p->id;
@@ -1273,8 +1283,8 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	}
 
 	*inode = newNode->id;
-	nodeOperations_->fillAttr(newNode, parentNode, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, newNode, parentNode, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	changeLog(timeStamp,
 	          "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
@@ -1338,8 +1348,8 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 	                                      FSNodeType::kDirectory, mode, umask, context.uid(),
 	                                      context.gid(), copysgid, AclInheritance::kInheritAcl);
 	*inode = newNode->id;
-	nodeOperations_->fillAttr(newNode, workDir, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, newNode, workDir, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	changeLog(timeStamp,
 	          "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
@@ -1695,7 +1705,9 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 
 	nodeOperations_->link(fsOpContext, context.ts(), destWorkDir, sourceChildNode, baseNameDst);
 
-	if (attr) { nodeOperations_->fillAttr(context, sourceChildNode, destWorkNode, *attr); }
+	if (attr) {
+		nodeOperations_->fillAttr(context, fsOpContext, sourceChildNode, destWorkNode, *attr);
+	}
 
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "MOVE(%" PRIiNode ",%s,%" PRIiNode ",%s):%" PRIiNode,
@@ -1714,20 +1726,18 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::link(const FsContext &context, inode_t inode_src,
-                                       inode_t parent_dst, const HString &name_dst, inode_t *inode,
-                                       Attributes *attr) {
+uint8_t FilesystemOperationsBase::link(const FsContext &context,
+                                       const FilesystemOperationContext &fsOpContext,
+                                       inode_t inode_src, inode_t parent_dst,
+                                       const HString &name_dst, inode_t *inode, Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *sp;
 	FSNode *dwd;
+
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(
 	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent_dst, &dwd);
@@ -1755,7 +1765,7 @@ uint8_t FilesystemOperationsBase::link(const FsContext &context, inode_t inode_s
 
 	if (inode) { *inode = inode_src; }
 
-	if (attr) { nodeOperations_->fillAttr(context, sp, dwd, *attr); }
+	if (attr) { nodeOperations_->fillAttr(context, fsOpContext, sp, dwd, *attr); }
 
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "LINK(%" PRIiNode ",%" PRIiNode ",%s)", sp->id, dwd->id,
@@ -2141,9 +2151,12 @@ void FilesystemOperationsBase::readdirData(const FsContext &context, uint8_t fla
 	ChecksumUpdater cu(ts);
 	FSNode *p = (FSNode *)dnode;
 	fs_update_atime(p, ts);
-	nodeOperations_->getDirData(
-	    context.rootinode(), context.uid(), context.gid(), context.auid(), context.agid(),
-	    context.sesflags(), static_cast<FSNodeDirectory *>(p), dbuff, flags & GETDIR_FLAG_WITHATTR);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	nodeOperations_->getDirData(fsOpContext, context.rootinode(), context.uid(), context.gid(),
+	                            context.auid(), context.agid(), context.sesflags(),
+	                            static_cast<FSNodeDirectory *>(p), dbuff,
+	                            flags & GETDIR_FLAG_WITHATTR);
 	incrementFSStat(FsStats::Readdir);
 	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
 }
@@ -2233,8 +2246,8 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context, inode_t in
 		}
 		if (!nodeOperations_->access(context, p, modemask)) { return SAUNAFS_ERROR_EACCES; }
 	}
-	nodeOperations_->fillAttr(p, NULL, context.uid(), context.gid(), context.auid(), context.agid(),
-	                          context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
+	                          context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Open);
 	metrics::Counter::increment(metrics::Counter::Master::FS_OPEN);
 	return SAUNAFS_STATUS_OK;

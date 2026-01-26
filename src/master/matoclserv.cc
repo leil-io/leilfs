@@ -2528,9 +2528,22 @@ void matoclserv_fuse_link(matoclserventry *eptr, const uint8_t *data, uint32_t l
 
 	if (status == SAUNAFS_STATUS_OK) {
 		auto context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->link(context, inode, inode_dst,
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->link(context, fsOpContext, inode, inode_dst,
 		                             HString(reinterpret_cast<const char *>(name_dst), nleng_dst),
 		                             &newinode, &attr);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err(
+				    "{}: transaction failed to commit: src inode {}, dst inode {}, name {}",
+				    __func__, inode, inode_dst,
+				    std::string(reinterpret_cast<const char *>(name_dst), nleng_dst));
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
