@@ -71,7 +71,7 @@ generate_certs() {
 		cat > server_ext.cnf <<EOF
 basicConstraints = CA:FALSE
 keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
+extendedKeyUsage = serverAuth, clientAuth
 subjectAltName = @alt_names
 
 [alt_names]
@@ -123,6 +123,24 @@ EOF
 			-out cs.crt \
 			-days "$CERT_DAYS" \
 			-sha256
+
+		# 9. Create shadow key and CSR
+		openssl genrsa -out shadow.key 4096
+		openssl req -new \
+			-key shadow.key \
+			-out shadow.csr \
+			-subj "/CN=Test Shadow"
+
+		# 10. Sign shadow CSR with CA
+		openssl x509 -req \
+			-in shadow.csr \
+			-CA ca.crt \
+			-CAkey ca.key \
+			-CAcreateserial \
+			-out shadow.crt \
+			-days "$CERT_DAYS" \
+			-sha256 \
+			-extfile server_ext.cnf
 
 		# Windows / WSL compatibility
 		if is_windows_system; then

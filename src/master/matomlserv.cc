@@ -47,6 +47,7 @@
 #include "common/output_packet.h"
 #include "common/saunafs_version.h"
 #include "common/sockets.h"
+#include "common/tls_session.h"
 #include "config/cfg.h"
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
@@ -64,7 +65,8 @@ constexpr uint16_t kOldChangesBlockSize = 5000;
 enum class MetaloggerConnectionMode : uint8_t {
 	KILL,
 	HEADER,
-	DATA
+	DATA,
+	HANDSHAKE
 };
 
 struct MatomlservEntry {
@@ -86,6 +88,12 @@ struct MatomlservEntry {
 	int metaFD{-1};
 	int chain1FD{-1};
 	int chain2FD{-1};
+
+	/// Context of the TLS channel used for communication with a
+	/// metalogger or shadow master.
+	/// If no TLS is used, this is `nullptr`.
+	std::unique_ptr<TlsSession> tlsSession{nullptr};
+	int lastHandshakeError{0};
 
 	MatomlservEntry(int sock_, uint32_t now) : sock(sock_), lastRead(now), lastWrite(now) {}
 };
@@ -163,6 +171,66 @@ static ShadowQueue gShadowQueue;
  * \param status - status to be forwarded.
  */
 void matomlserv_broadcast_metadata_saved(uint8_t status) { gShadowQueue.handleRequests(status); }
+
+/// Starts/continues a TLS handshake (non-blocking)
+/// @param eptr Pointer to the metalogger connection in the master
+void matomlserv_tlshandshake(MatomlservEntry *eptr) {
+	sassert(eptr->mode == MetaloggerConnectionMode::HANDSHAKE);
+
+	int ret = SSL_accept(eptr->tlsSession->session());
+
+	if (ret == 1) {
+		safs::log_info("TLS handshake completed with metalogger from {}:{}",
+		               ipToString(eptr->serviceIp), eptr->servicePort);
+		eptr->mode = MetaloggerConnectionMode::HEADER;
+		return;
+	}
+
+	int err = SSL_get_error(eptr->tlsSession->session(), ret);
+	eptr->lastHandshakeError = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		safs::log_info("TLS handshake in progress with metalogger from {}:{}: {}",
+		               ipToString(eptr->serviceIp), eptr->servicePort, opensslErrorString(err));
+		return;  // retry later
+	}
+
+	eptr->mode = MetaloggerConnectionMode::KILL;
+	safs::log_err("TLS handshake failed: {}", opensslErrorString(err));
+}
+
+/// Initiate a TLS connection with the metalogger.
+/// @param eptr Pointer to the metalogger connection in the master
+void matomlserv_starttls(MatomlservEntry *eptr) {
+	// Initialize a TLS session for the peer.
+	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
+	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
+	std::string trustFile = cfg_getstring("TLS_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+
+	try {
+		eptr->tlsSession =
+		    std::make_unique<TlsSession>(eptr->sock, true, keyFile, certFile, trustFile);
+		safs::log_info("Starting TLS session with metalogger from {}:{}",
+		               ipToString(eptr->serviceIp), eptr->servicePort);
+		eptr->mode = MetaloggerConnectionMode::HANDSHAKE;
+		matomlserv_tlshandshake(eptr);
+	} catch (const std::exception &e) {
+		eptr->mode = MetaloggerConnectionMode::KILL;
+		safs::log_err("Failed to start TLS session with metalogger from {}:{}: {}",
+		              ipToString(eptr->serviceIp), eptr->servicePort, e.what());
+	}
+}
+
+void matomlserv_endtls(MatomlservEntry *eptr) {
+	if (eptr->tlsSession != nullptr) {
+		int ret = SSL_shutdown(eptr->tlsSession->session());
+		if (ret < 0) {
+			safs::log_warn("TLS shutdown failed: {}",
+			               opensslErrorString(SSL_get_error(eptr->tlsSession->session(), ret)));
+		}
+		eptr->tlsSession.reset();
+	}
+}
 
 void matomlserv_store_logstring(uint64_t version, uint8_t *logstr, uint32_t logstrsize) {
 	if (gChangelogSecondsToRemember == 0) {
@@ -610,6 +678,9 @@ void matomlserv_gotpacket(MatomlservEntry *eptr, uint32_t type, const uint8_t *d
 		case SAU_MLTOMA_CLTOMA_PORT:
 			matomlserv_matoclport(eptr, data, length);
 			break;
+		case SAU_MLTOMA_STARTTLS:
+			matomlserv_starttls(eptr);
+			break;
 		default:
 			safs::log_info("master <-> metaloggers module: got unknown message (type:{})", type);
 			eptr->mode = MetaloggerConnectionMode::KILL;
@@ -625,6 +696,9 @@ void matomlserv_term() {
 	tcpclose(listenSocket);
 
 	for (auto &eptr : matomlservList) {
+		// End TLS session if any
+		matomlserv_endtls(&eptr);
+
 		// Remove from shadow queue
 		gShadowQueue.removeRequest(&eptr);
 	}
@@ -638,17 +712,41 @@ void matomlserv_read(MatomlservEntry *eptr) {
 	watchdog.start();
 	while (eptr->mode != MetaloggerConnectionMode::KILL) {
 		uint32_t bytesToRead = eptr->inputPacket.bytesToBeRead();
-		i = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+		if (eptr->tlsSession != nullptr && eptr->mode != MetaloggerConnectionMode::HANDSHAKE) {
+			i = SSL_read(eptr->tlsSession->session(), eptr->inputPacket.pointerToBeReadInto(),
+			             bytesToRead);
+		} else {
+			i = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+		}
+
 		if (i == 0) {
-			safs::log_info("connection with ML({}) has been closed by peer", eptr->serviceStrIp);
+			if (eptr->tlsSession != nullptr) {
+				int err = SSL_get_error(eptr->tlsSession->session(), i);
+				safs::log_info("TLS connection with ML({}) got error: {}",
+				               opensslErrorString(err));
+			} else {
+				safs::log_info("connection with ML({}) has been closed by peer",
+				               eptr->serviceStrIp);
+			}
 			eptr->mode = MetaloggerConnectionMode::KILL;
 			return;
 		}
 
 		if (i < 0) {
-			if (errno != EAGAIN) {
-				safs::log_err("read from ML({}) error", eptr->serviceStrIp);
-				eptr->mode = MetaloggerConnectionMode::KILL;
+			int err;
+			if (eptr->tlsSession != nullptr && eptr->mode != MetaloggerConnectionMode::HANDSHAKE) {
+				err = SSL_get_error(eptr->tlsSession->session(), i);
+				if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+					safs::log_warn("read from ML({}) error: {}", eptr->serviceStrIp,
+					               opensslErrorString(err));
+					eptr->mode = MetaloggerConnectionMode::KILL;
+				}
+			} else {
+				err = errno;
+				if (errno != EAGAIN) {
+					safs::log_err("read from ML({}) error", eptr->serviceStrIp);
+					eptr->mode = MetaloggerConnectionMode::KILL;
+				}
 			}
 			return;
 		}
@@ -679,15 +777,32 @@ void matomlserv_write(MatomlservEntry *eptr) {
 	watchdog.start();
 	while (!eptr->outputPackets.empty()) {
 		OutputPacket &outputPacket = eptr->outputPackets.front();
-		bytesWritten = write(eptr->sock, outputPacket.packet.data() + outputPacket.bytesSent,
-		                     outputPacket.packet.size() - outputPacket.bytesSent);
-		if (bytesWritten < 0) {
-			if (errno != EAGAIN) {
-				safs::log_err("main master server module: (ip:{}) write error", eptr->serviceStrIp);
-				eptr->mode = MetaloggerConnectionMode::KILL;
+		if (eptr->tlsSession != nullptr) {
+			bytesWritten = SSL_write(eptr->tlsSession->session(),
+			                         outputPacket.packet.data() + outputPacket.bytesSent,
+			                         outputPacket.packet.size() - outputPacket.bytesSent);
+			if (bytesWritten < 0) {
+				int err = SSL_get_error(eptr->tlsSession->session(), bytesWritten);
+				if (err != SSL_ERROR_WANT_WRITE && err != SSL_ERROR_WANT_READ) {
+					safs::log_warn("write to ML({}) error: {}", eptr->serviceStrIp,
+					               opensslErrorString(err));
+					eptr->mode = MetaloggerConnectionMode::KILL;
+				}
+				return;
 			}
-			return;
+		} else {
+			bytesWritten = write(eptr->sock, outputPacket.packet.data() + outputPacket.bytesSent,
+			                     outputPacket.packet.size() - outputPacket.bytesSent);
+			if (bytesWritten < 0) {
+				if (errno != EAGAIN) {
+					safs::log_err("main master server module: (ip:{}) write error",
+					              eptr->serviceStrIp);
+					eptr->mode = MetaloggerConnectionMode::KILL;
+				}
+				return;
+			}
 		}
+
 		outputPacket.bytesSent += bytesWritten;
 
 		if (outputPacket.bytesSent >= outputPacket.packet.size()) {
@@ -707,10 +822,27 @@ void matomlserv_desc(std::vector<pollfd> &pdesc) {
 	} else {
 		listenSocketPollFdIndex = -1;
 	}
+
 	for (auto &eptr : matomlservList) {
 		pdesc.push_back({eptr.sock, POLLIN, 0});
 		eptr.pollFdIndex = pdesc.size() - 1;
-		if (!eptr.outputPackets.empty()) { pdesc.back().events |= POLLOUT; }
+		if (eptr.mode == MetaloggerConnectionMode::HANDSHAKE) {
+			short events = 0;
+			switch (eptr.lastHandshakeError) {
+			case SSL_ERROR_WANT_READ:
+				events = POLLIN;
+				break;
+			case SSL_ERROR_WANT_WRITE:
+				events = POLLOUT;
+				break;
+			default:
+				events = POLLIN | POLLOUT;
+				break;
+			}
+			pdesc.back().events = events;
+		} else {
+			if (!eptr.outputPackets.empty()) { pdesc.back().events |= POLLOUT; }
+		}
 	}
 }
 
@@ -741,16 +873,20 @@ void matomlserv_serve(const std::vector<pollfd> &pdesc) {
 				eptr.mode = MetaloggerConnectionMode::KILL;
 			}
 
-			if ((pdesc[eptr.pollFdIndex].revents & POLLIN) &&
-			    eptr.mode != MetaloggerConnectionMode::KILL) {
-				eptr.lastRead = now;
-				matomlserv_read(&eptr);
-			}
+			if (eptr.mode == MetaloggerConnectionMode::HANDSHAKE) {
+				matomlserv_tlshandshake(&eptr);
+			} else {
+				if ((pdesc[eptr.pollFdIndex].revents & POLLIN) &&
+				    eptr.mode != MetaloggerConnectionMode::KILL) {
+					eptr.lastRead = now;
+					matomlserv_read(&eptr);
+				}
 
-			if ((pdesc[eptr.pollFdIndex].revents & POLLOUT) &&
-			    eptr.mode != MetaloggerConnectionMode::KILL) {
-				eptr.lastWrite = now;
-				matomlserv_write(&eptr);
+				if ((pdesc[eptr.pollFdIndex].revents & POLLOUT) &&
+				    eptr.mode != MetaloggerConnectionMode::KILL) {
+					eptr.lastWrite = now;
+					matomlserv_write(&eptr);
+				}
 			}
 		}
 
@@ -767,6 +903,7 @@ void matomlserv_serve(const std::vector<pollfd> &pdesc) {
 	for (auto it = matomlservList.begin(); it != matomlservList.end();) {
 		if (it->mode == MetaloggerConnectionMode::KILL) {
 			matomlserv_beforeclose(&(*it));
+			matomlserv_endtls(&(*it));
 			tcpclose(it->sock);
 			it = matomlservList.erase(it);
 		} else {
