@@ -844,9 +844,24 @@ int do_symlink(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFSOperations->symlink(FsContext::getForRestoreWithUidGid(ts, uid, gid), parent,
-	                              HString((char *)name), std::string((char *)path), &inode,
-	                              nullptr);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->symlink(FsContext::getForRestoreWithUidGid(ts, uid, gid),
+	                                   fsOpContext, parent, HString((char *)name),
+	                                   std::string((char *)path), &inode, nullptr);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: parent inode {}, name {}, path {}",
+			              __func__, parent, reinterpret_cast<const char *>(name),
+			              reinterpret_cast<const char *>(path));
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_undel(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {

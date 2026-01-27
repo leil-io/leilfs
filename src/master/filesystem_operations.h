@@ -109,8 +109,13 @@ public:
 	                     const std::function<void(int)> &callback) override;
 	uint8_t applySetTrashTime(const FsContext &context, inode_t inode, uint32_t trashtime,
 	                          uint8_t smode, uint32_t master_result) override;
-	uint8_t symlink(const FsContext &context, inode_t parent, const HString &name,
-	                const std::string &path, inode_t *inode, Attributes *attr) override;
+
+	/// Creates a symbolic link (symlink) in the filesystem.
+	/// @see IFilesystemOperations::symlink
+	uint8_t symlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                inode_t parent, const HString &name, const std::string &path, inode_t *inode,
+	                Attributes *attr) override;
+
 	uint8_t undel(const FsContext &context, inode_t inode) override;
 	uint8_t writeChunk(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                   inode_t inode, uint32_t index, bool usedummylockid,

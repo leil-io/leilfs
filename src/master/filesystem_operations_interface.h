@@ -197,8 +197,62 @@ public:
 	                             const std::function<void(int)> &callback) = 0;
 	virtual uint8_t applySetTrashTime(const FsContext &context, inode_t inode, uint32_t trashtime,
 	                                  uint8_t smode, uint32_t master_result) = 0;
-	virtual uint8_t symlink(const FsContext &context, inode_t parent, const HString &name,
-	                        const std::string &path, inode_t *inode, Attributes *attr) = 0;
+
+	/// Creates a symbolic link (symlink) in the filesystem.
+	///
+	/// This method creates a new symbolic link with the specified name in the given parent
+	/// directory that points to the provided target path. Symbolic links are special files
+	/// that contain a reference to another file or directory path. Unlike hard links, symlinks
+	/// can point to non-existent targets (dangling links), directories, and files across
+	/// different filesystems. The operation performs comprehensive validation including:
+	/// - Session verification (must be read-write, non-meta session)
+	/// - Write permission check on the parent directory
+	/// - Name validation and uniqueness check in the parent
+	/// - On master personalities, quota verification (ensures inode quota limits are not exceeded)
+	/// - Path validation (empty paths and paths containing null bytes are rejected)
+	/// - For case-insensitive filesystems, attempts to canonicalize the target path
+	///   (but allows dangling links if the target cannot be resolved)
+	///
+	/// After successful validation, a new symlink node is created with standard permissions
+	/// (0777 by default), and its statistics (including path length) are propagated up
+	/// through all ancestor directories.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param parent The inode number of the parent directory where the symlink will be created.
+	/// @param name The name of the new symlink within the parent directory.
+	/// @param path The target path that the symlink will point to. Can be relative or absolute.
+	///             The path is stored as-is and is not required to exist at creation time.
+	/// @param[in,out] inode Pointer to inode_t.
+	///                      - On master, must be set to 0 on input (will be assigned).
+	///                      - On shadow/metarestore, must be set to the expected inode value from
+	///                        the changelog. If the created inode does not match,
+	///                        SAUNAFS_ERROR_MISMATCH should be returned.
+	///                      On output, contains the inode number of the created symlink.
+	/// @param[out] attr Optional pointer to Attributes to be filled with the symlink's attributes
+	///                  after creation. Can be nullptr if not needed.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EROFS if the session is read-only
+	///         - SAUNAFS_ERROR_ENOENT if the session is meta-only or parent doesn't exist
+	///         - SAUNAFS_ERROR_ENOTDIR if parent is not a directory
+	///         - SAUNAFS_ERROR_EACCES if write permission denied on parent directory
+	///         - SAUNAFS_ERROR_EINVAL if name validation fails, path is empty, or path contains
+	///           null bytes
+	///         - SAUNAFS_ERROR_EEXIST if name already exists in parent directory
+	///         - SAUNAFS_ERROR_QUOTA if quota limits would be exceeded
+	///         - SAUNAFS_ERROR_MISMATCH if inode doesn't match expected value (shadow/metarestore
+	///           only)
+	///         - Other error codes as returned by node operations
+	///
+	/// @note Unlike hard links, symbolic links can point to directories and non-existent paths.
+	/// @note The symlink's path length contributes to the parent directory's statistics.
+	/// @note For case-insensitive filesystems, the target path is canonicalized when possible,
+	///       but dangling symlinks are still permitted.
+	virtual uint8_t symlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t parent, const HString &name, const std::string &path,
+	                        inode_t *inode, Attributes *attr) = 0;
+
 	virtual uint8_t undel(const FsContext &context, inode_t inode) = 0;
 	virtual uint8_t writeChunk(const FsContext &context,
 	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
