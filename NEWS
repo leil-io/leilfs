@@ -1,11 +1,11 @@
 This file lists noteworthy changes in SaunaFS.
 
 * SaunaFS (5.6.0) (2026-01-27)
- - Fix: Fix overwriting failing tests (#697)
  - doc: Remove info about 5.0.0 deprecations (#673)
  - docs(chunkserver): add `zonefs:` prefix documentation (#701)
  - feat(master): add reverse index prefixes for parent lookups (#698)
  - feat(tls): Secure master-client communication with TLS (#689)
+ - fix: Fix overwriting failing tests (#697)
  - fix(fdb): apply KeySelector offsets in getRange (#688)
  - fix(master): Remove unused case insensitive check (#691)
  - fix: Fix rebalancing related tests (#690)
