@@ -62,10 +62,12 @@ public:
 	                FSNodeDirectory *parent, const HString &childName, FSNode *childNode) override;
 
 	void updateCTime(FSNode *node, uint32_t ctime) override;
-	void fillAttr(FSNode *node, FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid,
-	              uint32_t agid, uint8_t sesflags, Attributes &attr) override;
-	void fillAttr(const FsContext &context, FSNode *node, FSNode *parent,
+
+	void fillAttr(const FilesystemOperationContext &fsOpContext, FSNode *node, FSNode *parent,
+	              uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid, uint8_t sesflags,
 	              Attributes &attr) override;
+	void fillAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	              FSNode *node, FSNode *parent, Attributes &attr) override;
 
 	/// Retrieves statistics for a filesystem node.
 	/// @see IFilesystemNodeOperations::getStats
@@ -109,9 +111,9 @@ public:
 
 #ifndef METARESTORE
 	uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) override;
-	void getDirData(inode_t rootINode, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
-	                uint8_t sesflags, FSNodeDirectory *nodeDir, uint8_t *outBuffer,
-	                uint8_t withAttr) override;
+	void getDirData(const FilesystemOperationContext &fsOpContext, inode_t rootINode, uint32_t uid,
+	                uint32_t gid, uint32_t auid, uint32_t agid, uint8_t sesflags,
+	                FSNodeDirectory *nodeDir, uint8_t *outBuffer, uint8_t withAttr) override;
 
 	/// Returns the number of entries in the given directory.
 	/// @see IFilesystemNodeOperations::getNumberOfDirEntries

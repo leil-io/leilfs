@@ -149,6 +149,28 @@ public:
 	                           uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
 	                           uint8_t copysgid, AclInheritance inheritAcl,
 	                           inode_t requestedINode = 0) = 0;
+
+	/// Creates a hard link (directory entry) between a parent directory and an existing node.
+	///
+	/// This method establishes a new edge from a parent directory to an existing child node,
+	/// creating a hard link. The child node must already exist in the filesystem. This operation:
+	/// - Adds a directory entry with the specified name to the parent directory
+	/// - Adds the parent to the child's parent list
+	/// - Updates the parent's nlink count (incremented if child is a directory)
+	/// - Updates parent directory statistics (size)
+	/// - Updates parent and child ctime/mtime when timeStamp > 0
+	/// - Propagates statistics changes to all ancestor directories
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param timeStamp The current timestamp for updating mtime/ctime.
+	/// @param parent The parent directory where the new link will be created.
+	/// @param child The existing child node to link into the parent directory.
+	/// @param name The name of the new directory entry (link name).
+	///
+	/// @note Directories cannot have multiple parents (to maintain tree structure), but files
+	///       can have multiple hard links to the same inode.
+	/// @note The caller must ensure that the name does not already exist in the parent directory.
+	/// @note This method automatically propagates statistics up the directory tree.
 	virtual void link(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                  FSNodeDirectory *parent, FSNode *child, const HString &name) = 0;
 
@@ -195,10 +217,12 @@ public:
 	                        FSNode *childNode) = 0;
 
 	virtual void updateCTime(FSNode *node, uint32_t ctime) = 0;
-	virtual void fillAttr(FSNode *node, FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid,
-	                      uint32_t agid, uint8_t sesflags, Attributes &attr) = 0;
-	virtual void fillAttr(const FsContext &context, FSNode *node, FSNode *parent,
-	                      Attributes &attr) = 0;
+
+	virtual void fillAttr(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                      FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+	                      uint8_t sesflags, Attributes &attr) = 0;
+	virtual void fillAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      FSNode *node, FSNode *parent, Attributes &attr) = 0;
 
 	/// Retrieves statistics for a filesystem node.
 	///
@@ -325,9 +349,11 @@ public:
 
 #ifndef METARESTORE
 	virtual uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) = 0;
-	virtual void getDirData(inode_t rootINode, uint32_t uid, uint32_t gid, uint32_t auid,
-	                        uint32_t agid, uint8_t sesflags, FSNodeDirectory *nodeDir,
-	                        uint8_t *outBuffer, uint8_t withAttr) = 0;
+
+	virtual void getDirData(const FilesystemOperationContext &fsOpContext, inode_t rootINode,
+	                        uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
+	                        uint8_t sesflags, FSNodeDirectory *nodeDir, uint8_t *outBuffer,
+	                        uint8_t withAttr) = 0;
 
 	/// Returns the number of entries in the given directory, possibly reusing the transaction
 	/// inside fsOpContext.

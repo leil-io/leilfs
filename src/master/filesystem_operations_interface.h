@@ -87,8 +87,53 @@ public:
 	virtual uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t inode, inode_t inode_src) = 0;
 	virtual uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) = 0;
-	virtual uint8_t link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
-	                     const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
+
+	/// Creates a hard link to an existing file in a destination directory.
+	///
+	/// This method creates a new directory entry (hard link) in the destination parent directory
+	/// that points to an existing source node (file, symlink, device, etc.). Hard links allow
+	/// multiple names to reference the same inode, enabling multiple paths to the same file.
+	/// The operation should perform comprehensive validation, including:
+	/// - Session verification (must be read-write, non-meta session)
+	/// - Permission checks (write access required on destination parent)
+	/// - Source node accessibility verification
+	/// - Type validation (source cannot be a directory to maintain tree structure)
+	/// - State validation (source cannot be in trash or reserved)
+	/// - Name validation and uniqueness check in destination
+	///
+	/// After successful validation, the link is created by calling nodeOperations_->link(),
+	/// which increments the node's link count, updates parent statistics, and propagates
+	/// changes up the directory tree.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The extra operation context (transaction in some implementations).
+	/// @param inode_src The inode number of the existing node to link to (source).
+	/// @param parent_dst The inode number of the destination parent directory where the link
+	///                   will be created.
+	/// @param name_dst The name for the new directory entry (link name) in the destination parent.
+	/// @param[out] inode Pointer to inode_t where the source inode number will be stored.
+	///                   Can be nullptr if not needed.
+	/// @param[out] attr Pointer to Attributes to be filled with the source node's attributes
+	///                  after the link operation. Can be nullptr if not needed.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EROFS if the session is read-only
+	///         - SAUNAFS_ERROR_ENOENT if the session is meta-only or the source node doesn't
+	///           exist or is in trash/reserved
+	///         - SAUNAFS_ERROR_ENOTDIR if parent_dst is not a directory
+	///         - SAUNAFS_ERROR_EACCES if write permission denied on destination parent
+	///         - SAUNAFS_ERROR_EPERM if source is a directory
+	///         - SAUNAFS_ERROR_EINVAL if name_dst validation fails
+	///         - SAUNAFS_ERROR_EEXIST if name_dst already exists in destination parent
+	///         - Other error codes as returned by node operations
+	///
+	/// @note Directories cannot have multiple hard links (to maintain tree structure).
+	/// @note The source node's link count is incremented.
+	/// @note Statistics are propagated up through all ancestor directories.
+	virtual uint8_t link(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                     inode_t inode_src, inode_t parent_dst, const HString &name_dst,
+	                     inode_t *inode, Attributes *attr) = 0;
+
 	virtual uint8_t purge(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                      inode_t inode) = 0;
 

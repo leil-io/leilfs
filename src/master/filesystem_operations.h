@@ -78,8 +78,13 @@ public:
 	uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t inode, inode_t inode_src) override;
 	uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) override;
-	uint8_t link(const FsContext &context, inode_t inode_src, inode_t parent_dst,
-	             const HString &name_dst, inode_t *inode, Attributes *attr) override;
+
+	/// Creates a hard link to an existing file in a destination directory.
+	/// @see IFilesystemOperations::link
+	uint8_t link(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	             inode_t inode_src, inode_t parent_dst, const HString &name_dst, inode_t *inode,
+	             Attributes *attr) override;
+
 	uint8_t purge(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t inode) override;
 

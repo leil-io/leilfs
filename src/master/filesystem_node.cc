@@ -430,7 +430,8 @@ void FilesystemNodeOperationsBase::addSubStats(const FilesystemOperationContext 
 	addStats(fsOpContext, parent, &resultStats);
 }
 
-void FilesystemNodeOperationsBase::fillAttr(FSNode *node, FSNode *parent, uint32_t uid,
+void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fsOpContext,
+                                            FSNode *node, FSNode *parent, uint32_t uid,
                                             uint32_t gid, uint32_t auid, uint32_t agid,
                                             uint8_t sesflags, Attributes &attr) {
 #ifdef METARESTORE
@@ -503,7 +504,7 @@ void FilesystemNodeOperationsBase::fillAttr(FSNode *node, FSNode *parent, uint32
 	put32bit(&ptr, node->ctime);
 
 	// Number of links
-	nlink = node->parents.size();
+	nlink = getNumberOfParents(fsOpContext, node);
 
 	// Type-specific attributes
 
@@ -551,14 +552,15 @@ void FilesystemNodeOperationsBase::fillAttr(FSNode *node, FSNode *parent, uint32
 	}
 }
 
-void FilesystemNodeOperationsBase::fillAttr(const FsContext &context, FSNode *node, FSNode *parent,
-                                            Attributes &attr) {
+void FilesystemNodeOperationsBase::fillAttr(const FsContext &context,
+                                            const FilesystemOperationContext &fsOpContext,
+                                            FSNode *node, FSNode *parent, Attributes &attr) {
 #ifdef METARESTORE
 	mabort("Bad code path - fsnodes_fill_attr() shall not be executed in metarestore context.");
 #endif /* METARESTORE */
 	sassert(context.hasSessionData() && context.hasUidGidData());
-	fillAttr(node, parent, context.uid(), context.gid(), context.auid(), context.agid(),
-	         context.sesflags(), attr);
+	fillAttr(fsOpContext, node, parent, context.uid(), context.gid(), context.auid(),
+	         context.agid(), context.sesflags(), attr);
 }
 
 void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &fsOpContext,
@@ -991,7 +993,8 @@ uint32_t FilesystemNodeOperationsBase::getDirSize(const FSNodeDirectory *nodeDir
 	return result;
 }
 
-void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, uint32_t gid,
+void FilesystemNodeOperationsBase::getDirData(const FilesystemOperationContext &fsOpContext,
+                                              inode_t rootINode, uint32_t uid, uint32_t gid,
                                               uint32_t auid, uint32_t agid, uint8_t sesflags,
                                               FSNodeDirectory *nodeDir, uint8_t *outBuffer,
                                               uint8_t withAttr) {
@@ -1009,7 +1012,7 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 	Attributes attr;
 
 	if (withAttr) {
-		fillAttr(nodeDir, nodeDir, uid, gid, auid, agid, sesflags, attr);
+		fillAttr(fsOpContext, nodeDir, nodeDir, uid, gid, auid, agid, sesflags, attr);
 		::memcpy(outBuffer, attr.data(), attr.size());
 		outBuffer += attr.size();
 	} else {
@@ -1027,7 +1030,7 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 
 		// parent attributes
 		if (withAttr) {
-			fillAttr(nodeDir, nodeDir, uid, gid, auid, agid, sesflags, attr);
+			fillAttr(fsOpContext, nodeDir, nodeDir, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(outBuffer, attr.data(), attr.size());
 			outBuffer += attr.size();
 		} else {
@@ -1044,17 +1047,19 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 		if (withAttr) {
 			if (!nodeDir->parents.empty()) {
 				auto *parent = idToNodeVerify<FSNode>(nodeDir->parents[0].first);
-				fillAttr(parent, nodeDir, uid, gid, auid, agid, sesflags, attr);
+				fillAttr(fsOpContext, parent, nodeDir, uid, gid, auid, agid, sesflags, attr);
 				::memcpy(outBuffer, attr.data(), attr.size());
 			} else {
 				if (rootINode == SPECIAL_INODE_ROOT) {
-					fillAttr(gMetadata->root, nodeDir, uid, gid, auid, agid, sesflags, attr);
+					fillAttr(fsOpContext, gMetadata->root, nodeDir, uid, gid, auid, agid, sesflags,
+					         attr);
 					::memcpy(outBuffer, attr.data(), attr.size());
 				} else {
 					FSNode *foundRootNode = idToNode(rootINode);
 					if (foundRootNode) {  // it should be always true because it's checked
 						// before, but better check than sorry
-						fillAttr(foundRootNode, nodeDir, uid, gid, auid, agid, sesflags, attr);
+						fillAttr(fsOpContext, foundRootNode, nodeDir, uid, gid, auid, agid,
+						         sesflags, attr);
 						::memcpy(outBuffer, attr.data(), attr.size());
 					} else {
 						memset(outBuffer, 0, attr.size());
@@ -1081,7 +1086,7 @@ void FilesystemNodeOperationsBase::getDirData(inode_t rootINode, uint32_t uid, u
 
 		// entry attributes
 		if (withAttr) {
-			fillAttr(entry.second, nodeDir, uid, gid, auid, agid, sesflags, attr);
+			fillAttr(fsOpContext, entry.second, nodeDir, uid, gid, auid, agid, sesflags, attr);
 			::memcpy(outBuffer, attr.data(), attr.size());
 			outBuffer += attr.size();
 		} else {
@@ -1114,7 +1119,7 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 		inode = nodeDir->id != rootINode ? nodeDir->id : SPECIAL_INODE_ROOT;
 		parent = idToNodeVerify<FSNodeDirectory>(
 		    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
-		fillAttr(nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
+		fillAttr(fsOpContext, nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
 		dirEntriesOut.emplace_back(kDotEntryIndex, kDotDotEntryIndex, inode, ".", attr);
 
 		firstEntry = kDotDotEntryIndex;
@@ -1127,7 +1132,7 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 			inode = SPECIAL_INODE_ROOT;
 			parent = idToNodeVerify<FSNodeDirectory>(
 			    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
-			fillAttr(nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
+			fillAttr(fsOpContext, nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
 		} else {
 			if (!nodeDir->parents.empty() && nodeDir->parents[0].first != rootINode) {
 				inode = nodeDir->parents[0].first;
@@ -1139,7 +1144,7 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 			    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
 			auto *grandparent = idToNodeVerify<FSNodeDirectory>(
 			    parent->parents.empty() ? SPECIAL_INODE_ROOT : parent->parents[0].first);
-			fillAttr(parent, grandparent, uid, gid, auid, agid, sesflags, attr);
+			fillAttr(fsOpContext, parent, grandparent, uid, gid, auid, agid, sesflags, attr);
 		}
 
 		uint64_t nextIndex = kUnusedEntryIndex;
@@ -1185,7 +1190,7 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 	while (iter != nodeDir->entries.end() && numberOfEntries > 0) {
 		name = static_cast<std::string>(*(*iter).first);
 		inode = (*iter).second->id;
-		fillAttr((*iter).second, nodeDir, uid, gid, auid, agid, sesflags, attr);
+		fillAttr(fsOpContext, (*iter).second, nodeDir, uid, gid, auid, agid, sesflags, attr);
 
 		firstEntry = (*iter).first->data() & ~kSignBit64;
 

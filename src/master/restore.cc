@@ -349,8 +349,23 @@ int do_link(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,',');
 	GETNAME(name,ptr,filename,lv,')');
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->link(FsContext::getForRestore(ts), inode, parent,
-	                           HString((const char *)name), nullptr, nullptr);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->link(FsContext::getForRestore(ts), fsOpContext, inode, parent,
+	                                 HString((const char *)name), nullptr, nullptr);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, parent inode {}, name {}",
+			              __func__, inode, parent,
+			              std::string(reinterpret_cast<const char *>(name)));
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_length(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
