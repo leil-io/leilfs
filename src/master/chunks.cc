@@ -848,6 +848,7 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 	bool lost_copy_found = it != c->parts.end();
 	int prev_needverincrease = c->needverincrease;
 	int lost_parts = c->parts.end() - it;
+	int prev_endangered = c->inEndangeredQueue;
 	if (lost_copy_found) {
 		c->parts.erase(it, c->parts.end());
 		c->needverincrease = 1;
@@ -865,7 +866,10 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 				safs::log_warn("GigaCronos: chunk_handle_disconnected_copies- verincrease: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}", c->chunkid ,uint32_t(c->operation), c->countMissingParts(), c->countRedundantParts());
 				chunk_emergency_increase_version(c);
 			} else {
-				safs::log_warn("GigaCronos: chunk_handle_disconnected_copies- finalize: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}, lost_parts: {}, prev_needverincrease: {}", c->chunkid ,uint32_t(c->operation), c->countMissingParts(), c->countRedundantParts(), lost_parts, prev_needverincrease);
+				safs::log_warn(
+				    "GigaCronos: chunk_handle_disconnected_copies- finalize: c->id: {}, c->operation: {}, c->countMissingParts(): {}, c->countRedundantParts(): {}, lost_parts: {}, prev_needverincrease: {} ,prev_endangered: {}",
+				    c->chunkid, uint32_t(c->operation), c->countMissingParts(),
+				    c->countRedundantParts(), lost_parts, prev_needverincrease, prev_endangered);
 				chunk_finalize_failed_operation(c);
 			}
 		}
