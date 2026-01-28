@@ -3,14 +3,14 @@ timeout_set 3 hours
 source test_utils/test_consistency_utils.sh
 
 CHUNKSERVERS=3
-MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsioretries=100,sfsdebug" \
+MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsioretries=100" \
 	setup_local_empty_saunafs info
 dir="${info[mount0]}/dir"
 mkdir "$dir"
 saunafs setgoal xor2 "$dir"
 
-DATA_SIZE_PER_THREAD=$(parse_si_suffix 3G)
-thread_count=10
+DATA_SIZE_PER_THREAD=$(parse_si_suffix 5G)
+thread_count=20
 
 echo "Writing data to files"
 for i in $(seq 1 $thread_count); do
