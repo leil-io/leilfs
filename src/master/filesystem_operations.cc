@@ -1134,30 +1134,29 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t ino
 }
 #endif
 
-uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t parent,
-                                          const HString &name, const std::string &path,
-                                          inode_t *inode, Attributes *attr) {
+uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
+                                          const FilesystemOperationContext &fsOpContext,
+                                          inode_t parent, const HString &name,
+                                          const std::string &path, inode_t *inode,
+                                          Attributes *attr) {
 	ChecksumUpdater cu(context.ts());
 	std::string basePath;
-	FSNode *wd;
+	FSNode *workNode;
+
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(
-	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent, &wd);
+	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent, &workNode);
 
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	auto *workDir = static_cast<FSNodeDirectory *>(workNode);
 
 	// If filesystem is case-insensitive, get the canonical path for the symlink target
-	if (static_cast<FSNodeDirectory *>(wd)->caseInsensitive) {
+	if (workDir->caseInsensitive) {
 		status = getCanonicalPath(context, fsOpContext, path, basePath);
 		if (status != SAUNAFS_STATUS_OK) {
 			// Unix-style symlinks allow dangling links, so if the path cannot be resolved,
@@ -1168,58 +1167,60 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context, inode_t pare
 		basePath = path;
 	}
 
-	if (basePath.length() == 0) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (basePath.length() == 0) { return SAUNAFS_ERROR_EINVAL; }
+
+	// Check for null bytes in the symlink path
 	for (uint32_t i = 0; i < basePath.length(); i++) {
-		if (basePath[i] == 0) {
-			return SAUNAFS_ERROR_EINVAL;
-		}
+		if (basePath[i] == 0) { return SAUNAFS_ERROR_EINVAL; }
 	}
 
 	if (nodeOperations_->nameCheck(name) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
-	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name,
-	                                context.isCaseInsensitive())) {
+	if (nodeOperations_->isNameUsed(fsOpContext, workDir, name, context.isCaseInsensitive())) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
 	if (context.isPersonalityMaster() &&
 	    (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
-	     fsnodes_quota_exceeded_dir(wd, {{QuotaResource::kInodes, 1}}))) {
+	     fsnodes_quota_exceeded_dir(workDir, {{QuotaResource::kInodes, 1}}))) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
-	FSNodeSymlink *p = static_cast<FSNodeSymlink *>(nodeOperations_->createNode(
-	    fsOpContext, context.ts(), static_cast<FSNodeDirectory *>(wd), name, FSNodeType::kSymlink,
-	    kStandardPermissionsMask, 0, context.uid(), context.gid(), 0,
-	    AclInheritance::kDontInheritAcl, *inode));
+	auto *newNode = static_cast<FSNodeSymlink *>(nodeOperations_->createNode(
+	    fsOpContext, context.ts(), workDir, name, FSNodeType::kSymlink, kStandardPermissionsMask, 0,
+	    context.uid(), context.gid(), 0, AclInheritance::kDontInheritAcl, *inode));
 
-	p->path = HString(basePath);
-	p->path_length = basePath.length();
-	fsnodes_update_checksum(p);
+	newNode->path = HString(basePath);
+	newNode->path_length = basePath.length();
+
+	fsnodes_update_checksum(newNode);
+
 	StatsRecord sr;
 	memset(&sr, 0, sizeof(StatsRecord));
 	sr.length = basePath.length();
-	nodeOperations_->addStats(fsOpContext, static_cast<FSNodeDirectory *>(wd), &sr);
-	if (attr != NULL) { nodeOperations_->fillAttr(context, fsOpContext, p, wd, *attr); }
+	nodeOperations_->addStats(fsOpContext, workDir, &sr);
+
+	if (attr != NULL) { nodeOperations_->fillAttr(context, fsOpContext, newNode, workDir, *attr); }
+
 	if (context.isPersonalityMaster()) {
 		assert(*inode == 0);
-		*inode = p->id;
+		*inode = newNode->id;
 		changeLog(context.ts(), "SYMLINK(%" PRIiNode ",%s,%s,%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
-		          wd->id, nodeOperations_->escapeName(name).c_str(),
+		          workNode->id, nodeOperations_->escapeName(name).c_str(),
 		          nodeOperations_->escapeName(basePath).c_str(), context.uid(), context.gid(),
-		          p->id);
+		          newNode->id);
 	} else {
-		if (*inode != p->id) {
+		if (*inode != newNode->id) {
 			return SAUNAFS_ERROR_MISMATCH;
 		}
 		gMetadata->metadataVersion++;
 	}
+
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Symlink);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SYMLINK);
 #endif /* #ifndef METARESTORE */
+
 	return SAUNAFS_STATUS_OK;
 }
 
