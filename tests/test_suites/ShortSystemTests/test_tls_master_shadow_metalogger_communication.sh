@@ -21,6 +21,15 @@ metalogger_cfg="|TLS_CERT_FILE = ${TLS_CERTS_DIR}/ml.crt"
 metalogger_cfg+="|TLS_KEY_FILE = ${TLS_CERTS_DIR}/ml.key"
 metalogger_cfg+="|TLS_CA_CERT_FILE = ${TLS_CERTS_DIR}/ca.crt"
 
+# Create TLS config file pointing to reload TLS config on client side
+cat > ${TEMP_DIR}/sfstls.cfg <<EOF
+tlscertfile=${TLS_CERTS_DIR}/client.crt
+tlskeyfile=${TLS_CERTS_DIR}/client.key
+tlsservercacertfile=${TLS_CERTS_DIR}/ca.crt
+tlsisserver=false
+tlsexpectedhostname=sfsmaster
+EOF
+
 # Set environment variable for client to find CA cert and check that
 # expected logic trying to use value from SSL_CERT_FILE when no CA
 # is given in mount configuration works.
@@ -28,7 +37,7 @@ export SSL_CERT_FILE="${TLS_CERTS_DIR}/ca.crt"
 
 USE_RAMDISK=YES \
 	MASTERSERVERS=2 \
-	MOUNT_EXTRA_CONFIG="tlscertfile=${TLS_CERTS_DIR}/client.crt,tlskeyfile=${TLS_CERTS_DIR}/client.key" \
+	MOUNT_EXTRA_CONFIG="tlsconfigfile=${TEMP_DIR}/sfstls.cfg" \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota" \
 	MASTER_0_EXTRA_CONFIG="${master_cfg0}|MASTER_TIMEOUT = 10|METADATA_DUMP_PERIOD_SECONDS = 0" \
 	MASTER_1_EXTRA_CONFIG="${master_cfg1}|MASTER_TIMEOUT = 10|METADATA_DUMP_PERIOD_SECONDS = 0" \

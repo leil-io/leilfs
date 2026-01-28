@@ -19,6 +19,11 @@
 #include "common/platform.h"
 #include "slogger/slogger.h"
 
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <sstream>
+
 #include <malloc.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -37,6 +42,67 @@ int checkX509Errors(int preverify_ok, X509_STORE_CTX *x509_ctx) {
 }
 
 }  // namespace
+
+inline void tlsTrim(std::string &s) {
+	auto notspace = [](unsigned char c) { return !std::isspace(c); };
+	auto b = std::find_if(s.begin(), s.end(), notspace);
+	auto e = std::find_if(s.rbegin(), s.rend(), notspace).base();
+	if (b < e) {
+		s.assign(b, e);
+	} else {
+		s.clear();
+	}
+}
+
+inline void tlsParseKV(std::string_view kv, TlsSession::TlsConfig &cfg) {
+	auto pos = kv.find('=');
+	if (pos == std::string_view::npos) { return; }
+
+	std::string key(kv.substr(0, pos));
+	std::string val(kv.substr(pos + 1));
+	tlsTrim(key);
+	tlsTrim(val);
+
+	if (key.empty()) { return; }
+
+	// Lowercase keys, one per line (exact format):
+	// tlsisserver, tlscertfile, tlskeyfile, tlsservercacertfile, tlsexpectedhostname
+	if (key == "tlsisserver") {
+		cfg.isServer = (val == "true" || val == "1" || val == "yes");
+	} else if (key == "tlscertfile") {
+		cfg.certFile = val;
+	} else if (key == "tlskeyfile") {
+		cfg.keyFile = val;
+	} else if (key == "tlsservercacertfile") {
+		cfg.caFile = val;
+	} else if (key == "tlsexpectedhostname") {
+		cfg.expectedHostname = val;
+	}
+}
+
+TlsSession::TlsConfig TlsSession::TlsConfig::fromFile(const std::string &path) {
+	TlsSession::TlsConfig cfg;
+	std::ifstream in(path);
+	if (!in) {
+		safs::log_err("TLS config open failed: {}", path);
+		return cfg;
+	}
+
+	std::string line;
+	while (std::getline(in, line)) {
+		tlsTrim(line);
+		if (line.empty() || line[0] == '#') { continue; }
+
+		// Allow comma-separated key=value pairs in one line
+		std::stringstream ss(line);
+		std::string part;
+		while (std::getline(ss, part, ',')) {
+			tlsTrim(part);
+			if (!part.empty()) { tlsParseKV(part, cfg); }
+		}
+	}
+	return cfg;
+}
 
 TlsSession::TlsSession(int socket, bool isServer, const std::string &keyFile,
                        const std::string &certFile, const std::string &trustedCAFile,
@@ -121,3 +187,7 @@ TlsSession::TlsSession(int socket, bool isServer, const std::string &keyFile,
 		}
 	}
 }
+
+TlsSession::TlsSession(int socket, const TlsConfig &cfg)
+    : TlsSession(socket, cfg.isServer, cfg.keyFile, cfg.certFile, cfg.caFile,
+                 cfg.expectedHostname) {}

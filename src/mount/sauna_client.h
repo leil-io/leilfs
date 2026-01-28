@@ -135,9 +135,7 @@ struct FsInitParams {
 	static constexpr bool     kDirectIO = false;
 
 	// TLS related parameters
-	static constexpr std::string_view kDefaultTlsCertFile = TlsSession::kNoFile;
-	static constexpr std::string_view kDefaultTlsKeyFile = TlsSession::kNoFile;
-	static constexpr std::string_view kDefaultTlsServerCACertFile = TlsSession::kNoFile;
+	static constexpr std::string_view kDefaultTlsConfigFile = TlsSession::kNoFile;
 
 	// Thank you, GCC 4.6, for no delegating constructors
 	FsInitParams()
@@ -186,9 +184,7 @@ struct FsInitParams {
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
 	             message_suppression_period(kDefaultMessageSuppressionPeriod),
-	             tls_cert_file(kDefaultTlsCertFile),
-	             tls_key_file(kDefaultTlsKeyFile),
-	             tls_server_ca_cert_file(kDefaultTlsServerCACertFile) {
+	             tls_config_file(kDefaultTlsConfigFile) {
 	}
 
 	FsInitParams(const std::string &bind_host, const std::string &host, const std::string &port, const std::string &mountpoint)
@@ -237,9 +233,7 @@ struct FsInitParams {
 	             verbose(kDefaultVerbose), direct_io(kDirectIO),
 	             log_notifications_area(kDefaultLogNotificationArea),
 	             message_suppression_period(kDefaultMessageSuppressionPeriod),
-	             tls_cert_file(kDefaultTlsCertFile),
-	             tls_key_file(kDefaultTlsKeyFile),
-	             tls_server_ca_cert_file(kDefaultTlsServerCACertFile) {
+	             tls_config_file(kDefaultTlsConfigFile) {
 	}
 
 	std::string bind_host;
@@ -311,9 +305,7 @@ struct FsInitParams {
 	unsigned message_suppression_period;
 
 	// TLS related parameters
-	std::string tls_cert_file;
-	std::string tls_key_file;
-	std::string tls_server_ca_cert_file;
+	std::string tls_config_file;
 
 	std::string io_limits_config_file;
 };
