@@ -1,8 +1,8 @@
-timeout_set "1 minutes"
+timeout_set "3 minutes"
 assert_program_installed openssl
 
 # Set up temp directory for certs
-echo "Generating TLS certificates for master-shadow communication test..."
+echo "Generating TLS certificates for master-shadow/metalogger communication test..."
 TLS_CERTS_DIR=${TEMP_DIR}/testcerts
 generate_certs ${TLS_CERTS_DIR}
 
@@ -16,6 +16,11 @@ master_cfg1="|TLS_CERT_FILE = ${TLS_CERTS_DIR}/shadow.crt"
 master_cfg1+="|TLS_KEY_FILE = ${TLS_CERTS_DIR}/shadow.key"
 master_cfg1+="|TLS_CA_CERT_FILE = ${TLS_CERTS_DIR}/ca.crt"
 
+# Configure metalogger to use TLS certs
+metalogger_cfg="|TLS_CERT_FILE = ${TLS_CERTS_DIR}/ml.crt"
+metalogger_cfg+="|TLS_KEY_FILE = ${TLS_CERTS_DIR}/ml.key"
+metalogger_cfg+="|TLS_CA_CERT_FILE = ${TLS_CERTS_DIR}/ca.crt"
+
 # Set environment variable for client to find CA cert and check that
 # expected logic trying to use value from SSL_CERT_FILE when no CA
 # is given in mount configuration works.
@@ -27,9 +32,32 @@ USE_RAMDISK=YES \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota" \
 	MASTER_0_EXTRA_CONFIG="${master_cfg0}|MASTER_TIMEOUT = 10|METADATA_DUMP_PERIOD_SECONDS = 0" \
 	MASTER_1_EXTRA_CONFIG="${master_cfg1}|MASTER_TIMEOUT = 10|METADATA_DUMP_PERIOD_SECONDS = 0" \
+	METALOGGER_EXTRA_CONFIG="${metalogger_cfg}" \
 	setup_local_empty_saunafs info
 
+# Add a metalogger
+saunafs_metalogger_daemon start
+
 cd "${info[mount0]}"
+metadata_generate_all
+metadata=$(metadata_print)
+
+# simulate master server failure and recovery
+sleep 3
+cd
+saunafs_master_daemon kill
+# leave only files written by metalogger
+rm ${info[master_data_path]}/{changelog,metadata,sessions}.*
+sfsmetarestore -a -d "${info[master_data_path]}"
+saunafs_master_daemon start
+
+# check restored filesystem
+cd "${info[mount0]}"
+assert_no_diff "$metadata" "$(metadata_print)"
+saunafs_wait_for_all_ready_chunkservers
+metadata_validate_files
+
+cd ..
 
 # Generate any changes, connect shadow master and wait until it's fully synchronized
 # Master should have metadata file with version 1, but after synchronization shadow will dump newer

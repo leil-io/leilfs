@@ -142,6 +142,23 @@ EOF
 			-sha256 \
 			-extfile server_ext.cnf
 
+		# 11. Create metalogger key and CSR
+		openssl genrsa -out ml.key 4096
+		openssl req -new \
+			-key ml.key \
+			-out ml.csr \
+			-subj "/CN=Test Metalogger"
+
+		# 12. Sign metalogger CSR with CA
+		openssl x509 -req \
+			-in ml.csr \
+			-CA ca.crt \
+			-CAkey ca.key \
+			-CAcreateserial \
+			-out ml.crt \
+			-days "$CERT_DAYS" \
+			-sha256
+
 		# Windows / WSL compatibility
 		if is_windows_system; then
 			chmod -R 777 .

@@ -743,7 +743,7 @@ void matomlserv_read(MatomlservEntry *eptr) {
 				}
 			} else {
 				err = errno;
-				if (errno != EAGAIN) {
+				if (err != EAGAIN) {
 					safs::log_err("read from ML({}) error", eptr->serviceStrIp);
 					eptr->mode = MetaloggerConnectionMode::KILL;
 				}
