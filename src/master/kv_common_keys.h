@@ -236,6 +236,13 @@ inline constexpr std::string_view kFileTestReportKeyPrefix = "FILETEST_REPORT_";
 /// tuple, serialized as a contiguous sequence via FileLocks serialization.
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";  // Section FLCK 1.0
 
+/// Key storing the latest next chunk id.
+/// Format: META_NEXT_CHUNK_ID:<NextChunkId>
+/// @note NextChunkId is encoded as a 64-bit Big Endian value.
+/// @note This key mirrors the current in-memory chunk id generator state and is used
+/// to restore allocation continuity without scanning all chunk keys.
+inline constexpr std::string_view kMetaNextChunkIdKey = "META_NEXT_CHUNK_ID";
+
 // Case-insensitive directory support
 
 /// Prefix for case-insensitive edges

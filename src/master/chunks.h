@@ -134,5 +134,7 @@ void chunk_store(FILE *fd);
 void chunk_unload(void);
 void chunk_newfs(void);
 int chunk_strinit(void);
+/// Returns the next chunk ID to be used.
+uint64_t chunk_get_next_id(void);
 uint64_t chunk_checksum(ChecksumMode mode);
 ChecksumRecalculationStatus chunks_update_checksum_a_bit(uint32_t speedLimit);
