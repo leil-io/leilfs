@@ -87,8 +87,8 @@ function start_fdb_cluster() {
 	# Create cluster file manually
 	if [ ! -f "${workspace}/conf/fdb.cluster" ]; then
 		echo "Creating new cluster configuration..."
-		readonly description="saunafstest"
-		readonly cluster_id="$(mktemp -u XXXXXXXX)"
+		local -r description="saunafstest"
+		local -r cluster_id="$(mktemp -u XXXXXXXX)"
 		echo "${description}:${cluster_id}@127.0.0.1:4500" > "${workspace}/conf/fdb.cluster"
 		chmod 644 "${workspace}/conf/fdb.cluster"
 	fi

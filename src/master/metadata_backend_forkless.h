@@ -100,8 +100,21 @@ public:
 	/// Returns a pointer to the underlying key-value engine.
 	kv::IKVEngine *getKVEngine() { return kvConnector_->getKVEngine(); }
 
-	/// Flush all pending batched updates
-	void flushPendingUpdates();
+	/// Flush pending batched updates.
+	///
+	/// This backend batches metadata updates (e.g. chunk changes) and periodically flushes
+	/// them to the KV store to avoid stalling the master event loop.
+	///
+	/// If flushAll is false, flushes at most one batch (kMaxUpdatesPerFlush_).
+	/// If flushAll is true, flushes until empty (or until a commit fails).
+	///
+	/// The flushAll=true mode is intended for operations that must leave the KV store in a
+	/// self-consistent state before proceeding (e.g. before persisting restore-relevant keys
+	/// in fs_storeall()).
+	///
+	/// @param flushAll Whether to flush until the queue becomes empty.
+	/// @return true on success; false if a KV commit failed while flushing.
+	bool flushPendingUpdates(bool flushAll = false);
 
 private:
 	/// Initializes the vector of metadata sections for later loading
@@ -120,6 +133,35 @@ private:
 
 	/// Loads CHNK_ metadata
 	int8_t loadChunks(bool ignoreFlag);
+
+	/// Persist the "next chunk ID" restore key(s).
+	///
+	/// The forkless keeps `META_NEXT_CHUNK_ID` up to date so that the chunk ID generator
+	/// can be restored without scanning the entire dataset.
+	///
+	/// Keys written/updated:
+	/// - `META_NEXT_CHUNK_ID`: the current next chunk id (from chunk_get_next_id()).
+	///
+	/// @param transaction Transaction used to persist the keys.
+	/// @return kOpSuccess on success, kOpFailure on failure.
+	int8_t saveNextChunkId(kv::IReadWriteTransaction *transaction);
+
+	/// Persist all forkless restore-relevant keys.
+	///
+	/// This is called from fs_storeall() to write the keys below:
+	/// - next chunk id keys (META_NEXT_CHUNK_ID),
+	///
+	/// Important: this must be done only after pending metadata updates have been fully flushed
+	/// (flushPendingUpdates(flushAll=true)), otherwise the KV store can temporarily contain
+	/// partially persisted metadata state but "finalized" restore keys.
+	///
+	/// @return kOpSuccess on success, kOpFailure on failure.
+	int8_t saveMetadataKeys();
+
+	/// Returns next chunk ID value from the KV store.
+	///
+	/// @return Next chunk id, or 0 if META_NEXT_CHUNK_ID key is not found in the KV store.
+	uint64_t getNextChunkId();
 
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
 	std::shared_ptr<IKVConnector> kvConnector_;
