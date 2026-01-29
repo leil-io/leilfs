@@ -60,14 +60,19 @@ public:
 	/// Enqueue an update (thread-safe)
 	void enqueue(std::unique_ptr<IMetadataUpdateEvent> event);
 
-	/// Flush all pending updates to FDB (thread-safe)
+	/// Flushes at most kMaxUpdatesPerFlush_ pending updates to FDB (thread-safe).
+	/// Intended for periodic/background flushing to avoid long stalls.
 	void flush();
+
+	/// Flushes all pending updates to FDB (thread-safe).
+	/// Returns true if all updates were flushed, false on commit failure.
+	bool flushAll();
 
 	/// Get count of pending updates
 	size_t pendingCount() const;
 
 private:
-	void flushNoLock();
+	bool flushNoLock();
 
 	kv::IKVEngine *kvEngine_;
 
@@ -75,4 +80,5 @@ private:
 	std::vector<std::unique_ptr<IMetadataUpdateEvent>> pendingUpdates_;
 
 	constexpr static size_t kInitialSize_ = 1000;
+	constexpr static size_t kMaxUpdatesPerFlush_ = 1000;
 };

@@ -22,6 +22,7 @@
 
 #include <fcntl.h>  // for open and O_RDONLY
 #include <sys/mman.h>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -60,7 +61,7 @@ MetadataBackendForkless *gForklessBackend = nullptr;
 
 // Add a static callback function
 static void flushMetadataCallback() {
-	if (gForklessBackend != nullptr) { gForklessBackend->flushPendingUpdates(); }
+	if (gForklessBackend != nullptr) { (void)gForklessBackend->flushPendingUpdates(false); }
 }
 
 inline Signal initializeNewMetadataHeaderSignal;
@@ -106,7 +107,7 @@ void MetadataBackendForkless::broadcast_metadata_saved(uint8_t status) {
 }
 
 uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
-	safs::log_err("MetadataBackendForkless::fs_storeall");
+	safs::log_info("MetadataBackendForkless::fs_storeall");
 
 	if (gMetadata == nullptr) {
 		// Periodic dump in shadow master or a request from saunafs-admin
@@ -114,16 +115,23 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 		return SAUNAFS_ERROR_NOTPOSSIBLE;
 	}
 
-	// FDB backend does not need to dump anything, as all updates are performed in real-time.
-	// However, to honor the interface, we simulate a successful dump here
-	flushPendingUpdates();
+	// Flush ALL pending batched updates to FDB before saving metadata keys,
+	// so restore-relevant keys reflect the fully persisted state.
+	if (!flushPendingUpdates(true)) {
+		safs::log_err("Failed to fully flush pending updates before saving metadata keys");
+		return SAUNAFS_ERROR_IO;
+	}
+
+	// Save metadata keys required for restore (checkpoint list, next chunk id, etc.)
+	if (saveMetadataKeys() != kOpSuccess) {
+		safs::log_err("Failed to save metadata keys required for restore");
+		return SAUNAFS_ERROR_IO;
+	}
 
 	return SAUNAFS_STATUS_OK;
 }
 
 #endif  // #if !defined(METARESTORE) && !defined(METALOGGER)
-
-#ifndef METALOGGER
 
 int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	(void)ignoreFlag;  // Unused parameter
@@ -131,18 +139,26 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	Timer timer;
 	safs::log_info("Loading chunks from FoundationDB");
 
+	uint64_t nextChunkId = getNextChunkId();
+	auto status = chunk_set_next_chunkid(nextChunkId);
+
+	if (status != SAUNAFS_STATUS_OK) {
+		safs::log_err("{}: failed to set next chunk id to {}", __func__, nextChunkId);
+		return kOpFailure;
+	}
+
 	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
-	std::string endKey = std::string(kChunkKeyPrefix) + "\\xff";
-	kv::KeySelector startSelector(kv::toBytes(kChunkKeyPrefix), true, 0);
-	kv::KeySelector endSelector(kv::toBytes(endKey), true, 0);
+	kv::Key startKey = kv::toBytes(kChunkKeyPrefix);
+	kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	kv::KeySelector endSelector(endKey, true, 0);
 
 	kv::Key lastKey;
-	static constexpr size_t kChunkPageSize = 1000;  // Number of entries to fetch per page
-
 	uint64_t chunkCount = 0;
 
 	while (true) {
-		auto pageResult = transaction->getRange(startSelector, endSelector, kChunkPageSize);
+		auto pageResult =
+		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
 		uint64_t chunkId{};
 		uint32_t chunkVersion{};
@@ -174,17 +190,50 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	safs::log_info("Loaded {} chunks", chunkCount);
 	safs::log_info("Section loaded successfully (CHNK 1.0): {}s", timer.elapsed_s());
 
-	// Connect the signal handlers after initial loading
+	return kOpSuccess;
+}
 
-	gChunkChangedSignal.connect(
-	    [this](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
-		    if (metadataWriter_) {
-			    metadataWriter_->enqueue(
-			        std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
-		    }
-	    });
+int8_t MetadataBackendForkless::saveNextChunkId(kv::IReadWriteTransaction *transaction) {
+	// META_NEXT_CHUNK_ID: <NextChunkId> e.g. META_NEXT_CHUNK_ID: 4
+	uint64_t nextChunkId = chunk_get_next_id();
+	kv::Value nextChunkIdValue;
+	serialize(nextChunkIdValue, nextChunkId);
+	auto key = kv::toBytes(kMetaNextChunkIdKey);
+	transaction->set(key, nextChunkIdValue);
+	safs::log_info("{}: Saving META_NEXT_CHUNK_ID with value: {}", __func__, nextChunkId);
 
 	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::saveMetadataKeys() {
+	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+
+	saveNextChunkId(transaction.get());
+
+	if (!transaction->commit()) {
+		safs::log_err("Failed to save metadata keys required for restore");
+		return kOpFailure;
+	}
+
+	safs::log_info("Metadata keys saved successfully for restore");
+	return kOpSuccess;
+}
+
+uint64_t MetadataBackendForkless::getNextChunkId() {
+	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+	uint64_t nextChunkId = 0;
+
+	// META_NEXT_CHUNK_ID: <NextChunkId>. e.g.: META_NEXT_CHUNK_ID: 4
+	auto key = kv::toBytes(kMetaNextChunkIdKey);
+	auto result = transaction->get(key);
+	if (result != std::nullopt) {
+		const uint8_t *data = result.value().data();
+		nextChunkId = get64bit(&data);
+		safs::log_info("Loaded {} as nextChunkId from FDB: {}", kMetaNextChunkIdKey,
+		               nextChunkId);
+	}
+
+	return nextChunkId;
 }
 
 int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
@@ -270,6 +319,7 @@ bool checkMetadataSignature() {
 }
 }  // namespace
 
+#ifndef METALOGGER
 void MetadataBackendForkless::loadall(int ignoreflag) {
 	safs::log_info("MetadataBackendForkless::loadall: ignoreflag: {}", ignoreflag);
 
@@ -310,8 +360,15 @@ void MetadataBackendForkless::store_fd(FILE *fd) {
 
 #endif  // #ifndef METALOGGER
 
-void MetadataBackendForkless::flushPendingUpdates() {
-	if (metadataWriter_) { metadataWriter_->flush(); }
+bool MetadataBackendForkless::flushPendingUpdates(bool flushAll) {
+	if (!metadataWriter_) { return false; }
+	if (flushAll) {
+		return metadataWriter_->flushAll();
+	}
+
+	// Periodic mode: best-effort single-batch flush.
+	metadataWriter_->flush();
+	return true;
 }
 
 void MetadataBackendForkless::initSections() {
@@ -355,6 +412,17 @@ void MetadataBackendForkless::init() {
 	// Initialize the metadata writer to handle metadata updates
 	metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine());
 
+	// Connect the signal handler for chunk changes
+	// This must be done in init() rather than loadChunks() to ensure that chunks created
+	// during changelog replay on shadow masters are also written to FDB
+	gChunkChangedSignal.connect(
+	    [this](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
+		    if (metadataWriter_) {
+			    metadataWriter_->enqueue(std::make_unique<ChunkUpdateEvent>(
+			        chunkId, version, lockedTo, lockId));
+		    }
+	    });
+
 	// Register periodic flush (every 1s) to ensure timely persistence
 	eventloop_timeregister_ms(1000, flushMetadataCallback);
 
@@ -377,6 +445,11 @@ void MetadataBackendForkless::init() {
 		transaction->set(kv::toBytes(kMetaVersionKey), metadataVersionValue);
 		transaction->set(kv::toBytes(kMetaNextSessionKey), initialValue32BitsValue);
 
+		constexpr uint64_t initialChunkId = 1ULL;
+		kv::Value initialChunkIdValue;
+		serialize(initialChunkIdValue, initialChunkId);
+		transaction->set(kv::toBytes(kMetaNextChunkIdKey), initialChunkIdValue);
+
 		// Initialize metadata signature to "SFSSIGNATURE M NEW"
 		transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M NEW"));
 
@@ -390,7 +463,7 @@ void MetadataBackendForkless::init() {
 	gMetadata = new FilesystemMetadata;
 	createConnections();
 
-	safs::log_info("Metadata version: {}", version);
+	safs::log_info("MetadataBackendForkless version: {}", version);
 }
 
 uint64_t MetadataBackendForkless::getVersion(const std::string & /*file*/) {

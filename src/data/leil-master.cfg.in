@@ -59,6 +59,10 @@
 ## (Default: @DATA_PATH@)
 # DATA_PATH = @DATA_PATH@
 
+## Path to FDB_CLUSTER file
+## (Default: @ETC_PATH@/saunafs-fdb/conf/fdb.cluster)
+# FDB_CLUSTER_FILE = @ETC_PATH@/saunafs-fdb/conf/fdb.cluster
+
 ## If set, servers with the same IP address will be treated
 ## as their topology distance is 0.
 ## (Default: 1)

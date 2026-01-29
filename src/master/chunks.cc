@@ -1804,6 +1804,10 @@ uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet) {
 	return SAUNAFS_ERROR_MISMATCH;
 }
 
+uint64_t chunk_get_next_id() {
+	return ChunksMetadata::getNextChunkId();
+}
+
 #ifndef METARESTORE
 
 const ChunksReplicationState& chunk_get_replication_state() {
