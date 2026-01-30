@@ -96,6 +96,11 @@ public:
 	void addSubStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
 	                 StatsRecord *newStats, StatsRecord *previousStats) override;
 
+	/// Updates all parent directories' statistics based on a node's stats change.
+	/// @see IFilesystemNodeOperations::updateParentStatsForNode
+	void updateParentStatsForNode(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                              StatsRecord *newStats, StatsRecord *previousStats) override;
+
 	void changeUidGid(const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t uid,
 	                  uint32_t gid) override;
 
@@ -227,6 +232,11 @@ public:
 	bool isAncestorOrNodeReservedOrTrash(FSNodeDirectory *ancestor, FSNode *node) override;
 
 	FSNodeDirectory *getFirstParent(FSNode *node) override;
+
+	/// Returns the IDs of all parents of the given node.
+	/// @see IFilesystemNodeOperations::getParentIds
+	std::vector<inode_t> getParentIds(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) override;
 
 protected:
 	/// Internal node lookup operation - override in subclasses for custom storage.
