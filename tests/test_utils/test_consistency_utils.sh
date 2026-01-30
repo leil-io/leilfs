@@ -9,9 +9,9 @@ writing_loop_thread() {
 	local data_size_to_write="${DATA_SIZE_PER_THREAD:-1024}"
 	pseudorandom_init $thread_id
 	while (( written_bytes < data_size_to_write )); do
-		case $(pseudorandom 3 3) in
-#			1) local file_size=$(pseudorandom 10 500K);;
-#			2) local file_size=$(pseudorandom 500K 50M);;
+		case $(pseudorandom 1 3) in
+			1) local file_size=$(pseudorandom 10 500K);;
+			2) local file_size=$(pseudorandom 500K 50M);;
 			3) local file_size=$(pseudorandom 50M 500M);;
 		esac
 		# Do not overflow more than 200 MB...
@@ -82,7 +82,7 @@ chunkservers_restarting_loop() {
 			saunafs_chunkserver_daemon $i stop
 			sleep $(pseudorandom 1 30)
 			saunafs_chunkserver_daemon $i start
-			sleep 7
+			sleep 10
 		done
 	done
 	echo "chunkservers_restarting_loop stopped"

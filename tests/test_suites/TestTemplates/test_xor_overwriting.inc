@@ -9,8 +9,8 @@ dir="${info[mount0]}/dir"
 mkdir "$dir"
 saunafs setgoal xor2 "$dir"
 
-DATA_SIZE_PER_THREAD=$(parse_si_suffix 5G)
-thread_count=20
+DATA_SIZE_PER_THREAD=$(parse_si_suffix 3G)
+thread_count=10
 
 echo "Writing data to files"
 for i in $(seq 1 $thread_count); do
