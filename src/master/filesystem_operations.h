@@ -150,9 +150,14 @@ public:
 	                     uint32_t lockid, Attributes &attr, uint64_t *chunkid) override;
 	uint8_t doSetLength(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                    inode_t inode, uint64_t length, Attributes &attr) override;
-	uint8_t setAttr(const FsContext &context, inode_t inode, uint8_t setmask, uint16_t attrmode,
-	                uint32_t attruid, uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
+
+	/// Sets attributes for a filesystem node (file, directory, etc.).
+	/// @see IFilesystemOperations::setAttr
+	uint8_t setAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                inode_t inode, uint8_t setmask, uint16_t attrmode, uint32_t attruid,
+	                uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                SugidClearMode sugidclearmode, Attributes &attr) override;
+
 	uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) override;
 	void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	            uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,

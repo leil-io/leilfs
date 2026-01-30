@@ -298,10 +298,63 @@ public:
 	virtual uint8_t doSetLength(const FsContext &context,
 	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint64_t length, Attributes &attr) = 0;
-	virtual uint8_t setAttr(const FsContext &context, inode_t inode, uint8_t setmask,
-	                        uint16_t attrmode, uint32_t attruid, uint32_t attrgid,
-	                        uint32_t attratime, uint32_t attrmtime, SugidClearMode sugidclearmode,
-	                        Attributes &attr) = 0;
+
+	/// Sets attributes for a filesystem node (file, directory, etc.).
+	///
+	/// This method modifies various attributes of a filesystem node, including permissions (mode),
+	/// ownership (uid/gid), and timestamps (atime/mtime). It performs comprehensive validation
+	/// including session verification, permission checks, and quota enforcement. The operation
+	/// supports selective attribute modification through the setmask parameter, allowing
+	/// operations like chmod, chown, and touch to be performed individually or in combination.
+	///
+	/// Key features and validations:
+	/// - Session verification (must be read-write, non-meta session)
+	/// - Node existence and accessibility verification
+	/// - Permission checks based on user privileges and ownership
+	/// - SUID/SGID bit clearing based on sugidclearmode policy
+	/// - Timestamp updates with proper access time handling
+	///
+	/// The setmask parameter controls which attributes are modified:
+	/// - SET_MODE_FLAG: Update file permissions (mode)
+	/// - SET_UID_FLAG: Change user ownership
+	/// - SET_GID_FLAG: Change group ownership
+	/// - SET_ATIME_FLAG/SET_ATIME_NOW_FLAG: Update access time
+	/// - SET_MTIME_FLAG/SET_MTIME_NOW_FLAG: Update modification time
+	///
+	/// SUID/SGID clearing follows different policies based on sugidclearmode:
+	/// - kAlways: Always clear both bits on chown
+	/// - kOsx: Clear on chown by non-root users
+	/// - kBsd: Clear on gid change by non-root users
+	/// - kExt: Clear based on group execute permission
+	/// - kSfs: Extended policy for directories and files
+	/// - kNever: Never clear (not recommended for security)
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode number of the node whose attributes to modify.
+	/// @param setmask Bitmask indicating which attributes to set (SET_MODE_FLAG, SET_UID_FLAG, etc.).
+	/// @param attrmode New file mode/permissions (used if SET_MODE_FLAG is set).
+	/// @param attruid New user ID (used if SET_UID_FLAG is set).
+	/// @param attrgid New group ID (used if SET_GID_FLAG is set).
+	/// @param attratime New access time (used if SET_ATIME_FLAG is set).
+	/// @param attrmtime New modification time (used if SET_MTIME_FLAG is set).
+	/// @param sugidclearmode Policy for clearing SUID/SGID bits on ownership changes.
+	/// @param[out] attr Attributes structure to be filled with the node's updated attributes.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EPERM if permission denied (not owner, invalid uid/gid, etc.)
+	///         - SAUNAFS_ERROR_EACCES if access denied based on current permissions
+	///         - SAUNAFS_ERROR_ENOENT if node doesn't exist
+	///         - Other error codes as returned by node operations
+	///
+	/// @note This operation updates the node's ctime (change time) to the current timestamp.
+	/// @note SUID/SGID bits are cleared according to the specified sugidclearmode policy.
+	/// @note For non-root users, various restrictions apply to prevent privilege escalation.
+	virtual uint8_t setAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, uint8_t setmask, uint16_t attrmode, uint32_t attruid,
+	                        uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
+	                        SugidClearMode sugidclearmode, Attributes &attr) = 0;
+
 	virtual uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) = 0;
 	virtual void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                    uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,

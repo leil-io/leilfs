@@ -150,6 +150,14 @@ public:
 	                           uint8_t copysgid, AclInheritance inheritAcl,
 	                           inode_t requestedINode = 0) = 0;
 
+	/// Syncs the current state of the node to persistent storage on backends that need it.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node to update.
+	/// @note In-memory backend: no-op.
+	/// @note KV backends: could schedule the set operation for later commit.
+	virtual void updateNode(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
+
 	/// Creates a hard link (directory entry) between a parent directory and an existing node.
 	///
 	/// This method establishes a new edge from a parent directory to an existing child node,

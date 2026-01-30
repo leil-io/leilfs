@@ -729,6 +729,11 @@ FSNode *FilesystemNodeOperationsBase::createNode(
 	return node;
 }
 
+void FilesystemNodeOperationsBase::updateNode(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, [[maybe_unused]] FSNode *node) {
+	// Default implementation does nothing, it is not needed for the in-memory backend
+}
+
 uint32_t FilesystemNodeOperationsBase::getPathSize(FSNodeDirectory *parent, FSNode *child) {
 	if (parent == nullptr || child == nullptr) {
 		return 0;
