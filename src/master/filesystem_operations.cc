@@ -909,10 +909,12 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::setAttr(const FsContext &context, inode_t inode, uint8_t setmask,
-                                          uint16_t attrmode, uint32_t attruid, uint32_t attrgid,
-                                          uint32_t attratime, uint32_t attrmtime,
-                                          SugidClearMode sugidclearmode, Attributes &attr) {
+uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
+                                          const FilesystemOperationContext &fsOpContext,
+                                          inode_t inode, uint8_t setmask, uint16_t attrmode,
+                                          uint32_t attruid, uint32_t attrgid, uint32_t attratime,
+                                          uint32_t attrmtime, SugidClearMode sugidclearmode,
+                                          Attributes &attr) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *p = NULL;
@@ -925,8 +927,6 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context, inode_t inod
 		return status;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -1044,6 +1044,10 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context, inode_t inod
 	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
 	                          context.agid(), context.sesflags(), attr);
 	fsnodes_update_checksum(p);
+
+	// Make persistent the changes on KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, p); }
+
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
 	return SAUNAFS_STATUS_OK;

@@ -1848,8 +1848,18 @@ void matoclserv_fuse_setattr(matoclserventry *eptr, const uint8_t *data, uint32_
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->setAttr(context, inode, setmask, attrmode, attruid, attrgid,
-		                                attratime, attrmtime, sugidclearmode, attr);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->setAttr(context, fsOpContext, inode, setmask, attrmode, attruid,
+		                                attrgid, attratime, attrmtime, sugidclearmode, attr);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);

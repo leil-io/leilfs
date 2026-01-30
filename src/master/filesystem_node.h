@@ -48,6 +48,13 @@ public:
 	                   FSNodeDirectory *parent, const HString &name, FSNodeType type, uint16_t mode,
 	                   uint16_t umask, uint32_t uid, uint32_t gid, uint8_t copysgid,
 	                   AclInheritance inheritAcl, inode_t requestedINode = 0) override;
+
+	/// Syncs the current state of the node to persistent storage on backends that need it.
+	/// @see IFilesystemNodeOperations::updateNode
+	/// @note This implementation is a no-op for in-memory storage.
+	void updateNode([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                [[maybe_unused]] FSNode *node) override;
+
 	void link(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	          FSNodeDirectory *parent, FSNode *child, const HString &name) override;
 
