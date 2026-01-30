@@ -71,7 +71,7 @@ generate_certs() {
 		cat > server_ext.cnf <<EOF
 basicConstraints = CA:FALSE
 keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
+extendedKeyUsage = serverAuth, clientAuth
 subjectAltName = @alt_names
 
 [alt_names]
@@ -121,6 +121,41 @@ EOF
 			-CAkey ca.key \
 			-CAcreateserial \
 			-out cs.crt \
+			-days "$CERT_DAYS" \
+			-sha256
+
+		# 9. Create shadow key and CSR
+		openssl genrsa -out shadow.key 4096
+		openssl req -new \
+			-key shadow.key \
+			-out shadow.csr \
+			-subj "/CN=Test Shadow"
+
+		# 10. Sign shadow CSR with CA
+		openssl x509 -req \
+			-in shadow.csr \
+			-CA ca.crt \
+			-CAkey ca.key \
+			-CAcreateserial \
+			-out shadow.crt \
+			-days "$CERT_DAYS" \
+			-sha256 \
+			-extfile server_ext.cnf
+
+		# 11. Create metalogger key and CSR
+		openssl genrsa -out ml.key 4096
+		openssl req -new \
+			-key ml.key \
+			-out ml.csr \
+			-subj "/CN=Test Metalogger"
+
+		# 12. Sign metalogger CSR with CA
+		openssl x509 -req \
+			-in ml.csr \
+			-CA ca.crt \
+			-CAkey ca.key \
+			-CAcreateserial \
+			-out ml.crt \
 			-days "$CERT_DAYS" \
 			-sha256
 

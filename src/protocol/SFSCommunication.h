@@ -357,6 +357,10 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MLTOMA_DUMP_CONFIG (1000U + 70)
 /// config:STDSTRING
 
+// 0x42F
+#define SAU_MLTOMA_STARTTLS (1000U + 71)
+/// -
+
 // MASTER <-> NOTIFIER [EXPERIMENTAL]
 
 // 0x00C8 [EXPERIMENTAL]

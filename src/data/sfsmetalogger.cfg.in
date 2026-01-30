@@ -69,3 +69,23 @@
 ## 'crit' or 'critical'
 ## 'off'
 # LOG_LEVEL = info
+
+##### EXPERIMENTAL:
+
+## Path to the TLS certificate file the metalogger will use
+## for TLS connections.
+## Example: /etc/saunafs/ssl/master.crt
+## (There is no default)
+# TLS_CERT_FILE =
+
+## Path to the TLS private key file the metalogger will use
+## for TLS connections.
+## Example: /etc/saunafs/ssl/master.key
+## (There is no default)
+# TLS_KEY_FILE =
+
+## Path to the trusted CA certificate file which is used to authenticate
+## connecting applications.
+## Example: /etc/saunafs/ssl/ca.crt
+## (There is no default)
+# TLS_CA_CERT_FILE =
