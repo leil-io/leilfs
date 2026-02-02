@@ -23,6 +23,15 @@ generate_certs ${TLS_CERTS_DIR}
 INVALID_TLS_CERTS_DIR=${TEMP_DIR}/invalid_testcerts
 generate_certs ${INVALID_TLS_CERTS_DIR}
 
+# Create TLS config file pointing to reload TLS config on client side
+cat > ${TEMP_DIR}/sfstls.cfg <<EOF
+tlscertfile=${TLS_CERTS_DIR}/client.crt
+tlskeyfile=${TLS_CERTS_DIR}/client.key
+tlsservercacertfile=${TLS_CERTS_DIR}/ca.crt
+tlsisserver=false
+tlsexpectedhostname=sfsmaster
+EOF
+
 # Configure master to use TLS certs
 master_cfg="|TLS_CERT_FILE = ${TLS_CERTS_DIR}/server.crt"
 master_cfg+="|TLS_KEY_FILE = ${TLS_CERTS_DIR}/server.key"
@@ -39,7 +48,7 @@ cs_cfg+="|TLS_CA_CERT_FILE = ${TLS_CERTS_DIR}/ca.crt"
 export SSL_CERT_FILE="${TLS_CERTS_DIR}/ca.crt"
 
 USE_RAMDISK=YES \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsioretries=5,tlscertfile=${TLS_CERTS_DIR}/client.crt,tlskeyfile=${TLS_CERTS_DIR}/client.key" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsioretries=5,tlsconfigfile=${TEMP_DIR}/sfstls.cfg" \
 	MASTER_EXTRA_CONFIG="${master_cfg}" \
 	CHUNKSERVER_EXTRA_CONFIG="${cs_cfg}" \
 	setup_local_empty_saunafs info

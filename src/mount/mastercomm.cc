@@ -96,13 +96,11 @@ struct threc {
 std::unique_ptr<TlsSession> tlsSession;
 int lastHandshakeError = 0;
 
-/// TLS related parameters
+/// TLS related values
 /// These are usually initialized as TlsSession::kNoFile on client startup (see
 /// FsInitParams)
-bool gIsTlsEnabled = false;
-std::string tlsCertFile = "";
-std::string tlsKeyFile = "";
-std::string tlsServerCaCertFile = "";
+std::string tlsConfigFile = "";
+std::mutex tlsConfigFileMutex;
 
 #define DEFAULT_OUTPUT_BUFFSIZE 0x1000
 #define DEFAULT_INPUT_BUFFSIZE 0x10000
@@ -235,6 +233,15 @@ struct InitParams {
 };
 
 static InitParams gInitParams;
+
+// Check if TLS connection is enabled to be tried,
+// at least client certificate and key files should be available.
+// Also, TLS config file can be used to configure TLS connection,
+// and should be prioritized if provided.
+bool isTlsEnabled() {
+	std::lock_guard lock(tlsConfigFileMutex);
+	return !tlsConfigFile.empty();
+}
 
 /// Starts or continues a TLS handshake.
 /// \return true if the handshake completed successfully, false otherwise.
@@ -1202,8 +1209,23 @@ int fs_register_with_new_session(std::vector<std::uint8_t> &registrationMessageB
 
 bool fs_starttls_connection() {
 	try {
-		tlsSession = std::make_unique<TlsSession>(fd, false, tlsKeyFile, tlsCertFile,
-		                                          tlsServerCaCertFile, gInitParams.host);
+		std::string tlsConfigFileCopy;
+		{
+			std::lock_guard<std::mutex> lock(tlsConfigFileMutex);
+			tlsConfigFileCopy = tlsConfigFile;
+		}
+
+		if (!tlsConfigFileCopy.empty()) {
+			TlsSession::TlsConfig tlsCfg = TlsSession::TlsConfig::fromFile(tlsConfigFileCopy);
+
+			if (tlsCfg.expectedHostname.empty()) { tlsCfg.expectedHostname = gInitParams.host; }
+
+			tlsSession = std::make_unique<TlsSession>(fd, tlsCfg);
+		} else {
+			safs::log_warn(
+			    "TLS configuration file not specified, not using TLS for connection to SFS master");
+			return false;
+		}
 		safs::log_info("initiating TLS handshake with SFS master");
 
 		auto startTlsRequest = cltoma::startTls::build();
@@ -1298,7 +1320,7 @@ int fs_connect(bool verbose) {
 	fd = fs_open_master_connection(verbose);
 	if (fd < 0) { return -1; }
 
-	if (gIsTlsEnabled && !fs_starttls_connection()) { return -1; }
+	if (isTlsEnabled() && !fs_starttls_connection()) { return -1; }
 
 	if (havepassword &&
 	    fs_register_with_get_random(registrationMessageBuffer, passwordDigest, verbose) < 0) {
@@ -1341,7 +1363,7 @@ void fs_reconnect() {
 	fd = fs_open_master_connection();
 	if (fd < 0) { return; }
 
-	if (gIsTlsEnabled && !fs_starttls_connection()) { return; }
+	if (isTlsEnabled() && !fs_starttls_connection()) { return; }
 
 	stats_inc(MASTER_CONNECTS, statsptr);
 	messageToMaster = registrationMessageBuffer.data();
@@ -1501,6 +1523,7 @@ void* fs_nop_thread(void *arg) {
 
 	uint64_t lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
 	uint64_t lastIOLimitsEpoch = gTweaks.getVarLastChangeEpochByName("IOLimitsFilePath");
+	uint64_t lastTlsConfigFileEpoch = gTweaks.getVarLastChangeEpochByName("TlsConfigFile");
 
 	for (;;) {
 		now = time(NULL);
@@ -1600,7 +1623,16 @@ void* fs_nop_thread(void *arg) {
 					}
 				}
 
+				const uint64_t currentTlsConfigFileEpoch =
+				    gTweaks.getVarLastChangeEpochByName("TlsConfigFile");
+
+				if (currentTlsConfigFileEpoch > lastTlsConfigFileEpoch) {
+					safs::log_warn("TLS configuration changed, starting reconnection...");
+					disconnect = true;
+				}
+
 				lastTweaksGlobalEpoch = currentTweaksGlobalEpoch;
+				lastTlsConfigFileEpoch = currentTlsConfigFileEpoch;
 			}
 		}
 
@@ -1834,10 +1866,10 @@ int fs_init_master_connection(SaunaClient::FsInitParams &params
 	disconnect = false;
 
     // TLS parameters
-	gIsTlsEnabled = params.tls_key_file != TlsSession::kNoFile && params.tls_cert_file != TlsSession::kNoFile;
-	tlsKeyFile = params.tls_key_file;
-	tlsCertFile = params.tls_cert_file;
-	tlsServerCaCertFile = params.tls_server_ca_cert_file;
+	{
+		std::lock_guard lock(tlsConfigFileMutex);
+		tlsConfigFile = params.tls_config_file;
+	}
 
 	if (params.delayed_init) {
 		return 1;
@@ -1868,6 +1900,7 @@ void fs_init_threads(uint32_t retries, uint32_t maxWaitTimeForRetry, uint32_t sl
 	gTweaks.registerVariable("MaxRetriesMasterComm", maxretries, "maxretriesmastercomm");
 	gTweaks.registerVariable("MaxWaitRetryTimeMasterComm", maxWaitRetryTime, "maxwaitretrytime");
 	gTweaks.registerVariable("MasterCommSleepTimeDivisor", mastercommSleepTimeDivisor, "mastercommsleeptimedivisor");
+	gTweaks.registerVariable("TlsConfigFile", tlsConfigFile, tlsConfigFileMutex, "tlsconfigfile");
 	mountInfoLock.unlock();
 
 	pthread_attr_init(&thattr);

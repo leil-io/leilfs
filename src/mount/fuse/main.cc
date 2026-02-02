@@ -273,9 +273,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.use_quota_in_volume_size = gMountOptions.usequotainvolumesize;
 	params.max_wait_retry_time = gMountOptions.maxwaitretrytime;
 	params.mastercomm_sleep_time_divisor = gMountOptions.mastercommsleeptimedivisor;
-	params.tls_cert_file = gMountOptions.tlscertfile;
-	params.tls_key_file = gMountOptions.tlskeyfile;
-	params.tls_server_ca_cert_file = gMountOptions.tlsservercacertfile;
+	params.tls_config_file = gMountOptions.tlsconfigfile;
 
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);
@@ -703,17 +701,9 @@ int main(int argc, char *argv[]) try {
 		gMountOptions.direntrycachesize = 10000000;
 	}
 
-	if (!gMountOptions.tlscertfile) {
-		gMountOptions.tlscertfile = strdup(SaunaClient::FsInitParams::kDefaultTlsCertFile.data());
-	}
-
-	if (!gMountOptions.tlskeyfile) {
-		gMountOptions.tlskeyfile = strdup(SaunaClient::FsInitParams::kDefaultTlsKeyFile.data());
-	}
-
-	if (!gMountOptions.tlsservercacertfile) {
-		gMountOptions.tlsservercacertfile =
-		    strdup(SaunaClient::FsInitParams::kDefaultTlsServerCACertFile.data());
+	if (!gMountOptions.tlsconfigfile) {
+		gMountOptions.tlsconfigfile =
+		    strdup(SaunaClient::FsInitParams::kDefaultTlsConfigFile.data());
 	}
 
 	gLimitGlibcArenas = gMountOptions.limitglibcmallocarenas;
@@ -793,9 +783,7 @@ int main(int argc, char *argv[]) try {
 		free(gMountOptions.iolimits);
 	if (gDefaultMountpoint && gDefaultMountpoint != fuse_opts.mountpoint)
 		free(gDefaultMountpoint);
-	free(gMountOptions.tlscertfile);
-	free(gMountOptions.tlskeyfile);
-	free(gMountOptions.tlsservercacertfile);
+	free(gMountOptions.tlsconfigfile);
 	free(fuse_opts.mountpoint);
 	free(conn_opts);
 	stats_term();

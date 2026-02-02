@@ -125,10 +125,7 @@ struct sfsopts_ {
 	int usequotainvolumesize;
 	unsigned maxwaitretrytime;
 	unsigned mastercommsleeptimedivisor;
-	char *tlscertfile;
-	char *tlskeyfile;
-	char *tlsservercacertfile;
-
+	char *tlsconfigfile;
 	sfsopts_()
 		: masterhost(NULL),
 		masterport(NULL),
@@ -193,9 +190,7 @@ struct sfsopts_ {
 		usequotainvolumesize(SaunaClient::FsInitParams::kDefaultUseQuotaInVolumeSize),
 		maxwaitretrytime(SaunaClient::FsInitParams::kDefaultMaxWaitRetryTime),
 		mastercommsleeptimedivisor(SaunaClient::FsInitParams::kDefaultMasterCommSleepTimeDivisor),
-		tlscertfile(nullptr),
-		tlskeyfile(nullptr),
-		tlsservercacertfile(nullptr)
+		tlsconfigfile(nullptr)
 	{ }
 };
 

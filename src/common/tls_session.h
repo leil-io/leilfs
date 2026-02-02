@@ -59,6 +59,28 @@ public:
 	// NOLINTNEXTLINE(readability-redundant-string-init)
 	static constexpr std::string_view kNoFile = "";
 
+	// Convenience: construct from a reusable configuration
+	struct TlsConfig {
+		bool isServer{false};
+		std::string keyFile;           // PEM
+		std::string certFile;          // PEM
+		std::string caFile;            // PEM
+		std::string expectedHostname;  // client-side: DNS or IP literal
+
+		// Parse a simple kv file. Supports multiple key=value pairs per line,
+		// separated by commas.
+		// Recognized keys: tlsisserver, tlscertfile, tlskeyfile, tlsservercacertfile,
+		// tlsexpectedhostname
+		static TlsConfig fromFile(const std::string &path);
+	};
+
+	/**
+	 * Constructs a TLS session for the given socket using the provided configuration.
+	 * @param socket The underlying connected socket file descriptor.
+	 * @param config The TLS configuration to use.
+	 **/
+	TlsSession(int socket, const TlsConfig &config);
+
 	/**
 	 * Constructs a TLS session for the given socket.
 	 * @param socket The underlying connected socket file descriptor.
@@ -77,8 +99,6 @@ public:
 
 	// Returns the context (for advanced tweaks if needed)
 	SSL_CTX *context() const { return ctx_.get(); }
-
-	// Returns the context (for advanced tweaks if needed)
 
 private:
 	struct CtxDeleter {

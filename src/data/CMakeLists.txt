@@ -13,6 +13,7 @@ install(FILES sfsgoals.cfg                                   DESTINATION ${SFSMA
 install(FILES sfshdd.cfg                                     DESTINATION ${CHUNKSERVER_EXAMPLES_SUBDIR})
 install(FILES sfsmount.cfg                                   DESTINATION ${CLIENT_EXAMPLES_SUBDIR})
 install(FILES sfsiolimits.cfg                                   DESTINATION ${CLIENT_EXAMPLES_SUBDIR})
+install(FILES sfstls.cfg                                     DESTINATION ${CLIENT_EXAMPLES_SUBDIR})
 install(FILES sfstopology.cfg                                DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
 install(FILES sfsglobaliolimits.cfg                             DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
 install(FILES saunafs-uraft.cfg                             DESTINATION ${URAFT_EXAMPLES_SUBDIR})
