@@ -20,24 +20,89 @@
 
 #include <sys/statvfs.h>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
 #include <ctime>
+#include <memory>
+#include <mutex>
+#include <utility>
 
+#include "chunkserver-common/chunk_trash_manager.h"
 #include "chunkserver-common/chunk_trash_manager_impl.h"
+#include "chunkserver-common/global_shared_resources.h"
+#include "chunkserver-common/hdd_stats.h"
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
-#include "hdd_stats.h"
 #include "slogger/slogger.h"
 
 namespace fs = std::filesystem;
 
-size_t ChunkTrashManagerImpl::availableThresholdGB = kDefaultAvailableThresholdGB;
-size_t ChunkTrashManagerImpl::trashTimeLimitSeconds = kDefaultTrashTimeLimitSeconds;
-size_t ChunkTrashManagerImpl::trashGarbageCollectorBulkSize = kDefaultTrashGarbageCollectorBulkSize;
-size_t ChunkTrashManagerImpl::garbageCollectorSpaceRecoveryStep =
+std::atomic<size_t> ChunkTrashManagerImpl::availableThresholdGB = kDefaultAvailableThresholdGB;
+std::atomic<size_t> ChunkTrashManagerImpl::trashTimeLimitSeconds = kDefaultTrashTimeLimitSeconds;
+std::atomic<size_t> ChunkTrashManagerImpl::trashGarbageCollectorBulkSize =
+    kDefaultTrashGarbageCollectorBulkSize;
+std::atomic<size_t> ChunkTrashManagerImpl::garbageCollectorSpaceRecoveryStep =
     kDefaultGarbageCollectorSpaceRecoveryStep;
+uint16_t ChunkTrashManagerImpl::numberOfTrashPurgeWorkers = kDefaultNumberOfTrashPurgeWorkers;
+
+inline constexpr uint64_t kNumberOfBytesPerMebiByte = 1024 * 1024;
+
+uint64_t ChunkTrashManagerImpl::maxBytesReadPerDisk = 1 * kNumberOfBytesPerMebiByte;
+uint64_t ChunkTrashManagerImpl::maxBytesWritePerDisk = 1 * kNumberOfBytesPerMebiByte;
+
+uint64_t ChunkTrashManagerImpl::previousBytesReadPerDisk = 1 * kNumberOfBytesPerMebiByte;   // 1MiB
+uint64_t ChunkTrashManagerImpl::previousBytesWritePerDisk = 1 * kNumberOfBytesPerMebiByte;  // 1MiB
 
 const std::string ChunkTrashManagerImpl::kTrashGuardString =
     std::string("/") + ChunkTrashManager::kTrashDirname + "/";
+
+/**
+ * @brief Encapsulates global state for the trash purger.
+ *
+ * ChunkTrashManagerImpl requires non-trivial global state (threads, queue,
+ * atomics, mutex, condition_variable). Originally these were separate static
+ * class members in a PIC library shared by the main binary and plugins, which
+ * can lead to unsafe initialization/destruction patterns across images.
+ *
+ * This aggregates the state into a single function-local static to ensure
+ * lazy initialization, well-defined destruction order, and reduced global
+ * symbol exposure.
+ */
+namespace {
+struct TrashPurgerState {
+	std::vector<std::thread> threads;
+	std::unique_ptr<ProducerConsumerQueue> queue;
+	std::atomic<uint32_t> jobsCount{0};
+	std::mutex mutex;
+	std::condition_variable cv;
+};
+
+TrashPurgerState &trashPurgerState() {
+	static TrashPurgerState state;
+	return state;
+}
+}  // namespace
+
+/**
+ * @brief Job representing a trash file removal task.
+ */
+struct TrashRemovalJob {
+	ChunkTrashIndex::TrashIndexFileEntries files;  // Files to remove from trash
+	std::string diskPath;                          // Disk where the files are located
+};
+
+/**
+ * @brief Operations that the trash purger worker thread can process.
+ *
+ * These values are used to signal the type of job that should be executed
+ * by the trash purger worker.
+ */
+enum TrashPurgerOperation : uint8_t {
+	Purge,  // Remove trash files from disk as part of the garbage collection process
+	Exit    // Signal the worker thread to terminate gracefully
+};
 
 void ChunkTrashManagerImpl::reloadConfig() {
 	availableThresholdGB =
@@ -48,32 +113,43 @@ void ChunkTrashManagerImpl::reloadConfig() {
 	    cfg_get("CHUNK_TRASH_GC_BATCH_SIZE", kDefaultTrashGarbageCollectorBulkSize);
 	garbageCollectorSpaceRecoveryStep = cfg_get("CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE",
 	                                            kDefaultGarbageCollectorSpaceRecoveryStep);
+
 	safs::log_info(
 	    "Reloaded chunk trash manager configuration: "
 	    "CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB={}, "
 	    "CHUNK_TRASH_EXPIRATION_SECONDS={}, "
 	    "CHUNK_TRASH_GC_BATCH_SIZE={}, "
-	    "CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE={}",
-	    availableThresholdGB, trashTimeLimitSeconds, trashGarbageCollectorBulkSize,
-	    garbageCollectorSpaceRecoveryStep);
+	    "CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE={}, "
+	    "CHUNK_TRASH_GC_PURGE_WORKERS_NR={}",
+	    availableThresholdGB.load(), trashTimeLimitSeconds.load(),
+	    trashGarbageCollectorBulkSize.load(), garbageCollectorSpaceRecoveryStep.load(),
+	    numberOfTrashPurgeWorkers);
 }
 
-std::string ChunkTrashManagerImpl::getTimeString(std::time_t time1) {
+void ChunkTrashManagerImpl::init() {
+	numberOfTrashPurgeWorkers =
+	    cfg_get_minmaxvalue("CHUNK_TRASH_GC_PURGE_WORKERS_NR", kDefaultNumberOfTrashPurgeWorkers,
+	                        kMinNumberOfTrashPurgeWorkers, kMaxNumberOfTrashPurgeWorkers);
+
+	auto &state = trashPurgerState();
+	if (!state.queue) { state.queue = std::make_unique<ProducerConsumerQueue>(); }
+
+	if (!state.threads.empty()) { return; }
+
+	std::unique_lock lock(state.mutex);
+	for (uint16_t i = 0; i < numberOfTrashPurgeWorkers; ++i) {
+		state.threads.emplace_back(&ChunkTrashManagerImpl::removeTrashFilesFromDiskWorker, i);
+	}
+}
+
+std::string ChunkTrashManagerImpl::getStringFromTime(std::time_t time) {
 	std::tm utcTime;
 
-#ifdef _WIN32
-	if (gmtime_s(&utcTime, &time1) != 0) {
+	if (gmtime_r(&time, &utcTime) == nullptr) {
 		safs::log_error_code(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
 		                     std::strerror(errno));
 		return "";
 	}
-#else
-	if (gmtime_r(&time1, &utcTime) == nullptr) {
-		safs::log_error_code(SAUNAFS_ERROR_EINVAL, "Failed to convert time to UTC: {}",
-		                     std::strerror(errno));
-		return "";
-	}
-#endif
 
 	std::ostringstream oss;
 	oss << std::put_time(&utcTime, kTimeStampFormat.c_str());
@@ -90,8 +166,19 @@ std::time_t ChunkTrashManagerImpl::getTimeFromString(const std::string &timeStri
 		errorCode = SAUNAFS_ERROR_EINVAL;
 		safs::log_error_code(static_cast<error_type>(errorCode), "Failed to parse time string: {}",
 		                     timeString.c_str());
+		return 0;
 	}
-	return std::mktime(&time);
+
+	const std::time_t parsedTime = timegm(&time);
+
+	if (parsedTime == static_cast<std::time_t>(-1)) {
+		errorCode = SAUNAFS_ERROR_EINVAL;
+		safs::log_error_code(static_cast<error_type>(errorCode),
+		                     "Failed to convert UTC time string: {}", timeString.c_str());
+		return 0;
+	}
+
+	return parsedTime;
 }
 
 ChunkTrashManagerImpl::error_type ChunkTrashManagerImpl::getMoveDestinationPath(
@@ -125,7 +212,7 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath, const fs::path 
 		return SAUNAFS_ERROR_NOTDONE;
 	}
 
-	const std::string deletionTimestamp = getTimeString(deletionTime);
+	const std::string deletionTimestamp = getStringFromTime(deletionTime);
 	std::string trashFilename;
 
 	auto errorCode = getMoveDestinationPath(filePath.string(), diskPath.string(), trashDir.string(),
@@ -158,13 +245,50 @@ int ChunkTrashManagerImpl::moveToTrash(const fs::path &filePath, const fs::path 
 }
 
 void ChunkTrashManagerImpl::removeTrashFiles(
-    const ChunkTrashIndex::TrashIndexDiskEntries &filesToRemove) const {
-	for (const auto &[diskPath, fileEntries] : filesToRemove) {
-		for (const auto &fileEntry : fileEntries) {
+    ChunkTrashIndex::TrashIndexDiskEntries &filesToRemove) const {
+	auto &state = trashPurgerState();
+
+	for (auto &[diskPath, fileEntries] : filesToRemove) {
+		state.jobsCount++;
+		auto job = std::make_unique<TrashRemovalJob>(std::move(fileEntries), diskPath);
+		state.queue->put(0, TrashPurgerOperation::Purge, reinterpret_cast<uint8_t *>(job.get()),
+		                 1);
+		job.release();
+	}
+	std::unique_lock<std::mutex> trashPurgerLock(state.mutex);
+	state.cv.wait(trashPurgerLock, [&] { return state.jobsCount == 0; });
+}
+
+void ChunkTrashManagerImpl::removeTrashFilesFromDiskWorker(uint16_t workerId) {
+	std::string threadName = "purgeWorker " + std::to_string(workerId);
+	pthread_setname_np(pthread_self(), threadName.c_str());
+
+	auto &state = trashPurgerState();
+
+	uint32_t jobId;
+	uint32_t operation;
+	uint8_t *jobPtrArg;
+
+	while (true) {
+		state.queue->get(&jobId, &operation, &jobPtrArg, nullptr);
+
+		if (operation == TrashPurgerOperation::Exit) { break; }
+		auto *raw = reinterpret_cast<TrashRemovalJob *>(jobPtrArg);
+
+		std::unique_ptr<TrashRemovalJob> job(raw);
+
+		const ChunkTrashIndex::TrashIndexFileEntries &filesToRemove = job->files;
+		const std::string &diskPath = job->diskPath;
+
+		for (const auto &fileEntry : filesToRemove) {
 			if (removeFileFromTrash(fileEntry.second) != SAUNAFS_STATUS_OK) { continue; }
 			HddStats::gStatsOperationsGCPurge++;
 			getTrashIndex().remove(fileEntry.first, fileEntry.second, diskPath);
 		}
+
+		state.jobsCount--;
+		std::unique_lock<std::mutex> trashPurgerLock(state.mutex);
+		state.cv.notify_one();
 	}
 }
 
@@ -172,8 +296,7 @@ fs::path ChunkTrashManagerImpl::getTrashDir(const fs::path &diskPath) {
 	return diskPath / ChunkTrashManager::kTrashDirname;
 }
 
-int ChunkTrashManagerImpl::init(const std::string &diskPath) {
-	reloadConfig();
+int ChunkTrashManagerImpl::registerDiskPath(const std::string &diskPath) {
 	const fs::path trashDir = getTrashDir(diskPath);
 
 	if (!fs::exists(trashDir)) {
@@ -186,7 +309,7 @@ int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 		}
 	}
 
-	getTrashIndex().reset(diskPath);
+	getTrashIndex().erase(diskPath);
 
 	for (const auto &file : fs::recursive_directory_iterator(trashDir)) {
 		if (fs::is_regular_file(file) && isTrashPath(file.path().string())) {
@@ -213,12 +336,38 @@ int ChunkTrashManagerImpl::init(const std::string &diskPath) {
 	return SAUNAFS_STATUS_OK;
 }
 
+void ChunkTrashManagerImpl::eraseDisk(const std::string &diskPath) {
+	getTrashIndex().erase(diskPath);
+}
+
+void ChunkTrashManagerImpl::terminate() {
+	auto &state = trashPurgerState();
+
+	if (!state.queue) {
+		state.threads.clear();
+		state.jobsCount.store(0, std::memory_order_relaxed);
+		return;
+	}
+
+	for (size_t i = 0; i < state.threads.size(); i++) {
+		state.queue->put(0, TrashPurgerOperation::Exit, nullptr, 1);
+	}
+
+	for (auto &thread : state.threads) {
+		if (thread.joinable()) { thread.join(); }
+	}
+
+	state.threads.clear();
+	state.queue.reset();
+	state.jobsCount.store(0, std::memory_order_relaxed);
+}
+
 bool ChunkTrashManagerImpl::isValidTimestampFormat(const std::string &timestamp) {
 	return timestamp.size() == kTimeStampLength && std::ranges::all_of(timestamp, ::isdigit);
 }
 
 void ChunkTrashManagerImpl::removeExpiredFiles(const time_t &timeLimit, size_t bulkSize) const {
-	const auto expiredFilesCollection = getTrashIndex().getExpiredFiles(timeLimit, bulkSize);
+	auto expiredFilesCollection = getTrashIndex().getExpiredFiles(timeLimit, bulkSize);
 	removeTrashFiles(expiredFilesCollection);
 }
 
@@ -240,7 +389,8 @@ void ChunkTrashManagerImpl::makeSpace(const std::string &diskPath,
 	while (availableSpace < spaceAvailabilityThreshold) {
 		const auto olderFilesCollection = getTrashIndex().getOlderFiles(diskPath, recoveryStep);
 		if (olderFilesCollection.empty()) { break; }
-		removeTrashFiles({{diskPath, olderFilesCollection}});
+		ChunkTrashIndex::TrashIndexDiskEntries temp = {{diskPath, olderFilesCollection}};
+		removeTrashFiles(temp);
 		availableSpace = checkAvailableSpace(diskPath);
 	}
 }
@@ -252,11 +402,82 @@ void ChunkTrashManagerImpl::makeSpace(const size_t spaceAvailabilityThreshold,
 	}
 }
 
+double ChunkTrashManagerImpl::computeGCThrottlingFactor(uint64_t currentBytesRead,
+                                                        uint64_t currentBytesWrite,
+                                                        uint64_t currentDiskCount) {
+	currentBytesRead /= currentDiskCount;
+	currentBytesWrite /= currentDiskCount;
+
+	// Exponential decay applied on each GC cycle to gradually lower the learned
+	// per-disk I/O baseline after sustained periods of lower activity.
+	constexpr double kMaxIoDecayFactor = 0.99997;
+
+	maxBytesReadPerDisk = std::max({uint64_t(maxBytesReadPerDisk * kMaxIoDecayFactor),
+	                                currentBytesRead, kNumberOfBytesPerMebiByte});
+	maxBytesWritePerDisk = std::max({uint64_t(maxBytesWritePerDisk * kMaxIoDecayFactor),
+	                                 currentBytesWrite, kNumberOfBytesPerMebiByte});
+
+	double totalIOPercentage =
+	    (static_cast<double>(currentBytesRead) * 100.0 / maxBytesReadPerDisk) +
+	    (static_cast<double>(currentBytesWrite) * 100.0 / maxBytesWritePerDisk);
+
+	/// Inverted sigmoid mapping a value in [0,100] to (0,1].
+	/// https://en.wikipedia.org/wiki/Sigmoid_function
+	///
+	/// kSigmoidCenter: midpoint of the curve (f(val) = 0.5 when val/100 == center).
+	/// kSigmoidSteepness: controls how sharp the transition is around the midpoint.
+	/// Larger values make the drop steeper.
+	///
+	/// Input is normalized to [0,1] before applying the sigmoid.
+	auto invertedSigmoid = [](double val) -> double {
+		const double kSigmoidSteepness = 10.0;       // steepness
+		const double kSigmoidCenter = 0.15;          // center in [0,1]
+		const double kSigmoidValNorm = val / 100.0;  // normalize so that 100% total I/O maps to 1.0
+
+		const double res =
+		    1.0 / (1.0 + std::exp(-kSigmoidSteepness * (kSigmoidValNorm - kSigmoidCenter)));
+		return 1.0 - res;
+	};
+
+	constexpr uint32_t kIoSpikeRatioThreshold = 10;
+
+	double throttlingFactor = invertedSigmoid(totalIOPercentage);
+
+	double ioSpikeRatio =
+	    (static_cast<double>(currentBytesRead) + 1) / (previousBytesReadPerDisk + 1) +
+	    (static_cast<double>(currentBytesWrite) + 1) / (previousBytesWritePerDisk + 1);
+
+	if (ioSpikeRatio >= kIoSpikeRatioThreshold) { throttlingFactor = 0; }
+
+	previousBytesReadPerDisk = currentBytesRead;
+	previousBytesWritePerDisk = currentBytesWrite;
+
+	return throttlingFactor;
+}
+
 void ChunkTrashManagerImpl::collectGarbage() {
-	if (!ChunkTrashManager::isEnabled) { return; }
 	std::time_t const currentTime = std::time(nullptr);
 	std::time_t const expirationTime = currentTime - trashTimeLimitSeconds;
-	removeExpiredFiles(expirationTime, trashGarbageCollectorBulkSize);
+
+	uint64_t currentBytesWrite = HddStats::gBytesWrittenSinceLastGCSweep.exchange(0);
+	uint64_t currentBytesRead = HddStats::gBytesReadSinceLastGCSweep.exchange(0);
+
+	uint64_t currentDiskCount = 1;
+	{
+		std::lock_guard disksLockGuard(gDisksMutex);
+		currentDiskCount = std::max(currentDiskCount, gDisks.size());
+	}
+
+	double factor =
+	    computeGCThrottlingFactor(currentBytesRead, currentBytesWrite, currentDiskCount);
+
+	uint64_t bulkSizeScaled = trashGarbageCollectorBulkSize * factor;
+
+	static constexpr uint64_t kMinGCBulkSizeForActivation = 5;
+
+	if (bulkSizeScaled >= kMinGCBulkSizeForActivation) {
+		removeExpiredFiles(expirationTime, bulkSizeScaled);
+	}
 	makeSpace(availableThresholdGB, garbageCollectorSpaceRecoveryStep);
 }
 

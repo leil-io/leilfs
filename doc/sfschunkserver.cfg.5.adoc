@@ -185,27 +185,32 @@ it will search in usual plugin locations, like PLUGINS_PATH/chunkserver (PLUGINS
 defined at build time), /usr/local/lib/saunafs/plugins/chunkserver, and
 /usr/lib/saunafs/plugins/chunkserver (default is empty string, i.e. disabled)
 
-*CHUNK_TRASH_ENABLED (EXPERIMENTAL)*:: enables or disables the chunk trash
+*CHUNK_TRASH_ENABLED*:: enables or disables the chunk trash
 feature. When enabled, deleted chunks are moved to a trash directory instead of
 being immediately removed. (Default: 0)
 
-*CHUNK_TRASH_EXPIRATION_SECONDS (EXPERIMENTAL)*:: specifies the timeout in
+*CHUNK_TRASH_EXPIRATION_SECONDS*:: specifies the timeout in
 seconds for chunks to remain in the trash before being permanently deleted.
 (Default: 259200)
 
-*CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB (EXPERIMENTAL)*:: sets the available space
+*CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB*:: sets the available space
 threshold in gigabytes. If the available space on the disk falls below this
 threshold, the system will start deleting older chunks from the trash to free
 up space. A suggested value is about the 15% of the capacity of the smaller
 configured disk. (Default: 0)
 
-*CHUNK_TRASH_GC_BATCH_SIZE (EXPERIMENTAL)*:: defines the bulk size for the
-garbage collector when processing chunks in the trash. This determines how many
-files are processed in each garbage collection cycle. (Default: 1000)
+*CHUNK_TRASH_GC_BATCH_SIZE*:: defines the maximum bulk size 
+per disk for the garbage collector when processing chunks in the trash. 
+This value is used when no I/O pressure is detected and is dynamically 
+scaled down based on current disk load.
+(Default: 500)
 
-*CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE (EXPERIMENTAL)*:: [ADVANCED] The
+*CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE*:: [ADVANCED] The
 number of files to remove from the trash in a single GC cycle, in case the disk
 is full and space needs to be recovered. (Default: 100)
+
+*CHUNK_TRASH_GC_PURGE_WORKERS_NR*:: The number of workers purging files
+in parallel. (Default: 5)
 
 *LOG_LEVEL*:: Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or
 config value LOG_LEVEL to determine logging level. Valid log levels are

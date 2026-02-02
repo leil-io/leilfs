@@ -28,7 +28,10 @@ public:
 	MOCK_METHOD(int, moveToTrash,
 	            (const std::filesystem::path &, const std::filesystem::path &, const std::time_t &),
 	            ());
-	MOCK_METHOD(int, init, (const std::string &), ());
+	MOCK_METHOD(void, init, (), ());
+	MOCK_METHOD(int, registerDiskPath, (const std::string &), ());
+	MOCK_METHOD(void, eraseDisk, (const std::string &), ());
+	MOCK_METHOD(void, terminate, (), ());
 	MOCK_METHOD(void, collectGarbage, (), ());
 	MOCK_METHOD(void, reloadConfig, (), ());
 };
@@ -42,9 +45,13 @@ protected:
 		mockImpl = std::make_shared<MockChunkTrashManagerImpl>();
 		ChunkTrashManager::setImpl(mockImpl);
 		ChunkTrashManager::isEnabled = 1;
+		EXPECT_CALL(*mockImpl, terminate()).Times(testing::AnyNumber());
 	}
 
-	void TearDown() override { mockImpl.reset(); }
+	void TearDown() override {
+		ChunkTrashManager::terminate();
+		mockImpl.reset();
+	}
 };
 
 TEST_F(ChunkTrashManagerTest, MoveToTrashForwardsCall) {
@@ -64,9 +71,17 @@ TEST_F(ChunkTrashManagerTest, MoveToTrashForwardsCall) {
 TEST_F(ChunkTrashManagerTest, InitForwardsCall) {
 	std::string const diskPath = "/disk/";
 
-	EXPECT_CALL(*mockImpl, init(diskPath)).Times(1);
+	EXPECT_CALL(*mockImpl, init).Times(1);
 
-	ChunkTrashManager::init(diskPath);  // Call the method.
+	ChunkTrashManager::init();  // Call the method.
+}
+
+TEST_F(ChunkTrashManagerTest, RegisterDiskPathForwardsCall) {
+	std::string const diskPath = "/disk/";
+
+	EXPECT_CALL(*mockImpl, registerDiskPath(diskPath)).Times(1);
+
+	ChunkTrashManager::registerDiskPath(diskPath);  // Call the method.
 }
 
 TEST_F(ChunkTrashManagerTest, CollectGarbageForwardsCall) {
@@ -81,6 +96,12 @@ TEST_F(ChunkTrashManagerTest, ReloadConfigForwardsCall) {
 	ChunkTrashManager::reloadConfig();  // Call the method.
 }
 
+TEST_F(ChunkTrashManagerTest, TerminateForwardsCall) {
+	EXPECT_CALL(*mockImpl, terminate()).Times(testing::AtLeast(1));
+
+	ChunkTrashManager::terminate();
+}
+
 TEST_F(ChunkTrashManagerTest, DisabledMoveToTrashDoesNotForwardsCall) {
 	std::filesystem::path filePath = "example.txt";
 	std::filesystem::path diskPath = "/disk/";
@@ -93,17 +114,26 @@ TEST_F(ChunkTrashManagerTest, DisabledMoveToTrashDoesNotForwardsCall) {
 	EXPECT_EQ(result, 0);  // Validate that the return value is as expected.
 }
 
+TEST_F(ChunkTrashManagerTest, DisabledRegisterDiskPathForwardsCall) {
+	std::string const diskPath = "/disk/";
+
+	EXPECT_CALL(*mockImpl, registerDiskPath(diskPath)).Times(1);
+
+	ChunkTrashManager::isEnabled = 0;
+	ChunkTrashManager::registerDiskPath(diskPath);  // Call the method.
+}
+
 TEST_F(ChunkTrashManagerTest, DisabledInitForwardsCall) {
 	std::string const diskPath = "/disk/";
 
-	EXPECT_CALL(*mockImpl, init(diskPath)).Times(1);
+	EXPECT_CALL(*mockImpl, init).Times(1);
 
 	ChunkTrashManager::isEnabled = 0;
-	ChunkTrashManager::init(diskPath);  // Call the method.
+	ChunkTrashManager::init();  // Call the method.
 }
 
-TEST_F(ChunkTrashManagerTest, DisabledCollectGarbageDoesNotForwardsCall) {
-	EXPECT_CALL(*mockImpl, collectGarbage()).Times(0);
+TEST_F(ChunkTrashManagerTest, DisabledCollectGarbageForwardsCall) {
+	EXPECT_CALL(*mockImpl, collectGarbage()).Times(1);
 
 	ChunkTrashManager::isEnabled = 0;
 	ChunkTrashManager::collectGarbage();  // Call the method.

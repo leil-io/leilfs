@@ -19,6 +19,7 @@
 #include "common/platform.h"
 
 #include <syslog.h>
+#include <atomic>
 #include <memory>
 
 #include "chunkserver-common/chunk_trash_manager.h"
@@ -27,7 +28,7 @@
 #include "errors/saunafs_error_codes.h"
 #include "slogger/slogger.h"
 
-u_short ChunkTrashManager::isEnabled = 0;
+std::atomic<uint8_t> ChunkTrashManager::isEnabled = 0;
 std::mutex ChunkTrashManager::implMutex;
 
 // Using the Meyer's singleton pattern to ensure proper initialization and
@@ -54,9 +55,11 @@ int ChunkTrashManager::moveToTrash(const std::filesystem::path &filePath,
 	if (!isEnabled) { return 0; }
 
 	// Protect against concurrent access
-	std::lock_guard<std::mutex> lock(implMutex);
-
-	auto &impl = getImpl();
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
 	if (!impl) {
 		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
 		                     "ChunkTrashManager implementation not initialized");
@@ -65,28 +68,74 @@ int ChunkTrashManager::moveToTrash(const std::filesystem::path &filePath,
 	return impl->moveToTrash(filePath, diskPath, deletionTime);
 }
 
-int ChunkTrashManager::init(const std::string &diskPath) {
-	reloadConfig();
-
+void ChunkTrashManager::init() {
 	// Protect against concurrent access
-	std::lock_guard<std::mutex> lock(implMutex);
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
+	if (!impl) {
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
+		return;
+	}
+	impl->init();
+	reloadConfig();
+}
 
-	auto &impl = getImpl();
+int ChunkTrashManager::registerDiskPath(const std::string &diskPath) {
+	// Protect against concurrent access
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
 	if (!impl) {
 		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
 		                     "ChunkTrashManager implementation not initialized");
 		return SAUNAFS_ERROR_NOTDONE;
 	}
-	return impl->init(diskPath);
+	return impl->registerDiskPath(diskPath);
+}
+
+void ChunkTrashManager::eraseDisk(const std::string &diskPath) {
+	// Protect against concurrent access
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
+	if (!impl) {
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
+		return;
+	}
+	impl->eraseDisk(diskPath);
+}
+
+void ChunkTrashManager::terminate() {
+	// Protect against concurrent access
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
+	if (!impl) {
+		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
+		                     "ChunkTrashManager implementation not initialized");
+		return;
+	}
+	impl->terminate();
 }
 
 void ChunkTrashManager::collectGarbage() {
-	if (!isEnabled) { return; }
-
 	// Protect against concurrent access
-	std::lock_guard<std::mutex> lock(implMutex);
-
-	auto &impl = getImpl();
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
 	if (!impl) {
 		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
 		                     "ChunkTrashManager implementation not initialized");
@@ -97,16 +146,18 @@ void ChunkTrashManager::collectGarbage() {
 
 void ChunkTrashManager::reloadConfig() {
 	// Protect against concurrent access
-	std::lock_guard<std::mutex> lock(implMutex);
-
-	auto &impl = getImpl();
+	ImplementationPtr impl;
+	{
+		std::lock_guard<std::mutex> lock(implMutex);
+		impl = getImpl();
+	}
 	if (!impl) {
 		safs::log_error_code(SAUNAFS_ERROR_EINVAL,
 		                     "ChunkTrashManager implementation not initialized");
 		return;
 	}
 
-	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", static_cast<u_short>(0));
+	isEnabled = cfg_get("CHUNK_TRASH_ENABLED", static_cast<u_short>(kDefaultIsEnabled));
 	safs::log_info("Chunk trash manager is {}", isEnabled ? "enabled" : "disabled");
 	impl->reloadConfig();
 }

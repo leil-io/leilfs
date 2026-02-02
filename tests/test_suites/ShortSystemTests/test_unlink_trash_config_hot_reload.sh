@@ -1,4 +1,4 @@
-timeout_set 4 minutes
+timeout_set 6 minutes
 
 CHUNKSERVERS=4 \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
@@ -86,6 +86,49 @@ if [ "$(find_all_trashed_chunks | wc -l)" -ne 0 ]; then
 	test_add_failure $'The trashed chunks were not removed after the trashing time'
 fi
 
+######################################################################
+#### Test that chunks already present in trash survive config reload
+#### with trash disabled and are later removed by garbage collector
+######################################################################
+
+# Create a new file consisting of a couple of chunks and remove it
+create_test_file "${info[mount0]}/file_reload_case" 3
+create_test_file "${info[mount0]}/xorfile_reload_case" xor3
+rm -f "${info[mount0]}/file_reload_case" "${info[mount0]}/xorfile_reload_case"
+
+# Wait for all chunks to be trashed
+if ! wait_for '[[ $(find_all_chunks | wc -l) == 0 ]]' "90 seconds"; then
+	test_add_failure $'The following chunks were not removed before reload:\n'"$(find_all_chunks)"
+fi
+
+# Verify that chunks are present in trash before reload
+trashed_chunks_before_reload=$(find_all_trashed_chunks | wc -l)
+echo "Trashed chunks before reload: ${trashed_chunks_before_reload}"
+
+MESSAGE="Expected trashed chunks before reload" \
+assert_success test "${trashed_chunks_before_reload}" -gt 0
+
+# Change the config to disable chunk trashing and reload it
+truncate -s 0 "${TEMP_DIR}/log"
+for chunkserver_id in $(seq 0 "$((CHUNKSERVERS-1))"); do
+	chunkserver_cfg="${etcdir}/sfschunkserver_${chunkserver_id}.cfg"
+	sed -E -i 's/^CHUNK_TRASH_ENABLED=.*/CHUNK_TRASH_ENABLED=0/' "${chunkserver_cfg}"
+	sed -E -i 's/^CHUNK_TRASH_EXPIRATION_SECONDS=.*/CHUNK_TRASH_EXPIRATION_SECONDS=50/' \
+	"${chunkserver_cfg}"
+	reload_chunkserver_config "${chunkserver_cfg}"
+done
+
+# Check that trashed chunks still exist immediately after reload
+trashed_chunks_after_reload=$(find_all_trashed_chunks | wc -l)
+echo "Trashed chunks immediately after reload: ${trashed_chunks_after_reload}"
+
+MESSAGE="Expected trashed chunks to still exist immediately after reload" \
+assert_success test "${trashed_chunks_after_reload}" -gt 0
+
+# Ensure trashed chunks are removed later by garbage collector
+if ! wait_for '[[ $(find_all_trashed_chunks | wc -l) == 0 ]]' "90 seconds"; then
+	test_add_failure $'The trashed chunks were not removed after reload with trash disabled'
+fi
 
 ######################################################################
 ##### Change the config to disable chunk trashing and reload it
