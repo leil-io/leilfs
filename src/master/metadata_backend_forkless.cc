@@ -53,6 +53,7 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_dumper_file.h"
+#include "master/metadata_section_bootstrap_fdb.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -325,7 +326,22 @@ void MetadataBackendForkless::loadall(int ignoreflag) {
 
 	// Load metadata global properties and check signature
 
-	if (!checkMetadataSignature()) { return; }
+	bool isSignatureValid = checkMetadataSignature();
+	bool bootstrapped = false;
+
+#ifndef METARESTORE
+	if (metadataserver::isMaster() && sectionBootstrapper_ != nullptr) {
+		bootstrapped = sectionBootstrapper_->bootstrapSections();
+		if (bootstrapped) {
+			safs::log_info("Metadata sections bootstrapped successfully");
+		}
+	}
+	sectionBootstrapper_.reset();
+	sectionBootstrapper_ = nullptr;
+	safs::log_info("Metadata bootstrapping stage finished");
+#endif
+
+	if (!isSignatureValid && !bootstrapped) { return; }
 
 	// Load the metadata sections
 
@@ -411,6 +427,11 @@ void MetadataBackendForkless::init() {
 
 	// Initialize the metadata writer to handle metadata updates
 	metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine());
+
+#ifndef METARESTORE
+	sectionBootstrapper_ =
+	    std::make_unique<MetadataSectionBootstrapFDB>(kvConnector_->getKVEngine());
+#endif  // #ifndef METARESTORE
 
 	// Connect the signal handler for chunk changes
 	// This must be done in init() rather than loadChunks() to ensure that chunks created
