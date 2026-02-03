@@ -282,13 +282,114 @@ public:
 	/// Return info about currently executed tasks
 	virtual std::vector<JobInfo> getCurrentTasksInfo() = 0;
 
+	/// Checks whether the client session can access the file specified by inode.
+	///
+	/// This method verifies if the user associated with the client session has the requested
+	/// access permissions (read, write, or execute) for a given filesystem node. It performs
+	/// session validation and permission checking based on the user's credentials (uid/gid)
+	/// and the requested access mode.
+	///
+	/// The function performs the following validations:
+	/// - Session verification (must be a non-meta session)
+	/// - Session mode check (read-write if write access is requested, otherwise read-only)
+	/// - Node existence verification
+	/// - Permission verification based on file mode, ACLs, and user credentials
+	///
+	/// The modemask parameter specifies what type of access to check:
+	/// - MODE_MASK_R (4): Check read permission
+	/// - MODE_MASK_W (2): Check write permission
+	/// - MODE_MASK_X (1): Check execute permission
+	/// - MODE_MASK_EMPTY (0): Check node existence only
+	///
+	/// These flags can be combined using bitwise OR to check multiple permissions.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param inode The inode number of the node to check access for.
+	/// @param modemask Bitmask specifying which access permissions to check (MODE_MASK_R,
+	///                 MODE_MASK_W, MODE_MASK_X, or combinations thereof).
+	///
+	/// @return SAUNAFS_STATUS_OK if the user has the requested access, or one of the following
+	///         error codes:
+	///         - SAUNAFS_ERROR_EACCES if access is denied (insufficient permissions)
+	///         - SAUNAFS_ERROR_ENOENT if the node doesn't exist
+	///         - SAUNAFS_ERROR_EPERM if session permissions are insufficient
+	///         - Other error codes as returned by node operations
 	virtual uint8_t access(const FsContext &context, inode_t inode, int modemask) = 0;
+
+	/// Looks up a child entry in a directory by name.
+	///
+	/// This method performs a directory lookup operation, retrieving the inode and attributes
+	/// of a child entry within a parent directory. The function supports special directory
+	/// entries ("." for current directory and ".." for parent directory) and handles case-sensitive
+	/// or case-insensitive filesystem semantics.
+	///
+	/// The function performs the following validations:
+	/// - Session verification (must be a non-meta session, operation is read-only)
+	/// - Parent node verification (must exist and be a directory)
+	/// - Execute permission check on the parent directory (required for directory traversal)
+	/// - Name validation
+	/// - Child entry lookup within the parent directory
+	/// - Case-sensitive or case-insensitive name matching
+	///
+	/// Special handling for dot-entries:
+	/// - "." (single dot): Returns the current directory inode, or SPECIAL_INODE_ROOT if at root
+	/// - ".." (double dot): Returns the parent directory inode, or SPECIAL_INODE_ROOT if at root
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param parent The inode number of the parent directory to search in.
+	/// @param name The name of the entry to look up within the parent directory.
+	/// @param[out] inode Pointer to inode_t where the found entry's inode number will be stored.
+	///                   Set to 0 on error.
+	/// @param[out] attr Reference to Attributes structure to be filled with the found entry's
+	///                  properties (permissions, ownership, timestamps, etc.).
+	///
+	/// @return SAUNAFS_STATUS_OK on successful lookup, or one of the following error codes:
+	///         - SAUNAFS_ERROR_ENOENT if the child entry doesn't exist in the parent directory
+	///         - SAUNAFS_ERROR_EINVAL if name validation fails
+	///         - SAUNAFS_ERROR_ENOTDIR if parent is not a directory
+	///         - SAUNAFS_ERROR_EACCES if access is denied (insufficient permissions in parent)
+	///         - SAUNAFS_ERROR_EPERM if session permissions are insufficient
+	///         - Other error codes as returned by node operations
 	virtual uint8_t lookup(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t parent, const HString &name, inode_t *inode,
 	                       Attributes &attr) = 0;
+
+	/// Looks up a node by traversing a multi-component path.
+	///
+	/// This method performs a multi-level directory traversal operation, resolving a path
+	/// (containing zero or more '/' delimiters) starting from the provided `parent` inode.
+	/// It decomposes the path into individual components and performs a sequential lookup
+	/// for each non-empty component.
+	///
+	/// Path parsing / edge-case behavior (current implementation):
+	/// - Empty components are ignored, so "dir1//dir2" is treated as "dir1/dir2".
+	/// - A trailing '/' is ignored, so "dir1/" is treated as "dir1".
+	/// - If `path` contains no non-empty components (e.g., "" or "/" or "///"), the function
+	///   resolves to the session root inode (context.rootinode()) and returns root attributes
+	///   via SPECIAL_INODE_ROOT (historical behavior).
+	///
+	/// The function performs the following validations (per component), delegated to `lookup()`:
+	/// - Session verification
+	/// - Parent node verification
+	/// - Execute permission checks on parent directories
+	/// - Name validation for each path component
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param parent The inode number of the starting directory for the path traversal.
+	/// @param path The path to traverse, which may contain multiple '/' delimiters.
+	/// @param[out] found_inode Receives the resolved entry inode on success.
+	/// @param[out] attr Receives attributes for the resolved entry on success (from the last
+	///                  component lookup or root SPECIAL_INODE_ROOT handling).
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or an error code propagated from `lookup()`.
+	///
+	/// @note If the resolved path points to the root inode, this function calls getAttr
+	///       to properly fetch the root's attributes.
 	virtual uint8_t wholePathLookup(const FsContext &context, inode_t parent,
 	                                const std::string &path, inode_t *found_inode,
 	                                Attributes &attr) = 0;
+
 	virtual uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                        inode_t inode, Attributes &attr) = 0;
 	virtual uint8_t trySetLength(const FsContext &context,
