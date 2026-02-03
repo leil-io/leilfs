@@ -329,6 +329,17 @@ public:
 	virtual void addSubStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
 	                         StatsRecord *newStats, StatsRecord *previousStats) = 0;
 
+	/// Updates all parent directories' statistics based on a node's stats change.
+	/// This is a convenience method that retrieves all parent directories of the given node
+	/// and calls addSubStats() for each parent to propagate the stats changes.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node whose parents' statistics should be updated.
+	/// @param newStats Pointer to a StatsRecord containing the node's new statistics.
+	/// @param previousStats Pointer to a StatsRecord containing the node's previous statistics.
+	virtual void updateParentStatsForNode(const FilesystemOperationContext &fsOpContext,
+	                                      FSNode *node, StatsRecord *newStats,
+	                                      StatsRecord *previousStats) = 0;
+
 	virtual void changeUidGid(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                          uint32_t uid, uint32_t gid) = 0;
 
@@ -519,7 +530,15 @@ public:
 	/// @param ancestor potential ancestor node
 	/// @param node potential reserved, trash or descendant node
 	virtual bool isAncestorOrNodeReservedOrTrash(FSNodeDirectory *ancestor, FSNode *node) = 0;
+
 	virtual FSNodeDirectory *getFirstParent(FSNode *node) = 0;
+
+	/// Returns all parent ids of the given node.
+	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
+	/// @param node The node whose parents are to be retrieved.
+	/// @return A vector of inode_t representing the parent ids of the node.
+	virtual std::vector<inode_t> getParentIds(const FilesystemOperationContext &fsOpContext,
+	                                          FSNode *node) = 0;
 
 protected:
 	/// Core node lookup operation - override in subclasses for custom storage.

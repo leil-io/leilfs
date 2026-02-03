@@ -2852,10 +2852,19 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 
 	// Original Legacy (1.6.27) does not use lock ID's
-	bool useDummyLockId = false;
+	constexpr bool kUseDummyLockId = false;
 	status = gFSOperations->writeChunk(matoclserv_get_context(eptr), fsOpContext, inode, chunkIndex,
-	                                   useDummyLockId, &lockId, &chunkId, &opflag, &fileLength,
+	                                   kUseDummyLockId, &lockId, &chunkId, &opflag, &fileLength,
 	                                   min_server_version);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}", __func__,
+			              inode, chunkIndex);
+
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
 
 	if (status != SAUNAFS_STATUS_OK) {
 		serializer->serializeFuseWriteChunk(outMessage, messageId, status);
@@ -2876,11 +2885,24 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		operation->serializer = serializer;
 		eptr->delayedChunkOperations.push_back(std::move(operation));
 	} else {        // return status immediately
-		dcm_modify(inode,eptr->sessionData->sessionId);
-		status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
-				chunkId, messageId, fileLength, lockId);
+		dcm_modify(inode, eptr->sessionData->sessionId);
+		status = matoclserv_fuse_write_chunk_respond(eptr, serializer, chunkId, messageId,
+		                                             fileLength, lockId);
 		if (status != SAUNAFS_STATUS_OK) {
-			gFSOperations->writeEnd(fsOpContext, 0, 0, chunkId, 0);  // ignore status - just do it.
+			// The previous transaction was already committed, so we need a new one here
+			auto fsOpContextEnd = gFSOperations->createFilesystemOperationContext(
+			    FilesystemOperationContext::TransactionType::kReadWrite);
+
+			// ignore status, just do it.
+			gFSOperations->writeEnd(fsOpContextEnd, 0, 0, chunkId, 0);
+
+			if (fsOpContextEnd.hasReadWriteTransaction()) {
+				if (!fsOpContextEnd.getReadWriteTransaction()->commit()) {
+					safs::log_err(
+					    "{}: transaction failed to commit during write end: inode {}, chunk index {}",
+					    __func__, inode, chunkIndex);
+				}
+			}
 		}
 	}
 
@@ -2913,7 +2935,17 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 	} else {
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
+
 		status = gFSOperations->writeEnd(fsOpContext, inode, fileLength, chunkId, lockId);
+
+		if (fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}, chunk id {}",
+				              __func__, inode, chunkId);
+
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	dcm_modify(inode,eptr->sessionData->sessionId);

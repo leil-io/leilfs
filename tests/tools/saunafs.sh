@@ -1110,3 +1110,12 @@ sfschunkserver_check_no_buffer_in_use() {
 	assert_equals "${chunkserver_count}" "${full_zeroes}"
 	assert_equals "${chunkserver_count}" "${unique_count}"
 }
+
+# The output lines from `dirinfo` and `admin info` are formatted as:
+# "key (possibly with spaces): value"
+# For example: "FS objects: 5"
+function get_value_from_dirinfo_and_admin_info() {
+	local content="${1}"
+	local key="${2}"
+	echo "${content}" | grep "${key}:" | cut -d: -f2- | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}

@@ -371,6 +371,16 @@ FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(FSNode *node) {
 	return gMetadata->root;
 }
 
+std::vector<inode_t> FilesystemNodeOperationsBase::getParentIds(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
+	assert(node);
+
+	std::vector<inode_t> parentIds;
+	parentIds.reserve(node->parents.size());
+	for (const auto &parent : node->parents) { parentIds.push_back(parent.first); }
+	return parentIds;
+}
+
 void FilesystemNodeOperationsBase::subStats(const FilesystemOperationContext &fsOpContext,
                                             FSNodeDirectory *parent, StatsRecord *stats) {
 	if (parent != nullptr) {
@@ -428,6 +438,15 @@ void FilesystemNodeOperationsBase::addSubStats(const FilesystemOperationContext 
 	resultStats.size = newStats->size - previousStats->size;
 	resultStats.realsize = newStats->realsize - previousStats->realsize;
 	addStats(fsOpContext, parent, &resultStats);
+}
+
+void FilesystemNodeOperationsBase::updateParentStatsForNode(
+    const FilesystemOperationContext &fsOpContext, FSNode *node, StatsRecord *newStats,
+    StatsRecord *previousStats) {
+	for (const auto &[parentId, _] : node->parents) {
+		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
+		addSubStats(fsOpContext, parentNode, newStats, previousStats);
+	}
 }
 
 void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fsOpContext,
@@ -1363,14 +1382,13 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 
 	fsnodes_quota_update(nodeFile, {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
-	for (const auto &[parentId, _] : nodeFile->parents) {
-		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
-		addSubStats(fsOpContext, parentNode, &newStats, &previousStats);
-	}
+	updateParentStatsForNode(fsOpContext, nodeFile, &newStats, &previousStats);
 
 	fsnodes_update_checksum(nodeFile);
 
-	gMetadata->nodeChangedSignal.emit(nodeFile);
+	if (!fsOpContext.hasTransaction()) {
+		gMetadata->nodeChangedSignal.emit(nodeFile);
+	}
 }
 
 void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext &fsOpContext,

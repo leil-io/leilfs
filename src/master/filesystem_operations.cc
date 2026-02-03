@@ -2405,7 +2405,6 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	ChecksumUpdater cu(context.ts());
 	uint64_t ochunkid, nchunkid;
 	FSNode *node;
-	FSNodeFile *p;
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
@@ -2415,23 +2414,27 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              MODE_MASK_EMPTY, inode, &node);
-	p = static_cast<FSNodeFile*>(node);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
 	if (index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
+
+	auto *fileNode = static_cast<FSNodeFile *>(node);
+
 #ifndef METARESTORE
 	if (gMagicAutoFileRepair && context.isPersonalityMaster()) {
-		fs_auto_repair_if_needed(p, index);
+		fs_auto_repair_if_needed(fileNode, index);
 	}
 #endif
 
-	const bool quota_exceeded = fsnodes_quota_exceeded(p, {{QuotaResource::kSize, 1}});
-	StatsRecord psr;
-	nodeOperations_->getStats(fsOpContext, p, &psr);
+	const bool quota_exceeded = fsnodes_quota_exceeded(fileNode, {{QuotaResource::kSize, 1}});
+
+	// Cache original stats for quota and parent update
+	StatsRecord originalStats;
+	nodeOperations_->getStats(fsOpContext, fileNode, &originalStats);
 
 	/* resize chunks structure */
-	if (index >= p->chunks.size()) {
+	if (index >= fileNode->chunks.size()) {
 		if (context.isPersonalityMaster() && quota_exceeded) {
 			return SAUNAFS_ERROR_QUOTA;
 		}
@@ -2444,13 +2447,13 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 			new_size = (index & 0xFFFFFFC0) + 64;
 		}
 		assert(new_size > index);
-		p->chunks.resize(new_size, 0);
+		fileNode->chunks.resize(new_size, 0);
 	}
 
-	ochunkid = p->chunks[index];
+	ochunkid = fileNode->chunks[index];
 	if (context.isPersonalityMaster()) {
 #ifndef METARESTORE
-		status = chunk_multi_modify(ochunkid, lockid, p->goal, usedummylockid,
+		status = chunk_multi_modify(ochunkid, lockid, fileNode->goal, usedummylockid,
 		                            quota_exceeded, opflag, &nchunkid, min_server_version);
 #else
 		(void)usedummylockid;
@@ -2460,38 +2463,45 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 #endif
 	} else {
 		bool increaseVersion = (*opflag != 0);
-		status = chunk_apply_modification(context.ts(), ochunkid, *lockid, p->goal,
+		status = chunk_apply_modification(context.ts(), ochunkid, *lockid, fileNode->goal,
 		                                  increaseVersion, &nchunkid);
 	}
 	if (status != SAUNAFS_STATUS_OK) {
-		fsnodes_update_checksum(p);
+		fsnodes_update_checksum(fileNode);
 		return status;
 	}
 	if (context.isPersonalityShadow() && nchunkid != *chunkid) {
-		fsnodes_update_checksum(p);
+		fsnodes_update_checksum(fileNode);
 		return SAUNAFS_ERROR_MISMATCH;
 	}
-	p->chunks[index] = nchunkid;
+
+	fileNode->chunks[index] = nchunkid;
 	*chunkid = nchunkid;
-	StatsRecord nsr;
-	nodeOperations_->getStats(fsOpContext, p, &nsr);
-	for (const auto &[parentId, _] : p->parents) {
-		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
-		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
-	}
-	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
+
+	// Propagate size changes to parent directories
+	StatsRecord newStats;
+	nodeOperations_->getStats(fsOpContext, fileNode, &newStats);
+	nodeOperations_->updateParentStatsForNode(fsOpContext, fileNode, &newStats, &originalStats);
+
+	fsnodes_quota_update(fileNode, {{QuotaResource::kSize, newStats.size - originalStats.size}});
 	if (length) {
-		*length = p->length;
+		*length = fileNode->length;
 	}
+
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
 		          inode, index, *opflag, *lockid, nchunkid);
 	} else {
 		gMetadata->metadataVersion++;
 	}
-	p->mtime = context.ts();
-	nodeOperations_->updateCTime(p, context.ts());
-	fsnodes_update_checksum(p);
+
+	fileNode->mtime = context.ts();
+	nodeOperations_->updateCTime(fileNode, context.ts());
+	fsnodes_update_checksum(fileNode);
+
+	// Make the change persistent for KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, fileNode); }
+
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Write);
 	metrics::Counter::increment(metrics::Counter::Master::FS_WRITE);
@@ -2510,7 +2520,7 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 		return status;
 	}
 	if (length > 0) {
-		FSNodeFile *p = nodeOperations_->idToNode<FSNodeFile>(inode);
+		auto *p = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 		if (!p) {
 			return SAUNAFS_ERROR_ENOENT;
 		}
@@ -2528,10 +2538,17 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 			p->mtime = ts;
 			nodeOperations_->updateCTime(p, ts);
 			fsnodes_update_checksum(p);
+
+			// Make the change persistent for KV backends
+			if (fsOpContext.hasReadWriteTransaction()) {
+				nodeOperations_->updateNode(fsOpContext, p);
+			}
+
 			changeLog(ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode, length,
 			          static_cast<uint32_t>(eraseFurtherChunks));
 		}
 	}
+
 	changeLog(ts, "UNLOCK(%" PRIu64 ")", chunkid);
 	return chunk_unlock(chunkid);
 }
