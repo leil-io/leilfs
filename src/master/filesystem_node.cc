@@ -2178,7 +2178,7 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(
 
 	if (!context.hasSessionData()) {
 		candidateRoot = nullptr;
-		candidateNode = idToNode(inode);
+		candidateNode = idToNode(fsOpContext, inode);
 
 		if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 	} else if (context.rootinode() == SPECIAL_INODE_ROOT || (context.rootinode() == 0)) {

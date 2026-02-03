@@ -137,12 +137,20 @@ public:
 	uint8_t cancelJob(uint32_t job_id) override;
 	std::vector<JobInfo> getCurrentTasksInfo() override;
 
+	/// Checks whether the client session can access the file specified by inode.
+	/// @see IFilesystemOperations::access
 	uint8_t access(const FsContext &context, inode_t inode, int modemask) override;
-	uint8_t lookup(const FsContext &context,
-	               const FilesystemOperationContext &fsOpContext, inode_t parent, const HString &name,
-	               inode_t *inode, Attributes &attr) override;
+
+	/// Looks up a child entry in a directory by name.
+	/// @see IFilesystemOperations::lookup
+	uint8_t lookup(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	               inode_t parent, const HString &name, inode_t *inode, Attributes &attr) override;
+
+	/// Looks up a node by traversing a multi-component path.
+	/// @see IFilesystemOperations::wholePathLookup
 	uint8_t wholePathLookup(const FsContext &context, inode_t parent, const std::string &path,
 	                        inode_t *found_inode, Attributes &attr) override;
+
 	uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, Attributes &attr) override;
 	uint8_t trySetLength(const FsContext &context, const FilesystemOperationContext &fsOpContext,
