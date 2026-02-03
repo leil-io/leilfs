@@ -80,6 +80,17 @@ enum class WriteStats : uint8_t {
 	STATNODES
 };
 
+enum CacheLabel{
+	COLD,
+	HOT
+};
+
+/* Cache constants*/
+static constexpr int64_t kMinBlocksPerInode = 256;
+static constexpr int64_t kHotPercentage = 25;
+static constexpr int64_t kEmergencyPercentage = 3;
+static constexpr int64_t kMaxHotInodes = 2;
+
 // Around 2s of history with usual granularity (kTicksPerSecond = 10)
 constexpr uint32_t kFCBHistorySize = 20;
 static std::list<uint64_t> gFCBHistory;
@@ -134,11 +145,6 @@ static bool gUseInodeBasedWriteAlgorithm = false;
 
 namespace InodeBasedWriteAlgorithm {
 
-enum CacheLabel{
-	COLD,
-	HOT
-};
-
 struct inodedata {
 	inode_t inode;
 	uint64_t maxfleng;
@@ -150,9 +156,9 @@ struct inodedata {
 	bool inqueue;  // true it this inode is waiting in one of the queues or is being processed
 	uint32_t minimumBlocksToWrite;
 	std::list<WriteCacheBlock> dataChain;
-	std::atomic<uint64_t> releasedCachedBlocks = 0;
-	std::atomic<uint64_t> tempCacheRequests = 0;
-	std::atomic<CacheLabel> cacheLabel;
+	uint64_t releasedCachedBlocks = 0;
+	uint64_t tempCacheRequests = 0;
+	CacheLabel cacheLabel;
 	int alterations_in_chain;  // number of adherent blocks with different chunk ids in chain
 	std::condition_variable flushcond;  // wait for !inqueue (flush)
 	std::condition_variable writecond;  // wait for flushwaiting==0 (write)
@@ -314,13 +320,6 @@ static std::list<DelayedQueueEntry> delayedQueue;
 static ConnectionPool gChunkserverConnectionPool;
 static ChunkConnectorUsingPool gChunkConnector(gChunkserverConnectionPool);
 
-/* Cache constants*/
-static constexpr int64_t kMinBlocksPerInode = 256;
-static constexpr int64_t kHotPercentage = 25;
-static constexpr int64_t kEmergencyPercentage = 3;
-static constexpr int64_t kMaxHotInodes = 2;
-
-
 /* globalLock: LOCKED */
 void write_cacheManagerUpdate() {
 	std::priority_queue<std::pair<int64_t, inodedata *>> Pq;
@@ -343,8 +342,7 @@ void write_cacheManagerUpdate() {
 /* globalLock: LOCKED*/
 bool write_canWriteInCache(inodedata *inoD) {
 	if (gCachePerInodePercentage > 0) {
-		uint64_t cacheBlocksInstance =inoD->dataChain.size();
-		return cacheBlocksInstance * 100 <= gCachePerInodePercentage * (freecacheblocks + cacheBlocksInstance);
+		return inoD->dataChain.size() * 100 <= gCachePerInodePercentage * (freecacheblocks + inoD->dataChain.size());
 	}
 	
 	if (inoD->dataChain.size() < kMinBlocksPerInode) { return true; }
@@ -1163,11 +1161,6 @@ struct ChunkData;
 using Lock = std::unique_lock<std::mutex>;
 using ChunkDataPtr = std::unique_ptr<ChunkData>;
 
-enum CacheLabel{
-	COLD,
-	HOT
-};
-
 struct inodedata {
 	inode_t inode;
 	uint64_t maxfleng = 0;           // inodeLock
@@ -1362,19 +1355,21 @@ static std::list<DelayedQueueEntry> delayedQueue;
 static ConnectionPool gChunkserverConnectionPool;
 static ChunkConnectorUsingPool gChunkConnector(gChunkserverConnectionPool);
 
-/* Cache constants*/
-static constexpr int64_t kMinBlocksPerInode = 256;
-static constexpr int64_t kHotPercentage = 25;
-static constexpr int64_t kEmergencyPercentage = 3;
-static constexpr int64_t kMaxHotInodes = 2;
-
 /* globalLock: LOCKED */
 void write_cacheManagerUpdate() {
 	std::priority_queue<std::pair<int64_t, inodedata *>> Pq;
 	for (auto ino : inodedataMap) {
 		ino.second->cacheLabel = CacheLabel::COLD;
-		ino.second->releasedCachedBlocks = ino.second->releasedCachedBlocks >> 1;
-		ino.second->tempCacheRequests = ino.second->tempCacheRequests >> 1;
+
+		// Compare and swap loop pattern to ensure consistency and no data races. Should be fast.
+		uint64_t current_released =
+		    ino.second->releasedCachedBlocks.load(std::memory_order_relaxed);
+		while (!ino.second->releasedCachedBlocks.compare_exchange_weak(
+		    current_released, current_released >> 1, std::memory_order_relaxed));
+		uint64_t current_requests = ino.second->tempCacheRequests.load(std::memory_order_relaxed);
+		while (!ino.second->tempCacheRequests.compare_exchange_weak(
+		    current_requests, current_requests >> 1, std::memory_order_relaxed));
+
 		Pq.push({-int64_t((ino.second->tempCacheRequests + 1) *
 		                  (ino.second->releasedCachedBlocks + 1) / (ino.second->cachedBlocks + 1)),
 		         ino.second});
@@ -1389,14 +1384,14 @@ void write_cacheManagerUpdate() {
 /* globalLock: UNLOCKED */
 /* inodeLock: UNLOCKED*/
 bool write_canWriteInCache(inodedata *inoD) {
+	uint64_t cacheBlocksInstance =inoD->cachedBlocks;
 	if (gCachePerInodePercentage > 0) {
-		uint64_t cacheBlocksInstance =inoD->cachedBlocks;
 		return cacheBlocksInstance * 100 <= gCachePerInodePercentage * (freecacheblocks + cacheBlocksInstance);
 	}
-	if (inoD->cachedBlocks < kMinBlocksPerInode) { return true; }
+	if (cacheBlocksInstance < kMinBlocksPerInode) { return true; }
 
 	if (inoD->cacheLabel == CacheLabel::HOT &&
-	    inoD->cachedBlocks * 100 < totalCacheBlocks * kHotPercentage) {
+	    cacheBlocksInstance * 100 < totalCacheBlocks * kHotPercentage) {
 		return true;
 	}
 	if (freecacheblocks * 100 > totalCacheBlocks * kEmergencyPercentage) { return true; }
@@ -1405,14 +1400,14 @@ bool write_canWriteInCache(inodedata *inoD) {
 
 /* globalLock: UNLOCKED*/
 void write_cb_release_blocks(uint32_t count) {
-	static uint8_t notifyAllCounter = 0;
-	notifyAllCounter = (notifyAllCounter+1)%100;
+	static std::atomic<uint64_t> notifyAllCounter = {0};
+	uint64_t old_counter = notifyAllCounter.fetch_add(1, std::memory_order_relaxed);
 	freecacheblocks += count;
 	if (fcbwaiting > 0 && freecacheblocks > 0) {
 		Lock fcbcondLock(fcbcondMutex);
-		if(count>1 || notifyAllCounter == 0){
+		if (count > 1 || (old_counter + 1) % 100 == 0) {
 			fcbcond.notify_all();
-		}else{
+		} else {
 			fcbcond.notify_one();
 		}
 	}
