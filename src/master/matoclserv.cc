@@ -493,8 +493,22 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 			serializer->serializeFuseTruncate(reply, operationType, messageId, status);
 		} else {
 			Attributes attr;
-			gFSOperations->doSetLength(context, fsOpContext, inode, fileLength, attr);
-			serializer->serializeFuseTruncate(reply, operationType, messageId, attr);
+			status = gFSOperations->doSetLength(context, fsOpContext, inode, fileLength, attr);
+
+			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+				if (!fsOpContext.getReadWriteTransaction()->commit()) {
+					safs::log_err(
+					    "{}: transaction failed to commit: inode {}, length {}, operation type {}",
+					    __func__, inode, fileLength, operationType);
+					status = SAUNAFS_ERROR_IO;
+				}
+			}
+
+			if (status == SAUNAFS_STATUS_OK) {
+				serializer->serializeFuseTruncate(reply, operationType, messageId, attr);
+			} else {
+				serializer->serializeFuseTruncate(reply, operationType, messageId, status);
+			}
 		}
 		matoclserv_createpacket(eptr, std::move(reply));
 		return;
@@ -1897,15 +1911,18 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 
-	const PacketSerializer *serializer = PacketSerializer::getSerializer(header.type, eptr->version);
+	const PacketSerializer *serializer =
+	    PacketSerializer::getSerializer(header.type, eptr->version);
+
 	if (header.type == SAU_CLTOMA_FUSE_TRUNCATE_END) {
-		cltoma::fuseTruncateEnd::deserialize(request,
-				messageId, inode, uid, gid, length, lockId);
+		cltoma::fuseTruncateEnd::deserialize(request, messageId, inode, uid, gid, length, lockId);
 		type = FUSE_TRUNCATE_END;
 		status = matoclserv_check_group_cache(eptr, gid);
+
 		if (status == SAUNAFS_STATUS_OK) {
 			opened = true; // permissions have already been checked on SAU_CLTOMA_TRUNCATE
 			context = matoclserv_get_context(eptr, uid, gid);
+
 			// We have to verify lockid in this request
 			if (lockId == 0) { // unlocking with lockid == 0 means "force unlock", this is not allowed
 				status = SAUNAFS_ERROR_WRONGLOCKID;
@@ -1913,19 +1930,18 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 				// let's check if chunk is still locked by us
 				status = gFSOperations->getChunkId(context, fsOpContext, inode,
 				                                   length / SFSCHUNKSIZE, &chunkId);
-				if (status == SAUNAFS_STATUS_OK) {
-					status = chunk_can_unlock(chunkId, lockId);
-				}
-				gFSOperations->endSetLength(chunkId);
+
+				if (status == SAUNAFS_STATUS_OK) { status = chunk_can_unlock(chunkId, lockId); }
+
+				if (status == SAUNAFS_STATUS_OK) { gFSOperations->endSetLength(chunkId); }
 			}
 		}
 	} else {
 		serializer->deserializeFuseTruncate(request, messageId, inode, opened, uid, gid, length);
 		type = FUSE_TRUNCATE;
 		status = matoclserv_check_group_cache(eptr, gid);
-		if (status == SAUNAFS_STATUS_OK) {
-			context = matoclserv_get_context(eptr, uid, gid);
-		}
+
+		if (status == SAUNAFS_STATUS_OK) { context = matoclserv_get_context(eptr, uid, gid); }
 	}
 
 	// Try to do the truncate
@@ -1939,27 +1955,81 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 	if (status == SAUNAFS_ERROR_NOTPOSSIBLE && header.type == SAU_CLTOMA_FUSE_TRUNCATE) {
 		// New client requested to truncate xor chunk. He has to do it himself.
 		uint64_t fileLength;
-		uint8_t opflag;
-		gFSOperations->writeChunk(context, fsOpContext, inode, length / SFSCHUNKSIZE, false,
-		                          &lockId, &chunkId, &opflag, &fileLength);
-		if (opflag) {
+		uint8_t chunkOperationPending;
+
+		status =
+		    gFSOperations->writeChunk(context, fsOpContext, inode, length / SFSCHUNKSIZE, false,
+		                              &lockId, &chunkId, &chunkOperationPending, &fileLength);
+
+		if (status != SAUNAFS_STATUS_OK) {
+			// writeChunk failed, don't use potentially uninitialized output parameters
+			// Fall through to error handling below
+		} else if (chunkOperationPending) {
 			// But first we have to duplicate chunk :)
 			type = FUSE_TRUNCATE_BEGIN;
 			length = fileLength;
 			status = SAUNAFS_ERROR_DELAYED;
 		} else {
 			// No duplication is needed
-			std::vector<uint8_t> reply;
-			matocl::fuseTruncate::serialize(reply, messageId, fileLength, lockId);
-			matoclserv_createpacket(eptr, std::move(reply));
-			if (eptr->sessionData) {
-				eptr->sessionData->currHourOperationsStats[2]++;
+
+			uint8_t commitStatus = SAUNAFS_STATUS_OK;
+
+			// Commit the transaction to persist metadata updates from writeChunk()
+			if (fsOpContext.hasReadWriteTransaction()) {
+				if (!fsOpContext.getReadWriteTransaction()->commit()) {
+					safs::log_err(
+					    "{}: transaction failed to commit: (no duplication) inode {}, length {}",
+					    __func__, inode, length);
+					commitStatus = SAUNAFS_ERROR_IO;
+				}
 			}
+
+			std::vector<uint8_t> reply;
+
+			if (commitStatus == SAUNAFS_STATUS_OK) {
+				matocl::fuseTruncate::serialize(reply, messageId, fileLength, lockId);
+			} else {
+				serializer->serializeFuseTruncate(reply, type, messageId, commitStatus);
+			}
+
+			matoclserv_createpacket(eptr, reply);
+
+			// Update client stats
+			if (eptr->sessionData) { eptr->sessionData->currHourOperationsStats[2]++; }
+
 			return;
 		}
 	}
 
+	// Handle delayed operations: status is SAUNAFS_ERROR_DELAYED either from trySetLength()
+	// or when chunk duplication is needed before truncation
 	if (status == SAUNAFS_ERROR_DELAYED) {
+		// Commit the transaction before enqueuing the delayed chunk operation so that
+		// metadata updates performed earlier in this request are persisted.
+		if (fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: (delayed) inode {}, length {}",
+				              __func__, inode, length);
+				// Commit failure is a critical error here. Return immediately rather than
+				// enqueuing a delayed operation, as the metadata state is inconsistent.
+				// Note: chunk operations may have been sent to chunkservers, but without
+				// persisted metadata, we cannot safely complete the operation.
+				std::vector<uint8_t> reply;
+
+				if (type == FUSE_TRUNCATE_BEGIN) {
+					// For BEGIN operations, use the status packet format
+					matocl::fuseTruncate::serialize(reply, messageId, SAUNAFS_ERROR_IO);
+				} else {
+					// For TRUNCATE / TRUNCATE_END, use the standard truncate serializer
+					serializer->serializeFuseTruncate(reply, type, messageId, SAUNAFS_ERROR_IO);
+				}
+
+				matoclserv_createpacket(eptr, reply);
+				if (eptr->sessionData) { eptr->sessionData->currHourOperationsStats[2]++; }
+				return;
+			}
+		}
+
 		// Duplicate or truncate request has been sent to chunkservers, delay the reply
 		auto chunkOperationPtr = std::make_unique<DelayedChunkOperation>();
 		passert(chunkOperationPtr.get());
@@ -1975,29 +2045,39 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		chunkOperationPtr->type = type;
 		chunkOperationPtr->serializer = serializer;
 		eptr->delayedChunkOperations.push_back(std::move(chunkOperationPtr));
-		if (eptr->sessionData) {
-			eptr->sessionData->currHourOperationsStats[2]++;
-		}
+
+		// Update client stats
+		if (eptr->sessionData) { eptr->sessionData->currHourOperationsStats[2]++; }
+
 		return;
 	}
+
 	if (status == SAUNAFS_STATUS_OK) {
 		status = gFSOperations->doSetLength(context, fsOpContext, inode, length, attr);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}, length {}", __func__,
+				              inode, length);
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
-	if (status == SAUNAFS_STATUS_OK) {
-		dcm_modify(inode, eptr->sessionData->sessionId);
-	}
+
+	if (status == SAUNAFS_STATUS_OK) { dcm_modify(inode, eptr->sessionData->sessionId); }
 
 	std::vector<uint8_t> reply;
 	if (status == SAUNAFS_STATUS_OK) {
 		serializer->serializeFuseTruncate(reply, type, messageId, attr);
 	} else {
-		safs::log_debug("matoclserv_fuse_truncate: Failed to truncate: {} (code {})", saunafs_error_string(status));
+		safs::log_debug("matoclserv_fuse_truncate: Failed to truncate: {} (code {})",
+		                saunafs_error_string(status), status);
 		serializer->serializeFuseTruncate(reply, type, messageId, status);
 	}
-	matoclserv_createpacket(eptr, std::move(reply));
-	if (eptr->sessionData) {
-		eptr->sessionData->currHourOperationsStats[2]++;
-	}
+
+	matoclserv_createpacket(eptr, reply);
+
+	if (eptr->sessionData) { eptr->sessionData->currHourOperationsStats[2]++; }
 }
 
 void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
