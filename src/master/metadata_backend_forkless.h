@@ -23,6 +23,7 @@
 #include "kv/ikv_engine.h"
 #include "master/kv_connector_interface.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_writer_fdb.h"
 
 // Forward declarations to avoid heavy includes in the header
@@ -175,4 +176,9 @@ private:
 
 	/// Metadata writer for all metadata updates
 	std::unique_ptr<MetadataWriterFDB> metadataWriter_;
+
+#ifndef METARESTORE
+	/// Bootstrapper for metadata sections
+	std::unique_ptr<MetadataSectionBootstrapFDB> sectionBootstrapper_ = nullptr;
+#endif  // #ifndef METARESTORE
 };
