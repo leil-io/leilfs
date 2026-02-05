@@ -44,6 +44,8 @@
 
 // connection timeout in seconds
 constexpr uint32_t kCSServTimeout = 10;
+// forceful termination timeout in milliseconds
+constexpr uint32_t kNWForcefulTerminationTimeout_ms = 30000;
 
 constexpr int kTimeoutOdd = 300000;
 constexpr int kTimeoutEven = 200000;
@@ -84,18 +86,19 @@ void NetworkWorkerThread::operator()() {
 	std::string threadName = "netWorker_" + std::to_string(threadCounter++);
 	pthread_setname_np(pthread_self(), threadName.c_str());
 
-	while (!doTerminate) {
-		preparePollFds();
-		int i = poll(pdesc.data(), pdesc.size(), gPollTimeout);
-		if (i < 0) {
+	while (!canTerminate_.load()) {
+		preparePollFds(doTerminate.load());
+		int fdWithEvents = poll(pdesc.data(), pdesc.size(), gPollTimeout);
+
+		if (fdWithEvents < 0) {
 			if (errno == EAGAIN) {
-				safs_pretty_syslog(LOG_WARNING, "poll returned EAGAIN");
+				safs::log_warn("{}: poll returned EAGAIN", __func__);
 				usleep(100000);
 				continue;
 			}
+
 			if (errno != EINTR) {
-				safs_pretty_syslog(LOG_WARNING, "poll error: %s",
-				                   strerr(errno));
+				safs::log_warn("{}: poll error: {}", __func__, strerr(errno));
 				break;
 			}
 		} else {
@@ -104,9 +107,19 @@ void NetworkWorkerThread::operator()() {
 				eassert(read(pdesc[0].fd, &notifyByte, 1) == 1);
 			}
 		}
+
 		servePoll();
 	}
 	this->terminate();
+}
+
+bool NetworkWorkerThread::updateAndCheckTerminationStatus() {
+	std::lock_guard lock(csservheadLock);
+	bool canTerminate =
+	    doTerminate.load() && (csservEntries.empty() ||
+	                           terminationTimer_.elapsed_ms() > kNWForcefulTerminationTimeout_ms);
+	canTerminate_.store(canTerminate);
+	return canTerminate;
 }
 
 void NetworkWorkerThread::terminate() {
@@ -126,7 +139,7 @@ void NetworkWorkerThread::terminate() {
 	}
 }
 
-void NetworkWorkerThread::preparePollFds() {
+void NetworkWorkerThread::preparePollFds(bool isTerminating) {
 	LOG_AVG_TILL_END_OF_SCOPE0("preparePollFds");
 	TRACETHIS();
 	pdesc.clear();
@@ -145,7 +158,7 @@ void NetworkWorkerThread::preparePollFds() {
 			case ChunkserverEntry::State::WriteLast:
 				pdesc.emplace_back(pollfd(entry.sock, 0, 0));
 				entry.pDescPos = pdesc.size() - 1;
-				if (entry.inputPacket.bytesLeft > 0) {
+				if (entry.inputPacket.bytesLeft > 0 && !isTerminating) {
 					pdesc.back().events |= POLLIN;
 				}
 				if (!entry.outputPackets.empty()) {
@@ -165,13 +178,13 @@ void NetworkWorkerThread::preparePollFds() {
 			case ChunkserverEntry::State::WriteForward:
 				pdesc.emplace_back(pollfd(entry.fwdSocket, POLLIN, 0));
 				entry.fwdPDescPos = pdesc.size() - 1;
-				if (entry.fwdOutputPacket.bytesLeft > 0) {
+				if (entry.fwdOutputPacket.bytesLeft > 0 && !isTerminating) {
 					pdesc.back().events |= POLLOUT;
 				}
 
 				pdesc.emplace_back(pollfd(entry.sock, 0, 0));
 				entry.pDescPos = pdesc.size() - 1;
-				if (entry.inputPacket.bytesLeft > 0) {
+				if (entry.inputPacket.bytesLeft > 0 && !isTerminating) {
 					pdesc.back().events |= POLLIN;
 				}
 				if (!entry.outputPackets.empty()) {
@@ -319,6 +332,9 @@ void NetworkWorkerThread::servePoll() {
 void NetworkWorkerThread::askForTermination() {
 	TRACETHIS();
 	doTerminate = true;
+	std::unique_lock lock(csservheadLock);
+	terminationTimer_.reset();
+	for (auto &entry : csservEntries) { entry.closeJobs(); }
 }
 
 void NetworkWorkerThread::addConnection(int newSocketFD) {

@@ -181,17 +181,36 @@ void mainNetworkThreadDesc(std::vector<pollfd> &pdesc) {
 	lsockpdescpos = pdesc.size() - 1;
 }
 
-void mainNetworkThreadTerm(void) {
+void mainNetworkThreadWantExit(void) {
 	TRACETHIS();
 	safs::log_info("closing {}:{}", ListenHost, ListenPort);
+	// Closing the listening socket will cause the main thread to stop accepting new connections and
+	// eventually exit after processing existing ones.
 	tcpclose(lsock);
 
 	free(ListenHost);
 	free(ListenPort);
 
+	// Ask worker threads to terminate and close their connections. They will be forcefully
+	// terminated after a timeout if they don't exit on their own.
 	for (auto& threadObject : networkThreadObjects) {
 		threadObject.askForTermination();
 	}
+}
+
+int mainNetworkThreadCanExit(void) {
+	TRACETHIS();
+	bool allTerminated = true;
+	for (auto &threadObject : networkThreadObjects) {
+		if (!threadObject.updateAndCheckTerminationStatus()) {
+			allTerminated = false;
+		}
+	}
+	return allTerminated ? 1 : 0;
+}
+
+void mainNetworkThreadTerm(void) {
+	TRACETHIS();
 
 	for (auto &thread : networkThreads) {
 		if (thread.joinable()) { thread.join(); }
@@ -277,6 +296,8 @@ int mainNetworkThreadInit(void) {
 	safs_pretty_syslog(LOG_NOTICE, "main server module: listen on %s:%s", ListenHost, ListenPort);
 
 	eventloop_reloadregister(mainNetworkThreadReload);
+	eventloop_wantexitregister(mainNetworkThreadWantExit);
+	eventloop_canexitregister(mainNetworkThreadCanExit);
 	eventloop_destructregister(mainNetworkThreadTerm);
 	eventloop_pollregister(mainNetworkThreadDesc, mainNetworkThreadServe);
 
