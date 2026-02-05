@@ -734,6 +734,12 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 				changeLog(ts, "TRUNC(%" PRIiNode ",%" PRIu32 ",%" PRIu32 "):%" PRIu64, p->id, indx,
 				          lockId, nchunkid);
 				fsnodes_update_checksum(p);
+
+				// Make the change persistent for KV backends
+				if (fsOpContext.hasReadWriteTransaction()) {
+					nodeOperations_->updateNode(fsOpContext, p);
+				}
+
 				return SAUNAFS_ERROR_DELAYED;
 			}
 		}
@@ -904,8 +910,13 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	fsnodes_update_checksum(p);
 	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
 	                          context.agid(), context.sesflags(), attr);
+
+	// Make the change persistent for KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, p); }
+
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+
 	return SAUNAFS_STATUS_OK;
 }
 

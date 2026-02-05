@@ -392,13 +392,158 @@ public:
 
 	virtual uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                        inode_t inode, Attributes &attr) = 0;
+
+	/// Attempts to initiate a file truncate operation (phase 1).
+	///
+	/// This method is the first phase of a file truncate operation. The complete workflow
+	/// depends on whether asynchronous chunk operations are required:
+	/// - Simple path: trySetLength() → doSetLength() (2 phases)
+	/// - Async path: trySetLength() → [async chunk work] → endSetLength() → doSetLength() (3 phases)
+	///
+	/// This function checks whether the truncate can proceed immediately or requires
+	/// asynchronous chunk operations on chunkservers. If the new length is not chunk-aligned
+	/// and a chunk exists at the truncation point, the chunk must be truncated, which is an
+	/// asynchronous operation handled by chunkservers.
+	///
+	/// The function performs the following validations and operations:
+	/// - Session verification (must be read-write, non-meta session)
+	/// - Node verification (must be a file and exist)
+	/// - Permission checks (write permission if file not opened, otherwise just existence)
+	/// - Chunk truncation initiation if the new length falls within an existing chunk
+	///
+	/// Chunk truncation workflow:
+	/// - If the new length is not chunk-aligned (length & SFSCHUNKMASK != 0), the function
+	///   checks if a chunk exists at the truncation index
+	/// - If a chunk exists, it initiates an asynchronous chunk truncation via chunk_multi_truncate
+	/// - The chunk operation is logged to the changelog (TRUNC entry)
+	/// - Returns SAUNAFS_ERROR_DELAYED to indicate the operation is pending
+	///
+	/// The denyTruncatingParity parameter prevents truncation of parity chunks (used for
+	/// erasure-coded files) when truncating down. This is necessary because parity chunks
+	/// cannot be partially truncated.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode number of the file to truncate.
+	/// @param opened Non-zero if the file is currently opened (affects permission checking:
+	///               if 0, write permission is required; if non-zero, only existence is checked).
+	/// @param length The new target length for the file in bytes.
+	/// @param denyTruncatingParity If true, prevents truncation of parity chunks when truncating
+	///                             down (used for erasure-coded files).
+	/// @param lockid Lock identifier for the chunk operation (used to prevent concurrent
+	///               modifications).
+	/// @param[out] attr Attributes structure to be filled with the file's current attributes
+	///                  (only filled if operation completes immediately).
+	/// @param[out] chunkid Pointer to receive the chunk ID if chunk truncation is initiated
+	///                     (used to track the async operation).
+	///
+	/// @return SAUNAFS_STATUS_OK if the operation can proceed immediately (no chunk work needed),
+	///         SAUNAFS_ERROR_DELAYED if chunk truncation was initiated (operation pending),
+	///         or one of the following error codes:
+	///         - SAUNAFS_ERROR_EPERM if session permissions are insufficient
+	///         - SAUNAFS_ERROR_EACCES if write access is denied
+	///         - SAUNAFS_ERROR_ENOENT if the file doesn't exist
+	///         - SAUNAFS_ERROR_NOTPOSSIBLE if truncation of parity chunks is denied
+	///         - Other error codes from chunk operations
+	///
+	/// @note If this function returns SAUNAFS_STATUS_OK, call doSetLength() immediately.
+	/// @note If this function returns SAUNAFS_ERROR_DELAYED, call endSetLength() after the
+	///       async chunk operation completes, then call doSetLength() to finalize.
+	/// @note The actual file length metadata is not modified by this function; only doSetLength()
+	///       modifies the file length and removes chunks beyond the new length.
+	/// @see endSetLength, doSetLength
 	virtual uint8_t trySetLength(const FsContext &context,
 	                             const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                             uint8_t opened, uint64_t length, bool denyTruncatingParity,
 	                             uint32_t lockid, Attributes &attr, uint64_t *chunkid) = 0;
+
+	/// Finalizes a file truncate operation by setting the file length metadata (phase 2).
+	///
+	/// This method is the final phase of a file truncate operation. It updates the file's
+	/// length metadata, removes all chunks beyond the new length, updates timestamps, and
+	/// logs the operation to the changelog. This function always erases chunks beyond the
+	/// new length because it's only called when finalizing a truncate operation.
+	///
+	/// This function is called in two scenarios:
+	/// 1. Immediately after trySetLength() returns SAUNAFS_STATUS_OK (no async work needed)
+	/// 2. After endSetLength() unlocks the chunk (when trySetLength returned DELAYED and
+	///    the async chunk operation completed)
+	///
+	/// The function performs the following operations:
+	/// - Session verification (must be read-write session)
+	/// - Node verification (must be a file and exist)
+	/// - Sets the file's length to the specified value
+	/// - Removes all chunks beyond the new length (eraseFurtherChunks = true)
+	/// - Updates the file's modification time (mtime) to current timestamp
+	/// - Updates the file's change time (ctime) to current timestamp
+	/// - Logs the LENGTH operation to the changelog for replication
+	/// - Updates filesystem statistics
+	/// - Returns updated file attributes
+	///
+	/// Changelog entry:
+	/// - Format: LENGTH(inode, length, eraseFurtherChunks)
+	/// - The eraseFurtherChunks flag is always 1 (true) for doSetLength
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode number of the file to set the length for.
+	/// @param length The new length for the file in bytes.
+	/// @param[out] attr Attributes structure to be filled with the file's updated attributes
+	///                  after the length change.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_EPERM if session permissions are insufficient
+	///         - SAUNAFS_ERROR_ENOENT if the file doesn't exist
+	///         - SAUNAFS_ERROR_EINVAL if the node is not a file
+	///         - Other error codes from node operations
+	///
+	/// @note This function must only be called after trySetLength() completes successfully
+	///       (and after endSetLength() if the async path was taken).
+	/// @note The function always removes chunks beyond the new length (eraseFurtherChunks=true).
+	/// @see trySetLength, endSetLength
 	virtual uint8_t doSetLength(const FsContext &context,
 	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint64_t length, Attributes &attr) = 0;
+
+	/// Unlocks a chunk after a truncate operation completes (phase 1.5).
+	///
+	/// This method is called to release the chunk lock acquired during a truncate operation
+	/// initiated by trySetLength(). It's an intermediate cleanup step in the truncate workflow
+	/// that occurs after the asynchronous chunk operation completes on the chunkservers but
+	/// before the final doSetLength() call that updates the file metadata.
+	///
+	/// The complete truncate workflow is:
+	/// 1. trySetLength() - Initiates truncate, may lock a chunk for truncation (returns DELAYED)
+	/// 2. [Asynchronous chunk truncation on chunkservers]
+	/// 3. endSetLength() - Unlocks the chunk (this function)
+	/// 4. doSetLength() - Finalizes by updating file length metadata
+	///
+	/// The function performs the following operations:
+	/// - Logs an UNLOCK operation to the changelog for replication
+	/// - Unlocks the specified chunk via chunk_unlock()
+	/// - Updates filesystem checksum
+	///
+	/// Changelog entry:
+	/// - Format: UNLOCK(chunkid)
+	///
+	/// This function is called in two scenarios:
+	/// 1. After a FUSE_TRUNCATE or FUSE_TRUNCATE_END delayed operation completes
+	/// 2. When cleaning up after a failed truncate operation
+	///
+	/// @param chunkid The chunk ID to unlock (obtained from trySetLength's chunkid output).
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or SAUNAFS_ERROR_NOCHUNK if the chunk doesn't exist.
+	///
+	/// @note This function does not modify file metadata; it only unlocks the chunk.
+	/// @note The chunk lock is maintained between trySetLength and endSetLength to prevent
+	///       concurrent modifications during the asynchronous chunk operation.
+	/// @note After calling this function, doSetLength() should be called to complete the truncate.
+	/// @note This function must be called for any truncate flow in which trySetLength()
+	///       acquired a chunk lock, including both delayed chunkserver truncation
+	///       (SAUNAFS_ERROR_DELAYED) and client-performs truncate/end flows where
+	///       trySetLength() can return SAUNAFS_ERROR_NOTPOSSIBLE (e.g. FUSE_TRUNCATE_END).
+	/// @see trySetLength, doSetLength
+	virtual uint8_t endSetLength(uint64_t chunkid) = 0;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	///
@@ -661,7 +806,6 @@ public:
 	virtual uint32_t getDirPathSize(inode_t inode) = 0;
 	virtual void getDirPathData(inode_t inode, uint8_t *buff, uint32_t size) = 0;
 	virtual uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) = 0;
-	virtual uint8_t endSetLength(uint64_t chunkid) = 0;
 	virtual uint8_t readChunk(inode_t inode, uint32_t indx, uint64_t *chunkid,
 	                          uint64_t *length) = 0;
 	virtual uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode,

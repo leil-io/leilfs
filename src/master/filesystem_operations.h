@@ -153,11 +153,21 @@ public:
 
 	uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, Attributes &attr) override;
+
+	/// Attempts to initiate a file truncate operation (phase 1).
+	/// @see IFilesystemOperations::trySetLength
 	uint8_t trySetLength(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                     inode_t inode, uint8_t opened, uint64_t length, bool denyTruncatingParity,
 	                     uint32_t lockid, Attributes &attr, uint64_t *chunkid) override;
+
+	/// Finalizes a file truncate operation by setting the file length metadata (phase 2).
+	/// @see IFilesystemOperations::doSetLength
 	uint8_t doSetLength(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                    inode_t inode, uint64_t length, Attributes &attr) override;
+
+	/// Unlocks a chunk after a truncate operation completes (phase 1.5).
+	/// @see IFilesystemOperations::endSetLength
+	uint8_t endSetLength(uint64_t chunkid) override;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	/// @see IFilesystemOperations::setAttr
@@ -245,7 +255,6 @@ public:
 	uint32_t getDirPathSize(inode_t inode) override;
 	void getDirPathData(inode_t inode, uint8_t *buff, uint32_t size) override;
 	uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) override;
-	uint8_t endSetLength(uint64_t chunkid) override;
 	uint8_t readChunk(inode_t inode, uint32_t indx, uint64_t *chunkid, uint64_t *length) override;
 	uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode, uint64_t length,
 	                 uint64_t chunkid, uint32_t lockid) override;
