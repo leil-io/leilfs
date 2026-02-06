@@ -61,6 +61,7 @@
 #include "mount/notification_area_logging.h"
 #include "mount/write_cache_block.h"
 #include "protocol/cltocs.h"
+#include "protocol/matocl.h"
 #include "protocol/SFSCommunication.h"
 
 #define IDLE_CONNECTION_TIMEOUT 6
@@ -125,6 +126,32 @@ static void updateStats(uint32_t freeCacheBlocks) {
 	statsAdd(WriteStats::CACHED_BYTES, gCachedBytes.exchange(0));
 }
 
+static std::mutex gUnlockChunkNoticeHandlerMutex;
+static std::condition_variable gUnlockChunkNoticeHandlerCond;
+/// List of <inode, chunkIndex> pairs
+static std::list<std::pair<inode_t, uint32_t>> gRecentlyUnlockedChunks;
+
+class UnlockChunkNoticeHandler : public PacketHandler {
+public:
+	bool handle(MessageBuffer buffer) override {
+		try {
+			inode_t inode;
+			uint32_t chunkIndex;
+			matocl::unlockChunkNotice::deserialize(buffer, inode, chunkIndex);
+	
+			std::unique_lock lock(gUnlockChunkNoticeHandlerMutex);
+			gRecentlyUnlockedChunks.emplace_back(inode, chunkIndex);
+			gUnlockChunkNoticeHandlerCond.notify_one();
+			return true;
+		} catch (IncorrectDeserializationException& ex) {
+			safs::log_err("Malformed MATOCL_UNLOCK_CHUNK_NOTICE: {}", ex.what());
+			return false;
+		}
+	}
+};
+
+static UnlockChunkNoticeHandler unlockChunkNoticeHandler;
+
 static bool gUseInodeBasedWriteAlgorithm = false;
 
 namespace InodeBasedWriteAlgorithm {
@@ -138,6 +165,7 @@ struct inodedata {
 	uint16_t lcnt;
 	uint32_t trycnt;
 	bool inqueue;  // true it this inode is waiting in one of the queues or is being processed
+	std::atomic_bool recentlyUnlockNoticeReceived = false;
 	uint32_t minimumBlocksToWrite;
 	std::list<WriteCacheBlock> dataChain;
 	int alterations_in_chain;  // number of adherent blocks with different chunk ids in chain
@@ -359,6 +387,8 @@ static bool delayed_queue_remove(inodedata *id, Glock &) {
 	return false;
 }
 
+void write_enqueue(inodedata *id, Glock &);
+
 void *delayed_queue_worker(void *) {
 	pthread_setname_np(pthread_self(), "delQueueWriter");
 
@@ -380,7 +410,41 @@ void *delayed_queue_worker(void *) {
 		updateStats(freecacheblocks);
 
 		lock.unlock();
-		usleep(timeout.remaining_us());
+
+		do {
+			Glock unlockChunkNoticeLock(gUnlockChunkNoticeHandlerMutex);
+			if (!gRecentlyUnlockedChunks.empty()) {
+				std::list<std::pair<inode_t, uint32_t>> recentlyUnlockedChunksCopy;
+				recentlyUnlockedChunksCopy.swap(gRecentlyUnlockedChunks);
+				unlockChunkNoticeLock.unlock();
+
+				Glock globalLock(gMutex);
+				for (const auto &[inode, _] : recentlyUnlockedChunksCopy) {
+					auto inodeData = write_find_inodedata(inode, globalLock);
+					if (inodeData != NO_INODEDATA) {
+						if (delayed_queue_remove(inodeData, globalLock)) {
+							write_enqueue(inodeData, globalLock);
+							// job done, no need to set recentlyUnlockNoticeReceived flag
+						} else {
+							// job is being processed or waiting in the queue, so we just set
+							// recentlyUnlockNoticeReceived flag and write worker will check it
+							// when it finishes the job
+							inodeData->recentlyUnlockNoticeReceived = true;
+						}
+					}
+				}
+
+				unlockChunkNoticeLock.lock();
+			}
+
+			auto status = gUnlockChunkNoticeHandlerCond.wait_for(
+			    unlockChunkNoticeLock, std::chrono::microseconds(timeout.remaining_us()));
+			if (status == std::cv_status::no_timeout) {
+				// We have been notified about recently unlocked chunk, so we need to check it
+				// immediately
+				continue;
+			}
+		} while (timeout.remaining_us() > 0);
 	}
 	return NULL;
 }
@@ -495,6 +559,7 @@ void InodeChunkWriter::processJob(inodedata *inodeData) {
 	try {
 		try {
 			locator->locateAndLockChunk(inodeData_->inode, chunkIndex_);
+			inodeData_->recentlyUnlockNoticeReceived = false;
 			Glock lock(gMutex);
 			inodeData_->maxfleng = std::max(inodeData_->maxfleng, locator->fileLength());
 			lock.unlock();
@@ -586,6 +651,16 @@ void InodeChunkWriter::processJob(inodedata *inodeData) {
 		Glock lock(gMutex);
 		int waitTime = 1;
 		if (inodeData_->trycnt > 10) { waitTime = std::min<int>(10, inodeData_->trycnt - 9); }
+
+		if (inodeData_->recentlyUnlockNoticeReceived) {
+			// If we have received unlock notice while processing the inode data, we should try to
+			// write the inode data immediately, without waiting for a timeout, because the unlock
+			// notice is a strong signal that the inode data is now writable and we won't get any
+			// more unlock notices until we try to write the inode data again.
+			waitTime = 0;
+			inodeData_->recentlyUnlockNoticeReceived = false;
+		}
+
 		write_delayed_enqueue(inodeData_, waitTime, lock);
 	}
 }
@@ -780,6 +855,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
 	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
+	fs_register_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
 
 	gIsInitialized = true;
 }
@@ -797,6 +873,7 @@ void write_data_term(void) {
 	jobsQueue.reset();
 	for (const auto &[_, id] : inodedataMap) { delete id; }
 	inodedataMap.clear();
+	fs_unregister_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
 
 	gIsInitialized = false;
 }
@@ -1164,6 +1241,7 @@ struct ChunkData {
 	int newDataInChainPipe[2];
 	uint32_t minimumBlocksToWrite = 1;
 	std::list<WriteCacheBlock> dataChain;
+	std::atomic_bool recentlyUnlockNoticeReceived = false;
 	bool inQueue =
 	    false;  // true if this chunk is waiting in one of the queues or is being processed
 	bool workerWaitingForData = false;
@@ -1416,6 +1494,9 @@ static std::vector<ChunkData *> delayed_queue_remove(inodedata *id, Lock &) {
 	return removedChunkData;
 }
 
+// Forward declaration, needed for delayed_queue_worker to call write_enqueue
+void write_enqueue(ChunkData *chunkData, Lock &);
+
 void *delayed_queue_worker(void *) {
 	pthread_setname_np(pthread_self(), "delQueueWriter");
 
@@ -1438,7 +1519,53 @@ void *delayed_queue_worker(void *) {
 		// Update the write stats
 		updateStats(freecacheblocks);
 
-		usleep(timeout.remaining_us());
+		do {
+			Lock unlockChunkNoticeLock(gUnlockChunkNoticeHandlerMutex);
+			if (!gRecentlyUnlockedChunks.empty()) {
+				std::list<std::pair<inode_t, uint32_t>> recentlyUnlockedChunksCopy;
+				recentlyUnlockedChunksCopy.swap(gRecentlyUnlockedChunks);
+				unlockChunkNoticeLock.unlock();
+
+				Lock globalLock(gMutex);
+				for (const auto &[inode, chunkIndex] : recentlyUnlockedChunksCopy) {
+					auto inodeData = write_find_inodedata(inode, globalLock);
+					if (inodeData != NO_INODEDATA) {
+						Lock inodeLock(inodeData->mutex);
+
+						auto chunkDataListIt = std::find_if(
+						    inodeData->chunkDataList.begin(), inodeData->chunkDataList.end(),
+						    [&](ChunkDataPtr &chunkData) {
+							    return chunkData->chunkIndex == chunkIndex;
+						    });
+
+						if (chunkDataListIt != inodeData->chunkDataList.end()) {
+							ChunkData *chunkData = chunkDataListIt->get();
+							inodeLock.unlock();
+
+							if (delayed_queue_remove(chunkData, globalLock)) {
+								write_enqueue(chunkData, globalLock);
+								// job done, no need to set recentlyUnlockNoticeReceived flag
+							} else {
+								// job is being processed or waiting in the queue, so we just set
+								// recentlyUnlockNoticeReceived flag and write worker will check it
+								// when it finishes the job
+								chunkData->recentlyUnlockNoticeReceived = true;
+							}
+						}
+					}
+				}
+
+				unlockChunkNoticeLock.lock();
+			}
+
+			auto status = gUnlockChunkNoticeHandlerCond.wait_for(
+			    unlockChunkNoticeLock, std::chrono::microseconds(timeout.remaining_us()));
+			if (status == std::cv_status::no_timeout) {
+				// We have been notified about recently unlocked chunk, so we need to check it
+				// immediately
+				continue;
+			}
+		} while (timeout.remaining_us() > 0);
 	}
 	return NULL;
 }
@@ -1544,7 +1671,7 @@ private:
 	 * Check if there is any data in the same chunk waiting to be written.
 	 * inodeLock: LOCKED
 	 */
-	bool haveAnyBlockInCurrentChunk(Lock &);
+	bool haveAnyBlockInCurrentChunk();
 
 	/*
 	 * Check if there is any data worth sending to the chunkserver.
@@ -1552,7 +1679,7 @@ private:
 	 * These can be taken only if we are close to run out of tasks to do.
 	 * inodeLock: LOCKED
 	 */
-	bool haveBlockWorthWriting(uint32_t unfinishedOperationCount, Lock &);
+	bool haveBlockWorthWriting(uint32_t unfinishedOperationCount);
 	ChunkData *chunkData_ = NO_CHUNKDATA;
 	uint32_t chunkIndex_ = 0;
 	Timer wholeOperationTimer;
@@ -1582,12 +1709,13 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 	try {
 		try {
 			locator->locateAndLockChunk(parent->inode, chunkIndex_);
+			chunkData_->recentlyUnlockNoticeReceived = false;
 			Lock inodeLock(parent->mutex);
 			parent->maxfleng = std::max(parent->maxfleng, locator->fileLength());
 
 			// Optimization -- talk with chunkservers only if we have to write any data.
 			// Don't do this if we just have to release some previously unlocked lock.
-			if (haveAnyBlockInCurrentChunk(inodeLock)) {
+			if (haveAnyBlockInCurrentChunk()) {
 				inodeLock.unlock();
 				writer.init(locator.get(), gChunkserverTimeout_ms);
 				processDataChain(writer);
@@ -1604,7 +1732,7 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 			inodeLock.lock();
 			chunkData_->minimumBlocksToWrite = writer.getMinimumBlockCountWorthWriting();
 			bool canWait = !chunkData_->requiresFlushing();
-			if (!haveAnyBlockInCurrentChunk(inodeLock)) {
+			if (!haveAnyBlockInCurrentChunk()) {
 				// There is no need to wait if we have just finished writing some chunk.
 				// Let's immediately start writing the next chunk (if there is any).
 				canWait = false;
@@ -1674,6 +1802,16 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 		if (chunkData_->tryCounter > 10) {
 			waitTime = std::min<int>(10, chunkData_->tryCounter - 9);
 		}
+
+		if (chunkData_->recentlyUnlockNoticeReceived) {
+			// If we have received unlock notice while processing the chunk, we should try to write
+			// the chunk immediately, without waiting for a timeout, because the unlock notice is
+			// a strong signal that the chunk is now writable and we won't get any more unlock
+			// notices until we try to write the chunk again.
+			waitTime = 0;
+			chunkData_->recentlyUnlockNoticeReceived = false;
+		}
+
 		write_delayed_enqueue(chunkData_, waitTime, globalLock);
 	}
 }
@@ -1705,7 +1843,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 		    writer.acceptsNewOperations()) {
 			Lock inodeLock(parent->mutex);
 			// While there is any block worth sending, we add new write operation
-			while (haveBlockWorthWriting(writer.getUnfinishedOperationsCount(), inodeLock)) {
+			while (haveBlockWorthWriting(writer.getUnfinishedOperationsCount())) {
 				// Remove block from cache and pass it to the writer
 				writer.addOperation(std::move(chunkData_->dataChain.front()));
 				chunkData_->popFromChain();
@@ -1715,7 +1853,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 
 				inodeLock.lock();
 			}
-			if (chunkData_->requiresFlushing() && !haveAnyBlockInCurrentChunk(inodeLock)) {
+			if (chunkData_->requiresFlushing() && !haveAnyBlockInCurrentChunk()) {
 				// No more data and some flushing is needed or required, so flush everything
 				writer.startFlushMode();
 			}
@@ -1723,7 +1861,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 				chunkData_->workerWaitingForData = true;
 			}
 			can_expect_next_block =
-			    haveAnyBlockInCurrentChunk(inodeLock) ||
+			    haveAnyBlockInCurrentChunk() ||
 			    (parent->wasLastBlockRecentlyWritten() && chunkData_->dataChain.empty());
 		} else if (writer.acceptsNewOperations()) {
 			// We are running out of time...
@@ -1738,7 +1876,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 				writer.startFlushMode();
 			}
 			can_expect_next_block =
-			    haveAnyBlockInCurrentChunk(inodeLock) ||
+			    haveAnyBlockInCurrentChunk() ||
 			    (parent->wasLastBlockRecentlyWritten() && chunkData_->dataChain.empty());
 		}
 
@@ -1775,10 +1913,10 @@ void ChunkJobWriter::returnJournalToDataChain(std::list<WriteCacheBlock> &&journ
 	}
 }
 
-bool ChunkJobWriter::haveAnyBlockInCurrentChunk(Lock &) { return !chunkData_->dataChain.empty(); }
+bool ChunkJobWriter::haveAnyBlockInCurrentChunk() { return !chunkData_->dataChain.empty(); }
 
-bool ChunkJobWriter::haveBlockWorthWriting(uint32_t unfinishedOperationCount, Lock &inodeLock) {
-	if (!haveAnyBlockInCurrentChunk(inodeLock)) { return false; }
+bool ChunkJobWriter::haveBlockWorthWriting(uint32_t unfinishedOperationCount) {
+	if (!haveAnyBlockInCurrentChunk()) { return false; }
 	const auto &block = chunkData_->dataChain.front();
 	if (block.type != WriteCacheBlock::kWritableBlock) {
 		// Always write data, that was previously written
@@ -1852,6 +1990,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
 	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
+	fs_register_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
 
 	gIsInitialized = true;
 }
@@ -1870,6 +2009,7 @@ void write_data_term(void) {
 	for (const auto &[_, id] : inodedataMap) { delete id; }
 	inodedataMap.clear();
 	truncateLocatorsData.clear();
+	fs_unregister_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
 
 	gIsInitialized = false;
 }

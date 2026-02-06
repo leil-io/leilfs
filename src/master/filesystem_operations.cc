@@ -2501,6 +2501,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 		                                  increaseVersion, &nchunkid);
 	}
 	if (status != SAUNAFS_STATUS_OK) {
+		if (status == SAUNAFS_ERROR_LOCKED) { *chunkid = nchunkid; }
 		fsnodes_update_checksum(fileNode);
 		return status;
 	}

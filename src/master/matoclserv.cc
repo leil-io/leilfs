@@ -191,6 +191,23 @@ struct matoclserventry {
 	std::vector<std::unique_ptr<DelayedChunkOperation>> delayedChunkOperations;
 };
 
+using WaitEntry = std::tuple<matoclserventry *, inode_t, uint32_t>;
+
+struct WaitEntryCmp {
+	bool operator()(const WaitEntry &a, const WaitEntry &b) const noexcept {
+		matoclserventry *pa = std::get<0>(a), *pb = std::get<0>(b);
+		if (pa != pb) { return std::less<matoclserventry *>()(pa, pb); }
+		inode_t ia = std::get<1>(a), ib = std::get<1>(b);
+		if (ia != ib) { return ia < ib; }
+		return std::get<2>(a) < std::get<2>(b);
+	}
+};
+
+// This map stores, for each chunk ID, the list of clients that are waiting for this chunk to be
+// unlocked and the inode and chunk index of the chunk they are waiting for. When a chunk is
+// unlocked, all clients in the corresponding list are notified and removed from the map.
+std::unordered_map<uint64_t, std::set<WaitEntry, WaitEntryCmp>> gWaitForUnlockMap;
+
 static std::list<std::unique_ptr<matoclserventry>> matoclservList;
 
 static int masterSocket;             ///< Master socket for accepting new connections
@@ -278,6 +295,65 @@ static inline void matoclserv_ugid_remap(matoclserventry *eptr, uint32_t *auid, 
 			*agid = eptr->sessionData->mapAllGid;
 		}
 	}
+}
+
+/// Adds a client connection to the wait-for-unlock list for a given chunk ID.
+/// @param eptr Pointer to the client connection in the master
+/// @param chunkId The ID of the chunk to wait for
+/// @param inode The inode of the chunk to wait for
+/// @param chunkIndex The index of the chunk to wait for
+static inline void matoclserv_add_to_wait_for_unlock_list(matoclserventry *eptr, uint64_t chunkId,
+                                                          inode_t inode, uint32_t chunkIndex) {
+	gWaitForUnlockMap[chunkId].emplace(eptr, inode, chunkIndex);
+}
+
+/// Removes a client connection from the wait-for-unlock list for all chunk IDs.
+/// @param eptr Pointer to the client connection in the master
+static inline void matoclserv_remove_entry_from_unlock_list(matoclserventry *eptr) {
+	for (auto waitMapIt = gWaitForUnlockMap.begin(); waitMapIt != gWaitForUnlockMap.end();) {
+		auto& waitSet = waitMapIt->second;
+
+		for (auto it = waitSet.begin(); it != waitSet.end();) {
+			if (std::get<0>(*it) == eptr) {
+				it = waitSet.erase(it);
+			} else {
+				++it;
+			}
+		}
+
+		if (waitSet.empty()) {
+			waitMapIt = gWaitForUnlockMap.erase(waitMapIt);
+		} else {
+			++waitMapIt;
+		}
+	}
+}
+
+void matoclserv_notify_unlock_list(uint64_t chunkId) {
+	auto it = gWaitForUnlockMap.find(chunkId);
+	if (it != gWaitForUnlockMap.end()) {
+		auto &clientsWaitingForUnlock = it->second;
+		for (auto &[waitingClient, inode, chunkIndex] : clientsWaitingForUnlock) {
+			// Don't send notices to clients that are being killed or that don't support notices
+			// about unlocked chunks
+			if (waitingClient->mode == ClientConnectionMode::KILL ||
+			    waitingClient->version < kFirstVersionWithUnlockChunkNotice) {
+				continue;
+			}
+
+			std::vector<uint8_t> outMessage;
+			matocl::unlockChunkNotice::serialize(outMessage, inode, chunkIndex);
+			matoclserv_createpacket(waitingClient, outMessage);
+		}
+		gWaitForUnlockMap.erase(it);
+	}
+	// If nothing is found, do nothing
+}
+
+/// Clears the wait-for-unlock list for all chunk IDs. This is called periodically to remove chunks
+/// that are no longer relevant or to clean up stale entries.
+static void matocl_clean_unlock_chunks_list() {
+	gWaitForUnlockMap.clear();
 }
 
 /// Checks whether a given group ID is registered in the session cache.
@@ -3011,6 +3087,11 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
+		if (status == SAUNAFS_ERROR_LOCKED) {
+			// The chunk is locked, so we need to add this client to the wait-for-unlock list.
+			// The chunkId must have been set by writeChunk above.
+			matoclserv_add_to_wait_for_unlock_list(eptr, chunkId, inode, chunkIndex);
+		}
 		serializer->serializeFuseWriteChunk(outMessage, messageId, status);
 		matoclserv_createpacket(eptr, outMessage);
 		return;
@@ -5131,6 +5212,8 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 			eptr->sessionData->disconnectedTimestamp = eventloop_time();
 		}
 	}
+
+	matoclserv_remove_entry_from_unlock_list(eptr);
 }
 
 void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *data,
@@ -5940,6 +6023,7 @@ void matoclserv_become_master() {
 
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 10, 0, matocl_session_check);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, matocl_session_stats_rotate);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, matocl_clean_unlock_chunks_list);
 	return;
 }
 
