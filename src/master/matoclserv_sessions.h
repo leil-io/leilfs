@@ -36,6 +36,8 @@
 // From configuration
 inline uint32_t gSessionSustainTime;
 
+class FilesystemOperationContext;
+
 struct Session {
 	using GroupCache = GenericLruCache<uint32_t, FsContext::GroupsContainer, 1024>;
 	using OpenFilesSet = std::set<inode_t>;
@@ -132,7 +134,8 @@ void matoclserv_reset_session_timeouts();
 /// @param currentSession Pointer to the session
 /// @param inode The inode of the open file
 /// @return SAUNAFS_STATUS_OK if the file was successfully acquired, or an error code otherwise
-int matoclserv_insert_open_file(Session *currentSession, inode_t inode);
+int matoclserv_insert_open_file(const FilesystemOperationContext &fsOpContext,
+                                Session *currentSession, inode_t inode);
 
 /// Adds an open file to the list of open files for a given session.
 /// @param sessionId The ID of the session to which the open file will be added

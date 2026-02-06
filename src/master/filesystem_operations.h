@@ -74,7 +74,16 @@ public:
 	// Functions which create/apply (depending on the given context) changes to the metadata.
 	// Common for metarestore and master server (both personalities)
 
-	uint8_t acquire(const FsContext &context, inode_t inode, uint32_t sessionid) override;
+	/// Registers a session as having acquired (opened) a file.
+	/// @see IFilesystemOperations::acquire
+	uint8_t acquire(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                inode_t inode, uint32_t sessionid) override;
+
+	/// Registers a session as having released (closed) a file.
+	/// @see IFilesystemOperations::release
+	uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                inode_t inode, uint32_t sessionid) override;
+
 	uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t inode, inode_t inode_src) override;
 	uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) override;
@@ -94,8 +103,6 @@ public:
 	               inode_t parent_src, const HString &name_src, inode_t parent_dst,
 	               const HString &name_dst, inode_t *inode, Attributes *attr) override;
 
-	uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
-	                inode_t inode, uint32_t sessionid) override;
 	uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
 	                     inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
 	uint8_t setGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
@@ -212,8 +219,8 @@ public:
 
 	uint8_t checkFile(const FsContext &context, inode_t inode,
 	                  ChunkCountArray &chunkCount) override;
-	uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
-	                  Attributes &attr) override;
+	uint8_t openCheck(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                  inode_t inode, uint8_t flags, Attributes &attr) override;
 	uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                GoalStatistics &dgtab) override;
