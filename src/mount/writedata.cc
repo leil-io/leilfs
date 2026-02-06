@@ -1454,7 +1454,6 @@ struct Register {
 
 static __int128_t totalCacheManagerScore{0};
 static std::map<uint64_t, Register> historyRegisters;
-static std::mutex writeCacheManagerMutex;
 
 void write_cacheManagerWriteEvent(inodedata *inoD, uint64_t byte_size) {
 	std::lock_guard lock(fcbcondMutex);
