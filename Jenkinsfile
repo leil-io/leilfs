@@ -228,6 +228,7 @@ pipeline {
                                     export PATH="/usr/lib/ccache:$PATH"
                                     cd build
                                     sudo nice make -j\$((\$(nproc) / 2)) install
+                                    sudo chown \$(id -u):\$(id -g) . -R
                                     saunafs-tests --gtest_filter="RebalancingTests*" --gtest_output="xml:./rebalance_test_detail.xml" || true
                                 """
                                 publishJunit("build/*test_detail.xml")
