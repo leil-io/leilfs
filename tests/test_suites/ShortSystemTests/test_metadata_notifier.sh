@@ -43,10 +43,10 @@ run_metadata_operations() {
 		sleep 1
 	done
 
-	saunafs settrashtime 10 folder1
+	saunafs settrashtime 3 folder1
 	touch folder1/file1
 	rm folder1/file1
-	sleep 1
+	sleep 6
 
 	saunafs settrashtime 0 folder1
 	touch folder1/file2
@@ -72,8 +72,9 @@ assert_notifier_log_plain() {
 		"inode 6: type=t path=/folder1/file1 (trash)"
 		"UNLINK(2,file2):7"
 		"inode 7: type=r path=/folder1/file2 (reserved)"
-		"PURGE(7)"
-		"inode 7: type=? path="
+		"PURGE(6)"
+		"RELEASE(6,1)"
+		"inode 6: type=? path="
 	)
 
 	for e in "${expected[@]}"; do
@@ -97,8 +98,9 @@ assert_notifier_log_tls() {
 		"inode 12: type=t path=/folder1/file1 (trash)"
 		"UNLINK(8,file2):13"
 		"inode 13: type=r path=/folder1/file2 (reserved)"
-		"PURGE(13)"
-		"inode 13: type=? path="
+		"PURGE(12)"
+		"RELEASE(12,1)"
+		"inode 12: type=? path="
 	)
 
 	for e in "${expected[@]}"; do

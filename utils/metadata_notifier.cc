@@ -282,6 +282,7 @@ int main(int argc, char *argv[]) {
 	std::regex accessRegex(R"(ACCESS\((\d+)\))");
 	std::regex unlinkRegex(R"(UNLINK\([^)]*\):(\d+))");
 	std::regex purgeRegex(R"(PURGE\((\d+)\))");
+	std::regex releaseRegex(R"(RELEASE\((\d+),(\d+)\))");
 
 	while (true) {
 		uint8_t temp[4096];
@@ -317,12 +318,14 @@ int main(int argc, char *argv[]) {
 				// Print log string
 				fprintf(stderr, "%s\n", str.c_str());
 
-				// If log string starts with ACCESS(<inode>), PURGE(<inode>) or
+				// If log string starts with ACCESS(<inode>), PURGE(<inode>),
+				// RELEASE(<inode>,<session_id>) or
 				// UNLINK(<parent_inode>,<name>):<unlinked_inode>, send request for path/type of
 				// that inode
 				std::smatch match;
 				if (std::regex_search(str, match, accessRegex) ||
 				    std::regex_search(str, match, unlinkRegex) ||
+				    std::regex_search(str, match, releaseRegex) ||
 				    std::regex_search(str, match, purgeRegex)) {
 					uint64_t inode = std::stoull(match[1].str());
 					sendGetPathTypeInode(sockfd, inode);
