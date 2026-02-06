@@ -26,6 +26,10 @@
 
 #include "config/cfg.h"
 #include "common/event_loop.h"
+#include "errors/saunafs_error_codes.h"
+#include "filesystem_node_types.h"
+#include "fs_context.h"
+#include "slogger/slogger.h"
 #if defined(SAUNAFS_HAVE_64BIT_JUDY) && !defined(DISABLE_JUDY_FOR_DEFECTIVENODESMAP)
 #  include "common/judy_map.h"
 #else
@@ -535,6 +539,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 	auto it = gMetadata->trash.begin();
 	watchdog.start();
 	while (it != gMetadata->trash.end() && ((*it).first.timestamp < ts)) {
+		auto fsContext = FsContext::getForMaster(eventloop_time());
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 		FSNodeFile *node = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>(
@@ -551,7 +556,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		assert(node->type == FSNodeType::kTrash);
 
 		auto node_id = node->id;
-		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
+		gFSOperations->purge(fsContext, fsOpContext, node_id);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
 		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
@@ -575,6 +580,7 @@ static void fs_do_emptyreserved(uint32_t ts) {
 	auto it = gMetadata->reserved.begin();
 	watchdog.start();
 	while (it != gMetadata->reserved.end()) {
+		auto fsContext = FsContext::getForMaster(eventloop_time());
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 		auto *node =
@@ -588,9 +594,16 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		}
 
 		assert(node->type == FSNodeType::kReserved);
+		node->type = FSNodeType::kTrash;
+		node->trashtime = 0;
 
 		auto node_id = node->id;
-		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
+		safs::log_info("URMAS: Purging file");
+		auto err = gFSOperations->purge(fsContext, fsOpContext, node_id);
+
+		if (err != SAUNAFS_STATUS_OK) {
+			safs::log_err("Could not purge reserved file; inode: {}", node_id);
+		}
 
 		// Purge operation should be performed anyway
 		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);

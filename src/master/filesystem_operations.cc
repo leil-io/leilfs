@@ -304,6 +304,7 @@ uint8_t FilesystemOperationsBase::purge(const FsContext &context,
 		return status;
 	}
 
+	safs::log_info("URMAS: Getting node for operation");
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
 	if (status != SAUNAFS_STATUS_OK) {
