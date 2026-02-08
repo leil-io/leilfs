@@ -35,6 +35,7 @@
 #include "common/datapack.h"
 #include "common/serialization.h"
 #include "common/sockets.h"
+#include "common/tls_session.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
 
@@ -44,6 +45,11 @@ constexpr uint8_t kPacketVersionMinor = SAUNAFS_PACKAGE_VERSION_MINOR;
 constexpr uint8_t kPacketVersionMicro = SAUNAFS_PACKAGE_VERSION_MICRO;
 constexpr uint16_t kCfgDefaultMasterTimeout = 60U;
 constexpr int kInvalidFD = -1;
+
+// TLS session related values
+/// If no TLS is used, this is `nullptr`.
+std::unique_ptr<TlsSession> tlsSession;
+int lastHandshakeError = 0;
 
 /// Structure for the packet being sent or received.
 struct PacketStruct {
@@ -58,6 +64,12 @@ struct PacketStruct {
 		put32bit(&ptr, size);
 	}
 };
+
+PacketStruct createStartTlsPacket() {
+	constexpr uint32_t kStartTlsPayloadSize = 0;
+	PacketStruct packet(NTTOMA_STARTTLS, kStartTlsPayloadSize);
+	return packet;
+}
 
 PacketStruct createRegisterPacket() {
 	uint8_t rversion = 1;
@@ -83,12 +95,48 @@ PacketStruct createGetPathTypeInodePacket(uint64_t inode) {
 	return packet;
 }
 
+inline ssize_t writeMaster(int sock, const uint8_t *buf, size_t len) {
+	// STARTTLS must be sent over plain TCP. After handshake, use TLS.
+	if (tlsSession) {
+		int ret = SSL_write(tlsSession->session(), buf, static_cast<int>(len));
+		if (ret > 0) { return ret; }
+		int err = SSL_get_error(tlsSession->session(), ret);
+		if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+			errno = EAGAIN;
+			return -1;
+		}
+		// Map other TLS errors to EIO for retry handling
+		errno = EIO;
+		return -1;
+	}
+	return ::write(sock, buf, len);
+}
+
+inline ssize_t readMaster(int sock, uint8_t *buf, size_t len) {
+	// After TLS handshake, use SSL_read; otherwise plain TCP.
+	if (tlsSession) {
+		int ret = SSL_read(tlsSession->session(), buf, static_cast<int>(len));
+		if (ret > 0) { return ret; }
+		int err = SSL_get_error(tlsSession->session(), ret);
+		if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+			errno = EAGAIN;
+			return -1;
+		}
+		// Clean shutdown
+		if (err == SSL_ERROR_ZERO_RETURN) { return 0; }
+		// Map other TLS errors to EIO for retry handling
+		errno = EIO;
+		return -1;
+	}
+	return ::read(sock, buf, len);
+}
+
 void writeToSocket(int sock, PacketStruct &pack) {
 	size_t offset = pack.startOffset;
 	size_t bytesLeft = pack.bytesLeft;
 
 	while (bytesLeft > 0) {
-		ssize_t writtenBytes = write(sock, pack.buffer.data() + offset, bytesLeft);
+		ssize_t writtenBytes = writeMaster(sock, pack.buffer.data() + offset, bytesLeft);
 
 		if (writtenBytes < 0) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -98,8 +146,14 @@ void writeToSocket(int sock, PacketStruct &pack) {
 			continue;
 		}
 
-		offset += writtenBytes;
-		bytesLeft -= writtenBytes;
+		if (writtenBytes == 0) {
+			// peer closed
+			fprintf(stderr, "write to Master returned 0 (closed)\n");
+			return;
+		}
+
+		offset += static_cast<size_t>(writtenBytes);
+		bytesLeft -= static_cast<size_t>(writtenBytes);
 	}
 }
 
@@ -111,6 +165,40 @@ void sendRegister(int sock) {
 void sendGetPathTypeInode(int sock, uint64_t inode) {
 	PacketStruct packet = createGetPathTypeInodePacket(inode);
 	writeToSocket(sock, packet);
+}
+
+void sendStartTls(int sock) {
+	// Always send STARTTLS over plain TCP
+	std::unique_ptr<TlsSession> saved = std::move(tlsSession);  // temporarily disable TLS
+	PacketStruct packet = createStartTlsPacket();
+	writeToSocket(sock, packet);
+	tlsSession = std::move(saved);
+}
+
+bool sendTlsHandshake() {
+	sassert(tlsSession != nullptr);
+
+	int ret = SSL_connect(tlsSession->session());
+
+	if (ret == 1) {
+		// Handshake completed successfully
+		return true;
+	}
+
+	int err = SSL_get_error(tlsSession->session(), ret);
+
+	lastHandshakeError = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		// Non-fatal, handshake can be retried later
+		fprintf(stderr, "TLS handshake in progress (notifier): %s",
+		        opensslErrorString(err).c_str());
+		return false;
+	}
+
+	// Fatal error
+	fprintf(stderr, "TLS handshake failed (notifier): %s", opensslErrorString(err).c_str());
+	return false;
 }
 
 int connectToServer(const char *host, int port) {
@@ -145,8 +233,8 @@ int connectToServer(const char *host, int port) {
 }
 
 int main(int argc, char *argv[]) {
-	if (argc != 3) {
-		fprintf(stderr, "Usage: %s <host> <port>\n", argv[0]);
+	if (argc != 3 && argc != 4) {
+		fprintf(stderr, "Usage: %s <host> <port> [tlsconfigfile]\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
@@ -155,6 +243,34 @@ int main(int argc, char *argv[]) {
 
 	int sockfd = connectToServer(host, port);
 	if (sockfd < 0) { return EXIT_FAILURE; }
+
+	if (argc == 4) {
+		const char *tlsConfigFile = argv[3];
+		fprintf(stderr, "Using TLS configuration from file: %s\n", tlsConfigFile);
+		try {
+			TlsSession::TlsConfig cfg = TlsSession::TlsConfig::fromFile(tlsConfigFile);
+			cfg.isServer = false;
+			if (cfg.expectedHostname.empty()) {
+				cfg.expectedHostname = host;
+			}
+
+			tlsSession = std::make_unique<TlsSession>(sockfd, cfg);
+			fprintf(stderr, "Starting TLS session with master %s:%d\n", host, port);
+			// Perform TLS handshake
+			sendStartTls(sockfd);
+
+			if (!sendTlsHandshake()) {
+				close(sockfd);
+				return EXIT_FAILURE;
+			}
+
+			fprintf(stderr, "TLS handshake completed\n");
+		} catch (const std::exception &e) {
+			fprintf(stderr, "TLS connection initialization failed: %s\n", e.what());
+			close(sockfd);
+			return EXIT_FAILURE;
+		}
+	}
 
 	fprintf(stderr, "Connected to %s:%d\n", host, port);
 
@@ -169,8 +285,8 @@ int main(int argc, char *argv[]) {
 
 	while (true) {
 		uint8_t temp[4096];
-		ssize_t n = read(sockfd, temp, sizeof(temp));
-		if (n <= 0) break;  // connection closed or error
+		ssize_t n = readMaster(sockfd, temp, sizeof(temp));
+		if (n <= 0) { break; }  // connection closed or error
 		recvBuffer.insert(recvBuffer.end(), temp, temp + n);
 
 		while (recvBuffer.size() >= kHeaderSize) {
@@ -180,7 +296,7 @@ int main(int argc, char *argv[]) {
 			get32bit(&parsePtr, packetType);
 			get32bit(&parsePtr, dataLen);
 
-			if (recvBuffer.size() < kHeaderSize + dataLen) break;  // wait for full packet
+			if (recvBuffer.size() < kHeaderSize + dataLen) { break; }  // wait for full packet
 
 			parsePtr = ptr + kHeaderSize;
 

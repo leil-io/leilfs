@@ -73,6 +73,7 @@ add_executable(big-session-metadata-benchmark big_session_metadata_benchmark.cc)
 install(TARGETS big-session-metadata-benchmark RUNTIME DESTINATION ${BIN_SUBDIR})
 
 add_executable(metadata-notifier metadata_notifier.cc)
+target_link_libraries(metadata-notifier sfscommon)
 install(TARGETS metadata-notifier RUNTIME DESTINATION ${BIN_SUBDIR})
 
 if(ENABLE_FOUNDATIONDB)

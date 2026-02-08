@@ -383,6 +383,10 @@ enum class SugidClearMode : uint8_t {
 #define MATONT_GET_PATH_TYPE_INODE (PROTO_BASE+204)
 /// inode:64 nodetype:8 path:STDSTRING
 
+// 0x00CD [EXPERIMENTAL]
+#define NTTOMA_STARTTLS (PROTO_BASE+205)
+/// -
+
 // CHUNKSERVER <-> MASTER
 
 // 0x044C

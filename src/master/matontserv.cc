@@ -29,6 +29,7 @@
 #include "common/output_packet.h"
 #include "common/serialization.h"
 #include "common/sockets.h"
+#include "common/tls_session.h"
 #include "config/cfg.h"
 #include "master/filesystem_node.h"
 #include "master/filesystem_operations.h"
@@ -43,7 +44,8 @@ constexpr size_t kPacketHeaderSize = sizeof(uint32_t) * 2;
 enum class NotifierConnectionMode : uint8_t {
 	KILL,
 	HEADER,
-	DATA
+	DATA,
+	HANDSHAKE,
 };
 
 struct MatontservEntry {
@@ -61,6 +63,12 @@ struct MatontservEntry {
 	uint32_t serviceIp{};
 	std::string config;
 
+	/// Context of the TLS channel used for communication with a
+	/// metadata notifier application.
+	/// If no TLS is used, this is `nullptr`.
+	std::unique_ptr<TlsSession> tlsSession{nullptr};
+	int lastHandshakeError{0};
+
 	MatontservEntry(int sock_, uint32_t now) : sock(sock_), lastRead(now), lastWrite(now) {}
 };
 
@@ -72,6 +80,66 @@ static bool gExiting = false;
 // from config
 static std::string ListenHost;
 static std::string ListenPort;
+
+/// Starts/continues a TLS handshake (non-blocking)
+/// @param eptr Pointer to the notifier connection in the master
+void matontserv_tlshandshake(MatontservEntry *eptr) {
+	sassert(eptr->mode == NotifierConnectionMode::HANDSHAKE);
+
+	int ret = SSL_accept(eptr->tlsSession->session());
+
+	if (ret == 1) {
+		safs::log_info("TLS handshake completed with notifier from {}:{}",
+		               ipToString(eptr->serviceIp), eptr->serviceStrIp);
+		eptr->mode = NotifierConnectionMode::HEADER;
+		return;
+	}
+
+	int err = SSL_get_error(eptr->tlsSession->session(), ret);
+	eptr->lastHandshakeError = err;
+
+	if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+		safs::log_info("TLS handshake in progress with notifier from {}:{}: {}",
+		               ipToString(eptr->serviceIp), eptr->serviceStrIp, opensslErrorString(err));
+		return;  // retry later
+	}
+
+	eptr->mode = NotifierConnectionMode::KILL;
+	safs::log_err("TLS handshake failed: {}", opensslErrorString(err));
+}
+
+/// Initiate a TLS connection with the notifier.
+/// @param eptr Pointer to the notifier connection in the master
+void matontserv_starttls(MatontservEntry *eptr) {
+	// Initialize a TLS session for the peer.
+	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
+	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
+	std::string trustFile = cfg_getstring("TLS_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+
+	try {
+		eptr->tlsSession =
+		    std::make_unique<TlsSession>(eptr->sock, true, keyFile, certFile, trustFile);
+		safs::log_info("Starting TLS session with notifier from {}:{}", ipToString(eptr->serviceIp),
+		               eptr->serviceStrIp);
+		eptr->mode = NotifierConnectionMode::HANDSHAKE;
+		matontserv_tlshandshake(eptr);
+	} catch (const std::exception &e) {
+		eptr->mode = NotifierConnectionMode::KILL;
+		safs::log_err("Failed to start TLS session with notifier from {}:{}: {}",
+		              ipToString(eptr->serviceIp), eptr->serviceStrIp, e.what());
+	}
+}
+
+void matontserv_endtls(MatontservEntry *eptr) {
+	if (eptr->tlsSession != nullptr) {
+		int ret = SSL_shutdown(eptr->tlsSession->session());
+		if (ret < 0) {
+			safs::log_warn("TLS shutdown failed: {}",
+			               opensslErrorString(SSL_get_error(eptr->tlsSession->session(), ret)));
+		}
+		eptr->tlsSession.reset();
+	}
+}
 
 uint8_t *matontserv_addpacket(MatontservEntry *eptr, uint32_t type, uint32_t size) {
 	eptr->outputPackets.emplace(PacketHeader(type, size));
@@ -165,6 +233,12 @@ void matontserv_reload(void) {
 void matontserv_term(void) {
 	safs::log_info("master <-> notifiers module: closing {}:{}", ListenHost,
 	               ListenPort);
+
+	for (auto &entry : matontservList) {
+		// End TLS session if any
+		matontserv_endtls(&entry);
+	}
+
 	tcpclose(listenSocket);
 
 	matontservList.clear();
@@ -177,10 +251,27 @@ void matontserv_desc(std::vector<pollfd> &pdesc) {
 	} else {
 		listenSocketPollFdIndex = -1;
 	}
-	for (auto &entry : matontservList) {
-		pdesc.push_back({entry.sock, POLLIN, 0});
-		entry.pollFdIndex = pdesc.size() - 1;
-		if (!entry.outputPackets.empty()) { pdesc.back().events |= POLLOUT; }
+
+	for (auto &eptr : matontservList) {
+		pdesc.push_back({eptr.sock, POLLIN, 0});
+		eptr.pollFdIndex = pdesc.size() - 1;
+		if (eptr.mode == NotifierConnectionMode::HANDSHAKE) {
+			short events = 0;
+			switch (eptr.lastHandshakeError) {
+			case SSL_ERROR_WANT_READ:
+				events = POLLIN;
+				break;
+			case SSL_ERROR_WANT_WRITE:
+				events = POLLOUT;
+				break;
+			default:
+				events = POLLIN | POLLOUT;
+				break;
+			}
+			pdesc.back().events = events;
+		} else {
+			if (!eptr.outputPackets.empty()) { pdesc.back().events |= POLLOUT; }
+		}
 	}
 }
 
@@ -287,6 +378,9 @@ void matontserv_gotpacket(MatontservEntry *eptr, uint32_t type, const uint8_t *d
 		case NTTOMA_GET_PATH_TYPE_INODE:
 			matontserv_get_path_type_inode(eptr, data, length);
 			break;
+		case NTTOMA_STARTTLS:
+			matontserv_starttls(eptr);
+			break;
 		default:
 			safs::log_info("master <-> notifiers module: got unknown message (type:{})",
 			               type);
@@ -305,17 +399,41 @@ void matontserv_read(MatontservEntry *eptr) {
 	watchdog.start();
 	while (eptr->mode != NotifierConnectionMode::KILL) {
 		uint32_t bytesToRead = eptr->inputPacket.bytesToBeRead();
-		i = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+		if (eptr->tlsSession != nullptr && eptr->mode != NotifierConnectionMode::HANDSHAKE) {
+			i = SSL_read(eptr->tlsSession->session(), eptr->inputPacket.pointerToBeReadInto(),
+			             bytesToRead);
+		} else {
+			i = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(), bytesToRead);
+		}
+
 		if (i == 0) {
-			safs::log_info("connection with NT({}) has been closed by peer", eptr->serviceStrIp);
+			if (eptr->tlsSession != nullptr) {
+				int err = SSL_get_error(eptr->tlsSession->session(), i);
+				safs::log_info("TLS connection with NT({}) got error: {}", eptr->serviceStrIp,
+				               opensslErrorString(err));
+			} else {
+				safs::log_info("connection with NT({}) has been closed by peer",
+				               eptr->serviceStrIp);
+			}
 			eptr->mode = NotifierConnectionMode::KILL;
 			return;
 		}
 
 		if (i < 0) {
-			if (errno != EAGAIN) {
-				safs::log_err("read from NT({}) error", eptr->serviceStrIp);
-				eptr->mode = NotifierConnectionMode::KILL;
+			int err;
+			if (eptr->tlsSession != nullptr && eptr->mode != NotifierConnectionMode::HANDSHAKE) {
+				err = SSL_get_error(eptr->tlsSession->session(), i);
+				if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+					safs::log_warn("read from NT({}) error: {}", eptr->serviceStrIp,
+					               opensslErrorString(err));
+					eptr->mode = NotifierConnectionMode::KILL;
+				}
+			} else {
+				err = errno;
+				if (errno != EAGAIN) {
+					safs::log_err("read from NT({}) error: {}", eptr->serviceStrIp, strerror(err));
+					eptr->mode = NotifierConnectionMode::KILL;
+				}
 			}
 			return;
 		}
@@ -346,16 +464,33 @@ void matontserv_write(MatontservEntry *eptr) {
 	watchdog.start();
 	while (!eptr->outputPackets.empty()) {
 		OutputPacket &outputPacket = eptr->outputPackets.front();
-		bytesWritten = write(eptr->sock, outputPacket.packet.data() + outputPacket.bytesSent,
-		                     outputPacket.packet.size() - outputPacket.bytesSent);
-		if (bytesWritten < 0) {
-			if (errno != EAGAIN) {
-				safs::log_err("main master server module: (ip:{}) write error",
-				              eptr->serviceStrIp);
-				eptr->mode = NotifierConnectionMode::KILL;
+		if (eptr->tlsSession != nullptr) {
+			bytesWritten = SSL_write(eptr->tlsSession->session(),
+			                         outputPacket.packet.data() + outputPacket.bytesSent,
+			                         outputPacket.packet.size() - outputPacket.bytesSent);
+			if (bytesWritten < 0) {
+				int err = SSL_get_error(eptr->tlsSession->session(), bytesWritten);
+				if (err != SSL_ERROR_WANT_WRITE && err != SSL_ERROR_WANT_READ) {
+					safs::log_warn("write to NT({}) error: {}", eptr->serviceStrIp,
+					               opensslErrorString(err));
+					eptr->mode = NotifierConnectionMode::KILL;
+				}
+				return;
 			}
-			return;
+		} else {
+			bytesWritten = write(eptr->sock, outputPacket.packet.data() + outputPacket.bytesSent,
+			                     outputPacket.packet.size() - outputPacket.bytesSent);
+			if (bytesWritten < 0) {
+				int err = errno;
+				if (err != EAGAIN) {
+					safs::log_err("main master server module: (ip:{}) write error: {}",
+					              eptr->serviceStrIp, strerror(err));
+					eptr->mode = NotifierConnectionMode::KILL;
+				}
+				return;
+			}
 		}
+
 		outputPacket.bytesSent += bytesWritten;
 
 		if (outputPacket.bytesSent >= outputPacket.packet.size()) {
@@ -394,15 +529,21 @@ void matontserv_serve(const std::vector<pollfd> &pdesc) {
 			if (pdesc[entry.pollFdIndex].revents & (POLLERR | POLLHUP)) {
 				entry.mode = NotifierConnectionMode::KILL;
 			}
-			if ((pdesc[entry.pollFdIndex].revents & POLLIN) &&
-			    entry.mode != NotifierConnectionMode::KILL) {
-				entry.lastRead = now;
-				matontserv_read(&entry);
-			}
-			if ((pdesc[entry.pollFdIndex].revents & POLLOUT) &&
-			    entry.mode != NotifierConnectionMode::KILL) {
-				entry.lastWrite = now;
-				matontserv_write(&entry);
+
+			if (entry.mode == NotifierConnectionMode::HANDSHAKE) {
+				matontserv_tlshandshake(&entry);
+			} else {
+				if ((pdesc[entry.pollFdIndex].revents & POLLIN) &&
+				    entry.mode != NotifierConnectionMode::KILL) {
+					entry.lastRead = now;
+					matontserv_read(&entry);
+				}
+
+				if ((pdesc[entry.pollFdIndex].revents & POLLOUT) &&
+				    entry.mode != NotifierConnectionMode::KILL) {
+					entry.lastWrite = now;
+					matontserv_write(&entry);
+				}
 			}
 		}
 		if ((uint32_t)(entry.lastRead + entry.timeout) < (uint32_t)now) {
@@ -416,6 +557,7 @@ void matontserv_serve(const std::vector<pollfd> &pdesc) {
 
 	for (auto it = matontservList.begin(); it != matontservList.end();) {
 		if (it->mode == NotifierConnectionMode::KILL) {
+			matontserv_endtls(&(*it));
 			tcpclose(it->sock);
 			it = matontservList.erase(it);
 		} else {
