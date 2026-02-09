@@ -317,6 +317,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, adminRecalculateMetadataChecksum, SAU_MATOCL_ADMIN_RECALCULATE_METADATA_CHECKSUM, 0,
 		uint8_t, status)
 
+// SAU_MATOCL_UNLOCK_CHUNK_NOTICE
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, unlockChunkNotice, kInodeAndChunkIndex, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, unlockChunkNotice, SAU_MATOCL_UNLOCK_CHUNK_NOTICE, kInodeAndChunkIndex,
+		inode_t, inode,
+		uint32_t, chunkIndex)
+
 // SAU_MATOCL_FUSE_TRUNCATE
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseTruncate, kStatusPacketVersion, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseTruncate, kFinishedPacketVersion, 1)
