@@ -2233,8 +2233,9 @@ uint8_t FilesystemOperationsBase::checkFile(const FsContext &context, inode_t in
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::openCheck(const FsContext &context, inode_t inode, uint8_t flags,
-                                            Attributes &attr) {
+uint8_t FilesystemOperationsBase::openCheck(const FsContext &context,
+                                            const FilesystemOperationContext &fsOpContext,
+                                            inode_t inode, uint8_t flags, Attributes &attr) {
 	FSNode *p;
 
 	uint8_t status = nodeOperations_->verifySession(
@@ -2243,9 +2244,6 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context, inode_t in
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
-
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -2270,70 +2268,95 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context, inode_t in
 }
 #endif
 
-uint8_t FilesystemOperationsBase::acquire(const FsContext &context, inode_t inode,
-                                          uint32_t sessionid) {
-	ChecksumUpdater cu(context.ts());
+uint8_t FilesystemOperationsBase::acquire(const FsContext &context,
+                                          const FilesystemOperationContext &fsOpContext,
+                                          inode_t inode, uint32_t sessionid) {
+	ChecksumUpdater checksumUpdater(context.ts());
 #ifndef METARESTORE
 	if (context.isPersonalityShadow()) {
 		matoclserv_add_open_file(sessionid, inode);
 	}
 #endif /* #ifndef METARESTORE */
-	FSNodeFile *p = nodeOperations_->idToNode<FSNodeFile>(inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
-	    p->type != FSNodeType::kReserved) {
+	auto *fileNode = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
+	if (!fileNode) { return SAUNAFS_ERROR_ENOENT; }
+
+	if (fileNode->type != FSNodeType::kFile && fileNode->type != FSNodeType::kTrash &&
+	    fileNode->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	if (std::find(p->sessionIds.begin(), p->sessionIds.end(), sessionid) != p->sessionIds.end()) {
+
+	if (std::find(fileNode->sessionIds.begin(), fileNode->sessionIds.end(), sessionid) !=
+	    fileNode->sessionIds.end()) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	p->sessionIds.push_back(sessionid);
-	fsnodes_update_checksum(p);
+
+	fileNode->sessionIds.push_back(sessionid);
+
+	fsnodes_update_checksum(fileNode);
+
+	// Persist the changes in KV backends
+	if (fsOpContext.hasReadWriteTransaction()) {
+		nodeOperations_->updateNode(fsOpContext, fileNode);
+	}
+
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
 	} else {
 		gMetadata->metadataVersion++;
 	}
+
 	return SAUNAFS_STATUS_OK;
 }
 
 uint8_t FilesystemOperationsBase::release(const FsContext &context,
                                           const FilesystemOperationContext &fsOpContext,
                                           inode_t inode, uint32_t sessionid) {
-	ChecksumUpdater cu(context.ts());
-	FSNodeFile *p = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
-	    p->type != FSNodeType::kReserved) {
+	ChecksumUpdater checksumUpdater(context.ts());
+
+	auto *fileNode = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
+
+	if (!fileNode) { return SAUNAFS_ERROR_ENOENT; }
+
+	if (fileNode->type != FSNodeType::kFile && fileNode->type != FSNodeType::kTrash &&
+	    fileNode->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
-	auto it = std::find(p->sessionIds.begin(), p->sessionIds.end(), sessionid);
-	if (it != p->sessionIds.end()) {
-		p->sessionIds.erase(it);
-		if (p->type == FSNodeType::kReserved && p->sessionIds.empty()) {
-			nodeOperations_->purge(fsOpContext, context.ts(), p);
+
+	auto iter = std::find(fileNode->sessionIds.begin(), fileNode->sessionIds.end(), sessionid);
+
+	if (iter != fileNode->sessionIds.end()) {
+		fileNode->sessionIds.erase(iter);
+
+		if (fileNode->type == FSNodeType::kReserved && fileNode->sessionIds.empty()) {
+			nodeOperations_->purge(fsOpContext, context.ts(), fileNode);
 		} else {
-			fsnodes_update_checksum(p);
+			fsnodes_update_checksum(fileNode);
+
+			// Persist the changes in KV backends
+			if (fsOpContext.hasReadWriteTransaction()) {
+				nodeOperations_->updateNode(fsOpContext, fileNode);
+			}
 		}
+
 #ifndef METARESTORE
 		if (context.isPersonalityShadow()) {
 			matoclserv_remove_open_file(sessionid, inode);
 		}
 #endif /* #ifndef METARESTORE */
+
 		if (context.isPersonalityMaster()) {
 			changeLog(context.ts(), "RELEASE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
 		} else {
 			gMetadata->metadataVersion++;
 		}
+
 		return SAUNAFS_STATUS_OK;
 	}
+
 #ifndef METARESTORE
-	safs_pretty_syslog(LOG_WARNING, "release: session not found");
+	safs::log_warn("{}: session {} not found for inode {}", __func__, sessionid, inode);
 #endif
+
 	return SAUNAFS_ERROR_EINVAL;
 }
 

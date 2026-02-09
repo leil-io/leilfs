@@ -83,7 +83,71 @@ public:
 	// Functions which create/apply (depending on the given context) changes to the metadata.
 	// Common for metarestore and master server (both personalities)
 
-	virtual uint8_t acquire(const FsContext &context, inode_t inode, uint32_t sessionid) = 0;
+	/// Registers a session as having acquired (opened) a file.
+	///
+	/// This method adds the specified session ID to the file's list of sessions that have
+	/// the file open. It is called when a client opens a file and is used to track file
+	/// usage across sessions. The operation ensures that:
+	/// - The target inode exists and is a valid file node (regular file, trash, or reserved)
+	/// - The session has not already acquired this file (prevents duplicate acquisitions)
+	///
+	/// For shadow personalities, this operation also updates the internal open file tracking
+	/// used by the metalogger service (matoclserv_add_open_file).
+	///
+	/// The operation updates the file node's checksum and logs the change to the changelog
+	/// on master personalities (as "ACQUIRE").
+	///
+	/// @param context The FS operation context containing user credentials, session info,
+	///                and timestamp.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode number of the file to acquire.
+	/// @param sessionid The session identifier that is acquiring the file.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_ENOENT if the inode does not exist
+	///         - SAUNAFS_ERROR_EPERM if the inode is not a file, trash, or reserved node
+	///         - SAUNAFS_ERROR_EINVAL if the session has already acquired this file
+	///
+	/// @note This operation must be paired with a corresponding release() call when the
+	///       file is closed.
+	/// @note Multiple sessions can acquire the same file simultaneously.
+	virtual uint8_t acquire(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, uint32_t sessionid) = 0;
+
+	/// Unregisters a session that has released (closed) a file.
+	///
+	/// This method removes the specified session ID from the file's list of sessions that
+	/// have the file open. It is called when a client closes a file and is the counterpart
+	/// to the acquire() operation. The operation:
+	/// - Verifies the target inode exists and is a valid file node (regular file, trash,
+	///   or reserved)
+	/// - Removes the session ID from the file's session list
+	/// - For reserved files with no remaining sessions, automatically purges the file
+	///   (deletes it permanently)
+	/// - Updates the file node's checksum
+	///
+	/// For shadow personalities, this operation also updates the internal open file tracking
+	/// used by the metalogger service (matoclserv_remove_open_file).
+	///
+	/// The operation logs the change to the changelog on master personalities (as "RELEASE").
+	///
+	/// @param context The FS operation context containing user credentials, session info,
+	///                and timestamp.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode number of the file to release.
+	/// @param sessionid The session identifier that is releasing the file.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - SAUNAFS_ERROR_ENOENT if the inode does not exist
+	///         - SAUNAFS_ERROR_EPERM if the inode is not a file, trash, or reserved node
+	///         - SAUNAFS_ERROR_EINVAL if the session was not found in the file's session list
+	///
+	/// @note This operation should only be called after a successful acquire() for the same
+	///       session and inode.
+	/// @note Reserved files are automatically purged when their last session is released.
+	virtual uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, uint32_t sessionid) = 0;
+
 	virtual uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t inode, inode_t inode_src) = 0;
 	virtual uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) = 0;
@@ -179,8 +243,7 @@ public:
 	virtual uint8_t rename(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t parent_src, const HString &name_src, inode_t parent_dst,
 	                       const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
-	virtual uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
-	                        inode_t inode, uint32_t sessionid) = 0;
+
 	virtual uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr,
 	                             uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
 	                             inode_t *nsinodes) = 0;
@@ -732,8 +795,9 @@ public:
 
 	virtual uint8_t checkFile(const FsContext &context, inode_t inode,
 	                          ChunkCountArray &chunkCount) = 0;
-	virtual uint8_t openCheck(const FsContext &context, inode_t inode, uint8_t flags,
-	                          Attributes &attr) = 0;
+	virtual uint8_t openCheck(const FsContext &context,
+	                          const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                          uint8_t flags, Attributes &attr) = 0;
 	virtual uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                        inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                        GoalStatistics &dgtab) = 0;

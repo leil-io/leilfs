@@ -114,6 +114,10 @@ enum class ClientConnectionMode : std::uint8_t {
 const uint32_t kMaxNumberOfChunkCopies = 100U;
 constexpr uint8_t kClientInactivityTimeout = 10;
 
+/// Batch size for committing transactions.
+/// Used to avoid transaction too old errors in KV backends.
+constexpr size_t kTransactionBatchSize = 100;
+
 struct matoclserventry;
 
 // locked chunks
@@ -1538,6 +1542,24 @@ void matoclserv_update_mount_info(matoclserventry *eptr, const uint8_t *data, ui
 	}
 }
 
+/// Helper function to commit transaction batches for bulk operations.
+/// Committing in batches avoids transaction too old issues in KV backends.
+/// @param fsOpContext The filesystem operation context to commit and replace with a fresh
+/// context.
+/// @param operationCount Reference to the current operation count; reset after commit.
+[[nodiscard]] bool commitTransactionBatch(FilesystemOperationContext &fsOpContext,
+                                          size_t &operationCount) {
+	assert(fsOpContext.hasReadWriteTransaction());
+
+	auto commitResult = fsOpContext.getReadWriteTransaction()->commit();
+
+	fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+	operationCount = 0;
+
+	return commitResult;
+}
+
 void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	const uint8_t *ptr;
 
@@ -1561,33 +1583,64 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	}
 
 	FsContext context = FsContext::getForMaster(eventloop_time());
+
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 
 	changelog_disable_flush();
-	auto it = eptr->sessionData->openFilesSet.begin();
+	auto iter = eptr->sessionData->openFilesSet.begin();
 
-	while (it != eptr->sessionData->openFilesSet.end()) {
-		inode_t openFileIno = *it;
+	size_t operationCount = 0;
+
+	while (iter != eptr->sessionData->openFilesSet.end()) {
+		inode_t openFileIno = *iter;
 		if (!inodes_to_reserve.contains(openFileIno)) {
 			// erase files not belonging to the reserve inodes list provided
 			gFSOperations->release(context, fsOpContext, openFileIno, eptr->sessionData->sessionId);
-			it = eptr->sessionData->openFilesSet.erase(it);
+			iter = eptr->sessionData->openFilesSet.erase(iter);
+			operationCount++;
+
+			if (fsOpContext.hasReadWriteTransaction() && operationCount >= kTransactionBatchSize) {
+				if (!commitTransactionBatch(fsOpContext, operationCount)) {
+					safs::log_err("{}: failed to commit transaction batch for reserving inodes",
+					              __func__);
+					// KV-backends: Continue for now until the transaction retry strategy is
+					// implemented
+				}
+			}
 		} else {
 			// skip files already in session
-			it++;
+			iter++;
 			// no need to remind this file as reserved, as it is already open
 			inodes_to_reserve.erase(openFileIno);
 		}
 	}
 
 	for (const auto &inode_to_reserve : inodes_to_reserve) {
-		if (gFSOperations->acquire(context, inode_to_reserve, eptr->sessionData->sessionId) ==
-		    SAUNAFS_STATUS_OK) {
+		if (gFSOperations->acquire(context, fsOpContext, inode_to_reserve,
+		                           eptr->sessionData->sessionId) == SAUNAFS_STATUS_OK) {
 			// Insert reserved inodes into the opened files set
 			eptr->sessionData->openFilesSet.insert(inode_to_reserve);
+			operationCount++;
+
+			if (fsOpContext.hasReadWriteTransaction() && operationCount >= kTransactionBatchSize) {
+				if (!commitTransactionBatch(fsOpContext, operationCount)) {
+					safs::log_err("{}: failed to commit transaction batch for reserving inodes",
+					              __func__);
+					// KV-backends: Continue for now until the transaction retry strategy is
+					// implemented
+				}
+			}
 		}
 	}
+
+	// Commit the final batch for KV backends
+	if (fsOpContext.hasReadWriteTransaction() && operationCount > 0) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: failed to commit final transaction for reserving inodes", __func__);
+		}
+	}
+
 	changelog_enable_flush();
 }
 
@@ -2804,9 +2857,20 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = matoclserv_insert_open_file(eptr->sessionData, inode);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = matoclserv_insert_open_file(fsOpContext, eptr->sessionData, inode);
+
 		if (status == SAUNAFS_STATUS_OK) {
-			status = gFSOperations->openCheck(context, inode, flags, attr);
+			status = gFSOperations->openCheck(context, fsOpContext, inode, flags, attr);
+		}
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+				status = SAUNAFS_ERROR_IO;
+			}
 		}
 	}
 
@@ -4938,12 +5002,34 @@ void matocl_locks_release(const FsContext &context, inode_t inode, uint32_t sess
 
 void matocl_close_files(Session *currentSession) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
+
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	size_t operationCount = 0;
 
 	for (const auto &openFileInode : currentSession->openFilesSet) {
 		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		matocl_locks_release(context, openFileInode, currentSession->sessionId);
+		operationCount++;
+
+		if (fsOpContext.hasReadWriteTransaction() && operationCount >= kTransactionBatchSize) {
+			if (!commitTransactionBatch(fsOpContext, operationCount)) {
+				safs::log_err(
+				    "{}: failed to commit transaction batch while closing files for session {}",
+				    __func__, currentSession->sessionId);
+				// KV-backends: Continue for now until the transaction retry strategy is implemented
+			}
+		}
+	}
+
+	// Commit the final batch for KV backends
+	if (fsOpContext.hasReadWriteTransaction() && operationCount > 0) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err(
+			    "{}: failed to commit final transaction while closing files for session {}",
+			    __func__, currentSession->sessionId);
+		}
 	}
 
 	currentSession->openFilesSet.clear();

@@ -28,6 +28,7 @@
 #include "common/massert.h"
 #include "common/type_defs.h"
 #include "config/cfg.h"
+#include "master/filesystem_operation_context.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/metadata_backend_common.h"
 #include "protocol/SFSCommunication.h"
@@ -327,13 +328,14 @@ int matoclserv_load_sessions() {
 }
 #undef MFSSIGNATURE
 
-int matoclserv_insert_open_file(Session *currentSession, inode_t inode) {
+int matoclserv_insert_open_file(const FilesystemOperationContext &fsOpContext,
+                                Session *currentSession, inode_t inode) {
 	if (currentSession->openFilesSet.contains(inode)) {
 		return SAUNAFS_STATUS_OK;  // file already acquired - nothing to do
 	}
 
-	int status = gFSOperations->acquire(FsContext::getForMaster(eventloop_time()), inode,
-	                                    currentSession->sessionId);
+	int status = gFSOperations->acquire(FsContext::getForMaster(eventloop_time()), fsOpContext,
+	                                    inode, currentSession->sessionId);
 
 	if (status == SAUNAFS_STATUS_OK) { currentSession->openFilesSet.insert(inode); }
 

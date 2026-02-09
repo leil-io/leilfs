@@ -244,7 +244,21 @@ int do_acquire(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 	EAT(ptr,filename,lv,',');
 	GETU32(cuid,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->acquire(FsContext::getForRestore(ts), inode, cuid);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->acquire(FsContext::getForRestore(ts), fsOpContext, inode, cuid);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, session id {}", __func__,
+			              inode, cuid);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_attr(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
