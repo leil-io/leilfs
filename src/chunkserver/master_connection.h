@@ -124,7 +124,7 @@ public:
 
 	// Polling
 
-	void providePollDescriptors(std::vector<pollfd> &pdesc);
+	void providePollDescriptors(std::vector<pollfd> &pdesc, bool doTerminate);
 
 	void handlePollErrors(const std::vector<pollfd> &pdesc);
 
@@ -209,6 +209,8 @@ public:
 	const std::string &clusterId() const { return clusterId_; }
 
 	bool isTlsEnabled() const { return !tlsCertFile_.empty() && !tlsKeyFile_.empty(); }
+
+	bool isOutputQueueEmpty() const { return outputPackets_.empty(); }
 
 private:
 	std::string masterHostStr_;                     ///< Hostname of the master server.
