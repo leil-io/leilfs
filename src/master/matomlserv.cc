@@ -50,6 +50,7 @@
 #include "common/tls_session.h"
 #include "config/cfg.h"
 #include "master/filesystem.h"
+#include "master/matoclserv.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
@@ -102,6 +103,7 @@ static std::deque<MatomlservEntry> matomlservList;
 static int listenSocket;
 static int32_t listenSocketPollFdIndex;
 static bool gExiting = false;
+static bool gClientOpsFinished = false;
 
 // from config
 static std::string gListenHost;
@@ -912,18 +914,22 @@ void matomlserv_serve(const std::vector<pollfd> &pdesc) {
 	}
 }
 
-void matomlserv_wantexit(void) {
+void matomlserv_wantexit() {
 	gExiting = true;
-	for (auto &eptr : matomlservList) {
-		matomlserv_createpacket(&eptr, matoml::endSession::build());
-	}
-	// Now we won't create any new packets, but we will wait for all existing packets to be
-	// transmitted to shadow masters and metaloggers
 }
 
-int matomlserv_canexit(void) {
+int matomlserv_canexit() {
+	if (!gClientOpsFinished && matoclserv_client_async_operations_finished()) {
+		gClientOpsFinished = true;
+		for (auto &eptr : matomlservList) {
+			matomlserv_createpacket(&eptr, matoml::endSession::build());
+		}
+		// Now we won't create any new packets, but we will wait for all existing packets to be
+		// transmitted to shadow masters and metaloggers
+		return 0;
+	}
 	// Exit when all connections are closed
-	return matomlservList.empty();
+	return static_cast<int>(matomlservList.empty());
 }
 
 void matomlserv_become_master() {

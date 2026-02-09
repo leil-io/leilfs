@@ -5804,16 +5804,25 @@ void matoclserv_wantexit() {
 	exiting = 1;
 }
 
+bool matoclserv_client_async_operations_finished() {
+	for (const auto &eptr : matoclservList) {
+		if (!eptr->delayedChunkOperations.empty()) {
+			return false;
+		}
+	}
+	return true;
+}
+
 int matoclserv_canexit() {
 	matoclserventry *adminTerminator = nullptr;
 	static bool terminatorPacketSent = false;
 
+	if (!matoclserv_client_async_operations_finished()) {
+		return 0;
+	}
+
 	for (const auto &eptr : matoclservList) {
 		if (!eptr->outputPackets.empty()) {
-			return 0;
-		}
-
-		if (!eptr->delayedChunkOperations.empty()) {
 			return 0;
 		}
 

@@ -57,3 +57,6 @@ void matoclserv_broadcast_metadata_saved(uint8_t status);
 /// Notify interested clients about the status of metadata checksum recalculation process.
 /// @param status Status of the metadata checksum recalculation process
 void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status);
+
+/// Check whether there are any async filesystem operations that still need to finished (e.g delayed chunk operations)
+bool matoclserv_client_async_operations_finished();
