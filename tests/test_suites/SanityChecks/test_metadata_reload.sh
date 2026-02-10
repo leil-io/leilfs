@@ -1,8 +1,6 @@
 timeout_set 2 minutes
 
 master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
-master_cfg+="|EMPTY_TRASH_PERIOD = 1"
-master_cfg+="|EMPTY_RESERVED_INODES_PERIOD = 1"
 
 CHUNKSERVERS=3 \
 	MOUNTS=2 \
