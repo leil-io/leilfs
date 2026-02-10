@@ -575,6 +575,8 @@ static void fs_do_emptyreserved(uint32_t ts) {
 	auto it = gMetadata->reserved.begin();
 	watchdog.start();
 	while (it != gMetadata->reserved.end()) {
+		if (watchdog.expired()) { break; }
+
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 		auto *node =
@@ -590,16 +592,26 @@ static void fs_do_emptyreserved(uint32_t ts) {
 		assert(node->type == FSNodeType::kReserved);
 
 		auto node_id = node->id;
-		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
+		FsContext context = FsContext::getForMaster(ts);
 
-		// Purge operation should be performed anyway
-		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
+		assert(!node->sessionIds.empty());
+		auto sessionIds = node->sessionIds;
+		if (!sessionIds.empty()) {
+			for (auto &sessionId : sessionIds) {
+				uint8_t status = gFSOperations->release(context, fsOpContext, node_id, sessionId);
+				if (status != SAUNAFS_STATUS_OK) {
+					safs::log_err(
+					    "Failed to release from periodic cleaning reserved file: {}, session: {}, status: {}",
+					    node_id, sessionId, status);
+				}
+			}
+		} else {
+			safs::log_critical(
+			    "Failed to release from periodic cleaning reserved file: {}, no session associated with the file",
+			    node_id);
+		}
 
 		it = gMetadata->reserved.begin();
-
-		if (watchdog.expired()) {
-			break;
-		}
 	}
 }
 
