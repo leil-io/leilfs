@@ -28,6 +28,7 @@
 #include <memory>
 #include <string>
 
+#include "common/chunk_part_type.h"
 #include "common/input_packet.h"
 #include "common/network_address.h"
 #include "common/output_packet.h"
@@ -140,11 +141,21 @@ public:
 
 	void createChunk(const std::vector<uint8_t> &data);
 
+	void createAndLockChunk(const std::vector<uint8_t> &data);
+
 	void deleteChunk(const std::vector<uint8_t> &data);
 
 	void setChunkVersion(const std::vector<uint8_t> &data);
 
+	void setChunkVersionAndLock(const std::vector<uint8_t> &data);
+
+	void lockChunk(const std::vector<uint8_t> &data);
+
+	void unlockChunk(const std::vector<uint8_t> &data);
+
 	void duplicateChunk(const std::vector<uint8_t> &data);
+
+	void duplicateAndLockChunk(const std::vector<uint8_t> &data);
 
 	void truncateChunk(const std::vector<uint8_t> &data);
 
@@ -155,6 +166,9 @@ public:
 	// Callbacks
 
 	static std::function<void(uint8_t status, void *packet)> sauJobFinished(MasterConn *masterConn);
+
+	static std::function<void(uint8_t status, void *packet)> sauJobFinishedAndLock(
+	    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType);
 
 	void sauJobFinished(uint8_t status, void *packet);
 

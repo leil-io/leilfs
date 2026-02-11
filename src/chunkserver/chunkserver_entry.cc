@@ -200,8 +200,8 @@ void ChunkserverEntry::retryConnect() {
 void ChunkserverEntry::checkAndApplyClosed() {
 	if (writeHLO_->pendingDelayedJobs() == 0 && readHLO_->pendingDelayedJobs() == 0 &&
 	    getBlocksHLO_->pendingDelayedJobs() == 0) {
-		writeHLO_->cleanup();
-		readHLO_->cleanup();
+		if (writeHLO_->chunkId() != 0) { writeHLO_->cleanup(); }
+		if (readHLO_->chunkId() != 0) { readHLO_->cleanup(); }
 
 		state = State::Closed;
 	}

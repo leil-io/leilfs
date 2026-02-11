@@ -141,6 +141,10 @@ void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
 	MasterConn::deletePacket(packet);
 }
 
+JobPool* masterconn_get_job_pool() {
+	return gJobPool.get();
+}
+
 void masterconn_wantexit(void) { gDoTerminate.store(true); }
 
 int masterconn_canexit(void) {

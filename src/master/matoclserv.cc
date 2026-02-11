@@ -2087,7 +2087,7 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		uint8_t chunkOperationPending;
 
 		status =
-		    gFSOperations->writeChunk(context, fsOpContext, inode, length / SFSCHUNKSIZE, false,
+		    gFSOperations->writeChunk(context, fsOpContext, inode, length / SFSCHUNKSIZE,
 		                              &lockId, &chunkId, &chunkOperationPending, &fileLength);
 
 		if (status != SAUNAFS_STATUS_OK) {
@@ -3071,11 +3071,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 
-	// Original Legacy (1.6.27) does not use lock ID's
-	constexpr bool kUseDummyLockId = false;
 	status = gFSOperations->writeChunk(matoclserv_get_context(eptr), fsOpContext, inode, chunkIndex,
-	                                   kUseDummyLockId, &lockId, &chunkId, &opflag, &fileLength,
-	                                   min_server_version);
+	                                   &lockId, &chunkId, &opflag, &fileLength, min_server_version);
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {

@@ -303,6 +303,9 @@ protected:
 	///< Number of blocks to write to the device in one write job.
 	uint16_t maxBlocksPerHddWriteJob_;
 
+	/// Indicates if the chunk is locked for writing. If true, master will be waiting for the lock
+	/// to be released when the write operation finishes.
+	bool isChunkLocked_ = false;
 	uint32_t writeJobId_ = 0;       ///< ID of the current write job being processed
 	uint32_t writeJobWriteId_ = 0;  ///< Specific write operation from client
 	std::shared_ptr<InputBuffer> inputBuffer_ = nullptr;  ///< Buffer for the current write job

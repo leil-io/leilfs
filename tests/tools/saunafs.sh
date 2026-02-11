@@ -379,6 +379,12 @@ create_sfsmaster_master_cfg_() {
 	echo "METADATA_BACKEND = ${saunafs_info_[metadata_backend]}"
 }
 
+add_lines_master_cfg_() {
+	lines=$1
+	lines_with_newline=$(echo "${lines}" | tr '|' '\n')
+	echo "${lines_with_newline}" >> "${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}"
+}
+
 create_sfsmaster_shadow_cfg_() {
 	local this_module_cfg_variable="MASTER_${masterserver_id}_EXTRA_CONFIG"
 	echo "PERSONALITY = shadow"
@@ -1084,6 +1090,9 @@ function is_zoned_device() {
 # Adds around 15s to the test.
 sfschunkserver_check_no_buffer_in_use() {
 	# Make sure some time passes to get dead csentries cleaned up
+	add_lines_master_cfg_ "CHUNKS_WRITE_REP_LIMIT = 1|CHUNKS_READ_REP_LIMIT = 1|`
+		`CHUNKS_LOOP_MIN_TIME = 10000"
+	saunafs_master_daemon reload
 	sleep 10
 
 	chunkserver_count=${saunafs_info_[chunkserver_count]}

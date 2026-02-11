@@ -111,6 +111,20 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		ChunkPartType, chunkType,
 		uint8_t,   status)
 
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, chunkLock, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		cstoma, chunkLock, SAU_CSTOMA_LOCK_CHUNK, kECChunks,
+		uint64_t,  chunkId,
+		ChunkPartType, chunkType,
+		uint8_t,   status)
+
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, writeEndStatus, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		cstoma, writeEndStatus, SAU_CSTOMA_WRITE_END_STATUS, kECChunks,
+		uint64_t,  chunkId,
+		ChunkPartType, chunkType,
+		uint8_t,   status)
+
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, deleteChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, deleteChunk, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

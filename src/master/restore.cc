@@ -969,7 +969,7 @@ int do_write(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 
 	int status = gFSOperations->writeChunk(FsContext::getForRestore(ts), fsOpContext, inode, indx,
-	                                       false, &lockid, &chunkid, &opflag, nullptr);
+	                                       &lockid, &chunkid, &opflag, nullptr);
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.getReadWriteTransaction()->commit()) {

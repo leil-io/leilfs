@@ -26,6 +26,7 @@
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
 #include "common/massert.h"
+#include "common/output_packet.h"
 #include "common/pcqueue.h"
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
@@ -100,12 +101,37 @@ JobPool::~JobPool() {
 	for (auto &listenerInfo : listenerInfos_) { close(listenerInfo.notifierFD); }
 }
 
+uint32_t JobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
+                                    JobCallback callback, void *extra,
+                                    ProcessJobCallback processJob, uint32_t listenerId) {
+	std::unique_lock lockedChunkLock(chunkToJobReplyMapMutex_);
+	auto it = chunkToJobReplyMap_.find(chunkWithType);
+	if (it != chunkToJobReplyMap_.end() && it->second.writeInitReceived) {
+		// Chunk is locked, store the job to be added later
+		auto &lockedChunkData = it->second;
+
+		lockedChunkData.pendingAddJobs.emplace_back(
+		    [this, operation, extra, listenerId, callback = std::move(callback),
+		     processJob = std::move(processJob)]() mutable -> uint32_t {
+			    return addJob(operation, std::move(callback), extra, std::move(processJob),
+			                  listenerId);
+		    });
+
+		return lockedChunkData.lockJobId;  // Lock guard is released here
+	}
+	lockedChunkLock.unlock();  // Release the lock before adding the job to avoid deadlocks
+
+	// Chunk is not locked, add the job immediately
+	return JobPool::addJob(operation, std::move(callback), extra, std::move(processJob),
+	                       listenerId);
+}
+
 uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
                          ProcessJobCallback processJob, uint32_t listenerId) {
 	// Check if the listenerId is valid
 	if (listenerId >= listenerInfos_.size()) {
-		safs::log_warn("JobPool: addJob: Invalid listenerId {} for operation {}, resetting to 0",
-		               listenerId, static_cast<int>(operation));
+		safs::log_warn("JobPool: {}: Invalid listenerId {} for operation {}, resetting to 0",
+		               __func__, listenerId, static_cast<int>(operation));
 		listenerId = 0;  // Reset to the first listener
 	}
 
@@ -124,6 +150,29 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	jobsQueue->put(
 	    jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()), 1,
 	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks) ? 0 : 1);
+	return jobId;
+}
+
+uint32_t JobPool::addLockJob(JobCallback callback, void *extra, uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn("JobPool: {}: Invalid listenerId {} for operation LOCK, resetting to 0",
+		               __func__, listenerId);
+		listenerId = 0;  // Reset to the first listener
+	}
+
+	auto &listenerInfo = listenerInfos_[listenerId];
+	std::unique_lock lock(listenerInfo.jobsMutex);
+	uint32_t jobId = listenerInfo.nextJobId++;
+	auto job = std::make_unique<Job>();
+	job->jobId = jobId;
+	job->callback = std::move(callback);
+	// No processJob for lock jobs, as they are just markers for locked chunks
+	job->extra = extra;
+	job->state = JobPool::State::Enabled;
+	job->listenerId = listenerId;
+	listenerInfo.jobHash[jobId] = std::move(job);
+	// Not an actual job, but a marker for a locked chunk, so never inserted into the job queue.
 	return jobId;
 }
 
@@ -531,8 +580,9 @@ uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddInternalDelete(chunkId, chunkVersion, chunkType);
 	};
-	return jobPool.addJob(JobPool::ChunkOperation::Delete, std::move(callback), extra, processJob,
-	                      listenerId);
+	return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
+	                                 JobPool::ChunkOperation::Delete, std::move(callback), extra,
+	                                 processJob, listenerId);
 }
 
 uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
@@ -551,8 +601,9 @@ uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, voi
 		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 			return hddInternalUpdateVersion(chunkId, chunkVersion, newChunkVersion, chunkType);
 		};
-		return jobPool.addJob(JobPool::ChunkOperation::ChangeVersion, callback, extra, processJob,
-		                      listenerId);
+		return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
+		                                 JobPool::ChunkOperation::ChangeVersion, callback, extra,
+		                                 processJob, listenerId);
 	}
 	return job_invalid(jobPool, callback, extra, listenerId);
 }
@@ -564,8 +615,9 @@ uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, vo
 		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 			return hddTruncate(chunkId, chunkVersion, chunkType, newChunkVersion, length);
 		};
-		return jobPool.addJob(JobPool::ChunkOperation::Truncate, callback, extra, processJob,
-		                      listenerId);
+		return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
+		                                 JobPool::ChunkOperation::Truncate, callback, extra,
+		                                 processJob, listenerId);
 	}
 	return job_invalid(jobPool, callback, extra, listenerId);
 }
@@ -579,8 +631,9 @@ uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, v
 			return hddDuplicate(chunkId, chunkVersion, newChunkVersion, chunkType, chunkIdCopy,
 			                    chunkVersionCopy);
 		};
-		return jobPool.addJob(JobPool::ChunkOperation::Duplicate, callback, extra, processJob,
-		                      listenerId);
+		return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
+		                                 JobPool::ChunkOperation::Duplicate, callback, extra,
+		                                 processJob, listenerId);
 	}
 	return job_invalid(jobPool, callback, extra, listenerId);
 }
@@ -594,8 +647,103 @@ uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, vo
 			return hddDuplicateTruncate(chunkId, chunkVersion, newChunkVersion, chunkType,
 			                            chunkIdCopy, chunkVersionCopy, length);
 		};
-		return jobPool.addJob(JobPool::ChunkOperation::DuplicateTruncate, callback, extra,
-		                      processJob, listenerId);
+		return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
+		                                 JobPool::ChunkOperation::DuplicateTruncate, callback,
+		                                 extra, processJob, listenerId);
 	}
 	return job_invalid(jobPool, callback, extra, listenerId);
+}
+
+bool JobPool::startChunkLock(const JobPool::JobCallback &callback, void *packet, uint64_t chunkId,
+                             ChunkPartType chunkType, uint32_t listenerId) {
+	std::unique_lock lock(chunkToJobReplyMapMutex_);
+	if (chunkToJobReplyMap_.contains(ChunkWithType{chunkId, chunkType})) {
+		lock.unlock();  // Release the lock before logging to avoid extra contention
+
+		safs::log_warn(
+		    "{}: Chunk lock job already exists for chunkId {:016X}, chunkType {}. Treating request "
+		    "as retransmission; not adding a new lock job.",
+		    __func__, chunkId, chunkType.toString());
+		return false;
+	}
+
+	chunkToJobReplyMap_[ChunkWithType{chunkId, chunkType}] =
+	    LockedChunkData(addLockJob(callback, packet, listenerId), listenerId);
+	return true;
+}
+
+bool JobPool::enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
+	std::unique_lock lock(chunkToJobReplyMapMutex_);
+	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
+	if (entry == chunkToJobReplyMap_.end()) {
+		lock.unlock();  // Release the lock before logging to avoid extra contention
+
+		// Master was not waiting for this lock, just log and return
+		safs::log_trace("{}: No chunk lock job found for chunkId {:016X}, chunkType {}. Ignoring.",
+		                __func__, chunkId, chunkType.toString());
+		return false;
+	}
+
+	entry->second.writeInitReceived = true;
+	return true;
+}
+
+bool JobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType,
+                                    const char *callerName, uint32_t &lockJobId,
+                                    uint32_t &listenerId, std::vector<AddJobFunc> &pendingAddJobs) {
+	std::unique_lock lock(chunkToJobReplyMapMutex_);
+	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
+	if (entry == chunkToJobReplyMap_.end()) {
+		lock.unlock();  // Release the lock before logging to avoid extra contention
+
+		// Master was not waiting for this lock, just log and return
+		safs::log_warn("{}: No chunk lock job found for chunkId {:016X}, chunkType {}. Ignoring.",
+		               callerName, chunkId, chunkType.toString());
+		return false;
+	}
+
+	lockJobId = entry->second.lockJobId;
+	listenerId = entry->second.listenerId;
+	pendingAddJobs = std::move(entry->second.pendingAddJobs);
+	chunkToJobReplyMap_.erase(entry);
+	return true;
+}
+
+void JobPool::endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status) {
+	uint32_t lockJobId;
+	uint32_t listenerId;
+	std::vector<AddJobFunc> pendingAddJobs;
+
+	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId,
+	                           pendingAddJobs)) {
+		return;  // No lock job found, just return
+	}
+
+	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
+
+	sendStatus(lockJobId, status, listenerId);
+}
+
+void JobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
+	uint32_t lockJobId;
+	uint32_t listenerId;
+	std::vector<AddJobFunc> pendingAddJobs;
+
+	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId,
+	                           pendingAddJobs)) {
+		return;  // No lock job found, just return
+	}
+
+	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
+
+	// Remove the lock job and the related packet
+	auto &listenerInfo = listenerInfos_[listenerId];
+	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex);
+	auto lockJobIterator = listenerInfo.jobHash.find(lockJobId);
+
+	if (lockJobIterator != listenerInfo.jobHash.end()) {
+		auto *outputPacket = reinterpret_cast<OutputPacket *>(lockJobIterator->second->extra);
+		delete outputPacket;
+		listenerInfo.jobHash.erase(lockJobIterator);
+	}
 }

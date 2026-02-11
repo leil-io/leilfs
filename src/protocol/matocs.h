@@ -47,6 +47,26 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t,  chunkVersion,
 		uint32_t,  newVersion)
 
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersionAndLock, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocs, setVersionAndLock, SAU_MATOCS_SET_VERSION_AND_LOCK, kECChunks,
+		uint64_t,  chunkId,
+		ChunkPartType, chunkType,
+		uint32_t,  chunkVersion,
+		uint32_t,  newVersion)
+
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, chunkLock, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocs, chunkLock, SAU_MATOCS_LOCK_CHUNK, kECChunks,
+		uint64_t,  chunkId,
+		ChunkPartType, chunkType)
+
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, chunkUnlock, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+	matocs, chunkUnlock, SAU_MATOCS_UNLOCK_CHUNK, kECChunks,
+	uint64_t,  chunkId,
+	ChunkPartType, chunkType)
+
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, deleteChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, deleteChunk, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
@@ -69,6 +89,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t,  chunkVersion)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, createChunk, SAU_MATOCS_CREATE_CHUNK, kECChunks,
+		uint64_t,  chunkId,
+		ChunkPartType, chunkType,
+		uint32_t,  chunkVersion)
+
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, createAndLockChunk, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocs, createAndLockChunk, SAU_MATOCS_CREATE_AND_LOCK_CHUNK, kECChunks,
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType,
 		uint32_t,  chunkVersion)
@@ -103,6 +130,15 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, duplicateChunk, SAU_MATOCS_DUPLICATE_CHUNK, kECChunks,
 		uint64_t, newChunkId,
 		uint32_t, newchunkVersion,
+		ChunkPartType, chunkType,
+		uint64_t, oldChunkId,
+		uint32_t, oldChunkVersion)
+
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, duplicateAndLockChunk, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocs, duplicateAndLockChunk, SAU_MATOCS_DUPLICATE_AND_LOCK_CHUNK, kECChunks,
+		uint64_t, newChunkId,
+		uint32_t, newChunkVersion,
 		ChunkPartType, chunkType,
 		uint64_t, oldChunkId,
 		uint32_t, oldChunkVersion)
