@@ -57,6 +57,8 @@ int chunk_unlock(uint64_t chunkid);
 uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lockid, uint8_t goal,
 		bool doIncreaseVersion, uint64_t *newChunkId);
 
+bool should_increase_chunk_version_on_modification(uint8_t operation);
+
 // Tries to set next chunk id to a passed value, returns status
 uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet);
 
@@ -102,6 +104,10 @@ void chunk_got_replicate_status(matocsserventry *ptr, uint64_t chunkId, uint32_t
 
 void chunk_got_create_status(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType, uint8_t status);
 void chunk_got_duplicate_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType, uint8_t status);
+void chunk_got_chunklock_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
+                                uint8_t status);
+void chunk_got_writeend_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
+                               uint8_t status);
 void chunk_got_setversion_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType, uint8_t status);
 void chunk_got_truncate_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType, uint8_t status);
 void chunk_got_duptrunc_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType, uint8_t status);

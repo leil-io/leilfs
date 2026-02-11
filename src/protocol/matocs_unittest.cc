@@ -48,6 +48,44 @@ TEST(MatocsCommunicationTests, SetVersion) {
 	SAUNAFS_VERIFY_INOUT_PAIR(newVersion);
 }
 
+TEST(MatocsCommunicationTests, SetVersionAndLock) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, newVersion, 53, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::setVersionAndLock::serialize(buffer, chunkIdIn, chunkTypeIn,
+	                                                     chunkVersionIn, newVersionIn));
+
+	verifyHeader(buffer, SAU_MATOCS_SET_VERSION_AND_LOCK);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, matocs::setVersionAndLock::kECChunks);
+	ASSERT_NO_THROW(matocs::setVersionAndLock::deserialize(buffer, chunkIdOut, chunkTypeOut,
+	                                                       chunkVersionOut, newVersionOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(newVersion);
+}
+
+TEST(MatocsCommunicationTests, ChunkLock) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::chunkLock::serialize(buffer, chunkIdIn, chunkTypeIn));
+
+	verifyHeader(buffer, SAU_MATOCS_LOCK_CHUNK);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, matocs::chunkLock::kECChunks);
+	ASSERT_NO_THROW(matocs::chunkLock::deserialize(buffer, chunkIdOut, chunkTypeOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+}
+
 TEST(MatocsCommunicationTests, DeleteChunk) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87,  0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52,  0);

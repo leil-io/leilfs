@@ -22,6 +22,8 @@
 #include <sys/poll.h>
 #include <thread>
 
+#include "common/slice_traits.h"
+
 #include "gtest/gtest.h"
 
 void mockJobCallback(uint8_t  /*status*/, void *extra) {
@@ -218,4 +220,65 @@ TEST_F(JobPoolTest, JobStatusHandling) {
 	for (uint32_t i = 0; i < kNrOperationTypes; ++i) {
 		EXPECT_EQ(counters[i].load(), 1);  // Each job should have been processed once
 	}
+}
+
+TEST_F(JobPoolTest, ChunkLocking) {
+	const uint64_t chunkId1 = 12345;
+	const uint64_t chunkId2 = 123456;
+	const uint64_t chunkId3 = 1234567;
+	const uint64_t chunkId4 = 12345678;
+	const ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	ChunkWithType chunkWithType1{chunkId1, chunkType};
+	ChunkWithType chunkWithType2{chunkId2, chunkType};
+	ChunkWithType chunkWithType3{chunkId3, chunkType};
+	ChunkWithType chunkWithType4{chunkId4, chunkType};
+
+	jobPool->startChunkLock(mockJobCallback, &counters[0], chunkId1, chunkType, 0);
+	jobPool->startChunkLock(mockJobCallback, &counters[0], chunkId2, chunkType, 0);
+	jobPool->startChunkLock(mockJobCallback, nullptr, chunkId4, chunkType, 0);
+	jobPool->enforceChunkLock(chunkId1, chunkType);
+	jobPool->enforceChunkLock(chunkId4, chunkType);
+
+	jobPool->addJobIfNotLocked(chunkWithType1, JobPool::ChunkOperation::Read, mockJobCallback,
+	                           &counters[0], mockProcessJob);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Job should not be processed because chunk is locked and enforced
+	EXPECT_EQ(counters[0].load(), 0);
+
+	jobPool->addJobIfNotLocked(chunkWithType2, JobPool::ChunkOperation::Read, mockJobCallback,
+	                           &counters[0], mockProcessJob);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Job should be processed because chunk is locked but not enforced
+	EXPECT_EQ(counters[0].load(), 1);
+
+	jobPool->addJobIfNotLocked(chunkWithType3, JobPool::ChunkOperation::Read, mockJobCallback,
+	                           &counters[0], mockProcessJob);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Job should be processed because chunk is not locked
+	EXPECT_EQ(counters[0].load(), 2);
+
+	jobPool->addJobIfNotLocked(chunkWithType4, JobPool::ChunkOperation::Read, mockJobCallback,
+	                           &counters[0], mockProcessJob);
+	jobPool->addJobIfNotLocked(chunkWithType4, JobPool::ChunkOperation::Read, mockJobCallback,
+	                           &counters[0], mockProcessJob);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Job should not be processed because chunk is locked and enforced
+	EXPECT_EQ(counters[0].load(), 2);
+
+	jobPool->endChunkLock(chunkId1, chunkType, SAUNAFS_STATUS_OK);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Now the job for chunkWithType1 should be processed because the lock is released and the
+	// callback for the lock job should be called
+	EXPECT_EQ(counters[0].load(), 4);
+
+	jobPool->endChunkLock(chunkId2, chunkType, SAUNAFS_STATUS_OK);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Now the callback for the lock job of chunkWithType2 should be called
+	EXPECT_EQ(counters[0].load(), 5);
+
+	jobPool->eraseChunkLock(chunkId4, chunkType);
+	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Now the jobs for chunkWithType4 should be processed because the lock is released, but the
+	// callback for the lock job should not be called
+	EXPECT_EQ(counters[0].load(), 7);
 }

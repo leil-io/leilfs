@@ -2525,7 +2525,8 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
-		          inode, index, *opflag, *lockid, nchunkid);
+		          inode, index, should_increase_chunk_version_on_modification(*opflag), *lockid,
+		          nchunkid);
 	} else {
 		gMetadata->metadataVersion++;
 	}

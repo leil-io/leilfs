@@ -139,7 +139,7 @@ void eventloop_destruct();
 /*! \brief Returns event loop time. The time is updated before call to handler functions
  * and doesn't change during handlers execution.
  *
- * \return time in milliseconds.
+ * \return time in seconds.
  */
 uint32_t eventloop_time(void);
 

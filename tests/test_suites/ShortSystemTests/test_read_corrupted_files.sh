@@ -15,6 +15,8 @@ USE_RAMDISK=YES \
 dir="${info[mount0]}/dir"
 mkdir "$dir"
 saunafs setgoal ec_4_1 "$dir"
+
+echo "WriteMaxRetries=2" | sudo tee "${info[mount0]}/.saunafs_tweaks"
 FILE_SIZE=${SAUNAFS_CHUNK_SIZE} file-generate "$dir/file"
 
 saunafs fileinfo "$dir/file"

@@ -528,20 +528,16 @@ void InodeChunkWriter::processJob(inodedata *inodeData) {
 	// First, choose index of some chunk to write
 	Glock lock(gMutex);
 	int status = inodeData_->status;
-	bool haveDataToWrite;
 	if (inodeData_->locator) {
 		// There is a chunk lock left by a previous unfinished job -- let's finish it!
 		chunkIndex_ = inodeData_->locator->chunkIndex();
-		haveDataToWrite = haveAnyBlockInCurrentChunk(lock);
 	} else if (!inodeData_->dataChain.empty()) {
 		// There is no unfinished job, but there is some data to write -- let's start a new job
 		chunkIndex_ = inodeData_->dataChain.front().chunkIndex;
-		haveDataToWrite = true;
 	} else {
 		// No data, no unfinished jobs -- something wrong!
 		// This should never happen, so the status doesn't really matter
 		safs::log_warn("got inode with no data to write!!!");
-		haveDataToWrite = false;
 		status = SAUNAFS_ERROR_EINVAL;
 	}
 	if (status != SAUNAFS_STATUS_OK) {
@@ -564,17 +560,15 @@ void InodeChunkWriter::processJob(inodedata *inodeData) {
 			inodeData_->maxfleng = std::max(inodeData_->maxfleng, locator->fileLength());
 			lock.unlock();
 
-			// Optimization -- talk with chunkservers only if we have to write any data.
-			// Don't do this if we just have to release some previously unlocked lock.
-			if (haveDataToWrite) {
-				writer.init(locator.get(), gChunkserverTimeout_ms);
-				processDataChain(writer);
-				writer.finish(kTimeToFinishOperations * 1000);
+			// Talk always to chunkservers, in order to release the locks sent to them.
+			writer.init(locator.get(), gChunkserverTimeout_ms);
+			processDataChain(writer);
+			writer.finish(kTimeToFinishOperations * 1000);
 
-				lock.lock();
-				returnJournalToDataChain(writer.releaseJournal(), lock);
-				lock.unlock();
-			}
+			lock.lock();
+			returnJournalToDataChain(writer.releaseJournal(), lock);
+			lock.unlock();
+
 			locator->unlockChunk();
 			read_inode_reconnect_and_clear_cache(inodeData_->inode, chunkIndex_);
 
@@ -1713,17 +1707,14 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 			Lock inodeLock(parent->mutex);
 			parent->maxfleng = std::max(parent->maxfleng, locator->fileLength());
 
-			// Optimization -- talk with chunkservers only if we have to write any data.
-			// Don't do this if we just have to release some previously unlocked lock.
-			if (haveAnyBlockInCurrentChunk()) {
-				inodeLock.unlock();
-				writer.init(locator.get(), gChunkserverTimeout_ms);
-				processDataChain(writer);
-				writer.finish(kTimeToFinishOperations * 1000);
+			// Talk always to chunkservers, in order to release the locks sent to them.
+			inodeLock.unlock();
+			writer.init(locator.get(), gChunkserverTimeout_ms);
+			processDataChain(writer);
+			writer.finish(kTimeToFinishOperations * 1000);
 
-				inodeLock.lock();
-				returnJournalToDataChain(writer.releaseJournal(), inodeLock);
-			}
+			inodeLock.lock();
+			returnJournalToDataChain(writer.releaseJournal(), inodeLock);
 			inodeLock.unlock();
 
 			locator->unlockChunk();
