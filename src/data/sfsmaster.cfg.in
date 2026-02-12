@@ -351,6 +351,12 @@
 ## (There is no default)
 # TLS_CA_CERT_FILE =
 
+## When set to 1, enables sending chunk part lock messages to the chunkservers.
+## This can be useful to track down which chunk parts are currently being
+## written. Reloadable. 
+## (Default: 0)
+# USE_CHUNKSERVER_SIDE_CHUNK_LOCK = 0
+
 ## Interval for periodic cleaning of reserved files, in milliseconds.
 ## If set to 0, the reserved files deletion is disabled.
 ## (Default: 0)

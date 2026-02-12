@@ -604,12 +604,12 @@ void matocsserv_got_chunk_checksum(matocsserventry *eptr, const uint8_t *data, u
 }
 
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
-                                uint32_t chunkVersion, bool &sentChunkLock) {
+                                uint32_t chunkVersion, bool needsLock, bool &sentChunkLock) {
 	sentChunkLock = false;
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.push_back(OutputPacket());
 		sassert(eptr->version >= kFirstECVersion);
-		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock) {
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 			// For newer chunkservers, create and lock part
 			matocs::createAndLockChunk::serialize(eptr->outputPackets.back().packet, chunkId,
 			                                      chunkType, chunkVersion);
@@ -730,11 +730,11 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 }
 
 int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
-                              bool needLock, bool &sentChunkLock) {
+                              bool needsLock, bool &sentChunkLock) {
 	sentChunkLock = false;
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		sassert(eptr->version >= kFirstECVersion);
-		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needLock) {
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 			eptr->outputPackets.emplace_back();
 			matocs::chunkLock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
 			sentChunkLock = true;
@@ -794,12 +794,12 @@ int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPa
 }
 
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
-		uint32_t chunkVersion, ChunkPartType chunkType, bool needChunkLock, bool &sentChunkLock) {
+		uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock, bool &sentChunkLock) {
 	sentChunkLock = false;
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.emplace_back();
 		sassert(eptr->version >= kFirstECVersion);
-		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needChunkLock) {
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 			// For newer chunkservers, set version with chunk lock
 			matocs::setVersionAndLock::serialize(eptr->outputPackets.back().packet, chunkId,
 			                                     chunkType, chunkVersion, newVersion);
@@ -835,13 +835,14 @@ void matocsserv_got_setchunkversion_status(matocsserventry *eptr,
 
 int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
                                    uint32_t newChunkVersion, ChunkPartType chunkType,
-                                   uint64_t chunkId, uint32_t chunkVersion, bool &sentChunkLock) {
+                                   uint64_t chunkId, uint32_t chunkVersion, bool needsLock,
+                                   bool &sentChunkLock) {
 	sentChunkLock = false;
 	if (eptr->mode == ChunkserverConnectionMode::KILL) { return 0; }
 
 	OutputPacket outPacket;
 	sassert(eptr->version >= kFirstECVersion);
-	if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock) {
+	if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 		// For newer chunkservers, duplicate with chunk lock
 		matocs::duplicateAndLockChunk::serialize(outPacket.packet, newChunkId, newChunkVersion,
 		                                         chunkType, chunkId, chunkVersion);

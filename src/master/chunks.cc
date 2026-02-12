@@ -109,6 +109,7 @@ static uint64_t gEndangeredChunksMaxCapacity;
 static uint64_t gDisconnectedCounter = 0;
 inline LinearAssignmentCache gLinearAssignmentCache;
 inline bool gUseLinearAssignmentOptimizer;
+static bool gUseChunkserverSideChunkLock;
 bool gAvoidSameIpChunkservers = false;
 
 struct ChunkPart {
@@ -1176,10 +1177,11 @@ int chunk_get_partstomodify(uint64_t chunkid, int &recover, int &remove) {
 
 // Chunk operations
 
-/// @brief Performs the chunk creation operation, which consists of creating a new chunk with 
+/// @brief Performs the chunk creation operation, which consists of creating a new chunk with
 /// version 1, associating it with the given goal and sending create chunk messages to the provided
 /// chunkservers. The parts in the chunk are marked as being written (it is expecteted that client
-/// starts writing) if the corresponding chunkserver supports locking and the create chunk message was sent with locking.
+/// starts writing) if the corresponding chunkserver supports locking and the create chunk message
+/// was sent with locking.
 /// @param createdChunk A reference to a pointer where the created chunk will be stored.
 /// @param goal The goal that will be associated with the created chunk.
 /// @param serversWithChunkTypes The list of chunkservers to create the chunk on.
@@ -1197,7 +1199,8 @@ void chunk_create_operation(
 		                                        server_with_type.second));
 		bool sentChunkLock = false;
 		matocsserv_send_createchunk(server_with_type.first, createdChunk->chunkid,
-		                            server_with_type.second, createdChunk->version, sentChunkLock);
+		                            server_with_type.second, createdChunk->version,
+		                            gUseChunkserverSideChunkLock, sentChunkLock);
 
 		if (sentChunkLock) { createdChunk->parts.back().mark_being_written(); }
 		// If the chunk lock was not sent, it means that the chunkserver does not support locking,
@@ -1221,14 +1224,14 @@ void chunk_increase_version_operation(Chunk *chunk, bool needsLocking) {
 			part.version = chunk->version + 1;
 			// If part is already being written then we don't need to ask the chunkserver to lock
 			// it again, and we can just increase the version.
-			bool partNeedsLocking = !part.is_being_written() && needsLocking;
+			bool partNeedsLocking =
+			    !part.is_being_written() && needsLocking && gUseChunkserverSideChunkLock;
 			bool sentChunkLock = false;
 			matocsserv_send_setchunkversion(part.server(), chunk->chunkid, chunk->version + 1,
-			                                chunk->version, part.type, partNeedsLocking, sentChunkLock);
+			                                chunk->version, part.type, partNeedsLocking,
+			                                sentChunkLock);
 
-			if (partNeedsLocking && sentChunkLock) {
-				part.mark_being_written();
-			}
+			if (partNeedsLocking && sentChunkLock) { part.mark_being_written(); }
 		}
 	}
 
@@ -1244,18 +1247,20 @@ void chunk_increase_version_operation(Chunk *chunk, bool needsLocking) {
 void chunk_lock_operation(Chunk *chunk) {
 	bool mustWaitForReply = false;
 	assert(chunk->isWritable());
-	for (auto &part : chunk->parts) {
-		if (part.is_valid()) {
-			if (part.is_busy()) { continue; }
-			// No busy parts from now on
+	if (gUseChunkserverSideChunkLock) {
+		for (auto &part : chunk->parts) {
+			if (part.is_valid()) {
+				if (part.is_busy()) { continue; }
+				// No busy parts from now on
 
-			bool sentChunkLock = false;
-			matocsserv_send_chunklock(part.server(), chunk->chunkid, part.type,
-			                          !part.is_being_written(), sentChunkLock);
-			if (sentChunkLock) {
-				part.mark_being_written();
-				mustWaitForReply = true;
-				part.mark_busy();
+				bool sentChunkLock = false;
+				matocsserv_send_chunklock(part.server(), chunk->chunkid, part.type,
+				                          !part.is_being_written(), sentChunkLock);
+				if (sentChunkLock) {
+					part.mark_being_written();
+					mustWaitForReply = true;
+					part.mark_busy();
+				}
 			}
 		}
 	}
@@ -1294,7 +1299,8 @@ void chunk_duplicate_operation(Chunk *originalChunk, uint8_t goal, Chunk *&newCh
 			bool sentChunkLock = false;
 			matocsserv_send_duplicatechunk(oldPart.server(), newChunk->chunkid, newChunk->version,
 			                               oldPart.type, originalChunk->chunkid,
-			                               originalChunk->version, sentChunkLock);
+			                               originalChunk->version, gUseChunkserverSideChunkLock,
+			                               sentChunkLock);
 
 			if (sentChunkLock) { newChunk->parts.back().mark_being_written(); }
 		}
@@ -3232,6 +3238,7 @@ void chunk_reload(void) {
 	gAvoidSameIpChunkservers = cfg_getuint32("AVOID_SAME_IP_CHUNKSERVERS", 0);
 	gRedundancyLevel = cfg_getuint32("REDUNDANCY_LEVEL", 0);
 	gUseLinearAssignmentOptimizer = cfg_getuint32("USE_LINEAR_ASSIGNMENT_OPTIMIZER", 1);
+	gUseChunkserverSideChunkLock = cfg_getuint32("USE_CHUNKSERVER_SIDE_CHUNK_LOCK", 0);
 
 	uint32_t disableChunksDel = cfg_getuint32("DISABLE_CHUNKS_DEL", 0);
 	if (disableChunksDel) {
@@ -3327,6 +3334,7 @@ int chunk_strinit(void) {
 	gAvoidSameIpChunkservers = cfg_getuint32("AVOID_SAME_IP_CHUNKSERVERS", 0);
 	gRedundancyLevel = cfg_getuint32("REDUNDANCY_LEVEL", 0);
 	gUseLinearAssignmentOptimizer = cfg_getuint32("USE_LINEAR_ASSIGNMENT_OPTIMIZER", 1);
+	gUseChunkserverSideChunkLock = cfg_getuint32("USE_CHUNKSERVER_SIDE_CHUNK_LOCK", 0);
 
 	if (disableChunksDel) {
 		MaxDelHardLimit = MaxDelSoftLimit = 0;

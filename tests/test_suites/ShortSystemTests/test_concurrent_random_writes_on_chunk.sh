@@ -1,4 +1,4 @@
-timeout_set 30 seconds
+timeout_set 45 seconds
 
 CHUNKSERVERS=8 \
 	USE_RAMDISK=YES \
@@ -12,22 +12,51 @@ cd "${info[mount0]}"
 mkdir dir
 saunafs setgoal ec62 dir
 
-times_to_repeat=512
+times_to_repeat=1024
 FILE_SIZE=$(( times_to_repeat * 4 * 1024 )) file-generate ${TEMP_DIR}/original_file
 
-# Write 4KB at a time, 1KB in each of 4 mounts, and repeat this 512 times, so that the file is
+# Write 4KB at a time, 1KB in each of 4 mounts, and repeat this 1024 times, so that the file is
 # written in random order and with many concurrent writes.
+
+master_reloading_loop_file=${TEMP_DIR}/master_reloading_loop_file
+switch_use_chunkserver_side_chunk_lock_thread() {
+	touch ${master_reloading_loop_file}
+	while true; do
+		if [ ! -e ${master_reloading_loop_file} ]; then
+			break
+		fi
+		sleep 0.15
+		current=$(grep USE_CHUNKSERVER_SIDE_CHUNK_LOCK ${info[master0_cfg]} | tail -n 1 | awk '{print $3}')
+		echo "Switching USE_CHUNKSERVER_SIDE_CHUNK_LOCK to $(( 1 - current ))"
+		sed -i "s/USE_CHUNKSERVER_SIDE_CHUNK_LOCK = ./USE_CHUNKSERVER_SIDE_CHUNK_LOCK = $(( 1 - current ))/g" ${info[master0_cfg]}
+		saunafs_master_daemon reload
+	done
+	echo "switch_use_chunkserver_side_chunk_lock_thread stopped"
+}
+
+stop_switch_use_chunkserver_side_chunk_lock_thread() {
+	rm -f ${master_reloading_loop_file}
+}
+
+switch_use_chunkserver_side_chunk_lock_thread &
+switch_use_chunkserver_side_chunk_lock_thread_pid=$!
 
 for i in $(seq 0 $((times_to_repeat - 1))); do
 	shuffled_seq=($(shuf -e $(seq 0 3)))
+	pids=()
 	for mount in $(seq 0 3); do
 		dd if="${TEMP_DIR}/original_file" of="${info[mount${mount}]}/dir/file" bs=1K \
 			skip=$(( i * 4 + ${shuffled_seq[$mount]} )) \
 			seek=$(( i * 4 + ${shuffled_seq[$mount]} )) \
 			count=1 conv=notrunc 2>/dev/null &
+		pids+=("$!")
 	done
-	wait
+	if [ ${#pids[@]} -gt 0 ]; then
+		wait "${pids[@]}"
+	fi
 	echo "Done writing $i-th block of 4KB"
 done
+
+stop_switch_use_chunkserver_side_chunk_lock_thread
 
 MESSAGE="Validating file after concurrent random writes" expect_success file-validate dir/file

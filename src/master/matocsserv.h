@@ -107,16 +107,17 @@ int matocsserv_send_sau_replicatechunk(matocsserventry* eptr,
 int matocsserv_send_deletechunk(matocsserventry* eptr,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
-                                uint32_t version, bool &sentChunkLock);
+                                uint32_t version, bool needsLock, bool &sentChunkLock);
 int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
-                              bool needLock, bool &sentChunkLock);
+                              bool needsLock, bool &sentChunkLock);
 int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType);
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
-                                    uint32_t chunkVersion, ChunkPartType chunkType,
-                                    bool needsLocking, bool &sentChunkLock);
+                                    uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock,
+                                    bool &sentChunkLock);
 int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
                                    uint32_t newChunkVersion, ChunkPartType chunkType,
-                                   uint64_t chunkId, uint32_t chunkVersion, bool &sentChunkLock);
+                                   uint64_t chunkId, uint32_t chunkVersion, bool needsLock,
+                                   bool &sentChunkLock);
 void matocsserv_send_truncatechunk(matocsserventry* eptr,
 		uint64_t chunkid, ChunkPartType chunkType, uint32_t length,
 		uint32_t version, uint32_t oldversion);

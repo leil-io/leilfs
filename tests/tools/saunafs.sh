@@ -372,6 +372,7 @@ create_sfsmaster_master_cfg_() {
 	echo "MATOTS_LISTEN_PORT = ${saunafs_info_[matots]}"
 	echo "METADATA_CHECKSUM_INTERVAL = 1"
 	echo "ADMIN_PASSWORD = ${saunafs_info_[admin_password]}"
+	echo "USE_CHUNKSERVER_SIDE_CHUNK_LOCK = 1"
 	create_magic_debug_log_entry_ "master_${masterserver_id}"
 	echo "${MASTER_EXTRA_CONFIG-}" | tr '|' '\n'
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
