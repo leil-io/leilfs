@@ -244,11 +244,6 @@
 ## (Default: 3600)
 # METADATA_DUMP_PERIOD_SECONDS = 3600
 
-## Interval for periodically cleaning of reserved files, in milliseconds. If set to 0, the reserved files
-## deletion is disabled.
-## (Default: 0)
-# EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0
-
 # deprecated:
 # CHUNKS_DEL_LIMIT - use CHUNKS_SOFT_DEL_LIMIT instead
 
@@ -355,3 +350,14 @@
 ## Example: /etc/saunafs/ssl/ca.crt
 ## (There is no default)
 # TLS_CA_CERT_FILE =
+
+## Interval for periodic cleaning of reserved files, in milliseconds.
+## If set to 0, the reserved files deletion is disabled.
+## (Default: 0)
+##
+## Note: Administrator-only option. Enabling periodic deletion may remove
+## master-side references to reserved files that are still held by other
+## applications or client instances that have not released them yet. This
+## can disrupt ongoing operations and lead to unexpected errors.
+##
+# EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0

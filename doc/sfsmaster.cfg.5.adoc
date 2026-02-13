@@ -290,6 +290,23 @@ for TLS connections (there is no default value).
 Path to the trusted CA certificate which is used to authenticate
 the TLS connection (there is no default value).
 
+*EMPTY_RESERVED_FILES_PERIOD_MSECONDS (EXPERIMENTAL)*::
+Interval for periodic cleaning of reserved files, in milliseconds.
+If set to 0, the reserved files deletion is disabled. (Default: 0)
+
+[WARNING]
+====
+Administrator-only option. Enabling periodic deletion may remove master-side
+references to reserved files that are still held by other applications or
+client instances that have not released them yet. This can disrupt ongoing
+operations and lead to unexpected errors.
+
+Recommended approach: Do not enable automatic deletion unless you fully
+understand the impact on running workloads. Prefer manually freeing reserved
+files by locating each reference or process using them and stopping it before
+releasing the reservation.
+====
+
 == NOTES
 
 Chunks in master are tested in loop. Speed (or frequency) is regulated by two
