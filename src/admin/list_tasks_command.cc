@@ -32,6 +32,10 @@ std::string ListTasksCommand::name() const {
 	return "list-tasks";
 }
 
+SaunaFsAdminCommand::SupportedOptions ListTasksCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
+}
+
 void ListTasksCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port>" << std::endl;
 	std::cerr << "    Lists tasks which are currently executed by master" << std::endl;
@@ -42,7 +46,10 @@ void ListTasksCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	std::vector<JobInfo> jobs_info;
 
 	auto request = cltoma::listTasks::build(true);

@@ -37,16 +37,21 @@ void MagicRecalculateMetadataChecksumCommand::usage() const {
 	std::cerr << "    Authentication with the admin password is required." << std::endl;
 }
 
-SaunaFsAdminCommand::SupportedOptions MagicRecalculateMetadataChecksumCommand::supportedOptions() const {
-	return { {"--async", "Don't wait for the task to finish."},
-	         {"--timeout=", "Operation timeout" }};
+SaunaFsAdminCommand::SupportedOptions MagicRecalculateMetadataChecksumCommand::supportedOptions()
+    const {
+	return {{"--async", "Don't wait for the task to finish."},
+	        {"--timeout=", "Operation timeout"},
+	        {kTlsMode, kTlsModeDescription}};
 }
 
 void MagicRecalculateMetadataChecksumCommand::run(const Options& options) const {
 	bool async = options.isSet("--async");
 
 	int timeout = 1000 * options.getValue<int>("--timeout", ServerConnection::kDefaultTimeout / 1000);
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1), timeout);
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1),
+	                                                    tlsCfg, timeout);
 	auto request = cltoma::adminRecalculateMetadataChecksum::build(async);
 	auto response = connection->sendAndReceive(request, SAU_MATOCL_ADMIN_RECALCULATE_METADATA_CHECKSUM);
 	uint8_t status;

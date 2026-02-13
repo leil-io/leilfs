@@ -31,6 +31,10 @@ std::string PromoteShadowCommand::name() const {
 	return "promote-shadow";
 }
 
+SaunaFsAdminCommand::SupportedOptions PromoteShadowCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
+}
+
 void PromoteShadowCommand::usage() const {
 	std::cerr << name() << " <shadow ip> <shadow port>" << std::endl;
 	std::cerr << "    Promotes metadata server. Works only if personality 'ha-cluster-managed'"
@@ -43,7 +47,12 @@ void PromoteShadowCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <shadow ip> and <shadow port>"
 				" for " + name());
 	}
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto connection =
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 	auto becomeMasterResponse = connection->sendAndReceive(
 			cltoma::adminBecomeMaster::build(), SAU_MATOCL_ADMIN_BECOME_MASTER);
 	uint8_t status;

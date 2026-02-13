@@ -28,6 +28,10 @@ std::string MountInfoListCommand::name() const {
 	return "list-mount-info";
 }
 
+SaunaFsAdminCommand::SupportedOptions MountInfoListCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
+}
+
 void MountInfoListCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port>\n";
 	std::cerr << "    Lists mountpoint information from all currently open sessions\n";
@@ -37,7 +41,11 @@ void MountInfoListCommand::run(const Options& options) const {
 	if (options.arguments().size() != 2) {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
-	ServerConnection connection(options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	std::vector<MountInfoEntry> mountInfoList;
 
 	auto request = cltoma::mountInfoList::build();

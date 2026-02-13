@@ -25,3 +25,6 @@ const std::string SaunaFsAdminCommand::kPorcelainMode = "--porcelain";
 const std::string SaunaFsAdminCommand::kPorcelainModeDescription =
 		"Make the output parsing-friendly.";
 const std::string SaunaFsAdminCommand::kVerboseMode = "--verbose";
+const std::string SaunaFsAdminCommand::kTlsMode = "--tlsconfigfile=";
+const std::string SaunaFsAdminCommand::kTlsModeDescription =
+    "Specify a TLS config file to use TLS connection to metadata servers.";

@@ -627,6 +627,14 @@ void matoclserv_tlshandshake(matoclserventry *eptr) {
 /// Initiate a TLS connection with the mount.
 /// @param eptr Pointer to the client connection in the master
 void matoclserv_starttls(matoclserventry *eptr) {
+	if (eptr->tlsSession != nullptr) {
+		safs::log_warn(
+		    "Attempted to start TLS session with client from {}:{}, but TLS session already exists",
+		    ipToString(eptr->peerIpAddress), eptr->peerPort);
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	}
+
 	// Initialize a TLS session for the peer.
 	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
 	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
@@ -5232,11 +5240,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 		return;
 	}
 
-	if (metadataserver::isMaster()) {
-		if (type == SAU_CLTOMA_STARTTLS) {
-			matoclserv_starttls(eptr);
-			return;
-		}
+	if (type == SAU_CLTOMA_STARTTLS) {
+		matoclserv_starttls(eptr);
+		return;
 	}
 
 	try {

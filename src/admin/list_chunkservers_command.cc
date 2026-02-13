@@ -37,6 +37,7 @@ std::string ListChunkserversCommand::name() const {
 SaunaFsAdminCommand::SupportedOptions ListChunkserversCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 	};
 }
 
@@ -49,7 +50,11 @@ void ListChunkserversCommand::run(const Options& options) const {
 	if (options.arguments().size() != 2) {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
-	for (const auto& cs : getChunkserversList(options.argument(0), options.argument(1))) {
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	for (const auto& cs : getChunkserversList(options.argument(0), options.argument(1), tlsCfg)) {
 		auto address = NetworkAddress(cs.servip, cs.servport);
 		if (cs.version == kDisconnectedChunkserverVersion) {
 			if (options.isSet(kPorcelainMode)) {
@@ -89,8 +94,8 @@ void ListChunkserversCommand::run(const Options& options) const {
 }
 
 std::vector<ChunkserverListEntry> ListChunkserversCommand::getChunkserversList (
-		const std::string& masterHost, const std::string& masterPort) {
-	ServerConnection connection(masterHost, masterPort);
+		const std::string& masterHost, const std::string& masterPort, const std::string& tlsCfg) {
+	ServerConnection connection(masterHost, masterPort, tlsCfg);
 	auto request = cltoma::cservList::build(true);
 	auto response = connection.sendAndReceive(request, SAU_MATOCL_CSERV_LIST);
 	std::vector<ChunkserverListEntry> result;

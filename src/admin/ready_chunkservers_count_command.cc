@@ -25,9 +25,14 @@
 #include <vector>
 
 #include "admin/list_chunkservers_command.h"
+#include "common/tls_session.h"
 
 std::string ReadyChunkserversCountCommand::name() const {
 	return "ready-chunkservers-count";
+}
+
+SaunaFsAdminCommand::SupportedOptions ReadyChunkserversCountCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
 }
 
 void ReadyChunkserversCountCommand::usage() const {
@@ -40,8 +45,12 @@ void ReadyChunkserversCountCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected exactly two arguments for " + name());
 	}
 	uint32_t readyChunkservers = 0;
-	auto chunkservers = ListChunkserversCommand::getChunkserversList(
-			options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto chunkservers = ListChunkserversCommand::getChunkserversList(options.argument(0),
+	                                                                 options.argument(1), tlsCfg);
 	for (const auto& cs : chunkservers) {
 		if (cs.totalspace > 0) {
 			++readyChunkservers;

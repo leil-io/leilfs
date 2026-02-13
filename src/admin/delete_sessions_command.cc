@@ -31,12 +31,21 @@ void DeleteSessionsCommand::usage() const {
 	std::cerr << "    Deletes the specified session." << std::endl;
 }
 
+SaunaFsAdminCommand::SupportedOptions DeleteSessionsCommand::supportedOptions() const {
+	return {
+	    {kTlsMode, kTlsModeDescription},
+	};
+}
+
 void DeleteSessionsCommand::run(const Options& options) const {
 	if (options.arguments().size() != 3) {
 		throw WrongUsageException("Expected <master ip>, <master port>, and <session_id> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	uint64_t sessionId = std::stoull(options.argument(2));
 
 	auto request = cltoma::deleteSession::build(sessionId);

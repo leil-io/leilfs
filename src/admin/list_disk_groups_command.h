@@ -27,4 +27,5 @@ public:
 	std::string name() const override;
 	void usage() const override;
 	void run(const Options& options) const override;
+	SupportedOptions supportedOptions() const override;
 };

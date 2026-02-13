@@ -38,7 +38,7 @@ void ListInotifiersCommand::usage() const {
 }
 
 SaunaFsAdminCommand::SupportedOptions ListInotifiersCommand::supportedOptions() const {
-	return {{kPorcelainMode, kPorcelainModeDescription}};
+	return {{kPorcelainMode, kPorcelainModeDescription}, {kTlsMode, kTlsModeDescription}};
 }
 
 template <class T>
@@ -74,9 +74,11 @@ void ListInotifiersCommand::run(const Options &options) const {
 	uint16_t port = 0;
 	const std::string &masterIp = options.argument(kIpArgOffset);
 	const std::string &masterPort = options.argument(kPortArgOffset);
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
 
 	tcpresolve(masterIp.c_str(), masterPort.c_str(), &ip, &port, false);
-	ServerConnection conn(NetworkAddress(ip, port));
+	ServerConnection conn(NetworkAddress(ip, port), tlsCfg);
 	auto request = cltoma::inotifierList::build();
 	auto response = conn.sendAndReceive(request, SAU_MATOCL_INOTIFIER_LIST);
 

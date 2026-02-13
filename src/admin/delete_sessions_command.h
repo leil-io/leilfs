@@ -24,4 +24,5 @@ public:
 	std::string name() const final;
 	void usage() const final;
 	void run(const Options& options) const final;
+	virtual SupportedOptions supportedOptions() const;
 };

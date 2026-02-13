@@ -64,10 +64,11 @@ std::string getPassword() {
 std::unique_ptr<RegisteredAdminConnection> RegisteredAdminConnection::create(
 		const std::string& host,
 		const std::string& port,
+		const std::string& tlsCfg,
 		int timeout) {
 	// Connect the master server
 	auto connection = std::unique_ptr<RegisteredAdminConnection>(
-			new RegisteredAdminConnection(host, port));
+			new RegisteredAdminConnection(host, port, tlsCfg));
 
 	connection->setTimeout(timeout);
 

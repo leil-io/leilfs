@@ -35,6 +35,7 @@ std::string InfoCommand::name() const {
 SaunaFsAdminCommand::SupportedOptions InfoCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 	};
 }
 
@@ -48,7 +49,11 @@ void InfoCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	const std::string host = options.argument(0);
+	const std::string port = options.argument(1);
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+	ServerConnection connection(host, port, tlsCfg);
 	std::vector<uint8_t> request, response;
 	serializeLegacyPacket(request, CLTOMA_INFO);
 	response = connection.sendAndReceive(request, MATOCL_INFO);

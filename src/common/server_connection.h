@@ -29,6 +29,7 @@
 #include <thread>
 
 #include "common/network_address.h"
+#include "common/tls_session.h"
 #include "protocol/packet.h"
 
 class ServerConnection {
@@ -40,8 +41,9 @@ public:
 
 	static const int kDefaultTimeout = 5000;
 
-	ServerConnection(const std::string& host, const std::string& port);
-	ServerConnection(const NetworkAddress& server);
+	ServerConnection(const std::string &host, const std::string &port,
+	                 const std::string &tlsConfigFile = "");
+	ServerConnection(const NetworkAddress &server, const std::string &tlsConfigFile = "");
 	virtual ~ServerConnection();
 
 	/// Sends a request and receives a response.
@@ -55,11 +57,9 @@ public:
 
 	/// A static method for those, who own a socket.
 	static MessageBuffer sendAndReceive(
-			int fd,
-			const MessageBuffer& request,
-			PacketHeader::Type expectedResponseType,
-			ReceiveMode receiveMode = ReceiveMode::kReceiveFirstNonNopMessage,
-			int timeout = kDefaultTimeout);
+	    int fd, const MessageBuffer &request, PacketHeader::Type expectedResponseType,
+	    ReceiveMode receiveMode = ReceiveMode::kReceiveFirstNonNopMessage,
+	    int timeout = kDefaultTimeout, TlsSession *tlsSession = nullptr);
 
 	void setTimeout(int timeout) {
 		timeout_ = timeout;
@@ -70,9 +70,23 @@ protected:
 	int fd_;
 	int timeout_;
 
+	/// Optional TLS session (present if tlsConfigFile_ was set and handshake succeeded)
+	std::unique_ptr<TlsSession> tlsSession_;
+	// Path to TLS client config file
+	std::string tlsConfigFile_;
+	int lastHandshakeError_{0};
+
 private:
 	/// Opens a connection and sets \p fd_
 	void connect(const NetworkAddress& server);
+
+	/// Starts a TLS connection request to target server and sets up TLS session if tlsConfigFile_
+	/// is not empty.
+	void startTlsSession(const NetworkAddress &server);
+
+	/// Performs a TLS handshake on the current fd_ and initializes tlsSession_ if tlsConfigFile_ is
+	/// not empty.
+	bool performTlsHandshake();
 };
 
 /// A special version of \p ServerConnection which sends \p ANTOAN_NOP every second.
@@ -80,16 +94,15 @@ private:
 class KeptAliveServerConnection : public ServerConnection {
 public:
 	/// Inherited constructor
-	KeptAliveServerConnection(const std::string& host, const std::string& port)
-			: ServerConnection(host, port),
-			  threadCanRun_(true) {
+	KeptAliveServerConnection(const std::string &host, const std::string &port,
+	                          const std::string &tlsConfigFile = "")
+	    : ServerConnection(host, port, tlsConfigFile), threadCanRun_(true) {
 		startNopThread();
 	}
 
 	/// Inherited constructor
-	KeptAliveServerConnection(const NetworkAddress& server)
-			: ServerConnection(server),
-			  threadCanRun_(true) {
+	KeptAliveServerConnection(const NetworkAddress &server, const std::string &tlsConfigFile = "")
+	    : ServerConnection(server, tlsConfigFile), threadCanRun_(true) {
 		startNopThread();
 	}
 

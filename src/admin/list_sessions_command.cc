@@ -39,14 +39,18 @@ void ListSessionsCommand::usage() const {
 }
 
 SaunaFsAdminCommand::SupportedOptions ListSessionsCommand::supportedOptions() const {
-	return {};
+	return {{kTlsMode, kTlsModeDescription}};
 }
 
 void ListSessionsCommand::run(const Options& options) const {
 	if (options.arguments().size() != 2) {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
-	ServerConnection connection(options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	LegacyVector<SessionFiles> sessions;
 
 	auto request = cltoma::listSessions::build();

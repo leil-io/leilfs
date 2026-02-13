@@ -29,6 +29,12 @@
 
 std::string ListDiskGroupsCommand::name() const { return "list-disk-groups"; }
 
+SaunaFsAdminCommand::SupportedOptions ListDiskGroupsCommand::supportedOptions() const {
+	return {
+	    {kTlsMode, kTlsModeDescription},
+	};
+}
+
 void ListDiskGroupsCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port>\n";
 	std::cerr << "    Prints disk groups configuration in chunkservers.\n";
@@ -40,8 +46,11 @@ void ListDiskGroupsCommand::run(const Options &options) const {
 		    "Expected <master ip> and <master port> for " + name());
 	}
 
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
 	auto chunkservers = ListChunkserversCommand::getChunkserversList(
-	    options.argument(0), options.argument(1));
+	    options.argument(0), options.argument(1), tlsCfg);
 
 	YAML::Emitter yaml;
 	yaml << YAML::BeginMap;  // start root map

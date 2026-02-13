@@ -65,6 +65,7 @@ std::string ListMountsCommand::name() const {
 SaunaFsAdminCommand::SupportedOptions ListMountsCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 		{kVerboseMode,   "Be a little more verbose and show goal and trash time limits."},
 	};
 }

@@ -37,6 +37,8 @@ public:
 	static const std::string kPorcelainMode;
 	static const std::string kPorcelainModeDescription;
 	static const std::string kVerboseMode;
+	static const std::string kTlsMode;
+	static const std::string kTlsModeDescription;
 
 	virtual ~SaunaFsAdminCommand() {}
 	virtual std::string name() const = 0;

@@ -48,6 +48,7 @@ void ListDefectiveFilesCommand::usage() const {
 SaunaFsAdminCommand::SupportedOptions ListDefectiveFilesCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 		{"--unavailable", "Print unavailable files"},
 		{"--undergoal", "Print files with undergoal chunks"},
 		{"--structure-error", "Print files/directories with structure error"},
@@ -80,7 +81,10 @@ void ListDefectiveFilesCommand::run(const Options &options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	uint8_t flags_set = 0;
 	if (options.isSet("--unavailable")) {
 		flags_set |= kChunkUnavailable;

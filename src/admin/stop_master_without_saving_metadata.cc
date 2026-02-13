@@ -31,6 +31,11 @@ std::string MetadataserverStopWithoutSavingMetadataCommand::name() const {
 	return "stop-master-without-saving-metadata";
 }
 
+SaunaFsAdminCommand::SupportedOptions
+MetadataserverStopWithoutSavingMetadataCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
+}
+
 void MetadataserverStopWithoutSavingMetadataCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port>" << std::endl;
 	std::cerr << "    Stop the master server without saving metadata in the metadata.sfs file."
@@ -45,7 +50,12 @@ void MetadataserverStopWithoutSavingMetadataCommand::run(const Options& options)
 		throw WrongUsageException("Expected <metadataserver ip> and <metadataserver port>"
 				" for " + name());
 	}
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto connection =
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 	auto adminStopWithoutMetadataDumpResponse = connection->sendAndReceive(
 			cltoma::adminStopWithoutMetadataDump::build(),
 			SAU_MATOCL_ADMIN_STOP_WITHOUT_METADATA_DUMP);

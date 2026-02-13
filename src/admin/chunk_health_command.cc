@@ -44,6 +44,7 @@ SaunaFsAdminCommand::SupportedOptions ChunksHealthCommand::supportedOptions() co
 		{kOptionAvailability, "Print report about availability of chunks."},
 		{kOptionReplication,  "Print report about about number of chunks that need replication."},
 		{kOptionDeletion,     "Print report about about number of chunks that need deletion."},
+		{kTlsMode,            kTlsModeDescription},
 	};
 }
 
@@ -76,7 +77,10 @@ void ChunksHealthCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name() + '\n');
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	bool regularOnly = false;
 	auto request = cltoma::chunksHealth::build(regularOnly);
 	auto response = connection.sendAndReceive(request, SAU_MATOCL_CHUNKS_HEALTH);

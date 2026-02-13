@@ -45,6 +45,7 @@ void ManageLocksCommand::usage() const {
 SaunaFsAdminCommand::SupportedOptions ManageLocksCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 		{"--active", "Print only active locks"},
 		{"--pending", "Print only pending locks"},
 		{"--inode=", "Specify an inode for operation"},
@@ -184,7 +185,12 @@ void ManageLocksCommand::run(const Options &options) const {
 		throw WrongUsageException("<master ip> <master port> [list/unlock] [flock/posix/all] for "
 				+ name());
 	}
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto connection =
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 
 	if (options.argument(2) == "unlock") {
 		processUnlock(*connection, options);
