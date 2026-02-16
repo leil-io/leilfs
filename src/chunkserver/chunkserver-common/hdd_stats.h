@@ -56,6 +56,8 @@ inline std::atomic<uint32_t> gStatsOperationsDuplicate(0);
 inline std::atomic<uint32_t> gStatsOperationsTruncate(0);
 inline std::atomic<uint32_t> gStatsOperationsDupTrunc(0);
 
+inline std::atomic<uint32_t> gStatsOperationsGCPurge(0);
+
 struct statsReport {
 	statsReport(uint64_t *overBytesRead, uint64_t *overBytesWrite,
 	            uint32_t *overOpsRead, uint32_t *overOpsWrite,
@@ -99,7 +101,7 @@ void stats(statsReport report);
 void operationStats(uint32_t *opsCreate, uint32_t *opsDelete,
                     uint32_t *opsUpdateVersion, uint32_t *opsDuplicate,
                     uint32_t *opsTruncate, uint32_t *opsDupTrunc,
-                    uint32_t *opsTest);
+                    uint32_t *opsTest, uint32_t *opsGCPurge);
 
 void overheadRead(uint32_t size);
 void overheadWrite(uint32_t size);

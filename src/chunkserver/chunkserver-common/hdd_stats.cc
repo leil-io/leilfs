@@ -19,6 +19,7 @@
 #include "common/platform.h"
 
 #include "chunkserver-common/hdd_stats.h"
+#include <cstdint>
 
 #include "chunkserver-common/disk_interface.h"
 #include "devtools/TracePrinter.h"
@@ -83,10 +84,9 @@ void stats(statsReport report) {
 	*report.totalWriteTime = gStatsTotalTimeWrite.exchange(0);
 }
 
-void operationStats(uint32_t *opsCreate, uint32_t *opsDelete,
-                    uint32_t *opsUpdateVersion, uint32_t *opsDuplicate,
-                    uint32_t *opsTruncate, uint32_t *opsDupTrunc,
-                    uint32_t *opsTest) {
+void operationStats(uint32_t *opsCreate, uint32_t *opsDelete, uint32_t *opsUpdateVersion,
+                    uint32_t *opsDuplicate, uint32_t *opsTruncate, uint32_t *opsDupTrunc,
+                    uint32_t *opsTest, uint32_t *opsGCPurge) {
 	TRACETHIS();
 	*opsCreate = gStatsOperationsCreate.exchange(0);
 	*opsDelete = gStatsOperationsDelete.exchange(0);
@@ -95,6 +95,7 @@ void operationStats(uint32_t *opsCreate, uint32_t *opsDelete,
 	*opsDuplicate = gStatsOperationsDuplicate.exchange(0);
 	*opsTruncate = gStatsOperationsTruncate.exchange(0);
 	*opsDupTrunc = gStatsOperationsDupTrunc.exchange(0);
+	*opsGCPurge = gStatsOperationsGCPurge.exchange(0);
 }
 
 void overheadRead(uint32_t size) {

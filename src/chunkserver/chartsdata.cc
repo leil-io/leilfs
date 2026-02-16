@@ -75,8 +75,9 @@
 #define CHARTS_CHUNKIOJOBS 28
 #define CHARTS_CHUNKOPJOBS 29
 #define CHARTS_MEMORY 30
+#define CHARTS_GC_PURGE 31
 
-#define CHARTS_NUMBER 31
+#define CHARTS_NUMBER 32
 
 const unsigned long kLinuxMaxrssSize = 1024UL;
 
@@ -113,6 +114,7 @@ const unsigned long kLinuxMaxrssSize = 1024UL;
 	{"chunkiojobs"      ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"chunkopjobs"      ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"memory"           ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{"gcpurge"          ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{NULL               ,0              ,0,0                 ,   0, 0}  \
 };
 
@@ -165,7 +167,7 @@ void chartsdata_refresh(void) {
 	uint64_t bytesIn, bytesOut, totalBytesRead, totalBytesWrite;
 	uint32_t opsRead, opsWrite, totalOpsRead, totalOpsWrite, replications = 0;
 	uint32_t opsCreate, opsDelete, opsUpdateVersion, opsDuplicate, opsTruncate;
-	uint32_t opsDupTrunc, opsTest;
+	uint32_t opsDupTrunc, opsTest, opsGCPurge;
 	uint32_t maxChunkServerJobsCount, maxMasterJobsCount;
 
 	// Timer runs only when the process is executing.
@@ -245,9 +247,8 @@ void chartsdata_refresh(void) {
 	data[CHARTS_TOTAL_LLOPW] = totalOpsWrite;
 	data[CHARTS_REPL] = replications + gReplicator.getStats();
 
-	HddStats::operationStats(&opsCreate, &opsDelete, &opsUpdateVersion,
-	                         &opsDuplicate, &opsTruncate, &opsDupTrunc,
-	                         &opsTest);
+	HddStats::operationStats(&opsCreate, &opsDelete, &opsUpdateVersion, &opsDuplicate, &opsTruncate,
+	                         &opsDupTrunc, &opsTest, &opsGCPurge);
 	data[CHARTS_CREATE] = opsCreate;
 	data[CHARTS_DELETE] = opsDelete;
 	data[CHARTS_VERSION] = opsUpdateVersion;
@@ -255,6 +256,7 @@ void chartsdata_refresh(void) {
 	data[CHARTS_TRUNCATE] = opsTruncate;
 	data[CHARTS_DUPTRUNC] = opsDupTrunc;
 	data[CHARTS_TEST] = opsTest;
+	data[CHARTS_GC_PURGE] = opsGCPurge;
 
 	charts_add(data, eventloop_time() - SECONDS_IN_ONE_MINUTE);
 }
