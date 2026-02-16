@@ -352,10 +352,12 @@ std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
 }
 
 std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_for_new_chunk(
-		uint8_t goal_id, uint32_t min_server_version) {
+    uint8_t goal_id, uint16_t &min_server_count, uint32_t min_server_version) {
 	static std::array<ChunkCreationHistory, GoalId::kMax + 1> history;
 	GetServersForNewChunk getter;
 	const Goal &goal(gFSOperations->getGoalDefinition(goal_id));
+
+	min_server_count = std::numeric_limits<uint16_t>::max();
 
 	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0 &&
@@ -386,6 +388,9 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	// we don't use any chunkserver twice if not necessary.
 	for (const auto &slice : goal) {
 		std::vector<std::pair<matocsserventry *, ChunkPartType>> slice_ret;
+		min_server_count =
+		    std::min(min_server_count,
+		             static_cast<uint16_t>(slice_traits::getNumberOfDataParts(slice.getType())));
 
 		// add parts index permutation here
 		std::array<int, Goal::Slice::kMaxPartsCount> shuffle;

@@ -1379,15 +1379,18 @@ uint8_t chunk_create(bool quotaExceeded, uint8_t goal, uint8_t *operation, uint6
 	if (quotaExceeded) { return SAUNAFS_ERROR_QUOTA; }
 
 	// Next check availability of chunkservers for the given goal
-	auto serversWithChunkTypes = matocsserv_getservers_for_new_chunk(goal, minServerVersion);
+	uint16_t minServerCount = 0;
+	auto serversWithChunkTypes =
+	    matocsserv_getservers_for_new_chunk(goal, minServerCount, minServerVersion);
 	if (serversWithChunkTypes.empty()) {
 		uint16_t usableChunkservers, totalChunkservers;
 		double minUsage, maxUsage;
 		matocsserv_usagedifference(&minUsage, &maxUsage, &usableChunkservers, &totalChunkservers);
 
-		if (usableChunkservers > 0 && eventloop_time() > starttime + kStartupGracePeriodSeconds) {
-			// if there are chunkservers and it's at least one minute after start then it means that
-			// there is no space left
+		if (usableChunkservers >= minServerCount &&
+		    eventloop_time() > starttime + kStartupGracePeriodSeconds) {
+			// if there are enough chunkservers and it's at least one minute after start then it
+			// means that there is no space left
 			return SAUNAFS_ERROR_NOSPACE;
 		}
 
