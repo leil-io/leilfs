@@ -490,7 +490,7 @@ add_metadata_server_() {
 	saunafs_info_[master${masterserver_id}_matoml]=$masterserver_matoml_port
 	saunafs_info_[master${masterserver_id}_matocl]=$masterserver_matocl_port
 	saunafs_info_[master${masterserver_id}_matocs]=$masterserver_matocs_port
-	saunafs_info_[master${masterserver_id}_matots]=$masterserver_matocs_port
+	saunafs_info_[master${masterserver_id}_matots]=$masterserver_matots_port
 }
 
 create_sfsmetalogger_cfg_() {
