@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include <boost/shared_ptr.hpp>
 #include <deque>
 
 #include "chunkserver-common/chunk_interface.h"

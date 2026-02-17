@@ -17,6 +17,7 @@
 #include <boost/bind.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/version.hpp>
+#include <boost/chrono.hpp>
 
 constexpr int kCommandTimeoutMs = 5000;  ///< Default command timeout in milliseconds.
 
@@ -57,11 +58,11 @@ void uRaftController::init() {
 		return;
 	}
 
-	check_cmd_status_timer_.expires_from_now(boost::posix_time::millisec(opt_.check_cmd_status_period));
+	check_cmd_status_timer_.expires_after(std::chrono::milliseconds(opt_.check_cmd_status_period));
 	check_cmd_status_timer_.async_wait(boost::bind(&uRaftController::checkCommandStatus, this,
 	                                   boost::asio::placeholders::error));
 
-	check_node_status_timer_.expires_from_now(boost::posix_time::millisec(opt_.check_node_status_period));
+	check_node_status_timer_.expires_after(std::chrono::milliseconds(opt_.check_node_status_period));
 	check_node_status_timer_.async_wait(boost::bind(&uRaftController::checkNodeStatus, this,
 	                                    boost::asio::placeholders::error));
 
@@ -249,7 +250,7 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 		}
 	}
 
-	check_cmd_status_timer_.expires_from_now(boost::posix_time::millisec(opt_.check_cmd_status_period));
+	check_cmd_status_timer_.expires_after(std::chrono::milliseconds(opt_.check_cmd_status_period));
 	check_cmd_status_timer_.async_wait(boost::bind(&uRaftController::checkCommandStatus, this,
 	                                   boost::asio::placeholders::error));
 }
@@ -295,7 +296,7 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 		}
 	}
 
-	check_node_status_timer_.expires_from_now(boost::posix_time::millisec(opt_.check_node_status_period));
+	check_node_status_timer_.expires_after(std::chrono::milliseconds(opt_.check_node_status_period));
 	check_node_status_timer_.async_wait(boost::bind(&uRaftController::checkNodeStatus, this,
 	                                    boost::asio::placeholders::error));
 }
@@ -328,7 +329,7 @@ void uRaftController::scheduleDeadRecovery() {
 	if (dead_recovery_pending_) { return; }
 	dead_recovery_pending_ = true;
 
-	dead_recovery_timer_.expires_from_now(boost::posix_time::millisec(kDeadRecoveryDelayMs));
+	dead_recovery_timer_.expires_after(std::chrono::milliseconds(kDeadRecoveryDelayMs));
 	dead_recovery_timer_.async_wait([this](const boost::system::error_code &ec) {
 		if (ec) { return; }
 
@@ -353,7 +354,7 @@ void uRaftController::scheduleDeadRecovery() {
 }
 
 void uRaftController::setSlowCommandTimeout(int timeout) {
-	cmd_timeout_timer_.expires_from_now(boost::posix_time::millisec(timeout));
+	cmd_timeout_timer_.expires_after(std::chrono::milliseconds(timeout));
 	cmd_timeout_timer_.async_wait([this, timeout](const boost::system::error_code & error) {
 		if (!error) {
 			syslog(LOG_ERR, "Metadata server mode switching timeout after %d ms", timeout);
@@ -631,7 +632,7 @@ void uRaftController::startPromotionBackoff(bool reset) {
 	syslog(LOG_WARNING, "Promotion backoff enabled (%d ms), streak=%d", backoff_ms,
 	       promotion_failure_streak_);
 
-	promotion_backoff_timer_.expires_from_now(boost::posix_time::millisec(backoff_ms));
+	promotion_backoff_timer_.expires_after(std::chrono::milliseconds(backoff_ms));
 	promotion_backoff_timer_.async_wait([this](const boost::system::error_code &ec) {
 		if (ec) { return; }
 		promotion_backoff_active_ = false;
