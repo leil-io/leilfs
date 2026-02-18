@@ -1,4 +1,4 @@
-timeout_set 45 seconds
+timeout_set 60 seconds
 
 CHUNKSERVERS=8 \
 	USE_RAMDISK=YES \
@@ -14,6 +14,7 @@ saunafs setgoal ec62 dir
 
 times_to_repeat=1024
 FILE_SIZE=$(( times_to_repeat * 4 * 1024 )) file-generate ${TEMP_DIR}/original_file
+copy_file="${TEMP_DIR}/original_file_copy"
 
 # Write 4KB at a time, 1KB in each of 4 mounts, and repeat this 1024 times, so that the file is
 # written in random order and with many concurrent writes.
@@ -55,6 +56,9 @@ for i in $(seq 0 $((times_to_repeat - 1))); do
 		wait "${pids[@]}"
 	fi
 	echo "Done writing $i-th block of 4KB"
+	dd if="${TEMP_DIR}/original_file" of="${copy_file}" bs=4K skip=$i seek=$i count=1 \
+		conv=notrunc 2>/dev/null
+	cmp -s "${copy_file}" "${info[mount${mount}]}/dir/file" && echo "match" || (echo "mismatch"; exit 1)
 done
 
 stop_switch_use_chunkserver_side_chunk_lock_thread
