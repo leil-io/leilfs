@@ -290,6 +290,10 @@ for TLS connections (there is no default value).
 Path to the trusted CA certificate which is used to authenticate
 the TLS connection (there is no default value).
 
+*USE_CHUNKSERVER_SIDE_CHUNK_LOCK (EXPERIMENTAL)*:: When set to 1, enables sending
+chunk part lock messages to the chunkservers. This can be useful to track down which
+chunk parts are currently being written. Reloadable (default: 0).
+
 *EMPTY_RESERVED_FILES_PERIOD_MSECONDS (EXPERIMENTAL)*::
 Interval for periodic cleaning of reserved files, in milliseconds.
 If set to 0, the reserved files deletion is disabled. (Default: 0)

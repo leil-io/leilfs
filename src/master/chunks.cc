@@ -109,6 +109,7 @@ static uint64_t gEndangeredChunksMaxCapacity;
 static uint64_t gDisconnectedCounter = 0;
 inline LinearAssignmentCache gLinearAssignmentCache;
 inline bool gUseLinearAssignmentOptimizer;
+static bool gUseChunkserverSideChunkLock;
 bool gAvoidSameIpChunkservers = false;
 
 struct ChunkPart {
@@ -126,14 +127,13 @@ struct ChunkPart {
 	ChunkPartType type; /*!< Part type. */
 	uint16_t csid : 13; /*!< Chunkserver id. */
 	uint16_t state : 3; /*!< Chunk part state. */
+	bool beingWritten = false;  /*!< Indicates if the chunk part is being written, i.e locked. */
 
-	ChunkPart() : version(0), type(), csid(0), state(INVALID) {
-	}
+	ChunkPart() : version(0), type(), csid(0), state(INVALID) {}
 
 	ChunkPart(uint16_t part_csid, int part_state, uint32_t part_version,
 	          const ChunkPartType &part_type)
-	    : version(part_version), type(part_type), csid(part_csid), state(part_state) {
-	}
+	    : version(part_version), type(part_type), csid(part_csid), state(part_state) {}
 
 	bool is_busy() const {
 		return state == BUSY || state == TDBUSY;
@@ -147,6 +147,12 @@ struct ChunkPart {
 		return state == TDVALID || state == TDBUSY;
 	}
 
+	bool is_being_written() const { return beingWritten; }
+
+	void mark_being_written() { beingWritten = true; }
+
+	void unmark_being_written() { beingWritten = false; }
+
 	void mark_busy() {
 		switch (state) {
 		case VALID:
@@ -159,6 +165,7 @@ struct ChunkPart {
 			sassert(!"ChunkPartInfo::mark_busy(): wrong state");
 		}
 	}
+
 	void unmark_busy() {
 		switch (state) {
 		case BUSY:
@@ -171,6 +178,7 @@ struct ChunkPart {
 			sassert(!"ChunkPartInfo::unmark_busy(): wrong state");
 		}
 	}
+
 	void mark_todel() {
 		switch (state) {
 		case VALID:
@@ -183,6 +191,7 @@ struct ChunkPart {
 			sassert(!"ChunkPartInfo::mark_todel(): wrong state");
 		}
 	}
+
 	void unmark_todel() {
 		switch (state) {
 		case TDVALID:
@@ -223,6 +232,7 @@ static bool     RebalancingBetweenLabels = false;
 
 static uint32_t jobsnorepbefore;
 
+constexpr uint32_t kStartupGracePeriodSeconds = 60;
 static uint32_t starttime;
 #endif // METARESTORE
 
@@ -232,14 +242,15 @@ class Chunk {
 	static_assert(ChunksAvailabilityState::kStateCount <= 3, "not enough space for chunk state");
 
 public:
-	/* chunk.operation */
-	enum {
+	/// @brief Current operation being performed on the chunk by chunkservers
+	enum ChunkOperation : uint8_t {
 		NONE,
 		CREATE,
 		SET_VERSION,
 		DUPLICATE,
 		TRUNCATE,
-		DUPTRUNC
+		DUPTRUNC,
+		LOCK
 	};
 
 	uint64_t chunkid;
@@ -256,9 +267,19 @@ public:
 	uint32_t lockedto;
 #ifndef METARESTORE
 	uint8_t inEndangeredQueue:1;
-	uint8_t needverincrease:1;
-	uint8_t interrupted:1;
-	uint8_t operation:3;
+	/// @brief Indicates whether the chunk version needs to be increased. This may be needed due to
+	///        a variety of reasons, e.g., disconnected parts, repair and replicate operations, etc.
+	///        The use of this flag happens at the beginning of the next write operation, forcing
+	///        the chunk version to be increased.
+	uint8_t needVersionIncrease : 1;
+	/// @brief Indicates whether the chunk operation or write was interrupted. This may happen when
+	///        chunkserver disconnects during the operation or sends an error status. The use
+	///        of this flag happens at the end of the current operation, forcing the chunk version
+	///        to be increased to avoid inconsistencies.
+	uint8_t interrupted : 1;
+	/// @brief Current operation being performed on the chunk by chunkservers
+	uint8_t operation : 3;
+
 private:
 	uint8_t allAvailabilityState_:2;
 	uint8_t copiesInStats_:4;
@@ -287,7 +308,7 @@ public:
 		checksum = 0;
 #ifndef METARESTORE
 		inEndangeredQueue = 0;
-		needverincrease = 1;
+		needVersionIncrease = 1;
 		interrupted = 0;
 		operation = Chunk::NONE;
 		parts.clear();
@@ -453,7 +474,15 @@ public:
 	}
 
 	bool isLocked() const {
-		return lockedto >= eventloop_time();
+		/// Chunk is considered locked if the current time is less than lockedto (not unlocked by
+		/// client) or if it is being written and lockedto is 0: which means client has unlocked the
+		/// chunk but the chunk parts are still being written.
+		if (lockedto >= eventloop_time()) { return true; }
+
+		bool isChunkBeingWritten = std::any_of(
+		    parts.begin(), parts.end(),
+		    [](const ChunkPart &part) { return part.is_being_written() && part.is_valid(); });
+		return isChunkBeingWritten && lockedto == 0;
 	}
 
 	void markCopyAsHavingWrongVersion(ChunkPart &part) {
@@ -463,6 +492,7 @@ public:
 
 	void invalidateCopy(ChunkPart &part) {
 		part.state = ChunkPart::INVALID;
+		part.beingWritten = false;
 		part.version = 0;
 		updateStats();
 	}
@@ -811,58 +841,100 @@ Chunk *chunk_new(uint64_t chunkid, uint32_t chunkversion) {
 }
 
 #ifndef METARESTORE
+void chunk_increase_version_operation(Chunk *targetChunk, bool needsLocking);
+
 void chunk_emergency_increase_version(Chunk *c) {
-	assert(c->isWritable());
-	for (auto &part : c->parts) {
-		if (part.is_valid()) {
-			if (!part.is_busy()) {
-				part.mark_busy();
-			}
-			part.version = c->version+1;
-			matocsserv_send_setchunkversion(part.server(),c->chunkid,c->version+1,c->version,
-					part.type);
-		}
-	}
-	c->interrupted = 0;
-	c->operation = Chunk::SET_VERSION;
-	c->version++;
+	chunk_increase_version_operation(c, false);
 	chunk_update_checksum(c);
 	gFSOperations->increaseChunkVersion(c->chunkid);
 	emit_chunk_changed(c);
 }
 
+/// @brief This function should be called when an operation on a chunk fails (chunk not writable)
+/// and the client should be notified about it after all the operation replies are received.
+/// @param c The chunk on which the operation was performed.
 void chunk_finalize_failed_operation(Chunk *c) {
 	if (c->operation == Chunk::CREATE) {
 		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_CHUNKLOST, true);
+	} else if (c->operation == Chunk::LOCK) {
+		// The client tried to lock the chunk, but it is not writable anymore. We need to notify the
+		// client about it, so that it can retry the operation and get a chance to lock the chunk
+		// when it becomes writable again.
+		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_CHUNKLOST);
 	} else {
 		matoclserv_chunk_status(c->chunkid, SAUNAFS_ERROR_NOTDONE);
 	}
 	c->operation = Chunk::NONE;
+
+	for (auto &part : c->parts) {
+		if (!part.is_valid() || part.is_busy() || part.is_todel() || !part.is_being_written()) {
+			continue;
+		}
+		// No valid parts should be busy, but some of them may be marked as being written if the
+		// failure happened when expecting writes to start right away. We need to unlock the parts
+		// in the chunkserver side and mark them as not being written to avoid inconsistencies.
+		part.unmark_being_written();
+		matocsserv_send_chunkunlock(part.server(), c->chunkid, part.type);
+	}
 }
 
 void chunk_handle_disconnected_copies(Chunk *c) {
-	auto it = std::remove_if(c->parts.begin(), c->parts.end(), [](const ChunkPart &part) {
-		return csdb_find(part.csid)->eptr == nullptr;
+	bool any_lost_copy_being_written = false;
+	auto it = std::remove_if(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
+		if (csdb_find(part.csid)->eptr == nullptr) {
+			if (part.is_being_written()) { any_lost_copy_being_written = true; }
+			return true;
+		}
+		return false;
 	});
 	bool lost_copy_found = it != c->parts.end();
 
 	if (lost_copy_found) {
 		c->parts.erase(it, c->parts.end());
-		c->needverincrease = 1;
+		c->needVersionIncrease = 1;
 		c->updateStats();
 	}
 
+	if (any_lost_copy_being_written) {
+		// The lost copy while being written may lead to inconsistencies, so we
+		// mark the operation as interrupted to increase the chunk version later.
+		c->interrupted = 1;
+	}
+
 	if (lost_copy_found && c->operation != Chunk::NONE) {
-		bool any_copy_busy = std::any_of(c->parts.begin(), c->parts.end(), [](const ChunkPart &part) {
-			return part.is_busy();
-		});
+		bool any_copy_busy = std::any_of(c->parts.begin(), c->parts.end(),
+		                                 [](const ChunkPart &part) { return part.is_busy(); });
+
 		if (any_copy_busy) {
+			// Wait for the remaining operation replies to arrive, but mark the operation as
+			// interrupted to increase the chunk version later (when the other replies arrive).
 			c->interrupted = 1;
 		} else {
 			if (c->isWritable()) {
 				chunk_emergency_increase_version(c);
 			} else {
 				chunk_finalize_failed_operation(c);
+			}
+		}
+	} else if (any_lost_copy_being_written) {
+		// implies operation == NONE
+		bool any_copy_being_written =
+		    std::any_of(c->parts.begin(), c->parts.end(),
+		                [](const ChunkPart &part) { return part.is_being_written(); });
+
+		if (any_copy_being_written) {
+			// Wait for remaining write replies to arrive, but mark the operation as interrupted
+			// to increase the chunk version later (when the other replies arrive).
+			c->interrupted = 1;
+		} else if (c->interrupted) {
+			if (c->isWritable()) {
+				// If there was an interrupted write, we need to increase the version
+				chunk_emergency_increase_version(c);
+			} else {
+				// If the chunk is not writable anymore, log the error
+				safs::log_warn(
+				    "{}: Chunk {} became not writable after losing copies during an operation.",
+				    __func__, c->chunkid);
 			}
 		}
 	}
@@ -1039,11 +1111,18 @@ int chunk_unlock(uint64_t chunkid) {
 	emit_chunk_changed(c);
 
 #ifndef METARESTORE
-	// If the chunk is not locked anymore, we can try to send notices about the operation
-	// status to clients waiting for the lock release.
-	matoclserv_notify_unlock_list(chunkid);
+	if (!c->isLocked()) {
+		// If the chunk is not locked anymore, we can try to send notices about the operation
+		// status to clients waiting for the lock release.
+		matoclserv_notify_unlock_list(chunkid);
+	}
 #endif
 	return SAUNAFS_STATUS_OK;
+}
+
+bool should_increase_chunk_version_on_modification(uint8_t operation) {
+	return operation == Chunk::CREATE || operation == Chunk::SET_VERSION ||
+	       operation == Chunk::TRUNCATE;
 }
 
 #ifndef METARESTORE
@@ -1096,218 +1175,440 @@ int chunk_get_partstomodify(uint64_t chunkid, int &recover, int &remove) {
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
-		bool usedummylockid, bool quota_exceeded, uint8_t *opflag, uint64_t *nchunkid,
-		uint32_t min_server_version = 0) {
-	Chunk *c = NULL;
-	if (ochunkid == 0) { // new chunk
-		if (quota_exceeded) {
-			return SAUNAFS_ERROR_QUOTA;
+// Chunk operations
+
+/// @brief Performs the chunk creation operation, which consists of creating a new chunk with
+/// version 1, associating it with the given goal and sending create chunk messages to the provided
+/// chunkservers. The parts in the chunk are marked as being written (it is expecteted that client
+/// starts writing) if the corresponding chunkserver supports locking and the create chunk message
+/// was sent with locking.
+/// @param createdChunk A reference to a pointer where the created chunk will be stored.
+/// @param goal The goal that will be associated with the created chunk.
+/// @param serversWithChunkTypes The list of chunkservers to create the chunk on.
+void chunk_create_operation(
+    Chunk *&createdChunk, uint8_t goal,
+    std::vector<std::pair<matocsserventry *, ChunkPartType>> &serversWithChunkTypes) {
+	createdChunk = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
+	createdChunk->interrupted = 0;
+	createdChunk->operation = Chunk::CREATE;
+	chunk_add_file_int(createdChunk, goal);
+
+	for (const auto &server_with_type : serversWithChunkTypes) {
+		createdChunk->parts.push_back(ChunkPart(matocsserv_get_csdb(server_with_type.first)->csid,
+		                                        ChunkPart::BUSY, createdChunk->version,
+		                                        server_with_type.second));
+		bool sentChunkLock = false;
+		matocsserv_send_createchunk(server_with_type.first, createdChunk->chunkid,
+		                            server_with_type.second, createdChunk->version,
+		                            gUseChunkserverSideChunkLock, sentChunkLock);
+
+		if (sentChunkLock) { createdChunk->parts.back().mark_being_written(); }
+		// If the chunk lock was not sent, it means that the chunkserver does not support locking,
+		// so the part is not marked as being written.
+	}
+
+	createdChunk->updateStats();
+}
+
+/// @brief Performs the chunk version increase operation, which consists of increasing the chunk
+/// version and sending setchunkversion messages to all valid parts in the chunk.
+/// @param chunk A pointer to the chunk whose version will be increased.
+/// @param needsLocking A boolean indicating whether locking is needed, i.e it is expected that
+/// client will start writing right after the version increase.
+void chunk_increase_version_operation(Chunk *chunk, bool needsLocking) {
+	assert(chunk->isWritable());
+	for (auto &part : chunk->parts) {
+		if (part.is_valid()) {
+			if (!part.is_busy()) { part.mark_busy(); }
+
+			part.version = chunk->version + 1;
+			// If part is already being written then we don't need to ask the chunkserver to lock
+			// it again, and we can just increase the version.
+			bool partNeedsLocking =
+			    !part.is_being_written() && needsLocking && gUseChunkserverSideChunkLock;
+			bool sentChunkLock = false;
+			matocsserv_send_setchunkversion(part.server(), chunk->chunkid, chunk->version + 1,
+			                                chunk->version, part.type, partNeedsLocking,
+			                                sentChunkLock);
+
+			if (partNeedsLocking && sentChunkLock) { part.mark_being_written(); }
 		}
-		auto serversWithChunkTypes = matocsserv_getservers_for_new_chunk(goal, min_server_version);
-		if (serversWithChunkTypes.empty()) {
-			uint16_t uscount,tscount;
-			double minusage,maxusage;
-			matocsserv_usagedifference(&minusage,&maxusage,&uscount,&tscount);
-			if ((uscount > 0) && (eventloop_time() > (starttime+600))) { // if there are chunkservers and it's at least one minute after start then it means that there is no space left
-				return SAUNAFS_ERROR_NOSPACE;
-			} else {
-				return SAUNAFS_ERROR_NOCHUNKSERVERS;
+	}
+
+	chunk->interrupted = 0;
+	chunk->operation = Chunk::SET_VERSION;
+	chunk->version++;
+}
+
+/// @brief Performs the chunk lock operation, which consists of sending chunk lock messages to all
+/// valid parts in the chunk and marking the parts as being written if the chunk lock message was
+/// sent with locking.
+/// @param chunk A pointer to the chunk to lock.
+void chunk_lock_operation(Chunk *chunk) {
+	bool mustWaitForReply = false;
+	assert(chunk->isWritable());
+	if (gUseChunkserverSideChunkLock) {
+		for (auto &part : chunk->parts) {
+			if (part.is_valid()) {
+				if (part.is_busy()) { continue; }
+				// No busy parts from now on
+
+				bool sentChunkLock = false;
+				matocsserv_send_chunklock(part.server(), chunk->chunkid, part.type,
+				                          !part.is_being_written(), sentChunkLock);
+				if (sentChunkLock) {
+					part.mark_being_written();
+					mustWaitForReply = true;
+					part.mark_busy();
+				}
 			}
 		}
-		ChunkCopiesCalculator calculator(gFSOperations->getGoalDefinition(goal));
-		for (const auto &server_with_type : serversWithChunkTypes) {
-			calculator.addPart(server_with_type.second, MediaLabel::kWildcard);
-		}
-		calculator.evalRedundancyLevel();
-		if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
-			return SAUNAFS_ERROR_NOCHUNKSERVERS;
-		}
-		c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
-		c->interrupted = 0;
-		c->operation = Chunk::CREATE;
-		chunk_add_file_int(c,goal);
-		for (const auto &server_with_type : serversWithChunkTypes) {
-			c->parts.push_back(ChunkPart(matocsserv_get_csdb(server_with_type.first)->csid,
-			                             ChunkPart::BUSY, c->version, server_with_type.second));
-			matocsserv_send_createchunk(server_with_type.first, c->chunkid, server_with_type.second,
-			                            c->version);
-		}
-		c->updateStats();
-		*opflag=1;
-		*nchunkid = c->chunkid;
+	}
+
+	chunk->interrupted = 0;
+	if (mustWaitForReply) {
+		// We'll need to wait for some replies
+		chunk->operation = Chunk::LOCK;
 	} else {
-		Chunk *oc = chunk_find(ochunkid);
-		if (oc==NULL) {
-			safs::log_err("chunk_multi_modify: could not find chunkid {}", ochunkid);
-			return SAUNAFS_ERROR_NOCHUNK;
-		}
-		if (*lockid != 0 && *lockid != oc->lockid) {
-			if (oc->lockid == 0 || oc->lockedto == 0) {
-				// Lock was removed by some chunk operation or by a different client
-				return SAUNAFS_ERROR_NOTLOCKED;
-			} else {
-				return SAUNAFS_ERROR_WRONGLOCKID;
-			}
-		}
-		if (*lockid == 0 && oc->isLocked()) {
-			*nchunkid = ochunkid;
-			return SAUNAFS_ERROR_LOCKED;
-		}
-		if (!oc->isWritable()) {
-			return SAUNAFS_ERROR_CHUNKLOST;
-		}
-		ChunkCopiesCalculator calculator(oc->getGoal());
-		for (auto &part : oc->parts) {
-			calculator.addPart(part.type, MediaLabel::kWildcard);
-		}
-		calculator.evalRedundancyLevel();
-		if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
-			return SAUNAFS_ERROR_NOCHUNKSERVERS;
-		}
+		// No need to wait, parts have been set to be written
+		chunk->operation = Chunk::NONE;
+	}
+}
 
-		if (oc->fileCount() == 1) { // refcount==1
-			*nchunkid = ochunkid;
-			c = oc;
-			if (c->operation != Chunk::NONE) {
-				return SAUNAFS_ERROR_CHUNKBUSY;
-			}
-			if (c->needverincrease) {
-				assert(c->isWritable());
-				for (auto &part : c->parts) {
-					if (part.is_valid()) {
-						if (!part.is_busy()) {
-							part.mark_busy();
-						}
-						part.version = c->version+1;
-						matocsserv_send_setchunkversion(part.server(), ochunkid, c->version+1, c->version,
-								part.type);
-					}
-				}
-				c->interrupted = 0;
-				c->operation = Chunk::SET_VERSION;
-				c->version++;
-				*opflag=1;
-			} else {
-				*opflag=0;
-			}
-		} else {
-			if (oc->fileCount() == 0) { // it's serious structure error
-				safs_pretty_syslog(LOG_WARNING,"serious structure inconsistency: (chunkid:%016" PRIX64 ")",ochunkid);
-				return SAUNAFS_ERROR_CHUNKLOST; // ERROR_STRUCTURE
-			}
-			if (quota_exceeded) {
-				return SAUNAFS_ERROR_QUOTA;
-			}
-			assert(oc->isWritable());
-			c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
-			c->interrupted = 0;
-			c->operation = Chunk::DUPLICATE;
-			chunk_delete_file_int(oc,goal);
-			chunk_add_file_int(c,goal);
-			for (const auto &old_part : oc->parts) {
-				if (old_part.is_valid()) {
-					c->parts.push_back(ChunkPart(old_part.csid, ChunkPart::BUSY, c->version, old_part.type));
-					matocsserv_send_duplicatechunk(old_part.server(), c->chunkid, c->version, old_part.type,
-							oc->chunkid, oc->version);
-				}
-			}
-			c->updateStats();
-			*nchunkid = c->chunkid;
-			*opflag=1;
+/// @brief Performs the chunk duplication operation, which consists of creating a new chunk with
+/// version 1, associating it with the given goal, sending duplicate chunk messages to the
+/// corresponding chunkservers and marking the parts in the new chunk as being written if the
+/// corresponding duplicate chunk message was sent with locking. It is expected that client will
+/// start writing to the new chunk right after the duplication.
+/// @param originalChunk A pointer to the original chunk to duplicate.
+/// @param goal The goal associated with the new chunk.
+/// @param newChunk A reference to a pointer where the new chunk will be stored.
+void chunk_duplicate_operation(Chunk *originalChunk, uint8_t goal, Chunk *&newChunk) {
+	assert(originalChunk->isWritable());
+	newChunk = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
+	newChunk->interrupted = 0;
+	newChunk->operation = Chunk::DUPLICATE;
+	chunk_delete_file_int(originalChunk, goal);
+	chunk_add_file_int(newChunk, goal);
+
+	for (const auto &oldPart : originalChunk->parts) {
+		if (oldPart.is_valid()) {
+			newChunk->parts.push_back(
+			    ChunkPart(oldPart.csid, ChunkPart::BUSY, newChunk->version, oldPart.type));
+
+			bool sentChunkLock = false;
+			matocsserv_send_duplicatechunk(oldPart.server(), newChunk->chunkid, newChunk->version,
+			                               oldPart.type, originalChunk->chunkid,
+			                               originalChunk->version, gUseChunkserverSideChunkLock,
+			                               sentChunkLock);
+
+			if (sentChunkLock) { newChunk->parts.back().mark_being_written(); }
 		}
 	}
 
-	c->lockedto = eventloop_time() + LOCKTIMEOUT;
-	if (*lockid == 0) {
-		if (usedummylockid) {
-			*lockid = 1;
-		} else {
-			*lockid = 2 + rnd_ranged<uint32_t>(0xFFFFFFF0); // some random number greater than 1
+	newChunk->updateStats();
+}
+
+/// @brief Performs the chunk truncate operation, which consists of increasing the chunk version and
+/// sending truncate chunk messages to all valid parts in the chunk. It is not expected that client
+/// will start writing right after the truncation.
+/// @param chunk A pointer to the chunk to truncate.
+/// @param length The new length of the chunk.
+void chunk_truncate_operation(Chunk *chunk, uint32_t length) {
+	assert(chunk->isWritable());
+	for (auto &part : chunk->parts) {
+		if (part.is_valid()) {
+			if (!part.is_busy()) { part.mark_busy(); }
+			part.version = chunk->version + 1;
+			uint32_t chunkTypeLength =
+			    slice_traits::chunkLengthToChunkPartLength(part.type, length);
+			matocsserv_send_truncatechunk(part.server(), chunk->chunkid, part.type, chunkTypeLength,
+			                              chunk->version + 1, chunk->version);
 		}
 	}
-	c->lockid = *lockid;
-	chunk_update_checksum(c);
-	emit_chunk_changed(c);
+
+	chunk->interrupted = 0;
+	chunk->operation = Chunk::TRUNCATE;
+	chunk->version++;
+}
+
+/// @brief Performs the chunk duplicate and truncate operation, which consists of creating a new
+/// chunk with version 1, associating it with the given goal, sending duplicate and truncate chunk
+/// messages to the corresponding chunkservers. It is not expected that client will start writing to
+/// the new chunk right after the duplication and truncation.
+/// @param originalChunk A pointer to the original chunk to duplicate and truncate.
+/// @param goal The goal associated with the new chunk.
+/// @param newChunk A reference to a pointer where the new chunk will be stored.
+/// @param length The new length of the chunk.
+void chunk_duplicate_and_truncate_operation(Chunk *originalChunk, uint8_t goal, Chunk *&newChunk,
+                                            uint32_t length) {
+	assert(originalChunk->isWritable());
+	newChunk = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
+	newChunk->interrupted = 0;
+	newChunk->operation = Chunk::DUPTRUNC;
+	chunk_delete_file_int(originalChunk, goal);
+	chunk_add_file_int(newChunk, goal);
+
+	for (const auto &oldPart : originalChunk->parts) {
+		if (oldPart.is_valid()) {
+			newChunk->parts.push_back(
+			    ChunkPart(oldPart.csid, ChunkPart::BUSY, newChunk->version, oldPart.type));
+			uint32_t chunkTypeLength =
+			    slice_traits::chunkLengthToChunkPartLength(oldPart.type, length);
+			matocsserv_send_duptruncchunk(oldPart.server(), newChunk->chunkid, newChunk->version,
+			                              oldPart.type, originalChunk->chunkid,
+			                              originalChunk->version, chunkTypeLength);
+		}
+	}
+
+	newChunk->updateStats();
+}
+
+/// @brief Handles the chunk creation case of the chunk_multi_modify operation, which consists of
+/// checking if the chunk can be created with the given goal and proceed if so.
+/// @param quotaExceeded Whether the quota has been exceeded.
+/// @param goal The goal for the chunk creation.
+/// @param operation Pointer to the operation code.
+/// @param newChunkId Pointer to the new chunk ID.
+/// @param minServerVersion The minimum server version required.
+/// @param createdChunk Pointer to the created chunk.
+/// @return The status code of the operation.
+uint8_t chunk_create(bool quotaExceeded, uint8_t goal, uint8_t *operation, uint64_t *newChunkId,
+                     uint32_t minServerVersion, Chunk *&createdChunk) {
+	// First check if quota is exceeded
+	if (quotaExceeded) { return SAUNAFS_ERROR_QUOTA; }
+
+	// Next check availability of chunkservers for the given goal
+	uint16_t minServerCount = 0;
+	auto serversWithChunkTypes =
+	    matocsserv_getservers_for_new_chunk(goal, minServerCount, minServerVersion);
+	if (serversWithChunkTypes.empty()) {
+		uint16_t usableChunkservers, totalChunkservers;
+		double minUsage, maxUsage;
+		matocsserv_usagedifference(&minUsage, &maxUsage, &usableChunkservers, &totalChunkservers);
+
+		if (usableChunkservers >= minServerCount &&
+		    eventloop_time() > starttime + kStartupGracePeriodSeconds) {
+			// if there are enough chunkservers and it's at least one minute after start then it
+			// means that there is no space left
+			return SAUNAFS_ERROR_NOSPACE;
+		}
+
+		return SAUNAFS_ERROR_NOCHUNKSERVERS;
+	}
+
+	// Check if the chunk would be safe to write with the current redundancy level
+	ChunkCopiesCalculator calculator(gFSOperations->getGoalDefinition(goal));
+	for (const auto &serverWithType : serversWithChunkTypes) {
+		calculator.addPart(serverWithType.second, MediaLabel::kWildcard);
+	}
+	calculator.evalRedundancyLevel();
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+
+	// All checks passed, we can create the chunk
+	chunk_create_operation(createdChunk, goal, serversWithChunkTypes);
+	*operation = Chunk::CREATE;
+	*newChunkId = createdChunk->chunkid;
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
-		uint8_t goal, bool denyTruncatingParityParts, bool quota_exceeded, uint64_t *nchunkid) {
-	Chunk *oc, *c;
+/// @brief Handles the chunk modification case of the chunk_multi_modify operation, which consists
+/// of checking if the chunk can be modified with the given parameters and proceed if so.
+/// @param currentChunkId The ID of the chunk to modify.
+/// @param lockId Pointer to the lock ID for the chunk modification.
+/// @param goal The goal for the chunk modification.
+/// @param quotaExceeded Whether the quota has been exceeded.
+/// @param operation Pointer to the operation code.
+/// @param targetChunkId Pointer to the target chunk ID after modification.
+/// @param targetChunk Reference to a pointer where the target chunk after modification will be
+/// stored.
+/// @return The status code of the operation.
+uint8_t chunk_modify(uint64_t currentChunkId, uint32_t *lockId, uint8_t goal, bool quotaExceeded,
+                     uint8_t *operation, uint64_t *targetChunkId, Chunk *&targetChunk) {
+	// First find the chunk
+	Chunk *currentChunk = chunk_find(currentChunkId);
+	if (currentChunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
 
-	c=NULL;
-	oc = chunk_find(ochunkid);
-	if (oc==NULL) {
-		safs::log_err("chunk_multi_truncate: could not find chunkid {}", ochunkid);
-		return SAUNAFS_ERROR_NOCHUNK;
+	// Next check if the chunk is locked and if the lockid matches
+	if (*lockId != 0 && *lockId != currentChunk->lockid) {
+		if (currentChunk->lockid == 0 || currentChunk->lockedto == 0) {
+			// Lock was removed by some chunk operation or by a different client
+			return SAUNAFS_ERROR_NOTLOCKED;
+		}
+
+		// Case *lockid != currentChunk->lockid
+		return SAUNAFS_ERROR_WRONGLOCKID;
 	}
-	if (!oc->isWritable()) {
-		return SAUNAFS_ERROR_CHUNKLOST;
-	}
-	if (oc->isLocked() && (lockid == 0 || lockid != oc->lockid)) {
+	if (*lockId == 0 && currentChunk->isLocked()) {
+		*targetChunkId = currentChunkId;
 		return SAUNAFS_ERROR_LOCKED;
 	}
-	if (denyTruncatingParityParts) {
-		for (const auto &part : oc->parts) {
-			if (slice_traits::isParityPart(part.type)) {
-				return SAUNAFS_ERROR_NOTPOSSIBLE;
-			}
+
+	// Check if the chunk is writable
+	if (!currentChunk->isWritable()) { return SAUNAFS_ERROR_CHUNKLOST; }
+
+	// Check if the chunk would be safe to write with the desired redundancy level
+	ChunkCopiesCalculator calculator(currentChunk->getGoal());
+	for (auto &part : currentChunk->parts) { calculator.addPart(part.type, MediaLabel::kWildcard); }
+	calculator.evalRedundancyLevel();
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+
+	if (currentChunk->fileCount() == 1) {
+		// Only one reference case
+		*targetChunkId = currentChunkId;
+		targetChunk = currentChunk;
+		if (targetChunk->operation != Chunk::NONE) { return SAUNAFS_ERROR_CHUNKBUSY; }
+
+		if (targetChunk->needVersionIncrease) {
+			// We are expected to start writing to the chunk, but it has lost some copies and we
+			// haven't increased its version yet, so we need to increase the version before allowing
+			// the write operation to proceed.
+			chunk_increase_version_operation(targetChunk, true);
+		} else {
+			chunk_lock_operation(targetChunk);
 		}
-	}
-	if (oc->fileCount() == 1) { // refcount==1
-		*nchunkid = ochunkid;
-		c = oc;
-		if (c->operation != Chunk::NONE) {
-			return SAUNAFS_ERROR_CHUNKBUSY;
-		}
-		assert(c->isWritable());
-		for (auto &part : c->parts) {
-			if (part.is_valid()) {
-				if (!part.is_busy()) {
-					part.mark_busy();
-				}
-				part.version = c->version+1;
-				uint32_t chunkTypeLength =
-						slice_traits::chunkLengthToChunkPartLength(part.type, length);
-				matocsserv_send_truncatechunk(part.server(), ochunkid, part.type, chunkTypeLength,
-						c->version + 1, c->version);
-			}
-		}
-		c->interrupted = 0;
-		c->operation = Chunk::TRUNCATE;
-		c->version++;
 	} else {
-		if (oc->fileCount() == 0) { // it's serious structure error
-			safs_pretty_syslog(LOG_WARNING,"serious structure inconsistency: (chunkid:%016" PRIX64 ")",ochunkid);
-			return SAUNAFS_ERROR_CHUNKLOST; // ERROR_STRUCTURE
+		if (currentChunk->fileCount() == 0) {  // it's serious structure error
+			safs::log_warn("serious structure inconsistency: (chunkid:{:016X})", currentChunkId);
+			return SAUNAFS_ERROR_CHUNKLOST;  // ERROR_STRUCTURE
 		}
-		if (quota_exceeded) {
-			return SAUNAFS_ERROR_QUOTA;
-		}
+		// More than one reference case
+		if (quotaExceeded) { return SAUNAFS_ERROR_QUOTA; }
 
-		assert(oc->isWritable());
-		c = chunk_new(ChunksMetadata::getAndIncrementNextChunkId(), 1);
-		c->interrupted = 0;
-		c->operation = Chunk::DUPTRUNC;
-		chunk_delete_file_int(oc,goal);
-		chunk_add_file_int(c,goal);
-		for (const auto &old_part : oc->parts) {
-			if (old_part.is_valid()) {
-				c->parts.push_back(ChunkPart(old_part.csid, ChunkPart::BUSY, c->version, old_part.type));
-				matocsserv_send_duptruncchunk(old_part.server(), c->chunkid, c->version,
-						old_part.type, oc->chunkid, oc->version,
-						slice_traits::chunkLengthToChunkPartLength(old_part.type, length));
-			}
-		}
-		c->updateStats();
-		*nchunkid = c->chunkid;
+		chunk_duplicate_operation(currentChunk, goal, targetChunk);
+		*targetChunkId = targetChunk->chunkid;
+	}
+	*operation = targetChunk->operation;
+
+	return SAUNAFS_STATUS_OK;
+}
+
+/// @brief Handles the chunk_multi_modify operation, which consists of performing either chunk
+/// creation or modification. Called when writing on the chunk is needed.
+///
+/// Since the chunk is going to be modified, the chunk is locked and a lock ID is
+/// assigned if the chunk is not already locked. After any of the operations, the chunk is expected
+/// to be written to by the client, so if enabled, the chunkserver side locking is used to lock the
+/// chunk, so the parts in the chunk are marked as being written and the corresponding chunk lock
+/// messages are sent to the chunkservers.
+///
+/// @param currentChunkId The current chunk ID in the file layout, 0 means no chunk in current
+/// index.
+/// @param lockid Pointer to the lock ID, used to transmit the assigned lock ID to the caller and to
+/// check the lock ID in case of modification. The lock ID is assigned in case of creation or
+/// modification if the chunk is not already locked. If the chunk is already locked, then the lock
+/// ID is used to verify the lock ownership.
+/// @param goal The goal for the chunk creation or modification.
+/// @param quotaExceeded Whether the quota has been exceeded, used to check if the operation can be
+/// performed.
+/// @param operation Pointer to the operation code, used to transmit the performed operation code to
+/// the caller.
+/// @param targetChunkId Pointer to the target chunk ID after modification, used to transmit the
+/// target chunk ID to the caller in case of modification.
+/// @param minServerVersion The minimum server version required for the chunk creation, used to
+/// check if the operation can be performed in case of creation.
+/// @return The status of the operation.
+uint8_t chunk_multi_modify(uint64_t currentChunkId, uint32_t *lockid, uint8_t goal,
+                           bool quotaExceeded, uint8_t *operation, uint64_t *targetChunkId,
+                           uint32_t minServerVersion = 0) {
+	Chunk *targetChunk = nullptr;
+	uint8_t status = SAUNAFS_STATUS_OK;
+	if (currentChunkId == 0) {
+		// New chunk case
+		status = chunk_create(quotaExceeded, goal, operation, targetChunkId, minServerVersion,
+		                      targetChunk);
+	} else {
+		// Existing chunk case
+		status = chunk_modify(currentChunkId, lockid, goal, quotaExceeded, operation, targetChunkId,
+		                      targetChunk);
 	}
 
-	c->lockedto=(uint32_t)eventloop_time()+LOCKTIMEOUT;
-	c->lockid = lockid;
-	chunk_update_checksum(c);
-	emit_chunk_changed(c);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	// Set the lock if needed
+	targetChunk->lockedto = eventloop_time() + LOCKTIMEOUT;
+	if (*lockid == 0) {
+		*lockid = 1 + rnd_ranged<uint32_t>(0xFFFFFFF0);  // some random number greater than 0
+	}
+	targetChunk->lockid = *lockid;
+
+	chunk_update_checksum(targetChunk);
+	emit_chunk_changed(targetChunk);
+	return SAUNAFS_STATUS_OK;
+}
+
+/// @brief Handles the chunk_multi_truncate operation, which consists of performing either chunk
+/// truncation or duplication and truncation.
+///
+/// Since the chunk is going to be modified, the chunk is locked and a lock ID is
+/// assigned if the chunk is not already locked.
+///
+/// @param currentChunkId The current chunk ID in the file layout. Should be non-zero since
+/// truncation of a non-existing chunk doesn't make sense.
+/// @param lockid The lock ID, used to check if the chunk is locked and to assign a new lock ID if
+/// needed.
+/// @param length The length to truncate the chunk to.
+/// @param goal The goal for the chunk truncation.
+/// @param denyTruncatingParityParts Whether truncating parity parts is denied.
+/// @param quotaExceeded Whether the quota has been exceeded, used to check if the operation can be
+/// performed.
+/// @param targetChunkId Pointer to the target chunk ID after truncation, used to transmit the
+/// target chunk ID to the caller in case of truncation.
+/// @return The status of the operation.
+uint8_t chunk_multi_truncate(uint64_t currentChunkId, uint32_t lockid, uint32_t length,
+                             uint8_t goal, bool denyTruncatingParityParts, bool quotaExceeded,
+                             uint64_t *targetChunkId) {
+	Chunk *currentChunk = nullptr;
+	Chunk *targetChunk = nullptr;
+
+	// First find the chunk
+	currentChunk = chunk_find(currentChunkId);
+	if (currentChunk == nullptr) {
+		safs::log_err("chunk_multi_truncate: could not find chunkid {}", currentChunkId);
+		return SAUNAFS_ERROR_NOCHUNK;
+	}
+
+	// Chunk must be writable to be truncated
+	if (!currentChunk->isWritable()) { return SAUNAFS_ERROR_CHUNKLOST; }
+
+	// Check if the chunk is locked and if the lockid matches
+	if (currentChunk->isLocked() && (lockid == 0 || lockid != currentChunk->lockid)) {
+		return SAUNAFS_ERROR_LOCKED;
+	}
+
+	// Deny truncating parity parts if initiating a truncate operation while reducing the file size
+	if (denyTruncatingParityParts) {
+		for (const auto &part : currentChunk->parts) {
+			if (slice_traits::isParityPart(part.type)) { return SAUNAFS_ERROR_NOTPOSSIBLE; }
+		}
+	}
+
+	if (currentChunk->fileCount() == 1) {
+		// Only one reference case - we can truncate the chunk without duplication
+		*targetChunkId = currentChunkId;
+		targetChunk = currentChunk;
+		if (targetChunk->operation != Chunk::NONE) { return SAUNAFS_ERROR_CHUNKBUSY; }
+
+		chunk_truncate_operation(targetChunk, length);
+	} else {
+		if (currentChunk->fileCount() == 0) {  // it's serious structure error
+			safs_pretty_syslog(LOG_WARNING,
+			                   "serious structure inconsistency: (chunkid:%016" PRIX64 ")",
+			                   currentChunkId);
+			return SAUNAFS_ERROR_CHUNKLOST;  // ERROR_STRUCTURE
+		}
+		// More than one reference case - need to duplicate and truncate
+		if (quotaExceeded) { return SAUNAFS_ERROR_QUOTA; }
+
+		chunk_duplicate_and_truncate_operation(currentChunk, goal, targetChunk, length);
+		*targetChunkId = targetChunk->chunkid;
+	}
+
+	targetChunk->lockedto = eventloop_time() + LOCKTIMEOUT;
+	targetChunk->lockid = lockid;
+
+	chunk_update_checksum(targetChunk);
+	emit_chunk_changed(targetChunk);
 	return SAUNAFS_STATUS_OK;
 }
 #endif // ! METARESTORE
@@ -1412,7 +1713,7 @@ int chunk_repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t co
 		}
 	}
 	*nversion = best_version;
-	c->needverincrease=1;
+	c->needVersionIncrease = 1;
 	c->updateStats();
 	chunk_update_checksum(c);
 	emit_chunk_changed(c);
@@ -1656,13 +1957,13 @@ void chunk_damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunk_t
 	for (auto &part : c->parts) {
 		if (part.csid == server_csid && part.type == chunk_type) {
 			c->invalidateCopy(part);
-			c->needverincrease=1;
+			c->needVersionIncrease = 1;
 			return;
 		}
 	}
 	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, slice_traits::standard::ChunkPartType()));
 	c->updateStats();
-	c->needverincrease=1;
+	c->needVersionIncrease = 1;
 }
 
 void chunk_lost(matocsserventry *ptr,uint64_t chunkid, ChunkPartType chunk_type) {
@@ -1677,7 +1978,7 @@ void chunk_lost(matocsserventry *ptr,uint64_t chunkid, ChunkPartType chunk_type)
 	if (it != c->parts.end()) {
 		c->parts.erase(it, c->parts.end());
 		c->updateStats();
-		c->needverincrease = 1;
+		c->needVersionIncrease = 1;
 	}
 }
 
@@ -1789,34 +2090,77 @@ void chunk_got_replicate_status(matocsserventry *ptr, uint64_t chunkId, uint32_t
 	c->updateStats();
 }
 
-void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,matocsserventry *ptr) {
+void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,
+                            matocsserventry *ptr) {
 	bool any_copy_busy = false;
 	auto server_csid = matocsserv_get_csdb(ptr)->csid;
 	for (auto &part : c->parts) {
 		if (part.csid == server_csid && part.type == chunkType) {
-			if (status!=0) {
-				c->interrupted = 1; // increase version after finish, just in case
+			if (status != SAUNAFS_STATUS_OK) {
+				c->interrupted = 1;  // increase version after finish, just in case
 				c->invalidateCopy(part);
 			} else {
-				if (part.is_busy()) {
-					part.unmark_busy();
-				}
+				if (part.is_busy()) { part.unmark_busy(); }
 			}
 		}
+
 		any_copy_busy |= part.is_busy();
 	}
+
 	if (!any_copy_busy) {
 		if (c->isWritable()) {
 			if (c->interrupted) {
 				chunk_emergency_increase_version(c);
 			} else {
-				matoclserv_chunk_status(c->chunkid,SAUNAFS_STATUS_OK);
+				matoclserv_chunk_status(c->chunkid, SAUNAFS_STATUS_OK);
 				c->operation = Chunk::NONE;
-				c->needverincrease = 0;
+				c->needVersionIncrease = 0;
 			}
 		} else {
 			chunk_finalize_failed_operation(c);
 		}
+	}
+}
+
+/// @brief Handles the end of a chunk write operation.
+/// This function is called when a chunkserver reports the status of a write operation on a chunk
+/// part. It checks the status and updates the chunk's state accordingly. If the write operation was
+/// not successful, it marks the corresponding copy as invalid and sets the interrupted flag on the
+/// chunk. The status sent by the chunkserver is expected to be the one not told to the clients.
+/// @param chunk The chunk that was written.
+/// @param chunkType The type of the chunk part.
+/// @param status The status of the write operation.
+/// @param ptr The server entry associated with the operation.
+void chunk_write_end_status(Chunk *chunk, ChunkPartType chunkType, uint8_t status,
+                            matocsserventry *ptr) {
+	bool anyCopyBeingWritten = false;
+	auto server_csid = matocsserv_get_csdb(ptr)->csid;
+	for (auto &part : chunk->parts) {
+		if (part.csid == server_csid && part.type == chunkType) {
+			if (status != SAUNAFS_STATUS_OK) {
+				chunk->interrupted = 1;  // increase version after finish, just in case
+				chunk->invalidateCopy(part);
+			} else {
+				if (part.is_being_written()) { part.unmark_being_written(); }
+			}
+		}
+
+		anyCopyBeingWritten |= part.is_being_written();
+	}
+
+	if (!anyCopyBeingWritten && chunk->interrupted) {
+		if (chunk->isWritable()) {
+			chunk_emergency_increase_version(chunk);
+		} else {
+			// If chunk is not writable, we probably have a lost chunk here
+			safs::log_warn("{}: chunk {} is not writable. Lost chunk?", __func__, chunk->chunkid);
+		}
+	}
+
+	if (!anyCopyBeingWritten && !chunk->isLocked()) {
+		// If the chunk is not locked anymore, we can try to send notices about the operation
+		// status to clients waiting for the lock release.
+		matoclserv_notify_unlock_list(chunk->chunkid);
 	}
 }
 
@@ -1836,6 +2180,34 @@ void chunk_got_duplicate_status(matocsserventry *ptr, uint64_t chunkId, ChunkPar
 		return ;
 	}
 	chunk_operation_status(c, chunkType, status, ptr);
+}
+
+/// @brief Handles the status of a chunk lock operation.
+/// @param ptr The server entry associated with the operation.
+/// @param chunkId The ID of the chunk.
+/// @param chunkType The type of the chunk part.
+/// @param status The status of the chunk lock operation.
+void chunk_got_chunklock_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
+                                uint8_t status) {
+	Chunk *chunk;
+	chunk = chunk_find(chunkId);
+	if (chunk == nullptr) { return; }
+
+	chunk_operation_status(chunk, chunkType, status, ptr);
+}
+
+/// @brief Handles the status of a chunk write end operation.
+/// @param ptr The server entry associated with the operation.
+/// @param chunkId The ID of the chunk.
+/// @param chunkType The type of the chunk part.
+/// @param status The status of the chunk write end operation.
+void chunk_got_writeend_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
+                               uint8_t status) {
+	Chunk *chunk;
+	chunk = chunk_find(chunkId);
+	if (chunk == nullptr) { return; }
+
+	chunk_write_end_status(chunk, chunkType, status, ptr);
 }
 
 void chunk_got_setversion_status(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType, uint8_t status) {
@@ -2053,7 +2425,7 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 	                                   all_servers, all_parts);
 	stats_replications++;
 	metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
-	c->needverincrease = 1;
+	c->needVersionIncrease = 1;
 	return true;
 }
 
@@ -2087,7 +2459,7 @@ void ChunkWorker::deleteAllChunkParts(Chunk *c) {
 		if (matocsserv_deletion_counter(part.server()) < TmpMaxDel) {
 			if (part.is_valid() && !part.is_busy()) {
 				c->deleteCopy(part);
-				c->needverincrease = 1;
+				c->needVersionIncrease = 1;
 				stats_deletions++;
 				metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
 				matocsserv_send_deletechunk(part.server(), c->chunkid, c->version,
@@ -2267,7 +2639,7 @@ bool ChunkWorker::removeUnneededChunkPart(Chunk *c, Goal::Slice::Type slice_type
 	if (candidate &&
 	    calc.canRemovePart(slice_type, slice_part, matocsserv_get_label(candidate->server()))) {
 		c->deleteCopy(*candidate);
-		c->needverincrease = 1;
+		c->needVersionIncrease = 1;
 		stats_deletions++;
 		metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
 		matocsserv_send_deletechunk(candidate->server(), c->chunkid, 0, candidate->type);
@@ -2869,6 +3241,7 @@ void chunk_reload(void) {
 	gAvoidSameIpChunkservers = cfg_getuint32("AVOID_SAME_IP_CHUNKSERVERS", 0);
 	gRedundancyLevel = cfg_getuint32("REDUNDANCY_LEVEL", 0);
 	gUseLinearAssignmentOptimizer = cfg_getuint32("USE_LINEAR_ASSIGNMENT_OPTIMIZER", 1);
+	gUseChunkserverSideChunkLock = cfg_getuint32("USE_CHUNKSERVER_SIDE_CHUNK_LOCK", 0);
 
 	uint32_t disableChunksDel = cfg_getuint32("DISABLE_CHUNKS_DEL", 0);
 	if (disableChunksDel) {
@@ -2964,6 +3337,7 @@ int chunk_strinit(void) {
 	gAvoidSameIpChunkservers = cfg_getuint32("AVOID_SAME_IP_CHUNKSERVERS", 0);
 	gRedundancyLevel = cfg_getuint32("REDUNDANCY_LEVEL", 0);
 	gUseLinearAssignmentOptimizer = cfg_getuint32("USE_LINEAR_ASSIGNMENT_OPTIMIZER", 1);
+	gUseChunkserverSideChunkLock = cfg_getuint32("USE_CHUNKSERVER_SIDE_CHUNK_LOCK", 0);
 
 	if (disableChunksDel) {
 		MaxDelHardLimit = MaxDelSoftLimit = 0;

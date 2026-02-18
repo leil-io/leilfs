@@ -352,10 +352,12 @@ std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
 }
 
 std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_for_new_chunk(
-		uint8_t goal_id, uint32_t min_server_version) {
+    uint8_t goal_id, uint16_t &min_server_count, uint32_t min_server_version) {
 	static std::array<ChunkCreationHistory, GoalId::kMax + 1> history;
 	GetServersForNewChunk getter;
 	const Goal &goal(gFSOperations->getGoalDefinition(goal_id));
+
+	min_server_count = std::numeric_limits<uint16_t>::max();
 
 	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0 &&
@@ -386,6 +388,9 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	// we don't use any chunkserver twice if not necessary.
 	for (const auto &slice : goal) {
 		std::vector<std::pair<matocsserventry *, ChunkPartType>> slice_ret;
+		min_server_count =
+		    std::min(min_server_count,
+		             static_cast<uint16_t>(slice_traits::getNumberOfDataParts(slice.getType())));
 
 		// add parts index permutation here
 		std::array<int, Goal::Slice::kMaxPartsCount> shuffle;
@@ -604,12 +609,21 @@ void matocsserv_got_chunk_checksum(matocsserventry *eptr, const uint8_t *data, u
 }
 
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
-		uint32_t chunkVersion) {
+                                uint32_t chunkVersion, bool needsLock, bool &sentChunkLock) {
+	sentChunkLock = false;
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.push_back(OutputPacket());
 		sassert(eptr->version >= kFirstECVersion);
-		matocs::createChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
-				chunkVersion);
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
+			// For newer chunkservers, create and lock part
+			matocs::createAndLockChunk::serialize(eptr->outputPackets.back().packet, chunkId,
+			                                      chunkType, chunkVersion);
+			sentChunkLock = true;
+		} else {
+			// For older chunkservers, create chunk without chunk lock, as they don't support it.
+			matocs::createChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+			                               chunkVersion);
+		}
 	}
 
 	return 0;
@@ -720,13 +734,87 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 	}
 }
 
+int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
+                              bool needsLock, bool &sentChunkLock) {
+	sentChunkLock = false;
+	if (eptr->mode != ChunkserverConnectionMode::KILL) {
+		sassert(eptr->version >= kFirstECVersion);
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
+			eptr->outputPackets.emplace_back();
+			matocs::chunkLock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+			sentChunkLock = true;
+		}
+		// For older chunkservers or if lock is not needed, we don't send chunk lock packet, as they
+		// don't support it or it's not needed.
+	}
+	return 0;
+}
+
+void matocsserv_got_chunklock_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint8_t status;
+
+	sassert(eptr->version >= kFirstECVersion);
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+	sassert(v == cstoma::chunkLock::kECChunks);
+	cstoma::chunkLock::deserialize(data, chunkId, chunkType, status);
+
+	chunk_got_chunklock_status(eptr, chunkId, chunkType, status);
+	if (status != SAUNAFS_STATUS_OK) {
+		safs::log_info("({}:{}) chunk: {:016X} chunk lock status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkId, saunafs_error_string(status));
+	}
+}
+
+void matocsserv_got_writeend_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint8_t status;
+
+	sassert(eptr->version >= kFirstECVersion);
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+	sassert(v == cstoma::writeEndStatus::kECChunks);
+	cstoma::writeEndStatus::deserialize(data, chunkId, chunkType, status);
+
+	chunk_got_writeend_status(eptr, chunkId, chunkType, status);
+	if (status != SAUNAFS_STATUS_OK) {
+		safs::log_info("({}:{}) chunk: {:016X} chunk write end status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkId, saunafs_error_string(status));
+	}
+}
+
+int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType) {
+	if (eptr->mode != ChunkserverConnectionMode::KILL) {
+		sassert(eptr->version >= kFirstECVersion);
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock) {
+			eptr->outputPackets.emplace_back();
+			matocs::chunkUnlock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+		}
+		// For older chunkservers, we don't send chunk unlock packet, as they don't support it.
+	}
+	return 0;
+}
+
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
-		uint32_t chunkVersion, ChunkPartType chunkType) {
+		uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock, bool &sentChunkLock) {
+	sentChunkLock = false;
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.emplace_back();
 		sassert(eptr->version >= kFirstECVersion);
-		matocs::setVersion::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
-				chunkVersion, newVersion);
+		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
+			// For newer chunkservers, set version with chunk lock
+			matocs::setVersionAndLock::serialize(eptr->outputPackets.back().packet, chunkId,
+			                                     chunkType, chunkVersion, newVersion);
+			sentChunkLock = true;
+		} else {
+			// For older chunkservers or if lock is not needed, set version without chunk lock, as
+			// they don't support it or it's not needed.
+			matocs::setVersion::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+			                              chunkVersion, newVersion);
+		}
 	}
 	return 0;
 }
@@ -750,16 +838,25 @@ void matocsserv_got_setchunkversion_status(matocsserventry *eptr,
 	}
 }
 
-int matocsserv_send_duplicatechunk(matocsserventry* eptr, uint64_t newChunkId, uint32_t newChunkVersion,
-		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion) {
-	if (eptr->mode == ChunkserverConnectionMode::KILL) {
-		return 0;
-	}
+int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
+                                   uint32_t newChunkVersion, ChunkPartType chunkType,
+                                   uint64_t chunkId, uint32_t chunkVersion, bool needsLock,
+                                   bool &sentChunkLock) {
+	sentChunkLock = false;
+	if (eptr->mode == ChunkserverConnectionMode::KILL) { return 0; }
 
 	OutputPacket outPacket;
 	sassert(eptr->version >= kFirstECVersion);
-	matocs::duplicateChunk::serialize(outPacket.packet, newChunkId, newChunkVersion, chunkType,
-	                                  chunkId, chunkVersion);
+	if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
+		// For newer chunkservers, duplicate with chunk lock
+		matocs::duplicateAndLockChunk::serialize(outPacket.packet, newChunkId, newChunkVersion,
+		                                         chunkType, chunkId, chunkVersion);
+		sentChunkLock = true;
+	} else {
+		// For older chunkservers, duplicate without chunk lock, as they don't support it.
+		matocs::duplicateChunk::serialize(outPacket.packet, newChunkId, newChunkVersion, chunkType,
+		                                  chunkId, chunkVersion);
+	}
 	eptr->outputPackets.push_back(std::move(outPacket));
 	return 0;
 }
@@ -1166,6 +1263,12 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 				break;
 			case SAU_CSTOMA_DUPLICATE_CHUNK:
 				matocsserv_got_duplicatechunk_status(eptr, data);
+				break;
+			case SAU_CSTOMA_LOCK_CHUNK:
+				matocsserv_got_chunklock_status(eptr, data);
+				break;
+			case SAU_CSTOMA_WRITE_END_STATUS:
+				matocsserv_got_writeend_status(eptr, data);
 				break;
 			case SAU_CSTOMA_SET_VERSION:
 				matocsserv_got_setchunkversion_status(eptr, data);

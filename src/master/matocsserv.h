@@ -89,8 +89,22 @@ std::vector<ServerWithUsage> matocsserv_getservers_sorted();
 uint32_t matocsserv_get_version(matocsserventry* eptr);
 void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *usablescount,
                                 uint16_t *totalscount);
-std::vector<std::pair<matocsserventry*, ChunkPartType>> matocsserv_getservers_for_new_chunk(
-		uint8_t goalId, uint32_t min_server_version = 0);
+
+/*! \brief Get chunkservers for a new chunk.
+ *
+ * This function returns a list of chunkservers that can be used for a new chunk creation. The
+ * returned servers are randomly shuffled and sorted by disk usage, so the least used and least
+ * loaded servers are returned first.
+ *
+ * \param goalId - the id of the goal for which the chunk is being created.
+ * \param min_server_count[out] - the minimum number of servers that should be returned for each
+ *                                slice in the goal. This is needed to determine if there are
+ *                                enough servers to create a chunk with the given goal.
+ * \param min_server_version - return only chunkservers with higher (or equal) version.
+ * \return List of chunkservers for new chunk creation with their types.
+ */
+std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_for_new_chunk(
+    uint8_t goalId, uint16_t &min_server_count, uint32_t min_server_version = 0);
 void matocsserv_getspace(uint64_t* totalspace, uint64_t* availspace);
 const char* matocsserv_getstrip(matocsserventry* eptr);
 uint32_t matocsserv_get_servip(matocsserventry *eptr);
@@ -106,13 +120,18 @@ int matocsserv_send_sau_replicatechunk(matocsserventry* eptr,
 
 int matocsserv_send_deletechunk(matocsserventry* eptr,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
-int matocsserv_send_createchunk(matocsserventry* eptr,
-		uint64_t chunkid, ChunkPartType chunkType, uint32_t version);
-int matocsserv_send_setchunkversion(matocsserventry* eptr,
-		uint64_t chunkId, uint32_t newVersion, uint32_t chunkVersion, ChunkPartType chunkType);
-int matocsserv_send_duplicatechunk(matocsserventry* eptr,
-		uint64_t newChunkId, uint32_t newChunkVersion,
-		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion);
+int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
+                                uint32_t version, bool needsLock, bool &sentChunkLock);
+int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
+                              bool needsLock, bool &sentChunkLock);
+int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType);
+int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
+                                    uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock,
+                                    bool &sentChunkLock);
+int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
+                                   uint32_t newChunkVersion, ChunkPartType chunkType,
+                                   uint64_t chunkId, uint32_t chunkVersion, bool needsLock,
+                                   bool &sentChunkLock);
 void matocsserv_send_truncatechunk(matocsserventry* eptr,
 		uint64_t chunkid, ChunkPartType chunkType, uint32_t length,
 		uint32_t version, uint32_t oldversion);

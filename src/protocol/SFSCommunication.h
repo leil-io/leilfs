@@ -451,6 +451,10 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
 
+// 0x0459
+#define SAU_MATOCS_CREATE_AND_LOCK_CHUNK (1000U + 113U)
+/// version==0 chunkid:64 chunktype:16 chunkversion:32
+
 // 0x0460
 #define SAU_MATOCS_DELETE_CHUNK (1000U + 120U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8
@@ -471,6 +475,10 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
 
+// 0x046C
+#define SAU_MATOCS_DUPLICATE_AND_LOCK_CHUNK (1000U + 132U)
+/// version==0 chunkid:64 chunkversion:32 chunktype:16 oldchunkid:64 oldchunkversion:32
+
 // 0x0474
 #define SAU_MATOCS_SET_VERSION (1000U + 140U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 newchunkversion:32
@@ -480,6 +488,26 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CSTOMA_SET_VERSION (1000U + 141U)
 /// version==0 chunkid:64 chunktype:8 status:8
 /// version==1 chunkid:64 chunktype:16 status:8
+
+// 0x0476
+#define SAU_MATOCS_SET_VERSION_AND_LOCK (1000U + 142U)
+/// version==0 chunkid:64 chunkversion:32 chunktype:16 newchunkversion:32
+
+// 0x0477
+#define SAU_MATOCS_LOCK_CHUNK (1000U + 143U)
+/// version==0 chunkid:64 chunktype:16
+
+// 0x0478
+#define SAU_CSTOMA_LOCK_CHUNK (1000U + 144U)
+/// version==0 chunkid:64 chunktype:16 status:8
+
+// 0x0479
+#define SAU_CSTOMA_WRITE_END_STATUS (1000U + 145U)
+/// version==0 chunkid:64 chunktype:16 status:8
+
+// 0x047A
+#define SAU_MATOCS_UNLOCK_CHUNK (1000U + 146U)
+/// version==0 chunkid:64 chunktype:16
 
 // 0x047e
 #define SAU_MATOCS_REPLICATE_CHUNK (1000U + 150U)

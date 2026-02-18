@@ -24,6 +24,7 @@
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/chunkserver_entry.h"
 #include "chunkserver/hdd_readahead.h"
+#include "chunkserver/masterconn.h"
 #include "chunkserver/network_stats.h"
 #include "protocol/cstocl.h"
 #include "protocol/cstocs.h"
@@ -315,6 +316,10 @@ void ReadHighLevelOp::cleanup() {
 		job_close(*workerJobPool(), kEmptyCallback, chunkId_, chunkType_);
 		isChunkOpen_ = false;
 	}
+
+	chunkId_ = 0;
+	chunkVersion_ = 0;
+	chunkType_ = slice_traits::standard::ChunkPartType();
 }
 
 bool WriteHighLevelOp::isOpenWriteJobBeingProcessed() const {
@@ -467,6 +472,7 @@ void WriteHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartT
 	chunkVersion_ = chunkVersion;
 	chunkType_ = chunkType;
 
+	isChunkLocked_ = masterconn_get_job_pool()->enforceChunkLock(chunkId_, chunkType_);
 	startOpenWriteJob();
 }
 
@@ -527,6 +533,11 @@ void WriteHighLevelOp::delayedClose() {
 }
 
 void WriteHighLevelOp::cleanup() {
+	if (chunkId_ == 0) {
+		safs::log_info("(WriteHighLevelOp::{}) Called with no chunk associated.", __func__);
+		return;
+	}
+
 	while (!writeDataBuffers_.empty()) {
 		getWriteInputBufferPool().put(std::move(writeDataBuffers_.front()));
 		writeDataBuffers_.pop_front();
@@ -541,4 +552,13 @@ void WriteHighLevelOp::cleanup() {
 		job_close(*workerJobPool(), kEmptyCallback, chunkId_, chunkType_);
 		isChunkOpen_ = false;
 	}
+
+	if (isChunkLocked_) {
+		masterconn_get_job_pool()->endChunkLock(chunkId_, chunkType_, SAUNAFS_STATUS_OK);
+	}
+	isChunkLocked_ = false;
+	partiallyCompletedWrites_.clear();
+	chunkId_ = 0;
+	chunkVersion_ = 0;
+	chunkType_ = slice_traits::standard::ChunkPartType();
 }

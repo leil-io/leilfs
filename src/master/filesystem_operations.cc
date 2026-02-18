@@ -2432,7 +2432,7 @@ uint8_t FilesystemOperationsBase::readChunk(inode_t inode, uint32_t indx, uint64
 
 uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
                                              const FilesystemOperationContext &fsOpContext,
-                                             inode_t inode, uint32_t index, bool usedummylockid,
+                                             inode_t inode, uint32_t index,
                                              /* inout */ uint32_t *lockid, uint64_t *chunkid,
                                              uint8_t *opflag, uint64_t *length,
                                              uint32_t min_server_version) {
@@ -2487,10 +2487,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	ochunkid = fileNode->chunks[index];
 	if (context.isPersonalityMaster()) {
 #ifndef METARESTORE
-		status = chunk_multi_modify(ochunkid, lockid, fileNode->goal, usedummylockid,
-		                            quota_exceeded, opflag, &nchunkid, min_server_version);
+		status = chunk_multi_modify(ochunkid, lockid, fileNode->goal, quota_exceeded, opflag,
+		                            &nchunkid, min_server_version);
 #else
-		(void)usedummylockid;
 		(void)min_server_version;
 		// This will NEVER happen (metarestore doesn't call this in master context)
 		mabort("bad code path: fs_writechunk");
@@ -2525,7 +2524,8 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
-		          inode, index, *opflag, *lockid, nchunkid);
+		          inode, index, should_increase_chunk_version_on_modification(*opflag), *lockid,
+		          nchunkid);
 	} else {
 		gMetadata->metadataVersion++;
 	}

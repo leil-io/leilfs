@@ -147,6 +147,40 @@ TEST(CstomaCommunicationTests, DeleteChunk) {
 	SAUNAFS_VERIFY_INOUT_PAIR(status);
 }
 
+TEST(CstomaCommunicationTests, ChunkLock) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0xFFFFFFFFFFFFFFFF, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, 2, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::chunkLock::serialize(buffer, chunkIdIn, chunkTypeIn, statusIn));
+
+	verifyHeader(buffer, SAU_CSTOMA_LOCK_CHUNK);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cstoma::chunkLock::deserialize(buffer, chunkIdOut, chunkTypeOut, statusOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(status);
+}
+
+TEST(CstomaCommunicationTests, WriteEndStatus) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0xFFFFFFFFFFFFFFFF, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, 2, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::writeEndStatus::serialize(buffer, chunkIdIn, chunkTypeIn, statusIn));
+
+	verifyHeader(buffer, SAU_CSTOMA_WRITE_END_STATUS);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cstoma::writeEndStatus::deserialize(buffer, chunkIdOut, chunkTypeOut, statusOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(status);
+}
+
 TEST(CstomaCommunicationTests, Replicate) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0xFFFFFFFFFFFFFFFF, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);

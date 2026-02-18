@@ -125,7 +125,7 @@ public:
 
 	uint8_t undel(const FsContext &context, inode_t inode) override;
 	uint8_t writeChunk(const FsContext &context, const FilesystemOperationContext &fsOpContext,
-	                   inode_t inode, uint32_t index, bool usedummylockid,
+	                   inode_t inode, uint32_t index,
 	                   /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                   uint64_t *length, uint32_t min_server_version = 0) override;
 	uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) override;

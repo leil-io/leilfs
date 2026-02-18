@@ -372,11 +372,18 @@ create_sfsmaster_master_cfg_() {
 	echo "MATOTS_LISTEN_PORT = ${saunafs_info_[matots]}"
 	echo "METADATA_CHECKSUM_INTERVAL = 1"
 	echo "ADMIN_PASSWORD = ${saunafs_info_[admin_password]}"
+	echo "USE_CHUNKSERVER_SIDE_CHUNK_LOCK = 1"
 	create_magic_debug_log_entry_ "master_${masterserver_id}"
 	echo "${MASTER_EXTRA_CONFIG-}" | tr '|' '\n'
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
 	echo "METADATA_BACKEND = ${saunafs_info_[metadata_backend]}"
+}
+
+add_lines_master_cfg_() {
+	lines=$1
+	lines_with_newline=$(echo "${lines}" | tr '|' '\n')
+	echo "${lines_with_newline}" >> "${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}"
 }
 
 create_sfsmaster_shadow_cfg_() {
@@ -1084,6 +1091,9 @@ function is_zoned_device() {
 # Adds around 15s to the test.
 sfschunkserver_check_no_buffer_in_use() {
 	# Make sure some time passes to get dead csentries cleaned up
+	add_lines_master_cfg_ "CHUNKS_WRITE_REP_LIMIT = 1|CHUNKS_READ_REP_LIMIT = 1|`
+		`CHUNKS_LOOP_MIN_TIME = 10000"
+	saunafs_master_daemon reload
 	sleep 10
 
 	chunkserver_count=${saunafs_info_[chunkserver_count]}
