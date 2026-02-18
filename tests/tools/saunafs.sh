@@ -355,7 +355,7 @@ create_bdb_name_storage_entry_() {
 	fi
 }
 
-create_sfsmaster_master_cfg_() {
+create_mds_common_cfg_() {
 	local this_module_cfg_variable="MASTER_${masterserver_id}_EXTRA_CONFIG"
 	echo "PERSONALITY = master"
 	echo "SYSLOG_IDENT = master_${masterserver_id}"
@@ -364,13 +364,7 @@ create_sfsmaster_master_cfg_() {
 	echo "EXPORTS_FILENAME = ${saunafs_info_[master_exports]}"
 	echo "TOPOLOGY_FILENAME = ${saunafs_info_[master_topology]}"
 	echo "CUSTOM_GOALS_FILENAME = ${saunafs_info_[master_custom_goals]}"
-	echo "DATA_PATH = $masterserver_data_path"
-	echo "MATONT_LISTEN_PORT = ${saunafs_info_[matont]}"
-	echo "MATOML_LISTEN_PORT = ${saunafs_info_[matoml]}"
-	echo "MATOCS_LISTEN_PORT = ${saunafs_info_[matocs]}"
-	echo "MATOCL_LISTEN_PORT = ${saunafs_info_[matocl]}"
-	echo "MATOTS_LISTEN_PORT = ${saunafs_info_[matots]}"
-	echo "METADATA_CHECKSUM_INTERVAL = 1"
+	echo "DATA_PATH = ${masterserver_data_path}"
 	echo "ADMIN_PASSWORD = ${saunafs_info_[admin_password]}"
 	echo "USE_CHUNKSERVER_SIDE_CHUNK_LOCK = 1"
 	create_magic_debug_log_entry_ "master_${masterserver_id}"
@@ -386,6 +380,37 @@ add_lines_master_cfg_() {
 	echo "${lines_with_newline}" >> "${saunafs_info_[master${saunafs_info_[current_master]}_cfg]}"
 }
 
+create_sfsmaster_master_cfg_() {
+	create_mds_common_cfg_
+	echo "MATONT_LISTEN_PORT = ${saunafs_info_[matont]}"
+	echo "MATOML_LISTEN_PORT = ${saunafs_info_[matoml]}"
+	echo "MATOCS_LISTEN_PORT = ${saunafs_info_[matocs]}"
+	echo "MATOCL_LISTEN_PORT = ${saunafs_info_[matocl]}"
+	echo "MATOTS_LISTEN_PORT = ${saunafs_info_[matots]}"
+	echo "METADATA_CHECKSUM_INTERVAL = 1"
+}
+
+create_sfsmds_cfg_() {
+	create_mds_common_cfg_
+	# MDS 0 uses global ports (for client/chunkserver connections)
+	# Other MDSs will use their own local ports (like shadows do)
+	if [[ ${masterserver_id} -eq 0 ]]; then
+		echo "MATONT_LISTEN_PORT = ${saunafs_info_[matont]}"
+		echo "MATOML_LISTEN_PORT = ${saunafs_info_[matoml]}"
+		echo "MATOCS_LISTEN_PORT = ${saunafs_info_[matocs]}"
+		echo "MATOCL_LISTEN_PORT = ${saunafs_info_[matocl]}"
+		echo "MATOTS_LISTEN_PORT = ${saunafs_info_[matots]}"
+	else
+		echo "MATONT_LISTEN_PORT = ${masterserver_matont_port}"
+		echo "MATOML_LISTEN_PORT = ${masterserver_matoml_port}"
+		echo "MATOCS_LISTEN_PORT = ${masterserver_matocs_port}"
+		echo "MATOCL_LISTEN_PORT = ${masterserver_matocl_port}"
+		echo "MATOTS_LISTEN_PORT = ${masterserver_matots_port}"
+	fi
+
+	echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster"
+}
+
 create_sfsmaster_shadow_cfg_() {
 	local this_module_cfg_variable="MASTER_${masterserver_id}_EXTRA_CONFIG"
 	echo "PERSONALITY = shadow"
@@ -395,12 +420,12 @@ create_sfsmaster_shadow_cfg_() {
 	echo "EXPORTS_FILENAME = ${saunafs_info_[master_exports]}"
 	echo "TOPOLOGY_FILENAME = ${saunafs_info_[master_topology]}"
 	echo "CUSTOM_GOALS_FILENAME = ${saunafs_info_[master_custom_goals]}"
-	echo "DATA_PATH = $masterserver_data_path"
-	echo "MATONT_LISTEN_PORT = $masterserver_matont_port"
-	echo "MATOML_LISTEN_PORT = $masterserver_matoml_port"
-	echo "MATOCS_LISTEN_PORT = $masterserver_matocs_port"
-	echo "MATOCL_LISTEN_PORT = $masterserver_matocl_port"
-	echo "MATOTS_LISTEN_PORT = $masterserver_matots_port"
+	echo "DATA_PATH = ${masterserver_data_path}"
+	echo "MATONT_LISTEN_PORT = ${masterserver_matont_port}"
+	echo "MATOML_LISTEN_PORT = ${masterserver_matoml_port}"
+	echo "MATOCS_LISTEN_PORT = ${masterserver_matocs_port}"
+	echo "MATOCL_LISTEN_PORT = ${masterserver_matocl_port}"
+	echo "MATOTS_LISTEN_PORT = ${masterserver_matots_port}"
 	echo "MASTER_HOST = $(get_ip_addr)"
 	echo "MASTER_PORT = ${saunafs_info_[matoml]}"
 	echo "METADATA_CHECKSUM_INTERVAL = 1"
@@ -456,6 +481,7 @@ add_metadata_server_() {
 	local masterserver_matots_port
 	local masterserver_data_path=$vardir/master${masterserver_id}
 	local masterserver_master_cfg=$etcdir/sfsmaster${masterserver_id}_master.cfg
+	local masterserver_mds_cfg=$etcdir/sfsmaster${masterserver_id}_mds.cfg
 	local masterserver_shadow_cfg=$etcdir/sfsmaster${masterserver_id}_shadow.cfg
 	local masterserver_cfg=$etcdir/sfsmaster${masterserver_id}.cfg
 
@@ -478,8 +504,8 @@ add_metadata_server_() {
 			test_fail "Wrong personality $personality"
 		fi
 	elif [[ "${saunafs_info_[metadata_backend]}" == "FDB" ]]; then
-		cp "$masterserver_master_cfg" "$masterserver_cfg"
-		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
+		create_sfsmds_cfg_ >"$masterserver_mds_cfg"
+		cp "$masterserver_mds_cfg" "$masterserver_cfg"
 	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg
@@ -490,7 +516,7 @@ add_metadata_server_() {
 	saunafs_info_[master${masterserver_id}_matoml]=$masterserver_matoml_port
 	saunafs_info_[master${masterserver_id}_matocl]=$masterserver_matocl_port
 	saunafs_info_[master${masterserver_id}_matocs]=$masterserver_matocs_port
-	saunafs_info_[master${masterserver_id}_matots]=$masterserver_matocs_port
+	saunafs_info_[master${masterserver_id}_matots]=$masterserver_matots_port
 }
 
 create_sfsmetalogger_cfg_() {
