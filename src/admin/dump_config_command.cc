@@ -44,6 +44,9 @@ SaunaFsAdminCommand::SupportedOptions DumpConfigurationCommand::supportedOptions
 			defaultsMode,
 			    "Return default values as well. This is informational and may "
 			    "not be correct in all cases."
+		},
+		{
+			kTlsMode, kTlsModeDescription
 		}
 	};
 }
@@ -54,8 +57,10 @@ void DumpConfigurationCommand::run(const Options &options) const {
 		    "Expected <master ip> and <master port> for " + name());
 	}
 
-	auto connection = RegisteredAdminConnection::create(options.argument(0),
-	                                                    options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 	auto adminResponse = connection->sendAndReceive(
 	    cltoma::adminDumpConfiguration::build(), SAU_MATOCL_ADMIN_DUMP_CONFIG);
 

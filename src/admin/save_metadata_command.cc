@@ -41,7 +41,7 @@ void SaveMetadataCommand::usage() const {
 }
 
 SaunaFsAdminCommand::SupportedOptions SaveMetadataCommand::supportedOptions() const {
-	return { {"--async", "Don't wait for the task to finish."} };
+	return {{"--async", "Don't wait for the task to finish."}, {kTlsMode, kTlsModeDescription}};
 }
 
 void SaveMetadataCommand::run(const Options& options) const {
@@ -50,8 +50,12 @@ void SaveMetadataCommand::run(const Options& options) const {
 				"Expected <metadataserver ip> and <metadataserver port> for " + name());
 	}
 
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
 	bool async = options.isSet("--async");
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1));
+	auto connection =
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 	auto request = cltoma::adminSaveMetadata::build(async);
 	auto response = connection->sendAndReceive(request, SAU_MATOCL_ADMIN_SAVE_METADATA);
 	uint8_t status;

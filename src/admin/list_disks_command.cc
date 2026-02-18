@@ -186,6 +186,7 @@ std::string ListDisksCommand::name() const {
 SaunaFsAdminCommand::SupportedOptions ListDisksCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 		{kVerboseMode,   "Be a little more verbose and show operations statistics."},
 	};
 }
@@ -199,8 +200,12 @@ void ListDisksCommand::run(const Options& options) const {
 	if (options.arguments().size() != 2) {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
 	auto chunkservers = ListChunkserversCommand::getChunkserversList(
-			options.argument(0), options.argument(1));
+			options.argument(0), options.argument(1), tlsCfg);
 	for (const auto& cs : chunkservers) {
 		if (cs.version == kDisconnectedChunkserverVersion) {
 			continue; // skip disconnected chunkservers -- these surely won't respond

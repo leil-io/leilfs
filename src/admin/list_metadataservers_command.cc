@@ -42,7 +42,7 @@ void ListMetadataserversCommand::usage() const {
 }
 
 SaunaFsAdminCommand::SupportedOptions ListMetadataserversCommand::supportedOptions() const {
-	return { {kPorcelainMode, kPorcelainModeDescription} };
+	return {{kPorcelainMode, kPorcelainModeDescription}, {kTlsMode, kTlsModeDescription}};
 }
 
 template<class T>
@@ -76,8 +76,10 @@ void ListMetadataserversCommand::run(const Options& options) const {
 	uint16_t port = 0;
 	std::string ipString = options.argument(0);
 	std::string portString = options.argument(1);
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
 	tcpresolve(ipString.c_str(), portString.c_str(), &ip, &port, false);
-	ServerConnection connection(NetworkAddress(ip, port));
+	ServerConnection connection(NetworkAddress(ip, port), tlsCfg);
 	auto request = cltoma::metadataserversList::build();
 	auto response = connection.sendAndReceive(request, SAU_MATOCL_METADATASERVERS_LIST);
 
@@ -95,7 +97,7 @@ void ListMetadataserversCommand::run(const Options& options) const {
 		// If information about MATOCL_SERV_PORT used by shadows isn't available we cannot query it
 		// for its hostname, metaversion etc.
 		if (e.port != 0) {
-			ServerConnection shadowConnection(NetworkAddress(e.ip, e.port));
+			ServerConnection shadowConnection(NetworkAddress(e.ip, e.port), tlsCfg);
 			s = MetadataserverStatusCommand::getStatus(shadowConnection);
 
 			auto request = cltoma::hostname::build();

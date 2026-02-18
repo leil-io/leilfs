@@ -40,6 +40,7 @@ std::string ListGoalsCommand::name() const {
 SaunaFsAdminCommand::SupportedOptions ListGoalsCommand::supportedOptions() const {
 	return {
 		{kPorcelainMode, kPorcelainModeDescription},
+		{kTlsMode, kTlsModeDescription},
 		{"--pretty", "Print nice table"}
 	};
 }
@@ -54,7 +55,10 @@ void ListGoalsCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	std::vector<SerializedGoal> serializedGoals;
 	auto request = cltoma::listGoals::build(true);
 	auto response = connection.sendAndReceive(request, SAU_MATOCL_LIST_GOALS);

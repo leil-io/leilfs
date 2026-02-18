@@ -32,6 +32,10 @@ std::string StopTaskCommand::name() const {
 	return "stop-task";
 }
 
+SaunaFsAdminCommand::SupportedOptions StopTaskCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
+}
+
 void StopTaskCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port> <task id>" << std::endl;
 	std::cerr << "    Stop execution of task with the given id" << std::endl;
@@ -49,7 +53,12 @@ void StopTaskCommand::run(const Options& options) const {
 		std::cout << "Expected <task_id> as integer number" << std::endl;
 		return;
 	}
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1));
+
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto connection =
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 	auto request = cltoma::stopTask::build(msgid, task_id);
 	auto response = connection->sendAndReceive(request, SAU_MATOCL_STOP_TASK);
 	uint8_t status;

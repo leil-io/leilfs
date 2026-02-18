@@ -35,6 +35,7 @@ public:
 	virtual void usage() const;
 	virtual void run(const Options& options) const;
 
-	static std::vector<ChunkserverListEntry> getChunkserversList (
-			const std::string& masterHost, const std::string& masterPort);
+	static std::vector<ChunkserverListEntry> getChunkserversList(const std::string &masterHost,
+	                                                             const std::string &masterPort,
+	                                                             const std::string &tlsCfg);
 };

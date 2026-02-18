@@ -35,11 +35,12 @@ public:
 	static std::unique_ptr<RegisteredAdminConnection> create(
 			const std::string& host,
 			const std::string& port,
+			const std::string &tlsConfigFile = "",
 			int timeout = kDefaultTimeout);
 
 private:
 	/// Private constructor for ::create.
-	RegisteredAdminConnection(const std::string host, const std::string& port)
-		: KeptAliveServerConnection(host, port) {
-	}
+	RegisteredAdminConnection(const std::string host, const std::string &port,
+	                          const std::string &tlsConfigFile = "")
+	    : KeptAliveServerConnection(host, port, tlsConfigFile) {}
 };

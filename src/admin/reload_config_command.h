@@ -29,4 +29,5 @@ public:
 	virtual std::string name() const override;
 	virtual void usage() const override;
 	virtual void run(const Options& options) const override;
+	SupportedOptions supportedOptions() const override;
 };

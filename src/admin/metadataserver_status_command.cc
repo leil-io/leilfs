@@ -37,7 +37,7 @@ void MetadataserverStatusCommand::usage() const {
 }
 
 SaunaFsAdminCommand::SupportedOptions MetadataserverStatusCommand::supportedOptions() const {
-	return { {kPorcelainMode, kPorcelainModeDescription} };
+	return {{kPorcelainMode, kPorcelainModeDescription}, {kTlsMode, kTlsModeDescription}};
 }
 
 void MetadataserverStatusCommand::run(const Options& options) const {
@@ -45,7 +45,10 @@ void MetadataserverStatusCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	MetadataserverStatus s = MetadataserverStatusCommand::getStatus(connection);
 
 	if (options.isSet(kPorcelainMode)) {

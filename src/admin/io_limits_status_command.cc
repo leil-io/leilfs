@@ -37,7 +37,7 @@ void IoLimitsStatusCommand::usage() const {
 }
 
 SaunaFsAdminCommand::SupportedOptions IoLimitsStatusCommand::supportedOptions() const {
-	return { {kPorcelainMode, kPorcelainModeDescription} };
+	return {{kPorcelainMode, kPorcelainModeDescription}, {kTlsMode, kTlsModeDescription}};
 }
 
 void IoLimitsStatusCommand::run(const Options& options) const {
@@ -45,7 +45,10 @@ void IoLimitsStatusCommand::run(const Options& options) const {
 		throw WrongUsageException("Expected <master ip> and <master port> for " + name());
 	}
 
-	ServerConnection connection(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
 	auto request = cltoma::iolimitsStatus::build(1);
 	auto response = connection.sendAndReceive(request, SAU_MATOCL_IOLIMITS_STATUS);
 

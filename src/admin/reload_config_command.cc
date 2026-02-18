@@ -33,6 +33,10 @@ std::string ReloadConfigCommand::name() const {
 	return "reload-config";
 }
 
+SaunaFsAdminCommand::SupportedOptions ReloadConfigCommand::supportedOptions() const {
+	return {{kTlsMode, kTlsModeDescription}};
+}
+
 void ReloadConfigCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port>" << std::endl;
 	std::cerr << "    Requests reloading configuration from the config file." << std::endl;
@@ -46,7 +50,11 @@ void ReloadConfigCommand::run(const Options& options) const {
 				"Expected <metadataserver ip> and <metadataserver port> for " + name());
 	}
 
-	auto connection = RegisteredAdminConnection::create(options.argument(0), options.argument(1));
+	auto tlsCfg =
+	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
+
+	auto connection =
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
 	auto adminReloadResponse =
 			connection->sendAndReceive(cltoma::adminReload::build(), SAU_MATOCL_ADMIN_RELOAD);
 	uint8_t status;
