@@ -146,10 +146,14 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	job->state = JobPool::State::Enabled;
 	job->listenerId = listenerId;
 	listenerInfo.jobHash[jobId] = std::move(job);
-	// Use higher priority (0) for Open and GetBlocks operations
-	jobsQueue->put(
-	    jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()), 1,
-	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks) ? 0 : 1);
+	// Use higher priority (0) for Open, Close and GetBlocks operations
+	uint8_t priority =
+	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks ||
+	     operation == ChunkOperation::Close)
+	        ? 0
+	        : 1;
+	jobsQueue->put(jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()),
+	               1, priority);
 	return jobId;
 }
 

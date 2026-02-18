@@ -28,3 +28,5 @@ int mainNetworkThreadInitThreads(void);
 
 uint32_t mainNetworkThreadGetListenIp();
 uint16_t mainNetworkThreadGetListenPort();
+
+bool doTerminate();

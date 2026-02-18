@@ -38,6 +38,7 @@
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/master_connection.h"
+#include "chunkserver/network_main_thread.h"
 #include "common/event_loop.h"
 #include "common/massert.h"
 #include "common/network_address.h"
@@ -76,8 +77,6 @@ static uint32_t gNumberOfWorkers = kDefaultNumberOfWorkers;
 constexpr uint32_t kDefaultReplicationNumberOfWorkers = 5;
 constexpr uint32_t kMinReplicationNumberOfWorkers = 1;
 static uint32_t gReplicationNumberOfWorkers = kDefaultReplicationNumberOfWorkers;
-
-static std::atomic<bool> gDoTerminate = false;
 
 static void* gReconnectHook;
 
@@ -145,8 +144,6 @@ JobPool* masterconn_get_job_pool() {
 	return gJobPool.get();
 }
 
-void masterconn_wantexit(void) { gDoTerminate.store(true); }
-
 int masterconn_canexit(void) {
 	if (gJobPool->getJobCount() == 0 && gReplicationJobPool->getJobCount() == 0 &&
 	    gMasterConnSingleton->isOutputQueueEmpty()) {
@@ -187,7 +184,7 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 		}
 	}
 
-	eptr->providePollDescriptors(pdesc, gDoTerminate.load());
+	eptr->providePollDescriptors(pdesc, doTerminate());
 }
 
 void masterconn_send_status() {
@@ -323,7 +320,7 @@ int masterconn_init(void) {
 	gReconnectHook =
 	    eventloop_timeregister(TIMEMODE_RUN_LATE, reconnectionDelay,
 	                           rnd_ranged<uint32_t>(reconnectionDelay), masterconn_reconnect);
-	eventloop_wantexitregister(masterconn_wantexit);
+
 	eventloop_canexitregister(masterconn_canexit);
 	eventloop_destructregister(masterconn_term);
 	eventloop_pollregister(masterconn_desc, masterconn_serve);
