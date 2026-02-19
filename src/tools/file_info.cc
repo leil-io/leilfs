@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 #include "common/chunk_copies_calculator.h"
+#include "common/server_connection.h"
 #include "common/type_defs.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
@@ -50,100 +51,87 @@ static std::string chunkTypeToString(ChunkPartType type) {
 static int chunks_info(const char *file_name, int fd, inode_t inode) {
 	static constexpr uint32_t kRequestSize = 100;
 	std::vector<ChunkWithAddressAndLabel> chunks;
-	std::vector<uint8_t> buffer;
-	uint32_t message_id, chunk_index;
+	uint32_t msgid{0};
+	uint32_t chunkIndex{0};
 
-	chunk_index = 0;
+	try {
+		do {
+			MessageBuffer request, response;
+			cltoma::chunksInfo::serialize(request, (uint32_t)0, (uint32_t)0, (uint32_t)0, inode,
+			                              chunkIndex, kRequestSize);
+			response = ServerConnection::sendAndReceive(
+			    fd, request, SAU_MATOCL_CHUNKS_INFO,
+			    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kInfiniteTimeout);
 
-	do {
-		buffer.clear();
-		cltoma::chunksInfo::serialize(buffer, (uint32_t)0, (uint32_t)0, (uint32_t)0, inode, chunk_index, kRequestSize);
-		if (tcpwrite(fd, buffer.data(), buffer.size()) != (int)buffer.size()) {
-			printf("%s [%" PRIu32 "]: master query: send error\n", file_name, chunk_index);
-			return -1;
-		}
+			PacketVersion version;
+			deserialize(response, version, msgid);
 
-		buffer.resize(PacketHeader::kSize);
-		if (tcptoread(fd, buffer.data(), PacketHeader::kSize, kInfiniteTimeout) != (int)PacketHeader::kSize) {
-			printf("%s [%" PRIu32 "]: master query: receive error\n", file_name, chunk_index);
-			return -1;
-		}
-
-		PacketHeader header;
-		deserializePacketHeader(buffer, header);
-
-		if (header.type != SAU_MATOCL_CHUNKS_INFO) {
-			printf("%s [%" PRIu32 "]: master query: wrong answer (type)\n", file_name,
-					chunk_index);
-			return -1;
-		}
-
-		buffer.resize(header.length);
-
-		if (tcptoread(fd, buffer.data(), header.length, kInfiniteTimeout) != (int)header.length) {
-			printf("%s [%" PRIu32 "]: master query: receive error\n", file_name, chunk_index);
-			return -1;
-		}
-
-		PacketVersion version;
-		deserialize(buffer, version, message_id);
-
-		if (message_id != 0) {
-			printf("%s [%" PRIu32 "]: master query: wrong answer (queryid)\n", file_name,
-					chunk_index);
-			return -1;
-		}
-
-		uint8_t status = SAUNAFS_STATUS_OK;
-		if (version == matocl::chunksInfo::kStatusPacketVersion) {
-			matocl::chunksInfo::deserialize(buffer, message_id, status);
-		} else if (version != matocl::chunksInfo::kResponsePacketVersion) {
-			printf("%s [%" PRIu32 "]: master query: wrong answer (packet version)\n", file_name,
-					chunk_index);
-			return -1;
-		}
-		if (status != SAUNAFS_STATUS_OK) {
-			printf("%s [%" PRIu32 "]: %s\n", file_name, chunk_index, saunafs_error_string(status));
-			return -1;
-		}
-
-		chunks.clear();
-		matocl::chunksInfo::deserialize(buffer, message_id, chunks);
-
-		for(auto &chunk : chunks) {
-			if (chunk.chunk_id == 0 && chunk.chunk_version == 0) {
-				printf("\tchunk %" PRIu32 ": empty\n", chunk_index);
-			} else {
-				printf("\tchunk %" PRIu32 ": %016" PRIX64 "_%08" PRIX32 ""
-						" / (id:%" PRIu64 " ver:%" PRIu32 ")\n",
-						chunk_index, chunk.chunk_id, chunk.chunk_version, chunk.chunk_id, chunk.chunk_version);
-				ChunkCopiesCalculator chunk_calculator;
-				for(const auto &part : chunk.chunk_parts) {
-					chunk_calculator.addPart(part.chunkType, MediaLabel::kWildcard);
-				}
-				chunk_calculator.evalRedundancyLevel();
-				if (chunk.chunk_parts.size() > 0) {
-					std::sort(chunk.chunk_parts.begin(), chunk.chunk_parts.end());
-					for (size_t i = 0; i < chunk.chunk_parts.size(); i++) {
-						printf("\t\tcopy %zu: %s:%s%s\n", i + 1,
-								chunk.chunk_parts[i].address.toString().c_str(),
-								chunk.chunk_parts[i].label.c_str(),
-								chunkTypeToString(chunk.chunk_parts[i].chunkType).c_str());
-					}
-				}
-				if (chunk_calculator.getFullCopiesCount() == 0) {
-					if (chunk.chunk_parts.size() == 0) {
-						printf("\t\tno valid copies !!!\n");
-					} else {
-						printf("\t\tnot enough parts available\n");
-					}
-				}
+			if (msgid != 0) {
+				printf("%s [%" PRIu32 "]: master query: wrong answer (queryid)\n", file_name,
+				       chunkIndex);
+				return -1;
 			}
-			chunk_index++;
-		}
-	} while (chunks.size() >= kRequestSize);
 
-	return 0;
+			uint8_t status = SAUNAFS_STATUS_OK;
+			if (version == matocl::chunksInfo::kStatusPacketVersion) {
+				matocl::chunksInfo::deserialize(response, msgid, status);
+			} else if (version != matocl::chunksInfo::kResponsePacketVersion) {
+				printf("%s [%" PRIu32 "]: master query: wrong answer (packet version)\n", file_name,
+				       chunkIndex);
+				return -1;
+			}
+
+			if (status != SAUNAFS_STATUS_OK) {
+				printf("%s [%" PRIu32 "]: %s\n", file_name, chunkIndex,
+				       saunafs_error_string(status));
+				return -1;
+			}
+
+			chunks.clear();
+			matocl::chunksInfo::deserialize(response, msgid, chunks);
+
+			for (auto &chunk : chunks) {
+				if (chunk.chunk_id == 0 && chunk.chunk_version == 0) {
+					printf("\tchunk %" PRIu32 ": empty\n", chunkIndex);
+				} else {
+					printf("\tchunk %" PRIu32 ": %016" PRIX64 "_%08" PRIX32 " / (id:%" PRIu64
+					       " ver:%" PRIu32 ")\n",
+					       chunkIndex, chunk.chunk_id, chunk.chunk_version, chunk.chunk_id,
+					       chunk.chunk_version);
+
+					ChunkCopiesCalculator chunk_calculator;
+					for (const auto &part : chunk.chunk_parts) {
+						chunk_calculator.addPart(part.chunkType, MediaLabel::kWildcard);
+					}
+					chunk_calculator.evalRedundancyLevel();
+
+					if (!chunk.chunk_parts.empty()) {
+						std::sort(chunk.chunk_parts.begin(), chunk.chunk_parts.end());
+						for (size_t i = 0; i < chunk.chunk_parts.size(); ++i) {
+							printf("\t\tcopy %zu: %s:%s%s\n", i + 1,
+							       chunk.chunk_parts[i].address.toString().c_str(),
+							       chunk.chunk_parts[i].label.c_str(),
+							       chunkTypeToString(chunk.chunk_parts[i].chunkType).c_str());
+						}
+					}
+
+					if (chunk_calculator.getFullCopiesCount() == 0) {
+						if (chunk.chunk_parts.empty()) {
+							printf("\t\tno valid copies !!!\n");
+						} else {
+							printf("\t\tnot enough parts available\n");
+						}
+					}
+				}
+				++chunkIndex;
+			}
+		} while (chunks.size() >= kRequestSize);
+
+		return 0;
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
+		return -1;
+	}
 }
 
 static int file_info(const char *fileName) {
