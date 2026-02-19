@@ -117,6 +117,8 @@ struct FsInitParams {
 	static constexpr int      kDefaultKeepCache = 0;
 	static constexpr double   kDefaultDirentryCacheTimeout = 0.25;
 	static constexpr unsigned kDefaultDirentryCacheSize = 100000;
+	static constexpr unsigned kDefaultNegativeCacheTo = 0;
+	static constexpr unsigned kDefaultNegativeCacheSize = 0;
 	static constexpr double   kDefaultEntryCacheTimeout = 0.0;
 	static constexpr double   kDefaultAttrCacheTimeout = 1.0;
 #if defined(DEFAULT_SUGID_CLEAR_MODE_EXT)
@@ -163,6 +165,7 @@ struct FsInitParams {
 	             symlink_cache_timeout_s(kDefaultSymlinkCacheTimeout),
 	             debug_mode(kDefaultDebugMode), keep_cache(kDefaultKeepCache),
 	             direntry_cache_timeout(kDefaultDirentryCacheTimeout), direntry_cache_size(kDefaultDirentryCacheSize),
+				 negative_cache_timeout(kDefaultNegativeCacheTo), negative_cache_size(kDefaultNegativeCacheSize),
 	             entry_cache_timeout(kDefaultEntryCacheTimeout), attr_cache_timeout(kDefaultAttrCacheTimeout),
 	             mkdir_copy_sgid(kDefaultMkdirCopySgid), sugid_clear_mode(kDefaultSugidClearMode),
 	             use_rw_lock(kDefaultUseRwLock),
@@ -212,6 +215,7 @@ struct FsInitParams {
 	             symlink_cache_timeout_s(kDefaultSymlinkCacheTimeout),
 	             debug_mode(kDefaultDebugMode), keep_cache(kDefaultKeepCache),
 	             direntry_cache_timeout(kDefaultDirentryCacheTimeout), direntry_cache_size(kDefaultDirentryCacheSize),
+				 negative_cache_timeout(kDefaultNegativeCacheTo), negative_cache_size(kDefaultNegativeCacheSize),
 	             entry_cache_timeout(kDefaultEntryCacheTimeout), attr_cache_timeout(kDefaultAttrCacheTimeout),
 	             mkdir_copy_sgid(kDefaultMkdirCopySgid), sugid_clear_mode(kDefaultSugidClearMode),
 	             use_rw_lock(kDefaultUseRwLock),
@@ -274,6 +278,8 @@ struct FsInitParams {
 	int keep_cache;
 	double direntry_cache_timeout;
 	unsigned direntry_cache_size;
+	unsigned negative_cache_timeout;
+	unsigned negative_cache_size;
 	double entry_cache_timeout;
 	double attr_cache_timeout;
 	bool mkdir_copy_sgid;

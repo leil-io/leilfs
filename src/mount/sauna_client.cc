@@ -69,6 +69,7 @@
 #include "mount/mastercomm.h"
 #include "mount/masterproxy.h"
 #include "mount/mount_info.h"
+#include "mount/negative_cache.h"
 #include "mount/notification_area_logging.h"
 #include "mount/oplog.h"
 #include "mount/readdata.h"
@@ -896,136 +897,150 @@ void access(Context &ctx, inode_t ino, int mask) {
 }
 
 EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
-	EntryParam e;
-	uint64_t maxfleng;
-	inode_t inode;
-	uint32_t nleng;
-	Attributes attr;
-	char attrstr[256];
-	uint8_t mattr;
-	uint8_t icacheflag;
-	int status;
+	if (gNegativeCache.lookup(parent, name)) {
+		if (debug_mode) {
+			safs::log_debug("lookup: ({},{}) negative cache hit, skipping master lookup",
+							parent, name);
+		}
+		// Negative cache hit, early return
+		// Kernel may cache negative entries for entry_timeout seconds
+		EntryParam e{};
+		e.ino = 0;
+		e.entry_timeout = NegativeCache::getGlobalTimeoutMs() / 1000.0;
+		return e;
+	}
 
 	if (debug_mode) {
 #ifdef _WIN32
-		if (parent != SPECIAL_INODE_ROOT ||
-		    strcmp(name, SPECIAL_FILE_NAME_OPLOG) != 0) {
+		if (parent != SPECIAL_INODE_ROOT || strcmp(name, SPECIAL_FILE_NAME_OPLOG) != 0) {
 			oplog_printf(ctx, "lookup (%" PRIiNode ",%s) ...", parent, name);
 		}
 #else
 		oplog_printf(ctx, "lookup (%" PRIiNode ",%s) ...", parent, name);
 #endif
 	}
-	nleng = strlen(name);
-	if (nleng > SFS_NAME_MAX) {
+
+	uint32_t nameLen = strlen(name);
+	if (nameLen > SFS_NAME_MAX) {
 		stats_inc(OP_LOOKUP);
-		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name, saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name,
+		             saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
 		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
 	}
+
+	constexpr uint32_t kAttrStrSize = 256;
+	char attrStr[kAttrStrSize];
 	if (parent == SPECIAL_INODE_ROOT) {
-		if (nleng == 2 && name[0] == '.' && name[1] == '.') {
-			nleng = 1;
+		if (std::string_view(name, nameLen) == "..") {
+			nameLen = 1;
 		}
 
-		inode_t ino = getSpecialInodeByName(name);
-		if (IS_SPECIAL_INODE(ino)) {
-			return special_lookup(ino, ctx, parent, name, attrstr);
+		inode_t inode = getSpecialInodeByName(name);
+		if (IS_SPECIAL_INODE(inode)) { 
+			return special_lookup(inode, ctx, parent, name, attrStr);
 		}
 	}
+
+	inode_t inode;
+	Attributes attr;
+	bool cacheHit = false;
+	int status;
 	if (parent == SPECIAL_INODE_FILE_BY_INODE) {
-		char *endptr = nullptr;
-		inode = strtol(name, &endptr, 10);
-		if (endptr == nullptr || *endptr != '\0') {
+		char *endPtr = nullptr;
+		inode = strtol(name, &endPtr, 10);
+		if (endPtr == nullptr || *endPtr != '\0') {
 			throw RequestException(SAUNAFS_ERROR_EINVAL);
 		}
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_getattr(inode, ctx.uid, ctx.gid, attr));
-		icacheflag = 0;
 	} else if (parent == SPECIAL_INODE_PATH_BY_INODE) {
-		char *endptr = nullptr;
-		inode = strtol(name, &endptr, 10);
-		if (endptr == nullptr || *endptr != '\0') {
+		char *endPtr = nullptr;
+		inode = strtol(name, &endPtr, 10);
+		if (endPtr == nullptr || *endPtr != '\0') {
 			throw RequestException(SAUNAFS_ERROR_EINVAL);
 		}
 		std::unique_lock<std::mutex> lock(gInodePathInfo.mtx);
-		std::string fullPath = "";
+		std::string fullPath;
 		int lookupStatus = SAUNAFS_STATUS_OK;
 		int getattrStatus = SAUNAFS_STATUS_OK;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(lookupStatus, ctx,
-		fs_fullpath(inode, ctx.uid, ctx.gid, fullPath));
+			fs_fullpath(inode, ctx.uid, ctx.gid, fullPath));
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(getattrStatus, ctx,
 			fs_getattr(inode, ctx.uid, ctx.gid, attr));
 		if (lookupStatus != SAUNAFS_STATUS_OK || getattrStatus != SAUNAFS_STATUS_OK) {
-			status = lookupStatus != SAUNAFS_STATUS_OK ? lookupStatus : getattrStatus;
+			status = (lookupStatus != SAUNAFS_STATUS_OK) ? lookupStatus : getattrStatus;
 			lock.unlock();
 			throw RequestException(status);
 		}
 		status = SAUNAFS_STATUS_OK;
 		if (ctx.pid > 0) {
-			PidPathEntry entry{ctx.pid, fullPath};
+			PidPathEntry entry{ .pid = ctx.pid, .path = fullPath };
 			gInodePathInfo.contextPidToPath[entry]++;
 		}
 		attr[0] = TYPE_FILE;
 		inode = parent;
-		icacheflag = 0;
-	} else if (usedircache && gDirEntryCache.lookup(ctx,parent,std::string(name,nleng),inode,attr)) {
-		if (debug_mode) {
-			safs::log_debug("lookup: sending data from dircache");
-		}
+	} else if (usedircache &&
+	           gDirEntryCache.lookup(ctx, parent, std::string(name, nameLen), inode, attr)) {
+		if (debug_mode) { safs::log_debug("lookup: sending data from dircache"); }
 		stats_inc(OP_DIRCACHE_LOOKUP);
-		status = 0;
-		icacheflag = 1;
-	} else {
+		status = SAUNAFS_STATUS_OK;
+		cacheHit = true;
+	} else {  // dentry miss
 		stats_inc(OP_LOOKUP);
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_lookup(parent, std::string(name, nleng), ctx.uid, ctx.gid, &inode, attr));
-		icacheflag = 0;
+			fs_lookup(parent, std::string(name, nameLen), ctx.uid, ctx.gid, &inode, attr));
 	}
 	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name, saunafs_error_string(status));
+		oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name,
+		             saunafs_error_string(status));
+
+		// Negative cache entry miss, adding to negative cache, return early
+		// Kernel may cache negative entries for entry_timeout seconds
+		if (status == SAUNAFS_ERROR_ENOENT && gNegativeCache.isMaxSizeAndTimeoutMsSet()) {
+			gNegativeCache.add(parent, name);
+			EntryParam e{};
+			e.ino = 0;
+			e.entry_timeout = NegativeCache::getGlobalTimeoutMs() / 1000.0;
+			return e;
+		}
 		throw RequestException(status);
 	}
-	if (attr[0]==TYPE_FILE) {
-		maxfleng = write_data_getmaxfleng(inode);
-	} else {
-		maxfleng = 0;
-	}
+	uint64_t maxFileLen = (attr[0] == TYPE_FILE) ? write_data_getmaxfleng(inode) : 0;
+	EntryParam e;
 	e.ino = inode;
-	mattr = attr_get_mattr(attr);
-	e.attr_timeout = (mattr&MATTR_NOACACHE)?0.0:attr_cache_timeout;
-	e.entry_timeout = (mattr&MATTR_NOECACHE)?0.0:((attr[0]==TYPE_DIRECTORY)?direntry_cache_timeout:entry_cache_timeout);
-	attr_to_stat(inode,attr,&e.attr);
-	if (maxfleng>(uint64_t)(e.attr.st_size)) {
-		update_attr_size(attr, maxfleng);
-		e.attr.st_size=maxfleng;
+	uint8_t modeAttr = attr_get_mattr(attr);
+	e.attr_timeout = (modeAttr & MATTR_NOACACHE) ? 0.0 : attr_cache_timeout;
+	if (modeAttr & MATTR_NOECACHE) {
+		e.entry_timeout = 0.0;
+	} else {
+		e.entry_timeout =
+		    (attr[0] == TYPE_DIRECTORY) ? direntry_cache_timeout : entry_cache_timeout;
+	}
+	attr_to_stat(inode, attr, &e.attr);
+	if (maxFileLen > static_cast<uint64_t>(e.attr.st_size)) {
+		update_attr_size(attr, maxFileLen);
+		e.attr.st_size = static_cast<__off_t>(maxFileLen);
 	}
 
 	// If lookup succeeded and data did not come from cache, then cache it.
-	// Files with at least one hardlink are impossible to keep track of, so it is
-	// better to don't track them.
-	if (!icacheflag && !(e.attr.st_nlink > 1 && attr[0] == TYPE_FILE)) {
-		auto data_acquire_time = gDirEntryCache.updateTime();
-
+	// Files with at least one hardlink are impossible to keep track of, so better not track them.
+	if (!cacheHit && (attr[0] != TYPE_FILE || e.attr.st_nlink <= 1)) {
 		std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
-		gDirEntryCache.updateTime();
-
-		gDirEntryCache.insert(ctx, parent, e.ino, std::string(name), attr,
-		                      data_acquire_time);
+		uint64_t data_acquire_time = gDirEntryCache.updateTime();
+		gDirEntryCache.insert(ctx, parent, e.ino, std::string(name), attr, data_acquire_time);
 		if (gDirEntryCache.size() > gDirEntryCacheMaxSize) {
-			gDirEntryCache.removeOldest(gDirEntryCache.size() -
-			                            gDirEntryCacheMaxSize);
+			gDirEntryCache.removeOldest(gDirEntryCache.size() - gDirEntryCacheMaxSize);
 		}
 	}
-
-	makeattrstr(attrstr,256,&e.attr);
+	makeattrstr(attrStr, kAttrStrSize, &e.attr);
 	oplog_printf(ctx, "lookup (%" PRIiNode ",%s)%s: OK (%.1f,%" PRIiNode ",%.1f,%s)",
 			parent,
 			name,
-			icacheflag?" (using open dir cache)":"",
+			cacheHit ? " (using open dir cache)" : "",
 			e.entry_timeout,
 			e.ino,
 			e.attr_timeout,
-			attrstr);
+			attrStr);
 	return e;
 }
 
@@ -3555,6 +3570,7 @@ std::vector<ChunkserverListEntry> getchunkservers() {
 }
 
 void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsigned direntry_cache_size_,
+		unsigned negative_cache_timeout_, unsigned negative_cache_size_,
 		double entry_cache_timeout_, double attr_cache_timeout_, int mkdir_copy_sgid_,
 		SugidClearMode sugid_clear_mode_, bool use_rwlock_,
 		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io,
@@ -3579,6 +3595,10 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	debug_mode = debug_mode_;
 	keep_cache = keep_cache_;
 	direntry_cache_timeout = direntry_cache_timeout_;
+	NegativeCache::setGlobalTimeoutMs(negative_cache_timeout_);
+	gNegativeCache.setTimeoutMs(NegativeCache::getGlobalTimeoutMs());
+	NegativeCache::setGlobalMaxSize(negative_cache_size_);
+	gNegativeCache.setMaxSize(NegativeCache::getGlobalMaxSize());
 	entry_cache_timeout = entry_cache_timeout_;
 	attr_cache_timeout = attr_cache_timeout_;
 	mkdir_copy_sgid = mkdir_copy_sgid_;
@@ -3615,6 +3635,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("DirectIO", gDirectIo, "sfsdirectio");
 	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush, "sfsignoreflush");
+	gTweaks.registerVariable("NegativeCacheTimeout", gNegativeCacheTimeoutMs, "sfsnegativecachetimeout");
+	gTweaks.registerVariable("NegativeCacheMaxSize", gNegativeCacheMaxSize, "sfsnegativecachesize");
 	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout, "statfscachetimeout");
 	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize, "usequotainvolumesize");
 #ifdef _WIN32
@@ -3704,6 +3726,7 @@ void fs_init(FsInitParams &params) {
 	);
 
 	init(params.debug_mode, params.keep_cache, params.direntry_cache_timeout, params.direntry_cache_size,
+		params.negative_cache_timeout, params.negative_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,
 		params.sugid_clear_mode, params.use_rw_lock,
 		params.acl_cache_timeout, params.acl_cache_size, params.direct_io,

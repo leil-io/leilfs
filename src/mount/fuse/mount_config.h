@@ -97,6 +97,8 @@ struct sfsopts_ {
 	double entrycacheto;
 	double direntrycacheto;
 	unsigned direntrycachesize;
+	unsigned negativecachetimeout;
+	unsigned negativecachesize;
 	unsigned reportreservedperiod;
 	char *iolimits;
 	int chunkserverrtt;
@@ -164,6 +166,8 @@ struct sfsopts_ {
 		entrycacheto(SaunaClient::FsInitParams::kDefaultEntryCacheTimeout),
 		direntrycacheto(SaunaClient::FsInitParams::kDefaultDirentryCacheTimeout),
 		direntrycachesize(SaunaClient::FsInitParams::kDefaultDirentryCacheSize),
+		negativecachetimeout(SaunaClient::FsInitParams::kDefaultNegativeCacheTo),
+		negativecachesize(SaunaClient::FsInitParams::kDefaultNegativeCacheSize),
 		reportreservedperiod(SaunaClient::FsInitParams::kDefaultReportReservedPeriod),
 		iolimits(NULL),
 		chunkserverrtt(SaunaClient::FsInitParams::kDefaultRoundTime),

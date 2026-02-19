@@ -254,6 +254,8 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.keep_cache = gMountOptions.keepcache;
 	params.direntry_cache_timeout = gMountOptions.direntrycacheto;
 	params.direntry_cache_size = gMountOptions.direntrycachesize;
+	params.negative_cache_timeout = gMountOptions.negativecachetimeout;
+	params.negative_cache_size = gMountOptions.negativecachesize;
 	params.entry_cache_timeout = gMountOptions.entrycacheto;
 	params.attr_cache_timeout = gMountOptions.attrcacheto;
 	params.mkdir_copy_sgid = gMountOptions.mkdircopysgid;
