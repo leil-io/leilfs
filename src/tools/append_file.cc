@@ -27,6 +27,7 @@
 #include <cstdint>
 
 #include "common/datapack.h"
+#include "common/server_connection.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
@@ -41,15 +42,12 @@ static void append_file_usage() {
 }
 
 static int append_file(const char *fname, const char *afname) {
-	uint32_t cmd, leng, uid, gid;
+	uint32_t uid, gid;
 	uint32_t msgid{0};
 	inode_t inode, ainode;
+	uint8_t status;
 
-	constexpr uint32_t kAppendFilePayload =
-	    sizeof(msgid) + sizeof(inode) + sizeof(ainode) + sizeof(uid) + sizeof(gid);
-	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kAppendFilePayload) + kAppendFilePayload;
-	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
-	const uint8_t *rptr;
+	MessageBuffer request, response;
 	mode_t dmode, smode;
 
 	int fd;
@@ -74,72 +72,27 @@ static int append_file(const char *fname, const char *afname) {
 	uid = getUId();
 	gid = getGId();
 
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_APPEND);
-	put32bit(&wptr, kAppendFilePayload);
-	put32bit(&wptr, msgid);
-	putINode(&wptr, inode);
-	putINode(&wptr, ainode);
-	put32bit(&wptr, uid);
-	put32bit(&wptr, gid);
+	try {
+		serializeLegacyPacket(request, CLTOMA_FUSE_APPEND, msgid, inode, ainode, uid, gid);
+		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_APPEND);
+		deserializeAllLegacyPacketDataNoHeader(response, msgid, status);
 
-	// send the request
-	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
-		printf("%s: master query: send error\n", fname);
+		close_master_conn(0);
+
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (msgid)\n", fname);
+			return -1;
+		}
+
+		if (status != SAUNAFS_STATUS_OK) {
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			return -1;
+		}
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
 		close_master_conn(1);
 		return -1;
 	}
-
-	// read the first part of the answer
-	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
-
-	if (cmd != MATOCL_FUSE_APPEND) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-
-	buff = (uint8_t *)malloc(leng);
-
-	if (tcpread(fd, buff, leng) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	close_master_conn(0);  // not needed anymore
-
-	// check the msgid
-	rptr = buff;
-	get32bit(&rptr, msgid);  // queryid
-	if (msgid != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		return -1;
-	}
-
-	if (leng - sizeof(msgid) != 1) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	}
-
-	if (*rptr != SAUNAFS_STATUS_OK) {
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		return -1;
-	}
-
-	free(buff);
 
 	return 0;
 }
