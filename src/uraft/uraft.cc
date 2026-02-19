@@ -152,20 +152,20 @@ bool uRaft::validPacket(const uint8_t *data, size_t size) {
 void uRaft::startElectionTimer() {
 	int timeout = opt_.election_timeout_min +
 	              rand() % (opt_.election_timeout_max - opt_.election_timeout_min);
-	election_timer_.expires_from_now(boost::posix_time::millisec(timeout));
+	election_timer_.expires_after(std::chrono::milliseconds(timeout));
 	election_timer_.async_wait(boost::bind(&uRaft::electionTimeout, this,
 	                                       boost::asio::placeholders::error));
 }
 
 void uRaft::startHearbeatTimer() {
-	heartbeat_timer_.expires_from_now(boost::posix_time::millisec(opt_.heartbeat_period));
+	heartbeat_timer_.expires_after(std::chrono::milliseconds(opt_.heartbeat_period));
 	heartbeat_timer_.async_wait(boost::bind(&uRaft::heartbeat, this,
 	                                        boost::asio::placeholders::error));
 }
 
 void uRaft::signLoyaltyAgreement() {
 	state_.loyalty_agreement = true;
-	loyalty_agreement_timer_.expires_from_now(boost::posix_time::millisec(opt_.election_timeout_min));
+	loyalty_agreement_timer_.expires_after(std::chrono::milliseconds(opt_.election_timeout_min));
 	loyalty_agreement_timer_.async_wait([this](const boost::system::error_code & error) {
 		if (!error) {
 			state_.loyalty_agreement = false;

@@ -4,6 +4,7 @@
 
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 /*! \brief Implementation of modified Raft consensus algorithm.
  *
@@ -222,8 +223,8 @@ protected:
 protected:
 	boost::asio::io_context                 &io_service_;
 	boost::asio::ip::udp::socket            socket_;
-	boost::asio::deadline_timer             election_timer_,heartbeat_timer_;
-	boost::asio::deadline_timer             loyalty_agreement_timer_;
+	boost::asio::steady_timer             election_timer_,heartbeat_timer_;
+	boost::asio::steady_timer             loyalty_agreement_timer_;
 	boost::array<uint8_t,kMaxPacketLength>  packet_data_;
 	boost::asio::ip::udp::endpoint          sender_endpoint_;
 

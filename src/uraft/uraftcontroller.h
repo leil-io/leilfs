@@ -153,12 +153,12 @@ private:
 	int computePromotionBackoffMs() const;
 
 protected:
-	boost::asio::deadline_timer check_cmd_status_timer_;
-	boost::asio::deadline_timer check_node_status_timer_;
-	boost::asio::deadline_timer cmd_timeout_timer_;
+	boost::asio::steady_timer check_cmd_status_timer_;
+	boost::asio::steady_timer check_node_status_timer_;
+	boost::asio::steady_timer cmd_timeout_timer_;
 
 	/// @brief Timer used to implement promotion backoff after failed promotions.
-	boost::asio::deadline_timer promotion_backoff_timer_;
+	boost::asio::steady_timer promotion_backoff_timer_;
 	/// @brief Number of consecutive promotion failures used to compute exponential backoff.
 	/// This value is reset on successful promotion.
 	int promotion_failure_streak_ = 0;
@@ -166,7 +166,7 @@ protected:
 	bool promotion_backoff_active_ = false;
 
 	/// @brief Timer used to schedule delayed recovery after detecting dead metadata.
-	boost::asio::deadline_timer dead_recovery_timer_;
+	boost::asio::steady_timer dead_recovery_timer_;
 	/// @brief True while a dead recovery timer is scheduled (prevents stacking retries).
 	bool dead_recovery_pending_ = false;
 

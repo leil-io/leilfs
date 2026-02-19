@@ -25,6 +25,7 @@
 #include <boost/dll/import.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/function.hpp>
+#include <boost/shared_ptr.hpp>
 
 #include "chunkserver-common/disk_plugin.h"
 
