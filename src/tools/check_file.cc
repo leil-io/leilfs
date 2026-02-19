@@ -25,6 +25,7 @@
 #include <cstdint>
 
 #include "common/datapack.h"
+#include "common/server_connection.h"
 #include "errors/saunafs_error_codes.h"
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"
@@ -34,17 +35,11 @@ static void check_file_usage() {
 }
 
 static int check_file(const char *fname) {
-	uint32_t cmd, leng;
 	uint32_t msgid{0};
 	inode_t inode;
-	uint8_t copies;
-	uint32_t chunks;
+	uint8_t status;
 
-	constexpr uint32_t kCheckFilePayload = sizeof(msgid) + sizeof(inode);
-	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kCheckFilePayload) + kCheckFilePayload;
-
-	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
-	const uint8_t *rptr;
+	MessageBuffer request, response;
 
 	int fd;
 	fd = open_master_conn(fname, &inode, nullptr, false);
@@ -52,103 +47,73 @@ static int check_file(const char *fname) {
 		return -1;
 	}
 
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_CHECK);
-	put32bit(&wptr, kCheckFilePayload);
-	put32bit(&wptr, msgid);
-	putINode(&wptr, inode);
+	try {
+		serializeLegacyPacket(request, CLTOMA_FUSE_CHECK, msgid, inode);
+		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_CHECK);
 
-	// send request to master
-	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
-		printf("%s: master query: send error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
+		close_master_conn(0);
 
-	// read the first part of the answer
-	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
+		// Parse response buffer
+		const uint8_t *rptr = response.data();
+		get32bit(&rptr, msgid);
 
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
-
-	if (cmd != MATOCL_FUSE_CHECK) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-
-	buff = (uint8_t *)malloc(leng);
-
-	// read the rest of the answer into the buffer
-	if (tcpread(fd, buff, leng) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	close_master_conn(0);  // not needed anymore
-
-	rptr = buff;
-	get32bit(&rptr, msgid);  // queryid
-
-	if (msgid != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		return -1;
-	}
-
-	if (leng - sizeof(msgid) == 1) {  // an error code was returned
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		return -1;
-	}
-
-	leng -= 4;
-
-	constexpr uint32_t kExpectedSize = + CHUNK_MATRIX_SIZE * sizeof(uint32_t);
-
-	if (leng % 3 != 0 && leng != kExpectedSize) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	}
-
-	printf("%s:\n", fname);
-
-	if (leng % 3 == 0) {
-		for (cmd = 0; cmd < leng; cmd += 3) {
-			copies = get8bit(&rptr);
-			chunks = get16bit(&rptr);
-			if (copies == 1) {
-				printf("1 copy:");
-			} else {
-				printf("%" PRIu8 " copies:", copies);
-			}
-			print_number(" ", "\n", chunks, 1, 0, 1);
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (msgid)\n", fname);
+			return -1;
 		}
-	} else {
-		for (cmd = 0; cmd < CHUNK_MATRIX_SIZE; cmd++) {
-			get32bit(&rptr, chunks);
-			if (chunks > 0) {
-				if (cmd == 1) {
-					printf(" chunks with 1 copy:    ");
-				} else if (cmd >= 10) {
-					printf(" chunks with 10+ copies:");
+
+		uint32_t remaining = static_cast<uint32_t>(response.size() - sizeof(msgid));
+
+		if (remaining == sizeof(status)) {
+			status = *rptr;
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			return -1;
+		}
+
+		constexpr uint32_t kExpectedSize = CHUNK_MATRIX_SIZE * sizeof(uint32_t);
+
+		if (remaining % 3 != 0 && remaining != kExpectedSize) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			return -1;
+		}
+
+		printf("%s:\n", fname);
+
+		// Legacy format: N * [copies:8, chunks:16]
+		if (remaining % 3 == 0) {
+			for (uint32_t offset = 0; offset < remaining; offset += 3) {
+				uint8_t copies = get8bit(&rptr);
+				uint16_t chunkCount16 = get16bit(&rptr);
+				uint32_t chunkCount = chunkCount16;
+				if (copies == 1) {
+					printf("1 copy:");
 				} else {
-					printf(" chunks with %u copies:  ", cmd);
+					printf("%" PRIu8 " copies:", copies);
 				}
-				print_number(" ", "\n", chunks, 1, 0, 1);
+				print_number(" ", "\n", chunkCount, 1, 0, 1);
+			}
+		} else {
+			// Modern format: CHUNK_MATRIX_SIZE * [chunks:32]
+			for (uint32_t copyIndex = 0; copyIndex < CHUNK_MATRIX_SIZE; ++copyIndex) {
+				uint32_t chunkCount = 0;
+				get32bit(&rptr, chunkCount);
+				if (chunkCount > 0) {
+					if (copyIndex == 1) {
+						printf(" chunks with 1 copy:    ");
+					} else if (copyIndex >= 10) {
+						printf(" chunks with 10+ copies:");
+					} else {
+						printf(" chunks with %u copies:  ", copyIndex);
+					}
+					print_number(" ", "\n", chunkCount, 1, 0, 1);
+				}
 			}
 		}
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
+		close_master_conn(1);
+		return -1;
 	}
-
-	free(buff);
 
 	return 0;
 }
