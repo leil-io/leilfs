@@ -318,3 +318,16 @@ protected:
 	/// List of write data buffers waiting to be written to the chunk.
 	std::list<std::shared_ptr<InputBuffer>> writeDataBuffers_;
 };
+
+/// @brief Creates a callback function for closing a write operation.
+/// This is only used for write operations, such that the chunk is locked. This callback will be
+/// called after the close operation is completed, to release the chunk lock. The close job syncs
+/// the metadata part of the chunk, so it is important for the master to know if also that operation
+/// succeeded, and not only the write data jobs.
+/// @param chunkId ID of the chunk.
+/// @param chunkType Type of the chunk.
+/// @param untoldStatus Error status untold to the client, to be sent to the master.
+/// @return A function to be used as a callback for closing a write operation.
+std::function<void(uint8_t status, void *packet)> jobCloseWriteCallback(uint64_t chunkId,
+                                                                        ChunkPartType chunkType,
+                                                                        uint8_t untoldStatus);

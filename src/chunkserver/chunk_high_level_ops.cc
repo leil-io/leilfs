@@ -549,16 +549,34 @@ void WriteHighLevelOp::cleanup() {
 	}
 
 	if (isChunkOpen_) {
-		job_close(*workerJobPool(), kEmptyCallback, chunkId_, chunkType_);
+		if (isChunkLocked_) {
+			// We need to wait for the metadata to be synced before releasing the lock, so we use a
+			// callback to release the lock afterward
+			job_close(*workerJobPool(), jobCloseWriteCallback(chunkId_, chunkType_, SAUNAFS_STATUS_OK),
+			          chunkId_, chunkType_);
+		} else {
+			job_close(*workerJobPool(), kEmptyCallback, chunkId_, chunkType_);
+		}
 		isChunkOpen_ = false;
-	}
-
-	if (isChunkLocked_) {
+	} else if (isChunkLocked_) {
 		masterconn_get_job_pool()->endChunkLock(chunkId_, chunkType_, SAUNAFS_STATUS_OK);
 	}
+
 	isChunkLocked_ = false;
 	partiallyCompletedWrites_.clear();
 	chunkId_ = 0;
 	chunkVersion_ = 0;
 	chunkType_ = slice_traits::standard::ChunkPartType();
+}
+
+std::function<void(uint8_t status, void *packet)> jobCloseWriteCallback(uint64_t chunkId,
+                                                                        ChunkPartType chunkType,
+                                                                        uint8_t untoldStatus) {
+	return [chunkId, chunkType, untoldStatus](uint8_t status, void * /*entry*/) {
+		if (untoldStatus == SAUNAFS_STATUS_OK && status != SAUNAFS_STATUS_OK) {
+			masterconn_get_job_pool()->endChunkLock(chunkId, chunkType, status);
+		} else {
+			masterconn_get_job_pool()->endChunkLock(chunkId, chunkType, untoldStatus);
+		}
+	};
 }

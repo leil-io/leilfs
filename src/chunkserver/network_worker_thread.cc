@@ -85,20 +85,28 @@ void NetworkWorkerThread::operator()() {
 	static std::atomic_uint16_t threadCounter(0);
 	std::string threadName = "netWorker_" + std::to_string(threadCounter++);
 	pthread_setname_np(pthread_self(), threadName.c_str());
+	bool lastDoTerminateValue = false;
 
 	while (!canTerminate_.load()) {
+		if (doTerminate.load() && !lastDoTerminateValue) {
+			// We've just switched to terminating mode, start wrapping up.
+			lastDoTerminateValue = true;
+			std::lock_guard lock(csservheadLock);
+			for (auto &entry : csservEntries) { entry.closeJobs(); }
+		}
+
 		preparePollFds(doTerminate.load());
 		int fdWithEvents = poll(pdesc.data(), pdesc.size(), gPollTimeout);
 
 		if (fdWithEvents < 0) {
 			if (errno == EAGAIN) {
-				safs::log_warn("{}: poll returned EAGAIN", __func__);
+				safs::log_warn("{} loop: poll returned EAGAIN", threadName);
 				usleep(100000);
 				continue;
 			}
 
 			if (errno != EINTR) {
-				safs::log_warn("{}: poll error: {}", __func__, strerr(errno));
+				safs::log_warn("{} loop: poll error: {}", threadName, strerr(errno));
 				break;
 			}
 		} else {
@@ -116,7 +124,8 @@ void NetworkWorkerThread::operator()() {
 bool NetworkWorkerThread::updateAndCheckTerminationStatus() {
 	std::lock_guard lock(csservheadLock);
 	bool canTerminate =
-	    doTerminate.load() && (csservEntries.empty() ||
+	    doTerminate.load() && ((csservEntries.empty() &&
+	                            (bgJobPool_.get() == nullptr || bgJobPool_->getJobCount() == 0)) ||
 	                           terminationTimer_.elapsed_ms() > kNWForcefulTerminationTimeout_ms);
 	canTerminate_.store(canTerminate);
 	return canTerminate;
@@ -334,7 +343,6 @@ void NetworkWorkerThread::askForTermination() {
 	doTerminate = true;
 	std::unique_lock lock(csservheadLock);
 	terminationTimer_.reset();
-	for (auto &entry : csservEntries) { entry.closeJobs(); }
 }
 
 void NetworkWorkerThread::addConnection(int newSocketFD) {

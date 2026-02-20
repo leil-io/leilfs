@@ -64,6 +64,12 @@ static uint32_t gNrOfNetworkWorkers;
 static uint32_t gNrOfHddWorkersPerNetworkWorker;
 static uint32_t gBgjobsCountPerNetworkWorker;
 
+static std::atomic<bool> gDoTerminate = false;
+
+bool doTerminate() {
+	return gDoTerminate.load();
+}
+
 void chunkReplicatorReload() {
 	unsigned rep_total = cfg_get_minmaxvalue<unsigned>("REPLICATION_TOTAL_TIMEOUT_MS",
 	                                                   ChunkReplicator::kDefaultTotalTimeout_ms,
@@ -177,6 +183,10 @@ void mainNetworkThreadReload(void) {
 
 void mainNetworkThreadDesc(std::vector<pollfd> &pdesc) {
 	TRACETHIS();
+	if (doTerminate()) {
+		return;
+	}
+
 	pdesc.push_back({lsock, POLLIN, 0});
 	lsockpdescpos = pdesc.size() - 1;
 }
@@ -196,6 +206,8 @@ void mainNetworkThreadWantExit(void) {
 	for (auto& threadObject : networkThreadObjects) {
 		threadObject.askForTermination();
 	}
+
+	gDoTerminate.store(true);
 }
 
 int mainNetworkThreadCanExit(void) {
@@ -222,6 +234,10 @@ void mainNetworkThreadTerm(void) {
 
 void mainNetworkThreadServe(const std::vector<pollfd> &pdesc) {
 	TRACETHIS();
+	if (doTerminate()) {
+		return;
+	}
+
 	int newSocketFD;
 
 	if (lsockpdescpos >= 0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
