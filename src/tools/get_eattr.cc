@@ -25,6 +25,7 @@
 #include <cstdint>
 
 #include "common/datapack.h"
+#include "common/server_connection.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
@@ -37,136 +38,139 @@ static void get_eattr_usage() {
 }
 
 static int get_eattr(const char *fname, uint8_t mode) {
-	uint32_t cmd, leng;
+	uint32_t msgid{0};
 	inode_t inode;
-	uint8_t fn, dn, i, j;
-	uint32_t fcnt[EATTR_BITS];
-	uint32_t dcnt[EATTR_BITS];
 	uint8_t eattr;
 	uint32_t cnt;
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) {
-		return -1;
-	}
+	uint8_t status;
+	uint8_t fileNodes, directoryNodes;
 
-	constexpr uint32_t kGetEAttrPayload = sizeof(uint32_t) + sizeof(inode) + sizeof(mode);
-	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kGetEAttrPayload) + kGetEAttrPayload;
-	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
-	const uint8_t *rptr;
+	MessageBuffer request, response;
 
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_GETEATTR);
-	put32bit(&wptr, kGetEAttrPayload);
-	put32bit(&wptr, 0);
-	putINode(&wptr, inode);
-	put8bit(&wptr, mode);
-	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
-		printf("%s: master query: send error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	if (tcpread(fd, reqbuff, 8) != 8) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
-	if (cmd != MATOCL_FUSE_GETEATTR) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	buff = (uint8_t *)malloc(leng);
-	if (tcpread(fd, buff, leng) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-	close_master_conn(0);
-	rptr = buff;
-	get32bit(&rptr, cmd);  // queryid
-	if (cmd != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		return -1;
-	}
-	leng -= 4;
-	if (leng == 1) {
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		return -1;
-	} else if (leng % 5 != 2) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	} else if (mode == GMODE_NORMAL && leng != 7) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	}
-	if (mode == GMODE_NORMAL) {
-		fn = get8bit(&rptr);
-		dn = get8bit(&rptr);
-		eattr = get8bit(&rptr);
-		get32bit(&rptr, cnt);
-		if ((fn != 0 || dn != 1) && (fn != 1 || dn != 0)) {
-			printf("%s: master query: wrong answer (fn,dn)\n", fname);
-			free(buff);
+	int fd = open_master_conn(fname, &inode, nullptr, false);
+	if (fd < 0) { return -1; }
+
+	try {
+		serializeLegacyPacket(request, CLTOMA_FUSE_GETEATTR, msgid, inode, mode);
+
+		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_GETEATTR);
+
+		const uint8_t *rptr = response.data();
+
+		get32bit(&rptr, msgid);
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (queryid)\n", fname);
+			close_master_conn(1);
 			return -1;
 		}
-		if (cnt != 1) {
-			printf("%s: master query: wrong answer (cnt)\n", fname);
-			free(buff);
+
+		uint32_t bodySize = static_cast<uint32_t>(response.size() - sizeof(msgid));
+
+		if (bodySize == sizeof(status)) {
+			status = *rptr;
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			close_master_conn(0);
+			return (status == SAUNAFS_STATUS_OK) ? 0 : -1;
+		}
+
+		if (bodySize < sizeof(fileNodes) + sizeof(directoryNodes)) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			close_master_conn(1);
 			return -1;
 		}
-		printf("%s: ", fname);
-		if (eattr > 0) {
-			cnt = 0;
-			for (j = 0; j < EATTR_BITS; j++) {
-				if (eattr & (1 << j)) {
-					printf("%s%s", (cnt) ? "," : "", eattrtab[j]);
-					cnt = 1;
+
+		fileNodes = get8bit(&rptr);
+		directoryNodes = get8bit(&rptr);
+
+		bodySize -= (sizeof(fileNodes) + sizeof(directoryNodes));
+
+		// NORMAL MODE
+		if (mode == GMODE_NORMAL) {
+			const uint32_t expectedNormalBody = sizeof(eattr) + sizeof(cnt);
+
+			if (bodySize != expectedNormalBody) {
+				printf("%s: master query: wrong answer (leng)\n", fname);
+				close_master_conn(1);
+				return -1;
+			}
+
+			eattr = get8bit(&rptr);
+			get32bit(&rptr, cnt);
+
+			if ((fileNodes != 0 || directoryNodes != 1) &&
+			    (fileNodes != 1 || directoryNodes != 0)) {
+				printf("%s: master query: wrong answer (fn,dn)\n", fname);
+				close_master_conn(1);
+				return -1;
+			}
+
+			if (cnt != 1) {
+				printf("%s: master query: wrong answer (cnt)\n", fname);
+				close_master_conn(1);
+				return -1;
+			}
+
+			close_master_conn(0);
+
+			printf("%s: ", fname);
+
+			if (eattr == 0) {
+				printf("-\n");
+				return 0;
+			}
+
+			bool first = true;
+			for (uint8_t j = 0; j < EATTR_BITS; ++j) {
+				if (eattr & (1u << j)) {
+					printf("%s%s", first ? "" : ",", eattrtab[j]);
+					first = false;
 				}
 			}
 			printf("\n");
-		} else {
-			printf("-\n");
+
+			return 0;
 		}
-		//              printf("%s: %" PRIX8 "\n",fname,eattr);
-	} else {
-		for (j = 0; j < EATTR_BITS; j++) {
-			fcnt[j] = 0;
-			dcnt[j] = 0;
+
+		// AGGREGATED MODE
+		const uint32_t entrySize = sizeof(eattr) + sizeof(cnt);
+		const uint32_t expectedAggregatedBody = (fileNodes + directoryNodes) * entrySize;
+
+		if (bodySize != expectedAggregatedBody) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			close_master_conn(1);
+			return -1;
 		}
-		fn = get8bit(&rptr);
-		dn = get8bit(&rptr);
-		for (i = 0; i < fn; i++) {
+
+		uint32_t fcnt[EATTR_BITS] = {};
+		uint32_t dcnt[EATTR_BITS] = {};
+
+		for (uint8_t i = 0; i < fileNodes; ++i) {
 			eattr = get8bit(&rptr);
 			get32bit(&rptr, cnt);
-			for (j = 0; j < EATTR_BITS; j++) {
-				if (eattr & (1 << j)) {
-					fcnt[j] += cnt;
-				}
+
+			for (uint8_t j = 0; j < EATTR_BITS; ++j) {
+				if (eattr & (1u << j)) { fcnt[j] += cnt; }
 			}
 		}
-		for (i = 0; i < dn; i++) {
+
+		for (uint8_t i = 0; i < directoryNodes; ++i) {
 			eattr = get8bit(&rptr);
 			get32bit(&rptr, cnt);
-			for (j = 0; j < EATTR_BITS; j++) {
-				if (eattr & (1 << j)) {
-					dcnt[j] += cnt;
-				}
+
+			for (uint8_t j = 0; j < EATTR_BITS; ++j) {
+				if (eattr & (1u << j)) { dcnt[j] += cnt; }
 			}
 		}
+
+		close_master_conn(0);
+
 		printf("%s:\n", fname);
-		for (j = 0; j < EATTR_BITS; j++) {
+
+		for (uint8_t j = 0; j < EATTR_BITS; ++j) {
 			if (eattrtab[j][0]) {
 				printf(" not directory nodes with attribute %16s :", eattrtab[j]);
 				print_number(" ", "\n", fcnt[j], 1, 0, 1);
+
 				printf(" directories with attribute         %16s :", eattrtab[j]);
 				print_number(" ", "\n", dcnt[j], 1, 0, 1);
 			} else {
@@ -180,8 +184,13 @@ static int get_eattr(const char *fname, uint8_t mode) {
 				}
 			}
 		}
+
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
+		close_master_conn(1);
+		return -1;
 	}
-	free(buff);
+
 	return 0;
 }
 
