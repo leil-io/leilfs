@@ -200,6 +200,10 @@ uint32_t JobPool::getJobCount() const {
 	return jobsQueue->elements();
 }
 
+bool JobPool::isFull() const {
+	return jobsQueue->isFull();
+}
+
 void JobPool::disableAndChangeCallbackAll(const JobCallback &callback, uint32_t listenerId) {
 	// Check if the listenerId is valid
 	if (listenerId >= listenerInfos_.size()) {

@@ -98,8 +98,9 @@ struct ChunkserverEntry {
 		Connecting,  // connecting to other chunkserver to form a writing chain
 		WriteInit,   // sending packet forming a chain to the next chunkserver
 		WriteForward,  // ready for writing data; will be forwarded to other CSs
-		WriteFinish,   // write error, will be closed after sending error status
-		Close,         // close request, will change to CloseWait or Closed
+		IOFinish,   // closing a connection after finishing IO, but before sending the final status
+		            // to the client
+		Close,      // close request, will change to CloseWait or Closed
 		CloseWait,  // waits for a worker to finish a job, then will be Closed
 		Closed      // ready to be deleted
 	};
@@ -211,12 +212,12 @@ struct ChunkserverEntry {
 	                   bool fromForward);
 
 	/// Handles forwarding errors by setting the appropriate error status and
-	/// transitioning the connection state to `WriteFinish`.
+	/// transitioning the connection state to `IOFinish`.
 	///
 	/// This function is called when an error occurs during forwarding
 	/// operations, such as read or write errors on the forwarding socket. It
 	/// serializes an error status message and attaches it to the packet, then
-	/// sets the state to `WriteFinish` to indicate that the connection should
+	/// sets the state to `IOFinish` to indicate that the connection should
 	/// be closed after sending the error status.
 	void fwdError();
 

@@ -66,7 +66,7 @@ bool ProducerConsumerQueue::isFull() const {
 uint32_t ProducerConsumerQueue::sizeLeft() const {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
-	return maxSize_ > 0 ? maxSize_ - currentSize_ : UINT32_MAX;
+	return maxSize_ > 0 ? (currentSize_ <= maxSize_ ? maxSize_ - currentSize_ : 0) : UINT32_MAX;
 }
 
 uint32_t ProducerConsumerQueue::elements() const {
@@ -75,23 +75,13 @@ uint32_t ProducerConsumerQueue::elements() const {
 	return currentElements_;
 }
 
-bool ProducerConsumerQueue::put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
+void ProducerConsumerQueue::put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
                                 uint8_t priority) {
 	TRACETHIS();
 	std::unique_lock<std::mutex> lock(mutex_);
-	notFull_.wait(lock, [this, length] {
-		return maxSize_ == 0 || currentSize_ + length <= maxSize_;
-	});
-
-	if (maxSize_ > 0 && length > maxSize_) {
-		errno = EDEADLK;
-		return false;
-	}
-
 	put_(jobId, jobType, data, length, priority);
 
 	notEmpty_.notify_one();
-	return true;
 }
 
 bool ProducerConsumerQueue::tryPut(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
@@ -123,7 +113,6 @@ bool ProducerConsumerQueue::get(uint32_t *jobId, uint32_t *jobType,
 	notEmpty_.wait(lock, [this] { return currentSize_ > 0; });
 
 	get_(jobId, jobType, data, length);
-	notFull_.notify_one();
 	return true;
 }
 
@@ -141,7 +130,6 @@ bool ProducerConsumerQueue::tryGet(uint32_t *jobId, uint32_t *jobType,
 	}
 
 	get_(jobId, jobType, data, length);
-	notFull_.notify_one();
 	return true;
 }
 
