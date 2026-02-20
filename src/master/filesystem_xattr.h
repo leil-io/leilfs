@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "common/massert.h"
+#include "common/observable_property.h"
 #include "common/type_defs.h"
 
 #define XATTR_INODE_HASH_SIZE 65536
@@ -100,3 +101,6 @@ uint8_t get_xattrs_length_for_inode(inode_t inode, void **xattrInodePointer, uin
 uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t *attributeName,
                       uint32_t attributeValueLength, const uint8_t *attributeValueBuffer,
                       uint8_t mode);
+
+/// Signal emitted when all xattrs for an inode are removed (node deletion cleanup).
+inline Signal<inode_t> gXAttrInodeRemovedSignal;

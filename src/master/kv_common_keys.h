@@ -74,8 +74,14 @@ inline constexpr std::string_view kFreeKeyPrefix = "FREE_";    // Section FREE 1
 /// LockedTo and LockId (both 32-bit) are also Big Endian.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";   // Section CHNK 1.0
 
-// Reserved for future use
+/// Prefix for extended attributes (xattrs)
+/// Format: XATR_<InodeId><AttributeName>:<AttributeValue>
+/// e.g.: XATR_1999UserAttr:UserValue
+/// @note InodeId is serialized as Big Endian to maintain numeric order in lexicographical sorting,
+/// enabling efficient range queries for all xattrs of a specific inode.
 inline constexpr std::string_view kXAttrKeyPrefix = "XATR_";   // Section XATR 1.0
+
+// Reserved for future use
 inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1.2
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";   // Section FLCK 1.0

@@ -22,6 +22,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "common/attributes.h"
 #include "common/goal.h"
@@ -46,6 +47,20 @@ struct QuotaOwner;
 
 struct NamedInodeEntry;
 struct HandleInodeEntry;
+
+inline constexpr char kAclXattrs[] = "system.richacl";
+
+/// Result of a getXAttr operation. Owns the attribute value bytes.
+struct XAttrGetResult {
+	std::vector<uint8_t> value;
+};
+
+/// Result of a listXAttr operation. Owns the serialized name list.
+struct XAttrListResult {
+	/// Serialized xattr names: each name is followed by a '\0' byte.
+	/// Does NOT include the always-present kAclXattrs prefix.
+	std::vector<uint8_t> data;
+};
 
 /// Interface for filesystem operations extensibility.
 /// Classes implementing this interface can be used to override default filesystem behavior.
@@ -804,16 +819,89 @@ public:
 	virtual uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                             ExtraAttributesArray &fileEAttrTab,
 	                             ExtraAttributesArray &dirEAttrTab) = 0;
-	virtual uint8_t listXAttrLeng(const FsContext &context,
-	                              const FilesystemOperationContext &fsOpContext, inode_t inode,
-	                              uint8_t opened, void **xanode, uint32_t *xasize) = 0;
+
+	/// Lists extended attribute names for an inode.
+	///
+	/// Verifies the session (read-only, non-meta) and resolves the inode with
+	/// read permission check (or no permission check if the file is already opened).
+	/// On success, returns the total serialized size of all xattr names (including
+	/// the always-present "system.richacl\0" prefix) and an owned result containing
+	/// the serialized user-defined attribute names.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
+	/// @param inode The inode to list attributes for.
+	/// @param opened Non-zero if the file is already opened (skips permission check).
+	/// @param[out] result Populated with the serialized xattr name data (excluding the
+	///                    kAclXattrs prefix, which the caller must prepend).
+	/// @param[out] xasize Total byte size of the serialized xattr name list, including
+	///                    the "system.richacl\0" prefix and a trailing '\0' per name.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - Session or permission errors from verifySession/getNodeForOperation
+	///         - SAUNAFS_ERROR_ERANGE if the total xattr name list exceeds SFS_XATTR_LIST_MAX
+	virtual uint8_t listXAttr(const FsContext &context,
+	                          const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                          uint8_t opened, XAttrListResult &result, uint32_t *xasize) = 0;
+
+	/// Retrieves the value of a single extended attribute.
+	///
+	/// Verifies the session (read-only, non-meta), resolves the inode with read
+	/// permission check (or no check if already opened), and validates the attribute
+	/// name (must not contain null bytes). Then looks up the named attribute and
+	/// returns an owned copy of its value.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
+	/// @param inode The inode to retrieve the attribute from.
+	/// @param opened Non-zero if the file is already opened (skips permission check).
+	/// @param anleng Length of the attribute name in bytes.
+	/// @param attrname The attribute name bytes (not null-terminated).
+	/// @param[out] result Populated with an owned copy of the attribute value on success.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - Session or permission errors from verifySession/getNodeForOperation
+	///         - SAUNAFS_ERROR_EINVAL if the attribute name contains null bytes
+	///         - SAUNAFS_ERROR_ENOATTR if the attribute does not exist
+	///         - SAUNAFS_ERROR_ERANGE if the stored value exceeds SFS_XATTR_SIZE_MAX
 	virtual uint8_t getXAttr(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                         uint8_t opened, uint8_t anleng, const uint8_t *attrname,
-	                         uint32_t *avleng, uint8_t **attrvalue) = 0;
-	virtual uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened,
-	                         uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
-	                         const uint8_t *attrvalue, uint8_t mode) = 0;
+	                         XAttrGetResult &result) = 0;
+
+	/// Sets, replaces, or removes an extended attribute on an inode.
+	///
+	/// Verifies the session (read-write, non-meta), resolves the inode with write
+	/// permission check (or no check if already opened), and validates the attribute
+	/// name and mode. Depending on the mode, the attribute is created, replaced, or
+	/// removed. On success, updates the inode's ctime, its checksum, and writes
+	/// a SETXATTR entry to the changelog.
+	///
+	/// @param context The FS operation context containing user credentials and session info.
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param inode The inode to set/remove the attribute on.
+	/// @param opened Non-zero if the file is already opened (skips permission check).
+	/// @param anleng Length of the attribute name in bytes.
+	/// @param attrname The attribute name bytes (not null-terminated).
+	/// @param avleng Length of the attribute value in bytes. Not applied to storage for REMOVE,
+	///              but still referenced in changelog logging; pass 0 for REMOVE.
+	/// @param attrvalue The attribute value bytes. Not applied to storage for REMOVE,
+	///                  but still referenced in changelog logging; pass a valid pointer for REMOVE.
+	/// @param mode One of XATTR_SMODE_CREATE_OR_REPLACE, XATTR_SMODE_CREATE_ONLY,
+	///             XATTR_SMODE_REPLACE_ONLY, or XATTR_SMODE_REMOVE.
+	///
+	/// @return SAUNAFS_STATUS_OK on success, or one of the following error codes:
+	///         - Session or permission errors from verifySession/getNodeForOperation
+	///         - SAUNAFS_ERROR_EINVAL if the attribute name is empty or contains null bytes,
+	///           or mode is invalid
+	///         - SAUNAFS_ERROR_EEXIST if mode is CREATE_ONLY and the attribute already exists
+	///         - SAUNAFS_ERROR_ENOATTR if mode is REPLACE_ONLY or REMOVE and the attribute
+	///           does not exist
+	///         - SAUNAFS_ERROR_ERANGE if the value or total name list size exceeds limits
+	virtual uint8_t setXAttr(const FsContext &context,
+	                         const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                         uint8_t opened, uint8_t anleng, const uint8_t *attrname,
+	                         uint32_t avleng, const uint8_t *attrvalue, uint8_t mode) = 0;
 
 	/// Removes (unlinks) a file or non-directory node from the filesystem.
 	///
@@ -876,7 +964,6 @@ public:
 	                         uint64_t length, uint64_t chunkid, uint32_t lockid) = 0;
 	virtual void getTrashTimeStore(TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes,
 	                               uint8_t *buff) = 0;
-	virtual void listXAttrData(void *xanode, uint8_t *xabuff) = 0;
 
 	virtual uint32_t newSessionId() = 0;
 
@@ -949,9 +1036,9 @@ public:
 	                            inode_t inode, uint64_t length, bool eraseFurtherChunks) = 0;
 	virtual uint8_t applyRepair(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
 	                            inode_t inode, uint32_t indx, uint32_t nversion) = 0;
-	virtual uint8_t applySetXAttr(uint32_t timestamp, inode_t inode, uint32_t anleng,
-	                              const uint8_t *attrname, uint32_t avleng,
-	                              const uint8_t *attrvalue, uint32_t mode) = 0;
+	virtual uint8_t applySetXAttr(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                              inode_t inode, uint32_t anleng, const uint8_t *attrname,
+	                              uint32_t avleng, const uint8_t *attrvalue, uint32_t mode) = 0;
 	virtual uint8_t applySetAcl(uint32_t timestamp, inode_t inode, char aclType,
 	                            const char *aclString) = 0;
 	virtual uint8_t applySetRichAcl(uint32_t timestamp, inode_t inode,
