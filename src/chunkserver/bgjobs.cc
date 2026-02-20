@@ -154,6 +154,7 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	        : 1;
 	jobsQueue->put(jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()),
 	               1, priority);
+	unprocessedJobs_.fetch_add(1, std::memory_order_relaxed);
 	return jobId;
 }
 
@@ -178,6 +179,20 @@ uint32_t JobPool::addLockJob(JobCallback callback, void *extra, uint32_t listene
 	listenerInfo.jobHash[jobId] = std::move(job);
 	// Not an actual job, but a marker for a locked chunk, so never inserted into the job queue.
 	return jobId;
+}
+
+bool JobPool::allJobsProcessed() const {
+	return unprocessedJobs_.load(std::memory_order_relaxed) == 0;
+}
+
+bool JobPool::isEmpty() {
+	if (jobsQueue->elements() > 0) { return false; }
+
+	for (auto &listenerInfo : listenerInfos_) {
+		std::lock_guard lock(listenerInfo.notifierMutex);
+		if (!listenerInfo.statusQueue.empty()) { return false; }
+	}
+	return true;
 }
 
 uint32_t JobPool::getJobCount() const {
@@ -264,6 +279,7 @@ void JobPool::processCompletedJobs(uint32_t listenerId) {
 			auto callback = jobIterator->second->callback;
 			if (callback) { callback(status, jobIterator->second->extra); }
 			listenerInfo.jobHash.erase(jobIterator);
+			unprocessedJobs_.fetch_sub(1, std::memory_order_relaxed);
 		}
 	}
 }

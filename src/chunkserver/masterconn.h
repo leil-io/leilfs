@@ -29,3 +29,4 @@ void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt);
 int masterconn_init(void);
 int masterconn_init_threads(void);
 JobPool* masterconn_get_job_pool();
+bool masterconn_canexit();

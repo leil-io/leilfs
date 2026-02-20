@@ -125,7 +125,7 @@ bool NetworkWorkerThread::updateAndCheckTerminationStatus() {
 	std::lock_guard lock(csservheadLock);
 	bool canTerminate =
 	    doTerminate.load() && ((csservEntries.empty() &&
-	                            (bgJobPool_.get() == nullptr || bgJobPool_->getJobCount() == 0)) ||
+	                            (bgJobPool_.get() == nullptr || bgJobPool_->allJobsProcessed())) ||
 	                           terminationTimer_.elapsed_ms() > kNWForcefulTerminationTimeout_ms);
 	canTerminate_.store(canTerminate);
 	return canTerminate;
