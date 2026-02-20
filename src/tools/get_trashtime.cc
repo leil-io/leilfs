@@ -26,6 +26,7 @@
 #include <stdlib.h>
 
 #include "common/datapack.h"
+#include "common/server_connection.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
@@ -40,122 +41,133 @@ static void get_trashtime_usage() {
 }
 
 static int get_trashtime(const char *fname, uint8_t mode) {
-	uint32_t cmd, leng;
+	uint32_t msgid = 0;
 	inode_t inode;
-	uint32_t fn, dn, i;
+	uint32_t fileNodes, directoryNodes, i;
 	uint32_t trashtime;
 	uint32_t cnt;
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) {
-		return -1;
-	}
+	uint8_t status;
 
-	constexpr uint32_t kGetTrashTimePayloadSize = sizeof(uint32_t) + sizeof(inode) + sizeof(mode);
-	constexpr uint32_t kReqBuffSize =
-	    sizeof(cmd) + sizeof(kGetTrashTimePayloadSize) + kGetTrashTimePayloadSize;
-	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
-	const uint8_t *rptr;
+	MessageBuffer request, response;
 
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_GETTRASHTIME);
-	put32bit(&wptr, kGetTrashTimePayloadSize);
-	put32bit(&wptr, 0);
-	putINode(&wptr, inode);
-	put8bit(&wptr, mode);
-	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
-		printf("%s: master query: send error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	if (tcpread(fd, reqbuff, 8) != 8) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
-	if (cmd != MATOCL_FUSE_GETTRASHTIME) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	buff = (uint8_t *)malloc(leng);
-	if (tcpread(fd, buff, leng) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-	close_master_conn(0);
-	rptr = buff;
-	get32bit(&rptr, cmd);  // queryid
-	if (cmd != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		return -1;
-	}
-	leng -= 4;
-	if (leng == 1) {
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		return -1;
-	} else if (leng < 8 || leng % 8 != 0) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	} else if (mode == GMODE_NORMAL && leng != 16) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	}
-	if (mode == GMODE_NORMAL) {
-		get32bit(&rptr, fn);
-		get32bit(&rptr, dn);
-		get32bit(&rptr, trashtime);
-		get32bit(&rptr, cnt);
-		if ((fn != 0 || dn != 1) && (fn != 1 || dn != 0)) {
-			printf("%s: master query: wrong answer (fn,dn)\n", fname);
-			free(buff);
+	int fd = open_master_conn(fname, &inode, nullptr, false);
+	if (fd < 0) { return -1; }
+
+	try {
+		serializeLegacyPacket(request, CLTOMA_FUSE_GETTRASHTIME, msgid, inode, mode);
+
+		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_GETTRASHTIME);
+
+		const uint8_t *rptr = response.data();
+
+		get32bit(&rptr, msgid);
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (queryid)\n", fname);
+			close_master_conn(1);
 			return -1;
 		}
-		if (cnt != 1) {
-			printf("%s: master query: wrong answer (cnt)\n", fname);
-			free(buff);
+
+		uint32_t bodySize = static_cast<uint32_t>(response.size() - sizeof(msgid));
+
+		if (bodySize == sizeof(status)) {
+			status = *rptr;
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			close_master_conn(0);
+			return (status == SAUNAFS_STATUS_OK) ? 0 : -1;
+		}
+
+		const uint32_t headerFieldsSize = sizeof(fileNodes) + sizeof(directoryNodes);
+
+		if (bodySize < headerFieldsSize) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			close_master_conn(1);
 			return -1;
 		}
-		printf("%s: %" PRIu32 "\n", fname, trashtime);
-	} else {
+
+		get32bit(&rptr, fileNodes);
+		get32bit(&rptr, directoryNodes);
+
+		bodySize -= headerFieldsSize;
+
+		if (mode == GMODE_NORMAL) {
+			const uint32_t expectedNormalBody = sizeof(trashtime) + sizeof(cnt);
+			if (bodySize != expectedNormalBody) {
+				printf("%s: master query: wrong answer (leng)\n", fname);
+				close_master_conn(1);
+				return -1;
+			}
+
+			get32bit(&rptr, trashtime);
+			get32bit(&rptr, cnt);
+
+			if ((fileNodes != 0 || directoryNodes != 1) &&
+			    (fileNodes != 1 || directoryNodes != 0)) {
+				printf("%s: master query: wrong answer (fn,dn)\n", fname);
+				close_master_conn(1);
+				return -1;
+			}
+
+			if (cnt != 1) {
+				printf("%s: master query: wrong answer (cnt)\n", fname);
+				close_master_conn(1);
+				return -1;
+			}
+
+			close_master_conn(0);
+			printf("%s: %" PRIu32 "\n", fname, trashtime);
+			return 0;
+		}
+
+		const uint32_t entrySize = sizeof(trashtime) + sizeof(cnt);
+		const uint32_t expectedAggregatedBody = (fileNodes + directoryNodes) * entrySize;
+
+		if (bodySize != expectedAggregatedBody) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			close_master_conn(1);
+			return -1;
+		}
+
 		std::vector<std::pair<uint32_t, uint32_t>> files;
 		std::vector<std::pair<uint32_t, uint32_t>> dirs;
-		get32bit(&rptr, fn);
-		get32bit(&rptr, dn);
-		files.reserve(fn);
-		dirs.reserve(dn);
-		for (i = 0; i < fn; ++i) {
+
+		files.reserve(fileNodes);
+		dirs.reserve(directoryNodes);
+
+		for (i = 0; i < fileNodes; ++i) {
 			get32bit(&rptr, trashtime);
 			get32bit(&rptr, cnt);
-			files.push_back({trashtime, cnt});
+			files.emplace_back(trashtime, cnt);
 		}
-		for (i = 0; i < dn; ++i) {
+
+		for (i = 0; i < directoryNodes; ++i) {
 			get32bit(&rptr, trashtime);
 			get32bit(&rptr, cnt);
-			dirs.push_back({trashtime, cnt});
+			dirs.emplace_back(trashtime, cnt);
 		}
+
+		close_master_conn(0);
+
 		std::sort(files.begin(), files.end());
 		std::sort(dirs.begin(), dirs.end());
+
 		printf("%s:\n", fname);
+
 		for (const auto &entry : files) {
 			printf(" files with trashtime        %10" PRIu32 " :", entry.first);
 			print_number(" ", "\n", entry.second, 1, 0, 1);
 		}
+
 		for (const auto &entry : dirs) {
 			printf(" directories with trashtime  %10" PRIu32 " :", entry.first);
 			print_number(" ", "\n", entry.second, 1, 0, 1);
 		}
+
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
+		close_master_conn(1);
+		return -1;
 	}
-	free(buff);
+
 	return 0;
 }
 
