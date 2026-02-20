@@ -72,3 +72,21 @@ TEST(TimeUtilsTests, TimerAndTimeout) {
 	EXPECT_EQ(0, timeout.remaining_ns());
 	EXPECT_TRUE(timeout.expired());
 }
+
+TEST(TimeUtilsTests, InfiniteTimeout) {
+	Timeout timeout(std::chrono::milliseconds(-1));
+
+	EXPECT_FALSE(timeout.expired());
+	EXPECT_EQ(timeout.remaining_ms(), -1);
+	EXPECT_EQ(timeout.remaining_us(), -1);
+	EXPECT_EQ(timeout.remaining_ns(), -1);
+	EXPECT_EQ(timeout.remaining_s(), -1);
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+	EXPECT_FALSE(timeout.expired());
+	EXPECT_EQ(timeout.remaining_ms(), -1);
+	EXPECT_EQ(timeout.remaining_us(), -1);
+	EXPECT_EQ(timeout.remaining_ns(), -1);
+	EXPECT_EQ(timeout.remaining_s(), -1);
+}
