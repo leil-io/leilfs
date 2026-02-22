@@ -122,6 +122,11 @@ void NetworkWorkerThread::operator()() {
 }
 
 bool NetworkWorkerThread::updateAndCheckTerminationStatus() {
+	// Don't even check the rest if we already know we can terminate.
+	if (canTerminate_.load()) {
+		return true;
+	}
+
 	std::lock_guard lock(csservheadLock);
 	bool canTerminate =
 	    doTerminate.load() && ((csservEntries.empty() &&
