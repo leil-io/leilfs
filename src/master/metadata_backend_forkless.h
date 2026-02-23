@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include "kv/ikv_engine.h"
+#include "master/filesystem_operation_context.h"
 #include "master/kv_connector_interface.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_section_bootstrap_fdb.h"
@@ -132,6 +133,10 @@ private:
 	/// Loads all sections
 	int fsLoad(bool ignoreFlag);
 
+	/// Loads NODE_ metadata
+	int8_t loadNodes(bool ignoreFlag);
+	int8_t loadNode(const FilesystemOperationContext &fsOpContext, FSNode *node);
+
 	/// Loads CHNK_ metadata
 	int8_t loadChunks(bool ignoreFlag);
 
@@ -158,6 +163,8 @@ private:
 	///
 	/// @return kOpSuccess on success, kOpFailure on failure.
 	int8_t saveMetadataKeys();
+
+	void onNodeChanged(FSNode *node);
 
 	/// Returns next chunk ID value from the KV store.
 	///

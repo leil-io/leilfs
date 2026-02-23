@@ -40,6 +40,18 @@ void ChunkUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->set(key, value);
 }
 
+NodeUpdateEvent::NodeUpdateEvent(FSNode *_node)
+    : nodeId(_node->id), serializedNode(_node->serializedSize()) {
+	uint8_t *ptr = serializedNode.data();
+	_node->serialize(&ptr);
+}
+
+void NodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Key: NODE_<nodeId>
+	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
+	txn->set(key, serializedNode);
+}
+
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {
 	pendingUpdates_.reserve(kInitialSize_);  // Default reserve size, can be adjusted
 }

@@ -49,6 +49,7 @@
 #include "master/kv_connector_fdb.h"
 #include "master/kv_connector_interface.h"
 #include "master/matoclserv.h"
+#include "master/matoclserv_sessions.h"
 #include "master/matomlserv.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
@@ -194,6 +195,15 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	return kOpSuccess;
 }
 
+
+void MetadataBackendForkless::onNodeChanged(FSNode *node) {
+	if (node == nullptr) {
+		safs::log_err("{}: received null node, skipping metadata update", __func__);
+		return;
+	}
+	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeUpdateEvent>(node)); }
+}
+
 int8_t MetadataBackendForkless::saveNextChunkId(kv::IReadWriteTransaction *transaction) {
 	// META_NEXT_CHUNK_ID: <NextChunkId> e.g. META_NEXT_CHUNK_ID: 4
 	uint64_t nextChunkId = chunk_get_next_id();
@@ -284,6 +294,104 @@ void fs_new() {
 }
 }  // namespace
 #endif  // #ifndef METARESTORE
+
+int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
+	(void)ignoreFlag;  // Unused parameter
+
+	Timer timer;
+	safs::log_info("Loading nodes from FoundationDB");
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+
+	kv::Key startKey = kv::encodeKeyBE(kNodeKeyPrefix, SPECIAL_INODE_ROOT);
+	kv::Key endKey = kv::prefixEnd(kv::toBytes(kNodeKeyPrefix));
+	kv::KeySelector startSelector(startKey, true, 0);
+	kv::KeySelector endSelector(endKey, true, 0);
+
+	uint64_t nodeCount = 0;
+
+	while (true) {
+		auto pageResult =
+		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
+
+		for (const auto &pair : pageResult.getPairs()) {
+			const uint8_t *source = pair.value.data();
+			auto type = static_cast<FSNodeType>(source[0]);
+			FSNode *node = FSNode::create(type);
+			node->deserialize(&source);
+
+			int8_t status = loadNode(fsOpContext, node);
+
+			if (status < 0) {
+				safs::log_err("Error loading node: {}", node->id);
+				return kOpFailure;
+			}
+			nodeCount++;
+		}
+
+		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
+
+		kv::Key lastKey = pageResult.getPairs().back().key;
+		startSelector = kv::KeySelector(lastKey, false, 0);
+	}
+
+	safs::log_info("Loaded {} nodes", nodeCount);
+	safs::log_info("Section loaded successfully (NODE 1.0): {}s", timer.elapsed_s());
+
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadNode(const FilesystemOperationContext &fsOpContext,
+                                         FSNode *node) {
+	if (node == nullptr) {
+		safs::log_err("{}: received null node, skipping", __func__);
+		return kOpFailure;
+	}
+#ifndef METARESTORE
+	auto *nodeFile = static_cast<FSNodeFile *>(node);
+#endif
+
+	switch (node->type) {
+	case FSNodeType::kDirectory:
+		gMetadata->dirNodes++;
+		break;
+	case FSNodeType::kSocket:
+	case FSNodeType::kFifo:
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
+		// Nothing extra to do
+		break;
+	case FSNodeType::kSymlink:
+		gMetadata->linkNodes++;
+		break;
+	case FSNodeType::kFile:
+	case FSNodeType::kTrash:
+	case FSNodeType::kReserved:
+#ifndef METARESTORE
+		for (const auto &sessionId : nodeFile->sessionIds) {
+			matoclserv_add_open_file(sessionId, node->id);
+		}
+#endif
+		fsnodes_quota_update(
+		    node,
+		    {{QuotaResource::kSize, +gFSOperations->nodeOperations()->getSize(fsOpContext, node)}});
+		gMetadata->fileNodes++;
+		break;
+	default:
+		safs::log_err("Loading node: unrecognized node type: {}", static_cast<char>(node->type));
+		fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
+		return kOpFailure;
+	}
+
+	gMetadata->addNode(node, true);
+	gMetadata->inodePool.markAsAcquired(node->id);
+	gMetadata->nodes++;
+	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
+
+	return kOpSuccess;
+}
 
 namespace {
 bool isNewMetadataHeader([[maybe_unused]] const std::string& headerSignature) {
@@ -388,9 +496,9 @@ bool MetadataBackendForkless::flushPendingUpdates(bool flushAll) {
 }
 
 void MetadataBackendForkless::initSections() {
-	/*metadataSections_.emplace_back("NODE 1.0", kNodeKeyPrefix,
+	metadataSections_.emplace_back("NODE 1.0", kNodeKeyPrefix,
 	                               [this](bool flag) { return loadNodes(flag); });
-	metadataSections_.emplace_back("EDGE 1.0", kEdgeKeyPrefix,
+	/*metadataSections_.emplace_back("EDGE 1.0", kEdgeKeyPrefix,
 	                               [this](bool flag) { return loadEdges(flag); });
 	metadataSections_.emplace_back("FREE 1.0", kFreeKeyPrefix,
 	                               [this](bool flag) { return loadFree(flag); });
@@ -522,7 +630,7 @@ void MetadataBackendForkless::createConnections() {
 
 	// getChangelogSignal().connect(kvConnector_.get(), &IKVConnector::onChangelogEvent);
 
-	// gMetadata->nodeChangedSignal.connect(kvConnector_.get(), &IKVConnector::onNodeChanged);
+	gMetadata->nodeChangedSignal.connect([this](FSNode *node) { onNodeChanged(node); });
 
 	// gMetadata->edgeChangedSignal.connect(kvConnector_.get(), &IKVConnector::onEdgeChanged);
 
