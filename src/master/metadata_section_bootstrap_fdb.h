@@ -65,7 +65,8 @@ private:
 
 	void initMetadataFileSections();
 
-	int8_t hasChunkLatestKeys();
+	int8_t hasPrefixLatestKeys(std::string_view prefix);
+	int8_t loadNodesSection();
 	int8_t loadChunkSection();
 
 	uint64_t metadataVersion_ = 0;

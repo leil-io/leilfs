@@ -118,15 +118,79 @@ bool MetadataSectionBootstrapFDB::bootstrapSections() {
 	return bootstrapped;
 }
 
-int8_t MetadataSectionBootstrapFDB::hasChunkLatestKeys() {
+int8_t MetadataSectionBootstrapFDB::hasPrefixLatestKeys(std::string_view prefix) {
 	if (kvEngine_ == nullptr) { return -1; }
 	auto transaction = kvEngine_->createReadOnlyTransaction();
-	kv::Key startKey = kv::toBytes(kChunkKeyPrefix);
+	kv::Key startKey = kv::toBytes(prefix);
 	kv::Key endKey = kv::prefixEnd(startKey);
 
 	auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
 	                                  kv::KeySelector(endKey, true, 0), 1);
 	return page.getPairs().empty() ? 1 : 0;
+}
+
+int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("NODE 1.0");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for NODE 1.0");
+		return kOpFailure;
+	}
+
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+	uint64_t nodeCount = 0;
+
+	MetadataWriterFDB writer(kvEngine_);
+	size_t pending = 0;
+
+	while (metadataFile_->offset(ptr) < sectionEnd) {
+		const uint8_t *nodeBegin = ptr;
+		uint8_t typeU8 = get8bit(&ptr);
+
+		// End marker for NODE section in metadata.sfs
+		if (typeU8 == 0) { break; }
+
+		auto type = static_cast<FSNodeType>(typeU8);
+		FSNode *node = FSNode::create(type);
+		if (node == nullptr) {
+			safs::log_err("Failed to create FSNode for type {}", typeU8);
+			return kOpFailure;
+		}
+
+		// A freshly created node reports its type-specific minimum serialized size
+		// (fixed header + per-type fixed fields, e.g. kFileHeaderSize for files). Reject if the
+		// section cannot even hold that, so deserialize() does not read past the mapped region.
+		if (sectionEnd - metadataFile_->offset(nodeBegin) < node->serializedSize()) {
+			safs::log_err("{}: truncated node entry", __func__);
+			FSNode::destroy(node);
+			return kOpFailure;
+		}
+
+		// deserialize expects the type byte to be present in the stream
+		ptr = nodeBegin;
+		node->deserialize(&ptr);
+
+		// Enqueue node update with checkpointVersion=0 to avoid NODEU_ entries.
+		writer.enqueue(std::make_unique<NodeUpdateEvent>(node));
+
+		FSNode::destroy(node);
+		nodeCount++;
+
+		if (++pending >= kFlushThreshold) {
+			writer.flush();
+			pending = 0;
+		}
+	}
+
+	if (!writer.flushAll()) {
+		safs::log_err("Failed to flush bootstrapped nodes to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} nodes from metadata file into FDB", nodeCount);
+	return kOpSuccess;
 }
 
 int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
@@ -219,9 +283,24 @@ std::optional<MetadataSectionBootstrapFDB::SectionMarker> MetadataSectionBootstr
 void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	metadataFileSections_.clear();
 
+    // Filesystem MetadataSection "NODE 1.0"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "NODE 1.0",
+	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kNodeKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadNodesSection(); },
+	});
+
+	// Filesystem MetadataSection "EDGE 1.0"
+	// Filesystem MetadataSection "FREE 1.0"
+	// Filesystem MetadataSection "XATR 1.0"
+	// Filesystem MetadataSection "ACLS 1.2"
+	// Filesystem MetadataSection "QUOT 1.1"
+	// Filesystem MetadataSection "FLCK 1.0"
+
+	// Filesystem MetadataSection "CHNK 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "CHNK 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasChunkLatestKeys(); },
+	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kChunkKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadChunkSection(); },
 	});
 }
