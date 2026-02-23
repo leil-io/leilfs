@@ -25,6 +25,7 @@
 #include "chunkserver-common/chunk_trash_manager_impl.h"
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
+#include "hdd_stats.h"
 #include "slogger/slogger.h"
 
 namespace fs = std::filesystem;
@@ -161,6 +162,7 @@ void ChunkTrashManagerImpl::removeTrashFiles(
 	for (const auto &[diskPath, fileEntries] : filesToRemove) {
 		for (const auto &fileEntry : fileEntries) {
 			if (removeFileFromTrash(fileEntry.second) != SAUNAFS_STATUS_OK) { continue; }
+			HddStats::gStatsOperationsGCPurge++;
 			getTrashIndex().remove(fileEntry.first, fileEntry.second, diskPath);
 		}
 	}
