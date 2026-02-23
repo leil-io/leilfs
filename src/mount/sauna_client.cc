@@ -1019,7 +1019,7 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	attr_to_stat(inode, attr, &e.attr);
 	if (maxFileLen > static_cast<uint64_t>(e.attr.st_size)) {
 		update_attr_size(attr, maxFileLen);
-		e.attr.st_size = static_cast<__off_t>(maxFileLen);
+		e.attr.st_size = static_cast<off_t>(maxFileLen);
 	}
 
 	// If lookup succeeded and data did not come from cache, then cache it.
