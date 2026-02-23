@@ -52,6 +52,19 @@ private:
 	uint32_t lockId;
 };
 
+/// Update event for node changes
+class NodeUpdateEvent : public IMetadataUpdateEvent {
+public:
+	NodeUpdateEvent(FSNode *_node);
+	~NodeUpdateEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t nodeId;
+	kv::Value serializedNode;
+};
+
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:
