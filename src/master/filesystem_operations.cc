@@ -957,7 +957,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 			return SAUNAFS_ERROR_EPERM;
 		}
 		if ((setmask & (SET_ATIME_NOW_FLAG | SET_MTIME_NOW_FLAG)) &&
-		    !nodeOperations_->access(context, p, MODE_MASK_W)) {
+		    !nodeOperations_->access(context, fsOpContext, p, MODE_MASK_W)) {
 			return SAUNAFS_ERROR_EACCES;
 		}
 	}
@@ -2256,7 +2256,9 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context,
 		if (flags & WANT_WRITE) {
 			modemask |= MODE_MASK_W;
 		}
-		if (!nodeOperations_->access(context, p, modemask)) { return SAUNAFS_ERROR_EACCES; }
+		if (!nodeOperations_->access(context, fsOpContext, p, modemask)) {
+			return SAUNAFS_ERROR_EACCES;
+		}
 	}
 	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
 	                          context.agid(), context.sesflags(), attr);
@@ -3234,7 +3236,9 @@ uint8_t FilesystemOperationsBase::applySetXAttr(const FilesystemOperationContext
 	return status;
 }
 
-uint8_t FilesystemOperationsBase::deleteAcl(const FsContext &context, inode_t inode, AclType type) {
+uint8_t FilesystemOperationsBase::deleteAcl(const FsContext &context,
+                                            const FilesystemOperationContext &fsOpContext,
+                                            inode_t inode, AclType type) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status =
@@ -3243,15 +3247,11 @@ uint8_t FilesystemOperationsBase::deleteAcl(const FsContext &context, inode_t in
 		return status;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
-
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	status = nodeOperations_->deleteAcl(p, type, context.ts());
+	status = nodeOperations_->deleteAcl(fsOpContext, p, type, context.ts());
 
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
@@ -3272,8 +3272,9 @@ uint8_t FilesystemOperationsBase::deleteAcl(const FsContext &context, inode_t in
 
 #ifndef METARESTORE
 
-uint8_t FilesystemOperationsBase::setAcl(const FsContext &context, inode_t inode,
-                                         const RichACL &acl) {
+uint8_t FilesystemOperationsBase::setAcl(const FsContext &context,
+                                         const FilesystemOperationContext &fsOpContext,
+                                         inode_t inode, const RichACL &acl) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
 	uint8_t status =
@@ -3282,16 +3283,13 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context, inode_t inode
 		return status;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
-
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	std::string acl_string = acl.toString();
-	status = nodeOperations_->setAcl(p, acl, context.ts());
+	status = nodeOperations_->setAcl(fsOpContext, p, acl, context.ts());
+
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
 			changeLog(context.ts(), "SETRICHACL(%" PRIiNode ",%s)", p->id, acl_string.c_str());
@@ -3302,7 +3300,9 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context, inode_t inode
 	return status;
 }
 
-uint8_t FilesystemOperationsBase::setAcl(const FsContext &context, inode_t inode, AclType type,
+uint8_t FilesystemOperationsBase::setAcl(const FsContext &context,
+                                         const FilesystemOperationContext &fsOpContext,
+                                         inode_t inode, AclType type,
                                          const AccessControlList &acl) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p;
@@ -3312,16 +3312,13 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context, inode_t inode
 		return status;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
-
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	std::string acl_string = acl.toString();
-	status = nodeOperations_->setAcl(p, type, acl, context.ts());
+	status = nodeOperations_->setAcl(fsOpContext, p, type, acl, context.ts());
+
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
 			changeLog(context.ts(), "SETACL(%" PRIiNode ",%c,%s)", p->id,
@@ -3331,11 +3328,11 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context, inode_t inode
 		gMetadata->metadataVersion++;
 	}
 	return status;
-
-	return SAUNAFS_ERROR_EINVAL;
 }
 
-uint8_t FilesystemOperationsBase::getAcl(const FsContext &context, inode_t inode, RichACL &acl) {
+uint8_t FilesystemOperationsBase::getAcl(const FsContext &context,
+                                         const FilesystemOperationContext &fsOpContext,
+                                         inode_t inode, RichACL &acl) {
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
@@ -3343,20 +3340,17 @@ uint8_t FilesystemOperationsBase::getAcl(const FsContext &context, inode_t inode
 		return status;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
-
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
-
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	return nodeOperations_->getAcl(p, acl);
+	return nodeOperations_->getAcl(fsOpContext, p, acl);
 }
 
 #endif /* #ifndef METARESTORE */
 
-uint8_t FilesystemOperationsBase::applySetAcl(uint32_t timestamp, inode_t inode, char aclType,
+uint8_t FilesystemOperationsBase::applySetAcl(const FilesystemOperationContext &fsOpContext,
+                                              uint32_t timestamp, inode_t inode, char aclType,
                                               const char *aclString) {
 	AccessControlList acl;
 	try {
@@ -3372,14 +3366,16 @@ uint8_t FilesystemOperationsBase::applySetAcl(uint32_t timestamp, inode_t inode,
 	if (!decodeChar("da", {AclType::kDefault, AclType::kAccess}, aclType, aclTypeEnum)) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	uint8_t status = nodeOperations_->setAcl(p, aclTypeEnum, std::move(acl), timestamp);
-	if (status == SAUNAFS_STATUS_OK) {
-		gMetadata->metadataVersion++;
-	}
-	return status;
+
+	uint8_t status = nodeOperations_->setAcl(fsOpContext, p, aclTypeEnum, acl, timestamp);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	gMetadata->metadataVersion++;
+	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::applySetRichAcl(uint32_t timestamp, inode_t inode,
+uint8_t FilesystemOperationsBase::applySetRichAcl(const FilesystemOperationContext &fsOpContext,
+                                                  uint32_t timestamp, inode_t inode,
                                                   const std::string &acl_string) {
 	RichACL acl;
 	try {
@@ -3391,11 +3387,12 @@ uint8_t FilesystemOperationsBase::applySetRichAcl(uint32_t timestamp, inode_t in
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	uint8_t status = nodeOperations_->setAcl(p, std::move(acl), timestamp);
-	if (status == SAUNAFS_STATUS_OK) {
-		gMetadata->metadataVersion++;
-	}
-	return status;
+
+	uint8_t status = nodeOperations_->setAcl(fsOpContext, p, acl, timestamp);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	gMetadata->metadataVersion++;
+	return SAUNAFS_STATUS_OK;
 }
 
 #ifndef METARESTORE

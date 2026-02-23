@@ -22,6 +22,8 @@
 
 #include "common/platform.h"
 
+#include <optional>
+
 #include "master/filesystem_node_operations_interface.h"
 #include "master/filesystem_node_types.h"
 #include "master/fs_context.h"
@@ -174,13 +176,28 @@ public:
 	std::string escapeName(const std::string &name) override;
 
 	// ACL operations
-	uint8_t setAcl(FSNode *node, const RichACL &acl, uint32_t timeStamp) override;
-	uint8_t setAcl(FSNode *node, AclType type, const AccessControlList &acl,
-	               uint32_t timeStamp) override;
+
+	/// Stores a RichACL on a node, replacing any previously stored ACL.
+	/// @see IFilesystemNodeOperations::setAcl
+	uint8_t setAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	               const RichACL &acl, uint32_t timeStamp) override;
+
+	/// Merges a POSIX ACL into the node's stored RichACL.
+	/// @see IFilesystemNodeOperations::setAcl
+	uint8_t setAcl(const FilesystemOperationContext &fsOpContext, FSNode *node, AclType type,
+	               const AccessControlList &acl, uint32_t timeStamp) override;
+
 #ifndef METARESTORE
-	uint8_t getAcl(FSNode *node, RichACL &acl) override;
+	/// Retrieves the stored RichACL for a node.
+	/// @see IFilesystemNodeOperations::getAcl
+	uint8_t getAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	               RichACL &acl) override;
 #endif  // METARESTORE
-	uint8_t deleteAcl(FSNode *node, AclType type, uint32_t timeStamp) override;
+
+	/// Removes or prunes the ACL stored on a node according to the ACL type.
+	/// @see IFilesystemNodeOperations::deleteAcl
+	uint8_t deleteAcl(const FilesystemOperationContext &fsOpContext, FSNode *node, AclType type,
+	                  uint32_t timeStamp) override;
 
 	// Recursive operations
 #ifndef METARESTORE
@@ -208,7 +225,18 @@ public:
 	                           inode_t *permissionDeniedINodesOut) override;
 
 	// Access control operations
-	int access(const FsContext &context, FSNode *node, uint8_t modeMask) override;
+	int access(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	           FSNode *node, uint8_t modeMask) override;
+
+protected:
+	/// Returns the stored RichACL for @p node, or nullptr if none is present.
+	/// @p scratch is an optional caller-supplied buffer; implementations that need
+	/// to materialise a temporary ACL (e.g. KV backends) emplace into @p scratch
+	/// and return &scratch->value(), while the default in-memory implementation
+	/// leaves @p scratch empty and returns a pointer into aclStorage directly.
+	/// The caller avoids constructing a RichACL when it is not needed.
+	virtual const RichACL *getAclForAccess(const FilesystemOperationContext &fsOpContext,
+	                                       FSNode *node, std::optional<RichACL> &scratch);
 	int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) override;
 	int nameCheck(const std::string &name) override;
 	uint8_t verifySession(const FsContext &context, OperationMode operationMode,

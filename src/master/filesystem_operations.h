@@ -86,7 +86,11 @@ public:
 
 	uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t inode, inode_t inode_src) override;
-	uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) override;
+
+	/// Removes or prunes the ACL stored on a node, given its inode.
+	/// @see IFilesystemOperations::deleteAcl
+	uint8_t deleteAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                  inode_t inode, AclType type) override;
 
 	/// Creates a hard link to an existing file in a destination directory.
 	/// @see IFilesystemOperations::link
@@ -256,10 +260,21 @@ public:
 	                      std::vector<ChunkWithAddressAndLabel> &chunks) override;
 	uint8_t getTrashTimePrepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	                            TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes) override;
-	uint8_t setAcl(const FsContext &context, inode_t inode, AclType type,
-	               const AccessControlList &acl) override;
-	uint8_t setAcl(const FsContext &context, inode_t inode, const RichACL &acl) override;
-	uint8_t getAcl(const FsContext &context, inode_t inode, RichACL &acl) override;
+
+	/// Merges a POSIX ACL (kAccess or kDefault) into the node's stored RichACL.
+	/// @see IFilesystemOperations::setAcl
+	uint8_t setAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	               inode_t inode, AclType type, const AccessControlList &acl) override;
+
+	/// Stores a RichACL directly on a node, replacing any previously stored ACL.
+	/// @see IFilesystemOperations::setAcl
+	uint8_t setAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	               inode_t inode, const RichACL &acl) override;
+
+	/// Retrieves the stored RichACL for a node, given its inode.
+	/// @see IFilesystemOperations::getAcl
+	uint8_t getAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	               inode_t inode, RichACL &acl) override;
 
 	// Functions which modify metadata or return some information.
 	// To be used by the master server with personality == kMaster
@@ -352,10 +367,17 @@ public:
 	uint8_t applySetXAttr(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
 	                      inode_t inode, uint32_t anleng, const uint8_t *attrname, uint32_t avleng,
 	                      const uint8_t *attrvalue, uint32_t mode) override;
-	uint8_t applySetAcl(uint32_t timestamp, inode_t inode, char aclType,
-	                    const char *aclString) override;
-	uint8_t applySetRichAcl(uint32_t timestamp, inode_t inode,
-	                        const std::string &acl_string) override;
+
+	/// Replays a SETACL changelog entry during metadata restore.
+	/// @see IFilesystemOperations::applySetAcl
+	uint8_t applySetAcl(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                    inode_t inode, char aclType, const char *aclString) override;
+
+	/// Replays a SETRICHACL changelog entry during metadata restore.
+	/// @see IFilesystemOperations::applySetRichAcl
+	uint8_t applySetRichAcl(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                        inode_t inode, const std::string &acl_string) override;
+
 	uint8_t applyUnlink(uint32_t timestamp, inode_t parent, const HString &name,
 	                    inode_t inode) override;
 	uint8_t applyUnlock(uint64_t chunkid) override;

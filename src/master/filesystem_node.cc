@@ -1938,7 +1938,9 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(FSNode *node, uint32_t 
 	fsnodes_update_checksum(node);
 }
 
-uint8_t FilesystemNodeOperationsBase::deleteAcl(FSNode *node, AclType type, uint32_t timeStamp) {
+uint8_t FilesystemNodeOperationsBase::deleteAcl(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, AclType type,
+    uint32_t timeStamp) {
 	if (type == AclType::kRichACL) {
 		gMetadata->aclStorage.erase(node->id);
 	} else if (type == AclType::kDefault) {
@@ -1979,7 +1981,8 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(FSNode *node, AclType type, uint
 }
 
 #ifndef METARESTORE
-uint8_t FilesystemNodeOperationsBase::getAcl(FSNode *node, RichACL &acl) {
+uint8_t FilesystemNodeOperationsBase::getAcl(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, RichACL &acl) {
 	const RichACL *richAcl = gMetadata->aclStorage.get(node->id);
 
 	if (!richAcl) { return SAUNAFS_ERROR_ENOATTR; }
@@ -1991,7 +1994,9 @@ uint8_t FilesystemNodeOperationsBase::getAcl(FSNode *node, RichACL &acl) {
 }
 #endif
 
-uint8_t FilesystemNodeOperationsBase::setAcl(FSNode *node, const RichACL &acl, uint32_t timeStamp) {
+uint8_t FilesystemNodeOperationsBase::setAcl(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const RichACL &acl, uint32_t timeStamp) {
 	if (!acl.checkInheritFlags(node->type == FSNodeType::kDirectory)) {
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
@@ -2021,8 +2026,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(FSNode *node, const RichACL &acl, u
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemNodeOperationsBase::setAcl(FSNode *node, AclType type,
-                                             const AccessControlList &acl, uint32_t timeStamp) {
+uint8_t FilesystemNodeOperationsBase::setAcl(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, AclType type,
+    const AccessControlList &acl, uint32_t timeStamp) {
 	if (type != AclType::kDefault && type != AclType::kAccess) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -2076,12 +2082,21 @@ int FilesystemNodeOperationsBase::nameCheck(const std::string &name) {
 	return 0;
 }
 
-int FilesystemNodeOperationsBase::access(const FsContext &context, FSNode *node, uint8_t modeMask) {
+const RichACL *FilesystemNodeOperationsBase::getAclForAccess(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    [[maybe_unused]] std::optional<RichACL> &scratch) {
+	return gMetadata->aclStorage.get(node->id);
+}
+
+int FilesystemNodeOperationsBase::access(const FsContext &context,
+                                         const FilesystemOperationContext &fsOpContext,
+                                         FSNode *node, uint8_t modeMask) {
 	if ((context.sesflags() & SESFLAG_NOMASTERPERMCHECK) || context.uid() == 0) {
 		return 1;  // super user or no permission check
 	}
 
-	const RichACL *nodeAcl = gMetadata->aclStorage.get(node->id);
+	std::optional<RichACL> aclScratch;  // not constructed here; KV backends emplace() as needed
+	const RichACL *nodeAcl = getAclForAccess(fsOpContext, node, aclScratch);
 
 	// If ACLs are present, use it for permission checking
 	if (nodeAcl != nullptr) {
@@ -2238,7 +2253,7 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(
 		return SAUNAFS_ERROR_EPERM;
 	}
 
-	if (context.canCheckPermissions() && !access(context, candidateNode, modeMask)) {
+	if (context.canCheckPermissions() && !access(context, fsOpContext, candidateNode, modeMask)) {
 		return SAUNAFS_ERROR_EACCES;
 	}
 

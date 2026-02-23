@@ -772,7 +772,22 @@ int do_deleteacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr
 		safs_pretty_syslog(LOG_ERR, "%s:%" PRIu64 ": corrupted ACL type", filename, lv);
 		return -1;
 	}
-	return gFSOperations->deleteAcl(FsContext::getForRestore(ts), inode, aclType);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status =
+	    gFSOperations->deleteAcl(FsContext::getForRestore(ts), fsOpContext, inode, aclType);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, ACL type {}", __func__,
+			              inode, aclTypeRaw);
+			return SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_setacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -789,8 +804,21 @@ int do_setacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	GETPATH(aclString, aclSize, ptr, filename, lv, ')');
 	EAT(ptr, filename, lv, ')');
 
-	return gFSOperations->applySetAcl(ts, inode, aclType,
-	                                  reinterpret_cast<const char *>(aclString));
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applySetAcl(fsOpContext, ts, inode, aclType,
+	                                        reinterpret_cast<const char *>(aclString));
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, ACL type {}", __func__,
+			              inode, aclType);
+			return SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_setrichacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -804,10 +832,23 @@ int do_setrichacl(const char *filename, uint64_t lv, uint32_t ts, const char *pt
 	GETPATH(acl_string, acl_size, ptr, filename, lv, ')');
 	EAT(ptr, filename, lv, ')');
 
-	return gFSOperations->applySetRichAcl(ts, inode, reinterpret_cast<const char *>(acl_string));
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applySetRichAcl(fsOpContext, ts, inode,
+	                                            reinterpret_cast<const char *>(acl_string));
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			return SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
-int do_setquota(const char *filename, uint64_t lv, uint32_t, const char *ptr) {
+int do_setquota(const char *filename, uint64_t lv, uint32_t /*ts*/, const char *ptr) {
 	char rigor = '\0', resource = '\0', ownerType = '\0';
 	inode_t ownerId;
 	uint64_t limit;
