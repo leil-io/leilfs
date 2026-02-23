@@ -53,3 +53,5 @@ generateFiles
 # finishes validating files and sometimes it gets stuck
 # drop_caches
 # validateFiles
+
+saunafs_chunkserver_daemon 0 stop

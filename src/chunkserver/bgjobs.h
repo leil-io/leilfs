@@ -139,6 +139,17 @@ public:
 	/// @return The ID of the added lock job.
 	uint32_t addLockJob(JobCallback callback, void *extra, uint32_t listenerId = 0);
 
+	/// @brief Returns whether all jobs in the JobPool have been processed by the worker threads.
+	/// This is a very accurate way to check if there are pending jobs in the JobPool, as it counts
+	/// the number of jobs that have been added but not yet passed by processCompletedJobs. Must
+	/// not be used for the masterConn's jobPool due to the special behavior of the lock jobs.
+	bool allJobsProcessed() const;
+
+	/// @brief Checks if the JobPool has no jobs and no status to be sent.
+	/// This function is a lighter version of allJobsProcessed that can be used for the masterConn's
+	/// jobPool to check if it is idle.
+	bool isEmpty();
+
 	/// @brief Gets the number of jobs in the JobPool.
 	uint32_t getJobCount() const;
 
@@ -303,6 +314,10 @@ private:
 	uint8_t workers;                                   /// Number of worker threads in the pool.
 	std::vector<std::thread> workerThreads;            /// Vector of worker threads.
 	std::unique_ptr<ProducerConsumerQueue> jobsQueue;  /// Queue for jobs.
+	/// Counter for unprocessed jobs, i.e jobs that have been added to the JobPool but have not yet
+	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
+	/// sure the JobPool is truly empty when stopping the chunkserver.
+	std::atomic<uint32_t> unprocessedJobs_{0};
 };
 
 /// @brief Adds an open job to the JobPool.

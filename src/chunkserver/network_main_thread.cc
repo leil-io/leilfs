@@ -35,6 +35,7 @@
 #include "chunkserver/chunk_replicator.h"
 #include "chunkserver/g_limiters.h"
 #include "chunkserver/hdd_readahead.h"
+#include "chunkserver/masterconn.h"
 #include "chunkserver/network_main_thread.h"
 #include "chunkserver/network_worker_thread.h"
 #include "common/cwrap.h"
@@ -210,15 +211,23 @@ void mainNetworkThreadWantExit(void) {
 	gDoTerminate.store(true);
 }
 
-int mainNetworkThreadCanExit(void) {
+bool networkThreadsCanExit() {
 	TRACETHIS();
 	bool allTerminated = true;
 	for (auto &threadObject : networkThreadObjects) {
-		if (!threadObject.updateAndCheckTerminationStatus()) {
-			allTerminated = false;
-		}
+		if (!threadObject.updateAndCheckTerminationStatus()) { allTerminated = false; }
 	}
-	return allTerminated ? 1 : 0;
+	return allTerminated;
+}
+
+int mainNetworkThreadCanExit() {
+	// Preserve this order:
+	// networkThreadsCanExit() must be checked before masterconn_canexit().
+	// If masterconn_canexit() is checked first, a network worker may still be processing an
+	// endChunkLock, which could add statuses to the masterconn job pool after masterconn_canexit()
+	// returns true. This could lead to the chunkserver exiting prematurely while holding chunk
+	// locks that have not been replied to the master.
+	return networkThreadsCanExit() && masterconn_canexit();
 }
 
 void mainNetworkThreadTerm(void) {

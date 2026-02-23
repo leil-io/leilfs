@@ -144,12 +144,10 @@ JobPool* masterconn_get_job_pool() {
 	return gJobPool.get();
 }
 
-int masterconn_canexit(void) {
-	if (gJobPool->getJobCount() == 0 && gReplicationJobPool->getJobCount() == 0 &&
-	    gMasterConnSingleton->isOutputQueueEmpty()) {
-		return 1;
-	}
-	return 0;
+bool masterconn_canexit() {
+	return gMasterConnSingleton->mode() != ConnectionMode::CONNECTED ||
+	       (gJobPool->isEmpty() && gReplicationJobPool->isEmpty() &&
+	        gMasterConnSingleton->isOutputQueueEmpty());
 }
 
 void masterconn_term(void) {
@@ -321,7 +319,6 @@ int masterconn_init(void) {
 	    eventloop_timeregister(TIMEMODE_RUN_LATE, reconnectionDelay,
 	                           rnd_ranged<uint32_t>(reconnectionDelay), masterconn_reconnect);
 
-	eventloop_canexitregister(masterconn_canexit);
 	eventloop_destructregister(masterconn_term);
 	eventloop_pollregister(masterconn_desc, masterconn_serve);
 	eventloop_reloadregister(masterconn_reload);
