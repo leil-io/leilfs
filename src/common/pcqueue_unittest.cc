@@ -19,6 +19,7 @@
 #include "common/pcqueue.h"
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -305,6 +306,59 @@ TEST(ProducerConsumerQueueTests, MultiplePrioritiesConcurrent) {
 
 	for (auto &producer : producers) { producer.join(); }
 	for (auto &consumer : consumers) { consumer.join(); }
+
+	EXPECT_TRUE(queue.isEmpty());
+}
+
+// Test expected order of retrieval with custom priority levels
+TEST(ProducerConsumerQueueTests, GetWithCustomPriority) {
+	const int kPriorityLevels = 10;
+	const int kTotalInsertions = 1000;
+	const int kBiggerMaxQueueSize = 1000000;
+
+	ProducerConsumerQueueWithPriority queue(kPriorityLevels, kBiggerMaxQueueSize, customDeleter);
+	std::vector<int> frequency(kPriorityLevels, 0);
+	std::vector<uint8_t> priorityLevelsToCheck(kPriorityLevels);
+	std::iota(priorityLevelsToCheck.begin(), priorityLevelsToCheck.end(), 0);
+
+	const uint32_t kSeed = 123456789U;
+	std::mt19937 rng(kSeed);
+
+	for (int i = 0; i < kTotalInsertions; ++i) {
+		uint32_t basePriority = rng();
+		uint32_t priority = basePriority % kPriorityLevels;
+		uint8_t *data = nullptr;
+		if (queue.tryPut(basePriority, priority, data, kMaxLength, priority)) {
+			frequency[priority]++;
+		}
+	}
+
+	for (int i = 0; i < kTotalInsertions; ++i) {
+		uint32_t jobId = 0;
+		uint32_t jobType = 0;
+		uint32_t length = 0;
+		uint8_t *retrievedData = nullptr;
+
+		std::shuffle(priorityLevelsToCheck.begin(), priorityLevelsToCheck.end(), rng);
+		queue.getUsingCustomPriority(&jobId, &jobType, &retrievedData, &length,
+		                             priorityLevelsToCheck);
+
+		EXPECT_EQ(length, kMaxLength);
+		EXPECT_EQ(retrievedData, nullptr);
+
+		auto basePriority = jobId;
+		auto priority = jobType;
+		EXPECT_EQ(priority, basePriority % kPriorityLevels);
+
+		// All higher priorities (given the custom priority order) should have been consumed already
+		for (uint32_t j = 0; j < kPriorityLevels; ++j) {
+			if (priorityLevelsToCheck[j] == priority) { break; }
+			EXPECT_EQ(frequency[priorityLevelsToCheck[j]], 0); 
+		}
+
+		EXPECT_GT(frequency[priority], 0);
+		frequency[priority]--;
+	}
 
 	EXPECT_TRUE(queue.isEmpty());
 }

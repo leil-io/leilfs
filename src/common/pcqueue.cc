@@ -117,6 +117,16 @@ void ProducerConsumerQueueWithPriority::get(uint32_t *jobId, uint32_t *jobType, 
 	get_(jobId, jobType, data, length);
 }
 
+void ProducerConsumerQueueWithPriority::getUsingCustomPriority(
+    uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length,
+    std::span<const uint8_t> priorityLevelsToCheck) {
+	TRACETHIS();
+	std::unique_lock<std::mutex> lock(mutex_);
+	notEmpty_.wait(lock, [this] { return currentSize_ > 0; });
+
+	getUsingCustomPriority_(jobId, jobType, data, length, priorityLevelsToCheck);
+}
+
 bool ProducerConsumerQueueWithPriority::tryGet(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
                                                uint32_t *length) {
 	TRACETHIS();
@@ -181,6 +191,20 @@ void ProducerConsumerQueueWithPriority::get_(uint32_t *jobId, uint32_t *jobType,
 	for (auto &queue : queuesByPriority_) {
 		if (!queue.empty()) {
 			notEmptyQueue = &queue;
+			break;
+		}
+	}
+
+	retrieveFromQueue_(jobId, jobType, data, length, notEmptyQueue);
+}
+
+void ProducerConsumerQueueWithPriority::getUsingCustomPriority_(
+    uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length,
+    std::span<const uint8_t> priorityLevelsToCheck) {
+	std::queue<QueueEntry> *notEmptyQueue = nullptr;
+	for (auto priority : priorityLevelsToCheck) {
+		if (priority < queuesByPriority_.size() && !queuesByPriority_[priority].empty()) {
+			notEmptyQueue = &queuesByPriority_[priority];
 			break;
 		}
 	}
