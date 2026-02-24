@@ -115,12 +115,14 @@ void xattr_recalculate_checksum() {
 
 void xattr_removeinode(inode_t inode) {
 	XAttributeInodeEntry *xattrInodeEntry = nullptr;
+	bool hadEntries = false;
 
 	auto hash = get_xattr_inode_hash(inode);
 	auto &bucket = gMetadata->xattrInodeHash[hash];
 	for (auto attributeIterator = bucket.begin(); attributeIterator != bucket.end();) {
 		xattrInodeEntry = attributeIterator->get();
 		if (xattrInodeEntry->inode == inode) {
+			hadEntries = true;
 			while (!xattrInodeEntry->xattrDataEntries.empty()) {
 				xattr_removeentry(xattrInodeEntry, xattrInodeEntry->xattrDataEntries.front());
 			}
@@ -128,6 +130,10 @@ void xattr_removeinode(inode_t inode) {
 		} else {
 			++attributeIterator;
 		}
+	}
+
+	if (hadEntries) {
+		gXAttrInodeRemovedSignal.emit(inode);
 	}
 }
 

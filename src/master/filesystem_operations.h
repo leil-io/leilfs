@@ -224,18 +224,27 @@ public:
 	uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                GoalStatistics &dgtab) override;
-	uint8_t getXAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
-	                 inode_t inode, uint8_t opened, uint8_t anleng, const uint8_t *attrname,
-	                 uint32_t *avleng, uint8_t **attrvalue) override;
 	uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                     ExtraAttributesArray &fileEAttrTab,
 	                     ExtraAttributesArray &dirEAttrTab) override;
-	uint8_t listXAttrLeng(const FsContext &context,
-	                      const FilesystemOperationContext &fsOpContext, inode_t inode,
-	                      uint8_t opened, void **xanode, uint32_t *xasize) override;
-	uint8_t setXAttr(const FsContext &context, inode_t inode, uint8_t opened, uint8_t anleng,
-	                 const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
-	                 uint8_t mode) override;
+
+	/// Lists extended attribute names for an inode.
+	/// @see IFilesystemOperations::listXAttr
+	uint8_t listXAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                  inode_t inode, uint8_t opened, XAttrListResult &result,
+	                  uint32_t *xasize) override;
+
+	/// Retrieves the value of a single extended attribute.
+	/// @see IFilesystemOperations::getXAttr
+	uint8_t getXAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                 inode_t inode, uint8_t opened, uint8_t anleng, const uint8_t *attrname,
+	                 XAttrGetResult &result) override;
+
+	/// Sets, replaces, or removes an extended attribute on an inode.
+	/// @see IFilesystemOperations::setXAttr
+	uint8_t setXAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                 inode_t inode, uint8_t opened, uint8_t anleng, const uint8_t *attrname,
+	                 uint32_t avleng, const uint8_t *attrvalue, uint8_t mode) override;
 
 	/// Removes (unlinks) a file or non-directory node from the filesystem.
 	/// @see IFilesystemOperations::unlink
@@ -267,7 +276,6 @@ public:
 	                 uint64_t chunkid, uint32_t lockid) override;
 	void getTrashTimeStore(TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes,
 	                       uint8_t *buff) override;
-	void listXAttrData(void *xanode, uint8_t *xabuff) override;
 
 	uint32_t newSessionId() override;
 
@@ -341,9 +349,9 @@ public:
 	                    inode_t inode, uint64_t length, bool eraseFurtherChunks) override;
 	uint8_t applyRepair(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
 	                    inode_t inode, uint32_t indx, uint32_t nversion) override;
-	uint8_t applySetXAttr(uint32_t timestamp, inode_t inode, uint32_t anleng,
-	                      const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
-	                      uint32_t mode) override;
+	uint8_t applySetXAttr(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                      inode_t inode, uint32_t anleng, const uint8_t *attrname, uint32_t avleng,
+	                      const uint8_t *attrvalue, uint32_t mode) override;
 	uint8_t applySetAcl(uint32_t timestamp, inode_t inode, char aclType,
 	                    const char *aclString) override;
 	uint8_t applySetRichAcl(uint32_t timestamp, inode_t inode,
@@ -408,6 +416,42 @@ public:
 	/// @see IFilesystemOperations::fs_locks_remove_pending.
 	int locksRemovePending(const FsContext &context, uint8_t type, uint64_t ownerid,
 	                       uint32_t sessionid, inode_t inode, uint64_t reqid) override;
+
+protected:
+	/// Backend-specific hook for retrieving an xattr value.
+	/// Default implementation reads from in-memory hash tables.
+	/// @param fsOpContext Operation context (provides transaction for KV backends).
+	/// @param inode The inode to retrieve the attribute from.
+	/// @param anleng Length of the attribute name.
+	/// @param attrname The attribute name bytes.
+	/// @param[out] result Populated with an owned copy of the attribute value.
+	virtual uint8_t doConcreteGetXAttr(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode,
+	    uint8_t anleng, const uint8_t *attrname, XAttrGetResult &result);
+
+	/// Backend-specific hook for listing xattr names for an inode.
+	/// Default implementation reads from in-memory hash tables.
+	/// @param fsOpContext Operation context (provides transaction for KV backends).
+	/// @param inode The inode to list attributes for.
+	/// @param[out] result Populated with serialized xattr name data.
+	/// @param[in,out] xasize Pre-initialized with sizeof(kAclXattrs); add name sizes here.
+	virtual uint8_t doConcreteListXAttr(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode,
+	    XAttrListResult &result, uint32_t *xasize);
+
+	/// Backend-specific hook for setting/removing an xattr.
+	/// Default implementation modifies in-memory hash tables.
+	/// @param fsOpContext Operation context (provides transaction for KV backends).
+	/// @param inode The inode to set/remove the attribute on.
+	/// @param anleng Length of the attribute name.
+	/// @param attrname The attribute name bytes.
+	/// @param avleng Length of the attribute value.
+	/// @param attrvalue The attribute value bytes.
+	/// @param mode One of XATTR_SMODE_* (create, replace, remove, etc.).
+	virtual uint8_t doConcreteSetXAttr(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode,
+	    uint8_t anleng, const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
+	    uint32_t mode);
 
 private:
 	/// Helper function used internally by `fs_flock_op` and `fs_posixlock_op`.

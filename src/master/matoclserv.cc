@@ -3694,10 +3694,9 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr, const uint8_t *data, uint32
 		put32bit(&ptr, msgid);
 		put8bit(&ptr, SAUNAFS_ERROR_EINVAL);
 	} else if (anleng == 0) {
-		void *xanode;
+		XAttrListResult listResult;
 		uint32_t xasize;
-		status =
-		    gFSOperations->listXAttrLeng(context, fsOpContext, inode, opened, &xanode, &xasize);
+		status = gFSOperations->listXAttr(context, fsOpContext, inode, opened, listResult, &xasize);
 		const uint32_t kSuccessSize =
 		    sizeof(msgid) + sizeof(xasize) + ((mode == XATTR_GMODE_GET_DATA) ? xasize : 0);
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_GETXATTR,
@@ -3710,14 +3709,18 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr, const uint8_t *data, uint32
 		} else {
 			put32bit(&ptr, xasize);
 			if (mode == XATTR_GMODE_GET_DATA && xasize > 0) {
-				gFSOperations->listXAttrData(xanode, ptr);
+				memcpy(ptr, kAclXattrs, sizeof(kAclXattrs));
+				if (!listResult.data.empty()) {
+					memcpy(ptr + sizeof(kAclXattrs), listResult.data.data(),
+					       listResult.data.size());
+				}
 			}
 		}
 	} else {
-		uint8_t *attrvalue;
-		uint32_t avleng;
+		XAttrGetResult getResult;
 		status = gFSOperations->getXAttr(context, fsOpContext, inode, opened, anleng, attrname,
-		                                 &avleng, &attrvalue);
+		                                 getResult);
+		uint32_t avleng = static_cast<uint32_t>(getResult.value.size());
 		const uint32_t kSuccessSize =
 		    sizeof(msgid) + sizeof(avleng) + ((mode == XATTR_GMODE_GET_DATA) ? avleng : 0);
 		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_GETXATTR,
@@ -3729,7 +3732,9 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr, const uint8_t *data, uint32
 			put8bit(&ptr, status);
 		} else {
 			put32bit(&ptr, avleng);
-			if (mode == XATTR_GMODE_GET_DATA && avleng > 0) { memcpy(ptr, attrvalue, avleng); }
+			if (mode == XATTR_GMODE_GET_DATA && avleng > 0) {
+				memcpy(ptr, getResult.value.data(), avleng);
+			}
 		}
 	}
 }
@@ -3794,8 +3799,20 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr, const uint8_t *data, uint32
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->setXAttr(context, inode, opened, anleng, attrname, avleng,
-		                                 attrvalue, mode);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->setXAttr(context, fsOpContext, inode, opened, anleng, attrname,
+		                                 avleng, attrvalue, mode);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}, attrname {}", __func__,
+				              inode,
+				              std::string_view(reinterpret_cast<const char *>(attrname), anleng));
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_SETXATTR, sizeof(msgid) + sizeof(status));

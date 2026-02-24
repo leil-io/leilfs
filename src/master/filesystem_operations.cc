@@ -55,8 +55,6 @@
 #include "protocol/matocl.h"
 #include "slogger/slogger.h"
 
-[[maybe_unused]] static const char kAclXattrs[] = "system.richacl";
-
 inline bool isDepletedSpace() {
 	uint64_t totalSpace = 0;
 	uint64_t availableSpace = 0;
@@ -3089,10 +3087,10 @@ uint8_t FilesystemOperationsBase::setExtraAttr(const FsContext &context, inode_t
 
 #ifndef METARESTORE
 
-uint8_t FilesystemOperationsBase::listXAttrLeng(const FsContext &context,
-                                                const FilesystemOperationContext &fsOpContext,
-                                                inode_t inode, uint8_t opened, void **xanode,
-                                                uint32_t *xasize) {
+uint8_t FilesystemOperationsBase::listXAttr(const FsContext &context,
+                                            const FilesystemOperationContext &fsOpContext,
+                                            inode_t inode, uint8_t opened, XAttrListResult &result,
+                                            uint32_t *xasize) {
 	FSNode *p;
 
 	uint8_t status =
@@ -3108,15 +3106,32 @@ uint8_t FilesystemOperationsBase::listXAttrLeng(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	*xasize = sizeof(kAclXattrs);
-	return get_xattrs_length_for_inode(p->id, xanode, xasize);
+	return doConcreteListXAttr(fsOpContext, p->id, result, xasize);
 }
 
-void FilesystemOperationsBase::listXAttrData(void *xanode, uint8_t *xabuff) {
-	memcpy(xabuff, kAclXattrs, sizeof(kAclXattrs));
-	xattr_listattr_data(xanode, xabuff + sizeof(kAclXattrs));
+uint8_t FilesystemOperationsBase::getXAttr(const FsContext &context,
+                                           const FilesystemOperationContext &fsOpContext,
+                                           inode_t inode, uint8_t opened, uint8_t anleng,
+                                           const uint8_t *attrname, XAttrGetResult &result) {
+	FSNode *p;
+
+	uint8_t status =
+	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
+	                                              opened == 0 ? MODE_MASK_R : MODE_MASK_EMPTY,
+	                                              inode, &p);
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	if (xattr_namecheck(anleng, attrname) < 0) { return SAUNAFS_ERROR_EINVAL; }
+	return doConcreteGetXAttr(fsOpContext, p->id, anleng, attrname, result);
 }
 
-uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context, inode_t inode, uint8_t opened,
+uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
+                                           const FilesystemOperationContext &fsOpContext,
+                                           inode_t inode, uint8_t opened,
                                            uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
                                            const uint8_t *attrvalue, uint8_t mode) {
 	uint32_t ts = eventloop_time();
@@ -3130,9 +3145,6 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context, inode_t ino
 		return status;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              opened == 0 ? MODE_MASK_W : MODE_MASK_EMPTY,
 	                                              inode, &p);
@@ -3145,7 +3157,7 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context, inode_t ino
 	if (mode > XATTR_SMODE_REMOVE) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	status = xattr_setattr(p->id, anleng, attrname, avleng, attrvalue, mode);
+	status = doConcreteSetXAttr(fsOpContext, p->id, anleng, attrname, avleng, attrvalue, mode);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
@@ -3158,34 +3170,50 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context, inode_t ino
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::getXAttr(const FsContext &context,
-                                           const FilesystemOperationContext &fsOpContext,
-                                           inode_t inode, uint8_t opened, uint8_t anleng,
-                                           const uint8_t *attrname, uint32_t *avleng,
-                                           uint8_t **attrvalue) {
-	FSNode *p;
+#endif /* #ifndef METARESTORE */
 
-	uint8_t status =
-	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+uint8_t FilesystemOperationsBase::doConcreteGetXAttr(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode, uint8_t anleng,
+    const uint8_t *attrname, XAttrGetResult &result) {
+	uint32_t avleng = 0;
+	uint8_t *attrvalue = nullptr;  // Assigned by xattr_getattr
 
-	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
-	                                              opened == 0 ? MODE_MASK_R : MODE_MASK_EMPTY,
-	                                              inode, &p);
+	uint8_t status = xattr_getattr(inode, anleng, attrname, &avleng, &attrvalue);
 
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	if (xattr_namecheck(anleng, attrname) < 0) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
-	return xattr_getattr(p->id, anleng, attrname, avleng, attrvalue);
+	result.value.assign(attrvalue, attrvalue + avleng);
+
+	return SAUNAFS_STATUS_OK;
 }
 
-#endif /* #ifndef METARESTORE */
+uint8_t FilesystemOperationsBase::doConcreteListXAttr(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode,
+    XAttrListResult &result, uint32_t *xasize) {
+	void *xanode = nullptr;  // Assigned by get_xattrs_length_for_inode
 
-uint8_t FilesystemOperationsBase::applySetXAttr(uint32_t timestamp, inode_t inode, uint32_t anleng,
+	uint8_t status = get_xattrs_length_for_inode(inode, &xanode, xasize);
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	uint32_t nameDataSize = *xasize - sizeof(kAclXattrs);
+
+	if (nameDataSize > 0 && xanode != nullptr) {
+		result.data.resize(nameDataSize);
+		xattr_listattr_data(xanode, result.data.data());
+	}
+
+	return SAUNAFS_STATUS_OK;
+}
+
+uint8_t FilesystemOperationsBase::doConcreteSetXAttr(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode, uint8_t anleng,
+    const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue, uint32_t mode) {
+	return xattr_setattr(inode, anleng, attrname, avleng, attrvalue, mode);
+}
+
+uint8_t FilesystemOperationsBase::applySetXAttr(const FilesystemOperationContext &fsOpContext,
+                                                uint32_t timestamp, inode_t inode, uint32_t anleng,
                                                 const uint8_t *attrname, uint32_t avleng,
                                                 const uint8_t *attrvalue, uint32_t mode) {
 	FSNode *p;
@@ -3195,14 +3223,11 @@ uint8_t FilesystemOperationsBase::applySetXAttr(uint32_t timestamp, inode_t inod
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	p = nodeOperations_->idToNode(inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	status = xattr_setattr(inode, anleng, attrname, avleng, attrvalue, mode);
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
+	status = doConcreteSetXAttr(fsOpContext, inode, static_cast<uint8_t>(anleng), attrname, avleng,
+	                            attrvalue, mode);
 
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 	nodeOperations_->updateCTime(p, timestamp);
 	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(p);

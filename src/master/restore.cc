@@ -735,8 +735,21 @@ int do_setxattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr)
 	EAT(ptr,filename,lv,',');
 	GETU32(mode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->applySetXAttr(ts, inode, strlen((char *)name), name, valueleng, value,
-	                                    mode);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applySetXAttr(fsOpContext, ts, inode, strlen((char *)name), name,
+	                                          valueleng, value, mode);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_deleteacl(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
