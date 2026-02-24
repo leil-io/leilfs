@@ -59,22 +59,22 @@ public:
 
 	/// @enum ChunkOperation
 	/// @brief Represents the type of operation to be performed on a chunk.
-	enum ChunkOperation {
-		Exit,
-		Invalid,
-		ChangeVersion,
-		Duplicate,
-		Truncate,
-		DuplicateTruncate,
-		Delete,
-		Create,
-		Open,
-		Close,
-		Read,
-		Prefetch,
-		Write,
-		Replicate,
-		GetBlocks
+	enum ChunkOperation : uint8_t {
+		Exit,     ///< Special operation to signal worker threads to exit. Master and client.
+		Invalid,  ///< Invalid operation, used for testing and error handling. Master and client.
+		ChangeVersion,      ///< Change the version of a chunk. Master only.
+		Duplicate,          ///< Duplicate a chunk. Master only.
+		Truncate,           ///< Truncate a chunk. Master only.
+		DuplicateTruncate,  ///< Duplicate and truncate a chunk. Master only.
+		Delete,             ///< Delete a chunk. Master only.
+		Create,             ///< Create a chunk. Master only.
+		Replicate,          ///< Replicate a chunk. Master only.
+		Open,               ///< Open a chunk for reading or writing. Client only.
+		Close,              ///< Close a chunk. Client only.
+		GetBlocks,          ///< Get the blocks of a chunk. Client (actually other CS) only.
+		Read,               ///< Read data from a chunk. Client only.
+		Prefetch,           ///< Prefetch data from a chunk. Client only.
+		Write               ///< Write data to a chunk. Client only.
 	};
 
 	/// @brief Callback function type for job completion.
@@ -101,8 +101,17 @@ public:
 	/// @param nrListeners The number of listeners that will use this JobPool.
 	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
 	/// @throws std::runtime_error If the pipe creation fails.
+	/// @note After construction, call start() to spawn worker threads. This two-phase
+	///       init avoids a vtable-pointer race when constructing derived classes.
 	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
 	        std::vector<int> &wakeupFDs);
+
+	/// @brief Spawns the worker threads.
+	///
+	/// Must be called once, after the fully-derived object has been constructed, so
+	/// that virtual dispatch in the worker threads resolves correctly. Calling it
+	/// more than once or before the object is fully constructed is undefined behaviour.
+	void startWorkers();
 
 	/// @brief Destructor for JobPool.
 	~JobPool();
@@ -117,27 +126,6 @@ public:
 	/// @return The ID of the added job.
 	uint32_t addJob(ChunkOperation operation, JobCallback callback, void *extra,
 	                ProcessJobCallback processJob, uint32_t listenerId = 0);
-
-	/// @brief Adds a job to the JobPool if the chunk is not locked.
-	/// If the chunk is locked, the job will be stored and added once the lock is released.
-	/// @param chunkWithType The chunk and its type associated with the job.
-	/// @param operation The type of operation to be performed on the chunk.
-	/// @param callback The callback function to be called upon job completion.
-	/// @param extra Additional data to be passed to the callback.
-	/// @param processJob The callback function to process the job.
-	/// @param listenerId The ID of the listener associated with the job.
-	/// @return The ID of the added job, or the lock job ID if the chunk is locked.
-	uint32_t addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
-	                           JobCallback callback, void *extra, ProcessJobCallback processJob,
-	                           uint32_t listenerId = 0);
-
-	/// @brief Adds a lock job to the JobPool for a specific chunk and type.
-	/// This function is used to create a lock job that will be associated with a locked chunk.
-	/// @param callback The callback function to be called when the lock is released.
-	/// @param extra Additional data to be passed to the callback.
-	/// @param listenerId The ID of the listener associated with the job.
-	/// @return The ID of the added lock job.
-	uint32_t addLockJob(JobCallback callback, void *extra, uint32_t listenerId = 0);
 
 	/// @brief Returns whether all jobs in the JobPool have been processed by the worker threads.
 	/// This is a very accurate way to check if there are pending jobs in the JobPool, as it counts
@@ -196,62 +184,7 @@ public:
 	void changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback,
 	                    uint32_t listenerId = 0);
 
-	/// @brief Starts a chunk lock job for a specific chunk and type.
-	/// This function is triggered when the master server sends a chunk lock request for a chunk
-	/// that is not currently locked. It adds a lock job to the JobPool and associates it with the
-	/// locked chunk. If the chunk is already locked, it returns false and does not add a new job,
-	/// as the existing lock job will be responsible for handling the lock.
-	/// @param callback The callback function to be called when the lock is released.
-	/// @param packet The packet to be sent to the master server with the write end status.
-	/// @param chunkId The ID of the chunk to be locked.
-	/// @param chunkType The type of the chunk to be locked.
-	/// @param listenerId The ID of the listener associated with the job.
-	/// @return true if the lock job was successfully added, false if the chunk is already locked.
-	bool startChunkLock(const JobPool::JobCallback &callback, void *packet, uint64_t chunkId,
-	                    ChunkPartType chunkType, uint32_t listenerId = 0);
-
-	/// @brief Enforces a chunk lock for a specific chunk and type.
-	/// This function is called when the client sends a write initialization for a chunk that is
-	/// already locked, to ensure that the lock is properly enforced. From now on, the master
-	/// requests on the locked chunk will wait for the lock to be released before being processed.
-	/// @param chunkId The ID of the chunk to enforce the lock on.
-	/// @param chunkType The type of the chunk to enforce the lock on.
-	/// @return true if the lock was successfully enforced, false if no lock job was found for the
-	/// chunk.
-	bool enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType);
-
-	/// @brief Releases a chunk lock entry for a specific chunk and type.
-	/// This is a helper function that returns the lock job ID, listener ID, and pending jobs
-	/// associated with a locked chunk if found, and removes the lock entry from the internal map.
-	/// @param chunkId The ID of the chunk to release the lock on.
-	/// @param chunkType The type of the chunk to release the lock on.
-	/// @param callerName The name of the function calling this helper, used for logging.
-	/// @param lockJobId The ID of the lock job associated with the chunk.
-	/// @param listenerId The ID of the listener associated with the lock job.
-	/// @param pendingAddJobs The list of pending jobs associated with the locked chunk.
-	/// @return true if the lock entry was found and released, false otherwise.
-	bool releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType, const char *callerName,
-	                           uint32_t &lockJobId, uint32_t &listenerId,
-	                           std::vector<AddJobFunc> &pendingAddJobs);
-
-	/// @brief Ends a chunk lock for a specific chunk and type.
-	/// This function is called when cleaning up the write operation on the locked chunk, to end the
-	/// lock and allow any pending jobs to be added and processed. It sends the write end status to
-	/// the master server and removes the lock job from the JobPool.
-	/// @param chunkId The ID of the chunk to end the lock on.
-	/// @param chunkType The type of the chunk to end the lock on.
-	/// @param status The status to be sent to the master server for the write end.
-	void endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status);
-
-	/// @brief Erases a chunk lock for a specific chunk and type.
-	/// This function is called when the master server sends a chunk unlock request for a chunk that
-	/// is currently locked. It removes the lock job from the JobPool and allows any pending jobs
-	/// that were waiting for the lock to be released to be added and processed.
-	/// @param chunkId The ID of the chunk to erase the lock on.
-	/// @param chunkType The type of the chunk to erase the lock on.
-	void eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType);
-
-private:
+protected:
 	/// @brief Represents a job in the JobPool.
 	struct Job {
 		uint32_t jobId;                 // The ID of the job.
@@ -292,6 +225,93 @@ private:
 		uint32_t nextJobId;                                          /// Next job ID to be assigned.
 	};
 
+	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
+	std::string name_;                         /// Human readable id of the JobPool.
+	uint8_t workers;                           /// Number of worker threads in the pool.
+	std::vector<std::thread> workerThreads;    /// Vector of worker threads.
+	std::unique_ptr<ProducerConsumerQueueWithPriority> jobsQueue;  /// Queue for jobs.
+	/// Counter for unprocessed jobs, i.e jobs that have been added to the JobPool but have not yet
+	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
+	/// sure the JobPool is truly empty when stopping the chunkserver.
+	std::atomic<uint32_t> unprocessedJobs_{0};
+};
+
+/**
+ * @class MasterJobPool
+ * @brief Specialized JobPool for managing master server related jobs with chunk lock handling.
+ *
+ * The MasterJobPool class extends the JobPool class to provide additional functionality for
+ * managing jobs related to master server operations, including handling chunk locks.
+ */
+class MasterJobPool : public JobPool {
+public:
+	/// @brief Constructor for MasterJobPool.
+	/// @param name Human readable name for this pool, useful for debugging.
+	/// @param workers The number of worker threads in the pool.
+	/// @param maxJobs The maximum number of jobs that can be queued.
+	/// @param nrListeners The number of listeners that will use this JobPool.
+	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
+	MasterJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
+	              std::vector<int> &wakeupFDs)
+	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs) {
+		startWorkers();
+	}
+
+	/// @brief Adds a job to the JobPool if the chunk is not locked.
+	/// If the chunk is locked, the job will be stored and added once the lock is released.
+	/// @param chunkWithType The chunk and its type associated with the job.
+	/// @param operation The type of operation to be performed on the chunk.
+	/// @param callback The callback function to be called upon job completion.
+	/// @param extra Additional data to be passed to the callback.
+	/// @param processJob The callback function to process the job.
+	/// @param listenerId The ID of the listener associated with the job.
+	/// @return The ID of the added job, or the lock job ID if the chunk is locked.
+	uint32_t addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
+	                           JobCallback callback, void *extra, ProcessJobCallback processJob,
+	                           uint32_t listenerId = 0);
+
+	/// @brief Starts a chunk lock job for a specific chunk and type.
+	/// This function is triggered when the master server sends a chunk lock request for a chunk
+	/// that is not currently locked. It adds a lock job to the JobPool and associates it with the
+	/// locked chunk. If the chunk is already locked, it returns false and does not add a new job,
+	/// as the existing lock job will be responsible for handling the lock.
+	/// @param callback The callback function to be called when the lock is released.
+	/// @param packet The packet to be sent to the master server with the write end status.
+	/// @param chunkId The ID of the chunk to be locked.
+	/// @param chunkType The type of the chunk to be locked.
+	/// @param listenerId The ID of the listener associated with the job.
+	/// @return true if the lock job was successfully added, false if the chunk is already locked.
+	bool startChunkLock(const JobPool::JobCallback &callback, void *packet, uint64_t chunkId,
+	                    ChunkPartType chunkType, uint32_t listenerId = 0);
+
+	/// @brief Enforces a chunk lock for a specific chunk and type.
+	/// This function is called when the client sends a write initialization for a chunk that is
+	/// already locked, to ensure that the lock is properly enforced. From now on, the master
+	/// requests on the locked chunk will wait for the lock to be released before being processed.
+	/// @param chunkId The ID of the chunk to enforce the lock on.
+	/// @param chunkType The type of the chunk to enforce the lock on.
+	/// @return true if the lock was successfully enforced, false if no lock job was found for the
+	/// chunk.
+	bool enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType);
+
+	/// @brief Ends a chunk lock for a specific chunk and type.
+	/// This function is called when cleaning up the write operation on the locked chunk, to end the
+	/// lock and allow any pending jobs to be added and processed. It sends the write end status to
+	/// the master server and removes the lock job from the JobPool.
+	/// @param chunkId The ID of the chunk to end the lock on.
+	/// @param chunkType The type of the chunk to end the lock on.
+	/// @param status The status to be sent to the master server for the write end.
+	void endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status);
+
+	/// @brief Erases a chunk lock for a specific chunk and type.
+	/// This function is called when the master server sends a chunk unlock request for a chunk that
+	/// is currently locked. It removes the lock job from the JobPool and allows any pending jobs
+	/// that were waiting for the lock to be released to be added and processed.
+	/// @param chunkId The ID of the chunk to erase the lock on.
+	/// @param chunkType The type of the chunk to erase the lock on.
+	void eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType);
+
+private:
 	/// @brief Structure to hold information about a locked chunk.
 	struct LockedChunkData {
 		uint32_t lockJobId;   /// The ID of the lock job associated with the locked chunk.
@@ -307,20 +327,33 @@ private:
 		LockedChunkData() = default;
 	};
 
+	/// @brief Adds a lock job to the JobPool for a specific chunk and type.
+	/// This function is used to create a lock job that will be associated with a locked chunk.
+	/// @param callback The callback function to be called when the lock is released.
+	/// @param extra Additional data to be passed to the callback.
+	/// @param listenerId The ID of the listener associated with the job.
+	/// @return The ID of the added lock job.
+	uint32_t addLockJob(JobCallback callback, void *extra, uint32_t listenerId = 0);
+
+	/// @brief Releases a chunk lock entry for a specific chunk and type.
+	/// This is a helper function that returns the lock job ID, listener ID, and pending jobs
+	/// associated with a locked chunk if found, and removes the lock entry from the internal map.
+	/// @param chunkId The ID of the chunk to release the lock on.
+	/// @param chunkType The type of the chunk to release the lock on.
+	/// @param callerName The name of the function calling this helper, used for logging.
+	/// @param lockJobId The ID of the lock job associated with the chunk.
+	/// @param listenerId The ID of the listener associated with the lock job.
+	/// @param pendingAddJobs The list of pending jobs associated with the locked chunk.
+	/// @return true if the lock entry was found and released, false otherwise.
+	bool releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType, const char *callerName,
+	                           uint32_t &lockJobId, uint32_t &listenerId,
+	                           std::vector<AddJobFunc> &pendingAddJobs);
+
 	/// Mutex to protect access to the chunkToJobReplyMap_.
 	std::mutex chunkToJobReplyMapMutex_;
 	/// Map to associate locked chunks with their corresponding lock job and pending jobs.
 	std::unordered_map<ChunkWithType, LockedChunkData, KeyOperations, KeyOperations>
 	    chunkToJobReplyMap_;
-	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
-	std::string name_;                         /// Human readable id of the JobPool.
-	uint8_t workers;                           /// Number of worker threads in the pool.
-	std::vector<std::thread> workerThreads;    /// Vector of worker threads.
-	std::unique_ptr<ProducerConsumerQueueWithPriority> jobsQueue;  /// Queue for jobs.
-	/// Counter for unprocessed jobs, i.e jobs that have been added to the JobPool but have not yet
-	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
-	/// sure the JobPool is truly empty when stopping the chunkserver.
-	std::atomic<uint32_t> unprocessedJobs_{0};
 };
 
 /// @brief Adds an open job to the JobPool.
@@ -412,7 +445,7 @@ uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, uint64_
 
 /// @brief Adds a replicate job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -422,24 +455,24 @@ uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, uint64_
 /// @param sourcesBuffer The sources buffer.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_replicate(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
+uint32_t job_replicate(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                        uint32_t sourcesBufferSize, const uint8_t *sourcesBuffer,
                        uint32_t listenerId = 0);
 
 /// @brief Adds an invalid job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extra,
+uint32_t job_invalid(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                      uint32_t listenerId = 0);
 
 /// @brief Adds a delete job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -447,12 +480,13 @@ uint32_t job_invalid(JobPool &jobPool, JobPool::JobCallback callback, void *extr
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                    uint32_t chunkVersion, ChunkPartType chunkType, uint32_t listenerId = 0);
+uint32_t job_delete(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                    uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                    uint32_t listenerId = 0);
 
 /// @brief Adds a create job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -460,12 +494,13 @@ uint32_t job_delete(JobPool &jobPool, JobPool::JobCallback callback, void *extra
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra, uint64_t chunkId,
-                    uint32_t chunkVersion, ChunkPartType chunkType, uint32_t listenerId = 0);
+uint32_t job_create(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                    uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                    uint32_t listenerId = 0);
 
 /// @brief Adds a change version job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -474,13 +509,13 @@ uint32_t job_create(JobPool &jobPool, JobPool::JobCallback callback, void *extra
 /// @param newChunkVersion The new version of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                      uint32_t newChunkVersion, uint32_t listenerId = 0);
 
 /// @brief Adds a truncate job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -490,13 +525,13 @@ uint32_t job_version(JobPool &jobPool, const JobPool::JobCallback &callback, voi
 /// @param length The length to truncate to.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+uint32_t job_truncate(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                       uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
                       uint32_t newChunkVersion, uint32_t length, uint32_t listenerId = 0);
 
 /// @brief Adds a duplicate job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -507,14 +542,14 @@ uint32_t job_truncate(JobPool &jobPool, const JobPool::JobCallback &callback, vo
 /// @param chunkVersionCopy The version of the chunk to copy.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+uint32_t job_duplicate(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                        uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                        ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
                        uint32_t listenerId = 0);
 
 /// @brief Adds a duplicate and truncate job to the JobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The MasterJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param extra Additional data to be passed to the callback.
 /// @param chunkId The ID of the chunk.
@@ -526,7 +561,7 @@ uint32_t job_duplicate(JobPool &jobPool, const JobPool::JobCallback &callback, v
 /// @param length The length to truncate to.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_duptrunc(JobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
+uint32_t job_duptrunc(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                       uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkVersion,
                       ChunkPartType chunkType, uint64_t chunkIdCopy, uint32_t chunkVersionCopy,
                       uint32_t length, uint32_t listenerId = 0);

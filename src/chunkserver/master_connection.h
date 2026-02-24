@@ -45,7 +45,7 @@ inline std::string gLabel;
 inline uint32_t gTimeout_ms;
 
 // Forward declaration
-class JobPool;
+class MasterJobPool;
 
 /// @brief Enum representing the connection mode to the Metadata Server (MDS).
 enum class ConnectionMode : std::uint8_t {
@@ -70,8 +70,8 @@ enum class RegistrationStatus : std::uint8_t {
 class MasterConn {
 public:
 	explicit MasterConn(const std::string &masterHostStr, const std::string &masterPortStr,
-	                    const std::string &clusterId, const std::shared_ptr<JobPool> &jobPool,
-	                    const std::shared_ptr<JobPool> &replicationJobPool)
+	                    const std::string &clusterId, const std::shared_ptr<MasterJobPool> &jobPool,
+	                    const std::shared_ptr<MasterJobPool> &replicationJobPool)
 	    : masterHostStr_(masterHostStr),
 	      masterPortStr_(masterPortStr),
 	      clusterId_(clusterId),
@@ -231,8 +231,9 @@ private:
 	std::string masterPortStr_;                     ///< Port of the master server.
 	uint32_t version_{saunafsVersion(0, 0, 0)};     ///< Version of the master server.
 	std::string clusterId_;                         ///< Cluster ID for this connection.
-	std::shared_ptr<JobPool> jobPool_;              ///< Shared reference to the JobPool.
-	std::shared_ptr<JobPool> replicationJobPool_;   ///< Shared reference to the ReplicationJobPool.
+	std::shared_ptr<MasterJobPool> jobPool_;        ///< Shared reference to the JobPool.
+	/// Shared reference to the ReplicationJobPool.
+	std::shared_ptr<MasterJobPool> replicationJobPool_;
 
 	// For compatibility with old masters (version < 5.0)
 	void handleRegistrationAttempt();
