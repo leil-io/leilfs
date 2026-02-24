@@ -466,7 +466,10 @@ void WriteHighLevelOp::prepareInputBufferForWrite(bool isForward) {
 	if (inputBuffer_ == nullptr) {
 		inputBuffer_ = getWriteInputBufferPool().get(
 		    isForward ? kSauWriteDataPrefixSizeForward : kSauWriteDataPrefixSize,
-		    maxBlocksPerHddWriteJob_);
+		    nextInputBufferBlockCount_);
+
+		nextInputBufferBlockCount_ =
+		    std::min<uint16_t>(nextInputBufferBlockCount_ * 2, maxBlocksPerHddWriteJob_);
 	}
 
 	inputBuffer_->addNewWriteOperation();
@@ -573,6 +576,8 @@ void WriteHighLevelOp::cleanup() {
 	partiallyCompletedWrites_.clear();
 	chunkId_ = 0;
 	chunkVersion_ = 0;
+	nextInputBufferBlockCount_ =
+	    std::min(kDefaultInitialNextInputBufferBlockCount, maxBlocksPerHddWriteJob_);
 	chunkType_ = slice_traits::standard::ChunkPartType();
 }
 
