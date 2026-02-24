@@ -74,7 +74,9 @@ static int append_file(const char *fname, const char *afname) {
 
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_APPEND, msgid, inode, ainode, uid, gid);
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_APPEND);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_APPEND,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 		deserializeAllLegacyPacketDataNoHeader(response, msgid, status);
 
 		close_master_conn(0);

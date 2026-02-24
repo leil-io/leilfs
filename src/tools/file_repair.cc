@@ -60,7 +60,9 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 		serializeLegacyPacket(request, CLTOMA_FUSE_REPAIR, msgid, inode, uid, gid,
 		                      correct_only_flag);
 
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_REPAIR);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_REPAIR,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		const uint8_t *rptr = response.data();
 		get32bit(&rptr, msgid);

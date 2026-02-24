@@ -49,7 +49,9 @@ static int check_file(const char *fname) {
 
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_CHECK, msgid, inode);
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_CHECK);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_CHECK,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		close_master_conn(0);
 

@@ -51,7 +51,9 @@ static int dir_info(const char *fname) {
 	try {
 		MessageBuffer request, response;
 		serializeLegacyPacket(request, CLTOMA_FUSE_GETDIRSTATS, msgid, inode);
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_GETDIRSTATS);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_GETDIRSTATS,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		const uint8_t *rptr = response.data();
 		get32bit(&rptr, msgid);

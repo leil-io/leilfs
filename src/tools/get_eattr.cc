@@ -53,7 +53,9 @@ static int get_eattr(const char *fname, uint8_t mode) {
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_GETEATTR, msgid, inode, mode);
 
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_GETEATTR);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_GETEATTR,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		const uint8_t *rptr = response.data();
 

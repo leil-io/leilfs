@@ -76,7 +76,9 @@ static int master_register(int rfd, uint32_t cuid) {
 		serializeLegacyPacket(request, CLTOMA_FUSE_REGISTER, blob, regTools, cuid, majorVer,
 		                      minorVer, microVer);
 
-		response = ServerConnection::sendAndReceive(rfd, request, MATOCL_FUSE_REGISTER);
+		response = ServerConnection::sendAndReceive(
+		    rfd, request, MATOCL_FUSE_REGISTER,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		if (response.size() != sizeof(uint8_t)) {
 			printf("register to master: wrong answer (length)\n");

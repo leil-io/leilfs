@@ -56,7 +56,9 @@ static int get_trashtime(const char *fname, uint8_t mode) {
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_GETTRASHTIME, msgid, inode, mode);
 
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_GETTRASHTIME);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_GETTRASHTIME,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		const uint8_t *rptr = response.data();
 

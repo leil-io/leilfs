@@ -67,7 +67,9 @@ static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
 
 		serializeLegacyPacket(request, CLTOMA_FUSE_SETEATTR, msgid, inode, uid, eattr, mode);
 
-		response = ServerConnection::sendAndReceive(fd, request, MATOCL_FUSE_SETEATTR);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_SETEATTR,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
 		close_master_conn(0);
 
