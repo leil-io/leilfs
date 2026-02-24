@@ -73,7 +73,7 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
 	}
 
 	// Initialize the job queue with a maximum size and two priority levels
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(2, maxJobs);
+	jobsQueue = std::make_unique<ProducerConsumerQueueWithPriority>(2, maxJobs);
 
 	for (uint8_t i = 0; i < workers; ++i) {
 		workerThreads.emplace_back(&JobPool::workerThread, this, name_, i);

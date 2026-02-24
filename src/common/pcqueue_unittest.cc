@@ -31,7 +31,7 @@ const uint32_t kMaxQueueSize = 100;
 
 // Test adding and removing a single element
 TEST(ProducerConsumerQueueTests, SingleElement) {
-	ProducerConsumerQueue queue(1, kMaxSize, customDeleter);
+	ProducerConsumerQueue queue(kMaxSize, customDeleter);
 	auto *data = new uint8_t[kMaxLength];
 	EXPECT_TRUE(queue.tryPut(1, 1, data, kMaxLength));
 
@@ -40,7 +40,7 @@ TEST(ProducerConsumerQueueTests, SingleElement) {
 	uint32_t length = 0;
 	uint8_t *retrievedData = nullptr;
 
-	EXPECT_TRUE(queue.get(&jobId, &jobType, &retrievedData, &length));
+	queue.get(&jobId, &jobType, &retrievedData, &length);
 	EXPECT_EQ(jobId, 1U);
 	EXPECT_EQ(jobType, 1U);
 	EXPECT_EQ(length, kMaxLength);
@@ -49,7 +49,7 @@ TEST(ProducerConsumerQueueTests, SingleElement) {
 
 // Test adding and removing multiple elements
 TEST(ProducerConsumerQueueTests, MultipleElements) {
-	ProducerConsumerQueue queue(1, kMaxQueueSize, customDeleter);
+	ProducerConsumerQueue queue(kMaxQueueSize, customDeleter);
 	for (int i = 0; i < kMaxSize; ++i) {
 		auto *data = new uint8_t[kMaxLength];
 		EXPECT_TRUE(queue.tryPut(i, i, data, kMaxLength));
@@ -61,7 +61,7 @@ TEST(ProducerConsumerQueueTests, MultipleElements) {
 		uint32_t length = 0;
 		uint8_t *retrievedData = nullptr;
 
-		EXPECT_TRUE(queue.get(&jobId, &jobType, &retrievedData, &length));
+		queue.get(&jobId, &jobType, &retrievedData, &length);
 		EXPECT_EQ(jobId, i);
 		EXPECT_EQ(jobType, i);
 		EXPECT_EQ(length, kMaxLength);
@@ -70,7 +70,7 @@ TEST(ProducerConsumerQueueTests, MultipleElements) {
 
 // Test behavior when the queue is full
 TEST(ProducerConsumerQueueTests, QueueFull) {
-	ProducerConsumerQueue queue(1, 2, customDeleter);
+	ProducerConsumerQueue queue(2, customDeleter);
 	auto *data1 = new uint8_t[kMaxLength];
 	auto *data2 = new uint8_t[kMaxLength];
 	auto *data3 = new uint8_t[kMaxLength];
@@ -82,7 +82,7 @@ TEST(ProducerConsumerQueueTests, QueueFull) {
 
 // Test behavior when the queue is empty
 TEST(ProducerConsumerQueueTests, QueueEmpty) {
-	ProducerConsumerQueue queue(1, kMaxSize, customDeleter);
+	ProducerConsumerQueue queue(kMaxSize, customDeleter);
 	uint32_t jobId = 0;
 	uint32_t jobType = 0;
 	uint32_t length = 0;
@@ -95,7 +95,7 @@ TEST(ProducerConsumerQueueTests, MultipleProducers) {
 	const int kMaxProducersSize = 10;
 	const int kMaxInsertionsPerThread = 10;
 
-	ProducerConsumerQueue queue(1, kMaxQueueSize, customDeleter);
+	ProducerConsumerQueue queue(kMaxQueueSize, customDeleter);
 	std::vector<std::thread> producers;
 	producers.reserve(kMaxProducersSize);
 
@@ -117,7 +117,7 @@ TEST(ProducerConsumerQueueTests, MultipleConsumers) {
 	const int kMaxConsumersSize = 10;
 	const int kMaxRemovalsPerThread = 10;
 
-	ProducerConsumerQueue queue(1, kMaxQueueSize, customDeleter);
+	ProducerConsumerQueue queue(kMaxQueueSize, customDeleter);
 	for (uint32_t i = 0; i < kMaxQueueSize; ++i) {
 		auto *data = new uint8_t[kMaxLength];
 		queue.put(i, i, data, 1);
@@ -149,7 +149,7 @@ TEST(ProducerConsumerQueueTests, ProducersAndConsumers) {
 	const int kMaxInsertionsPerThread = 10;
 	const int kMaxRemovalsPerThread = 10;
 
-	ProducerConsumerQueue queue(1, kMaxQueueSize, customDeleter);
+	ProducerConsumerQueue queue(kMaxQueueSize, customDeleter);
 	std::vector<std::thread> producers;
 	producers.reserve(kMaxProducersSize);
 
@@ -192,7 +192,7 @@ TEST(ProducerConsumerQueueTests, CustomDeleter) {
 	};
 
 	{
-		ProducerConsumerQueue queue(1, kMaxSize, customDeleter);
+		ProducerConsumerQueue queue(kMaxSize, customDeleter);
 		auto *data = new uint8_t[kMaxLength];
 		queue.put(1, 1, data, kMaxLength);
 	}
@@ -207,7 +207,7 @@ TEST(ProducerConsumerQueueTests, MultiplePrioritiesBasic) {
 	const int kNumberOfInsertions = kPriorityLevels * kInsertionsPerPriority;
 	const int kBiggerMaxQueueSize = 100000;
 
-	ProducerConsumerQueue queue(kPriorityLevels, kBiggerMaxQueueSize, customDeleter);
+	ProducerConsumerQueueWithPriority queue(kPriorityLevels, kBiggerMaxQueueSize, customDeleter);
 	for (int i = 0; i < kNumberOfInsertions; ++i) {
 		auto *data = new uint8_t[kMaxLength];
 		queue.put(i, i, data, kMaxLength, i % kPriorityLevels);
@@ -219,7 +219,7 @@ TEST(ProducerConsumerQueueTests, MultiplePrioritiesBasic) {
 		uint32_t length = 0;
 		uint8_t *retrievedData = nullptr;
 
-		EXPECT_TRUE(queue.get(&jobId, &jobType, &retrievedData, &length));
+		queue.get(&jobId, &jobType, &retrievedData, &length);
 		EXPECT_EQ(jobId, jobType);
 		/// order should be: 0, 3, 6, 9, ... 1, 4, 7, 10, ... 2, 5, 8, 11, ...
 		/// sorted by priority first (remainder), then by insertion order
@@ -239,7 +239,7 @@ TEST(ProducerConsumerQueueTests, MultiplePrioritiesConcurrent) {
 	const int kNumberOfThreads = 10;
 	const int kBiggerMaxQueueSize = 100000;
 
-	ProducerConsumerQueue queue(kPriorityLevels, kBiggerMaxQueueSize, customDeleter);
+	ProducerConsumerQueueWithPriority queue(kPriorityLevels, kBiggerMaxQueueSize, customDeleter);
 	std::mutex frequencyMutex;
 	std::vector<int> frequency(kPriorityLevels, 0);
 

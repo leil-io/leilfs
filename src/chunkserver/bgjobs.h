@@ -312,11 +312,11 @@ private:
 	/// Map to associate locked chunks with their corresponding lock job and pending jobs.
 	std::unordered_map<ChunkWithType, LockedChunkData, KeyOperations, KeyOperations>
 	    chunkToJobReplyMap_;
-	std::vector<ListenerInfo> listenerInfos_;          /// Vector of listener information.
-	std::string name_;                                 /// Human readable id of the JobPool.
-	uint8_t workers;                                   /// Number of worker threads in the pool.
-	std::vector<std::thread> workerThreads;            /// Vector of worker threads.
-	std::unique_ptr<ProducerConsumerQueue> jobsQueue;  /// Queue for jobs.
+	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
+	std::string name_;                         /// Human readable id of the JobPool.
+	uint8_t workers;                           /// Number of worker threads in the pool.
+	std::vector<std::thread> workerThreads;    /// Vector of worker threads.
+	std::unique_ptr<ProducerConsumerQueueWithPriority> jobsQueue;  /// Queue for jobs.
 	/// Counter for unprocessed jobs, i.e jobs that have been added to the JobPool but have not yet
 	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
 	/// sure the JobPool is truly empty when stopping the chunkserver.

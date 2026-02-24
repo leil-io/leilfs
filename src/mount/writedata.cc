@@ -837,7 +837,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	writeStatsInit();
 
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(1, 0, deleterByType<inodedata>);
+	jobsQueue = std::make_unique<ProducerConsumerQueue>(0, deleterByType<inodedata>);
 
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr, 0x100000);
@@ -1970,7 +1970,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	writeStatsInit();
 
-	jobsQueue = std::make_unique<ProducerConsumerQueue>(1, 0, deleterByType<ChunkData>);
+	jobsQueue = std::make_unique<ProducerConsumerQueue>(0, deleterByType<ChunkData>);
 
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr, 0x100000);
