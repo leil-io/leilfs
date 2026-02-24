@@ -76,6 +76,7 @@ enum class ChunkserverConnectionMode : std::uint8_t {
 
 double gLoadFactorPenalty = 0.;
 bool gPrioritizeDataParts = true;
+bool gSortedServersNeedsRefresh = false;
 
 // A safe threshold of 15 seconds to determine whether chunks registration is in progress and
 // prevent dumping metadata.
@@ -167,6 +168,14 @@ void matocsserv_getserverdata(const matocsserventry *eptr, ChunkserverListEntry 
 csdbentry *matocsserv_get_csdb(matocsserventry *eptr) {
 	assert(eptr);
 	return eptr->csdb;
+}
+
+bool matocsserv_sorted_servers_need_refresh() {
+	return gSortedServersNeedsRefresh;
+}
+
+void matocsserv_sorted_servers_refresh_done() {
+	gSortedServersNeedsRefresh = false;
 }
 
 /* replications DB */
@@ -1586,6 +1595,8 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			tcpclose(eptr->sock);
 
 			entriesIterator = matocsservList.erase(entriesIterator);
+
+			gSortedServersNeedsRefresh = true;
 		} else {
 			++entriesIterator;
 		}
@@ -1653,6 +1664,10 @@ void matocsserv_reload() {
 
 	tcpclose(lsock);
 	lsock = newlsock;
+}
+
+bool matocsserv_is_killed(matocsserventry* eptr) {
+	return eptr != nullptr && eptr->mode == ChunkserverConnectionMode::KILL;
 }
 
 uint32_t matocsserv_get_version(matocsserventry *eptr) {

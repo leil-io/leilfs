@@ -2306,6 +2306,7 @@ private:
 	                             ChunkCopiesCalculator& calc, const IpCounter &ip_counter);
 	bool rebalanceChunkParts(Chunk *c, ChunkCopiesCalculator& calc, bool only_todel, const IpCounter &ip_counter);
 	bool rebalanceChunkPartsWithSameIp(Chunk *c, ChunkCopiesCalculator &calc, const IpCounter &ip_counter);
+	void updateSortedServers();
 
 	loop_info inforec_;
 	uint32_t deleteNotDone_;
@@ -2364,12 +2365,16 @@ void ChunkWorker::doEveryLoopTasks() {
 	chunksinfo_loopend = eventloop_time();
 }
 
-void ChunkWorker::doEverySecondTasks() {
+void ChunkWorker::updateSortedServers() {
 	sortedServers_ = matocsserv_getservers_sorted();
 	labeledSortedServers_.clear();
 	for (const ServerWithUsage& sw : sortedServers_) {
 		labeledSortedServers_[sw.label].push_back(sw);
 	}
+}
+
+void ChunkWorker::doEverySecondTasks() {
+	updateSortedServers();
 }
 
 static bool chunkPresentOnServer(Chunk *c, matocsserventry *server) {
@@ -2712,6 +2717,8 @@ bool ChunkWorker::rebalanceChunkParts(Chunk *c, ChunkCopiesCalculator &calc, boo
 		                              : labeledSortedServers_[current_copy_label];
 
 		for (const auto &empty_server : sorted_servers) {
+			if (matocsserv_is_killed(empty_server.server)) { continue; }
+
 			if (!only_todel && gAvoidSameIpChunkservers) {
 				auto empty_server_ip = matocsserv_get_servip(empty_server.server);
 				auto it = ip_counter.find(empty_server_ip);
@@ -2784,6 +2791,8 @@ bool ChunkWorker::rebalanceChunkPartsWithSameIp(Chunk *c, ChunkCopiesCalculator 
 			           });
 
 		for (const auto &empty_server : sorted_by_ip_count) {
+			if (matocsserv_is_killed(empty_server.server)) { continue; }
+
 			auto empty_server_ip = matocsserv_get_servip(empty_server.server);
 			auto it = ip_counter.find(empty_server_ip);
 			auto empty_server_ip_count = it != ip_counter.end() ? it->second : 0;
@@ -2942,7 +2951,6 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 	if (rebalanceChunkParts(c, calc, false, ip_occurrence)) {
 		return;
 	}
-
 }
 
 bool ChunkWorker::deleteUnusedChunks() {
@@ -2989,6 +2997,13 @@ bool ChunkWorker::deleteUnusedChunks() {
 void ChunkWorker::mainLoop() {
 	Chunk *c;
 
+	auto updateSortedServersIfNeeded = [&]() {
+		if (matocsserv_sorted_servers_need_refresh()) {
+			updateSortedServers();
+			matocsserv_sorted_servers_refresh_done();
+		}
+	};
+
 	reenter(this) {
 		stack_.work_limit.setMaxDuration(std::chrono::milliseconds(ChunksLoopTimeout));
 		stack_.work_limit.start();
@@ -3026,6 +3041,7 @@ void ChunkWorker::mainLoop() {
 				if (stack_.watchdog.expired()) {
 					yield;
 					stack_.watchdog.start();
+					updateSortedServersIfNeeded();
 				}
 			}
 		}
@@ -3052,6 +3068,7 @@ void ChunkWorker::mainLoop() {
 			// regenerate usable_server_count
 			matocsserv_usagedifference(nullptr, nullptr, &stack_.usable_server_count,
 			                           nullptr);
+			updateSortedServersIfNeeded();
 
 			stack_.node = gChunksMetadata->chunkhash[stack_.current_bucket];
 			while (stack_.node) {
@@ -3065,6 +3082,7 @@ void ChunkWorker::mainLoop() {
 					matocsserv_usagedifference(nullptr, nullptr,
 					                           &stack_.usable_server_count,
 					                           nullptr);
+					updateSortedServersIfNeeded();
 				}
 			}
 
