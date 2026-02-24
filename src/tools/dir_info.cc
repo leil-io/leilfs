@@ -25,6 +25,7 @@
 #include <cstdint>
 
 #include "common/datapack.h"
+#include "common/server_connection.h"
 #include "common/type_defs.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
@@ -41,124 +42,95 @@ static void dir_info_usage() {
 }
 
 static int dir_info(const char *fname) {
-	uint32_t cmd, leng;
 	uint32_t msgid = 0;
-	inode_t inode, inodes, dirs, files, links;
-	uint32_t chunks;
-	uint64_t length, size, realsize;
+	inode_t inode;
 
-	constexpr uint8_t kDirStatsPayload =
-	    sizeof(cmd) + sizeof(leng) + sizeof(msgid) + sizeof(inodes) + sizeof(dirs) + sizeof(files) +
-	    sizeof(links) + sizeof(chunks) + sizeof(length) + sizeof(size) + sizeof(realsize);
-	constexpr uint8_t kDirStatsLegacyPayload =
-	    sizeof(msgid) + sizeof(inodes) + sizeof(dirs) + sizeof(files) + sizeof(links) +
-	    (4 * sizeof(uint32_t)) + sizeof(chunks) + sizeof(length) + sizeof(size) + sizeof(realsize);
+	int fd = open_master_conn(fname, &inode, nullptr, false);
+	if (fd < 0) { return -1; }
 
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) {
-		return -1;
-	}
+	try {
+		MessageBuffer request, response;
+		serializeLegacyPacket(request, CLTOMA_FUSE_GETDIRSTATS, msgid, inode);
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_GETDIRSTATS,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
-	constexpr uint32_t kDirInfoPayload = sizeof(msgid) + sizeof(inode);
-	constexpr uint32_t kReqBuffSize = sizeof(cmd) + sizeof(kDirInfoPayload) + kDirInfoPayload;
+		const uint8_t *rptr = response.data();
+		get32bit(&rptr, msgid);
 
-	uint8_t reqbuff[kReqBuffSize], *wptr, *buff;
-	const uint8_t *rptr;
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (queryid)\n", fname);
+			close_master_conn(1);
+			return -1;
+		}
 
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_GETDIRSTATS);
-	put32bit(&wptr, kDirInfoPayload);
-	put32bit(&wptr, msgid);
-	putINode(&wptr, inode);
+		uint32_t remaining = static_cast<uint32_t>(response.size() - sizeof(msgid));
 
-	// send the request
-	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
-		printf("%s: master query: send error\n", fname);
+		if (remaining == sizeof(uint8_t)) {
+			uint8_t status = *rptr;
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			close_master_conn(0);
+			return (status == SAUNAFS_STATUS_OK) ? 0 : -1;
+		}
+
+		inode_t inodes, dirs, files, links;
+		uint32_t chunks = 0;
+		uint64_t length = 0, size = 0, realsize = 0;
+
+		// Expected body sizes (after msgid)
+		const uint32_t expectedCurrentBody = sizeof(inodes) + sizeof(dirs) + sizeof(files) +
+		                                     sizeof(links) + sizeof(chunks) + sizeof(length) +
+		                                     sizeof(size) + sizeof(realsize);
+
+		const uint32_t expectedLegacyBody =
+		    sizeof(inodes) + sizeof(dirs) + sizeof(files) + sizeof(links) +
+		    (4 * sizeof(uint32_t)) +  // legacy fillers
+		    sizeof(chunks) + sizeof(length) + sizeof(size) + sizeof(realsize);
+
+		if (remaining != expectedCurrentBody && remaining != expectedLegacyBody) {
+			printf("%s: master query: wrong answer (leng) %u/(%u|%u)\n", fname, remaining,
+			       expectedCurrentBody, expectedLegacyBody);
+			close_master_conn(1);
+			return -1;
+		}
+
+		getINode(&rptr, inodes);
+		getINode(&rptr, dirs);
+		getINode(&rptr, files);
+		getINode(&rptr, links);
+
+		const bool isLegacy = (remaining == expectedLegacyBody);
+		if (isLegacy) {
+			rptr += 2 * sizeof(uint32_t);  // skip empty data (8 bytes) from legacy format
+		}
+
+		get32bit(&rptr, chunks);
+
+		if (isLegacy) {
+			rptr += 2 * sizeof(uint32_t);  // skip empty data (8 bytes) from legacy format
+		}
+
+		length = get64bit(&rptr);
+		size = get64bit(&rptr);
+		realsize = get64bit(&rptr);
+
+		close_master_conn(0);
+
+		printf("%s:\n", fname);
+		print_number(" inodes:       ", "\n", inodes, 0, 0, 1);
+		print_number("  directories: ", "\n", dirs, 0, 0, 1);
+		print_number("  files:       ", "\n", files, 0, 0, 1);
+		print_number("  links:       ", "\n", links, 0, 0, 1);
+		print_number(" chunks:       ", "\n", chunks, 0, 0, 1);
+		print_number(" length:       ", "\n", length, 0, 1, 1);
+		print_number(" size:         ", "\n", size, 0, 1, 1);
+		print_number(" realsize:     ", "\n", realsize, 0, 1, 1);
+
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
 		close_master_conn(1);
 		return -1;
 	}
-
-	// read the first part of the answer (cmd and length)
-	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
-
-	if (cmd != MATOCL_FUSE_GETDIRSTATS) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-
-	buff = (uint8_t *)malloc(leng);
-
-	// read the rest of the answer into the buffer
-	if (tcpread(fd, buff, leng) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	rptr = buff;
-	get32bit(&rptr, msgid);  // queryid
-
-	if (msgid != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	if (leng == sizeof(msgid) + sizeof(uint8_t)) {  // status code
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	if (leng != kDirStatsLegacyPayload && leng != kDirStatsPayload) {
-		printf("%s: master query: wrong answer (leng) %u/(%u|%u)\n", fname, leng, kDirStatsPayload,
-		       kDirStatsLegacyPayload);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	close_master_conn(0);
-
-	getINode(&rptr, inodes);
-	getINode(&rptr, dirs);
-	getINode(&rptr, files);
-	getINode(&rptr, links);
-	if (leng == kDirStatsLegacyPayload) {
-		rptr += 2 * sizeof(uint32_t);  // skip empty data (8 bytes) from legacy format
-	}
-	get32bit(&rptr, chunks);
-	if (leng == kDirStatsLegacyPayload) {
-		rptr += 2 * sizeof(uint32_t);  // skip empty data (8 bytes) from legacy format
-	}
-	length = get64bit(&rptr);
-	size = get64bit(&rptr);
-	realsize = get64bit(&rptr);
-
-	free(buff);
-
-	printf("%s:\n", fname);
-	print_number(" inodes:       ", "\n", inodes, 0, 0, 1);
-	print_number("  directories: ", "\n", dirs, 0, 0, 1);
-	print_number("  files:       ", "\n", files, 0, 0, 1);
-	print_number("  links:       ", "\n", links, 0, 0, 1);
-	print_number(" chunks:       ", "\n", chunks, 0, 0, 1);
-	print_number(" length:       ", "\n", length, 0, 1, 1);
-	print_number(" size:         ", "\n", size, 0, 1, 1);
-	print_number(" realsize:     ", "\n", realsize, 0, 1, 1);
 
 	return 0;
 }

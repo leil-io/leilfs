@@ -61,44 +61,42 @@ static int kMaxMasterRetries = 5;
 #endif
 
 static int master_register(int rfd, uint32_t cuid) {
-	uint32_t i;
-	const uint8_t *rptr;
-	uint8_t *wptr, regbuff[8 + 73];
+	MessageBuffer request, response;
 
-	wptr = regbuff;
-	put32bit(&wptr, CLTOMA_FUSE_REGISTER);
-	put32bit(&wptr, 73);
-	memcpy(wptr, FUSE_REGISTER_BLOB_ACL, 64);
-	wptr += 64;
-	put8bit(&wptr, REGISTER_TOOLS);
-	put32bit(&wptr, cuid);
-	put16bit(&wptr, SAUNAFS_PACKAGE_VERSION_MAJOR);
-	put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MINOR);
-	put8bit(&wptr, SAUNAFS_PACKAGE_VERSION_MICRO);
-	if (tcpwrite(rfd, regbuff, 8 + 73) != 8 + 73) {
-		printf("register to master: send error\n");
+	try {
+		uint8_t regTools = static_cast<uint8_t>(REGISTER_TOOLS);
+		uint16_t majorVer = static_cast<uint16_t>(SAUNAFS_PACKAGE_VERSION_MAJOR);
+		uint8_t minorVer = static_cast<uint8_t>(SAUNAFS_PACKAGE_VERSION_MINOR);
+		uint8_t microVer = static_cast<uint8_t>(SAUNAFS_PACKAGE_VERSION_MICRO);
+		constexpr char kBlobStr[] = FUSE_REGISTER_BLOB_ACL;
+		uint8_t blob[REGISTER_BLOB_SIZE] = {0};
+		std::memcpy(blob, kBlobStr,
+		            (sizeof(kBlobStr) < sizeof(blob)) ? sizeof(kBlobStr) : sizeof(blob));
+
+		serializeLegacyPacket(request, CLTOMA_FUSE_REGISTER, blob, regTools, cuid, majorVer,
+		                      minorVer, microVer);
+
+		response = ServerConnection::sendAndReceive(
+		    rfd, request, MATOCL_FUSE_REGISTER,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+
+		if (response.size() != sizeof(uint8_t)) {
+			printf("register to master: wrong answer (length)\n");
+			return -1;
+		}
+
+		uint8_t status = response[0];
+
+		if (status != SAUNAFS_STATUS_OK) {
+			printf("register to master: %s\n", saunafs_error_string(status));
+			return -1;
+		}
+
+		return 0;
+	} catch (const Exception &e) {
+		fprintf(stderr, "register to master: %s\n", e.what());
 		return -1;
 	}
-	if (tcpread(rfd, regbuff, 9) != 9) {
-		printf("register to master: receive error\n");
-		return -1;
-	}
-	rptr = regbuff;
-	get32bit(&rptr, i);
-	if (i != MATOCL_FUSE_REGISTER) {
-		printf("register to master: wrong answer (type)\n");
-		return -1;
-	}
-	get32bit(&rptr, i);
-	if (i != 1) {
-		printf("register to master: wrong answer (length)\n");
-		return -1;
-	}
-	if (*rptr) {
-		printf("register to master: %s\n", saunafs_error_string(*rptr));
-		return -1;
-	}
-	return 0;
 }
 
 static int master_connect(const master_info_t *info) {

@@ -96,4 +96,5 @@ public:
 	bool expired() const;
 private:
 	SteadyDuration timeout_;
+	bool infinite_ = false;
 };

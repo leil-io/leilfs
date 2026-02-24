@@ -26,6 +26,7 @@
 
 #include "common/datapack.h"
 #include "common/massert.h"
+#include "common/server_connection.h"
 #include "common/type_defs.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
@@ -46,96 +47,77 @@ static void set_trashtime_usage() {
 }
 
 static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode) {
-	uint32_t cmd, leng, uid;
+	uint32_t uid;
+	uint32_t msgid{0};
+	uint8_t status;
 	inode_t inode, changed, notchanged, notpermitted;
 
-	constexpr uint32_t kPacketPayloadSize =
-	    sizeof(uint32_t) + sizeof(inode) + sizeof(uid) + sizeof(trashtime) + sizeof(mode);
-	//                                    CLTOMA_FUSE...  kPacketPayloadSize
-	constexpr size_t kReqBuffSize = sizeof(uint32_t) + sizeof(uint32_t) + kPacketPayloadSize;
-	uint8_t reqbuff[kReqBuffSize];
-	uint8_t *wptr;
-	uint8_t *buff;
-	const uint8_t *rptr;
-
 	int fd = open_master_conn(fname, &inode, nullptr, true);
-
 	if (fd < 0) {
 		return -1;
 	}
 
 	uid = getUId();
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_SETTRASHTIME);
-	put32bit(&wptr, kPacketPayloadSize);
-	put32bit(&wptr, 0);
-	putINode(&wptr, inode);
-	put32bit(&wptr, uid);
-	put32bit(&wptr, trashtime);
-	put8bit(&wptr, mode);
 
-	if (tcpwrite(fd, reqbuff, kReqBuffSize) != kReqBuffSize) {
-		printf("%s: master query: send error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	constexpr uint32_t kAnswerHeaderSize = sizeof(cmd) + sizeof(leng);
+	try {
+		MessageBuffer request, response;
 
-	if (tcptoread(fd, reqbuff, kAnswerHeaderSize, kInfiniteTimeout) != kAnswerHeaderSize) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
-	if (cmd != MATOCL_FUSE_SETTRASHTIME) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-	buff = (uint8_t *)malloc(leng);
-	if (tcptoread(fd, buff, leng,  kInfiniteTimeout) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-	close_master_conn(0);
-	rptr = buff;
-	get32bit(&rptr, cmd);  // queryid
-	if (cmd != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		return -1;
-	}
-	leng -= sizeof(cmd);
-	if (leng == 1) {
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		return -1;
-	} else if (leng != 3 * kinode_t_size) {  // changed, notchanged, notpermitted
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	}
-	getINode(&rptr, changed);
-	getINode(&rptr, notchanged);
-	getINode(&rptr, notpermitted);
-	if ((mode & SMODE_RMASK) == 0) {
-		if (changed || mode == SMODE_SET) {
-			printf("%s: %" PRIu32 "\n", fname, trashtime);
-		} else {
-			printf("%s: trashtime not changed\n", fname);
+		serializeLegacyPacket(request, CLTOMA_FUSE_SETTRASHTIME, msgid, inode, uid, trashtime,
+		                      mode);
+
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_SETTRASHTIME,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kInfiniteTimeout);
+
+		const uint8_t *rptr = response.data();
+		get32bit(&rptr, msgid);
+
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (queryid)\n", fname);
+			close_master_conn(0);
+			return -1;
 		}
-	} else {
-		printf("%s:\n", fname);
-		print_number(" inodes with trashtime changed:     ", "\n", changed, kMode32, 0, 1);
-		print_number(" inodes with trashtime not changed: ", "\n", notchanged, kMode32, 0, 1);
-		print_number(" inodes with permission denied:     ", "\n", notpermitted, kMode32, 0, 1);
+
+		uint32_t remaining = static_cast<uint32_t>(response.size() - sizeof(msgid));
+
+		if (remaining == sizeof(status)) {
+			status = *rptr;
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			close_master_conn(0);
+			return (status == SAUNAFS_STATUS_OK) ? 0 : -1;
+		}
+
+		const uint32_t kExpectedSize = sizeof(changed) + sizeof(notchanged) + sizeof(notpermitted);
+		if (remaining != kExpectedSize) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			close_master_conn(0);
+			return -1;
+		}
+
+		getINode(&rptr, changed);
+		getINode(&rptr, notchanged);
+		getINode(&rptr, notpermitted);
+
+		if ((mode & SMODE_RMASK) == 0) {
+			if (changed || mode == SMODE_SET) {
+				printf("%s: %" PRIu32 "\n", fname, trashtime);
+			} else {
+				printf("%s: trashtime not changed\n", fname);
+			}
+		} else {
+			printf("%s:\n", fname);
+			print_number(" inodes with trashtime changed:     ", "\n", changed, kMode32, 0, 1);
+			print_number(" inodes with trashtime not changed: ", "\n", notchanged, kMode32, 0, 1);
+			print_number(" inodes with permission denied:     ", "\n", notpermitted, kMode32, 0, 1);
+		}
+
+		close_master_conn(0);
+		return 0;
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
+		close_master_conn(1);
+		return -1;
 	}
-	free(buff);
-	return 0;
 }
 
 static int gene_set_trashtime_run(int argc, char **argv, int rflag) {

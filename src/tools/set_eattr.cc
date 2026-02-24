@@ -25,6 +25,7 @@
 #include <stdlib.h>
 
 #include "common/datapack.h"
+#include "common/server_connection.h"
 #include "errors/saunafs_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
@@ -53,110 +54,77 @@ static void set_eattr_usage() {
 }
 
 static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
-	uint32_t cmd, leng, uid;
-	inode_t inode, changed, notchanged, notpermitted;
 	uint32_t msgid{0};
+	inode_t inode;
 
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, true);
-	if (fd < 0) {
-		return -1;
-	}
+	MessageBuffer request, response;
 
-	uid = getUId();
+	int fd = open_master_conn(fname, &inode, nullptr, true);
+	if (fd < 0) { return -1; }
 
-	constexpr uint32_t kSetEAttrPayload =
-	    sizeof(msgid) + sizeof(inode) + sizeof(uid) + sizeof(eattr) + sizeof(mode);
-	constexpr uint32_t kSetEAttrFullSize =
-	    sizeof(cmd) + sizeof(kSetEAttrPayload) + kSetEAttrPayload;
-	uint8_t reqbuff[kSetEAttrFullSize], *wptr, *buff;
-	const uint8_t *rptr;
+	try {
+		uint32_t uid = getUId();
 
-	wptr = reqbuff;
-	put32bit(&wptr, CLTOMA_FUSE_SETEATTR);
-	put32bit(&wptr, kSetEAttrPayload);
-	put32bit(&wptr, msgid);
-	putINode(&wptr, inode);
-	put32bit(&wptr, uid);
-	put8bit(&wptr, eattr);
-	put8bit(&wptr, mode);
+		serializeLegacyPacket(request, CLTOMA_FUSE_SETEATTR, msgid, inode, uid, eattr, mode);
 
-	// send request to master
-	if (tcpwrite(fd, reqbuff, kSetEAttrFullSize) != kSetEAttrFullSize) {
-		printf("%s: master query: send error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
+		response = ServerConnection::sendAndReceive(
+		    fd, request, MATOCL_FUSE_SETEATTR,
+		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
 
-	// read the first part of the answer
-	if (tcpread(fd, reqbuff, sizeof(cmd) + sizeof(leng)) != sizeof(cmd) + sizeof(leng)) {
-		printf("%s: master query: receive error\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
+		close_master_conn(0);
 
-	rptr = reqbuff;
-	get32bit(&rptr, cmd);
-	get32bit(&rptr, leng);
+		const uint8_t *rptr = response.data();
 
-	if (cmd != MATOCL_FUSE_SETEATTR) {
-		printf("%s: master query: wrong answer (type)\n", fname);
-		close_master_conn(1);
-		return -1;
-	}
-
-	buff = (uint8_t *)malloc(leng);
-
-	if (tcpread(fd, buff, leng) != (int32_t)leng) {
-		printf("%s: master query: receive error\n", fname);
-		free(buff);
-		close_master_conn(1);
-		return -1;
-	}
-
-	close_master_conn(0);  // not needed anymore
-
-	rptr = buff;
-	get32bit(&rptr, msgid);  // queryid
-
-	if (msgid != 0) {
-		printf("%s: master query: wrong answer (queryid)\n", fname);
-		free(buff);
-		return -1;
-	}
-
-	if (leng - sizeof(msgid) == 1) {  // an error code was returned
-		printf("%s: %s\n", fname, saunafs_error_string(*rptr));
-		free(buff);
-		return -1;
-	}
-
-	if (leng != sizeof(msgid) + 3 * sizeof(inode_t)) {
-		printf("%s: master query: wrong answer (leng)\n", fname);
-		free(buff);
-		return -1;
-	}
-
-	getINode(&rptr, changed);
-	getINode(&rptr, notchanged);
-	getINode(&rptr, notpermitted);
-
-	if ((mode & SMODE_RMASK) == 0) {
-		if (changed) {
-			printf("%s: attribute(s) changed\n", fname);
-		} else {
-			printf("%s: attribute(s) not changed\n", fname);
+		get32bit(&rptr, msgid);
+		if (msgid != 0) {
+			printf("%s: master query: wrong answer (queryid)\n", fname);
+			return -1;
 		}
-	} else {
-		printf("%s:\n", fname);
-		print_number(" inodes with attributes changed:     ", "\n", changed, kMode32, 0, 1);
-		print_number(" inodes with attributes not changed: ", "\n", notchanged, kMode32, 0, 1);
-		print_number(" inodes with permission denied:      ", "\n", notpermitted, kMode32, 0, 1);
+
+		uint32_t bodySize = static_cast<uint32_t>(response.size() - sizeof(msgid));
+
+		if (bodySize == sizeof(uint8_t)) {
+			uint8_t status = *rptr;
+			printf("%s: %s\n", fname, saunafs_error_string(status));
+			return -1;
+		}
+
+		inode_t changed;
+		inode_t notchanged;
+		inode_t notpermitted;
+		constexpr uint32_t kExpectedSize =
+		    sizeof(changed) + sizeof(notchanged) + sizeof(notpermitted);
+
+		if (bodySize != kExpectedSize) {
+			printf("%s: master query: wrong answer (leng)\n", fname);
+			return -1;
+		}
+
+		getINode(&rptr, changed);
+		getINode(&rptr, notchanged);
+		getINode(&rptr, notpermitted);
+
+		if ((mode & SMODE_RMASK) == 0) {
+			if (changed) {
+				printf("%s: attribute(s) changed\n", fname);
+			} else {
+				printf("%s: attribute(s) not changed\n", fname);
+			}
+		} else {
+			printf("%s:\n", fname);
+			print_number(" inodes with attributes changed:     ", "\n", changed, kMode32, 0, 1);
+			print_number(" inodes with attributes not changed: ", "\n", notchanged, kMode32, 0, 1);
+			print_number(" inodes with permission denied:      ", "\n", notpermitted, kMode32, 0,
+			             1);
+		}
+
+		return 0;
+
+	} catch (const Exception &e) {
+		fprintf(stderr, "%s\n", e.what());
+		close_master_conn(1);
+		return -1;
 	}
-
-	free(buff);
-
-	return 0;
 }
 
 static int gene_eattr_run(int argc, char **argv, uint8_t mode, void (*usage_func)(void)) {

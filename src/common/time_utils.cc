@@ -110,15 +110,24 @@ int64_t Timer::lap_s() {
 
 // Timeout implementation
 
-Timeout::Timeout(std::chrono::nanoseconds timeout) :
-	timeout_(std::chrono::duration_cast<SteadyDuration>(timeout)) {
+Timeout::Timeout(std::chrono::nanoseconds timeout) {
+	if (timeout.count() < 0) {
+		infinite_ = true;
+		timeout_ = SteadyDuration(0);
+	} else {
+		infinite_ = false;
+		timeout_ = std::chrono::duration_cast<SteadyDuration>(timeout);
+	}
 }
 
 SteadyTimePoint Timeout::deadline() const {
+	if (infinite_) { return SteadyTimePoint::max(); }
 	return startTime() + timeout_;
 }
 
 SteadyDuration Timeout::remainingTime() const {
+	if (infinite_) { return SteadyDuration::max(); }
+
 	SteadyDuration elapsed = elapsedTime();
 	if (elapsed >= timeout_) {
 		return SteadyDuration(0);
@@ -128,21 +137,26 @@ SteadyDuration Timeout::remainingTime() const {
 }
 
 int64_t Timeout::remaining_ns() const {
+	if (infinite_) { return -1; }
 	return duration_int64_cast<std::nano>(remainingTime());
 }
 
 int64_t Timeout::remaining_us() const {
+	if (infinite_) { return -1; }
 	return duration_int64_cast<std::micro>(remainingTime());
 }
 
 int64_t Timeout::remaining_ms() const {
+	if (infinite_) { return -1; }
 	return duration_int64_cast<std::milli>(remainingTime());
 }
 
 int64_t Timeout::remaining_s() const {
+	if (infinite_) { return -1; }
 	return duration_int64_cast<std::ratio<1>>(remainingTime());
 }
 
 bool Timeout::expired() const {
+	if (infinite_) { return false; }
 	return remainingTime() == SteadyDuration(0);
 }

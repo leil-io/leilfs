@@ -34,6 +34,8 @@
 #include "common/type_defs.h"
 #include "protocol/SFSCommunication.h"
 
+constexpr int kDefaultTimeoutMs = 10000;
+
 #define tcpread(s, b, l) tcptoread(s, b, l, 10000)
 #define tcpwrite(s, b, l) tcptowrite(s, b, l, 10000)
 
