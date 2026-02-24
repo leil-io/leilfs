@@ -33,7 +33,7 @@ const uint32_t kMaxQueueSize = 100;
 TEST(ProducerConsumerQueueTests, SingleElement) {
 	ProducerConsumerQueue queue(1, kMaxSize, customDeleter);
 	auto *data = new uint8_t[kMaxLength];
-	EXPECT_TRUE(queue.put(1, 1, data, kMaxLength));
+	EXPECT_TRUE(queue.tryPut(1, 1, data, kMaxLength));
 
 	uint32_t jobId = 0;
 	uint32_t jobType = 0;
@@ -52,7 +52,7 @@ TEST(ProducerConsumerQueueTests, MultipleElements) {
 	ProducerConsumerQueue queue(1, kMaxQueueSize, customDeleter);
 	for (int i = 0; i < kMaxSize; ++i) {
 		auto *data = new uint8_t[kMaxLength];
-		EXPECT_TRUE(queue.put(i, i, data, kMaxLength));
+		EXPECT_TRUE(queue.tryPut(i, i, data, kMaxLength));
 	}
 
 	for (uint32_t i = 0; i < kMaxSize; ++i) {
@@ -74,8 +74,8 @@ TEST(ProducerConsumerQueueTests, QueueFull) {
 	auto *data1 = new uint8_t[kMaxLength];
 	auto *data2 = new uint8_t[kMaxLength];
 	auto *data3 = new uint8_t[kMaxLength];
-	EXPECT_TRUE(queue.put(1, 1, data1, 1));
-	EXPECT_TRUE(queue.put(2, 2, data2, 1));
+	EXPECT_TRUE(queue.tryPut(1, 1, data1, 1));
+	EXPECT_TRUE(queue.tryPut(2, 2, data2, 1));
 	EXPECT_FALSE(queue.tryPut(3, 3, data3, kMaxLength));
 	delete[] data3;
 }

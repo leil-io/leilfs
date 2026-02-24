@@ -153,6 +153,9 @@ public:
 	/// @brief Gets the number of jobs in the JobPool.
 	uint32_t getJobCount() const;
 
+	/// @brief Checks if the JobPool is full.
+	bool isFull() const;
+
 	/// @brief Disables all jobs and changes their callback function.
 	///
 	/// @param callback The new callback function to be set for all jobs.

@@ -205,7 +205,7 @@ void NetworkWorkerThread::preparePollFds(bool isTerminating) {
 					pdesc.back().events |= POLLOUT;
 				}
 				break;
-			case ChunkserverEntry::State::WriteFinish:
+			case ChunkserverEntry::State::IOFinish:
 				if (!entry.outputPackets.empty()) {
 					pdesc.emplace_back(pollfd(entry.sock, POLLOUT, 0));
 					entry.pDescPos = pdesc.size() - 1;
@@ -242,7 +242,7 @@ void NetworkWorkerThread::servePoll() {
 		if (lstate == ChunkserverEntry::State::Idle ||
 		    lstate == ChunkserverEntry::State::Read ||
 		    lstate == ChunkserverEntry::State::WriteLast ||
-		    lstate == ChunkserverEntry::State::WriteFinish ||
+		    lstate == ChunkserverEntry::State::IOFinish ||
 		    lstate == ChunkserverEntry::State::GetBlock) {
 			if (entry.pDescPos >= 0 &&
 			    (pdesc[entry.pDescPos].revents & POLLIN)) {
@@ -297,7 +297,7 @@ void NetworkWorkerThread::servePoll() {
 				eptr->writeToSocket();
 			}
 		}
-		if (entry.state == ChunkserverEntry::State::WriteFinish &&
+		if (entry.state == ChunkserverEntry::State::IOFinish &&
 		    entry.outputPackets.empty()) {
 			entry.state = ChunkserverEntry::State::Close;
 		}

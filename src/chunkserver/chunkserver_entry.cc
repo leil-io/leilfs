@@ -128,7 +128,7 @@ void ChunkserverEntry::fwdError() {
 	uint8_t status =
 	    (state == State::Connecting ? SAUNAFS_ERROR_CANTCONNECT : SAUNAFS_ERROR_DISCONNECTED);
 	createAttachedWriteStatus(chunkId, status, 0);
-	state = State::WriteFinish;
+	state = State::IOFinish;
 }
 
 int ChunkserverEntry::initConnection() {
@@ -334,7 +334,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 
 		if (initConnection() < kInitConnectionOK) {
 			createAttachedWriteStatus(chunkId, SAUNAFS_ERROR_CANTCONNECT, 0);
-			state = State::WriteFinish;
+			state = State::IOFinish;
 			return;
 		}
 	} else {
@@ -373,7 +373,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 
 	if (status != SAUNAFS_STATUS_OK) {
 		createAttachedWriteStatus(opChunkId, status, writeId);
-		state = State::WriteFinish;
+		state = State::IOFinish;
 		return;
 	}
 
@@ -413,7 +413,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		cltocs::writeEnd::deserialize(data, length, opChunkId);
 	} catch (IncorrectDeserializationException&) {
 		safs::log_info("Received malformed WRITE_END message (length: {})", length);
-		state = State::WriteFinish;
+		state = State::IOFinish;
 		return;
 	}
 
@@ -421,7 +421,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		safs::log_info(
 		    "Received malformed WRITE_END message (got chunkId={:016X}, expected {:016X})",
 		    opChunkId, chunkId);
-		state = State::WriteFinish;
+		state = State::IOFinish;
 		return;
 	}
 
@@ -434,7 +434,7 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		// TODO(msulikowski) temporary syslog message. May be useful until this
 		// code is fully tested
 		safs::log_info("Received WRITE_END message too early");
-		state = State::WriteFinish;
+		state = State::IOFinish;
 		return;
 	}
 
@@ -445,7 +445,15 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 
 	// All went fine, cleanup
 	writeHLO_->cleanup();
-	state = State::Idle;
+	if (workerJobPool->isFull()) {
+		// If the worker job pool is full (best-effort check), try not to accept
+		// more requests until it has free slots. Note: the pool state may change
+		// after this check, but this serves as backpressure heuristic.
+		state = State::IOFinish;
+	} else {
+		// Ready for new requests, reset state
+		state = State::Idle;
+	}
 }
 
 void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
@@ -676,13 +684,13 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 			state = State::Close;
 			break;
 		}
-	} else if (state == State::WriteFinish) {
+	} else if (state == State::IOFinish) {
 		switch (type) {
 		case SAU_CLTOCS_WRITE_DATA:
 		case SAU_CLTOCS_WRITE_END:
 			return;
 		default:
-			safs::log_info("Got invalid message in WriteFinish state (type:{})", type);
+			safs::log_info("Got invalid message in IOFinish state (type:{})", type);
 			state = State::Close;
 		}
 	} else {

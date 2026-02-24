@@ -40,6 +40,9 @@ inline void deleterDummy(uint8_t * /*unused*/) {}
 ///
 /// Can be configured to support several priority levels. Final interface is queue-like,
 /// but preferring higher priority items and preserving order within each priority level.
+/// The maxSize parameter can be used to limit the number of items the queue should hold, but
+/// won't block put() calls and is just going to return false for tryPut() calls when the limit is
+/// reached.
 ///
 /// This class provides a thread-safe queue implementation that allows multiple
 /// producers and consumers to add and remove items concurrently. It uses a
@@ -87,7 +90,7 @@ public:
 	/// and deleter.
 	///
 	/// @param priorityLevels The number of priority levels. Default is 1 (no priorities).
-	/// @param maxSize The maximum number of elements the queue can hold.
+	/// @param maxSize The maximum number of elements the queue should hold.
 	/// Default is 0 (unlimited).
 	/// @param deleter A callable type that defines how to delete the data
 	/// stored in the queue. Default is deleterDummy.
@@ -120,14 +123,15 @@ public:
 
 	/// @brief Adds an element to the queue.
 	///
+	/// @note This method is not blocked by the maxSize limit.
+	///
 	/// @param jobId The job ID associated with the element.
 	/// @param jobType The job type associated with the element.
 	/// @param data A pointer to the data to be added.
 	/// @param length The length of the data to be added.
 	/// @param priority The priority level of the element (0 is the highest
 	/// priority). Default is 0.
-	/// @return true if the element was added successfully, false otherwise.
-	bool put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
+	void put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
 	         uint8_t priority = 0);
 
 	/// @brief Tries to add an element to the queue without blocking.
@@ -215,8 +219,6 @@ private:
 	uint32_t currentSize_;
 	///< Mutex for synchronizing access to the queue.
 	mutable std::mutex mutex_;
-	///< Condition variable to signal when the queue is not full.
-	std::condition_variable notFull_;
 	///< Condition variable to signal when the queue is not empty.
 	std::condition_variable notEmpty_;
 	///< The deleter function used to delete the data stored in the queue.

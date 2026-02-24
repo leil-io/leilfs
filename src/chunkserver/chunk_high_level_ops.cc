@@ -172,9 +172,8 @@ void ReadHighLevelOp::readFinishedCallback(uint8_t status, void *buffer) {
 			isChunkOpen_ = false;
 		}
 
-		// after sending status even if there was an error it's possible to
-		// receive new requests on the same connection
-		setParentState(ChunkserverEntry::State::Idle);
+		// Send status and close connection
+		setParentState(ChunkserverEntry::State::IOFinish);
 		LOG_AVG_STOP(readOperationTimer_);
 	}
 }
@@ -225,7 +224,15 @@ void ReadHighLevelOp::readContinue(uint16_t callMaxParallelHddReadJobs) {
 		isChunkOpen_ = false;
 		// no error - do not disconnect - go direct to the IDLE state, ready for
 		// requests on the same connection
-		setParentState(ChunkserverEntry::State::Idle);
+		if (workerJobPool()->isFull()) {
+			// If the worker job pool is full (best-effort check), try not to accept
+			// more requests until it has free slots. Note: the pool state may change
+			// after this check, but this serves as backpressure heuristic.
+			setParentState(ChunkserverEntry::State::IOFinish);
+		} else {
+			// Ready for new requests, reset state
+			setParentState(ChunkserverEntry::State::Idle);
+		}
 		LOG_AVG_STOP(readOperationTimer_);
 	} else {
 		std::vector<uint8_t> readDataPrefix;
@@ -341,7 +348,7 @@ void WriteHighLevelOp::startOpenWriteJob() {
 void WriteHighLevelOp::updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId) {
 	if (status != SAUNAFS_STATUS_OK) {
 		createAttachedWriteStatus(chunkId_, status, writeId);
-		setParentState(ChunkserverEntry::State::WriteFinish);
+		setParentState(ChunkserverEntry::State::IOFinish);
 		return;
 	}
 
@@ -351,7 +358,7 @@ void WriteHighLevelOp::updateUsingWriteStatusAndReply(uint8_t status, uint32_t w
 		return;
 	}
 
-	// state is WriteForward or WriteFinish
+	// state is WriteForward or IOFinish
 	if (partiallyCompletedWrites_.count(writeId) > 0) {
 		// found - it means that it was added by status_receive, ie. next
 		// chunkserver from a chain finished writing before our worker
