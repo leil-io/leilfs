@@ -207,8 +207,15 @@ protected:
 /// @brief High-level operation for writing data to a chunk.
 class WriteHighLevelOp : public HighLevelOp {
 public:
+	/// @brief Default initial number of blocks for the next input buffer, which can be adjusted
+	/// based on the max blocks per HDD write job.
+	constexpr static uint16_t kDefaultInitialNextInputBufferBlockCount = 4;
+
 	WriteHighLevelOp(ChunkserverEntry *parent, uint16_t maxBlocksPerHddWriteJob)
-	    : HighLevelOp(parent), maxBlocksPerHddWriteJob_(maxBlocksPerHddWriteJob) {}
+	    : HighLevelOp(parent),
+	      maxBlocksPerHddWriteJob_(maxBlocksPerHddWriteJob),
+	      nextInputBufferBlockCount_(
+	          std::min(kDefaultInitialNextInputBufferBlockCount, maxBlocksPerHddWriteJob)) {}
 
 	/// Sets up and starts the write high level operation.
 	/// Enqueues a job_open for the chunk.
@@ -299,9 +306,12 @@ protected:
 
 	/// Prepares the input buffer for a write operation.
 	void prepareInputBufferForWrite(bool isForward);
-
-	///< Number of blocks to write to the device in one write job.
+	
+	/// Number of blocks to write to the device in one write job.
 	uint16_t maxBlocksPerHddWriteJob_;
+
+	/// Size in blocks of the next input buffer.
+	uint16_t nextInputBufferBlockCount_;
 
 	/// Indicates if the chunk is locked for writing. If true, master will be waiting for the lock
 	/// to be released when the write operation finishes.
