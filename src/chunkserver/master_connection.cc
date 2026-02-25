@@ -386,23 +386,20 @@ void MasterConn::onConnected() {
 
 // Polling
 
-void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc, bool doTerminate) {
+void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc) {
 	pDescPos_ = -1;
 
 	if (mode_ == ConnectionMode::FREE || socketFD_ < 0) { return; }
 
 	if (mode_ == ConnectionMode::CONNECTED) {
-		if (!doTerminate && (jobPool_->getJobCount() < kMaxBackgroundJobsThreshold ||
-		    replicationJobPool_->getJobCount() < kMaxBackgroundJobsThreshold)) {
+		if (jobPool_->getJobCount() < kMaxBackgroundJobsThreshold ||
+		    replicationJobPool_->getJobCount() < kMaxBackgroundJobsThreshold) {
 			pdesc.emplace_back(socketFD_, POLLIN, 0);
 			pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 		}
 	}
 
 	if (mode_ == ConnectionMode::HANDSHAKE) {
-		// Let's proceed with the handshake even if doTerminate is true, to avoid leaving a
-		// half-open connection. The handshake will be attempted to be completed, but if it fails,
-		// the connection will be closed and the thread will be able to terminate.
 		short event = 0;
 		switch (lastHandshakeError_) {
 		case SSL_ERROR_WANT_READ:

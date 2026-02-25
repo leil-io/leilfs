@@ -77,8 +77,6 @@ constexpr uint32_t kDefaultReplicationNumberOfWorkers = 5;
 constexpr uint32_t kMinReplicationNumberOfWorkers = 1;
 static uint32_t gReplicationNumberOfWorkers = kDefaultReplicationNumberOfWorkers;
 
-static std::atomic<bool> gDoTerminate = false;
-
 static void* gReconnectHook;
 
 //  Stats
@@ -141,16 +139,6 @@ void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
 	MasterConn::deletePacket(packet);
 }
 
-void masterconn_wantexit(void) { gDoTerminate.store(true); }
-
-int masterconn_canexit(void) {
-	if (gJobPool->getJobCount() == 0 && gReplicationJobPool->getJobCount() == 0 &&
-	    gMasterConnSingleton->isOutputQueueEmpty()) {
-		return 1;
-	}
-	return 0;
-}
-
 void masterconn_term(void) {
 	//  For each connection (currently only one), release its resources.
 	MasterConn *eptr = gMasterConnSingleton.get();
@@ -183,7 +171,7 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 		}
 	}
 
-	eptr->providePollDescriptors(pdesc, gDoTerminate.load());
+	eptr->providePollDescriptors(pdesc);
 }
 
 void masterconn_send_status() {
@@ -319,8 +307,6 @@ int masterconn_init(void) {
 	gReconnectHook =
 	    eventloop_timeregister(TIMEMODE_RUN_LATE, reconnectionDelay,
 	                           rnd_ranged<uint32_t>(reconnectionDelay), masterconn_reconnect);
-	eventloop_wantexitregister(masterconn_wantexit);
-	eventloop_canexitregister(masterconn_canexit);
 	eventloop_destructregister(masterconn_term);
 	eventloop_pollregister(masterconn_desc, masterconn_serve);
 	eventloop_reloadregister(masterconn_reload);

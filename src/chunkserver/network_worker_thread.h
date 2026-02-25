@@ -59,25 +59,21 @@ public:
 		return bgJobPool_.get();
 	}
 
-	bool updateAndCheckTerminationStatus();
-
 private:
-	void preparePollFds(bool isTerminating);
-	void servePoll();
+	void preparePollFds();
+	void servePoll() ;
 	void terminate();
 
 	/// Human readable name for the thread
 	std::string name_;
 
-	std::atomic<bool> doTerminate;  ///< Whether the thread should terminate
+	std::atomic<bool> doTerminate;
 	std::mutex csservheadLock;
 	std::list<ChunkserverEntry> csservEntries;
 
 	std::unique_ptr<JobPool> bgJobPool_;
-	std::atomic<bool> canTerminate_{false};  ///< Whether it is safe to terminate the thread
 	int bgJobPoolWakeUpFd_;
 	static const uint32_t JOB_FD_PDESC_POS = 1;
 	std::vector<struct pollfd> pdesc;
 	int notify_pipe[2];
-	Timer terminationTimer_{};
 };
