@@ -34,7 +34,7 @@ int RemoveTask::retrieveNodes(const FilesystemOperationContext &fsOpContext, FSN
 	if (!wd_tmp) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (!gFSOperations->nodeOperations()->access(*context_, wd_tmp, MODE_MASK_W)) {
+	if (!gFSOperations->nodeOperations()->access(*context_, fsOpContext, wd_tmp, MODE_MASK_W)) {
 		return SAUNAFS_ERROR_EACCES;
 	}
 	wd = static_cast<FSNodeDirectory*>(wd_tmp);

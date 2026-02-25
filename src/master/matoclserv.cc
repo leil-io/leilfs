@@ -4337,10 +4337,22 @@ void matoclserv_fuse_deleteacl(matoclserventry *eptr, const uint8_t *data, uint3
 	cltoma::fuseDeleteAcl::deserialize(data, length, messageId, inode, uid, gid, type);
 
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
+
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->deleteAcl(context, inode, type);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		status = gFSOperations->deleteAcl(context, fsOpContext, inode, type);
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+				status = SAUNAFS_ERROR_IO;
+			}
+		}
 	}
+
 	matoclserv_createpacket(eptr, matocl::fuseDeleteAcl::build(messageId, status));
 }
 
@@ -4358,32 +4370,35 @@ void matoclserv_fuse_getacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->getAcl(context, inode, acl);
-	}
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadOnly);
 
-	if (status == SAUNAFS_STATUS_OK) {
-		if (eptr->version >= kRichACLVersion) {
-			FSNode *node = gFSOperations->nodeOperations()->idToNode(inode);
-			uint32_t owner_id = node ? node->uid : RichACL::Ace::kInvalidId;
-			matocl::fuseGetAcl::serialize(reply, messageId, owner_id, acl);
-		} else {
-			std::pair<bool, AccessControlList> posix_acl;
-			if (type == AclType::kDefault) {
-				posix_acl = acl.convertToDefaultPosixACL();
+		status = gFSOperations->getAcl(context, fsOpContext, inode, acl);
+
+		if (status == SAUNAFS_STATUS_OK) {
+			if (eptr->version >= kRichACLVersion) {
+				FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
+				uint32_t owner_id = node ? node->uid : RichACL::Ace::kInvalidId;
+				matocl::fuseGetAcl::serialize(reply, messageId, owner_id, acl);
 			} else {
-				// default behavior for unknown acl type.
-				posix_acl = acl.convertToPosixACL();
-			}
-
-			if (posix_acl.first) {
-				if (eptr->version >= kACL11Version) {
-					matocl::fuseGetAcl::serialize(reply, messageId, posix_acl.second);
+				std::pair<bool, AccessControlList> posix_acl;
+				if (type == AclType::kDefault) {
+					posix_acl = acl.convertToDefaultPosixACL();
 				} else {
-					legacy::AccessControlList legacy_acl = posix_acl.second;
-					matocl::fuseGetAcl::serialize(reply, messageId, legacy_acl);
+					// default behavior for unknown acl type.
+					posix_acl = acl.convertToPosixACL();
 				}
-			} else {
-				status = SAUNAFS_ERROR_ENOATTR;
+
+				if (posix_acl.first) {
+					if (eptr->version >= kACL11Version) {
+						matocl::fuseGetAcl::serialize(reply, messageId, posix_acl.second);
+					} else {
+						legacy::AccessControlList legacy_acl = posix_acl.second;
+						matocl::fuseGetAcl::serialize(reply, messageId, legacy_acl);
+					}
+				} else {
+					status = SAUNAFS_ERROR_ENOATTR;
+				}
 			}
 		}
 	}
@@ -4771,14 +4786,26 @@ void matoclserv_fuse_setacl(matoclserventry *eptr, const uint8_t *data, uint32_t
 	}
 
 	uint8_t status = matoclserv_check_group_cache(eptr, gid);
+
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
 		if (use_posix) {
-			status = gFSOperations->setAcl(context, inode, type, posix_acl);
+			status = gFSOperations->setAcl(context, fsOpContext, inode, type, posix_acl);
 		} else {
-			status = gFSOperations->setAcl(context, inode, rich_acl);
+			status = gFSOperations->setAcl(context, fsOpContext, inode, rich_acl);
+		}
+
+		if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+				status = SAUNAFS_ERROR_IO;
+			}
 		}
 	}
+
 	matoclserv_createpacket(eptr, matocl::fuseSetAcl::build(messageId, status));
 }
 

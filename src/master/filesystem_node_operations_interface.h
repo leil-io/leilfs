@@ -466,13 +466,78 @@ public:
 	virtual std::string escapeName(const std::string &name) = 0;
 
 	// ACL operations
-	virtual uint8_t setAcl(FSNode *node, const RichACL &acl, uint32_t timeStamp) = 0;
-	virtual uint8_t setAcl(FSNode *node, AclType type, const AccessControlList &acl,
-	                       uint32_t timeStamp) = 0;
+
+	/// Stores a RichACL on a node, replacing any previously stored ACL.
+	///
+	/// If the ACL is equivalent to the node's POSIX mode bits (RichACL::equivMode returns true),
+	/// the stored ACL is erased and only the mode bits are updated. Otherwise the ACL is written
+	/// to storage after resolving the auto-set-mode flag: if kAutoSetMode is set, the flag is
+	/// cleared and the ACL's mode is derived from the node's current mode bits before storing.
+	/// In both cases node->mode is updated to reflect the new permission bits, and the node's
+	/// ctime and checksum are updated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node on which to set the ACL.
+	/// @param acl The RichACL to store.
+	/// @param timeStamp The timestamp used to update the node's ctime.
+	/// @return SAUNAFS_STATUS_OK on success, SAUNAFS_ERROR_ENOTSUP if the ACL's inherit flags
+	///         are invalid for the node type.
+	virtual uint8_t setAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                       const RichACL &acl, uint32_t timeStamp) = 0;
+
+	/// Merges a POSIX ACL into the node's stored RichACL.
+	///
+	/// Reads the current RichACL (if any), calls createExplicitInheritance() and
+	/// removeInheritOnly() to normalise inheritance, then appends the POSIX ACL entries:
+	/// - kDefault: calls appendDefaultPosixACL() and refreshes the mode bits from the node.
+	/// - kAccess:  calls appendPosixACL() and updates node->mode from the resulting RichACL.
+	/// The merged ACL is always written back to storage.  node->ctime and checksum are updated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node on which to set the ACL.
+	/// @param type Must be AclType::kAccess or AclType::kDefault.
+	/// @param acl The POSIX ACL entries to merge in.
+	/// @param timeStamp The timestamp used to update the node's ctime.
+	/// @return SAUNAFS_STATUS_OK on success.
+	///         SAUNAFS_ERROR_EINVAL  if type is neither kAccess nor kDefault.
+	///         SAUNAFS_ERROR_ENOTSUP if type is kDefault and node is not a directory.
+	virtual uint8_t setAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                       AclType type, const AccessControlList &acl, uint32_t timeStamp) = 0;
+
 #ifndef METARESTORE
-	virtual uint8_t getAcl(FSNode *node, RichACL &acl) = 0;
+	/// Retrieves the stored RichACL for a node.
+	///
+	/// Looks up the ACL in storage. If no ACL is stored for the node (i.e. permissions are
+	/// fully described by the mode bits alone), returns SAUNAFS_ERROR_ENOATTR. Otherwise
+	/// copies the stored ACL into @p acl and asserts that node->mode matches the ACL's mode.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node whose ACL to retrieve.
+	/// @param[out] acl Receives the stored RichACL.
+	/// @return SAUNAFS_STATUS_OK on success, SAUNAFS_ERROR_ENOATTR if no ACL is stored.
+	virtual uint8_t getAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                       RichACL &acl) = 0;
 #endif  // METARESTORE
-	virtual uint8_t deleteAcl(FSNode *node, AclType type, uint32_t timeStamp) = 0;
+
+	/// Removes or prunes the ACL stored on a node according to the ACL type.
+	///
+	/// - kRichACL: removes the entire stored ACL unconditionally.
+	/// - kDefault: only valid on directories; reads the current ACL, calls
+	///   createExplicitInheritance() and removeInheritOnly(true) to strip default
+	///   (inherit-only) entries, then erases the ACL if empty or writes back the pruned ACL.
+	/// - kAccess:  reads the current ACL, calls createExplicitInheritance() and
+	///   removeInheritOnly(false) to strip access entries, then erases or writes back.
+	/// In all cases node->ctime and checksum are updated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node whose ACL to delete or prune.
+	/// @param type The ACL type to remove (kRichACL, kDefault, or kAccess).
+	/// @param timeStamp The timestamp used to update the node's ctime.
+	/// @return SAUNAFS_STATUS_OK on success.
+	///         SAUNAFS_ERROR_ENOTSUP if type is kDefault and node is not a directory.
+	///         SAUNAFS_ERROR_EINVAL  if type is not kRichACL, kDefault, or kAccess.
+	virtual uint8_t deleteAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                          AclType type, uint32_t timeStamp) = 0;
 
 	// Recursive operations
 #ifndef METARESTORE
@@ -501,7 +566,8 @@ public:
 	                                   inode_t *permissionDeniedINodesOut) = 0;
 
 	// Access control operations
-	virtual int access(const FsContext &context, FSNode *node, uint8_t modeMask) = 0;
+	virtual int access(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                   FSNode *node, uint8_t modeMask) = 0;
 	virtual int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) = 0;
 	virtual int nameCheck(const std::string &name) = 0;
 	virtual uint8_t verifySession(const FsContext &context, OperationMode operationMode,

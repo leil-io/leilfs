@@ -165,7 +165,23 @@ public:
 
 	virtual uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t inode, inode_t inode_src) = 0;
-	virtual uint8_t deleteAcl(const FsContext &context, inode_t inode, AclType type) = 0;
+
+	/// Removes or prunes the ACL stored on a node, given its inode.
+	///
+	/// Verifies the session (read-write, non-meta) and resolves the inode to a node, then
+	/// delegates to IFilesystemNodeOperations::deleteAcl. On success, writes a
+	/// DELETEACL(inode, type_char) entry to the changelog (master personality) or
+	/// increments the metadata version (shadow personality).
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param inode The inode of the node whose ACL to delete or prune.
+	/// @param type The ACL type to remove: kRichACL removes the entire ACL; kDefault removes
+	///             default (inherit-only) entries; kAccess removes access entries.
+	/// @return SAUNAFS_STATUS_OK on success, or a session/permission/node-lookup error.
+	virtual uint8_t deleteAcl(const FsContext &context,
+	                          const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                          AclType type) = 0;
 
 	/// Creates a hard link to an existing file in a destination directory.
 	///
@@ -943,10 +959,53 @@ public:
 	virtual uint8_t getTrashTimePrepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	                                    TrashtimeMap &fileTrashtimes,
 	                                    TrashtimeMap &dirTrashtimes) = 0;
-	virtual uint8_t setAcl(const FsContext &context, inode_t inode, AclType type,
-	                       const AccessControlList &acl) = 0;
-	virtual uint8_t setAcl(const FsContext &context, inode_t inode, const RichACL &acl) = 0;
-	virtual uint8_t getAcl(const FsContext &context, inode_t inode, RichACL &acl) = 0;
+
+	/// Merges a POSIX ACL (kAccess or kDefault) into the node's stored RichACL.
+	///
+	/// Verifies the session (read-write, non-meta), resolves the inode, then delegates to
+	/// IFilesystemNodeOperations::setAcl(AclType, AccessControlList). On success, writes a
+	/// SETACL(inode, 'a'|'d', acl_string) entry to the changelog (master personality) or
+	/// increments the metadata version (shadow personality).
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param inode The inode of the node on which to set the ACL.
+	/// @param type Must be AclType::kAccess or AclType::kDefault.
+	/// @param acl The POSIX ACL entries to merge in.
+	/// @return SAUNAFS_STATUS_OK on success, or a session/permission/node-lookup error.
+	virtual uint8_t setAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t inode, AclType type, const AccessControlList &acl) = 0;
+
+	/// Stores a RichACL directly on a node, replacing any previously stored ACL.
+	///
+	/// Verifies the session (read-write, non-meta), resolves the inode, calls
+	/// acl.toString() to produce the changelog representation, then delegates to
+	/// IFilesystemNodeOperations::setAcl(RichACL). On success, writes a
+	/// SETRICHACL(inode, acl_string) entry to the changelog (master personality) or
+	/// increments the metadata version (shadow personality).
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param inode The inode of the node on which to set the ACL.
+	/// @param acl The RichACL to store.
+	/// @return SAUNAFS_STATUS_OK on success, or a session/permission/node-lookup error.
+	virtual uint8_t setAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t inode, const RichACL &acl) = 0;
+
+	/// Retrieves the stored RichACL for a node, given its inode.
+	///
+	/// Verifies the session (read-only, any session type), resolves the inode, then delegates
+	/// to IFilesystemNodeOperations::getAcl. Does not write to the changelog and does not
+	/// need a read-write transaction.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context carrying a read-only transaction in KV backends.
+	/// @param inode The inode of the node whose ACL to retrieve.
+	/// @param[out] acl Receives the stored RichACL.
+	/// @return SAUNAFS_STATUS_OK on success, SAUNAFS_ERROR_ENOATTR if no ACL is stored,
+	///         or a session/permission/node-lookup error.
+	virtual uint8_t getAcl(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t inode, RichACL &acl) = 0;
 
 	// Functions which modify metadata or return some information.
 	// To be used by the master server with personality == kMaster
@@ -1039,10 +1098,39 @@ public:
 	virtual uint8_t applySetXAttr(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
 	                              inode_t inode, uint32_t anleng, const uint8_t *attrname,
 	                              uint32_t avleng, const uint8_t *attrvalue, uint32_t mode) = 0;
-	virtual uint8_t applySetAcl(uint32_t timestamp, inode_t inode, char aclType,
-	                            const char *aclString) = 0;
-	virtual uint8_t applySetRichAcl(uint32_t timestamp, inode_t inode,
+
+	/// Replays a SETACL changelog entry during metadata restore.
+	///
+	/// Parses @p aclString via AccessControlList::fromString, resolves the inode, decodes
+	/// @p aclType ('d' -> kDefault, 'a' -> kAccess) via decodeChar, then calls
+	/// IFilesystemNodeOperations::setAcl(AclType, AccessControlList). On success, increments
+	/// the metadata version.
+	///
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param timestamp The timestamp from the changelog entry, used to update the node's ctime.
+	/// @param inode The inode of the node on which to set the ACL.
+	/// @param aclType Single character encoding the ACL type: 'd' for kDefault, 'a' for kAccess.
+	/// @param aclString The serialized POSIX ACL string as written by AccessControlList::toString.
+	/// @return SAUNAFS_STATUS_OK on success, SAUNAFS_ERROR_EINVAL if parsing or type decoding
+	///         fails, SAUNAFS_ERROR_ENOENT if the inode does not exist.
+	virtual uint8_t applySetAcl(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                            inode_t inode, char aclType, const char *aclString) = 0;
+
+	/// Replays a SETRICHACL changelog entry during metadata restore.
+	///
+	/// Parses @p acl_string via RichACL::fromString, resolves the inode, then calls
+	/// IFilesystemNodeOperations::setAcl(RichACL). On success, increments the metadata version.
+	///
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param timestamp The timestamp from the changelog entry, used to update the node's ctime.
+	/// @param inode The inode of the node on which to set the ACL.
+	/// @param acl_string The serialized RichACL string as written by RichACL::toString.
+	/// @return SAUNAFS_STATUS_OK on success, SAUNAFS_ERROR_EINVAL if parsing fails,
+	///         SAUNAFS_ERROR_ENOENT if the inode does not exist.
+	virtual uint8_t applySetRichAcl(const FilesystemOperationContext &fsOpContext,
+	                                uint32_t timestamp, inode_t inode,
 	                                const std::string &acl_string) = 0;
+
 	virtual uint8_t applyUnlink(uint32_t timestamp, inode_t parent, const HString &name,
 	                            inode_t inode) = 0;
 	virtual uint8_t applyUnlock(uint64_t chunkid) = 0;
