@@ -86,9 +86,18 @@ double matocsserv_get_usage(matocsserventry* eptr);
 /*! \brief Get chunkservers ordered by disk usage. */
 std::vector<ServerWithUsage> matocsserv_getservers_sorted();
 
+/*! \brief Check if chunkserver is killed. */
+bool matocsserv_is_killed(matocsserventry* eptr);
+
 uint32_t matocsserv_get_version(matocsserventry* eptr);
 void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *usablescount,
                                 uint16_t *totalscount);
+
+/*! \brief Check if sorted servers need refresh. */
+bool matocsserv_sorted_servers_need_refresh();
+
+/*! \brief Acknowledge that sorted servers have been refreshed. */
+void matocsserv_sorted_servers_refresh_done();
 
 /*! \brief Get chunkservers for a new chunk.
  *
