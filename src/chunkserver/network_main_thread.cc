@@ -283,6 +283,17 @@ int mainNetworkThreadInit(void) {
 	gBgjobsCountPerNetworkWorker = cfg_get_minvalue<uint32_t>(
 	    "BGJOBSCNT_PER_NETWORK_WORKER",
 	    NetworkWorkerThread::kDefaultMaxBackgroundJobsPerNetworkWorker, 10);
+	std::string ioPriorityModeStr = cfg_getstring("IO_PRIORITY_MODE", "FIFO");
+	if (ioPriorityModeStr == "SWITCH") {
+		// Must clearly say that the mode is Switch, otherwise it will be Fifo. This is because Fifo
+		// is the default and more tested mode.
+		gIOPriorityMode = IOPriorityMode::Switch;
+	} else {
+		gIOPriorityMode = IOPriorityMode::Fifo;
+		if (ioPriorityModeStr != "FIFO") {
+			safs::log_warn("Invalid IO_PRIORITY_MODE '{}', defaulting to FIFO", ioPriorityModeStr);
+		}
+	}
 
 	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
 	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,

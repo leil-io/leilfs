@@ -51,8 +51,8 @@ constexpr auto kInvalidJob = nullptr;
 JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
                  std::vector<int> &wakeupFDs, uint8_t numPriorities)
     // EFD_NONBLOCK to prevent blocking reads/writes
-    : listenerInfos_(nrListeners), name_(name), workers(workers) {
-	nrListeners = std::max(nrListeners, 1u);  // Ensure at least one listener
+    : listenerInfos_(std::max(nrListeners, 1U)), name_(name), workers(workers) {
+	nrListeners = std::max(nrListeners, 1U);  // Ensure at least one listener
 
 	if (wakeupFDs.size() != nrListeners) {
 		safs::log_warn(
@@ -90,6 +90,24 @@ void JobPool::startWorkers() {
 }
 
 JobPool::~JobPool() {
+	// stop() could already have been called (e.g. from a derived-class destructor).
+	// The call here is a safety net; if the pool was never stopped the virtual
+	// putExitJobToQueue() will resolve to JobPool's version.
+	// If stop() was already called, this will be a no-op due to the stopped_ guard.
+	stop();
+
+	jobsQueue.reset();
+
+	workerThreads.clear();
+
+	for (auto &listenerInfo : listenerInfos_) { close(listenerInfo.notifierFD); }
+}
+
+void JobPool::stop() {
+	if (stopped_.exchange(true, std::memory_order_acq_rel)) {
+		return;  // Already stopped.
+	}
+
 	for (uint8_t i = 0; i < workers; ++i) {
 		putExitJobToQueue();
 	}
@@ -101,12 +119,6 @@ JobPool::~JobPool() {
 	for (size_t i = 0; i < listenerInfos_.size(); ++i) {
 		if (!listenerInfos_[i].statusQueue.empty()) { processCompletedJobs(i); }
 	}
-
-	jobsQueue.reset();
-
-	workerThreads.clear();
-
-	for (auto &listenerInfo : listenerInfos_) { close(listenerInfo.notifierFD); }
 }
 
 uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
@@ -285,7 +297,7 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 	uint8_t status = SAUNAFS_STATUS_OK;
 
 	while (true) {
-		jobsQueue->get(&jobId, &operation, &jobPtrArg, nullptr);
+		getFromJobQueue(&jobId, &operation, &jobPtrArg);
 
 		if (operation == ChunkOperation::Exit) { break; }
 
@@ -370,6 +382,10 @@ void JobPool::putExitJobToQueue() {
 
 void JobPool::putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg) {
 	jobsQueue->put(jobId, operation, jobPtrArg, 1);
+}
+
+void JobPool::getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jobPtrArg) {
+	jobsQueue->get(jobId, operation, jobPtrArg, nullptr);
 }
 
 uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
@@ -514,19 +530,59 @@ void MasterJobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
 	}
 }
 
+ClientJobPool::~ClientJobPool() {
+	// Call stop() while this derived object is fully alive so that virtual
+	// dispatch resolves to ClientJobPool::putExitJobToQueue(), enqueuing Exit
+	// at the correct lowest priority and allowing workers to drain the queue.
+	stop();
+}
+
 void ClientJobPool::putExitJobToQueue() {
-	// Use priority 1 to ensure exit jobs are processed after all other jobs
-	jobsQueue->put(0, JobPool::ChunkOperation::Exit, nullptr, 1, 1);
+	// Enqueue EXIT at the lowest priority for the active I/O priority mode
+	jobsQueue->put(0, ChunkOperation::Exit, nullptr, 1, getJobPriority(ChunkOperation::Exit));
+}
+
+uint8_t ClientJobPool::getJobPriority(ChunkOperation operation) {
+	switch (operation) {
+	case ChunkOperation::Open:
+	case ChunkOperation::Close:
+	case ChunkOperation::GetBlocks:
+		// Use higher priority (0) for Open, Close and GetBlocks operations
+		return 0;
+	case ChunkOperation::Read:
+	case ChunkOperation::Prefetch:
+		return kReadLevel;  // Read jobs
+	case ChunkOperation::Exit:
+	case ChunkOperation::Write:
+		// Use the lowest priority for Write and Exit operations, with an extra level if in Switch
+		// mode
+		return (ioPriorityMode_ == IOPriorityMode::Switch) ? kWriteLevelSwitchMode
+		                                                   : kWriteLevelFifoMode;
+	default:
+		return 0;  // Default priority for other jobs
+	}
 }
 
 void ClientJobPool::putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg) {
-	// Use higher priority (0) for Open, Close and GetBlocks operations
-	uint8_t priority =
-	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks ||
-	     operation == ChunkOperation::Close)
-	        ? 0
-	        : 1;
-	jobsQueue->put(jobId, operation, jobPtrArg, 1, priority);
+	jobsQueue->put(jobId, operation, jobPtrArg, 1,
+	               getJobPriority(static_cast<ChunkOperation>(operation)));
+}
+
+void ClientJobPool::getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jobPtrArg) {
+	if (ioPriorityMode_ == IOPriorityMode::Fifo || stopped_.load()) {
+		// If we don't have a preferred IO type or if we're stopping, just get the next job without
+		// custom priority considerations. In switch mode, the priority levels in the queue will
+		// still ensure that Exit and Write jobs are processed correctly.
+		jobsQueue->get(jobId, operation, jobPtrArg, nullptr);
+		return;
+	}
+
+	// The IOPriorityMode must be Switch if preferredIOType_ is not kPreferAny, so we can use the
+	// priority feature of the queue to prefer the specified IO type.
+	uint8_t preferredIOType = preferredIOType_.fetch_xor(kSwitchValue, std::memory_order_relaxed);
+	uint8_t otherIOType = preferredIOType ^ kSwitchValue;
+	std::array<uint8_t, 3> priorityLevelsToCheck = {0, preferredIOType, otherIOType};
+	jobsQueue->getUsingCustomPriority(jobId, operation, jobPtrArg, nullptr, priorityLevelsToCheck);
 }
 
 uint32_t job_open(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,

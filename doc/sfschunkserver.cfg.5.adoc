@@ -216,6 +216,13 @@ config value LOG_LEVEL to determine logging level. Valid log levels are
 - 'crit' or 'critical'
 - 'off'
 
+*IO_PRIORITY_MODE (EXPERIMENTAL)*:: Define IO jobs, i.e reads and writes from drives,
+prioritization scheme. The available modes are:
+- 'FIFO': prioritizes the IO jobs first enqueued.
+- 'SWITCH': alternates read and write jobs (interleaving) to prevent one class of IO from
+starving the other.
+Not reloadable. (Default: FIFO)
+
 *TLS_CERT_FILE (EXPERIMENTAL)*::
 Path to the TLS certificate file the chunk server will use for TLS connections
 (there is no default value).

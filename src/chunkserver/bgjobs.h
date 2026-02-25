@@ -38,6 +38,14 @@
 constexpr auto kEmptyCallback = nullptr;
 constexpr auto kEmptyExtra = nullptr;
 
+/// @brief Mode for consumer threads to pick IO jobs from the JobPool.
+enum class IOPriorityMode : uint8_t {
+	Fifo,   ///< Process IO jobs in the order they were added, regardless of type.
+	Switch  ///< Switch between read and write jobs to prevent starvation of either type.
+};
+
+inline IOPriorityMode gIOPriorityMode;
+
 /**
  * @class JobPool
  * @brief Manages and processes background jobs in a thread pool.
@@ -115,7 +123,16 @@ public:
 	void startWorkers();
 
 	/// @brief Destructor for JobPool.
-	~JobPool();
+	/// @note stop() must have been called before destruction (e.g. from a derived class destructor)
+	/// to ensure worker threads are shut down correctly. ~JobPool() only releases resources.
+	virtual ~JobPool();
+
+	/// @brief Shuts down all worker threads and drains pending status.
+	///
+	/// Enqueues one Exit job per worker (via the virtual putExitJobToQueue() so
+	/// derived classes use the correct priority), joins all threads, and drains
+	/// any remaining status queues. Safe to call more than once.
+	void stop();
 
 	/// @brief Adds a job to the JobPool.
 	///
@@ -235,6 +252,12 @@ protected:
 	/// @param jobPtrArg A pointer to the data of the job to be added.
 	virtual void putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg);
 
+	/// @brief Gets a job from the job queue.
+	/// @param jobId The ID of the job to be retrieved.
+	/// @param operation The type of operation to be performed on the chunk.
+	/// @param jobPtrArg A pointer to the data of the job to be retrieved.
+	virtual void getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jobPtrArg);
+
 	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
 	std::string name_;                         /// Human readable id of the JobPool.
 	uint8_t workers;                           /// Number of worker threads in the pool.
@@ -244,6 +267,8 @@ protected:
 	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
 	/// sure the JobPool is truly empty when stopping the chunkserver.
 	std::atomic<uint32_t> unprocessedJobs_{0};
+	/// Guards against double-shutdown (stop() called more than once or from destructor).
+	std::atomic<bool> stopped_{false};
 };
 
 /**
@@ -371,7 +396,8 @@ private:
  * @brief Specialized JobPool for managing client server related jobs.
  *
  * The ClientJobPool class extends the JobPool class to provide additional functionality for
- * managing jobs related to client server operations.
+ * managing jobs related to client server operations. It includes a mechanism to prioritize read and
+ * write jobs based on the IOPriorityMode.
  */
 class ClientJobPool : public JobPool {
 public:
@@ -382,8 +408,16 @@ public:
 	/// @param nrListeners The number of listeners that will use this JobPool.
 	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
 	ClientJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
-	              std::vector<int> &wakeupFDs)
-	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs, 2) {
+	              std::vector<int> &wakeupFDs, IOPriorityMode ioPriorityMode)
+	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs,
+	              ioPriorityMode == IOPriorityMode::Fifo ? 2 : 3),
+	      ioPriorityMode_(ioPriorityMode) {
+		if (ioPriorityMode_ == IOPriorityMode::Switch) {
+			preferredIOType_.store(kPreferRead);
+		} else {
+			preferredIOType_.store(kPreferAny);
+		}
+
 		startWorkers();
 	}
 
@@ -394,6 +428,20 @@ public:
 	~ClientJobPool() override;
 
 private:
+	constexpr static uint8_t kPreferAny = 0;
+	constexpr static uint8_t kReadLevel = 1;
+	constexpr static uint8_t kWriteLevelFifoMode = kReadLevel;
+	constexpr static uint8_t kWriteLevelSwitchMode = 2;
+
+	constexpr static uint8_t kPreferRead = kReadLevel;
+	constexpr static uint8_t kPreferWrite = kWriteLevelSwitchMode;
+	constexpr static uint8_t kSwitchValue = kPreferRead ^ kPreferWrite;
+
+	/// @brief Gets the job priority based on the operation type.
+	/// @param operation The type of operation to be performed on the chunk.
+	/// @return The priority of the job, where lower values indicate higher priority.
+	uint8_t getJobPriority(ChunkOperation operation);
+
 	/// @brief Puts an exit job into the client job queue.
 	void putExitJobToQueue() override;
 
@@ -404,6 +452,20 @@ private:
 	/// @param operation The type of operation to be performed on the chunk.
 	/// @param jobPtrArg A pointer to the data of the job to be added.
 	void putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg) override;
+
+	/// @brief Gets a job from the client job queue.
+	/// @note The ClientJobPool uses the preferredIOType_ member to switch between preferring read
+	/// and write jobs when the IOPriorityMode is set to Switch. The preferredIOType_ is updated
+	/// every time a job is retrieved from the queue if in switch mode, to give more balanced access
+	/// to read and write operations.
+	/// @param jobId The ID of the job to be retrieved.
+	/// @param operation The type of operation to be performed on the chunk.
+	/// @param jobPtrArg A pointer to the data of the job to be retrieved.
+	void getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jobPtrArg) override;
+
+	/// The preferred IO type for the Switch mode, used to switch between read and write jobs.
+	std::atomic<uint8_t> preferredIOType_;
+	IOPriorityMode ioPriorityMode_;
 };
 
 /// @brief Adds an open job to the ClientJobPool.
