@@ -1103,10 +1103,6 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CLTOMA_UPDATE_MOUNT_INFO (1000U + 487U)
 /// mount_info:STDSTRING
 
-//0x05D0
-#define SAU_MATOCL_UNLOCK_CHUNK_NOTICE (1000U + 488U)
-/// inode:32 chunkindex:32
-
 /// version==0 msgid:32 status:8
 /// version==1 msgid:32 filelength:64 chunkid:64 chunkversion:32 locations:(N * [ip:32 port:16 label:STDSTRING chunktype:8])
 /// version==2 msgid:32 filelength:64 chunkid:64 chunkversion:32 locations:(N * [ip:32 port:16 label:STDSTRING chunktype:16])

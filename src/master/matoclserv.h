@@ -42,10 +42,6 @@ void matoclserv_stats(uint64_t stats[5]);
 void matoclserv_chunk_status(uint64_t chunkId, uint8_t status,
                              bool isFailedCreateOperation = false);
 
-/// Notifies all clients waiting for a given chunk ID to be unlocked.
-/// @param chunkId The ID of the chunk that has been unlocked
-void matoclserv_notify_unlock_list(uint64_t chunkId);
-
 /// Initializes the network configuration and register the eventloop callbacks.
 /// @return 0 on success, negative value on error
 int matoclserv_network_init();

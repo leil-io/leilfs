@@ -53,4 +53,3 @@ constexpr uint32_t kFirstVersionWithMountInfoOnMonitoring = saunafsVersion(5, 0,
 constexpr uint32_t kFirstVersionWithChunkBasedWriteAlgorithm = saunafsVersion(5, 0, 0);
 constexpr uint32_t kFirstVersionWithClusterId = saunafsVersion(5, 0, 0);
 constexpr uint32_t kFirstVersionWithReadTrashReservedByHandleOffset = saunafsVersion(5, 3, 0);
-constexpr uint32_t kFirstVersionWithUnlockChunkNotice = saunafsVersion(5, 7, 0);

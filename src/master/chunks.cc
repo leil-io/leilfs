@@ -1021,9 +1021,9 @@ int chunk_can_unlock(uint64_t chunkid, uint32_t lockid) {
 		return SAUNAFS_STATUS_OK;
 	} else if (c->lockedto == 0) {
 		return SAUNAFS_ERROR_NOTLOCKED;
+	} else {
+		return SAUNAFS_ERROR_WRONGLOCKID;
 	}
-	// Case lockid != c->lockid
-	return SAUNAFS_ERROR_WRONGLOCKID;
 }
 
 int chunk_unlock(uint64_t chunkid) {
@@ -1037,12 +1037,6 @@ int chunk_unlock(uint64_t chunkid) {
 	c->lockedto = 0;
 	chunk_update_checksum(c);
 	emit_chunk_changed(c);
-
-#ifndef METARESTORE
-	// If the chunk is not locked anymore, we can try to send notices about the operation
-	// status to clients waiting for the lock release.
-	matoclserv_notify_unlock_list(chunkid);
-#endif
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1151,7 +1145,6 @@ uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
 			}
 		}
 		if (*lockid == 0 && oc->isLocked()) {
-			*nchunkid = ochunkid;
 			return SAUNAFS_ERROR_LOCKED;
 		}
 		if (!oc->isWritable()) {
