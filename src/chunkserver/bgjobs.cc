@@ -49,7 +49,7 @@
 constexpr auto kInvalidJob = nullptr;
 
 JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
-                 std::vector<int> &wakeupFDs)
+                 std::vector<int> &wakeupFDs, uint8_t numPriorities)
     // EFD_NONBLOCK to prevent blocking reads/writes
     : listenerInfos_(nrListeners), name_(name), workers(workers) {
 	nrListeners = std::max(nrListeners, 1u);  // Ensure at least one listener
@@ -72,8 +72,12 @@ JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uin
 		listenerInfos_[i].nextJobId = 1;
 	}
 
-	// Initialize the job queue with a maximum size and two priority levels
-	jobsQueue = std::make_unique<ProducerConsumerQueueWithPriority>(2, maxJobs);
+	// Initialize the job queue with a maximum size
+	if (numPriorities > 1) {
+		jobsQueue = std::make_unique<ProducerConsumerQueueWithPriority>(numPriorities, maxJobs);
+	} else {
+		jobsQueue = std::make_unique<ProducerConsumerQueue>(maxJobs);
+	}
 
 	// NOTE: worker threads are NOT started here. Call start() after the fully-derived
 	// object is constructed to avoid a vtable-pointer race condition.
@@ -87,8 +91,7 @@ void JobPool::startWorkers() {
 
 JobPool::~JobPool() {
 	for (uint8_t i = 0; i < workers; ++i) {
-		// Use priority 1 to ensure exit jobs are processed after all other jobs
-		jobsQueue->put(0, JobPool::ChunkOperation::Exit, nullptr, 1, 1);
+		putExitJobToQueue();
 	}
 
 	for (auto &thread : workerThreads) {
@@ -126,14 +129,8 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	job->state = JobPool::State::Enabled;
 	job->listenerId = listenerId;
 	listenerInfo.jobHash[jobId] = std::move(job);
-	// Use higher priority (0) for Open, Close and GetBlocks operations
-	uint8_t priority =
-	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks ||
-	     operation == ChunkOperation::Close)
-	        ? 0
-	        : 1;
-	jobsQueue->put(jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()),
-	               1, priority);
+
+	putToJobQueue(jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()));
 	unprocessedJobs_.fetch_add(1, std::memory_order_relaxed);
 	return jobId;
 }
@@ -367,6 +364,14 @@ bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerI
 	return true;
 }
 
+void JobPool::putExitJobToQueue() {
+	jobsQueue->put(0, JobPool::ChunkOperation::Exit, nullptr, 1);
+}
+
+void JobPool::putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg) {
+	jobsQueue->put(jobId, operation, jobPtrArg, 1);
+}
+
 uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
                                           JobCallback callback, void *extra,
                                           ProcessJobCallback processJob, uint32_t listenerId) {
@@ -509,7 +514,22 @@ void MasterJobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
 	}
 }
 
-uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+void ClientJobPool::putExitJobToQueue() {
+	// Use priority 1 to ensure exit jobs are processed after all other jobs
+	jobsQueue->put(0, JobPool::ChunkOperation::Exit, nullptr, 1, 1);
+}
+
+void ClientJobPool::putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg) {
+	// Use higher priority (0) for Open, Close and GetBlocks operations
+	uint8_t priority =
+	    (operation == ChunkOperation::Open || operation == ChunkOperation::GetBlocks ||
+	     operation == ChunkOperation::Close)
+	        ? 0
+	        : 1;
+	jobsQueue->put(jobId, operation, jobPtrArg, 1, priority);
+}
+
+uint32_t job_open(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   ChunkPartType chunkType, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddOpen(chunkId, chunkType);
@@ -518,7 +538,7 @@ uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chun
 	                      processJob, listenerId);
 }
 
-uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_close(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    ChunkPartType chunkType, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddClose(chunkId, chunkType);
@@ -527,7 +547,7 @@ uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chu
 	                      processJob, listenerId);
 }
 
-uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_read(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
                   OutputBuffer *outputBuffer, bool performHddOpen, uint32_t listenerId) {
@@ -536,9 +556,7 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chun
 		uint8_t status = SAUNAFS_STATUS_OK;
 		if (performHddOpen) {
 			status = hddOpen(chunkId, chunkType);
-			if (status != SAUNAFS_STATUS_OK) {
-				return status;
-			}
+			if (status != SAUNAFS_STATUS_OK) { return status; }
 		}
 
 		status = hddRead(chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
@@ -557,7 +575,7 @@ uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chun
 	                      processJob, listenerId);
 }
 
-uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
+uint32_t job_prefetch(ClientJobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
                       uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched,
                       uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
@@ -568,7 +586,7 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 	                      processJob, listenerId);
 }
 
-uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
                    uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
@@ -630,7 +648,7 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chu
 				if (op.startBlock != op.endBlock) {
 					safs::log_warn(
 					    "job_write: startBlock {} != endBlock {} for chunk id {} when not full "
-						"blocks. This is not supported, doing first block only.",
+					    "blocks. This is not supported, doing first block only.",
 					    op.startBlock, op.endBlock, chunkId);
 				}
 
@@ -638,9 +656,7 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chu
 				                                      op.startBlock, op.offset, op.size, op.crcs[0],
 				                                      op.buffer));
 
-				if (statuses.back() != SAUNAFS_STATUS_OK) {
-					break;
-				}
+				if (statuses.back() != SAUNAFS_STATUS_OK) { break; }
 			}
 		}
 
@@ -657,7 +673,7 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chu
 	                      processJob, listenerId);
 }
 
-uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_get_blocks(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                         uint32_t version, ChunkPartType chunkType, uint16_t *blocks,
                         uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {

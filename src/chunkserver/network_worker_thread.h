@@ -55,7 +55,7 @@ public:
 	void askForTermination();
 	void addConnection(int newSocketFD);
 
-	JobPool *backgroundJobPool() {
+	ClientJobPool *backgroundJobPool() {
 		return bgJobPool_.get();
 	}
 
@@ -73,7 +73,7 @@ private:
 	std::mutex csservheadLock;
 	std::list<ChunkserverEntry> csservEntries;
 
-	std::unique_ptr<JobPool> bgJobPool_;
+	std::unique_ptr<ClientJobPool> bgJobPool_;
 	std::atomic<bool> canTerminate_{false};  ///< Whether it is safe to terminate the thread
 	int bgJobPoolWakeUpFd_;
 	static const uint32_t JOB_FD_PDESC_POS = 1;

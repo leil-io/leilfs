@@ -57,7 +57,7 @@ static ConnectionPool gForwardConnectionPool;
 static constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 static constexpr uint8_t kConnectRetries = 10;
 
-ChunkserverEntry::ChunkserverEntry(int socket, JobPool *workerJobPool,
+ChunkserverEntry::ChunkserverEntry(int socket, ClientJobPool *workerJobPool,
                                    uint16_t maxBlocksPerHddReadJob, uint16_t maxParallelHddReadJobs,
                                    uint16_t maxBlocksPerHddWriteJob)
     : workerJobPool(workerJobPool), sock(socket) {

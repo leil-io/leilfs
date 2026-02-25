@@ -100,11 +100,12 @@ public:
 	/// @param maxJobs The maximum number of jobs that can be queued.
 	/// @param nrListeners The number of listeners that will use this JobPool.
 	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
+	/// @param numPriorities The number of priority levels for the job queue.
 	/// @throws std::runtime_error If the pipe creation fails.
 	/// @note After construction, call start() to spawn worker threads. This two-phase
 	///       init avoids a vtable-pointer race when constructing derived classes.
 	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
-	        std::vector<int> &wakeupFDs);
+	        std::vector<int> &wakeupFDs, uint8_t numPriorities = 1);
 
 	/// @brief Spawns the worker threads.
 	///
@@ -195,6 +196,16 @@ protected:
 		uint32_t listenerId;            // The ID of the listener associated with the job.
 	};
 
+	/// @brief Structure to hold information about a listener.
+	struct ListenerInfo {
+		int notifierFD;            /// File descriptor for notifications.
+		std::mutex notifierMutex;  /// Mutex for event notifications.
+		std::mutex jobsMutex;      /// Mutex for job operations.
+		std::queue<std::pair<uint32_t, uint8_t>> statusQueue;        /// Queue for job statuses.
+		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
+		uint32_t nextJobId;                                          /// Next job ID to be assigned.
+	};
+
 	/// @brief Worker thread function.
 	/// @param poolName Parent pool name, used to name the specific thread.
 	/// @param workerId Worker index in this pool, used to name the thread.
@@ -215,15 +226,14 @@ protected:
 	/// @return 1 if a status is not the last one, 0 if it is the last status.
 	bool receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId = 0);
 
-	/// @brief Structure to hold information about a listener.
-	struct ListenerInfo {
-		int notifierFD;            /// File descriptor for notifications.
-		std::mutex notifierMutex;  /// Mutex for event notifications.
-		std::mutex jobsMutex;      /// Mutex for job operations.
-		std::queue<std::pair<uint32_t, uint8_t>> statusQueue;        /// Queue for job statuses.
-		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
-		uint32_t nextJobId;                                          /// Next job ID to be assigned.
-	};
+	/// @brief Puts an exit job into the job queue.
+	virtual void putExitJobToQueue();
+
+	/// @brief Puts a job into the job queue.
+	/// @param jobId The ID of the job to be added.
+	/// @param operation The type of operation to be performed on the chunk.
+	/// @param jobPtrArg A pointer to the data of the job to be added.
+	virtual void putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg);
 
 	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
 	std::string name_;                         /// Human readable id of the JobPool.
@@ -356,15 +366,55 @@ private:
 	    chunkToJobReplyMap_;
 };
 
-/// @brief Adds an open job to the JobPool.
+/**
+ * @class ClientJobPool
+ * @brief Specialized JobPool for managing client server related jobs.
+ *
+ * The ClientJobPool class extends the JobPool class to provide additional functionality for
+ * managing jobs related to client server operations.
+ */
+class ClientJobPool : public JobPool {
+public:
+	/// @brief Constructor for ClientJobPool.
+	/// @param name Human readable name for this pool, useful for debugging.
+	/// @param workers The number of worker threads in the pool.
+	/// @param maxJobs The maximum number of jobs that can be queued.
+	/// @param nrListeners The number of listeners that will use this JobPool.
+	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
+	ClientJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
+	              std::vector<int> &wakeupFDs)
+	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs, 2) {
+		startWorkers();
+	}
+
+	/// @brief Destructor for ClientJobPool.
+	/// Calls stop() while the derived object is still alive so that
+	/// putExitJobToQueue() virtual dispatch resolves to the correct override,
+	/// enqueuing Exit at the right (lowest) priority.
+	~ClientJobPool() override;
+
+private:
+	/// @brief Puts an exit job into the client job queue.
+	void putExitJobToQueue() override;
+
+	/// @brief Puts a job into the client job queue.
+	/// @note The ClientJobPool uses the priority parameter of the put function to give higher
+	/// priority to Open, Close and GetBlocks operations.
+	/// @param jobId The ID of the job to be added.
+	/// @param operation The type of operation to be performed on the chunk.
+	/// @param jobPtrArg A pointer to the data of the job to be added.
+	void putToJobQueue(uint32_t jobId, uint32_t operation, uint8_t *jobPtrArg) override;
+};
+
+/// @brief Adds an open job to the ClientJobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The ClientJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_open(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a close job to the JobPool.
@@ -375,12 +425,12 @@ uint32_t job_open(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chun
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_close(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    ChunkPartType chunkType, uint32_t listenerId = 0);
 
-/// @brief Adds a read job to the JobPool.
+/// @brief Adds a read job to the ClientJobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The ClientJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param chunkId The ID of the chunk.
 /// @param version The version of the chunk.
@@ -393,27 +443,27 @@ uint32_t job_close(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chu
 /// @param performHddOpen Whether to perform HDD open.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_read(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_read(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
                   OutputBuffer *outputBuffer, bool performHddOpen, uint32_t listenerId = 0);
 
-/// @brief Adds a prefetch job to the JobPool.
+/// @brief Adds a prefetch job to the ClientJobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The ClientJobPool instance.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param firstBlockToBePrefetched The first block to be prefetched.
 /// @param blocksToBePrefetched The number of blocks to be prefetched.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
+uint32_t job_prefetch(ClientJobPool &jobPool, uint64_t chunkId, ChunkPartType chunkType,
                       uint32_t firstBlockToBePrefetched, uint32_t blocksToBePrefetched,
                       uint32_t listenerId = 0);
 
-/// @brief Adds a write job to the JobPool.
+/// @brief Adds a write job to the ClientJobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The ClientJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param chunkId The ID of the chunk.
 /// @param chunkVersion The version of the chunk.
@@ -425,13 +475,13 @@ uint32_t job_prefetch(JobPool &jobPool, uint64_t chunkId, ChunkPartType chunkTyp
 /// @param buffer The data buffer to write.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                    uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
                    uint32_t listenerId = 0);
 
-/// @brief Adds a get blocks job to the JobPool.
+/// @brief Adds a get blocks job to the ClientJobPool.
 ///
-/// @param jobPool The JobPool instance.
+/// @param jobPool The ClientJobPool instance.
 /// @param callback The callback function to be called upon job completion.
 /// @param chunkId The ID of the chunk.
 /// @param version The version of the chunk.
@@ -439,7 +489,7 @@ uint32_t job_write(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chu
 /// @param blocks The blocks to get.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
-uint32_t job_get_blocks(JobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
+uint32_t job_get_blocks(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                         uint32_t version, ChunkPartType chunkType, uint16_t *blocks,
                         uint32_t listenerId = 0);
 

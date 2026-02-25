@@ -70,8 +70,8 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers
 		// Create the JobPool instance with the specified number of workers. It would be serving
 		// only this network worker thread, thus the number of listeners is 1.
 		std::vector<int> bgJobPoolWakeUpFds(1);
-		bgJobPool_ =
-		    std::make_unique<JobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, 1, bgJobPoolWakeUpFds);
+		bgJobPool_ = std::make_unique<ClientJobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, 1,
+		                                             bgJobPoolWakeUpFds);
 		bgJobPoolWakeUpFd_ = bgJobPoolWakeUpFds[0];
 	} catch (const std::exception &e) {
 		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
