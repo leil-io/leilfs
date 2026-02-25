@@ -1,0 +1,1 @@
+source test_suites/TestTemplates/test_simultaneous_write_read.inc
