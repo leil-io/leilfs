@@ -77,6 +77,31 @@ private:
 	uint32_t timestamp;
 };
 
+class EdgeUpdateEvent : public IMetadataUpdateEvent {
+public:
+	EdgeUpdateEvent(inode_t _parentId, HString _name, inode_t _childId);
+	~EdgeUpdateEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t parentId;
+	HString name;
+	inode_t childId;
+};
+
+class EdgeRemoveEvent : public IMetadataUpdateEvent {
+public:
+	EdgeRemoveEvent(inode_t _parentId, HString _name);
+	~EdgeRemoveEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t parentId;
+	HString name;
+};
+
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:

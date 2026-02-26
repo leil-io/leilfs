@@ -73,6 +73,33 @@ void FreeNodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	}
 }
 
+EdgeUpdateEvent::EdgeUpdateEvent(inode_t _parentId, HString _name, inode_t _childId)
+	: parentId(_parentId), name(std::move(_name)), childId(_childId) {}
+
+void EdgeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// EDGE_<ParentId><Name>: <ChildId>. e.g.: EDGE_1999ChildName: 2535
+
+	// Key: EDGE_<parentId><name>
+	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
+	kv::appendStr(key, name);
+
+	// Value: childId
+	kv::Value value(kv::toBytesBE(childId));
+
+	txn->set(key, value);
+}
+
+EdgeRemoveEvent::EdgeRemoveEvent(inode_t _parentId, HString _name)
+	: parentId(_parentId), name(std::move(_name)) {}
+
+void EdgeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Key: EDGE_<parentId><name>
+	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
+	kv::appendStr(key, name);
+
+	txn->remove(key);
+}
+
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {
 	pendingUpdates_.reserve(kInitialSize_);  // Default reserve size, can be adjusted
 }
