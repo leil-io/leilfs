@@ -29,6 +29,7 @@
 #include "common/memory_mapped_file.h"
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
+#include "master/hstring.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_writer_fdb.h"
@@ -273,6 +274,58 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	return kOpSuccess;
 }
 
+int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("EDGE 1.0");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for EDGE 1.0");
+		return kOpFailure;
+	}
+
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+	uint64_t edgeCount = 0;
+
+	MetadataWriterFDB writer(kvEngine_);
+	size_t pending = 0;
+
+	while (metadataFile_->offset(ptr) < sectionEnd) {
+		inode_t parentId{};
+		getINode(&ptr, parentId);
+		inode_t childId{};
+		getINode(&ptr, childId);
+		auto edgeNameSize = get16bit(&ptr);
+
+		// End-of-edges marker: parentId == 0 && childId == 0
+		if (parentId == 0 && childId == 0) { break; }
+
+		if (edgeNameSize == 0) {
+			safs::log_err("Bootstrapping edge: empty name for edge {}->{}", parentId, childId);
+			return kOpFailure;
+		}
+
+		std::string name(reinterpret_cast<const char *>(ptr), edgeNameSize);
+		ptr += edgeNameSize;
+
+		writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		edgeCount++;
+
+		if (++pending >= kFlushThreshold) {
+			writer.flush();
+			pending = 0;
+		}
+	}
+
+	if (!writer.flushAll()) {
+		safs::log_err("Failed to flush bootstrapped edges to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} edges from metadata file into FDB", edgeCount);
+	return kOpSuccess;
+}
+
 int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
 	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
 
@@ -341,6 +394,12 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	});
 
 	// Filesystem MetadataSection "EDGE 1.0"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "EDGE 1.0",
+	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kEdgeKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadEdgesSection(); },
+	});
+
 	// Filesystem MetadataSection "FREE 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "FREE 1.0",
