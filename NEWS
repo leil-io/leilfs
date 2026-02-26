@@ -10,7 +10,6 @@ This file lists noteworthy changes in SaunaFS.
  - feat(tls): Secure master-nt communication with TLS (#732)
  - fix(uraft): fix leadership ping-ponging issues (#711)
  - fix: Delayed chunk operations missing from shadow changelogs (#740)
- - perf: wake up writes after locked chunk status (#736)
 
 * SaunaFS (5.6.0) (2026-02-02)
  - fix: Fix overwriting failing tests (#697)
