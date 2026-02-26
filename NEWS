@@ -1,5 +1,16 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.7.0) (2026-02-26)
+ - docs(master): document some filesystem operations (#729)
+ - docs(uraft): improve helper and HA documentation (#713)
+ - docs: Update saunafs repo reference on docs files  (#715)
+ - feat(tls): Allow client runtime update for TLS (#723)
+ - feat(tls): Secure cs-master communication with TLS (#718)
+ - feat(tls): Secure master-ml communication with TLS (#720)
+ - feat(tls): Secure master-nt communication with TLS (#732)
+ - fix(uraft): fix leadership ping-ponging issues (#711)
+ - fix: Delayed chunk operations missing from shadow changelogs (#740)
+
 * SaunaFS (5.6.0) (2026-02-02)
  - fix: Fix overwriting failing tests (#697)
  - doc: Remove info about 5.0.0 deprecations (#673)
