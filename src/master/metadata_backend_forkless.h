@@ -134,13 +134,82 @@ private:
 	int fsLoad(bool ignoreFlag);
 
 	/// Loads NODE_ metadata
+	/// Loads all nodes from the KV store and reconstructs the in-memory filesystem node table.
+	///
+	/// Nodes are stored as `NODE_<nodeId>: <serializedNode>` entries. This method paginates
+	/// through the full NODE_ keyspace starting from SPECIAL_INODE_ROOT, deserializes each
+	/// node, and calls loadNode() to register it in gMetadata.
+	///
+	/// @param ignoreFlag Currently unused; reserved for consistency with other load functions.
+	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadNodes(bool ignoreFlag);
+
+	/// Register a single deserialized node in the in-memory metadata structures.
+	///
+	/// Updates per-type counters (dirNodes, fileNodes, linkNodes), registers open sessions
+	/// for file-like nodes, applies quota accounting, and inserts the node into the global
+	/// node hash table and inode pool.
+	///
+	/// @param fsOpContext Filesystem operation context (transaction).
+	/// @param node        Deserialized FSNode to register. Ownership is transferred to gMetadata.
+	/// @return kOpSuccess on success, kOpFailure if the node type is unrecognized.
 	int8_t loadNode(const FilesystemOperationContext &fsOpContext, FSNode *node);
 
 	/// Loads FREE_ metadata
+	/// Loads all free (detained) inodes from the KV store into the in-memory inode pool.
+	///
+	/// Free inodes are stored as `FREE_<nodeId>: <timestamp>` entries. This method paginates
+	/// through the full FREE_ keyspace, calls `gMetadata->inodePool.detain()` for each entry,
+	/// and then connects signal handlers so that future detain/release operations are
+	/// automatically propagated to the KV store via FreeNodeUpdateEvent.
+	///
+	/// @param ignoreFlag Currently unused; reserved for consistency with other load functions.
+	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadFree(bool ignoreFlag);
 
+	/// Loads EDGE_ metadata
+	/// Loads all edges from the KV store and reconstructs the in-memory directory tree.
+	///
+	/// Edges are stored as `EDGE_<ParentId><Name>: <ChildId>` entries. This method paginates
+	/// through the full EDGE_ keyspace, deserializes each entry, and calls loadEdge() to
+	/// attach the child node to its parent directory (or to the trash/reserved containers
+	/// when parentId is 0).
+	///
+	/// @param ignoreFlag When true, missing parent/child nodes are tolerated and orphan nodes
+	///                   are attached to the root directory instead of causing a failure.
+	/// @return kOpSuccess on success, kOpFailure on error.
+	int8_t loadEdges(bool ignoreFlag);
+
+	/// Load a single edge into the in-memory filesystem tree.
+	///
+	/// Depending on parentId:
+	/// - parentId == 0: the child is inserted into the trash or reserved container based on
+	///   its node type.
+	/// - parentId != 0: the child is inserted into the parent directory's entry map, its
+	///   parent back-pointer is set, and directory statistics are propagated upward.
+	///
+	/// On the first call, pass `init = true` to reset internal static state (the "current parent"
+	/// tracker used to detect out-of-order edges).
+	///
+	/// @param fsOpContext Filesystem operation context (transaction).
+	/// @param parentId   Inode of the parent directory (0 for trash/reserved).
+	/// @param childId    Inode of the child node.
+	/// @param name       Edge name (filename component).
+	/// @param ignoreFlag When true, tolerate missing nodes (see loadEdges()).
+	/// @param init       When true, reset static state without loading an edge.
+	/// @return kOpSuccess on success, kOpFailure on error.
+	int8_t loadEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
+	                inode_t childId, const std::string &name, bool ignoreFlag, bool init = false);
+
 	/// Loads CHNK_ metadata
+	/// Loads all chunks from the KV store and reconstructs the in-memory chunk table.
+	///
+	/// Chunks are stored as `CHNK_<chunkId><version>: <lockedTo><lockId>` entries. This method
+	/// first restores the next-chunk-id generator from the KV store, then paginates through the
+	/// full CHNK_ keyspace to load each chunk.
+	///
+	/// @param ignoreFlag Currently unused; reserved for consistency with other load functions.
+	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadChunks(bool ignoreFlag);
 
 	/// Persist the "next chunk ID" restore key(s).
@@ -168,6 +237,25 @@ private:
 	int8_t saveMetadataKeys();
 
 	void onNodeChanged(FSNode *node);
+
+	/// Enqueue an edge update event to the metadata writer.
+	///
+	/// Called when a directory entry is created or renamed. The event writes
+	/// `EDGE_<parentId><name>: <childId>` to the KV store on the next flush.
+	///
+	/// @param parentId Inode of the parent directory.
+	/// @param childId  Inode of the child node.
+	/// @param name     Edge name (filename component).
+	void onEdgeChanged(inode_t parentId, inode_t childId, const HString &name);
+
+	/// Enqueue an edge removal event to the metadata writer.
+	///
+	/// Called when a directory entry is unlinked. The event removes the `EDGE_<parentId><name>` key
+	/// from the KV store on the next flush.
+	///
+	/// @param parentId Inode of the parent directory.
+	/// @param name     Edge name (filename component) to remove.
+	void onEdgeRemoved(inode_t parentId, const HString &name);
 
 	/// Returns next chunk ID value from the KV store.
 	///
