@@ -393,6 +393,62 @@ int8_t MetadataBackendForkless::loadNode(const FilesystemOperationContext &fsOpC
 	return kOpSuccess;
 }
 
+int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
+	(void)ignoreFlag;  // Unused parameter
+
+	safs::log_info("Loading free nodes");
+	Timer timer;
+
+	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+
+	kv::Key startKey = kv::toBytes(kFreeKeyPrefix);
+	kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	kv::KeySelector endSelector(endKey, true, 0);
+
+	while (true) {
+		auto pageResult =
+		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
+
+		inode_t inode{};
+		uint32_t timeStamp{};
+
+		for (const auto &pair : pageResult.getPairs()) {
+			const uint8_t *source = pair.key.data();
+			source += kFreeKeyPrefix.size();  // Skip "FREE_"
+			getINode(&source, inode);
+
+			source = pair.value.data();
+			get32bit(&source, timeStamp);
+
+			gMetadata->inodePool.detain(inode, timeStamp, true);
+		}
+
+		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
+
+		kv::Key lastKey = pageResult.getPairs().back().key;
+		startSelector = kv::KeySelector(lastKey, false, 0);
+	}
+
+	// Connect the signal handlers after initial loading to avoid triggering them for already loaded
+	// free nodes.
+	gMetadata->inodePool.detainedAddedSignal.connect([this](inode_t inode, uint32_t timestamp) {
+		if (metadataWriter_) {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
+		}
+	});
+
+	gMetadata->inodePool.detainedRemovedSignal.connect([this](inode_t inode) {
+		if (metadataWriter_) {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));
+		}
+	});
+
+	safs::log_info("Section loaded successfully (FREE 1.0): {}s", timer.elapsed_s());
+	return kOpSuccess;
+}
+
+
 namespace {
 bool isNewMetadataHeader([[maybe_unused]] const std::string& headerSignature) {
 	[[maybe_unused]] static constexpr std::string_view kMetadataHeaderNew(SFSSIGNATURE "M NEW");
@@ -403,6 +459,7 @@ bool isNewMetadataHeader([[maybe_unused]] const std::string& headerSignature) {
 			fs_new();
 			safs::log_info("Detected new metadata header in FDB Backend");
 			initializeNewMetadataHeaderSignal.emit();
+			gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
 			return true;
 		}
 	}
@@ -499,10 +556,10 @@ void MetadataBackendForkless::initSections() {
 	metadataSections_.emplace_back("NODE 1.0", kNodeKeyPrefix,
 	                               [this](bool flag) { return loadNodes(flag); });
 	/*metadataSections_.emplace_back("EDGE 1.0", kEdgeKeyPrefix,
-	                               [this](bool flag) { return loadEdges(flag); });
+	                               [this](bool flag) { return loadEdges(flag); });*/
 	metadataSections_.emplace_back("FREE 1.0", kFreeKeyPrefix,
 	                               [this](bool flag) { return loadFree(flag); });
-	metadataSections_.emplace_back("XATR 1.0", "XATR_", loadXAttr);
+	/*metadataSections_.emplace_back("XATR 1.0", "XATR_", loadXAttr);
 	metadataSections_.emplace_back("ACLS 1.2", "ACLS_", loadACLs);
 	metadataSections_.emplace_back("QUOT 1.1", "QUOT_", loadQuotas);
 	metadataSections_.emplace_back("FLCK 1.0", "FLCK_", loadLocks);*/
