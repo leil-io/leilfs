@@ -68,6 +68,7 @@ private:
 	int8_t hasPrefixLatestKeys(std::string_view prefix);
 	int8_t loadNodesSection();
 	int8_t loadChunkSection();
+	int8_t loadFreeSection();
 
 	uint64_t metadataVersion_ = 0;
 	std::shared_ptr<MemoryMappedFile> metadataFile_;
