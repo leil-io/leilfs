@@ -865,7 +865,21 @@ int do_setquota(const char *filename, uint64_t lv, uint32_t /*ts*/, const char *
 	GETU64(limit, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return gFSOperations->applySetQuota(rigor, resource, ownerType, ownerId, limit);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applySetQuota(fsOpContext, rigor, resource, ownerType, ownerId,
+	                                          limit);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: ownerType {}, ownerId {}", __func__,
+			              ownerType, ownerId);
+			return SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_snapshot(const char* /*filename*/, uint64_t /*lv*/, uint32_t /*ts*/, const char* /*ptr*/) {

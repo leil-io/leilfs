@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <initializer_list>
 #include <optional>
 
 #include "master/filesystem_node_operations_interface.h"
@@ -30,6 +31,7 @@
 #include "protocol/directory_entry.h"
 #include "protocol/handle_inode_entry.h"
 #include "protocol/named_inode_entry.h"
+#include "protocol/quota.h"
 
 /// Base class for filesystem node operations extensibility.
 ///
@@ -290,6 +292,19 @@ protected:
 	/// @see IFilesystemNodeOperations::preserveEdge
 	void preserveEdge(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
 	                  FSNode *child, hstorage::Handle *handlePtr) override;
+
+	/// Updates owner quota usage for node mutations.
+	/// In-memory backend applies updates directly to quota structures.
+	/// KV backend can override to persist counters in the active transaction.
+	virtual void quotaUpdate(
+	    const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList);
+
+	/// Removes all quota tuples for a specific owner.
+	/// In-memory backend removes from quota database.
+	/// KV backend can override to remove owner keys from persistent storage.
+	virtual void quotaRemove(const FilesystemOperationContext &fsOpContext,
+	                         QuotaOwnerType ownerType, uint32_t ownerId);
 
 private:
 	// Private helpers

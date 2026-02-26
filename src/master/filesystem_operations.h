@@ -330,13 +330,64 @@ public:
 	uint8_t fullPathByInode(const FsContext &context, inode_t inode,
 	                        std::string &fullPath) override;
 	std::string fullPathByInode(inode_t initialInode) override;
+#endif
 
 	// QUOTAS
 
+	/// Checks hard user/group quota limits for resource deltas.
+	/// @see IFilesystemOperations::quotaExceededUg
+	bool quotaExceededUg(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
+
+	/// Checks hard directory-owner quota limits for a node context.
+	/// @see IFilesystemOperations::quotaExceededDir
+	bool quotaExceededDir(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
+
+	/// Checks destination-side hard directory quota limits for move/rename.
+	/// @see IFilesystemOperations::quotaExceededDirMove
+	bool quotaExceededDirMove(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+	    FSNodeDirectory *prevNode,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
+
+	/// Performs combined user/group and directory hard quota checks.
+	/// @see IFilesystemOperations::quotaExceeded
+	bool quotaExceeded(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
+
+	/// Applies quota usage deltas for successful node mutations.
+	/// @see IFilesystemOperations::quotaUpdate
+	void quotaUpdate(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
+
+	/// Removes all quota tuples for one owner.
+	/// @see IFilesystemOperations::quotaRemove
+	void quotaRemove([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                 QuotaOwnerType ownerType, uint32_t ownerId) override;
+
+#ifndef METARESTORE
+	/// Returns all quota entries visible to the caller.
+	/// @see IFilesystemOperations::quotaGetAll
 	uint8_t quotaGetAll(const FsContext &context, std::vector<QuotaEntry> &results) override;
+
+	/// Returns quota entries for selected owners.
+	/// @see IFilesystemOperations::quotaGet
 	uint8_t quotaGet(const FsContext &context, const std::vector<QuotaOwner> &owners,
 	                 std::vector<QuotaEntry> &results) override;
-	uint8_t quotaSet(const FsContext &context, const std::vector<QuotaEntry> &entries) override;
+
+	/// Sets quota tuples and emits SETQUOTA changelog entries.
+	/// @see IFilesystemOperations::quotaSet
+	uint8_t quotaSet(const FsContext &context,
+	                 [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                 const std::vector<QuotaEntry> &entries) override;
+
+	/// Builds display information for quota entries.
+	/// @see IFilesystemOperations::quotaGetInfo
 	uint8_t quotaGetInfo(const FsContext &context, const std::vector<QuotaEntry> &entries,
 	                     std::vector<std::string> &result) override;
 
@@ -345,7 +396,6 @@ public:
 	/// Starts recalculating metadata checksum in background.
 	/// @see IFilesystemOperations::fs_start_checksum_recalculation.
 	uint8_t startChecksumRecalculation() override;
-
 #endif
 	void addFilesToChunks(bool isMetadataLoading = true) override;
 
@@ -384,8 +434,10 @@ public:
 	uint8_t applyTrunc(uint32_t timestamp, inode_t inode, uint32_t indx, uint64_t chunkid,
 	                   uint32_t lockid) override;
 
-	uint8_t applySetQuota(char rigor, char resource, char ownerType, inode_t ownerId,
-	                      uint64_t limit) override;
+	/// Replays a SETQUOTA changelog tuple update.
+	/// @see IFilesystemOperations::applySetQuota
+	uint8_t applySetQuota(const FilesystemOperationContext &fsOpContext, char rigor, char resource,
+	                      char ownerType, inode_t ownerId, uint64_t limit) override;
 
 	// CHECKSUM
 

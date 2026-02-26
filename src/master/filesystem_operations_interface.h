@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <vector>
@@ -34,6 +35,7 @@
 #include "master/locks.h"
 #include "master/setgoal_task.h"
 #include "master/settrashtime_task.h"
+#include "protocol/quota.h"
 
 class HString;
 class AccessControlList;
@@ -1063,12 +1065,134 @@ public:
 	                                std::string &fullPath) = 0;
 	virtual std::string fullPathByInode(inode_t initialInode) = 0;
 
+#endif
+
 	// QUOTAS
 
+	/// Checks whether applying @p resourceList would exceed hard user/group limits.
+	///
+	/// In the in-memory implementation, only hard limits are enforced; soft limits are stored and
+	/// reported but do not reject operations. A limit value of 0 means "unlimited".
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param uid User owner id used for user quota checks.
+	/// @param gid Group owner id used for group quota checks.
+	/// @param resourceList Resource deltas to validate (typically inodes and/or size).
+	/// @return true if either user or group hard quota would be exceeded.
+	virtual bool quotaExceededUg(
+	    const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
+	/// Checks whether applying @p resourceList would exceed hard directory-owner limits.
+	///
+	/// The check is performed for the node's directory owner (when applicable) and ancestor
+	/// directories according to the quota traversal rules used by rename/create/write paths.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param node Node whose directory context is validated.
+	/// @param resourceList Resource deltas to validate (typically inodes and/or size).
+	/// @return true if any checked directory hard quota would be exceeded.
+	virtual bool quotaExceededDir(
+	    const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
+	/// Checks destination-side directory hard limits for move/rename operations.
+	///
+	/// Implementations compare destination and previous ancestry and stop checks at the common
+	/// ancestor, matching existing in-memory rename quota semantics.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param node Destination directory.
+	/// @param prevNode Previous/source directory.
+	/// @param resourceList Resource deltas to validate for the move.
+	/// @return true if destination-side hard quotas would be exceeded.
+	virtual bool quotaExceededDirMove(
+	    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+	    FSNodeDirectory *prevNode,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
+	/// Checks both user/group and directory hard quotas for @p node.
+	///
+	/// This is the combined helper used by operations that need both checks in one call.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param node Node whose owner and directory quotas are validated.
+	/// @param resourceList Resource deltas to validate.
+	/// @return true if any relevant hard quota would be exceeded.
+	virtual bool quotaExceeded(
+	    const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
+	/// Applies quota usage deltas after a successful metadata mutation.
+	///
+	/// In the in-memory implementation, this updates only user/group `used` counters
+	/// incrementally. Inode-owner `used` values are derived from directory stats for reads.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param node Mutated node whose owner usage must be updated.
+	/// @param resourceList Resource deltas to apply.
+	virtual void quotaUpdate(
+	    const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
+	/// Removes all quota tuples for a single owner.
+	///
+	/// Used by inode-owner cleanup paths when an inode is removed.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param ownerType Owner namespace (user/group/inode).
+	/// @param ownerId Owner identifier.
+	virtual void quotaRemove(const FilesystemOperationContext &fsOpContext,
+	                         QuotaOwnerType ownerType, uint32_t ownerId) = 0;
+
+#ifndef METARESTORE
+	/// Returns all quota entries visible to @p context.
+	///
+	/// Non-privileged sessions require quota-management permission flags. Inode-owner visibility is
+	/// filtered by session root and inode `used` is reported using directory stats semantics.
+	/// In the in-memory implementation this returns only resources with at least one non-zero
+	/// soft/hard limit, plus the matching `used` entry for each returned resource.
+	///
+	/// @param context Session context used for permission and visibility checks.
+	/// @param[out] results Collected quota entries.
+	/// @return SAUNAFS_STATUS_OK on success or a permission error.
 	virtual uint8_t quotaGetAll(const FsContext &context, std::vector<QuotaEntry> &results) = 0;
+
+	/// Returns quota entries for selected owners.
+	///
+	/// Owner access is validated per owner type (user/group/inode). For each existing owner in the
+	/// in-memory implementation, all rigor/resource tuples are returned (including zero-valued ones),
+	/// except inode-owner `used`, which is derived from current directory stats.
+	///
+	/// @param context Session context used for permission and visibility checks.
+	/// @param owners Owners to query.
+	/// @param[out] results Collected quota entries.
+	/// @return SAUNAFS_STATUS_OK on success or an access/validation error.
 	virtual uint8_t quotaGet(const FsContext &context, const std::vector<QuotaOwner> &owners,
 	                         std::vector<QuotaEntry> &results) = 0;
-	virtual uint8_t quotaSet(const FsContext &context, const std::vector<QuotaEntry> &entries) = 0;
+
+	/// Sets quota entries and writes corresponding SETQUOTA changelog records.
+	///
+	/// The caller provides a read-write operation context so backend-specific quota writes can be
+	/// applied within the same operation scope.
+	///
+	/// @param context Session context used for permission checks.
+	/// @param fsOpContext Filesystem operation context carrying a read-write transaction.
+	/// @param entries Quota entries to set.
+	/// @return SAUNAFS_STATUS_OK on success or an access/validation/storage error.
+	virtual uint8_t quotaSet(const FsContext &context,
+	                         const FilesystemOperationContext &fsOpContext,
+	                         const std::vector<QuotaEntry> &entries) = 0;
+
+	/// Returns display information strings for quota entries.
+	///
+	/// For inode owners this is a resolved path when the inode exists; for other owner types it is
+	/// an empty string.
+	///
+	/// @param context Session context used for path resolution scope.
+	/// @param entries Quota entries for which to generate info.
+	/// @param[out] result Display strings aligned with @p entries.
+	/// @return SAUNAFS_STATUS_OK on success.
 	virtual uint8_t quotaGetInfo(const FsContext &context, const std::vector<QuotaEntry> &entries,
 	                             std::vector<std::string> &result) = 0;
 
@@ -1137,7 +1261,20 @@ public:
 	virtual uint8_t applyTrunc(uint32_t timestamp, inode_t inode, uint32_t indx, uint64_t chunkid,
 	                           uint32_t lockid) = 0;
 
-	virtual uint8_t applySetQuota(char rigor, char resource, char ownerType, inode_t ownerId,
+	/// Replays a SETQUOTA changelog entry during metadata restore.
+	///
+	/// Decodes single-character tuple selectors (rigor/resource/ownerType), applies one quota tuple
+	/// update, and advances metadata version on success.
+	///
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
+	/// @param rigor Quota rigor selector ('S' or 'H').
+	/// @param resource Quota resource selector ('S' for size, 'I' for inodes).
+	/// @param ownerType Quota owner selector ('U', 'G', or 'I').
+	/// @param ownerId Owner identifier.
+	/// @param limit New tuple value.
+	/// @return SAUNAFS_STATUS_OK on success, SAUNAFS_ERROR_EINVAL on decode/validation errors.
+	virtual uint8_t applySetQuota(const FilesystemOperationContext &fsOpContext, char rigor,
+	                              char resource, char ownerType, inode_t ownerId,
 	                              uint64_t limit) = 0;
 
 	// CHECKSUM
