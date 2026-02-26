@@ -273,6 +273,56 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	return kOpSuccess;
 }
 
+int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("FREE 1.0");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for FREE 1.0");
+		return kOpFailure;
+	}
+
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	inode_t freeNodesNumber{};
+	getINode(&ptr, freeNodesNumber);
+
+	constexpr uint8_t kFreeNodesEntrySize = sizeof(inode_t) + sizeof(uint32_t);
+	if (marker->length > 0 &&
+	    freeNodesNumber != (marker->length - sizeof(inode_t)) / kFreeNodesEntrySize) {
+		safs::log_warn("FREE section: count ({}) does not match section length, adjusting",
+		               freeNodesNumber);
+		freeNodesNumber = (marker->length - sizeof(inode_t)) / kFreeNodesEntrySize;
+	}
+
+	MetadataWriterFDB writer(kvEngine_);
+	size_t pending = 0;
+	uint64_t loadedCount = 0;
+
+	for (inode_t i = 0; i < freeNodesNumber; ++i) {
+		inode_t inode{};
+		uint32_t timestamp{};
+		getINode(&ptr, inode);
+		get32bit(&ptr, timestamp);
+
+		writer.enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
+		loadedCount++;
+
+		if (++pending >= kFlushThreshold) {
+			writer.flush();
+			pending = 0;
+		}
+	}
+
+	if (!writer.flushAll()) {
+		safs::log_err("Failed to flush bootstrapped free nodes to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} free nodes from metadata file into FDB", loadedCount);
+	return kOpSuccess;
+}
+
 std::optional<MetadataSectionBootstrapFDB::SectionMarker> MetadataSectionBootstrapFDB::findSection(
     std::string_view name) const {
 	auto sectionIterator = sectionMarkers_.find(std::string(name));
@@ -292,6 +342,12 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 
 	// Filesystem MetadataSection "EDGE 1.0"
 	// Filesystem MetadataSection "FREE 1.0"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "FREE 1.0",
+	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kFreeKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadFreeSection(); },
+	});
+
 	// Filesystem MetadataSection "XATR 1.0"
 	// Filesystem MetadataSection "ACLS 1.2"
 	// Filesystem MetadataSection "QUOT 1.1"

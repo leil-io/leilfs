@@ -65,6 +65,18 @@ private:
 	kv::Value serializedNode;
 };
 
+class FreeNodeUpdateEvent : public IMetadataUpdateEvent {
+public:
+	FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp = 0);
+	~FreeNodeUpdateEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t nodeId;
+	uint32_t timestamp;
+};
+
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:

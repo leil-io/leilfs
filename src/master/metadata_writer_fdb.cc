@@ -52,6 +52,27 @@ void NodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->set(key, serializedNode);
 }
 
+FreeNodeUpdateEvent::FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp)
+    : nodeId(_nodeId), timestamp(_timestamp) {}
+
+void FreeNodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Key: FREE_<nodeId>
+	kv::Key key = kv::encodeKeyBE(kFreeKeyPrefix, nodeId);
+
+	// timestamp == 0 indicates allocation (removal from free list), non-zero indicates freeing
+	// (addition to free list with timestamp)
+	if (timestamp == 0) {
+		// Node is being allocated, remove from free list
+		txn->remove(key);
+	} else {
+		// Node is being freed, add to free list with timestamp
+		kv::Value value(sizeof(timestamp));
+		uint8_t *ptr = value.data();
+		put32bit(&ptr, timestamp);
+		txn->set(key, value);
+	}
+}
+
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {
 	pendingUpdates_.reserve(kInitialSize_);  // Default reserve size, can be adjusted
 }

@@ -137,6 +137,9 @@ private:
 	int8_t loadNodes(bool ignoreFlag);
 	int8_t loadNode(const FilesystemOperationContext &fsOpContext, FSNode *node);
 
+	/// Loads FREE_ metadata
+	int8_t loadFree(bool ignoreFlag);
+
 	/// Loads CHNK_ metadata
 	int8_t loadChunks(bool ignoreFlag);
 
