@@ -1,8 +1,6 @@
 This file lists noteworthy changes in SaunaFS.
 
 * SaunaFS (5.7.0) (2026-02-26)
- - Revert "perf: wake up writes after locked chunk status (#736)"
- - Revert "refactor: make CS wait for received jobs at stop (#734)"
  - docs(master): document some filesystem operations (#729)
  - docs(uraft): improve helper and HA documentation (#713)
  - docs: Update saunafs repo reference on docs files  (#715)
