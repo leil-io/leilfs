@@ -135,6 +135,9 @@ const static std::unordered_map<std::string, std::string> defaultOptionsMaster =
     {"PRIORITIZE_DATA_PARTS", "1"},
     {"USE_CHUNKSERVER_SIDE_CHUNK_LOCK", "0"},
     {"CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED", "1"},
+    {"TLS_CERT_FILE", ""},
+    {"TLS_KEY_FILE", ""},
+    {"TLS_CA_CERT_FILE", ""},
 };
 
 const static std::unordered_map<std::string, std::string> defaultOptionsShadow = {
@@ -143,6 +146,9 @@ const static std::unordered_map<std::string, std::string> defaultOptionsShadow =
     {"MASTER_RECONNECTION_DELAY", "1"},
 	{"MASTER_TIMEOUT", "60"},
     {"LOAD_FACTOR_PENALTY", "0.0"},
+    {"TLS_CERT_FILE", ""},
+    {"TLS_KEY_FILE", ""},
+    {"TLS_CA_CERT_FILE", ""},
 };
 
 const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
@@ -188,6 +194,9 @@ const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
     {"CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB", "0"},
     {"CHUNK_TRASH_GC_BATCH_SIZE", "1000"},
     {"CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE", "100"},
+    {"TLS_CERT_FILE", ""},
+    {"TLS_KEY_FILE", ""},
+    {"TLS_CA_CERT_FILE", ""},
 };
 
 const static std::unordered_map<std::string, std::string> defaultOptionsMeta = {
@@ -203,6 +212,9 @@ const static std::unordered_map<std::string, std::string> defaultOptionsMeta = {
     {"MASTER_HOST", "sfsmaster"},
     {"MASTER_PORT", "9419"},
     {"MASTER_RECONNECTION_DELAY", "1"},
+    {"TLS_CERT_FILE", ""},
+    {"TLS_KEY_FILE", ""},
+    {"TLS_CA_CERT_FILE", ""},
 };
 // clang-format on
 
