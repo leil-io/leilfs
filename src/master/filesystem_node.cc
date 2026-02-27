@@ -1408,12 +1408,13 @@ void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext
 	int64_t size = 0;
 
 	// Decrease quota for old owner
-	quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
-
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
 		size = getSize(fsOpContext, node);
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, -size}});
+		quotaUpdate(fsOpContext, node,
+		            {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -size}});
+	} else {
+		quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
 	}
 
 	// Change ownership
@@ -1421,11 +1422,12 @@ void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext
 	node->gid = gid;
 
 	// Increase quota for new owner
-	quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
-
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, +size}});
+		quotaUpdate(fsOpContext, node,
+		            {{QuotaResource::kInodes, +1}, {QuotaResource::kSize, +size}});
+	} else {
+		quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
 	}
 }
 
@@ -1451,7 +1453,6 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, -getSize(fsOpContext, node)}});
 		gMetadata->fileNodes--;
 		for (uint32_t i = 0; i < static_cast<FSNodeFile*>(node)->chunks.size(); ++i) {
 			uint64_t chunkid = static_cast<FSNodeFile*>(node)->chunks[i];
@@ -1471,7 +1472,14 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 
 	gMetadata->inodePool.release(node->id, timeStamp, true);
 	xattr_removeinode(node->id);
-	quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
+	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
+	    node->type == FSNodeType::kReserved) {
+		quotaUpdate(
+		    fsOpContext, node,
+		    {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -getSize(fsOpContext, node)}});
+	} else {
+		quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
+	}
 	quotaRemove(fsOpContext, QuotaOwnerType::kInode, node->id);
 #ifndef METARESTORE
 	fsnodes_periodic_remove(node->id);
