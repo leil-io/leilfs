@@ -13,6 +13,7 @@ FILE_SIZE=1234 file-generate file
 checksum123="$(head -c 123 file | md5sum)"
 
 saunafs_chunkserver_daemon 0 stop
+saunafs_wait_for_ready_chunkservers 0
 assert_awk_finds '/no valid copies/' "$(saunafs fileinfo file)"
 # Following operation should pass - wake up just after 4th try (0.2 + 0.4 + 0.8 + 1.6 = 3.0s)
 (sleep 3.1 && saunafs_chunkserver_daemon 0 start) & truncate -s 123 file
@@ -20,6 +21,7 @@ assert_awk_finds '/[0-9A-F]+_00000002/' "$(saunafs fileinfo file)"
 assert_equals "$checksum123" "$(cat file | md5sum)"
 
 saunafs_chunkserver_daemon 0 stop
+saunafs_wait_for_ready_chunkservers 0
 assert_awk_finds '/no valid copies/' "$(saunafs fileinfo file)"
 # Following operation shouldn't pass - waiting time's exceeded
 sleep 12.7 && saunafs_chunkserver_daemon 0 start &
