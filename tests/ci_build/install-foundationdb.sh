@@ -74,25 +74,29 @@ sha256sum -c "${server_pkg}${hash_suffix}" || die "Server package verification f
 cd - || die "Failed to change back to previous directory"
 
 # Install the packages
-echo "Installing FoundationDB packages..."
-dpkg -i "${workspace}/${client_pkg}" "${workspace}/${server_pkg}" || die "Failed to install FoundationDB packages"
-
-# Fix any missing dependencies
-echo "Fixing missing dependencies..."
-apt-get install -f -y || die "Failed to fix missing dependencies"
-
-# Verify the installation
-echo "Verifying FoundationDB installation..."
-if command -v fdbcli &> /dev/null; then
-	echo "FoundationDB CLI installed successfully."
-	fdbcli --version
+if grep -q Microsoft /proc/version && ! grep -q microsoft-standard /proc/version; then
+	echo "Running on WSL1: skipping FoundationDB installation."
 else
-	echo "FoundationDB CLI installation failed."
-	exit 1
+	echo "Installing FoundationDB packages..."
+	dpkg -i "${workspace}/${client_pkg}" "${workspace}/${server_pkg}" || die "Failed to install FoundationDB packages"
+
+	# Fix any missing dependencies
+	echo "Fixing missing dependencies..."
+	apt-get install -f -y || die "Failed to fix missing dependencies"
+
+	# Verify the installation
+	echo "Verifying FoundationDB installation..."
+	if command -v fdbcli &> /dev/null; then
+		echo "FoundationDB CLI installed successfully."
+		fdbcli --version
+	else
+		echo "FoundationDB CLI installation failed."
+		exit 1
+	fi
+
+	# Clean up temporary workspace
+	echo "Removing temporary workspace..."
+	rm -r "${workspace:?}"
+
+	echo "FoundationDB installation completed successfully."
 fi
-
-# Clean up temporary workspace
-echo "Removing temporary workspace..."
-rm -r "${workspace:?}"
-
-echo "FoundationDB installation completed successfully."
