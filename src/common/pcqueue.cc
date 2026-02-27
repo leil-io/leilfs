@@ -27,12 +27,14 @@
 #include "devtools/TracePrinter.h"
 #include "slogger/slogger.h"
 
-ProducerConsumerQueue::ProducerConsumerQueue(uint8_t priorityLevels, uint32_t maxSize,
-                                             Deleter deleter)
+ProducerConsumerQueueWithPriority::ProducerConsumerQueueWithPriority(uint8_t priorityLevels,
+                                                                     uint32_t maxSize,
+                                                                     Deleter deleter)
     : maxSize_(maxSize), currentElements_(0), currentSize_(0), deleter_(deleter) {
 	if (priorityLevels == 0) {
-		safs::log_info("ProducerConsumerQueue::{}: Given priorityLevels is 0, using 1 instead",
-		               __func__);
+		safs::log_info(
+		    "ProducerConsumerQueueWithPriority::{}: Given priorityLevels is 0, using 1 instead",
+		    __func__);
 		priorityLevels = 1;
 	}
 	queuesByPriority_.reserve(priorityLevels);
@@ -40,7 +42,7 @@ ProducerConsumerQueue::ProducerConsumerQueue(uint8_t priorityLevels, uint32_t ma
 	TRACETHIS();
 }
 
-ProducerConsumerQueue::~ProducerConsumerQueue() {
+ProducerConsumerQueueWithPriority::~ProducerConsumerQueueWithPriority() {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	for (auto &queue : queuesByPriority_) {
@@ -51,32 +53,32 @@ ProducerConsumerQueue::~ProducerConsumerQueue() {
 	}
 }
 
-bool ProducerConsumerQueue::isEmpty() const {
+bool ProducerConsumerQueueWithPriority::isEmpty() const {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	return currentSize_ == 0;
 }
 
-bool ProducerConsumerQueue::isFull() const {
+bool ProducerConsumerQueueWithPriority::isFull() const {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	return maxSize_ > 0 && currentSize_ >= maxSize_;
 }
 
-uint32_t ProducerConsumerQueue::sizeLeft() const {
+uint32_t ProducerConsumerQueueWithPriority::sizeLeft() const {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	return maxSize_ > 0 ? (currentSize_ <= maxSize_ ? maxSize_ - currentSize_ : 0) : UINT32_MAX;
 }
 
-uint32_t ProducerConsumerQueue::elements() const {
+uint32_t ProducerConsumerQueueWithPriority::elements() const {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	return currentElements_;
 }
 
-void ProducerConsumerQueue::put(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
-                                uint8_t priority) {
+void ProducerConsumerQueueWithPriority::put(uint32_t jobId, uint32_t jobType, uint8_t *data,
+                                            uint32_t length, uint8_t priority) {
 	TRACETHIS();
 	std::unique_lock<std::mutex> lock(mutex_);
 	put_(jobId, jobType, data, length, priority);
@@ -84,8 +86,8 @@ void ProducerConsumerQueue::put(uint32_t jobId, uint32_t jobType, uint8_t *data,
 	notEmpty_.notify_one();
 }
 
-bool ProducerConsumerQueue::tryPut(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
-                                   uint8_t priority) {
+bool ProducerConsumerQueueWithPriority::tryPut(uint32_t jobId, uint32_t jobType, uint8_t *data,
+                                               uint32_t length, uint8_t priority) {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	if (maxSize_ > 0) {
@@ -106,18 +108,27 @@ bool ProducerConsumerQueue::tryPut(uint32_t jobId, uint32_t jobType, uint8_t *da
 	return true;
 }
 
-bool ProducerConsumerQueue::get(uint32_t *jobId, uint32_t *jobType,
-                                uint8_t **data, uint32_t *length) {
+void ProducerConsumerQueueWithPriority::get(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+                                            uint32_t *length) {
 	TRACETHIS();
 	std::unique_lock<std::mutex> lock(mutex_);
 	notEmpty_.wait(lock, [this] { return currentSize_ > 0; });
 
 	get_(jobId, jobType, data, length);
-	return true;
 }
 
-bool ProducerConsumerQueue::tryGet(uint32_t *jobId, uint32_t *jobType,
-                                   uint8_t **data, uint32_t *length) {
+void ProducerConsumerQueueWithPriority::getUsingCustomPriority(
+    uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length,
+    std::span<const uint8_t> priorityLevelsToCheck) {
+	TRACETHIS();
+	std::unique_lock<std::mutex> lock(mutex_);
+	notEmpty_.wait(lock, [this] { return currentSize_ > 0; });
+
+	getUsingCustomPriority_(jobId, jobType, data, length, priorityLevelsToCheck);
+}
+
+bool ProducerConsumerQueueWithPriority::tryGet(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+                                               uint32_t *length) {
 	TRACETHIS();
 	std::lock_guard<std::mutex> lock(mutex_);
 	if (currentSize_ == 0) {
@@ -133,12 +144,12 @@ bool ProducerConsumerQueue::tryGet(uint32_t *jobId, uint32_t *jobType,
 	return true;
 }
 
-void ProducerConsumerQueue::put_(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
-                                 uint8_t priority) {
+void ProducerConsumerQueueWithPriority::put_(uint32_t jobId, uint32_t jobType, uint8_t *data,
+                                             uint32_t length, uint8_t priority) {
 	assert(queuesByPriority_.size() > 0);
 	if (priority >= queuesByPriority_.size()) {
 		safs::log_info(
-		    "ProducerConsumerQueue::{}: Given priority {} exceeds max priority {}, using lowest priority instead",
+		    "ProducerConsumerQueueWithPriority::{}: Given priority {} exceeds max priority {}, using lowest priority instead",
 		    __func__, priority, queuesByPriority_.size() - 1);
 		priority = queuesByPriority_.size() - 1;  // lowest priority
 	}
@@ -148,19 +159,12 @@ void ProducerConsumerQueue::put_(uint32_t jobId, uint32_t jobType, uint8_t *data
 	currentElements_++;
 }
 
-void ProducerConsumerQueue::get_(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
-                                 uint32_t *length) {
-	std::queue<QueueEntry> *notEmptyQueue = nullptr;
-	for (auto &queue : queuesByPriority_) {
-		if (!queue.empty()) {
-			notEmptyQueue = &queue;
-			break;
-		}
-	}
-
-	if (notEmptyQueue == nullptr) {
+void ProducerConsumerQueueWithPriority::retrieveFromQueue_(uint32_t *jobId, uint32_t *jobType,
+                                                          uint8_t **data, uint32_t *length,
+                                                          std::queue<QueueEntry> *queue) {
+	if (queue == nullptr) {
 		safs::log_warn(
-		    "ProducerConsumerQueue::{}: No non-empty queue found (this should not happen)",
+		    "ProducerConsumerQueueWithPriority::{}: Trying to retrieve from a null queue (this should not happen)",
 		    __func__);
 		if (jobId) { *jobId = 0; }
 		if (jobType) { *jobType = 0; }
@@ -169,7 +173,7 @@ void ProducerConsumerQueue::get_(uint32_t *jobId, uint32_t *jobType, uint8_t **d
 		return;
 	}
 
-	auto &entry = notEmptyQueue->front();
+	auto &entry = queue->front();
 	currentSize_ -= entry.length;
 	currentElements_--;
 
@@ -178,5 +182,32 @@ void ProducerConsumerQueue::get_(uint32_t *jobId, uint32_t *jobType, uint8_t **d
 	if (data) { *data = entry.data; }
 	if (length) { *length = entry.length; }
 
-	notEmptyQueue->pop();
+	queue->pop();
+}
+
+void ProducerConsumerQueueWithPriority::get_(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+                                             uint32_t *length) {
+	std::queue<QueueEntry> *notEmptyQueue = nullptr;
+	for (auto &queue : queuesByPriority_) {
+		if (!queue.empty()) {
+			notEmptyQueue = &queue;
+			break;
+		}
+	}
+
+	retrieveFromQueue_(jobId, jobType, data, length, notEmptyQueue);
+}
+
+void ProducerConsumerQueueWithPriority::getUsingCustomPriority_(
+    uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length,
+    std::span<const uint8_t> priorityLevelsToCheck) {
+	std::queue<QueueEntry> *notEmptyQueue = nullptr;
+	for (auto priority : priorityLevelsToCheck) {
+		if (priority < queuesByPriority_.size() && !queuesByPriority_[priority].empty()) {
+			notEmptyQueue = &queuesByPriority_[priority];
+			break;
+		}
+	}
+
+	retrieveFromQueue_(jobId, jobType, data, length, notEmptyQueue);
 }

@@ -277,3 +277,11 @@
 ## Example: /etc/saunafs/ssl/ca.crt
 ## (There is no default)
 # TLS_CA_CERT_FILE =
+
+## Define IO jobs, i.e reads and writes from drives, prioritization scheme.
+## The available modes are:
+## - 'FIFO': prioritizes the IO jobs first enqueued.
+## - 'SWITCH': alternates read and write jobs (interleaving) to prevent one class of IO from
+##   starving the other.
+## Not reloadable.
+# IO_PRIORITY_MODE = FIFO

@@ -58,8 +58,8 @@ static bool gEnableLoadFactor;
 static const uint64_t kSendStatusDelay = 5;
 
 //  JobPool shared between all connections to MDSs
-static std::shared_ptr<JobPool> gJobPool;
-static std::shared_ptr<JobPool> gReplicationJobPool;
+static std::shared_ptr<MasterJobPool> gJobPool;
+static std::shared_ptr<MasterJobPool> gReplicationJobPool;
 
 //  Singleton for the MasterConn instance (will become a list of connections in the future)
 static std::unique_ptr<MasterConn> gMasterConnSingleton = nullptr;
@@ -140,7 +140,7 @@ void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
 	MasterConn::deletePacket(packet);
 }
 
-JobPool* masterconn_get_job_pool() {
+MasterJobPool* masterconn_get_job_pool() {
 	return gJobPool.get();
 }
 
@@ -334,8 +334,8 @@ int masterconn_init_threads(void) {
 		// Create the JobPool instance with the specified number of workers, it would be serving
 		// only this master network thread, thus the number of listeners is 1.
 		std::vector<int> bgJobPoolFDs(1);
-		gJobPool = std::make_shared<JobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount, 1,
-		                                     bgJobPoolFDs);
+		gJobPool = std::make_shared<MasterJobPool>("ma", gNumberOfWorkers, kMaxBackgroundJobsCount,
+		                                           1, bgJobPoolFDs);
 		gJobFD = bgJobPoolFDs[0];
 	} catch (const std::exception &e) {
 		safs::log_err("masterconn_init_threads: Failed to create JobPool instance: {}", e.what());
@@ -357,8 +357,8 @@ int masterconn_init_threads(void) {
 		// serving only this master network thread, thus the number of listeners is 1.
 		std::vector<int> replicationJobPoolFDs(1);
 		gReplicationJobPool =
-		    std::make_shared<JobPool>("ma_repl", gReplicationNumberOfWorkers,
-		                              kMaxBackgroundJobsCount, 1, replicationJobPoolFDs);
+		    std::make_shared<MasterJobPool>("ma_repl", gReplicationNumberOfWorkers,
+		                                    kMaxBackgroundJobsCount, 1, replicationJobPoolFDs);
 		gReplicationJobFD = replicationJobPoolFDs[0];
 	} catch (const std::exception &e) {
 		safs::log_err("masterconn_init_threads: Failed to create ReplicationJobPool instance: {}",

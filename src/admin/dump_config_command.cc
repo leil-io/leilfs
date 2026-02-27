@@ -171,6 +171,7 @@ const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
     {"NR_OF_NETWORK_WORKERS", "4"},
     {"NR_OF_HDD_WORKERS_PER_NETWORK_WORKER", "16"},
     {"BGJOBSCNT_PER_NETWORK_WORKER", "4000"},
+    {"IO_PRIORITY_MODE", "FIFO"},
     {"MAX_BLOCKS_PER_HDD_WRITE_JOB", "16"},
     {"MAX_BLOCKS_PER_HDD_READ_JOB", "16"},
     {"MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY", "1"},

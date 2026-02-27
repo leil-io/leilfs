@@ -27,6 +27,7 @@
 #include <functional>
 #include <mutex>
 #include <queue>
+#include <span>
 
 template<typename T>
 void deleterByType(uint8_t *p) {
@@ -35,7 +36,7 @@ void deleterByType(uint8_t *p) {
 
 inline void deleterDummy(uint8_t * /*unused*/) {}
 
-/// @class ProducerConsumerQueue
+/// @class ProducerConsumerQueueWithPriority
 /// @brief A thread-safe queue for producer-consumer scenarios.
 ///
 /// Can be configured to support several priority levels. Final interface is queue-like,
@@ -57,7 +58,7 @@ inline void deleterDummy(uint8_t * /*unused*/) {}
 ///   another module processes the tasks.
 ///
 /// // Example usage:
-/// ProducerConsumerQueue queue(10, deleterByType<YourDataType>);
+/// ProducerConsumerQueueWithPriority queue(10, deleterByType<YourDataType>);
 ///
 /// // Producer thread
 /// std::thread producer([&queue]() {
@@ -82,11 +83,11 @@ inline void deleterDummy(uint8_t * /*unused*/) {}
 ///
 /// producer.join();
 /// consumer.join();
-class ProducerConsumerQueue {
+class ProducerConsumerQueueWithPriority {
 public:
 	using Deleter = std::function<void(uint8_t*)>;
 
-	/// @brief Constructs a ProducerConsumerQueue with a specified maximum size
+	/// @brief Constructs a ProducerConsumerQueueWithPriority with a specified maximum size
 	/// and deleter.
 	///
 	/// @param priorityLevels The number of priority levels. Default is 1 (no priorities).
@@ -94,11 +95,11 @@ public:
 	/// Default is 0 (unlimited).
 	/// @param deleter A callable type that defines how to delete the data
 	/// stored in the queue. Default is deleterDummy.
-	explicit ProducerConsumerQueue(uint8_t priorityLevels = 1, uint32_t maxSize = 0,
-	                               Deleter deleter = deleterDummy);
+	explicit ProducerConsumerQueueWithPriority(uint8_t priorityLevels = 1, uint32_t maxSize = 0,
+	                                           Deleter deleter = deleterDummy);
 
-	/// @brief Destructor for the ProducerConsumerQueue.
-	~ProducerConsumerQueue();
+	/// @brief Destructor for the ProducerConsumerQueueWithPriority.
+	virtual ~ProducerConsumerQueueWithPriority();
 
 	/// @brief Checks if the queue is empty.
 	///
@@ -148,14 +149,30 @@ public:
 
 	/// @brief Removes an element from the queue.
 	///
+	/// @note This method will block if the queue is empty until an element is added.
+	/// Will remove the highest priority element available, preserving order within each priority
+	/// level.
+	///
 	/// @param jobId A pointer to store the job ID of the removed element.
 	/// @param jobType A pointer to store the job type of the removed element.
 	/// @param data A pointer to store the data of the removed element.
 	/// @param length A pointer to store the length of the data of the removed
 	/// element.
-	/// @return true if an element was removed successfully, false otherwise.
-	bool get(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+	void get(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
 	         uint32_t *length);
+
+	/// @brief Removes an element from the queue using custom priority levels to check.
+	/// @note This method will block if the queue is empty until an element is added. Will check the
+	/// specified priority levels in order and remove the first available element, preserving order
+	/// within each priority level.
+	/// @param jobId A pointer to store the job ID of the removed element.
+	/// @param jobType A pointer to store the job type of the removed element.
+	/// @param data A pointer to store the data of the removed element.
+	/// @param length A pointer to store the length of the data of the removed element.
+	/// @param priorityLevelsToCheck A vector of priority levels to check in order (0 is the highest
+	/// priority). Needs to contain all priority levels used in the queue, but can be in any order.
+	void getUsingCustomPriority(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+	                            uint32_t *length, std::span<const uint8_t> priorityLevelsToCheck);
 
 	/// @brief Tries to remove an element from the queue without blocking.
 	///
@@ -173,10 +190,6 @@ private:
 	/// mutex_: LOCKED
 	inline void put_(uint32_t jobId, uint32_t jobType, uint8_t *data, uint32_t length,
 	                 uint8_t priority);
-
-	/// @brief Removes an element from the queue assuming non-emptiness.
-	/// mutex_: LOCKED
-	inline void get_(uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length);
 
 	/// @brief Represents an entry in the queue.
 	struct QueueEntry {
@@ -209,6 +222,23 @@ private:
 		~QueueEntry() = default;
 	};
 
+	/// @brief Removes an element from a specific queue.
+	/// mutex_: LOCKED
+	inline void retrieveFromQueue_(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+	                              uint32_t *length, std::queue<QueueEntry> *queue);
+
+	/// @brief Removes an element from all queues assuming non-emptiness.
+	/// mutex_: LOCKED
+	inline void get_(uint32_t *jobId, uint32_t *jobType, uint8_t **data, uint32_t *length);
+
+	/// @brief Removes an element from all queues assuming non-emptiness.
+	/// Checks the specified priority levels in order and removes the first available element,
+	/// preserving order within each priority level.
+	/// mutex_: LOCKED
+	inline void getUsingCustomPriority_(uint32_t *jobId, uint32_t *jobType, uint8_t **data,
+	                                    uint32_t *length,
+	                                    std::span<const uint8_t> priorityLevelsToCheck);
+
 	///< The underlying queues storing the entries.
 	std::vector<std::queue<QueueEntry>> queuesByPriority_;
 	///< The maximum number of elements the queue can hold.
@@ -223,4 +253,20 @@ private:
 	std::condition_variable notEmpty_;
 	///< The deleter function used to delete the data stored in the queue.
 	Deleter deleter_;
+};
+
+/// @class ProducerConsumerQueue
+/// A simplified version of ProducerConsumerQueueWithPriority that only supports a single priority
+/// level and provides a more queue-like interface. It inherits from
+/// ProducerConsumerQueueWithPriority and uses its implementation, but hides the priority-related
+/// functionality.
+class ProducerConsumerQueue : public ProducerConsumerQueueWithPriority {
+public:
+	ProducerConsumerQueue(uint32_t maxSize = 0, Deleter deleter = deleterDummy)
+	    : ProducerConsumerQueueWithPriority(1, maxSize, deleter) {}
+
+private:
+	// Hide priority-specific functions by making them private, i.e removed from the public
+	// interface deleting them
+	using ProducerConsumerQueueWithPriority::getUsingCustomPriority;
 };

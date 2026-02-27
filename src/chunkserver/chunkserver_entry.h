@@ -112,7 +112,7 @@ struct ChunkserverEntry {
 	static constexpr uint32_t kGenerateChartExpectedPacketSize =
 	    sizeof(uint32_t);
 
-	JobPool *workerJobPool;  // Job pool assigned to a given network worker thread
+	ClientJobPool *workerJobPool;  // Job pool assigned to a given network worker thread
 
 	ChunkserverEntry::State state = ChunkserverEntry::State::Idle;
 	ChunkserverEntry::Mode mode = ChunkserverEntry::Mode::Header;
@@ -141,7 +141,7 @@ struct ChunkserverEntry {
 	uint32_t chunkVersion = 0; // R+W
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType(); // R
 
-	ChunkserverEntry(int socket, JobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
+	ChunkserverEntry(int socket, ClientJobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
 	                 uint16_t maxParallelHddReadJobs, uint16_t maxBlocksPerHddWriteJob);
 
 	// Disallow copying and moving to avoid misuse.

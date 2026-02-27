@@ -31,7 +31,7 @@
 #include "devtools/request_log.h"
 #include "protocol/cltocs.h"
 
-class JobPool;
+class ClientJobPool;
 
 inline constexpr uint8_t kSauWriteDataPrefixSize = cltocs::writeData::kPrefixSize;
 // For forwarding: size of SAU_CLTOCS_WRITE_DATA prefix plus the packet header.
@@ -60,7 +60,7 @@ protected:
 	void setParentState(ChunkserverEntry::State newState) { parent_->state = newState; }
 
 	/// Job pool of the network worker handling the parent ChunkserverEntry.
-	JobPool *workerJobPool() const { return parent_->workerJobPool; }
+	ClientJobPool *workerJobPool() const { return parent_->workerJobPool; }
 
 	/// Checks and applies closing on the parent ChunkserverEntry.
 	void checkAndApplyClosedOnParent() const { parent_->checkAndApplyClosed(); }
