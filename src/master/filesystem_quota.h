@@ -85,10 +85,10 @@ void fsnodes_quota_update(FSNode *node,
 	const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
 
 /*! \brief Remove quota.
- * \param owner_type Owner type (user, group, inode(directory)).
+ * \param owner_type Owner type (user, group, inode (directory)).
  * \param owner_id Owner id.
  */
-void fsnodes_quota_remove(QuotaOwnerType owner_type, uint32_t owner_id);
+void fsnodes_quota_remove(QuotaOwnerType owner_type, inode_t owner_id);
 
 /*! \brief Adjust reported free/total space based on quota information.
  * \param node Pointer to root node in directory tree that we should adjust space for.

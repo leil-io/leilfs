@@ -368,7 +368,7 @@ public:
 	/// Removes all quota tuples for one owner.
 	/// @see IFilesystemOperations::quotaRemove
 	void quotaRemove([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
-	                 QuotaOwnerType ownerType, uint32_t ownerId) override;
+	                 QuotaOwnerType ownerType, inode_t ownerId) override;
 
 #ifndef METARESTORE
 	/// Returns all quota entries visible to the caller.

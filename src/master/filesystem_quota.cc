@@ -478,7 +478,7 @@ void fsnodes_quota_update(FSNode *node,
 	}
 }
 
-void fsnodes_quota_remove(QuotaOwnerType owner_type, uint32_t owner_id) {
+void fsnodes_quota_remove(QuotaOwnerType owner_type, inode_t owner_id) {
 	gMetadata->quotaDatabase.remove(owner_type, owner_id);
 	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
 }

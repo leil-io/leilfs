@@ -203,7 +203,7 @@ void FilesystemNodeOperationsBase::quotaUpdate(
 
 void FilesystemNodeOperationsBase::quotaRemove(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, QuotaOwnerType ownerType,
-    uint32_t ownerId) {
+    inode_t ownerId) {
 	fsnodes_quota_remove(ownerType, ownerId);
 }
 

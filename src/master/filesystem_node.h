@@ -304,7 +304,7 @@ protected:
 	/// In-memory backend removes from quota database.
 	/// KV backend can override to remove owner keys from persistent storage.
 	virtual void quotaRemove(const FilesystemOperationContext &fsOpContext,
-	                         QuotaOwnerType ownerType, uint32_t ownerId);
+	                         QuotaOwnerType ownerType, inode_t ownerId);
 
 private:
 	// Private helpers

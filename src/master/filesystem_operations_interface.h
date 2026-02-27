@@ -1143,7 +1143,7 @@ public:
 	/// @param ownerType Owner namespace (user/group/inode).
 	/// @param ownerId Owner identifier.
 	virtual void quotaRemove(const FilesystemOperationContext &fsOpContext,
-	                         QuotaOwnerType ownerType, uint32_t ownerId) = 0;
+	                         QuotaOwnerType ownerType, inode_t ownerId) = 0;
 
 #ifndef METARESTORE
 	/// Returns all quota entries visible to @p context.
