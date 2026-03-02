@@ -87,6 +87,16 @@ inline constexpr std::string_view kXAttrKeyPrefix = "XATR_";   // Section XATR 1
 /// @note InodeId is serialized as Big Endian to maintain numeric order in lexicographical sorting,
 /// enabling efficient range queries.
 inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1.2
+
+/// Prefix for quotas
+/// Format: QUOT_<OwnerType><OwnerId><Rigor><Resource>:<Value>
+/// - OwnerType: u8 (user/group/inode)
+/// - OwnerId: inode_t serialized as Big Endian
+/// - Rigor: u8 (soft/hard/used)
+/// - Resource: u8 (inodes/size)
+/// - Value: u64 serialized as Big Endian
+/// @note Numeric fields in the key are serialized as Big Endian to preserve numeric order in
+/// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";   // Section FLCK 1.0
 

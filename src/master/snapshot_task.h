@@ -87,7 +87,8 @@ public:
 
 protected:
 	/*! \brief Test if node can be cloned. */
-	int cloneNodeTest(FSNode *src_node, FSNode *dst_node, FSNodeDirectory *dst_parent);
+	int cloneNodeTest(const FilesystemOperationContext &fsOpContext, FSNode *src_node,
+	                  FSNode *dst_node, FSNodeDirectory *dst_parent);
 	FSNode *cloneToExistingNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
 	                            FSNode *src_node, FSNodeDirectory *dst_parent, FSNode *dst_node);
 	FSNode *cloneToNewNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,

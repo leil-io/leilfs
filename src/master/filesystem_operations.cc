@@ -64,19 +64,6 @@ inline bool isDepletedSpace() {
 
 static const int kInitialTaskBatchSize = 1000;
 
-template <class T>
-bool decodeChar(const char *keys, const std::vector<T> values, char key, T &value) {
-	const uint32_t count = strlen(keys);
-	sassert(values.size() == count);
-	for (uint32_t i = 0; i < count; i++) {
-		if (key == keys[i]) {
-			value = values[i];
-			return true;
-		}
-	}
-	return false;
-}
-
 FilesystemOperationsBase::FilesystemOperationsBase(
     std::unique_ptr<IFilesystemNodeOperations> _nodeOps)
     : nodeOperations_(std::move(_nodeOps)) {}
@@ -723,7 +710,8 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 				denyTruncatingParity = denyTruncatingParity && (length < node_file->length);
 				status = chunk_multi_truncate(
 				    ochunkid, lockId, (length & SFSCHUNKMASK), p->goal, denyTruncatingParity,
-				    fsnodes_quota_exceeded(p, {{QuotaResource::kSize, 1}}), &nchunkid);
+				    quotaExceeded(fsOpContext, p, {{QuotaResource::kSize, 1}}),
+				    &nchunkid);
 				if (status != SAUNAFS_STATUS_OK) {
 					return status;
 				}
@@ -1194,8 +1182,9 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 	}
 
 	if (context.isPersonalityMaster() &&
-	    (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
-	     fsnodes_quota_exceeded_dir(workDir, {{QuotaResource::kInodes, 1}}))) {
+	    (quotaExceededUg(fsOpContext, context.uid(), context.gid(),
+	                     {{QuotaResource::kInodes, 1}}) ||
+	     quotaExceededDir(fsOpContext, workDir, {{QuotaResource::kInodes, 1}}))) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
@@ -1280,8 +1269,9 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	}
 
 	// Quota verification
-	if (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
-	    fsnodes_quota_exceeded_dir(parentNode, {{QuotaResource::kInodes, 1}})) {
+	if (quotaExceededUg(fsOpContext, context.uid(), context.gid(),
+	                    {{QuotaResource::kInodes, 1}}) ||
+	    quotaExceededDir(fsOpContext, parentNode, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
@@ -1344,8 +1334,9 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
-	if (fsnodes_quota_exceeded_ug(context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
-	    fsnodes_quota_exceeded_dir(workNode, {{QuotaResource::kInodes, 1}})) {
+	if (quotaExceededUg(fsOpContext, context.uid(), context.gid(),
+	                    {{QuotaResource::kInodes, 1}}) ||
+	    quotaExceededDir(fsOpContext, workNode, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
@@ -1702,8 +1693,8 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 		}
 	}
 
-	if (fsnodes_quota_exceeded_dir(
-	        destWorkDir, sourceWorkDir,
+	if (quotaExceededDirMove(
+	        fsOpContext, destWorkDir, sourceWorkDir,
 	        {{QuotaResource::kInodes, quota_delta[(int)QuotaResource::kInodes]},
 	         {QuotaResource::kSize, quota_delta[(int)QuotaResource::kSize]}})) {
 		return SAUNAFS_ERROR_QUOTA;
@@ -1819,7 +1810,8 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	if (context.isPersonalityMaster() && fsnodes_quota_exceeded(p, {{QuotaResource::kSize, 1}})) {
+	if (context.isPersonalityMaster() &&
+	    quotaExceeded(fsOpContext, p, {{QuotaResource::kSize, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 	status = nodeOperations_->appendChunks(fsOpContext, context.ts(), static_cast<FSNodeFile *>(p),
@@ -2461,7 +2453,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	}
 #endif
 
-	const bool quota_exceeded = fsnodes_quota_exceeded(fileNode, {{QuotaResource::kSize, 1}});
+	const bool quota_exceeded = quotaExceeded(fsOpContext, fileNode, {{QuotaResource::kSize, 1}});
 
 	// Cache original stats for quota and parent update
 	StatsRecord originalStats;
@@ -2517,7 +2509,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	nodeOperations_->getStats(fsOpContext, fileNode, &newStats);
 	nodeOperations_->updateParentStatsForNode(fsOpContext, fileNode, &newStats, &originalStats);
 
-	fsnodes_quota_update(fileNode, {{QuotaResource::kSize, newStats.size - originalStats.size}});
+	quotaUpdate(fsOpContext, fileNode, {{QuotaResource::kSize, newStats.size - originalStats.size}});
 	if (length) {
 		*length = fileNode->length;
 	}
@@ -2644,7 +2636,7 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
-	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
+	quotaUpdate(fsOpContext, p, {{QuotaResource::kSize, nsr.size - psr.size}});
 	fsnodes_update_checksum(p);
 	return SAUNAFS_STATUS_OK;
 }
@@ -2700,7 +2692,7 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 		auto *parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
-	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
+	quotaUpdate(fsOpContext, p, {{QuotaResource::kSize, nsr.size - psr.size}});
 	fsnodes_update_checksum(p);
 	return SAUNAFS_STATUS_OK;
 }
@@ -2754,7 +2746,7 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 		nodeOperations_->addSubStats(fsOpContext, parent, &nsr, &psr);
 	}
 
-	fsnodes_quota_update(p, {{QuotaResource::kSize, nsr.size - psr.size}});
+	quotaUpdate(fsOpContext, p, {{QuotaResource::kSize, nsr.size - psr.size}});
 
 	gMetadata->metadataVersion++;
 	p->mtime = timestamp;
@@ -3521,8 +3513,9 @@ uint64_t FilesystemOperationsBase::getMetadataVersion() {
 	return gMetadata->metadataVersion;
 }
 
-uint8_t FilesystemOperationsBase::applySetQuota(char rigor, char resource, char ownerType,
-                                                inode_t ownerId, uint64_t limit) {
+uint8_t FilesystemOperationsBase::applySetQuota(
+    const FilesystemOperationContext & /*fsOpContext*/, char rigor, char resource, char ownerType,
+    inode_t ownerId, uint64_t limit) {
 	return quotas::fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
 }
 
@@ -3607,6 +3600,46 @@ uint8_t FilesystemOperationsBase::getChunksInfo(const FsContext &context, uint32
 	return SAUNAFS_STATUS_OK;
 }
 
+#endif
+
+bool FilesystemOperationsBase::quotaExceededUg(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
+	return fsnodes_quota_exceeded_ug(uid, gid, resourceList);
+}
+
+bool FilesystemOperationsBase::quotaExceededDir(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
+	return fsnodes_quota_exceeded_dir(node, resourceList);
+}
+
+bool FilesystemOperationsBase::quotaExceededDirMove(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+    FSNodeDirectory *prevNode,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
+	return fsnodes_quota_exceeded_dir(node, prevNode, resourceList);
+}
+
+bool FilesystemOperationsBase::quotaExceeded(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
+	return fsnodes_quota_exceeded(node, resourceList);
+}
+
+void FilesystemOperationsBase::quotaUpdate(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
+	fsnodes_quota_update(node, resourceList);
+}
+
+void FilesystemOperationsBase::quotaRemove(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, QuotaOwnerType ownerType,
+    inode_t ownerId) {
+	fsnodes_quota_remove(ownerType, ownerId);
+}
+
+#ifndef METARESTORE
 uint8_t FilesystemOperationsBase::quotaGetAll(const FsContext &context,
                                               std::vector<QuotaEntry> &results) {
 	return quotas::fs_quota_get_all(context, results);
@@ -3618,8 +3651,9 @@ uint8_t FilesystemOperationsBase::quotaGet(const FsContext &context,
 	return quotas::fs_quota_get(context, owners, results);
 }
 
-uint8_t FilesystemOperationsBase::quotaSet(const FsContext &context,
-                                           const std::vector<QuotaEntry> &entries) {
+uint8_t FilesystemOperationsBase::quotaSet(
+    const FsContext &context, [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    const std::vector<QuotaEntry> &entries) {
 	return quotas::fs_quota_set(context, entries);
 }
 
@@ -3628,7 +3662,9 @@ uint8_t FilesystemOperationsBase::quotaGetInfo(const FsContext &context,
                                                std::vector<std::string> &result) {
 	return quotas::fs_quota_get_info(context, entries, result);
 }
+#endif
 
+#ifndef METARESTORE
 uint8_t FilesystemOperationsBase::startChecksumRecalculation() {
 	return checksum::fs_start_checksum_recalculation();
 }

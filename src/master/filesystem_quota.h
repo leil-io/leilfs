@@ -21,13 +21,39 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <utility>
+#include <vector>
 
+#include "common/massert.h"
 #include "common/quota_database.h"
 #include "master/filesystem_freenode.h"
 #include "master/filesystem_node_types.h"
 #include "protocol/quota.h"
+
+/// Decodes a single-character selector into a typed value.
+///
+/// Used by applySetQuota replay paths to decode SETQUOTA changelog fields
+/// (rigor, resource, ownerType) from their single-character representations.
+///
+/// @param keys  Null-terminated string of valid selector characters.
+/// @param values Parallel vector of typed values matching @p keys.
+/// @param key   Character to decode.
+/// @param[out] value Decoded typed value on success.
+/// @return true if @p key was found in @p keys.
+template <class T>
+inline bool decodeChar(const char *keys, const std::vector<T> &values, char key, T &value) {
+	const uint32_t count = strlen(keys);
+	sassert(values.size() == count);
+	for (uint32_t i = 0; i < count; i++) {
+		if (key == keys[i]) {
+			value = values[i];
+			return true;
+		}
+	}
+	return false;
+}
 
 class FsContext;
 
@@ -85,10 +111,10 @@ void fsnodes_quota_update(FSNode *node,
 	const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
 
 /*! \brief Remove quota.
- * \param owner_type Owner type (user, group, inode(directory)).
+ * \param owner_type Owner type (user, group, inode (directory)).
  * \param owner_id Owner id.
  */
-void fsnodes_quota_remove(QuotaOwnerType owner_type, uint32_t owner_id);
+void fsnodes_quota_remove(QuotaOwnerType owner_type, inode_t owner_id);
 
 /*! \brief Adjust reported free/total space based on quota information.
  * \param node Pointer to root node in directory tree that we should adjust space for.

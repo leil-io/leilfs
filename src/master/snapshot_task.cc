@@ -26,18 +26,23 @@
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operation_context.h"
 #include "master/filesystem_operations_interface.h"
-#include "master/filesystem_quota.h"
 
-int SnapshotTask::cloneNodeTest(FSNode *src_node, FSNode *dst_node, FSNodeDirectory *dst_parent) {
-	if (fsnodes_quota_exceeded_ug(src_node, {{QuotaResource::kInodes, 1}}) ||
-	    fsnodes_quota_exceeded_dir(dst_parent, {{QuotaResource::kInodes, 1}})) {
+int SnapshotTask::cloneNodeTest(const FilesystemOperationContext &fsOpContext, FSNode *src_node,
+                                FSNode *dst_node, FSNodeDirectory *dst_parent) {
+	if (gFSOperations->quotaExceededUg(fsOpContext, src_node->uid, src_node->gid,
+	                                   {{QuotaResource::kInodes, 1}}) ||
+	    gFSOperations->quotaExceededDir(fsOpContext, dst_parent,
+	                                    {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 	if (src_node->type == FSNodeType::kFile &&
-	    (fsnodes_quota_exceeded_ug(src_node, {{QuotaResource::kSize, 1}}) ||
-	     fsnodes_quota_exceeded_dir(dst_parent, {{QuotaResource::kSize, 1}}))) {
+	    (gFSOperations->quotaExceededUg(fsOpContext, src_node->uid, src_node->gid,
+	                                    {{QuotaResource::kSize, 1}}) ||
+	     gFSOperations->quotaExceededDir(fsOpContext, dst_parent,
+	                                    {{QuotaResource::kSize, 1}}))) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
+
 	if (dst_node) {
 		if (orig_inode_ != 0 && dst_node->id == orig_inode_) {
 			return SAUNAFS_ERROR_EINVAL;
@@ -173,7 +178,8 @@ void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
 
 	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &nsr);
 	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
-	fsnodes_quota_update(dst_node, {{QuotaResource::kSize, nsr.size - psr.size}});
+	gFSOperations->quotaUpdate(fsOpContext, dst_node,
+	                           {{QuotaResource::kSize, nsr.size - psr.size}});
 }
 
 void SnapshotTask::cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDirectory *dst_node) {
@@ -239,7 +245,7 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	FSNode *dst_node =
 	    gFSOperations->nodeOperations()->lookup(fsOpContext, dst_parent, current_subtask_->second);
 
-	int status = cloneNodeTest(src_node, dst_node, dst_parent);
+	int status = cloneNodeTest(fsOpContext, src_node, dst_node, dst_parent);
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
