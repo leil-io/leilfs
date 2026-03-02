@@ -121,14 +121,20 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 	// so restore-relevant keys reflect the fully persisted state.
 	if (!flushPendingUpdates(true)) {
 		safs::log_err("Failed to fully flush pending updates before saving metadata keys");
+		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
 		return SAUNAFS_ERROR_IO;
 	}
 
 	// Save metadata keys required for restore (checkpoint list, next chunk id, etc.)
 	if (saveMetadataKeys() != kOpSuccess) {
 		safs::log_err("Failed to save metadata keys required for restore");
+		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
 		return SAUNAFS_ERROR_IO;
 	}
+
+	changelog_rotate();
+	matomlserv_broadcast_logrotate();
+	broadcast_metadata_saved(SAUNAFS_STATUS_OK);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -204,6 +210,10 @@ void MetadataBackendForkless::onNodeChanged(FSNode *node) {
 	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeUpdateEvent>(node)); }
 }
 
+void MetadataBackendForkless::onNodeRemoved(inode_t nodeId) {
+	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeRemoveEvent>(nodeId)); }
+}
+
 void MetadataBackendForkless::onEdgeChanged(inode_t parentId, inode_t childId,
                                            const HString &name) {
 	if (metadataWriter_) {
@@ -229,9 +239,59 @@ int8_t MetadataBackendForkless::saveNextChunkId(kv::IReadWriteTransaction *trans
 	return kOpSuccess;
 }
 
+int8_t MetadataBackendForkless::saveMetadataKeys(kv::IReadWriteTransaction *transaction) {
+	// MaxInodeId is stored in META_MAX_INODE_ID: <maxInodeId> e.g. META_MAX_INODE_ID: 42
+	kv::Key maxInodeIdKey{kv::toBytes(gMetadata->maxInodeId().getName())};
+	kv::Value maxInodeIdValue;
+	serialize(maxInodeIdValue, gMetadata->maxInodeId().getValue());
+	transaction->set(maxInodeIdKey, maxInodeIdValue);
+
+	// Metadata version is stored in META_VERSION: <version> e.g. META_VERSION: 3
+	kv::Key versionKey{kv::toBytes(kMetaVersionKey)};
+	kv::Value serializedVersion;
+	serialize(serializedVersion, gMetadata->metadataVersion);
+	transaction->set(versionKey, serializedVersion);
+
+	// Next session ID is stored in META_NEXT_SESSION: <nextSessionId> e.g. META_NEXT_SESSION: 5
+	kv::Key sessionKey{kv::toBytes(kMetaNextSessionKey)};
+	kv::Value sessionValue;
+	serialize(sessionValue, gMetadata->nextSessionId().getValue());
+	transaction->set(sessionKey, sessionValue);
+
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadMetadataKeys() {
+	// Load metadata global properties from FDB (equivalent to the file header that
+	// MetadataBackendFile reads from metadata.sfs: maxInodeId, metadata version and nextSessionId).
+
+	// MaxInodeId is stored in META_MAX_INODE_ID: <maxInodeId> e.g. META_MAX_INODE_ID: 42
+	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+
+	inode_t maxInodeId{SPECIAL_INODE_ROOT};
+	const auto maxInodeIdKey = gMetadata->maxInodeId().getName();
+	auto value = transaction->get(kv::toBytes(maxInodeIdKey));
+	if (value.has_value()) {
+		const uint8_t *data = value.value().data();
+		getINode(&data, maxInodeId);
+	}
+
+	gMetadata->maxInodeId().setValue(maxInodeId);
+
+	// Metadata version is stored in META_VERSION: <version> e.g. META_VERSION: 3
+	gMetadata->metadataVersion = kvConnector_->get64bitBE(kv::toBytes(kMetaVersionKey), 1);
+
+	// Next session ID is stored in META_NEXT_SESSION: <nextSessionId> e.g. META_NEXT_SESSION: 5
+	auto nextSessionIdValue = kvConnector_->get32bitBE(kv::toBytes(kMetaNextSessionKey), 1);
+	gMetadata->nextSessionId().setValue(nextSessionIdValue);
+
+	return kOpSuccess;
+}
+
 int8_t MetadataBackendForkless::saveMetadataKeys() {
 	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
 
+	saveMetadataKeys(transaction.get());
 	saveNextChunkId(transaction.get());
 
 	if (!transaction->commit()) {
@@ -693,7 +753,7 @@ bool checkMetadataSignature() {
 void MetadataBackendForkless::loadall(int ignoreflag) {
 	safs::log_info("MetadataBackendForkless::loadall: ignoreflag: {}", ignoreflag);
 
-	// Load metadata global properties and check signature
+	// Check metadata signature
 
 	bool isSignatureValid = checkMetadataSignature();
 	bool bootstrapped = false;
@@ -711,6 +771,10 @@ void MetadataBackendForkless::loadall(int ignoreflag) {
 #endif
 
 	if (!isSignatureValid && !bootstrapped) { return; }
+
+	// Load metadata global properties from FDB
+
+	loadMetadataKeys();
 
 	// Load the metadata sections
 
@@ -892,6 +956,8 @@ void MetadataBackendForkless::createConnections() {
 	// getChangelogSignal().connect(kvConnector_.get(), &IKVConnector::onChangelogEvent);
 
 	gMetadata->nodeChangedSignal.connect([this](FSNode *node) { onNodeChanged(node); });
+
+	gMetadata->nodeRemovedSignal.connect([this](inode_t nodeId) { onNodeRemoved(nodeId); });
 
 	// gMetadata->edgeChangedSignal.connect(kvConnector_.get(), &IKVConnector::onEdgeChanged);
 

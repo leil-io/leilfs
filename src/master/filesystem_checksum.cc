@@ -109,6 +109,11 @@ void fsnodes_update_checksum(FSNode *node) {
 	if (gChecksumBackgroundUpdater.isNodeIncluded(node)) {
 		addToChecksum(gChecksumBackgroundUpdater.fsNodesChecksum, node->checksum);
 	}
+
+	// All nodes changes call fsnodes_update_checksum(), so triggering nodeChangedSignal here
+	// ensures that any node change is tracked, which is necessary for keeping FDB nodes's state up
+	// to date and consistent with the in-memory state of the nodes.
+	gMetadata->nodeChangedSignal.emit(node);
 }
 
 static void fsnodes_recalculate_checksum() {

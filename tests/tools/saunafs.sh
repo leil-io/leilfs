@@ -517,7 +517,13 @@ add_metadata_server_() {
 		create_sfsmds_cfg_ >"$masterserver_mds_cfg"
 		cp "$masterserver_mds_cfg" "$masterserver_cfg"
 	elif [[ "${saunafs_info_[metadata_backend]}" == "FORKLESS" ]]; then
-		cp "$masterserver_master_cfg" "$masterserver_cfg"
+		if [[ "$personality" == "master" ]]; then
+			cp "$masterserver_master_cfg" "$masterserver_cfg"
+		elif [[ "$personality" == "shadow" ]]; then
+			cp "$masterserver_shadow_cfg" "$masterserver_cfg"
+		else
+			test_fail "Wrong personality $personality"
+		fi
 		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
 	fi
 

@@ -52,6 +52,14 @@ void NodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->set(key, serializedNode);
 }
 
+NodeRemoveEvent::NodeRemoveEvent(inode_t _nodeId) : nodeId(_nodeId) {}
+
+void NodeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Key: NODE_<nodeId>
+	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
+	txn->remove(key);
+}
+
 FreeNodeUpdateEvent::FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp)
     : nodeId(_nodeId), timestamp(_timestamp) {}
 
