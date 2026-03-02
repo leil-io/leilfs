@@ -65,6 +65,18 @@ private:
 	kv::Value serializedNode;
 };
 
+/// Removal event for nodes
+class NodeRemoveEvent : public IMetadataUpdateEvent {
+public:
+	NodeRemoveEvent(inode_t _nodeId);
+	~NodeRemoveEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t nodeId;
+};
+
 class FreeNodeUpdateEvent : public IMetadataUpdateEvent {
 public:
 	FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp = 0);

@@ -224,6 +224,25 @@ private:
 	/// @return kOpSuccess on success, kOpFailure on failure.
 	int8_t saveNextChunkId(kv::IReadWriteTransaction *transaction);
 
+	/// Persist metadata global properties to the KV store within an existing transaction.
+	///
+	/// Writes the current values of `maxInodeId`, `metadataVersion`, and `nextSessionId` from
+	/// gMetadata to FDB. These are the equivalent of the file header that MetadataBackendFile
+	/// writes to metadata.sfs.
+	///
+	/// @param transaction Transaction used to persist the keys.
+	/// @return kOpSuccess on success, kOpFailure on failure.
+	int8_t saveMetadataKeys(kv::IReadWriteTransaction *transaction);
+
+	/// Load metadata global properties from the KV store.
+	///
+	/// Reads `maxInodeId`, `metadataVersion`, and `nextSessionId` from FDB and populates the
+	/// corresponding fields in gMetadata. These are the equivalent of the file header that
+	/// MetadataBackendFile reads from metadata.sfs.
+	///
+	/// @return kOpSuccess on success, kOpFailure on failure.
+	int8_t loadMetadataKeys();
+
 	/// Persist all forkless restore-relevant keys.
 	///
 	/// This is called from fs_storeall() to write the keys below:
@@ -236,7 +255,21 @@ private:
 	/// @return kOpSuccess on success, kOpFailure on failure.
 	int8_t saveMetadataKeys();
 
+	/// Enqueue a node update event to the metadata writer.
+	///
+	/// Called when a filesystem node is created or modified. The event serializes the node and
+	/// writes `NODE_<nodeId>: <serializedNode>` to the KV store on the next flush.
+	///
+	/// @param node Pointer to the modified filesystem node.
 	void onNodeChanged(FSNode *node);
+
+	/// Enqueue a node removal event to the metadata writer.
+	///
+	/// Called when a filesystem node is removed. The event removes the `NODE_<nodeId>` key
+	/// from the KV store on the next flush.
+	///
+	/// @param nodeId Inode of the removed filesystem node.
+	void onNodeRemoved(inode_t nodeId);
 
 	/// Enqueue an edge update event to the metadata writer.
 	///
