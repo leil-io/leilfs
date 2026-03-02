@@ -29,19 +29,6 @@
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operations_interface.h"
 
-template <class T>
-bool decodeChar(const char *keys, const std::vector<T> values, char key, T &value) {
-	const uint32_t count = strlen(keys);
-	sassert(values.size() == count);
-	for (uint32_t i = 0; i < count; i++) {
-		if (key == keys[i]) {
-			value = values[i];
-			return true;
-		}
-	}
-	return false;
-}
-
 #ifndef METARESTORE
 /*! \brief Remove entries that are not descendants of \param root_inode. */
 static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<QuotaEntry> &results) {

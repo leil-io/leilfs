@@ -195,13 +195,13 @@ void FilesystemNodeOperationsBase::preserveEdge(const FilesystemOperationContext
 	gMetadata->edgeChangedSignal.emit(parent, child, handlePtr);
 }
 
-void FilesystemNodeOperationsBase::quotaUpdate(
+void FilesystemNodeOperationsBase::nodeQuotaUpdate(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
     const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
 	fsnodes_quota_update(node, resourceList);
 }
 
-void FilesystemNodeOperationsBase::quotaRemove(
+void FilesystemNodeOperationsBase::nodeQuotaRemove(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, QuotaOwnerType ownerType,
     inode_t ownerId) {
 	fsnodes_quota_remove(ownerType, ownerId);
@@ -751,10 +751,10 @@ FSNode *FilesystemNodeOperationsBase::createNode(
 
 	fsnodes_update_checksum(node);
 	link(fsOpContext, timeStamp, parent, node, name);
-	quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
+	nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
 
 	if (type == FSNodeType::kFile) {
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, +getSize(fsOpContext, node)}});
+		nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kSize, +getSize(fsOpContext, node)}});
 	}
 
 	return node;
@@ -1304,8 +1304,8 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 	getStats(fsOpContext, destNodeFile, &newStats);
 
 	// Update quotas based on the change in file size
-	quotaUpdate(fsOpContext, destNodeFile,
-	            {{QuotaResource::kSize, newStats.size - previousStats.size}});
+	nodeQuotaUpdate(fsOpContext, destNodeFile,
+	                {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
 	// Update stats for all parent directories
 	for (const auto &[parentId, _] : destNodeFile->parents) {
@@ -1392,7 +1392,8 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 
 	getStats(fsOpContext, nodeFile, &newStats);
 
-	quotaUpdate(fsOpContext, nodeFile, {{QuotaResource::kSize, newStats.size - previousStats.size}});
+	nodeQuotaUpdate(fsOpContext, nodeFile,
+	                {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
 	updateParentStatsForNode(fsOpContext, nodeFile, &newStats, &previousStats);
 
@@ -1411,10 +1412,10 @@ void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
 		size = getSize(fsOpContext, node);
-		quotaUpdate(fsOpContext, node,
-		            {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -size}});
+		nodeQuotaUpdate(fsOpContext, node,
+		                {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -size}});
 	} else {
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
+		nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
 	}
 
 	// Change ownership
@@ -1424,10 +1425,10 @@ void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext
 	// Increase quota for new owner
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		quotaUpdate(fsOpContext, node,
-		            {{QuotaResource::kInodes, +1}, {QuotaResource::kSize, +size}});
+		nodeQuotaUpdate(fsOpContext, node,
+		                {{QuotaResource::kInodes, +1}, {QuotaResource::kSize, +size}});
 	} else {
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
+		nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
 	}
 }
 
@@ -1474,13 +1475,13 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 	xattr_removeinode(node->id);
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		quotaUpdate(
+		nodeQuotaUpdate(
 		    fsOpContext, node,
 		    {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -getSize(fsOpContext, node)}});
 	} else {
-		quotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
+		nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
 	}
-	quotaRemove(fsOpContext, QuotaOwnerType::kInode, node->id);
+	nodeQuotaRemove(fsOpContext, QuotaOwnerType::kInode, node->id);
 #ifndef METARESTORE
 	fsnodes_periodic_remove(node->id);
 	dcm_modify(node->id, 0);

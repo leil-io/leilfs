@@ -296,15 +296,15 @@ protected:
 	/// Updates owner quota usage for node mutations.
 	/// In-memory backend applies updates directly to quota structures.
 	/// KV backend can override to persist counters in the active transaction.
-	virtual void quotaUpdate(
+	virtual void nodeQuotaUpdate(
 	    const FilesystemOperationContext &fsOpContext, FSNode *node,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList);
 
 	/// Removes all quota tuples for a specific owner.
 	/// In-memory backend removes from quota database.
 	/// KV backend can override to remove owner keys from persistent storage.
-	virtual void quotaRemove(const FilesystemOperationContext &fsOpContext,
-	                         QuotaOwnerType ownerType, inode_t ownerId);
+	virtual void nodeQuotaRemove(const FilesystemOperationContext &fsOpContext,
+	                             QuotaOwnerType ownerType, inode_t ownerId);
 
 private:
 	// Private helpers

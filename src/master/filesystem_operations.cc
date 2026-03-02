@@ -64,19 +64,6 @@ inline bool isDepletedSpace() {
 
 static const int kInitialTaskBatchSize = 1000;
 
-template <class T>
-bool decodeChar(const char *keys, const std::vector<T> values, char key, T &value) {
-	const uint32_t count = strlen(keys);
-	sassert(values.size() == count);
-	for (uint32_t i = 0; i < count; i++) {
-		if (key == keys[i]) {
-			value = values[i];
-			return true;
-		}
-	}
-	return false;
-}
-
 FilesystemOperationsBase::FilesystemOperationsBase(
     std::unique_ptr<IFilesystemNodeOperations> _nodeOps)
     : nodeOperations_(std::move(_nodeOps)) {}
