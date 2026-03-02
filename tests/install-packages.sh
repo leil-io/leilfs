@@ -64,7 +64,6 @@ common_packages=(
 	bison
 	byacc
 	dbus
-	# doxygen
 	flex
 	tree
 )

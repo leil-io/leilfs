@@ -24,7 +24,7 @@ if(EXISTS ${CMAKE_CURRENT_BINARY_DIR}/sfsmds.cfg)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsmds.cfg       DESTINATION ${SFSMDS_EXAMPLES_SUBDIR})
 endif()
 
-install(FILES saunafs.completion DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/bash_completion.d RENAME saunafs COMPONENT client)
+install(FILES saunafs.completion DESTINATION etc/bash_completion.d RENAME saunafs COMPONENT client)
 
 if(BUILD_TESTS)
   # Create a mock include dir.
