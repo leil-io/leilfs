@@ -6417,7 +6417,12 @@ void matoclserv_admin_save_metadata(matoclserventry* eptr, const uint8_t* data, 
 		               ipToString(eptr->peerIpAddress));
 		uint8_t status = gMetadataBackend->fs_storeall(DumpType::kBackgroundDump);
 
-		if (status != SAUNAFS_STATUS_OK || asynchronous) {
+		// Forkless backend performs dump synchronously, so inProgress() function always return
+		// false and the reply is sent immediately.
+		// For the MetadataBackendFile, the dump is performed asynchronously through the fork, so
+		// the reply is sent later, after the dump process is finished.
+		if (status != SAUNAFS_STATUS_OK || asynchronous ||
+		    !gMetadataBackend->dumper()->inProgress()) {
 			matoclserv_createpacket(eptr, matocl::adminSaveMetadata::build(status));
 		} else {
 			// Mark the client; we will reply after metadata save process is finished
