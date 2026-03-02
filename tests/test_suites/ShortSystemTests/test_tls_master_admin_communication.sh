@@ -73,5 +73,8 @@ config="$(saunafs-admin dump-config --defaults localhost "${master_port}" --tlsc
 printf "%s\n" "${config}"
 # Spot-check a couple of defaults that should be stable
 expect_equals 1 "$(grep "GLOBALIOLIMITS_RENEGOTIATION_PERIOD_SECONDS: 0.1" <<< "${config}" | wc -l)"
-# This value may appear across multiple services, adjust expected count if needed
+# These values may appear across multiple services, adjust expected count if needed
 expect_equals 3 "$(grep "REPLICATION_BANDWIDTH_LIMIT_KBPS: 0" <<< "${config}" | wc -l)"
+expect_equals 3 "$(grep "TLS_CERT_FILE: \"\"" <<< "${config}" | wc -l)"
+expect_equals 3 "$(grep "TLS_KEY_FILE: \"\"" <<< "${config}" | wc -l)"
+expect_equals 3 "$(grep "TLS_CA_CERT_FILE: \"\"" <<< "${config}" | wc -l)"
