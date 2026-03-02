@@ -44,6 +44,54 @@ TEST(KVUtilsTest, ToBytes) {
 	EXPECT_EQ(result, expected);
 }
 
+TEST(KVUtilsTest, PrefixEnd) {
+	// Normal case: last byte incremented, length preserved
+	{
+		kv::Key prefix = {0x01, 0x02};
+		kv::Key expected = {0x01, 0x03};
+		EXPECT_EQ(kv::prefixEnd(prefix), expected);
+	}
+
+	// Last byte is 0xFF: carry into previous byte and truncate
+	{
+		kv::Key prefix = {0x01, 0xFF};
+		kv::Key expected = {0x02};
+		EXPECT_EQ(kv::prefixEnd(prefix), expected);
+	}
+
+	// Multiple trailing 0xFF bytes: carry and truncate all of them
+	{
+		kv::Key prefix = {0x01, 0xFF, 0xFF};
+		kv::Key expected = {0x02};
+		EXPECT_EQ(kv::prefixEnd(prefix), expected);
+	}
+
+	// Single byte, not 0xFF: just increment
+	{
+		kv::Key prefix = {0x42};
+		kv::Key expected = {0x43};
+		EXPECT_EQ(kv::prefixEnd(prefix), expected);
+	}
+
+	// All 0xFF bytes: no finite upper bound, must throw
+	{
+		kv::Key prefix = {0xFF, 0xFF};
+		EXPECT_THROW(kv::prefixEnd(prefix), std::invalid_argument);
+	}
+
+	// Single 0xFF byte: no finite upper bound, must throw
+	{
+		kv::Key prefix = {0xFF};
+		EXPECT_THROW(kv::prefixEnd(prefix), std::invalid_argument);
+	}
+
+	// Empty prefix: no finite upper bound, must throw
+	{
+		kv::Key prefix = {};
+		EXPECT_THROW(kv::prefixEnd(prefix), std::invalid_argument);
+	}
+}
+
 TEST(KVUtilsTest, ToBytesLE) {
 	// Test uint8_t (single byte - endianness doesn't matter)
 	{

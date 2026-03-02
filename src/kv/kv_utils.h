@@ -40,6 +40,25 @@ inline void appendStr(Bytes &destination, std::string_view str) {
 	destination.insert(destination.end(), str.begin(), str.end());
 }
 
+/// Returns the exclusive upper bound for a prefix range scan.
+///
+/// This is equivalent to FoundationDB's `strinc` helper: the smallest key strictly greater
+/// than all keys that begin with @p prefix.
+///
+/// @throws std::invalid_argument if @p prefix is empty or all 0xFF bytes and has no finite upper
+/// bound.
+inline Key prefixEnd(Key prefix) {
+	for (size_t i = prefix.size(); i > 0; --i) {
+		if (prefix[i - 1] != 0xFF) {
+			++prefix[i - 1];
+			prefix.resize(i);
+			return prefix;
+		}
+	}
+
+	throw std::invalid_argument("Prefix has no finite upper bound");
+}
+
 /// Converts integral types to a vector of uint8_t encoded in little-endian order.
 template <typename T>
     requires(std::is_integral_v<T>)
