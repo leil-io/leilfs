@@ -23,6 +23,8 @@ typedef int (*fsync_t)(int);
 // offset in a file used in some scenarios
 #define FAR_OFFSET_THRESHOLD 102400
 
+int EIO_replies = 0;
+
 // for files which match FILENAME_TRIGGER, this library will cause the following functions to fail:
 // * pread always fails with EIO if file name contains "pread_EIO"
 // * pwrite always fails with EIO if file name contains "pwrite_EIO"
@@ -44,6 +46,7 @@ static int err_on_operation(int fd, const char* opname, size_t offset) {
 	char filename[FILENAME_BUFSIZE] = {0};
 	char always_eio_trigger[COMMAND_BUFSIZE] = {0};
 	char far_eio_trigger[COMMAND_BUFSIZE] = {0};
+	char slow_and_one_eio_trigger[COMMAND_BUFSIZE] = {0};
 
 	ssize_t result = read_filename(fd, filename, FILENAME_BUFSIZE);
 	if (result == -1) {
@@ -57,12 +60,21 @@ static int err_on_operation(int fd, const char* opname, size_t offset) {
 	// prepare substrings of the filename which trigger errors in various scenarios
 	sprintf(always_eio_trigger, "%s_EIO", opname);
 	sprintf(far_eio_trigger, "%s_far_EIO", opname);
+	sprintf(slow_and_one_eio_trigger, "%s_slow_and_one_EIO", opname);
 
 	// TODO: remove fixed pattern for SMRs after the basic support
 	if (strstr(filename, always_eio_trigger) || strstr(filename, "sauna_nullb0")) {
 		return EIO;
 	} else if (strstr(filename, far_eio_trigger) && offset > FAR_OFFSET_THRESHOLD) {
 		return EIO;
+	} else if (strstr(filename, slow_and_one_eio_trigger)) {
+		// sleep for a while to simulate a slow operation
+		sleep(2);  // 2 seconds
+		if (EIO_replies == 0) {
+			EIO_replies++;
+			return EIO;
+		}
+		return 0;
 	} else {
 		return 0;
 	}

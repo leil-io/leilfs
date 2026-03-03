@@ -387,7 +387,7 @@ int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16
 		if (ret != size) {
 			hddAddErrorAndPreserveErrno(chunk);
 			safs::log_warn("{}: file:{} - write error", errorMsg,
-			               chunk->fullMetaFilename().c_str());
+			               chunk->fullDataFilename().c_str());
 			hddReportDamagedChunk(chunk->id(), chunk->type());
 			updater.markWriteAsFailed();
 			return -1;

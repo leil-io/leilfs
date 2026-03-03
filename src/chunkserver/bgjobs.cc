@@ -435,6 +435,28 @@ uint32_t MasterJobPool::addLockJob(JobCallback callback, void *extra, uint32_t l
 	return jobId;
 }
 
+void MasterJobPool::changeLockJobsCallback(const CallbackMaker &callbackMaker,
+                                           uint32_t listenerId) {
+	// Check if the listenerId is valid
+	if (listenerId >= listenerInfos_.size()) {
+		safs::log_warn(
+		    "{} job pool: {}: Invalid listenerId {} for changing lock jobs callback, resetting to 0",
+		    name_, __func__, listenerId);
+		listenerId = 0;  // Reset to the first listener
+	}
+
+	auto &listenerInfo = listenerInfos_[listenerId];
+	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo.jobsMutex);
+	for (auto &[chunkWithType, lockedChunkData] : chunkToJobReplyMap_) {
+		if (lockedChunkData.listenerId == listenerId) {
+			auto jobIterator = listenerInfo.jobHash.find(lockedChunkData.lockJobId);
+			if (jobIterator != listenerInfo.jobHash.end()) {
+				jobIterator->second->callback = callbackMaker(chunkWithType, listenerId);
+			}
+		}
+	}
+}
+
 bool MasterJobPool::startChunkLock(const JobPool::JobCallback &callback, void *packet,
                                    uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId) {
 	std::unique_lock lock(chunkToJobReplyMapMutex_);

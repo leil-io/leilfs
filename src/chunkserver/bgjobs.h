@@ -280,6 +280,10 @@ protected:
  */
 class MasterJobPool : public JobPool {
 public:
+	/// @brief Function type for creating job callbacks based on chunk information and listener ID.
+	using CallbackMaker =
+	    std::function<JobCallback(ChunkWithType chunkWithType, uint32_t listenerId)>;
+
 	/// @brief Constructor for MasterJobPool.
 	/// @param name Human readable name for this pool, useful for debugging.
 	/// @param workers The number of worker threads in the pool.
@@ -304,6 +308,13 @@ public:
 	uint32_t addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
 	                           JobCallback callback, void *extra, ProcessJobCallback processJob,
 	                           uint32_t listenerId = 0);
+
+	/// @brief Changes the callback function for all lock jobs associated with a specific listener.
+	/// This function is used to update the callback for all lock jobs when the master server
+	/// disconnects to ensure that no chunks with broken data remain registered.
+	/// @param callbackMaker The function to create new callback functions for all lock jobs.
+	/// @param listenerId The ID of the listener associated with the lock jobs.
+	void changeLockJobsCallback(const CallbackMaker &callbackMaker, uint32_t listenerId = 0);
 
 	/// @brief Starts a chunk lock job for a specific chunk and type.
 	/// This function is triggered when the master server sends a chunk lock request for a chunk

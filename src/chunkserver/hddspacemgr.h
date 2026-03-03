@@ -34,6 +34,7 @@ uint32_t hddGetAndResetErrorCounter();
 
 void hddGetDamagedChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
 void hddGetLostChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
+void hddReportLostChunk(uint64_t chunkid, ChunkPartType chunk_type);
 void hddGetNewChunks(std::vector<ChunkWithVersionAndType>& chunks,
                      std::size_t limit);
 

@@ -101,7 +101,8 @@ void masterconn_stats(uint64_t *bin,uint64_t *bout,uint32_t *maxjobscnt) {
 void masterconn_check_hdd_reports() {
 	MasterConn *eptr = gMasterConnSingleton.get();
 	uint32_t errorcounter;
-	if (eptr->mode() == ConnectionMode::CONNECTED) {
+	if (eptr->mode() == ConnectionMode::CONNECTED &&
+	    eptr->registrationStatus() == RegistrationStatus::kChunksRegistered) {
 		if (hddGetAndResetSpaceChanged()) {
 			uint64_t usedspace, totalspace, tdusedspace, tdtotalspace;
 			uint32_t chunkcount, tdchunkcount;
@@ -138,6 +139,41 @@ void masterconn_check_hdd_reports() {
 void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
 	(void)status;
 	MasterConn::deletePacket(packet);
+}
+
+std::function<void(uint8_t, void *)> masterconn_jobDeleteAfterErrorFinished(
+    ChunkWithType chunkWithType) {
+	return [chunkWithType](uint8_t status, void *packet) {
+		(void)packet;
+		// packet should be nullptr
+
+		if (status == SAUNAFS_STATUS_OK &&
+		    gMasterConnSingleton->mode() == ConnectionMode::CONNECTED) {
+			// Report the chunk as lost to the master server, so it won't be registered again and
+			// won't cause any inconsistencies. If the mode is connected, it means that registration
+			// with the master server was successful, so we can safely report the chunk as lost. If
+			// the mode is not connected, it means that registration with the master server was not
+			// successful, so we can skip reporting the chunk as lost, as it won't be registered
+			// anyway.
+			hddReportLostChunk(chunkWithType.id, chunkWithType.type);
+		}
+	};
+}
+
+std::function<void(uint8_t, void *)> masterconn_unwantedLockJobFinished(
+    ChunkWithType chunkWithType, uint32_t listenerId) {
+	return [chunkWithType, listenerId](uint8_t status, void *packet) {
+		MasterConn::deletePacket(packet);
+
+		if (status == SAUNAFS_STATUS_OK) { return; }
+
+		// If there was an error while writing, which is passed to the callback as status, we want
+		// to remove the chunk itself and avoid registering it again with the master server, as it
+		// might contain broken data. To do that, we add a delete job to the job pool, which will be
+		// processed and will remove the chunk from the chunk server.
+		job_delete(*gJobPool, masterconn_jobDeleteAfterErrorFinished(chunkWithType), nullptr,
+		           chunkWithType.id, 0, chunkWithType.type, listenerId);
+	};
 }
 
 MasterJobPool* masterconn_get_job_pool() {
@@ -228,6 +264,7 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	// If the connection is in KILL mode, disable the job pool and close the socket.
 	if (eptr->mode() == ConnectionMode::KILL) {
 		gJobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
+		gJobPool->changeLockJobsCallback(masterconn_unwantedLockJobFinished);
 		gReplicationJobPool->disableAndChangeCallbackAll(masterconn_unwantedjobfinished);
 		tcpclose(eptr->socketFD());
 		eptr->resetPackets();
