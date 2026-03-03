@@ -137,9 +137,12 @@ struct ChunkserverEntry {
 	/// List of output packets waiting to be sent to the clients
 	std::list<std::unique_ptr<PacketStruct>> outputPackets;
 
-	uint64_t chunkId = 0; // R+W
-	uint32_t chunkVersion = 0; // R+W
-	ChunkPartType chunkType = slice_traits::standard::ChunkPartType(); // R
+	/// Number of pending write jobs in total for the write high level operations of this entry.
+	/// Used to determine when to close the connection after a close request.
+	uint32_t pendingWriteJobs = 0;
+	uint64_t chunkId = 0;           ///< R+W
+	uint32_t chunkVersion = 0;      ///< R+W
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();  // R
 
 	ChunkserverEntry(int socket, ClientJobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
 	                 uint16_t maxParallelHddReadJobs, uint16_t maxBlocksPerHddWriteJob);
@@ -152,6 +155,9 @@ struct ChunkserverEntry {
 
 	/// Destructor: closes the sockets.
 	~ChunkserverEntry();
+
+	/// Clears completed write high level operations and tries to send instant replies if possible.
+	void everyLoopUpdateWrite();
 
 	/// Returns whether the last header type was SAU_CLTOCS_WRITE_DATA.
 	inline bool isLastHeaderTypeWriteData();
@@ -352,6 +358,9 @@ struct ChunkserverEntry {
 	/// Checks if the chunk is open for reading or writing.
 	bool isChunkOpen();
 
+	/// Force closes any open chunks without checking if the operations are finished.
+	void forceCloseOpenChunks();
+
 	/// Checks if it is ready to be closed, and if so set the state to Closed.
 	void checkAndApplyClosed();
 
@@ -365,8 +374,16 @@ struct ChunkserverEntry {
 	void closeJobs();
 
 private:
+	/// Retrieves the active write high level operation for the current entry.
+	/// @param callerName The name of the calling function for logging purposes.
+	/// @return Pointer to the active `WriteHighLevelOp`, or `nullptr` if there is no active write
+	/// operation.
+	WriteHighLevelOp *getActiveWriteHLO(const char *callerName);
+
+	/// Max blocks per HDD write job
+	uint16_t maxBlocksPerHddWriteJob_;
 	/// Write operation related data
-	std::unique_ptr<WriteHighLevelOp> writeHLO_;
+	std::list<std::unique_ptr<WriteHighLevelOp>> writeHLOs_;
 	/// Read operation related data
 	std::unique_ptr<ReadHighLevelOp> readHLO_;
 	/// Get blocks operation related data

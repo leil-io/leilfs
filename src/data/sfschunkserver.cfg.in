@@ -285,3 +285,17 @@
 ##   starving the other.
 ## Not reloadable.
 # IO_PRIORITY_MODE = FIFO
+
+## Caps the amount of data in MiB the chunkserver "buffers", i.e fast replies to the
+## client as if it was synced to the drives but it was only read from network and
+## stored in memory. Similar to page cache. This feature has the following constraints:
+## - does not work on standard (replica) chunks.
+## - must have chunkserver side chunk locking enabled (see
+## USE_CHUNKSERVER_SIDE_CHUNK_LOCK in master config).
+## It is also suggested to set the IO_PRIORITY_MODE to SWITCH. The PERFORM_FSYNC
+## continues working as intended, as it affects the time spent closing of the
+## written chunk.
+## Can provide better results for writes in general, but may significantly improve
+## performance for small files.
+## Reloadable.
+# WRITE_BUFFERING_SIZE_MB = 0

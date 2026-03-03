@@ -111,6 +111,15 @@ public:
 		return bytes_written;
 	}
 
+	/// @brief Overwrites data in the buffer at the given offset.
+	/// @param offset The offset to overwrite the data at.
+	/// @param mem The memory to copy the data from.
+	/// @param len The length of the data to copy.
+	void overwriteInterval(size_t offset, const void *mem, size_t len) {
+		eassert(offset + len <= capacity_);
+		memcpy((void *)&data_[offset + padding_], mem, len);
+	}
+
 	ssize_t readFromFD(int sock, size_t len) {
 		eassert(unflushedDataOneAfterLastIndex_ + len <= trueCapacity_);
 		ssize_t bytesRead = ::read(sock, &data_[unflushedDataOneAfterLastIndex_], len);
@@ -291,6 +300,20 @@ public:
 		isCallbackStarted_ = newIsCallbackStarted;
 	}
 
+	/// @brief Updates the block data in the buffer for the given block index and the offset and
+	/// size in the block.
+	/// @param blockIndex The index of the block to update.
+	/// @param offsetInBlock The offset within the block to start updating.
+	/// @param sizeInBlock The size of the data to update within the block.
+	/// @param mem The memory containing the data to update.
+	void updateIntervalBlockData(size_t blockIndex, size_t offsetInBlock, size_t sizeInBlock,
+	                             const void *mem);
+
+	/// @brief Updates the CRC of the block in the buffer for the given block index and size.
+	/// @param blockIndex The index of the block to update the CRC for.
+	/// @param size The size of the data block to update its CRC.
+	void updateBlockCRC(size_t blockIndex, size_t size);
+
 private:
 	/// The current remaining bytes to be written to the file descriptor at once.
 	/// When the buffer is prepared, should be equal to: SFSBLOCKSIZE + kCrcSize + headerSize_.
@@ -378,10 +401,9 @@ public:
 	/// @param numBlocks The number of blocks.
 	explicit InputBuffer(size_t headerSize, size_t numBlocks);
 
-	/// @brief Destructor only decreases the global counter of input buffers blocks.
-	~InputBuffer() {
-		gCurrentTotalInputBufferBlocks -= numBlocks_;
-	}
+	/// @brief Destructor only decreases the global counter of input buffers blocks and write
+	/// buffering blocks.
+	~InputBuffer();
 
 	/// @brief Reads at most `bytesToRead` bytes from the socket.
 	/// It puts the data into the header buffer if not already filled considering the
@@ -458,6 +480,19 @@ public:
 
 	/// @brief Returns whether the buffer is currently being updated (reading from socket).
 	bool isBeingUpdated() const;
+
+	/// @brief Number of blocks that have been replied to the client.
+	std::atomic<uint16_t> repliedBlocks{0};
+
+	/// @brief Returns the current number of blocks in the buffer.
+	size_t currentBlocks() const { return writeInfo_.size(); }
+
+	/// @brief Returns the vector of WriteInfo for the write operations in the buffer.
+	std::vector<WriteInfo> &getWriteInfoVector() { return writeInfo_; }
+
+	/// @brief Returns the pointer to the block data in the buffer for the given block index and
+	/// offset in the block.
+	const uint8_t *getBlockBufferData(size_t blockIndex, size_t offsetInBlock) const;
 
 protected:
 	const size_t headerSize_;  ///< The size of the header.
@@ -544,5 +579,21 @@ inline ReplicatorBufferPool &getReplicateBuffersPool() {
 	return replicateBuffersPool;
 }
 
+/// @brief Releases the old IO buffers that have been in the pool for longer than the given
+/// expiration time.
+/// @param expirationTime_ms The expiration time in milliseconds.
 void releaseOldIoBuffers(uint32_t expirationTime_ms);
+
+/// @brief Sets the new maximum size of the IO buffers pool in megabytes.
+/// @param maxBuffersPoolSize_mb The new maximum size in megabytes.
 void setNewMaxIoBuffersPoolSize(size_t maxBuffersPoolSize_mb);
+
+/// @brief Modifies the number of available write buffering blocks by the given value.
+/// @param blocks The value to modify the number of available write buffering blocks by.
+void modifyAvailableWriteBufferingBlocks(int32_t blocks);
+
+/// @brief Returns the current number of available write buffering blocks.
+/// This is the number of blocks that can be currently buffered for write operations, i.e. the
+/// number of blocks that can be currently in the input buffers for write operations before they are
+/// flushed to the disk.
+int32_t getAvailableWriteBufferingBlocks();

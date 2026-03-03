@@ -435,7 +435,7 @@ uint32_t MasterJobPool::addLockJob(JobCallback callback, void *extra, uint32_t l
 	return jobId;
 }
 
-void MasterJobPool::changeLockJobsCallback(const CallbackMaker &callbackMaker,
+void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCallbackMaker,
                                            uint32_t listenerId) {
 	// Check if the listenerId is valid
 	if (listenerId >= listenerInfos_.size()) {
@@ -451,7 +451,7 @@ void MasterJobPool::changeLockJobsCallback(const CallbackMaker &callbackMaker,
 		if (lockedChunkData.listenerId == listenerId) {
 			auto jobIterator = listenerInfo.jobHash.find(lockedChunkData.lockJobId);
 			if (jobIterator != listenerInfo.jobHash.end()) {
-				jobIterator->second->callback = callbackMaker(chunkWithType, listenerId);
+				jobIterator->second->callback = lockJobCallbackMaker(chunkWithType, listenerId);
 			}
 		}
 	}

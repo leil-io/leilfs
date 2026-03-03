@@ -30,6 +30,16 @@
 
 #include "common/crc.h"
 
+inline std::atomic<int32_t> gAvailableWriteBufferingBlocks = 0;
+
+void modifyAvailableWriteBufferingBlocks(int32_t blocks) {
+	gAvailableWriteBufferingBlocks += blocks;
+}
+
+int32_t getAvailableWriteBufferingBlocks() {
+	return gAvailableWriteBufferingBlocks.load();
+}
+
 OutputBuffer::OutputBuffer(size_t headerSize, size_t numBlocks)
     : currentRemainingBytesForFD_(0),
       headerSize_(headerSize),
@@ -154,12 +164,40 @@ const uint8_t *OutputBuffer::rawData(BufferType type) const {
 	}
 }
 
+void OutputBuffer::updateIntervalBlockData(size_t blockIndex, size_t offsetInBlock,
+                                           size_t sizeInBlock, const void *mem) {
+	eassert(blockIndex < numBlocks_);
+	eassert(offsetInBlock + sizeInBlock <= SFSBLOCKSIZE);
+
+	size_t startIndex = blockIndex * SFSBLOCKSIZE + offsetInBlock;
+	blockBuffer_.overwriteInterval(startIndex, mem, sizeInBlock);
+}
+
+void OutputBuffer::updateBlockCRC(size_t blockIndex, size_t size) {
+	eassert(blockIndex < numBlocks_);
+
+	uint8_t crcBuff[kCrcSize];
+	uint8_t *crcBuffPointer = crcBuff;
+	put32bit(&crcBuffPointer,
+	         mycrc32(0, blockBuffer_.paddedIndex(blockIndex * SFSBLOCKSIZE), size));
+
+	size_t crcIndex = blockIndex * kCrcSize;
+	crcBuffer_.overwriteInterval(crcIndex, crcBuff, kCrcSize);
+}
+
 InputBuffer::InputBuffer(size_t headerSize, size_t numBlocks)
 	: headerSize_(headerSize),
 	  numBlocks_(numBlocks),
 	  blockBuffer_(numBlocks * SFSBLOCKSIZE, disk::kIoBlockSize),
 	  headerBuffer_(numBlocks * headerSize) {
+	writeInfo_.reserve(numBlocks);
 	gCurrentTotalInputBufferBlocks += numBlocks_;
+}
+
+InputBuffer::~InputBuffer() {
+	gCurrentTotalInputBufferBlocks -= numBlocks_;
+	modifyAvailableWriteBufferingBlocks(repliedBlocks);
+	repliedBlocks = 0;
 }
 
 ssize_t InputBuffer::readFromSocket(int sock, size_t bytesToRead) {
@@ -266,7 +304,10 @@ void InputBuffer::clear() {
 	crcData_.clear();
 	headerBuffer_.clear();
 	writeInfo_.clear();
+
 	isBeingUpdated_ = false;
+	gAvailableWriteBufferingBlocks += repliedBlocks;
+	repliedBlocks = 0;
 }
 
 void InputBuffer::addNewWriteOperation() {
@@ -367,6 +408,12 @@ bool InputBuffer::isFull() const {
 
 bool InputBuffer::isBeingUpdated() const {
 	return isBeingUpdated_;
+}
+
+const uint8_t *InputBuffer::getBlockBufferData(size_t blockIndex, size_t offsetInBlock) const {
+	eassert(blockIndex < numBlocks_);
+	eassert(offsetInBlock < SFSBLOCKSIZE);
+	return blockBuffer_.paddedIndex(blockIndex * SFSBLOCKSIZE + offsetInBlock);
 }
 
 void releaseOldIoBuffers(uint32_t expirationTime_ms) {

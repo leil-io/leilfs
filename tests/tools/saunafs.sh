@@ -682,6 +682,7 @@ create_sfschunkserver_cfg_() {
 	echo "MASTER_HOST = $ip_address"
 	echo "MASTER_PORT = ${saunafs_info_[matocs]}"
 	echo "CSSERV_LISTEN_PORT = $csserv_port"
+	echo "WRITE_BUFFERING_SIZE_MB = 64"
 	create_chunkserver_label_entry_ "${chunkserver_id}"
 	create_magic_debug_log_entry_ "chunkserver_${chunkserver_id}"
 	echo "${CHUNKSERVER_EXTRA_CONFIG-}" | tr '|' '\n'
