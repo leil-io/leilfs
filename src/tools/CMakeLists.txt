@@ -22,4 +22,4 @@ else()
 endif()
 target_link_libraries(saunafs sfscommon)
 
-install(TARGETS saunafs DESTINATION ${BIN_SUBDIR})
+install(TARGETS saunafs DESTINATION ${BIN_SUBDIR} COMPONENT client)

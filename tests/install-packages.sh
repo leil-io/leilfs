@@ -28,8 +28,6 @@ common_packages=(
 	cmake
 	curl
 	dbench
-	debhelper
-	devscripts
 	fakeroot
 	fio
 	fuse3
@@ -66,11 +64,12 @@ common_packages=(
 	bison
 	byacc
 	dbus
-	doxygen
 	flex
 	tree
 )
 apt_packages=(
+	debhelper
+	devscripts
 	build-essential
 	iproute2
 	iozone3             # required by Ganesha -> iozone suite
@@ -128,6 +127,9 @@ noble_packages=(
 	util-linux-extra
 )
 dnf_packages=(
+	perl-IPC-Cmd # Required for vcpkg
+	perl-Time-Piece # Required by vcpkg
+	isa-l
 	boost-filesystem
 	boost-iostreams
 	boost-program-options
@@ -196,7 +198,7 @@ case "${release}" in
 		apt-get -y install ca-certificates-java # https://www.mail-archive.com/debian-bugs-dist@lists.debian.org/msg1911078.html
 		apt-get -y install "${common_packages[@]}" "${apt_packages[@]}"
 		;;
-	Fedora/*)
+	Fedora/*|Rocky/*)
 		dnf -y install "${common_packages[@]}" "${dnf_packages[@]}"
 		update-alternatives --remove-all nc
 		update-alternatives --install /usr/bin/nc nc /usr/bin/netcat 1
