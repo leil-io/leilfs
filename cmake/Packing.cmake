@@ -1,4 +1,4 @@
-set(CPACK_GENERATOR "DEB")
+set(CPACK_GENERATOR "DEB;RPM")
 set(CPACK_PACKAGE_NAME "${PROJECT_NAME}"
         CACHE STRING "Name of package to be built"
 )
@@ -52,9 +52,25 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
 #set(CPACK_DEBIAN_PACKAGE_DEPENDS "asciidoctor, debhelper, cmake, libfuse3-dev, pkg-config, zlib1g-dev, libspdlog-dev, libfmt-dev, libboost-system-dev, libboost-program-options-dev, python3")
 set(CPACK_DEBIAN_ENABLE_COMPONENT_DEPENDS ON)
 
-# Remove the Unspecified package
-get_cmake_property(CPACK_COMPONENTS_ALL COMPONENTS)
-list(REMOVE_ITEM CPACK_COMPONENTS_ALL "Unspecified")
+# RPM configuration (client component)
+set(CPACK_RPM_COMPONENT_INSTALL ON)
+set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-only")
+set(CPACK_RPM_PACKAGE_RELEASE 1 CACHE STRING "RPM package release number")
+set(CPACK_RPM_PACKAGE_AUTOREQPROV "yes")
+set(CPACK_RPM_DEBUGINFO_PACKAGE ON)
+set(CPACK_RPM_CLIENT_PACKAGE_NAME "saunafs-client")
+set(CPACK_RPM_CLIENT_PACKAGE_SUMMARY "SaunaFS Client")
+set(CPACK_RPM_CLIENT_PACKAGE_DESCRIPTION "SaunaFS client libraries, mount helper, example configs, and shell completion.")
+
+set(CPACK_COMPONENT_CLIENT_DISPLAY_NAME "SaunaFS Client")
+set(CPACK_COMPONENT_CLIENT_DESCRIPTION "SaunaFS client libraries, mount helper, configs, and shell completion.")
+
+# Remove the Unspecified package unless the user explicitly provided components
+if(NOT CPACK_COMPONENTS_ALL)
+  get_cmake_property(CPACK_COMPONENTS_ALL COMPONENTS)
+  list(REMOVE_ITEM CPACK_COMPONENTS_ALL "Unspecified")
+endif()
 
 include(CPack)
 message(STATUS "Components to pack: ${CPACK_COMPONENTS_ALL}")

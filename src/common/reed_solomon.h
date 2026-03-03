@@ -27,7 +27,9 @@
 #include <cassert>
 
 #ifdef SAUNAFS_HAVE_ISA_L_ERASURE_CODE_H
-  #include <isa-l/erasure_code.h>
+extern "C" {
+#include <isa-l/erasure_code.h>
+}
 #else
   #include "common/galois_field.h"
 #endif
