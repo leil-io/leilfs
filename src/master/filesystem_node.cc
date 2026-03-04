@@ -1492,13 +1492,14 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 	auto nodeIterator = std::find(gMetadata->nodeHash[nodeHashIndex].begin(),
 	                              gMetadata->nodeHash[nodeHashIndex].end(), node);
 
-	FSNode::destroy(node);
-
 	if (nodeIterator != gMetadata->nodeHash[nodeHashIndex].end()) {
 		auto lastElement = gMetadata->nodeHash[nodeHashIndex].end() - 1;
 		std::iter_swap(nodeIterator, lastElement); // Swap with last element to avoid erase: O(1)
 		gMetadata->nodeHash[nodeHashIndex].pop_back(); // Remove the last element: O(1)
+		gMetadata->nodeRemovedSignal.emit(node->id);
 	}
+
+	FSNode::destroy(node);
 }
 
 void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOpContext,
