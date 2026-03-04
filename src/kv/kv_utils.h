@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include <array>
 #include <bit>
 #include <cstring>
 #include <memory>
@@ -57,6 +58,53 @@ inline Key prefixEnd(Key prefix) {
 	}
 
 	throw std::invalid_argument("Prefix has no finite upper bound");
+}
+
+/// Returns true if @p byteValue is a plain printable ASCII character (0x20 - 0x7E).
+///
+/// Used to decide whether a byte can be emitted as-is or must be escaped.
+constexpr bool isPrintableAscii(uint8_t byteValue) noexcept {
+	// Keep logs simple and grep-safe: only plain printable ASCII.
+	constexpr auto kMinPrintable = 0x20;  // space
+	constexpr auto kMaxPrintable = 0x7e;  // tilde (~)
+	return byteValue >= kMinPrintable && byteValue <= kMaxPrintable;
+}
+
+/// Converts a raw byte buffer to a printable ASCII string with non-printable bytes escaped.
+///
+/// Each byte that passes isPrintableAscii() is emitted verbatim. All other bytes are
+/// rendered as `\xNN` (lowercase hex), making binary key data safe to include in log
+/// messages and easily grep-able.
+///
+/// @param data Pointer to the byte buffer to convert.
+/// @param size Number of bytes to process.
+/// @return A string where every byte is either a printable ASCII character or `\xNN`.
+inline std::string bytesToEscapedAscii(const uint8_t *data, size_t size) {
+	static constexpr std::array<char, 16> kHex = {'0', '1', '2', '3', '4', '5', '6', '7',
+	                                              '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+	std::string out;
+	// Worst case every byte becomes "\xNN" (4 chars).
+	out.reserve(size * 4);
+	for (size_t i = 0; i < size; ++i) {
+		const uint8_t byteValue = data[i];
+		if (isPrintableAscii(byteValue)) {
+			out.push_back(static_cast<char>(byteValue));
+		} else {
+			out.append("\\x");
+			out.push_back(kHex[byteValue >> 4]);    // Upper 4 bits (0..15)
+			out.push_back(kHex[byteValue & 0x0f]);  // Lower 4 bits (0..15)
+		}
+	}
+	return out;
+}
+
+/// Converts a KV key to a printable ASCII string with non-printable bytes escaped.
+///
+/// Convenience wrapper around bytesToEscapedAscii() for kv::Key values.
+/// @param key The key to convert.
+/// @return A human-readable representation of the key suitable for logging.
+inline std::string keyToEscapedAscii(const kv::Key &key) {
+	return bytesToEscapedAscii(key.data(), key.size());
 }
 
 /// Converts integral types to a vector of uint8_t encoded in little-endian order.

@@ -25,6 +25,7 @@
 #include <foundationdb/fdb_c_types.h>
 
 #include "fdb/fdb_future.h"
+#include "kv/kv_utils.h"
 #include "slogger/slogger.h"
 
 namespace fdb {
@@ -100,8 +101,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	if (valuePresent != 0) {
 		value.assign(valueRead, valueRead + valueLength);
 	} else {
-		safs::log_info("Transaction::get: key not found: {}",
-		               std::string_view(reinterpret_cast<const char *>(key.data()), key.size()));
+		safs::log_info("Transaction::get: key not found: {}", kv::keyToEscapedAscii(key));
 		value.clear();
 		return std::nullopt;
 	}
@@ -179,8 +179,7 @@ kv::GetRangeResult Transaction::getRange(
 
 	if (pairs.empty()) {
 		safs::log_info("Transaction::getRange: no keys found in range: {} - {}",
-		               std::string(begin.getKey().begin(), begin.getKey().end()),
-		               std::string(end.getKey().begin(), end.getKey().end()));
+		               kv::keyToEscapedAscii(begin.getKey()), kv::keyToEscapedAscii(end.getKey()));
 		return {{}, false};
 	}
 
