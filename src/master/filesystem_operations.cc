@@ -1827,7 +1827,9 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 	return status;
 }
 
-static int fsnodes_check_lock_permissions(const FsContext &context, inode_t inode, uint16_t op) {
+int FilesystemOperationsBase::checkLockPermissions(const FsContext &context,
+                                                   const FilesystemOperationContext &fsOpContext,
+                                                   inode_t inode, uint16_t op) {
 	FSNode *dummy;
 	uint8_t modemask = MODE_MASK_EMPTY;
 
@@ -1837,27 +1839,24 @@ static int fsnodes_check_lock_permissions(const FsContext &context, inode_t inod
 		modemask = MODE_MASK_R;
 	}
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
-
 	return gFSOperations->nodeOperations()->getNodeForOperation(
 	    context, fsOpContext, ExpectedNodeType::kAny, modemask, inode, &dummy);
 }
 
-int FilesystemOperationsBase::posixLockProbe(const FsContext &context, inode_t inode,
-                                             uint64_t start, uint64_t end, uint64_t owner,
-                                             uint32_t sessionid, uint32_t reqid, uint32_t msgid,
-                                             uint16_t oper, safs_locks::FlockWrapper &info) {
-	uint8_t status;
-
+int FilesystemOperationsBase::posixLockProbe(const FsContext &context,
+                                             const FilesystemOperationContext &fsOpContext,
+                                             inode_t inode, uint64_t start, uint64_t end,
+                                             uint64_t owner, uint32_t sessionid, uint32_t reqid,
+                                             uint32_t msgid, uint16_t oper,
+                                             safs_locks::FlockWrapper &info) {
 	if (oper != safs_locks::kShared && oper != safs_locks::kExclusive &&
 	    oper != safs_locks::kUnlock) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	if ((status = fsnodes_check_lock_permissions(context, inode, oper)) != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	uint8_t status = checkLockPermissions(context, fsOpContext, inode, oper);
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	FileLocks &locks = gMetadata->posixLocks;
 	const FileLocks::Lock *collision;
@@ -1877,16 +1876,13 @@ int FilesystemOperationsBase::posixLockProbe(const FsContext &context, inode_t i
 	}
 }
 
-int FilesystemOperationsBase::lockOperation(const FsContext &context, FileLocks &locks,
-                                            inode_t inode, uint64_t start, uint64_t end,
-                                            uint64_t owner, uint32_t sessionid, uint32_t reqid,
-                                            uint32_t msgid, uint16_t oper, bool nonblocking,
-                                            std::vector<FileLocks::Owner> &applied) {
-	uint8_t status;
+int FilesystemOperationsBase::lockOperation(
+    const FsContext &context, const FilesystemOperationContext &fsOpContext, FileLocks &locks,
+    inode_t inode, uint64_t start, uint64_t end, uint64_t owner, uint32_t sessionid, uint32_t reqid,
+    uint32_t msgid, uint16_t oper, bool nonblocking, std::vector<FileLocks::Owner> &applied) {
+	uint8_t status = checkLockPermissions(context, fsOpContext, inode, oper);
 
-	if ((status = fsnodes_check_lock_permissions(context, inode, oper)) != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	FileLocks::LockQueue queue;
 	bool success = false;
@@ -1936,13 +1932,15 @@ int FilesystemOperationsBase::lockOperation(const FsContext &context, FileLocks 
 	return status;
 }
 
-int FilesystemOperationsBase::flockOperation(const FsContext &context, inode_t inode,
-                                             uint64_t owner, uint32_t sessionid, uint32_t reqid,
-                                             uint32_t msgid, uint16_t oper, bool nonblocking,
+int FilesystemOperationsBase::flockOperation(const FsContext &context,
+                                             const FilesystemOperationContext &fsOpContext,
+                                             inode_t inode, uint64_t owner, uint32_t sessionid,
+                                             uint32_t reqid, uint32_t msgid, uint16_t oper,
+                                             bool nonblocking,
                                              std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
-	int ret = lockOperation(context, gMetadata->flockLocks, inode, 0, 1, owner, sessionid, reqid,
-	                        msgid, oper, nonblocking, applied);
+	int ret = lockOperation(context, fsOpContext, gMetadata->flockLocks, inode, 0, 1, owner,
+	                        sessionid, reqid, msgid, oper, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(),
 		          "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
@@ -1954,14 +1952,15 @@ int FilesystemOperationsBase::flockOperation(const FsContext &context, inode_t i
 	return ret;
 }
 
-int FilesystemOperationsBase::posixLockOperation(const FsContext &context, inode_t inode,
-                                                 uint64_t start, uint64_t end, uint64_t owner,
-                                                 uint32_t sessionid, uint32_t reqid, uint32_t msgid,
-                                                 uint16_t oper, bool nonblocking,
+int FilesystemOperationsBase::posixLockOperation(const FsContext &context,
+                                                 const FilesystemOperationContext &fsOpContext,
+                                                 inode_t inode, uint64_t start, uint64_t end,
+                                                 uint64_t owner, uint32_t sessionid, uint32_t reqid,
+                                                 uint32_t msgid, uint16_t oper, bool nonblocking,
                                                  std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
-	int ret = lockOperation(context, gMetadata->posixLocks, inode, start, end, owner, sessionid,
-	                        reqid, msgid, oper, nonblocking, applied);
+	int ret = lockOperation(context, fsOpContext, gMetadata->posixLocks, inode, start, end, owner,
+	                        sessionid, reqid, msgid, oper, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(),
 		          "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32
@@ -1973,9 +1972,9 @@ int FilesystemOperationsBase::posixLockOperation(const FsContext &context, inode
 	return ret;
 }
 
-int FilesystemOperationsBase::locksClearSession(const FsContext &context, uint8_t type,
-                                                inode_t inode, uint32_t sessionid,
-                                                std::vector<FileLocks::Owner> &applied) {
+int FilesystemOperationsBase::locksClearSession(
+    const FsContext &context, [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    uint8_t type, inode_t inode, uint32_t sessionid, std::vector<FileLocks::Owner> &applied) {
 	if (type != (uint8_t)safs_locks::Type::kFlock && type != (uint8_t)safs_locks::Type::kPosix) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
@@ -2010,10 +2009,10 @@ int FilesystemOperationsBase::locksClearSession(const FsContext &context, uint8_
 	return SAUNAFS_STATUS_OK;
 }
 
-int FilesystemOperationsBase::locksListAll(const FsContext &context, uint8_t type, bool pending,
-                                           uint64_t start, uint64_t max,
-                                           std::vector<safs_locks::Info> &outLocks) {
-	(void)context;
+int FilesystemOperationsBase::locksListAll(
+    [[maybe_unused]] const FsContext &context,
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint8_t type, bool pending,
+    uint64_t start, uint64_t max, std::vector<safs_locks::Info> &outLocks) {
 	FileLocks *locks;
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
 		locks = &gMetadata->flockLocks;
@@ -2032,10 +2031,10 @@ int FilesystemOperationsBase::locksListAll(const FsContext &context, uint8_t typ
 	return SAUNAFS_STATUS_OK;
 }
 
-int FilesystemOperationsBase::locksListInode(const FsContext &context, uint8_t type, bool pending,
-                                             inode_t inode, uint64_t start, uint64_t max,
-                                             std::vector<safs_locks::Info> &outLocks) {
-	(void)context;
+int FilesystemOperationsBase::locksListInode(
+    [[maybe_unused]] const FsContext &context,
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint8_t type, bool pending,
+    inode_t inode, uint64_t start, uint64_t max, std::vector<safs_locks::Info> &outLocks) {
 	FileLocks *locks;
 
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
@@ -2067,9 +2066,9 @@ void FilesystemOperationsBase::manageLockTryLockPending(FileLocks &locks, inode_
 	}
 }
 
-int FilesystemOperationsBase::locksUnlockInode(const FsContext &context, uint8_t type,
-                                               inode_t inode,
-                                               std::vector<FileLocks::Owner> &applied) {
+int FilesystemOperationsBase::locksUnlockInode(
+    const FsContext &context, [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    uint8_t type, inode_t inode, std::vector<FileLocks::Owner> &applied) {
 	ChecksumUpdater cu(context.ts());
 
 	if (type == (uint8_t)safs_locks::Type::kFlock) {
@@ -2092,9 +2091,9 @@ int FilesystemOperationsBase::locksUnlockInode(const FsContext &context, uint8_t
 	return SAUNAFS_STATUS_OK;
 }
 
-int FilesystemOperationsBase::locksRemovePending(const FsContext &context, uint8_t type,
-                                                 uint64_t ownerid, uint32_t sessionid,
-                                                 inode_t inode, uint64_t reqid) {
+int FilesystemOperationsBase::locksRemovePending(
+    const FsContext &context, [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    uint8_t type, uint64_t ownerid, uint32_t sessionid, inode_t inode, uint64_t reqid) {
 	ChecksumUpdater cu(context.ts());
 
 	FileLocks *locks;

@@ -323,3 +323,63 @@ TEST(LocksTest, Unqueue) {
 
 	locks.clear();
 }
+
+// KV restore API tests (insertActive / insertPending / getActiveLocks / getPendingLocks)
+
+TEST(LocksTest, GettersReturnNullptrForMissingInode) {
+	FileLocks locks;
+
+	EXPECT_EQ(nullptr, locks.getActiveLocks(99));
+	EXPECT_EQ(nullptr, locks.getPendingLocks(99));
+}
+
+TEST(LocksTest, InsertActiveMakesLockQueryable) {
+	FileLocks locks;
+	const inode_t inode = 7;
+
+	EXPECT_EQ(nullptr, locks.getActiveLocks(inode));
+
+	FileLocks::Lock lock(LockRange::Type::kExclusive, 0, 10, owners[0]);
+	locks.insertActive(inode, lock);
+
+	const FileLocks::Locks *active = locks.getActiveLocks(inode);
+	ASSERT_NE(nullptr, active);
+	EXPECT_EQ(1U, active->size());
+
+	// Another owner must collide with the inserted active lock
+	const FileLocks::Lock *collision =
+	    locks.findCollision(inode, LockRange::Type::kExclusive, 0, 10, owners[1]);
+	ASSERT_NE(nullptr, collision);
+	EXPECT_EQ(0U, collision->start);
+	EXPECT_EQ(10U, collision->end);
+
+	locks.clear();
+}
+
+TEST(LocksTest, InsertPendingPreservesSortOrder) {
+	FileLocks locks;
+	const inode_t inode = 42;
+
+	EXPECT_EQ(nullptr, locks.getPendingLocks(inode));
+
+	// Insert out of order: [50,60), [10,20), [30,40)
+	locks.insertPending(inode, FileLocks::Lock(LockRange::Type::kExclusive, 50, 60, owners[0]));
+	locks.insertPending(inode, FileLocks::Lock(LockRange::Type::kExclusive, 10, 20, owners[1]));
+	locks.insertPending(inode, FileLocks::Lock(LockRange::Type::kExclusive, 30, 40, owners[2]));
+
+	// Queue must be sorted by start position regardless of insertion order
+	const FileLocks::LockQueue *queue = locks.getPendingLocks(inode);
+	ASSERT_NE(nullptr, queue);
+	ASSERT_EQ(3U, queue->size());
+	EXPECT_EQ(10U, (*queue)[0].start);
+	EXPECT_EQ(30U, (*queue)[1].start);
+	EXPECT_EQ(50U, (*queue)[2].start);
+
+	// gatherCandidates must correctly identify locks that overlap [25, 35):
+	// [10,20) is a predecessor candidate (first-- logic) and [30,40) overlaps.
+	FileLocks::LockQueue candidates;
+	locks.gatherCandidates(inode, 25, 35, candidates);
+	EXPECT_EQ(2U, candidates.size());
+
+	locks.clear();
+}

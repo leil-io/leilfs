@@ -447,49 +447,55 @@ public:
 	// Locks
 
 	/// Perform a flock operation on filesystem.
-	/// @see IFilesystemOperations::fs_flock_op.
-	int flockOperation(const FsContext &context, inode_t inode, uint64_t owner, uint32_t sessionid,
-	                   uint32_t reqid, uint32_t msgid, uint16_t oper, bool nonblocking,
+	/// @see IFilesystemOperations::flockOperation.
+	int flockOperation(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                   inode_t inode, uint64_t owner, uint32_t sessionid, uint32_t reqid,
+	                   uint32_t msgid, uint16_t oper, bool nonblocking,
 	                   std::vector<FileLocks::Owner> &applied) override;
 
 	/// Perform a posix lock operation on filesystem.
-	/// @see IFilesystemOperations::fs_posixlock_op.
-	int posixLockOperation(const FsContext &context, inode_t inode, uint64_t start, uint64_t end,
-	                       uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid,
-	                       uint16_t oper, bool nonblocking,
-	                       std::vector<FileLocks::Owner> &applied) override;
+	/// @see IFilesystemOperations::posixLockOperation.
+	int posixLockOperation(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       inode_t inode, uint64_t start, uint64_t end, uint64_t owner,
+	                       uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t oper,
+	                       bool nonblocking, std::vector<FileLocks::Owner> &applied) override;
 
 	/// Perform a POSIX lock probe on filesystem.
-	/// @see IFilesystemOperations::fs_posixlock_probe.
-	int posixLockProbe(const FsContext &context, inode_t inode, uint64_t start, uint64_t end,
-	                   uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid,
-	                   uint16_t oper, safs_locks::FlockWrapper &info) override;
+	/// @see IFilesystemOperations::posixLockProbe.
+	int posixLockProbe(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                   inode_t inode, uint64_t start, uint64_t end, uint64_t owner,
+	                   uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t oper,
+	                   safs_locks::FlockWrapper &info) override;
 
 	/// Release (unlock + unqueue) all locks from a given session.
-	/// @see IFilesystemOperations::fs_locks_clear_session.
-	int locksClearSession(const FsContext &context, uint8_t type, inode_t inode, uint32_t sessionid,
+	/// @see IFilesystemOperations::locksClearSession.
+	int locksClearSession(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      uint8_t type, inode_t inode, uint32_t sessionid,
 	                      std::vector<FileLocks::Owner> &applied) override;
 
 	/// List locks in the filesystem.
-	/// @see IFilesystemOperations::fs_locks_list_all.
-	int locksListAll(const FsContext &context, uint8_t type, bool pending, uint64_t start,
-	                 uint64_t max, std::vector<safs_locks::Info> &outLocks) override;
+	/// @see IFilesystemOperations::locksListAll.
+	int locksListAll(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                 uint8_t type, bool pending, uint64_t start, uint64_t max,
+	                 std::vector<safs_locks::Info> &outLocks) override;
 
 	/// List locks for a specific inode.
-	/// @see IFilesystemOperations::fs_locks_list_inode.
-	int locksListInode(const FsContext &context, uint8_t type, bool pending, inode_t inode,
-	                   uint64_t start, uint64_t max,
+	/// @see IFilesystemOperations::locksListInode.
+	int locksListInode(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                   uint8_t type, bool pending, inode_t inode, uint64_t start, uint64_t max,
 	                   std::vector<safs_locks::Info> &outLocks) override;
 
 	/// Unlocks the matching locks on the specified inode and tries to apply pending locks.
-	/// @see IFilesystemOperations::fs_locks_unlock_inode.
-	int locksUnlockInode(const FsContext &context, uint8_t type, inode_t inode,
+	/// @see IFilesystemOperations::locksUnlockInode.
+	int locksUnlockInode(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                     uint8_t type, inode_t inode,
 	                     std::vector<FileLocks::Owner> &applied) override;
 
 	/// Removes a pending lock matching the provided parameters.
-	/// @see IFilesystemOperations::fs_locks_remove_pending.
-	int locksRemovePending(const FsContext &context, uint8_t type, uint64_t ownerid,
-	                       uint32_t sessionid, inode_t inode, uint64_t reqid) override;
+	/// @see IFilesystemOperations::locksRemovePending.
+	int locksRemovePending(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                       uint8_t type, uint64_t ownerid, uint32_t sessionid, inode_t inode,
+	                       uint64_t reqid) override;
 
 protected:
 	/// Backend-specific hook for retrieving an xattr value.
@@ -527,17 +533,27 @@ protected:
 	    uint8_t anleng, const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
 	    uint32_t mode);
 
+	/// Permission check for lock operations.
+	/// Validates that the caller has appropriate read/write access for the
+	/// requested lock type. Shared by posixLockProbe and lockOperation.
+	static int checkLockPermissions(const FsContext &context,
+	                                const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                                uint16_t op);
+
+	/// Core lock operation logic shared by flockOperation and posixLockOperation.
+	/// Operates on the given FileLocks reference, enabling KV overrides to pass
+	/// a temporary FileLocks loaded from FDB instead of gMetadata.
+	int lockOperation(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                  FileLocks &locks, inode_t inode, uint64_t start, uint64_t end, uint64_t owner,
+	                  uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t oper,
+	                  bool nonblocking, std::vector<FileLocks::Owner> &applied);
+
+	/// Try applying pending locks after an unlock.
+	/// Operates on the given FileLocks reference for the same reason as lockOperation.
+	void manageLockTryLockPending(FileLocks &locks, inode_t inode, uint64_t start, uint64_t end,
+	                              std::vector<FileLocks::Owner> &applied);
+
 private:
-	/// Helper function used internally by `fs_flock_op` and `fs_posixlock_op`.
-	static int lockOperation(const FsContext &context, FileLocks &locks, inode_t inode,
-	                         uint64_t start, uint64_t end, uint64_t owner, uint32_t sessionid,
-	                         uint32_t reqid, uint32_t msgid, uint16_t oper, bool nonblocking,
-	                         std::vector<FileLocks::Owner> &applied);
-
-	/// Helper function used internally by `fs_locks_unlock_inode`.
-	static void manageLockTryLockPending(FileLocks &locks, inode_t inode, uint64_t start,
-	                                     uint64_t end, std::vector<FileLocks::Owner> &applied);
-
 	/// Node operations object
 	std::unique_ptr<IFilesystemNodeOperations> nodeOperations_;
 };
