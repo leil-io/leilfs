@@ -73,6 +73,9 @@ public:
 	/// @param key The key to remove.
 	void remove(const kv::Key &key) override;
 
+	/// Removes a half-open key range [start, end) from the database.
+	void removeRange(const kv::Key &start, const kv::Key &end) override;
+
 	/// Commits the transaction, making all changes permanent.
 	bool commit() override;
 

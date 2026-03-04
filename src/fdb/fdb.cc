@@ -209,6 +209,13 @@ void Transaction::remove(const kv::Key &key) {
 	fdb_transaction_clear(tr_.get(), key.data(), static_cast<int>(key.size()));
 }
 
+void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
+	if (!tr_) { return; }
+
+	fdb_transaction_clear_range(tr_.get(), start.data(), static_cast<int>(start.size()), end.data(),
+	                            static_cast<int>(end.size()));
+}
+
 bool Transaction::commit() {
 	if (!tr_) { return false; }
 

@@ -136,6 +136,11 @@ public:
 	/// @param key The key to remove.
 	virtual void remove(const Key &key) = 0;
 
+	/// Removes a half-open key range [start, end) from the database.
+	/// @param start Inclusive start key.
+	/// @param end Exclusive end key.
+	virtual void removeRange(const Key &start, const Key &end) = 0;
+
 	/// Commits the transaction, making all changes permanent.
 	virtual bool commit() = 0;
 
