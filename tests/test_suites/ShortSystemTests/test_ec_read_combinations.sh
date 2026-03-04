@@ -12,6 +12,12 @@ mkdir "$dir"
 saunafs setgoal ec "$dir"
 FILE_SIZE=876M file-generate "$dir/file"
 
+# Allow final write/status propagation to settle on Windows
+# before starting chunkserver shutdown test operations.
+if is_windows_system; then
+	sleep 0.1
+fi
+
 for i in {0..7}; do
 	for cs in {0..2}; do
 		saunafs_chunkserver_daemon $(((i + cs) % 8)) stop
