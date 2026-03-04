@@ -60,7 +60,7 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 	uint32_t nleng, uid, gid;
 	uint8_t status;
 	uint32_t msgid = 0, job_id;
-	int fd;
+	ServerConnection *conn;
 
 	sigset_t set;
 	sigemptyset(&set);
@@ -76,10 +76,8 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 		return -1;
 	}
 
-	fd = open_master_conn(dstdir, &dstinode, NULL, true);
-	if (fd < 0) {
-		return -1;
-	}
+	conn = open_master_conn(dstdir, &dstinode, nullptr, true);
+	if (conn == nullptr) { return -1; }
 
 	uid = getUId();
 	gid = getGId();
@@ -87,10 +85,10 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 	printf("Creating snapshot: %s -> %s/%s ...\n", srcname, dstdir, dstbase);
 	try {
 		auto request = cltoma::requestTaskId::build(msgid);
-		auto response = ServerConnection::sendAndReceive(fd, request,
-				SAU_MATOCL_REQUEST_TASK_ID,
-				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-				kInfiniteTimeout);
+		conn->setTimeout(kInfiniteTimeout);
+		auto response =
+		    conn->sendAndReceive(request, SAU_MATOCL_REQUEST_TASK_ID,
+		                         ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 		matocl::requestTaskId::deserialize(response, msgid, job_id);
 
 		std::thread signal_thread(std::bind(signalHandler, job_id));
@@ -104,9 +102,9 @@ static int make_snapshot(const char *dstdir, const char *dstbase, const char *sr
 		});
 		request = cltoma::snapshot::build(msgid, job_id, srcinode, dstinode, dstbase,
 		                                  uid, gid, canoverwrite, ignore_missing_src, initial_batch_size);
-		response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SNAPSHOT,
-				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-				kInfiniteTimeout);
+		conn->setTimeout(kInfiniteTimeout);
+		response = conn->sendAndReceive(request, SAU_MATOCL_FUSE_SNAPSHOT,
+				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 		matocl::snapshot::deserialize(response, msgid, status);
 
 		close_master_conn(0);
@@ -205,8 +203,8 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 
 #ifdef _WIN32
 		inode_t srcinode;
-		int fd = open_master_conn(srcnames[0], &srcinode, NULL, true);
-		if (fd < 0) { return -1; }
+		ServerConnection *conn = open_master_conn(srcnames[0], &srcinode, nullptr, true);
+		if (conn == nullptr) { return -1; }
 		return make_snapshot(to, base, srcnames[0], srcinode, canowerwrite, ignore_missing_src, initial_batch_size);
 #else
 		return make_snapshot(to, base, srcnames[0], sst.st_ino, canowerwrite, ignore_missing_src, initial_batch_size);
@@ -244,8 +242,8 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 			}
 #ifdef _WIN32
 			inode_t srcinode;
-			int fd = open_master_conn(srcnames[0], &srcinode, NULL, true);
-			if (fd < 0) { return -1; }
+			ServerConnection *conn = open_master_conn(srcnames[0], &srcinode, nullptr, true);
+			if (conn == nullptr) { return -1; }
 			return make_snapshot(dir, base, srcnames[0], srcinode, canowerwrite, ignore_missing_src, initial_batch_size);
 #else
 			return make_snapshot(dir, base, srcnames[0], sst.st_ino, canowerwrite, ignore_missing_src, initial_batch_size);
@@ -293,9 +291,9 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 					}
 #ifdef _WIN32
 					inode_t srcinode;
-					int fd =
-					    open_master_conn(srcnames[i], &srcinode, NULL, true);
-					if (fd < 0) { return -1; }
+					ServerConnection *conn =
+					    open_master_conn(srcnames[i], &srcinode, nullptr, true);
+					if (conn == nullptr) { return -1; }
 					if (make_snapshot(to, base, srcnames[i], srcinode, canowerwrite,
 					                  ignore_missing_src, initial_batch_size) < 0) {
 #else
@@ -321,9 +319,9 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 						}
 #ifdef _WIN32
 						inode_t srcinode;
-						int fd = open_master_conn(srcnames[i], &srcinode, NULL,
-						                          true);
-						if (fd < 0) { return -1; }
+						ServerConnection *conn =
+						    open_master_conn(srcnames[i], &srcinode, nullptr, true);
+						if (conn == nullptr) { return -1; }
 						if (make_snapshot(to, base, srcnames[i], srcinode, canowerwrite,
 						                  ignore_missing_src, initial_batch_size) < 0) {
 #else
@@ -342,9 +340,9 @@ static int snapshot(const char *dstname, char *const *srcnames, uint32_t srcelem
 						}
 #ifdef _WIN32
 						inode_t srcinode;
-						int fd = open_master_conn(srcnames[i], &srcinode, NULL,
-						                          true);
-						if (fd < 0) { return -1; }
+						ServerConnection *conn =
+						    open_master_conn(srcnames[i], &srcinode, nullptr, true);
+						if (conn == nullptr) { return -1; }
 						if (make_snapshot(dir, base, srcnames[i], srcinode, canowerwrite,
 						                  ignore_missing_src, initial_batch_size) < 0) {
 #else

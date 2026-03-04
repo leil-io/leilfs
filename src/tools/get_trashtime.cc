@@ -50,15 +50,15 @@ static int get_trashtime(const char *fname, uint8_t mode) {
 
 	MessageBuffer request, response;
 
-	int fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) { return -1; }
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, false);
+	if (conn == nullptr) { return -1; }
 
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_GETTRASHTIME, msgid, inode, mode);
 
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_GETTRASHTIME,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_GETTRASHTIME,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		const uint8_t *rptr = response.data();
 

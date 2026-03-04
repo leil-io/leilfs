@@ -59,17 +59,17 @@ static int set_eattr(const char *fname, uint8_t eattr, uint8_t mode) {
 
 	MessageBuffer request, response;
 
-	int fd = open_master_conn(fname, &inode, nullptr, true);
-	if (fd < 0) { return -1; }
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, true);
+	if (conn == nullptr) { return -1; }
 
 	try {
 		uint32_t uid = getUId();
 
 		serializeLegacyPacket(request, CLTOMA_FUSE_SETEATTR, msgid, inode, uid, eattr, mode);
 
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_SETEATTR,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_SETEATTR,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		close_master_conn(0);
 

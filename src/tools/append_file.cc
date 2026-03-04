@@ -50,15 +50,10 @@ static int append_file(const char *fname, const char *afname) {
 	MessageBuffer request, response;
 	mode_t dmode, smode;
 
-	int fd;
-	fd = open_master_conn(fname, &inode, &dmode, true);
-	if (fd < 0) {
-		return -1;
-	}
+	if (open_master_conn(afname, &ainode, &smode, true) == nullptr) { return -1; }
 
-	if (open_master_conn(afname, &ainode, &smode, true) < 0) {
-		return -1;
-	}
+	ServerConnection *conn = open_master_conn(fname, &inode, &dmode, true);
+	if (conn == nullptr) { return -1; }
 
 	if ((smode & S_IFMT) != S_IFREG) {
 		printf("%s: not a file\n", afname);
@@ -74,9 +69,9 @@ static int append_file(const char *fname, const char *afname) {
 
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_APPEND, msgid, inode, ainode, uid, gid);
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_APPEND,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_APPEND,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 		deserializeAllLegacyPacketDataNoHeader(response, msgid, status);
 
 		close_master_conn(0);

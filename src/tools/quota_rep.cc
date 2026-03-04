@@ -176,10 +176,8 @@ static int quota_rep(const std::string &path, std::vector<int> requested_uids,
 	        (report_all || per_directory_quota));
 
 	inode_t inode;
-	int fd = open_master_conn(path.c_str(), &inode, nullptr, false);
-	if (fd < 0) {
-		return -1;
-	}
+	ServerConnection *conn = open_master_conn(path.c_str(), &inode, nullptr, false);
+	if (conn == nullptr) { return -1; }
 	if (!per_directory_quota) {
 		if (check_usage(quota_rep_usage, inode != 1, "Mount root path expected\n")) {
 			return 1;
@@ -203,7 +201,7 @@ static int quota_rep(const std::string &path, std::vector<int> requested_uids,
 	}
 
 	try {
-		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_GET_QUOTA);
+		auto response = conn->sendAndReceive(request, SAU_MATOCL_FUSE_GET_QUOTA);
 		std::vector<QuotaEntry> quota_entries;
 		std::vector<std::string> quota_info;
 		PacketVersion version;

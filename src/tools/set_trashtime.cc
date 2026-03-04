@@ -52,10 +52,8 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode) {
 	uint8_t status;
 	inode_t inode, changed, notchanged, notpermitted;
 
-	int fd = open_master_conn(fname, &inode, nullptr, true);
-	if (fd < 0) {
-		return -1;
-	}
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, true);
+	if (conn == nullptr) { return -1; }
 
 	uid = getUId();
 
@@ -65,9 +63,9 @@ static int set_trashtime(const char *fname, uint32_t trashtime, uint8_t mode) {
 		serializeLegacyPacket(request, CLTOMA_FUSE_SETTRASHTIME, msgid, inode, uid, trashtime,
 		                      mode);
 
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_SETTRASHTIME,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kInfiniteTimeout);
+		conn->setTimeout(kInfiniteTimeout);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_SETTRASHTIME,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		const uint8_t *rptr = response.data();
 		get32bit(&rptr, msgid);

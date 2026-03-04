@@ -41,17 +41,14 @@ static int check_file(const char *fname) {
 
 	MessageBuffer request, response;
 
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) {
-		return -1;
-	}
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, false);
+	if (conn == nullptr) { return -1; }
 
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_CHECK, msgid, inode);
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_CHECK,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_CHECK,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		close_master_conn(0);
 

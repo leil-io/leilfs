@@ -61,15 +61,14 @@ void signalHandler(uint32_t job_id) {
 	if (sig == SIGINT || sig == SIGTERM || sig == SIGHUP) {
 		fmt::println("Stopping task id {}", job_id);
 		inode_t inode;
-		int fd = open_master_conn(".", &inode, nullptr, false);
-		if (fd < 0) {
+		ServerConnection *conn = open_master_conn(".", &inode, nullptr, false);
+		if (conn == nullptr) {
 			printf("Connection to master failed\n");
 			return;
 		}
 		try {
 			auto request = cltoma::stopTask::build(msgid, job_id);
-			auto response = ServerConnection::sendAndReceive(fd, request,
-					SAU_MATOCL_STOP_TASK);
+			auto response = conn->sendAndReceive(request, SAU_MATOCL_STOP_TASK);
 			uint8_t status;
 			matocl::stopTask::deserialize(response, msgid, status);
 			if (status == SAUNAFS_STATUS_OK) {

@@ -47,15 +47,15 @@ static int get_eattr(const char *fname, uint8_t mode) {
 
 	MessageBuffer request, response;
 
-	int fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) { return -1; }
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, false);
+	if (conn == nullptr) { return -1; }
 
 	try {
 		serializeLegacyPacket(request, CLTOMA_FUSE_GETEATTR, msgid, inode, mode);
 
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_GETEATTR,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_GETEATTR,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		const uint8_t *rptr = response.data();
 

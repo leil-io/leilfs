@@ -45,15 +45,15 @@ static int dir_info(const char *fname) {
 	uint32_t msgid = 0;
 	inode_t inode;
 
-	int fd = open_master_conn(fname, &inode, nullptr, false);
-	if (fd < 0) { return -1; }
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, false);
+	if (conn == nullptr) { return -1; }
 
 	try {
 		MessageBuffer request, response;
 		serializeLegacyPacket(request, CLTOMA_FUSE_GETDIRSTATS, msgid, inode);
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_GETDIRSTATS,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_GETDIRSTATS,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		const uint8_t *rptr = response.data();
 		get32bit(&rptr, msgid);

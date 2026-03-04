@@ -39,16 +39,15 @@ static void get_goal_usage() {
 
 static int get_goal(const char *fname, uint8_t mode) {
 	inode_t inode;
-	int fd = open_master_conn(fname, &inode, NULL, false);
-	if (fd < 0) {
+	ServerConnection *conn = open_master_conn(fname, &inode, NULL, false);
+	if (conn == nullptr) {
 		return -1;
 	}
 	try {
 		uint32_t messageId = 0;
 		MessageBuffer request;
 		cltoma::fuseGetGoal::serialize(request, messageId, inode, mode);
-		MessageBuffer response =
-		    ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_GETGOAL);
+		MessageBuffer response = conn->sendAndReceive(request, SAU_MATOCL_FUSE_GETGOAL);
 		PacketVersion version;
 		std::vector<FuseGetGoalStats> goalsStats;
 		deserializePacketVersionNoHeader(response, version);

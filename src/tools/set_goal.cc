@@ -43,19 +43,18 @@ static void set_goal_usage() {
 
 static int set_goal(const char *fname, const std::string &goal, uint8_t mode) {
 	inode_t inode;
-	int fd;
+	ServerConnection *conn;
 	uint32_t messageId = 0;
 	uint32_t uid = getUId();
-	fd = open_master_conn(fname, &inode, NULL, true);
-	if (fd < 0) {
-		return -1;
-	}
+	conn = open_master_conn(fname, &inode, nullptr, true);
+	if (conn == nullptr) { return -1; }
 
 	try {
 		auto request = cltoma::fuseSetGoal::build(messageId, inode, uid, goal, mode);
-		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SETGOAL,
-		                    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-		                    kInfiniteTimeout);
+		conn->setTimeout(kInfiniteTimeout);
+		auto response =
+		    conn->sendAndReceive(request, SAU_MATOCL_FUSE_SETGOAL,
+		                         ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 		inode_t changed;
 		inode_t notChanged;
 		inode_t notPermitted;

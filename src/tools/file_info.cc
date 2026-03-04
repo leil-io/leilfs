@@ -48,7 +48,7 @@ static std::string chunkTypeToString(ChunkPartType type) {
 	return "";
 }
 
-static int chunks_info(const char *file_name, int fd, inode_t inode) {
+static int chunks_info(const char *file_name, ServerConnection *conn, inode_t inode) {
 	static constexpr uint32_t kRequestSize = 100;
 	std::vector<ChunkWithAddressAndLabel> chunks;
 	uint32_t msgid{0};
@@ -59,9 +59,10 @@ static int chunks_info(const char *file_name, int fd, inode_t inode) {
 			MessageBuffer request, response;
 			cltoma::chunksInfo::serialize(request, (uint32_t)0, (uint32_t)0, (uint32_t)0, inode,
 			                              chunkIndex, kRequestSize);
-			response = ServerConnection::sendAndReceive(
-			    fd, request, SAU_MATOCL_CHUNKS_INFO,
-			    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kInfiniteTimeout);
+			conn->setTimeout(kInfiniteTimeout);
+			response =
+			    conn->sendAndReceive(request, SAU_MATOCL_CHUNKS_INFO,
+			                         ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 			PacketVersion version;
 			deserialize(response, version, msgid);
@@ -137,16 +138,15 @@ static int chunks_info(const char *file_name, int fd, inode_t inode) {
 static int file_info(const char *fileName) {
 	std::vector<uint8_t> buffer;
 	inode_t inode;
-	int fd;
 
-	fd = open_master_conn(fileName, &inode, nullptr, false);
-	if (fd < 0) {
+	ServerConnection *conn = open_master_conn(fileName, &inode, nullptr, false);
+	if (conn == nullptr) {
 		return -1;
 	}
 	try {
 		printf("%s:\n", fileName);
 
-		if (chunks_info(fileName, fd, inode) < 0) {
+		if (chunks_info(fileName, conn, inode) < 0) {
 			close_master_conn(1);
 			return -1;
 		}

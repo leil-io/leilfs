@@ -46,11 +46,8 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 	inode_t inode;
 	uint32_t notchanged, erased, repaired;
 
-	int fd;
-	fd = open_master_conn(fname, &inode, nullptr, true);
-	if (fd < 0) {
-		return -1;
-	}
+	ServerConnection *conn = open_master_conn(fname, &inode, nullptr, true);
+	if (conn == nullptr) { return -1; }
 
 	uint32_t uid = getUId();
 	uint32_t gid = getGId();
@@ -60,9 +57,9 @@ static int file_repair(const char *fname, uint8_t correct_only_flag) {
 		serializeLegacyPacket(request, CLTOMA_FUSE_REPAIR, msgid, inode, uid, gid,
 		                      correct_only_flag);
 
-		response = ServerConnection::sendAndReceive(
-		    fd, request, MATOCL_FUSE_REPAIR,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_REPAIR,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		const uint8_t *rptr = response.data();
 		get32bit(&rptr, msgid);

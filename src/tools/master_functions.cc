@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <memory>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,12 +56,12 @@ struct master_info_t {
 	uint32_t version;
 };
 
-static thread_local int gCurrentMaster = -1;
+static thread_local std::unique_ptr<ServerConnection> gCurrentMaster;
 #ifdef _WIN32
 static int kMaxMasterRetries = 5;
 #endif
 
-static int master_register(int rfd, uint32_t cuid) {
+static bool master_register(ServerConnection *conn, uint32_t cuid) {
 	MessageBuffer request, response;
 
 	try {
@@ -76,42 +77,42 @@ static int master_register(int rfd, uint32_t cuid) {
 		serializeLegacyPacket(request, CLTOMA_FUSE_REGISTER, blob, regTools, cuid, majorVer,
 		                      minorVer, microVer);
 
-		response = ServerConnection::sendAndReceive(
-		    rfd, request, MATOCL_FUSE_REGISTER,
-		    ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage, kDefaultTimeoutMs);
+		conn->setTimeout(kDefaultTimeoutMs);
+		response = conn->sendAndReceive(request, MATOCL_FUSE_REGISTER,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		if (response.size() != sizeof(uint8_t)) {
 			printf("register to master: wrong answer (length)\n");
-			return -1;
+			return false;
 		}
 
 		uint8_t status = response[0];
 
 		if (status != SAUNAFS_STATUS_OK) {
 			printf("register to master: %s\n", saunafs_error_string(status));
-			return -1;
+			return false;
 		}
 
-		return 0;
+		return true;
 	} catch (const Exception &e) {
 		fprintf(stderr, "register to master: %s\n", e.what());
-		return -1;
+		return false;
 	}
 }
 
-static int master_connect(const master_info_t *info) {
-	for(int cnt = 0; cnt < 10; ++cnt) {
-		int sd = tcpsocket();
-		if (sd < 0) {
-			return -1;
+static std::unique_ptr<ServerConnection> master_connect(const master_info_t *info) {
+	NetworkAddress addr(info->ip, info->port);
+
+	for (int cnt = 0; cnt < 10; ++cnt) {
+		try {
+			auto conn = std::make_unique<ServerConnection>(addr);
+			return conn;
+		} catch (...) {
+			// connection attempt failed
 		}
-		int timeout = (cnt % 2) ? (300 * (1 << (cnt >> 1))) : (200 * (1 << (cnt >> 1)));
-		if (tcpnumtoconnect(sd, info->ip, info->port, timeout) >= 0) {
-			return sd;
-		}
-		tcpclose(sd);
 	}
-	return -1;
+
+	return nullptr;
 }
 
 static bool contains_master_info_name_end(const char *name) {
@@ -158,7 +159,7 @@ static int read_master_info(const char *name, master_info_t *info) {
 }
 
 #ifdef _WIN32
-int get_inode_by_path(int sd, std::string path, inode_t &inode) {
+int get_inode_by_path(std::unique_ptr<ServerConnection> conn, std::string path, inode_t &inode) {
 	try {
 		uint32_t messageId = 0;
 		inode_t rootInodeParent = 1;
@@ -168,8 +169,7 @@ int get_inode_by_path(int sd, std::string path, inode_t &inode) {
 		MessageBuffer request;
 		cltoma::wholePathLookup::serialize(request, messageId, rootInodeParent,
 		                                   path, parentUid, parentGid);
-		MessageBuffer response = ServerConnection::sendAndReceive(
-		    sd, request, SAU_MATOCL_WHOLE_PATH_LOOKUP);
+		MessageBuffer response = conn->sendAndReceive(request, SAU_MATOCL_WHOLE_PATH_LOOKUP);
 		PacketVersion packet_version;
 		deserializePacketVersionNoHeader(response, packet_version);
 		if (packet_version == matocl::wholePathLookup::kStatusPacketVersion) {
@@ -264,7 +264,8 @@ void get_next_path_iteration(std::string &path) {
 	}
 }
 
-int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unused]] bool needrwfs) {
+ServerConnection *open_master_conn(const char *name, inode_t *inode, mode_t *mode,
+                                   [[maybe_unused]] bool needrwfs) {
 	char rpath[PATH_MAX + 1];
 	saunafs_stat_t stb;
 	[[maybe_unused]] struct statvfs stvfsb;
@@ -281,17 +282,17 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 #endif
 	if (!get_full_path(name_to_use.c_str(), rpath)) {
 		printf("%s: get_full_path error\n", name);
-		return -1;
+		return nullptr;
 	}
 #ifndef _WIN32
 	if (needrwfs) {
 		if (statvfs(rpath, &stvfsb) != 0) {
 			printf("%s: (%s) statvfs error: %s\n", name, rpath, strerr(errno));
-			return -1;
+			return nullptr;
 		}
 		if (stvfsb.f_flag & ST_RDONLY) {
 			printf("%s: (%s) Read-only file system\n", name, rpath);
-			return -1;
+			return nullptr;
 		}
 	}
 #else
@@ -299,7 +300,7 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 #endif
 	if (stat_portable(rpath, &stb) != 0) {
 		printf("%s: (%s) stat error: %s\n", name, rpath, strerr(errno));
-		return -1;
+		return nullptr;
 	}
 	*inode = stb.st_ino;
 #ifdef _WIN32
@@ -314,24 +315,21 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 	if (mode) {
 		*mode = stb.st_mode;
 	}
-	if (gCurrentMaster >= 0) {
-		close(gCurrentMaster);
-		gCurrentMaster = -1;
-	}
+	force_master_conn_close();
 
 	for (;;) {
 		inode_t rpath_inode;
 
 		if (stat_portable(rpath, &stb) != 0) {
 			printf("%s: (%s) stat error: %s\n", name, rpath, strerror(errno));
-			return -1;
+			return nullptr;
 		}
 		rpath_inode = stb.st_ino;
 
 		size_t rpath_len = strlen(rpath);
 		if (rpath_len + sizeof("/" SPECIAL_FILE_NAME_MASTERINFO) > PATH_MAX) {
 			printf("%s: path too long\n", name);
-			return -1;
+			return nullptr;
 		}
 
 		if (rpath_len == 4 && rpath[2] == '\\' && rpath[3] == '.') {
@@ -345,7 +343,7 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 		int r = read_master_info(rpath, &master_info);
 		if (r == -2) {
 			printf("%s: can't read '" SPECIAL_FILE_NAME_MASTERINFO "'\n", name);
-			return -1;
+			return nullptr;
 		}
 
 		if (r == 0) {
@@ -353,24 +351,24 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 			    master_info.cuid == 0) {
 				printf("%s: incorrect '" SPECIAL_FILE_NAME_MASTERINFO "'\n",
 				       name);
-				return -1;
+				return nullptr;
 			}
 
 			if (rpath_inode == *inode) {
 				*inode = SPECIAL_INODE_ROOT;
 			}
 
-			int sd = master_connect(&master_info);
-			if (sd < 0) {
+			std::unique_ptr<ServerConnection> conn = master_connect(&master_info);
+			if (!conn) {
 				printf("%s: can't connect to master (" SPECIAL_FILE_NAME_MASTERINFO "): %s\n", name,
 				       strerr(errno));
-				return -1;
+				return nullptr;
 			}
 
-			if (master_register(sd, master_info.cuid) < 0) {
+			if (!master_register(conn.get(), master_info.cuid)) {
 				printf("%s: can't register to master (" SPECIAL_FILE_NAME_MASTERINFO ")\n", name);
-				tcpclose(sd);
-				return -1;
+				conn.reset();
+				return nullptr;
 			}
 
 #ifdef _WIN32
@@ -390,13 +388,13 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 				if (inode_by_path_result != SAUNAFS_STATUS_OK) {
 					printf("%s: can't get inode from path: %s\n", name,
 					       saunafs_error_string(inode_by_path_result));
-					tcpclose(sd);
-					return -1;
+					conn->reset();
+					return nullptr;
 				}
 			}
 #endif
-			gCurrentMaster = sd;
-			return sd;
+			gCurrentMaster = std::move(conn);
+			return gCurrentMaster.get();
 		}
 
 		// remove .masterinfo from end of string
@@ -406,45 +404,35 @@ int open_master_conn(const char *name, inode_t *inode, mode_t *mode, [[maybe_unu
 		if (strlen(rpath) < 3 || !std::isalpha(rpath[0]) || rpath[1] != ':' ||
 		    rpath[2] != '\\') {
 			printf("%s: not SaunaFS object\n", name);
-			return -1;
+			return nullptr;
 		}
 #else
 		if (rpath[0] != '/' || rpath[1] == '\0') {
 			printf("%s: not SaunaFS object\n", name);
-			return -1;
+			return nullptr;
 		}
 #endif
 		dirname_inplace(rpath);
 		if (stat_portable(rpath, &stb) != 0) {
 			printf("%s: (%s) stat error: %s\n", name, rpath, strerror(errno));
-			return -1;
+			return nullptr;
 		}
 
 #ifdef _WIN32
 		if (master_conn_retries++ > kMaxMasterRetries) {
 			printf("%s: exceeded master connection max retries: not SaunaFS object\n", name);
-			return -1;
+			return nullptr;
 		}
 		sleep(master_conn_retries);
 #endif
 	}
-	return -1;
+	return nullptr;
 }
 
 void close_master_conn(int err) {
-	if (gCurrentMaster < 0) {
-		return;
-	}
-	if (err) {
-		close(gCurrentMaster);
-		gCurrentMaster = -1;
-	}
+	if (!gCurrentMaster) { return; }
+
+	if (err) { gCurrentMaster.reset(); }
 }
 
-void force_master_conn_close() {
-	if (gCurrentMaster < 0) {
-		return;
-	}
-	close(gCurrentMaster);
-	gCurrentMaster = -1;
-}
+void force_master_conn_close() { gCurrentMaster.reset(); }

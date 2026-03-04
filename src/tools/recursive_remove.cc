@@ -45,7 +45,7 @@ static int recursive_remove(const char *file_name) {
 	char path_buf[PATH_MAX];
 	inode_t parent;
 	uint32_t uid, gid;
-	int fd;
+	ServerConnection *conn;
 	uint8_t status;
 	uint32_t msgid = 0, job_id;
 
@@ -88,10 +88,8 @@ static int recursive_remove(const char *file_name) {
 	std::string parent_path(path_buf);
 	parent_path = parent_path.substr(0, find_last_delimiter_pos(parent_path));
 
-	fd = open_master_conn(parent_path.c_str(), &parent, nullptr, false);
-	if (fd < 0) {
-		return -1;
-	}
+	conn = open_master_conn(parent_path.c_str(), &parent, nullptr, false);
+	if (conn == nullptr) { return -1; }
 
 	uid = getUId();
 	gid = getGId();
@@ -105,10 +103,10 @@ static int recursive_remove(const char *file_name) {
 	printf("Executing recursive remove (%s) ...\n", path_buf);
 	try {
 		auto request = cltoma::requestTaskId::build(msgid);
-		auto response = ServerConnection::sendAndReceive(fd,
-				request, SAU_MATOCL_REQUEST_TASK_ID,
-				ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-				kInfiniteTimeout);
+		conn->setTimeout(kInfiniteTimeout);
+		auto response =
+		    conn->sendAndReceive(request, SAU_MATOCL_REQUEST_TASK_ID,
+		                         ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 		matocl::requestTaskId::deserialize(response, msgid, job_id);
 
 		std::thread signal_thread(std::bind(signalHandler, job_id));
@@ -120,9 +118,9 @@ static int recursive_remove(const char *file_name) {
 			signal_thread.join();
 		});
 		request = cltoma::recursiveRemove::build(msgid, job_id, parent, fname, uid, gid);
-		response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_RECURSIVE_REMOVE,
-					ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage,
-					kInfiniteTimeout);
+		conn->setTimeout(kInfiniteTimeout);
+		response = conn->sendAndReceive(request, SAU_MATOCL_RECURSIVE_REMOVE,
+		                                ServerConnection::ReceiveMode::kReceiveFirstNonNopMessage);
 
 		matocl::recursiveRemove::deserialize(response, msgid, status);
 

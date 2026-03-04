@@ -43,10 +43,8 @@ static void quota_set_usage() {
 static int quota_set(const std::string &path, QuotaOwner owner, uint64_t soft_inodes,
 					 uint64_t hard_inodes, uint64_t soft_size, uint64_t hard_size) {
 	inode_t inode;
-	int fd = open_master_conn(path.c_str(), &inode, nullptr, true);
-	if (fd < 0) {
-		return -1;
-	}
+	ServerConnection *conn = open_master_conn(path.c_str(), &inode, nullptr, true);
+	if (conn == nullptr) { return -1; }
 
 	uint32_t uid = getUId();
 	uint32_t gid = getGId();
@@ -70,7 +68,7 @@ static int quota_set(const std::string &path, QuotaOwner owner, uint64_t soft_in
 		}
 	}
 	try {
-		auto response = ServerConnection::sendAndReceive(fd, request, SAU_MATOCL_FUSE_SET_QUOTA);
+		auto response = conn->sendAndReceive(request, SAU_MATOCL_FUSE_SET_QUOTA);
 		uint8_t status;
 		matocl::fuseSetQuota::deserialize(response, message_id, status);
 		if (status != SAUNAFS_STATUS_OK) {
