@@ -146,14 +146,14 @@ static int recursive_remove(const char *file_name) {
 
 int recursive_remove_run(int argc, char **argv) {
 	int status = 0;
+	// Go past initial command
+	argc--;
+	argv++;
 
 	if (argc < 1) {
 		recursive_remove_usage();
 		return 1;
 	}
-	// Go past initial command
-	argc--;
-	argv++;
 
 	while (argc > 0) {
 		if (recursive_remove(*argv) < 0) {
