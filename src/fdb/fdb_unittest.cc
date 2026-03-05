@@ -233,6 +233,77 @@ TEST_F(FDBKVEngineTest, GetRangeWithOffsets) {
 	ASSERT_EQ(elementsWithOffsets.back(), "key_17");
 }
 
+TEST_F(FDBKVEngineTest, RemoveRange) {
+	constexpr size_t kNumKeys = 10;
+
+	{  // Initially insert keys key_0, key_1, ..., key_9 into the database
+		auto transaction = kvEngine->createReadWriteTransaction();
+		for (size_t i = 0; i < kNumKeys; ++i) {
+			std::string key = "key_" + std::to_string(i);
+			std::string value = "value_" + std::to_string(i);
+			transaction->set(kv::toBytes(key), kv::toBytes(value));
+		}
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	{  // Remove the range [key_3, key_7), i.e. keys key_3, key_4, key_5 and key_6.
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->removeRange(kv::toBytes("key_3"), kv::toBytes("key_7"));
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		for (size_t i = 0; i < kNumKeys; ++i) {
+			std::string key = "key_" + std::to_string(i);
+			auto value = transaction->get(kv::toBytes(key));
+			// Range of keys [key_3, key_7) should be removed, but the others should still be
+			// present.
+			if (i >= 3 && i < 7) {
+				ASSERT_FALSE(value.has_value()) << "Expected key missing: " << key;
+			} else {
+				ASSERT_TRUE(value.has_value()) << "Expected key present: " << key;
+			}
+		}
+	}
+
+	{  // Remove the range [key_0, key_2), i.e. keys key_0 and key_1.
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->removeRange(kv::toBytes("key_0"), kv::toBytes("key_2"));
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	{  // Verify that key_0 and key_1 are removed, but key_2 is still present
+		auto transaction = kvEngine->createReadWriteTransaction();
+		ASSERT_FALSE(transaction->get(kv::toBytes("key_0")).has_value());
+		ASSERT_FALSE(transaction->get(kv::toBytes("key_1")).has_value());
+		ASSERT_TRUE(transaction->get(kv::toBytes("key_2")).has_value());
+	}
+
+	{  // Remove range with a single key: start key and end key are the same, but the range is
+	   // end-exclusive, so key_2 should not be removed.
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->removeRange(kv::toBytes("key_2"), kv::toBytes("key_2"));
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	{  // Verify that key_2 is still present after calling removeRange() with a single key
+		auto transaction = kvEngine->createReadWriteTransaction();
+		ASSERT_TRUE(transaction->get(kv::toBytes("key_2")).has_value());
+	}
+
+	{  // Remove key_2 by calling removeRange() with a range that includes key_2
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->removeRange(kv::toBytes("key_2"), kv::toBytes("key_3"));
+		ASSERT_TRUE(transaction->commit());
+	}
+
+	{  // Verify that key_2 is removed
+		auto transaction = kvEngine->createReadWriteTransaction();
+		ASSERT_FALSE(transaction->get(kv::toBytes("key_2")).has_value());
+	}
+}
+
 TEST_F(FDBKVEngineTest, AtomicAdd) {
 	kv::Key key{'c', 'o', 'u', 'n', 't'};
 	constexpr int64_t initialValue = 10;

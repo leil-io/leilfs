@@ -179,6 +179,9 @@ public:
 	/// @param key The key to remove.
 	void remove(const kv::Key &key);
 
+	/// Removes a half-open key range [start, end) from the database.
+	void removeRange(const kv::Key &start, const kv::Key &end);
+
 	/// Commits the transaction.
 	/// @return True if the commit was successful, false otherwise.
 	bool commit();

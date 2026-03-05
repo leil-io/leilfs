@@ -93,6 +93,9 @@ public:
 	/// Signal emitted when a node changes (added, modified, but not removed)
 	Signal<FSNode *> nodeChangedSignal;
 
+	/// Signal emitted when a node is removed
+	Signal<inode_t> nodeRemovedSignal;
+
 	/// Signal emitted when an edge changes (added, modified, but not removed)
 	Signal<FSNodeDirectory *, FSNode *, hstorage::Handle *> edgeChangedSignal;
 

@@ -494,3 +494,120 @@ TEST(KVUtilsTest, EncodeKeyBE) {
 		EXPECT_EQ(result.size(), kPrefix.size() + sizeof(kValue));
 	}
 }
+
+TEST(KVUtilsTest, IsPrintableAscii) {
+	// Boundary: space (0x20) is the first printable character
+	EXPECT_TRUE(kv::isPrintableAscii(0x20));
+
+	// Boundary: tilde (0x7E) is the last printable character
+	EXPECT_TRUE(kv::isPrintableAscii(0x7E));
+
+	// Common printable characters
+	EXPECT_TRUE(kv::isPrintableAscii('A'));
+	EXPECT_TRUE(kv::isPrintableAscii('z'));
+	EXPECT_TRUE(kv::isPrintableAscii('0'));
+	EXPECT_TRUE(kv::isPrintableAscii('!'));
+
+	// Just below the printable range: control characters
+	EXPECT_FALSE(kv::isPrintableAscii(0x1F));  // US (unit separator)
+	EXPECT_FALSE(kv::isPrintableAscii(0x00));  // NUL
+	EXPECT_FALSE(kv::isPrintableAscii('\n'));   // newline (0x0A)
+	EXPECT_FALSE(kv::isPrintableAscii('\t'));   // tab (0x09)
+
+	// Just above the printable range: DEL and extended bytes
+	EXPECT_FALSE(kv::isPrintableAscii(0x7F));  // DEL
+	EXPECT_FALSE(kv::isPrintableAscii(0x80));  // first extended byte
+	EXPECT_FALSE(kv::isPrintableAscii(0xFF));  // max uint8_t
+}
+
+TEST(KVUtilsTest, BytesToEscapedAscii) {
+	// Empty input: empty output
+	{
+		std::string result = kv::bytesToEscapedAscii(nullptr, 0);
+		EXPECT_EQ(result, "");
+	}
+
+	// All printable ASCII: output equals input as string
+	{
+		const std::string kInput = "Hello, World!";
+		std::string result = kv::bytesToEscapedAscii(
+		    reinterpret_cast<const uint8_t *>(kInput.data()), kInput.size());
+		EXPECT_EQ(result, kInput);
+	}
+
+	// Single non-printable byte: rendered as \xNN
+	{
+		const uint8_t kInput[] = {0x01};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "\\x01");
+	}
+
+	// NUL byte
+	{
+		const uint8_t kInput[] = {0x00};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "\\x00");
+	}
+
+	// DEL (0x7F): just above the printable range
+	{
+		const uint8_t kInput[] = {0x7F};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "\\x7f");
+	}
+
+	// 0xFF: max byte value
+	{
+		const uint8_t kInput[] = {0xFF};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "\\xff");
+	}
+
+	// Mixed printable and non-printable bytes
+	{
+		const uint8_t kInput[] = {'A', 0x01, 'B', 0xFF};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "A\\x01B\\xff");
+	}
+
+	// Boundary bytes: space (0x20) and tilde (0x7E) are printable
+	{
+		const uint8_t kInput[] = {0x1F, 0x20, 0x7E, 0x7F};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "\\x1f ~\\x7f");
+	}
+
+	// Binary key-like data (prefix + big-endian uint32_t)
+	{
+		const uint8_t kInput[] = {'N', 0x00, 0x00, 0x00, 0x01};
+		std::string result = kv::bytesToEscapedAscii(kInput, sizeof(kInput));
+		EXPECT_EQ(result, "N\\x00\\x00\\x00\\x01");
+	}
+}
+
+TEST(KVUtilsTest, KeyToEscapedAscii) {
+	// Empty key: empty output
+	{
+		kv::Key key = {};
+		EXPECT_EQ(kv::keyToEscapedAscii(key), "");
+	}
+
+	// All printable ASCII key
+	{
+		kv::Key key = {'N', 'O', 'D', 'E', '_'};
+		EXPECT_EQ(kv::keyToEscapedAscii(key), "NODE_");
+	}
+
+	// Key with non-printable byte suffix (e.g. encodeKeyBE result)
+	{
+		kv::Key key = kv::encodeKeyBE("N", static_cast<uint32_t>(1));
+		// "N" + 0x00 0x00 0x00 0x01
+		EXPECT_EQ(kv::keyToEscapedAscii(key), "N\\x00\\x00\\x00\\x01");
+	}
+
+	// key consisting entirely of non-printable bytes
+	{
+		kv::Key key = {0x00, 0xFF, 0x1F};
+		EXPECT_EQ(kv::keyToEscapedAscii(key), "\\x00\\xff\\x1f");
+	}
+}

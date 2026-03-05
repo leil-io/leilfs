@@ -59,6 +59,12 @@ void FDBTransaction::remove(const kv::Key &key) {
 	tr_.remove(key);
 }
 
+void FDBTransaction::removeRange(const kv::Key &start, const kv::Key &end) {
+	if (!tr_) { return; }
+
+	tr_.removeRange(start, end);
+}
+
 bool FDBTransaction::commit() {
 	if (!tr_) { return false; }
 
