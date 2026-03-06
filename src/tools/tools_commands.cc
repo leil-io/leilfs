@@ -76,7 +76,12 @@ static int cd_func(int argc, char **argv) {
 }
 
 static int ls_func(int argc, char **argv) {
+#ifdef _WIN32
+	std::string command("dir");
+#else
 	std::string command("ls");
+#endif
+
 	for (int i = 1; i < argc; ++i) {
 		command += " ";
 		command.append(argv[i]);
