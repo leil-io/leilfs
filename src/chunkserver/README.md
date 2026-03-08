@@ -37,8 +37,8 @@ Files in the top-level directory are grouped by subsystem:
 | `chunk_replicator.*`              | Cross-chunkserver chunk replication           |
 | `chunk_file_creator.*`            | RAII helper for safe chunk creation           |
 | `chunk_filename_parser.*`         | Parse chunk filenames to extract metadata     |
-| `io_buffers.*`                    | Aligned I/O buffers for network writes        |
-| `buffers_pool.h`                  | Thread-safe `OutputBuffer` recycling pool     |
+| `io_buffers.*`                    | Aligned I/O buffers for moving data between network and disk        |
+| `buffers_pool.h`                  | Thread-safe buffer (`OutputBuffer`, `InputBuffer`, `ReplicatorBuffer`) recycling pool     |
 | `slice_recovery_planner.h`        | EC/XOR slice recovery planning                |
 | `g_limiters.*`                    | Singleton for replication bandwidth limiter   |
 | `replication_bandwidth_limiter.*` | I/O throttling for replication                |
@@ -93,11 +93,11 @@ IChunk (abstract interface)
   `metaFD_`, `dataFD_`, `id_`, `version_`, `blocks_`, `type_`
   (`ChunkPartType` supporting standard/XOR/EC), `state_`, `refCount_`, and
   `indexInDisk_`.
-- **`CmrChunk`** -- specialization for CMR disks. Uses a SPLIT format with
-  separate `.met` and `.dat` files. The metadata file begins with a reserved
-  1 KiB signature area followed by CRC data; for standard chunks, the header
-  is 5 KiB and therefore spans two 4 KiB disk blocks, while XOR/EC parts round
-  the overall header size up to the disk block size.
+- **`CmrChunk`** -- built-in chunk implementation for CMR disks. Each chunk is
+  stored in two files: `.met` keeps metadata and `.dat` keeps payload data.
+  The `.met` file starts with a reserved 1 KiB signature area and then stores
+  the per-block CRC table. For standard chunks, that metadata header is 5 KiB.
+  For XOR and EC parts, the header is padded up to the device I/O block size.
 - **`ChunkSignature`** -- on-disk signature `SAUC 1.0` + chunkId + version +
   chunkType. Virtual to allow plugins to extend.
 
@@ -116,7 +116,8 @@ Locked -> ToBeDeleted -> Deleted    (deferred delete path)
 ```
 
 When a thread wants to lock an already-locked chunk, it waits on the chunk's
-`CondVarWithWaitCount`. Condition variables are recycled via `gFreeCondVars`.
+`CondVarWithWaitCount`. Condition variables are recycled via `gFreeCondVars` (see
+`hddChunkFindOrCreatePlusLock` function).
 
 ### Disk Abstraction
 
@@ -147,19 +148,21 @@ IDiskManager (interface)
 
 - **`IDiskManager`** -- strategy interface: `getDiskForNewChunk()`,
   `getDiskForGC()`, `getChunkToTest()`, `reloadDisksFromCfg()`.
-- **`DefaultDiskManager`** -- parses `hdd.cfg`, creates `CmrDisk` instances or
-  plugin-provided disks, and selects new-chunk targets with a carry-based
-  heuristic derived from available space. Garbage collection selection is
-  round-robin over eligible zoned disks. Test selection iterates disks
-  sequentially.
+- **`DefaultDiskManager`** -- parses `hdd.cfg`, creates built-in `CmrDisk`
+  instances and any plugin-provided disk types, and chooses disks for several
+  background tasks. New chunks are placed with a carry-based heuristic derived
+  from available space. Garbage collection uses round-robin selection only for
+  eligible zoned disks; this applies only to zoned-disk plugins, not to the built-in
+  `CmrDisk` path. Periodic CRC testing walks the disk list sequentially.
 
 ### Per-Disk Chunk Tracking (`DiskChunks`)
 
 Each disk maintains a `DiskChunks` instance: a vector of `IChunk*` with
-**constant-time insert, remove, and test selection**. An index boundary
-(`firstUntestedChunk_`) separates tested from untested chunks, enabling
-efficient CRC verification scheduling. The collection can be `shuffle()`-d to
-randomize test order.
+**constant-time insert, remove, and next-test selection**. The vector is split
+by `firstUntestedChunk_`: entries before that index were already checked in the
+current CRC-test pass, and entries from that index onward are still waiting to
+be checked. After a disk scan, the chunkserver calls `shuffle()` and resets the
+boundary so the next verification pass runs in randomized order.
 
 ### Key Global Resources
 
@@ -234,22 +237,25 @@ background jobs.
 
 ### ChunkserverEntry (Connection State Machine)
 
-`chunkserver_entry.{h,cc}` implements a **per-connection state machine**:
+`chunkserver_entry.{h,cc}` implements a **per-connection state machine** (see
+`ChunkserverEntry::State`):
 
 ```
+Idle -> GetBlock -> Idle              (get chunk blocks request sequence)
 Idle -> Read                          (client read request)
-Idle -> GetBlock                      (get chunk blocks request)
 Idle -> WriteLast                     (write, no forwarding chain)
 Idle -> Connecting -> WriteInit -> WriteForward  (write with forwarding)
 Idle -> WriteInit -> WriteForward     (write, reused fwd connection)
 
-WriteLast / WriteForward -> Idle      (writeEnd success, pool not full)
+Read / WriteLast / WriteForward -> Idle      (read / write high level operation success, pool not full)
 
-(any I/O state) -> IOFinish -> Close
-                                 |
-                                 +--> CloseWait -> Closed  (if pending jobs)
-                                 |
-                                 +--> Closed               (if no pending jobs)
+(any I/O state) -> IOFinish                              (network error, IO job error, job pool full)
+                      |
+                      +----> Close                       (after sending pending packets)
+                               |
+                               +--> CloseWait -> Closed  (if pending jobs)
+                               |
+                               +--> Closed               (if no pending jobs)
 ```
 
 Each connection operates in one of two modes: `Header` (reading packet header)
@@ -260,7 +266,8 @@ writes.
 
 The entry contains `ReadHighLevelOp`, `WriteHighLevelOp`, and
 `GetBlocksHighLevelOp` for structured I/O management. Network packets use
-`PacketStruct` for management and `OutputBuffer` for aligned packet assembly.
+`PacketStruct` for management and `OutputBuffer` for building read replies without
+extra copy of block data from contiguous aligned data retrieved from the disks.
 
 ## Master Connection
 
@@ -297,9 +304,10 @@ master server:
 ## Background Jobs System
 
 `bgjobs.{h,cc}` implements a base job-pool abstraction with two derived pool
-types. At runtime the chunkserver uses three pool instances: client pools in
-network workers, one master pool, and one replication pool. Wakeup is
-pipe-based and job dispatch uses a producer-consumer queue:
+types. At runtime the chunkserver uses pools for three reasons: client pools in
+network workers, one master pool, and one replication pool. The listener (network
+workers, main network thread) wakeup is pipe-based and job dispatch uses a
+producer-consumer queue:
 
 ```
 JobPool (base: thread pool + PCQueue)
@@ -321,7 +329,7 @@ JobPool (base: thread pool + PCQueue)
   preferring read and write jobs to prevent starvation.
 
 Convenience functions (`job_open`, `job_close`, `job_read`, `job_write`,
-`job_prefetch`) wrap the pool API for common operations.
+`job_replicate`, `job_create`, ...) wrap the pool API for each specific operation.
 
 ## High-Level Chunk Operations
 
@@ -340,8 +348,11 @@ HighLevelOp (base)
   reads until all requested data is served.
 - **`WriteHighLevelOp`** -- supports **batched multi-block writes**
   (`maxBlocksPerHddWriteJob`); manages the chunk open/close lifecycle.
-- All operations track `pendingDelayedJobs_` and support `delayedClose()` for
-  clean resource release.
+
+All operations track `pendingDelayedJobs_` and support `delayedClose()` for
+clean resource release. The base class also keeps track of the parent
+`ChunkserverEntry` instance to apply state changes, enqueue packets and access
+its worker pool.
 
 ## Replication Subsystem
 
@@ -349,10 +360,9 @@ HighLevelOp (base)
 
 `chunk_replicator.{h,cc}` -- connects to source chunkservers via
 `ChunkConnector` and replicates chunk data. The `replicate()` method takes a
-`ChunkFileCreator` and a list of `ChunkTypeWithAddress` sources. It supports
-**wave-based recovery** with configurable timeouts (total, wave, connection).
-For erasure-coded chunks, it uses `SliceRecoveryPlanner`. The global instance
-is `gReplicator`.
+`ChunkFileCreator` and a list of `ChunkTypeWithAddress` sources. It performs
+direct read requests to other chunkservers. For erasure-coded chunks, it uses
+`SliceRecoveryPlanner`. The global instance is `gReplicator`.
 
 ### ChunkFileCreator
 
@@ -402,14 +412,23 @@ IPlugin (root interface: name, version, initialize)
 - **`Buffer<T>`** (`io_buffers.h`) -- generic buffer with padding support,
   copy-in/copy-out, and read/write from FDs and chunks.
 - **`OutputBuffer`** (`io_buffers.h`) -- specialized for network writes. Three
-  sections: Header, CRC, Block. Block data is **aligned to 4 KiB**
+  sections: Header, CRC, Block. Block data is aligned to 4 KiB
   (`disk::kIoBlockSize`). It assembles per-block header+CRC+payload into the
   aligned block buffer and writes it out block-by-block. Pool-recycled via
   `BuffersPool`.
+- **`InputBuffer`** (`io_buffers.h`) -- specialized for network reads. Three
+  sections: Header, CRC, Block. Block data is aligned to 4 KiB
+  (`disk::kIoBlockSize`). It consumes per-block header+payload from the network into the
+  buffers. The write operations are assembled after calling `setupLastWriteOperation`.
+  The final purpose is to use `getWriteOperations` to batch write operations into fewer
+  `pwrite` calls. It is also designed to forward its content in the case of chain writes.
+  Pool-recycled via `BuffersPool`.
+- **`ReplicatorBuffer`** (`io_buffers.h`) -- specialized for replications. Contains only
+  a block buffer aligned to 4 KiB (`disk::kIoBlockSize`). Pool-recycled via `BuffersPool`.
 - **`BuffersPool<T>`** (`buffers_pool.h`) -- thread-safe pool of
-  `OutputBuffer` objects, keyed by `(headerSize, numBlocks)`. Auto-creates new
-  buffers when the pool is empty, recycles after use, and supports TTL-based
-  expiration via `releaseOldBuffers()`.
+  `OutputBuffer`, `InputBuffer` and `ReplicatorBuffer` objects, keyed by
+  `(headerSize, numBlocks)`. Auto-creates new buffers when the pool is empty, recycles
+  after use, and supports TTL-based expiration via `releaseOldBuffers()`.
 
 ### Open Chunk Pool
 
@@ -471,6 +490,25 @@ is dependency-ordered:
 
 Client connections are accepted only after all subsystems are ready.
 
+## Shutdown sequence
+
+When the termination signal is received, the eventloop moves through some
+stages before ending the process:
+
+1. **WantExit** -- `mainNetworkThreadWantExit()` closes the listening socket,
+   calls `NetworkWorkerThread::askForTermination()` on every worker (stops
+   accepting new data, drains in-flight replies), and sets `gDoTerminate`.
+2. **CanExit** -- polled each loop tick via `mainNetworkThreadCanExit()`.
+   Returns `true` when all workers have emptied their `csservEntries` and
+   `bgJobPool_` (or the 30 s forceful-termination timeout fires), **and**
+   both master job pools are drained (`masterconn_canexit()`). Workers
+   are checked first to avoid a race with in-flight `endChunkLock` replies.
+3. **Destruct** -- `eventloop_destruct()` runs registered destructors in
+   reverse order: `mainNetworkThreadTerm()` joins all worker threads;
+   `hddTerminate()` joins background threads, flushes dirty CRCs, and clears
+   `gChunksMap`/`gDisks`; `masterconn_term()` closes the master socket and
+   resets the job pools.
+
 ## Key Design Patterns
 
 - **Interface-based extensibility** -- all major abstractions are behind pure
@@ -488,7 +526,7 @@ Client connections are accepted only after all subsystems are ready.
 - **RAII resource management** -- `OpenChunk` guards FD lifecycle;
   `ChunkFileCreator` ensures incomplete replications are cleaned up;
   `LockFile` prevents concurrent disk access.
-- **Object pooling** -- `BuffersPool<OutputBuffer>` recycles memory-efficient
+- **Object pooling** -- `BuffersPool<T>` recycles memory-efficient
   I/O buffers; `IndexedResourcePool<OpenChunk>` caches open file descriptors
   with LRU eviction.
 - **Strategy pattern** -- `IDiskManager` allows pluggable chunk placement
