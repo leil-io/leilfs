@@ -4,7 +4,7 @@ sqlite_test_path=$(realpath test_utils/sqlite_stress_test.py)
 
 CHUNKSERVERS=5 \
 	USE_RAMDISK=YES \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10,sfsdirentrycacheto=0" \
 	CHUNKSERVER_EXTRA_CONFIG="MAGIC_DEBUG_LOG=${TEMP_DIR}/log" \
 	setup_local_empty_saunafs info
 
