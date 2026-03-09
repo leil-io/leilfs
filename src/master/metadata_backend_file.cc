@@ -286,12 +286,7 @@ static bool xattr_load(MetadataLoader::Options options) {
 		}
 
 		auto inodeHash = get_xattr_inode_hash(inode);
-		for (const auto &xattrEntry : gMetadata->xattrInodeHash[inodeHash]) {
-			xattrInodeEntry = xattrEntry.get();
-			if (xattrInodeEntry->inode == inode) {
-				break;
-			}
-		}
+		xattrInodeEntry = find_xattr_inode_entry(inode, inodeHash);
 
 		if (xattrInodeEntry != nullptr &&
 		    xattrInodeEntry->attributeNameLength + attributeNameLength + 1 > SFS_XATTR_LIST_MAX) {
