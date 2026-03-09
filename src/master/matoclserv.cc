@@ -848,6 +848,9 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 		vmode = get8bit(&data);
 	}
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	uint32_t size = sizeof(uint16_t);  // 2 bytes for SESSION_STATS
 
 	constexpr uint32_t kExtraVModeSize = sizeof(Session::minGoal) + sizeof(Session::maxGoal) +
@@ -877,7 +880,7 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 				size += 1;  // for '.'
 			} else {
 				size += sizeof(pathLength);
-				size += gFSOperations->getDirPathSize(eaptr->sessionData->rootInode);
+				size += gFSOperations->getDirPathSize(fsOpContext, eaptr->sessionData->rootInode);
 			}
 		}
 	}
@@ -906,10 +909,12 @@ void matoclserv_session_list(matoclserventry *eptr, const uint8_t *data, uint32_
 				putINode(&ptr, static_cast<inode_t>(1));
 				put8bit(&ptr, '.');
 			} else {
-				pathLength = gFSOperations->getDirPathSize(eaptr->sessionData->rootInode);
+				pathLength =
+				    gFSOperations->getDirPathSize(fsOpContext, eaptr->sessionData->rootInode);
 				put32bit(&ptr, pathLength);
 				if (pathLength > 0) {
-					gFSOperations->getDirPathData(eaptr->sessionData->rootInode, ptr, pathLength);
+					gFSOperations->getDirPathData(fsOpContext, eaptr->sessionData->rootInode, ptr,
+					                              pathLength);
 					ptr += pathLength;
 				}
 			}
@@ -2996,7 +3001,9 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	std::vector<uint8_t> receivedData(data, data + header.length);
 	serializer->deserializeFuseReadChunk(receivedData, messageId, inode, index);
 
-	status = gFSOperations->readChunk(inode, index, &chunkid, &fleng);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	status = gFSOperations->readChunk(fsOpContext, inode, index, &chunkid, &fleng);
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
 	if (status == SAUNAFS_STATUS_OK) {
 		if (chunkid > 0) {
@@ -4064,8 +4071,11 @@ void matoclserv_fuse_gettrash(matoclserventry *eptr, const PacketHeader &header,
 		uint64_t off;
 		cltoma::fuseGetTrash::deserialize(data, header.length, msgId, off, maxEntries);
 		std::vector<HandleInodeEntry> entries;
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadOnly);
 		gFSOperations->readTrash(
-		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
+		    fsOpContext, off,
+		    std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
 		    entries);
 		matoclserv_createpacket(eptr, matocl::fuseGetTrash::build(msgId, entries));
 	} else {
@@ -4100,8 +4110,10 @@ void matoclserv_fuse_getdetachedattr(matoclserventry *eptr, const uint8_t *data,
 		dtype = DTYPE_UNKNOWN;
 	}
 
-	status = gFSOperations->getDetachedAttr(eptr->sessionData->rootInode, eptr->sessionData->flags,
-	                                        inode, attr, dtype);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	status = gFSOperations->getDetachedAttr(fsOpContext, eptr->sessionData->rootInode,
+	                                        eptr->sessionData->flags, inode, attr, dtype);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessSize = sizeof(msgid) + attr.size();
@@ -4138,8 +4150,10 @@ void matoclserv_fuse_gettrashpath(matoclserventry *eptr, const uint8_t *data, ui
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = gFSOperations->getTrashPath(eptr->sessionData->rootInode, eptr->sessionData->flags,
-	                                     inode, path);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	status = gFSOperations->getTrashPath(fsOpContext, eptr->sessionData->rootInode,
+	                                     eptr->sessionData->flags, inode, path);
 
 	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
 	const uint32_t kSuccessSize = sizeof(msgid) + sizeof(uint32_t) + path.length() + 1;
@@ -4320,8 +4334,11 @@ void matoclserv_fuse_getreserved(matoclserventry *eptr, const PacketHeader &head
 		uint64_t off;
 		cltoma::fuseGetReserved::deserialize(data, header.length, msgId, off, maxEntries);
 		std::vector<HandleInodeEntry> entries;
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadOnly);
 		gFSOperations->readReserved(
-		    off, std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
+		    fsOpContext, off,
+		    std::min<uint32_t>(maxEntries, matocl::fuseGetDir::kMaxNumberOfDirectoryEntries),
 		    entries);
 		matoclserv_createpacket(eptr, matocl::fuseGetReserved::build(msgId, entries));
 	} else {

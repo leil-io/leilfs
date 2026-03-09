@@ -166,7 +166,8 @@ public:
 
 	/// Returns entries from a HandleIndexContainer starting at a given handleOffset.
 	/// @see IFilesystemNodeOperations::getDetachedData
-	void getDetachedData(const HandleIndexContainer &data, uint64_t handleOffset,
+	void getDetachedData(const FilesystemOperationContext &fsOpContext,
+	                     const HandleIndexContainer &data, uint64_t handleOffset,
 	                     uint32_t maxEntries, std::vector<HandleInodeEntry> &entries,
 	                     bool fromTrash) override;
 #endif

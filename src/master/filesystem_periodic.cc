@@ -136,6 +136,8 @@ static std::string get_node_info(FSNode *node) {
 
 std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_flags, uint64_t max_entries,
 	                                                   uint64_t &entry_index) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	FSNode *node;
 	std::vector<DefectiveFileInfo> defective_nodes_info;
 	ActiveLoopWatchdog watchdog;
@@ -144,7 +146,7 @@ std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_fla
 	watchdog.start();
 	for (uint64_t i = 0; i < max_entries && it != gDefectiveNodes.end(); ++it) {
 		if (((*it).second & requested_flags) != 0) {
-			node = gFSOperations->nodeOperations()->idToNode<FSNode>((*it).first);
+			node = gFSOperations->nodeOperations()->idToNode<FSNode>(fsOpContext, (*it).first);
 			std::string info = get_node_info(node);
 			defective_nodes_info.emplace_back(std::move(info), (*it).second);
 			++i;
@@ -161,6 +163,8 @@ std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_fla
 void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, inode_t &ugfiles,
                      inode_t &mfiles, uint32_t &chunks, uint32_t &ugchunks, uint32_t &mchunks,
                      std::string &result) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	std::stringstream report;
 	int errors = 0;
 
@@ -169,7 +173,7 @@ void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, ino
 			break;
 		}
 
-		FSNode *node = gFSOperations->nodeOperations()->idToNode<FSNode>(entry.first);
+		FSNode *node = gFSOperations->nodeOperations()->idToNode<FSNode>(fsOpContext, entry.first);
 		if (!node) {
 			report << "Structure error in defective list, entry " << std::to_string(entry.first) << "\n";
 			errors++;

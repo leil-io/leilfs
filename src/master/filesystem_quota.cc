@@ -36,22 +36,23 @@ static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<Qu
 		return;
 	}
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	FSNodeDirectory *root_node =
 	    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(root_inode);
 
-	auto it = std::remove_if(results.begin(), results.end(), [root_node](const QuotaEntry &entry) {
-		if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode) {
-			FSNode *node = gFSOperations->nodeOperations()->idToNode(entry.entryKey.owner.ownerId);
-			if (!node) {
-				return true;
-			}
-			if (root_node->id == entry.entryKey.owner.ownerId) {
-				return false;
-			}
-			return !gFSOperations->nodeOperations()->isAncestor(root_node, node);
-		}
-		return false;
-	});
+	auto it = std::remove_if(
+	    results.begin(), results.end(), [&fsOpContext, root_node](const QuotaEntry &entry) {
+		    if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode) {
+			    FSNode *node = gFSOperations->nodeOperations()->idToNode(
+			        fsOpContext, entry.entryKey.owner.ownerId);
+			    if (!node) { return true; }
+			    if (root_node->id == entry.entryKey.owner.ownerId) { return false; }
+			    return !gFSOperations->nodeOperations()->isAncestor(root_node, node);
+		    }
+		    return false;
+	    });
 	results.erase(it, results.end());
 }
 
@@ -108,6 +109,9 @@ uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &resu
 	}
 	results = gMetadata->quotaDatabase.getEntriesWithStats();
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	for (auto &entry : results) {
 		if (entry.entryKey.owner.ownerType != QuotaOwnerType::kInode ||
 		    entry.entryKey.rigor != QuotaRigor::kUsed) {
@@ -115,7 +119,7 @@ uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &resu
 		}
 
 		FSNodeDirectory *node = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
-		    entry.entryKey.owner.ownerId);
+		    fsOpContext, entry.entryKey.owner.ownerId);
 		if (!node || node->type != FSNodeType::kDirectory) { continue; }
 
 		switch (entry.entryKey.resource) {
@@ -135,6 +139,8 @@ uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &resu
 
 uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
                      std::vector<QuotaEntry> &results) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	std::vector<QuotaEntry> tmp;
 	FSNodeDirectory *node;
 	for (const QuotaOwner &owner : owners) {
@@ -149,7 +155,8 @@ uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &ow
 				}
 				break;
 			case QuotaOwnerType::kInode:
-				node = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(owner.ownerId);
+				node = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext,
+				                                                                  owner.ownerId);
 				if (!node || node->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_EINVAL; }
 				if (node->uid != context.uid() ||
 				    (node->gid != context.gid() && !(context.sesflags() & SESFLAG_IGNOREGID))) {
@@ -164,8 +171,8 @@ uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &ow
 		if (result) {
 			for (auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard, QuotaRigor::kUsed}) {
 				if (owner.ownerType == QuotaOwnerType::kInode && rigor == QuotaRigor::kUsed) {
-					node =
-					    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(owner.ownerId);
+					node = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
+					    fsOpContext, owner.ownerId);
 					assert(node);
 					tmp.push_back(
 					    {{owner, rigor, QuotaResource::kInodes}, (uint64_t)node->stats.inodes});
@@ -188,13 +195,16 @@ uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &ow
 
 uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
 		std::vector<std::string> &result) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	std::string info;
 
 	result.clear();
 	for (const auto &entry : entries) {
 		info.clear();
 		if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode) {
-			FSNode *node = gFSOperations->nodeOperations()->idToNode(entry.entryKey.owner.ownerId);
+			FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext,
+			                                                         entry.entryKey.owner.ownerId);
 			if (node) {
 				fsnodes_getpath(context.rootinode(), node, info);
 			}
@@ -209,6 +219,9 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 	static const char resource_name[2] = {'I', 'S'};
 	static const char owner_name[3] = {'U', 'G', 'I'};
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	if (context.sesflags() & SESFLAG_READONLY) {
@@ -221,7 +234,8 @@ uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &en
 		if(entry.entryKey.owner.ownerType != QuotaOwnerType::kInode) {
 			continue;
 		}
-		FSNode *node = gFSOperations->nodeOperations()->idToNode(entry.entryKey.owner.ownerId);
+		FSNode *node =
+		    gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.entryKey.owner.ownerId);
 		if(!node) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
@@ -416,6 +430,8 @@ bool fsnodes_quota_exceeded_dir(FSNode *node,
 
 bool fsnodes_quota_exceeded_dir(FSNodeDirectory *node, FSNodeDirectory* prev_node,
 		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	// Because nodes are directories fsnodes_find_common_ancestor
 	// is guaranteed to work properly.
 	FSNode *common = fsnodes_find_common_ancestor(prev_node, node);
@@ -429,8 +445,8 @@ bool fsnodes_quota_exceeded_dir(FSNodeDirectory *node, FSNodeDirectory* prev_nod
 
 	// node is directory so it has only one parent.
 	while(!node->parents.empty()) {
-		auto *parent =
-		    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(node->parents[0].first);
+		auto *parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
+		    fsOpContext, node->parents[0].first);
 
 		if (parent == common) {
 			return false;

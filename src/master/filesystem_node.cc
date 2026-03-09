@@ -967,7 +967,8 @@ void FilesystemNodeOperationsBase::getDetachedData(const TrashPathContainer &dat
 	}
 }
 
-void FilesystemNodeOperationsBase::getDetachedData(const HandleIndexContainer &data,
+void FilesystemNodeOperationsBase::getDetachedData(const FilesystemOperationContext &fsOpContext,
+                                                   const HandleIndexContainer &data,
                                                    uint64_t handleOffset, uint32_t maxEntries,
                                                    std::vector<HandleInodeEntry> &entries,
                                                    bool fromTrash) {
@@ -982,7 +983,7 @@ void FilesystemNodeOperationsBase::getDetachedData(const HandleIndexContainer &d
 		std::string nameForClient;
 
 		if (fromTrash) {
-			FSNode *node = idToNode((*iter).second);
+			FSNode *node = idToNode(fsOpContext, (*iter).second);
 			nameForClient = gMetadata->trash.at(TrashPathKey(node)).get().c_str();
 		} else {
 			nameForClient = gMetadata->reserved.at((*iter).second).get().c_str();

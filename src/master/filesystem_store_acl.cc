@@ -62,7 +62,8 @@ void fs_store_acls(FILE *fd) {
 	fs_store_marker(fd);
 }
 
-static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile,
+static int fs_load_posix_acl(const FilesystemOperationContext &fsOpContext,
+                             const std::shared_ptr<MemoryMappedFile> &metadataFile,
                              size_t& offsetBegin,
                              int ignoreFlag,
                              bool default_acl) {
@@ -106,7 +107,7 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 		AccessControlList posix_acl;
 		deserialize(ptr, size, inode, posix_acl);
 		offsetBegin += size;
-		FSNode *p = gFSOperations->nodeOperations()->idToNode(inode);
+		FSNode *p = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
@@ -137,7 +138,8 @@ static int fs_load_posix_acl(const std::shared_ptr<MemoryMappedFile> &metadataFi
 	return kSuccess;
 }
 
-static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile,
+static int fs_load_legacy_acl(const FilesystemOperationContext &fsOpContext,
+                              const std::shared_ptr<MemoryMappedFile> &metadataFile,
                               size_t& offsetBegin,
                               int ignoreFlag) {
 	try {
@@ -176,7 +178,7 @@ static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataF
 		std::unique_ptr<legacy::AccessControlList> default_acl;
 		deserialize(ptr, size, inode, extended_acl, default_acl);
 		offsetBegin += size;
-		FSNode *p = gFSOperations->nodeOperations()->idToNode(inode);
+		FSNode *p = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
@@ -205,10 +207,12 @@ static int fs_load_legacy_acl(const std::shared_ptr<MemoryMappedFile> &metadataF
 }
 
 bool fs_load_legacy_acls(MetadataLoader::Options options) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	int status;
 
 	do {
-		status = fs_load_legacy_acl(options.metadataFile, options.offset,
+		status = fs_load_legacy_acl(fsOpContext, options.metadataFile, options.offset,
 		                            options.ignoreFlag);
 		if (status < 0) {
 			return false;
@@ -218,9 +222,11 @@ bool fs_load_legacy_acls(MetadataLoader::Options options) {
 }
 
 bool fs_load_posix_acls(MetadataLoader::Options options) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	int status;
 	do {
-		status = fs_load_posix_acl(options.metadataFile, options.offset,
+		status = fs_load_posix_acl(fsOpContext, options.metadataFile, options.offset,
 		                           options.ignoreFlag, false);
 		if (status < 0) {
 			return false;
@@ -228,7 +234,7 @@ bool fs_load_posix_acls(MetadataLoader::Options options) {
 	} while (status == 0);
 
 	do {
-		status = fs_load_posix_acl(options.metadataFile, options.offset,
+		status = fs_load_posix_acl(fsOpContext, options.metadataFile, options.offset,
 		                           options.ignoreFlag, true);
 		if (status < 0) {
 			return false;
@@ -238,7 +244,8 @@ bool fs_load_posix_acls(MetadataLoader::Options options) {
 	return true;
 }
 
-int fs_load_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &offsetBegin,
+int fs_load_acl(const FilesystemOperationContext &fsOpContext,
+                const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &offsetBegin,
                 int ignoreFlag) {
 	try {
 		// Read size of the entry
@@ -275,7 +282,7 @@ int fs_load_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &o
 		RichACL acl;
 		deserialize(ptr, size, inode, acl);
 		offsetBegin += size;
-		FSNode *p = gFSOperations->nodeOperations()->idToNode(inode);
+		FSNode *p = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
 		if (!p) {
 			throw Exception("unknown inode: " + std::to_string(inode));
 		}
@@ -291,10 +298,12 @@ int fs_load_acl(const std::shared_ptr<MemoryMappedFile> &metadataFile, size_t &o
 }
 
 bool fs_load_acls(MetadataLoader::Options options) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	int s;
 
 	do {
-		s = fs_load_acl(options.metadataFile, options.offset,
+		s = fs_load_acl(fsOpContext, options.metadataFile, options.offset,
 		                options.ignoreFlag);
 		if (s < 0) { return false; }
 	} while (s == 0);

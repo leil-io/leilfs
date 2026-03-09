@@ -112,12 +112,6 @@ public:
 		return node;
 	}
 
-	/// Looks up a node by its inode.
-	template <class NodeType = FSNode>
-	NodeType *idToNode(inode_t inode) {
-		return static_cast<NodeType *>(this->idToNodeInternal(inode));
-	}
-
 	/// Looks up a node by its inode and context.
 	template <class NodeType = FSNode>
 	NodeType *idToNode(const FilesystemOperationContext &fsOpContext, inode_t inode) {
@@ -453,7 +447,8 @@ public:
 	/// The offset provided by the client (e.g., FUSE readdir) is always non-negative (sign bit 0).
 	/// Internally, the server may store offsets with the sign bit set (bit 63 = 1).
 	/// All lookups are enforced to be done ignoring the sign bit by setting it to 0.
-	virtual void getDetachedData(const HandleIndexContainer &data, uint64_t handleOffset,
+	virtual void getDetachedData(const FilesystemOperationContext &fsOpContext,
+	                             const HandleIndexContainer &data, uint64_t handleOffset,
 	                             uint32_t maxEntries, std::vector<HandleInodeEntry> &entries,
 	                             bool fromTrash) = 0;
 #endif

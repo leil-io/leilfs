@@ -874,8 +874,11 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 
 	util::ScopedTimer timer("checking filesystem consistency of the metadata file took");
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	gMetadata->root =
-	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, SPECIAL_INODE_ROOT);
 	if (gMetadata->root == nullptr) {
 		safs::log_err("error reading metadata (root node not found)");
 		return kOpFailure;
@@ -1137,15 +1140,19 @@ void MetadataBackendFile::storeedgelist(FSNodeDirectory *parent, FILE *fd) {
 }
 
 void MetadataBackendFile::storeedgelist(const TrashPathContainer &data, FILE *fd) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first.id);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.first.id);
 		storeedge(nullptr, child, (std::string)entry.second, fd);
 	}
 }
 
 void MetadataBackendFile::storeedgelist(const ReservedPathContainer &data, FILE *fd) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.first);
 		storeedge(nullptr, child, (std::string)entry.second, fd);
 	}
 }

@@ -144,15 +144,19 @@ void fs_dumpedgelist(FSNodeDirectory *parent) {
 }
 
 void fs_dumpedgelist(const TrashPathContainer &data) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first.id);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.first.id);
 		fs_dumpedge(nullptr, child, (std::string)entry.second);
 	}
 }
 
 void fs_dumpedgelist(const ReservedPathContainer &data) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.first);
 		fs_dumpedge(nullptr, child, (std::string)entry.second);
 	}
 }

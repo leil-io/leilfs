@@ -1016,11 +1016,13 @@ public:
 	                        inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
 	                        inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
 	                        inode_t *linkNodes) = 0;
-	virtual uint32_t getDirPathSize(inode_t inode) = 0;
-	virtual void getDirPathData(inode_t inode, uint8_t *buff, uint32_t size) = 0;
+	virtual uint32_t getDirPathSize(const FilesystemOperationContext &fsOpContext,
+	                                inode_t inode) = 0;
+	virtual void getDirPathData(const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                            uint8_t *buff, uint32_t size) = 0;
 	virtual uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) = 0;
-	virtual uint8_t readChunk(inode_t inode, uint32_t indx, uint64_t *chunkid,
-	                          uint64_t *length) = 0;
+	virtual uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                          uint32_t indx, uint64_t *chunkid, uint64_t *length) = 0;
 	virtual uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                         uint64_t length, uint64_t chunkid, uint32_t lockid) = 0;
 	virtual void getTrashTimeStore(TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes,
@@ -1033,21 +1035,22 @@ public:
 	virtual void readReservedData(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) = 0;
 	virtual void readReserved(uint32_t off, uint32_t max_entries,
 	                          std::vector<NamedInodeEntry> &entries) = 0;
-	virtual void readReserved(uint64_t handleOffset, uint32_t maxEntries,
-	                          std::vector<HandleInodeEntry> &entries) = 0;
+	virtual void readReserved(const FilesystemOperationContext &fsOpContext, uint64_t handleOffset,
+	                          uint32_t maxEntries, std::vector<HandleInodeEntry> &entries) = 0;
 
 	// TRASH
 	virtual uint8_t readTrashSize(inode_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) = 0;
 	virtual void readTrashData(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) = 0;
 	virtual void readTrash(uint32_t off, uint32_t max_entries,
 	                       std::vector<NamedInodeEntry> &entries) = 0;
-	virtual void readTrash(uint64_t handleOffset, uint32_t maxEntries,
-	                       std::vector<HandleInodeEntry> &entries) = 0;
-	virtual uint8_t getTrashPath(inode_t rootinode, uint8_t sesflags, inode_t inode,
-	                             std::string &path) = 0;
+	virtual void readTrash(const FilesystemOperationContext &fsOpContext, uint64_t handleOffset,
+	                       uint32_t maxEntries, std::vector<HandleInodeEntry> &entries) = 0;
+	virtual uint8_t getTrashPath(const FilesystemOperationContext &fsOpContext, inode_t rootinode,
+	                             uint8_t sesflags, inode_t inode, std::string &path) = 0;
 
 	// RESERVED+TRASH
-	virtual uint8_t getDetachedAttr(inode_t rootinode, uint8_t sesflags, inode_t inode,
+	virtual uint8_t getDetachedAttr(const FilesystemOperationContext &fsOpContext,
+	                                inode_t rootinode, uint8_t sesflags, inode_t inode,
 	                                Attributes &attr, uint8_t dtype) = 0;
 
 	// EXTRA
@@ -1063,7 +1066,8 @@ public:
 
 	virtual uint8_t fullPathByInode(const FsContext &context, inode_t inode,
 	                                std::string &fullPath) = 0;
-	virtual std::string fullPathByInode(inode_t initialInode) = 0;
+	virtual std::string fullPathByInode(const FilesystemOperationContext &fsOpContext,
+	                                    inode_t initialInode) = 0;
 
 #endif
 
@@ -1206,10 +1210,11 @@ public:
 
 	// Functions which apply changes from changelog, only for shadow master and metarestore
 	virtual uint8_t applyChecksum(const std::string &version, uint64_t checksum) = 0;
-	virtual uint8_t applyCreate(uint32_t timestamp, inode_t parent, const HString &name,
-	                            FSNodeType type, uint32_t mode, uint32_t uid, uint32_t gid,
-	                            uint32_t rdev, inode_t inode) = 0;
-	virtual uint8_t applyAccess(uint32_t timestamp, inode_t inode) = 0;
+	virtual uint8_t applyCreate(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                            inode_t parent, const HString &name, FSNodeType type, uint32_t mode,
+	                            uint32_t uid, uint32_t gid, uint32_t rdev, inode_t inode) = 0;
+	virtual uint8_t applyAccess(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                            inode_t inode) = 0;
 	virtual uint8_t applyAttr(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
 	                          inode_t inode, uint32_t mode, uint32_t uid, uint32_t gid,
 	                          uint32_t atime, uint32_t mtime) = 0;
@@ -1255,11 +1260,11 @@ public:
 	                                uint32_t timestamp, inode_t inode,
 	                                const std::string &acl_string) = 0;
 
-	virtual uint8_t applyUnlink(uint32_t timestamp, inode_t parent, const HString &name,
-	                            inode_t inode) = 0;
+	virtual uint8_t applyUnlink(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                            inode_t parent, const HString &name, inode_t inode) = 0;
 	virtual uint8_t applyUnlock(uint64_t chunkid) = 0;
-	virtual uint8_t applyTrunc(uint32_t timestamp, inode_t inode, uint32_t indx, uint64_t chunkid,
-	                           uint32_t lockid) = 0;
+	virtual uint8_t applyTrunc(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
+	                           inode_t inode, uint32_t indx, uint64_t chunkid, uint32_t lockid) = 0;
 
 	/// Replays a SETQUOTA changelog entry during metadata restore.
 	///

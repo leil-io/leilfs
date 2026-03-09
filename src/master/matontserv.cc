@@ -341,7 +341,10 @@ void matontserv_get_path_type_inode(MatontservEntry *eptr, const uint8_t *data, 
 
 	inode_t inode = static_cast<inode_t>(responseInode);
 	std::string pathByInode;
-	FSNode *node = invalidInode ? nullptr : gFSOperations->nodeOperations()->idToNode(inode);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	FSNode *node =
+	    invalidInode ? nullptr : gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
 	if (node == nullptr) {
 		safs::log_info("NTTOMA_GET_PATH_TYPE_INODE - inode {} not found", responseInode);
 		// Send back an empty path
@@ -353,7 +356,7 @@ void matontserv_get_path_type_inode(MatontservEntry *eptr, const uint8_t *data, 
 		return;
 	}
 
-	pathByInode = gFSOperations->fullPathByInode(inode);
+	pathByInode = gFSOperations->fullPathByInode(fsOpContext, inode);
 	responseData =
 	    matontserv_addpacket(eptr, MATONT_GET_PATH_TYPE_INODE,
 	                         sizeof(responseInode) + sizeof(node->type) + pathByInode.size() + 1);
