@@ -40,7 +40,7 @@ static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<Qu
 	    FilesystemOperationContext::TransactionType::kReadOnly);
 
 	FSNodeDirectory *root_node =
-	    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(root_inode);
+	    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(fsOpContext, root_inode);
 
 	auto it = std::remove_if(
 	    results.begin(), results.end(), [&fsOpContext, root_node](const QuotaEntry &entry) {
@@ -49,14 +49,15 @@ static void fs_remove_invisible_quota_entries(inode_t root_inode, std::vector<Qu
 			        fsOpContext, entry.entryKey.owner.ownerId);
 			    if (!node) { return true; }
 			    if (root_node->id == entry.entryKey.owner.ownerId) { return false; }
-			    return !gFSOperations->nodeOperations()->isAncestor(root_node, node);
+			    return !gFSOperations->nodeOperations()->isAncestor(fsOpContext, root_node, node);
 		    }
 		    return false;
 	    });
 	results.erase(it, results.end());
 }
 
-static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) {
+static void fsnodes_getpath(const FilesystemOperationContext &fsOpContext, inode_t root_inode,
+                            FSNode *node, std::string &ret) {
 	std::string::size_type size;
 	FSNode *p;
 
@@ -69,8 +70,8 @@ static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) 
 	size = 0;
 	while (p != gMetadata->root && !p->parents.empty() && p->id != root_inode) {
 		// get first parent
-		auto *parent =
-		    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(p->parents[0].first);
+		auto *parent = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
+		    fsOpContext, p->parents[0].first);
 		size += parent->getChildName(p).length() + 1;
 		p = parent;
 	}
@@ -83,8 +84,8 @@ static void fsnodes_getpath(inode_t root_inode, FSNode *node, std::string &ret) 
 
 	p = node;
 	while (p != gMetadata->root && !p->parents.empty()) {
-		auto *parent =
-		    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(p->parents[0].first);
+		auto *parent = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
+		    fsOpContext, p->parents[0].first);
 		std::string name = parent->getChildName(p);
 		if (size >= name.length()) {
 			size -= name.length();
@@ -205,22 +206,18 @@ uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry
 		if (entry.entryKey.owner.ownerType == QuotaOwnerType::kInode) {
 			FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext,
 			                                                         entry.entryKey.owner.ownerId);
-			if (node) {
-				fsnodes_getpath(context.rootinode(), node, info);
-			}
+			if (node) { fsnodes_getpath(fsOpContext, context.rootinode(), node, info); }
 		}
 		result.push_back(info);
 	}
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &entries) {
+uint8_t fs_quota_set(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+                     const std::vector<QuotaEntry> &entries) {
 	static const char rigor_name[3] = {'S', 'H', 'U'};
 	static const char resource_name[2] = {'I', 'S'};
 	static const char owner_name[3] = {'U', 'G', 'I'};
-
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
 
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
@@ -282,11 +279,13 @@ uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, inode_t ow
 }
 }  // namespace quotas
 
-static int fsnodes_find_depth(FSNodeDirectory *a) {
+static int fsnodes_find_depth(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *a) {
 	assert(a);
+
 	int depth = 1;
 	while (!a->parents.empty()) {
-		a = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(a->parents[0].first);
+		a = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(fsOpContext,
+		                                                                     a->parents[0].first);
 		++depth;
 	}
 
@@ -300,27 +299,29 @@ static int fsnodes_find_depth(FSNodeDirectory *a) {
  * If the nodes are files with many hard links,
  * then it's possible that this function will fail.
  *
+ * \param fsOpContext Filesystem operation context with a potential transaction.
  *  \return Pointer to common ancestor.
  */
-static FSNode *fsnodes_find_common_ancestor(FSNodeDirectory *a, FSNodeDirectory *b) {
+static FSNode *fsnodes_find_common_ancestor(const FilesystemOperationContext &fsOpContext,
+                                            FSNodeDirectory *a, FSNodeDirectory *b) {
 	if (!a || !b) {
 		return nullptr;
 	}
 
-	int depth_a = fsnodes_find_depth(a);
-	int depth_b = fsnodes_find_depth(b);
+	int depth_a = fsnodes_find_depth(fsOpContext, a);
+	int depth_b = fsnodes_find_depth(fsOpContext, b);
 
 	if (depth_a > depth_b) {
 		for(;depth_a > depth_b;--depth_a) {
 			assert(a && !a->parents.empty());
 			a = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
-			    a->parents[0].first);
+			    fsOpContext, a->parents[0].first);
 		}
 	} else if (depth_b > depth_a) {
 		for(;depth_b > depth_a;--depth_b) {
 			assert(b && !b->parents.empty());
 			b = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
-			    b->parents[0].first);
+			    fsOpContext, b->parents[0].first);
 		}
 	}
 
@@ -331,8 +332,10 @@ static FSNode *fsnodes_find_common_ancestor(FSNodeDirectory *a, FSNodeDirectory 
 	while(!a->parents.empty()) {
 		assert(!b->parents.empty());
 
-		a = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(a->parents[0].first);
-		b = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(b->parents[0].first);
+		a = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(fsOpContext,
+		                                                                     a->parents[0].first);
+		b = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(fsOpContext,
+		                                                                     b->parents[0].first);
 
 		if (a == b) {
 			return a;
@@ -395,8 +398,9 @@ bool fsnodes_quota_exceeded_ug(FSNode *node,
 	return fsnodes_quota_exceeded_ug(node->uid, node->gid, resource_list);
 }
 
-bool fsnodes_quota_exceeded_dir(FSNode *node,
-		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
+bool fsnodes_quota_exceeded_dir(
+    const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
 	if (!node) {
 		return false;
 	}
@@ -409,7 +413,7 @@ bool fsnodes_quota_exceeded_dir(FSNode *node,
 		// Directory can have only one parent, so we get rid of recursion.
 		while(!node->parents.empty()) {
 			auto *parent = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
-			    node->parents[0].first);
+			    fsOpContext, node->parents[0].first);
 			if (fsnodes_test_dir_quota_noparents(parent, resource_list)) {
 				return true;
 			}
@@ -417,24 +421,22 @@ bool fsnodes_quota_exceeded_dir(FSNode *node,
 		}
 	} else {
 		for (const auto &[parentId, _] : node->parents) {
-			auto *parent =
-			    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(parentId);
-			if (fsnodes_quota_exceeded_dir(parent, resource_list)) {
-				return true;
-			}
+			auto *parent = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
+			    fsOpContext, parentId);
+			if (fsnodes_quota_exceeded_dir(fsOpContext, parent, resource_list)) { return true; }
 		}
 	}
 
 	return false;
 }
 
-bool fsnodes_quota_exceeded_dir(FSNodeDirectory *node, FSNodeDirectory* prev_node,
-		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
+bool fsnodes_quota_exceeded_dir(
+    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+    FSNodeDirectory *prev_node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
 	// Because nodes are directories fsnodes_find_common_ancestor
 	// is guaranteed to work properly.
-	FSNode *common = fsnodes_find_common_ancestor(prev_node, node);
+	FSNode *common = fsnodes_find_common_ancestor(fsOpContext, prev_node, node);
 	if (node == common) {
 		return false;
 	}
@@ -462,10 +464,11 @@ bool fsnodes_quota_exceeded_dir(FSNodeDirectory *node, FSNodeDirectory* prev_nod
 	return false;
 }
 
-bool fsnodes_quota_exceeded(FSNode *node,
-		const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
+bool fsnodes_quota_exceeded(
+    const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list) {
 	return fsnodes_quota_exceeded_ug(node, resource_list) ||
-	       fsnodes_quota_exceeded_dir(node, resource_list);
+	       fsnodes_quota_exceeded_dir(fsOpContext, node, resource_list);
 }
 
 void fsnodes_quota_update(FSNode *node,

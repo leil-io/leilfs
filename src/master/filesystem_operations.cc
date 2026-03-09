@@ -1497,7 +1497,7 @@ uint8_t FilesystemOperationsBase::recursiveRemove(const FsContext &context, inod
 
 	std::string node_name;
 
-	nodeOperations_->getPath(static_cast<FSNodeDirectory *>(wd_tmp), child, node_name);
+	nodeOperations_->getPath(fsOpContext, static_cast<FSNodeDirectory *>(wd_tmp), child, node_name);
 	return gMetadata->taskManager.submitTask(job_id, context.ts(), kInitialTaskBatchSize, task,
 	                                         RemoveTask::generateDescription(node_name), callback);
 }
@@ -1651,7 +1651,8 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 	std::array<int64_t, 2> quota_delta = {{1, 1}};
 
 	if (sourceChildNode->type == FSNodeType::kDirectory) {
-		if (nodeOperations_->isAncestor(static_cast<FSNodeDirectory *>(sourceChildNode),
+		if (nodeOperations_->isAncestor(fsOpContext,
+		                                static_cast<FSNodeDirectory *>(sourceChildNode),
 		                                destWorkDir)) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
@@ -2892,8 +2893,8 @@ uint8_t FilesystemOperationsBase::setGoal(const FsContext &context, inode_t inod
 	auto task = new SetGoalTask({p->id}, context.uid(), goal,
 							  smode, setgoal_stats);
 	std::string node_name;
-	FSNodeDirectory *parent = nodeOperations_->getFirstParent(p);
-	nodeOperations_->getPath(parent, p, node_name);
+	FSNodeDirectory *parent = nodeOperations_->getFirstParent(fsOpContext, p);
+	nodeOperations_->getPath(fsOpContext, parent, p, node_name);
 
 	std::string goal_name;
 #ifndef METARESTORE
@@ -2983,8 +2984,8 @@ uint8_t FilesystemOperationsBase::setTrashTime(
 	auto task = new SetTrashtimeTask({p->id}, context.uid(), trashtime,
 							  smode, settrashtime_stats);
 	std::string node_name;
-	FSNodeDirectory *parent = nodeOperations_->getFirstParent(p);
-	nodeOperations_->getPath(parent, p, node_name);
+	FSNodeDirectory *parent = nodeOperations_->getFirstParent(fsOpContext, p);
+	nodeOperations_->getPath(fsOpContext, parent, p, node_name);
 	return gMetadata->taskManager.submitTask(context.ts(), kInitialTaskBatchSize,
 	                                          task, SetTrashtimeTask::generateDescription(node_name, trashtime),
 	                                          callback);
@@ -3398,9 +3399,10 @@ uint32_t FilesystemOperationsBase::getDirPathSize(const FilesystemOperationConte
 		} else {
 			FSNodeDirectory *parent = nullptr;
 			if (!node->parents.empty()) {
-				parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(node->parents[0].first);
+				parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext,
+				                                                          node->parents[0].first);
 			}
-			return 1 + nodeOperations_->getPathSize(parent, node);
+			return 1 + nodeOperations_->getPathSize(fsOpContext, parent, node);
 		}
 	} else {
 		return 11;  // "(not found)"
@@ -3422,12 +3424,12 @@ void FilesystemOperationsBase::getDirPathData(const FilesystemOperationContext &
 			if (size > 0) {
 				FSNodeDirectory *parent = nullptr;
 				if (!node->parents.empty()) {
-					parent =
-					    nodeOperations_->idToNodeVerify<FSNodeDirectory>(node->parents[0].first);
+					parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(
+					    fsOpContext, node->parents[0].first);
 				}
 
 				buff[0] = '/';
-				nodeOperations_->getPathData(parent, node, buff + 1, size - 1);
+				nodeOperations_->getPathData(fsOpContext, parent, node, buff + 1, size - 1);
 				return;
 			}
 		}
@@ -3611,22 +3613,21 @@ bool FilesystemOperationsBase::quotaExceededUg(
 }
 
 bool FilesystemOperationsBase::quotaExceededDir(
-    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const FilesystemOperationContext &fsOpContext, FSNode *node,
     const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
-	return fsnodes_quota_exceeded_dir(node, resourceList);
+	return fsnodes_quota_exceeded_dir(fsOpContext, node, resourceList);
 }
 
 bool FilesystemOperationsBase::quotaExceededDirMove(
-    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
-    FSNodeDirectory *prevNode,
+    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node, FSNodeDirectory *prevNode,
     const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
-	return fsnodes_quota_exceeded_dir(node, prevNode, resourceList);
+	return fsnodes_quota_exceeded_dir(fsOpContext, node, prevNode, resourceList);
 }
 
 bool FilesystemOperationsBase::quotaExceeded(
-    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const FilesystemOperationContext &fsOpContext, FSNode *node,
     const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
-	return fsnodes_quota_exceeded(node, resourceList);
+	return fsnodes_quota_exceeded(fsOpContext, node, resourceList);
 }
 
 void FilesystemOperationsBase::quotaUpdate(
@@ -3653,10 +3654,10 @@ uint8_t FilesystemOperationsBase::quotaGet(const FsContext &context,
 	return quotas::fs_quota_get(context, owners, results);
 }
 
-uint8_t FilesystemOperationsBase::quotaSet(
-    const FsContext &context, [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
-    const std::vector<QuotaEntry> &entries) {
-	return quotas::fs_quota_set(context, entries);
+uint8_t FilesystemOperationsBase::quotaSet(const FsContext &context,
+                                           const FilesystemOperationContext &fsOpContext,
+                                           const std::vector<QuotaEntry> &entries) {
+	return quotas::fs_quota_set(context, fsOpContext, entries);
 }
 
 uint8_t FilesystemOperationsBase::quotaGetInfo(const FsContext &context,

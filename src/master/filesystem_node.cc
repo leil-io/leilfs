@@ -142,7 +142,8 @@ uint64_t FilesystemNodeOperationsBase::fileRealSize(FSNodeFile *node, uint32_t n
 
 // Protected methods
 
-FSNode *FilesystemNodeOperationsBase::idToNodeInternal(inode_t inode) const {
+FSNode *FilesystemNodeOperationsBase::idToNodeInternal(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode) const {
 	// Find the node with the given id
 	uint32_t nodeHashIndex = NODEHASHPOS(inode);
 
@@ -151,12 +152,6 @@ FSNode *FilesystemNodeOperationsBase::idToNodeInternal(inode_t inode) const {
 	}
 
 	return nullptr;
-}
-
-FSNode *FilesystemNodeOperationsBase::idToNodeInternal(
-    const FilesystemOperationContext &fsOpContext, inode_t inode) const {
-	(void)fsOpContext;  // Unused parameter in this implementation
-	return idToNodeInternal(inode);
 }
 
 void FilesystemNodeOperationsBase::incrementNodeCounters(
@@ -286,9 +281,10 @@ bool FilesystemNodeOperationsBase::isNameUsed(const FilesystemOperationContext &
 	return lookup(fsOpContext, node, name, isCaseInsensitive) != nullptr;
 }
 
-bool FilesystemNodeOperationsBase::isAncestor(FSNodeDirectory *ancestor, FSNode *node) {
+bool FilesystemNodeOperationsBase::isAncestor(const FilesystemOperationContext &fsOpContext,
+                                              FSNodeDirectory *ancestor, FSNode *node) {
 	for (const auto &[parentId, _] : node->parents) {
-		auto *dirNode = idToNodeVerify<FSNodeDirectory>(parentId);
+		auto *dirNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 
 		while (dirNode != nullptr) {
 			if (ancestor == dirNode) { return true; }
@@ -296,7 +292,7 @@ bool FilesystemNodeOperationsBase::isAncestor(FSNodeDirectory *ancestor, FSNode 
 			assert(dirNode->parents.size() <= 1);
 
 			if (!dirNode->parents.empty()) {
-				dirNode = idToNodeVerify<FSNodeDirectory>(dirNode->parents[0].first);
+				dirNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, dirNode->parents[0].first);
 			} else {
 				dirNode = nullptr;
 			}
@@ -306,14 +302,14 @@ bool FilesystemNodeOperationsBase::isAncestor(FSNodeDirectory *ancestor, FSNode 
 	return false;
 }
 
-bool FilesystemNodeOperationsBase::isAncestorOrNodeReservedOrTrash(FSNodeDirectory *ancestor,
-                                                                   FSNode *node) {
+bool FilesystemNodeOperationsBase::isAncestorOrNodeReservedOrTrash(
+    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *ancestor, FSNode *node) {
 	// Return true if file is reserved:
 	if (node && (node->type == FSNodeType::kReserved || node->type == FSNodeType::kTrash)) {
 		return true;
 	}
 	// Or if ancestor is ancestor of node
-	return isAncestor(ancestor, node);
+	return isAncestor(fsOpContext, ancestor, node);
 }
 
 // stats
@@ -375,10 +371,13 @@ uint64_t FilesystemNodeOperationsBase::getNumberOfParents(
 	return node->parents.size();
 }
 
-FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(FSNode *node) {
+FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(
+    const FilesystemOperationContext &fsOpContext, FSNode *node) {
 	assert(node);
 
-	if (!node->parents.empty()) { return idToNodeVerify<FSNodeDirectory>(node->parents[0].first); }
+	if (!node->parents.empty()) {
+		return idToNodeVerify<FSNodeDirectory>(fsOpContext, node->parents[0].first);
+	}
 
 	return gMetadata->root;
 }
@@ -765,7 +764,8 @@ void FilesystemNodeOperationsBase::updateNode(
 	// Default implementation does nothing, it is not needed for the in-memory backend
 }
 
-uint32_t FilesystemNodeOperationsBase::getPathSize(FSNodeDirectory *parent, FSNode *child) {
+uint32_t FilesystemNodeOperationsBase::getPathSize(const FilesystemOperationContext &fsOpContext,
+                                                   FSNodeDirectory *parent, FSNode *child) {
 	if (parent == nullptr || child == nullptr) {
 		return 0;
 	}
@@ -776,7 +776,7 @@ uint32_t FilesystemNodeOperationsBase::getPathSize(FSNodeDirectory *parent, FSNo
 	while (parent != gMetadata->root && !parent->parents.empty()) {
 		child = parent;
 		assert(child->parents.size() == 1);
-		parent = idToNodeVerify<FSNodeDirectory>(child->parents[0].first);
+		parent = idToNodeVerify<FSNodeDirectory>(fsOpContext, child->parents[0].first);
 		name = parent->getChildName(child);
 		size += name.length() + 1;
 	}
@@ -784,7 +784,8 @@ uint32_t FilesystemNodeOperationsBase::getPathSize(FSNodeDirectory *parent, FSNo
 	return size;
 }
 
-void FilesystemNodeOperationsBase::getPathData(FSNodeDirectory *parent, FSNode *child,
+void FilesystemNodeOperationsBase::getPathData(const FilesystemOperationContext &fsOpContext,
+                                               FSNodeDirectory *parent, FSNode *child,
                                                uint8_t *path, uint32_t size) {
 	if (parent == nullptr || child == nullptr) {
 		return;
@@ -807,7 +808,7 @@ void FilesystemNodeOperationsBase::getPathData(FSNodeDirectory *parent, FSNode *
 	while (parent != gMetadata->root && !parent->parents.empty()) {
 		child = parent;
 		assert(child->parents.size() == 1);
-		parent = idToNodeVerify<FSNodeDirectory>(child->parents[0].first);
+		parent = idToNodeVerify<FSNodeDirectory>(fsOpContext, child->parents[0].first);
 		name = parent->getChildName(child);
 
 		if (size >= name.length()) {
@@ -824,9 +825,10 @@ void FilesystemNodeOperationsBase::getPathData(FSNodeDirectory *parent, FSNode *
 	}
 }
 
-void FilesystemNodeOperationsBase::getPath(FSNodeDirectory *parent, FSNode *child,
+void FilesystemNodeOperationsBase::getPath(const FilesystemOperationContext &fsOpContext,
+                                           FSNodeDirectory *parent, FSNode *child,
                                            std::string &path) {
-	uint32_t size = getPathSize(parent, child);
+	uint32_t size = getPathSize(fsOpContext, parent, child);
 
 	if (size > FSNode::kEdgeNameMaxSize) {
 		safs::log_warn("path too long !!! - truncate");
@@ -835,7 +837,7 @@ void FilesystemNodeOperationsBase::getPath(FSNodeDirectory *parent, FSNode *chil
 
 	path.resize(size);
 
-	getPathData(parent, child, (uint8_t *)path.data(), size);
+	getPathData(fsOpContext, parent, child, (uint8_t *)path.data(), size);
 }
 
 #ifndef METARESTORE
@@ -1083,7 +1085,7 @@ void FilesystemNodeOperationsBase::getDirData(const FilesystemOperationContext &
 		// parent attributes
 		if (withAttr) {
 			if (!nodeDir->parents.empty()) {
-				auto *parent = idToNodeVerify<FSNode>(nodeDir->parents[0].first);
+				auto *parent = idToNodeVerify<FSNode>(fsOpContext, nodeDir->parents[0].first);
 				fillAttr(fsOpContext, parent, nodeDir, uid, gid, auid, agid, sesflags, attr);
 				::memcpy(outBuffer, attr.data(), attr.size());
 			} else {
@@ -1144,7 +1146,6 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
                                           FSNodeDirectory *nodeDir, uint64_t firstEntry,
                                           uint64_t numberOfEntries,
                                           std::vector<DirectoryEntry> &dirEntriesOut) {
-	(void)fsOpContext;  // unused in this implementation
 	sassert(!(firstEntry & kSignBit64));
 
 	FSNodeDirectory *parent;
@@ -1155,7 +1156,7 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 	if (firstEntry == kDotEntryIndex && numberOfEntries >= 1) {
 		inode = nodeDir->id != rootINode ? nodeDir->id : SPECIAL_INODE_ROOT;
 		parent = idToNodeVerify<FSNodeDirectory>(
-		    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
+		    fsOpContext, nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
 		fillAttr(fsOpContext, nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
 		dirEntriesOut.emplace_back(kDotEntryIndex, kDotDotEntryIndex, inode, ".", attr);
 
@@ -1167,8 +1168,9 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 	if (firstEntry == kDotDotEntryIndex && numberOfEntries >= 1) {
 		if (nodeDir->id == rootINode) {
 			inode = SPECIAL_INODE_ROOT;
-			parent = idToNodeVerify<FSNodeDirectory>(
-			    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
+			parent = idToNodeVerify<FSNodeDirectory>(fsOpContext, nodeDir->parents.empty()
+			                                                          ? SPECIAL_INODE_ROOT
+			                                                          : nodeDir->parents[0].first);
 			fillAttr(fsOpContext, nodeDir, parent, uid, gid, auid, agid, sesflags, attr);
 		} else {
 			if (!nodeDir->parents.empty() && nodeDir->parents[0].first != rootINode) {
@@ -1177,9 +1179,11 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 				inode = SPECIAL_INODE_ROOT;
 			}
 
-			parent = idToNodeVerify<FSNodeDirectory>(
-			    nodeDir->parents.empty() ? SPECIAL_INODE_ROOT : nodeDir->parents[0].first);
+			parent = idToNodeVerify<FSNodeDirectory>(fsOpContext, nodeDir->parents.empty()
+			                                                          ? SPECIAL_INODE_ROOT
+			                                                          : nodeDir->parents[0].first);
 			auto *grandparent = idToNodeVerify<FSNodeDirectory>(
+			    fsOpContext,
 			    parent->parents.empty() ? SPECIAL_INODE_ROOT : parent->parents[0].first);
 			fillAttr(fsOpContext, parent, grandparent, uid, gid, auid, agid, sesflags, attr);
 		}
@@ -1513,7 +1517,7 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 		if (childNode->type == FSNodeType::kFile &&
 		    (childNode->trashtime > 0 ||
 		     !static_cast<FSNodeFile *>(childNode)->sessionIds.empty())) {
-			getPath(parent, childNode, path);
+			getPath(fsOpContext, parent, childNode, path);
 		}
 	}
 
@@ -2243,7 +2247,7 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(
 
 			if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 
-			if (!isAncestorOrNodeReservedOrTrash(candidateRoot, candidateNode)) {
+			if (!isAncestorOrNodeReservedOrTrash(fsOpContext, candidateRoot, candidateNode)) {
 				return SAUNAFS_ERROR_EPERM;
 			}
 		}

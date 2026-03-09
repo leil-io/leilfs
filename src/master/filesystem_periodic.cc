@@ -93,11 +93,12 @@ void fs_background_task_manager_work() {
 	}
 }
 
-static std::string get_node_info(FSNode *node) {
+static std::string get_node_info(const FilesystemOperationContext &fsOpContext, FSNode *node) {
 	std::string name;
 	if (node == nullptr) {
 		return name;
 	}
+
 	if (node->type == FSNodeType::kTrash) {
 		name = "file in trash " + std::to_string(node->id) + ": " +
 		       (std::string)gMetadata->trash.at(TrashPathKey(node));
@@ -109,9 +110,9 @@ static std::string get_node_info(FSNode *node) {
 		bool first = true;
 		for (const auto &[parentId, _] : node->parents) {
 			std::string path;
-			auto *parent =
-			    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(parentId);
-			gFSOperations->nodeOperations()->getPath(parent, node, path);
+			auto *parent = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
+			    fsOpContext, parentId);
+			gFSOperations->nodeOperations()->getPath(fsOpContext, parent, node, path);
 			if (!first) {
 				name += "|" + path;
 			} else {
@@ -125,9 +126,9 @@ static std::string get_node_info(FSNode *node) {
 		FSNodeDirectory *parent = nullptr;
 		if (!node->parents.empty()) {
 			parent = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeDirectory>(
-			    node->parents.front().first);
+			    fsOpContext, node->parents.front().first);
 		}
-		gFSOperations->nodeOperations()->getPath(parent, node, path);
+		gFSOperations->nodeOperations()->getPath(fsOpContext, parent, node, path);
 		name += path;
 	}
 
@@ -147,7 +148,7 @@ std::vector<DefectiveFileInfo> fs_get_defective_nodes_info(uint8_t requested_fla
 	for (uint64_t i = 0; i < max_entries && it != gDefectiveNodes.end(); ++it) {
 		if (((*it).second & requested_flags) != 0) {
 			node = gFSOperations->nodeOperations()->idToNode<FSNode>(fsOpContext, (*it).first);
-			std::string info = get_node_info(node);
+			std::string info = get_node_info(fsOpContext, node);
 			defective_nodes_info.emplace_back(std::move(info), (*it).second);
 			++i;
 		}
@@ -211,7 +212,7 @@ void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, ino
 		if (entry.second & kChunkUnavailable) {
 			assert(node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			       node->type == FSNodeType::kReserved);
-			std::string name = get_node_info(node);
+			std::string name = get_node_info(fsOpContext, node);
 			if (node->type == FSNodeType::kTrash) {
 				report << "-";
 			} else if (node->type == FSNodeType::kReserved) {
@@ -228,7 +229,7 @@ void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, ino
 		}
 
 		if (entry.second & kStructureError) {
-			std::string name = get_node_info(node);
+			std::string name = get_node_info(fsOpContext, node);
 			report << "Structure error in " << name << "\n";
 			errors++;
 		}
@@ -328,6 +329,8 @@ void fs_process_file_test() {
 	uint32_t k;
 	uint8_t vc, node_error_flag;
 	ActiveLoopWatchdog watchdog;
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 
 	static inode_t files = 0;
 	static inode_t ugfiles = 0;
@@ -464,7 +467,7 @@ void fs_process_file_test() {
 
 				auto it = gDefectiveNodes.find(node->id);
 				if (it == gDefectiveNodes.end()) {
-					std::string name = get_node_info(node);
+					std::string name = get_node_info(fsOpContext, node);
 					safs::log_trace("Chunks unavailable in {}",
 					                   name);
 				}
@@ -475,7 +478,7 @@ void fs_process_file_test() {
 			if (node_error_flag & kStructureError) {
 				auto it = gDefectiveNodes.find(node->id);
 				if (it == gDefectiveNodes.end()) {
-					std::string name = get_node_info(node);
+					std::string name = get_node_info(fsOpContext, node);
 					safs_pretty_syslog(LOG_ERR, "Structure error in %s",
 					                   name.c_str());
 				}

@@ -173,9 +173,12 @@ public:
 #endif
 
 	// Path operations
-	void getPath(FSNodeDirectory *parent, FSNode *child, std::string &path) override;
-	uint32_t getPathSize(FSNodeDirectory *parent, FSNode *child) override;
-	void getPathData(FSNodeDirectory *parent, FSNode *child, uint8_t *path, uint32_t size) override;
+	void getPath(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	             FSNode *child, std::string &path) override;
+	uint32_t getPathSize(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                     FSNode *child) override;
+	void getPathData(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                 FSNode *child, uint8_t *path, uint32_t size) override;
 	std::string escapeName(const std::string &name) override;
 
 	// ACL operations
@@ -256,23 +259,21 @@ protected:
 
 	/// Returns true if \a ancestor is ancestor of \a node.
 	/// @see IFilesystemNodeOperations::isAncestor
-	bool isAncestor(FSNodeDirectory *ancestor, FSNode *node) override;
+	bool isAncestor(const FilesystemOperationContext &fsOpContext,
+	                FSNodeDirectory *ancestor, FSNode *node) override;
 
 	/// Returns true if \a node is reserved or in trash or \a ancestor is ancestor of \a node.
 	/// @see IFilesystemNodeOperations::isAncestorOrNodeReservedOrTrash
-	bool isAncestorOrNodeReservedOrTrash(FSNodeDirectory *ancestor, FSNode *node) override;
+	bool isAncestorOrNodeReservedOrTrash(const FilesystemOperationContext &fsOpContext,
+	                                    FSNodeDirectory *ancestor, FSNode *node) override;
 
-	FSNodeDirectory *getFirstParent(FSNode *node) override;
+	FSNodeDirectory *getFirstParent(const FilesystemOperationContext &fsOpContext,
+	                                FSNode *node) override;
 
 	/// Returns the IDs of all parents of the given node.
 	/// @see IFilesystemNodeOperations::getParentIds
 	std::vector<inode_t> getParentIds(
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) override;
-
-protected:
-	/// Internal node lookup operation - override in subclasses for custom storage.
-	/// @see IFilesystemNodeOperations::idToNodeInternal
-	FSNode *idToNodeInternal(inode_t inode) const override;
 
 	/// Internal node lookup operation with context - override in subclasses for custom storage.
 	/// @see IFilesystemNodeOperations::idToNodeInternal
