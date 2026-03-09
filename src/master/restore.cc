@@ -480,19 +480,31 @@ int do_lock_op(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) 
 
 	int status = SAUNAFS_STATUS_OK;
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	switch (static_cast<safs_locks::Type>(lock_type)) {
 	case safs_locks::Type::kFlock:
-		status = gFSOperations->flockOperation(FsContext::getForRestore(ts), inode, owner,
-		                                       sessionid, 0, 0, op, nonblocking, dummy_applied);
+		status =
+		    gFSOperations->flockOperation(FsContext::getForRestore(ts), fsOpContext, inode, owner,
+		                                  sessionid, 0, 0, op, nonblocking, dummy_applied);
 		break;
 	case safs_locks::Type::kPosix:
-		status = gFSOperations->posixLockOperation(FsContext::getForRestore(ts), inode, start, end,
-		                                           owner, sessionid, 0, 0, op, nonblocking,
-		                                           dummy_applied);
+		status = gFSOperations->posixLockOperation(FsContext::getForRestore(ts), fsOpContext, inode,
+		                                           start, end, owner, sessionid, 0, 0, op,
+		                                           nonblocking, dummy_applied);
 		break;
 	default:
 		safs_pretty_syslog(LOG_ERR, "Invalid lock type passed to restore: %u", lock_type);
 		return SAUNAFS_ERROR_EINVAL;
+	}
+
+	if ((status == SAUNAFS_STATUS_OK || status == SAUNAFS_ERROR_WAITING) &&
+	    fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
 	}
 
 	if (status==SAUNAFS_ERROR_WAITING) {
@@ -520,8 +532,20 @@ int do_remove_pending_op(const char *filename, uint64_t lv, uint32_t ts, const c
 	GETU64(reqid, ptr);
 	EAT(ptr,filename,lv,')');
 
-	return gFSOperations->locksRemovePending(FsContext::getForRestore(ts), lock_type, ownerid,
-	                                         sessionid, inode, reqid);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->locksRemovePending(FsContext::getForRestore(ts), fsOpContext,
+	                                               lock_type, ownerid, sessionid, inode, reqid);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -537,8 +561,20 @@ int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const 
 	GETU32(sessionid, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return gFSOperations->locksClearSession(FsContext::getForRestore(ts), lock_type, inode,
-	                                        sessionid, applied);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->locksClearSession(FsContext::getForRestore(ts), fsOpContext,
+	                                              lock_type, inode, sessionid, applied);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_lock_unlock_inode(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -552,7 +588,20 @@ int do_lock_unlock_inode(const char *filename, uint64_t lv, uint32_t ts, const c
 	GETINODE(inode, ptr);
 	EAT(ptr, filename, lv, ')');
 
-	return gFSOperations->locksUnlockInode(FsContext::getForRestore(ts), lock_type, inode, applied);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->locksUnlockInode(FsContext::getForRestore(ts), fsOpContext,
+	                                             lock_type, inode, applied);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_purge(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {

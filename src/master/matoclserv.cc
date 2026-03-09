@@ -4469,8 +4469,21 @@ void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	status = gFSOperations->flockOperation(context, inode, owner, eptr->sessionData->sessionId,
-	                                       requestId, messageId, op, nonblocking, applied);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	status = gFSOperations->flockOperation(context, fsOpContext, inode, owner,
+	                                       eptr->sessionData->sessionId, requestId, messageId, op,
+	                                       nonblocking, applied);
+
+	if ((status == SAUNAFS_STATUS_OK || status == SAUNAFS_ERROR_WAITING) &&
+	    fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+			applied.clear();
+		}
+	}
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kFlock);
 
@@ -4510,8 +4523,11 @@ void matoclserv_fuse_getlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 		lock_end = (uint64_t)lock_info.l_start + (uint64_t)lock_info.l_len;
 	}
 
-	status = gFSOperations->posixLockProbe(context, inode, lock_info.l_start, lock_end, owner,
-	                                       eptr->sessionData->sessionId, 0, message_id,
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
+	status = gFSOperations->posixLockProbe(context, fsOpContext, inode, lock_info.l_start, lock_end,
+	                                       owner, eptr->sessionData->sessionId, 0, message_id,
 	                                       lock_info.l_type, lock_info);
 
 	// Standard states that lock of length 0 is a lock till EOF
@@ -4564,9 +4580,21 @@ void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	status = gFSOperations->posixLockOperation(context, inode, lock_info.l_start, lock_end, owner,
-	                                           eptr->sessionData->sessionId, request_id, message_id,
-	                                           op, nonblocking, applied);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	status = gFSOperations->posixLockOperation(context, fsOpContext, inode, lock_info.l_start,
+	                                           lock_end, owner, eptr->sessionData->sessionId,
+	                                           request_id, message_id, op, nonblocking, applied);
+
+	if ((status == SAUNAFS_STATUS_OK || status == SAUNAFS_ERROR_WAITING) &&
+	    fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+			applied.clear();
+		}
+	}
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kPosix);
 
@@ -4611,15 +4639,19 @@ void matoclserv_manage_locks_list(matoclserventry *eptr, const uint8_t *data, ui
 
 	deserializePacketVersionNoHeader(data, length, version);
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	if (version == cltoma::manageLocksList::kAll) {
 		cltoma::manageLocksList::deserialize(data, length, type, pending, start, max);
 		max = std::min(max, SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
-		status = gFSOperations->locksListAll(context, (uint8_t)type, pending, start, max, locks);
+		status = gFSOperations->locksListAll(context, fsOpContext, (uint8_t)type, pending, start,
+		                                     max, locks);
 	} else if (version == cltoma::manageLocksList::kInode) {
 		cltoma::manageLocksList::deserialize(data, length, inode, type, pending, start, max);
 		max = std::min(max, SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT);
-		status = gFSOperations->locksListInode(context, (uint8_t)type, pending, inode, start, max,
-		                                       locks);
+		status = gFSOperations->locksListInode(context, fsOpContext, (uint8_t)type, pending, inode,
+		                                       start, max, locks);
 	} else {
 		throw IncorrectDeserializationException(
 				"Unknown SAU_CLTOMA_MANAGE_LOCKS_LIST version: " + std::to_string(version));
@@ -4656,6 +4688,9 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 
 	deserializePacketVersionNoHeader(data, length, version);
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	if (version == cltoma::manageLocksUnlock::kSingle) {
 		cltoma::manageLocksUnlock::deserialize(data, length, type, inode, sessionid, owner, start,
 		                                       end);
@@ -4664,29 +4699,38 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 			end = std::numeric_limits<decltype(end)>::max();
 		}
 		if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
-			status = gFSOperations->flockOperation(context, inode, owner, sessionid, 0, 0,
-			                                       safs_locks::kUnlock, true, flocks_applied);
+			status = gFSOperations->flockOperation(context, fsOpContext, inode, owner, sessionid, 0,
+			                                       0, safs_locks::kUnlock, true, flocks_applied);
 		}
 		if (status == SAUNAFS_STATUS_OK &&
 		    (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
-			status =
-			    gFSOperations->posixLockOperation(context, inode, start, end, owner, sessionid, 0,
-			                                      0, safs_locks::kUnlock, true, posix_applied);
+			status = gFSOperations->posixLockOperation(context, fsOpContext, inode, start, end,
+			                                           owner, sessionid, 0, 0, safs_locks::kUnlock,
+			                                           true, posix_applied);
 		}
 	} else if (version == cltoma::manageLocksUnlock::kInode) {
 		cltoma::manageLocksUnlock::deserialize(data, length, type, inode);
 		if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
-			status = gFSOperations->locksUnlockInode(context, (uint8_t)safs_locks::Type::kFlock,
-			                                         inode, flocks_applied);
+			status = gFSOperations->locksUnlockInode(
+			    context, fsOpContext, (uint8_t)safs_locks::Type::kFlock, inode, flocks_applied);
 		}
 		if (status == SAUNAFS_STATUS_OK &&
 		    (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
-			status = gFSOperations->locksUnlockInode(context, (uint8_t)safs_locks::Type::kPosix,
-			                                         inode, posix_applied);
+			status = gFSOperations->locksUnlockInode(
+			    context, fsOpContext, (uint8_t)safs_locks::Type::kPosix, inode, posix_applied);
 		}
 	} else {
 		throw IncorrectDeserializationException("Unknown SAU_CLTOMA_MANAGE_LOCKS_UNLOCK version: " +
 		                                        std::to_string(version));
+	}
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+			flocks_applied.clear();
+			posix_applied.clear();
+		}
 	}
 
 	for (auto sessionAndMsg : flocks_applied) {
@@ -4732,10 +4776,20 @@ void matoclserv_fuse_locks_interrupt(matoclserventry *eptr, const uint8_t *data,
 
 	cltoma::fuseFlock::deserialize(data, length, messageId, interruptData);
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	// we do not reply, so there is not need for checking status of this fs_operation
-	gFSOperations->locksRemovePending(context, type, interruptData.owner,
+	gFSOperations->locksRemovePending(context, fsOpContext, type, interruptData.owner,
 	                                  eptr->sessionData->sessionId, interruptData.ino,
 	                                  interruptData.reqid);
+
+	if (fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__,
+			              interruptData.ino);
+		}
+	}
 }
 
 void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -5121,19 +5175,20 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status) {
 	}
 }
 
-void matocl_locks_release(const FsContext &context, inode_t inode, uint32_t sessionId) {
+void matocl_locks_release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+                          inode_t inode, uint32_t sessionId) {
 	std::vector<FileLocks::Owner> applied;
 
-	gFSOperations->locksClearSession(context, (uint8_t)safs_locks::Type::kFlock, inode, sessionId,
-	                                 applied);
+	gFSOperations->locksClearSession(context, fsOpContext, (uint8_t)safs_locks::Type::kFlock, inode,
+	                                 sessionId, applied);
 
 	for (auto candidate : applied) {
 		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kFlock);
 	}
 
 	applied.clear();
-	gFSOperations->locksClearSession(context, (uint8_t)safs_locks::Type::kPosix, inode, sessionId,
-	                                 applied);
+	gFSOperations->locksClearSession(context, fsOpContext, (uint8_t)safs_locks::Type::kPosix, inode,
+	                                 sessionId, applied);
 
 	for (auto candidate : applied) {
 		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kPosix);
@@ -5150,7 +5205,7 @@ void matocl_close_files(Session *currentSession) {
 
 	for (const auto &openFileInode : currentSession->openFilesSet) {
 		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
-		matocl_locks_release(context, openFileInode, currentSession->sessionId);
+		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		operationCount++;
 
 		if (fsOpContext.hasReadWriteTransaction() && operationCount >= kTransactionBatchSize) {

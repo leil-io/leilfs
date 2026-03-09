@@ -1289,6 +1289,7 @@ public:
 	/// Supports placing and removing whole-file shared/exclusive advisory locks, removing pending
 	/// requests and handling interruptible requests.
 	/// @param context Filesystem context.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param inode Target inode for the flock operation.
 	/// @param owner Owner identifier provided by the client.
 	/// @param sessionid Session id of the requesting client.
@@ -1302,15 +1303,18 @@ public:
 	/// @return `SAUNAFS_STATUS_OK` on success, `SAUNAFS_ERROR_WAITING` if the request
 	///         cannot be granted immediately, `SAUNAFS_ERROR_EINVAL` for invalid args,
 	///         or other filesystem-specific error codes (permission, quota, etc.).
-	virtual int flockOperation(const FsContext &context, inode_t inode, uint64_t owner,
-	                           uint32_t sessionid, uint32_t reqid, uint32_t msgid, uint16_t oper,
-	                           bool nonblocking, std::vector<FileLocks::Owner> &applied) = 0;
+	virtual int flockOperation(const FsContext &context,
+	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                           uint64_t owner, uint32_t sessionid, uint32_t reqid, uint32_t msgid,
+	                           uint16_t oper, bool nonblocking,
+	                           std::vector<FileLocks::Owner> &applied) = 0;
 
 	/// Perform a POSIX byte-range (fcntl) lock operation on the filesystem.
 	///
 	/// Handles POSIX (fcntl) style byte-range locks: place shared/exclusive locks,
 	/// release ranges, enqueue pending requests and handle interruptible requests.
 	/// @param context Filesystem context (permissions, timestamp, personality, ...).
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param inode Target inode on which the byte-range lock is requested.
 	/// @param start Start offset of the range (inclusive).
 	/// @param end End offset of the range (exclusive).
@@ -1326,15 +1330,17 @@ public:
 	/// @return `SAUNAFS_STATUS_OK` on success, `SAUNAFS_ERROR_WAITING` if the request
 	///         cannot be granted immediately, `SAUNAFS_ERROR_EINVAL` for invalid args,
 	///         or other filesystem-specific error codes (permission, quota, etc.).
-	virtual int posixLockOperation(const FsContext &context, inode_t inode, uint64_t start,
-	                               uint64_t end, uint64_t owner, uint32_t sessionid, uint32_t reqid,
-	                               uint32_t msgid, uint16_t oper, bool nonblocking,
+	virtual int posixLockOperation(const FsContext &context,
+	                               const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                               uint64_t start, uint64_t end, uint64_t owner, uint32_t sessionid,
+	                               uint32_t reqid, uint32_t msgid, uint16_t oper, bool nonblocking,
 	                               std::vector<FileLocks::Owner> &applied) = 0;
 
 	/// Perform a POSIX lock probe on filesystem.
 	/// A POSIX probe checks whether a lock request (shared/exclusive) would be blocked
 	/// by existing locks without placing a lock.
 	/// @param context Filesystem context.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param inode Inode number on which to probe locks.
 	/// @param start Start of the range to probe.
 	/// @param end End of the range to probe.
@@ -1349,59 +1355,74 @@ public:
 	/// @return SAUNAFS_STATUS_OK if no conflicting lock was found (info.l_type set to kUnlock),
 	///         SAUNAFS_ERROR_WAITING if a conflicting lock was found (info filled),
 	///         SAUNAFS_ERROR_EINVAL for invalid parameters.
-	virtual int posixLockProbe(const FsContext &context, inode_t inode, uint64_t start,
-	                           uint64_t end, uint64_t owner, uint32_t sessionid, uint32_t reqid,
-	                           uint32_t msgid, uint16_t oper, safs_locks::FlockWrapper &info) = 0;
+	virtual int posixLockProbe(const FsContext &context,
+	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                           uint64_t start, uint64_t end, uint64_t owner, uint32_t sessionid,
+	                           uint32_t reqid, uint32_t msgid, uint16_t oper,
+	                           safs_locks::FlockWrapper &info) = 0;
 
 	/// Release (unlock + unqueue) all locks from a given session.
 	/// @param context Filesystem context.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param type Type of locks to clear (kFlock, kPosix).
 	/// @param inode inode number on which to clear locks.
 	/// @param sessionid Session id whose locks are to be cleared.
 	/// @param applied Vector to be filled with the owners of the cleared locks.
-	virtual int locksClearSession(const FsContext &context, uint8_t type, inode_t inode,
-	                              uint32_t sessionid, std::vector<FileLocks::Owner> &applied) = 0;
+	virtual int locksClearSession(const FsContext &context,
+	                              const FilesystemOperationContext &fsOpContext, uint8_t type,
+	                              inode_t inode, uint32_t sessionid,
+	                              std::vector<FileLocks::Owner> &applied) = 0;
 
 	/// List locks in the filesystem.
 	/// Fills outLocks with locks matching the type and pending parameters.
 	/// @param context Filesystem context (could be ignored in some implementations).
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param type Type of locks to list (kFlock, kPosix).
 	/// @param pending If true, lists pending locks, otherwise lists active locks.
 	/// @param start Start index for listing.
 	/// @param max Maximum number of locks to list.
 	/// @param outLocks Vector to be filled with the listed locks.
-	virtual int locksListAll(const FsContext &context, uint8_t type, bool pending, uint64_t start,
-	                         uint64_t max, std::vector<safs_locks::Info> &outLocks) = 0;
+	virtual int locksListAll(const FsContext &context,
+	                         const FilesystemOperationContext &fsOpContext, uint8_t type,
+	                         bool pending, uint64_t start, uint64_t max,
+	                         std::vector<safs_locks::Info> &outLocks) = 0;
 
 	/// List locks for a specific inode.
 	/// @param context Filesystem context (could be ignored in some implementations).
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param type Type of locks to list (kFlock, kPosix).
 	/// @param pending If true, lists pending locks, otherwise lists active locks.
 	/// @param inode inode number on which to list locks.
 	/// @param start Start index for listing.
 	/// @param max Maximum number of locks to list.
 	/// @param outLocks Vector to be filled with the listed locks.
-	virtual int locksListInode(const FsContext &context, uint8_t type, bool pending, inode_t inode,
-	                           uint64_t start, uint64_t max,
+	virtual int locksListInode(const FsContext &context,
+	                           const FilesystemOperationContext &fsOpContext, uint8_t type,
+	                           bool pending, inode_t inode, uint64_t start, uint64_t max,
 	                           std::vector<safs_locks::Info> &outLocks) = 0;
 
 	/// Unlocks the matching locks on the specified inode and tries to apply pending locks.
 	/// @param context Filesystem context.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param type Type of locks to unlock (kFlock, kPosix).
 	/// @param inode inode number on which to unlock locks.
 	/// @param applied Vector to be filled with the owners of the unlocked locks.
-	virtual int locksUnlockInode(const FsContext &context, uint8_t type, inode_t inode,
-	                             std::vector<FileLocks::Owner> &applied) = 0;
+	virtual int locksUnlockInode(const FsContext &context,
+	                             const FilesystemOperationContext &fsOpContext, uint8_t type,
+	                             inode_t inode, std::vector<FileLocks::Owner> &applied) = 0;
 
 	/// Removes a pending lock matching the provided parameters.
 	/// @param context Filesystem context.
+	/// @param fsOpContext The operation context carrying a transaction in KV backends.
 	/// @param type Type of lock to operate on (kFlock, kPosix).
 	/// @param ownerid Owner identifier provided by the client (FUSE owner typically).
 	/// @param sessionid Session id of the client that enqueued the lock.
 	/// @param inode Inode number on which the pending lock was queued.
 	/// @param reqid Request id (used to identify interruptible requests).
-	virtual int locksRemovePending(const FsContext &context, uint8_t type, uint64_t ownerid,
-	                               uint32_t sessionid, inode_t inode, uint64_t reqid) = 0;
+	virtual int locksRemovePending(const FsContext &context,
+	                               const FilesystemOperationContext &fsOpContext, uint8_t type,
+	                               uint64_t ownerid, uint32_t sessionid, inode_t inode,
+	                               uint64_t reqid) = 0;
 };
 
 // Global filesystem operations instance.

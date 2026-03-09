@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include <unordered_map>
+#include <utility>
 
 #include "common/compact_vector.h"
 #include "common/memory_mapped_file.h"
@@ -343,6 +344,27 @@ public:
 
 	/*! \brief Removes all locks from the class. */
 	void clear();
+
+	/// Inserts a lock directly into the active set (for restoring from KV).
+	void insertActive(inode_t inode, Lock lock) { active_locks_[inode].insert(lock); }
+
+	/// Inserts a lock directly into the pending queue (for restoring from KV).
+	void insertPending(inode_t inode, Lock lock) {
+		LockQueue &queue = pending_locks_[inode];
+		queue.insert(std::lower_bound(queue.begin(), queue.end(), lock), std::move(lock));
+	}
+
+	/// Returns the active lock set for a given inode, or nullptr if none.
+	const Locks *getActiveLocks(inode_t inode) const {
+		auto iter = active_locks_.find(inode);
+		return iter != active_locks_.end() ? &iter->second : nullptr;
+	}
+
+	/// Returns the pending lock queue for a given inode, or nullptr if none.
+	const LockQueue *getPendingLocks(inode_t inode) const {
+		auto iter = pending_locks_.find(inode);
+		return iter != pending_locks_.end() ? &iter->second : nullptr;
+	}
 
 	FileLocks(const FileLocks &other) = delete;
 	FileLocks(FileLocks &&other) = delete;

@@ -98,6 +98,17 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1
 /// @note Numeric fields in the key are serialized as Big Endian to preserve numeric order in
 /// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
+
+/// Prefix for locks
+/// Format: FLCK_<InodeId:BE><Type:u8><Status:u8> → serialized lock entries
+/// - InodeId: inode_t serialized as Big Endian (enables per-inode prefix scan)
+/// - Type: u8 (safs_locks::Type – kFlock or kPosix)
+/// - Status: u8 (0 = active, 1 = pending)
+/// @note Inode-first key layout allows efficient per-inode scans using
+/// prefix FLCK_<InodeId>. Numeric fields in the key are serialized as
+/// Big Endian to preserve numeric order in lexicographical sorting.
+/// The value contains all lock entries for the given (inode, type, status)
+/// tuple, serialized as a contiguous sequence via FileLocks serialization.
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";   // Section FLCK 1.0
 
 // Case-insensitive directory support
