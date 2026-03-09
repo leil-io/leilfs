@@ -377,7 +377,7 @@ void FilesystemOperationsBase::statfs(const FsContext &context,
 	} else {
 		*trspace = 0;
 		*respace = 0;
-		rn = nodeOperations_->idToNode(context.rootinode());
+		rn = nodeOperations_->idToNode(fsOpContext, context.rootinode());
 	}
 	if (!rn || rn->type != FSNodeType::kDirectory) {
 		*totalspace = 0;
@@ -485,7 +485,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 					} else {
 						*inode = workDir->parents[0].first;
 					}
-					FSNode *pp = nodeOperations_->idToNode(workDir->parents[0].first);
+					FSNode *pp = nodeOperations_->idToNode(fsOpContext, workDir->parents[0].first);
 					nodeOperations_->fillAttr(fsOpContext, pp, workDir, context.uid(),
 					                          context.gid(), context.auid(), context.agid(),
 					                          context.sesflags(), attr);
@@ -743,7 +743,7 @@ uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
                                                    const std::string &inputPath,
                                                    std::string &canonicalPath) {
 	bool caseInsensitiveFS = context.isCaseInsensitive();
-	FSNode *currentNode = nodeOperations_->idToNode(context.rootinode());
+	FSNode *currentNode = nodeOperations_->idToNode(fsOpContext, context.rootinode());
 	std::string resultPath;
 
 	if (!currentNode || currentNode->type != FSNodeType::kDirectory) {
@@ -1055,7 +1055,7 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
                                             uint32_t timestamp, inode_t inode, uint32_t mode,
                                             uint32_t uid, uint32_t gid, uint32_t atime,
                                             uint32_t mtime) {
-	FSNode *p = nodeOperations_->idToNode(inode);
+	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
@@ -1076,7 +1076,7 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &fsOpContext,
                                               uint32_t timestamp, inode_t inode, uint64_t length,
                                               bool eraseFurtherChunks) {
-	FSNode *p = nodeOperations_->idToNode(inode);
+	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
@@ -3215,7 +3215,7 @@ uint8_t FilesystemOperationsBase::applySetXAttr(const FilesystemOperationContext
 	    mode > XATTR_SMODE_REMOVE) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	p = nodeOperations_->idToNode(inode);
+	p = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 	status = doConcreteSetXAttr(fsOpContext, inode, static_cast<uint8_t>(anleng), attrname, avleng,
 	                            attrvalue, mode);
@@ -3349,7 +3349,7 @@ uint8_t FilesystemOperationsBase::applySetAcl(const FilesystemOperationContext &
 	} catch (Exception &) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	FSNode *p = nodeOperations_->idToNode(inode);
+	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
@@ -3374,7 +3374,7 @@ uint8_t FilesystemOperationsBase::applySetRichAcl(const FilesystemOperationConte
 	} catch (Exception &) {
 		return SAUNAFS_ERROR_EINVAL;
 	}
-	FSNode *p = nodeOperations_->idToNode(inode);
+	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!p) {
 		return SAUNAFS_ERROR_ENOENT;
 	}

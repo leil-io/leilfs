@@ -409,7 +409,7 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 
 	std::string name(pSrc, pSrc + edgeNameSize);
 	sectionOffset += edgeNameSize;
-	FSNode *child = gFSOperations->nodeOperations()->idToNode(childId);
+	FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, childId);
 	if (!child) {
 		safs_pretty_syslog(
 		    LOG_ERR, "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: child not found",
@@ -439,7 +439,8 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 	} else {
 		FSNodeDirectory *parent;
 		if (currentParentId != parentId){
-			parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(parentId);
+			parent =
+			    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
 			currentParentNode = parent;
 		} else {
 			parent = currentParentNode;
@@ -449,8 +450,8 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 			    LOG_ERR, "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: parent not found",
 			    parentId, gFSOperations->nodeOperations()->escapeName(name).c_str(), childId);
 			if (ignoreFlag) {
-				parent =
-				    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
+				    fsOpContext, SPECIAL_INODE_ROOT);
 				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
@@ -477,8 +478,8 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 			              gFSOperations->nodeOperations()->escapeName(name), childId,
 			              static_cast<char>(parent->type));
 			if (ignoreFlag) {
-				parent =
-				    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
+				    fsOpContext, SPECIAL_INODE_ROOT);
 				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,

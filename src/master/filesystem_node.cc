@@ -1091,7 +1091,7 @@ void FilesystemNodeOperationsBase::getDirData(const FilesystemOperationContext &
 					         attr);
 					::memcpy(outBuffer, attr.data(), attr.size());
 				} else {
-					FSNode *foundRootNode = idToNode(rootINode);
+					FSNode *foundRootNode = idToNode(fsOpContext, rootINode);
 					if (foundRootNode) {  // it should be always true because it's checked
 						// before, but better check than sorry
 						fillAttr(fsOpContext, foundRootNode, nodeDir, uid, gid, auid, agid,
