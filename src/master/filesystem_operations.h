@@ -283,9 +283,16 @@ public:
 	                inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
 	                inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
 	                inode_t *linkNodes) override;
+
+	/// Returns the byte length of the full path string for a directory node.
+	/// @see IFilesystemOperations::getDirPathSize
 	uint32_t getDirPathSize(const FilesystemOperationContext &fsOpContext, inode_t inode) override;
+
+	/// Writes the full path string for a directory node into a caller-supplied buffer.
+	/// @see IFilesystemOperations::getDirPathData
 	void getDirPathData(const FilesystemOperationContext &fsOpContext, inode_t inode, uint8_t *buff,
 	                    uint32_t size) override;
+
 	uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) override;
 	uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode, uint32_t indx,
 	                  uint64_t *chunkid, uint64_t *length) override;

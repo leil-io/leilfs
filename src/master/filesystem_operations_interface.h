@@ -23,6 +23,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "common/attributes.h"
@@ -51,6 +52,10 @@ struct NamedInodeEntry;
 struct HandleInodeEntry;
 
 inline constexpr char kAclXattrs[] = "system.richacl";
+
+// Sentinel strings written by getDirPathData() for error cases
+inline constexpr std::string_view kDirPathNotFound = "(not found)";
+inline constexpr std::string_view kDirPathNotDirectory = "(not directory)";
 
 /// Result of a getXAttr operation. Owns the attribute value bytes.
 struct XAttrGetResult {
@@ -1016,10 +1021,47 @@ public:
 	                        inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
 	                        inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
 	                        inode_t *linkNodes) = 0;
+
+	/// Returns the byte length of the directory-path representation for `inode`.
+	///
+	/// Return value:
+	/// - If the inode is not found: `kDirPathNotFound.size()`.
+	/// - If the node is not a directory: `kDirPathNotDirectory.size()`.
+	/// - If the node is a directory: full absolute path length in bytes, including leading `/`.
+	///
+	/// Use this value to pre-allocate the buffer passed to `getDirPathData()` for an
+	/// untruncated result.
+	///
+	/// @param fsOpContext The operation context (used for node lookups in KV backends).
+	/// @param inode The inode of the directory node to measure.
+	/// @return The number of bytes required for `getDirPathData()` to produce an
+	///         untruncated result for this inode.
 	virtual uint32_t getDirPathSize(const FilesystemOperationContext &fsOpContext,
 	                                inode_t inode) = 0;
+
+	/// Writes the directory-path representation for `inode` into a caller-supplied buffer.
+	///
+	/// Resolves `inode` to a node and writes into `buff` (up to `size` bytes):
+	/// - If the inode is not found and `size >= kDirPathNotFound.size()`: writes
+	///   `kDirPathNotFound` into `buff`; writes nothing if `size` is smaller.
+	/// - If the node is not a directory and `size >= kDirPathNotDirectory.size()`: writes
+	///   `kDirPathNotDirectory` into `buff`; writes nothing if `size` is smaller.
+	/// - If the node is a valid directory:
+	///   - If `size == 0`, nothing is written.
+	///   - If `size > 0`, `buff[0]` is always `'/'` and the remaining bytes are filled with path
+	///     data. If the buffer is too small for the full path, output is truncated: `buff[0]`
+	///     remains `'/'` and the remaining bytes contain a right-aligned tail of the path.
+	///
+	/// The buffer is not null-terminated. Callers should use `getDirPathSize()` first to
+	/// obtain the exact buffer size needed for an untruncated result.
+	///
+	/// @param fsOpContext The operation context (used for node lookups in KV backends).
+	/// @param inode The inode of the directory node whose path to write.
+	/// @param buff Pointer to the output buffer.
+	/// @param size The size of the output buffer in bytes.
 	virtual void getDirPathData(const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint8_t *buff, uint32_t size) = 0;
+
 	virtual uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) = 0;
 	virtual uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                          uint32_t indx, uint64_t *chunkid, uint64_t *length) = 0;
