@@ -52,6 +52,9 @@ public:
 	/// Returns the ID of the chunk associated with the operation.
 	uint64_t chunkId() const { return chunkId_; }
 
+	/// Returns the type of the chunk associated with the operation.
+	ChunkPartType chunkType() const { return chunkType_; }
+
 protected:
 	/// Gets the state of the parent ChunkserverEntry.
 	ChunkserverEntry::State getParentState() const { return parent_->state; }
@@ -61,6 +64,9 @@ protected:
 
 	/// Job pool of the network worker handling the parent ChunkserverEntry.
 	ClientJobPool *workerJobPool() const { return parent_->workerJobPool; }
+
+	/// Gets the parent pending write jobs counter.
+	uint32_t &parentPendingWriteJobs() { return parent_->pendingWriteJobs; }
 
 	/// Checks and applies closing on the parent ChunkserverEntry.
 	void checkAndApplyClosedOnParent() const { parent_->checkAndApplyClosed(); }
@@ -263,7 +269,15 @@ public:
 	/// @return Number of bytes written.
 	ssize_t writeData(int sock, size_t bytesToWrite);
 
-	/// Checks if the write operation is completed.
+	/// Attempts to seal the write operation. In order to seal the operation, all the write data
+	/// blocks must have been replied (considering also the chain writes). If there is a not-nullptr
+	/// input buffer it must also be replied, in which case it is moved to the list of write data
+	/// buffers waiting to be written to the chunk.
+	/// @return True if the operation was sealed, false otherwise.
+	bool trySeal();
+
+	/// Checks if the write operation is completed, considering that it is sealed and there are no
+	/// write data buffers waiting to be written.
 	bool isCompleted() const;
 
 	/// Performs a delayed close of the write operation.
@@ -273,7 +287,19 @@ public:
 	/// Closes chunk if open.
 	void cleanup();
 
+	/// Tries to send an instant reply to the client if possible, considering the current state of
+	/// the write operation and the amount of write buffering blocks available.
+	/// Does not work if the operation is sealed, in delayed close, the open write job is still
+	/// being processed or the chunk is not locked for writing.
+	/// Does not violates the order of replies for the write data blocks received from the client,
+	/// neither the amount of write buffering blocks available.
+	void tryInstantReply();
+
 protected:
+	/// Decreases the pending write jobs in the parent ChunkserverEntry to check and apply closed on
+	/// parent. This is used while in delayed close mode whenever a callback is processed.
+	void decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
+
 	/// Checks if there is an open write job being processed.
 	bool isOpenWriteJobBeingProcessed() const;
 
@@ -313,11 +339,20 @@ protected:
 	/// Size in blocks of the next input buffer.
 	uint16_t nextInputBufferBlockCount_;
 
+	/// Indicates if the operation is in delayed close:
+	/// - no new replies issued
+	/// - decrease pending write jobs in parent on delayed close completion
+	bool inDelayedClose_ = false;
 	/// Indicates if the chunk is locked for writing. If true, master will be waiting for the lock
 	/// to be released when the write operation finishes.
 	bool isChunkLocked_ = false;
-	uint32_t writeJobId_ = 0;       ///< ID of the current write job being processed
-	uint32_t writeJobWriteId_ = 0;  ///< Specific write operation from client
+	/// Indicates if the write operation has ended from the client side, i.e all data has been
+	/// received and replied to.
+	bool isSealed_ = false;
+
+	uint8_t untoldStatus_ = SAUNAFS_STATUS_OK;  ///< Untold status to be sent to master at cleanup.
+	uint32_t writeJobId_ = 0;                   ///< ID of the current write job being processed
+	uint32_t writeJobWriteId_ = 0;              ///< Specific write operation from client
 	std::shared_ptr<InputBuffer> inputBuffer_ = nullptr;  ///< Buffer for the current write job
 	/// writeJobWriteId's which:
 	/// - have been completed by our worker, but need ack from the next

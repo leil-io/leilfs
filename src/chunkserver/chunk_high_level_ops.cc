@@ -24,6 +24,7 @@
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/chunkserver_entry.h"
 #include "chunkserver/hdd_readahead.h"
+#include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
 #include "chunkserver/network_stats.h"
 #include "protocol/cstocl.h"
@@ -370,6 +371,11 @@ void WriteHighLevelOp::updateUsingWriteStatusAndReply(uint8_t status, uint32_t w
 	}
 }
 
+void WriteHighLevelOp::decreasePendingWriteJobsToCheckAndApplyClosedOnParent() {
+	parentPendingWriteJobs()--;
+	checkAndApplyClosedOnParent();
+}
+
 void WriteHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
 	assert(getParentState() == ChunkserverEntry::State::CloseWait);
 
@@ -379,14 +385,17 @@ void WriteHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
 		setNoWriteJobBeingProcessed();
 	}
 
-	assert(pendingDelayedJobs_ > 0);
-	pendingDelayedJobs_--;
-	checkAndApplyClosedOnParent();
+	assert(parentPendingWriteJobs() > 0);
+	decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
 }
 
 void WriteHighLevelOp::startNextWriteJob() {
 	if (writeDataBuffers_.empty()) {
 		safs::log_warn("({}) Called with no write data buffers.", __func__);
+		return;
+	}
+	if (writeDataBuffers_.front()->currentBlocks() == 0) {
+		safs::log_warn("({}) Called with no blocks in front InputBuffer.", __func__);
 		return;
 	}
 
@@ -409,6 +418,8 @@ void WriteHighLevelOp::writeCurrentInputPacket() {
 }
 
 void WriteHighLevelOp::continueWritingIfPossible() {
+	tryInstantReply();
+
 	if (!writeDataBuffers_.empty()) {
 		// there is a write buffer ready to be written, there should not be any
 		// write jobs being processed.
@@ -416,7 +427,10 @@ void WriteHighLevelOp::continueWritingIfPossible() {
 		return;
 	}
 
-	if (inputBuffer_ != nullptr && !inputBuffer_->isBeingUpdated()) { writeCurrentInputPacket(); }
+	if (inputBuffer_ != nullptr && !inputBuffer_->isBeingUpdated()) {
+		assert(inputBuffer_->currentBlocks() > 0);
+		writeCurrentInputPacket();
+	}
 }
 
 void WriteHighLevelOp::writeFinishedCallback(uint8_t status, void * /*entry*/) {
@@ -426,16 +440,53 @@ void WriteHighLevelOp::writeFinishedCallback(uint8_t status, void * /*entry*/) {
 	}
 	setNoWriteJobBeingProcessed();
 
+	if (writeDataBuffers_.empty()) {
+		// This should not happen, but if it does, we can just log and continue.
+		// The write job should not have been started if there were no buffers, so this is an
+		// inconsistent state.
+		safs::log_err(
+		    "({}) No write data buffers available after write finished for chunkId {:016X}.",
+		    __func__, chunkId_);
+
+		if (inDelayedClose_) {
+			decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
+		}
+
+		return;
+	}
+
 	auto statusWithWriteIdToReply = writeDataBuffers_.front()->getStatuses();
+	uint16_t alreadyRepliedBlocks = writeDataBuffers_.front()->repliedBlocks;
+
+	if (alreadyRepliedBlocks > 0) {
+		// This means that this write data buffer has already been replied to for some blocks, so we
+		// need to remove the input buffer from the container that patches read operations.
+		hddRemoveAlreadyRepliedInputBuffer(chunkId_, chunkType_, writeDataBuffers_.front());
+	}
+
 	getWriteInputBufferPool().put(std::move(writeDataBuffers_.front()));
 	writeDataBuffers_.pop_front();
 
 	for (const auto &[status, writeId] : statusWithWriteIdToReply) {
-		updateUsingWriteStatusAndReply(status, writeId);
-		if (status != SAUNAFS_STATUS_OK) { return; }
+		if (alreadyRepliedBlocks == 0) {
+			if (!inDelayedClose_) {
+				updateUsingWriteStatusAndReply(status, writeId);
+				if (status != SAUNAFS_STATUS_OK) { return; }
+			} // else: in delayed close, do not reply, just consume the status
+		} else {
+			// Already replied
+			if (untoldStatus_ == SAUNAFS_STATUS_OK && status != SAUNAFS_STATUS_OK) {
+				untoldStatus_ = status;
+			}
+			alreadyRepliedBlocks--;
+		}
 	}
 
 	continueWritingIfPossible();
+
+	if (inDelayedClose_) {
+		decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
+	}
 }
 
 void WriteHighLevelOp::openWriteFinishedCallback(uint8_t status, void * /*entry*/) {
@@ -498,9 +549,13 @@ void WriteHighLevelOp::prepareForNewWriteData(bool mustForward, uint8_t *headerB
 void WriteHighLevelOp::processWriteDataBlock(uint16_t blocknum, uint32_t opOffset, uint32_t opSize,
                                              uint32_t writeId, uint32_t crc) {
 	inputBuffer_->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
+	tryInstantReply();
 
 	// No write jobs in progress or current input buffer is full - write it
-	if (!isWriteJobBeingProcessed() || inputBuffer_->isFull()) { writeCurrentInputPacket(); }
+	if (!isWriteJobBeingProcessed() || inputBuffer_->isFull()) {
+		assert(inputBuffer_->currentBlocks() > 0);
+		writeCurrentInputPacket();
+	}
 }
 
 bool WriteHighLevelOp::isLastHeaderSizeValid() const { return inputBuffer_->isHeaderSizeValid(); }
@@ -517,44 +572,123 @@ ssize_t WriteHighLevelOp::writeData(int sock, size_t bytesToWrite) {
 	return inputBuffer_->writeToSocket(sock, bytesToWrite);
 }
 
+bool WriteHighLevelOp::trySeal() {
+	if (inputBuffer_ != nullptr) {
+		// If there is an input buffer, we can only seal if all its data has been replied
+		if (inputBuffer_->isBeingUpdated()) { return false; }
+		if (inputBuffer_->currentBlocks() > inputBuffer_->repliedBlocks) {
+			return false;
+		}
+
+		for (const auto &buffer : writeDataBuffers_) {
+			if (buffer->currentBlocks() > buffer->repliedBlocks) {
+				// The log warn is because this case does not make any sense, there could be any
+				// issue somewhere else
+				safs::log_err(
+				    "({}) Inconsistent state: write data buffer has un-replied blocks "
+				    "while input buffer is fully replied (chunkId: {:016X}).",
+				    __func__, chunkId_);
+				assert(
+				    false &&
+				    "write data buffer has un-replied blocks while input buffer is fully replied");
+				return false;
+			}
+		}
+
+		// There is an input buffer, all its data has been processed and replied
+		// so we can write it out to complete the operation
+		assert(inputBuffer_->currentBlocks() > 0);
+		writeCurrentInputPacket();
+	} else {
+		// There is no input buffer, we can only seal if all write data buffers have been replied
+		for (const auto &buffer : writeDataBuffers_) {
+			if (buffer->currentBlocks() > buffer->repliedBlocks) {
+				// There is a write data buffer with un-replied blocks and no input buffer
+				return false;
+			}
+		}
+	}
+
+	// All buffers have been replied, check partially completed writes (chain writes)
+	isSealed_ = partiallyCompletedWrites_.empty();
+
+	return isSealed_;
+}
+
 bool WriteHighLevelOp::isCompleted() const {
-	// Conditions:
-	// - no write job being processed
-	// - no partially completed writes (forward case)
-	// - no write data buffers waiting to be enqueued
-	// - no input buffer being filled (all data has been processed)
-	return !isWriteJobBeingProcessed() && partiallyCompletedWrites_.empty() &&
-	       writeDataBuffers_.empty() && inputBuffer_ == nullptr;
+	return writeDataBuffers_.empty() && isSealed_;
 }
 
 void WriteHighLevelOp::delayedClose() {
-	workerJobPool()->disableJob(writeJobId_);
-	workerJobPool()->changeCallback(
-	    writeJobId_,
-	    [this](uint8_t status, void *entry) { this->delayedCloseCallback(status, entry); },
-	    kEmptyExtra);
+	inDelayedClose_ = true;
 
-	if (inputBuffer_ != nullptr) {
-		/// Drop the input buffer, it won't be used anymore
-		getWriteInputBufferPool().put(std::move(inputBuffer_));
+	// Only write init received - disable open write job
+	if (isOpenWriteJobBeingProcessed()) {
+		workerJobPool()->disableJob(writeJobId_);
+		workerJobPool()->changeCallback(
+		    writeJobId_,
+		    [this](uint8_t status, void *entry) { this->delayedCloseCallback(status, entry); },
+		    kEmptyExtra);
+
+		parentPendingWriteJobs()++;
+		// When open write job is being processed no writes can be instantly replied, so that's it.
+		return;
 	}
 
-	pendingDelayedJobs_++;
+	// Some write data jobs received, handle input buffer
+	if (inputBuffer_ != nullptr) {
+		if (inputBuffer_->repliedBlocks > 0) {
+			/// There are replied blocks in the input buffer, move it to write data buffers
+			if (inputBuffer_->isBeingUpdated()) {
+				// Unfinished update - we need to drop that last block
+				inputBuffer_->getWriteInfoVector().pop_back();
+			}
+			writeDataBuffers_.emplace_back(std::move(inputBuffer_));
+		} else {
+			/// No replied blocks - drop the input buffer, it won't be used anymore
+			getWriteInputBufferPool().put(std::move(inputBuffer_));
+		}
+	}
+	// Input buffer now is null
+	assert(inputBuffer_ == nullptr);
+
+	// Drop write data buffers with no replied blocks
+	while (writeDataBuffers_.size() > (isWriteJobBeingProcessed() ? 1 : 0) &&
+	       writeDataBuffers_.back()->repliedBlocks == 0) {
+		getWriteInputBufferPool().put(std::move(writeDataBuffers_.back()));
+		writeDataBuffers_.pop_back();
+	}
+
+	if (!isWriteJobBeingProcessed() && !writeDataBuffers_.empty()) {
+		// No write job in progress, start one to trigger the processing of the remaining buffers,
+		// which will be replied in writeFinishedCallback
+		startNextWriteJob();
+	}
+
+	// Pending write jobs will be handled in writeFinishedCallback, they need to write out the
+	// buffers
+	parentPendingWriteJobs() += writeDataBuffers_.size();
 }
 
 void WriteHighLevelOp::cleanup() {
 	if (chunkId_ == 0) {
-		safs::log_info("(WriteHighLevelOp::{}) Called with no chunk associated.", __func__);
+		safs::log_warn("(WriteHighLevelOp::{}) Called with no chunk associated.", __func__);
 		return;
 	}
 
 	while (!writeDataBuffers_.empty()) {
+		if (writeDataBuffers_.front()->repliedBlocks > 0) {
+			hddRemoveAlreadyRepliedInputBuffer(chunkId_, chunkType_, writeDataBuffers_.front());
+		}
 		getWriteInputBufferPool().put(std::move(writeDataBuffers_.front()));
 		writeDataBuffers_.pop_front();
 	}
 
 	if (inputBuffer_ != nullptr) {
 		/// Drop the input buffer, it won't be used anymore
+		if (inputBuffer_->repliedBlocks > 0) {
+			hddRemoveAlreadyRepliedInputBuffer(chunkId_, chunkType_, inputBuffer_);
+		}
 		getWriteInputBufferPool().put(std::move(inputBuffer_));
 	}
 
@@ -562,23 +696,73 @@ void WriteHighLevelOp::cleanup() {
 		if (isChunkLocked_) {
 			// We need to wait for the metadata to be synced before releasing the lock, so we use a
 			// callback to release the lock afterward
-			job_close(*workerJobPool(), jobCloseWriteCallback(chunkId_, chunkType_, SAUNAFS_STATUS_OK),
+			job_close(*workerJobPool(), jobCloseWriteCallback(chunkId_, chunkType_, untoldStatus_),
 			          chunkId_, chunkType_);
 		} else {
 			job_close(*workerJobPool(), kEmptyCallback, chunkId_, chunkType_);
 		}
-		isChunkOpen_ = false;
 	} else if (isChunkLocked_) {
-		masterconn_get_job_pool()->endChunkLock(chunkId_, chunkType_, SAUNAFS_STATUS_OK);
+		masterconn_get_job_pool()->endChunkLock(chunkId_, chunkType_, untoldStatus_);
+	}
+}
+
+void WriteHighLevelOp::tryInstantReply() {
+	// No need to try instant reply if:
+	// - sealed: everything has been replied already.
+	// - in delayed close: we won't accept new write data and we will reply to pending ones in
+	//   writeFinishedCallback, so no need to try here.
+	// - open write job being processed: we haven't received of the initial open write job.
+	// - chunk not locked: we cannot perform instant reply if the chunk is not locked because
+	//   master will not receive the status if there is some failure.
+	// - chunk type is standard: we only support instant reply for non-standard slices, because for
+	//   standard slice we may lost data due to a single IO error.
+	if (isSealed_ || inDelayedClose_ || isOpenWriteJobBeingProcessed() || !isChunkLocked_ ||
+	    chunkType_ == slice_traits::standard::ChunkPartType()) {
+		return;
 	}
 
-	isChunkLocked_ = false;
-	partiallyCompletedWrites_.clear();
-	chunkId_ = 0;
-	chunkVersion_ = 0;
-	nextInputBufferBlockCount_ =
-	    std::min(kDefaultInitialNextInputBufferBlockCount, maxBlocksPerHddWriteJob_);
-	chunkType_ = slice_traits::standard::ChunkPartType();
+	// Instant reply for a single buffer, it is assumed that we can reply for all blocks in
+	// the buffer.
+	auto bufferLevelInstantReply = [this](std::shared_ptr<InputBuffer> &buffer) {
+		auto &writeInfoVec = buffer->getWriteInfoVector();
+
+		if (writeInfoVec.size() > 0) {
+			hddInsertAlreadyRepliedInputBuffer(chunkId_, chunkType_, buffer,
+			                                   buffer->repliedBlocks == 0);
+		}
+
+		modifyAvailableWriteBufferingBlocks(
+		    -static_cast<int32_t>(writeInfoVec.size() - buffer->repliedBlocks));
+		while (buffer->repliedBlocks < writeInfoVec.size()) {
+			const auto &writeInfo = writeInfoVec[buffer->repliedBlocks];
+			updateUsingWriteStatusAndReply(SAUNAFS_STATUS_OK, writeInfo.writeId);
+			buffer->repliedBlocks++;
+		}
+	};
+
+	// Try for write data buffers, in the expected order of reply
+	for (auto &buff : writeDataBuffers_) {
+		// Everything replied
+		if (buff->repliedBlocks == buff->currentBlocks()) { continue; }
+
+		if (getAvailableWriteBufferingBlocks() + static_cast<int32_t>(buff->repliedBlocks) <
+		    static_cast<int32_t>(buff->currentBlocks())) {
+			// Cannot reply the remaining blocks
+			return;
+		}
+
+		bufferLevelInstantReply(buff);
+	}
+
+	// Try for the input buffer
+	if (inputBuffer_ == nullptr || inputBuffer_->isBeingUpdated() ||
+	    inputBuffer_->repliedBlocks == inputBuffer_->currentBlocks() ||
+	    getAvailableWriteBufferingBlocks() + static_cast<int32_t>(inputBuffer_->repliedBlocks) <
+	        static_cast<int32_t>(inputBuffer_->currentBlocks())) {
+		return;
+	}
+
+	bufferLevelInstantReply(inputBuffer_);
 }
 
 std::function<void(uint8_t status, void *packet)> jobCloseWriteCallback(uint64_t chunkId,

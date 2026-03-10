@@ -146,7 +146,7 @@ void NetworkWorkerThread::terminate() {
 		auto& entry = csservEntries.back();
 
 		if (entry.isChunkOpen()) {
-			hddClose(entry.chunkId, entry.chunkType);
+			entry.forceCloseOpenChunks();
 		}
 
 		csservEntries.pop_back(); // Should call the entry destructor
@@ -231,6 +231,9 @@ void NetworkWorkerThread::servePoll() {
 	std::unique_lock lock(csservheadLock);
 	for (auto& entry : csservEntries) {
 		ChunkserverEntry* eptr = &entry;
+
+		eptr->everyLoopUpdateWrite();
+
 		if (entry.pDescPos >= 0
 				&& (pdesc[entry.pDescPos].revents & (POLLERR | POLLHUP))) {
 			entry.state = ChunkserverEntry::State::Close;

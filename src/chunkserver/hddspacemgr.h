@@ -34,6 +34,7 @@ uint32_t hddGetAndResetErrorCounter();
 
 void hddGetDamagedChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
 void hddGetLostChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
+void hddReportLostChunk(uint64_t chunkid, ChunkPartType chunk_type);
 void hddGetNewChunks(std::vector<ChunkWithVersionAndType>& chunks,
                      std::size_t limit);
 
@@ -128,3 +129,17 @@ int hddInternalUpdateVersion(IChunk *chunk, uint32_t version,
                              uint32_t newversion);
 int hddInternalUpdateVersion(uint64_t chunkId, uint32_t version,
                              uint32_t newversion, ChunkPartType chunkType);
+
+/** \brief Inserts the input buffer of already replied write operation to a container, so that it is
+ * used to patch some of the read requests coming after the write operation, but before the chunk
+ * file is updated on disk. Thread safe.
+ */
+void hddInsertAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkType,
+                                        std::shared_ptr<InputBuffer> inputBuffer,
+                                        bool isFirstReply);
+
+/** \brief Removes the input buffer of already replied write operation from the container, so that
+ * it is not used to patch read requests anymore. Thread safe.
+ */
+void hddRemoveAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkType,
+                                        std::shared_ptr<InputBuffer> inputBuffer);

@@ -157,8 +157,9 @@ how much of skipped data to read if an offset of some read operation is greater
 than the offset where the previous operation finished (default is 0, i.e. don't
 read any skipped data; the value is aligned down to 64 KiB)
 
-*PERFORM_FSYNC*:: call fsync() after a chunk is modified (default is 1, i.e.
-enabled)
+*PERFORM_FSYNC*:: call fsync() after a chunk is modified. In the case of individual
+write jobs it does not apply, but when closing the chunks (default is 1, i.e.
+enabled).
 
 *STAT_CHUNKS_AT_DISK_SCAN*:: verify that chunk metadata and data parts exists at
 scan time. If set to 1, the data part is also checked to be multiple of
@@ -222,6 +223,20 @@ prioritization scheme. The available modes are:
 - 'SWITCH': alternates read and write jobs (interleaving) to prevent one class of IO from
 starving the other.
 Not reloadable. (Default: FIFO)
+
+*WRITE_BUFFERING_SIZE_MB (EXPERIMENTAL)*:: Caps the amount of data in MiB the chunkserver
+"buffers", i.e fast replies to the client as if it was synced to the drives but it was
+only read from network and stored in memory. Similar to page cache. This feature has
+the following constraints:
+- does not work on standard (replica) chunks.
+- must have chunkserver side chunk locking enabled (see USE_CHUNKSERVER_SIDE_CHUNK_LOCK
+in master config).
+It is also suggested to set the IO_PRIORITY_MODE to SWITCH. The PERFORM_FSYNC
+continues working as intended, as it affects the time spent closing of the
+written chunk.
+Can provide better results for writes in general, but may significantly improve
+performance for small files.
+Reloadable. (Default: 0)
 
 *TLS_CERT_FILE (EXPERIMENTAL)*::
 Path to the TLS certificate file the chunk server will use for TLS connections

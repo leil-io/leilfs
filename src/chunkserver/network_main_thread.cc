@@ -95,6 +95,34 @@ void replicationBandwidthLimitReload() {
 	}
 }
 
+void loadReloadableSettings() {
+	int64_t prevWriteBufferingSize_mb = gWriteBufferingSize_mb;
+	gWriteBufferingSize_mb = cfg_get_minvalue<uint32_t>(
+	    "WRITE_BUFFERING_SIZE_MB", NetworkWorkerThread::kDefaultWriteBufferingSize_mb, 0);
+	int32_t blocksDiff =
+	    ((static_cast<int64_t>(gWriteBufferingSize_mb) - prevWriteBufferingSize_mb) * 1024 * 1024) /
+	    SFSBLOCKSIZE;
+	modifyAvailableWriteBufferingBlocks(blocksDiff);
+
+	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
+	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,
+	    NetworkWorkerThread::kMinBlocksPerHddWriteJob,
+	    NetworkWorkerThread::kMaxBlocksPerHddWriteJob);
+	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint16_t>(
+	    "MAX_BLOCKS_PER_HDD_READ_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddReadJob, 1);
+	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
+	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
+	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
+
+	size_t maxBuffersPoolSize_mb = cfg_get_minvalue<size_t>("MAX_BUFFERS_POOL_SIZE_MB", 512, 0);
+	setNewMaxIoBuffersPoolSize(maxBuffersPoolSize_mb);
+
+	gHDDReadAhead.setReadAhead_kB(
+	    cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));
+	gHDDReadAhead.setMaxReadBehind_kB(
+	    cfg_get_maxvalue<uint32_t>("MAX_READ_BEHIND_KB", 0, SFSCHUNKSIZE / 1024));
+}
+
 void mainNetworkThreadReload(void) {
 	TRACETHIS();
 
@@ -113,23 +141,7 @@ void mainNetworkThreadReload(void) {
 	}
 	chunkReplicatorReload();
 
-	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
-	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,
-	    NetworkWorkerThread::kMinBlocksPerHddWriteJob,
-	    NetworkWorkerThread::kMaxBlocksPerHddWriteJob);
-	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint16_t>(
-	    "MAX_BLOCKS_PER_HDD_READ_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddReadJob, 1);
-	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
-	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
-	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
-
-	size_t maxBuffersPoolSize_mb = cfg_get_minvalue<size_t>("MAX_BUFFERS_POOL_SIZE_MB", 512, 0);
-	setNewMaxIoBuffersPoolSize(maxBuffersPoolSize_mb);
-
-	gHDDReadAhead.setReadAhead_kB(
-			cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));
-	gHDDReadAhead.setMaxReadBehind_kB(
-			cfg_get_maxvalue<uint32_t>("MAX_READ_BEHIND_KB", 0, SFSCHUNKSIZE / 1024));
+	loadReloadableSettings();
 
 	char *oldListenHost, *oldListenPort;
 	int newlsock;
@@ -295,23 +307,7 @@ int mainNetworkThreadInit(void) {
 		}
 	}
 
-	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
-	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,
-	    NetworkWorkerThread::kMinBlocksPerHddWriteJob,
-	    NetworkWorkerThread::kMaxBlocksPerHddWriteJob);
-	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint16_t>(
-	    "MAX_BLOCKS_PER_HDD_READ_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddReadJob, 1);
-	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
-	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",
-	    NetworkWorkerThread::kDefaultMaxParallelHddReadJobsPerCsEntry, 1);
-
-	size_t maxBuffersPoolSize_mb = cfg_get_minvalue<size_t>("MAX_BUFFERS_POOL_SIZE_MB", 512, 0);
-	setNewMaxIoBuffersPoolSize(maxBuffersPoolSize_mb);
-
-	gHDDReadAhead.setReadAhead_kB(
-			cfg_get_maxvalue<uint32_t>("READ_AHEAD_KB", 0, SFSCHUNKSIZE / 1024));
-	gHDDReadAhead.setMaxReadBehind_kB(
-			cfg_get_maxvalue<uint32_t>("MAX_READ_BEHIND_KB", 0, SFSCHUNKSIZE / 1024));
+	loadReloadableSettings();
 
 	lsock = tcpsocket();
 	if (lsock < 0) {
