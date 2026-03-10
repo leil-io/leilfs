@@ -23,6 +23,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -324,20 +325,160 @@ public:
 	                       inode_t parent_src, const HString &name_src, inode_t parent_dst,
 	                       const HString &name_dst, inode_t *inode, Attributes *attr) = 0;
 
+	/// Updates extra-attribute flags on a node (optionally recursively).
+	///
+	/// Applies `eattr` using `smode` semantics (set/increase/decrease, with optional recursion).
+	/// Valid bits in `eattr` are: `EATTR_NOOWNER`, `EATTR_NOACACHE`, `EATTR_NOECACHE`,
+	/// and `EATTR_NODATACACHE`.
+	///
+	/// Counter parameters:
+	/// - On master, outputs the number of changed (`sinodes`), unchanged (`ncinodes`),
+	///   and permission-denied (`nsinodes`) inodes.
+	/// - On shadow/restore replay, inputs are expected counts from changelog replay and
+	///   are validated against the locally computed values.
+	///
+	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param inode Root inode for the operation.
+	/// @param eattr Extra-attribute bitmask to apply.
+	/// @param smode Mode controlling set/increase/decrease and recursion.
+	/// @param[in,out] sinodes Changed count (output on master; expected input on shadow/restore).
+	/// @param[in,out] ncinodes Unchanged count (output on master; expected input on
+	/// shadow/restore).
+	/// @param[in,out] nsinodes Permission-denied count (output on master; expected input on
+	/// shadow/restore).
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `smode` or `eattr` is invalid.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved or the session context
+	///         is invalid for this non-meta operation.
+	/// @return SAUNAFS_ERROR_EPERM if the target is outside the session-visible namespace, or
+	///         (non-recursive mode) no change is permitted due to ownership checks.
+	/// @return SAUNAFS_ERROR_MISMATCH on shadow/restore replay if expected counters differ.
 	virtual uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr,
 	                             uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
 	                             inode_t *nsinodes) = 0;
+
+	/// Schedules setting a storage goal on a node (optionally recursively).
+	///
+	/// Accepted `smode` values are `SMODE_SET` and `SMODE_RSET` only.
+	/// `setgoal_stats` accumulates changed/not-changed/not-permitted counters.
+	///
+	/// If the operation is not finished in the initial batch, returns
+	/// `SAUNAFS_ERROR_WAITING`; in that case `callback` is invoked on completion with the
+	/// final status. If it finishes immediately, `callback` is not invoked.
+	///
+	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param inode Root inode for the operation.
+	/// @param goal Target goal id.
+	/// @param smode Set mode (`SMODE_SET` or `SMODE_RSET`).
+	/// @param setgoal_stats Shared counters for changed/not-changed/not-permitted inodes.
+	/// @param callback Completion callback used when asynchronous processing is required.
+	///
+	/// @return SAUNAFS_STATUS_OK on immediate success.
+	/// @return SAUNAFS_ERROR_WAITING if accepted for asynchronous completion.
+	/// @return SAUNAFS_ERROR_EINVAL if `goal` or `smode` is invalid.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the target type is unsupported (not a directory,
+	///         file, trash, or reserved node), the target is outside the session-visible
+	///         namespace, or (non-recursive mode) a single-node owner check fails and the
+	///         initial batch completes immediately. In recursive mode, owner-based denials
+	///         are accumulated in `setgoal_stats` counters instead.
 	virtual uint8_t setGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 	                        std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 	                        const std::function<void(int)> &callback) = 0;
+
+	/// Applies a single-node goal update during shadow/restore replay and verifies consistency.
+	///
+	/// Computes the local per-node set-goal result for `inode` and compares it with
+	/// `master_result` (expected `SetGoalTask::k*` result code).
+	///
+	/// @param context The FS operation context (typically shadow/restore replay context).
+	/// @param inode The inode to update.
+	/// @param goal Target goal id.
+	/// @param smode Set mode (`SMODE_SET` or `SMODE_RSET`).
+	/// @param master_result Expected per-node result code from master changelog replay.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `goal` or `smode` is invalid.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the target type is unsupported (not a directory,
+	///         file, trash, or reserved node) or the target is outside the session-visible
+	///         namespace.
+	/// @return SAUNAFS_ERROR_MISMATCH if local result differs from `master_result`.
 	virtual uint8_t applySetGoal(const FsContext &context, inode_t inode, uint8_t goal,
 	                             uint8_t smode, uint32_t master_result) = 0;
+
+	/// Updates the stored path string of a trash inode.
+	///
+	/// For contexts with session data, this operation requires a meta session.
+	/// `path` must be non-empty and must not contain embedded `'\0'` bytes.
+	///
+	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param inode Inode expected to be in trash.
+	/// @param path New stored trash path.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `path` is empty or contains `'\0'`.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_EPERM if the session is not a meta session, or inode is outside
+	///         the session-visible namespace.
+	/// @return SAUNAFS_ERROR_ENOENT if inode cannot be resolved as a trash node.
 	virtual uint8_t setTrashPath(const FsContext &context, inode_t inode,
 	                             const std::string &path) = 0;
+
+	/// Schedules setting trash-time on a node (optionally recursively).
+	///
+	/// `smode` controls set/increase/decrease semantics and optional recursion.
+	/// `settrashtime_stats` accumulates changed/not-changed/not-permitted counters.
+	///
+	/// If the operation is not finished in the initial batch, returns
+	/// `SAUNAFS_ERROR_WAITING`; in that case `callback` is invoked on completion with the
+	/// final status. If it finishes immediately, `callback` is not invoked.
+	///
+	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param inode Root inode for the operation.
+	/// @param trashtime Target trash-time value.
+	/// @param smode Mode controlling set/increase/decrease and recursion.
+	/// @param settrashtime_stats Shared counters for changed/not-changed/not-permitted inodes.
+	/// @param callback Completion callback used when asynchronous processing is required.
+	///
+	/// @return SAUNAFS_STATUS_OK on immediate success.
+	/// @return SAUNAFS_ERROR_WAITING if accepted for asynchronous completion.
+	/// @return SAUNAFS_ERROR_EINVAL if `smode` is invalid.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the target type is unsupported (not a directory,
+	///         file, trash, or reserved node), the target is outside the session-visible
+	///         namespace, or (non-recursive mode) a single-node owner check fails and the
+	///         initial batch completes immediately. In recursive mode, owner-based denials
+	///         are accumulated in `settrashtime_stats` counters instead.
 	virtual uint8_t setTrashTime(const FsContext &context, inode_t inode, uint32_t trashtime,
 	                             uint8_t smode,
 	                             std::shared_ptr<SetTrashtimeTask::StatsArray> settrashtime_stats,
 	                             const std::function<void(int)> &callback) = 0;
+
+	/// Applies a single-node trash-time update on shadow/restore replay and verifies consistency.
+	///
+	/// Computes the local per-node set-trashtime result for `inode` and compares it with
+	/// `master_result` (expected `SetTrashtimeTask::k*` result code).
+	///
+	/// @param context The FS operation context (typically shadow/restore replay context).
+	/// @param inode The inode to update.
+	/// @param trashtime Target trash-time value.
+	/// @param smode Mode controlling set/increase/decrease and recursion.
+	/// @param master_result Expected per-node result code from master changelog replay.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `smode` is invalid.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the target type is unsupported (not a directory,
+	///         file, trash, or reserved node) or the target is outside the session-visible
+	///         namespace.
+	/// @return SAUNAFS_ERROR_MISMATCH if local result differs from `master_result`.
 	virtual uint8_t applySetTrashTime(const FsContext &context, inode_t inode, uint32_t trashtime,
 	                                  uint8_t smode, uint32_t master_result) = 0;
 
