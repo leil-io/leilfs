@@ -84,6 +84,8 @@ public:
 	uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, uint32_t sessionid) override;
 
+	/// Appends the contents of one file to another.
+	/// @see IFilesystemOperations::append
 	uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t inode, inode_t inode_src) override;
 
@@ -98,6 +100,8 @@ public:
 	             inode_t inode_src, inode_t parent_dst, const HString &name_dst, inode_t *inode,
 	             Attributes *attr) override;
 
+	/// Purges a trash node from metadata.
+	/// @see IFilesystemOperations::purge
 	uint8_t purge(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t inode) override;
 
@@ -279,6 +283,8 @@ public:
 	// Functions which modify metadata or return some information.
 	// To be used by the master server with personality == kMaster
 
+	/// Retrieves filesystem-wide capacity and object counters.
+	/// @see IFilesystemOperations::getFSStats
 	void getFSStats(uint64_t *totalSpace, uint64_t *availableSpace, uint64_t *trashSpace,
 	                inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
 	                inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
@@ -293,7 +299,10 @@ public:
 	void getDirPathData(const FilesystemOperationContext &fsOpContext, inode_t inode, uint8_t *buff,
 	                    uint32_t size) override;
 
+	/// Resolves a filesystem path to a directory inode, starting from the root.
+	/// @see IFilesystemOperations::getRootInode
 	uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) override;
+
 	uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode, uint32_t indx,
 	                  uint64_t *chunkid, uint64_t *length) override;
 	uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode, uint64_t length,

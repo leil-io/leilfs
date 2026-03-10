@@ -170,6 +170,29 @@ public:
 	virtual uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                        inode_t inode, uint32_t sessionid) = 0;
 
+	/// Appends the contents of one file to another.
+	///
+	/// Interprets `inode` as destination and `inode_src` as source.
+	/// On success, destination file data is extended by the source file data in order.
+	/// If the source file has no chunks, no data is copied, but all preceding validations
+	/// (session, permissions, quota) still apply.
+	///
+	/// @param context The FS operation context containing user credentials, session info,
+	///                and timestamp.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode Destination inode (must be writable in the current session context).
+	/// @param inode_src Source inode (must be readable in the current session context).
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `inode == inode_src`.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the session is invalid for this operation or an inode
+	///         cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if an inode is outside the session-visible subtree or is not
+	///         a file-like node.
+	/// @return SAUNAFS_ERROR_EACCES if read/write permissions are insufficient.
+	/// @return SAUNAFS_ERROR_QUOTA if appending would exceed quota (master personality).
+	/// @return SAUNAFS_ERROR_INDEXTOOBIG if the resulting chunk index range would overflow.
 	virtual uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t inode, inode_t inode_src) = 0;
 
@@ -236,6 +259,25 @@ public:
 	                     inode_t inode_src, inode_t parent_dst, const HString &name_dst,
 	                     inode_t *inode, Attributes *attr) = 0;
 
+	/// Purges a trash node from metadata.
+	///
+	/// The inode must resolve to a trash-type node; otherwise the call fails.
+	/// For contexts with session data, this operation requires a meta session.
+	///
+	/// On success, the trash entry is removed. If the node still has active file sessions,
+	/// it is moved to reserved instead of being removed immediately, while still reporting
+	/// success.
+	///
+	/// @param context The FS operation context containing user credentials, session info,
+	///                and timestamp.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode of the trash node to purge.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_EPERM if the session is not a meta session, or the inode
+	///         resolves to a node that is inaccessible from a meta session.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode does not exist or is not a trash-type node.
 	virtual uint8_t purge(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                      inode_t inode) = 0;
 
@@ -1017,6 +1059,24 @@ public:
 	// Functions which modify metadata or return some information.
 	// To be used by the master server with personality == kMaster
 
+	/// Retrieves filesystem-wide capacity and object counters.
+	///
+	/// This method fills all output parameters with the current master-side values used by
+	/// `CLTOMA_INFO`/`MATOCL_INFO` (`SaunaFsStatistics`):
+	/// - `totalSpace` and `availableSpace` come from `matocsserv_getspace()`.
+	/// - All remaining parameters reflect the current metadata counters, sourced from the
+	///   backend used by the active implementation (in-memory or KV store).
+	///
+	/// @param[out] totalSpace Receives total chunkserver space in bytes.
+	/// @param[out] availableSpace Receives currently available chunkserver space in bytes.
+	/// @param[out] trashSpace Receives total size in bytes of files in trash.
+	/// @param[out] trashNodes Receives number of files in trash.
+	/// @param[out] reservedSpace Receives total size in bytes of files in reserved.
+	/// @param[out] reservedNodes Receives number of files in reserved.
+	/// @param[out] inodes Receives total number of metadata nodes.
+	/// @param[out] directoryNodes Receives number of directory nodes.
+	/// @param[out] fileNodes Receives number of file-type nodes.
+	/// @param[out] linkNodes Receives number of symbolic-link nodes.
 	virtual void getFSStats(uint64_t *totalSpace, uint64_t *availableSpace, uint64_t *trashSpace,
 	                        inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
 	                        inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
@@ -1062,7 +1122,24 @@ public:
 	virtual void getDirPathData(const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint8_t *buff, uint32_t size) = 0;
 
+	/// Resolves a filesystem path to a directory inode, starting from the root.
+	///
+	/// Walks each `/`-separated component of `path` from the filesystem root directory.
+	/// Multiple consecutive `/` characters are treated as a single separator.
+	/// An empty path or a path consisting only of `/` characters resolves to the root inode.
+	/// On success, writes the inode of the resolved directory to `*rootinode`.
+	///
+	/// @note Primarily used during FUSE session registration to resolve the mount subpath
+	///       into the inode that becomes the session's visible filesystem root.
+	///
+	/// @param[out] rootinode Receives the inode of the directory at `path`.
+	/// @param path Null-terminated path to resolve (e.g. `"subvol/dir"`).
+	/// @return `SAUNAFS_STATUS_OK` on success.
+	/// @return `SAUNAFS_ERROR_ENOENT` if any path component is not found.
+	/// @return `SAUNAFS_ERROR_ENOTDIR` if any resolved path component is not a directory.
+	/// @return `SAUNAFS_ERROR_EINVAL` if a path component name is invalid.
 	virtual uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) = 0;
+
 	virtual uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                          uint32_t indx, uint64_t *chunkid, uint64_t *length) = 0;
 	virtual uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode,
