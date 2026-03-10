@@ -417,6 +417,10 @@ uint8_t FilesystemOperationsBase::applyAccess(const FilesystemOperationContext &
 	p->atime = timestamp;
 	fsnodes_update_checksum(p);
 	gMetadata->metadataVersion++;
+
+	// Make the change persistent for KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, p); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -834,6 +838,9 @@ uint8_t FilesystemOperationsBase::applyTrunc(const FilesystemOperationContext &f
 	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(p);
 
+	// Make the change persistent for KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, p); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1074,6 +1081,10 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	nodeOperations_->updateCTime(p, timestamp);
 	fsnodes_update_checksum(p);
 	gMetadata->metadataVersion++;
+
+	// Make persistent the changes on KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, p); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1094,6 +1105,10 @@ uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &
 	nodeOperations_->updateCTime(p, timestamp);
 	fsnodes_update_checksum(p);
 	gMetadata->metadataVersion++;
+
+	// Make the change persistent for KV backends
+	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, p); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
