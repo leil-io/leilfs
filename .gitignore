@@ -114,4 +114,4 @@ CMakeUserPresets.json
 
 # Copilot user instructions #
 ##############
-.github/copilot-user-instructions.md
+.github/copilot-user.instructions.md
