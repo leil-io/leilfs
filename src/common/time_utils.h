@@ -93,7 +93,7 @@ public:
 	int64_t lap_s();
 
 private:
-	SteadyTimePoint now() const;
+	static SteadyTimePoint now();
 	SteadyTimePoint startTime_;
 };
 
