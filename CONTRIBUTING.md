@@ -302,8 +302,7 @@ Before we accept your PR, we will need your permission to license code however
 we wish, either as a copyright assignment or as a Contributor License Agreement
 (CLA). This is not yet done, so please write to us on
 [Matrix](https://matrix.to/#/#leil:matrix.org) if you wish to submit your code
-to us. Some code can however be waived through (e.g simple typo or bug fixes),
-but this up to the discretion of the developers
+to us. Some contributions (e.g., simple typo or bug fixes) can be waived from this requirement, but this is at the discretion of the developers.
 
 
 ## Attribution
