@@ -5,13 +5,11 @@ applyTo: '**/*'
 # Language-specific instructions
 
 Use specific instructions for C and C++ files from
-[`./instructions/cpp.instructions.md`](./instructions/cpp.instructions.md).
-
-More language-specific instructions will be added in separate files as needed.
+[`instructions/cpp.instructions.md`](instructions/cpp.instructions.md).
 
 # Building and testing during development
 
-If the file `./copilot-user-instructions.md` exists, see it for environment-specific build and test commands.
+If the file `copilot-user.instructions.md` exists, see it for environment-specific build and test commands.
 
 # Commit messages
 
