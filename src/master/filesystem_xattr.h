@@ -84,9 +84,11 @@ static inline uint32_t get_xattr_data_hash(inode_t inode, uint8_t attributeNameL
 	return (hash & (XATTR_DATA_HASH_SIZE - 1));
 }
 
-static inline uint32_t get_xattr_inode_hash(inode_t inode) {
+static constexpr uint32_t get_xattr_inode_hash(inode_t inode) {
 	return ((inode * 0x72B5F387U) & (XATTR_INODE_HASH_SIZE - 1));
 }
+
+XAttributeInodeEntry *find_xattr_inode_entry(inode_t inode, uint32_t inodeHash);
 
 void xattr_checksum_add_to_background(XAttributeDataEntry *xattrDataEntry);
 void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xattrDataBuffer);
