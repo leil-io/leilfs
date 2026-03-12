@@ -29,8 +29,13 @@
 
 #include "common/type_defs.h"
 
-inline uint32_t gCleanAcquiredFilesPeriod;
-inline uint32_t gCleanAcquiredFilesTimeout;
+#ifdef _WIN32
+#include <atomic>
+#include <cstdint>
+
+inline std::atomic<uint32_t> gCleanAcquiredFilesPeriod;
+inline std::atomic<uint32_t> gCleanAcquiredFilesTimeout;
+#endif
 
 // Define the AcquiredFileLastTimeUsed struct
 struct AcquiredFileLastTimeUsed {

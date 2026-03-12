@@ -3576,7 +3576,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io,
 #ifdef _WIN32
 		int mounting_uid_, int mounting_gid_, std::unordered_set<uint32_t> &allowed_users_,
-		bool ignore_utimens_update_,
+		bool ignore_utimens_update_, unsigned acquired_files_cleanup_period_,
+		unsigned acquired_files_cleanup_timeout_,
 #endif
 #ifdef __linux__
 		unsigned malloc_trim_period_,
@@ -3588,6 +3589,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	mounting_gid = mounting_gid_;
 	allowed_users = allowed_users_;
 	gIgnoreUtimensUpdate = ignore_utimens_update_;
+	gCleanAcquiredFilesPeriod = acquired_files_cleanup_period_;
+	gCleanAcquiredFilesTimeout = acquired_files_cleanup_timeout_;
 #endif
 	gIgnoreFlush = ignore_flush_;
 	gStatfsCacheTimeout = statfs_cache_timeout_;
@@ -3641,6 +3644,10 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	gTweaks.registerVariable("UseQuotaInVolumeSize", gUseQuotaInVolumeSize, "usequotainvolumesize");
 #ifdef _WIN32
 	gTweaks.registerVariable("IgnoreUtimens", gIgnoreUtimensUpdate, "sfsignoreutimensupdate");
+	gTweaks.registerVariable("AcquiredFilesCleanupPeriod", gCleanAcquiredFilesPeriod,
+	                         "sfscleanacquiredfilesperiod");
+	gTweaks.registerVariable("AcquiredFilesCleanupTimeout", gCleanAcquiredFilesTimeout,
+	                         "sfscleanacquiredfilestimeout");
 #endif
 	gTweaks.registerVariable("AclCacheMaxTime", acl_cache->maxTime_ms, "aclcacheto");
 	gTweaks.registerVariable("AclCacheHit", acl_cache->cacheHit);
@@ -3732,7 +3739,8 @@ void fs_init(FsInitParams &params) {
 		params.acl_cache_timeout, params.acl_cache_size, params.direct_io,
 #ifdef _WIN32
 		params.mounting_uid, params.mounting_gid, params.allowed_users,
-		params.ignore_utimens_update,
+		params.ignore_utimens_update, params.clean_acquired_files_period,
+		params.clean_acquired_files_timeout,
 #endif
 #ifdef __linux__
 		params.malloc_trim_period,
