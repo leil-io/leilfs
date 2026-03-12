@@ -53,18 +53,14 @@ static uint32_t gcd(uint32_t a, uint32_t b) {
 	}
 }
 
-ChunkWriter::Operation::Operation() : unfinishedWrites(0), offsetOfEnd(0) {}
-
 bool ChunkWriter::Operation::isExpandPossible(JournalPosition newPosition, uint32_t stripeSize) {
 	// If the operation is not empty, the new JournalPosition has to be compatible with
 	// the previous elements of the operation, ie. we can only expand by a new block
-	// of the same stripe and the same (from, to) range
-	for (const JournalPosition& position : journalPositions) {
+	// of the same stripe
+	for (const JournalPosition &position : journalPositions) {
 		sassert(newPosition->chunkIndex == position->chunkIndex);
-		if (newPosition->from != position->from
-				|| newPosition->to != position->to
-				|| (newPosition->blockIndex / stripeSize) != (position->blockIndex / stripeSize)
-				|| newPosition->blockIndex == position->blockIndex) {
+		if (newPosition->blockIndex == position->blockIndex ||
+		    (newPosition->blockIndex / stripeSize) != (position->blockIndex / stripeSize)) {
 			return false;
 		}
 	}
@@ -74,25 +70,27 @@ bool ChunkWriter::Operation::isExpandPossible(JournalPosition newPosition, uint3
 void ChunkWriter::Operation::expand(JournalPosition newPosition) {
 	sassert(newPosition->type != WriteCacheBlock::kParityBlock);
 	uint64_t newOffsetOfEnd = newPosition->offsetInFile() + newPosition->size();
-	if (newPosition->type != WriteCacheBlock::kReadBlock && newOffsetOfEnd > offsetOfEnd) {
-		offsetOfEnd = newOffsetOfEnd;
+	if (newPosition->type != WriteCacheBlock::kReadBlock) {
+		offsetOfEnd = std::max(offsetOfEnd, newOffsetOfEnd);
+		minimumModifiedOffset = std::min(minimumModifiedOffset, newPosition->from);
+		maximumModifiedOffset = std::max(maximumModifiedOffset, newPosition->to);
 	}
 	journalPositions.push_back(newPosition);
 }
 
-bool ChunkWriter::Operation::collidesWith(const Operation& operation) const {
-	for (const auto& position1 : journalPositions) {
-		for (const auto& position2 : operation.journalPositions) {
-			sassert(position1->chunkIndex == position2->chunkIndex);
-			if (position1->blockIndex != position2->blockIndex
-					|| position1->from >= position2->to
-					|| position1->to <= position2->from) {
-				continue;
-			}
-			return true;
-		}
+bool ChunkWriter::Operation::collidesWith(const Operation &operation, uint32_t stripeSize) const {
+	if (journalPositions.empty() || operation.journalPositions.empty()) { return false; }
+	sassert(journalPositions.front()->chunkIndex == operation.journalPositions.front()->chunkIndex);
+
+	if ((journalPositions.front()->blockIndex / stripeSize) !=
+	    (operation.journalPositions.front()->blockIndex / stripeSize)) {
+		// Different stripes, no collision
+		return false;
 	}
-	return false;
+
+	// Same chunk, same stripe - check if the modified parts of blocks overlap
+	return !(maximumModifiedOffset <= operation.minimumModifiedOffset ||
+	         minimumModifiedOffset >= operation.maximumModifiedOffset);
 }
 
 bool ChunkWriter::Operation::isFullStripe(uint32_t stripeSize) const {
@@ -347,7 +345,7 @@ bool ChunkWriter::canStartOperation(const Operation& operation) {
 	// Starting them may result in reading old version of data when calculating new parity.
 	for (const auto& writeIdAndOperation : pendingOperations_) {
 		const auto& pendingOperation = writeIdAndOperation.second;
-		if (operation.collidesWith(pendingOperation)) {
+		if (operation.collidesWith(pendingOperation, combinedStripeSize_)) {
 			return false;
 		}
 	}
@@ -414,8 +412,8 @@ void ChunkWriter::fillOperation(Operation &operation, int first_block, int first
 	if (size == 0) {
 		return;
 	}
-	int block_from = operation.journalPositions.front()->from;
-	int block_to = operation.journalPositions.front()->to;
+	int block_from = operation.minimumModifiedOffset;
+	int block_to = operation.maximumModifiedOffset;
 
 	std::vector<WriteCacheBlock> blocks;
 	blocks.reserve(size);
@@ -423,11 +421,26 @@ void ChunkWriter::fillOperation(Operation &operation, int first_block, int first
 	assert(blocks.size() == (size_t)size);
 
 	for (int index = 0; index < size; ++index) {
-		// Insert the new block into the journal just after the last block of the operation
-		auto position = journal_.insert(operation.journalPositions.back(), std::move(blocks[index]));
-		operation.journalPositions.push_back(position);
+		bool isBlockInOperation = false;
+		JournalPosition position;
+		// Check if the block is already in the journal, because it could be the case that the write
+		// operation on this block does not cover the whole interval the operation does.
+		for (const auto& journalPosition : operation.journalPositions) {
+			if (journalPosition->blockIndex == blocks[index].blockIndex) {
+				journalPosition->overwriteWithReadBlock(blocks[index]);
+				position = journalPosition;
+				isBlockInOperation = true;
+				break;
+			}
+		}
+		// If the block is not in the journal, insert it
+		if (!isBlockInOperation) {
+			// Insert the new block into the journal just after the last block of the operation
+			position = journal_.insert(operation.journalPositions.back(), std::move(blocks[index]));
+			operation.journalPositions.push_back(position);
+		}
 
-		stripe_element[first_index + index] = position->data();
+		stripe_element[first_index + index] = position->rawData(block_from);
 	}
 }
 
@@ -446,8 +459,8 @@ void ChunkWriter::fillNotExisting(Operation &operation, int first_block,
 	if (blocks_number == 0) {
 		return;
 	}
-	int block_from = operation.journalPositions.front()->from;
-	int block_to = operation.journalPositions.front()->to;
+	int block_from = operation.minimumModifiedOffset;
+	int block_to = operation.maximumModifiedOffset;
 	int beyond_start = first_block + first_index;
 
 	std::vector<WriteCacheBlock> blocks;
@@ -455,8 +468,7 @@ void ChunkWriter::fillNotExisting(Operation &operation, int first_block,
 	// Fills not existing blocks with zeroes
 	for (int index = beyond_start; index < beyond_start + blocks_number;
 	     ++index) {
-		WriteCacheBlock block(locator_->chunkIndex(), index,
-		                      WriteCacheBlock::kReadBlock);
+		WriteCacheBlock block(locator_->chunkIndex(), index, WriteCacheBlock::kReadBlock);
 		memset(block.data(), 0, SFSBLOCKSIZE);
 		block.from = block_from;
 		block.to = block_to;
@@ -481,10 +493,16 @@ void ChunkWriter::fillNotExisting(Operation &operation, int first_block,
  */
 void ChunkWriter::fillStripe(Operation &operation, int first_block, std::vector<uint8_t *> &stripe_element) {
 	for (const auto &position : operation.journalPositions) {
-		assert((position->blockIndex % combinedStripeSize_) == (position->blockIndex - first_block));
+		assert((position->blockIndex % combinedStripeSize_) ==
+		       (position->blockIndex - first_block));
 		assert(((int)position->blockIndex - first_block) < combinedStripeSize_);
-		assert(position->to == operation.journalPositions.front()->to);
-		assert(position->from == operation.journalPositions.front()->from);
+		assert(position->to <= operation.maximumModifiedOffset);
+		assert(position->from >= operation.minimumModifiedOffset);
+		if (position->from != operation.minimumModifiedOffset ||
+		    position->to != operation.maximumModifiedOffset) {
+			// This block is not fully covered by the operation, so we need to read it
+			continue;
+		}
 		stripe_element[position->blockIndex - first_block] = position->data();
 	}
 
@@ -492,21 +510,25 @@ void ChunkWriter::fillStripe(Operation &operation, int first_block, std::vector<
 	int hole_size = 0;
 	int range_end = std::min(combinedStripeSize_, SFSBLOCKSINCHUNK - first_block);
 	for (int i = 0; i < range_end; ++i) {
+		// If the block is beyond file size, it is not a hole, but it also doesn't need to be read
 		if (first_block + i >= chunkSizeInBlocks_) {
+			// Check if previous blocks were holes and fill them before filling not existing blocks
 			if (hole_size > 0) {
 				fillOperation(operation, first_block, hole_start, hole_size,
 				              stripe_element);
 				hole_size = 0;
 			}
 			if (stripe_element[i] == nullptr) {
+				// Fill not existing blocks with zeroes, so they can be used for parity calculation
 				fillNotExisting(operation, first_block, i, 1, stripe_element);
 			}
 			continue;
 		}
+
 		if (stripe_element[i] == nullptr) {
-			if (hole_size == 0) {
-				hole_start = i;
-			}
+			// This block is a hole, or it is not fully covered by the operation, so we need to read
+			// it.
+			if (hole_size == 0) { hole_start = i; }
 			hole_size++;
 		} else if (hole_size > 0) {
 			fillOperation(operation, first_block, hole_start, hole_size, stripe_element);
@@ -529,9 +551,9 @@ void ChunkWriter::startOperation(Operation operation) {
 	LOG_AVG_TILL_END_OF_SCOPE0("ChunkWriter::startOperation");
 	// If the operation is a partial-stripe write, read all the missing blocks first
 	int first_block = combinedStripeSize_ * (operation.journalPositions.front()->blockIndex / combinedStripeSize_);
-	int block_size = operation.journalPositions.front()->size();
-	int block_from = operation.journalPositions.front()->from;
-	int block_to = operation.journalPositions.front()->to;
+	int block_from = operation.minimumModifiedOffset;
+	int block_to = operation.maximumModifiedOffset;
+	int block_size = block_to - block_from;
 
 	std::vector<uint8_t *> stripe_element(combinedStripeSize_, nullptr);
 	fillStripe(operation, first_block, stripe_element);
@@ -650,9 +672,9 @@ void ChunkWriter::readBlocks(int block_index, int size, int block_from, int bloc
 	locator_->locationInfo().chunkId, locator_->locationInfo().version, std::move(plan));
 
 	assert(buffer.size() == 0);
-	executor.executePlan(buffer, chunk_type_locations, connector_,
-			read_data_get_connect_timeout_ms(), read_data_get_wave_read_timeout_ms(),
-			Timeout{std::chrono::milliseconds(read_data_get_wave_read_timeout_ms())});
+	executor.executePlan(buffer, chunk_type_locations, read_data_get_chunk_connector(),
+	                     read_data_get_connect_timeout_ms(), read_data_get_wave_read_timeout_ms(),
+	                     Timeout{std::chrono::milliseconds(read_data_get_wave_read_timeout_ms())});
 
 	int offset = 0;
 	for (int index = block_index; index < block_index + size; ++index) {

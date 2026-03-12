@@ -142,10 +142,14 @@ private:
 	public:
 		std::vector<JournalPosition> journalPositions;  // stripe in the written journal
 		std::list<WriteCacheBlock> parityBuffers;       // memory for parity blocks
-		uint32_t unfinishedWrites;                      // number of write request sent
-		uint64_t offsetOfEnd;                           // offset in the file
+		uint32_t unfinishedWrites{0};                   // number of write request sent
+		uint64_t offsetOfEnd{0};                        // offset in the file
+		// minimum modified offset in each block of the operation
+		uint32_t minimumModifiedOffset{SFSBLOCKSIZE};
+		// maximum modified offset in each block of the operation
+		uint32_t maximumModifiedOffset{0};
 
-		Operation();
+		Operation() = default;
 		Operation(Operation&&) = default;
 		Operation(const Operation&) = delete;
 		Operation& operator=(const Operation&) = delete;
@@ -165,7 +169,7 @@ private:
 		 * Returns true if two operations write the same place in a file.
 		 * One of these operations have to be complete, ie. contain a full stripe
 		 */
-		bool collidesWith(const Operation& operation) const;
+		bool collidesWith(const Operation& operation, uint32_t stripeSize) const;
 
 		/*
 		 * Returns true if the operation is not a partial-stripe write operation
