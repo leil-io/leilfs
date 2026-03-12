@@ -329,14 +329,11 @@ void FilesystemOperationsBase::getFSStats(uint64_t *totalSpace, uint64_t *availa
 uint8_t FilesystemOperationsBase::getRootInode(inode_t *rootinode, const uint8_t *path) {
 	HString hname;
 	uint32_t nleng;
-	const uint8_t *name;
-	FSNodeDirectory *parent;
-
-	name = path;
-	parent = gMetadata->root;
+	const uint8_t *name = path;
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
+	FSNodeDirectory *parent = nodeOperations_->getRootNode(fsOpContext);
 
 	for (;;) {
 		while (*name == '/') {
