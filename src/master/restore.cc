@@ -208,7 +208,19 @@ int do_access(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,'(');
 	GETINODE(inode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->applyAccess(ts, inode);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applyAccess(fsOpContext, ts, inode);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_append(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -329,8 +341,22 @@ int do_create(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFSOperations->applyCreate(ts, parent, HString((const char *)name),
-	                                  static_cast<FSNodeType>(type), mode, uid, gid, rdev, inode);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applyCreate(fsOpContext, ts, parent, HString((const char *)name),
+	                                        static_cast<FSNodeType>(type), mode, uid, gid, rdev, inode);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err(
+			    "{}: transaction failed to commit: parent {}, type {}, inode {}",
+			    __func__, parent, type, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_session(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -1014,7 +1040,20 @@ int do_unlink(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETINODE(inode,ptr);
-	return gFSOperations->applyUnlink(ts, parent, HString((char *)name), inode);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applyUnlink(fsOpContext, ts, parent, HString((char *)name), inode);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: parent {}, inode {}",
+			              __func__, parent, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_unlock(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
@@ -1053,7 +1092,20 @@ int do_trunc(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,')');
 	EAT(ptr,filename,lv,':');
 	GETU64(chunkid,ptr);
-	return gFSOperations->applyTrunc(ts, inode, indx, chunkid, lockid);
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applyTrunc(fsOpContext, ts, inode, indx, chunkid, lockid);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}, chunkid {}",
+			              __func__, inode, indx, chunkid);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_write(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {

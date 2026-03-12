@@ -409,7 +409,7 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 
 	std::string name(pSrc, pSrc + edgeNameSize);
 	sectionOffset += edgeNameSize;
-	FSNode *child = gFSOperations->nodeOperations()->idToNode(childId);
+	FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, childId);
 	if (!child) {
 		safs_pretty_syslog(
 		    LOG_ERR, "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: child not found",
@@ -439,7 +439,8 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 	} else {
 		FSNodeDirectory *parent;
 		if (currentParentId != parentId){
-			parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(parentId);
+			parent =
+			    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
 			currentParentNode = parent;
 		} else {
 			parent = currentParentNode;
@@ -449,8 +450,8 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 			    LOG_ERR, "loading edge: %" PRIiNode ",%s->%" PRIiNode " error: parent not found",
 			    parentId, gFSOperations->nodeOperations()->escapeName(name).c_str(), childId);
 			if (ignoreFlag) {
-				parent =
-				    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
+				    fsOpContext, SPECIAL_INODE_ROOT);
 				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
@@ -477,8 +478,8 @@ static int8_t fs_parseEdge(const FilesystemOperationContext &fsOpContext,
 			              gFSOperations->nodeOperations()->escapeName(name), childId,
 			              static_cast<char>(parent->type));
 			if (ignoreFlag) {
-				parent =
-				    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
+				    fsOpContext, SPECIAL_INODE_ROOT);
 				if (!parent || parent->type != FSNodeType::kDirectory) {
 					safs_pretty_syslog(
 					    LOG_ERR,
@@ -873,8 +874,11 @@ static int fs_load(const std::shared_ptr<MemoryMappedFile> &metadataFile, int ig
 
 	util::ScopedTimer timer("checking filesystem consistency of the metadata file took");
 
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
 	gMetadata->root =
-	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(SPECIAL_INODE_ROOT);
+	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, SPECIAL_INODE_ROOT);
 	if (gMetadata->root == nullptr) {
 		safs::log_err("error reading metadata (root node not found)");
 		return kOpFailure;
@@ -1136,15 +1140,19 @@ void MetadataBackendFile::storeedgelist(FSNodeDirectory *parent, FILE *fd) {
 }
 
 void MetadataBackendFile::storeedgelist(const TrashPathContainer &data, FILE *fd) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first.id);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.first.id);
 		storeedge(nullptr, child, (std::string)entry.second, fd);
 	}
 }
 
 void MetadataBackendFile::storeedgelist(const ReservedPathContainer &data, FILE *fd) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
 	for (const auto &entry : data) {
-		FSNode *child = gFSOperations->nodeOperations()->idToNode(entry.first);
+		FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, entry.first);
 		storeedge(nullptr, child, (std::string)entry.second, fd);
 	}
 }

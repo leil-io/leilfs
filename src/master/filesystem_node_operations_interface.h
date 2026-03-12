@@ -96,26 +96,12 @@ public:
 
 	// Type-safe node lookup operations
 
-	/// Looks up a node by its inode and verifies its type.
-	template <class NodeType>
-	NodeType *idToNodeVerify(inode_t inode) {
-		auto *node = static_cast<NodeType *>(this->idToNodeInternal(inode));
-		this->checkNodeType(node);
-		return node;
-	}
-
 	/// Looks up a node by its inode and context, and verifies its type.
 	template <class NodeType>
 	NodeType *idToNodeVerify(const FilesystemOperationContext &fsOpContext, inode_t inode) {
 		auto *node = static_cast<NodeType *>(this->idToNodeInternal(fsOpContext, inode));
 		this->checkNodeType(node);
 		return node;
-	}
-
-	/// Looks up a node by its inode.
-	template <class NodeType = FSNode>
-	NodeType *idToNode(inode_t inode) {
-		return static_cast<NodeType *>(this->idToNodeInternal(inode));
 	}
 
 	/// Looks up a node by its inode and context.
@@ -453,16 +439,19 @@ public:
 	/// The offset provided by the client (e.g., FUSE readdir) is always non-negative (sign bit 0).
 	/// Internally, the server may store offsets with the sign bit set (bit 63 = 1).
 	/// All lookups are enforced to be done ignoring the sign bit by setting it to 0.
-	virtual void getDetachedData(const HandleIndexContainer &data, uint64_t handleOffset,
+	virtual void getDetachedData(const FilesystemOperationContext &fsOpContext,
+	                             const HandleIndexContainer &data, uint64_t handleOffset,
 	                             uint32_t maxEntries, std::vector<HandleInodeEntry> &entries,
 	                             bool fromTrash) = 0;
 #endif
 
 	// Path operations
-	virtual void getPath(FSNodeDirectory *parent, FSNode *child, std::string &path) = 0;
-	virtual uint32_t getPathSize(FSNodeDirectory *parent, FSNode *child) = 0;
-	virtual void getPathData(FSNodeDirectory *parent, FSNode *child, uint8_t *path,
-	                         uint32_t size) = 0;
+	virtual void getPath(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                     FSNode *child, std::string &path) = 0;
+	virtual uint32_t getPathSize(const FilesystemOperationContext &fsOpContext,
+	                             FSNodeDirectory *parent, FSNode *child) = 0;
+	virtual void getPathData(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	                         FSNode *child, uint8_t *path, uint32_t size) = 0;
 	virtual std::string escapeName(const std::string &name) = 0;
 
 	// ACL operations
@@ -588,16 +577,21 @@ public:
 	// Ancestry operations
 
 	/// Returns true if \a ancestor is ancestor of \a node.
+	/// @param fsOpContext Filesystem operation context with a potential transaction.
 	/// @param ancestor potential ancestor node
 	/// @param node potential descendant node
-	virtual bool isAncestor(FSNodeDirectory *ancestor, FSNode *node) = 0;
+	virtual bool isAncestor(const FilesystemOperationContext &fsOpContext,
+	                        FSNodeDirectory *ancestor, FSNode *node) = 0;
 
 	/// Returns true if \a node is reserved or in trash or \a ancestor is ancestor of \a node.
+	/// @param fsOpContext Filesystem operation context with a potential transaction.
 	/// @param ancestor potential ancestor node
 	/// @param node potential reserved, trash or descendant node
-	virtual bool isAncestorOrNodeReservedOrTrash(FSNodeDirectory *ancestor, FSNode *node) = 0;
+	virtual bool isAncestorOrNodeReservedOrTrash(const FilesystemOperationContext &fsOpContext,
+	                                             FSNodeDirectory *ancestor, FSNode *node) = 0;
 
-	virtual FSNodeDirectory *getFirstParent(FSNode *node) = 0;
+	virtual FSNodeDirectory *getFirstParent(const FilesystemOperationContext &fsOpContext,
+	                                        FSNode *node) = 0;
 
 	/// Returns all parent ids of the given node.
 	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
@@ -607,11 +601,6 @@ public:
 	                                          FSNode *node) = 0;
 
 protected:
-	/// Core node lookup operation - override in subclasses for custom storage.
-	/// @param inode The inode of the node to look up.
-	/// @return Pointer to the node if found, nullptr otherwise.
-	virtual FSNode *idToNodeInternal(inode_t inode) const = 0;
-
 	/// Core node lookup operation with context - override in subclasses for custom storage.
 	/// @param context The FS context for the operation, potentially carrying a transaction.
 	/// @param inode The inode of the node to look up.

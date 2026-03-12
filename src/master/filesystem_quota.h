@@ -32,6 +32,8 @@
 #include "master/filesystem_node_types.h"
 #include "protocol/quota.h"
 
+class FilesystemOperationContext;
+
 /// Decodes a single-character selector into a typed value.
 ///
 /// Used by applySetQuota replay paths to decode SETQUOTA changelog fields
@@ -75,31 +77,37 @@ bool fsnodes_quota_exceeded_ug(FSNode *node,
 	const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
 
 /*! \brief Test if resource change exceeds quota for directories.
+ * \param fsOpContext Filesystem operation context with a potential transaction.
  * \param node Pointer to node in directory tree to check quota for.
  * \param resource_list Required changes to resources.
  * \return true if quota is exceeded.
  */
-bool fsnodes_quota_exceeded_dir(FSNode *node,
-	const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
+bool fsnodes_quota_exceeded_dir(
+    const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
 
 /*! \brief Test if moving node (moving resources from one parent to other) exceeds quota.
+ * \param fsOpContext Filesystem operation context with a potential transaction.
  * \param node Destination parent.
  * \param prev_node Source parent.
  * \param resource_list required changes to quota.
  * \return true if quota is exceeded.
  */
-bool fsnodes_quota_exceeded_dir(FSNodeDirectory *node, FSNodeDirectory* prev_node,
-	const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
-
+bool fsnodes_quota_exceeded_dir(
+    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
+    FSNodeDirectory *prev_node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
 
 /*! \brief Test if resource change exceeds quota for user+groups and directories.
+ * \param fsOpContext Filesystem operation context with a potential transaction.
  * \param node Pointer to node in directory tree to check quota for. User id and group id is taken
  *             from node.
  * \param resource_list Required changes to resources.
  * \return true if quota is exceeded.
  */
-bool fsnodes_quota_exceeded(FSNode *node,
-	const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
+bool fsnodes_quota_exceeded(
+    const FilesystemOperationContext &fsOpContext, FSNode *node,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resource_list);
 
 /*! \brief Update quota for both user+group and directory.
  * \param node Pointer to node in directory tree to update quota for. User id and group id is taken
@@ -127,7 +135,8 @@ namespace quotas {
 uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results);
 uint8_t fs_quota_get(const FsContext &context, const std::vector<QuotaOwner> &owners,
                      std::vector<QuotaEntry> &results);
-uint8_t fs_quota_set(const FsContext &context, const std::vector<QuotaEntry> &entries);
+uint8_t fs_quota_set(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+                     const std::vector<QuotaEntry> &entries);
 uint8_t fs_quota_get_info(const FsContext &context, const std::vector<QuotaEntry> &entries,
                           std::vector<std::string> &result);
 
