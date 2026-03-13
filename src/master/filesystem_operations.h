@@ -84,6 +84,8 @@ public:
 	uint8_t release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, uint32_t sessionid) override;
 
+	/// Appends the contents of one file to another.
+	/// @see IFilesystemOperations::append
 	uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t inode, inode_t inode_src) override;
 
@@ -98,6 +100,8 @@ public:
 	             inode_t inode_src, inode_t parent_dst, const HString &name_dst, inode_t *inode,
 	             Attributes *attr) override;
 
+	/// Purges a trash node from metadata.
+	/// @see IFilesystemOperations::purge
 	uint8_t purge(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t inode) override;
 
@@ -107,17 +111,34 @@ public:
 	               inode_t parent_src, const HString &name_src, inode_t parent_dst,
 	               const HString &name_dst, inode_t *inode, Attributes *attr) override;
 
+	/// Updates extra-attribute flags on a node (optionally recursively).
+	/// @see IFilesystemOperations::setExtraAttr
 	uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
 	                     inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
+
+	/// Schedules setting a storage goal on a node (optionally recursively).
+	/// @see IFilesystemOperations::setGoal
 	uint8_t setGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 	                std::shared_ptr<SetGoalTask::StatsArray> setgoal_stats,
 	                const std::function<void(int)> &callback) override;
+
+	/// Applies a single-node goal update during shadow/restore replay and verifies consistency.
+	/// @see IFilesystemOperations::applySetGoal
 	uint8_t applySetGoal(const FsContext &context, inode_t inode, uint8_t goal, uint8_t smode,
 	                     uint32_t master_result) override;
+
+	/// Updates the stored path string of a trash inode.
+	/// @see IFilesystemOperations::setTrashPath
 	uint8_t setTrashPath(const FsContext &context, inode_t inode, const std::string &path) override;
+
+	/// Schedules setting trash-time on a node (optionally recursively).
+	/// @see IFilesystemOperations::setTrashTime
 	uint8_t setTrashTime(const FsContext &context, inode_t inode, uint32_t trashtime, uint8_t smode,
 	                     std::shared_ptr<SetTrashtimeTask::StatsArray> settrashtime_stats,
 	                     const std::function<void(int)> &callback) override;
+
+	/// Applies a single-node trash-time update on shadow/restore replay and verifies consistency.
+	/// @see IFilesystemOperations::applySetTrashTime
 	uint8_t applySetTrashTime(const FsContext &context, inode_t inode, uint32_t trashtime,
 	                          uint8_t smode, uint32_t master_result) override;
 
@@ -279,14 +300,26 @@ public:
 	// Functions which modify metadata or return some information.
 	// To be used by the master server with personality == kMaster
 
+	/// Retrieves filesystem-wide capacity and object counters.
+	/// @see IFilesystemOperations::getFSStats
 	void getFSStats(uint64_t *totalSpace, uint64_t *availableSpace, uint64_t *trashSpace,
 	                inode_t *trashNodes, uint64_t *reservedSpace, inode_t *reservedNodes,
 	                inode_t *inodes, inode_t *directoryNodes, inode_t *fileNodes,
 	                inode_t *linkNodes) override;
+
+	/// Returns the byte length of the full path string for a directory node.
+	/// @see IFilesystemOperations::getDirPathSize
 	uint32_t getDirPathSize(const FilesystemOperationContext &fsOpContext, inode_t inode) override;
+
+	/// Writes the full path string for a directory node into a caller-supplied buffer.
+	/// @see IFilesystemOperations::getDirPathData
 	void getDirPathData(const FilesystemOperationContext &fsOpContext, inode_t inode, uint8_t *buff,
 	                    uint32_t size) override;
+
+	/// Resolves a filesystem path to a directory inode, starting from the root.
+	/// @see IFilesystemOperations::getRootInode
 	uint8_t getRootInode(inode_t *rootinode, const uint8_t *path) override;
+
 	uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode, uint32_t indx,
 	                  uint64_t *chunkid, uint64_t *length) override;
 	uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode, uint64_t length,

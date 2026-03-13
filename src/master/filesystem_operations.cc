@@ -3406,11 +3406,11 @@ uint8_t FilesystemOperationsBase::applySetRichAcl(const FilesystemOperationConte
 #ifndef METARESTORE
 uint32_t FilesystemOperationsBase::getDirPathSize(const FilesystemOperationContext &fsOpContext,
                                                   inode_t inode) {
-	FSNode *node;
-	node = nodeOperations_->idToNode(fsOpContext, inode);
+	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
+
 	if (node) {
 		if (node->type != FSNodeType::kDirectory) {
-			return 15;  // "(not directory)"
+			return kDirPathNotDirectory.size();
 		} else {
 			FSNodeDirectory *parent = nullptr;
 			if (!node->parents.empty()) {
@@ -3420,19 +3420,20 @@ uint32_t FilesystemOperationsBase::getDirPathSize(const FilesystemOperationConte
 			return 1 + nodeOperations_->getPathSize(fsOpContext, parent, node);
 		}
 	} else {
-		return 11;  // "(not found)"
+		return kDirPathNotFound.size();
 	}
+
 	return 0;  // unreachable
 }
 
 void FilesystemOperationsBase::getDirPathData(const FilesystemOperationContext &fsOpContext,
                                               inode_t inode, uint8_t *buff, uint32_t size) {
-	FSNode *node;
-	node = nodeOperations_->idToNode(fsOpContext, inode);
+	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
+
 	if (node) {
 		if (node->type != FSNodeType::kDirectory) {
-			if (size >= 15) {
-				memcpy(buff, "(not directory)", 15);
+			if (size >= kDirPathNotDirectory.size()) {
+				memcpy(buff, kDirPathNotDirectory.data(), kDirPathNotDirectory.size());
 				return;
 			}
 		} else {
@@ -3449,8 +3450,8 @@ void FilesystemOperationsBase::getDirPathData(const FilesystemOperationContext &
 			}
 		}
 	} else {
-		if (size >= 11) {
-			memcpy(buff, "(not found)", 11);
+		if (size >= kDirPathNotFound.size()) {
+			memcpy(buff, kDirPathNotFound.data(), kDirPathNotFound.size());
 			return;
 		}
 	}
