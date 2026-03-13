@@ -593,6 +593,15 @@ public:
 	virtual FSNodeDirectory *getFirstParent(const FilesystemOperationContext &fsOpContext,
 	                                        FSNode *node) = 0;
 
+	/// Returns the inode id of the first parent of the given node, or 0 if the node has no parents.
+	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
+	/// @param node The node whose first parent id is to be retrieved.
+	/// @return The inode id of the first parent, or 0 if the node has no parents.
+	/// @note Prefer this over getParentIds() when only the first parent is needed, as it avoids
+	///       building the full parent vector (relevant for KV backends).
+	virtual inode_t getFirstParentId(const FilesystemOperationContext &fsOpContext,
+	                                 FSNode *node) = 0;
+
 	/// Returns all parent ids of the given node.
 	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
 	/// @param node The node whose parents are to be retrieved.

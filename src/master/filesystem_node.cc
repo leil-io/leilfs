@@ -382,6 +382,15 @@ FSNodeDirectory *FilesystemNodeOperationsBase::getFirstParent(
 	return gMetadata->root;
 }
 
+inode_t FilesystemNodeOperationsBase::getFirstParentId(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
+	assert(node);
+
+	if (!node->parents.empty()) { return node->parents[0].first; }
+
+	return 0;
+}
+
 std::vector<inode_t> FilesystemNodeOperationsBase::getParentIds(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
 	assert(node);

@@ -3410,10 +3410,9 @@ uint32_t FilesystemOperationsBase::getDirPathSize(const FilesystemOperationConte
 			return kDirPathNotDirectory.size();
 		} else {
 			FSNodeDirectory *parent = nullptr;
-			auto parentIds = nodeOperations_->getParentIds(fsOpContext, node);
-			if (!parentIds.empty()) {
-				parent =
-				    nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentIds[0]);
+			const inode_t parentId = nodeOperations_->getFirstParentId(fsOpContext, node);
+			if (parentId != 0) {
+				parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 			}
 			return 1 + nodeOperations_->getPathSize(fsOpContext, parent, node);
 		}
@@ -3437,10 +3436,10 @@ void FilesystemOperationsBase::getDirPathData(const FilesystemOperationContext &
 		} else {
 			if (size > 0) {
 				FSNodeDirectory *parent = nullptr;
-				auto parentIds = nodeOperations_->getParentIds(fsOpContext, node);
-				if (!parentIds.empty()) {
+				const inode_t parentId = nodeOperations_->getFirstParentId(fsOpContext, node);
+				if (parentId != 0) {
 					parent =
-					    nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentIds[0]);
+					    nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 				}
 
 				buff[0] = '/';

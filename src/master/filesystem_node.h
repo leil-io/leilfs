@@ -270,6 +270,10 @@ protected:
 	FSNodeDirectory *getFirstParent(const FilesystemOperationContext &fsOpContext,
 	                                FSNode *node) override;
 
+	/// @see IFilesystemNodeOperations::getFirstParentId
+	inode_t getFirstParentId([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                         FSNode *node) override;
+
 	/// Returns the IDs of all parents of the given node.
 	/// @see IFilesystemNodeOperations::getParentIds
 	std::vector<inode_t> getParentIds(
