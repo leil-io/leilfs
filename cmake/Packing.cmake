@@ -37,7 +37,7 @@ set(
 
 set(CPACK_PACKAGE_VERSION_MAJOR ${PACKAGE_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${PACKAGE_VERSION_MINOR})
-set(CPACK_PACKAGE_VERSION_PATCH ${PACKAGE_VERSION_PATCH})
+set(CPACK_PACKAGE_VERSION_PATCH ${PACKAGE_VERSION_MICRO})
 
 set(CPACK_COMPONENTS_GROUPING IGNORE)
 
@@ -57,7 +57,26 @@ set(CPACK_RPM_COMPONENT_INSTALL ON)
 set(CPACK_RPM_PACKAGE_VERSION "${PACKAGE_VERSION}")
 set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-only")
-set(CPACK_RPM_PACKAGE_RELEASE 1 CACHE STRING "RPM package release number")
+
+# RPM version must be numeric only (no hyphens). Encode any suffix into
+# the release field so that e.g. "5.8.0-dev" becomes Version 5.8.0,
+# Release 0.dev.1 (sorts lower than a plain release "1").
+set(CPACK_RPM_PACKAGE_VERSION
+    "${PACKAGE_VERSION_MAJOR}.${PACKAGE_VERSION_MINOR}.${PACKAGE_VERSION_MICRO}")
+
+# Determine version suffix for the RPM release field.
+if(DEFINED VERSION_SUFFIX)
+  string(REGEX REPLACE "^-" "" _version_suffix "${VERSION_SUFFIX}")
+else()
+  set(_version_suffix "dev")
+endif()
+
+if(_version_suffix STREQUAL "official")
+  set(CPACK_RPM_PACKAGE_RELEASE 1 CACHE STRING "RPM package release number")
+else()
+  set(CPACK_RPM_PACKAGE_RELEASE "0.${_version_suffix}.1" CACHE STRING "RPM package release number")
+endif()
+
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "yes")
 set(CPACK_RPM_DEBUGINFO_PACKAGE ON)
 set(CPACK_RPM_CLIENT_PACKAGE_NAME "saunafs-client")
