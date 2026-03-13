@@ -191,6 +191,7 @@ if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# FoundationDB' /etc/sudoer
 		# FoundationDB
 		saunafstest ALL = NOPASSWD: /usr/lib/foundationdb/fdbmonitor --conffile*
 		saunafstest ALL = NOPASSWD: /usr/bin/pkill -f fdbmonitor*
+		saunafstest ALL = NOPASSWD: /usr/bin/pkill -9 -f fdbmonitor*
 	END
 fi
 
