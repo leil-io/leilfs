@@ -188,6 +188,9 @@ disk I/O. Key responsibilities:
   `hddLateInit()` spawns background threads that perform scanning/testing.
 - **Chunk I/O** -- `hddOpen`/`hddClose`, `hddRead`,
   `hddChunkWriteBlock`/`hddChunkWriteFullBlocks`, `hddPrefetchBlocks`.
+- **Buffered-read consistency** -- keeps already-replied write buffers for a
+  chunk and overlays their contents onto later reads until the corresponding
+  disk writes finish.
 - **Chunk Operations** -- `hddInternalCreate`, `hddInternalDelete`,
   `hddInternalUpdateVersion`, `hddDuplicate`, `hddDuplicateTruncate`,
   `hddTruncate`.
@@ -222,8 +225,9 @@ worker threads runs independent poll-based loops for client chunk I/O.
 `NetworkWorkerThread` instances (default 4). It does not run a separate
 standalone poll loop; instead, it registers listening-socket callbacks in the
 shared event loop. Incoming connections are accepted there and **distributed
-round-robin** to workers. This module also handles configuration reloads
-(replication timeouts, bandwidth limits, readahead settings) and hosts the
+round-robin** to workers. This module also reloads runtime settings such as
+`WRITE_BUFFERING_SIZE_MB`, read/write job sizing, buffer-pool limits,
+replication timeouts, bandwidth limits, and readahead settings, and hosts the
 global `ChunkReplicator` instance (`gReplicator`).
 
 ### Network Worker Thread
@@ -233,7 +237,10 @@ managing a list of `ChunkserverEntry` connections. Each worker owns a
 `ClientJobPool` (background HDD job pool) with a configurable number of HDD
 worker threads (default 16 per network worker). The main loop prepares poll
 descriptors, calls `poll()`, services I/O events, and processes completed
-background jobs.
+background jobs. On each loop iteration it also advances buffered writes via
+`ChunkserverEntry::everyLoopUpdateWrite()`, which retires completed sealed
+writes and gives the newest write operation another chance to fast-reply
+buffered blocks.
 
 ### ChunkserverEntry (Connection State Machine)
 
@@ -247,7 +254,8 @@ Idle -> WriteLast                     (write, no forwarding chain)
 Idle -> Connecting -> WriteInit -> WriteForward  (write with forwarding)
 Idle -> WriteInit -> WriteForward     (write, reused fwd connection)
 
-Read / WriteLast / WriteForward -> Idle      (read / write high level operation success, pool not full)
+Read -> Idle                                 (read high level operation success, pool not full)
+WriteLast / WriteForward -> Idle             (current write sealed for the client; buffered writes may still drain, pool not full)
 
 (any I/O state) -> IOFinish                              (network error, IO job error, job pool full)
                       |
@@ -257,6 +265,13 @@ Read / WriteLast / WriteForward -> Idle      (read / write high level operation 
                                |
                                +--> Closed               (if no pending jobs)
 ```
+
+A single connection can own multiple `WriteHighLevelOp` instances. The newest
+one receives incoming `WRITE_DATA` packets; older ones must already be sealed by
+`WRITE_END` yet still own buffered `InputBuffer`s waiting for `job_write()`
+completion. Returning to `Idle` therefore means the current write sequence has
+finished from the client's perspective, not necessarily that every buffered
+block is already on disk.
 
 Each connection operates in one of two modes: `Header` (reading packet header)
 or `Data` (reading packet body). For write operations, the chunkserver supports
@@ -323,7 +338,10 @@ JobPool (base: thread pool + PCQueue)
   `startChunkLock`, `enforceChunkLock`, `endChunkLock`, `eraseChunkLock`.
   Lock-sensitive operations (Delete, ChangeVersion, Duplicate, Truncate,
   DuplicateTruncate) are deferred when the chunk is locked by a client write.
-  Create/Replicate jobs are queued normally.
+  Create/Replicate jobs are queued normally. When chunkserver-side write
+  buffering fast-replies a write, the lock remains held until close/metadata
+  sync so late disk failures can still be reported back through
+  `endChunkLock()`.
 - **`ClientJobPool`** -- extends `JobPool` with **I/O priority**: supports
   `Fifo` and `Switch` modes. In `Switch` mode, it alternates between
   preferring read and write jobs to prevent starvation.
@@ -346,13 +364,35 @@ HighLevelOp (base)
 - **`ReadHighLevelOp`** -- supports **parallel HDD read jobs** (configurable
   `maxParallelHddReadJobs` and `maxBlocksPerHddReadJob`), issuing concurrent
   reads until all requested data is served.
-- **`WriteHighLevelOp`** -- supports **batched multi-block writes**
-  (`maxBlocksPerHddWriteJob`); manages the chunk open/close lifecycle.
+- **`WriteHighLevelOp`** -- manages the full write lifecycle: starts with a
+  `job_open()`, collects `WRITE_DATA` blocks into pooled `InputBuffer`s,
+  forwards them if needed, batches them into `job_write()` calls, and closes
+  the chunk afterward. With write buffering enabled, it may fast-reply
+  non-standard slices once the data is buffered in memory, the chunk lock is
+  active, and global buffer budget is available. After a successful
+  `WRITE_END`, the operation becomes sealed; it may still exist until all
+  buffered writes finish and the lock can be released.
 
 All operations track `pendingDelayedJobs_` and support `delayedClose()` for
 clean resource release. The base class also keeps track of the parent
 `ChunkserverEntry` instance to apply state changes, enqueue packets and access
 its worker pool.
+
+### Chunkserver-Side Write Buffering
+
+When `WRITE_BUFFERING_SIZE_MB` is nonzero, `WriteHighLevelOp` may acknowledge
+some `WRITE_DATA` packets for non-standard slices before the corresponding disk
+write finishes. This fast-reply path is only used after the initial
+`job_open()` completes, while chunkserver-side chunk locking is active
+(`USE_CHUNKSERVER_SIDE_CHUNK_LOCK` on the master), and only if enough global
+write-buffer budget remains available.
+
+Acknowledged-but-not-yet-flushed data stays in `InputBuffer`s owned by the
+sealed write operation. `hddspacemgr` keeps references to those buffers so
+later overlapping reads can be patched from memory until `job_write()`
+finishes. Deferred write errors are not sent back to the client after an early
+success reply; instead, the final status is carried to the master when the
+chunk lock is released after close and metadata sync.
 
 ## Replication Subsystem
 
@@ -416,12 +456,14 @@ IPlugin (root interface: name, version, initialize)
   (`disk::kIoBlockSize`). It assembles per-block header+CRC+payload into the
   aligned block buffer and writes it out block-by-block. Pool-recycled via
   `BuffersPool`.
-- **`InputBuffer`** (`io_buffers.h`) -- specialized for network reads. Three
-  sections: Header, CRC, Block. Block data is aligned to 4 KiB
-  (`disk::kIoBlockSize`). It consumes per-block header+payload from the network into the
-  buffers. The write operations are assembled after calling `setupLastWriteOperation`.
-  The final purpose is to use `getWriteOperations` to batch write operations into fewer
-  `pwrite` calls. It is also designed to forward its content in the case of chain writes.
+- **`InputBuffer`** (`io_buffers.h`) -- specialized for inbound `WRITE_DATA`
+  traffic. It stores forwarded packet headers in a header buffer, payload data
+  in an aligned block buffer, and per-write metadata (`WriteInfo` + CRCs)
+  alongside them. `getWriteOperations()` merges contiguous full-block writes
+  into fewer disk operations for `job_write()`. When fast replies are used, the
+  same buffer also acts as the chunkserver-side write cache: `repliedBlocks`
+  tracks which writes were already acknowledged, and `hddspacemgr` may use the
+  buffered data to patch later reads until the disk write completes.
   Pool-recycled via `BuffersPool`.
 - **`ReplicatorBuffer`** (`io_buffers.h`) -- specialized for replications. Contains only
   a block buffer aligned to 4 KiB (`disk::kIoBlockSize`). Pool-recycled via `BuffersPool`.
@@ -437,7 +479,8 @@ IPlugin (root interface: name, version, initialize)
   resources are purged after a configurable threshold (default 4 s). Global
   instance: `gOpenChunks`.
 - **`OpenChunk`** (`open_chunk.h`) -- RAII wrapper: on destruction, closes
-  metaFD/dataFD, releases the chunk lock, and reports errors.
+  metaFD/dataFD, releases the chunk via `hddChunkRelease()`, and reports close
+  errors as chunk damage.
 
 ### Readahead
 
@@ -534,8 +577,10 @@ stages before ending the process:
 - **Write forwarding pipeline** -- write requests form a chain across
   chunkservers (`Client -> CS1 -> CS2 -> ...`) via `fwdSocket`, enabling
   pipelined multi-replica writes.
-- **Lock hierarchy** -- `gChunksMapMutex` -> per-chunk CondVar; `gDisksMutex`
-  -> disk data; `gMasterReportsLock` -> damaged/lost/new chunk queues.
+- **Shared locking** -- `gChunksMapMutex` guards the chunk registry, per-chunk
+  `CondVarWithWaitCount` objects coordinate chunk waiters, `gDisksMutex`
+  protects disk state, and `gMasterReportsLock` protects the damaged/lost/new
+  chunk report queues.
 - **Global process state** -- core state is exposed through global variables
   in `global_shared_resources.h`: `gChunksMap`, `gDisks`, `gDiskManager`,
   `gOpenChunks`, etc. Initialized during startup and used process-wide.
