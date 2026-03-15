@@ -506,6 +506,10 @@ bool read_data_get_prefetchxorstripes() {
 	return gPrefetchXorStripes;
 }
 
+ChunkConnector& read_data_get_chunk_connector() {
+	return gChunkConnector;
+}
+
 inline void clear_read_records() {
 	std::unique_lock gMutexLock(gMutex);
 

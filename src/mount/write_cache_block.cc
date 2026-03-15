@@ -95,3 +95,26 @@ const uint8_t* WriteCacheBlock::data() const {
 uint8_t* WriteCacheBlock::data() {
 	return blockData.data() + from;
 }
+
+uint8_t* WriteCacheBlock::rawData(uint32_t offset) {
+	assert(offset < SFSBLOCKSIZE);
+	return blockData.data() + offset;
+}
+
+void WriteCacheBlock::overwriteWithReadBlock(const WriteCacheBlock& readBlock) {
+	assert(readBlock.type == kReadBlock);
+	assert(chunkIndex == readBlock.chunkIndex);
+	assert(blockIndex == readBlock.blockIndex);
+	assert(from >= readBlock.from);
+	assert(to <= readBlock.to);
+	assert(readBlock.to <= SFSBLOCKSIZE);
+
+	if (from > readBlock.from) {
+		auto copySize = from - readBlock.from;
+		memcpy(blockData.data() + readBlock.from, readBlock.data(), copySize);
+	}
+	if (to < readBlock.to) {
+		auto copySize = readBlock.to - to;
+		memcpy(blockData.data() + to, readBlock.blockData.data() + to, copySize);
+	}
+}
