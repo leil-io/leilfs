@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 
 readonly workspace="/tmp/saunafs-fdb-test"
+readonly fdbmonitor_pattern="fdbmonitor --conffile ${workspace}/conf/foundationdb\.conf"
+
+function wait_until_processes_stop() {
+	local pattern="${1}"
+	local timeout_seconds="${2:-5}"
+	local deadline=$((SECONDS + timeout_seconds))
+	while pgrep -f "${pattern}" > /dev/null 2>&1; do
+		if (( SECONDS >= deadline )); then
+			return 1
+		fi
+		sleep 0.1
+	done
+	return 0
+}
 
 function create_workspace() {
 	mkdir -p "${workspace}"/{conf,data,logs}
@@ -41,13 +55,34 @@ function check_cluster_status() {
 }
 
 function cleanup_fdb_cluster() {
-	sudo pkill -f fdbmonitor || true
-	rm -r "${workspace:?}" || true
+	# Kill fdbmonitor (runs as root); escalate to SIGKILL if SIGTERM does not
+	# stop it within the grace period.
+	sudo pkill -f "${fdbmonitor_pattern}" 2>/dev/null || true
+	if ! wait_until_processes_stop "${fdbmonitor_pattern}" 5; then
+		sudo pkill -9 -f "${fdbmonitor_pattern}" 2>/dev/null || true
+		wait_until_processes_stop "${fdbmonitor_pattern}" 2 || true
+	fi
+
+	# Ensure worker processes bound to the test workspace are not left alive;
+	# escalate to SIGKILL for each worker pattern on timeout.
+	local worker_patterns=("fdbserver.*${workspace}/data/" "backup_agent.*${workspace}/logs")
+	for pattern in "${worker_patterns[@]}"; do
+		pkill -f "${pattern}" 2>/dev/null || true
+	done
+	for pattern in "${worker_patterns[@]}"; do
+		if ! wait_until_processes_stop "${pattern}" 2; then
+			pkill -9 -f "${pattern}" 2>/dev/null || true
+			wait_until_processes_stop "${pattern}" 1 || true
+		fi
+	done
+
+	rm -rf "${workspace:?}" 2>/dev/null || true
 }
 
 function start_fdb_cluster() {
 	cleanup_fdb_cluster
 	create_workspace
+	fdb_cluster_started=1
 
 	# Create cluster file manually
 	if [ ! -f "${workspace}/conf/fdb.cluster" ]; then
@@ -68,8 +103,4 @@ function start_fdb_cluster() {
 
 	# Wait for fdbmonitor to initialize
 	sleep 3
-}
-
-function stop_fdb_cluster() {
-	cleanup_fdb_cluster
 }
