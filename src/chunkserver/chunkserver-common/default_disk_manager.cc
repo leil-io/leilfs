@@ -333,6 +333,22 @@ IDisk *DefaultDiskManager::getDiskForGC() {
 	return bestDisk;
 }
 
+std::vector<IDisk *> DefaultDiskManager::getSuitableDisksForGC() {
+	TRACETHIS();
+	std::vector<IDisk *> suitableDisks;
+
+	std::lock_guard disksLockGuard(gDisksMutex);
+
+	if (gDisks.empty()) { return suitableDisks; }
+
+	for (const auto &disk : gDisks) {
+		if (!disk->isZonedDevice() || !disk->isSelectableForNewChunk()) { continue; }
+		suitableDisks.push_back(disk.get());
+	}
+
+	return suitableDisks;
+}
+
 IChunk *DefaultDiskManager::getChunkToTest(uint32_t &elapsedTimeMs) {
 	IChunk *chunk = ChunkNotFound;
 

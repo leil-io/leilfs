@@ -65,6 +65,10 @@ public:
 	/// Could return DiskNotFound if the disks does not need GC.
 	virtual IDisk *getDiskForGC() = 0;
 
+	/// Returns all the suitable disks for Garbage Collection (GC).
+	/// Could return an empty vector if the disks does not need GC.
+	virtual std::vector<IDisk *> getSuitableDisksForGC() = 0;
+
 	/// Selects the disk to use for a chunk test.
 	virtual IChunk *getChunkToTest(uint32_t &elapsedTimeMs) = 0;
 

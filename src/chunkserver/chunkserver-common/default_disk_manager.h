@@ -78,6 +78,9 @@ public:
 	/// Selects the disk to use for GC.
 	IDisk *getDiskForGC() override;
 
+	/// Gets all the suitable disks for GC
+	std::vector<IDisk *> getSuitableDisksForGC() override;
+
 	/// Selects next chunk to test.
 	IChunk *getChunkToTest(uint32_t &elapsedTimeMs) override;
 
