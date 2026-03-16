@@ -24,8 +24,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <ostream>
+#include <string>
 #include <unistd.h>
 
 #include "common/massert.h"
@@ -36,8 +38,6 @@
 // This import should be placed after other includes to avoid Windows dependency issues
 // with winsock2.h and windows.h included in tools/tools_common_functions.h
 #include "common/args_stat_encoding.h"
-
-static char path_buf[PATH_MAX];
 
 void split(std::vector<char*> &argv_new, std::vector<char> &line) {
 	size_t pos = 0;
@@ -57,8 +57,14 @@ void split(std::vector<char*> &argv_new, std::vector<char> &line) {
 }
 
 static void print_prefix() {
-	char *path = getcwd(path_buf, PATH_MAX);
-	fprintf(stdout, "sau:%s$ ", path);
+	std::error_code ec;
+	std::filesystem::path cwd = std::filesystem::current_path(ec);
+
+	if (ec) {
+		fprintf(stdout, "sau:[unknown]$ ");
+	} else {
+		fprintf(stdout, "sau:%s$ ", cwd.string().c_str());
+	}
 }
 
 int main(int argc, char **argv) {
