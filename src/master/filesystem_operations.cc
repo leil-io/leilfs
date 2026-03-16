@@ -1832,6 +1832,13 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) {
 		return status;
 	}
+
+	// Make append changes persistent for KV backends.
+	if (fsOpContext.hasReadWriteTransaction()) {
+		nodeOperations_->updateNode(fsOpContext, p);
+		nodeOperations_->updateNode(fsOpContext, sp);
+	}
+
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "APPEND(%" PRIiNode ",%" PRIiNode ")", p->id, sp->id);
 	} else {
