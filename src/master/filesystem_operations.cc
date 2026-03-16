@@ -329,14 +329,11 @@ void FilesystemOperationsBase::getFSStats(uint64_t *totalSpace, uint64_t *availa
 uint8_t FilesystemOperationsBase::getRootInode(inode_t *rootinode, const uint8_t *path) {
 	HString hname;
 	uint32_t nleng;
-	const uint8_t *name;
-	FSNodeDirectory *parent;
-
-	name = path;
-	parent = gMetadata->root;
+	const uint8_t *name = path;
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
+	FSNodeDirectory *parent = nodeOperations_->getRootNode(fsOpContext);
 
 	for (;;) {
 		while (*name == '/') {
@@ -3413,9 +3410,9 @@ uint32_t FilesystemOperationsBase::getDirPathSize(const FilesystemOperationConte
 			return kDirPathNotDirectory.size();
 		} else {
 			FSNodeDirectory *parent = nullptr;
-			if (!node->parents.empty()) {
-				parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext,
-				                                                          node->parents[0].first);
+			const inode_t parentId = nodeOperations_->getFirstParentId(fsOpContext, node);
+			if (parentId != 0) {
+				parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 			}
 			return 1 + nodeOperations_->getPathSize(fsOpContext, parent, node);
 		}
@@ -3439,9 +3436,10 @@ void FilesystemOperationsBase::getDirPathData(const FilesystemOperationContext &
 		} else {
 			if (size > 0) {
 				FSNodeDirectory *parent = nullptr;
-				if (!node->parents.empty()) {
-					parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(
-					    fsOpContext, node->parents[0].first);
+				const inode_t parentId = nodeOperations_->getFirstParentId(fsOpContext, node);
+				if (parentId != 0) {
+					parent =
+					    nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 				}
 
 				buff[0] = '/';
