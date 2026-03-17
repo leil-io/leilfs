@@ -1321,8 +1321,8 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 	nodeQuotaUpdate(fsOpContext, destNodeFile,
 	                {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
-	// Update stats for all parent directories
-	for (const auto &[parentId, _] : destNodeFile->parents) {
+	// Update stats for all parent directories via backend-specific parent lookup.
+	for (inode_t parentId : getParentIds(fsOpContext, destNodeFile)) {
 		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 		addSubStats(fsOpContext, parentNode, &newStats, &previousStats);
 	}
