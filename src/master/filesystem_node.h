@@ -144,6 +144,12 @@ public:
 	            FSNodeDirectory *nodeDir, uint64_t firstEntry, uint64_t numberOfEntries,
 	            std::vector<DirectoryEntry> &dirEntriesOut) override;
 #endif
+
+	/// Returns direct child inode IDs for a directory.
+	/// @see IFilesystemNodeOperations::getDirectoryChildInodes
+	std::vector<inode_t> getDirectoryChildInodes(const FilesystemOperationContext &fsOpContext,
+	                                             const FSNodeDirectory *nodeDir) override;
+
 	/// Checks if a name is already used in the given directory.
 	/// @see IFilesystemNodeOperations::isNameUsed
 	bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
