@@ -267,7 +267,6 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.direct_io = gMountOptions.directio;
 	params.use_inode_based_write_algorithm =
 	    gMountOptions.useinodebasedwritealgorithm;
-	params.ignore_flush = gMountOptions.ignoreflush;
 	params.malloc_trim_period = gMountOptions.malloctrimperiod;
 	params.log_notifications_area = gMountOptions.lognotificationarea;
 	params.message_suppression_period = gMountOptions.messagesuppressionperiod;
@@ -641,6 +640,12 @@ int main(int argc, char *argv[]) try {
 
 	if (!gMountOptions.writecachesize)
 		gMountOptions.writecachesize = 128;
+
+	if (gMountOptions.ignoreflush) {
+		std::fprintf(stderr,
+		             "Warning: option 'sfsignoreflush' is deprecated and has no "
+		             "effect; it will be ignored.\n");
+	}
 
 	if (gMountOptions.cachePerInodePercentage < 1) {
 		fprintf(stderr, "cache per inode percentage too low (%u %%) - "

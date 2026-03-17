@@ -243,7 +243,6 @@ static unsigned gDirEntryCacheMaxSize = 100000;
 
 static int debug_mode = 0;
 static int usedircache = 1;
-static std::atomic<bool> gIgnoreFlush = false;
 static std::atomic<bool> gUseQuotaInVolumeSize = false;
 static int keep_cache = 0;
 static double direntry_cache_timeout = 0.1;
@@ -2577,12 +2576,6 @@ BytesWritten write(Context &ctx, inode_t ino, const char *buf, size_t size, off_
 }
 
 void flush(Context &ctx, inode_t ino, FileInfo* fi) {
-	if (gIgnoreFlush) {
-		oplog_printf(ctx, "flush (%" PRIiNode "): OK",
-				ino);
-		return;
-	}
-
 	finfo *fileinfo = reinterpret_cast<finfo*>(fi->fh);
 	int err;
 
@@ -3582,7 +3575,7 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 #ifdef __linux__
 		unsigned malloc_trim_period_,
 #endif
-		bool ignore_flush_, unsigned statfs_cache_timeout_, bool use_quota_in_volume_size_
+		unsigned statfs_cache_timeout_, bool use_quota_in_volume_size_
 		) {
 #ifdef _WIN32
 	mounting_uid = mounting_uid_;
@@ -3592,7 +3585,6 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	gCleanAcquiredFilesPeriod = acquired_files_cleanup_period_;
 	gCleanAcquiredFilesTimeout = acquired_files_cleanup_timeout_;
 #endif
-	gIgnoreFlush = ignore_flush_;
 	gStatfsCacheTimeout = statfs_cache_timeout_;
 	gUseQuotaInVolumeSize = use_quota_in_volume_size_;
 	debug_mode = debug_mode_;
@@ -3637,7 +3629,6 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 
 	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("DirectIO", gDirectIo, "sfsdirectio");
-	gTweaks.registerVariable("IgnoreFlush", gIgnoreFlush, "sfsignoreflush");
 	gTweaks.registerVariable("NegativeCacheTimeout", gNegativeCacheTimeoutMs, "sfsnegativecachetimeout");
 	gTweaks.registerVariable("NegativeCacheMaxSize", gNegativeCacheMaxSize, "sfsnegativecachesize");
 	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout, "statfscachetimeout");
@@ -3745,7 +3736,7 @@ void fs_init(FsInitParams &params) {
 #ifdef __linux__
 		params.malloc_trim_period,
 #endif
-		params.ignore_flush, params.statfs_cache_timeout, params.use_quota_in_volume_size
+		params.statfs_cache_timeout, params.use_quota_in_volume_size
 		);
 }
 

@@ -79,7 +79,6 @@ struct FsInitParams {
 
 	static constexpr float    kDefaultBandwidthOveruse = 1.0;
 	static constexpr unsigned kDefaultChunkserverWriteTo = 5000;
-	static constexpr bool     kDefaultIgnoreFlush = false;
 	static constexpr int      kDefaultLogNotificationArea = 0;
 	static constexpr unsigned kDefaultMessageSuppressionPeriod = 10;
 	static constexpr unsigned kDefaultStatfsCacheTo = 0;
@@ -180,7 +179,7 @@ struct FsInitParams {
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
-	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
+	             statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
 	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
@@ -230,7 +229,7 @@ struct FsInitParams {
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
-	             ignore_flush(kDefaultIgnoreFlush), statfs_cache_timeout(kDefaultStatfsCacheTo),
+	             statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
 	             mastercomm_sleep_time_divisor(kDefaultMasterCommSleepTimeDivisor),
@@ -300,7 +299,6 @@ struct FsInitParams {
 #endif
 
 	bool use_inode_based_write_algorithm;
-	bool ignore_flush;
 	unsigned statfs_cache_timeout;
 	bool use_quota_in_volume_size;
 	unsigned max_wait_retry_time;
