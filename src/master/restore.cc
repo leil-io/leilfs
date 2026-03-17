@@ -726,8 +726,23 @@ int do_seteattr(const char* filename, uint64_t lv, uint32_t ts, const char* ptr)
 	GETINODE(nci,ptr);
 	EAT(ptr,filename,lv,',');
 	GETINODE(npi,ptr);
-	return gFSOperations->setExtraAttr(FsContext::getForRestoreWithUidGid(ts, uid, 0), inode, eattr,
-	                                   smode, &ci, &nci, &npi);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->setExtraAttr(FsContext::getForRestoreWithUidGid(ts, uid, 0),
+	                                         fsOpContext, inode, eattr, smode, &ci, &nci, &npi);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, uid {}, eattr {}, smode {}",
+			              __func__, inode, uid, static_cast<uint32_t>(eattr),
+			              static_cast<uint32_t>(smode));
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_setgoal(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {

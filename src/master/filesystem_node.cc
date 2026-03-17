@@ -1912,11 +1912,12 @@ void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t 
 	}
 }
 
-void FilesystemNodeOperationsBase::setExtraAttrRecursive(FSNode *node, uint32_t timeStamp,
-                                                         uint32_t uid, uint8_t eattr, uint8_t smode,
-                                                         inode_t *modifiedINodesOut,
-                                                         inode_t *unchangedINodesOut,
-                                                         inode_t *permissionDeniedINodesOut) {
+void FilesystemNodeOperationsBase::setExtraAttrRecursive(
+    const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t timeStamp, uint32_t uid,
+    uint8_t eattr, uint8_t smode, inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
+    inode_t *permissionDeniedINodesOut) {
+	bool nodeChanged = false;
+
 	// Check permission
 	if ((node->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET)) == 0 && uid != 0 && node->uid != uid) {
 		(*permissionDeniedINodesOut)++;
@@ -1924,8 +1925,10 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(FSNode *node, uint32_t 
 		// Sanitize attributes: remove NOECACHE flag for non-directory nodes
 		uint8_t adjustedExtraAttr = eattr;
 		if (node->type != FSNodeType::kDirectory) {
+			const uint16_t oldMode = node->mode;
 			node->mode &= ~(EATTR_NOECACHE << EATTR_BIT_OFFSET);
 			adjustedExtraAttr &= ~(EATTR_NOECACHE);
+			if (node->mode != oldMode) { nodeChanged = true; }
 		}
 
 		// Compute new extra attributes based on smode
@@ -1956,6 +1959,7 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(FSNode *node, uint32_t 
 
 			(*modifiedINodesOut)++;
 			updateCTime(node, timeStamp);
+			nodeChanged = true;
 		} else {
 			(*unchangedINodesOut)++;
 		}
@@ -1966,12 +1970,15 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(FSNode *node, uint32_t 
 		const auto *dirNode = static_cast<const FSNodeDirectory *>(node);
 
 		for (const auto &entry : dirNode->entries) {
-			setExtraAttrRecursive(entry.second, timeStamp, uid, eattr, smode, modifiedINodesOut,
-			                  unchangedINodesOut, permissionDeniedINodesOut);
+			setExtraAttrRecursive(fsOpContext, entry.second, timeStamp, uid, eattr, smode,
+			                      modifiedINodesOut, unchangedINodesOut, permissionDeniedINodesOut);
 		}
 	}
 
 	fsnodes_update_checksum(node);
+
+	// Make the change persistent for KV backends
+	if (nodeChanged && fsOpContext.hasReadWriteTransaction()) { updateNode(fsOpContext, node); }
 }
 
 uint8_t FilesystemNodeOperationsBase::deleteAcl(

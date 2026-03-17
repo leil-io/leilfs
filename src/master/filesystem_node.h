@@ -212,6 +212,9 @@ public:
 	                      GoalStatistics &dirGoalsTab) override;
 	void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                           TrashtimeMap &dirTrashtimes) override;
+
+	/// Aggregates extra-attribute histogram counters for a node or subtree.
+	/// @see IFilesystemNodeOperations::getExtraAttrRecursive
 	void getExtraAttrRecursive(FSNode *node, uint8_t gmode, ExtraAttributesArray &fileEAttrTab,
 	                           ExtraAttributesArray &dirEAttrTab) override;
 #endif  // METARESTORE
@@ -225,9 +228,11 @@ public:
 	                           inode_t *unchangedINodesOut,
 	                           inode_t *permissionDeniedINodesOut) override;
 
-	void setExtraAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid, uint8_t eattr,
-	                           uint8_t smode, inode_t *modifiedINodesOut,
-	                           inode_t *unchangedINodesOut,
+	/// Applies extra-attribute updates on a node or subtree and tracks outcomes.
+	/// @see IFilesystemNodeOperations::setExtraAttrRecursive
+	void setExtraAttrRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                           uint32_t timeStamp, uint32_t uid, uint8_t eattr, uint8_t smode,
+	                           inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
 	                           inode_t *permissionDeniedINodesOut) override;
 
 	// Access control operations
