@@ -2,8 +2,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 collect_sources(CHUNKSERVER_PLUGINS)
 shared_add_library(chunkserver-common ${CHUNKSERVER_PLUGINS_SOURCES})
-target_link_libraries(chunkserver-common safsprotocol sfscommon
-        ${Boost_LIBRARIES} ${ADDITIONAL_LIBS})
+shared_target_link_libraries(chunkserver-common
+        safsprotocol
+        sfscommon
+        ${Boost_LIBRARIES}
+        ${ADDITIONAL_LIBS})
 
 shared_target_link_libraries(chunkserver-common STATIC sfserr SHARED sfserr_pic)
 
