@@ -113,8 +113,9 @@ public:
 
 	/// Updates extra-attribute flags on a node (optionally recursively).
 	/// @see IFilesystemOperations::setExtraAttr
-	uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr, uint8_t smode,
-	                     inode_t *sinodes, inode_t *ncinodes, inode_t *nsinodes) override;
+	uint8_t setExtraAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                     inode_t inode, uint8_t eattr, uint8_t smode, inode_t *sinodes,
+	                     inode_t *ncinodes, inode_t *nsinodes) override;
 
 	/// Schedules setting a storage goal on a node (optionally recursively).
 	/// @see IFilesystemOperations::setGoal
@@ -249,6 +250,9 @@ public:
 	uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                GoalStatistics &dgtab) override;
+
+	/// Retrieves aggregated extra-attribute statistics for a node or subtree.
+	/// @see IFilesystemOperations::getExtraAttr
 	uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                     ExtraAttributesArray &fileEAttrTab,
 	                     ExtraAttributesArray &dirEAttrTab) override;

@@ -338,6 +338,7 @@ public:
 	///   are validated against the locally computed values.
 	///
 	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param fsOpContext The operation context carrying a read-write transaction in KV backends.
 	/// @param inode Root inode for the operation.
 	/// @param eattr Extra-attribute bitmask to apply.
 	/// @param smode Mode controlling set/increase/decrease and recursion.
@@ -355,8 +356,9 @@ public:
 	/// @return SAUNAFS_ERROR_EPERM if the target is outside the session-visible namespace, or
 	///         (non-recursive mode) no change is permitted due to ownership checks.
 	/// @return SAUNAFS_ERROR_MISMATCH on shadow/restore replay if expected counters differ.
-	virtual uint8_t setExtraAttr(const FsContext &context, inode_t inode, uint8_t eattr,
-	                             uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
+	virtual uint8_t setExtraAttr(const FsContext &context,
+	                             const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                             uint8_t eattr, uint8_t smode, inode_t *sinodes, inode_t *ncinodes,
 	                             inode_t *nsinodes) = 0;
 
 	/// Schedules setting a storage goal on a node (optionally recursively).
@@ -1022,6 +1024,29 @@ public:
 	virtual uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                        inode_t inode, uint8_t gmode, GoalStatistics &fgtab,
 	                        GoalStatistics &dgtab) = 0;
+
+	/// Retrieves aggregated extra-attribute statistics for a node or subtree.
+	///
+	/// Resolves `inode` in the caller session and aggregates counts of extra-attribute
+	/// combinations into separate histograms for non-directory nodes and directory nodes.
+	/// Traversal depth is controlled by `gmode` (`GMODE_NORMAL` for one node,
+	/// `GMODE_RECURSIVE` for subtree).
+	///
+	/// Histogram semantics:
+	/// - `fileEAttrTab` indexes are built from non-directory extraattr bits
+	///   `EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NODATACACHE`.
+	/// - `dirEAttrTab` indexes are built from directory extraattr bits (full extraattr nibble).
+	///
+	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param inode Root inode for the query.
+	/// @param gmode Traversal mode (`GMODE_NORMAL` or `GMODE_RECURSIVE`).
+	/// @param[out] fileEAttrTab Histogram for non-directory nodes.
+	/// @param[out] dirEAttrTab Histogram for directory nodes.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `gmode` is invalid.
+	/// @return Session/visibility errors returned by verifySession/getNodeForOperation
+	///         (for example SAUNAFS_ERROR_ENOENT, SAUNAFS_ERROR_EPERM, SAUNAFS_ERROR_EROFS).
 	virtual uint8_t getExtraAttr(const FsContext &context, inode_t inode, uint8_t gmode,
 	                             ExtraAttributesArray &fileEAttrTab,
 	                             ExtraAttributesArray &dirEAttrTab) = 0;

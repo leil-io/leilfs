@@ -535,6 +535,19 @@ public:
 	                              GoalStatistics &dirGoalsTab) = 0;
 	virtual void getTrashTimeRecursive(FSNode *node, uint8_t gmode, TrashtimeMap &fileTrashtimes,
 	                                   TrashtimeMap &dirTrashtimes) = 0;
+
+	/// Aggregates extra-attribute histogram counters for a node or subtree.
+	///
+	/// Traverses `node` according to `gmode`. For non-directory nodes, increments
+	/// `fileEAttrTab` using a mask of file-relevant flags
+	/// (`EATTR_NOOWNER | EATTR_NOACACHE | EATTR_NODATACACHE`).
+	/// For directories, increments `dirEAttrTab` using the full extra-attribute nibble
+	/// (including `EATTR_NOECACHE`).
+	///
+	/// @param node Root node for traversal.
+	/// @param gmode Traversal mode (`GMODE_NORMAL` or `GMODE_RECURSIVE`).
+	/// @param[in,out] fileEAttrTab Histogram for non-directory nodes.
+	/// @param[in,out] dirEAttrTab Histogram for directory nodes.
 	virtual void getExtraAttrRecursive(FSNode *node, uint8_t gmode,
 	                                   ExtraAttributesArray &fileEAttrTab,
 	                                   ExtraAttributesArray &dirEAttrTab) = 0;
@@ -549,8 +562,31 @@ public:
 	                                   inode_t *modifiedINodesOut, inode_t *unchangedINodesOut,
 	                                   inode_t *permissionDeniedINodesOut) = 0;
 
-	virtual void setExtraAttrRecursive(FSNode *node, uint32_t timeStamp, uint32_t uid,
-	                                   uint8_t eattr, uint8_t smode, inode_t *modifiedINodesOut,
+	/// Applies extra-attribute updates on a node or subtree and tracks outcomes.
+	///
+	/// Applies `eattr` according to `smode` (set/increase/decrease, optional recursion).
+	/// Permission is denied when `uid` is neither root nor owner and `EATTR_NOOWNER` is
+	/// not set on the target node; denied nodes increment `permissionDeniedINodesOut`.
+	/// For non-directory nodes, `EATTR_NOECACHE` is cleared/ignored.
+	///
+	/// Nodes with changed extra attributes:
+	/// - have mode (extraattr bits) updated,
+	/// - propagate mode to stored ACL metadata (if present),
+	/// - update ctime/checksum,
+	/// - are persisted via updateNode() when a read-write transaction is present.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node Root node for update traversal.
+	/// @param timeStamp Timestamp used for ctime updates.
+	/// @param uid Requesting uid used for ownership checks.
+	/// @param eattr Requested extra-attribute bitmask.
+	/// @param smode Update mode flags (`SMODE_*`, including optional recursion).
+	/// @param[in,out] modifiedINodesOut Count of nodes whose extra attributes changed.
+	/// @param[in,out] unchangedINodesOut Count of nodes visited without effective changes.
+	/// @param[in,out] permissionDeniedINodesOut Count of nodes rejected by ownership checks.
+	virtual void setExtraAttrRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                                   uint32_t timeStamp, uint32_t uid, uint8_t eattr,
+	                                   uint8_t smode, inode_t *modifiedINodesOut,
 	                                   inode_t *unchangedINodesOut,
 	                                   inode_t *permissionDeniedINodesOut) = 0;
 
