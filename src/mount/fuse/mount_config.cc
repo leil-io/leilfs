@@ -98,6 +98,8 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsdirentrycachesize=%u", direntrycachesize, 0),
 	SFS_OPT("nostdmountoptions", nostdmountoptions, 1),
 	SFS_OPT("sfsuseinodebasedwritealgorithm=%d", useinodebasedwritealgorithm, 0),
+	// Leaving it only to consume the option if provided, as it is not used in the codebase and may
+	// prevent the client from starting if set and not consumed.
 	SFS_OPT("sfsignoreflush=%d", ignoreflush, 0),
 	SFS_OPT("limitglibcmallocarenas=%d", limitglibcmallocarenas, 0),
 	SFS_OPT("malloctrimperiod=%d", malloctrimperiod, 0),
@@ -200,7 +202,10 @@ void initialize_opts_name_values() {
 	gOptsNameValues["bandwidthoveruse"] = std::to_string(gMountOptions.bandwidthoveruse);
 	gOptsNameValues["sfsdirentrycachesize"] = std::to_string(gMountOptions.direntrycachesize);
 	gOptsNameValues["nostdmountoptions"] = std::to_string(gMountOptions.nostdmountoptions);
-	gOptsNameValues["sfsignoreflush"] = std::to_string(gMountOptions.ignoreflush);
+	if (gMountOptions.ignoreflush != 0) {
+		gOptsNameValues["sfsignoreflush (deprecated, ignored)"] =
+		    std::to_string(gMountOptions.ignoreflush);
+	}
 	gOptsNameValues["limitglibcmallocarenas"] =
 	    std::to_string(gMountOptions.limitglibcmallocarenas);
 	gOptsNameValues["malloctrimperiod"] = std::to_string(gMountOptions.malloctrimperiod);
@@ -284,10 +289,6 @@ void usage(const char *progname) {
 				"each chunk (default: %u)\n"
 "    -o sfsuseinodebasedwritealgorithm=0|1  use inode based write algorithm when "
 				"set to 1. Use chunk based write algorithm when set to 0 "
-				"(default: %d)\n"
-"    -o sfsignoreflush=0|1       Advanced: use with caution. Ignore flush usual "
-				"behavior by replying SUCCESS to it immediately. Targets fast "
-				"creation of small files, but may cause data loss during crashes "
 				"(default: %d)\n"
 "\n"
 "Other options:\n"
@@ -396,7 +397,6 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultWriteWorkers,
 		SaunaClient::FsInitParams::kDefaultWriteWindowSize,
 		SaunaClient::FsInitParams::kDefaultUseInodeBasedWriteAlgorithm,
-		SaunaClient::FsInitParams::kDefaultIgnoreFlush,
 		SaunaClient::FsInitParams::kDefaultUseRwLock,
 		SaunaClient::FsInitParams::kDefaultMkdirCopySgid,
 		sugidClearModeString(SaunaClient::FsInitParams::kDefaultSugidClearMode),
