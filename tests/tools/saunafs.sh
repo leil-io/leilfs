@@ -927,19 +927,39 @@ get_current_master_sessions_file() {
   echo "${saunafs_info_[master${saunafs_info_[current_master]}_data_path]}/sessions.sfs"
 }
 
+# print enabled chunkserver hdd paths on selected server, one per line
+get_chunkserver_hdds_() {
+	local chunkserver_number=$1
+
+	sed -E \
+		-e '/^[[:space:]]*#/d' \
+		-e '/^[[:space:]]*$/d' \
+		-e 's/\*//g' \
+		-e 's/^zonefs://' \
+		-e 's/\|.*$//' \
+		-e 's/[[:space:]]+$//' \
+		"${saunafs_info_[chunkserver${chunkserver_number}_hdd]}"
+}
+
 # print absolute paths of all chunk files on selected server, one per line
 find_chunkserver_chunks() {
 	local chunkserver_number=$1
 	local chunk_metadata_pattern="chunk*${chunk_metadata_extension}"
 	local chunk_data_pattern="chunk*${chunk_data_extension}"
 	shift
-	local hdds=$(sed -e 's/*//' -e 's/zonefs://' -e 's/|//' \
-		${saunafs_info_[chunkserver${chunkserver_number}_hdd]})
+
+	local hdds
+	hdds=$(get_chunkserver_hdds_ ${chunkserver_number})
+
+	if [[ -z ${hdds} ]]; then
+		return 0
+	fi
+
 	if (($# > 0)); then
-		find $hdds "(" -name "${chunk_data_pattern}" \
+		find ${hdds} "(" -name "${chunk_data_pattern}" \
 			-o -name "${chunk_metadata_pattern}" ")" -a "(" "$@" ")"
 	else
-		find $hdds "(" -name "${chunk_data_pattern}" \
+		find ${hdds} "(" -name "${chunk_data_pattern}" \
 			-o -name "${chunk_metadata_pattern}" ")"
 	fi
 }
@@ -950,15 +970,19 @@ find_chunkserver_metadata_chunks() {
 	local chunk_metadata_pattern="chunk*${chunk_metadata_extension}"
 	shift
 
-	local hdds=$(sed -e 's/*//' -e 's/zonefs://' -e 's/|//' \
-		${saunafs_info_[chunkserver${chunkserver_number}_hdd]})
+	local hdds
+	hdds=$(get_chunkserver_hdds_ ${chunkserver_number})
+
+	if [[ -z ${hdds} ]]; then
+		return 0
+	fi
 
 	local -a extended_args=()
 	if (($# > 0)); then
 		extended_args+=(-a "(" "$@" ")")
 	fi
 
-	find $hdds "(" -name "${chunk_metadata_pattern}" ")" "${extended_args[@]}"
+	find ${hdds} "(" -name "${chunk_metadata_pattern}" ")" "${extended_args[@]}"
 }
 
 # print absolute paths of all chunk files on all servers used in test, one per line
@@ -966,7 +990,7 @@ find_all_chunks() {
 	local count=${saunafs_info_[chunkserver_count]}
 	local chunkserver
 	for ((chunkserver = 0; chunkserver < count; ++chunkserver)); do
-		find_chunkserver_chunks $chunkserver "$@"
+		find_chunkserver_chunks ${chunkserver} "$@"
 	done
 }
 
@@ -975,10 +999,9 @@ find_all_metadata_chunks() {
 	local count=${saunafs_info_[chunkserver_count]}
 	local chunkserver
 	for ((chunkserver = 0; chunkserver < count; ++chunkserver)); do
-		find_chunkserver_metadata_chunks $chunkserver "$@"
+		find_chunkserver_metadata_chunks ${chunkserver} "$@"
 	done
 }
-
 
 # print absolute paths of all trashed chunk files on selected server, one per
 # line
@@ -987,12 +1010,17 @@ find_chunkserver_trashed_chunks() {
 	local chunk_metadata_pattern="chunk*${chunk_metadata_extension}.*"
 	local chunk_data_pattern="chunk*${chunk_data_extension}.*"
 	shift
-	local trash_bins=$(sed -E \
-	  -e 's/\*//' \
-	  -e 's/zonefs://' \
-	  -e 's/\|//' \
-	  -e 's@\/?$@/.trash.bin/@' \
-		${saunafs_info_[chunkserver${chunkserver_number}_hdd]})
+
+	local trash_bins
+	trash_bins=$(
+		get_chunkserver_hdds_ ${chunkserver_number} | sed -E \
+			-e 's@/?$@/.trash.bin/@'
+	)
+
+	if [[ -z ${trash_bins} ]]; then
+		return 0
+	fi
+
 	if (($# > 0)); then
 		find ${trash_bins} "(" -name "${chunk_data_pattern}" \
 			-o -name "${chunk_metadata_pattern}" ")" -a "(" "$@" ")"

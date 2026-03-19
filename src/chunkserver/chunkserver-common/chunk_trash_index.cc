@@ -30,10 +30,9 @@ void ChunkTrashIndex::clear() {
 	trashIndex.clear();
 }
 
-void ChunkTrashIndex::reset(const std::filesystem::path &diskPath) {
+void ChunkTrashIndex::erase(const std::filesystem::path &diskPath) {
 	std::scoped_lock<std::mutex> const lock(trashIndexMutex);
 	trashIndex.erase(diskPath);
-	trashIndex[diskPath] = {};
 }
 
 void ChunkTrashIndex::add(const time_t &deletionTime, const std::string &filePath,
@@ -80,10 +79,8 @@ ChunkTrashIndex::TrashIndexDiskEntries ChunkTrashIndex::getExpiredFilesInternal(
     const time_t &timeLimit, size_t bulkSize) {
 	TrashIndexDiskEntries expiredFiles;
 
-	size_t count = 0;
 	for (const auto &diskEntry : trashIndex) {
-		if (bulkSize != 0 && count >= bulkSize) { break; }
-		count += getExpiredFilesInternal(diskEntry.first, timeLimit, expiredFiles, bulkSize);
+		getExpiredFilesInternal(diskEntry.first, timeLimit, expiredFiles, bulkSize);
 	}
 
 	return expiredFiles;

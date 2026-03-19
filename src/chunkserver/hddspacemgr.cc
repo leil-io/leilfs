@@ -410,6 +410,10 @@ void hddCheckDisks() {
 					gDisksToBeDeletedWithPendingChunks.emplace_back(
 					    std::move(*it), std::move(diskToDelWithPendingChunks.second));
 				}
+				ChunkTrashManager::eraseDisk((*it)->metaPath());
+				if (!(*it)->isZonedDevice() && (*it)->metaPath() != (*it)->dataPath()) {
+					ChunkTrashManager::eraseDisk((*it)->dataPath());
+				}
 				gDisks.erase(it);
 				break;
 			}
@@ -2624,7 +2628,10 @@ void hddDiskScanThread(IDisk *disk) {
 	}
 
 	gHddSpaceChanged = true;
-
+	ChunkTrashManager::registerDiskPath(disk->metaPath());
+	if (!disk->isZonedDevice() && disk->metaPath() != disk->dataPath()) {
+		ChunkTrashManager::registerDiskPath(disk->dataPath());
+	}
 	hddDiskScan(disk, beginTime);
 	hddDiskRandomizeChunksForTests(disk);
 	gScansInProgress--;
@@ -2665,14 +2672,15 @@ void hddFreeResourcesThread() {
 	pthread_setname_np(pthread_self(), "freeResThread");
 
 	while (!gTerminate) {
-		gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex,
-		                       kMaxFreeUnused);
+		Timeout timeout(std::chrono::duration_cast<std::chrono::microseconds>(
+		    std::chrono::seconds(kDelayedStep)));
+		gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex, kMaxFreeUnused);
 		ChunkTrashManager::collectGarbage();
 		hddReleaseDisksToBeDeleted();
 		/// Release buffers older than kDelayedStep seconds
 		releaseOldIoBuffers(kOldIoBuffersExpirationTimeMs);
 
-		sleep(kDelayedStep);
+		usleep(timeout.remaining_us());
 	}
 }
 
@@ -2690,6 +2698,8 @@ void hddTerminate(void) {
 		gTesterThread.join();
 		gDisksThread.join();
 		gDelayedThread.join();
+
+		ChunkTrashManager::terminate();
 
 		try {
 			gChunkTesterThread.join();
@@ -2924,7 +2934,7 @@ int hddInit() {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
-		ChunkTrashManager::reloadConfig();
+		ChunkTrashManager::init();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
@@ -2940,13 +2950,6 @@ int hddInit() {
 				                   "marked for deletion or read-only",
 				                   disk->getPaths().c_str());
 				continue;
-			}
-			ChunkTrashManager::init(disk->metaPath());
-			if (disk->isZonedDevice()) {
-				continue;
-			}
-			if (disk->metaPath() != disk->dataPath()) {
-				ChunkTrashManager::init(disk->dataPath());
 			}
 		}
 	}

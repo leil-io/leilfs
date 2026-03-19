@@ -44,18 +44,34 @@ extern "C" int statvfs(const char *path, struct statvfs *buf) { return fake_stat
 
 namespace fs = std::filesystem;
 
+inline constexpr uint64_t kMiB = 1024 * 1024;
+
 class ChunkTrashManagerImplTest : public ::testing::Test {
 public:
 	fs::path testDir;
 	ChunkTrashManagerImpl chunkTrashManagerImpl;
 
+	void seedState(uint64_t maxReadMiB, uint64_t maxWriteMiB, uint64_t prevReadMiB,
+	               uint64_t prevWriteMiB) {
+		ChunkTrashManagerImpl::maxBytesReadPerDisk = maxReadMiB * kMiB;
+		ChunkTrashManagerImpl::maxBytesWritePerDisk = maxWriteMiB * kMiB;
+		ChunkTrashManagerImpl::previousBytesReadPerDisk = prevReadMiB * kMiB;
+		ChunkTrashManagerImpl::previousBytesWritePerDisk = prevWriteMiB * kMiB;
+	}
+
 	void SetUp() override {
 		testDir = fs::temp_directory_path() / "chunk_trash_manager_test";
 		fs::create_directories(testDir);
-		chunkTrashManagerImpl.init(testDir.string());
+		chunkTrashManagerImpl.init();
+		chunkTrashManagerImpl.registerDiskPath(testDir.string());
+
+		seedState(100, 100, 20, 20);
 	}
 
-	void TearDown() override { fs::remove_all(testDir); }
+	void TearDown() override {
+		fs::remove_all(testDir);
+		chunkTrashManagerImpl.terminate();
+	}
 };
 
 TEST_F(ChunkTrashManagerImplTest, MoveToTrashValidFile) {
@@ -63,7 +79,7 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashValidFile) {
 	std::ofstream(filePath.string());  // Create a valid file
 	std::time_t deletionTime = 1729259531;
 	std::string const deletionTimeString =
-	    ChunkTrashManagerImpl::getTimeString(deletionTime);  // Convert time to string format
+	    ChunkTrashManagerImpl::getStringFromTime(deletionTime);  // Convert time to string format
 
 	ASSERT_TRUE(fs::exists(filePath));
 	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
@@ -87,7 +103,7 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashFileInNestedDirectory) {
 	std::ofstream(filePath.string());
 
 	std::time_t deletionTime = 1729259531;
-	std::string const deletionTimeString = ChunkTrashManagerImpl::getTimeString(deletionTime);
+	std::string const deletionTimeString = ChunkTrashManagerImpl::getStringFromTime(deletionTime);
 
 	int const result = chunkTrashManagerImpl.moveToTrash(filePath, testDir, deletionTime);
 	ASSERT_EQ(result, SAUNAFS_STATUS_OK);
@@ -122,7 +138,7 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrashAlreadyTrashedFile) {
 TEST_F(ChunkTrashManagerImplTest, ConcurrentMoveToTrash) {
 	const int numFiles = 10;
 	std::time_t deletionTime = 1729259531;
-	const std::string deletionTimeString = ChunkTrashManagerImpl::getTimeString(deletionTime);
+	const std::string deletionTimeString = ChunkTrashManagerImpl::getStringFromTime(deletionTime);
 	std::vector<std::thread> threads;
 	for (int i = 0; i < numFiles; ++i) {
 		threads.emplace_back([this, i, deletionTime]() {
@@ -157,8 +173,8 @@ TEST_F(ChunkTrashManagerImplTest, PerformanceTest) {
 	ASSERT_LE(elapsed.count(), 2.0);  // Expect it to complete within 2 seconds
 }
 
-// Testing initialization method
-TEST_F(ChunkTrashManagerImplTest, InitCreatesTrashDirectory) {
+// Testing registerDiskPath method
+TEST_F(ChunkTrashManagerImplTest, RegisterDiskPathCreatesTrashDirectory) {
 	fs::path trashPath = testDir / ".trash.bin";
 	ASSERT_TRUE(fs::exists(trashPath));  // Ensure trash directory exists
 }
@@ -174,11 +190,11 @@ TEST_F(ChunkTrashManagerImplTest, MoveToTrash) {
 	ASSERT_FALSE(fs::exists(filePath));  // Ensure file is moved to trash
 }
 
-// Testing getTimeString method
-TEST_F(ChunkTrashManagerImplTest, GetTimeString) {
+// Testing getStringFromTime method
+TEST_F(ChunkTrashManagerImplTest, getStringFromTime) {
 	std::time_t testDeletionTime = 1729259531;
 	std::string testTimeString = "20241018135211";
-	std::string timeString = chunkTrashManagerImpl.getTimeString(testDeletionTime);
+	std::string timeString = chunkTrashManagerImpl.getStringFromTime(testDeletionTime);
 	ASSERT_EQ(timeString, testTimeString);  // Compare formatted strings
 }
 
@@ -187,7 +203,8 @@ TEST_F(ChunkTrashManagerImplTest, RemoveExpiredFiles) {
 	fs::path expiredFilePath = testDir / "expired_file.txt";
 	std::ofstream(expiredFilePath.string());
 	std::time_t oldDeletionTime = std::time(nullptr) - 86400;  // 1 day ago
-	const std::string oldDeletionTimeString = chunkTrashManagerImpl.getTimeString(oldDeletionTime);
+	const std::string oldDeletionTimeString =
+	    chunkTrashManagerImpl.getStringFromTime(oldDeletionTime);
 	const std::string trashPath =
 	    (testDir / ".trash.bin/expired_file.txt.").string() + oldDeletionTimeString;
 
@@ -246,19 +263,18 @@ TEST_F(ChunkTrashManagerImplTest, MakeSpaceOnSpecificDisk) {
 
 // Testing converting time string to time value
 TEST_F(ChunkTrashManagerImplTest, GetTimeFromString) {
-	std::string timeString = "20231018120350";
+	std::string timeString = "20241018135211";
 	int errorCode = 0;
 	time_t timeValue = ChunkTrashManagerImpl::getTimeFromString(timeString, errorCode);
 
-	std::tm tm = {};
-	strptime(timeString.c_str(), "%Y%m%d%H%M%S", &tm);
-	time_t expectedTimeValue = std::mktime(&tm);
+	// 2024-10-18 13:52:11 UTC
+	time_t expectedTimeValue = 1729259531;
 
 	ASSERT_EQ(timeValue, expectedTimeValue);  // Compare time values
 }
 
 // Mocking helper functions for filesystem operations
-TEST_F(ChunkTrashManagerImplTest, InitHandlesInvalidAndValidFiles) {
+TEST_F(ChunkTrashManagerImplTest, RegisterDiskPathHandlesInvalidAndValidFiles) {
 	// Arrange: Create mocks for filesystem entries
 	std::string validFile = "file_with_timestamp.20231015";
 	std::string invalidFile = "file_without_timestamp";
@@ -269,9 +285,58 @@ TEST_F(ChunkTrashManagerImplTest, InitHandlesInvalidAndValidFiles) {
 	std::ofstream(trashDir / validFile);
 	std::ofstream(trashDir / invalidFile);
 
-	// Act: Call the init function to cover the lines
-	int status = chunkTrashManagerImpl.init(trashDir.string());
+	// Act: Call the registerDiskPath function to cover the lines
+	int status = chunkTrashManagerImpl.registerDiskPath(trashDir.string());
 
 	// Assert: Check function behavior and coverage
 	EXPECT_EQ(status, SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ChunkTrashManagerImplTest, ComputeGCThrottlingFactor_DecreasesAsRelativeIoIncreases) {
+	ChunkTrashManagerImpl manager;
+
+	seedState(100, 100, 20, 20);
+
+	const double veryHighFactor = manager.computeGCThrottlingFactor(0.1 * kMiB, 0.1 * kMiB, 1);
+	EXPECT_GT(veryHighFactor, 0.8);
+	EXPECT_LE(veryHighFactor, 1);
+
+	seedState(100, 100, 20, 20);
+	const double highFactor = manager.computeGCThrottlingFactor(5 * kMiB, 5 * kMiB, 1);
+	EXPECT_GT(highFactor, 0.6);
+	EXPECT_LE(highFactor, 1);
+
+	seedState(100, 100, 20, 20);
+	const double mediumFactor = manager.computeGCThrottlingFactor(15 * kMiB, 15 * kMiB, 1);
+	EXPECT_GT(mediumFactor, 0.1);
+	EXPECT_LE(mediumFactor, 0.4);
+
+	seedState(100, 100, 20, 20);
+	const double lowFactor = manager.computeGCThrottlingFactor(80 * kMiB, 80 * kMiB, 1);
+	EXPECT_GT(lowFactor, 0);
+	EXPECT_LE(lowFactor, 0.05);
+
+	EXPECT_GT(highFactor, mediumFactor);
+	EXPECT_GT(mediumFactor, lowFactor);
+}
+
+TEST_F(ChunkTrashManagerImplTest, ComputeGCThrottlingFactor_IoSpikeForcesZeroFactor) {
+	ChunkTrashManagerImpl manager;
+
+	seedState(100, 100, 1, 1);
+	const double factor = manager.computeGCThrottlingFactor(20 * kMiB, 20 * kMiB, 1);
+
+	EXPECT_DOUBLE_EQ(factor, 0.0);
+}
+
+TEST_F(ChunkTrashManagerImplTest, ComputeGCThrottlingFactor_MoreDisksIncreaseFactor) {
+	ChunkTrashManagerImpl manager;
+
+	seedState(100, 100, 20, 20);
+	const double oneDiskFactor = manager.computeGCThrottlingFactor(40 * kMiB, 40 * kMiB, 1);
+
+	seedState(100, 100, 20, 20);
+	const double fourDiskFactor = manager.computeGCThrottlingFactor(40 * kMiB, 40 * kMiB, 4);
+
+	EXPECT_GT(fourDiskFactor, oneDiskFactor);
 }

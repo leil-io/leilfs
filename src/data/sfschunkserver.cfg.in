@@ -237,8 +237,6 @@
 ## (Default: empty string - disabled)
 # PLUGINS_DIR = ""
 
-##### EXPERIMENTAL:
-
 ## Enables or disables the chunk trash feature. When enabled, deleted chunks are
 ## moved to a trash directory instead of being immediately removed. (Default: 0)
 # CHUNK_TRASH_ENABLED = 0
@@ -253,14 +251,20 @@
 ## the capacity of the smaller configured disk. (Default: 0)
 # CHUNK_TRASH_FREE_SPACE_THRESHOLD_GB = 0
 
-## Defines the bulk size for the garbage collector when processing chunks in the
-## trash. This determines how many files are processed in each garbage
-## collection cycle. (Default: 1000)
-# CHUNK_TRASH_GC_BATCH_SIZE = 1000
+## Defines the maximum bulk size per disk for the garbage 
+## collector when processing chunks in the trash. 
+## This value is used when no I/O pressure is detected and is dynamically 
+## scaled down based on current disk load. (Default: 500)
+# CHUNK_TRASH_GC_BATCH_SIZE = 500
 
 ## [ADVANCED] The number of files to remove from the trash in a single GC cycle,
 ## in case the disk is full and space needs to be recovered. (Default: 100)
 # CHUNK_TRASH_GC_SPACE_RECOVERY_BATCH_SIZE = 100
+
+## The number of workers purging files in parallel. (Default: 5)
+# CHUNK_TRASH_GC_PURGE_WORKERS_NR = 5
+
+##### EXPERIMENTAL:
 
 ## Path to the TLS certificate file the chunk server will use for TLS connections.
 ## Example: /etc/saunafs/ssl/cs.crt

@@ -66,13 +66,13 @@ public:
 	void clear();
 
 	/**
-	 * @brief Resets the trash index for a specific disk path.
+	 * @brief Erases the trash index for a specific disk path.
 	 *
 	 * This method clears all entries associated with the specified disk path.
 	 *
-	 * @param diskPath The path of the disk whose index will be reset.
+	 * @param diskPath The path of the disk whose index will be erased.
 	 */
-	void reset(const std::filesystem::path &diskPath);
+	void erase(const std::filesystem::path &diskPath);
 
 	/**
 	 * @brief Retrieves expired files from the trash index.

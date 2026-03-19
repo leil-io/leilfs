@@ -18,8 +18,8 @@
 
 #include "common/platform.h"
 
-#include "chunkserver-common/hdd_stats.h"
 #include <cstdint>
+#include "chunkserver-common/hdd_stats.h"
 
 #include "chunkserver-common/disk_interface.h"
 #include "devtools/TracePrinter.h"
@@ -42,6 +42,7 @@ static inline void totalRead(IDisk *disk, uint64_t size, MicroSeconds duration) 
 
 	gStatsTotalOperationsRead++;
 	gStatsTotalBytesRead += size;
+	gBytesReadSinceLastGCSweep += size;
 	gStatsTotalTimeRead += duration;
 
 	auto &diskStats = disk->getCurrentStats();
@@ -61,6 +62,7 @@ static inline void totalWrite(IDisk *disk, uint64_t size,
 
 	gStatsTotalOperationsWrite++;
 	gStatsTotalBytesWrite += size;
+	gBytesWrittenSinceLastGCSweep += size;
 	gStatsTotalTimeWrite += duration;
 
 	auto &diskStats = disk->getCurrentStats();

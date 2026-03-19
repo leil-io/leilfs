@@ -20,6 +20,8 @@
 
 #include "common/platform.h"
 
+#include <atomic>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <mutex>
@@ -32,7 +34,13 @@ public:
 	virtual int moveToTrash(const std::filesystem::path &, const std::filesystem::path &,
 	                        const std::time_t &) = 0;
 
-	virtual int init(const std::string &) = 0;
+	virtual void init() = 0;
+
+	virtual int registerDiskPath(const std::string &) = 0;
+
+	virtual void eraseDisk(const std::string &) = 0;
+
+	virtual void terminate() = 0;
 
 	virtual void collectGarbage() = 0;
 
@@ -62,16 +70,40 @@ public:
 	 */
 	static inline const std::string kTrashDirname = ".trash.bin";
 
-	static u_short isEnabled;  ///< Flag to enable or disable the trash manager.
+	/**
+	 * @brief Default value of IsEnabled
+	 */
+	static inline const uint8_t kDefaultIsEnabled = 0;
+
+	/**
+	 * @brief Flag to enable or disable the trash manager.
+	 */
+	static std::atomic<uint8_t> isEnabled;
+
+	/**
+	 * @brief Initializes the chunk trash manager.
+	 */
+	static void init();
 
 	/**
 	 * @brief Initializes the trash directory for the specified disk.
 	 *
-	 * @param diskPath The path of the disk where the trash directory will be
-	 * initialized.
+	 * @param diskPath The path of the disk where the trash directory will be  initialized.
 	 * @return Status code indicating success or failure.
 	 */
-	static int init(const std::string &diskPath);
+	static int registerDiskPath(const std::string &diskPath);
+
+	/**
+	 * @brief Deletes the trash directory information for the specified disk.
+	 *
+	 * @param diskPath Path of the disk whose trash directory information will be erased
+	 */
+	static void eraseDisk(const std::string &diskPath);
+
+	/**
+	 * @brief Terminates the chunk trash manager gracefully
+	 */
+	static void terminate();
 
 	/**
 	 * @brief Moves a file to the trash directory.
