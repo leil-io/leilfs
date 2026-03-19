@@ -371,7 +371,7 @@ void FilesystemOperationsBase::statfs(const FsContext &context,
 	if (context.rootinode() == SPECIAL_INODE_ROOT) {
 		*trspace = gMetadata->trashSpace;
 		*respace = gMetadata->reservedSpace;
-		rn = gMetadata->root;
+		rn = nodeOperations_->getRootNode(fsOpContext);
 	} else {
 		*trspace = 0;
 		*respace = 0;
