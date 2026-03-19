@@ -374,7 +374,8 @@ void wrap_write_init(bool isFromMainThread) {
 	                gSaunaFSInitParams.write_workers, gSaunaFSInitParams.write_window_size,
 	                gSaunaFSInitParams.chunkserver_write_timeout_ms,
 	                gSaunaFSInitParams.cache_per_inode_percentage,
-	                gSaunaFSInitParams.write_wave_timeout_ms);
+	                gSaunaFSInitParams.write_wave_timeout_ms,
+	                gSaunaFSInitParams.max_chunks_written_in_parallel_per_inode);
 }
 
 uint32_t getSafeSleepTimeDivisor() {

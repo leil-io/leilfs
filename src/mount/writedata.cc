@@ -1179,6 +1179,11 @@ struct inodedata {
 	std::condition_variable flushcond;  // wait for !inqueue (flush): using globalLock
 	std::condition_variable writecond;  // wait for flushwaiting==0 (write): using inodeLock
 	std::list<ChunkDataPtr> chunkDataList;
+	// chunks pending to be written to chunkservers, waiting due to the max parallel chunks written
+	// per inode limit, processed in FIFO order. Protected by global lock
+	std::deque<ChunkData *> pendingChunkData;
+	// number of chunks being currently written to chunkservers
+	std::atomic<uint16_t> parallelChunksBeingWritten = 0;
 	std::atomic_bool emptyChunkDataList = true;
 	std::atomic<uint64_t> totalCachedBlocks = 0;
 	std::mutex mutex;
@@ -1329,6 +1334,7 @@ static bool gIsInitialized = false;
 
 static std::atomic<uint32_t> maxretries;
 static std::atomic<uint32_t> gWriteWaveTimeout;
+static std::atomic<uint32_t> gMaxChunksWrittenInParallelPerInode;
 static std::mutex gMutex;
 
 static std::mutex fcbcondMutex;
@@ -1585,6 +1591,32 @@ void write_enqueue(std::vector<ChunkData *> &chunks, Lock &) {
 }
 
 /* globalLock: LOCKED*/
+void add_pending_jobs(inodedata *parent, Lock &globalLock) {
+	while (!parent->pendingChunkData.empty() &&
+	       (gMaxChunksWrittenInParallelPerInode.load() == 0 ||
+	        parent->parallelChunksBeingWritten < gMaxChunksWrittenInParallelPerInode.load())) {
+		ChunkData *chunkData = parent->pendingChunkData.front();
+		parent->pendingChunkData.pop_front();
+		write_enqueue(chunkData, globalLock);
+		parent->parallelChunksBeingWritten++;
+	}
+}
+
+/* globalLock: LOCKED*/
+void add_pending_jobs_after_job_processed(inodedata *parent, Lock &globalLock) {
+	parent->parallelChunksBeingWritten--;
+
+	add_pending_jobs(parent, globalLock);
+}
+
+/* globalLock: LOCKED*/
+void add_pending_jobs_after_new_job(inodedata *parent, ChunkData *chunkData, Lock &globalLock) {
+	parent->pendingChunkData.push_back(chunkData);
+
+	add_pending_jobs(parent, globalLock);
+}
+
+/* globalLock: LOCKED*/
 void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Lock &globalLock) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_job_delayed_end");
 	LOG_AVG_TILL_END_OF_SCOPE1("write_job_delayed_end#sec", seconds);
@@ -1635,9 +1667,13 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Lock &
 		globalLock.lock();
 		if (parent->emptyChunkDataList || status != SAUNAFS_STATUS_OK) {
 			parent->flushcond.notify_all();
+
+			add_pending_jobs_after_job_processed(parent, globalLock);
 		} else {// parent->emptyChunkDataList = false and status == SAUNAFS_STATUS_OK
 			if (somebodyIsWriting) {
 				write_enqueue(chunkData, globalLock);
+			} else {
+				add_pending_jobs_after_job_processed(parent, globalLock);
 			}
 		}
 	}
@@ -1953,7 +1989,8 @@ void *write_worker(void *) {
 /* API | globalLock: INITIALIZED,UNLOCKED */
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
-                     uint32_t cachePerInodePercentage, uint32_t waveTimeout) {
+                     uint32_t cachePerInodePercentage, uint32_t waveTimeout,
+                     uint32_t maxChunksWrittenInParallelPerInode) {
 	uint64_t cachebytecount = uint64_t(cachesize) * 1024 * 1024;
 	uint64_t cacheblockcount = (cachebytecount / SFSBLOCKSIZE);
 	pthread_attr_t thattr;
@@ -1963,6 +2000,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	gChunkserverTimeout_ms = chunkserverTimeout_ms;
 	maxretries = retries;
 	gWriteWaveTimeout = waveTimeout;
+	gMaxChunksWrittenInParallelPerInode = maxChunksWrittenInParallelPerInode;
 	if (cacheblockcount < 10) { cacheblockcount = 10; }
 
 	freecacheblocks = cacheblockcount;
@@ -1981,6 +2019,9 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
 	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
+	gTweaks.registerVariable("MaxChunksWrittenInParallelPerInode",
+	                         gMaxChunksWrittenInParallelPerInode,
+	                         "sfsmaxchunkswritteninparallelperinode");
 	fs_register_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
 
 	gIsInitialized = true;
@@ -2054,7 +2095,7 @@ int write_block(ChunkData *chunkData, uint16_t pos, uint32_t from, uint32_t to, 
 		inodeLock.unlock();
 
 		globalLock.lock();
-		write_enqueue(chunkData, globalLock);
+		add_pending_jobs_after_new_job(parent, chunkData, globalLock);
 		globalLock.unlock();
 
 		inodeLock.lock();
@@ -2398,7 +2439,8 @@ int write_data_end(void *vid) {
 
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
-                     uint32_t cachePerInodePercentage, uint32_t waveTimeout) {
+                     uint32_t cachePerInodePercentage, uint32_t waveTimeout,
+                     uint32_t maxChunksWrittenInParallelPerInode) {
 	if (gUseInodeBasedWriteAlgorithm) {
 		if (InodeBasedWriteAlgorithm::gIsInitialized) { return; }
 
@@ -2410,7 +2452,7 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 		ChunkBasedWriteAlgorithm::write_data_init(cachesize, retries, workers, writewindowsize,
 		                                          chunkserverTimeout_ms, cachePerInodePercentage,
-		                                          waveTimeout);
+		                                          waveTimeout, maxChunksWrittenInParallelPerInode);
 	}
 }
 

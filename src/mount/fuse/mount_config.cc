@@ -98,6 +98,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsdirentrycachesize=%u", direntrycachesize, 0),
 	SFS_OPT("nostdmountoptions", nostdmountoptions, 1),
 	SFS_OPT("sfsuseinodebasedwritealgorithm=%d", useinodebasedwritealgorithm, 0),
+	SFS_OPT("sfsmaxchunkswritteninparallelperinode=%u", maxchunkswritteninparallelperinode, 0),
 	// Leaving it only to consume the option if provided, as it is not used in the codebase and may
 	// prevent the client from starting if set and not consumed.
 	SFS_OPT("sfsignoreflush=%d", ignoreflush, 0),
@@ -151,6 +152,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfswriteworkers"] = std::to_string(gMountOptions.writeworkers);
 	gOptsNameValues["sfsuseinodebasedwritealgorithm"] =
 	    std::to_string(gMountOptions.useinodebasedwritealgorithm);
+	gOptsNameValues["sfsmaxchunkswritteninparallelperinode"] =
+	    std::to_string(gMountOptions.maxchunkswritteninparallelperinode);
 	gOptsNameValues["sfsioretries (read)"] = std::to_string(gMountOptions.ioretries);
 	gOptsNameValues["sfsioretries (write)"] = std::to_string(gMountOptions.ioretries);
 	gOptsNameValues["sfswritewindowsize"] = std::to_string(gMountOptions.writewindowsize);
@@ -290,6 +293,9 @@ void usage(const char *progname) {
 "    -o sfsuseinodebasedwritealgorithm=0|1  use inode based write algorithm when "
 				"set to 1. Use chunk based write algorithm when set to 0 "
 				"(default: %d)\n"
+"    -o sfsmaxchunkswritteninparallelperinode=N  define the maximum number of chunks "
+				"that can be written in parallel per inode. 0 stands for unlimited "
+				"(default: %u)\n"
 "\n"
 "Other options:\n"
 "    -m   --meta                 equivalent to '-o sfsmeta'\n"
@@ -397,6 +403,7 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultWriteWorkers,
 		SaunaClient::FsInitParams::kDefaultWriteWindowSize,
 		SaunaClient::FsInitParams::kDefaultUseInodeBasedWriteAlgorithm,
+		SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode,
 		SaunaClient::FsInitParams::kDefaultUseRwLock,
 		SaunaClient::FsInitParams::kDefaultMkdirCopySgid,
 		sugidClearModeString(SaunaClient::FsInitParams::kDefaultSugidClearMode),

@@ -229,6 +229,10 @@ Use inode based write algorithm when set to 1. Use chunk based write algorithm
 when set to 0. Though chunk based algorithm is faster in most cases, inode
 based algorithm may prove useful in some scenarios (default: 0).
 
+*-o sfsmaxchunkswritteninparallelperinode=*'N'::
+Define the maximum number of chunks that can be written in parallel per inode.
+0 stands for unlimited (default: 0).
+
 *-o sfsdirectio=*'0|1'::
 Whether to use FUSE DirectIO. This may improve performance when reading large
 files under certain conditions.
