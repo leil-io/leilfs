@@ -403,7 +403,7 @@ std::vector<inode_t> FilesystemNodeOperationsBase::getParentIds(
 
 std::string FilesystemNodeOperationsBase::getChildNameByParentId(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t parentId,
-    FSNode *node) {
+    const FSNode *node) {
 	if (node == nullptr) { return {}; }
 	for (const auto &[storedParentId, nameHandle] : node->parents) {
 		if (storedParentId != parentId) { continue; }

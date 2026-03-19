@@ -665,9 +665,10 @@ public:
 	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
 	/// @param parentId Parent inode id.
 	/// @param node Child node.
-	/// @return Edge name or empty string if not found.
+	/// @return Edge name, or empty string if the edge is not found, @p node is null, or
+	///         @p parentId is 0.
 	virtual std::string getChildNameByParentId(const FilesystemOperationContext &fsOpContext,
-	                                           inode_t parentId, FSNode *node) = 0;
+	                                           inode_t parentId, const FSNode *node) = 0;
 
 protected:
 	/// Core node lookup operation with context - override in subclasses for custom storage.
