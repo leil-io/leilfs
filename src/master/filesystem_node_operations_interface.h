@@ -403,6 +403,22 @@ public:
 	                    FSNodeDirectory *nodeDir, uint64_t firstEntry, uint64_t numberOfEntries,
 	                    std::vector<DirectoryEntry> &dirEntriesOut) = 0;
 #endif
+
+	/// Returns direct child inode IDs for a directory.
+	///
+	/// Used by recursive operations (for example setgoal tasks) to enqueue one subtree level.
+	///
+	/// Backend expectations:
+	/// - in-memory metadata implementation reads children from `nodeDir->entries`,
+	/// - KV/FDB implementation enumerates children from persistent EDGE_* records and must not
+	///   depend on `nodeDir->entries` being populated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param nodeDir Directory whose direct child inode IDs should be returned.
+	/// @return Direct child inode IDs (excluding "." and "..").
+	virtual std::vector<inode_t> getDirectoryChildInodes(
+	    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) = 0;
+
 	/// Checks if a name is already used in the given directory.
 	///
 	/// Determines whether a directory entry with the specified name exists in the given

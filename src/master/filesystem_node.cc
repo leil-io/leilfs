@@ -1268,6 +1268,18 @@ void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile, ChunkCountArr
 }
 #endif
 
+std::vector<inode_t> FilesystemNodeOperationsBase::getDirectoryChildInodes(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    const FSNodeDirectory *nodeDir) {
+	std::vector<inode_t> childInodes;
+	if (nodeDir == nullptr) { return childInodes; }
+
+	childInodes.reserve(nodeDir->entries.size());
+	for (const auto &entry : nodeDir->entries) { childInodes.push_back(entry.second->id); }
+
+	return childInodes;
+}
+
 uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationContext &fsOpContext,
                                                    uint32_t timeStamp, FSNodeFile *destNodeFile,
                                                    FSNodeFile *srcNodeFile) {
@@ -1362,7 +1374,7 @@ void FilesystemNodeOperationsBase::changeFileGoal(const FilesystemOperationConte
 
 	fsnodes_update_checksum(nodeFile);
 
-	gMetadata->nodeChangedSignal.emit(nodeFile);
+	if (!fsOpContext.hasReadWriteTransaction()) { gMetadata->nodeChangedSignal.emit(nodeFile); }
 }
 
 void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &fsOpContext,
@@ -1821,6 +1833,8 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
                                                     inode_t *modifiedINodesOut,
                                                     inode_t *unchangedINodesOut,
                                                     inode_t *permissionDeniedINodesOut) {
+	bool nodeChanged = false;
+
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kDirectory ||
 	    node->type == FSNodeType::kTrash || node->type == FSNodeType::kReserved) {
 		if ((node->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET)) == 0 && uid != 0 &&
@@ -1833,12 +1847,15 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 					(*modifiedINodesOut)++;
 				} else {
 					node->goal = goal;
-					gMetadata->nodeChangedSignal.emit(node);
+					if (!fsOpContext.hasReadWriteTransaction()) {
+						gMetadata->nodeChangedSignal.emit(node);
+					}
 					(*modifiedINodesOut)++;
 				}
 
 				updateCTime(node, timeStamp);
 				fsnodes_update_checksum(node);
+				nodeChanged = true;
 			} else {
 				(*unchangedINodesOut)++;
 			}
@@ -1851,6 +1868,8 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 			}
 		}
 	}
+
+	if (nodeChanged && fsOpContext.hasReadWriteTransaction()) { updateNode(fsOpContext, node); }
 }
 
 void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t timeStamp,
