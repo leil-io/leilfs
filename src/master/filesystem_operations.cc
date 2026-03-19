@@ -597,7 +597,7 @@ uint8_t FilesystemOperationsBase::fullPathByInode(const FsContext &context, inod
 		status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 		                                              MODE_MASK_R, parentId, &parent_node);
 		if (status != SAUNAFS_STATUS_OK) { return status; }
-		current_name = static_cast<FSNodeDirectory *>(parent_node)->getChildName(current_node);
+		current_name = nodeOperations_->getChildNameByParentId(fsOpContext, parentId, current_node);
 		if (current_name.empty()) { return SAUNAFS_ERROR_ENOENT; }
 		fullPath = current_inode == initial_inode
 		               ? current_name
@@ -640,7 +640,8 @@ std::string FilesystemOperationsBase::fullPathByInode(const FilesystemOperationC
 
 		auto parentNode = nodeOperations_->idToNode<FSNodeDirectory>(fsOpContext, parent);
 		if (!parentNode) { return ""; }
-		currentName = parentNode->getChildName(currentNode);
+		currentName = nodeOperations_->getChildNameByParentId(fsOpContext, parent, currentNode);
+		if (currentName.empty()) { return ""; }
 		fullPath = currentInode == initialInode ? currentName : currentName + "/" + fullPath;
 		currentInode = parent;
 		currentNode = parentNode;

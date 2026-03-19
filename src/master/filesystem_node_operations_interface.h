@@ -661,6 +661,14 @@ public:
 	virtual std::vector<inode_t> getParentIds(const FilesystemOperationContext &fsOpContext,
 	                                          FSNode *node) = 0;
 
+	/// Returns the edge name that links parentId -> node.
+	/// @param fsOpContext The filesystem operation context potentially containing a transaction.
+	/// @param parentId Parent inode id.
+	/// @param node Child node.
+	/// @return Edge name or empty string if not found.
+	virtual std::string getChildNameByParentId(const FilesystemOperationContext &fsOpContext,
+	                                           inode_t parentId, FSNode *node) = 0;
+
 protected:
 	/// Core node lookup operation with context - override in subclasses for custom storage.
 	/// @param context The FS context for the operation, potentially carrying a transaction.

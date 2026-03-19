@@ -401,6 +401,18 @@ std::vector<inode_t> FilesystemNodeOperationsBase::getParentIds(
 	return parentIds;
 }
 
+std::string FilesystemNodeOperationsBase::getChildNameByParentId(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t parentId,
+    FSNode *node) {
+	if (node == nullptr) { return {}; }
+	for (const auto &[storedParentId, nameHandle] : node->parents) {
+		if (storedParentId != parentId) { continue; }
+		if (nameHandle == nullptr) { return {}; }
+		return static_cast<std::string>(*nameHandle);
+	}
+	return {};
+}
+
 void FilesystemNodeOperationsBase::subStats(const FilesystemOperationContext &fsOpContext,
                                             FSNodeDirectory *parent, StatsRecord *stats) {
 	if (parent != nullptr) {
