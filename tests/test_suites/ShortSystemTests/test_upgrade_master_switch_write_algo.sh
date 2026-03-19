@@ -21,7 +21,8 @@ assert_equals 2 $(saunafs_old_admin_master list-mounts | grep $SAUNAFSXX_TAG | w
 
 # Unmount old SaunaFS client 1:
 assert_success saunafs_mount_unmount 1
-# Mount SaunaFS client 1:
+# Mount SaunaFS client 1, but writing only a chunk at a time:
+echo "sfsmaxchunkswritteninparallelperinode=1" >> "${info[mount1_cfg]}"
 assert_success saunafs_mount_start 1
 
 cd "${info[mount0]}"

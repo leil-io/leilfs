@@ -2,7 +2,7 @@ timeout_set 45 seconds
 
 USE_RAMDISK=YES \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
-	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER|sfsuseinodebasedwritealgorithm=1" \
+	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER|sfsmaxchunkswritteninparallelperinode=1" \
 	setup_local_empty_saunafs info
 
 cd "${info[mount0]}"
