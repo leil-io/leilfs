@@ -3,6 +3,12 @@ assert_program_installed fio
 
 io_priority_mode=${IO_PRIORITY_MODE:-FIFO}
 
+if is_windows_system; then
+	io_engine=sync
+else
+	io_engine=libaio
+fi
+
 CHUNKSERVERS=4 \
 	USE_RAMDISK=YES \
 	MOUNT_EXTRA_CONFIG="cacheexpirationtime=0" \
@@ -21,4 +27,4 @@ for count in {1..2}; do
 done
 
 assert_success fio --directory="${info[mount0]}/dir_std" --name=simultaneous_rw --rw=rw --bs=64K \
-	--size=400M --numjobs=4 --direct=1 --group_reporting --ioengine=libaio
+	--size=400M --numjobs=4 --direct=1 --group_reporting --ioengine=${io_engine}
