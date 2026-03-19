@@ -496,7 +496,7 @@ public:
 	 */
 	std::string getChildName(const FSNode *node) const {
 		for (const auto &[parentId, hstring] : node->parents) {
-			if (parentId == this->id) { return hstring->get(); }
+			if (parentId == this->id) { return hstring ? hstring->get() : std::string{}; }
 		}
 		return {};
 	}
