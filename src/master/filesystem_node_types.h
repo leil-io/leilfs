@@ -496,7 +496,7 @@ public:
 	 */
 	std::string getChildName(const FSNode *node) const {
 		for (const auto &[parentId, hstring] : node->parents) {
-			if (parentId == this->id) { return hstring->get(); }
+			if (parentId == this->id) { return hstring ? hstring->get() : std::string{}; }
 		}
 		return {};
 	}
@@ -538,8 +538,10 @@ public:
 				FSNode *child = (*lowerIt).second;
 				if (!child) { return {}; }
 				// ORIGINAL name from parents vector (first stored casing).
-				for (const auto &[parentId, hstring] : child->parents) {
-					if (parentId == this->id) { return std::string(hstring->get()); }
+				for (const auto &[parentId, nameHandle] : child->parents) {
+					if (parentId != this->id) { continue; }
+					if (nameHandle == nullptr) { return {}; }
+					return static_cast<std::string>(*nameHandle);
 				}
 
 				// Fallback: scan entries for pointer equality (should rarely be needed).

@@ -290,6 +290,11 @@ protected:
 	std::vector<inode_t> getParentIds(
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) override;
 
+	/// Returns the edge name that links parentId -> node.
+	/// @see IFilesystemNodeOperations::getChildNameByParentId
+	std::string getChildNameByParentId(const FilesystemOperationContext &fsOpContext,
+	                                   inode_t parentId, const FSNode *node) override;
+
 	/// Internal node lookup operation with context - override in subclasses for custom storage.
 	/// @see IFilesystemNodeOperations::idToNodeInternal
 	FSNode *idToNodeInternal(const FilesystemOperationContext &fsOpContext,
