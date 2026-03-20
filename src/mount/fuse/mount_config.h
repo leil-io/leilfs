@@ -187,7 +187,7 @@ struct sfsopts_ {
 		bandwidthoveruse(SaunaClient::FsInitParams::kDefaultBandwidthOveruse),
 		nonemptymount(SaunaClient::FsInitParams::kDefaultNonEmptyMounts),
 		directio(SaunaClient::FsInitParams::kDirectIO),
-		useinodebasedwritealgorithm(SaunaClient::FsInitParams::kDefaultUseInodeBasedWriteAlgorithm),
+		useinodebasedwritealgorithm(0), // deprecated
 		maxchunkswritteninparallelperinode(SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode),
 		ignoreflush(0), // deprecated
 		limitglibcmallocarenas(SaunaClient::FsInitParams::kDefaultLimitGlibcMallocArenas),

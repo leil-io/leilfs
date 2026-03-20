@@ -265,8 +265,6 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.acl_cache_size = gMountOptions.aclcachesize;
 	params.debug_mode = gMountOptions.debug;
 	params.direct_io = gMountOptions.directio;
-	params.use_inode_based_write_algorithm =
-	    gMountOptions.useinodebasedwritealgorithm;
 	params.max_chunks_written_in_parallel_per_inode =
 	    gMountOptions.maxchunkswritteninparallelperinode;
 	params.malloc_trim_period = gMountOptions.malloctrimperiod;
@@ -647,6 +645,12 @@ int main(int argc, char *argv[]) try {
 		std::fprintf(stderr,
 		             "Warning: option 'sfsignoreflush' is deprecated and has no "
 		             "effect; it will be ignored.\n");
+	}
+
+	if (gMountOptions.useinodebasedwritealgorithm) {
+		fprintf(stderr,
+		        "Warning: option 'sfsuseinodebasedwritealgorithm' is deprecated and has no "
+		        "effect; it will be ignored.\n");
 	}
 
 	if (gMountOptions.cachePerInodePercentage < 1) {

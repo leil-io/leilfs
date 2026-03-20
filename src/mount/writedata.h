@@ -41,8 +41,3 @@ int write_data_flush_inode(inode_t inode);
 int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
                         Attributes &attr);
 int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff, size_t currentSize);
-
-bool isChunkBasedWriteAlgorithmInitialized();
-bool isInodeBasedWriteAlgorithmInitialized();
-void setUseInodeBasedWriteAlgorithm(bool useInodeBasedWriteAlgorithm);
-bool getUseInodeBasedWriteAlgorithm();

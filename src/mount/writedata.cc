@@ -297,8 +297,6 @@ struct DelayedQueueEntry {
 	    : inodeData(inodeData), ticksLeft(ticksLeft) {}
 };
 
-static bool gIsInitialized = false;
-
 static std::atomic<uint32_t> maxretries;
 static std::atomic<uint32_t> gWriteWaveTimeout;
 static std::mutex gMutex;
@@ -850,8 +848,6 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
 	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
 	fs_register_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
-
-	gIsInitialized = true;
 }
 
 void write_data_term(void) {
@@ -868,8 +864,6 @@ void write_data_term(void) {
 	for (const auto &[_, id] : inodedataMap) { delete id; }
 	inodedataMap.clear();
 	fs_unregister_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
-
-	gIsInitialized = false;
 }
 
 /* glock: UNLOCKED */
@@ -1329,8 +1323,6 @@ struct DelayedQueueEntry {
 	DelayedQueueEntry(ChunkData *chunkData, int32_t ticksLeft)
 	    : chunkData(chunkData), ticksLeft(ticksLeft) {}
 };
-
-static bool gIsInitialized = false;
 
 static std::atomic<uint32_t> maxretries;
 static std::atomic<uint32_t> gWriteWaveTimeout;
@@ -2023,8 +2015,6 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 	                         gMaxChunksWrittenInParallelPerInode,
 	                         "sfsmaxchunkswritteninparallelperinode");
 	fs_register_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
-
-	gIsInitialized = true;
 }
 
 void write_data_term(void) {
@@ -2042,8 +2032,6 @@ void write_data_term(void) {
 	inodedataMap.clear();
 	truncateLocatorsData.clear();
 	fs_unregister_packet_type_handler(SAU_MATOCL_UNLOCK_CHUNK_NOTICE, &unlockChunkNoticeHandler);
-
-	gIsInitialized = false;
 }
 
 /* inodeLock: UNLOCKED */
@@ -2442,14 +2430,10 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t cachePerInodePercentage, uint32_t waveTimeout,
                      uint32_t maxChunksWrittenInParallelPerInode) {
 	if (gUseInodeBasedWriteAlgorithm) {
-		if (InodeBasedWriteAlgorithm::gIsInitialized) { return; }
-
 		InodeBasedWriteAlgorithm::write_data_init(cachesize, retries, workers, writewindowsize,
 		                                          chunkserverTimeout_ms, cachePerInodePercentage,
 		                                          waveTimeout);
 	} else {
-		if (ChunkBasedWriteAlgorithm::gIsInitialized) { return; }
-
 		ChunkBasedWriteAlgorithm::write_data_init(cachesize, retries, workers, writewindowsize,
 		                                          chunkserverTimeout_ms, cachePerInodePercentage,
 		                                          waveTimeout, maxChunksWrittenInParallelPerInode);
@@ -2506,20 +2490,4 @@ int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff, s
 		return InodeBasedWriteAlgorithm::write_data(vid, offset, size, buff, currentSize);
 	}
 	return ChunkBasedWriteAlgorithm::write_data(vid, offset, size, buff, currentSize);
-}
-
-bool isChunkBasedWriteAlgorithmInitialized() {
-	return ChunkBasedWriteAlgorithm::gIsInitialized;
-}
-
-bool isInodeBasedWriteAlgorithmInitialized() {
-	return InodeBasedWriteAlgorithm::gIsInitialized;
-}
-
-void setUseInodeBasedWriteAlgorithm(bool useInodeBasedWriteAlgorithm) {
-	gUseInodeBasedWriteAlgorithm = useInodeBasedWriteAlgorithm;
-}
-
-bool getUseInodeBasedWriteAlgorithm() {
-	return gUseInodeBasedWriteAlgorithm;
 }

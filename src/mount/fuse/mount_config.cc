@@ -97,11 +97,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("bandwidthoveruse=%lf", bandwidthoveruse, 1),
 	SFS_OPT("sfsdirentrycachesize=%u", direntrycachesize, 0),
 	SFS_OPT("nostdmountoptions", nostdmountoptions, 1),
-	SFS_OPT("sfsuseinodebasedwritealgorithm=%d", useinodebasedwritealgorithm, 0),
 	SFS_OPT("sfsmaxchunkswritteninparallelperinode=%u", maxchunkswritteninparallelperinode, 0),
-	// Leaving it only to consume the option if provided, as it is not used in the codebase and may
-	// prevent the client from starting if set and not consumed.
-	SFS_OPT("sfsignoreflush=%d", ignoreflush, 0),
 	SFS_OPT("limitglibcmallocarenas=%d", limitglibcmallocarenas, 0),
 	SFS_OPT("malloctrimperiod=%d", malloctrimperiod, 0),
 	SFS_OPT("sfslognotificationarea=%d", lognotificationarea, 0),
@@ -111,6 +107,11 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("maxwaitretrytime=%u", maxwaitretrytime, 0),
 	SFS_OPT("mastercommsleeptimedivisor=%u", mastercommsleeptimedivisor, 0),
 	SFS_OPT("tlsconfigfile=%s", tlsconfigfile, 0),
+
+	// Leaving it only to consume the option if provided, as it is not used in the codebase and may
+	// prevent the client from starting if set and not consumed.
+	SFS_OPT("sfsignoreflush=%d", ignoreflush, 0),
+	SFS_OPT("sfsuseinodebasedwritealgorithm=%d", useinodebasedwritealgorithm, 0),
 
 	SFS_OPT("enablefilelocks=%u", filelocks, 0),
 	SFS_OPT("nonempty", nonemptymount, 1),
@@ -150,8 +151,10 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfscacheperinodepercentage"] =
 	    std::to_string(gMountOptions.cachePerInodePercentage);
 	gOptsNameValues["sfswriteworkers"] = std::to_string(gMountOptions.writeworkers);
-	gOptsNameValues["sfsuseinodebasedwritealgorithm"] =
-	    std::to_string(gMountOptions.useinodebasedwritealgorithm);
+	if (gMountOptions.useinodebasedwritealgorithm != 0) {
+		gOptsNameValues["sfsuseinodebasedwritealgorithm (deprecated, ignored)"] =
+		    std::to_string(gMountOptions.useinodebasedwritealgorithm);
+	}
 	gOptsNameValues["sfsmaxchunkswritteninparallelperinode"] =
 	    std::to_string(gMountOptions.maxchunkswritteninparallelperinode);
 	gOptsNameValues["sfsioretries (read)"] = std::to_string(gMountOptions.ioretries);
@@ -290,9 +293,6 @@ void usage(const char *progname) {
 "    -o sfswriteworkers=N        define number of write workers (default: %u)\n"
 "    -o sfswritewindowsize=N     define write window size (in blocks) for "
 				"each chunk (default: %u)\n"
-"    -o sfsuseinodebasedwritealgorithm=0|1  use inode based write algorithm when "
-				"set to 1. Use chunk based write algorithm when set to 0 "
-				"(default: %d)\n"
 "    -o sfsmaxchunkswritteninparallelperinode=N  define the maximum number of chunks "
 				"that can be written in parallel per inode. 0 stands for unlimited "
 				"(default: %u)\n"
@@ -402,7 +402,6 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultCachePerInodePercentage,
 		SaunaClient::FsInitParams::kDefaultWriteWorkers,
 		SaunaClient::FsInitParams::kDefaultWriteWindowSize,
-		SaunaClient::FsInitParams::kDefaultUseInodeBasedWriteAlgorithm,
 		SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode,
 		SaunaClient::FsInitParams::kDefaultUseRwLock,
 		SaunaClient::FsInitParams::kDefaultMkdirCopySgid,
