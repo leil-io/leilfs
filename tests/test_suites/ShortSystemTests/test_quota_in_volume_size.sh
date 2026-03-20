@@ -3,7 +3,8 @@ timeout_set 40 seconds
 CHUNKSERVERS=1 \
 	USE_RAMDISK=YES \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota" \
-	MOUNT_EXTRA_CONFIG="usequotainvolumesize=1,statfscachetimeout=1,sfsreportreservedperiod=1,sfsuseinodebasedwritealgorithm=1" \
+	MOUNT_EXTRA_CONFIG="usequotainvolumesize=1,statfscachetimeout=1,sfsreportreservedperiod=1,`
+		`sfsmaxchunkswritteninparallelperinode=1,sfswritecachesize=2048" \
 	setup_local_empty_saunafs info
 
 get_mountpoint_total_space() {

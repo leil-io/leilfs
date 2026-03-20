@@ -104,7 +104,7 @@ struct FsInitParams {
 	static constexpr bool     kDefaultMkdirCopySgid = true;
 	static constexpr unsigned kDefaultWriteWaveTo = 50;
 #endif
-	static constexpr bool     kDefaultUseInodeBasedWriteAlgorithm = false;
+	static constexpr unsigned kDefaultMaxChunksWrittenInParallelPerInode = 0;
 	static constexpr unsigned kDefaultWriteCacheSize = 128;
 	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
@@ -178,7 +178,7 @@ struct FsInitParams {
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
-	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
+	             max_chunks_written_in_parallel_per_inode(kDefaultMaxChunksWrittenInParallelPerInode),
 	             statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -228,7 +228,7 @@ struct FsInitParams {
 #else
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
-	             use_inode_based_write_algorithm(kDefaultUseInodeBasedWriteAlgorithm),
+	             max_chunks_written_in_parallel_per_inode(kDefaultMaxChunksWrittenInParallelPerInode),
 	             statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -298,7 +298,7 @@ struct FsInitParams {
 	unsigned malloc_trim_period;
 #endif
 
-	bool use_inode_based_write_algorithm;
+	unsigned max_chunks_written_in_parallel_per_inode;
 	unsigned statfs_cache_timeout;
 	bool use_quota_in_volume_size;
 	unsigned max_wait_retry_time;

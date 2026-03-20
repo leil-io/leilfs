@@ -28,9 +28,12 @@
 #include "common/attributes.h"
 #include "common/type_defs.h"
 
+namespace WriteAlgorithm {
+
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
-                     uint32_t cachePerInodePercentage, uint32_t waveTimeout);
+                     uint32_t cachePerInodePercentage, uint32_t waveTimeout,
+                     uint32_t maxChunksWrittenInParallelPerInode);
 void write_data_term(void);
 void *write_data_new(inode_t inode);
 int write_data_end(void *vid);
@@ -41,7 +44,4 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
                         Attributes &attr);
 int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff, size_t currentSize);
 
-bool isChunkBasedWriteAlgorithmInitialized();
-bool isInodeBasedWriteAlgorithmInitialized();
-void setUseInodeBasedWriteAlgorithm(bool useInodeBasedWriteAlgorithm);
-bool getUseInodeBasedWriteAlgorithm();
+}  // namespace WriteAlgorithm
