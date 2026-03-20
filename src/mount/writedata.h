@@ -28,6 +28,8 @@
 #include "common/attributes.h"
 #include "common/type_defs.h"
 
+namespace WriteAlgorithm {
+
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
                      uint32_t cachePerInodePercentage, uint32_t waveTimeout,
@@ -41,3 +43,5 @@ int write_data_flush_inode(inode_t inode);
 int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
                         Attributes &attr);
 int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff, size_t currentSize);
+
+}  // namespace WriteAlgorithm

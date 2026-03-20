@@ -1004,7 +1004,8 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 		}
 		throw RequestException(status);
 	}
-	uint64_t maxFileLen = (attr[0] == TYPE_FILE) ? write_data_getmaxfleng(inode) : 0;
+	uint64_t maxFileLen =
+	    (attr[0] == TYPE_FILE) ? WriteAlgorithm::write_data_getmaxfleng(inode) : 0;
 	EntryParam e;
 	e.ino = inode;
 	uint8_t modeAttr = attr_get_mattr(attr);
@@ -1086,7 +1087,7 @@ AttrReply getattr(Context &ctx, inode_t ino) {
 		throw RequestException(status);
 	}
 
-	maxfleng = write_data_getmaxfleng(ino);
+	maxfleng = WriteAlgorithm::write_data_getmaxfleng(ino);
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(ino,attr,&o_stbuf);
 	if (attr[0]==TYPE_FILE && maxfleng>(uint64_t)(o_stbuf.st_size)) {
@@ -1152,7 +1153,7 @@ AttrReply setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set) {
 	}
 
 	status = SAUNAFS_ERROR_EINVAL;
-	maxfleng = write_data_getmaxfleng(ino);
+	maxfleng = WriteAlgorithm::write_data_getmaxfleng(ino);
 	if ((to_set & (SAUNAFS_SET_ATTR_MODE
 			| SAUNAFS_SET_ATTR_UID
 			| SAUNAFS_SET_ATTR_GID
@@ -1209,7 +1210,7 @@ AttrReply setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set) {
 		}
 		if (to_set & (SAUNAFS_SET_ATTR_MTIME | SAUNAFS_SET_ATTR_MTIME_NOW)) {
 			// in this case we want flush all pending writes because they could overwrite mtime
-			write_data_flush_inode(ino);
+			WriteAlgorithm::write_data_flush_inode(ino);
 		}
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 		fs_setattr(ino,ctx.uid,ctx.gid,setmask,stbuf->st_mode&07777,stbuf->st_uid,stbuf->st_gid,stbuf->st_atime,stbuf->st_mtime,sugid_clear_mode,attr));
@@ -1261,8 +1262,10 @@ AttrReply setattr(Context &ctx, inode_t ino, struct stat *stbuf, int to_set) {
 			throw RequestException(SAUNAFS_ERROR_EFBIG);
 		}
 		try {
-			RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-				write_data_truncate(ino, false, ctx.uid, ctx.gid, stbuf->st_size, attr));
+			RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
+			    status, ctx,
+			    WriteAlgorithm::write_data_truncate(ino, false, ctx.uid, ctx.gid, stbuf->st_size,
+			                                        attr));
 			maxfleng = 0; // after the flush master server has valid length, don't use our length cache
 		} catch (Exception& ex) {
 			status = ex.status();
@@ -2114,7 +2117,7 @@ static finfo* fs_newfileinfo(uint8_t accmode, inode_t inode) {
 		fileinfo->data = static_cast<void *>(read_data_new(inode));
 	} else if (accmode == O_WRONLY) {
 		fileinfo->mode = IO_WRITEONLY;
-		fileinfo->data = write_data_new(inode);
+		fileinfo->data = WriteAlgorithm::write_data_new(inode);
 	} else {
 		fileinfo->mode = IO_NONE;
 		fileinfo->data = NULL;
@@ -2134,7 +2137,7 @@ void remove_file_info(FileInfo *f) {
 	if (fileinfo->mode == IO_READONLY || fileinfo->mode == IO_READ) {
 		read_data_end(static_cast<ReadRecord *>(fileinfo->data));
 	} else if (fileinfo->mode == IO_WRITEONLY || fileinfo->mode == IO_WRITE) {
-		write_data_end(fileinfo->data);
+		WriteAlgorithm::write_data_end(fileinfo->data);
 	}
 	lock.unlock(); // This unlock is needed, since we want to destroy the mutex
 	pthread_mutex_destroy(fileinfo->lock.native_handle()); // Make helgrind happy
@@ -2421,7 +2424,7 @@ ReadCache::Result read(Context &ctx,
 		throw RequestException(SAUNAFS_ERROR_EACCES);
 	}
 	if (fileinfo->mode==IO_WRITE) {
-		err = write_data_flush(fileinfo->data);
+		err = WriteAlgorithm::write_data_flush(fileinfo->data);
 		if (err != SAUNAFS_STATUS_OK) {
 			oplog_printf(ctx, "read (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): %s",
 					ino,
@@ -2430,7 +2433,7 @@ ReadCache::Result read(Context &ctx,
 					saunafs_error_string(err));
 			throw RequestException(err);
 		}
-		write_data_end(fileinfo->data);
+		WriteAlgorithm::write_data_end(fileinfo->data);
 	}
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_NONE) {
 		fileinfo->mode = IO_READ;
@@ -2439,7 +2442,7 @@ ReadCache::Result read(Context &ctx,
 	// end of reader critical section
 	flushlock.unlock();
 
-	write_data_flush_inode(ino);
+	WriteAlgorithm::write_data_flush_inode(ino);
 
 	uint64_t firstBlockToRead = off / SFSBLOCKSIZE;
 	uint64_t firstBlockNotToRead = (off + size + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
@@ -2543,7 +2546,7 @@ BytesWritten write(Context &ctx, inode_t ino, const char *buf, size_t size, off_
 	}
 	if (fileinfo->mode==IO_READ || fileinfo->mode==IO_NONE) {
 		fileinfo->mode = IO_WRITE;
-		fileinfo->data = write_data_new(ino);
+		fileinfo->data = WriteAlgorithm::write_data_new(ino);
 	}
 
 	Attributes attr;
@@ -2555,8 +2558,7 @@ BytesWritten write(Context &ctx, inode_t ino, const char *buf, size_t size, off_
 	attr_to_stat(ino, attr, &stbuf);
 	size_t currentSize = stbuf.st_size;
 
-	err = write_data(fileinfo->data, off, size, (const uint8_t *)buf,
-	                 currentSize);
+	err = WriteAlgorithm::write_data(fileinfo->data, off, size, (const uint8_t *)buf, currentSize);
 	gDirEntryCache.lockAndInvalidateInode(ino);
 	if (err != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "write (%" PRIiNode ",%" PRIu64 ",%" PRIu64 "): (physical) %s",
@@ -2599,7 +2601,7 @@ void flush(Context &ctx, inode_t ino, FileInfo* fi) {
 	err = SAUNAFS_STATUS_OK;
 	std::unique_lock lock(fileinfo->lock);
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_WRITEONLY) {
-		err = write_data_flush(fileinfo->data);
+		err = WriteAlgorithm::write_data_flush(fileinfo->data);
 	}
 	safs_locks::FlockWrapper file_lock(safs_locks::kRelease,0,0,0);
 	auto use_posixlocks = fileinfo->use_posixlocks;
@@ -2644,7 +2646,7 @@ void fsync(Context &ctx, inode_t ino, int datasync, FileInfo* fi) {
 	err = SAUNAFS_STATUS_OK;
 	std::lock_guard lock(fileinfo->lock);
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_WRITEONLY) {
-		err = write_data_flush(fileinfo->data);
+		err = WriteAlgorithm::write_data_flush(fileinfo->data);
 	}
 	if (err != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "fsync (%" PRIiNode ",%d): %s",
@@ -3701,10 +3703,10 @@ void fs_init(FsInitParams &params) {
 			params.prefetch_xor_stripes,
 			std::max(params.bandwidth_overuse, 1.));
 
-	write_data_init(params.write_cache_size, params.io_retries, params.write_workers,
-	                params.write_window_size, params.chunkserver_write_timeout_ms,
-	                params.cache_per_inode_percentage, params.write_wave_timeout_ms,
-	                params.max_chunks_written_in_parallel_per_inode);
+	WriteAlgorithm::write_data_init(
+	    params.write_cache_size, params.io_retries, params.write_workers, params.write_window_size,
+	    params.chunkserver_write_timeout_ms, params.cache_per_inode_percentage,
+	    params.write_wave_timeout_ms, params.max_chunks_written_in_parallel_per_inode);
 #ifdef _WIN32
 	set_debug_mode(params.debug_mode);
 #endif
@@ -3745,7 +3747,7 @@ void fs_init(FsInitParams &params) {
 }
 
 void fs_term() {
-	write_data_term();
+	WriteAlgorithm::write_data_term();
 	read_data_term();
 	masterproxy_term();
 	::fs_term();
