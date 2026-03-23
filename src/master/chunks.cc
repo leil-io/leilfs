@@ -2473,6 +2473,11 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 			++invalid_parts;
 		}
 	}
+
+	if(degenerate){
+		safs::log_warn("GigaCronos: doChunkJobs: degenerate: {}", degenerate);
+	}
+
 	calc.optimize(gUseLinearAssignmentOptimizer, &gLinearAssignmentCache);
 
 	// step 1a. count number of chunk parts on servers with the same ip
