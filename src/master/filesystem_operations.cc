@@ -96,7 +96,7 @@ void FilesystemOperationsBase::changeLog(uint32_t ts, const char *format, ...) {
 
 	uint64_t version = gMetadata->metadataVersion++;
 	changelog(version, entry);
-	getChangelogSignal().emit({.version=version, .entry=entry});
+	getChangelogSignal().emit({.version = version, .entry = entry});
 	matomlserv_broadcast_logstring(version, (uint8_t *)entry, tsLength + entryLength);
 	matontserv_broadcast_message(version, std::string(entry, tsLength + entryLength));
 #endif
@@ -105,9 +105,7 @@ void FilesystemOperationsBase::changeLog(uint32_t ts, const char *format, ...) {
 #ifndef METARESTORE
 uint8_t FilesystemOperationsBase::readReservedSize(inode_t rootinode, uint8_t sesflags,
                                                    uint32_t *dbuffsize) {
-	if (rootinode != 0) {
-		return SAUNAFS_ERROR_EPERM;
-	}
+	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
 	(void)sesflags;
 	*dbuffsize = nodeOperations_->getDetachedSize(gMetadata->reserved);
 	return SAUNAFS_STATUS_OK;
@@ -134,9 +132,7 @@ void FilesystemOperationsBase::readReserved(const FilesystemOperationContext &fs
 
 uint8_t FilesystemOperationsBase::readTrashSize(inode_t rootinode, uint8_t sesflags,
                                                 uint32_t *dbuffsize) {
-	if (rootinode != 0) {
-		return SAUNAFS_ERROR_EPERM;
-	}
+	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
 	(void)sesflags;
 	*dbuffsize = nodeOperations_->getDetachedSize(gMetadata->trash);
 	return SAUNAFS_STATUS_OK;
@@ -166,26 +162,16 @@ uint8_t FilesystemOperationsBase::getDetachedAttr(const FilesystemOperationConte
                                                   inode_t inode, Attributes &attr, uint8_t dtype) {
 	FSNode *p;
 	attr.fill(0);
-	if (rootinode != 0) {
-		return SAUNAFS_ERROR_EPERM;
-	}
+	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
 	(void)sesflags;
-	if (!DTYPE_ISVALID(dtype)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!DTYPE_ISVALID(dtype)) { return SAUNAFS_ERROR_EINVAL; }
 	p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 	if (p->type != FSNodeType::kTrash && p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (dtype == DTYPE_TRASH && p->type == FSNodeType::kReserved) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	if (dtype == DTYPE_RESERVED && p->type == FSNodeType::kTrash) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (dtype == DTYPE_TRASH && p->type == FSNodeType::kReserved) { return SAUNAFS_ERROR_ENOENT; }
+	if (dtype == DTYPE_RESERVED && p->type == FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
 
 	nodeOperations_->fillAttr(fsOpContext, p, NULL, p->uid, p->gid, p->uid, p->gid, sesflags, attr);
 
@@ -196,17 +182,11 @@ uint8_t FilesystemOperationsBase::getTrashPath(const FilesystemOperationContext 
                                                inode_t rootinode, uint8_t sesflags, inode_t inode,
                                                std::string &path) {
 	FSNode *p;
-	if (rootinode != 0) {
-		return SAUNAFS_ERROR_EPERM;
-	}
+	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
 	(void)sesflags;
 	p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	if (p->type != FSNodeType::kTrash) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
+	if (p->type != FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
 	path = (std::string)gMetadata->trash.at(TrashPathKey(p));
 	return SAUNAFS_STATUS_OK;
 }
@@ -218,9 +198,7 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -234,9 +212,7 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	for (uint32_t i = 0; i < path.length(); i++) {
-		if (path[i] == 0) {
-			return SAUNAFS_ERROR_EINVAL;
-		}
+		if (path[i] == 0) { return SAUNAFS_ERROR_EINVAL; }
 	}
 
 	updateTrashNameEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
@@ -256,9 +232,7 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -286,9 +260,7 @@ uint8_t FilesystemOperationsBase::purge(const FsContext &context,
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -336,28 +308,20 @@ uint8_t FilesystemOperationsBase::getRootInode(inode_t *rootinode, const uint8_t
 	FSNodeDirectory *parent = nodeOperations_->getRootNode(fsOpContext);
 
 	for (;;) {
-		while (*name == '/') {
-			name++;
-		}
+		while (*name == '/') { name++; }
 		if (*name == '\0') {
 			*rootinode = parent->id;
 			return SAUNAFS_STATUS_OK;
 		}
 		nleng = 0;
-		while (name[nleng] && name[nleng] != '/') {
-			nleng++;
-		}
-		hname = HString((const char*)name, nleng);
+		while (name[nleng] && name[nleng] != '/') { nleng++; }
+		hname = HString((const char *)name, nleng);
 		if (nodeOperations_->nameCheck(hname) < 0) { return SAUNAFS_ERROR_EINVAL; }
 
 		FSNode *child = nodeOperations_->lookup(fsOpContext, parent, hname);
-		if (!child) {
-			return SAUNAFS_ERROR_ENOENT;
-		}
-		if (child->type != FSNodeType::kDirectory) {
-			return SAUNAFS_ERROR_ENOTDIR;
-		}
-		parent = static_cast<FSNodeDirectory*>(child);
+		if (!child) { return SAUNAFS_ERROR_ENOENT; }
+		if (child->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_ENOTDIR; }
+		parent = static_cast<FSNodeDirectory *>(child);
 		name += nleng;
 	}
 }
@@ -397,9 +361,7 @@ uint8_t FilesystemOperationsBase::applyChecksum(const std::string &version, uint
 	uint64_t computedChecksum = metadataChecksum(ChecksumMode::kGetCurrent);
 	gMetadata->metadataVersion++;
 	if (!gDisableChecksumVerification && (version == versionString)) {
-		if (checksum != computedChecksum) {
-			return SAUNAFS_ERROR_BADMETADATACHECKSUM;
-		}
+		if (checksum != computedChecksum) { return SAUNAFS_ERROR_BADMETADATACHECKSUM; }
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -408,9 +370,7 @@ uint8_t FilesystemOperationsBase::applyAccess(const FilesystemOperationContext &
                                               uint32_t timestamp, inode_t inode) {
 	FSNode *p;
 	p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 	p->atime = timestamp;
 	fsnodes_update_checksum(p);
 	gMetadata->metadataVersion++;
@@ -428,9 +388,7 @@ uint8_t FilesystemOperationsBase::access(const FsContext &context, inode_t inode
 	uint8_t status = nodeOperations_->verifySession(
 	    context, (modemask & MODE_MASK_W) ? OperationMode::kReadWrite : OperationMode::kReadOnly,
 	    SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -451,9 +409,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status =
 	    nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kDirectory,
@@ -509,9 +465,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 	FSNode *child = nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(workDir),
 	                                        name, context.isCaseInsensitive());
 
-	if (!child) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
 	*inode = child->id;
 	nodeOperations_->fillAttr(fsOpContext, child, workDir, context.uid(), context.gid(),
@@ -537,14 +491,10 @@ uint8_t FilesystemOperationsBase::wholePathLookup(const FsContext &context, inod
 		if (current_it != delim_it) {
 			HString hstr(current_it, delim_it);
 			status = lookup(context, fsOpContext, parent, hstr, &tmp_inode, attr);
-			if (status != SAUNAFS_STATUS_OK) {
-				return status;
-			}
+			if (status != SAUNAFS_STATUS_OK) { return status; }
 			parent = tmp_inode;
 		}
-		if (delim_it == path.end()) {
-			break;
-		}
+		if (delim_it == path.end()) { break; }
 		current_it = std::next(delim_it);
 	}
 
@@ -599,9 +549,7 @@ uint8_t FilesystemOperationsBase::fullPathByInode(const FsContext &context, inod
 		if (status != SAUNAFS_STATUS_OK) { return status; }
 		current_name = nodeOperations_->getChildNameByParentId(fsOpContext, parentId, current_node);
 		if (current_name.empty()) { return SAUNAFS_ERROR_ENOENT; }
-		fullPath = current_inode == initial_inode
-		               ? current_name
-		               : current_name + "/" + fullPath;
+		fullPath = current_inode == initial_inode ? current_name : current_name + "/" + fullPath;
 		current_inode = parentId;
 		current_node = parent_node;
 	}
@@ -660,15 +608,11 @@ uint8_t FilesystemOperationsBase::getAttr(const FsContext &context,
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
 	                          context.agid(), context.sesflags(), attr);
@@ -691,18 +635,14 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              opened == 0 ? MODE_MASK_W : MODE_MASK_EMPTY,
 	                                              inode, &p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	FSNodeFile *node_file = static_cast<FSNodeFile*>(p);
+	FSNodeFile *node_file = static_cast<FSNodeFile *>(p);
 
 	if (length & SFSCHUNKMASK) {
 		uint32_t indx = (length >> SFSCHUNKBITS);
@@ -715,11 +655,8 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 				denyTruncatingParity = denyTruncatingParity && (length < node_file->length);
 				status = chunk_multi_truncate(
 				    ochunkid, lockId, (length & SFSCHUNKMASK), p->goal, denyTruncatingParity,
-				    quotaExceeded(fsOpContext, p, {{QuotaResource::kSize, 1}}),
-				    &nchunkid);
-				if (status != SAUNAFS_STATUS_OK) {
-					return status;
-				}
+				    quotaExceeded(fsOpContext, p, {{QuotaResource::kSize, 1}}), &nchunkid);
+				if (status != SAUNAFS_STATUS_OK) { return status; }
 				node_file->chunks[indx] = nchunkid;
 				*chunkid = nchunkid;
 				changeLog(ts, "TRUNC(%" PRIiNode ",%" PRIu32 ",%" PRIu32 "):%" PRIu64, p->id, indx,
@@ -800,9 +737,7 @@ uint8_t FilesystemOperationsBase::applyTrunc(const FilesystemOperationContext &f
 	uint8_t status;
 	auto *p = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 
 	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 	    p->type != FSNodeType::kReserved) {
@@ -811,26 +746,21 @@ uint8_t FilesystemOperationsBase::applyTrunc(const FilesystemOperationContext &f
 
 	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 
-	if (indx >= p->chunks.size()) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (indx >= p->chunks.size()) { return SAUNAFS_ERROR_EINVAL; }
 
 	ochunkid = p->chunks[indx];
 
 	if (ochunkid == 0) {
-		safs::log_err("fs_apply_trunc: node does not have a chunk at index {} chunks, inode {}", indx, inode);
+		safs::log_err("fs_apply_trunc: node does not have a chunk at index {} chunks, inode {}",
+		              indx, inode);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
 
 	status = chunk_apply_modification(timestamp, ochunkid, lockid, p->goal, true, &nchunkid);
 
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	if (chunkid != nchunkid) {
-		return SAUNAFS_ERROR_MISMATCH;
-	}
+	if (chunkid != nchunkid) { return SAUNAFS_ERROR_MISMATCH; }
 
 	p->chunks[indx] = nchunkid;
 	gMetadata->metadataVersion++;
@@ -881,15 +811,11 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              MODE_MASK_EMPTY, inode, &p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	// This function is called only when the file is being truncated, in
 	// matoclserv_chunk_status and in matoclserv_fuse_truncate. Therefore,
@@ -929,24 +855,19 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 
 	auto status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	if (context.uid() != 0 && (context.sesflags() & SESFLAG_MAPALL) && (setmask & (SET_UID_FLAG | SET_GID_FLAG))) {
+	if (context.uid() != 0 && (context.sesflags() & SESFLAG_MAPALL) &&
+	    (setmask & (SET_UID_FLAG | SET_GID_FLAG))) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	if ((p->mode & (EATTR_NOOWNER << EATTR_BIT_OFFSET)) == 0 && context.uid() != 0 &&
 	    context.uid() != p->uid) {
-		if (setmask & (SET_MODE_FLAG | SET_UID_FLAG | SET_GID_FLAG)) {
-			return SAUNAFS_ERROR_EPERM;
-		}
+		if (setmask & (SET_MODE_FLAG | SET_UID_FLAG | SET_GID_FLAG)) { return SAUNAFS_ERROR_EPERM; }
 		if ((setmask & SET_ATIME_FLAG) && !(setmask & SET_ATIME_NOW_FLAG)) {
 			return SAUNAFS_ERROR_EPERM;
 		}
@@ -973,8 +894,8 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	}
 	// then do it yourself
 	if ((p->mode & 06000) &&
-	    (setmask & (SET_UID_FLAG |
-	                SET_GID_FLAG))) {  // this is "chown" operation and suid or sgid bit is set
+	    (setmask &
+	     (SET_UID_FLAG | SET_GID_FLAG))) {  // this is "chown" operation and suid or sgid bit is set
 		switch (sugidclearmode) {
 		case SugidClearMode::kAlways:
 			p->mode &= 0171777;  // safest approach - always delete both suid and sgid
@@ -982,7 +903,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 			break;
 		case SugidClearMode::kOsx:
 			if (context.uid() != 0) {  // OSX+Solaris - every change done by unprivileged user
-				         // should clear suid and sgid
+				                       // should clear suid and sgid
 				p->mode &= 0171777;
 				attrmode &= 01777;
 			}
@@ -990,7 +911,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 		case SugidClearMode::kBsd:
 			if (context.uid() != 0 && (setmask & SET_GID_FLAG) &&
 			    p->gid != attrgid) {  // *BSD - like in kOsx but only when something is
-				                  // actually changed
+				                      // actually changed
 				p->mode &= 0171777;
 				attrmode &= 01777;
 			}
@@ -1008,8 +929,8 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 			break;
 		case SugidClearMode::kSfs:
 			if (p->type != FSNodeType::kDirectory) {  // similar to EXT3, but unprivileged users
-				                          // also clear suid/sgid bits on
-				                          // directories
+				                                      // also clear suid/sgid bits on
+				                                      // directories
 				if (p->mode & 010) {
 					p->mode &= 0171777;
 					attrmode &= 01777;
@@ -1065,12 +986,8 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
                                             uint32_t uid, uint32_t gid, uint32_t atime,
                                             uint32_t mtime) {
 	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	if (mode > 07777) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
+	if (mode > 07777) { return SAUNAFS_ERROR_EINVAL; }
 	p->mode = mode | (p->mode & 0xF000);
 	gMetadata->aclStorage.setMode(p->id, p->mode, p->type == FSNodeType::kDirectory);
 	if (p->uid != uid || p->gid != gid) { nodeOperations_->changeUidGid(fsOpContext, p, uid, gid); }
@@ -1090,9 +1007,7 @@ uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &
                                               uint32_t timestamp, inode_t inode, uint64_t length,
                                               bool eraseFurtherChunks) {
 	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EINVAL;
@@ -1130,9 +1045,7 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t ino
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -1144,7 +1057,7 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t ino
 
 	if (p->type != FSNodeType::kSymlink) { return SAUNAFS_ERROR_EINVAL; }
 
-	path = (std::string)static_cast<FSNodeSymlink*>(p)->path;
+	path = (std::string) static_cast<FSNodeSymlink *>(p)->path;
 	fs_update_atime(p, ts);
 	incrementFSStat(FsStats::Readlink);
 	metrics::Counter::increment(metrics::Counter::Master::FS_READLINK);
@@ -1229,9 +1142,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 		          nodeOperations_->escapeName(basePath).c_str(), context.uid(), context.gid(),
 		          newNode->id);
 	} else {
-		if (*inode != newNode->id) {
-			return SAUNAFS_ERROR_MISMATCH;
-		}
+		if (*inode != newNode->id) { return SAUNAFS_ERROR_MISMATCH; }
 		gMetadata->metadataVersion++;
 	}
 
@@ -1286,8 +1197,7 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	}
 
 	// Quota verification
-	if (quotaExceededUg(fsOpContext, context.uid(), context.gid(),
-	                    {{QuotaResource::kInodes, 1}}) ||
+	if (quotaExceededUg(fsOpContext, context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
 	    quotaExceededDir(fsOpContext, parentNode, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
@@ -1351,8 +1261,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
-	if (quotaExceededUg(fsOpContext, context.uid(), context.gid(),
-	                    {{QuotaResource::kInodes, 1}}) ||
+	if (quotaExceededUg(fsOpContext, context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}) ||
 	    quotaExceededDir(fsOpContext, workNode, {{QuotaResource::kInodes, 1}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
@@ -1398,25 +1307,20 @@ uint8_t FilesystemOperationsBase::applyCreate(const FilesystemOperationContext &
 		return SAUNAFS_ERROR_EINVAL;
 	}
 	wd = nodeOperations_->idToNode(fsOpContext, parent);
-	if (!wd) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
-	if (wd->type != FSNodeType::kDirectory) {
-		return SAUNAFS_ERROR_ENOTDIR;
-	}
+	if (!wd) { return SAUNAFS_ERROR_ENOENT; }
+	if (wd->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_ENOTDIR; }
 
 	// For metadata restore operations, use default case-sensitive behavior
 	if (nodeOperations_->isNameUsed(fsOpContext, static_cast<FSNodeDirectory *>(wd), name)) {
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
-
 	// we pass requested inode number here
 	p = nodeOperations_->createNode(fsOpContext, timestamp, static_cast<FSNodeDirectory *>(wd),
 	                                name, type, mode, 0, uid, gid, 0, AclInheritance::kInheritAcl,
 	                                inode);
 	if (type == FSNodeType::kBlockDev || type == FSNodeType::kCharDev) {
-		static_cast<FSNodeDevice*>(p)->rdev = rdev;
+		static_cast<FSNodeDevice *>(p)->rdev = rdev;
 		fsnodes_update_checksum(p);
 	}
 	if (inode != p->id) {
@@ -1485,9 +1389,7 @@ uint8_t FilesystemOperationsBase::recursiveRemove(const FsContext &context, inod
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -1495,15 +1397,11 @@ uint8_t FilesystemOperationsBase::recursiveRemove(const FsContext &context, inod
 	status = nodeOperations_->getNodeForOperation(
 	    context, fsOpContext, ExpectedNodeType::kDirectory, MODE_MASK_W, parent, &wd_tmp);
 
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	FSNode *child =
 	    nodeOperations_->lookup(fsOpContext, static_cast<FSNodeDirectory *>(wd_tmp), name);
-	if (!child) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
 	auto shared_context = std::make_shared<FsContext>(context);
 	auto task = new RemoveTask({name}, wd_tmp->id, shared_context);
@@ -1544,9 +1442,7 @@ uint8_t FilesystemOperationsBase::rmdir(const FsContext &context,
 		return SAUNAFS_ERROR_EPERM;
 	}
 
-	if (child->type != FSNodeType::kDirectory) {
-		return SAUNAFS_ERROR_ENOTDIR;
-	}
+	if (child->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_ENOTDIR; }
 
 	if (nodeOperations_->getNumberOfDirEntries(fsOpContext, static_cast<FSNodeDirectory *>(child)) >
 	    0) {
@@ -1664,9 +1560,8 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 	std::array<int64_t, 2> quota_delta = {{1, 1}};
 
 	if (sourceChildNode->type == FSNodeType::kDirectory) {
-		if (nodeOperations_->isAncestor(fsOpContext,
-		                                static_cast<FSNodeDirectory *>(sourceChildNode),
-		                                destWorkDir)) {
+		if (nodeOperations_->isAncestor(
+		        fsOpContext, static_cast<FSNodeDirectory *>(sourceChildNode), destWorkDir)) {
 			return SAUNAFS_ERROR_EINVAL;
 		}
 		const StatsRecord &stats = static_cast<FSNodeDirectory *>(sourceChildNode)->stats;
@@ -1707,10 +1602,9 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 		}
 	}
 
-	if (quotaExceededDirMove(
-	        fsOpContext, destWorkDir, sourceWorkDir,
-	        {{QuotaResource::kInodes, quota_delta[(int)QuotaResource::kInodes]},
-	         {QuotaResource::kSize, quota_delta[(int)QuotaResource::kSize]}})) {
+	if (quotaExceededDirMove(fsOpContext, destWorkDir, sourceWorkDir,
+	                         {{QuotaResource::kInodes, quota_delta[(int)QuotaResource::kInodes]},
+	                          {QuotaResource::kSize, quota_delta[(int)QuotaResource::kSize]}})) {
 		return SAUNAFS_ERROR_QUOTA;
 	}
 
@@ -1805,14 +1699,10 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
                                          inode_t inode, inode_t inode_src) {
 	ChecksumUpdater cu(context.ts());
 	FSNode *p, *sp;
-	if (inode == inode_src) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (inode == inode_src) { return SAUNAFS_ERROR_EINVAL; }
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              MODE_MASK_W, inode, &p);
@@ -1830,9 +1720,7 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 	}
 	status = nodeOperations_->appendChunks(fsOpContext, context.ts(), static_cast<FSNodeFile *>(p),
 	                                       static_cast<FSNodeFile *>(sp));
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	// Make append changes persistent for KV backends.
 	if (fsOpContext.hasReadWriteTransaction()) {
@@ -1883,7 +1771,7 @@ int FilesystemOperationsBase::posixLockProbe(const FsContext &context,
 	const FileLocks::Lock *collision;
 
 	collision = locks.findCollision(inode, static_cast<FileLocks::Lock::Type>(oper), start, end,
-			FileLocks::Owner{owner, sessionid, reqid, msgid});
+	                                FileLocks::Owner{owner, sessionid, reqid, msgid});
 
 	if (collision == nullptr) {
 		info.l_type = safs_locks::kUnlock;
@@ -1911,23 +1799,22 @@ int FilesystemOperationsBase::lockOperation(
 	switch (oper) {
 	case safs_locks::kShared:
 		success = locks.sharedLock(inode, start, end,
-				FileLocks::Owner{owner, sessionid, reqid, msgid}, nonblocking);
+		                           FileLocks::Owner{owner, sessionid, reqid, msgid}, nonblocking);
 		break;
 	case safs_locks::kExclusive:
-		success = locks.exclusiveLock(inode, start, end,
-				FileLocks::Owner{owner, sessionid, reqid, msgid}, nonblocking);
+		success = locks.exclusiveLock(
+		    inode, start, end, FileLocks::Owner{owner, sessionid, reqid, msgid}, nonblocking);
 		break;
 	case safs_locks::kRelease:
-		locks.removePending(inode, [sessionid,owner](const FileLocks::Lock &lock) {
+		locks.removePending(inode, [sessionid, owner](const FileLocks::Lock &lock) {
 			const FileLocks::Lock::Owner &lock_owner = lock.owner();
 			return lock_owner.sessionid == sessionid && lock_owner.owner == owner;
 		});
 		start = 0;
-		end   = std::numeric_limits<uint64_t>::max();
+		end = std::numeric_limits<uint64_t>::max();
 		/* fallthrough */
 	case safs_locks::kUnlock:
-		success = locks.unlock(inode, start, end,
-				FileLocks::Owner{owner, sessionid, reqid, msgid});
+		success = locks.unlock(inode, start, end, FileLocks::Owner{owner, sessionid, reqid, msgid});
 		break;
 	default:
 		return SAUNAFS_ERROR_EINVAL;
@@ -1940,9 +1827,7 @@ int FilesystemOperationsBase::lockOperation(
 	// and he issued shared lock for this same range. This converts exclusive lock
 	// to shared lock. In the result we may need to apply other shared pending locks
 	// for this range.
-	if (oper == safs_locks::kExclusive) {
-		return status;
-	}
+	if (oper == safs_locks::kExclusive) { return status; }
 
 	locks.gatherCandidates(inode, start, end, queue);
 	for (auto &candidate : queue) {
@@ -2002,16 +1887,15 @@ int FilesystemOperationsBase::locksClearSession(
 
 	ChecksumUpdater cu(context.ts());
 
-	FileLocks *locks = type == (uint8_t)safs_locks::Type::kFlock ? &gMetadata->flockLocks
-	                                                             : &gMetadata->posixLocks;
+	FileLocks *locks =
+	    type == (uint8_t)safs_locks::Type::kFlock ? &gMetadata->flockLocks : &gMetadata->posixLocks;
 
 	locks->removePending(inode, [sessionid](const FileLocks::Lock &lock) {
 		return lock.owner().sessionid == sessionid;
 	});
-	std::pair<uint64_t, uint64_t> range = locks->unlock(inode,
-	    [sessionid](const FileLocks::Lock::Owner &owner) {
-			return owner.sessionid == sessionid;
-		});
+	std::pair<uint64_t, uint64_t> range = locks->unlock(
+	    inode,
+	    [sessionid](const FileLocks::Lock::Owner &owner) { return owner.sessionid == sessionid; });
 
 	if (range.first < range.second) {
 		FileLocks::LockQueue queue;
@@ -2153,9 +2037,7 @@ uint8_t FilesystemOperationsBase::readdirSize(const FsContext &context, inode_t 
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -2192,9 +2074,7 @@ uint8_t FilesystemOperationsBase::readdir(const FsContext &context, inode_t inod
                                           std::vector<DirectoryEntry> &dir_entries) {
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -2227,9 +2107,7 @@ uint8_t FilesystemOperationsBase::checkFile(const FsContext &context, inode_t in
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -2251,9 +2129,7 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context,
 	uint8_t status = nodeOperations_->verifySession(
 	    context, (flags & WANT_WRITE) ? OperationMode::kReadWrite : OperationMode::kReadOnly,
 	    SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -2262,12 +2138,8 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context,
 
 	if ((flags & AFTER_CREATE) == 0) {
 		uint8_t modemask = 0;
-		if (flags & WANT_READ) {
-			modemask |= MODE_MASK_R;
-		}
-		if (flags & WANT_WRITE) {
-			modemask |= MODE_MASK_W;
-		}
+		if (flags & WANT_READ) { modemask |= MODE_MASK_R; }
+		if (flags & WANT_WRITE) { modemask |= MODE_MASK_W; }
 		if (!nodeOperations_->access(context, fsOpContext, p, modemask)) {
 			return SAUNAFS_ERROR_EACCES;
 		}
@@ -2285,9 +2157,7 @@ uint8_t FilesystemOperationsBase::acquire(const FsContext &context,
                                           inode_t inode, uint32_t sessionid) {
 	ChecksumUpdater checksumUpdater(context.ts());
 #ifndef METARESTORE
-	if (context.isPersonalityShadow()) {
-		matoclserv_add_open_file(sessionid, inode);
-	}
+	if (context.isPersonalityShadow()) { matoclserv_add_open_file(sessionid, inode); }
 #endif /* #ifndef METARESTORE */
 	auto *fileNode = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 	if (!fileNode) { return SAUNAFS_ERROR_ENOENT; }
@@ -2351,9 +2221,7 @@ uint8_t FilesystemOperationsBase::release(const FsContext &context,
 		}
 
 #ifndef METARESTORE
-		if (context.isPersonalityShadow()) {
-			matoclserv_remove_open_file(sessionid, inode);
-		}
+		if (context.isPersonalityShadow()) { matoclserv_remove_open_file(sessionid, inode); }
 #endif /* #ifndef METARESTORE */
 
 		if (context.isPersonalityMaster()) {
@@ -2383,9 +2251,7 @@ uint32_t FilesystemOperationsBase::newSessionId() {
 }
 #endif
 uint8_t FilesystemOperationsBase::applySession(uint32_t sessionid) {
-	if (sessionid != gMetadata->nextSessionId().getValue()) {
-		return SAUNAFS_ERROR_MISMATCH;
-	}
+	if (sessionid != gMetadata->nextSessionId().getValue()) { return SAUNAFS_ERROR_MISMATCH; }
 	gMetadata->metadataVersion++;
 	gMetadata->nextSessionId().increment();
 	return SAUNAFS_STATUS_OK;
@@ -2393,18 +2259,19 @@ uint8_t FilesystemOperationsBase::applySession(uint32_t sessionid) {
 
 #ifndef METARESTORE
 uint8_t fs_auto_repair_if_needed(FSNodeFile *p, uint32_t chunkIndex) {
-	uint64_t chunkId =
-	        (chunkIndex < p->chunks.size() ? p->chunks[chunkIndex] : 0);
+	uint64_t chunkId = (chunkIndex < p->chunks.size() ? p->chunks[chunkIndex] : 0);
 	if (chunkId != 0 && chunk_has_only_invalid_copies(chunkId)) {
 		uint32_t notchanged, erased, repaired;
-		FsContext context = FsContext::getForMasterWithSession(0, SPECIAL_INODE_ROOT, 0, 0, 0, 0, 0);
+		FsContext context =
+		    FsContext::getForMasterWithSession(0, SPECIAL_INODE_ROOT, 0, 0, 0, 0, 0);
 		gFSOperations->repair(context, p->id, 0, &notchanged, &erased, &repaired);
 		safs_pretty_syslog(LOG_NOTICE,
-		       "auto repair inode %" PRIiNode ", chunk %016" PRIX64
-		       ": "
-		       "not changed: %" PRIu32 ", erased: %" PRIu32 ", repaired: %" PRIu32,
-		       p->id, chunkId, notchanged, erased, repaired);
-		safs_silent_syslog(LOG_DEBUG, "master.fs.file_auto_repaired: %" PRIiNode " %" PRIu32, p->id, repaired);
+		                   "auto repair inode %" PRIiNode ", chunk %016" PRIX64
+		                   ": "
+		                   "not changed: %" PRIu32 ", erased: %" PRIu32 ", repaired: %" PRIu32,
+		                   p->id, chunkId, notchanged, erased, repaired);
+		safs_silent_syslog(LOG_DEBUG, "master.fs.file_auto_repaired: %" PRIiNode " %" PRIu32, p->id,
+		                   repaired);
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -2419,22 +2286,16 @@ uint8_t FilesystemOperationsBase::readChunk(const FilesystemOperationContext &fs
 	*chunkid = 0;
 	*length = 0;
 	p = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 	    p->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_EPERM;
 	}
 	if (indx > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 #ifndef METARESTORE
-	if (gMagicAutoFileRepair) {
-		fs_auto_repair_if_needed(p, indx);
-	}
+	if (gMagicAutoFileRepair) { fs_auto_repair_if_needed(p, indx); }
 #endif
-	if (indx < p->chunks.size()) {
-		*chunkid = p->chunks[indx];
-	}
+	if (indx < p->chunks.size()) { *chunkid = p->chunks[indx]; }
 	*length = p->length;
 	fs_update_atime(p, ts);
 	incrementFSStat(FsStats::Read);
@@ -2455,9 +2316,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kFile,
 	                                              MODE_MASK_EMPTY, inode, &node);
@@ -2482,9 +2341,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 
 	/* resize chunks structure */
 	if (index >= fileNode->chunks.size()) {
-		if (context.isPersonalityMaster() && quota_exceeded) {
-			return SAUNAFS_ERROR_QUOTA;
-		}
+		if (context.isPersonalityMaster() && quota_exceeded) { return SAUNAFS_ERROR_QUOTA; }
 		uint32_t new_size;
 		if (index < 8) {
 			new_size = index + 1;
@@ -2530,10 +2387,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	nodeOperations_->getStats(fsOpContext, fileNode, &newStats);
 	nodeOperations_->updateParentStatsForNode(fsOpContext, fileNode, &newStats, &originalStats);
 
-	quotaUpdate(fsOpContext, fileNode, {{QuotaResource::kSize, newStats.size - originalStats.size}});
-	if (length) {
-		*length = fileNode->length;
-	}
+	quotaUpdate(fsOpContext, fileNode,
+	            {{QuotaResource::kSize, newStats.size - originalStats.size}});
+	if (length) { *length = fileNode->length; }
 
 	if (context.isPersonalityMaster()) {
 		changeLog(context.ts(), "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
@@ -2548,7 +2404,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	fsnodes_update_checksum(fileNode);
 
 	// Make the change persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, fileNode); }
+	if (fsOpContext.hasReadWriteTransaction()) {
+		nodeOperations_->updateNode(fsOpContext, fileNode);
+	}
 
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Write);
@@ -2564,14 +2422,10 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	uint8_t status = chunk_can_unlock(chunkid, lockid);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 	if (length > 0) {
 		auto *p = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
-		if (!p) {
-			return SAUNAFS_ERROR_ENOENT;
-		}
+		if (!p) { return SAUNAFS_ERROR_ENOENT; }
 		if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 		    p->type != FSNodeType::kReserved) {
 			return SAUNAFS_ERROR_EPERM;
@@ -2676,9 +2530,7 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -2688,7 +2540,7 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	FSNodeFile *node_file = static_cast<FSNodeFile*>(p);
+	FSNodeFile *node_file = static_cast<FSNodeFile *>(p);
 	nodeOperations_->getStats(fsOpContext, p, &psr);
 	for (indx = 0; indx < node_file->chunks.size(); indx++) {
 		if (chunk_repair(p->goal, node_file->chunks[indx], &nversion, correct_only)) {
@@ -2722,9 +2574,7 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 
 	p = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 
 	if (p->type != FSNodeType::kFile && p->type != FSNodeType::kTrash &&
 	    p->type != FSNodeType::kReserved) {
@@ -2776,15 +2626,11 @@ uint8_t FilesystemOperationsBase::getGoal(const FsContext &context,
                                           GoalStatistics &dgtab) {
 	FSNode *p;
 
-	if (!GMODE_ISVALID(gmode)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!GMODE_ISVALID(gmode)) { return SAUNAFS_ERROR_EINVAL; }
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext,
 	                                              ExpectedNodeType::kFileOrDirectory, 0, inode, &p);
@@ -2801,15 +2647,11 @@ uint8_t FilesystemOperationsBase::getTrashTimePrepare(const FsContext &context, 
                                                       TrashtimeMap &dirTrashtimes) {
 	FSNode *p;
 
-	if (!GMODE_ISVALID(gmode)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!GMODE_ISVALID(gmode)) { return SAUNAFS_ERROR_EINVAL; }
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -2844,15 +2686,11 @@ uint8_t FilesystemOperationsBase::getExtraAttr(const FsContext &context, inode_t
 	fileEAttrTab.fill(0);
 	dirEAttrTab.fill(0);
 
-	if (!GMODE_ISVALID(gmode)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!GMODE_ISVALID(gmode)) { return SAUNAFS_ERROR_EINVAL; }
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -2879,9 +2717,7 @@ uint8_t FilesystemOperationsBase::setGoal(const FsContext &context, inode_t inod
 	}
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -2897,12 +2733,11 @@ uint8_t FilesystemOperationsBase::setGoal(const FsContext &context, inode_t inod
 		return SAUNAFS_ERROR_EPERM;
 	}
 	sassert(context.hasUidGidData());
-	(*setgoal_stats)[SetGoalTask::kChanged] = 0;      // - Number of inodes with changed goal
-	(*setgoal_stats)[SetGoalTask::kNotChanged] = 0;   // - Number of inodes with not changed goal
-	(*setgoal_stats)[SetGoalTask::kNotPermitted] = 0; // - Number of inodes with permission denied
+	(*setgoal_stats)[SetGoalTask::kChanged] = 0;       // - Number of inodes with changed goal
+	(*setgoal_stats)[SetGoalTask::kNotChanged] = 0;    // - Number of inodes with not changed goal
+	(*setgoal_stats)[SetGoalTask::kNotPermitted] = 0;  // - Number of inodes with permission denied
 
-	auto task = new SetGoalTask({p->id}, context.uid(), goal,
-							  smode, setgoal_stats);
+	auto task = new SetGoalTask({p->id}, context.uid(), goal, smode, setgoal_stats);
 	std::string node_name;
 	FSNodeDirectory *parent = nodeOperations_->getFirstParent(fsOpContext, p);
 	nodeOperations_->getPath(fsOpContext, parent, p, node_name);
@@ -2913,12 +2748,12 @@ uint8_t FilesystemOperationsBase::setGoal(const FsContext &context, inode_t inod
 #else
 	goal_name = "goal id: " + std::to_string(goal);
 #endif
-	return gMetadata->taskManager.submitTask(context.ts(), kInitialTaskBatchSize,
-						  task, SetGoalTask::generateDescription(node_name, goal_name),
-						  callback);
+	return gMetadata->taskManager.submitTask(context.ts(), kInitialTaskBatchSize, task,
+	                                         SetGoalTask::generateDescription(node_name, goal_name),
+	                                         callback);
 }
 
-//This function is only used by Shadow
+// This function is only used by Shadow
 uint8_t FilesystemOperationsBase::applySetGoal(const FsContext &context, inode_t inode,
                                                uint8_t goal, uint8_t smode,
                                                uint32_t master_result) {
@@ -2930,9 +2765,7 @@ uint8_t FilesystemOperationsBase::applySetGoal(const FsContext &context, inode_t
 	}
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -2953,9 +2786,7 @@ uint8_t FilesystemOperationsBase::applySetGoal(const FsContext &context, inode_t
 	uint32_t my_result = task.setGoal(fsOpContext, p, context.ts());
 
 	gMetadata->metadataVersion++;
-	if (master_result != my_result) {
-		return SAUNAFS_ERROR_MISMATCH;
-	}
+	if (master_result != my_result) { return SAUNAFS_ERROR_MISMATCH; }
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2965,14 +2796,10 @@ uint8_t FilesystemOperationsBase::setTrashTime(
     std::shared_ptr<SetTrashtimeTask::StatsArray> settrashtime_stats,
     const std::function<void(int)> &callback) {
 	ChecksumUpdater cu(context.ts());
-	if (!SMODE_ISVALID(smode)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!SMODE_ISVALID(smode)) { return SAUNAFS_ERROR_EINVAL; }
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -2988,18 +2815,20 @@ uint8_t FilesystemOperationsBase::setTrashTime(
 		return SAUNAFS_ERROR_EPERM;
 	}
 	sassert(context.hasUidGidData());
-	(*settrashtime_stats)[SetTrashtimeTask::kChanged] = 0;      // - Number of inodes with changed trashtime
-	(*settrashtime_stats)[SetTrashtimeTask::kNotChanged] = 0;   // - Number of inodes with not changed trashtime
-	(*settrashtime_stats)[SetTrashtimeTask::kNotPermitted] = 0; // - Number of inodes with permission denied
+	(*settrashtime_stats)[SetTrashtimeTask::kChanged] =
+	    0;  // - Number of inodes with changed trashtime
+	(*settrashtime_stats)[SetTrashtimeTask::kNotChanged] =
+	    0;  // - Number of inodes with not changed trashtime
+	(*settrashtime_stats)[SetTrashtimeTask::kNotPermitted] =
+	    0;  // - Number of inodes with permission denied
 
-	auto task = new SetTrashtimeTask({p->id}, context.uid(), trashtime,
-							  smode, settrashtime_stats);
+	auto task = new SetTrashtimeTask({p->id}, context.uid(), trashtime, smode, settrashtime_stats);
 	std::string node_name;
 	FSNodeDirectory *parent = nodeOperations_->getFirstParent(fsOpContext, p);
 	nodeOperations_->getPath(fsOpContext, parent, p, node_name);
-	return gMetadata->taskManager.submitTask(context.ts(), kInitialTaskBatchSize,
-	                                          task, SetTrashtimeTask::generateDescription(node_name, trashtime),
-	                                          callback);
+	return gMetadata->taskManager.submitTask(
+	    context.ts(), kInitialTaskBatchSize, task,
+	    SetTrashtimeTask::generateDescription(node_name, trashtime), callback);
 }
 
 uint8_t FilesystemOperationsBase::applySetTrashTime(const FsContext &context, inode_t inode,
@@ -3007,14 +2836,10 @@ uint8_t FilesystemOperationsBase::applySetTrashTime(const FsContext &context, in
                                                     uint32_t master_result) {
 	assert(context.isPersonalityShadow());
 	ChecksumUpdater cu(context.ts());
-	if (!SMODE_ISVALID(smode)) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (!SMODE_ISVALID(smode)) { return SAUNAFS_ERROR_EINVAL; }
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -3035,9 +2860,7 @@ uint8_t FilesystemOperationsBase::applySetTrashTime(const FsContext &context, in
 	uint32_t my_result = task.setTrashtime(p, context.ts());
 
 	gMetadata->metadataVersion++;
-	if (master_result != my_result) {
-		return SAUNAFS_ERROR_MISMATCH;
-	}
+	if (master_result != my_result) { return SAUNAFS_ERROR_MISMATCH; }
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -3054,9 +2877,7 @@ uint8_t FilesystemOperationsBase::setExtraAttr(const FsContext &context,
 	}
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	FSNode *p;
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
@@ -3100,9 +2921,7 @@ uint8_t FilesystemOperationsBase::listXAttr(const FsContext &context,
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              opened == 0 ? MODE_MASK_R : MODE_MASK_EMPTY,
@@ -3136,8 +2955,8 @@ uint8_t FilesystemOperationsBase::getXAttr(const FsContext &context,
 
 uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
                                            const FilesystemOperationContext &fsOpContext,
-                                           inode_t inode, uint8_t opened,
-                                           uint8_t anleng, const uint8_t *attrname, uint32_t avleng,
+                                           inode_t inode, uint8_t opened, uint8_t anleng,
+                                           const uint8_t *attrname, uint32_t avleng,
                                            const uint8_t *attrvalue, uint8_t mode) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
@@ -3146,9 +2965,7 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
 
 	status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              opened == 0 ? MODE_MASK_W : MODE_MASK_EMPTY,
@@ -3156,16 +2973,10 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
 
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	if (xattr_namecheck(anleng, attrname) < 0) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
-	if (mode > XATTR_SMODE_REMOVE) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (xattr_namecheck(anleng, attrname) < 0) { return SAUNAFS_ERROR_EINVAL; }
+	if (mode > XATTR_SMODE_REMOVE) { return SAUNAFS_ERROR_EINVAL; }
 	status = doConcreteSetXAttr(fsOpContext, p->id, anleng, attrname, avleng, attrvalue, mode);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 	nodeOperations_->updateCTime(p, ts);
 	fsnodes_update_checksum(p);
 	changeLog(ts, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", p->id,
@@ -3246,9 +3057,7 @@ uint8_t FilesystemOperationsBase::deleteAcl(const FsContext &context,
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -3282,9 +3091,7 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context,
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -3311,9 +3118,7 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context,
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kNotMeta);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -3339,9 +3144,7 @@ uint8_t FilesystemOperationsBase::getAcl(const FsContext &context,
 	FSNode *p;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -3358,13 +3161,9 @@ uint8_t FilesystemOperationsBase::applySetAcl(const FilesystemOperationContext &
 	AccessControlList acl;
 	try {
 		acl = AccessControlList::fromString(aclString);
-	} catch (Exception &) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	} catch (Exception &) { return SAUNAFS_ERROR_EINVAL; }
 	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 	AclType aclTypeEnum;
 	if (!decodeChar("da", {AclType::kDefault, AclType::kAccess}, aclType, aclTypeEnum)) {
 		return SAUNAFS_ERROR_EINVAL;
@@ -3383,13 +3182,9 @@ uint8_t FilesystemOperationsBase::applySetRichAcl(const FilesystemOperationConte
 	RichACL acl;
 	try {
 		acl = RichACL::fromString(acl_string);
-	} catch (Exception &) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	} catch (Exception &) { return SAUNAFS_ERROR_EINVAL; }
 	FSNode *p = nodeOperations_->idToNode(fsOpContext, inode);
-	if (!p) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+	if (!p) { return SAUNAFS_ERROR_ENOENT; }
 
 	uint8_t status = nodeOperations_->setAcl(fsOpContext, p, acl, timestamp);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
@@ -3462,9 +3257,7 @@ uint8_t FilesystemOperationsBase::getDirStats(const FsContext &context, inode_t 
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -3493,10 +3286,8 @@ uint8_t FilesystemOperationsBase::getChunkId(const FsContext &context,
 	FSNode *p;
 	uint8_t status = nodeOperations_->getNodeForOperation(
 	    context, fsOpContext, ExpectedNodeType::kFile, MODE_MASK_EMPTY, inode, &p);
-	FSNodeFile *node_file = static_cast<FSNodeFile*>(p);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	FSNodeFile *node_file = static_cast<FSNodeFile *>(p);
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 	if (index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 	if (index < node_file->chunks.size()) {
 		*chunkid = node_file->chunks[index];
@@ -3512,10 +3303,8 @@ void FilesystemOperationsBase::addFilesToChunks(bool isMetadataLoading) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			    node->type == FSNodeType::kReserved) {
-				for (const auto &chunkid : static_cast<FSNodeFile*>(node)->chunks) {
-					if (chunkid > 0) {
-						chunk_add_file(chunkid, node->goal, isMetadataLoading);
-					}
+				for (const auto &chunkid : static_cast<FSNodeFile *>(node)->chunks) {
+					if (chunkid > 0) { chunk_add_file(chunkid, node->goal, isMetadataLoading); }
 				}
 			}
 		}
@@ -3523,15 +3312,13 @@ void FilesystemOperationsBase::addFilesToChunks(bool isMetadataLoading) {
 }
 
 uint64_t FilesystemOperationsBase::getMetadataVersion() {
-	if (!gMetadata) {
-		throw NoMetadataException();
-	}
+	if (!gMetadata) { throw NoMetadataException(); }
 	return gMetadata->metadataVersion;
 }
 
-uint8_t FilesystemOperationsBase::applySetQuota(
-    const FilesystemOperationContext & /*fsOpContext*/, char rigor, char resource, char ownerType,
-    inode_t ownerId, uint64_t limit) {
+uint8_t FilesystemOperationsBase::applySetQuota(const FilesystemOperationContext & /*fsOpContext*/,
+                                                char rigor, char resource, char ownerType,
+                                                inode_t ownerId, uint64_t limit) {
 	return quotas::fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
 }
 
@@ -3572,9 +3359,7 @@ uint8_t FilesystemOperationsBase::getChunksInfo(const FsContext &context, uint32
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kAny);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -3590,22 +3375,19 @@ uint8_t FilesystemOperationsBase::getChunksInfo(const FsContext &context, uint32
 
 	std::vector<ChunkPartWithAddressAndLabel> chunk_parts;
 
-	if (chunk_count == 0) {
-		chunk_count = file_node->chunks.size();
-	}
+	if (chunk_count == 0) { chunk_count = file_node->chunks.size(); }
 
 	chunks.clear();
-	while(chunk_index < file_node->chunks.size() && chunk_count > 0) {
+	while (chunk_index < file_node->chunks.size() && chunk_count > 0) {
 		uint64_t chunk_id = file_node->chunks[chunk_index];
 		uint32_t chunk_version;
 
 		chunk_parts.clear();
 		chunk_version = 0;
 		if (chunk_id > 0) {
-			status = chunk_getversionandlocations(chunk_id, current_ip, chunk_version, kMaxNumberOfChunkCopies, chunk_parts);
-			if (status != SAUNAFS_STATUS_OK) {
-				return status;
-			}
+			status = chunk_getversionandlocations(chunk_id, current_ip, chunk_version,
+			                                      kMaxNumberOfChunkCopies, chunk_parts);
+			if (status != SAUNAFS_STATUS_OK) { return status; }
 		}
 
 		chunks.emplace_back(std::move(chunk_id), std::move(chunk_version), std::move(chunk_parts));

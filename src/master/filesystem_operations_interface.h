@@ -684,7 +684,8 @@ public:
 	/// This method is the first phase of a file truncate operation. The complete workflow
 	/// depends on whether asynchronous chunk operations are required:
 	/// - Simple path: trySetLength() → doSetLength() (2 phases)
-	/// - Async path: trySetLength() → [async chunk work] → endSetLength() → doSetLength() (3 phases)
+	/// - Async path: trySetLength() → [async chunk work] → endSetLength() → doSetLength() (3
+	/// phases)
 	///
 	/// This function checks whether the truncate can proceed immediately or requires
 	/// asynchronous chunk operations on chunkservers. If the new length is not chunk-aligned
@@ -864,7 +865,8 @@ public:
 	/// @param context The FS operation context containing user credentials and session info.
 	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param inode The inode number of the node whose attributes to modify.
-	/// @param setmask Bitmask indicating which attributes to set (SET_MODE_FLAG, SET_UID_FLAG, etc.).
+	/// @param setmask Bitmask indicating which attributes to set (SET_MODE_FLAG, SET_UID_FLAG,
+	/// etc.).
 	/// @param attrmode New file mode/permissions (used if SET_MODE_FLAG is set).
 	/// @param attruid New user ID (used if SET_UID_FLAG is set).
 	/// @param attrgid New group ID (used if SET_GID_FLAG is set).
@@ -1450,8 +1452,8 @@ public:
 	/// Returns quota entries for selected owners.
 	///
 	/// Owner access is validated per owner type (user/group/inode). For each existing owner in the
-	/// in-memory implementation, all rigor/resource tuples are returned (including zero-valued ones),
-	/// except inode-owner `used`, which is derived from current directory stats.
+	/// in-memory implementation, all rigor/resource tuples are returned (including zero-valued
+	/// ones), except inode-owner `used`, which is derived from current directory stats.
 	///
 	/// @param context Session context used for permission and visibility checks.
 	/// @param owners Owners to query.
