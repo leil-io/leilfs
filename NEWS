@@ -1,5 +1,30 @@
 This file lists noteworthy changes in SaunaFS.
 
+* SaunaFS (5.8.0) (2026-03-23)
+ - build: Add RPM package for client (#772)
+ - build: Fix compilation errors for boost 1.9 (#754)
+ - build: Fix wrong patch version for rpm package (#783)
+ - build: fix bash completion path for rpm packages (#791)
+ - docs(master): add architectural reference README (#750)
+ - docs(master): improve documentation for KV key prefixes (#744)
+ - docs(master): update doc for PARENT_ key prefix (#775)
+ - feat(admin): Add default TLS for dump-config (#770)
+ - feat(cs): IO priority mode
+ - feat(monitoring): add GC stats to CS charts LS-344 (#752)
+ - feat(mount): Implement negative cache
+ - feat(tls): Secure master-admin with TLS layer (#748)
+ - feat: chunkserver side chunk lock (#743)
+ - fix(build): correct version handling in packaging (#788)
+ - fix(cs): fix flaky test_helgrind_basic (#759)
+ - fix(master): Fix reserved files forced cleaning (#741)
+ - fix(master): avoid rebalancing to disconnected CS (#763)
+ - fix(windows): Fix offset type issue in client lib (#761)
+ - fix: avoid stopping CS with pending replies (#756)
+ - fix: fix CS kill/crash when writing data (#755)
+ - fix: fix first version with chunk unlock notice
+ - fix: improve CS behavior with very low bgjobscnt (#760)
+ - perf(cs): make inputBuffer size progressive (#764)
+
 * SaunaFS (5.7.0) (2026-02-26)
  - docs(master): document some filesystem operations (#729)
  - docs(uraft): improve helper and HA documentation (#713)
