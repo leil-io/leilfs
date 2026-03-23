@@ -360,9 +360,8 @@ public:
 	uint8_t getDirStats(const FsContext &context, inode_t inode, inode_t *inodes, inode_t *dirs,
 	                    inode_t *files, inode_t *links, uint32_t *chunks, uint64_t *length,
 	                    uint64_t *size, uint64_t *rsize) override;
-	uint8_t getChunkId(const FsContext &context,
-	                   const FilesystemOperationContext &fsOpContext, inode_t inode, uint32_t index,
-	                   uint64_t *chunkid) override;
+	uint8_t getChunkId(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                   inode_t inode, uint32_t index, uint64_t *chunkid) override;
 
 	// SPECIAL - LOG EMERGENCY INCREASE VERSION FROM CHUNKS-MODULE
 	void increaseChunkVersion(uint64_t chunkid) override;

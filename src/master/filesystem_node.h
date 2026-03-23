@@ -191,8 +191,8 @@ public:
 
 	/// Stores a RichACL on a node, replacing any previously stored ACL.
 	/// @see IFilesystemNodeOperations::setAcl
-	uint8_t setAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
-	               const RichACL &acl, uint32_t timeStamp) override;
+	uint8_t setAcl(const FilesystemOperationContext &fsOpContext, FSNode *node, const RichACL &acl,
+	               uint32_t timeStamp) override;
 
 	/// Merges a POSIX ACL into the node's stored RichACL.
 	/// @see IFilesystemNodeOperations::setAcl
@@ -270,13 +270,13 @@ protected:
 
 	/// Returns true if \a ancestor is ancestor of \a node.
 	/// @see IFilesystemNodeOperations::isAncestor
-	bool isAncestor(const FilesystemOperationContext &fsOpContext,
-	                FSNodeDirectory *ancestor, FSNode *node) override;
+	bool isAncestor(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *ancestor,
+	                FSNode *node) override;
 
 	/// Returns true if \a node is reserved or in trash or \a ancestor is ancestor of \a node.
 	/// @see IFilesystemNodeOperations::isAncestorOrNodeReservedOrTrash
 	bool isAncestorOrNodeReservedOrTrash(const FilesystemOperationContext &fsOpContext,
-	                                    FSNodeDirectory *ancestor, FSNode *node) override;
+	                                     FSNodeDirectory *ancestor, FSNode *node) override;
 
 	FSNodeDirectory *getFirstParent(const FilesystemOperationContext &fsOpContext,
 	                                FSNode *node) override;
