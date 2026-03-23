@@ -1731,7 +1731,7 @@ uint8_t FilesystemNodeOperationsBase::undel(const FilesystemOperationContext &fs
 #endif
 
 			gFSOperations->changeLog(
-			    timeStamp,
+			    fsOpContext, timeStamp,
 			    "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 			    currentParent->id, escapeName(name).c_str(),
 			    static_cast<char>(FSNodeType::kDirectory), currentNode->mode & kPermissionsMask,

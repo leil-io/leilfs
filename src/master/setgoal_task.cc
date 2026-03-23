@@ -57,7 +57,8 @@ int SetGoalTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		}
 		(*stats_)[result] += 1;
 		if (result == kChanged) {
-			gFSOperations->changeLog(ts, "SETGOAL(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 ")",
+			gFSOperations->changeLog(fsOpContext, ts,
+			                         "SETGOAL(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 ")",
 			                         inode, uid_, goal_, smode_);
 		}
 	}

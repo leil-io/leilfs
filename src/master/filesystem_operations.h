@@ -67,9 +67,14 @@ public:
 	/// Returns version of the loaded metadata.
 	uint64_t getMetadataVersion() override;
 
+	/// Increments the metadata version counter and returns the pre-increment value (the version of
+	/// this mutation).
+	/// @see IFilesystemOperations::increaseMetadataVersion
+	uint64_t increaseMetadataVersion(const FilesystemOperationContext &fsOpContext) override;
+
 	/// @see IFilesystemOperations::fs_changelog
-	void changeLog(uint32_t ts, const char *format, ...) override
-	    __attribute__((__format__(__printf__, 3, 4)));
+	void changeLog(const FilesystemOperationContext &fsOpContext, uint32_t ts, const char *format,
+	               ...) override __attribute__((__format__(__printf__, 4, 5)));
 
 	// Functions which create/apply (depending on the given context) changes to the metadata.
 	// Common for metarestore and master server (both personalities)
@@ -200,7 +205,7 @@ public:
 
 	/// Unlocks a chunk after a truncate operation completes (phase 1.5).
 	/// @see IFilesystemOperations::endSetLength
-	uint8_t endSetLength(uint64_t chunkid) override;
+	uint8_t endSetLength(const FilesystemOperationContext &fsOpContext, uint64_t chunkid) override;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	/// @see IFilesystemOperations::setAttr
@@ -209,7 +214,8 @@ public:
 	                uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                SugidClearMode sugidclearmode, Attributes &attr) override;
 
-	uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) override;
+	uint8_t readlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                 inode_t inode, std::string &path) override;
 	void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	            uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 	            uint64_t *reservedspace, inode_t *inodes) override;
@@ -236,12 +242,14 @@ public:
 	                        const std::function<void(int)> &callback, uint32_t job_id) override;
 	uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags, void **dnode,
 	                    uint32_t *dbuffsize) override;
-	void readdirData(const FsContext &context, uint8_t flags, void *dnode, uint8_t *dbuff) override;
+	void readdirData(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                 uint8_t flags, void *dnode, uint8_t *dbuff) override;
 
 	/// Reads a paginated list of entries from a directory.
 	/// @see IFilesystemOperations::readdir
-	uint8_t readdir(const FsContext &context, inode_t inode, uint64_t first_entry,
-	                uint64_t number_of_entries, std::vector<DirectoryEntry> &dir_entries) override;
+	uint8_t readdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
+	                std::vector<DirectoryEntry> &dir_entries) override;
 
 	uint8_t checkFile(const FsContext &context, inode_t inode,
 	                  ChunkCountArray &chunkCount) override;
@@ -364,7 +372,8 @@ public:
 	                   inode_t inode, uint32_t index, uint64_t *chunkid) override;
 
 	// SPECIAL - LOG EMERGENCY INCREASE VERSION FROM CHUNKS-MODULE
-	void increaseChunkVersion(uint64_t chunkid) override;
+	void increaseChunkVersion(const FilesystemOperationContext &fsOpContext,
+	                          uint64_t chunkid) override;
 
 	uint8_t fullPathByInode(const FsContext &context, inode_t inode,
 	                        std::string &fullPath) override;

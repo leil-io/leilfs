@@ -97,11 +97,20 @@ public:
 	/// Returns version of the loaded metadata.
 	virtual uint64_t getMetadataVersion() = 0;
 
+	/// Increments the metadata version counter and returns the pre-increment value (the version of
+	/// this mutation).
+	virtual uint64_t increaseMetadataVersion(const FilesystemOperationContext &fsOpContext) = 0;
+
 	/// Adds an entry to a changelog, updates filesystem.cc internal structures, prepends a
 	/// proper timestamp to changelog entry and broadcasts it to metaloggers and shadow masters.
-	/// The attribute is used to ensure printf-like format string checking by the compiler.
-	virtual void changeLog(uint32_t ts, const char *format, ...)
-	    __attribute__((__format__(__printf__, 3, 4))) = 0;
+	/// The __attribute__ is used to ensure printf-like format string checking by the compiler.
+	/// @param fsOpContext Operation context (provides transaction for KV backends).
+	/// @param ts Timestamp to add to the changelog entry.
+	/// @param format printf-like format string for the changelog entry.
+	/// @param ... Variable arguments for the format string.
+	virtual void changeLog(const FilesystemOperationContext &fsOpContext, uint32_t ts,
+	                       const char *format, ...)
+	    __attribute__((__format__(__printf__, 4, 5))) = 0;
 
 	// Functions which create/apply (depending on the given context) changes to the metadata.
 	// Common for metarestore and master server (both personalities)
@@ -818,6 +827,7 @@ public:
 	/// 2. When cleaning up after a failed truncate operation
 	///
 	/// @param chunkid The chunk ID to unlock (obtained from trySetLength's chunkid output).
+	/// @param fsOpContext The filesystem operation context (transaction).
 	///
 	/// @return SAUNAFS_STATUS_OK on success, or SAUNAFS_ERROR_NOCHUNK if the chunk doesn't exist.
 	///
@@ -830,7 +840,8 @@ public:
 	///       (SAUNAFS_ERROR_DELAYED) and client-performs truncate/end flows where
 	///       trySetLength() can return SAUNAFS_ERROR_NOTPOSSIBLE (e.g. FUSE_TRUNCATE_END).
 	/// @see trySetLength, doSetLength
-	virtual uint8_t endSetLength(uint64_t chunkid) = 0;
+	virtual uint8_t endSetLength(const FilesystemOperationContext &fsOpContext,
+	                             uint64_t chunkid) = 0;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	///
@@ -889,7 +900,9 @@ public:
 	                        uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                        SugidClearMode sugidclearmode, Attributes &attr) = 0;
 
-	virtual uint8_t readlink(const FsContext &context, inode_t inode, std::string &path) = 0;
+	virtual uint8_t readlink(const FsContext &context,
+	                         const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                         std::string &path) = 0;
 	virtual void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                    uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 	                    uint64_t *reservedspace, inode_t *inodes) = 0;
@@ -995,8 +1008,9 @@ public:
 	                                const std::function<void(int)> &callback, uint32_t job_id) = 0;
 	virtual uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags,
 	                            void **dnode, uint32_t *dbuffsize) = 0;
-	virtual void readdirData(const FsContext &context, uint8_t flags, void *dnode,
-	                         uint8_t *dbuff) = 0;
+	virtual void readdirData(const FsContext &context,
+	                         const FilesystemOperationContext &fsOpContext, uint8_t flags,
+	                         void *dnode, uint8_t *dbuff) = 0;
 
 	/// Reads a paginated list of entries from a directory.
 	///
@@ -1006,6 +1020,7 @@ public:
 	///
 	/// @param context Session context containing user credentials (uid, gid), session
 	///                flags, and root inode information.
+	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param inode The inode number of the directory to read.
 	/// @param first_entry Starting index for pagination (offset into the directory listing).
 	/// @param number_of_entries Maximum number of entries to return.
@@ -1014,8 +1029,8 @@ public:
 	/// @return SAUNAFS_STATUS_OK on success, or an appropriate error code on failure
 	///         (e.g., SAUNAFS_ERROR_ENOENT if directory not found,
 	///         SAUNAFS_ERROR_EACCES if permission denied).
-	virtual uint8_t readdir(const FsContext &context, inode_t inode, uint64_t first_entry,
-	                        uint64_t number_of_entries,
+	virtual uint8_t readdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                        inode_t inode, uint64_t first_entry, uint64_t number_of_entries,
 	                        std::vector<DirectoryEntry> &dir_entries) = 0;
 
 	virtual uint8_t checkFile(const FsContext &context, inode_t inode,
@@ -1349,7 +1364,8 @@ public:
 	                           uint32_t index, uint64_t *chunkid) = 0;
 
 	// SPECIAL - LOG EMERGENCY INCREASE VERSION FROM CHUNKS-MODULE
-	virtual void increaseChunkVersion(uint64_t chunkid) = 0;
+	virtual void increaseChunkVersion(const FilesystemOperationContext &fsOpContext,
+	                                  uint64_t chunkid) = 0;
 
 	virtual uint8_t fullPathByInode(const FsContext &context, inode_t inode,
 	                                std::string &fullPath) = 0;

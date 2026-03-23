@@ -108,7 +108,8 @@ protected:
 	 * The function (for master) emits metadata CLONE information. For shadow it updates
 	 * metadata version.
 	 */
-	void emitChangelog(uint32_t ts, inode_t dst_inode);
+	void emitChangelog(const FilesystemOperationContext &fsOpContext, uint32_t ts,
+	                   inode_t dst_inode);
 
 private:
 	SubtaskContainer subtask_; /*!< List of pairs (inode to be cloned, clone file name). */

@@ -68,11 +68,10 @@ FilesystemOperationsBase::FilesystemOperationsBase(
     std::unique_ptr<IFilesystemNodeOperations> _nodeOps)
     : nodeOperations_(std::move(_nodeOps)) {}
 
-void FilesystemOperationsBase::changeLog(uint32_t ts, const char *format, ...) {
-#ifdef METARESTORE
-	(void)ts;
-	(void)format;
-#else
+void FilesystemOperationsBase::changeLog(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, [[maybe_unused]] uint32_t ts,
+    [[maybe_unused]] const char *format, ...) {
+#ifndef METARESTORE
 	const uint32_t kMaxTimestampSize = 20;
 	const uint32_t kMaxEntrySize = kMaxLogLineSize - kMaxTimestampSize;
 	static char entry[kMaxLogLineSize];
@@ -94,7 +93,7 @@ void FilesystemOperationsBase::changeLog(uint32_t ts, const char *format, ...) {
 		entryLength++;
 	}
 
-	uint64_t version = gMetadata->metadataVersion++;
+	uint64_t version = increaseMetadataVersion(fsOpContext);
 	changelog(version, entry);
 	getChangelogSignal().emit({.version = version, .entry = entry});
 	matomlserv_broadcast_logstring(version, (uint8_t *)entry, tsLength + entryLength);
@@ -219,7 +218,7 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 	                     gMetadata->trashReservedToId, p, path);
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "SETPATH(%" PRIiNode ",%s)", p->id,
+		changeLog(fsOpContext, context.ts(), "SETPATH(%" PRIiNode ",%s)", p->id,
 		          nodeOperations_->escapeName(path).c_str());
 	} else {
 		gMetadata->metadataVersion++;
@@ -246,7 +245,9 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 
 	status = nodeOperations_->undel(fsOpContext, context.ts(), static_cast<FSNodeFile *>(p));
 	if (context.isPersonalityMaster()) {
-		if (status == SAUNAFS_STATUS_OK) { changeLog(context.ts(), "UNDEL(%" PRIiNode ")", p->id); }
+		if (status == SAUNAFS_STATUS_OK) {
+			changeLog(fsOpContext, context.ts(), "UNDEL(%" PRIiNode ")", p->id);
+		}
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -274,7 +275,7 @@ uint8_t FilesystemOperationsBase::purge(const FsContext &context,
 	nodeOperations_->purge(fsOpContext, context.ts(), p);
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "PURGE(%" PRIiNode ")", purged_inode);
+		changeLog(fsOpContext, context.ts(), "PURGE(%" PRIiNode ")", purged_inode);
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -659,8 +660,8 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 				if (status != SAUNAFS_STATUS_OK) { return status; }
 				node_file->chunks[indx] = nchunkid;
 				*chunkid = nchunkid;
-				changeLog(ts, "TRUNC(%" PRIiNode ",%" PRIu32 ",%" PRIu32 "):%" PRIu64, p->id, indx,
-				          lockId, nchunkid);
+				changeLog(fsOpContext, ts, "TRUNC(%" PRIiNode ",%" PRIu32 ",%" PRIu32 "):%" PRIu64,
+				          p->id, indx, lockId, nchunkid);
 				fsnodes_update_checksum(p);
 
 				// Make the change persistent for KV backends
@@ -777,7 +778,13 @@ uint8_t FilesystemOperationsBase::setNextChunkId(const FsContext &context, uint6
 	uint8_t status = chunk_set_next_chunkid(nextChunkId);
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
-			changeLog(context.ts(), "NEXTCHUNKID(%" PRIu64 ")", nextChunkId);
+			// changeLog requires a FilesystemOperationContext, but this function is only reachable
+			// when gChunkIdGenerator->isStrictlyMonotonic() (non-KV), so no transaction commit is
+			// needed.
+			auto fsOpContext = createFilesystemOperationContext(
+			    FilesystemOperationContext::TransactionType::kReadWrite);
+
+			changeLog(fsOpContext, context.ts(), "NEXTCHUNKID(%" PRIu64 ")", nextChunkId);
 		}
 	} else {
 		gMetadata->metadataVersion++;
@@ -786,10 +793,11 @@ uint8_t FilesystemOperationsBase::setNextChunkId(const FsContext &context, uint6
 }
 
 #ifndef METARESTORE
-uint8_t FilesystemOperationsBase::endSetLength(uint64_t chunkid) {
+uint8_t FilesystemOperationsBase::endSetLength(const FilesystemOperationContext &fsOpContext,
+                                               uint64_t chunkid) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
-	changeLog(ts, "UNLOCK(%" PRIu64 ")", chunkid);
+	changeLog(fsOpContext, ts, "UNLOCK(%" PRIu64 ")", chunkid);
 	return chunk_unlock(chunkid);
 }
 #endif
@@ -824,7 +832,7 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	bool eraseFurtherChunks = true;
 	nodeOperations_->setLength(fsOpContext, static_cast<FSNodeFile *>(p), length,
 	                           eraseFurtherChunks);
-	changeLog(ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode,
+	changeLog(fsOpContext, ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode,
 	          static_cast<FSNodeFile *>(p)->length, static_cast<uint32_t>(eraseFurtherChunks));
 	p->mtime = ts;
 	nodeOperations_->updateCTime(p, ts);
@@ -965,7 +973,8 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	} else if (setmask & SET_MTIME_FLAG) {
 		p->mtime = attrmtime;
 	}
-	changeLog(ts, "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", p->id,
+	changeLog(fsOpContext, ts,
+	          "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", p->id,
 	          p->mode & 07777, p->uid, p->gid, p->atime, p->mtime);
 	nodeOperations_->updateCTime(p, ts);
 	nodeOperations_->fillAttr(fsOpContext, p, NULL, context.uid(), context.gid(), context.auid(),
@@ -1029,16 +1038,23 @@ uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &
 
 /// Update atime of the given node and generate a changelog entry.
 /// Doesn't do anything if NO_ATIME=1 is set in the config file.
-static inline void fs_update_atime(FSNode *p, uint32_t ts) {
+static inline void fs_update_atime(const FilesystemOperationContext &fsOpContext, FSNode *p,
+                                   uint32_t ts) {
 	if (!gAtimeDisabled && p->atime != ts) {
 		p->atime = ts;
 		fsnodes_update_checksum(p);
-		gFSOperations->changeLog(ts, "ACCESS(%" PRIiNode ")", p->id);
+		gFSOperations->changeLog(fsOpContext, ts, "ACCESS(%" PRIiNode ")", p->id);
+
+		// Schedule the node update for KV backends.
+		if (fsOpContext.hasReadWriteTransaction()) {
+			gFSOperations->nodeOperations()->updateNode(fsOpContext, p);
+		}
 	}
 }
 
-uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t inode,
-                                           std::string &path) {
+uint8_t FilesystemOperationsBase::readlink(const FsContext &context,
+                                           const FilesystemOperationContext &fsOpContext,
+                                           inode_t inode, std::string &path) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *p = NULL;
@@ -1046,9 +1062,6 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t ino
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
-
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &p);
@@ -1058,7 +1071,7 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context, inode_t ino
 	if (p->type != FSNodeType::kSymlink) { return SAUNAFS_ERROR_EINVAL; }
 
 	path = (std::string) static_cast<FSNodeSymlink *>(p)->path;
-	fs_update_atime(p, ts);
+	fs_update_atime(fsOpContext, p, ts);
 	incrementFSStat(FsStats::Readlink);
 	metrics::Counter::increment(metrics::Counter::Master::FS_READLINK);
 	return SAUNAFS_STATUS_OK;
@@ -1137,8 +1150,9 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 	if (context.isPersonalityMaster()) {
 		assert(*inode == 0);
 		*inode = newNode->id;
-		changeLog(context.ts(), "SYMLINK(%" PRIiNode ",%s,%s,%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
-		          workNode->id, nodeOperations_->escapeName(name).c_str(),
+		changeLog(fsOpContext, context.ts(),
+		          "SYMLINK(%" PRIiNode ",%s,%s,%" PRIu32 ",%" PRIu32 "):%" PRIiNode, workNode->id,
+		          nodeOperations_->escapeName(name).c_str(),
 		          nodeOperations_->escapeName(basePath).c_str(), context.uid(), context.gid(),
 		          newNode->id);
 	} else {
@@ -1217,7 +1231,7 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	nodeOperations_->fillAttr(fsOpContext, newNode, parentNode, context.uid(), context.gid(),
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 
-	changeLog(timeStamp,
+	changeLog(fsOpContext, timeStamp,
 	          "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 	          parentNode->id, nodeOperations_->escapeName(name).c_str(), static_cast<char>(type),
 	          newNode->mode & kPermissionsMask, context.uid(), context.gid(), rdev, newNode->id);
@@ -1282,7 +1296,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 	nodeOperations_->fillAttr(fsOpContext, newNode, workDir, context.uid(), context.gid(),
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 
-	changeLog(timeStamp,
+	changeLog(fsOpContext, timeStamp,
 	          "CREATE(%" PRIiNode ",%s,%c,%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 "):%" PRIiNode,
 	          workDir->id, nodeOperations_->escapeName(name).c_str(),
 	          static_cast<char>(FSNodeType::kDirectory), newNode->mode & kPermissionsMask,
@@ -1369,7 +1383,7 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context,
 
 	if (child->type == FSNodeType::kDirectory) { return SAUNAFS_ERROR_EPERM; }
 
-	changeLog(timeStamp, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, workDir->id,
+	changeLog(fsOpContext, timeStamp, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, workDir->id,
 	          nodeOperations_->escapeName(baseName).c_str(), child->id);
 
 	nodeOperations_->unlink(fsOpContext, timeStamp, workDir, baseName, child);
@@ -1449,7 +1463,7 @@ uint8_t FilesystemOperationsBase::rmdir(const FsContext &context,
 		return SAUNAFS_ERROR_ENOTEMPTY;
 	}
 
-	changeLog(timeStamp, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, workNode->id,
+	changeLog(fsOpContext, timeStamp, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, workNode->id,
 	          nodeOperations_->escapeName(name).c_str(), child->id);
 
 	nodeOperations_->unlink(fsOpContext, timeStamp, workDir, name, child);
@@ -1623,7 +1637,7 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 	}
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "MOVE(%" PRIiNode ",%s,%" PRIiNode ",%s):%" PRIiNode,
+		changeLog(fsOpContext, context.ts(), "MOVE(%" PRIiNode ",%s,%" PRIiNode ",%s):%" PRIiNode,
 		          sourceWorkNode->id, nodeOperations_->escapeName(baseNameSrc).c_str(),
 		          destWorkNode->id, nodeOperations_->escapeName(baseNameDst).c_str(),
 		          sourceChildNode->id);
@@ -1681,8 +1695,8 @@ uint8_t FilesystemOperationsBase::link(const FsContext &context,
 	if (attr) { nodeOperations_->fillAttr(context, fsOpContext, sp, dwd, *attr); }
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "LINK(%" PRIiNode ",%" PRIiNode ",%s)", sp->id, dwd->id,
-		          nodeOperations_->escapeName(name_dst).c_str());
+		changeLog(fsOpContext, context.ts(), "LINK(%" PRIiNode ",%" PRIiNode ",%s)", sp->id,
+		          dwd->id, nodeOperations_->escapeName(name_dst).c_str());
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -1729,7 +1743,7 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 	}
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "APPEND(%" PRIiNode ",%" PRIiNode ")", p->id, sp->id);
+		changeLog(fsOpContext, context.ts(), "APPEND(%" PRIiNode ",%" PRIiNode ")", p->id, sp->id);
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -1848,7 +1862,7 @@ int FilesystemOperationsBase::flockOperation(const FsContext &context,
 	int ret = lockOperation(context, fsOpContext, gMetadata->flockLocks, inode, 0, 1, owner,
 	                        sessionid, reqid, msgid, oper, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(),
+		changeLog(fsOpContext, context.ts(),
 		          "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
 		          (uint8_t)safs_locks::Type::kFlock, inode, owner, sessionid, oper);
 	} else {
@@ -1868,7 +1882,7 @@ int FilesystemOperationsBase::posixLockOperation(const FsContext &context,
 	int ret = lockOperation(context, fsOpContext, gMetadata->posixLocks, inode, start, end, owner,
 	                        sessionid, reqid, msgid, oper, nonblocking, applied);
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(),
+		changeLog(fsOpContext, context.ts(),
 		          "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32
 		          ",%" PRIu16 ")",
 		          (uint8_t)safs_locks::Type::kPosix, inode, start, end, owner, sessionid, oper);
@@ -1905,8 +1919,8 @@ int FilesystemOperationsBase::locksClearSession(
 		}
 	}
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "CLRLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu32 ")", type, inode,
-		          sessionid);
+		changeLog(fsOpContext, context.ts(), "CLRLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu32 ")", type,
+		          inode, sessionid);
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -1988,7 +2002,7 @@ int FilesystemOperationsBase::locksUnlockInode(
 	}
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "FLCKINODE(%" PRIu8 ",%" PRIiNode ")", type, inode);
+		changeLog(fsOpContext, context.ts(), "FLCKINODE(%" PRIu8 ",%" PRIiNode ")", type, inode);
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -2017,7 +2031,7 @@ int FilesystemOperationsBase::locksRemovePending(
 	});
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(),
+		changeLog(fsOpContext, context.ts(),
 		          "RMPLOCK(%" PRIu8 ",%" PRIu64 ",%" PRIu32 ",%" PRIiNode ",%" PRIu64 ")", type,
 		          ownerid, sessionid, inode, reqid);
 	} else {
@@ -2053,14 +2067,15 @@ uint8_t FilesystemOperationsBase::readdirSize(const FsContext &context, inode_t 
 	return SAUNAFS_STATUS_OK;
 }
 
-void FilesystemOperationsBase::readdirData(const FsContext &context, uint8_t flags, void *dnode,
-                                           uint8_t *dbuff) {
+void FilesystemOperationsBase::readdirData(const FsContext &context,
+                                           const FilesystemOperationContext &fsOpContext,
+                                           uint8_t flags, void *dnode, uint8_t *dbuff) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 	FSNode *p = (FSNode *)dnode;
-	fs_update_atime(p, ts);
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
+
+	fs_update_atime(fsOpContext, p, ts);
+
 	nodeOperations_->getDirData(fsOpContext, context.rootinode(), context.uid(), context.gid(),
 	                            context.auid(), context.agid(), context.sesflags(),
 	                            static_cast<FSNodeDirectory *>(p), dbuff,
@@ -2069,15 +2084,14 @@ void FilesystemOperationsBase::readdirData(const FsContext &context, uint8_t fla
 	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
 }
 
-uint8_t FilesystemOperationsBase::readdir(const FsContext &context, inode_t inode,
-                                          uint64_t first_entry, uint64_t number_of_entries,
+uint8_t FilesystemOperationsBase::readdir(const FsContext &context,
+                                          const FilesystemOperationContext &fsOpContext,
+                                          inode_t inode, uint64_t first_entry,
+                                          uint64_t number_of_entries,
                                           std::vector<DirectoryEntry> &dir_entries) {
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
-
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
 
 	FSNode *dir;
 	status = nodeOperations_->getNodeForOperation(
@@ -2088,7 +2102,7 @@ uint8_t FilesystemOperationsBase::readdir(const FsContext &context, inode_t inod
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
 
-	fs_update_atime(dir, ts);
+	fs_update_atime(fsOpContext, dir, ts);
 
 	nodeOperations_->getDir(fsOpContext, context.rootinode(), context.uid(), context.gid(),
 	                        context.auid(), context.agid(), context.sesflags(),
@@ -2182,7 +2196,8 @@ uint8_t FilesystemOperationsBase::acquire(const FsContext &context,
 	}
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
+		changeLog(fsOpContext, context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode,
+		          sessionid);
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -2225,7 +2240,8 @@ uint8_t FilesystemOperationsBase::release(const FsContext &context,
 #endif /* #ifndef METARESTORE */
 
 		if (context.isPersonalityMaster()) {
-			changeLog(context.ts(), "RELEASE(%" PRIiNode ",%" PRIu32 ")", inode, sessionid);
+			changeLog(fsOpContext, context.ts(), "RELEASE(%" PRIiNode ",%" PRIu32 ")", inode,
+			          sessionid);
 		} else {
 			gMetadata->metadataVersion++;
 		}
@@ -2244,12 +2260,20 @@ uint8_t FilesystemOperationsBase::release(const FsContext &context,
 uint32_t FilesystemOperationsBase::newSessionId() {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
+
 	const uint32_t current = gMetadata->nextSessionId().getValue();
-	changeLog(ts, "SESSION():%" PRIu32, current);
+
+	// Used so far only for the changeLog signature
+	auto fsOpContext =
+	    createFilesystemOperationContext(FilesystemOperationContext::TransactionType::kReadWrite);
+	changeLog(fsOpContext, ts, "SESSION():%" PRIu32, current);
+
 	gMetadata->nextSessionId().increment();
+
 	return current;
 }
 #endif
+
 uint8_t FilesystemOperationsBase::applySession(uint32_t sessionid) {
 	if (sessionid != gMetadata->nextSessionId().getValue()) { return SAUNAFS_ERROR_MISMATCH; }
 	gMetadata->metadataVersion++;
@@ -2297,7 +2321,7 @@ uint8_t FilesystemOperationsBase::readChunk(const FilesystemOperationContext &fs
 #endif
 	if (indx < p->chunks.size()) { *chunkid = p->chunks[indx]; }
 	*length = p->length;
-	fs_update_atime(p, ts);
+	fs_update_atime(fsOpContext, p, ts);
 	incrementFSStat(FsStats::Read);
 	metrics::Counter::increment(metrics::Counter::Master::FS_READ);
 	return SAUNAFS_STATUS_OK;
@@ -2392,9 +2416,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	if (length) { *length = fileNode->length; }
 
 	if (context.isPersonalityMaster()) {
-		changeLog(context.ts(), "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64,
-		          inode, index, should_increase_chunk_version_on_modification(*opflag), *lockid,
-		          nchunkid);
+		changeLog(fsOpContext, context.ts(),
+		          "WRITE(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu32 "):%" PRIu64, inode, index,
+		          should_increase_chunk_version_on_modification(*opflag), *lockid, nchunkid);
 	} else {
 		gMetadata->metadataVersion++;
 	}
@@ -2446,19 +2470,20 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 				nodeOperations_->updateNode(fsOpContext, p);
 			}
 
-			changeLog(ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode, length,
-			          static_cast<uint32_t>(eraseFurtherChunks));
+			changeLog(fsOpContext, ts, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode,
+			          length, static_cast<uint32_t>(eraseFurtherChunks));
 		}
 	}
 
-	changeLog(ts, "UNLOCK(%" PRIu64 ")", chunkid);
+	changeLog(fsOpContext, ts, "UNLOCK(%" PRIu64 ")", chunkid);
 	return chunk_unlock(chunkid);
 }
 
-void FilesystemOperationsBase::increaseChunkVersion(uint64_t chunkid) {
+void FilesystemOperationsBase::increaseChunkVersion(const FilesystemOperationContext &fsOpContext,
+                                                    uint64_t chunkid) {
 	uint32_t ts = eventloop_time();
 	ChecksumUpdater cu(ts);
-	changeLog(ts, "INCVERSION(%" PRIu64 ")", chunkid);
+	changeLog(fsOpContext, ts, "INCVERSION(%" PRIu64 ")", chunkid);
 }
 #endif
 
@@ -2504,7 +2529,7 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 
 	// Log the repair operation with new version 0 (indicating deletion)
 	uint32_t nversion = 0;
-	changeLog(ts, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode, indx, nversion);
+	changeLog(fsOpContext, ts, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode, indx, nversion);
 
 	nodeOperations_->getStats(fsOpContext, p, &nsr);
 	nodeOperations_->updateParentStatsForNode(fsOpContext, p, &nsr, &psr);
@@ -2544,7 +2569,8 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 	nodeOperations_->getStats(fsOpContext, p, &psr);
 	for (indx = 0; indx < node_file->chunks.size(); indx++) {
 		if (chunk_repair(p->goal, node_file->chunks[indx], &nversion, correct_only)) {
-			changeLog(ts, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode, indx, nversion);
+			changeLog(fsOpContext, ts, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode, indx,
+			          nversion);
 			p->mtime = ts;
 			nodeOperations_->updateCTime(p, ts);
 			if (nversion > 0) {
@@ -2898,7 +2924,7 @@ uint8_t FilesystemOperationsBase::setExtraAttr(const FsContext &context,
 		*sinodes = si;
 		*ncinodes = nci;
 		*nsinodes = nsi;
-		changeLog(context.ts(),
+		changeLog(fsOpContext, context.ts(),
 		          "SETEATTR(%" PRIiNode ",%" PRIu32 ",%" PRIu8 ",%" PRIu8 "):%" PRIiNode
 		          ",%" PRIiNode ",%" PRIiNode,
 		          p->id, context.uid(), eattr, smode, si, nci, nsi);
@@ -2979,7 +3005,7 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 	nodeOperations_->updateCTime(p, ts);
 	fsnodes_update_checksum(p);
-	changeLog(ts, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", p->id,
+	changeLog(fsOpContext, ts, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", p->id,
 	          nodeOperations_->escapeName(std::string((const char *)attrname, anleng)).c_str(),
 	          nodeOperations_->escapeName(std::string((const char *)attrvalue, avleng)).c_str(),
 	          mode);
@@ -3073,7 +3099,7 @@ uint8_t FilesystemOperationsBase::deleteAcl(const FsContext &context,
 			static_assert((int)AclType::kDefault == 1, "fix acl_type table");
 			static_assert((int)AclType::kRichACL == 2, "fix acl_type table");
 
-			changeLog(context.ts(), "DELETEACL(%" PRIiNode ",%c)", p->id,
+			changeLog(fsOpContext, context.ts(), "DELETEACL(%" PRIiNode ",%c)", p->id,
 			          acl_type[std::min(3, (int)type)]);
 		}
 	} else {
@@ -3102,7 +3128,8 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context,
 
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
-			changeLog(context.ts(), "SETRICHACL(%" PRIiNode ",%s)", p->id, acl_string.c_str());
+			changeLog(fsOpContext, context.ts(), "SETRICHACL(%" PRIiNode ",%s)", p->id,
+			          acl_string.c_str());
 		}
 	} else {
 		gMetadata->metadataVersion++;
@@ -3129,7 +3156,7 @@ uint8_t FilesystemOperationsBase::setAcl(const FsContext &context,
 
 	if (context.isPersonalityMaster()) {
 		if (status == SAUNAFS_STATUS_OK) {
-			changeLog(context.ts(), "SETACL(%" PRIiNode ",%c,%s)", p->id,
+			changeLog(fsOpContext, context.ts(), "SETACL(%" PRIiNode ",%c,%s)", p->id,
 			          (type == AclType::kAccess ? 'a' : 'd'), acl_string.c_str());
 		}
 	} else {
@@ -3314,6 +3341,11 @@ void FilesystemOperationsBase::addFilesToChunks(bool isMetadataLoading) {
 uint64_t FilesystemOperationsBase::getMetadataVersion() {
 	if (!gMetadata) { throw NoMetadataException(); }
 	return gMetadata->metadataVersion;
+}
+
+uint64_t FilesystemOperationsBase::increaseMetadataVersion(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext) {
+	return gMetadata->metadataVersion++;
 }
 
 uint8_t FilesystemOperationsBase::applySetQuota(const FilesystemOperationContext & /*fsOpContext*/,
