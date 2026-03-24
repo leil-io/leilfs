@@ -1,6 +1,7 @@
 [Unit]
-Description=SaunaFS master server daemon
-After=syslog.target network-online.target network.target
+Description=LeilFS high availability master server daemon
+Documentation=man:sfsmaster(8) man:sfsgoals.cfg(5) man:sfsmaster.cfg(5) man:sfsglobaliolimits.cfg(5) man:saunafs(7) man:sfsmaster(8) man:sfsmetadump(8) man:sfsrestoremaster(8)
+After=network-online.target
 PartOf=saunafs-uraft.service
 
 [Service]

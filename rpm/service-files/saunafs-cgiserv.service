@@ -1,16 +1,16 @@
 [Unit]
-Description=SaunaFS CGI server daemon
-Documentation=man:saunafs-cgiserver
-After=network-online.target network.target
+Description=LeilFS CGI server daemon
+Documentation=man:saunafs-cgiserver(8)
+After=network-online.target
 
 [Service]
 Environment=BIND_HOST=0.0.0.0
 Environment=BIND_PORT=9425
 Environment=ROOT_PATH=/usr/share/sfscgi
-EnvironmentFile=-/etc/default/%p
+EnvironmentFile=-/etc/sysconfig/%p
 ExecStart=/usr/sbin/saunafs-cgiserver -H ${BIND_HOST} -P ${BIND_PORT} -R ${ROOT_PATH}
 Restart=on-abort
-User=nobody
+User=saunafs
 
 [Install]
 WantedBy=multi-user.target
