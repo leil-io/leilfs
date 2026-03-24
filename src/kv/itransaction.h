@@ -93,6 +93,17 @@ public:
 	/// @param key The key to retrieve the value for.
 	virtual std::optional<Value> get(const Key &key) = 0;
 
+	/// Retrieves the value for a given key without adding it to the
+	/// transaction's read conflict range (snapshot/advisory read).
+	/// Use only when the read is advisory, for example, observing a
+	/// counter before a blind atomic write, to avoid unnecessary conflicts.
+	/// @warning Snapshot reads are not serializable and may observe stale
+	///          or internally inconsistent data relative to other reads in
+	///          the same transaction. Do not use for reads that must be
+	///          transactionally consistent; use get() instead.
+	/// @param key The key to retrieve the value for.
+	virtual std::optional<Value> getSnapshot(const Key &key) = 0;
+
 	/// Retrieves the value for a given key asynchronously.
 	/// @param key The key to retrieve the value for.
 	/// @return A future that will contain the value when ready.

@@ -46,6 +46,15 @@ public:
 	/// @param key The key to retrieve the value for.
 	std::optional<kv::Value> get(const kv::Key &key) override;
 
+	/// Retrieves the value for a given key without adding it to the
+	/// transaction's read conflict range (snapshot read).
+	/// @warning Snapshot reads do not participate in conflict checking and
+	///          must not be used for correctness-critical read-modify-write
+	///          logic. They are intended for advisory reads (e.g. observing
+	///          a hot counter) where occasional anomalies are acceptable.
+	/// @param key The key to retrieve the value for.
+	std::optional<kv::Value> getSnapshot(const kv::Key &key) override;
+
 	/// Retrieves the value for a given key asynchronously.
 	/// @param key The key to retrieve the value for.
 	/// @return A future that will contain the value when ready.

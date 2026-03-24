@@ -28,6 +28,12 @@ std::optional<kv::Value> FDBTransaction::get(const kv::Key &key) {
 	return tr_.get(key);
 }
 
+std::optional<kv::Value> FDBTransaction::getSnapshot(const kv::Key &key) {
+	if (!tr_) { return std::nullopt; }
+
+	return tr_.get(key, /*snapshot=*/true);
+}
+
 std::unique_ptr<kv::IFuture> FDBTransaction::getAsync(const kv::Key &key) {
 	if (!tr_) { return nullptr; }
 
