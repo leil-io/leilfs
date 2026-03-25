@@ -97,10 +97,12 @@ public:
 	/// transaction's read conflict range (snapshot/advisory read).
 	/// Use only when the read is advisory, for example, observing a
 	/// counter before a blind atomic write, to avoid unnecessary conflicts.
-	/// @warning Snapshot reads are not serializable and may observe stale
-	///          or internally inconsistent data relative to other reads in
-	///          the same transaction. Do not use for reads that must be
-	///          transactionally consistent; use get() instead.
+	/// @warning Snapshot reads do not add the key to the transaction's read
+	///          conflict set and therefore provide no serializable
+	///          guarantees. Decisions based on snapshot-read values can be
+	///          invalidated by concurrent writes without causing a commit
+	///          conflict. Use get() for reads that must be transactionally
+	///          consistent.
 	/// @param key The key to retrieve the value for.
 	virtual std::optional<Value> getSnapshot(const Key &key) = 0;
 

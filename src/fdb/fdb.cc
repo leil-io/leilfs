@@ -223,8 +223,21 @@ bool Transaction::commit() {
 	error_ = fdb_future_block_until_ready(future);
 
 	if (error_ != 0) {
-		safs::log_err("Transaction::commit: error: {}", fdb_get_error(error_));
+		safs::log_err("Transaction::commit: fdb_future_block_until_ready: error: {}",
+		              fdb_get_error(error_));
 		fdb_future_destroy(future);
+		return false;
+	}
+
+	// fdb_future_block_until_ready() only signals the future is ready; the
+	// actual commit outcome (e.g. conflict, transaction_too_old) is in the
+	// future itself and must be checked with fdb_future_get_error().
+	error_ = fdb_future_get_error(future);
+
+	fdb_future_destroy(future);
+
+	if (error_ != 0) {
+		safs::log_err("Transaction::commit: commit failed: {}", fdb_get_error(error_));
 		return false;
 	}
 
@@ -234,13 +247,10 @@ bool Transaction::commit() {
 	if (versionError != 0) {
 		safs::log_err("Transaction::commit: fdb_transaction_get_committed_version: error: {}",
 		              fdb_get_error(versionError));
-		fdb_future_destroy(future);
 		return false;
 	}
 
 	committedVersion_ = version;
-
-	fdb_future_destroy(future);
 
 	return true;
 }
