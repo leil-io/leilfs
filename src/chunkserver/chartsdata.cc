@@ -27,6 +27,7 @@
 #include <sys/time.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -76,8 +77,10 @@
 #define CHARTS_CHUNKOPJOBS 29
 #define CHARTS_MEMORY 30
 #define CHARTS_GC_PURGE 31
+#define CHARTS_SPACE_GROWTH 32
+#define CHARTS_SPACE_RECLAIMED 33
 
-#define CHARTS_NUMBER 32
+#define CHARTS_NUMBER 34
 
 const unsigned long kLinuxMaxrssSize = 1024UL;
 
@@ -115,6 +118,8 @@ const unsigned long kLinuxMaxrssSize = 1024UL;
 	{"chunkopjobs"      ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"memory"           ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"gcpurge"          ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{"spacegrowth"      ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,60}, \
+	{"spacereclaimed"   ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,60}, \
 	{NULL               ,0              ,0,0                 ,   0, 0}  \
 };
 
@@ -169,6 +174,7 @@ void chartsdata_refresh(void) {
 	uint32_t opsCreate, opsDelete, opsUpdateVersion, opsDuplicate, opsTruncate;
 	uint32_t opsDupTrunc, opsTest, opsGCPurge;
 	uint32_t maxChunkServerJobsCount, maxMasterJobsCount;
+	int64_t usedSpaceDelta;
 
 	// Timer runs only when the process is executing.
 	struct itimerval userTime;
@@ -257,6 +263,11 @@ void chartsdata_refresh(void) {
 	data[CHARTS_DUPTRUNC] = opsDupTrunc;
 	data[CHARTS_TEST] = opsTest;
 	data[CHARTS_GC_PURGE] = opsGCPurge;
+
+	HddStats::getSpaceDeltaStats(&usedSpaceDelta);
+
+	data[CHARTS_SPACE_GROWTH] = std::max(usedSpaceDelta, int64_t(0));
+	data[CHARTS_SPACE_RECLAIMED] = std::max(-usedSpaceDelta, int64_t(0));
 
 	charts_add(data, eventloop_time() - SECONDS_IN_ONE_MINUTE);
 }

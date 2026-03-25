@@ -100,6 +100,15 @@ void operationStats(uint32_t *opsCreate, uint32_t *opsDelete, uint32_t *opsUpdat
 	*opsGCPurge = gStatsOperationsGCPurge.exchange(0);
 }
 
+void getSpaceDeltaStats(int64_t *spaceDelta) {
+	TRACETHIS();
+	const uint64_t lastReadUsedSpace = gStatsLastReadUsedSpace.load();
+	const uint64_t previousReadUsedSpace = gStatsPreviousReadUsedSpace.exchange(lastReadUsedSpace);
+	*spaceDelta = (previousReadUsedSpace == 0)
+	                  ? 0
+	                  : int64_t(lastReadUsedSpace) - int64_t(previousReadUsedSpace);
+}
+
 void overheadRead(uint32_t size) {
 	TRACETHIS();
 	gStatsOverheadOperationsRead++;
