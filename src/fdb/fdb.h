@@ -120,6 +120,17 @@ private:
 	fdb_error_t error_ = 1;  ///< The error code of the last operation.
 };
 
+/// Custom deleter for FDBFuture (C struct), to ensure proper cleanup.
+struct FDBFutureDeleter {
+	constexpr FDBFutureDeleter() noexcept = default;
+	void operator()(FDBFuture *fut) const {
+		if (fut != nullptr) { fdb_future_destroy(fut); }
+	}
+};
+
+/// Owning handle for an FDBFuture; automatically destroyed on scope exit.
+using UniqueFDBFuture = std::unique_ptr<FDBFuture, FDBFutureDeleter>;
+
 /// A class that wraps a FoundationDB transaction.
 /// Provides methods to perform read and write operations on the database.
 class Transaction {
