@@ -561,7 +561,7 @@ static void fs_do_emptytrash(uint32_t ts) {
 		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
 
 		// Purge operation should be performed anyway - if it fails, inode will be reserved
-		gFSOperations->changeLog(ts, "PURGE(%" PRIiNode ")", node_id);
+		gFSOperations->changeLog(fsOpContext, ts, "PURGE(%" PRIiNode ")", node_id);
 
 		it = gMetadata->trash.begin();
 

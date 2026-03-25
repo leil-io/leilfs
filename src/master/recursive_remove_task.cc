@@ -50,7 +50,7 @@ int RemoveTask::retrieveNodes(const FilesystemOperationContext &fsOpContext, FSN
 
 void RemoveTask::doUnlink(const FilesystemOperationContext &fsOpContext, uint32_t ts,
                           FSNodeDirectory *wd, FSNode *child) {
-	gFSOperations->changeLog(ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
+	gFSOperations->changeLog(fsOpContext, ts, "UNLINK(%" PRIiNode ",%s):%" PRIiNode, parent_,
 	                         gFSOperations->nodeOperations()->escapeName(*current_subtask_).c_str(),
 	                         child->id);
 

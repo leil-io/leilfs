@@ -568,8 +568,17 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 		return;
 	case FUSE_TRUNCATE:
 	case FUSE_TRUNCATE_END:
-		gFSOperations->endSetLength(chunkId);
+		gFSOperations->endSetLength(fsOpContext, chunkId);
 		if (status != SAUNAFS_STATUS_OK) {
+			// Commit endSetLength's unlock changelog even on error, so KV backends
+			// persist the unlock regardless of the chunk operation outcome.
+			if (fsOpContext.hasReadWriteTransaction()) {
+				if (!fsOpContext.getReadWriteTransaction()->commit()) {
+					safs::log_err(
+					    "{}: transaction failed to commit after endSetLength: inode {}, chunkId {}",
+					    __func__, inode, chunkId);
+				}
+			}
 			serializer->serializeFuseTruncate(reply, operationType, messageId, status);
 		} else {
 			Attributes attr;
@@ -2075,7 +2084,9 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 
 				if (status == SAUNAFS_STATUS_OK) { status = chunk_can_unlock(chunkId, lockId); }
 
-				if (status == SAUNAFS_STATUS_OK) { gFSOperations->endSetLength(chunkId); }
+				if (status == SAUNAFS_STATUS_OK) {
+					gFSOperations->endSetLength(fsOpContext, chunkId);
+				}
 			}
 		}
 	} else {
@@ -2243,7 +2254,19 @@ void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32
 	getINode(&data, inode);
 
 	FsContext context = matoclserv_get_context(eptr);
-	status = gFSOperations->readlink(context, inode, path);
+
+	// ReadWrite mode is needed to update atime of the symlink
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	status = gFSOperations->readlink(context, fsOpContext, inode, path);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			// Best-effort: atime update only, do not fail the readlink.
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+		}
+	}
 
 	constexpr uint32_t kFailedAnswerSize = sizeof(msgid) + sizeof(status);
 	constexpr uint32_t kSuccessAnswerSize = sizeof(msgid) + sizeof(uint32_t);
@@ -2835,8 +2858,19 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 
 		if (packet_version == cltoma::fuseGetDir::kClientAbleToProcessDirentIndex) {
 			std::vector<DirectoryEntry> dir_entries;
-			status = gFSOperations->readdir(context, inode, first_entry, number_of_entries,
-			                                dir_entries);  //<DirectoryEntry>
+			auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+			    FilesystemOperationContext::TransactionType::kReadWrite);
+
+			status = gFSOperations->readdir(context, fsOpContext, inode, first_entry,
+			                                number_of_entries, dir_entries);
+
+			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+				if (!fsOpContext.getReadWriteTransaction()->commit()) {
+					// Best-effort: atime update only, do not fail the directory listing.
+					safs::log_err("{}: Failed to commit atime update for inode {}", __func__,
+					              inode);
+				}
+			}
 
 			if (status != SAUNAFS_STATUS_OK) {
 				matocl::fuseGetDir::serialize(buffer, message_id, status);
@@ -2910,7 +2944,17 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 	if (status != SAUNAFS_STATUS_OK) {
 		put8bit(&ptr, status);
 	} else {
-		gFSOperations->readdirData(context, flags, custom, ptr);
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+
+		gFSOperations->readdirData(context, fsOpContext, flags, custom, ptr);
+
+		// Best effort to update atime
+		if (fsOpContext.hasReadWriteTransaction()) {
+			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				safs::log_err("{}: Failed to commit atime update for inode {}", __func__, inode);
+			}
+		}
 	}
 
 	eptr->sessionData->currHourOperationsStats[12]++;
@@ -3001,9 +3045,12 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	std::vector<uint8_t> receivedData(data, data + header.length);
 	serializer->deserializeFuseReadChunk(receivedData, messageId, inode, index);
 
+	// ReadWrite transaction is needed to update atime inside readChunk
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadOnly);
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	status = gFSOperations->readChunk(fsOpContext, inode, index, &chunkid, &fleng);
+
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
 	if (status == SAUNAFS_STATUS_OK) {
 		if (chunkid > 0) {
@@ -3012,6 +3059,14 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 			remove_unsupported_ec_parts(eptr->version, allChunkCopies);
 		} else {
 			version = 0;
+		}
+	}
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			// Best-effort: atime update only, do not fail the chunk read.
+			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}", __func__,
+			              inode, index);
 		}
 	}
 
@@ -5339,9 +5394,23 @@ void matocl_session_check() {
 }
 
 void matocl_before_disconnect(matoclserventry *eptr) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
 	// unlock locked chunks
 	for (const auto &operation : eptr->delayedChunkOperations) {
-		if (operation->type == FUSE_TRUNCATE) { gFSOperations->endSetLength(operation->chunkId); }
+		if (operation->type == FUSE_TRUNCATE) {
+			gFSOperations->endSetLength(fsOpContext, operation->chunkId);
+		}
+	}
+
+	// Commit the transaction for KV backends
+	if (fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_critical(
+			    "{}: transaction failed to commit while unlocking chunks for session {}", __func__,
+			    eptr->sessionData ? eptr->sessionData->sessionId : 0);
+		}
 	}
 
 	eptr->delayedChunkOperations.clear();

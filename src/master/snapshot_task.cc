@@ -213,14 +213,15 @@ void SnapshotTask::cloneSymlinkData(const FilesystemOperationContext &fsOpContex
 	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
 }
 
-void SnapshotTask::emitChangelog(uint32_t ts, inode_t dst_inode) {
+void SnapshotTask::emitChangelog(const FilesystemOperationContext &fsOpContext, uint32_t ts,
+                                 inode_t dst_inode) {
 	if (!emit_changelog_) {
-		gMetadata->metadataVersion++;
+		gFSOperations->increaseMetadataVersion(fsOpContext);
 		return;
 	}
 
 	gFSOperations->changeLog(
-	    ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
+	    fsOpContext, ts, "CLONE(%" PRIiNode ",%" PRIiNode ",%" PRIiNode ",%s,%" PRIu8 ")",
 	    current_subtask_->first, dst_parent_inode_, dst_inode,
 	    gFSOperations->nodeOperations()->escapeName(current_subtask_->second).c_str(),
 	    can_overwrite_);
@@ -259,7 +260,7 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	assert(dst_node);
 	fsnodes_update_checksum(dst_node);
 	fsnodes_update_checksum(dst_parent);
-	emitChangelog(ts, dst_node->id);
+	emitChangelog(fsOpContext, ts, dst_node->id);
 	if (dst_inode_ != 0 && dst_inode_ != dst_node->id) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}

@@ -846,8 +846,22 @@ void chunk_increase_version_operation(Chunk *targetChunk, bool needsLocking);
 void chunk_emergency_increase_version(Chunk *c) {
 	chunk_increase_version_operation(c, false);
 	chunk_update_checksum(c);
-	gFSOperations->increaseChunkVersion(c->chunkid);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
+
 	emit_chunk_changed(c);
+
+	// Commit the transaction under KV backends
+	if (fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_critical(
+			    "{}: Failed to commit transaction for increasing version of chunk {}.", __func__,
+			    c->chunkid);
+		}
+	}
 }
 
 /// @brief This function should be called when an operation on a chunk fails (chunk not writable)

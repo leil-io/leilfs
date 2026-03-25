@@ -57,10 +57,24 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		(*stats_)[result] += 1;
 		if (result == kChanged) {
 			gFSOperations->changeLog(
-			    ts, "SETTRASHTIME(%" PRIiNode ",%" PRIu32 ",%" PRIu32 ",%" PRIu8 ")", inode, uid_,
-			    trashtime_, smode_);
+			    fsOpContext, ts, "SETTRASHTIME(%" PRIiNode ",%" PRIu32 ",%" PRIu32 ",%" PRIu8 ")",
+			    inode, uid_, trashtime_, smode_);
+
+			// Schedule the node update for KV backends.
+			if (fsOpContext.hasReadWriteTransaction()) {
+				gFSOperations->nodeOperations()->updateNode(fsOpContext, node);
+			}
 		}
 	}
+
+	if (result == kChanged && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: inode {}, trashtime {}, smode {}",
+			              __func__, inode, trashtime_, static_cast<uint32_t>(smode_));
+			return SAUNAFS_ERROR_IO;
+		}
+	}
+
 	return SAUNAFS_STATUS_OK;
 }
 
