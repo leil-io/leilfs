@@ -64,11 +64,12 @@ struct InputPacket {
 	void increaseBytesRead(uint32_t additionalBytesRead) {
 		bytesRead_ += additionalBytesRead;
 		if (bytesRead_ == PacketHeader::kSize) {
-			auto messageDataLength = getHeader().length;
+			const auto header = getHeader();
+			const auto messageDataLength = header.length;
 			if (messageDataLength > maxPacketSize_) {
 				throw InputPacketTooLongException(
-						"packet too long (" + std::to_string(messageDataLength) +
-						"/" + std::to_string(maxPacketSize_) + ")");
+				    "packet " + std::to_string(header.type) + " too long (" +
+				    std::to_string(messageDataLength) + "/" + std::to_string(maxPacketSize_) + ")");
 			}
 			data_.resize(messageDataLength);
 		}
