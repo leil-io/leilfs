@@ -97,7 +97,7 @@ void FilesystemOperationsBase::changeLog(
 	changelog(version, entry);
 	getChangelogSignal().emit({.version = version, .entry = entry});
 	matomlserv_broadcast_logstring(version, (uint8_t *)entry, tsLength + entryLength);
-	matontserv_broadcast_message(version, std::string(entry, tsLength + entryLength));
+	matontserv_broadcast_message(version, std::string_view(entry, tsLength + entryLength));
 #endif
 }
 

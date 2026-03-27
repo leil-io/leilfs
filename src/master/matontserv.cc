@@ -147,7 +147,7 @@ uint8_t *matontserv_addpacket(MatontservEntry *eptr, uint32_t type, uint32_t siz
 	return eptr->outputPackets.back().packet.data() + kPacketHeaderSize;
 }
 
-void matontserv_broadcast_message(uint64_t version, std::string message) {
+void matontserv_broadcast_message(uint64_t version, std::string_view message) {
 	uint8_t *data;
 
 	for (auto &entry : matontservList) {
@@ -156,7 +156,7 @@ void matontserv_broadcast_message(uint64_t version, std::string message) {
 		                            1 + sizeof(version) + message.size());
 		put8bit(&data, 0xFF);
 		put64bit(&data, version);
-		memcpy(data, message.c_str(), message.size());
+		memcpy(data, message.data(), message.size());
 	}
 }
 
