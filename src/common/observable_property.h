@@ -68,6 +68,9 @@ public:
 	/// Returns the number of connected slots.
 	size_t size() const { return slots_.size(); }
 
+	/// Returns true if no slots are connected.
+	bool empty() const { return slots_.empty(); }
+
 private:
 	/// List of connected slots (observers)
 	std::vector<SlotType> slots_;
