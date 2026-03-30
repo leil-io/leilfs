@@ -128,6 +128,13 @@
         {
             "name": "test-vcpkg",
             "inherits": ["test", "vcpkg"]
+        },
+        {
+            "name": "wsl1-test-vcpkg",
+            "inherits": ["test-vcpkg"],
+            "cacheVariables": {
+                "ENABLE_FOUNDATIONDB": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -178,6 +185,11 @@
         {
             "name": "test-vcpkg",
             "configurePreset": "test-vcpkg",
+            "inherits": ["default"]
+        },
+        {
+            "name": "wsl1-test-vcpkg",
+            "configurePreset": "wsl1-test-vcpkg",
             "inherits": ["default"]
         }
     ],
@@ -304,6 +316,19 @@
                 {
                     "type": "build",
                     "name": "test-vcpkg"
+                }
+            ]
+        },
+        {
+            "name": "wsl1-test-vcpkg",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "wsl1-test-vcpkg"
+                },
+                {
+                    "type": "build",
+                    "name": "wsl1-test-vcpkg"
                 }
             ]
         }
