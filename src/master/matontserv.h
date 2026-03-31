@@ -20,10 +20,11 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <string_view>
 
 #include "common/inotifier_list_entry.h"
 
-void matontserv_broadcast_message(uint64_t version, std::string message);
+void matontserv_broadcast_message(uint64_t version, std::string_view message);
 
 int matontserv_init(void);
 

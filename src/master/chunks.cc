@@ -784,7 +784,9 @@ static void chunk_recalculate_checksum() {
 }
 
 static inline void emit_chunk_changed(const Chunk *c) {
-	gChunkChangedSignal.emit(c->chunkid, c->version, c->lockedto, c->lockid);
+	if (!gChunkChangedSignal.empty()) {
+		gChunkChangedSignal.emit(c->chunkid, c->version, c->lockedto, c->lockid);
+	}
 }
 
 uint64_t chunk_checksum(ChecksumMode mode) {
