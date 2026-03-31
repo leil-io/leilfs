@@ -586,6 +586,8 @@ void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
 	*toDelUsedSpace = toDelTotal - toDelAvailable;
 	*toDelTotalSpace = toDelTotal;
 	*toDelChunkCount = toDelChunks;
+
+	HddStats::gStatsLastReadUsedSpace = *usedSpace;
 }
 
 int hddGetLoadFactor() {
