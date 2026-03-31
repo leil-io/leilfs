@@ -115,3 +115,6 @@ CMakeUserPresets.json
 # Copilot user instructions #
 ##############
 .github/copilot-user.instructions.md
+
+# CLAUDE #
+.claude
