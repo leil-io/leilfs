@@ -8,7 +8,7 @@ test_filter="${1:-}"
 [ -n "${test_filter}" ] || test_filter="*"
 echo "test_filter: ${test_filter}"
 
-export SAUNAFS_ROOT=${WORKSPACE}/install/saunafs
+export SAUNAFS_ROOT=${WORKSPACE}/install/leilfs
 echo "SAUNAFS_ROOT: ${SAUNAFS_ROOT}"
 export TEST_OUTPUT_DIR=${WORKSPACE}/test_output
 echo "TEST_OUTPUT_DIR: ${TEST_OUTPUT_DIR}"

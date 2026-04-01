@@ -4,7 +4,7 @@ PROJECT_DIR="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/../..")"
 WORKSPACE=${WORKSPACE:-"${PROJECT_DIR}"}
 die() { echo "Error: $*" >&2; exit 1; }
 
-export SAUNAFS_ROOT=${WORKSPACE}/install/saunafs
+export SAUNAFS_ROOT=${WORKSPACE}/install/leilfs
 echo "SAUNAFS_ROOT: ${SAUNAFS_ROOT}"
 export TEST_OUTPUT_DIR=${WORKSPACE}/test_output
 echo "TEST_OUTPUT_DIR: ${TEST_OUTPUT_DIR}"
