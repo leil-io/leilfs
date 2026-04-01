@@ -1,12 +1,12 @@
 %define distro @DISTRO@
 
-Summary:        SaunaFS - distributed, fault tolerant file system
+Summary:        LeilFS - distributed, fault tolerant file system
 Name:           saunafs
 Version:        3.13.0
 Release:        0%{?distro}
 License:        GPL v3
 Group:          System Environment/Daemons
-URL:            http://www.saunafs.org/
+URL:            http://leil.io/
 Source:         saunafs-%{version}.tar.gz
 BuildRequires:  fuse-devel
 BuildRequires:  cmake
@@ -27,9 +27,9 @@ BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 %define         debug_package      %{nil}
 
 %description
-SaunaFS is an Open Source, easy to deploy and maintain, distributed,
+LeilFS is an Open Source, easy to deploy and maintain, distributed,
 fault tolerant file system for POSIX compliant OSes.
-http://saunafs.com
+http://leil.io
 
 # Packages
 ############################################################

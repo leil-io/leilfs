@@ -1,16 +1,16 @@
 <p align="center">
-    <img alt="SaunaFS" style="width: 50%; height: auto;" src="https://s3.diaway.com/files/saunafs/H_Logo_Colored_B_BG_WHITE.png"/>
+    <img alt="LeilFS" style="width: 50%; height: auto;" src="https://s3.diaway.com/files/leil/logo_png/LeilFS_positive.png"/>
 </p>
 <h3 align="center">A Distributed POSIX File System</h3>
 
-[![Slack](https://img.shields.io/badge/slack-join_us-olive?logo=slack&style=flat)](https://join.slack.com/t/saunafs/shared_invite/zt-2dktkrdwm-1BHZje_DMX3NQdxO9HoYog)
+[![Matrix](https://img.shields.io/badge/matrix-join_chat-0dbd8b?logo=matrix&style=flat)](https://matrix.to/#/#leil:matrix.org)
 
 ## About
 
-[SaunaFS](https://saunafs.com) is a free and open source, distributed POSIX file
+[LeilFS](https://leil.io) is a free and open source, distributed POSIX file
 system inspired by [Google File System](https://en.wikipedia.org/wiki/Google_File_System).
-SaunaFS is being developed and maintained by the team from [Leil
-Storage](https://leil.io). Designed to run on commodity hardware, SaunaFS is a
+LeilFS is being developed and maintained by the team from [Leil
+Storage](https://leil.io). Designed to run on commodity hardware, LeilFS is a
 high-performance, scalable, and reliable file system that provides high
 availability, data integrity, fault tolerance, and performance on par with local
 file systems. It is easy to deploy and manage, and it is designed to be used in
@@ -18,8 +18,8 @@ a wide range of applications, from small clusters to large data centers.
 
 ### About Leil Storage
 
-There are a few commercial products built on top of SaunaFS, Leil Storage being
-the flagship product. Leil Storage = SaunaFS + [HM-SMR drives
+There are a few commercial products built on top of LeilFS, Leil Storage being
+the flagship product. Leil Storage = LeilFS + [HM-SMR drives
 support](https://leil.io/#whatishmsmr) + [ICE](https://leil.io/#green) + Arctic
 Forest Concept.
 
@@ -65,15 +65,15 @@ great fit. Contact us to learn more.
 ### Installation
 
 Please refer to the [Installation Guide](INSTALL.md) for detailed instructions
-on how to install SaunaFS.
+on how to install LeilFS.
 
 ### Setup
 
-Check the [Quick Start guide](https://docs.saunafs.com/quick-start) for a
-simple setup of SaunaFS on a single machine.
+Check the [Quick Start guide](https://docs.leil.io/quick-start) for a
+simple setup of LeilFS on a single machine.
 
 After the Quick Start Guide, for an advanced setup, please refer to the
-[Administration Guide](https://docs.saunafs.com/administration-guide) as a starting
+[Administration Guide](https://docs.leil.io/administration-guide) as a starting
 place.
 
 ### Building from source
@@ -88,8 +88,8 @@ system to speed up the build process. Note that setting `-j` without nice can
 lead to the system running out of memory/hanging.
 
 ```bash
-git clone https://github.com/leil-io/saunafs.git
-cd saunafs
+git clone https://github.com/leil-io/leilfs.git
+cd leilfs
 mkdir build
 cd build
 cmake ..
@@ -100,27 +100,27 @@ nice -n 16 make -j$(nproc)
 
 There are 2 types of documentation available:
 
-* [Online documentation for a general overview](https://docs.saunafs.com/)
+* [Online documentation for a general overview](https://docs.leil.io/)
 * [Man pages for specific commands and service configuration](doc/)
 
 ## Contributing
 
 See the [Contributing Guide](CONTRIBUTING.md) for detailed information on how
-to contribute to SaunaFS.
+to contribute to LeilFS.
 
-The [Developer Guide](https://docs.saunafs.com/dev-guide) is a good starting
+The [Developer Guide](https://docs.leil.io/dev-guide) is a good starting
 point for how to setup a development environment and run tests.
 
 ## Contact us
 
-Join our [Slack community](https://join.slack.com/t/saunafs/shared_invite/zt-2dktkrdwm-1BHZje_DMX3NQdxO9HoYog) to connect with fellow
-SaunaFS enthusiasts, developers, and users. In our Slack channels, you can:
+Join our [community chat on Matrix](https://matrix.to/#/#leil:matrix.org) to connect with fellow
+LeilFS enthusiasts, developers, and users. In the chat, you can:
 
 - **Ask Questions**: Seek guidance, share your experiences, and ask questions
-related to SaunaFS.
+related to LeilFS.
 - **Discuss Ideas**: Engage in discussions about new features, improvements,
 and best practices.
-- **Receive Updates**: Stay informed about SaunaFS developments, releases, and
+- **Receive Updates**: Stay informed about LeilFS developments, releases, and
 events.
 
 Join us and be part of the discussion.
@@ -134,9 +134,9 @@ file](src/nfs-ganesha/LICENSE) for more info.
 ### Other ways to contact us
 | Method                     | Link                                                          |
 |----------------------------|---------------------------------------------------------------|
-| :email: Email              | [contact@saunafs.com](mailto:contact@saunafs.com?subject=RFI) |
-| :globe_with_meridians: Web | <https://saunafs.com>                                         |
+| :email: Email              | [contact@leil.io](mailto:contact@leil.io?subject=RFI) |
+| :globe_with_meridians: Web | <https://leil.io>                                         |
 
 Thank you for your help.
 
-The SaunaFS Team.
+The LeilFS Team.

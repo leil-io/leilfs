@@ -8,7 +8,7 @@
         {
             "name": "default",
             "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build/saunafs",
+            "binaryDir": "${sourceDir}/build/leilfs",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CODE_COVERAGE": "OFF",
@@ -39,8 +39,8 @@
         {
             "name": "windows-default",
             "generator": "MinGW Makefiles",
-            "binaryDir": "${sourceDir}/build/saunafs",
-            "installDir": "${sourceDir}/install/saunafs/",
+            "binaryDir": "${sourceDir}/build/leilfs",
+            "installDir": "${sourceDir}/install/leilfs/",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe",
@@ -79,8 +79,8 @@
         },
         {
             "name": "debug",
-            "binaryDir": "${sourceDir}/build/saunafs/debug",
-            "installDir": "${sourceDir}/install/saunafs/",
+            "binaryDir": "${sourceDir}/build/leilfs/debug",
+            "installDir": "${sourceDir}/install/leilfs/",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             },
@@ -88,8 +88,8 @@
         },
         {
             "name": "coverage",
-            "binaryDir": "${sourceDir}/build/saunafs/coverage",
-            "installDir": "${sourceDir}/install/saunafs/",
+            "binaryDir": "${sourceDir}/build/leilfs/coverage",
+            "installDir": "${sourceDir}/install/leilfs/",
             "cacheVariables": {
                 "CODE_COVERAGE": "ON"
             },
@@ -97,12 +97,12 @@
         },
         {
             "name": "test",
-            "installDir": "${sourceDir}/install/saunafs/",
+            "installDir": "${sourceDir}/install/leilfs/",
             "inherits": "default"
         },
         {
             "name": "release",
-            "binaryDir": "${sourceDir}/build/saunafs/release",
+            "binaryDir": "${sourceDir}/build/leilfs/release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_INSTALL_PREFIX": "/",
