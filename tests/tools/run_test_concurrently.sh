@@ -54,9 +54,9 @@ RUN_UNITTESTS=${RUN_UNITTESTS:-'false'}
 VALGRIND=${VALGRIND:-'No'}
 BUILD_ID=${BUILD_ID:-}
 DISPATCHER_URL=${DISPATCHER_URL:-}
-SAUNAFS_TESTS_PATH=${SAUNAFS_TESTS_PATH:-"${WORKSPACE}/install/saunafs/bin/saunafs-tests"}
+SAUNAFS_TESTS_PATH=${SAUNAFS_TESTS_PATH:-"${WORKSPACE}/install/leilfs/bin/saunafs-tests"}
 
-export SAUNAFS_ROOT=$WORKSPACE/install/saunafs
+export SAUNAFS_ROOT=$WORKSPACE/install/leilfs
 export TEST_OUTPUT_DIR=$WORKSPACE/test_output
 export TERM=xterm
 
