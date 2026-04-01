@@ -487,7 +487,7 @@ TEST(InputBufferTests, inputBufferGeneralTest) {
 #endif
 
 	std::mt19937_64 rng(time(0));
-	std::vector<uint16_t> offsets = {0, 1024, 0, 0};
+	std::vector<uint32_t> offsets = {0, 1024, 0, 0};
 	std::vector<int> dataSizes = {12345, 1024, SFSBLOCKSIZE, SFSBLOCKSIZE};
 	std::vector<uint8_t> buf;
 	for (auto &dataSize : dataSizes) {

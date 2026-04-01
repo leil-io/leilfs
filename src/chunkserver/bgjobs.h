@@ -565,7 +565,7 @@ uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_get_blocks(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
-                        uint32_t version, ChunkPartType chunkType, uint16_t *blocks,
+                        uint32_t version, ChunkPartType chunkType, uint32_t *blocks,
                         uint32_t listenerId = 0);
 
 /// @brief Adds a replicate job to the JobPool.

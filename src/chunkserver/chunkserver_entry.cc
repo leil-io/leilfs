@@ -58,8 +58,8 @@ static constexpr uint32_t kMaxPacketSize = 100000 + SFSBLOCKSIZE;
 static constexpr uint8_t kConnectRetries = 10;
 
 ChunkserverEntry::ChunkserverEntry(int socket, ClientJobPool *workerJobPool,
-                                   uint16_t maxBlocksPerHddReadJob, uint16_t maxParallelHddReadJobs,
-                                   uint16_t maxBlocksPerHddWriteJob)
+                                   uint32_t maxBlocksPerHddReadJob, uint16_t maxParallelHddReadJobs,
+                                   uint32_t maxBlocksPerHddWriteJob)
     : workerJobPool(workerJobPool),
       sock(socket),
       maxBlocksPerHddWriteJob_(maxBlocksPerHddWriteJob) {
@@ -373,7 +373,7 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	TRACETHIS();
 	uint64_t opChunkId;
 	uint32_t writeId;
-	uint16_t blocknum;
+	uint32_t blocknum;
 	uint32_t opOffset;
 	uint32_t opSize;
 	uint32_t crc;

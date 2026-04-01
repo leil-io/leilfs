@@ -100,7 +100,7 @@ size_t CmrChunk::getHeaderSize() const {
 
 off_t CmrChunk::getCrcOffset() const { return kMaxSignatureBlockSize; }
 
-void CmrChunk::shrinkToBlocks(uint16_t newBlocks) { (void)newBlocks; }
+void CmrChunk::shrinkToBlocks(uint32_t newBlocks) { (void)newBlocks; }
 
 bool CmrChunk::isDirty() { return false; }
 

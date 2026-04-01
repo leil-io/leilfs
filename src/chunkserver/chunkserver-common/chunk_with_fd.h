@@ -81,7 +81,7 @@ public:
 	                                       bool isForMetadata) const override;
 
 	/// Returns the offset in the data file for the requested blockNumber.
-	off_t getBlockOffset(uint16_t blockNumber) const override;
+	off_t getBlockOffset(uint32_t blockNumber) const override;
 	/// Returns the size of the data file for the given blockCount.
 	off_t getFileSizeFromBlockCount(uint32_t blockCount) const override;
 	/// Returns true if the data file size is valid for the given fileSize.
@@ -105,9 +105,9 @@ public:
 	ChunkPartType type() const override;
 
 	/// Returns the number of blocks in the Chunk.
-	uint16_t blocks() const override;
+	uint32_t blocks() const override;
 	/// Sets the number of blocks in the Chunk.
-	void setBlocks(uint16_t newBlocks) override;
+	void setBlocks(uint32_t newBlocks) override;
 
 	/// Returns the Chunk id.
 	uint64_t id() const override;
@@ -166,10 +166,10 @@ public:
 	void setRefCount(uint16_t newRefCount) override;
 
 	/// Returns the number of blocks expected to be read next.
-	uint16_t blockExpectedToBeReadNext() const override;
+	uint32_t blockExpectedToBeReadNext() const override;
 	/// Sets the number of blocks expected to be read next.
 	void setBlockExpectedToBeReadNext(
-	    uint16_t newBlockExpectedToBeReadNext) override;
+	    uint32_t newBlockExpectedToBeReadNext) override;
 
 private:
 	/// The pointer to the condition variable on which threads wait until this
@@ -187,9 +187,9 @@ private:
 	ChunkPartType type_;         ///< The type of the chunk (ec:5, xor:2, etc.).
 	int32_t metaFD_ = -1;        ///< Metadata file descriptor
 	int32_t dataFD_ = -1;        ///< Data file descriptor
-	uint16_t blocks_ = 0;        ///< Number of blocks in the chunk
+	uint32_t blocks_ = 0;        ///< Number of blocks in the chunk
 	uint16_t refCount_ = 0;      ///< Used to properly release the chunk
-	uint16_t blockExpectedToBeReadNext_ = 0;  ///< Read ahead helper
+	uint32_t blockExpectedToBeReadNext_ = 0;  ///< Read ahead helper
 	uint8_t validAttr_ = 0;   ///< Tells if the attributes were recently updated
 	uint8_t wasChanged_ = 0;  ///< Tells if it was changed from last flush
 	ChunkState state_;        ///< The state of the chunk

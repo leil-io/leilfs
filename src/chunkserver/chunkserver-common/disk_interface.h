@@ -142,8 +142,8 @@ public:
 
 	/// Sets the number of blocks for \a chunk from \a originalBlocks to \a
 	/// newBlocks.
-	virtual void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-	                            uint16_t newBlocks) = 0;
+	virtual void setChunkBlocks(IChunk *chunk, uint32_t originalBlocks,
+	                            uint32_t newBlocks) = 0;
 
 	/// Defragments or moves the given Chunk if needed.
 	/// If this type of this does not support Chunk fragmentation, an empty
@@ -193,7 +193,7 @@ public:
 
 	/// Reads ahead blockCount blocks from firstBlock in an attempt to
 	/// improve the performance of next reads.
-	virtual void prefetchChunkBlocks(IChunk &chunk, uint16_t firstBlock,
+	virtual void prefetchChunkBlocks(IChunk &chunk, uint32_t firstBlock,
 	                                 uint32_t blockCount) = 0;
 
 	/// Reads the CRC and the data for exactly one block
@@ -201,7 +201,7 @@ public:
 	/// Assumes blockBuffer can fit both, data and CRC.
 	/// Returns the number of read bytes on success, -1 on failure.
 	virtual int readBlockAndCrc(IChunk *chunk, uint8_t *blockBuffer,
-	                            uint8_t *crcData, uint16_t blocknum,
+	                            uint8_t *crcData, uint32_t blocknum,
 	                            const char *errorMsg) = 0;
 
 	/// Overwrites the Chunk version in the metadata file and in memory.
@@ -212,26 +212,26 @@ public:
 	/// \returns number of written bytes on success or the negative of the error code on failure.
 	virtual int writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
 	                                    uint32_t offsetInBlock, uint32_t size,
-	                                    const uint8_t *crcBuff, uint8_t *crcData, uint16_t blockNum,
+	                                    const uint8_t *crcBuff, uint8_t *crcData, uint32_t blockNum,
 	                                    bool isNewBlock, const char *errorMsg) = 0;
 	/// Writes the data and the CRC for a number of full blocks
 	/// \returns number of written bytes on success or the negative of the error code on failure.
 	/// If the written bytes are less than expected, it is IO error.
-	virtual int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-	                                   uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+	virtual int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint32_t startBlock,
+	                                   uint32_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
 	                                   bool areNewBlocks, const char *errorMsg) = 0;
 
 	/// Writes a Chunk block
 	/// \return SAUNAFS_STATUS_OK on success or specific SAUNAFS_ error code
 	virtual int writeChunkBlock(IChunk *chunk, uint32_t version,
-	                            uint16_t blocknum, uint32_t offsetInBlock,
+	                            uint32_t blocknum, uint32_t offsetInBlock,
 	                            uint32_t size, uint32_t crc, uint8_t *crcData,
 	                            const uint8_t *buffer, bool isFromReplication = false) = 0;
 	/// Writes `numBlocks` full Chunk blocks
 	/// \returns number of written bytes on success or the negative of the error code on failure.
 	/// If the written bytes are less than expected, it is IO error.
-	virtual int writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock,
-	                            uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
+	virtual int writeChunkBlocks(IChunk *chunk, uint32_t version, uint32_t startBlock,
+	                            uint32_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
 	                            const uint8_t *buffer, bool isFromReplication = false) = 0;
 
 	/// Writes the Chunk header into the device

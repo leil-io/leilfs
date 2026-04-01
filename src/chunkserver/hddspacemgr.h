@@ -62,23 +62,23 @@ int hddOpen(uint64_t chunkId, ChunkPartType chunkType);
 int hddClose(IChunk *chunk);
 int hddClose(uint64_t chunkId, ChunkPartType chunkType);
 int hddPrefetchBlocks(uint64_t chunkId, ChunkPartType chunkType,
-                      uint32_t firstBlock, uint16_t numberOfBlocks);
+                      uint32_t firstBlock, uint32_t numberOfBlocks);
 int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
             uint32_t offset, uint32_t size,
             [[maybe_unused]] uint32_t maxBlocksToBeReadBehind,
             [[maybe_unused]] uint32_t blocksToBeReadAhead,
             OutputBuffer *outputBuffer);
 int hddChunkWriteBlock(uint64_t chunkId, uint32_t version,
-                       ChunkPartType chunkType, uint16_t blocknum,
+                       ChunkPartType chunkType, uint32_t blocknum,
                        uint32_t offset, uint32_t size, uint32_t crc,
                        const uint8_t *buffer);
 int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
-                            uint16_t startBlock, uint16_t numBlocks, std::vector<uint32_t> &crcList,
+                            uint32_t startBlock, uint32_t numBlocks, std::vector<uint32_t> &crcList,
                             const uint8_t *buffer);
 
 /* chunk info */
 int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
-                              uint32_t version, uint16_t *blocks);
+                              uint32_t version, uint32_t *blocks);
 
 /* chunk operations */
 int hddTruncate(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,

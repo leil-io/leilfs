@@ -243,7 +243,7 @@ void ReadHighLevelOp::readContinue(uint16_t callMaxParallelHddReadJobs) {
 			const uint32_t thisPartOffset = offset_ % SFSBLOCKSIZE;
 			const uint32_t thisPartSize = std::min<uint32_t>(
 			    totalRequestSize, maxBlocksPerHddReadJob_ * SFSBLOCKSIZE - thisPartOffset);
-			const uint16_t totalRequestBlocks =
+			const uint32_t totalRequestBlocks =
 			    (totalRequestSize + thisPartOffset + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE;
 
 			auto buffer = prepareReadDataPacket(readDataPrefix, thisPartSize, thisPartOffset);
@@ -456,7 +456,7 @@ void WriteHighLevelOp::writeFinishedCallback(uint8_t status, void * /*entry*/) {
 	}
 
 	auto statusWithWriteIdToReply = writeDataBuffers_.front()->getStatuses();
-	uint16_t alreadyRepliedBlocks = writeDataBuffers_.front()->repliedBlocks;
+	uint32_t alreadyRepliedBlocks = writeDataBuffers_.front()->repliedBlocks;
 
 	if (alreadyRepliedBlocks > 0) {
 		// This means that this write data buffer has already been replied to for some blocks, so we
@@ -520,7 +520,7 @@ void WriteHighLevelOp::prepareInputBufferForWrite(bool isForward) {
 		    nextInputBufferBlockCount_);
 
 		nextInputBufferBlockCount_ =
-		    std::min<uint16_t>(nextInputBufferBlockCount_ * 2, maxBlocksPerHddWriteJob_);
+		    std::min<uint32_t>(nextInputBufferBlockCount_ * 2, maxBlocksPerHddWriteJob_);
 	}
 
 	inputBuffer_->addNewWriteOperation();
@@ -546,7 +546,7 @@ void WriteHighLevelOp::prepareForNewWriteData(bool mustForward, uint8_t *headerB
 	}
 }
 
-void WriteHighLevelOp::processWriteDataBlock(uint16_t blocknum, uint32_t opOffset, uint32_t opSize,
+void WriteHighLevelOp::processWriteDataBlock(uint32_t blocknum, uint32_t opOffset, uint32_t opSize,
                                              uint32_t writeId, uint32_t crc) {
 	inputBuffer_->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
 	tryInstantReply();

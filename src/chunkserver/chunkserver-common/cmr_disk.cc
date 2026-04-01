@@ -181,8 +181,8 @@ IChunk *CmrDisk::instantiateNewConcreteChunk(uint64_t chunkId,
 	return chunk;
 }
 
-void CmrDisk::setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-                             uint16_t newBlocks) {
+void CmrDisk::setChunkBlocks(IChunk *chunk, uint32_t originalBlocks,
+                             uint32_t newBlocks) {
 	(void)originalBlocks;
 	chunk->setBlocks(newBlocks);
 }
@@ -276,7 +276,7 @@ ssize_t CmrDisk::preadData(IChunk *chunk, uint8_t *blockBuffer, uint64_t size,
 	return ::pread(chunk->dataFD(), blockBuffer, size, offset);
 }
 
-void CmrDisk::prefetchChunkBlocks(IChunk &chunk, uint16_t firstBlock,
+void CmrDisk::prefetchChunkBlocks(IChunk &chunk, uint32_t firstBlock,
                                   uint32_t blockCount) {
 	if (blockCount > 0) {
 		auto blockSize = SFSBLOCKSIZE;
@@ -293,7 +293,7 @@ void CmrDisk::prefetchChunkBlocks(IChunk &chunk, uint16_t firstBlock,
 }
 
 int CmrDisk::readBlockAndCrc(IChunk *chunk, uint8_t *blockBuffer,
-                             uint8_t *crcData, uint16_t blocknum,
+                             uint8_t *crcData, uint32_t blocknum,
                              const char *errorMsg) {
 	assert(chunk);
 
@@ -345,7 +345,7 @@ int CmrDisk::overwriteChunkVersion(IChunk *chunk, uint32_t newVersion) {
 int CmrDisk::writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
                                      uint32_t offsetInBlock, uint32_t size,
                                      const uint8_t *crcBuff, uint8_t *crcData,
-                                     uint16_t blockNum, bool isNewBlock,
+                                     uint32_t blockNum, bool isNewBlock,
                                      const char *errorMsg) {
 	(void)isNewBlock;
 
@@ -373,8 +373,8 @@ int CmrDisk::writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
 	return size;
 }
 
-int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-                                    uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint32_t startBlock,
+                                    uint32_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
                                     bool areNewBlocks, const char *errorMsg) {
 	(void)areNewBlocks;
 
@@ -454,7 +454,7 @@ void CmrDisk::punchHoles(IChunk *chunk, const uint8_t *buffer, uint32_t offset,
 #endif
 }
 
-int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
+int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint32_t blocknum,
                              uint32_t offsetInBlock, uint32_t size,
                              uint32_t crc, uint8_t *crcData,
                              const uint8_t *buffer, bool isFromReplication) {
@@ -488,12 +488,12 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 		std::array<uint8_t, kCrcSize> crcBuff{};
 
 		if (blocknum >= chunk->blocks()) {
-			const uint16_t prevBlocks = chunk->blocks();
+			const uint32_t prevBlocks = chunk->blocks();
 			chunk->setBlocks(blocknum + 1);
 			isNewBlock = true;
 
 			// Fill new blocks' CRCs with empty data
-			for (uint16_t i = prevBlocks; i < blocknum; i++) {
+			for (uint32_t i = prevBlocks; i < blocknum; i++) {
 				memcpy(crcData + i * kCrcSize, &gEmptyBlockCrc, kCrcSize);
 			}
 		}
@@ -560,12 +560,12 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 				return SAUNAFS_ERROR_IO;
 			}
 
-			const uint16_t prevBlocks = chunk->blocks();
+			const uint32_t prevBlocks = chunk->blocks();
 			chunk->setBlocks(blocknum + 1);
 			isNewBlock = true;
 
 			// Fill new blocks' CRCs with empty data
-			for (uint16_t i = prevBlocks; i < blocknum; i++) {
+			for (uint32_t i = prevBlocks; i < blocknum; i++) {
 				memcpy(crcData + i * kCrcSize, &gEmptyBlockCrc, kCrcSize);
 			}
 
@@ -601,8 +601,8 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 	return SAUNAFS_STATUS_OK;
 }
 
-int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock,
-                              uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
+int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint32_t startBlock,
+                              uint32_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
                               const uint8_t *buffer, bool isFromReplication) {
 	assert(chunk);
 	LOG_AVG_TILL_END_OF_SCOPE0("writeChunkBlocks");
@@ -619,7 +619,7 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 	}
 
 	if (gCheckCrcWhenWriting && !isFromReplication) {
-		for (uint16_t i = 0; i < numBlocks; ++i) {
+		for (uint32_t i = 0; i < numBlocks; ++i) {
 			if (crc[i] != mycrc32(0, buffer + i * SFSBLOCKSIZE, SFSBLOCKSIZE)) {
 				return -SAUNAFS_ERROR_CRC;
 			}
@@ -636,10 +636,10 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 		put32bit(&crcBuffPointer, crcValue);
 	}
 
-	const uint16_t prevBlocks = chunk->blocks();
+	const uint32_t prevBlocks = chunk->blocks();
 	if (startBlock >= chunk->blocks()) {
 		// Fill new blocks' CRCs with empty data
-		for (uint16_t i = prevBlocks; i < startBlock; i++) {
+		for (uint32_t i = prevBlocks; i < startBlock; i++) {
 			memcpy(crcData + i * kCrcSize, &gEmptyBlockCrc, kCrcSize);
 		}
 	}

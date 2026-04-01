@@ -144,8 +144,8 @@ struct ChunkserverEntry {
 	uint32_t chunkVersion = 0;      ///< R+W
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();  // R
 
-	ChunkserverEntry(int socket, ClientJobPool *workerJobPool, uint16_t maxBlocksPerHddReadJob,
-	                 uint16_t maxParallelHddReadJobs, uint16_t maxBlocksPerHddWriteJob);
+	ChunkserverEntry(int socket, ClientJobPool *workerJobPool, uint32_t maxBlocksPerHddReadJob,
+	                 uint16_t maxParallelHddReadJobs, uint32_t maxBlocksPerHddWriteJob);
 
 	// Disallow copying and moving to avoid misuse.
 	ChunkserverEntry(const ChunkserverEntry &) = delete;
@@ -381,7 +381,7 @@ private:
 	WriteHighLevelOp *getActiveWriteHLO(const char *callerName);
 
 	/// Max blocks per HDD write job
-	uint16_t maxBlocksPerHddWriteJob_;
+	uint32_t maxBlocksPerHddWriteJob_;
 	/// Write operation related data
 	std::list<std::unique_ptr<WriteHighLevelOp>> writeHLOs_;
 	/// Read operation related data

@@ -121,7 +121,7 @@ public:
 
 	/// Returns the offset in the data file for the requested blockNumber. This
 	/// value is usually blockNumber times SFSBLOCKSIZE.
-	virtual off_t getBlockOffset(uint16_t blockNumber) const = 0;
+	virtual off_t getBlockOffset(uint32_t blockNumber) const = 0;
 
 	/// Returns the size of the data file for the given blockCount. Usually,
 	/// this value is blockCount times SFSBLOCKSIZE.
@@ -163,7 +163,7 @@ public:
 
 	/// Shrink the chunk to the given number of blocks. This is used when
 	/// truncating a file.
-	virtual void shrinkToBlocks(uint16_t newBlocks) = 0;
+	virtual void shrinkToBlocks(uint32_t newBlocks) = 0;
 
 	/// Returns true if the Chunk is in an state considered as dirty.
 	/// For example the Chunk is fragmented and needs defragmentation.
@@ -209,9 +209,9 @@ public:
 	virtual void setWasChanged(uint8_t newWasChanged) = 0;
 
 	/// Returns the number of blocks in the Chunk.
-	virtual uint16_t blocks() const = 0;
+	virtual uint32_t blocks() const = 0;
 	/// Sets the number of blocks in the Chunk.
-	virtual void setBlocks(uint16_t newBlocks) = 0;
+	virtual void setBlocks(uint32_t newBlocks) = 0;
 
 	/// Returns Disk where the Chunk resides.
 	virtual IDisk *owner() const = 0;
@@ -244,8 +244,8 @@ public:
 
 	/// Returns the number of blocks expected to be read next. This is used to
 	/// improve the read performance by reading ahead some blocks.
-	virtual uint16_t blockExpectedToBeReadNext() const = 0;
+	virtual uint32_t blockExpectedToBeReadNext() const = 0;
 	/// Sets the new block expected to be read.
 	virtual void setBlockExpectedToBeReadNext(
-	    uint16_t newBlockExpectedToBeReadNext) = 0;
+	    uint32_t newBlockExpectedToBeReadNext) = 0;
 };

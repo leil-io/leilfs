@@ -64,7 +64,7 @@ public:
 
 	/// Shrink the chunk to the given number of blocks. For CmrChunk, this
 	/// function does nothing, but we need the function in the interface.
-	void shrinkToBlocks(uint16_t newBlocks) override;
+	void shrinkToBlocks(uint32_t newBlocks) override;
 
 	/// Returns true if the Chunk is in an state considered as dirty. For
 	/// CmrChunk, this function always returns false because CmrChunk doesn't

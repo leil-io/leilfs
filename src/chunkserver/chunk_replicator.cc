@@ -75,7 +75,7 @@ uint32_t ChunkReplicator::getChunkBlocks(uint64_t chunk_id, uint32_t chunk_versi
 	uint64_t rx_chunk_id;
 	uint32_t rx_chunk_version;
 	ChunkPartType rx_chunk_type = slice_traits::standard::ChunkPartType();
-	uint16_t nr_of_blocks;
+	uint32_t nr_of_blocks;
 	uint8_t status;
 	if (header.type == SAU_CSTOCS_GET_CHUNK_BLOCKS_STATUS) {
 		PacketVersion v;
@@ -183,7 +183,7 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 				crcData.push_back(crc);
 			}
 			fileCreator.write(static_cast<const uint8_t *>(buffer->data()),
-			                  static_cast<uint16_t>(firstBlock), static_cast<uint16_t>(nrOfBlocks),
+			                  static_cast<uint32_t>(firstBlock), static_cast<uint32_t>(nrOfBlocks),
 			                  crcData);
 		}
 		getReplicateBuffersPool().put(std::move(buffer));

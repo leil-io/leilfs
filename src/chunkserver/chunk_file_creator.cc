@@ -70,7 +70,7 @@ void ChunkFileCreator::create() {
 	}
 }
 
-void ChunkFileCreator::write(const uint8_t *buffer, uint16_t startBlock, uint16_t numBlocks,
+void ChunkFileCreator::write(const uint8_t *buffer, uint32_t startBlock, uint32_t numBlocks,
                              std::vector<uint32_t> &crc) {
 	assert(is_open_ && !is_commited_ && chunk_);
 	auto *crcData = gOpenChunks.getResource(chunk_->metaFD()).crcData();

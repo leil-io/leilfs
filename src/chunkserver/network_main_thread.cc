@@ -104,11 +104,11 @@ void loadReloadableSettings() {
 	    SFSBLOCKSIZE;
 	modifyAvailableWriteBufferingBlocks(blocksDiff);
 
-	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint16_t>(
+	gMaxBlocksPerHddWriteJob = cfg_get_minmaxvalue<uint32_t>(
 	    "MAX_BLOCKS_PER_HDD_WRITE_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddWriteJob,
 	    NetworkWorkerThread::kMinBlocksPerHddWriteJob,
 	    NetworkWorkerThread::kMaxBlocksPerHddWriteJob);
-	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint16_t>(
+	gMaxBlocksPerHddReadJob = cfg_get_minvalue<uint32_t>(
 	    "MAX_BLOCKS_PER_HDD_READ_JOB", NetworkWorkerThread::kDefaultMaxBlocksPerHddReadJob, 1);
 	gMaxParallelHddReadJobsPerCsEntry = cfg_get_minvalue<uint16_t>(
 	    "MAX_PARALLEL_HDD_READ_JOBS_PER_CS_ENTRY",

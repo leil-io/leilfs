@@ -37,7 +37,7 @@ public:
 	~ChunkFileCreator();
 
 	void create();
-	void write(const uint8_t *buffer, uint16_t startBlock, uint16_t numBlocks,
+	void write(const uint8_t *buffer, uint32_t startBlock, uint32_t numBlocks,
 	           std::vector<uint32_t> &crc);
 	void commit();
 

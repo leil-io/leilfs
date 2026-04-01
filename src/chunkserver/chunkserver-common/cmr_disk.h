@@ -83,8 +83,8 @@ public:
 	IChunk *instantiateNewConcreteChunk(uint64_t chunkId,
 	                                    ChunkPartType type) override;
 
-	void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-	                    uint16_t newBlocks) override;
+	void setChunkBlocks(IChunk *chunk, uint32_t originalBlocks,
+	                    uint32_t newBlocks) override;
 
 	int defragmentOrMoveChunk(IChunk *chunk, uint8_t *crcData) override;
 
@@ -110,7 +110,7 @@ public:
 
 	/// Reads ahead blockCount blocks from firstBlock in an attempt to
 	/// improve the performance of next reads.
-	void prefetchChunkBlocks(IChunk &chunk, uint16_t firstBlock,
+	void prefetchChunkBlocks(IChunk &chunk, uint32_t firstBlock,
 	                         uint32_t blockCount) override;
 
 	/// Reads the CRC and the data for exactly one block
@@ -118,7 +118,7 @@ public:
 	/// Assumes blockBuffer can fit both, data and CRC.
 	/// Returns the number of read bytes on success or negative number if fails.
 	int readBlockAndCrc(IChunk *chunk, uint8_t *blockBuffer, uint8_t *crcData,
-	                    uint16_t blocknum, const char *errorMsg) override;
+	                    uint32_t blocknum, const char *errorMsg) override;
 
 	/// Overwrites the Chunk version in the metadata file and in memory
 	///
@@ -129,11 +129,11 @@ public:
 	int writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
 	                            uint32_t offsetInBlock, uint32_t size,
 	                            const uint8_t *crcBuff, uint8_t *crcData,
-	                            uint16_t blockNum, bool isNewBlock,
+	                            uint32_t blockNum, bool isNewBlock,
 	                            const char *errorMsg) override;
 	/// Writes the data and the CRC for a number of full blocks
-	int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-	                           uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+	int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint32_t startBlock,
+	                           uint32_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
 	                           bool areNewBlocks, const char *errorMsg) override;
 
 	/// If supported, deallocates space (creates a hole) in the byte range
@@ -145,11 +145,11 @@ public:
 	                uint32_t size);
 
 	/// Writes a Chunk block
-	int writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum, uint32_t offsetInBlock,
+	int writeChunkBlock(IChunk *chunk, uint32_t version, uint32_t blocknum, uint32_t offsetInBlock,
 	                    uint32_t size, uint32_t crc, uint8_t *crcData, const uint8_t *buffer,
 	                    bool isFromReplication = false) override;
 	/// Writes `numBlocks` full Chunk blocks
-	int writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock, uint16_t numBlocks,
+	int writeChunkBlocks(IChunk *chunk, uint32_t version, uint32_t startBlock, uint32_t numBlocks,
 	                     std::vector<uint32_t> &crc, uint8_t *crcData, const uint8_t *buffer,
 	                    bool isFromReplication = false) override;
 

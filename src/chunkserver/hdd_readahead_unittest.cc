@@ -23,7 +23,7 @@
 
 #include <gtest/gtest.h>
 
-void testHDDReadAhead(uint32_t actual_kB, uint16_t expected_blocks) {
+void testHDDReadAhead(uint32_t actual_kB, uint32_t expected_blocks) {
 	SCOPED_TRACE("Testing actual_kB = " + std::to_string(actual_kB));
 	{
 		HDDReadAhead d;

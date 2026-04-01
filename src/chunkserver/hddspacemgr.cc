@@ -705,11 +705,11 @@ void hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(uint64_t chunkId, Chunk
 	auto &inputBufferList = it->second;
 
 	for (const auto &[inputBuffer, writeInfoVec] : inputBufferList) {
-		uint16_t repliedBlocks = inputBuffer->repliedBlocks;
+		uint32_t repliedBlocks = inputBuffer->repliedBlocks;
 
 		// For each block that was replied to the client, check if it overlaps with the
 		// requested range
-		for (uint16_t blockNum = 0; blockNum < repliedBlocks; ++blockNum) {
+		for (uint32_t blockNum = 0; blockNum < repliedBlocks; ++blockNum) {
 			auto &writeInfo = writeInfoVec[blockNum];
 			uint32_t opOffset = writeInfo.offset + writeInfo.blockNum * SFSBLOCKSIZE;
 			uint32_t opEndOffset = opOffset + writeInfo.size;
@@ -765,7 +765,7 @@ int hddClose(uint64_t chunkId, ChunkPartType chunkType) {
 	return status;
 }
 
-int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber, OutputBuffer *outputBuffer,
+int hddReadCrcAndBlock(IChunk *chunk, uint32_t blockNumber, OutputBuffer *outputBuffer,
                        bool isDataPreviouslyRead) {
 	LOG_AVG_TILL_END_OF_SCOPE0("hddReadCrcAndBlock");
 	assert(chunk);
@@ -814,7 +814,7 @@ int hddReadCrcAndBlock(IChunk *chunk, uint16_t blockNumber, OutputBuffer *output
 }
 
 int hddPrefetchBlocks(uint64_t chunkId, ChunkPartType chunkType,
-                      uint32_t firstBlock, uint16_t numberOfBlocks) {
+                      uint32_t firstBlock, uint32_t numberOfBlocks) {
 	LOG_AVG_TILL_END_OF_SCOPE0("hddPrefetchBlocks");
 
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
@@ -850,7 +850,7 @@ int hddPrefetchBlocks(uint64_t chunkId, ChunkPartType chunkType,
 	return status;
 }
 
-static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
+static void hddReadAheadAndBehind(IChunk *chunk, uint32_t block,
                                   uint32_t maxBlocksToBeReadBehind,
                                   uint32_t blocksToBeReadAhead) {
 	// Ask OS for an appropriate read ahead and (if requested and needed)
@@ -858,7 +858,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 	if (chunk->blockExpectedToBeReadNext() < block &&
 	    maxBlocksToBeReadBehind > 0) {
 		// We were asked to read some possibly skipped blocks.
-		uint16_t firstBlockToRead = chunk->blockExpectedToBeReadNext();
+		uint32_t firstBlockToRead = chunk->blockExpectedToBeReadNext();
 		// Try to prevent all possible overflows:
 		if (firstBlockToRead + maxBlocksToBeReadBehind < block) {
 			firstBlockToRead = block - maxBlocksToBeReadBehind;
@@ -868,7 +868,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 		    *chunk, firstBlockToRead,
 		    blocksToBeReadAhead + block - firstBlockToRead);
 		auto buffer = getReadOutputBufferPool().get(kIgnoreHeaderSize, block - firstBlockToRead);
-		for (uint16_t b = firstBlockToRead; b < block; ++b) {
+		for (uint32_t b = firstBlockToRead; b < block; ++b) {
 			hddReadCrcAndBlock(chunk, b, buffer.get(), false);
 		}
 		getReadOutputBufferPool().put(std::move(buffer));
@@ -877,7 +877,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 	}
 
 	chunk->setBlockExpectedToBeReadNext(
-	    std::max<uint16_t>(block + 1, chunk->blockExpectedToBeReadNext()));
+	    std::max<uint32_t>(block + 1, chunk->blockExpectedToBeReadNext()));
 }
 
 /**
@@ -892,7 +892,7 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
                     from the configuration. This is needed to keep integrity of
                     partial reads.
 */
-int hddCheckCrcForFullBlock(IChunk *chunk, uint16_t block, OutputBuffer *outputBuffer,
+int hddCheckCrcForFullBlock(IChunk *chunk, uint32_t block, OutputBuffer *outputBuffer,
                             uint32_t offsetInBlockBuffer, bool forceCheck) {
 	if (!forceCheck && (!gCheckCrcWhenReading || block >= chunk->blocks())) {
 		return SAUNAFS_STATUS_OK;
@@ -922,7 +922,7 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 
 	auto originalOffset = offset;
 	auto originalSize = size;
-	uint16_t block = offset / SFSBLOCKSIZE;
+	uint32_t block = offset / SFSBLOCKSIZE;
 
 	safs::log_debug("hddRead: chunkId: {}, block: {}, offset: {}, size: {}",
 	                chunkId, block, offset, size);
@@ -963,8 +963,8 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 			offsetWithinBlock = 0;
 		}
 
-		uint16_t numBlocks = size / SFSBLOCKSIZE;
-		uint16_t initialBlock = block;
+		uint32_t numBlocks = size / SFSBLOCKSIZE;
+		uint32_t initialBlock = block;
 
 		if (initialBlock < chunk->blocks()) {
 			uint32_t bytesToBeRead = std::min<uint32_t>(
@@ -986,8 +986,8 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 		// The data was already read in the previous step as a big block
 		constexpr bool dataWasPreviouslyRead = true;
 
-		for (uint16_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
-			uint16_t blockNumber = initialBlock + i;
+		for (uint32_t i = 0; i < numBlocks && status == SAUNAFS_STATUS_OK; i++) {
+			uint32_t blockNumber = initialBlock + i;
 			status = hddReadCrcAndBlock(chunk, blockNumber, outputBuffer, dataWasPreviouslyRead);
 
 			if (status == SAUNAFS_STATUS_OK) {
@@ -1059,7 +1059,7 @@ void hddRecomputeCrcIfBlockEmpty(uint8_t *block, uint8_t *crcBuffer) {
 }
 
 int hddChunkWriteBlock(uint64_t chunkId, uint32_t version,
-                       ChunkPartType chunkType, uint16_t blocknum,
+                       ChunkPartType chunkType, uint32_t blocknum,
                        uint32_t offset, uint32_t size, uint32_t crc,
                        const uint8_t *buffer) {
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
@@ -1078,7 +1078,7 @@ int hddChunkWriteBlock(uint64_t chunkId, uint32_t version,
 }
 
 int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
-                            uint16_t startBlock, uint16_t numBlocks, std::vector<uint32_t> &crcList,
+                            uint32_t startBlock, uint32_t numBlocks, std::vector<uint32_t> &crcList,
                             const uint8_t *buffer) {
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 
@@ -1099,7 +1099,7 @@ int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType ch
 /* chunk info */
 
 int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
-                              uint32_t version, uint16_t *blocks) {
+                              uint32_t version, uint32_t *blocks) {
 	TRACETHIS1(chunkId);
 
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
@@ -1213,7 +1213,7 @@ int hddInternalCreate(uint64_t chunkId, uint32_t version,
 static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
                                 ChunkPartType chunkType) {
 	TRACETHIS2(chunkId, version);
-	uint16_t block;
+	uint32_t block;
 
 	HddStats::gStatsOperationsTest++;
 
@@ -1295,7 +1295,7 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
                                 ChunkPartType chunkType, uint64_t copyChunkId,
                                 uint32_t copyChunkVersion) {
 	TRACETHIS();
-	uint16_t block;
+	uint32_t block;
 	int32_t retSize;
 	int status;
 	IChunk *dupChunk, *originalChunk;
@@ -1690,7 +1690,7 @@ static int hddInternalTruncate(uint64_t chunkId, ChunkPartType chunkType,
 
 		// remove unneeded blocks
 		if (disk->isZonedDevice()) {
-			chunk->shrinkToBlocks(static_cast<uint16_t>(blocks));
+			chunk->shrinkToBlocks(static_cast<uint32_t>(blocks));
 		}
 
 		if (lastPartialBlockSize > 0) {
@@ -1796,8 +1796,8 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
                                         uint32_t copyChunkVersion,
                                         uint32_t copyChunkLength) {
 	TRACETHIS();
-	uint16_t block;
-	uint16_t blocks;
+	uint32_t block;
+	uint32_t blocks;
 	int32_t retSize;
 	int status;
 	IChunk *dupChunk, *originalChunk;

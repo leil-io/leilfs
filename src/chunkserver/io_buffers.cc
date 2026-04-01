@@ -321,7 +321,7 @@ void InputBuffer::addNewWriteOperation() {
 	isBeingUpdated_ = true;
 }
 
-void InputBuffer::setupLastWriteOperation(uint16_t blockNum, uint32_t offset, uint32_t size,
+void InputBuffer::setupLastWriteOperation(uint32_t blockNum, uint32_t offset, uint32_t size,
                                           uint32_t writeId, uint32_t crc) {
 	if (writeInfo_.empty()) {
 		safs::log_warn("({}) Called without operations. Adding an empty write operation.",

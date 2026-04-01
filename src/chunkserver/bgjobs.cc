@@ -717,7 +717,7 @@ uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 					}
 				} else {
 					// All blocks written successfully
-					for (uint16_t i = 0; i < numBlocks; ++i) {
+					for (uint32_t i = 0; i < numBlocks; ++i) {
 						statuses.push_back(SAUNAFS_STATUS_OK);
 					}
 				}
@@ -752,7 +752,7 @@ uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 }
 
 uint32_t job_get_blocks(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
-                        uint32_t version, ChunkPartType chunkType, uint16_t *blocks,
+                        uint32_t version, ChunkPartType chunkType, uint32_t *blocks,
                         uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddChunkGetNumberOfBlocks(chunkId, chunkType, version, blocks);

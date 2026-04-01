@@ -339,7 +339,7 @@ private:
 /// @brief Contains information about a write operation directly coming from a WRITE_DATA packet.
 /// This structure is used to store the information about the blocks to be written.
 struct WriteInfo {
-	uint16_t blockNum;  ///< The block number in the chunk.
+	uint32_t blockNum;  ///< The block number in the chunk.
 	uint32_t offset;    ///< The offset in the block where the data starts.
 	uint32_t size;      ///< The size of the data to be written.
 	uint32_t writeId;   ///< The write identifier from client.
@@ -354,8 +354,8 @@ struct WriteInfo {
 /// from the client. A set of full blocks can be written in one write operation and
 /// the partial blocks are written one-by-one.
 struct WriteOperation {
-	uint16_t startBlock;         ///< The start block number in the chunk.
-	uint16_t endBlock;           ///< The end block number in the chunk.
+	uint32_t startBlock;         ///< The start block number in the chunk.
+	uint32_t endBlock;           ///< The end block number in the chunk.
 	const uint8_t *buffer;       ///< The pointer to the data to be written.
 	uint32_t offset;             ///< The offset in the block where the data starts.
 	uint32_t size;               ///< The size of the data to be written.
@@ -452,7 +452,7 @@ public:
 	/// @param size The size of the data to be written.
 	/// @param writeId The write identifier from client.
 	/// @param crc The CRC of the block.
-	void setupLastWriteOperation(uint16_t blockNum, uint32_t offset, uint32_t size,
+	void setupLastWriteOperation(uint32_t blockNum, uint32_t offset, uint32_t size,
 	                             uint32_t writeId, uint32_t crc);
 
 	/// @brief Returns the write operations to be performed by the JobPool workers.
@@ -482,7 +482,7 @@ public:
 	bool isBeingUpdated() const;
 
 	/// @brief Number of blocks that have been replied to the client.
-	std::atomic<uint16_t> repliedBlocks{0};
+	std::atomic<uint32_t> repliedBlocks{0};
 
 	/// @brief Returns the current number of blocks in the buffer.
 	size_t currentBlocks() const { return writeInfo_.size(); }

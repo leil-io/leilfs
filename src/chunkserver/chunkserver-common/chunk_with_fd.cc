@@ -96,7 +96,7 @@ std::string FDChunk::generateFilenameForVersion(uint32_t _version,
 	return result.str();
 }
 
-off_t FDChunk::getBlockOffset(uint16_t blockNumber) const {
+off_t FDChunk::getBlockOffset(uint32_t blockNumber) const {
 	return blockNumber * SFSBLOCKSIZE;
 }
 
@@ -178,12 +178,12 @@ uint16_t FDChunk::refCount() const { return refCount_; }
 
 void FDChunk::setRefCount(uint16_t newRefCount) { refCount_ = newRefCount; }
 
-uint16_t FDChunk::blockExpectedToBeReadNext() const {
+uint32_t FDChunk::blockExpectedToBeReadNext() const {
 	return blockExpectedToBeReadNext_;
 }
 
 void FDChunk::setBlockExpectedToBeReadNext(
-    uint16_t newBlockExpectedToBeReadNext) {
+    uint32_t newBlockExpectedToBeReadNext) {
 	blockExpectedToBeReadNext_ = newBlockExpectedToBeReadNext;
 }
 
@@ -203,9 +203,9 @@ ChunkFormat FDChunk::chunkFormat() const { return ChunkFormat::SPLIT; }
 
 ChunkPartType FDChunk::type() const { return type_; }
 
-uint16_t FDChunk::blocks() const { return blocks_; }
+uint32_t FDChunk::blocks() const { return blocks_; }
 
-void FDChunk::setBlocks(uint16_t newBlocks) { blocks_ = newBlocks; }
+void FDChunk::setBlocks(uint32_t newBlocks) { blocks_ = newBlocks; }
 
 uint64_t FDChunk::id() const { return id_; }
 

@@ -120,14 +120,14 @@ protected:
 	/// Callback for chunk block retrieval completion.
 	void getChunkBlocksCallback(uint8_t status, void * /*entry*/);
 
-	uint16_t getBlocksJobResult_ = 0;  ///< Result of the get blocks job
+	uint32_t getBlocksJobResult_ = 0;  ///< Result of the get blocks job
 	uint32_t getBlocksJobId_ = 0;      ///< Current job ID for retrieving chunk blocks
 };
 
 /// @brief High-level operation for reading data from a chunk.
 class ReadHighLevelOp : public HighLevelOp {
 public:
-	ReadHighLevelOp(ChunkserverEntry *parent, uint16_t maxBlocksPerHddReadJob,
+	ReadHighLevelOp(ChunkserverEntry *parent, uint32_t maxBlocksPerHddReadJob,
 	                uint16_t maxParallelHddReadJobs)
 	    : HighLevelOp(parent),
 	      maxBlocksPerHddReadJob_(maxBlocksPerHddReadJob),
@@ -195,7 +195,7 @@ protected:
 	void readContinue(uint16_t callMaxParallelHddReadJobs);
 
 	/// Number of blocks to read from the device in one read job.
-	uint16_t maxBlocksPerHddReadJob_;
+	uint32_t maxBlocksPerHddReadJob_;
 	uint16_t maxParallelHddReadJobs_;  ///< Maximum size of pendingReadDataBuffers.
 
 	/// List of output buffers waiting for the HDD worker to finish, and then be sent.
@@ -215,9 +215,9 @@ class WriteHighLevelOp : public HighLevelOp {
 public:
 	/// @brief Default initial number of blocks for the next input buffer, which can be adjusted
 	/// based on the max blocks per HDD write job.
-	constexpr static uint16_t kDefaultInitialNextInputBufferBlockCount = 4;
+	constexpr static uint32_t kDefaultInitialNextInputBufferBlockCount = 4;
 
-	WriteHighLevelOp(ChunkserverEntry *parent, uint16_t maxBlocksPerHddWriteJob)
+	WriteHighLevelOp(ChunkserverEntry *parent, uint32_t maxBlocksPerHddWriteJob)
 	    : HighLevelOp(parent),
 	      maxBlocksPerHddWriteJob_(maxBlocksPerHddWriteJob),
 	      nextInputBufferBlockCount_(
@@ -248,7 +248,7 @@ public:
 	/// @param opSize Size of the data to be written.
 	/// @param writeId Write identifier from client.
 	/// @param crc CRC of the block.
-	void processWriteDataBlock(uint16_t blocknum, uint32_t opOffset, uint32_t opSize,
+	void processWriteDataBlock(uint32_t blocknum, uint32_t opOffset, uint32_t opSize,
 	                           uint32_t writeId, uint32_t crc);
 
 	/// Checks if the size of the last write operation header is valid.
@@ -334,10 +334,10 @@ protected:
 	void prepareInputBufferForWrite(bool isForward);
 	
 	/// Number of blocks to write to the device in one write job.
-	uint16_t maxBlocksPerHddWriteJob_;
+	uint32_t maxBlocksPerHddWriteJob_;
 
 	/// Size in blocks of the next input buffer.
-	uint16_t nextInputBufferBlockCount_;
+	uint32_t nextInputBufferBlockCount_;
 
 	/// Indicates if the operation is in delayed close:
 	/// - no new replies issued

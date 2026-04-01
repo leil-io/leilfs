@@ -31,8 +31,8 @@
 #include "chunkserver/bgjobs.h"
 
 inline std::atomic<uint16_t> gMaxParallelHddReadJobsPerCsEntry;
-inline std::atomic<uint16_t> gMaxBlocksPerHddReadJob;
-inline std::atomic<uint16_t> gMaxBlocksPerHddWriteJob;
+inline std::atomic<uint32_t> gMaxBlocksPerHddReadJob;
+inline std::atomic<uint32_t> gMaxBlocksPerHddWriteJob;
 inline std::atomic<uint32_t> gWriteBufferingSize_mb;
 
 class NetworkWorkerThread {
@@ -42,12 +42,12 @@ public:
 	static constexpr uint32_t kDefaultMaxBackgroundJobsPerNetworkWorker = 4000;
 
 	static constexpr uint16_t kDefaultMaxParallelHddReadJobsPerCsEntry = 1;
-	static constexpr uint16_t kDefaultMaxBlocksPerHddReadJob = 16;
+	static constexpr uint32_t kDefaultMaxBlocksPerHddReadJob = 16;
 
 	static constexpr uint32_t kDefaultWriteBufferingSize_mb = 0;
-	static constexpr uint16_t kDefaultMaxBlocksPerHddWriteJob = 16;
-	static constexpr uint16_t kMinBlocksPerHddWriteJob = 1;
-	static constexpr uint16_t kMaxBlocksPerHddWriteJob = 64;
+	static constexpr uint32_t kDefaultMaxBlocksPerHddWriteJob = 16;
+	static constexpr uint32_t kMinBlocksPerHddWriteJob = 1;
+	static constexpr uint32_t kMaxBlocksPerHddWriteJob = 64;
 
 	NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers, uint32_t bgjobsCount);
 	NetworkWorkerThread(const NetworkWorkerThread&) = delete;
