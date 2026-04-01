@@ -1,13 +1,13 @@
-# INSTALL - SaunaFS
+# INSTALL - LeilFS
 
-You can install SaunaFS from pre-built packages or from source. The
+You can install LeilFS from pre-built packages or from source. The
 pre-built packages are currently available for the following platforms:
 
 -   Linux (x86_64)
     -   Ubuntu 24.04 (Noble)
     -   Ubuntu 22.04 (Jammy)
 
-Please follow the instructions below to install SaunaFS on your
+Please follow the instructions below to install LeilFS on your
 system.
 
 ## Installing from pre-built packages
@@ -34,17 +34,17 @@ system.
         --list-keys
     ```
 
-2. Add the SaunaFS repository to your system:
+2. Add the LeilFS repository to your system:
 
     The repository is available at
-    <https://repo.saunafs.com/repository/saunafs-ubuntu-24.04/> for Ubuntu 24.04
-    or <https://repo.saunafs.com/repository/saunafs-ubuntu-22.04/> for Ubuntu 22.04.
+    <https://repo.leil.io/repository/saunafs-ubuntu-24.04/> for Ubuntu 24.04
+    or <https://repo.leil.io/repository/saunafs-ubuntu-22.04/> for Ubuntu 22.04.
 
     For Ubuntu 24.04, use:
 
     ```shell
     cat | sudo tee /etc/apt/sources.list.d/saunafs.list <<EOF
-    deb [arch=amd64 signed-by=/usr/share/keyrings/saunafs-archive-keyring.gpg] https://repo.saunafs.com/repository/saunafs-ubuntu-24.04/ noble main
+    deb [arch=amd64 signed-by=/usr/share/keyrings/saunafs-archive-keyring.gpg] https://repo.leil.io/repository/saunafs-ubuntu-24.04/ noble main
     EOF
     ```
 
@@ -52,7 +52,7 @@ system.
 
     ```shell
     cat | sudo tee /etc/apt/sources.list.d/saunafs.list <<EOF
-    deb [arch=amd64 signed-by=/usr/share/keyrings/saunafs-archive-keyring.gpg] https://repo.saunafs.com/repository/saunafs-ubuntu-22.04/ jammy main
+    deb [arch=amd64 signed-by=/usr/share/keyrings/saunafs-archive-keyring.gpg] https://repo.leil.io/repository/saunafs-ubuntu-22.04/ jammy main
     EOF
     ```
 
@@ -62,7 +62,7 @@ system.
     sudo apt update
     ```
 
-4. Install SaunaFS:
+4. Install LeilFS:
 
     ```shell
     sudo apt update
@@ -75,8 +75,8 @@ system.
 
 ## Installing from source
 
-SaunaFS is written in C++ and uses CMake as its build system. There are some utility scripts that can be used to
-automate the build process. Please, follow the instructions below to build SaunaFS from source.
+LeilFS is written in C++ and uses CMake as its build system. There are some utility scripts that can be used to
+automate the build process. Please, follow the instructions below to build LeilFS from source.
 
 ### Dependencies
 
@@ -117,7 +117,7 @@ As it is a destructive operation, it will ask for confirmation before removing t
 
 #### VCPKG
 
-SaunaFS uses the VCPKG package manager to manage some of its dependencies that require fine version control. The following script can be used to install the VCPKG package manager:
+LeilFS uses the VCPKG package manager to manage some of its dependencies that require fine version control. The following script can be used to install the VCPKG package manager:
 
 ```shell
 ./utils/vcpkg_setup.sh
@@ -133,13 +133,13 @@ vcpkg install
 
 ### Building
 
-The following script can be used to build SaunaFS with appropriate flags to run the tests
+The following script can be used to build LeilFS with appropriate flags to run the tests
 
 ```shell
 ./tests/ci_build/run-build.sh test
 ```
 
-If you want to build SaunaFS without the tests, you can use the following command:
+If you want to build LeilFS without the tests, you can use the following command:
 
 (might require elevated privileges depending on your filesystem permissions)
 
@@ -147,7 +147,7 @@ If you want to build SaunaFS without the tests, you can use the following comman
 ./tests/ci_build/run-build.sh release
 ```
 
-If you don't want to use the scripts above, you can use the following commands to build SaunaFS:
+If you don't want to use the scripts above, you can use the following commands to build LeilFS:
 
 ```shell
 cmake --workflow --preset test
@@ -165,7 +165,7 @@ cmake --workflow --list-presets
 
 ### Installing
 
-The following command can be used to install SaunaFS:
+The following command can be used to install LeilFS:
 
 ```shell
 sudo make install

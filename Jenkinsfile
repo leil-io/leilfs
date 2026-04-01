@@ -2,12 +2,13 @@ GIT_COMMIT_EMAIL = ""
 GIT_COMMIT_HASH = ""
 REGISTRY_URL = "registry.ci.leil.io"
 
-def buildSfstests() {
+def buildLfstests() {
+    // TODO(rolysr): We should build from latest lfstests release
     sh '''
-        git clone "https://github.com/leil-io/sfstests"
-        cd sfstests
-        git checkout v0.5.0
-        go build -o $WORKSPACE/sfstests
+        git clone "https://github.com/leil-io/lfstests"
+        cd lfstests
+        git checkout dev
+        go build -o $WORKSPACE/lfstests
         '''
 }
 
@@ -29,7 +30,7 @@ def pushImage(registryImageName) {
 def runSanity() {
     def resultsFile = "test_results_sanity.xml"
     sh """
-        ./sfstests/sfstests \
+        ./lfstests/lfstests \
         --auth /etc/apt/auth.conf.d/ \
         --workers ${SANITY_WORKERS} \
         --multiplier ${MACHINE_MULTIPLIER} \
@@ -41,7 +42,7 @@ def runSanity() {
 def runShort() {
     def resultsFile = "test_results_short.xml"
     sh """
-        ./sfstests/sfstests \
+        ./lfstests/lfstests \
         --auth /etc/apt/auth.conf.d/ \
         --suite ShortSystemTests \
         --workers ${SHORT_WORKERS} \
@@ -53,7 +54,7 @@ def runShort() {
 }
 def runMachine() {
     def resultsFile = "test_results_machine.xml"
-    sh """ ./sfstests/sfstests \
+    sh """ ./lfstests/lfstests \
         --auth /etc/apt/auth.conf.d/ \
         --suite SingleMachineTests \
         --workers 1 \
@@ -65,7 +66,7 @@ def runMachine() {
 }
 def runLong() {
     def resultsFile = "test_results_long.xml"
-    sh """ ./sfstests/sfstests \
+    sh """ ./lfstests/lfstests \
         --auth /etc/apt/auth.conf.d/ \
         --workers ${LONG_WORKERS} \
         --suite LongSystemTests \
@@ -338,9 +339,9 @@ pipeline {
                                 checkout scm
                             }
                         }
-                        stage('Build sfstests') {
+                        stage('Build lfstests') {
                             steps {
-                                buildSfstests()
+                                buildLfstests()
                             }
                         }
 

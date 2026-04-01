@@ -883,7 +883,7 @@ print("""<body>""")
 print("""<div id="header">""")
 print("""<table class="HDR" cellpadding="0" cellspacing="0" border="0" summary="Page header">""")
 print("""<tr>""")
-print("""<td class="LOGO"><a href="https://saunafs.com"><img src="logomini.svg" alt="logo" style="border:0;width:110px;height:38px" /></a></td>""")
+print("""<td class="LOGO"><a href="https://leil.io"><img src="logomini.svg" alt="logo" style="border:0;width:110px;height:38px" /></a></td>""")
 print("""<td class="MENU"><table class="MENU" cellspacing="0" summary="Header menu">""")
 print("""<tr>""")
 last = "U"
@@ -3506,7 +3506,7 @@ def print_file(name):
 if "HELP" in sectionset:
     # FIXME(kulek@saunafs.org) - it should be in separate file help.html however we are waiting for CMAKE to make it happen.
     # print_file("@CGI_PATH@/help.html")
-    print("""Please, contact with contact@saunafs.com""")
+    print("""Please, contact with contact@leil.io""")
     print("""<br/>""")
 
 print("""</div> <!-- end of container -->""")

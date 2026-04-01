@@ -1,11 +1,11 @@
-SaunaFS functional tests
+LeilFS functional tests
 *************************
 
 
 How to configure testing environment?
 =====================================
 
-Functional tests configure and run testing SaunaFS installation several times.
+Functional tests configure and run testing LeilFS installation several times.
 Test installation runs all system modules on a single computer.
 To prepare the testing environment safely, please use the following script:
 
@@ -39,14 +39,14 @@ Make sure that the user saunafstest is able to read files from this directory.
 How to compile the tests?
 =========================
 
-To use tests, SaunaFS has to be compiled with an option ENABLE_TESTS, e.g.:
+To use tests, LeilFS has to be compiled with an option ENABLE_TESTS, e.g.:
 
     cmake .. -DENABLE_TESTS=YES
 
 Test installation has to be prepared. Default location for tests is
 '$HOME/local' but it can be changed in tests config file, e.g.:
 
-    : ${SAUNAFS_ROOT:="$HOME/SaunaFS"}
+    : ${SAUNAFS_ROOT:="$HOME/LeilFS"}
 
 After that, the tests are ready to be run.
 
@@ -93,13 +93,13 @@ To create a new test simply create a file:
 where:
     <SUITE> is a test suite that you want your test to be a part of.
         Existing test suites:
-         -  SanityChecks – basic tests of SaunaFS functionality; these tests
+         -  SanityChecks – basic tests of LeilFS functionality; these tests
                 should last a couple of minutes,
-         -  ShortSystemTests – advanced tests of SaunaFS functionality not requiring
+         -  ShortSystemTests – advanced tests of LeilFS functionality not requiring
                 dedicated storage; these tests last around half an hour,
-         -  LongSystemTests – advanced tests of SaunaFS functionality requiring
+         -  LongSystemTests – advanced tests of LeilFS functionality requiring
                 dedicated storage; these tests last a few hours,
-         -  ContinuousTests – tests using SaunaFS mountpoint to populate SaunaFS
+         -  ContinuousTests – tests using LeilFS mountpoint to populate LeilFS
                 installation with data and validate them;
                 these tests are desigend to be run continuously,
     <TEST_NAME> is a name of your test.

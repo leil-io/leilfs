@@ -55,9 +55,9 @@ master_kill_loop() {
 master_kill_loop &
 
 cd "${info[mount0]}"
-assert_success git clone https://github.com/leil-io/saunafs.git
-saunafs setgoal -r 2 saunafs
-mkdir saunafs/build
-cd saunafs/build
+assert_success git clone https://github.com/leil-io/leilfs.git
+saunafs setgoal -r 2 leilfs
+mkdir leilfs/build
+cd leilfs/build
 assert_success cmake .. -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=../install
 assert_success make -j${PARALLEL_JOBS} install

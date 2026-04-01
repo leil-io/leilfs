@@ -47,7 +47,7 @@ while IFS= read -r line; do
     fi
 done < "$tmp_file"
 
-changelog_entry+="\n -- SaunaFS Team <contact@saunafs.com>  ${current_date}\n"
+changelog_entry+="\n -- LeilFS Team <contact@leil.io>  ${current_date}\n"
 
 # Insert new NEWS entry after the first line
 {

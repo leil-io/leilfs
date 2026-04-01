@@ -18,9 +18,9 @@ saunafs setgoal ec43 work
 
 cd work
 
-assert_success git clone "https://github.com/leil-io/saunafs.git"
+assert_success git clone "https://github.com/leil-io/leilfs.git"
 
-cd saunafs
+cd leilfs
 
 mkdir -p build
 cd build

@@ -1,5 +1,5 @@
 <!-- omit in toc -->
-# Contributing to SaunaFS
+# Contributing to LeilFS
 
 First off, thanks for taking the time to contribute!
 
@@ -39,10 +39,10 @@ contributions.
 ## I Have a Question
 
 > If you want to ask a question, we assume that you have read the available
-> [Documentation](https://docs.saunafs.com) and the [man files].
+> [Documentation](https://docs.leil.io) and the [man files].
 
 Before you ask a question, it is best to search for existing
-[Issues](https://github.com/leil-io/saunafs/issues) that might help you. In case
+[Issues](https://github.com/leil-io/leilfs/issues) that might help you. In case
 you have found a suitable issue and still need clarification, you can write your
 question in this issue. It is also advisable to search the internet for answers
 first.
@@ -50,14 +50,14 @@ first.
 If you then still feel the need to ask a question and need clarification, we
 recommend the following:
 
-- Open an [Issue](https://github.com/leil-io/saunafs/issues/new).
+- Open an [Issue](https://github.com/leil-io/leilfs/issues/new).
 - Provide as much context as you can about what you're running into.
 - Include all the technical details that seem relevant e.g. project version (s),
   platform (if needed).
 
 We will then take care of the issue as soon as possible.
 
-You might also consider joining the [Slack channel](https://join.slack.com/t/saunafs/shared_invite/zt-2dktkrdwm-1BHZje_DMX3NQdxO9HoYog)
+You might also consider joining the [Matrix chat](https://matrix.to/#/#leil:matrix.org)
 to ask questions and discuss the project.
 
 ## I Want to Contribute
@@ -79,13 +79,13 @@ steps in advance to help us fix any potential bug as fast as possible.
 - Make sure that you are using the latest version.
 - Determine if your bug is really a bug and not an error on your side e.g. using
   incompatible environment components/versions (Make sure that you have read the
-  [documentation](https://docs.saunafs.com) and the [man
-  files](https://github.com/leil-io/saunafs/tree/main/doc). If you are looking
+  [documentation](https://docs.leil.io) and the [man
+  files](https://github.com/leil-io/leilfs/tree/main/doc). If you are looking
   for support, you might want to check [this section](#i-have-a-question)).
 - To see if other users have experienced (and potentially already solved) the
   same issue you are having, check if there is not already a bug report existing
   for your bug or error in the [issue
-  tracker](https://github.com/leil-io/saunafs/issues?q=is%3Aissue+label%3Abug).
+  tracker](https://github.com/leil-io/leilfs/issues?q=is%3Aissue+label%3Abug).
 - Also make sure to search the internet (including Stack Overflow) to see if
   users outside the GitHub community have discussed the issue.
 - Collect information about the bug:
@@ -103,7 +103,7 @@ steps in advance to help us fix any potential bug as fast as possible.
 We use GitHub issues to track bugs and errors. If you run into an issue with the
 project:
 
-- Open an [Issue](https://github.com/leil-io/saunafs/issues/new). (Since we
+- Open an [Issue](https://github.com/leil-io/leilfs/issues/new). (Since we
   can't be sure at this point whether it is a bug or not, we ask you not to talk
   about a bug yet and not to label the issue.)
 - Explain the behavior you would expect and the actual behavior.
@@ -136,7 +136,7 @@ included. If you do so, reference it here in the description. -->
 ### Suggesting Enhancements
 
 This section guides you through submitting an enhancement suggestion for
-SaunaFS, **including completely new features and minor improvements to existing
+LeilFS, **including completely new features and minor improvements to existing
 functionality**. Following these guidelines will help maintainers and the
 community to understand your suggestion and find related suggestions.
 
@@ -144,16 +144,16 @@ community to understand your suggestion and find related suggestions.
 #### Before Submitting an Enhancement
 
 - Make sure that you are using the latest version.
-- Read the [documentation](https://docs.saunafs.com) carefully and find out if the functionality is
+- Read the [documentation](https://docs.leil.io) carefully and find out if the functionality is
   already covered, maybe by an individual configuration.
-- Perform a [search](https://github.com/leil-io/saunafs/issues) to see if the
+- Perform a [search](https://github.com/leil-io/leilfs/issues) to see if the
   enhancement has already been suggested. If it has, add a comment to the
   existing issue instead of opening a new one.
 
 <!-- omit in toc -->
 #### How Do I Submit a Good Enhancement Suggestion?
 
-Enhancement suggestions are tracked as [GitHub issues](https://github.com/leil-io/saunafs/issues).
+Enhancement suggestions are tracked as [GitHub issues](https://github.com/leil-io/leilfs/issues).
 
 - Use a **clear and descriptive title** for the issue to identify the
   suggestion.
@@ -163,7 +163,7 @@ Enhancement suggestions are tracked as [GitHub issues](https://github.com/leil-i
   see instead** and why. At this point, tell which alternatives do not work for
   you. You might want to use images and/or animations to enhance the description
   of your ideas.
-- **Explain why this enhancement would be useful** to most SaunaFS users. Point
+- **Explain why this enhancement would be useful** to most LeilFS users. Point
   to other projects that have solved similar issue better and would serve as
   inspiration.
 
@@ -174,7 +174,7 @@ documentation -->
 
 If you notice a typo, grammatical error, or potentially a small improvement to
 make in the code, we encourage you to post it in the mega issue for
-[grammar/typos/nitpicks](https://github.com/leil-io/saunafs/issues/6) instead
+[grammar/typos/nitpicks](https://github.com/leil-io/leilfs/issues/6) instead
 of creating a pull request or another issue.
 
 This is to to keep both the issue tracker and the pull requests clean and
@@ -191,8 +191,8 @@ time or the team's).
 Currently, the preferred ways to indicate you want to contribute code are (in
 order):
 * Commenting on a specific Github issue
-* [Slack](https://join.slack.com/t/saunafs/shared_invite/zt-2dktkrdwm-1BHZje_DMX3NQdxO9HoYog),
-* [Email](mailto:contact@saunafs.com?subject=RFI),
+* [Matrix](https://matrix.to/#/#leil:matrix.org),
+* [Email](mailto:contact@leil.io?subject=RFI),
 
 If you get an OK from us, please read below for more details.
 
