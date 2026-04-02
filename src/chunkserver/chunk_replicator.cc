@@ -102,10 +102,10 @@ uint32_t ChunkReplicator::getChunkBlocks(uint64_t chunk_id, uint32_t chunk_versi
 
 	if (slice_traits::isParityPart(chunk_type) || slice_traits::getDataPartIndex(chunk_type) == 0) {
 		return std::min(SFSBLOCKSINCHUNK,
-		                nr_of_blocks * slice_traits::getNumberOfDataParts(chunk_type));
+		                int32_t(nr_of_blocks * slice_traits::getNumberOfDataParts(chunk_type)));
 	}
 	return std::min(SFSBLOCKSINCHUNK,
-	                (nr_of_blocks + 1) * slice_traits::getNumberOfDataParts(chunk_type));
+	                int32_t((nr_of_blocks + 1) * slice_traits::getNumberOfDataParts(chunk_type)));
 }
 
 uint32_t ChunkReplicator::getChunkBlocks(uint64_t chunk_id, uint32_t chunk_version,

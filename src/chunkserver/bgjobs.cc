@@ -698,7 +698,7 @@ uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 				auto bytesWritten = hddChunkWriteFullBlocks(
 				    chunkId, chunkVersion, chunkType, op.startBlock, numBlocks, op.crcs, op.buffer);
 
-				if (bytesWritten != numBlocks * SFSBLOCKSIZE) {
+				if (bytesWritten != int32_t(numBlocks * SFSBLOCKSIZE)) {
 					if (bytesWritten < 0) {
 						statuses.push_back(-bytesWritten);
 						break;

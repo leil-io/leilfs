@@ -118,14 +118,14 @@ namespace writeData {
 
 inline void serializePrefix(std::vector<uint8_t>& destination,
 		uint64_t chunkId, uint32_t writeId,
-		uint16_t blockNumber, uint32_t offset, uint32_t size, uint32_t crc) {
+		uint32_t blockNumber, uint32_t offset, uint32_t size, uint32_t crc) {
 	serializePacketPrefix(destination, size, SAU_CLTOCS_WRITE_DATA, 0,
 			chunkId, writeId, blockNumber, offset, size, crc);
 }
 
 inline void deserializePrefix(const uint8_t* source, uint32_t sourceSize,
 		uint64_t& chunkId, uint32_t& writeId,
-		uint16_t& blockNumber, uint32_t& offset, uint32_t& size, uint32_t& crc) {
+		uint32_t& blockNumber, uint32_t& offset, uint32_t& size, uint32_t& crc) {
 	verifyPacketVersionNoHeader(source, sourceSize, 0);
 	deserializePacketDataNoHeader(source, sourceSize,
 			chunkId, writeId, blockNumber, offset, size, crc);

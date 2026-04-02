@@ -70,21 +70,21 @@ inline void serialize(std::vector<uint8_t>& destination,
 
 inline void deserialize(const std::vector<uint8_t>& source,
 		uint64_t& chunkId, uint32_t& chunkVersion, legacy::ChunkPartType& chunkType,
-		uint16_t& blocks, uint8_t& status) {
+		uint32_t& blocks, uint8_t& status) {
 	verifyPacketVersionNoHeader(source, kStandardAndXorChunks);
 	deserializeAllPacketDataNoHeader(source, chunkId, chunkVersion, chunkType, blocks, status);
 }
 
 inline void serialize(std::vector<uint8_t>& destination,
 		uint64_t chunkId, uint32_t chunkVersion, const ChunkPartType& chunkType,
-		uint16_t blocks, uint8_t status) {
+		uint32_t blocks, uint8_t status) {
 	serializePacket(destination, SAU_CSTOCS_GET_CHUNK_BLOCKS_STATUS, kECChunks, chunkId, chunkVersion,
 			chunkType, blocks, status);
 }
 
 inline void deserialize(const std::vector<uint8_t>& source,
 		uint64_t& chunkId, uint32_t& chunkVersion, ChunkPartType& chunkType,
-		uint16_t& blocks, uint8_t& status) {
+		uint32_t& blocks, uint8_t& status) {
 	verifyPacketVersionNoHeader(source, kECChunks);
 	deserializeAllPacketDataNoHeader(source, chunkId, chunkVersion, chunkType, blocks, status);
 }

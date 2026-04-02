@@ -77,7 +77,7 @@ TEST(CltocsCommunicationTests, WriteInit) {
 TEST(CltocsCommunicationTests, WriteData) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId,  0x987654321, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, writeId,  0x12345,     0);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint16_t, blockNum, 510,         0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, blockNum, 510,         0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, offset,   1024,        0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, size,     62000,       0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, crc,      0xDEADBEEF,  0);

@@ -49,7 +49,7 @@ TEST(CstocsCommunicationTests, GetChunkBlocksStatus) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0x0123456789ABCDEF, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 0x01234567, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_7, standard);
-	SAUNAFS_DEFINE_INOUT_PAIR(uint16_t, blocks, 0xFEED, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, blocks, 0xFEED, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, 123, 0);
 
 	std::vector<uint8_t> buffer;
