@@ -208,13 +208,13 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &node);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	} else if (node->type != FSNodeType::kTrash) {
-		return SAUNAFS_ERROR_ENOENT;
-	} else if (path.length() == 0) {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	if (node->type != FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
+
+	if (path.length() == 0) { return SAUNAFS_ERROR_EINVAL; }
+
 	for (uint32_t i = 0; i < path.length(); i++) {
 		if (path[i] == 0) { return SAUNAFS_ERROR_EINVAL; }
 	}
@@ -242,11 +242,10 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &node);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	} else if (node->type != FSNodeType::kTrash) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	if (node->type != FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
 
 	status = nodeOperations_->undel(fsOpContext, context.ts(), static_cast<FSNodeFile *>(node));
 	if (context.isPersonalityMaster()) {
@@ -270,11 +269,11 @@ uint8_t FilesystemOperationsBase::purge(const FsContext &context,
 
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &node);
-	if (status != SAUNAFS_STATUS_OK) {
-		return status;
-	} else if (node->type != FSNodeType::kTrash) {
-		return SAUNAFS_ERROR_ENOENT;
-	}
+
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
+	if (node->type != FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
+
 	// This should be equal to inode, because `node` is not a directory
 	inode_t purged_inode = node->id;
 	nodeOperations_->purge(fsOpContext, context.ts(), node);
@@ -1813,13 +1812,14 @@ int FilesystemOperationsBase::posixLockProbe(const FsContext &context,
 	if (collision == nullptr) {
 		info.l_type = safs_locks::kUnlock;
 		return SAUNAFS_STATUS_OK;
-	} else {
-		info.l_type = static_cast<int>(collision->type);
-		info.l_start = collision->start;
-		info.l_len = std::min<uint64_t>(collision->end - collision->start,
-		                                std::numeric_limits<int64_t>::max());
-		return SAUNAFS_ERROR_WAITING;
 	}
+
+	info.l_type = static_cast<int>(collision->type);
+	info.l_start = collision->start;
+	info.l_len =
+	    std::min<uint64_t>(collision->end - collision->start, std::numeric_limits<int64_t>::max());
+
+	return SAUNAFS_ERROR_WAITING;
 }
 
 int FilesystemOperationsBase::lockOperation(
@@ -3257,21 +3257,19 @@ uint32_t FilesystemOperationsBase::getDirPathSize(const FilesystemOperationConte
 	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
 
 	if (node) {
-		if (node->type != FSNodeType::kDirectory) {
-			return kDirPathNotDirectory.size();
-		} else {
-			FSNodeDirectory *parent = nullptr;
-			const inode_t parentId = nodeOperations_->getFirstParentId(fsOpContext, node);
-			if (parentId != 0) {
-				parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
-			}
-			return 1 + nodeOperations_->getPathSize(fsOpContext, parent, node);
+		if (node->type != FSNodeType::kDirectory) { return kDirPathNotDirectory.size(); }
+
+		FSNodeDirectory *parent = nullptr;
+		const inode_t parentId = nodeOperations_->getFirstParentId(fsOpContext, node);
+
+		if (parentId != 0) {
+			parent = nodeOperations_->idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 		}
-	} else {
-		return kDirPathNotFound.size();
+
+		return 1 + nodeOperations_->getPathSize(fsOpContext, parent, node);
 	}
 
-	return 0;  // unreachable
+	return kDirPathNotFound.size();
 }
 
 void FilesystemOperationsBase::getDirPathData(const FilesystemOperationContext &fsOpContext,
@@ -3403,11 +3401,8 @@ std::vector<JobInfo> FilesystemOperationsBase::getCurrentTasksInfo() {
 }
 
 uint8_t FilesystemOperationsBase::cancelJob(uint32_t job_id) {
-	if (gMetadata->taskManager.cancelJob(job_id)) {
-		return SAUNAFS_STATUS_OK;
-	} else {
-		return SAUNAFS_ERROR_EINVAL;
-	}
+	if (gMetadata->taskManager.cancelJob(job_id)) { return SAUNAFS_STATUS_OK; }
+	return SAUNAFS_ERROR_EINVAL;
 }
 
 uint32_t FilesystemOperationsBase::reserveJobId() { return gMetadata->taskManager.reserveJobId(); }
