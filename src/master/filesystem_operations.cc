@@ -180,8 +180,8 @@ uint8_t FilesystemOperationsBase::getDetachedAttr(const FilesystemOperationConte
 		return SAUNAFS_ERROR_ENOENT;
 	}
 
-	nodeOperations_->fillAttr(fsOpContext, node, NULL, node->uid, node->gid, node->uid, node->gid,
-	                          sesflags, attr);
+	nodeOperations_->fillAttr(fsOpContext, node, nullptr, node->uid, node->gid, node->uid,
+	                          node->gid, sesflags, attr);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -624,8 +624,8 @@ uint8_t FilesystemOperationsBase::getAttr(const FsContext &context,
 	                                              MODE_MASK_EMPTY, inode, &node);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	nodeOperations_->fillAttr(fsOpContext, node, NULL, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	incrementFSStat(FsStats::Getattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_GETATTR);
@@ -683,8 +683,8 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 			}
 		}
 	}
-	nodeOperations_->fillAttr(fsOpContext, node, NULL, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
@@ -849,8 +849,8 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	node->mtime = timeStamp;
 	nodeOperations_->updateCTime(node, timeStamp);
 	fsnodes_update_checksum(node);
-	nodeOperations_->fillAttr(fsOpContext, node, NULL, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	// Make the change persistent for KV backends
 	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
@@ -990,8 +990,8 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	          "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", node->id,
 	          node->mode & 07777, node->uid, node->gid, node->atime, node->mtime);
 	nodeOperations_->updateCTime(node, timeStamp);
-	nodeOperations_->fillAttr(fsOpContext, node, NULL, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 	fsnodes_update_checksum(node);
 
 	// Make persistent the changes on KV backends
@@ -1160,7 +1160,9 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 	statsRecord.length = basePath.length();
 	nodeOperations_->addStats(fsOpContext, workDir, &statsRecord);
 
-	if (attr != NULL) { nodeOperations_->fillAttr(context, fsOpContext, newNode, workDir, *attr); }
+	if (attr != nullptr) {
+		nodeOperations_->fillAttr(context, fsOpContext, newNode, workDir, *attr);
+	}
 
 	if (context.isPersonalityMaster()) {
 		assert(*inode == 0);
@@ -2071,7 +2073,7 @@ int FilesystemOperationsBase::locksRemovePending(
 uint8_t FilesystemOperationsBase::readdirSize(const FsContext &context, inode_t inode,
                                               uint8_t flags, void **dnode, uint32_t *dbuffsize) {
 	FSNode *node;
-	*dnode = NULL;
+	*dnode = nullptr;
 	*dbuffsize = 0;
 
 	uint8_t status =
@@ -2183,8 +2185,8 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context,
 			return SAUNAFS_ERROR_EACCES;
 		}
 	}
-	nodeOperations_->fillAttr(fsOpContext, node, NULL, context.uid(), context.gid(), context.auid(),
-	                          context.agid(), context.sesflags(), attr);
+	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
+	                          context.auid(), context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Open);
 	metrics::Counter::increment(metrics::Counter::Master::FS_OPEN);
 	return SAUNAFS_STATUS_OK;
