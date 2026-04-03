@@ -77,9 +77,8 @@ void FilesystemOperationsBase::changeLog(
 
 	// Then append the entry to the buffer
 	va_list argList;
-	uint32_t entryLength;
 	va_start(argList, format);
-	entryLength = vsnprintf(entry + tsLength, kMaxEntrySize, format, argList);
+	uint32_t entryLength = vsnprintf(entry + tsLength, kMaxEntrySize, format, argList);
 	va_end(argList);
 
 	if (entryLength >= kMaxEntrySize) {
@@ -159,12 +158,11 @@ void FilesystemOperationsBase::readTrash(const FilesystemOperationContext &fsOpC
 uint8_t FilesystemOperationsBase::getDetachedAttr(const FilesystemOperationContext &fsOpContext,
                                                   inode_t rootinode, uint8_t sesflags,
                                                   inode_t inode, Attributes &attr, uint8_t dtype) {
-	FSNode *node;
 	attr.fill(0);
 	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
 	(void)sesflags;
 	if (!DTYPE_ISVALID(dtype)) { return SAUNAFS_ERROR_EINVAL; }
-	node = nodeOperations_->idToNode(fsOpContext, inode);
+	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!node) { return SAUNAFS_ERROR_ENOENT; }
 	if (node->type != FSNodeType::kTrash && node->type != FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
@@ -185,10 +183,9 @@ uint8_t FilesystemOperationsBase::getDetachedAttr(const FilesystemOperationConte
 uint8_t FilesystemOperationsBase::getTrashPath(const FilesystemOperationContext &fsOpContext,
                                                inode_t rootinode, uint8_t sesflags, inode_t inode,
                                                std::string &path) {
-	FSNode *node;
 	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
 	(void)sesflags;
-	node = nodeOperations_->idToNode(fsOpContext, inode);
+	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!node) { return SAUNAFS_ERROR_ENOENT; }
 	if (node->type != FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
 	path = (std::string)gMetadata->trash.at(TrashPathKey(node));
@@ -373,8 +370,7 @@ uint8_t FilesystemOperationsBase::applyChecksum(const std::string &version, uint
 
 uint8_t FilesystemOperationsBase::applyAccess(const FilesystemOperationContext &fsOpContext,
                                               uint32_t timestamp, inode_t inode) {
-	FSNode *node;
-	node = nodeOperations_->idToNode(fsOpContext, inode);
+	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!node) { return SAUNAFS_ERROR_ENOENT; }
 	node->atime = timestamp;
 	fsnodes_update_checksum(node);
@@ -1804,10 +1800,9 @@ int FilesystemOperationsBase::posixLockProbe(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	FileLocks &locks = gMetadata->posixLocks;
-	const FileLocks::Lock *collision;
-
-	collision = locks.findCollision(inode, static_cast<FileLocks::Lock::Type>(oper), start, end,
-	                                FileLocks::Owner{owner, sessionid, reqid, msgid});
+	const FileLocks::Lock *collision =
+	    locks.findCollision(inode, static_cast<FileLocks::Lock::Type>(oper), start, end,
+	                        FileLocks::Owner{owner, sessionid, reqid, msgid});
 
 	if (collision == nullptr) {
 		info.l_type = safs_locks::kUnlock;
@@ -2328,11 +2323,10 @@ uint8_t FilesystemOperationsBase::readChunk(const FilesystemOperationContext &fs
                                             uint64_t *length) {
 	uint32_t timeStamp = eventloop_time();
 	ChecksumUpdater checksumUpdater(timeStamp);
-	FSNodeFile *nodeFile;
 
 	*chunkid = 0;
 	*length = 0;
-	nodeFile = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
+	FSNodeFile *nodeFile = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 	if (!nodeFile) { return SAUNAFS_ERROR_ENOENT; }
 	if (nodeFile->type != FSNodeType::kFile && nodeFile->type != FSNodeType::kTrash &&
 	    nodeFile->type != FSNodeType::kReserved) {
