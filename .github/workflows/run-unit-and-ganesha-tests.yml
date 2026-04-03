@@ -154,7 +154,7 @@ jobs:
                   -DENABLE_URAFT=ON \
                   -DGSH_CAN_HOST_LOCAL_FS=ON \
                   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-                  -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/install/saunafs/" \
+                  -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/install/leilfs/" \
                   -DENABLE_TESTS=ON \
                   -DCODE_COVERAGE=OFF \
                   -DSAUNAFS_TEST_POINTER_OBFUSCATION=ON \
