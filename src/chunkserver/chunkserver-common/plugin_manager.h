@@ -49,6 +49,9 @@ public:
 	/// True if this plugin manager can handle the plugin based on the version.
 	bool checkVersion(IPlugin *plugin);
 
+	/// Reload plugins options for all the needed plugins.
+	void reloadPlugins();
+
 	/// Cleanup resources for all the needed plugins.
 	void cleanupPlugins();
 

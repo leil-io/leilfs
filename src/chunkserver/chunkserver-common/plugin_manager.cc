@@ -118,6 +118,15 @@ bool PluginManager::checkVersion(IPlugin *plugin) {
 	return false;
 }
 
+void PluginManager::reloadPlugins() {
+	for (auto &[name, plugin] : diskPlugins_) {
+		if (plugin) {
+			safs::log_info("Reloading plugin {}", plugin->toString());
+			plugin->reload();
+		}
+	}
+}
+
 void PluginManager::cleanupPlugins() {
 	for (auto &[name, plugin] : diskPlugins_) {
 		if (plugin) {

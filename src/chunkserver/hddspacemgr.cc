@@ -2845,6 +2845,9 @@ void hddReload(void) {
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
+
+	// Request plugins to reload
+	pluginManager.reloadPlugins();
 }
 
 int hddLateInit() {
