@@ -643,7 +643,7 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 	                                              inode, &node);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	FSNodeFile *node_file = static_cast<FSNodeFile *>(node);
+	auto *node_file = static_cast<FSNodeFile *>(node);
 
 	if (length & SFSCHUNKMASK) {
 		uint32_t indx = (length >> SFSCHUNKBITS);
@@ -2589,7 +2589,7 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	FSNodeFile *node_file = static_cast<FSNodeFile *>(node);
+	auto *node_file = static_cast<FSNodeFile *>(node);
 	nodeOperations_->getStats(fsOpContext, node, &previousStats);
 	for (indx = 0; indx < node_file->chunks.size(); indx++) {
 		if (chunk_repair(node->goal, node_file->chunks[indx], &nversion, correct_only)) {
@@ -3341,7 +3341,7 @@ uint8_t FilesystemOperationsBase::getChunkId(const FsContext &context,
 	FSNode *node;
 	uint8_t status = nodeOperations_->getNodeForOperation(
 	    context, fsOpContext, ExpectedNodeType::kFile, MODE_MASK_EMPTY, inode, &node);
-	FSNodeFile *node_file = static_cast<FSNodeFile *>(node);
+	auto *node_file = static_cast<FSNodeFile *>(node);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 	if (index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 	if (index < node_file->chunks.size()) {
@@ -3428,7 +3428,7 @@ uint8_t FilesystemOperationsBase::getChunksInfo(const FsContext &context, uint32
 
 	if (chunk_index > kMaxChunkIndex) { return SAUNAFS_ERROR_INDEXTOOBIG; }
 
-	FSNodeFile *file_node = static_cast<FSNodeFile *>(node);
+	auto *file_node = static_cast<FSNodeFile *>(node);
 
 	std::vector<ChunkPartWithAddressAndLabel> chunk_parts;
 
