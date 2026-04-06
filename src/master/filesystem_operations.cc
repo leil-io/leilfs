@@ -735,7 +735,8 @@ uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
 uint8_t FilesystemOperationsBase::applyTrunc(const FilesystemOperationContext &fsOpContext,
                                              uint32_t timestamp, inode_t inode, uint32_t indx,
                                              uint64_t chunkid, uint32_t lockid) {
-	uint64_t ochunkid, nchunkid;
+	uint64_t ochunkid;
+	uint64_t nchunkid;
 	uint8_t status;
 	auto *nodeFile = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 
@@ -2352,7 +2353,8 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
                                              uint8_t *opflag, uint64_t *length,
                                              [[maybe_unused]] uint32_t min_server_version) {
 	ChecksumUpdater checksumUpdater(context.ts());
-	uint64_t ochunkid, nchunkid;
+	uint64_t ochunkid;
+	uint64_t nchunkid;
 	FSNode *node;
 
 	uint8_t status =
@@ -2565,8 +2567,10 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
                                          uint32_t *erased, uint32_t *repaired) {
 	uint32_t timeStamp = eventloop_time();
 	ChecksumUpdater checksumUpdater(timeStamp);
-	uint32_t nversion, indx;
-	StatsRecord psr, nsr;
+	uint32_t nversion;
+	uint32_t indx;
+	StatsRecord previousStats;
+	StatsRecord newStats;
 	FSNode *node;
 
 	*notchanged = 0;
@@ -2586,7 +2590,7 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	FSNodeFile *node_file = static_cast<FSNodeFile *>(node);
-	nodeOperations_->getStats(fsOpContext, node, &psr);
+	nodeOperations_->getStats(fsOpContext, node, &previousStats);
 	for (indx = 0; indx < node_file->chunks.size(); indx++) {
 		if (chunk_repair(node->goal, node_file->chunks[indx], &nversion, correct_only)) {
 			changeLog(fsOpContext, timeStamp, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode,
@@ -2603,9 +2607,9 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 			(*notchanged)++;
 		}
 	}
-	nodeOperations_->getStats(fsOpContext, node, &nsr);
-	nodeOperations_->updateParentStatsForNode(fsOpContext, node, &nsr, &psr);
-	quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, nsr.size - psr.size}});
+	nodeOperations_->getStats(fsOpContext, node, &newStats);
+	nodeOperations_->updateParentStatsForNode(fsOpContext, node, &newStats, &previousStats);
+	quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, newStats.size - previousStats.size}});
 	fsnodes_update_checksum(node);
 	return SAUNAFS_STATUS_OK;
 }
@@ -2615,7 +2619,8 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
                                               uint32_t timestamp, inode_t inode, uint32_t indx,
                                               uint32_t nversion) {
 	uint8_t status;
-	StatsRecord psr, nsr;
+	StatsRecord previousStats;
+	StatsRecord newStats;
 
 	auto *nodeFile = nodeOperations_->idToNode<FSNodeFile>(fsOpContext, inode);
 
@@ -2640,7 +2645,7 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
 
-	nodeOperations_->getStats(fsOpContext, nodeFile, &psr);
+	nodeOperations_->getStats(fsOpContext, nodeFile, &previousStats);
 
 	if (nversion == 0) {
 		status = chunk_delete_file(nodeFile->chunks[indx], nodeFile->goal);
@@ -2649,11 +2654,12 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 		status = chunk_set_version(nodeFile->chunks[indx], nversion);
 	}
 
-	nodeOperations_->getStats(fsOpContext, nodeFile, &nsr);
+	nodeOperations_->getStats(fsOpContext, nodeFile, &newStats);
 
-	nodeOperations_->updateParentStatsForNode(fsOpContext, nodeFile, &nsr, &psr);
+	nodeOperations_->updateParentStatsForNode(fsOpContext, nodeFile, &newStats, &previousStats);
 
-	quotaUpdate(fsOpContext, nodeFile, {{QuotaResource::kSize, nsr.size - psr.size}});
+	quotaUpdate(fsOpContext, nodeFile,
+	            {{QuotaResource::kSize, newStats.size - previousStats.size}});
 
 	gMetadata->metadataVersion++;
 	nodeFile->mtime = timestamp;
