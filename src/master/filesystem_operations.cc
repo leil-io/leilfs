@@ -101,18 +101,18 @@ void FilesystemOperationsBase::changeLog(
 }
 
 #ifndef METARESTORE
-uint8_t FilesystemOperationsBase::readReservedSize(inode_t rootinode, uint8_t sesflags,
+uint8_t FilesystemOperationsBase::readReservedSize(inode_t rootinode,
+                                                   [[maybe_unused]] uint8_t sesflags,
                                                    uint32_t *dbuffsize) {
 	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
-	(void)sesflags;
+
 	*dbuffsize = nodeOperations_->getDetachedSize(gMetadata->reserved);
+
 	return SAUNAFS_STATUS_OK;
 }
 
-void FilesystemOperationsBase::readReservedData(inode_t rootinode, uint8_t sesflags,
-                                                uint8_t *dbuff) {
-	(void)rootinode;
-	(void)sesflags;
+void FilesystemOperationsBase::readReservedData([[maybe_unused]] inode_t rootinode,
+                                                [[maybe_unused]] uint8_t sesflags, uint8_t *dbuff) {
 	nodeOperations_->getDetachedData(gMetadata->reserved, dbuff);
 }
 
@@ -128,17 +128,18 @@ void FilesystemOperationsBase::readReserved(const FilesystemOperationContext &fs
 	                                 maxEntries, entries, false);
 }
 
-uint8_t FilesystemOperationsBase::readTrashSize(inode_t rootinode, uint8_t sesflags,
+uint8_t FilesystemOperationsBase::readTrashSize(inode_t rootinode,
+                                                [[maybe_unused]] uint8_t sesflags,
                                                 uint32_t *dbuffsize) {
 	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
-	(void)sesflags;
+
 	*dbuffsize = nodeOperations_->getDetachedSize(gMetadata->trash);
+
 	return SAUNAFS_STATUS_OK;
 }
 
-void FilesystemOperationsBase::readTrashData(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) {
-	(void)rootinode;
-	(void)sesflags;
+void FilesystemOperationsBase::readTrashData([[maybe_unused]] inode_t rootinode,
+                                             [[maybe_unused]] uint8_t sesflags, uint8_t *dbuff) {
 	nodeOperations_->getDetachedData(gMetadata->trash, dbuff);
 }
 
@@ -156,11 +157,11 @@ void FilesystemOperationsBase::readTrash(const FilesystemOperationContext &fsOpC
 
 /* common procedure for trash and reserved files */
 uint8_t FilesystemOperationsBase::getDetachedAttr(const FilesystemOperationContext &fsOpContext,
-                                                  inode_t rootinode, uint8_t sesflags,
-                                                  inode_t inode, Attributes &attr, uint8_t dtype) {
+                                                  inode_t rootinode,
+                                                  [[maybe_unused]] uint8_t sesflags, inode_t inode,
+                                                  Attributes &attr, uint8_t dtype) {
 	attr.fill(0);
 	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
-	(void)sesflags;
 	if (!DTYPE_ISVALID(dtype)) { return SAUNAFS_ERROR_EINVAL; }
 	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!node) { return SAUNAFS_ERROR_ENOENT; }
@@ -181,10 +182,9 @@ uint8_t FilesystemOperationsBase::getDetachedAttr(const FilesystemOperationConte
 }
 
 uint8_t FilesystemOperationsBase::getTrashPath(const FilesystemOperationContext &fsOpContext,
-                                               inode_t rootinode, uint8_t sesflags, inode_t inode,
-                                               std::string &path) {
+                                               inode_t rootinode, [[maybe_unused]] uint8_t sesflags,
+                                               inode_t inode, std::string &path) {
 	if (rootinode != 0) { return SAUNAFS_ERROR_EPERM; }
-	(void)sesflags;
 	FSNode *node = nodeOperations_->idToNode(fsOpContext, inode);
 	if (!node) { return SAUNAFS_ERROR_ENOENT; }
 	if (node->type != FSNodeType::kTrash) { return SAUNAFS_ERROR_ENOENT; }
@@ -2350,7 +2350,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
                                              inode_t inode, uint32_t index,
                                              /* inout */ uint32_t *lockid, uint64_t *chunkid,
                                              uint8_t *opflag, uint64_t *length,
-                                             uint32_t min_server_version) {
+                                             [[maybe_unused]] uint32_t min_server_version) {
 	ChecksumUpdater checksumUpdater(context.ts());
 	uint64_t ochunkid, nchunkid;
 	FSNode *node;
@@ -2401,7 +2401,6 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 		status = chunk_multi_modify(ochunkid, lockid, fileNode->goal, quota_exceeded, opflag,
 		                            &nchunkid, min_server_version);
 #else
-		(void)min_server_version;
 		// This will NEVER happen (metarestore doesn't call this in master context)
 		mabort("bad code path: fs_writechunk");
 #endif
@@ -3371,9 +3370,9 @@ uint64_t FilesystemOperationsBase::increaseMetadataVersion(
 	return gMetadata->metadataVersion++;
 }
 
-uint8_t FilesystemOperationsBase::applySetQuota(const FilesystemOperationContext & /*fsOpContext*/,
-                                                char rigor, char resource, char ownerType,
-                                                inode_t ownerId, uint64_t limit) {
+uint8_t FilesystemOperationsBase::applySetQuota(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, char rigor, char resource,
+    char ownerType, inode_t ownerId, uint64_t limit) {
 	return quotas::fs_apply_setquota(rigor, resource, ownerType, ownerId, limit);
 }
 
