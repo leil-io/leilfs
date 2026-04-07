@@ -106,7 +106,7 @@ struct FsInitParams {
 #endif
 	static constexpr unsigned kDefaultMaxChunksWrittenInParallelPerInode = 0;
 	static constexpr unsigned kDefaultWriteCacheSize = 128;
-	static constexpr unsigned kDefaultCachePerInodePercentage = 25;
+	static constexpr unsigned kDefaultCachePerInodePercentage = 100;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
 	static constexpr unsigned kDefaultWriteWindowSize = 15;
 	static constexpr unsigned kDefaultSymlinkCacheTimeout = 3600;
