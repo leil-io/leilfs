@@ -37,16 +37,19 @@ done
 # Stop the chunkserver daemon
 saunafs_chunkserver_daemon 0 stop
 
+# Sync to a dump boundary before restarting the chunkserver, so that registration happens
+# right at the start of a new dump period. This gives us a full period (~10s) before the next
+# dump fires, which is safely within the 15-second chunks registration timeout.
+echo "Syncing with dump period before restarting the chunkserver..."
+while ! is_time_for_metadata_dump; do
+	sleep 0.2
+done
+sleep 1  # let the boundary pass
+
 # Start the chunkserver again to trigger chunks registration
 saunafs_chunkserver_daemon 0 start
 
 saunafs_wait_for_ready_chunkservers 1
-
-# If metadata dump is already in progress, we add a delay to sync up with the next one
-if is_time_for_metadata_dump; then
-	echo "Metadata dump is already in progress, waiting 2 seconds to sync up with the next one"
-	sleep 2
-fi
 
 # Wait for the next metadata dump execution
 truncate_log
