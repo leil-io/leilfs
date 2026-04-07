@@ -184,9 +184,11 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	isVersionLessThan5_ = false;
 	registrationAttempts_ = 0;
 
-	hddForeachChunkInBulks([this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
-		createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
-	});
+	hddForeachChunkInBulks(
+	    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
+		    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
+	    },
+	    gChunkBulkSize.load(std::memory_order_relaxed));
 
 	uint64_t usedSpace;
 	uint64_t totalSpace;

@@ -117,19 +117,21 @@ void masterconn_check_hdd_reports() {
 			errorcounter--;
 		}
 
+		const auto chunkBulkSize = gChunkBulkSize.load(std::memory_order_relaxed);
+
 		std::vector<ChunkWithType> chunks_with_type;
-		hddGetDamagedChunks(chunks_with_type, 1000);
+		hddGetDamagedChunks(chunks_with_type, chunkBulkSize);
 		if (!chunks_with_type.empty()) {
 			eptr->createAttachedPacket(cstoma::chunkDamaged::build(chunks_with_type));
 		}
 
-		hddGetLostChunks(chunks_with_type, 1000);
+		hddGetLostChunks(chunks_with_type, chunkBulkSize);
 		if (!chunks_with_type.empty()) {
 			eptr->createAttachedPacket(cstoma::chunkLost::build(chunks_with_type));
 		}
 
 		std::vector<ChunkWithVersionAndType> chunks_with_version;
-		hddGetNewChunks(chunks_with_version, 1000);
+		hddGetNewChunks(chunks_with_version, chunkBulkSize);
 		if (!chunks_with_version.empty()) {
 			eptr->createAttachedPacket(cstoma::chunkNew::build(chunks_with_version));
 		}

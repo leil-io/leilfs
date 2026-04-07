@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <atomic>
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
@@ -44,11 +45,16 @@ void hddSerializeAllDiskInfosV2(uint8_t *buff);
 
 std::string hddGetDiskGroups();
 
-const std::size_t kChunkBulkSize = 1000;
+// Controls the number of chunks processed per bulk operation when reporting
+// chunks to the master (e.g. registration, damaged, lost, new chunks).
+inline constexpr uint32_t kDefaultChunkBulkSize = 1'000;
+inline constexpr uint32_t kMinChunkBulkSize = 1;
+inline constexpr uint32_t kMaxChunkBulkSize = 100'000;
+inline std::atomic_uint32_t gChunkBulkSize{kDefaultChunkBulkSize};
+
 using BulkFunction = std::function<void(std::vector<ChunkWithVersionAndType>&)>;
-/// Executes the callback for each bulk of at most \p kChunkBulkSize chunks.
-void hddForeachChunkInBulks(BulkFunction bulkCallback,
-                            std::size_t bulkSize = kChunkBulkSize);
+/// Executes the callback for each bulk of at most \p bulkSize chunks.
+void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 
 int hddGetAndResetSpaceChanged();
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
