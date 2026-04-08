@@ -55,6 +55,7 @@ enum {
 	KEY_PASSWORDASK,
 	KEY_NOSTDMOUNTOPTIONS,
 	KEY_NONEMPTY,
+	KEY_WAN,
 	KEY_HELP,
 	KEY_VERSION
 };
@@ -76,6 +77,7 @@ struct sfsopts_ {
 	int meta;
 	int debug;
 	int delayedinit;
+	int wan;
 	int acl;
 	int xattrs;
 	double aclcacheto;
@@ -150,6 +152,7 @@ struct sfsopts_ {
 		meta(0),
 		debug(SaunaClient::FsInitParams::kDefaultDebugMode),
 		delayedinit(SaunaClient::FsInitParams::kDefaultDelayedInit),
+		wan(0),
 		acl(SaunaClient::FsInitParams::kDefaultEnableAcl),
 		xattrs(SaunaClient::FsInitParams::kDefaultEnableXattrs),
 		aclcacheto(SaunaClient::FsInitParams::kDefaultAclCacheTimeout),
