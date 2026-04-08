@@ -171,6 +171,7 @@ const static std::unordered_map<std::string, std::string> defaultOptionsCS = {
     {"HDD_CHECK_CRC_WHEN_READING", "1"},
     {"HDD_CHECK_CRC_WHEN_WRITING", "1"},
     {"HDD_ADVISE_NO_CACHE", "0"},
+    {"HDD_CHUNK_BULK_SIZE", "1000"},
     {"HDD_PUNCH_HOLES", "0"},
     {"ENABLE_LOAD_FACTOR", "0"},
     {"REPLICATION_BANDWIDTH_LIMIT_KBPS", "0"},

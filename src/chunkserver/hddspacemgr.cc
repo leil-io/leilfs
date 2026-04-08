@@ -176,6 +176,21 @@ int hddGetAndResetSpaceChanged() {
 	return gHddSpaceChanged.exchange(false);
 }
 
+static void hddReloadChunkBulkSize(bool isReload) {
+	const auto previousChunkBulkSize = gChunkBulkSize.load(std::memory_order_relaxed);
+	const auto configuredChunkBulkSize = cfg_get_minmaxvalue<uint32_t>(
+	    "HDD_CHUNK_BULK_SIZE", kDefaultChunkBulkSize, kMinChunkBulkSize, kMaxChunkBulkSize);
+
+	gChunkBulkSize.store(configuredChunkBulkSize, std::memory_order_relaxed);
+
+	if (isReload && previousChunkBulkSize != configuredChunkBulkSize) {
+		safs::log_info("hdd space manager: HDD_CHUNK_BULK_SIZE changed from {} to {}",
+		               previousChunkBulkSize, configuredChunkBulkSize);
+	}
+
+	safs::log_info("hdd space manager: Effective HDD_CHUNK_BULK_SIZE: {}", configuredChunkBulkSize);
+}
+
 uint32_t hddGetSerializedSizeOfAllDiskInfosV2() {
 	TRACETHIS();
 	uint32_t serializedSizeOfAllDisks = 0;
@@ -2799,6 +2814,8 @@ void hddReload(void) {
 	gCheckCrcWhenWriting = cfg_getuint8("HDD_CHECK_CRC_WHEN_WRITING", 1) != 0U;
 	gPunchHolesInFiles = cfg_getuint32("HDD_PUNCH_HOLES", 0);
 
+	hddReloadChunkBulkSize(true);
+
 	char *leaveFreeStr = cfg_getstr("HDD_LEAVE_SPACE_DEFAULT",
 	                                disk::gLeaveSpaceDefaultDefaultStrValue);
 	auto parsedLeaveFree = cfg_parse_size(leaveFreeStr);
@@ -2967,6 +2984,8 @@ int hddInit() {
 	gCheckCrcWhenWriting = cfg_getuint8("HDD_CHECK_CRC_WHEN_WRITING", 1) != 0U;
 
 	gPunchHolesInFiles = cfg_getuint32("HDD_PUNCH_HOLES", 0);
+
+	hddReloadChunkBulkSize(false);
 
 	eventloop_reloadregister(hddReload);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_MINUTE, 0,

@@ -113,6 +113,12 @@
 ## (Default: 0)
 # HDD_ADVISE_NO_CACHE = 0
 
+## [ADVANCED] Number of chunks to process in a single bulk operation when reporting
+## chunks to the master (e.g., when registering chunks, reporting new
+## chunks, or reporting damaged or lost chunks).
+## Reloadable. (Default: 1000, Minimum: 1, Maximum: 100000)
+# HDD_CHUNK_BULK_SIZE = 1000
+
 ## If enabled then chunkserver detects zero values in chunk data and frees
 ## corresponding file blocks (decreasing file system usage).
 ## This option works only on Linux
