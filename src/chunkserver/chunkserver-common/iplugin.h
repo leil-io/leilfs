@@ -38,6 +38,9 @@ public:
 	/// needed.
 	virtual bool initialize() = 0;
 
+	/// Called on chunkserver reload to refresh plugin configuration parameters.
+	virtual void reload() = 0;
+
 	/// Returns the plugin name
 	virtual std::string name() = 0;
 	/// Returns the plugin version
