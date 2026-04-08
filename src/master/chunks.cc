@@ -28,6 +28,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -553,44 +554,28 @@ uint64_t Chunk::allFullChunkCopies[CHUNK_MATRIX_SIZE][CHUNK_MATRIX_SIZE];
 #endif
 
 #define CHUNK_BUCKET_SIZE 20000
-struct chunk_bucket {
-	Chunk bucket[CHUNK_BUCKET_SIZE];
-	uint32_t firstfree;
-	chunk_bucket *next;
+struct ChunkBucket {
+	std::array<Chunk, CHUNK_BUCKET_SIZE> bucket;
+	uint32_t firstAvailableChunk{};
 };
 
 namespace {
 struct ChunksMetadata {
 	// chunks
-	chunk_bucket *cbhead;
+	std::vector<std::unique_ptr<ChunkBucket>> chunkBuckets;
 	std::vector<Chunk *> availableChunks;
-	std::vector<Chunk *> chunkhash[kChunkHashSize];
-	uint64_t lastchunkid;
-	Chunk *lastchunkptr;
+	std::vector<Chunk *> chunkhash[kChunkHashSize]{};
+	uint64_t lastchunkid{};
+	Chunk *lastchunkptr{};
 
 	// other chunks metadata information
-	uint64_t chunksChecksum;
-	uint64_t chunksChecksumRecalculated;
-	uint32_t checksumRecalculationPosition;
+	uint64_t chunksChecksum{};
+	uint64_t chunksChecksumRecalculated{};
+	uint32_t checksumRecalculationPosition{};
 
-	ChunksMetadata() :
-			cbhead{},
-			availableChunks{},
-			chunkhash{},
-			lastchunkid{},
-			lastchunkptr{},
-			chunksChecksum{},
-			chunksChecksumRecalculated{},
-			checksumRecalculationPosition{0} {
-	}
+	ChunksMetadata() = default;
 
-	~ChunksMetadata() {
-		chunk_bucket *cbn;
-		for (chunk_bucket *cb = cbhead; cb; cb = cbn) {
-			cbn = cb->next;
-			delete cb;
-		}
-	}
+	~ChunksMetadata() = default;
 
 	/// Gets the id that will be assigned to the next created chunk without incrementing it.
 	static uint64_t getNextChunkId() {
@@ -800,7 +785,6 @@ uint64_t chunk_checksum(ChecksumMode mode) {
 }
 
 static inline Chunk *chunk_malloc() {
-	chunk_bucket *cb;
 	Chunk *ret;
 	if (!gChunksMetadata->availableChunks.empty()) {
 		ret = gChunksMetadata->availableChunks.back();
@@ -808,14 +792,17 @@ static inline Chunk *chunk_malloc() {
 		ret->clear();
 		return ret;
 	}
-	if (gChunksMetadata->cbhead==NULL || gChunksMetadata->cbhead->firstfree==CHUNK_BUCKET_SIZE) {
-		cb = new chunk_bucket;
-		cb->next = gChunksMetadata->cbhead;
-		cb->firstfree = 0;
-		gChunksMetadata->cbhead = cb;
+
+	if (gChunksMetadata->chunkBuckets.empty() ||
+	    gChunksMetadata->chunkBuckets.back()->firstAvailableChunk == CHUNK_BUCKET_SIZE) {
+		auto chunkBucket = std::make_unique<ChunkBucket>();
+		chunkBucket->firstAvailableChunk = 0;
+		gChunksMetadata->chunkBuckets.push_back(std::move(chunkBucket));
 	}
-	ret = (gChunksMetadata->cbhead->bucket)+(gChunksMetadata->cbhead->firstfree);
-	gChunksMetadata->cbhead->firstfree++;
+
+	auto &currentBucket = gChunksMetadata->chunkBuckets.back();
+	ret = &(currentBucket->bucket[currentBucket->firstAvailableChunk]);
+	currentBucket->firstAvailableChunk++;
 	ret->clear();
 	return ret;
 }
