@@ -420,6 +420,9 @@ void masterDisconnectedCallback() {
 }
 
 inline void eraseAclCache(inode_t inode) {
+	if (!acl_cache) {
+		return;
+	}
 	acl_cache->erase(
 			inode    , 0, 0,
 			inode + 1, 0, 0);
