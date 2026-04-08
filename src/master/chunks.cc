@@ -256,7 +256,6 @@ public:
 
 	uint64_t chunkid;
 	uint64_t checksum;
-	Chunk *next;
 #ifndef METARESTORE
 	compact_vector<ChunkPart> parts;
 #endif
@@ -301,7 +300,6 @@ public:
 
 	void clear() {
 		goalCounters_.clear();
-		next = nullptr;
 		chunkid = 0;
 		version = 0;
 		lockid = 0;
@@ -565,7 +563,7 @@ namespace {
 struct ChunksMetadata {
 	// chunks
 	chunk_bucket *cbhead;
-	Chunk *chfreehead;
+	std::vector<Chunk *> availableChunks;
 	std::vector<Chunk *> chunkhash[kChunkHashSize];
 	uint64_t lastchunkid;
 	Chunk *lastchunkptr;
@@ -577,7 +575,7 @@ struct ChunksMetadata {
 
 	ChunksMetadata() :
 			cbhead{},
-			chfreehead{},
+			availableChunks{},
 			chunkhash{},
 			lastchunkid{},
 			lastchunkptr{},
@@ -804,9 +802,9 @@ uint64_t chunk_checksum(ChecksumMode mode) {
 static inline Chunk *chunk_malloc() {
 	chunk_bucket *cb;
 	Chunk *ret;
-	if (gChunksMetadata->chfreehead) {
-		ret = gChunksMetadata->chfreehead;
-		gChunksMetadata->chfreehead = ret->next;
+	if (!gChunksMetadata->availableChunks.empty()) {
+		ret = gChunksMetadata->availableChunks.back();
+		gChunksMetadata->availableChunks.pop_back();
 		ret->clear();
 		return ret;
 	}
@@ -824,8 +822,7 @@ static inline Chunk *chunk_malloc() {
 
 #ifndef METARESTORE
 static inline void chunk_free(Chunk *p) {
-	p->next = gChunksMetadata->chfreehead;
-	gChunksMetadata->chfreehead = p;
+	gChunksMetadata->availableChunks.push_back(p);
 	p->inEndangeredQueue = 0;
 }
 #endif /* METARESTORE */
