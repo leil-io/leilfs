@@ -78,7 +78,7 @@ public:
 	private:
 		static constexpr int defectiveTimeout_ms = 2000;
 		static constexpr uint32_t kReferenceRoundTripTime_ms = 100;
-		static constexpr float kLatencyInfluence = 0.49f;
+		static constexpr float kLatencyInfluence = 0.3f;
 		static constexpr uint32_t kRoundTripTimeSmoothingFactor = 8;
 
 		uint32_t pendingReads_;
