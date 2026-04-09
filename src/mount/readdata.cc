@@ -418,8 +418,9 @@ void ReadaheadOperationsManager::addExtraRequests_(
 	}
 
 	if (!rrec->readaheadRequests.empty()) {
-		maximumRequestedOffset = rrec->readaheadRequests.lastPendingRequest()
-		                             ->requestPtr->endOffset();
+		maximumRequestedOffset =
+		    std::max(maximumRequestedOffset,
+		             rrec->readaheadRequests.lastPendingRequest()->requestPtr->endOffset());
 	}
 
 	uint64_t throughputWindow = rrec->readahead_adviser.throughputWindow();
@@ -438,7 +439,6 @@ void ReadaheadOperationsManager::addExtraRequests_(
 		// Try to align extra requests to SFSCHUNKSIZE
 		uint64_t extraRequestSize = std::min<uint64_t>(
 		    satisfyingSize, SFSCHUNKSIZE - (maximumRequestedOffset % SFSCHUNKSIZE));
-		ReadCache::Entry *entry = rrec->cache.forceInsert(maximumRequestedOffset, extraRequestSize);
 
 		if (maximumRequestedOffset < currentOffset) {
 			safs::log_warn(
@@ -449,6 +449,9 @@ void ReadaheadOperationsManager::addExtraRequests_(
 			// Next subtraction will overflow, so let's just return here
 			return;
 		}
+
+		ReadCache::Entry *entry = rrec->cache.forceInsert(maximumRequestedOffset, extraRequestSize);
+
 		int64_t extraPriority =
 		    rrec->readahead_adviser.expectedNeededTime_us(maximumRequestedOffset - currentOffset);
 
