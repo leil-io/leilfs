@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,37 +36,28 @@
 
 #include "common/charts.h"
 #include "common/event_loop.h"
+#include "common/time_utils.h"
 #include "master/chunks.h"
 #include "master/filesystem_stats.h"
 #include "master/matoclserv.h"
+#include "slogger/slogger.h"
 
-#if defined(SAUNAFS_HAVE_GETRUSAGE) && defined(SAUNAFS_HAVE_STRUCT_RUSAGE_RU_MAXRSS)
-#  include <sys/types.h>
-#  ifdef SAUNAFS_HAVE_SYS_RESOURCE_H
-#    include <sys/resource.h>
-#  endif
-#  ifdef SAUNAFS_HAVE_SYS_RUSAGE_H
-#    include <sys/rusage.h>
-#  endif
-#  ifndef RUSAGE_SELF
-#    define RUSAGE_SELF 0
-#  endif
-#  define MEMORY_USAGE 1
+#if defined(SAUNAFS_HAVE_GETRUSAGE)
+#include <sys/types.h>
+#ifdef SAUNAFS_HAVE_SYS_RESOURCE_H
+#include <sys/resource.h>
+#endif
+#ifdef SAUNAFS_HAVE_SYS_RUSAGE_H
+#include <sys/rusage.h>
+#endif
+#ifndef RUSAGE_SELF
+#define RUSAGE_SELF 0
+#endif
+#define CPU_USAGE 1
 #endif
 
-#if defined(SAUNAFS_HAVE_SETITIMER)
-#  include <sys/time.h>
-#  include <csignal>
-#  ifndef ITIMER_REAL
-#    define ITIMER_REAL 0
-#  endif
-#  ifndef ITIMER_VIRTUAL
-#    define ITIMER_VIRTUAL 1
-#  endif
-#  ifndef ITIMER_PROF
-#    define ITIMER_PROF 2
-#  endif
-#  define CPU_USAGE 1
+#if defined(CPU_USAGE) && defined(SAUNAFS_HAVE_STRUCT_RUSAGE_RU_MAXRSS)
+#define MEMORY_USAGE 1
 #endif
 
 #define CHARTS_FILENAME "stats.sfs"
@@ -138,12 +130,13 @@
 	{CHARTS_NONE                       ,CHARTS_NONE                       ,CHARTS_NONE                       ,0              ,0,0                 ,   0, 0}  \
 };
 
-static const uint32_t calcdefs[]=CALCDEFS
-static const statdef statdefs[]=STATDEFS
-static const estatdef estatdefs[]=ESTATDEFS
+static const uint32_t calcdefs[] = CALCDEFS;
+static const statdef statdefs[] = STATDEFS;
+static const estatdef estatdefs[] = ESTATDEFS;
 
 #ifdef CPU_USAGE
-static struct itimerval it_set;
+static struct rusage prev_rusage;
+static bool prevRusageValid = false;
 #endif
 
 #ifdef MEMORY_USAGE
@@ -161,12 +154,9 @@ void chartsdata_refresh(void) {
 	uint64_t data[CHARTS];
 	FsStatsArray fsdata;
 	uint32_t i,del,repl; //,bin,bout,opr,opw,dbr,dbw,dopr,dopw,repl;
-#ifdef CPU_USAGE
-	struct itimerval uc,pc;
-	uint32_t ucusec,pcusec;
-#endif
 #ifdef MEMORY_USAGE
-	struct rusage ru;
+	struct rusage ru{};
+	bool haveRusage = false;
 #endif
 
 	for (i=0 ; i<CHARTS ; i++) {
@@ -174,60 +164,51 @@ void chartsdata_refresh(void) {
 	}
 
 #ifdef CPU_USAGE
-// CPU usage
-	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
-	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
-
-	if (uc.it_value.tv_sec<=999) {  // on fucken linux timers can go backward !!!
-		uc.it_value.tv_sec = 999-uc.it_value.tv_sec;
-		uc.it_value.tv_usec = 999999-uc.it_value.tv_usec;
+	// CPU usage via getrusage deltas
+	struct rusage cur{};
+	if (getrusage(RUSAGE_SELF, &cur) == -1) {
+		safs::log_error_code(errno, "could not get cpu usage for chartsdata");
 	} else {
-		uc.it_value.tv_sec = 0;
-		uc.it_value.tv_usec = 0;
-	}
-	if (pc.it_value.tv_sec<=999) {  // as abowe - who the hell has invented this stupid os !!!
-		pc.it_value.tv_sec = 999-pc.it_value.tv_sec;
-		pc.it_value.tv_usec = 999999-pc.it_value.tv_usec;
-	} else {
-		pc.it_value.tv_sec = 0;
-		pc.it_value.tv_usec = 0;
-	}
+		if (prevRusageValid) {
+			data[CHARTS_UCPU] = timeDiffUsec(cur.ru_utime, prev_rusage.ru_utime);
+			data[CHARTS_SCPU] = timeDiffUsec(cur.ru_stime, prev_rusage.ru_stime);
+		}
+		prev_rusage = cur;
+		prevRusageValid = true;
 
-	ucusec = uc.it_value.tv_sec*1000000U+uc.it_value.tv_usec;
-	pcusec = pc.it_value.tv_sec*1000000U+pc.it_value.tv_usec;
-
-	if (pcusec>ucusec) {
-		pcusec-=ucusec;
-	} else {
-		pcusec=0;
+#ifdef MEMORY_USAGE
+		ru = cur;
+		haveRusage = true;
+#endif
 	}
-	data[CHARTS_UCPU] = ucusec;
-	data[CHARTS_SCPU] = pcusec;
 #endif
 
 // memory usage
 #ifdef MEMORY_USAGE
-	getrusage(RUSAGE_SELF,&ru);
+	if (!haveRusage && getrusage(RUSAGE_SELF, &ru) == -1) {
+		safs::log_error_code(errno, "could not get memory usage for chartsdata");
+	} else {
 #  ifdef __APPLE__
-	memusage = ru.ru_maxrss;
+		memusage = ru.ru_maxrss;
 #  else
-	memusage = ru.ru_maxrss * UINT64_C(1024);
+		memusage = ru.ru_maxrss * UINT64_C(1024);
 #  endif
 #  ifdef __linux__
-	if (memusage==0) {
-		int fd = open("/proc/self/statm",O_RDONLY);
-		char statbuff[1000];
-		int l;
-		if (fd>=0) {
-			l = read(fd,statbuff,1000);
-			if (l<1000 && l>0) {
-				statbuff[l]=0;
-				memusage = strtoul(statbuff,NULL,10)*getpagesize();
+		if (memusage == 0) {
+			int fd = open("/proc/self/statm", O_RDONLY);
+			char statbuff[1000];
+			int l;
+			if (fd >= 0) {
+				l = read(fd, statbuff, 1000);
+				if (l < 1000 && l > 0) {
+					statbuff[l] = 0;
+					memusage = strtoul(statbuff, NULL, 10) * getpagesize();
+				}
+				close(fd);
 			}
-			close(fd);
 		}
-	}
 #  endif
+	}
 	if (memusage>0) {
 		data[CHARTS_MEMORY] = memusage;
 	}
@@ -256,29 +237,32 @@ void chartsdata_store(void) {
 }
 
 int chartsdata_init() {
-#ifdef CPU_USAGE
-	struct itimerval uc, pc;
-#endif
 #ifdef MEMORY_USAGE
-	struct rusage ru;
+	struct rusage ru{};
+	bool haveRusage = false;
 #endif
 
 #ifdef CPU_USAGE
-	it_set.it_interval.tv_sec = 0;
-	it_set.it_interval.tv_usec = 0;
-	it_set.it_value.tv_sec = 999;
-	it_set.it_value.tv_usec = 999999;
-
-	setitimer(ITIMER_VIRTUAL, &it_set, &uc);  // user time
-	setitimer(ITIMER_PROF, &it_set, &pc);     // user time + system time
+	if (getrusage(RUSAGE_SELF, &prev_rusage) == -1) {
+		safs::log_error_code(errno, "could not initialize cpu usage for chartsdata");
+	} else {
+		prevRusageValid = true;
+#ifdef MEMORY_USAGE
+		ru = prev_rusage;
+		haveRusage = true;
+#endif
+	}
 #endif
 #ifdef MEMORY_USAGE
-	getrusage(RUSAGE_SELF, &ru);
+	if (!haveRusage && getrusage(RUSAGE_SELF, &ru) == -1) {
+		safs::log_error_code(errno, "could not initialize memory usage for chartsdata");
+	} else {
 #  ifdef __APPLE__
-	memusage = ru.ru_maxrss;
+		memusage = ru.ru_maxrss;
 #  else
-	memusage = ru.ru_maxrss * 1024;
+		memusage = static_cast<uint64_t>(ru.ru_maxrss) * UINT64_C(1024);
 #  endif
+	}
 #endif
 
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 60, 0, chartsdata_refresh);

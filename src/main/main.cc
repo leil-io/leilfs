@@ -132,13 +132,6 @@ static void signal_pipe_serv(const std::vector<pollfd> &pdesc) {
 			} else if (sigid=='\003') {
 				safs_pretty_syslog(LOG_NOTICE, "Received SIGUSR1, killing gently...");
 				exit(SAUNAFS_EXIT_STATUS_GENTLY_KILL);
-			} else if (sigid == '\004') {
-				safs_pretty_syslog(LOG_NOTICE, "Received SIGPROF signal");
-			} else if (sigid == '\005') {
-				safs_pretty_syslog(LOG_NOTICE, "Received SIGVTALRM signal");
-			} else if (sigid == '\006') {
-				// Disabling logging for SIGALRM to avoid bunch of logs triggered by
-				// SignalLoopWatchdog class
 			}
 		}
 	}
@@ -257,21 +250,6 @@ static int ignoresignal[]={
 	-1
 };
 
-static int timerSignalCodes[]={
-#ifndef GPERFTOOLS
-#ifdef SIGALRM
-	SIGALRM,
-#endif
-#ifdef SIGVTALRM
-	SIGVTALRM,
-#endif
-#ifdef SIGPROF
-	SIGPROF,
-#endif
-#endif
-	-1
-};
-
 static int exitsignal[]={
 #if defined(SIGUSR1) && defined(ENABLE_EXIT_ON_USR1)
 	SIGUSR1,
@@ -297,29 +275,6 @@ void reloadhandle(int signo) {
 void exithandle(int signo) {
 	signo = write(signalpipe[1],"\003",1); // see above
 	(void)signo;
-}
-
-void alarmSignalsHandler(int signo) {
-#ifndef GPERFTOOLS
-	ssize_t bytesWritten = 0;
-#ifdef SIGPROF
-	if (signo == SIGPROF) {
-		bytesWritten = write(signalpipe[1], "\004", 1);  // see above
-	}
-#endif
-#ifdef SIGVTALRM
-	if (signo == SIGVTALRM) {
-		bytesWritten = write(signalpipe[1], "\005", 1);  // see above
-	}
-#endif
-#ifdef SIGALRM
-	if (signo == SIGALRM) {
-		bytesWritten = write(signalpipe[1], "\006", 1);  // see above
-	}
-#endif
-	(void)bytesWritten;  // Prevent compiler warning
-#endif
-	(void)signo;  // Prevent compiler warning
 }
 
 void set_signal_handlers(int daemonflag) {
@@ -350,10 +305,6 @@ void set_signal_handlers(int daemonflag) {
 	sa.sa_handler = SIG_IGN;
 	for (i=0 ; ignoresignal[i]>0 ; i++) {
 		sigaction(ignoresignal[i],&sa,(struct sigaction *)0);
-	}
-	sa.sa_handler = alarmSignalsHandler;
-	for (i = 0; timerSignalCodes[i] > 0; i++) {
-		sigaction(timerSignalCodes[i], &sa, (struct sigaction *)0);
 	}
 	sa.sa_handler = daemonflag?SIG_IGN:termhandle;
 	for (i=0 ; daemonignoresignal[i]>0 ; i++) {
