@@ -32,6 +32,12 @@ int EIO_replies = 0;
 // * fsync always fails with EIO if file name contains "fsync_EIO"
 // * pread fails with EIO if offset>FAR_OFFSET_THRESHOLD and file name contains "pread_far_EIO"
 // * pwrite fails with EIO if offset>FAR_OFFSET_THRESHOLD and file name contains "pwrite_far_EIO"
+// * pread fails with EIO if the first operation and takes 2s more if file name contains
+// "pread_slow_and_one_eio_trigger"
+// * pwrite fails with EIO if the first operation and takes 2s more if file name contains
+// "pwrite_slow_and_one_eio_trigger"
+// * pread takes 10ms + 1us per 250B if file name contains "pread_only_slow"
+// * pwrite takes 10ms + 1us per 250B if file name contains "pwrite_only_slow"
 
 // returns -1 on failure and sets errno (via readlink call)
 ssize_t read_filename(int fd, char *buf, int bufsize) {
@@ -42,11 +48,12 @@ ssize_t read_filename(int fd, char *buf, int bufsize) {
 	return readlink(fdpath, buf, bufsize);
 }
 
-static int err_on_operation(int fd, const char* opname, size_t offset) {
+static int err_on_operation(int fd, const char* opname, size_t offset, size_t size) {
 	char filename[FILENAME_BUFSIZE] = {0};
 	char always_eio_trigger[COMMAND_BUFSIZE] = {0};
 	char far_eio_trigger[COMMAND_BUFSIZE] = {0};
 	char slow_and_one_eio_trigger[COMMAND_BUFSIZE] = {0};
+	char only_slow[COMMAND_BUFSIZE] = {0};
 
 	ssize_t result = read_filename(fd, filename, FILENAME_BUFSIZE);
 	if (result == -1) {
@@ -61,6 +68,7 @@ static int err_on_operation(int fd, const char* opname, size_t offset) {
 	sprintf(always_eio_trigger, "%s_EIO", opname);
 	sprintf(far_eio_trigger, "%s_far_EIO", opname);
 	sprintf(slow_and_one_eio_trigger, "%s_slow_and_one_EIO", opname);
+	sprintf(only_slow, "%s_only_slow", opname);
 
 	// TODO: remove fixed pattern for SMRs after the basic support
 	if (strstr(filename, always_eio_trigger) || strstr(filename, "sauna_nullb0")) {
@@ -75,6 +83,12 @@ static int err_on_operation(int fd, const char* opname, size_t offset) {
 			return EIO;
 		}
 		return 0;
+	} else if (strstr(filename, only_slow)) {
+		// sleep for a while to simulate a slow operation on hdd of 250MB/s peak throughput
+		int kBaseLatency_us = 10 * 1000;  // 10ms
+		int bytesPerUs = 250;  // 250B per 1us
+		usleep(kBaseLatency_us + size / bytesPerUs);
+		return 0;
 	} else {
 		return 0;
 	}
@@ -86,7 +100,7 @@ ssize_t pread(int fd, void *buf, size_t count, off_t offset) {
 	int err;
 	static pread_t _pread = NULL;
 
-	err = err_on_operation(fd, "pread", offset);
+	err = err_on_operation(fd, "pread", offset, count);
 	if (err) {
 		errno = err;
 		return -1;
@@ -101,7 +115,7 @@ ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset) {
 	int err;
 	static pwrite_t _pwrite = NULL;
 
-	err = err_on_operation(fd, "pwrite", offset);
+	err = err_on_operation(fd, "pwrite", offset, count);
 	if (err) {
 		errno = err;
 		return -1;
@@ -116,7 +130,7 @@ int close(int fd) {
 	int err;
 	static close_t _close = NULL;
 
-	err = err_on_operation(fd, "close", 0);
+	err = err_on_operation(fd, "close", 0, 0);
 	if (err) {
 		errno = err;
 		return -1;
@@ -131,7 +145,7 @@ int fsync(int fd) {
 	int err;
 	static fsync_t _fsync = NULL;
 
-	err = err_on_operation(fd, "fsync", 0);
+	err = err_on_operation(fd, "fsync", 0, 0);
 	if (err) {
 		errno = err;
 		return -1;
