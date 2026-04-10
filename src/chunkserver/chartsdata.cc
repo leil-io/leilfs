@@ -23,13 +23,10 @@
 #include "chunkserver/chartsdata.h"
 
 #include <fcntl.h>
-#include <sys/resource.h>
-#include <sys/time.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <algorithm>
 #include <cerrno>
-#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -41,7 +38,26 @@
 #include "chunkserver/network_stats.h"
 #include "common/charts.h"
 #include "common/event_loop.h"
+#include "common/time_utils.h"
 #include "slogger/slogger.h"
+
+#if defined(SAUNAFS_HAVE_GETRUSAGE)
+#include <sys/types.h>
+#ifdef SAUNAFS_HAVE_SYS_RESOURCE_H
+#include <sys/resource.h>
+#endif
+#ifdef SAUNAFS_HAVE_SYS_RUSAGE_H
+#include <sys/rusage.h>
+#endif
+#ifndef RUSAGE_SELF
+#define RUSAGE_SELF 0
+#endif
+#define CPU_USAGE 1
+#endif
+
+#if defined(CPU_USAGE) && defined(SAUNAFS_HAVE_STRUCT_RUSAGE_RU_MAXRSS)
+#define MEMORY_USAGE 1
+#endif
 
 #define CHARTS_FILENAME "csstats.sfs"
 
@@ -81,8 +97,6 @@
 #define CHARTS_SPACE_RECLAIMED 33
 
 #define CHARTS_NUMBER 34
-
-const unsigned long kLinuxMaxrssSize = 1024UL;
 
 /* name , join mode , percent , scale , multiplier , divisor */
 #define STATDEFS { \
@@ -140,32 +154,26 @@ const unsigned long kLinuxMaxrssSize = 1024UL;
 	{CHARTS_NONE                            ,CHARTS_NONE                            ,CHARTS_NONE           ,0              ,0,0                 ,   0, 0}  \
 };
 
-static const uint32_t calcdefs[]=CALCDEFS
-static const statdef statdefs[]=STATDEFS
-static const estatdef estatdefs[]=ESTATDEFS
+static const uint32_t calcdefs[] = CALCDEFS;
+static const statdef statdefs[] = STATDEFS;
+static const estatdef estatdefs[] = ESTATDEFS;
 
-static struct itimerval it_set;
-
-inline uint32_t toMicroSeconds(struct itimerval &itimer) {
-    return itimer.it_value.tv_sec * 1000000 + itimer.it_value.tv_usec;
-}
+#ifdef CPU_USAGE
+static struct rusage prev_rusage;
+static bool prevRusageValid = false;
+#endif
 
 // NOLINTNEXTLINE(misc-use-anonymous-namespace)
-static uint64_t GetMemUsage() {
-	struct rusage resUse{};
-	int err = getrusage(RUSAGE_SELF, &resUse);
-	if (err != -1) {
+#ifdef MEMORY_USAGE
+static uint64_t GetMemUsage(const struct rusage &resUse) {
 #ifdef __APPLE__
-		return resUse.ru_maxrss;
+	return resUse.ru_maxrss;
 #else
-		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
-		return resUse.ru_maxrss * kLinuxMaxrssSize;
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
+	return static_cast<uint64_t>(resUse.ru_maxrss) * UINT64_C(1024);
 #endif
-	} else {
-		safs::log_error_code(errno, "could not get memory usage for chartsdata");
-		return 0;
-	}
 }
+#endif
 
 void chartsdata_refresh(void) {
 	uint64_t data[CHARTS_NUMBER];
@@ -175,54 +183,40 @@ void chartsdata_refresh(void) {
 	uint32_t opsDupTrunc, opsTest, opsGCPurge;
 	uint32_t maxChunkServerJobsCount, maxMasterJobsCount;
 	int64_t usedSpaceDelta;
+#ifdef MEMORY_USAGE
+	struct rusage ru{};
+	bool haveRusage = false;
+#endif
 
-	// Timer runs only when the process is executing.
-	struct itimerval userTime;
+	for (auto i = 0; i < CHARTS_NUMBER; ++i) { data[i] = CHARTS_NODATA; }
 
-	// Timer runs when the process is executing and when
-	// the system is executing on behalf of the process.
-	struct itimerval procTime;
-
-	uint32_t userTimeMicroSeconds, procTimeMicroSeconds;
-
-	for (auto i = 0; i < CHARTS_NUMBER; ++i) {
-		data[i] = 0;
-	}
-
-	setitimer(ITIMER_VIRTUAL, &it_set, &userTime); // user time
-	setitimer(ITIMER_PROF, &it_set, &procTime);    // user time + system time
-
-	// on fucken linux timers can go backward !!!
-	if (userTime.it_value.tv_sec <= 999) {
-		userTime.it_value.tv_sec = 999 - userTime.it_value.tv_sec;
-		userTime.it_value.tv_usec = 999999 - userTime.it_value.tv_usec;
+#ifdef CPU_USAGE
+	// CPU usage via getrusage deltas
+	struct rusage cur{};
+	if (getrusage(RUSAGE_SELF, &cur) == -1) {
+		safs::log_error_code(errno, "could not get cpu usage for chartsdata");
 	} else {
-		userTime.it_value.tv_sec = 0;
-		userTime.it_value.tv_usec = 0;
-	}
+		if (prevRusageValid) {
+			data[CHARTS_UCPU] = timeDiffUsec(cur.ru_utime, prev_rusage.ru_utime);
+			data[CHARTS_SCPU] = timeDiffUsec(cur.ru_stime, prev_rusage.ru_stime);
+		}
+		prev_rusage = cur;
+		prevRusageValid = true;
 
-	// as abowe - who the hell has invented this stupid os !!!
-	if (procTime.it_value.tv_sec <= 999) {
-		procTime.it_value.tv_sec = 999 - procTime.it_value.tv_sec;
-		procTime.it_value.tv_usec = 999999 - procTime.it_value.tv_usec;
+#ifdef MEMORY_USAGE
+		ru = cur;
+		haveRusage = true;
+#endif
+	}
+#endif
+
+#ifdef MEMORY_USAGE
+	if (!haveRusage && getrusage(RUSAGE_SELF, &ru) == -1) {
+		safs::log_error_code(errno, "could not get memory usage for chartsdata");
 	} else {
-		procTime.it_value.tv_sec = 0;
-		procTime.it_value.tv_usec = 0;
+		data[CHARTS_MEMORY] = GetMemUsage(ru);
 	}
-
-	userTimeMicroSeconds = toMicroSeconds(userTime);
-	procTimeMicroSeconds = toMicroSeconds(procTime);
-
-	if (procTimeMicroSeconds > userTimeMicroSeconds) {
-		procTimeMicroSeconds -= userTimeMicroSeconds;
-	} else {
-		procTimeMicroSeconds = 0;
-	}
-
-	data[CHARTS_MEMORY] = GetMemUsage();
-
-	data[CHARTS_UCPU] = userTimeMicroSeconds;
-	data[CHARTS_SCPU] = procTimeMicroSeconds;
+#endif
 
 	masterconn_stats(&bytesIn, &bytesOut, &maxMasterJobsCount);
 	data[CHARTS_MASTERIN] = bytesIn;
@@ -283,15 +277,13 @@ void chartsdata_store(void) {
 }
 
 int chartsdata_init() {
-	struct itimerval userTime, procTime;
-
-	it_set.it_interval.tv_sec = 0;
-	it_set.it_interval.tv_usec = 0;
-	it_set.it_value.tv_sec = 999;
-	it_set.it_value.tv_usec = 999999;
-
-	setitimer(ITIMER_VIRTUAL, &it_set, &userTime); // user time
-	setitimer(ITIMER_PROF, &it_set, &procTime);    // user time + system time
+#ifdef CPU_USAGE
+	if (getrusage(RUSAGE_SELF, &prev_rusage) == -1) {
+		safs::log_error_code(errno, "could not initialize cpu usage for chartsdata");
+	} else {
+		prevRusageValid = true;
+	}
+#endif
 
 	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_MINUTE, 0, chartsdata_refresh);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_HOUR, 0, chartsdata_store);

@@ -26,6 +26,21 @@
 #include <cstdint>
 #include <ratio>
 
+struct timeval;
+
+/*!
+ * @brief Returns elapsed microseconds between two timeval snapshots.
+ *
+ * Handles microsecond borrow and clamps negative deltas to zero.
+ * Use this helper instead of raw unsigned subtraction to avoid wraparound
+ * when @p current.tv_usec is smaller than @p previous.tv_usec.
+ *
+ * @param current Newer timeval snapshot.
+ * @param previous Older timeval snapshot.
+ * @return Elapsed time in microseconds, clamped to zero when negative.
+ */
+uint64_t timeDiffUsec(const struct timeval &current, const struct timeval &previous);
+
 // SteadyClock is an alias for std::chrono::steady_clock or compatible class.
 // SteadyTimePoint is a matching time_point, SteadyDuration - matching duration.
 

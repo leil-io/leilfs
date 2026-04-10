@@ -21,6 +21,7 @@
 #include "common/platform.h"
 #include "common/time_utils.h"
 
+#include <sys/time.h>
 #include <chrono>
 #include <ratio>
 
@@ -44,6 +45,25 @@ constexpr bool SteadyClock::is_steady;
 template <class Ratio2, class Dur>
 static int64_t duration_int64_cast(Dur duration) {
 	return std::chrono::duration_cast<std::chrono::duration<int64_t, Ratio2>>(duration).count();
+}
+
+namespace {
+constexpr int64_t kMicrosecondsInSecond = 1000000;
+}
+
+uint64_t timeDiffUsec(const struct timeval &current, const struct timeval &previous) {
+	int64_t sec = static_cast<int64_t>(current.tv_sec) - static_cast<int64_t>(previous.tv_sec);
+	int64_t usec = static_cast<int64_t>(current.tv_usec) - static_cast<int64_t>(previous.tv_usec);
+
+	if (usec < 0) {
+		--sec;
+		usec += kMicrosecondsInSecond;
+	}
+
+	if (sec < 0) { return 0; }
+
+	return (static_cast<uint64_t>(sec) * static_cast<uint64_t>(kMicrosecondsInSecond)) +
+	       static_cast<uint64_t>(usec);
 }
 
 // Timer implementation

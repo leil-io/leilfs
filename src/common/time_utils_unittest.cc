@@ -21,6 +21,7 @@
 #include "common/platform.h"
 #include "common/time_utils.h"
 
+#include <sys/time.h>
 #include <unistd.h>
 #include <chrono>
 #include <thread>
@@ -89,4 +90,18 @@ TEST(TimeUtilsTests, InfiniteTimeout) {
 	EXPECT_EQ(timeout.remaining_us(), -1);
 	EXPECT_EQ(timeout.remaining_ns(), -1);
 	EXPECT_EQ(timeout.remaining_s(), -1);
+}
+
+TEST(TimeUtilsTests, TimeDiffUsecHandlesMicrosecondBorrow) {
+	const timeval current{.tv_sec = 10, .tv_usec = 100};
+	const timeval previous{.tv_sec = 8, .tv_usec = 900000};
+
+	EXPECT_EQ(timeDiffUsec(current, previous), 1100100U);
+}
+
+TEST(TimeUtilsTests, TimeDiffUsecClampsNegativeDeltaToZero) {
+	const timeval current{.tv_sec = 5, .tv_usec = 0};
+	const timeval previous{.tv_sec = 6, .tv_usec = 0};
+
+	EXPECT_EQ(timeDiffUsec(current, previous), 0U);
 }
