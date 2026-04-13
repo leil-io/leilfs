@@ -564,7 +564,7 @@ struct ChunksMetadata {
 	// chunks
 	std::vector<std::unique_ptr<ChunkBucket>> chunkBuckets;
 	std::vector<Chunk *> availableChunks;
-	std::vector<Chunk *> chunkhash[kChunkHashSize]{};
+	compact_vector<Chunk *> chunkhash[kChunkHashSize]{};
 	uint64_t lastchunkid{};
 	Chunk *lastchunkptr{};
 
