@@ -603,6 +603,7 @@ static ChunksMetadata *gChunksMetadata;
 #ifndef METARESTORE
 
 static Chunk *gCurrentChunkInZombieLoop = nullptr;
+static uint32_t gCurrentChunkInZombieLoopBucket = kChunkHashSize;
 static size_t gCurrentChunkInZombieLoopIndex = 0;
 
 class ReplicationDelayInfo {
@@ -2033,6 +2034,7 @@ void chunk_clean_zombie_servers_a_bit() {
 
 	watchdog.start();
 	while (current_position < kChunkHashSize) {
+		gCurrentChunkInZombieLoopBucket = current_position;
 		const auto &bucket = gChunksMetadata->chunkhash[current_position];
 		while (gCurrentChunkInZombieLoopIndex < bucket.size()) {
 			gCurrentChunkInZombieLoop = bucket[gCurrentChunkInZombieLoopIndex++];
@@ -2052,6 +2054,7 @@ void chunk_clean_zombie_servers_a_bit() {
 	if (current_position >= kChunkHashSize) {
 		--gDisconnectedCounter;
 		current_position = 0;
+		gCurrentChunkInZombieLoopBucket = current_position;
 		gCurrentChunkInZombieLoopIndex = 0;
 		gCurrentChunkInZombieLoop =
 		    getCurrentChunkInBucket(current_position, gCurrentChunkInZombieLoopIndex);
@@ -2977,13 +2980,14 @@ bool ChunkWorker::deleteUnusedChunks() {
 			assert(stack_.current_bucket_index < bucket.size());
 			assert(bucket[stack_.current_bucket_index] == stack_.node);
 
+			if (stack_.current_bucket == gCurrentChunkInZombieLoopBucket &&
+			    stack_.current_bucket_index < gCurrentChunkInZombieLoopIndex) {
+				--gCurrentChunkInZombieLoopIndex;
+			}
 			if (stack_.node == gCurrentChunkInZombieLoop) { gCurrentChunkInZombieLoop = nullptr; }
 
 			Chunk *toDelete = bucket[stack_.current_bucket_index];
-			if (stack_.current_bucket_index + 1 < bucket.size()) {
-				std::swap(bucket[stack_.current_bucket_index], bucket.back());
-			}
-			bucket.pop_back();
+			bucket.erase(bucket.begin() + static_cast<std::ptrdiff_t>(stack_.current_bucket_index));
 			chunk_delete(toDelete);
 
 			stack_.node =
