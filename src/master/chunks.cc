@@ -602,12 +602,8 @@ static ChunksMetadata *gChunksMetadata;
 
 #ifndef METARESTORE
 
-// Last chunk processed by the zombie loop
-static Chunk *gCurrentChunkInZombieLoop = nullptr;
-// Hash bucket currently being scanned
-static uint32_t gCurrentChunkInZombieLoopBucket = 0;
 // Outer iteration index over chunkhash
-static uint32_t gCurrentChunkInZombieLoopPosition = 0;
+static uint32_t gCurrentBucketInZombieLoop = 0;
 // Index within the current bucket's vector
 static size_t gCurrentChunkInZombieLoopIndex = 0;
 
@@ -953,14 +949,14 @@ Chunk *chunk_find(uint64_t chunkid) {
 	if (gChunksMetadata->lastchunkid==chunkid) {
 		return gChunksMetadata->lastchunkptr;
 	}
-	for (Chunk *chunkit : gChunksMetadata->chunkhash[chunkpos]) {
-		if (chunkit->chunkid == chunkid) {
+	for (Chunk *chunk : gChunksMetadata->chunkhash[chunkpos]) {
+		if (chunk->chunkid == chunkid) {
 			gChunksMetadata->lastchunkid = chunkid;
-			gChunksMetadata->lastchunkptr = chunkit;
+			gChunksMetadata->lastchunkptr = chunk;
 #ifndef METARESTORE
-			chunk_handle_disconnected_copies(chunkit);
+			chunk_handle_disconnected_copies(chunk);
 #endif // METARESTORE
-			return chunkit;
+			return chunk;
 		}
 	}
 	return nullptr;
@@ -1997,10 +1993,8 @@ void chunk_server_disconnected(matocsserventry */*ptr*/, const MediaLabel &label
 	// only if the loop was executed at least twice. Reset the scan position so the
 	// next call starts from the beginning, ensuring both passes cover all chunks.
 	gDisconnectedCounter = 2;
-	gCurrentChunkInZombieLoopPosition = 0;
-	gCurrentChunkInZombieLoopBucket = 0;
+	gCurrentBucketInZombieLoop = 0;
 	gCurrentChunkInZombieLoopIndex = 0;
-	gCurrentChunkInZombieLoop = nullptr;
 	eventloop_make_next_poll_nonblocking();
 	fs_cs_disconnected();
 	gChunksMetadata->lastchunkid = 0;
@@ -2037,35 +2031,31 @@ static Chunk *getCurrentChunkInBucket(uint32_t currentBucket, size_t currentBuck
 void chunk_clean_zombie_servers_a_bit() {
 	SignalLoopWatchdog watchdog;
 
-	if (gDisconnectedCounter == 0) {
-		return;
-	}
+	if (gDisconnectedCounter == 0) { return; }
 
 	watchdog.start();
-	while (gCurrentChunkInZombieLoopPosition < kChunkHashSize) {
-		gCurrentChunkInZombieLoopBucket = gCurrentChunkInZombieLoopPosition;
-		const auto &bucket = gChunksMetadata->chunkhash[gCurrentChunkInZombieLoopPosition];
+
+	while (gCurrentBucketInZombieLoop < kChunkHashSize) {
+		const auto &bucket = gChunksMetadata->chunkhash[gCurrentBucketInZombieLoop];
+
 		while (gCurrentChunkInZombieLoopIndex < bucket.size()) {
-			gCurrentChunkInZombieLoop = bucket[gCurrentChunkInZombieLoopIndex++];
-			chunk_handle_disconnected_copies(gCurrentChunkInZombieLoop);
+			chunk_handle_disconnected_copies(bucket[gCurrentChunkInZombieLoopIndex++]);
+
 			if (watchdog.expired()) {
 				eventloop_make_next_poll_nonblocking();
 				return;
 			}
 		}
-		++gCurrentChunkInZombieLoopPosition;
-		if (gCurrentChunkInZombieLoopPosition < kChunkHashSize) {
-			gCurrentChunkInZombieLoopIndex = 0;
-			gCurrentChunkInZombieLoop = getCurrentChunkInBucket(gCurrentChunkInZombieLoopPosition,
-			                                                    gCurrentChunkInZombieLoopIndex);
-		}
+
+		++gCurrentBucketInZombieLoop;
+
+		if (gCurrentBucketInZombieLoop < kChunkHashSize) { gCurrentChunkInZombieLoopIndex = 0; }
 	}
+
 	--gDisconnectedCounter;
-	gCurrentChunkInZombieLoopPosition = 0;
-	gCurrentChunkInZombieLoopBucket = 0;
+	gCurrentBucketInZombieLoop = 0;
 	gCurrentChunkInZombieLoopIndex = 0;
-	gCurrentChunkInZombieLoop =
-	    getCurrentChunkInBucket(gCurrentChunkInZombieLoopPosition, gCurrentChunkInZombieLoopIndex);
+
 	eventloop_make_next_poll_nonblocking();
 }
 
@@ -2987,11 +2977,10 @@ bool ChunkWorker::deleteUnusedChunks() {
 			assert(stack_.current_bucket_index < bucket.size());
 			assert(bucket[stack_.current_bucket_index] == stack_.node);
 
-			if (stack_.current_bucket == gCurrentChunkInZombieLoopBucket &&
+			if (stack_.current_bucket == gCurrentBucketInZombieLoop &&
 			    stack_.current_bucket_index < gCurrentChunkInZombieLoopIndex) {
 				--gCurrentChunkInZombieLoopIndex;
 			}
-			if (stack_.node == gCurrentChunkInZombieLoop) { gCurrentChunkInZombieLoop = nullptr; }
 
 			Chunk *toDelete = bucket[stack_.current_bucket_index];
 			bucket.erase(bucket.begin() + static_cast<std::ptrdiff_t>(stack_.current_bucket_index));
