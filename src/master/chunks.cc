@@ -602,8 +602,13 @@ static ChunksMetadata *gChunksMetadata;
 
 #ifndef METARESTORE
 
+// Last chunk processed by the zombie loop
 static Chunk *gCurrentChunkInZombieLoop = nullptr;
-static uint32_t gCurrentChunkInZombieLoopBucket = kChunkHashSize;
+// Hash bucket currently being scanned
+static uint32_t gCurrentChunkInZombieLoopBucket = 0;
+// Outer iteration index over chunkhash
+static uint32_t gCurrentChunkInZombieLoopPosition = 0;
+// Index within the current bucket's vector
 static size_t gCurrentChunkInZombieLoopIndex = 0;
 
 class ReplicationDelayInfo {
@@ -1989,8 +1994,13 @@ void chunk_server_disconnected(matocsserventry */*ptr*/, const MediaLabel &label
 		replicationDelayInfoForLabel[label].serverDisconnected();
 	}
 	// If chunkserver disconnects, we can assure it was processed by zombie server loop
-	// only if the loop was executed at least twice.
+	// only if the loop was executed at least twice. Reset the scan position so the
+	// next call starts from the beginning, ensuring both passes cover all chunks.
 	gDisconnectedCounter = 2;
+	gCurrentChunkInZombieLoopPosition = 0;
+	gCurrentChunkInZombieLoopBucket = 0;
+	gCurrentChunkInZombieLoopIndex = 0;
+	gCurrentChunkInZombieLoop = nullptr;
 	eventloop_make_next_poll_nonblocking();
 	fs_cs_disconnected();
 	gChunksMetadata->lastchunkid = 0;
@@ -2026,16 +2036,15 @@ static Chunk *getCurrentChunkInBucket(uint32_t currentBucket, size_t currentBuck
  */
 void chunk_clean_zombie_servers_a_bit() {
 	SignalLoopWatchdog watchdog;
-	static uint32_t current_position = kChunkHashSize;
 
 	if (gDisconnectedCounter == 0) {
 		return;
 	}
 
 	watchdog.start();
-	while (current_position < kChunkHashSize) {
-		gCurrentChunkInZombieLoopBucket = current_position;
-		const auto &bucket = gChunksMetadata->chunkhash[current_position];
+	while (gCurrentChunkInZombieLoopPosition < kChunkHashSize) {
+		gCurrentChunkInZombieLoopBucket = gCurrentChunkInZombieLoopPosition;
+		const auto &bucket = gChunksMetadata->chunkhash[gCurrentChunkInZombieLoopPosition];
 		while (gCurrentChunkInZombieLoopIndex < bucket.size()) {
 			gCurrentChunkInZombieLoop = bucket[gCurrentChunkInZombieLoopIndex++];
 			chunk_handle_disconnected_copies(gCurrentChunkInZombieLoop);
@@ -2044,21 +2053,19 @@ void chunk_clean_zombie_servers_a_bit() {
 				return;
 			}
 		}
-		++current_position;
-		if (current_position < kChunkHashSize) {
+		++gCurrentChunkInZombieLoopPosition;
+		if (gCurrentChunkInZombieLoopPosition < kChunkHashSize) {
 			gCurrentChunkInZombieLoopIndex = 0;
-			gCurrentChunkInZombieLoop =
-			    getCurrentChunkInBucket(current_position, gCurrentChunkInZombieLoopIndex);
+			gCurrentChunkInZombieLoop = getCurrentChunkInBucket(gCurrentChunkInZombieLoopPosition,
+			                                                    gCurrentChunkInZombieLoopIndex);
 		}
 	}
-	if (current_position >= kChunkHashSize) {
-		--gDisconnectedCounter;
-		current_position = 0;
-		gCurrentChunkInZombieLoopBucket = current_position;
-		gCurrentChunkInZombieLoopIndex = 0;
-		gCurrentChunkInZombieLoop =
-		    getCurrentChunkInBucket(current_position, gCurrentChunkInZombieLoopIndex);
-	}
+	--gDisconnectedCounter;
+	gCurrentChunkInZombieLoopPosition = 0;
+	gCurrentChunkInZombieLoopBucket = 0;
+	gCurrentChunkInZombieLoopIndex = 0;
+	gCurrentChunkInZombieLoop =
+	    getCurrentChunkInBucket(gCurrentChunkInZombieLoopPosition, gCurrentChunkInZombieLoopIndex);
 	eventloop_make_next_poll_nonblocking();
 }
 
