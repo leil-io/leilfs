@@ -511,7 +511,7 @@ uint8_t FilesystemOperationsBase::fullPathByInode(const FsContext &context, inod
 	inode_t current_inode = initial_inode;
 	FSNode *parent_node;
 	FSNode *current_node;
-	std::string current_name = "";
+	std::string current_name;
 
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadOnly, SessionType::kNotMeta);
@@ -560,10 +560,10 @@ uint8_t FilesystemOperationsBase::fullPathByInode(const FsContext &context, inod
 
 std::string FilesystemOperationsBase::fullPathByInode(const FilesystemOperationContext &fsOpContext,
                                                       inode_t initialInode) {
-	std::string fullPath = "";
+	std::string fullPath;
 	inode_t currentInode = initialInode;
 	FSNode *currentNode = nodeOperations_->idToNode(fsOpContext, currentInode);
-	std::string currentName = "";
+	std::string currentName;
 
 	while (currentInode != SPECIAL_INODE_ROOT) {
 		if (!currentNode) { return ""; }
