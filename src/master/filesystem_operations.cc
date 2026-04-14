@@ -587,7 +587,7 @@ std::string FilesystemOperationsBase::fullPathByInode(const FilesystemOperationC
 			break;
 		}
 
-		auto parentNode = nodeOperations_->idToNode<FSNodeDirectory>(fsOpContext, parent);
+		auto *parentNode = nodeOperations_->idToNode<FSNodeDirectory>(fsOpContext, parent);
 		if (!parentNode) { return ""; }
 		currentName = nodeOperations_->getChildNameByParentId(fsOpContext, parent, currentNode);
 		if (currentName.empty()) { return ""; }
@@ -1429,7 +1429,7 @@ uint8_t FilesystemOperationsBase::recursiveRemove(const FsContext &context, inod
 	if (!child) { return SAUNAFS_ERROR_ENOENT; }
 
 	auto shared_context = std::make_shared<FsContext>(context);
-	auto task = new RemoveTask({name}, wd_tmp->id, shared_context);
+	auto *task = new RemoveTask({name}, wd_tmp->id, shared_context);
 
 	std::string node_name;
 
@@ -2788,7 +2788,7 @@ uint8_t FilesystemOperationsBase::setGoal(const FsContext &context, inode_t inod
 	(*setgoal_stats)[SetGoalTask::kNotChanged] = 0;    // - Number of inodes with not changed goal
 	(*setgoal_stats)[SetGoalTask::kNotPermitted] = 0;  // - Number of inodes with permission denied
 
-	auto task = new SetGoalTask({node->id}, context.uid(), goal, smode, setgoal_stats);
+	auto *task = new SetGoalTask({node->id}, context.uid(), goal, smode, setgoal_stats);
 	std::string node_name;
 	FSNodeDirectory *parent = nodeOperations_->getFirstParent(fsOpContext, node);
 	nodeOperations_->getPath(fsOpContext, parent, node, node_name);
@@ -2873,7 +2873,7 @@ uint8_t FilesystemOperationsBase::setTrashTime(
 	(*settrashtime_stats)[SetTrashtimeTask::kNotPermitted] =
 	    0;  // - Number of inodes with permission denied
 
-	auto task =
+	auto *task =
 	    new SetTrashtimeTask({node->id}, context.uid(), trashtime, smode, settrashtime_stats);
 	std::string node_name;
 	FSNodeDirectory *parent = nodeOperations_->getFirstParent(fsOpContext, node);
