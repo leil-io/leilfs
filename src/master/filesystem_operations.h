@@ -158,7 +158,7 @@ public:
 	uint8_t writeChunk(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                   inode_t inode, uint32_t index,
 	                   /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
-	                   uint64_t *length, uint32_t min_server_version = 0) override;
+	                   uint64_t *length, [[maybe_unused]] uint32_t min_server_version = 0) override;
 	uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) override;
 	uint8_t getCanonicalPath(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext,
@@ -342,26 +342,31 @@ public:
 	uint32_t newSessionId() override;
 
 	// RESERVED
-	uint8_t readReservedSize(inode_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) override;
-	void readReservedData(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) override;
+	uint8_t readReservedSize(inode_t rootinode, [[maybe_unused]] uint8_t sesflags,
+	                         uint32_t *dbuffsize) override;
+	void readReservedData([[maybe_unused]] inode_t rootinode, [[maybe_unused]] uint8_t sesflags,
+	                      uint8_t *dbuff) override;
 	void readReserved(uint32_t off, uint32_t max_entries,
 	                  std::vector<NamedInodeEntry> &entries) override;
 	void readReserved(const FilesystemOperationContext &fsOpContext, uint64_t handleOffset,
 	                  uint32_t maxEntries, std::vector<HandleInodeEntry> &entries) override;
 
 	// TRASH
-	uint8_t readTrashSize(inode_t rootinode, uint8_t sesflags, uint32_t *dbuffsize) override;
-	void readTrashData(inode_t rootinode, uint8_t sesflags, uint8_t *dbuff) override;
+	uint8_t readTrashSize(inode_t rootinode, [[maybe_unused]] uint8_t sesflags,
+	                      uint32_t *dbuffsize) override;
+	void readTrashData([[maybe_unused]] inode_t rootinode, [[maybe_unused]] uint8_t sesflags,
+	                   uint8_t *dbuff) override;
 	void readTrash(uint32_t off, uint32_t max_entries,
 	               std::vector<NamedInodeEntry> &entries) override;
 	void readTrash(const FilesystemOperationContext &fsOpContext, uint64_t handleOffset,
 	               uint32_t maxEntries, std::vector<HandleInodeEntry> &entries) override;
 	uint8_t getTrashPath(const FilesystemOperationContext &fsOpContext, inode_t rootinode,
-	                     uint8_t sesflags, inode_t inode, std::string &path) override;
+	                     [[maybe_unused]] uint8_t sesflags, inode_t inode,
+	                     std::string &path) override;
 
 	// RESERVED+TRASH
 	uint8_t getDetachedAttr(const FilesystemOperationContext &fsOpContext, inode_t rootinode,
-	                        uint8_t sesflags, inode_t inode, Attributes &attr,
+	                        [[maybe_unused]] uint8_t sesflags, inode_t inode, Attributes &attr,
 	                        uint8_t dtype) override;
 
 	// EXTRA
@@ -486,8 +491,9 @@ public:
 
 	/// Replays a SETQUOTA changelog tuple update.
 	/// @see IFilesystemOperations::applySetQuota
-	uint8_t applySetQuota(const FilesystemOperationContext &fsOpContext, char rigor, char resource,
-	                      char ownerType, inode_t ownerId, uint64_t limit) override;
+	uint8_t applySetQuota([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                      char rigor, char resource, char ownerType, inode_t ownerId,
+	                      uint64_t limit) override;
 
 	// CHECKSUM
 

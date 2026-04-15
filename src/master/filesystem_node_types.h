@@ -203,6 +203,10 @@ public:
 	}
 };
 
+// Sentinel for a failed node lookup (e.g. idToNode, lookup).
+constexpr FSNode *kNodeNotFound = nullptr;
+// Placeholder used as lower-bound key in sorted node containers
+// (paired with a handle to construct a search key for lower_bound).
 constexpr FSNode *kUnknownNode = nullptr;
 
 /*! \brief Node used for storing file object.
