@@ -28,6 +28,7 @@
 
 #include "common/attributes.h"
 #include "common/event_loop.h"
+#include "common/loop_watchdog.h"
 #include "errors/saunafs_error_codes.h"
 #include "master/changelog.h"
 #include "master/chunks.h"
@@ -101,6 +102,96 @@ void FilesystemOperationsBase::changeLog(
 }
 
 #ifndef METARESTORE
+void FilesystemOperationsBase::doEmptyTrash(uint32_t timeStamp) {
+	SignalLoopWatchdog watchdog;
+
+	auto trashIter = gMetadata->trash.begin();
+
+	// This function is reimplemented in KV backends, so fsOpContext is here only to satisfy the
+	// interface. It does not need to be committed.
+	auto fsOpContext =
+	    createFilesystemOperationContext(FilesystemOperationContext::TransactionType::kReadWrite);
+
+	watchdog.start();
+
+	while (trashIter != gMetadata->trash.end() && ((*trashIter).first.timestamp < timeStamp)) {
+		auto *node =
+		    nodeOperations()->idToNodeVerify<FSNodeFile>(fsOpContext, (*trashIter).first.id);
+
+		if (node == kNodeNotFound) {
+			removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
+			                 gMetadata->trashReservedToId, node);
+			trashIter = gMetadata->trash.begin();
+			continue;
+		}
+
+		assert(node->type == FSNodeType::kTrash);
+
+		auto nodeId = node->id;
+		nodeOperations()->purge(fsOpContext, timeStamp, node);
+
+		// Purge operation should be performed anyway - if it fails, inode will be reserved
+		changeLog(fsOpContext, timeStamp, "PURGE(%" PRIiNode ")", nodeId);
+
+		trashIter = gMetadata->trash.begin();
+
+		if (watchdog.expired()) { break; }
+	}
+}
+
+void FilesystemOperationsBase::doEmptyReserved(uint32_t timeStamp) {
+	SignalLoopWatchdog watchdog;
+
+	auto reservedIter = gMetadata->reserved.begin();
+
+	// This function is reimplemented in KV backends, so fsOpContext is here only to satisfy the
+	// interface. It does not need to be committed.
+	auto fsOpContext =
+	    createFilesystemOperationContext(FilesystemOperationContext::TransactionType::kReadWrite);
+
+	watchdog.start();
+
+	while (reservedIter != gMetadata->reserved.end()) {
+		if (watchdog.expired()) { break; }
+
+		auto *node =
+		    nodeOperations()->idToNodeVerify<FSNodeFile>(fsOpContext, (*reservedIter).first);
+
+		if (node == kNodeNotFound) {
+			removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+			                    gMetadata->trashReservedToId, (*reservedIter).first);
+			reservedIter = gMetadata->reserved.begin();
+			continue;
+		}
+
+		assert(node->type == FSNodeType::kReserved);
+
+		auto nodeId = node->id;
+		FsContext context = FsContext::getForMaster(timeStamp);
+
+		assert(!node->sessionIds.empty());
+
+		auto sessionIds = node->sessionIds;
+
+		if (!sessionIds.empty()) {
+			for (auto &sessionId : sessionIds) {
+				uint8_t status = release(context, fsOpContext, nodeId, sessionId);
+				if (status != SAUNAFS_STATUS_OK) {
+					safs::log_err(
+					    "Failed to release from periodic cleaning reserved file: {}, session: {}, status: {}",
+					    nodeId, sessionId, status);
+				}
+			}
+		} else {
+			safs::log_critical(
+			    "Failed to release from periodic cleaning reserved file: {}, no session associated with the file",
+			    nodeId);
+		}
+
+		reservedIter = gMetadata->reserved.begin();
+	}
+}
+
 uint8_t FilesystemOperationsBase::readReservedSize(inode_t rootinode,
                                                    [[maybe_unused]] uint8_t sesflags,
                                                    uint32_t *dbuffsize) {
@@ -199,7 +290,27 @@ uint8_t FilesystemOperationsBase::getTrashPath(const FilesystemOperationContext 
 
 	return SAUNAFS_STATUS_OK;
 }
+
 #endif
+
+std::optional<std::string> FilesystemOperationsBase::getDetachedPath(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNode *node) {
+	if (node == nullptr) { return std::nullopt; }
+
+	if (node->type == FSNodeType::kTrash) {
+		auto iter = gMetadata->trash.find(TrashPathKey(node));
+		if (iter == gMetadata->trash.end()) { return std::nullopt; }
+		return (std::string)(*iter).second;
+	}
+
+	if (node->type == FSNodeType::kReserved) {
+		auto iter = gMetadata->reserved.find(node->id);
+		if (iter == gMetadata->reserved.end()) { return std::nullopt; }
+		return (std::string)(*iter).second;
+	}
+
+	return std::nullopt;
+}
 
 uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t inode,
                                                const std::string &path) {
@@ -260,6 +371,14 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 	} else {
 		gMetadata->metadataVersion++;
 	}
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("undel: failed to commit transaction for inode {}", inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
 	return status;
 }
 
@@ -546,10 +665,11 @@ uint8_t FilesystemOperationsBase::fullPathByInode(const FsContext &context, inod
 			if (currentNode != kNodeNotFound && parentId == 0 &&
 			    (currentNode->type == FSNodeType::kReserved ||
 			     currentNode->type == FSNodeType::kTrash)) {
+				auto detachedPath = getDetachedPath(fsOpContext, currentNode);
+				if (!detachedPath.has_value()) { return SAUNAFS_ERROR_ENOENT; }
 				currentName =
-				    currentNode->type == FSNodeType::kTrash
-				        ? gMetadata->trash.at(TrashPathKey(currentNode)).get() + " (trash)"
-				        : gMetadata->reserved.at(currentInode).get() + " (reserved)";
+				    *detachedPath +
+				    (currentNode->type == FSNodeType::kTrash ? " (trash)" : " (reserved)");
 				fullPath = currentName;
 				return SAUNAFS_STATUS_OK;
 			}
@@ -587,19 +707,10 @@ std::string FilesystemOperationsBase::fullPathByInode(const FilesystemOperationC
 		if (parent == 0) {
 			if (currentNode->type == FSNodeType::kReserved ||
 			    currentNode->type == FSNodeType::kTrash) {
-				std::string pathFromTrashOrReserved;
-				if (currentNode->type == FSNodeType::kTrash) {
-					const auto key = TrashPathKey(currentNode);
-					auto iter = gMetadata->trash.find(key);
-					if (iter == gMetadata->trash.end()) { return ""; }
-					pathFromTrashOrReserved = (*iter).second.get() + " (trash)";
-				} else {
-					auto iter = gMetadata->reserved.find(currentInode);
-					if (iter == gMetadata->reserved.end()) { return ""; }
-					pathFromTrashOrReserved = (*iter).second.get() + " (reserved)";
-				}
-
-				return "/" + pathFromTrashOrReserved;
+				auto detachedPath = getDetachedPath(fsOpContext, currentNode);
+				if (!detachedPath.has_value()) { return ""; }
+				return "/" + *detachedPath +
+				       (currentNode->type == FSNodeType::kTrash ? " (trash)" : " (reserved)");
 			}
 			break;
 		}
@@ -859,7 +970,7 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	changeLog(fsOpContext, timeStamp, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")", inode,
 	          static_cast<FSNodeFile *>(node)->length, static_cast<uint32_t>(eraseFurtherChunks));
 	node->mtime = timeStamp;
-	nodeOperations_->updateCTime(node, timeStamp);
+	nodeOperations_->updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
 	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
 	                          context.auid(), context.agid(), context.sesflags(), attr);
@@ -1001,7 +1112,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	changeLog(fsOpContext, timeStamp,
 	          "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", node->id,
 	          node->mode & 07777, node->uid, node->gid, node->atime, node->mtime);
-	nodeOperations_->updateCTime(node, timeStamp);
+	nodeOperations_->updateCTime(fsOpContext, node, timeStamp);
 	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 	fsnodes_update_checksum(node);
@@ -1031,7 +1142,7 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	}
 	node->atime = atime;
 	node->mtime = mtime;
-	nodeOperations_->updateCTime(node, timestamp);
+	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	fsnodes_update_checksum(node);
 	gMetadata->metadataVersion++;
 
@@ -1054,7 +1165,7 @@ uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &
 	nodeOperations_->setLength(fsOpContext, static_cast<FSNodeFile *>(node), length,
 	                           eraseFurtherChunks);
 	node->mtime = timestamp;
-	nodeOperations_->updateCTime(node, timestamp);
+	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	fsnodes_update_checksum(node);
 	gMetadata->metadataVersion++;
 
@@ -2463,7 +2574,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	}
 
 	fileNode->mtime = context.ts();
-	nodeOperations_->updateCTime(fileNode, context.ts());
+	nodeOperations_->updateCTime(fsOpContext, fileNode, context.ts());
 	fsnodes_update_checksum(fileNode);
 
 	// Make the change persistent for KV backends
@@ -2504,7 +2615,7 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 			bool eraseFurtherChunks = false;
 			nodeOperations_->setLength(fsOpContext, nodeFile, length, eraseFurtherChunks);
 			nodeFile->mtime = timeStamp;
-			nodeOperations_->updateCTime(nodeFile, timeStamp);
+			nodeOperations_->updateCTime(fsOpContext, nodeFile, timeStamp);
 			fsnodes_update_checksum(nodeFile);
 
 			// Make the change persistent for KV backends
@@ -2569,7 +2680,7 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 
 	fileNode->chunks[chunkIndex] = 0;
 	nodeFile->mtime = timeStamp;
-	nodeOperations_->updateCTime(nodeFile, timeStamp);
+	nodeOperations_->updateCTime(fsOpContext, nodeFile, timeStamp);
 
 	// Log the repair operation with new version 0 (indicating deletion)
 	uint32_t newVersion = 0;
@@ -2620,7 +2731,7 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 			changeLog(fsOpContext, timeStamp, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode,
 			          chunkIndex, newVersion);
 			node->mtime = timeStamp;
-			nodeOperations_->updateCTime(node, timeStamp);
+			nodeOperations_->updateCTime(fsOpContext, node, timeStamp);
 			if (newVersion > 0) {
 				(*repaired)++;
 			} else {
@@ -2686,7 +2797,7 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 
 	gMetadata->metadataVersion++;
 	nodeFile->mtime = timestamp;
-	nodeOperations_->updateCTime(nodeFile, timestamp);
+	nodeOperations_->updateCTime(fsOpContext, nodeFile, timestamp);
 
 	fsnodes_update_checksum(nodeFile);
 
@@ -2932,10 +3043,14 @@ uint8_t FilesystemOperationsBase::applySetTrashTime(const FsContext &context, in
 	sassert(context.hasUidGidData());
 
 	SetTrashtimeTask task(context.uid(), trashtime, smode);
-	uint32_t myResult = task.setTrashtime(node, context.ts());
+	uint32_t myResult = task.setTrashtime(fsOpContext, node, context.ts());
 
 	gMetadata->metadataVersion++;
 	if (master_result != myResult) { return SAUNAFS_ERROR_MISMATCH; }
+	if (myResult == SetTrashtimeTask::kChanged && fsOpContext.hasReadWriteTransaction()) {
+		nodeOperations_->updateNode(fsOpContext, node);
+		if (!fsOpContext.getReadWriteTransaction()->commit()) { return SAUNAFS_ERROR_IO; }
+	}
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -3056,7 +3171,7 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
 	if (mode > XATTR_SMODE_REMOVE) { return SAUNAFS_ERROR_EINVAL; }
 	status = doConcreteSetXAttr(fsOpContext, node->id, anleng, attrname, avleng, attrvalue, mode);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
-	nodeOperations_->updateCTime(node, timeStamp);
+	nodeOperations_->updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
 	changeLog(fsOpContext, timeStamp, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", node->id,
 	          nodeOperations_->escapeName(std::string((const char *)attrname, anleng)).c_str(),
@@ -3125,7 +3240,7 @@ uint8_t FilesystemOperationsBase::applySetXAttr(const FilesystemOperationContext
 	                            attrvalue, mode);
 
 	if (status != SAUNAFS_STATUS_OK) { return status; }
-	nodeOperations_->updateCTime(node, timestamp);
+	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(node);
 	return status;

@@ -96,7 +96,7 @@ uint8_t SetGoalTask::setGoal(const FilesystemOperationContext &fsOpContext, FSNo
 						gMetadata->nodeChangedSignal.emit(node);
 					}
 				}
-				gFSOperations->nodeOperations()->updateCTime(node, ts);
+				gFSOperations->nodeOperations()->updateCTime(fsOpContext, node, ts);
 				fsnodes_update_checksum(node);
 
 				// Make goal updates persistent for KV backends.

@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include <map>
+#include <optional>
 
 #include "common/goal.h"
 #include "common/type_defs.h"
@@ -384,6 +385,14 @@ public:
 	                        std::string &fullPath) override;
 	std::string fullPathByInode(const FilesystemOperationContext &fsOpContext,
 	                            inode_t initialInode) override;
+
+	/// Purges expired trash entries whose expiry timestamp is before @p timeStamp.
+	/// @see IFilesystemOperations::doEmptyTrash
+	void doEmptyTrash(uint32_t timeStamp) override;
+
+	/// Releases all reserved files whose sessions have expired (no active openers).
+	/// @see IFilesystemOperations::doEmptyReserved
+	void doEmptyReserved(uint32_t timeStamp) override;
 #endif
 
 	// QUOTAS
@@ -588,6 +597,14 @@ protected:
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode,
 	    uint8_t anleng, const uint8_t *attrname, uint32_t avleng, const uint8_t *attrvalue,
 	    uint32_t mode);
+
+	/// Backend-specific hook for retrieving a detached trash/reserved path.
+	/// Default implementation reads from in-memory trash/reserved containers.
+	/// @param fsOpContext Operation context (provides transaction for KV backends).
+	/// @param node Detached trash/reserved node whose stored path should be retrieved.
+	/// @return Stored detached path without leading slash or suffix, or std::nullopt if absent.
+	virtual std::optional<std::string> getDetachedPath(
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNode *node);
 
 	/// Permission check for lock operations.
 	/// Validates that the caller has appropriate read/write access for the

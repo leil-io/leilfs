@@ -1503,6 +1503,23 @@ public:
 	virtual uint8_t quotaGetInfo(const FsContext &context, const std::vector<QuotaEntry> &entries,
 	                             std::vector<std::string> &result) = 0;
 
+	/// Purges expired trash entries whose expiry timestamp is before @p timeStamp.
+	///
+	/// Default implementation iterates gMetadata->trash. KV backends override this to scan
+	/// TRSH_TIME_ entries directly from FDB.
+	///
+	/// @param timeStamp Current wall-clock time (seconds since epoch). Entries with
+	///                  expiryTs < timeStamp are eligible for purge.
+	virtual void doEmptyTrash(uint32_t timeStamp) = 0;
+
+	/// Releases all reserved files whose sessions have expired (no active openers).
+	///
+	/// Default implementation iterates gMetadata->reserved. KV backends override this to scan
+	/// RSVD_PATH_ entries directly from FDB.
+	///
+	/// @param timeStamp Current wall-clock time (seconds since epoch).
+	virtual void doEmptyReserved(uint32_t timeStamp) = 0;
+
 	// CHECKSUM
 
 	/// Starts recalculating metadata checksum in background.

@@ -99,6 +99,25 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1
 /// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
 
+/// Prefix for trash time-ordered entries (for periodic expiry scans)
+/// Format: TRSH_TIME_<ExpiryTimestamp><InodeId>:<empty>
+/// - ExpiryTimestamp: ctime + trashtime, 32-bit Big Endian
+/// - InodeId: inode_t Big Endian (sizeof(inode_t) bytes)
+/// @note Lexicographic order matches expiry time order, enabling efficient scan up to a deadline.
+/// @note Value is empty; the key itself encodes all information needed for expiry scans.
+inline constexpr std::string_view kTrashTimeKeyPrefix = "TRSH_TIME_";  // Section TRSH 1.0
+
+/// Prefix for trash path entries (path lookup by inode)
+/// Format: TRSH_PATH_<InodeId>:<PathString>
+/// @note Written when a file enters trash; deleted on undel or purge.
+inline constexpr std::string_view kTrashPathKeyPrefix = "TRSH_PATH_";  // Section TRSH 1.0
+
+/// Prefix for reserved path entries (path lookup by inode)
+/// Format: RSVD_PATH_<InodeId>:<PathString>
+/// @note Written when a file enters the reserved list (unlinked with active sessions).
+/// Deleted when all sessions are released.
+inline constexpr std::string_view kReservedPathKeyPrefix = "RSVD_PATH_";  // Section RSVD 1.0
+
 /// Prefix for locks
 /// Format: FLCK_<InodeId:BE><Type:u8><Status:u8> → serialized lock entries
 /// - InodeId: inode_t serialized as Big Endian (enables per-inode prefix scan)

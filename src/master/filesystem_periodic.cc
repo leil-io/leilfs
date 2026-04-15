@@ -36,6 +36,7 @@
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_checksum_updater.h"
 #include "master/filesystem_metadata.h"
+#include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/matoclserv.h"
 
@@ -93,6 +94,13 @@ void fs_background_task_manager_work() {
 	}
 }
 
+static std::string get_detached_node_path(const FilesystemOperationContext &fsOpContext,
+                                          const FSNode *node) {
+	std::string path = gFSOperations->fullPathByInode(fsOpContext, node->id);
+	if (!path.empty() && path.front() == '/') { path.erase(path.begin()); }
+	return path;
+}
+
 static std::string get_node_info(const FilesystemOperationContext &fsOpContext, FSNode *node) {
 	std::string name;
 	if (node == nullptr) {
@@ -101,10 +109,10 @@ static std::string get_node_info(const FilesystemOperationContext &fsOpContext, 
 
 	if (node->type == FSNodeType::kTrash) {
 		name = "file in trash " + std::to_string(node->id) + ": " +
-		       (std::string)gMetadata->trash.at(TrashPathKey(node));
+		       get_detached_node_path(fsOpContext, node);
 	} else if (node->type == FSNodeType::kReserved) {
 		name = "reserved file " + std::to_string(node->id) + ": " +
-		       (std::string)gMetadata->reserved.at(node->id);
+		       get_detached_node_path(fsOpContext, node);
 	} else if (node->type == FSNodeType::kFile) {
 		name = "file " + std::to_string(node->id) + ": ";
 		bool first = true;
@@ -536,95 +544,12 @@ struct InodeInfo {
 };
 
 #ifndef METARESTORE
-static void fs_do_emptytrash(uint32_t ts) {
-	SignalLoopWatchdog watchdog;
-
-	auto it = gMetadata->trash.begin();
-	watchdog.start();
-	while (it != gMetadata->trash.end() && ((*it).first.timestamp < ts)) {
-		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-		    FilesystemOperationContext::TransactionType::kReadWrite);
-		FSNodeFile *node = gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>(
-		    fsOpContext, (*it).first.id);
-
-		if (!node) {
-			std::string pathName = (*it).second.get();
-			removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
-			                 gMetadata->trashReservedToId, node);
-			it = gMetadata->trash.begin();
-			continue;
-		}
-
-		assert(node->type == FSNodeType::kTrash);
-
-		auto node_id = node->id;
-		gFSOperations->nodeOperations()->purge(fsOpContext, ts, node);
-
-		// Purge operation should be performed anyway - if it fails, inode will be reserved
-		gFSOperations->changeLog(fsOpContext, ts, "PURGE(%" PRIiNode ")", node_id);
-
-		it = gMetadata->trash.begin();
-
-		if (watchdog.expired()) {
-			break;
-		}
-	}
-}
-
 void fs_periodic_emptytrash(void) {
-	uint32_t ts = eventloop_time();
-	fs_do_emptytrash(ts);
-}
-
-static void fs_do_emptyreserved(uint32_t ts) {
-	SignalLoopWatchdog watchdog;
-
-	auto it = gMetadata->reserved.begin();
-	watchdog.start();
-	while (it != gMetadata->reserved.end()) {
-		if (watchdog.expired()) { break; }
-
-		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-		    FilesystemOperationContext::TransactionType::kReadWrite);
-		auto *node =
-		    gFSOperations->nodeOperations()->idToNodeVerify<FSNodeFile>(fsOpContext, (*it).first);
-
-		if (!node) {
-			removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-			                    gMetadata->trashReservedToId, (*it).first);
-			it = gMetadata->reserved.begin();
-			continue;
-		}
-
-		assert(node->type == FSNodeType::kReserved);
-
-		auto node_id = node->id;
-		FsContext context = FsContext::getForMaster(ts);
-
-		assert(!node->sessionIds.empty());
-		auto sessionIds = node->sessionIds;
-		if (!sessionIds.empty()) {
-			for (auto &sessionId : sessionIds) {
-				uint8_t status = gFSOperations->release(context, fsOpContext, node_id, sessionId);
-				if (status != SAUNAFS_STATUS_OK) {
-					safs::log_err(
-					    "Failed to release from periodic cleaning reserved file: {}, session: {}, status: {}",
-					    node_id, sessionId, status);
-				}
-			}
-		} else {
-			safs::log_critical(
-			    "Failed to release from periodic cleaning reserved file: {}, no session associated with the file",
-			    node_id);
-		}
-
-		it = gMetadata->reserved.begin();
-	}
+	gFSOperations->doEmptyTrash(eventloop_time());
 }
 
 void fs_periodic_emptyreserved(void) {
-	uint32_t ts = eventloop_time();
-	fs_do_emptyreserved(ts);
+	gFSOperations->doEmptyReserved(eventloop_time());
 }
 
 void fs_read_periodic_config_file() {
