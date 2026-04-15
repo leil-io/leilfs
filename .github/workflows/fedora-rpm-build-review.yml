@@ -1,0 +1,38 @@
+name: Fedora RPM build and review
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+      options: --privileged 
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: dnf install -y fedora-packager python3-specfile
+
+      - name: Run build script
+        run: |
+          cd rpm
+          ./build.sh
+
+      - name: Run review script
+        run: |
+          cd rpm
+          ./review.sh
+
+      - name: Upload Review Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fedora Review Report
+          path: rpm/review-leilfs/review.txt
