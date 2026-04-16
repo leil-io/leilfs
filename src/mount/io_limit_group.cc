@@ -19,58 +19,56 @@
  */
 
 #include "common/platform.h"
-#include "mount/io_limit_group.h"
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 
-static void skipHierarchy(std::istream& is) {
-	char x;
-	do {
-		is >> x;
-	} while (x != ':');
-}
+#include "mount/io_limit_group.h"
 
-static bool searchSubsystems(std::istream& is, const std::string& subsystem) {
-	const int length = subsystem.length();
-	int matched = 0;
-	char x;
-	while (1) {
-		is >> x;
-		if (matched == length && (x == ',' || x == ':')) {
-			while (x != ':') {
-				is >> x;
-			}
+static bool searchSubsystems(const std::string& subsystems, const std::string& subsystem) {
+	std::stringstream ss(subsystems);
+	std::string sub;
+	while (std::getline(ss, sub, ',')) {
+		if (sub == subsystem) {
 			return true;
 		}
-		if (matched == length || x != subsystem[matched]) {
-			while (x != ',' && x != ':') {
-				is >> x;
-			}
-			if (x == ':') {
-				return false;
-			}
-			matched = 0;
-			continue;
-		}
-		matched++;
 	}
+	return false;
 }
 
 IoLimitGroupId getIoLimitGroupId(std::istream& input, const std::string& subsystem) {
+	std::string v2Path;
+	bool v2Found = false;
+
 	try {
 		for (std::string line; std::getline(input, line);) {
 			try {
 				std::stringstream ss(line);
-				ss.exceptions(std::stringstream::eofbit);
-				skipHierarchy(ss);
-				if (searchSubsystems(ss, subsystem)) {
-					ss.exceptions(std::stringstream::goodbit);
-					std::string groupId;
-					std::getline(ss, groupId);
-					return groupId;
+
+				std::string hierarchyIdStr;
+				if (!std::getline(ss, hierarchyIdStr, ':')) {
+					continue;
+				}
+
+				std::string subsystems;
+				if (!std::getline(ss, subsystems, ':')) {
+					continue;
+				}
+
+				std::string path;
+				if (!std::getline(ss, path)) {
+					continue;
+				}
+
+				if (hierarchyIdStr == "0" && subsystems.empty()) {
+					v2Path = path;
+					v2Found = true;
+				}
+
+				if (searchSubsystems(subsystems, subsystem)) {
+					return path;
 				}
 			} catch (std::ios_base::failure&) {
 				throw GetIoLimitGroupIdException("Parse error");
@@ -82,6 +80,10 @@ IoLimitGroupId getIoLimitGroupId(std::istream& input, const std::string& subsyst
 		if (!input.eof()) {
 			throw;
 		}
+	}
+
+	if (v2Found) {
+		return v2Path;
 	}
 
 	throw GetIoLimitGroupIdException("Can't find subsystem '" + subsystem + "'");

@@ -19,10 +19,11 @@
  */
 
 #include "common/platform.h"
-#include "mount/io_limit_group.h"
 
-#include <sstream>
 #include <gtest/gtest.h>
+#include <sstream>
+
+#include "mount/io_limit_group.h"
 
 TEST(IoLimitGroupTests, Empty) {
 	std::stringstream input("");
@@ -57,4 +58,32 @@ TEST(IoLimitGroupTests, Commas) {
 TEST(IoLimitGroupTests, SecondLine) {
 	std::stringstream input("1:blah:/wrong\n:blkio:/test\n");
 	EXPECT_EQ(getIoLimitGroupId(input, "blkio"), "/test");
+}
+
+TEST(IoLimitGroupTests, CgroupV2) {
+	std::stringstream input("0::/test/path\n");
+	EXPECT_EQ(getIoLimitGroupId(input, "blkio"), "/test/path");
+}
+
+TEST(IoLimitGroupTests, CgroupV2AndV1) {
+	std::stringstream input("0::/v2/path\n1:blkio:/v1/path\n");
+	// V1 should take precedence
+	EXPECT_EQ(getIoLimitGroupId(input, "blkio"), "/v1/path");
+}
+
+TEST(IoLimitGroupTests, CgroupV2AndOtherV1) {
+	std::stringstream input("0::/v2/path\n1:cpu:/v1/cpu/path\n");
+	// V1 doesn't match requested, should fallback to v2
+	EXPECT_EQ(getIoLimitGroupId(input, "blkio"), "/v2/path");
+}
+
+TEST(IoLimitGroupTests, CgroupHybridReversed) {
+	std::stringstream input("1:blkio:/v1/path\n0::/v2/path\n");
+	// V1 should still take precedence if found first
+	EXPECT_EQ(getIoLimitGroupId(input, "blkio"), "/v1/path");
+}
+
+TEST(IoLimitGroupTests, MalformedLine) {
+	std::stringstream input("invalid_line\n0::/valid/v2\n");
+	EXPECT_EQ(getIoLimitGroupId(input, "blkio"), "/valid/v2");
 }
