@@ -96,9 +96,7 @@ void fs_background_task_manager_work() {
 
 static std::string get_detached_node_path(const FilesystemOperationContext &fsOpContext,
                                           const FSNode *node) {
-	std::string path = gFSOperations->fullPathByInode(fsOpContext, node->id);
-	if (!path.empty() && path.front() == '/') { path.erase(path.begin()); }
-	return path;
+	return gFSOperations->getDetachedPath(fsOpContext, node).value_or("");
 }
 
 static std::string get_node_info(const FilesystemOperationContext &fsOpContext, FSNode *node) {

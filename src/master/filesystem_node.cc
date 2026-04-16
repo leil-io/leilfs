@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <string_view>
 #include <type_traits>
 
 #include "common/attributes.h"
@@ -206,13 +207,12 @@ void FilesystemNodeOperationsBase::updateDetachedSpaceUsage(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
     uint64_t previousLength, uint64_t newLength) {
 	if (previousLength == newLength) { return; }
+	const uint64_t diffLength = newLength - previousLength;
 
 	if (nodeFile->type == FSNodeType::kTrash) {
-		gMetadata->trashSpace -= previousLength;
-		gMetadata->trashSpace += newLength;
+		gMetadata->trashSpace += diffLength;
 	} else if (nodeFile->type == FSNodeType::kReserved) {
-		gMetadata->reservedSpace -= previousLength;
-		gMetadata->reservedSpace += newLength;
+		gMetadata->reservedSpace += diffLength;
 	}
 }
 

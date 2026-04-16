@@ -25,6 +25,7 @@
 
 #include <cstdarg>
 #include <cstdint>
+#include <string_view>
 
 #include "common/attributes.h"
 #include "common/event_loop.h"
@@ -119,8 +120,9 @@ void FilesystemOperationsBase::doEmptyTrash(uint32_t timeStamp) {
 		    nodeOperations()->idToNodeVerify<FSNodeFile>(fsOpContext, (*trashIter).first.id);
 
 		if (node == kNodeNotFound) {
-			removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
-			                 gMetadata->trashReservedToId, node);
+			const TrashPathKey trashKey = (*trashIter).first;
+			removeTrashEntryByKey(gMetadata->trash, gMetadata->trashHandlesIndex,
+			                      gMetadata->trashReservedToId, trashKey);
 			trashIter = gMetadata->trash.begin();
 			continue;
 		}

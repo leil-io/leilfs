@@ -23,6 +23,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -111,6 +112,11 @@ public:
 	virtual void changeLog(const FilesystemOperationContext &fsOpContext, uint32_t ts,
 	                       const char *format, ...)
 	    __attribute__((__format__(__printf__, 4, 5))) = 0;
+
+	/// Retrieves the stored path for a detached trash/reserved node.
+	/// Implementations may override this to load detached paths from backend-specific storage.
+	virtual std::optional<std::string> getDetachedPath(
+	    const FilesystemOperationContext &fsOpContext, const FSNode *node) = 0;
 
 	// Functions which create/apply (depending on the given context) changes to the metadata.
 	// Common for metarestore and master server (both personalities)

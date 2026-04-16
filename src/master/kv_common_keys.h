@@ -115,7 +115,7 @@ inline constexpr std::string_view kTrashPathKeyPrefix = "TRSH_PATH_";  // Sectio
 /// Prefix for reserved path entries (path lookup by inode)
 /// Format: RSVD_PATH_<InodeId>:<PathString>
 /// @note Written when a file enters the reserved list (unlinked with active sessions).
-/// Deleted when all sessions are released.
+/// Deleted/Purged when all sessions pointing to the file release it.
 inline constexpr std::string_view kReservedPathKeyPrefix = "RSVD_PATH_";  // Section RSVD 1.0
 
 /// Prefix for locks

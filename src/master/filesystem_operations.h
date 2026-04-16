@@ -604,7 +604,8 @@ protected:
 	/// @param node Detached trash/reserved node whose stored path should be retrieved.
 	/// @return Stored detached path without leading slash or suffix, or std::nullopt if absent.
 	virtual std::optional<std::string> getDetachedPath(
-	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNode *node);
+	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	    const FSNode *node) override;
 
 	/// Permission check for lock operations.
 	/// Validates that the caller has appropriate read/write access for the

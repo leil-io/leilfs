@@ -81,6 +81,30 @@ TEST_F(FilesystemTrashReservedTests, AddAndRemoveTrashEntryFromContainers) {
 	FSNode::destroy(node);
 }
 
+TEST_F(FilesystemTrashReservedTests, RemoveTrashEntryByKeyWithoutNode) {
+	TrashPathContainer trash;
+	HandleIndexContainer trashHandlesIndex;
+	TrashReservedToIdContainer trashReservedToId;
+	FSNode *node = createFSNode(1, FSNodeType::kFile);
+
+	std::string path = "/path/to/file";
+
+	addTrashEntry(trash, trashHandlesIndex, trashReservedToId, node, path);
+
+	ASSERT_EQ(trash.size(), 1U);
+	ASSERT_EQ(trashHandlesIndex.size(), 1U);
+	ASSERT_EQ(trashReservedToId.counter, 1U);
+
+	TrashPathKey key(node);
+	FSNode::destroy(node);
+
+	removeTrashEntryByKey(trash, trashHandlesIndex, trashReservedToId, key);
+
+	ASSERT_EQ(trash.size(), 0U);
+	ASSERT_EQ(trashHandlesIndex.size(), 0U);
+	ASSERT_EQ(trashReservedToId.counter, 1U);
+}
+
 TEST_F(FilesystemTrashReservedTests, AddAndRemoveReservedEntryFromContainers) {
 	ReservedPathContainer reserved;
 	HandleIndexContainer reservedHandlesIndex;
