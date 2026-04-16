@@ -1,0 +1,15 @@
+name: "CAA Check"
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  caa:
+    uses: leil-io/legal/.github/workflows/caa-assistant.yml@main
+
