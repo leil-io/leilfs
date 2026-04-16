@@ -2550,7 +2550,7 @@ if "ML" in sectionset:
 
 if "MS" in sectionset:
     out = []
-    mountinfo_list = cltoma_mount_info_list() 
+    mountinfo_list = cltoma_mount_info_list()
 
     try:
         MSorder = int(fields.getvalue("MSorder"))
@@ -3506,7 +3506,7 @@ def print_file(name):
 if "HELP" in sectionset:
     # FIXME(kulek@saunafs.org) - it should be in separate file help.html however we are waiting for CMAKE to make it happen.
     # print_file("@CGI_PATH@/help.html")
-    print("""Please, contact with contact@leil.io""")
+    print("""Please, contact with support@leil.io""")
     print("""<br/>""")
 
 print("""</div> <!-- end of container -->""")

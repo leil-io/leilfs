@@ -1,3 +1,11 @@
+/* Blue / navy palette to match updated branding (replaces legacy greens) */
+:root {
+	--sfs-primary: #2d3a8d; /* Indigo / navy */
+	--sfs-secondary: #4f7cff; /* Muted blue accent (darker for contrast) */
+	--sfs-ok: #3b63f0; /* Slightly stronger OK blue */
+	--sfs-row-hover: #d2e1ff; /* Light blue hover */
+}
+
 body {
 	margin:0;
 	border:0;
@@ -90,12 +98,12 @@ a:link {color: #fff;}
 a:active {color: #fff;}
 a:visited {color: #fff;}
 
-a.VISIBLELINK {color: #64bc46;}
+a.VISIBLELINK {color: var(--sfs-secondary);}
 
 span.DELETEREADY {color: #7e7b7b;}
 span.DELETEPENDING {color: #9110e6;}
 span.OVERGOAL {color: #2727c7;}
-span.NORMAL {color: #007600;}
+span.NORMAL {color: var(--sfs-ok);}
 span.UNDERGOAL {color: #e08500;}
 span.ENDANGERED {color: #795548;}
 span.MISSING {color: #ca0000;}
@@ -103,12 +111,12 @@ span.MISSING {color: #ca0000;}
 span.DELETEREADYBOX {background: #7e7b7b; width:8px; height:8px; display: inline-block;}
 span.DELETEPENDINGBOX {background: #9110e6; width:8px; height:8px; display: inline-block;}
 span.OVERGOALBOX {background: #2727c7; width:8px; height:8px; display: inline-block;}
-span.NORMALBOX {background: #007600; width:8px; height:8px; display: inline-block;}
+span.NORMALBOX {background: var(--sfs-ok); width:8px; height:8px; display: inline-block;}
 span.UNDERGOALBOX {background: #e08500; width:8px; height:8px; display: inline-block;}
 span.ENDANGEREDBOX {background: #795548; width:8px; height:8px; display: inline-block;}
 span.MISSINGBOX {background:#ca0000; width:8px; height:8px; display: inline-block;}
 
-span.NOTEXCEEDED {color: #007600;}
+span.NOTEXCEEDED {color: var(--sfs-ok);}
 span.EXCEEDED {color: #ca0000;}
 span.SEXCEEDED {color: #e08500;}
 
@@ -128,19 +136,19 @@ table.MENU a:link {color:#FFF; text-decoration:none;}
 table.MENU a:active {color:#FFF; text-decoration:none;}
 table.MENU a:visited {color:#FFF; text-decoration:none;}
 table.MENU td {padding: 8px; font-family: sans-serif; font-size: 16px; text-align:center; white-space: nowrap; color:#FFF}
-table.MENU td.UU {background-color: #008028;}
-table.MENU td.SU {background-color: #008028;}
-table.MENU td.US {background-color: #64bc46;}
-table.MENU td.SS {background-color: #64bc46;}
-table.MENU td.LUU {background-color: #008028;}
-table.MENU td.LSU {background-color: #008028;}
-table.MENU td.LUS {background-color: #64bc46;}
-table.MENU td.LSS {background-color: #008028;}
+table.MENU td.UU {background-color: var(--sfs-primary);}
+table.MENU td.SU {background-color: var(--sfs-primary);}
+table.MENU td.US {background-color: var(--sfs-secondary);}
+table.MENU td.SS {background-color: var(--sfs-secondary);}
+table.MENU td.LUU {background-color: var(--sfs-primary);}
+table.MENU td.LSU {background-color: var(--sfs-primary);}
+table.MENU td.LUS {background-color: var(--sfs-secondary);}
+table.MENU td.LSS {background-color: var(--sfs-primary);}
 
 table.FR {width: 1010px; margin-left:auto; margin-right:auto;}
 table.FR td, table.FR tr.C1 td {background-color: #e2e2e2;}
 table.FR tr.C2 td {background-color: #e2e2e2;}
-table.FR tr:first-child th {background-color: #008028; color: #fff}
+table.FR tr:first-child th {background-color: var(--sfs-primary); color: #fff}
 table.FR th {background-color: #6a6a6a; color: #fff}
 table.FR th.SMPROGBAR {width: 102px;}
 table.FR th.PROGBAR {width: 202px;}
@@ -151,27 +159,27 @@ table.FR th.PERC20 {width: 20%;}
 table.FR th.PERC88 {width: 88%;}
 table.FR th.PERC96 {width: 96%;}
 table.FR .LEFT {text-align: left; padding-left: 7px}
-table.FR td.REL {background-color: #008028;}
-table.FR td.PR {background-color: #64bc46;}
+table.FR td.REL {background-color: var(--sfs-primary);}
+table.FR td.PR {background-color: var(--sfs-secondary);}
 
 table.CR {width: 1010px; margin-left:auto; margin-right:auto;}
 table.CR td, table.CR tr.C1 td {background-color: #e2e2e2;}
 table.CR tr.C2 td {background-color: #e2e2e2;}
 table.CR tr.C3 td {background-color: #e2e2e2;}
 table.CR tr.C4 td {background-color: #e2e2e2;}
-table.CR tr:first-child th {background-color: #008028;}
+table.CR tr:first-child th {background-color: var(--sfs-primary);}
 table.CR th {background-color: #6a6a6a; color: #fff}
 
 table.CR > tbody > tr:nth-child(even):hover > td,
 table.CR > tbody > tr:nth-child(even):hover + tr > td,
-table.FR > tbody > tr:hover > td { background-color: #afbaac; }
+table.FR > tbody > tr:hover > td { background-color: var(--sfs-row-hover); }
 
 table.BOTMENU {width: 1000px; margin-left:auto; margin-right:auto;}
 
 .smbox {position:relative; border:1px solid #000; width:100px; background:#fff; height:14px;}
-.smbox .progress {background:#0F0; float:left; height:14px;}
+.smbox .progress {background: var(--sfs-secondary); float:left; height:14px;}
 .smbox .value {width:100%; position:absolute; left:0; top:0; text-align:center;}
 
 .box {position:relative; border:1px solid #000; width:200px; background:#fff; height:14px;}
-.box .progress {background:#0F0; float:left; height:14px;}
+.box .progress {background: var(--sfs-secondary); float:left; height:14px;}
 .box .value {width:100%; position:absolute; left:0; top:0; text-align:center;}
