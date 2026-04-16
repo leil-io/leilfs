@@ -55,7 +55,7 @@ saunafs - open prompt to perform SaunaFS-specific operations
 *saunafs makesnapshot* [*-o*] 'SOURCE'... 'DESTINATION'
 
 [verse]
-*saunafs rremove* [*-l*] 'OBJECT'...
+*saunafs rremove* 'OBJECT'...
 
 == DESCRIPTION
 

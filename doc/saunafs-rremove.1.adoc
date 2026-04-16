@@ -8,7 +8,7 @@ saunafs-rremove - remove recursively
 == SYNOPSIS
 
 [verse]
-*saunafs-rremove* [*-l*] 'OBJECT'...
+*saunafs-rremove* 'OBJECT'...
 
 == DESCRIPTION
 
