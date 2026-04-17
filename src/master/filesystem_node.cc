@@ -1467,7 +1467,7 @@ namespace {
 /// Returns true when a path segment of the given length consisting entirely of dots is a
 /// dot-only name (".") or dot-dot name (".."), which are invalid in trash paths.
 bool isDotOnlySegment(uint32_t segmentLength, uint32_t dotCount) {
-	return segmentLength == dotCount && segmentLength <= 2;
+	return segmentLength > 0 && segmentLength == dotCount && segmentLength <= 2;
 }
 
 }  // namespace

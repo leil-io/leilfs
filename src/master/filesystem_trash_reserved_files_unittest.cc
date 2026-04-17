@@ -20,10 +20,80 @@
 
 #include <gtest/gtest.h>
 
+#include "master/filesystem_node.h"
+#include "master/filesystem_node_operations_interface.h"
 #include "master/filesystem_trash_reserved_files.h"
 #include "master/hstring_memstorage.h"
+#include "protocol/SFSCommunication.h"
 
 using namespace hstorage;
+
+struct TrashPathValidator : FilesystemNodeOperationsBase {
+	static uint8_t validate(const std::string &path) { return validateTrashPath(path); }
+};
+
+class ValidateTrashPathTest : public ::testing::Test {
+protected:
+	void SetUp() override { Storage::reset(new MemStorage()); }
+
+	static uint8_t validate(const std::string &path) { return TrashPathValidator::validate(path); }
+};
+
+TEST_F(ValidateTrashPathTest, EmptyPathIsRejected) { EXPECT_NE(validate(""), SAUNAFS_STATUS_OK); }
+
+TEST_F(ValidateTrashPathTest, AllSlashesAreRejected) {
+	EXPECT_NE(validate("/"), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate("///"), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, DotSegmentsAreRejected) {
+	EXPECT_NE(validate("."), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate(".."), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate("a/."), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate("a/.."), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate("./b"), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate("../b"), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, TripleDotSegmentIsAccepted) {
+	// "..." is not "." or ".." so it is a valid segment
+	EXPECT_EQ(validate("..."), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(validate("a/..."), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, ConsecutiveSlashesAreRejected) {
+	EXPECT_NE(validate("a//b"), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, EmbeddedNullByteIsRejected) {
+	std::string pathWithNull = std::string("a/") + '\0' + "b";
+	EXPECT_NE(validate(pathWithNull), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, SegmentExceedingMaxLengthIsRejected) {
+	std::string longSegment(kMaxFileNameLength + 1, 'x');
+	EXPECT_NE(validate(longSegment), SAUNAFS_STATUS_OK);
+	EXPECT_NE(validate("a/" + longSegment), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, MaxLengthSegmentIsAccepted) {
+	std::string maxSegment(kMaxFileNameLength, 'x');
+	EXPECT_EQ(validate(maxSegment), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, ValidSingleSegmentIsAccepted) {
+	EXPECT_EQ(validate("file"), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(validate("/file"), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, ValidMultiSegmentPathIsAccepted) {
+	EXPECT_EQ(validate("a/b/c"), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(validate("/a/b/c"), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ValidateTrashPathTest, TrailingSlashIsRejected) {
+	EXPECT_NE(validate("a/b/"), SAUNAFS_STATUS_OK);
+}
 
 class FilesystemTrashReservedTests : public ::testing::Test {
 protected:
