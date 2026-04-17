@@ -210,7 +210,8 @@ public:
 	                        FSNodeDirectory *parent, const HString &childName,
 	                        FSNode *childNode) = 0;
 
-	virtual void updateCTime(FSNode *node, uint32_t ctime) = 0;
+	virtual void updateCTime(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                         uint32_t ctime) = 0;
 
 	virtual void fillAttr(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                      FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,

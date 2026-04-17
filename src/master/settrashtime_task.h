@@ -25,6 +25,8 @@
 #include "master/filesystem_trash_reserved_files.h"
 #include "master/task_manager.h"
 
+class FilesystemOperationContext;
+
 class SetTrashtimeTask : public TaskManager::Task {
 public:
 	enum {
@@ -68,7 +70,7 @@ public:
 		return "Setting trashtime (" + std::to_string(trashtime) + "): " + target;
 	}
 
-	uint8_t setTrashtime(FSNode *node, uint32_t ts);
+	uint8_t setTrashtime(const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t ts);
 
 private:
 	std::vector<inode_t> inode_list_;

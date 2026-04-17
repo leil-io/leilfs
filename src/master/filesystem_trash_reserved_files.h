@@ -144,6 +144,23 @@ inline void addTrashEntry(TrashPathContainer &trash, HandleIndexContainer &trash
 	trashHandlesIndex.insert({HandleIndexKey(pathId), node->id});
 }
 
+inline void removeTrashEntryByKey(TrashPathContainer &trash,
+                                  HandleIndexContainer &trashHandlesIndex,
+                                  TrashReservedToIdContainer &trashReservedToId,
+                                  const TrashPathKey &key) {
+	auto trashIt = trash.find(key);
+	if (trashIt == trash.end()) { return; }
+
+	uint64_t handleHash = (*trashIt).second.data();
+	auto pathIdIt = trashReservedToId.nameToId.find(handleHash);
+	if (pathIdIt != trashReservedToId.nameToId.end()) {
+		uint64_t pathId = pathIdIt->second;
+		trashHandlesIndex.erase(HandleIndexKey(pathId));
+		trashReservedToId.erase(handleHash);
+	}
+	trash.erase(trashIt);
+}
+
 inline void removeTrashEntry(TrashPathContainer &trash, HandleIndexContainer &trashHandlesIndex,
                              TrashReservedToIdContainer &trashReservedToId, FSNode *node) {
 	TrashPathKey key(node);

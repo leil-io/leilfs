@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <string_view>
 #include <type_traits>
 
 #include "common/attributes.h"
@@ -202,6 +203,19 @@ void FilesystemNodeOperationsBase::nodeQuotaRemove(
 	fsnodes_quota_remove(ownerType, ownerId);
 }
 
+void FilesystemNodeOperationsBase::updateDetachedSpaceUsage(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
+    uint64_t previousLength, uint64_t newLength) {
+	if (previousLength == newLength) { return; }
+	const uint64_t diffLength = newLength - previousLength;
+
+	if (nodeFile->type == FSNodeType::kTrash) {
+		gMetadata->trashSpace += diffLength;
+	} else if (nodeFile->type == FSNodeType::kReserved) {
+		gMetadata->reservedSpace += diffLength;
+	}
+}
+
 // Public methods
 
 FSNode *FilesystemNodeOperationsBase::lookup(
@@ -223,7 +237,8 @@ FSNode *FilesystemNodeOperationsBase::lookup(
 	return nullptr;
 }
 
-void FilesystemNodeOperationsBase::updateCTime(FSNode *node, uint32_t ctime) {
+void FilesystemNodeOperationsBase::updateCTime(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t ctime) {
 	if (node->type == FSNodeType::kTrash && node->ctime != ctime) {
 		auto oldKey = TrashPathKey(node);
 		node->ctime = ctime;
@@ -1315,17 +1330,12 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 		}
 	}
 
+	uint64_t previousLength = destNodeFile->length;
+
 	// Calculate the new total length after appending
 	uint64_t length = (static_cast<uint64_t>(dstChunks) << SFSCHUNKBITS) + srcNodeFile->length;
 
-	// Update trash or reserved space counters if the destination is in trash or reserved
-	if (destNodeFile->type == FSNodeType::kTrash) {
-		gMetadata->trashSpace -= destNodeFile->length;
-		gMetadata->trashSpace += length;
-	} else if (destNodeFile->type == FSNodeType::kReserved) {
-		gMetadata->reservedSpace -= destNodeFile->length;
-		gMetadata->reservedSpace += length;
-	}
+	updateDetachedSpaceUsage(fsOpContext, destNodeFile, previousLength, length);
 
 	destNodeFile->length = length;
 	getStats(fsOpContext, destNodeFile, &newStats);
@@ -1384,15 +1394,10 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 	uint32_t chunks = 0;
 	StatsRecord previousStats;
 	StatsRecord newStats;
+	uint64_t previousLength = nodeFile->length;
 	getStats(fsOpContext, nodeFile, &previousStats);
 
-	if (nodeFile->type == FSNodeType::kTrash) {
-		gMetadata->trashSpace -= nodeFile->length;
-		gMetadata->trashSpace += length;
-	} else if (nodeFile->type == FSNodeType::kReserved) {
-		gMetadata->reservedSpace -= nodeFile->length;
-		gMetadata->reservedSpace += length;
-	}
+	updateDetachedSpaceUsage(fsOpContext, nodeFile, previousLength, length);
 
 	nodeFile->length = length;
 
@@ -1455,6 +1460,51 @@ void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext
 	} else {
 		nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, +1}});
 	}
+}
+
+namespace {
+
+/// Returns true when a path segment of the given length consisting entirely of dots is a
+/// dot-only name (".") or dot-dot name (".."), which are invalid in trash paths.
+bool isDotOnlySegment(uint32_t segmentLength, uint32_t dotCount) {
+	return segmentLength > 0 && segmentLength == dotCount && segmentLength <= 2;
+}
+
+}  // namespace
+
+uint8_t FilesystemNodeOperationsBase::validateTrashPath(const std::string &pathStr) {
+	if (pathStr.empty()) { return SAUNAFS_ERROR_CANTCREATEPATH; }
+
+	// Skip leading slashes
+	size_t start = pathStr.find_first_not_of('/');
+	if (start == std::string::npos) { return SAUNAFS_ERROR_CANTCREATEPATH; }
+
+	std::string_view path(pathStr);
+	path.remove_prefix(start);
+
+	uint32_t partLength = 0;
+	uint32_t dots = 0;
+
+	for (char chr : path) {
+		if (chr == '\0') { return SAUNAFS_ERROR_CANTCREATEPATH; }
+
+		if (chr == '/') {
+			if (partLength == 0) { return SAUNAFS_ERROR_CANTCREATEPATH; }  // "//"
+			if (isDotOnlySegment(partLength, dots)) { return SAUNAFS_ERROR_CANTCREATEPATH; }
+			partLength = 0;
+			dots = 0;
+		} else {
+			if (chr == '.') { dots++; }
+			partLength++;
+			if (partLength > kMaxFileNameLength) { return SAUNAFS_ERROR_CANTCREATEPATH; }
+		}
+	}
+
+	// Last segment must be non-empty and not a dot-only name
+	if (partLength == 0) { return SAUNAFS_ERROR_CANTCREATEPATH; }
+	if (isDotOnlySegment(partLength, dots)) { return SAUNAFS_ERROR_CANTCREATEPATH; }
+
+	return SAUNAFS_STATUS_OK;
 }
 
 void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &fsOpContext,
@@ -1630,52 +1680,19 @@ uint8_t FilesystemNodeOperationsBase::undel(const FilesystemOperationContext &fs
 		pathStr = (std::string)gMetadata->reserved.at(node->id);
 	}
 
-	const char *path = pathStr.c_str();
-	unsigned pathLength = pathStr.length();
+	uint8_t validationStatus = validateTrashPath(pathStr);
+	if (validationStatus != SAUNAFS_STATUS_OK) { return validationStatus; }
 
-	if (pathStr.empty()) { return SAUNAFS_ERROR_CANTCREATEPATH; }
-
-	while (*path == '/' && pathLength > 0) {
-		path++;
-		pathLength--;
-	}
-
-	if (pathLength == 0) { return SAUNAFS_ERROR_CANTCREATEPATH; }
-
-	uint32_t partLength = 0;
-	uint32_t dots = 0;
-
-	for (uint32_t i = 0; i < pathLength; i++) {
-		if (path[i] == 0) {  // incorrect name character
-			return SAUNAFS_ERROR_CANTCREATEPATH;
-		}
-
-		if (path[i] == '/') {
-			if (partLength == 0) {  // "//" in path
-				return SAUNAFS_ERROR_CANTCREATEPATH;
-			}
-			if (partLength == dots && partLength <= 2) {  // '.' or '..' in path
-				return SAUNAFS_ERROR_CANTCREATEPATH;
-			}
-			partLength = 0;
-			dots = 0;
-		} else {
-			if (path[i] == '.') { dots++; }
-			partLength++;
-			if (partLength > kMaxFileNameLength) { return SAUNAFS_ERROR_CANTCREATEPATH; }
-		}
-	}
-
-	if (partLength == 0) {  // last part cannot be empty - it's the name of undeleted file
-		return SAUNAFS_ERROR_CANTCREATEPATH;
-	}
-
-	if (partLength == dots && partLength <= 2) {  // '.' or '..' in path
-		return SAUNAFS_ERROR_CANTCREATEPATH;
-	}
+	// Strip leading slashes for path reconstruction
+	std::string_view pathView = pathStr;
+	const size_t firstNonSlash = pathView.find_first_not_of('/');
+	if (firstNonSlash != std::string_view::npos) { pathView.remove_prefix(firstNonSlash); }
+	const char *path = pathView.data();
+	auto pathLength = static_cast<unsigned>(pathView.size());
 
 	// Path reconstruction
 
+	uint32_t partLength = 0;
 	FSNode *currentNode = nullptr;
 	FSNodeDirectory *currentParent = gMetadata->root;
 
@@ -1844,7 +1861,7 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 					(*modifiedINodesOut)++;
 				}
 
-				updateCTime(node, timeStamp);
+				updateCTime(fsOpContext, node, timeStamp);
 				fsnodes_update_checksum(node);
 				nodeChanged = true;
 			} else {
@@ -1968,7 +1985,7 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(
 			}
 
 			(*modifiedINodesOut)++;
-			updateCTime(node, timeStamp);
+			updateCTime(fsOpContext, node, timeStamp);
 			nodeChanged = true;
 		} else {
 			(*unchangedINodesOut)++;
@@ -2027,7 +2044,7 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(
 		return SAUNAFS_ERROR_EINVAL;
 	}
 
-	updateCTime(node, timeStamp);
+	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
 
 	return SAUNAFS_STATUS_OK;
@@ -2074,7 +2091,7 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 		gMetadata->aclStorage.set(node->id, std::move(newAcl));
 	}
 
-	updateCTime(node, timeStamp);
+	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
 	return SAUNAFS_STATUS_OK;
 }
@@ -2107,7 +2124,7 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 	}
 	gMetadata->aclStorage.set(node->id, std::move(newAcl));
 
-	updateCTime(node, timeStamp);
+	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
 	return SAUNAFS_STATUS_OK;
 }

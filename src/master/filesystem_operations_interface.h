@@ -23,6 +23,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -111,6 +112,11 @@ public:
 	virtual void changeLog(const FilesystemOperationContext &fsOpContext, uint32_t ts,
 	                       const char *format, ...)
 	    __attribute__((__format__(__printf__, 4, 5))) = 0;
+
+	/// Retrieves the stored path for a detached trash/reserved node.
+	/// Implementations may override this to load detached paths from backend-specific storage.
+	virtual std::optional<std::string> getDetachedPath(
+	    const FilesystemOperationContext &fsOpContext, const FSNode *node) = 0;
 
 	// Functions which create/apply (depending on the given context) changes to the metadata.
 	// Common for metarestore and master server (both personalities)
@@ -1502,6 +1508,23 @@ public:
 	/// @return SAUNAFS_STATUS_OK on success.
 	virtual uint8_t quotaGetInfo(const FsContext &context, const std::vector<QuotaEntry> &entries,
 	                             std::vector<std::string> &result) = 0;
+
+	/// Purges expired trash entries whose expiry timestamp is before @p timeStamp.
+	///
+	/// Default implementation iterates gMetadata->trash. KV backends override this to scan
+	/// TRSH_TIME_ entries directly from FDB.
+	///
+	/// @param timeStamp Current wall-clock time (seconds since epoch). Entries with
+	///                  expiryTs < timeStamp are eligible for purge.
+	virtual void doEmptyTrash(uint32_t timeStamp) = 0;
+
+	/// Releases all reserved files whose sessions have expired (no active openers).
+	///
+	/// Default implementation iterates gMetadata->reserved. KV backends override this to scan
+	/// RSVD_PATH_ entries directly from FDB.
+	///
+	/// @param timeStamp Current wall-clock time (seconds since epoch).
+	virtual void doEmptyReserved(uint32_t timeStamp) = 0;
 
 	// CHECKSUM
 

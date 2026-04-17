@@ -23,7 +23,6 @@
 #include "master/settrashtime_task.h"
 
 #include "master/filesystem_checksum.h"
-#include "master/filesystem_metadata.h"
 #include "master/filesystem_operations_interface.h"
 
 int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
@@ -36,19 +35,17 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
 	if (!node) { return SAUNAFS_ERROR_EINVAL; }
 
-	uint8_t result = setTrashtime(node, ts);
+	uint8_t result = setTrashtime(fsOpContext, node, ts);
 
 	if (result != kNoAction) {
-		if (node->type == FSNodeType::kDirectory && (smode_ & SMODE_RMASK) &&
-		    !static_cast<const FSNodeDirectory *>(node)->entries.empty()) {
-			std::vector<inode_t> inode_list;
-			inode_list.reserve(static_cast<const FSNodeDirectory *>(node)->entries.size());
-			for (const auto &entry : static_cast<const FSNodeDirectory *>(node)->entries) {
-				inode_list.push_back(entry.second->id);
+		if (node->type == FSNodeType::kDirectory && (smode_ & SMODE_RMASK)) {
+			auto inode_list = gFSOperations->nodeOperations()->getDirectoryChildInodes(
+			    fsOpContext, static_cast<const FSNodeDirectory *>(node));
+			if (!inode_list.empty()) {
+				auto *task =
+				    new SetTrashtimeTask(std::move(inode_list), uid_, trashtime_, smode_, stats_);
+				work_queue.push_front(*task);
 			}
-			auto task = new SetTrashtimeTask(std::move(inode_list), uid_,
-			                                              trashtime_, smode_, stats_);
-			work_queue.push_front(*task);
 		}
 
 		if ((smode_ & SMODE_RMASK) == 0 && result == kNotPermitted) {
@@ -82,7 +79,8 @@ bool SetTrashtimeTask::isFinished() const {
 	return current_inode_ == inode_list_.end();
 }
 
-uint8_t SetTrashtimeTask::setTrashtime(FSNode *node, uint32_t ts) {
+uint8_t SetTrashtimeTask::setTrashtime(const FilesystemOperationContext &fsOpContext, FSNode *node,
+                                       uint32_t ts) {
 	uint8_t set;
 
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kDirectory ||
@@ -92,7 +90,6 @@ uint8_t SetTrashtimeTask::setTrashtime(FSNode *node, uint32_t ts) {
 			return SetTrashtimeTask::kNotPermitted;
 		} else {
 			set = 0;
-			auto old_trash_key = TrashPathKey(node);
 			switch (smode_ & SMODE_TMASK) {
 			case SMODE_SET:
 				if (node->trashtime != trashtime_) {
@@ -114,10 +111,7 @@ uint8_t SetTrashtimeTask::setTrashtime(FSNode *node, uint32_t ts) {
 				break;
 			}
 			if (set) {
-				node->ctime = ts;
-				if (node->type == FSNodeType::kTrash) {
-					updateTrashFromOldEntry(gMetadata->trash, node, old_trash_key);
-				}
+				gFSOperations->nodeOperations()->updateCTime(fsOpContext, node, ts);
 				fsnodes_update_checksum(node);
 				return SetTrashtimeTask::kChanged;
 			} else {

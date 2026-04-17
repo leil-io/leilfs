@@ -72,7 +72,8 @@ public:
 	void removeEdge(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                FSNodeDirectory *parent, const HString &childName, FSNode *childNode) override;
 
-	void updateCTime(FSNode *node, uint32_t ctime) override;
+	void updateCTime([[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                 uint32_t ctime) override;
 
 	void fillAttr(const FilesystemOperationContext &fsOpContext, FSNode *node, FSNode *parent,
 	              uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid, uint8_t sesflags,
@@ -328,12 +329,32 @@ protected:
 	virtual void nodeQuotaRemove(const FilesystemOperationContext &fsOpContext,
 	                             QuotaOwnerType ownerType, inode_t ownerId);
 
-private:
-	// Private helpers
+	/// Updates detached trash/reserved space counters for a file size mutation.
+	/// In-memory backend updates `gMetadata->trashSpace` / `gMetadata->reservedSpace`.
+	/// KV backends can override to persist the delta in the active transaction.
+	virtual void updateDetachedSpaceUsage(const FilesystemOperationContext &fsOpContext,
+	                                      const FSNodeFile *nodeFile, uint64_t previousLength,
+	                                      uint64_t newLength);
 
+	/// Validates a trash/reserved path string for use with undel().
+	///
+	/// Checks that the path is non-empty, contains no NUL bytes, has no "//" sequences,
+	/// no "." or ".." components, and that all name segments fit within kMaxFileNameLength.
+	///
+	/// @param pathStr  The full path string as stored in trash/reserved (leading '/' is stripped).
+	/// @return SAUNAFS_STATUS_OK if the path is valid; SAUNAFS_ERROR_CANTCREATEPATH otherwise.
+	static uint8_t validateTrashPath(const std::string &pathStr);
+
+	/// Frees a node and performs all associated in-memory and KV cleanup.
+	///
+	/// Caller is responsible for removing the NODE_ key from KV and decrementing the
+	/// kMetaNodesKey / kMetaFileNodesKey counters (via atomicAdd) BEFORE calling this.
+	/// This method deletes chunks, releases the inode, cleans up xattrs, quota, and
+	/// node hash, then destroys the node object.
 	void removeNode(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                FSNode *node);
 
+private:
 	/// Number of blocks in the last chunk before EOF
 	static uint32_t lastChunkBlocks(FSNodeFile *node);
 
