@@ -58,6 +58,15 @@ uint64_t uRaft::nodeGetVersion() {
 	return state_.data_version;
 }
 
+void uRaft::bootstrapLeaderState() {
+}
+
+void uRaft::restorePersistentState() {
+}
+
+void uRaft::persistRuntimeState() {
+}
+
 template<typename ConstBufferSequence>
 void uRaft::socketSend(const ConstBufferSequence &buffers, const boost::asio::ip::udp::endpoint &destination) {
 	boost::system::error_code ecode;
@@ -106,7 +115,8 @@ void uRaft::checkTerm(int /*id*/, const RpcHeader &data) {
 }
 
 void uRaft::stepDownToFollower(StepDownPolicy policy, uint64_t newTerm) {
-	const bool wasPresident = state_.president;
+	const bool wasFollower = state_.type == kFollower;
+	const bool shouldDemote = policy == StepDownPolicy::kDemoteIfPresident && !wasFollower;
 
 	if (newTerm > 0U) { state_.current_term = newTerm; }
 
@@ -117,9 +127,10 @@ void uRaft::stepDownToFollower(StepDownPolicy policy, uint64_t newTerm) {
 
 	quorum_loss_streak_ = 0;
 
-	if (wasPresident && policy == StepDownPolicy::kDemoteIfPresident) { nodeDemote(); }
+	if (shouldDemote) { nodeDemote(); }
 
 	startElectionTimer();
+	persistRuntimeState();
 }
 
 /*! \brief Checks if a received packet is structurally valid.
@@ -169,8 +180,10 @@ void uRaft::signLoyaltyAgreement() {
 	loyalty_agreement_timer_.async_wait([this](const boost::system::error_code & error) {
 		if (!error) {
 			state_.loyalty_agreement = false;
+			persistRuntimeState();
 		}
 	});
+	persistRuntimeState();
 }
 
 void uRaft::startReceive() {
@@ -244,6 +257,8 @@ void uRaft::electionTimeout(const boost::system::error_code &error) {
 		       nodeToString(state_.id).c_str());
 		nodePromote();
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Called every heartbeat_period ms. */
@@ -279,6 +294,7 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 
 			if (quorum_loss_streak_ < opt_.quorum_loss_grace_heartbeats) {
 				sendHeartbeat();  // Heartbeat still needs to be sent
+				persistRuntimeState();
 				return;  // Quorum hysteresis: tolerate transient loss
 			}
 
@@ -308,6 +324,8 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 			}
 		}
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Append Entries packet. */
@@ -357,6 +375,7 @@ void uRaft::rpcAppend(int id, const RpcRequest &data) {
 
 	state_.type = kFollower;
 	startElectionTimer();
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Append Response packet. */
@@ -372,6 +391,8 @@ void uRaft::rpcAppendResponse(int id, const RpcResponse &data) {
 	node_[id].data_version = data.data_version;
 	node_[id].vote_granted = true;
 	node_[id].recv         = true;
+
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Request Vote packet. */
@@ -402,6 +423,8 @@ void uRaft::rpcReqVote(int id, const RpcRequest &data) {
 		state_.voted_for = id;
 		startElectionTimer();
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Request Vote Response packet. */
@@ -422,6 +445,8 @@ void uRaft::rpcReqVoteResponse(int id, const RpcResponse &data) {
 		sendHeartbeat();
 		election_timer_.cancel();
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Dispatching received packet to proper handler. */
@@ -505,7 +530,11 @@ void uRaft::init() {
 	socket_.open(boost::asio::ip::udp::v4());
 	socket_.bind(node_[state_.id].addr);
 
-	startElectionTimer();
+	restorePersistentState();
+	bootstrapLeaderState();
+	if (state_.type != kLeader) {
+		startElectionTimer();
+	}
 	startHearbeatTimer();
 	startReceive();
 
@@ -513,6 +542,8 @@ void uRaft::init() {
 	// It's possible that before restart we have signed agreement with a leader.
 	// Now we wait for this agreement to expire.
 	signLoyaltyAgreement();
+
+	persistRuntimeState();
 }
 
 void uRaft::demoteLeader() {
