@@ -1,17 +1,22 @@
 [Unit]
 Description=SaunaFS uraft high availability daemon
-Requires=saunafs-ha-master.service
 After=network-online.target network.target
-After=saunafs-ha-master.service
 
 [Service]
 Type=simple
-PIDFile=/var/run/saunafs-uraft.pid
 TimeoutSec=0
+KillMode=process
+RuntimeDirectory=saunafs-uraft
+RuntimeDirectoryPreserve=restart
 ExecStart=/usr/sbin/saunafs-uraft
-ExecStopPost=/usr/sbin/saunafs-uraft-helper demote
-Restart=on-failure
-RestartSec=60
+# Clear the reload marker before a fresh start so a later real stop still tears down sfsmaster.
+ExecStartPre=/bin/rm -f /run/saunafs-uraft/reload.request
+# Reload restarts uRaft only; stop remains the only path that tears down sfsmaster.
+ExecReload=/bin/sh -ec 'touch /run/saunafs-uraft/reload.request; if [ -n "${MAINPID:-}" ]; then kill -TERM "${MAINPID}"; fi'
+# Stop is the only path that releases the VIP and stops sfsmaster.
+ExecStopPost=/bin/sh -ec 'if [ -f /run/saunafs-uraft/reload.request ]; then rm -f /run/saunafs-uraft/reload.request; exit 0; fi; if [ "${SERVICE_RESULT:-}" != success ]; then exit 0; fi; /usr/sbin/saunafs-uraft-helper dead; /usr/sbin/saunafs-uraft-helper stop-saunafs-ha-master'
+Restart=always
+RestartSec=0
 User=saunafs
 
 [Install]

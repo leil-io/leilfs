@@ -53,6 +53,7 @@ uRaftController::~uRaftController() {
 void uRaftController::init() {
 	uRaftStatus::init();
 
+	node_alive_ = !opt_.elector_mode;
 	set_block_promotion(true);
 	if (opt_.elector_mode) {
 		return;
@@ -130,6 +131,11 @@ void uRaftController::nodeDemote() {
 	setSlowCommandTimeout(opt_.demote_timeout);
 	if (runSlowCommand("saunafs-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
+	} else {
+		syslog(LOG_ERR, "Unable to launch demotion helper");
+		if (!node_alive_) {
+			scheduleDeadRecovery();
+		}
 	}
 }
 
@@ -185,11 +191,18 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			if (commandSucceeded) {
 				syslog(LOG_NOTICE, "Metadata server switch to slave mode succeeded");
 			} else {
-				syslog(LOG_ERR, "Demotion failed with exit code: %d", WEXITSTATUS(status));
+				syslog(LOG_ERR, "Demotion failed with exit code: %d",
+				       WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 			}
 
 			command_type_ = kCmdNone;
 			command_pid_  = -1;
+
+			if (!commandSucceeded && !node_alive_) {
+				syslog(LOG_WARNING,
+				       "Metadata still dead after failed demotion: scheduling retry");
+				scheduleDeadRecovery();
+			}
 
 			if (is_promote_pending_) {
 				// Only execute pending promotion if node is still Leader. This prevents

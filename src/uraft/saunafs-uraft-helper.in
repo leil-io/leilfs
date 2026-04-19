@@ -192,6 +192,13 @@ saunafs_promote() {
 saunafs_demote() {
 	# drop ip
 	saunafs_drop_ip
+
+	# If sfsmaster already died uncleanly, clean stale metadata state before restarting it.
+	if ! pgrep -x "sfsmaster" > /dev/null; then
+		log "sfsmaster is not running, cleaning dirty metadata before demotion restart"
+		saunafs_cleanup_dirty_state || return $?
+	fi
+
 	# restart shadow
 	saunafs_master -o initial-personality=shadow restart
 }
