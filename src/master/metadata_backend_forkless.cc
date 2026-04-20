@@ -55,6 +55,7 @@
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_dumper_file.h"
 #include "master/metadata_section_bootstrap_fdb.h"
+#include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -224,6 +225,25 @@ void MetadataBackendForkless::onEdgeChanged(inode_t parentId, inode_t childId,
 void MetadataBackendForkless::onEdgeRemoved(inode_t parentId, const HString &name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<EdgeRemoveEvent>(parentId, name));
+	}
+}
+
+void MetadataBackendForkless::onXAttrInodeRemoved(inode_t inode) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<XAttrInodeRemoveEvent>(inode));
+	}
+}
+
+void MetadataBackendForkless::onXAttrChanged(inode_t inode, const std::vector<uint8_t> &name,
+                                             const std::vector<uint8_t> &value) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<XAttrUpdateEvent>(inode, name, value));
+	}
+}
+
+void MetadataBackendForkless::onXAttrRemoved(inode_t inode, const std::vector<uint8_t> &name) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<XAttrRemoveEvent>(inode, name));
 	}
 }
 
@@ -517,6 +537,133 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 	});
 
 	safs::log_info("Section loaded successfully (FREE 1.0): {}s", timer.elapsed_s());
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
+	safs::log_info("Loading xattrs from FoundationDB");
+	Timer timer;
+
+	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+
+	kv::Key startKey = kv::toBytes(kXAttrKeyPrefix);
+	kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	kv::KeySelector endSelector(endKey, true, 0);
+
+	const size_t kMinKeySize = kXAttrKeyPrefix.size() + sizeof(inode_t);
+
+	/// Format: XATR_<InodeId><AttributeName>:<AttributeValue>
+	/// e.g.: XATR_1999UserAttr:UserValue
+	XAttributeInodeEntry *xattrInodeEntry = nullptr;
+
+	while (true) {
+		xattrInodeEntry = nullptr;  // Reset pointer to avoid stale values
+		auto pageResult =
+		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
+		const auto &pairs = pageResult.getPairs();
+
+		inode_t inode{};
+
+		bool exceeded = false;
+		for (const auto &pair : pairs) {
+			if (pair.key.size() <= kMinKeySize) {
+				safs::log_warn("Loading xattr: empty attribute name, skipping key");
+				continue;
+			}
+
+			const uint8_t *source = pair.key.data();
+			source += kXAttrKeyPrefix.size();  // Skip "XATR_"
+			getINode(&source, inode);
+
+			auto attributeNameBegin = pair.key.begin() + kMinKeySize;
+			auto attributeNameSize = pair.key.end() - attributeNameBegin;
+			if (attributeNameSize > SFS_XATTR_NAME_MAX) {
+				safs::log_err("Loading xattr: attribute name too long");
+				if (ignoreFlag) {
+					safs::log_err(
+					    "Ignoring xattr with name size {}, exceeding max of {}, due to ignore flag",
+					    attributeNameSize, SFS_XATTR_NAME_MAX);
+					continue;
+				}
+				exceeded = true;
+				break;
+			}
+
+			auto attributeNameLength = static_cast<uint8_t>(attributeNameSize);
+			auto attributeValueLength = static_cast<uint32_t>(pair.value.size());
+
+			if (attributeValueLength > SFS_XATTR_SIZE_MAX) {
+				safs::log_err("Loading xattr: value oversized");
+				if (ignoreFlag) {
+					safs::log_err(
+					    "Ignoring xattr with value size {}, exceeding max of {}, due to ignore flag",
+					    attributeValueLength, SFS_XATTR_SIZE_MAX);
+					continue;
+				}
+				exceeded = true;
+				break;
+			}
+
+			auto inodeHash = get_xattr_inode_hash(inode);
+			xattrInodeEntry = find_xattr_inode_entry(inode, inodeHash);
+
+			if (xattrInodeEntry != nullptr &&
+			    xattrInodeEntry->attributeNameLength + attributeNameLength + 1 >
+			        SFS_XATTR_LIST_MAX) {
+				safs::log_err("Loading xattr: name list too long");
+				if (ignoreFlag) {
+					safs::log_err(
+					    "Ignoring xattr with name list size {}, exceeding max of {}, due to ignore flag",
+					    xattrInodeEntry->attributeNameLength + attributeNameLength + 1,
+					    SFS_XATTR_LIST_MAX);
+					continue;
+				}
+				exceeded = true;
+				break;
+			}
+
+			auto xattrEntry = std::make_unique<XAttributeDataEntry>();
+			xattrEntry->inode = inode;
+			xattrEntry->attributeName.resize(attributeNameLength);
+			passert(xattrEntry->attributeName.data());
+			memcpy(xattrEntry->attributeName.data(), pair.key.data() + kMinKeySize,
+			       attributeNameLength);
+
+			if (attributeValueLength > 0) {
+				xattrEntry->attributeValue.resize(attributeValueLength);
+				passert(xattrEntry->attributeValue.data());
+				memcpy(xattrEntry->attributeValue.data(), pair.value.data(), attributeValueLength);
+			} else {
+				xattrEntry->attributeValue.clear();
+			}
+
+			auto dataHash =
+			    get_xattr_data_hash(inode, attributeNameLength, xattrEntry->attributeName.data());
+
+			gMetadata->xattrDataHash[dataHash].push_back(std::move(xattrEntry));
+			auto *xattrEntryPointer = gMetadata->xattrDataHash[dataHash].back().get();
+
+			if (xattrInodeEntry != nullptr) {
+				xattrInodeEntry->xattrDataEntries.push_back(xattrEntryPointer);
+				xattrInodeEntry->attributeNameLength += attributeNameLength + 1U;
+				xattrInodeEntry->attributeValueLength += attributeValueLength;
+			} else {
+				auto newXAttrInodeEntry = XAttributeInodeEntry::create(
+				    inode, attributeNameLength + 1U, attributeValueLength);
+				newXAttrInodeEntry->xattrDataEntries.push_back(xattrEntryPointer);
+				gMetadata->xattrInodeHash[inodeHash].push_back(std::move(newXAttrInodeEntry));
+			}
+		}
+
+		if (exceeded) { return SAUNAFS_ERROR_ERANGE; }
+		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
+
+		// Advance the start selector past the last key in this page.
+		startSelector = kv::KeySelector(pageResult.getPairs().back().key, false, 0);
+	}
+
+	safs::log_info("Section loaded successfully (XATR 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
 }
 
@@ -827,8 +974,9 @@ void MetadataBackendForkless::initSections() {
 	                               [this](bool flag) { return loadEdges(flag); });
 	metadataSections_.emplace_back("FREE 1.0", kFreeKeyPrefix,
 	                               [this](bool flag) { return loadFree(flag); });
-	/*metadataSections_.emplace_back("XATR 1.0", "XATR_", loadXAttr);
-	metadataSections_.emplace_back("ACLS 1.2", "ACLS_", loadACLs);
+	metadataSections_.emplace_back("XATR 1.0", kXAttrKeyPrefix,
+	                               [this](bool flag) { return loadXAttr(flag); });
+	/*metadataSections_.emplace_back("ACLS 1.2", "ACLS_", loadACLs);
 	metadataSections_.emplace_back("QUOT 1.1", "QUOT_", loadQuotas);
 	metadataSections_.emplace_back("FLCK 1.0", "FLCK_", loadLocks);*/
 	metadataSections_.emplace_back("CHNK 1.0", kChunkKeyPrefix,
@@ -970,6 +1118,16 @@ void MetadataBackendForkless::createConnections() {
 
 	gMetadata->edgeRemovedSignal.connect(
 	    [this](inode_t parentId, const HString &name) { onEdgeRemoved(parentId, name); });
+
+	gXAttrInodeRemovedSignal.connect([this](inode_t inode) { onXAttrInodeRemoved(inode); });
+
+	gXAttrChangedSignal.connect(
+	    [this](inode_t inode, const std::vector<uint8_t> &name, const std::vector<uint8_t> &value) {
+		    onXAttrChanged(inode, name, value);
+	    });
+
+	gXAttrRemovedSignal.connect(
+	    [this](inode_t inode, const std::vector<uint8_t> &name) { onXAttrRemoved(inode, name); });
 
 	initializeNewMetadataHeaderSignal.connect([this]() { initializeNewMetadataHeader(); });
 }

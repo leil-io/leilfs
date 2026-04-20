@@ -114,6 +114,48 @@ private:
 	HString name;
 };
 
+/// Update event for xattr creation or value change.
+/// Writes XATR_<InodeId><AttributeName>: <AttributeValue> to FDB.
+class XAttrUpdateEvent : public IMetadataUpdateEvent {
+public:
+	XAttrUpdateEvent(inode_t _inode, std::vector<uint8_t> _name, std::vector<uint8_t> _value);
+	~XAttrUpdateEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t inode;
+	std::vector<uint8_t> name;
+	std::vector<uint8_t> value;
+};
+
+/// Removal event for a single xattr entry.
+/// Removes XATR_<InodeId><AttributeName> from FDB.
+class XAttrRemoveEvent : public IMetadataUpdateEvent {
+public:
+	XAttrRemoveEvent(inode_t _inode, std::vector<uint8_t> _name);
+	~XAttrRemoveEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t inode;
+	std::vector<uint8_t> name;
+};
+
+/// Removal event for all xattrs of an inode.
+/// Removes the range XATR_<InodeId> .. XATR_<InodeId+1> from FDB.
+class XAttrInodeRemoveEvent : public IMetadataUpdateEvent {
+public:
+	explicit XAttrInodeRemoveEvent(inode_t _inode);
+	~XAttrInodeRemoveEvent() override = default;
+
+	void applyEvent(kv::IReadWriteTransaction *txn) override;
+
+private:
+	inode_t inode;
+};
+
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:
