@@ -15,6 +15,9 @@
 #include <boost/bind.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
+#include <chrono>
+#include <thread>
+
 using boost::asio::ip::udp;
 
 uRaft::uRaft(boost::asio::io_context &ios)
@@ -518,17 +521,65 @@ void uRaft::init() {
 
 	state_.id = opt_.id;
 	if (state_.id < 0) {
-		state_.id = scanLocalInterfaces();
-	}
-	if (state_.id < 0) {
+#if defined(SAUNAFS_HAVE_GETIFADDRS)
+		unsigned detect_wait_seconds = 0;
+
+		while ((state_.id = scanLocalInterfaces()) < 0) {
+			if (detect_wait_seconds == 0 || detect_wait_seconds % 30 == 0) {
+				syslog(LOG_WARNING,
+				       "Waiting for local uRaft node address before auto-detecting node id");
+			}
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+			++detect_wait_seconds;
+		}
+		syslog(LOG_NOTICE, "Detected local uRaft node id %d after %u seconds", state_.id,
+		       detect_wait_seconds);
+#else
 		throw std::runtime_error("Invalid id");
+#endif
 	}
 
 	opt_.quorum = opt_.server.size() / 2 + 1;
 	state_.local_time   = opt_.election_timeout_min / opt_.heartbeat_period + 1;
 
-	socket_.open(boost::asio::ip::udp::v4());
-	socket_.bind(node_[state_.id].addr);
+	const std::string bind_target = nodeToString(state_.id);
+	unsigned          wait_seconds = 0;
+	const auto        address_not_available =
+	    boost::system::errc::make_error_condition(boost::system::errc::address_not_available);
+
+	while (true) {
+		boost::system::error_code open_error;
+		socket_.open(boost::asio::ip::udp::v4(), open_error);
+		if (open_error) {
+			throw std::runtime_error("Failed to open uRaft UDP socket: " + open_error.message());
+		}
+
+		boost::system::error_code bind_error;
+		socket_.bind(node_[state_.id].addr, bind_error);
+		if (!bind_error) {
+			if (wait_seconds > 0) {
+				syslog(LOG_NOTICE,
+				       "Local uRaft address %s became available after %u seconds",
+				       bind_target.c_str(), wait_seconds);
+			}
+			break;
+		}
+
+		socket_.close();
+
+			if (bind_error != address_not_available) {
+			throw std::runtime_error("Failed to bind uRaft UDP socket to '" + bind_target +
+			                         "': " + bind_error.message());
+		}
+
+		if (wait_seconds == 0 || wait_seconds % 30 == 0) {
+			syslog(LOG_WARNING,
+			       "Waiting for local uRaft address %s before binding UDP socket",
+			       bind_target.c_str());
+		}
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		++wait_seconds;
+	}
 
 	restorePersistentState();
 	bootstrapLeaderState();
