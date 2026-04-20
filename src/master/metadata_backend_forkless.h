@@ -167,6 +167,19 @@ private:
 	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadFree(bool ignoreFlag);
 
+	/// Loads XATR_ metadata
+	/// Loads all extended attributes from the KV store and reconstructs the in-memory xattr
+	/// hash tables (xattrDataHash and xattrInodeHash).
+	///
+	/// Xattrs are stored as `XATR_<InodeId><AttributeName>: <AttributeValue>` entries. This
+	/// method paginates through the full XATR_ keyspace, validates name and value lengths
+	/// against protocol limits (SFS_XATTR_NAME_MAX, SFS_XATTR_SIZE_MAX, SFS_XATTR_LIST_MAX),
+	/// and inserts each entry into gMetadata.
+	///
+	/// @param ignoreFlag When true, entries with oversized names or values are skipped.
+	/// @return kOpSuccess on success, kOpFailure or SAUNAFS_ERROR_ERANGE on error.
+	int8_t loadXAttr(bool ignoreFlag);
+
 	/// Loads EDGE_ metadata
 	/// Loads all edges from the KV store and reconstructs the in-memory directory tree.
 	///
@@ -289,6 +302,33 @@ private:
 	/// @param parentId Inode of the parent directory.
 	/// @param name     Edge name (filename component) to remove.
 	void onEdgeRemoved(inode_t parentId, const HString &name);
+
+	/// Enqueue an xattr inode removal event to the metadata writer.
+	///
+	/// Called when all xattrs of an inode are removed. The event removes all `XATR_<inode><name>`
+	/// keys for the given inode from the KV store on the next flush.
+	/// @param inode Inode of the xattr entries to remove.
+	void onXAttrInodeRemoved(inode_t inode);
+
+	/// Enqueue an xattr creation or update event to the metadata writer.
+	///
+	/// Called when an xattr is created or its value is modified. The event writes
+	/// `XATR_<inode><name>: <value>` to the KV store on the next flush.
+	///
+	/// @param inode Inode that owns the xattr.
+	/// @param name  Attribute name bytes.
+	/// @param value Attribute value bytes.
+	void onXAttrChanged(inode_t inode, const std::vector<uint8_t> &name,
+	                    const std::vector<uint8_t> &value);
+
+	/// Enqueue a single xattr removal event to the metadata writer.
+	///
+	/// Called when one xattr entry is removed via XATTR_SMODE_REMOVE. The event removes
+	/// `XATR_<inode><name>` from the KV store on the next flush.
+	///
+	/// @param inode Inode that owns the xattr.
+	/// @param name  Attribute name bytes.
+	void onXAttrRemoved(inode_t inode, const std::vector<uint8_t> &name);
 
 	/// Returns next chunk ID value from the KV store.
 	///
