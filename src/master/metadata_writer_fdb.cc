@@ -108,6 +108,40 @@ void EdgeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->remove(key);
 }
 
+XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::vector<uint8_t> _name,
+                                   std::vector<uint8_t> _value)
+    : inode(_inode), name(std::move(_name)), value(std::move(_value)) {}
+
+void XAttrUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Key: XATR_<inode><attributeName>
+	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
+	key.insert(key.end(), name.begin(), name.end());
+
+	// Value: raw attribute value bytes
+	txn->set(key, value);
+}
+
+XAttrRemoveEvent::XAttrRemoveEvent(inode_t _inode, std::vector<uint8_t> _name)
+    : inode(_inode), name(std::move(_name)) {}
+
+void XAttrRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Key: XATR_<inode><attributeName>
+	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
+	key.insert(key.end(), name.begin(), name.end());
+
+	txn->remove(key);
+}
+
+XAttrInodeRemoveEvent::XAttrInodeRemoveEvent(inode_t _inode) : inode(_inode) {}
+
+void XAttrInodeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+	// Remove all keys in range XATR_<inode> .. XATR_<inode+1>
+	auto startKey = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
+	auto endKey = kv::encodeKeyBE(kXAttrKeyPrefix, static_cast<inode_t>(inode + 1));
+
+	txn->removeRange(startKey, endKey);
+}
+
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {
 	pendingUpdates_.reserve(kInitialSize_);  // Default reserve size, can be adjusted
 }

@@ -376,6 +376,69 @@ int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
 	return kOpSuccess;
 }
 
+int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("XATR 1.0");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for XATR 1.0");
+		return kOpFailure;
+	}
+
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	MetadataWriterFDB writer(kvEngine_);
+	uint64_t xattrCount = 0;
+	size_t pending = 0;
+
+	while (true) {
+		inode_t inode{};
+		getINode(&ptr, inode);
+		uint8_t attributeNameLength = get8bit(&ptr);
+
+		uint32_t attributeValueLength{};
+		get32bit(&ptr, attributeValueLength);
+		marker->offset = metadataFile_->offset(ptr);
+
+		if (inode == 0) { break; }
+
+		if (attributeNameLength == 0) {
+			safs::log_err("Bootstrapping xattr: empty name for inode {}", inode);
+			return kOpFailure;
+		}
+
+		if (attributeValueLength > SFS_XATTR_SIZE_MAX) {
+			safs::log_err("Bootstrapping xattr: value oversized for inode {}", inode);
+			return kOpFailure;
+		}
+
+		std::vector<uint8_t> attributeName(ptr, ptr + attributeNameLength);
+		ptr += attributeNameLength;
+
+		std::vector<uint8_t> attributeValue(ptr, ptr + attributeValueLength);
+		ptr += attributeValueLength;
+
+		marker->offset = metadataFile_->offset(ptr);
+
+		writer.enqueue(std::make_unique<XAttrUpdateEvent>(inode, std::move(attributeName),
+		                                                  std::move(attributeValue)));
+		xattrCount++;
+
+		if (++pending >= kFlushThreshold) {
+			writer.flush();
+			pending = 0;
+		}
+	}
+
+	if (!writer.flushAll()) {
+		safs::log_err("Failed to flush bootstrapped xattrs to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} xattrs from metadata file into FDB", xattrCount);
+	return kOpSuccess;
+}
+
 std::optional<MetadataSectionBootstrapFDB::SectionMarker> MetadataSectionBootstrapFDB::findSection(
     std::string_view name) const {
 	auto sectionIterator = sectionMarkers_.find(std::string(name));
@@ -408,6 +471,12 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	});
 
 	// Filesystem MetadataSection "XATR 1.0"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "XATR 1.0",
+	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kXAttrKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadXAttrSection(); },
+	});
+
 	// Filesystem MetadataSection "ACLS 1.2"
 	// Filesystem MetadataSection "QUOT 1.1"
 	// Filesystem MetadataSection "FLCK 1.0"

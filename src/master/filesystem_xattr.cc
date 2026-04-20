@@ -177,6 +177,12 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 				xattrInodeEntry->attributeNameLength -= attributeNameLength + 1U;
 				xattrInodeEntry->attributeValueLength -= xattrDataEntry->attributeValue.size();
 
+				if (gXAttrRemovedSignal.size() > 0) {
+					gXAttrRemovedSignal.emit(
+					    inode,
+					    std::vector<uint8_t>(attributeName, attributeName + attributeNameLength));
+				}
+
 				xattr_removeentry(xattrInodeEntry, xattrDataEntry.get());
 
 				if (xattrInodeEntry->xattrDataEntries.empty()) {
@@ -208,6 +214,13 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 
 			xattrInodeEntry->attributeValueLength += attributeValueLength;
 			xattr_update_checksum(xattrDataEntry.get());
+
+			if (gXAttrChangedSignal.size() > 0) {
+				gXAttrChangedSignal.emit(
+				    inode, std::vector<uint8_t>(attributeName, attributeName + attributeNameLength),
+				    xattrDataEntry->attributeValue);
+			}
+
 			return SAUNAFS_STATUS_OK;
 		}
 	}
@@ -250,6 +263,12 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 		    XAttributeInodeEntry::create(inode, attributeNameLength + 1U, attributeValueLength);
 		xattrInodeEntry->xattrDataEntries.push_back(xattrDataEntryPointer);
 		gMetadata->xattrInodeHash[inodeHash].push_back(std::move(xattrInodeEntry));
+	}
+
+	if (gXAttrChangedSignal.size() > 0) {
+		gXAttrChangedSignal.emit(
+		    inode, std::vector<uint8_t>(attributeName, attributeName + attributeNameLength),
+		    xattrDataEntryPointer->attributeValue);
 	}
 
 	return SAUNAFS_STATUS_OK;

@@ -70,6 +70,7 @@ private:
 	int8_t loadChunkSection();
 	int8_t loadEdgesSection();
 	int8_t loadFreeSection();
+	int8_t loadXAttrSection();
 
 	uint64_t metadataVersion_ = 0;
 	std::shared_ptr<MemoryMappedFile> metadataFile_;
