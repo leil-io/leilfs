@@ -161,6 +161,147 @@ The master communicates with five types of peers. The naming convention
 | `matontserv`   | Notifier clients | Broadcasts changelog events for inotify-like functionality. |
 | `masterconn`   | Active master   | Used only when running in **Shadow** personality. Receives changelogs and metadata from the active master. |
 
+## Client Sessions
+
+Client session state is split across a manager-owned in-memory view and a
+metadata-backed per-file view:
+
+- the session manager owns `Session` objects and handles creation, lookup,
+  timeout, persistence, and startup reconstruction,
+- each `Session` keeps mount-level session state plus an in-memory set of
+  currently open file inodes,
+- each `FSNodeFile` keeps the reverse mapping, `sessionIds`, inside filesystem
+  metadata.
+
+This split is intentional: some code needs to answer "what files does this
+session hold open?", while other code needs to answer "what sessions still
+hold this file open?". The manager layer isolates lifecycle logic from
+persistence, so different backends can keep the same session semantics while
+storing the durable state differently.
+
+The manager is attached during startup:
+
+- The master init sequence attaches the session manager before session state is
+  loaded.
+
+`matoclserv_sessions.cc` is a thin dispatcher layer: session-related wrappers
+forward to the active session manager with `sassert(...)` guards. Any
+dispatcher call before the backend is attached fails an assertion instead of
+falling back silently.
+
+### Session Data Model
+
+`Session` represents one client mount or meta-session known to the master.
+Its durable data is the information needed to recognize and restore a
+reconnectable mount: session identity, peer identity, mount root and access
+limits, UID/GID remapping, and hourly operation stats. Runtime-only state
+includes live connection state, transient connection details, caches, and the
+in-memory open-file set.
+
+`newSession` is not serialized directly. Instead, persistence treats
+reconnectable sessions as the durable subset, and loaded sessions are
+recreated in that reconnectable state.
+
+The lifecycle-related fields have distinct roles:
+
+- `newSession` acts as a small state flag used both to decide whether the
+  session is persisted and to select timeout policy.
+- `connections` is the in-memory connection counter updated by registration,
+  reconnect, and disconnect handling.
+- `disconnectedTimestamp` is cleared on reconnect/use, set when the last
+  connection drops, and initialized to `eventloop_time()` for sessions restored
+  from `sessions.sfs`.
+
+### Session ID Allocation and Changelog
+
+Session IDs come from a metadata-owned counter rather than from `sessions.sfs`.
+Allocating a new session consumes the current counter value, records the
+allocation in the changelog, and advances the counter. Because the same
+logical event is replayed during restore/shadow processing, session ID
+assignment stays consistent across snapshots and changelog replay.
+
+### Client Lifecycle
+
+The client lifecycle is:
+
+- **Create** -- Reconnectable sessions are allocated, filled with their stored
+  identity and limits, and persisted.
+- **Reconnect** -- An existing session record is reused, its disconnected
+  state is cleared, and its connection count is incremented.
+- **Disconnect** -- The connection count is decremented; once the last
+  connection drops, the session becomes eligible for timeout-based cleanup.
+- **Explicit delete / timeout cleanup** -- Both trigger teardown of the
+  session's open files and locks. Timeout cleanup also reaps expired session
+  records.
+
+The session file is not rewritten on every open or close. It is updated when
+reconnectable sessions are created and when periodic stats persistence runs.
+
+### Two Open-File Indexes
+
+The implementation keeps two synchronized indexes because different subsystems
+need opposite lookup directions:
+
+- `Session::openFilesSet` is the in-memory, per-session view of currently open
+  files.
+- `FSNodeFile::sessionIds` is the durable, per-file view of which sessions
+  still hold that file open.
+
+Normal open, close, and session-teardown paths update both sides. In the
+normal master open path, file-side membership is updated first and the
+in-memory session set is updated only on success. The file-side index is the
+durable one: it survives restart, drives reserved/trash file lifetime, and is
+used to rebuild the in-memory per-session view during startup.
+
+### `acquire()` / `release()` Semantics
+
+At the file-operation level, acquire adds session membership to the file node,
+while release removes it. If a reserved file no longer has any recorded
+openers, it can be deleted immediately. Lock cleanup is tied to session
+teardown rather than to a standalone release.
+
+Because reserved-file deletion is keyed off `FSNodeFile::sessionIds.empty()`,
+reserved-file lifetime depends on the file-side index, not on the session file
+alone.
+
+### Persistence and Restart
+
+The current master path spreads durable session-related state across two
+stores:
+
+- **`metadata.sfs`** stores `gMetadata->nextSessionId()` and the per-file
+  `FSNodeFile::sessionIds` vectors.
+- **`sessions.sfs`** stores reconnectable session metadata and hourly stats.
+
+`sessions.sfs` intentionally does **not** store:
+
+- `openFilesSet`
+- lock state
+- `connections`
+- `disconnectedTimestamp`
+- `groupsCache`
+- file-side `sessionIds`
+- transient connection details such as the current live socket attachment
+
+Startup reconstruction happens in two stages:
+
+1. Reconnectable sessions are loaded from `sessions.sfs` and start in a
+   disconnected state.
+2. Metadata loading rebuilds each session's in-memory open-file set from the
+   persisted file-side opener membership, creating compatibility-only
+   synthetic sessions if file-side membership exists without a matching session
+   record.
+
+This split answers the key restart questions:
+
+- **How does reconnect survive restart?**
+  Session identity and mount-level access limits come back from `sessions.sfs`.
+- **How does open-file state survive restart?**
+  File opener membership comes back from `FSNodeFile::sessionIds` in metadata.
+- **Why do reserved files depend on session state?**
+  Reserved/trash lifecycle logic consults the file-side `sessionIds` vector to
+  decide whether a detached file must stay alive.
+
 ## Metadata Persistence
 
 Metadata durability is achieved through two complementary mechanisms:

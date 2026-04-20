@@ -42,6 +42,7 @@
 #include "master/metadata_backend_file.h"
 #include "master/metadata_backend_interface.h"
 #include "master/personality.h"
+#include "master/session_manager.h"
 #include "master/topology.h"
 #include "metrics/metrics.h"
 
@@ -73,6 +74,11 @@ inline int metadata_backend_init() {
 	return 0;
 }
 
+inline int session_manager_init() {
+	matoclserv_set_session_manager(std::make_unique<SessionManagerFile>());
+	return 0;
+}
+
 /// Functions to call before normal startup
 inline const std::vector<RunTab> earlyRunTabs = {
     RunTab{.function = metadataserver::personality_validate, .name = "validate personality"}};
@@ -87,6 +93,8 @@ inline const std::vector<RunTab> runTabs = {
     RunTab{.function = rnd_init, .name = "random generator"},
     // has to be before 'fs_init' and 'matoclserv_networkinit'
     RunTab{.function = dcm_init, .name = "data cache manager"},
+    // must run before 'matoclserv_sessions_init' so the dispatcher has a backing manager.
+    RunTab{.function = session_manager_init, .name = "attach session manager"},
     // has to be before 'fs_init'
     RunTab{.function = matoclserv_sessions_init, .name = "load stored sessions"},
     RunTab{.function = exports_init, .name = "exports manager"},

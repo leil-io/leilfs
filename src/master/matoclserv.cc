@@ -5158,11 +5158,11 @@ void matoclserv_admin_reload(matoclserventry* eptr, const uint8_t* data, uint32_
 std::string get_client_configs() {
 	std::map<std::string, std::string> client_configs;
 
-	for (const auto& sessionPtr : gSessionsVector) {
-		if (sessionPtr->config.empty()) { continue; }
-		NetworkAddress addr(sessionPtr->peerIpAddress, sessionPtr->peerPort);
-		client_configs[addr.toString()] = sessionPtr->config;
-	}
+	matoclserv_for_each_session([&client_configs](const Session &session) {
+		if (session.config.empty()) { return; }
+		NetworkAddress addr(session.peerIpAddress, session.peerPort);
+		client_configs[addr.toString()] = session.config;
+	});
 
 	return cfg_yaml_list("clients", client_configs);
 }
@@ -5376,21 +5376,8 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 }
 
 void matocl_session_check() {
-	uint32_t now = eventloop_time();
-
-	for (auto sessionIt = gSessionsVector.begin(); sessionIt != gSessionsVector.end();) {
-		auto& sessionPtr = *sessionIt;
-		if (sessionPtr->connections == 0 &&
-		    ((sessionPtr->newSession > 1 && sessionPtr->disconnectedTimestamp < now) ||
-		     (sessionPtr->newSession == 1 &&
-		      sessionPtr->disconnectedTimestamp + gSessionSustainTime < now) ||
-		     (sessionPtr->newSession == 0 && sessionPtr->disconnectedTimestamp + 7200 < now))) {
-			matocl_session_timedout(sessionPtr.get());
-			sessionIt = gSessionsVector.erase(sessionIt);
-		} else {
-			++sessionIt;
-		}
-	}
+	matoclserv_remove_timed_out_sessions(
+	    [](Session *currentSession) { matocl_session_timedout(currentSession); });
 }
 
 void matocl_before_disconnect(matoclserventry *eptr) {

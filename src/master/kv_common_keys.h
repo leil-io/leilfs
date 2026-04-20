@@ -28,6 +28,25 @@ inline constexpr std::string_view kMetaVersionKey = "META_VERSION";
 
 inline constexpr std::string_view kMetaNextSessionKey = "META_NEXT_SESSION";
 
+/// Prefix for persisted session records.
+/// Format: SESS_REC_<SessionId>:<SerializedSessionRecord>
+/// - SessionId: uint32_t serialized as Big Endian
+/// - Value: versioned serialized Session record (kSessionRecordVersion + payload)
+/// @note SessionId is Big Endian to preserve numeric ordering in lexicographical
+/// scans by the SESS_REC_ prefix.
+/// @note This must stay disjoint from per-session secondary-index prefixes such as
+/// kSessionOpenKeyPrefix because session records are loaded by prefix scan.
+inline constexpr std::string_view kSessionKeyPrefix = "SESS_REC_";
+
+/// Prefix for the per-session open-file index.
+/// Format: SESS_OPEN_<SessionId><InodeId>:<EmptyValue>
+/// - SessionId: uint32_t serialized as Big Endian
+/// - InodeId: inode_t serialized as Big Endian
+/// @note The (SessionId, InodeId) key layout enables efficient per-session scans
+/// and range deletion of all open-file rows for a session.
+/// @note Value is empty; key presence encodes membership in the open-file set.
+inline constexpr std::string_view kSessionOpenKeyPrefix = "SESS_OPEN_";
+
 inline constexpr std::string_view kInodeRangeStartKey = "META_NEXT_INODE_RANGE";
 inline constexpr std::string_view kChunkRangeStartKey = "META_NEXT_CHUNK_RANGE";
 
