@@ -7,7 +7,7 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "SaunaFS - A distributed filesystem for th
         CACHE STRING "Summary of package description"
 )
 
-set(CPACK_PACKAGE_CONTACT "contact@saunafs.com"
+set(CPACK_PACKAGE_CONTACT "hello@leil.io"
         CACHE STRING "Contact email for package"
 )
 
