@@ -192,7 +192,7 @@ Currently, the preferred ways to indicate you want to contribute code are (in
 order):
 * Commenting on a specific Github issue
 * [Matrix](https://matrix.to/#/#leil:matrix.org),
-* [Email](mailto:contact@leil.io?subject=RFI),
+* [Email](mailto:hello@leil.io?subject=RFI),
 
 If you get an OK from us, please read below for more details.
 
