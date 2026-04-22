@@ -1,4 +1,30 @@
-This file lists noteworthy changes in SaunaFS.
+This file lists noteworthy changes in LeilFS.
+
+* LeilFS (5.9.0) (2026-04-22)
+ - docs(chunkserver): add architectural reference README (#779)
+ - docs(master): improve FS operations docs (#790)
+ - docs(mount): add mount client architecture guide (#800)
+ - feat(chunkserver): add HDD_CHUNK_BULK_SIZE option (#824)
+ - feat(chunkserver): add plugin reload mechanism  (#821)
+ - feat(kv): add getSnapshot() for conflict-free reads on hot keys (#809)
+ - feat(monitoring): add used space delta to chunkservers charts LS-456 (#808)
+ - feat(windows): Add acquired files clean to Tweaks (#774)
+ - feat: introduce helper and support fdb features (#777)
+ - fix(build): fix chunkserver-common_pic link deps (#796)
+ - fix(ci): update workflow install prefix to leilfs (#818)
+ - fix(master): fix xattr lookup with hash collisions (#784)
+ - fix(master): persist append in KV backend (#795)
+ - fix(mount): fix not released read cache entries
+ - fix(tests): always tear down FDB on test failure (#793)
+ - fix(tests): exact key match in dirinfo/admin info (#794)
+ - fix(tools): Fix help for rremove function (#778)
+ - fix(tools): Fix tools win ls and unicode (#780)
+ - fix: replace setitimer with getrusage for CPU metrics (#828)
+ - perf(chunkserver): Protect IO performance during massive delete LS #79 (#739)
+ - perf(master): reduce chunks processing overhead (#813)
+ - perf(mount): reduce reads while writing (#789)
+ - perf(mount): set cachePerInodePercentage to 100 LS-423 (#812)
+ - perf: CS write buffering (#749)
 
 * SaunaFS (5.8.0) (2026-03-23)
  - build: Add RPM package for client (#772)
