@@ -213,6 +213,19 @@ public:
 	virtual void updateCTime(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                         uint32_t ctime) = 0;
 
+	/// Updates ctime on a trash node whose trashtime has just changed, keeping the TrashPathKey
+	/// ordering and/or the backend expiry index consistent.
+	/// Must be called with the old trashtime captured before that field is mutated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The trash node whose ctime and trashtime are being updated.
+	/// @param newCtime The new ctime value to set on the node.
+	/// @param oldTrashtime The old trashtime value before the update, used for locating the
+	///                     existing TrashPathKey.
+	virtual void updateCTimeForTrashNode(const FilesystemOperationContext &fsOpContext,
+	                                     FSNode *node, uint32_t newCtime,
+	                                     uint32_t oldTrashtime) = 0;
+
 	virtual void fillAttr(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                      FSNode *parent, uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid,
 	                      uint8_t sesflags, Attributes &attr) = 0;
