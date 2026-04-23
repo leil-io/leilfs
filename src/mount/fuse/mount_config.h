@@ -77,8 +77,11 @@ struct sfsopts_ {
 	int debug;
 	int delayedinit;
 	int acl;
+	int xattrs;
 	double aclcacheto;
 	unsigned aclcachesize;
+	double xattrcacheto;
+	unsigned xattrcachesize;
 	int rwlock;
 	int mkdircopysgid;
 	char *sugidclearmodestr;
@@ -146,9 +149,12 @@ struct sfsopts_ {
 		meta(0),
 		debug(SaunaClient::FsInitParams::kDefaultDebugMode),
 		delayedinit(SaunaClient::FsInitParams::kDefaultDelayedInit),
-		acl(), // deprecated
+		acl(SaunaClient::FsInitParams::kDefaultEnableAcl),
+		xattrs(SaunaClient::FsInitParams::kDefaultEnableXattrs),
 		aclcacheto(SaunaClient::FsInitParams::kDefaultAclCacheTimeout),
 		aclcachesize(SaunaClient::FsInitParams::kDefaultAclCacheSize),
+		xattrcacheto(SaunaClient::FsInitParams::kDefaultXattrCacheTimeout),
+		xattrcachesize(SaunaClient::FsInitParams::kDefaultXattrCacheSize),
 		rwlock(SaunaClient::FsInitParams::kDefaultUseRwLock),
 		mkdircopysgid(SaunaClient::FsInitParams::kDefaultMkdirCopySgid),
 		sugidclearmodestr(NULL),

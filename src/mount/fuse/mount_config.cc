@@ -59,6 +59,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfswritecachesize=%u", writecachesize, 0),
 	SFS_OPT("sfschunkserverwavewriteto=%u", chunkserverwavewriteto, 0),
 	SFS_OPT("sfsaclcachesize=%u", aclcachesize, 0),
+	SFS_OPT("sfsxattrcachesize=%u", xattrcachesize, 0),
 	SFS_OPT("sfscacheperinodepercentage=%u", cachePerInodePercentage, 0),
 	SFS_OPT("sfswriteworkers=%u", writeworkers, 0),
 	SFS_OPT("sfsioretries=%u", ioretries, 0),
@@ -67,6 +68,9 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsmeta", meta, 1),
 	SFS_OPT("sfsdelayedinit", delayedinit, 1),
 	SFS_OPT("sfsacl", acl, 1),
+	SFS_OPT("sfsacl=%d", acl, 0),
+	SFS_OPT("sfsxattrs", xattrs, 1),
+	SFS_OPT("sfsxattrs=%d", xattrs, 0),
 	SFS_OPT("sfsrwlock=%d", rwlock, 0),
 	SFS_OPT("sfsdonotrememberpassword", donotrememberpassword, 1),
 	SFS_OPT("sfscachemode=%s", cachemode, 0),
@@ -79,6 +83,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsnegativecachetimeout=%u", negativecachetimeout, 0),
 	SFS_OPT("sfsnegativecachesize=%u", negativecachesize, 0),
 	SFS_OPT("sfsaclcacheto=%lf", aclcacheto, 0),
+	SFS_OPT("sfsxattrcacheto=%lf", xattrcacheto, 0),
 	SFS_OPT("sfsreportreservedperiod=%u", reportreservedperiod, 0),
 	SFS_OPT("sfsiolimits=%s", iolimits, 0),
 	SFS_OPT("sfschunkserverrtt=%d", chunkserverrtt, 0),
@@ -148,6 +153,7 @@ void initialize_opts_name_values() {
 #endif
 	gOptsNameValues["sfswritecachesize"] = std::to_string(gMountOptions.writecachesize);
 	gOptsNameValues["sfsaclcachesize"] = std::to_string(gMountOptions.aclcachesize);
+	gOptsNameValues["sfsxattrcachesize"] = std::to_string(gMountOptions.xattrcachesize);
 	gOptsNameValues["sfscacheperinodepercentage"] =
 	    std::to_string(gMountOptions.cachePerInodePercentage);
 	gOptsNameValues["sfswriteworkers"] = std::to_string(gMountOptions.writeworkers);
@@ -164,6 +170,7 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsmeta"] = std::to_string(gMountOptions.meta);
 	gOptsNameValues["sfsdelayedinit"] = std::to_string(gMountOptions.delayedinit);
 	gOptsNameValues["sfsacl"] = std::to_string(gMountOptions.acl);
+	gOptsNameValues["sfsxattrs"] = std::to_string(gMountOptions.xattrs);
 	gOptsNameValues["sfsrwlock"] = std::to_string(gMountOptions.rwlock);
 	gOptsNameValues["sfsdonotrememberpassword"] =
 	    std::to_string(gMountOptions.donotrememberpassword);
@@ -181,6 +188,7 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsnegativecachetimeout"] = std::to_string(gMountOptions.negativecachetimeout);
 	gOptsNameValues["sfsnegativecachesize"] = std::to_string(gMountOptions.negativecachesize);
 	gOptsNameValues["sfsaclcacheto"] = std::to_string(gMountOptions.aclcacheto);
+	gOptsNameValues["sfsxattrcacheto"] = std::to_string(gMountOptions.xattrcacheto);
 	gOptsNameValues["sfsreportreservedperiod"] = std::to_string(gMountOptions.reportreservedperiod);
 	gOptsNameValues["sfsiolimits"] =
 	    gMountOptions.iolimits ? std::string(gMountOptions.iolimits) : "";
@@ -311,8 +319,8 @@ void usage(const char *progname) {
 				"- with this option mount can be run without "
 				"network (good for being run from fstab/init "
 				"scripts etc.)\n"
-"    -o sfsacl                   DEPRECATED, used to enable/disable ACL "
-				"support, ignored now\n"
+"    -o sfsacl=0|1              enable/disable ACL xattr handling (default: %d)\n"
+"    -o sfsxattrs=0|1           enable/disable xattr handling (default: %d)\n"
 "    -o sfsrwlock=0|1            when set to 1, parallel reads from the same "
 				"descriptor are performed (default: %d)\n"
 "    -o sfsmkdircopysgid=N       sgid bit should be copied during mkdir "
@@ -337,6 +345,7 @@ void usage(const char *progname) {
 				"When equal to 0 disabled for both internal and Linux kernel-level negative caching. "
 				"If changed in .saunafs_tweaks clears the whole cache (default: %u)\n"
 "    -o sfsaclcacheto=SEC        set ACL cache timeout in seconds (default: %.2f)\n"
+"    -o sfsxattrcacheto=SEC      set xattr cache timeout in seconds (default: %.2f)\n"
 "    -o sfsreportreservedperiod=SEC  set reporting reserved inodes interval in "
 				"seconds (default: %u)\n"
 "    -o sfschunkserverrtt=MSEC   set timeout after which SYN packet is "
@@ -350,6 +359,8 @@ void usage(const char *progname) {
 "    -o sfsmemlock               try to lock memory\n"
 #endif
 "    -o sfsaclcachesize=N        define ACL cache size in number of entries "
+				"(0: no cache; default: %u)\n"
+"    -o sfsxattrcachesize=N      define xattr cache size in number of entries "
 				"(0: no cache; default: %u)\n"
 "    -o sfsioretries=N           define number of retries before I/O error is "
 				"returned (default: %u)\n"
@@ -403,6 +414,8 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultWriteWorkers,
 		SaunaClient::FsInitParams::kDefaultWriteWindowSize,
 		SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode,
+		SaunaClient::FsInitParams::kDefaultEnableAcl,
+		SaunaClient::FsInitParams::kDefaultEnableXattrs,
 		SaunaClient::FsInitParams::kDefaultUseRwLock,
 		SaunaClient::FsInitParams::kDefaultMkdirCopySgid,
 		sugidClearModeString(SaunaClient::FsInitParams::kDefaultSugidClearMode),
@@ -413,10 +426,12 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultNegativeCacheTo,
 		SaunaClient::FsInitParams::kDefaultNegativeCacheSize,
 		SaunaClient::FsInitParams::kDefaultAclCacheTimeout,
+		SaunaClient::FsInitParams::kDefaultXattrCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultReportReservedPeriod,
 		SaunaClient::FsInitParams::kDefaultRoundTime,
 		SaunaClient::FsInitParams::kDefaultChunkserverWaveReadTo,
 		SaunaClient::FsInitParams::kDefaultAclCacheSize,
+		SaunaClient::FsInitParams::kDefaultXattrCacheSize,
 		SaunaClient::FsInitParams::kDefaultIoRetries,
 		SaunaClient::FsInitParams::kDefaultSymlinkCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultSubfolder,
