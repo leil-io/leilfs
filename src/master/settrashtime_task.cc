@@ -90,6 +90,7 @@ uint8_t SetTrashtimeTask::setTrashtime(const FilesystemOperationContext &fsOpCon
 			return SetTrashtimeTask::kNotPermitted;
 		} else {
 			set = 0;
+			const uint32_t oldTrashtime = node->trashtime;
 			switch (smode_ & SMODE_TMASK) {
 			case SMODE_SET:
 				if (node->trashtime != trashtime_) {
@@ -111,7 +112,12 @@ uint8_t SetTrashtimeTask::setTrashtime(const FilesystemOperationContext &fsOpCon
 				break;
 			}
 			if (set) {
-				gFSOperations->nodeOperations()->updateCTime(fsOpContext, node, ts);
+				if (node->type == FSNodeType::kTrash) {
+					gFSOperations->nodeOperations()->updateCTimeForTrashNode(fsOpContext, node, ts,
+					                                                         oldTrashtime);
+				} else {
+					gFSOperations->nodeOperations()->updateCTime(fsOpContext, node, ts);
+				}
 				fsnodes_update_checksum(node);
 				return SetTrashtimeTask::kChanged;
 			} else {

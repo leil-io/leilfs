@@ -75,6 +75,11 @@ public:
 	void updateCTime([[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                 uint32_t ctime) override;
 
+	/// Updates ctime on a trash node whose trashtime has just changed.
+	/// @see IFilesystemNodeOperations::updateCTimeForTrashNode
+	void updateCTimeForTrashNode([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+	                             FSNode *node, uint32_t newCtime, uint32_t oldTrashtime) override;
+
 	void fillAttr(const FilesystemOperationContext &fsOpContext, FSNode *node, FSNode *parent,
 	              uint32_t uid, uint32_t gid, uint32_t auid, uint32_t agid, uint8_t sesflags,
 	              Attributes &attr) override;
