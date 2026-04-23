@@ -104,6 +104,7 @@ struct sfsopts_ {
 	unsigned negativecachesize;
 	unsigned reportreservedperiod;
 	char *iolimits;
+	int chunkserverlatencysort;
 	int chunkserverrtt;
 	int chunkserverconnectreadto;
 	int chunkserverwavereadto;
@@ -177,6 +178,7 @@ struct sfsopts_ {
 		negativecachesize(SaunaClient::FsInitParams::kDefaultNegativeCacheSize),
 		reportreservedperiod(SaunaClient::FsInitParams::kDefaultReportReservedPeriod),
 		iolimits(NULL),
+		chunkserverlatencysort(SaunaClient::FsInitParams::kDefaultChunkserverLatencySort),
 		chunkserverrtt(SaunaClient::FsInitParams::kDefaultRoundTime),
 		chunkserverconnectreadto(SaunaClient::FsInitParams::kDefaultChunkserverConnectTo),
 		chunkserverwavereadto(SaunaClient::FsInitParams::kDefaultChunkserverWaveReadTo),

@@ -77,12 +77,59 @@ TEST(ChunkserverStatsTests, ChunkserverStatsDefectTracking) {
 	EXPECT_EQ(stats.getStatisticsFor(server1).score(), 1.);
 }
 
+TEST(ChunkserverStatsTests, ChunkserverStatsRoundTripTimeTracking) {
+	ChunkserverStats stats;
+	NetworkAddress server1(1111, 11);
+	NetworkAddress server2(2222, 22);
+
+	stats.setUseRoundTripTime(true);
+	stats.updateRoundTripTime(server1, 200);
+	stats.updateRoundTripTime(server2, 20);
+
+	EXPECT_TRUE(stats.getStatisticsFor(server1).hasRoundTripTime());
+	EXPECT_EQ(200u, stats.getStatisticsFor(server1).roundTripTime_ms());
+	EXPECT_GT(stats.getStatisticsFor(server2).score(), stats.getStatisticsFor(server1).score());
+
+	stats.updateRoundTripTime(server1, 40);
+	EXPECT_LT(stats.getStatisticsFor(server1).roundTripTime_ms(), 200u);
+	EXPECT_GT(stats.getStatisticsFor(server1).roundTripTime_ms(), 40u);
+}
+
+TEST(ChunkserverStatsTests, ChunkserverStatsRoundTripTimeDisabled) {
+	ChunkserverStats stats;
+	NetworkAddress server1(1111, 11);
+	NetworkAddress server2(2222, 22);
+
+	stats.updateRoundTripTime(server1, 200);
+	stats.updateRoundTripTime(server2, 20);
+
+	EXPECT_FALSE(stats.getStatisticsFor(server1).hasRoundTripTime());
+	EXPECT_FALSE(stats.getStatisticsFor(server2).hasRoundTripTime());
+	EXPECT_EQ(stats.getStatisticsFor(server1).score(), 1.);
+	EXPECT_EQ(stats.getStatisticsFor(server2).score(), 1.);
+}
+
+TEST(ChunkserverStatsTests, ChunkserverStatsDefectPenaltyOutweighsLatency) {
+	ChunkserverStats stats;
+	NetworkAddress fastServer(1111, 11);
+	NetworkAddress slowServer(2222, 22);
+
+	stats.setUseRoundTripTime(true);
+	stats.updateRoundTripTime(fastServer, 5);
+	stats.updateRoundTripTime(slowServer, 500);
+	stats.markDefective(fastServer);
+
+	EXPECT_LT(stats.getStatisticsFor(fastServer).score(),
+	          stats.getStatisticsFor(slowServer).score());
+}
+
 TEST(ChunkserverStatsTests, ChunkserverStatsProxy) {
 	ChunkserverStats stats;
 	NetworkAddress server1(1111, 11);
 
 	{
 		ChunkserverStatsProxy proxy(stats);
+		stats.setUseRoundTripTime(true);
 
 		proxy.registerReadOperation(server1);
 		proxy.registerReadOperation(server1);
@@ -97,6 +144,9 @@ TEST(ChunkserverStatsTests, ChunkserverStatsProxy) {
 
 		proxy.unregisterWriteOperation(server1);
 		EXPECT_EQ(1u, stats.getStatisticsFor(server1).pendingWrites());
+
+		proxy.updateRoundTripTime(server1, 25);
+		EXPECT_TRUE(stats.getStatisticsFor(server1).hasRoundTripTime());
 	}
 	EXPECT_EQ(0u, stats.getStatisticsFor(server1).pendingReads());
 	EXPECT_EQ(0u, stats.getStatisticsFor(server1).pendingWrites());

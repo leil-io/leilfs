@@ -86,6 +86,8 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsxattrcacheto=%lf", xattrcacheto, 0),
 	SFS_OPT("sfsreportreservedperiod=%u", reportreservedperiod, 0),
 	SFS_OPT("sfsiolimits=%s", iolimits, 0),
+	SFS_OPT("sfschunkserverlatencysort", chunkserverlatencysort, 1),
+	SFS_OPT("sfschunkserverlatencysort=%d", chunkserverlatencysort, 0),
 	SFS_OPT("sfschunkserverrtt=%d", chunkserverrtt, 0),
 	SFS_OPT("sfschunkserverconnectreadto=%d", chunkserverconnectreadto, 0),
 	SFS_OPT("sfschunkserverwavereadto=%d", chunkserverwavereadto, 0),
@@ -192,6 +194,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsreportreservedperiod"] = std::to_string(gMountOptions.reportreservedperiod);
 	gOptsNameValues["sfsiolimits"] =
 	    gMountOptions.iolimits ? std::string(gMountOptions.iolimits) : "";
+	gOptsNameValues["sfschunkserverlatencysort"] =
+	    std::to_string(gMountOptions.chunkserverlatencysort);
 	gOptsNameValues["sfschunkserverrtt"] = std::to_string(gMountOptions.chunkserverrtt);
 	gOptsNameValues["sfschunkserverconnectreadto"] =
 	    std::to_string(gMountOptions.chunkserverconnectreadto);
@@ -348,6 +352,8 @@ void usage(const char *progname) {
 "    -o sfsxattrcacheto=SEC      set xattr cache timeout in seconds (default: %.2f)\n"
 "    -o sfsreportreservedperiod=SEC  set reporting reserved inodes interval in "
 				"seconds (default: %u)\n"
+"    -o sfschunkserverlatencysort=0|1  prefer lower-latency chunkservers when "
+				"choosing read/write targets (default: %d)\n"
 "    -o sfschunkserverrtt=MSEC   set timeout after which SYN packet is "
 				"considered lost during the first retry of "
 				"connecting a chunkserver (default: %u)\n"
@@ -428,6 +434,7 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultAclCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultXattrCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultReportReservedPeriod,
+		SaunaClient::FsInitParams::kDefaultChunkserverLatencySort,
 		SaunaClient::FsInitParams::kDefaultRoundTime,
 		SaunaClient::FsInitParams::kDefaultChunkserverWaveReadTo,
 		SaunaClient::FsInitParams::kDefaultAclCacheSize,

@@ -3913,6 +3913,7 @@ void fs_init(FsInitParams &params) {
 	}
 
 	read_data_init(params.io_retries,
+			params.chunkserver_latency_sort,
 			params.chunkserver_round_time_ms,
 			params.chunkserver_connect_timeout_ms,
 			params.chunkserver_wave_read_timeout_ms,

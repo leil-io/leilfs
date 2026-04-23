@@ -237,6 +237,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.io_retries = gMountOptions.ioretries;
 	params.io_limits_config_file = gMountOptions.iolimits ? gMountOptions.iolimits : "";
 	params.bandwidth_overuse = gMountOptions.bandwidthoveruse;
+	params.chunkserver_latency_sort = gMountOptions.chunkserverlatencysort;
 	params.chunkserver_round_time_ms = gMountOptions.chunkserverrtt;
 	params.chunkserver_connect_timeout_ms = gMountOptions.chunkserverconnectreadto;
 	params.chunkserver_wave_read_timeout_ms = gMountOptions.chunkserverwavereadto;

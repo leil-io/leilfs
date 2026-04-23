@@ -38,6 +38,7 @@
 #include "common/read_plan_executor.h"
 #include "common/time_utils.h"
 #include "mount/chunk_reader.h"
+#include "mount/global_chunkserver_stats.h"
 #include "mount/mastercomm.h"
 #include "mount/memory_info.h"
 #include "mount/mount_info.h"
@@ -753,6 +754,7 @@ void read_data_end(ReadRecord *rrec) {
 }
 
 void read_data_init(uint32_t retries,
+		bool chunkserverLatencySort,
 		uint32_t chunkserverRoundTripTime_ms,
 		uint32_t chunkserverConnectTimeout_ms,
 		uint32_t chunkServerWaveReadTimeout_ms,
@@ -791,7 +793,10 @@ void read_data_init(uint32_t retries,
 	gMaxReadaheadRequests = max_readahead_requests;
 	gPrefetchXorStripes = prefetchXorStripes;
 	gBandwidthOveruse = bandwidth_overuse;
+	globalChunkserverStats.setUseRoundTripTime(chunkserverLatencySort);
 	gChunkConnector.setRoundTripTime(chunkserverRoundTripTime_ms);
+	gChunkConnector.setChunkserverStats(
+	    chunkserverLatencySort ? &globalChunkserverStats : nullptr);
 	gChunkConnector.setSourceIp(fs_getsrcip());
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr,0x100000);

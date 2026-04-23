@@ -138,6 +138,7 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultXattrCacheSize = 10000;
 	static constexpr bool     kDefaultVerbose = false;
 	static constexpr bool     kDirectIO = false;
+	static constexpr bool     kDefaultChunkserverLatencySort = false;
 
 	// TLS related parameters
 	static constexpr std::string_view kDefaultTlsConfigFile = TlsSession::kNoFile;
@@ -148,6 +149,7 @@ struct FsInitParams {
 	             do_not_remember_password(kDefaultDoNotRememberPassword), delayed_init(kDefaultDelayedInit),
 	             report_reserved_period(kDefaultReportReservedPeriod),
 	             io_retries(kDefaultIoRetries),
+	             chunkserver_latency_sort(kDefaultChunkserverLatencySort),
 	             chunkserver_round_time_ms(kDefaultRoundTime),
 	             chunkserver_connect_timeout_ms(kDefaultChunkserverConnectTo),
 	             chunkserver_wave_read_timeout_ms(kDefaultChunkserverWaveReadTo),
@@ -200,6 +202,7 @@ struct FsInitParams {
 	             do_not_remember_password(kDefaultDoNotRememberPassword), delayed_init(kDefaultDelayedInit),
 	             report_reserved_period(kDefaultReportReservedPeriod),
 	             io_retries(kDefaultIoRetries),
+	             chunkserver_latency_sort(kDefaultChunkserverLatencySort),
 	             chunkserver_round_time_ms(kDefaultRoundTime),
 	             chunkserver_connect_timeout_ms(kDefaultChunkserverConnectTo),
 	             chunkserver_wave_read_timeout_ms(kDefaultChunkserverWaveReadTo),
@@ -259,6 +262,7 @@ struct FsInitParams {
 	unsigned report_reserved_period;
 
 	unsigned io_retries;
+	bool chunkserver_latency_sort;
 	unsigned chunkserver_round_time_ms;
 	unsigned chunkserver_connect_timeout_ms;
 	unsigned chunkserver_wave_read_timeout_ms;
