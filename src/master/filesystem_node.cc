@@ -251,6 +251,14 @@ void FilesystemNodeOperationsBase::updateCTime(
 	}
 }
 
+void FilesystemNodeOperationsBase::updateCTimeForTrashNode(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, uint32_t newCtime,
+    uint32_t oldTrashtime) {
+	TrashPathKey oldKey(node->id, node->ctime, oldTrashtime);
+	node->ctime = newCtime;
+	updateTrashFromOldEntry(gMetadata->trash, node, oldKey);
+}
+
 std::string FilesystemNodeOperationsBase::escapeName(const std::string &name) {
 	constexpr std::array<char, 16> hexDigits = {
 	    {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'}};

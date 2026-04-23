@@ -26,6 +26,7 @@ assert_program_installed socat
 CHUNKSERVERS=4 \
 	MOUNTS=10 \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
+	CHUNKSERVER_EXTRA_CONFIG="${CUSTOM_CS_EXTRA_CONFIG}" \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 

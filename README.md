@@ -134,7 +134,7 @@ file](src/nfs-ganesha/LICENSE) for more info.
 ### Other ways to contact us
 | Method                     | Link                                                          |
 |----------------------------|---------------------------------------------------------------|
-| :email: Email              | [contact@leil.io](mailto:contact@leil.io?subject=RFI) |
+| :email: Email              | [hello@leil.io](mailto:hello@leil.io?subject=RFI) |
 | :globe_with_meridians: Web | <https://leil.io>                                         |
 
 Thank you for your help.

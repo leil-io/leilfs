@@ -60,6 +60,18 @@ struct TrashPathKey {
 	{
 	}
 
+	TrashPathKey(uint32_t nodeId, uint32_t ctime, uint32_t trashtime)
+	    :
+#ifdef WORDS_BIGENDIAN
+	      timestamp(std::min((uint64_t)ctime + trashtime, (uint64_t)UINT32_MAX)),
+	      id(nodeId)
+#else
+	      id(nodeId),
+	      timestamp(std::min((uint64_t)ctime + trashtime, (uint64_t)UINT32_MAX))
+#endif
+	{
+	}
+
 	bool operator<(const TrashPathKey &other) const {
 		return std::make_pair(timestamp, id) < std::make_pair(other.timestamp, other.id);
 	}
