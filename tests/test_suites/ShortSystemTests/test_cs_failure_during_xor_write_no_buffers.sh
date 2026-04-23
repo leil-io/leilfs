@@ -1,0 +1,2 @@
+CUSTOM_CS_EXTRA_CONFIG="MAX_BUFFERS_POOL_SIZE_MB=0|WRITE_BUFFERING_SIZE_MB=0"
+	source test_suites/TestTemplates/test_cs_failure_during_xor_write.inc
