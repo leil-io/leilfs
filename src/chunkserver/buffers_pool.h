@@ -86,9 +86,12 @@ public:
 	 * @param buffer The buffer to put back.
 	 */
 	void put(std::shared_ptr<T> &&buffer) {
+		// Move into a local so the caller's shared_ptr is always nulled,
+		// even if the pool is full and we end up discarding the buffer.
+		auto localBuffer = std::move(buffer);
 		std::unique_lock lock(mutex_);
 
-		auto [headerSize, numBlocks] = buffer->type();
+		auto [headerSize, numBlocks] = localBuffer->type();
 		auto &buffers = buffersMap_[{headerSize, numBlocks}];
 
 		if (operationsSinceLastLog_ == kLogAfterEveryXTimes) {
@@ -100,8 +103,8 @@ public:
 		operationsSinceLastLog_++;
 
 		if (currentNumberOfBlocks_ + numBlocks <= maxNumberOfBlocks_) {
-			buffer->clear();
-			buffers.emplace(std::move(buffer));
+			localBuffer->clear();
+			buffers.emplace(std::move(localBuffer));
 			currentNumberOfBlocks_ += numBlocks;
 		}
 		// To make sure the deallocation is not done under the lock.
