@@ -25,7 +25,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
 
+#include "common/sessions_file.h"
 #include "master/session.h"
 
 // From configuration
@@ -39,6 +41,12 @@ void matoclserv_set_session_manager(std::unique_ptr<ISessionManager> manager);
 
 /// Persists all sessions through the active session manager.
 void matoclserv_store_sessions();
+
+/// Persists one session through the active session manager.
+void matoclserv_persist_session(Session *session);
+
+/// Persists or observes session runtime state after a connection disconnects.
+void matoclserv_session_disconnected(Session *session);
 
 /// Loads all sessions from the active session manager's backing store.
 /// @return The active session manager's backend-defined load status.
@@ -73,8 +81,14 @@ void matoclserv_reset_session_timeouts();
 /// Iterates over all sessions currently owned by the session manager.
 void matoclserv_for_each_session(const std::function<void(const Session &)> &visitor);
 
-/// Removes timed out sessions and invokes the callback before erasing each entry.
-void matoclserv_remove_timed_out_sessions(const std::function<void(Session *)> &onTimedOut);
+/// Returns session summaries for the admin list-sessions command.
+std::vector<SessionFiles> matoclserv_list_sessions();
+
+/// Returns true when the active backend provides the admin list-sessions view.
+bool matoclserv_uses_backend_session_list();
+
+/// Removes timed out sessions whose callback confirms teardown completed.
+void matoclserv_remove_timed_out_sessions(const std::function<bool(Session *)> &onTimedOut);
 
 /// Inserts an open file to the list of open files for a given session.
 /// @param currentSession Pointer to the session

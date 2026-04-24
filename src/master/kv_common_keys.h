@@ -26,8 +26,6 @@
 inline constexpr std::string_view kMetaFormatKey = "META_FORMAT";
 inline constexpr std::string_view kMetaVersionKey = "META_VERSION";
 
-inline constexpr std::string_view kMetaNextSessionKey = "META_NEXT_SESSION";
-
 /// Prefix for persisted session records.
 /// Format: SESS_REC_<SessionId>:<SerializedSessionRecord>
 /// - SessionId: uint32_t serialized as Big Endian
@@ -47,8 +45,25 @@ inline constexpr std::string_view kSessionKeyPrefix = "SESS_REC_";
 /// @note Value is empty; key presence encodes membership in the open-file set.
 inline constexpr std::string_view kSessionOpenKeyPrefix = "SESS_OPEN_";
 
+/// Prefix for per-session runtime ownership state.
+/// Format: SESS_STATE_<SessionId>:<SerializedSessionState>
+/// - SessionId: uint32_t serialized as Big Endian
+/// - Value: versioned runtime state used by the FDB session manager.
+/// @note This row is intentionally separate from @c SESS_REC_ so the stable
+///       session record schema can remain unchanged while MDS-local ownership
+///       and disconnect state evolves.
+inline constexpr std::string_view kSessionStateKeyPrefix = "SESS_STATE_";
+
 inline constexpr std::string_view kInodeRangeStartKey = "META_NEXT_INODE_RANGE";
 inline constexpr std::string_view kChunkRangeStartKey = "META_NEXT_CHUNK_RANGE";
+inline constexpr std::string_view kSessionRangeStartKey = "META_NEXT_SESSION_RANGE";
+
+/// Cluster-wide counter used to allocate stable mds_id values.
+/// Format: META_NEXT_MDS_ID : <uint32_t LE>
+/// Each MDS bootstrap does atomicAdd(+1) on this key then reads the
+/// post-increment value as its assigned mds_id. Value 0 means "no mds_id
+/// has ever been allocated"; allocated ids start at 1.
+inline constexpr std::string_view kMetaNextMdsIdKey = "META_NEXT_MDS_ID";
 
 // Keys for filesystem statistics
 inline constexpr std::string_view kMetaNodesKey = "META_NODES";

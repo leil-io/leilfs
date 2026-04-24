@@ -29,6 +29,7 @@
 #include <memory>
 #include <vector>
 
+#include "common/sessions_file.h"
 #include "master/session.h"
 
 class FilesystemOperationContext;
@@ -84,6 +85,21 @@ public:
 	/// Only sessions with @c newSession==1 are written. The exact persistence
 	/// semantics are backend-specific.
 	virtual void storeSessions() = 0;
+
+	/// Persists one session through the active backend.
+	///
+	/// Backends that only support full-catalog rewrites may forward this to
+	/// storeSessions(). Backends with row-level persistence can upsert just the
+	/// requested session.
+	virtual void persistSession(const Session &session) = 0;
+
+	/// Persists or observes runtime state after an active connection disconnects.
+	///
+	/// The file backend keeps this as a no-op because its restart semantics are
+	/// driven by the persisted session catalog. KV backends may use this to
+	/// persist runtime ownership/disconnect state separately from the stable
+	/// session record.
+	virtual void sessionDisconnected(const Session &session) = 0;
 
 	/// Creates a new session and appends it to the managed set.
 	///
@@ -175,21 +191,33 @@ public:
 	/// here is not supported.
 	virtual void forEachSession(const std::function<void(const Session &)> &visitor) const = 0;
 
+	/// Returns session summaries for the admin list-sessions command.
+	///
+	/// Backends may choose whether this is local-process or cluster-wide. The
+	/// file backend exposes the current local in-memory view; KV backends could
+	/// expose the full cluster view (implementation dependent).
+	virtual std::vector<SessionFiles> listSessions() const = 0;
+
+	/// Returns true when listSessions() should replace matoclserv's local
+	/// connection-list walk for admin list-sessions.
+	virtual bool usesBackendSessionList() const = 0;
+
 	/// Reaps sessions whose disconnect-timeout has elapsed.
 	///
 	/// For each session whose disconnect deadline is in the past, the manager
 	/// first invokes @p onTimedOut (so the network layer can close any lingering
-	/// open files) and then erases the entry — giving backend-specific
-	/// implementations a hook point to remove persistent rows.
+	/// open files). If the callback returns true, the entry is removed. If it
+	/// returns false, the session stays managed so a later sweep can retry.
 	///
 	/// @param now Current wall-clock time (seconds since epoch), typically from
 	///            eventloop_time().
 	/// @param sessionSustainTime How long a disconnected session is kept alive
 	///                           before it is eligible for reaping. Clamped by
 	///                           configuration on the dispatcher side.
-	/// @param onTimedOut Invoked exactly once per reaped session, before removal.
+	/// @param onTimedOut Invoked for every timed-out session. Return true when
+	///                   teardown completed and the session may be removed.
 	virtual void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
-	                                    const std::function<void(Session *)> &onTimedOut) = 0;
+	                                    const std::function<bool(Session *)> &onTimedOut) = 0;
 
 protected:
 	/// Guard against construction from a null reference; kept to mirror the
@@ -238,8 +266,18 @@ public:
 	void resetSessionTimeouts() override;
 
 	/// @copydoc ISessionManager::rotateStats
-	/// @note The final step persists via the derived storeSessions() override.
+	/// @note The default implementation preserves legacy behavior by calling
+	///       storeSessions() after rotating the in-memory counters. Backends
+	///       with row-level persistence may override this.
 	void rotateStats() override;
+
+	/// @copydoc ISessionManager::persistSession
+	/// @note Defaults to storeSessions() to preserve the file-backed contract.
+	void persistSession(const Session &session) override;
+
+	/// @copydoc ISessionManager::sessionDisconnected
+	/// @note Defaults to a no-op to preserve the file-backed contract.
+	void sessionDisconnected(const Session &session) override;
 
 	/// @copydoc ISessionManager::unload
 	void unload() override;
@@ -247,11 +285,18 @@ public:
 	/// @copydoc ISessionManager::forEachSession
 	void forEachSession(const std::function<void(const Session &)> &visitor) const override;
 
+	/// @copydoc ISessionManager::listSessions
+	std::vector<SessionFiles> listSessions() const override;
+
+	/// @copydoc ISessionManager::usesBackendSessionList
+	bool usesBackendSessionList() const override;
+
 	/// @copydoc ISessionManager::removeTimedOutSessions
-	/// @note Calls @p onTimedOut first, then onSessionRemoved() (the derived
-	///       class hook for backend cleanup), then erases the entry.
+	/// @note Calls @p onTimedOut first. On success, calls onSessionRemoved()
+	///       (the derived class hook for backend cleanup), then erases the
+	///       entry. On failure, keeps the session for a later retry.
 	void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
-	                            const std::function<void(Session *)> &onTimedOut) override;
+	                            const std::function<bool(Session *)> &onTimedOut) override;
 
 	/// Appends @p sessionPtr to the managed vector and returns a non-owning
 	/// pointer to the stored Session. @p sessionPtr must be non-null.
@@ -270,15 +315,14 @@ protected:
 	/// @copydoc SessionManagerBase::findSessionEntry(uint32_t)
 	const Session *findSessionEntry(uint32_t sessionId) const;
 
-	/// Hook invoked after a session has been reaped by removeTimedOutSessions()
-	/// and before it is erased from the in-memory vector.
+	/// Hook invoked after timed-out session teardown succeeds and before the
+	/// session is erased from the in-memory vector.
 	///
 	/// The default implementation is empty — it is used by the file backend
 	/// where persistence is driven by storeSessions(). KV backends override
 	/// this to drop the session record and its open-file index rows.
 	virtual void onSessionRemoved(const Session &session);
 
-private:
 	/// Returns true when @p session is eligible for reaping under the tri-level
 	/// threshold (freshly-registered pending, normal, and legacy pre-1.5.13).
 	static bool isTimedOut(const Session &session, uint32_t now, uint32_t sessionSustainTime);

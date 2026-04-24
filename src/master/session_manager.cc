@@ -152,6 +152,12 @@ void SessionManagerBase::rotateStats() {
 	storeSessions();
 }
 
+void SessionManagerBase::persistSession([[maybe_unused]] const Session &session) {
+	storeSessions();
+}
+
+void SessionManagerBase::sessionDisconnected([[maybe_unused]] const Session &session) {}
+
 void SessionManagerBase::unload() {
 	for (const auto &sessionPtr : sessions_) { sessionPtr->openFilesSet.clear(); }
 	sessions_.clear();
@@ -161,8 +167,26 @@ void SessionManagerBase::forEachSession(const std::function<void(const Session &
 	for (const auto &sessionPtr : sessions_) { visitor(*sessionPtr); }
 }
 
+std::vector<SessionFiles> SessionManagerBase::listSessions() const {
+	std::vector<SessionFiles> summaries;
+
+	for (const auto &sessionPtr : sessions_) {
+		if (sessionPtr->connections == 0) { continue; }
+
+		SessionFiles summary;
+		summary.sessionId = sessionPtr->sessionId;
+		summary.peerIp = sessionPtr->peerIpAddress;
+		summary.filesNumber = sessionPtr->openFilesSet.size();
+		summaries.push_back(summary);
+	}
+
+	return summaries;
+}
+
+bool SessionManagerBase::usesBackendSessionList() const { return false; }
+
 void SessionManagerBase::removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
-                                                const std::function<void(Session *)> &onTimedOut) {
+                                                const std::function<bool(Session *)> &onTimedOut) {
 	for (auto sessionIt = sessions_.begin(); sessionIt != sessions_.end();) {
 		auto &sessionPtr = *sessionIt;
 		if (!isTimedOut(*sessionPtr, now, sessionSustainTime)) {
@@ -170,7 +194,11 @@ void SessionManagerBase::removeTimedOutSessions(uint32_t now, uint32_t sessionSu
 			continue;
 		}
 
-		onTimedOut(sessionPtr.get());
+		if (!onTimedOut(sessionPtr.get())) {
+			++sessionIt;
+			continue;
+		}
+
 		onSessionRemoved(*sessionPtr);
 		sessionIt = sessions_.erase(sessionIt);
 	}

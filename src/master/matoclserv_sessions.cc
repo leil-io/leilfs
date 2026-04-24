@@ -60,6 +60,18 @@ void matoclserv_store_sessions() {
 	gSessionManager->storeSessions();
 }
 
+void matoclserv_persist_session(Session *session) {
+	sassert(gSessionManager != nullptr);
+	if (session == nullptr) { return; }
+	gSessionManager->persistSession(*session);
+}
+
+void matoclserv_session_disconnected(Session *session) {
+	sassert(gSessionManager != nullptr);
+	if (session == nullptr) { return; }
+	gSessionManager->sessionDisconnected(*session);
+}
+
 int matoclserv_load_sessions() {
 	sassert(gSessionManager != nullptr);
 	return gSessionManager->loadSessions();
@@ -90,7 +102,17 @@ void matoclserv_for_each_session(const std::function<void(const Session &)> &vis
 	gSessionManager->forEachSession(visitor);
 }
 
-void matoclserv_remove_timed_out_sessions(const std::function<void(Session *)> &onTimedOut) {
+std::vector<SessionFiles> matoclserv_list_sessions() {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->listSessions();
+}
+
+bool matoclserv_uses_backend_session_list() {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->usesBackendSessionList();
+}
+
+void matoclserv_remove_timed_out_sessions(const std::function<bool(Session *)> &onTimedOut) {
 	sassert(gSessionManager != nullptr);
 	gSessionManager->removeTimedOutSessions(eventloop_time(), gSessionSustainTime, onTimedOut);
 }

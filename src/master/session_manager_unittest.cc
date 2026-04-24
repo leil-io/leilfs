@@ -201,6 +201,7 @@ TEST(SessionManagerBaseTests, RemoveTimedOutSkipsActiveSessions) {
 	std::vector<uint32_t> timedOut;
 	manager.removeTimedOutSessions(1'000'000, 60, [&](Session *timedOutSession) {
 		timedOut.push_back(timedOutSession->sessionId);
+		return true;
 	});
 
 	EXPECT_TRUE(timedOut.empty());
@@ -219,6 +220,7 @@ TEST(SessionManagerBaseTests, RemoveTimedOutReapsPendingCloseSession) {
 	std::vector<uint32_t> timedOut;
 	manager.removeTimedOutSessions(101, 100'000, [&](Session *timedOutSession) {
 		timedOut.push_back(timedOutSession->sessionId);
+		return true;
 	});
 
 	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
@@ -238,14 +240,18 @@ TEST(SessionManagerBaseTests, RemoveTimedOutHonorsStrictLessThanSustainBoundary)
 
 	// isTimedOut for newSession==1 uses dts + sustain < now (strict <).
 	// now == dts + sustain => NOT timed out.
-	manager.removeTimedOutSessions(
-	    150, 50, [&](Session *timedOutSession) { timedOut.push_back(timedOutSession->sessionId); });
+	manager.removeTimedOutSessions(150, 50, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return true;
+	});
 	EXPECT_TRUE(timedOut.empty());
 	EXPECT_NE(manager.findSessionEntry(1), nullptr);
 
 	// now == dts + sustain + 1 => timed out.
-	manager.removeTimedOutSessions(
-	    151, 50, [&](Session *timedOutSession) { timedOut.push_back(timedOutSession->sessionId); });
+	manager.removeTimedOutSessions(151, 50, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return true;
+	});
 	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
 	EXPECT_EQ(manager.findSessionEntry(1), nullptr);
 }
@@ -262,7 +268,10 @@ TEST(SessionManagerBaseTests, RemoveTimedOutUsesLegacyThresholdForOldClients) {
 	manager.addSession(std::move(session));
 
 	std::vector<uint32_t> timedOut;
-	auto record = [&](Session *timedOutSession) { timedOut.push_back(timedOutSession->sessionId); };
+	auto record = [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return true;
+	};
 
 	// Legacy path uses kLegacyClientTimeoutSeconds and ignores sessionSustainTime.
 	// dts + kLegacyClientTimeoutSeconds == now => NOT timed out.
@@ -288,6 +297,7 @@ TEST(SessionManagerBaseTests, RemoveTimedOutInvokesOnTimedOutBeforeOnSessionRemo
 
 	manager.removeTimedOutSessions(200, 50, [&](Session *timedOutSession) {
 		manager.hookEvents.push_back("timedOut:" + std::to_string(timedOutSession->sessionId));
+		return true;
 	});
 
 	ASSERT_EQ(manager.hookEvents.size(), 2U);
@@ -316,6 +326,7 @@ TEST(SessionManagerBaseTests, RemoveTimedOutProcessesMixedSetCorrectly) {
 	std::vector<uint32_t> timedOut;
 	manager.removeTimedOutSessions(200, 100, [&](Session *timedOutSession) {
 		timedOut.push_back(timedOutSession->sessionId);
+		return true;
 	});
 
 	EXPECT_EQ(timedOut, std::vector<uint32_t>{3});
@@ -323,6 +334,51 @@ TEST(SessionManagerBaseTests, RemoveTimedOutProcessesMixedSetCorrectly) {
 	EXPECT_NE(manager.findSessionEntry(1), nullptr);
 	EXPECT_NE(manager.findSessionEntry(2), nullptr);
 	EXPECT_EQ(manager.findSessionEntry(3), nullptr);
+}
+
+TEST(SessionManagerBaseTests, RemoveTimedOutKeepsSessionWhenTeardownFails) {
+	TestSessionManager manager;
+	auto session = makeSession(1);
+	session->newSession = 1;
+	session->connections = 0;
+	session->disconnectedTimestamp = 100;
+	manager.addSession(std::move(session));
+
+	std::vector<uint32_t> timedOut;
+	manager.removeTimedOutSessions(200, 50, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return false;
+	});
+
+	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
+	EXPECT_TRUE(manager.removedSessionIds.empty());
+	EXPECT_NE(manager.findSessionEntry(1), nullptr);
+}
+
+TEST(SessionManagerBaseTests, RemoveTimedOutKeepsOnlyFailedTeardownSessions) {
+	TestSessionManager manager;
+	auto failed = makeSession(1);
+	failed->newSession = 1;
+	failed->connections = 0;
+	failed->disconnectedTimestamp = 100;
+	manager.addSession(std::move(failed));
+
+	auto completed = makeSession(2);
+	completed->newSession = 1;
+	completed->connections = 0;
+	completed->disconnectedTimestamp = 100;
+	manager.addSession(std::move(completed));
+
+	std::vector<uint32_t> timedOut;
+	manager.removeTimedOutSessions(200, 50, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return timedOutSession->sessionId != 1;
+	});
+
+	EXPECT_EQ(timedOut, (std::vector<uint32_t>{1, 2}));
+	EXPECT_EQ(manager.removedSessionIds, std::vector<uint32_t>{2});
+	EXPECT_NE(manager.findSessionEntry(1), nullptr);
+	EXPECT_EQ(manager.findSessionEntry(2), nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +402,15 @@ TEST(SessionManagerBaseTests, RotateStatsMovesCurrentToPrevAndZeroesCurrent) {
 	EXPECT_EQ(stored->prevHourOperationsStats[5], 42U);
 	EXPECT_EQ(stored->currHourOperationsStats[0], 0U);
 	EXPECT_EQ(stored->currHourOperationsStats[5], 0U);
+	EXPECT_EQ(manager.storeSessionsCallCount, 1);
+}
+
+TEST(SessionManagerBaseTests, PersistSessionDefaultsToStoreSessions) {
+	TestSessionManager manager;
+	const Session *stored = manager.addSession(makeSession(1));
+
+	manager.persistSession(*stored);
+
 	EXPECT_EQ(manager.storeSessionsCallCount, 1);
 }
 
@@ -419,4 +484,25 @@ TEST(SessionManagerBaseTests, ForEachSessionVisitsInInsertionOrder) {
 	manager.forEachSession([&](const Session &session) { visited.push_back(session.sessionId); });
 
 	EXPECT_EQ(visited, (std::vector<uint32_t>{10, 20, 30}));
+}
+
+TEST(SessionManagerBaseTests, ListSessionsReturnsActiveSessionSummaries) {
+	TestSessionManager manager;
+	auto disconnected = makeSession(10);
+	disconnected->connections = 0;
+	disconnected->openFilesSet.insert(100);
+	manager.addSession(std::move(disconnected));
+
+	auto active = makeSession(20);
+	active->peerIpAddress = 0x7F000001;
+	active->openFilesSet.insert(200);
+	active->openFilesSet.insert(300);
+	manager.addSession(std::move(active));
+
+	auto summaries = manager.listSessions();
+
+	ASSERT_EQ(summaries.size(), 1U);
+	EXPECT_EQ(summaries[0].sessionId, 20U);
+	EXPECT_EQ(summaries[0].peerIp, 0x7F000001U);
+	EXPECT_EQ(summaries[0].filesNumber, 2U);
 }
