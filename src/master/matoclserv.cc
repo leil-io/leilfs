@@ -5295,15 +5295,15 @@ bool matocl_close_files(Session *currentSession) {
 	// openFilesSet. Callers that keep the session managed can retry them later. Only inodes from
 	// successfully committed batches are erased here.
 	//
-	// We intentionally do not retry failed batches in-function: release() may emit side effects
-	// outside the backend transaction, so retrying could duplicate those effects without a matching
-	// backend state change.
-	std::vector<inode_t> toProcess(currentSession->openFilesSet.begin(),
-	                               currentSession->openFilesSet.end());
+	// We intentionally do not perform immediate retries for failed batches in
+	// this function: release() may emit side effects outside the backend
+	// transaction, so retrying here could duplicate those effects without a
+	// matching backend state change. Failed inodes stay in openFilesSet so later
+	// session-management or timeout-driven cleanup can retry them.
 	std::vector<inode_t> pendingBatch;
 	std::vector<inode_t> committed;
 	pendingBatch.reserve(kTransactionBatchSize);
-	committed.reserve(toProcess.size());
+	committed.reserve(currentSession->openFilesSet.size());
 
 	// Commits one pending batch for transactional backends, or marks it as completed immediately
 	// for synchronous backends.
@@ -5330,7 +5330,7 @@ bool matocl_close_files(Session *currentSession) {
 
 	bool anyFailure = false;
 
-	for (inode_t openFileInode : toProcess) {
+	for (inode_t openFileInode : currentSession->openFilesSet) {
 		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		pendingBatch.push_back(openFileInode);
@@ -5357,7 +5357,11 @@ bool matocl_close_files(Session *currentSession) {
 		finalCommitSucceeded = false;
 	}
 
-	for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
+	if (!anyFailure && finalCommitSucceeded) {
+		currentSession->openFilesSet.clear();
+	} else {
+		for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
+	}
 	return !anyFailure && finalCommitSucceeded && currentSession->openFilesSet.empty();
 }
 
@@ -6295,19 +6299,7 @@ void matoclserv_reload() {
 		}
 	}
 
-	gSessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
-
-	if (gSessionSustainTime > 7 * 86400) {
-		gSessionSustainTime = 7 * 86400;
-		safs::log_warn(
-		    "SESSION_SUSTAIN_TIME too big (more than week) - setting this value to one week");
-	}
-
-	if (gSessionSustainTime < 60) {
-		gSessionSustainTime = 60;
-		safs::log_warn(
-		    "SESSION_SUSTAIN_TIME too low (less than minute) - setting this value to one minute");
-	}
+	matoclserv_configure_session_sustain_time();
 
 	matoclserv_iolimits_reload();
 

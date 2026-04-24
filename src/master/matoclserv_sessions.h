@@ -110,5 +110,9 @@ void matoclserv_remove_open_file(uint32_t sessionId, inode_t inode);
 /// Initializes the active session manager and configures SESSION_SUSTAIN_TIME.
 int matoclserv_sessions_init();
 
+/// Reads SESSION_SUSTAIN_TIME from config and clamps it into the allowed range.
+/// Shared between session init and reload so both paths stay in sync.
+void matoclserv_configure_session_sustain_time();
+
 /// Clears in-memory session state held by the active session manager.
 void matoclserv_session_unload();

@@ -32,7 +32,9 @@ namespace {
 
 std::unique_ptr<ISessionManager> gSessionManager;
 
-void configureSessionSustainTime() {
+}  // namespace
+
+void matoclserv_configure_session_sustain_time() {
 	gSessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
 
 	if (gSessionSustainTime > 7 * 86400) {
@@ -48,9 +50,8 @@ void configureSessionSustainTime() {
 	}
 }
 
-}  // namespace
-
 void matoclserv_set_session_manager(std::unique_ptr<ISessionManager> manager) {
+	sassert(manager != nullptr);
 	if (gSessionManager != nullptr) { gSessionManager->unload(); }
 	gSessionManager = std::move(manager);
 }
@@ -145,7 +146,7 @@ void matocl_session_stats_rotate() {
 int matoclserv_sessions_init() {
 	sassert(gSessionManager != nullptr);
 	int status = gSessionManager->initialize();
-	configureSessionSustainTime();
+	matoclserv_configure_session_sustain_time();
 	return status;
 }
 

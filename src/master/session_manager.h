@@ -231,7 +231,7 @@ protected:
 /// open-files bookkeeping, and the timeout-reaping loop. Concrete subclasses
 /// only need to supply the persistence side: initialize(), loadSessions(),
 /// storeSessions(), plus, optionally, onSessionRemoved() to tear down any
-/// backend-specific per-session state.
+/// backend-specific per-session state and report whether removal can finish.
 ///
 /// Newly derived classes should prefer extending this base rather than
 /// implementing ISessionManager from scratch, so different backends keep the
@@ -292,9 +292,9 @@ public:
 	bool usesBackendSessionList() const override;
 
 	/// @copydoc ISessionManager::removeTimedOutSessions
-	/// @note Calls @p onTimedOut first. On success, calls onSessionRemoved()
-	///       (the derived class hook for backend cleanup), then erases the
-	///       entry. On failure, keeps the session for a later retry.
+	/// @note Calls @p onTimedOut first. If teardown and onSessionRemoved()
+	///       both succeed, erases the entry. Otherwise keeps the session for a
+	///       later retry.
 	void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
 	                            const std::function<bool(Session *)> &onTimedOut) override;
 
@@ -318,10 +318,11 @@ protected:
 	/// Hook invoked after timed-out session teardown succeeds and before the
 	/// session is erased from the in-memory vector.
 	///
-	/// The default implementation is empty — it is used by the file backend
-	/// where persistence is driven by storeSessions(). KV backends override
-	/// this to drop the session record and its open-file index rows.
-	virtual void onSessionRemoved(const Session &session);
+	/// The default implementation returns true, it is used by the file
+	/// backend where persistence is driven by storeSessions(). KV backends
+	/// override this to drop the session record and its open-file index rows,
+	/// and return false if durable cleanup failed.
+	virtual bool onSessionRemoved(const Session &session);
 
 	/// Returns true when @p session is eligible for reaping under the tri-level
 	/// threshold (freshly-registered pending, normal, and legacy pre-1.5.13).

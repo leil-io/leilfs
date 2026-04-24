@@ -176,7 +176,7 @@ std::vector<SessionFiles> SessionManagerBase::listSessions() const {
 		SessionFiles summary;
 		summary.sessionId = sessionPtr->sessionId;
 		summary.peerIp = sessionPtr->peerIpAddress;
-		summary.filesNumber = sessionPtr->openFilesSet.size();
+		summary.filesNumber = static_cast<uint32_t>(sessionPtr->openFilesSet.size());
 		summaries.push_back(summary);
 	}
 
@@ -199,12 +199,16 @@ void SessionManagerBase::removeTimedOutSessions(uint32_t now, uint32_t sessionSu
 			continue;
 		}
 
-		onSessionRemoved(*sessionPtr);
+		if (!onSessionRemoved(*sessionPtr)) {
+			++sessionIt;
+			continue;
+		}
+
 		sessionIt = sessions_.erase(sessionIt);
 	}
 }
 
-void SessionManagerBase::onSessionRemoved([[maybe_unused]] const Session &session) {}
+bool SessionManagerBase::onSessionRemoved([[maybe_unused]] const Session &session) { return true; }
 
 bool SessionManagerBase::isTimedOut(const Session &session, uint32_t now,
                                     uint32_t sessionSustainTime) {

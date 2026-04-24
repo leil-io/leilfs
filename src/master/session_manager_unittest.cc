@@ -58,7 +58,9 @@ public:
 	}
 
 	~ScopedCurrentDirectory() {
-		if (!previousPath_.empty()) { chdir(previousPath_.c_str()); }
+		if (!previousPath_.empty() && chdir(previousPath_.c_str()) != 0) {
+			ADD_FAILURE() << "failed to restore current working directory";
+		}
 	}
 
 	ScopedCurrentDirectory(const ScopedCurrentDirectory &) = delete;
@@ -82,13 +84,15 @@ public:
 	using SessionManagerBase::findSessionEntry;
 
 	int storeSessionsCallCount = 0;
+	bool removeHookResult = true;
 	std::vector<uint32_t> removedSessionIds;
 	std::vector<std::string> hookEvents;
 
 protected:
-	void onSessionRemoved(const Session &session) override {
+	bool onSessionRemoved(const Session &session) override {
 		removedSessionIds.push_back(session.sessionId);
 		hookEvents.push_back("removed:" + std::to_string(session.sessionId));
+		return removeHookResult;
 	}
 };
 
@@ -475,6 +479,26 @@ TEST(SessionManagerBaseTests, RemoveTimedOutKeepsSessionWhenTeardownFails) {
 
 	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
 	EXPECT_TRUE(manager.removedSessionIds.empty());
+	EXPECT_NE(manager.findSessionEntry(1), nullptr);
+}
+
+TEST(SessionManagerBaseTests, RemoveTimedOutKeepsSessionWhenRemovalHookFails) {
+	TestSessionManager manager;
+	manager.removeHookResult = false;
+	auto session = makeSession(1);
+	session->newSession = 1;
+	session->connections = 0;
+	session->disconnectedTimestamp = 100;
+	manager.addSession(std::move(session));
+
+	std::vector<uint32_t> timedOut;
+	manager.removeTimedOutSessions(200, 50, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return true;
+	});
+
+	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
+	EXPECT_EQ(manager.removedSessionIds, std::vector<uint32_t>{1});
 	EXPECT_NE(manager.findSessionEntry(1), nullptr);
 }
 
