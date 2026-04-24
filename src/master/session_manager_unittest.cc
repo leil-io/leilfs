@@ -22,18 +22,51 @@
 
 #include <gtest/gtest.h>
 
+#include <limits.h>
+#include <unistd.h>
+
+#include <array>
 #include <cstdint>
+#include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "master/metadata_backend_common.h"
 #include "master/session.h"
+#include "unittests/TemporaryDirectory.h"
 
 namespace {
 
 /// Fixed timeout window applied to legacy pre-1.5.13 clients (newSession==0).
 /// Must stay in sync with the literal in SessionManagerBase::isTimedOut().
 constexpr uint32_t kLegacyClientTimeoutSeconds = 7200;
+
+class ScopedCurrentDirectory {
+public:
+	explicit ScopedCurrentDirectory(const std::string &path) {
+		std::array<char, PATH_MAX> buffer{};
+		if (getcwd(buffer.data(), buffer.size()) == nullptr) {
+			throw std::runtime_error("failed to read current working directory");
+		}
+
+		previousPath_ = buffer.data();
+		if (chdir(path.c_str()) != 0) {
+			throw std::runtime_error("failed to change current working directory");
+		}
+	}
+
+	~ScopedCurrentDirectory() {
+		if (!previousPath_.empty()) { chdir(previousPath_.c_str()); }
+	}
+
+	ScopedCurrentDirectory(const ScopedCurrentDirectory &) = delete;
+	ScopedCurrentDirectory &operator=(const ScopedCurrentDirectory &) = delete;
+
+private:
+	std::string previousPath_;
+};
 
 /// Concrete SessionManagerBase used by these tests.
 ///
@@ -68,7 +101,97 @@ std::unique_ptr<Session> makeSession(uint32_t sessionId) {
 	return session;
 }
 
+void writeRawSessionsFile(const std::vector<uint8_t> &contents) {
+	std::ofstream file(kSessionsFilename, std::ios::binary);
+	ASSERT_TRUE(file) << "Cannot open " << kSessionsFilename << " for writing";
+	file.write(reinterpret_cast<const char *>(contents.data()), contents.size());
+	ASSERT_TRUE(file.good()) << "Cannot write " << kSessionsFilename;
+}
+
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// SessionManagerFile loader
+// ---------------------------------------------------------------------------
+
+TEST(SessionManagerFileTests, LoadSessionsReturnsZeroWhenSessionsFileIsMissing) {
+	TemporaryDirectory temp("/tmp", "session-file-missing");
+	ScopedCurrentDirectory cwd(temp.name());
+
+	SessionManagerFile manager;
+
+	EXPECT_EQ(manager.loadSessions(), 0);
+}
+
+TEST(SessionManagerFileTests, CurrentFormatRoundTripsThroughStoreAndLoad) {
+	TemporaryDirectory temp("/tmp", "session-file-current");
+	ScopedCurrentDirectory cwd(temp.name());
+
+	auto session = makeSession(42);
+	session->info = "mount-info";
+	session->peerIpAddress = 0x7F000001;
+	session->rootInode = 7;
+	session->flags = 3;
+	session->minGoal = 2;
+	session->maxGoal = 5;
+	session->minTrashTime = 60;
+	session->maxTrashTime = 3600;
+	session->rootUid = 1000;
+	session->rootGid = 1001;
+	session->mapAllUid = 2000;
+	session->mapAllGid = 2001;
+	session->currHourOperationsStats[0] = 11;
+	session->prevHourOperationsStats[0] = 22;
+
+	SessionManagerFile writer;
+	writer.addSession(std::move(session));
+	writer.storeSessions();
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+
+	int visited = 0;
+	reader.forEachSession([&](const Session &loaded) {
+		++visited;
+		EXPECT_EQ(loaded.sessionId, 42U);
+		EXPECT_EQ(loaded.info, "mount-info");
+		EXPECT_EQ(loaded.peerIpAddress, 0x7F000001U);
+		EXPECT_EQ(loaded.rootInode, 7U);
+		EXPECT_EQ(loaded.flags, 3U);
+		EXPECT_EQ(loaded.minGoal, 2U);
+		EXPECT_EQ(loaded.maxGoal, 5U);
+		EXPECT_EQ(loaded.minTrashTime, 60U);
+		EXPECT_EQ(loaded.maxTrashTime, 3600U);
+		EXPECT_EQ(loaded.rootUid, 1000U);
+		EXPECT_EQ(loaded.rootGid, 1001U);
+		EXPECT_EQ(loaded.mapAllUid, 2000U);
+		EXPECT_EQ(loaded.mapAllGid, 2001U);
+		EXPECT_EQ(loaded.currHourOperationsStats[0], 11U);
+		EXPECT_EQ(loaded.prevHourOperationsStats[0], 22U);
+		EXPECT_EQ(loaded.newSession, 1U);
+	});
+	EXPECT_EQ(visited, 1);
+}
+
+TEST(SessionManagerFileTests, OldSfsSessionHeaderIsRejected) {
+	TemporaryDirectory temp("/tmp", "session-file-old-sfs");
+	ScopedCurrentDirectory cwd(temp.name());
+	writeRawSessionsFile({'S', 'F', 'S', 'S', ' ', 1, 6, 3});
+
+	SessionManagerFile manager;
+
+	EXPECT_EQ(manager.loadSessions(), -1);
+}
+
+TEST(SessionManagerFileTests, MfsSessionHeaderIsRejected) {
+	TemporaryDirectory temp("/tmp", "session-file-mfs");
+	ScopedCurrentDirectory cwd(temp.name());
+	writeRawSessionsFile({'M', 'F', 'S', 'S', ' ', 1, 6, 4});
+
+	SessionManagerFile manager;
+
+	EXPECT_EQ(manager.loadSessions(), -1);
+}
 
 // ---------------------------------------------------------------------------
 // findSession()

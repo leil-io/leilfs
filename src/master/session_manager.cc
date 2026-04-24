@@ -317,15 +317,11 @@ void SessionManagerFile::storeSessions() {
 	}
 }
 
-#define MFSSIGNATURE "MFS"
-
 int SessionManagerFile::loadSessions() {
 	uint32_t sessionInfoLength;
 	uint8_t headerBuffer[8];
 	std::vector<uint8_t> sessionBuffer;
 	const uint8_t *ptr;
-	uint8_t mapAllData;
-	uint8_t goalTrashData;
 	uint32_t statsInFile;
 	int bytesRead;
 
@@ -343,71 +339,31 @@ int SessionManagerFile::loadSessions() {
 		return -1;
 	}
 
-	if (memcmp(headerBuffer, SFSSIGNATURE "S 1.5", kSessionsHeaderSize) == 0 ||
-	    memcmp(headerBuffer, MFSSIGNATURE "S 1.5", kSessionsHeaderSize) == 0) {
-		mapAllData = 0;
-		goalTrashData = 0;
-		statsInFile = 16;
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\001", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\001", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 0;
-		statsInFile = 16;
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\002", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\002", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 0;
-		statsInFile = 21;
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\003", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 0;
-		if (fread(headerBuffer, 2, 1, fd) != 1) {
-			safs::log_warn("can't load sessions, fread error");
-			fclose(fd);
-			return -1;
-		}
-		ptr = headerBuffer;
-		statsInFile = get16bit(&ptr);
-	} else if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) == 0 ||
-	           memcmp(headerBuffer, MFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) == 0) {
-		mapAllData = 1;
-		goalTrashData = 1;
-		if (fread(headerBuffer, sizeof(uint16_t), 1, fd) != 1) {
-			safs::log_warn("can't load sessions, fread error");
-			fclose(fd);
-			return -1;
-		}
-		ptr = headerBuffer;
-		statsInFile = get16bit(&ptr);
-	} else {
+	if (memcmp(headerBuffer, SFSSIGNATURE "S \001\006\004", kSessionsHeaderSize) != 0) {
 		safs::log_warn("can't load sessions, bad header");
 		fclose(fd);
 		return -1;
 	}
 
+	if (fread(headerBuffer, sizeof(uint16_t), 1, fd) != 1) {
+		safs::log_warn("can't load sessions, fread error");
+		fclose(fd);
+		return -1;
+	}
+	ptr = headerBuffer;
+	statsInFile = get16bit(&ptr);
+
 	constexpr uint8_t kStatEntrySize =
 	    sizeof(std::remove_extent<decltype(Session::currHourOperationsStats)>::type::value_type) +
 	    sizeof(std::remove_extent<decltype(Session::prevHourOperationsStats)>::type::value_type);
-	constexpr uint32_t kCommonSize = sizeof(Session::sessionId) + sizeof(sessionInfoLength) +
-	                                 sizeof(Session::peerIpAddress) + sizeof(Session::rootInode) +
-	                                 sizeof(Session::flags) + sizeof(Session::rootUid) +
-	                                 sizeof(Session::rootGid);
-	constexpr uint32_t kExtraSizeWithMapAll =
-	    sizeof(Session::mapAllUid) + sizeof(Session::mapAllGid);
-	constexpr uint32_t kExtraSizeWithGoalTrash =
+	constexpr uint32_t kSessionSerializedSize =
+	    sizeof(Session::sessionId) + sizeof(sessionInfoLength) + sizeof(Session::peerIpAddress) +
+	    sizeof(Session::rootInode) + sizeof(Session::flags) +
 	    sizeof(Session::minGoal) + sizeof(Session::maxGoal) + sizeof(Session::minTrashTime) +
-	    sizeof(Session::maxTrashTime);
+	    sizeof(Session::maxTrashTime) + sizeof(Session::rootUid) + sizeof(Session::rootGid) +
+	    sizeof(Session::mapAllUid) + sizeof(Session::mapAllGid);
 	const uint32_t kStatsSize = statsInFile * kStatEntrySize;
-
-	if (mapAllData == 0) {
-		sessionBuffer.resize(kCommonSize + kStatsSize);
-	} else if (goalTrashData == 0) {
-		sessionBuffer.resize(kCommonSize + kExtraSizeWithMapAll + kStatsSize);
-	} else {
-		sessionBuffer.resize(kCommonSize + kExtraSizeWithMapAll + kExtraSizeWithGoalTrash +
-		                     kStatsSize);
-	}
+	sessionBuffer.resize(kSessionSerializedSize + kStatsSize);
 
 	while (!feof(fd)) {
 		bytesRead = fread(sessionBuffer.data(), sessionBuffer.size(), 1, fd);
@@ -419,18 +375,14 @@ int SessionManagerFile::loadSessions() {
 			get32bit(&ptr, sessionPtr->peerIpAddress);
 			getINode(&ptr, sessionPtr->rootInode);
 			sessionPtr->flags = get8bit(&ptr);
-			if (goalTrashData) {
-				sessionPtr->minGoal = get8bit(&ptr);
-				sessionPtr->maxGoal = get8bit(&ptr);
-				get32bit(&ptr, sessionPtr->minTrashTime);
-				get32bit(&ptr, sessionPtr->maxTrashTime);
-			}
+			sessionPtr->minGoal = get8bit(&ptr);
+			sessionPtr->maxGoal = get8bit(&ptr);
+			get32bit(&ptr, sessionPtr->minTrashTime);
+			get32bit(&ptr, sessionPtr->maxTrashTime);
 			get32bit(&ptr, sessionPtr->rootUid);
 			get32bit(&ptr, sessionPtr->rootGid);
-			if (mapAllData) {
-				get32bit(&ptr, sessionPtr->mapAllUid);
-				get32bit(&ptr, sessionPtr->mapAllGid);
-			}
+			get32bit(&ptr, sessionPtr->mapAllUid);
+			get32bit(&ptr, sessionPtr->mapAllGid);
 
 			sessionPtr->newSession = 1;
 			sessionPtr->disconnectedTimestamp = eventloop_time();
@@ -475,5 +427,3 @@ int SessionManagerFile::loadSessions() {
 	fclose(fd);
 	return 1;
 }
-
-#undef MFSSIGNATURE
