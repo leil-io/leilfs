@@ -86,8 +86,6 @@ public:
 	void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
 	                    uint16_t newBlocks) override;
 
-	int defragmentOrMoveChunk(IChunk *chunk, uint8_t *crcData) override;
-
 	void updateAfterScan() override;
 
 	// IO

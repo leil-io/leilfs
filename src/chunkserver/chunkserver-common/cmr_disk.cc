@@ -187,12 +187,6 @@ void CmrDisk::setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
 	chunk->setBlocks(newBlocks);
 }
 
-int CmrDisk::defragmentOrMoveChunk(IChunk *chunk, uint8_t *crcData) {
-	(void)chunk;
-	(void)crcData;
-	return SAUNAFS_STATUS_OK;
-}
-
 void CmrDisk::updateAfterScan() {
 	// Nothing to do, but we need the function in the interface
 }
