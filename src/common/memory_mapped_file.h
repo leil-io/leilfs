@@ -18,6 +18,7 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
