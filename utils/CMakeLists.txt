@@ -52,12 +52,12 @@ install(TARGETS posixlockcmd RUNTIME DESTINATION ${BIN_SUBDIR})
 
 # ping client
 add_executable(sfsping sfs_ping.cc)
-target_link_libraries(sfsping sfscommon)
+target_link_libraries(sfsping leil-common)
 install(TARGETS sfsping RUNTIME DESTINATION ${BIN_SUBDIR})
 
 # ping server
 add_executable(sfspingserv sfs_pingserv.cc)
-target_link_libraries(sfspingserv sfscommon)
+target_link_libraries(sfspingserv leil-common)
 install(TARGETS sfspingserv RUNTIME DESTINATION ${BIN_SUBDIR})
 
 # ping pong fcntl lock test
@@ -77,7 +77,7 @@ add_executable(create-and-reread-file create_and_reread_file.cc)
 install(TARGETS create-and-reread-file RUNTIME DESTINATION ${BIN_SUBDIR})
 
 add_executable(metadata-notifier metadata_notifier.cc)
-target_link_libraries(metadata-notifier sfscommon)
+target_link_libraries(metadata-notifier leil-common)
 install(TARGETS metadata-notifier RUNTIME DESTINATION ${BIN_SUBDIR})
 
 if(ENABLE_FOUNDATIONDB)

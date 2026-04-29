@@ -58,15 +58,15 @@ load_config() {
 }
 
 log() {
-	logger -t saunafs-uraft $@
+	logger -t leil-uraft $@
 }
 
 saunafs_master() {
-	sfsmaster -o ha-cluster-managed "$@"
+	leil-master -o ha-cluster-managed "$@"
 }
 
 saunafs_ha_master() {
-	sfsmaster -o ha-cluster-managed -o initial-personality=shadow "$@"
+	leil-master -o ha-cluster-managed -o initial-personality=shadow "$@"
 }
 
 load_and_validate_elector_mode() {
@@ -99,21 +99,21 @@ start_saunafs_ha_master() {
 
 	if [[ "${URAFT_ELECTOR_MODE}" == "1" ]]; then
 		# Handle the scenario of a MDS becoming ELECTOR, so we need to stop the master if it's running
-		if pgrep -x "sfsmaster" > /dev/null; then
-			log "Stopping sfsmaster..."
+		if pgrep -x "leil-master" > /dev/null; then
+			log "Stopping leil-master..."
 			saunafs_ha_master stop || status=$?
 			if [[ $status -ne 0 ]]; then
-				log "Stopping sfsmaster failed with status $status."
+				log "Stopping leil-master failed with status $status."
 				return $status
 			fi
 		fi
 	fi
 
 	if [[ "${URAFT_ELECTOR_MODE}" == "0" ]]; then
-		log "Starting sfsmaster..."
+		log "Starting leil-master..."
 		saunafs_ha_master start || status=$?
 		if [[ $status -ne 0 ]]; then
-			log "Starting sfsmaster failed with status $status."
+			log "Starting leil-master failed with status $status."
 			return $status
 		fi
 	fi
@@ -127,10 +127,10 @@ stop_saunafs_ha_master() {
 	URAFT_ELECTOR_MODE=$(load_and_validate_elector_mode)
 
 	if [[ "${URAFT_ELECTOR_MODE}" == "0" ]]; then
-		log "Stopping sfsmaster..."
+		log "Stopping leil-master..."
 		saunafs_ha_master stop || status=$?
 		if [[ $status -ne 0 ]]; then
-			log "Stopping sfsmaster failed with status $status."
+			log "Stopping leil-master failed with status $status."
 			return $status
 		fi
 	fi
@@ -144,10 +144,10 @@ reload_saunafs_ha_master() {
 	URAFT_ELECTOR_MODE=$(load_and_validate_elector_mode)
 
 	if [[ "${URAFT_ELECTOR_MODE}" == "0" ]]; then
-		log "Reloading sfsmaster..."
+		log "Reloading leil-master..."
 		saunafs_ha_master reload || status=$?
 		if [[ $status -ne 0 ]]; then
-			log "Reloading sfsmaster failed with status $status."
+			log "Reloading leil-master failed with status $status."
 			return $status
 		fi
 	fi
@@ -156,11 +156,11 @@ reload_saunafs_ha_master() {
 }
 
 saunafs_admin() {
-	saunafs-admin "$@"
+	leil-admin "$@"
 }
 
 get_metadata_version_from_file() {
-	local version=$(@SBIN_PATH@/sfsmetarestore -g -d "${SAUNAFS_DATA_DIR}" | grep -v warn 2> /dev/null)
+	local version=$(@SBIN_PATH@/leil-metarestore -g -d "${SAUNAFS_DATA_DIR}" | grep -v warn 2> /dev/null)
 	if [[ $? == 0 && ${version} =~ ^[0-9]+$ ]]; then
 		echo -n "${version}"
 	else
@@ -260,7 +260,7 @@ saunafs_metadata_version() {
 			fi
 		;;
 		*)
-			log "unexpected output from saunafs-admin: $admin_result"
+			log "unexpected output from leil-admin: $admin_result"
 			return $SAUNAFS_URAFT_OK
 		;;
 	esac

@@ -255,6 +255,7 @@ else:
 cgitb.enable()
 
 fields = cgi.FieldStorage()
+script_name = os.environ.get("SCRIPT_NAME") or "leil.cgi"
 
 try:
     if "masterhost" in fields:
@@ -688,13 +689,13 @@ except Exception:
     print("""<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">""")
     print("""<head>""")
     print("""<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />""")
-    print("""<title>SaunaFS Info (%s)</title>""" % (htmlentities(mastername)))
+    print("""<title>LeilFS Info (%s)</title>""" % (htmlentities(mastername)))
     print("""<link href="favicon.ico" rel="icon" sizes="any" />""")
     print("""<link href="favicon.svg" rel="icon" type="image/svg+xml" />""")
-    print("""<link rel="stylesheet" href="sfs.css" type="text/css" />""")
+    print("""<link rel="stylesheet" href="leil.css" type="text/css" />""")
     print("""<script type="text/javascript">changemaster = function() {
-        window.location="sfs.cgi?masterhost=" + document.getElementById("masterhost").value + "&masterport=" + document.getElementById("masterport").value }
-        </script>""")
+        window.location=%r + "?masterhost=" + document.getElementById("masterhost").value + "&masterport=" + document.getElementById("masterport").value }
+        </script>""" % script_name)
     print("""</head>""")
     print("""<body>""")
     print("""<h1 align="center">Can't connect to SaunaFS master (IP:%s ; PORT:%u)</h1>""" % (
@@ -713,10 +714,10 @@ if masterversion == (0, 0, 0):
     print("""<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">""")
     print("""<head>""")
     print("""<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />""")
-    print("""<title>SaunaFS Info (%s)</title>""" % (htmlentities(mastername)))
+    print("""<title>LeilFS Info (%s)</title>""" % (htmlentities(mastername)))
     print("""<link href="favicon.ico" rel="icon" sizes="any" />""")
     print("""<link href="favicon.svg" rel="icon" type="image/svg+xml" />""")
-    print("""<link rel="stylesheet" href="sfs.css" type="text/css" />""")
+    print("""<link rel="stylesheet" href="leil.css" type="text/css" />""")
     print("""</head>""")
     print("""<body>""")
     print("""<h1 align="center">Can't detect SaunaFS master version</h1>""")
@@ -733,7 +734,7 @@ def createlink(update):
     for k, v in update.items():
         if v != "":
             c.append("%s=%s" % (k, urlescape(v)))
-    return "sfs.cgi?%s" % ("&".join(c))
+    return "%s?%s" % (script_name, "&".join(c))
 
 
 def createorderlink(prefix, columnid):
@@ -783,11 +784,11 @@ if "CSremove" in fields:
         print("""<head>""")
         print("""<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />""")
         print("""<meta http-equiv="Refresh" content="0; url=%s" />""" % url)
-        print("""<title>SaunaFS Info (%s)</title>""" % (
+        print("""<title>LeilFS Info (%s)</title>""" % (
             htmlentities(mastername)))
         print("""<link href="favicon.ico" rel="icon" sizes="any" />""")
         print("""<link href="favicon.svg" rel="icon" type="image/svg+xml" />""")
-        print("""<link rel="stylesheet" href="sfs.css" type="text/css" />""")
+        print("""<link rel="stylesheet" href="leil.css" type="text/css" />""")
         print("""</head>""")
         print("""<body>""")
         print("""<h1 align="center"><a href="%s">If you see this then it means that redirection didn't work, so click here</a></h1>""")
@@ -801,11 +802,11 @@ if "CSremove" in fields:
         print("""<head>""")
         print("""<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />""")
         print("""<meta http-equiv="Refresh" content="5; url=%s" />""" % url)
-        print("""<title>SaunaFS Info (%s)</title>""" % (
+        print("""<title>LeilFS Info (%s)</title>""" % (
             htmlentities(mastername)))
         print("""<link href="favicon.ico" rel="icon" sizes="any" />""")
         print("""<link href="favicon.svg" rel="icon" type="image/svg+xml" />""")
-        print("""<link rel="stylesheet" href="sfs.css" type="text/css" />""")
+        print("""<link rel="stylesheet" href="leil.css" type="text/css" />""")
         print("""</head>""")
         print("""<body>""")
         print("""<h3 align="center">Can't remove server (%s) from list - wait 5 seconds for refresh</h3>""" % fields.getvalue(
@@ -871,10 +872,10 @@ print("""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3
 print("""<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">""")
 print("""<head>""")
 print("""<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />""")
-print("""<title>SaunaFS Info (%s)</title>""" % (htmlentities(mastername)))
+print("""<title>LeilFS Info (%s)</title>""" % (htmlentities(mastername)))
 print("""<link href="favicon.ico" rel="icon" sizes="any" />""")
 print("""<link href="favicon.svg" rel="icon" type="image/svg+xml" />""")
-print("""<link rel="stylesheet" href="sfs.css" type="text/css" />""")
+print("""<link rel="stylesheet" href="leil.css" type="text/css" />""")
 print("""</head>""")
 print("""<body>""")
 

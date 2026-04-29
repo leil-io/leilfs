@@ -82,7 +82,7 @@ set(BIN_SUBDIR                  "${CMAKE_INSTALL_FULL_BINDIR}")
 set(SBIN_SUBDIR                 "${CMAKE_INSTALL_FULL_SBINDIR}")
 set(LIB_SUBDIR                  "${CMAKE_INSTALL_FULL_LIBDIR}")
 set(MAN_SUBDIR                  "${CMAKE_INSTALL_FULL_MANDIR}")
-set(CGI_SUBDIR                  "${CMAKE_INSTALL_FULL_DATAROOTDIR}/sfscgi")
+set(CGI_SUBDIR                  "${CMAKE_INSTALL_FULL_DATAROOTDIR}/leil-cgi")
 set(INCL_SUBDIR                 "${CMAKE_INSTALL_FULL_INCLUDEDIR}/saunafs")
 
 set(ETC_SUBDIR                  "${CMAKE_INSTALL_FULL_SYSCONFDIR}/saunafs")

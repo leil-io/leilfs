@@ -77,6 +77,10 @@
 #define CFGNAME APPNAME
 #endif
 
+#ifndef CFGNAME_LEGACY
+#define CFGNAME_LEGACY APPNAME_LEGACY
+#endif
+
 #ifndef SAUNAFS_MAX_FILES
 #  define SAUNAFS_MAX_FILES 5000
 #endif
@@ -441,7 +445,7 @@ public:
 
 	FileLock(RunMode runmode, uint32_t timeout)
 			: fd_(),
-			  name_("." STR(APPNAME) ".lock"),
+			  name_("." STR(APPNAME_LEGACY) ".lock"),
 			  lockstatus_(LockStatus::kFail),
 			  thisProcessCreatedLockFile_(false) {
 		while ((lockstatus_ = wdlock(runmode, timeout)) == LockStatus::kAgain) {
@@ -823,7 +827,7 @@ int main(int argc,char **argv) {
 	int32_t nicelevel;
 	uint32_t locktimeout;
 	struct rlimit rls;
-	std::string default_cfgfile = ETC_PATH "/" STR(APPNAME) ".cfg";
+	std::string default_cfgfile = ETC_PATH "/" STR(APPNAME_LEGACY) ".cfg";
 	std::string cfgfile = default_cfgfile;
 	std::string pidfile;
 
@@ -914,7 +918,7 @@ int main(int argc,char **argv) {
 				"configuration file %s not found - using "
 				"defaults; please create one to remove this "
 				"warning (you can copy sample configuration "
-				"from '" APP_EXAMPLES_SUBDIR "/" STR(CFGNAME) ".cfg' to get a base "
+				"from '" APP_EXAMPLES_SUBDIR "/" STR(CFGNAME_LEGACY) ".cfg' to get a base "
 				"configuration)",
 				cfgfile.c_str());
 	} else if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {

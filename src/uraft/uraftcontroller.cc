@@ -100,7 +100,7 @@ void uRaftController::nodePromote() {
 	}
 
 	setSlowCommandTimeout(opt_.promote_timeout);
-	if (runSlowCommand("saunafs-uraft-helper promote")) {
+	if (runSlowCommand("leil-uraft-helper promote")) {
 		command_type_ = kCmdPromote;
 		// Floating IP Manager will be started after promotion completes successfully
 	}
@@ -128,7 +128,7 @@ void uRaftController::nodeDemote() {
 	}
 
 	setSlowCommandTimeout(opt_.demote_timeout);
-	if (runSlowCommand("saunafs-uraft-helper demote")) {
+	if (runSlowCommand("leil-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
 	}
 }
@@ -139,7 +139,7 @@ uint64_t uRaftController::nodeGetVersion() {
 	}
 
 	std::string versionStr;
-	std::vector<std::string> params = {"saunafs-uraft-helper", "metadata-version",
+	std::vector<std::string> params = {"leil-uraft-helper", "metadata-version",
 	                                   opt_.local_master_server,
 	                                   boost::lexical_cast<std::string>(opt_.local_master_port)};
 
@@ -259,7 +259,7 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 	if (error) return;
 
-	std::vector<std::string> params = { "saunafs-uraft-helper", "isalive" };
+	std::vector<std::string> params = { "leil-uraft-helper", "isalive" };
 	std::string              result;
 	bool                     is_alive = node_alive_;
 
@@ -314,7 +314,7 @@ void uRaftController::startDeadMetadataHandler() {
 	}
 
 	setSlowCommandTimeout(opt_.dead_handler_timeout);
-	if (runSlowCommand("saunafs-uraft-helper dead")) {
+	if (runSlowCommand("leil-uraft-helper dead")) {
 		command_type_ = kCmdStatusDead;
 	}
 }
@@ -538,7 +538,7 @@ void uRaftController::startFloatingIpManager() {
 	    opt_.floating_iface, opt_.floating_ip, opt_.check_floating_ip_period);
 
 	std::function<bool()> restoreFloatingIpFunction = [this]() -> bool {
-		std::vector<std::string> params = {"saunafs-uraft-helper", "assign-ip"};
+		std::vector<std::string> params = {"leil-uraft-helper", "assign-ip"};
 		std::string result;
 		int timeout = 6 * opt_.check_floating_ip_period;
 		return runCommand(params, result, timeout);
@@ -566,7 +566,7 @@ void uRaftController::stopFloatingIpManager() {
 /// \note Uses a 5-second timeout for the cleanup operation.
 /// \note Logs errors if cleanup fails but does not throw exceptions.
 void uRaftController::cleanupDirtyPromotion() {
-	std::vector<std::string> cleanup = {"saunafs-uraft-helper", "cleanup"};
+	std::vector<std::string> cleanup = {"leil-uraft-helper", "cleanup"};
 	std::string result;
 
 	if (!runCommand(cleanup, result, kCommandTimeoutMs)) {
