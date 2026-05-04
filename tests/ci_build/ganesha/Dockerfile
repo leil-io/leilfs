@@ -90,7 +90,7 @@ RUN set -e ; \
             -DUSE_FSAL_PROXY_V4=NO \
             -DUSE_FSAL_RGW=NO \
             -DUSE_FSAL_XFS=NO \
-            -DUSE_GSS=NO \
+            -DUSE_GSS=YES \
             -Snfs-ganesha-${GANESHA_VERSION}/src; \
         make -Cnfs-ganesha-${GANESHA_VERSION}/build -j$(($(nproc)*3/4+1)) install ; \
         rm -rf nfs-ganesha-${GANESHA_VERSION} ntirpc-${NTIRPC_VERSION} ; \
@@ -145,6 +145,9 @@ COPY --from=ganesha-builder /tmp/dependencies/usr/lib /usr/lib
 RUN set -e ; \
     apt update; \
     apt install -y --no-install-recommends \
+        keyutils \
+        krb5-admin-server \
+        krb5-kdc \
         nfs-common ; \
     rm -rf /var/lib/apt/lists/* ; \
     true
