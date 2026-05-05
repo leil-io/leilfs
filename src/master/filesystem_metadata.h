@@ -162,6 +162,10 @@ extern bool gDisableEmptyFoldersMetadataOnFullDisk;
 
 inline std::unique_ptr<IIdGenerator<inode_t>> gInodeIdGenerator = nullptr;
 
+// Session IDs are allocated by gSessionIdGenerator in the KV-backed path, so
+// gMetadata->nextSessionId() is no longer the source of truth for MDS.
+inline std::unique_ptr<IIdGenerator<uint32_t>> gSessionIdGenerator = nullptr;
+
 #ifndef METARESTORE
 extern std::map<int, Goal> gGoalDefinitions;
 extern bool gAtimeDisabled;

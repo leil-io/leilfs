@@ -161,6 +161,46 @@ The master communicates with five types of peers. The naming convention
 | `matontserv`   | Notifier clients | Broadcasts changelog events for inotify-like functionality. |
 | `masterconn`   | Active master   | Used only when running in **Shadow** personality. Receives changelogs and metadata from the active master. |
 
+## Client Sessions
+
+Client session lifecycle is routed through `ISessionManager`. The file-backed
+master binds `SessionManagerFile`; KV/MDS builds can bind a different manager
+without changing the shared `Session` runtime object or the `matoclserv`
+protocol handlers.
+
+`matoclserv_sessions.cc` is the dispatcher layer. Its wrappers forward to the
+active manager and assert if they are called before startup attaches one.
+
+For the file-backed master, `SessionManagerFile` keeps the complete in-memory
+session catalog and persists reconnectable session records to `sessions.sfs`.
+The loader accepts the current session-file header only; old `MFS`-branded and
+pre-1.6.4 session files are rejected at startup instead of being interpreted by
+compatibility branches. `storeSessions()` continues to write the current format.
+
+Session durability is split between the session file and metadata:
+
+- `sessions.sfs` stores reconnectable mount identity, access limits, UID/GID
+  mapping, and hourly operation stats.
+- `metadata.sfs` stores the session-id counter and each file's
+  `FSNodeFile::sessionIds` list.
+- `Session::openFilesSet` is an in-memory, per-session index rebuilt on startup
+  from the file-side `sessionIds` metadata.
+
+That split gives the master both lookup directions: "which files does this
+session hold?" through `openFilesSet`, and "which sessions hold this file?"
+through `FSNodeFile::sessionIds`. The file-side list is the durable authority
+for reserved-file lifetime and purge decisions.
+
+The lifecycle remains the traditional master lifecycle: create, reconnect,
+disconnect, explicit delete, and timeout cleanup. Session ids are still
+allocated through `gFSOperations->newSessionId()`, which records the allocation
+in the changelog for the file-backed master path.
+
+Explicit delete and timeout cleanup both call `matocl_close_files()` to release
+open files and locks. The helper reports whether teardown completed; timeout
+cleanup erases a session only after successful teardown, so a failed transactional
+backend commit can keep the session managed for a later retry.
+
 ## Metadata Persistence
 
 Metadata durability is achieved through two complementary mechanisms:
