@@ -254,7 +254,7 @@ rm -rf $RPM_BUILD_ROOT
 %files master
 %define sau_master_examples %{_docdir}/saunafs-master/examples
 %defattr(644,root,root,755)
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %attr(755,root,root) %{_sbindir}/sfsmaster
 %attr(755,root,root) %{_sbindir}/sfsrestoremaster
 %attr(755,root,root) %{_sbindir}/sfsmetadump
@@ -284,7 +284,7 @@ rm -rf $RPM_BUILD_ROOT
 %files metalogger
 %define sau_metalogger_examples %{_docdir}/saunafs-metalogger/examples
 %defattr(644,root,root,755)
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %attr(755,root,root) %{_sbindir}/sfsmetalogger
 %attr(755,%{sau_user},%{sau_group}) %dir %{sau_datadir}
 %{_mandir}/man5/sfsmetalogger.cfg.5*
@@ -295,7 +295,7 @@ rm -rf $RPM_BUILD_ROOT
 %files chunkserver
 %define sau_chunkserver_examples %{_docdir}/saunafs-chunkserver/examples
 %defattr(644,root,root,755)
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %attr(755,root,root) %{_sbindir}/sfschunkserver
 %dir %{sau_confdir}
 %attr(755,%{sau_user},%{sau_group}) %dir %{sau_confdir}
@@ -310,7 +310,7 @@ rm -rf $RPM_BUILD_ROOT
 %files client
 %define sau_client_examples %{_docdir}/saunafs-client/examples
 %defattr(644,root,root,755)
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %attr(755,root,root) %{_bindir}/saunafs
 %attr(755,root,root) %{_bindir}/sfsmount
 %{_mandir}/man1/saunafs-appendchunks.1*
@@ -358,7 +358,7 @@ rm -rf $RPM_BUILD_ROOT
 
 %files cgi
 %defattr(644,root,root,755)
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %dir %{_datadir}/sfscgi
 %{_datadir}/sfscgi/err.gif
 %{_datadir}/sfscgi/favicon.ico
@@ -378,7 +378,7 @@ rm -rf $RPM_BUILD_ROOT
 
 %files adm
 %defattr(644,root,root,755)
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %attr(755,root,root) %{_bindir}/saunafs-admin
 %{_mandir}/man8/saunafs-admin.8*
 %{_bindir}/saunafs-probe
@@ -389,7 +389,7 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(644,root,root,755)
 %attr(755,root,root) %{_sbindir}/saunafs-uraft
 %attr(755,root,root) %{_sbindir}/saunafs-uraft-helper
-%doc NEWS README.md UPGRADE
+%doc NEWS README.md
 %{_mandir}/man8/saunafs-uraft.8*
 %{_mandir}/man8/saunafs-uraft-helper.8*
 %{_mandir}/man5/saunafs-uraft.cfg.5*
