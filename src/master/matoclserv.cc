@@ -5284,6 +5284,7 @@ bool matocl_close_files(Session *currentSession) {
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
+	const bool contextHasTransaction = fsOpContext.hasReadWriteTransaction();
 
 	// Teardown must preserve backend correctness across partial failures.
 	//
@@ -5302,67 +5303,59 @@ bool matocl_close_files(Session *currentSession) {
 	// session-management or timeout-driven cleanup can retry them.
 	std::vector<inode_t> pendingBatch;
 	std::vector<inode_t> committed;
-	pendingBatch.reserve(kTransactionBatchSize);
-	committed.reserve(currentSession->openFilesSet.size());
+	if (contextHasTransaction) { pendingBatch.reserve(kTransactionBatchSize); }
 
-	// Commits one pending batch for transactional backends, or marks it as completed immediately
-	// for synchronous backends.
+	// Commits one pending batch for transactional backends.
 	auto flushBatch = [&](bool isFinal) -> bool {
-		if (pendingBatch.empty()) { return true; }
-
-		if (!fsOpContext.hasReadWriteTransaction()) {
-			// File backend applies release() synchronously; nothing to commit.
-			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
-			pendingBatch.clear();
-			return true;
-		}
-
 		if (!fsOpContext.getReadWriteTransaction()->commit()) { return false; }
 
-		committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
+		if (!isFinal) {
+			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
+		}
+
 		pendingBatch.clear();
+
 		if (!isFinal) {
 			fsOpContext = gFSOperations->createFilesystemOperationContext(
 			    FilesystemOperationContext::TransactionType::kReadWrite);
 		}
+
 		return true;
 	};
 
 	bool anyFailure = false;
+	size_t pendingOperations = currentSession->openFilesSet.size();
 
 	for (inode_t openFileInode : currentSession->openFilesSet) {
 		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId);
-		pendingBatch.push_back(openFileInode);
 
-		if (pendingBatch.size() >= kTransactionBatchSize) {
-			if (!flushBatch(/*isFinal=*/false)) {
+		if (contextHasTransaction) {
+			pendingOperations--;
+			pendingBatch.push_back(openFileInode);
+
+			const bool shouldFlush =
+			    pendingBatch.size() >= kTransactionBatchSize || pendingOperations == 0;
+
+			if (shouldFlush && !flushBatch(/*isFinal=*/pendingOperations == 0)) {
 				safs::log_err(
 				    "{}: batch commit failed while closing files for session {}; "
-				    "leaving {} inode(s) from this batch plus any un-started "
+				    "leaving {} inode(s) from this batch plus {} un-started "
 				    "inodes in openFilesSet for callers that can retry later",
-				    __func__, currentSession->sessionId, pendingBatch.size());
+				    __func__, currentSession->sessionId, pendingBatch.size(), pendingOperations);
 				anyFailure = true;
 				break;
 			}
 		}
 	}
 
-	bool finalCommitSucceeded = true;
-	if (!anyFailure && !flushBatch(/*isFinal=*/true)) {
-		safs::log_err(
-		    "{}: final commit failed while closing files for session {}; "
-		    "leaving {} inode(s) in openFilesSet for callers that can retry later",
-		    __func__, currentSession->sessionId, pendingBatch.size());
-		finalCommitSucceeded = false;
-	}
-
-	if (!anyFailure && finalCommitSucceeded) {
+	if (!anyFailure) {
 		currentSession->openFilesSet.clear();
 	} else {
 		for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
 	}
-	return !anyFailure && finalCommitSucceeded && currentSession->openFilesSet.empty();
+
+	return !anyFailure;
 }
 
 void matoclserv_session_files(matoclserventry *eptr, [[maybe_unused]] const uint8_t *data,
