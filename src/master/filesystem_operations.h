@@ -166,6 +166,12 @@ public:
 	                         const std::string &inputPath, std::string &canonicalPath) override;
 
 #ifndef METARESTORE
+	/// Updates the configured duration of one full file-test pass.
+	static void setFileTestLoopTime(uint32_t loopTime);
+
+	/// Returns the configured duration of one full file-test pass.
+	static uint32_t fileTestLoopTime();
+
 	/// Returns a map with all defined goals.
 	const std::map<int, Goal> &getAllGoalDefinitions() const override;
 
@@ -460,6 +466,36 @@ public:
 	/// Starts recalculating metadata checksum in background.
 	/// @see IFilesystemOperations::fs_start_checksum_recalculation.
 	uint8_t startChecksumRecalculation() override;
+
+	/// Runs the once-per-second file-test scheduler tick.
+	/// @see IFilesystemOperations::fsTestPeriodicTick
+	void fsTestPeriodicTick(uint32_t timeStamp) override;
+
+	/// Runs one background file-test step from the event loop.
+	/// @see IFilesystemOperations::fsTestBackgroundStep
+	void fsTestBackgroundStep() override;
+
+	/// Returns the last published file-test report.
+	/// @see IFilesystemOperations::fsTestGetData
+	void fsTestGetData(FsTestReport &out) override;
+
+	/// Returns a paginated list of defective files.
+	/// @see IFilesystemOperations::fsTestGetDefectiveNodes
+	std::vector<DefectiveFileInfo> fsTestGetDefectiveNodes(uint8_t requestedFlags,
+	                                                       uint64_t maxEntries,
+	                                                       uint64_t &cursor) override;
+
+	/// Removes file-test state for a deleted node.
+	/// @see IFilesystemOperations::fsTestOnNodeRemoved
+	void fsTestOnNodeRemoved(const FilesystemOperationContext &fsOpContext, inode_t inode) override;
+
+	/// Runs one background metadata-checksum recalculation step.
+	/// @see IFilesystemOperations::backgroundChecksumStep
+	void backgroundChecksumStep() override;
+
+	/// In-memory backend has no backend-specific periodic options.
+	/// @see IFilesystemOperations::readBackendPeriodicConfig
+	void readBackendPeriodicConfig() override {}
 #endif
 	void addFilesToChunks(bool isMetadataLoading = true) override;
 
@@ -509,6 +545,10 @@ public:
 
 	/// Returns checksum of the loaded metadata.
 	uint64_t metadataChecksum(ChecksumMode mode) override;
+
+	/// In-memory backend supports Master-Shadow metadata checksums.
+	/// @see IFilesystemOperations::metadataChecksumSupported
+	bool metadataChecksumSupported() const override { return true; }
 
 	// Locks
 

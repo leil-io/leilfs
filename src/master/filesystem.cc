@@ -451,15 +451,15 @@ void fs_unload() {
 }
 
 int fs_init(bool doLoad) {
+	// Initialize the concrete filesystem operations before any FS call
+	initFSOperations();
+
 	try {
 		fs_read_config_file();
 	} catch (Exception &ex) {
 		safs::log_err("Error in configuration: {}", ex.what());
 		throw;
 	}
-
-	// Initialize the concrete filesystem operations before any FS call
-	initFSOperations();
 
 	if (!gMetadataLockfile) {
 		gMetadataLockfile = std::make_unique<Lockfile>(kMetadataFilename + std::string(".lock"));
