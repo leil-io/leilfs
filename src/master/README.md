@@ -279,7 +279,7 @@ registered in `fs_periodic_master_init()` (see `filesystem_periodic.cc`):
 | **Background task processing** (`fs_background_task_manager_work`) | Every loop | Drives the `TaskManager`, processing a batch of tasks (snapshots, recursive removes, goal/trashtime changes) per iteration. |
 | **Checksum recalculation** (`fs_background_checksum_recalculation_a_bit`) | Every loop | Incrementally recalculates metadata checksums (nodes, xattrs, chunks) in the background, progressing through steps at a speed limit per iteration. |
 | **Trash cleanup** (`fs_periodic_emptytrash`) | Every 100ms | Purges expired trash entries whose deletion timestamp has passed. |
-| **Reserved file cleanup** (`fs_periodic_emptyreserved`) | Configurable period | Releases reserved files (deleted-but-still-open files) whose sessions are no longer active. |
+| **Reserved file cleanup** (`fs_periodic_emptyreserved`) | Configurable period in ms (`EMPTY_RESERVED_FILES_PERIOD_MSECONDS`); `0` disables | Force-releases reserved files (deleted-but-still-open files) from all owning sessions, even if sessions are still active; enabling it can disrupt clients that still hold those files. |
 | **Chunk maintenance** (in `chunks.cc`) | Periodic | Handles chunk replication, deletion of excess copies, and rebalancing across chunkservers. |
 
 ## Initialization Sequence
