@@ -390,7 +390,8 @@ public:
 	/// @see IFilesystemOperations::doEmptyTrash
 	void doEmptyTrash(uint32_t timeStamp) override;
 
-	/// Releases all reserved files whose sessions have expired (no active openers).
+	/// Forcefully releases every reserved file from each of its owning sessions, regardless
+	/// of whether those sessions are still active.
 	/// @see IFilesystemOperations::doEmptyReserved
 	void doEmptyReserved(uint32_t timeStamp) override;
 #endif

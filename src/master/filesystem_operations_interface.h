@@ -1518,10 +1518,14 @@ public:
 	///                  expiryTs < timeStamp are eligible for purge.
 	virtual void doEmptyTrash(uint32_t timeStamp) = 0;
 
-	/// Releases all reserved files whose sessions have expired (no active openers).
+	/// Forcefully releases every reserved file from each of its owning sessions, regardless
+	/// of whether those sessions are still active.
 	///
-	/// Default implementation iterates gMetadata->reserved. KV backends override this to scan
-	/// RSVD_PATH_ entries directly from FDB.
+	/// Disabled by default (EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0). When enabled it
+	/// can disrupt clients that still hold reserved files they have not yet released.
+	///
+	/// Default implementation iterates the in-memory reserved map. KV backends override
+	/// this to scan reserved entries directly from FDB.
 	///
 	/// @param timeStamp Current wall-clock time (seconds since epoch).
 	virtual void doEmptyReserved(uint32_t timeStamp) = 0;
