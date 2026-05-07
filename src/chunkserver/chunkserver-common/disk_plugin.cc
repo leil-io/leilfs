@@ -29,7 +29,9 @@ DiskPlugin::~DiskPlugin() {}
 bool DiskPlugin::initialize() {
 	// Needed after upgrading to c++23
 	// https://github.com/gabime/spdlog/wiki/How-to-use-spdlog-in-DLLs
-	initializeLogger();
+	if (!initializeLogger()) {
+		return false;
+	}
 
 	// Also needed after upgrading to c++23
 	initializeEmptyBlockCrcForDisks();
@@ -37,13 +39,30 @@ bool DiskPlugin::initialize() {
 	return true;
 }
 
-void DiskPlugin::initializeLogger() {
-		logger_ = spdlog::get("syslog");
+bool DiskPlugin::initializeLogger() {
+	logger_ = spdlog::get("syslog");
 
-		if (!logger_) {
+	if (!logger_) {
+		// spdlog's registry can be per-shared-library when used as a
+		// header-only lib, so `get` may return null even though another
+		// module already registered "syslog". Catch the duplicate-name
+		// exception and fall back to `get` in that case.
+		try {
 			logger_ = spdlog::syslog_logger_mt("syslog");
+		} catch (const spdlog::spdlog_ex &e) {
+			logger_ = spdlog::get("syslog");
+
+			if (!logger_) {
+				safs::log_warn(
+				    "Disk plugin: failed to create or obtain 'syslog' spdlog logger after exception: {}",
+				    e.what());
+				return false;
+			}
 		}
 	}
+
+	return true;
+}
 
 std::string DiskPlugin::toString() {
 	return name() + " v" + SAUNAFS_PACKAGE_VERSION;
