@@ -234,13 +234,6 @@ static uint32_t gFileTestLoopTime = kDefaultFileTestLoopTime;
 static int gFileTestLoopIndex = 0;
 static unsigned gFileTestLoopBucketLimit = 0;
 
-enum NodeErrorFlag {
-	kChunkUnavailable = 1,
-	kChunkUnderGoal = 2,
-	kStructureError = 4,
-	kAllNodeErrors = 7
-};
-
 #if defined(SAUNAFS_HAVE_64BIT_JUDY) && !defined(DISABLE_JUDY_FOR_DEFECTIVENODESMAP)
 using DefectiveNodesMap = judy_map<inode_t, uint8_t>;
 #else

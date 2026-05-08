@@ -22,7 +22,17 @@
 #pragma once
 
 #include "common/platform.h"
+
+#include <cstdint>
+
 #include "common/serialization_macros.h"
+
+enum NodeErrorFlag : uint8_t {
+	kChunkUnavailable = 1,
+	kChunkUnderGoal   = 2,
+	kStructureError   = 4,
+	kAllNodeErrors    = kChunkUnavailable | kChunkUnderGoal | kStructureError,
+};
 
 SAUNAFS_DEFINE_SERIALIZABLE_CLASS(DefectiveFileInfo,
 		std::string, file_name,

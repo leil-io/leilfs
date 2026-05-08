@@ -29,13 +29,6 @@
 
 static const uint64_t kDefaultEntriesLimit = 1000;
 
-enum NodeErrorFlag {
-	kChunkUnavailable = 1,
-	kChunkUnderGoal   = 2,
-	kStructureError   = 4,
-	kAllNodeErrors    = 7
-};
-
 std::string ListDefectiveFilesCommand::name() const {
 	return "list-defective-files";
 }
