@@ -1560,7 +1560,7 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 	}
 	nodeQuotaRemove(fsOpContext, QuotaOwnerType::kInode, node->id);
 #ifndef METARESTORE
-	fsnodes_periodic_remove(node->id);
+	fsnodes_periodic_remove(fsOpContext, node->id);
 	dcm_modify(node->id, 0);
 #endif
 

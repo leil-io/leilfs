@@ -81,7 +81,7 @@ inline constexpr std::string_view kMetaLinkNodesKey = "META_LINK_NODES";
 /// Format: NODE_<InodeId>:<SerializedFSNodeData>
 /// @note InodeId is serialized as Big Endian to maintain numeric order in lexicographical sorting
 /// enabling efficient range queries for all nodes or specific inode ranges.
-inline constexpr std::string_view kNodeKeyPrefix = "NODE_";    // Section NODE 1.0
+inline constexpr std::string_view kNodeKeyPrefix = "NODE_";  // Section NODE 1.0
 
 /// Prefix for edges (directory entries)
 /// Format: EDGE_<ParentId><Name>:<ChildId>
@@ -94,33 +94,33 @@ inline constexpr std::string_view kNodeKeyPrefix = "NODE_";    // Section NODE 1
 /// which are stored as separate keys with their own prefixes (e.g., DIR_PARENT_, PARENT_).
 /// @see kEdgeLowerKeyPrefix, kDirParentKeyPrefix, kParentKeyPrefix, kDirNodesCountPrefix,
 /// kDirStatsPrefix
-inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";    // Section EDGE 1.0
+inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
 
 /// Prefix for free/reusable inode ids
 /// Format: FREE_<InodeId>:<TimeStamp>
 /// @note InodeId is serialized as Big Endian. TimeStamp is a 32-bit Big Endian value indicating
 /// when the inode was freed.
-inline constexpr std::string_view kFreeKeyPrefix = "FREE_";    // Section FREE 1.0
+inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 
 /// Prefix for chunk entries (mostly used for chunk locking)
 /// Format: CHNK_<ChunkId><ChunkVersion>:<LockedTo><LockId>
 /// @note ChunkId (64-bit) and ChunkVersion (32-bit) are serialized as Big Endian in the key.
 /// LockedTo and LockId (both 32-bit) are also Big Endian.
-inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";   // Section CHNK 1.0
+inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
 
 /// Prefix for extended attributes (xattrs)
 /// Format: XATR_<InodeId><AttributeName>:<AttributeValue>
 /// e.g.: XATR_1999UserAttr:UserValue
 /// @note InodeId is serialized as Big Endian to maintain numeric order in lexicographical sorting,
 /// enabling efficient range queries for all xattrs of a specific inode.
-inline constexpr std::string_view kXAttrKeyPrefix = "XATR_";   // Section XATR 1.0
+inline constexpr std::string_view kXAttrKeyPrefix = "XATR_";  // Section XATR 1.0
 
 /// Prefix for Access Control Lists (ACLs)
 /// Format: ACLS_<InodeId>:<binary RichACL>
 /// e.g.: ACLS_1999:<binary data>
 /// @note InodeId is serialized as Big Endian to maintain numeric order in lexicographical sorting,
 /// enabling efficient range queries.
-inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";    // Section ACLS 1.2
+inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";  // Section ACLS 1.2
 
 /// Prefix for quotas
 /// Format: QUOT_<OwnerType><OwnerId><Rigor><Resource>:<Value>
@@ -152,6 +152,73 @@ inline constexpr std::string_view kTrashPathKeyPrefix = "TRSH_PATH_";  // Sectio
 /// Deleted/Purged when all sessions pointing to the file release it.
 inline constexpr std::string_view kReservedPathKeyPrefix = "RSVD_PATH_";  // Section RSVD 1.0
 
+/// File-test scanner lease.
+/// Format: FILETEST_LEASE:<OwnerMdsId><ExpiryTime><LeaseEpoch><ActiveScanGeneration>
+/// - OwnerMdsId: uint32_t serialized as Big Endian
+/// - ExpiryTime: uint32_t Unix timestamp serialized as Big Endian
+/// - LeaseEpoch: uint64_t serialized as Big Endian
+/// - ActiveScanGeneration: uint64_t serialized as Big Endian
+inline constexpr std::string_view kFileTestLeaseKey = "FILETEST_LEASE";
+
+/// Last-committed NODE_ key from the in-progress scan; the next page resumes after it.
+/// Absent when no scan is in progress or at cycle start.
+/// Format: FILETEST_CURSOR:<LastCommittedNodeKey>
+/// - LastCommittedNodeKey: raw NODE_<InodeId> key bytes
+/// @note InodeId inside LastCommittedNodeKey is serialized as Big Endian.
+inline constexpr std::string_view kFileTestCursorKey = "FILETEST_CURSOR";
+
+/// Running counters for the in-progress scan cycle; written by the lease owner each committed page.
+/// Reset to a fresh Stats with the new generation when a cycle completes or a new one begins.
+/// Format: FILETEST_ACTIVE_STATS:<ScanGeneration><LoopStart><LoopEnd><Files>
+///                               <UnderGoalFiles><MissingFiles><Chunks>
+///                               <UnderGoalChunks><MissingChunks><NotFoundChunks>
+///                               <UnavailableChunks><UnavailableFiles>
+///                               <UnavailableTrashFiles><UnavailableReservedFiles>
+/// - ScanGeneration: uint64_t serialized as Big Endian
+/// - LoopStart, LoopEnd: uint32_t Unix timestamps serialized as Big Endian
+/// - Files, UnderGoalFiles, MissingFiles: inode_t serialized as Big Endian
+/// - Chunks, UnderGoalChunks, MissingChunks, NotFoundChunks, UnavailableChunks:
+///   uint32_t serialized as Big Endian
+/// - UnavailableFiles, UnavailableTrashFiles, UnavailableReservedFiles:
+///   inode_t serialized as Big Endian
+inline constexpr std::string_view kFileTestActiveStatsKey = "FILETEST_ACTIVE_STATS";
+
+/// Completed-cycle counters swapped atomically from FILETEST_ACTIVE_STATS at end-of-cycle.
+/// Read by FSTEST_INFO and as the generation anchor for list-defective-files scans.
+/// Format: FILETEST_PUBLISHED_STATS:<ScanGeneration><LoopStart><LoopEnd><Files>
+///                                  <UnderGoalFiles><MissingFiles><Chunks>
+///                                  <UnderGoalChunks><MissingChunks><NotFoundChunks>
+///                                  <UnavailableChunks><UnavailableFiles>
+///                                  <UnavailableTrashFiles><UnavailableReservedFiles>
+/// @see kFileTestActiveStatsKey for field types and order.
+inline constexpr std::string_view kFileTestPublishedStatsKey = "FILETEST_PUBLISHED_STATS";
+
+/// Rendered human-readable report swapped atomically alongside FILETEST_PUBLISHED_STATS.
+/// Built from the completed generation's FILETEST_REPORT_ rows; capped below FDB's value limit.
+/// Format: FILETEST_PUBLISHED_REPORT:<ReportText>
+/// - ReportText: raw bytes of the rendered report string with no length prefix
+inline constexpr std::string_view kFileTestPublishedReportKey = "FILETEST_PUBLISHED_REPORT";
+
+/// Prefix for per-defective-inode file-test rows.
+/// Format: FILETEST_DEFECTIVE_<InodeId>:<ScanGeneration><Flags>
+/// - InodeId: inode_t serialized as Big Endian
+/// - ScanGeneration: uint64_t serialized as Big Endian
+/// - Flags: uint8_t NodeErrorFlag bitmask
+/// @note InodeId is encoded in the key to preserve numeric ordering for scans.
+inline constexpr std::string_view kFileTestDefectiveKeyPrefix = "FILETEST_DEFECTIVE_";
+
+/// Prefix for per-inode pre-rendered report fragments used to build FILETEST_PUBLISHED_REPORT.
+/// Generation-scoped so publish can range-scan only the completed cycle and ignore stale rows.
+/// Only inodes with visible FSTEST_INFO lines have a row; under-goal-only inodes are omitted
+/// (Master also produces no report text for them, this is an intentional parity).
+/// Format: FILETEST_REPORT_<KeyScanGeneration><InodeId>:<ScanGeneration><Errors><Text>
+/// - KeyScanGeneration: uint64_t serialized as Big Endian
+/// - InodeId: inode_t serialized as Big Endian
+/// - ScanGeneration: uint64_t serialized as Big Endian
+/// - Errors: uint32_t serialized as Big Endian
+/// - Text: raw bytes of the pre-rendered report fragment with no length prefix
+inline constexpr std::string_view kFileTestReportKeyPrefix = "FILETEST_REPORT_";
+
 /// Prefix for locks
 /// Format: FLCK_<InodeId:BE><Type:u8><Status:u8> → serialized lock entries
 /// - InodeId: inode_t serialized as Big Endian (enables per-inode prefix scan)
@@ -162,7 +229,7 @@ inline constexpr std::string_view kReservedPathKeyPrefix = "RSVD_PATH_";  // Sec
 /// Big Endian to preserve numeric order in lexicographical sorting.
 /// The value contains all lock entries for the given (inode, type, status)
 /// tuple, serialized as a contiguous sequence via FileLocks serialization.
-inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";   // Section FLCK 1.0
+inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";  // Section FLCK 1.0
 
 // Case-insensitive directory support
 
