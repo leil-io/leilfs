@@ -1,6 +1,6 @@
 include_directories(${CMAKE_CURRENT_SOURCE_DIR} ../master)
 add_definitions(-DMETARESTORE)
-add_definitions(-DAPPNAME=sfsmetarestore -DAPP_EXAMPLES_SUBDIR="${USR_SHARE_DOC}")
+add_definitions(-DAPPNAME=leil-metarestore -DAPPNAME_LEGACY=sfsmetarestore -DAPP_EXAMPLES_SUBDIR="${USR_SHARE_DOC}")
 
 collect_sources(METARESTORE)
 
@@ -25,13 +25,19 @@ add_library(metarestore ${METARESTORE_SOURCES} ${METARESTORE_MASTER_SOURCES} ${M
   ../master/metadata_loader.cc ../master/setgoal_task.cc ../master/settrashtime_task.cc
   ../master/changelog.cc)
 
-target_link_libraries(metarestore metrics sfscommon)
+target_link_libraries(metarestore metrics leil-common)
 if(JUDY_LIBRARY)
   target_link_libraries(metarestore ${JUDY_LIBRARY})
 endif()
 
 create_unittest(metarestore ${METARESTORE_TESTS})
 
-add_executable(sfsmetarestore ${METARESTORE_MAIN})
-target_link_libraries(sfsmetarestore metarestore sfscommon ${PAM_LIBRARIES})
-install(TARGETS sfsmetarestore RUNTIME DESTINATION ${SBIN_SUBDIR})
+add_executable(leil-metarestore ${METARESTORE_MAIN})
+target_link_libraries(leil-metarestore metarestore leil-common ${PAM_LIBRARIES})
+install(TARGETS leil-metarestore RUNTIME DESTINATION ${SBIN_SUBDIR})
+
+add_custom_target(sfsmetarestore-symlink ALL
+  COMMAND ln -sf leil-metarestore sfsmetarestore
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS leil-metarestore)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsmetarestore DESTINATION ${SBIN_SUBDIR})

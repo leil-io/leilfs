@@ -6,8 +6,8 @@ else
 	test_fail "pylint is not installed"
 fi
 
-# Get paths to sfs.cgi, chart.cgi and the CGI server
-mapfile -t files < <(find "${SAUNAFS_ROOT}/share/sfscgi/" -name '*.cgi')
+# Get paths to leil.cgi, chart.cgi and the CGI server
+mapfile -t files < <(find "${SAUNAFS_ROOT}/share/leil-cgi/" -name '*.cgi')
 files+=("${SAUNAFS_ROOT}/sbin/saunafs-cgiserver")
 
 # Validate all found files using pylint

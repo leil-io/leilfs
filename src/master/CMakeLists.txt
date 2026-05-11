@@ -1,5 +1,5 @@
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-add_definitions(-DAPPNAME=sfsmaster -DAPP_EXAMPLES_SUBDIR="${SFSMASTER_EXAMPLES_SUBDIR}")
+add_definitions(-DAPPNAME=leil-master -DAPPNAME_LEGACY=sfsmaster -DAPP_EXAMPLES_SUBDIR="${SFSMASTER_EXAMPLES_SUBDIR}")
 
 collect_sources(MASTER)
 
@@ -35,7 +35,7 @@ else()
 endif()
 
 add_library(master ${MASTER_SOURCES})
-target_link_libraries(master sfscommon metrics ${ADDITIONAL_LIBS})
+target_link_libraries(master leil-common metrics ${ADDITIONAL_LIBS})
 if(JUDY_LIBRARY)
   target_link_libraries(master ${JUDY_LIBRARY})
 endif()
@@ -43,14 +43,25 @@ if(DB_FOUND)
   target_link_libraries(master ${DB_LIBRARY})
 endif()
 create_unittest(master ${MASTER_TESTS})
-link_unittest(master master sfscommon)
+link_unittest(master master leil-common)
 
-add_executable(sfsmaster ${MAIN_SRC})
-target_link_libraries(sfsmaster master metrics ${PAM_LIBRARIES})
+add_executable(leil-master ${MAIN_SRC})
+target_link_libraries(leil-master master metrics ${PAM_LIBRARIES})
 if(SYSTEMD_FOUND)
-  target_link_libraries(sfsmaster ${SYSTEMD_LIBRARIES})
+  target_link_libraries(leil-master ${SYSTEMD_LIBRARIES})
 endif()
-install(TARGETS sfsmaster RUNTIME DESTINATION ${SBIN_SUBDIR})
+install(TARGETS leil-master RUNTIME DESTINATION ${SBIN_SUBDIR})
+add_custom_target(sfsmaster-symlink ALL
+  COMMAND ln -sf leil-master sfsmaster
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS leil-master)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsmaster DESTINATION ${SBIN_SUBDIR})
 
-configure_file(sfsrestoremaster.in sfsrestoremaster @ONLY)
-install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/sfsrestoremaster DESTINATION ${SBIN_SUBDIR})
+configure_file(sfsrestoremaster.in leil-restoremaster @ONLY)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/leil-restoremaster DESTINATION ${SBIN_SUBDIR})
+
+add_custom_target(sfsrestoremaster-symlink ALL
+  COMMAND ln -sf leil-restoremaster sfsrestoremaster
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS leil-restoremaster)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sfsrestoremaster DESTINATION ${SBIN_SUBDIR})

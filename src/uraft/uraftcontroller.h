@@ -102,7 +102,7 @@ private:
 	/// @brief Clean up dirty metadata state after failed promotion.
 	///
 	/// This function is called when a promotion fails or times out, leaving the metadata server in
-	/// an inconsistent state. It invokes the saunafs-uraft-helper 'cleanup' command to remove
+	/// an inconsistent state. It invokes the leil-uraft-helper 'cleanup' command to remove
 	/// temporary metadata file (metadata.sfs.tmp) if no process is holding it.
 	///
 	/// This is a recovery operation to prevent deadlocks caused by incomplete metadata dumps from
