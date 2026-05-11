@@ -33,7 +33,7 @@ namespace fdb {
 /// Implements the kv::IFuture interface for asynchronous get operations.
 ///
 /// @note The transaction that created this future must remain alive until get() is called.
-/// @note This future is single-use: get() can only be called once successfully.
+/// @note This future is single-use: get() can only be called once.
 class FDBFutureValue final : public kv::IFuture {
 public:
 	/// Constructs a FDBFutureValue wrapping the given FDBFuture*.
@@ -58,6 +58,41 @@ public:
 	/// @return The value if successful and present, std::nullopt on error or if key not found.
 	/// @note This method can only be called once. Subsequent calls return std::nullopt.
 	std::optional<kv::Value> get(int *error = nullptr) override;
+
+private:
+	FDBFuture *future_;
+	bool consumed_ = false;
+};
+
+/// Wraps a FoundationDB range future (FDBFuture*) with RAII semantics.
+/// Implements the kv::IRangeFuture interface for asynchronous get_range operations.
+///
+/// @note The transaction that created this future must remain alive until get() is called.
+/// @note This future is single-use: get() can only be called once.
+class FDBFutureRange final : public kv::IRangeFuture {
+public:
+	/// Constructs a FDBFutureRange wrapping the given FDBFuture*.
+	/// @param future The FDB future to wrap. Takes ownership.
+	explicit FDBFutureRange(FDBFuture *future);
+
+	/// Destructor. Destroys the wrapped FDB future.
+	~FDBFutureRange() override;
+
+	// Non-copyable, non-movable
+	FDBFutureRange(const FDBFutureRange &) = delete;
+	FDBFutureRange &operator=(const FDBFutureRange &) = delete;
+	FDBFutureRange(FDBFutureRange &&) = delete;
+	FDBFutureRange &operator=(FDBFutureRange &&) = delete;
+
+	/// Checks if the future result is ready without blocking.
+	/// @return True if the result is ready, false otherwise.
+	bool isReady() override;
+
+	/// Blocks until the result is ready and retrieves the range.
+	/// @param error Optional pointer to store error code (0 on success, non-zero on error).
+	/// @return The range result, or an empty result on error.
+	/// @note This method can only be called once. Subsequent calls return an empty result.
+	kv::GetRangeResult get(int *error = nullptr) override;
 
 private:
 	FDBFuture *future_;

@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <optional>
 
 #include "kv/kv_types.h"
@@ -27,7 +29,7 @@ namespace kv {
 /// Interface for asynchronous future results from key-value operations.
 /// Provides methods to check readiness and retrieve values from pending operations.
 ///
-/// @note This future is single-use: get() can only be called once successfully.
+/// @note This future is single-use: get() can only be called once.
 /// @note The transaction that created this future must remain alive until get() is called.
 class IFuture {
 public:
@@ -52,6 +54,35 @@ public:
 
 protected:
 	IFuture() = default;
+};
+
+/// Interface for asynchronous future results from key-value range operations.
+///
+/// @note This future is single-use: get() can only be called once.
+/// @note The transaction that created this future must remain alive until get() is called.
+class IRangeFuture {
+public:
+	virtual ~IRangeFuture() = default;
+
+	// Non-copyable, non-movable
+	IRangeFuture(const IRangeFuture &) = delete;
+	IRangeFuture &operator=(const IRangeFuture &) = delete;
+	IRangeFuture(IRangeFuture &&) = delete;
+	IRangeFuture &operator=(IRangeFuture &&) = delete;
+
+	/// Checks if the future result is ready without blocking.
+	/// @return True if the result is ready, false otherwise.
+	virtual bool isReady() = 0;
+
+	/// Blocks until the result is ready and retrieves the range.
+	/// @param error Optional pointer to store error code (0 on success, non-zero on error).
+	/// @return The range result, or an empty result on error.
+	/// @note This method can only be called once. Subsequent calls return an empty result.
+	/// @note The caller must keep the transaction alive until this method returns.
+	virtual GetRangeResult get(int *error = nullptr) = 0;
+
+protected:
+	IRangeFuture() = default;
 };
 
 }  // namespace kv
