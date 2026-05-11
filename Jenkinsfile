@@ -198,6 +198,8 @@ pipeline {
                                     cd ..
                                     mkdir -p build
                                     cd build
+                                    rm -f CMakeCache.txt
+                                    rm -rf CMakeFiles
                                     nice cmake \
                                          -DCMAKE_TOOLCHAIN_FILE="../vcpkg/scripts/buildsystems/vcpkg.cmake" \
                                          -DENABLE_CLIENT_LIB=ON \
