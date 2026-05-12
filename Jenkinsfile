@@ -198,8 +198,11 @@ pipeline {
                                     cd ..
                                     mkdir -p build
                                     cd build
-                                    rm -f CMakeCache.txt
-                                    rm -rf CMakeFiles
+                                    find . -mindepth 1 -maxdepth 1 \
+                                      ! -name vcpkg_installed \
+                                      ! -name 'nfs-ganesha-*.zip' \
+                                      ! -name 'ntirpc-*.zip' \
+                                      -exec rm -rf -- {} +
                                     nice cmake \
                                          -DCMAKE_TOOLCHAIN_FILE="../vcpkg/scripts/buildsystems/vcpkg.cmake" \
                                          -DENABLE_CLIENT_LIB=ON \
@@ -230,7 +233,8 @@ pipeline {
                                 sh """
                                     export PATH="/usr/lib/ccache:$PATH"
                                     cd build
-                                    sudo nice make -j\$((\$(nproc) / 2)) install
+                                    nice make -j\$((\$(nproc) / 2))
+                                    sudo cmake --install .
                                     saunafs-tests --gtest_filter="RebalancingTests*" --gtest_output="xml:./rebalance_test_detail.xml" || true
                                 """
                                 publishJunit("build/*test_detail.xml")
