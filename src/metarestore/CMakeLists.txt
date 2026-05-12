@@ -29,11 +29,24 @@ target_link_libraries(metarestore metrics leil-common)
 if(JUDY_LIBRARY)
   target_link_libraries(metarestore ${JUDY_LIBRARY})
 endif()
+if(DB_FOUND)
+  target_link_libraries(metarestore ${DB_LIBRARY})
+endif()
 
 create_unittest(metarestore ${METARESTORE_TESTS})
 
+if(APPLE)
+  set(ENABLE_WHOLE_ARCHIVE "-Wl,-force_load")
+  set(DISABLE_WHOLE_ARCHIVE "")
+else()
+  set(ENABLE_WHOLE_ARCHIVE "-Wl,--whole-archive")
+  set(DISABLE_WHOLE_ARCHIVE "-Wl,--no-whole-archive")
+endif()
+
 add_executable(leil-metarestore ${METARESTORE_MAIN})
-target_link_libraries(leil-metarestore metarestore leil-common ${PAM_LIBRARIES})
+target_link_libraries(leil-metarestore
+  ${ENABLE_WHOLE_ARCHIVE} metarestore ${DISABLE_WHOLE_ARCHIVE}
+  leil-common ${PAM_LIBRARIES})
 install(TARGETS leil-metarestore RUNTIME DESTINATION ${SBIN_SUBDIR})
 
 add_custom_target(sfsmetarestore-symlink ALL
