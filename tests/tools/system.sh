@@ -27,3 +27,22 @@ get_nproc_clamped_between() {
 	local procs_num=$(nproc)
 	echo $(( (procs_num < minimum) ? minimum : (maximum < procs_num) ? maximum : procs_num ))
 }
+
+find_program() {
+	local program_name=$1
+	local program_path
+
+	if program_path=$(command -v "${program_name}" 2>/dev/null); then
+		echo "${program_path}"
+		return 0
+	fi
+
+	for program_path in /usr/sbin /usr/bin /sbin /bin; do
+		if [[ -x "${program_path}/${program_name}" ]]; then
+			echo "${program_path}/${program_name}"
+			return 0
+		fi
+	done
+
+	return 1
+}

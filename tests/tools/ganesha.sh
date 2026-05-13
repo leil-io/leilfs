@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+readonly GANESHA_PID_DIR=/var/run/ganesha
+readonly GANESHA_PID_FILE=${GANESHA_PID_DIR}/ganesha.pid
+
 # Function to retry the specified command up to a maximum number of attempts
 # with a delay of 5 seconds between each attempt
 retry_command_with_attempts() {
@@ -22,18 +25,17 @@ retry_command_with_attempts() {
 
 # Create PID file for Ganesha
 create_ganesha_pid_file() {
-	PID_FILE=/var/run/ganesha/ganesha.pid
-	if [ ! -f ${PID_FILE} ]; then
-		echo "ganesha.pid doesn't exists, creating it..."
-		sudo mkdir -p /var/run/ganesha
-		sudo touch "${PID_FILE}"
+	if [ ! -f "${GANESHA_PID_FILE}" ]; then
+		echo "${GANESHA_PID_FILE} does not exist, creating it..."
+		sudo mkdir -p "${GANESHA_PID_DIR}"
+		sudo touch "${GANESHA_PID_FILE}"
 	fi
 }
 
 # Function to check RPC service availability
 check_and_recover_rpc_service() {
 	# if NFS service is available, RPC is already running
-	if [ showmount -e localhost ]; then
+	if showmount -e localhost >/dev/null 2>&1; then
 		echo "RPC service is now available"
 		return 0
 	fi

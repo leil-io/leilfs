@@ -4,6 +4,8 @@ set -x
 readonly self="$(readlink -f "${BASH_SOURCE[0]}")"
 readonly script_dir="$(dirname "$self")"
 
+export DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}"
+
 echo 'Installing necessary programs'
 # lsb_release is required by both build scripts and this script -- install it first
 if ! command -v  lsb_release >/dev/null; then
@@ -109,6 +111,9 @@ apt_packages=(
 	# liburcu-dev
 	docbook
 	docbook-xml
+	keyutils
+	krb5-admin-server
+	krb5-kdc
 	krb5-user
 	libacl1-dev
 	libcap-dev
@@ -120,6 +125,7 @@ apt_packages=(
 	libnfsidmap-dev
 	libnsl-dev
 	libsqlite3-dev
+	nfs-common
 	software-properties-common
 )
 noble_packages=(
@@ -176,13 +182,16 @@ dnf_packages=(
 	docbook-dtds
 	docbook-style-xsl
 	jemalloc-devel
+	keyutils
 	krb5-libs
+	krb5-server
 	krb5-workstation
 	libacl-devel
 	libcap-devel
 	libnfsidmap-devel
 	libprometheus-cpp-devel
 	libsqlite3x-devel
+	nfs-utils
 	xfsprogs-devel
 )
 
