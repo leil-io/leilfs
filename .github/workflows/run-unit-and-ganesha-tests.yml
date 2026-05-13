@@ -6,6 +6,7 @@ on:
     push:
         branches:
             - dev
+            - remove-unneeded-ganesha-build-dependences
 
 jobs:
     Run-Unit-Tests-and-Ganesha:
@@ -51,43 +52,24 @@ jobs:
                 # Install build dependencies
                 sudo apt update
                 sudo apt install -y --no-install-recommends \
-                    acl \
                     bison \
                     build-essential \
-                    byacc \
                     cmake \
-                    dbus \
-                    docbook \
-                    docbook-xml \
                     doxygen \
-                    fio \
                     flex \
                     git \
-                    krb5-user \
                     libacl1-dev \
                     libblkid-dev \
-                    libboost-filesystem-dev \
-                    libboost-iostreams-dev \
-                    libboost-program-options-dev \
-                    libboost-system-dev \
                     libcap-dev \
                     libdbus-1-dev \
-                    libgssapi-krb5-2 \
                     libjemalloc-dev \
-                    libjudy-dev \
                     libkrb5-dev \
-                    libkrb5support0 \
                     libnfsidmap-dev \
                     libnsl-dev \
-                    libsqlite3-dev \
-                    libtirpc-dev \
+                    libunwind-dev \
                     liburcu-dev \
-                    nfs-common \
-                    pkg-config \
-                    pv \
-                    wget \
-                    unzip \
-                    rpcbind
+                    lsb-release \
+                    pkg-config
 
                 # Clone and build Ganesha v9.2
                 cd $GITHUB_WORKSPACE
@@ -97,8 +79,9 @@ jobs:
                 git submodule update --recursive --init
                 mkdir build
                 cmake -B build src \
-                    -DCMAKE_C_FLAGS="-Wno-unused-function" \
+                    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                     -DCMAKE_INSTALL_PREFIX=/usr \
+                    -DUSE_FSAL_SAUNAFS=ON \
                     -DUSE_FSAL_CEPH=OFF \
                     -DUSE_FSAL_GLUSTER=OFF \
                     -DUSE_FSAL_GPFS=OFF \
@@ -110,7 +93,10 @@ jobs:
                     -DUSE_FSAL_RGW=OFF \
                     -DUSE_FSAL_XFS=OFF \
                     -DUSE_GSS=ON \
-                    -DUSE_MONITORING=OFF
+                    -DUSE_MONITORING=OFF \
+                    -DUSE_RADOS_RECOV=OFF \
+                    -DRADOS_URLS=OFF \
+                    -D_MSPAC_SUPPORT=OFF
                 sudo cmake --build build --target install
 
             - name: Set up Python
