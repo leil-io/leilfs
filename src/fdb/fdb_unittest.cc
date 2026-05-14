@@ -18,17 +18,19 @@
 
 #include "common/platform.h"
 
+#include <gtest/gtest.h>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
 #include "kv/ifuture.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
-
-#include <gtest/gtest.h>
-#include <cstddef>
-#include <cstdint>
-#include <vector>
 
 /// Fixture for testing the FDBKVEngine.
 /// Initializes the FoundationDB context and database connection before running tests.
@@ -231,6 +233,103 @@ TEST_F(FDBKVEngineTest, GetRangeWithOffsets) {
 	ASSERT_EQ(elementsWithOffsets.size(), kExpectedNumberOfElements);
 	ASSERT_EQ(elementsWithOffsets.front(), "key_13");  // Lexicographical order
 	ASSERT_EQ(elementsWithOffsets.back(), "key_17");
+}
+
+TEST_F(FDBKVEngineTest, GetRangeAsync) {
+	const auto prefix = kv::toBytes("async_range_key_");
+	const auto end = kv::prefixEnd(prefix);
+	kv::KeySelector startSelector(prefix, true, 0);
+	kv::KeySelector endSelector(end, true, 0);
+
+	constexpr size_t kNumKeys = 6;
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->removeRange(prefix, end);
+		ASSERT_TRUE(transaction->commit()) << "Failed to clear async range test keys.";
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		for (size_t i = 0; i < kNumKeys; ++i) {
+			std::string key = "async_range_key_" + std::to_string(i);
+			std::string value = "async_range_value_" + std::to_string(i);
+			transaction->set(kv::toBytes(key), kv::toBytes(value));
+		}
+		ASSERT_TRUE(transaction->commit()) << "Failed to seed async range test keys.";
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto syncResult = transaction->getRange(startSelector, endSelector, kNumKeys);
+		auto future = transaction->getRangeAsync(startSelector, endSelector, kNumKeys);
+		ASSERT_TRUE(future != nullptr) << "Failed to create async range future.";
+
+		int error = -1;
+		auto asyncResult = future->get(&error);
+		ASSERT_EQ(error, 0);
+		ASSERT_EQ(asyncResult.getPairs().size(), syncResult.getPairs().size());
+		ASSERT_EQ(asyncResult.hasMore(), syncResult.hasMore());
+		for (size_t i = 0; i < syncResult.getPairs().size(); ++i) {
+			ASSERT_EQ(asyncResult.getPairs()[i].key, syncResult.getPairs()[i].key);
+			ASSERT_EQ(asyncResult.getPairs()[i].value, syncResult.getPairs()[i].value);
+		}
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto future = transaction->getRangeAsync(startSelector, endSelector, 2);
+		ASSERT_TRUE(future != nullptr) << "Failed to create paginated async range future.";
+
+		int error = -1;
+		auto rangeResult = future->get(&error);
+		ASSERT_EQ(error, 0);
+		ASSERT_EQ(rangeResult.getPairs().size(), 2U);
+		ASSERT_TRUE(rangeResult.hasMore());
+
+		error = 0;
+		auto secondRead = future->get(&error);
+		ASSERT_NE(error, 0);
+		ASSERT_TRUE(secondRead.getPairs().empty());
+		ASSERT_FALSE(secondRead.hasMore());
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		kv::KeySelector secondPageStart(kv::toBytes("async_range_key_2"), true, 0);
+
+		auto firstFuture = transaction->getRangeAsync(startSelector, endSelector, 2);
+		auto secondFuture = transaction->getRangeAsync(secondPageStart, endSelector, 2);
+		ASSERT_TRUE(firstFuture != nullptr && secondFuture != nullptr)
+		    << "Failed to create multiple async range futures.";
+
+		int firstError = -1;
+		int secondError = -1;
+		auto firstResult = firstFuture->get(&firstError);
+		auto secondResult = secondFuture->get(&secondError);
+
+		ASSERT_EQ(firstError, 0);
+		ASSERT_EQ(secondError, 0);
+		ASSERT_EQ(firstResult.getPairs().size(), 2U);
+		ASSERT_EQ(secondResult.getPairs().size(), 2U);
+		ASSERT_EQ(firstResult.getPairs().front().key, kv::toBytes("async_range_key_0"));
+		ASSERT_EQ(secondResult.getPairs().front().key, kv::toBytes("async_range_key_2"));
+	}
+
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto missingPrefix = kv::toBytes("async_range_missing_");
+		auto future =
+		    transaction->getRangeAsync(kv::KeySelector(missingPrefix, true, 0),
+		                               kv::KeySelector(kv::prefixEnd(missingPrefix), true, 0));
+		ASSERT_TRUE(future != nullptr) << "Failed to create empty async range future.";
+
+		int error = -1;
+		auto rangeResult = future->get(&error);
+		ASSERT_EQ(error, 0);
+		ASSERT_TRUE(rangeResult.getPairs().empty());
+		ASSERT_FALSE(rangeResult.hasMore());
+	}
 }
 
 TEST_F(FDBKVEngineTest, RemoveRange) {

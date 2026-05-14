@@ -171,10 +171,24 @@ public:
 	/// @param streamingMode The streaming mode to use for the range query.
 	/// @return GetRangeResult with key-value pairs and whether more results are available.
 	/// @note If the transaction is not valid, it returns an empty GetRangeResult
-	kv::GetRangeResult getRange(const kv::KeySelector &begin, const kv::KeySelector &end,
-	                            int limit, int iteration = 0, bool snapshot = false,
-	                            bool reverse = false,
+	kv::GetRangeResult getRange(const kv::KeySelector &begin, const kv::KeySelector &end, int limit,
+	                            int iteration = 0, bool snapshot = false, bool reverse = false,
 	                            FDBStreamingMode streamingMode = FDB_STREAMING_MODE_SERIAL);
+
+	/// Gets a range of keys and values asynchronously.
+	/// @param begin The starting key for the range.
+	/// @param end The ending key for the range.
+	/// @param limit The maximum number of key-value pairs to retrieve.
+	/// @param iteration The iteration number for streaming mode.
+	/// @param snapshot Whether to use a snapshot for the transaction.
+	/// @param reverse Whether to retrieve the range in reverse order.
+	/// @param streamingMode The streaming mode to use for the range query.
+	/// @return A future that will contain the range when ready.
+	/// @note The transaction must remain alive until the future's get() method is called.
+	std::unique_ptr<kv::IRangeFuture> getRangeAsync(
+	    const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration = 0,
+	    bool snapshot = false, bool reverse = false,
+	    FDBStreamingMode streamingMode = FDB_STREAMING_MODE_SERIAL);
 
 	/// Sets a value for a given key.
 	/// @param key The key to set the value for.
