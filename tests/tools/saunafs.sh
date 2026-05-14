@@ -17,6 +17,10 @@ setup_local_empty_saunafs() {
 	local number_of_mounts=${MOUNTS:-1}
 	local disks_per_chunkserver=${DISK_PER_CHUNKSERVER:-1}
 	local auto_shadow_master=${AUTO_SHADOW_MASTER:-YES}
+	# Shadow masters are not used with the FDB metadata backend
+	if [[ ${metadata_backend} == "FDB" ]]; then
+		auto_shadow_master="NO"
+	fi
 	local cgi_server=${CGI_SERVER:-NO}
 	local ip_address=$(get_ip_addr)
 	local etcdir=$TEMP_DIR/saunafs/etc
@@ -119,9 +123,7 @@ setup_local_empty_saunafs() {
 	export PATH="$oldpath"
 
 	# Add shadow master if not present (and not disabled); wait for it to synchronize
-	if [[ $auto_shadow_master == YES && \
-	      $number_of_masterservers == 1 && \
-	      ${saunafs_info_[metadata_backend]} == "FILE" ]]; then
+	if [[ $auto_shadow_master == YES && $number_of_masterservers == 1 ]]; then
 		add_metadata_server_ auto "shadow"
 		saunafs_master_n auto start ${shadow_start_param}
 		if ! [[ ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
