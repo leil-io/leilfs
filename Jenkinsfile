@@ -2,13 +2,13 @@ GIT_COMMIT_EMAIL = ""
 GIT_COMMIT_HASH = ""
 REGISTRY_URL = "registry.ci.leil.io"
 
-def buildLfstests() {
-    // TODO(rolysr): We should build from latest lfstests release
+def buildLeilTests() {
+    // TODO(rolysr): We should build from latest leil-tests release
     sh '''
-        git clone "https://github.com/leil-io/lfstests"
-        cd lfstests
+        git clone "https://github.com/leil-io/leil-tests"
+        cd leil-tests
         git checkout dev
-        go build -o $WORKSPACE/lfstests
+        go build -o $WORKSPACE/leil-tests
         '''
 }
 
@@ -16,13 +16,13 @@ def buildImage(imageName) {
     sh """
         cd $WORKSPACE
         mkdir -p build
-        docker buildx build --build-arg BASE_IMAGE=${imageName} --tag saunafs-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
+        docker buildx build --build-arg BASE_IMAGE=${imageName} --tag leil-test:latest -f tests/docker/Dockerfile.test $WORKSPACE
         """
 }
 
 def pushImage(registryImageName) {
     sh """
-        docker tag saunafs-test:latest ${registryImageName}
+        docker tag leil-test:latest ${registryImageName}
         docker push ${registryImageName}
         """
 }
@@ -30,7 +30,7 @@ def pushImage(registryImageName) {
 def runSanity() {
     def resultsFile = "test_results_sanity.xml"
     sh """
-        ./lfstests/lfstests \
+        ./leil-tests/leil-tests \
         --auth /etc/apt/auth.conf.d/ \
         --workers ${SANITY_WORKERS} \
         --multiplier ${MACHINE_MULTIPLIER} \
@@ -42,7 +42,7 @@ def runSanity() {
 def runShort() {
     def resultsFile = "test_results_short.xml"
     sh """
-        ./lfstests/lfstests \
+        ./leil-tests/leil-tests \
         --auth /etc/apt/auth.conf.d/ \
         --suite ShortSystemTests \
         --workers ${SHORT_WORKERS} \
@@ -54,7 +54,7 @@ def runShort() {
 }
 def runMachine() {
     def resultsFile = "test_results_machine.xml"
-    sh """ ./lfstests/lfstests \
+    sh """ ./leil-tests/leil-tests \
         --auth /etc/apt/auth.conf.d/ \
         --suite SingleMachineTests \
         --workers 1 \
@@ -66,7 +66,7 @@ def runMachine() {
 }
 def runLong() {
     def resultsFile = "test_results_long.xml"
-    sh """ ./lfstests/lfstests \
+    sh """ ./leil-tests/leil-tests \
         --auth /etc/apt/auth.conf.d/ \
         --workers ${LONG_WORKERS} \
         --suite LongSystemTests \
@@ -284,7 +284,7 @@ pipeline {
                         SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
                         LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
-                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu22.04-saunafs-test:$GIT_COMMIT"
+                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu22.04-leil-test:$GIT_COMMIT"
                     }
                     agent { label "build" }
                     stages {
@@ -318,7 +318,7 @@ pipeline {
                             )
                             sh """
                                 docker image rm ${env.REGISTRY_IMAGE_NAME} || true
-                                docker image rm saunafs-test:latest || true
+                                docker image rm leil-test:latest || true
                                 """
                         }
                     }
@@ -331,7 +331,7 @@ pipeline {
                         LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
 
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
-                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu24.04-saunafs-test:$GIT_COMMIT"
+                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu24.04-leil-test:$GIT_COMMIT"
                     }
                     stages {
                         stage("Checkout source") {
@@ -339,9 +339,9 @@ pipeline {
                                 checkout scm
                             }
                         }
-                        stage('Build lfstests') {
+                        stage('Build leil-tests') {
                             steps {
-                                buildLfstests()
+                                buildLeilTests()
                             }
                         }
 
@@ -427,11 +427,11 @@ pipeline {
                                 notFailBuild: true,
                             )
                             sh '''
-                                docker rm $(docker stop $(docker ps -a -q --filter ancestor=saunafs-test --format="{{.ID}}")) || true
+                                docker rm $(docker stop $(docker ps -a -q --filter ancestor=leil-test --format="{{.ID}}")) || true
                                 '''
                             sh """
                                 docker image rm ${env.REGISTRY_IMAGE_NAME} || true
-                                docker image rm saunafs-test:latest || true
+                                docker image rm leil-test:latest || true
                                 """
                         }
                     }
