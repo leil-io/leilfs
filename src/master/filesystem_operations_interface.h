@@ -568,12 +568,93 @@ public:
 	                        inode_t parent, const HString &name, const std::string &path,
 	                        inode_t *inode, Attributes *attr) = 0;
 
+	/// Restores a file from trash using the path stored with its detached metadata.
+	///
+	/// The operation is intended for meta sessions. It resolves `inode`, verifies that it is a
+	/// trash node, validates the stored trash path, reconstructs the destination path from the
+	/// filesystem root, creates missing intermediate directories when needed, and links the file
+	/// back as an active file. The final path component must not already exist.
+	///
+	/// On master personalities, a successful restore is recorded as `UNDEL(inode)`. On replay
+	/// personalities, the operation applies that changelog entry and advances metadata state.
+	/// Implementations that need transactions create and commit their operation context internally.
+	///
+	/// @param context The FS operation context containing session data and timestamp.
+	/// @param inode The inode of the trash file to restore.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_EPERM if the session is not a meta session or cannot access the
+	///         inode.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode does not exist or is not a trash node.
+	/// @return SAUNAFS_ERROR_CANTCREATEPATH if the stored path is invalid or cannot be
+	///         reconstructed.
+	/// @return SAUNAFS_ERROR_EEXIST if the destination path already exists.
+	/// @return SAUNAFS_ERROR_IO if a transactional backend cannot commit the restore.
 	virtual uint8_t undel(const FsContext &context, inode_t inode) = 0;
+
+	/// Prepares a file chunk for client-side writing.
+	///
+	/// The operation validates a read-write, non-meta session, resolves `inode` as a file-like
+	/// node, verifies `index`, and prepares the chunk at that index for modification. Depending on
+	/// the current file layout and chunk state, this may create a new chunk, lock an existing
+	/// chunk, duplicate a shared chunk, or start a version-increase operation before the client
+	/// writes data. The actual file length is finalized later by writeEnd().
+	///
+	/// On success, both personalities update file layout, timestamps, checksum, and quota
+	/// counters. Master additionally logs `WRITE(inode,index,version_flag,lockid):chunkid`; on
+	/// replay, `chunkid` is the expected resulting chunk id and mismatches return
+	/// SAUNAFS_ERROR_MISMATCH.
+	///
+	/// @param context The FS operation context containing session data and timestamp.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode of the file-like node to write.
+	/// @param index The chunk index in the file.
+	/// @param[in,out] lockid Existing lock id to verify, or 0 to request/receive a lock id.
+	/// @param[in,out] chunkid On master, receives the resulting chunk id; on replay,
+	///                        contains the expected resulting chunk id and is updated on
+	///                        success. If the chunk is already locked, receives the locked
+	///                        chunk id.
+	/// @param[in,out] opflag On master, receives the chunk operation code; non-zero means the
+	///                       caller must wait for chunkserver-side work. On replay, contains the
+	///                       changelog flag that controls whether the chunk version is increased.
+	/// @param[out] length Optional output for the current file length; may be nullptr.
+	/// @param min_server_version Min chunkserver version for new chunk allocation (master only).
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is not file-like or the session is invalid.
+	/// @return SAUNAFS_ERROR_INDEXTOOBIG if `index` exceeds the maximum chunk index.
+	/// @return SAUNAFS_ERROR_QUOTA if allocating or duplicating the chunk would exceed quota.
+	/// @return SAUNAFS_ERROR_LOCKED if the chunk is locked by another operation.
+	/// @return SAUNAFS_ERROR_NOTLOCKED or SAUNAFS_ERROR_WRONGLOCKID if the supplied lock id does
+	///         not match current chunk state.
+	/// @return SAUNAFS_ERROR_MISMATCH on replay when the resulting chunk id differs from
+	///         `chunkid`.
+	/// @return Other chunk allocation/modification errors such as SAUNAFS_ERROR_NOCHUNKSERVERS,
+	///         SAUNAFS_ERROR_NOSPACE, SAUNAFS_ERROR_NOCHUNK, SAUNAFS_ERROR_CHUNKLOST, or
+	///         SAUNAFS_ERROR_CHUNKBUSY.
+	///
+	/// @see writeEnd
 	virtual uint8_t writeChunk(const FsContext &context,
 	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                           uint32_t index,
 	                           /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                           uint64_t *length, uint32_t min_server_version = 0) = 0;
+
+	/// Raises the next chunk-id floor used by strictly monotonic chunk-id generators.
+	///
+	/// Implementations must not lower the current next chunk id. Passing a value lower than the
+	/// current one leaves metadata unchanged and returns SAUNAFS_ERROR_MISMATCH. Successful master
+	/// calls are logged as `NEXTCHUNKID(nextChunkId)`, and replay personalities apply that entry to
+	/// keep future allocations above already known chunk ids.
+	///
+	/// @param context The FS operation context containing timestamp and personality information.
+	/// @param nextChunkId The minimum next chunk id to use for future allocations.
+	///
+	/// @return SAUNAFS_STATUS_OK if the next chunk-id floor was accepted.
+	/// @return SAUNAFS_ERROR_MISMATCH if `nextChunkId` is lower than the current next chunk id.
 	virtual uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) = 0;
 
 	/// Given a string representing a path, resolves and returns the canonical

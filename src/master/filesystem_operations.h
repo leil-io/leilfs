@@ -155,12 +155,21 @@ public:
 	                inode_t parent, const HString &name, const std::string &path, inode_t *inode,
 	                Attributes *attr) override;
 
+	/// Restores a file from trash using the path stored with its detached metadata.
+	/// @see IFilesystemOperations::undel
 	uint8_t undel(const FsContext &context, inode_t inode) override;
+
+	/// Prepares a file chunk for client-side writing.
+	/// @see IFilesystemOperations::writeChunk
 	uint8_t writeChunk(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                   inode_t inode, uint32_t index,
 	                   /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                   uint64_t *length, [[maybe_unused]] uint32_t min_server_version = 0) override;
+
+	/// Raises the next chunk-id floor used by strictly monotonic chunk-id generators.
+	/// @see IFilesystemOperations::setNextChunkId
 	uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) override;
+
 	uint8_t getCanonicalPath(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext,
 	                         const std::string &inputPath, std::string &canonicalPath) override;
