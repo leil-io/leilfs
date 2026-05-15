@@ -205,6 +205,8 @@ public:
 	uint8_t wholePathLookup(const FsContext &context, inode_t parent, const std::string &path,
 	                        inode_t *found_inode, Attributes &attr) override;
 
+	/// Retrieves the attributes of a filesystem node.
+	/// @see IFilesystemOperations::getAttr
 	uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, Attributes &attr) override;
 
@@ -230,8 +232,13 @@ public:
 	                uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                SugidClearMode sugidclearmode, Attributes &attr) override;
 
+	/// Reads the target path stored in a symbolic link.
+	/// @see IFilesystemOperations::readlink
 	uint8_t readlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                 inode_t inode, std::string &path) override;
+
+	/// Reports filesystem space and inode statistics visible from the session root.
+	/// @see IFilesystemOperations::statfs
 	void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	            uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 	            uint64_t *reservedspace, inode_t *inodes) override;
@@ -243,9 +250,15 @@ public:
 	uint8_t mkdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t parent, const HString &name, uint16_t mode, uint16_t umask,
 	              uint8_t copysgid, inode_t *inode, Attributes &attr) override;
+
+	/// Removes one chunk reference from a file-like node by chunk id.
+	/// @see IFilesystemOperations::removeChunkFromFile
 	uint8_t removeChunkFromFile(const FsContext &context,
 	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint64_t chunkId) override;
+
+	/// Scans and repairs chunk metadata for a file-like node.
+	/// @see IFilesystemOperations::repair
 	uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	               uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) override;
 
