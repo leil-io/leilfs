@@ -267,10 +267,18 @@ public:
 	uint8_t rmdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t parent, const HString &name) override;
 
+	/// Removes a filesystem entry and all nested contents as a task-manager job.
+	/// @see IFilesystemOperations::recursiveRemove
 	uint8_t recursiveRemove(const FsContext &context, inode_t parent, const HString &name,
 	                        const std::function<void(int)> &callback, uint32_t job_id) override;
+
+	/// Calculates the serialized directory listing size for readdirData().
+	/// @see IFilesystemOperations::readdirSize
 	uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags, void **dnode,
 	                    uint32_t *dbuffsize) override;
+
+	/// Serializes directory entries into a buffer sized by readdirSize().
+	/// @see IFilesystemOperations::readdirData
 	void readdirData(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                 uint8_t flags, void *dnode, uint8_t *dbuff) override;
 

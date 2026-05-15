@@ -1190,10 +1190,77 @@ public:
 	virtual uint8_t rmdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                      inode_t parent, const HString &name) = 0;
 
+	/// Removes a filesystem entry and all nested contents as a task-manager job.
+	///
+	/// Verifies a read-write, non-meta session, resolves `parent` as a writable directory,
+	/// verifies that `name` exists under it, and submits a recursive remove task. The task walks
+	/// directories depth-first, unlinks files and empty directories, logs each removal as
+	/// `UNLINK(parent,name):inode`, and performs per-task transaction commits in transactional
+	/// backends.
+	///
+	/// The initial batch is processed synchronously. If the operation finishes in that batch, the
+	/// final status is returned directly and `callback` is not invoked. Otherwise the job remains
+	/// queued, SAUNAFS_ERROR_WAITING is returned, and `callback` receives the final status.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param parent The parent directory inode containing the entry to remove.
+	/// @param name The entry name to remove recursively.
+	/// @param callback Completion callback used only when the job continues asynchronously.
+	/// @param job_id The task-manager job id to use for the submitted recursive remove job.
+	/// @return SAUNAFS_STATUS_OK if removal completed during the initial batch.
+	/// @return SAUNAFS_ERROR_WAITING if the job was accepted for asynchronous completion.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the session is meta-only, `parent` cannot be resolved, or
+	///         `name` does not exist.
+	/// @return SAUNAFS_ERROR_ENOTDIR if `parent` is not a directory.
+	/// @return SAUNAFS_ERROR_EACCES if write access to a processed parent directory is denied.
+	/// @return SAUNAFS_ERROR_EPERM if `parent` is outside the session-visible namespace or
+	///         sticky-bit checks reject a processed entry.
+	/// @return SAUNAFS_ERROR_ENOTEMPTY if concurrent changes keep adding entries to a directory
+	///         being removed.
+	/// @return SAUNAFS_ERROR_IO if a transactional backend cannot commit a task step.
 	virtual uint8_t recursiveRemove(const FsContext &context, inode_t parent, const HString &name,
 	                                const std::function<void(int)> &callback, uint32_t job_id) = 0;
+
+	/// Calculates the serialized directory listing size for readdirData().
+	///
+	/// This is the first phase of the two-phase directory-read path. It zeroes `*dnode` and
+	/// `*dbuffsize`, verifies a read-only, non-meta session, resolves `inode` as a readable
+	/// directory, stores an opaque directory handle in `*dnode`, and stores the exact serialized
+	/// buffer size in `*dbuffsize`. If GETDIR_FLAG_WITHATTR is present in `flags`, the size
+	/// includes full attributes for dot entries and children; otherwise it includes entry types
+	/// only.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param inode The directory inode to read.
+	/// @param flags Directory read flags; only GETDIR_FLAG_WITHATTR affects the size.
+	/// @param[out] dnode Receives an opaque directory handle for readdirData(); set to nullptr on
+	///                   entry and left null on error.
+	/// @param[out] dbuffsize Receives the required serialized buffer size; set to zero on entry and
+	///                       left zero on error.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_ENOENT if the session is meta-only or the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_ENOTDIR if the inode is not a directory.
+	/// @return SAUNAFS_ERROR_EACCES if read access to the directory is denied.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is outside the session-visible namespace.
 	virtual uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags,
 	                            void **dnode, uint32_t *dbuffsize) = 0;
+
+	/// Serializes directory entries into a buffer sized by readdirSize().
+	///
+	/// This is the second phase of the two-phase directory-read path. The caller must pass the
+	/// `dnode` returned by a successful readdirSize() call and a `dbuff` buffer of the reported
+	/// size. The function updates directory atime when needed, emitting an ACCESS changelog entry
+	/// when the timestamp changes and atime updates are enabled, then serializes `.` and `..` plus
+	/// all child entries, including either full attributes or entry types according to
+	/// GETDIR_FLAG_WITHATTR. It does not perform validation and has no status return.
+	///
+	/// @param context The FS operation context (user credentials, session flags, root inode).
+	/// @param fsOpContext The operation context; needs a read-write transaction to persist atime in
+	///                    transactional backends.
+	/// @param flags Directory read flags; only GETDIR_FLAG_WITHATTR affects serialization.
+	/// @param dnode Opaque directory handle returned by readdirSize().
+	/// @param[out] dbuff Output buffer with at least the size returned by readdirSize().
 	virtual void readdirData(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext, uint8_t flags,
 	                         void *dnode, uint8_t *dbuff) = 0;
