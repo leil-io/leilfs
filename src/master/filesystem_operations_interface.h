@@ -1438,9 +1438,52 @@ public:
 	virtual uint8_t unlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t parent, const HString &name) = 0;
 
+	/// Returns chunk ids, versions, and locations for a file chunk range.
+	///
+	/// Verifies the session for a read-only operation, resolves `inode` as a readable file-like
+	/// node, validates `chunk_index`, clears `chunks`, and appends one result per file chunk slot
+	/// starting at `chunk_index` until `chunk_count` slots are reported or EOF is reached. If
+	/// `chunk_count` is zero, the range extends to EOF. Holes are returned as entries with chunk
+	/// id 0, version 0, and no locations.
+	///
+	/// For non-empty chunk slots, implementations return the current chunk version and available
+	/// part locations, using `current_ip` to prefer closer locations where topology information is
+	/// available. Does not write to the changelog.
+	///
+	/// @param context The FS operation context (user credentials, session flags, root inode).
+	/// @param current_ip Client IP used to order chunk locations by topology distance.
+	/// @param inode File-like inode whose chunk layout to inspect.
+	/// @param chunk_index First file chunk index to report.
+	/// @param chunk_count Maximum number of chunk slots to report; 0 means until EOF.
+	/// @param[out] chunks Receives chunk entries; cleared before data is appended.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_INDEXTOOBIG if `chunk_index` exceeds the maximum chunk index.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EACCES if read access to the file is denied.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is not file-like or not visible in the session.
+	/// @return SAUNAFS_ERROR_NOCHUNK if a non-zero file chunk reference has no chunk metadata.
 	virtual uint8_t getChunksInfo(const FsContext &context, uint32_t current_ip, inode_t inode,
 	                              uint32_t chunk_index, uint32_t chunk_count,
 	                              std::vector<ChunkWithAddressAndLabel> &chunks) = 0;
+
+	/// Aggregates trash-time counters for a node or subtree.
+	///
+	/// Validates `gmode`, verifies the session for a read-only operation, resolves `inode` as a
+	/// file-like node or directory with no permission mode requirement, and accumulates trash-time
+	/// values into `fileTrashtimes` and `dirTrashtimes`. `GMODE_NORMAL` counts only `inode`;
+	/// `GMODE_RECURSIVE` descends into directory children. The maps are not cleared before
+	/// aggregation.
+	///
+	/// @param context The FS operation context (user credentials, session flags, root inode).
+	/// @param inode Root inode for the query.
+	/// @param gmode Traversal mode (`GMODE_NORMAL` or `GMODE_RECURSIVE`).
+	/// @param[in,out] fileTrashtimes Trash-time counters for file-like nodes.
+	/// @param[in,out] dirTrashtimes Trash-time counters for directory nodes.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `gmode` is invalid.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is neither file-like nor a directory, or is
+	///         not visible in the session.
 	virtual uint8_t getTrashTimePrepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	                                    TrashtimeMap &fileTrashtimes,
 	                                    TrashtimeMap &dirTrashtimes) = 0;

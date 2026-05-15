@@ -325,9 +325,14 @@ public:
 	uint8_t unlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t parent, const HString &name) override;
 
+	/// Returns chunk ids, versions, and locations for a file chunk range.
+	/// @see IFilesystemOperations::getChunksInfo
 	uint8_t getChunksInfo(const FsContext &context, uint32_t current_ip, inode_t inode,
 	                      uint32_t chunk_index, uint32_t chunk_count,
 	                      std::vector<ChunkWithAddressAndLabel> &chunks) override;
+
+	/// Aggregates trash-time counters for a node or subtree.
+	/// @see IFilesystemOperations::getTrashTimePrepare
 	uint8_t getTrashTimePrepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	                            TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes) override;
 
