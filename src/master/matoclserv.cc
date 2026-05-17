@@ -1426,7 +1426,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    (path != nullptr) ? reinterpret_cast<const char *>(path) : "unknown path",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				matoclserv_store_sessions();
+				matoclserv_persist_session(eptr->sessionData);
 			}
 
 			// answer
@@ -1531,7 +1531,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				matoclserv_store_sessions();
+				matoclserv_persist_session(eptr->sessionData);
 			}
 
 			// answer
@@ -5158,11 +5158,11 @@ void matoclserv_admin_reload(matoclserventry* eptr, const uint8_t* data, uint32_
 std::string get_client_configs() {
 	std::map<std::string, std::string> client_configs;
 
-	for (const auto& sessionPtr : gSessionsVector) {
-		if (sessionPtr->config.empty()) { continue; }
-		NetworkAddress addr(sessionPtr->peerIpAddress, sessionPtr->peerPort);
-		client_configs[addr.toString()] = sessionPtr->config;
-	}
+	matoclserv_for_each_session([&client_configs](const Session &session) {
+		if (session.config.empty()) { return; }
+		NetworkAddress addr(session.peerIpAddress, session.peerPort);
+		client_configs[addr.toString()] = session.config;
+	});
 
 	return cfg_yaml_list("clients", client_configs);
 }
@@ -5279,67 +5279,115 @@ void matocl_locks_release(const FsContext &context, const FilesystemOperationCon
 	}
 }
 
-void matocl_close_files(Session *currentSession) {
+bool matocl_close_files(Session *currentSession) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
+	const bool contextHasTransaction = fsOpContext.hasReadWriteTransaction();
 
-	size_t operationCount = 0;
+	// Teardown must preserve backend correctness across partial failures.
+	//
+	// File-backed backends apply release() synchronously, so every processed inode can be erased
+	// from openFilesSet immediately.
+	//
+	// Transactional KV backends may batch many release() calls into one commit. If a batch commit
+	// fails, the backend state for that batch is rolled back, so those inodes must remain in
+	// openFilesSet. Callers that keep the session managed can retry them later. Only inodes from
+	// successfully committed batches are erased here.
+	//
+	// We intentionally do not perform immediate retries for failed batches in
+	// this function: release() may emit side effects outside the backend
+	// transaction, so retrying here could duplicate those effects without a
+	// matching backend state change. Failed inodes stay in openFilesSet so later
+	// session-management or timeout-driven cleanup can retry them.
+	std::vector<inode_t> pendingBatch;
+	std::vector<inode_t> committed;
+	if (contextHasTransaction) { pendingBatch.reserve(kTransactionBatchSize); }
 
-	for (const auto &openFileInode : currentSession->openFilesSet) {
+	// Commits one pending batch for transactional backends.
+	auto flushBatch = [&](bool isFinal) -> bool {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) { return false; }
+
+		if (!isFinal) {
+			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
+		}
+
+		pendingBatch.clear();
+
+		if (!isFinal) {
+			fsOpContext = gFSOperations->createFilesystemOperationContext(
+			    FilesystemOperationContext::TransactionType::kReadWrite);
+		}
+
+		return true;
+	};
+
+	bool anyFailure = false;
+	size_t pendingOperations = currentSession->openFilesSet.size();
+
+	for (inode_t openFileInode : currentSession->openFilesSet) {
 		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
 		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId);
-		operationCount++;
 
-		if (fsOpContext.hasReadWriteTransaction() && operationCount >= kTransactionBatchSize) {
-			if (!commitTransactionBatch(fsOpContext, operationCount)) {
+		if (contextHasTransaction) {
+			pendingOperations--;
+			pendingBatch.push_back(openFileInode);
+
+			const bool shouldFlush =
+			    pendingBatch.size() >= kTransactionBatchSize || pendingOperations == 0;
+
+			if (shouldFlush && !flushBatch(/*isFinal=*/pendingOperations == 0)) {
 				safs::log_err(
-				    "{}: failed to commit transaction batch while closing files for session {}",
-				    __func__, currentSession->sessionId);
-				// KV-backends: Continue for now until the transaction retry strategy is implemented
+				    "{}: batch commit failed while closing files for session {}; "
+				    "leaving {} inode(s) from this batch plus {} un-started "
+				    "inodes in openFilesSet for callers that can retry later",
+				    __func__, currentSession->sessionId, pendingBatch.size(), pendingOperations);
+				anyFailure = true;
+				break;
 			}
 		}
 	}
 
-	// Commit the final batch for KV backends
-	if (fsOpContext.hasReadWriteTransaction() && operationCount > 0) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err(
-			    "{}: failed to commit final transaction while closing files for session {}",
-			    __func__, currentSession->sessionId);
-		}
+	if (!anyFailure) {
+		currentSession->openFilesSet.clear();
+	} else {
+		for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
 	}
 
-	currentSession->openFilesSet.clear();
+	return !anyFailure;
 }
 
-void matoclserv_session_files(matoclserventry *eptr,
-                              [[maybe_unused]] const uint8_t *data,
+void matoclserv_session_files(matoclserventry *eptr, [[maybe_unused]] const uint8_t *data,
                               [[maybe_unused]] uint32_t length) {
 	std::vector<SessionFiles> sessions;
 	MessageBuffer reply;
 
-	for (const auto &eaptr : matoclservList) {
-		if (eaptr->mode == ClientConnectionMode::KILL || !eaptr->sessionData ||
-		    eaptr->registered != ClientState::kRegistered) {
-			continue;
-		}
+	// File-backed sessions report the local live-connection view. KV-backed managers may provide a
+	// backend-derived catalog instead, such as a broader session view that is not limited to
+	// currently connected local clients.
+	if (matoclserv_uses_backend_session_list()) {
+		sessions = matoclserv_list_sessions();
+	} else {
+		for (const auto &eaptr : matoclservList) {
+			if (eaptr->mode == ClientConnectionMode::KILL || !eaptr->sessionData ||
+			    eaptr->registered != ClientState::kRegistered) {
+				continue;
+			}
 
-		SessionFiles session;
-		session.sessionId = eaptr->sessionData->sessionId;
-		session.peerIp = eaptr->sessionData->peerIpAddress;
-		session.filesNumber = session_number_of_files(eaptr->sessionData);
-		sessions.push_back(session);
+			SessionFiles session;
+			session.sessionId = eaptr->sessionData->sessionId;
+			session.peerIp = eaptr->sessionData->peerIpAddress;
+			session.filesNumber = session_number_of_files(eaptr->sessionData);
+			sessions.push_back(session);
+		}
 	}
 
 	matocl::listSessions::serialize(reply, sessions);
 	matoclserv_createpacket(eptr, std::move(reply));
 }
 
-void matocl_session_timedout(Session *currentSession) {
-	matocl_close_files(currentSession);
-}
+bool matocl_session_timedout(Session *currentSession) { return matocl_close_files(currentSession); }
 
 void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint8_t status = SAUNAFS_STATUS_OK;
@@ -5376,21 +5424,8 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 }
 
 void matocl_session_check() {
-	uint32_t now = eventloop_time();
-
-	for (auto sessionIt = gSessionsVector.begin(); sessionIt != gSessionsVector.end();) {
-		auto& sessionPtr = *sessionIt;
-		if (sessionPtr->connections == 0 &&
-		    ((sessionPtr->newSession > 1 && sessionPtr->disconnectedTimestamp < now) ||
-		     (sessionPtr->newSession == 1 &&
-		      sessionPtr->disconnectedTimestamp + gSessionSustainTime < now) ||
-		     (sessionPtr->newSession == 0 && sessionPtr->disconnectedTimestamp + 7200 < now))) {
-			matocl_session_timedout(sessionPtr.get());
-			sessionIt = gSessionsVector.erase(sessionIt);
-		} else {
-			++sessionIt;
-		}
-	}
+	matoclserv_remove_timed_out_sessions(
+	    [](Session *currentSession) { return matocl_session_timedout(currentSession); });
 }
 
 void matocl_before_disconnect(matoclserventry *eptr) {
@@ -5423,6 +5458,8 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 		if (eptr->sessionData->connections == 0) {
 			eptr->sessionData->disconnectedTimestamp = eventloop_time();
 		}
+
+		matoclserv_session_disconnected(eptr->sessionData);
 	}
 
 	matoclserv_remove_entry_from_unlock_list(eptr);
@@ -6255,19 +6292,7 @@ void matoclserv_reload() {
 		}
 	}
 
-	gSessionSustainTime = cfg_getuint32("SESSION_SUSTAIN_TIME", 86400);
-
-	if (gSessionSustainTime > 7 * 86400) {
-		gSessionSustainTime = 7 * 86400;
-		safs::log_warn(
-		    "SESSION_SUSTAIN_TIME too big (more than week) - setting this value to one week");
-	}
-
-	if (gSessionSustainTime < 60) {
-		gSessionSustainTime = 60;
-		safs::log_warn(
-		    "SESSION_SUSTAIN_TIME too low (less than minute) - setting this value to one minute");
-	}
+	matoclserv_configure_session_sustain_time();
 
 	matoclserv_iolimits_reload();
 

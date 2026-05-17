@@ -18,9 +18,10 @@
 
 #pragma once
 
-#include "kv/itransaction.h"
+#include "common/platform.h"
 
 #include "fdb/fdb.h"
+#include "kv/itransaction.h"
 
 namespace fdb {
 
@@ -67,6 +68,16 @@ public:
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	kv::GetRangeResult getRange(const kv::KeySelector &start, const kv::KeySelector &end,
 	                            int limit = kv::kDefaultGetRangeLimit) override;
+
+	/// Retrieves a range of keys and values asynchronously.
+	/// @param start The starting key for the range.
+	/// @param end The ending key for the range.
+	/// @param limit The maximum number of key-value pairs to retrieve.
+	/// @return A future that will contain the range when ready.
+	/// @note The transaction must remain alive until the future's get() method is called.
+	std::unique_ptr<kv::IRangeFuture> getRangeAsync(const kv::KeySelector &start,
+	                                                const kv::KeySelector &end,
+	                                                int limit = kv::kDefaultGetRangeLimit) override;
 
 	/// Sets a value for a given key.
 	/// @param key The key to set the value for.

@@ -36,7 +36,10 @@ public:
 	bool initialize() override;
 
 	/// Initializes the logger for this plugin.
-	void initializeLogger();
+	/// Returns true when logger initialization succeeds.
+	/// Returns false when logger initialization fails and callers should
+	/// treat the plugin initialization as failed.
+	bool initializeLogger();
 
 	/// Matches the versioning system of the other packages.
 	/// Override this method if you need to change the version for testing.

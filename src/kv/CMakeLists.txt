@@ -5,4 +5,4 @@ collect_sources(KV)
 add_library(kv INTERFACE)
 
 create_unittest(kv ${KV_TESTS})
-link_unittest(kv kv sfscommon)
+link_unittest(kv kv leil-common)

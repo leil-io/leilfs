@@ -16,8 +16,9 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "fdb/fdb_transaction.h"
+#include "common/platform.h"
 
+#include "fdb/fdb_transaction.h"
 #include "kv/ifuture.h"
 
 namespace fdb {
@@ -45,6 +46,14 @@ kv::GetRangeResult FDBTransaction::getRange(const kv::KeySelector &start,
 	if (!tr_) { return {{}, false}; }
 
 	return tr_.getRange(start, end, limit);
+}
+
+std::unique_ptr<kv::IRangeFuture> FDBTransaction::getRangeAsync(const kv::KeySelector &start,
+                                                                const kv::KeySelector &end,
+                                                                int limit) {
+	if (!tr_) { return nullptr; }
+
+	return tr_.getRangeAsync(start, end, limit);
 }
 
 void FDBTransaction::set(const kv::Key &key, const kv::Value &value) {

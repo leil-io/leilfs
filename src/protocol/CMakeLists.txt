@@ -22,4 +22,4 @@ collect_sources(PROTOCOL)
 add_library(safsprotocol ${PROTOCOL_SOURCES})
 
 create_unittest(safsprotocol ${PROTOCOL_TESTS})
-link_unittest(safsprotocol sfscommon)
+link_unittest(safsprotocol leil-common)

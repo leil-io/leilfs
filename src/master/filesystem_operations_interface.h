@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "common/attributes.h"
+#include "common/defective_file_info.h"
 #include "common/goal.h"
 #include "master/checksum.h"
 #include "master/filesystem_node_operations_interface.h"
@@ -69,6 +70,19 @@ struct XAttrListResult {
 	/// Serialized xattr names: each name is followed by a '\0' byte.
 	/// Does NOT include the always-present kAclXattrs prefix.
 	std::vector<uint8_t> data;
+};
+
+/// Internal carrier for file-test status returned by fs_test_getdata().
+struct FsTestReport {
+	uint32_t loopStart = 0;
+	uint32_t loopEnd = 0;
+	inode_t files = 0;
+	inode_t underGoalFiles = 0;
+	inode_t missingFiles = 0;
+	uint32_t chunks = 0;
+	uint32_t underGoalChunks = 0;
+	uint32_t missingChunks = 0;
+	std::string report;
 };
 
 /// Interface for filesystem operations extensibility.
@@ -1518,10 +1532,14 @@ public:
 	///                  expiryTs < timeStamp are eligible for purge.
 	virtual void doEmptyTrash(uint32_t timeStamp) = 0;
 
-	/// Releases all reserved files whose sessions have expired (no active openers).
+	/// Forcefully releases every reserved file from each of its owning sessions, regardless
+	/// of whether those sessions are still active.
 	///
-	/// Default implementation iterates gMetadata->reserved. KV backends override this to scan
-	/// RSVD_PATH_ entries directly from FDB.
+	/// Disabled by default (EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0). When enabled it
+	/// can disrupt clients that still hold reserved files they have not yet released.
+	///
+	/// Default implementation iterates the in-memory reserved map. KV backends override
+	/// this to scan reserved entries directly from FDB.
 	///
 	/// @param timeStamp Current wall-clock time (seconds since epoch).
 	virtual void doEmptyReserved(uint32_t timeStamp) = 0;
@@ -1531,6 +1549,66 @@ public:
 	/// Starts recalculating metadata checksum in background.
 	/// @return SAUNAFS_STATUS_OK if dump started successfully, otherwise cause of the failure.
 	virtual uint8_t startChecksumRecalculation() = 0;
+
+	/// Runs the once-per-second file-test scheduler tick.
+	///
+	/// The in-memory implementation preserves the node-hash scan timing and counters.
+	/// KV implementations may acquire backend-specific scanner ownership and publish their
+	/// result state elsewhere.
+	///
+	/// @param timeStamp Event-loop timestamp for this scheduler tick.
+	virtual void fsTestPeriodicTick(uint32_t timeStamp) = 0;
+
+	/// Runs one background file-test step from the event loop.
+	///
+	/// The in-memory implementation preserves the watchdog/yield behavior. KV implementations may
+	/// use backend-specific page transactions and cooperative leases.
+	virtual void fsTestBackgroundStep() = 0;
+
+	/// Returns the last published file-test report.
+	///
+	/// The in-memory implementation builds the report from gDefectiveNodes. KV implementations may
+	/// return a previously rendered report from shared backend storage.
+	///
+	/// @param[out] out File-test report populated from the latest published scan results.
+	virtual void fsTestGetData(FsTestReport &out) = 0;
+
+	/// Returns a paginated list of defective files matching @p requestedFlags.
+	///
+	/// The cursor is opaque to callers; pass 0 to start from the beginning. The in-memory
+	/// implementation keeps the hash-map position semantics; KV implementations use it
+	/// as an inode-ordered scan position into FILETEST_DEFECTIVE_ rows.
+	///
+	/// @param requestedFlags NodeErrorFlag bits used to filter defective files.
+	/// @param maxEntries Maximum number of entries to return.
+	/// @param[in,out] cursor Opaque scan cursor; set to 0 to start a new scan.
+	/// @return Defective file entries matching @p requestedFlags.
+	virtual std::vector<DefectiveFileInfo> fsTestGetDefectiveNodes(uint8_t requestedFlags,
+	                                                               uint64_t maxEntries,
+	                                                               uint64_t &cursor) = 0;
+
+	/// Removes backend-specific file-test state for a node that is being deleted.
+	///
+	/// KV implementations may use @p fsOpContext to clear state in the same transaction as the
+	/// node removal. The in-memory implementation only erases from gDefectiveNodes.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param inode Removed inode whose file-test state must be cleared.
+	virtual void fsTestOnNodeRemoved(const FilesystemOperationContext &fsOpContext,
+	                                 inode_t inode) = 0;
+
+	/// Runs one background metadata-checksum recalculation step.
+	///
+	/// The in-memory implementation preserves the checksum updater behavior. KV implementations may
+	/// no-op because metadata checksums are not meaningful for native KV metadata.
+	virtual void backgroundChecksumStep() = 0;
+
+	/// Reads backend-specific options from configuration.
+	///
+	/// Called from `fs_read_periodic_config_file()` after the master-side options are loaded,
+	/// so backends can read their own keys without the master code referencing them.
+	/// Implementations with no backend-specific periodic options should override as a no-op.
+	virtual void readBackendPeriodicConfig() = 0;
 #endif
 	virtual void addFilesToChunks(bool isMetadataLoading = true) = 0;
 
@@ -1612,6 +1690,9 @@ public:
 
 	/// Returns checksum of the loaded metadata.
 	virtual uint64_t metadataChecksum(ChecksumMode mode) = 0;
+
+	/// Returns whether this backend computes meaningful Master-Shadow metadata checksums.
+	virtual bool metadataChecksumSupported() const = 0;
 
 	// Lock operations
 

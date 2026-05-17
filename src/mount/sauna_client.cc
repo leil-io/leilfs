@@ -122,10 +122,11 @@ struct ReaddirSession {
 std::jthread gMallocTrimThread;
 
 void mallocTrimThread(const std::stop_token& stop, unsigned mallocTrimePeriod_ms) {
-	if (pthread_setname_np(pthread_self(), "mallocTrimThread") != 0) {
+	int setname_result = pthread_setname_np(pthread_self(), "mallocTrimTh");
+	if (setname_result != 0) {
 		// If thread name was not set, log a warning
 		// This is not a fatal error, so we just log it
-		safs::log_warn("Failed to set malloc trim thread name: {}", strerror(errno));
+		safs::log_warn("Failed to set malloc trim thread name: {}", strerror(setname_result));
 	}
 
 	while (!stop.stop_requested()) {

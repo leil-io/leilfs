@@ -24,6 +24,7 @@
 
 #include "common/defective_file_info.h"
 #include "common/type_defs.h"
+#include "master/filesystem_operation_context.h"
 
 inline uint32_t gEmptyReservedFilesPeriod = 0;
 
@@ -37,4 +38,4 @@ void fs_periodic_master_init();
 void fs_test_getdata(uint32_t &loopstart, uint32_t &loopend, inode_t &files, inode_t &ugfiles,
                      inode_t &mfiles, uint32_t &chunks, uint32_t &ugchunks, uint32_t &mchunks,
                      std::string &report);
-void fsnodes_periodic_remove(inode_t inode);
+void fsnodes_periodic_remove(const FilesystemOperationContext &fsOpContext, inode_t inode);

@@ -60,6 +60,9 @@ FROM rpc-statd AS ganesha
 RUN set -e ; \
     apt update; \
     apt install -y --no-install-recommends \
+        keyutils \
+        krb5-admin-server \
+        krb5-kdc \
         nfs-common \
         nfs-ganesha ; \
     rm -rf /var/lib/apt/lists/* ; \

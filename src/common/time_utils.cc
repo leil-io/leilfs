@@ -72,7 +72,7 @@ Timer::Timer() : startTime_(now()) {
 	static_assert(SteadyClock::is_steady, "Monotonic clock is required");
 }
 
-SteadyTimePoint Timer::now() const {
+SteadyTimePoint Timer::now() {
 	return SteadyClock::now();
 }
 

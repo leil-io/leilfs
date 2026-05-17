@@ -18,24 +18,22 @@
 
 #include "common/platform.h"
 
-#include "fdb/fdb.h"
-
 #include <cstdint>
 #include <iterator>
+#include <memory>
 
 #include <foundationdb/fdb_c_types.h>
 
+#include "fdb/fdb.h"
 #include "fdb/fdb_future.h"
 #include "kv/kv_utils.h"
 #include "slogger/slogger.h"
 
 namespace fdb {
 
-const uint8_t *toU8(std::string_view str) {
-	return reinterpret_cast<const uint8_t *>(str.data());
-}
+const uint8_t *toU8(std::string_view str) { return reinterpret_cast<const uint8_t *>(str.data()); }
 
-//Static
+// Static
 
 fdb_error_t DB::selectAPIVersion(int version) { return fdb_select_api_version(version); }
 
@@ -108,7 +106,7 @@ std::unique_ptr<kv::IFuture> Transaction::getAsync(const kv::Key &key, bool snap
 	if (!tr_) { return nullptr; }
 
 	FDBFuture *future = fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()),
-	                                         static_cast<fdb_bool_t>(snapshot));
+	                                        static_cast<fdb_bool_t>(snapshot));
 
 	return std::make_unique<FDBFutureValue>(future);
 }
@@ -117,7 +115,17 @@ kv::GetRangeResult Transaction::getRange(
     const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration /* = 0 */,
     bool snapshot /* = false */, bool reverse /* = false */,
     FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
-	if (!tr_) { return {{}, false}; }
+	auto future = getRangeAsync(begin, end, limit, iteration, snapshot, reverse, streamingMode);
+	if (!future) { return {{}, false}; }
+
+	return future->get();
+}
+
+std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
+    const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration /* = 0 */,
+    bool snapshot /* = false */, bool reverse /* = false */,
+    FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
+	if (!tr_) { return nullptr; }
 
 	static constexpr int kBytesLimit = 0;
 
@@ -133,50 +141,13 @@ kv::GetRangeResult Transaction::getRange(
 	// FDB offsets are 1-based.
 	const int endOffset = 1 + end.getOffset();
 
-	UniqueFDBFuture future(fdb_transaction_get_range(
+	FDBFuture *future = fdb_transaction_get_range(
 	    tr_.get(), begin.getKey().data(), static_cast<int>(begin.getKey().size()), beginOrEqual,
 	    beginOffset, end.getKey().data(), static_cast<int>(end.getKey().size()), endOrEqual,
 	    endOffset, limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
-	    static_cast<fdb_bool_t>(reverse)));
+	    static_cast<fdb_bool_t>(reverse));
 
-	auto error = fdb_future_block_until_ready(future.get());
-
-	if (error != 0) {
-		safs::log_err("Transaction::getRange: fdb_future_block_until_ready: error: {}",
-		              fdb_get_error(error));
-		return {{}, false};
-	}
-
-	const FDBKeyValue *keyValues;
-	int count = 0;
-	fdb_bool_t more = 0;
-
-	error = fdb_future_get_keyvalue_array(future.get(), &keyValues, &count, &more);
-
-	if (error != 0) {
-		safs::log_err("Transaction::getRange: fdb_future_get_keyvalue_array: error: {}",
-		              fdb_get_error(error));
-		return {{}, false};
-	}
-
-	std::vector<kv::KeyValuePair> pairs;
-	pairs.reserve(count);
-
-	for (int i = 0; i < count; ++i) {
-		kv::Key key(keyValues[i].key, keyValues[i].key + keyValues[i].key_length);
-		kv::Value value(keyValues[i].value, keyValues[i].value + keyValues[i].value_length);
-		pairs.emplace_back(std::move(key), std::move(value));
-	}
-
-	if (pairs.empty()) {
-		safs::log_info("Transaction::getRange: no keys found in range: {} - {}",
-		               kv::keyToEscapedAscii(begin.getKey()), kv::keyToEscapedAscii(end.getKey()));
-		return {{}, false};
-	}
-
-	kv::GetRangeResult result(std::move(pairs), more != 0);
-
-	return result;
+	return std::make_unique<FDBFutureRange>(future);
 }
 
 void Transaction::set(const kv::Key &key, const kv::Value &value) {

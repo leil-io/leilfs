@@ -18,24 +18,19 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <optional>
-#include <vector>
 
-#include "kv/kv_utils.h"
+#include "kv/kv_types.h"
 
 namespace kv {
 
 class IFuture;
-
-/// Represents a key-value pair in the key-value store.
-/// Keys and values are stored as vectors of bytes.
-struct KeyValuePair {
-	Key key;
-	Value value;
-};
+class IRangeFuture;
 
 /// Represents a key selector for range queries.
 class KeySelector {
@@ -56,23 +51,6 @@ private:
 	Key key_;         ///< The key for this selector.
 	bool inclusive_;  ///< Whether the key is inclusive in the range.
 	int offset_;      ///< Offset for the key selector, used for pagination in range queries.
-};
-
-/// Result of a range query with information if there are more results available.
-class GetRangeResult {
-public:
-	GetRangeResult(std::vector<KeyValuePair> pairs, bool hasMore)
-	    : pairs_(std::move(pairs)), hasMore_(hasMore) {}
-
-	/// Returns the key-value pairs in the result.
-	const std::vector<KeyValuePair> &getPairs() const { return pairs_; }
-
-	/// Returns whether there are more results available.
-	bool hasMore() const { return hasMore_; }
-
-private:
-	std::vector<KeyValuePair> pairs_;  ///< The key-value pairs retrieved in the range query.
-	bool hasMore_{false};              ///< True if more results are available beyond this range.
 };
 
 constexpr int kDefaultGetRangeLimit = 1000;
@@ -118,6 +96,16 @@ public:
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	virtual GetRangeResult getRange(const KeySelector &start, const KeySelector &end,
 	                                int limit = kDefaultGetRangeLimit) = 0;
+
+	/// Retrieves a range of keys and values asynchronously.
+	/// @param start The starting key for the range.
+	/// @param end The ending key for the range.
+	/// @param limit The maximum number of key-value pairs to retrieve.
+	/// @return A future that will contain the range when ready.
+	/// @note The transaction must remain alive until the future's get() method is called.
+	virtual std::unique_ptr<IRangeFuture> getRangeAsync(const KeySelector &start,
+	                                                    const KeySelector &end,
+	                                                    int limit = kDefaultGetRangeLimit) = 0;
 
 protected:
 	IReadOnlyTransaction() = default;

@@ -109,7 +109,7 @@ jobs:
                     -DUSE_FSAL_PROXY_V4=OFF \
                     -DUSE_FSAL_RGW=OFF \
                     -DUSE_FSAL_XFS=OFF \
-                    -DUSE_GSS=OFF \
+                    -DUSE_GSS=ON \
                     -DUSE_MONITORING=OFF
                 sudo cmake --build build --target install
 

@@ -179,6 +179,21 @@ if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Ganesha' /etc/sudoers.d/s
 	END
 fi
 
+if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Kerberos' /etc/sudoers.d/saunafstest >/dev/null; then
+	cat <<-'END' >>/etc/sudoers.d/saunafstest
+		# Kerberos automated tests
+		Defaults:saunafstest env_keep += "KRB5_CONFIG KRB5CCNAME"
+		saunafstest ALL = NOPASSWD: /usr/bin/kinit saunafstest
+		saunafstest ALL = NOPASSWD: /usr/bin/klist
+		saunafstest ALL = NOPASSWD: /usr/bin/kdestroy
+		saunafstest ALL = NOPASSWD: /usr/sbin/rpc.gssd -f -vvv -r -R SAUNAFS.TEST \
+			-p /tmp/SaunaFS-autotests/* -d /tmp/SaunaFS-autotests/* -k /tmp/SaunaFS-autotests/* -n
+		saunafstest ALL = NOPASSWD: /sbin/rpc.gssd -f -vvv -r -R SAUNAFS.TEST \
+			-p /tmp/SaunaFS-autotests/* -d /tmp/SaunaFS-autotests/* -k /tmp/SaunaFS-autotests/* -n
+		saunafstest ALL = NOPASSWD: /usr/bin/pkill -f rpc.gssd*
+	END
+fi
+
 if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Client' /etc/sudoers.d/saunafstest >/dev/null; then
 	cat <<-'END' >>/etc/sudoers.d/saunafstest
 		# Client

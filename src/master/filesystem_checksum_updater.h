@@ -52,7 +52,8 @@ public:
 protected:
 	static void writeToChangelog(uint32_t ts) {
 		lastEntry_ = gMetadata->metadataVersion;
-		if (metadataserver::isMaster() && !gChecksumBackgroundUpdater.inProgress()) {
+		if (metadataserver::isMaster() && gFSOperations->metadataChecksumSupported() &&
+		    !gChecksumBackgroundUpdater.inProgress()) {
 			// The checksum updater is not used by KV/MDS backends, which do not rely on
 			// changelog-based checksumming. The fsOpContext here is a placeholder to satisfy
 			// the updated changeLog() signature; no transaction commit is needed.

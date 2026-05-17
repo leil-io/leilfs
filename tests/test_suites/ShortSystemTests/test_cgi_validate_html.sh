@@ -59,14 +59,14 @@ traverse_cgi "$cgi_pages/full"
 
 # Make sure saunafs-cgiserver connected to the master server and downloaded more than 20 files.
 # Only a few files are downloaded when connection to the master server was unsuccessful.
-assert_less_than '20' "$(find "$cgi_pages/empty" -name "sfs.cgi*" | wc -l)"
-assert_less_than '20' "$(find "$cgi_pages/full" -name "sfs.cgi*" | wc -l)"
+assert_less_than '20' "$(find "$cgi_pages/empty" -name "leil.cgi*" | wc -l)"
+assert_less_than '20' "$(find "$cgi_pages/full" -name "leil.cgi*" | wc -l)"
 
 # Make sure there are no tracebacks.
 expect_empty "$(grep -Inri -A 20 'Traceback' "$cgi_pages" || true)"
 
 # Validate html pages using 'tidy'
-find "$cgi_pages" -name "sfs.cgi*" | while read file; do
+find "$cgi_pages" -name "leil.cgi*" | while read file; do
 	tidyOutput="$(tidy -q -errors $file 2>&1 | true)"
 	# Filter out known warnings about unescaped ampersands in URLs
 	filteredOutput=$(echo "${tidyOutput}" | grep -v 'Unescaped \&')

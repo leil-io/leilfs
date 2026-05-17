@@ -161,6 +161,46 @@ The master communicates with five types of peers. The naming convention
 | `matontserv`   | Notifier clients | Broadcasts changelog events for inotify-like functionality. |
 | `masterconn`   | Active master   | Used only when running in **Shadow** personality. Receives changelogs and metadata from the active master. |
 
+## Client Sessions
+
+Client session lifecycle is routed through `ISessionManager`. The file-backed
+master binds `SessionManagerFile`; KV/MDS builds can bind a different manager
+without changing the shared `Session` runtime object or the `matoclserv`
+protocol handlers.
+
+`matoclserv_sessions.cc` is the dispatcher layer. Its wrappers forward to the
+active manager and assert if they are called before startup attaches one.
+
+For the file-backed master, `SessionManagerFile` keeps the complete in-memory
+session catalog and persists reconnectable session records to `sessions.sfs`.
+The loader accepts the current session-file header only; old `MFS`-branded and
+pre-1.6.4 session files are rejected at startup instead of being interpreted by
+compatibility branches. `storeSessions()` continues to write the current format.
+
+Session durability is split between the session file and metadata:
+
+- `sessions.sfs` stores reconnectable mount identity, access limits, UID/GID
+  mapping, and hourly operation stats.
+- `metadata.sfs` stores the session-id counter and each file's
+  `FSNodeFile::sessionIds` list.
+- `Session::openFilesSet` is an in-memory, per-session index rebuilt on startup
+  from the file-side `sessionIds` metadata.
+
+That split gives the master both lookup directions: "which files does this
+session hold?" through `openFilesSet`, and "which sessions hold this file?"
+through `FSNodeFile::sessionIds`. The file-side list is the durable authority
+for reserved-file lifetime and purge decisions.
+
+The lifecycle remains the traditional master lifecycle: create, reconnect,
+disconnect, explicit delete, and timeout cleanup. Session ids are still
+allocated through `gFSOperations->newSessionId()`, which records the allocation
+in the changelog for the file-backed master path.
+
+Explicit delete and timeout cleanup both call `matocl_close_files()` to release
+open files and locks. The helper reports whether teardown completed; timeout
+cleanup erases a session only after successful teardown, so a failed transactional
+backend commit can keep the session managed for a later retry.
+
 ## Metadata Persistence
 
 Metadata durability is achieved through two complementary mechanisms:
@@ -233,14 +273,32 @@ Jobs support cancellation and completion callbacks.
 Several maintenance routines run on timer-driven or per-loop schedules,
 registered in `fs_periodic_master_init()` (see `filesystem_periodic.cc`):
 
-| Operation | Schedule | Purpose |
-|-----------|----------|---------|
-| **File integrity test** (`fs_periodic_file_test` / `fs_background_file_test`) | Every second (timer) + every loop (background) | Scans the entire node hash table in a configurable cycle time (`FILE_TEST_LOOP_MIN_TIME`, default 3600s). For each file node, checks chunk availability and copy counts. For each directory, validates parent-child pointer consistency. Builds a `gDefectiveNodes` map of inodes with unavailable chunks, under-goal chunks, or structural errors. |
-| **Background task processing** (`fs_background_task_manager_work`) | Every loop | Drives the `TaskManager`, processing a batch of tasks (snapshots, recursive removes, goal/trashtime changes) per iteration. |
-| **Checksum recalculation** (`fs_background_checksum_recalculation_a_bit`) | Every loop | Incrementally recalculates metadata checksums (nodes, xattrs, chunks) in the background, progressing through steps at a speed limit per iteration. |
-| **Trash cleanup** (`fs_periodic_emptytrash`) | Every 100ms | Purges expired trash entries whose deletion timestamp has passed. |
-| **Reserved file cleanup** (`fs_periodic_emptyreserved`) | Configurable period | Releases reserved files (deleted-but-still-open files) whose sessions are no longer active. |
-| **Chunk maintenance** (in `chunks.cc`) | Periodic | Handles chunk replication, deletion of excess copies, and rebalancing across chunkservers. |
+- **File integrity test** (`fs_periodic_file_test` / `fs_background_file_test`):
+  runs every second (timer) and every loop (background). Scans the entire node
+  hash table in a configurable cycle time (`FILE_TEST_LOOP_MIN_TIME`, default
+  3600s). For each file node, checks chunk availability and copy counts. For
+  each directory, validates parent-child pointer consistency. Builds a
+  `gDefectiveNodes` map of inodes with unavailable chunks, under-goal chunks,
+  or structural errors.
+- **Background task processing** (`fs_background_task_manager_work`):
+  runs every loop. Drives the `TaskManager`, processing a batch of tasks
+  (snapshots, recursive removes, goal/trashtime changes) per iteration.
+- **Checksum recalculation** (`fs_background_checksum_recalculation_a_bit`):
+  runs every loop. Incrementally recalculates metadata checksums (nodes,
+  xattrs, chunks) in the background, progressing through steps at a speed
+  limit per iteration.
+- **Trash cleanup** (`fs_periodic_emptytrash`):
+  runs every 100ms. Purges expired trash entries whose deletion timestamp has
+  passed.
+- **Reserved file cleanup** (`fs_periodic_emptyreserved`):
+  runs on a configurable period in ms
+  (`EMPTY_RESERVED_FILES_PERIOD_MSECONDS`), where `0` disables it.
+  Force-releases reserved files (deleted-but-still-open files) from all owning
+  sessions, even if sessions are still active; enabling it can disrupt clients
+  that still hold those files.
+- **Chunk maintenance** (in `chunks.cc`):
+  runs periodically. Handles chunk replication, deletion of excess copies, and
+  rebalancing across chunkservers.
 
 ## Initialization Sequence
 

@@ -145,11 +145,6 @@ public:
 	virtual void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
 	                            uint16_t newBlocks) = 0;
 
-	/// Defragments or moves the given Chunk if needed.
-	/// If this type of this does not support Chunk fragmentation, an empty
-	/// implementation is enough.
-	virtual int defragmentOrMoveChunk(IChunk *chunk, uint8_t *crcData) = 0;
-
 	/// Updates this disk attributes after a scan.
 	/// Useful for SMR drives, for instance, to update the zones state after
 	/// knowing all the Chunks.

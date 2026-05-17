@@ -4,7 +4,7 @@ collect_sources(CHUNKSERVER_PLUGINS)
 shared_add_library(chunkserver-common ${CHUNKSERVER_PLUGINS_SOURCES})
 shared_target_link_libraries(chunkserver-common
         safsprotocol
-        sfscommon
+        leil-common
         ${Boost_LIBRARIES}
         ${ADDITIONAL_LIBS})
 
@@ -15,4 +15,4 @@ link_unittest(chunkserver-common
         GTest::gtest
         GTest::gmock
         chunkserver-common
-        sfscommon)
+        leil-common)
