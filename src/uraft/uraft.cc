@@ -435,6 +435,11 @@ void uRaft::rpcReqVoteResponse(int id, const RpcResponse &data) {
 	// Stale response
 	if (data.term < state_.current_term) { return; }
 
+	// A vote response is proof that the peer is alive and reachable, so refresh its
+	// freshness timestamp immediately. This avoids treating a freshly elected quorum as
+	// stale until the first AppendEntries round-trip completes.
+	node_[id].heartbeat = std::max(node_[id].heartbeat, data.req_time);
+
 	if (state_.type != kCandidate) {
 		return;
 	}
