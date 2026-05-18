@@ -216,19 +216,19 @@ namespace {
 constexpr int kDefaultFileTestLoopTime = 300;
 constexpr int kErrorsLogMax = 500;
 
-static inode_t fsinfo_files = 0;
-static inode_t fsinfo_ugfiles = 0;
-static inode_t fsinfo_mfiles = 0;
-static uint32_t fsinfo_chunks = 0;
-static uint32_t fsinfo_ugchunks = 0;
-static uint32_t fsinfo_mchunks = 0;
-static uint32_t fsinfo_loopstart = 0;
-static uint32_t fsinfo_loopend = 0;
-static uint32_t fsinfo_notfoundchunks = 0;
-static uint32_t fsinfo_unavailchunks = 0;
-static inode_t fsinfo_unavailfiles = 0;
-static inode_t fsinfo_unavailtrashfiles = 0;
-static inode_t fsinfo_unavailreservedfiles = 0;
+static inode_t gFileTestPublishedFiles = 0;
+static inode_t gFileTestPublishedUnderGoalFiles = 0;
+static inode_t gFileTestPublishedMissingFiles = 0;
+static uint32_t gFileTestPublishedChunks = 0;
+static uint32_t gFileTestPublishedUnderGoalChunks = 0;
+static uint32_t gFileTestPublishedMissingChunks = 0;
+static uint32_t gFileTestPublishedLoopStart = 0;
+static uint32_t gFileTestPublishedLoopEnd = 0;
+static uint32_t gFileTestPublishedUnknownChunks = 0;
+static uint32_t gFileTestPublishedUnavailableChunks = 0;
+static inode_t gFileTestPublishedUnavailableFiles = 0;
+static inode_t gFileTestPublishedUnavailableTrashFiles = 0;
+static inode_t gFileTestPublishedUnavailableReservedFiles = 0;
 
 static uint32_t gFileTestLoopTime = kDefaultFileTestLoopTime;
 static int gFileTestLoopIndex = 0;
@@ -242,6 +242,18 @@ using DefectiveNodesMap = flat_map<inode_t, uint8_t>;
 
 constexpr size_t kMaxNodeEntries = 1000000;
 static DefectiveNodesMap gDefectiveNodes;
+
+void addNodeErrorFlag(uint8_t &errorFlags, NodeErrorFlag flag) {
+	errorFlags |= static_cast<uint8_t>(flag);
+}
+
+bool hasNodeErrorFlag(uint8_t errorFlags, NodeErrorFlag flag) {
+	return (errorFlags & static_cast<uint8_t>(flag)) != 0;
+}
+
+bool hasAnyNodeErrorFlag(uint8_t errorFlags, uint8_t requestedFlags) {
+	return (errorFlags & requestedFlags) != 0;
+}
 
 std::string getDetachedNodePath(IFilesystemOperations &operations,
                                 const FilesystemOperationContext &fsOpContext, const FSNode *node) {
@@ -290,156 +302,167 @@ std::string getNodeInfo(IFilesystemOperations &operations,
 }
 
 void processFileTest(FilesystemOperationsBase &operations) {
-	uint32_t k;
-	uint8_t vc, node_error_flag;
 	ActiveLoopWatchdog watchdog;
 	auto fsOpContext = operations.createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
 
-	static inode_t files = 0;
-	static inode_t ugfiles = 0;
-	static inode_t mfiles = 0;
-	static uint32_t chunks = 0;
-	static uint32_t ugchunks = 0;
-	static uint32_t mchunks = 0;
-	static uint32_t notfoundchunks = 0;
-	static uint32_t unavailchunks = 0;
-	static inode_t unavailfiles = 0;
-	static inode_t unavailtrashfiles = 0;
-	static inode_t unavailreservedfiles = 0;
+	static inode_t currentScanFiles = 0;
+	static inode_t currentScanUnderGoalFiles = 0;
+	static inode_t currentScanMissingFiles = 0;
+	static uint32_t currentScanChunks = 0;
+	static uint32_t currentScanUnderGoalChunks = 0;
+	static uint32_t currentScanMissingChunks = 0;
+	static uint32_t currentScanUnknownChunks = 0;
+	static uint32_t currentScanUnavailableChunks = 0;
+	static inode_t currentScanUnavailableFiles = 0;
+	static inode_t currentScanUnavailableTrashFiles = 0;
+	static inode_t currentScanUnavailableReservedFiles = 0;
 
 	if (gFileTestLoopIndex == 0) {
-		if (unavailfiles > 0) { safs::log_err("Currently unavailable files: {}", unavailfiles); }
-		if (unavailchunks > 0) { safs::log_err("Currently unavailable chunks: {}", unavailchunks); }
-		if (unavailreservedfiles > 0) {
-			safs::log_err("Currently unavailable reserved files: {}", unavailreservedfiles);
+		if (currentScanUnavailableFiles > 0) {
+			safs::log_err("Currently unavailable files: {}", currentScanUnavailableFiles);
 		}
-		if (unavailtrashfiles > 0) {
-			safs::log_warn("Currently unavailable trash files: {}", unavailtrashfiles);
+		if (currentScanUnavailableChunks > 0) {
+			safs::log_err("Currently unavailable chunks: {}", currentScanUnavailableChunks);
+		}
+		if (currentScanUnavailableReservedFiles > 0) {
+			safs::log_err("Currently unavailable reserved files: {}",
+			              currentScanUnavailableReservedFiles);
+		}
+		if (currentScanUnavailableTrashFiles > 0) {
+			safs::log_warn("Currently unavailable trash files: {}",
+			               currentScanUnavailableTrashFiles);
 		}
 
-		fsinfo_files = files;
-		fsinfo_ugfiles = ugfiles;
-		fsinfo_mfiles = mfiles;
-		fsinfo_chunks = chunks;
-		fsinfo_ugchunks = ugchunks;
-		fsinfo_mchunks = mchunks;
-		fsinfo_loopstart = fsinfo_loopend;
-		fsinfo_loopend = eventloop_time();
-		fsinfo_notfoundchunks = notfoundchunks;
-		fsinfo_unavailchunks = unavailchunks;
-		fsinfo_unavailfiles = unavailfiles;
-		fsinfo_unavailtrashfiles = unavailtrashfiles;
-		fsinfo_unavailreservedfiles = unavailreservedfiles;
+		gFileTestPublishedFiles = currentScanFiles;
+		gFileTestPublishedUnderGoalFiles = currentScanUnderGoalFiles;
+		gFileTestPublishedMissingFiles = currentScanMissingFiles;
+		gFileTestPublishedChunks = currentScanChunks;
+		gFileTestPublishedUnderGoalChunks = currentScanUnderGoalChunks;
+		gFileTestPublishedMissingChunks = currentScanMissingChunks;
+		gFileTestPublishedLoopStart = gFileTestPublishedLoopEnd;
+		gFileTestPublishedLoopEnd = eventloop_time();
+		gFileTestPublishedUnknownChunks = currentScanUnknownChunks;
+		gFileTestPublishedUnavailableChunks = currentScanUnavailableChunks;
+		gFileTestPublishedUnavailableFiles = currentScanUnavailableFiles;
+		gFileTestPublishedUnavailableTrashFiles = currentScanUnavailableTrashFiles;
+		gFileTestPublishedUnavailableReservedFiles = currentScanUnavailableReservedFiles;
 
-		files = 0;
-		ugfiles = 0;
-		mfiles = 0;
-		chunks = 0;
-		ugchunks = 0;
-		mchunks = 0;
-		notfoundchunks = 0;
-		unavailchunks = 0;
-		unavailfiles = 0;
-		unavailtrashfiles = 0;
-		unavailreservedfiles = 0;
+		currentScanFiles = 0;
+		currentScanUnderGoalFiles = 0;
+		currentScanMissingFiles = 0;
+		currentScanChunks = 0;
+		currentScanUnderGoalChunks = 0;
+		currentScanMissingChunks = 0;
+		currentScanUnknownChunks = 0;
+		currentScanUnavailableChunks = 0;
+		currentScanUnavailableFiles = 0;
+		currentScanUnavailableTrashFiles = 0;
+		currentScanUnavailableReservedFiles = 0;
 	}
 
 	watchdog.start();
-	for (k = 0; k < gFileTestLoopBucketLimit && gFileTestLoopIndex < NODEHASHSIZE;
-	     k++, gFileTestLoopIndex++) {
-		if (k > 0 && watchdog.expired()) {
-			gFileTestLoopBucketLimit -= k;
+	uint32_t scannedBuckets = 0;
+	for (; scannedBuckets < gFileTestLoopBucketLimit && gFileTestLoopIndex < NODEHASHSIZE;
+	     scannedBuckets++, gFileTestLoopIndex++) {
+		if (scannedBuckets > 0 && watchdog.expired()) {
+			gFileTestLoopBucketLimit -= scannedBuckets;
 			return;
 		}
 
 		for (const auto &node : gMetadata->nodeHash[gFileTestLoopIndex]) {
-			node_error_flag = 0;
+			uint8_t nodeErrorFlags = 0;
 
 			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			    node->type == FSNodeType::kReserved) {
-				for (const auto &chunkid : static_cast<FSNodeFile *>(node)->chunks) {
-					if (chunkid == 0) { continue; }
+				for (const auto &chunkId : static_cast<FSNodeFile *>(node)->chunks) {
+					if (chunkId == 0) { continue; }
 
-					if (chunk_get_fullcopies(chunkid, &vc) != SAUNAFS_STATUS_OK) {
-						node_error_flag |= static_cast<int>(kChunkUnavailable);
-						notfoundchunks++;
-						mchunks++;
-					} else if (vc == 0) {
-						node_error_flag |= static_cast<int>(kChunkUnavailable);
-						unavailchunks++;
-						mchunks++;
+					uint8_t fullCopies = 0;
+					if (chunk_get_fullcopies(chunkId, &fullCopies) != SAUNAFS_STATUS_OK) {
+						addNodeErrorFlag(nodeErrorFlags, kChunkUnavailable);
+						currentScanUnknownChunks++;
+						currentScanMissingChunks++;
+					} else if (fullCopies == 0) {
+						addNodeErrorFlag(nodeErrorFlags, kChunkUnavailable);
+						currentScanUnavailableChunks++;
+						currentScanMissingChunks++;
 					} else {
-						int recover, remove;
-						chunk_get_partstomodify(chunkid, recover, remove);
-						if (recover > 0) {
-							node_error_flag |= static_cast<int>(kChunkUnderGoal);
-							ugchunks++;
+						int recoverParts = 0;
+						int removeParts = 0;
+						chunk_get_partstomodify(chunkId, recoverParts, removeParts);
+						if (recoverParts > 0) {
+							addNodeErrorFlag(nodeErrorFlags, kChunkUnderGoal);
+							currentScanUnderGoalChunks++;
 						}
 					}
-					chunks++;
+					currentScanChunks++;
 				}
 			}
 
 			if (node->type == FSNodeType::kDirectory) {
 				for (const auto &entry : static_cast<FSNodeDirectory *>(node)->entries) {
-					FSNode *childNode = entry.second;
+					auto *childNode = entry.second;
 
-					if (!childNode) {
-						node_error_flag |= static_cast<int>(kStructureError);
+					if (childNode == kNodeNotFound) {
+						addNodeErrorFlag(nodeErrorFlags, kStructureError);
 					} else {
-						auto parentInChildPtr = std::find_if(
+						auto parentIter = std::find_if(
 						    childNode->parents.begin(), childNode->parents.end(),
 						    [node](const std::pair<inode_t, const hstorage::Handle *> &p) {
 							    return p.first == node->id;
 						    });
-						if (parentInChildPtr == childNode->parents.end()) {
-							node_error_flag |= static_cast<int>(kStructureError);
+						if (parentIter == childNode->parents.end()) {
+							addNodeErrorFlag(nodeErrorFlags, kStructureError);
 						}
 					}
 				}
 			}
 
-			if (node_error_flag == 0) {
-				auto it = gDefectiveNodes.find(node->id);
-				if (it != gDefectiveNodes.end()) { gDefectiveNodes.erase(it); }
+			if (nodeErrorFlags == 0) {
+				auto defectiveNodeIter = gDefectiveNodes.find(node->id);
+				if (defectiveNodeIter != gDefectiveNodes.end()) {
+					gDefectiveNodes.erase(defectiveNodeIter);
+				}
 				continue;
 			}
 
-			if (node_error_flag & kChunkUnavailable) {
+			if (hasNodeErrorFlag(nodeErrorFlags, kChunkUnavailable)) {
 				if (node->type == FSNodeType::kTrash) {
-					unavailtrashfiles++;
+					currentScanUnavailableTrashFiles++;
 				} else if (node->type == FSNodeType::kReserved) {
-					unavailreservedfiles++;
+					currentScanUnavailableReservedFiles++;
 				} else {
-					unavailfiles += node->parents.size();
+					currentScanUnavailableFiles += node->parents.size();
 				}
 
-				auto it = gDefectiveNodes.find(node->id);
-				if (it == gDefectiveNodes.end()) {
+				auto defectiveNodeIter = gDefectiveNodes.find(node->id);
+				if (defectiveNodeIter == gDefectiveNodes.end()) {
 					std::string name = getNodeInfo(operations, fsOpContext, node);
 					safs::log_trace("Chunks unavailable in {}", name);
 				}
 			}
-			if (node_error_flag & kChunkUnderGoal) { ugfiles++; }
-			if (node_error_flag & kStructureError) {
-				auto it = gDefectiveNodes.find(node->id);
-				if (it == gDefectiveNodes.end()) {
+			if (hasNodeErrorFlag(nodeErrorFlags, kChunkUnderGoal)) { currentScanUnderGoalFiles++; }
+			if (hasNodeErrorFlag(nodeErrorFlags, kStructureError)) {
+				auto defectiveNodeIter = gDefectiveNodes.find(node->id);
+				if (defectiveNodeIter == gDefectiveNodes.end()) {
 					std::string name = getNodeInfo(operations, fsOpContext, node);
 					safs_pretty_syslog(LOG_ERR, "Structure error in %s", name.c_str());
 				}
 			}
 
 			if (gDefectiveNodes.size() < kMaxNodeEntries) {
-				gDefectiveNodes[node->id] = node_error_flag;
+				gDefectiveNodes[node->id] = nodeErrorFlags;
 			} else {
-				auto it = gDefectiveNodes.find(node->id);
-				if (it != gDefectiveNodes.end()) { (*it).second = node_error_flag; }
+				auto defectiveNodeIter = gDefectiveNodes.find(node->id);
+				if (defectiveNodeIter != gDefectiveNodes.end()) {
+					(*defectiveNodeIter).second = nodeErrorFlags;
+				}
 			}
 		}
 	}
 
-	gFileTestLoopBucketLimit -= k;
+	gFileTestLoopBucketLimit -= scannedBuckets;
 	if (gFileTestLoopIndex >= NODEHASHSIZE) { gFileTestLoopIndex = 0; }
 }
 
@@ -478,42 +501,43 @@ void FilesystemOperationsBase::fsTestGetData(FsTestReport &out) {
 	auto fsOpContext =
 	    createFilesystemOperationContext(FilesystemOperationContext::TransactionType::kReadOnly);
 	std::stringstream report;
-	int errors = 0;
+	int errorCount = 0;
 
-	for (const auto &entry : gDefectiveNodes) {
-		if (errors >= kErrorsLogMax) { break; }
+	for (const auto &defectiveNodeEntry : gDefectiveNodes) {
+		if (errorCount >= kErrorsLogMax) { break; }
 
-		FSNode *node = nodeOperations()->idToNode<FSNode>(fsOpContext, entry.first);
-		if (!node) {
-			report << "Structure error in defective list, entry " << std::to_string(entry.first)
-			       << "\n";
-			errors++;
+		auto *node = nodeOperations()->idToNode<FSNode>(fsOpContext, defectiveNodeEntry.first);
+		if (node == kNodeNotFound) {
+			report << "Structure error in defective list, entry "
+			       << std::to_string(defectiveNodeEntry.first) << "\n";
+			errorCount++;
 			continue;
 		}
 
 		if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 		    node->type == FSNodeType::kReserved) {
-			FSNodeFile *fileNode = static_cast<FSNodeFile *>(node);
-			for (std::size_t j = 0; j < fileNode->chunks.size(); ++j) {
-				auto chunkid = fileNode->chunks[j];
-				if (chunkid == 0) { continue; }
+			auto *fileNode = static_cast<FSNodeFile *>(node);
+			for (std::size_t chunkIndex = 0; chunkIndex < fileNode->chunks.size(); ++chunkIndex) {
+				auto chunkId = fileNode->chunks[chunkIndex];
+				if (chunkId == 0) { continue; }
 
-				uint8_t vc;
-				if (chunk_get_fullcopies(chunkid, &vc) != SAUNAFS_STATUS_OK) {
-					report << "structure error - chunk " << chunkid
-					       << " not found (inode: " << fileNode->id << " ; index: " << j << ")\n";
-					errors++;
-				} else if (vc == 0) {
-					report << "currently unavailable chunk " << chunkid
-					       << " (inode: " << fileNode->id << " ; index: " << j << ")\n";
-					errors++;
+				uint8_t fullCopies = 0;
+				if (chunk_get_fullcopies(chunkId, &fullCopies) != SAUNAFS_STATUS_OK) {
+					report << "structure error - chunk " << chunkId
+					       << " not found (inode: " << fileNode->id << " ; index: " << chunkIndex
+					       << ")\n";
+					errorCount++;
+				} else if (fullCopies == 0) {
+					report << "currently unavailable chunk " << chunkId
+					       << " (inode: " << fileNode->id << " ; index: " << chunkIndex << ")\n";
+					errorCount++;
 				}
 			}
 		}
 
-		if (errors >= kErrorsLogMax) { break; }
+		if (errorCount >= kErrorsLogMax) { break; }
 
-		if (entry.second & kChunkUnavailable) {
+		if (hasNodeErrorFlag(defectiveNodeEntry.second, kChunkUnavailable)) {
 			assert(node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			       node->type == FSNodeType::kReserved);
 			std::string name = getNodeInfo(*this, fsOpContext, node);
@@ -525,51 +549,54 @@ void FilesystemOperationsBase::fsTestGetData(FsTestReport &out) {
 				report << "*";
 			}
 			report << " currently unavailable " << name << "\n";
-			errors++;
+			errorCount++;
 		}
 
-		if (errors >= kErrorsLogMax) { break; }
+		if (errorCount >= kErrorsLogMax) { break; }
 
-		if (entry.second & kStructureError) {
+		if (hasNodeErrorFlag(defectiveNodeEntry.second, kStructureError)) {
 			std::string name = getNodeInfo(*this, fsOpContext, node);
 			report << "Structure error in " << name << "\n";
-			errors++;
+			errorCount++;
 		}
 
-		if (errors >= kErrorsLogMax) { break; }
+		if (errorCount >= kErrorsLogMax) { break; }
 	}
 
-	if (errors >= kErrorsLogMax) {
-		report << "only first " << errors << " errors (unavailable chunks/files) were logged\n";
+	if (errorCount >= kErrorsLogMax) {
+		report << "only first " << errorCount << " errors (unavailable chunks/files) were logged\n";
 	}
 
-	if (fsinfo_notfoundchunks > 0) {
-		report << "unknown chunks: " << fsinfo_notfoundchunks << "\n";
+	if (gFileTestPublishedUnknownChunks > 0) {
+		report << "unknown chunks: " << gFileTestPublishedUnknownChunks << "\n";
 	}
 
-	if (fsinfo_unavailchunks > 0) {
-		report << "unavailable chunks: " << fsinfo_unavailchunks << "\n";
+	if (gFileTestPublishedUnavailableChunks > 0) {
+		report << "unavailable chunks: " << gFileTestPublishedUnavailableChunks << "\n";
 	}
 
-	if (fsinfo_unavailtrashfiles > 0) {
-		report << "unavailable trash files: " << fsinfo_unavailtrashfiles << "\n";
+	if (gFileTestPublishedUnavailableTrashFiles > 0) {
+		report << "unavailable trash files: " << gFileTestPublishedUnavailableTrashFiles << "\n";
 	}
 
-	if (fsinfo_unavailreservedfiles > 0) {
-		report << "unavailable reserved files: " << fsinfo_unavailreservedfiles << "\n";
+	if (gFileTestPublishedUnavailableReservedFiles > 0) {
+		report << "unavailable reserved files: " << gFileTestPublishedUnavailableReservedFiles
+		       << "\n";
 	}
 
-	if (fsinfo_unavailfiles > 0) { report << "unavailable files: " << fsinfo_unavailfiles << "\n"; }
+	if (gFileTestPublishedUnavailableFiles > 0) {
+		report << "unavailable files: " << gFileTestPublishedUnavailableFiles << "\n";
+	}
 
 	out.report = report.str();
-	out.files = fsinfo_files;
-	out.underGoalFiles = fsinfo_ugfiles;
-	out.missingFiles = fsinfo_mfiles;
-	out.chunks = fsinfo_chunks;
-	out.underGoalChunks = fsinfo_ugchunks;
-	out.missingChunks = fsinfo_mchunks;
-	out.loopStart = fsinfo_loopstart;
-	out.loopEnd = fsinfo_loopend;
+	out.files = gFileTestPublishedFiles;
+	out.underGoalFiles = gFileTestPublishedUnderGoalFiles;
+	out.missingFiles = gFileTestPublishedMissingFiles;
+	out.chunks = gFileTestPublishedChunks;
+	out.underGoalChunks = gFileTestPublishedUnderGoalChunks;
+	out.missingChunks = gFileTestPublishedMissingChunks;
+	out.loopStart = gFileTestPublishedLoopStart;
+	out.loopEnd = gFileTestPublishedLoopEnd;
 }
 
 std::vector<DefectiveFileInfo> FilesystemOperationsBase::fsTestGetDefectiveNodes(
@@ -579,14 +606,17 @@ std::vector<DefectiveFileInfo> FilesystemOperationsBase::fsTestGetDefectiveNodes
 	std::vector<DefectiveFileInfo> defectiveNodesInfo;
 	ActiveLoopWatchdog watchdog;
 	defectiveNodesInfo.reserve(maxEntries);
-	auto it = gDefectiveNodes.find_nth(cursor);
+	auto defectiveNodeIter = gDefectiveNodes.find_nth(cursor);
 	watchdog.start();
-	for (uint64_t i = 0; i < maxEntries && it != gDefectiveNodes.end(); ++it) {
-		if (((*it).second & requestedFlags) != 0) {
-			FSNode *node = nodeOperations()->idToNode<FSNode>(fsOpContext, (*it).first);
+	for (uint64_t returnedEntries = 0;
+	     returnedEntries < maxEntries && defectiveNodeIter != gDefectiveNodes.end();
+	     ++defectiveNodeIter) {
+		if (hasAnyNodeErrorFlag((*defectiveNodeIter).second, requestedFlags)) {
+			auto *node =
+			    nodeOperations()->idToNode<FSNode>(fsOpContext, (*defectiveNodeIter).first);
 			std::string info = getNodeInfo(*this, fsOpContext, node);
-			defectiveNodesInfo.emplace_back(std::move(info), (*it).second);
-			++i;
+			defectiveNodesInfo.emplace_back(std::move(info), (*defectiveNodeIter).second);
+			++returnedEntries;
 		}
 		++cursor;
 		if (watchdog.expired()) { return defectiveNodesInfo; }
@@ -597,8 +627,8 @@ std::vector<DefectiveFileInfo> FilesystemOperationsBase::fsTestGetDefectiveNodes
 
 void FilesystemOperationsBase::fsTestOnNodeRemoved(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, inode_t inode) {
-	auto it = gDefectiveNodes.find(inode);
-	if (it != gDefectiveNodes.end()) { gDefectiveNodes.erase(it); }
+	auto defectiveNodeIter = gDefectiveNodes.find(inode);
+	if (defectiveNodeIter != gDefectiveNodes.end()) { gDefectiveNodes.erase(defectiveNodeIter); }
 }
 
 // ---------------------------------------------------------------------------
@@ -613,8 +643,8 @@ void FilesystemOperationsBase::backgroundChecksumStep() {
 		return;
 	case ChecksumRecalculatingStep::kNodes:
 		while (gChecksumBackgroundUpdater.getPosition() < NODEHASHSIZE) {
-			auto checkSumPosition = gChecksumBackgroundUpdater.getPosition();
-			for (const auto &node : gMetadata->nodeHash[checkSumPosition]) {
+			auto checksumPosition = gChecksumBackgroundUpdater.getPosition();
+			for (const auto &node : gMetadata->nodeHash[checksumPosition]) {
 				fsnodes_checksum_add_to_background(node);
 				++recalculated;
 			}
