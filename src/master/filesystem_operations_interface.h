@@ -568,12 +568,93 @@ public:
 	                        inode_t parent, const HString &name, const std::string &path,
 	                        inode_t *inode, Attributes *attr) = 0;
 
+	/// Restores a file from trash using the path stored with its detached metadata.
+	///
+	/// The operation is intended for meta sessions. It resolves `inode`, verifies that it is a
+	/// trash node, validates the stored trash path, reconstructs the destination path from the
+	/// filesystem root, creates missing intermediate directories when needed, and links the file
+	/// back as an active file. The final path component must not already exist.
+	///
+	/// On master personalities, a successful restore is recorded as `UNDEL(inode)`. On replay
+	/// personalities, the operation applies that changelog entry and advances metadata state.
+	/// Implementations that need transactions create and commit their operation context internally.
+	///
+	/// @param context The FS operation context containing session data and timestamp.
+	/// @param inode The inode of the trash file to restore.
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_EPERM if the session is not a meta session or cannot access the
+	///         inode.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode does not exist or is not a trash node.
+	/// @return SAUNAFS_ERROR_CANTCREATEPATH if the stored path is invalid or cannot be
+	///         reconstructed.
+	/// @return SAUNAFS_ERROR_EEXIST if the destination path already exists.
+	/// @return SAUNAFS_ERROR_IO if a transactional backend cannot commit the restore.
 	virtual uint8_t undel(const FsContext &context, inode_t inode) = 0;
+
+	/// Prepares a file chunk for client-side writing.
+	///
+	/// The operation validates a read-write, non-meta session, resolves `inode` as a file-like
+	/// node, verifies `index`, and prepares the chunk at that index for modification. Depending on
+	/// the current file layout and chunk state, this may create a new chunk, lock an existing
+	/// chunk, duplicate a shared chunk, or start a version-increase operation before the client
+	/// writes data. The actual file length is finalized later by writeEnd().
+	///
+	/// On success, both personalities update file layout, timestamps, checksum, and quota
+	/// counters. Master additionally logs `WRITE(inode,index,version_flag,lockid):chunkid`; on
+	/// replay, `chunkid` is the expected resulting chunk id and mismatches return
+	/// SAUNAFS_ERROR_MISMATCH.
+	///
+	/// @param context The FS operation context containing session data and timestamp.
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param inode The inode of the file-like node to write.
+	/// @param index The chunk index in the file.
+	/// @param[in,out] lockid Existing lock id to verify, or 0 to request/receive a lock id.
+	/// @param[in,out] chunkid On master, receives the resulting chunk id; on replay,
+	///                        contains the expected resulting chunk id and is updated on
+	///                        success. If the chunk is already locked, receives the locked
+	///                        chunk id.
+	/// @param[in,out] opflag On master, receives the chunk operation code; non-zero means the
+	///                       caller must wait for chunkserver-side work. On replay, contains the
+	///                       changelog flag that controls whether the chunk version is increased.
+	/// @param[out] length Optional output for the current file length; may be nullptr.
+	/// @param min_server_version Min chunkserver version for new chunk allocation (master only).
+	///
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is not file-like or the session is invalid.
+	/// @return SAUNAFS_ERROR_INDEXTOOBIG if `index` exceeds the maximum chunk index.
+	/// @return SAUNAFS_ERROR_QUOTA if allocating or duplicating the chunk would exceed quota.
+	/// @return SAUNAFS_ERROR_LOCKED if the chunk is locked by another operation.
+	/// @return SAUNAFS_ERROR_NOTLOCKED or SAUNAFS_ERROR_WRONGLOCKID if the supplied lock id does
+	///         not match current chunk state.
+	/// @return SAUNAFS_ERROR_MISMATCH on replay when the resulting chunk id differs from
+	///         `chunkid`.
+	/// @return Other chunk allocation/modification errors such as SAUNAFS_ERROR_NOCHUNKSERVERS,
+	///         SAUNAFS_ERROR_NOSPACE, SAUNAFS_ERROR_NOCHUNK, SAUNAFS_ERROR_CHUNKLOST, or
+	///         SAUNAFS_ERROR_CHUNKBUSY.
+	///
+	/// @see writeEnd
 	virtual uint8_t writeChunk(const FsContext &context,
 	                           const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                           uint32_t index,
 	                           /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                           uint64_t *length, uint32_t min_server_version = 0) = 0;
+
+	/// Raises the next chunk-id floor used by strictly monotonic chunk-id generators.
+	///
+	/// Implementations must not lower the current next chunk id. Passing a value lower than the
+	/// current one leaves metadata unchanged and returns SAUNAFS_ERROR_MISMATCH. Successful master
+	/// calls are logged as `NEXTCHUNKID(nextChunkId)`, and replay personalities apply that entry to
+	/// keep future allocations above already known chunk ids.
+	///
+	/// @param context The FS operation context containing timestamp and personality information.
+	/// @param nextChunkId The minimum next chunk id to use for future allocations.
+	///
+	/// @return SAUNAFS_STATUS_OK if the next chunk-id floor was accepted.
+	/// @return SAUNAFS_ERROR_MISMATCH if `nextChunkId` is lower than the current next chunk id.
 	virtual uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) = 0;
 
 	/// Given a string representing a path, resolves and returns the canonical
@@ -705,6 +786,18 @@ public:
 	                                const std::string &path, inode_t *found_inode,
 	                                Attributes &attr) = 0;
 
+	/// Retrieves the attributes of a filesystem node.
+	///
+	/// Verifies the session (read-only, non-meta), resolves the inode with no read/write/execute
+	/// permission requirement, and fills @p attr from the node and the caller's session
+	/// credentials. Does not write to the changelog.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context carrying a read-only transaction in KV backends.
+	/// @param inode The inode whose attributes to read.
+	/// @param[out] attr Receives the node's attributes; zero-filled on any error return.
+	/// @return SAUNAFS_STATUS_OK on success, or a session/visibility error from
+	///         verifySession/getNodeForOperation (e.g. SAUNAFS_ERROR_EPERM, SAUNAFS_ERROR_ENOENT).
 	virtual uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                        inode_t inode, Attributes &attr) = 0;
 
@@ -920,9 +1013,42 @@ public:
 	                        uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                        SugidClearMode sugidclearmode, Attributes &attr) = 0;
 
+	/// Reads the target path stored in a symbolic link.
+	///
+	/// Verifies the session (read-only, non-meta), resolves `inode` with no read/write/execute
+	/// permission requirement, and requires the node to be a symlink. On success, copies the target
+	/// into `path` and updates atime, emitting an ACCESS changelog entry when the timestamp changes
+	/// and atime updates are enabled.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context; needs a read-write transaction to persist atime in
+	///                    KV backends.
+	/// @param inode The symbolic link inode to read.
+	/// @param[out] path Receives the stored symlink target on success.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_ENOENT if the session is meta-only or the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is outside the session-visible namespace.
+	/// @return SAUNAFS_ERROR_EINVAL if the resolved node is not a symbolic link.
 	virtual uint8_t readlink(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                         std::string &path) = 0;
+
+	/// Reports filesystem space and inode statistics visible from the session root.
+	///
+	/// For a full-root session, returns global trash and reserved space. For a subdirectory-root
+	/// session, trash and reserved space are reported as zero and the inode count is taken from
+	/// that subtree. Total and available space come from chunkserver space accounting and may be
+	/// adjusted by quota rules for the resolved root. If the root cannot be resolved as a
+	/// directory, `totalspace`, `availspace`, and `inodes` are reported as zero; for unresolved
+	/// subdirectory roots, all output statistics are zero.
+	///
+	/// @param context The FS operation context containing the session root.
+	/// @param fsOpContext The operation context used by transactional backends for reads.
+	/// @param[out] totalspace Total data space in bytes.
+	/// @param[out] availspace Available data space in bytes.
+	/// @param[out] trashspace Trash space in bytes, or zero for subdirectory roots.
+	/// @param[out] reservedspace Reserved-file space in bytes, or zero for subdirectory roots.
+	/// @param[out] inodes Inode count for the visible root.
 	virtual void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                    uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 	                    uint64_t *reservedspace, inode_t *inodes) = 0;
@@ -985,9 +1111,49 @@ public:
 	virtual uint8_t mkdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                      inode_t parent, const HString &name, uint16_t mode, uint16_t umask,
 	                      uint8_t copysgid, inode_t *inode, Attributes &attr) = 0;
+
+	/// Removes one chunk reference from a file-like node by chunk id.
+	///
+	/// Used to roll back a chunk allocation after chunkserver-side work fails. Verifies a
+	/// read-write session, resolves `inode` as a writable file-like node, locates the first slot
+	/// equal to `chunkId`, drops the file's reference in chunk metadata, clears that slot, and
+	/// logs `REPAIR(inode,index):0`.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param fsOpContext The operation context (read-write transaction in KV backends).
+	/// @param inode The file-like node to update.
+	/// @param chunkId The chunk id to remove. Must be non-zero.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_NOCHUNK if `chunkId` is zero, absent from the file layout, or absent
+	///         from chunk metadata.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_EACCES if write access to the file is denied.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is not file-like or not visible in the session.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_CHUNKLOST if chunk metadata cannot remove the file reference cleanly.
 	virtual uint8_t removeChunkFromFile(const FsContext &context,
 	                                    const FilesystemOperationContext &fsOpContext,
 	                                    inode_t inode, uint64_t chunkId) = 0;
+
+	/// Scans and repairs chunk metadata for a file-like node.
+	///
+	/// Verifies a read-write session, resolves `inode` as a writable file-like node, and walks
+	/// every chunk slot. Each changed slot is logged as `REPAIR(inode,index):version`: `version ==
+	/// 0` means the file's chunk reference was erased, otherwise the slot was corrected to that
+	/// version. With `correct_only` non-zero, unrecoverable missing/lost chunks are kept (counted
+	/// as unchanged) instead of being erased; recoverable version corrections still apply.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param inode The file-like node to repair.
+	/// @param correct_only Non-zero to avoid erasing unrecoverable chunks.
+	/// @param[out] notchanged Chunk slots left unchanged.
+	/// @param[out] erased Chunk slots whose reference was erased from the file layout.
+	/// @param[out] repaired Chunk slots corrected to a recoverable version.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_EACCES if write access to the file is denied.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is not file-like or not visible in the session.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
 	virtual uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	                       uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) = 0;
 
@@ -1024,10 +1190,77 @@ public:
 	virtual uint8_t rmdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                      inode_t parent, const HString &name) = 0;
 
+	/// Removes a filesystem entry and all nested contents as a task-manager job.
+	///
+	/// Verifies a read-write, non-meta session, resolves `parent` as a writable directory,
+	/// verifies that `name` exists under it, and submits a recursive remove task. The task walks
+	/// directories depth-first, unlinks files and empty directories, logs each removal as
+	/// `UNLINK(parent,name):inode`, and performs per-task transaction commits in transactional
+	/// backends.
+	///
+	/// The initial batch is processed synchronously. If the operation finishes in that batch, the
+	/// final status is returned directly and `callback` is not invoked. Otherwise the job remains
+	/// queued, SAUNAFS_ERROR_WAITING is returned, and `callback` receives the final status.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param parent The parent directory inode containing the entry to remove.
+	/// @param name The entry name to remove recursively.
+	/// @param callback Completion callback used only when the job continues asynchronously.
+	/// @param job_id The task-manager job id to use for the submitted recursive remove job.
+	/// @return SAUNAFS_STATUS_OK if removal completed during the initial batch.
+	/// @return SAUNAFS_ERROR_WAITING if the job was accepted for asynchronous completion.
+	/// @return SAUNAFS_ERROR_EROFS if the session is read-only.
+	/// @return SAUNAFS_ERROR_ENOENT if the session is meta-only, `parent` cannot be resolved, or
+	///         `name` does not exist.
+	/// @return SAUNAFS_ERROR_ENOTDIR if `parent` is not a directory.
+	/// @return SAUNAFS_ERROR_EACCES if write access to a processed parent directory is denied.
+	/// @return SAUNAFS_ERROR_EPERM if `parent` is outside the session-visible namespace or
+	///         sticky-bit checks reject a processed entry.
+	/// @return SAUNAFS_ERROR_ENOTEMPTY if concurrent changes keep adding entries to a directory
+	///         being removed.
+	/// @return SAUNAFS_ERROR_IO if a transactional backend cannot commit a task step.
 	virtual uint8_t recursiveRemove(const FsContext &context, inode_t parent, const HString &name,
 	                                const std::function<void(int)> &callback, uint32_t job_id) = 0;
+
+	/// Calculates the serialized directory listing size for readdirData().
+	///
+	/// This is the first phase of the two-phase directory-read path. It zeroes `*dnode` and
+	/// `*dbuffsize`, verifies a read-only, non-meta session, resolves `inode` as a readable
+	/// directory, stores an opaque directory handle in `*dnode`, and stores the exact serialized
+	/// buffer size in `*dbuffsize`. If GETDIR_FLAG_WITHATTR is present in `flags`, the size
+	/// includes full attributes for dot entries and children; otherwise it includes entry types
+	/// only.
+	///
+	/// @param context The FS operation context (user credentials, session flags, timestamp).
+	/// @param inode The directory inode to read.
+	/// @param flags Directory read flags; only GETDIR_FLAG_WITHATTR affects the size.
+	/// @param[out] dnode Receives an opaque directory handle for readdirData(); set to nullptr on
+	///                   entry and left null on error.
+	/// @param[out] dbuffsize Receives the required serialized buffer size; set to zero on entry and
+	///                       left zero on error.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_ENOENT if the session is meta-only or the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_ENOTDIR if the inode is not a directory.
+	/// @return SAUNAFS_ERROR_EACCES if read access to the directory is denied.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is outside the session-visible namespace.
 	virtual uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags,
 	                            void **dnode, uint32_t *dbuffsize) = 0;
+
+	/// Serializes directory entries into a buffer sized by readdirSize().
+	///
+	/// This is the second phase of the two-phase directory-read path. The caller must pass the
+	/// `dnode` returned by a successful readdirSize() call and a `dbuff` buffer of the reported
+	/// size. The function updates directory atime when needed, emitting an ACCESS changelog entry
+	/// when the timestamp changes and atime updates are enabled, then serializes `.` and `..` plus
+	/// all child entries, including either full attributes or entry types according to
+	/// GETDIR_FLAG_WITHATTR. It does not perform validation and has no status return.
+	///
+	/// @param context The FS operation context (user credentials, session flags, root inode).
+	/// @param fsOpContext The operation context; needs a read-write transaction to persist atime in
+	///                    transactional backends.
+	/// @param flags Directory read flags; only GETDIR_FLAG_WITHATTR affects serialization.
+	/// @param dnode Opaque directory handle returned by readdirSize().
+	/// @param[out] dbuff Output buffer with at least the size returned by readdirSize().
 	virtual void readdirData(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext, uint8_t flags,
 	                         void *dnode, uint8_t *dbuff) = 0;
@@ -1205,9 +1438,52 @@ public:
 	virtual uint8_t unlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t parent, const HString &name) = 0;
 
+	/// Returns chunk ids, versions, and locations for a file chunk range.
+	///
+	/// Verifies the session for a read-only operation, resolves `inode` as a readable file-like
+	/// node, validates `chunk_index`, clears `chunks`, and appends one result per file chunk slot
+	/// starting at `chunk_index` until `chunk_count` slots are reported or EOF is reached. If
+	/// `chunk_count` is zero, the range extends to EOF. Holes are returned as entries with chunk
+	/// id 0, version 0, and no locations.
+	///
+	/// For non-empty chunk slots, implementations return the current chunk version and available
+	/// part locations, using `current_ip` to prefer closer locations where topology information is
+	/// available. Does not write to the changelog.
+	///
+	/// @param context The FS operation context (user credentials, session flags, root inode).
+	/// @param current_ip Client IP used to order chunk locations by topology distance.
+	/// @param inode File-like inode whose chunk layout to inspect.
+	/// @param chunk_index First file chunk index to report.
+	/// @param chunk_count Maximum number of chunk slots to report; 0 means until EOF.
+	/// @param[out] chunks Receives chunk entries; cleared before data is appended.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_INDEXTOOBIG if `chunk_index` exceeds the maximum chunk index.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EACCES if read access to the file is denied.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is not file-like or not visible in the session.
+	/// @return SAUNAFS_ERROR_NOCHUNK if a non-zero file chunk reference has no chunk metadata.
 	virtual uint8_t getChunksInfo(const FsContext &context, uint32_t current_ip, inode_t inode,
 	                              uint32_t chunk_index, uint32_t chunk_count,
 	                              std::vector<ChunkWithAddressAndLabel> &chunks) = 0;
+
+	/// Aggregates trash-time counters for a node or subtree.
+	///
+	/// Validates `gmode`, verifies the session for a read-only operation, resolves `inode` as a
+	/// file-like node or directory with no permission mode requirement, and accumulates trash-time
+	/// values into `fileTrashtimes` and `dirTrashtimes`. `GMODE_NORMAL` counts only `inode`;
+	/// `GMODE_RECURSIVE` descends into directory children. The maps are not cleared before
+	/// aggregation.
+	///
+	/// @param context The FS operation context (user credentials, session flags, root inode).
+	/// @param inode Root inode for the query.
+	/// @param gmode Traversal mode (`GMODE_NORMAL` or `GMODE_RECURSIVE`).
+	/// @param[in,out] fileTrashtimes Trash-time counters for file-like nodes.
+	/// @param[in,out] dirTrashtimes Trash-time counters for directory nodes.
+	/// @return SAUNAFS_STATUS_OK on success.
+	/// @return SAUNAFS_ERROR_EINVAL if `gmode` is invalid.
+	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
+	/// @return SAUNAFS_ERROR_EPERM if the inode is neither file-like nor a directory, or is
+	///         not visible in the session.
 	virtual uint8_t getTrashTimePrepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	                                    TrashtimeMap &fileTrashtimes,
 	                                    TrashtimeMap &dirTrashtimes) = 0;

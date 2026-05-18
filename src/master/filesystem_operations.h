@@ -155,12 +155,21 @@ public:
 	                inode_t parent, const HString &name, const std::string &path, inode_t *inode,
 	                Attributes *attr) override;
 
+	/// Restores a file from trash using the path stored with its detached metadata.
+	/// @see IFilesystemOperations::undel
 	uint8_t undel(const FsContext &context, inode_t inode) override;
+
+	/// Prepares a file chunk for client-side writing.
+	/// @see IFilesystemOperations::writeChunk
 	uint8_t writeChunk(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                   inode_t inode, uint32_t index,
 	                   /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                   uint64_t *length, [[maybe_unused]] uint32_t min_server_version = 0) override;
+
+	/// Raises the next chunk-id floor used by strictly monotonic chunk-id generators.
+	/// @see IFilesystemOperations::setNextChunkId
 	uint8_t setNextChunkId(const FsContext &context, uint64_t nextChunkId) override;
+
 	uint8_t getCanonicalPath(const FsContext &context,
 	                         const FilesystemOperationContext &fsOpContext,
 	                         const std::string &inputPath, std::string &canonicalPath) override;
@@ -196,6 +205,8 @@ public:
 	uint8_t wholePathLookup(const FsContext &context, inode_t parent, const std::string &path,
 	                        inode_t *found_inode, Attributes &attr) override;
 
+	/// Retrieves the attributes of a filesystem node.
+	/// @see IFilesystemOperations::getAttr
 	uint8_t getAttr(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                inode_t inode, Attributes &attr) override;
 
@@ -221,8 +232,13 @@ public:
 	                uint32_t attrgid, uint32_t attratime, uint32_t attrmtime,
 	                SugidClearMode sugidclearmode, Attributes &attr) override;
 
+	/// Reads the target path stored in a symbolic link.
+	/// @see IFilesystemOperations::readlink
 	uint8_t readlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                 inode_t inode, std::string &path) override;
+
+	/// Reports filesystem space and inode statistics visible from the session root.
+	/// @see IFilesystemOperations::statfs
 	void statfs(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	            uint64_t *totalspace, uint64_t *availspace, uint64_t *trashspace,
 	            uint64_t *reservedspace, inode_t *inodes) override;
@@ -234,9 +250,15 @@ public:
 	uint8_t mkdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t parent, const HString &name, uint16_t mode, uint16_t umask,
 	              uint8_t copysgid, inode_t *inode, Attributes &attr) override;
+
+	/// Removes one chunk reference from a file-like node by chunk id.
+	/// @see IFilesystemOperations::removeChunkFromFile
 	uint8_t removeChunkFromFile(const FsContext &context,
 	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                            uint64_t chunkId) override;
+
+	/// Scans and repairs chunk metadata for a file-like node.
+	/// @see IFilesystemOperations::repair
 	uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	               uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) override;
 
@@ -245,10 +267,18 @@ public:
 	uint8_t rmdir(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	              inode_t parent, const HString &name) override;
 
+	/// Removes a filesystem entry and all nested contents as a task-manager job.
+	/// @see IFilesystemOperations::recursiveRemove
 	uint8_t recursiveRemove(const FsContext &context, inode_t parent, const HString &name,
 	                        const std::function<void(int)> &callback, uint32_t job_id) override;
+
+	/// Calculates the serialized directory listing size for readdirData().
+	/// @see IFilesystemOperations::readdirSize
 	uint8_t readdirSize(const FsContext &context, inode_t inode, uint8_t flags, void **dnode,
 	                    uint32_t *dbuffsize) override;
+
+	/// Serializes directory entries into a buffer sized by readdirSize().
+	/// @see IFilesystemOperations::readdirData
 	void readdirData(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                 uint8_t flags, void *dnode, uint8_t *dbuff) override;
 
@@ -295,9 +325,14 @@ public:
 	uint8_t unlink(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t parent, const HString &name) override;
 
+	/// Returns chunk ids, versions, and locations for a file chunk range.
+	/// @see IFilesystemOperations::getChunksInfo
 	uint8_t getChunksInfo(const FsContext &context, uint32_t current_ip, inode_t inode,
 	                      uint32_t chunk_index, uint32_t chunk_count,
 	                      std::vector<ChunkWithAddressAndLabel> &chunks) override;
+
+	/// Aggregates trash-time counters for a node or subtree.
+	/// @see IFilesystemOperations::getTrashTimePrepare
 	uint8_t getTrashTimePrepare(const FsContext &context, inode_t inode, uint8_t gmode,
 	                            TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes) override;
 
