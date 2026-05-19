@@ -295,6 +295,7 @@ int fs_loadall(bool isFromInit = true) {
 
 	gChunkIdGenerator->initialize();
 	gInodeIdGenerator->initialize();
+	if (gSessionIdGenerator) { gSessionIdGenerator->initialize(); }
 
 	{
 		auto scopedTimer = util::ScopedTimer("metadata load time");
