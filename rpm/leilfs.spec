@@ -22,12 +22,6 @@ Source2:        leilfs-uraft.sudoers
 Source3:        10-leilfs.conf
 Source4:        leilfs.conf
 
-# Approved in the pull request, when added to new version, remove patches
-Patch0:         0001-build-Fix-build-failure-with-GCC-15-due-to-missing-c.patch
-Patch1:         0002-build-Make-Timer-now-static-to-fix-compiler-warnings.patch
-Patch2:         0003-build-Fix-build-failure-due-to-missing-mutex-include.patch
-Patch3:         0004-chore-master-Remove-executable-permissions-on-.cc-fi.patch
-
 BuildRequires:  asciidoc
 BuildRequires:  cmake
 BuildRequires:  gcc
@@ -264,8 +258,8 @@ done
 
 # Remove /usr/bin/env from python3 scripts
 for i in src/cgi/chart.cgi.in \
-         src/cgi/saunafs-cgiserver.py.in \
-         src/cgi/sfs.cgi.in tests/data/extract_tests_durations.py \
+         src/cgi/leil-cgiserver.py.in \
+         src/cgi/leil.cgi.in tests/data/extract_tests_durations.py \
          tests/test_utils/sqlite_stress_test.py \
          utils/wireshark/plugins/epan/saunafs/make_dissector.py; do
     sed -i 's@#!/usr/bin/env python3@#!/usr/bin/python3@' $i
@@ -328,9 +322,13 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files master
 %license COPYING
 %doc NEWS README.md
+%{_sbindir}/leil-master
 %{_sbindir}/sfsmaster
+%{_sbindir}/leil-restoremaster
 %{_sbindir}/sfsrestoremaster
+%{_sbindir}/leil-metadump
 %{_sbindir}/sfsmetadump
+%{_sbindir}/leil-metarestore
 %{_sbindir}/sfsmetarestore
 %{_unitdir}/saunafs-master.service
 %dir %{leil_confdir}
@@ -363,6 +361,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files metalogger
 %license COPYING
 %doc NEWS README.md
+%{_sbindir}/leil-metalogger
 %{_sbindir}/sfsmetalogger
 %{_unitdir}/saunafs-metalogger.service
 %dir %{leil_confdir}
@@ -379,6 +378,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files chunkserver
 %license COPYING
 %doc NEWS README.md
+%{_sbindir}/leil-chunkserver
 %{_sbindir}/sfschunkserver
 %{_unitdir}/saunafs-chunkserver.service
 %dir %{leil_confdir}
@@ -399,7 +399,9 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files client
 %license COPYING
 %doc NEWS README.md
+%{_bindir}/leil
 %{_bindir}/saunafs
+%{_bindir}/leil-mount
 %{_bindir}/sfsmount
 %dir %{leil_confdir}
 %{_mandir}/man1/saunafs-appendchunks.1*
@@ -459,16 +461,16 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files cgi
 %license COPYING
 %doc NEWS README.md
-%dir %{_datadir}/sfscgi
-%{_datadir}/sfscgi/err.gif
-%{_datadir}/sfscgi/favicon.ico
-%{_datadir}/sfscgi/favicon.svg
-%{_datadir}/sfscgi/index.html
-%{_datadir}/sfscgi/logomini.svg
-%{_datadir}/sfscgi/logomini.png
-%{_datadir}/sfscgi/sfs.css
-%{_datadir}/sfscgi/sfs.cgi
-%{_datadir}/sfscgi/chart.cgi
+%dir %{_datadir}/leil-cgi
+%{_datadir}/leil-cgi/err.gif
+%{_datadir}/leil-cgi/favicon.ico
+%{_datadir}/leil-cgi/favicon.svg
+%{_datadir}/leil-cgi/index.html
+%{_datadir}/leil-cgi/logomini.svg
+%{_datadir}/leil-cgi/logomini.png
+%{_datadir}/leil-cgi/leil.css
+%{_datadir}/leil-cgi/leil.cgi
+%{_datadir}/leil-cgi/chart.cgi
 
 # Files - CGI server
 ############################################################
@@ -476,6 +478,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files cgiserv
 %license COPYING
 %doc NEWS README.md
+%{_sbindir}/leil-cgiserver
 %{_sbindir}/saunafs-cgiserver
 %{_unitdir}/saunafs-cgiserv.service
 %{_mandir}/man8/saunafs-cgiserver.8*
@@ -486,8 +489,10 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files adm
 %license COPYING
 %doc NEWS README.md
+%{_bindir}/leil-admin
 %{_bindir}/saunafs-admin
 %{_mandir}/man8/saunafs-admin.8*
+%{_bindir}/leil-probe
 %{_bindir}/saunafs-probe
 %{_mandir}/man8/saunafs-probe.8*
 
@@ -497,7 +502,9 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files uraft
 %license COPYING
 %doc NEWS README.md
+%{_sbindir}/leil-uraft
 %{_sbindir}/saunafs-uraft
+%{_sbindir}/leil-uraft-helper
 %{_sbindir}/saunafs-uraft-helper
 %{_unitdir}/saunafs-uraft.service
 %{_unitdir}/saunafs-ha-master.service
