@@ -543,16 +543,13 @@ uint32_t job_prefetch(ClientJobPool &jobPool, uint64_t chunkId, ChunkPartType ch
 /// @param chunkId The ID of the chunk.
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
-/// @param blockNum The block number to write.
-/// @param offset The offset to write to.
-/// @param size The size to write.
-/// @param crc The CRC of the data.
-/// @param buffer The data buffer to write.
+/// @param inputBuffers The input buffers containing the data, offsets, block indexes and CRCs to be
+/// written.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
-                   uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
-                   uint32_t listenerId = 0);
+                   uint32_t chunkVersion, ChunkPartType chunkType,
+                   std::vector<InputBuffer *> inputBuffers, uint32_t listenerId = 0);
 
 /// @brief Adds a get blocks job to the ClientJobPool.
 ///

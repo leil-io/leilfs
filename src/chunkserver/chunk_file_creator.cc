@@ -74,8 +74,10 @@ void ChunkFileCreator::write(const uint8_t *buffer, uint16_t startBlock, uint16_
                              std::vector<uint32_t> &crc) {
 	assert(is_open_ && !is_commited_ && chunk_);
 	auto *crcData = gOpenChunks.getResource(chunk_->metaFD()).crcData();
+	std::vector<uint16_t> blocksPerBuffer = {numBlocks};
+	std::vector<const uint8_t *> buffers = {buffer};
 	int writtenBytes = chunk_->owner()->writeChunkBlocks(chunk_, 0, startBlock, numBlocks, crc,
-	                                                     crcData, buffer, true);
+	                                                     crcData, blocksPerBuffer, buffers, true);
 	if (writtenBytes != static_cast<int>(numBlocks * SFSBLOCKSIZE)) {
 		if (writtenBytes < 0) {
 			int status = -writtenBytes;

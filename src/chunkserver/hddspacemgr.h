@@ -80,7 +80,8 @@ int hddChunkWriteBlock(uint64_t chunkId, uint32_t version,
                        const uint8_t *buffer);
 int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
                             uint16_t startBlock, uint16_t numBlocks, std::vector<uint32_t> &crcList,
-                            const uint8_t *buffer);
+                            std::vector<uint16_t> &blocksPerBuffer,
+                            std::vector<const uint8_t *> &buffers);
 
 /* chunk info */
 int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,

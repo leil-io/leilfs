@@ -231,6 +231,19 @@ public:
 	InputBufferTests() : InputBuffer(testHeaderSize, testNumBlocks) {}
 };
 
+void checkWriteOperation(std::vector<WriteOperation> &writeOperations,
+                         std::vector<WriteOperation> &expectedWriteOperations) {
+	ASSERT_EQ(writeOperations.size(), expectedWriteOperations.size());
+	for (size_t i = 0; i < writeOperations.size(); i++) {
+		ASSERT_EQ(writeOperations[i].startBlock, expectedWriteOperations[i].startBlock);
+		ASSERT_EQ(writeOperations[i].blocksPerBuffer, expectedWriteOperations[i].blocksPerBuffer);
+		ASSERT_EQ(writeOperations[i].offset, expectedWriteOperations[i].offset);
+		ASSERT_EQ(writeOperations[i].size, expectedWriteOperations[i].size);
+		ASSERT_EQ(writeOperations[i].buffers, expectedWriteOperations[i].buffers);
+		ASSERT_EQ(writeOperations[i].crcs, expectedWriteOperations[i].crcs);
+	}
+}
+
 // InputBuffer tests
 
 TEST(InputBufferTests, inputBufferBasicWriteToSocketTest) {
@@ -326,149 +339,202 @@ TEST(InputBufferTests, inputBufferBasicReadFromSocketTest) {
 	close(auxPipeFileDescriptors[1]);
 }
 
-TEST(InputBufferTests, inputBufferAddSetupGetWriteOperationsTest) {
+TEST(InputBufferTests, inputBufferAddSetupGetWriteOperationsSingleBufferTest) {
 	InputBufferTests inputBuffer;
+	std::vector<InputBuffer *> inputBuffers{&inputBuffer};
+	uint32_t totalBlocks = 12345;
+	constexpr uint32_t dummyWriteId = 0;
 
-	auto checkWriteOperation = [](std::vector<WriteOperation> &writeOperations,
-	                              std::vector<WriteOperation> &expectedWriteOperations) {
-		ASSERT_EQ(writeOperations.size(), expectedWriteOperations.size());
-		for (size_t i = 0; i < writeOperations.size(); i++) {
-			ASSERT_EQ(writeOperations[i].startBlock, expectedWriteOperations[i].startBlock);
-			ASSERT_EQ(writeOperations[i].endBlock, expectedWriteOperations[i].endBlock);
-			ASSERT_EQ(writeOperations[i].offset, expectedWriteOperations[i].offset);
-			ASSERT_EQ(writeOperations[i].size, expectedWriteOperations[i].size);
-			ASSERT_EQ(writeOperations[i].buffer, expectedWriteOperations[i].buffer);
-			ASSERT_EQ(writeOperations[i].crcs, expectedWriteOperations[i].crcs);
-		}
-	};
-
+	// Test contiguous full blocks
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(0, 0, SFSBLOCKSIZE, 1, 1);
+	inputBuffer.setupLastWriteOperation(0, 0, SFSBLOCKSIZE, dummyWriteId, 1);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(1, 0, SFSBLOCKSIZE, 2, 666);
+	inputBuffer.setupLastWriteOperation(1, 0, SFSBLOCKSIZE, dummyWriteId, 666);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(2, 0, SFSBLOCKSIZE, 3, 555);
+	inputBuffer.setupLastWriteOperation(2, 0, SFSBLOCKSIZE, dummyWriteId, 555);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(3, 0, SFSBLOCKSIZE, 4, 444);
-	std::vector<WriteOperation> writeOperations = inputBuffer.getWriteOperations();
+	inputBuffer.setupLastWriteOperation(3, 0, SFSBLOCKSIZE, dummyWriteId, 444);
+	std::vector<WriteOperation> writeOperations =
+	    InputBuffer::getWriteOperations(inputBuffers, totalBlocks);
 	std::vector<WriteOperation> expectedWriteOperations = {
 	    {.startBlock = 0,
-	     .endBlock = 3,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block),
+	     .blocksPerBuffer = {4},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block)},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {1, 666, 555, 444}}};
 	checkWriteOperation(writeOperations, expectedWriteOperations);
+	ASSERT_EQ(totalBlocks, 4u);
 
+	// Test non-contiguous blocks and non-full block
 	inputBuffer.clear();
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(5, 0, SFSBLOCKSIZE, 5, 123);
+	inputBuffer.setupLastWriteOperation(5, 0, SFSBLOCKSIZE, dummyWriteId, 123);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(7, 0, SFSBLOCKSIZE, 6, 456);
+	inputBuffer.setupLastWriteOperation(7, 0, SFSBLOCKSIZE, dummyWriteId, 456);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(8, 0, 12345, 7, 789);
+	inputBuffer.setupLastWriteOperation(8, 0, 12345, dummyWriteId, 789);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(9, 0, SFSBLOCKSIZE, 8, 901);
-	writeOperations = inputBuffer.getWriteOperations();
+	inputBuffer.setupLastWriteOperation(9, 0, SFSBLOCKSIZE, dummyWriteId, 901);
+	totalBlocks = 12345;
+	writeOperations = InputBuffer::getWriteOperations(inputBuffers, totalBlocks);
 	expectedWriteOperations = {
 	    {.startBlock = 5,
-	     .endBlock = 5,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block),
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block)},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {123}},
 	    {.startBlock = 7,
-	     .endBlock = 7,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE,
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {456}},
 	    {.startBlock = 8,
-	     .endBlock = 8,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + 2 * SFSBLOCKSIZE,
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + 2 * SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = 12345,
 	     .crcs = {789}},
 	    {.startBlock = 9,
-	     .endBlock = 9,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + 3 * SFSBLOCKSIZE,
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + 3 * SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {901}}};
 	checkWriteOperation(writeOperations, expectedWriteOperations);
+	ASSERT_EQ(totalBlocks, 4u);
 
+	// Test apparently contiguous data which start in non-full block, and test block overwrite
 	inputBuffer.clear();
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(10, 12345, SFSBLOCKSIZE, 9, 111);
+	inputBuffer.setupLastWriteOperation(10, 12345, SFSBLOCKSIZE - 12345, dummyWriteId, 111);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(11, 0, SFSBLOCKSIZE, 10, 222);
+	inputBuffer.setupLastWriteOperation(11, 0, SFSBLOCKSIZE, dummyWriteId, 222);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(12, 0, SFSBLOCKSIZE, 11, 333);
+	inputBuffer.setupLastWriteOperation(12, 0, SFSBLOCKSIZE, dummyWriteId, 333);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(12, 0, SFSBLOCKSIZE, 12, 444);
-	writeOperations = inputBuffer.getWriteOperations();
+	inputBuffer.setupLastWriteOperation(12, 0, SFSBLOCKSIZE, dummyWriteId, 444);
+	totalBlocks = 12345;
+	writeOperations = InputBuffer::getWriteOperations(inputBuffers, totalBlocks);
 	expectedWriteOperations = {
 	    {.startBlock = 10,
-	     .endBlock = 10,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block),
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block)},
 	     .offset = 12345,
-	     .size = SFSBLOCKSIZE,
+	     .size = SFSBLOCKSIZE - 12345,
 	     .crcs = {111}},
 	    {.startBlock = 11,
-	     .endBlock = 12,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE,
+	     .blocksPerBuffer = {2},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {222, 333}},
 	    {.startBlock = 12,
-	     .endBlock = 12,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + 3 * SFSBLOCKSIZE,
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + 3 * SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {444}}};
 	checkWriteOperation(writeOperations, expectedWriteOperations);
+	ASSERT_EQ(totalBlocks, 4u);
 
+	// Test extreme block indexes, last before SFSBLOCKSINCHUNK, 0 and a couple of contiguous full
+	// blocks far beyond the current SFSBLOCKSINCHUNK, which are mergeable.
 	inputBuffer.clear();
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(1023, 12345, SFSBLOCKSIZE, 13, 555);
+	inputBuffer.setupLastWriteOperation(1023, 12345, SFSBLOCKSIZE, dummyWriteId, 555);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(0, 0, 12345, 14, 666);
+	inputBuffer.setupLastWriteOperation(0, 0, 12345, dummyWriteId, 666);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(9999, 0, SFSBLOCKSIZE, 15, 777);
+	inputBuffer.setupLastWriteOperation(9999, 0, SFSBLOCKSIZE, dummyWriteId, 777);
 	inputBuffer.addNewWriteOperation();
-	inputBuffer.setupLastWriteOperation(10000, 0, SFSBLOCKSIZE, 16, 888);
-	writeOperations = inputBuffer.getWriteOperations();
+	inputBuffer.setupLastWriteOperation(10000, 0, SFSBLOCKSIZE, dummyWriteId, 888);
+	totalBlocks = 12345;
+	writeOperations = InputBuffer::getWriteOperations(inputBuffers, totalBlocks);
 	expectedWriteOperations = {
 	    {.startBlock = 1023,
-	     .endBlock = 1023,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block),
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block)},
 	     .offset = 12345,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {555}},
 	    {.startBlock = 0,
-	     .endBlock = 0,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE,
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = 12345,
 	     .crcs = {666}},
 	    {.startBlock = 9999,
-	     .endBlock = 10000,
-	     .buffer = inputBuffer.rawData(InputBuffer::BufferType::Block) + 2 * SFSBLOCKSIZE,
+	     .blocksPerBuffer = {2},
+	     .buffers = {inputBuffer.rawData(InputBuffer::BufferType::Block) + 2 * SFSBLOCKSIZE},
 	     .offset = 0,
 	     .size = SFSBLOCKSIZE,
 	     .crcs = {777, 888}}};
 	checkWriteOperation(writeOperations, expectedWriteOperations);
+	ASSERT_EQ(totalBlocks, 4u);
 
 	std::vector<uint8_t> statuses = {SAUNAFS_STATUS_OK, SAUNAFS_ERROR_WRONGSIZE, SAUNAFS_ERROR_IO,
 	                                 SAUNAFS_ERROR_IO};
-	inputBuffer.applyStatuses(statuses);
+	InputBuffer::applyStatuses({&inputBuffer}, statuses);
 	auto statusesWriteIdPairs = inputBuffer.getStatuses();
 
-	std::vector<std::pair<uint8_t, uint32_t>> expectedStatuses = {{SAUNAFS_STATUS_OK, 13},
-	                                                              {SAUNAFS_ERROR_WRONGSIZE, 14},
-	                                                              {SAUNAFS_ERROR_IO, 15},
-	                                                              {SAUNAFS_ERROR_IO, 16}};
+	std::vector<std::pair<uint8_t, uint32_t>> expectedStatuses = {
+	    {SAUNAFS_STATUS_OK, dummyWriteId},
+	    {SAUNAFS_ERROR_WRONGSIZE, dummyWriteId},
+	    {SAUNAFS_ERROR_IO, dummyWriteId},
+	    {SAUNAFS_ERROR_IO, dummyWriteId}};
 	ASSERT_EQ(statusesWriteIdPairs, expectedStatuses);
+}
+
+TEST(InputBufferTests, inputBufferAddSetupGetWriteOperationsMultiBufferTest) {
+	constexpr uint32_t dummyWriteId = 0;
+	InputBufferTests inputBuffer1;  // blocks 0,1,2,3
+	InputBufferTests inputBuffer2;  // blocks 4,5,6,7
+	InputBufferTests inputBuffer3;  // blocks 8,9,10,11
+	InputBufferTests inputBuffer4;  // blocks 12, part of 13
+	std::vector<InputBuffer *> inputBuffers{&inputBuffer1, &inputBuffer2, &inputBuffer3,
+	                                        &inputBuffer4};
+	std::vector<uint32_t> crcs;
+	uint32_t totalBlocks = 12345;
+
+	// Test contiguous blocks from multiple buffers, and split the last input buffer
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 4; j++) {
+			uint32_t blockIndex = j + 4 * i;
+			inputBuffers[i]->addNewWriteOperation();
+			inputBuffers[i]->setupLastWriteOperation(blockIndex, 0, SFSBLOCKSIZE, dummyWriteId,
+			                                         blockIndex * 111);
+			crcs.push_back(blockIndex * 111);
+		}
+	}
+	inputBuffer4.addNewWriteOperation();
+	inputBuffer4.setupLastWriteOperation(12, 0, SFSBLOCKSIZE, dummyWriteId, 12 * 111);
+	crcs.push_back(12 * 111);
+	inputBuffer4.addNewWriteOperation();
+	inputBuffer4.setupLastWriteOperation(13, 0, 12345, dummyWriteId, 13 * 111);
+
+	std::vector<WriteOperation> writeOperations =
+	    InputBuffer::getWriteOperations(inputBuffers, totalBlocks);
+	std::vector<WriteOperation> expectedWriteOperations = {
+	    {.startBlock = 0,
+	     .blocksPerBuffer = {4, 4, 4, 1},
+	     .buffers = {inputBuffer1.rawData(InputBuffer::BufferType::Block),
+	                 inputBuffer2.rawData(InputBuffer::BufferType::Block),
+	                 inputBuffer3.rawData(InputBuffer::BufferType::Block),
+	                 inputBuffer4.rawData(InputBuffer::BufferType::Block)},
+	     .offset = 0,
+	     .size = SFSBLOCKSIZE,
+	     .crcs = crcs},
+	    {.startBlock = 13,
+	     .blocksPerBuffer = {1},
+	     .buffers = {inputBuffer4.rawData(InputBuffer::BufferType::Block) + SFSBLOCKSIZE},
+	     .offset = 0,
+	     .size = 12345,
+	     .crcs = {13 * 111}}};
+	checkWriteOperation(writeOperations, expectedWriteOperations);
+	ASSERT_EQ(totalBlocks, 14u);
 }
 
 TEST(InputBufferTests, inputBufferGeneralTest) {
@@ -513,7 +579,7 @@ TEST(InputBufferTests, inputBufferGeneralTest) {
 		}
 
 		std::vector<uint8_t> statuses(dataSizes.size(), SAUNAFS_ERROR_IO);
-		inputBuffer.applyStatuses(statuses);
+		InputBuffer::applyStatuses({&inputBuffer}, statuses);
 	});
 
 	// Make sure the consumer thread is waiting for the wake up call

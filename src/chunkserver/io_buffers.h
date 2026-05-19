@@ -351,12 +351,14 @@ struct WriteInfo {
 ///
 /// The operation consists of a possibly condensed set of blocks to be written
 /// to the disk. The blocks are written in the same order as they were received
-/// from the client. A set of full blocks can be written in one write operation and
-/// the partial blocks are written one-by-one.
+/// from the client. A set of full blocks, not necessarily contiguous in memory, can be written in
+/// one write operation and the partial blocks are written one-by-one.
 struct WriteOperation {
 	uint16_t startBlock;         ///< The start block number in the chunk.
-	uint16_t endBlock;           ///< The end block number in the chunk.
-	const uint8_t *buffer;       ///< The pointer to the data to be written.
+	/// The number of blocks to be written from each buffer.
+	std::vector<uint16_t> blocksPerBuffer;
+	/// The pointers to the buffers containing the block data.
+	std::vector<const uint8_t *> buffers;
 	uint32_t offset;             ///< The offset in the block where the data starts.
 	uint32_t size;               ///< The size of the data to be written.
 	std::vector<uint32_t> crcs;  ///< The CRCs of the blocks to be written.
@@ -459,11 +461,18 @@ public:
 	/// It merges the write operations if contiguous full blocks.
 	/// The write operations are returned in the order they were received from the client.
 	/// @return The vector of write operations.
-	std::vector<WriteOperation> getWriteOperations() const;
+	static std::vector<WriteOperation> getWriteOperations(
+	    const std::vector<InputBuffer *> &inputBuffers, uint32_t &totalBlocks);
 
-	/// @brief Sets the statuses of the write operations in the buffer.
+	/// @brief Returns the pointer to the block data and CRC for the given block index.
+	/// If the block index is out of range, it returns nullptr and logs a warning.
+	std::pair<const uint8_t *, size_t> getBlockDataAndCrc(uint16_t index) const;
+
+	/// @brief Sets the statuses of the write operations to the provided buffers.
+	/// @param inputBuffers The vector of input buffers to set the statuses for.
 	/// @param statuses The vector of statuses to set.
-	void applyStatuses(std::vector<uint8_t> &statuses);
+	static void applyStatuses(const std::vector<InputBuffer *> &inputBuffers,
+	                          std::vector<uint8_t> &statuses);
 
 	/// @brief Returns the statuses,ID pair of the write operations in the buffer.
 	/// @return The vector of statuses along with write IDs.

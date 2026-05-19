@@ -212,9 +212,11 @@ public:
 	/// Writes the data and the CRC for a number of full blocks
 	/// \returns number of written bytes on success or the negative of the error code on failure.
 	/// If the written bytes are less than expected, it is IO error.
-	virtual int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-	                                   uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
-	                                   bool areNewBlocks, const char *errorMsg) = 0;
+	virtual int writeFullBlocksAndCrcs(IChunk *chunk, const std::vector<uint16_t> &blocksPerBuffer,
+	                                   const std::vector<const uint8_t *> &buffers,
+	                                   uint16_t startBlock, const uint8_t *crcBuff,
+	                                   uint8_t *crcData, bool areNewBlocks,
+	                                   const char *errorMsg) = 0;
 
 	/// Writes a Chunk block
 	/// \return SAUNAFS_STATUS_OK on success or specific SAUNAFS_ error code
@@ -226,8 +228,10 @@ public:
 	/// \returns number of written bytes on success or the negative of the error code on failure.
 	/// If the written bytes are less than expected, it is IO error.
 	virtual int writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock,
-	                            uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
-	                            const uint8_t *buffer, bool isFromReplication = false) = 0;
+	                             uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
+	                             const std::vector<uint16_t> &blocksPerBuffer,
+	                             const std::vector<const uint8_t *> &buffers,
+	                             bool isFromReplication = false) = 0;
 
 	/// Writes the Chunk header into the device
 	///

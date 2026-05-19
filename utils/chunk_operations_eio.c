@@ -2,15 +2,17 @@
 #define _GNU_SOURCE
 #endif
 #include <dlfcn.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
 typedef ssize_t (*pread_t)(int, void *, size_t, off_t);
 typedef ssize_t (*pwrite_t)(int, const void *, size_t, off_t);
+typedef ssize_t (*pwritev_t)(int, const struct iovec *, int, off_t);
 typedef int (*close_t)(int);
 typedef int (*fsync_t)(int);
 
@@ -124,6 +126,21 @@ ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset) {
 		_pwrite = (pwrite_t)dlsym(RTLD_NEXT, "pwrite");
 	}
 	return _pwrite(fd, buf, count, offset);
+}
+
+ssize_t pwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
+	size_t total = 0;
+	for (int i = 0; i < iovcnt; ++i) total += iov[i].iov_len;
+
+	int err = err_on_operation(fd, "pwrite", offset, total);
+	if (err) {
+		errno = err;
+		return -1;
+	}
+
+	static pwritev_t _pwritev = NULL;
+	if (!_pwritev) { _pwritev = (pwritev_t)dlsym(RTLD_NEXT, "pwritev"); }
+	return _pwritev(fd, iov, iovcnt, offset);
 }
 
 int close(int fd) {

@@ -130,9 +130,10 @@ public:
 	                            uint16_t blockNum, bool isNewBlock,
 	                            const char *errorMsg) override;
 	/// Writes the data and the CRC for a number of full blocks
-	int writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-	                           uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
-	                           bool areNewBlocks, const char *errorMsg) override;
+	int writeFullBlocksAndCrcs(IChunk *chunk, const std::vector<uint16_t> &blocksPerBuffer,
+	                           const std::vector<const uint8_t *> &buffers, uint16_t startBlock,
+	                           const uint8_t *crcBuff, uint8_t *crcData, bool areNewBlocks,
+	                           const char *errorMsg) override;
 
 	/// If supported, deallocates space (creates a hole) in the byte range
 	/// starting at offset and continuing for size bytes.
@@ -148,8 +149,10 @@ public:
 	                    bool isFromReplication = false) override;
 	/// Writes `numBlocks` full Chunk blocks
 	int writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock, uint16_t numBlocks,
-	                     std::vector<uint32_t> &crc, uint8_t *crcData, const uint8_t *buffer,
-	                    bool isFromReplication = false) override;
+	                     std::vector<uint32_t> &crc, uint8_t *crcData,
+	                     const std::vector<uint16_t> &blocksPerBuffer,
+	                     const std::vector<const uint8_t *> &buffers,
+	                     bool isFromReplication = false) override;
 
 	/// Writes to device custom blockSize from blockBuffer
 	int writeChunkData(IChunk *chunk, uint8_t *blockBuffer, int32_t blockSize,
