@@ -95,8 +95,9 @@ function start_fdb_cluster() {
 
 	create_config_file
 
-	# Start FoundationDB with required sudo privileges
-	sudo /usr/lib/foundationdb/fdbmonitor --conffile "${workspace}/conf/foundationdb.conf" &
+	# Start FoundationDB with required sudo privileges. Detach via a subshell so the
+	# test shell's bare `wait` does not block on this long-running daemon.
+	( sudo /usr/lib/foundationdb/fdbmonitor --conffile "${workspace}/conf/foundationdb.conf" & )
 
 	# Ensure cluster is configured
 	fdbcli --exec "configure new single memory" --cluster-file "${workspace}/conf/fdb.cluster"
