@@ -260,7 +260,15 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	assert(dst_node);
 	fsnodes_update_checksum(dst_node);
 	fsnodes_update_checksum(dst_parent);
+
+	// Persist post-createNode in-memory mutations on KV backends.
+	if (fsOpContext.hasReadWriteTransaction()) {
+		gFSOperations->nodeOperations()->updateNode(fsOpContext, dst_node);
+		gFSOperations->nodeOperations()->updateNode(fsOpContext, dst_parent);
+	}
+
 	emitChangelog(fsOpContext, ts, dst_node->id);
+
 	if (dst_inode_ != 0 && dst_inode_ != dst_node->id) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
