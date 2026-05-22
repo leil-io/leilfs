@@ -28,7 +28,9 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "common/datapack.h"
@@ -59,7 +61,27 @@
 #include "slogger/slogger.h"
 
 namespace {
+constexpr uint32_t kMetadataFlushIntervalMs = 100;
+
 MetadataBackendForkless *gForklessBackend = nullptr;
+
+#ifndef METARESTORE
+bool hasPersistedMetadataSectionData(kv::IKVEngine *kvEngine,
+	                                 const std::vector<MetadataSectionFDB> &metadataSections) {
+	for (const auto &section : metadataSections) {
+		auto transaction = kvEngine->createReadOnlyTransaction();
+		kv::Key startKey = kv::toBytes(section.prefix);
+		kv::Key endKey = kv::prefixEnd(startKey);
+		auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
+		                                  kv::KeySelector(endKey, true, 0), 1);
+
+		if (!page.getPairs().empty()) { return true; }
+	}
+
+	return false;
+}
+#endif  // #ifndef METARESTORE
+
 }
 
 // Add a static callback function
@@ -93,13 +115,13 @@ MetadataBackendForkless::~MetadataBackendForkless() {
 #if !defined(METARESTORE) && !defined(METALOGGER)
 
 bool MetadataBackendForkless::commit_metadata_dump() {
-	safs::log_err("MetadataBackendForkless::commit_metadata_dump");
+	safs::log_warn("MetadataBackendForkless::commit_metadata_dump is not fully implemented");
 
 	return true;
 }
 
 int MetadataBackendForkless::emergency_saves() {
-	safs::log_err("MetadataBackendForkless::emergency_saves");
+	safs::log_warn("MetadataBackendForkless::emergency_saves is not fully implemented");
 
 	return 0;
 }
@@ -156,7 +178,6 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 		return kOpFailure;
 	}
 
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
 	kv::Key startKey = kv::toBytes(kChunkKeyPrefix);
 	kv::Key endKey = kv::prefixEnd(startKey);
 	kv::KeySelector startSelector(startKey, true, 0);
@@ -166,6 +187,7 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	uint64_t chunkCount = 0;
 
 	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 		auto pageResult =
 		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
@@ -234,14 +256,14 @@ void MetadataBackendForkless::onXAttrInodeRemoved(inode_t inode) {
 	}
 }
 
-void MetadataBackendForkless::onXAttrChanged(inode_t inode, const std::vector<uint8_t> &name,
-                                             const std::vector<uint8_t> &value) {
+void MetadataBackendForkless::onXAttrChanged(inode_t inode, std::span<const uint8_t> name,
+                                             std::span<const uint8_t> value) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrUpdateEvent>(inode, name, value));
 	}
 }
 
-void MetadataBackendForkless::onXAttrRemoved(inode_t inode, const std::vector<uint8_t> &name) {
+void MetadataBackendForkless::onXAttrRemoved(inode_t inode, std::span<const uint8_t> name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrRemoveEvent>(inode, name));
 	}
@@ -261,7 +283,7 @@ int8_t MetadataBackendForkless::saveNextChunkId(kv::IReadWriteTransaction *trans
 
 int8_t MetadataBackendForkless::saveMetadataKeys(kv::IReadWriteTransaction *transaction) {
 	// MaxInodeId is stored in META_MAX_INODE_ID: <maxInodeId> e.g. META_MAX_INODE_ID: 42
-	kv::Key maxInodeIdKey{kv::toBytes(gMetadata->maxInodeId().getName())};
+	kv::Key maxInodeIdKey{kv::toBytes(kMetaMaxInodeIdKey)};
 	kv::Value maxInodeIdValue;
 	serialize(maxInodeIdValue, gMetadata->maxInodeId().getValue());
 	transaction->set(maxInodeIdKey, maxInodeIdValue);
@@ -289,8 +311,7 @@ int8_t MetadataBackendForkless::loadMetadataKeys() {
 	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 
 	inode_t maxInodeId{SPECIAL_INODE_ROOT};
-	const auto maxInodeIdKey = gMetadata->maxInodeId().getName();
-	auto value = transaction->get(kv::toBytes(maxInodeIdKey));
+	auto value = transaction->get(kv::toBytes(kMetaMaxInodeIdKey));
 	if (value.has_value()) {
 		const uint8_t *data = value.value().data();
 		getINode(&data, maxInodeId);
@@ -395,7 +416,6 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
 
 	kv::Key startKey = kv::encodeKeyBE(kNodeKeyPrefix, SPECIAL_INODE_ROOT);
 	kv::Key endKey = kv::prefixEnd(kv::toBytes(kNodeKeyPrefix));
@@ -405,6 +425,7 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 	uint64_t nodeCount = 0;
 
 	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 		auto pageResult =
 		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
@@ -491,14 +512,13 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 	safs::log_info("Loading free nodes");
 	Timer timer;
 
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
-
 	kv::Key startKey = kv::toBytes(kFreeKeyPrefix);
 	kv::Key endKey = kv::prefixEnd(startKey);
 	kv::KeySelector startSelector(startKey, true, 0);
 	kv::KeySelector endSelector(endKey, true, 0);
 
 	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 		auto pageResult =
 		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
@@ -544,8 +564,6 @@ int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
 	safs::log_info("Loading xattrs from FoundationDB");
 	Timer timer;
 
-	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
-
 	kv::Key startKey = kv::toBytes(kXAttrKeyPrefix);
 	kv::Key endKey = kv::prefixEnd(startKey);
 	kv::KeySelector startSelector(startKey, true, 0);
@@ -559,6 +577,7 @@ int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
 
 	while (true) {
 		xattrInodeEntry = nullptr;  // Reset pointer to avoid stale values
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 		auto pageResult =
 		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 		const auto &pairs = pageResult.getPairs();
@@ -674,8 +693,6 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
 
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
-
 	kv::Key startKey = kv::toBytes(kEdgeKeyPrefix);
 	kv::Key endKey = kv::prefixEnd(startKey);
 	kv::KeySelector startSelector(startKey, true, 0);
@@ -695,6 +712,7 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	constexpr size_t kMinEdgeKeySize = kEdgeKeyPrefix.size() + sizeof(inode_t) + 1;
 
 	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 		auto pageResult = transaction->getRange(startSelector, endSelector, kEdgePageSize);
 
 		for (const auto &pair : pageResult.getPairs()) {
@@ -739,10 +757,8 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpContext,
                                          inode_t parentId, inode_t childId, const std::string &name,
                                          bool ignoreFlag, bool init) {
-	static inode_t currentParentId;
-
 	if (init) {
-		currentParentId = 0;
+		currentLoadParentId_ = 0;
 		return kOpSuccess;
 	}
 
@@ -823,14 +839,14 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 			}
 		}
 
-		if (currentParentId != parentId) {
+		if (currentLoadParentId_ != parentId) {
 			if (parent->entries.size() > 0) {
 				safs::log_err("loading edge: {}, {}->{} error: parent node sequence error",
 				              parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
 				return kOpFailure;
 			}
 
-			currentParentId = parentId;
+			currentLoadParentId_ = parentId;
 		}
 
 		auto handleOwner = std::make_unique<hstorage::Handle>(name);
@@ -900,12 +916,18 @@ bool checkMetadataSignature() {
 void MetadataBackendForkless::loadall(int ignoreflag) {
 	safs::log_info("MetadataBackendForkless::loadall: ignoreflag: {}", ignoreflag);
 
-	// Check metadata signature
-
-	bool isSignatureValid = checkMetadataSignature();
 	bool bootstrapped = false;
 
 #ifndef METARESTORE
+	// Bootstrap must start from a headerless-and-empty FDB store. If filesystem sections already
+	// exist without META_HEADER, the store is in a partially initialized state and we must fail
+	// fast instead of trying to continue migration implicitly.
+	if (metadataserver::isMaster() && getHeaderSignature().empty() &&
+	    ::hasPersistedMetadataSectionData(kvConnector_->getKVEngine(), metadataSections_)) {
+		throw MetadataConsistencyException(
+		    "inconsistent forkless metadata state: metadata sections exist without metadata header");
+	}
+
 	if (metadataserver::isMaster() && sectionBootstrapper_ != nullptr) {
 		bootstrapped = sectionBootstrapper_->bootstrapSections();
 		if (bootstrapped) {
@@ -915,7 +937,26 @@ void MetadataBackendForkless::loadall(int ignoreflag) {
 	sectionBootstrapper_.reset();
 	sectionBootstrapper_ = nullptr;
 	safs::log_info("Metadata bootstrapping stage finished");
+
+	// Re-check after bootstrap because section loaders flush filesystem metadata before
+	// saveMetadataHeader() writes META_HEADER. A failed bootstrap can therefore leave section data
+	// behind while the header is still empty; the empty-store fallback must not turn that state
+	// into a brand-new filesystem.
+	// Only a truly fresh store is allowed to enter the M NEW path, so keep the version check too.
+	if (metadataserver::isMaster() && getHeaderSignature().empty() && getVersion("") == 0) {
+		if (::hasPersistedMetadataSectionData(kvConnector_->getKVEngine(), metadataSections_)) {
+			throw MetadataConsistencyException(
+			    "inconsistent forkless metadata state: metadata sections exist without metadata header");
+		}
+
+		safs::log_warn("Initializing empty forkless metadata header");
+		initializeEmptyMetadataHeader();
+	}
 #endif
+
+	// Check metadata signature
+
+	bool isSignatureValid = checkMetadataSignature();
 
 	if (!isSignatureValid && !bootstrapped) { return; }
 
@@ -959,12 +1000,10 @@ void MetadataBackendForkless::store_fd(FILE *fd) {
 bool MetadataBackendForkless::flushPendingUpdates(bool flushAll) {
 	if (!metadataWriter_) { return false; }
 	if (flushAll) {
-		return metadataWriter_->flushAll();
+		return metadataWriter_->flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty);
 	}
 
-	// Periodic mode: best-effort single-batch flush.
-	metadataWriter_->flush();
-	return true;
+	return metadataWriter_->flush();
 }
 
 void MetadataBackendForkless::initSections() {
@@ -996,6 +1035,17 @@ void MetadataBackendForkless::initializeNewMetadataHeader() {
 	safs::log_info("Metadata header initialized successfully in FDB");
 }
 
+void MetadataBackendForkless::initializeEmptyMetadataHeader() {
+	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+	transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M NEW"));
+
+	if (!transaction->commit()) {
+		const auto *message = "Failed to initialize empty metadata header in FDB";
+		safs::log_err(message);
+		throw MetadataConsistencyException(message);
+	}
+}
+
 void MetadataBackendForkless::init() {
 	kvConnector_ = std::make_shared<KVConnectorFDB>();
 
@@ -1025,42 +1075,10 @@ void MetadataBackendForkless::init() {
 		    }
 	    });
 
-	// Register periodic flush (every 1s) to ensure timely persistence
-	eventloop_timeregister_ms(1000, flushMetadataCallback);
+	// Register periodic flush to ensure timely persistence under high metadata mutation load.
+	eventloop_timeregister_ms(kMetadataFlushIntervalMs, flushMetadataCallback);
 
 	uint64_t version = getVersion("");
-
-	if (version == 0) {  // Version does not exist, the metadata is new
-		safs::log_warn("Initializing new metadata");
-
-		auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
-
-		version = 1ULL;
-		kv::Value metadataVersionValue;
-		serialize(metadataVersionValue, version);
-
-		constexpr uint32_t initialValue32Bits = 1U;
-		kv::Value initialValue32BitsValue;
-		serialize(initialValue32BitsValue, initialValue32Bits);
-
-		transaction->set(kv::toBytes(kMetaFormatKey), kv::toBytes("1.0"));
-		transaction->set(kv::toBytes(kMetaVersionKey), metadataVersionValue);
-		transaction->set(kv::toBytes(kMetaNextSessionKey), initialValue32BitsValue);
-
-		constexpr uint64_t initialChunkId = 1ULL;
-		kv::Value initialChunkIdValue;
-		serialize(initialChunkIdValue, initialChunkId);
-		transaction->set(kv::toBytes(kMetaNextChunkIdKey), initialChunkIdValue);
-
-		// Initialize metadata signature to "SFSSIGNATURE M NEW"
-		transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M NEW"));
-
-		if (!transaction->commit()) {
-			const auto *message = "Failed to initialize new metadata";
-			safs::log_err(message);
-			throw MetadataConsistencyException(message);
-		}
-	}
 
 	gMetadata = new FilesystemMetadata;
 	createConnections();
@@ -1069,7 +1087,12 @@ void MetadataBackendForkless::init() {
 }
 
 uint64_t MetadataBackendForkless::getVersion(const std::string & /*file*/) {
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+	if (kvConnector_ == nullptr || kvConnector_->getKVEngine() == nullptr) {
+		safs::log_err("{}: KV connector/engine unavailable, returning version 0", __func__);
+		return 0;
+	}
+
+	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 	kv::Key versionKey{kv::toBytes(kMetaVersionKey)};
 
 	auto result = transaction->get(versionKey);
@@ -1084,7 +1107,12 @@ uint64_t MetadataBackendForkless::getVersion(const std::string & /*file*/) {
 }
 
 std::string MetadataBackendForkless::getHeaderSignature() {
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
+	if (kvConnector_ == nullptr || kvConnector_->getKVEngine() == nullptr) {
+		safs::log_err("{}: KV connector/engine unavailable, returning empty signature", __func__);
+		return "";
+	}
+
+	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 	kv::Key headerKey{kv::toBytes(kMetaHeaderKey)};
 
 	auto result = transaction->get(headerKey);
@@ -1122,12 +1150,12 @@ void MetadataBackendForkless::createConnections() {
 	gXAttrInodeRemovedSignal.connect([this](inode_t inode) { onXAttrInodeRemoved(inode); });
 
 	gXAttrChangedSignal.connect(
-	    [this](inode_t inode, const std::vector<uint8_t> &name, const std::vector<uint8_t> &value) {
+	    [this](inode_t inode, std::span<const uint8_t> name, std::span<const uint8_t> value) {
 		    onXAttrChanged(inode, name, value);
 	    });
 
 	gXAttrRemovedSignal.connect(
-	    [this](inode_t inode, const std::vector<uint8_t> &name) { onXAttrRemoved(inode, name); });
+	    [this](inode_t inode, std::span<const uint8_t> name) { onXAttrRemoved(inode, name); });
 
 	initializeNewMetadataHeaderSignal.connect([this]() { initializeNewMetadataHeader(); });
 }

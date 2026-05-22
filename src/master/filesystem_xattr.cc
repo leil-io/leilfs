@@ -21,10 +21,25 @@
 #include "common/platform.h"
 
 #include <algorithm>
+#include <cassert>
+#include <span>
 
 #include <common/hashfn.h>
+#include <common/massert.h>
 #include <master/filesystem_metadata.h>
 #include <master/filesystem_xattr.h>
+
+namespace {
+std::span<const uint8_t> xattrBytesView(const uint8_t *data, size_t size) {
+	// A null pointer is only acceptable when the length is zero; otherwise the API
+	// produced a malformed pointer/length pair and we want to catch it, not mask it.
+	// Use sassert so the check is enforced in release builds too (plain assert is
+	// compiled out under NDEBUG, leaving std::span{nullptr, size} as UB).
+	sassert(data != nullptr || size == 0);
+	if (size == 0) { return {}; }
+	return {data, size};
+}
+}  // namespace
 
 XAttributeInodeEntry *find_xattr_inode_entry(inode_t inode, uint32_t inodeHash) {
 	for (const auto &xattrEntry : gMetadata->xattrInodeHash[inodeHash]) {
@@ -178,9 +193,8 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 				xattrInodeEntry->attributeValueLength -= xattrDataEntry->attributeValue.size();
 
 				if (gXAttrRemovedSignal.size() > 0) {
-					gXAttrRemovedSignal.emit(
-					    inode,
-					    std::vector<uint8_t>(attributeName, attributeName + attributeNameLength));
+					gXAttrRemovedSignal.emit(inode,
+					                         xattrBytesView(attributeName, attributeNameLength));
 				}
 
 				xattr_removeentry(xattrInodeEntry, xattrDataEntry.get());
@@ -216,9 +230,9 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 			xattr_update_checksum(xattrDataEntry.get());
 
 			if (gXAttrChangedSignal.size() > 0) {
-				gXAttrChangedSignal.emit(
-				    inode, std::vector<uint8_t>(attributeName, attributeName + attributeNameLength),
-				    xattrDataEntry->attributeValue);
+				gXAttrChangedSignal.emit(inode, xattrBytesView(attributeName, attributeNameLength),
+				                         xattrBytesView(xattrDataEntry->attributeValue.data(),
+				                                        xattrDataEntry->attributeValue.size()));
 			}
 
 			return SAUNAFS_STATUS_OK;
@@ -266,9 +280,9 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 	}
 
 	if (gXAttrChangedSignal.size() > 0) {
-		gXAttrChangedSignal.emit(
-		    inode, std::vector<uint8_t>(attributeName, attributeName + attributeNameLength),
-		    xattrDataEntryPointer->attributeValue);
+		gXAttrChangedSignal.emit(inode, xattrBytesView(attributeName, attributeNameLength),
+		                         xattrBytesView(xattrDataEntryPointer->attributeValue.data(),
+		                                        xattrDataEntryPointer->attributeValue.size()));
 	}
 
 	return SAUNAFS_STATUS_OK;

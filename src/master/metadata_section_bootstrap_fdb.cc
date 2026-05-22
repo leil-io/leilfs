@@ -23,15 +23,19 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <span>
 #include <string_view>
 
 #include "common/datapack.h"
 #include "common/memory_mapped_file.h"
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
+#include "kv/kv_utils.h"
 #include "master/hstring.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
+#include "master/metadata_backend_interface.h"
 #include "master/metadata_writer_fdb.h"
 #include "slogger/slogger.h"
 
@@ -57,7 +61,9 @@ MetadataSectionBootstrapFDB::MetadataSectionBootstrapFDB(kv::IKVEngine *kvEngine
 
 bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	static constexpr uint8_t kMetadataHeaderOffset = 8;
+	maxInodeId_ = 0;
 	metadataVersion_ = 0;
+	nextSessionId_ = 0;
 
 	sectionMarkers_.clear();
 
@@ -71,13 +77,11 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	// Skip file signature
 	const uint8_t *metadataHeaderPtr = metadataFile_->seek(kMetadataHeaderOffset);
 
-	inode_t maxInodeId{};
-	getINode(&metadataHeaderPtr, maxInodeId);
+	getINode(&metadataHeaderPtr, maxInodeId_);
 
 	metadataVersion_ = get64bit(&metadataHeaderPtr);
 
-	uint32_t session{};
-	get32bit(&metadataHeaderPtr, session);
+	get32bit(&metadataHeaderPtr, nextSessionId_);
 
 	size_t offsetBegin = metadataFile_->offset(metadataHeaderPtr);
 	const uint8_t *sectionPtr = metadataFile_->seek(offsetBegin);
@@ -116,7 +120,35 @@ bool MetadataSectionBootstrapFDB::bootstrapSections() {
 		}
 	}
 
+	if (bootstrapped && saveMetadataHeader() != kOpSuccess) { return false; }
+
 	return bootstrapped;
+}
+
+int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
+	auto transaction = kvEngine_->createReadWriteTransaction();
+
+	transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M 2.9"));
+	transaction->set(kv::toBytes(kMetaFormatKey), kv::toBytes("1.0"));
+
+	kv::Value maxInodeIdValue;
+	serialize(maxInodeIdValue, maxInodeId_);
+	transaction->set(kv::toBytes(kMetaMaxInodeIdKey), maxInodeIdValue);
+
+	kv::Value metadataVersionValue;
+	serialize(metadataVersionValue, metadataVersion_);
+	transaction->set(kv::toBytes(kMetaVersionKey), metadataVersionValue);
+
+	kv::Value nextSessionIdValue;
+	serialize(nextSessionIdValue, nextSessionId_);
+	transaction->set(kv::toBytes(kMetaNextSessionKey), nextSessionIdValue);
+
+	if (!transaction->commit()) {
+		safs::log_err("Failed to commit bootstrapped metadata header to FDB");
+		return kOpFailure;
+	}
+
+	return kOpSuccess;
 }
 
 int8_t MetadataSectionBootstrapFDB::hasPrefixLatestKeys(std::string_view prefix) {
@@ -180,12 +212,12 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 		nodeCount++;
 
 		if (++pending >= kFlushThreshold) {
-			writer.flush();
+			if (!writer.flush()) { return kOpFailure; }
 			pending = 0;
 		}
 	}
 
-	if (!writer.flushAll()) {
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
 		safs::log_err("Failed to flush bootstrapped nodes to FDB");
 		return kOpFailure;
 	}
@@ -243,12 +275,12 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 
 		chunkCount++;
 		if (++pending >= kFlushThreshold) {
-			writer.flush();
+			if (!writer.flush()) { return kOpFailure; }
 			pending = 0;
 		}
 	}
 
-	if (!writer.flushAll()) {
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
 		safs::log_err("Failed to flush bootstrapped chunks to FDB");
 		return kOpFailure;
 	}
@@ -312,12 +344,12 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 		edgeCount++;
 
 		if (++pending >= kFlushThreshold) {
-			writer.flush();
+			if (!writer.flush()) { return kOpFailure; }
 			pending = 0;
 		}
 	}
 
-	if (!writer.flushAll()) {
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
 		safs::log_err("Failed to flush bootstrapped edges to FDB");
 		return kOpFailure;
 	}
@@ -362,12 +394,12 @@ int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
 		loadedCount++;
 
 		if (++pending >= kFlushThreshold) {
-			writer.flush();
+			if (!writer.flush()) { return kOpFailure; }
 			pending = 0;
 		}
 	}
 
-	if (!writer.flushAll()) {
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
 		safs::log_err("Failed to flush bootstrapped free nodes to FDB");
 		return kOpFailure;
 	}
@@ -386,19 +418,30 @@ int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
 	}
 
 	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping xattr: section bounds overflow");
+		return kOpFailure;
+	}
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	constexpr size_t kXAttrHeaderSize = sizeof(inode_t) + sizeof(uint8_t) + sizeof(uint32_t);
 
 	MetadataWriterFDB writer(kvEngine_);
 	uint64_t xattrCount = 0;
 	size_t pending = 0;
 
-	while (true) {
+	while (metadataFile_->offset(ptr) < sectionEnd) {
+		// Subtraction avoids overflow; offset(ptr) < sectionEnd is guaranteed by the loop.
+		if (kXAttrHeaderSize > sectionEnd - metadataFile_->offset(ptr)) {
+			safs::log_err("Bootstrapping xattr: truncated entry header");
+			return kOpFailure;
+		}
+
 		inode_t inode{};
 		getINode(&ptr, inode);
 		uint8_t attributeNameLength = get8bit(&ptr);
 
 		uint32_t attributeValueLength{};
 		get32bit(&ptr, attributeValueLength);
-		marker->offset = metadataFile_->offset(ptr);
 
 		if (inode == 0) { break; }
 
@@ -412,25 +455,30 @@ int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
 			return kOpFailure;
 		}
 
-		std::vector<uint8_t> attributeName(ptr, ptr + attributeNameLength);
+		const size_t attributeDataLength =
+		    static_cast<size_t>(attributeNameLength) + static_cast<size_t>(attributeValueLength);
+		// Subtraction avoids overflow; offset(ptr) <= sectionEnd holds after the header read.
+		if (attributeDataLength > sectionEnd - metadataFile_->offset(ptr)) {
+			safs::log_err("Bootstrapping xattr: truncated attribute data for inode {}", inode);
+			return kOpFailure;
+		}
+
+		std::span<const uint8_t> attributeName(ptr, attributeNameLength);
 		ptr += attributeNameLength;
 
-		std::vector<uint8_t> attributeValue(ptr, ptr + attributeValueLength);
+		std::span<const uint8_t> attributeValue(ptr, attributeValueLength);
 		ptr += attributeValueLength;
 
-		marker->offset = metadataFile_->offset(ptr);
-
-		writer.enqueue(std::make_unique<XAttrUpdateEvent>(inode, std::move(attributeName),
-		                                                  std::move(attributeValue)));
+		writer.enqueue(std::make_unique<XAttrUpdateEvent>(inode, attributeName, attributeValue));
 		xattrCount++;
 
 		if (++pending >= kFlushThreshold) {
-			writer.flush();
+			if (!writer.flush()) { return kOpFailure; }
 			pending = 0;
 		}
 	}
 
-	if (!writer.flushAll()) {
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
 		safs::log_err("Failed to flush bootstrapped xattrs to FDB");
 		return kOpFailure;
 	}
@@ -449,7 +497,7 @@ std::optional<MetadataSectionBootstrapFDB::SectionMarker> MetadataSectionBootstr
 void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	metadataFileSections_.clear();
 
-    // Filesystem MetadataSection "NODE 1.0"
+	// Filesystem MetadataSection "NODE 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "NODE 1.0",
 	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kNodeKeyPrefix); },
