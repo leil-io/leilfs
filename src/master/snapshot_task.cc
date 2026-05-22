@@ -325,6 +325,12 @@ int SnapshotTask::cloneNodeStep(const FilesystemOperationContext &fsOpContext, u
 		}
 	}
 
+	// Emit node changed signal to notify changes during the node creation and data cloning
+	if (gMetadata->nodeChangedSignal.size() > 0) {
+		gMetadata->nodeChangedSignal.emit(dst_node);
+		gMetadata->nodeChangedSignal.emit(dst_parent);
+	}
+
 	return SAUNAFS_STATUS_OK;
 }
 

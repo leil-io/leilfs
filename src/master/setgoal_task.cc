@@ -139,9 +139,6 @@ uint8_t SetGoalTask::setGoal(const FilesystemOperationContext &fsOpContext, FSNo
 					if (changeStatus != SAUNAFS_STATUS_OK) { return SetGoalTask::kChunkTableError; }
 				} else {
 					node->goal = goal_;
-					if (!fsOpContext.hasReadWriteTransaction()) {
-						gMetadata->nodeChangedSignal.emit(node);
-					}
 				}
 				gFSOperations->nodeOperations()->updateCTime(fsOpContext, node, ts);
 				fsnodes_update_checksum(node);
@@ -149,6 +146,11 @@ uint8_t SetGoalTask::setGoal(const FilesystemOperationContext &fsOpContext, FSNo
 				// Make goal updates persistent for KV backends.
 				if (fsOpContext.hasReadWriteTransaction()) {
 					gFSOperations->nodeOperations()->updateNode(fsOpContext, node);
+				}
+
+				// Emit node changed signal to notify modifications like ctime or goal updates
+				if (!fsOpContext.hasReadWriteTransaction()) {
+					gMetadata->nodeChangedSignal.emit(node);
 				}
 				return SetGoalTask::kChanged;
 			} else {

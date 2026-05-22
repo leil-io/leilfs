@@ -378,8 +378,8 @@
 ## FORKLESS enables the MetadataBackendForkless, which stores filesystem metadata in FoundationDB
 ## without forking the master process during metadata dumps.
 ##
-## Note: FORKLESS metadata backend is experimental and under active development. It is not
-## suitable for production use. Data loss or inconsistencies may occur.
+## Note: FORKLESS metadata backend is experimental and under active development.
+## It is not suitable for production use. Data loss or inconsistencies may occur.
 ##
 ## (Default: FILE)
-# METADATA_BACKEND_TYPE = FILE
+# METADATA_BACKEND = FILE

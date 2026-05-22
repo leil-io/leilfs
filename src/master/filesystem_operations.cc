@@ -899,6 +899,11 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 		}
 	}
 
+	// Emit node change event for the undelled node
+	if (status == SAUNAFS_STATUS_OK && gMetadata->nodeChangedSignal.size() > 0) {
+		gMetadata->nodeChangedSignal.emit(node);
+	}
+
 	return status;
 }
 
@@ -1031,6 +1036,9 @@ uint8_t FilesystemOperationsBase::applyAccess(const FilesystemOperationContext &
 
 	// Make the change persistent for KV backends
 	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+
+	// Emit node changed after updating atime
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1342,6 +1350,9 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 					nodeOperations_->updateNode(fsOpContext, node);
 				}
 
+				// Emit node changed after truncating chunk
+				if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
+
 				return SAUNAFS_ERROR_DELAYED;
 			}
 		}
@@ -1452,6 +1463,9 @@ uint8_t FilesystemOperationsBase::applyTrunc(const FilesystemOperationContext &f
 		nodeOperations_->updateNode(fsOpContext, nodeFile);
 	}
 
+	// Emit node changed after applying truncation
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(nodeFile); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1532,6 +1546,9 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 
 	// Make the change persistent for KV backends
 	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+
+	// Emit node changed to notify about mtime and ctime changes, which are not emitted by setLength
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
@@ -1687,6 +1704,9 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	// Make persistent the changes on KV backends
 	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
 
+	// Emit node changed signal to notify about mtime and ctime changes
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
+
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
 	return SAUNAFS_STATUS_OK;
@@ -1721,6 +1741,9 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	// Make persistent the changes on KV backends
 	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
 
+	// Emit node changed signal to notify about mtime and ctime changes
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1747,6 +1770,9 @@ uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &
 	// Make the change persistent for KV backends
 	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
 
+	// Emit node changed signal to notify about mtime and ctime changes
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1765,6 +1791,9 @@ static inline void fs_update_atime(const FilesystemOperationContext &fsOpContext
 		// conflict-free atomicMax on NODE_ATIME_ instead of a whole-node write. fillAttr serves
 		// max(node->atime, NODE_ATIME_), recovering the advance if the cached bump is lost.
 		gFSOperations->nodeOperations()->persistNodeAtime(fsOpContext, p, ts);
+
+		// Emit node changed signal to notify about atime change
+		if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(p); }
 	}
 }
 
@@ -1860,6 +1889,9 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 	if (fsOpContext.hasReadWriteTransaction()) {
 		nodeOperations_->updateNode(fsOpContext, newNode);
 	}
+
+	// Emit node changed signal for the newly created symlink node
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(newNode); }
 
 	StatsRecord statsRecord;
 	memset(&statsRecord, 0, sizeof(StatsRecord));
@@ -1962,6 +1994,9 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	metrics::Counter::increment(metrics::Counter::Master::FS_MKNOD);
 	fsnodes_update_checksum(newNode);
 
+	// Emit node changed signal for the newly created node
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(newNode); }
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2060,6 +2095,9 @@ uint8_t FilesystemOperationsBase::applyCreate(const FilesystemOperationContext &
 	if (type == FSNodeType::kBlockDev || type == FSNodeType::kCharDev) {
 		static_cast<FSNodeDevice *>(node)->rdev = rdev;
 		fsnodes_update_checksum(node);
+
+		// Emit node changed signal for the newly created node
+		if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 	}
 	if (inode != node->id) {
 		// if inode!=p->id then requested inode number was already acquired
@@ -2497,6 +2535,12 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 	if (fsOpContext.hasReadWriteTransaction()) {
 		nodeOperations_->updateNode(fsOpContext, targetNode);
 		nodeOperations_->updateNode(fsOpContext, sourceNode);
+	}
+
+	// Emit node changed signal to notify changes for target and source nodes
+	if (gMetadata->nodeChangedSignal.size() > 0) {
+		gMetadata->nodeChangedSignal.emit(targetNode);
+		gMetadata->nodeChangedSignal.emit(sourceNode);
 	}
 
 	if (context.isPersonalityMaster()) {
@@ -2976,6 +3020,9 @@ uint8_t FilesystemOperationsBase::acquire(const FsContext &context,
 		nodeOperations_->updateNode(fsOpContext, fileNode);
 	}
 
+	// Emit node changed signal to notify changes for the file node
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(fileNode); }
+
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode,
 		          sessionid);
@@ -3017,6 +3064,11 @@ uint8_t FilesystemOperationsBase::release(const FsContext &context,
 			// Persist the changes in KV backends
 			if (fsOpContext.hasReadWriteTransaction()) {
 				nodeOperations_->updateNode(fsOpContext, fileNode);
+			}
+
+			// Emit node changed signal to notify changes for the file node
+			if (gMetadata->nodeChangedSignal.size() > 0) {
+				gMetadata->nodeChangedSignal.emit(fileNode);
 			}
 		}
 
@@ -3260,6 +3312,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 		nodeOperations_->updateNode(fsOpContext, fileNode);
 	}
 
+	// Emit node changed signal to notify changes for the file node
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(fileNode); }
+
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Write);
 	metrics::Counter::increment(metrics::Counter::Master::FS_WRITE);
@@ -3307,6 +3362,11 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 			// Make the change persistent for KV backends
 			if (fsOpContext.hasReadWriteTransaction()) {
 				nodeOperations_->updateNode(fsOpContext, nodeFile);
+			}
+
+			// Emit node changed to notify mtime and ctime changes, not emitted by setLength
+			if (gMetadata->nodeChangedSignal.size() > 0) {
+				gMetadata->nodeChangedSignal.emit(nodeFile);
 			}
 
 			changeLog(fsOpContext, timeStamp, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")",
@@ -3390,6 +3450,9 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 	if (fsOpContext.hasReadWriteTransaction()) {
 		nodeOperations_->updateNode(fsOpContext, nodeFile);
 	}
+	// Emit node changed signal to notify changes for the file node after chunk removal
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(nodeFile); }
+
 	return SAUNAFS_STATUS_OK;
 }
 #endif /* #ifndef METARESTORE */
@@ -3471,6 +3534,9 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 		return SAUNAFS_ERROR_IO;
 	}
 
+	// Emit node changed signal to notify changes for the file node after repair
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
+
 	return SAUNAFS_STATUS_OK;
 }
 #endif /* #ifndef METARESTORE */
@@ -3530,6 +3596,8 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 
 	fsnodes_update_checksum(nodeFile);
 
+	// Emit node changed signal to notify changes for the file node after repair
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(nodeFile); }
 	return status;
 }
 
@@ -3910,6 +3978,10 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 	nodeOperations_->updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Emit node changed signal to notify changes for the node after setxattr
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
+
 	changeLog(fsOpContext, timeStamp, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", node->id,
 	          nodeOperations_->escapeName(std::string((const char *)attrname, anleng)).c_str(),
 	          nodeOperations_->escapeName(std::string((const char *)attrvalue, avleng)).c_str(),
@@ -3980,6 +4052,9 @@ uint8_t FilesystemOperationsBase::applySetXAttr(const FilesystemOperationContext
 	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(node);
+
+	// Emit node changed signal to notify changes for the node after setxattr
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 	return status;
 }
 

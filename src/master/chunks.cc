@@ -1032,6 +1032,7 @@ int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal) {
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1044,6 +1045,7 @@ static inline int chunk_delete_file_int(Chunk *c, uint8_t goal) {
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1056,6 +1058,7 @@ static inline int chunk_add_file_int(Chunk *c, uint8_t goal, bool isMetadataLoad
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
 	chunk_update_checksum(c, isMetadataLoading);
+	if (!isMetadataLoading) { emit_chunk_changed(c); }
 	return SAUNAFS_STATUS_OK;
 }
 
