@@ -8,7 +8,12 @@ if(NOT DB_FOUND)
 endif()
 
 if(NOT ENABLE_FOUNDATIONDB)
-  list(REMOVE_ITEM MASTER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/kv_connector_fdb.cc")
+  list(REMOVE_ITEM MASTER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/kv_connector_fdb.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/metadata_backend_forkless.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/metadata_section_bootstrap_fdb.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/metadata_writer_fdb.cc"
+  )
 endif()
 
 option(DISABLE_JUDY_FOR_DEFECTIVENODESMAP       "Disable the use of judy for the defective inodes map."                OFF)
@@ -37,6 +42,7 @@ endif()
 add_library(master ${MASTER_SOURCES})
 target_link_libraries(master leil-common metrics ${ADDITIONAL_LIBS})
 if(ENABLE_FOUNDATIONDB)
+  target_compile_definitions(master PUBLIC ENABLE_FOUNDATIONDB)
   target_link_libraries(master fdb)
 endif()
 if(JUDY_LIBRARY)

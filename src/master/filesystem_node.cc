@@ -670,6 +670,10 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
 
 	fsnodes_update_checksum(parent);
+
+	// Emit node changed signal to notify changes in the parent directory
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(parent); }
+
 	HString currentName = childName;
 	if (parent->caseInsensitive) { currentName = HString::hstringToLowerCase(childName); }
 
@@ -689,6 +693,9 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	assert(childNode->type != FSNodeType::kTrash);
 	childNode->ctime = timeStamp;
 	fsnodes_update_checksum(childNode);
+
+	// Emit node changed signal to notify changes in the child node
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(childNode); }
 
 	gMetadata->edgeRemovedSignal.emit(parent->id, childName);
 }
@@ -722,9 +729,13 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	if (timeStamp > 0) {
 		parent->mtime = parent->ctime = timeStamp;
 		fsnodes_update_checksum(parent);
+		// Emit node changed signal to notify changes in the parent directory
+		if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(parent); }
 		assert(child->type != FSNodeType::kTrash);
 		child->ctime = timeStamp;
 		fsnodes_update_checksum(child);
+		// Emit node changed signal to notify changes in the child node
+		if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(child); }
 	}
 }
 
@@ -1634,6 +1645,11 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 			childNode->ctime = timeStamp;
 			fsnodes_update_checksum(childNode);
 
+			// Emit node changed signal to notify the node is now in Trash
+			if (gMetadata->nodeChangedSignal.size() > 0) {
+				gMetadata->nodeChangedSignal.emit(childNode);
+			}
+
 			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			              gMetadata->trashReservedToId, childNode, path);
 
@@ -1642,6 +1658,11 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 		} else if (!fileNode->sessionIds.empty()) {
 			childNode->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(childNode);
+
+			// Emit node changed signal to notify the node is now Reserved
+			if (gMetadata->nodeChangedSignal.size() > 0) {
+				gMetadata->nodeChangedSignal.emit(childNode);
+			}
 
 			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                 gMetadata->trashReservedToId, childNode, path);
@@ -1667,6 +1688,12 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 		if (!fileNode->sessionIds.empty()) {
 			fileNode->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(fileNode);
+
+			// Emit node changed signal to notify the node's type has changed
+			if (gMetadata->nodeChangedSignal.size() > 0) {
+				gMetadata->nodeChangedSignal.emit(fileNode);
+			}
+
 			gMetadata->reservedSpace += fileNode->length;
 			gMetadata->reservedNodes++;
 
@@ -1681,6 +1708,12 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 		                 gMetadata->trashReservedToId, node);
 		node->ctime = timeStamp;
 		fsnodes_update_checksum(node);
+
+		// Emit node changed signal to notify the node's ctime has changed
+		if (gMetadata->nodeChangedSignal.size() > 0) {
+			gMetadata->nodeChangedSignal.emit(node);
+		}
+
 		removeNode(fsOpContext, timeStamp, node);
 
 		return 1;  // Return 1 to indicate the node was successfully deleted
@@ -1697,6 +1730,12 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 
 		fileNode->ctime = timeStamp;
 		fsnodes_update_checksum(fileNode);
+
+		// Emit node changed signal to notify the node's ctime has changed
+		if (gMetadata->nodeChangedSignal.size() > 0) {
+			gMetadata->nodeChangedSignal.emit(fileNode);
+		}
+
 		removeNode(fsOpContext, timeStamp, fileNode);
 		return 1;
 	}
@@ -1810,6 +1849,7 @@ void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationCon
 	    node->type == FSNodeType::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
 			safs::log_warn("file inode {}: unknown goal !!! - fixing", node->id);
+			// changeFileGoal updates the checksum and emits nodeChangedSignal itself.
 			changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), DEFAULT_GOAL);
 		}
 
@@ -1818,6 +1858,13 @@ void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationCon
 		if (!GoalId::isValid(node->goal)) {
 			safs::log_warn("directory inode {}: unknown goal !!! - fixing", node->id);
 			node->goal = DEFAULT_GOAL;
+			// Persist the fix: refresh the checksum and emit only on an actual change so a
+			// read-only GETGOAL walk does not enqueue every visited node.
+			fsnodes_update_checksum(node);
+			if (!fsOpContext.hasReadWriteTransaction() &&
+			    gMetadata->nodeChangedSignal.size() > 0) {
+				gMetadata->nodeChangedSignal.emit(node);
+			}
 		}
 
 		dirGoalsTab[node->goal]++;
@@ -1915,6 +1962,8 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 	}
 
 	if (nodeChanged && fsOpContext.hasReadWriteTransaction()) { updateNode(fsOpContext, node); }
+	// Emit node changed signal to notify changes during the goal change
+	if (nodeChanged && gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 }
 
 void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t timeStamp,
@@ -1961,6 +2010,11 @@ void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t 
 				}
 
 				fsnodes_update_checksum(node);
+
+				// Emit node changed signal to notify changes during the trashtime update
+				if (gMetadata->nodeChangedSignal.size() > 0) {
+					gMetadata->nodeChangedSignal.emit(node);
+				}
 			} else {
 				(*unchangedINodesOut)++;
 			}
@@ -2038,6 +2092,11 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(
 
 	// Make the change persistent for KV backends
 	if (nodeChanged && fsOpContext.hasReadWriteTransaction()) { updateNode(fsOpContext, node); }
+
+	// Emit node changed signal to notify changes during the extra attribute update
+	if (nodeChanged && gMetadata->nodeChangedSignal.size() > 0) {
+		gMetadata->nodeChangedSignal.emit(node);
+	}
 }
 
 uint8_t FilesystemNodeOperationsBase::deleteAcl(
@@ -2078,6 +2137,9 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(
 
 	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Emit node changed signal to notify changes during the ACL deletion
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2130,6 +2192,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Emit node changed signal to notify changes during the ACL update
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2163,6 +2228,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Emit node changed signal to notify changes during the ACL update
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 	return SAUNAFS_STATUS_OK;
 }
 

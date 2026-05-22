@@ -41,7 +41,9 @@
 #include "master/matomlserv.h"
 #include "master/matontserv.h"
 #include "master/metadata_backend_file.h"
+#ifdef ENABLE_FOUNDATIONDB
 #include "master/metadata_backend_forkless.h"
+#endif
 #include "master/metadata_backend_interface.h"
 #include "master/personality.h"
 #include "master/session_manager.h"
@@ -66,31 +68,30 @@ inline int metadata_backend_init() {
 
 	if (gMetadataBackend == nullptr) {
 		if (backendType == "FILE") {
-			try {
-				gMetadataBackend = std::make_unique<MetadataBackendFile>();
-				gMetadataBackend->init();
-				gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
-				safs::log_info("Initialized FILE metadata backend");
-			} catch (const std::exception &e) {
-				constexpr auto kErrorMessage = "Failed to initialize metadata backend";
-				safs::log_err("{}: {}", kErrorMessage, e.what());
-				throw Exception(kErrorMessage);
-			}
+			gMetadataBackend = std::make_unique<MetadataBackendFile>();
 		} else if (backendType == "FORKLESS") {
-			try {
-				gMetadataBackend = std::make_unique<MetadataBackendForkless>();
-				gMetadataBackend->init();
-				gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
-				safs::log_info("Initialized FORKLESS metadata backend");
-			} catch (const std::exception &e) {
-				constexpr auto kErrorMessage = "Failed to initialize metadata forkless backend";
-				safs::log_err("{}: {}", kErrorMessage, e.what());
-				throw Exception(kErrorMessage);
-			}
+#ifdef ENABLE_FOUNDATIONDB
+			gMetadataBackend = std::make_unique<MetadataBackendForkless>();
+#else
+			constexpr auto kErrorMessage =
+			    "FORKLESS metadata backend requires ENABLE_FOUNDATIONDB";
+			safs::log_err(kErrorMessage);
+			throw Exception(kErrorMessage);
+#endif
 		} else {
 			std::string errorMessage = "Unsupported METADATA_BACKEND type: " + backendType;
 			safs::log_err("{}", errorMessage);
 			throw Exception(errorMessage);
+		}
+
+		try {
+			gMetadataBackend->init();
+			gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
+			safs::log_info("Initialized {} metadata backend", backendType);
+		} catch (const std::exception &e) {
+			constexpr auto kErrorMessage = "Failed to initialize metadata backend";
+			safs::log_err("{}: {}", kErrorMessage, e.what());
+			throw Exception(kErrorMessage);
 		}
 	}
 

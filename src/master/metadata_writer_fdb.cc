@@ -20,7 +20,12 @@
 
 #include "master/metadata_writer_fdb.h"
 
+#include <algorithm>
+#include <utility>
+
+#include "common/datapack.h"
 #include "kv/itransaction.h"
+#include "kv/kv_utils.h"
 #include "master/kv_common_keys.h"
 
 ChunkUpdateEvent::ChunkUpdateEvent(uint64_t _chunkId, uint32_t _version, uint32_t _lockedTo,
@@ -108,9 +113,9 @@ void EdgeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->remove(key);
 }
 
-XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::vector<uint8_t> _name,
-                                   std::vector<uint8_t> _value)
-    : inode(_inode), name(std::move(_name)), value(std::move(_value)) {}
+XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::span<const uint8_t> _name,
+                                   std::span<const uint8_t> _value)
+    : inode(_inode), name(_name.begin(), _name.end()), value(_value.begin(), _value.end()) {}
 
 void XAttrUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	// Key: XATR_<inode><attributeName>
@@ -121,8 +126,8 @@ void XAttrUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->set(key, value);
 }
 
-XAttrRemoveEvent::XAttrRemoveEvent(inode_t _inode, std::vector<uint8_t> _name)
-    : inode(_inode), name(std::move(_name)) {}
+XAttrRemoveEvent::XAttrRemoveEvent(inode_t _inode, std::span<const uint8_t> _name)
+    : inode(_inode), name(_name.begin(), _name.end()) {}
 
 void XAttrRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	// Key: XATR_<inode><attributeName>
@@ -142,9 +147,7 @@ void XAttrInodeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	txn->removeRange(startKey, endKey);
 }
 
-MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {
-	pendingUpdates_.reserve(kInitialSize_);  // Default reserve size, can be adjusted
-}
+MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {}
 
 void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 	if (event == nullptr) {
@@ -155,19 +158,21 @@ void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 	pendingUpdates_.emplace_back(std::move(event));
 }
 
-void MetadataWriterFDB::flush() {
-	std::lock_guard<std::mutex> lock(mutex_);
-	(void)flushNoLock();
-}
+bool MetadataWriterFDB::flush(FlushMode mode) {
+	size_t updatesToFlush = pendingCount();
 
-bool MetadataWriterFDB::flushAll() {
-	std::lock_guard<std::mutex> lock(mutex_);
-	while (!pendingUpdates_.empty()) {
-		if (!flushNoLock()) {
-			// Stop on failure to avoid a tight loop; caller can retry later.
-			return false;
-		}
+	while (updatesToFlush > 0) {
+		const size_t batchSize = std::min(updatesToFlush, kMaxUpdatesPerFlush_);
+		if (!flushBatch(batchSize)) { return false; }
+		updatesToFlush -= batchSize;
 	}
+
+	if (mode == FlushMode::kSnapshot) { return true; }
+
+	while (pendingCount() > 0) {
+		if (!flushBatch(kMaxUpdatesPerFlush_)) { return false; }
+	}
+
 	return true;
 }
 
@@ -176,24 +181,41 @@ size_t MetadataWriterFDB::pendingCount() const {
 	return pendingUpdates_.size();
 }
 
-bool MetadataWriterFDB::flushNoLock() {
-	if (pendingUpdates_.empty()) { return true; }
+MetadataWriterFDB::UpdateQueue MetadataWriterFDB::takeBatch(size_t maxUpdates) {
+	UpdateQueue batch;
+	std::lock_guard<std::mutex> lock(mutex_);
+
+	const size_t batchSize = std::min(pendingUpdates_.size(), maxUpdates);
+	for (size_t i = 0; i < batchSize; ++i) {
+		batch.push_back(std::move(pendingUpdates_.front()));
+		pendingUpdates_.pop_front();
+	}
+
+	return batch;
+}
+
+void MetadataWriterFDB::restoreBatch(UpdateQueue updates) {
+	std::lock_guard<std::mutex> lock(mutex_);
+	while (!updates.empty()) {
+		pendingUpdates_.push_front(std::move(updates.back()));
+		updates.pop_back();
+	}
+}
+
+bool MetadataWriterFDB::flushBatch(size_t maxUpdates) {
+	auto batch = takeBatch(maxUpdates);
+	if (batch.empty()) { return true; }
 
 	auto transaction = kvEngine_->createReadWriteTransaction();
 
-	// Process all updates in order in batches of kMaxUpdatesPerFlush_
-	const size_t batchSize = std::min(pendingUpdates_.size(), kMaxUpdatesPerFlush_);
-	for (size_t i = 0; i < batchSize; ++i) {
-		pendingUpdates_[i]->applyEvent(transaction.get());
-	}
+	for (const auto &update : batch) { update->applyEvent(transaction.get()); }
 
 	if (!transaction->commit()) {
-		safs::log_err("Failed to flush {} metadata updates to FDB", batchSize);
+		safs::log_err("Failed to flush {} metadata updates to FDB", batch.size());
+		restoreBatch(std::move(batch));
 		return false;
 	}
 
-	safs::log_info("Flushed {} metadata updates to FDB", batchSize);
-	pendingUpdates_.erase(pendingUpdates_.begin(),
-	                      pendingUpdates_.begin() + static_cast<std::ptrdiff_t>(batchSize));
+	safs::log_info("Flushed {} metadata updates to FDB", batch.size());
 	return true;
 }

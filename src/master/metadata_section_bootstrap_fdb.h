@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -29,6 +30,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include "common/type_defs.h"
 #include "kv/ikv_engine.h"
 
 class MemoryMappedFile;
@@ -62,6 +65,7 @@ private:
 
 	bool prepare(const std::string &metadataFilePath);
 	std::optional<SectionMarker> findSection(std::string_view name) const;
+	int8_t saveMetadataHeader();
 
 	void initMetadataFileSections();
 
@@ -72,7 +76,9 @@ private:
 	int8_t loadFreeSection();
 	int8_t loadXAttrSection();
 
+	inode_t maxInodeId_ = 0;
 	uint64_t metadataVersion_ = 0;
+	uint32_t nextSessionId_ = 0;
 	std::shared_ptr<MemoryMappedFile> metadataFile_;
 	std::unordered_map<std::string, SectionMarker> sectionMarkers_;
 	kv::IKVEngine *kvEngine_ = nullptr;

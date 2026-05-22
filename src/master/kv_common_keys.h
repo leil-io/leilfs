@@ -26,6 +26,8 @@
 inline constexpr std::string_view kMetaFormatKey = "META_FORMAT";
 inline constexpr std::string_view kMetaVersionKey = "META_VERSION";
 inline constexpr std::string_view kMetaHeaderKey = "META_HEADER";
+inline constexpr std::string_view kMetaMaxInodeIdKey = "META_MAX_INODE_ID";
+inline constexpr std::string_view kMetaNextSessionKey = "META_NEXT_SESSION";
 
 /// Prefix for persisted session records.
 /// Format: SESS_REC_<SessionId>:<SerializedSessionRecord>

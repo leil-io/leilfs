@@ -20,6 +20,14 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "kv/ikv_engine.h"
 #include "master/filesystem_operation_context.h"
 #include "master/kv_connector_interface.h"
@@ -124,6 +132,7 @@ private:
 
 	///  Initializes new metadata in FDB
 	void initializeNewMetadataHeader();
+	void initializeEmptyMetadataHeader();
 
 	///  Registers observers/watchers on selected metadata properties
 	void createConnections();
@@ -201,7 +210,7 @@ private:
 	/// - parentId != 0: the child is inserted into the parent directory's entry map, its
 	///   parent back-pointer is set, and directory statistics are propagated upward.
 	///
-	/// On the first call, pass `init = true` to reset internal static state (the "current parent"
+	/// On the first call, pass `init = true` to reset the internal "current parent"
 	/// tracker used to detect out-of-order edges).
 	///
 	/// @param fsOpContext Filesystem operation context (transaction).
@@ -209,7 +218,7 @@ private:
 	/// @param childId    Inode of the child node.
 	/// @param name       Edge name (filename component).
 	/// @param ignoreFlag When true, tolerate missing nodes (see loadEdges()).
-	/// @param init       When true, reset static state without loading an edge.
+	/// @param init       When true, reset state without loading an edge.
 	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
 	                inode_t childId, const std::string &name, bool ignoreFlag, bool init = false);
@@ -318,8 +327,8 @@ private:
 	/// @param inode Inode that owns the xattr.
 	/// @param name  Attribute name bytes.
 	/// @param value Attribute value bytes.
-	void onXAttrChanged(inode_t inode, const std::vector<uint8_t> &name,
-	                    const std::vector<uint8_t> &value);
+	void onXAttrChanged(inode_t inode, std::span<const uint8_t> name,
+	                    std::span<const uint8_t> value);
 
 	/// Enqueue a single xattr removal event to the metadata writer.
 	///
@@ -328,7 +337,7 @@ private:
 	///
 	/// @param inode Inode that owns the xattr.
 	/// @param name  Attribute name bytes.
-	void onXAttrRemoved(inode_t inode, const std::vector<uint8_t> &name);
+	void onXAttrRemoved(inode_t inode, std::span<const uint8_t> name);
 
 	/// Returns next chunk ID value from the KV store.
 	///
@@ -347,6 +356,8 @@ private:
 
 	/// Metadata writer for all metadata updates
 	std::unique_ptr<MetadataWriterFDB> metadataWriter_;
+
+	inode_t currentLoadParentId_ = 0;
 
 #ifndef METARESTORE
 	/// Bootstrapper for metadata sections

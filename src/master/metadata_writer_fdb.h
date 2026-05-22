@@ -20,9 +20,17 @@
 
 #include "common/platform.h"
 
-#include <kv/ikv_engine.h>
-#include <master/kv_connector_interface.h>
-#include <master/metadata_backend_interface.h>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <span>
+#include <vector>
+
+#include "common/type_defs.h"
+#include "kv/ikv_engine.h"
+#include "master/filesystem_node_types.h"
 
 class IMetadataUpdateEvent {
 public:
@@ -118,7 +126,8 @@ private:
 /// Writes XATR_<InodeId><AttributeName>: <AttributeValue> to FDB.
 class XAttrUpdateEvent : public IMetadataUpdateEvent {
 public:
-	XAttrUpdateEvent(inode_t _inode, std::vector<uint8_t> _name, std::vector<uint8_t> _value);
+	XAttrUpdateEvent(inode_t _inode, std::span<const uint8_t> _name,
+	                 std::span<const uint8_t> _value);
 	~XAttrUpdateEvent() override = default;
 
 	void applyEvent(kv::IReadWriteTransaction *txn) override;
@@ -133,7 +142,7 @@ private:
 /// Removes XATR_<InodeId><AttributeName> from FDB.
 class XAttrRemoveEvent : public IMetadataUpdateEvent {
 public:
-	XAttrRemoveEvent(inode_t _inode, std::vector<uint8_t> _name);
+	XAttrRemoveEvent(inode_t _inode, std::span<const uint8_t> _name);
 	~XAttrRemoveEvent() override = default;
 
 	void applyEvent(kv::IReadWriteTransaction *txn) override;
@@ -159,30 +168,39 @@ private:
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:
+	/// Controls which set of queued updates a flush operation must persist.
+	///
+	/// Snapshot mode flushes only the updates that were already queued when the call started.
+	/// Drain-until-empty mode keeps flushing until the queue becomes empty, including updates
+	/// enqueued while the flush is in progress.
+	enum class FlushMode : uint8_t {
+		kSnapshot,        ///< Flush only the initial snapshot of pending updates.
+		kDrainUntilEmpty, ///< Keep flushing until no pending updates remain.
+	};
+
 	explicit MetadataWriterFDB(kv::IKVEngine *kvEngine);
 
 	/// Enqueue an update (thread-safe)
 	void enqueue(std::unique_ptr<IMetadataUpdateEvent> event);
 
-	/// Flushes at most kMaxUpdatesPerFlush_ pending updates to FDB (thread-safe).
-	/// Intended for periodic/background flushing to avoid long stalls.
-	void flush();
-
-	/// Flushes all pending updates to FDB (thread-safe).
-	/// Returns true if all updates were flushed, false on commit failure.
-	bool flushAll();
+	/// Flushes pending updates that were queued when the call started (thread-safe).
+	/// Intended for periodic/background flushing to avoid unbounded backlog growth.
+	bool flush(FlushMode mode = FlushMode::kSnapshot);
 
 	/// Get count of pending updates
 	size_t pendingCount() const;
 
 private:
-	bool flushNoLock();
+	using UpdateQueue = std::deque<std::unique_ptr<IMetadataUpdateEvent>>;
+
+	UpdateQueue takeBatch(size_t maxUpdates);
+	void restoreBatch(UpdateQueue updates);
+	bool flushBatch(size_t maxUpdates);
 
 	kv::IKVEngine *kvEngine_;
 
 	mutable std::mutex mutex_;
-	std::vector<std::unique_ptr<IMetadataUpdateEvent>> pendingUpdates_;
+	UpdateQueue pendingUpdates_;
 
-	constexpr static size_t kInitialSize_ = 1000;
 	constexpr static size_t kMaxUpdatesPerFlush_ = 1000;
 };
