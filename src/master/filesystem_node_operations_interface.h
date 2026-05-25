@@ -558,6 +558,17 @@ public:
 	virtual uint8_t deleteAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                          AclType type, uint32_t timeStamp) = 0;
 
+	/// Re-aligns a node's stored ACL with the standard permission bits in node->mode.
+	///
+	/// Ensures the (node->mode & kStandardPermissionsMask) == acl.getMode() invariant
+	/// holds after a mode change. No-op when the node has no stored ACL.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param node The node whose stored ACL must be re-aligned with node->mode.
+	/// @note In-memory backend: updates the in-process AclStorage cache.
+	/// @note KV backends: read-modify-write the persisted ACL in the same transaction.
+	virtual void syncAclWithMode(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
+
 	// Recursive operations
 #ifndef METARESTORE
 	virtual void getGoalRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,

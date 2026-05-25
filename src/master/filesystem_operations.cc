@@ -1583,7 +1583,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	}
 	if (setmask & SET_MODE_FLAG) {
 		node->mode = (attrmode & 07777) | (node->mode & 0xF000);
-		gMetadata->aclStorage.setMode(node->id, node->mode, node->type == FSNodeType::kDirectory);
+		nodeOperations_->syncAclWithMode(fsOpContext, node);
 	}
 	if (setmask & (SET_UID_FLAG | SET_GID_FLAG)) {
 		nodeOperations_->changeUidGid(fsOpContext, node,
@@ -1627,7 +1627,7 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	if (mode > 07777) { return SAUNAFS_ERROR_EINVAL; }
 
 	node->mode = mode | (node->mode & 0xF000);
-	gMetadata->aclStorage.setMode(node->id, node->mode, node->type == FSNodeType::kDirectory);
+	nodeOperations_->syncAclWithMode(fsOpContext, node);
 	if (node->uid != uid || node->gid != gid) {
 		nodeOperations_->changeUidGid(fsOpContext, node, uid, gid);
 	}

@@ -217,6 +217,10 @@ public:
 	uint8_t deleteAcl(const FilesystemOperationContext &fsOpContext, FSNode *node, AclType type,
 	                  uint32_t timeStamp) override;
 
+	/// Re-aligns a node's stored ACL with the standard permission bits in node->mode.
+	/// @see IFilesystemNodeOperations::syncAclWithMode
+	void syncAclWithMode(const FilesystemOperationContext &fsOpContext, FSNode *node) override;
+
 	// Recursive operations
 #ifndef METARESTORE
 	void getGoalRecursive(const FilesystemOperationContext &fsOpContext, FSNode *node,

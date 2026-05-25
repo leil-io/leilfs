@@ -1985,12 +1985,7 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(
 		if (newExtraAttr != (node->mode >> EATTR_BIT_OFFSET)) {
 			node->mode =
 			    (node->mode & kPermissionsMask) | (((uint16_t)newExtraAttr) << EATTR_BIT_OFFSET);
-			const RichACL *nodeAcl = gMetadata->aclStorage.get(node->id);
-
-			if (nodeAcl != nullptr) {
-				gMetadata->aclStorage.setMode(node->id, node->mode,
-				                              node->type == FSNodeType::kDirectory);
-			}
+			syncAclWithMode(fsOpContext, node);
 
 			(*modifiedINodesOut)++;
 			updateCTime(fsOpContext, node, timeStamp);
@@ -2056,6 +2051,11 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(
 	fsnodes_update_checksum(node);
 
 	return SAUNAFS_STATUS_OK;
+}
+
+void FilesystemNodeOperationsBase::syncAclWithMode(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
+	gMetadata->aclStorage.setMode(node->id, node->mode, node->type == FSNodeType::kDirectory);
 }
 
 #ifndef METARESTORE
