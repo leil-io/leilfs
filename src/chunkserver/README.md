@@ -1,9 +1,9 @@
-# Chunkserver (`sfschunkserver`) -- Architectural Reference
+# Chunkserver (`leil-chunkserver`) -- Architectural Reference
 
-The chunkserver is a storage node in a SaunaFS cluster. It stores chunk data on
+The chunkserver is a storage node in a LeilFS cluster. It stores chunk data on
 local disks, serves read/write requests from clients and other chunkservers,
 and coordinates with the master server to maintain chunk availability and
-replication. The binary produced from this directory is **`sfschunkserver`**.
+replication. The binary produced from this directory is **`leil-chunkserver`**.
 
 Chunks are fixed-size pieces of files (up to 64 MiB, subdivided into 64 KiB
 blocks). The chunkserver is responsible for their on-disk lifecycle: creation,

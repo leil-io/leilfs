@@ -1,0 +1,124 @@
+leil-migrations(7)
+===================
+
+== NAME
+
+leil-migrations - Overview of migrating LeilFS between major versions
+
+== SYNOPSIS
+
+LeilFS migration documentation for system administrators.
+
+== DESCRIPTION
+
+We use semantic versioning to determine whether something is a breaking change.
+Sometimes, it’s as simple as a command-line interface change. Other times, it
+involves changes to LeilFS’s data formats. Most of the time however, upgrades
+should be smooth.
+
+A key goal is to support smooth downgrades between versions within the same
+minor bracket (y in x.y.z). When downgrades are no longer simple, we treat them
+as breaking changes.
+
+This document outlines the upgrade/downgrade procedures for various versions.
+
+As a general rule:
+
+* Upgrade to the latest minor version of your current major version (e.g.,
+  from 4.9.0 to 4.11.0).
+* Verify everything works correctly.
+* Review the NEWS file for breaking changes.
+* Proceed with the upgrade to the next major version (e.g., 5.0.0).
+
+The same logic applies to downgrading:
+
+* Downgrade to the first minor version of your current major version (e.g.,
+  from 5.1.0 to 5.0.0).
+* Verify everything works correctly.
+* Review the NEWS file for breaking changes.
+* Proceed with the downgrade to the last major and minor version (e.g., 4.11.0).
+
+Direct upgrades or downgrades between arbitrary minor versions (other than the
+latest or first in the major series) might appear to work, but may cause
+unexpected behavior or data corruption. This approach is unsupported and
+discouraged. However, these behaviors may be documented below.
+
+== SCRIPTS
+
+This document describes the more technical details of the migration, in such a
+way you can even do it on your own by hand. However, scripts and programs are
+provided in the source files (located under /migrations/) that allows
+performing the migration more easily and with backups/error checking. A more
+step-by-step procedure may be published on https://docs.leil.io in regards
+to the official Ubuntu packages and may linked here.
+
+== 4.x.x TO 5.x.x
+
+The main breaking change in 5.x.x relates to the changelog format. The LENGTH
+operation format now has three variables. The third variable adds whether to
+scan chunks further or not. On older versions, this would be always 1.
+
+=== UPGRADE PROCEDURE
+
+No action is required during upgrade. 5.0.0 and later can parse both LENGTH
+operations correctly.
+
+=== DOWNGRADE PROCEDURE
+
+Older versions cannot parse the new LENGTH format correctly. Version 4.11.0
+will correctly print out that why it failed to be parsed. Earlier
+versions may simply report a parse error and "Unknown LeilFS Error". While
+this typically doesn’t affect daily operations, if a stale lock appears and
+`leil-metarestore` or `leil-master` (through the option AUTO_RECOVERY or `-o
+auto-recovery`) try to restore from changelog, this will fail.
+
+To fix this, manually revert new LENGTH operations to the old format by
+removing the third argument in the changelog.sfs files located in the
+`DATA_PATH` (typically `/var/lib/leil/`).
+
+Example: This line must be converted from:
+
+"122087244: 1748937259|LENGTH(57605,1536,0)"
+
+To this:
+
+"122087244: 1748937259|LENGTH(57605,1536)"
+
+This will not affect the metadata consistency, it is safe to do this on newer
+metadata where this new variable was used.
+
+Programs that use these changelogs (typically master, metalogger or shadow)
+must not be running while performing this operation.
+
+[WARNING]
+=========
+Do not perform this operation while master, metalogger, or
+shadow are running and accessing the changelog. Doing so may corrupt the
+changelog and result in data loss.
+=========
+
+Apply this change to master, metalogger and shadow changelogs.
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue. Include version information and relevant logs when reporting bugs.
+
+== COPYRIGHT
+
+Copyright 2025 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil(7)

@@ -37,7 +37,7 @@ static void append_file_usage() {
 	fprintf(
 	    stderr,
 	    "append file chunks to another file. If destination file doesn't exist then it's created"
-	    " as empty file and then chunks are appended\n\nusage:\n saunafs appendchunks dstfile name [name "
+	    " as empty file and then chunks are appended\n\nusage:\n leil appendchunks dstfile name [name "
 	    "...]\n");
 }
 

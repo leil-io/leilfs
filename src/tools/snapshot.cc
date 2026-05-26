@@ -49,7 +49,7 @@ static saunafs_stat_t kDefaultEmptyStat = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 static void snapshot_usage() {
 	fprintf(stderr,
-	        "make snapshot (lazy copy)\n\nusage:\n saunafs makesnapshot [-of] src [src ...] dst\n");
+	        "make snapshot (lazy copy)\n\nusage:\n leil makesnapshot [-of] src [src ...] dst\n");
 	fprintf(stderr, " -o,-f - allow to overwrite existing objects\n");
 }
 

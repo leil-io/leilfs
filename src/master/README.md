@@ -1,9 +1,9 @@
-# Master Server (`sfsmaster`) -- Architectural Reference
+# Master Server (`leil-master`) -- Architectural Reference
 
-The master server is the central metadata authority in a SaunaFS cluster. It
+The master server is the central metadata authority in a LeilFS cluster. It
 maintains the entire filesystem namespace (inodes, directories, edges, xattrs,
 ACLs, quotas, locks) in memory and coordinates chunk placement across
-chunkservers. The binary produced from this directory is **`sfsmaster`**.
+chunkservers. The binary produced from this directory is **`leil-master`**.
 
 A single codebase supports two runtime **personalities**:
 
@@ -14,7 +14,7 @@ A single codebase supports two runtime **personalities**:
 The personality is selected at startup via configuration and can only transition
 from Shadow to Master (never the reverse). Conditional compilation guards
 (`METARESTORE`, `METALOGGER`) also allow parts of this code to be linked into
-the `sfsmetarestore` and `sfsmetalogger` binaries.
+the `leil-metarestore` and `leil-metalogger` binaries.
 
 ## Code Organization
 
@@ -233,7 +233,7 @@ Metadata durability is achieved through two complementary mechanisms:
 - Changelogs are rotated (configurable `BACK_LOGS`), flushed after each write
   (configurable), and broadcast to metaloggers/shadows via `matomlserv`.
 - **`restore.*`** -- replays changelog entries to reconstruct metadata state.
-  Used by shadow masters during synchronization and by `sfsmetarestore` for
+  Used by shadow masters during synchronization and by `leil-metarestore` for
   offline recovery.
 
 ## KV Store Backend

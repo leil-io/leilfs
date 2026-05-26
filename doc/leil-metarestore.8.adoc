@@ -1,0 +1,100 @@
+leil-metarestore(8)
+====================
+
+== NAME
+
+leil-metarestore - replay LeilFS metadata change logs or dump LeilFS metadata image
+
+== SYNOPSIS
+
+[verse]
+*leil-metarestore* [*-z*] *-m* 'OLDMETADATAFILE' *-o* 'NEWMETADATAFILE' ['CHANGELOGFILE'...]
+
+[verse]
+*leil-metarestore* *-m* 'METADATAFILE'
+
+[verse]
+*leil-metarestore* [*-z*] *-a* [*-d* 'DIRECTORY']
+
+[verse]
+*leil-metarestore* *-g* *-d* 'DIRECTORY'
+
+[verse]
+*leil-metarestore -v*
+
+[verse]
+*leil-metarestore -?*
+
+== DESCRIPTION
+
+When *leil-metarestore* is called with both *-m* and *-o* options, it replays given 'CHANGELOGFILEs'
+on 'OLDMETADATAFILE' and writes result to 'NEWMETADATAFILE'. Multiple change log files can be given.
+
+*leil-metarestore* with just *-m* 'METADATAFILE' option dumps LeilFS metadata image file in human
+readable form.
+
+*leil-metarestore* called with -a option automatically performs all operations needed to merge change
+log files. Master data directory can be specified using -d 'DIRECTORY' option.
+
+*leil-metarestore* -g with path to metadata files, prints latest metadata version that can be restored from disk.
+Prints 0 if metadata files are corrupted.
+
+*-v*::
+print version information and exit
+
+*-a*::
+autorestore mode (see above)
+
+*-d* 'DATAPATH'::
+master data directory (for autorestore mode)
+
+*-g* 'DIRECTORY'::
+Print latest metadata version that can be restored from disk at the directory. Prints 0 if metadata files are corrupted.
+
+*-m* 'METADATAFILE'::
+specify input metadata image file
+
+*-o* 'NEWMETADATAFILE'::
+specify output metadata image file
+
+*-z*::
+ignore metadata checksum inconsistency while applying changelogs
+
+== FILES
+
+*metadata.sfs*::
+Leil File System metadata image as read by *leil-master* process
+
+*metadata.sfs.back*::
+Leil File System metadata image as left by killed or crashed *leil-master* process
+
+*changelog.***.sfs*::
+Leil File System metadata change logs
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-restoremaster(8), leil-master(8), leilfs(7)

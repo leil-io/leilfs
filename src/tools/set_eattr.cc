@@ -33,7 +33,7 @@
 
 static void del_eattr_usage() {
 	fprintf(stderr,
-	        "delete objects extra attributes\n\nusage:\n saunafs deleattr [-nhHr] -f attrname [-f "
+	        "delete objects extra attributes\n\nusage:\n leil deleattr [-nhHr] -f attrname [-f "
 	        "attrname ...] "
 	        "name [name ...]\n");
 	print_numberformat_options();
@@ -45,7 +45,7 @@ static void del_eattr_usage() {
 static void set_eattr_usage() {
 	fprintf(
 	    stderr,
-	    "set objects extra attributes\n\nusage:\n saunafs seteattr [-nhHr] -f attrname [-f attrname ...] "
+	    "set objects extra attributes\n\nusage:\n leil seteattr [-nhHr] -f attrname [-f attrname ...] "
 	    "name [name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();

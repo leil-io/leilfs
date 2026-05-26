@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "common/event_loop.h"
 #include "config/cfg.h"
@@ -436,7 +437,17 @@ void topology_reload(void) {
 	if (TopologyFileName) {
 		free(TopologyFileName);
 	}
-	TopologyFileName = cfg_getstr("TOPOLOGY_FILENAME", ETC_PATH "/sfstopology.cfg");
+	const std::string defaultTopologyFileName = ETC_PATH "/leil-topology.cfg";
+	const std::string legacyTopologyFileName = ETC_PATH "/sfstopology.cfg";
+	std::string topologyFileName = cfg_getstring("TOPOLOGY_FILENAME", defaultTopologyFileName);
+	if (topologyFileName == defaultTopologyFileName && access(defaultTopologyFileName.c_str(), F_OK) != 0 &&
+	    access(legacyTopologyFileName.c_str(), F_OK) == 0) {
+		safs::log_warn(
+		    "using legacy topology configuration file {} because default file {} was not found",
+		    legacyTopologyFileName.c_str(), defaultTopologyFileName.c_str());
+		topologyFileName = legacyTopologyFileName;
+	}
+	TopologyFileName = strdup(topologyFileName.c_str());
 	topology_load();
 
 	gPreferLocalChunkserver = cfg_getnum("PREFER_LOCAL_CHUNKSERVER", 1);

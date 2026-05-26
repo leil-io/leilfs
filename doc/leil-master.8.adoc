@@ -1,0 +1,129 @@
+leil-master(8)
+===============
+
+== NAME
+
+leil-master - start, restart or stop Leil File System metadata server process
+
+== SYNOPSIS
+
+[verse]
+leil-master [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
+
+[verse]
+*leil-master -v*
+
+[verse]
+*leil-master -h*
+
+== DESCRIPTION
+
+*leil-master* is the metadata server program of Leil File System. Depending on
+parameters it can start, restart or stop LeilFS metadata server process.
+Without any options it starts LeilFS metadata server, killing previously run
+process if lock file exists.
+
+Metadata server can work in one of two modes (personalities):
+
+. master . shadow
+
+If metadata server works with 'master' personality it acts as main metadata
+server govering all file system metadata modifications. If metadata server
+works with 'shadow' personality it acts as backup metadata server ready for
+immediate deployment as new 'master' in case of current 'master' failure.
+Shadow only accepts connections from leil-admin, i.e. leil-chunkserver,
+leil-metalogger and leil-mount (the client) are not allowed to connect to 'shadow'
+instance.
+
+Current metadata server personality is defined in metadata server configuration
+file and can be changed on the fly from 'shadow' to 'master' by proper
+modification and reloading of its configuration file.
+
+'Master' and 'shadow' are designed to run simultaneously in sync forever. It is
+very unlikely but still (due to a memory corruption or a bug) possible that
+after some time their metadata will somehow differ. Since version 2.5.2
+metadata checksum is maintained both by 'master' and 'shadow', in order to
+detect and fix possible metadata corruptions. In case mismatch is detected
+'shadow' asks 'master' to double check its metadata and dump its current
+snapshot. After the metadata is dumped and the checksum in 'master' is
+recalculated shadow downloads the new metadata snapshot, which should ensure
+that master and all shadows have exactly the same metadata.
+
+SIGHUP (or 'reload' 'ACTION') forces *leil-master* to reload all configuration
+files.
+
+*-v*::
+print version information and exit
+
+*-h*::
+print usage information and exit
+
+*-c* 'CFGFILE'::
+specify alternative path of configuration file (default is *leil-master.cfg* in
+system configuration directory)
+
+*-u*::
+log undefined configuration values (when default is assumed)
+
+*-d*::
+run in foreground, don't daemonize
+
+*-t* 'LOCKTIMEOUT'::
+how long to wait for lockfile (default is 60 seconds)
+
+'ACTION'::
+is the one of *start*, *stop*, *restart*, *reload*, *test*, *isalive* or
+*kill*. Default action is *restart*.
+
+== FILES
+
+*leil-master.cfg*:: configuration file for LeilFS master process (see
+*leil-master.cfg*(5) manual)
+
+*leil-exports.cfg*:: LeilFS access control file (used with *leil-mount*`s` 1.6.0
+or later, see *leil-exports.cfg*(5) manual)
+
+*leil-topology.cfg*:: Network topology definitions (see *leil-topology.cfg*(5)
+manual)
+
+*sfsmaster.lock*:: PID file of running LeilFS master process
+
+*.sfsmaster.lock*:: lock file of running LeilFS master process (created in
+data directory)
+
+*metadata.sfs*, *metadata.sfs.back*:: LeilFS filesystem metadata image
+
+*`changelog.*.sfs`*:: LeilFS filesystem metadata change logs (merged into
+*metadata.sfs* once per hour)
+
+*data.stats*:: LeilFS master charts state
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-metarestore(8), leil-chunkserver(8), leil-mount(1),
+leil-master.cfg(5), leil-exports.cfg(5), leil-topology.cfg(5),
+leilfs(7)

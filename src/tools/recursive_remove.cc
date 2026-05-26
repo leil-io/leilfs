@@ -38,7 +38,7 @@ static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeou
 
 static void recursive_remove_usage() {
 	fprintf(stderr,
-	        "recursive remove\n\nusage:\n saunafs rremove name [name ...]\n");
+	        "recursive remove\n\nusage:\n leil rremove name [name ...]\n");
 }
 
 static int recursive_remove(const char *file_name) {

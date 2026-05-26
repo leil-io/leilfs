@@ -33,7 +33,7 @@
 #include "tools/tools_common_functions.h"
 
 static void dir_info_usage() {
-	fprintf(stderr, "show directories stats\n\nusage:\n saunafs dirinfo [-nhH] name [name ...]\n");
+	fprintf(stderr, "show directories stats\n\nusage:\n leil dirinfo [-nhH] name [name ...]\n");
 	print_numberformat_options();
 	fprintf(stderr,
 	        "\nMeaning of some not obvious output data:\n 'length' is just sum of files lengths\n"

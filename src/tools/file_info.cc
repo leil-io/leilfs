@@ -35,7 +35,7 @@ static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeou
 static void file_info_usage() {
 	fprintf(stderr,
 	        "show files info (shows detailed info of each file chunk)\n\nusage:\n"
-	        " saunafs fileinfo name [name ...]\n");
+	        " leil fileinfo name [name ...]\n");
 }
 
 static std::string chunkTypeToString(ChunkPartType type) {

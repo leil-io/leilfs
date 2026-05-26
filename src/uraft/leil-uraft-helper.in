@@ -4,11 +4,26 @@ SAUNAFS_URAFT_OK=0
 SAUNAFS_URAFT_ERROR=1
 SAUNAFS_DATA_DIR="@DATA_PATH@"
 METADATA_LOCK="@DATA_PATH@/metadata.sfs.lock"
-SAUNAFS_URAFT_CONFIG="@ETC_PATH@/saunafs-uraft.cfg"
-SAUNAFS_MASTER_CONFIG="@ETC_PATH@/sfsmaster.cfg"
+SAUNAFS_URAFT_CONFIG="@ETC_PATH@/leil-uraft.cfg"
+SAUNAFS_URAFT_LEGACY_CONFIG="@ETC_PATH@/saunafs-uraft.cfg"
+SAUNAFS_MASTER_CONFIG="@ETC_PATH@/leil-master.cfg"
+SAUNAFS_MASTER_LEGACY_CONFIG="@ETC_PATH@/sfsmaster.cfg"
 
 metadata_location=
 
+select_existing_config() {
+	local default_config="$1"
+	local legacy_config="$2"
+
+	if [ ! -f "$default_config" ] && [ -f "$legacy_config" ]; then
+		echo "$legacy_config"
+	else
+		echo "$default_config"
+	fi
+}
+
+SAUNAFS_URAFT_CONFIG=$(select_existing_config "$SAUNAFS_URAFT_CONFIG" "$SAUNAFS_URAFT_LEGACY_CONFIG")
+SAUNAFS_MASTER_CONFIG=$(select_existing_config "$SAUNAFS_MASTER_CONFIG" "$SAUNAFS_MASTER_LEGACY_CONFIG")
 
 print_missing_config() {
 	echo "$1 file is missing, it looks like a clean installation."
@@ -46,13 +61,13 @@ load_config() {
 
 	if [[ $ipaddr == "" || $netmask == "" || $iface == "" ]] ; then
 		echo "Configuration file $SAUNAFS_URAFT_CONFIG does not contain valid network information."
-		echo "See example @URAFT_EXAMPLES_SUBDIR@/saunafs-uraft.cfg file for reference."
+		echo "See example @URAFT_EXAMPLES_SUBDIR@/leil-uraft.cfg file for reference."
 		exit $SAUNAFS_URAFT_ERROR
 	fi
 
 	if [[ ! $ADMIN_PASSWORD ]] ; then
 		echo "SaunaFS admin password must be set in order to authenticate to master server."
-		echo "See example @SFSMASTER_EXAMPLES_SUBDIR@/sfsmaster.cfg file for reference."
+		echo "See example @SFSMASTER_EXAMPLES_SUBDIR@/leil-master.cfg file for reference."
 		exit $SAUNAFS_URAFT_ERROR
 	fi
 }

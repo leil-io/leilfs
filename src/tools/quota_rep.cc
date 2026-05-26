@@ -42,9 +42,9 @@
 static void quota_rep_usage() {
 	fprintf(stderr,
 	        "summarize quotas for a user/group or all users and groups\n\n"
-	        "usage: \n saunafs repquota [-nhH] (-u <uid>|-g <gid>)+ <mountpoint-root-path>\n"
-	        " saunafs repquota [-nhH] -a <mountpoint-root-path>\n"
-	        " saunafs repquota [-nhH] -d <directory-path>\n");
+	        "usage: \n leil repquota [-nhH] (-u <uid>|-g <gid>)+ <mountpoint-root-path>\n"
+	        " leil repquota [-nhH] -a <mountpoint-root-path>\n"
+	        " leil repquota [-nhH] -d <directory-path>\n");
 	print_numberformat_options();
 }
 

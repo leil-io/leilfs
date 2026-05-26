@@ -288,8 +288,9 @@ done
 
 mkdir -p %{buildroot}%{_datadir}/bash-completion/completions/
 
-mv %{buildroot}%{_sysconfdir}/bash_completion.d/saunafs \
-   %{buildroot}%{_datadir}/bash-completion/completions/saunafs
+mv %{buildroot}%{_sysconfdir}/bash_completion.d/leil \
+    %{buildroot}%{_sysconfdir}/bash_completion.d/saunafs \
+    %{buildroot}%{_datadir}/bash-completion/completions/
 
 rm -rf %{buildroot}%{_sysconfdir}/bash_completion.d/
 
@@ -335,23 +336,39 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %attr(-,%{leil_user},%{leil_group}) %dir %{leil_datadir}
 %attr(-,%{leil_user},%{leil_group}) %{leil_datadir}/metadata.sfs.empty
 %{_mandir}/man5/sfsexports.cfg.5*
+%{_mandir}/man5/leil-exports.cfg.5*
 %{_mandir}/man5/sfstopology.cfg.5*
+%{_mandir}/man5/leil-topology.cfg.5*
 %{_mandir}/man5/sfsgoals.cfg.5*
+%{_mandir}/man5/leil-goals.cfg.5*
 %{_mandir}/man5/sfsmaster.cfg.5*
+%{_mandir}/man5/leil-master.cfg.5*
 %{_mandir}/man5/sfsglobaliolimits.cfg.5*
+%{_mandir}/man5/leil-globaliolimits.cfg.5*
 %{_mandir}/man7/sfs.7*
+%{_mandir}/man7/leilfs.7*
+%{_mandir}/man7/leil.7*
 %{_mandir}/man7/saunafs.7*
 %{_mandir}/man8/sfsmaster.8*
+%{_mandir}/man8/leil-master.8*
 %{_mandir}/man8/sfsmetadump.8*
+%{_mandir}/man8/leil-metadump.8*
 %{_mandir}/man8/sfsmetarestore.8*
+%{_mandir}/man8/leil-metarestore.8*
 %{_mandir}/man8/sfsrestoremaster.8*
+%{_mandir}/man8/leil-restoremaster.8*
 %dir %{_docdir}/saunafs-master/
 %dir %{_docdir}/saunafs-master/examples/
 %{_docdir}/saunafs-master/examples/sfsexports.cfg
+%{_docdir}/saunafs-master/examples/leil-exports.cfg
 %{_docdir}/saunafs-master/examples/sfstopology.cfg
+%{_docdir}/saunafs-master/examples/leil-topology.cfg
 %{_docdir}/saunafs-master/examples/sfsgoals.cfg
+%{_docdir}/saunafs-master/examples/leil-goals.cfg
 %{_docdir}/saunafs-master/examples/sfsmaster.cfg
+%{_docdir}/saunafs-master/examples/leil-master.cfg
 %{_docdir}/saunafs-master/examples/sfsglobaliolimits.cfg
+%{_docdir}/saunafs-master/examples/leil-globaliolimits.cfg
 %config(noreplace) %{_sysconfdir}/pam.d/saunafs
 %config(noreplace) %{_sysconfdir}/security/limits.d/%{leil_limits_conf}
 
@@ -367,10 +384,13 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %dir %{leil_confdir}
 %attr(-,%{leil_user},%{leil_group}) %dir %{leil_datadir}
 %{_mandir}/man5/sfsmetalogger.cfg.5*
+%{_mandir}/man5/leil-metalogger.cfg.5*
 %{_mandir}/man8/sfsmetalogger.8*
+%{_mandir}/man8/leil-metalogger.8*
 %dir %{_docdir}/saunafs-metalogger/
 %dir %{_docdir}/saunafs-metalogger/examples/
 %{_docdir}/saunafs-metalogger/examples/sfsmetalogger.cfg
+%{_docdir}/saunafs-metalogger/examples/leil-metalogger.cfg
 
 # Files - chunkserver
 ############################################################
@@ -384,12 +404,17 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %dir %{leil_confdir}
 %attr(-,%{leil_user},%{leil_group}) %dir %{leil_datadir}
 %{_mandir}/man5/sfschunkserver.cfg.5*
+%{_mandir}/man5/leil-chunkserver.cfg.5*
 %{_mandir}/man5/sfshdd.cfg.5*
+%{_mandir}/man5/leil-hdd.cfg.5*
 %{_mandir}/man8/sfschunkserver.8*
+%{_mandir}/man8/leil-chunkserver.8*
 %dir %{_docdir}/saunafs-chunkserver/
 %dir %{_docdir}/saunafs-chunkserver/examples/
 %{_docdir}/saunafs-chunkserver/examples/sfschunkserver.cfg
+%{_docdir}/saunafs-chunkserver/examples/leil-chunkserver.cfg
 %{_docdir}/saunafs-chunkserver/examples/sfshdd.cfg
+%{_docdir}/saunafs-chunkserver/examples/leil-hdd.cfg
 %config(noreplace) %{_sysconfdir}/pam.d/saunafs
 %config(noreplace) %{_sysconfdir}/security/limits.d/%{leil_limits_conf}
 
@@ -404,33 +429,60 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_bindir}/leil-mount
 %{_bindir}/sfsmount
 %dir %{leil_confdir}
+%{_mandir}/man1/leil-appendchunks.1*
 %{_mandir}/man1/saunafs-appendchunks.1*
+%{_mandir}/man1/leil-checkfile.1*
 %{_mandir}/man1/saunafs-checkfile.1*
+%{_mandir}/man1/leil-deleattr.1*
 %{_mandir}/man1/saunafs-deleattr.1*
+%{_mandir}/man1/leil-dirinfo.1*
 %{_mandir}/man1/saunafs-dirinfo.1*
+%{_mandir}/man1/leil-fileinfo.1*
 %{_mandir}/man1/saunafs-fileinfo.1*
+%{_mandir}/man1/leil-filerepair.1*
 %{_mandir}/man1/saunafs-filerepair.1*
+%{_mandir}/man1/leil-geteattr.1*
 %{_mandir}/man1/saunafs-geteattr.1*
+%{_mandir}/man1/leil-getgoal.1*
 %{_mandir}/man1/saunafs-getgoal.1*
+%{_mandir}/man1/leil-gettrashtime.1*
 %{_mandir}/man1/saunafs-gettrashtime.1*
+%{_mandir}/man1/leil-makesnapshot.1*
 %{_mandir}/man1/saunafs-makesnapshot.1*
+%{_mandir}/man1/leil-repquota.1*
 %{_mandir}/man1/saunafs-repquota.1*
+%{_mandir}/man1/leil-seteattr.1*
 %{_mandir}/man1/saunafs-seteattr.1*
+%{_mandir}/man1/leil-setgoal.1*
 %{_mandir}/man1/saunafs-setgoal.1*
+%{_mandir}/man1/leil-setquota.1*
 %{_mandir}/man1/saunafs-setquota.1*
+%{_mandir}/man1/leil-settrashtime.1*
 %{_mandir}/man1/saunafs-settrashtime.1*
+%{_mandir}/man1/leil-rremove.1*
 %{_mandir}/man1/saunafs-rremove.1*
+%{_mandir}/man1/leil.1*
 %{_mandir}/man1/saunafs.1*
+%{_mandir}/man1/leil-mount.1*
 %{_mandir}/man1/sfsmount.1*
 %{_mandir}/man5/sfsiolimits.cfg.5*
+%{_mandir}/man5/leil-iolimits.cfg.5*
 %{_mandir}/man5/sfsmount.cfg.5*
+%{_mandir}/man5/leil-mount.cfg.5*
 %{_mandir}/man7/sfs.7*
+%{_mandir}/man7/leilfs.7*
+%{_mandir}/man7/leil.7*
 %{_mandir}/man7/saunafs-migrations.7*
+%{_mandir}/man7/leil-migrations.7*
 %dir %{_docdir}/saunafs-client/
 %dir %{_docdir}/saunafs-client/examples/
 %{_docdir}/saunafs-client/examples/sfstls.cfg
+%{_docdir}/saunafs-client/examples/leil-tls.cfg
 %{_docdir}/saunafs-client/examples/sfsiolimits.cfg
+%{_docdir}/saunafs-client/examples/leil-iolimits.cfg
 %{_docdir}/saunafs-client/examples/sfsmount.cfg
+%{_docdir}/saunafs-client/examples/leil-mount.cfg
+%{_datadir}/bash-completion/completions/leil
 %{_datadir}/bash-completion/completions/saunafs
 
 # Files - client-devel
@@ -484,6 +536,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_sbindir}/leil-cgiserver
 %{_sbindir}/saunafs-cgiserver
 %{_unitdir}/saunafs-cgiserv.service
+%{_mandir}/man8/leil-cgiserver.8*
 %{_mandir}/man8/saunafs-cgiserver.8*
 
 # Files - Administration utility
@@ -494,9 +547,11 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %doc NEWS README.md
 %{_bindir}/leil-admin
 %{_bindir}/saunafs-admin
+%{_mandir}/man8/leil-admin.8*
 %{_mandir}/man8/saunafs-admin.8*
 %{_bindir}/leil-probe
 %{_bindir}/saunafs-probe
+%{_mandir}/man8/leil-probe.8*
 %{_mandir}/man8/saunafs-probe.8*
 
 # Files - uraft
@@ -511,11 +566,15 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_sbindir}/saunafs-uraft-helper
 %{_unitdir}/saunafs-uraft.service
 %{_unitdir}/saunafs-ha-master.service
+%{_mandir}/man8/leil-uraft.8*
 %{_mandir}/man8/saunafs-uraft.8*
+%{_mandir}/man8/leil-uraft-helper.8*
 %{_mandir}/man8/saunafs-uraft-helper.8*
+%{_mandir}/man5/leil-uraft.cfg.5*
 %{_mandir}/man5/saunafs-uraft.cfg.5*
 %dir %{_docdir}/saunafs-uraft/
 %dir %{_docdir}/saunafs-uraft/examples/
+%{_docdir}/saunafs-uraft/examples/leil-uraft.cfg
 %{_docdir}/saunafs-uraft/examples/saunafs-uraft.cfg
 %config(noreplace) %{_sysconfdir}/sysctl.d/10-leilfs-uraft-arp.conf
 %attr(0440, root, root) %config(noreplace) %{_sysconfdir}/sudoers.d/leilfs-uraft

@@ -827,8 +827,10 @@ int main(int argc,char **argv) {
 	int32_t nicelevel;
 	uint32_t locktimeout;
 	struct rlimit rls;
-	std::string default_cfgfile = ETC_PATH "/" STR(APPNAME_LEGACY) ".cfg";
-	std::string cfgfile = default_cfgfile;
+	std::string defaultCfgFile = ETC_PATH "/" STR(APPNAME) ".cfg";
+	std::string legacyDefaultCfgFile = ETC_PATH "/" STR(CFGNAME_LEGACY) ".cfg";
+	std::string cfgfile = defaultCfgFile;
+	bool usingLegacyDefaultCfgFile = false;
 	std::string pidfile;
 
 	prepareEnvironment();
@@ -912,18 +914,28 @@ int main(int argc,char **argv) {
 		makePidFile(pidfile);
 	}
 
+	if (cfgfile == defaultCfgFile && access(defaultCfgFile.c_str(), F_OK) != 0 &&
+		access(legacyDefaultCfgFile.c_str(), F_OK) == 0) {
+		cfgfile = legacyDefaultCfgFile;
+		usingLegacyDefaultCfgFile = true;
+	}
+
 	ch = cfg_load(cfgfile.c_str(), logundefined);
 	if (ch == 1) {
 		safs_pretty_syslog(LOG_WARNING,
 				"configuration file %s not found - using "
 				"defaults; please create one to remove this "
 				"warning (you can copy sample configuration "
-				"from '" APP_EXAMPLES_SUBDIR "/" STR(CFGNAME_LEGACY) ".cfg' to get a base "
+				"from '" APP_EXAMPLES_SUBDIR "/" STR(CFGNAME) ".cfg' to get a base "
 				"configuration)",
 				cfgfile.c_str());
 	} else if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {
 		// Setup logs before first log
 		safs::setup_logs();
+		if (usingLegacyDefaultCfgFile) {
+			safs::log_warn("using legacy configuration file {} because default file {} was not found",
+			               legacyDefaultCfgFile, defaultCfgFile);
+		}
 		safs::log_info("Configuration file {} loaded", cfgfile);
 	}
 
