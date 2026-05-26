@@ -25,6 +25,7 @@
 #include <linux/falloc.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/uio.h>
 #include <filesystem>
 
 #include "chunkserver-common/chunk_interface.h"
@@ -367,31 +368,68 @@ int CmrDisk::writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer,
 	return size;
 }
 
-int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const uint8_t *buffer, uint16_t startBlock,
-                                    uint16_t numBlocks, const uint8_t *crcBuff, uint8_t *crcData,
+int CmrDisk::writeFullBlocksAndCrcs(IChunk *chunk, const std::vector<uint16_t> &blocksPerBuffer,
+                                    const std::vector<const uint8_t *> &buffers,
+                                    uint16_t startBlock, const uint8_t *crcBuff, uint8_t *crcData,
                                     bool areNewBlocks, const char *errorMsg) {
 	(void)areNewBlocks;
+	assert(blocksPerBuffer.size() == buffers.size());
 
-	uint32_t size = numBlocks * SFSBLOCKSIZE;
-	{
-		DiskWriteStatsUpdater updater(chunk->owner(), size);
+	constexpr size_t kMaxIovecsPerCall = 16;
+	std::array<struct iovec, kMaxIovecsPerCall> ioVectors{};
 
-		auto ret = pwrite(chunk->dataFD(), buffer, size, chunk->getBlockOffset(startBlock));
-
-		if (ret != size) {
-			hddAddErrorAndPreserveErrno(chunk);
-			safs::log_warn("{}: file:{} - write error", errorMsg, chunk->fullDataFilename());
-			hddReportDamagedChunk(chunk->id(), chunk->type());
-			updater.markWriteAsFailed();
-			return -1;
+	size_t buffersWritten = 0;
+	uint16_t blockCursor = startBlock;
+	uint32_t committedBytes = 0;
+	while (buffersWritten < buffers.size()) {
+		const size_t batchEnd = std::min(buffersWritten + kMaxIovecsPerCall, buffers.size());
+		size_t size = 0;
+		for (size_t j = buffersWritten; j < batchEnd; ++j) {
+			// const_cast is needed because POSIX struct iovec is not const-correct for write-style
+			// syscalls.
+			ioVectors[j - buffersWritten].iov_base = const_cast<uint8_t *>(buffers[j]);
+			ioVectors[j - buffersWritten].iov_len =
+			    static_cast<size_t>(blocksPerBuffer[j]) * SFSBLOCKSIZE;
+			size += ioVectors[j - buffersWritten].iov_len;
 		}
+
+		const off_t offset = chunk->getBlockOffset(blockCursor);
+		{
+			DiskWriteStatsUpdater updater(chunk->owner(), size);
+
+			ssize_t ret = 0;
+			do {
+				ret = pwritev(chunk->dataFD(), ioVectors.data(), batchEnd - buffersWritten, offset);
+			} while (ret < 0 && errno == EINTR);
+
+			if (ret != static_cast<ssize_t>(size)) {
+				hddAddErrorAndPreserveErrno(chunk);
+				safs::log_warn("{}: file:{} - write error", errorMsg, chunk->fullDataFilename());
+				hddReportDamagedChunk(chunk->id(), chunk->type());
+				updater.markWriteAsFailed();
+				return -1;  // damaged chunk, caller should handle it
+			}
+		}
+		// Successfully written the batch, now punch holes in the blocks that are fully zero and
+		// update CRCs
+		uint16_t blocksWritten = size / SFSBLOCKSIZE;
+
+		uint16_t blockCursorPunchHoles = blockCursor;
+		for (size_t i = 0; i < batchEnd - buffersWritten; ++i) {
+			punchHoles(chunk, static_cast<const uint8_t *>(ioVectors[i].iov_base),
+			           chunk->getBlockOffset(blockCursorPunchHoles), ioVectors[i].iov_len);
+			blockCursorPunchHoles += blocksPerBuffer[buffersWritten + i];
+		}
+
+		memcpy(crcData + blockCursor * kCrcSize, crcBuff + (blockCursor - startBlock) * kCrcSize,
+		       kCrcSize * blocksWritten);
+
+		blockCursor += blocksWritten;
+		buffersWritten = batchEnd;
+		committedBytes += size;
 	}
 
-	punchHoles(chunk, buffer, chunk->getBlockOffset(startBlock), size);
-
-	memcpy(crcData + startBlock * kCrcSize, crcBuff, kCrcSize * numBlocks);
-
-	return size;
+	return committedBytes;
 }
 
 void CmrDisk::punchHoles(IChunk *chunk, const uint8_t *buffer, uint32_t offset,
@@ -597,8 +635,10 @@ int CmrDisk::writeChunkBlock(IChunk *chunk, uint32_t version, uint16_t blocknum,
 
 int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlock,
                               uint16_t numBlocks, std::vector<uint32_t> &crc, uint8_t *crcData,
-                              const uint8_t *buffer, bool isFromReplication) {
+                              const std::vector<uint16_t> &blocksPerBuffer,
+                              const std::vector<const uint8_t *> &buffers, bool isFromReplication) {
 	assert(chunk);
+	assert(blocksPerBuffer.size() == buffers.size());
 	LOG_AVG_TILL_END_OF_SCOPE0("writeChunkBlocks");
 	TRACETHIS3(chunk->id(), startBlock, numBlocks);
 
@@ -613,9 +653,15 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 	}
 
 	if (gCheckCrcWhenWriting && !isFromReplication) {
-		for (uint16_t i = 0; i < numBlocks; ++i) {
-			if (crc[i] != mycrc32(0, buffer + i * SFSBLOCKSIZE, SFSBLOCKSIZE)) {
-				return -SAUNAFS_ERROR_CRC;
+		uint16_t crcIndex = 0;
+		for (size_t bufferIndex = 0; bufferIndex < buffers.size(); ++bufferIndex) {
+			uint16_t blocksInBuffer = blocksPerBuffer[bufferIndex];
+			const uint8_t *buffer = buffers[bufferIndex];
+			for (uint16_t i = 0; i < blocksInBuffer; ++i) {
+				if (crc[crcIndex] != mycrc32(0, buffer + i * SFSBLOCKSIZE, SFSBLOCKSIZE)) {
+					return -SAUNAFS_ERROR_CRC;
+				}
+				crcIndex++;
 			}
 		}
 	}
@@ -643,11 +689,11 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 		areNewBlocks = true;
 	}
 
-	int written = writeFullBlocksAndCrcs(chunk, buffer, startBlock, numBlocks, crcBuff.data(),
-	                                     crcData, areNewBlocks, "writeChunkBlocks");
+	int written = writeFullBlocksAndCrcs(chunk, blocksPerBuffer, buffers, startBlock,
+	                                     crcBuff.data(), crcData, areNewBlocks, "writeChunkBlocks");
 	if (written < 0) { return -SAUNAFS_ERROR_IO; }
 
-	return numBlocks * SFSBLOCKSIZE;
+	return written;
 }
 
 int CmrDisk::writeChunkData(IChunk *chunk, uint8_t *blockBuffer,

@@ -665,10 +665,17 @@ uint32_t job_prefetch(ClientJobPool &jobPool, uint64_t chunkId, ChunkPartType ch
 }
 
 uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
-                   uint32_t chunkVersion, ChunkPartType chunkType, InputBuffer *inputBuffer,
-                   uint32_t listenerId) {
+                   uint32_t chunkVersion, ChunkPartType chunkType,
+                   std::vector<InputBuffer *> inputBuffers, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
-		auto writeOperations = inputBuffer->getWriteOperations();
+		if (inputBuffers.empty()) {
+			safs::log_warn("job_write: No input buffers found for chunk id {}", chunkId);
+			return SAUNAFS_STATUS_OK;
+		}
+
+		uint32_t totalBlocks = 0;
+		auto writeOperations = InputBuffer::getWriteOperations(inputBuffers, totalBlocks);
+
 		if (writeOperations.empty()) {
 			safs::log_warn("job_write: No write operations found for chunk id {}", chunkId);
 			return SAUNAFS_STATUS_OK;
@@ -685,20 +692,24 @@ uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 
 			if (op.offset == 0 && op.size == SFSBLOCKSIZE) {
 				// Full blocks write
-				if (op.startBlock > op.endBlock) {
-					safs::log_warn(
-					    "job_write: startBlock {} > endBlock {} for chunk id {}. This is not "
-					    "supported.",
-					    op.startBlock, op.endBlock, chunkId);
+				uint32_t numBlocks = 0;
+				for (auto blocks : op.blocksPerBuffer) { numBlocks += blocks; }
+
+				// Make sure numBlocks does not exceed uint16_t max, as that's the maximum we can
+				// handle in one write
+				if (numBlocks > std::numeric_limits<uint16_t>::max()) {
+					safs::log_err(
+					    "job_write: Too many blocks ({}) in write operation for chunk id {}",
+					    numBlocks, chunkId);
 					statuses.push_back(SAUNAFS_ERROR_EINVAL);
 					break;
 				}
 
-				auto numBlocks = op.endBlock - op.startBlock + 1;
-				auto bytesWritten = hddChunkWriteFullBlocks(
-				    chunkId, chunkVersion, chunkType, op.startBlock, numBlocks, op.crcs, op.buffer);
+				auto bytesWritten =
+				    hddChunkWriteFullBlocks(chunkId, chunkVersion, chunkType, op.startBlock,
+				                            numBlocks, op.crcs, op.blocksPerBuffer, op.buffers);
 
-				if (bytesWritten != numBlocks * SFSBLOCKSIZE) {
+				if (bytesWritten != static_cast<int>(numBlocks * SFSBLOCKSIZE)) {
 					if (bytesWritten < 0) {
 						statuses.push_back(-bytesWritten);
 						break;
@@ -717,32 +728,32 @@ uint32_t job_write(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 					}
 				} else {
 					// All blocks written successfully
-					for (uint16_t i = 0; i < numBlocks; ++i) {
+					for (uint32_t i = 0; i < numBlocks; ++i) {
 						statuses.push_back(SAUNAFS_STATUS_OK);
 					}
 				}
 			} else {
-				// Not a full block write
-				if (op.startBlock != op.endBlock) {
-					safs::log_warn(
-					    "job_write: startBlock {} != endBlock {} for chunk id {} when not full "
-					    "blocks. This is not supported, doing first block only.",
-					    op.startBlock, op.endBlock, chunkId);
-				}
-
 				statuses.push_back(hddChunkWriteBlock(chunkId, chunkVersion, chunkType,
 				                                      op.startBlock, op.offset, op.size, op.crcs[0],
-				                                      op.buffer));
+				                                      op.buffers[0]));
 
 				if (statuses.back() != SAUNAFS_STATUS_OK) { break; }
 			}
 		}
 
-		inputBuffer->applyStatuses(statuses);
+		if (statuses.empty()) {
+			safs::log_warn("job_write: No write operations were processed for chunk id {}", chunkId);
+			return SAUNAFS_STATUS_OK;
+		}
+
+		if (statuses.size() < totalBlocks) { statuses.resize(totalBlocks, statuses.back()); }
+		assert(statuses.size() == totalBlocks);
+
+		InputBuffer::applyStatuses(inputBuffers, statuses);
 
 		if (!statuses.empty() && statuses.back() != SAUNAFS_STATUS_OK) {
-			safs::log_err("Failed to write chunk id {}: {}", chunkId,
-			              saunafs_error_string(statuses.back()));
+			safs::log_warn("Failed to write chunk id {}: {}", chunkId,
+			               saunafs_error_string(statuses.back()));
 		}
 
 		return statuses.empty() ? static_cast<uint8_t>(SAUNAFS_STATUS_OK) : statuses.back();

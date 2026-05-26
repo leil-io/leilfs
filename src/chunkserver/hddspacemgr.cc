@@ -1094,7 +1094,8 @@ int hddChunkWriteBlock(uint64_t chunkId, uint32_t version,
 
 int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
                             uint16_t startBlock, uint16_t numBlocks, std::vector<uint32_t> &crcList,
-                            const uint8_t *buffer) {
+                            std::vector<uint16_t> &blocksPerBuffer,
+                            std::vector<const uint8_t *> &buffers) {
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 
 	if (chunk == ChunkNotFound) {
@@ -1105,7 +1106,7 @@ int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType ch
 
 	auto *crcData = gOpenChunks.getResource(chunk->metaFD()).crcData();
 	int status = chunk->owner()->writeChunkBlocks(chunk, version, startBlock, numBlocks, crcList,
-	                                              crcData, buffer);
+	                                              crcData, blocksPerBuffer, buffers);
 	hddChunkRelease(chunk);
 
 	return status;

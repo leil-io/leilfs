@@ -338,46 +338,91 @@ void InputBuffer::setupLastWriteOperation(uint16_t blockNum, uint32_t offset, ui
 	isBeingUpdated_ = false;
 }
 
-std::vector<WriteOperation> InputBuffer::getWriteOperations() const {
+std::vector<WriteOperation> InputBuffer::getWriteOperations(
+    const std::vector<InputBuffer *> &inputBuffers, uint32_t &totalBlocks) {
 	std::vector<WriteOperation> operations;
+	totalBlocks = 0;
 
-	auto isMergeable = [](const WriteOperation &wp, const WriteInfo &info) {
+	uint16_t endBlock = 0;
+	auto isMergeable = [&endBlock](const WriteOperation &wp, const WriteInfo &info) {
 		// If the operation and the info refer to full block writes and the info is the next block
 		// after the operation, we can merge them.
-		return wp.endBlock + 1 == info.blockNum && wp.offset == 0 && wp.size == SFSBLOCKSIZE &&
+		return endBlock + 1 == info.blockNum && wp.offset == 0 && wp.size == SFSBLOCKSIZE &&
 		       info.offset == 0 && info.size == SFSBLOCKSIZE;
 	};
 
-	for (uint32_t i = 0; i < writeInfo_.size(); ++i) {
-		const auto &info = writeInfo_[i];
+	for (auto *inputBuffer : inputBuffers) {
+		const auto &writeInfos = inputBuffer->getWriteInfoVector();
+		for (uint32_t i = 0; i < writeInfos.size(); ++i) {
+			totalBlocks++;
+			const auto &info = writeInfos[i];
 
-		if (!operations.empty() && isMergeable(operations.back(), info)) {
-			operations.back().endBlock++;
-			operations.back().crcs.push_back(crcData_[i]);
-			continue;
+			auto [blockData, crc] = inputBuffer->getBlockDataAndCrc(i);
+			if (!operations.empty() && isMergeable(operations.back(), info)) {
+				endBlock++;
+				operations.back().crcs.push_back(crc);
+
+				if (i > 0) {
+					operations.back().blocksPerBuffer.back()++;
+				} else {
+					// if i == 0, it means the block data is not contiguous (in memory) with the
+					// previous block data in the block buffer, so we need to add a new buffer for
+					// it.
+					operations.back().buffers.push_back(blockData);
+					operations.back().blocksPerBuffer.push_back(1);
+				}
+				continue;
+			}
+
+			// New operation that cannot be merged with the previous one, we need to create a new
+			// WriteOperation.
+			WriteOperation op;
+			op.startBlock = info.blockNum;
+			endBlock = info.blockNum;
+			op.blocksPerBuffer = {1};
+			op.buffers = {blockData};
+			op.offset = info.offset;
+			op.size = info.size;
+			op.crcs.push_back(crc);
+			operations.push_back(op);
 		}
-
-		WriteOperation op;
-		op.startBlock = info.blockNum;
-		op.endBlock = info.blockNum;
-		op.buffer = blockBuffer_.paddedIndex(i * SFSBLOCKSIZE);
-		op.offset = info.offset;
-		op.size = info.size;
-		op.crcs.push_back(crcData_[i]);
-		operations.push_back(op);
 	}
 
 	return operations;
 }
 
-void InputBuffer::applyStatuses(std::vector<uint8_t> &statuses) {
-	if (statuses.size() > writeInfo_.size()) {
-		safs::log_warn("({}) Called with more statuses than writeInfo_. Truncating the statuses.",
-		               __func__);
-		statuses.resize(writeInfo_.size());
+std::pair<const uint8_t *, size_t> InputBuffer::getBlockDataAndCrc(uint16_t index) const {
+	if (index >= writeInfo_.size()) {
+		safs::log_warn("({}) Invalid block index: {}", __func__, index);
+		return {nullptr, 0};
 	}
 
-	for (uint32_t i = 0; i < statuses.size(); ++i) { writeInfo_[i].status = statuses[i]; }
+	return {blockBuffer_.paddedIndex(index * SFSBLOCKSIZE), crcData_[index]};
+}
+
+void InputBuffer::applyStatuses(const std::vector<InputBuffer *> &inputBuffers,
+                                std::vector<uint8_t> &statuses) {
+	uint32_t blockCursor = 0;
+	for (const auto &inputBuffer : inputBuffers) {
+		if (blockCursor + inputBuffer->currentBlocks() > statuses.size()) {
+			safs::log_warn(
+			    "({}) Not enough statuses provided for the input buffers. Stopping "
+			    "the application of statuses.",
+			    __func__);
+			return;
+		}
+
+		auto currentInputBufferStatuses =
+		    std::vector<uint8_t>(statuses.begin() + blockCursor,
+		                         statuses.begin() + blockCursor + inputBuffer->currentBlocks());
+		assert(currentInputBufferStatuses.size() == inputBuffer->currentBlocks());
+		assert(inputBuffer->currentBlocks() == inputBuffer->writeInfo_.size());
+
+		for (uint32_t i = 0; i < inputBuffer->currentBlocks(); ++i) {
+			inputBuffer->writeInfo_[i].status = currentInputBufferStatuses[i];
+		}
+		blockCursor += inputBuffer->currentBlocks();
+	}
 }
 
 std::vector<std::pair<uint8_t, uint32_t>> InputBuffer::getStatuses() const {

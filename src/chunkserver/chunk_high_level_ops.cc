@@ -406,10 +406,12 @@ void WriteHighLevelOp::startNextWriteJob() {
 
 	/// Start the next write job: it is always the first write data buffer
 	writeJobWriteId_ = writeDataBuffers_.front()->getLastWriteId();
+	enqueuedInputBuffers_ = 1;
+	std::vector<InputBuffer *> inputBuffers = {writeDataBuffers_.front().get()};
 	writeJobId_ = job_write(
 	    *workerJobPool(),
 	    [this](uint8_t status, void *entry) { this->writeFinishedCallback(status, entry); },
-	    chunkId_, chunkVersion_, chunkType_, writeDataBuffers_.front().get());
+	    chunkId_, chunkVersion_, chunkType_, inputBuffers);
 }
 
 void WriteHighLevelOp::writeCurrentInputPacket() {
@@ -440,32 +442,29 @@ void WriteHighLevelOp::writeFinishedCallback(uint8_t status, void * /*entry*/) {
 	}
 	setNoWriteJobBeingProcessed();
 
-	if (writeDataBuffers_.empty()) {
-		// This should not happen, but if it does, we can just log and continue.
-		// The write job should not have been started if there were no buffers, so this is an
-		// inconsistent state.
-		safs::log_err(
-		    "({}) No write data buffers available after write finished for chunkId {:016X}.",
-		    __func__, chunkId_);
+	std::vector<std::pair<uint8_t, uint32_t>> statusWithWriteIdToReply;
+	uint16_t alreadyRepliedBlocks = 0;
+	while (enqueuedInputBuffers_ > 0) {
+		assert(!writeDataBuffers_.empty());
 
-		if (inDelayedClose_) {
-			decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
+		auto statusWithWriteIdToReplyCurrentBuffer = writeDataBuffers_.front()->getStatuses();
+		statusWithWriteIdToReply.insert(statusWithWriteIdToReply.end(),
+		                                statusWithWriteIdToReplyCurrentBuffer.begin(),
+		                                statusWithWriteIdToReplyCurrentBuffer.end());
+		uint16_t alreadyRepliedBlocksBuffer = writeDataBuffers_.front()->repliedBlocks;
+		alreadyRepliedBlocks += alreadyRepliedBlocksBuffer;
+
+		if (alreadyRepliedBlocksBuffer > 0) {
+			// This means that this write data buffer has already been replied to for some blocks,
+			// so we need to remove the input buffer from the container that patches read
+			// operations.
+			hddRemoveAlreadyRepliedInputBuffer(chunkId_, chunkType_, writeDataBuffers_.front());
 		}
 
-		return;
+		getWriteInputBufferPool().put(std::move(writeDataBuffers_.front()));
+		writeDataBuffers_.pop_front();
+		enqueuedInputBuffers_--;
 	}
-
-	auto statusWithWriteIdToReply = writeDataBuffers_.front()->getStatuses();
-	uint16_t alreadyRepliedBlocks = writeDataBuffers_.front()->repliedBlocks;
-
-	if (alreadyRepliedBlocks > 0) {
-		// This means that this write data buffer has already been replied to for some blocks, so we
-		// need to remove the input buffer from the container that patches read operations.
-		hddRemoveAlreadyRepliedInputBuffer(chunkId_, chunkType_, writeDataBuffers_.front());
-	}
-
-	getWriteInputBufferPool().put(std::move(writeDataBuffers_.front()));
-	writeDataBuffers_.pop_front();
 
 	for (const auto &[status, writeId] : statusWithWriteIdToReply) {
 		if (alreadyRepliedBlocks == 0) {
@@ -652,8 +651,9 @@ void WriteHighLevelOp::delayedClose() {
 	// Input buffer now is null
 	assert(inputBuffer_ == nullptr);
 
-	// Drop write data buffers with no replied blocks
-	while (writeDataBuffers_.size() > (isWriteJobBeingProcessed() ? 1 : 0) &&
+	// Drop write data buffers with no replied blocks, and keep at least the amount input buffers
+	// that are currently enqueued in write jobs
+	while (writeDataBuffers_.size() > enqueuedInputBuffers_ &&
 	       writeDataBuffers_.back()->repliedBlocks == 0) {
 		getWriteInputBufferPool().put(std::move(writeDataBuffers_.back()));
 		writeDataBuffers_.pop_back();
@@ -683,6 +683,7 @@ void WriteHighLevelOp::cleanup() {
 		getWriteInputBufferPool().put(std::move(writeDataBuffers_.front()));
 		writeDataBuffers_.pop_front();
 	}
+	enqueuedInputBuffers_ = 0;
 
 	if (inputBuffer_ != nullptr) {
 		/// Drop the input buffer, it won't be used anymore

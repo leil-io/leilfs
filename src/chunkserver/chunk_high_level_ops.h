@@ -353,6 +353,8 @@ protected:
 	uint8_t untoldStatus_ = SAUNAFS_STATUS_OK;  ///< Untold status to be sent to master at cleanup.
 	uint32_t writeJobId_ = 0;                   ///< ID of the current write job being processed
 	uint32_t writeJobWriteId_ = 0;              ///< Specific write operation from client
+	/// Number of input buffers currently enqueued in write jobs
+	uint16_t enqueuedInputBuffers_ = 0;
 	std::shared_ptr<InputBuffer> inputBuffer_ = nullptr;  ///< Buffer for the current write job
 	/// writeJobWriteId's which:
 	/// - have been completed by our worker, but need ack from the next
