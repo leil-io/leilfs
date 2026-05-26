@@ -20,10 +20,12 @@
 void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &make_daemon, std::string &pidfile) {
 	namespace po = boost::program_options;
 	po::options_description generic("options");
+	const std::string defaultConfigFile = ETC_PATH "/leil-uraft.cfg";
+	const std::string legacyConfigFile = ETC_PATH "/saunafs-uraft.cfg";
 
 	generic.add_options()
 	("help", "produce help message")
-	("config,c", po::value<std::string>()->default_value(ETC_PATH "/saunafs-uraft.cfg"), "configuration file");
+	("config,c", po::value<std::string>()->default_value(defaultConfigFile), "configuration file");
 
 	po::options_description config("Configuration");
 	config.add_options()
@@ -80,6 +82,10 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 		std::string config_file;
 
 		config_file = vm["config"].as<std::string>();
+		if (config_file == defaultConfigFile && access(defaultConfigFile.c_str(), F_OK) != 0 &&
+		    access(legacyConfigFile.c_str(), F_OK) == 0) {
+			config_file = legacyConfigFile;
+		}
 		std::ifstream ifs(config_file.c_str());
 
 		if (!ifs) {

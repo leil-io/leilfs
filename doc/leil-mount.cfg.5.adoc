@@ -1,0 +1,67 @@
+leil-mount.cfg(5)
+==================
+
+== NAME
+
+leil-mount.cfg - configuration file for the leil-mount command
+
+== SYNTAX
+
+OPTION,OPTION,OPTION,...
+
+OPTION
+
+PATH
+
+The *#* character starts comments.
+
+== DESCRIPTION
+
+The *leil-mount.cfg* file defines the default mountpoint and the default leil-mount
+specific mount options for the leil-mount command. Options can be either stated
+in one line as a comma separated list of options, or by giving one option per
+line. Options not leil-mount specific will be ignored.
+
+The default mount point should be listed on a separate line, giving the full
+path. Lines starting with the *#* character are ignored.
+
+=== EXAMPLES
+
+ #
+ # Default Options
+ #
+ sfsmaster=192.168.1.1
+ sfspassword=changeme
+ #
+ # Default mount point
+ #
+ /mnt/leil
+
+
+=== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+=== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-mount(1) leil(7)

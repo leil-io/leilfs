@@ -365,17 +365,28 @@ static void fs_read_goal_config_file() {
 			cfg_getstring("CUSTOM_GOALS_FILENAME", "");
 	if (goalConfigFile.empty()) {
 		// file is not specified
-		const char *defaultGoalConfigFile = ETC_PATH "/sfsgoals.cfg";
+		const char *defaultGoalConfigFile = ETC_PATH "/leil-goals.cfg";
+		const char *legacyGoalConfigFile = ETC_PATH "/sfsgoals.cfg";
 		if (access(defaultGoalConfigFile, F_OK) == 0) {
 			// the default file exists - use it
 			goalConfigFile = defaultGoalConfigFile;
+		} else if (access(legacyGoalConfigFile, F_OK) == 0) {
+			goalConfigFile = legacyGoalConfigFile;
 		} else {
 			safs_pretty_syslog(LOG_WARNING,
-					"goal configuration file %s not found - using default goals; if you don't "
-					"want to define custom goals create an empty file %s to disable this warning",
-					defaultGoalConfigFile, defaultGoalConfigFile);
+					"goal configuration files %s and %s not found - using default goals; if you "
+					"don't want to define custom goals create an empty file %s to disable this "
+					"warning",
+					defaultGoalConfigFile, legacyGoalConfigFile, defaultGoalConfigFile);
 			fs_read_goals_from_stream(std::stringstream()); // empty means defaults
 			return;
+		}
+	} else {
+		const std::string defaultGoalConfigFile = ETC_PATH "/leil-goals.cfg";
+		const std::string legacyGoalConfigFile = ETC_PATH "/sfsgoals.cfg";
+		if (goalConfigFile == defaultGoalConfigFile && access(defaultGoalConfigFile.c_str(), F_OK) != 0 &&
+		    access(legacyGoalConfigFile.c_str(), F_OK) == 0) {
+			goalConfigFile = legacyGoalConfigFile;
 		}
 	}
 	std::ifstream goalConfigStream(goalConfigFile);

@@ -118,7 +118,7 @@ set(DEFAULT_GROUP                "saunafs"                 CACHE STRING "Default
 set(DEFAULT_MASTER_HOSTNAME      "sfsmaster"                CACHE STRING "Default master server hostname")
 set(DEFAULT_MASTER_PORT          "9421"                     CACHE STRING "Default master server port number")
 set(DEFAULT_MOUNTED_SUBFOLDER    "/"                        CACHE STRING "Default subfolder to be mounted")
-set(DEFAULT_SFSMOUNT_CONFIG_PATH "${ETC_PATH}/sfsmount.cfg" CACHE STRING "Default full path to sfsmount configuration file")
+set(DEFAULT_SFSMOUNT_CONFIG_PATH "${ETC_PATH}/leil-mount.cfg" CACHE STRING "Default full path to leil-mount configuration file")
 set(SAUNAFS_BLOCKS_IN_CHUNK     "1024"                     CACHE STRING "Number of blocks in one chunk")
 set(SAUNAFS_BLOCK_SIZE          "65536"                    CACHE STRING "Number of bytes in one block")
 set(ASCIIDOCTOR_VERSION         "2.0.23"                   CACHE STRING "Pinned asciidoctor gem version")

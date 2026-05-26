@@ -1,4 +1,4 @@
-# Mount Client (`sfsmount`) -- Architectural Reference
+# Mount Client (`leil-mount`) -- Architectural Reference
 
 The `src/mount` module is the client-side runtime for SaunaFS. It is
 responsible for:
@@ -12,8 +12,8 @@ responsible for:
 
 This directory produces the shared `mount` library and multiple frontends:
 
-- `sfsmount` (`src/mount/fuse`) -- FUSE daemon.
-- `saunafs-polonaise-server` (`src/mount/polonaise`) -- optional Thrift
+- `leil-mount` (`src/mount/fuse`) -- FUSE daemon.
+- `leil-polonaise-server` (`src/mount/polonaise`) -- optional Thrift
   server, intended for removal in a future cleanup.
 - `saunafs-client` / `saunafs-client-cpp` (`src/mount/client`) -- embeddable
   client libraries (when `ENABLE_CLIENT_LIB` is enabled).
@@ -25,8 +25,8 @@ This directory produces the shared `mount` library and multiple frontends:
 ```
 src/mount/
 |-- *.{h,cc}         # Core mount runtime and data path
-|-- fuse/            # FUSE frontend (sfsmount)
-|-- polonaise/       # Thrift frontend (saunafs-polonaise-server)
+|-- fuse/            # FUSE frontend (leil-mount)
+|-- polonaise/       # Thrift frontend (leil-polonaise-server)
 |-- client/          # C/C++ API libraries
 `-- windows -> ...   # Symlink to the Windows-client repo (populated when building for Windows)
 ```
@@ -99,8 +99,8 @@ copy from `/tmp` to isolate singleton global state per instance.
 | Component | Build gate | Notes |
 |---|---|---|
 | `mount` library | always from `src/mount` | Core client runtime shared by all frontends. |
-| `sfsmount` | top-level `NOT MINGW` + FUSE3 detected (fatal error if not found) | Added via `add_subdirectory(src/mount/fuse)`. |
-| `saunafs-polonaise-server` | `ENABLE_POLONAISE=ON` + Boost.Program_options + Polonaise + Thrift | Subdirectory returns early when dependencies are missing. |
+| `leil-mount` | top-level `NOT MINGW` + FUSE3 detected (fatal error if not found) | Added via `add_subdirectory(src/mount/fuse)`. |
+| `leil-polonaise-server` | `ENABLE_POLONAISE=ON` + Boost.Program_options + Polonaise + Thrift | Subdirectory returns early when dependencies are missing. |
 | `saunafs-client`, `saunafs-client-cpp`, `saunafsmount_shared` | `ENABLE_CLIENT_LIB=ON` | Unit/integration test mode (`ENABLE_TESTS`) forces this option on. |
 | `fsalsaunafs` (NFS-Ganesha FSAL) | `ENABLE_NFS_GANESHA=ON` | Links against `saunafs-client_pic`; `ENABLE_CLIENT_LIB=ON` is required for in-tree builds since `saunafs-client_pic` is only produced when that option is on. |
 

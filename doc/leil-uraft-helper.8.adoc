@@ -1,0 +1,154 @@
+leil-uraft-helper(8)
+=====================
+
+== NAME
+
+leil-uraft-helper - LeilFS HA suite helper
+
+== SYNOPSIS
+
+[verse]
+leil-uraft-helper _COMMAND_ [_ARGUMENTS_]
+
+== DESCRIPTION
+
+*leil-uraft-helper* is a helper script, used internally by *leil-uraft* to manage nodes.
+[%hardbreaks]
+The uRaft daemon performs leader election and then calls this helper to execute backend-specific
+actions (promote/demote, floating IP assignment, health checks).
+This split is intentional:
+
+- *leil-uraft* implements the election logic.
+- *leil-uraft-helper* implements the platform and LeilFS-specific operations.
+
+In production, it is important that helper commands are:
+
+- Fast (bounded runtime, no unbounded retries).
+- Deterministic and idempotent where possible.
+- Strict about machine-readable output for commands used in voting.
+
+[%hardbreaks]
+Except for *isalive* and *metadata-version* (which can be useful for debugging), this script
+is intended to be called by *leil-uraft*.
+
+== COMMANDS
+
+The following commands are used by *leil-uraft*.
+
+*isalive*::
+Checks whether the local metadata service is responsive.
+
+This command must print exactly one of the following strings, without extra text:
+
+- `alive` (exit status 0)
+- `dead`  (exit status non-zero)
+
+The daemon uses this result to gate leader promotion (see `blocked_promote` in
+the uRaft status endpoint).
+
+[%hardbreaks]
+NOTE: In the current implementation the helper wraps `leil-master -o ha-cluster-managed isalive`.
+If `leil-master` is wedged or slow to connect, *leil-uraft* may time out and log "Isalive timeout".
+
+*metadata-version* ['HOST' 'PORT']::
+Returns the local metadata version as an unsigned integer.
+
+The daemon uses this to avoid electing a node with stale metadata.
+The command must print an integer (decimal) and nothing else.
+
+If the metadata service is unhealthy, returning `0` is a safe choice because it prevents the node
+from being elected Leader.
+
+*promote*::
+Promotes the local node to active master.
+
+Typical responsibilities include:
+
+- Switching `leil-master` personality to `master`.
+- Ensuring metadata is consistent.
+- Assigning the floating IP (VIP) to the configured interface.
+
+On success the command should return exit status 0.
+
+*demote*::
+Demotes the local node from active master to shadow.
+
+Typical responsibilities include:
+
+- Dropping the floating IP (VIP).
+- Restarting `leil-master` with `initial-personality=shadow`.
+
+This command is the cleanest way to ensure a former Leader re-joins as a shadow after failover.
+
+*dead*::
+Handles the situation where the local metadata server is considered dead.
+
+[%hardbreaks]
+The default helper implementation drops the floating IP only.
+In some environments, you may also want to stop/restart `leil-master` or force a demotion to shadow;
+if you customize `dead`, keep it idempotent and fast.
+
+*assign-ip*::
+Assigns the configured floating IP to the configured network interface.
+
+*drop-ip*::
+Drops the configured floating IP from the configured network interface.
+
+*is-floating-ip-alive*::
+Reports whether the floating IP is present on the local interface.
+
+This is useful for debugging and for VIP watchdog behavior.
+
+[%hardbreaks]
+Other helper commands may exist (for example `quick-stop` and `cleanup`) and can be used
+by operators or by additional recovery logic.
+
+== FILES
+
+The helper script reads configuration from:
+
+- `@ETC_PATH@/leil-uraft.cfg`
+- `@ETC_PATH@/leil-master.cfg`
+
+It may also read metadata state from:
+
+- `DATA_PATH` configured in `leil-master.cfg`
+
+== EXIT STATUS
+
+The exact semantics depend on the command, but the general contract is:
+
+- Exit status 0 indicates success.
+- Non-zero exit status indicates failure.
+
+For commands that are parsed by the daemon (`isalive`, `metadata-version`), stdout must remain
+machine-readable even on error.
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023 Leil Storage OÜ
+
+[%hardbreaks]
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+[%hardbreaks]
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+[%hardbreaks]
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+leil-uraft(8), leil-uraft.cfg(5)

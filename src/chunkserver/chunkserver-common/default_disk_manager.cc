@@ -146,15 +146,20 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 void DefaultDiskManager::reloadDisksFromCfg() {
 	TRACETHIS();
 
-	std::string hddFilename = cfg_get("HDD_CONF_FILENAME",
-	                                  ETC_PATH "/sfshdd.cfg");
+	const std::string defaultHddFilename = ETC_PATH "/leil-hdd.cfg";
+	const std::string legacyHddFilename = ETC_PATH "/sfshdd.cfg";
+	std::string hddFilename = cfg_get("HDD_CONF_FILENAME", defaultHddFilename);
+	if (hddFilename == defaultHddFilename && !std::ifstream(defaultHddFilename).good() &&
+	    std::ifstream(legacyHddFilename).good()) {
+		hddFilename = legacyHddFilename;
+	}
 	std::ifstream hddFile(hddFilename);
 
 	if (!hddFile.is_open()) {
 		throw InitializeException("can't open hdd config file " + hddFilename +
 		                          ": " + strerr(errno) +
 		                          " - new file can be created using " +
-		                          APP_EXAMPLES_SUBDIR "/sfshdd.cfg");
+		                          APP_EXAMPLES_SUBDIR "/leil-hdd.cfg");
 	}
 
 	safs_pretty_syslog(LOG_INFO, "hdd configuration file %s opened",

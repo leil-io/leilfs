@@ -827,7 +827,8 @@ int main(int argc,char **argv) {
 	int32_t nicelevel;
 	uint32_t locktimeout;
 	struct rlimit rls;
-	std::string default_cfgfile = ETC_PATH "/" STR(APPNAME_LEGACY) ".cfg";
+	std::string default_cfgfile = ETC_PATH "/" STR(APPNAME) ".cfg";
+	std::string legacy_default_cfgfile = ETC_PATH "/" STR(CFGNAME_LEGACY) ".cfg";
 	std::string cfgfile = default_cfgfile;
 	std::string pidfile;
 
@@ -912,13 +913,18 @@ int main(int argc,char **argv) {
 		makePidFile(pidfile);
 	}
 
+	if (cfgfile == default_cfgfile && access(default_cfgfile.c_str(), F_OK) != 0 &&
+	    access(legacy_default_cfgfile.c_str(), F_OK) == 0) {
+		cfgfile = legacy_default_cfgfile;
+	}
+
 	ch = cfg_load(cfgfile.c_str(), logundefined);
 	if (ch == 1) {
 		safs_pretty_syslog(LOG_WARNING,
 				"configuration file %s not found - using "
 				"defaults; please create one to remove this "
 				"warning (you can copy sample configuration "
-				"from '" APP_EXAMPLES_SUBDIR "/" STR(CFGNAME_LEGACY) ".cfg' to get a base "
+				"from '" APP_EXAMPLES_SUBDIR "/" STR(CFGNAME) ".cfg' to get a base "
 				"configuration)",
 				cfgfile.c_str());
 	} else if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {

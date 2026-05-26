@@ -900,7 +900,7 @@ static void exports_loadexports() {
 			std::string err_msg = std::string("exports "
 				"configuration file (") + ExportsFileName +
 				") not found - please create one (you can copy "
-				APP_EXAMPLES_SUBDIR "/sfsexports.cfg to "
+				APP_EXAMPLES_SUBDIR "/leil-exports.cfg to "
 				"get a base configuration)";
 			throw InitializeException(err_msg);
 		} else {
@@ -941,7 +941,13 @@ static void exports_loadexports() {
 }
 
 static void exports_load() {
-	ExportsFileName = cfg_getstring("EXPORTS_FILENAME", ETC_PATH "/sfsexports.cfg");
+	const std::string defaultExportsFileName = ETC_PATH "/leil-exports.cfg";
+	const std::string legacyExportsFileName = ETC_PATH "/sfsexports.cfg";
+	ExportsFileName = cfg_getstring("EXPORTS_FILENAME", defaultExportsFileName);
+	if (ExportsFileName == defaultExportsFileName && access(defaultExportsFileName.c_str(), F_OK) != 0 &&
+	    access(legacyExportsFileName.c_str(), F_OK) == 0) {
+		ExportsFileName = legacyExportsFileName;
+	}
 	exports_loadexports();
 }
 

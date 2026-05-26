@@ -1,0 +1,119 @@
+leil-metalogger.cfg(5)
+=======================
+
+== NAME
+
+leil-metalogger.cfg - configuration file for leil-metalogger
+
+== DESCRIPTION
+
+The file *leil-metalogger.cfg* contains configuration of LeilFS metalogger process.
+
+== SYNTAX
+
+Syntax is:
+
+'OPTION' *=* 'VALUE'
+
+Lines starting with *#* character are ignored.
+
+== OPTIONS
+
+Configuration options:
+
+*DATA_PATH*::
+where to store metadata files
+
+*WORKING_USER*::
+user to run daemon as
+
+*WORKING_GROUP*::
+group to run daemon as (optional - if empty then default user group will be used)
+
+*SYSLOG_IDENT*::
+name of process to place in syslog messages (default is leil-metalogger)
+
+*LOCK_MEMORY*::
+whether to perform mlockall() to avoid swapping out leil-metalogger process (default is 0, i.e. no)
+
+*LIMIT_GLIBC_MALLOC_ARENAS*:: Linux only: limit glibc malloc arenas to given
+value - prevents from using huge amount of virtual memory. This can influence
+performance by reducing memory fragmentation and improving cache locality, but
+it may also lead to contention and reduced parallelism in multi-threaded
+applications. Use it in constrained memory environments, recommended values are
+4 or 8. (default is 0: disabled or let glibc decide)
+
+*NICE_LEVEL*::
+nice level to run daemon with (default is -19 if possible; note: process must be started as root to
+increase priority)
+
+*BACK_LOGS*::
+number of metadata change log files (default is 50)
+
+*BACK_META_KEEP_PREVIOUS*::
+number of previous metadata files to be kept (default is 3)
+
+*META_DOWNLOAD_FREQ*::
+metadata download frequency in hours (default is 24, at most *BACK_LOGS*/2)
+
+*MASTER_HOST*::
+address of LeilFS master host to connect with (default is sfsmaster)
+
+*MASTER_PORT*::
+number of LeilFS master port to connect with (default is 9419)
+
+*MASTER_RECONNECTION_DELAY*::
+delay in seconds before trying to reconnect to master after disconnection (default is 30)
+
+*MASTER_TIMEOUT*::
+timeout (in seconds) for master connections (default is 60)
+
+*LOG_LEVEL*:: Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or
+config value LOG_LEVEL to determine logging level. Valid log levels are
+- 'trace'
+- 'debug'
+- 'info'
+- 'warn' or 'warning'
+- 'err' or 'error'
+- 'crit' or 'critical'
+- 'off'
+
+*TLS_CERT_FILE (EXPERIMENTAL)*::
+Path to the TLS certificate file the metalogger will use
+for TLS connections (there is no default value).
+
+*TLS_KEY_FILE (EXPERIMENTAL)*::
+Path to the TLS private key file the metalogger will use
+for TLS connections (there is no default value).
+
+*TLS_CA_CERT_FILE (EXPERIMENTAL)*::
+Path to the trusted CA certificate which is used to authenticate
+the TLS connection (there is no default value).
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-metalogger(8)
