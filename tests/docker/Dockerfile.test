@@ -8,7 +8,7 @@ ENV LC_ALL="C.UTF-8"
 ENV GTEST_ROOT=/usr/local
 ENV DEBIAN_FRONTEND=noninteractive
 
-WORKDIR /saunafs
+WORKDIR /leilfs
 COPY ./tests/install-packages.sh ./tests/
 COPY ./tests/llvm.sh ./tests/
 RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
@@ -41,16 +41,16 @@ FROM test-setup AS test-build
 
 # Enable additional basic tools
 ENV PATH="/usr/lib/ccache:${PATH}"
-ENV VCPKG_ROOT="/saunafs/vcpkg/"
+ENV VCPKG_ROOT="/leilfs/vcpkg/"
 ENV PATH="${VCPKG_ROOT}:${PATH}"
 
-WORKDIR /saunafs
+WORKDIR /leilfs
 RUN mkdir -p .git/modules/vcpkg
 COPY .git/modules/vcpkg .git/modules/vcpkg
 COPY vcpkg/ vcpkg
 COPY vcpkg.json .
 RUN vcpkg/bootstrap-vcpkg.sh;
-RUN --mount=type=cache,target=/saunafs/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/saunafs/vcpkg/packages/,sharing=locked vcpkg/vcpkg install;
+RUN --mount=type=cache,target=/leilfs/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/leilfs/vcpkg/packages/,sharing=locked vcpkg/vcpkg install;
 
 COPY CMakeLists.txt .
 COPY cmake ./cmake
@@ -63,9 +63,9 @@ COPY tests ./tests
 COPY COPYING .
 COPY README.md .
 
-RUN mkdir -p /saunafs/build && ls /saunafs && \
-    cd /saunafs/build && cmake \
-	-DCMAKE_TOOLCHAIN_FILE="/saunafs/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+RUN mkdir -p /leilfs/build && ls /leilfs && \
+    cd /leilfs/build && cmake \
+	-DCMAKE_TOOLCHAIN_FILE="/leilfs/vcpkg/scripts/buildsystems/vcpkg.cmake" \
     -DENABLE_TESTS=1 \
     -DENABLE_DOCS=1 \
     -DENABLE_NFS_GANESHA=1 \
@@ -77,7 +77,7 @@ RUN mkdir -p /saunafs/build && ls /saunafs && \
 
 # TODO: Use CMake presets
 RUN --mount=type=cache,target=/root/.ccache \
-    cd /saunafs/build && make -j$(nproc) install;
+    cd /leilfs/build && make -j$(nproc) install;
 
 
 WORKDIR /

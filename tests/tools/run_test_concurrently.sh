@@ -54,7 +54,7 @@ RUN_UNITTESTS=${RUN_UNITTESTS:-'false'}
 VALGRIND=${VALGRIND:-'No'}
 BUILD_ID=${BUILD_ID:-}
 DISPATCHER_URL=${DISPATCHER_URL:-}
-SAUNAFS_TESTS_PATH=${SAUNAFS_TESTS_PATH:-"${WORKSPACE}/install/leilfs/bin/saunafs-tests"}
+SAUNAFS_TESTS_PATH=${SAUNAFS_TESTS_PATH:-"${WORKSPACE}/install/leilfs/bin/leil-tests"}
 
 export SAUNAFS_ROOT=$WORKSPACE/install/leilfs
 export TEST_OUTPUT_DIR=$WORKSPACE/test_output
@@ -79,7 +79,7 @@ fi
 
 make -C build/saunafs -j$(nproc) install
 
-killall -9 saunafs-tests || true
+killall -9 leil-tests || true
 mkdir -m 777 -p $TEST_OUTPUT_DIR
 rm -rf "${TEST_OUTPUT_DIR:?}"/* || true
 rm -rf /mnt/ramdisk/* || true
@@ -93,7 +93,7 @@ if [ -z "${DISPATCHER_URL}" ]; then
 		$WORKSPACE/build/saunafs/src/unittests/unittests --gtest_color=yes --gtest_output=xml:$TEST_OUTPUT_DIR/unit_test_results.xml
 	fi
 
-	$SAUNAFS_ROOT/bin/saunafs-tests --gtest_color=yes --gtest_filter=$FILTER --gtest_output=xml:$TEST_OUTPUT_DIR/test_results.xml
+	$SAUNAFS_ROOT/bin/leil-tests --gtest_color=yes --gtest_filter=$FILTER --gtest_output=xml:$TEST_OUTPUT_DIR/test_results.xml
 
 else
 	{
@@ -126,7 +126,7 @@ else
 		NEXT_TEST=$(get_next_test)
 		START_TIME=$(($(date +%s%N) / 1000000))
 		while [ "${NEXT_TEST}" != "" ]; do
-			"${SAUNAFS_ROOT}/bin/saunafs-tests" \
+			"${SAUNAFS_ROOT}/bin/leil-tests" \
 				--gtest_color=yes \
 				--gtest_filter="${TEST_SUITE}.${NEXT_TEST}" \
 				--gtest_output="xml:${TEST_OUTPUT_DIR}/test_results.xml" || {
