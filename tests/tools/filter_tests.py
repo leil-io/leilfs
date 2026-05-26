@@ -28,7 +28,7 @@ def get_gtest_testlist(
     """Returns a list of (all minus excluded) tests in a given test_suite"""
 
     tests_list = os.popen(
-        workspace + "/install/leilfs/bin/saunafs-tests "
+        workspace + "/install/leilfs/bin/leil-tests "
         "--gtest_list_tests --gtest_filter=" + test_suite + "*"
     )
 

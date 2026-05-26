@@ -10,15 +10,15 @@ export TEST_OUTPUT_DIR=${WORKSPACE}/test_output
 echo "TEST_OUTPUT_DIR: ${TEST_OUTPUT_DIR}"
 export TERM=xterm
 
-killall -9 saunafs-tests || true
+killall -9 leil-tests || true
 mkdir -m 777 -p "${TEST_OUTPUT_DIR}"
 rm -rf "${TEST_OUTPUT_DIR:?}"/{,.}* || true
 rm -rf /mnt/ramdisk/{,.}*  || true
-[ -f "${WORKSPACE}/build/saunafs/src/unittests/unittests" ] || \
-	die "${WORKSPACE}/build/saunafs/src/unittests/unittests" not found, did you build the project?
-"${WORKSPACE}/build/saunafs/src/unittests/unittests" --gtest_color=yes --gtest_output=xml:"${TEST_OUTPUT_DIR}/coverage_test_results.xml"
+[ -f "${WORKSPACE}/build/leilfs/src/unittests/unittests" ] || \
+	die "${WORKSPACE}/build/leilfs/src/unittests/unittests" not found, did you build the project?
+"${WORKSPACE}/build/leilfs/src/unittests/unittests" --gtest_color=yes --gtest_output=xml:"${TEST_OUTPUT_DIR}/coverage_test_results.xml"
 
-lcov --directory "${WORKSPACE}/build/saunafs/" --capture --output-file "${TEST_OUTPUT_DIR}/code_coverage.info" -rc lcov_branch_coverage=1
+lcov --directory "${WORKSPACE}/build/leilfs/" --capture --output-file "${TEST_OUTPUT_DIR}/code_coverage.info" -rc lcov_branch_coverage=1
 lcov --remove "${TEST_OUTPUT_DIR}/code_coverage.info" -o "${TEST_OUTPUT_DIR}/filtered_code_coverage.info" -rc lcov_branch_coverage=1 \
 	'/usr/include/*' \
 	'/usr/local/include/*' \

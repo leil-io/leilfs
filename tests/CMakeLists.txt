@@ -21,7 +21,7 @@ add_custom_target(list_of_test_cases
 
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   VERBATIM)
-set_source_files_properties(saunafs-tests.cc PROPERTIES
+set_source_files_properties(leil-tests.cc PROPERTIES
   OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_cases.h
   OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_suites.h)
 
@@ -32,15 +32,8 @@ install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/set_saunafs_constants.sh DESTINATIO
 # Build executable running all the test cases
 include_directories(${CMAKE_CURRENT_BINARY_DIR}) # test_cases.h is located here
 add_definitions(-DTEST_DATA_PATH=${CMAKE_CURRENT_SOURCE_DIR})
-add_executable(leil-tests saunafs-tests.cc)
+add_executable(leil-tests leil-tests.cc)
 add_dependencies(leil-tests list_of_test_cases)
 target_link_libraries(leil-tests GTest::gtest GTest::gtest_main)
 target_link_libraries(leil-tests ${Boost_SYSTEM_LIBRARY} ${Boost_FILESYSTEM_LIBRARY})
 install(TARGETS leil-tests RUNTIME DESTINATION ${BIN_SUBDIR})
-
-add_custom_target(saunafs-tests-symlink ALL
-  COMMAND ln -sf leil-tests saunafs-tests
-  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS leil-tests
-)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/saunafs-tests DESTINATION ${BIN_SUBDIR})

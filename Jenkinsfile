@@ -3,11 +3,10 @@ GIT_COMMIT_HASH = ""
 REGISTRY_URL = "registry.ci.leil.io"
 
 def buildLeilTests() {
-    // TODO(rolysr): We should build from latest leil-tests release
     sh '''
         git clone "https://github.com/leil-io/leil-tests"
         cd leil-tests
-        git checkout dev
+        git checkout v0.7.0
         go build -o $WORKSPACE/leil-tests
         '''
 }
@@ -229,7 +228,7 @@ pipeline {
                                     export PATH="/usr/lib/ccache:$PATH"
                                     cd build
                                     sudo nice make -j\$((\$(nproc) / 2)) install
-                                    saunafs-tests --gtest_filter="RebalancingTests*" --gtest_output="xml:./rebalance_test_detail.xml" || true
+                                    leil-tests --gtest_filter="RebalancingTests*" --gtest_output="xml:./rebalance_test_detail.xml" || true
                                 """
                                 publishJunit("build/*test_detail.xml")
                             }
@@ -255,7 +254,7 @@ pipeline {
                         checkout scm
                         script {
                             sh """
-                                docker buildx build --tag saunafs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
+                                docker buildx build --tag leilfs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
                                 """
                         }
                     }
@@ -273,7 +272,7 @@ pipeline {
                                 notFailBuild: true,
                             )
                             sh """
-                                docker image rm saunafs-clang-build || true
+                                docker image rm leilfs-clang-build || true
                                 """
                         }
                     }

@@ -32,7 +32,7 @@
 namespace {
 
 std::string tempDirForAllTests() {
-	return "/tmp/Saunafs_bashtests_global_env";
+	return "/tmp/Leilfs_bashtests_global_env";
 }
 
 // The file has to be available for all bash tests

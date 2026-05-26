@@ -96,7 +96,7 @@ if __name__ == "__main__":
         "-p",
         "--saunafs_tests_path",
         type=str,
-        help="Path to saunafs-tests binary file",
+        help="Path to leil-tests binary file",
     )
     parser.add_argument("-s", "--test_suite", type=str, help="Name of test_suite")
     parser.add_argument(
