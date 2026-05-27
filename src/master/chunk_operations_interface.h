@@ -38,14 +38,17 @@ struct matocsserventry;
 /// Layering mirrors the FilesystemOperations family, with the InMemory layer
 /// that family is missing:
 ///   IChunkOperations  -- this interface (the external surface)
-///   ChunkOperationsBase -- storage-agnostic orchestration; calls the protected
-///                          storage primitives, never touches storage directly
-///   ChunkOperationsInMemory -- primitives against gChunksMetadata (leil-master)
-///   ChunkOperationsKV       -- primitives against a KV store, like FoundationDB
+///   ChunkOperationsBase -- default behavior: forwards to the in-memory engine
+///                          in chunks.{h,cc}
+///   ChunkOperationsInMemory -- empty leaf over Base (leil-master)
+///   ChunkOperationsKV       -- overrides only the methods that persist to a KV
+///                              store like FoundationDB (leil-mds)
 ///
-/// InMemory and KV are siblings, so KV cannot silently inherit in-memory storage
-/// logic. The public surface below is the same for both bindings; the actual
-/// divergence lives in the protected storage primitives.
+/// In Step 1 only the refcount/version deltas, the startup rebuild, and the
+/// chunkserver-report lookup persist; KV inherits the rest (locations, status
+/// callbacks, maintenance) as in-memory while the location layer still lives in
+/// RAM. The protected storage primitives below become the InMemory/KV divergence
+/// point once that layer moves to FDB.
 class IChunkOperations {
 public:
 	virtual ~IChunkOperations() = default;
