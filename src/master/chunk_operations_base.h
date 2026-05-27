@@ -26,8 +26,8 @@
 /// chunks.{h,cc}, which holds the real logic and owns gChunksMetadata.
 ///
 /// This is the whole behavior leil-master needs, so ChunkOperationsInMemory is an
-/// empty leaf over it. ChunkOperationsKV (leil-mds) inherits the same defaults but
-/// overrides the methods that must persist to FoundationDB -- the refcount/version
+/// empty leaf over it. ChunkOperationsKV inherits the same defaults but overrides
+/// the methods that must persist to a KV store -- the refcount/version
 /// deltas, the startup rebuild, and the chunkserver-report lookup -- and inherits
 /// everything else (locations, got*Status, maintenance, stats) as in-memory while
 /// the location layer still lives in RAM (Step 1).

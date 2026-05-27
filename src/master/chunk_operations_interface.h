@@ -43,7 +43,7 @@ class FilesystemOperationContext;
 ///                          in chunks.{h,cc}
 ///   ChunkOperationsInMemory -- empty leaf over Base (leil-master)
 ///   ChunkOperationsKV       -- overrides only the methods that persist to a KV
-///                              store like FoundationDB (leil-mds)
+///                              store
 ///
 /// In Step 1 only the refcount/version deltas, the startup rebuild, and the
 /// chunkserver-report lookup persist; KV inherits the rest (locations, status
@@ -74,13 +74,13 @@ public:
 	virtual int unlock(uint64_t chunkid) = 0;
 
 	// --- Id-allocation watermark.
-	// KV stub: the FDB MDS owns this via META_NEXT_CHUNK_RANGE (non-monotonic
+	// KV stub: the KV backend owns this via META_NEXT_CHUNK_RANGE (non-monotonic
 	// generator), so chunk_server_has_chunk never bumps it. ---
 	virtual uint8_t setNextChunkId(uint64_t nextChunkIdToBeSet) = 0;
 
 	// --- Changelog replay.
-	// KV stub: reached only from fs_apply_* replay, which the FDB MDS does not
-	// run (FoundationDB is the source of truth). ---
+	// KV stub: reached only from fs_apply_* replay, which the KV backend does not
+	// run (the KV store is the source of truth). ---
 	virtual uint8_t applyModification(uint32_t ts, uint64_t oldChunkId, uint32_t lockid,
 	                                  uint8_t goal, bool doIncreaseVersion,
 	                                  uint64_t *newChunkId) = 0;
@@ -160,11 +160,11 @@ public:
 	virtual int strinit() = 0;
 
 	// --- Checksums.
-	// KV stub: checksums belong to the Master/Shadow dump model, not FDB. ---
+	// KV stub: checksums belong to the Master/Shadow dump model, not the KV store. ---
 	virtual uint64_t checksum(ChecksumMode mode) = 0;
 	virtual ChecksumRecalculationStatus updateChecksumABit(uint32_t speedLimit) = 0;
 };
 
 /// The active chunk-operations backend, bound at startup (InMemory for
-/// leil-master, KV for leil-mds), mirroring gFSOperations.
+/// leil-master, KV for the KV-backed build), mirroring gFSOperations.
 inline std::unique_ptr<IChunkOperations> gChunkOperations = nullptr;

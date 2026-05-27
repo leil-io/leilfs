@@ -36,7 +36,7 @@ prefix**, and each group corresponds to a logical subsystem:
 | `changelog*`          | Write-ahead log (WAL)                            |
 | `restore*`            | Changelog replay (apply entries to metadata)     |
 | `hstring*`            | Efficient string (filename) storage              |
-| `kv_*`                | KV store (FoundationDB) integration              |
+| `kv_*`                | KV store integration                             |
 | `task_manager*`       | Async task execution framework                   |
 | `locks*`              | POSIX and flock advisory file locking            |
 | `acl_storage*`        | Deduplicated RichACL storage                     |
@@ -47,9 +47,9 @@ prefix**, and each group corresponds to a logical subsystem:
 
 A key organizational convention is the **interface / implementation split**:
 public interfaces live in `*_interface.h` files as pure virtual classes (e.g.
-`IFilesystemOperations`, `IFilesystemNodeOperations`, `IMetadataBackend`,
-`IKVConnector`), while default in-memory implementations use a `*Base` suffix
-or reside in the corresponding `.cc` file.
+`IFilesystemOperations`, `IFilesystemNodeOperations`, `IChunkOperations`,
+`IMetadataBackend`, `IKVConnector`), while default in-memory implementations use
+a `*Base` suffix or reside in the corresponding `.cc` file.
 
 ## Core Data Model
 
@@ -148,6 +148,13 @@ indexed by chunk index (offset / chunk_size).
 
 The `gChunkChangedSignal` notifies observers when chunk metadata changes.
 
+Chunk operations are reached through the **`IChunkOperations`** interface
+(`chunk_operations_interface.h`). `ChunkOperationsBase` is the in-memory default,
+forwarding to the `chunks.cc` free functions above; the master binds
+`gChunkOperations` to `ChunkOperationsInMemory` (an empty leaf over `Base`). This
+is the seam a KV-backed build overrides with `ChunkOperationsKV` to persist chunk
+refcount/version to a KV store.
+
 ## Network Servers
 
 The master communicates with five types of peers. The naming convention
@@ -164,7 +171,7 @@ The master communicates with five types of peers. The naming convention
 ## Client Sessions
 
 Client session lifecycle is routed through `ISessionManager`. The file-backed
-master binds `SessionManagerFile`; KV/MDS builds can bind a different manager
+master binds `SessionManagerFile`; KV builds can bind a different manager
 without changing the shared `Session` runtime object or the `matoclserv`
 protocol handlers.
 
@@ -229,7 +236,7 @@ Metadata durability is achieved through two complementary mechanisms:
   Used by shadow masters during synchronization and by `sfsmetarestore` for
   offline recovery.
 
-## KV Store Backend (FoundationDB)
+## KV Store Backend
 
 An alternative to file-based metadata storage, designed for distributed
 metadata:
@@ -237,9 +244,9 @@ metadata:
 - **`IKVConnector`** (`kv_connector_interface.h`) -- interface for KV store
   operations and event handlers for metadata changes (`onNodeChanged`,
   `onEdgeChanged`, `onEdgeRemoved`, `onDetainedAdded`, etc.).
-- **`kv_connector_fdb.*`** -- FoundationDB concrete implementation
-  (conditionally compiled). This integration is currently not wired into the
-  default master initialization path in `init.h`.
+- **`kv_connector_fdb.*`** -- concrete KV store implementation (conditionally
+  compiled). This integration is currently not wired into the default master
+  initialization path in `init.h`.
 - **`kv_common_keys.h`** -- defines key prefix conventions for all metadata
   sections in the KV store: `NODE_`, `EDGE_`, `FREE_`, `CHNK_`, `XATR_`,
   `ACLS_`, `QUOT_`, `FLCK_`, plus reverse indexes (`DIR_PARENT_`, `PARENT_`,
@@ -337,8 +344,8 @@ Client connections are accepted only after all other subsystems are ready.
   coupling producers to consumers.
 - **Global process state** -- core state is exposed through global variables:
   `gMetadata` is a raw pointer (`FilesystemMetadata *`), while
-  `gFSOperations`, `gMetadataBackend`, `gInodeIdGenerator`, and
-  `gChunkIdGenerator` are global `std::unique_ptr`s. They are initialized
+  `gFSOperations`, `gChunkOperations`, `gMetadataBackend`, `gInodeIdGenerator`,
+  and `gChunkIdGenerator` are global `std::unique_ptr`s. They are initialized
   during startup and then used process-wide.
 - **Conditional compilation** -- `METARESTORE` and `METALOGGER` preprocessor
   guards exclude master-only or tool-only code paths, allowing the same source
