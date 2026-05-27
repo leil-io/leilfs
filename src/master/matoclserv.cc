@@ -74,6 +74,7 @@
 #include "kv/itransaction.h"
 #include "master/changelog.h"
 #include "master/chartsdata.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
 #include "master/datacachemgr.h"
@@ -454,8 +455,8 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
                                             uint32_t lockId) {
 	uint32_t chunkVersion;
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
-	uint8_t status = chunk_getversionandlocations(chunkId, eptr->peerIpAddress, chunkVersion,
-			kMaxNumberOfChunkCopies, allChunkCopies);
+	uint8_t status = gChunkOperations->getVersionAndLocations(
+	    chunkId, eptr->peerIpAddress, chunkVersion, kMaxNumberOfChunkCopies, allChunkCopies);
 
 	remove_unsupported_ec_parts(eptr->version, allChunkCopies);
 
@@ -824,9 +825,9 @@ void matoclserv_list_goals(matoclserventry* eptr) {
 void matoclserv_chunks_health(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	bool regularChunksOnly;
 	cltoma::chunksHealth::deserialize(data, length, regularChunksOnly);
-	auto message = matocl::chunksHealth::build(regularChunksOnly,
-			chunk_get_availability_state(),
-			chunk_get_replication_state());
+	auto message =
+	    matocl::chunksHealth::build(regularChunksOnly, gChunkOperations->getAvailabilityState(),
+	                                gChunkOperations->getReplicationState());
 
 	matoclserv_createpacket(eptr, std::move(message));
 }
@@ -1067,7 +1068,7 @@ void matoclserv_info(matoclserventry *eptr, const uint8_t *data, uint32_t length
 	                          &statistics.allNodes, &statistics.dirNodes, &statistics.fileNodes,
 	                          &statistics.symlinkNodes);
 
-	chunk_info(&statistics.chunks, &statistics.chunkCopies, &statistics.regularCopies);
+	gChunkOperations->info(&statistics.chunks, &statistics.chunkCopies, &statistics.regularCopies);
 
 	statistics.memoryUsage = chartsdata_memusage();
 
@@ -1140,10 +1141,10 @@ void matoclserv_chunkstest_info(matoclserventry *eptr,const uint8_t *data,uint32
 		return;
 	}
 
-	auto chunksInfoSize = get_chunk_info_serialized_size();
+	auto chunksInfoSize = gChunkOperations->getChunkInfoSerializedSize();
 
 	ptr = matoclserv_createpacket(eptr, MATOCL_CHUNKSTEST_INFO, chunksInfoSize);
-	chunk_store_info(ptr);
+	gChunkOperations->storeChunkInfo(ptr);
 }
 
 void matoclserv_chunks_matrix(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -1166,7 +1167,7 @@ void matoclserv_chunks_matrix(matoclserventry *eptr, const uint8_t *data, uint32
 	ptr = matoclserv_createpacket(eptr, MATOCL_CHUNKS_MATRIX,
 	                              CHUNK_MATRIX_SIZE * CHUNK_MATRIX_SIZE * sizeof(uint32_t));
 
-	chunk_store_chunkcounters(ptr, matrixId);
+	gChunkOperations->storeChunkCounters(ptr, matrixId);
 }
 
 void matoclserv_exports_info(matoclserventry *eptr,const uint8_t *data,uint32_t length) {
@@ -2082,7 +2083,9 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 				status = gFSOperations->getChunkId(context, fsOpContext, inode,
 				                                   length / SFSCHUNKSIZE, &chunkId);
 
-				if (status == SAUNAFS_STATUS_OK) { status = chunk_can_unlock(chunkId, lockId); }
+				if (status == SAUNAFS_STATUS_OK) {
+					status = gChunkOperations->canUnlock(chunkId, lockId);
+				}
 
 				if (status == SAUNAFS_STATUS_OK) {
 					gFSOperations->endSetLength(fsOpContext, chunkId);
@@ -3054,8 +3057,8 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
 	if (status == SAUNAFS_STATUS_OK) {
 		if (chunkid > 0) {
-			status = chunk_getversionandlocations(chunkid, eptr->peerIpAddress, version,
-					kMaxNumberOfChunkCopies, allChunkCopies);
+			status = gChunkOperations->getVersionAndLocations(
+			    chunkid, eptr->peerIpAddress, version, kMaxNumberOfChunkCopies, allChunkCopies);
 			remove_unsupported_ec_parts(eptr->version, allChunkCopies);
 		} else {
 			version = 0;
@@ -6228,7 +6231,7 @@ void matoclserv_start_cond_check() {
 		// very simple condition checking if all chunkservers have been connected
 		// in the future master will know his chunkservers list and then this condition will be
 		// changed
-		if (chunk_get_missing_count() < 100) {
+		if (gChunkOperations->getMissingCount() < 100) {
 			starting = 0;
 		} else {
 			starting--;

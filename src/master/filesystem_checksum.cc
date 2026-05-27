@@ -26,6 +26,7 @@
 
 #include "common/event_loop.h"
 #include "common/hashfn.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_xattr.h"
@@ -135,7 +136,7 @@ uint64_t fs_checksum(ChecksumMode mode) {
 	hashCombine(checksum, gMetadata->fsNodesChecksum);
 	hashCombine(checksum, gMetadata->xattrChecksum);
 	hashCombine(checksum, gMetadata->quotaChecksum);
-	hashCombine(checksum, chunk_checksum(mode));
+	hashCombine(checksum, gChunkOperations->checksum(mode));
 	return checksum;
 }
 

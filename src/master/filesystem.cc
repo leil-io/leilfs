@@ -32,6 +32,7 @@
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
 #include "master/changelog.h"
+#include "master/chunk_operations_in_memory.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
 #include "master/deferred_metadata_dump_task.h"
@@ -233,6 +234,11 @@ static void initFSOperations() {
 	if (!gFSOperations) {
 		auto nodeOps = std::make_unique<FilesystemNodeOperationsBase>();
 		gFSOperations = std::make_unique<FilesystemOperationsBase>(std::move(nodeOps));
+	}
+	// In-memory chunk operations for leil-master. The MDS binds its KV variant
+	// earlier (metadata_backend_init), so this guarded assignment is a no-op there.
+	if (!gChunkOperations) {
+		gChunkOperations = std::make_unique<ChunkOperationsInMemory>();
 	}
 }
 
