@@ -1278,7 +1278,8 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 				// We deny truncating parity only if truncating down
 				denyTruncatingParity = denyTruncatingParity && (length < fileNode->length);
 				status = gChunkOperations->multiTruncate(
-				    oldChunkId, lockId, (length & SFSCHUNKMASK), node->goal, denyTruncatingParity,
+				    fsOpContext, oldChunkId, lockId, (length & SFSCHUNKMASK), node->goal,
+				    denyTruncatingParity,
 				    quotaExceeded(fsOpContext, node, {{QuotaResource::kSize, 1}}), &newChunkId);
 				if (status != SAUNAFS_STATUS_OK) { return status; }
 				fileNode->chunks[chunkIndex] = newChunkId;
@@ -3025,8 +3026,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	oldChunkId = fileNode->chunks[index];
 	if (context.isPersonalityMaster()) {
 #ifndef METARESTORE
-		status = gChunkOperations->multiModify(oldChunkId, lockid, fileNode->goal, isQuotaExceeded,
-		                                       opflag, &newChunkId, min_server_version);
+		status =
+		    gChunkOperations->multiModify(fsOpContext, oldChunkId, lockid, fileNode->goal,
+		                                  isQuotaExceeded, opflag, &newChunkId, min_server_version);
 #else
 		// This will NEVER happen (metarestore doesn't call this in master context)
 		mabort("bad code path: fs_writechunk");
@@ -3130,12 +3132,14 @@ void FilesystemOperationsBase::increaseChunkVersion(const FilesystemOperationCon
 	uint32_t timeStamp = eventloop_time();
 	ChecksumUpdater checksumUpdater(timeStamp);
 	changeLog(fsOpContext, timeStamp, "INCVERSION(%" PRIu64 ")", chunkid);
+	gChunkOperations->persistRecord(fsOpContext, chunkid);
 }
 #endif
 
-uint8_t FilesystemOperationsBase::applyIncreaseChunkVersion(uint64_t chunkid) {
+uint8_t FilesystemOperationsBase::applyIncreaseChunkVersion(
+    const FilesystemOperationContext &fsOpContext, uint64_t chunkid) {
 	gMetadata->metadataVersion++;
-	return gChunkOperations->increaseVersion(chunkid);
+	return gChunkOperations->increaseVersion(fsOpContext, chunkid);
 }
 
 #ifndef METARESTORE
@@ -3168,7 +3172,7 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 	// not found
 	if (chunkIndex == fileNode->chunks.size()) { return SAUNAFS_ERROR_NOCHUNK; }
 
-	status = gChunkOperations->deleteFile(chunkId, nodeFile->goal);
+	status = gChunkOperations->deleteFile(fsOpContext, chunkId, nodeFile->goal);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	fileNode->chunks[chunkIndex] = 0;
@@ -3220,8 +3224,8 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 	auto *fileNode = static_cast<FSNodeFile *>(node);
 	nodeOperations_->getStats(fsOpContext, node, &previousStats);
 	for (chunkIndex = 0; chunkIndex < fileNode->chunks.size(); chunkIndex++) {
-		if (gChunkOperations->repair(node->goal, fileNode->chunks[chunkIndex], &newVersion,
-		                             correct_only)) {
+		if (gChunkOperations->repair(fsOpContext, node->goal, fileNode->chunks[chunkIndex],
+		                             &newVersion, correct_only)) {
 			changeLog(fsOpContext, timeStamp, "REPAIR(%" PRIiNode ",%" PRIu32 "):%" PRIu32, inode,
 			          chunkIndex, newVersion);
 			node->mtime = timeStamp;
@@ -3240,6 +3244,12 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 	nodeOperations_->updateParentStatsForNode(fsOpContext, node, &newStats, &previousStats);
 	quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, newStats.size - previousStats.size}});
 	fsnodes_update_checksum(node);
+
+	if (fsOpContext.hasReadWriteTransaction() && !fsOpContext.getReadWriteTransaction()->commit()) {
+		safs::log_err("{}: failed to commit transaction for inode {}", __func__, inode);
+		return SAUNAFS_ERROR_IO;
+	}
+
 	return SAUNAFS_STATUS_OK;
 }
 #endif /* #ifndef METARESTORE */
@@ -3276,10 +3286,10 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 	nodeOperations_->getStats(fsOpContext, nodeFile, &previousStats);
 
 	if (nversion == 0) {
-		status = gChunkOperations->deleteFile(nodeFile->chunks[indx], nodeFile->goal);
+		status = gChunkOperations->deleteFile(fsOpContext, nodeFile->chunks[indx], nodeFile->goal);
 		nodeFile->chunks[indx] = 0;
 	} else {
-		status = gChunkOperations->setVersion(nodeFile->chunks[indx], nversion);
+		status = gChunkOperations->setVersion(fsOpContext, nodeFile->chunks[indx], nversion);
 	}
 
 	nodeOperations_->getStats(fsOpContext, nodeFile, &newStats);
@@ -3991,13 +4001,18 @@ uint8_t FilesystemOperationsBase::getChunkId(const FsContext &context,
 #endif
 
 void FilesystemOperationsBase::addFilesToChunks(bool isMetadataLoading) {
+	// In-memory rebuild from the loaded node table; no KV transaction is involved,
+	// so persisting backends receive an empty context and skip the CHNK_ write.
+	const FilesystemOperationContext loadContext;
+
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
 			if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 			    node->type == FSNodeType::kReserved) {
 				for (const auto &chunkid : static_cast<FSNodeFile *>(node)->chunks) {
 					if (chunkid > 0) {
-						gChunkOperations->addFile(chunkid, node->goal, isMetadataLoading);
+						gChunkOperations->addFile(loadContext, chunkid, node->goal,
+						                          isMetadataLoading);
 					}
 				}
 			}

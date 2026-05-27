@@ -1332,7 +1332,8 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 	for (uint32_t i = 0; i < srcChunks; ++i) {
 		auto chunkId = srcNodeFile->chunks[i];
 		if (chunkId > 0) {
-			if (gChunkOperations->addFile(chunkId, destNodeFile->goal) != SAUNAFS_STATUS_OK) {
+			if (gChunkOperations->addFile(fsOpContext, chunkId, destNodeFile->goal) !=
+			    SAUNAFS_STATUS_OK) {
 				safs::log_err("structure error - chunk {:016X} not found (inode: {} ; index: {})",
 				              chunkId, srcNodeFile->id, i);
 			}
@@ -1389,7 +1390,7 @@ void FilesystemNodeOperationsBase::changeFileGoal(const FilesystemOperationConte
 	}
 
 	for (const auto &chunkId : nodeFile->chunks) {
-		if (chunkId > 0) { gChunkOperations->changeFile(chunkId, oldGoal, goal); }
+		if (chunkId > 0) { gChunkOperations->changeFile(fsOpContext, chunkId, oldGoal, goal); }
 	}
 
 	fsnodes_update_checksum(nodeFile);
@@ -1420,7 +1421,8 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 		for (uint32_t i = chunks; i < nodeFile->chunks.size(); i++) {
 			uint64_t chunkId = nodeFile->chunks[i];
 			if (chunkId > 0) {
-				if (gChunkOperations->deleteFile(chunkId, nodeFile->goal) != SAUNAFS_STATUS_OK) {
+				if (gChunkOperations->deleteFile(fsOpContext, chunkId, nodeFile->goal) !=
+				    SAUNAFS_STATUS_OK) {
 					safs::log_err(
 					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
 					    chunkId, nodeFile->id, i);
@@ -1538,7 +1540,8 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 		for (uint32_t i = 0; i < static_cast<FSNodeFile *>(node)->chunks.size(); ++i) {
 			uint64_t chunkid = static_cast<FSNodeFile *>(node)->chunks[i];
 			if (chunkid > 0) {
-				if (gChunkOperations->deleteFile(chunkid, node->goal) != SAUNAFS_STATUS_OK) {
+				if (gChunkOperations->deleteFile(fsOpContext, chunkid, node->goal) !=
+				    SAUNAFS_STATUS_OK) {
 					safs::log_err(
 					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
 					    chunkid, node->id, i);

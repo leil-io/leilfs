@@ -33,12 +33,17 @@
 /// the location layer still lives in RAM (Step 1).
 class ChunkOperationsBase : public IChunkOperations {
 public:
-	int addFile(uint64_t chunkid, uint8_t goal, bool isMetadataLoading = false) override;
-	int deleteFile(uint64_t chunkid, uint8_t goal) override;
-	int changeFile(uint64_t chunkid, uint8_t prevGoal, uint8_t newGoal) override;
+	int addFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid, uint8_t goal,
+	            bool isMetadataLoading = false) override;
+	int deleteFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	               uint8_t goal) override;
+	int changeFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	               uint8_t prevGoal, uint8_t newGoal) override;
 
-	int increaseVersion(uint64_t chunkid) override;
-	int setVersion(uint64_t chunkid, uint32_t version) override;
+	int increaseVersion(const FilesystemOperationContext &fsOpContext, uint64_t chunkid) override;
+	int setVersion(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	               uint32_t version) override;
+	void persistRecord(const FilesystemOperationContext &fsOpContext, uint64_t chunkid) override;
 
 	int unlock(uint64_t chunkid) override;
 
@@ -48,9 +53,11 @@ public:
 	                          bool doIncreaseVersion, uint64_t *newChunkId) override;
 
 #ifndef METARESTORE
-	uint8_t multiModify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal, bool quotaExceeded,
-	                    uint8_t *opflag, uint64_t *nchunkid, uint32_t minServerVersion) override;
-	uint8_t multiTruncate(uint64_t ochunkid, uint32_t lockid, uint32_t length, uint8_t goal,
+	uint8_t multiModify(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
+	                    uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag,
+	                    uint64_t *nchunkid, uint32_t minServerVersion) override;
+	uint8_t multiTruncate(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
+	                      uint32_t lockid, uint32_t length, uint8_t goal,
 	                      bool denyTruncatingParityParts, bool quotaExceeded,
 	                      uint64_t *nchunkid) override;
 	int canUnlock(uint64_t chunkid, uint32_t lockid) override;
@@ -62,7 +69,8 @@ public:
 	                           uint32_t maxNumberOfChunkCopies,
 	                           std::vector<ChunkPartWithAddressAndLabel> &serversList) override;
 
-	int repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t correctOnly) override;
+	int repair(const FilesystemOperationContext &fsOpContext, uint8_t goal, uint64_t ochunkid,
+	           uint32_t *nversion, uint8_t correctOnly) override;
 	int getFullCopies(uint64_t chunkid, uint8_t *vcopies) override;
 	int getPartsToModify(uint64_t chunkid, int &recover, int &remove) override;
 	bool hasOnlyInvalidCopies(uint64_t chunkid) override;

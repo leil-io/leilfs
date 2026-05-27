@@ -545,7 +545,8 @@ public:
 	                  inode_t inode, uint32_t mode, uint32_t uid, uint32_t gid, uint32_t atime,
 	                  uint32_t mtime) override;
 	uint8_t applySession(uint32_t sessionid) override;
-	uint8_t applyIncreaseChunkVersion(uint64_t chunkid) override;
+	uint8_t applyIncreaseChunkVersion(const FilesystemOperationContext &fsOpContext,
+	                                  uint64_t chunkid) override;
 	uint8_t applyLength(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,
 	                    inode_t inode, uint64_t length, bool eraseFurtherChunks) override;
 	uint8_t applyRepair(const FilesystemOperationContext &fsOpContext, uint32_t timestamp,

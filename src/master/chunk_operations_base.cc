@@ -24,25 +24,34 @@
 // the real in-memory logic. leil-master uses these as-is; ChunkOperationsKV
 // overrides the subset that must persist to FoundationDB.
 
-int ChunkOperationsBase::addFile(uint64_t chunkid, uint8_t goal, bool isMetadataLoading) {
+int ChunkOperationsBase::addFile([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+                                 uint64_t chunkid, uint8_t goal, bool isMetadataLoading) {
 	return chunk_add_file(chunkid, goal, isMetadataLoading);
 }
 
-int ChunkOperationsBase::deleteFile(uint64_t chunkid, uint8_t goal) {
+int ChunkOperationsBase::deleteFile([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+                                    uint64_t chunkid, uint8_t goal) {
 	return chunk_delete_file(chunkid, goal);
 }
 
-int ChunkOperationsBase::changeFile(uint64_t chunkid, uint8_t prevGoal, uint8_t newGoal) {
+int ChunkOperationsBase::changeFile([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+                                    uint64_t chunkid, uint8_t prevGoal, uint8_t newGoal) {
 	return chunk_change_file(chunkid, prevGoal, newGoal);
 }
 
-int ChunkOperationsBase::increaseVersion(uint64_t chunkid) {
+int ChunkOperationsBase::increaseVersion(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint64_t chunkid) {
 	return chunk_increase_version(chunkid);
 }
 
-int ChunkOperationsBase::setVersion(uint64_t chunkid, uint32_t version) {
+int ChunkOperationsBase::setVersion([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+                                    uint64_t chunkid, uint32_t version) {
 	return chunk_set_version(chunkid, version);
 }
+
+void ChunkOperationsBase::persistRecord(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] uint64_t chunkid) {}
 
 int ChunkOperationsBase::unlock(uint64_t chunkid) { return chunk_unlock(chunkid); }
 
@@ -57,16 +66,18 @@ uint8_t ChunkOperationsBase::applyModification(uint32_t ts, uint64_t oldChunkId,
 }
 
 #ifndef METARESTORE
-uint8_t ChunkOperationsBase::multiModify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
-                                         bool quotaExceeded, uint8_t *opflag, uint64_t *nchunkid,
-                                         uint32_t minServerVersion) {
+uint8_t ChunkOperationsBase::multiModify(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
+    uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag, uint64_t *nchunkid,
+    uint32_t minServerVersion) {
 	return chunk_multi_modify(ochunkid, lockid, goal, quotaExceeded, opflag, nchunkid,
 	                          minServerVersion);
 }
 
-uint8_t ChunkOperationsBase::multiTruncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
-                                           uint8_t goal, bool denyTruncatingParityParts,
-                                           bool quotaExceeded, uint64_t *nchunkid) {
+uint8_t ChunkOperationsBase::multiTruncate(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
+    uint32_t lockid, uint32_t length, uint8_t goal, bool denyTruncatingParityParts,
+    bool quotaExceeded, uint64_t *nchunkid) {
 	return chunk_multi_truncate(ochunkid, lockid, length, goal, denyTruncatingParityParts,
 	                            quotaExceeded, nchunkid);
 }
@@ -76,8 +87,7 @@ int ChunkOperationsBase::canUnlock(uint64_t chunkid, uint32_t lockid) {
 }
 
 int ChunkOperationsBase::getVersionAndLocations(uint64_t chunkid, uint32_t currentIp,
-                                                uint32_t &version,
-                                                uint32_t maxNumberOfChunkCopies,
+                                                uint32_t &version, uint32_t maxNumberOfChunkCopies,
                                                 std::vector<ChunkTypeWithAddress> &serversList) {
 	return chunk_getversionandlocations(chunkid, currentIp, version, maxNumberOfChunkCopies,
 	                                    serversList);
@@ -90,7 +100,8 @@ int ChunkOperationsBase::getVersionAndLocations(
 	                                    serversList);
 }
 
-int ChunkOperationsBase::repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion,
+int ChunkOperationsBase::repair([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+                                uint8_t goal, uint64_t ochunkid, uint32_t *nversion,
                                 uint8_t correctOnly) {
 	return chunk_repair(goal, ochunkid, nversion, correctOnly);
 }

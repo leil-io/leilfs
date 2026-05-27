@@ -168,7 +168,8 @@ void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
 	for (uint32_t i = 0; i < src_node->chunks.size(); ++i) {
 		auto chunkid = src_node->chunks[i];
 		if (chunkid > 0) {
-			if (gChunkOperations->addFile(chunkid, dst_node->goal) != SAUNAFS_STATUS_OK) {
+			if (gChunkOperations->addFile(fsOpContext, chunkid, dst_node->goal) !=
+			    SAUNAFS_STATUS_OK) {
 				safs_pretty_syslog(LOG_ERR,
 				       "structure error - chunk %016" PRIX64
 				       " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",

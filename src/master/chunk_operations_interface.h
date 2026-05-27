@@ -32,6 +32,7 @@
 #include "master/checksum.h"
 
 struct matocsserventry;
+class FilesystemOperationContext;
 
 /// Operations over chunk metadata, behind a swappable backend.
 ///
@@ -47,20 +48,27 @@ struct matocsserventry;
 /// In Step 1 only the refcount/version deltas, the startup rebuild, and the
 /// chunkserver-report lookup persist; KV inherits the rest (locations, status
 /// callbacks, maintenance) as in-memory while the location layer still lives in
-/// RAM. The protected storage primitives below become the InMemory/KV divergence
-/// point once that layer moves to FDB.
+/// RAM.
 class IChunkOperations {
 public:
 	virtual ~IChunkOperations() = default;
 
 	// --- Reference counting / goal (the persisted refcount, Step 1) ---
-	virtual int addFile(uint64_t chunkid, uint8_t goal, bool isMetadataLoading = false) = 0;
-	virtual int deleteFile(uint64_t chunkid, uint8_t goal) = 0;
-	virtual int changeFile(uint64_t chunkid, uint8_t prevGoal, uint8_t newGoal) = 0;
+	// fsOpContext carries the KV transaction so the refcount write joins the same
+	// transaction as the triggering node mutation; the in-memory backend ignores it.
+	virtual int addFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                    uint8_t goal, bool isMetadataLoading = false) = 0;
+	virtual int deleteFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                       uint8_t goal) = 0;
+	virtual int changeFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                       uint8_t prevGoal, uint8_t newGoal) = 0;
 
 	// --- Version (the persisted version, Step 1) ---
-	virtual int increaseVersion(uint64_t chunkid) = 0;
-	virtual int setVersion(uint64_t chunkid, uint32_t version) = 0;
+	virtual int increaseVersion(const FilesystemOperationContext &fsOpContext,
+	                            uint64_t chunkid) = 0;
+	virtual int setVersion(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                       uint32_t version) = 0;
+	virtual void persistRecord(const FilesystemOperationContext &fsOpContext, uint64_t chunkid) = 0;
 
 	// --- Locking ---
 	virtual int unlock(uint64_t chunkid) = 0;
@@ -79,12 +87,13 @@ public:
 
 #ifndef METARESTORE
 	// --- Write / modify (client write path) ---
-	virtual uint8_t multiModify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal,
-	                            bool quotaExceeded, uint8_t *opflag, uint64_t *nchunkid,
-	                            uint32_t minServerVersion) = 0;
-	virtual uint8_t multiTruncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
-	                              uint8_t goal, bool denyTruncatingParityParts,
-	                              bool quotaExceeded, uint64_t *nchunkid) = 0;
+	virtual uint8_t multiModify(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
+	                            uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag,
+	                            uint64_t *nchunkid, uint32_t minServerVersion) = 0;
+	virtual uint8_t multiTruncate(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
+	                              uint32_t lockid, uint32_t length, uint8_t goal,
+	                              bool denyTruncatingParityParts, bool quotaExceeded,
+	                              uint64_t *nchunkid) = 0;
 	virtual int canUnlock(uint64_t chunkid, uint32_t lockid) = 0;
 
 	// --- Read path (locations) ---
@@ -96,7 +105,8 @@ public:
 	                                   std::vector<ChunkPartWithAddressAndLabel> &serversList) = 0;
 
 	// --- Repair / health queries ---
-	virtual int repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t correctOnly) = 0;
+	virtual int repair(const FilesystemOperationContext &fsOpContext, uint8_t goal,
+	                   uint64_t ochunkid, uint32_t *nversion, uint8_t correctOnly) = 0;
 	virtual int getFullCopies(uint64_t chunkid, uint8_t *vcopies) = 0;
 	virtual int getPartsToModify(uint64_t chunkid, int &recover, int &remove) = 0;
 	virtual bool hasOnlyInvalidCopies(uint64_t chunkid) = 0;
@@ -108,7 +118,8 @@ public:
 	virtual void lost(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) = 0;
 	virtual void serverDisconnected(matocsserventry *ptr, const MediaLabel &label) = 0;
 	virtual void serverUnlabelledConnected() = 0;
-	virtual void serverLabelChanged(const MediaLabel &previousLabel, const MediaLabel &newLabel) = 0;
+	virtual void serverLabelChanged(const MediaLabel &previousLabel,
+	                                const MediaLabel &newLabel) = 0;
 
 	// --- Async operation results from chunkservers ---
 	virtual void gotDeleteStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
@@ -123,8 +134,8 @@ public:
 	                                uint8_t status) = 0;
 	virtual void gotWriteEndStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                               uint8_t status) = 0;
-	virtual void gotSetVersionStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
-	                                 uint8_t status) = 0;
+	virtual void gotSetVersionStatus(matocsserventry *ptr, uint64_t chunkId,
+	                                 ChunkPartType chunkType, uint8_t status) = 0;
 	virtual void gotTruncateStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                               uint8_t status) = 0;
 	virtual void gotDuptruncStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
@@ -152,27 +163,6 @@ public:
 	// KV stub: checksums belong to the Master/Shadow dump model, not FDB. ---
 	virtual uint64_t checksum(ChecksumMode mode) = 0;
 	virtual ChecksumRecalculationStatus updateChecksumABit(uint32_t speedLimit) = 0;
-
-protected:
-	// --- Storage primitives: the actual InMemory vs KV divergence point.
-	//
-	// Step 1 diverges ONLY on the chunk record (version + per-goal refcount):
-	//   InMemory -> gChunksMetadata; KV -> CHNK_<chunkid> in FoundationDB.
-	// Locations, chunk_got_*_status, getVersionAndLocations and the maintenance
-	// sweep stay shared in-memory this step and become primitives only when the
-	// location layer moves to FDB.
-	//
-	// This set is intentionally minimal and grows as ChunkOperationsBase is
-	// refactored to route record access through it (boundary discipline).
-	//
-	//   virtual bool      recordFind(uint64_t chunkid, ChunkRecord &out) = 0;
-	//   virtual void      recordCreate(uint64_t chunkid, uint32_t version) = 0;
-	//   virtual void      recordErase(uint64_t chunkid) = 0;
-	//   virtual void      recordAddRef(uint64_t chunkid, uint8_t goal) = 0;
-	//   virtual void      recordRemoveRef(uint64_t chunkid, uint8_t goal) = 0;
-	//   virtual void      recordChangeGoal(uint64_t chunkid, uint8_t prev, uint8_t next) = 0;
-	//   virtual uint32_t  recordVersion(uint64_t chunkid) = 0;
-	//   virtual void      recordSetVersion(uint64_t chunkid, uint32_t version) = 0;
 };
 
 /// The active chunk-operations backend, bound at startup (InMemory for
