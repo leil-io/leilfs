@@ -36,7 +36,7 @@
 class ChunkOperationsBase : public IChunkOperations {
 public:
 	int addFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid, uint8_t goal,
-	            bool isMetadataLoading = false) override;
+	            bool isMetadataLoading) override;
 	int deleteFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
 	               uint8_t goal) override;
 	int changeFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,

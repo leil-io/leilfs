@@ -4003,7 +4003,7 @@ uint8_t FilesystemOperationsBase::getChunkId(const FsContext &context,
 void FilesystemOperationsBase::addFilesToChunks(bool isMetadataLoading) {
 	// In-memory rebuild from the loaded node table; no KV transaction is involved,
 	// so persisting backends receive an empty context and skip the CHNK_ write.
-	const FilesystemOperationContext loadContext;
+	const FilesystemOperationContext loadContext{};
 
 	for (uint32_t i = 0; i < NODEHASHSIZE; i++) {
 		for (const auto &node : gMetadata->nodeHash[i]) {
