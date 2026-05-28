@@ -53,6 +53,7 @@
 #include "common/tls_session.h"
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
+#include "master/chunk_metadata.h"
 #include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"

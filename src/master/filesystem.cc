@@ -46,6 +46,7 @@
 #include "master/goal_config_loader.h"
 #include "master/id_generator_incremental.h"
 #include "master/matoclserv_sessions.h"
+#include "master/matocsserv.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/restore.h"

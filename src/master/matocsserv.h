@@ -27,8 +27,13 @@
 
 #include "common/chunk_part_type.h"
 #include "common/media_label.h"
+#include "common/time_utils.h"
 #include "master/get_servers_for_new_chunk.h"
 #include "protocol/chunkserver_list_entry.h"
+
+/// Expires a short interval after the last chunk-registration message; while it
+/// is unexpired, chunkserver chunk registration is treated as still in progress.
+extern Timeout gTimeoutSinceLastChunkRegistration;
 
 /// A struct representing a chunkserver.
 struct matocsserventry;

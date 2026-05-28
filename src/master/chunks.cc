@@ -60,6 +60,7 @@
 #include "common/small_vector.h"
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
+#include "master/chunk_metadata.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
@@ -112,7 +113,6 @@ static uint64_t gDisconnectedCounter = 0;
 inline LinearAssignmentCache gLinearAssignmentCache;
 inline bool gUseLinearAssignmentOptimizer;
 static bool gUseChunkserverSideChunkLock;
-bool gAvoidSameIpChunkservers = false;
 
 struct ChunkPart {
 	enum {

@@ -31,17 +31,12 @@
 #include "common/chunk_with_address_and_label.h"
 #include "common/chunks_availability_state.h"
 #include "common/observable_property.h"
-#include "common/time_utils.h"
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
 #include "master/id_generator_interface.h"
 #include "master/metadata_loader.h"
 
 struct matocsserventry;
-
-extern bool gAvoidSameIpChunkservers;
-
-extern Timeout gTimeoutSinceLastChunkRegistration;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
