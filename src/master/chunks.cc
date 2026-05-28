@@ -1095,7 +1095,7 @@ void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
 	if (chunk_find(chunkid) != nullptr) { return; }
 	Chunk *c = chunk_new(chunkid, version);
 	for (const auto &counter : goals) {
-		for (uint8_t i = 0; i < counter.count; ++i) { c->addFileWithGoal(counter.goal); }
+		for (uint32_t i = 0; i < counter.count; ++i) { c->addFileWithGoal(counter.goal); }
 	}
 	chunk_update_checksum(c);
 }
