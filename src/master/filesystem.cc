@@ -237,9 +237,7 @@ static void initFSOperations() {
 	}
 	// In-memory chunk operations for leil-master. The MDS binds its KV variant
 	// earlier (metadata_backend_init), so this guarded assignment is a no-op there.
-	if (!gChunkOperations) {
-		gChunkOperations = std::make_unique<ChunkOperationsInMemory>();
-	}
+	if (!gChunkOperations) { gChunkOperations = std::make_unique<ChunkOperationsInMemory>(); }
 }
 
 /* executed in master mode */
@@ -297,7 +295,7 @@ int fs_loadall(bool isFromInit = true) {
 	fs_strinit(isFromInit);
 
 	ensureChunkIdGenerator();
-	chunk_strinit();
+	gChunkOperations->strinit();
 
 	gChunkIdGenerator->initialize();
 	gInodeIdGenerator->initialize();
@@ -432,7 +430,7 @@ static void fs_read_config_file() {
 		    "Empty folders will not be created when space is depleted.");
 	}
 
-	chunk_invalidate_goal_cache();
+	gChunkOperations->invalidateGoalCache();
 	fs_read_goal_config_file(); // may throw
 	fs_read_snapshot_config_file();
 	fs_read_periodic_config_file();
@@ -451,7 +449,7 @@ void fs_unload() {
 	                   gFSOperations->getMetadataVersion());
 	restore_reset();
 	matoclserv_session_unload();
-	chunk_unload();
+	gChunkOperations->unload();
 	dcm_clear();
 	delete gMetadata;
 	gMetadata = nullptr;
@@ -535,7 +533,7 @@ int fs_init(const char *fname, int ignoreflag, bool noLock) {
 
 	fs_strinit(true);
 	ensureChunkIdGenerator();
-	chunk_strinit();
+	gChunkOperations->strinit();
 	gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
 	gMetadataBackend->loadall(ignoreflag);
 	return 0;

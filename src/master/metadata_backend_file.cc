@@ -39,6 +39,7 @@
 #include <common/setup.h>
 #include <common/type_defs.h>
 #include <master/changelog.h>
+#include <master/chunk_operations_interface.h>
 #include <master/chunks.h>
 #include <master/filesystem.h>
 #include <master/filesystem_metadata.h>
@@ -916,7 +917,7 @@ void fs_new(void) {
 	gMetadata->nodeHash[hashRootIndex].push_back(gMetadata->root);
 	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
 
-	chunk_newfs();
+	gChunkOperations->newfs();
 
 	gMetadata->nodes = 1;
 	gMetadata->dirNodes = 1;
@@ -998,7 +999,7 @@ void MetadataBackendFile::loadall(int ignoreflag) {
 	    "metadata file {} read ({} inodes including {} directory inodes, {} file inodes, "
 	    "{} symlink inodes and {} chunks)",
 	    metadataFile->filename().c_str(), gMetadata->nodes, gMetadata->dirNodes,
-	    gMetadata->fileNodes, gMetadata->linkNodes, chunk_count());
+	    gMetadata->fileNodes, gMetadata->linkNodes, gChunkOperations->count());
 #else
 	safs::log_info("metadata file {} read", metadataFile_);
 #endif

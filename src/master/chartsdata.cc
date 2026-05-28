@@ -214,7 +214,7 @@ void chartsdata_refresh(void) {
 	}
 #endif
 
-	gChunkOperations->stats(&del,&repl);
+	gChunkOperations->stats(&del, &repl);
 	data[CHARTS_DELCHUNK]=del;
 	data[CHARTS_REPLCHUNK]=repl;
 	retrieveFSStats(fsdata);

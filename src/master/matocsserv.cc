@@ -1156,9 +1156,7 @@ void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8
 	sassert(v == cstoma::chunkDamaged::kECChunks);
 	std::vector<ChunkWithType> chunks;
 	cstoma::chunkDamaged::deserialize(data, chunks);
-	for (const auto& chunk : chunks) {
-		gChunkOperations->damaged(eptr, chunk.id, chunk.type);
-	}
+	for (const auto &chunk : chunks) { gChunkOperations->damaged(eptr, chunk.id, chunk.type); }
 }
 
 void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t>& data) {
