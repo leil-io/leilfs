@@ -34,26 +34,35 @@
 struct matocsserventry;
 class FilesystemOperationContext;
 
-/// Operations over chunk metadata, behind a swappable backend.
+/// Operations over chunk metadata, behind a swappable/extensible backend.
 ///
 /// Layering mirrors the FilesystemOperations family, with the InMemory layer
 /// that family is missing:
 ///   IChunkOperations  -- this interface (the external surface)
 ///   ChunkOperationsBase -- default behavior: forwards to the in-memory engine
-///                          in chunks.{h,cc}
-///   ChunkOperationsInMemory -- empty leaf over Base (leil-master)
-///   ChunkOperationsKV       -- overrides only the methods that persist to a KV
-///                              store
+///                          in chunks.{h,cc}. Will evolve into shared logic for multiple backends.
+///   ChunkOperationsInMemory -- empty leaf over Base (leil-master). Will evolve into in-memory
+///                              specific logic.
+///   ChunkOperationsKV       -- overrides only the methods that persist to a KV store
 ///
-/// In Step 1 only the refcount/version deltas, the startup rebuild, and the
-/// chunkserver-report lookup persist; KV inherits the rest (locations, status
-/// callbacks, maintenance) as in-memory while the location layer still lives in
-/// RAM.
+/// A backend overrides only the operations it needs to specialize; everything
+/// else falls through to the in-memory default, so the seam can be extended
+/// incrementally without touching call sites.
 class IChunkOperations {
 public:
+	/// Default constructor
+	IChunkOperations() = default;
+
+	/// Unneeded copy/assign constructors/operators
+	IChunkOperations(const IChunkOperations &) = delete;
+	IChunkOperations &operator=(const IChunkOperations &) = delete;
+	IChunkOperations(IChunkOperations &&) = delete;
+	IChunkOperations &operator=(IChunkOperations &&) = delete;
+
+	/// Virtual destructor
 	virtual ~IChunkOperations() = default;
 
-	// --- Reference counting / goal (the persisted refcount, Step 1) ---
+	// --- Reference counting / goal (persisted refcount) ---
 	// fsOpContext carries the KV transaction so the refcount write joins the same
 	// transaction as the triggering node mutation; the in-memory backend ignores it.
 	virtual int addFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
@@ -63,7 +72,7 @@ public:
 	virtual int changeFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
 	                       uint8_t prevGoal, uint8_t newGoal) = 0;
 
-	// --- Version (the persisted version, Step 1) ---
+	// --- Version (persisted version) ---
 	virtual int increaseVersion(const FilesystemOperationContext &fsOpContext,
 	                            uint64_t chunkid) = 0;
 	virtual int setVersion(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,

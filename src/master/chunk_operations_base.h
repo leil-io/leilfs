@@ -22,15 +22,17 @@
 
 #include "master/chunk_operations_interface.h"
 
-/// Default chunk-operations behavior: forwards to the in-memory engine in
-/// chunks.{h,cc}, which holds the real logic and owns gChunksMetadata.
+/// Base for every chunk-operations backend.
 ///
-/// This is the whole behavior leil-master needs, so ChunkOperationsInMemory is an
-/// empty leaf over it. ChunkOperationsKV inherits the same defaults but overrides
-/// the methods that must persist to a KV store -- the refcount/version
-/// deltas, the startup rebuild, and the chunkserver-report lookup -- and inherits
-/// everything else (locations, got*Status, maintenance, stats) as in-memory while
-/// the location layer still lives in RAM (Step 1).
+/// Today Base forwards to the in-memory engine in chunks.{h,cc}; that engine
+/// holds the real logic and owns gChunksMetadata. ChunkOperationsInMemory is an
+/// empty leaf over Base, and ChunkOperationsKV overrides only the operations that
+/// persist to a KV store.
+///
+/// Intended end-state: Base holds only the logic common to all backends, while
+/// the in-memory-specific behavior moves down into ChunkOperationsInMemory (a
+/// sibling of ChunkOperationsKV), so each subclass implements only its divergent
+/// part.
 class ChunkOperationsBase : public IChunkOperations {
 public:
 	int addFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid, uint8_t goal,

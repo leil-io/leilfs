@@ -21,8 +21,8 @@
 #include "master/chunks.h"
 
 // Default behavior forwards to the existing chunks.cc free functions, which hold
-// the real in-memory logic. leil-master uses these as-is; ChunkOperationsKV
-// overrides the subset that must persist to a KV store.
+// the real in-memory logic. leil-master uses these as-is; ChunkOperationsKV (or similars)
+// can now override the subset that must persist to a KV store.
 
 int ChunkOperationsBase::addFile([[maybe_unused]] const FilesystemOperationContext &fsOpContext,
                                  uint64_t chunkid, uint8_t goal, bool isMetadataLoading) {
