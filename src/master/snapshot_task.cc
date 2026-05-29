@@ -21,6 +21,7 @@
 
 #include "master/snapshot_task.h"
 
+#include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/filesystem_checksum.h"
 #include "master/filesystem_metadata.h"
@@ -167,7 +168,8 @@ void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
 	for (uint32_t i = 0; i < src_node->chunks.size(); ++i) {
 		auto chunkid = src_node->chunks[i];
 		if (chunkid > 0) {
-			if (chunk_add_file(chunkid, dst_node->goal) != SAUNAFS_STATUS_OK) {
+			if (gChunkOperations->addFile(fsOpContext, chunkid, dst_node->goal) !=
+			    SAUNAFS_STATUS_OK) {
 				safs_pretty_syslog(LOG_ERR,
 				       "structure error - chunk %016" PRIX64
 				       " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",

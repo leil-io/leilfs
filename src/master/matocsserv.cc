@@ -53,6 +53,8 @@
 #include "common/tls_session.h"
 #include "config/cfg.h"
 #include "errors/saunafs_error_codes.h"
+#include "master/chunk_metadata.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
@@ -649,7 +651,7 @@ void matocsserv_got_createchunk_status(matocsserventry *eptr, const std::vector<
 	sassert(v == cstoma::createChunk::kECChunks);
 	cstoma::createChunk::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_create_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotCreateStatus(eptr, chunkId, chunkType, status);
 
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X} creation status: {}", eptr->serviceStrIp,
@@ -680,7 +682,7 @@ void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<
 	sassert(v == cstoma::deleteChunk::kECChunks);
 	cstoma::deleteChunk::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_delete_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotDeleteStatus(eptr, chunkId, chunkType, status);
 	eptr->delcounter--;
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X} deletion status: {}", eptr->serviceStrIp,
@@ -736,7 +738,7 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 	cstoma::replicateChunk::deserialize(data, chunkId, chunkType, status, chunkVersion);
 
 	matocsserv_replication_end(chunkId, chunkVersion, chunkType, eptr);
-	chunk_got_replicate_status(eptr, chunkId, chunkVersion, chunkType, status);
+	gChunkOperations->gotReplicateStatus(eptr, chunkId, chunkVersion, chunkType, status);
 	if (status != 0 && status != SAUNAFS_ERROR_WAITING) {
 		safs::log_info("({}:{}) chunk: {:016X} replication status: {}", eptr->serviceStrIp,
 		               eptr->servport, chunkId, saunafs_error_string(status));
@@ -770,7 +772,7 @@ void matocsserv_got_chunklock_status(matocsserventry *eptr, const std::vector<ui
 	sassert(v == cstoma::chunkLock::kECChunks);
 	cstoma::chunkLock::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_chunklock_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotChunkLockStatus(eptr, chunkId, chunkType, status);
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_info("({}:{}) chunk: {:016X} chunk lock status: {}", eptr->serviceStrIp,
 		               eptr->servport, chunkId, saunafs_error_string(status));
@@ -788,7 +790,7 @@ void matocsserv_got_writeend_status(matocsserventry *eptr, const std::vector<uin
 	sassert(v == cstoma::writeEndStatus::kECChunks);
 	cstoma::writeEndStatus::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_writeend_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotWriteEndStatus(eptr, chunkId, chunkType, status);
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_info("({}:{}) chunk: {:016X} chunk write end status: {}", eptr->serviceStrIp,
 		               eptr->servport, chunkId, saunafs_error_string(status));
@@ -840,7 +842,7 @@ void matocsserv_got_setchunkversion_status(matocsserventry *eptr,
 	sassert(v == cstoma::setVersion::kECChunks);
 	cstoma::setVersion::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_setversion_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotSetVersionStatus(eptr, chunkId, chunkType, status);
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X} set version status: {}",
 				eptr->serviceStrIp, eptr->servport, chunkId, saunafs_error_string(status));
@@ -881,7 +883,7 @@ void matocsserv_got_duplicatechunk_status(matocsserventry* eptr, const std::vect
 	sassert(v == cstoma::duplicateChunk::kECChunks);
 	cstoma::duplicateChunk::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_duplicate_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotDuplicateStatus(eptr, chunkId, chunkType, status);
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X}, type: {} duplication status: {}",
 		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
@@ -917,7 +919,7 @@ void matocsserv_got_sau_truncatechunk_status(matocsserventry *eptr,
 		chunkType = legacy_type;
 	}
 
-	chunk_got_truncate_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotTruncateStatus(eptr, chunkId, chunkType, status);
 	if (status!=0) {
 		safs::log_info("({}:{}) chunk: {:016X}, type: {:08X} truncate status: {}",
 		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
@@ -951,7 +953,7 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 	sassert(v == cstoma::duptruncChunk::kECChunks);
 	cstoma::duptruncChunk::deserialize(data, chunkId, chunkType, status);
 
-	chunk_got_duptrunc_status(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotDuptruncStatus(eptr, chunkId, chunkType, status);
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X}, type: {} duplication with truncate status: {}",
 		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
@@ -1084,9 +1086,7 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 	sassert(v == cstoma::registerChunks::kECChunks);
 	std::vector<ChunkWithVersionAndType> chunks;
 	cstoma::registerChunks::deserialize(data, chunks);
-	for (auto& chunk : chunks) {
-		chunk_server_has_chunk(eptr, chunk.id, chunk.version, chunk.type);
-	}
+	gChunkOperations->serverHasChunks(eptr, chunks);
 
 	// Chunks registration is in progress, so we reset the timeout
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
@@ -1122,7 +1122,7 @@ void matocsserv_sau_register_label(matocsserventry *eptr, const std::vector<uint
 	if (label != static_cast<std::string>(eptr->label)) {
 		safs::log_info("chunkserver (ip: {}, port {}) changed its label from '{}' to '{}'",
 		    eptr->serviceStrIp, eptr->servport, static_cast<std::string>(eptr->label), label);
-		chunk_server_label_changed(eptr->label, MediaLabel(label));
+		gChunkOperations->serverLabelChanged(eptr->label, MediaLabel(label));
 		eptr->label = MediaLabel(label);
 		eptr->csdb->label = eptr->label;
 	}
@@ -1155,9 +1155,7 @@ void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8
 	sassert(v == cstoma::chunkDamaged::kECChunks);
 	std::vector<ChunkWithType> chunks;
 	cstoma::chunkDamaged::deserialize(data, chunks);
-	for (const auto& chunk : chunks) {
-		chunk_damaged(eptr, chunk.id, chunk.type);
-	}
+	for (const auto &chunk : chunks) { gChunkOperations->damaged(eptr, chunk.id, chunk.type); }
 }
 
 void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -1167,7 +1165,7 @@ void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t
 	sassert(v == cstoma::chunkLost::kECChunks);
 	std::vector<ChunkWithType> chunks;
 	cstoma::chunkLost::deserialize(data, chunks);
-	for (const auto &chunk : chunks) { chunk_lost(eptr, chunk.id, chunk.type); }
+	for (const auto &chunk : chunks) { gChunkOperations->lost(eptr, chunk.id, chunk.type); }
 }
 
 void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -1177,9 +1175,7 @@ void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t>&
 	sassert(v == cstoma::chunkNew::kECChunks);
 	std::vector<ChunkWithVersionAndType> chunks;
 	cstoma::chunkNew::deserialize(data, chunks);
-	for (auto &chunk : chunks) {
-		chunk_server_has_chunk(eptr, chunk.id, chunk.version, chunk.type);
-	}
+	gChunkOperations->serverHasChunks(eptr, chunks);
 }
 
 void matocsserv_error_occurred(matocsserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -1535,7 +1531,7 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->tlsSession = nullptr;
 
 			matocsservList.emplace_back(std::move(eptr));
-			chunk_server_unlabelled_connected();
+			gChunkOperations->serverUnlabelledConnected();
 		} else {
 			tcpclose(newSocket);
 		}
@@ -1588,7 +1584,7 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 
 			matocsserv_replication_disconnected(eptr);
 
-			chunk_server_disconnected(eptr, eptr->label);
+			gChunkOperations->serverDisconnected(eptr, eptr->label);
 
 			if (eptr->csdb) { csdb_lost_connection(eptr->servip, eptr->servport); }
 

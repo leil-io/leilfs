@@ -31,16 +31,12 @@
 #include "common/chunk_with_address_and_label.h"
 #include "common/chunks_availability_state.h"
 #include "common/observable_property.h"
-#include "common/time_utils.h"
 #include "master/checksum.h"
+#include "master/chunk_goal_counters.h"
 #include "master/id_generator_interface.h"
 #include "master/metadata_loader.h"
 
 struct matocsserventry;
-
-extern bool gAvoidSameIpChunkservers;
-
-extern Timeout gTimeoutSinceLastChunkRegistration;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
@@ -54,6 +50,22 @@ int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);
 int chunk_delete_file(uint64_t chunkid,uint8_t goal);
 int chunk_add_file(uint64_t chunkid, uint8_t goal, bool isMetadataLoading = false);
 int chunk_unlock(uint64_t chunkid);
+
+/// Reads a chunk's version and a snapshot of its per-goal reference counts.
+/// Returns false if the chunk is unknown.
+bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
+                                         ChunkGoalCounters &counters);
+
+/// Returns true if the chunk is present in the in-memory hash.
+bool chunk_exists(uint64_t chunkid);
+
+/// Creates an in-memory chunk with the given version and per-goal reference counts, unless it is
+/// already present. The counterpart to chunk_add_from_initial_metadata_load for callers that
+/// restore a chunk's reference counts on demand (e.g. when a chunkserver reports it after a
+/// restart) rather than from the metadata image.
+void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
+                                     const std::vector<ChunkGoalCounters::GoalCounter> &goals);
+
 uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lockid, uint8_t goal,
 		bool doIncreaseVersion, uint64_t *newChunkId);
 

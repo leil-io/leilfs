@@ -375,7 +375,20 @@ int do_incversion(const char *filename, uint64_t lv, uint32_t ts, const char *pt
 	EAT(ptr,filename,lv,'(');
 	GETU64(chunkid,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->applyIncreaseChunkVersion(chunkid);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	int status = gFSOperations->applyIncreaseChunkVersion(fsOpContext, chunkid);
+
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			safs::log_err("{}: transaction failed to commit: chunk {}", __func__, chunkid);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_link(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {

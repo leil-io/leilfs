@@ -35,6 +35,7 @@
 #include "common/slice_traits.h"
 #include "common/special_inode_defs.h"
 #include "common/type_defs.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/datacachemgr.h"
 #include "master/filesystem_checksum.h"
@@ -1284,7 +1285,7 @@ void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile, ChunkCountArr
 
 	for (const auto &chunkid : nodeFile->chunks) {
 		if (chunkid > 0) {
-			chunk_get_fullcopies(chunkid, &count);
+			gChunkOperations->getFullCopies(chunkid, &count);
 			count = std::min<unsigned>(count, CHUNK_MATRIX_SIZE - 1);
 			chunkCount[count]++;
 		}
@@ -1331,7 +1332,8 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 	for (uint32_t i = 0; i < srcChunks; ++i) {
 		auto chunkId = srcNodeFile->chunks[i];
 		if (chunkId > 0) {
-			if (chunk_add_file(chunkId, destNodeFile->goal) != SAUNAFS_STATUS_OK) {
+			if (gChunkOperations->addFile(fsOpContext, chunkId, destNodeFile->goal) !=
+			    SAUNAFS_STATUS_OK) {
 				safs::log_err("structure error - chunk {:016X} not found (inode: {} ; index: {})",
 				              chunkId, srcNodeFile->id, i);
 			}
@@ -1388,7 +1390,7 @@ void FilesystemNodeOperationsBase::changeFileGoal(const FilesystemOperationConte
 	}
 
 	for (const auto &chunkId : nodeFile->chunks) {
-		if (chunkId > 0) { chunk_change_file(chunkId, oldGoal, goal); }
+		if (chunkId > 0) { gChunkOperations->changeFile(fsOpContext, chunkId, oldGoal, goal); }
 	}
 
 	fsnodes_update_checksum(nodeFile);
@@ -1419,7 +1421,8 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 		for (uint32_t i = chunks; i < nodeFile->chunks.size(); i++) {
 			uint64_t chunkId = nodeFile->chunks[i];
 			if (chunkId > 0) {
-				if (chunk_delete_file(chunkId, nodeFile->goal) != SAUNAFS_STATUS_OK) {
+				if (gChunkOperations->deleteFile(fsOpContext, chunkId, nodeFile->goal) !=
+				    SAUNAFS_STATUS_OK) {
 					safs::log_err(
 					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
 					    chunkId, nodeFile->id, i);
@@ -1537,7 +1540,8 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 		for (uint32_t i = 0; i < static_cast<FSNodeFile *>(node)->chunks.size(); ++i) {
 			uint64_t chunkid = static_cast<FSNodeFile *>(node)->chunks[i];
 			if (chunkid > 0) {
-				if (chunk_delete_file(chunkid, node->goal) != SAUNAFS_STATUS_OK) {
+				if (gChunkOperations->deleteFile(fsOpContext, chunkid, node->goal) !=
+				    SAUNAFS_STATUS_OK) {
 					safs::log_err(
 					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
 					    chunkid, node->id, i);

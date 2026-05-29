@@ -60,6 +60,7 @@
 #include "common/small_vector.h"
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
+#include "master/chunk_metadata.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
@@ -112,7 +113,6 @@ static uint64_t gDisconnectedCounter = 0;
 inline LinearAssignmentCache gLinearAssignmentCache;
 inline bool gUseLinearAssignmentOptimizer;
 static bool gUseChunkserverSideChunkLock;
-bool gAvoidSameIpChunkservers = false;
 
 struct ChunkPart {
 	enum {
@@ -333,6 +333,9 @@ public:
 	uint32_t fileCount() const {
 		return goalCounters_.fileCount();
 	}
+
+	// Per-goal reference counts, for persisting the chunk record to a KV backend
+	const ChunkGoalCounters &goalCounters() const { return goalCounters_; }
 
 	// Called when this chunk becomes a part of a file with the given goal
 	void addFileWithGoal(uint8_t goal) {
@@ -1074,6 +1077,27 @@ int chunk_add_file(uint64_t chunkid, uint8_t goal, bool isMetadataLoading) {
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
 	return chunk_add_file_int(c, goal, isMetadataLoading);
+}
+
+bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
+                                         ChunkGoalCounters &counters) {
+	Chunk *c = chunk_find(chunkid);
+	if (c == nullptr) { return false; }
+	version = c->version;
+	counters = c->goalCounters();
+	return true;
+}
+
+bool chunk_exists(uint64_t chunkid) { return chunk_find(chunkid) != nullptr; }
+
+void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
+                                     const std::vector<ChunkGoalCounters::GoalCounter> &goals) {
+	if (chunk_find(chunkid) != nullptr) { return; }
+	Chunk *c = chunk_new(chunkid, version);
+	for (const auto &counter : goals) {
+		for (uint32_t i = 0; i < counter.count; ++i) { c->addFileWithGoal(counter.goal); }
+	}
+	chunk_update_checksum(c);
 }
 
 int chunk_can_unlock(uint64_t chunkid, uint32_t lockid) {

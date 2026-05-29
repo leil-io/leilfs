@@ -102,10 +102,14 @@ inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
 /// when the inode was freed.
 inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 
-/// Prefix for chunk entries (mostly used for chunk locking)
-/// Format: CHNK_<ChunkId><ChunkVersion>:<LockedTo><LockId>
-/// @note ChunkId (64-bit) and ChunkVersion (32-bit) are serialized as Big Endian in the key.
-/// LockedTo and LockId (both 32-bit) are also Big Endian.
+/// Prefix for chunk records (durable refcount + version)
+/// Format: CHNK_<ChunkId> -> <Version><GoalCount>[<Goal><Count>]*
+/// @note ChunkId (64-bit) is serialized as Big Endian in the key, keeping the keyspace in
+/// chunk-id order for range scans. The value is a single datapack big-endian blob: Version
+/// (32-bit), GoalCount (16-bit, number of (Goal, Count) pairs), then that many per-goal reference
+/// counts (Goal 8-bit, Count 8-bit), mirroring ChunkGoalCounters. GoalCount is 16-bit because
+/// per-goal overflow can split one goal across several entries, so the count may exceed 255.
+/// Write locks live elsewhere (a future CHNK_LOCK_ prefix), so they are not part of this record.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
 
 /// Prefix for extended attributes (xattrs)

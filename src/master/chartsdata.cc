@@ -37,7 +37,7 @@
 #include "common/charts.h"
 #include "common/event_loop.h"
 #include "common/time_utils.h"
-#include "master/chunks.h"
+#include "master/chunk_operations_interface.h"
 #include "master/filesystem_stats.h"
 #include "master/matoclserv.h"
 #include "slogger/slogger.h"
@@ -214,7 +214,7 @@ void chartsdata_refresh(void) {
 	}
 #endif
 
-	chunk_stats(&del,&repl);
+	gChunkOperations->stats(&del, &repl);
 	data[CHARTS_DELCHUNK]=del;
 	data[CHARTS_REPLCHUNK]=repl;
 	retrieveFSStats(fsdata);
