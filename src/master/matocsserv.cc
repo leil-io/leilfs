@@ -1086,9 +1086,7 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 	sassert(v == cstoma::registerChunks::kECChunks);
 	std::vector<ChunkWithVersionAndType> chunks;
 	cstoma::registerChunks::deserialize(data, chunks);
-	for (auto& chunk : chunks) {
-		gChunkOperations->serverHasChunk(eptr, chunk.id, chunk.version, chunk.type);
-	}
+	gChunkOperations->serverHasChunks(eptr, chunks);
 
 	// Chunks registration is in progress, so we reset the timeout
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
@@ -1177,9 +1175,7 @@ void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t>&
 	sassert(v == cstoma::chunkNew::kECChunks);
 	std::vector<ChunkWithVersionAndType> chunks;
 	cstoma::chunkNew::deserialize(data, chunks);
-	for (auto &chunk : chunks) {
-		gChunkOperations->serverHasChunk(eptr, chunk.id, chunk.version, chunk.type);
-	}
+	gChunkOperations->serverHasChunks(eptr, chunks);
 }
 
 void matocsserv_error_occurred(matocsserventry *eptr, const uint8_t *data, uint32_t length) {

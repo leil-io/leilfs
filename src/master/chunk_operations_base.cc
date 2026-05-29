@@ -123,6 +123,11 @@ void ChunkOperationsBase::serverHasChunk(matocsserventry *ptr, uint64_t chunkid,
 	chunk_server_has_chunk(ptr, chunkid, versionWithTodelFlag, chunkType);
 }
 
+void ChunkOperationsBase::serverHasChunks(matocsserventry *ptr,
+                                          const std::vector<ChunkWithVersionAndType> &chunks) {
+	for (const auto &chunk : chunks) { serverHasChunk(ptr, chunk.id, chunk.version, chunk.type); }
+}
+
 void ChunkOperationsBase::damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) {
 	chunk_damaged(ptr, chunkid, chunkType);
 }

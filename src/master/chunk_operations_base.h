@@ -79,6 +79,8 @@ public:
 
 	void serverHasChunk(matocsserventry *ptr, uint64_t chunkid, uint32_t versionWithTodelFlag,
 	                    ChunkPartType chunkType) override;
+	void serverHasChunks(matocsserventry *ptr,
+	                     const std::vector<ChunkWithVersionAndType> &chunks) override;
 	void damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) override;
 	void lost(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) override;
 	void serverDisconnected(matocsserventry *ptr, const MediaLabel &label) override;

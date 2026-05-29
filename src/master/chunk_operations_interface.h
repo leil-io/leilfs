@@ -27,6 +27,7 @@
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
 #include "common/chunk_with_address_and_label.h"
+#include "common/chunk_with_version_and_type.h"
 #include "common/chunks_availability_state.h"
 #include "common/media_label.h"
 #include "master/checksum.h"
@@ -123,6 +124,8 @@ public:
 	// --- Chunkserver session ingestion ---
 	virtual void serverHasChunk(matocsserventry *ptr, uint64_t chunkid,
 	                            uint32_t versionWithTodelFlag, ChunkPartType chunkType) = 0;
+	virtual void serverHasChunks(matocsserventry *ptr,
+	                             const std::vector<ChunkWithVersionAndType> &chunks) = 0;
 	virtual void damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) = 0;
 	virtual void lost(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) = 0;
 	virtual void serverDisconnected(matocsserventry *ptr, const MediaLabel &label) = 0;

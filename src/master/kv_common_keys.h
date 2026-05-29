@@ -105,10 +105,11 @@ inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 /// Prefix for chunk records (durable refcount + version)
 /// Format: CHNK_<ChunkId> -> <Version><GoalCount>[<Goal><Count>]*
 /// @note ChunkId (64-bit) is serialized as Big Endian in the key, keeping the keyspace in
-/// chunk-id order for range scans. The value is a single blob: Version (32-bit, little endian),
-/// GoalCount (8-bit, number of (Goal, Count) pairs), then that many per-goal reference counts
-/// (Goal 8-bit, Count 8-bit), mirroring ChunkGoalCounters. Write locks live elsewhere
-/// (a future CHNK_LOCK_ prefix), so they are not part of this record.
+/// chunk-id order for range scans. The value is a single datapack big-endian blob: Version
+/// (32-bit), GoalCount (16-bit, number of (Goal, Count) pairs), then that many per-goal reference
+/// counts (Goal 8-bit, Count 8-bit), mirroring ChunkGoalCounters. GoalCount is 16-bit because
+/// per-goal overflow can split one goal across several entries, so the count may exceed 255.
+/// Write locks live elsewhere (a future CHNK_LOCK_ prefix), so they are not part of this record.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
 
 /// Prefix for extended attributes (xattrs)
