@@ -441,26 +441,26 @@ public:
 
 	/// Checks hard user/group quota limits for resource deltas.
 	/// @see IFilesystemOperations::quotaExceededUg
-	bool quotaExceededUg(
+	QuotaCheckResult quotaExceededUg(
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
 
 	/// Checks hard directory-owner quota limits for a node context.
 	/// @see IFilesystemOperations::quotaExceededDir
-	bool quotaExceededDir(
+	QuotaCheckResult quotaExceededDir(
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
 
 	/// Checks destination-side hard directory quota limits for move/rename.
 	/// @see IFilesystemOperations::quotaExceededDirMove
-	bool quotaExceededDirMove(
+	QuotaCheckResult quotaExceededDirMove(
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
 	    FSNodeDirectory *prevNode,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
 
 	/// Performs combined user/group and directory hard quota checks.
 	/// @see IFilesystemOperations::quotaExceeded
-	bool quotaExceeded(
+	QuotaCheckResult quotaExceeded(
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
 
