@@ -61,7 +61,7 @@ FSNode *SnapshotTask::cloneToExistingNode(const FilesystemOperationContext &fsOp
 
 	switch (src_node->type) {
 	case FSNodeType::kDirectory:
-		cloneDirectoryData(static_cast<const FSNodeDirectory *>(src_node),
+		cloneDirectoryData(fsOpContext, static_cast<const FSNodeDirectory *>(src_node),
 		                   static_cast<FSNodeDirectory *>(dst_node));
 		break;
 	case FSNodeType::kFile:
@@ -105,7 +105,7 @@ FSNode *SnapshotTask::cloneToNewNode(const FilesystemOperationContext &fsOpConte
 
 	switch (src_node->type) {
 	case FSNodeType::kDirectory:
-		cloneDirectoryData(static_cast<const FSNodeDirectory *>(src_node),
+		cloneDirectoryData(fsOpContext, static_cast<const FSNodeDirectory *>(src_node),
 		                   static_cast<FSNodeDirectory *>(dst_node));
 		break;
 	case FSNodeType::kFile:
@@ -180,15 +180,17 @@ void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
 	                           {{QuotaResource::kSize, nsr.size - psr.size}});
 }
 
-void SnapshotTask::cloneDirectoryData(const FSNodeDirectory *src_node, FSNodeDirectory *dst_node) {
+void SnapshotTask::cloneDirectoryData(const FilesystemOperationContext &fsOpContext,
+                                      const FSNodeDirectory *src_node, FSNodeDirectory *dst_node) {
 	if (!enqueue_work_) {
 		return;
 	}
 	SubtaskContainer data;
-	data.reserve(src_node->entries.size());
-	for (const auto &entry : src_node->entries) {
-		auto local_id = entry.second->id;
-		data.emplace_back(std::move(local_id), (HString)(*entry.first));
+	// Enumerate children through the backend-agnostic edge seam: the in-memory backend
+	// reads `src_node->entries`, the KV backend scans EDGE_* rows (entries is not populated).
+	for (auto &[name, childId] :
+	     gFSOperations->nodeOperations()->getDirectoryChildEdges(fsOpContext, src_node)) {
+		data.emplace_back(childId, std::move(name));
 	}
 	if (!data.empty()) {
 		auto task = new SnapshotTask(std::move(data), orig_inode_, dst_node->id, 0, can_overwrite_,

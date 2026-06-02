@@ -156,6 +156,11 @@ public:
 	std::vector<inode_t> getDirectoryChildInodes(const FilesystemOperationContext &fsOpContext,
 	                                             const FSNodeDirectory *nodeDir) override;
 
+	/// Returns direct child (name, inode) edges for a directory.
+	/// @see IFilesystemNodeOperations::getDirectoryChildEdges
+	std::vector<std::pair<HString, inode_t>> getDirectoryChildEdges(
+	    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) override;
+
 	/// Checks if a name is already used in the given directory.
 	/// @see IFilesystemNodeOperations::isNameUsed
 	bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,

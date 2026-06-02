@@ -1305,6 +1305,19 @@ std::vector<inode_t> FilesystemNodeOperationsBase::getDirectoryChildInodes(
 	return childInodes;
 }
 
+std::vector<std::pair<HString, inode_t>> FilesystemNodeOperationsBase::getDirectoryChildEdges(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) {
+	std::vector<std::pair<HString, inode_t>> childEdges;
+	if (nodeDir == nullptr) { return childEdges; }
+
+	childEdges.reserve(nodeDir->entries.size());
+	for (const auto &entry : nodeDir->entries) {
+		childEdges.emplace_back(HString(*entry.first), entry.second->id);
+	}
+
+	return childEdges;
+}
+
 uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationContext &fsOpContext,
                                                    uint32_t timeStamp, FSNodeFile *destNodeFile,
                                                    FSNodeFile *srcNodeFile) {
