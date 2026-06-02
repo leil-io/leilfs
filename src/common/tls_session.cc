@@ -165,11 +165,15 @@ TlsSession::TlsSession(int socket, bool isServer, const std::string &keyFile,
 		const bool looksLikeIp =
 		    (expectedHostname.find_first_not_of("0123456789.") == std::string::npos);
 
+		X509_VERIFY_PARAM *param = SSL_get0_param(ssl_.get());
+		if (!param) { throw OpenSslException("SSL_get0_param failed"); }
+		X509_VERIFY_PARAM_set_hostflags(param, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+
 		if (!looksLikeIp) {
 			// DNS hostname: enable stricter wildcard handling and set expected host
-			SSL_set_hostflags(ssl_.get(), X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-			if (SSL_set1_host(ssl_.get(), expectedHostname.c_str()) != 1) {
-				throw OpenSslException("SSL_set1_host failed:" + opensslErrorString(SSL_ERROR_SSL));
+			if (X509_VERIFY_PARAM_set1_host(param, expectedHostname.c_str(), 0) != 1) {
+				throw OpenSslException("X509_VERIFY_PARAM_set1_host failed: " +
+				                       opensslErrorString(SSL_ERROR_SSL));
 			}
 			if (SSL_set_tlsext_host_name(ssl_.get(), expectedHostname.c_str()) != 1) {
 				throw OpenSslException("SSL_set_tlsext_host_name failed: " +
@@ -177,9 +181,6 @@ TlsSession::TlsSession(int socket, bool isServer, const std::string &keyFile,
 			}
 		} else {
 			// IP literal: set expected peer IP
-			X509_VERIFY_PARAM *param = SSL_get0_param(ssl_.get());
-			SSL_set_hostflags(ssl_.get(), X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-			X509_VERIFY_PARAM_set_hostflags(param, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
 			if (X509_VERIFY_PARAM_set1_ip_asc(param, expectedHostname.c_str()) != 1) {
 				throw OpenSslException("X509_VERIFY_PARAM_set1_ip_asc failed: " +
 				                       opensslErrorString(SSL_ERROR_SSL));
