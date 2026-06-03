@@ -34,9 +34,10 @@
 
 const uint32_t kReceiveBufferSize = 1024;
 
-WriteExecutor::WriteExecutor(ChunkserverStats& chunkserverStats,
-		const NetworkAddress& headAddress, uint32_t chunkserver_version, int headFd,
-		uint32_t responseTimeout_ms, uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType)
+WriteExecutor::WriteExecutor(ChunkserverStats &chunkserverStats, const NetworkAddress &headAddress,
+                             uint32_t chunkserver_version, int headFd, uint32_t responseTimeout_ms,
+                             uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                             uint32_t writeWindowSize, bool useDataFlush)
 		: chunkserverStats_(chunkserverStats),
 		  isRunning_(false),
 		  chunkId_(chunkId),
@@ -46,6 +47,8 @@ WriteExecutor::WriteExecutor(ChunkserverStats& chunkserverStats,
 		  chunkserver_version_(chunkserver_version),
 		  chainHeadFd_(headFd),
 		  receiveBuffer_(kReceiveBufferSize),
+		  writeWindowSize_(writeWindowSize),
+		  useDataFlush_(useDataFlush),
 		  unconfirmedPackets_(0),
 		  responseTimeout_(std::chrono::milliseconds(responseTimeout_ms)) {
 	chunkserverStats_.registerWriteOperation(chainHead_);
@@ -76,7 +79,21 @@ void WriteExecutor::addInitPacket() {
 
 	sassert((!chain_.empty() && chain_.front().chunkserver_version >= kFirstECVersion) ||
 	        chunkserver_version_ >= kFirstECVersion);
-	cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_, chain_);
+	auto minChunkserverVersion = chunkserver_version_;
+	for (const auto& server : chain_) {
+		if (server.chunkserver_version < minChunkserverVersion) {
+			minChunkserverVersion = server.chunkserver_version;
+		}
+	}
+
+	if (minChunkserverVersion < kFirstVersionWithWriteFlushPacket) {
+		// Some chunkserver in the chain doesn't support write flush packet
+		cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_, chain_);
+		useDataFlush_ = false;
+	} else {
+		cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_, chain_,
+		                             useDataFlush_);
+	}
 
 	increaseUnconfirmedPacketCount();
 	isRunning_ = true;
@@ -97,11 +114,35 @@ void WriteExecutor::addDataPacket(uint32_t writeId,
 	packet.data = data;
 	packet.dataSize = size;
 
+	writeDataPacketsSinceLastFlush_++;
+	if (writeDataPacketsSinceLastFlush_ >= writeWindowSize_) {
+		addFlushPacket();
+	}
+
 	increaseUnconfirmedPacketCount();
+}
+
+void WriteExecutor::addFlushPacket() {
+	sassert(isRunning_);
+	if (writeDataPacketsSinceLastFlush_ == 0 || !useDataFlush_) {
+		// No need to flush if we haven't sent any data packets since last flush
+		// or not using flush packets or chunkserver doesn't support flush packets.
+		return;
+	}
+
+	pendingPackets_.push_back(Packet());
+	Packet& packet = pendingPackets_.back();
+	cltocs::writeFlush::serialize(packet.buffer, chunkId_);
+	writeDataPacketsSinceLastFlush_ = 0;
 }
 
 void WriteExecutor::addEndPacket() {
 	sassert(isRunning_);
+
+	// For the cases when write prematurely due to write buffering.
+	// Won't do anything if already sent it.
+	addFlushPacket();
+
 	pendingPackets_.push_back(Packet());
 	std::vector<uint8_t>& buffer = pendingPackets_.back().buffer;
 	cltocs::writeEnd::serialize(buffer, chunkId_);

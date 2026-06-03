@@ -54,11 +54,16 @@ public:
 	 * \param chunkId - a chunk that will be written to
 	 * \param chunkVersion - a chunk that will be written to
 	 * \param chunkType - a chunk that will be written to
+	 * \param writeWindowSize - the maximum number of write operations that can be in progress at
+	 * the same time
+	 * \param useDataFlush - if true, flush packet will be used to trigger flush of the data to
+	 * chunkservers when the number of pending operations reaches writeWindowSize or when the
+	 * ChunkWriter stops accepting new operations -> client called flush on inode.
 	 */
 	WriteExecutor(ChunkserverStats& chunkserverStats,
 			const NetworkAddress& headAddress, uint32_t chunkserver_version, int headFd,
 			uint32_t responseTimeout_ms, uint64_t chunkId, uint32_t chunkVersion,
-			ChunkPartType chunkType);
+			ChunkPartType chunkType, uint32_t writeWindowSize, bool useDataFlush);
 	WriteExecutor(const WriteExecutor&) = delete;
 	~WriteExecutor();
 	WriteExecutor& operator=(const WriteExecutor&) = delete;
@@ -66,6 +71,7 @@ public:
 	void addInitPacket();
 	void addDataPacket(uint32_t writeId,
 			uint16_t block, uint32_t offset, uint32_t size, const uint8_t* data);
+	void addFlushPacket();
 	void addEndPacket();
 	void sendData();
 	std::vector<Status> receiveData();
@@ -116,6 +122,9 @@ private:
 	std::list<Packet> pendingPackets_;
 	MultiBufferWriter bufferWriter_;
 	MessageReceiveBuffer receiveBuffer_;
+	uint32_t writeDataPacketsSinceLastFlush_{0};
+	const uint32_t writeWindowSize_;
+	bool useDataFlush_;
 
 	/// Number of WRITE_STATUS messages that are expected to be received from the chunkserver
 	uint32_t unconfirmedPackets_;

@@ -228,7 +228,9 @@ public:
 	/// @param chunkId ID of the chunk.
 	/// @param chunkVersion Version of the chunk.
 	/// @param chunkType Type of the chunk.
-	void setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
+	/// @param expectWriteFlush Indicates if the write operation expects a write flush packet.
+	void setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+	           bool expectWriteFlush = false);
 
 	/// Prepares for new write data to be added to the input buffer.
 	/// @param mustForward Indicates if the data must be forwarded to another chunkserver.
@@ -295,6 +297,9 @@ public:
 	/// neither the amount of write buffering blocks available.
 	void tryInstantReply();
 
+	/// Makes the current input buffer available for write jobs. Starts write jobs if not running one
+	/// or schedules the write job to run ASAP.
+	void flushData();
 protected:
 	/// Decreases the pending write jobs in the parent ChunkserverEntry to check and apply closed on
 	/// parent. This is used while in delayed close mode whenever a callback is processed.
@@ -332,12 +337,18 @@ protected:
 
 	/// Prepares the input buffer for a write operation.
 	void prepareInputBufferForWrite(bool isForward);
-	
+
 	/// Number of blocks to write to the device in one write job.
 	uint16_t maxBlocksPerHddWriteJob_;
 
 	/// Size in blocks of the next input buffer.
 	uint16_t nextInputBufferBlockCount_;
+	/// Indicates if the write operation expects a write flush packet.
+	bool expectWriteFlush_ = false;
+	/// Queue of number of input buffers waiting to be flushed.
+	std::queue<uint32_t> inputBuffersForNextFlush_;
+	///< Number of input buffers that are ready to be flushed since the last flush.
+	uint32_t inputBuffersReadySinceLastFlush_ = 0;
 
 	/// Indicates if the operation is in delayed close:
 	/// - no new replies issued

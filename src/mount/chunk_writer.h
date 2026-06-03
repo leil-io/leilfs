@@ -45,9 +45,15 @@ public:
 	 *        to write to them and read from them
 	 * \param dataChainFd - end of pipe; if anything is written to it, ChunkWriter will break its
 	 *        poll call and look for some new data in write cache for the currently written chunk
+	 * \param writeWindowSize - maximum number of operations that can be in progress at the same
+	 *        time; if this number is exceeded, no new operations can be started. When reached,
+	 *        triggers a flush of the data to chunkservers if the flush packet is enabled.
+	 * \param useDataFlush - if true, flush packet will be used to trigger flush of the data to
+	 *        chunkservers when the number of pending operations reaches writeWindowSize or when
+	 *        the ChunkWriter stops accepting new operations -> client called flush on inode.
 	 */
-	ChunkWriter(ChunkserverStats &stats, ChunkConnector &connector,
-	            int dataChainFd);
+	ChunkWriter(ChunkserverStats &stats, ChunkConnector &connector, int dataChainFd,
+	            uint32_t writeWindowSize, bool useDataFlush);
 	ChunkWriter(const ChunkWriter&) = delete;
 	~ChunkWriter();
 	ChunkWriter& operator=(const ChunkWriter&) = delete;
@@ -91,6 +97,12 @@ public:
 	 * \return number of new and pending write operations.
 	 */
 	uint32_t getUnfinishedOperationsCount();
+
+	/*!
+	 * \return true if the ChunkWriter is waiting for more data to write, i.e. if the number of
+	 * pending operations is less than writeWindowSize + 1.
+	 */
+	bool isWaitingForData();
 
 	/*!
 	 * \return number of pending write operations.
@@ -185,6 +197,8 @@ private:
 	bool acceptsNewOperations_ = true;
 	int combinedStripeSize_ = 0;
 	int dataChainFd_;
+	uint32_t writeWindowSize_ = 0;
+	bool useDataFlush_ = false;
 	int chunkSizeInBlocks_;
 
 	std::map<int, std::unique_ptr<WriteExecutor>> executors_;

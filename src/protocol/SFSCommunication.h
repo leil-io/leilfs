@@ -580,6 +580,10 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CLTOCS_WRITE_DATA (1000U + 212U)
 /// chunkid:64 writeid:32 blocknum:16 offset:32 size:32 crc:32 data:BYTES[size]
 
+// 0x04C0
+#define SAU_CLTOCS_WRITE_FLUSH (1000U + 216U)
+/// chunkid:64
+
 // 0x04BD
 #define SAU_CLTOCS_WRITE_END (1000U + 213U)
 /// chunkid:64
