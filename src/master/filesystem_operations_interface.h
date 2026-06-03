@@ -31,6 +31,7 @@
 #include "common/attributes.h"
 #include "common/defective_file_info.h"
 #include "common/goal.h"
+#include "errors/saunafs_error_codes.h"
 #include "master/checksum.h"
 #include "master/filesystem_node_operations_interface.h"
 #include "master/filesystem_node_types.h"
@@ -50,6 +51,18 @@ struct ChunkWithAddressAndLabel;
 
 struct QuotaEntry;
 struct QuotaOwner;
+
+/// Result of a quota enforcement check. Fallible backends must report quota read failures
+/// through status, because a KV backend read error may not reliably fail the later commit.
+struct QuotaCheckResult {
+	uint8_t status = SAUNAFS_STATUS_OK;
+	bool exceeded = false;
+};
+
+inline uint8_t statusFromQuotaCheck(const QuotaCheckResult &result) {
+	if (result.status != SAUNAFS_STATUS_OK) { return result.status; }
+	return result.exceeded ? SAUNAFS_ERROR_QUOTA : SAUNAFS_STATUS_OK;
+}
 
 struct NamedInodeEntry;
 struct HandleInodeEntry;
@@ -1681,8 +1694,8 @@ public:
 	/// @param uid User owner id used for user quota checks.
 	/// @param gid Group owner id used for group quota checks.
 	/// @param resourceList Resource deltas to validate (typically inodes and/or size).
-	/// @return true if either user or group hard quota would be exceeded.
-	virtual bool quotaExceededUg(
+	/// @return status plus whether either user or group hard quota would be exceeded.
+	virtual QuotaCheckResult quotaExceededUg(
 	    const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
 
@@ -1694,8 +1707,8 @@ public:
 	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
 	/// @param node Node whose directory context is validated.
 	/// @param resourceList Resource deltas to validate (typically inodes and/or size).
-	/// @return true if any checked directory hard quota would be exceeded.
-	virtual bool quotaExceededDir(
+	/// @return status plus whether any checked directory hard quota would be exceeded.
+	virtual QuotaCheckResult quotaExceededDir(
 	    const FilesystemOperationContext &fsOpContext, FSNode *node,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
 
@@ -1708,8 +1721,8 @@ public:
 	/// @param node Destination directory.
 	/// @param prevNode Previous/source directory.
 	/// @param resourceList Resource deltas to validate for the move.
-	/// @return true if destination-side hard quotas would be exceeded.
-	virtual bool quotaExceededDirMove(
+	/// @return status plus whether destination-side hard quotas would be exceeded.
+	virtual QuotaCheckResult quotaExceededDirMove(
 	    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
 	    FSNodeDirectory *prevNode,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
@@ -1721,9 +1734,35 @@ public:
 	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
 	/// @param node Node whose owner and directory quotas are validated.
 	/// @param resourceList Resource deltas to validate.
-	/// @return true if any relevant hard quota would be exceeded.
-	virtual bool quotaExceeded(
+	/// @return status plus whether any relevant hard quota would be exceeded.
+	virtual QuotaCheckResult quotaExceeded(
 	    const FilesystemOperationContext &fsOpContext, FSNode *node,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
+	/// Runs the user/group then directory hard-quota checks for a create-style operation,
+	/// returning the final operation status directly.
+	///
+	/// Unlike quotaExceeded(), which derives the owner and directory context from a single
+	/// existing node, this takes the owner (@p uid / @p gid) and the target @p dir explicitly.
+	/// That is required on paths where the node does not exist yet (symlink, mknod, mkdir,
+	/// snapshot clone): the owner is the creating caller's context and the directory is the
+	/// intended parent.
+	///
+	/// It returns a status rather than a QuotaCheckResult because every caller folds the result
+	/// the same way and never inspects `exceeded` on its own; folding it here keeps each call
+	/// site to a single check. The user/group check is evaluated first and its status (including
+	/// a backend read failure) is propagated before the directory check runs.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param uid User owner id used for the user/group quota check.
+	/// @param gid Group owner id used for the user/group quota check.
+	/// @param dir Parent directory node whose owner/ancestor quotas are validated.
+	/// @param resourceList Resource deltas to validate (typically inodes and/or size).
+	/// @return SAUNAFS_STATUS_OK when neither check is exceeded and both reads succeed,
+	///         SAUNAFS_ERROR_QUOTA when a hard limit would be exceeded, or the backend status
+	///         on a quota read failure.
+	virtual uint8_t checkQuotaUgDir(
+	    const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid, FSNode *dir,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
 
 	/// Applies quota usage deltas after a successful metadata mutation.
