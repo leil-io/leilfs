@@ -1,5 +1,18 @@
 This file lists noteworthy changes in LeilFS.
 
+* LeilFS (5.10.0) (2026-06-03)
+ - Revert "chore: Remove DCO requirement (#787)" (#848)
+ - doc: delete lazy flag from rremove manpage (#836)
+ - docs(master): clarify reserved cleanup behavior (#855)
+ - docs(master): improve fs operations docs (#863)
+ - feat(kv,fdb): add async range reads (#860)
+ - fix(cs): fix CS crash on writes delayed close (#847)
+ - fix(master): avoid crash of nodes in trash (#846)
+ - fix(master): persist snapshot mutations on KV (#865)
+ - fix(mount): fix malloc trim thread naming (#857)
+ - fix: fix build errors for Fedora (#835)
+ - fix: fix logger load failure (#859)
+
 * LeilFS (5.9.0) (2026-04-22)
  - docs(chunkserver): add architectural reference README (#779)
  - docs(master): improve FS operations docs (#790)
