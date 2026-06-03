@@ -40,13 +40,8 @@ check_and_recover_rpc_service() {
 		return 0
 	fi
 
-	rpcbind_pid=$(pidof rpcbind)
-
-	# Check if rpcbind is running and restart it
-	if [ -n "$rpcbind_pid" ]; then
-		echo "RPC service is unavailable"
-		sudo pkill -HUP rpcbind
-	fi
+	echo "RPC service is unavailable"
+	sudo pkill -x -HUP rpcbind 2>/dev/null || true
 
 	return 1
 }
