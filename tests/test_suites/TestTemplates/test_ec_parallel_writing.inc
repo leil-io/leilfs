@@ -4,8 +4,21 @@ else
 	timeout_set $(( (FILE_SIZE_MB / 25) * 3)) minutes
 fi
 
+# Have 4 mounts to use flush packet, 4 that are not going to use it and 2 that might use it.
+
+random_seed=$RANDOM
+RANDOM=$random_seed
+echo "Using random seed for setup: $random_seed"
+
 CHUNKSERVERS=4 \
 	MOUNTS=10 \
+	MOUNT_USE_WRITE_FLUSH_PACKET=1 \
+	MOUNT_0_EXTRA_CONFIG="sfsusewriteflushpacket=0" \
+	MOUNT_1_EXTRA_CONFIG="sfsusewriteflushpacket=0" \
+	MOUNT_2_EXTRA_CONFIG="sfsusewriteflushpacket=0" \
+	MOUNT_3_EXTRA_CONFIG="sfsusewriteflushpacket=0" \
+	MOUNT_4_EXTRA_CONFIG="sfsusewriteflushpacket=$((RANDOM % 2))" \
+	MOUNT_5_EXTRA_CONFIG="sfsusewriteflushpacket=$((RANDOM % 2))" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,readbuffersexpirationtime=100,maxreadaheadrequests=1,readworkers=10" \
 	MASTER_CUSTOM_GOALS="10 ec_3_1: \$ec(3,1)" \
 	USE_RAMDISK=YES \

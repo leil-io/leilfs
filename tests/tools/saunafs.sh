@@ -34,6 +34,11 @@ setup_local_empty_saunafs() {
 	saunafs_info_[chunkserver_count]=$number_of_chunkservers
 	saunafs_info_[admin_password]=${ADMIN_PASSWORD:-password}
 	saunafs_info_[metadata_backend]="${metadata_backend}"
+	saunafs_info_[mount_use_write_flush_packet]=${MOUNT_USE_WRITE_FLUSH_PACKET:-NOT_SET}
+
+	local random_seed=${RANDOM_SEED:-$RANDOM}
+	RANDOM=$random_seed
+	echo "Using random seed: $random_seed"
 
 	declare -g mds_command="sfsmaster"
 
@@ -747,14 +752,25 @@ function validate_and_append_fuse_options() {
 create_sfsmount_cfg_() {
 	local this_mount_cfg_variable="MOUNT_${1}_EXTRA_CONFIG"
 	local this_mount_exports_variable="MOUNT_${1}_EXTRA_EXPORTS"
+
+	# Make the tests more robust by randomizing write flush packet usage if not set by the test.
+	if [[ ${saunafs_info_[mount_use_write_flush_packet]} == NOT_SET ]]; then
+		echo "sfsusewriteflushpacket=$((RANDOM % 2))"
+	else
+		echo "sfsusewriteflushpacket=${saunafs_info_[mount_use_write_flush_packet]}"
+	fi
+
+	# General config for all mounts
 	echo "sfsmaster=$ip_address"
 	echo "sfsport=${saunafs_info_[matocl]}"
+	echo "${MOUNT_EXTRA_CONFIG-}" | tr '|' '\n'
+
+	# Mount specific config and exports
+	echo "${!this_mount_cfg_variable-}" | tr '|' '\n'
 	if [[ ${!this_mount_exports_variable-} ]]; then
 		# we want custom exports options, so we need to identify with a password
 		echo "sfspassword=${1}"
 	fi
-	echo "${MOUNT_EXTRA_CONFIG-}" | tr '|' '\n'
-	echo "${!this_mount_cfg_variable-}" | tr '|' '\n'
 }
 
 windows_do_mount_() {
