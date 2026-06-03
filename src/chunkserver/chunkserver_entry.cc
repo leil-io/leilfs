@@ -334,13 +334,20 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	std::vector<ChunkTypeWithAddress> chain;
 
 	sassert(type == SAU_CLTOCS_WRITE_INIT);
+	bool expectWriteFlush = false;
 	try {
 		PacketVersion v;
 		deserializePacketVersionNoHeader(data, length, v);
-		sassert(v == cltocs::writeInit::kECChunks);
-		cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType, chain);
-	} catch (Exception &) {
-		safs::log_info("Received malformed WRITE_INIT message (length: {})", length);
+		if (v == cltocs::writeInit::kECChunks) {
+			cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType, chain);
+		} else if (v == cltocs::writeInit::kECChunksWithWriteFlush) {
+			cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType,
+			                               expectWriteFlush, chain);
+		} else {
+			throw IncorrectDeserializationException("Unexpected packet version");
+		}
+	} catch (Exception &ex) {
+		safs::log_info("Received malformed WRITE_INIT message (length: {}): {}", length, ex.what());
 		state = State::Close;
 		return;
 	}
@@ -349,7 +356,12 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		// Create a chain -- connect to the next chunkserver
 		fwdServer = chain[0].address;
 		chain.erase(chain.begin());
-		cltocs::writeInit::serialize(fwdInitPacket, chunkId, chunkVersion, chunkType, chain);
+		if (expectWriteFlush) {
+			cltocs::writeInit::serialize(fwdInitPacket, chunkId, chunkVersion, chunkType,
+			                             expectWriteFlush, chain);
+		} else {
+			cltocs::writeInit::serialize(fwdInitPacket, chunkId, chunkVersion, chunkType, chain);
+		}
 		fwdOutputPacket.startPtr = fwdInitPacket.data();
 		fwdOutputPacket.bytesLeft = fwdInitPacket.size();
 		connectRetryCounter = 0;
@@ -365,7 +377,7 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 
 	// Setup write HLO
 	writeHLOs_.emplace_back(std::make_unique<WriteHighLevelOp>(this, maxBlocksPerHddWriteJob_));
-	writeHLOs_.back()->setup(chunkId, chunkVersion, chunkType);
+	writeHLOs_.back()->setup(chunkId, chunkVersion, chunkType, expectWriteFlush);
 }
 
 void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
@@ -444,6 +456,36 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	writeHLOs_.back()->updateUsingWriteStatusAndReply(status, writeId);
+}
+
+void ChunkserverEntry::writeFlush(const uint8_t *data, uint32_t length) {
+	TRACETHIS();
+	uint64_t opChunkId;
+
+	try {
+		cltocs::writeFlush::deserialize(data, length, opChunkId);
+	} catch (IncorrectDeserializationException &ex) {
+		safs::log_info("Received malformed WRITE_FLUSH message (length: {}): {}", length,
+		               ex.what());
+		state = State::IOFinish;
+		return;
+	}
+	if (opChunkId != chunkId) {
+		safs::log_info(
+		    "Received malformed WRITE_FLUSH message (got chunkId={:016X}, expected {:016X})",
+		    opChunkId, chunkId);
+		state = State::IOFinish;
+		return;
+	}
+
+	if (writeHLOs_.empty()) {
+		safs::log_warn("Received WRITE_FLUSH message without prior WRITE_INIT (chunkId={:016X})",
+		               opChunkId);
+		state = State::Close;
+		return;
+	}
+
+	writeHLOs_.back()->flushData();
 }
 
 void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
@@ -739,6 +781,9 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 		case SAU_CLTOCS_WRITE_DATA:
 			writeData(data, type, length);
 			break;
+		case SAU_CLTOCS_WRITE_FLUSH:
+			writeFlush(data, length);
+			break;
 		case SAU_CLTOCS_WRITE_END:
 			writeEnd(data, length);
 			break;
@@ -751,6 +796,9 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 		switch (type) {
 		case SAU_CLTOCS_WRITE_DATA:
 			writeData(data, type, length);
+			break;
+		case SAU_CLTOCS_WRITE_FLUSH:
+			writeFlush(data, length);
 			break;
 		case SAU_CSTOCL_WRITE_STATUS:
 			writeStatus(data, type, length);
@@ -766,6 +814,7 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 	} else if (state == State::IOFinish) {
 		switch (type) {
 		case SAU_CLTOCS_WRITE_DATA:
+		case SAU_CLTOCS_WRITE_FLUSH:
 		case SAU_CLTOCS_WRITE_END:
 			return;
 		default:
@@ -773,7 +822,8 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 			state = State::Close;
 		}
 	} else {
-		safs::log_info("Got invalid message (type:{})", type);
+		safs::log_info("Got invalid message (current state: {}) (type:{})", static_cast<int>(state),
+		               type);
 		state = State::Close;
 	}
 }
@@ -868,7 +918,8 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 	}
 	packet.bytesLeft = length;
 
-	if (mustForward && (type == SAU_CLTOCS_WRITE_DATA || type == SAU_CLTOCS_WRITE_END)) {
+	if (mustForward && (type == SAU_CLTOCS_WRITE_DATA || type == SAU_CLTOCS_WRITE_END ||
+	                    type == SAU_CLTOCS_WRITE_FLUSH)) {
 		fwdOutputPacket.bytesLeft = PacketHeader::kSize;
 		// Use the correct buffer for forwarding
 		if (type == SAU_CLTOCS_WRITE_DATA) {

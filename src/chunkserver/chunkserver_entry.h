@@ -338,6 +338,9 @@ struct ChunkserverEntry {
 	void writeData(const uint8_t *data, PacketHeader::Type type,
 	               PacketHeader::Length length);
 
+	/// Flushes the written data to the drives.
+	void writeFlush(const uint8_t *data, uint32_t length);
+
 	/// Finalizes a write operation and closes the chunk and connection.
 	void writeEnd(const uint8_t *data, uint32_t length);
 

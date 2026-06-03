@@ -79,23 +79,8 @@ inline void deserialize(const uint8_t* source, uint32_t sourceSize,
 
 namespace writeInit {
 
-const PacketVersion kStandardAndXorChunks = 0;
 const PacketVersion kECChunks = 1;
-
-inline void serialize(std::vector<uint8_t>& destination,
-		uint64_t chunkId, uint32_t chunkVersion, legacy::ChunkPartType chunkType,
-		const std::vector<NetworkAddress>& chain) {
-	serializePacket(destination, SAU_CLTOCS_WRITE_INIT, kStandardAndXorChunks,
-			chunkId, chunkVersion, chunkType, chain);
-}
-
-inline void deserialize(const uint8_t* source, uint32_t sourceSize,
-		uint64_t& chunkId, uint32_t& chunkVersion, legacy::ChunkPartType& chunkType,
-		std::vector<NetworkAddress>& chain) {
-	verifyPacketVersionNoHeader(source, sourceSize, kStandardAndXorChunks);
-	deserializeAllPacketDataNoHeader(source, sourceSize,
-			chunkId, chunkVersion, chunkType, chain);
-}
+const PacketVersion kECChunksWithWriteFlush = 2;
 
 inline void serialize(std::vector<uint8_t>& destination,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
@@ -110,6 +95,21 @@ inline void deserialize(const uint8_t* source, uint32_t sourceSize,
 	verifyPacketVersionNoHeader(source, sourceSize, kECChunks);
 	deserializeAllPacketDataNoHeader(source, sourceSize,
 			chunkId, chunkVersion, chunkType, chain);
+}
+
+inline void serialize(std::vector<uint8_t> &destination, uint64_t chunkId, uint32_t chunkVersion,
+                      ChunkPartType chunkType, bool expectWriteFlush,
+                      const std::vector<ChunkTypeWithAddress> &chain) {
+	serializePacket(destination, SAU_CLTOCS_WRITE_INIT, kECChunksWithWriteFlush,
+			chunkId, chunkVersion, chunkType, expectWriteFlush, chain);
+}
+
+inline void deserialize(const uint8_t *source, uint32_t sourceSize, uint64_t &chunkId,
+                        uint32_t &chunkVersion, ChunkPartType &chunkType, bool &expectWriteFlush,
+                        std::vector<ChunkTypeWithAddress> &chain) {
+	verifyPacketVersionNoHeader(source, sourceSize, kECChunksWithWriteFlush);
+	deserializeAllPacketDataNoHeader(source, sourceSize,
+			chunkId, chunkVersion, chunkType, expectWriteFlush, chain);
 }
 
 } // namespace writeInit
@@ -136,6 +136,25 @@ inline void deserializePrefix(const uint8_t* source, uint32_t sourceSize,
 static const uint32_t kPrefixSize = 4 + 8 + 4 + 2 + 4 + 4 + 4;
 
 } // namespace writeData
+
+namespace writeFlush {
+
+const PacketVersion kInitial = 0;
+
+inline void serialize(std::vector<uint8_t> &destination, uint64_t chunkId) {
+	serializePacket(destination, SAU_CLTOCS_WRITE_FLUSH, kInitial, chunkId);
+}
+
+inline void deserialize(const uint8_t *source, uint32_t sourceSize, uint64_t &chunkId) {
+	verifyPacketVersionNoHeader(source, sourceSize, kInitial);
+	deserializePacketDataNoHeader(source, sourceSize, chunkId);
+}
+
+// kPrefixSize is equal to:
+// version:u32 chunkId:u64
+static const uint32_t kPrefixSize = 4 + 8;
+
+} // namespace writeFlush
 
 namespace writeEnd {
 

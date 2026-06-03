@@ -205,8 +205,13 @@ struct inodedata {
 		            kMaximumTimeInDataChainSinceLastFlush_ms);
 	}
 
-	bool wasLastBlockRecentlyWritten() const {
+	bool wasLastBlockVeryRecentlyWritten() const {
 		return elapsedMsSince(lastWriteToDataChainMs.load()) < kVeryRecentWrite_ms;
+	}
+
+	bool wasLastBlockRecentlyWritten() const {
+		return elapsedMsSince(lastWriteToDataChainMs.load(std::memory_order_relaxed)) <
+		       kRecentWrite_ms;
 	}
 
 private:
@@ -228,7 +233,12 @@ private:
 	 * This is used to avoid writing a partial stripe to chunkservers when last block was full and
 	 * next one has not even started.
 	 */
-	static const uint32_t kVeryRecentWrite_ms = 100;
+	static const uint32_t kVeryRecentWrite_ms = 5;
+
+	/*! Limit for triggering the send of a write flush packet when the last write to chunkservers
+	 * was not very recent.
+	 */
+	static const uint32_t kRecentWrite_ms = 100;
 };
 
 using InodeDataPtr = std::unique_ptr<inodedata>;
@@ -352,7 +362,8 @@ static InodeDataMap inodedataMap;
 using TruncateLocatorsDataMap = std::map<inode_t, std::pair<uint64_t, uint64_t>>;
 static std::mutex truncateLocatorsDataMutex;
 static TruncateLocatorsDataMap truncateLocatorsData;
-static uint32_t gWriteWindowSize;
+static std::atomic<uint32_t> gWriteWindowSize;
+static std::atomic<bool> gUseWriteFlushPacket;
 static uint32_t gChunkserverTimeout_ms;
 
 // percentage of the free cache (1% - 100%) which can be used by one inode
@@ -717,7 +728,7 @@ private:
 	 * These can be taken only if we are close to run out of tasks to do.
 	 * inodeLock: LOCKED
 	 */
-	bool haveBlockWorthWriting(uint32_t unfinishedOperationCount);
+	bool haveBlockWorthWriting(bool isWaitingForData);
 	ChunkData *chunkData_ = kNoChunkData;
 	uint32_t chunkIndex_ = 0;
 	Timer wholeOperationTimer;
@@ -739,7 +750,8 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 	inodedata *parent = chunkData_->getParent();
 
 	/*  Process the job */
-	ChunkWriter writer(globalChunkserverStats, gChunkConnector, chunkData_->newDataInChainPipe[0]);
+	ChunkWriter writer(globalChunkserverStats, gChunkConnector, chunkData_->newDataInChainPipe[0],
+	                   gWriteWindowSize.load(), gUseWriteFlushPacket.load());
 	wholeOperationTimer.reset();
 	std::unique_ptr<WriteChunkLocator> locator = std::move(chunkData_->locator);
 	if (!locator) { locator.reset(new WriteChunkLocator()); }
@@ -886,7 +898,7 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 			UniqueLock inodeLock(parent->mutex);
 			// While there is any block worth sending, we add new write operation
 			int blocksPut = 0;
-			while (haveBlockWorthWriting(writer.getUnfinishedOperationsCount())) {
+			while (haveBlockWorthWriting(writer.isWaitingForData())) {
 				// Remove block from cache and pass it to the writer
 				writer.addOperation(std::move(chunkData_->dataChain.front()));
 				chunkData_->popFromChain();
@@ -904,12 +916,12 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 				// No more data and some flushing is needed or required, so flush everything
 				writer.startFlushMode();
 			}
-			if (writer.getUnfinishedOperationsCount() < gWriteWindowSize) {
+			if (writer.isWaitingForData()) {
 				chunkData_->workerWaitingForData = true;
 			}
 			can_expect_next_block =
 			    haveAnyBlockInCurrentChunk() ||
-			    (parent->wasLastBlockRecentlyWritten() && chunkData_->dataChain.empty());
+			    (parent->wasLastBlockVeryRecentlyWritten() && chunkData_->dataChain.empty());
 		} else if (writer.acceptsNewOperations()) {
 			// We are running out of time...
 			UniqueLock inodeLock(parent->mutex);
@@ -924,14 +936,15 @@ void ChunkJobWriter::processDataChain(ChunkWriter &writer) {
 			}
 			can_expect_next_block =
 			    haveAnyBlockInCurrentChunk() ||
-			    (parent->wasLastBlockRecentlyWritten() && chunkData_->dataChain.empty());
+			    (parent->wasLastBlockVeryRecentlyWritten() && chunkData_->dataChain.empty());
 		}
 
 		UniqueLock inodeLock(parent->mutex);
 		writer.setChunkSizeInBlocks(
 		    std::min(parent->maxfleng - chunkIndex_ * SFSCHUNKSIZE, (uint64_t)SFSCHUNKSIZE));
 		inodeLock.unlock();
-		if (writer.startNewOperations(can_expect_next_block) > 0) {
+		if (writer.startNewOperations(can_expect_next_block,
+		                              parent->wasLastBlockRecentlyWritten()) > 0) {
 			parent->lastWriteToChunkserversMs.store(inodedata::nowSteadyMs(),
 			                                        std::memory_order_relaxed);
 		}
@@ -961,21 +974,21 @@ void ChunkJobWriter::returnJournalToDataChain(std::list<WriteCacheBlock> &&journ
 
 bool ChunkJobWriter::haveAnyBlockInCurrentChunk() { return !chunkData_->dataChain.empty(); }
 
-bool ChunkJobWriter::haveBlockWorthWriting(uint32_t unfinishedOperationCount) {
+bool ChunkJobWriter::haveBlockWorthWriting(bool isWaitingForData) {
 	if (!haveAnyBlockInCurrentChunk()) { return false; }
 	const auto &block = chunkData_->dataChain.front();
 	if (block.type != WriteCacheBlock::kWritableBlock) {
 		// Always write data, that was previously written
 		return true;
-	} else if (unfinishedOperationCount >= gWriteWindowSize) {
-		// Don't start new operations if there is already a lot of pending writes
+	} else if (!isWaitingForData) {
+		// Don't start new operations if we have enough data in progress
 		return false;
-	} else {
-		// Always start full blocks; start partial blocks only if we have to flush the data
-		// or the block won't be expanded (only the last one can be) to a full block
-		return (block.size() == SFSBLOCKSIZE || chunkData_->requiresFlushing() ||
-		        chunkData_->dataChain.size() > 1);
 	}
+
+	// Always start full blocks; start partial blocks only if we have to flush the data
+	// or the block won't be expanded (only the last one can be) to a full block
+	return (block.size() == SFSBLOCKSIZE || chunkData_->requiresFlushing() ||
+	        chunkData_->dataChain.size() > 1);
 }
 
 /* main working thread | globalLock:UNLOCKED */
@@ -1009,13 +1022,14 @@ void *write_worker(void *) {
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
                      uint32_t cachePerInodePercentage, uint32_t waveTimeout,
-                     uint32_t maxChunksWrittenInParallelPerInode) {
+                     uint32_t maxChunksWrittenInParallelPerInode, bool useWriteFlushPacket) {
 	uint64_t cachebytecount = uint64_t(cachesize) * 1024 * 1024;
 	uint64_t cacheblockcount = (cachebytecount / SFSBLOCKSIZE);
 	pthread_attr_t thattr;
 
 	gChunkConnector.setSourceIp(fs_getsrcip());
 	gWriteWindowSize = writewindowsize;
+	gUseWriteFlushPacket = useWriteFlushPacket;
 	gChunkserverTimeout_ms = chunkserverTimeout_ms;
 	maxretries = retries;
 	gWriteWaveTimeout = waveTimeout;
@@ -1040,6 +1054,8 @@ void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
 
 	std::lock_guard mountInfoLock(gMountInfoMtx);
 	gTweaks.registerVariable("WriteMaxRetries", maxretries, "sfsioretries (write)");
+	gTweaks.registerVariable("WriteWindowSize", gWriteWindowSize, "sfswritewindowsize");
+	gTweaks.registerVariable("UseWriteFlushPacket", gUseWriteFlushPacket, "sfsusewriteflushpacket");
 	gTweaks.registerVariable("WriteWaveTimeout", gWriteWaveTimeout, "sfschunkserverwavewriteto");
 	gTweaks.registerVariable("MaxChunksWrittenInParallelPerInode",
 	                         gMaxChunksWrittenInParallelPerInode,

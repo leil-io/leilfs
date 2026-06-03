@@ -570,7 +570,8 @@ enum class SugidClearMode : uint8_t {
 // 0x04BA
 #define SAU_CLTOCS_WRITE_INIT (1000U + 210U)
 /// version==0 chunkid:64 chunkversion:32 chunktype:8 chain:(N * [ip:32 port:16])
-/// version==1 chunkid:64 chunkversion:32 chunktype:16 chain:(N * [ip:32 port:16])
+/// version==1 chunkid:64 chunkversion:32 chunktype:16 chain:(N * [ip:32 port:16 chunktype:16 chunkserver_version:32])
+/// version==2 chunkid:64 chunkversion:32 chunktype:16 expectwriteflush:8 chain:(N * [ip:32 port:16 chunktype:16 chunkserver_version:32])
 
 // 0x04BB
 #define SAU_CSTOCL_WRITE_STATUS (1000U + 211U)
@@ -579,6 +580,10 @@ enum class SugidClearMode : uint8_t {
 // 0x04BC
 #define SAU_CLTOCS_WRITE_DATA (1000U + 212U)
 /// chunkid:64 writeid:32 blocknum:16 offset:32 size:32 crc:32 data:BYTES[size]
+
+// 0x04C0
+#define SAU_CLTOCS_WRITE_FLUSH (1000U + 216U)
+/// chunkid:64
 
 // 0x04BD
 #define SAU_CLTOCS_WRITE_END (1000U + 213U)

@@ -3707,7 +3707,8 @@ void fs_init(FsInitParams &params) {
 	WriteAlgorithm::write_data_init(
 	    params.write_cache_size, params.io_retries, params.write_workers, params.write_window_size,
 	    params.chunkserver_write_timeout_ms, params.cache_per_inode_percentage,
-	    params.write_wave_timeout_ms, params.max_chunks_written_in_parallel_per_inode);
+	    params.write_wave_timeout_ms, params.max_chunks_written_in_parallel_per_inode,
+	    params.use_write_flush_packet);
 #ifdef _WIN32
 	set_debug_mode(params.debug_mode);
 #endif

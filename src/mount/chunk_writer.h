@@ -45,9 +45,16 @@ public:
 	 *        to write to them and read from them
 	 * \param dataChainFd - end of pipe; if anything is written to it, ChunkWriter will break its
 	 *        poll call and look for some new data in write cache for the currently written chunk
+	 * \param writeWindowSize - limit how many operations may be in flight; the writer may
+	 *        intentionally allow up to writeWindowSize + 1 unfinished operations to keep at least
+	 *        writeWindowSize writes in progress in common cases. When the limit is reached, it may
+	 *        trigger a flush of the data to chunkservers if the flush packet is enabled.
+	 * \param useWriteFlushPacket - if true, flush packet will be used to trigger flush of the data
+	 *        to chunkservers when the number of pending operations reaches writeWindowSize or when
+	 *        the ChunkWriter stops accepting new operations -> client called flush on inode.
 	 */
-	ChunkWriter(ChunkserverStats &stats, ChunkConnector &connector,
-	            int dataChainFd);
+	ChunkWriter(ChunkserverStats &stats, ChunkConnector &connector, int dataChainFd,
+	            uint32_t writeWindowSize, bool useWriteFlushPacket);
 	ChunkWriter(const ChunkWriter&) = delete;
 	~ChunkWriter();
 	ChunkWriter& operator=(const ChunkWriter&) = delete;
@@ -79,8 +86,10 @@ public:
 	/*!
 	 * Starts these added operations, which are worth starting right now.
 	 * Returns number of operations started.
+	 * \param can_expect_next_block - indicates if the next block is expected
+	 * \param wasLastBlockRecentlyWritten - indicates if the last block was recently written
 	 */
-	uint32_t startNewOperations(bool can_expect_next_block);
+	uint32_t startNewOperations(bool can_expect_next_block, bool wasLastBlockRecentlyWritten);
 
 	/*!
 	 * Processes all started operations for at most specified time (0 - asap)
@@ -91,6 +100,12 @@ public:
 	 * \return number of new and pending write operations.
 	 */
 	uint32_t getUnfinishedOperationsCount();
+
+	/*!
+	 * \return true if the ChunkWriter is waiting for more data to write, i.e. if the number of
+	 * unfinished operations is less than writeWindowSize + 1.
+	 */
+	bool isWaitingForData();
 
 	/*!
 	 * \return number of pending write operations.
@@ -185,6 +200,8 @@ private:
 	bool acceptsNewOperations_ = true;
 	int combinedStripeSize_ = 0;
 	int dataChainFd_;
+	uint32_t writeWindowSize_ = 0;
+	bool useWriteFlushPacket_ = false;
 	int chunkSizeInBlocks_;
 
 	std::map<int, std::unique_ptr<WriteExecutor>> executors_;

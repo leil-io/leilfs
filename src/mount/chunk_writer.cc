@@ -106,11 +106,13 @@ bool ChunkWriter::Operation::isFullStripe(uint32_t stripeSize) const {
 	return (journalPositions.size() == elementsInStripe);
 }
 
-ChunkWriter::ChunkWriter(ChunkserverStats &chunkserverStats,
-                         ChunkConnector &connector, int dataChainFd)
+ChunkWriter::ChunkWriter(ChunkserverStats &chunkserverStats, ChunkConnector &connector,
+                         int dataChainFd, uint32_t writeWindowSize, bool useWriteFlushPacket)
     : chunkserverStats_(chunkserverStats),
       connector_(connector),
-      dataChainFd_(dataChainFd) {}
+      dataChainFd_(dataChainFd),
+      writeWindowSize_(writeWindowSize),
+      useWriteFlushPacket_(useWriteFlushPacket) {}
 
 ChunkWriter::~ChunkWriter() {
 	try {
@@ -155,7 +157,7 @@ void ChunkWriter::init(WriteChunkLocator* locator, uint32_t chunkserverTimeout_m
 		std::unique_ptr<WriteExecutor> executor(new WriteExecutor(
 				chunkserverStats_, location.address, location.chunkserver_version, fd,
 				chunkserverTimeout_ms, locator_->locationInfo().chunkId, locator_->locationInfo().version,
-				location.chunk_type));
+				location.chunk_type, writeWindowSize_, useWriteFlushPacket_));
 		executors_.insert(std::make_pair(fd, std::move(executor)));
 	}
 
@@ -170,11 +172,14 @@ uint32_t ChunkWriter::getMinimumBlockCountWorthWriting() {
 	return combinedStripeSize_;
 }
 
-uint32_t ChunkWriter::startNewOperations(bool can_expect_next_block) {
+uint32_t ChunkWriter::startNewOperations(bool can_expect_next_block,
+                                         bool wasLastBlockRecentlyWritten) {
 	LOG_AVG_TILL_END_OF_SCOPE0("ChunkWriter::startNewOperations");
 	uint32_t operationsStarted = 0;
 	// Start all possible operations. Break at the first operation that can't be started, because
 	// we have to preserve the order of operations in order to ensure the files contain proper data
+
+	bool cannotStartNextNewOperation = false;
 	for (auto i = newOperations_.begin(); i != newOperations_.end(); i = newOperations_.erase(i)) {
 		Operation& operation = *i;
 		// Don't start partial-stripe writes if they can be extended in the future.
@@ -185,11 +190,26 @@ uint32_t ChunkWriter::startNewOperations(bool can_expect_next_block) {
 				&& can_expect_next_block) {
 			break;
 		}
+
+		// Check collisions
 		if (!canStartOperation(operation)) {
+			cannotStartNextNewOperation = true;
 			break;
 		}
+
 		startOperation(std::move(operation));
 		++operationsStarted;
+	}
+
+	if (cannotStartNextNewOperation || !wasLastBlockRecentlyWritten ||
+	    (!acceptsNewOperations_ && newOperations_.empty())) {
+		// If we can't start the next operation due to collision of the writes, we have to flush
+		// the data to chunkservers in order to finish the pending operations and be able to start
+		// the next ones. We can also be in flush mode -- finish all the operations as soon as
+		// possible.
+
+		// Won't do anything if flush packet is disabled or last packet was already a flush packet
+		for (auto &executorPair : executors_) { executorPair.second->addFlushPacket(); }
 	}
 	return operationsStarted;
 }
@@ -264,6 +284,10 @@ void ChunkWriter::processOperations(uint32_t msTimeout) {
 
 uint32_t ChunkWriter::getUnfinishedOperationsCount() {
 	return pendingOperations_.size() + newOperations_.size();
+}
+
+bool ChunkWriter::isWaitingForData() {
+	return getUnfinishedOperationsCount() <= writeWindowSize_;
 }
 
 uint32_t ChunkWriter::getPendingOperationsCount() {
