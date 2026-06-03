@@ -1762,12 +1762,8 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 	}
 
 	if (context.isPersonalityMaster()) {
-		uint8_t quotaStatus = statusFromQuotaCheck(quotaExceededUg(
-		    fsOpContext, context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}));
-		if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
-
-		quotaStatus = statusFromQuotaCheck(
-		    quotaExceededDir(fsOpContext, workDir, {{QuotaResource::kInodes, 1}}));
+		uint8_t quotaStatus = checkQuotaUgDir(
+		    fsOpContext, context.uid(), context.gid(), workDir, {{QuotaResource::kInodes, 1}});
 		if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
 	}
 
@@ -1853,12 +1849,8 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	}
 
 	// Quota verification
-	uint8_t quotaStatus = statusFromQuotaCheck(
-	    quotaExceededUg(fsOpContext, context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}));
-	if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
-
-	quotaStatus = statusFromQuotaCheck(
-	    quotaExceededDir(fsOpContext, parentNode, {{QuotaResource::kInodes, 1}}));
+	uint8_t quotaStatus = checkQuotaUgDir(
+	    fsOpContext, context.uid(), context.gid(), parentNode, {{QuotaResource::kInodes, 1}});
 	if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
 
 	static_cast<FSNodeDirectory *>(parentNode)->caseInsensitive = isCaseInsensitive;
@@ -1920,12 +1912,8 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 		return SAUNAFS_ERROR_EEXIST;
 	}
 
-	uint8_t quotaStatus = statusFromQuotaCheck(
-	    quotaExceededUg(fsOpContext, context.uid(), context.gid(), {{QuotaResource::kInodes, 1}}));
-	if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
-
-	quotaStatus = statusFromQuotaCheck(
-	    quotaExceededDir(fsOpContext, workNode, {{QuotaResource::kInodes, 1}}));
+	uint8_t quotaStatus = checkQuotaUgDir(
+	    fsOpContext, context.uid(), context.gid(), workNode, {{QuotaResource::kInodes, 1}});
 	if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
 
 	if (gDisableEmptyFoldersMetadataOnFullDisk) {
@@ -4146,6 +4134,14 @@ QuotaCheckResult FilesystemOperationsBase::quotaExceeded(
     const FilesystemOperationContext &fsOpContext, FSNode *node,
     const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
 	return {.exceeded = fsnodes_quota_exceeded(fsOpContext, node, resourceList)};
+}
+
+uint8_t FilesystemOperationsBase::checkQuotaUgDir(
+    const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid, FSNode *dir,
+    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) {
+	uint8_t status = statusFromQuotaCheck(quotaExceededUg(fsOpContext, uid, gid, resourceList));
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+	return statusFromQuotaCheck(quotaExceededDir(fsOpContext, dir, resourceList));
 }
 
 void FilesystemOperationsBase::quotaUpdate(

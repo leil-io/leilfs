@@ -30,21 +30,13 @@
 
 int SnapshotTask::cloneNodeTest(const FilesystemOperationContext &fsOpContext, FSNode *src_node,
                                 FSNode *dst_node, FSNodeDirectory *dst_parent) {
-	int quotaStatus = statusFromQuotaCheck(gFSOperations->quotaExceededUg(
-	    fsOpContext, src_node->uid, src_node->gid, {{QuotaResource::kInodes, 1}}));
-	if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
-
-	quotaStatus = statusFromQuotaCheck(
-	    gFSOperations->quotaExceededDir(fsOpContext, dst_parent, {{QuotaResource::kInodes, 1}}));
+	int quotaStatus = gFSOperations->checkQuotaUgDir(
+	    fsOpContext, src_node->uid, src_node->gid, dst_parent, {{QuotaResource::kInodes, 1}});
 	if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
 
 	if (src_node->type == FSNodeType::kFile) {
-		quotaStatus = statusFromQuotaCheck(gFSOperations->quotaExceededUg(
-		    fsOpContext, src_node->uid, src_node->gid, {{QuotaResource::kSize, 1}}));
-		if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
-
-		quotaStatus = statusFromQuotaCheck(
-		    gFSOperations->quotaExceededDir(fsOpContext, dst_parent, {{QuotaResource::kSize, 1}}));
+		quotaStatus = gFSOperations->checkQuotaUgDir(
+		    fsOpContext, src_node->uid, src_node->gid, dst_parent, {{QuotaResource::kSize, 1}});
 		if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
 	}
 

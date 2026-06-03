@@ -1739,6 +1739,32 @@ public:
 	    const FilesystemOperationContext &fsOpContext, FSNode *node,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
 
+	/// Runs the user/group then directory hard-quota checks for a create-style operation,
+	/// returning the final operation status directly.
+	///
+	/// Unlike quotaExceeded(), which derives the owner and directory context from a single
+	/// existing node, this takes the owner (@p uid / @p gid) and the target @p dir explicitly.
+	/// That is required on paths where the node does not exist yet (symlink, mknod, mkdir,
+	/// snapshot clone): the owner is the creating caller's context and the directory is the
+	/// intended parent.
+	///
+	/// It returns a status rather than a QuotaCheckResult because every caller folds the result
+	/// the same way and never inspects `exceeded` on its own; folding it here keeps each call
+	/// site to a single check. The user/group check is evaluated first and its status (including
+	/// a backend read failure) is propagated before the directory check runs.
+	///
+	/// @param fsOpContext Filesystem operation context carrying backend transaction state.
+	/// @param uid User owner id used for the user/group quota check.
+	/// @param gid Group owner id used for the user/group quota check.
+	/// @param dir Parent directory node whose owner/ancestor quotas are validated.
+	/// @param resourceList Resource deltas to validate (typically inodes and/or size).
+	/// @return SAUNAFS_STATUS_OK when neither check is exceeded and both reads succeed,
+	///         SAUNAFS_ERROR_QUOTA when a hard limit would be exceeded, or the backend status
+	///         on a quota read failure.
+	virtual uint8_t checkQuotaUgDir(
+	    const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid, FSNode *dir,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) = 0;
+
 	/// Applies quota usage deltas after a successful metadata mutation.
 	///
 	/// In the in-memory implementation, this updates only user/group `used` counters

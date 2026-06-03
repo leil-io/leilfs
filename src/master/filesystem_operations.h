@@ -464,6 +464,12 @@ public:
 	    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
 	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
 
+	/// Runs user/group then directory hard quota checks, propagating read-failure status.
+	/// @see IFilesystemOperations::checkQuotaUgDir
+	uint8_t checkQuotaUgDir(
+	    const FilesystemOperationContext &fsOpContext, uint32_t uid, uint32_t gid, FSNode *dir,
+	    const std::initializer_list<std::pair<QuotaResource, int64_t>> &resourceList) override;
+
 	/// Applies quota usage deltas for successful node mutations.
 	/// @see IFilesystemOperations::quotaUpdate
 	void quotaUpdate(
