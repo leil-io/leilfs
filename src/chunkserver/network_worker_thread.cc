@@ -250,7 +250,10 @@ void NetworkWorkerThread::servePoll() {
 			if (entry.pDescPos >= 0 &&
 			    (pdesc[entry.pDescPos].revents & POLLIN)) {
 				entry.lastActivity = now;
-				eptr->readFromSocket();
+				bool shouldContinueReading = eptr->readFromSocket();
+				while (shouldContinueReading && entry.state == lstate) {
+					shouldContinueReading = eptr->readFromSocket(false);
+				}
 			}
 			if (entry.pDescPos >= 0 &&
 			    (pdesc[entry.pDescPos].revents & POLLOUT) &&

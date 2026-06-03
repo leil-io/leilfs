@@ -827,12 +827,12 @@ void ChunkserverEntry::gotPacket(uint32_t type, const uint8_t *data,
 }
 
 bool ChunkserverEntry::processRWBytes(int bytesRW, PacketStruct &packet, bool shouldForwardError,
-                                      const char *callerName, bool isRead) {
+                                      const char *callerName, bool isRead, bool isDataExpected) {
 	if (bytesRW == 0) {
 		if (shouldForwardError) {
 			safs::log_info("({}) {} returned 0 bytes", callerName, isRead ? "read" : "write");
 			fwdError();
-		} else {
+		} else if (isDataExpected) {
 			state = State::Close;
 		}
 
@@ -846,7 +846,7 @@ bool ChunkserverEntry::processRWBytes(int bytesRW, PacketStruct &packet, bool sh
 
 			if (shouldForwardError) {
 				fwdError();
-			} else {
+			} else if (isDataExpected) {
 				state = State::Close;
 			}
 		}
@@ -865,7 +865,7 @@ bool ChunkserverEntry::processRWBytes(int bytesRW, PacketStruct &packet, bool sh
 }
 
 bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *headerBuf,
-                                  Mode &targetMode) {
+                                  Mode &targetMode, bool isDataExpected) {
 	// At this point, packet.startPtr points to the current position in the header buffer,
 	// and packet.bytesLeft is the number of bytes remaining to read to complete the header.
 	// Therefore, packet.startPtr + packet.bytesLeft should equal headerBuf + PacketHeader::kSize,
@@ -878,7 +878,9 @@ bool ChunkserverEntry::readHeader(int socket, PacketStruct &packet, uint8_t *hea
 
 	auto bytesRead = ::read(socket, packet.startPtr, packet.bytesLeft);
 
-	if (!processRWBytes(bytesRead, packet, fromForward, __func__, true)) { return false; }
+	if (!processRWBytes(bytesRead, packet, fromForward, __func__, true, isDataExpected)) {
+		return false;
+	}
 
 	if (packet.bytesLeft > 0) { return false; }
 
@@ -1067,16 +1069,18 @@ void ChunkserverEntry::forward() {
 	}
 }
 
-void ChunkserverEntry::readFromSocket() {
+bool ChunkserverEntry::readFromSocket(bool isDataExpected) {
 	TRACETHIS();
 
-	if (mode == Mode::Header && !readHeader(sock, inputPacket, headerBuffer, mode)) { return; }
+	if (mode == Mode::Header && !readHeader(sock, inputPacket, headerBuffer, mode, isDataExpected)) { return false; }
 
 	if (mode == Mode::Data) {
-		if (!readData(sock, inputPacket)) { return; }
+		if (!readData(sock, inputPacket)) { return false; }
 
 		processPacket(inputPacket, headerBuffer, mode, false);
+		return true;
 	}
+	return false;
 }
 
 void ChunkserverEntry::writeToSocket() {

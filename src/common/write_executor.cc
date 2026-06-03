@@ -150,27 +150,31 @@ void WriteExecutor::addEndPacket() {
 
 void WriteExecutor::sendData() {
 	LOG_AVG_TILL_END_OF_SCOPE0("WriteExecutor::sendData");
-	if (!bufferWriter_.hasDataToSend()) {
-		if (pendingPackets_.empty()) {
-			return;
-		}
-		const Packet& packet = pendingPackets_.front();
-		bufferWriter_.addBufferToSend(packet.buffer.data(), packet.buffer.size());
-		if (packet.data != nullptr) {
-			bufferWriter_.addBufferToSend(packet.data, packet.dataSize);
-		}
-	}
 
-	ssize_t bytesSent = bufferWriter_.writeTo(chainHeadFd_);
-	if (bytesSent == 0) {
-		throw ChunkserverConnectionException("Write error: connection closed by peer", server());
-	} else if (bytesSent < 0 && tcpgetlasterror() != TCPEAGAIN) {
-		throw ChunkserverConnectionException(
-				"Write error: " + std::string(strerr(tcpgetlasterror())), server());
-	}
-	if (!bufferWriter_.hasDataToSend()) {
-		bufferWriter_.reset();
-		pendingPackets_.pop_front();
+	while (true) {
+		if (!bufferWriter_.hasDataToSend()) {
+			if (pendingPackets_.empty()) { return; }
+
+			const Packet &packet = pendingPackets_.front();
+			bufferWriter_.addBufferToSend(packet.buffer.data(), packet.buffer.size());
+			if (packet.data != nullptr) {
+				bufferWriter_.addBufferToSend(packet.data, packet.dataSize);
+			}
+		}
+
+		ssize_t bytesSent = bufferWriter_.writeTo(chainHeadFd_);
+		if (bytesSent == 0) {
+			throw ChunkserverConnectionException("Write error: connection closed by peer",
+			                                     server());
+		} else if (bytesSent < 0 && tcpgetlasterror() != TCPEAGAIN) {
+			throw ChunkserverConnectionException(
+			    "Write error: " + std::string(strerr(tcpgetlasterror())), server());
+		}
+
+		if (!bufferWriter_.hasDataToSend()) {
+			bufferWriter_.reset();
+			pendingPackets_.pop_front();
+		}
 	}
 }
 
