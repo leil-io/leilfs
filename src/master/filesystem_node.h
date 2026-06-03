@@ -275,6 +275,13 @@ protected:
 	/// The caller avoids constructing a RichACL when it is not needed.
 	virtual const RichACL *getAclForAccess(const FilesystemOperationContext &fsOpContext,
 	                                       FSNode *node, std::optional<RichACL> &scratch);
+
+	/// Persists the ACL a freshly created @p node inherits from its parent's default ACL.
+	/// The default in-memory implementation stores into aclStorage; backends that keep ACLs
+	/// elsewhere (e.g. KV) override to persist there. @p acl is consumed.
+	virtual void storeInheritedAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                               RichACL &&acl);
+
 	int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) override;
 	int nameCheck(const std::string &name) override;
 	uint8_t verifySession(const FsContext &context, OperationMode operationMode,

@@ -762,14 +762,15 @@ FSNode *FilesystemNodeOperationsBase::createNode(
 	}
 
 	// If desired, node inherits permissions from parent's default ACL
+	std::optional<RichACL> parentAclScratch;
 	const RichACL *parentAcl = (inheritAcl == AclInheritance::kInheritAcl)
-	                               ? gMetadata->aclStorage.get(parent->id)
+	                               ? getAclForAccess(fsOpContext, parent, parentAclScratch)
 	                               : nullptr;
 	if (parentAcl != nullptr) {
 		RichACL acl;
 		uint16_t mode = node->mode;
 		if (RichACL::inheritInode(*parentAcl, mode, acl, umask, type == FSNodeType::kDirectory)) {
-			gMetadata->aclStorage.set(node->id, std::move(acl));
+			storeInheritedAcl(fsOpContext, node, std::move(acl));
 		}
 		// Set effective permissions as the intersection of mode and ACL
 		node->mode &= mode | ~kStandardPermissionsMask;
@@ -2180,6 +2181,11 @@ const RichACL *FilesystemNodeOperationsBase::getAclForAccess(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
     [[maybe_unused]] std::optional<RichACL> &scratch) {
 	return gMetadata->aclStorage.get(node->id);
+}
+
+void FilesystemNodeOperationsBase::storeInheritedAcl(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, RichACL &&acl) {
+	gMetadata->aclStorage.set(node->id, std::move(acl));
 }
 
 int FilesystemNodeOperationsBase::access(const FsContext &context,
