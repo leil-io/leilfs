@@ -1777,6 +1777,12 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 
 	fsnodes_update_checksum(newNode);
 
+	// Re-persist: createNode() stored the node before the symlink target was set above
+	// (no-op on the in-memory backend).
+	if (fsOpContext.hasReadWriteTransaction()) {
+		nodeOperations_->updateNode(fsOpContext, newNode);
+	}
+
 	StatsRecord statsRecord;
 	memset(&statsRecord, 0, sizeof(StatsRecord));
 	statsRecord.length = basePath.length();
