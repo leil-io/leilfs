@@ -1318,6 +1318,13 @@ std::vector<std::pair<HString, inode_t>> FilesystemNodeOperationsBase::getDirect
 	return childEdges;
 }
 
+std::string FilesystemNodeOperationsBase::getBaseStoredChildName(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *nodeDir,
+    const HString &anyCaseName) {
+	if (nodeDir == nullptr) { return {}; }
+	return nodeDir->getBaseStoredChildName(anyCaseName);
+}
+
 uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationContext &fsOpContext,
                                                    uint32_t timeStamp, FSNodeFile *destNodeFile,
                                                    FSNodeFile *srcNodeFile) {

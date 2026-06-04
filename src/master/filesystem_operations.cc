@@ -1333,10 +1333,11 @@ uint8_t FilesystemOperationsBase::getCanonicalPath(const FsContext &context,
 				dir->updateLowerCaseEntries();
 			}
 
-			// Case-insensitive: resolve canonical casing using getBaseStoredChildName
+			// Canonicalize to the stored-case child name, so a stored symlink target still
+			// resolves after case-insensitivity is later turned off.
 			std::string baseName;
 			if (caseInsensitiveFS) {
-				baseName = dir->getBaseStoredChildName(name);
+				baseName = nodeOperations_->getBaseStoredChildName(fsOpContext, dir, name);
 				if (baseName.empty()) { return SAUNAFS_ERROR_ENOENT; }
 			} else {
 				baseName = name;

@@ -161,6 +161,12 @@ public:
 	std::vector<std::pair<HString, inode_t>> getDirectoryChildEdges(
 	    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) override;
 
+	/// Resolves the stored-case child name via the directory's in-memory lowercase index.
+	/// @see IFilesystemNodeOperations::getBaseStoredChildName
+	std::string getBaseStoredChildName(const FilesystemOperationContext &fsOpContext,
+	                                   FSNodeDirectory *nodeDir,
+	                                   const HString &anyCaseName) override;
+
 	/// Checks if a name is already used in the given directory.
 	/// @see IFilesystemNodeOperations::isNameUsed
 	bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
