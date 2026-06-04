@@ -188,8 +188,9 @@ void SnapshotTask::cloneDirectoryData(const FilesystemOperationContext &fsOpCont
 	SubtaskContainer data;
 	// Enumerate children through the backend-agnostic edge seam: the in-memory backend
 	// reads `src_node->entries`, the KV backend scans EDGE_* rows (entries is not populated).
-	for (auto &[name, childId] :
-	     gFSOperations->nodeOperations()->getDirectoryChildEdges(fsOpContext, src_node)) {
+	auto childEdges = gFSOperations->nodeOperations()->getDirectoryChildEdges(fsOpContext, src_node);
+	data.reserve(childEdges.size());
+	for (auto &[name, childId] : childEdges) {
 		data.emplace_back(childId, std::move(name));
 	}
 	if (!data.empty()) {
