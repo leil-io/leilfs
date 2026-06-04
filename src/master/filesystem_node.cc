@@ -1301,7 +1301,9 @@ std::vector<inode_t> FilesystemNodeOperationsBase::getDirectoryChildInodes(
 	if (nodeDir == nullptr) { return childInodes; }
 
 	childInodes.reserve(nodeDir->entries.size());
-	for (const auto &entry : nodeDir->entries) { childInodes.push_back(entry.second->id); }
+	for (const auto &entry : nodeDir->entries) {
+		if (entry.second != nullptr) { childInodes.push_back(entry.second->id); }
+	}
 
 	return childInodes;
 }
@@ -1313,7 +1315,9 @@ std::vector<std::pair<HString, inode_t>> FilesystemNodeOperationsBase::getDirect
 
 	childEdges.reserve(nodeDir->entries.size());
 	for (const auto &entry : nodeDir->entries) {
-		childEdges.emplace_back(HString(*entry.first), entry.second->id);
+		if (entry.second != nullptr) {
+			childEdges.emplace_back(HString(*entry.first), entry.second->id);
+		}
 	}
 
 	return childEdges;
