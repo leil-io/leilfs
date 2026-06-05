@@ -376,8 +376,13 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	// Setup write HLO
-	writeHLOs_.emplace_back(std::make_unique<WriteHighLevelOp>(this, maxBlocksPerHddWriteJob_));
-	writeHLOs_.back()->setup(chunkId, chunkVersion, chunkType, expectWriteFlush);
+	if (expectWriteFlush) {
+		writeHLOs_.emplace_back(
+		    std::make_unique<WriteHighLevelOpExpectFlush>(this, maxBlocksPerHddWriteJob_));
+	} else {
+		writeHLOs_.emplace_back(std::make_unique<WriteHighLevelOp>(this, maxBlocksPerHddWriteJob_));
+	}
+	writeHLOs_.back()->setup(chunkId, chunkVersion, chunkType);
 }
 
 void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,

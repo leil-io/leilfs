@@ -338,6 +338,10 @@ bool WriteHighLevelOp::isWriteJobBeingProcessed() const { return writeJobId_ != 
 
 void WriteHighLevelOp::setNoWriteJobBeingProcessed() { writeJobId_ = 0; }
 
+bool WriteHighLevelOp::isInputBufferFreezable() const {
+	return inputBuffer_ != nullptr && !inputBuffer_->isBeingUpdated();
+}
+
 void WriteHighLevelOp::startOpenWriteJob() {
 	writeJobWriteId_ = 0;
 	writeJobId_ = job_open(
@@ -389,55 +393,135 @@ void WriteHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
 	decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
 }
 
+// ---------------------------------------------------------------------------
+// Differentiating hooks. Each `WriteHighLevelOp` base implementation is
+// immediately followed by the matching `WriteHighLevelOpExpectFlush` override
+// for easy side-by-side comparison.
+// ---------------------------------------------------------------------------
+
+bool WriteHighLevelOp::canStartWriteJobNow() const {
+	return !writeDataBuffers_.empty() && !isWriteJobBeingProcessed();
+}
+
+bool WriteHighLevelOpExpectFlush::canStartWriteJobNow() const {
+	if (!expectsWriteFlush_) { return WriteHighLevelOp::canStartWriteJobNow(); }
+	return !writeDataBuffers_.empty() && !isWriteJobBeingProcessed() &&
+	       !inputBuffersForNextFlush_.empty();
+}
+
+bool WriteHighLevelOp::shouldWriteCurrentInputBuffer() const {
+	return isInputBufferFreezable() && (inputBuffer_->isFull() || !isWriteJobBeingProcessed());
+}
+
+bool WriteHighLevelOpExpectFlush::shouldWriteCurrentInputBuffer() const {
+	if (!expectsWriteFlush_) { return WriteHighLevelOp::shouldWriteCurrentInputBuffer(); }
+	return isInputBufferFreezable() && inputBuffer_->isFull();
+}
+
+void WriteHighLevelOp::freezeCurrentInputBuffer() {
+	writeDataBuffers_.emplace_back(std::move(inputBuffer_));
+}
+
+void WriteHighLevelOpExpectFlush::freezeCurrentInputBuffer() {
+	WriteHighLevelOp::freezeCurrentInputBuffer();
+	if (expectsWriteFlush_) { ++inputBuffersReadySinceLastFlush_; }
+}
+
+void WriteHighLevelOp::collectInputBuffersForNextJob(std::vector<InputBuffer *> &inputBuffers) {
+	if (writeDataBuffers_.front()->currentBlocks() == 0) {
+		safs::log_warn("({}) Called with no blocks in front InputBuffer.", __func__);
+	}
+
+	enqueuedInputBuffers_ = 1;
+	inputBuffers.push_back(writeDataBuffers_.front().get());
+}
+
+void WriteHighLevelOpExpectFlush::collectInputBuffersForNextJob(
+    std::vector<InputBuffer *> &inputBuffers) {
+	if (!expectsWriteFlush_) {
+		WriteHighLevelOp::collectInputBuffersForNextJob(inputBuffers);
+		return;
+	}
+
+	enqueuedInputBuffers_ = inputBuffersForNextFlush_.front();
+	inputBuffersForNextFlush_.pop();
+
+	if (writeDataBuffers_.size() < enqueuedInputBuffers_) {
+		safs::log_err("({}) Fewer available write data buffers than expected ({} < {}).", __func__,
+		              writeDataBuffers_.size(), enqueuedInputBuffers_);
+		enqueuedInputBuffers_ = writeDataBuffers_.size();
+	}
+
+	auto inputBuffersIt = writeDataBuffers_.begin();
+	for (uint32_t i = 0; i < enqueuedInputBuffers_; i++) {
+		if (inputBuffersIt->get()->currentBlocks() == 0) {
+			safs::log_warn("({}) Called with no blocks in front InputBuffer.", __func__);
+		}
+
+		inputBuffers.push_back(inputBuffersIt->get());
+		inputBuffersIt++;
+	}
+}
+
+bool WriteHighLevelOp::shouldDeferInstantReply(bool /*fromFlushDataCall*/) const { return false; }
+
+bool WriteHighLevelOpExpectFlush::shouldDeferInstantReply(bool fromFlushDataCall) const {
+	return expectsWriteFlush_ && !fromFlushDataCall;
+}
+
+void WriteHighLevelOp::onSwitchingToEagerWriteOnDelayedClose() {}
+
+void WriteHighLevelOpExpectFlush::onSwitchingToEagerWriteOnDelayedClose() {
+	expectsWriteFlush_ = false;
+}
+
+void WriteHighLevelOp::resetFlushBatchingState() {}
+
+void WriteHighLevelOpExpectFlush::resetFlushBatchingState() {
+	inputBuffersReadySinceLastFlush_ = 0;
+	inputBuffersForNextFlush_ = std::queue<uint32_t>();
+}
+
+void WriteHighLevelOp::flushData() {
+	safs::log_warn("({}) Called flushData on a write operation that does not expect write flush.",
+	               __func__);
+}
+
+void WriteHighLevelOpExpectFlush::flushData() {
+	tryInstantReply(true);
+
+	if (inputBuffer_ != nullptr && inputBuffer_->currentBlocks() > 0 &&
+	    !inputBuffer_->isBeingUpdated()) {
+		freezeCurrentInputBuffer();
+	}
+
+	if (inputBuffersReadySinceLastFlush_ > 0) {
+		inputBuffersForNextFlush_.push(inputBuffersReadySinceLastFlush_);
+		inputBuffersReadySinceLastFlush_ = 0;
+
+		if (canStartWriteJobNow()) { startNextWriteJob(); }
+	} else {
+		// This can happen if the connection is created but very little data is sent, which implies
+		// some WriteHighLevelOp receive no write data packets.
+		safs::log_debug("({}) Called flushData with no input buffers ready to be flushed.",
+		                __func__);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// End of differentiating hooks.
+// ---------------------------------------------------------------------------
+
 void WriteHighLevelOp::startNextWriteJob() {
-	if (writeDataBuffers_.empty()) {
-		safs::log_warn("({}) Called with no write data buffers.", __func__);
-		return;
-	}
-
-	if (isWriteJobBeingProcessed()) {
-		safs::log_warn("({}) Called with write job already in progress.", __func__);
-		return;
-	}
-
-	if (expectWriteFlush_ && inputBuffersForNextFlush_.empty()) {
-		safs::log_warn(
-		    "({}) Called with no input buffers ready to be flushed while expecting write flush.",
-		    __func__);
+	if (!canStartWriteJobNow()) {
+		safs::log_warn("({}) Called when not ready to start a write job.", __func__);
 		return;
 	}
 
 	/// Start the next write job: it is always the first write data buffer
 	writeJobWriteId_ = writeDataBuffers_.front()->getLastWriteId();
 	std::vector<InputBuffer *> inputBuffers;
-
-	if (expectWriteFlush_) {
-		enqueuedInputBuffers_ = inputBuffersForNextFlush_.front();
-		inputBuffersForNextFlush_.pop();
-
-		if (writeDataBuffers_.size() < enqueuedInputBuffers_) {
-			safs::log_err("({}) Fewer available write data buffers than expected ({} < {}).",
-			              __func__, writeDataBuffers_.size(), enqueuedInputBuffers_);
-			enqueuedInputBuffers_ = writeDataBuffers_.size();
-		}
-
-		auto inputBuffersIt = writeDataBuffers_.begin();
-		for (uint32_t i = 0; i < enqueuedInputBuffers_; i++) {
-			if (inputBuffersIt->get()->currentBlocks() == 0) {
-				safs::log_warn("({}) Called with no blocks in front InputBuffer.", __func__);
-			}
-
-			inputBuffers.push_back(inputBuffersIt->get());
-			inputBuffersIt++;
-		}
-	} else {
-		if (writeDataBuffers_.front()->currentBlocks() == 0) {
-			safs::log_warn("({}) Called with no blocks in front InputBuffer.", __func__);
-		}
-
-		enqueuedInputBuffers_ = 1;
-		inputBuffers.push_back(writeDataBuffers_.front().get());
-	}
+	collectInputBuffersForNextJob(inputBuffers);
 
 	writeJobId_ = job_write(
 	    *workerJobPool(),
@@ -445,54 +529,23 @@ void WriteHighLevelOp::startNextWriteJob() {
 	    chunkId_, chunkVersion_, chunkType_, inputBuffers);
 }
 
-void WriteHighLevelOp::writeCurrentInputPacket() {
-	writeDataBuffers_.emplace_back(std::move(inputBuffer_));
-	inputBuffersReadySinceLastFlush_++;
-	if (!isWriteJobBeingProcessed() && !expectWriteFlush_) { startNextWriteJob(); }
+void WriteHighLevelOp::writeCurrentInputBuffer() {
+	freezeCurrentInputBuffer();
+	if (canStartWriteJobNow()) { startNextWriteJob(); }
 }
 
 void WriteHighLevelOp::continueWritingIfPossible() {
 	tryInstantReply();
 	// There should not be any write jobs being processed.
 
-	if (!writeDataBuffers_.empty() && (!expectWriteFlush_ || !inputBuffersForNextFlush_.empty())) {
-		// There is a write buffer ready to be written and either we do not expect write flushes (so
-		// we can write it immediately) or we expect write flushes but there are already scheduled
-		// flushes from previous flushData calls, so we can write it immediately.
+	if (canStartWriteJobNow()) {
 		startNextWriteJob();
 		return;
 	}
 
-	if (!expectWriteFlush_ && inputBuffer_ != nullptr && !inputBuffer_->isBeingUpdated()) {
+	if (shouldWriteCurrentInputBuffer()) {
 		assert(inputBuffer_->currentBlocks() > 0);
-		writeCurrentInputPacket();
-	}
-}
-
-void WriteHighLevelOp::flushData() {
-	if (!expectWriteFlush_) {
-		safs::log_warn("({}) Called flushData on a write operation that does not expect write flush.",
-		               __func__);
-	}
-
-	tryInstantReply(true);
-
-	if (inputBuffer_ != nullptr && inputBuffer_->currentBlocks() > 0 && !inputBuffer_->isBeingUpdated()) {
-		writeDataBuffers_.emplace_back(std::move(inputBuffer_));
-		inputBuffersReadySinceLastFlush_++;
-	}
-
-	if (inputBuffersReadySinceLastFlush_ > 0) {
-		inputBuffersForNextFlush_.push(inputBuffersReadySinceLastFlush_);
-		inputBuffersReadySinceLastFlush_ = 0;
-	
-		if (!isWriteJobBeingProcessed() && !writeDataBuffers_.empty()) {
-			startNextWriteJob();
-		}
-	} else {
-		// This can happen if the connection is created but very little data is sent, which implies
-		// some WriteHighLevelOp receive no write data packets.
-		safs::log_debug("({}) Called flushData with no input buffers ready to be flushed.", __func__);
+		writeCurrentInputBuffer();
 	}
 }
 
@@ -571,7 +624,7 @@ void WriteHighLevelOp::prepareInputBufferForWrite(bool isForward) {
 	if (inputBuffer_ != nullptr && inputBuffer_->isFull()) {
 		safs::log_warn("({}) Called with full inputBuffer, isForward: {}. Writing existing buffer.",
 		               __func__, isForward);
-		writeCurrentInputPacket();
+		writeCurrentInputBuffer();
 	}
 
 	if (inputBuffer_ == nullptr) {
@@ -586,14 +639,12 @@ void WriteHighLevelOp::prepareInputBufferForWrite(bool isForward) {
 	inputBuffer_->addNewWriteOperation();
 }
 
-void WriteHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                             bool expectWriteFlush) {
+void WriteHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType) {
 	stats_hlopw++;
 
 	chunkId_ = chunkId;
 	chunkVersion_ = chunkVersion;
 	chunkType_ = chunkType;
-	expectWriteFlush_ = expectWriteFlush;
 
 	isChunkLocked_ = masterconn_get_job_pool()->enforceChunkLock(chunkId_, chunkType_);
 	startOpenWriteJob();
@@ -613,10 +664,9 @@ void WriteHighLevelOp::processWriteDataBlock(uint16_t blocknum, uint32_t opOffse
 	inputBuffer_->setupLastWriteOperation(blocknum, opOffset, opSize, writeId, crc);
 	tryInstantReply();
 
-	// No write jobs in progress or current input buffer is full - write it
-	if (inputBuffer_->isFull() || (!isWriteJobBeingProcessed() && !expectWriteFlush_)) {
+	if (shouldWriteCurrentInputBuffer()) {
 		assert(inputBuffer_->currentBlocks() > 0);
-		writeCurrentInputPacket();
+		writeCurrentInputBuffer();
 	}
 }
 
@@ -660,7 +710,7 @@ bool WriteHighLevelOp::trySeal() {
 		// There is an input buffer, all its data has been processed and replied
 		// so we can write it out to complete the operation
 		assert(inputBuffer_->currentBlocks() > 0);
-		writeCurrentInputPacket();
+		writeCurrentInputBuffer();
 	} else {
 		// There is no input buffer, we can only seal if all write data buffers have been replied
 		for (const auto &buffer : writeDataBuffers_) {
@@ -724,7 +774,7 @@ void WriteHighLevelOp::delayedClose() {
 
 	// We do not expect write flush anymore, so all the remaining buffers should be written out, but
 	// one-by-one
-	expectWriteFlush_ = false;
+	onSwitchingToEagerWriteOnDelayedClose();
 	if (!isWriteJobBeingProcessed() && !writeDataBuffers_.empty()) {
 		// No write job in progress, start one to trigger the processing of the remaining buffers,
 		// which will be replied in writeFinishedCallback
@@ -752,8 +802,7 @@ void WriteHighLevelOp::cleanup() {
 		writeDataBuffers_.pop_front();
 	}
 	enqueuedInputBuffers_ = 0;
-	inputBuffersReadySinceLastFlush_ = 0;
-	inputBuffersForNextFlush_ = std::queue<uint32_t>();
+	resetFlushBatchingState();
 	nextInputBufferBlockCount_ =
 	    std::min(kDefaultInitialNextInputBufferBlockCount, maxBlocksPerHddWriteJob_);
 
@@ -794,7 +843,7 @@ void WriteHighLevelOp::tryInstantReply(bool fromFlushDataCall) {
 		return;
 	}
 
-	if (expectWriteFlush_ && !fromFlushDataCall) {
+	if (shouldDeferInstantReply(fromFlushDataCall)) {
 		// If we expect write flushes, we only try instant reply when flushData is called, because
 		// that's the only time when we know that there won't be more data to be flushed for the
 		// current write operation.
