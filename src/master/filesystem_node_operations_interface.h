@@ -433,6 +433,41 @@ public:
 	virtual std::vector<inode_t> getDirectoryChildInodes(
 	    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) = 0;
 
+	/// Returns direct child (name, inode) edges for a directory.
+	///
+	/// Like getDirectoryChildInodes but also carries the edge name, for recursive
+	/// operations that must recreate the edges in a destination (for example snapshot
+	/// cloning).
+	///
+	/// Backend expectations:
+	/// - in-memory metadata implementation reads children from `nodeDir->entries`,
+	/// - KV/FDB implementation enumerates children from persistent EDGE_* records and must not
+	///   depend on `nodeDir->entries` being populated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param nodeDir Directory whose direct child (name, inode) edges should be returned.
+	/// @return Direct child (name, inode) edges (excluding "." and "..").
+	virtual std::vector<std::pair<HString, inode_t>> getDirectoryChildEdges(
+	    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) = 0;
+
+	/// Returns the original stored-case name under which `nodeDir`'s child matching `anyCaseName`
+	/// is recorded, resolving case-insensitively (any-case input maps to the stored casing).
+	/// Returns an empty string if no matching child exists. Used to canonicalize names under
+	/// case-insensitive directories (e.g. a symlink target).
+	///
+	/// Backend expectations:
+	/// - in-memory implementation resolves via the directory's in-memory lowercase index,
+	/// - KV/FDB implementation resolves via persisted edge indices and must not depend on
+	///   `nodeDir->entries`/`lowerCaseEntries` being populated.
+	///
+	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param nodeDir Case-insensitive directory to resolve the child name in.
+	/// @param anyCaseName Any-case child name to canonicalize.
+	/// @return The original stored-case child name, or empty if not found.
+	virtual std::string getBaseStoredChildName(const FilesystemOperationContext &fsOpContext,
+	                                           FSNodeDirectory *nodeDir,
+	                                           const HString &anyCaseName) = 0;
+
 	/// Checks if a name is already used in the given directory.
 	///
 	/// Determines whether a directory entry with the specified name exists in the given

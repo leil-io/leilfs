@@ -156,6 +156,17 @@ public:
 	std::vector<inode_t> getDirectoryChildInodes(const FilesystemOperationContext &fsOpContext,
 	                                             const FSNodeDirectory *nodeDir) override;
 
+	/// Returns direct child (name, inode) edges for a directory.
+	/// @see IFilesystemNodeOperations::getDirectoryChildEdges
+	std::vector<std::pair<HString, inode_t>> getDirectoryChildEdges(
+	    const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) override;
+
+	/// Resolves the stored-case child name via the directory's in-memory lowercase index.
+	/// @see IFilesystemNodeOperations::getBaseStoredChildName
+	std::string getBaseStoredChildName(const FilesystemOperationContext &fsOpContext,
+	                                   FSNodeDirectory *nodeDir,
+	                                   const HString &anyCaseName) override;
+
 	/// Checks if a name is already used in the given directory.
 	/// @see IFilesystemNodeOperations::isNameUsed
 	bool isNameUsed(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *node,
@@ -264,6 +275,13 @@ protected:
 	/// The caller avoids constructing a RichACL when it is not needed.
 	virtual const RichACL *getAclForAccess(const FilesystemOperationContext &fsOpContext,
 	                                       FSNode *node, std::optional<RichACL> &scratch);
+
+	/// Persists the ACL a freshly created @p node inherits from its parent's default ACL.
+	/// The default in-memory implementation stores into aclStorage; backends that keep ACLs
+	/// elsewhere (e.g. KV) override to persist there. @p acl is consumed.
+	virtual void storeInheritedAcl(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                               RichACL &&acl);
+
 	int stickyAccess(FSNode *parent, FSNode *node, uint32_t uid) override;
 	int nameCheck(const std::string &name) override;
 	uint8_t verifySession(const FsContext &context, OperationMode operationMode,

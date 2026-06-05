@@ -762,14 +762,15 @@ FSNode *FilesystemNodeOperationsBase::createNode(
 	}
 
 	// If desired, node inherits permissions from parent's default ACL
+	std::optional<RichACL> parentAclScratch;
 	const RichACL *parentAcl = (inheritAcl == AclInheritance::kInheritAcl)
-	                               ? gMetadata->aclStorage.get(parent->id)
+	                               ? getAclForAccess(fsOpContext, parent, parentAclScratch)
 	                               : nullptr;
 	if (parentAcl != nullptr) {
 		RichACL acl;
 		uint16_t mode = node->mode;
 		if (RichACL::inheritInode(*parentAcl, mode, acl, umask, type == FSNodeType::kDirectory)) {
-			gMetadata->aclStorage.set(node->id, std::move(acl));
+			storeInheritedAcl(fsOpContext, node, std::move(acl));
 		}
 		// Set effective permissions as the intersection of mode and ACL
 		node->mode &= mode | ~kStandardPermissionsMask;
@@ -1300,9 +1301,33 @@ std::vector<inode_t> FilesystemNodeOperationsBase::getDirectoryChildInodes(
 	if (nodeDir == nullptr) { return childInodes; }
 
 	childInodes.reserve(nodeDir->entries.size());
-	for (const auto &entry : nodeDir->entries) { childInodes.push_back(entry.second->id); }
+	for (const auto &entry : nodeDir->entries) {
+		if (entry.second != nullptr) { childInodes.push_back(entry.second->id); }
+	}
 
 	return childInodes;
+}
+
+std::vector<std::pair<HString, inode_t>> FilesystemNodeOperationsBase::getDirectoryChildEdges(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeDirectory *nodeDir) {
+	std::vector<std::pair<HString, inode_t>> childEdges;
+	if (nodeDir == nullptr) { return childEdges; }
+
+	childEdges.reserve(nodeDir->entries.size());
+	for (const auto &entry : nodeDir->entries) {
+		if (entry.second != nullptr) {
+			childEdges.emplace_back(HString(*entry.first), entry.second->id);
+		}
+	}
+
+	return childEdges;
+}
+
+std::string FilesystemNodeOperationsBase::getBaseStoredChildName(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeDirectory *nodeDir,
+    const HString &anyCaseName) {
+	if (nodeDir == nullptr) { return {}; }
+	return nodeDir->getBaseStoredChildName(anyCaseName);
 }
 
 uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationContext &fsOpContext,
@@ -2160,6 +2185,11 @@ const RichACL *FilesystemNodeOperationsBase::getAclForAccess(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node,
     [[maybe_unused]] std::optional<RichACL> &scratch) {
 	return gMetadata->aclStorage.get(node->id);
+}
+
+void FilesystemNodeOperationsBase::storeInheritedAcl(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, RichACL &&acl) {
+	gMetadata->aclStorage.set(node->id, std::move(acl));
 }
 
 int FilesystemNodeOperationsBase::access(const FsContext &context,
