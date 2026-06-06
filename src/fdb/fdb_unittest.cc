@@ -691,3 +691,77 @@ TEST_F(FDBKVEngineTest, ExtractIntegralLEFromFuture) {
 
 	safs::log_info("All extractIntegralLEFromFuture tests passed successfully.");
 }
+
+// --- Op-counter profiling gating -------------------------------------------
+
+namespace {
+/// Restores the process-wide op-counter gate on scope exit, so a failed
+/// assertion cannot leak the enabled state into other tests in the suite.
+struct OpCounterGateGuard {
+	bool previous;
+	OpCounterGateGuard() : previous(fdb::opCountersEnabled()) {}
+	~OpCounterGateGuard() { fdb::setOpCountersEnabled(previous); }
+};
+}  // namespace
+
+// The gate flag is process-global and needs no FDB connection:
+// setOpCountersEnabled() must be observable through opCountersEnabled().
+TEST(FdbOpCountersGatingTest, FlagReflectsSetter) {
+	const OpCounterGateGuard guard;
+
+	fdb::setOpCountersEnabled(true);
+	EXPECT_TRUE(fdb::opCountersEnabled());
+
+	fdb::setOpCountersEnabled(false);
+	EXPECT_FALSE(fdb::opCountersEnabled());
+}
+
+// Counters must move only while accounting is enabled. Drives real FDB ops and
+// compares getOpCounters() deltas with the gate off versus on.
+TEST_F(FDBKVEngineTest, OpCountersGatedByFlag) {
+	const OpCounterGateGuard guard;
+	const auto key = kv::toBytes("opcount_gate_key");
+
+	// Gate off: a full set+commit+get cycle must not move any counter.
+	fdb::setOpCountersEnabled(false);
+	const fdb::FdbOpCounters before = fdb::getOpCounters();
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(int64_t{1}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		(void)txn->get(key);
+	}
+	const fdb::FdbOpCounters disabled = fdb::getOpCounters();
+	EXPECT_EQ(disabled.sets, before.sets);
+	EXPECT_EQ(disabled.commits, before.commits);
+	EXPECT_EQ(disabled.pointReads, before.pointReads);
+
+	// Gate on: the same shaped work must bump the matching counters.
+	fdb::setOpCountersEnabled(true);
+	const fdb::FdbOpCounters gateOn = fdb::getOpCounters();
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(int64_t{2}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		ASSERT_TRUE(txn->get(key).has_value());
+	}
+	const fdb::FdbOpCounters after = fdb::getOpCounters();
+	// set is buffered (one call, no retry) so its delta is exact; reads and
+	// commits incur a round-trip that may retry, so require at least one.
+	EXPECT_EQ(after.sets - gateOn.sets, 1U);
+	EXPECT_GE(after.commits - gateOn.commits, 1U);
+	EXPECT_GE(after.pointReads - gateOn.pointReads, 1U);
+
+	// Clean up the key; the gate is restored by OpCounterGateGuard on scope exit.
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->remove(key);
+		ASSERT_TRUE(txn->commit());
+	}
+}

@@ -32,6 +32,33 @@
 
 namespace fdb {
 
+/// Process-wide FoundationDB operation counters for performance profiling.
+/// Each field counts issued client calls; reads and commits incur a network
+/// round-trip, buffered writes (set/atomicAdd/clear) do not until commit.
+struct FdbOpCounters {
+	uint64_t pointReads{0};       ///< fdb_transaction_get calls (sync get + getAsync).
+	uint64_t rangeReads{0};       ///< fdb_transaction_get_range calls (sync + async).
+	uint64_t sets{0};             ///< fdb_transaction_set calls (buffered).
+	uint64_t atomicAdds{0};       ///< FDB_MUTATION_TYPE_ADD ops (buffered).
+	uint64_t clears{0};           ///< fdb_transaction_clear calls (buffered).
+	uint64_t clearRanges{0};      ///< fdb_transaction_clear_range calls (buffered).
+	uint64_t commits{0};          ///< commit attempts (each one round-trip).
+	uint64_t commitConflicts{0};  ///< commit attempts that failed with a retryable error.
+	uint64_t commitFailures{0};   ///< commit attempts that failed with a non-retryable error.
+};
+
+/// Returns a snapshot of the process-wide FDB operation counters.
+FdbOpCounters getOpCounters();
+
+/// Enables or disables op-counter accounting (disabled by default). When
+/// disabled, the per-call bump is a single relaxed bool load and getOpCounters()
+/// keeps reporting whatever was counted while enabled. Intended to be toggled
+/// once at startup from configuration.
+void setOpCountersEnabled(bool enabled);
+
+/// Returns whether op-counter accounting is currently enabled.
+bool opCountersEnabled();
+
 /// A class that wraps the FoundationDB database instance.
 class DB {
 public:
