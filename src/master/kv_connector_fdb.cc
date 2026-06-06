@@ -18,6 +18,8 @@
 
 #include "common/platform.h"
 
+#include <limits>
+
 #include "master/kv_connector_fdb.h"
 
 #include "common/serialization.h"
@@ -51,6 +53,32 @@ bool KVConnectorFDB::init() {
 	if (!fdbDB) {
 		safs::log_err("Failed to get FoundationDB database instance");
 		return false;
+	}
+
+	// Bound every FDB transaction so a stuck op (e.g. an unreachable cluster) fails instead of
+	// blocking the single-threaded master loop forever; ~5s matches FDB's per-transaction
+	// server limit. The option's valid range is [0, INT_MAX] ms (0 disables), so read int64
+	// and reject out-of-range values, which FDB would otherwise truncate, wrap, or disable.
+	static constexpr int64_t kDefaultTxnTimeoutMs = 5000;
+	const auto timeoutMs = cfg_getint64("FDB_TRANSACTION_TIMEOUT_MS", kDefaultTxnTimeoutMs);
+	if (timeoutMs < 0 || timeoutMs > std::numeric_limits<int32_t>::max()) {
+		safs::log_err("FDB_TRANSACTION_TIMEOUT_MS must be in [0, {}] ms (0 disables), got {}",
+		              std::numeric_limits<int32_t>::max(), timeoutMs);
+		return false;
+	}
+	if (timeoutMs > 0) {
+		const auto encoded = kv::toBytesLE<int64_t>(timeoutMs);  // FDB Int option = 8-byte LE
+		const auto err = fdbDB->setOption(
+		    FDB_DB_OPTION_TRANSACTION_TIMEOUT,
+		    std::string_view(reinterpret_cast<const char *>(encoded.data()), encoded.size()));
+		if (err != 0) {
+			// A non-zero timeout was requested but could not be applied; fail fast instead of
+			// running unbounded, which would reintroduce the hang this guard prevents.
+			safs::log_err("Failed to set FDB transaction timeout ({} ms): {}", timeoutMs,
+			              fdb::DB::errorMsg(err));
+			return false;
+		}
+		safs::log_info("FDB transaction timeout set to {} ms", timeoutMs);
 	}
 
 	kvEngine_ = std::make_shared<fdb::FDBKVEngine>(fdbDB);
