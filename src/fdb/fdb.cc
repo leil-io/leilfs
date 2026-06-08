@@ -18,6 +18,7 @@
 
 #include "common/platform.h"
 
+#include <atomic>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -30,6 +31,59 @@
 #include "slogger/slogger.h"
 
 namespace fdb {
+
+namespace {
+
+/// Process-wide profiling counters. Relaxed atomics: the cost is negligible
+/// next to an FDB round-trip and exact ordering between fields is not needed.
+struct AtomicOpCounters {
+	std::atomic<uint64_t> pointReads{0};
+	std::atomic<uint64_t> rangeReads{0};
+	std::atomic<uint64_t> sets{0};
+	std::atomic<uint64_t> atomicAdds{0};
+	std::atomic<uint64_t> clears{0};
+	std::atomic<uint64_t> clearRanges{0};
+	std::atomic<uint64_t> commits{0};
+	std::atomic<uint64_t> commitConflicts{0};
+	std::atomic<uint64_t> commitFailures{0};
+};
+
+/// Process-wide counter instance. Namespace-scope with constant initialization
+/// (atomic members default to 0), so the disabled path avoids the guard check a
+/// function-local static would add on every FDB call.
+AtomicOpCounters gOpCounters;
+
+/// Gates op-counter accounting. Off by default: production clusters pay only a
+/// single relaxed bool load per FDB call, while tests can switch it on.
+std::atomic<bool> gOpCountersEnabled{false};
+
+inline void bump(std::atomic<uint64_t> &counter) {
+	if (!gOpCountersEnabled.load(std::memory_order_relaxed)) { return; }
+	counter.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
+void setOpCountersEnabled(bool enabled) {
+	gOpCountersEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool opCountersEnabled() { return gOpCountersEnabled.load(std::memory_order_relaxed); }
+
+FdbOpCounters getOpCounters() {
+	auto &c = gOpCounters;
+	return {
+	    c.pointReads.load(std::memory_order_relaxed),
+	    c.rangeReads.load(std::memory_order_relaxed),
+	    c.sets.load(std::memory_order_relaxed),
+	    c.atomicAdds.load(std::memory_order_relaxed),
+	    c.clears.load(std::memory_order_relaxed),
+	    c.clearRanges.load(std::memory_order_relaxed),
+	    c.commits.load(std::memory_order_relaxed),
+	    c.commitConflicts.load(std::memory_order_relaxed),
+	    c.commitFailures.load(std::memory_order_relaxed),
+	};
+}
 
 const uint8_t *toU8(std::string_view str) { return reinterpret_cast<const uint8_t *>(str.data()); }
 
@@ -72,6 +126,7 @@ fdb_error_t Transaction::setOption(FDBTransactionOption option, std::string_view
 std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	if (!tr_) { return std::nullopt; }
 
+	bump(gOpCounters.pointReads);
 	UniqueFDBFuture future(
 	    fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()), snapshot));
 
@@ -105,6 +160,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 std::unique_ptr<kv::IFuture> Transaction::getAsync(const kv::Key &key, bool snapshot) {
 	if (!tr_) { return nullptr; }
 
+	bump(gOpCounters.pointReads);
 	FDBFuture *future = fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()),
 	                                        static_cast<fdb_bool_t>(snapshot));
 
@@ -127,6 +183,7 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
     FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
 	if (!tr_) { return nullptr; }
 
+	bump(gOpCounters.rangeReads);
 	static constexpr int kBytesLimit = 0;
 
 	// For begin selectors: orEqual=0 means >= (inclusive), orEqual=1 means > (exclusive)
@@ -153,6 +210,7 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
 void Transaction::set(const kv::Key &key, const kv::Value &value) {
 	if (!tr_) { return; }
 
+	bump(gOpCounters.sets);
 	fdb_transaction_set(tr_.get(), key.data(), static_cast<int>(key.size()), value.data(),
 	                    static_cast<int>(value.size()));
 }
@@ -160,6 +218,7 @@ void Transaction::set(const kv::Key &key, const kv::Value &value) {
 void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
 	if (!tr_) { return; }
 
+	bump(gOpCounters.atomicAdds);
 	fdb_transaction_atomic_op(tr_.get(), key.data(), static_cast<int>(key.size()), delta.data(),
 	                          static_cast<int>(delta.size()), FDB_MUTATION_TYPE_ADD);
 }
@@ -167,12 +226,14 @@ void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
 void Transaction::remove(const kv::Key &key) {
 	if (!tr_) { return; }
 
+	bump(gOpCounters.clears);
 	fdb_transaction_clear(tr_.get(), key.data(), static_cast<int>(key.size()));
 }
 
 void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
 	if (!tr_) { return; }
 
+	bump(gOpCounters.clearRanges);
 	fdb_transaction_clear_range(tr_.get(), start.data(), static_cast<int>(start.size()), end.data(),
 	                            static_cast<int>(end.size()));
 }
@@ -180,6 +241,7 @@ void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
 bool Transaction::commit() {
 	if (!tr_) { return false; }
 
+	bump(gOpCounters.commits);
 	UniqueFDBFuture future(fdb_transaction_commit(tr_.get()));
 
 	error_ = fdb_future_block_until_ready(future.get());
@@ -187,6 +249,7 @@ bool Transaction::commit() {
 	if (error_ != 0) {
 		safs::log_err("Transaction::commit: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(error_));
+		bump(gOpCounters.commitFailures);
 		return false;
 	}
 
@@ -197,6 +260,15 @@ bool Transaction::commit() {
 
 	if (error_ != 0) {
 		safs::log_err("Transaction::commit: commit failed: {}", fdb_get_error(error_));
+		// evaluatePredicate() calls into the FDB C API, so only pay for it when
+		// accounting is on; keeps the disabled path a single relaxed bool load.
+		// The gate is already known here, so increment directly instead of bump().
+		if (opCountersEnabled()) {
+			auto &counter = DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE, error_)
+			                    ? gOpCounters.commitConflicts
+			                    : gOpCounters.commitFailures;
+			counter.fetch_add(1, std::memory_order_relaxed);
+		}
 		return false;
 	}
 
