@@ -27,7 +27,6 @@
 
 #include "fdb/fdb.h"
 #include "fdb/fdb_future.h"
-#include "kv/kv_utils.h"
 #include "slogger/slogger.h"
 
 namespace fdb {
@@ -150,7 +149,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	}
 
 	if (valuePresent == 0) {
-		safs::log_info("Transaction::get: key not found: {}", kv::keyToEscapedAscii(key));
+		// Missing key is normal control flow; callers should handle the empty optional.
 		return std::nullopt;
 	}
 
