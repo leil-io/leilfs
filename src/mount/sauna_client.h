@@ -130,10 +130,15 @@ struct FsInitParams {
 	static constexpr SugidClearMode kDefaultSugidClearMode = SugidClearMode::kNever;
 #endif
 	static constexpr bool     kDefaultUseRwLock = true;
+	static constexpr bool     kDefaultEnableAcl = true;
+	static constexpr bool     kDefaultEnableXattrs = true;
 	static constexpr double   kDefaultAclCacheTimeout = 1.0;
 	static constexpr unsigned kDefaultAclCacheSize = 1000;
+	static constexpr double   kDefaultXattrCacheTimeout = 30.0;
+	static constexpr unsigned kDefaultXattrCacheSize = 10000;
 	static constexpr bool     kDefaultVerbose = false;
 	static constexpr bool     kDirectIO = false;
+	static constexpr bool     kDefaultChunkserverLatencySort = false;
 
 	// TLS related parameters
 	static constexpr std::string_view kDefaultTlsConfigFile = TlsSession::kNoFile;
@@ -144,6 +149,7 @@ struct FsInitParams {
 	             do_not_remember_password(kDefaultDoNotRememberPassword), delayed_init(kDefaultDelayedInit),
 	             report_reserved_period(kDefaultReportReservedPeriod),
 	             io_retries(kDefaultIoRetries),
+	             chunkserver_latency_sort(kDefaultChunkserverLatencySort),
 	             chunkserver_round_time_ms(kDefaultRoundTime),
 	             chunkserver_connect_timeout_ms(kDefaultChunkserverConnectTo),
 	             chunkserver_wave_read_timeout_ms(kDefaultChunkserverWaveReadTo),
@@ -168,7 +174,9 @@ struct FsInitParams {
 	             entry_cache_timeout(kDefaultEntryCacheTimeout), attr_cache_timeout(kDefaultAttrCacheTimeout),
 	             mkdir_copy_sgid(kDefaultMkdirCopySgid), sugid_clear_mode(kDefaultSugidClearMode),
 	             use_rw_lock(kDefaultUseRwLock),
+	             enable_acl(kDefaultEnableAcl), enable_xattrs(kDefaultEnableXattrs),
 	             acl_cache_timeout(kDefaultAclCacheTimeout), acl_cache_size(kDefaultAclCacheSize),
+	             xattr_cache_timeout(kDefaultXattrCacheTimeout), xattr_cache_size(kDefaultXattrCacheSize),
 #ifdef _WIN32
 	             mounting_uid(USE_LOCAL_ID), mounting_gid(USE_LOCAL_ID),
 	             clean_acquired_files_period(kDefaultCleanAcquiredFilesPeriod),
@@ -194,6 +202,7 @@ struct FsInitParams {
 	             do_not_remember_password(kDefaultDoNotRememberPassword), delayed_init(kDefaultDelayedInit),
 	             report_reserved_period(kDefaultReportReservedPeriod),
 	             io_retries(kDefaultIoRetries),
+	             chunkserver_latency_sort(kDefaultChunkserverLatencySort),
 	             chunkserver_round_time_ms(kDefaultRoundTime),
 	             chunkserver_connect_timeout_ms(kDefaultChunkserverConnectTo),
 	             chunkserver_wave_read_timeout_ms(kDefaultChunkserverWaveReadTo),
@@ -218,7 +227,9 @@ struct FsInitParams {
 	             entry_cache_timeout(kDefaultEntryCacheTimeout), attr_cache_timeout(kDefaultAttrCacheTimeout),
 	             mkdir_copy_sgid(kDefaultMkdirCopySgid), sugid_clear_mode(kDefaultSugidClearMode),
 	             use_rw_lock(kDefaultUseRwLock),
+	             enable_acl(kDefaultEnableAcl), enable_xattrs(kDefaultEnableXattrs),
 	             acl_cache_timeout(kDefaultAclCacheTimeout), acl_cache_size(kDefaultAclCacheSize),
+	             xattr_cache_timeout(kDefaultXattrCacheTimeout), xattr_cache_size(kDefaultXattrCacheSize),
 #ifdef _WIN32
 	             mounting_uid(USE_LOCAL_ID), mounting_gid(USE_LOCAL_ID),
 	             clean_acquired_files_period(kDefaultCleanAcquiredFilesPeriod),
@@ -251,6 +262,7 @@ struct FsInitParams {
 	unsigned report_reserved_period;
 
 	unsigned io_retries;
+	bool chunkserver_latency_sort;
 	unsigned chunkserver_round_time_ms;
 	unsigned chunkserver_connect_timeout_ms;
 	unsigned chunkserver_wave_read_timeout_ms;
@@ -284,8 +296,12 @@ struct FsInitParams {
 	bool mkdir_copy_sgid;
 	SugidClearMode sugid_clear_mode;
 	bool use_rw_lock;
+	bool enable_acl;
+	bool enable_xattrs;
 	double acl_cache_timeout;
 	unsigned acl_cache_size;
+	double xattr_cache_timeout;
+	unsigned xattr_cache_size;
 #ifdef _WIN32
 	int mounting_uid;
 	int mounting_gid;

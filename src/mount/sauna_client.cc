@@ -252,6 +252,8 @@ static double attr_cache_timeout = 0.1;
 static int mkdir_copy_sgid = 0;
 static int sugid_clear_mode = 0;
 bool use_rwlock = 0;
+static std::atomic<bool> gEnableAcl = true;
+static std::atomic<bool> gEnableXattrs = true;
 static std::atomic<bool> gDirectIo(false);
 
 // lock_request_counter shared by flock and setlk
@@ -338,6 +340,22 @@ void patch_uid_gid_fields(AttrReply &e) { patch_uid_gid_fields(e.attr); }
 
 static std::unique_ptr<AclCache> acl_cache;
 
+struct XattrCacheRecord {
+	uint8_t status;
+	std::vector<uint8_t> value;
+};
+
+typedef std::shared_ptr<XattrCacheRecord> XattrCacheEntry;
+typedef LruCache<
+		LruCacheOption::UseTreeMap,
+		LruCacheOption::Reentrant,
+		XattrCacheEntry,
+		inode_t, uint32_t, uint32_t, std::string> XattrCache;
+
+static std::unique_ptr<XattrCache> xattr_cache;
+static SteadyClock gXattrCacheClock;
+static const std::string kListXattrCacheKey;
+
 void update_readdir_session(uint64_t sessId, uint64_t entryIno) {
 	std::lock_guard<std::mutex> sessions_lock(gReaddirMutex);
 	gReaddirSessions[sessId].lastReadIno = entryIno;
@@ -393,6 +411,9 @@ static uint8_t updateNextReaddirEntryIndexIfMasterRestarted(ReaddirSession &read
 void masterDisconnectedCallback() {
 	gGroupCache.reset();
 	gDirEntryCache.clear();
+	if (xattr_cache) {
+		xattr_cache->clear();
+	}
 	std::lock_guard<std::mutex> sessions_lock(gReaddirMutex);
 	for (auto& rs : gReaddirSessions) {
 		rs.second.restarted = true;
@@ -400,9 +421,21 @@ void masterDisconnectedCallback() {
 }
 
 inline void eraseAclCache(inode_t inode) {
+	if (!acl_cache) {
+		return;
+	}
 	acl_cache->erase(
 			inode    , 0, 0,
 			inode + 1, 0, 0);
+}
+
+inline void eraseXattrCache(inode_t inode) {
+	if (!xattr_cache) {
+		return;
+	}
+	xattr_cache->erase(
+			inode    , 0, 0, std::string(),
+			inode + 1, 0, 0, std::string());
 }
 
 // TODO consider making oplog_printf asynchronous
@@ -1925,7 +1958,7 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 
 		struct stat stats;
 		attr_to_stat(it->inode,it->attr,&stats);
-		result.emplace_back(it->name, stats, entry_index); // nextEntryOffset = entry_index
+		result.emplace_back(it->name, stats, entry_index);
 	}
 
 	if (max_entries == 0) {
@@ -2664,6 +2697,83 @@ void fsync(Context &ctx, inode_t ino, int datasync, FileInfo* fi) {
 
 namespace {
 
+bool isAclXattrName(const char *name) {
+	return strcmp(name, "system.posix_acl_access") == 0 ||
+			strcmp(name, "system.posix_acl_default") == 0 ||
+			strcmp(name, "system.nfs4_acl") == 0 ||
+			strcmp(name, "system.richacl") == 0
+#ifdef __APPLE__
+			|| strcmp(name, "com.apple.system.Security") == 0
+#endif
+			;
+}
+
+std::vector<uint8_t> filterVisibleXattrs(const uint8_t *buff, uint32_t valueLength) {
+	std::vector<uint8_t> filtered;
+	if (valueLength == 0) {
+		return filtered;
+	}
+	if (!gEnableXattrs.load()) {
+		return filtered;
+	}
+	if (gEnableAcl.load()) {
+		filtered.assign(buff, buff + valueLength);
+		return filtered;
+	}
+
+	const uint8_t *current = buff;
+	const uint8_t *end = buff + valueLength;
+	while (current < end) {
+		const uint8_t *terminator = (const uint8_t*)memchr(current, '\0', end - current);
+		if (!terminator) {
+			break;
+		}
+		if (!isAclXattrName((const char*)current)) {
+			filtered.insert(filtered.end(), current, terminator + 1);
+		}
+		current = terminator + 1;
+	}
+	return filtered;
+}
+
+XattrCacheEntry loadListXattrCacheEntry(Context& ctx, inode_t ino, uint32_t uid, uint32_t gid,
+		const std::string&) {
+	const uint8_t *buff = nullptr;
+	uint32_t valueLength = 0;
+	uint8_t status;
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+		fs_listxattr(ino, 0, uid, gid, XATTR_GMODE_GET_DATA, &buff, &valueLength));
+	if (status != SAUNAFS_STATUS_OK) {
+		throw RequestException(status);
+	}
+
+	XattrCacheEntry entry(new XattrCacheRecord());
+	entry->status = status;
+	entry->value = filterVisibleXattrs(buff, valueLength);
+	return entry;
+}
+
+XattrCacheEntry loadPlainXattrCacheEntry(Context& ctx, inode_t ino, uint32_t uid, uint32_t gid,
+		const std::string &name) {
+	const uint8_t *buff = nullptr;
+	uint32_t valueLength = 0;
+	uint8_t status;
+	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+		fs_getxattr(ino, 0, uid, gid, (uint8_t)name.length(), (const uint8_t*)name.c_str(),
+			XATTR_GMODE_GET_DATA, &buff, &valueLength));
+	if (status != SAUNAFS_STATUS_OK && status != SAUNAFS_ERROR_ENOATTR &&
+			status != SAUNAFS_ERROR_ENODATA) {
+		throw RequestException(status);
+	}
+
+	XattrCacheEntry entry(new XattrCacheRecord());
+	entry->status = status;
+	if (status == SAUNAFS_STATUS_OK) {
+		entry->value.assign(buff, buff + valueLength);
+	}
+	return entry;
+}
+
 class XattrHandler {
 public:
 	virtual ~XattrHandler() {}
@@ -2702,6 +2812,9 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_setxattr(ino, 0, ctx.uid, ctx.gid, nleng, (const uint8_t*)name,
 				(uint32_t)size, (const uint8_t*)value, mode));
+		if (status == SAUNAFS_STATUS_OK) {
+			eraseXattrCache(ino);
+		}
 		return status;
 	}
 
@@ -2723,6 +2836,9 @@ public:
 		uint8_t status;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_removexattr(ino, 0, ctx.uid, ctx.gid, nleng, (const uint8_t*)name));
+		if (status == SAUNAFS_STATUS_OK) {
+			eraseXattrCache(ino);
+		}
 		return status;
 	}
 };
@@ -2771,6 +2887,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_setacl(ino, ctx.uid, ctx.gid, type_, posix_acl));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		gDirEntryCache.lockAndInvalidateInode(ino);
 		return status;
 	}
@@ -2810,6 +2927,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_deletacl(ino, ctx.uid, ctx.gid, type_));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		return status;
 	}
 
@@ -2830,6 +2948,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_setacl(ino, ctx.uid, ctx.gid, acl));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		gDirEntryCache.lockAndInvalidateInode(ino);
 		return status;
 	}
@@ -2866,6 +2985,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_deletacl(ino, ctx.uid, ctx.gid, AclType::kRichACL));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		return status;
 	}
 private:
@@ -2884,6 +3004,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_setacl(ino, ctx.uid, ctx.gid, acl));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		gDirEntryCache.lockAndInvalidateInode(ino);
 		return status;
 	}
@@ -2920,6 +3041,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_deletacl(ino, ctx.uid, ctx.gid, AclType::kRichACL));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		return status;
 	}
 private:
@@ -2950,6 +3072,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_setacl(ino, ctx.uid, ctx.gid, result));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		gDirEntryCache.lockAndInvalidateInode(ino);
 		return status;
 	}
@@ -2984,6 +3107,7 @@ public:
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_deletacl(ino, ctx.uid, ctx.gid, AclType::kRichACL));
 		eraseAclCache(ino);
+		eraseXattrCache(ino);
 		return status;
 	}
 
@@ -3018,6 +3142,12 @@ static std::map<std::string, XattrHandler*> xattr_handlers = {
 };
 
 static XattrHandler* choose_xattr_handler(const char *name) {
+	if (!gEnableXattrs.load()) {
+		return &enotsupXattrHandler;
+	}
+	if (!gEnableAcl.load() && isAclXattrName(name)) {
+		return &enotsupXattrHandler;
+	}
 	try {
 		return xattr_handlers.at(name);
 	} catch (std::out_of_range&) {
@@ -3099,6 +3229,15 @@ void setxattr(Context &ctx, inode_t ino, const char *name, const char *value,
 				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
+	if (!gEnableXattrs.load()) {
+		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
+				ino,
+				name,
+				(uint64_t)size,
+				flags,
+				saunafs_error_string(SAUNAFS_ERROR_ENOTSUP));
+		throw RequestException(SAUNAFS_ERROR_ENOTSUP);
+	}
 	if (strcmp(name,"security.capability")==0) {
 		oplog_printf(ctx, "setxattr (%" PRIiNode ",%s,%" PRIu64 ",%d): %s",
 				ino,
@@ -3147,6 +3286,7 @@ XattrReply getxattr(Context &ctx, inode_t ino, const char *name, size_t size, ui
 	std::vector<uint8_t> buffer;
 	const uint8_t *buff;
 	uint32_t leng;
+	XattrHandler *handler;
 
 
 	stats_inc(OP_GETXATTR);
@@ -3191,6 +3331,14 @@ XattrReply getxattr(Context &ctx, inode_t ino, const char *name, size_t size, ui
 				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
+	if (!gEnableXattrs.load()) {
+		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
+				ino,
+				name,
+				(uint64_t)size,
+				saunafs_error_string(SAUNAFS_ERROR_ENOTSUP));
+		throw RequestException(SAUNAFS_ERROR_ENOTSUP);
+	}
 	if (strcmp(name,"security.capability")==0) {
 		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
 				ino,
@@ -3205,7 +3353,25 @@ XattrReply getxattr(Context &ctx, inode_t ino, const char *name, size_t size, ui
 		mode = XATTR_GMODE_GET_DATA;
 	}
 	(void)position;
-	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx, choose_xattr_handler(name)->getxattr(ctx, ino, name, nleng, mode, leng, buffer)) 
+	handler = choose_xattr_handler(name);
+	if (handler == &plainXattrHandler && xattr_cache) {
+		try {
+			auto cache_entry = xattr_cache->get(gXattrCacheClock.now(), ino, ctx.uid, ctx.gid,
+					std::string(name),
+					[&ctx](inode_t cache_ino, uint32_t uid, uint32_t gid,
+							const std::string &cache_name) {
+						return loadPlainXattrCacheEntry(ctx, cache_ino, uid, gid, cache_name);
+					});
+			status = cache_entry->status;
+			buffer = cache_entry->value;
+			leng = buffer.size();
+		} catch (RequestException &e) {
+			status = e.saunafs_error_code;
+		}
+	} else {
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+			handler->getxattr(ctx, ino, name, nleng, mode, leng, buffer));
+	}
 	buff = buffer.data();
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "getxattr (%" PRIiNode ",%s,%" PRIu64 "): %s",
@@ -3244,10 +3410,10 @@ XattrReply getxattr(Context &ctx, inode_t ino, const char *name, size_t size, ui
 }
 
 XattrReply listxattr(Context &ctx, inode_t ino, size_t size) {
+	std::vector<uint8_t> buffer;
 	const uint8_t *buff;
 	uint32_t leng;
 	int status;
-	uint8_t mode;
 
 	stats_inc(OP_LISTXATTR);
 	if (debug_mode) {
@@ -3262,13 +3428,36 @@ XattrReply listxattr(Context &ctx, inode_t ino, size_t size) {
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
 	}
-	if (size==0) {
-		mode = XATTR_GMODE_LENGTH_ONLY;
-	} else {
-		mode = XATTR_GMODE_GET_DATA;
+	if (!gEnableXattrs.load()) {
+		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): OK (0)",
+				ino,
+				(uint64_t)size);
+		return XattrReply{0, {}};
 	}
-	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_listxattr(ino,0,ctx.uid,ctx.gid,mode,&buff,&leng));
+	if (xattr_cache) {
+		try {
+			auto cache_entry = xattr_cache->get(gXattrCacheClock.now(), ino, ctx.uid, ctx.gid,
+					kListXattrCacheKey,
+					[&ctx](inode_t cache_ino, uint32_t uid, uint32_t gid,
+							const std::string &cache_name) {
+						return loadListXattrCacheEntry(ctx, cache_ino, uid, gid, cache_name);
+					});
+			status = cache_entry->status;
+			buffer = cache_entry->value;
+			leng = buffer.size();
+		} catch (RequestException &e) {
+			status = e.saunafs_error_code;
+		}
+	} else {
+		uint8_t listMode = (size == 0 && gEnableAcl.load()) ? XATTR_GMODE_LENGTH_ONLY :
+				XATTR_GMODE_GET_DATA;
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+			fs_listxattr(ino, 0, ctx.uid, ctx.gid, listMode, &buff, &leng));
+		if (status == SAUNAFS_STATUS_OK && listMode == XATTR_GMODE_GET_DATA) {
+			buffer = filterVisibleXattrs(buff, leng);
+			leng = buffer.size();
+		}
+	}
 	if (status != SAUNAFS_STATUS_OK) {
 		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): %s",
 				ino,
@@ -3283,6 +3472,7 @@ XattrReply listxattr(Context &ctx, inode_t ino, size_t size) {
 				leng);
 		return XattrReply{leng, {}};
 	} else {
+		buff = buffer.data();
 		if (leng>size) {
 			oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): %s",
 					ino,
@@ -3339,6 +3529,13 @@ void removexattr(Context &ctx, inode_t ino, const char *name) {
 				name,
 				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
+	}
+	if (!gEnableXattrs.load()) {
+		oplog_printf(ctx, "removexattr (%" PRIiNode ",%s): %s",
+				ino,
+				name,
+				saunafs_error_string(SAUNAFS_ERROR_ENOTSUP));
+		throw RequestException(SAUNAFS_ERROR_ENOTSUP);
 	}
 	status = choose_xattr_handler(name)->removexattr(ctx, ino, name, nleng);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -3568,8 +3765,10 @@ std::vector<ChunkserverListEntry> getchunkservers() {
 void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsigned direntry_cache_size_,
 		unsigned negative_cache_timeout_, unsigned negative_cache_size_,
 		double entry_cache_timeout_, double attr_cache_timeout_, int mkdir_copy_sgid_,
-		SugidClearMode sugid_clear_mode_, bool use_rwlock_,
-		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io,
+		SugidClearMode sugid_clear_mode_, bool use_rwlock_, bool enable_acl_,
+		bool enable_xattrs_,
+		double acl_cache_timeout_, unsigned acl_cache_size_,
+		double xattr_cache_timeout_, unsigned xattr_cache_size_, bool direct_io,
 #ifdef _WIN32
 		int mounting_uid_, int mounting_gid_, std::unordered_set<uint32_t> &allowed_users_,
 		bool ignore_utimens_update_, unsigned acquired_files_cleanup_period_,
@@ -3602,6 +3801,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	mkdir_copy_sgid = mkdir_copy_sgid_;
 	sugid_clear_mode = static_cast<decltype (sugid_clear_mode)>(sugid_clear_mode_);
 	use_rwlock = use_rwlock_;
+	gEnableXattrs = enable_xattrs_;
+	gEnableAcl = enable_acl_ && gEnableXattrs.load();
 	uint64_t timeout = (uint64_t)(direntry_cache_timeout * 1000000);
 	gDirEntryCache.setTimeout(timeout);
 	gDirEntryCacheMaxSize = direntry_cache_size_;
@@ -3614,15 +3815,30 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 		safs::log_debug("mkdir copy sgid={} sugid clear mode={}",
 		                mkdir_copy_sgid_, sugidClearModeString(sugid_clear_mode_));
 		safs::log_debug("RW lock {}", use_rwlock ? "enabled" : "disabled");
+		safs::log_debug("ACL support {}", gEnableAcl.load() ? "enabled" : "disabled");
+		safs::log_debug("XATTR support {}", gEnableXattrs.load() ? "enabled" : "disabled");
 		safs::log_debug("ACL acl_cache_timeout={:.2f}, acl_cache_size={}\n",
 		                acl_cache_timeout_, acl_cache_size_);
+		safs::log_debug("XATTR xattr_cache_timeout={:.2f}, xattr_cache_size={}\n",
+		                xattr_cache_timeout_, xattr_cache_size_);
 	}
 	statsptr_init();
 
-	acl_cache.reset(new AclCache(
-			std::chrono::milliseconds((int)(1000 * acl_cache_timeout_)),
-			acl_cache_size_,
-			getAcl));
+	if (gEnableAcl.load() && acl_cache_timeout_ > 0.0 && acl_cache_size_ > 0) {
+		acl_cache.reset(new AclCache(
+				std::chrono::milliseconds((int)(1000 * acl_cache_timeout_)),
+				acl_cache_size_,
+				getAcl));
+	} else {
+		acl_cache.reset();
+	}
+	if (gEnableXattrs.load() && xattr_cache_timeout_ > 0.0 && xattr_cache_size_ > 0) {
+		xattr_cache.reset(new XattrCache(
+				std::chrono::milliseconds((int)(1000 * xattr_cache_timeout_)),
+				xattr_cache_size_));
+	} else {
+		xattr_cache.reset();
+	}
 
 #ifdef __linux__
 	if (malloc_trim_period_ > 0) {
@@ -3632,6 +3848,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 
 	std::lock_guard lock(gMountInfoMtx);
 	gTweaks.registerVariable("DirectIO", gDirectIo, "sfsdirectio");
+	gTweaks.registerVariable("EnableAcl", gEnableAcl, "sfsacl");
+	gTweaks.registerVariable("EnableXattrs", gEnableXattrs, "sfsxattrs");
 	gTweaks.registerVariable("NegativeCacheTimeout", gNegativeCacheTimeoutMs, "sfsnegativecachetimeout");
 	gTweaks.registerVariable("NegativeCacheMaxSize", gNegativeCacheMaxSize, "sfsnegativecachesize");
 	gTweaks.registerVariable("StatfsCacheTimeout", gStatfsCacheTimeout, "statfscachetimeout");
@@ -3643,10 +3861,18 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	gTweaks.registerVariable("AcquiredFilesCleanupTimeout", gCleanAcquiredFilesTimeout,
 	                         "sfscleanacquiredfilestimeout");
 #endif
-	gTweaks.registerVariable("AclCacheMaxTime", acl_cache->maxTime_ms, "aclcacheto");
-	gTweaks.registerVariable("AclCacheHit", acl_cache->cacheHit);
-	gTweaks.registerVariable("AclCacheExpired", acl_cache->cacheExpired);
-	gTweaks.registerVariable("AclCacheMiss", acl_cache->cacheMiss);
+	if (acl_cache) {
+		gTweaks.registerVariable("AclCacheMaxTime", acl_cache->maxTime_ms, "aclcacheto");
+		gTweaks.registerVariable("AclCacheHit", acl_cache->cacheHit);
+		gTweaks.registerVariable("AclCacheExpired", acl_cache->cacheExpired);
+		gTweaks.registerVariable("AclCacheMiss", acl_cache->cacheMiss);
+	}
+	if (xattr_cache) {
+		gTweaks.registerVariable("XattrCacheMaxTime", xattr_cache->maxTime_ms, "xattrcacheto");
+		gTweaks.registerVariable("XattrCacheHit", xattr_cache->cacheHit);
+		gTweaks.registerVariable("XattrCacheExpired", xattr_cache->cacheExpired);
+		gTweaks.registerVariable("XattrCacheMiss", xattr_cache->cacheMiss);
+	}
 }
 
 void fs_init(FsInitParams &params) {
@@ -3691,6 +3917,7 @@ void fs_init(FsInitParams &params) {
 	}
 
 	read_data_init(params.io_retries,
+			params.chunkserver_latency_sort,
 			params.chunkserver_round_time_ms,
 			params.chunkserver_connect_timeout_ms,
 			params.chunkserver_wave_read_timeout_ms,
@@ -3733,8 +3960,9 @@ void fs_init(FsInitParams &params) {
 	init(params.debug_mode, params.keep_cache, params.direntry_cache_timeout, params.direntry_cache_size,
 		params.negative_cache_timeout, params.negative_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,
-		params.sugid_clear_mode, params.use_rw_lock,
-		params.acl_cache_timeout, params.acl_cache_size, params.direct_io,
+		params.sugid_clear_mode, params.use_rw_lock, params.enable_acl, params.enable_xattrs,
+		params.acl_cache_timeout, params.acl_cache_size,
+		params.xattr_cache_timeout, params.xattr_cache_size, params.direct_io,
 #ifdef _WIN32
 		params.mounting_uid, params.mounting_gid, params.allowed_users,
 		params.ignore_utimens_update, params.clean_acquired_files_period,

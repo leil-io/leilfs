@@ -55,6 +55,7 @@ enum {
 	KEY_PASSWORDASK,
 	KEY_NOSTDMOUNTOPTIONS,
 	KEY_NONEMPTY,
+	KEY_WAN,
 	KEY_HELP,
 	KEY_VERSION
 };
@@ -76,9 +77,13 @@ struct sfsopts_ {
 	int meta;
 	int debug;
 	int delayedinit;
+	int wan;
 	int acl;
+	int xattrs;
 	double aclcacheto;
 	unsigned aclcachesize;
+	double xattrcacheto;
+	unsigned xattrcachesize;
 	int rwlock;
 	int mkdircopysgid;
 	char *sugidclearmodestr;
@@ -101,6 +106,7 @@ struct sfsopts_ {
 	unsigned negativecachesize;
 	unsigned reportreservedperiod;
 	char *iolimits;
+	int chunkserverlatencysort;
 	int chunkserverrtt;
 	int chunkserverconnectreadto;
 	int chunkserverwavereadto;
@@ -146,9 +152,13 @@ struct sfsopts_ {
 		meta(0),
 		debug(SaunaClient::FsInitParams::kDefaultDebugMode),
 		delayedinit(SaunaClient::FsInitParams::kDefaultDelayedInit),
-		acl(), // deprecated
+		wan(0),
+		acl(SaunaClient::FsInitParams::kDefaultEnableAcl),
+		xattrs(SaunaClient::FsInitParams::kDefaultEnableXattrs),
 		aclcacheto(SaunaClient::FsInitParams::kDefaultAclCacheTimeout),
 		aclcachesize(SaunaClient::FsInitParams::kDefaultAclCacheSize),
+		xattrcacheto(SaunaClient::FsInitParams::kDefaultXattrCacheTimeout),
+		xattrcachesize(SaunaClient::FsInitParams::kDefaultXattrCacheSize),
 		rwlock(SaunaClient::FsInitParams::kDefaultUseRwLock),
 		mkdircopysgid(SaunaClient::FsInitParams::kDefaultMkdirCopySgid),
 		sugidclearmodestr(NULL),
@@ -171,6 +181,7 @@ struct sfsopts_ {
 		negativecachesize(SaunaClient::FsInitParams::kDefaultNegativeCacheSize),
 		reportreservedperiod(SaunaClient::FsInitParams::kDefaultReportReservedPeriod),
 		iolimits(NULL),
+		chunkserverlatencysort(SaunaClient::FsInitParams::kDefaultChunkserverLatencySort),
 		chunkserverrtt(SaunaClient::FsInitParams::kDefaultRoundTime),
 		chunkserverconnectreadto(SaunaClient::FsInitParams::kDefaultChunkserverConnectTo),
 		chunkserverwavereadto(SaunaClient::FsInitParams::kDefaultChunkserverWaveReadTo),

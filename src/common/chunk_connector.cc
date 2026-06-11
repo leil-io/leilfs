@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <algorithm>
 
+#include "common/chunkserver_stats.h"
 #include "common/exceptions.h"
 #include "errors/sfserr.h"
 #include "common/sockets.h"
@@ -32,7 +33,8 @@ static int64_t timeoutTime(int64_t rtt, uint8_t tryCounter) {
 	return rtt * (1 << (tryCounter / 2)) * 3 / (tryCounter % 2 == 0 ? 3 : 2);
 }
 
-ChunkConnector::ChunkConnector(uint32_t sourceIp) : roundTripTime_ms_(20), sourceIp_(sourceIp) {
+ChunkConnector::ChunkConnector(uint32_t sourceIp)
+		: roundTripTime_ms_(20), sourceIp_(sourceIp), chunkserverStats_(nullptr) {
 }
 
 int ChunkConnector::startUsingConnection(const NetworkAddress& server,
@@ -60,11 +62,16 @@ int ChunkConnector::startUsingConnection(const NetworkAddress& server,
 				timeoutTime(roundTripTime_ms_, retries),
 				timeout.remaining_ms());
 		connectTimeout = std::max(int64_t(1), connectTimeout); // tcpnumtoconnect doesn't like 0
+		Timer connectTimer;
 		if (tcpnumtoconnect(fd, server.ip, server.port, connectTimeout) < 0) {
 			err = tcpgetlasterror();
 			tcpclose(fd);
 			fd = -1;
 		} else {
+			if (chunkserverStats_) {
+				chunkserverStats_->updateRoundTripTime(server,
+						static_cast<uint32_t>(std::max<int64_t>(1, connectTimer.elapsed_ms())));
+			}
 			break;
 		}
 		retries++;

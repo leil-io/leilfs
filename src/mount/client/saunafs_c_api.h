@@ -52,6 +52,7 @@ typedef struct sau_init_params {
 	unsigned report_reserved_period;
 
 	unsigned io_retries;
+	bool chunkserver_latency_sort;
 	unsigned chunkserver_round_time_ms;
 	unsigned chunkserver_connect_timeout_ms;
 	unsigned chunkserver_wave_read_timeout_ms;

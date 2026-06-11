@@ -89,14 +89,28 @@ Path to the TLS configuration file for client-side TLS settings.
 Connection with master is done in background - with this option mount can be
 run without network (good for being run from fstab / init scripts etc.).
 
-*-o sfsacl*::
-Enable ACL support (disabled by default).
+*-o wan*::
+Apply WAN-tuned mount settings:
+`sfschunkserverlatencysort=1,sfsacl=0,sfsxattrs=0,sfsdirentrycacheto=60,sfsdirentrycachesize=10000000`.
+
+*-o sfsacl=*'0|1'::
+Enable or disable ACL xattr handling. Use `-o sfsacl=0` to disable it
+(default: 1).
+
+*-o sfsxattrs=*'0|1'::
+Enable or disable xattr handling (default: 1).
 
 *-o sfsaclcacheto=*'SEC'::
 Set ACL cache timeout in seconds (default: 1.0).
 
 *-o sfsaclcachesize=*'N'::
 Define ACL cache size in number of entries (0: no cache; default: 1000).
+
+*-o sfsxattrcacheto=*'SEC'::
+Set xattr cache timeout in seconds (default: 30.0).
+
+*-o sfsxattrcachesize=*'N'::
+Define xattr cache size in number of entries (0: no cache; default: 10000).
 
 *-o sfsrwlock=*'0|1'::
 When set to 1, parallel reads from the same descriptor are performed (default:

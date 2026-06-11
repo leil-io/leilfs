@@ -21,7 +21,9 @@
 
 #include "common/platform.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <unordered_map>
 
@@ -34,8 +36,8 @@
 // Code which uses chunkservers to perform read/write operations should register and unregister
 // these operations with the global ChunkserverStats instance.
 //
-// If there is a choice between multiple chunkservers capable of performing some operation, the
-// chunkserver with lowest pending operation count should be chosen.
+// If there is a choice between multiple chunkservers capable of performing some operation, prefer
+// healthy chunkservers with lower observed latency.
 //
 // Code that determines a chunkserver to be defective should call markDefective(). Others should
 // prefer to use chunkservers not marked as defective, if possible. The defective flag is cleared
@@ -63,14 +65,27 @@ public:
 			return pendingWrites_;
 		}
 
+		bool hasRoundTripTime() const {
+			return hasRoundTripTime_;
+		}
+
+		uint32_t roundTripTime_ms() const {
+			return roundTripTime_ms_;
+		}
+
 		float score() const;
 
 	private:
 		static constexpr int defectiveTimeout_ms = 2000;
+		static constexpr uint32_t kReferenceRoundTripTime_ms = 100;
+		static constexpr float kLatencyInfluence = 0.3f;
+		static constexpr uint32_t kRoundTripTimeSmoothingFactor = 8;
 
 		uint32_t pendingReads_;
 		uint32_t pendingWrites_;
 		uint32_t defects_;
+		uint32_t roundTripTime_ms_;
+		bool hasRoundTripTime_;
 		Timeout defectiveTimeout_;
 
 		friend class ChunkserverStats;
@@ -86,11 +101,15 @@ public:
 	void registerWriteOperation(const NetworkAddress& address);
 	void unregisterWriteOperation(const NetworkAddress& address);
 
+	void setUseRoundTripTime(bool useRoundTripTime);
+	bool useRoundTripTime() const;
+	void updateRoundTripTime(const NetworkAddress& address, uint32_t roundTripTime_ms);
 	void markDefective(const NetworkAddress& address);
 	void markWorking(const NetworkAddress& address);
 
 private:
 	std::mutex mutex_;
+	std::atomic<bool> useRoundTripTime_{false};
 	std::unordered_map<NetworkAddress, ChunkserverEntry> chunkserverEntries_;
 };
 
@@ -120,6 +139,7 @@ public:
 	void registerWriteOperation(const NetworkAddress& address);
 	void unregisterWriteOperation(const NetworkAddress& address);
 
+	void updateRoundTripTime(const NetworkAddress& address, uint32_t roundTripTime_ms);
 	void markDefective(const NetworkAddress& address);
 	void markWorking(const NetworkAddress& address);
 

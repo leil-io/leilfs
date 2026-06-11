@@ -416,7 +416,8 @@ int read_to_buffer(ReadRecord *rrec, uint64_t current_offset,
                    std::unique_lock<std::mutex> &entryLock);
 int read_data(ReadRecord *rr, off_t fuseOffset, size_t fuseSize,
               uint64_t offset, uint32_t size, ReadCache::Result &ret);
-void read_data_init(uint32_t retries, uint32_t chunkserverRoundTripTime_ms,
+void read_data_init(uint32_t retries, bool chunkserverLatencySort,
+                    uint32_t chunkserverRoundTripTime_ms,
                     uint32_t chunkserverConnectTimeout_ms,
                     uint32_t chunkServerWaveReadTimeout_ms,
                     uint32_t chunkserverTotalReadTimeout_ms,

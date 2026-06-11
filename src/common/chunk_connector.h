@@ -25,6 +25,8 @@
 #include "common/sockets.h"
 #include "common/time_utils.h"
 
+class ChunkserverStats;
+
 class ChunkConnector {
 public:
 	ChunkConnector(uint32_t sourceIp = 0);
@@ -42,12 +44,20 @@ public:
 		sourceIp_ = sourceIp;
 	}
 
+	/// A setter.
+	void setChunkserverStats(ChunkserverStats* chunkserverStats) {
+		chunkserverStats_ = chunkserverStats;
+	}
+
 private:
 	/// Time after which SYN packet will be considered lost during the first retry of tcptoconnect.
 	uint32_t roundTripTime_ms_;
 
 	/// IP address to bind to when connecting chunkservers.
 	uint32_t sourceIp_;
+
+	/// Optional statistics sink for per-chunkserver RTT observations.
+	ChunkserverStats* chunkserverStats_;
 };
 
 class Connection {
