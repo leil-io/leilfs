@@ -27,12 +27,12 @@ sudo dnf install fedora-packager python3-specfile
 
 ### Run the build script (takes around 20 minutes in CI)
 ```bash
-./build.sh
+sudo ./build.sh
 ```
 
 ### Run the review script (takes around 25-30 minutes in CI)
 ```bash
-./review.sh
+sudo ./review.sh
 ```
 
 > [!NOTE]
