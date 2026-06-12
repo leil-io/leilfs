@@ -57,9 +57,9 @@ function check_cluster_status() {
 function cleanup_fdb_cluster() {
 	# Kill fdbmonitor (runs as root); escalate to SIGKILL if SIGTERM does not
 	# stop it within the grace period.
-	sudo pkill -f "${fdbmonitor_pattern}" 2>/dev/null || true
+	sudo -n pkill -f "${fdbmonitor_pattern}" 2>/dev/null || true
 	if ! wait_until_processes_stop "${fdbmonitor_pattern}" 5; then
-		sudo pkill -9 -f "${fdbmonitor_pattern}" 2>/dev/null || true
+		sudo -n pkill -9 -f "${fdbmonitor_pattern}" 2>/dev/null || true
 		wait_until_processes_stop "${fdbmonitor_pattern}" 2 || true
 	fi
 

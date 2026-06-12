@@ -69,8 +69,10 @@ test_end() {
 		remove_all_emulated_zoned_disks
 	fi
 
-	# Clean up FDB cluster if one was started for this test.
+	# Clean up FDB cluster if one was started for this test. LeilFS processes
+	# must be stopped first: killing FDB under a live MDS wedges teardown.
 	if [[ ${fdb_cluster_started:-} ]]; then
+		terminate_fs_processes
 		cleanup_fdb_cluster
 	fi
 
@@ -180,6 +182,27 @@ unix_unmount_fs() {
 			break
 		fi
 	done
+}
+
+# Stop mounts first (no FUSE op may hang on a dying MDS), then daemons:
+# SIGTERM, bounded wait, SIGKILL. Run before cleanup_fdb_cluster -- FDB
+# must never die under a live MDS or teardown wedges. On Windows only the
+# client mount runs locally; unmount it and leave the rest to the caller.
+terminate_fs_processes() {
+	if is_windows_system; then
+		windows_unmount_fs
+		return
+	fi
+	local pattern='sfs|saunafs-polo|polonaise-'
+	unix_unmount_fs
+	pkill -TERM -u saunafstest "$pattern" || true
+	for i in {1..25}; do
+		if ! pgrep -u saunafstest "$pattern" >/dev/null; then
+			return
+		fi
+		sleep 0.2
+	done
+	pkill -KILL -u saunafstest "$pattern" || true
 }
 
 # Do not use directly
