@@ -186,14 +186,79 @@ saunafs_promote() {
 		echo -n "${ADMIN_PASSWORD}" | \
 			saunafs_admin promote-shadow "${matocl_host}" ${matocl_port}
 	fi
+
+	if ! wait_for_metadata_personality master; then
+		return $SAUNAFS_URAFT_ERROR
+	fi
+
 	saunafs_assign_ip
+}
+
+saunafs_metadata_personality() {
+	load_config
+
+	local admin_result=$(saunafs_admin metadataserver-status --porcelain "${matocl_host}" "${matocl_port}")
+	if [[ $? != 0 ]] ; then
+		log "failed to query SaunaFS master status"
+		return $SAUNAFS_URAFT_ERROR
+	fi
+
+	local personality=$(echo "$admin_result" | cut -f1)
+	case "$personality" in
+		master|shadow)
+			echo -n "${personality}"
+			return $SAUNAFS_URAFT_OK
+		;;
+		*)
+			log "unexpected output from saunafs-admin: $admin_result"
+			return $SAUNAFS_URAFT_ERROR
+		;;
+	esac
+}
+
+wait_for_metadata_personality() {
+	local expected="$1"
+	local retry_delay=1
+	local retry_count=0
+	local retry_limit=3
+	local current_status=
+	local status=0
+
+	while true; do
+		current_status=$(saunafs_metadata_personality)
+		status=$?
+		if [[ $status == 0 && "${current_status}" == "${expected}" ]]; then
+			return $SAUNAFS_URAFT_OK
+		fi
+
+		if [[ ${retry_count} -ge ${retry_limit} ]]; then
+			log "BIG ERROR: metadata personality did not become '${expected}' after ${retry_limit} retries (last seen: '${current_status:-unknown}')"
+			return $SAUNAFS_URAFT_ERROR
+		fi
+
+		log "Metadata personality is '${current_status:-unknown}', expected '${expected}' - retrying in ${retry_delay}s (attempt $((retry_count + 1))/${retry_limit})"
+		sleep "${retry_delay}"
+		retry_delay=$((retry_delay * 2))
+		retry_count=$((retry_count + 1))
+	done
 }
 
 saunafs_demote() {
 	# drop ip
 	saunafs_drop_ip
+
+	# If sfsmaster already died uncleanly, clean stale metadata state before restarting it.
+	if ! pgrep -x "sfsmaster" > /dev/null; then
+		log "sfsmaster is not running, cleaning dirty metadata before demotion restart"
+		saunafs_cleanup_dirty_state || return $?
+	fi
+
 	# restart shadow
 	saunafs_master -o initial-personality=shadow restart
+
+	if ! wait_for_metadata_personality shadow; then
+		return $SAUNAFS_URAFT_ERROR
+	fi
 }
 
 saunafs_cleanup_dirty_state() {
@@ -365,6 +430,7 @@ print_help() {
 	echo "Available commands:"
 	echo "isalive"
 	echo "metadata-version"
+	echo "metadata-personality"
 	echo "quick-stop"
 	echo "promote"
 	echo "demote"
@@ -381,6 +447,7 @@ print_help() {
 case "$1" in
 	isalive)           saunafs_isalive;;
 	metadata-version)  saunafs_metadata_version $@;;
+	metadata-personality) saunafs_metadata_personality;;
 	quick-stop)        saunafs_quick_stop;;
 	promote)           saunafs_promote;;
 	demote)            saunafs_demote;;

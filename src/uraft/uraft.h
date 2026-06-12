@@ -60,14 +60,14 @@ protected:
 	///   - local "metadata dead" handling where VIP release / restarts are scheduled elsewhere.
 	///
 	/// - kDemoteIfPresident:
-	///   Step down in Raft and, if we were President, also call nodeDemote() so the local metadata
-	///   server is not left in master mode while we are no longer eligible to lead. Use this for
-	///   Raft-driven stepdowns, e.g.:
+	///   Step down in Raft and also call nodeDemote() so the local metadata server is not left in
+	///   master mode while we are no longer eligible to lead. Use this for Raft-driven stepdowns,
+	///   e.g.:
 	///   - observing a higher term in received RPCs (checkTerm),
 	///   - quorum loss while being President (heartbeat).
 	enum class StepDownPolicy : uint8_t {
 		kRaftOnly,          // Update Raft state and restart election timer
-		kDemoteIfPresident  // Additionally call nodeDemote() if we were president
+		kDemoteIfPresident  // Additionally call nodeDemote() on Raft-driven step-downs
 	};
 
 	static const int kMaxPacketLength = 1024;
@@ -158,6 +158,24 @@ public:
 	 */
 	virtual uint64_t nodeGetVersion();
 
+	/// @brief Allow derived classes to seed the startup Raft role before timers are armed.
+	///
+	/// The default implementation keeps the node as a follower. Controllers can override this to
+	/// inspect local metadata state and resume as an active leader after a restart.
+	virtual void bootstrapLeaderState();
+
+	/// @brief Restore any persisted Raft snapshot before bootstrap decisions are applied.
+	///
+	/// The default implementation does nothing. Controllers can override this to load a snapshot
+	/// from volatile storage and restore the in-memory Raft state after a restart.
+	virtual void restorePersistentState();
+
+	/// @brief Persist the current in-memory Raft snapshot.
+	///
+	/// The default implementation does nothing. Controllers can override this to continuously save
+	/// the current Raft state to volatile storage so a restart can resume from the latest snapshot.
+	virtual void persistRuntimeState();
+
 	/*! \brief Returns true when this node runs in elector mode, false otherwise.
 	 *
 	 * Electors do not have a local metadata server, so some version-related logic may need to
@@ -178,8 +196,8 @@ protected:
 	///
 	/// The caller chooses the StepDownPolicy:
 	/// - kRaftOnly: only updates Raft state and restarts the election timer.
-	/// - kDemoteIfPresident: if the node was President, also calls nodeDemote() so the local
-	///   metadata server is not left in master mode while stepping down in Raft.
+	/// - kDemoteIfPresident: also calls nodeDemote() so the local metadata server is not left in
+	///   master mode while stepping down in Raft.
 	///
 	/// @param policy StepDownPolicy used to control side effects.
 	/// @param newTerm Optional new term; if non-zero and greater than current, updates

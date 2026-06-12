@@ -15,6 +15,9 @@
 #include <boost/bind.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
+#include <chrono>
+#include <thread>
+
 using boost::asio::ip::udp;
 
 uRaft::uRaft(boost::asio::io_context &ios)
@@ -56,6 +59,15 @@ void uRaft::nodeLeader(int) {
 
 uint64_t uRaft::nodeGetVersion() {
 	return state_.data_version;
+}
+
+void uRaft::bootstrapLeaderState() {
+}
+
+void uRaft::restorePersistentState() {
+}
+
+void uRaft::persistRuntimeState() {
 }
 
 template<typename ConstBufferSequence>
@@ -106,7 +118,8 @@ void uRaft::checkTerm(int /*id*/, const RpcHeader &data) {
 }
 
 void uRaft::stepDownToFollower(StepDownPolicy policy, uint64_t newTerm) {
-	const bool wasPresident = state_.president;
+	const bool wasFollower = state_.type == kFollower;
+	const bool shouldDemote = policy == StepDownPolicy::kDemoteIfPresident && !wasFollower;
 
 	if (newTerm > 0U) { state_.current_term = newTerm; }
 
@@ -117,9 +130,10 @@ void uRaft::stepDownToFollower(StepDownPolicy policy, uint64_t newTerm) {
 
 	quorum_loss_streak_ = 0;
 
-	if (wasPresident && policy == StepDownPolicy::kDemoteIfPresident) { nodeDemote(); }
+	if (shouldDemote) { nodeDemote(); }
 
 	startElectionTimer();
+	persistRuntimeState();
 }
 
 /*! \brief Checks if a received packet is structurally valid.
@@ -169,8 +183,10 @@ void uRaft::signLoyaltyAgreement() {
 	loyalty_agreement_timer_.async_wait([this](const boost::system::error_code & error) {
 		if (!error) {
 			state_.loyalty_agreement = false;
+			persistRuntimeState();
 		}
 	});
+	persistRuntimeState();
 }
 
 void uRaft::startReceive() {
@@ -244,6 +260,8 @@ void uRaft::electionTimeout(const boost::system::error_code &error) {
 		       nodeToString(state_.id).c_str());
 		nodePromote();
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Called every heartbeat_period ms. */
@@ -279,6 +297,7 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 
 			if (quorum_loss_streak_ < opt_.quorum_loss_grace_heartbeats) {
 				sendHeartbeat();  // Heartbeat still needs to be sent
+				persistRuntimeState();
 				return;  // Quorum hysteresis: tolerate transient loss
 			}
 
@@ -308,6 +327,8 @@ void uRaft::heartbeat(const boost::system::error_code &error) {
 			}
 		}
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Append Entries packet. */
@@ -357,6 +378,7 @@ void uRaft::rpcAppend(int id, const RpcRequest &data) {
 
 	state_.type = kFollower;
 	startElectionTimer();
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Append Response packet. */
@@ -372,6 +394,8 @@ void uRaft::rpcAppendResponse(int id, const RpcResponse &data) {
 	node_[id].data_version = data.data_version;
 	node_[id].vote_granted = true;
 	node_[id].recv         = true;
+
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Request Vote packet. */
@@ -402,12 +426,19 @@ void uRaft::rpcReqVote(int id, const RpcRequest &data) {
 		state_.voted_for = id;
 		startElectionTimer();
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Handling of RPC Request Vote Response packet. */
 void uRaft::rpcReqVoteResponse(int id, const RpcResponse &data) {
 	// Stale response
 	if (data.term < state_.current_term) { return; }
+
+	// A vote response is proof that the peer is alive and reachable, so refresh its
+	// freshness timestamp immediately. This avoids treating a freshly elected quorum as
+	// stale until the first AppendEntries round-trip completes.
+	node_[id].heartbeat = std::max(node_[id].heartbeat, data.req_time);
 
 	if (state_.type != kCandidate) {
 		return;
@@ -422,6 +453,8 @@ void uRaft::rpcReqVoteResponse(int id, const RpcResponse &data) {
 		sendHeartbeat();
 		election_timer_.cancel();
 	}
+
+	persistRuntimeState();
 }
 
 /*! \brief Dispatching received packet to proper handler. */
@@ -493,19 +526,71 @@ void uRaft::init() {
 
 	state_.id = opt_.id;
 	if (state_.id < 0) {
-		state_.id = scanLocalInterfaces();
-	}
-	if (state_.id < 0) {
+#if defined(SAUNAFS_HAVE_GETIFADDRS)
+		unsigned detect_wait_seconds = 0;
+
+		while ((state_.id = scanLocalInterfaces()) < 0) {
+			if (detect_wait_seconds == 0 || detect_wait_seconds % 30 == 0) {
+				syslog(LOG_WARNING,
+				       "Waiting for local uRaft node address before auto-detecting node id");
+			}
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+			++detect_wait_seconds;
+		}
+		syslog(LOG_NOTICE, "Detected local uRaft node id %d after %u seconds", state_.id,
+		       detect_wait_seconds);
+#else
 		throw std::runtime_error("Invalid id");
+#endif
 	}
 
 	opt_.quorum = opt_.server.size() / 2 + 1;
 	state_.local_time   = opt_.election_timeout_min / opt_.heartbeat_period + 1;
 
-	socket_.open(boost::asio::ip::udp::v4());
-	socket_.bind(node_[state_.id].addr);
+	const std::string bind_target = nodeToString(state_.id);
+	unsigned          wait_seconds = 0;
+	const auto        address_not_available =
+	    boost::system::errc::make_error_condition(boost::system::errc::address_not_available);
 
-	startElectionTimer();
+	while (true) {
+		boost::system::error_code open_error;
+		socket_.open(boost::asio::ip::udp::v4(), open_error);
+		if (open_error) {
+			throw std::runtime_error("Failed to open uRaft UDP socket: " + open_error.message());
+		}
+
+		boost::system::error_code bind_error;
+		socket_.bind(node_[state_.id].addr, bind_error);
+		if (!bind_error) {
+			if (wait_seconds > 0) {
+				syslog(LOG_NOTICE,
+				       "Local uRaft address %s became available after %u seconds",
+				       bind_target.c_str(), wait_seconds);
+			}
+			break;
+		}
+
+		socket_.close();
+
+			if (bind_error != address_not_available) {
+			throw std::runtime_error("Failed to bind uRaft UDP socket to '" + bind_target +
+			                         "': " + bind_error.message());
+		}
+
+		if (wait_seconds == 0 || wait_seconds % 30 == 0) {
+			syslog(LOG_WARNING,
+			       "Waiting for local uRaft address %s before binding UDP socket",
+			       bind_target.c_str());
+		}
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		++wait_seconds;
+	}
+
+	restorePersistentState();
+	bootstrapLeaderState();
+	if (state_.type != kLeader) {
+		startElectionTimer();
+	}
 	startHearbeatTimer();
 	startReceive();
 
@@ -513,6 +598,8 @@ void uRaft::init() {
 	// It's possible that before restart we have signed agreement with a leader.
 	// Now we wait for this agreement to expire.
 	signLoyaltyAgreement();
+
+	persistRuntimeState();
 }
 
 void uRaft::demoteLeader() {

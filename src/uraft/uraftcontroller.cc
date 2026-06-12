@@ -4,7 +4,14 @@
 #include "uraft.h"
 #include "uraftcontroller.h"
 
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <limits>
 #include <poll.h>
+#include <sys/stat.h>
 #include <sys/syslog.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -24,6 +31,28 @@ constexpr int kCommandTimeoutMs = 5000;  ///< Default command timeout in millise
 // Delay used both as a grace period for transient failures and as the retry interval while the
 // metadata server remains dead (single knob).
 constexpr int kDeadRecoveryDelayMs = 2000;
+
+namespace {
+
+constexpr char kRuntimeStateDirectory[] = "/run/saunafs-uraft";
+constexpr char kRuntimeStatePath[] = "/run/saunafs-uraft/quorum.state";
+constexpr char kRuntimeStateTmpPath[] = "/run/saunafs-uraft/quorum.state.tmp";
+constexpr char kRuntimeStateMagic[] = "URAFTSN1";
+constexpr uint32_t kRuntimeStateVersion = 1;
+
+template<typename T>
+bool writeField(std::ostream &out, const T &value) {
+	out.write(reinterpret_cast<const char *>(&value), sizeof(T));
+	return static_cast<bool>(out);
+}
+
+template<typename T>
+bool readField(std::istream &in, T &value) {
+	in.read(reinterpret_cast<char *>(&value), sizeof(T));
+	return static_cast<bool>(in);
+}
+
+}  // namespace
 
 uRaftController::uRaftController(boost::asio::io_context &ios)
 	: uRaftStatus(ios),
@@ -53,7 +82,8 @@ uRaftController::~uRaftController() {
 void uRaftController::init() {
 	uRaftStatus::init();
 
-	set_block_promotion(true);
+	node_alive_ = !opt_.elector_mode;
+	set_block_promotion(state_.type != kLeader);
 	if (opt_.elector_mode) {
 		return;
 	}
@@ -72,6 +102,254 @@ void uRaftController::init() {
 void uRaftController::set_options(const uRaftController::Options &opt) {
 	uRaftStatus::set_options(opt);
 	opt_ = opt;
+}
+
+void uRaftController::bootstrapLeaderState() {
+	if (opt_.elector_mode) {
+		return;
+	}
+
+	std::vector<std::string> personality_cmd = {"saunafs-uraft-helper", "metadata-personality"};
+	std::string personality;
+
+	if (!runCommand(personality_cmd, personality, kCommandTimeoutMs)) {
+		syslog(LOG_WARNING, "Unable to query local metadata personality at startup - booting as follower");
+		state_.type = kFollower;
+		state_.president = false;
+		return;
+	}
+
+	if (personality != "master") {
+		if (personality.empty()) {
+			syslog(LOG_NOTICE, "Local metadata personality is unavailable - booting as follower");
+		} else {
+			syslog(LOG_NOTICE, "Local metadata personality is '%s' - booting as follower",
+			       personality.c_str());
+		}
+		state_.type = kFollower;
+		state_.president = false;
+		if (state_.leader_id == state_.id) {
+			state_.leader_id = -1;
+		}
+		return;
+	}
+
+	std::vector<std::string> version_cmd = {"saunafs-uraft-helper", "metadata-version"};
+	std::string version;
+
+	if (runCommand(version_cmd, version, kCommandTimeoutMs)) {
+		try {
+			state_.data_version = boost::lexical_cast<uint64_t>(version.c_str());
+		} catch (...) {
+			syslog(LOG_WARNING, "Invalid metadata version '%s' during leader bootstrap - using 0",
+			       version.c_str());
+			state_.data_version = 0;
+		}
+	} else {
+		syslog(LOG_WARNING, "Unable to query metadata version during leader bootstrap - using 0");
+		state_.data_version = 0;
+	}
+
+	state_.type = kLeader;
+	state_.president = true;
+	state_.leader_id = state_.id;
+	state_.voted_for = state_.id;
+	node_[state_.id].vote_granted = true;
+	node_[state_.id].recv = true;
+	node_[state_.id].heartbeat = state_.local_time;
+	node_[state_.id].data_version = state_.data_version;
+	node_alive_ = true;
+	set_block_promotion(false);
+
+	syslog(LOG_NOTICE,
+	       "Local sfsmaster is master - bootstrapping uRaft as active Leader (version=%lu)",
+	       state_.data_version);
+
+	startFloatingIpManager();
+}
+
+void uRaftController::restorePersistentState() {
+	std::ifstream state_file(kRuntimeStatePath, std::ios::binary);
+	if (!state_file) {
+		return;
+	}
+
+	char magic[sizeof(kRuntimeStateMagic) - 1];
+	uint32_t version = 0;
+	uint32_t node_count = 0;
+	int32_t node_id = -1;
+	uint32_t heartbeat_period = 0;
+	int64_t snapshot_ns = 0;
+	uint64_t current_term = 0;
+	int32_t voted_for = -1;
+	int32_t leader_id = -1;
+	uint32_t state_type = 0;
+	uint64_t local_time = 0;
+	uint64_t data_version = 0;
+	uint8_t president = 0;
+	uint8_t loyalty_agreement = 0;
+	int32_t quorum_loss_streak = 0;
+
+	if (!state_file.read(magic, sizeof(magic))) {
+		return;
+	}
+	if (std::memcmp(magic, kRuntimeStateMagic, sizeof(magic)) != 0) {
+		syslog(LOG_WARNING, "Ignoring invalid uRaft runtime snapshot (bad magic)");
+		return;
+	}
+	if (!readField(state_file, version) || version != kRuntimeStateVersion) {
+		syslog(LOG_WARNING, "Ignoring invalid uRaft runtime snapshot (bad version)");
+		return;
+	}
+	if (!readField(state_file, node_count) ||
+	    !readField(state_file, node_id) ||
+	    !readField(state_file, heartbeat_period) ||
+	    !readField(state_file, snapshot_ns) ||
+	    !readField(state_file, current_term) ||
+	    !readField(state_file, voted_for) ||
+	    !readField(state_file, leader_id) ||
+	    !readField(state_file, state_type) ||
+	    !readField(state_file, local_time) ||
+	    !readField(state_file, data_version) ||
+	    !readField(state_file, president) ||
+	    !readField(state_file, loyalty_agreement) ||
+	    !readField(state_file, quorum_loss_streak)) {
+		syslog(LOG_WARNING, "Ignoring truncated uRaft runtime snapshot");
+		return;
+	}
+
+	if (node_count != node_.size() || node_id != state_.id || heartbeat_period != static_cast<uint32_t>(opt_.heartbeat_period)) {
+		syslog(LOG_WARNING,
+		       "Ignoring uRaft runtime snapshot due to configuration mismatch (nodes=%u/%zu id=%d/%d heartbeat=%u/%d)",
+		       node_count, node_.size(), node_id, state_.id, heartbeat_period, opt_.heartbeat_period);
+		return;
+	}
+
+	for (size_t i = 0; i < node_.size(); ++i) {
+		uint64_t node_data_version = 0;
+		uint64_t node_heartbeat = 0;
+		uint8_t node_vote_granted = 0;
+		uint8_t node_recv = 0;
+
+		if (!readField(state_file, node_data_version) ||
+		    !readField(state_file, node_heartbeat) ||
+		    !readField(state_file, node_vote_granted) ||
+		    !readField(state_file, node_recv)) {
+			syslog(LOG_WARNING, "Ignoring truncated uRaft runtime snapshot node block");
+			return;
+		}
+
+		node_[i].data_version = node_data_version;
+		node_[i].heartbeat = node_heartbeat;
+		node_[i].vote_granted = node_vote_granted != 0;
+		node_[i].recv = node_recv != 0;
+	}
+
+	if (state_type < static_cast<uint32_t>(kStateLast)) {
+		state_.type = static_cast<int>(state_type);
+	}
+
+	state_.current_term = current_term;
+	state_.voted_for = voted_for;
+	state_.leader_id = leader_id;
+	state_.local_time = local_time;
+	state_.data_version = data_version;
+	state_.president = president != 0;
+	state_.loyalty_agreement = loyalty_agreement != 0;
+	quorum_loss_streak_ = quorum_loss_streak;
+
+	const auto now = std::chrono::steady_clock::now().time_since_epoch();
+	const auto snapshot_time = std::chrono::nanoseconds(snapshot_ns);
+	if (snapshot_ns > 0 && now > snapshot_time) {
+		const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - snapshot_time).count();
+		if (elapsed > 0 && opt_.heartbeat_period > 0) {
+			const uint64_t elapsed_heartbeats = static_cast<uint64_t>(elapsed / opt_.heartbeat_period);
+			if (elapsed_heartbeats > 0) {
+				const uint64_t max_value = std::numeric_limits<uint64_t>::max();
+				if (max_value - state_.local_time < elapsed_heartbeats) {
+					state_.local_time = max_value;
+				} else {
+					state_.local_time += elapsed_heartbeats;
+				}
+			}
+		}
+	}
+
+	syslog(LOG_NOTICE, "Restored uRaft runtime snapshot (term=%lu, leader=%d, voted_for=%d, local_time=%lu)",
+	       state_.current_term, state_.leader_id, state_.voted_for, state_.local_time);
+}
+
+void uRaftController::persistRuntimeState() {
+	if (mkdir(kRuntimeStateDirectory, 0755) < 0 && errno != EEXIST) {
+		syslog(LOG_ERR, "Unable to create runtime state directory %s: %s",
+		       kRuntimeStateDirectory, strerror(errno));
+		return;
+	}
+
+	std::ofstream state_file(kRuntimeStateTmpPath, std::ios::binary | std::ios::trunc);
+	if (!state_file) {
+		syslog(LOG_ERR, "Unable to open runtime state snapshot %s for writing", kRuntimeStateTmpPath);
+		return;
+	}
+
+	const uint32_t version = kRuntimeStateVersion;
+	const uint32_t node_count = static_cast<uint32_t>(node_.size());
+	const int32_t node_id = static_cast<int32_t>(state_.id);
+	const uint32_t heartbeat_period = static_cast<uint32_t>(opt_.heartbeat_period);
+	const int64_t snapshot_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+	    std::chrono::steady_clock::now().time_since_epoch()).count();
+	const uint32_t state_type = static_cast<uint32_t>(state_.type);
+	const uint8_t president = state_.president ? 1U : 0U;
+	const uint8_t loyalty_agreement = state_.loyalty_agreement ? 1U : 0U;
+
+	if (!state_file.write(kRuntimeStateMagic, sizeof(kRuntimeStateMagic) - 1) ||
+	    !writeField(state_file, version) ||
+	    !writeField(state_file, node_count) ||
+	    !writeField(state_file, node_id) ||
+	    !writeField(state_file, heartbeat_period) ||
+	    !writeField(state_file, snapshot_ns) ||
+	    !writeField(state_file, state_.current_term) ||
+	    !writeField(state_file, state_.voted_for) ||
+	    !writeField(state_file, state_.leader_id) ||
+	    !writeField(state_file, state_type) ||
+	    !writeField(state_file, state_.local_time) ||
+	    !writeField(state_file, state_.data_version) ||
+	    !writeField(state_file, president) ||
+	    !writeField(state_file, loyalty_agreement) ||
+	    !writeField(state_file, quorum_loss_streak_)) {
+		syslog(LOG_ERR, "Failed to write uRaft runtime snapshot header");
+		state_file.close();
+		::unlink(kRuntimeStateTmpPath);
+		return;
+	}
+
+	for (const auto &node : node_) {
+		const uint8_t vote_granted = node.vote_granted ? 1U : 0U;
+		const uint8_t recv = node.recv ? 1U : 0U;
+		if (!writeField(state_file, node.data_version) ||
+		    !writeField(state_file, node.heartbeat) ||
+		    !writeField(state_file, vote_granted) ||
+		    !writeField(state_file, recv)) {
+			syslog(LOG_ERR, "Failed to write uRaft runtime snapshot node state");
+			state_file.close();
+			::unlink(kRuntimeStateTmpPath);
+			return;
+		}
+	}
+
+	state_file.flush();
+	if (!state_file) {
+		syslog(LOG_ERR, "Failed to flush uRaft runtime snapshot");
+		state_file.close();
+		::unlink(kRuntimeStateTmpPath);
+		return;
+	}
+	state_file.close();
+
+	if (std::rename(kRuntimeStateTmpPath, kRuntimeStatePath) != 0) {
+		syslog(LOG_ERR, "Failed to publish uRaft runtime snapshot: %s", strerror(errno));
+		::unlink(kRuntimeStateTmpPath);
+	}
 }
 
 void uRaftController::nodePromote() {
@@ -130,6 +408,10 @@ void uRaftController::nodeDemote() {
 	setSlowCommandTimeout(opt_.demote_timeout);
 	if (runSlowCommand("leil-uraft-helper demote")) {
 		command_type_ = kCmdDemote;
+	} else {
+		syslog(LOG_ERR, "Unable to launch demotion helper");
+		syslog(LOG_WARNING, "Scheduling demotion retry");
+		scheduleDeadRecovery(false);
 	}
 }
 
@@ -185,7 +467,10 @@ void uRaftController::checkCommandStatus(const boost::system::error_code &error)
 			if (commandSucceeded) {
 				syslog(LOG_NOTICE, "Metadata server switch to slave mode succeeded");
 			} else {
-				syslog(LOG_ERR, "Demotion failed with exit code: %d", WEXITSTATUS(status));
+				syslog(LOG_ERR, "Demotion failed with exit code: %d",
+				       WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+				syslog(LOG_WARNING, "Scheduling demotion retry");
+				scheduleDeadRecovery(false);
 			}
 
 			command_type_ = kCmdNone;
@@ -282,7 +567,9 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 		if (is_alive != node_alive_) {
 			if (is_alive) {
 				syslog(LOG_NOTICE, "Metadata server is alive");
-				cancelDeadRecovery();
+				if (dead_recovery_pending_ && dead_recovery_requires_dead_) {
+					cancelDeadRecovery();
+				}
 			} else {
 				syslog(LOG_NOTICE, "Metadata server is dead");
 				// Controller-owned dead handling:
@@ -290,7 +577,9 @@ void uRaftController::checkNodeStatus(const boost::system::error_code &error) {
 				// 2) Run the helper's 'dead' command to release floating IPs without restarting sfsmaster.
 				stepDownToFollower(StepDownPolicy::kRaftOnly);
 				startDeadMetadataHandler();
-				scheduleDeadRecovery();
+				// Keep retrying the follow-up demotion even if sfsmaster starts answering again.
+				// Raft already stepped down, so the local metadata role still needs to catch up.
+				scheduleDeadRecovery(false);
 			}
 			node_alive_ = is_alive;
 		}
@@ -321,20 +610,27 @@ void uRaftController::startDeadMetadataHandler() {
 
 void uRaftController::cancelDeadRecovery() {
 	dead_recovery_pending_ = false;
+	dead_recovery_requires_dead_ = true;
 	dead_recovery_timer_.cancel();
 }
 
-void uRaftController::scheduleDeadRecovery() {
+void uRaftController::scheduleDeadRecovery(bool requires_dead) {
 	// Idempotent: don't stack multiple recovery timers
-	if (dead_recovery_pending_) { return; }
+	if (dead_recovery_pending_) {
+		dead_recovery_requires_dead_ = dead_recovery_requires_dead_ && requires_dead;
+		return;
+	}
 	dead_recovery_pending_ = true;
+	dead_recovery_requires_dead_ = requires_dead;
 
 	dead_recovery_timer_.expires_after(std::chrono::milliseconds(kDeadRecoveryDelayMs));
 	dead_recovery_timer_.async_wait([this](const boost::system::error_code &ec) {
 		if (ec) { return; }
 
-		// If metadata recovered, stop dead recovery process
-		if (node_alive_) {
+		const bool requires_dead = dead_recovery_requires_dead_;
+
+		// If metadata recovered and we only care about dead metadata, stop recovery.
+		if (requires_dead && node_alive_) {
 			cancelDeadRecovery();
 			return;
 		}
@@ -342,13 +638,14 @@ void uRaftController::scheduleDeadRecovery() {
 		// If another command is running, retry after the same delay
 		if (command_pid_ >= 0 || command_type_ != kCmdNone) {
 			cancelDeadRecovery();
-			scheduleDeadRecovery();
+			scheduleDeadRecovery(requires_dead);
 			return;
 		}
 
 		// Still dead and safe to act: restart shadow via demote path
 		syslog(LOG_WARNING, "Metadata still dead: restarting shadow via demote");
 		dead_recovery_pending_ = false;
+		dead_recovery_requires_dead_ = true;
 		nodeDemote();
 	});
 }

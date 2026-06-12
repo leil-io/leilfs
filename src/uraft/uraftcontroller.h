@@ -56,6 +56,15 @@ public:
 	//! called by uRaft when it needs to know metadata version.
 	uint64_t nodeGetVersion() override;
 
+	//! called by uRaft during startup to seed the initial Raft role.
+	void bootstrapLeaderState() override;
+
+	//! called by uRaft during startup to restore persisted runtime state.
+	void restorePersistentState() override;
+
+	//! called by uRaft when it wants to save the current runtime state.
+	void persistRuntimeState() override;
+
 	//! Returns true when this node runs in elector mode.
 	bool isElectorNode() const override;
 
@@ -85,13 +94,13 @@ private:
 	/// so the VIP is immediately released while follow-up recovery is scheduled separately.
 	void startDeadMetadataHandler();
 
-	/// @brief Schedule a delayed dead recovery attempt (restart shadow).
+	/// @brief Schedule a delayed recovery attempt.
 	///
-	/// The recovery is implemented as a single-delay retry loop: after the timer fires, it
-	/// either performs the recovery action if safe (no other command running), or reschedules
-	/// itself with the same delay. In case the metadata is alive again and the demotion is not
-	/// performed, the timer is canceled.
-	void scheduleDeadRecovery();
+	/// When `requires_dead` is true, the retry is only meaningful while the metadata process
+	/// stays down. When false, the retry keeps trying to demote even if the process is still
+	/// running, which is needed when a demotion command fails on a live master or when a
+	/// dead-path Raft step-down already happened and the follow-up demotion must still complete.
+	void scheduleDeadRecovery(bool requires_dead = true);
 
 	/// @brief Cancel pending dead recovery attempts.
 	///
@@ -165,10 +174,14 @@ protected:
 	/// @brief True while promotion backoff is active (promotions are temporarily blocked).
 	bool promotion_backoff_active_ = false;
 
-	/// @brief Timer used to schedule delayed recovery after detecting dead metadata.
+	/// @brief Timer used to schedule delayed recovery after detecting dead metadata or a failed
+	/// demotion command.
 	boost::asio::steady_timer dead_recovery_timer_;
-	/// @brief True while a dead recovery timer is scheduled (prevents stacking retries).
+	/// @brief True while a recovery timer is scheduled (prevents stacking retries).
 	bool dead_recovery_pending_ = false;
+	/// @brief True when the pending recovery should only run while the metadata is dead.
+	/// This is kept false for demote retries so they continue even if the process is alive.
+	bool dead_recovery_requires_dead_ = true;
 
 	pid_t                       command_pid_;   /// Last run command pid.
 	int                         command_type_;  /// Last run command type.

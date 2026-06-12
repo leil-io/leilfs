@@ -37,6 +37,8 @@ void uRaftStatus::init() {
 	boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), opt_.status_port);
 
 	acceptor_.open(endpoint.protocol());
+	// Allow quick restarts even if previous status queries left the port in TIME_WAIT.
+	acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
 	acceptor_.bind(endpoint);
 	acceptor_.listen(10);
 
