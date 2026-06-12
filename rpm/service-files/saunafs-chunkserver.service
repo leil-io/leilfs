@@ -1,7 +1,7 @@
 [Unit]
-Description=SaunaFS chunkserver daemon
-Documentation=man:sfschunkserver
-After=network-online.target network.target
+Description=LeilFS chunkserver daemon
+Documentation=man:sfschunkserver(8) man:sfschunkserver.cfg(5) man:sfshdd.cfg(5)
+After=network-online.target
 
 [Service]
 Type=forking

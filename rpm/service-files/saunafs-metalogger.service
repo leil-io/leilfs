@@ -1,7 +1,7 @@
 [Unit]
-Description=SaunaFS metalogger server daemon
-Documentation=man:sfsmetalogger
-After=network-online.target network.target
+Description=LeilFS metalogger server daemon
+Documentation=man:sfsmetalogger(8) man:sfsmetalogger.cfg(5)
+After=network-online.target
 
 [Service]
 Type=forking

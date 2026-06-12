@@ -1,0 +1,18 @@
+Filters = [
+    'spelling-error.* \b(sfstools|metarestore|saunafs)\b',
+
+    'non-standard-uid /var/lib/saunafs',
+    'non-standard-gid /var/lib/saunafs',
+
+    # Suppress warning because it is hard to test (possible in CI)
+    # Some tests run as root and modify the system
+    'no-%check-section',
+
+    # Supposed to be non-readable
+    'non-readable /etc/sudoers.d/leilfs-uraft 440',
+
+    # False positive, saunafs-user is a package for creating
+    # user and group saunafs
+    'no-binary',
+    'only-non-binary-in-usr-lib'
+]

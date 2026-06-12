@@ -1,0 +1,3 @@
+# Allow saunafs user to set floating ip
+saunafs    ALL=NOPASSWD:/sbin/ip
+Defaults !requiretty
