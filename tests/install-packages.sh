@@ -73,6 +73,7 @@ apt_packages=(
 	debhelper
 	devscripts
 	build-essential
+	ibverbs-utils       # ibv_devices / ibv_devinfo (NFS/RDMA Ganesha test)
 	iproute2
 	iozone3             # required by Ganesha -> iozone suite
 	libblkid-dev
@@ -126,6 +127,7 @@ apt_packages=(
 	libnsl-dev
 	libsqlite3-dev
 	nfs-common
+	rdma-core           # iwpmd + librdmacm runtime (NFS/RDMA Ganesha test)
 	software-properties-common
 )
 noble_packages=(
@@ -154,12 +156,14 @@ dnf_packages=(
 	libblkid-devel
 	libcutl-devel
 	libdb-devel
+	libibverbs-utils    # ibv_devices / ibv_devinfo (NFS/RDMA Ganesha test)
 	libnsl
 	libtirpc-devel
 	netcat
 	pam-devel
 	pkgconfig
 	python3-virtualenv
+	rdma-core           # iwpmd + librdmacm runtime (NFS/RDMA Ganesha test)
 	rpm-build
 	spdlog-devel
 	systemd-devel

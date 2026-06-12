@@ -176,6 +176,18 @@ jobs:
               run: |
                   "${GITHUB_WORKSPACE}/build/src/unittests/unittests" --gtest_color=yes
 
+            - name: Enable soft-RDMA kernel modules
+              run: |
+                  # Needed by RDMA tests. SoftiWARP (siw) / SoftRoCE (rdma_rxe) usually ship
+                  # in linux-modules-extra.
+                  sudo apt-get install -y "linux-modules-extra-$(uname -r)" || true
+                  sudo modprobe siw 2>/dev/null || sudo modprobe rdma_rxe 2>/dev/null || true
+                  if modinfo siw >/dev/null 2>&1 || modinfo rdma_rxe >/dev/null 2>&1; then
+                      echo "soft-RDMA module available; RDMA test will run"
+                  else
+                      echo "soft-RDMA module NOT available on this kernel; RDMA test will skip"
+                  fi
+
             - name: Run Ganesha suite
               run: |
                   sudo chmod o+xr /home/runner/
