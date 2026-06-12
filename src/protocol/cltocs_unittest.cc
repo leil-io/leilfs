@@ -74,6 +74,32 @@ TEST(CltocsCommunicationTests, WriteInit) {
 	SAUNAFS_VERIFY_INOUT_PAIR(chain);
 }
 
+TEST(CltocsCommunicationTests, WriteInitWithWriteFlush) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId,  0x987654321, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 0x01234567, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_7, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(bool, expectWriteFlush, true, false);
+	SAUNAFS_DEFINE_INOUT_VECTOR_PAIR(ChunkTypeWithAddress, chain) = {
+			ChunkTypeWithAddress(NetworkAddress(0x0A000001, 12388), slice_traits::standard::ChunkPartType(), kStdVersion),
+			ChunkTypeWithAddress(NetworkAddress(0x0A000002, 12389), slice_traits::standard::ChunkPartType(), kStdVersion),
+	};
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cltocs::writeInit::serialize(buffer,
+			chunkIdIn, chunkVersionIn, chunkTypeIn, expectWriteFlushIn, chainIn));
+
+	verifyHeader(buffer, SAU_CLTOCS_WRITE_INIT);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cltocs::writeInit::deserialize(buffer.data(), buffer.size(),
+			chunkIdOut, chunkVersionOut, chunkTypeOut, expectWriteFlushOut, chainOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(expectWriteFlush);
+	SAUNAFS_VERIFY_INOUT_PAIR(chain);
+}
+
 TEST(CltocsCommunicationTests, WriteData) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId,  0x987654321, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, writeId,  0x12345,     0);
@@ -98,6 +124,19 @@ TEST(CltocsCommunicationTests, WriteData) {
 	SAUNAFS_VERIFY_INOUT_PAIR(offset);
 	SAUNAFS_VERIFY_INOUT_PAIR(size);
 	SAUNAFS_VERIFY_INOUT_PAIR(crc);
+}
+
+TEST(CltocsCommunicationTests, WriteFlush) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0x987654321, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cltocs::writeFlush::serialize(buffer, chunkIdIn));
+
+	verifyHeader(buffer, SAU_CLTOCS_WRITE_FLUSH);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cltocs::writeFlush::deserialize(buffer.data(), buffer.size(), chunkIdOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
 }
 
 TEST(CltocsCommunicationTests, WriteEnd) {

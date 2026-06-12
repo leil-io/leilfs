@@ -14,8 +14,12 @@ expect_equals "false" "$(cat ${info[mount0]}/.saunafs_tweaks | grep -i directio 
 expect_equals "true" "$(cat ${info[mount1]}/.saunafs_tweaks | grep -i directio | awk '{print $2}')"
 
 # Modify the options on the fly from tweaks file
+echo "WriteWindowSize=50" | sudo tee ${info[mount0]}/.saunafs_tweaks
+echo "UseWriteFlushPacket=true" | sudo tee ${info[mount0]}/.saunafs_tweaks
 echo "DirectIO=true" | sudo tee ${info[mount0]}/.saunafs_tweaks
 echo "DirectIO=false" | sudo tee ${info[mount1]}/.saunafs_tweaks
 
+expect_equals "50" "$(cat ${info[mount0]}/.saunafs_tweaks | grep -i WriteWindowSize | awk '{print $2}')"
+expect_equals "true" "$(cat ${info[mount0]}/.saunafs_tweaks | grep -i UseWriteFlushPacket | awk '{print $2}')"
 expect_equals "true" "$(cat ${info[mount0]}/.saunafs_tweaks | grep -i directio | awk '{print $2}')"
 expect_equals "false" "$(cat ${info[mount1]}/.saunafs_tweaks | grep -i directio | awk '{print $2}')"

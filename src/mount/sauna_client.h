@@ -105,6 +105,7 @@ struct FsInitParams {
 	static constexpr unsigned kDefaultWriteWaveTo = 50;
 #endif
 	static constexpr unsigned kDefaultMaxChunksWrittenInParallelPerInode = 0;
+	static constexpr bool     kDefaultUseWriteFlushPacket = false;
 	static constexpr unsigned kDefaultWriteCacheSize = 128;
 	static constexpr unsigned kDefaultCachePerInodePercentage = 100;
 	static constexpr unsigned kDefaultWriteWorkers = 10;
@@ -179,6 +180,7 @@ struct FsInitParams {
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             max_chunks_written_in_parallel_per_inode(kDefaultMaxChunksWrittenInParallelPerInode),
+	             use_write_flush_packet(kDefaultUseWriteFlushPacket),
 	             statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -229,6 +231,7 @@ struct FsInitParams {
 	             malloc_trim_period(kDefaultMallocTrimPeriod),
 #endif
 	             max_chunks_written_in_parallel_per_inode(kDefaultMaxChunksWrittenInParallelPerInode),
+	             use_write_flush_packet(kDefaultUseWriteFlushPacket),
 	             statfs_cache_timeout(kDefaultStatfsCacheTo),
 	             use_quota_in_volume_size(kDefaultUseQuotaInVolumeSize),
 	             max_wait_retry_time(kDefaultMaxWaitRetryTime),
@@ -299,6 +302,7 @@ struct FsInitParams {
 #endif
 
 	unsigned max_chunks_written_in_parallel_per_inode;
+	bool use_write_flush_packet;
 	unsigned statfs_cache_timeout;
 	bool use_quota_in_volume_size;
 	unsigned max_wait_retry_time;

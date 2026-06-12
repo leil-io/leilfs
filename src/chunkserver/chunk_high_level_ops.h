@@ -211,6 +211,18 @@ protected:
 };
 
 /// @brief High-level operation for writing data to a chunk.
+///
+/// Contains the core write-path logic and state for all write variants. In its default form it
+/// implements the standard, "eager" write path: write jobs are started as soon as a buffer is
+/// ready (no client-side WRITE_FLUSH is expected).
+///
+/// One concrete derivation exists:
+/// - `WriteHighLevelOpExpectFlush`: batched mode. Write jobs are deferred until the client sends
+///   an explicit WRITE_FLUSH packet, at which point `flushData()` releases a batch of buffered
+///   input packets for writing.
+///
+/// The differentiating behavior is expressed through a small set of virtual hooks (see the
+/// `protected` section). Default implementations match the no-flush (eager) variant.
 class WriteHighLevelOp : public HighLevelOp {
 public:
 	/// @brief Default initial number of blocks for the next input buffer, which can be adjusted
@@ -222,6 +234,8 @@ public:
 	      maxBlocksPerHddWriteJob_(maxBlocksPerHddWriteJob),
 	      nextInputBufferBlockCount_(
 	          std::min(kDefaultInitialNextInputBufferBlockCount, maxBlocksPerHddWriteJob)) {}
+
+	virtual ~WriteHighLevelOp() = default;
 
 	/// Sets up and starts the write high level operation.
 	/// Enqueues a job_open for the chunk.
@@ -291,11 +305,66 @@ public:
 	/// the write operation and the amount of write buffering blocks available.
 	/// Does not work if the operation is sealed, in delayed close, the open write job is still
 	/// being processed or the chunk is not locked for writing.
-	/// Does not violates the order of replies for the write data blocks received from the client,
+	/// Does not violate the order of replies for the write data blocks received from the client,
 	/// neither the amount of write buffering blocks available.
-	void tryInstantReply();
+	/// @param fromFlushDataCall Indicates if the function is called from flushData.
+	void tryInstantReply(bool fromFlushDataCall = false);
+
+	/// Makes the current input buffer available for write jobs. Starts write jobs if not running
+	/// one or schedules the write job to run ASAP.
+	/// Default (no-flush) behavior logs a warning and drains the current input buffer
+	/// opportunistically. The expect-flush variant overrides this with the real batching logic.
+	virtual void flushData();
 
 protected:
+	// ---------------------------------------------------------------------------
+	// Differentiating hooks. Defaults implement the no-flush ("eager") behavior.
+	// Implementations live in chunk_high_level_ops.cc, paired with the matching
+	// `WriteHighLevelOpExpectFlush` overrides for easy side-by-side comparison.
+	// ---------------------------------------------------------------------------
+
+	/// Whether a write job may be started right now. Encapsulates the full precondition set used
+	/// by `writeCurrentInputBuffer()` and `continueWritingIfPossible()` to decide whether to launch the
+	/// next job from queued buffers: there must be at least one queued buffer in
+	/// `writeDataBuffers_` and no write job currently in flight. The expect-flush variant adds the
+	/// extra requirement that a flush trigger has been received (unless batching has been turned
+	/// off after a delayed close).
+	virtual bool canStartWriteJobNow() const;
+
+	/// Populates `inputBuffers` and sets `enqueuedInputBuffers_` for the next write job.
+	/// Default takes only the first front buffer (single-buffer write).
+	virtual void collectInputBuffersForNextJob(std::vector<InputBuffer *> &inputBuffers);
+
+	/// Whether `processWriteDataBlock()` should freeze the current input buffer onto
+	/// `writeDataBuffers_` (and possibly start a write job) immediately after appending the just-
+	/// received block. Encapsulates the full precondition set: there must be a current input
+	/// buffer (`inputBuffer_ != nullptr`) that is not still being updated. Default (eager) policy:
+	/// freeze as soon as the buffer is full, or whenever there is no in-flight write job that
+	/// would naturally drain it later.
+	virtual bool shouldWriteCurrentInputBuffer() const;
+
+	/// Whether `tryInstantReply()` should defer (no-op) the reply. Used by the expect-flush
+	/// variant to delay instant replies until an explicit `flushData()` trigger.
+	virtual bool shouldDeferInstantReply(bool fromFlushDataCall) const;
+
+	/// Hook called from `delayedClose()` right before re-evaluating whether to start a write job.
+	/// Derived classes use this to switch off flush batching and fall back to eager behavior, so
+	/// that any remaining buffered data is drained one-by-one.
+	virtual void onSwitchingToEagerWriteOnDelayedClose();
+
+	/// Hook called from `cleanup()` to reset any flush-batching state.
+	virtual void resetFlushBatchingState();
+
+	/// Moves the current `inputBuffer_` onto `writeDataBuffers_`. Unlike `writeCurrentInputBuffer()`,
+	/// this does NOT start a new write job; callers are responsible for triggering one if
+	/// appropriate. Derived classes may override to perform additional bookkeeping (e.g. updating
+	/// flush-batching counters).
+	virtual void freezeCurrentInputBuffer();
+
+	// ---------------------------------------------------------------------------
+	// Shared protected methods.
+	// ---------------------------------------------------------------------------
+
 	/// Decreases the pending write jobs in the parent ChunkserverEntry to check and apply closed on
 	/// parent. This is used while in delayed close mode whenever a callback is processed.
 	void decreasePendingWriteJobsToCheckAndApplyClosedOnParent();
@@ -305,6 +374,9 @@ protected:
 
 	/// Sets that no write job is being processed.
 	void setNoWriteJobBeingProcessed();
+
+	/// Checks whether the current input buffer can be frozen
+	bool isInputBufferFreezable() const;
 
 	/// Starts an open write job for the current chunk.
 	void startOpenWriteJob();
@@ -319,7 +391,7 @@ protected:
 	/// Preserves the inputPacket buffer into writePackets (to avoid copying it).
 	/// Creates a new write if no running write job.
 	/// Used for write operations, where the data comes from the network.
-	void writeCurrentInputPacket();
+	void writeCurrentInputBuffer();
 
 	/// Checks and processes the next packet in the input buffer.
 	void continueWritingIfPossible();
@@ -332,7 +404,11 @@ protected:
 
 	/// Prepares the input buffer for a write operation.
 	void prepareInputBufferForWrite(bool isForward);
-	
+
+	// ---------------------------------------------------------------------------
+	// Shared protected state.
+	// ---------------------------------------------------------------------------
+
 	/// Number of blocks to write to the device in one write job.
 	uint16_t maxBlocksPerHddWriteJob_;
 
@@ -364,6 +440,40 @@ protected:
 	std::set<uint32_t> partiallyCompletedWrites_;
 	/// List of write data buffers waiting to be written to the chunk.
 	std::list<std::shared_ptr<InputBuffer>> writeDataBuffers_;
+};
+
+/// @brief Concrete write high-level operation that batches writes until a WRITE_FLUSH arrives.
+///
+/// While `expectsWriteFlush_` is true, input packets accumulate in `writeDataBuffers_` without
+/// triggering a write job. The client signals batch boundaries via WRITE_FLUSH, which translates
+/// to `flushData()` calls that release a batch of buffers to a single `job_write`. Instant replies
+/// are also deferred to flush points.
+///
+/// On `delayedClose()`, the variant switches off flush batching (`expectsWriteFlush_ = false`) so
+/// any remaining buffered data is drained one-by-one, matching the base eager behavior.
+class WriteHighLevelOpExpectFlush : public WriteHighLevelOp {
+public:
+	using WriteHighLevelOp::WriteHighLevelOp;
+
+	void flushData() override;
+
+protected:
+	bool canStartWriteJobNow() const override;
+	void collectInputBuffersForNextJob(std::vector<InputBuffer *> &inputBuffers) override;
+	void freezeCurrentInputBuffer() override;
+	bool shouldWriteCurrentInputBuffer() const override;
+	bool shouldDeferInstantReply(bool fromFlushDataCall) const override;
+	void onSwitchingToEagerWriteOnDelayedClose() override;
+	void resetFlushBatchingState() override;
+
+private:
+	/// Indicates whether the operation is still in flush-batching mode. Cleared by
+	/// `delayedClose()` so the remaining buffered data is drained using the base (eager) behavior.
+	bool expectsWriteFlush_ = true;
+	/// Queue of number of input buffers per pending flush batch.
+	std::queue<uint32_t> inputBuffersForNextFlush_;
+	/// Number of input buffers that became ready since the last flush.
+	uint32_t inputBuffersReadySinceLastFlush_ = 0;
 };
 
 /// @brief Creates a callback function for closing a write operation.

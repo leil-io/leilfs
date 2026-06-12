@@ -98,6 +98,7 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsdirentrycachesize=%u", direntrycachesize, 0),
 	SFS_OPT("nostdmountoptions", nostdmountoptions, 1),
 	SFS_OPT("sfsmaxchunkswritteninparallelperinode=%u", maxchunkswritteninparallelperinode, 0),
+	SFS_OPT("sfsusewriteflushpacket=%d", usewriteflushpacket, 0),
 	SFS_OPT("limitglibcmallocarenas=%d", limitglibcmallocarenas, 0),
 	SFS_OPT("malloctrimperiod=%d", malloctrimperiod, 0),
 	SFS_OPT("sfslognotificationarea=%d", lognotificationarea, 0),
@@ -157,6 +158,7 @@ void initialize_opts_name_values() {
 	}
 	gOptsNameValues["sfsmaxchunkswritteninparallelperinode"] =
 	    std::to_string(gMountOptions.maxchunkswritteninparallelperinode);
+	gOptsNameValues["sfsusewriteflushpacket"] = std::to_string(gMountOptions.usewriteflushpacket);
 	gOptsNameValues["sfsioretries (read)"] = std::to_string(gMountOptions.ioretries);
 	gOptsNameValues["sfsioretries (write)"] = std::to_string(gMountOptions.ioretries);
 	gOptsNameValues["sfswritewindowsize"] = std::to_string(gMountOptions.writewindowsize);
@@ -296,6 +298,9 @@ void usage(const char *progname) {
 "    -o sfsmaxchunkswritteninparallelperinode=N  define the maximum number of chunks "
 				"that can be written in parallel per inode. 0 stands for unlimited "
 				"(default: %u)\n"
+"    -o sfsusewriteflushpacket=0|1  when set to 1, suggests the chunkserver to flush "
+"				the packets received every window size blocks or when write needs to "
+"				finish (default: %d)\n"
 "\n"
 "Other options:\n"
 "    -m   --meta                 equivalent to '-o sfsmeta'\n"
@@ -403,6 +408,7 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultWriteWorkers,
 		SaunaClient::FsInitParams::kDefaultWriteWindowSize,
 		SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode,
+		SaunaClient::FsInitParams::kDefaultUseWriteFlushPacket,
 		SaunaClient::FsInitParams::kDefaultUseRwLock,
 		SaunaClient::FsInitParams::kDefaultMkdirCopySgid,
 		sugidClearModeString(SaunaClient::FsInitParams::kDefaultSugidClearMode),

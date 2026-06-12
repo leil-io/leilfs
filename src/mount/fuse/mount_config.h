@@ -119,6 +119,7 @@ struct sfsopts_ {
 	bool directio;
 	int useinodebasedwritealgorithm;
 	unsigned maxchunkswritteninparallelperinode;
+	bool usewriteflushpacket;
 	int ignoreflush;
 	unsigned limitglibcmallocarenas;
 	unsigned malloctrimperiod;
@@ -189,6 +190,7 @@ struct sfsopts_ {
 		directio(SaunaClient::FsInitParams::kDirectIO),
 		useinodebasedwritealgorithm(0), // deprecated
 		maxchunkswritteninparallelperinode(SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode),
+		usewriteflushpacket(SaunaClient::FsInitParams::kDefaultUseWriteFlushPacket),
 		ignoreflush(0), // deprecated
 		limitglibcmallocarenas(SaunaClient::FsInitParams::kDefaultLimitGlibcMallocArenas),
 		malloctrimperiod(SaunaClient::FsInitParams::kDefaultMallocTrimPeriod),

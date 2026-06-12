@@ -193,7 +193,8 @@ Try to change nice level to specified value on startup (default: -19).
 Define number of write workers (default: 10).
 
 *-o sfswritewindowsize=*'N'::
-Define write window size (in blocks) for each chunk (default: 15).
+Define write window size (in blocks) for each chunk. Can be updated via
+tweaks hidden file (default: 15).
 
 *-o sfsmemlock*::
 Try to lock memory (must be enabled at build time).
@@ -227,6 +228,12 @@ Equivalent to *--nonempty* option for use in fstab.
 *-o sfsmaxchunkswritteninparallelperinode=*'N'::
 Define the maximum number of chunks that can be written in parallel per inode.
 0 stands for unlimited (default: 0).
+
+*-o sfsusewriteflushpacket=*'0|1'::
+When set to 1, suggests the chunkserver to flush the packets received every
+window size blocks  (option sfswritewindowsize) or when a write needs to finish
+(e.g. when flush() is called on the inode or when enough time has passed). Can
+be updated via tweaks hidden file (default: 0).
 
 *-o sfsdirectio=*'0|1'::
 Whether to use FUSE DirectIO. This may improve performance when reading large

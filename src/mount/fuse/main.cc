@@ -267,6 +267,7 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.direct_io = gMountOptions.directio;
 	params.max_chunks_written_in_parallel_per_inode =
 	    gMountOptions.maxchunkswritteninparallelperinode;
+	params.use_write_flush_packet = gMountOptions.usewriteflushpacket;
 	params.malloc_trim_period = gMountOptions.malloctrimperiod;
 	params.log_notifications_area = gMountOptions.lognotificationarea;
 	params.message_suppression_period = gMountOptions.messagesuppressionperiod;
