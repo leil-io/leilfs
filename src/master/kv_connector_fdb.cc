@@ -81,6 +81,38 @@ bool KVConnectorFDB::init() {
 		safs::log_info("FDB transaction timeout set to {} ms", timeoutMs);
 	}
 
+	// Optionally lower FDB's per-transaction size cap (mutations plus read/write conflict
+	// ranges), which FDB enforces at commit with "Transaction exceeds byte limit". A lowered
+	// cap reproduces unbounded-accumulation bugs at a small, test-friendly scale instead of
+	// the default 10 MB. The bounds mirror the size_limit option's documented valid range:
+	// 32 bytes up to 10000000, which is FDB's default and hard maximum, so the cap can only
+	// be lowered, never raised. 0 (this config's default) keeps FDB's own limit.
+	static constexpr int64_t kMinTxnSizeLimitBytes = 32;
+	static constexpr int64_t kMaxTxnSizeLimitBytes = 10'000'000;
+	const auto sizeLimitBytes = cfg_getint64("FDB_TRANSACTION_SIZE_LIMIT_BYTES", 0);
+	if (sizeLimitBytes != 0 &&
+	    (sizeLimitBytes < kMinTxnSizeLimitBytes || sizeLimitBytes > kMaxTxnSizeLimitBytes)) {
+		safs::log_err(
+		    "FDB_TRANSACTION_SIZE_LIMIT_BYTES must be 0 (FDB default) or in "
+		    "[{}, {}] bytes, got {}",
+		    kMinTxnSizeLimitBytes, kMaxTxnSizeLimitBytes, sizeLimitBytes);
+		return false;
+	}
+	if (sizeLimitBytes != 0) {
+		const auto encoded = kv::toBytesLE<int64_t>(sizeLimitBytes);  // FDB Int option = 8-byte LE
+		const auto err = fdbDB->setOption(
+		    FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT,
+		    std::string_view(reinterpret_cast<const char *>(encoded.data()), encoded.size()));
+		if (err != 0) {
+			// A custom limit was requested but could not be applied; fail fast rather than run
+			// with a limit other than the operator asked for.
+			safs::log_err("Failed to set FDB transaction size limit ({} bytes): {}", sizeLimitBytes,
+			              fdb::DB::errorMsg(err));
+			return false;
+		}
+		safs::log_info("FDB transaction size limit set to {} bytes", sizeLimitBytes);
+	}
+
 	kvEngine_ = std::make_shared<fdb::FDBKVEngine>(fdbDB);
 
 	if (!kvEngine_) {
