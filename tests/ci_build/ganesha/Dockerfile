@@ -20,7 +20,7 @@ HEALTHCHECK --interval=30s --timeout=3s \
 
 FROM base AS ganesha-builder
 
-ARG GANESHA_VERSION=9.2
+ARG GANESHA_VERSION=9.15
 ENV GANESHA_VERSION=${GANESHA_VERSION}
 ARG NTIRPC_VERSION=7.2
 ENV NTIRPC_VERSION=${NTIRPC_VERSION}
@@ -51,9 +51,11 @@ RUN set -e ; \
           libcap-dev \
           libdbus-1-dev \
           libgssapi-krb5-2 \
+          libibverbs-dev \
           libjemalloc-dev \
           libjudy-dev \
           libkrb5-dev \
+          librdmacm-dev \
           libkrb5support0 \
           libnfsidmap-dev \
           libnsl-dev \
@@ -91,6 +93,7 @@ RUN set -e ; \
             -DUSE_FSAL_RGW=NO \
             -DUSE_FSAL_XFS=NO \
             -DUSE_GSS=YES \
+            -DUSE_NFS_RDMA=ON \
             -Snfs-ganesha-${GANESHA_VERSION}/src; \
         make -Cnfs-ganesha-${GANESHA_VERSION}/build -j$(($(nproc)*3/4+1)) install ; \
         rm -rf nfs-ganesha-${GANESHA_VERSION} ntirpc-${NTIRPC_VERSION} ; \
