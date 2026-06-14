@@ -41,6 +41,7 @@
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/changelog.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/filesystem.h"
 #include "master/filesystem_metadata.h"
@@ -140,6 +141,14 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 		return SAUNAFS_ERROR_NOTPOSSIBLE;
 	}
 
+	auto checkpointDescriptor = buildCheckpointDescriptor();
+	if (checkpointManager_ == nullptr ||
+	    !checkpointManager_->beginCheckpoint(checkpointDescriptor)) {
+		safs::log_err("Failed to begin metadata checkpoint sketch");
+		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
+		return SAUNAFS_ERROR_IO;
+	}
+
 	// Flush ALL pending batched updates to FDB before saving metadata keys,
 	// so restore-relevant keys reflect the fully persisted state.
 	if (!flushPendingUpdates(true)) {
@@ -148,9 +157,10 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 		return SAUNAFS_ERROR_IO;
 	}
 
-	// Save metadata keys required for restore (checkpoint list, next chunk id, etc.)
-	if (saveMetadataKeys() != kOpSuccess) {
-		safs::log_err("Failed to save metadata keys required for restore");
+	// Seal the checkpoint descriptor after all pending live-key updates have been drained.
+	if (checkpointManager_ == nullptr ||
+	    !checkpointManager_->sealCheckpoint(checkpointDescriptor)) {
+		safs::log_err("Failed to seal metadata checkpoint sketch");
 		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
 		return SAUNAFS_ERROR_IO;
 	}
@@ -170,7 +180,7 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	Timer timer;
 	safs::log_info("Loading chunks from FoundationDB");
 
-	uint64_t nextChunkId = getNextChunkId();
+	uint64_t nextChunkId = loadedCheckpointDescriptor_.nextChunkId;
 	auto status = chunk_set_next_chunkid(nextChunkId);
 
 	if (status != SAUNAFS_STATUS_OK) {
@@ -178,7 +188,7 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 		return kOpFailure;
 	}
 
-	kv::Key startKey = kv::toBytes(kChunkKeyPrefix);
+	kv::Key startKey = kv::toBytes(kChunkLatestKeyPrefix);
 	kv::Key endKey = kv::prefixEnd(startKey);
 	kv::KeySelector startSelector(startKey, true, 0);
 	kv::KeySelector endSelector(endKey, true, 0);
@@ -197,14 +207,30 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 		uint32_t lockId{};
 
 		for (const auto &pair : pageResult.getPairs()) {
+			chunkId = 0;
+			chunkVersion = 0;
+			lockedTo = 0;
+			lockId = 0;
 			const uint8_t *source = pair.key.data();
-			source += kChunkKeyPrefix.size();  // Skip "CHNK_"
-			chunkId = get64bit(&source);
-			get32bit(&source, chunkVersion);
 
-			source = pair.value.data();
-			get32bit(&source, lockedTo);
-			get32bit(&source, lockId);
+			if (pair.key.size() == kChunkLatestKeyPrefix.size() + sizeof(uint64_t)) {
+				source += kChunkLatestKeyPrefix.size();  // Skip "CHNL_"
+				chunkId = get64bit(&source);
+			} else {
+				safs::log_warn("Skipping malformed chunk key of size {}", pair.key.size());
+				continue;
+			}
+
+			if (pair.value.size() == sizeof(uint32_t) * 3) {
+				source = pair.value.data();
+				get32bit(&source, chunkVersion);
+				get32bit(&source, lockedTo);
+				get32bit(&source, lockId);
+			} else {
+				safs::log_warn("Skipping malformed chunk value of size {} for chunk {}",
+				               pair.value.size(), chunkId);
+				continue;
+			}
 
 			if (chunkId > 0) {
 				chunk_add_from_initial_metadata_load(chunkId, chunkVersion, lockedTo, lockId);
@@ -224,6 +250,22 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	return kOpSuccess;
 }
 
+MetadataCheckpointDescriptor MetadataBackendForkless::buildCheckpointDescriptor() const {
+	MetadataCheckpointDescriptor descriptor;
+	descriptor.maxInodeId = gMetadata->maxInodeId().getValue();
+	descriptor.metadataVersion = gMetadata->metadataVersion;
+	descriptor.nextSessionId = gMetadata->nextSessionId().getValue();
+	descriptor.nextChunkId = chunk_get_next_id();
+	return descriptor;
+}
+
+void MetadataBackendForkless::applyCheckpointDescriptor(
+    const MetadataCheckpointDescriptor &descriptor) {
+	loadedCheckpointDescriptor_ = descriptor;
+	gMetadata->maxInodeId().setValue(descriptor.maxInodeId);
+	gMetadata->metadataVersion = descriptor.metadataVersion;
+	gMetadata->nextSessionId().setValue(descriptor.nextSessionId);
+}
 
 void MetadataBackendForkless::onNodeChanged(FSNode *node) {
 	if (node == nullptr) {
@@ -269,98 +311,6 @@ void MetadataBackendForkless::onXAttrRemoved(inode_t inode, std::span<const uint
 	}
 }
 
-int8_t MetadataBackendForkless::saveNextChunkId(kv::IReadWriteTransaction *transaction) {
-	// META_NEXT_CHUNK_ID: <NextChunkId> e.g. META_NEXT_CHUNK_ID: 4
-	uint64_t nextChunkId = chunk_get_next_id();
-	kv::Value nextChunkIdValue;
-	serialize(nextChunkIdValue, nextChunkId);
-	auto key = kv::toBytes(kMetaNextChunkIdKey);
-	transaction->set(key, nextChunkIdValue);
-	safs::log_info("{}: Saving META_NEXT_CHUNK_ID with value: {}", __func__, nextChunkId);
-
-	return kOpSuccess;
-}
-
-int8_t MetadataBackendForkless::saveMetadataKeys(kv::IReadWriteTransaction *transaction) {
-	// MaxInodeId is stored in META_MAX_INODE_ID: <maxInodeId> e.g. META_MAX_INODE_ID: 42
-	kv::Key maxInodeIdKey{kv::toBytes(kMetaMaxInodeIdKey)};
-	kv::Value maxInodeIdValue;
-	serialize(maxInodeIdValue, gMetadata->maxInodeId().getValue());
-	transaction->set(maxInodeIdKey, maxInodeIdValue);
-
-	// Metadata version is stored in META_VERSION: <version> e.g. META_VERSION: 3
-	kv::Key versionKey{kv::toBytes(kMetaVersionKey)};
-	kv::Value serializedVersion;
-	serialize(serializedVersion, gMetadata->metadataVersion);
-	transaction->set(versionKey, serializedVersion);
-
-	// Next session ID is stored in META_NEXT_SESSION: <nextSessionId> e.g. META_NEXT_SESSION: 5
-	kv::Key sessionKey{kv::toBytes(kMetaNextSessionKey)};
-	kv::Value sessionValue;
-	serialize(sessionValue, gMetadata->nextSessionId().getValue());
-	transaction->set(sessionKey, sessionValue);
-
-	return kOpSuccess;
-}
-
-int8_t MetadataBackendForkless::loadMetadataKeys() {
-	// Load metadata global properties from FDB (equivalent to the file header that
-	// MetadataBackendFile reads from metadata.sfs: maxInodeId, metadata version and nextSessionId).
-
-	// MaxInodeId is stored in META_MAX_INODE_ID: <maxInodeId> e.g. META_MAX_INODE_ID: 42
-	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
-
-	inode_t maxInodeId{SPECIAL_INODE_ROOT};
-	auto value = transaction->get(kv::toBytes(kMetaMaxInodeIdKey));
-	if (value.has_value()) {
-		const uint8_t *data = value.value().data();
-		getINode(&data, maxInodeId);
-	}
-
-	gMetadata->maxInodeId().setValue(maxInodeId);
-
-	// Metadata version is stored in META_VERSION: <version> e.g. META_VERSION: 3
-	gMetadata->metadataVersion = kvConnector_->get64bitBE(kv::toBytes(kMetaVersionKey), 1);
-
-	// Next session ID is stored in META_NEXT_SESSION: <nextSessionId> e.g. META_NEXT_SESSION: 5
-	auto nextSessionIdValue = kvConnector_->get32bitBE(kv::toBytes(kMetaNextSessionKey), 1);
-	gMetadata->nextSessionId().setValue(nextSessionIdValue);
-
-	return kOpSuccess;
-}
-
-int8_t MetadataBackendForkless::saveMetadataKeys() {
-	auto transaction = kvConnector_->getKVEngine()->createReadWriteTransaction();
-
-	saveMetadataKeys(transaction.get());
-	saveNextChunkId(transaction.get());
-
-	if (!transaction->commit()) {
-		safs::log_err("Failed to save metadata keys required for restore");
-		return kOpFailure;
-	}
-
-	safs::log_info("Metadata keys saved successfully for restore");
-	return kOpSuccess;
-}
-
-uint64_t MetadataBackendForkless::getNextChunkId() {
-	auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
-	uint64_t nextChunkId = 0;
-
-	// META_NEXT_CHUNK_ID: <NextChunkId>. e.g.: META_NEXT_CHUNK_ID: 4
-	auto key = kv::toBytes(kMetaNextChunkIdKey);
-	auto result = transaction->get(key);
-	if (result != std::nullopt) {
-		const uint8_t *data = result.value().data();
-		nextChunkId = get64bit(&data);
-		safs::log_info("Loaded {} as nextChunkId from FDB: {}", kMetaNextChunkIdKey,
-		               nextChunkId);
-	}
-
-	return nextChunkId;
-}
-
 int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
 	for (const auto &section : metadataSections_) {
 		auto result = section.loadFunction(ignoreFlag);
@@ -369,6 +319,23 @@ int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
 			safs::log_err("Failed to load section: {}", section.name);
 			return result;
 		}
+	}
+
+	// Initialize the root node pointer after all nodes have been loaded and registered in gMetadata
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
+	gMetadata->root =
+	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, SPECIAL_INODE_ROOT);
+
+	if (gMetadata->root == nullptr) {
+		safs::log_err("Error reading metadata: root node not found");
+		return kOpFailure;
+	}
+
+	if (gMetadata->root->type != FSNodeType::kDirectory) {
+		safs::log_err("Error reading metadata: root node not a directory");
+		return kOpFailure;
 	}
 
 	return kOpSuccess;
@@ -396,7 +363,7 @@ void fs_new() {
 	gMetadata->addNode(gMetadata->root);  // Add the root dir and save it to database
 	gMetadata->inodePool.markAsAcquired(gMetadata->root->id);
 
-	chunk_newfs();
+	gChunkOperations->newfs();
 
 	gMetadata->nodes = 1;
 	gMetadata->dirNodes = 1;
@@ -422,8 +389,6 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 	kv::KeySelector startSelector(startKey, true, 0);
 	kv::KeySelector endSelector(endKey, true, 0);
 
-	uint64_t nodeCount = 0;
-
 	while (true) {
 		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
 		auto pageResult =
@@ -441,7 +406,6 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 				safs::log_err("Error loading node: {}", node->id);
 				return kOpFailure;
 			}
-			nodeCount++;
 		}
 
 		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
@@ -450,7 +414,7 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 		startSelector = kv::KeySelector(lastKey, false, 0);
 	}
 
-	safs::log_info("Loaded {} nodes", nodeCount);
+	safs::log_info("Loaded {} nodes", gMetadata->nodes);
 	safs::log_info("Section loaded successfully (NODE 1.0): {}s", timer.elapsed_s());
 
 	return kOpSuccess;
@@ -960,9 +924,13 @@ void MetadataBackendForkless::loadall(int ignoreflag) {
 
 	if (!isSignatureValid && !bootstrapped) { return; }
 
-	// Load metadata global properties from FDB
+	// Load metadata global properties from the current checkpoint descriptor.
 
-	loadMetadataKeys();
+	if (checkpointManager_ == nullptr) {
+		throw MetadataConsistencyException(
+		    "checkpoint manager is not initialized for forkless metadata backend");
+	}
+	applyCheckpointDescriptor(checkpointManager_->loadLatestCheckpoint());
 
 	// Load the metadata sections
 
@@ -987,7 +955,7 @@ void MetadataBackendForkless::loadall(int ignoreflag) {
 	    "metadata read ({} inodes including {} directory inodes, {} file inodes, "
 	    "{} symlink inodes and {} chunks)",
 	    gMetadata->nodes, gMetadata->dirNodes, gMetadata->fileNodes, gMetadata->linkNodes,
-	    chunk_count());
+	    gChunkOperations->count());
 #endif
 }
 
@@ -1018,7 +986,7 @@ void MetadataBackendForkless::initSections() {
 	/*metadataSections_.emplace_back("ACLS 1.2", "ACLS_", loadACLs);
 	metadataSections_.emplace_back("QUOT 1.1", "QUOT_", loadQuotas);
 	metadataSections_.emplace_back("FLCK 1.0", "FLCK_", loadLocks);*/
-	metadataSections_.emplace_back("CHNK 1.0", kChunkKeyPrefix,
+	metadataSections_.emplace_back("CHNK 1.0", kChunkLatestKeyPrefix,
 	                               [this](bool flag) { return loadChunks(flag); });
 }
 
@@ -1056,8 +1024,9 @@ void MetadataBackendForkless::init() {
 		throw std::runtime_error("Failed to initialize KV store");
 	}
 
-	// Initialize the metadata writer to handle metadata updates
-	metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine());
+	checkpointManager_ = std::make_unique<MetadataCheckpointManager>(kvConnector_->getKVEngine());
+	metadataWriter_ =
+	    std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(), checkpointManager_.get());
 
 #ifndef METARESTORE
 	sectionBootstrapper_ =

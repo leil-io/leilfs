@@ -532,7 +532,7 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	// Filesystem MetadataSection "CHNK 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "CHNK 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kChunkKeyPrefix); },
+	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kChunkLatestKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadChunkSection(); },
 	});
 }

@@ -27,22 +27,29 @@
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/kv_common_keys.h"
+#include "master/metadata_checkpoint_manager.h"
 
 ChunkUpdateEvent::ChunkUpdateEvent(uint64_t _chunkId, uint32_t _version, uint32_t _lockedTo,
                                    uint32_t _lockId)
     : chunkId(_chunkId), version(_version), lockedTo(_lockedTo), lockId(_lockId) {}
 
-void ChunkUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
-	// Key: CHNK_<ChunkId><ChunkVersion>
-	kv::Key key = kv::encodeKeyBE(kChunkKeyPrefix, chunkId, version);
+void ChunkUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("ChunkUpdateEvent requires a valid transaction in the context");
+		return;
+	}
 
-	// Value: <lockedTo><lockId>
-	kv::Value value(sizeof(lockedTo) + sizeof(lockId));
+	// Key: CHNL_<ChunkId>
+	kv::Key key = kv::encodeKeyBE(kChunkLatestKeyPrefix, chunkId);
+
+	// Value: <chunkVersion><lockedTo><lockId>
+	kv::Value value(sizeof(version) + sizeof(lockedTo) + sizeof(lockId));
 	uint8_t *ptr = value.data();
+	put32bit(&ptr, version);
 	put32bit(&ptr, lockedTo);
 	put32bit(&ptr, lockId);
 
-	txn->set(key, value);
+	context.transaction->set(key, value);
 }
 
 NodeUpdateEvent::NodeUpdateEvent(FSNode *_node)
@@ -51,24 +58,34 @@ NodeUpdateEvent::NodeUpdateEvent(FSNode *_node)
 	_node->serialize(&ptr);
 }
 
-void NodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void NodeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("NodeUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// Key: NODE_<nodeId>
 	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
-	txn->set(key, serializedNode);
+	context.transaction->set(key, serializedNode);
 }
 
 NodeRemoveEvent::NodeRemoveEvent(inode_t _nodeId) : nodeId(_nodeId) {}
 
-void NodeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void NodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("NodeRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// Key: NODE_<nodeId>
 	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
-	txn->remove(key);
+	context.transaction->remove(key);
 }
 
 FreeNodeUpdateEvent::FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp)
     : nodeId(_nodeId), timestamp(_timestamp) {}
 
-void FreeNodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void FreeNodeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: FREE_<nodeId>
 	kv::Key key = kv::encodeKeyBE(kFreeKeyPrefix, nodeId);
 
@@ -76,20 +93,20 @@ void FreeNodeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	// (addition to free list with timestamp)
 	if (timestamp == 0) {
 		// Node is being allocated, remove from free list
-		txn->remove(key);
+		context.transaction->remove(key);
 	} else {
 		// Node is being freed, add to free list with timestamp
 		kv::Value value(sizeof(timestamp));
 		uint8_t *ptr = value.data();
 		put32bit(&ptr, timestamp);
-		txn->set(key, value);
+		context.transaction->set(key, value);
 	}
 }
 
 EdgeUpdateEvent::EdgeUpdateEvent(inode_t _parentId, HString _name, inode_t _childId)
 	: parentId(_parentId), name(std::move(_name)), childId(_childId) {}
 
-void EdgeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void EdgeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	// EDGE_<ParentId><Name>: <ChildId>. e.g.: EDGE_1999ChildName: 2535
 
 	// Key: EDGE_<parentId><name>
@@ -99,55 +116,57 @@ void EdgeUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
 	// Value: childId
 	kv::Value value(kv::toBytesBE(childId));
 
-	txn->set(key, value);
+	context.transaction->set(key, value);
 }
 
 EdgeRemoveEvent::EdgeRemoveEvent(inode_t _parentId, HString _name)
 	: parentId(_parentId), name(std::move(_name)) {}
 
-void EdgeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void EdgeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: EDGE_<parentId><name>
 	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
 	kv::appendStr(key, name);
 
-	txn->remove(key);
+	context.transaction->remove(key);
 }
 
 XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::span<const uint8_t> _name,
                                    std::span<const uint8_t> _value)
     : inode(_inode), name(_name.begin(), _name.end()), value(_value.begin(), _value.end()) {}
 
-void XAttrUpdateEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void XAttrUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: XATR_<inode><attributeName>
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
 
 	// Value: raw attribute value bytes
-	txn->set(key, value);
+	context.transaction->set(key, value);
 }
 
 XAttrRemoveEvent::XAttrRemoveEvent(inode_t _inode, std::span<const uint8_t> _name)
     : inode(_inode), name(_name.begin(), _name.end()) {}
 
-void XAttrRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void XAttrRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: XATR_<inode><attributeName>
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
 
-	txn->remove(key);
+	context.transaction->remove(key);
 }
 
 XAttrInodeRemoveEvent::XAttrInodeRemoveEvent(inode_t _inode) : inode(_inode) {}
 
-void XAttrInodeRemoveEvent::applyEvent(kv::IReadWriteTransaction *txn) {
+void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// Remove all keys in range XATR_<inode> .. XATR_<inode+1>
 	auto startKey = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	auto endKey = kv::encodeKeyBE(kXAttrKeyPrefix, static_cast<inode_t>(inode + 1));
 
-	txn->removeRange(startKey, endKey);
+	context.transaction->removeRange(startKey, endKey);
 }
 
-MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {}
+MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
+                                     MetadataCheckpointManager *checkpointManager)
+    : kvEngine_(kvEngine), checkpointManager_(checkpointManager) {}
 
 void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 	if (event == nullptr) {
@@ -208,7 +227,14 @@ bool MetadataWriterFDB::flushBatch(size_t maxUpdates) {
 
 	auto transaction = kvEngine_->createReadWriteTransaction();
 
-	for (const auto &update : batch) { update->applyEvent(transaction.get()); }
+	MetadataWriteContext context{
+	    .transaction = transaction.get(),
+	    .checkpointManager = checkpointManager_,
+	    .checkpointVersion =
+	        checkpointManager_ != nullptr ? checkpointManager_->activeCheckpointVersion() : 0,
+	};
+
+	for (const auto &update : batch) { update->applyEvent(context); }
 
 	if (!transaction->commit()) {
 		safs::log_err("Failed to flush {} metadata updates to FDB", batch.size());

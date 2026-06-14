@@ -32,6 +32,7 @@
 #include "master/filesystem_operation_context.h"
 #include "master/kv_connector_interface.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_checkpoint_manager.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_writer_fdb.h"
 
@@ -115,8 +116,10 @@ public:
 	/// This backend batches metadata updates (e.g. chunk changes) and periodically flushes
 	/// them to the KV store to avoid stalling the master event loop.
 	///
-	/// If flushAll is false, flushes at most one batch (kMaxUpdatesPerFlush_).
-	/// If flushAll is true, flushes until empty (or until a commit fails).
+	/// If flushAll is false, flushes all the batches that are currently pending at the time of the
+	/// call.
+	/// If flushAll is true, continues flushing until no pending batches remain (or until a
+	/// commit fails).
 	///
 	/// The flushAll=true mode is intended for operations that must leave the KV store in a
 	/// self-consistent state before proceeding (e.g. before persisting restore-relevant keys
@@ -141,6 +144,12 @@ private:
 
 	/// Loads all sections
 	int fsLoad(bool ignoreFlag);
+
+	/// Captures the restore-relevant state that defines one checkpoint boundary.
+	MetadataCheckpointDescriptor buildCheckpointDescriptor() const;
+
+	/// Applies a loaded checkpoint descriptor to the in-memory metadata globals.
+	void applyCheckpointDescriptor(const MetadataCheckpointDescriptor &descriptor);
 
 	/// Loads NODE_ metadata
 	/// Loads all nodes from the KV store and reconstructs the in-memory filesystem node table.
@@ -234,49 +243,6 @@ private:
 	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadChunks(bool ignoreFlag);
 
-	/// Persist the "next chunk ID" restore key(s).
-	///
-	/// The forkless keeps `META_NEXT_CHUNK_ID` up to date so that the chunk ID generator
-	/// can be restored without scanning the entire dataset.
-	///
-	/// Keys written/updated:
-	/// - `META_NEXT_CHUNK_ID`: the current next chunk id (from chunk_get_next_id()).
-	///
-	/// @param transaction Transaction used to persist the keys.
-	/// @return kOpSuccess on success, kOpFailure on failure.
-	int8_t saveNextChunkId(kv::IReadWriteTransaction *transaction);
-
-	/// Persist metadata global properties to the KV store within an existing transaction.
-	///
-	/// Writes the current values of `maxInodeId`, `metadataVersion`, and `nextSessionId` from
-	/// gMetadata to FDB. These are the equivalent of the file header that MetadataBackendFile
-	/// writes to metadata.sfs.
-	///
-	/// @param transaction Transaction used to persist the keys.
-	/// @return kOpSuccess on success, kOpFailure on failure.
-	int8_t saveMetadataKeys(kv::IReadWriteTransaction *transaction);
-
-	/// Load metadata global properties from the KV store.
-	///
-	/// Reads `maxInodeId`, `metadataVersion`, and `nextSessionId` from FDB and populates the
-	/// corresponding fields in gMetadata. These are the equivalent of the file header that
-	/// MetadataBackendFile reads from metadata.sfs.
-	///
-	/// @return kOpSuccess on success, kOpFailure on failure.
-	int8_t loadMetadataKeys();
-
-	/// Persist all forkless restore-relevant keys.
-	///
-	/// This is called from fs_storeall() to write the keys below:
-	/// - next chunk id keys (META_NEXT_CHUNK_ID),
-	///
-	/// Important: this must be done only after pending metadata updates have been fully flushed
-	/// (flushPendingUpdates(flushAll=true)), otherwise the KV store can temporarily contain
-	/// partially persisted metadata state but "finalized" restore keys.
-	///
-	/// @return kOpSuccess on success, kOpFailure on failure.
-	int8_t saveMetadataKeys();
-
 	/// Enqueue a node update event to the metadata writer.
 	///
 	/// Called when a filesystem node is created or modified. The event serializes the node and
@@ -339,13 +305,11 @@ private:
 	/// @param name  Attribute name bytes.
 	void onXAttrRemoved(inode_t inode, std::span<const uint8_t> name);
 
-	/// Returns next chunk ID value from the KV store.
-	///
-	/// @return Next chunk id, or 0 if META_NEXT_CHUNK_ID key is not found in the KV store.
-	uint64_t getNextChunkId();
-
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
 	std::shared_ptr<IKVConnector> kvConnector_;
+
+	/// Manager for metadata checkpoints
+	std::unique_ptr<MetadataCheckpointManager> checkpointManager_;
 
 	/// Metadata sections with their loading functions
 	std::vector<MetadataSectionFDB> metadataSections_;
@@ -356,6 +320,9 @@ private:
 
 	/// Metadata writer for all metadata updates
 	std::unique_ptr<MetadataWriterFDB> metadataWriter_;
+
+	/// Descriptor of the currently loaded checkpoint
+	MetadataCheckpointDescriptor loadedCheckpointDescriptor_{};
 
 	inode_t currentLoadParentId_ = 0;
 

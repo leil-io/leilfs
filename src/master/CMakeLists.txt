@@ -13,6 +13,7 @@ if(NOT ENABLE_FOUNDATIONDB)
     "${CMAKE_CURRENT_SOURCE_DIR}/metadata_backend_forkless.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/metadata_section_bootstrap_fdb.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/metadata_writer_fdb.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/metadata_checkpoint_manager.cc"
   )
 endif()
 

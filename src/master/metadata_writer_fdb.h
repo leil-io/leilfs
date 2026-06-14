@@ -32,6 +32,17 @@
 #include "kv/ikv_engine.h"
 #include "master/filesystem_node_types.h"
 
+class MetadataCheckpointManager;
+
+struct MetadataWriteContext {
+	kv::IReadWriteTransaction *transaction{nullptr};
+	MetadataCheckpointManager *checkpointManager{nullptr};
+
+	// Snapshot of the active checkpoint interval used for first-touch undo capture.
+	// This is passed explicitly so events do not need to query manager state.
+	uint64_t checkpointVersion{0};
+};
+
 class IMetadataUpdateEvent {
 public:
 	IMetadataUpdateEvent() = default;
@@ -42,7 +53,7 @@ public:
 
 	virtual ~IMetadataUpdateEvent() = default;
 
-	virtual void applyEvent(kv::IReadWriteTransaction * /*txn*/) {};
+	virtual void applyEvent(const MetadataWriteContext &context) = 0;
 };
 
 /// Update event types for different metadata sections
@@ -51,7 +62,7 @@ public:
 	ChunkUpdateEvent(uint64_t _chunkId, uint32_t _version, uint32_t _lockedTo, uint32_t _lockId);
 	~ChunkUpdateEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	uint64_t chunkId;
@@ -66,7 +77,7 @@ public:
 	NodeUpdateEvent(FSNode *_node);
 	~NodeUpdateEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t nodeId;
@@ -79,7 +90,7 @@ public:
 	NodeRemoveEvent(inode_t _nodeId);
 	~NodeRemoveEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t nodeId;
@@ -90,7 +101,7 @@ public:
 	FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp = 0);
 	~FreeNodeUpdateEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t nodeId;
@@ -102,7 +113,7 @@ public:
 	EdgeUpdateEvent(inode_t _parentId, HString _name, inode_t _childId);
 	~EdgeUpdateEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t parentId;
@@ -115,7 +126,7 @@ public:
 	EdgeRemoveEvent(inode_t _parentId, HString _name);
 	~EdgeRemoveEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t parentId;
@@ -130,7 +141,7 @@ public:
 	                 std::span<const uint8_t> _value);
 	~XAttrUpdateEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t inode;
@@ -145,7 +156,7 @@ public:
 	XAttrRemoveEvent(inode_t _inode, std::span<const uint8_t> _name);
 	~XAttrRemoveEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t inode;
@@ -159,7 +170,7 @@ public:
 	explicit XAttrInodeRemoveEvent(inode_t _inode);
 	~XAttrInodeRemoveEvent() override = default;
 
-	void applyEvent(kv::IReadWriteTransaction *txn) override;
+	void applyEvent(const MetadataWriteContext &context) override;
 
 private:
 	inode_t inode;
@@ -178,7 +189,8 @@ public:
 		kDrainUntilEmpty, ///< Keep flushing until no pending updates remain.
 	};
 
-	explicit MetadataWriterFDB(kv::IKVEngine *kvEngine);
+	explicit MetadataWriterFDB(kv::IKVEngine *kvEngine,
+	                           MetadataCheckpointManager *checkpointManager = nullptr);
 
 	/// Enqueue an update (thread-safe)
 	void enqueue(std::unique_ptr<IMetadataUpdateEvent> event);
@@ -198,6 +210,7 @@ private:
 	bool flushBatch(size_t maxUpdates);
 
 	kv::IKVEngine *kvEngine_;
+	MetadataCheckpointManager *checkpointManager_;
 
 	mutable std::mutex mutex_;
 	UpdateQueue pendingUpdates_;
