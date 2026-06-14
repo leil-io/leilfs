@@ -155,6 +155,19 @@ inline constexpr std::string_view kFileChunksKeyPrefix = "FCHK_";
 /// Format: BULKOP_<TargetInode><Generation> -> <VersionedBulkOperationRecord>
 inline constexpr std::string_view kBulkOperationKeyPrefix = "BULKOP_";
 
+/// Prefix for chunk entries (mostly used for chunk locking)
+/// Format: CHNL_<ChunkId>:<ChunkVersion><LockedTo><LockId>
+/// @note ChunkId (64-bit) is serialized as Big Endian in the key.
+/// ChunkVersion, LockedTo and LockId (all 32-bit) are also Big Endian.
+inline constexpr std::string_view kChunkLatestKeyPrefix = "CHNL_";  // Latest chunk versions (hot)
+
+/// Ordered catalog of sealed metadata checkpoint versions retained in FDB.
+/// Format: META_CHECKPOINT_VERSIONS:<Version1><Version2>...<VersionN>
+/// @note Versions are encoded as 64-bit Big Endian integers in ascending order.
+/// @note Values are used to decide which undo ranges should be applied when restoring
+/// metadata/chunk state to a target snapshot version.
+inline constexpr std::string_view kMetaCheckpointVersionsKey = "META_CHECKPOINT_VERSIONS";
+
 /// Prefix for extended attributes (xattrs)
 /// Format: XATR_<InodeId><AttributeName>:<AttributeValue>
 /// e.g.: XATR_1999UserAttr:UserValue
