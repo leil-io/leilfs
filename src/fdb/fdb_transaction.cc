@@ -59,24 +59,35 @@ std::unique_ptr<kv::IRangeFuture> FDBTransaction::getRangeAsync(const kv::KeySel
 void FDBTransaction::set(const kv::Key &key, const kv::Value &value) {
 	if (!tr_) { return; }
 
+	mutationCount_++;
 	tr_.set(key, value);
 }
 
 void FDBTransaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
 	if (!tr_) { return; }
 
+	mutationCount_++;
 	tr_.atomicAdd(key, delta);
+}
+
+void FDBTransaction::atomicMax(const kv::Key &key, const kv::Value &value) {
+	if (!tr_) { return; }
+
+	mutationCount_++;
+	tr_.atomicMax(key, value);
 }
 
 void FDBTransaction::remove(const kv::Key &key) {
 	if (!tr_) { return; }
 
+	mutationCount_++;
 	tr_.remove(key);
 }
 
 void FDBTransaction::removeRange(const kv::Key &start, const kv::Key &end) {
 	if (!tr_) { return; }
 
+	mutationCount_++;
 	tr_.removeRange(start, end);
 }
 
@@ -84,6 +95,12 @@ bool FDBTransaction::commit() {
 	if (!tr_) { return false; }
 
 	return tr_.commit();
+}
+
+std::unique_ptr<kv::ICommitFuture> FDBTransaction::commitAsync() {
+	if (!tr_) { return std::make_unique<kv::ImmediateCommitFuture>(false); }
+
+	return tr_.commitAsync();
 }
 
 std::optional<int64_t> FDBTransaction::getCommittedVersion() const {

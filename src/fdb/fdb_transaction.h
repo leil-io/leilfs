@@ -89,6 +89,11 @@ public:
 	/// @param delta The delta value to add (must be little-endian).
 	void atomicAdd(const kv::Key &key, const kv::Value &delta) override;
 
+	/// Atomically sets the value to max(existing, value) as little-endian unsigned
+	/// integers (FDB MAX, not lexicographic BYTE_MAX). Conflict-free.
+	/// @see kv::IReadWriteTransaction::atomicMax.
+	void atomicMax(const kv::Key &key, const kv::Value &value) override;
+
 	/// Removes a key from the database.
 	/// @param key The key to remove.
 	void remove(const kv::Key &key) override;
@@ -99,8 +104,14 @@ public:
 	/// Commits the transaction, making all changes permanent.
 	bool commit() override;
 
+	/// Submits the commit asynchronously and returns a pollable future.
+	std::unique_ptr<kv::ICommitFuture> commitAsync() override;
+
 	/// Returns the committed version of the transaction, if available.
 	std::optional<int64_t> getCommittedVersion() const override;
+
+	/// Number of buffered mutations issued on this transaction so far.
+	uint64_t mutationCount() const override { return mutationCount_; }
 
 	/// Returns the error code of the last operation.
 	fdb_error_t error() const { return error_; }
@@ -108,6 +119,7 @@ public:
 private:
 	fdb::Transaction tr_;
 	fdb_error_t error_{1};
+	uint64_t mutationCount_{0};
 };
 
 }  // namespace fdb

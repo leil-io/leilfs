@@ -23,6 +23,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <fdb/fdb_api_version.h>  // Needs to be included before foundationdb/fdb_c.h
 #include <foundationdb/fdb_c.h>
@@ -45,10 +47,23 @@ struct FdbOpCounters {
 	uint64_t commits{0};          ///< commit attempts (each one round-trip).
 	uint64_t commitConflicts{0};  ///< commit attempts that failed with a retryable error.
 	uint64_t commitFailures{0};   ///< commit attempts that failed with a non-retryable error.
+	uint64_t readWaitNanos{0};    ///< wall time blocked in read futures (sync get + getAsync + range).
+	uint64_t commitWaitNanos{0};  ///< wall time blocked waiting for commit futures.
 };
+
+/// Adds to the process-wide read-wait accumulator the nanoseconds a caller spent
+/// blocked on a read future. Used by the future wrappers (fdb_future.cc) whose
+/// blocking happens outside this translation unit. No-op when accounting is off.
+void addReadWaitNanos(uint64_t nanos);
 
 /// Returns a snapshot of the process-wide FDB operation counters.
 FdbOpCounters getOpCounters();
+
+/// Returns the per-key-prefix read histogram (point + range reads bucketed by
+/// the leading key tag, e.g. "NODE_"), sorted by descending count. Only
+/// populated while op-counter accounting is enabled; used to attribute the read
+/// round-trips an operation costs to the key families it touches.
+std::vector<std::pair<std::string, uint64_t>> getReadPrefixHistogram();
 
 /// Enables or disables op-counter accounting (disabled by default). When
 /// disabled, the per-call bump is a single relaxed bool load and getOpCounters()
@@ -227,6 +242,14 @@ public:
 	/// @param delta The delta value to add.
 	void atomicAdd(const kv::Key &key, const kv::Value &delta);
 
+	/// Atomically sets the value to max(existing, value) as little-endian unsigned
+	/// integers (absent key counts as zero). This is FoundationDB's MAX mutation, not
+	/// the lexicographic BYTE_MAX. Conflict-free: no read, no read conflict range. See
+	/// kv::IReadWriteTransaction::atomicMax.
+	/// @param key The key to update.
+	/// @param value The candidate value (fixed-width little-endian).
+	void atomicMax(const kv::Key &key, const kv::Value &value);
+
 	/// Removes a key from the database.
 	/// @param key The key to remove.
 	void remove(const kv::Key &key);
@@ -237,6 +260,11 @@ public:
 	/// Commits the transaction.
 	/// @return True if the commit was successful, false otherwise.
 	bool commit();
+
+	/// Submits the commit asynchronously, returning a pollable future.
+	/// The future references this transaction's state, so the Transaction must
+	/// outlive the returned future.
+	std::unique_ptr<kv::ICommitFuture> commitAsync();
 
 	/// Gets the committed version of the transaction.
 	/// @return The committed version, if available.

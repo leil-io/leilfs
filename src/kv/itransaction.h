@@ -31,6 +31,7 @@ namespace kv {
 
 class IFuture;
 class IRangeFuture;
+class ICommitFuture;
 
 /// Represents a key selector for range queries.
 class KeySelector {
@@ -133,6 +134,19 @@ public:
 	/// @param delta The delta value to add (must be little-endian).
 	virtual void atomicAdd(const Key &key, const Value &delta) = 0;
 
+	/// Atomically sets the value for a key to the maximum of its existing value and
+	/// `value`, compared as little-endian unsigned integers (an absent key counts as
+	/// zero). This is FoundationDB's MAX mutation (numeric little-endian), not BYTE_MAX
+	/// (lexicographic): the shorter operand is zero-extended on the high end, so encode
+	/// values as fixed-width little-endian for the comparison to be a true numeric max.
+	/// Commutative and conflict-free: it performs no read and adds no read conflict
+	/// range, so concurrent writers never abort each other on this key. This is the
+	/// basis for fire-and-forget monotonic fields (e.g. atime) whose deferred commit
+	/// can never diverge from the backend on a conflict.
+	/// @param key The key to update.
+	/// @param value The candidate value (fixed-width little-endian).
+	virtual void atomicMax(const Key &key, const Value &value) = 0;
+
 	/// Removes a key from the database.
 	/// @param key The key to remove.
 	virtual void remove(const Key &key) = 0;
@@ -145,8 +159,19 @@ public:
 	/// Commits the transaction, making all changes permanent.
 	virtual bool commit() = 0;
 
+	/// Submits the commit asynchronously and returns a pollable future.
+	/// The caller drives completion via ICommitFuture::isReady()/getResult().
+	/// @note The transaction must stay alive until the future's getResult() returns.
+	virtual std::unique_ptr<ICommitFuture> commitAsync() = 0;
+
 	/// Returns the committed version of the transaction, if available.
 	virtual std::optional<int64_t> getCommittedVersion() const = 0;
+
+	/// Number of buffered mutations (set / atomicAdd / atomicMax / remove /
+	/// removeRange calls) issued on this transaction so far. Lets a shared-transaction
+	/// owner (group commit) detect whether a failed op body already wrote, poisoning
+	/// the shared transaction (it must be rebuilt), or failed clean (no rebuild needed).
+	virtual uint64_t mutationCount() const = 0;
 
 protected:
 	IReadWriteTransaction() = default;
