@@ -86,6 +86,11 @@ FreeNodeUpdateEvent::FreeNodeUpdateEvent(inode_t _nodeId, uint32_t _timestamp)
     : nodeId(_nodeId), timestamp(_timestamp) {}
 
 void FreeNodeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("FreeNodeUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// Key: FREE_<nodeId>
 	kv::Key key = kv::encodeKeyBE(kFreeKeyPrefix, nodeId);
 
@@ -107,6 +112,11 @@ EdgeUpdateEvent::EdgeUpdateEvent(inode_t _parentId, HString _name, inode_t _chil
 	: parentId(_parentId), name(std::move(_name)), childId(_childId) {}
 
 void EdgeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("EdgeUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// EDGE_<ParentId><Name>: <ChildId>. e.g.: EDGE_1999ChildName: 2535
 
 	// Key: EDGE_<parentId><name>
@@ -123,6 +133,11 @@ EdgeRemoveEvent::EdgeRemoveEvent(inode_t _parentId, HString _name)
 	: parentId(_parentId), name(std::move(_name)) {}
 
 void EdgeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("EdgeRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// Key: EDGE_<parentId><name>
 	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
 	kv::appendStr(key, name);
@@ -135,6 +150,11 @@ XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::span<const uint8_t> _nam
     : inode(_inode), name(_name.begin(), _name.end()), value(_value.begin(), _value.end()) {}
 
 void XAttrUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("XAttrUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// Key: XATR_<inode><attributeName>
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
@@ -147,6 +167,11 @@ XAttrRemoveEvent::XAttrRemoveEvent(inode_t _inode, std::span<const uint8_t> _nam
     : inode(_inode), name(_name.begin(), _name.end()) {}
 
 void XAttrRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("XAttrRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
 	// Key: XATR_<inode><attributeName>
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
@@ -157,9 +182,16 @@ void XAttrRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 XAttrInodeRemoveEvent::XAttrInodeRemoveEvent(inode_t _inode) : inode(_inode) {}
 
 void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
-	// Remove all keys in range XATR_<inode> .. XATR_<inode+1>
+	if (context.transaction == nullptr) {
+		safs::log_err("XAttrInodeRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
+	// Remove all keys with prefix XATR_<inode>. Use prefixEnd() for the exclusive
+	// upper bound so a max-valued inode cannot overflow inode+1 and produce an
+	// invalid range.
 	auto startKey = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
-	auto endKey = kv::encodeKeyBE(kXAttrKeyPrefix, static_cast<inode_t>(inode + 1));
+	auto endKey = kv::prefixEnd(startKey);
 
 	context.transaction->removeRange(startKey, endKey);
 }
@@ -167,6 +199,16 @@ void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
                                      MetadataCheckpointManager *checkpointManager)
     : kvEngine_(kvEngine), checkpointManager_(checkpointManager) {}
+
+MetadataWriterFDB::~MetadataWriterFDB() {
+	if (pendingCount() > 0) {
+		safs::log_warn(
+		    "MetadataWriterFDB destroyed with {} pending updates, attempting final flush",
+		    pendingCount());
+		// flushBatch() is exception-safe, so this cannot throw out of the destructor.
+		(void)flush(FlushMode::kDrainUntilEmpty);
+	}
+}
 
 void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 	if (event == nullptr) {
@@ -225,19 +267,33 @@ bool MetadataWriterFDB::flushBatch(size_t maxUpdates) {
 	auto batch = takeBatch(maxUpdates);
 	if (batch.empty()) { return true; }
 
-	auto transaction = kvEngine_->createReadWriteTransaction();
+	// Apply and commit under try/catch: a throwing applyEvent()/commit() (FDB timeout,
+	// serialization error, etc.) must not destroy the batch, or the updates are lost
+	// permanently. Restore the batch on any failure so it is retried on the next flush.
+	try {
+		auto transaction = kvEngine_->createReadWriteTransaction();
 
-	MetadataWriteContext context{
-	    .transaction = transaction.get(),
-	    .checkpointManager = checkpointManager_,
-	    .checkpointVersion =
-	        checkpointManager_ != nullptr ? checkpointManager_->activeCheckpointVersion() : 0,
-	};
+		MetadataWriteContext context{
+		    .transaction = transaction.get(),
+		    .checkpointManager = checkpointManager_,
+		    .checkpointVersion =
+		        checkpointManager_ != nullptr ? checkpointManager_->activeCheckpointVersion() : 0,
+		};
 
-	for (const auto &update : batch) { update->applyEvent(context); }
+		for (const auto &update : batch) { update->applyEvent(context); }
 
-	if (!transaction->commit()) {
-		safs::log_err("Failed to flush {} metadata updates to FDB", batch.size());
+		if (!transaction->commit()) {
+			safs::log_err("Failed to flush {} metadata updates to FDB", batch.size());
+			restoreBatch(std::move(batch));
+			return false;
+		}
+	} catch (const std::exception &e) {
+		safs::log_err("Exception while flushing {} metadata updates to FDB: {}", batch.size(),
+		              e.what());
+		restoreBatch(std::move(batch));
+		return false;
+	} catch (...) {
+		safs::log_err("Unknown exception while flushing {} metadata updates to FDB", batch.size());
 		restoreBatch(std::move(batch));
 		return false;
 	}

@@ -70,8 +70,11 @@ MetadataBackendForkless *gForklessBackend = nullptr;
 #ifndef METARESTORE
 bool hasPersistedMetadataSectionData(kv::IKVEngine *kvEngine,
 	                                 const std::vector<MetadataSectionFDB> &metadataSections) {
+	if (kvEngine == nullptr) { return false; }
+
+	// One transaction for all sections: cheaper, and gives a consistent point-in-time view.
+	auto transaction = kvEngine->createReadOnlyTransaction();
 	for (const auto &section : metadataSections) {
-		auto transaction = kvEngine->createReadOnlyTransaction();
 		kv::Key startKey = kv::toBytes(section.prefix);
 		kv::Key endKey = kv::prefixEnd(startKey);
 		auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
@@ -215,8 +218,11 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	auto status = chunk_set_next_chunkid(nextChunkId);
 
 	if (status != SAUNAFS_STATUS_OK) {
-		safs::log_err("{}: failed to set next chunk id to {}", __func__, nextChunkId);
-		return kOpFailure;
+		// Non-fatal: a missing or stale META_NEXT_CHUNK_ID (e.g. after an upgrade or partial
+		// bootstrap) must not block startup. Match the file loader and continue; chunk ids seen
+		// during the load below still establish the effective watermark.
+		safs::log_warn("{}: could not set next chunk id to {}, continuing with chunk load",
+		               __func__, nextChunkId);
 	}
 
 	kv::Key startKey = kv::toBytes(kChunkLatestKeyPrefix);
@@ -426,15 +432,26 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
 		for (const auto &pair : pageResult.getPairs()) {
+			if (pair.value.empty()) {
+				safs::log_err("Error loading node: empty value in database");
+				return kOpFailure;
+			}
+
 			const uint8_t *source = pair.value.data();
 			auto type = static_cast<FSNodeType>(source[0]);
 			FSNode *node = FSNode::create(type);
+			if (node == nullptr) {
+				safs::log_err("Error loading node: failed to create node of type {}",
+				              static_cast<char>(type));
+				return kOpFailure;
+			}
 			node->deserialize(&source);
 
 			int8_t status = loadNode(fsOpContext, node);
 
 			if (status < 0) {
 				safs::log_err("Error loading node: {}", node->id);
+				FSNode::destroy(node);
 				return kOpFailure;
 			}
 		}
@@ -521,6 +538,15 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 		uint32_t timeStamp{};
 
 		for (const auto &pair : pageResult.getPairs()) {
+			if (pair.key.size() < kFreeKeyPrefix.size() + sizeof(inode_t)) {
+				safs::log_err("{}: malformed key of size {}", __func__, pair.key.size());
+				return kOpFailure;
+			}
+			if (pair.value.size() < sizeof(uint32_t)) {
+				safs::log_err("{}: malformed value of size {}", __func__, pair.value.size());
+				return kOpFailure;
+			}
+
 			const uint8_t *source = pair.key.data();
 			source += kFreeKeyPrefix.size();  // Skip "FREE_"
 			getINode(&source, inode);
@@ -1104,9 +1130,10 @@ void MetadataBackendForkless::init() {
 	    std::make_unique<MetadataSectionBootstrapFDB>(kvConnector_->getKVEngine());
 #endif  // #ifndef METARESTORE
 
-	// Connect the signal handler for chunk changes
-	// This must be done in init() rather than loadChunks() to ensure that chunks created
-	// during changelog replay on shadow masters are also written to FDB
+	// Connect the signal handler for chunk changes once at init() (rather than in loadChunks())
+	// so it is in place for every chunk mutation while running as master.
+	// The handler guards on metadataWriter_, which is null on shadows, so shadow-side chunk
+	// mutations are not persisted until this node is promoted to master (see onPromotedToMaster()).
 	gChunkChangedSignal.connect(
 	    [this](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
 		    if (metadataWriter_) {
@@ -1134,7 +1161,7 @@ uint64_t MetadataBackendForkless::getVersion(const std::string & /*file*/) {
 
 	auto result = transaction->get(versionKey);
 
-	if (result != std::nullopt) {
+	if (result != std::nullopt && result->size() >= sizeof(uint64_t)) {
 		const uint8_t *data = result.value().data();
 		uint64_t version = get64bit(&data);
 		return version;

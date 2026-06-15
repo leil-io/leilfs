@@ -86,7 +86,7 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	size_t offsetBegin = metadataFile_->offset(metadataHeaderPtr);
 	const uint8_t *sectionPtr = metadataFile_->seek(offsetBegin);
 
-	while (!isEndOfMetadata(sectionPtr)) {
+	while (sectionPtr != nullptr && !isEndOfMetadata(sectionPtr)) {
 		const uint8_t *sectionLengthPtr = sectionPtr + kMetadataSectionNameSize;
 		const uint64_t sectionLength = get64bit(&sectionLengthPtr);
 		const size_t sectionOffset = metadataFile_->offset(sectionLengthPtr);
@@ -151,7 +151,7 @@ int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	return kOpSuccess;
 }
 
-int8_t MetadataSectionBootstrapFDB::hasPrefixLatestKeys(std::string_view prefix) {
+int8_t MetadataSectionBootstrapFDB::isSectionBootstrapNeeded(std::string_view prefix) {
 	if (kvEngine_ == nullptr) { return -1; }
 	auto transaction = kvEngine_->createReadOnlyTransaction();
 	kv::Key startKey = kv::toBytes(prefix);
@@ -171,6 +171,10 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 		return kOpFailure;
 	}
 
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping nodes: section bounds overflow");
+		return kOpFailure;
+	}
 	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
 	const uint8_t *ptr = metadataFile_->seek(marker->offset);
 	uint64_t nodeCount = 0;
@@ -205,6 +209,13 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 		ptr = nodeBegin;
 		node->deserialize(&ptr);
 
+		// Guard against a truncated/corrupt section advancing the pointer past the section end.
+		if (metadataFile_->offset(ptr) > sectionEnd) {
+			safs::log_err("{}: node read past section end", __func__);
+			FSNode::destroy(node);
+			return kOpFailure;
+		}
+
 		// Enqueue node update with checkpointVersion=0 to avoid NODEU_ entries.
 		writer.enqueue(std::make_unique<NodeUpdateEvent>(node));
 
@@ -235,6 +246,10 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 		return kOpFailure;
 	}
 
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping chunks: section bounds overflow");
+		return kOpFailure;
+	}
 	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
 
 	// The section starts with the next-chunk-id (uint64_t); reject a section too small to
@@ -315,6 +330,10 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 		return kOpFailure;
 	}
 
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping edges: section bounds overflow");
+		return kOpFailure;
+	}
 	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
 	const uint8_t *ptr = metadataFile_->seek(marker->offset);
 	uint64_t edgeCount = 0;
@@ -323,6 +342,13 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 	size_t pending = 0;
 
 	while (metadataFile_->offset(ptr) < sectionEnd) {
+		// Ensure the fixed-size edge header fits before reading it (subtraction avoids overflow;
+		// offset(ptr) < sectionEnd is guaranteed by the loop condition).
+		if (sectionEnd - metadataFile_->offset(ptr) < (sizeof(inode_t) * 2) + sizeof(uint16_t)) {
+			safs::log_err("{}: truncated edge entry header", __func__);
+			return kOpFailure;
+		}
+
 		inode_t parentId{};
 		getINode(&ptr, parentId);
 		inode_t childId{};
@@ -334,6 +360,13 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 
 		if (edgeNameSize == 0) {
 			safs::log_err("Bootstrapping edge: empty name for edge {}->{}", parentId, childId);
+			return kOpFailure;
+		}
+
+		// Ensure the edge name bytes are within the section before reading them (subtraction
+		// avoids overflow; offset(ptr) <= sectionEnd holds after the header read above).
+		if (edgeNameSize > sectionEnd - metadataFile_->offset(ptr)) {
+			safs::log_err("{}: truncated edge name for edge {}->{}", __func__, parentId, childId);
 			return kOpFailure;
 		}
 
@@ -367,7 +400,19 @@ int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
 		return kOpFailure;
 	}
 
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping free: section bounds overflow");
+		return kOpFailure;
+	}
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
 	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	// The section starts with the free-node count (inode_t); reject a section too small to hold it
+	// so the count-vs-length computation below cannot underflow.
+	if (marker->length < sizeof(inode_t)) {
+		safs::log_err("{}: section length {} is too small", __func__, marker->length);
+		return kOpFailure;
+	}
 
 	inode_t freeNodesNumber{};
 	getINode(&ptr, freeNodesNumber);
@@ -385,6 +430,13 @@ int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
 	uint64_t loadedCount = 0;
 
 	for (inode_t i = 0; i < freeNodesNumber; ++i) {
+		// Ensure the next entry fits before reading it (subtraction avoids overflow; offset(ptr)
+		// <= sectionEnd is maintained because freeNodesNumber is clamped to the section length).
+		if (kFreeNodesEntrySize > sectionEnd - metadataFile_->offset(ptr)) {
+			safs::log_err("{}: truncated entry at index {}", __func__, i);
+			return kOpFailure;
+		}
+
 		inode_t inode{};
 		uint32_t timestamp{};
 		getINode(&ptr, inode);
@@ -500,28 +552,28 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	// Filesystem MetadataSection "NODE 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "NODE 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kNodeKeyPrefix); },
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kNodeKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadNodesSection(); },
 	});
 
 	// Filesystem MetadataSection "EDGE 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "EDGE 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kEdgeKeyPrefix); },
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kEdgeKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadEdgesSection(); },
 	});
 
 	// Filesystem MetadataSection "FREE 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "FREE 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kFreeKeyPrefix); },
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kFreeKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadFreeSection(); },
 	});
 
 	// Filesystem MetadataSection "XATR 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "XATR 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kXAttrKeyPrefix); },
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kXAttrKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadXAttrSection(); },
 	});
 
@@ -532,7 +584,7 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	// Filesystem MetadataSection "CHNK 1.0"
 	metadataFileSections_.emplace_back(MetadataFileSection{
 	    .name = "CHNK 1.0",
-	    .isBootstrapNeeded = [this](bool) { return hasPrefixLatestKeys(kChunkLatestKeyPrefix); },
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kChunkLatestKeyPrefix); },
 	    .loadFunction = [this](bool) { return loadChunkSection(); },
 	});
 }

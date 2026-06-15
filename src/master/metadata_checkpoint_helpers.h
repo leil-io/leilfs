@@ -18,7 +18,9 @@
 
 #pragma once
 
-#include <cstring>
+#include <cstdint>
+#include <set>
+#include <vector>
 
 #include "common/datapack.h"
 #include "kv/ikv_engine.h"
@@ -86,7 +88,7 @@ inline std::vector<uint64_t> loadCheckpointVersions(kv::IKVEngine *kvEngine) {
 	auto versionsValue = transaction->get(kv::toBytes(kMetaCheckpointVersionsKey));
 	if (!versionsValue.has_value()) { return versions; }
 
-	if (versionsValue.has_value()) { versions = deserializeCheckpointVersions(*versionsValue); }
+	versions = deserializeCheckpointVersions(*versionsValue);
 
 	return versions;
 }
