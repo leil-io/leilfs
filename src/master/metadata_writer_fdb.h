@@ -192,6 +192,15 @@ public:
 	explicit MetadataWriterFDB(kv::IKVEngine *kvEngine,
 	                           MetadataCheckpointManager *checkpointManager = nullptr);
 
+	/// Flushes any remaining pending updates so they are not lost on shutdown/restart.
+	~MetadataWriterFDB();
+
+	// Non-copyable and non-movable (holds a mutex and a pending-update queue).
+	MetadataWriterFDB(const MetadataWriterFDB &) = delete;
+	MetadataWriterFDB &operator=(const MetadataWriterFDB &) = delete;
+	MetadataWriterFDB(MetadataWriterFDB &&) = delete;
+	MetadataWriterFDB &operator=(MetadataWriterFDB &&) = delete;
+
 	/// Enqueue an update (thread-safe)
 	void enqueue(std::unique_ptr<IMetadataUpdateEvent> event);
 

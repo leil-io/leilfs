@@ -69,7 +69,7 @@ private:
 
 	void initMetadataFileSections();
 
-	int8_t hasPrefixLatestKeys(std::string_view prefix);
+	int8_t isSectionBootstrapNeeded(std::string_view prefix);
 	int8_t loadNodesSection();
 	int8_t loadChunkSection();
 	int8_t loadEdgesSection();

@@ -18,7 +18,6 @@
 
 #include "master/metadata_checkpoint_manager.h"
 
-#include <algorithm>
 #include <cstring>
 #include <set>
 #include <string>
@@ -29,6 +28,7 @@
 #include "common/serialization.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/exceptions.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_checkpoint_helpers.h"
@@ -51,6 +51,11 @@ bool MetadataCheckpointManager::beginCheckpoint(const MetadataCheckpointDescript
 }
 
 bool MetadataCheckpointManager::sealCheckpoint(const MetadataCheckpointDescriptor &descriptor) {
+	if (descriptor.metadataVersion == 0) {
+		safs::log_warn("{}: cannot seal a checkpoint with version 0", __func__);
+		return false;
+	}
+
 	if (!checkpointVersionsLoaded_) { loadCheckpointVersions(); }
 
 	auto transaction = kvEngine_->createReadWriteTransaction();
@@ -62,8 +67,21 @@ bool MetadataCheckpointManager::sealCheckpoint(const MetadataCheckpointDescripto
 		return false;
 	}
 
-	saveCheckpointVersions(transaction.get(), descriptor);
-	removeDroppedCheckpointVersions(transaction.get());
+	// Compute the next catalog and the dropped versions on local copies so the manager's
+	// in-memory state is mutated only after the transaction commits successfully.
+	std::vector<uint64_t> nextCheckpointVersions;
+	std::vector<uint64_t> droppedVersions;
+	computeRetainedCheckpointVersions(descriptor.metadataVersion, nextCheckpointVersions,
+	                                  droppedVersions);
+
+	if (checkpoints::saveCheckpointVersions(transaction.get(), nextCheckpointVersions) !=
+	    kOpSuccess) {
+		safs::log_err("Failed to persist checkpoint catalog for version {}",
+		              descriptor.metadataVersion);
+		return false;
+	}
+
+	removeDroppedCheckpointVersions(transaction.get(), droppedVersions);
 
 	if (!transaction->commit()) {
 		safs::log_err("Failed to seal checkpoint version {}: transaction commit failed",
@@ -71,6 +89,8 @@ bool MetadataCheckpointManager::sealCheckpoint(const MetadataCheckpointDescripto
 		return false;
 	}
 
+	// Commit succeeded: now it is safe to update the in-memory state.
+	retainedCheckpointVersions_ = std::move(nextCheckpointVersions);
 	resetIntervalState();
 	pendingCheckpoint_.reset();
 	activeCheckpointVersion_ = descriptor.metadataVersion;
@@ -83,26 +103,40 @@ MetadataCheckpointDescriptor MetadataCheckpointManager::loadLatestCheckpoint() {
 	MetadataCheckpointDescriptor descriptor;
 	auto transaction = kvEngine_->createReadOnlyTransaction();
 
+	// A present-but-undersized key means corrupted restore state; fail fast instead of
+	// silently falling back to defaults (which could reuse inode/chunk/session ids).
 	auto maxInodeValue = transaction->get(kv::toBytes(kMetaMaxInodeIdKey));
 	if (maxInodeValue.has_value()) {
+		if (maxInodeValue->size() < sizeof(inode_t)) {
+			throw MetadataConsistencyException("Invalid size for META_MAX_INODE_ID key");
+		}
 		const uint8_t *data = maxInodeValue->data();
 		getINode(&data, descriptor.maxInodeId);
 	}
 
 	auto versionValue = transaction->get(kv::toBytes(kMetaVersionKey));
 	if (versionValue.has_value()) {
+		if (versionValue->size() < sizeof(uint64_t)) {
+			throw MetadataConsistencyException("Invalid size for META_VERSION key");
+		}
 		const uint8_t *data = versionValue->data();
 		descriptor.metadataVersion = get64bit(&data);
 	}
 
 	auto nextSessionValue = transaction->get(kv::toBytes(kMetaNextSessionKey));
 	if (nextSessionValue.has_value()) {
+		if (nextSessionValue->size() < sizeof(uint32_t)) {
+			throw MetadataConsistencyException("Invalid size for META_NEXT_SESSION key");
+		}
 		const uint8_t *data = nextSessionValue->data();
 		get32bit(&data, descriptor.nextSessionId);
 	}
 
 	auto nextChunkValue = transaction->get(kv::toBytes(kMetaNextChunkIdKey));
 	if (nextChunkValue.has_value()) {
+		if (nextChunkValue->size() < sizeof(uint64_t)) {
+			throw MetadataConsistencyException("Invalid size for META_NEXT_CHUNK_ID key");
+		}
 		const uint8_t *data = nextChunkValue->data();
 		descriptor.nextChunkId = get64bit(&data);
 	}
@@ -142,8 +176,14 @@ void MetadataCheckpointManager::recordPreMutation(const MetadataMutationContext 
 		    } else if constexpr (std::is_same_v<T, EdgeSetMutation> ||
 		                         std::is_same_v<T, EdgeRemoveMutation>) {
 			    return MetadataSectionKind::Edge;
-		    } else {
+		    } else if constexpr (std::is_same_v<T, XAttrSetMutation> ||
+		                         std::is_same_v<T, XAttrRemoveMutation> ||
+		                         std::is_same_v<T, XAttrRangeRemoveMutation>) {
 			    return MetadataSectionKind::XAttr;
+		    } else {
+			    // Force a compile error if a new MetadataMutation alternative is added
+			    // without being mapped to a section here.
+			    static_assert(!sizeof(T *), "Unhandled mutation type in std::visit");
 		    }
 	    },
 	    mutation);
@@ -228,45 +268,34 @@ void MetadataCheckpointManager::loadCheckpointVersions() {
 	checkpointVersionsLoaded_ = true;
 }
 
-int8_t MetadataCheckpointManager::saveCheckpointVersions(
-    kv::IReadWriteTransaction *transaction, const MetadataCheckpointDescriptor &descriptor) {
-	if (transaction == nullptr) { return kOpFailure; }
-
-	if (descriptor.metadataVersion == 0) {
-		safs::log_warn("{}: Active checkpoint version is 0, cannot save checkpoint versions",
-		               __func__);
-		return kOpFailure;
-	}
-
+void MetadataCheckpointManager::computeRetainedCheckpointVersions(
+    uint64_t newVersion, std::vector<uint64_t> &retained, std::vector<uint64_t> &dropped) const {
 	std::set<uint64_t> checkpointVersionsSet(retainedCheckpointVersions_.begin(),
 	                                         retainedCheckpointVersions_.end());
 
 	// Add the new checkpoint version to the checkpoint versions set
-	checkpointVersionsSet.insert(descriptor.metadataVersion);
+	checkpointVersionsSet.insert(newVersion);
 
-	const size_t maxRetainedCheckpoints =
-	    std::max<size_t>(1, static_cast<size_t>(gStoredPreviousBackMetaCopies) + 1);
+	// gStoredPreviousBackMetaCopies is uint32_t (never negative); the +1 keeps the active
+	// checkpoint, and on 64-bit size_t the addition cannot overflow.
+	const size_t maxRetainedCheckpoints = static_cast<size_t>(gStoredPreviousBackMetaCopies) + 1;
 
 	// Trim the set to keep only the last 'gStoredPreviousBackMetaCopies + 1' versions
-	droppedCheckpointVersions.clear();
+	dropped.clear();
 	while (checkpointVersionsSet.size() > maxRetainedCheckpoints) {
-		droppedCheckpointVersions.push_back(*checkpointVersionsSet.begin());
+		dropped.push_back(*checkpointVersionsSet.begin());
 		checkpointVersionsSet.erase(checkpointVersionsSet.begin());
 	}
 
-	// Update the retained checkpoint versions vector and persist it in FDB
-	retainedCheckpointVersions_.assign(checkpointVersionsSet.begin(), checkpointVersionsSet.end());
-	checkpoints::saveCheckpointVersions(transaction, retainedCheckpointVersions_);
-
-	return kOpSuccess;
+	retained.assign(checkpointVersionsSet.begin(), checkpointVersionsSet.end());
 }
 
 int8_t MetadataCheckpointManager::removeDroppedCheckpointVersions(
-    kv::IReadWriteTransaction *transaction) {
+    kv::IReadWriteTransaction *transaction, const std::vector<uint64_t> &droppedVersions) {
 	if (transaction == nullptr) { return kOpFailure; }
 
-	// Delete dropped checkpoints from FDB using the recorders
-	for (uint64_t droppedVersion : droppedCheckpointVersions) {
+	// Best-effort cleanup of per-checkpoint data for the dropped versions using the recorders.
+	for (uint64_t droppedVersion : droppedVersions) {
 		for (auto *recorder : recorders_) {
 			if (recorder != nullptr) {
 				if (recorder->dropCheckpointData(transaction, droppedVersion) != kOpSuccess) {
@@ -277,6 +306,5 @@ int8_t MetadataCheckpointManager::removeDroppedCheckpointVersions(
 		}
 	}
 
-	droppedCheckpointVersions.clear();
 	return kOpSuccess;
 }
