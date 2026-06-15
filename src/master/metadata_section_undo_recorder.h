@@ -18,7 +18,10 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -50,7 +53,8 @@ constexpr std::string_view sectionName(MetadataSectionKind section) {
 	case MetadataSectionKind::XAttr:
 		return "XAttr";
 	case MetadataSectionKind::Count:
-		return "Count";
+		// Sentinel, not a real section: report as Unknown so callers reject it.
+		return "Unknown";
 	}
 	return "Unknown";
 }
@@ -125,9 +129,10 @@ using MetadataMutation =
 
 class ISectionUndoRecorder {
 public:
-	ISectionUndoRecorder(const ISectionUndoRecorder &) = default;
+	// Polymorphic interface: suppress copy/move to prevent slicing.
+	ISectionUndoRecorder(const ISectionUndoRecorder &) = delete;
 	ISectionUndoRecorder(ISectionUndoRecorder &&) = delete;
-	ISectionUndoRecorder &operator=(const ISectionUndoRecorder &) = default;
+	ISectionUndoRecorder &operator=(const ISectionUndoRecorder &) = delete;
 	ISectionUndoRecorder &operator=(ISectionUndoRecorder &&) = delete;
 	ISectionUndoRecorder() = default;
 	virtual ~ISectionUndoRecorder() = default;

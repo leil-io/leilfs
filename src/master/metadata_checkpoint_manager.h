@@ -190,25 +190,16 @@ private:
 	/// marks it loaded via checkpointVersionsLoaded_.
 	void loadCheckpointVersions();
 
-	/// Inserts the descriptor's version into the retained catalog, trims it back to the
-	/// retention limit, and persists the result in the given transaction.
+	/// Computes the next retained catalog from the current one plus a new checkpoint version.
 	///
-	/// Versions trimmed off the front are recorded in droppedCheckpointVersions for later
-	/// cleanup by removeDroppedCheckpointVersions().
+	/// Works on local outputs only and does not mutate any member, so the caller can apply the
+	/// result after the seal transaction commits successfully.
 	///
-	/// @param transaction Transaction to write the updated catalog into.
-	/// @param descriptor  Provides the new checkpoint version (must be non-zero).
-	/// @return kOpSuccess on success, kOpFailure on null transaction or zero version.
-	int8_t saveCheckpointVersions(kv::IReadWriteTransaction *transaction,
-	                              const MetadataCheckpointDescriptor &descriptor);
-
-	/// Removes the per-checkpoint data associated with a single dropped checkpoint version.
-	///
-	/// @param transaction            Transaction used to remove keys.
-	/// @param droppedCheckpointVersion Checkpoint version whose data should be removed.
-	/// @return kOpSuccess on success, kOpFailure on failure.
-	int8_t dropCheckpointData(kv::IReadWriteTransaction *transaction,
-	                          uint64_t droppedCheckpointVersion);
+	/// @param newVersion New checkpoint version to insert.
+	/// @param retained   Output: the catalog trimmed to the retention limit, ascending.
+	/// @param dropped    Output: versions trimmed off the front (to be cleaned up).
+	void computeRetainedCheckpointVersions(uint64_t newVersion, std::vector<uint64_t> &retained,
+	                                       std::vector<uint64_t> &dropped) const;
 
 	/// Remove keys associated with checkpoints that were dropped during trimming.
 	///
@@ -218,9 +209,11 @@ private:
 	/// @note: For some keyspaces (e.g. CHNU_ chunk undo), a full cleanup requires a prefix/range
 	/// scan and removing all keys under that prefix.
 	///
-	/// @param transaction Transaction used to remove keys.
-	/// @return kOpSuccess on success, kOpFailure on failure.
-	int8_t removeDroppedCheckpointVersions(kv::IReadWriteTransaction *transaction);
+	/// @param transaction     Transaction used to remove keys.
+	/// @param droppedVersions Checkpoint versions whose per-checkpoint data should be removed.
+	/// @return kOpSuccess on success, kOpFailure on null transaction.
+	int8_t removeDroppedCheckpointVersions(kv::IReadWriteTransaction *transaction,
+	                                       const std::vector<uint64_t> &droppedVersions);
 
 	/// Key-value engine used for all durable checkpoint state. Not owned.
 	kv::IKVEngine *kvEngine_;
@@ -232,12 +225,6 @@ private:
 	/// In-memory mirror of META_CHECKPOINT_VERSIONS: the retained sealed checkpoint
 	/// versions in ascending order.
 	std::vector<uint64_t> retainedCheckpointVersions_;
-
-	/// Checkpoint versions dropped during trimming in sealCheckpoint().
-	///
-	/// These versions are removed from META_CHECKPOINT_VERSIONS and are used to drive cleanup
-	/// of associated per-checkpoint keys (undo entries, etc.) in removeDroppedCheckpointVersions().
-	std::vector<uint64_t> droppedCheckpointVersions;
 
 	/// Recorders indexed by MetadataSectionKind; null entries mean the section has no
 	/// registered recorder. Recorders are not owned by this array.
