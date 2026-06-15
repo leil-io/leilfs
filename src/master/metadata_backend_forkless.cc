@@ -58,6 +58,7 @@
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_dumper_file.h"
 #include "master/metadata_section_bootstrap_fdb.h"
+#include "master/personality.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
@@ -90,6 +91,19 @@ static void flushMetadataCallback() {
 	if (gForklessBackend != nullptr) { (void)gForklessBackend->flushPendingUpdates(false); }
 }
 
+// Called by the personality subsystem when this server is promoted from Shadow to Master.
+// Must match the void(*)(void) signature required by registerFunctionCalledOnPromotion.
+static void forklessBackendBecameMaster() {
+	if (gForklessBackend != nullptr) { gForklessBackend->onPromotedToMaster(); }
+}
+
+// Eventloop destruct hook: runs while the time table is still alive (before
+// eventloop_release_resources() clears it) so the backend's static destructor never
+// unregisters an already-removed flush timer. Must match the void(*)(void) signature.
+static void forklessFlushTimerTeardown() {
+	if (gForklessBackend != nullptr) { gForklessBackend->onEventloopTeardown(); }
+}
+
 inline Signal initializeNewMetadataHeaderSignal;
 
 MetadataBackendForkless::MetadataBackendForkless()
@@ -106,6 +120,17 @@ MetadataBackendForkless::MetadataBackendForkless()
 }
 
 MetadataBackendForkless::~MetadataBackendForkless() {
+	// Unregister the periodic flush timer if it is still live. This matters when the backend
+	// is destroyed while the eventloop is running (e.g. recreated in tests): otherwise stale
+	// timers accumulate and keep flushing the newer instance through gForklessBackend. At
+	// process shutdown the eventloop destruct hook (onEventloopTeardown) has already cleared
+	// flushTimerHandle_, so this is a no-op and never touches the already-cleared time table
+	// (eventloop_timeunregister maborts on an unknown handle).
+	if (flushTimerHandle_ != nullptr) {
+		eventloop_timeunregister(flushTimerHandle_);
+		flushTimerHandle_ = nullptr;
+	}
+
 	// Static callbacks (periodic flush timer, promotion handler) dereference
 	// gForklessBackend. Clear it on destruction so they never touch a deleted
 	// instance. Guard on identity so destroying an old backend cannot clobber a
@@ -141,30 +166,36 @@ uint8_t MetadataBackendForkless::fs_storeall(DumpType /*dumpType*/) {
 		return SAUNAFS_ERROR_NOTPOSSIBLE;
 	}
 
-	auto checkpointDescriptor = buildCheckpointDescriptor();
-	if (checkpointManager_ == nullptr ||
-	    !checkpointManager_->beginCheckpoint(checkpointDescriptor)) {
-		safs::log_err("Failed to begin metadata checkpoint sketch");
-		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-		return SAUNAFS_ERROR_IO;
+	// Checkpoint management and FDB persistence are master-only.
+	// Shadows share the same FDB database and must not write checkpoint keys or
+	// flush the writer queue — both conflict with the master's own storeall path.
+	if (metadataserver::isMaster()) {
+		auto checkpointDescriptor = buildCheckpointDescriptor();
+		if (checkpointManager_ == nullptr ||
+		    !checkpointManager_->beginCheckpoint(checkpointDescriptor)) {
+			safs::log_err("Failed to begin metadata checkpoint sketch");
+			broadcast_metadata_saved(SAUNAFS_ERROR_IO);
+			return SAUNAFS_ERROR_IO;
+		}
+
+		// Flush ALL pending batched updates to FDB before saving metadata keys,
+		// so restore-relevant keys reflect the fully persisted state.
+		if (!flushPendingUpdates(true)) {
+			safs::log_err("Failed to fully flush pending updates before saving metadata keys");
+			broadcast_metadata_saved(SAUNAFS_ERROR_IO);
+			return SAUNAFS_ERROR_IO;
+		}
+
+		// Seal the checkpoint descriptor after all pending live-key updates have been drained.
+		if (checkpointManager_ == nullptr ||
+		    !checkpointManager_->sealCheckpoint(checkpointDescriptor)) {
+			safs::log_err("Failed to seal metadata checkpoint sketch");
+			broadcast_metadata_saved(SAUNAFS_ERROR_IO);
+			return SAUNAFS_ERROR_IO;
+		}
 	}
 
-	// Flush ALL pending batched updates to FDB before saving metadata keys,
-	// so restore-relevant keys reflect the fully persisted state.
-	if (!flushPendingUpdates(true)) {
-		safs::log_err("Failed to fully flush pending updates before saving metadata keys");
-		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-		return SAUNAFS_ERROR_IO;
-	}
-
-	// Seal the checkpoint descriptor after all pending live-key updates have been drained.
-	if (checkpointManager_ == nullptr ||
-	    !checkpointManager_->sealCheckpoint(checkpointDescriptor)) {
-		safs::log_err("Failed to seal metadata checkpoint sketch");
-		broadcast_metadata_saved(SAUNAFS_ERROR_IO);
-		return SAUNAFS_ERROR_IO;
-	}
-
+	// Changelog rotation and status broadcast still apply to both personalities.
 	changelog_rotate();
 	matomlserv_broadcast_logrotate();
 	broadcast_metadata_saved(SAUNAFS_STATUS_OK);
@@ -974,6 +1005,35 @@ bool MetadataBackendForkless::flushPendingUpdates(bool flushAll) {
 	return metadataWriter_->flush();
 }
 
+void MetadataBackendForkless::onPromotedToMaster() {
+	// Idempotent: a node promoted once already has its writer; ignore repeat promotions.
+	if (metadataWriter_ != nullptr) { return; }
+
+	safs::log_info("MetadataBackendForkless: promoted to master, initializing metadata writer");
+
+	// Re-read the durable checkpoint catalog before writing: the old master kept sealing
+	// checkpoints while this node was a shadow, so the catalog loaded at startup is stale.
+	// In-memory metadata is authoritative here (kept current by changelog replay), so only the
+	// checkpoint catalog is refreshed, not the metadata globals.
+	checkpointManager_->reloadDurableCheckpointState();
+
+	metadataWriter_ =
+	    std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(), checkpointManager_.get());
+	registerFlushTimer();
+}
+
+void MetadataBackendForkless::registerFlushTimer() {
+	if (flushTimerHandle_ != nullptr) { return; }  // already registered; never stack timers
+	flushTimerHandle_ = eventloop_timeregister_ms(kMetadataFlushIntervalMs, flushMetadataCallback);
+
+	// Install a destruct hook bound to the current eventloop's lifetime. It runs during
+	// eventloop_destruct() — before eventloop_release_resources() clears the time table — and
+	// clears the cached handle so the (later) static destructor does not unregister an
+	// already-removed timer. Rebound on each fresh registration, so it also survives an
+	// eventloop that is torn down and recreated (e.g. across test cases).
+	eventloop_destructregister(forklessFlushTimerTeardown);
+}
+
 void MetadataBackendForkless::initSections() {
 	metadataSections_.emplace_back("NODE 1.0", kNodeKeyPrefix,
 	                               [this](bool flag) { return loadNodes(flag); });
@@ -1025,8 +1085,19 @@ void MetadataBackendForkless::init() {
 	}
 
 	checkpointManager_ = std::make_unique<MetadataCheckpointManager>(kvConnector_->getKVEngine());
-	metadataWriter_ =
-	    std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(), checkpointManager_.get());
+
+	// Writer and flush timer are only initialized for the master personality.
+	// Shadows must not write to the shared FDB database; all on* signal handlers already guard on
+	// metadataWriter_ != nullptr, so no events reach FDB while the pointer stays null.
+	// onPromotedToMaster() creates the writer and registers the timer on shadow->master promotion.
+	if (metadataserver::isMaster()) {
+		metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(),
+		                                                      checkpointManager_.get());
+		registerFlushTimer();
+	}
+
+	// Register the promotion callback so a shadow that becomes master starts writing to FDB.
+	metadataserver::registerFunctionCalledOnPromotion(forklessBackendBecameMaster);
 
 #ifndef METARESTORE
 	sectionBootstrapper_ =
@@ -1043,9 +1114,6 @@ void MetadataBackendForkless::init() {
 			        chunkId, version, lockedTo, lockId));
 		    }
 	    });
-
-	// Register periodic flush to ensure timely persistence under high metadata mutation load.
-	eventloop_timeregister_ms(kMetadataFlushIntervalMs, flushMetadataCallback);
 
 	uint64_t version = getVersion("");
 

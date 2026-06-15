@@ -117,6 +117,12 @@ MetadataCheckpointDescriptor MetadataCheckpointManager::loadLatestCheckpoint() {
 	return descriptor;
 }
 
+void MetadataCheckpointManager::reloadDurableCheckpointState() {
+	loadCheckpointVersions();
+	resetIntervalState();
+	pendingCheckpoint_.reset();
+}
+
 void MetadataCheckpointManager::recordPreMutation(const MetadataMutationContext &context,
 	                       const MetadataMutation &mutation) {
 	if (context.transaction == nullptr || context.checkpointVersion == 0) { return; }
