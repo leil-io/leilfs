@@ -129,7 +129,34 @@ public:
 	/// @return true on success; false if a KV commit failed while flushing.
 	bool flushPendingUpdates(bool flushAll = false);
 
+	/// Called when this server is promoted from Shadow to Master.
+	///
+	/// Creates the metadata writer and registers the periodic flush timer so that
+	/// FDB persistence begins from this point forward. On shadow servers the writer
+	/// is intentionally left null until promotion; all on* signal handlers already
+	/// guard on metadataWriter_ != nullptr, so no writes reach FDB before this call.
+	void onPromotedToMaster();
+
+	/// Drops the cached flush-timer handle without unregistering it.
+	///
+	/// Registered as an eventloop destruct hook so it runs during eventloop_destruct(), while
+	/// the eventloop time table is still alive and before eventloop_release_resources()
+	/// clears it. The backend is a static object destroyed after eventloop teardown, so its
+	/// destructor must not call eventloop_timeunregister() on an already-removed handle (that
+	/// maborts). Clearing the handle here makes the destructor's unregister a no-op at process
+	/// shutdown, while the destructor still unregisters a live timer when the backend is
+	/// recreated in tests (eventloop still running).
+	void onEventloopTeardown() { flushTimerHandle_ = nullptr; }
+
 private:
+	/// Registers the periodic flush timer once, caching its handle in flushTimerHandle_.
+	///
+	/// Idempotent: a second call while a timer is already registered is a no-op, so the
+	/// master-at-startup and shadow->master promotion paths cannot stack timers. Each fresh
+	/// registration also installs an eventloop destruct hook that clears the handle at
+	/// teardown, so the hook is rebound if the eventloop is recreated (see onEventloopTeardown()).
+	void registerFlushTimer();
+
 	/// Initializes the vector of metadata sections for later loading
 	void initSections();
 
@@ -320,6 +347,12 @@ private:
 
 	/// Metadata writer for all metadata updates
 	std::unique_ptr<MetadataWriterFDB> metadataWriter_;
+
+	/// Handle of the periodic flush timer registered via eventloop_timeregister_ms(); null
+	/// until a master registers the timer. Used to unregister the timer when the backend is
+	/// destroyed while the eventloop is still alive (e.g. recreated in tests). See
+	/// registerFlushTimer() and onEventloopTeardown().
+	void *flushTimerHandle_ = nullptr;
 
 	/// Descriptor of the currently loaded checkpoint
 	MetadataCheckpointDescriptor loadedCheckpointDescriptor_{};

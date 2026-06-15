@@ -111,6 +111,18 @@ public:
 	/// @return Descriptor describing the newest sealed checkpoint.
 	MetadataCheckpointDescriptor loadLatestCheckpoint();
 
+	/// Refreshes the in-memory checkpoint catalog from FDB without reading the descriptor.
+	///
+	/// Reloads META_CHECKPOINT_VERSIONS and the active checkpoint version, resets per-interval
+	/// recorder state, and discards any staged checkpoint. Unlike loadLatestCheckpoint() it does
+	/// not touch the in-memory metadata globals.
+	///
+	/// Used on shadow->master promotion: the promoted node's in-memory metadata (kept current by
+	/// changelog replay) is authoritative, so only the durable checkpoint catalog — which the old
+	/// master kept sealing while this node was a shadow — needs to be re-read before this node
+	/// seals its own checkpoints.
+	void reloadDurableCheckpointState();
+
 	/// Notifies the checkpoint layer that a live section key is about to be mutated.
 	///
 	/// Routes the typed mutation to the ISectionUndoRecorder owning the affected metadata
