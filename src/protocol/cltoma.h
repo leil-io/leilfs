@@ -59,6 +59,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseMknod, SAU_CLTOMA_FUSE_MKNOD, 0,
 		uint32_t, gid,
 		uint32_t, rdev)
 
+// Fused create+open: server does mknod (type file) + acquire for the session.
+// flags carries the open flags (WANT_READ/WANT_WRITE), matching fuseOpen.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseCreate, SAU_CLTOMA_FUSE_CREATE, 0, uint32_t,
+                                    messageId, inode_t, inode, LegacyString<uint8_t>, name,
+                                    uint16_t, mode, uint16_t, umask, uint32_t, uid, uint32_t, gid,
+                                    uint8_t, flags)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, fuseMkdir, SAU_CLTOMA_FUSE_MKDIR, 0,
 		uint32_t, messageId,
 		inode_t, inode,

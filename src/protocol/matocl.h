@@ -68,6 +68,21 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		inode_t, inode,
 		Attributes, attributes)
 
+// SAU_MATOCL_FUSE_CREATE (fused create+open, mirrors fuseMknod's reply shape)
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseCreate, kStatusPacketVersion, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseCreate, kResponsePacketVersion, 1)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, fuseCreate, SAU_MATOCL_FUSE_CREATE, kStatusPacketVersion,
+		uint32_t, messageId,
+		uint8_t, status)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, fuseCreate, SAU_MATOCL_FUSE_CREATE, kResponsePacketVersion,
+		uint32_t, messageId,
+		inode_t, inode,
+		Attributes, attributes)
+
 // SAU_MATOCL_FUSE_MKDIR
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseMkdir, kStatusPacketVersion, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseMkdir, kResponsePacketVersion, 1)

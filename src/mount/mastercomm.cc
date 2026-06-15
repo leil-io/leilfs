@@ -2290,6 +2290,48 @@ uint8_t fs_mknod(inode_t parent, uint8_t nleng, const uint8_t *name, uint8_t typ
 	}
 }
 
+uint8_t fs_create(inode_t parent, uint8_t nleng, const uint8_t *name, uint16_t mode, uint16_t umask,
+                  uint32_t uid, uint32_t gid, uint8_t flags, inode_t &inode, Attributes &attr) {
+	threc* rec = fs_get_my_threc();
+	auto message = cltoma::fuseCreate::build(rec->packetId, parent,
+			LegacyString<uint8_t>(reinterpret_cast<const char*>(name), nleng),
+			mode, umask, uid, gid, flags);
+	if (!fs_saucreatepacket(rec, message)) {
+		return SAUNAFS_ERROR_IO;
+	}
+	if (!fs_sausendandreceive(rec, SAU_MATOCL_FUSE_CREATE, message)) {
+		return SAUNAFS_ERROR_IO;
+	}
+	try {
+		uint32_t messageId;
+		PacketVersion packetVersion;
+		deserializePacketVersionNoHeader(message, packetVersion);
+		if (packetVersion == matocl::fuseCreate::kStatusPacketVersion) {
+			uint8_t status;
+			matocl::fuseCreate::deserialize(message, messageId, status);
+			if (status == SAUNAFS_STATUS_OK) {
+				fs_got_inconsistent("SAU_MATOCL_FUSE_CREATE", message.size(),
+						"version 0 and SAUNAFS_STATUS_OK");
+				return SAUNAFS_ERROR_IO;
+			}
+			return status;
+		} else if (packetVersion == matocl::fuseCreate::kResponsePacketVersion) {
+			matocl::fuseCreate::deserialize(message, messageId, inode, attr);
+			// The fused create also opens the file; track the acquire client-side
+			// like fs_opencheck does, so it is reported via CLTOMA_FUSE_RESERVED_INODES.
+			fs_inc_acnt(inode);
+			return SAUNAFS_STATUS_OK;
+		} else {
+			fs_got_inconsistent("SAU_MATOCL_FUSE_CREATE", message.size(),
+					"unknown version " + std::to_string(packetVersion));
+			return SAUNAFS_ERROR_IO;
+		}
+	} catch (Exception& ex) {
+		fs_got_inconsistent("SAU_MATOCL_FUSE_CREATE", message.size(), ex.what());
+		return SAUNAFS_ERROR_IO;
+	}
+}
+
 uint8_t fs_mkdir(inode_t parent, uint8_t nleng, const uint8_t *name, uint16_t mode, uint16_t umask,
                  uint32_t uid, uint32_t gid, uint8_t copysgid, inode_t &inode, Attributes &attr) {
 	threc* rec = fs_get_my_threc();

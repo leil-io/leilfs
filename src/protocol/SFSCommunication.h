@@ -1629,6 +1629,17 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCL_DELETE_SESSION (1000U + 708U)
 /// status:8
 
+// 0x06AD
+#define SAU_CLTOMA_FUSE_CREATE (1000U + 709U)
+// msgid:32 inode:32 name:NAME mode:16 umask:16 uid:32 gid:32 flags:8
+// Fused create+open: combines mknod and open into one request, replacing the
+// FUSE_MKNOD + FUSE_OPEN round-trip pair.
+
+// 0x06AE
+#define SAU_MATOCL_FUSE_CREATE (1000U + 710U)
+// msgid:32 status:8
+// msgid:32 inode:32 attr:ATTR
+
 // 0x643
 #define SAU_CLTOMA_ADMIN_DUMP_CONFIG (1000U + 603U)
 /// -

@@ -2207,29 +2207,46 @@ EntryParam create(Context &ctx, inode_t parent, const char *name, mode_t mode,
 		throw RequestException(SAUNAFS_ERROR_EINVAL);
 	}
 
-	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_mknod(parent,nleng,(const uint8_t*)name,TYPE_FILE,mode&07777,ctx.umask,ctx.uid,ctx.gid,0,inode,attr));
-	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (mknod): %s",
-				parent,
-				name,
-				modestr+1,
-				(unsigned int)mode,
-				saunafs_error_string(status));
-		throw RequestException(status);
-	}
-	Attributes tmp_attr;
-	RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-		fs_opencheck(inode,ctx.uid,ctx.gid,oflags,tmp_attr));
+	if (masterVersion.load() >= kFirstVersionWithFusedCreate) {
+		// Fused create+open: one FUSE_CREATE RPC instead of the separate FUSE_MKNOD
+		// and FUSE_OPEN round-trip pair.
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+			fs_create(parent, nleng, (const uint8_t*)name, mode & 07777, ctx.umask, ctx.uid,
+			          ctx.gid, oflags, inode, attr));
+		if (status != SAUNAFS_STATUS_OK) {
+			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
+					parent,
+					name,
+					modestr+1,
+					(unsigned int)mode,
+					saunafs_error_string(status));
+			throw RequestException(status);
+		}
+	} else {
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+			fs_mknod(parent,nleng,(const uint8_t*)name,TYPE_FILE,mode&07777,ctx.umask,ctx.uid,ctx.gid,0,inode,attr));
+		if (status != SAUNAFS_STATUS_OK) {
+			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (mknod): %s",
+					parent,
+					name,
+					modestr+1,
+					(unsigned int)mode,
+					saunafs_error_string(status));
+			throw RequestException(status);
+		}
+		Attributes tmp_attr;
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+			fs_opencheck(inode,ctx.uid,ctx.gid,oflags,tmp_attr));
 
-	if (status != SAUNAFS_STATUS_OK) {
-		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (open): %s",
-				parent,
-				name,
-				modestr+1,
-				(unsigned int)mode,
-				saunafs_error_string(status));
-		throw RequestException(status);
+		if (status != SAUNAFS_STATUS_OK) {
+			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (open): %s",
+					parent,
+					name,
+					modestr+1,
+					(unsigned int)mode,
+					saunafs_error_string(status));
+			throw RequestException(status);
+		}
 	}
 
 	mattr = attr_get_mattr(attr);

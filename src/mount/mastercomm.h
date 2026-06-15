@@ -73,6 +73,8 @@ uint8_t fs_symlink(inode_t parent, uint8_t nleng, const uint8_t *name, const uin
 uint8_t fs_mknod(inode_t parent, uint8_t nleng, const uint8_t *name, uint8_t type, uint16_t mode,
                  uint16_t umask, uint32_t uid, uint32_t gid, uint32_t rdev, inode_t &inode,
                  Attributes &attr);
+uint8_t fs_create(inode_t parent, uint8_t nleng, const uint8_t *name, uint16_t mode, uint16_t umask,
+                  uint32_t uid, uint32_t gid, uint8_t flags, inode_t &inode, Attributes &attr);
 uint8_t fs_mkdir(inode_t parent, uint8_t nleng, const uint8_t *name, uint16_t mode, uint16_t umask,
                  uint32_t uid, uint32_t gid, uint8_t copysgid, inode_t &inode, Attributes &attr);
 uint8_t fs_unlink(inode_t parent, uint8_t nleng, const uint8_t *name, uint32_t uid, uint32_t gid);

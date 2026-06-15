@@ -3084,6 +3084,101 @@ void matoclserv_fuse_mknod(matoclserventry *eptr, PacketHeader header, const uin
 	});
 }
 
+// Fused create+open: mknod a file and acquire it for the calling session in a single
+// transaction, so an empty-file create costs one durable commit instead of two (the
+// mknod + open round-trip pair). Version-gated on the client; old clients still send
+// the separate FUSE_MKNOD and FUSE_OPEN.
+void matoclserv_fuse_create(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
+	uint32_t messageId, uid, gid;
+	inode_t parentInode;
+	LegacyString<uint8_t> name;
+	uint16_t mode, umask;
+	uint8_t flags;
+
+	if (header.type == SAU_CLTOMA_FUSE_CREATE) {
+		cltoma::fuseCreate::deserialize(data, header.length, messageId, parentInode, name, mode,
+		                                umask, uid, gid, flags);
+	} else {
+		throw IncorrectDeserializationException(
+				"Unknown packet type for matoclserv_fuse_create: " + std::to_string(header.type));
+	}
+
+	// Reply data shared between the op body and the reply continuation; a retry
+	// refreshes it through the same struct.
+	auto replyData = std::make_shared<std::pair<inode_t, Attributes>>();
+	uint8_t status = matoclserv_check_group_cache(eptr, gid);
+
+	// Replayable op body: mknod + acquire the open file + openCheck, all in one
+	// transaction. On the KV backend the in-memory open-file record (Session::openFilesSet)
+	// is deliberately NOT done here; it is applied once on commit success (below) so a
+	// retry replays the persistent acquire on a fresh transaction without the already-open
+	// early-return skipping it. On the in-memory Master there is no transaction to roll
+	// back, so acquire+record are coupled here (matoclserv_insert_open_file): a later
+	// openCheck failure must not orphan an untracked acquire that disconnect cleanup would
+	// never release (mirrors matoclserv_fuse_open).
+	OpReplay runCreate = [eptr, uid, gid, parentInode, name, mode, umask, flags,
+	                      replyData](FilesystemOperationContext &ctx) -> uint8_t {
+		FsContext context = matoclserv_get_context(eptr, uid, gid);
+		uint8_t opStatus =
+		    gFSOperations->mknod(context, ctx, parentInode, HString(name), FSNodeType::kFile, mode,
+		                         umask, 0, &replyData->first, replyData->second);
+		if (opStatus == SAUNAFS_STATUS_OK) {
+			opStatus = ctx.getReadWriteTransaction() == nullptr
+			               ? matoclserv_insert_open_file(ctx, eptr->sessionData, replyData->first)
+			               : matoclserv_acquire_open_file_persist(ctx, eptr->sessionData,
+			                                                      replyData->first);
+		}
+		if (opStatus == SAUNAFS_STATUS_OK) {
+			opStatus = gFSOperations->openCheck(context, ctx, replyData->first,
+			                                    flags | AFTER_CREATE, replyData->second);
+		}
+		return opStatus;
+	};
+
+	if (eptr->sessionData) {
+		eptr->sessionData->currHourOperationsStats[8]++;
+	}
+
+	// Builds the reply (inode + attr) applying the same data-cache adjustment the
+	// FUSE_OPEN reply uses, since this op opens the file as well as creating it.
+	auto sendCreateReply = [eptr, messageId](uint8_t replyStatus, inode_t ino,
+	                                         Attributes replyAttr) {
+		MessageBuffer reply;
+		if (replyStatus == SAUNAFS_STATUS_OK) {
+			// When the data cache manager cannot keep this open coherent (dcm_open == 0), clear
+			// the ALLOWDATACACHE attribute bit so the client does not cache this file's data.
+			if (dcm_open(ino, eptr->sessionData->sessionId) == 0) {
+				replyAttr[1] &= (0xFF ^ (MATTR_ALLOWDATACACHE << 4));
+			}
+			matocl::fuseCreate::serialize(reply, messageId, ino, replyAttr);
+		} else {
+			matocl::fuseCreate::serialize(reply, messageId, replyStatus);
+		}
+		matoclserv_createpacket(eptr, std::move(reply));
+	};
+
+	if (status != SAUNAFS_STATUS_OK) {  // group-cache error: reply without running the op
+		sendCreateReply(status, replyData->first, replyData->second);
+		return;
+	}
+
+	// Reply continuation (dropped for a killed client) plus an onCommit hook that records the
+	// open file on commit success and runs even for a killed client, so the persisted acquire
+	// is tracked in openFilesSet for disconnect cleanup. On the in-memory Master the op body
+	// already recorded it (matoclserv_insert_open_file); the set insert there is an idempotent
+	// no-op. Mirrors matoclserv_fuse_open.
+	matoclserv_submit_op(
+	    eptr, std::move(runCreate),
+	    [sendCreateReply, replyData](uint8_t commitStatus) {
+		    sendCreateReply(commitStatus, replyData->first, replyData->second);
+	    },
+	    [eptr, replyData](uint8_t commitStatus) {
+		    if (commitStatus == SAUNAFS_STATUS_OK) {
+			    matoclserv_record_open_file(eptr->sessionData, replyData->first);
+		    }
+	    });
+}
+
 void matoclserv_fuse_mkdir(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
 	uint32_t messageId, uid, gid;
 	inode_t inode;
@@ -6408,6 +6503,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				    break;
 				case SAU_CLTOMA_FUSE_MKNOD:
 					matoclserv_fuse_mknod(eptr, PacketHeader(type, length), data);
+					break;
+				case SAU_CLTOMA_FUSE_CREATE:
+					matoclserv_fuse_create(eptr, PacketHeader(type, length), data);
 					break;
 				case SAU_CLTOMA_FUSE_MKDIR:
 					matoclserv_fuse_mkdir(eptr, PacketHeader(type, length), data);
