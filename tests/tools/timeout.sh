@@ -49,6 +49,12 @@ timeout_killer_thread() {
 
 			test_add_failure "$test_timeout_message"
 			test_freeze_result
+			# Stop LeilFS and FDB before the sweep. fdb_cluster_started is set
+			# after this subshell forks, so cleanup_fdb_cluster runs
+			# unconditionally (safe no-op without a cluster). killall stays
+			# last: it kills this shell too.
+			terminate_fs_processes
+			cleanup_fdb_cluster
 			killall -9 -u $(whoami)
 		fi
 	done
