@@ -44,8 +44,9 @@ void throwIfRetryable(fdb_error_t err) {
 	// predicate because a timeout during COMMIT has an unknown result. This helper
 	// guards READ futures only, and the op-boundary replay runs on a fresh
 	// transaction with a fresh timeout budget, so a timed-out read is safe to
-	// replay. The commit path (FDBCommitFuture::getResult) uses the raw predicate
-	// and keeps 1031 non-retryable.
+	// replay. The commit path (FDBCommitFuture::getResult) uses RETRYABLE_NOT_COMMITTED,
+	// which excludes 1031 and the whole maybe-committed class, so a commit with an
+	// unknown result is never blindly replayed.
 	constexpr fdb_error_t kTransactionTimedOut = 1031;
 	if (err == kTransactionTimedOut ||
 	    fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err) != 0) {

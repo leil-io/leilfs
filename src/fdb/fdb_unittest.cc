@@ -718,6 +718,41 @@ TEST(FdbOpCountersGatingTest, FlagReflectsSetter) {
 	EXPECT_FALSE(fdb::opCountersEnabled());
 }
 
+// Locks the error-predicate semantics the commit-retry decision depends on. The retry
+// paths (matoclserv_commit_op_with_retry, the deferred-commit poller, the group-commit
+// batch poller) replay an op ONLY when FDBCommitFuture::getResult reports the commit
+// retryable. That flag MUST come from RETRYABLE_NOT_COMMITTED, never the broad RETRYABLE
+// predicate: RETRYABLE also covers commit_unknown_result / the maybe-committed class,
+// where the commit may already have applied, so a blind replay would double-apply the op
+// (a second inode/chunk, a double atomicAdd). This guards against a regression back to the
+// broad predicate. Runs under the fixture so the FDB API version is selected (the predicate
+// is a local libfdb_c call and needs no cluster).
+TEST_F(FDBKVEngineTest, CommitErrorRetryablePredicate) {
+	// FDB error codes (fdbclient/error_definitions.h).
+	constexpr fdb_error_t kNotCommitted = 1020;          // definitely did not commit
+	constexpr fdb_error_t kTransactionTooOld = 1007;     // definitely did not commit
+	constexpr fdb_error_t kCommitUnknownResult = 1021;   // MAY have committed
+	constexpr fdb_error_t kTransactionTimedOut = 1031;   // unknown result during commit
+
+	// The predicate the commit path uses: only definitely-not-committed conflicts are
+	// safe to blindly replay.
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                       kNotCommitted));
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                       kTransactionTooOld));
+	EXPECT_FALSE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                        kCommitUnknownResult));
+	EXPECT_FALSE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                        kTransactionTimedOut));
+
+	// Why the broad predicate is wrong here: it would flag commit_unknown_result retryable.
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE, kCommitUnknownResult));
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_MAYBE_COMMITTED,
+	                                       kCommitUnknownResult));
+	// not_committed is never in the maybe-committed class.
+	EXPECT_FALSE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_MAYBE_COMMITTED, kNotCommitted));
+}
+
 // Counters must move only while accounting is enabled. Drives real FDB ops and
 // compares getOpCounters() deltas with the gate off versus on.
 TEST_F(FDBKVEngineTest, OpCountersGatedByFlag) {

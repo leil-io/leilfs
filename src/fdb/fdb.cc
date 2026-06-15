@@ -358,9 +358,12 @@ bool Transaction::commit() {
 		// accounting is on; keeps the disabled path a single relaxed bool load.
 		// The gate is already known here, so increment directly instead of bump().
 		if (opCountersEnabled()) {
-			auto &counter = DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE, error_)
-			                    ? gOpCounters.commitConflicts
-			                    : gOpCounters.commitFailures;
+			// Match FDBCommitFuture::getResult: a commit_unknown_result / maybe-committed
+			// error is a commitFailure, not a (definitely-not-committed) conflict.
+			auto &counter =
+			    DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED, error_)
+			        ? gOpCounters.commitConflicts
+			        : gOpCounters.commitFailures;
 			counter.fetch_add(1, std::memory_order_relaxed);
 		}
 		return false;
@@ -461,7 +464,15 @@ public:
 		if (err != 0) {
 			*errorOut_ = err;
 			consumedError_ = err;
-			const bool isRetryable = DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE, err);
+			// RETRYABLE_NOT_COMMITTED, NOT the broad RETRYABLE predicate: RETRYABLE also
+			// returns true for commit_unknown_result (1021) and the rest of the
+			// MAYBE_COMMITTED class, where the commit may already have applied. A blind
+			// replay of such an op would double-apply it (a second inode/chunk, a double
+			// atomicAdd). Reporting only the definitely-not-committed conflicts
+			// (not_committed 1020, transaction_too_old 1007, ...) as retryable lets callers
+			// safely replay those and surface an unknown-result commit as an error instead.
+			const bool isRetryable =
+			    DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED, err);
 			consumedRetryable_ = isRetryable;
 			safs::log_err("FDBCommitFuture::getResult: commit failed: {}", fdb_get_error(err));
 			if (opCountersEnabled()) {
