@@ -19,10 +19,12 @@
 #include "common/platform.h"
 
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "fdb/fdb.h"
@@ -716,6 +718,41 @@ TEST(FdbOpCountersGatingTest, FlagReflectsSetter) {
 	EXPECT_FALSE(fdb::opCountersEnabled());
 }
 
+// Locks the error-predicate semantics the commit-retry decision depends on. The retry
+// paths (matoclserv_commit_op_with_retry, the deferred-commit poller, the group-commit
+// batch poller) replay an op ONLY when FDBCommitFuture::getResult reports the commit
+// retryable. That flag MUST come from RETRYABLE_NOT_COMMITTED, never the broad RETRYABLE
+// predicate: RETRYABLE also covers commit_unknown_result / the maybe-committed class,
+// where the commit may already have applied, so a blind replay would double-apply the op
+// (a second inode/chunk, a double atomicAdd). This guards against a regression back to the
+// broad predicate. Runs under the fixture so the FDB API version is selected (the predicate
+// is a local libfdb_c call and needs no cluster).
+TEST_F(FDBKVEngineTest, CommitErrorRetryablePredicate) {
+	// FDB error codes (fdbclient/error_definitions.h).
+	constexpr fdb_error_t kNotCommitted = 1020;          // definitely did not commit
+	constexpr fdb_error_t kTransactionTooOld = 1007;     // definitely did not commit
+	constexpr fdb_error_t kCommitUnknownResult = 1021;   // MAY have committed
+	constexpr fdb_error_t kTransactionTimedOut = 1031;   // unknown result during commit
+
+	// The predicate the commit path uses: only definitely-not-committed conflicts are
+	// safe to blindly replay.
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                       kNotCommitted));
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                       kTransactionTooOld));
+	EXPECT_FALSE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                        kCommitUnknownResult));
+	EXPECT_FALSE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED,
+	                                        kTransactionTimedOut));
+
+	// Why the broad predicate is wrong here: it would flag commit_unknown_result retryable.
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE, kCommitUnknownResult));
+	EXPECT_TRUE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_MAYBE_COMMITTED,
+	                                       kCommitUnknownResult));
+	// not_committed is never in the maybe-committed class.
+	EXPECT_FALSE(fdb::DB::evaluatePredicate(FDB_ERROR_PREDICATE_MAYBE_COMMITTED, kNotCommitted));
+}
+
 // Counters must move only while accounting is enabled. Drives real FDB ops and
 // compares getOpCounters() deltas with the gate off versus on.
 TEST_F(FDBKVEngineTest, OpCountersGatedByFlag) {
@@ -763,5 +800,182 @@ TEST_F(FDBKVEngineTest, OpCountersGatedByFlag) {
 		auto txn = kvEngine->createReadWriteTransaction();
 		txn->remove(key);
 		ASSERT_TRUE(txn->commit());
+	}
+}
+
+// atomicMax persists the numeric max of the stored and candidate values, treats an
+// absent key as zero, and is conflict-free (concurrent writers do not abort each
+// other). Values are fixed-width little-endian, matching the FDB MAX mutation.
+TEST_F(FDBKVEngineTest, AtomicMax) {
+	const auto key = kv::toBytes("atomic_max_key");
+	const auto absentKey = kv::toBytes("atomic_max_absent_key");
+
+	{  // Start from a clean slate.
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->remove(key);
+		txn->remove(absentKey);
+		ASSERT_TRUE(txn->commit());
+	}
+
+	{  // Seed an initial value.
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(uint64_t{100}));
+		ASSERT_TRUE(txn->commit());
+	}
+
+	{  // A smaller candidate must not lower the stored value.
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->atomicMax(key, kv::toBytesLE(uint64_t{50}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		auto v = txn->get(key);
+		ASSERT_TRUE(v.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*v), uint64_t{100});
+	}
+
+	{  // A larger candidate must raise it.
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->atomicMax(key, kv::toBytesLE(uint64_t{200}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		auto v = txn->get(key);
+		ASSERT_TRUE(v.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*v), uint64_t{200});
+	}
+
+	// Numeric, not lexicographic: 256 (LE bytes 00 01 ..) must beat 255 (LE bytes
+	// FF 00 ..) even though 255's first byte is larger. This is what separates FDB
+	// MAX (little-endian integer) from BYTE_MAX (byte-string/lexicographic).
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->set(key, kv::toBytesLE(uint64_t{255}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->atomicMax(key, kv::toBytesLE(uint64_t{256}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		auto v = txn->get(key);
+		ASSERT_TRUE(v.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*v), uint64_t{256});
+	}
+
+	{  // An absent key counts as zero, so any positive candidate is stored.
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->atomicMax(absentKey, kv::toBytesLE(uint64_t{7}));
+		ASSERT_TRUE(txn->commit());
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		auto v = txn->get(absentKey);
+		ASSERT_TRUE(v.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*v), uint64_t{7});
+	}
+
+	// Conflict-free: two transactions that both atomicMax the same key both commit
+	// (atomicMax adds no read conflict range), and the result is the max of the two.
+	{
+		auto txnA = kvEngine->createReadWriteTransaction();
+		txnA->atomicMax(key, kv::toBytesLE(uint64_t{1000}));
+		auto txnB = kvEngine->createReadWriteTransaction();
+		txnB->atomicMax(key, kv::toBytesLE(uint64_t{2000}));
+		ASSERT_TRUE(txnB->commit());
+		ASSERT_TRUE(txnA->commit()) << "atomicMax must not abort a concurrent writer.";
+	}
+	{
+		auto txn = kvEngine->createReadWriteTransaction();
+		auto v = txn->get(key);
+		ASSERT_TRUE(v.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*v), uint64_t{2000});
+	}
+
+	{  // Cleanup.
+		auto txn = kvEngine->createReadWriteTransaction();
+		txn->remove(key);
+		txn->remove(absentKey);
+		ASSERT_TRUE(txn->commit());
+	}
+}
+
+// mutationCount() counts each buffered write exactly once and ignores reads. Group
+// commit relies on this to detect whether a failed op body already poisoned a shared
+// transaction. The transaction is intentionally dropped without committing: the count
+// is a property of the buffered mutations, not of the commit.
+TEST_F(FDBKVEngineTest, MutationCount) {
+	auto txn = kvEngine->createReadWriteTransaction();
+	EXPECT_EQ(txn->mutationCount(), uint64_t{0}) << "A fresh transaction has buffered nothing.";
+
+	txn->set(kv::toBytes("mc_key"), kv::toBytesLE(uint64_t{1}));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{1}) << "set() buffers one mutation.";
+
+	txn->atomicAdd(kv::toBytes("mc_key"), kv::toBytesLE(uint64_t{1}));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{2}) << "atomicAdd() buffers one mutation.";
+
+	txn->atomicMax(kv::toBytes("mc_key"), kv::toBytesLE(uint64_t{9}));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{3}) << "atomicMax() buffers one mutation.";
+
+	(void)txn->get(kv::toBytes("mc_key"));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{3}) << "get() is a read, not a mutation.";
+
+	txn->remove(kv::toBytes("mc_key"));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{4}) << "remove() buffers one mutation.";
+
+	txn->removeRange(kv::toBytes("mc_a"), kv::toBytes("mc_b"));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{5}) << "removeRange() buffers one mutation.";
+}
+
+// Exercises the async-commit path end to end: poll isReady(), finalize via getResult(),
+// confirm the committed version is captured, that getResult() is single-use, and that
+// the write is durable.
+TEST_F(FDBKVEngineTest, CommitAsync) {
+	const auto key = kv::toBytes("commit_async_key");
+	const auto value = kv::toBytes("commit_async_value");
+
+	auto txn = kvEngine->createReadWriteTransaction();
+	txn->set(key, value);
+
+	auto future = txn->commitAsync();
+	ASSERT_TRUE(future != nullptr) << "commitAsync() must return a future.";
+
+	// Drive the future to readiness through isReady(), then finalize. Bounded by a
+	// wall-clock deadline (not an iteration count) so it stays robust on slow or
+	// loaded CI; the timeout is generous since a healthy commit resolves in millis.
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (!future->isReady() && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	ASSERT_TRUE(future->isReady()) << "Commit future did not become ready within the timeout.";
+
+	int error = -1;
+	bool retryable = true;
+	ASSERT_TRUE(future->getResult(&error, &retryable)) << "Async commit should succeed.";
+	EXPECT_EQ(error, 0);
+	EXPECT_FALSE(retryable);
+
+	// A successful commit captures its version on the (still-alive) transaction.
+	EXPECT_TRUE(txn->getCommittedVersion().has_value())
+	    << "A successful async commit must expose its committed version.";
+
+	// Single-use: a second getResult() reports false without re-committing.
+	EXPECT_FALSE(future->getResult()) << "getResult() is single-use.";
+
+	{  // The write is durable.
+		auto verify = kvEngine->createReadWriteTransaction();
+		auto got = verify->get(key);
+		ASSERT_TRUE(got.has_value()) << "Async-committed key must be present.";
+		EXPECT_EQ(*got, value);
+	}
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
 	}
 }
