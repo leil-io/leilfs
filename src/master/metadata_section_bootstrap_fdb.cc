@@ -76,6 +76,10 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 
 	// Skip file signature
 	const uint8_t *metadataHeaderPtr = metadataFile_->seek(kMetadataHeaderOffset);
+	if (metadataHeaderPtr == nullptr) {
+		safs::log_err("Failed to seek to metadata header offset; file too small or corrupted");
+		return false;
+	}
 
 	getINode(&metadataHeaderPtr, maxInodeId_);
 

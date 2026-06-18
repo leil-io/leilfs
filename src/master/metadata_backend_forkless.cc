@@ -1130,21 +1130,13 @@ void MetadataBackendForkless::init() {
 	    std::make_unique<MetadataSectionBootstrapFDB>(kvConnector_->getKVEngine());
 #endif  // #ifndef METARESTORE
 
-	// Connect the signal handler for chunk changes once at init() (rather than in loadChunks())
-	// so it is in place for every chunk mutation while running as master.
-	// The handler guards on metadataWriter_, which is null on shadows, so shadow-side chunk
-	// mutations are not persisted until this node is promoted to master (see onPromotedToMaster()).
-	gChunkChangedSignal.connect(
-	    [this](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
-		    if (metadataWriter_) {
-			    metadataWriter_->enqueue(std::make_unique<ChunkUpdateEvent>(
-			        chunkId, version, lockedTo, lockId));
-		    }
-	    });
-
 	uint64_t version = getVersion("");
 
 	gMetadata = new FilesystemMetadata;
+
+	// Wires both the process-global signals (once) and the per-load gMetadata signals.
+	// gChunkChangedSignal is among the global ones; it is connected here, still before any
+	// runtime chunk mutation, and the slot guards on metadataWriter_ (null on shadows).
 	createConnections();
 
 	safs::log_info("MetadataBackendForkless version: {}", version);
@@ -1191,10 +1183,12 @@ std::string MetadataBackendForkless::getHeaderSignature() {
 }
 
 void MetadataBackendForkless::createConnections() {
-	// gMetadata->nextSessionId().connect(kvConnector_.get(), &IKVConnector::onNextSessionIdChanged);
+	// Process-global signals (gChunkChangedSignal, gXAttr*, initializeNewMetadataHeaderSignal):
+	// connect once per process. They are never recreated and Signal has no per-slot disconnect,
+	// so reconnecting on each backend init would stack duplicate slots.
+	connectGlobalSignalsOnce();
 
-	// getChangelogSignal().connect(kvConnector_.get(), &IKVConnector::onChangelogEvent);
-
+	// Per-load signals on gMetadata: recreated fresh each load, so they never accumulate.
 	gMetadata->nodeChangedSignal.connect([this](FSNode *node) { onNodeChanged(node); });
 
 	gMetadata->nodeRemovedSignal.connect([this](inode_t nodeId) { onNodeRemoved(nodeId); });
@@ -1210,16 +1204,44 @@ void MetadataBackendForkless::createConnections() {
 
 	gMetadata->edgeRemovedSignal.connect(
 	    [this](inode_t parentId, const HString &name) { onEdgeRemoved(parentId, name); });
+}
 
-	gXAttrInodeRemovedSignal.connect([this](inode_t inode) { onXAttrInodeRemoved(inode); });
+void MetadataBackendForkless::connectGlobalSignalsOnce() {
+	// These signals are process-global (file-scope / inline), so they outlive any single backend
+	// instance and Signal has no per-slot disconnect. Connect exactly once per process: a second
+	// backend (e.g. recreated in tests) would otherwise stack duplicate slots and enqueue every
+	// mutation once per stale slot. Slots capture nothing and route through gForklessBackend
+	// (cleared in the destructor), so the single connection always targets the current backend.
+	static bool connected = false;
+	if (connected) { return; }
+	connected = true;
 
-	gXAttrChangedSignal.connect(
-	    [this](inode_t inode, std::span<const uint8_t> name, std::span<const uint8_t> value) {
-		    onXAttrChanged(inode, name, value);
+	// gChunkChangedSignal handler guards on metadataWriter_ (null on shadows), so shadow-side
+	// chunk mutations are not persisted until promotion (see onPromotedToMaster()).
+	gChunkChangedSignal.connect(
+	    [](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
+		    if (gForklessBackend != nullptr && gForklessBackend->metadataWriter_) {
+			    gForklessBackend->metadataWriter_->enqueue(
+			        std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
+		    }
 	    });
 
-	gXAttrRemovedSignal.connect(
-	    [this](inode_t inode, std::span<const uint8_t> name) { onXAttrRemoved(inode, name); });
+	gXAttrInodeRemovedSignal.connect([](inode_t inode) {
+		if (gForklessBackend != nullptr) { gForklessBackend->onXAttrInodeRemoved(inode); }
+	});
 
-	initializeNewMetadataHeaderSignal.connect([this]() { initializeNewMetadataHeader(); });
+	gXAttrChangedSignal.connect(
+	    [](inode_t inode, std::span<const uint8_t> name, std::span<const uint8_t> value) {
+		    if (gForklessBackend != nullptr) {
+			    gForklessBackend->onXAttrChanged(inode, name, value);
+		    }
+	    });
+
+	gXAttrRemovedSignal.connect([](inode_t inode, std::span<const uint8_t> name) {
+		if (gForklessBackend != nullptr) { gForklessBackend->onXAttrRemoved(inode, name); }
+	});
+
+	initializeNewMetadataHeaderSignal.connect([]() {
+		if (gForklessBackend != nullptr) { gForklessBackend->initializeNewMetadataHeader(); }
+	});
 }
