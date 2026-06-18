@@ -1455,15 +1455,22 @@ uint8_t chunk_modify(uint64_t currentChunkId, uint32_t *lockId, uint8_t goal, bo
 	Chunk *currentChunk = chunk_find(currentChunkId);
 	if (currentChunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
 
-	// Next check if the chunk is locked and if the lockid matches
+	// Next check if the chunk is locked and if the lockid matches.
 	if (*lockId != 0 && *lockId != currentChunk->lockid) {
-		if (currentChunk->lockid == 0 || currentChunk->lockedto == 0) {
-			// Lock was removed by some chunk operation or by a different client
-			return SAUNAFS_ERROR_NOTLOCKED;
+		// Adopt a client-presented lock id only for chunks restored without any live lock.
+		// `lockedto == 0` alone is not enough: writeEnd clears it while chunkserver-side
+		// writes may still be tracked by beingWritten, which is covered by isLocked().
+		const bool restartRestoredNoLock = currentChunk->lockid == 0 &&
+		                                   currentChunk->lockedto == 0 &&
+		                                   !currentChunk->isLocked();
+		if (!restartRestoredNoLock) {
+			if (currentChunk->lockid == 0 || currentChunk->lockedto == 0) {
+				// Lock was removed by some chunk operation or by a different client
+				return SAUNAFS_ERROR_NOTLOCKED;
+			}
+			// Case *lockId != currentChunk->lockid
+			return SAUNAFS_ERROR_WRONGLOCKID;
 		}
-
-		// Case *lockid != currentChunk->lockid
-		return SAUNAFS_ERROR_WRONGLOCKID;
 	}
 	if (*lockId == 0 && currentChunk->isLocked()) {
 		*targetChunkId = currentChunkId;
