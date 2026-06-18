@@ -157,6 +157,16 @@ private:
 	/// teardown, so the hook is rebound if the eventloop is recreated (see onEventloopTeardown()).
 	void registerFlushTimer();
 
+	/// Connects the process-global signals (gChunkChangedSignal, gXAttr*,
+	/// initializeNewMetadataHeaderSignal) exactly once per process.
+	///
+	/// These signals are never recreated and Signal has no per-slot disconnect, so connecting
+	/// them on every backend init would stack duplicate slots and enqueue each mutation once per
+	/// stale slot after a recreation. The slots route through gForklessBackend (not `this`), so a
+	/// single permanent connection always targets the current live backend. Static because it
+	/// needs no instance state.
+	static void connectGlobalSignalsOnce();
+
 	/// Initializes the vector of metadata sections for later loading
 	void initSections();
 
