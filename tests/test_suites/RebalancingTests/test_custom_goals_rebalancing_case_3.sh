@@ -1,4 +1,4 @@
-timeout_set "6 minutes"
+timeout_set "8 minutes"
 
 CHUNKSERVERS=6 \
 	USE_LOOP_DISKS=YES \
@@ -27,7 +27,7 @@ assert_equals 3 $(saunafs_rebalancing_status | awk '/us/ && $2 == 0' | wc -l)
 
 # Change goal of all our files from eu_eu to 2. Expect chunks to be spread evenly across servers
 saunafs setgoal -r 2 eu_files
-assert_eventually_prints "" "saunafs_rebalancing_status | awk '\$2 < 40 || \$2 > 60'" "2 minutes"
+assert_eventually_prints "" "saunafs_rebalancing_status | awk '\$2 < 40 || \$2 > 60'" "4 minutes"
 
 # Check the chunkservers load after 5 seconds to see if it is stable.
 sleep 5

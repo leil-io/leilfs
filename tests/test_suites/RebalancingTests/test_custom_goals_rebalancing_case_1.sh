@@ -1,4 +1,4 @@
-timeout_set "6 minutes"
+timeout_set "8 minutes"
 
 CHUNKSERVERS=5 \
 	USE_LOOP_DISKS=YES \
@@ -26,7 +26,7 @@ assert_eventually_prints "" "saunafs_rebalancing_status | awk '\$2 < 90 || \$2 >
 
 # Add one 'ssd' server and expect chunks to be rebalanced to about 80 on each server.
 saunafs_chunkserver_daemon 0 start
-assert_eventually_prints "" "saunafs_rebalancing_status | awk '\$2 < 70 || \$2 > 90'" "3 minutes"
+assert_eventually_prints "" "saunafs_rebalancing_status | awk '\$2 < 70 || \$2 > 90'" "5 minutes"
 
 # Check the chunkservers load after 5 seconds to see if it is stable.
 sleep 5

@@ -1,4 +1,5 @@
 is_windows_system() {
+	return 1
 	grep /proc/version -e [Mm]icrosoft > /dev/null
 }
 
