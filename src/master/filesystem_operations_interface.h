@@ -154,7 +154,8 @@ public:
 	/// the file open. It is called when a client opens a file and is used to track file
 	/// usage across sessions. The operation ensures that:
 	/// - The target inode exists and is a valid file node (regular file, trash, or reserved)
-	/// - The session has not already acquired this file (prevents duplicate acquisitions)
+	/// - Duplicate acquire (same session, same inode) is handled per backend (see the
+	///   idempotency note below)
 	///
 	/// For shadow personalities, this operation also updates the internal open file tracking
 	/// used by the metalogger service (matoclserv_add_open_file).
@@ -172,7 +173,12 @@ public:
 	///         - SAUNAFS_ERROR_ENOENT if the inode does not exist
 	///         - SAUNAFS_ERROR_EPERM if the inode is not a file, trash, or reserved node
 	///         - SAUNAFS_ERROR_EINVAL if the session has already acquired this file
+	///           (in-memory backend only; see the idempotency note below)
 	///
+	/// @note Duplicate acquire is backend-specific: the in-memory backend returns
+	///       SAUNAFS_ERROR_EINVAL (a duplicate means its open-file tracking drifted), while the
+	///       KV backend returns SAUNAFS_STATUS_OK (it defers that tracking to commit, so a
+	///       duplicate is expected on a group-commit replay).
 	/// @note This operation must be paired with a corresponding release() call when the
 	///       file is closed.
 	/// @note Multiple sessions can acquire the same file simultaneously.

@@ -112,6 +112,22 @@ int SessionManagerBase::insertOpenFile(const FilesystemOperationContext &fsOpCon
 	return status;
 }
 
+int SessionManagerBase::acquireOpenFilePersist(const FilesystemOperationContext &fsOpContext,
+                                               Session *currentSession, inode_t inode) {
+	if (currentSession->openFilesSet.contains(inode)) {
+		return SAUNAFS_STATUS_OK;  // already acquired in memory - nothing to persist
+	}
+
+	// Persist only; the in-memory openFilesSet insert is deferred to commit success
+	// by the caller so a commit retry replays this acquire on a fresh transaction.
+	return gFSOperations->acquire(FsContext::getForMaster(eventloop_time()), fsOpContext, inode,
+	                              currentSession->sessionId);
+}
+
+void SessionManagerBase::recordOpenFile(Session *currentSession, inode_t inode) {
+	currentSession->openFilesSet.insert(inode);
+}
+
 void SessionManagerBase::addOpenFile(uint32_t sessionId, inode_t inode) {
 	auto *session = findSessionEntry(sessionId);
 	if (session != nullptr) {

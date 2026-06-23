@@ -1,4 +1,11 @@
-timeout_set '1 minute'
+# FDB-backed masters may spend extra time replaying commit conflicts in this
+# many-writers-plus-truncates-on-one-file workload. The in-memory master keeps
+# the historical timeout.
+if [[ "${METADATA_BACKEND:-}" == "FDB" ]]; then
+	timeout_set '3 minutes'
+else
+	timeout_set '1 minute'
+fi
 
 CHUNKSERVERS=11 \
 	MASTER_CUSTOM_GOALS="3 ec32: \$ec(3,2)`

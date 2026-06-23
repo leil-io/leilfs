@@ -22,7 +22,9 @@
 
 #include <memory>
 
+#include "common/type_defs.h"
 #include "kv/itransaction.h"
+#include "kv/kv_types.h"
 
 namespace kv {
 class IReadOnlyTransaction;

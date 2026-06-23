@@ -124,9 +124,20 @@ int matoclserv_insert_open_file(const FilesystemOperationContext &fsOpContext,
 	return gSessionManager->insertOpenFile(fsOpContext, currentSession, inode);
 }
 
+int matoclserv_acquire_open_file_persist(const FilesystemOperationContext &fsOpContext,
+                                         Session *currentSession, inode_t inode) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->acquireOpenFilePersist(fsOpContext, currentSession, inode);
+}
+
 void matoclserv_add_open_file(uint32_t sessionId, inode_t inode) {
 	sassert(gSessionManager != nullptr);
 	gSessionManager->addOpenFile(sessionId, inode);
+}
+
+void matoclserv_record_open_file(Session *currentSession, inode_t inode) {
+	sassert(gSessionManager != nullptr);
+	gSessionManager->recordOpenFile(currentSession, inode);
 }
 
 void matoclserv_remove_open_file(uint32_t sessionId, inode_t inode) {
