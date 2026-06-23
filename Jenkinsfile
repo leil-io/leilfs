@@ -2,11 +2,37 @@ GIT_COMMIT_EMAIL = ""
 GIT_COMMIT_HASH = ""
 REGISTRY_URL = "registry.ci.leil.io"
 
+def getLeilTestsRef() {
+    def ref = params?.LEIL_TESTS_REF?.trim()
+    if (!ref) {
+        return 'refs/tags/v0.7.0'
+    }
+
+    if (ref.startsWith('refs/')) {
+        return ref
+    }
+
+    if (ref ==~ /^v\d+\.\d+\.\d+([.-].*)?$/) {
+        return "refs/tags/${ref}"
+    }
+
+    return ref
+}
+
 def buildLeilTests() {
+    dir('leil-tests') {
+        deleteDir()
+        checkout([
+            $class: 'GitSCM',
+            branches: [[name: getLeilTestsRef()]],
+            doGenerateSubmoduleConfigurations: false,
+            userRemoteConfigs: [[
+                url: 'https://github.com/leil-io/leil-tests.git'
+            ]]
+        ])
+    }
     sh '''
-        git clone "https://github.com/leil-io/leil-tests"
         cd leil-tests
-        git checkout v0.7.0
         go build -o $WORKSPACE/leil-tests
         '''
 }
@@ -142,6 +168,11 @@ pipeline {
             name: 'DEBIAN_PACKAGE_REF',
             defaultValue: 'dev',
             description: 'If deploying packages, what leil-io/debian-package reference to use?'
+        )
+        string(
+            name: 'LEIL_TESTS_REF',
+            defaultValue: 'v0.7.0',
+            description: 'leil-tests ref: branch (dev, fix/foo), tag (v0.7.0), refs/*, or SHA'
         )
     }
 
