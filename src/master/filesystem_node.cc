@@ -2299,8 +2299,19 @@ uint8_t FilesystemNodeOperationsBase::getNodeForOperation(
 
 		if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 	} else if (context.rootinode() == SPECIAL_INODE_ROOT || (context.rootinode() == 0)) {
-		candidateRoot = getRootNode(fsOpContext);
-		candidateNode = idToNode(fsOpContext, inode);
+		candidateRoot = nullptr;
+
+		if (inode == SPECIAL_INODE_ROOT) {
+			candidateRoot = getRootNode(fsOpContext);
+			candidateNode = candidateRoot;
+		} else {
+			candidateNode = idToNode(fsOpContext, inode);
+			// Only pay the root-node round-trip when the node resolved and a caller
+			// asked for the root; a null node returns ENOENT just below.
+			if (candidateNode != nullptr && rootDirOut != nullptr) {
+				candidateRoot = getRootNode(fsOpContext);
+			}
+		}
 
 		if (candidateNode == nullptr) { return SAUNAFS_ERROR_ENOENT; }
 
