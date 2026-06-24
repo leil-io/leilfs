@@ -32,6 +32,7 @@
 #include "common/exception.h"
 #include "common/massert.h"
 #include "errors/sfserr.h"
+#include "kv/ifuture.h"
 
 #if defined(_WIN32)
   #include "common/sockets.h"
@@ -40,6 +41,25 @@
 ExitingStatus gExitingStatus = ExitingStatus::kRunning;
 bool gReloadRequested = false;
 static bool nextPollNonblocking = false;
+
+/// Runs one event-loop handler, containing retryable KV backend errors.
+///
+/// Op bodies replay these on a fresh transaction at the op boundary, but periodic
+/// and connection handlers (session sweeps, disconnect bookkeeping, ...) have no
+/// such boundary; before this guard an escaped kv::RetryableTransactionError
+/// (e.g. a transaction_timed_out read while the backend is slow or shutting
+/// down) reached std::terminate and aborted the whole server. The interrupted
+/// handler simply runs again on a later loop iteration.
+template <typename Handler, typename... Args>
+static void eventloop_run_handler(const char *kind, Handler &&handler, Args &&...args) {
+	try {
+		handler(std::forward<Args>(args)...);
+	} catch (const kv::RetryableTransactionError &e) {
+		safs::log_warn(
+		    "event loop: retryable backend error escaped a {} handler, skipping this run: {}", kind,
+		    e.what());
+	}
+}
 
 typedef struct pollentry {
 	void (*desc)(std::vector<pollfd>&);
@@ -256,11 +276,11 @@ void eventloop_run() {
 			}
 		} else {
 			for (auto &pollit : gPollEntries) {
-				pollit.serve(pdesc);
+				eventloop_run_handler("poll", pollit.serve, pdesc);
 			}
 		}
 		for (const FunctionEntry &fun : gEachLoopEntries) {
-			fun();
+			eventloop_run_handler("each-loop", fun);
 		}
 
 		uint64_t msecnow = usecnow / 1000;
@@ -308,17 +328,17 @@ void eventloop_run() {
 			if (timeit.millisecond_precision) {
 				if (msecnow >= timeit.nextevent) {
 					timeit.nextevent = msecnow + timeit.period;
-					timeit.fun();
+					eventloop_run_handler("timed", timeit.fun);
 				}
 				continue;
 			}
 
 			if (now >= timeit.nextevent) {
 				if (timeit.mode == TIMEMODE_RUN_LATE) {
-					timeit.fun();
+					eventloop_run_handler("timed", timeit.fun);
 				} else { /* timeit.mode == TIMEMODE_SKIP_LATE */
 					if (now == timeit.nextevent) {
-						timeit.fun();
+						eventloop_run_handler("timed", timeit.fun);
 					}
 				}
 				timeit.nextevent += ((now - timeit.nextevent + timeit.period)

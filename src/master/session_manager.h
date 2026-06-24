@@ -153,6 +153,22 @@ public:
 	virtual int insertOpenFile(const FilesystemOperationContext &fsOpContext,
 	                           Session *currentSession, inode_t inode) = 0;
 
+	/// Backend-persist-only half of insertOpenFile: runs IFilesystemOperations::acquire()
+	/// inside @p fsOpContext but does NOT touch Session::openFilesSet. The caller
+	/// records the in-memory open file (recordOpenFile) only after the transaction
+	/// commits, so a commit retry can replay the persistent acquire on a fresh
+	/// transaction without the already-open early-return skipping it.
+	virtual int acquireOpenFilePersist(const FilesystemOperationContext &fsOpContext,
+	                                   Session *currentSession, inode_t inode) = 0;
+
+	/// In-memory half of insertOpenFile: records @p inode in @p currentSession's
+	/// openFilesSet. The caller pairs this with acquireOpenFilePersist(), invoking
+	/// it only after the persisting transaction commits. Unlike addOpenFile() it
+	/// takes the live Session pointer the caller already holds, so it never goes
+	/// through the by-id lookup / synthetic-session recovery path (which the KV
+	/// backend, whose sessions are loaded on demand, refuses).
+	virtual void recordOpenFile(Session *currentSession, inode_t inode) = 0;
+
 	/// Adds @p inode to Session::openFilesSet for the session @p sessionId.
 	///
 	/// Used during startup reconstruction, restore/shadow replay, and similar
@@ -255,6 +271,13 @@ public:
 	/// @copydoc ISessionManager::insertOpenFile
 	int insertOpenFile(const FilesystemOperationContext &fsOpContext, Session *currentSession,
 	                   inode_t inode) override;
+
+	/// @copydoc ISessionManager::acquireOpenFilePersist
+	int acquireOpenFilePersist(const FilesystemOperationContext &fsOpContext,
+	                           Session *currentSession, inode_t inode) override;
+
+	/// @copydoc ISessionManager::recordOpenFile
+	void recordOpenFile(Session *currentSession, inode_t inode) override;
 
 	/// @copydoc ISessionManager::addOpenFile
 	void addOpenFile(uint32_t sessionId, inode_t inode) override;

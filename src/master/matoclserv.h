@@ -60,3 +60,24 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status);
 
 /// Check whether there are any async filesystem operations that still need to finished (e.g delayed chunk operations)
 bool matoclserv_client_async_operations_finished();
+
+/// Group-commit runtime counters, for diagnosing how well batching amortizes
+/// durability under a given load. committedOps/committedBatches is the average ops per
+/// commit (the headline number: near 1 means batching is not engaging, latency-bound).
+/// Counted on the single event-loop thread; gathered only while batch-stats accounting is
+/// enabled (see matoclserv_set_batch_stats_enabled).
+struct MatoclBatchStats {
+	uint64_t committedBatches = 0;  ///< batches whose single commit became durable
+	uint64_t committedOps = 0;      ///< total member ops across those batches
+	uint64_t maxBatchSize = 0;      ///< largest committed batch
+	uint64_t batchReplays = 0;      ///< whole-batch conflict replays (external writer)
+	uint64_t heldOps = 0;           ///< ops parked because a batch commit was in flight
+	uint64_t sizeBuckets[5] = {0};  ///< committed-batch size histogram: 1, 2-3, 4-7, 8-15, 16+
+};
+
+/// Enables/disables group-commit batch-stats accounting (default off; the master turns it on
+/// with FDB_OP_PROFILING). When off, the hot-path counters are a single bool check.
+void matoclserv_set_batch_stats_enabled(bool enabled);
+
+/// Returns the current group-commit batch-stats counters (process-wide, since process start).
+MatoclBatchStats matoclserv_get_batch_stats();

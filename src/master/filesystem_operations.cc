@@ -2834,6 +2834,10 @@ uint8_t FilesystemOperationsBase::acquire(const FsContext &context,
 
 	if (std::find(fileNode->sessionIds.begin(), fileNode->sessionIds.end(), sessionid) !=
 	    fileNode->sessionIds.end()) {
+		// Reached only when openFilesSet does not track the inode (the in-memory master
+		// couples acquire with that insert), so a session already in sessionIds means the two
+		// have drifted -- a structural inconsistency, not a retry. The KV backend defers the
+		// insert and overrides acquire() to tolerate the duplicate.
 		return SAUNAFS_ERROR_EINVAL;
 	}
 

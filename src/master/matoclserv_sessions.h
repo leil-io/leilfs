@@ -97,6 +97,19 @@ void matoclserv_remove_timed_out_sessions(const std::function<bool(Session *)> &
 int matoclserv_insert_open_file(const FilesystemOperationContext &fsOpContext,
                                 Session *currentSession, inode_t inode);
 
+/// Backend-persist-only half of matoclserv_insert_open_file: acquires the file in the
+/// transaction without recording it in Session::openFilesSet. Pair with
+/// matoclserv_record_open_file() on commit success so a commit retry can replay the
+/// persistent acquire on a fresh transaction. @return acquire() status.
+int matoclserv_acquire_open_file_persist(const FilesystemOperationContext &fsOpContext,
+                                         Session *currentSession, inode_t inode);
+
+/// In-memory half paired with matoclserv_acquire_open_file_persist: records the
+/// open file in @p currentSession on commit success. Takes the live Session
+/// pointer (not a session id), so it avoids the by-id / synthetic-session path
+/// that the KV backend refuses.
+void matoclserv_record_open_file(Session *currentSession, inode_t inode);
+
 /// Adds an open file to the list of open files for a given session.
 /// @param sessionId The ID of the session to which the open file will be added
 /// @param inode The inode of the open file to add
