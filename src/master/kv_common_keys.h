@@ -121,6 +121,16 @@ inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.
 /// ChunkVersion, LockedTo and LockId (all 32-bit) are also Big Endian.
 inline constexpr std::string_view kChunkLatestKeyPrefix = "CHNL_";  // Latest chunk versions (hot)
 
+/// Prefix for chunk undo entries (used for restoring chunk state to historical checkpoint versions)
+/// Represents the initial state of a chunk at the beginning of a checkpoint interval, which can be
+/// used to undo changes to that chunk when restoring to a snapshot at the checkpoint version.
+///
+/// Format: CHNU_<CheckpointVersion><ChunkId>:<ChunkVersion><LockedTo><LockId>
+/// @note CheckpointVersion (64-bit) and ChunkId (64-bit) are serialized as Big Endian in the key.
+/// ChunkVersion, LockedTo and LockId (all 32-bit) are also Big Endian.
+/// @note Empty values represent chunk removals during rollback.
+inline constexpr std::string_view kChunkUndoKeyPrefix = "CHNU_";  // Undo chunk versions (cold)
+
 /// Ordered catalog of sealed metadata checkpoint versions retained in FDB.
 /// Format: META_CHECKPOINT_VERSIONS:<Version1><Version2>...<VersionN>
 /// @note Versions are encoded as 64-bit Big Endian integers in ascending order.

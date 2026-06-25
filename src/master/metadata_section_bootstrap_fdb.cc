@@ -278,6 +278,8 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	uint64_t nextChunkId = get64bit(&ptr);
 	uint64_t chunkCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (CHNU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -299,7 +301,6 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 
 		if (chunkId == 0) { break; }
 
-		// Enqueue chunk update event for FDB with no checkpoint version to avoid undo logging
 		writer.enqueue(std::make_unique<ChunkUpdateEvent>(chunkId, chunkVersion, lockedTo, lockId));
 
 		chunkCount++;

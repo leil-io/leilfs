@@ -28,6 +28,7 @@
 #include "kv/kv_utils.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_checkpoint_manager.h"
+#include "master/metadata_section_undo_recorder.h"
 
 ChunkUpdateEvent::ChunkUpdateEvent(uint64_t _chunkId, uint32_t _version, uint32_t _lockedTo,
                                    uint32_t _lockId)
@@ -48,6 +49,20 @@ void ChunkUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	put32bit(&ptr, version);
 	put32bit(&ptr, lockedTo);
 	put32bit(&ptr, lockId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
 
 	context.transaction->set(key, value);
 }

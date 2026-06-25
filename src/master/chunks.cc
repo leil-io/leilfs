@@ -3206,6 +3206,70 @@ void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersio
 	chunk->lockid = lockId;
 }
 
+/// Deletes a chunk structure without updating statistics.
+///
+/// This function only invalidates the "last chunk" lookup cache (if it points to the given chunk)
+/// and then frees the chunk structure via chunk_free().
+///
+/// Unlike the master runtime variant, this variant does not update master statistics
+/// (e.g. via Chunk::freeStats()).
+///
+/// @param chunk Chunk to delete.
+void chunk_delete_without_updating_stats(Chunk *chunk) {
+	if (gChunksMetadata->lastchunkptr == chunk) {
+		gChunksMetadata->lastchunkid = 0;
+		gChunksMetadata->lastchunkptr = nullptr;
+	}
+#ifndef METARESTORE
+	chunk_free(chunk);
+#endif /* METARESTORE */
+}
+
+int chunk_restore_set(uint64_t chunkId, uint32_t chunkVersion, uint32_t lockedTo, uint32_t lockId) {
+	// Find existing or create if missing.
+	// For undo, "missing" can happen if earlier undo deleted it and later undo re-adds it.
+	Chunk *foundChunk = chunk_find(chunkId);
+	if (foundChunk == nullptr) {
+		chunk_add_from_initial_metadata_load(chunkId, chunkVersion, lockedTo, lockId);
+		return SAUNAFS_STATUS_OK;
+	}
+
+	foundChunk->version = chunkVersion;
+	foundChunk->lockedto = lockedTo;
+	foundChunk->lockid = lockId;
+	chunk_update_checksum(foundChunk, true);
+	return SAUNAFS_STATUS_OK;
+}
+
+int chunk_restore_remove(uint64_t chunkId) {
+	Chunk *foundChunk = chunk_find(chunkId);
+	if (foundChunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
+
+	const auto bucketIndex = chunkHashPos(chunkId);
+	auto &bucket = gChunksMetadata->chunkhash[bucketIndex];
+
+	// Unlink from hash chain (must happen before chunk_delete_without_updating_stats()).
+	auto chunkIterator = std::ranges::find(bucket.begin(), bucket.end(), foundChunk);
+	if (chunkIterator != bucket.end()) { bucket.erase(chunkIterator); }
+
+	// Invalidate "last chunk" cache if it pointed to this chunk
+	if (gChunksMetadata->lastchunkptr == foundChunk) {
+		gChunksMetadata->lastchunkptr = nullptr;
+		gChunksMetadata->lastchunkid = 0;
+	}
+
+	// Remove checksum contribution (safe even if checksum is 0).
+	// Mirror chunk_update_checksum removal rules for recalculated checksum.
+	if (chunkHashPos(foundChunk->chunkid) < gChunksMetadata->checksumRecalculationPosition) {
+		removeFromChecksum(gChunksMetadata->chunksChecksumRecalculated, foundChunk->checksum);
+	}
+	removeFromChecksum(gChunksMetadata->chunksChecksum, foundChunk->checksum);
+
+	// Now it's safe to free.
+	chunk_delete_without_updating_stats(foundChunk);
+	return SAUNAFS_STATUS_OK;
+}
+
 bool chunksLoadFromFile(MetadataLoader::Options options) {
 	const uint8_t *ptr = options.metadataFile->seek(options.offset);
 	uint64_t nextChunkId = get64bit(&ptr);

@@ -44,6 +44,36 @@ inline std::unique_ptr<IIdGeneratorWithState<uint64_t>> gChunkIdGenerator = null
 
 void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
                                           uint32_t lockedTo, uint32_t lockId);
+
+/// Restores or updates a chunk entry during shadow sync paths with checkpoint undo.
+///
+/// Intended for shadow sync paths that replay undo information for chunks.
+/// If the chunk is missing, it is created (this can happen when an earlier undo removed it and a
+/// later undo re-adds it).
+///
+/// Side effects:
+/// - Creates the chunk if missing (via chunk_add_from_initial_metadata_load()).
+/// - Updates the in-memory chunk fields (version/lock state).
+/// - Updates chunk checksum accounting (via chunk_update_checksum()).
+///
+/// @param chunkId Chunk identifier.
+/// @param version Chunk version to set.
+/// @param lockedTo Chunk lock expiration time (same semantics as in metadata).
+/// @param lockId Chunk lock identifier.
+/// @return SAUNAFS_STATUS_OK (no-op or success).
+int chunk_restore_set(uint64_t chunkId, uint32_t chunkVersion, uint32_t lockedTo, uint32_t lockId);
+
+/// Removes a chunk entry during shadow sync paths with checkpoint undo.
+///
+/// Intended for shadow sync paths that replay undo information for chunks.
+/// If the chunk exists, it is unlinked from the internal chunk hash table, removed from checksum
+/// accounting (including the recalculated checksum when applicable), and freed (via chunk_delete()).
+/// If the chunk does not exist, this is a no-op.
+///
+/// @param chunkId Chunk identifier.
+/// @return SAUNAFS_STATUS_OK (no-op or success).
+int chunk_restore_remove(uint64_t chunkId);
+
 int chunk_increase_version(uint64_t chunkid);
 int chunk_set_version(uint64_t chunkid,uint32_t version);
 int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal);

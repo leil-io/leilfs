@@ -289,6 +289,17 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	// chunk_set_next_chunkid() only moves the generator forward, so this never lowers it.
 	if (maxChunkId > 0) { chunk_set_next_chunkid(maxChunkId + 1); }
 
+	// Apply undo checkpoints so that chunk state matches the loaded checkpoint version
+	// Target version is the metadataVersion value we loaded into loadedCheckpointDescriptor_
+	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
+
+	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::Chunk, targetVersion)) {
+		safs::log_err("{}: failed to roll back chunks to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
+	}
+
 	safs::log_info("Loaded {} chunks", chunkCount);
 	safs::log_info("Section loaded successfully (CHNK 1.0): {}s", timer.elapsed_s());
 
