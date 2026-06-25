@@ -182,6 +182,22 @@ void EdgeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
 	kv::appendStr(key, name);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = EdgeSetMutation{
+		    .parentId = parentId,
+		    .childId = childId,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	// Value: childId
 	kv::Value value(kv::toBytesBE(childId));
 
@@ -200,6 +216,21 @@ void EdgeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: EDGE_<parentId><name>
 	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
 	kv::appendStr(key, name);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = EdgeRemoveMutation{
+		    .parentId = parentId,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
 
 	context.transaction->remove(key);
 }

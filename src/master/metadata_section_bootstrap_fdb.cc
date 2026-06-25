@@ -356,6 +356,8 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 	const uint8_t *ptr = section->begin;
 	uint64_t edgeCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (EDGEU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
