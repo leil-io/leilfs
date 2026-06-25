@@ -275,6 +275,19 @@ inline constexpr std::string_view kDirNodesCountPrefix = "DIR_NODES_COUNT_";
 /// as children are added/removed, enabling efficient queries like 'saunafs dirinfo'.
 inline constexpr std::string_view kDirStatsPrefix = "DIR_STATS_";
 
+/// Prefix for a directory's child-change time.
+/// Format: DIR_CHILD_CHANGE_TIME_<InodeId> -> <TimeStamp> (32-bit little-endian)
+/// @note Updated via a conflict-free FDB atomicMax on every child link/unlink, so
+/// concurrent same-directory creates avoid colliding on (and need not rewrite) the whole
+/// parent node. A directory's served mtime and ctime are reconciled as max(node field,
+/// this key); since adding/removing an entry sets a directory's mtime and ctime to the
+/// same timestamp, one key covers both. Explicit directory mtime sets overwrite this
+/// key so backward mtime changes are not masked. Once present, this shadow remains
+/// authoritative during attribute reconciliation; whole-node writes do not fold it into
+/// NODE_. An absent key counts as zero, so the node's own timestamps remain authoritative
+/// when no child change has been recorded.
+inline constexpr std::string_view kDirChildChangeTimePrefix = "DIR_CHILD_CHANGE_TIME_";
+
 /// Suffix bytes for directory statistics fields.
 /// Used to differentiate the 8 stats keys per directory without string comparisons.
 enum class StatsSuffix : uint8_t {

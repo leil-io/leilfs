@@ -573,10 +573,20 @@ void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fs
 		}
 	}
 
-	// Timestamps
+	// Timestamps. A directory's mtime/ctime are reconciled with its conflict-free
+	// child-change time: a child create/remove records that key via atomicMax
+	// instead of rewriting the parent node, so the node's own mtime/ctime can lag behind.
+	uint32_t mtime = node->mtime;
+	uint32_t ctime = node->ctime;
+	if (node->type == FSNodeType::kDirectory) {
+		const uint32_t childChange =
+		    getDirChildChangeTime(fsOpContext, static_cast<FSNodeDirectory *>(node));
+		if (childChange > mtime) { mtime = childChange; }
+		if (childChange > ctime) { ctime = childChange; }
+	}
 	put32bit(&ptr, node->atime);
-	put32bit(&ptr, node->mtime);
-	put32bit(&ptr, node->ctime);
+	put32bit(&ptr, mtime);
+	put32bit(&ptr, ctime);
 
 	// Number of links
 	nlink = getNumberOfParents(fsOpContext, node);
@@ -670,6 +680,8 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
 
 	fsnodes_update_checksum(parent);
+	// Persist the parent's child-change time conflict-free; see link().
+	persistDirChildChangeTime(fsOpContext, parent, timeStamp);
 	HString currentName = childName;
 	if (parent->caseInsensitive) { currentName = HString::hstringToLowerCase(childName); }
 
@@ -691,6 +703,23 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	fsnodes_update_checksum(childNode);
 
 	gMetadata->edgeRemovedSignal.emit(parent->id, childName);
+}
+
+void FilesystemNodeOperationsBase::persistDirChildChangeTime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
+    uint32_t /*timeStamp*/) {
+	// Default no-op: the in-memory master persists a directory's mtime/ctime via the node
+	// itself (and the periodic metadata dump). The KV backend overrides this.
+}
+
+uint32_t FilesystemNodeOperationsBase::getDirChildChangeTime(
+    const FilesystemOperationContext & /*fsOpContext*/, const FSNodeDirectory * /*dir*/) {
+	return 0;
+}
+
+void FilesystemNodeOperationsBase::resetDirChildChangeTime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/) {
+	// Default no-op: the in-memory master keeps a directory's mtime in the node itself.
 }
 
 void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpContext,
@@ -722,6 +751,9 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	if (timeStamp > 0) {
 		parent->mtime = parent->ctime = timeStamp;
 		fsnodes_update_checksum(parent);
+		// Persist the parent's child-change time conflict-free so it survives a
+		// reload without rewriting (and conflicting on) the whole parent node.
+		persistDirChildChangeTime(fsOpContext, parent, timeStamp);
 		assert(child->type != FSNodeType::kTrash);
 		child->ctime = timeStamp;
 		fsnodes_update_checksum(child);

@@ -1603,8 +1603,16 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	}
 	if (setmask & SET_MTIME_NOW_FLAG) {
 		node->mtime = timeStamp;
+		if (node->type == FSNodeType::kDirectory) {
+			nodeOperations_->resetDirChildChangeTime(fsOpContext,
+			                                        static_cast<FSNodeDirectory *>(node));
+		}
 	} else if (setmask & SET_MTIME_FLAG) {
 		node->mtime = attrmtime;
+		if (node->type == FSNodeType::kDirectory) {
+			nodeOperations_->resetDirChildChangeTime(fsOpContext,
+			                                        static_cast<FSNodeDirectory *>(node));
+		}
 	}
 	changeLog(fsOpContext, timeStamp,
 	          "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", node->id,

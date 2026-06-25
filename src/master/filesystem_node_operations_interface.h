@@ -144,6 +144,13 @@ public:
 	/// @note KV backends: could schedule the set operation for later commit.
 	virtual void updateNode(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
 
+	/// Resets a directory's persisted child-change time to its current mtime when mtime is
+	/// set explicitly (utimes). Directory mtime can move backward after child changes, so the
+	/// KV backend overwrites the DIR_CHILD_CHANGE_TIME_ shadow to keep max-reconcile parity.
+	/// In-memory backend: no-op.
+	virtual void resetDirChildChangeTime(const FilesystemOperationContext &fsOpContext,
+	                                     FSNodeDirectory *dir) = 0;
+
 	/// Creates a hard link (directory entry) between a parent directory and an existing node.
 	///
 	/// This method establishes a new edge from a parent directory to an existing child node,

@@ -131,6 +131,26 @@ public:
 	uint64_t getNumberOfParents(const FilesystemOperationContext &fsOpContext,
 	                            const FSNode *node) override;
 
+	/// No-op: the in-memory master keeps a directory's mtime in the node itself.
+	/// @see IFilesystemNodeOperations::resetDirChildChangeTime
+	void resetDirChildChangeTime(const FilesystemOperationContext &fsOpContext,
+	                             FSNodeDirectory *dir) override;
+
+	/// Conflict-free persistence of a directory's child-change time: records
+	/// that an entry of `dir` was added or removed at `timeStamp` WITHOUT rewriting (and
+	/// conflicting on) the whole parent node. The default is a no-op: backends that persist
+	/// the directory node itself (the in-memory master) keep mtime/ctime in the node. The
+	/// KV backend overrides this with an FDB atomicMax on the DIR_CHILD_CHANGE_TIME_ key.
+	virtual void persistDirChildChangeTime(const FilesystemOperationContext &fsOpContext,
+	                                       FSNodeDirectory *dir, uint32_t timeStamp);
+
+	/// Returns the directory's persisted child-change time, or 0 if none. Used to reconcile
+	/// a directory's served mtime/ctime (max of the node field and this value) when a child
+	/// create/remove did not rewrite the node. Default 0: the node's own timestamps are
+	/// authoritative (in-memory master).
+	virtual uint32_t getDirChildChangeTime(const FilesystemOperationContext &fsOpContext,
+	                                       const FSNodeDirectory *dir);
+
 #ifndef METARESTORE
 	uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) override;
 	void getDirData(const FilesystemOperationContext &fsOpContext, inode_t rootINode, uint32_t uid,
