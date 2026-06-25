@@ -30,6 +30,7 @@
 #include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
+#include "master/metadata_xattr_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
 
 /// Snapshot descriptor bound to one metadata checkpoint boundary.
@@ -244,6 +245,7 @@ private:
 	std::unique_ptr<ChunkUndoRecorder> chunkUndoRecorder_;
 	std::unique_ptr<NodeUndoRecorder> nodeUndoRecorder_;
 	std::unique_ptr<EdgeUndoRecorder> edgeUndoRecorder_;
+	std::unique_ptr<XAttrUndoRecorder> xattrUndoRecorder_;
 
 	/// Last sealed checkpoint version; 0 before any checkpoint has been sealed.
 	uint64_t activeCheckpointVersion_{0};

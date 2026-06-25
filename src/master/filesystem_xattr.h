@@ -94,16 +94,19 @@ XAttributeInodeEntry *find_xattr_inode_entry(inode_t inode, uint32_t inodeHash);
 void xattr_checksum_add_to_background(XAttributeDataEntry *xattrDataEntry);
 void xattr_listattr_data(void *xattrInodeEntry, uint8_t *xattrDataBuffer);
 void xattr_recalculate_checksum();
-void xattr_removeinode(inode_t inode);
+void xattr_removeinode(inode_t inode, bool emitSignals = true);
 
 uint8_t xattr_getattr(inode_t inode, uint8_t attributeNameLength, const uint8_t *attributeName,
                       uint32_t *attributeValueLength, uint8_t **attributeValue);
 
 uint8_t get_xattrs_length_for_inode(inode_t inode, void **xattrInodePointer, uint32_t *xattrSize);
 
+/// @param emitSignals When false, suppresses gXAttr* signal emits. Used by the forkless
+///                    XAttrUndoRecorder restore path, which must mutate in-memory xattrs without
+///                    re-enqueuing them into the metadata writer.
 uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t *attributeName,
                       uint32_t attributeValueLength, const uint8_t *attributeValueBuffer,
-                      uint8_t mode);
+                      uint8_t mode, bool emitSignals = true);
 
 /// Signal emitted when all xattrs for an inode are removed (node deletion cleanup).
 inline Signal<inode_t> gXAttrInodeRemovedSignal;
