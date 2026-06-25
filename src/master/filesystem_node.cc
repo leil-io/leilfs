@@ -603,7 +603,9 @@ void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fs
 		put64bit(&ptr, static_cast<FSNodeFile *>(node)->length);
 		break;
 	case FSNodeType::kDirectory:
-		put32bit(&ptr, static_cast<FSNodeDirectory *>(node)->nlink);
+		// Served via getDirNlink so the KV backend can return 2 + persisted direct-subdir
+		// count; the in-memory master returns the node's own nlink field.
+		put32bit(&ptr, getDirNlink(fsOpContext, static_cast<FSNodeDirectory *>(node)));
 		// Rescale length to GB (reduces size to 32-bit length)
 		put64bit(&ptr, static_cast<FSNodeDirectory *>(node)->stats.length >> kGBBitShift);
 		break;
@@ -677,7 +679,10 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 
 	parent->mtime = parent->ctime = timeStamp;
 
-	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
+	if (childNode->type == FSNodeType::kDirectory) {
+		parent->nlink--;
+		persistDirSubdirCountDelta(fsOpContext, parent, -1);
+	}
 
 	fsnodes_update_checksum(parent);
 	// Persist the parent's child-change time conflict-free; see link().
@@ -722,6 +727,17 @@ void FilesystemNodeOperationsBase::resetDirChildChangeTime(
 	// Default no-op: the in-memory master keeps a directory's mtime in the node itself.
 }
 
+void FilesystemNodeOperationsBase::persistDirSubdirCountDelta(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
+    int64_t /*delta*/) {
+	// Default no-op: the in-memory master keeps a directory's nlink in the node itself.
+}
+
+uint32_t FilesystemNodeOperationsBase::getDirNlink(
+    const FilesystemOperationContext & /*fsOpContext*/, const FSNodeDirectory *dir) {
+	return dir->nlink;
+}
+
 void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpContext,
                                         uint32_t timeStamp, FSNodeDirectory *parent, FSNode *child,
                                         const HString &name) {
@@ -742,7 +758,10 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	// Implementation specific (virtual) edge preservation (in-memory, FDB, etc.)
 	preserveEdge(fsOpContext, parent, child, handlePtr);
 
-	if (child->type == FSNodeType::kDirectory) { parent->nlink++; }
+	if (child->type == FSNodeType::kDirectory) {
+		parent->nlink++;
+		persistDirSubdirCountDelta(fsOpContext, parent, 1);
+	}
 
 	StatsRecord childStats;
 	getStats(fsOpContext, child, &childStats);

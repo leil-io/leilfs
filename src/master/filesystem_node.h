@@ -151,6 +151,20 @@ public:
 	virtual uint32_t getDirChildChangeTime(const FilesystemOperationContext &fsOpContext,
 	                                       const FSNodeDirectory *dir);
 
+	/// Conflict-free persistence of a directory's direct-subdirectory count delta:
+	/// records +1/-1 on every subdirectory link/unlink WITHOUT rewriting the parent
+	/// node, co-located with the in-memory FSNodeDirectory::nlink update. Default no-op: the
+	/// in-memory master keeps nlink in the node. The KV backend overrides with an FDB
+	/// atomicAdd on the DIR_SUBDIRS_ key.
+	virtual void persistDirSubdirCountDelta(const FilesystemOperationContext &fsOpContext,
+	                                        FSNodeDirectory *dir, int64_t delta);
+
+	/// Returns the directory's served link count. Default: the node's own nlink field (the
+	/// in-memory master). The KV backend overrides this to 2 + the persisted direct-subdir
+	/// count, so nlink survives a reload without rewriting the node per child create.
+	virtual uint32_t getDirNlink(const FilesystemOperationContext &fsOpContext,
+	                             const FSNodeDirectory *dir);
+
 #ifndef METARESTORE
 	uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) override;
 	void getDirData(const FilesystemOperationContext &fsOpContext, inode_t rootINode, uint32_t uid,

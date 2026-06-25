@@ -288,6 +288,16 @@ inline constexpr std::string_view kDirStatsPrefix = "DIR_STATS_";
 /// when no child change has been recorded.
 inline constexpr std::string_view kDirChildChangeTimePrefix = "DIR_CHILD_CHANGE_TIME_";
 
+/// Prefix for a directory's DIRECT subdirectory count.
+/// Format: DIR_SUBDIRS_<InodeId> -> <Count> (signed 64-bit little-endian)
+/// @note Maintained via a conflict-free FDB atomicAdd(+/-1) on every subdirectory
+/// link/unlink, co-located with the in-memory FSNodeDirectory::nlink update, so it is a
+/// persisted shadow of (nlink - 2). A directory's served nlink is 2 + this count (POSIX:
+/// 2 for "." and the parent entry, plus one per direct subdirectory). Distinct from the
+/// DIR_STATS Dirs counter, which is the RECURSIVE subtree directory count. An absent key
+/// counts as zero (an empty directory, nlink 2).
+inline constexpr std::string_view kDirSubdirCountPrefix = "DIR_SUBDIRS_";
+
 /// Suffix bytes for directory statistics fields.
 /// Used to differentiate the 8 stats keys per directory without string comparisons.
 enum class StatsSuffix : uint8_t {
