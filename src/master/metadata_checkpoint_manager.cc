@@ -210,10 +210,17 @@ bool MetadataCheckpointManager::restoreSectionToCheckpointVersion(MetadataSectio
 	return false;
 }
 
+const std::unordered_set<uint64_t> &MetadataCheckpointManager::nodesRemovedDuringRestore() const {
+	static const std::unordered_set<uint64_t> kEmpty;
+	return nodeUndoRecorder_ ? nodeUndoRecorder_->removedDuringRestore() : kEmpty;
+}
+
 void MetadataCheckpointManager::initializeRecorders() {
 	chunkUndoRecorder_ = std::make_unique<ChunkUndoRecorder>(kvEngine_);
+	nodeUndoRecorder_ = std::make_unique<NodeUndoRecorder>(kvEngine_);
 
 	recorders_[static_cast<size_t>(MetadataSectionKind::Chunk)] = chunkUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::Node)] = nodeUndoRecorder_.get();
 }
 
 ISectionUndoRecorder *MetadataCheckpointManager::recorderFor(MetadataSectionKind section) {
