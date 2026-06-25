@@ -38,6 +38,7 @@
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_writer_fdb.h"
 #include "slogger/slogger.h"
 
@@ -143,6 +144,13 @@ bool MetadataSectionBootstrapFDB::bootstrapSections() {
 
 int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	auto transaction = kvEngine_->createReadWriteTransaction();
+	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
+		// A missing section can trigger a partial bootstrap for an already initialized store.
+		// Preserve its checkpoint descriptor and catalog instead of replacing them with the
+		// potentially older metadata.sfs values used to restore the section.
+		safs::log_info("Preserving initialized FDB metadata header after partial bootstrap");
+		return kOpSuccess;
+	}
 
 	transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M 2.9"));
 	transaction->set(kv::toBytes(kMetaFormatKey), kv::toBytes("1.0"));
@@ -158,6 +166,14 @@ int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	kv::Value nextSessionIdValue;
 	serialize(nextSessionIdValue, nextSessionId_);
 	transaction->set(kv::toBytes(kMetaNextSessionKey), nextSessionIdValue);
+
+	// The imported metadata image is the first restorable checkpoint. Publish its catalog entry in
+	// the same transaction as META_HEADER so a completed bootstrap can never expose a header
+	// without the checkpoint version needed by every section undo recorder.
+	std::vector<uint64_t> checkpointVersions{metadataVersion_};
+	if (checkpoints::saveCheckpointVersions(transaction.get(), checkpointVersions) != kOpSuccess) {
+		return kOpFailure;
+	}
 
 	if (!transaction->commit()) {
 		safs::log_err("Failed to commit bootstrapped metadata header to FDB");
@@ -289,6 +305,8 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	uint64_t nextChunkId = get64bit(&ptr);
 	uint64_t chunkCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (CHNU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -310,7 +328,6 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 
 		if (chunkId == 0) { break; }
 
-		// Enqueue chunk update event for FDB with no checkpoint version to avoid undo logging
 		writer.enqueue(std::make_unique<ChunkUpdateEvent>(chunkId, chunkVersion, lockedTo, lockId));
 
 		chunkCount++;
@@ -326,6 +343,13 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	}
 
 	auto transaction = kvEngine_->createReadWriteTransaction();
+	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
+		// On a partial bootstrap, the existing checkpoint descriptor remains authoritative.
+		// Only the missing chunk rows imported above belong to this operation.
+		safs::log_info("Preserving initialized FDB chunk metadata after partial bootstrap");
+		return kOpSuccess;
+	}
+
 	kv::Value nextChunkIdValue(sizeof(uint64_t));
 	uint8_t *nextChunkPtr = nextChunkIdValue.data();
 	put64bit(&nextChunkPtr, nextChunkId);

@@ -16,6 +16,8 @@
    along with LeilFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_checkpoint_manager.h"
 
 #include <cstring>
@@ -211,9 +213,9 @@ bool MetadataCheckpointManager::restoreSectionToCheckpointVersion(MetadataSectio
 }
 
 void MetadataCheckpointManager::initializeRecorders() {
-	// Initialize recorders for each metadata section.
-	// Each recorder is responsible for tracking mutations and restoring data for its respective
-	// section.
+	chunkUndoRecorder_ = std::make_unique<ChunkUndoRecorder>(kvEngine_);
+
+	recorders_[static_cast<size_t>(MetadataSectionKind::Chunk)] = chunkUndoRecorder_.get();
 }
 
 ISectionUndoRecorder *MetadataCheckpointManager::recorderFor(MetadataSectionKind section) {
