@@ -46,6 +46,7 @@
 #include "master/metadata_backend_forkless.h"
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_chunk_undo_recorder.h"
+#include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "protocol/SFSCommunication.h"
@@ -320,6 +321,11 @@ kv::Value chunkValue(uint32_t version, uint32_t lockedTo, uint32_t lockId) {
 	return value;
 }
 
+kv::Key namedKey(std::string_view prefix, inode_t inode, std::string_view name) {
+	kv::Key key = kv::encodeKeyBE(prefix, inode);
+	kv::appendStr(key, name);
+	return key;
+}
 constexpr uint64_t kCheckpointVersion = 17;
 
 }  // namespace
@@ -353,6 +359,48 @@ TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValues) {
 	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
 	engine.store()[kv::encodeKeyBE(kChunkUndoKeyPrefix, kCheckpointVersion, kChunkId)] =
 	    kv::Value{0x01};
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing parent id.
+		    malformedKeys.push_back(kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion));
+		    // A non-detached edge must contain a non-empty name after its parent id.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{41}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    EdgeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = {};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoValues) {
+	RecordingKVEngine engine;
+	EdgeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kParentId = 41;
+	kv::Key undoKey = kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, kParentId);
+	kv::appendStr(undoKey, "child");
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[undoKey] = kv::Value{0x01};
 
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 }
@@ -473,6 +521,37 @@ TEST(MetadataUndoRecorderRetry, NodePreservesOriginalPreimage) {
 	engine.store()[liveKey] = originalValue;
 
 	const MetadataMutation mutation = NodeSetMutation{.inode = kInode, .liveKey = liveKey};
+	expectFailedFirstTouchRetryPreservesPreimage(
+	    recorder, engine.store(), mutation, undoKey, originalValue,
+	    [&](RecordingTransaction &transaction, bool laterMutation) {
+		    transaction.set(liveKey, laterMutation ? laterValue : updatedValue);
+	    });
+	EXPECT_EQ(engine.store().at(liveKey), laterValue);
+}
+
+TEST(MetadataUndoRecorderRetry, EdgePreservesOriginalPreimage) {
+	RecordingKVEngine engine;
+	EdgeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kParentId = 43;
+	constexpr inode_t kOriginalChildId = 44;
+	constexpr inode_t kUpdatedChildId = 45;
+	constexpr inode_t kLaterChildId = 46;
+	const HString name("entry");
+	const kv::Key liveKey = namedKey(kEdgeKeyPrefix, kParentId, name);
+	kv::Key undoKey = kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, kParentId);
+	kv::appendStr(undoKey, name);
+	const kv::Value originalValue = kv::toBytesBE(kOriginalChildId);
+	const kv::Value updatedValue = kv::toBytesBE(kUpdatedChildId);
+	const kv::Value laterValue = kv::toBytesBE(kLaterChildId);
+	engine.store()[liveKey] = originalValue;
+
+	const MetadataMutation mutation = EdgeSetMutation{
+	    .parentId = kParentId,
+	    .childId = kUpdatedChildId,
+	    .name = name,
+	    .liveKey = liveKey,
+	};
 	expectFailedFirstTouchRetryPreservesPreimage(
 	    recorder, engine.store(), mutation, undoKey, originalValue,
 	    [&](RecordingTransaction &transaction, bool laterMutation) {
