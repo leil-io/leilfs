@@ -57,6 +57,7 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_dumper_file.h"
+#include "master/metadata_node_restore_helpers.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
@@ -86,6 +87,20 @@ bool hasPersistedMetadataSectionData(kv::IKVEngine *kvEngine,
 	return false;
 }
 #endif  // #ifndef METARESTORE
+
+int checkOrphanedNodes() {
+	for (auto i = 0; i < NODEHASHSIZE; i++) {
+		for (const auto &node : gMetadata->nodeHash[i]) {
+			if (node->parents.empty() && node != gMetadata->root &&
+			    (node->type != FSNodeType::kTrash) && (node->type != FSNodeType::kReserved)) {
+				safs::log_err("Found orphaned inode: %" PRIiNode, node->id);
+				return kOpFailure;
+			}
+		}
+	}
+
+	return kOpSuccess;
+}
 
 }
 
@@ -394,6 +409,8 @@ int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
 		return kOpFailure;
 	}
 
+	if (checkOrphanedNodes() != kOpSuccess) { return kOpFailure; }
+
 	return kOpSuccess;
 }
 
@@ -481,6 +498,17 @@ int8_t MetadataBackendForkless::loadNodes(bool ignoreFlag) {
 		startSelector = kv::KeySelector(lastKey, false, 0);
 	}
 
+	// Apply undo checkpoints so that node state matches the loaded checkpoint version
+	// Target version is the metadataVersion value we loaded into loadedCheckpointDescriptor_
+	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
+
+	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::Node, targetVersion)) {
+		safs::log_err("{}: failed to roll back nodes to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
+	}
+
 	safs::log_info("Loaded {} nodes", gMetadata->nodes);
 	safs::log_info("Section loaded successfully (NODE 1.0): {}s", timer.elapsed_s());
 
@@ -493,48 +521,8 @@ int8_t MetadataBackendForkless::loadNode(const FilesystemOperationContext &fsOpC
 		safs::log_err("{}: received null node, skipping", __func__);
 		return kOpFailure;
 	}
-#ifndef METARESTORE
-	auto *nodeFile = static_cast<FSNodeFile *>(node);
-#endif
 
-	switch (node->type) {
-	case FSNodeType::kDirectory:
-		gMetadata->dirNodes++;
-		break;
-	case FSNodeType::kSocket:
-	case FSNodeType::kFifo:
-	case FSNodeType::kBlockDev:
-	case FSNodeType::kCharDev:
-		// Nothing extra to do
-		break;
-	case FSNodeType::kSymlink:
-		gMetadata->linkNodes++;
-		break;
-	case FSNodeType::kFile:
-	case FSNodeType::kTrash:
-	case FSNodeType::kReserved:
-#ifndef METARESTORE
-		for (const auto &sessionId : nodeFile->sessionIds) {
-			matoclserv_add_open_file(sessionId, node->id);
-		}
-#endif
-		fsnodes_quota_update(
-		    node,
-		    {{QuotaResource::kSize, +gFSOperations->nodeOperations()->getSize(fsOpContext, node)}});
-		gMetadata->fileNodes++;
-		break;
-	default:
-		safs::log_err("Loading node: unrecognized node type: {}", static_cast<char>(node->type));
-		fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
-		return kOpFailure;
-	}
-
-	gMetadata->addNode(node, true);
-	gMetadata->inodePool.markAsAcquired(node->id);
-	gMetadata->nodes++;
-	fsnodes_quota_update(node, {{QuotaResource::kInodes, +1}});
-
-	return kOpSuccess;
+	return metadata::nodes::insertLoadedNode(fsOpContext, node);
 }
 
 int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {

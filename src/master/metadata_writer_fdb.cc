@@ -81,6 +81,21 @@ void NodeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 
 	// Key: NODE_<nodeId>
 	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = NodeSetMutation{
+		    .inode = nodeId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->set(key, serializedNode);
 }
 
@@ -94,6 +109,21 @@ void NodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 
 	// Key: NODE_<nodeId>
 	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = NodeRemoveMutation{
+		    .inode = nodeId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->remove(key);
 }
 

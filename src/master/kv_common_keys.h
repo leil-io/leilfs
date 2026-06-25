@@ -86,6 +86,10 @@ inline constexpr std::string_view kMetaLinkNodesKey = "META_LINK_NODES";
 /// enabling efficient range queries for all nodes or specific inode ranges.
 inline constexpr std::string_view kNodeKeyPrefix = "NODE_";  // Section NODE 1.0
 
+/// Prefix for node undo entries (cold)
+/// Format: NODEU_<checkpointVersion><nodeId>:<SerializedFSNodeUndoData>
+inline constexpr std::string_view kNodeUndoKeyPrefix = "NODEU_";  // Undo node versions (cold)
+
 /// Prefix for edges (directory entries)
 /// Format: EDGE_<ParentId><Name>:<ChildId>
 /// e.g.: EDGE_1999ChildName: 2535
