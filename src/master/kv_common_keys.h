@@ -132,7 +132,8 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";  // Section ACLS 1.2
 /// - OwnerId: inode_t serialized as Big Endian
 /// - Rigor: u8 (soft/hard/used)
 /// - Resource: u8 (inodes/size)
-/// - Value: u64 serialized as Big Endian
+/// - Value: u64. Soft/hard limits are big-endian; the used counter is little-endian
+///   (maintained by a conflict-free atomicAdd, so its readers decode little-endian).
 /// @note Numeric fields in the key are serialized as Big Endian to preserve numeric order in
 /// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
