@@ -298,6 +298,17 @@ inline constexpr std::string_view kDirChildChangeTimePrefix = "DIR_CHILD_CHANGE_
 /// counts as zero (an empty directory, nlink 2).
 inline constexpr std::string_view kDirSubdirCountPrefix = "DIR_SUBDIRS_";
 
+/// Prefix for a node's access time.
+/// Format: NODE_ATIME_<InodeId> -> <TimeStamp> (32-bit little-endian)
+/// @note Advanced on a read via a conflict-free FDB atomicMax, so atime-on-read no longer
+/// rewrites (and conflicts on) the whole NODE_ blob. A node's served atime is reconciled as
+/// max(node field, this key). An absent key counts as zero, so the node's own atime stays
+/// authoritative when no read has advanced it. Applies to every node type (files via
+/// readChunk, symlinks via readlink, directories via readdir). On an explicit atime set
+/// (utimes), which may move atime BACKWARD, this key is overwritten (plain set) with the new
+/// value so the max-reconcile does not mask the set.
+inline constexpr std::string_view kNodeAtimeKeyPrefix = "NODE_ATIME_";
+
 /// Suffix bytes for directory statistics fields.
 /// Used to differentiate the 8 stats keys per directory without string comparisons.
 enum class StatsSuffix : uint8_t {

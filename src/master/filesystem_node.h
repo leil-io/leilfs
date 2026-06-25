@@ -131,6 +131,20 @@ public:
 	uint64_t getNumberOfParents(const FilesystemOperationContext &fsOpContext,
 	                            const FSNode *node) override;
 
+	/// No-op: the in-memory master stores atime in the node (the caller already bumped it).
+	/// @see IFilesystemNodeOperations::persistNodeAtime
+	void persistNodeAtime(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                      uint32_t timeStamp) override;
+
+	/// Returns 0: the in-memory master keeps a node's atime in the node itself.
+	/// @see IFilesystemNodeOperations::getNodeAtime
+	uint32_t getNodeAtime(const FilesystemOperationContext &fsOpContext,
+	                      const FSNode *node) override;
+
+	/// No-op: the in-memory master keeps a node's atime in the node itself.
+	/// @see IFilesystemNodeOperations::resetNodeAtime
+	void resetNodeAtime(const FilesystemOperationContext &fsOpContext, FSNode *node) override;
+
 	/// No-op: the in-memory master keeps a directory's mtime in the node itself.
 	/// @see IFilesystemNodeOperations::resetDirChildChangeTime
 	void resetDirChildChangeTime(const FilesystemOperationContext &fsOpContext,

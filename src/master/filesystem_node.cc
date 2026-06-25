@@ -584,7 +584,12 @@ void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fs
 		if (childChange > mtime) { mtime = childChange; }
 		if (childChange > ctime) { ctime = childChange; }
 	}
-	put32bit(&ptr, node->atime);
+	// atime is reconciled with its conflict-free read-advance key: a read records
+	// atime via atomicMax on NODE_ATIME_ instead of rewriting the node, so node->atime can lag.
+	uint32_t atime = node->atime;
+	const uint32_t accessTime = getNodeAtime(fsOpContext, node);
+	if (accessTime > atime) { atime = accessTime; }
+	put32bit(&ptr, atime);
 	put32bit(&ptr, mtime);
 	put32bit(&ptr, ctime);
 
@@ -736,6 +741,23 @@ void FilesystemNodeOperationsBase::persistDirSubdirCountDelta(
 uint32_t FilesystemNodeOperationsBase::getDirNlink(
     const FilesystemOperationContext & /*fsOpContext*/, const FSNodeDirectory *dir) {
 	return dir->nlink;
+}
+
+void FilesystemNodeOperationsBase::persistNodeAtime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNode * /*node*/, uint32_t /*timeStamp*/) {
+	// Default no-op: the in-memory master persists a node's atime via the node itself (the
+	// caller, fs_update_atime, already bumped node->atime and logged ACCESS) and the periodic
+	// metadata dump. The KV backend overrides this with an FDB atomicMax on NODE_ATIME_.
+}
+
+uint32_t FilesystemNodeOperationsBase::getNodeAtime(
+    const FilesystemOperationContext & /*fsOpContext*/, const FSNode * /*node*/) {
+	return 0;
+}
+
+void FilesystemNodeOperationsBase::resetNodeAtime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNode * /*node*/) {
+	// Default no-op: the in-memory master keeps a node's atime in the node itself.
 }
 
 void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpContext,

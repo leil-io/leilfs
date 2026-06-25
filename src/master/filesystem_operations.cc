@@ -1598,8 +1598,12 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	}
 	if (setmask & SET_ATIME_NOW_FLAG) {
 		node->atime = timeStamp;
+		// Explicit set: overwrite the conflict-free atime shadow so a backward set is not
+		// masked by the max-reconcile. No-op on the in-memory master.
+		nodeOperations_->resetNodeAtime(fsOpContext, node);
 	} else if (setmask & SET_ATIME_FLAG) {
 		node->atime = attratime;
+		nodeOperations_->resetNodeAtime(fsOpContext, node);
 	}
 	if (setmask & SET_MTIME_NOW_FLAG) {
 		node->mtime = timeStamp;
@@ -1691,10 +1695,13 @@ static inline void fs_update_atime(const FilesystemOperationContext &fsOpContext
 		fsnodes_update_checksum(p);
 		gFSOperations->changeLog(fsOpContext, ts, "ACCESS(%" PRIiNode ")", p->id);
 
-		// Schedule the node update for KV backends.
-		if (fsOpContext.hasReadWriteTransaction()) {
-			gFSOperations->nodeOperations()->updateNode(fsOpContext, p);
-		}
+		// Persist the advance. The in-memory master needs nothing more (no-op); the
+		// KV backend records it with a conflict-free atomicMax on NODE_ATIME_ INSTEAD of the
+		// whole-node updateNode this used to do, so atime-on-read no longer conflicts with a
+		// concurrent writer on the node nor pays a whole-node write. fillAttr reconciles the
+		// served atime as max(node->atime, NODE_ATIME_), which also covers the case where the
+		// in-memory node->atime bump above is later lost (cache eviction or restart).
+		gFSOperations->nodeOperations()->persistNodeAtime(fsOpContext, p, ts);
 	}
 }
 

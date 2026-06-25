@@ -144,6 +144,25 @@ public:
 	/// @note KV backends: could schedule the set operation for later commit.
 	virtual void updateNode(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
 
+	/// Persists a node's access-time advance recorded on a read. The caller
+	/// (fs_update_atime) has already bumped node->atime and logged ACCESS. In-memory backend:
+	/// no-op (the node itself is the store). KV backend: a conflict-free FDB atomicMax on the
+	/// NODE_ATIME_ key, WITHOUT rewriting (and conflicting on) the node. Read paths only.
+	virtual void persistNodeAtime(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	                              uint32_t timeStamp) = 0;
+
+	/// Returns a node's persisted access time, or 0 if none. Used to reconcile the served
+	/// atime (max of the node field and this value) when a read advanced atime without
+	/// rewriting the node. In-memory backend: 0 (the node's own atime is authoritative).
+	virtual uint32_t getNodeAtime(const FilesystemOperationContext &fsOpContext,
+	                              const FSNode *node) = 0;
+
+	/// Resets the persisted access time to the node's current atime when atime is set
+	/// explicitly (utimes). atime can move backward, which the conflict-free
+	/// max-reconcile would otherwise mask; the KV backend overwrites the NODE_ATIME_
+	/// shadow so max(node->atime, shadow) == node->atime. In-memory backend: no-op.
+	virtual void resetNodeAtime(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
+
 	/// Resets a directory's persisted child-change time to its current mtime when mtime is
 	/// set explicitly (utimes). Directory mtime can move backward after child changes, so the
 	/// KV backend overwrites the DIR_CHILD_CHANGE_TIME_ shadow to keep max-reconcile parity.
