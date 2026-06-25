@@ -48,6 +48,7 @@
 #include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/filesystem_quota.h"
+#include "master/filesystem_xattr.h"
 #include "master/kv_common_keys.h"
 #include "master/kv_connector_fdb.h"
 #include "master/kv_connector_interface.h"
@@ -719,6 +720,17 @@ int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
 
 		// Advance the start selector past the last key in this page.
 		startSelector = kv::KeySelector(pageResult.getPairs().back().key, false, 0);
+	}
+
+	// Apply undo checkpoints so that xattr state matches the loaded checkpoint version. Xattrs are
+	// not node-coupled, so this rollback is required for the section to converge on shadow sync.
+	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
+
+	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::XAttr, targetVersion)) {
+		safs::log_err("{}: failed to roll back xattrs to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
 	}
 
 	safs::log_info("Section loaded successfully (XATR 1.0): {}s", timer.elapsed_s());

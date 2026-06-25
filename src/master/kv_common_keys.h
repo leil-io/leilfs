@@ -161,6 +161,20 @@ inline constexpr std::string_view kMetaCheckpointVersionsKey = "META_CHECKPOINT_
 /// enabling efficient range queries for all xattrs of a specific inode.
 inline constexpr std::string_view kXAttrKeyPrefix = "XATR_";  // Section XATR 1.0
 
+/// Prefix for extended-attribute undo entries (used for restoring xattr state to historical
+/// checkpoint versions). Stores the pre-image of an xattr at the first time it is mutated within a
+/// checkpoint interval, so xattrs can be rolled back to a checkpoint boundary during load/shadow
+/// sync.
+///
+/// Format: XATRU_<CheckpointVersion><InodeId><AttributeName>:<Presence><AttributeValue>
+/// @note CheckpointVersion (64-bit) and InodeId (inode_t) are serialized as Big Endian in the key;
+/// AttributeName is the raw attribute-name bytes (matching the XATR_ key layout).
+/// @note The value is prefixed by a single Presence byte: 0x01 means the xattr existed and the
+/// remaining bytes are its pre-image value; 0x00 is a tombstone (the xattr did not exist before the
+/// first mutation in the interval). The flag byte is required because xattrs may legitimately hold
+/// an empty value, so an empty payload cannot itself signal a tombstone.
+inline constexpr std::string_view kXAttrUndoKeyPrefix = "XATRU_";  // Undo xattr versions (cold)
+
 /// Prefix for Access Control Lists (ACLs)
 /// Format: ACLS_<InodeId>:<binary RichACL>
 /// e.g.: ACLS_1999:<binary data>
