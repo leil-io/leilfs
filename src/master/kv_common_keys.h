@@ -103,6 +103,18 @@ inline constexpr std::string_view kNodeUndoKeyPrefix = "NODEU_";  // Undo node v
 /// kDirNodesCountPrefix, kDirStatsPrefix
 inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
 
+/// Prefix for edge undo entries (used for restoring edge state to historical checkpoint versions)
+/// Stores the pre-image of an edge at the first time it is mutated within a checkpoint interval,
+/// so directory topology can be rolled back to a checkpoint boundary during load/shadow sync.
+///
+/// Format: EDGEU_<CheckpointVersion><ParentId><Name>:<ChildId>
+/// @note CheckpointVersion (64-bit) and ParentId (inode_t) are serialized as Big Endian in the
+/// key; Name is the raw edge-name bytes (matching the EDGE_ key layout). ChildId (inode_t) in the
+/// value is Big Endian.
+/// @note Empty values represent edges that did not exist at the start of the interval (tombstones);
+/// applying them during rollback removes the edge.
+inline constexpr std::string_view kEdgeUndoKeyPrefix = "EDGEU_";  // Undo edge versions (cold)
+
 /// Prefix for free/reusable inode ids
 /// Format: FREE_<InodeId>:<TimeStamp>
 /// @note InodeId is serialized as Big Endian. TimeStamp is a 32-bit Big Endian value indicating

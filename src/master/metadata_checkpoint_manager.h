@@ -28,6 +28,7 @@
 #include "common/type_defs.h"
 #include "kv/ikv_engine.h"
 #include "master/metadata_chunk_undo_recorder.h"
+#include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
 
@@ -242,6 +243,7 @@ private:
 
 	std::unique_ptr<ChunkUndoRecorder> chunkUndoRecorder_;
 	std::unique_ptr<NodeUndoRecorder> nodeUndoRecorder_;
+	std::unique_ptr<EdgeUndoRecorder> edgeUndoRecorder_;
 
 	/// Last sealed checkpoint version; 0 before any checkpoint has been sealed.
 	uint64_t activeCheckpointVersion_{0};

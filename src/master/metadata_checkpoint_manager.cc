@@ -218,9 +218,11 @@ const std::unordered_set<uint64_t> &MetadataCheckpointManager::nodesRemovedDurin
 void MetadataCheckpointManager::initializeRecorders() {
 	chunkUndoRecorder_ = std::make_unique<ChunkUndoRecorder>(kvEngine_);
 	nodeUndoRecorder_ = std::make_unique<NodeUndoRecorder>(kvEngine_);
+	edgeUndoRecorder_ = std::make_unique<EdgeUndoRecorder>(kvEngine_);
 
 	recorders_[static_cast<size_t>(MetadataSectionKind::Chunk)] = chunkUndoRecorder_.get();
 	recorders_[static_cast<size_t>(MetadataSectionKind::Node)] = nodeUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::Edge)] = edgeUndoRecorder_.get();
 }
 
 ISectionUndoRecorder *MetadataCheckpointManager::recorderFor(MetadataSectionKind section) {

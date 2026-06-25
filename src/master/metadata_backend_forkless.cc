@@ -584,6 +584,17 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 		}
 	});
 
+	// NOTE: unlike NODE, EDGE and CHNK, the FREE section intentionally has no checkpoint
+	// rollback (no FreeNodeUndoRecorder is registered, and FreeNodeUpdateEvent does not call
+	// recordPreMutation). This is deliberate, not an omission:
+	//   - Free-inode state is node-coupled: every detain/release mirrors a node remove/create.
+	//     Node rollback already restores the in-memory pool via markAsAcquired()/release() in
+	//     metadata_node_restore_helpers, exactly as the normal load path does.
+	//   - The detain/release pool operations are idempotent under changelog replay, so loading a
+	//     drifted (post-checkpoint) FREE_ image and replaying to the current version converges to
+	//     the same detained set instead of double-applying like NODE/EDGE creates would.
+	// A dedicated FREE rollback would only matter for point-in-time restore without changelog
+	// replay, which the forkless backend never does. See test_shadow_free_sync.sh.
 	safs::log_info("Section loaded successfully (FREE 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
 }
@@ -778,6 +789,18 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 		startSelector = kv::KeySelector(lastKey, false, 0);
 	}
 
+	// Apply undo checkpoints so that edge (directory topology) state matches the loaded checkpoint
+	// version. Edges roll back after nodes (loadNodes runs first): an edge present at the target
+	// version points to a node present at that version, which the node rollback already restored.
+	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
+
+	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::Edge, targetVersion)) {
+		safs::log_err("{}: failed to roll back edges to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
+	}
+
 	safs::log_info("Section loaded successfully (EDGE 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
 }
@@ -793,7 +816,19 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 	FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, childId);
 
 	if (child == nullptr) {
-		safs::log_err("loading edge: {}, {}->{} error: child not found", parentId,
+		// A child removed by node rollback during this forkless load means this edge is
+		// post-checkpoint drift: at the target checkpoint the child (and therefore this edge) did
+		// not exist. Skip it instead of failing the section load; edge rollback and changelog
+		// replay reconcile the final state. Genuinely missing children (not rolled back) still
+		// fail, preserving corruption detection.
+		if (checkpointManager_ != nullptr &&
+		    checkpointManager_->nodesRemovedDuringRestore().contains(childId)) {
+			safs::log_debug("{}: {}, {}->{} skipped: child removed by node rollback", __func__,
+			               parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
+			return kOpSuccess;
+		}
+
+		safs::log_err("{}: {}, {}->{} error: child not found", __func__, parentId,
 		              gFSOperations->nodeOperations()->escapeName(name), childId);
 
 		if (ignoreFlag) { return kOpSuccess; }
@@ -811,7 +846,7 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->reservedNodes++;
 		} else {
-			safs::log_err("loading edge: {}, {}->{} error: bad child type ({})", parentId,
+			safs::log_err("{}: {}, {}->{} error: bad child type ({})", __func__, parentId,
 			              gFSOperations->nodeOperations()->escapeName(name), childId,
 			              static_cast<char>(child->type));
 			return kOpFailure;
@@ -821,7 +856,7 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 		    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
 
 		if (parent == nullptr) {
-			safs::log_err("loading edge: {}, {}->{} error: parent not found", parentId,
+			safs::log_err("{}: {}, {}->{} error: parent not found", __func__, parentId,
 			              gFSOperations->nodeOperations()->escapeName(name), childId);
 
 			if (ignoreFlag) {
@@ -829,12 +864,12 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 				    fsOpContext, SPECIAL_INODE_ROOT);
 
 				if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
-					safs::log_err("loading edge: {}, {}->{} root dir not found !!!", parentId,
+					safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
 					              gFSOperations->nodeOperations()->escapeName(name), childId);
 					return kOpFailure;
 				}
 
-				safs::log_err("loading edge: {}, {}->{} attaching node to root dir", parentId,
+				safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
 				              gFSOperations->nodeOperations()->escapeName(name), childId);
 				parentId = SPECIAL_INODE_ROOT;
 			} else {
@@ -844,7 +879,7 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 		}
 
 		if (parent->type != FSNodeType::kDirectory) {
-			safs::log_err("loading edge: {}, {}->{} error: bad parent type ({})", parentId,
+			safs::log_err("{}: {}, {}->{} error: bad parent type ({})", __func__, parentId,
 			              gFSOperations->nodeOperations()->escapeName(name), childId,
 			              static_cast<char>(parent->type));
 
@@ -853,12 +888,12 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 				    fsOpContext, SPECIAL_INODE_ROOT);
 
 				if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
-					safs::log_err("loading edge: {}, {}->{} root dir not found !!!", parentId,
+					safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
 					              gFSOperations->nodeOperations()->escapeName(name), childId);
 					return kOpFailure;
 				}
 
-				safs::log_err("loading edge: {}, {}->{} attaching node to root dir", parentId,
+				safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
 				              gFSOperations->nodeOperations()->escapeName(name), childId);
 				parentId = SPECIAL_INODE_ROOT;
 			} else {
@@ -869,7 +904,7 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 
 		if (currentLoadParentId_ != parentId) {
 			if (parent->entries.size() > 0) {
-				safs::log_err("loading edge: {}, {}->{} error: parent node sequence error",
+				safs::log_err("{}: {}, {}->{} error: parent node sequence error", __func__,
 				              parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
 				return kOpFailure;
 			}
