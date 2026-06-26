@@ -1609,13 +1609,13 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 		node->mtime = timeStamp;
 		if (node->type == FSNodeType::kDirectory) {
 			nodeOperations_->resetDirChildChangeTime(fsOpContext,
-			                                        static_cast<FSNodeDirectory *>(node));
+			                                        static_cast<FSNodeDirectory *>(node), timeStamp);
 		}
 	} else if (setmask & SET_MTIME_FLAG) {
 		node->mtime = attrmtime;
 		if (node->type == FSNodeType::kDirectory) {
 			nodeOperations_->resetDirChildChangeTime(fsOpContext,
-			                                        static_cast<FSNodeDirectory *>(node));
+			                                        static_cast<FSNodeDirectory *>(node), timeStamp);
 		}
 	}
 	changeLog(fsOpContext, timeStamp,
@@ -1651,6 +1651,11 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	}
 	node->atime = atime;
 	node->mtime = mtime;
+	// NOTE: unlike setAttr, this changelog-replay path does not reset the conflict-free
+	// atime / dir-child-change shadows. It is safe today: the in-memory master has no such
+	// shadows, and the KV MDS does not replay the changelog (emit-only). If changelog replay
+	// is ever enabled on a KV backend, mirror setAttr's resetNodeAtime / resetDirChildChangeTime
+	// here so a restored backward timestamp is not masked by the max-reconcile.
 	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	fsnodes_update_checksum(node);
 	gMetadata->metadataVersion++;
@@ -1695,12 +1700,9 @@ static inline void fs_update_atime(const FilesystemOperationContext &fsOpContext
 		fsnodes_update_checksum(p);
 		gFSOperations->changeLog(fsOpContext, ts, "ACCESS(%" PRIiNode ")", p->id);
 
-		// Persist the advance. The in-memory master needs nothing more (no-op); the
-		// KV backend records it with a conflict-free atomicMax on NODE_ATIME_ INSTEAD of the
-		// whole-node updateNode this used to do, so atime-on-read no longer conflicts with a
-		// concurrent writer on the node nor pays a whole-node write. fillAttr reconciles the
-		// served atime as max(node->atime, NODE_ATIME_), which also covers the case where the
-		// in-memory node->atime bump above is later lost (cache eviction or restart).
+		// Persist the advance: no-op on the in-memory master; the KV backend records it with a
+		// conflict-free atomicMax on NODE_ATIME_ instead of a whole-node write. fillAttr serves
+		// max(node->atime, NODE_ATIME_), recovering the advance if the cached bump is lost.
 		gFSOperations->nodeOperations()->persistNodeAtime(fsOpContext, p, ts);
 	}
 }

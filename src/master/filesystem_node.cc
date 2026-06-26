@@ -718,8 +718,7 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 void FilesystemNodeOperationsBase::persistDirChildChangeTime(
     const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
     uint32_t /*timeStamp*/) {
-	// Default no-op: the in-memory master persists a directory's mtime/ctime via the node
-	// itself (and the periodic metadata dump). The KV backend overrides this.
+	// Default no-op: the in-memory master keeps dir mtime/ctime in the node; the KV backend overrides.
 }
 
 uint32_t FilesystemNodeOperationsBase::getDirChildChangeTime(
@@ -728,7 +727,8 @@ uint32_t FilesystemNodeOperationsBase::getDirChildChangeTime(
 }
 
 void FilesystemNodeOperationsBase::resetDirChildChangeTime(
-    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/) {
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
+    uint32_t /*opTimeStamp*/) {
 	// Default no-op: the in-memory master keeps a directory's mtime in the node itself.
 }
 
@@ -745,9 +745,7 @@ uint32_t FilesystemNodeOperationsBase::getDirNlink(
 
 void FilesystemNodeOperationsBase::persistNodeAtime(
     const FilesystemOperationContext & /*fsOpContext*/, FSNode * /*node*/, uint32_t /*timeStamp*/) {
-	// Default no-op: the in-memory master persists a node's atime via the node itself (the
-	// caller, fs_update_atime, already bumped node->atime and logged ACCESS) and the periodic
-	// metadata dump. The KV backend overrides this with an FDB atomicMax on NODE_ATIME_.
+	// Default no-op: the in-memory master keeps atime in the node; the KV backend overrides.
 }
 
 uint32_t FilesystemNodeOperationsBase::getNodeAtime(

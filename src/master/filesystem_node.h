@@ -136,11 +136,6 @@ public:
 	void persistNodeAtime(const FilesystemOperationContext &fsOpContext, FSNode *node,
 	                      uint32_t timeStamp) override;
 
-	/// Returns 0: the in-memory master keeps a node's atime in the node itself.
-	/// @see IFilesystemNodeOperations::getNodeAtime
-	uint32_t getNodeAtime(const FilesystemOperationContext &fsOpContext,
-	                      const FSNode *node) override;
-
 	/// No-op: the in-memory master keeps a node's atime in the node itself.
 	/// @see IFilesystemNodeOperations::resetNodeAtime
 	void resetNodeAtime(const FilesystemOperationContext &fsOpContext, FSNode *node) override;
@@ -148,8 +143,9 @@ public:
 	/// No-op: the in-memory master keeps a directory's mtime in the node itself.
 	/// @see IFilesystemNodeOperations::resetDirChildChangeTime
 	void resetDirChildChangeTime(const FilesystemOperationContext &fsOpContext,
-	                             FSNodeDirectory *dir) override;
+	                             FSNodeDirectory *dir, uint32_t opTimeStamp) override;
 
+protected:
 	/// Conflict-free persistence of a directory's child-change time: records
 	/// that an entry of `dir` was added or removed at `timeStamp` WITHOUT rewriting (and
 	/// conflicting on) the whole parent node. The default is a no-op: backends that persist
@@ -179,6 +175,14 @@ public:
 	virtual uint32_t getDirNlink(const FilesystemOperationContext &fsOpContext,
 	                             const FSNodeDirectory *dir);
 
+	/// Returns a node's persisted access time, or 0 if none. Used to reconcile the served
+	/// atime (max of the node field and this value) when a read advanced atime without
+	/// rewriting the node. Default 0: the node's own atime is authoritative (in-memory master).
+	/// The KV backend overrides this with a read of the NODE_ATIME_ key.
+	virtual uint32_t getNodeAtime(const FilesystemOperationContext &fsOpContext,
+	                              const FSNode *node);
+
+public:
 #ifndef METARESTORE
 	uint32_t getDirSize(const FSNodeDirectory *nodeDir, uint8_t withAttr) override;
 	void getDirData(const FilesystemOperationContext &fsOpContext, inode_t rootINode, uint32_t uid,

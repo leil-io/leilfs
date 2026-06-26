@@ -1,11 +1,8 @@
 timeout_set '2 minutes'
 
-# Exercises the attributes that the KV MDS persists conflict-free (directory link
-# count via DIR_SUBDIRS_, directory mtime via DIR_CHILD_CHANGE_TIME_, access time via NODE_ATIME_)
-# and reconciles on read as a function of the node field and a shadow key. The same
-# observable behaviour must hold on the in-memory Master (which keeps these in the node),
-# so this test is backend-agnostic and runs in both ShortSystemTests (Master) and FDBTests
-# (KV, via the test_short_ wrapper) to prove parity. Every check survives an MDS restart.
+# Conflict-free attributes (dir nlink via DIR_SUBDIRS_, dir mtime via DIR_CHILD_CHANGE_TIME_,
+# atime via NODE_ATIME_) must read back identically on the in-memory Master and the KV MDS, so
+# this test runs in both ShortSystemTests and FDBTests (test_short_ wrapper) and survives restart.
 
 USE_RAMDISK="YES" \
 	CHUNKSERVERS=1 \
@@ -13,7 +10,7 @@ USE_RAMDISK="YES" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	setup_local_empty_saunafs info
 
-cd "${info[mount0]}"
+cd "${info[mount0]}" || exit 1
 
 # drop_caches before each stat: FUSE caches attributes, which would otherwise mask a
 # server-side timestamp/nlink change.
@@ -50,6 +47,14 @@ dir_past_mtime=$(( $(date +%s) - 100000 ))
 touch -m -d "@${dir_past_mtime}" d
 drop_caches
 assert_equals "${dir_past_mtime}" "$(stat -c %Y d)"
+
+# An explicit future dir mtime must not drag ctime forward: the child-change shadow (also used
+# to reconcile ctime) is clamped to the change time, so mtime follows the future value, ctime = now.
+dir_future_mtime=$(( $(date +%s) + 100000 ))
+touch -m -d "@${dir_future_mtime}" d
+drop_caches
+assert_equals "${dir_future_mtime}" "$(stat -c %Y d)"
+assert_less_than "$(stat -c %Z d)" "${dir_future_mtime}"
 
 # atime advances through the conflict-free read path.
 # Use a nonempty file so cat reaches persistNodeAtime and the atomicMax shadow.
