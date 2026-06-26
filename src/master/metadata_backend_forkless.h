@@ -35,6 +35,7 @@
 #include "master/metadata_checkpoint_manager.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_writer_fdb.h"
+#include "protocol/quota.h"
 
 // Forward declarations to avoid heavy includes in the header
 struct ChangelogEvent;
@@ -238,6 +239,18 @@ private:
 	/// @return kOpSuccess on success, kOpFailure or SAUNAFS_ERROR_ERANGE on error.
 	int8_t loadXAttr(bool ignoreFlag);
 
+	/// Loads QUOT_ metadata
+	/// Loads all quota limits from the KV store into gMetadata->quotaDatabase and recomputes the
+	/// quota checksum.
+	///
+	/// Quota limits are stored as `QUOT_<OwnerType><OwnerId><Rigor><Resource>: <Limit>` entries
+	/// (soft/hard only). Usage (kUsed) is not persisted; it is rebuilt from node loading and is
+	/// excluded from the quota checksum.
+	///
+	/// @param ignoreFlag Currently unused; reserved for consistency with other load functions.
+	/// @return kOpSuccess on success, kOpFailure on error.
+	int8_t loadQuotas(bool ignoreFlag);
+
 	/// Loads EDGE_ metadata
 	/// Loads all edges from the KV store and reconstructs the in-memory directory tree.
 	///
@@ -344,6 +357,16 @@ private:
 	/// @param inode Inode that owns the xattr.
 	/// @param name  Attribute name bytes.
 	void onXAttrRemoved(inode_t inode, std::span<const uint8_t> name);
+
+	/// Enqueue a quota update or removal event to the metadata writer.
+	///
+	/// Called when an owner's quota limits change. Reads the owner's current limits from
+	/// gMetadata->quotaDatabase: if the owner still has limits, enqueues a QuotaUpdateEvent that
+	/// rewrites its soft/hard rows; otherwise enqueues a QuotaRemoveEvent that drops them.
+	///
+	/// @param ownerType Quota owner type (user, group, inode/directory).
+	/// @param ownerId   Quota owner id.
+	void onQuotaChanged(QuotaOwnerType ownerType, inode_t ownerId);
 
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
 	std::shared_ptr<IKVConnector> kvConnector_;

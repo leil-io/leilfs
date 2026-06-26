@@ -24,11 +24,14 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "common/datapack.h"
 #include "common/memory_mapped_file.h"
+#include "common/serialization.h"
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
@@ -37,6 +40,7 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_writer_fdb.h"
+#include "protocol/quota.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -557,6 +561,87 @@ int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
 	return kOpSuccess;
 }
 
+int8_t MetadataSectionBootstrapFDB::loadQuotaSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("QUOT 1.1");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for QUOT 1.1");
+		return kOpFailure;
+	}
+
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping quotas: section bounds overflow");
+		return kOpFailure;
+	}
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	// The QUOT 1.1 section is a single length-prefixed blob: <size:u32><serialize(vector<QuotaEntry>)>,
+	// mirroring storequotas()/fs_loadquotas() in the FILE backend. A zero size is the empty marker.
+	constexpr size_t kSizeFieldLength = sizeof(uint32_t);
+	// Subtraction avoids overflow; offset(ptr) <= sectionEnd holds after seek().
+	if (kSizeFieldLength > sectionEnd - metadataFile_->offset(ptr)) {
+		safs::log_err("{}: truncated quota blob size", __func__);
+		return kOpFailure;
+	}
+
+	uint32_t blobSize = 0;
+	deserialize(ptr, kSizeFieldLength, blobSize);
+	ptr += kSizeFieldLength;
+
+	if (blobSize == 0) {
+		safs::log_info("Bootstrapped 0 quotas from metadata file into FDB");
+		return kOpSuccess;
+	}
+
+	if (blobSize > sectionEnd - metadataFile_->offset(ptr)) {
+		safs::log_err("{}: truncated quota blob payload", __func__);
+		return kOpFailure;
+	}
+
+	std::vector<QuotaEntry> entries;
+	try {
+		deserialize(ptr, blobSize, entries);
+	} catch (const std::exception &ex) {
+		safs::log_err("Bootstrapping quotas: failed to deserialize entries: {}", ex.what());
+		return kOpFailure;
+	}
+	ptr += blobSize;
+
+	// Group entries by owner so each owner is persisted with one QuotaUpdateEvent, matching
+	// onQuotaChanged(). storequotas() emits only soft/hard limits (usage is excluded), so the
+	// grouped entries reproduce exactly the QUOT_<owner><rigor><resource> rows the backend expects.
+	std::map<std::pair<QuotaOwnerType, inode_t>, std::vector<QuotaEntry>> entriesByOwner;
+	for (const QuotaEntry &entry : entries) {
+		entriesByOwner[{entry.entryKey.owner.ownerType, entry.entryKey.owner.ownerId}].push_back(entry);
+	}
+
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging and will be flushed directly to FDB.
+	MetadataWriterFDB writer(kvEngine_);
+	size_t pending = 0;
+
+	for (auto &[owner, ownerEntries] : entriesByOwner) {
+		writer.enqueue(
+		    std::make_unique<QuotaUpdateEvent>(owner.first, owner.second, std::move(ownerEntries)));
+
+		if (++pending >= kFlushThreshold) {
+			if (!writer.flush()) { return kOpFailure; }
+			pending = 0;
+		}
+	}
+
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
+		safs::log_err("Failed to flush bootstrapped quotas to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} quota owners ({} entries) from metadata file into FDB",
+	               entriesByOwner.size(), entries.size());
+	return kOpSuccess;
+}
+
 std::optional<MetadataSectionBootstrapFDB::SectionMarker> MetadataSectionBootstrapFDB::findSection(
     std::string_view name) const {
 	auto sectionIterator = sectionMarkers_.find(std::string(name));
@@ -596,7 +681,14 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	});
 
 	// Filesystem MetadataSection "ACLS 1.2"
+
 	// Filesystem MetadataSection "QUOT 1.1"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "QUOT 1.1",
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kQuotasKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadQuotaSection(); },
+	});
+
 	// Filesystem MetadataSection "FLCK 1.0"
 
 	// Filesystem MetadataSection "CHNK 1.0"

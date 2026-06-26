@@ -317,6 +317,94 @@ void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	context.transaction->removeRange(startKey, endKey);
 }
 
+namespace {
+
+// Key prefix for all quota limit rows of one owner: QUOT_<OwnerType:u8><OwnerId:inode_t BE>
+kv::Key quotaOwnerPrefix(QuotaOwnerType ownerType, inode_t ownerId) {
+	kv::Key key = kv::toBytes(kQuotasKeyPrefix);
+	key.push_back(static_cast<uint8_t>(ownerType));
+	kv::Value idBytes = kv::toBytesBE(ownerId);
+	key.insert(key.end(), idBytes.begin(), idBytes.end());
+	return key;
+}
+
+// Full quota row key: QUOT_<OwnerType:u8><OwnerId:inode_t BE><Rigor:u8><Resource:u8>
+kv::Key quotaEntryKey(QuotaOwnerType ownerType, inode_t ownerId, QuotaRigor rigor,
+                      QuotaResource resource) {
+	kv::Key key = quotaOwnerPrefix(ownerType, ownerId);
+	key.push_back(static_cast<uint8_t>(rigor));
+	key.push_back(static_cast<uint8_t>(resource));
+	return key;
+}
+
+}  // namespace
+
+QuotaUpdateEvent::QuotaUpdateEvent(QuotaOwnerType _ownerType, inode_t _ownerId,
+                                   std::vector<QuotaEntry> _entries)
+    : ownerType(_ownerType), ownerId(_ownerId), entries(std::move(_entries)) {}
+
+void QuotaUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("QuotaUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		kv::Key ownerPrefix = quotaOwnerPrefix(ownerType, ownerId);
+		MetadataMutation mutation = QuotaSetMutation{
+		    .ownerType = ownerType,
+		    .ownerId = ownerId,
+		    .rangeBegin = ownerPrefix,
+		    .rangeEnd = kv::prefixEnd(ownerPrefix),
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	// Persist only the soft/hard limit entries provided by the caller. Usage (kUsed) is rebuilt
+	// from node loading and is intentionally excluded (it is not part of the quota checksum).
+	for (const QuotaEntry &entry : entries) {
+		kv::Key key = quotaEntryKey(ownerType, ownerId, entry.entryKey.rigor, entry.entryKey.resource);
+		kv::Value value(kv::toBytesBE(static_cast<uint64_t>(entry.limit)));
+		context.transaction->set(key, value);
+	}
+}
+
+QuotaRemoveEvent::QuotaRemoveEvent(QuotaOwnerType _ownerType, inode_t _ownerId)
+    : ownerType(_ownerType), ownerId(_ownerId) {}
+
+void QuotaRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("QuotaRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
+	kv::Key startKey = quotaOwnerPrefix(ownerType, ownerId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = QuotaRemoveMutation{
+		    .ownerType = ownerType,
+		    .ownerId = ownerId,
+		    .rangeBegin = startKey,
+		    .rangeEnd = kv::prefixEnd(startKey),
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	context.transaction->removeRange(startKey, kv::prefixEnd(startKey));
+}
+
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
                                      MetadataCheckpointManager *checkpointManager,
                                      size_t backlogHighWatermark)

@@ -180,6 +180,9 @@ void MetadataCheckpointManager::recordPreMutation(const MetadataMutationContext 
 		                         std::is_same_v<T, XAttrRemoveMutation> ||
 		                         std::is_same_v<T, XAttrRangeRemoveMutation>) {
 			    return MetadataSectionKind::XAttr;
+		    } else if constexpr (std::is_same_v<T, QuotaSetMutation> ||
+		                         std::is_same_v<T, QuotaRemoveMutation>) {
+			    return MetadataSectionKind::Quota;
 		    } else {
 			    // Force a compile error if a new MetadataMutation alternative is added
 			    // without being mapped to a section here.
@@ -220,11 +223,13 @@ void MetadataCheckpointManager::initializeRecorders() {
 	nodeUndoRecorder_ = std::make_unique<NodeUndoRecorder>(kvEngine_);
 	edgeUndoRecorder_ = std::make_unique<EdgeUndoRecorder>(kvEngine_);
 	xattrUndoRecorder_ = std::make_unique<XAttrUndoRecorder>(kvEngine_);
+	quotaUndoRecorder_ = std::make_unique<QuotaUndoRecorder>(kvEngine_);
 
 	recorders_[static_cast<size_t>(MetadataSectionKind::Chunk)] = chunkUndoRecorder_.get();
 	recorders_[static_cast<size_t>(MetadataSectionKind::Node)] = nodeUndoRecorder_.get();
 	recorders_[static_cast<size_t>(MetadataSectionKind::Edge)] = edgeUndoRecorder_.get();
 	recorders_[static_cast<size_t>(MetadataSectionKind::XAttr)] = xattrUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::Quota)] = quotaUndoRecorder_.get();
 }
 
 ISectionUndoRecorder *MetadataCheckpointManager::recorderFor(MetadataSectionKind section) {

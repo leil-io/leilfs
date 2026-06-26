@@ -31,6 +31,7 @@
 #include "common/type_defs.h"
 #include "kv/ikv_engine.h"
 #include "master/filesystem_node_types.h"
+#include "protocol/quota.h"
 
 class MetadataCheckpointManager;
 
@@ -174,6 +175,37 @@ public:
 
 private:
 	inode_t inode;
+};
+
+/// Update event for quota limit creation or change for one owner.
+/// Writes QUOT_<OwnerType><OwnerId><Rigor><Resource>: <Limit> for each provided entry.
+/// Only soft/hard limit entries are persisted; usage (kUsed) is rebuilt from node loading and is
+/// excluded from the quota checksum.
+class QuotaUpdateEvent : public IMetadataUpdateEvent {
+public:
+	QuotaUpdateEvent(QuotaOwnerType _ownerType, inode_t _ownerId, std::vector<QuotaEntry> _entries);
+	~QuotaUpdateEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	QuotaOwnerType ownerType;
+	inode_t ownerId;
+	std::vector<QuotaEntry> entries;
+};
+
+/// Removal event for all quota limits of one owner.
+/// Removes the range QUOT_<OwnerType><OwnerId> .. (prefix end) from FDB.
+class QuotaRemoveEvent : public IMetadataUpdateEvent {
+public:
+	QuotaRemoveEvent(QuotaOwnerType _ownerType, inode_t _ownerId);
+	~QuotaRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	QuotaOwnerType ownerType;
+	inode_t ownerId;
 };
 
 /// Metadata writer that preserves changelog ordering

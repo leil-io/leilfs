@@ -194,6 +194,23 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";  // Section ACLS 1.2
 /// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
 
+/// Prefix for quota undo entries (used for restoring quota limits to historical checkpoint
+/// versions). Stores the pre-image of an owner's full limit set at the first time it is mutated
+/// within a checkpoint interval, so quota limits can be rolled back to a checkpoint boundary
+/// during load/shadow sync.
+///
+/// Format:
+/// QUOTU_<CheckpointVersion><OwnerType><OwnerId>:<Presence>[<SoftInodes><SoftSize><HardInodes><HardSize>]
+/// - CheckpointVersion: (64-bit) serialized as Big Endian
+/// - OwnerType: u8 (user/group/inode)
+/// - OwnerId: inode_t serialized as Big Endian
+/// - Presence: u8 (0x01 = owner had limits, 0x00 = owner had no limits)
+/// - SoftInodes, SoftSize, HardInodes, HardSize: four u64 Big Endian limits (soft/hard x
+///   inodes/size order)
+/// @note Usage (kUsed) is never recorded; it is rebuilt from node loading and excluded from the
+/// quota checksum.
+inline constexpr std::string_view kQuotaUndoKeyPrefix = "QUOTU_";  // Undo quota versions (cold)
+
 /// Prefix for trash time-ordered entries (for periodic expiry scans)
 /// Format: TRSH_TIME_<ExpiryTimestamp><InodeId>:<empty>
 /// - ExpiryTimestamp: ctime + trashtime, 32-bit Big Endian

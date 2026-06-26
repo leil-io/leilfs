@@ -35,6 +35,7 @@
 
 #include "common/datapack.h"
 #include "common/event_loop.h"
+#include "common/quota_database.h"
 #include "common/scoped_timer.h"
 #include "common/serialization.h"
 #include "common/time_utils.h"
@@ -381,6 +382,29 @@ void MetadataBackendForkless::onXAttrRemoved(inode_t inode, std::span<const uint
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrRemoveEvent>(inode, name));
 	}
+}
+
+void MetadataBackendForkless::onQuotaChanged(QuotaOwnerType ownerType, inode_t ownerId) {
+	if (!metadataWriter_) { return; }
+
+	// Snapshot the owner's current soft/hard limits now (the signal fires synchronously, after the
+	// quotaDatabase mutation). If the owner has no limits left, persist its removal instead.
+	const auto *limits = gMetadata->quotaDatabase.get(ownerType, ownerId);
+	if (limits == nullptr) {
+		metadataWriter_->enqueue(std::make_unique<QuotaRemoveEvent>(ownerType, ownerId));
+		return;
+	}
+
+	std::vector<QuotaEntry> entries;
+	for (const auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard}) {
+		for (const auto resource : {QuotaResource::kInodes, QuotaResource::kSize}) {
+			const uint64_t limit = (*limits)[static_cast<int>(rigor)][static_cast<int>(resource)];
+			entries.emplace_back(QuotaEntryKey{QuotaOwner{ownerType, ownerId}, rigor, resource},
+			                     limit);
+		}
+	}
+	metadataWriter_->enqueue(
+	    std::make_unique<QuotaUpdateEvent>(ownerType, ownerId, std::move(entries)));
 }
 
 int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
@@ -734,6 +758,72 @@ int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
 	}
 
 	safs::log_info("Section loaded successfully (XATR 1.0): {}s", timer.elapsed_s());
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadQuotas(bool ignoreFlag) {
+	(void)ignoreFlag;  // Unused parameter
+
+	safs::log_info("Loading quotas from FoundationDB");
+	Timer timer;
+
+	// Key: QUOT_<OwnerType:u8><OwnerId:inode_t BE><Rigor:u8><Resource:u8> -> <Limit:u64 BE>
+	const size_t kQuotaKeySize = kQuotasKeyPrefix.size() + sizeof(uint8_t) + sizeof(inode_t) +
+	                             sizeof(uint8_t) + sizeof(uint8_t);
+
+	kv::Key startKey = kv::toBytes(kQuotasKeyPrefix);
+	kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	kv::KeySelector endSelector(endKey, true, 0);
+
+	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+		auto pageResult =
+		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
+
+		for (const auto &pair : pageResult.getPairs()) {
+			if (pair.key.size() != kQuotaKeySize || pair.value.size() < sizeof(uint64_t)) {
+				safs::log_warn("{}: skipping malformed quota row (key {}, value {})", __func__,
+				               pair.key.size(), pair.value.size());
+				continue;
+			}
+
+			const uint8_t *keyPtr = pair.key.data() + kQuotasKeyPrefix.size();
+			auto ownerType = static_cast<QuotaOwnerType>(*keyPtr);
+			keyPtr++;
+			inode_t ownerId{};
+			getINode(&keyPtr, ownerId);
+			auto rigor = static_cast<QuotaRigor>(*keyPtr);
+			keyPtr++;
+			auto resource = static_cast<QuotaResource>(*keyPtr);
+
+			const uint8_t *valuePtr = pair.value.data();
+			uint64_t limit = get64bit(&valuePtr);
+
+			gMetadata->quotaDatabase.set(ownerType, ownerId, rigor, resource, limit);
+		}
+
+		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
+
+		startSelector = kv::KeySelector(pageResult.getPairs().back().key, false, 0);
+	}
+
+	// Usage (kUsed) is not persisted; it is rebuilt from node loading. The checksum covers only the
+	// soft/hard limits loaded above, matching QuotaDatabase::checksum() semantics.
+	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
+
+	// Roll quota limits back to the loaded checkpoint version. Quota limits are not node-coupled,
+	// so this rollback is required for the section to converge on shadow sync.
+	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
+
+	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::Quota, targetVersion)) {
+		safs::log_err("{}: failed to roll back quotas to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
+	}
+
+	safs::log_info("Section loaded successfully (QUOT 1.1): {}s", timer.elapsed_s());
 	return kOpSuccess;
 }
 
@@ -1132,8 +1222,10 @@ void MetadataBackendForkless::initSections() {
 	                               [this](bool flag) { return loadFree(flag); });
 	metadataSections_.emplace_back("XATR 1.0", kXAttrKeyPrefix,
 	                               [this](bool flag) { return loadXAttr(flag); });
-	/*metadataSections_.emplace_back("ACLS 1.2", "ACLS_", loadACLs);
-	metadataSections_.emplace_back("QUOT 1.1", "QUOT_", loadQuotas);
+	metadataSections_.emplace_back("QUOT 1.1", kQuotasKeyPrefix,
+	                               [this](bool flag) { return loadQuotas(flag); });
+	/*metadataSections_.emplace_back("ACLS 1.2", kACLsKeyPrefix,
+	                               [this](bool flag) { return loadACLs(flag); });
 	metadataSections_.emplace_back("FLCK 1.0", "FLCK_", loadLocks);*/
 	metadataSections_.emplace_back("CHNK 1.0", kChunkLatestKeyPrefix,
 	                               [this](bool flag) { return loadChunks(flag); });
@@ -1302,6 +1394,10 @@ void MetadataBackendForkless::connectGlobalSignalsOnce() {
 
 	gXAttrRemovedSignal.connect([](inode_t inode, std::span<const uint8_t> name) {
 		if (gForklessBackend != nullptr) { gForklessBackend->onXAttrRemoved(inode, name); }
+	});
+
+	gQuotaChangedSignal.connect([](QuotaOwnerType ownerType, inode_t ownerId) {
+		if (gForklessBackend != nullptr) { gForklessBackend->onQuotaChanged(ownerType, ownerId); }
 	});
 
 	initializeNewMetadataHeaderSignal.connect([]() {
