@@ -178,8 +178,17 @@ private:
 	void initializeNewMetadataHeader();
 	void initializeEmptyMetadataHeader();
 
-	///  Registers observers/watchers on selected metadata properties
+	///  Registers observers/watchers on selected metadata properties.
+	///  Wires the process-global signals (once) and the per-load gMetadata signals for the
+	///  currently live gMetadata instance.
 	void createConnections();
+
+	/// Connects the per-load gMetadata signals (node/edge changed/removed) for the current
+	/// gMetadata instance. gMetadata is destroyed and recreated on every shadow (re)load
+	/// (fs_strinit), and Signal has no per-slot disconnect, so these must be reconnected once per
+	/// fresh instance -- on every loadall -- not once at init. Without this, a shadow that is later
+	/// promoted has a live writer but no signal->writer wiring, so its mutations never reach FDB.
+	void connectPerLoadSignals();
 
 	// FS Load from FDB
 
