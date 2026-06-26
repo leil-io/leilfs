@@ -40,6 +40,10 @@ struct matocsserventry;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
+/// Emitted when a chunk is deleted, so a listener can remove its persisted CHNL_ entry.
+/// Parameter: chunk id.
+inline Signal<uint64_t> gChunkRemovedSignal;
+
 inline std::unique_ptr<IIdGeneratorWithState<uint64_t>> gChunkIdGenerator = nullptr;
 
 void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
@@ -73,6 +77,11 @@ int chunk_restore_set(uint64_t chunkId, uint32_t chunkVersion, uint32_t lockedTo
 /// @param chunkId Chunk identifier.
 /// @return SAUNAFS_STATUS_OK (no-op or success).
 int chunk_restore_remove(uint64_t chunkId);
+
+/// Re-emits gChunkChangedSignal for one live chunk (if it exists) so a listener
+/// can re-persist it. Used by the master-promotion dirty-delta reconcile, where chunk
+/// mutations replayed signal-free into a shadow's memory never reached FDB.
+void chunk_emit_changed(uint64_t chunkId);
 
 int chunk_increase_version(uint64_t chunkid);
 int chunk_set_version(uint64_t chunkid,uint32_t version);

@@ -23,13 +23,16 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "kv/ikv_engine.h"
 #include "master/filesystem_operation_context.h"
+#include "master/hstring.h"
 #include "master/kv_connector_interface.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_checkpoint_manager.h"
@@ -189,6 +192,34 @@ private:
 	/// fresh instance -- on every loadall -- not once at init. Without this, a shadow that is later
 	/// promoted has a live writer but no signal->writer wiring, so its mutations never reach FDB.
 	void connectPerLoadSignals();
+
+	/// Promotion crash-window gap: persist the changelog-replayed state that a shadow
+	/// applied while the writer was null (so it never reached FDB -- e.g. the previous master was
+	/// SIGKILLed within its flush window). Instead of re-writing the whole namespace, only the
+	/// delta is reconciled: while running as a shadow, every signal handler records the touched
+	/// key in a per-section dirty set (reset on each FDB load); on promotion this method resolves
+	/// each dirty key against the authoritative in-memory state and enqueues an update or a remove.
+	/// Bounded by changes since the last load, not by namespace size. Routed through the writer
+	/// queue so the flush timer drains it and the checkpoint undo stays consistent.
+	/// TODO: Improve the function to prevent dirty sets from growing unboundedly in long-running
+	/// shadows by flushing them to FDB after the dirty sets reach a certain size, even before
+	/// promotion.
+	void reconcileDirtyToFDB();
+
+	/// Per-section reconcile helpers invoked by reconcileDirtyToFDB(). Each resolves its own dirty
+	/// set against the authoritative in-memory state, enqueues updates/removals through the writer,
+	/// and accumulates counts into the shared persisted/removed references.
+	void reconcileDirtyNodesToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyEdgesToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyXAttrsToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyQuotasToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyAclsToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyFreeInodesToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyChunksToFDB(uint64_t &persisted, uint64_t &removed);
+
+	/// Clears every dirty set. Called on each load: after loading FDB, memory matches the FDB
+	/// snapshot, so there is nothing dirty until the next changelog-replay mutation.
+	void clearDirtySets();
 
 	// FS Load from FDB
 
@@ -396,6 +427,16 @@ private:
 	/// @param inode Inode whose ACL changed.
 	void onAclChanged(inode_t inode);
 
+	/// Enqueue a chunk update or removal event to the metadata writer. On a shadow (no writer) the
+	/// chunk id is recorded in the dirty set instead, to be reconciled on promotion.
+	///
+	/// @param chunkId  Chunk whose metadata changed/was removed.
+	/// @param version  Chunk version (changed only).
+	/// @param lockedTo Lock expiry timestamp (changed only).
+	/// @param lockId   Lock id (changed only).
+	void onChunkChanged(uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId);
+	void onChunkRemoved(uint64_t chunkId);
+
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
 	std::shared_ptr<IKVConnector> kvConnector_;
 
@@ -427,4 +468,16 @@ private:
 	/// Bootstrapper for metadata sections
 	std::unique_ptr<MetadataSectionBootstrapFDB> sectionBootstrapper_ = nullptr;
 #endif  // #ifndef METARESTORE
+
+	/// Per-section "dirty" sets: keys touched by changelog replay while running as a shadow (the
+	/// writer is null then, so nothing is persisted). Reset on each FDB load (clearDirtySets()),
+	/// drained on promotion (reconcileDirtyToFDB()). See reconcileDirtyToFDB().
+	std::set<inode_t> dirtyNodes_;
+	std::set<std::pair<inode_t, HString>> dirtyEdges_;
+	std::set<std::pair<inode_t, std::vector<uint8_t>>> dirtyXattrs_;
+	std::set<inode_t> dirtyXattrInodes_;
+	std::set<std::pair<QuotaOwnerType, inode_t>> dirtyQuotaOwners_;
+	std::set<inode_t> dirtyAcls_;
+	std::set<inode_t> dirtyFreeInodes_;
+	std::set<uint64_t> dirtyChunks_;
 };

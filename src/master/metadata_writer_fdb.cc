@@ -67,6 +67,36 @@ void ChunkUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	context.transaction->set(key, value);
 }
 
+ChunkRemoveEvent::ChunkRemoveEvent(uint64_t _chunkId) : chunkId(_chunkId) {}
+
+void ChunkRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("ChunkRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
+	// Key: CHNL_<ChunkId>
+	kv::Key key = kv::encodeKeyBE(kChunkLatestKeyPrefix, chunkId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		// ChunkSetMutation records the pre-image (or a tombstone) generically, which is exactly the
+		// undo a removal needs: rollback restores the chunk that existed before this checkpoint.
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	context.transaction->remove(key);
+}
+
 NodeUpdateEvent::NodeUpdateEvent(FSNode *_node)
     : nodeId(_node->id), serializedNode(_node->serializedSize()) {
 	uint8_t *ptr = serializedNode.data();

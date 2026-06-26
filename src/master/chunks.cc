@@ -779,6 +779,16 @@ static inline void emit_chunk_changed(const Chunk *c) {
 	}
 }
 
+void chunk_emit_changed(uint64_t chunkId) {
+	if (gChunksMetadata == nullptr) { return; }
+	for (Chunk *chunk : gChunksMetadata->chunkhash[chunkHashPos(chunkId)]) {
+		if (chunk->chunkid == chunkId) {
+			emit_chunk_changed(chunk);
+			return;
+		}
+	}
+}
+
 uint64_t chunk_checksum(ChecksumMode mode) {
 	uint64_t checksum = 46586918175221;
 	addToChecksum(checksum, ChunksMetadata::getNextChunkId());
@@ -967,6 +977,9 @@ Chunk *chunk_find(uint64_t chunkid) {
 
 #ifndef METARESTORE
 void chunk_delete(Chunk *c) {
+	// Persist the chunk removal. Emitted before chunk_free() while the chunk id is still valid;
+	// the handler guards on the master personality (shadows do not write).
+	if (!gChunkRemovedSignal.empty()) { gChunkRemovedSignal.emit(c->chunkid); }
 	if (gChunksMetadata->lastchunkptr==c) {
 		gChunksMetadata->lastchunkid=0;
 		gChunksMetadata->lastchunkptr=NULL;

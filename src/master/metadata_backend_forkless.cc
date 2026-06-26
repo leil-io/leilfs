@@ -344,29 +344,43 @@ void MetadataBackendForkless::onNodeChanged(FSNode *node) {
 		safs::log_err("{}: received null node, skipping metadata update", __func__);
 		return;
 	}
-	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeUpdateEvent>(node)); }
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<NodeUpdateEvent>(node));
+	} else {
+		dirtyNodes_.insert(node->id);
+	}
 }
 
 void MetadataBackendForkless::onNodeRemoved(inode_t nodeId) {
-	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeRemoveEvent>(nodeId)); }
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<NodeRemoveEvent>(nodeId));
+	} else {
+		dirtyNodes_.insert(nodeId);
+	}
 }
 
 void MetadataBackendForkless::onEdgeChanged(inode_t parentId, inode_t childId,
                                            const HString &name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<EdgeUpdateEvent>(parentId, name, childId));
+	} else {
+		dirtyEdges_.emplace(parentId, name);
 	}
 }
 
 void MetadataBackendForkless::onEdgeRemoved(inode_t parentId, const HString &name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<EdgeRemoveEvent>(parentId, name));
+	} else {
+		dirtyEdges_.emplace(parentId, name);
 	}
 }
 
 void MetadataBackendForkless::onXAttrInodeRemoved(inode_t inode) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrInodeRemoveEvent>(inode));
+	} else {
+		dirtyXattrInodes_.insert(inode);
 	}
 }
 
@@ -374,17 +388,24 @@ void MetadataBackendForkless::onXAttrChanged(inode_t inode, std::span<const uint
                                              std::span<const uint8_t> value) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrUpdateEvent>(inode, name, value));
+	} else {
+		dirtyXattrs_.emplace(inode, std::vector<uint8_t>(name.begin(), name.end()));
 	}
 }
 
 void MetadataBackendForkless::onXAttrRemoved(inode_t inode, std::span<const uint8_t> name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrRemoveEvent>(inode, name));
+	} else {
+		dirtyXattrs_.emplace(inode, std::vector<uint8_t>(name.begin(), name.end()));
 	}
 }
 
 void MetadataBackendForkless::onQuotaChanged(QuotaOwnerType ownerType, inode_t ownerId) {
-	if (!metadataWriter_) { return; }
+	if (!metadataWriter_) {
+		dirtyQuotaOwners_.emplace(ownerType, ownerId);
+		return;
+	}
 
 	// Snapshot the owner's current soft/hard limits now (the signal fires synchronously, after the
 	// quotaDatabase mutation). If the owner has no limits left, persist its removal instead.
@@ -407,7 +428,10 @@ void MetadataBackendForkless::onQuotaChanged(QuotaOwnerType ownerType, inode_t o
 }
 
 void MetadataBackendForkless::onAclChanged(inode_t inode) {
-	if (!metadataWriter_) { return; }
+	if (!metadataWriter_) {
+		dirtyAcls_.insert(inode);
+		return;
+	}
 
 	// Snapshot the inode's current ACL now (the signal fires synchronously, after the aclStorage
 	// mutation). If the inode has no ACL, persist its removal instead.
@@ -420,6 +444,24 @@ void MetadataBackendForkless::onAclChanged(inode_t inode) {
 	std::vector<uint8_t> buffer;
 	serialize(buffer, *acl);
 	metadataWriter_->enqueue(std::make_unique<AclUpdateEvent>(inode, std::move(buffer)));
+}
+
+void MetadataBackendForkless::onChunkChanged(uint64_t chunkId, uint32_t version, uint32_t lockedTo,
+                                             uint32_t lockId) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(
+		    std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
+	} else {
+		dirtyChunks_.insert(chunkId);
+	}
+}
+
+void MetadataBackendForkless::onChunkRemoved(uint64_t chunkId) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<ChunkRemoveEvent>(chunkId));
+	} else {
+		dirtyChunks_.insert(chunkId);
+	}
 }
 
 int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
@@ -615,12 +657,16 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 	gMetadata->inodePool.detainedAddedSignal.connect([this](inode_t inode, uint32_t timestamp) {
 		if (metadataWriter_) {
 			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
+		} else {
+			dirtyFreeInodes_.insert(inode);
 		}
 	});
 
 	gMetadata->inodePool.detainedRemovedSignal.connect([this](inode_t inode) {
 		if (metadataWriter_) {
 			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));
+		} else {
+			dirtyFreeInodes_.insert(inode);
 		}
 	});
 
@@ -1298,13 +1344,184 @@ void MetadataBackendForkless::onPromotedToMaster() {
 
 	// Re-read the durable checkpoint catalog before writing: the old master kept sealing
 	// checkpoints while this node was a shadow, so the catalog loaded at startup is stale.
-	// In-memory metadata is authoritative here (kept current by changelog replay), so only the
-	// checkpoint catalog is refreshed, not the metadata globals.
+	// In-memory metadata is authoritative here (kept current by changelog replay).
 	checkpointManager_->reloadDurableCheckpointState();
 
 	metadataWriter_ =
 	    std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(), checkpointManager_.get());
 	registerFlushTimer();
+
+	// Close the promotion crash-window gap. If the previous master was killed within its
+	// flush window, the tail of its writes reached the changelog (and thus this node's memory via
+	// replay) but not FDB. Replay does not enqueue, so without this the promoted master would never
+	// persist that tail and a later FDB-only reload would lose it. Persist only the recorded dirty
+	// delta -- and only when FDB is actually behind memory; a graceful handoff seals FDB == memory,
+	// so there is no gap and the (redundant) dirty set is simply discarded.
+	const uint64_t persistedVersion = getVersion("");
+	if (gMetadata != nullptr && persistedVersion < gMetadata->metadataVersion) {
+		safs::log_info(
+		    "Promotion reconcile: FDB persisted version {} is behind in-memory version {}; "
+		    "persisting recorded dirty delta",
+		    persistedVersion, gMetadata->metadataVersion);
+		reconcileDirtyToFDB();
+	} else {
+		clearDirtySets();
+	}
+}
+
+void MetadataBackendForkless::reconcileDirtyToFDB() {
+	if (gMetadata == nullptr || metadataWriter_ == nullptr) {
+		clearDirtySets();
+		return;
+	}
+
+	uint64_t persisted = 0;
+	uint64_t removed = 0;
+
+	reconcileDirtyNodesToFDB(persisted, removed);
+	reconcileDirtyEdgesToFDB(persisted, removed);
+	reconcileDirtyXAttrsToFDB(persisted, removed);
+	reconcileDirtyQuotasToFDB(persisted, removed);
+	reconcileDirtyAclsToFDB(persisted, removed);
+	reconcileDirtyFreeInodesToFDB(persisted, removed);
+	reconcileDirtyChunksToFDB(persisted, removed);
+
+	safs::log_info("Promotion reconcile: persisted {} and removed {} dirty entries", persisted,
+	               removed);
+	clearDirtySets();
+}
+
+// Nodes: re-persist survivors, remove deletions.
+void MetadataBackendForkless::reconcileDirtyNodesToFDB(uint64_t &persisted, uint64_t &removed) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+	auto *nodeOps = gFSOperations->nodeOperations();
+
+	for (const inode_t inode : dirtyNodes_) {
+		FSNode *node = nodeOps->idToNode(fsOpContext, inode);
+		if (node != nullptr) {
+			onNodeChanged(node);
+			++persisted;
+		} else {
+			onNodeRemoved(inode);
+			++removed;
+		}
+	}
+}
+
+// Edges: resolve (parent, name) against the parent directory.
+void MetadataBackendForkless::reconcileDirtyEdgesToFDB(uint64_t &persisted, uint64_t &removed) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+	auto *nodeOps = gFSOperations->nodeOperations();
+
+	for (const auto &[parentId, name] : dirtyEdges_) {
+		FSNode *parent = nodeOps->idToNode(fsOpContext, parentId);
+		FSNode *child = nullptr;
+		if (parent != nullptr && parent->type == FSNodeType::kDirectory) {
+			auto *directory = static_cast<FSNodeDirectory *>(parent);
+			auto it = directory->find(name);
+			if (it != directory->end()) { child = it->second; }
+		}
+		if (child != nullptr) {
+			onEdgeChanged(parentId, child->id, name);
+			++persisted;
+		} else {
+			onEdgeRemoved(parentId, name);
+			++removed;
+		}
+	}
+}
+
+// XAttrs: resolve (inode, name) against the in-memory attribute set, then whole-inode removals.
+void MetadataBackendForkless::reconcileDirtyXAttrsToFDB(uint64_t &persisted, uint64_t &removed) {
+	for (const auto &[inode, name] : dirtyXattrs_) {
+		const std::vector<uint8_t> *value = nullptr;
+		for (const auto &inodeEntry : gMetadata->xattrInodeHash[get_xattr_inode_hash(inode)]) {
+			if (inodeEntry->inode != inode) { continue; }
+			for (const XAttributeDataEntry *dataEntry : inodeEntry->xattrDataEntries) {
+				if (dataEntry->attributeName.size() == name.size() &&
+				    std::equal(dataEntry->attributeName.begin(), dataEntry->attributeName.end(),
+				               name.begin())) {
+					value = &dataEntry->attributeValue;
+					break;
+				}
+			}
+			if (value != nullptr) { break; }
+		}
+		if (value != nullptr) {
+			onXAttrChanged(inode, name, *value);
+			++persisted;
+		} else {
+			onXAttrRemoved(inode, name);
+			++removed;
+		}
+	}
+
+	// Whole-inode xattr removals (e.g. node deletions).
+	for (const inode_t inode : dirtyXattrInodes_) {
+		onXAttrInodeRemoved(inode);
+		++removed;
+	}
+}
+
+// Quotas: the handler re-reads current state and enqueues an update or a remove.
+void MetadataBackendForkless::reconcileDirtyQuotasToFDB(uint64_t &persisted,
+                                                        uint64_t & /*removed*/) {
+	for (const auto &[ownerType, ownerId] : dirtyQuotaOwners_) {
+		onQuotaChanged(ownerType, ownerId);
+		++persisted;
+	}
+}
+
+// ACLs: the handler re-reads current state and enqueues an update or a remove.
+void MetadataBackendForkless::reconcileDirtyAclsToFDB(uint64_t &persisted, uint64_t & /*removed*/) {
+	for (const inode_t inode : dirtyAcls_) {
+		onAclChanged(inode);
+		++persisted;
+	}
+}
+
+// Free inodes: re-add still-detained ones (with their timestamp), remove released ones.
+void MetadataBackendForkless::reconcileDirtyFreeInodesToFDB(uint64_t &persisted, uint64_t &removed) {
+	std::unordered_map<inode_t, uint32_t> detained;
+	for (const auto &freeEntry : gMetadata->inodePool) {
+		detained.emplace(freeEntry.id, freeEntry.ts);
+	}
+	for (const inode_t inode : dirtyFreeInodes_) {
+		auto it = detained.find(inode);
+		if (it != detained.end()) {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, it->second));
+			++persisted;
+		} else {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));  // removal form
+			++removed;
+		}
+	}
+}
+
+// Chunks: re-emit changes for survivors (the writer captures gChunkChangedSignal), remove gone.
+void MetadataBackendForkless::reconcileDirtyChunksToFDB(uint64_t &persisted, uint64_t &removed) {
+	for (const uint64_t chunkId : dirtyChunks_) {
+		if (chunk_exists(chunkId)) {
+			chunk_emit_changed(chunkId);
+			++persisted;
+		} else {
+			onChunkRemoved(chunkId);
+			++removed;
+		}
+	}
+}
+
+void MetadataBackendForkless::clearDirtySets() {
+	dirtyNodes_.clear();
+	dirtyEdges_.clear();
+	dirtyXattrs_.clear();
+	dirtyXattrInodes_.clear();
+	dirtyQuotaOwners_.clear();
+	dirtyAcls_.clear();
+	dirtyFreeInodes_.clear();
+	dirtyChunks_.clear();
 }
 
 void MetadataBackendForkless::registerFlushTimer() {
@@ -1456,6 +1673,10 @@ void MetadataBackendForkless::createConnections() {
 void MetadataBackendForkless::connectPerLoadSignals() {
 	if (gMetadata == nullptr) { return; }
 
+	// A fresh load means in-memory state now matches the FDB snapshot, so any dirty delta recorded
+	// while following as a shadow is obsolete; start the next delta from a clean slate.
+	clearDirtySets();
+
 	// Per-load signals on gMetadata: recreated fresh each load, so they never accumulate. Each
 	// loadall() runs against a freshly created gMetadata (see fs_strinit), so connecting once per
 	// loadall yields exactly one slot per instance.
@@ -1486,11 +1707,14 @@ void MetadataBackendForkless::connectGlobalSignalsOnce() {
 	// chunk mutations are not persisted until promotion (see onPromotedToMaster()).
 	gChunkChangedSignal.connect(
 	    [](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
-		    if (gForklessBackend != nullptr && gForklessBackend->metadataWriter_) {
-			    gForklessBackend->metadataWriter_->enqueue(
-			        std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
+		    if (gForklessBackend != nullptr) {
+			    gForklessBackend->onChunkChanged(chunkId, version, lockedTo, lockId);
 		    }
 	    });
+
+	gChunkRemovedSignal.connect([](uint64_t chunkId) {
+		if (gForklessBackend != nullptr) { gForklessBackend->onChunkRemoved(chunkId); }
+	});
 
 	gXAttrInodeRemovedSignal.connect([](inode_t inode) {
 		if (gForklessBackend != nullptr) { gForklessBackend->onXAttrInodeRemoved(inode); }

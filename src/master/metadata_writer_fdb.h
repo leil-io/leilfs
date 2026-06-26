@@ -72,6 +72,18 @@ private:
 	uint32_t lockId;
 };
 
+/// Removal event for chunks (deletes CHNL_<chunkId>).
+class ChunkRemoveEvent : public IMetadataUpdateEvent {
+public:
+	explicit ChunkRemoveEvent(uint64_t _chunkId);
+	~ChunkRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	uint64_t chunkId;
+};
+
 /// Update event for node changes
 class NodeUpdateEvent : public IMetadataUpdateEvent {
 public:
