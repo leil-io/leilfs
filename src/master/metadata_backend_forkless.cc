@@ -22,6 +22,7 @@
 
 #include <fcntl.h>  // for open and O_RDONLY
 #include <sys/mman.h>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -40,6 +41,7 @@
 #include "common/scoped_timer.h"
 #include "common/serialization.h"
 #include "common/time_utils.h"
+#include "config/cfg.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/acl_storage.h"
@@ -59,6 +61,7 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_dumper_file.h"
+#include "master/metadata_edge_restore_helpers.h"
 #include "master/metadata_node_restore_helpers.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/personality.h"
@@ -67,6 +70,7 @@
 
 namespace {
 constexpr uint32_t kMetadataFlushIntervalMs = 100;
+constexpr auto kDisablePeriodicFlushOption = "METADATA_FDB_DEBUG_DISABLE_PERIODIC_FLUSH";
 
 MetadataBackendForkless *gForklessBackend = nullptr;
 
@@ -83,6 +87,12 @@ bool hasPersistedMetadataSectionData(kv::IKVEngine *kvEngine,
 		auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
 		                                  kv::KeySelector(endKey, true, 0), 1);
 
+		if (!page.getPairs().empty()) { return true; }
+	}
+	for (const std::string_view prefix : {kTrashPathKeyPrefix, kReservedPathKeyPrefix}) {
+		kv::Key startKey = kv::toBytes(prefix);
+		auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
+		                                  kv::KeySelector(kv::prefixEnd(startKey), true, 0), 1);
 		if (!page.getPairs().empty()) { return true; }
 	}
 
@@ -360,29 +370,60 @@ void MetadataBackendForkless::onNodeChanged(FSNode *node) {
 		safs::log_err("{}: received null node, skipping metadata update", __func__);
 		return;
 	}
-	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeUpdateEvent>(node)); }
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<NodeUpdateEvent>(node));
+	} else {
+		dirtyNodes_.insert(node->id);
+	}
 }
 
 void MetadataBackendForkless::onNodeRemoved(inode_t nodeId) {
-	if (metadataWriter_) { metadataWriter_->enqueue(std::make_unique<NodeRemoveEvent>(nodeId)); }
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<NodeRemoveEvent>(nodeId));
+	} else {
+		dirtyNodes_.insert(nodeId);
+	}
 }
 
 void MetadataBackendForkless::onEdgeChanged(inode_t parentId, inode_t childId,
                                            const HString &name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<EdgeUpdateEvent>(parentId, name, childId));
+	} else {
+		dirtyEdges_.emplace(parentId, name);
 	}
 }
 
 void MetadataBackendForkless::onEdgeRemoved(inode_t parentId, const HString &name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<EdgeRemoveEvent>(parentId, name));
+	} else {
+		dirtyEdges_.emplace(parentId, name);
+	}
+}
+
+void MetadataBackendForkless::onDetachedPathChanged(inode_t inode, FSNodeType nodeType,
+                                                    const HString &path) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<DetachedPathUpdateEvent>(inode, nodeType, path));
+	} else {
+		dirtyDetachedPaths_[inode] = DirtyDetachedPath{.nodeType = nodeType, .path = path};
+	}
+}
+
+void MetadataBackendForkless::onDetachedPathRemoved(inode_t inode) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<DetachedPathRemoveEvent>(inode));
+	} else {
+		dirtyDetachedPaths_[inode] = std::nullopt;
 	}
 }
 
 void MetadataBackendForkless::onXAttrInodeRemoved(inode_t inode) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrInodeRemoveEvent>(inode));
+	} else {
+		dirtyXattrInodes_.insert(inode);
 	}
 }
 
@@ -390,17 +431,24 @@ void MetadataBackendForkless::onXAttrChanged(inode_t inode, std::span<const uint
                                              std::span<const uint8_t> value) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrUpdateEvent>(inode, name, value));
+	} else {
+		dirtyXattrs_.emplace(inode, std::vector<uint8_t>(name.begin(), name.end()));
 	}
 }
 
 void MetadataBackendForkless::onXAttrRemoved(inode_t inode, std::span<const uint8_t> name) {
 	if (metadataWriter_) {
 		metadataWriter_->enqueue(std::make_unique<XAttrRemoveEvent>(inode, name));
+	} else {
+		dirtyXattrs_.emplace(inode, std::vector<uint8_t>(name.begin(), name.end()));
 	}
 }
 
 void MetadataBackendForkless::onQuotaChanged(QuotaOwnerType ownerType, inode_t ownerId) {
-	if (!metadataWriter_) { return; }
+	if (!metadataWriter_) {
+		dirtyQuotaOwners_.emplace(ownerType, ownerId);
+		return;
+	}
 
 	// Snapshot the owner's current soft/hard limits now (the signal fires synchronously, after the
 	// quotaDatabase mutation). If the owner has no limits left, persist its removal instead.
@@ -423,7 +471,10 @@ void MetadataBackendForkless::onQuotaChanged(QuotaOwnerType ownerType, inode_t o
 }
 
 void MetadataBackendForkless::onAclChanged(inode_t inode) {
-	if (!metadataWriter_) { return; }
+	if (!metadataWriter_) {
+		dirtyAcls_.insert(inode);
+		return;
+	}
 
 	// Snapshot the inode's current ACL now (the signal fires synchronously, after the aclStorage
 	// mutation). If the inode has no ACL, persist its removal instead.
@@ -436,6 +487,24 @@ void MetadataBackendForkless::onAclChanged(inode_t inode) {
 	std::vector<uint8_t> buffer;
 	serialize(buffer, *acl);
 	metadataWriter_->enqueue(std::make_unique<AclUpdateEvent>(inode, std::move(buffer)));
+}
+
+void MetadataBackendForkless::onChunkChanged(uint64_t chunkId, uint32_t version, uint32_t lockedTo,
+                                             uint32_t lockId) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(
+		    std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
+	} else {
+		dirtyChunks_.insert(chunkId);
+	}
+}
+
+void MetadataBackendForkless::onChunkRemoved(uint64_t chunkId) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<ChunkRemoveEvent>(chunkId));
+	} else {
+		dirtyChunks_.insert(chunkId);
+	}
 }
 
 int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
@@ -628,17 +697,11 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 
 	// Connect the signal handlers after initial loading to avoid triggering them for already loaded
 	// free nodes.
-	gMetadata->inodePool.detainedAddedSignal.connect([this](inode_t inode, uint32_t timestamp) {
-		if (metadataWriter_) {
-			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
-		}
-	});
+	gMetadata->inodePool.detainedAddedSignal.connect(
+	    [this](inode_t inode, uint32_t timestamp) { onFreeInodeDetained(inode, timestamp); });
 
-	gMetadata->inodePool.detainedRemovedSignal.connect([this](inode_t inode) {
-		if (metadataWriter_) {
-			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));
-		}
-	});
+	gMetadata->inodePool.detainedRemovedSignal.connect(
+	    [this](inode_t inode) { onFreeInodeReleased(inode); });
 
 	// NOTE: unlike NODE, EDGE and CHNK, the FREE section intentionally has no checkpoint
 	// rollback (no FreeNodeUndoRecorder is registered, and FreeNodeUpdateEvent does not call
@@ -653,6 +716,22 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 	// replay, which the forkless backend never does. See test_shadow_free_sync.sh.
 	safs::log_info("Section loaded successfully (FREE 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
+}
+
+void MetadataBackendForkless::onFreeInodeDetained(inode_t inode, uint32_t timestamp) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
+	} else {
+		dirtyFreeInodeValues_[inode] = timestamp;
+	}
+}
+
+void MetadataBackendForkless::onFreeInodeReleased(inode_t inode) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));
+	} else {
+		dirtyFreeInodeValues_[inode] = std::nullopt;
+	}
 }
 
 int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
@@ -820,13 +899,26 @@ int8_t MetadataBackendForkless::loadQuotas(bool ignoreFlag) {
 			}
 
 			const uint8_t *keyPtr = pair.key.data() + kQuotasKeyPrefix.size();
-			auto ownerType = static_cast<QuotaOwnerType>(*keyPtr);
+			const uint8_t ownerTypeValue = *keyPtr;
 			keyPtr++;
 			inode_t ownerId{};
 			getINode(&keyPtr, ownerId);
-			auto rigor = static_cast<QuotaRigor>(*keyPtr);
+			const uint8_t rigorValue = *keyPtr;
 			keyPtr++;
-			auto resource = static_cast<QuotaResource>(*keyPtr);
+			const uint8_t resourceValue = *keyPtr;
+
+			if (ownerTypeValue > static_cast<uint8_t>(QuotaOwnerType::kInode) ||
+			    rigorValue > static_cast<uint8_t>(QuotaRigor::kHard) ||
+			    resourceValue > static_cast<uint8_t>(QuotaResource::kSize)) {
+				safs::log_warn(
+				    "{}: skipping quota row with invalid owner type {}, rigor {}, or resource {}",
+				    __func__, ownerTypeValue, rigorValue, resourceValue);
+				continue;
+			}
+
+			const auto ownerType = static_cast<QuotaOwnerType>(ownerTypeValue);
+			const auto rigor = static_cast<QuotaRigor>(rigorValue);
+			const auto resource = static_cast<QuotaResource>(resourceValue);
 
 			const uint8_t *valuePtr = pair.value.data();
 			uint64_t limit = get64bit(&valuePtr);
@@ -939,7 +1031,7 @@ int8_t MetadataBackendForkless::loadACLs(bool ignoreFlag) {
 	//   - SETACL/DELETEACL replay is idempotent (full replace / erase), so loading the latest
 	//     ACLS_ image and replaying to the current version converges to the same ACLs.
 	// A dedicated ACL rollback would only matter for point-in-time restore without changelog
-	// replay, which the forkless backend never does. See test_shadow_acl_sync_with_fdb.sh.
+	// replay, which the forkless backend never does. See test_shadow_acl_sync.sh.
 	safs::log_info("Section loaded successfully (ACLS 1.2): {}s", timer.elapsed_s());
 	return kOpSuccess;
 }
@@ -947,6 +1039,7 @@ int8_t MetadataBackendForkless::loadACLs(bool ignoreFlag) {
 int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	safs::log_info("Loading edges from FoundationDB");
 	Timer timer;
+	deferredIncompatibleDetachedPaths_.clear();
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -982,6 +1075,11 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 			const uint8_t *source = pair.key.data();
 			source += kEdgeKeyPrefix.size();  // Skip "EDGE_"
 			getINode(&source, parentId);
+			if (parentId == 0) {
+				safs::log_err(
+				    "loading edge: parent-zero EDGE_ rows are not valid in the current schema");
+				return kOpFailure;
+			}
 
 			auto nameSize = pair.key.size() - kEdgeKeyPrefix.size() - sizeof(inode_t);
 			edgeName = std::string(reinterpret_cast<const char *>(source), nameSize);
@@ -1008,17 +1106,19 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 		startSelector = kv::KeySelector(lastKey, false, 0);
 	}
 
+	if (loadDetachedPaths(fsOpContext, FSNodeType::kTrash, kTrashPathKeyPrefix, ignoreFlag) !=
+	        kOpSuccess ||
+	    loadDetachedPaths(fsOpContext, FSNodeType::kReserved, kReservedPathKeyPrefix, ignoreFlag) !=
+	        kOpSuccess) {
+		return kOpFailure;
+	}
+
 	// Apply undo checkpoints so that edge (directory topology) state matches the loaded checkpoint
 	// version. Edges roll back after nodes (loadNodes runs first): an edge present at the target
 	// version points to a node present at that version, which the node rollback already restored.
 	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
 
-	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
-	                                         MetadataSectionKind::Edge, targetVersion)) {
-		safs::log_err("{}: failed to roll back edges to checkpoint version {}", __func__,
-		              targetVersion);
-		return kOpFailure;
-	}
+	if (restoreEdgesToCheckpointVersion(targetVersion) != kOpSuccess) { return kOpFailure; }
 
 	safs::log_info("Section loaded successfully (EDGE 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
@@ -1029,6 +1129,17 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
                                          bool ignoreFlag, bool init) {
 	if (init) {
 		currentLoadParentId_ = 0;
+		return kOpSuccess;
+	}
+
+	// Node rollback removes directories created after the target checkpoint before live EDGE_
+	// rows are loaded. Every edge below such a parent is post-checkpoint drift, even when its
+	// child already existed at the checkpoint (for example, an old file moved into a new
+	// directory). Edge rollback and changelog replay will reconstruct the final topology.
+	if (parentId != 0 && checkpointManager_ != nullptr &&
+	    checkpointManager_->nodesRemovedDuringRestore().contains(parentId)) {
+		safs::log_debug("{}: {}, {}->{} skipped: parent removed by node rollback", __func__,
+		               parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
 		return kOpSuccess;
 	}
 
@@ -1056,105 +1167,178 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 	}
 
 	if (parentId == 0U) {
-		if (child->type == FSNodeType::kTrash) {
-			gMetadata->trash.insert({TrashPathKey(child), hstorage::Handle(name)});
-			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
-			gMetadata->trashNodes++;
-		} else if (child->type == FSNodeType::kReserved) {
-			gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
-			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
-			gMetadata->reservedNodes++;
-		} else {
-			safs::log_err("{}: {}, {}->{} error: bad child type ({})", __func__, parentId,
-			              gFSOperations->nodeOperations()->escapeName(name), childId,
-			              static_cast<char>(child->type));
-			return kOpFailure;
-		}
-	} else {
-		auto *parent =
-		    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
-
-		if (parent == nullptr) {
-			safs::log_err("{}: {}, {}->{} error: parent not found", __func__, parentId,
-			              gFSOperations->nodeOperations()->escapeName(name), childId);
-
-			if (ignoreFlag) {
-				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
-				    fsOpContext, SPECIAL_INODE_ROOT);
-
-				if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
-					safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
-					              gFSOperations->nodeOperations()->escapeName(name), childId);
-					return kOpFailure;
-				}
-
-				safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
-				              gFSOperations->nodeOperations()->escapeName(name), childId);
-				parentId = SPECIAL_INODE_ROOT;
-			} else {
-				safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
-				return kOpFailure;
-			}
-		}
-
-		if (parent->type != FSNodeType::kDirectory) {
-			safs::log_err("{}: {}, {}->{} error: bad parent type ({})", __func__, parentId,
-			              gFSOperations->nodeOperations()->escapeName(name), childId,
-			              static_cast<char>(parent->type));
-
-			if (ignoreFlag) {
-				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
-				    fsOpContext, SPECIAL_INODE_ROOT);
-
-				if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
-					safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
-					              gFSOperations->nodeOperations()->escapeName(name), childId);
-					return kOpFailure;
-				}
-
-				safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
-				              gFSOperations->nodeOperations()->escapeName(name), childId);
-				parentId = SPECIAL_INODE_ROOT;
-			} else {
-				safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
-				return kOpFailure;
-			}
-		}
-
-		if (currentLoadParentId_ != parentId) {
-			if (parent->entries.size() > 0) {
-				safs::log_err("{}: {}, {}->{} error: parent node sequence error", __func__,
-				              parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
-				return kOpFailure;
-			}
-
-			currentLoadParentId_ = parentId;
-		}
-
-		auto handleOwner = std::make_unique<hstorage::Handle>(name);
-		hstorage::Handle *handlePtr = handleOwner.get();
-		if (parent->entries.insert({handlePtr, child}).second) {
-			// On successful insert, the parent now owns the handle
-			handleOwner.release();  // NOLINT(bugprone-unused-return-value)
-			parent->entries_hash ^= handlePtr->hash();
-		} else {
-			// insert failed → unique_ptr cleans up automatically
-			safs::log_err("{}: duplicate entry {}->{} in directory {}", __func__,
-			              gFSOperations->nodeOperations()->escapeName(name), childId, parentId);
-			return kOpFailure;
-		}
-
-		child->parents.push_back({parent->id, handlePtr});
-
-		if (child->type == FSNodeType::kDirectory) {
-			parent->nlink++;
-		}
-
-		StatsRecord statsRecord{};
-		gFSOperations->nodeOperations()->getStats(fsOpContext, child, &statsRecord);
-		gFSOperations->nodeOperations()->addStats(fsOpContext, parent, &statsRecord);
+		safs::log_err("{}: parent 0 is reserved for detached path rows", __func__);
+		return kOpFailure;
 	}
 
+	auto *parent =
+	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
+
+	if (parent == nullptr) {
+		safs::log_err("{}: {}, {}->{} error: parent not found", __func__, parentId,
+		              gFSOperations->nodeOperations()->escapeName(name), childId);
+
+		if (ignoreFlag) {
+			parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext,
+			                                                                    SPECIAL_INODE_ROOT);
+
+			if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
+				safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
+				              gFSOperations->nodeOperations()->escapeName(name), childId);
+				return kOpFailure;
+			}
+
+			safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
+			              gFSOperations->nodeOperations()->escapeName(name), childId);
+			parentId = SPECIAL_INODE_ROOT;
+		} else {
+			safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
+			return kOpFailure;
+		}
+	}
+
+	if (parent->type != FSNodeType::kDirectory) {
+		safs::log_err("{}: {}, {}->{} error: bad parent type ({})", __func__, parentId,
+		              gFSOperations->nodeOperations()->escapeName(name), childId,
+		              static_cast<char>(parent->type));
+
+		if (ignoreFlag) {
+			parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext,
+			                                                                    SPECIAL_INODE_ROOT);
+
+			if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
+				safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
+				              gFSOperations->nodeOperations()->escapeName(name), childId);
+				return kOpFailure;
+			}
+
+			safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
+			              gFSOperations->nodeOperations()->escapeName(name), childId);
+			parentId = SPECIAL_INODE_ROOT;
+		} else {
+			safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
+			return kOpFailure;
+		}
+	}
+
+	if (currentLoadParentId_ != parentId) {
+		if (parent->entries.size() > 0) {
+			safs::log_err("{}: {}, {}->{} error: parent node sequence error", __func__, parentId,
+			              gFSOperations->nodeOperations()->escapeName(name), childId);
+			return kOpFailure;
+		}
+
+		currentLoadParentId_ = parentId;
+	}
+
+	auto handleOwner = std::make_unique<hstorage::Handle>(name);
+	hstorage::Handle *handlePtr = handleOwner.get();
+	if (parent->entries.insert({handlePtr, child}).second) {
+		// On successful insert, the parent now owns the handle
+		handleOwner.release();  // NOLINT(bugprone-unused-return-value)
+		parent->entries_hash ^= handlePtr->hash();
+	} else {
+		// insert failed → unique_ptr cleans up automatically
+		safs::log_err("{}: duplicate entry {}->{} in directory {}", __func__,
+		              gFSOperations->nodeOperations()->escapeName(name), childId, parentId);
+		return kOpFailure;
+	}
+
+	child->parents.push_back({parent->id, handlePtr});
+
+	if (child->type == FSNodeType::kDirectory) { parent->nlink++; }
+
+	StatsRecord statsRecord{};
+	gFSOperations->nodeOperations()->getStats(fsOpContext, child, &statsRecord);
+	gFSOperations->nodeOperations()->addStats(fsOpContext, parent, &statsRecord);
+
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadDetachedPaths(const FilesystemOperationContext &fsOpContext,
+                                                  FSNodeType nodeType, std::string_view keyPrefix,
+                                                  bool ignoreFlag) {
+	constexpr size_t kPathPageSize = 1000;
+	const size_t expectedKeySize = keyPrefix.size() + sizeof(inode_t);
+	kv::Key startKey = kv::toBytes(keyPrefix);
+	const kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	const kv::KeySelector endSelector(endKey, true, 0);
+
+	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+		auto page = transaction->getRange(startSelector, endSelector, kPathPageSize);
+
+		for (const auto &pair : page.getPairs()) {
+			if (pair.key.size() != expectedKeySize || pair.value.empty()) {
+				safs::log_err("loading detached path: malformed {} row", keyPrefix);
+				return kOpFailure;
+			}
+
+			const uint8_t *source = pair.key.data() + keyPrefix.size();
+			inode_t inode = 0;
+			getINode(&source, inode);
+			std::string path(reinterpret_cast<const char *>(pair.value.data()), pair.value.size());
+			if (loadDetachedPath(fsOpContext, inode, nodeType, path, ignoreFlag) != kOpSuccess) {
+				return kOpFailure;
+			}
+		}
+
+		if (!page.hasMore() || page.getPairs().empty()) { break; }
+		startSelector = kv::KeySelector(page.getPairs().back().key, false, 0);
+	}
+
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadDetachedPath(const FilesystemOperationContext &fsOpContext,
+                                                 inode_t inode, FSNodeType nodeType,
+                                                 const std::string &path, bool ignoreFlag) {
+	FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
+	if (node == nullptr) {
+		if (checkpointManager_ != nullptr &&
+		    checkpointManager_->nodesRemovedDuringRestore().contains(inode)) {
+			safs::log_debug("{}: inode {} skipped: child removed by node rollback", __func__,
+			                inode);
+			return kOpSuccess;
+		}
+
+		safs::log_err("{}: detached inode {} not found", __func__, inode);
+		return ignoreFlag ? kOpSuccess : kOpFailure;
+	}
+
+	if (node->type != nodeType) {
+		// NODE rollback precedes path loading. The live row may therefore describe a later
+		// transition than the node body already restored for the checkpoint. Defer it, then
+		// require durable undo to prove the mismatch is expected post-checkpoint state.
+		deferredIncompatibleDetachedPaths_.insert(inode);
+		safs::log_debug(
+		    "{}: inode {} path deferred until edge rollback: child type {}, row type {}", __func__,
+		    inode, static_cast<char>(node->type), static_cast<char>(nodeType));
+		return kOpSuccess;
+	}
+
+	return metadata::edges::restoreLoadedDetachedPath(fsOpContext, inode, nodeType, HString(path));
+}
+
+int8_t MetadataBackendForkless::restoreEdgesToCheckpointVersion(uint64_t targetVersion) {
+	if (checkpointManager_ == nullptr || !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::Edge, targetVersion)) {
+		safs::log_err("{}: failed to roll back edges to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
+	}
+
+	const auto &restoredPaths = checkpointManager_->detachedPathsTouchedDuringRestore();
+	for (inode_t inode : deferredIncompatibleDetachedPaths_) {
+		if (!restoredPaths.contains(inode)) {
+			safs::log_err("{}: inode {} has an incompatible live path with no applicable undo",
+			              __func__, inode);
+			return kOpFailure;
+		}
+	}
+
+	deferredIncompatibleDetachedPaths_.clear();
 	return kOpSuccess;
 }
 
@@ -1321,10 +1505,217 @@ void MetadataBackendForkless::onPromotedToMaster() {
 	metadataWriter_ =
 	    std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(), checkpointManager_.get());
 	registerFlushTimer();
+
+	// Close the promotion crash-window gap. If the previous master was killed within its
+	// flush window, the tail of its writes reached the changelog (and thus this node's memory via
+	// replay) but not FDB. Replay does not enqueue, so without this the promoted master would never
+	// persist that tail and a later FDB-only reload would lose it. Persist only the recorded dirty
+	// delta -- and only when FDB is actually behind memory; a graceful handoff seals FDB == memory,
+	// so there is no gap and the (redundant) dirty set is simply discarded.
+	const uint64_t persistedVersion = getVersion("");
+	if (gMetadata != nullptr && persistedVersion < gMetadata->metadataVersion) {
+		safs::log_info(
+		    "Promotion reconcile: FDB persisted version {} is behind in-memory version {}; "
+		    "persisting recorded dirty delta",
+		    persistedVersion, gMetadata->metadataVersion);
+		reconcileDirtyToFDB();
+	} else {
+		clearDirtySets();
+	}
+}
+
+void MetadataBackendForkless::reconcileDirtyToFDB() {
+	if (gMetadata == nullptr || metadataWriter_ == nullptr) {
+		clearDirtySets();
+		return;
+	}
+
+	uint64_t persisted = 0;
+	uint64_t removed = 0;
+
+	reconcileDirtyNodesToFDB(persisted, removed);
+	reconcileDirtyEdgesToFDB(persisted, removed);
+	reconcileDirtyDetachedPathsToFDB(persisted, removed);
+	reconcileDirtyXAttrsToFDB(persisted, removed);
+	reconcileDirtyQuotasToFDB(persisted, removed);
+	reconcileDirtyAclsToFDB(persisted, removed);
+	reconcileDirtyFreeInodesToFDB(persisted, removed);
+	reconcileDirtyChunksToFDB(persisted, removed);
+
+	safs::log_info("Promotion reconcile: persisted {} and removed {} dirty entries", persisted,
+	               removed);
+	clearDirtySets();
+}
+
+// Nodes: re-persist survivors, remove deletions.
+void MetadataBackendForkless::reconcileDirtyNodesToFDB(uint64_t &persisted, uint64_t &removed) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	auto *nodeOps = gFSOperations->nodeOperations();
+
+	for (const inode_t inode : dirtyNodes_) {
+		FSNode *node = nodeOps->idToNode(fsOpContext, inode);
+		if (node != nullptr) {
+			onNodeChanged(node);
+			++persisted;
+		} else {
+			onNodeRemoved(inode);
+			++removed;
+		}
+	}
+}
+
+// Edges: resolve directory entries against their parent.
+void MetadataBackendForkless::reconcileDirtyEdgesToFDB(uint64_t &persisted, uint64_t &removed) {
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+	auto *nodeOps = gFSOperations->nodeOperations();
+
+	for (const auto &[parentId, name] : dirtyEdges_) {
+		std::optional<inode_t> childId;
+		FSNode *parent = nodeOps->idToNode(fsOpContext, parentId);
+		if (parent != nullptr && parent->type == FSNodeType::kDirectory) {
+			auto *directory = static_cast<FSNodeDirectory *>(parent);
+			auto it = directory->find(name);
+			if (it != directory->end()) { childId = it->second->id; }
+		}
+		if (childId.has_value()) {
+			onEdgeChanged(parentId, *childId, name);
+			++persisted;
+		} else {
+			onEdgeRemoved(parentId, name);
+			++removed;
+		}
+	}
+}
+
+// Detached paths: persist the final state captured at signal time. The inode is the durable
+// identity, so duplicate paths remain separate and reconciliation stays bounded by dirty inodes.
+void MetadataBackendForkless::reconcileDirtyDetachedPathsToFDB(uint64_t &persisted,
+                                                               uint64_t &removed) {
+	for (const auto &[inode, state] : dirtyDetachedPaths_) {
+		if (state.has_value()) {
+			onDetachedPathChanged(inode, state->nodeType, state->path);
+			++persisted;
+		} else {
+			onDetachedPathRemoved(inode);
+			++removed;
+		}
+	}
+}
+
+// XAttrs: resolve range removals and point mutations against the in-memory attribute set.
+void MetadataBackendForkless::reconcileDirtyXAttrsToFDB(uint64_t &persisted, uint64_t &removed) {
+	auto persistCurrentInodeXattrs = [this, &persisted](inode_t inode) {
+		for (const auto &inodeEntry : gMetadata->xattrInodeHash[get_xattr_inode_hash(inode)]) {
+			if (inodeEntry->inode != inode) { continue; }
+			for (const XAttributeDataEntry *dataEntry : inodeEntry->xattrDataEntries) {
+				onXAttrChanged(inode, dataEntry->attributeName, dataEntry->attributeValue);
+				++persisted;
+			}
+			return;
+		}
+	};
+
+	// A whole-inode removal can be followed by inode reuse while a shadow runs. Clear the
+	// persisted range first and then reconstruct the inode's current attributes. Point mutations
+	// for the same inode are covered by that reconstruction and must not be enqueued before the
+	// range deletion.
+	for (const inode_t inode : dirtyXattrInodes_) {
+		onXAttrInodeRemoved(inode);
+		++removed;
+		persistCurrentInodeXattrs(inode);
+	}
+
+	for (const auto &[inode, name] : dirtyXattrs_) {
+		if (dirtyXattrInodes_.contains(inode)) { continue; }
+
+		const std::vector<uint8_t> *value = nullptr;
+		for (const auto &inodeEntry : gMetadata->xattrInodeHash[get_xattr_inode_hash(inode)]) {
+			if (inodeEntry->inode != inode) { continue; }
+			for (const XAttributeDataEntry *dataEntry : inodeEntry->xattrDataEntries) {
+				if (dataEntry->attributeName.size() == name.size() &&
+				    std::equal(dataEntry->attributeName.begin(), dataEntry->attributeName.end(),
+				               name.begin())) {
+					value = &dataEntry->attributeValue;
+					break;
+				}
+			}
+			if (value != nullptr) { break; }
+		}
+		if (value != nullptr) {
+			onXAttrChanged(inode, name, *value);
+			++persisted;
+		} else {
+			onXAttrRemoved(inode, name);
+			++removed;
+		}
+	}
+}
+
+// Quotas: the handler re-reads current state and enqueues an update or a remove.
+void MetadataBackendForkless::reconcileDirtyQuotasToFDB(uint64_t &persisted,
+                                                        uint64_t & /*removed*/) {
+	for (const auto &[ownerType, ownerId] : dirtyQuotaOwners_) {
+		onQuotaChanged(ownerType, ownerId);
+		++persisted;
+	}
+}
+
+// ACLs: the handler re-reads current state and enqueues an update or a remove.
+void MetadataBackendForkless::reconcileDirtyAclsToFDB(uint64_t &persisted, uint64_t & /*removed*/) {
+	for (const inode_t inode : dirtyAcls_) {
+		onAclChanged(inode);
+		++persisted;
+	}
+}
+
+// Free inodes: persist the final value captured by the last shadow-side transition for each key.
+void MetadataBackendForkless::reconcileDirtyFreeInodesToFDB(uint64_t &persisted, uint64_t &removed) {
+	for (const auto &[inode, timestamp] : dirtyFreeInodeValues_) {
+		if (timestamp.has_value()) {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, *timestamp));
+			++persisted;
+		} else {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));  // removal form
+			++removed;
+		}
+	}
+}
+
+// Chunks: re-emit changes for survivors (the writer captures gChunkChangedSignal), remove gone.
+void MetadataBackendForkless::reconcileDirtyChunksToFDB(uint64_t &persisted, uint64_t &removed) {
+	for (const uint64_t chunkId : dirtyChunks_) {
+		if (chunk_exists(chunkId)) {
+			chunk_emit_changed(chunkId);
+			++persisted;
+		} else {
+			onChunkRemoved(chunkId);
+			++removed;
+		}
+	}
+}
+
+void MetadataBackendForkless::clearDirtySets() {
+	dirtyNodes_.clear();
+	dirtyEdges_.clear();
+	dirtyDetachedPaths_.clear();
+	dirtyXattrs_.clear();
+	dirtyXattrInodes_.clear();
+	dirtyQuotaOwners_.clear();
+	dirtyAcls_.clear();
+	dirtyFreeInodeValues_.clear();
+	dirtyChunks_.clear();
 }
 
 void MetadataBackendForkless::registerFlushTimer() {
 	if (flushTimerHandle_ != nullptr) { return; }  // already registered; never stack timers
+	if (cfg_getuint32(kDisablePeriodicFlushOption, 0U) != 0U) {
+		safs::log_warn("Periodic FDB metadata flush disabled by {} (debug/test only)",
+		               kDisablePeriodicFlushOption);
+		return;
+	}
+
 	flushTimerHandle_ = eventloop_timeregister_ms(kMetadataFlushIntervalMs, flushMetadataCallback);
 
 	// Install a destruct hook bound to the current eventloop's lifetime. It runs during
@@ -1470,6 +1861,10 @@ void MetadataBackendForkless::createConnections() {
 void MetadataBackendForkless::connectPerLoadSignals() {
 	if (gMetadata == nullptr) { return; }
 
+	// A fresh load means in-memory state now matches the FDB snapshot, so any dirty delta recorded
+	// while following as a shadow is obsolete; start the next delta from a clean slate.
+	clearDirtySets();
+
 	// Per-load signals on gMetadata: recreated fresh each load, so they never accumulate. Each
 	// loadall() runs against a freshly created gMetadata (see fs_strinit), so connecting once per
 	// loadall yields exactly one slot per instance.
@@ -1484,6 +1879,14 @@ void MetadataBackendForkless::connectPerLoadSignals() {
 
 	gMetadata->edgeRemovedSignal.connect(
 	    [this](inode_t parentId, const HString &name) { onEdgeRemoved(parentId, name); });
+
+	gMetadata->detachedPathChangedSignal.connect(
+	    [this](inode_t inode, FSNodeType nodeType, const HString &path) {
+		    onDetachedPathChanged(inode, nodeType, path);
+	    });
+
+	gMetadata->detachedPathRemovedSignal.connect(
+	    [this](inode_t inode) { onDetachedPathRemoved(inode); });
 }
 
 void MetadataBackendForkless::connectGlobalSignalsOnce() {
@@ -1496,23 +1899,22 @@ void MetadataBackendForkless::connectGlobalSignalsOnce() {
 	if (connected) { return; }
 	connected = true;
 
-	// gChunkChangedSignal handler guards on metadataWriter_ (null on shadows), so shadow-side
-	// chunk mutations are not persisted until promotion (see onPromotedToMaster()).
+	// onChunkChanged() enqueues a ChunkUpdateEvent when this node is the master. On a shadow there
+	// is no writer, so it records the chunk id in dirtyChunks_ instead and the mutation is
+	// persisted on promotion (see reconcileDirtyToFDB()).
 	gChunkChangedSignal.connect(
 	    [](uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId) {
-		    if (gForklessBackend != nullptr && gForklessBackend->metadataWriter_) {
-			    gForklessBackend->metadataWriter_->enqueue(
-			        std::make_unique<ChunkUpdateEvent>(chunkId, version, lockedTo, lockId));
+		    if (gForklessBackend != nullptr) {
+			    gForklessBackend->onChunkChanged(chunkId, version, lockedTo, lockId);
 		    }
 	    });
 
 	// Deleting the row keeps the CHNL_ keyspace in step with the in-memory chunk table: the
 	// writer queue is FIFO, so a pending update for the same chunk is applied before this
-	// removal. Guarded on metadataWriter_ like the update handler above.
+	// removal. On a shadow, onChunkRemoved() records the id in dirtyChunks_ like the update
+	// handler above; reconcileDirtyToFDB() resolves it against chunk_exists() on promotion.
 	gChunkRemovedSignal.connect([](uint64_t chunkId) {
-		if (gForklessBackend != nullptr && gForklessBackend->metadataWriter_) {
-			gForklessBackend->metadataWriter_->enqueue(std::make_unique<ChunkRemoveEvent>(chunkId));
-		}
+		if (gForklessBackend != nullptr) { gForklessBackend->onChunkRemoved(chunkId); }
 	});
 
 	gXAttrInodeRemovedSignal.connect([](inode_t inode) {

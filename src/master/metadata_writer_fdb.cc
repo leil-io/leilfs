@@ -78,6 +78,22 @@ void ChunkRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: CHNL_<ChunkId>
 	kv::Key key = kv::encodeKeyBE(kChunkLatestKeyPrefix, chunkId);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		// ChunkSetMutation records the pre-image (or a tombstone) generically, which is exactly the
+		// undo a removal needs: rollback restores the chunk that existed before this checkpoint.
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->remove(key);
 }
 
@@ -233,6 +249,70 @@ void EdgeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	}
 
 	context.transaction->remove(key);
+}
+
+DetachedPathUpdateEvent::DetachedPathUpdateEvent(inode_t _inode, FSNodeType _nodeType,
+                                                 HString _path)
+    : inode(_inode), nodeType(_nodeType), path(std::move(_path)) {}
+
+void DetachedPathUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("DetachedPathUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+	if (nodeType != FSNodeType::kTrash && nodeType != FSNodeType::kReserved) {
+		safs::log_err("DetachedPathUpdateEvent received invalid node type {} for inode {}",
+		              static_cast<char>(nodeType), inode);
+		return;
+	}
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = DetachedPathSetMutation{
+		    .inode = inode,
+		    .nodeType = nodeType,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	const auto trashKey = kv::encodeKeyBE(kTrashPathKeyPrefix, inode);
+	const auto reservedKey = kv::encodeKeyBE(kReservedPathKeyPrefix, inode);
+	const kv::Value value(path.begin(), path.end());
+	if (nodeType == FSNodeType::kTrash) {
+		context.transaction->remove(reservedKey);
+		context.transaction->set(trashKey, value);
+	} else {
+		context.transaction->remove(trashKey);
+		context.transaction->set(reservedKey, value);
+	}
+}
+
+DetachedPathRemoveEvent::DetachedPathRemoveEvent(inode_t _inode) : inode(_inode) {}
+
+void DetachedPathRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("DetachedPathRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = DetachedPathRemoveMutation{.inode = inode};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	context.transaction->remove(kv::encodeKeyBE(kTrashPathKeyPrefix, inode));
+	context.transaction->remove(kv::encodeKeyBE(kReservedPathKeyPrefix, inode));
 }
 
 XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::span<const uint8_t> _name,

@@ -53,6 +53,77 @@
 #include "master/metadata_xattr_undo_recorder.h"
 #include "protocol/SFSCommunication.h"
 
+struct MetadataBackendForklessTestAccess {
+	static void recordDetainedInode(MetadataBackendForkless &backend, inode_t inode,
+	                                uint32_t timestamp) {
+		backend.onFreeInodeDetained(inode, timestamp);
+	}
+
+	static void recordReleasedInode(MetadataBackendForkless &backend, inode_t inode) {
+		backend.onFreeInodeReleased(inode);
+	}
+
+	static void recordChangedEdge(MetadataBackendForkless &backend, inode_t parentId,
+	                              inode_t childId, const HString &name) {
+		backend.onEdgeChanged(parentId, childId, name);
+	}
+
+	static void recordRemovedEdge(MetadataBackendForkless &backend, inode_t parentId,
+	                              const HString &name) {
+		backend.onEdgeRemoved(parentId, name);
+	}
+
+	static void recordChangedDetachedPath(MetadataBackendForkless &backend, inode_t inode,
+	                                      FSNodeType nodeType, const HString &path) {
+		backend.onDetachedPathChanged(inode, nodeType, path);
+	}
+
+	static void recordRemovedDetachedPath(MetadataBackendForkless &backend, inode_t inode) {
+		backend.onDetachedPathRemoved(inode);
+	}
+
+	static void attachWriter(MetadataBackendForkless &backend, kv::IKVEngine *kvEngine) {
+		backend.metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvEngine);
+	}
+
+	static void reconcileFreeInodes(MetadataBackendForkless &backend, uint64_t &persisted,
+	                                uint64_t &removed) {
+		backend.reconcileDirtyFreeInodesToFDB(persisted, removed);
+	}
+
+	static void reconcileEdges(MetadataBackendForkless &backend, uint64_t &persisted,
+	                           uint64_t &removed) {
+		backend.reconcileDirtyEdgesToFDB(persisted, removed);
+	}
+
+	static void reconcileDetachedPaths(MetadataBackendForkless &backend, uint64_t &persisted,
+	                                   uint64_t &removed) {
+		backend.reconcileDirtyDetachedPathsToFDB(persisted, removed);
+	}
+
+	static void prepareCheckpointLoad(MetadataBackendForkless &backend, kv::IKVEngine *kvEngine,
+	                                  uint64_t checkpointVersion) {
+		backend.checkpointManager_ = std::make_unique<MetadataCheckpointManager>(kvEngine);
+		backend.loadedCheckpointDescriptor_.metadataVersion = checkpointVersion;
+	}
+
+	static int8_t loadEdge(MetadataBackendForkless &backend, inode_t parentId, inode_t childId,
+	                       const std::string &name) {
+		return backend.loadEdge(FilesystemOperationContext{}, parentId, childId, name,
+		                        /*ignoreFlag=*/false, /*init=*/false);
+	}
+
+	static int8_t loadDetachedPath(MetadataBackendForkless &backend, inode_t inode,
+	                               FSNodeType nodeType, const std::string &path) {
+		return backend.loadDetachedPath(FilesystemOperationContext{}, inode, nodeType, path,
+		                                /*ignoreFlag=*/false);
+	}
+
+	static bool restoreEdges(MetadataBackendForkless &backend, uint64_t checkpointVersion) {
+		return backend.restoreEdgesToCheckpointVersion(checkpointVersion) == kOpSuccess;
+	}
+};
+
 struct MetadataSectionBootstrapFDBTestAccess {
 	static int8_t saveMetadataHeader(MetadataSectionBootstrapFDB &bootstrap, inode_t maxInodeId,
 	                                 uint64_t metadataVersion, uint32_t nextSessionId) {
@@ -214,6 +285,251 @@ private:
 // consulting the complete in-memory inode pool. Run the scenario in a child process with
 // gMetadata unset: a full-pool scan would crash the child, while recorded-state-only
 // reconciliation reaches the expected zero exit code and keeps the test failure contained.
+TEST(MetadataBackendForklessTest, FreePromotionReconcileUsesOnlyRecordedDirtyState) {
+	EXPECT_EXIT(
+	    {
+		    // Deliberately make the authoritative inode pool unavailable. The recorded dirty values
+		    // must contain everything promotion needs to reconstruct the affected FREE keys.
+		    gMetadata = nullptr;
+
+		    RecordingKVEngine engine;
+		    constexpr inode_t kDetainedInode = 41;
+		    constexpr inode_t kReleasedInode = 42;
+		    constexpr uint32_t kTimestamp = 1234;
+		    // Model stale persisted state: inode 42 was detained in the last FDB image, but the
+		    // shadow will subsequently observe its release and must remove this key on promotion.
+		    engine.store()[kv::encodeKeyBE(kFreeKeyPrefix, kReleasedInode)] =
+		        kv::toBytesBE(uint32_t{5678});
+
+		    // A newly constructed backend has no writer, matching a shadow. Drive both inodes
+		    // through opposite transitions to prove that only the last state per key is retained:
+		    //   inode 41: released -> detained(1234) => persist FREE_41 = 1234
+		    //   inode 42: detained(4321) -> released => remove  FREE_42
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::recordReleasedInode(backend, kDetainedInode);
+		    MetadataBackendForklessTestAccess::recordDetainedInode(backend, kDetainedInode,
+		                                                           kTimestamp);
+		    MetadataBackendForklessTestAccess::recordDetainedInode(backend, kReleasedInode,
+		                                                           /*timestamp=*/4321);
+		    MetadataBackendForklessTestAccess::recordReleasedInode(backend, kReleasedInode);
+
+		    // Attaching the writer after the transitions models promotion. Reconciliation should
+		    // enqueue exactly one final update and one final removal, not all four transitions.
+		    MetadataBackendForklessTestAccess::attachWriter(backend, &engine);
+
+		    uint64_t persisted = 0;
+		    uint64_t removed = 0;
+		    MetadataBackendForklessTestAccess::reconcileFreeInodes(backend, persisted, removed);
+		    if (persisted != 1 || removed != 1 || !backend.flushPendingUpdates(true)) {
+			    std::_Exit(1);
+		    }
+
+		    // Flushing must materialize the final shadow-observed state: inode 41 is detained with
+		    // its last timestamp, and the stale row for the now-released inode 42 is gone.
+		    const auto detained =
+		        engine.store().find(kv::encodeKeyBE(kFreeKeyPrefix, kDetainedInode));
+		    if (detained == engine.store().end() || detained->second != kv::toBytesBE(kTimestamp) ||
+		        engine.store().contains(kv::encodeKeyBE(kFreeKeyPrefix, kReleasedInode))) {
+			    std::_Exit(2);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// Detached paths use the same inode-keyed rows as MDS. Two trash entries may legitimately have
+// the same original path (delete, recreate, and delete the same name), so the path must be the
+// value rather than the durable identity. Also exercise a trash-to-reserved transition and a
+// stale inode whose final shadow state is absent.
+TEST(MetadataBackendForklessTest, DetachedPathPromotionReconcileUsesMdsKeyspace) {
+	EXPECT_EXIT(
+	    {
+		    constexpr inode_t kFirstTrashInode = 41;
+		    constexpr inode_t kSecondTrashInode = 42;
+		    constexpr inode_t kReservedInode = 43;
+		    constexpr inode_t kRemovedInode = 44;
+		    const HString duplicatePath("same/original/path");
+		    const HString reservedPath("reserved/path");
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::encodeKeyBE(kTrashPathKeyPrefix, kRemovedInode)] =
+		        kv::toBytes("stale/trash");
+		    engine.store()[kv::encodeKeyBE(kReservedPathKeyPrefix, kRemovedInode)] =
+		        kv::toBytes("stale/reserved");
+
+		    // These are the final per-inode states observed while replaying as a shadow. The last
+		    // state for inode 43 wins, changing its target key family from trash to reserved.
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::recordChangedDetachedPath(
+		        backend, kFirstTrashInode, FSNodeType::kTrash, duplicatePath);
+		    MetadataBackendForklessTestAccess::recordChangedDetachedPath(
+		        backend, kSecondTrashInode, FSNodeType::kTrash, duplicatePath);
+		    MetadataBackendForklessTestAccess::recordChangedDetachedPath(
+		        backend, kReservedInode, FSNodeType::kTrash, HString("old/trash/path"));
+		    MetadataBackendForklessTestAccess::recordChangedDetachedPath(
+		        backend, kReservedInode, FSNodeType::kReserved, reservedPath);
+		    MetadataBackendForklessTestAccess::recordRemovedDetachedPath(backend, kRemovedInode);
+
+		    MetadataBackendForklessTestAccess::attachWriter(backend, &engine);
+		    uint64_t persisted = 0;
+		    uint64_t removed = 0;
+		    MetadataBackendForklessTestAccess::reconcileDetachedPaths(backend, persisted, removed);
+		    if (persisted != 3 || removed != 1 || !backend.flushPendingUpdates(true)) {
+			    std::_Exit(1);
+		    }
+
+		    const auto firstTrash =
+		        engine.store().find(kv::encodeKeyBE(kTrashPathKeyPrefix, kFirstTrashInode));
+		    const auto secondTrash =
+		        engine.store().find(kv::encodeKeyBE(kTrashPathKeyPrefix, kSecondTrashInode));
+		    const auto reserved =
+		        engine.store().find(kv::encodeKeyBE(kReservedPathKeyPrefix, kReservedInode));
+		    if (firstTrash == engine.store().end() ||
+		        firstTrash->second != kv::toBytes(duplicatePath) ||
+		        secondTrash == engine.store().end() ||
+		        secondTrash->second != kv::toBytes(duplicatePath) ||
+		        reserved == engine.store().end() || reserved->second != kv::toBytes(reservedPath) ||
+		        engine.store().contains(kv::encodeKeyBE(kTrashPathKeyPrefix, kReservedInode)) ||
+		        engine.store().contains(kv::encodeKeyBE(kTrashPathKeyPrefix, kRemovedInode)) ||
+		        engine.store().contains(kv::encodeKeyBE(kReservedPathKeyPrefix, kRemovedInode))) {
+			    std::_Exit(2);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// The persisted key is the inode, not the path. Reconstruct two trash nodes carrying the same
+// original path and verify neither overwrites the other in the authoritative trash container.
+TEST(MetadataBackendForklessTest, LoadsDuplicateDetachedPathsByInode) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kFirstInode = 41;
+		    constexpr inode_t kSecondInode = 42;
+		    const std::string duplicatePath("directory/file");
+		    for (inode_t inode : {kFirstInode, kSecondInode}) {
+			    auto *node = new FSNodeFile(FSNodeType::kTrash);
+			    node->id = inode;
+			    gMetadata->addNode(node, /*isFromScan=*/true);
+		    }
+
+		    MetadataBackendForkless backend;
+		    if (MetadataBackendForklessTestAccess::loadDetachedPath(
+		            backend, kFirstInode, FSNodeType::kTrash, duplicatePath) != kOpSuccess ||
+		        MetadataBackendForklessTestAccess::loadDetachedPath(
+		            backend, kSecondInode, FSNodeType::kTrash, duplicatePath) != kOpSuccess) {
+			    std::_Exit(1);
+		    }
+
+		    if (gMetadata->trash.size() != 2 || gMetadata->trashNodes != 2) { std::_Exit(2); }
+		    bool foundFirst = false;
+		    bool foundSecond = false;
+		    for (const auto &entry : gMetadata->trash) {
+			    if (entry.second.get() != duplicatePath) { std::_Exit(3); }
+			    foundFirst |= entry.first.id == kFirstInode;
+			    foundSecond |= entry.first.id == kSecondInode;
+		    }
+		    std::_Exit(foundFirst && foundSecond ? 0 : 4);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// NODE rollback runs before detached path loading. Model a file that was regular at checkpoint 17
+// and was subsequently unlinked into trash: the restored NODE body is regular, while the hot
+// TRSH_PATH_ row is newer. The inode-keyed EDGEU_ tombstone proves that the path did not exist at
+// the checkpoint, so loading can defer the mismatch until edge-section rollback removes it.
+TEST(MetadataBackendForklessTest, DefersPostCheckpointTrashPathUntilEdgeRollback) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kFileInode = 41;
+		    constexpr uint64_t kCheckpointVersion = 17;
+		    const HString trashPath("directory/file");
+
+		    // This is the checkpoint NODE state after node rollback, not the latest kTrash body.
+		    auto *checkpointFile = new FSNodeFile(FSNodeType::kFile);
+		    checkpointFile->id = kFileInode;
+		    gMetadata->addNode(checkpointFile, /*isFromScan=*/true);
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		    const kv::Key undoKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, kFileInode);
+		    engine.store()[undoKey] = {};  // The inode had no detached path at the checkpoint.
+
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::prepareCheckpointLoad(backend, &engine,
+		                                                             kCheckpointVersion);
+
+		    // This row comes from the newer hot TRSH_PATH_ image. It must not be materialized
+		    // against the already-restored regular node, but its applicable undo row makes it safe
+		    // to defer.
+		    if (MetadataBackendForklessTestAccess::loadDetachedPath(
+		            backend, kFileInode, FSNodeType::kTrash, trashPath) != kOpSuccess) {
+			    std::_Exit(1);
+		    }
+		    if (!MetadataBackendForklessTestAccess::restoreEdges(backend, kCheckpointVersion)) {
+			    std::_Exit(2);
+		    }
+
+		    // The checkpoint state has neither a detached path nor a detached node type.
+		    if (checkpointFile->type != FSNodeType::kFile || !gMetadata->trash.empty() ||
+		        !gMetadata->reserved.empty()) {
+			    std::_Exit(3);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// Deferral is not a general relaxation of detached-path validation. Without a matching EDGEU_ row,
+// the same mixed-looking live row is not proven to be post-checkpoint drift and the section restore
+// must reject it as inconsistent metadata.
+TEST(MetadataBackendForklessTest, RejectsIncompatibleDetachedPathWithoutApplicableUndo) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kFileInode = 41;
+		    constexpr uint64_t kCheckpointVersion = 17;
+		    const std::string trashPath("directory/file");
+
+		    auto *checkpointFile = new FSNodeFile(FSNodeType::kFile);
+		    checkpointFile->id = kFileInode;
+		    gMetadata->addNode(checkpointFile, /*isFromScan=*/true);
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::prepareCheckpointLoad(backend, &engine,
+		                                                             kCheckpointVersion);
+		    if (MetadataBackendForklessTestAccess::loadDetachedPath(
+		            backend, kFileInode, FSNodeType::kTrash, trashPath) != kOpSuccess) {
+			    std::_Exit(1);
+		    }
+
+		    std::_Exit(MetadataBackendForklessTestAccess::restoreEdges(backend, kCheckpointVersion)
+		                   ? 2
+		                   : 0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
 TEST(MetadataSectionBootstrapFDBTest, SeedsImportedVersionAsInitialCheckpoint) {
 	RecordingKVEngine engine;
 	MetadataSectionBootstrapFDB bootstrap(&engine);
@@ -452,6 +768,59 @@ TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoValues) {
 	engine.store()[undoKey] = kv::Value{0x01};
 
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, DetachedPathRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing the detached inode after the parent-zero discriminator.
+		    auto truncatedKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0});
+		    truncatedKey.push_back(0xff);
+		    malformedKeys.push_back(std::move(truncatedKey));
+		    // Detached-path keys have no payload after the inode.
+		    auto oversizedKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, inode_t{41});
+		    oversizedKey.push_back(0xff);
+		    malformedKeys.push_back(std::move(oversizedKey));
+		    // Inode 0 is only the detached-path discriminator, never a detached inode.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, inode_t{0}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    EdgeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = {};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, DetachedPathRejectsMalformedUndoValues) {
+	for (const kv::Value &malformedValue : {kv::Value{static_cast<uint8_t>(FSNodeType::kFile), 'p'},
+	                                        kv::Value{static_cast<uint8_t>(FSNodeType::kTrash)}}) {
+		RecordingKVEngine engine;
+		EdgeUndoRecorder recorder(&engine);
+
+		constexpr inode_t kInode = 41;
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine
+		    .store()[kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, kInode)] =
+		    malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
 }
 
 TEST(MetadataUndoRecorderRestore, XAttrRejectsMalformedUndoKeys) {
@@ -742,6 +1111,34 @@ TEST(MetadataUndoRecorderRetry, EdgePreservesOriginalPreimage) {
 		    transaction.set(liveKey, laterMutation ? laterValue : updatedValue);
 	    });
 	EXPECT_EQ(engine.store().at(liveKey), laterValue);
+}
+
+TEST(MetadataUndoRecorderRetry, DetachedPathPreservesOriginalPreimage) {
+	RecordingKVEngine engine;
+	EdgeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kInode = 47;
+	const kv::Key trashKey = kv::encodeKeyBE(kTrashPathKeyPrefix, kInode);
+	const kv::Key reservedKey = kv::encodeKeyBE(kReservedPathKeyPrefix, kInode);
+	const kv::Key undoKey =
+	    kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, kInode);
+	const kv::Value originalValue = kv::toBytes("original/path");
+	const kv::Value updatedValue = kv::toBytes("updated/path");
+	const kv::Value laterValue = kv::toBytes("later/path");
+	kv::Value expectedUndoValue{static_cast<uint8_t>(FSNodeType::kTrash)};
+	expectedUndoValue.insert(expectedUndoValue.end(), originalValue.begin(), originalValue.end());
+	engine.store()[trashKey] = originalValue;
+
+	const MetadataMutation mutation =
+	    DetachedPathSetMutation{.inode = kInode, .nodeType = FSNodeType::kReserved};
+	expectFailedFirstTouchRetryPreservesPreimage(
+	    recorder, engine.store(), mutation, undoKey, expectedUndoValue,
+	    [&](RecordingTransaction &transaction, bool laterMutation) {
+		    transaction.remove(trashKey);
+		    transaction.set(reservedKey, laterMutation ? laterValue : updatedValue);
+	    });
+	EXPECT_FALSE(engine.store().contains(trashKey));
+	EXPECT_EQ(engine.store().at(reservedKey), laterValue);
 }
 
 TEST(MetadataUndoRecorderRetry, XAttrPreservesOriginalPreimage) {

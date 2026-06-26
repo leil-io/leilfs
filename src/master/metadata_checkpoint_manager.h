@@ -34,8 +34,8 @@
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_quota_undo_recorder.h"
-#include "master/metadata_xattr_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
+#include "master/metadata_xattr_undo_recorder.h"
 
 /// Snapshot descriptor bound to one metadata checkpoint boundary.
 ///
@@ -172,6 +172,9 @@ public:
 	/// away (post-checkpoint drift) instead of failing the EDGE section load. Returns an empty set
 	/// when no node recorder is registered.
 	const std::unordered_set<uint64_t> &nodesRemovedDuringRestore() const;
+
+	/// Detached-path inodes processed by the most recent edge-section restore.
+	const EdgeUndoRecorder::DetachedPathKeySet &detachedPathsTouchedDuringRestore() const;
 
 private:
 	/// Registers the per-section undo recorders into recorders_.
