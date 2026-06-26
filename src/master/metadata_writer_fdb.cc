@@ -78,6 +78,22 @@ void ChunkRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: CHNL_<ChunkId>
 	kv::Key key = kv::encodeKeyBE(kChunkLatestKeyPrefix, chunkId);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		// ChunkSetMutation records the pre-image (or a tombstone) generically, which is exactly the
+		// undo a removal needs: rollback restores the chunk that existed before this checkpoint.
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->remove(key);
 }
 
