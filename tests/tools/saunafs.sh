@@ -379,6 +379,12 @@ create_mds_common_cfg_() {
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
 	echo "METADATA_BACKEND = ${saunafs_info_[metadata_backend]}"
+	# The forkless backend needs the FDB cluster file in the config template itself, so that
+	# saunafs_make_conf_for_master regenerates a usable config on every promotion (not only the
+	# initial config produced by add_metadata_server_).
+	if [[ "${saunafs_info_[metadata_backend]}" == "FORKLESS" ]]; then
+		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster"
+	fi
 }
 
 add_lines_master_cfg_() {
@@ -442,6 +448,11 @@ create_sfsmaster_shadow_cfg_() {
 	echo "${!this_module_cfg_variable-}" | tr '|' '\n'
 	create_bdb_name_storage_entry_
 	echo "METADATA_BACKEND = ${saunafs_info_[metadata_backend]}"
+	# As in create_mds_common_cfg_: keep FDB_CLUSTER_FILE in the shadow template so
+	# saunafs_make_conf_for_shadow regenerates a usable config on every demotion.
+	if [[ "${saunafs_info_[metadata_backend]}" == "FORKLESS" ]]; then
+		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster"
+	fi
 }
 
 saunafs_make_conf_for_shadow() {
@@ -514,6 +525,9 @@ add_metadata_server_() {
 		create_sfsmds_cfg_ >"$masterserver_mds_cfg"
 		cp "$masterserver_mds_cfg" "$masterserver_cfg"
 	elif [[ "${saunafs_info_[metadata_backend]}" == "FORKLESS" ]]; then
+		# FDB_CLUSTER_FILE is emitted by the master/shadow cfg templates (see
+		# create_mds_common_cfg_ / create_sfsmaster_shadow_cfg_), so it survives later
+		# saunafs_make_conf_for_master/_for_shadow regeneration.
 		if [[ "$personality" == "master" ]]; then
 			cp "$masterserver_master_cfg" "$masterserver_cfg"
 		elif [[ "$personality" == "shadow" ]]; then
@@ -521,7 +535,6 @@ add_metadata_server_() {
 		else
 			test_fail "Wrong personality $personality"
 		fi
-		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
 	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg

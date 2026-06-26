@@ -22,7 +22,6 @@
 
 #include <fcntl.h>  // for open and O_RDONLY
 #include <sys/mman.h>
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -46,7 +45,6 @@
 #include "master/changelog.h"
 #include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
-#include "master/filesystem.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
@@ -54,7 +52,6 @@
 #include "master/filesystem_xattr.h"
 #include "master/kv_common_keys.h"
 #include "master/kv_connector_fdb.h"
-#include "master/kv_connector_interface.h"
 #include "master/matoclserv.h"
 #include "master/matoclserv_sessions.h"
 #include "master/matomlserv.h"
@@ -1194,6 +1191,11 @@ bool checkMetadataSignature() {
 void MetadataBackendForkless::loadall(int ignoreflag) {
 	safs::log_info("MetadataBackendForkless::loadall: ignoreflag: {}", ignoreflag);
 
+	// gMetadata is recreated before each load (fs_strinit); rewire its per-load signals so a shadow
+	// promoted after this load has working signal->writer wiring. The load itself is signal-free
+	// (restore helpers do not emit), so connecting before the load enqueues nothing spurious.
+	connectPerLoadSignals();
+
 	bool bootstrapped = false;
 
 #ifndef METARESTORE
@@ -1447,14 +1449,19 @@ void MetadataBackendForkless::createConnections() {
 	// so reconnecting on each backend init would stack duplicate slots.
 	connectGlobalSignalsOnce();
 
-	// Per-load signals on gMetadata: recreated fresh each load, so they never accumulate.
+	// Per-load gMetadata signals are NOT connected here: gMetadata is recreated on every shadow
+	// (re)load, so the wiring is (re)done in connectPerLoadSignals(), invoked from loadall().
+}
+
+void MetadataBackendForkless::connectPerLoadSignals() {
+	if (gMetadata == nullptr) { return; }
+
+	// Per-load signals on gMetadata: recreated fresh each load, so they never accumulate. Each
+	// loadall() runs against a freshly created gMetadata (see fs_strinit), so connecting once per
+	// loadall yields exactly one slot per instance.
 	gMetadata->nodeChangedSignal.connect([this](FSNode *node) { onNodeChanged(node); });
 
 	gMetadata->nodeRemovedSignal.connect([this](inode_t nodeId) { onNodeRemoved(nodeId); });
-
-	// gMetadata->edgeChangedSignal.connect(kvConnector_.get(), &IKVConnector::onEdgeChanged);
-
-	// gMetadata->edgeRemovedSignal.connect(kvConnector_.get(), &IKVConnector::onEdgeRemoved);
 
 	gMetadata->edgeChangedSignal.connect(
 	    [this](FSNodeDirectory *parent, FSNode *child, hstorage::Handle *handlePtr) {
