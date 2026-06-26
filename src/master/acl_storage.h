@@ -23,8 +23,15 @@
 
 #include <unordered_map>
 
+#include "common/observable_property.h"
 #include "common/richacl.h"
 #include "common/type_defs.h"
+
+/// Signal emitted whenever an inode's ACL changes (set, mode-synced, or removed).
+/// Parameter: inode id. Handlers should read the current ACL from gMetadata->aclStorage to persist
+/// (ACLS_<inode>) or remove it. ACLs are not part of the metadata checksum; they are rebuilt from
+/// node loading order via this durable section on the forkless backend.
+inline Signal<inode_t> gAclChangedSignal;
 
 /*!
  * \brief A class aggregating ACL storage and inode->acl maps, deduplication included.

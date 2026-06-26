@@ -75,6 +75,7 @@ private:
 	int8_t loadEdgesSection();
 	int8_t loadFreeSection();
 	int8_t loadXAttrSection();
+	int8_t loadACLSection();
 	int8_t loadQuotaSection();
 
 	inode_t maxInodeId_ = 0;

@@ -1654,7 +1654,12 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 
 	// and free
 	gMetadata->nodes--;
+
+	// Notify durable backends to drop the inode's ACL row so it cannot be reattached to a reused
+	// inode. Only emit when the inode actually had an ACL.
+	const bool hadAcl = gMetadata->aclStorage.get(node->id) != nullptr;
 	gMetadata->aclStorage.erase(node->id);
+	if (hadAcl) { gAclChangedSignal.emit(node->id); }
 
 	if (node->type == FSNodeType::kDirectory) { gMetadata->dirNodes--; }
 
@@ -2209,12 +2214,16 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(
 	// Persist the ACL deletion
 	updateNode(fsOpContext, node);
 
+	// Notify durable backends so the inode's ACL row is updated/removed
+	gAclChangedSignal.emit(node->id);
 	return SAUNAFS_STATUS_OK;
 }
 
 void FilesystemNodeOperationsBase::syncAclWithMode(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
 	gMetadata->aclStorage.setMode(node->id, node->mode, node->type == FSNodeType::kDirectory);
+	// Notify durable backends: setMode rewrites the stored ACL's mode
+	gAclChangedSignal.emit(node->id);
 }
 
 #ifndef METARESTORE
@@ -2263,6 +2272,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	// Persist the ACL update
 	updateNode(fsOpContext, node);
+
+	// Notify durable backends so the inode's ACL row is updated/removed
+	gAclChangedSignal.emit(node->id);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2299,6 +2311,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	// Persist the ACL update
 	updateNode(fsOpContext, node);
+
+	// Notify durable backends so the inode's ACL row is updated/removed
+	gAclChangedSignal.emit(node->id);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2326,6 +2341,8 @@ const RichACL *FilesystemNodeOperationsBase::getAclForAccess(
 void FilesystemNodeOperationsBase::storeInheritedAcl(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, RichACL &&acl) {
 	gMetadata->aclStorage.set(node->id, std::move(acl));
+	// Notify durable backends so the inherited ACL is persisted
+	gAclChangedSignal.emit(node->id);
 }
 
 int FilesystemNodeOperationsBase::access(const FsContext &context,

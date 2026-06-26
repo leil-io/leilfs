@@ -405,6 +405,33 @@ void QuotaRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	context.transaction->removeRange(startKey, kv::prefixEnd(startKey));
 }
 
+AclUpdateEvent::AclUpdateEvent(inode_t _inode, std::vector<uint8_t> _serializedAcl)
+    : inode(_inode), serializedAcl(std::move(_serializedAcl)) {}
+
+void AclUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("AclUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+
+	// Key: ACLS_<inode>
+	auto key = kv::encodeKeyBE(kACLsKeyPrefix, inode);
+	context.transaction->set(key, serializedAcl);
+}
+
+AclRemoveEvent::AclRemoveEvent(inode_t _inode) : inode(_inode) {}
+
+void AclRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("AclRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
+	// Key: ACLS_<inode>
+	auto key = kv::encodeKeyBE(kACLsKeyPrefix, inode);
+	context.transaction->remove(key);
+}
+
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
                                      MetadataCheckpointManager *checkpointManager,
                                      size_t backlogHighWatermark)

@@ -208,6 +208,34 @@ private:
 	inode_t ownerId;
 };
 
+/// Update event for an inode's ACL creation or change.
+/// Writes ACLS_<InodeId>: <serialized RichACL> to FDB. The caller serializes the RichACL at emit
+/// time so the event carries a snapshot independent of later in-memory changes.
+class AclUpdateEvent : public IMetadataUpdateEvent {
+public:
+	AclUpdateEvent(inode_t _inode, std::vector<uint8_t> _serializedAcl);
+	~AclUpdateEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+	std::vector<uint8_t> serializedAcl;
+};
+
+/// Removal event for an inode's ACL.
+/// Removes ACLS_<InodeId> from FDB.
+class AclRemoveEvent : public IMetadataUpdateEvent {
+public:
+	explicit AclRemoveEvent(inode_t _inode);
+	~AclRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+};
+
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:

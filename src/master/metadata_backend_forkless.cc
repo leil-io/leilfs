@@ -36,11 +36,13 @@
 #include "common/datapack.h"
 #include "common/event_loop.h"
 #include "common/quota_database.h"
+#include "common/richacl.h"
 #include "common/scoped_timer.h"
 #include "common/serialization.h"
 #include "common/time_utils.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/acl_storage.h"
 #include "master/changelog.h"
 #include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
@@ -405,6 +407,22 @@ void MetadataBackendForkless::onQuotaChanged(QuotaOwnerType ownerType, inode_t o
 	}
 	metadataWriter_->enqueue(
 	    std::make_unique<QuotaUpdateEvent>(ownerType, ownerId, std::move(entries)));
+}
+
+void MetadataBackendForkless::onAclChanged(inode_t inode) {
+	if (!metadataWriter_) { return; }
+
+	// Snapshot the inode's current ACL now (the signal fires synchronously, after the aclStorage
+	// mutation). If the inode has no ACL, persist its removal instead.
+	const RichACL *acl = gMetadata->aclStorage.get(inode);
+	if (acl == nullptr) {
+		metadataWriter_->enqueue(std::make_unique<AclRemoveEvent>(inode));
+		return;
+	}
+
+	std::vector<uint8_t> buffer;
+	serialize(buffer, *acl);
+	metadataWriter_->enqueue(std::make_unique<AclUpdateEvent>(inode, std::move(buffer)));
 }
 
 int MetadataBackendForkless::fsLoad(bool ignoreFlag) {
@@ -827,6 +845,92 @@ int8_t MetadataBackendForkless::loadQuotas(bool ignoreFlag) {
 	return kOpSuccess;
 }
 
+int8_t MetadataBackendForkless::loadACLs(bool ignoreFlag) {
+	(void)ignoreFlag;  // Unused parameter
+
+	safs::log_info("Loading ACLs from FoundationDB");
+	Timer timer;
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadOnly);
+
+	// Key: ACLS_<inode> -> <serialized RichACL>
+	const size_t kAclKeySize = kACLsKeyPrefix.size() + sizeof(inode_t);
+
+	kv::Key startKey = kv::toBytes(kACLsKeyPrefix);
+	kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	kv::KeySelector endSelector(endKey, true, 0);
+
+	uint64_t aclCount = 0;
+
+	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+		auto pageResult =
+		    transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
+
+		for (const auto &pair : pageResult.getPairs()) {
+			if (pair.key.size() != kAclKeySize) {
+				safs::log_warn("{}: skipping malformed ACL key of size {}", __func__,
+				               pair.key.size());
+				continue;
+			}
+
+			const uint8_t *keyPtr = pair.key.data() + kACLsKeyPrefix.size();
+			inode_t inode{};
+			getINode(&keyPtr, inode);
+
+			FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
+			if (node == nullptr) {
+				// A node removed by node rollback during this load means this ACL is
+				// post-checkpoint drift: at the target checkpoint the node (and therefore this
+				// ACL) did not exist. Skip it instead of failing the section load;
+				// changelog replay reconciles the final state.
+				if (checkpointManager_ != nullptr &&
+				    checkpointManager_->nodesRemovedDuringRestore().contains(inode)) {
+					safs::log_debug("{}: ACL for inode {} skipped: node removed by node rollback",
+					                __func__, inode);
+				}
+				else {
+					// A node-deletion removes the ACL row, so a missing node here indicates a stale
+					// row; report and skip it rather than failing the load.
+					safs::log_warn("{}: ACL for inode {} skipped: node not found", __func__, inode);
+				}
+				continue;
+			}
+
+			RichACL acl;
+			try {
+				deserialize(pair.value.data(), pair.value.size(), acl);
+			} catch (const std::exception &e) {
+				safs::log_err("{}: failed to deserialize ACL for inode {}: {}", __func__, inode,
+				              e.what());
+				return kOpFailure;
+			}
+
+			gMetadata->aclStorage.set(inode, std::move(acl));
+			aclCount++;
+		}
+
+		if (!pageResult.hasMore() || pageResult.getPairs().empty()) { break; }
+
+		startSelector = kv::KeySelector(pageResult.getPairs().back().key, false, 0);
+	}
+
+	safs::log_info("Loaded {} ACLs", aclCount);
+
+	// NOTE: like FREE, the ACLS section intentionally has no checkpoint rollback (no recorder is
+	// registered, and the Acl*Event do not call recordPreMutation). This is deliberate:
+	//   - ACLs are not part of the metadata checksum, so a drifted (post-checkpoint) ACL image
+	//     never causes a shadow checksum mismatch at intermediate replay versions.
+	//   - SETACL/DELETEACL replay is idempotent (full replace / erase), so loading the latest
+	//     ACLS_ image and replaying to the current version converges to the same ACLs.
+	// A dedicated ACL rollback would only matter for point-in-time restore without changelog
+	// replay, which the forkless backend never does. See test_shadow_acl_sync_with_fdb.sh.
+	safs::log_info("Section loaded successfully (ACLS 1.2): {}s", timer.elapsed_s());
+	return kOpSuccess;
+}
+
 int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	safs::log_info("Loading edges from FoundationDB");
 	Timer timer;
@@ -1224,9 +1328,9 @@ void MetadataBackendForkless::initSections() {
 	                               [this](bool flag) { return loadXAttr(flag); });
 	metadataSections_.emplace_back("QUOT 1.1", kQuotasKeyPrefix,
 	                               [this](bool flag) { return loadQuotas(flag); });
-	/*metadataSections_.emplace_back("ACLS 1.2", kACLsKeyPrefix,
+	metadataSections_.emplace_back("ACLS 1.2", kACLsKeyPrefix,
 	                               [this](bool flag) { return loadACLs(flag); });
-	metadataSections_.emplace_back("FLCK 1.0", "FLCK_", loadLocks);*/
+	// metadataSections_.emplace_back("FLCK 1.0", "FLCK_", loadLocks);
 	metadataSections_.emplace_back("CHNK 1.0", kChunkLatestKeyPrefix,
 	                               [this](bool flag) { return loadChunks(flag); });
 }
@@ -1398,6 +1502,10 @@ void MetadataBackendForkless::connectGlobalSignalsOnce() {
 
 	gQuotaChangedSignal.connect([](QuotaOwnerType ownerType, inode_t ownerId) {
 		if (gForklessBackend != nullptr) { gForklessBackend->onQuotaChanged(ownerType, ownerId); }
+	});
+
+	gAclChangedSignal.connect([](inode_t inode) {
+		if (gForklessBackend != nullptr) { gForklessBackend->onAclChanged(inode); }
 	});
 
 	initializeNewMetadataHeaderSignal.connect([]() {

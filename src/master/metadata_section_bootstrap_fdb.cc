@@ -31,6 +31,7 @@
 
 #include "common/datapack.h"
 #include "common/memory_mapped_file.h"
+#include "common/richacl.h"
 #include "common/serialization.h"
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
@@ -561,6 +562,84 @@ int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
 	return kOpSuccess;
 }
 
+int8_t MetadataSectionBootstrapFDB::loadACLSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("ACLS 1.2");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for ACLS 1.2");
+		return kOpFailure;
+	}
+
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping ACLs: section bounds overflow");
+		return kOpFailure;
+	}
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging and will be flushed directly to FDB.
+	MetadataWriterFDB writer(kvEngine_);
+	uint64_t aclCount = 0;
+	size_t pending = 0;
+
+	// Each entry is <size:u32><serialize(inode, acl)>; a zero size is the end marker. This mirrors
+	// fs_store_acls()/fs_load_acl() in the FILE backend.
+	constexpr size_t kSizeFieldLength = sizeof(uint32_t);
+
+	try {
+		while (metadataFile_->offset(ptr) < sectionEnd) {
+			// Subtraction avoids overflow; offset(ptr) < sectionEnd is guaranteed by the loop.
+			if (kSizeFieldLength > sectionEnd - metadataFile_->offset(ptr)) {
+				safs::log_err("{}: truncated ACL entry size", __func__);
+				return kOpFailure;
+			}
+
+			uint32_t entrySize = 0;
+			deserialize(ptr, kSizeFieldLength, entrySize);
+			ptr += kSizeFieldLength;
+
+			// End-of-ACLs marker.
+			if (entrySize == 0) { break; }
+
+			if (entrySize > sectionEnd - metadataFile_->offset(ptr)) {
+				safs::log_err("{}: truncated ACL entry payload", __func__);
+				return kOpFailure;
+			}
+
+			inode_t inode{};
+			RichACL acl;
+			deserialize(ptr, entrySize, inode, acl);
+			ptr += entrySize;
+
+			// Re-serialize the ACL alone for FDB, matching loadACLs()/onAclChanged() so the value
+			// reads back identically (the inode is encoded in the ACLS_<inode> key, not the value).
+			std::vector<uint8_t> serializedAcl;
+			serialize(serializedAcl, acl);
+
+			writer.enqueue(std::make_unique<AclUpdateEvent>(inode, std::move(serializedAcl)));
+			aclCount++;
+
+			if (++pending >= kFlushThreshold) {
+				if (!writer.flush()) { return kOpFailure; }
+				pending = 0;
+			}
+		}
+	} catch (const std::exception &ex) {
+		safs::log_err("Bootstrapping ACLs: failed to deserialize entry: {}", ex.what());
+		return kOpFailure;
+	}
+
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
+		safs::log_err("Failed to flush bootstrapped ACLs to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} ACLs from metadata file into FDB", aclCount);
+	return kOpSuccess;
+}
+
 int8_t MetadataSectionBootstrapFDB::loadQuotaSection() {
 	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
 
@@ -681,6 +760,11 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	});
 
 	// Filesystem MetadataSection "ACLS 1.2"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "ACLS 1.2",
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kACLsKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadACLSection(); },
+	});
 
 	// Filesystem MetadataSection "QUOT 1.1"
 	metadataFileSections_.emplace_back(MetadataFileSection{
