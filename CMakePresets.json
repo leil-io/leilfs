@@ -142,6 +142,45 @@
             "cacheVariables": {
                 "ENABLE_FOUNDATIONDB": "OFF"
             }
+        },
+        {
+            "name": "sanitize-vcpkg-base",
+            "hidden": true,
+            "inherits": ["test-vcpkg"],
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "ENABLE_WERROR": "OFF"
+            }
+        },
+        {
+            "name": "asan-vcpkg",
+            "displayName": "AddressSanitizer",
+            "inherits": ["sanitize-vcpkg-base"],
+            "binaryDir": "${sourceDir}/build/leilfs-asan",
+            "installDir": "${sourceDir}/install/leilfs-asan",
+            "cacheVariables": {
+                "SANITIZE": "address"
+            }
+        },
+        {
+            "name": "tsan-vcpkg",
+            "displayName": "ThreadSanitizer",
+            "inherits": ["sanitize-vcpkg-base"],
+            "binaryDir": "${sourceDir}/build/leilfs-tsan",
+            "installDir": "${sourceDir}/install/leilfs-tsan",
+            "cacheVariables": {
+                "SANITIZE": "thread"
+            }
+        },
+        {
+            "name": "ubsan-vcpkg",
+            "displayName": "UndefinedBehaviorSanitizer",
+            "inherits": ["sanitize-vcpkg-base"],
+            "binaryDir": "${sourceDir}/build/leilfs-ubsan",
+            "installDir": "${sourceDir}/install/leilfs-ubsan",
+            "cacheVariables": {
+                "SANITIZE": "undefined"
+            }
         }
     ],
     "buildPresets": [
@@ -197,6 +236,21 @@
         {
             "name": "test-vcpkg",
             "configurePreset": "test-vcpkg",
+            "inherits": ["default"]
+        },
+        {
+            "name": "asan-vcpkg",
+            "configurePreset": "asan-vcpkg",
+            "inherits": ["default"]
+        },
+        {
+            "name": "tsan-vcpkg",
+            "configurePreset": "tsan-vcpkg",
+            "inherits": ["default"]
+        },
+        {
+            "name": "ubsan-vcpkg",
+            "configurePreset": "ubsan-vcpkg",
             "inherits": ["default"]
         },
         {
