@@ -609,10 +609,15 @@ bool MetadataWriterFDB::flushAndWait() {
 	std::unique_lock<std::mutex> lock(mutex_);
 	// Observe only failures from this point on; ignore a stale failure from a previous caller.
 	lastFlushFailed_ = false;
+	// Tell the worker to drain immediately without group-commit lingering: the seal needs the queue
+	// empty and the worker parked as soon as possible.
+	drainNow_ = true;
 	workCv_.notify_all();
+	lingerCv_.notify_all();  // cut any active group-commit window short
 	drainedCv_.wait(lock, [this] {
 		return stop_ || lastFlushFailed_ || (pendingUpdates_.empty() && !busy_);
 	});
+	drainNow_ = false;
 	return !lastFlushFailed_ && !stop_;
 }
 
@@ -731,6 +736,7 @@ void MetadataWriterFDB::stopWorker() {
 	workCv_.notify_all();
 	spaceCv_.notify_all();
 	drainedCv_.notify_all();
+	lingerCv_.notify_all();
 	if (workerThread_.joinable()) { workerThread_.join(); }
 }
 
@@ -739,6 +745,17 @@ void MetadataWriterFDB::workerLoop() {
 	while (true) {
 		workCv_.wait(lock, [this] { return stop_ || !pendingUpdates_.empty(); });
 		if (pendingUpdates_.empty()) { break; }  // stop requested and nothing left to drain
+
+		// Group-commit linger: if the pending set is below a full batch and no seal barrier
+		// (drainNow_) or shutdown (stop_) wants an immediate drain, wait briefly so trickle coalesces
+		// into fewer, fatter commits. The wait is on lingerCv_, which enqueue() does NOT signal, so
+		// accumulating events never wake the worker (no per-enqueue wakeup storm / lock contention
+		// with the producer). Only stop or a seal barrier cuts the window short. Under sustained load
+		// the queue is already >= kMaxUpdatesPerFlush_ at wake, so this is skipped entirely.
+		if (!stop_ && !drainNow_ && pendingUpdates_.size() < kMaxUpdatesPerFlush_) {
+			lingerCv_.wait_for(lock, std::chrono::milliseconds(kBatchLingerMs_),
+			                   [this] { return stop_ || drainNow_; });
+		}
 
 		// Take a batch under the lock; commit it WITHOUT the lock so enqueue() never blocks on FDB
 		// commit latency (that is the whole point of the async writer).

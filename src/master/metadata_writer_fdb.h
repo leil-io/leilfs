@@ -389,12 +389,20 @@ private:
 	std::condition_variable workCv_;     ///< wakes the worker when work arrives or on stop
 	std::condition_variable spaceCv_;    ///< wakes enqueuers blocked on backpressure as space frees
 	std::condition_variable drainedCv_;  ///< wakes flushAndWait() when the queue is empty and idle
+	std::condition_variable lingerCv_;   ///< ends the group-commit window on stop/seal; NOT signalled
+	                                     ///< by enqueue (so accumulation never wakes the worker)
 	bool stop_ = false;
 	bool busy_ = false;             ///< worker holds a batch that is being committed
 	bool lastFlushFailed_ = false;  ///< a commit failed since the last flushAndWait() reset it
+	bool drainNow_ = false;         ///< a flushAndWait() barrier wants an immediate drain (no linger)
 	size_t maxPending_;             ///< backpressure high-water mark (async mode)
 
 	constexpr static size_t kMaxUpdatesPerFlush_ = 1000;
 	constexpr static size_t kDefaultMaxPending_ = 200000;
 	constexpr static int kCommitRetryBackoffMs_ = 20;
+	/// Group-commit window: when the worker wakes with a partial batch (< kMaxUpdatesPerFlush_) it
+	/// waits up to this long for more events to coalesce into one commit. FDB throughput is
+	/// transactions/sec-bound and the changelog is the durability record, so this deferral carries
+	/// no client-visible latency cost.
+	constexpr static int kBatchLingerMs_ = 2;
 };
