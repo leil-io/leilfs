@@ -65,8 +65,6 @@
 #include "slogger/slogger.h"
 
 namespace {
-constexpr uint32_t kMetadataFlushIntervalMs = 100;
-
 MetadataBackendForkless *gForklessBackend = nullptr;
 
 #ifndef METARESTORE
@@ -105,22 +103,10 @@ int checkOrphanedNodes() {
 
 }
 
-// Add a static callback function
-static void flushMetadataCallback() {
-	if (gForklessBackend != nullptr) { (void)gForklessBackend->flushPendingUpdates(false); }
-}
-
 // Called by the personality subsystem when this server is promoted from Shadow to Master.
 // Must match the void(*)(void) signature required by registerFunctionCalledOnPromotion.
 static void forklessBackendBecameMaster() {
 	if (gForklessBackend != nullptr) { gForklessBackend->onPromotedToMaster(); }
-}
-
-// Eventloop destruct hook: runs while the time table is still alive (before
-// eventloop_release_resources() clears it) so the backend's static destructor never
-// unregisters an already-removed flush timer. Must match the void(*)(void) signature.
-static void forklessFlushTimerTeardown() {
-	if (gForklessBackend != nullptr) { gForklessBackend->onEventloopTeardown(); }
 }
 
 inline Signal initializeNewMetadataHeaderSignal;
@@ -139,21 +125,14 @@ MetadataBackendForkless::MetadataBackendForkless()
 }
 
 MetadataBackendForkless::~MetadataBackendForkless() {
-	// Unregister the periodic flush timer if it is still live. This matters when the backend
-	// is destroyed while the eventloop is running (e.g. recreated in tests): otherwise stale
-	// timers accumulate and keep flushing the newer instance through gForklessBackend. At
-	// process shutdown the eventloop destruct hook (onEventloopTeardown) has already cleared
-	// flushTimerHandle_, so this is a no-op and never touches the already-cleared time table
-	// (eventloop_timeunregister maborts on an unknown handle).
-	if (flushTimerHandle_ != nullptr) {
-		eventloop_timeunregister(flushTimerHandle_);
-		flushTimerHandle_ = nullptr;
-	}
+	// The async metadata writer owns a background thread that commits to FDB. It is a member
+	// declared after kvConnector_/checkpointManager_, so it is destroyed first: ~MetadataWriterFDB
+	// stops and joins the worker (final drain) while the KV engine and checkpoint manager are still
+	// alive. No explicit teardown is needed here.
 
-	// Static callbacks (periodic flush timer, promotion handler) dereference
-	// gForklessBackend. Clear it on destruction so they never touch a deleted
-	// instance. Guard on identity so destroying an old backend cannot clobber a
-	// newer one that already claimed the pointer in its constructor.
+	// The promotion handler static callback dereferences gForklessBackend. Clear it on destruction
+	// so it never touches a deleted instance. Guard on identity so destroying an old backend cannot
+	// clobber a newer one that already claimed the pointer in its constructor.
 	if (gForklessBackend == this) { gForklessBackend = nullptr; }
 }
 
@@ -1327,13 +1306,12 @@ void MetadataBackendForkless::store_fd(FILE *fd) {
 
 #endif  // #ifndef METALOGGER
 
-bool MetadataBackendForkless::flushPendingUpdates(bool flushAll) {
+bool MetadataBackendForkless::flushPendingUpdates(bool /*flushAll*/) {
 	if (!metadataWriter_) { return false; }
-	if (flushAll) {
-		return metadataWriter_->flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty);
-	}
-
-	return metadataWriter_->flush();
+	// Drain everything and wait for the background worker to go idle. The checkpoint seal path is
+	// the only caller; it needs all pending updates committed (and the worker parked) before
+	// beginCheckpoint()/sealCheckpoint() mutate checkpoint-manager state.
+	return metadataWriter_->flushAndWait();
 }
 
 void MetadataBackendForkless::onPromotedToMaster() {
@@ -1347,9 +1325,11 @@ void MetadataBackendForkless::onPromotedToMaster() {
 	// In-memory metadata is authoritative here (kept current by changelog replay).
 	checkpointManager_->reloadDurableCheckpointState();
 
-	metadataWriter_ =
-	    std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(), checkpointManager_.get());
-	registerFlushTimer();
+	// Async writer: a background thread drains and commits the queue off the event loop, so client
+	// mutations never block on FDB commit latency. The seal path (fs_storeall -> flushPendingUpdates)
+	// uses flushAndWait() to barrier the worker idle before sealing a checkpoint.
+	metadataWriter_ = std::make_unique<MetadataWriterFDB>(
+	    kvConnector_->getKVEngine(), checkpointManager_.get(), /*asyncFlush=*/true);
 
 	// Close the promotion crash-window gap. If the previous master was killed within its
 	// flush window, the tail of its writes reached the changelog (and thus this node's memory via
@@ -1524,18 +1504,6 @@ void MetadataBackendForkless::clearDirtySets() {
 	dirtyChunks_.clear();
 }
 
-void MetadataBackendForkless::registerFlushTimer() {
-	if (flushTimerHandle_ != nullptr) { return; }  // already registered; never stack timers
-	flushTimerHandle_ = eventloop_timeregister_ms(kMetadataFlushIntervalMs, flushMetadataCallback);
-
-	// Install a destruct hook bound to the current eventloop's lifetime. It runs during
-	// eventloop_destruct() — before eventloop_release_resources() clears the time table — and
-	// clears the cached handle so the (later) static destructor does not unregister an
-	// already-removed timer. Rebound on each fresh registration, so it also survives an
-	// eventloop that is torn down and recreated (e.g. across test cases).
-	eventloop_destructregister(forklessFlushTimerTeardown);
-}
-
 void MetadataBackendForkless::initSections() {
 	metadataSections_.emplace_back("NODE 1.0", kNodeKeyPrefix,
 	                               [this](bool flag) { return loadNodes(flag); });
@@ -1590,14 +1558,13 @@ void MetadataBackendForkless::init() {
 
 	checkpointManager_ = std::make_unique<MetadataCheckpointManager>(kvConnector_->getKVEngine());
 
-	// Writer and flush timer are only initialized for the master personality.
+	// The (async) writer is only initialized for the master personality.
 	// Shadows must not write to the shared FDB database; all on* signal handlers already guard on
 	// metadataWriter_ != nullptr, so no events reach FDB while the pointer stays null.
-	// onPromotedToMaster() creates the writer and registers the timer on shadow->master promotion.
+	// onPromotedToMaster() creates the writer on shadow->master promotion.
 	if (metadataserver::isMaster()) {
-		metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvConnector_->getKVEngine(),
-		                                                      checkpointManager_.get());
-		registerFlushTimer();
+		metadataWriter_ = std::make_unique<MetadataWriterFDB>(
+		    kvConnector_->getKVEngine(), checkpointManager_.get(), /*asyncFlush=*/true);
 	}
 
 	// Register the promotion callback so a shadow that becomes master starts writing to FDB.

@@ -21,6 +21,7 @@
 #include "master/metadata_writer_fdb.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "common/datapack.h"
@@ -464,14 +465,25 @@ void AclRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
                                      MetadataCheckpointManager *checkpointManager,
-                                     size_t backlogHighWatermark)
+                                     size_t backlogHighWatermark, bool asyncFlush)
     : kvEngine_(kvEngine),
       checkpointManager_(checkpointManager),
+      asyncFlush_(asyncFlush),
       backlogHighWatermark_(backlogHighWatermark),
       backlogLogStep_(backlogHighWatermark),
-      backlogLowWatermark_(backlogHighWatermark / 2) {}
+      backlogLowWatermark_(backlogHighWatermark / 2),
+      maxPending_(kDefaultMaxPending_) {
+	if (asyncFlush_) { startWorker(); }
+}
 
 MetadataWriterFDB::~MetadataWriterFDB() {
+	if (asyncFlush_) {
+		// Signals the worker to drain the remaining updates and exit, then joins it. The worker
+		// still uses kvEngine_/checkpointManager_, which outlive the writer (see the backend's
+		// member declaration order), so its final commits are safe.
+		stopWorker();
+		return;
+	}
 	if (pendingCount() > 0) {
 		safs::log_warn(
 		    "MetadataWriterFDB destroyed with {} pending updates, attempting final flush",
@@ -490,10 +502,24 @@ void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 	size_t depth = 0;
 	bool shouldLog = false;
 	{
-		std::lock_guard<std::mutex> lock(mutex_);
+		std::unique_lock<std::mutex> lock(mutex_);
+		if (asyncFlush_) {
+			// Bounded queue (backpressure): if the background worker cannot keep up -- e.g. FDB is
+			// stalled -- block the caller until space frees. The changelog is the durability
+			// record, so throttling here only paces the in-memory->FDB mirror; nothing is lost.
+			if (pendingUpdates_.size() >= maxPending_) {
+				safs::log_warn("MetadataWriterFDB queue full ({} >= {}), throttling until it drains",
+				               pendingUpdates_.size(), maxPending_);
+				spaceCv_.wait(lock, [this] { return stop_ || pendingUpdates_.size() < maxPending_; });
+			}
+		}
 		pendingUpdates_.emplace_back(std::move(event));
 		depth = pendingUpdates_.size();
 		shouldLog = noteBacklogGrowthLocked(depth);
+		// Wake the background worker (async mode). Backpressure (hard cap, maxPending_) and the
+		// backlog health signal (soft high-watermark, logged) are complementary: the watermark
+		// warns before the cap ever blocks.
+		if (asyncFlush_) { workCv_.notify_one(); }
 	}
 
 	// Log outside the lock. FDB persistence is asynchronous and the changelog is the durable
@@ -501,10 +527,7 @@ void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 	// health signal to act on (alert / failover) before memory is exhausted.
 	if (shouldLog) {
 		safs::log_err(
-		    "FDB metadata writer backlog: {} pending updates; FDB persistence is lagging. The "
-		    "changelog remains the durable source of truth (recovery replays it), but this master "
-		    "should be investigated or failed over before memory is exhausted.",
-		    depth);
+		    "FDB metadata writer backlog: {} pending updates; FDB persistence is lagging.", depth);
 	}
 }
 
@@ -579,6 +602,20 @@ bool MetadataWriterFDB::flush(FlushMode mode) {
 	return true;
 }
 
+bool MetadataWriterFDB::flushAndWait() {
+	// Synchronous writer (e.g. migration bootstrap): drain on the caller's thread.
+	if (!asyncFlush_) { return flush(FlushMode::kDrainUntilEmpty); }
+
+	std::unique_lock<std::mutex> lock(mutex_);
+	// Observe only failures from this point on; ignore a stale failure from a previous caller.
+	lastFlushFailed_ = false;
+	workCv_.notify_all();
+	drainedCv_.wait(lock, [this] {
+		return stop_ || lastFlushFailed_ || (pendingUpdates_.empty() && !busy_);
+	});
+	return !lastFlushFailed_ && !stop_;
+}
+
 size_t MetadataWriterFDB::pendingCount() const {
 	std::lock_guard<std::mutex> lock(mutex_);
 	return pendingUpdates_.size();
@@ -605,14 +642,14 @@ void MetadataWriterFDB::restoreBatch(UpdateQueue updates) {
 	}
 }
 
-bool MetadataWriterFDB::flushBatch(size_t maxUpdates, size_t &consumedOut) {
-	consumedOut = 0;
-	auto batch = takeBatch(maxUpdates);
+bool MetadataWriterFDB::commitBatch(UpdateQueue &batch, size_t &appliedOut) {
+	appliedOut = 0;
 	if (batch.empty()) { return true; }
 
 	// Apply and commit under try/catch: a throwing applyEvent()/commit() (FDB timeout,
-	// serialization error, etc.) must not destroy the batch, or the updates are lost
-	// permanently. Restore the batch on any failure so it is retried on the next flush.
+	// serialization error, etc.) must not lose the batch. This function never takes from or
+	// restores to the queue -- the caller owns the batch: it retries the whole batch on failure
+	// and re-queues the tail deferred by the size cap (reported via appliedOut) on success.
 	size_t applied = 0;
 	try {
 		auto transaction = kvEngine_->createReadWriteTransaction();
@@ -641,21 +678,37 @@ bool MetadataWriterFDB::flushBatch(size_t maxUpdates, size_t &consumedOut) {
 
 		if (!transaction->commit()) {
 			safs::log_err("Failed to flush {} metadata updates to FDB", applied);
-			restoreBatch(std::move(batch));
 			return false;
 		}
 	} catch (const std::exception &e) {
 		safs::log_err("Exception while flushing {} metadata updates to FDB: {}", applied, e.what());
-		restoreBatch(std::move(batch));
 		return false;
 	} catch (...) {
 		safs::log_err("Unknown exception while flushing {} metadata updates to FDB", applied);
+		return false;
+	}
+
+	// Commit succeeded: the first `applied` events are durable. The caller re-queues any deferred
+	// tail (events beyond the size cap) so it flushes, in order, in a following batch.
+	appliedOut = applied;
+	safs::log_info("Flushed {} metadata updates to FDB", applied);
+	return true;
+}
+
+bool MetadataWriterFDB::flushBatch(size_t maxUpdates, size_t &consumedOut) {
+	consumedOut = 0;
+	auto batch = takeBatch(maxUpdates);
+	if (batch.empty()) { return true; }
+
+	size_t applied = 0;
+	if (!commitBatch(batch, applied)) {
+		// Restore the whole batch to the front so it is retried, in order, on the next flush.
 		restoreBatch(std::move(batch));
 		return false;
 	}
 
-	// Commit succeeded: the first `applied` events are durable. Re-queue any deferred tail so it
-	// flushes (with its own undo capture) in a following batch, preserving order.
+	// Re-queue any tail deferred by the size cap so it flushes (with its own undo capture) in a
+	// following batch, preserving order.
 	if (applied < batch.size()) {
 		UpdateQueue tail;
 		for (size_t i = applied; i < batch.size(); ++i) { tail.push_back(std::move(batch[i])); }
@@ -663,6 +716,74 @@ bool MetadataWriterFDB::flushBatch(size_t maxUpdates, size_t &consumedOut) {
 	}
 
 	consumedOut = applied;
-	safs::log_info("Flushed {} metadata updates to FDB", applied);
 	return true;
+}
+
+void MetadataWriterFDB::startWorker() {
+	workerThread_ = std::thread([this] { workerLoop(); });
+}
+
+void MetadataWriterFDB::stopWorker() {
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		stop_ = true;
+	}
+	workCv_.notify_all();
+	spaceCv_.notify_all();
+	drainedCv_.notify_all();
+	if (workerThread_.joinable()) { workerThread_.join(); }
+}
+
+void MetadataWriterFDB::workerLoop() {
+	std::unique_lock<std::mutex> lock(mutex_);
+	while (true) {
+		workCv_.wait(lock, [this] { return stop_ || !pendingUpdates_.empty(); });
+		if (pendingUpdates_.empty()) { break; }  // stop requested and nothing left to drain
+
+		// Take a batch under the lock; commit it WITHOUT the lock so enqueue() never blocks on FDB
+		// commit latency (that is the whole point of the async writer).
+		UpdateQueue batch;
+		const size_t batchSize = std::min(pendingUpdates_.size(), kMaxUpdatesPerFlush_);
+		for (size_t i = 0; i < batchSize; ++i) {
+			batch.push_back(std::move(pendingUpdates_.front()));
+			pendingUpdates_.pop_front();
+		}
+		busy_ = true;
+		lock.unlock();
+
+		size_t applied = 0;
+		const bool ok = commitBatch(batch, applied);
+
+		lock.lock();
+		busy_ = false;
+		if (!ok) {
+			// Preserve order: return the failed batch to the front for retry.
+			while (!batch.empty()) {
+				pendingUpdates_.push_front(std::move(batch.back()));
+				batch.pop_back();
+			}
+			lastFlushFailed_ = true;
+		} else if (applied < batch.size()) {
+			// The size cap deferred a tail: return it to the front, in order, for the next batch.
+			for (size_t i = batch.size(); i-- > applied;) {
+				pendingUpdates_.push_front(std::move(batch[i]));
+			}
+		}
+
+		// Wake enqueuers blocked on backpressure (space may have freed) and any flushAndWait().
+		spaceCv_.notify_all();
+		if (lastFlushFailed_ || pendingUpdates_.empty()) { drainedCv_.notify_all(); }
+
+		if (!ok) {
+			if (stop_) {
+				safs::log_warn(
+				    "MetadataWriterFDB stopping with {} unflushed updates after a commit failure",
+				    pendingUpdates_.size());
+				break;
+			}
+			// Back off so a persistent FDB failure does not hot-spin; wake immediately on stop.
+			workCv_.wait_for(lock, std::chrono::milliseconds(kCommitRetryBackoffMs_),
+			                 [this] { return stop_; });
+		}
+	}
 }
