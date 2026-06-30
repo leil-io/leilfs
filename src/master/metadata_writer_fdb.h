@@ -31,7 +31,9 @@
 #include <vector>
 
 #include "common/type_defs.h"
+#include "kv/ifuture.h"
 #include "kv/ikv_engine.h"
+#include "kv/itransaction.h"
 #include "master/filesystem_node_types.h"
 #include "protocol/quota.h"
 
@@ -323,13 +325,28 @@ public:
 private:
 	using UpdateQueue = std::deque<std::unique_ptr<IMetadataUpdateEvent>>;
 
+	/// One commit in flight: the transaction must outlive its future until getResult(), and the
+	/// events are retained so they can be requeued and re-committed if the commit fails.
+	struct InFlightCommit {
+		std::unique_ptr<kv::IReadWriteTransaction> transaction;
+		std::unique_ptr<kv::ICommitFuture> future;
+		UpdateQueue events;
+	};
+
 	UpdateQueue takeBatch(size_t maxUpdates);
-	void restoreBatch(UpdateQueue updates);
-	/// Applies and commits a batch in a single transaction, honoring the per-transaction size cap
-	/// (deferring events once the measured size reaches kTxnSoftLimitBytes_). Reports the number of
-	/// events applied+committed in `appliedOut`. Does NOT take from or restore to the queue -- the
-	/// caller owns the batch: it retries the whole batch on failure and re-queues the deferred tail
-	/// on success. Returns false (without throwing) on commit/apply failure.
+	void restoreBatch(UpdateQueue updates);  ///< push events to the front of pending (lock held)
+
+	/// Applies a batch's events into the transaction (sets up the write context), honoring the
+	/// per-transaction size cap: it stops before the measured size reaches kTxnSoftLimitBytes_ and
+	/// reports how many events it applied in `appliedOut` (always >= 1 for a non-empty batch). May
+	/// throw (a throwing applyEvent propagates to the caller). Shared by the sync commit path and
+	/// the async pipeline.
+	void applyBatch(UpdateQueue &batch, kv::IReadWriteTransaction *transaction, size_t &appliedOut);
+
+	/// Applies and commits a batch synchronously in one transaction; never touches the queue.
+	/// Reports the number of events applied+committed in `appliedOut` (the size cap may defer a
+	/// tail the caller must re-queue). Returns false (without throwing) on apply/commit failure.
+	/// Used by the sync (bootstrap) path.
 	bool commitBatch(UpdateQueue &batch, size_t &appliedOut);
 
 	/// Synchronous path (asyncFlush_ == false, e.g. migration bootstrap): takes up to `maxUpdates`,
@@ -345,17 +362,22 @@ private:
 	/// back below the low-watermark. Called after a flush drains the queue.
 	void maybeLogBacklogRecovery();
 
-	/// Background-writer lifecycle (async mode only).
+	// Async pipeline (asyncFlush == true): a background worker keeps up to kMaxInFlight_ commitAsync()
+	// transactions in flight -- all off the event loop -- and reaps them in submission order.
 	void startWorker();
 	void stopWorker();
 	void workerLoop();
+	/// Requeues every in-flight batch's events to the FRONT of the pending queue in submission order,
+	/// then clears the pipeline (lock held). On a commit failure this lets the in-order re-commit
+	/// produce the correct final per-key state even though newer commits may already have landed.
+	void requeueInFlightLocked();
 
 	kv::IKVEngine *kvEngine_;
 	MetadataCheckpointManager *checkpointManager_;
 	const bool asyncFlush_;
 
 	mutable std::mutex mutex_;
-	UpdateQueue pendingUpdates_;
+	UpdateQueue pendingUpdates_;  ///< guarded by mutex_
 
 	// Backlog watermark bookkeeping (guarded by mutex_). FDB persistence is asynchronous: the
 	// changelog is the durable source of truth and FDB is a materialized image of it, so an FDB
@@ -386,23 +408,22 @@ private:
 
 	// Async-writer coordination (all guarded by mutex_).
 	std::thread workerThread_;
-	std::condition_variable workCv_;     ///< wakes the worker when work arrives or on stop
+	std::condition_variable workCv_;     ///< wakes the worker when work arrives, a slot frees, or stop
 	std::condition_variable spaceCv_;    ///< wakes enqueuers blocked on backpressure as space frees
-	std::condition_variable drainedCv_;  ///< wakes flushAndWait() when the queue is empty and idle
-	std::condition_variable lingerCv_;   ///< ends the group-commit window on stop/seal; NOT signalled
-	                                     ///< by enqueue (so accumulation never wakes the worker)
+	std::condition_variable drainedCv_;  ///< wakes flushAndWait() when the pipeline is fully drained
+	std::condition_variable lingerCv_;   ///< group-commit linger; NOT signalled by enqueue (no storm)
 	bool stop_ = false;
-	bool busy_ = false;             ///< worker holds a batch that is being committed
+	bool drainNow_ = false;         ///< seal/shutdown wants an immediate drain: cut the linger short
 	bool lastFlushFailed_ = false;  ///< a commit failed since the last flushAndWait() reset it
-	bool drainNow_ = false;         ///< a flushAndWait() barrier wants an immediate drain (no linger)
 	size_t maxPending_;             ///< backpressure high-water mark (async mode)
 
+	// In-flight commits, guarded by mutex_ (all push/pop happen under the lock; only the blocking
+	// getResult() on a held future pointer runs off-lock). flushAndWait() reads its emptiness.
+	std::deque<InFlightCommit> inFlight_;
+
 	constexpr static size_t kMaxUpdatesPerFlush_ = 1000;
+	constexpr static size_t kMaxInFlight_ = 8;  ///< pipeline depth (commits kept in flight)
 	constexpr static size_t kDefaultMaxPending_ = 200000;
 	constexpr static int kCommitRetryBackoffMs_ = 20;
-	/// Group-commit window: when the worker wakes with a partial batch (< kMaxUpdatesPerFlush_) it
-	/// waits up to this long for more events to coalesce into one commit. FDB throughput is
-	/// transactions/sec-bound and the changelog is the durability record, so this deferral carries
-	/// no client-visible latency cost.
-	constexpr static int kBatchLingerMs_ = 2;
+	constexpr static int kBatchLingerMs_ = 2;  ///< trickle-only group-commit linger (pipeline idle)
 };

@@ -17,9 +17,14 @@
 */
 
 #include <gtest/gtest.h>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <optional>
+#include <stdexcept>
+#include <thread>
 
 #include "kv/ifuture.h"
 #include "kv/ikv_engine.h"
@@ -33,6 +38,12 @@ namespace {
 // (nullopt), so the writer falls back to count-based batching.
 class NoopTransaction : public kv::IReadWriteTransaction {
 public:
+	/// @param appliedSink Optional cross-transaction counter incremented once per buffered
+	///   mutation. The writer destroys each transaction after committing it, so a test that needs
+	///   to know how many events actually reached the backend has to accumulate outside them.
+	explicit NoopTransaction(std::atomic<uint64_t> *appliedSink = nullptr)
+	    : appliedSink_(appliedSink) {}
+
 	std::optional<kv::Value> get(const kv::Key & /*key*/) override { return std::nullopt; }
 	std::optional<kv::Value> getSnapshot(const kv::Key & /*key*/) override { return std::nullopt; }
 	std::unique_ptr<kv::IFuture> getAsync(const kv::Key & /*key*/) override { return nullptr; }
@@ -49,22 +60,26 @@ public:
 		return nullptr;
 	}
 
-	void set(const kv::Key & /*key*/, const kv::Value & /*value*/) override { ++mutationCount_; }
+	void set(const kv::Key & /*key*/, const kv::Value & /*value*/) override { noteMutation(); }
 	void atomicAdd(const kv::Key & /*key*/, const kv::Value & /*delta*/) override {
-		++mutationCount_;
+		noteMutation();
 	}
 	void atomicMax(const kv::Key & /*key*/, const kv::Value & /*value*/) override {
-		++mutationCount_;
+		noteMutation();
 	}
-	void remove(const kv::Key & /*key*/) override { ++mutationCount_; }
+	void remove(const kv::Key & /*key*/) override { noteMutation(); }
 	void removeRange(const kv::Key & /*start*/, const kv::Key & /*end*/) override {
-		++mutationCount_;
+		noteMutation();
 	}
 	// Conflict annotation, not a buffered write: leave mutationCount_ untouched.
 	void addReadConflictKey(const kv::Key & /*key*/) override {}
 
 	bool commit() override { return true; }
-	std::unique_ptr<kv::ICommitFuture> commitAsync() override { return nullptr; }
+	// The async pipeline dereferences this future unconditionally when it reaps the commit, so it
+	// must not be nullptr. An in-memory backend is durable the moment the mutations are buffered.
+	std::unique_ptr<kv::ICommitFuture> commitAsync() override {
+		return std::make_unique<kv::ImmediateCommitFuture>(/*success=*/true);
+	}
 	// Contract forbids nullptr; an in-memory backend has no recovery work, so hand back an
 	// already-successful future (this mock never fails a commit, so it is never called).
 	std::unique_ptr<kv::IVoidFuture> recoverAsync(int /*backendErrorCode*/) override {
@@ -74,6 +89,12 @@ public:
 	uint64_t mutationCount() const override { return mutationCount_; }
 
 private:
+	void noteMutation() {
+		++mutationCount_;
+		if (appliedSink_ != nullptr) { appliedSink_->fetch_add(1, std::memory_order_relaxed); }
+	}
+
+	std::atomic<uint64_t> *appliedSink_;
 	uint64_t mutationCount_{0};
 };
 
@@ -87,8 +108,55 @@ public:
 	}
 };
 
+// Engine whose read-write transaction factory throws until released, modelling an FDB client
+// failure at transaction-construction time (client not initialised, network thread dead, ...).
+// This is the one commit failure the async pipeline cannot observe through
+// ICommitFuture::getResult(): the commit is never submitted, so nothing is ever recorded in
+// inFlight_ and the worker's reap block -- the usual source of the drained notification -- is
+// skipped entirely.
+class ThrowingKVEngine : public kv::IKVEngine {
+public:
+	std::unique_ptr<kv::IReadOnlyTransaction> createReadOnlyTransaction() override {
+		return std::make_unique<NoopTransaction>();
+	}
+
+	std::unique_ptr<kv::IReadWriteTransaction> createReadWriteTransaction() override {
+		if (throwing_.load(std::memory_order_acquire)) {
+			throwCount_.fetch_add(1, std::memory_order_relaxed);
+			throw std::runtime_error("simulated FDB client failure");
+		}
+		return std::make_unique<NoopTransaction>(&applied_);
+	}
+
+	/// Lets the worker build transactions again, simulating the client recovering.
+	void stopThrowing() { throwing_.store(false, std::memory_order_release); }
+
+	/// How many times the factory has thrown, i.e. how many times the worker hit the failure path.
+	uint64_t throwCount() const { return throwCount_.load(std::memory_order_relaxed); }
+
+	/// Total mutations buffered across every transaction this engine handed out.
+	uint64_t applied() const { return applied_.load(std::memory_order_relaxed); }
+
+private:
+	std::atomic<bool> throwing_{true};
+	std::atomic<uint64_t> throwCount_{0};
+	std::atomic<uint64_t> applied_{0};
+};
+
 std::unique_ptr<IMetadataUpdateEvent> makeEvent(uint64_t seed) {
 	return std::make_unique<NodeRemoveEvent>(static_cast<inode_t>(seed + 1));
+}
+
+/// Spins (bounded) until `predicate` holds, so the async worker's progress is awaited rather than
+/// slept on: fast on an idle machine, tolerant on a loaded CI box. Returns whether it held.
+template <typename Predicate>
+bool waitFor(Predicate predicate, std::chrono::milliseconds limit) {
+	const auto deadline = std::chrono::steady_clock::now() + limit;
+	while (std::chrono::steady_clock::now() < deadline) {
+		if (predicate()) { return true; }
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	return predicate();
 }
 
 }  // namespace
@@ -137,4 +205,61 @@ TEST(MetadataWriterFDBBacklog, SignalEscalatesAndRecovers) {
 	// Drain so the destructor's final flush has nothing to do.
 	ASSERT_TRUE(writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty));
 	EXPECT_EQ(writer.pendingCount(), 0U);
+}
+
+// A transaction that never gets built leaves the pipeline empty, so the worker skips the reap
+// block that normally notifies drainedCv_. flushAndWait() must still be released: its predicate is
+// already satisfied (the failure sets lastFlushFailed_), and without a notification the checkpoint
+// seal would park forever behind a failing FDB client while the worker retried in the background.
+TEST(MetadataWriterFDBAsync, FlushAndWaitReturnsWhenTransactionBuildThrows) {
+	ThrowingKVEngine engine;
+	MetadataWriterFDB writer(&engine, /*checkpointManager=*/nullptr,
+	                         MetadataWriterFDB::kDefaultBacklogHighWatermark_,
+	                         /*asyncFlush=*/true);
+
+	writer.enqueue(makeEvent(0));
+
+	std::promise<bool> outcome;
+	auto released = outcome.get_future();
+	std::thread sealer([&] { outcome.set_value(writer.flushAndWait()); });
+
+	const bool returned = released.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+
+	// Release the worker before joining, whether or not the wait succeeded: on a regression the
+	// sealer is parked until something can commit, and joining it would hang the whole suite
+	// instead of failing this one test.
+	engine.stopThrowing();
+	sealer.join();
+
+	EXPECT_TRUE(returned) << "flushAndWait() was not released by the build-failure path; a "
+	                         "checkpoint seal would hang while the FDB client is unavailable";
+	if (returned) {
+		EXPECT_FALSE(released.get()) << "a failed transaction build must be reported as a failed "
+		                                "flush, not a successful drain";
+	}
+}
+
+// A build failure must requeue its batch intact rather than drop it: the changelog is the
+// durability record, but the FDB mirror still has to converge once the client recovers.
+TEST(MetadataWriterFDBAsync, BuildFailureRequeuesEventsInsteadOfDroppingThem) {
+	ThrowingKVEngine engine;
+	MetadataWriterFDB writer(&engine, /*checkpointManager=*/nullptr,
+	                         MetadataWriterFDB::kDefaultBacklogHighWatermark_,
+	                         /*asyncFlush=*/true);
+
+	constexpr size_t kEvents = 16;
+	for (size_t i = 0; i < kEvents; ++i) { writer.enqueue(makeEvent(i)); }
+
+	// Confirm the worker actually reached the failure path, so the assertions below are not just
+	// racing past a queue that was never touched.
+	ASSERT_TRUE(waitFor([&] { return engine.throwCount() > 0; }, std::chrono::seconds(5)))
+	    << "worker never attempted to build a transaction";
+	EXPECT_EQ(writer.pendingCount(), kEvents) << "a failed build must requeue its whole batch";
+	EXPECT_EQ(engine.applied(), 0U) << "nothing may reach the backend while the build fails";
+
+	// Once the client recovers, every event must land exactly once and in one drain.
+	engine.stopThrowing();
+	EXPECT_TRUE(writer.flushAndWait());
+	EXPECT_EQ(writer.pendingCount(), 0U);
+	EXPECT_EQ(engine.applied(), kEvents) << "events were lost or duplicated across the requeue";
 }

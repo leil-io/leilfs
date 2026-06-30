@@ -609,14 +609,17 @@ bool MetadataWriterFDB::flushAndWait() {
 	std::unique_lock<std::mutex> lock(mutex_);
 	// Observe only failures from this point on; ignore a stale failure from a previous caller.
 	lastFlushFailed_ = false;
-	// Tell the worker to drain immediately without group-commit lingering: the seal needs the queue
-	// empty and the worker parked as soon as possible.
+	// Cut any active group-commit linger short: the seal needs the queue empty and the pipeline idle
+	// as soon as possible, not after the linger window elapses.
 	drainNow_ = true;
 	workCv_.notify_all();
-	lingerCv_.notify_all();  // cut any active group-commit window short
+	lingerCv_.notify_all();
+	// Wait until the worker has committed everything: the pending queue is empty and no commit is
+	// still in flight. The checkpoint seal then runs with the pipeline fully drained.
 	drainedCv_.wait(lock, [this] {
-		return stop_ || lastFlushFailed_ || (pendingUpdates_.empty() && !busy_);
+		return stop_ || lastFlushFailed_ || (pendingUpdates_.empty() && inFlight_.empty());
 	});
+	// Re-arm the group-commit linger for the next interval now that this drain is complete.
 	drainNow_ = false;
 	return !lastFlushFailed_ && !stop_;
 }
@@ -647,6 +650,33 @@ void MetadataWriterFDB::restoreBatch(UpdateQueue updates) {
 	}
 }
 
+void MetadataWriterFDB::applyBatch(UpdateQueue &batch, kv::IReadWriteTransaction *transaction,
+                                   size_t &appliedOut) {
+	appliedOut = 0;
+	MetadataWriteContext context{
+	    .transaction = transaction,
+	    .checkpointManager = checkpointManager_,
+	    .checkpointVersion =
+	        checkpointManager_ != nullptr ? checkpointManager_->activeCheckpointVersion() : 0,
+	};
+	size_t applied = 0;
+	for (const auto &update : batch) {
+		update->applyEvent(context);
+		++applied;
+
+		// Stop before the transaction exceeds the backend's per-transaction size limit. The
+		// measured size includes the per-first-touch undo rows applyEvent() may have written in
+		// this same transaction. Always keep at least one event so an oversized event still
+		// commits alone rather than being deferred forever. getApproximateSize() is a client-side
+		// estimate, so polling it per event is cheap.
+		if (applied < batch.size()) {
+			const auto approxSize = transaction->getApproximateSize();
+			if (approxSize.has_value() && *approxSize >= kTxnSoftLimitBytes_) { break; }
+		}
+	}
+	appliedOut = applied;
+}
+
 bool MetadataWriterFDB::commitBatch(UpdateQueue &batch, size_t &appliedOut) {
 	appliedOut = 0;
 	if (batch.empty()) { return true; }
@@ -658,29 +688,7 @@ bool MetadataWriterFDB::commitBatch(UpdateQueue &batch, size_t &appliedOut) {
 	size_t applied = 0;
 	try {
 		auto transaction = kvEngine_->createReadWriteTransaction();
-
-		MetadataWriteContext context{
-		    .transaction = transaction.get(),
-		    .checkpointManager = checkpointManager_,
-		    .checkpointVersion =
-		        checkpointManager_ != nullptr ? checkpointManager_->activeCheckpointVersion() : 0,
-		};
-
-		for (const auto &update : batch) {
-			update->applyEvent(context);
-			++applied;
-
-			// Stop before the transaction exceeds the backend's per-transaction size limit. The
-			// measured size includes the per-first-touch undo rows applyEvent() may have written
-			// in this same transaction. Always keep at least one event so an oversized event
-			// still commits alone rather than being deferred forever. getApproximateSize() is a
-			// client-side estimate, so polling it per event is cheap.
-			if (applied < batch.size()) {
-				const auto approxSize = transaction->getApproximateSize();
-				if (approxSize.has_value() && *approxSize >= kTxnSoftLimitBytes_) { break; }
-			}
-		}
-
+		applyBatch(batch, transaction.get(), applied);
 		if (!transaction->commit()) {
 			safs::log_err("Failed to flush {} metadata updates to FDB", applied);
 			return false;
@@ -736,71 +744,144 @@ void MetadataWriterFDB::stopWorker() {
 	workCv_.notify_all();
 	spaceCv_.notify_all();
 	drainedCv_.notify_all();
-	lingerCv_.notify_all();
+	lingerCv_.notify_all();  // cut an active group-commit window short instead of waiting it out
 	if (workerThread_.joinable()) { workerThread_.join(); }
+}
+
+void MetadataWriterFDB::requeueInFlightLocked() {
+	// Move every in-flight batch's events, oldest batch first, back to the FRONT of the pending
+	// queue preserving submission order, then clear the pipeline. The abandoned futures may still
+	// land, but each re-commit writes the same self-contained snapshots (idempotent), so the
+	// in-order re-commit yields the correct final per-key state even if a newer commit already
+	// landed before an older one failed. Caller holds mutex_.
+	UpdateQueue events;
+	for (auto &commit : inFlight_) {
+		while (!commit.events.empty()) {
+			events.push_back(std::move(commit.events.front()));
+			commit.events.pop_front();
+		}
+	}
+	inFlight_.clear();
+	while (!events.empty()) {
+		pendingUpdates_.push_front(std::move(events.back()));
+		events.pop_back();
+	}
 }
 
 void MetadataWriterFDB::workerLoop() {
 	std::unique_lock<std::mutex> lock(mutex_);
 	while (true) {
-		workCv_.wait(lock, [this] { return stop_ || !pendingUpdates_.empty(); });
-		if (pendingUpdates_.empty()) { break; }  // stop requested and nothing left to drain
+		workCv_.wait(lock,
+		             [this] { return stop_ || !pendingUpdates_.empty() || !inFlight_.empty(); });
+		if (stop_ && pendingUpdates_.empty() && inFlight_.empty()) { break; }
 
-		// Group-commit linger: if the pending set is below a full batch and no seal barrier
-		// (drainNow_) or shutdown (stop_) wants an immediate drain, wait briefly so trickle coalesces
-		// into fewer, fatter commits. The wait is on lingerCv_, which enqueue() does NOT signal, so
-		// accumulating events never wake the worker (no per-enqueue wakeup storm / lock contention
-		// with the producer). Only stop or a seal barrier cuts the window short. Under sustained load
-		// the queue is already >= kMaxUpdatesPerFlush_ at wake, so this is skipped entirely.
-		if (!stop_ && !drainNow_ && pendingUpdates_.size() < kMaxUpdatesPerFlush_) {
+		// Group-commit linger (trickle only): if the pipeline is idle and the queue holds less than a
+		// full batch, wait briefly so a trickle of enqueues coalesces into one fatter commit instead
+		// of many tiny ones. Gated on inFlight_ being empty -- when commits are already in flight,
+		// their duration is itself the accumulation window, so we never delay a reap under load. The
+		// wait is on lingerCv_, which enqueue() does NOT signal (no per-enqueue wakeup storm); only
+		// stop_ or a seal/shutdown drain (drainNow_) cuts the window short.
+		if (!stop_ && !drainNow_ && inFlight_.empty() && !pendingUpdates_.empty() &&
+		    pendingUpdates_.size() < kMaxUpdatesPerFlush_) {
 			lingerCv_.wait_for(lock, std::chrono::milliseconds(kBatchLingerMs_),
 			                   [this] { return stop_ || drainNow_; });
 		}
 
-		// Take a batch under the lock; commit it WITHOUT the lock so enqueue() never blocks on FDB
-		// commit latency (that is the whole point of the async writer).
-		UpdateQueue batch;
-		const size_t batchSize = std::min(pendingUpdates_.size(), kMaxUpdatesPerFlush_);
-		for (size_t i = 0; i < batchSize; ++i) {
-			batch.push_back(std::move(pendingUpdates_.front()));
-			pendingUpdates_.pop_front();
+		// Fill the pipeline: keep up to kMaxInFlight_ commitAsync() transactions in flight so commit
+		// latency overlaps with more work. The txn build + applyEvent (incl. recordPreMutation FDB
+		// reads) + commitAsync run WITHOUT the lock, so enqueue() never blocks on FDB.
+		while (inFlight_.size() < kMaxInFlight_ && !pendingUpdates_.empty()) {
+			UpdateQueue batch;
+			const size_t batchSize = std::min(pendingUpdates_.size(), kMaxUpdatesPerFlush_);
+			for (size_t i = 0; i < batchSize; ++i) {
+				batch.push_back(std::move(pendingUpdates_.front()));
+				pendingUpdates_.pop_front();
+			}
+			spaceCv_.notify_all();  // freed queue space for any blocked enqueuer
+			lock.unlock();
+
+			std::unique_ptr<kv::IReadWriteTransaction> transaction;
+			std::unique_ptr<kv::ICommitFuture> future;
+			size_t applied = 0;
+			bool built = false;
+			try {
+				transaction = kvEngine_->createReadWriteTransaction();
+				applyBatch(batch, transaction.get(), applied);
+				future = transaction->commitAsync();
+				built = true;
+			} catch (const std::exception &e) {
+				safs::log_err("Exception starting async commit of {} updates: {}; requeuing",
+				              batch.size(), e.what());
+			} catch (...) {
+				safs::log_err("Unknown exception starting async commit; requeuing");
+			}
+
+			lock.lock();
+			if (built) {
+				// The size cap may have deferred a tail: return it to the FRONT, in order, so the
+				// pipeline picks it up as a following batch. The in-flight commit then holds only
+				// the events actually written into its transaction (needed so a failure requeue via
+				// requeueInFlightLocked() re-commits exactly those events, in order).
+				while (batch.size() > applied) {
+					pendingUpdates_.push_front(std::move(batch.back()));
+					batch.pop_back();
+				}
+				inFlight_.push_back(InFlightCommit{.transaction = std::move(transaction),
+				                                   .future = std::move(future),
+				                                   .events = std::move(batch)});
+			} else {
+				while (!batch.empty()) {
+					pendingUpdates_.push_front(std::move(batch.back()));
+					batch.pop_back();
+				}
+				lastFlushFailed_ = true;
+				// Unblock a waiting flushAndWait(): its predicate observes lastFlushFailed_, but the
+				// reap below only runs (and only it notifies) when the pipeline is non-empty. Without
+				// this the seal would sleep forever on a build failure with nothing in flight.
+				drainedCv_.notify_all();
+				break;  // stop filling; reap / back off below
+			}
 		}
-		busy_ = true;
-		lock.unlock();
 
-		size_t applied = 0;
-		const bool ok = commitBatch(batch, applied);
+		// Reap the oldest in-flight commit in submission order. Block on getResult() WITHOUT the lock
+		// so the producer can keep enqueuing while we wait for durability. Only the worker mutates
+		// inFlight_, so front() stays valid across the unlock.
+		if (!inFlight_.empty()) {
+			kv::ICommitFuture *future = inFlight_.front().future.get();
+			lock.unlock();
+			int commitError = 0;
+			bool retryable = false;
+			const bool committed = future->getResult(&commitError, &retryable);
+			lock.lock();
 
-		lock.lock();
-		busy_ = false;
-		if (!ok) {
-			// Preserve order: return the failed batch to the front for retry.
-			while (!batch.empty()) {
-				pendingUpdates_.push_front(std::move(batch.back()));
-				batch.pop_back();
+			if (committed) {
+				safs::log_info("Flushed {} metadata updates to FDB", inFlight_.front().events.size());
+				inFlight_.pop_front();
+			} else {
+				// Forkless is the sole writer, so a failed commit means FDB is transiently
+				// unavailable -- the whole pipeline is affected. Requeue this batch and every newer
+				// in-flight batch in order, then retry. See requeueInFlightLocked().
+				safs::log_err(
+				    "Async commit failed (err {}, retryable {}); requeuing {} in-flight batch(es)",
+				    commitError, retryable, inFlight_.size());
+				requeueInFlightLocked();
+				lastFlushFailed_ = true;
 			}
-			lastFlushFailed_ = true;
-		} else if (applied < batch.size()) {
-			// The size cap deferred a tail: return it to the front, in order, for the next batch.
-			for (size_t i = batch.size(); i-- > applied;) {
-				pendingUpdates_.push_front(std::move(batch[i]));
-			}
-		}
 
-		// Wake enqueuers blocked on backpressure (space may have freed) and any flushAndWait().
-		spaceCv_.notify_all();
-		if (lastFlushFailed_ || pendingUpdates_.empty()) { drainedCv_.notify_all(); }
+			spaceCv_.notify_all();
+			if (pendingUpdates_.empty() && inFlight_.empty()) { drainedCv_.notify_all(); }
 
-		if (!ok) {
-			if (stop_) {
-				safs::log_warn(
-				    "MetadataWriterFDB stopping with {} unflushed updates after a commit failure",
-				    pendingUpdates_.size());
-				break;
+			if (!committed) {
+				if (stop_) {
+					safs::log_warn(
+					    "MetadataWriterFDB stopping with {} unflushed updates after a commit failure",
+					    pendingUpdates_.size());
+					break;
+				}
+				// Back off so a persistent FDB failure does not hot-spin; wake immediately on stop.
+				workCv_.wait_for(lock, std::chrono::milliseconds(kCommitRetryBackoffMs_),
+				                 [this] { return stop_; });
 			}
-			// Back off so a persistent FDB failure does not hot-spin; wake immediately on stop.
-			workCv_.wait_for(lock, std::chrono::milliseconds(kCommitRetryBackoffMs_),
-			                 [this] { return stop_; });
 		}
 	}
 }
