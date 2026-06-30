@@ -132,7 +132,8 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";  // Section ACLS 1.2
 /// - OwnerId: inode_t serialized as Big Endian
 /// - Rigor: u8 (soft/hard/used)
 /// - Resource: u8 (inodes/size)
-/// - Value: u64 serialized as Big Endian
+/// - Value: u64. Soft/hard limits are big-endian; the used counter is little-endian
+///   (maintained by a conflict-free atomicAdd, so its readers decode little-endian).
 /// @note Numeric fields in the key are serialized as Big Endian to preserve numeric order in
 /// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
@@ -274,6 +275,40 @@ inline constexpr std::string_view kDirNodesCountPrefix = "DIR_NODES_COUNT_";
 /// Stats are recursively aggregated (sum of all descendants) and maintained incrementally
 /// as children are added/removed, enabling efficient queries like 'saunafs dirinfo'.
 inline constexpr std::string_view kDirStatsPrefix = "DIR_STATS_";
+
+/// Prefix for a directory's child-change time.
+/// Format: DIR_CHILD_CHANGE_TIME_<InodeId> -> <TimeStamp> (32-bit little-endian)
+/// @note Updated via a conflict-free FDB atomicMax on every child link/unlink, so
+/// concurrent same-directory creates avoid colliding on (and need not rewrite) the whole
+/// parent node. A directory's served mtime and ctime are reconciled as max(node field,
+/// this key); since adding/removing an entry sets a directory's mtime and ctime to the
+/// same timestamp, one key covers both. Explicit directory mtime sets overwrite this
+/// key so backward mtime changes are not masked. Once present, this shadow remains
+/// authoritative during attribute reconciliation; whole-node writes do not fold it into
+/// NODE_. An absent key counts as zero, so the node's own timestamps remain authoritative
+/// when no child change has been recorded.
+inline constexpr std::string_view kDirChildChangeTimePrefix = "DIR_CHILD_CHANGE_TIME_";
+
+/// Prefix for a directory's DIRECT subdirectory count.
+/// Format: DIR_SUBDIRS_<InodeId> -> <Count> (signed 64-bit little-endian)
+/// @note Maintained via a conflict-free FDB atomicAdd(+/-1) on every subdirectory
+/// link/unlink, co-located with the in-memory FSNodeDirectory::nlink update, so it is a
+/// persisted shadow of (nlink - 2). A directory's served nlink is 2 + this count (POSIX:
+/// 2 for "." and the parent entry, plus one per direct subdirectory). Distinct from the
+/// DIR_STATS Dirs counter, which is the RECURSIVE subtree directory count. An absent key
+/// counts as zero (an empty directory, nlink 2).
+inline constexpr std::string_view kDirSubdirCountPrefix = "DIR_SUBDIRS_";
+
+/// Prefix for a node's access time.
+/// Format: NODE_ATIME_<InodeId> -> <TimeStamp> (32-bit little-endian)
+/// @note Advanced on a read via a conflict-free FDB atomicMax, so atime-on-read no longer
+/// rewrites (and conflicts on) the whole NODE_ blob. A node's served atime is reconciled as
+/// max(node field, this key). An absent key counts as zero, so the node's own atime stays
+/// authoritative when no read has advanced it. Applies to every node type (files via
+/// readChunk, symlinks via readlink, directories via readdir). On an explicit atime set
+/// (utimes), which may move atime BACKWARD, this key is overwritten (plain set) with the new
+/// value so the max-reconcile does not mask the set.
+inline constexpr std::string_view kNodeAtimeKeyPrefix = "NODE_ATIME_";
 
 /// Suffix bytes for directory statistics fields.
 /// Used to differentiate the 8 stats keys per directory without string comparisons.

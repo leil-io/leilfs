@@ -573,10 +573,25 @@ void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fs
 		}
 	}
 
-	// Timestamps
-	put32bit(&ptr, node->atime);
-	put32bit(&ptr, node->mtime);
-	put32bit(&ptr, node->ctime);
+	// Timestamps. A directory's mtime/ctime are reconciled with its conflict-free
+	// child-change time: a child create/remove records that key via atomicMax
+	// instead of rewriting the parent node, so the node's own mtime/ctime can lag behind.
+	uint32_t mtime = node->mtime;
+	uint32_t ctime = node->ctime;
+	if (node->type == FSNodeType::kDirectory) {
+		const uint32_t childChange =
+		    getDirChildChangeTime(fsOpContext, static_cast<FSNodeDirectory *>(node));
+		if (childChange > mtime) { mtime = childChange; }
+		if (childChange > ctime) { ctime = childChange; }
+	}
+	// atime is reconciled with its conflict-free read-advance key: a read records
+	// atime via atomicMax on NODE_ATIME_ instead of rewriting the node, so node->atime can lag.
+	uint32_t atime = node->atime;
+	const uint32_t accessTime = getNodeAtime(fsOpContext, node);
+	if (accessTime > atime) { atime = accessTime; }
+	put32bit(&ptr, atime);
+	put32bit(&ptr, mtime);
+	put32bit(&ptr, ctime);
 
 	// Number of links
 	nlink = getNumberOfParents(fsOpContext, node);
@@ -593,7 +608,9 @@ void FilesystemNodeOperationsBase::fillAttr(const FilesystemOperationContext &fs
 		put64bit(&ptr, static_cast<FSNodeFile *>(node)->length);
 		break;
 	case FSNodeType::kDirectory:
-		put32bit(&ptr, static_cast<FSNodeDirectory *>(node)->nlink);
+		// Served via getDirNlink so the KV backend can return 2 + persisted direct-subdir
+		// count; the in-memory master returns the node's own nlink field.
+		put32bit(&ptr, getDirNlink(fsOpContext, static_cast<FSNodeDirectory *>(node)));
 		// Rescale length to GB (reduces size to 32-bit length)
 		put64bit(&ptr, static_cast<FSNodeDirectory *>(node)->stats.length >> kGBBitShift);
 		break;
@@ -667,9 +684,14 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 
 	parent->mtime = parent->ctime = timeStamp;
 
-	if (childNode->type == FSNodeType::kDirectory) { parent->nlink--; }
+	if (childNode->type == FSNodeType::kDirectory) {
+		parent->nlink--;
+		persistDirSubdirCountDelta(fsOpContext, parent, -1);
+	}
 
 	fsnodes_update_checksum(parent);
+	// Persist the parent's child-change time conflict-free; see link().
+	persistDirChildChangeTime(fsOpContext, parent, timeStamp);
 	HString currentName = childName;
 	if (parent->caseInsensitive) { currentName = HString::hstringToLowerCase(childName); }
 
@@ -693,6 +715,49 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	gMetadata->edgeRemovedSignal.emit(parent->id, childName);
 }
 
+void FilesystemNodeOperationsBase::persistDirChildChangeTime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
+    uint32_t /*timeStamp*/) {
+	// Default no-op: the in-memory master keeps dir mtime/ctime in the node; the KV backend overrides.
+}
+
+uint32_t FilesystemNodeOperationsBase::getDirChildChangeTime(
+    const FilesystemOperationContext & /*fsOpContext*/, const FSNodeDirectory * /*dir*/) {
+	return 0;
+}
+
+void FilesystemNodeOperationsBase::resetDirChildChangeTime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
+    uint32_t /*opTimeStamp*/) {
+	// Default no-op: the in-memory master keeps a directory's mtime in the node itself.
+}
+
+void FilesystemNodeOperationsBase::persistDirSubdirCountDelta(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
+    int64_t /*delta*/) {
+	// Default no-op: the in-memory master keeps a directory's nlink in the node itself.
+}
+
+uint32_t FilesystemNodeOperationsBase::getDirNlink(
+    const FilesystemOperationContext & /*fsOpContext*/, const FSNodeDirectory *dir) {
+	return dir->nlink;
+}
+
+void FilesystemNodeOperationsBase::persistNodeAtime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNode * /*node*/, uint32_t /*timeStamp*/) {
+	// Default no-op: the in-memory master keeps atime in the node; the KV backend overrides.
+}
+
+uint32_t FilesystemNodeOperationsBase::getNodeAtime(
+    const FilesystemOperationContext & /*fsOpContext*/, const FSNode * /*node*/) {
+	return 0;
+}
+
+void FilesystemNodeOperationsBase::resetNodeAtime(
+    const FilesystemOperationContext & /*fsOpContext*/, FSNode * /*node*/) {
+	// Default no-op: the in-memory master keeps a node's atime in the node itself.
+}
+
 void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpContext,
                                         uint32_t timeStamp, FSNodeDirectory *parent, FSNode *child,
                                         const HString &name) {
@@ -713,7 +778,10 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	// Implementation specific (virtual) edge preservation (in-memory, FDB, etc.)
 	preserveEdge(fsOpContext, parent, child, handlePtr);
 
-	if (child->type == FSNodeType::kDirectory) { parent->nlink++; }
+	if (child->type == FSNodeType::kDirectory) {
+		parent->nlink++;
+		persistDirSubdirCountDelta(fsOpContext, parent, 1);
+	}
 
 	StatsRecord childStats;
 	getStats(fsOpContext, child, &childStats);
@@ -722,6 +790,9 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	if (timeStamp > 0) {
 		parent->mtime = parent->ctime = timeStamp;
 		fsnodes_update_checksum(parent);
+		// Persist the parent's child-change time conflict-free so it survives a
+		// reload without rewriting (and conflicting on) the whole parent node.
+		persistDirChildChangeTime(fsOpContext, parent, timeStamp);
 		assert(child->type != FSNodeType::kTrash);
 		child->ctime = timeStamp;
 		fsnodes_update_checksum(child);

@@ -1598,13 +1598,25 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	}
 	if (setmask & SET_ATIME_NOW_FLAG) {
 		node->atime = timeStamp;
+		// Explicit set: overwrite the conflict-free atime shadow so a backward set is not
+		// masked by the max-reconcile. No-op on the in-memory master.
+		nodeOperations_->resetNodeAtime(fsOpContext, node);
 	} else if (setmask & SET_ATIME_FLAG) {
 		node->atime = attratime;
+		nodeOperations_->resetNodeAtime(fsOpContext, node);
 	}
 	if (setmask & SET_MTIME_NOW_FLAG) {
 		node->mtime = timeStamp;
+		if (node->type == FSNodeType::kDirectory) {
+			nodeOperations_->resetDirChildChangeTime(fsOpContext,
+			                                        static_cast<FSNodeDirectory *>(node), timeStamp);
+		}
 	} else if (setmask & SET_MTIME_FLAG) {
 		node->mtime = attrmtime;
+		if (node->type == FSNodeType::kDirectory) {
+			nodeOperations_->resetDirChildChangeTime(fsOpContext,
+			                                        static_cast<FSNodeDirectory *>(node), timeStamp);
+		}
 	}
 	changeLog(fsOpContext, timeStamp,
 	          "ATTR(%" PRIiNode ",%d,%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ")", node->id,
@@ -1639,6 +1651,11 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	}
 	node->atime = atime;
 	node->mtime = mtime;
+	// NOTE: unlike setAttr, this changelog-replay path does not reset the conflict-free
+	// atime / dir-child-change shadows. It is safe today: the in-memory master has no such
+	// shadows, and the KV MDS does not replay the changelog (emit-only). If changelog replay
+	// is ever enabled on a KV backend, mirror setAttr's resetNodeAtime / resetDirChildChangeTime
+	// here so a restored backward timestamp is not masked by the max-reconcile.
 	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	fsnodes_update_checksum(node);
 	gMetadata->metadataVersion++;
@@ -1683,10 +1700,10 @@ static inline void fs_update_atime(const FilesystemOperationContext &fsOpContext
 		fsnodes_update_checksum(p);
 		gFSOperations->changeLog(fsOpContext, ts, "ACCESS(%" PRIiNode ")", p->id);
 
-		// Schedule the node update for KV backends.
-		if (fsOpContext.hasReadWriteTransaction()) {
-			gFSOperations->nodeOperations()->updateNode(fsOpContext, p);
-		}
+		// Persist the advance: no-op on the in-memory master; the KV backend records it with a
+		// conflict-free atomicMax on NODE_ATIME_ instead of a whole-node write. fillAttr serves
+		// max(node->atime, NODE_ATIME_), recovering the advance if the cached bump is lost.
+		gFSOperations->nodeOperations()->persistNodeAtime(fsOpContext, p, ts);
 	}
 }
 
