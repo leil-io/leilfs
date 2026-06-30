@@ -10,6 +10,11 @@ CHUNKSERVERS=1 \
 	setup_local_empty_saunafs info
 port=${saunafs_info_[matocl]}
 
+# A synchronous 'save-metadata' blocks the admin client until the dump finishes. The dump here is
+# deliberately slowed (see metarestore.sh below), so give the client a generous, machine-scaled
+# timeout to avoid tripping the 5s default on a loaded host.
+admin_timeout="--timeout=$(timeout_rescale_seconds 60)"
+
 # Instead of real sfsmetarestore, provide a program which hangs forever to slow down metadata dumps
 cat > "$TEMP_DIR/metarestore.sh" << END
 #!/usr/bin/env bash
@@ -36,7 +41,7 @@ assert_file_not_exists "$TEMP_DIR/dump_started"
 # Verify if the command without --async blocks us until metadata is created
 touch "${info[mount0]}/file2"  # To make changelog not empty for metarestore
 rm -f "$TEMP_DIR"/dump_*
-assert_success saunafs_admin_command save-metadata localhost "$port" <<< "pass"
+assert_success saunafs_admin_command save-metadata localhost "$port" ${admin_timeout} <<< "pass"
 assert_file_exists "$TEMP_DIR/dump_finished"
 assert_equals 3 $(count_metadata_files)
 
@@ -64,7 +69,7 @@ chmod +w "${info[master_data_path]}"  # Fix data dir
 # Verify if save-metadata properly reports status of the operation (using fork)
 sed -i -re "s/(MAGIC_PREFER_BACKGROUND_DUMP).*/\1 = 0/" "${info[master_cfg]}"
 saunafs_admin_master reload-config
-assert_success saunafs_admin_command save-metadata localhost "$port" <<< "pass"
+assert_success saunafs_admin_command save-metadata localhost "$port" ${admin_timeout} <<< "pass"
 chmod -w "${info[master_data_path]}"  # Make it impossible to save metadata
 assert_failure saunafs_admin_command save-metadata localhost "$port" <<< "pass"
 chmod +w "${info[master_data_path]}"  # Fix data dir
