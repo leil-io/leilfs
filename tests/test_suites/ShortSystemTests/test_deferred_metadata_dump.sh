@@ -1,4 +1,4 @@
-timeout_set 45 seconds
+timeout_set 90 seconds
 
 master_log_file="${TEMP_DIR}/log"
 
@@ -55,8 +55,14 @@ birth_timestamp_after_stop=$(get_birth_time_timestamp "${info[master_data_path]}
 assert_success saunafs_master_daemon_ha start -o initial-personality=master \
 	-o auto-recovery -o defer-metadata-dump
 
+# After restarting the master, the client and chunkservers reconnect asynchronously. A stat
+# can be served from the kernel attribute cache before the client<->master session is back,
+# so gate on the write itself: retry it until the reconnect completes, otherwise it could
+# fail with "Transport endpoint is not connected".
+saunafs_wait_for_all_ready_chunkservers
+
 echo "Testing filesystem functionality during metadata dump..."
-echo "additional_data_during_dump" > test_dir/during_dump_file.txt
+assert_eventually 'echo "additional_data_during_dump" > test_dir/during_dump_file.txt' "60 seconds"
 
 assert_equals "test_data" "$(cat test_dir/test_file.txt)"
 assert_equals "additional_data_during_dump" "$(cat test_dir/during_dump_file.txt)"
