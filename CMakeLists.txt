@@ -270,14 +270,38 @@ if(MINGW)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wformat=0")
 endif()
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pipe -pthread -Wall -Wextra -Werror -Wpedantic -fwrapv")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pipe -pthread -Wall -Wextra -Wpedantic -fwrapv")
+if(ENABLE_WERROR)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+endif()
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -g")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O2 -ftree-vectorize -g -fno-omit-frame-pointer")
 set(CMAKE_CXX_FLAGS_COVERAGE "-O0 -g --coverage")
 set(CMAKE_CXX_FLAGS_CLANG_ANALYZE "--analyze -Xanalyzer -analyzer-output=text")
-set(CMAKE_CXX_FLAGS_CLANG_SANITIZE_THREAD "-g -O0 -fsanitize=thread")
 set(CMAKE_CXX_FLAGS_CXXDEBUG "-O0 -g -D_GLIBCXX_DEBUG")
+
+# Sanitizer support: configure with -DSANITIZE=address|thread|undefined (empty disables).
+# Works with GCC and Clang. MemorySanitizer is not supported: it needs every dependency,
+# including libc++, instrumented too.
+set(SANITIZE "" CACHE STRING "Build with a sanitizer: address, thread, or undefined")
+set_property(CACHE SANITIZE PROPERTY STRINGS "" address thread undefined)
+set(SANITIZE_SUPPORTED_VALUES address thread undefined)
+if(SANITIZE)
+  if(SANITIZE STREQUAL "memory")
+    message(FATAL_ERROR
+      "SANITIZE=memory needs all dependencies and libc++ instrumented; not supported.")
+  endif()
+  if(NOT SANITIZE IN_LIST SANITIZE_SUPPORTED_VALUES)
+    message(FATAL_ERROR
+      "Unsupported SANITIZE value: '${SANITIZE}'. "
+      "Expected address, thread, undefined, or an empty value.")
+  endif()
+  add_compile_options(-g -fno-omit-frame-pointer -fsanitize=${SANITIZE})
+  add_link_options(-fsanitize=${SANITIZE})
+  message(STATUS "Sanitizer enabled: SANITIZE=${SANITIZE}")
+endif()
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
 
 add_definitions(-D_LARGEFILE_SOURCE)
