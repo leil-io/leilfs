@@ -134,6 +134,10 @@ chunks with number of copies specified in the label to replicate/delete. +
   Authentication with the admin password is required. +
   --async +
     Don't wait for the task to finish. +
+  --timeout <seconds> +
+    Seconds to wait for the operation to finish (default: 5). A synchronous
+    save-metadata blocks until the dump completes, so raise this when dumping
+    large metadata. +
 
 *stop-task* __<master ip> <master port> <task id>__::
     Stop execution of task with the given id

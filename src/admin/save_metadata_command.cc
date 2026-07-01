@@ -22,6 +22,7 @@
 #include "admin/save_metadata_command.h"
 
 #include <iostream>
+#include <limits>
 
 #include "admin/registered_admin_connection.h"
 #include "protocol/cltoma.h"
@@ -37,11 +38,14 @@ void SaveMetadataCommand::usage() const {
 			"    With --async fail if the process cannot be started, e.g. because the process\n"
 			"    is already in progress. Without --async, fails if either the process cannot be\n"
 			"    started or if it finishes with an error (i.e., no metadata file is created).\n"
+			"    With --timeout <seconds> set how long to wait for the operation (default: 5).\n"
 			"    Authentication with the admin password is required." << std::endl;
 }
 
 SaunaFsAdminCommand::SupportedOptions SaveMetadataCommand::supportedOptions() const {
-	return {{"--async", "Don't wait for the task to finish."}, {kTlsMode, kTlsModeDescription}};
+	return {{"--async", "Don't wait for the task to finish."},
+	        {"--timeout=", "Operation timeout"},
+	        {kTlsMode, kTlsModeDescription}};
 }
 
 void SaveMetadataCommand::run(const Options& options) const {
@@ -54,8 +58,23 @@ void SaveMetadataCommand::run(const Options& options) const {
 	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
 
 	bool async = options.isSet("--async");
+	int timeout = ServerConnection::kDefaultTimeout;
+	if (options.isSet("--timeout")) {
+		// getValue<int> throws on non-numeric or out-of-int-range input; treat any such
+		// failure as out of range so it is rejected by the single check below.
+		int seconds = -1;
+		try {
+			seconds = options.getValue<int>("--timeout");
+		} catch (const std::exception &) {
+			// fall through with seconds == -1
+		}
+		if (seconds <= 0 || seconds > std::numeric_limits<int>::max() / 1000) {
+			throw WrongUsageException("--timeout must be between 1 and 2147483 seconds");
+		}
+		timeout = seconds * 1000;
+	}
 	auto connection =
-	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg);
+	    RegisteredAdminConnection::create(options.argument(0), options.argument(1), tlsCfg, timeout);
 	auto request = cltoma::adminSaveMetadata::build(async);
 	auto response = connection->sendAndReceive(request, SAU_MATOCL_ADMIN_SAVE_METADATA);
 	uint8_t status;

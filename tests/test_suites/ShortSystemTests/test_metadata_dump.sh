@@ -11,6 +11,11 @@ CHUNKSERVERS=3 \
 	MASTER_EXTRA_CONFIG=$master_extra_config \
 	setup_local_empty_saunafs info
 
+# A synchronous 'save-metadata' blocks the admin client until the dump finishes. Under the heavy
+# workload below a dump can take a while on a loaded host, so give the client a generous,
+# machine-scaled timeout to avoid tripping the 5s default.
+admin_timeout="--timeout=$(timeout_rescale_seconds 60)"
+
 # 'metaout_tmp' is used to ensure 'metaout' is complete when "created"
 cat > $TEMP_DIR/metarestore_ok.sh << END
 #!/usr/bin/env bash
@@ -62,7 +67,7 @@ function check() {
 	assert_file_exists "changelog.sfs"
 	assert_file_exists "metadata.sfs"
 	if [[ $2 == OK ]]; then
-		assert_success saunafs_admin_master save-metadata
+		assert_success saunafs_admin_master save-metadata ${admin_timeout}
 	else
 		assert_failure saunafs_admin_master save-metadata
 	fi
