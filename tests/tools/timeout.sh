@@ -87,10 +87,23 @@ timeout_get_multiplier() {
 	cat "$test_timeout_multiplier_file"
 }
 
+# Total scaling applied to test timeouts: the framework multiplier (e.g. 15 under valgrind,
+# set via timeout_set_multiplier, and an extra 5x on Windows) combined with the machine
+# multiplier (SAUNAFS_TEST_TIMEOUT_MULTIPLIER, exported on slow or loaded CI machines). Both
+# model the same thing, an environment that runs uniformly slower, so rescaled waits track the
+# same total the hard test timeout uses (see timeout_killer_thread).
+timeout_get_total_multiplier() {
+	local framework_multiplier=$(timeout_get_multiplier)
+	if is_windows_system; then
+		framework_multiplier=$((5 * framework_multiplier))
+	fi
+	echo $((framework_multiplier * ${SAUNAFS_TEST_TIMEOUT_MULTIPLIER:-1}))
+}
+
 # takes as parameter timeout (e.g. '1 minute') and rescales it by multiplier
 # prints result in seconds to standard output (e.g. '900 seconds')
 timeout_rescale() {
-	local multiplier=$(timeout_get_multiplier)
+	local multiplier=$(timeout_get_total_multiplier)
 	local value=$(($(date +%s -d "$1") - $(date +%s)))
 	echo $((value * multiplier)) seconds
 }
@@ -98,6 +111,6 @@ timeout_rescale() {
 # takes as parameter timeout in seconds (e.g. '60') and rescales it by multiplier
 # prints result to standard output (e.g. '900')
 timeout_rescale_seconds() {
-	local multiplier=$(timeout_get_multiplier)
+	local multiplier=$(timeout_get_total_multiplier)
 	echo $(($1 * multiplier))
 }
