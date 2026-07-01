@@ -1,28 +1,43 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Uses built RPM packages in results_*/ to generate a review in
 # review-*/review.txt
 
-read NAME VERSION RELEASE < <(rpmspec -q --qf "%{NAME} %{VERSION}\n" *.spec | head -1)
+read NAME VERSION < <(rpmspec -q --qf "%{NAME} %{VERSION}\n" *.spec | head -1)
+REVIEW_DIR="review-${NAME}"
+REVIEW_WORKDIR=$(mktemp -d -t "${NAME}-review.XXXXXX")
+
+cleanup() {
+    rm -rf "${REVIEW_WORKDIR}"
+}
+trap cleanup EXIT
 
 echo "Cleaning old review results..."
-rm -rf review-${NAME}
+rm -rf "${REVIEW_DIR}"
 
-RELEASE_DIR=$(find results_${NAME}/${VERSION}/ -maxdepth 1 -mindepth 1 -type d | head -1)
+RELEASE_DIR=$(find "results_${NAME}/${VERSION}/" -maxdepth 1 -mindepth 1 -type d | head -1)
 
-if [ -z "$RELEASE_DIR" ]; then
+if [ -z "${RELEASE_DIR}" ]; then
     echo "ERROR: No build results found in results_${NAME}/${VERSION}/"
     exit 1
 fi
 
 echo "Found build results in: ${RELEASE_DIR}"
-echo "Copying resulting source and rpm packages..."
-cp -f ${RELEASE_DIR}/*.src.rpm .
-find ${RELEASE_DIR}/ -name "*.rpm" ! -name "*debug*" -exec cp -f {} . \;
+echo "Copying resulting source and rpm packages to ${REVIEW_WORKDIR}..."
+cp -f "${RELEASE_DIR}"/*.src.rpm "${REVIEW_WORKDIR}/"
+find "${RELEASE_DIR}/" -name "*.rpm" ! -name "*debug*" -exec cp -f {} "${REVIEW_WORKDIR}/" \;
+cp -f "${NAME}.spec" "${REVIEW_WORKDIR}/"
 
 echo "Running Fedora Review..."
-fedora-review -n ${NAME} -p -v
+(
+    cd "${REVIEW_WORKDIR}"
+    fedora-review -n "${NAME}" -p -v
+)
 
-echo "Review concluded, removing source and rpm packages..."
-rm -f *.src.rpm
-rm -f *.rpm
+if [ -d "${REVIEW_WORKDIR}/${REVIEW_DIR}" ]; then
+    cp -a "${REVIEW_WORKDIR}/${REVIEW_DIR}" .
+fi
+
+echo "Review concluded."
