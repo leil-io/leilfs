@@ -2,8 +2,20 @@ MOUNTS=4 \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
 
+# Mounts report their info to the master asynchronously after connecting, so right after
+# mounting or after a master restart the admin command can return blocks containing only
+# the "Session ID:" header. Poll until every session has a complete mount info block
+# instead of sleeping a fixed time, which is not enough on loaded machines.
+mount_infos_are_complete() {
+	local expected_count=$1
+	local mounts
+	mounts=$(saunafs_admin_command list-mount-info localhost "${info[matocl]}") || return 1
+	[[ $(grep -c "^Session ID:" <<<"${mounts}") -eq ${expected_count} ]] || return 1
+	[[ $(grep -c "^SAUNAFS CLIENT MOUNT INFO:" <<<"${mounts}") -eq ${expected_count} ]] || return 1
+}
+
 # wait for master server to populate mount info for each mountpoint
-sleep 3
+assert_eventually 'mount_infos_are_complete 4' "30 seconds"
 
 check_mount_infos() {
 	declare -A expected_map
@@ -59,6 +71,8 @@ check_mount_infos
 assert_success saunafs_master_daemon stop
 sleep 5
 assert_success saunafs_master_daemon start
-sleep 3
+
+# wait for the mounts to reconnect and report their info to the restarted master
+assert_eventually 'mount_infos_are_complete 4' "30 seconds"
 
 check_mount_infos
