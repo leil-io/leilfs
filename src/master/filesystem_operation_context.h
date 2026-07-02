@@ -25,6 +25,7 @@
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_types.h"
+#include "master/filesystem_node_arena.h"
 
 namespace kv {
 class IReadOnlyTransaction;
@@ -70,9 +71,10 @@ public:
 	FilesystemOperationContext &operator=(FilesystemOperationContext &&) = default;
 
 	/// Destructor.
-	/// Destroying the context only releases any owned transaction objects. It does not implicitly
-	/// commit or rollback transactions; callers must ensure that any required commit or rollback is
-	/// performed via the transaction interfaces before the context is destroyed.
+	/// Destroying the context releases any owned transaction objects and destroys the nodes
+	/// owned by the arena. It does not implicitly commit or rollback transactions; callers must
+	/// ensure that any required commit or rollback is performed via the transaction interfaces
+	/// before the context is destroyed.
 	~FilesystemOperationContext() = default;
 
 	/// Returns true if this context has an active transaction
@@ -90,6 +92,12 @@ public:
 	/// Get the transaction type hint
 	TransactionType getTransactionType() const { return transactionType_; }
 
+	/// Per-operation owner of KV-materialized nodes; stays empty on in-memory builds.
+	/// Accessible from const contexts: pinning is physical cache state shared through the
+	/// const resolution seam, not a logical filesystem mutation.
+	/// @see FSNodeArena
+	FSNodeArena &nodeArena() const { return nodeArena_; }
+
 private:
 	/// The active read-write transaction (if any)
 	std::unique_ptr<kv::IReadWriteTransaction> rwTransaction_ = nullptr;
@@ -99,4 +107,8 @@ private:
 
 	/// Hint about what transaction type to create if lazy initialization is needed
 	TransactionType transactionType_ = TransactionType::kNone;
+
+	/// Nodes materialized by a KV backend during this operation; freed on teardown.
+	/// Mutable so the const seam can pin; see nodeArena().
+	mutable FSNodeArena nodeArena_;
 };
