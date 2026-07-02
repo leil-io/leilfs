@@ -420,14 +420,15 @@ void hddCheckDisks() {
 	for (auto &diskToDelWithPendingChunks : gNewDisksToBeDeletedWithPendingChunks) {
 		for (auto it = gDisks.begin(); it != gDisks.end(); ++it) {
 			if (diskToDelWithPendingChunks.first == it->get()) {
-				if (!diskToDelWithPendingChunks.second.empty()) {
-					// Pending chunks
-					gDisksToBeDeletedWithPendingChunks.emplace_back(
-					    std::move(*it), std::move(diskToDelWithPendingChunks.second));
-				}
 				ChunkTrashManager::eraseDisk((*it)->metaPath());
 				if (!(*it)->isZonedDevice() && (*it)->metaPath() != (*it)->dataPath()) {
 					ChunkTrashManager::eraseDisk((*it)->dataPath());
+				}
+				if (!diskToDelWithPendingChunks.second.empty()) {
+					// Pending chunks; moving *it leaves a null unique_ptr in
+					// gDisks, so it must stay the last use of the disk.
+					gDisksToBeDeletedWithPendingChunks.emplace_back(
+					    std::move(*it), std::move(diskToDelWithPendingChunks.second));
 				}
 				gDisks.erase(it);
 				break;
