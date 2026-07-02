@@ -5,7 +5,7 @@ REGISTRY_URL = "registry.ci.leil.io"
 def getLeilTestsRef() {
     def ref = params?.LEIL_TESTS_REF?.trim()
     if (!ref) {
-        return 'refs/tags/v0.7.0'
+        return 'refs/tags/v0.8.0'
     }
 
     if (ref.startsWith('refs/')) {
@@ -171,8 +171,8 @@ pipeline {
         )
         string(
             name: 'LEIL_TESTS_REF',
-            defaultValue: 'v0.7.0',
-            description: 'leil-tests ref: branch (dev, fix/foo), tag (v0.7.0), refs/*, or SHA'
+            defaultValue: 'v0.8.0',
+            description: 'leil-tests ref: branch (dev, fix/foo), tag (v0.8.0), refs/*, or SHA'
         )
     }
 
