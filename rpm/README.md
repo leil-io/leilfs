@@ -30,6 +30,20 @@ sudo dnf install fedora-packager python3-specfile
 sudo ./build.sh
 ```
 
+The script creates the RPM source tarball from the current Git checkout. In CI,
+this means the `LEILFS_REF` used for checkout is also the source reference that
+gets packaged. If Jenkins leaves the repository in detached `HEAD` state, pass
+the same checked-out branch, tag, or commit explicitly so the script can resolve
+and verify it:
+```bash
+sudo ./build.sh dev
+sudo ./build.sh v5.10.0
+sudo ./build.sh 1e9e026dc6fa536ebbc0708a58a9947741b8c2c0
+```
+Branch arguments may resolve through local refs or `origin/<branch>`, but the
+resolved ref must match the current checkout. To build another branch, tag, or
+commit, check it out first.
+
 ### Run the review script (takes around 25-30 minutes in CI)
 ```bash
 sudo ./review.sh

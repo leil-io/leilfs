@@ -471,6 +471,9 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_datadir}/leil-cgi/leil.css
 %{_datadir}/leil-cgi/leil.cgi
 %{_datadir}/leil-cgi/chart.cgi
+%{_datadir}/leil-cgi/sfs.css
+%{_datadir}/leil-cgi/sfs.cgi
+%{_datadir}/sfscgi
 
 # Files - CGI server
 ############################################################
