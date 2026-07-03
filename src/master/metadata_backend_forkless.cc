@@ -914,8 +914,17 @@ bool isNewMetadataHeader([[maybe_unused]] const std::string& headerSignature) {
 		if (headerSignature == kMetadataHeaderNew || headerSignature == kMetadataHeaderOld) {
 			fs_new();
 			safs::log_info("Detected new metadata header in FDB Backend");
-			initializeNewMetadataHeaderSignal.emit();
-			gMetadataBackend->fs_storeall(DumpType::kForegroundDump);
+			// Persist the root node and seal the initial checkpoint before finalizing the header.
+			// The header stays at the "M NEW" placeholder until this succeeds, so a crash can only
+			// leave either "M NEW" (fresh init re-runs idempotently) or a fully durable "M 2.9",
+			// never a finalized header with a missing root node or checkpoint.
+			if (gMetadataBackend->fs_storeall(DumpType::kForegroundDump) == SAUNAFS_STATUS_OK) {
+				initializeNewMetadataHeaderSignal.emit();
+			} else {
+				safs::log_err(
+				    "Failed to persist initial metadata during fresh initialization; leaving M NEW "
+				    "header for retry on next start");
+			}
 			return true;
 		}
 	}
