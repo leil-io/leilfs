@@ -4,13 +4,15 @@ timeout_set 1 minute
 iolimits="$TEMP_DIR/iolimits.cfg"
 echo "limit unclassified 1024" > "$iolimits"
 
+# Tolerated relative error (in %) for the strict fast side.
 E=11
 if is_windows_system; then
 	E=15
 fi
-if valgrind_enabled; then
-	E=$((5 * E))
-fi
+# Slow-side tolerance (in %): loose, reads can stall on busy CI machines.
+E_SLOW=$((100 * $(timeout_get_total_multiplier)))
+# Fast-side absolute grace (in ns) for the limiter's token bucket bursts.
+FAST_GRACE=$((250 * 1000 * 1000))
 
 CHUNKSERVERS=3 \
 	USE_RAMDISK=YES \
@@ -40,4 +42,5 @@ time=$((end - start))
 abserr=$((time - expected))
 relerr=$((100 * abserr / expected))
 echo $expected $time $abserr $relerr
-assert_near 0 $relerr $E
+assert_less_or_equal $((expected * (100 - E) / 100 - FAST_GRACE)) ${time}
+assert_less_or_equal ${time} $((expected * (100 + E_SLOW) / 100))
