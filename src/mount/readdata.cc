@@ -841,10 +841,16 @@ void read_data_term(void) {
 void read_inode_ops(inode_t inode) { // attributes of inode have been changed - force reconnect and clear cache
 	std::unique_lock gMutexLock(gMutex);
 
-	ReadRecordRange range = gActiveReadRecords.equal_range(inode);
+	for (ReadRecords *records : {&gActiveReadRecords, &gInactiveReadRecords}) {
+		ReadRecordRange range = records->equal_range(inode);
 
-	for (auto it = range.first; it != range.second; ++it) {
-		it->second->refreshCounter = REFRESHTICKS; // force reconnect on forthcoming access
+		for (auto it = range.first; it != range.second; ++it) {
+			it->second->refreshCounter = REFRESHTICKS;  // force reconnect on forthcoming access
+			if (!it->second->expired) {
+				std::unique_lock inodeLock(it->second->mutex);
+				it->second->cache.clear();
+			}
+		}
 	}
 }
 
