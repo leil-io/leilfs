@@ -216,7 +216,7 @@ private:
 
 	UpdateQueue takeBatch(size_t maxUpdates);
 	void restoreBatch(UpdateQueue updates);
-	bool flushBatch(size_t maxUpdates);
+	bool flushBatch(size_t maxUpdates, size_t &consumedOut);
 
 	kv::IKVEngine *kvEngine_;
 	MetadataCheckpointManager *checkpointManager_;
@@ -225,4 +225,13 @@ private:
 	UpdateQueue pendingUpdates_;
 
 	constexpr static size_t kMaxUpdatesPerFlush_ = 1000;
+
+	// Soft cap on a flush transaction's approximate size. While applying a batch, the real
+	// transaction size (IReadWriteTransaction::getApproximateSize(), which counts the mutations,
+	// the per-first-touch undo rows written in the same transaction, conflict ranges and
+	// backend overhead) is polled after each event; once it reaches this limit the remaining
+	// events are deferred to the next batch. Kept below FDB's ~10 MB per-transaction limit with
+	// headroom for the single event that crosses the threshold. At least one event is always
+	// applied so an oversized event still makes progress.
+	constexpr static size_t kTxnSoftLimitBytes_ = 8UL * 1000 * 1000;
 };

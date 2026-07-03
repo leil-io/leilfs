@@ -220,18 +220,26 @@ void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 }
 
 bool MetadataWriterFDB::flush(FlushMode mode) {
+	// Snapshot: flush only the updates queued when the call started. A batch may consume fewer
+	// than kMaxUpdatesPerFlush_ events when the byte cap splits it, so track how many were
+	// actually taken instead of assuming a fixed batch size.
 	size_t updatesToFlush = pendingCount();
 
 	while (updatesToFlush > 0) {
 		const size_t batchSize = std::min(updatesToFlush, kMaxUpdatesPerFlush_);
-		if (!flushBatch(batchSize)) { return false; }
-		updatesToFlush -= batchSize;
+		size_t consumed = 0;
+		if (!flushBatch(batchSize, consumed)) { return false; }
+		if (consumed == 0) { break; }  // queue drained concurrently; nothing left to take
+		// consumed <= batchSize <= updatesToFlush, so this cannot underflow.
+		updatesToFlush -= consumed;
 	}
 
 	if (mode == FlushMode::kSnapshot) { return true; }
 
 	while (pendingCount() > 0) {
-		if (!flushBatch(kMaxUpdatesPerFlush_)) { return false; }
+		size_t consumed = 0;
+		if (!flushBatch(kMaxUpdatesPerFlush_, consumed)) { return false; }
+		if (consumed == 0) { break; }
 	}
 
 	return true;
@@ -263,13 +271,15 @@ void MetadataWriterFDB::restoreBatch(UpdateQueue updates) {
 	}
 }
 
-bool MetadataWriterFDB::flushBatch(size_t maxUpdates) {
+bool MetadataWriterFDB::flushBatch(size_t maxUpdates, size_t &consumedOut) {
+	consumedOut = 0;
 	auto batch = takeBatch(maxUpdates);
 	if (batch.empty()) { return true; }
 
 	// Apply and commit under try/catch: a throwing applyEvent()/commit() (FDB timeout,
 	// serialization error, etc.) must not destroy the batch, or the updates are lost
 	// permanently. Restore the batch on any failure so it is retried on the next flush.
+	size_t applied = 0;
 	try {
 		auto transaction = kvEngine_->createReadWriteTransaction();
 
@@ -280,24 +290,45 @@ bool MetadataWriterFDB::flushBatch(size_t maxUpdates) {
 		        checkpointManager_ != nullptr ? checkpointManager_->activeCheckpointVersion() : 0,
 		};
 
-		for (const auto &update : batch) { update->applyEvent(context); }
+		for (const auto &update : batch) {
+			update->applyEvent(context);
+			++applied;
+
+			// Stop before the transaction exceeds the backend's per-transaction size limit. The
+			// measured size includes the per-first-touch undo rows applyEvent() may have written
+			// in this same transaction. Always keep at least one event so an oversized event
+			// still commits alone rather than being deferred forever. getApproximateSize() is a
+			// client-side estimate, so polling it per event is cheap.
+			if (applied < batch.size()) {
+				const auto approxSize = transaction->getApproximateSize();
+				if (approxSize.has_value() && *approxSize >= kTxnSoftLimitBytes_) { break; }
+			}
+		}
 
 		if (!transaction->commit()) {
-			safs::log_err("Failed to flush {} metadata updates to FDB", batch.size());
+			safs::log_err("Failed to flush {} metadata updates to FDB", applied);
 			restoreBatch(std::move(batch));
 			return false;
 		}
 	} catch (const std::exception &e) {
-		safs::log_err("Exception while flushing {} metadata updates to FDB: {}", batch.size(),
-		              e.what());
+		safs::log_err("Exception while flushing {} metadata updates to FDB: {}", applied, e.what());
 		restoreBatch(std::move(batch));
 		return false;
 	} catch (...) {
-		safs::log_err("Unknown exception while flushing {} metadata updates to FDB", batch.size());
+		safs::log_err("Unknown exception while flushing {} metadata updates to FDB", applied);
 		restoreBatch(std::move(batch));
 		return false;
 	}
 
-	safs::log_info("Flushed {} metadata updates to FDB", batch.size());
+	// Commit succeeded: the first `applied` events are durable. Re-queue any deferred tail so it
+	// flushes (with its own undo capture) in a following batch, preserving order.
+	if (applied < batch.size()) {
+		UpdateQueue tail;
+		for (size_t i = applied; i < batch.size(); ++i) { tail.push_back(std::move(batch[i])); }
+		restoreBatch(std::move(tail));
+	}
+
+	consumedOut = applied;
+	safs::log_info("Flushed {} metadata updates to FDB", applied);
 	return true;
 }
