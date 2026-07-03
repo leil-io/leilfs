@@ -712,11 +712,11 @@ void MasterConn::downloadStart(const uint8_t *data, uint32_t length) {
 	passert(data);
 
 	if (length == 1) {
-		// Forkless backend has no metadata.sfs on the master.
-		// The master still opened the changelog FDs during DOWNLOAD_METADATA_SFS processing,
-		// so continue the download chain from changelogs.
+		// Backends without a downloadable metadata.sfs on the master (e.g. forkless/FDB) still
+		// opened the changelog FDs during DOWNLOAD_METADATA_SFS processing, so continue the
+		// download chain from changelogs instead of reporting a download error.
 		if (downloadingFileNum == DOWNLOAD_METADATA_SFS && gMetadataBackend != nullptr &&
-		    gMetadataBackend->backendType() == "MetadataBackendForkless") {
+		    !gMetadataBackend->supportsMetadataFileDownload()) {
 			downloadingFileNum = 0;
 			downloadInit(DOWNLOAD_CHANGELOG_SFS);
 			return;

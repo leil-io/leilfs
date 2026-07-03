@@ -109,6 +109,16 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	return true;
 }
 
+// Imports each metadata section from metadata.sfs into FDB, then writes META_HEADER last so a
+// partially bootstrapped store is never mistaken for a complete one.
+//
+// Crash/failure recovery (intentionally NOT atomic — bootstrap is a one-time migration):
+// sections are committed in batches before saveMetadataHeader() runs, so if bootstrap stops
+// early FDB holds partial section data (NODE_/EDGE_/... keys) with no META_HEADER. On the next
+// startup the empty-store protection detects "section data without header" and aborts rather
+// than treating it as a fresh filesystem. To retry, an operator must first clear the FDB
+// keyspace used by this master (drop the section-prefix keys, or wipe/recreate the FDB
+// directory) so the store is truly empty; bootstrap then re-runs cleanly from metadata.sfs.
 bool MetadataSectionBootstrapFDB::bootstrapSections() {
 	safs::log_info("{}: Bootstrapping metadata sections from file into FDB backend", __func__);
 	if (!prepare(kMetadataFilename)) { return false; }

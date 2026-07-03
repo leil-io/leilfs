@@ -47,6 +47,8 @@ public:
 
 	std::string backendType() override { return "MetadataBackendFile"; }
 
+	bool supportsMetadataFileDownload() override { return true; }
+
 	void setMetadataFile(const std::string &metadataFile) {
 		metadataFile_ = metadataFile;
 	}

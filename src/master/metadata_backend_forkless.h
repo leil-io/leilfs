@@ -73,6 +73,9 @@ public:
 
 	std::string backendType() override { return "MetadataBackendForkless"; }
 
+	/// Forkless keeps metadata in FDB, not in a downloadable metadata.sfs on the master.
+	bool supportsMetadataFileDownload() override { return false; }
+
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.
 	void store_fd(FILE *fd) override;

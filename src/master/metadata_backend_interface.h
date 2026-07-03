@@ -70,6 +70,13 @@ public:
 	/// To be used from configuration to instantiate the correct backend.
 	virtual std::string backendType() = 0;
 
+	/// Whether this backend keeps a downloadable metadata image file (metadata.sfs) on the
+	/// master that a shadow/metalogger can fetch. File-based backends return true; backends that
+	/// hold metadata elsewhere (e.g. the forkless/FDB backend) return false, so the download
+	/// chain continues from changelogs instead. Keeps download behavior a backend capability
+	/// rather than a match on the diagnostic backendType() name.
+	virtual bool supportsMetadataFileDownload() = 0;
+
 // Available for master, shadow and metarestore
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.

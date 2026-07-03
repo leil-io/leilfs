@@ -232,6 +232,7 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 
 	kv::Key lastKey;
 	uint64_t chunkCount = 0;
+	uint64_t maxChunkId = 0;
 
 	while (true) {
 		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
@@ -271,6 +272,7 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 
 			if (chunkId > 0) {
 				chunk_add_from_initial_metadata_load(chunkId, chunkVersion, lockedTo, lockId);
+				maxChunkId = std::max(maxChunkId, chunkId);
 				chunkCount++;
 			}
 		}
@@ -280,6 +282,12 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 		lastKey = pageResult.getPairs().back().key;
 		startSelector = kv::KeySelector(lastKey, false, 0);
 	}
+
+	// chunk_add_from_initial_metadata_load() creates chunks without advancing the id generator,
+	// so a stale/missing META_NEXT_CHUNK_ID (checkpoint descriptor) could otherwise reuse an
+	// already-loaded chunk id. Advance the watermark past the highest id seen in FDB.
+	// chunk_set_next_chunkid() only moves the generator forward, so this never lowers it.
+	if (maxChunkId > 0) { chunk_set_next_chunkid(maxChunkId + 1); }
 
 	safs::log_info("Loaded {} chunks", chunkCount);
 	safs::log_info("Section loaded successfully (CHNK 1.0): {}s", timer.elapsed_s());
