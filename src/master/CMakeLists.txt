@@ -15,6 +15,10 @@ if(NOT ENABLE_FOUNDATIONDB)
     "${CMAKE_CURRENT_SOURCE_DIR}/metadata_writer_fdb.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/metadata_checkpoint_manager.cc"
   )
+  # These tests exercise FDB-only classes, so exclude them from the non-FDB build.
+  list(REMOVE_ITEM MASTER_TESTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/metadata_writer_fdb_unittest.cc"
+  )
 endif()
 
 option(DISABLE_JUDY_FOR_DEFECTIVENODESMAP       "Disable the use of judy for the defective inodes map."                OFF)
