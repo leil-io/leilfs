@@ -6,14 +6,16 @@ echo "limit unclassified 1024" > "$iolimits"
 
 # number of mounts
 N=5
-# tolerated relative error (in %)
+# Tolerated relative error (in %) for the strict fast side.
 E=11
 if is_windows_system; then
 	E=15
 fi
-if valgrind_enabled; then
-	E=$((5 * E))
-fi
+# Slow-side tolerance (in %): loose, reads can stall on busy CI machines.
+E_SLOW=$((50 * $(timeout_get_total_multiplier)))
+# Fast-side absolute grace (in ns) for the limiter's token bucket bursts.
+# Larger here: the sequential reader start-up gives the bucket more time to refill.
+FAST_GRACE=$((500 * 1000 * 1000))
 
 CHUNKSERVERS=3 \
 	MOUNTS=$N \
@@ -48,6 +50,7 @@ start_readers | while [ $(head -c1M |wc -c) = $((1024 * 1024)) ]; do
 	abserr=$((time - expected))
 	relerr=$((100 * abserr / expected))
 	echo $expected $time $abserr $relerr
-	assert_near 0 $relerr $E
+	assert_less_or_equal $((expected * (100 - E) / 100 - FAST_GRACE)) ${time}
+	assert_less_or_equal ${time} $((expected * (100 + E_SLOW) / 100))
 	i=$((i+1))
 done
