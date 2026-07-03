@@ -197,8 +197,13 @@ void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 }
 
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
-                                     MetadataCheckpointManager *checkpointManager)
-    : kvEngine_(kvEngine), checkpointManager_(checkpointManager) {}
+                                     MetadataCheckpointManager *checkpointManager,
+                                     size_t backlogHighWatermark)
+    : kvEngine_(kvEngine),
+      checkpointManager_(checkpointManager),
+      backlogHighWatermark_(backlogHighWatermark),
+      backlogLogStep_(backlogHighWatermark),
+      backlogLowWatermark_(backlogHighWatermark / 2) {}
 
 MetadataWriterFDB::~MetadataWriterFDB() {
 	if (pendingCount() > 0) {
@@ -215,8 +220,67 @@ void MetadataWriterFDB::enqueue(std::unique_ptr<IMetadataUpdateEvent> event) {
 		safs::log_err("{}: received null event, skipping", __func__);
 		return;
 	}
+
+	size_t depth = 0;
+	bool shouldLog = false;
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		pendingUpdates_.emplace_back(std::move(event));
+		depth = pendingUpdates_.size();
+		shouldLog = noteBacklogGrowthLocked(depth);
+	}
+
+	// Log outside the lock. FDB persistence is asynchronous and the changelog is the durable
+	// source of truth, so a growing backlog means FDB is lagging, not that data is lost; it is a
+	// health signal to act on (alert / failover) before memory is exhausted.
+	if (shouldLog) {
+		safs::log_err(
+		    "FDB metadata writer backlog: {} pending updates; FDB persistence is lagging. The "
+		    "changelog remains the durable source of truth (recovery replays it), but this master "
+		    "should be investigated or failed over before memory is exhausted.",
+		    depth);
+	}
+}
+
+bool MetadataWriterFDB::noteBacklogGrowthLocked(size_t depth) {
+	if (depth < backlogHighWatermark_) { return false; }
+
+	if (!backlogActive_) {
+		backlogActive_ = true;
+		nextBacklogLogThreshold_ = depth + backlogLogStep_;
+		++backlogEscalations_;
+		return true;  // first crossing of the high-watermark
+	}
+
+	if (depth >= nextBacklogLogThreshold_) {
+		nextBacklogLogThreshold_ = depth + backlogLogStep_;
+		++backlogEscalations_;
+		return true;  // grew by another step while still backlogged
+	}
+
+	return false;
+}
+
+void MetadataWriterFDB::maybeLogBacklogRecovery() {
+	size_t depth = 0;
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		if (!backlogActive_ || pendingUpdates_.size() >= backlogLowWatermark_) { return; }
+		backlogActive_ = false;
+		nextBacklogLogThreshold_ = 0;
+		depth = pendingUpdates_.size();
+	}
+	safs::log_info("FDB metadata writer backlog cleared: {} pending updates remaining", depth);
+}
+
+bool MetadataWriterFDB::isBacklogCritical() const {
 	std::lock_guard<std::mutex> lock(mutex_);
-	pendingUpdates_.emplace_back(std::move(event));
+	return pendingUpdates_.size() >= backlogHighWatermark_;
+}
+
+uint64_t MetadataWriterFDB::backlogEscalationCount() const {
+	std::lock_guard<std::mutex> lock(mutex_);
+	return backlogEscalations_;
 }
 
 bool MetadataWriterFDB::flush(FlushMode mode) {
@@ -234,7 +298,10 @@ bool MetadataWriterFDB::flush(FlushMode mode) {
 		updatesToFlush -= consumed;
 	}
 
-	if (mode == FlushMode::kSnapshot) { return true; }
+	if (mode == FlushMode::kSnapshot) {
+		maybeLogBacklogRecovery();
+		return true;
+	}
 
 	while (pendingCount() > 0) {
 		size_t consumed = 0;
@@ -242,6 +309,7 @@ bool MetadataWriterFDB::flush(FlushMode mode) {
 		if (consumed == 0) { break; }
 	}
 
+	maybeLogBacklogRecovery();
 	return true;
 }
 

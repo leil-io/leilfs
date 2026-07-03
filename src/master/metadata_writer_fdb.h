@@ -189,8 +189,19 @@ public:
 		kDrainUntilEmpty, ///< Keep flushing until no pending updates remain.
 	};
 
+	/// Default pending-update count at which the backlog is reported critical: far above what a
+	/// healthy 100 ms flush cycle leaves queued, so crossing it means FDB persistence is lagging
+	/// badly.
+	static constexpr size_t kDefaultBacklogHighWatermark_ = 100000;
+
+	/// @param kvEngine          Key-value engine used for flush transactions.
+	/// @param checkpointManager Optional checkpoint manager (undo/first-touch capture).
+	/// @param backlogHighWatermark Pending-update count at which the backlog is reported critical
+	///        (see isBacklogCritical()). Injectable so tests can use a small threshold; defaults
+	///        to kDefaultBacklogHighWatermark_.
 	explicit MetadataWriterFDB(kv::IKVEngine *kvEngine,
-	                           MetadataCheckpointManager *checkpointManager = nullptr);
+	                           MetadataCheckpointManager *checkpointManager = nullptr,
+	                           size_t backlogHighWatermark = kDefaultBacklogHighWatermark_);
 
 	/// Flushes any remaining pending updates so they are not lost on shutdown/restart.
 	~MetadataWriterFDB();
@@ -211,6 +222,17 @@ public:
 	/// Get count of pending updates
 	size_t pendingCount() const;
 
+	/// Whether the pending-update backlog has reached the critical high-watermark, i.e. FDB
+	/// persistence is lagging far behind the in-memory metadata. This is a health signal: the
+	/// changelog remains the durable source of truth (see the note on the watermark constants),
+	/// so a critical backlog is not data loss, but the master should be investigated / failed
+	/// over before memory is exhausted. Intended for a health endpoint or monitoring.
+	bool isBacklogCritical() const;
+
+	/// Number of backlog escalation events logged so far (one per high-watermark crossing and
+	/// per subsequent growth step). A monotonically increasing monitoring / test hook.
+	uint64_t backlogEscalationCount() const;
+
 private:
 	using UpdateQueue = std::deque<std::unique_ptr<IMetadataUpdateEvent>>;
 
@@ -218,11 +240,37 @@ private:
 	void restoreBatch(UpdateQueue updates);
 	bool flushBatch(size_t maxUpdates, size_t &consumedOut);
 
+	/// Updates backlog bookkeeping after the queue grew to `depth` (called under mutex_).
+	/// Returns true when this growth should emit an escalation log.
+	bool noteBacklogGrowthLocked(size_t depth);
+
+	/// Logs a one-shot recovery message and clears the backlog state once the queue has drained
+	/// back below the low-watermark. Called after a flush drains the queue.
+	void maybeLogBacklogRecovery();
+
 	kv::IKVEngine *kvEngine_;
 	MetadataCheckpointManager *checkpointManager_;
 
 	mutable std::mutex mutex_;
 	UpdateQueue pendingUpdates_;
+
+	// Backlog watermark bookkeeping (guarded by mutex_). FDB persistence is asynchronous: the
+	// changelog is the durable source of truth and FDB is a materialized image of it, so an FDB
+	// outage does not lose data (recovery replays the changelog) — but pendingUpdates_ grows while
+	// FDB is unreachable. These fields turn that otherwise-silent growth into an escalating,
+	// queryable health signal so the backlog can be acted on (alert / failover) before memory is
+	// exhausted. Note the durability contract: the maximum tolerable FDB outage is bounded by the
+	// changelog retention window; beyond it the FDB image must be re-materialized from metadata.
+	bool backlogActive_{false};
+	size_t nextBacklogLogThreshold_{0};
+	uint64_t backlogEscalations_{0};
+
+	// Critical high-watermark (from the constructor), the escalation step (re-log once the backlog
+	// grows by this many more events past the last log), and the recovery low-watermark (hysteresis
+	// to avoid log flapping around the high-watermark). Derived from backlogHighWatermark_.
+	const size_t backlogHighWatermark_;
+	const size_t backlogLogStep_;
+	const size_t backlogLowWatermark_;
 
 	constexpr static size_t kMaxUpdatesPerFlush_ = 1000;
 
