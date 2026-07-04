@@ -39,6 +39,10 @@ echo "test_data" > test_dir/test_file.txt
 echo "Starting test with deferred metadata dump..."
 
 echo "Stopping primary master to simulate failover..."
+# Step off the mount while the master is down: with the cwd on the mount, every bash fork
+# stats "." through FUSE and blocks uninterruptibly for the mount's full retry budget
+# (longer than the test timeout) until the client reconnects to a master.
+cd "${TEMP_DIR}"
 assert_success saunafs_master_daemon_ha stop
 
 # Verify that starting sfsmaster with default values does not trigger a deferred metadata dump
@@ -62,7 +66,10 @@ assert_success saunafs_master_daemon_ha start -o initial-personality=master \
 saunafs_wait_for_all_ready_chunkservers
 
 echo "Testing filesystem functionality during metadata dump..."
-assert_eventually 'echo "additional_data_during_dump" > test_dir/during_dump_file.txt' "60 seconds"
+assert_eventually 'echo "additional_data_during_dump" > "${info[mount0]}/test_dir/during_dump_file.txt"' "60 seconds"
+
+# The write above confirms the client session is back, it is safe to work on the mount again.
+cd "${info[mount0]}"
 
 assert_equals "test_data" "$(cat test_dir/test_file.txt)"
 assert_equals "additional_data_during_dump" "$(cat test_dir/during_dump_file.txt)"
