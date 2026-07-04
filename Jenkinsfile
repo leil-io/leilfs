@@ -358,7 +358,6 @@ pipeline {
                     environment {
                         SANITY_WORKERS = "${env.SANITY_WORKERS ?: '4'}"
                         SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
-                        LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
 
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
                         REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu24.04-leil-test:$GIT_COMMIT"
@@ -410,20 +409,6 @@ pipeline {
                                 runMachine()
                             }
                         }
-
-                        stage('Run long system tests') {
-                            when {
-                                anyOf {
-                                    branch 'dev'
-                                    branch 'gh-readonly-queue/*'
-                                    branch 'stable'
-                                    changeRequest()
-                                }
-                            }
-                            steps {
-                                runLong()
-                            }
-                        }
                     }
                     post {
                         unstable {
@@ -442,10 +427,76 @@ pipeline {
                                 )
                             }
                         }
-                        success {
+                        // Clean after build
+                        cleanup {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh '''
+                                docker rm $(docker stop $(docker ps -a -q --filter ancestor=leil-test --format="{{.ID}}")) || true
+                                '''
+                            sh """
+                                docker image rm ${env.REGISTRY_IMAGE_NAME} || true
+                                docker image rm leil-test:latest || true
+                                """
+                        }
+                    }
+                }
+                stage('Long system tests (Ubuntu 24.04)') {
+                    when {
+                        beforeAgent true
+                        anyOf {
+                            branch 'dev'
+                            branch 'gh-readonly-queue/*'
+                            branch 'stable'
+                            changeRequest()
+                        }
+                    }
+                    agent { label "test && ubuntu-2404" }
+                    environment {
+                        LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
+                        MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                    }
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkout scm
+                            }
+                        }
+                        stage('Build leil-tests') {
+                            steps {
+                                buildLeilTests()
+                            }
+                        }
+                        stage('Build image') {
+                            steps {
+                                script {
+                                    buildImage("ubuntu:24.04")
+                                }
+                            }
+                        }
+                        stage('Run long system tests') {
+                            steps {
+                                runLong()
+                            }
+                        }
+                    }
+                    post {
+                        unstable {
                             script {
-                                slackGoodMessage(
-                                    "Ubuntu 24.04 pipeline passed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                slackBadMessage(
+                                    "Long tests failed to pass on ${BRANCH_NAME}",
+                                    "Long tests failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                )
+                            }
+                        }
+                        failure {
+                            script {
+                                slackBadMessage(
+                                    "Long tests pipeline failed on ${BRANCH_NAME}",
+                                    "Long tests pipeline failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
                                 )
                             }
                         }
@@ -460,7 +511,6 @@ pipeline {
                                 docker rm $(docker stop $(docker ps -a -q --filter ancestor=leil-test --format="{{.ID}}")) || true
                                 '''
                             sh """
-                                docker image rm ${env.REGISTRY_IMAGE_NAME} || true
                                 docker image rm leil-test:latest || true
                                 """
                         }
@@ -490,6 +540,17 @@ pipeline {
                         ]
                     )
                 }
+            }
+        }
+    }
+    post {
+        // Runs only when every parallel branch is done, including the long
+        // tests, unlike the previous per-branch success notification.
+        success {
+            script {
+                slackGoodMessage(
+                    "Pipeline passed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                )
             }
         }
     }
