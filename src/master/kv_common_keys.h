@@ -92,8 +92,8 @@ inline constexpr std::string_view kNodeKeyPrefix = "NODE_";  // Section NODE 1.0
 /// @note The in-memory implementation only needs to persist the EDGE section in metadata.sfs,
 /// but the KV implementations need additional reverse indexes for efficient lookups and traversals,
 /// which are stored as separate keys with their own prefixes (e.g., DIR_PARENT_, PARENT_).
-/// @see kEdgeLowerKeyPrefix, kDirParentKeyPrefix, kParentKeyPrefix, kDirNodesCountPrefix,
-/// kDirStatsPrefix
+/// @see kEdgeByHashKeyPrefix, kEdgeLowerKeyPrefix, kDirParentKeyPrefix, kParentKeyPrefix,
+/// kDirNodesCountPrefix, kDirStatsPrefix
 inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
 
 /// Prefix for free/reusable inode ids
@@ -225,9 +225,9 @@ inline constexpr std::string_view kFileTestDefectiveKeyPrefix = "FILETEST_DEFECT
 inline constexpr std::string_view kFileTestReportKeyPrefix = "FILETEST_REPORT_";
 
 /// Prefix for locks
-/// Format: FLCK_<InodeId:BE><Type:u8><Status:u8> → serialized lock entries
+/// Format: FLCK_<InodeId:BE><Type:u8><Status:u8> -> serialized lock entries
 /// - InodeId: inode_t serialized as Big Endian (enables per-inode prefix scan)
-/// - Type: u8 (safs_locks::Type – kFlock or kPosix)
+/// - Type: u8 (safs_locks::Type, kFlock or kPosix)
 /// - Status: u8 (0 = active, 1 = pending)
 /// @note Inode-first key layout allows efficient per-inode scans using
 /// prefix FLCK_<InodeId>. Numeric fields in the key are serialized as
@@ -241,6 +241,20 @@ inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";  // Section FLCK 1.
 /// Prefix for case-insensitive edges
 /// Format: LOWER_EDGE_<ParentId><LowercaseName>:<ChildId>
 inline constexpr std::string_view kEdgeLowerKeyPrefix = "LOWER_EDGE_";
+
+// Hash-ordered readdir index
+
+/// Prefix for the hash-ordered secondary edge index used by paged readdir
+/// Format: EDGEHASH_<ParentId><NameHash><Name>:<ChildId>
+/// @note ParentId, NameHash (64-bit) and ChildId are Big Endian; hash-ordered keys let a readdir
+/// cursor resume with a first-greater-or-equal seek even if the cursor entry was deleted.
+/// @note Must not start with "EDGE_", or a primary EDGE_ scan for a parent id matching the
+/// literal's remaining bytes would include these rows.
+/// @note The name in the key keeps hash collisions as distinct rows; the cursor alone cannot
+/// distinguish them (getDir handles that boundary case).
+/// @note Rebuildable from EDGE, so no section version (like LOWER_EDGE_).
+/// @see kEdgeKeyPrefix, kEdgeLowerKeyPrefix
+inline constexpr std::string_view kEdgeByHashKeyPrefix = "EDGEHASH_";
 
 // Extra indexes for edges' reverse lookups/traversals
 
