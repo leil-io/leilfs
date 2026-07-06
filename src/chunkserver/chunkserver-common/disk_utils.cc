@@ -18,6 +18,9 @@
 
 #include "common/platform.h"
 
+#include <algorithm>
+#include <cctype>
+
 #include "chunkserver-common/disk_utils.h"
 
 namespace disk {
@@ -57,11 +60,22 @@ Configuration::Configuration(std::string hddCfgLine) {
 		hddCfgLine.erase(hddCfgLine.begin());
 	}
 
-	static const std::string zonedToken = "zonefs:";
-	if (hddCfgLine.find(zonedToken) == 0) {
-		prefix = hddCfgLine.substr(0, zonedToken.size() - 1);
-		isZoned = true;
-		hddCfgLine.erase(0, zonedToken.size());
+	// A disk type prefix is an alphanumeric token (plus '_') followed by ':'
+	// before the first path character, e.g. "zonefs:" or "mock:". The prefix
+	// selects the plugin used to instantiate the disk; unprefixed lines are
+	// handled by CmrDisk.
+	static const std::string zonedPrefix = "zonefs";
+	const auto colonPos = hddCfgLine.find(':');
+	if (colonPos != std::string::npos && colonPos > 0) {
+		const std::string token = hddCfgLine.substr(0, colonPos);
+		const bool isPrefixToken = std::all_of(
+		    token.begin(), token.end(),
+		    [](unsigned char symbol) { return std::isalnum(symbol) != 0 || symbol == '_'; });
+		if (isPrefixToken) {
+			prefix = token;
+			isZoned = (prefix == zonedPrefix);
+			hddCfgLine.erase(0, colonPos + 1);
+		}
 	}
 
 	static std::string const delimiter = " | ";

@@ -331,6 +331,50 @@ metadata_generate_all() {
 	done
 }
 
+# generate_mock_chunks_changelog <chunk_count> [chunks_per_file] [start_version]
+# Prints a changelog which populates a filesystem containing no files yet
+# with <chunk_count> chunks, spread over files of <chunks_per_file> chunks each.
+# Chunk ids are sequential starting from 1 and get version 1 -- matching the
+# chunks synthesized by the mock disk plugin (src/chunkserver/plugins/mockdisk),
+# so mock chunkservers register exactly the chunks this metadata references.
+# All files have the default goal (1): give each mock chunkserver a disjoint
+# id range (mock:<count>:<firstChunkId>:...) so every chunk has exactly one
+# copy. sfsmetarestore knows no custom goal configuration, so changelogs with
+# SETGOAL to other goal ids cannot be applied offline.
+# [start_version] must be the current metadata version (metadata_get_version);
+# session bookkeeping bumps it above 1 even on a fresh cluster.
+# Apply with: sfsmetarestore -a -d <master_data_path> (master stopped).
+generate_mock_chunks_changelog() {
+	local chunk_count=$1
+	local chunks_per_file=${2:-10000}
+	local start_version=${3:-1}
+	assert_program_installed awk
+	awk -v chunk_count="$chunk_count" \
+			-v chunks_per_file="$chunks_per_file" \
+			-v start_version="$start_version" '
+	END {
+		version = start_version
+		chunkid = 1
+		inode = 2
+		file_nr = 0
+		while (chunkid <= chunk_count) {
+			chunks_in_file = chunk_count - chunkid + 1
+			if (chunks_in_file > chunks_per_file) {
+				chunks_in_file = chunks_per_file
+			}
+			printf "%d: 1|CREATE(1,mock_%07d,f,420,9,9,0):%d\n", \
+					version++, file_nr, inode
+			for (i = 0; i < chunks_in_file; ++i) {
+				printf "%d: 1|WRITE(%d,%d,1,1):%d\n", version++, inode, i, chunkid++
+			}
+			printf "%d: 1|LENGTH(%d,%.0f,0)\n", \
+					version++, inode, chunks_in_file * 67108864
+			++inode
+			++file_nr
+		}
+	}' < /dev/null
+}
+
 # Prints long changelog full of create operations, working only on an empty filesystem.
 # This changelog applies only to an empty metadata file (version == 1)
 generate_changelog() {

@@ -44,7 +44,7 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 
 	IDisk *currentDisk = DiskNotFound;
 
-	if (configuration.isZoned) {
+	if (!configuration.prefix.empty()) {
 		currentDisk = pluginManager.createDisk(configuration);
 	} else {
 		currentDisk = new CmrDisk(configuration);

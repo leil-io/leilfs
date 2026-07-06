@@ -20,10 +20,13 @@
 
 #include "common/platform.h"
 
+#include <functional>
+
 #include "chunkserver-common/chunk_signature.h"
 #include "chunkserver-common/disk_chunks.h"
 #include "chunkserver-common/disk_utils.h"
 #include "common/chunk_part_type.h"
+#include "common/chunk_with_version_and_type.h"
 #include "common/disk_info.h"
 
 constexpr IDisk* DiskNotFound = nullptr;
@@ -160,6 +163,29 @@ public:
 	/// Useful for SMR drives, for instance, to update the zones state after
 	/// knowing all the Chunks.
 	virtual void updateAfterScan() = 0;
+
+	/// Sink handed to disks which enumerate their chunks themselves during
+	/// scan (e.g. synthetic/mock disks) instead of walking directories.
+	/// The callbacks are provided by the hdd space manager, which owns all
+	/// chunk-registry mutation; disks must not touch the registry directly.
+	struct SyntheticChunkSink {
+		/// Reserves registry capacity for the announced number of chunks.
+		std::function<void(uint64_t expectedChunkCount)> reserve;
+
+		/// Registers a bulk of chunks belonging to this disk.
+		std::function<void(std::vector<ChunkWithVersionAndType> &&bulk)> emitBulk;
+
+		/// True when the scan should stop as soon as possible.
+		std::function<bool()> isTerminating;
+	};
+
+	/// Disks that enumerate their chunks themselves populate the registry
+	/// through \p sink and return true. The default implementation returns
+	/// false, requesting the standard directory walk of the disk scan.
+	virtual bool scanSyntheticChunks(const SyntheticChunkSink &sink) {
+		(void)sink;
+		return false;
+	}
 
 	// IO
 
