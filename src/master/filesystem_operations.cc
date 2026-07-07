@@ -3278,6 +3278,11 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 			(*notchanged)++;
 		}
 	}
+	if (*erased > 0 || *repaired > 0) {
+		// Chunk-table and mtime edits only touch the materialized node on KV.
+		// Persist them; in-memory backend already stores the node itself.
+		nodeOperations_->updateNode(fsOpContext, node);
+	}
 	nodeOperations_->getStats(fsOpContext, node, &newStats);
 	nodeOperations_->updateParentStatsForNode(fsOpContext, node, &newStats, &previousStats);
 	quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, newStats.size - previousStats.size}});
