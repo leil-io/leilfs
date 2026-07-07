@@ -94,6 +94,11 @@ public:
 
 	void createAttachedPacket(MessageBuffer serializedPacket);
 
+	/// Enqueues a packet right after the (possibly partially written) head of
+	/// the output queue, so it jumps any long backlog (e.g. registration
+	/// bulks). Used for replies the master is actively waiting for.
+	void createAttachedPriorityPacket(MessageBuffer serializedPacket);
+
 	template <class... Data>
 	void createAttachedNoVersionPacket(PacketHeader::Type type, const Data &...data) {
 		std::vector<uint8_t> buffer;
@@ -162,6 +167,11 @@ public:
 	void duplicateTruncateChunk(const std::vector<uint8_t> &data);
 
 	void replicateChunk(const std::vector<uint8_t> &data);
+
+	/// Handles SAU_MATOCS_QUERY_CHUNKS: replies immediately (from the event
+	/// loop, in-memory lookup only) which of the queried chunks this
+	/// chunkserver hosts. See cstoma::queryChunksResponse.
+	void queryChunks(const std::vector<uint8_t> &data);
 
 	// Callbacks
 

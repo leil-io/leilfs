@@ -165,3 +165,20 @@ int matocsserv_send_duptruncchunk(matocsserventry* eptr,
 int matocsserv_init();
 void matocsserv_getserverdata(const matocsserventry* eptr, ChunkserverListEntry &result);
 csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
+
+/*! \brief Starts an on-demand chunk-location query for \p chunkId.
+ *
+ * Broadcast to every connected chunkserver that supports location queries.
+ * This includes chunkservers that have finished their registration handshake:
+ * an ongoing disk scan can still announce chunks through CHUNK_NEW, whose
+ * locations may not be known to the master yet.
+ * When all queried chunkservers answered -- or the query timed out -- the
+ * waiters are completed through matoclserv_chunk_locations_resolved().
+ * Queries for the same chunk id are coalesced.
+ *
+ * \return true if the query is pending and the caller should defer its reply
+ *         until matoclserv_chunk_locations_resolved(chunkId) fires; false if
+ *         nothing can be queried (no eligible chunkserver, or too many
+ *         queries in flight) and the caller should reply immediately.
+ */
+bool matocsserv_query_chunk_location(uint64_t chunkId);

@@ -398,6 +398,15 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCS_REGISTER_HOST (1000U + 175U)
 /// status:8 version:32 clusterid:STDSTRING
 
+// 0x0498
+#define SAU_MATOCS_QUERY_CHUNKS (1000U + 176U)
+/// version==0 chunkids:(N * [chunkid:64])
+
+// 0x0499
+#define SAU_CSTOMA_QUERY_CHUNKS_RESPONSE (1000U + 177U)
+/// version==0 queriedchunkids:(N * [chunkid:64])
+///            foundchunks:(M * [chunkid:64 chunkversion:32 chunktype:16])
+
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
 /// version==0 chunks:(N * [chunkid:64 chunkversion:32 chunktype:8])

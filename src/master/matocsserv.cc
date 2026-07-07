@@ -35,6 +35,7 @@
 #include <cstring>
 #include <ctime>
 #include <list>
+#include <unordered_map>
 #include <vector>
 
 #include "common/counting_sort.h"
@@ -60,6 +61,7 @@
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
+#include "master/matoclserv.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cstoma.h"
@@ -144,6 +146,13 @@ struct matocsserventry {
 
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
+	/// True once this connection finished its registration handshake
+	/// (SAU_CSTOMA_REGISTER_SPACE is the de-facto end-of-registration marker).
+	/// Note: the chunkserver's disks may still be scanning at that point, with
+	/// chunks arriving later through the CHUNK_NEW stream, so this must not be
+	/// used to decide whether the chunkserver could host still-unknown chunks.
+	bool chunkRegistrationComplete{false};
+
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
@@ -162,6 +171,33 @@ static int32_t lsockpdescpos;
 // from config
 static std::string gListenHost;
 static std::string gListenPort;
+
+/// on-demand chunk-location queries
+
+// Defaults for the ON_DEMAND_CHUNK_QUERY_* configuration entries
+constexpr uint32_t kDefaultOnDemandChunkQueryTimeout_ms = 2000;
+constexpr uint32_t kDefaultOnDemandChunkQueryLimit = 10000;
+
+static uint32_t gOnDemandChunkQueryTimeout_ms = kDefaultOnDemandChunkQueryTimeout_ms;
+static uint32_t gOnDemandChunkQueryLimit = kDefaultOnDemandChunkQueryLimit;
+
+/// A chunk id being resolved by an on-demand chunk-location query.
+struct PendingChunkQuery {
+	Timeout deadline;
+	/// Number of queried chunkservers which have not answered yet.
+	/// The waiters are resolved when it reaches zero or the deadline expires.
+	uint32_t outstandingReplies = 0;
+};
+
+/// Chunk ids currently being resolved by on-demand queries.
+static std::unordered_map<uint64_t, PendingChunkQuery> gPendingChunkQueries;
+
+/// Ids accumulated during the current event-loop iteration; flushed as one
+/// SAU_MATOCS_QUERY_CHUNKS packet per eligible chunkserver.
+static std::vector<uint64_t> gChunkQueryIdsToSend;
+
+static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr);
+static void matocsserv_resolve_chunk_query(uint64_t chunkId);
 
 void matocsserv_getserverdata(const matocsserventry *eptr, ChunkserverListEntry &result) {
 	if (eptr) { result = *eptr; }
@@ -1034,6 +1070,22 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		                                gClusterId);
 		eptr->outputPackets.push_back(std::move(outPacket));
 	}
+
+	// A freshly promoted master may have client operations waiting for chunk
+	// locations while no chunkserver was connected yet: ask the newcomer
+	// about all of them right away.
+	if (matocsserv_can_answer_chunk_queries(eptr) && !gPendingChunkQueries.empty()) {
+		std::vector<uint64_t> chunkIds;
+		chunkIds.reserve(gPendingChunkQueries.size());
+		for (auto &[chunkId, query] : gPendingChunkQueries) {
+			chunkIds.push_back(chunkId);
+			++query.outstandingReplies;
+		}
+
+		OutputPacket outPacket;
+		matocs::queryChunks::serialize(outPacket.packet, chunkIds);
+		eptr->outputPackets.push_back(std::move(outPacket));
+	}
 }
 
 void register_space(matocsserventry* eptr) {
@@ -1065,6 +1117,123 @@ void matocsserv_space(matocsserventry *eptr, const uint8_t *data, uint32_t lengt
 		eptr->todelusedspace = get64bit(&data);
 		eptr->todeltotalspace = get64bit(&data);
 		if (length == kSpacePktWithCountsAndToDel) { get32bit(&data, eptr->todelchunkscount); }
+	}
+}
+
+/// True if this connection can be asked about chunk locations on demand:
+/// host-registered and speaking the protocol. Deliberately NOT limited to
+/// connections whose registration is still in progress: a chunkserver may
+/// finish its registration handshake while its disks are still scanning (e.g.
+/// right after a restart), in which case its chunks arrive through the
+/// CHUNK_NEW stream long after REGISTER_SPACE -- and it must stay queryable
+/// for that whole window. The answer is an in-memory lookup, so querying a
+/// fully-registered chunkserver is cheap and resolves waiters quickly with a
+/// negative reply.
+static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
+	return eptr->mode == ChunkserverConnectionMode::CONNECTED && eptr->csdb != nullptr &&
+	       eptr->version >= kFirstVersionWithChunkLocationQuery;
+}
+
+/// Completes the on-demand query for \p chunkId and wakes its waiters.
+static void matocsserv_resolve_chunk_query(uint64_t chunkId) {
+	gPendingChunkQueries.erase(chunkId);
+	matoclserv_chunk_locations_resolved(chunkId);
+}
+
+bool matocsserv_query_chunk_location(uint64_t chunkId) {
+	if (gPendingChunkQueries.find(chunkId) != gPendingChunkQueries.end()) {
+		// Already being queried; the caller can wait for the same resolution
+		return true;
+	}
+
+	if (gPendingChunkQueries.size() >= gOnDemandChunkQueryLimit) { return false; }
+
+	bool anyTarget = false;
+	for (const auto &entry : matocsservList) {
+		if (matocsserv_can_answer_chunk_queries(entry.get())) {
+			anyTarget = true;
+			break;
+		}
+	}
+	if (!anyTarget) { return false; }
+
+	gPendingChunkQueries.emplace(
+	    chunkId,
+	    PendingChunkQuery{Timeout(std::chrono::milliseconds(gOnDemandChunkQueryTimeout_ms)), 0});
+	gChunkQueryIdsToSend.push_back(chunkId);
+
+	return true;
+}
+
+/// Flushes the chunk-location queries accumulated during this event-loop
+/// iteration: one SAU_MATOCS_QUERY_CHUNKS packet per eligible chunkserver.
+void matocsserv_flush_chunk_queries() {
+	if (gChunkQueryIdsToSend.empty()) { return; }
+
+	std::vector<uint64_t> chunkIds;
+	chunkIds.swap(gChunkQueryIdsToSend);
+
+	uint32_t targetCount = 0;
+	for (auto &entry : matocsservList) {
+		auto *eptr = entry.get();
+		if (!matocsserv_can_answer_chunk_queries(eptr)) { continue; }
+
+		OutputPacket outPacket;
+		matocs::queryChunks::serialize(outPacket.packet, chunkIds);
+		eptr->outputPackets.push_back(std::move(outPacket));
+		++targetCount;
+	}
+
+	for (const auto chunkId : chunkIds) {
+		auto queryIter = gPendingChunkQueries.find(chunkId);
+		if (queryIter == gPendingChunkQueries.end()) { continue; }
+
+		queryIter->second.outstandingReplies += targetCount;
+		if (queryIter->second.outstandingReplies == 0) {
+			// All eligible chunkservers disappeared since the id was queued
+			matocsserv_resolve_chunk_query(chunkId);
+		}
+	}
+}
+
+/// Resolves the waiters of queries whose deadline expired (e.g. a queried
+/// chunkserver disconnected before answering). Runs once per second.
+void matocsserv_pending_chunk_queries_check() {
+	if (gPendingChunkQueries.empty()) { return; }
+
+	std::vector<uint64_t> expiredChunkIds;
+	for (const auto &[chunkId, query] : gPendingChunkQueries) {
+		if (query.deadline.expired()) { expiredChunkIds.push_back(chunkId); }
+	}
+
+	for (const auto chunkId : expiredChunkIds) { matocsserv_resolve_chunk_query(chunkId); }
+}
+
+void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	if (eptr->csdb == nullptr) {
+		safs::log_info(
+		    "SAU_CSTOMA_QUERY_CHUNKS_RESPONSE - possible for registered "
+		    "connections only (ip: {}, port {})",
+		    eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	std::vector<uint64_t> queriedChunkIds;
+	std::vector<ChunkWithVersionAndType> foundChunks;
+	cstoma::queryChunksResponse::deserialize(data, queriedChunkIds, foundChunks);
+
+	// Register the found copies exactly like a registration bulk would
+	gChunkOperations->serverHasChunks(eptr, foundChunks);
+
+	for (const auto chunkId : queriedChunkIds) {
+		auto queryIter = gPendingChunkQueries.find(chunkId);
+		if (queryIter == gPendingChunkQueries.end()) {
+			continue;  // already resolved or timed out
+		}
+
+		if (queryIter->second.outstandingReplies > 0) { --queryIter->second.outstandingReplies; }
+		if (queryIter->second.outstandingReplies == 0) { matocsserv_resolve_chunk_query(chunkId); }
 	}
 }
 
@@ -1103,6 +1272,9 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t>& data) {
 	cstoma::registerSpace::deserialize(data, eptr->usedspace, eptr->totalspace, eptr->chunkscount,
 			eptr->todelusedspace, eptr->todeltotalspace, eptr->todelchunkscount);
+	// REGISTER_SPACE is sent right after the last registration bulk, so it
+	// marks the end of this connection's chunk registration.
+	eptr->chunkRegistrationComplete = true;
 	register_space(eptr);
 }
 
@@ -1315,6 +1487,9 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 				break;
 			case SAU_CSTOMA_REGISTER_CONFIG:
 				matocsserv_sau_register_config(eptr, data);
+				break;
+			case SAU_CSTOMA_QUERY_CHUNKS_RESPONSE:
+				matocsserv_sau_query_chunks_response(eptr, data);
 				break;
 			case SAU_CSTOMA_STATUS:
 				matocsserv_sau_status(eptr, data);
@@ -1607,12 +1782,21 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 	}
 }
 
+/// Reads the on-demand chunk-location query configuration (also on reload)
+static void matocsserv_reload_chunk_query_cfg() {
+	gOnDemandChunkQueryTimeout_ms = cfg_get_minvalue<uint32_t>(
+	    "ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS", kDefaultOnDemandChunkQueryTimeout_ms, 100);
+	gOnDemandChunkQueryLimit =
+	    cfg_getuint32("ON_DEMAND_CHUNK_QUERY_LIMIT", kDefaultOnDemandChunkQueryLimit);
+}
+
 void matocsserv_reload() {
 	std::string oldListenHost = gListenHost;
 	std::string oldListenPort = gListenPort;
 	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST","*");
 	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
+	matocsserv_reload_chunk_query_cfg();
 
 	auto previousValue = gPrioritizeDataParts;
 	gPrioritizeDataParts =
@@ -1687,6 +1871,7 @@ int matocsserv_init() {
 	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
 	gPrioritizeDataParts = static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
+	matocsserv_reload_chunk_query_cfg();
 
 	lsock = tcpsocket();
 	if (lsock < 0) {
@@ -1715,5 +1900,7 @@ int matocsserv_init() {
 	eventloop_reloadregister(matocsserv_reload);
 	eventloop_destructregister(matocsserv_term);
 	eventloop_pollregister(matocsserv_desc, matocsserv_serve);
+	eventloop_eachloopregister(matocsserv_flush_chunk_queries);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 1, 0, matocsserv_pending_chunk_queries_check);
 	return 0;
 }

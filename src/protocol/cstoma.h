@@ -81,6 +81,15 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerChunks, SAU_CSTOMA_REGISTER_CHUNKS, kECChunks,
 		std::vector<ChunkWithVersionAndType>, chunks)
 
+// Reply to SAU_MATOCS_QUERY_CHUNKS (on-demand chunk-location query, sent by
+// the master while a chunkserver's registration is still in progress).
+// queriedChunkIds echoes every id from the query, so the master can account
+// for negative answers; foundChunks lists the parts this chunkserver hosts
+// (possibly several per id for EC parts).
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunksResponse, SAU_CSTOMA_QUERY_CHUNKS_RESPONSE,
+                                    0, std::vector<uint64_t>, queriedChunkIds,
+                                    std::vector<ChunkWithVersionAndType>, foundChunks)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerSpace, SAU_CSTOMA_REGISTER_SPACE, 0,
 		uint64_t, usedSpace,

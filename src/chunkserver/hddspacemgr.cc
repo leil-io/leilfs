@@ -361,6 +361,7 @@ void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 		if (chunk->state() == ChunkState::Available) {
 			gOpenChunks.purge(chunk->metaFD());
 			chunk->owner()->chunks().remove(chunk);
+			hddForgetPresentChunkType(chunk->type());
 			gChunksMap.erase(chunkToKey(*chunk));
 		} else if (chunk->state() == ChunkState::Locked) {
 			// Some hdd worker is doing something with this chunk,
@@ -2519,6 +2520,7 @@ static bool hddScanSyntheticChunks(IDisk *disk) {
 				auto *chunk = disk->instantiateNewConcreteChunk(entry.id, entry.type);
 				passert(chunk);
 				gChunksMap.insert({key, std::unique_ptr<IChunk>(chunk)});
+				hddNotePresentChunkType(entry.type);
 				chunk->setVersion(entry.version);
 				disk->updateChunkAttributes(chunk, true);
 				chunk->setState(ChunkState::Available);

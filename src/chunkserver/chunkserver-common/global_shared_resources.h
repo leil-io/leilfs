@@ -48,6 +48,26 @@ inline ChunkMap gChunksMap;
 /// Chunk objects stored in the registry have their own separate locks.
 inline std::mutex gChunksMapMutex;
 
+/// Number of chunks per ChunkPartType currently present in gChunksMap.
+/// Maintained at every gChunksMap insert/erase, under gChunksMapMutex.
+/// Lets id-only lookups (e.g. the master's on-demand chunk-location query)
+/// probe one (id, type) key per hosted type instead of scanning the whole
+/// type space. In practice it holds a handful of entries.
+inline std::map<ChunkPartType, uint64_t> gPresentChunkTypes;
+
+/// Registers one more chunk of \p type. Call under gChunksMapMutex, next to
+/// the gChunksMap insert.
+inline void hddNotePresentChunkType(ChunkPartType type) { ++gPresentChunkTypes[type]; }
+
+/// Unregisters one chunk of \p type. Call under gChunksMapMutex, next to the
+/// gChunksMap erase.
+inline void hddForgetPresentChunkType(ChunkPartType type) {
+	auto typeIterator = gPresentChunkTypes.find(type);
+	if (typeIterator != gPresentChunkTypes.end() && --(typeIterator->second) == 0) {
+		gPresentChunkTypes.erase(typeIterator);
+	}
+}
+
 inline const int kOpenRetryCount = 4;
 inline const int kOpenRetry_ms = 5;
 

@@ -34,10 +34,12 @@
 #include <cstring>
 #include <ctime>
 
+#include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_main_thread.h"
+#include "common/chunk_version_with_todel_flag.h"
 #include "common/input_packet.h"
 #include "common/loop_watchdog.h"
 #include "common/network_address.h"
@@ -72,6 +74,17 @@ void MasterConn::attachPacket(void *packet) {
 
 void MasterConn::createAttachedPacket(MessageBuffer serializedPacket) {
 	outputPackets_.emplace_back(std::move(serializedPacket));
+}
+
+void MasterConn::createAttachedPriorityPacket(MessageBuffer serializedPacket) {
+	if (outputPackets_.empty()) {
+		outputPackets_.emplace_back(std::move(serializedPacket));
+		return;
+	}
+
+	// The head packet may already be partially written to the socket, so the
+	// earliest safe position is right after it.
+	outputPackets_.emplace(std::next(outputPackets_.begin()), std::move(serializedPacket));
 }
 
 // Configuration
@@ -664,6 +677,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_REGISTER_HOST:
 		onRegistered(message);
 		break;
+	case SAU_MATOCS_QUERY_CHUNKS:
+		queryChunks(message);
+		break;
 	default:
 		safs::log_info("MasterConn: got unknown message (type: {}): {}", header.type,
 		               address_.toString());
@@ -676,6 +692,39 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 }
 
 // Chunk operations
+
+void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
+	std::vector<uint64_t> chunkIds;
+	matocs::queryChunks::deserialize(data, chunkIds);
+
+	std::vector<ChunkWithVersionAndType> foundChunks;
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		for (const auto chunkId : chunkIds) {
+			for (const auto &[chunkType, count] : gPresentChunkTypes) {
+				auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, chunkType));
+				if (chunkIter == gChunksMap.end()) { continue; }
+
+				const IChunk *chunk = chunkIter->second.get();
+				if (chunk->state() == ChunkState::Deleted ||
+				    chunk->state() == ChunkState::ToBeDeleted) {
+					continue;
+				}
+
+				const bool markedForDeletion =
+				    chunk->owner() != nullptr && chunk->owner()->isMarkedForDeletion();
+				foundChunks.emplace_back(
+				    chunkId,
+				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
+				    chunkType);
+			}
+		}
+	}
+
+	// The master holds client operations back until this answer arrives, so
+	// it must jump any registration backlog in the output queue.
+	createAttachedPriorityPacket(cstoma::queryChunksResponse::build(chunkIds, foundChunks));
+}
 
 void MasterConn::createChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
@@ -765,7 +814,7 @@ void MasterConn::setChunkVersionAndLock(const std::vector<uint8_t> &data) {
 void MasterConn::lockChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
-	
+
 	matocs::chunkLock::deserialize(data, chunkId, chunkType);
 
 	auto *chunkLockOutputPacket = new OutputPacket;
@@ -792,7 +841,7 @@ void MasterConn::lockChunk(const std::vector<uint8_t> &data) {
 void MasterConn::unlockChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
-	
+
 	matocs::chunkUnlock::deserialize(data, chunkId, chunkType);
 	if (jobPool_) {
 		jobPool_->eraseChunkLock(chunkId, chunkType);

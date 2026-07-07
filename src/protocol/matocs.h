@@ -32,6 +32,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, version,
 		std::string, clusterId)
 
+// On-demand chunk-location query: while a chunkserver's registration is in
+// progress, the master asks which of these chunks the chunkserver hosts so
+// that waiting client operations can be answered without waiting for the
+// full registration. Answered with SAU_CSTOMA_QUERY_CHUNKS_RESPONSE.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, queryChunks, SAU_MATOCS_QUERY_CHUNKS, 0,
+                                    std::vector<uint64_t>, chunkIds)
+
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
