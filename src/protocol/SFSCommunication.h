@@ -437,6 +437,18 @@ enum class SugidClearMode : uint8_t {
 /// version==0 queriedchunkids:(N * [chunkid:64])
 ///            foundchunks:(M * [chunkid:64 chunkversion:32 chunktype:16])
 
+// 0x049E
+#define SAU_MATOCS_REGISTER_CHUNKS_START (1000U + 182U)
+/// version==0 bulksize:32 initialcredits:32
+
+// 0x049F
+#define SAU_MATOCS_REGISTER_CHUNKS_CREDIT (1000U + 183U)
+/// version==0 credits:32
+
+// 0x04A0
+#define SAU_CSTOMA_REGISTER_CHUNKS_END (1000U + 184U)
+/// version==0 chunkcount:64
+
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
 /// version==0 chunks:(N * [chunkid:64 chunkversion:32 chunktype:8])

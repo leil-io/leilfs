@@ -28,6 +28,7 @@ MASTERSERVERS=2 \
 	MOUNTS=1 \
 	USE_RAMDISK=YES \
 	AUTO_SHADOW_MASTER=NO \
+	MASTER_EXTRA_CONFIG="CHUNK_REGISTRATION_CHUNKS_PER_SECOND = 100000" \
 	CHUNKSERVER_EXTRA_CONFIG="MASTER_RECONNECTION_DELAY = 1" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	setup_local_empty_saunafs info
@@ -90,14 +91,9 @@ files_readable() {
 # from the probe set, so no location gets cached for the measurement)
 assert_success files_readable "${sanity_files[@]}"
 
-# Throttle re-registration to one chunk per packet: emulates the packet count
-# of a much larger cluster (hundreds of millions of chunks) at CI-sized chunk
-# counts. The initial registration above already ran at full speed.
-for csid in 0 1; do
-	echo "HDD_CHUNK_BULK_SIZE = 1" >> "${info[chunkserver${csid}_cfg]}"
-	saunafs_chunkserver_daemon "$csid" reload
-done
-
+# Re-registration is paced by the masters' CHUNK_REGISTRATION_CHUNKS_PER_SECOND
+# budget (set above), emulating the registration duration of a much larger
+# cluster at CI-sized chunk counts.
 # Start the shadow and wait for full metadata sync
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"

@@ -15,6 +15,7 @@ MASTERSERVERS=2 \
 	MOUNTS=1 \
 	USE_RAMDISK=YES \
 	AUTO_SHADOW_MASTER=NO \
+	MASTER_EXTRA_CONFIG="CHUNK_REGISTRATION_CHUNKS_PER_SECOND = 100000" \
 	CHUNKSERVER_EXTRA_CONFIG="MASTER_RECONNECTION_DELAY = 1" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	setup_local_empty_saunafs info
@@ -42,13 +43,9 @@ count_chunk_copies() {
 }
 assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
 
-# Slow down re-registration so the post-promotion registration window is long
-# enough to observe the on-demand path racing it
-for csid in 0 1; do
-	echo "HDD_CHUNK_BULK_SIZE = 1" >> "${info[chunkserver${csid}_cfg]}"
-	saunafs_chunkserver_daemon "$csid" reload
-done
-
+# Re-registration is paced by the masters' CHUNK_REGISTRATION_CHUNKS_PER_SECOND
+# budget (set above), so the post-promotion registration window is long enough
+# to observe the on-demand path racing it.
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
 

@@ -107,9 +107,12 @@ wait_for_chunk_count "$((MOCK_CS_COUNT * CHUNK_COUNT + 1))"
 echo "PROMOTION_FULL_REGISTRATION_MS: $(($(now_ms) - promotion_start_ms))"
 
 # 4. Memory footprint (the promoted master runs with master1's cfg)
-master_pid=$(pgrep -f "sfsmaster" | head -1)
+# several processes can match (symlink names, transient reload commands);
+# the actual master is the one with the largest RSS
+master_pid=$(pgrep -f "sfsmaster|leil-master" | xargs -r ps -o pid=,rss= -p 2>/dev/null \
+	| sort -k2 -rn | head -1 | awk '{print $1}')
 [[ $master_pid ]] && echo "MASTER_RSS_KB: $(awk '/VmRSS/ {print $2}' /proc/$master_pid/status)"
-cs_pid=$(pgrep -f "sfschunkserver -c ${info[chunkserver0_cfg]}" | head -1)
+cs_pid=$(pgrep -f "(sfschunkserver|leil-chunkserver).*${info[chunkserver0_cfg]}" | head -1)
 [[ $cs_pid ]] && echo "CHUNKSERVER_RSS_KB: $(awk '/VmRSS/ {print $2}' /proc/$cs_pid/status)"
 
 echo "CHUNK_COUNT: $CHUNK_COUNT, MOCK_CS_COUNT: $MOCK_CS_COUNT"

@@ -259,6 +259,20 @@ further operations are answered immediately with the currently known
 locations, as if this mechanism was disabled. Setting it to 0 disables
 on-demand queries entirely (default is 10000)
 
+*CHUNK_REGISTRATION_BULK_SIZE*:: Number of chunks per bulk this master
+dictates to chunkservers registering through the master-driven (pull)
+protocol (default is 1000, range 1..100000)
+
+*CHUNK_REGISTRATION_WINDOW*:: Number of registration bulks a chunkserver may
+have in flight before waiting for this master's credit grants (default is 4,
+minimum is 1)
+
+*CHUNK_REGISTRATION_CHUNKS_PER_SECOND*:: Global chunk-registration ingest
+budget, in chunks per second, shared by all chunkservers registering through
+the pull protocol. Protects the master from a registration flood when many
+chunkservers reconnect at once (e.g. right after a failover). 0 means
+unlimited (default is 0)
+
 *PRIORITIZE_DATA_PARTS*:: When set, master server will prioritize data parts in
 EC goals to land in the chunkservers with higher percentage of available space.
 Could cause parities landing always in the same chunkservers if the cluster is
