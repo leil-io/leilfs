@@ -5623,9 +5623,7 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 
 	deserializePacketVersionNoHeader(data, length, version);
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
+	// Deserialize once; the packet does not change across retry attempts.
 	if (version == cltoma::manageLocksUnlock::kSingle) {
 		cltoma::manageLocksUnlock::deserialize(data, length, type, inode, sessionid, owner, start,
 		                                       end);
@@ -5633,39 +5631,54 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 		if (end == 0) {
 			end = std::numeric_limits<decltype(end)>::max();
 		}
-		if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
-			status = gFSOperations->flockOperation(context, fsOpContext, inode, owner, sessionid, 0,
-			                                       0, safs_locks::kUnlock, true, flocks_applied);
-		}
-		if (status == SAUNAFS_STATUS_OK &&
-		    (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
-			status = gFSOperations->posixLockOperation(context, fsOpContext, inode, start, end,
-			                                           owner, sessionid, 0, 0, safs_locks::kUnlock,
-			                                           true, posix_applied);
-		}
 	} else if (version == cltoma::manageLocksUnlock::kInode) {
 		cltoma::manageLocksUnlock::deserialize(data, length, type, inode);
-		if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
-			status = gFSOperations->locksUnlockInode(
-			    context, fsOpContext, (uint8_t)safs_locks::Type::kFlock, inode, flocks_applied);
-		}
-		if (status == SAUNAFS_STATUS_OK &&
-		    (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
-			status = gFSOperations->locksUnlockInode(
-			    context, fsOpContext, (uint8_t)safs_locks::Type::kPosix, inode, posix_applied);
-		}
 	} else {
 		throw IncorrectDeserializationException("Unknown SAU_CLTOMA_MANAGE_LOCKS_UNLOCK version: " +
 		                                        std::to_string(version));
 	}
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
-			status = SAUNAFS_ERROR_IO;
-			flocks_applied.clear();
-			posix_applied.clear();
-		}
+	// Admin unlock shares lock records with FLOCK/SETLK, so routine KV conflicts
+	// must replay instead of returning EIO.
+	bool transactional = false;
+	status = matoclserv_commit_op_with_retry(
+	    [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		    transactional = fsOpContext.hasReadWriteTransaction();
+		    flocks_applied.clear();  // reset per attempt so a replay cannot duplicate wake sets
+		    posix_applied.clear();
+		    uint8_t st = SAUNAFS_STATUS_OK;
+		    if (version == cltoma::manageLocksUnlock::kSingle) {
+			    if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
+				    st = gFSOperations->flockOperation(context, fsOpContext, inode, owner,
+				                                       sessionid, 0, 0, safs_locks::kUnlock, true,
+				                                       flocks_applied);
+			    }
+			    if (st == SAUNAFS_STATUS_OK &&
+			        (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
+				    st = gFSOperations->posixLockOperation(context, fsOpContext, inode, start, end,
+				                                           owner, sessionid, 0, 0,
+				                                           safs_locks::kUnlock, true, posix_applied);
+			    }
+		    } else {
+			    if (type == safs_locks::Type::kAll || type == safs_locks::Type::kFlock) {
+				    st = gFSOperations->locksUnlockInode(context, fsOpContext,
+				                                         (uint8_t)safs_locks::Type::kFlock, inode,
+				                                         flocks_applied);
+			    }
+			    if (st == SAUNAFS_STATUS_OK &&
+			        (type == safs_locks::Type::kAll || type == safs_locks::Type::kPosix)) {
+				    st = gFSOperations->locksUnlockInode(context, fsOpContext,
+				                                         (uint8_t)safs_locks::Type::kPosix, inode,
+				                                         posix_applied);
+			    }
+		    }
+		    return st;
+	    });
+
+	if (transactional && status != SAUNAFS_STATUS_OK) {
+		// KV rolled back the failed attempt, so wake no one; in-memory applied in place.
+		flocks_applied.clear();
+		posix_applied.clear();
 	}
 
 	for (auto sessionAndMsg : flocks_applied) {
@@ -5711,20 +5724,14 @@ void matoclserv_fuse_locks_interrupt(matoclserventry *eptr, const uint8_t *data,
 
 	cltoma::fuseFlock::deserialize(data, length, messageId, interruptData);
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
-	// we do not reply, so there is not need for checking status of this fs_operation
-	gFSOperations->locksRemovePending(context, fsOpContext, type, interruptData.owner,
-	                                  eptr->sessionData->sessionId, interruptData.ino,
-	                                  interruptData.reqid);
-
-	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("{}: transaction failed to commit: inode {}", __func__,
-			              interruptData.ino);
-		}
-	}
+	// There is no reply, but pending-lock removal still needs KV conflict retry;
+	// otherwise a routine commit conflict can silently leave the pending lock behind.
+	matoclserv_commit_op_with_retry([&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		return gFSOperations->locksRemovePending(context, fsOpContext, type,
+		                                         interruptData.owner,
+		                                         eptr->sessionData->sessionId,
+		                                         interruptData.ino, interruptData.reqid);
+	});
 }
 
 void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
