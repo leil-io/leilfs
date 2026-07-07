@@ -245,6 +245,20 @@ chunkserver disk usage to determine most fitting chunkserver. Heavy loaded
 chunkservers will be picked for operations less frequently. (default is 0,
 correct values are in range from 0 to 0.5)
 
+*ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS*:: While chunkservers are still registering
+their chunks (e.g. right after this server became the active master), client
+operations on chunks without a known location are held back and the
+registering chunkservers are asked about those chunks on demand. This is the
+maximum time (in milliseconds) such an operation waits for the answers before
+it is completed with whatever is known at that point (default is 2000,
+minimum is 100)
+
+*ON_DEMAND_CHUNK_QUERY_LIMIT*:: Maximum number of chunk ids being resolved by
+on-demand chunk-location queries at the same time. When the limit is reached,
+further operations are answered immediately with the currently known
+locations, as if this mechanism was disabled. Setting it to 0 disables
+on-demand queries entirely (default is 10000)
+
 *PRIORITIZE_DATA_PARTS*:: When set, master server will prioritize data parts in
 EC goals to land in the chunkservers with higher percentage of available space.
 Could cause parities landing always in the same chunkservers if the cluster is
