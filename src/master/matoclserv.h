@@ -46,6 +46,10 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status,
 /// @param chunkId The ID of the chunk that has been unlocked
 void matoclserv_notify_unlock_list(uint64_t chunkId);
 
+/// Reissues a staged KV changelog version into the strictly increasing published stream.
+/// In-memory master bypasses this; its inline versions are already serialized.
+uint64_t matoclserv_sequence_published_changelog_version(uint64_t stagedVersion);
+
 /// Initializes the network configuration and register the eventloop callbacks.
 /// @return 0 on success, negative value on error
 int matoclserv_network_init();

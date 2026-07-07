@@ -108,6 +108,12 @@ void FilesystemOperationsBase::changeLog(
 		return;
 	}
 
+	if (fsOpContext.hasReadWriteTransaction()) {
+		// Direct KV commits still publish inline; sequence them with deferred publications
+		// so duplicate staged versions do not reach changelog consumers.
+		version = matoclserv_sequence_published_changelog_version(version);
+	}
+
 	changelog(version, entry);
 
 	if (!getChangelogSignal().empty()) {

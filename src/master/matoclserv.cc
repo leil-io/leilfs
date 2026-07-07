@@ -312,11 +312,25 @@ static void matoclserv_commit_wakeup_serve(const std::vector<pollfd> &pdesc) {
 	}
 }
 
-/// Publishes all changelog sinks after a deferring transaction commits.
+/// Last changelog version handed to KV changelog sinks.
+/// In-memory master bypasses this; its inline version counter is already serialized.
+static uint64_t gLastPublishedChangelogVersion = 0;
+
+uint64_t matoclserv_sequence_published_changelog_version(uint64_t stagedVersion) {
+	gLastPublishedChangelogVersion =
+	    std::max(gLastPublishedChangelogVersion + 1, stagedVersion);
+	return gLastPublishedChangelogVersion;
+}
+
+/// Publishes buffered changelog sinks after a deferring transaction commits.
+/// Staged KV versions can collide, so this is the total-order point that reissues
+/// monotonically increasing versions for changelog, metaloggers and notifiers.
+/// Gaps are allowed; direct inline KV publications use the same sequencer.
 static void matoclserv_publish_deferred_changelog(const FilesystemOperationContext &ctx) {
 	auto entries = ctx.takeDeferredChangelogEntries();
 	for (auto &deferred : entries) {
-		// Preserve inline payload bytes, including the trailing NUL.
+		deferred.version = matoclserv_sequence_published_changelog_version(deferred.version);
+		// C-string sinks stop at the trailing NUL; broadcasts send it, matching inline path.
 		changelog(deferred.version, deferred.entry.c_str());
 		if (!getChangelogSignal().empty()) {
 			getChangelogSignal().emit(
