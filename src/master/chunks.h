@@ -56,15 +56,18 @@ int chunk_unlock(uint64_t chunkid);
 bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
                                          ChunkGoalCounters &counters);
 
+/// Reads a chunk's write-lock state (lockid and lock expiry timestamp).
+/// Returns false if the chunk is unknown.
+bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto);
+
 /// Returns true if the chunk is present in the in-memory hash.
 bool chunk_exists(uint64_t chunkid);
 
-/// Creates an in-memory chunk with the given version and per-goal reference counts, unless it is
-/// already present. The counterpart to chunk_add_from_initial_metadata_load for callers that
-/// restore a chunk's reference counts on demand (e.g. when a chunkserver reports it after a
-/// restart) rather than from the metadata image.
+/// Restores an in-memory chunk from persisted version, refs and lock state.
+/// Used by on-demand restore paths when a chunk is not present in memory yet.
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
-                                     const std::vector<ChunkGoalCounters::GoalCounter> &goals);
+                                     const std::vector<ChunkGoalCounters::GoalCounter> &goals,
+                                     uint32_t lockid, uint32_t lockedto);
 
 uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lockid, uint8_t goal,
 		bool doIncreaseVersion, uint64_t *newChunkId);
