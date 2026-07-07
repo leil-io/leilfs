@@ -122,6 +122,7 @@ void hddRemoveChunkFromContainers(IChunk *chunk) {
 		disk->setNeedRefresh(true);
 	}
 
+	hddForgetPresentChunkType(chunkIter->first.type);
 	gChunksMap.erase(chunkIter);
 }
 
@@ -456,6 +457,7 @@ IChunk *hddRecreateChunk(IDisk *disk, IChunk *chunk, uint64_t chunkId,
 	massert(success,
 	        "Cannot insert new chunk to the map as a chunk with "
 	        "its chunkId and chunkPartType already exists");
+	hddNotePresentChunkType(type);
 
 	chunk->setCondVar(std::move(waiting));
 

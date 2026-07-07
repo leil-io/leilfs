@@ -11,9 +11,9 @@ timeout_set '30 minutes'
 #
 # This test measures the time from promotion until client IO works for files
 # spread across the whole chunk-id space and asserts it is much smaller than
-# the full re-registration time. It is expected to FAIL until the on-demand
-# chunk-location resolution (milestone M1) lands; the M1 PR moves it to
-# ShortSystemTests.
+# the full re-registration time. It passes since the on-demand chunk-location
+# resolution landed: client operations on unregistered chunks are held back
+# and resolved through SAU_MATOCS_QUERY_CHUNKS instead of stalling.
 
 CHUNK_COUNT=${CHUNK_COUNT:-1000000}
 CHUNKS_PER_FILE=10000

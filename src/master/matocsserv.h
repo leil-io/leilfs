@@ -176,3 +176,10 @@ csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
 matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint16_t port,
                                             uint32_t version);
 void matocsserv_test_connection_free(matocsserventry *eptr);
+
+/// Coalesces location queries and broadcasts to all eligible chunkservers, even
+/// after registration: disk scans may still reveal unreported chunks.
+/// @param chunkId Chunk whose locations should be discovered.
+/// @return True to defer the client reply until matoclserv_chunk_locations_resolved()
+/// runs after all answers or timeout; false if no query can start.
+bool matocsserv_query_chunk_location(uint64_t chunkId);
