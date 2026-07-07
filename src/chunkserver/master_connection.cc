@@ -27,6 +27,7 @@
 #include <sys/uio.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -197,12 +198,33 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	isVersionLessThan5_ = false;
 	registrationAttempts_ = 0;
 
+	if (!gForcePushRegistration && version_ >= kFirstVersionWithPullChunkRegistration) {
+		// Master-driven (pull) registration: send the registration tail right
+		// away (this chunkserver becomes placeable for new chunks) and wait
+		// for the master to release the chunk stream with
+		// SAU_MATOCS_REGISTER_CHUNKS_START.
+		sendRegistrationTail();
+		registrationStatus_ = RegistrationStatus::kAwaitingPullStart;
+		pullStartTimeout_ = Timeout(std::chrono::seconds(gPullRegistrationStartTimeout_s));
+		return;
+	}
+
+	pushRegisterChunks();
+}
+
+void MasterConn::pushRegisterChunks() {
 	hddForeachChunkInBulks(
 	    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
 	    },
 	    gChunkBulkSize.load(std::memory_order_relaxed));
 
+	sendRegistrationTail();
+
+	registrationStatus_ = RegistrationStatus::kChunksRegistered;
+}
+
+void MasterConn::sendRegistrationTail() {
 	uint64_t usedSpace;
 	uint64_t totalSpace;
 	uint64_t toDelUsedSpace;
@@ -216,11 +238,78 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	    usedSpace, totalSpace, chunkCount, toDelUsedSpace, toDelTotalSpace, toDelChunkCount);
 	createAttachedPacket(std::move(registerSpace));
 
-	registrationStatus_ = RegistrationStatus::kChunksRegistered;
-
 	sendRegisterLabel();
 
 	sendConfig();
+}
+
+void MasterConn::onRegisterChunksStart(const std::vector<uint8_t> &data) {
+	uint32_t bulkSize{};
+	uint32_t initialCredits{};
+	matocs::registerChunksStart::deserialize(data, bulkSize, initialCredits);
+
+	if (registrationStatus_ != RegistrationStatus::kAwaitingPullStart) {
+		safs::log_warn(
+		    "MasterConn: unexpected REGISTER_CHUNKS_START in registration status {}, ignoring",
+		    static_cast<int>(registrationStatus_));
+		return;
+	}
+
+	pullBulkSize_ = std::clamp(bulkSize, kMinChunkBulkSize, kMaxChunkBulkSize);
+	pullCredits_ = initialCredits;
+	pullChunksSent_ = 0;
+	registrationStatus_ = RegistrationStatus::kChunksRegistering;
+
+	safs::log_info(
+	    "MasterConn: master-driven chunk registration started (bulk size {}, initial credits {})",
+	    pullBulkSize_, pullCredits_);
+
+	hddRegistrationSweepBegin();
+	pumpPullRegistration();
+}
+
+void MasterConn::onRegisterChunksCredit(const std::vector<uint8_t> &data) {
+	uint32_t credits{};
+	matocs::registerChunksCredit::deserialize(data, credits);
+
+	if (registrationStatus_ != RegistrationStatus::kChunksRegistering) {
+		// Late credit, e.g. after the END packet was already sent
+		return;
+	}
+
+	pullCredits_ += credits;
+	pumpPullRegistration();
+}
+
+void MasterConn::pumpPullRegistration() {
+	std::vector<ChunkWithVersionAndType> bulk;
+
+	while (pullCredits_ > 0) {
+		if (!hddRegistrationSweepNext(bulk, pullBulkSize_)) {
+			createAttachedPacket(cstoma::registerChunksEnd::build(pullChunksSent_));
+			registrationStatus_ = RegistrationStatus::kChunksRegistered;
+			safs::log_info("MasterConn: master-driven chunk registration complete ({} chunks)",
+			               pullChunksSent_);
+			return;
+		}
+
+		pullChunksSent_ += bulk.size();
+		--pullCredits_;
+		createAttachedPacket(cstoma::registerChunks::build(bulk));
+	}
+}
+
+void MasterConn::checkPullRegistrationStartTimeout() {
+	if (registrationStatus_ != RegistrationStatus::kAwaitingPullStart ||
+	    !pullStartTimeout_.expired()) {
+		return;
+	}
+
+	safs::log_warn(
+	    "MasterConn: master did not start chunk registration within {}s, "
+	    "falling back to push registration",
+	    gPullRegistrationStartTimeout_s);
+	pushRegisterChunks();
 }
 
 void MasterConn::handleRegistrationAttempt() {
@@ -680,6 +769,12 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_QUERY_CHUNKS:
 		queryChunks(message);
 		break;
+	case SAU_MATOCS_REGISTER_CHUNKS_START:
+		onRegisterChunksStart(message);
+		break;
+	case SAU_MATOCS_REGISTER_CHUNKS_CREDIT:
+		onRegisterChunksCredit(message);
+		break;
 	default:
 		safs::log_info("MasterConn: got unknown message (type: {}): {}", header.type,
 		               address_.toString());
@@ -718,6 +813,14 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
 				    chunkType);
 			}
+		}
+	}
+
+	// During a pull-registration sweep the answered chunks are already known
+	// to the master, so the sweep does not need to repeat them.
+	if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
+		for (const auto &foundChunk : foundChunks) {
+			hddRegistrationSweepMarkRegistered(foundChunk.id, foundChunk.type);
 		}
 	}
 

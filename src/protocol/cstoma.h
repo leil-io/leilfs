@@ -90,6 +90,12 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunksResponse, SAU_CSTOMA_QUER
                                     0, std::vector<uint64_t>, queriedChunkIds,
                                     std::vector<ChunkWithVersionAndType>, foundChunks)
 
+// Ends a master-driven (pull) chunk registration stream started by
+// SAU_MATOCS_REGISTER_CHUNKS_START; chunkCount is the number of chunks the
+// sweep reported, for logging/verification.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, registerChunksEnd, SAU_CSTOMA_REGISTER_CHUNKS_END, 0,
+                                    uint64_t, chunkCount)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerSpace, SAU_CSTOMA_REGISTER_SPACE, 0,
 		uint64_t, usedSpace,

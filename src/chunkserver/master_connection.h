@@ -44,6 +44,15 @@ inline std::string gBindHostStr;
 inline std::string gLabel;
 inline uint32_t gTimeout_ms;
 
+/// CHUNK_REGISTRATION_START_TIMEOUT (seconds): how long a pull-capable
+/// chunkserver waits for SAU_MATOCS_REGISTER_CHUNKS_START before falling
+/// back to the old push registration.
+inline uint32_t gPullRegistrationStartTimeout_s;
+
+/// CHUNK_REGISTRATION_FORCE_PUSH: skip the pull protocol entirely and always
+/// push the full chunk list (testability / emergency escape hatch).
+inline bool gForcePushRegistration;
+
 // Forward declaration
 class MasterJobPool;
 
@@ -61,6 +70,8 @@ enum class RegistrationStatus : std::uint8_t {
 	kUnregistered,           ///< Initial state, not registered yet.
 	kRegistrationRequested,  ///< Registration has been requested but not yet confirmed.
 	kHostRegistered,         ///< Registration has been confirmed.
+	kAwaitingPullStart,      ///< Waiting for the master to start pull registration.
+	kChunksRegistering,      ///< Master-driven (pull) chunk registration in progress.
 	kChunksRegistered,       ///< Chunks have been registered with the MDS.
 };
 
@@ -119,6 +130,20 @@ public:
 	void sendRegister();
 
 	void onRegistered(const std::vector<uint8_t> &data);
+
+	// Master-driven (pull) chunk registration
+
+	/// Handles SAU_MATOCS_REGISTER_CHUNKS_START: begins the pull sweep.
+	void onRegisterChunksStart(const std::vector<uint8_t> &data);
+
+	/// Handles SAU_MATOCS_REGISTER_CHUNKS_CREDIT: releases more bulks.
+	void onRegisterChunksCredit(const std::vector<uint8_t> &data);
+
+	/// Falls back to the old push registration when the master never sent
+	/// SAU_MATOCS_REGISTER_CHUNKS_START (e.g. a master which advertises a
+	/// pull-capable version but does not speak the protocol).
+	/// Called periodically from the event loop.
+	void checkPullRegistrationStartTimeout();
 
 	int initConnect();
 
@@ -250,6 +275,24 @@ private:
 	static constexpr uint8_t kMaxRegistrationAttemptsToBeConsideredOldMaster = 3;
 	uint32_t registrationAttempts_{0};  ///< Number of registration attempts.
 	bool isVersionLessThan5_{false};    ///< Indicates if the master server is an old version.
+
+	// Master-driven (pull) chunk registration
+
+	/// Sends the space/label/config registration tail.
+	void sendRegistrationTail();
+
+	/// Runs the old push registration (full sweep in one go).
+	void pushRegisterChunks();
+
+	/// Sends sweep bulks while pull credits remain; sends
+	/// SAU_CSTOMA_REGISTER_CHUNKS_END when the sweep completes.
+	void pumpPullRegistration();
+
+	uint32_t pullBulkSize_{0};    ///< Chunks per bulk, dictated by the master.
+	uint32_t pullCredits_{0};     ///< Bulks the master is ready to accept.
+	uint64_t pullChunksSent_{0};  ///< Chunks reported in this pull session.
+	/// Expires while waiting for SAU_MATOCS_REGISTER_CHUNKS_START.
+	Timeout pullStartTimeout_{std::chrono::seconds(0)};
 
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	/// Registration status to this MDS.

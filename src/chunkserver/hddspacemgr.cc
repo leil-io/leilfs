@@ -598,6 +598,112 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize) {
 	handleBulkIfReady(BulkReadyWhen::NONEMPTY);
 }
 
+/// Master-driven (pull) chunk registration sweep.
+/// All sweep state is guarded by gChunksMapMutex, like the registry itself.
+/// Chunks are marked with the session epoch when reported; the termination
+/// pass rescans the whole registry until no unmarked chunk remains, which
+/// covers chunks skipped while locked, chunks moved behind the bucket cursor
+/// by a rehash, and chunks inserted during the sweep.
+
+static uint8_t gRegistrationSweepEpoch = 0;
+static std::size_t gRegistrationSweepBucket = 0;
+static bool gRegistrationSweepCursorDone = false;
+
+void hddRegistrationSweepBegin() {
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+
+	++gRegistrationSweepEpoch;
+	if (gRegistrationSweepEpoch == 0) {
+		// The epoch wrapped: clear every stale mark, or a chunk still
+		// carrying this epoch value from 256 sessions ago would be skipped.
+		for (const auto &chunkEntry : gChunksMap) { chunkEntry.second->setRegistrationEpoch(0); }
+		gRegistrationSweepEpoch = 1;
+	}
+
+	gRegistrationSweepBucket = 0;
+	gRegistrationSweepCursorDone = false;
+}
+
+bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize) {
+	bulk.clear();
+	bulk.reserve(bulkSize);
+
+	auto addChunkToBulk = [&bulk](IChunk *chunk, uint8_t epoch) {
+		chunk->setRegistrationEpoch(epoch);
+		bulk.emplace_back(chunk->id(),
+		                  common::combineVersionWithTodelFlag(
+		                      chunk->version(), chunk->owner()->isMarkedForDeletion()),
+		                  chunk->type());
+	};
+
+	std::vector<ChunkWithType> recheckList;
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+
+		// Phase 1: advance the bucket cursor. Buckets are consumed whole, so
+		// a bulk can slightly exceed bulkSize (bucket sizes are ~1).
+		const std::size_t bucketCount = gChunksMap.bucket_count();
+		while (!gRegistrationSweepCursorDone && bulk.size() < bulkSize) {
+			if (gRegistrationSweepBucket >= bucketCount) {
+				gRegistrationSweepCursorDone = true;
+				break;
+			}
+			for (auto bucketIter = gChunksMap.begin(gRegistrationSweepBucket);
+			     bucketIter != gChunksMap.end(gRegistrationSweepBucket); ++bucketIter) {
+				IChunk *chunk = bucketIter->second.get();
+				if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
+				    chunk->state() != ChunkState::Available) {
+					// Marked already, or picked up by a later pass
+					continue;
+				}
+				addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			}
+			++gRegistrationSweepBucket;
+		}
+
+		if (!bulk.empty()) { return true; }
+
+		// Phase 2 (termination): collect the stragglers
+		for (const auto &chunkEntry : gChunksMap) {
+			IChunk *chunk = chunkEntry.second.get();
+			if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
+			    chunk->state() == ChunkState::Deleted ||
+			    chunk->state() == ChunkState::ToBeDeleted) {
+				continue;
+			}
+			if (chunk->state() == ChunkState::Available) {
+				addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			} else {
+				recheckList.emplace_back(chunk->id(), chunk->type());
+			}
+			if (bulk.size() + recheckList.size() >= bulkSize) { break; }
+		}
+	}
+
+	// Wait for the locked stragglers, mirroring hddForeachChunkInBulks
+	for (const auto &chunkWithType : recheckList) {
+		auto *chunk = hddChunkFindAndLock(chunkWithType.id, chunkWithType.type);
+		if (chunk == ChunkNotFound) { continue; }
+		{
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			if (chunk->registrationEpoch() != gRegistrationSweepEpoch) {
+				addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			}
+		}
+		hddChunkRelease(chunk);
+	}
+
+	return !bulk.empty();
+}
+
+void hddRegistrationSweepMarkRegistered(uint64_t chunkId, ChunkPartType type) {
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+	auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, type));
+	if (chunkIter != gChunksMap.end()) {
+		chunkIter->second->setRegistrationEpoch(gRegistrationSweepEpoch);
+	}
+}
+
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
                       uint32_t *chunkCount, uint64_t *toDelUsedSpace,
                       uint64_t *toDelTotalSpace, uint32_t *toDelChunkCount) {

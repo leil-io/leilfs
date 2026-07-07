@@ -13,6 +13,7 @@ CHUNKSERVERS=2 \
 	MOUNTS=1 \
 	USE_RAMDISK=YES \
 	AUTO_SHADOW_MASTER=NO \
+	MASTER_EXTRA_CONFIG="CHUNK_REGISTRATION_CHUNKS_PER_SECOND = 50000" \
 	CHUNKSERVER_EXTRA_CONFIG="MASTER_RECONNECTION_DELAY = 1" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	setup_local_empty_saunafs info
@@ -41,10 +42,10 @@ count_chunk_copies() {
 assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
 echo "PHASE: initial registration complete ($(count_chunk_copies) copies)"
 
-# Throttle re-registration, then restart both chunkservers: the master drops
-# all their copies and the slow re-registration window begins
+# Restart both chunkservers: the master drops all their copies and the
+# re-registration window (paced by CHUNK_REGISTRATION_CHUNKS_PER_SECOND set
+# above) begins
 for csid in 0 1; do
-	echo "HDD_CHUNK_BULK_SIZE = 1" >> "${info[chunkserver${csid}_cfg]}"
 	saunafs_chunkserver_daemon "$csid" restart
 done
 saunafs_wait_for_all_ready_chunkservers
@@ -77,8 +78,7 @@ assert_success rm -f "${info[mount0]}/mock_0000001"
 assert_success rm -f "${info[mount0]}/during_registration_3"
 
 echo "PHASE: IO checks done, waiting for registration to converge" \
-	"(can take ~1 min: with HDD_CHUNK_BULK_SIZE=1 chunks found by a scan" \
-	"which finished after the reconnect drain one per packet)"
+	"(bounded by CHUNK_REGISTRATION_CHUNKS_PER_SECOND: ~8s at these counts)"
 # Registration converges: all copies of the remaining mock chunks plus the
 # two remaining new files' chunks are eventually known (>=: the copies of the
 # unlinked chunks disappear later, via the regular deletion machinery)

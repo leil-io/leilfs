@@ -56,6 +56,27 @@ using BulkFunction = std::function<void(std::vector<ChunkWithVersionAndType>&)>;
 /// Executes the callback for each bulk of at most \p bulkSize chunks.
 void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 
+/// Master-driven (pull) chunk registration sweep.
+/// Unlike hddForeachChunkInBulks, which enumerates everything in one call,
+/// this sweep is resumable: the master releases bulks one credit at a time
+/// (see SAU_MATOCS_REGISTER_CHUNKS_START), so enumeration must survive
+/// concurrent registry mutation between calls.
+
+/// Starts a new pull-registration sweep session over the chunk registry,
+/// invalidating the marks of the previous session.
+void hddRegistrationSweepBegin();
+
+/// Collects at most (approximately) \p bulkSize chunks not yet reported in
+/// this sweep session and marks them as reported. Returns false when the
+/// sweep is complete (\p bulk is then empty); a true return means "send this
+/// bulk and call again".
+bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize);
+
+/// Marks a chunk as already reported in the current sweep session. Used when
+/// the chunk's info was already sent through an on-demand chunk-location
+/// query, so the sweep does not need to repeat it.
+void hddRegistrationSweepMarkRegistered(uint64_t chunkId, ChunkPartType type);
+
 int hddGetAndResetSpaceChanged();
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
                       uint32_t *chunkCount, uint64_t *toDelUsedSpace,

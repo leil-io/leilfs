@@ -139,6 +139,11 @@ public:
 	/// Sets the wasChanged attribute.
 	void setWasChanged(uint8_t newWasChanged) override;
 
+	/// Returns the registration sweep epoch.
+	uint8_t registrationEpoch() const override { return registrationEpoch_; }
+	/// Sets the registration sweep epoch.
+	void setRegistrationEpoch(uint8_t newEpoch) override { registrationEpoch_ = newEpoch; }
+
 	/// Returns the owner of the Chunk.
 	IDisk *owner() const override;
 	/// Sets the owner of the Chunk.
@@ -192,6 +197,8 @@ private:
 	uint16_t blockExpectedToBeReadNext_ = 0;  ///< Read ahead helper
 	uint8_t validAttr_ = 0;   ///< Tells if the attributes were recently updated
 	uint8_t wasChanged_ = 0;  ///< Tells if it was changed from last flush
+	/// Epoch of the last pull-registration sweep reporting this chunk
+	uint8_t registrationEpoch_ = 0;
 	ChunkState state_;        ///< The state of the chunk
 
 	/// The index of the chunk within the Disk.

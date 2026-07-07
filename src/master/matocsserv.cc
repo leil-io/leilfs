@@ -146,12 +146,22 @@ struct matocsserventry {
 
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
-	/// True once this connection finished its registration handshake
-	/// (SAU_CSTOMA_REGISTER_SPACE is the de-facto end-of-registration marker).
+	/// True once this connection finished its registration handshake: for the
+	/// old push protocol at SAU_CSTOMA_REGISTER_SPACE, for the pull protocol
+	/// at SAU_CSTOMA_REGISTER_CHUNKS_END.
 	/// Note: the chunkserver's disks may still be scanning at that point, with
 	/// chunks arriving later through the CHUNK_NEW stream, so this must not be
 	/// used to decide whether the chunkserver could host still-unknown chunks.
 	bool chunkRegistrationComplete{false};
+
+	/// True when this connection registers through the master-driven (pull)
+	/// protocol (SAU_MATOCS_REGISTER_CHUNKS_START was sent to it).
+	bool pullRegistration{false};
+
+	/// Credit grants withheld because the global registration budget
+	/// (CHUNK_REGISTRATION_CHUNKS_PER_SECOND) was exhausted; paid out by
+	/// matocsserv_pull_registration_budget_tick.
+	uint32_t pullCreditsOwed{0};
 
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
@@ -198,6 +208,24 @@ static std::vector<uint64_t> gChunkQueryIdsToSend;
 
 static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr);
 static void matocsserv_resolve_chunk_query(uint64_t chunkId);
+
+/* master-driven (pull) chunk registration */
+
+// Defaults for the CHUNK_REGISTRATION_* configuration entries
+constexpr uint32_t kDefaultChunkRegistrationBulkSize = 1000;
+constexpr uint32_t kDefaultChunkRegistrationWindow = 4;
+
+/// Chunks per registration bulk, dictated to pull-mode chunkservers.
+static uint32_t gChunkRegistrationBulkSize = kDefaultChunkRegistrationBulkSize;
+/// Bulks a pull-mode chunkserver may have in flight.
+static uint32_t gChunkRegistrationWindow = kDefaultChunkRegistrationWindow;
+/// Global registration ingest budget, chunks per second; 0 = unlimited.
+/// This is the DOS guard for a mass reconnect (e.g. after a failover).
+static uint32_t gChunkRegistrationChunksPerSecond = 0;
+
+/// Budget accounting for the current second.
+static uint64_t gRegistrationBudgetSecond = 0;
+static uint64_t gRegistrationChunksThisSecond = 0;
 
 void matocsserv_getserverdata(const matocsserventry *eptr, ChunkserverListEntry &result) {
 	if (eptr) { result = *eptr; }
@@ -1071,6 +1099,20 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		eptr->outputPackets.push_back(std::move(outPacket));
 	}
 
+	// Master-driven (pull) registration: tell a pull-capable chunkserver to
+	// start sending its chunk list, paced by credits
+	if (eptr->version >= kFirstVersionWithPullChunkRegistration) {
+		eptr->pullRegistration = true;
+
+		OutputPacket outPacket;
+		matocs::registerChunksStart::serialize(outPacket.packet, gChunkRegistrationBulkSize,
+		                                       gChunkRegistrationWindow);
+		eptr->outputPackets.push_back(std::move(outPacket));
+
+		// Registration is now in progress; hold background metadata dumps
+		gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
+	}
+
 	// A freshly promoted master may have client operations waiting for chunk
 	// locations while no chunkserver was connected yet: ask the newcomer
 	// about all of them right away.
@@ -1237,6 +1279,76 @@ void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vect
 	}
 }
 
+/// Sends a pull-registration credit grant releasing \p credits more bulks.
+static void matocsserv_grant_pull_credits(matocsserventry *eptr, uint32_t credits) {
+	OutputPacket outPacket;
+	matocs::registerChunksCredit::serialize(outPacket.packet, credits);
+	eptr->outputPackets.push_back(std::move(outPacket));
+}
+
+/// Rolls the per-second registration budget window forward.
+static void matocsserv_refresh_registration_budget() {
+	const uint64_t nowSecond = eventloop_time();
+	if (nowSecond != gRegistrationBudgetSecond) {
+		gRegistrationBudgetSecond = nowSecond;
+		gRegistrationChunksThisSecond = 0;
+	}
+}
+
+/// Regrants a credit for a processed pull-registration bulk, unless the
+/// global CHUNK_REGISTRATION_CHUNKS_PER_SECOND budget for this second is
+/// exhausted; then the grant is owed and paid by the budget tick.
+static void matocsserv_regrant_pull_credit(matocsserventry *eptr, std::size_t processedChunks) {
+	if (gChunkRegistrationChunksPerSecond == 0) {
+		matocsserv_grant_pull_credits(eptr, 1);
+		return;
+	}
+
+	matocsserv_refresh_registration_budget();
+	gRegistrationChunksThisSecond += processedChunks;
+
+	if (gRegistrationChunksThisSecond < gChunkRegistrationChunksPerSecond) {
+		matocsserv_grant_pull_credits(eptr, 1);
+	} else {
+		++eptr->pullCreditsOwed;
+	}
+}
+
+/// Runs every event-loop iteration: once a new second starts, pays the
+/// credit grants withheld by the budget, until the budget fills up again.
+void matocsserv_pull_registration_budget_tick() {
+	matocsserv_refresh_registration_budget();
+
+	for (auto &entry : matocsservList) {
+		auto *eptr = entry.get();
+		if (eptr->pullCreditsOwed == 0 || eptr->mode == ChunkserverConnectionMode::KILL) {
+			continue;
+		}
+
+		while (eptr->pullCreditsOwed > 0 &&
+		       (gChunkRegistrationChunksPerSecond == 0 ||
+		        gRegistrationChunksThisSecond < gChunkRegistrationChunksPerSecond)) {
+			// Account the owed bulk against the budget upfront; the actual
+			// chunk count arrives with the bulk itself.
+			gRegistrationChunksThisSecond += gChunkRegistrationBulkSize;
+			--eptr->pullCreditsOwed;
+			matocsserv_grant_pull_credits(eptr, 1);
+		}
+	}
+}
+
+void matocsserv_sau_register_chunks_end(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkCount{};
+	cstoma::registerChunksEnd::deserialize(data, chunkCount);
+
+	eptr->chunkRegistrationComplete = true;
+	eptr->pullCreditsOwed = 0;
+
+	safs::log_info(
+	    "chunkserver finished master-driven chunk registration - ip: {}, port: {}, chunks: {}",
+	    eptr->serviceStrIp, eptr->servport, chunkCount);
+}
+
 void matocsserv_sau_register_host(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint32_t version;
 	uint32_t servip;
@@ -1267,14 +1379,21 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 
 	// Chunks registration is in progress, so we reset the timeout
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
+
+	// Pull-mode registration: release the next bulk (budget permitting)
+	if (eptr->pullRegistration && !eptr->chunkRegistrationComplete) {
+		matocsserv_regrant_pull_credit(eptr, chunks.size());
+	}
 }
 
 void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t>& data) {
 	cstoma::registerSpace::deserialize(data, eptr->usedspace, eptr->totalspace, eptr->chunkscount,
 			eptr->todelusedspace, eptr->todeltotalspace, eptr->todelchunkscount);
-	// REGISTER_SPACE is sent right after the last registration bulk, so it
-	// marks the end of this connection's chunk registration.
-	eptr->chunkRegistrationComplete = true;
+	// For push-mode chunkservers REGISTER_SPACE is sent right after the last registration bulk,
+	// so it marks the end of this connection's chunk registration.
+	// Pull-mode chunkservers send it before their chunks; their registration ends
+	// with SAU_CSTOMA_REGISTER_CHUNKS_END.
+	if (!eptr->pullRegistration) { eptr->chunkRegistrationComplete = true; }
 	register_space(eptr);
 }
 
@@ -1491,7 +1610,10 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 			case SAU_CSTOMA_QUERY_CHUNKS_RESPONSE:
 				matocsserv_sau_query_chunks_response(eptr, data);
 				break;
-			case SAU_CSTOMA_STATUS:
+		    case SAU_CSTOMA_REGISTER_CHUNKS_END:
+			    matocsserv_sau_register_chunks_end(eptr, data);
+			    break;
+		    case SAU_CSTOMA_STATUS:
 				matocsserv_sau_status(eptr, data);
 				break;
 			case SAU_CSTOMA_STARTTLS:
@@ -1788,6 +1910,11 @@ static void matocsserv_reload_chunk_query_cfg() {
 	    "ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS", kDefaultOnDemandChunkQueryTimeout_ms, 100);
 	gOnDemandChunkQueryLimit =
 	    cfg_getuint32("ON_DEMAND_CHUNK_QUERY_LIMIT", kDefaultOnDemandChunkQueryLimit);
+	gChunkRegistrationBulkSize = cfg_get_minmaxvalue<uint32_t>(
+	    "CHUNK_REGISTRATION_BULK_SIZE", kDefaultChunkRegistrationBulkSize, 1, 100000);
+	gChunkRegistrationWindow =
+	    cfg_get_minvalue<uint32_t>("CHUNK_REGISTRATION_WINDOW", kDefaultChunkRegistrationWindow, 1);
+	gChunkRegistrationChunksPerSecond = cfg_getuint32("CHUNK_REGISTRATION_CHUNKS_PER_SECOND", 0);
 }
 
 void matocsserv_reload() {
@@ -1901,6 +2028,7 @@ int matocsserv_init() {
 	eventloop_destructregister(matocsserv_term);
 	eventloop_pollregister(matocsserv_desc, matocsserv_serve);
 	eventloop_eachloopregister(matocsserv_flush_chunk_queries);
+	eventloop_eachloopregister(matocsserv_pull_registration_budget_tick);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 1, 0, matocsserv_pending_chunk_queries_check);
 	return 0;
 }

@@ -39,6 +39,18 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, queryChunks, SAU_MATOCS_QUERY_CHUNKS, 0,
                                     std::vector<uint64_t>, chunkIds)
 
+// Master-driven (pull) chunk registration: tells a freshly host-registered
+// chunkserver to start sending its chunk list in bulks of at most bulkSize
+// chunks, with at most initialCredits bulks in flight. Further bulks are
+// released by SAU_MATOCS_REGISTER_CHUNKS_CREDIT grants; the chunkserver ends
+// the stream with SAU_CSTOMA_REGISTER_CHUNKS_END. This lets the master pace
+// registration during a mass reconnect (e.g. after a failover).
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, registerChunksStart, SAU_MATOCS_REGISTER_CHUNKS_START,
+                                    0, uint32_t, bulkSize, uint32_t, initialCredits)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, registerChunksCredit, SAU_MATOCS_REGISTER_CHUNKS_CREDIT,
+                                    0, uint32_t, credits)
+
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
