@@ -312,6 +312,30 @@ static void matoclserv_commit_wakeup_serve(const std::vector<pollfd> &pdesc) {
 	}
 }
 
+/// Publishes all changelog sinks after a deferring transaction commits.
+static void matoclserv_publish_deferred_changelog(const FilesystemOperationContext &ctx) {
+	auto entries = ctx.takeDeferredChangelogEntries();
+	for (auto &deferred : entries) {
+		// Preserve inline payload bytes, including the trailing NUL.
+		changelog(deferred.version, deferred.entry.c_str());
+		if (!getChangelogSignal().empty()) {
+			getChangelogSignal().emit(
+			    {.version = deferred.version, .entry = deferred.entry.c_str()});
+		}
+		matomlserv_broadcast_logstring(deferred.version,
+		                               reinterpret_cast<uint8_t *>(deferred.entry.data()),
+		                               deferred.entry.size());
+		matontserv_broadcast_message(deferred.version, std::string_view(deferred.entry));
+	}
+}
+
+/// Confirms a durable deferring commit and drains its changelog buffer.
+/// confirmCommitted() arms the destructor tripwire before publication drains entries.
+static void matoclserv_commit_confirmed(const FilesystemOperationContext &ctx) {
+	ctx.confirmCommitted();
+	matoclserv_publish_deferred_changelog(ctx);
+}
+
 /// Runs a replayable op body on a fresh read-write transaction and commits it
 /// SYNCHRONOUSLY, replaying the whole op (body + commit) on a fresh transaction on a
 /// retryable backend error -- either a read error thrown from the body
@@ -339,6 +363,7 @@ static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
 	for (uint32_t attempt = 0;; ++attempt) {
 		FilesystemOperationContext ctx = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
+		if (ctx.hasReadWriteTransaction()) { ctx.setDeferChangelog(); }
 		uint8_t status;
 		try {
 			if (attempt < gDebugInjectReadConflicts) {
@@ -367,6 +392,7 @@ static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
 		int commitError = 0;
 		bool retryable = false;
 		if (txn->commitAsync()->getResult(&commitError, &retryable)) {
+			matoclserv_commit_confirmed(ctx);
 			return SAUNAFS_STATUS_OK;  // durable
 		}
 		if (retryable && attempt < gMaxCommitRetries) {
@@ -519,15 +545,13 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 /// can no longer be used. Terminates: every restart either drops a member or
 /// consumes one member's bounded retry budget.
 ///
-/// Replaying a body re-runs its changeLog() call. This is safe for the KV backend:
-/// the metadata version is bumped inside the op transaction via a conflict-free
-/// atomicAdd (so it increments exactly once per durable commit), and metaloggers are
-/// not authoritative for the KV backend (the store is the source of truth), so a
-/// re-emitted changelog line is inert.
+/// Replayed bodies rerun changeLog(); discarded contexts drop their buffered entries.
+/// Only the durable context publishes, so each entry appears once after commit.
 static FilesystemOperationContext matoclserv_replay_members(std::vector<BatchMember> &members) {
 	for (;;) {
 		FilesystemOperationContext ctx = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
+		if (ctx.hasReadWriteTransaction()) { ctx.setDeferChangelog(); }
 		bool restart = false;
 		for (size_t idx = 0; idx < members.size() && !restart;) {
 			restart = matoclserv_replay_members_iteration(members, idx, ctx);
@@ -555,6 +579,11 @@ static void matoclserv_join_open_batch(BatchMember member) {
 	if (!gOpenBatch.hasContext) {
 		gOpenBatch.ctx = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
+		// Batched KV ops buffer changelog entries until commit, avoiding uncommitted
+		// publication and duplicate entries from replayed batches.
+		if (gOpenBatch.ctx.hasReadWriteTransaction()) {
+			gOpenBatch.ctx.setDeferChangelog();
+		}
 		gOpenBatch.hasContext = true;
 	}
 	auto *txn = gOpenBatch.ctx.getReadWriteTransaction();
@@ -626,6 +655,7 @@ static void matoclserv_poll_batch() {
 		const bool ok = gInFlightBatch->future->getResult(&commitError, &retryable);
 		if (ok) {
 			matoclserv_record_committed_batch(gInFlightBatch->members.size());
+			matoclserv_commit_confirmed(gInFlightBatch->ctx);
 			for (BatchMember &member : gInFlightBatch->members) {
 				matoclserv_finish_member(member, SAUNAFS_STATUS_OK);
 			}

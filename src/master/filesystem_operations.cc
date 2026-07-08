@@ -100,6 +100,14 @@ void FilesystemOperationsBase::changeLog(
 	}
 
 	uint64_t version = increaseMetadataVersion(fsOpContext);
+
+	if (fsOpContext.deferChangelog()) {
+		// Defer every sink (local log, signal, broadcasts) so replayed attempts publish nothing.
+		fsOpContext.appendDeferredChangelogEntry(version,
+		                                         std::string(entry, timeStampLength + entryLength));
+		return;
+	}
+
 	changelog(version, entry);
 
 	if (!getChangelogSignal().empty()) {
