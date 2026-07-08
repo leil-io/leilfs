@@ -336,29 +336,15 @@ static void matoclserv_commit_confirmed(const FilesystemOperationContext &ctx) {
 	matoclserv_publish_deferred_changelog(ctx);
 }
 
-/// Runs a replayable op body on a fresh read-write transaction and commits it
-/// SYNCHRONOUSLY, replaying the whole op (body + commit) on a fresh transaction on a
-/// retryable backend error -- either a read error thrown from the body
-/// (kv::RetryableTransactionError) or a retryable commit conflict (surfaced by
-/// getResult's retryable flag). Bounded by
-/// gMaxCommitRetries. Used by the few standalone post-durability cleanup commits that do
-/// not go through the group batch (e.g. the writeEnd cleanup in the write_chunk
-/// continuation), which still need conflict-retry because batch commits run concurrently
-/// and can conflict on a shared inode -- without it those sites reply EIO on every such
-/// conflict.
-///
-/// Returns the op status. A non-OK body status is returned WITHOUT committing (e.g.
-/// permission error, or SAUNAFS_ERROR_LOCKED from writeChunk). A non-retryable commit
-/// failure or retry exhaustion returns SAUNAFS_ERROR_IO. Commit is intentionally NOT
-/// retried on commit_unknown_result (non-retryable here): the commit may have applied,
-/// so a blind replay could double-apply (e.g. burn a second chunk).
-///
-/// The body must refresh any reply/out state it owns on EACH call (it may run more than
-/// once) and must NOT apply in-process persistent side effects -- do those only after
-/// this returns SAUNAFS_STATUS_OK. On the KV backend the body may only read, check, and
-/// stage backend writes; it must not mutate in-memory MDS structures, because a replay
-/// reruns it on a fresh transaction that does not roll those back. Returns OK with no
-/// commit when there is no read-write transaction (in-memory Master, applied in place).
+/// Runs a replayable op on a fresh read-write transaction and commits synchronously.
+/// Retryable body reads and retryable commit conflicts replay the whole body on a
+/// new transaction, bounded by gMaxCommitRetries. Non-OK body status returns without
+/// commit; non-retryable commit failure or retry exhaustion returns SAUNAFS_ERROR_IO.
+/// Unknown commit result is not replayed because it may have applied already; replay
+/// could double-apply. Used by standalone post-durability cleanups outside the group
+/// batch because they can conflict with batched commits on the same inode. The body
+/// must rebuild out state each attempt and defer persistent in-memory side effects
+/// until OK. Without a read-write transaction, the body has already applied in place.
 static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
 	for (uint32_t attempt = 0;; ++attempt) {
 		FilesystemOperationContext ctx = gFSOperations->createFilesystemOperationContext(
@@ -5368,6 +5354,31 @@ static void matoclserv_lock_wake_up(std::vector<FileLocks::Owner> &owners, safs_
 	}
 }
 
+/// Runs a lock mutation through commit retry and returns client-visible status.
+/// WAITING must commit because it persists a pending lock, so map it to OK for the
+/// harness and restore WAITING afterwards. `applied` is per-attempt wakeup state;
+/// non-committed outcomes clear it so callers can wake unconditionally.
+static uint8_t matoclserv_run_lock_op(std::vector<FileLocks::Owner> &applied,
+                                      const OpReplay &lockOp) {
+	uint8_t lockStatus = SAUNAFS_STATUS_OK;
+	uint8_t commitStatus =
+	    matoclserv_commit_op_with_retry([&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		    applied.clear();  // reset per attempt so a replay cannot duplicate the wake set
+		    lockStatus = lockOp(fsOpContext);
+		    if (lockStatus == SAUNAFS_ERROR_WAITING) { return SAUNAFS_STATUS_OK; }
+		    return lockStatus;
+	    });
+	if (lockStatus != SAUNAFS_STATUS_OK && lockStatus != SAUNAFS_ERROR_WAITING) {
+		applied.clear();  // op error, nothing committed: never wake owners for it
+		return lockStatus;
+	}
+	if (commitStatus != SAUNAFS_STATUS_OK) {  // conflict retries exhausted
+		applied.clear();
+		return SAUNAFS_ERROR_IO;
+	}
+	return lockStatus;
+}
+
 void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 	uint32_t messageId;
@@ -5396,21 +5407,12 @@ void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
-	status = gFSOperations->flockOperation(context, fsOpContext, inode, owner,
-	                                       eptr->sessionData->sessionId, requestId, messageId, op,
-	                                       nonblocking, applied);
-
-	if ((status == SAUNAFS_STATUS_OK || status == SAUNAFS_ERROR_WAITING) &&
-	    fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
-			status = SAUNAFS_ERROR_IO;
-			applied.clear();
-		}
-	}
+	status = matoclserv_run_lock_op(
+	    applied, [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		    return gFSOperations->flockOperation(context, fsOpContext, inode, owner,
+		                                         eptr->sessionData->sessionId, requestId,
+		                                         messageId, op, nonblocking, applied);
+	    });
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kFlock);
 
@@ -5507,21 +5509,13 @@ void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	}
 
 	std::vector<FileLocks::Owner> applied;
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
-	status = gFSOperations->posixLockOperation(context, fsOpContext, inode, lock_info.l_start,
-	                                           lock_end, owner, eptr->sessionData->sessionId,
-	                                           request_id, message_id, op, nonblocking, applied);
-
-	if ((status == SAUNAFS_STATUS_OK || status == SAUNAFS_ERROR_WAITING) &&
-	    fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
-			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
-			status = SAUNAFS_ERROR_IO;
-			applied.clear();
-		}
-	}
+	status = matoclserv_run_lock_op(
+	    applied, [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		    return gFSOperations->posixLockOperation(context, fsOpContext, inode,
+		                                             lock_info.l_start, lock_end, owner,
+		                                             eptr->sessionData->sessionId, request_id,
+		                                             message_id, op, nonblocking, applied);
+	    });
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kPosix);
 

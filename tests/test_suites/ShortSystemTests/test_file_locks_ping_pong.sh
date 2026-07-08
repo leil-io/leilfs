@@ -1,4 +1,12 @@
-timeout_set 1 minutes
+# Under the FDB backend every lock and unlock is a durable transaction, so this
+# 100k-operation ping-pong runs far longer than on the in-memory master (which
+# applies locks in memory). Give the FDB backend a larger budget; the in-memory
+# master keeps the historical timeout.
+if [[ "${METADATA_BACKEND:-}" == "FDB" ]]; then
+	timeout_set '10 minutes'
+else
+	timeout_set '1 minute'
+fi
 
 USE_RAMDISK=YES \
 	MOUNTS=5
