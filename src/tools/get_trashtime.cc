@@ -35,7 +35,7 @@
 static void get_trashtime_usage() {
 	fprintf(stderr,
 	        "get objects trashtime (how many seconds file should be left in trash)\n\nusage: "
-	        "\n saunafs gettrashtime [-nhHr] name [name ...]\n");
+	        "\n leil gettrashtime [-nhHr] name [name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();
 }

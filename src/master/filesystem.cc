@@ -361,21 +361,38 @@ static void fs_read_goals_from_stream(std::istream&& stream) {
 }
 
 static void fs_read_goal_config_file() {
+	const std::string defaultGoalConfigFile = ETC_PATH "/leil-goals.cfg";
+	const std::string legacyGoalConfigFile = ETC_PATH "/sfsgoals.cfg";
 	std::string goalConfigFile =
 			cfg_getstring("CUSTOM_GOALS_FILENAME", "");
 	if (goalConfigFile.empty()) {
 		// file is not specified
-		const char *defaultGoalConfigFile = ETC_PATH "/sfsgoals.cfg";
-		if (access(defaultGoalConfigFile, F_OK) == 0) {
+		if (access(defaultGoalConfigFile.c_str(), F_OK) == 0) {
 			// the default file exists - use it
 			goalConfigFile = defaultGoalConfigFile;
+		} else if (access(legacyGoalConfigFile.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using legacy goal configuration file {} because default file {} was not found",
+			    legacyGoalConfigFile.c_str(), defaultGoalConfigFile.c_str());
+			goalConfigFile = legacyGoalConfigFile;
 		} else {
-			safs_pretty_syslog(LOG_WARNING,
-					"goal configuration file %s not found - using default goals; if you don't "
-					"want to define custom goals create an empty file %s to disable this warning",
-					defaultGoalConfigFile, defaultGoalConfigFile);
-			fs_read_goals_from_stream(std::stringstream()); // empty means defaults
+			safs::log_warn(
+			    "goal configuration files %s and %s not found - using default goals; if you "
+			    "don't want to define custom goals create an empty file %s to disable this "
+			    "warning",
+			    defaultGoalConfigFile.c_str(), legacyGoalConfigFile.c_str(),
+			    defaultGoalConfigFile.c_str());
+			fs_read_goals_from_stream(std::stringstream());  // empty means defaults
 			return;
+		}
+	} else {
+		if (goalConfigFile == defaultGoalConfigFile &&
+		    access(defaultGoalConfigFile.c_str(), F_OK) != 0 &&
+		    access(legacyGoalConfigFile.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using legacy goal configuration file {} because configured default file {} was not found",
+			    legacyGoalConfigFile.c_str(), defaultGoalConfigFile.c_str());
+			goalConfigFile = legacyGoalConfigFile;
 		}
 	}
 	std::ifstream goalConfigStream(goalConfigFile);

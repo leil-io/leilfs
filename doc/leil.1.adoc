@@ -1,0 +1,132 @@
+leil(1)
+========
+
+== NAME
+
+leil - open prompt to perform LeilFS-specific operations
+
+== SYNOPSIS
+
+[verse]
+*leil getgoal* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
+
+[verse]
+*leil setgoal* [*-r*] [*-n*|*-h*|*-H*] 'NAME' 'OBJECT'...
+
+[verse]
+*leil setquota* (*-u* 'UID' | *-g* 'GID') 'SOFT-LIMIT-SIZE' 'HARD-LIMIT-SIZE'
+              'SOFT-LIMIT-INODES' 'HARD-LIMIT-INODES' 'MOUNTPOINT-ROOT-PATH'
+
+[verse]
+*leil repquota* [*-nhH*] (*-u* 'UID' | *-g* 'GID')+ 'MOUNTPOINT-ROOT-PATH'
+*leil repquota* [*-nhH*] -a 'MOUNTPOINT-ROOT-PATH'
+
+[verse]
+*leil gettrashtime* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
+
+[verse]
+*leil settrashtime* [*-r*] [*-n*|*-h*|*-H*] [*+*|*-*]SECONDS 'OBJECT'...
+
+[verse]
+*leil geteattr* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
+
+[verse]
+*leil seteattr* [*-r*] [*-n*|*-h*|*-H*] *-f* 'ATTRNAME' [*-f* 'ATTRNAME' ...] 'OBJECT'...
+
+[verse]
+*leil deleattr* [*-r*] [*-n*|*-h*|*-H*] *-f* 'ATTRNAME' [*-f* 'ATTRNAME' ...] 'OBJECT'...
+
+[verse]
+*leil checkfile* 'FILE'...
+
+[verse]
+*leil fileinfo* 'FILE'...
+
+[verse]
+*leil dirinfo* [*-n*|*-h*|*-H*] 'OBJECT'...
+
+[verse]
+*leil filerepair* [*-n*|*-h*|*-H*] 'FILE'...
+
+[verse]
+*leil appendchunks* 'SNAPSHOT_FILE' 'OBJECT'...
+
+[verse]
+*leil makesnapshot* [*-o*] 'SOURCE'... 'DESTINATION'
+
+[verse]
+*leil rremove* 'OBJECT'...
+
+== DESCRIPTION
+
+See respective documents.
+
+== GENERAL OPTIONS
+
+Most of *leil* operations use following options to select format of printed
+numbers:
+
+*-n*::
+Print exact numbers (e.g. 1024).
+
+*-h*::
+Print numbers with binary prefixes (Ki, Mi, Gi as `2^10`, `2^20` etc.).
+
+*-H*::
+Print numbers with SI prefixes (k, M, G as `10^3`, `10^6` etc.).
+
+The same can be achieved by setting *SFSHRFORMAT* environment variable to: *0*
+(exact numbers), *1* or *h* (binary prefixes), *2* or *H* (SI prefixes), *3* or
+*h+* (exact numbers and binary prefixes), *4* or *H+* (exact numbers and SI
+prefixes). The default is to print just exact numbers.
+
+Other options:
+
+*-r*::
+This option enables recursive mode.
+
+*-v*, *--version*::
+Print version and exit
+
+== INHERITANCE
+
+When new object is created in LeilFS, attributes such as goal, trashtime and
+extra attributes are inherited from parent directory. So if you set i.e.
+"noowner" attribute and goal to 3 in a directory then every new object created
+in this directory will have goal set to 3 and "noowner" flag set. A newly
+created object inherits always the current set of its parent's attributes.
+Changing a directory attribute does not affect its already created children. To
+change an attribute for a directory and all of its children use `'-r'` option.
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-mount(1), leil-appendchunks(1), leil-checkfile(1),
+leil-deleattr(1), leil-dirinfo(1), leil-fileinfo(1),
+leil-filerepair(1), leil-geteattr(1), leil-getgoal(1),
+leil-gettrashtime(1), leil-makesnapshot(1), leil-seteattr(1),
+leil-setgoal(1), leil-settrashtime(1), leil-rremove(1),
+leil-repquota(1), leil-setquota(1), leilfs(7)

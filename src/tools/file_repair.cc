@@ -36,7 +36,7 @@ static void file_repair_usage() {
 	    stderr,
 	    "repair given file. Use it with caution. It forces file to be readable, so it could erase "
 	    "(fill with zeros) file when chunkservers are not currently connected.\n\n"
-	    "usage:\n saunafs filerepair [-nhHc] name [name ...]\n");
+	    "usage:\n leil filerepair [-nhHc] name [name ...]\n");
 	print_numberformat_options();
 	fprintf(stderr, " -c - restore to previous version if applicable, never erase\n");
 }

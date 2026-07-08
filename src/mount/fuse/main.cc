@@ -28,6 +28,7 @@
 #include <fuse.h>
 #include <fuse_lowlevel.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "common/crc.h"
 #include "common/md5.h"
@@ -562,8 +563,21 @@ int main(int argc, char *argv[]) try {
 	if (fuse_opt_parse(&args, &defaultargs, gSfsOptsStage1, sfs_opt_proc_stage1))
 		exit(1);
 
-	if (!gCustomCfg)
-		sfs_opt_parse_cfg_file(DEFAULT_SFSMOUNT_CONFIG_PATH, 1, &defaultargs);
+	if (!gCustomCfg) {
+		const std::string defaultConfigPath = DEFAULT_SFSMOUNT_CONFIG_PATH;
+		const std::string legacyConfigPath = ETC_PATH "/" STR(CFGNAME_LEGACY) ".cfg";
+		std::string configPath = defaultConfigPath;
+
+		if (access(defaultConfigPath.c_str(), F_OK) != 0 &&
+		    access(legacyConfigPath.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using legacy mount configuration file {} because default file {} was not found",
+			    legacyConfigPath, defaultConfigPath);
+			configPath = legacyConfigPath;
+		}
+
+		sfs_opt_parse_cfg_file(configPath.c_str(), 1, &defaultargs);
+	}
 
 	normalize_options_casing(defaultargs.argc, defaultargs.argv);
 

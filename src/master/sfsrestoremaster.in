@@ -86,12 +86,23 @@ except:
 EOF
 }
 
+select_readable_config() {
+	local default_config="$1"
+	local legacy_config="$2"
+
+	if [ ! -r "$default_config" ] && [ -r "$legacy_config" ]; then
+		echo "$legacy_config"
+	else
+		echo "$default_config"
+	fi
+}
+
 notice "Using configuration directory: $etc_directory"
 
 notice "Checking configuration files..."
 
-ml_config="$etc_directory/sfsmetalogger.cfg"
-ma_config="$etc_directory/sfsmaster.cfg"
+ml_config=$(select_readable_config "$etc_directory/leil-metalogger.cfg" "$etc_directory/sfsmetalogger.cfg")
+ma_config=$(select_readable_config "$etc_directory/leil-master.cfg" "$etc_directory/sfsmaster.cfg")
 
 if [ ! -r "$ml_config" ]; then
 	panic "Can't read metalogger configuration: $ml_config"

@@ -19,17 +19,17 @@
 
 #include "common/platform.h"
 
-#include "tools/tools_commands.h"
-#include "common/version.h"
-
+#include <ostream>
 #include <stdlib.h>
 #include <unistd.h>
-#include <ostream>
+
+#include "common/version.h"
+#include "tools/tools_commands.h"
 
 int printUsage(int argc, char **argv) {
 	if (argc < 2) {
 		fprintf(stderr, "usage:\n");
-		fprintf(stderr, "\tsaunafs <tool name> [options]\n");
+		fprintf(stderr, "\tleil <tool name> [options]\n");
 		printTools();
 		printf("\n");
 		printOptions();

@@ -1,0 +1,45 @@
+leil-checkfile(1)
+==================
+
+== NAME
+
+leil-checkfile - print information about chunks
+
+== SYNOPSIS
+
+[verse]
+*leil checkfile* 'FILE'...
+
+== DESCRIPTION
+
+*checkfile*
+checks and prints number of chunks and number of chunk copies belonging to
+specified file(s). It can be used on any file, included deleted ('trash').
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil(1)

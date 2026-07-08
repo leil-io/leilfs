@@ -38,7 +38,7 @@ static int kInfiniteTimeout = -1;
 static void set_trashtime_usage() {
 	fprintf(stderr,
 	        "set objects trashtime (how many seconds file should be left in trash)\n\nusage: "
-	        "\n saunafs settrashtime [-nhHr] SECONDS[-|+] name [name ...]\n");
+	        "\n leil settrashtime [-nhHr] SECONDS[-|+] name [name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();
 	fprintf(stderr, " SECONDS+ - if trashtime smaller then given value, increase trashtime to given value\n");

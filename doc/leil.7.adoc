@@ -1,0 +1,101 @@
+leil(7)
+========
+
+== NAME
+
+leilfs - a networking, distributed, highly available file system
+
+== DESCRIPTION
+
+LeilFS is a networking, highly available, distributed file system. It spreads
+data over several physical localisations (servers), which are visible to a user
+as one resource. For standard file operations LeilFS acts as other Unix-alike
+file systems. It has hierarchical structure (directory tree), stores files'
+attributes (permissions, last access and modification times) as well as makes
+it possible to create special files (block and character devices, pipes and
+sockets), symbolic links (file names pointing to another files accessible
+locally, not necessarily on LeilFS) and hard links (different names of files
+which refer to the same data on LeilFS). Access to the file system can be
+limited basing on IP address and/or password.
+
+Distinctive features of LeilFS are:
+
+ - higher reliability (data can be stored in several copies on separate
+   computers)
+
+ - dynamically expanding disk space by attaching new computers/disks
+
+ - possibility of storing deleted files for a defined period of time ("trash
+   bin" service on a file system level)
+
+ - possibility of creating snapshot of a file, which means coherent copy of
+   them whole file, even while the file is being written.
+
+
+== ARCHITECTURE
+
+LeilFS installation consists of five types of machines:
+
+ - master metadata server (or `the master') a managing server - single computer
+   managing the whole filesystem, storing metadata for every file (information
+   on size, attributes and file localisation(s), including all information
+   about non-regular files, i.e. directories, sockets, pipes and devices.
+
+ - metadata server shadows (or `the shadow') - almost identical to the master,
+   there can be any number  of those, they work as master metadata server
+   backup and they are ready for immediate deployment as new master in case of
+   current master failure.
+
+ - data servers (any number of commodity servers storing files data and
+   replicating it among themselves (if a certain file is supposed to exist in
+   more than one copy).
+
+ - metadata backup servers - any number of servers, all of which store metadata
+   changelogs and periodically downloading base metadata file; it's easy to run
+   leil-master process on such machine when primary master stops working.
+
+ - client computers referring to LeilFS stored files - any number of machines
+   with working leil-mount process that communicates with the managing server to
+   receive and modify file information and with chunkservers to exchange actual
+   file data.
+
+
+Metadata is stored in memory of the managing server and simultaneously is being
+saved on disk (as a periodically updated binary file and immediately updated
+incremental logs). The main binary file as well as the logs are replicated to
+metaloggers (if present).
+
+
+File data is divided to fragments (chunks) of maximum size 64MB each which are
+stored as files on selected disks on data servers (chunkservers). Each chunk is
+saved on different computers in a number of copies equal to a "goal" for the
+given file.
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-chunkserver(8), leil-master(8), leil-metalogger(8), leil-mount(1),
+leil-admin(8)

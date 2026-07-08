@@ -1,0 +1,123 @@
+leil-goals.cfg(5)
+==================
+
+== NAME
+
+leil-goals.cfg - replication goals configuration file
+
+== DESCRIPTION
+
+The file *leil-goals.cfg* contains definitions of the replication goals.
+
+== SYNTAX
+
+Syntax is:
+
+'id' 'name' : $'type' { 'label' ... }
+
+'id' 'name' : 'label' ...
+
+The *#* character starts comments.
+
+== DETAILS
+
+There are 40 replication goals, with 'ids' between 1 and 40, inclusive. Each
+file stored on the filesystem refers to some goal id and is replicated
+according to the goal currently associated with this id.
+
+By default, first five goals are defined: goal 1 means one copy on any
+chunkserver, goal 2 means two copies on any two chunkservers and so on, until 5
+- which is the maximal default number of copies. The purpose of leil-goals.cfg is
+to override this behavior, when desired. The file is a list of goal
+definitions, each consisting of 'id', 'name' and a list of 'labels'. The
+maximal length of this list is 40 labels.
+
+'id' indicates the goal id to be redefined. If some files are already assigned
+this goal id, their effective goal will change.
+
+'name' is a human readable name used by the user interface tools
+(leil-setgoal(1), leil-getgoal(1)). 'name' can consist of up to 32 alphanumeric
+characters: a-z, A-Z, 0-9, _.
+
+'type' specifies goal type - currently supported types are:
+
+	- *std* - for each file using this goal and for each label, the system
+	  will try to maintain a copy of the file on some chunkserver with this
+	  label.
+	- **ec**(K,M) - for each file using this goal, the system will split
+	  the file into K + M parts (K data parts and M parity). For reading,
+	  any K of the parts are necessary. If labels are specified, parts will
+	  be kept on chunkservers with these labels. Otherwise, default
+	  wildcard labels will be used. K can be in range from 2 to 32 and M
+	  from 1 to 32.
+
+If the type is unspecified, it is assumed to be *std*.
+
+The list of 'labels' is a list of chunkserver labels as defined in
+leil-chunkserver.cfg(5). 'label' can consist of up to 32 alphanumeric characters:
+a-z, A-Z, 0-9, _.
+
+
+One label may occur multiple times - in such case the system will create one
+copy per each occurrence. The special label _ means "a copy on any
+chunkserver".
+
+Note that changing the definition of a goal in leil-goals.cfg affects all files
+which currently use given goal id.
+
+== EXAMPLES
+
+Some example goal definitions:
+
+3 3 : _ _ _   # one of the default goals (three copies anywhere)
+
+8 not_important_file : _   # only one copy
+
+11 important_file : _ _
+
+12 local_copy_on_mars : mars _ # at least one copy in the Martian datacenter
+
+13 cached_on_ssd : ssd _
+
+14 very_important_file : _ _ _ _
+
+15 first_ec : $ec(3,1)
+
+16 ec32_ssd : $ec(3,2) { ssd ssd ssd ssd ssd } # all parts on ssd
+
+17 ec53_mixed : $ec(5,3) { hdd ssd hdd _ _ _ _ _ } # two parts on hdd and one part on ssd
+
+== SNAPSHOT FILES
+
+Snapshot shares data with the original file until the file receives
+modification and diverges from the snapshotted version. If some snapshot has
+different goal than its original file, any shared data are stored according to
+the goal with higher 'id' of the two.
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-master.cfg(5)

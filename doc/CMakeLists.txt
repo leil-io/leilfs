@@ -5,49 +5,97 @@ endif()
 
 # These manpages should be generated
 set(MANPAGES
-    saunafs-admin.8
-    saunafs-appendchunks.1
-    saunafs-cgiserver.8
-    saunafs-checkfile.1
-    saunafs-deleattr.1       # not a source
-    saunafs-dirinfo.1
-    saunafs-fileinfo.1
-    saunafs-filerepair.1
-    saunafs-geteattr.1
-    saunafs-getgoal.1
-    saunafs-gettrashtime.1
-    saunafs-makesnapshot.1
-    saunafs-migrations.7
-    saunafs-probe.8          # not a source
-    saunafs-repquota.1
-    saunafs-rremove.1
-    saunafs-seteattr.1       # not a source
-    saunafs-setgoal.1        # not a source
-    saunafs-setquota.1       # not a source
-    saunafs-settrashtime.1   # not a source
-    saunafs-uraft-helper.8
-    saunafs-uraft.8
-    saunafs-uraft.cfg.5
-    saunafs.1
-    saunafs.7
-    sfs.7                    # not a source
-    sfschunkserver.8
-    sfschunkserver.cfg.5
-    sfsexports.cfg.5
-    sfsglobaliolimits.cfg.5
-    sfsgoals.cfg.5
-    sfshdd.cfg.5
-    sfsiolimits.cfg.5
-    sfsmaster.8
-    sfsmaster.cfg.5
-    sfsmetadump.8
-    sfsmetalogger.8
-    sfsmetalogger.cfg.5
-    sfsmetarestore.8
-    sfsmount.1
-    sfsmount.cfg.5
-    sfsrestoremaster.8
-    sfstopology.cfg.5
+    leil-admin.8
+    leil-appendchunks.1
+    leil-cgiserver.8
+    leil-checkfile.1
+    leil-dirinfo.1
+    leil-fileinfo.1
+    leil-filerepair.1
+    leil-geteattr.1
+    leil-getgoal.1
+    leil-gettrashtime.1
+    leil-makesnapshot.1
+    leil-migrations.7
+    leil-repquota.1
+    leil-rremove.1
+    leil-uraft-helper.8
+    leil-uraft.8
+    leil-uraft.cfg.5
+    leil.1
+    leil.7
+    leil-chunkserver.8
+    leil-chunkserver.cfg.5
+    leil-exports.cfg.5
+    leil-globaliolimits.cfg.5
+    leil-goals.cfg.5
+    leil-hdd.cfg.5
+    leil-iolimits.cfg.5
+    leil-master.8
+    leil-master.cfg.5
+    leil-metadump.8
+    leil-metalogger.8
+    leil-metalogger.cfg.5
+    leil-metarestore.8
+    leil-mount.1
+    leil-mount.cfg.5
+    leil-restoremaster.8
+    leil-topology.cfg.5
+)
+
+set(MANPAGE_SYMLINKS
+    leil-geteattr.1 leil-deleattr.1
+    leil-geteattr.1 leil-seteattr.1
+    leil-getgoal.1 leil-setgoal.1
+    leil-gettrashtime.1 leil-settrashtime.1
+    leil-repquota.1 leil-setquota.1
+    leil-admin.8 leil-probe.8
+    leil.7 leilfs.7
+
+    leil-admin.8 saunafs-admin.8
+    leil-admin.8 saunafs-probe.8
+    leil-appendchunks.1 saunafs-appendchunks.1
+    leil-cgiserver.8 saunafs-cgiserver.8
+    leil-checkfile.1 saunafs-checkfile.1
+    leil-geteattr.1 saunafs-deleattr.1
+    leil-dirinfo.1 saunafs-dirinfo.1
+    leil-fileinfo.1 saunafs-fileinfo.1
+    leil-filerepair.1 saunafs-filerepair.1
+    leil-geteattr.1 saunafs-geteattr.1
+    leil-getgoal.1 saunafs-getgoal.1
+    leil-gettrashtime.1 saunafs-gettrashtime.1
+    leil-makesnapshot.1 saunafs-makesnapshot.1
+    leil-migrations.7 saunafs-migrations.7
+    leil-repquota.1 saunafs-repquota.1
+    leil-rremove.1 saunafs-rremove.1
+    leil-geteattr.1 saunafs-seteattr.1
+    leil-getgoal.1 saunafs-setgoal.1
+    leil-repquota.1 saunafs-setquota.1
+    leil-gettrashtime.1 saunafs-settrashtime.1
+    leil.1 saunafs.1
+    leil.7 saunafs.7
+    leil-uraft.cfg.5 saunafs-uraft.cfg.5
+    leil-uraft-helper.8 saunafs-uraft-helper.8
+    leil-uraft.8 saunafs-uraft.8
+
+    leil-chunkserver.cfg.5 sfschunkserver.cfg.5
+    leil-chunkserver.8 sfschunkserver.8
+    leil-exports.cfg.5 sfsexports.cfg.5
+    leil-globaliolimits.cfg.5 sfsglobaliolimits.cfg.5
+    leil-goals.cfg.5 sfsgoals.cfg.5
+    leil-hdd.cfg.5 sfshdd.cfg.5
+    leil-iolimits.cfg.5 sfsiolimits.cfg.5
+    leil-master.cfg.5 sfsmaster.cfg.5
+    leil-master.8 sfsmaster.8
+    leil-metadump.8 sfsmetadump.8
+    leil-metalogger.cfg.5 sfsmetalogger.cfg.5
+    leil-metalogger.8 sfsmetalogger.8
+    leil-metarestore.8 sfsmetarestore.8
+    leil-mount.cfg.5 sfsmount.cfg.5
+    leil-mount.1 sfsmount.1
+    leil-restoremaster.8 sfsrestoremaster.8
+    leil-topology.cfg.5 sfstopology.cfg.5
+    leilfs.7 sfs.7
 )
 
 foreach(MANPAGE ${MANPAGES})
@@ -72,6 +120,45 @@ foreach(MANPAGE ${MANPAGES})
 
     string(REGEX MATCH "[0-9]$" SECTION_NUMBER ${MANPAGE})
     install(FILES ${GENERATED_MANPAGE_PATH} DESTINATION ${MAN_SUBDIR}/man${SECTION_NUMBER})
+endforeach()
+
+list(LENGTH MANPAGE_SYMLINKS MANPAGE_SYMLINK_COUNT)
+math(EXPR MANPAGE_SYMLINK_REMAINDER "${MANPAGE_SYMLINK_COUNT} % 2")
+if(NOT MANPAGE_SYMLINK_REMAINDER EQUAL 0)
+    message(FATAL_ERROR "MANPAGE_SYMLINKS must contain <target> <link> pairs")
+endif()
+
+set(GENERATED_MANPAGE_NAMES ${MANPAGES})
+math(EXPR MANPAGE_SYMLINK_LAST_INDEX "${MANPAGE_SYMLINK_COUNT} - 1")
+foreach(SYMLINK_INDEX RANGE 0 ${MANPAGE_SYMLINK_LAST_INDEX} 2)
+    math(EXPR LINK_INDEX "${SYMLINK_INDEX} + 1")
+    list(GET MANPAGE_SYMLINKS ${SYMLINK_INDEX} TARGET_MANPAGE)
+    list(GET MANPAGE_SYMLINKS ${LINK_INDEX} LINK_MANPAGE)
+
+    list(FIND GENERATED_MANPAGE_NAMES ${TARGET_MANPAGE} TARGET_MANPAGE_INDEX)
+    if(TARGET_MANPAGE_INDEX EQUAL -1)
+        message(FATAL_ERROR "Manpage symlink target ${TARGET_MANPAGE} must be listed in MANPAGES or generated by an earlier symlink")
+    endif()
+
+    list(FIND GENERATED_MANPAGE_NAMES ${LINK_MANPAGE} LINK_MANPAGE_INDEX)
+    if(NOT LINK_MANPAGE_INDEX EQUAL -1)
+        message(FATAL_ERROR "Manpage symlink link name ${LINK_MANPAGE} duplicates an existing or generated manpage")
+    endif()
+    list(APPEND GENERATED_MANPAGE_NAMES ${LINK_MANPAGE})
+
+    set(TARGET_MANPAGE_PATH ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_MANPAGE})
+    set(LINK_MANPAGE_PATH ${CMAKE_CURRENT_BINARY_DIR}/${LINK_MANPAGE})
+    add_custom_command(
+            OUTPUT ${LINK_MANPAGE_PATH}
+            COMMAND ${CMAKE_COMMAND} -E create_symlink ${TARGET_MANPAGE} ${LINK_MANPAGE_PATH}
+            DEPENDS ${TARGET_MANPAGE_PATH}
+            COMMENT "Generating manpage symlink ${LINK_MANPAGE}"
+            VERBATIM
+    )
+    list(APPEND GENERATED_MANPAGES ${LINK_MANPAGE_PATH})
+
+    string(REGEX MATCH "[0-9]$" SECTION_NUMBER ${LINK_MANPAGE})
+    install(FILES ${LINK_MANPAGE_PATH} DESTINATION ${MAN_SUBDIR}/man${SECTION_NUMBER})
 endforeach()
 
 add_custom_target(manpages ALL SOURCES ${GENERATED_MANPAGES})

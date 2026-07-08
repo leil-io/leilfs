@@ -1,0 +1,65 @@
+leil-gettrashtime(1)
+=====================
+
+== NAME
+
+leil-gettrashtime, leil-settrashtime - get or set trash time
+
+== SYNOPSIS
+
+[verse]
+*leil gettrashtime* [*-r*] [*-n*|*-h*|*-H*] 'OBJECT'...
+
+[verse]
+*leil settrashtime* [*-r*] [*-n*|*-h*|*-H*] SECONDS[*+*|*-*] 'OBJECT'...
+
+
+== DESCRIPTION
+
+*gettrashtime* and *settrashtime* operate on object's 'trashtime' value, i.e.
+the number of seconds the file is preserved in special 'trash' directory before
+it's finally removed from filesystem. 'Trashtime' must be non-negative integer
+value. *gettrashtime* prints current 'trashtime' value of given object(s).
+
+== OPTIONS
+
+*-r*:: This option enables recursive mode, which works as usual for every given
+file, but for every given directory additionally prints current 'trashtime'
+value of all contained objects (files and directories).
+
+'N'\[*+*|*-*]:: If new value is specified in 'N'*+* form, 'trashtime' value is
+increased to 'N' for objects with lower 'trashtime' value and unchanged for the
+rest. Similarly, if new value is specified as 'N'*-*, 'trashtime' value is
+decreased to 'N' for objects with higher 'trashtime' value and unchanged for
+the rest. These tools can be used on any file, directory or deleted ('trash')
+file.
+
+*-n*, *-h*, *-H*:: These options are described in leil(1).
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil(1)

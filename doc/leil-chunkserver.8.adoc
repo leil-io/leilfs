@@ -1,0 +1,99 @@
+leil-chunkserver(8)
+====================
+
+== NAME
+
+leil-chunkserver - start, restart or stop Leil File System chunkserver process
+
+== SYNOPSIS
+
+[verse]
+*leil-chunkserver* [*-c* 'CFGFILE'] [*-u*] [*-d*] [*-t* 'LOCKTIMEOUT'] ['ACTION']
+
+[verse]
+*leil-chunkserver -v*
+
+[verse]
+*leil-chunkserver -h*
+
+
+== DESCRIPTION
+
+*leil-chunkserver* is the data server of Leil File System. Depending on
+parameters it can start, restart or stop LeilFS chunkserver process. Without
+any options it starts LeilFS chunkserver, killing previously run process if
+lock file exists.
+
+SIGHUP (or *reload* 'ACTION') forces *leil-chunkserver* to reload all
+configuration files.
+
+Chunkserver periodically tests stored chunks (see *HDD_TEST_FREQ* option in
+*leil-chunkserver.cfg* manual).
+
+LeilFS master doesn't send metadata change logs to chunkserver and expect at
+least one *leil-metalogger* daemon to connect.
+
+Chunkserver scans attached disks in background.
+
+== OPTIONS
+
+*-v*:: print version information and exit
+
+*-h*:: print usage information and exit
+
+*-c* 'CFGFILE':: specify alternative path of configuration file (default is
+*leil-chunkserver.cfg* in system configuration directory)
+
+*-u*:: log undefined configuration values (when default is assumed)
+
+*-d*:: run in foreground, don't daemonize
+
+*-t* 'LOCKTIMEOUT':: how long to wait for lockfile (default is 60 seconds)
+
+'ACTION' is the one of *start*, *stop*, *restart*, *reload*, *test*, *isalive*
+or *kill*. Default action is *restart*.
+
+== FILES
+
+*leil-chunkserver.cfg*:: configuration file for LeilFS chunkserver process;
+refer to *leil-chunkserver.cfg*(5) manual for details
+
+*leil-hdd.cfg*:: list of directories (mountpoints) used for LeilFS storage (one
+per line; directory prefixed by *** character causes given directory to be
+freed by replicating all data already stored there to another locations)
+
+*sfschunkserver.lock*:: PID file of running LeilFS chunkserver process
+
+*.sfschunkserver.lock*:: lock file of running LeilFS chunkserver process
+(created in data directory)
+
+*data.csstats*::
+Chunkserver charts state
+
+== REPORTING BUGS
+
+Report bugs to the GitHub repository <https://github.com/leil-io/leilfs> as an
+issue.
+
+== COPYRIGHT
+
+Copyright 2008-2009 Gemius SA
+
+Copyright 2013-2019 Skytechnology sp. z o.o.
+
+Copyright 2023-2024 Leil Storage OÜ
+
+LeilFS is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3.
+
+LeilFS is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+LeilFS. If not, see <http://www.gnu.org/licenses/>.
+
+== SEE ALSO
+
+leil-master(8), leil-mount(1), leil-chunkserver.cfg(5), leil-hdd.cfg(5), leilfs(7)

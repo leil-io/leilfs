@@ -1,0 +1,369 @@
+# leil-master.cfg(5)
+
+## Personality of this instance of metadata server ('master' or 'shadow').
+## 'master' means that this instance of metadata server acts as main
+## metadata server govering all file system metadata modifications.
+## 'shadow' means that this instance of metadata server acts as backup
+## metadata server ready for immediate deployment as new 'master' in case
+## of current 'master' failure.
+## Only one metadata server in SaunaFS shall have 'master' personality.
+# PERSONALITY = master
+
+## Uniquely identifies this namespace.
+## Prevents accidental connections to wrong metadata or chunkservers.
+# CLUSTER_ID = default
+
+## Password for administrative connections and commands.
+# ADMIN_PASSWORD =
+
+## User to run daemon as.
+# WORKING_USER = @DEFAULT_USER@
+
+## Group to run daemon as (if empty then default user group will be used).
+# WORKING_GROUP = @DEFAULT_GROUP@
+
+## Name of process to place in syslog messages.
+## (Default: leil-master)
+# SYSLOG_IDENT = leil-master
+
+## Whether to perform "mlockall()" to avoid swapping out leil-master process,
+## boolean value (0 or 1).
+## (Default: 0)
+# LOCK_MEMORY = 0
+
+## Linux only: limit glibc malloc arenas to given value - prevents from using
+## huge amount of virtual memory. This can influence performance by reducing
+## memory fragmentation and improving cache locality, but it may also lead to
+## contention and reduced parallelism in multi-threaded applications.
+## Use it in constrained memory environments, recommended values are 4 or 8.
+## (default is 0: disabled or let glibc decide)
+# LIMIT_GLIBC_MALLOC_ARENAS = 0
+
+## Nice level to run daemon with, when possible to set.
+## (Default: -19)
+# NICE_LEVEL = -19
+
+## Path to leil-exports.cfg file
+## (Default: @ETC_PATH@/leil-exports.cfg)
+# EXPORTS_FILENAME = @ETC_PATH@/leil-exports.cfg
+
+## Path to leil-topology.cfg file
+## (Default: @ETC_PATH@/leil-topology.cfg)
+# TOPOLOGY_FILENAME = @ETC_PATH@/leil-topology.cfg
+
+## Path to leil-goals.cfg file
+## (Default: @ETC_PATH@/leil-goals.cfg)
+# CUSTOM_GOALS_FILENAME = @ETC_PATH@/leil-goals.cfg
+
+## Location for metadata files.
+## (Default: @DATA_PATH@)
+# DATA_PATH = @DATA_PATH@
+
+## If set, servers with the same IP address will be treated
+## as their topology distance is 0.
+## (Default: 1)
+# PREFER_LOCAL_CHUNKSERVER = 1
+
+## When this option is set (equals 1) master will try to recover metadata
+## from changelog when it is being started after a crash; otherwise it will
+## refuse to start and 'leil-metarestore' should be used to recover the metadata.
+## (Default: 0)
+# AUTO_RECOVERY = 0
+
+## Number of metadata change log files.
+## (Default: 50)
+# BACK_LOGS = 50
+
+## Number of previous metadata files to be kept.
+## (Default: 1)
+# BACK_META_KEEP_PREVIOUS = 1
+
+## Initial delay in seconds before starting chunk operations.
+## (Default: 300)
+# OPERATIONS_DELAY_INIT = 300
+
+## Chunk operations delay in seconds after chunkserver disconnection.
+## (Default: 3600)
+# OPERATIONS_DELAY_DISCONNECT = 3600
+
+## IP address to listen on for metalogger connections (* means any).
+# MATOML_LISTEN_HOST = *
+
+## Port to listen on for metalogger connections.
+## (Default: 9419)
+# MATOML_LISTEN_PORT = 9419
+
+## How many seconds of change logs to be preserved in memory.
+## Note: logs are stored in blocks of 5k lines, so sometimes real number of
+## seconds may be little bigger; zero disables extra logs storage.
+## (Default: 600)
+# MATOML_LOG_PRESERVE_SECONDS = 600
+
+## IP address to listen on for chunkserver connections (* means any).
+# MATOCS_LISTEN_HOST = *
+
+## Port to listen on for chunkserver connections
+## (Default: 9420)
+# MATOCS_LISTEN_PORT = 9420
+
+## IP address to listen on for client (mount) connections (* means any).
+# MATOCL_LISTEN_HOST = *
+
+## Port to listen on for client (mount) connections
+## (Default: 9421).
+# MATOCL_LISTEN_PORT = 9421
+
+## Chunks loop shouldn't check more chunks per seconds than given number.
+## (Default: 100000)
+# CHUNKS_LOOP_MAX_CPS = 100000
+
+## Chunks loop will check all chunks in specified time (in seconds) unless
+## CHUNKS_LOOP_MAX_CPS will force slower execution.
+## (Default: 300)
+# CHUNKS_LOOP_MIN_TIME = 300
+
+## Time in milliseconds between chunks loop execution.
+## (Default: 1000)
+# CHUNKS_LOOP_PERIOD = 1000
+
+## Hard limit on CPU usage by chunks loop (percentage).
+## (Default: 60)
+# CHUNKS_LOOP_MAX_CPU = 60
+
+## Use linear assignment in chunks optimization. It is suggested to
+## disable it if not using labeled chunkservers (Boolean, 0 or 1).
+## (Default: 1)
+# USE_LINEAR_ASSIGNMENT_OPTIMIZER = 1
+
+## Soft maximum number of chunks to delete on one chunkserver.
+## (Default: 10)
+# CHUNKS_SOFT_DEL_LIMIT = 10
+
+## Hard maximum number of chunks to delete on one chunkserver.
+## (Default: 25)
+# CHUNKS_HARD_DEL_LIMIT = 25
+
+## Maximum number of chunks to replicate to one chunkserver.
+## (Default: 2)
+# CHUNKS_WRITE_REP_LIMIT = 2
+
+## Maximum number of chunks to replicate from one chunkserver
+## (Default: 10)
+# CHUNKS_READ_REP_LIMIT = 10
+
+## Percentage of endangered chunks that should be replicated with high priority.
+## Example: when set to 0.2, up to 20% of chunks served in one turn would be extracted
+## from endangered priority queue.
+## When set to 1 (max), no other chunks would be processed as long as there are
+## any endangered chunks in the queue (not advised)
+## (Default: 0), i.e. there is no overhead for prioritizing endangered chunks.
+# ENDANGERED_CHUNKS_PRIORITY = 0
+
+## Max capacity of endangered chunks queue. This value can limit memory
+## usage of master server if there are lots of endangered chunks in the
+## system. This value is ignored if ENDANGERED_CHUNKS_PRIORITY is set to 0.
+## (Default: 1Mi), i.e. no more than 1Mi chunks will be kept in a queue.
+# ENDANGERED_CHUNKS_MAX_CAPACITY = 1Mi
+
+## A maximum difference between disk usage on chunkservers that doesn't trigger
+## chunk rebalancing. Value is fraction of one (i.e. 0.1 is 10%).
+## (Default: 0.1)
+# ACCEPTABLE_DIFFERENCE = 0.1
+
+## When balancing disk usage, allow moving chunks between servers with
+## different labels. Value is boolean i.e. '0' means that chunks will be
+## moved only between servers with the same label.
+## (Default: 0)
+# CHUNKS_REBALANCING_BETWEEN_LABELS = 0
+
+## Whether to update inode access time on every access,
+## boolean value (0 or 1)
+## (Default: 0)
+# NO_ATIME = 0
+
+## Time in seconds for which client session data (e.g. list of open files) should be
+## sustained in the master server after connection with the client was lost.
+## Values between 60 and 604800 (one week) are accepted.
+## (Default: 86400)
+# SESSION_SUSTAIN_TIME = 86400
+
+# GLOBALIOLIMITS_FILENAME = @ETC_PATH@/leil-globaliolimits.cfg
+
+## How often mountpoints will request bandwidth allocations under constant,
+## predictable load.
+## (Default: 0.1)
+# GLOBALIOLIMITS_RENEGOTIATION_PERIOD_SECONDS = 0.1
+
+## After inactivity, no waiting is required to transfer the amount of data
+## equivalent to normal data flow over the period of that many milliseconds.
+## (Default: 250)
+# GLOBALIOLIMITS_ACCUMULATE_MS = 250
+
+# SFSMETARESTORE_PATH = @SBIN_PATH@/sfsmetarestore
+
+## Delay in seconds before trying to reconnect to metadata server
+## after disconnection.
+## Mandatory for "shadow" instance.
+## (Default: 5)
+# MASTER_RECONNECTION_DELAY = 5
+
+## Address of the host running SaunaFS metadata server that currently
+## acts as master.
+## Mandatory for "shadow" instance.
+# MASTER_HOST = sfsmaster
+
+## Port number where SaunaFS metadata server currently running as master
+## listens for connections from shadow's and metaloggers.
+## Mandatory for "shadow" instance.
+## (Default: 9419)
+# MASTER_PORT = 9419
+
+## Timeout (in seconds) for metadata server connections;
+## Mandatory for "shadow" instance.
+## (Default: 60)
+# MASTER_TIMEOUT = 60
+
+## How often metadata checksum shall be sent to backup servers, every N metadata updates.
+## (Default: 50)
+# METADATA_CHECKSUM_INTERVAL = 50
+
+## How fast should metadata be recalculated in background, N objects per function call.
+## (Default: 100)
+# METADATA_CHECKSUM_RECALCULATION_SPEED = 100
+
+## Should checksum verification be disabled while applying changelog, boolean.
+## (Default: 0)
+# DISABLE_METADATA_CHECKSUM_VERIFICATION = 0
+
+## Minimal time in seconds between metadata dumps caused by requests from shadow masters.
+## (Default: 1800)
+# METADATA_SAVE_REQUEST_MIN_PERIOD = 1800
+
+## Metadata periodical dump interval in seconds. If set to 0, metadata periodic dump
+## is disabled (not recommended).
+## (Default: 3600)
+# METADATA_DUMP_PERIOD_SECONDS = 3600
+
+# deprecated:
+# CHUNKS_DEL_LIMIT - use CHUNKS_SOFT_DEL_LIMIT instead
+
+## Use Berkeley DB for file/directory name storage (Boolean, 0 or 1).
+## By default system memory is used for storing file/directory names.
+## With this option enabled Berkeley DB is used for storing
+## names in file (@DATA_PATH@/name_storage.db)
+## (Default: 0)
+# USE_BDB_FOR_NAME_STORAGE = 1
+
+## Size of memory cache (in MB) for file/directory names used
+## by Berkeley DB storage.
+## (Default: 10)
+# BDB_NAME_STORAGE_CACHE_SIZE = 10
+
+## When this option is set to 1, process of selecting chunkservers for chunks
+## will try to avoid using those that share the same ip.
+## (Default: 0)
+# AVOID_SAME_IP_CHUNKSERVERS = 0
+
+## When set, percentage of load will be added to chunkserver disk usage to determine most fitting
+## chunkserver. Heavy loaded chunkservers will be picked for operations less frequently.
+## (Default: 0, Valid range: [0, 0.5])
+# LOAD_FACTOR_PENALTY = 0
+
+## When set, master server will prioritize data parts in EC goals to land in the
+## chunkservers with higher percentage of available space. Could cause parities
+## landing always in the same chunkservers if the cluster is not well balanced.
+## (Default: 1)
+# PRIORITIZE_DATA_PARTS = 1
+
+## Maximum amount of time in milliseconds that the polling operation will wait
+## for events. The value is applied for the polling in the events loop. Smaller
+## values could reduce latency at the cost of CPU usage.
+## (Default: 50)
+# POLL_TIMEOUT_MS = 50
+
+## Minimum number of required redundant chunk parts that can be lost before
+## chunk becomes endangered
+## (Default: 0)
+# REDUNDANCY_LEVEL = 0
+
+## This option can be used to specify initial number of snapshotted nodes that will be atomically
+## cloned before enqueuing the task for execution in fixed-sized batches.
+## (Default: 1000)
+# SNAPSHOT_INITIAL_BATCH_SIZE = 1000
+
+## This option specifies the maximum initial batch size set for snapshot request.
+## (Default: 10000)
+# SNAPSHOT_INITIAL_BATCH_SIZE_LIMIT = 10000
+
+## Test files loop will try to check all files in specified time (in seconds).
+## (Default: 3600)
+# FILE_TEST_LOOP_MIN_TIME = 3600
+
+## Setup logging. Uses the environment variable SAUNAFS_LOG_LEVEL or config
+## value LOG_LEVEL to determine logging level.
+## Valid log levels are
+## 'trace'
+## 'debug'
+## 'info'
+## 'warn' or 'warning'
+## 'err' or 'error'
+## 'crit' or 'critical'
+## 'off'
+# LOG_LEVEL = info
+
+##### EXPERIMENTAL:
+
+## Port to listen on for notifier connections.
+## Set to 0 to disable the notifier service.
+## (Default: 0)
+# MATONT_LISTEN_PORT = 0
+
+## Option to enable Prometheus support and metric collection. Set to either 1
+## to enable, or 0 to disable.
+## (Default: 0)
+# ENABLE_PROMETHEUS = 0
+
+## When ENABLE_PROMETHEUS is set, you can use this option to set the host and
+## port where it will listen for scrapers. Must in the format of HOST:PORT.
+## (Default: 0.0.0.0:9499)
+# PROMETHEUS_HOST=0.0.0.0:9499
+
+## This option allows the system to create metadata for empty folders when
+## storage space is depleted.
+## (Default: 1)
+# CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED = 1
+
+## Path to the TLS certificate file the master/shadow server will use
+## for TLS connections.
+## Example: /etc/saunafs/ssl/master.crt
+## (There is no default)
+# TLS_CERT_FILE =
+
+## Path to the TLS private key file the master/shadow server will use
+## for TLS connections.
+## Example: /etc/saunafs/ssl/master.key
+## (There is no default)
+# TLS_KEY_FILE =
+
+## Path to the trusted CA certificate file which is used to authenticate
+## connecting applications.
+## Example: /etc/saunafs/ssl/ca.crt
+## (There is no default)
+# TLS_CA_CERT_FILE =
+
+## When set to 1, enables sending chunk part lock messages to the chunkservers.
+## This can be useful to track down which chunk parts are currently being
+## written. Reloadable.
+## (Default: 0)
+# USE_CHUNKSERVER_SIDE_CHUNK_LOCK = 0
+
+## Interval for periodic cleaning of reserved files, in milliseconds.
+## If set to 0, the reserved files deletion is disabled.
+## (Default: 0)
+##
+## Note: Administrator-only option. Enabling periodic deletion may remove
+## master-side references to reserved files that are still held by other
+## applications or client instances that have not released them yet. This
+## can disrupt ongoing operations and lead to unexpected errors.
+##
+# EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0

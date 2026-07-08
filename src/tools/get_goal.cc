@@ -31,7 +31,7 @@
 
 static void get_goal_usage() {
 	fprintf(stderr,
-	        "get objects goal (desired number of copies)\n\nusage:\n saunafs getgoal [-nhHr] name [name "
+	        "get objects goal (desired number of copies)\n\nusage:\n leil getgoal [-nhHr] name [name "
 	        "...]\n");
 	print_numberformat_options();
 	print_recursive_option();

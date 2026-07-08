@@ -34,7 +34,7 @@ static int kInfiniteTimeout = 10 * 24 * 3600 * 1000; // simulate infinite timeou
 
 static void set_goal_usage() {
 	fprintf(stderr,
-	        "set objects goal (desired number of copies)\n\nusage:\n saunafs setgoal GOAL name "
+	        "set objects goal (desired number of copies)\n\nusage:\n leil setgoal GOAL name "
 	        "[name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();

@@ -32,7 +32,7 @@
 #include "tools/tools_common_functions.h"
 
 static void get_eattr_usage() {
-	fprintf(stderr, "get objects extra attributes\n\nusage:\n saunafs geteattr [-nhHr] name [name ...]\n");
+	fprintf(stderr, "get objects extra attributes\n\nusage:\n leil geteattr [-nhHr] name [name ...]\n");
 	print_numberformat_options();
 	print_recursive_option();
 }

@@ -34,7 +34,7 @@
 static void quota_set_usage() {
 	fprintf(stderr,
 	        "set quotas\n\n"
-	        "usage:\n saunafs setquota (-u <uid>|-g <gid> |-d) "
+	        "usage:\n leil setquota (-u <uid>|-g <gid> |-d) "
 	        "<soft-limit-size> <hard-limit-size> "
 	        "<soft-limit-inodes> <hard-limit-inodes> <directory-path>\n"
 	        " 0 deletes the limit\n");

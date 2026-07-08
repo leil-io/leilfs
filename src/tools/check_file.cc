@@ -31,7 +31,7 @@
 #include "tools/tools_common_functions.h"
 
 static void check_file_usage() {
-	fprintf(stderr, "check files\n\nusage:\n saunafs checkfile [-nhH] name [name ...]\n");
+	fprintf(stderr, "check files\n\nusage:\n leil checkfile [-nhH] name [name ...]\n");
 }
 
 static int check_file(const char *fname) {
