@@ -43,7 +43,7 @@ setup_local_empty_saunafs() {
 	declare -g mds_command="sfsmaster"
 
 	if [[ ${metadata_backend} != "FILE" ]]; then
-		mds_command="sfsmds"
+		mds_command="leil-mds"
 	fi
 
 	if is_windows_system; then
