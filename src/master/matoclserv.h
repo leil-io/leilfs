@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <cstddef>
 #include <cstdint>
 
 #include "common/type_defs.h"
@@ -49,6 +50,11 @@ void matoclserv_notify_unlock_list(uint64_t chunkId);
 /// Reissues a staged KV changelog version into the strictly increasing published stream.
 /// In-memory master bypasses this; its inline versions are already serialized.
 uint64_t matoclserv_sequence_published_changelog_version(uint64_t stagedVersion);
+
+/// Fans one formatted changelog entry out to every sink: the changelog file/replay, the
+/// changelog signal, metaloggers, and notifiers. `entry` must be NUL-terminated for the
+/// C-string sinks; `size` counts the trailing NUL so broadcasts match the inline framing.
+void matoclserv_emit_changelog_sinks(uint64_t version, char *entry, std::size_t size);
 
 /// Initializes the network configuration and register the eventloop callbacks.
 /// @return 0 on success, negative value on error

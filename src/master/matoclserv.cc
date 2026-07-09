@@ -322,6 +322,17 @@ uint64_t matoclserv_sequence_published_changelog_version(uint64_t stagedVersion)
 	return gLastPublishedChangelogVersion;
 }
 
+void matoclserv_emit_changelog_sinks(uint64_t version, char *entry, std::size_t size) {
+	// C-string sinks stop at the trailing NUL; broadcasts send it, matching the inline path.
+	changelog(version, entry);
+	if (!getChangelogSignal().empty()) {
+		getChangelogSignal().emit({.version = version, .entry = entry});
+	}
+	matomlserv_broadcast_logstring(version, reinterpret_cast<uint8_t *>(entry),
+	                               static_cast<uint32_t>(size));
+	matontserv_broadcast_message(version, std::string_view(entry, size));
+}
+
 /// Publishes buffered changelog sinks after a deferring transaction commits.
 /// Staged KV versions can collide, so this is the total-order point that reissues
 /// monotonically increasing versions for changelog, metaloggers and notifiers.
@@ -330,16 +341,8 @@ static void matoclserv_publish_deferred_changelog(const FilesystemOperationConte
 	auto entries = ctx.takeDeferredChangelogEntries();
 	for (auto &deferred : entries) {
 		deferred.version = matoclserv_sequence_published_changelog_version(deferred.version);
-		// C-string sinks stop at the trailing NUL; broadcasts send it, matching inline path.
-		changelog(deferred.version, deferred.entry.c_str());
-		if (!getChangelogSignal().empty()) {
-			getChangelogSignal().emit(
-			    {.version = deferred.version, .entry = deferred.entry.c_str()});
-		}
-		matomlserv_broadcast_logstring(deferred.version,
-		                               reinterpret_cast<uint8_t *>(deferred.entry.data()),
-		                               deferred.entry.size());
-		matontserv_broadcast_message(deferred.version, std::string_view(deferred.entry));
+		matoclserv_emit_changelog_sinks(deferred.version, deferred.entry.data(),
+		                                deferred.entry.size());
 	}
 }
 
@@ -5382,14 +5385,17 @@ static uint8_t matoclserv_run_lock_op(std::vector<FileLocks::Owner> &applied,
 		    if (lockStatus == SAUNAFS_ERROR_WAITING) { return SAUNAFS_STATUS_OK; }
 		    return lockStatus;
 	    });
+
 	if (lockStatus != SAUNAFS_STATUS_OK && lockStatus != SAUNAFS_ERROR_WAITING) {
 		applied.clear();  // op error, nothing committed: never wake owners for it
 		return lockStatus;
 	}
+
 	if (commitStatus != SAUNAFS_STATUS_OK) {  // conflict retries exhausted
 		applied.clear();
 		return SAUNAFS_ERROR_IO;
 	}
+
 	return lockStatus;
 }
 

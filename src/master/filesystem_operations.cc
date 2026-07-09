@@ -114,14 +114,7 @@ void FilesystemOperationsBase::changeLog(
 		version = matoclserv_sequence_published_changelog_version(version);
 	}
 
-	changelog(version, entry);
-
-	if (!getChangelogSignal().empty()) {
-		getChangelogSignal().emit({.version = version, .entry = entry});
-	}
-
-	matomlserv_broadcast_logstring(version, (uint8_t *)entry, timeStampLength + entryLength);
-	matontserv_broadcast_message(version, std::string_view(entry, timeStampLength + entryLength));
+	matoclserv_emit_changelog_sinks(version, entry, timeStampLength + entryLength);
 #endif
 }
 
