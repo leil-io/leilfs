@@ -931,6 +931,44 @@ TEST_F(FDBKVEngineTest, MutationCount) {
 	EXPECT_EQ(txn->mutationCount(), uint64_t{5}) << "removeRange() buffers one mutation.";
 }
 
+// getApproximateSize() reports the client-side estimate of the transaction's buffered writes.
+// It is supported by the FDB backend, grows as mutations are added, and reflects the payload
+// size (a large value increases it substantially more than a small one). The writer relies on
+// this to bound a flush transaction below FDB's per-transaction size limit. The transaction is
+// dropped without committing: the size is a property of the buffered mutations, not of the
+// commit.
+TEST_F(FDBKVEngineTest, GetApproximateSize) {
+	auto txn = kvEngine->createReadWriteTransaction();
+
+	// A fresh transaction reports a value (baseline overhead); the FDB backend supports it.
+	auto initial = txn->getApproximateSize();
+	ASSERT_TRUE(initial.has_value())
+	    << "getApproximateSize() must be supported by the FDB backend.";
+
+	// A buffered set() grows the estimate by at least the value payload.
+	const auto key = kv::toBytes("approx_size_key");
+	const kv::Value smallValue(64, 'x');
+	txn->set(key, smallValue);
+	auto afterSmall = txn->getApproximateSize();
+	ASSERT_TRUE(afterSmall.has_value());
+	EXPECT_GT(*afterSmall, *initial) << "A buffered set() must increase the approximate size.";
+	EXPECT_GE(*afterSmall - *initial, smallValue.size())
+	    << "The growth must cover at least the written value bytes.";
+
+	// A large value grows the estimate substantially more than a small one.
+	const auto bigKey = kv::toBytes("approx_size_big_key");
+	const kv::Value bigValue(64 * 1024, 'y');  // 64 KiB, under FDB's per-value limit
+	txn->set(bigKey, bigValue);
+	auto afterBig = txn->getApproximateSize();
+	ASSERT_TRUE(afterBig.has_value());
+	EXPECT_GE(*afterBig - *afterSmall, bigValue.size())
+	    << "A large buffered value must be reflected in the approximate size.";
+
+	safs::log_info("Approximate size: initial={}, after 64B set={}, after 64KiB set={}", *initial,
+	               *afterSmall, *afterBig);
+	// No cleanup: the transaction is intentionally dropped without committing.
+}
+
 // Exercises the async-commit path end to end: poll isReady(), finalize via getResult(),
 // confirm the committed version is captured, that getResult() is single-use, and that
 // the write is durable.

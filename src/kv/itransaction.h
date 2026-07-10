@@ -173,6 +173,13 @@ public:
 	/// the shared transaction (it must be rebuilt), or failed clean (no rebuild needed).
 	virtual uint64_t mutationCount() const = 0;
 
+	/// Approximate byte size of the transaction's buffered writes so far, including the
+	/// mutations, read/write conflict ranges and backend overhead that count toward the
+	/// backend's per-transaction size limit. Returns std::nullopt when the backend cannot
+	/// report it (callers then fall back to a count-based bound). Computed client-side, so it
+	/// is cheap to poll while applying a batch.
+	virtual std::optional<uint64_t> getApproximateSize() { return std::nullopt; }
+
 protected:
 	IReadWriteTransaction() = default;
 };

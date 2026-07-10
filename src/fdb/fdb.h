@@ -270,6 +270,11 @@ public:
 	/// @return The committed version, if available.
 	std::optional<int64_t> getCommittedVersion() const { return committedVersion_; }
 
+	/// Approximate byte size that the buffered mutations and conflict ranges would contribute
+	/// to a commit (fdb_transaction_get_approximate_size). Computed client-side.
+	/// @return The approximate size, or std::nullopt on error.
+	std::optional<uint64_t> getApproximateSize();
+
 private:
 	/// Custom deleter for FDBTransaction (C struct), to ensure proper cleanup.
 	struct FDBTransactionDeleter {
