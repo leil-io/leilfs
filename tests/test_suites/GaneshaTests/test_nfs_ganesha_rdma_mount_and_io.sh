@@ -9,9 +9,9 @@
 #   - A soft-RDMA device: SoftiWARP (siw) or SoftRoCE (rdma_rxe).
 #   - The rpcrdma client module, and (for siw) the iWARP port mapper: sudo iwpmd
 #
-# /etc/sudoers.d/saunafstest:
-#   saunafstest ALL = NOPASSWD: /bin/mount, /bin/umount, /bin/pkill, /bin/mkdir
-#   saunafstest ALL = NOPASSWD: /usr/bin/ganesha.nfsd, /sbin/modprobe, /usr/bin/rdma
+# The scoped sudoers grants this test needs are provisioned by
+# tests/setup_machine.sh (the "# Ganesha" and "# Ganesha RDMA" blocks) — see
+# there for the exact, up-to-date command list.
 
 timeout_set 1 minute
 
@@ -22,26 +22,33 @@ readonly rdma_port=20049 # Ganesha default NFS_RDMA_Port
 ganesha_bin=$(command -v ganesha.nfsd || echo /usr/bin/ganesha.nfsd)
 if ! ldd "${ganesha_bin}" 2>/dev/null | grep -qE 'librdmacm|libibverbs'; then
 	echo "SKIP: Ganesha not built with NFS/RDMA (-DUSE_NFS_RDMA=ON)."
-	exit 0
+	test_end
 fi
-if ! is_program_installed rdma || ! is_program_installed ibv_devices; then
-	echo "SKIP: iproute2 'rdma' or ibverbs-utils 'ibv_devices' not installed."
-	exit 0
+if ! is_program_installed rdma || ! is_program_installed ibv_devinfo; then
+	echo "SKIP: iproute2 'rdma' or ibverbs-utils 'ibv_devinfo' not installed."
+	test_end
 fi
 
 # Bind the soft-RDMA device to a real NIC (the default-route interface) and mount
 # via its routable IP. A loopback device (siw/rxe on 'lo', 127.0.0.1) brings the
 # port up but does not deliver the RPC data path for a same-host mount; a real
-# netdev gives the device a routable GID that the client can connect to. Fall
-# back to 'lo' only when there is no routable interface.
-rdma_netdev=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+# netdev gives the device a routable GID that the client can connect to. With no
+# routable interface there is nothing usable to bind, so skip rather than fall
+# back to a loopback mount that cannot carry the RDMA data path.
+# Read the interface as the token after 'dev' so a gateway-less default route
+# ("default dev eth0 ...", e.g. point-to-point links) parses correctly too.
+rdma_netdev=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
 server_ip=$(ip -o -4 addr show "${rdma_netdev}" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
 if [[ -z ${rdma_netdev} || -z ${server_ip} ]]; then
-	rdma_netdev=lo
-	server_ip=127.0.0.1
+	echo "SKIP: no routable IPv4 interface for the RDMA data path."
+	test_end
 fi
 
 setup_soft_rdma() {
+	# Drop any leftover device from a crashed run; otherwise "rdma link add"
+	# fails with "File exists" and the test misreads it as no kernel support.
+	# Expected to fail on a clean run (no such device), so ignore the result.
+	sudo rdma link delete "${rdma_dev}" 2>/dev/null || true
 	sudo modprobe siw 2>/dev/null &&
 		sudo rdma link add "${rdma_dev}" type siw netdev "${rdma_netdev}" 2>/dev/null && return 0
 	sudo modprobe rdma_rxe 2>/dev/null &&
@@ -50,27 +57,52 @@ setup_soft_rdma() {
 }
 if ! setup_soft_rdma; then
 	echo "SKIP: kernel has no SoftiWARP (siw) or SoftRoCE (rdma_rxe) support."
-	exit 0
+	test_end
 fi
-trap 'sudo rdma link delete "${rdma_dev}" 2>/dev/null || true' EXIT
+
+# Single EXIT trap, registered as soon as the RDMA link exists. Defining cleanup
+# here (not after the mount is up) guarantees the link and any iwpmd we start are
+# torn down even if setup fails in between. Registering a second EXIT trap later
+# would silently replace this one and leak those resources.
+started_iwpmd=0
+test_error_cleanup() {
+	set +e
+	if [[ -n ${mountpoint_path:-} ]] && mountpoint -q "${mountpoint_path}"; then
+		sudo umount -l "${mountpoint_path}"
+	fi
+	sudo pkill -9 ganesha.nfsd 2>/dev/null
+	sudo rdma link delete "${rdma_dev}" 2>/dev/null
+	if [[ ${started_iwpmd} == 1 ]]; then
+		sudo pkill -x iwpmd 2>/dev/null
+	fi
+}
+trap test_error_cleanup EXIT
 echo "RDMA: device ${rdma_dev} on ${rdma_netdev}, mounting via ${server_ip}"
 
 # siw is iWARP; its connection setup needs the iWARP port mapper (iwpmd) running.
 # systemd keeps iwpmd stopped (StopWhenUnneeded=yes) without RDMA hardware, so
 # start it standalone when a siw device needs it. Skip only if it cannot start.
-# Record whether WE started it, so cleanup only stops a daemon we launched.
-started_iwpmd=0
+# Record whether WE started it (started_iwpmd, initialized above), so cleanup
+# only stops a daemon we launched.
 if ibv_devinfo -d "${rdma_dev}" 2>/dev/null | grep -qi iWARP && ! pgrep -x iwpmd >/dev/null 2>&1; then
 	sudo iwpmd 2>/dev/null || true
 	sleep 1
 	if ! pgrep -x iwpmd >/dev/null 2>&1; then
 		echo "SKIP: could not start the iWARP port mapper (iwpmd)."
-		exit 0
+		test_end
 	fi
 	started_iwpmd=1
 fi
 
-sudo modprobe rpcrdma 2>/dev/null || true # NFS-over-RDMA client transport
+# NFS-over-RDMA client transport. Required by the mount below; without it the
+# client can't speak RPC/RDMA and "mount -o rdma" would hard-fail or hang. Gate
+# on the module being present (loaded or builtin) rather than modprobe's exit
+# code, so a builtin rpcrdma (CONFIG_SUNRPC_XPRT_RDMA=y) is not misread as absent.
+sudo modprobe rpcrdma 2>/dev/null || true
+if [[ ! -d /sys/module/rpcrdma ]]; then
+	echo "SKIP: kernel has no NFS-over-RDMA client transport (rpcrdma)."
+	test_end
+fi
 
 # --- SaunaFS + Ganesha ------------------------------------------------------
 CHUNKSERVERS=3 \
@@ -81,19 +113,6 @@ CHUNKSERVERS=3 \
 mountpoint_path="${TEMP_DIR}/mnt/ganesha-rdma"
 ganesha_config="${info[mount0]}/ganesha.conf"
 ganesha_log="${TEMP_DIR}/ganesha-rdma.log"
-
-test_error_cleanup() {
-	set +e
-	if mountpoint -q "${mountpoint_path}"; then
-		sudo umount -l "${mountpoint_path}"
-	fi
-	sudo pkill -9 ganesha.nfsd
-	sudo rdma link delete "${rdma_dev}" 2>/dev/null
-	if [[ ${started_iwpmd:-0} == 1 ]]; then
-		sudo pkill -x iwpmd 2>/dev/null
-	fi
-}
-trap test_error_cleanup EXIT
 
 mkdir -p "${mountpoint_path}"
 create_ganesha_pid_file
