@@ -2,7 +2,7 @@ name: Fedora RPM build and review
 
 on:
   push:
-    branches: [dev]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,12 +11,20 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     container:
-      image: fedora:latest
-      options: --privileged 
+      image: fedora:rawhide
+      options: --privileged
 
     steps:
+      - name: Install git
+        run: dnf install -y git
+
+      - name: Trust the GitHub Actions workspace
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
       - name: Install build dependencies
         run: dnf install -y fedora-packager python3-specfile

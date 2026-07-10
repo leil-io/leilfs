@@ -52,6 +52,14 @@ create_source_tarball() {
             exit 1
         fi
 
+        if [ "${ALLOW_NON_GIT_SOURCE:-0}" != "1" ]; then
+            echo "ERROR: not inside a Git checkout; refusing to silently fetch Source0 from the network." >&2
+            echo "That would package a stale published release tarball instead of this checkout." >&2
+            cat "${REPO_ROOT_ERROR}" >&2
+            echo "Set ALLOW_NON_GIT_SOURCE=1 to intentionally build from the spec's published Source0 instead." >&2
+            exit 1
+        fi
+
         if [ "${SOURCE_REF}" != "HEAD" ]; then
             echo "ERROR: ${SOURCE_REF} requested but not inside a Git checkout." >&2
             exit 1
@@ -60,6 +68,13 @@ create_source_tarball() {
         echo "WARNING: not inside a Git checkout; downloading source tarball from spec." >&2
         spectool -g "${NAME}.spec"
         return
+    fi
+
+    if [ "${ALLOW_DIRTY_SOURCE:-0}" != "1" ] && \
+       ! git -C "${REPO_ROOT}" diff-index --quiet HEAD --; then
+        echo "ERROR: refusing to create source tarball from a dirty checkout." >&2
+        echo "Commit or stash tracked changes, or set ALLOW_DIRTY_SOURCE=1 to package HEAD anyway." >&2
+        exit 1
     fi
 
     resolved_ref=$(resolve_source_ref "${SOURCE_REF}")
@@ -93,8 +108,15 @@ if rpmlint -c "${FILTERS}" "${NAME}.spec"; then
     # If BuildRequires was changed - reinstall every BuildRequires
     echo "Running local mockbuild..."
     fedpkg mockbuild -- --clean -v
-    echo "Running rpmlint in results_${NAME}/${VERSION}/${RELEASE}/..."
-    if rpmlint -c "${FILTERS}" "results_${NAME}/${VERSION}/${RELEASE}"/*.x86_64.rpm; then
+
+    RESULTS_DIR=$(find "results_${NAME}/${VERSION}" -mindepth 1 -maxdepth 1 -type d -print -quit)
+    if [ -z "${RESULTS_DIR}" ]; then
+        echo "ERROR: no results directory found under results_${NAME}/${VERSION}/" >&2
+        exit 1
+    fi
+
+    echo "Running rpmlint in ${RESULTS_DIR}/..."
+    if rpmlint -c "${FILTERS}" "${RESULTS_DIR}"/*.x86_64.rpm; then
         echo "Build finished successfully."
     else
         echo "ERROR: Build finished unsuccessfully"
