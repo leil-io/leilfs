@@ -20,7 +20,11 @@
 
 #include "common/platform.h"
 
+#include <cassert>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
@@ -75,7 +79,11 @@ public:
 	/// owned by the arena. It does not implicitly commit or rollback transactions; callers must
 	/// ensure that any required commit or rollback is performed via the transaction interfaces
 	/// before the context is destroyed.
-	~FilesystemOperationContext() = default;
+	/// Debug builds catch a committed context whose deferred changelog was not drained,
+	/// because dropping those entries would lose changelog, metalogger and notifier sinks.
+	~FilesystemOperationContext() {
+		assert(deferredChangelogEntries_.empty() || !commitConfirmed_);
+	}
 
 	/// Returns true if this context has an active transaction
 	bool hasTransaction() const;
@@ -98,6 +106,34 @@ public:
 	/// @see FSNodeArena
 	FSNodeArena &nodeArena() const { return nodeArena_; }
 
+	/// A changelog entry whose publication is held until the owning transaction commits.
+	struct DeferredChangelogEntry {
+		uint64_t version;
+		std::string entry;
+	};
+
+	/// Buffer changelog sinks until this context's transaction commits.
+	/// Needed for replayable KV commits: aborted attempts drop their buffers, and
+	/// consumers never see uncommitted entries.
+	void setDeferChangelog() { deferChangelog_ = true; }
+
+	/// Returns true when changelog entries must be buffered instead of published inline.
+	bool deferChangelog() const { return deferChangelog_; }
+
+	/// Buffer one changelog entry for post-commit publication.
+	void appendDeferredChangelogEntry(uint64_t version, std::string entry) const {
+		deferredChangelogEntries_.emplace_back(version, std::move(entry));
+	}
+
+	/// Drains buffered entries for post-commit publication.
+	/// Dropping an unconfirmed context without draining discards aborted/replayed entries.
+	std::vector<DeferredChangelogEntry> takeDeferredChangelogEntries() const {
+		return std::exchange(deferredChangelogEntries_, {});
+	}
+
+	/// Records that the transaction committed so the destructor catches an undrained buffer.
+	void confirmCommitted() const { commitConfirmed_ = true; }
+
 private:
 	/// The active read-write transaction (if any)
 	std::unique_ptr<kv::IReadWriteTransaction> rwTransaction_ = nullptr;
@@ -111,4 +147,13 @@ private:
 	/// Nodes materialized by a KV backend during this operation; freed on teardown.
 	/// Mutable so the const seam can pin; see nodeArena().
 	mutable FSNodeArena nodeArena_;
+
+	/// See setDeferChangelog().
+	bool deferChangelog_ = false;
+
+	/// Changelog entries buffered for post-commit publication; mutable like nodeArena_.
+	mutable std::vector<DeferredChangelogEntry> deferredChangelogEntries_;
+
+	/// See confirmCommitted(); mutable like the entry buffer it guards.
+	mutable bool commitConfirmed_ = false;
 };

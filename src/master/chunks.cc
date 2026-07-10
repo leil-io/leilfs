@@ -1088,15 +1088,26 @@ bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
 	return true;
 }
 
+bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto) {
+	Chunk *c = chunk_find(chunkid);
+	if (c == nullptr) { return false; }
+	lockid = c->lockid;
+	lockedto = c->lockedto;
+	return true;
+}
+
 bool chunk_exists(uint64_t chunkid) { return chunk_find(chunkid) != nullptr; }
 
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
-                                     const std::vector<ChunkGoalCounters::GoalCounter> &goals) {
+                                     const std::vector<ChunkGoalCounters::GoalCounter> &goals,
+                                     uint32_t lockid, uint32_t lockedto) {
 	if (chunk_find(chunkid) != nullptr) { return; }
 	Chunk *c = chunk_new(chunkid, version);
 	for (const auto &counter : goals) {
 		for (uint32_t i = 0; i < counter.count; ++i) { c->addFileWithGoal(counter.goal); }
 	}
+	c->lockid = lockid;
+	c->lockedto = lockedto;
 	chunk_update_checksum(c);
 }
 

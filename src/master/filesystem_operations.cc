@@ -100,14 +100,21 @@ void FilesystemOperationsBase::changeLog(
 	}
 
 	uint64_t version = increaseMetadataVersion(fsOpContext);
-	changelog(version, entry);
 
-	if (!getChangelogSignal().empty()) {
-		getChangelogSignal().emit({.version = version, .entry = entry});
+	if (fsOpContext.deferChangelog()) {
+		// Defer every sink (local log, signal, broadcasts) so replayed attempts publish nothing.
+		fsOpContext.appendDeferredChangelogEntry(version,
+		                                         std::string(entry, timeStampLength + entryLength));
+		return;
 	}
 
-	matomlserv_broadcast_logstring(version, (uint8_t *)entry, timeStampLength + entryLength);
-	matontserv_broadcast_message(version, std::string_view(entry, timeStampLength + entryLength));
+	if (fsOpContext.hasReadWriteTransaction()) {
+		// Direct KV commits still publish inline; sequence them with deferred publications
+		// so duplicate staged versions do not reach changelog consumers.
+		version = matoclserv_sequence_published_changelog_version(version);
+	}
+
+	matoclserv_emit_changelog_sinks(version, entry, timeStampLength + entryLength);
 #endif
 }
 
@@ -3269,6 +3276,11 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 		} else {
 			(*notchanged)++;
 		}
+	}
+	if (*erased > 0 || *repaired > 0) {
+		// Chunk-table and mtime edits only touch the materialized node on KV.
+		// Persist them; in-memory backend already stores the node itself.
+		nodeOperations_->updateNode(fsOpContext, node);
 	}
 	nodeOperations_->getStats(fsOpContext, node, &newStats);
 	nodeOperations_->updateParentStatsForNode(fsOpContext, node, &newStats, &previousStats);

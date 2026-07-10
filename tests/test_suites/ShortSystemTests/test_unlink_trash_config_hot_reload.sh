@@ -1,6 +1,8 @@
 timeout_set 6 minutes
 
-CHUNKSERVERS=4 \
+chunkserver_count=4
+
+CHUNKSERVERS=${chunkserver_count} \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	MASTER_EXTRA_CONFIG="CHUNKS_LOOP_MIN_TIME = 1`
 			`|CHUNKS_LOOP_MAX_CPU = 90`
@@ -28,7 +30,6 @@ reload_chunkserver_config() {
 		xargs -r kill -HUP
 }
 
-CHUNKSERVERS=$(grep -Eo '^CHUNKSERVERS=[^ ]+' "${BASH_SOURCE[0]}" | head -n1 | cut -d= -f2)
 etcdir="${TEMP_DIR}/saunafs/etc"
 
 ######################################################################
@@ -36,7 +37,7 @@ etcdir="${TEMP_DIR}/saunafs/etc"
 ######################################################################
 # truncate the log file
 truncate -s 0 "${TEMP_DIR}/log"
-for chunkserver_id in $(seq 0 "$((CHUNKSERVERS-1))"); do
+for chunkserver_id in $(seq 0 "$((chunkserver_count-1))"); do
 	chunkserver_cfg="${etcdir}/sfschunkserver_${chunkserver_id}.cfg"
 	sed -E -i 's/^CHUNK_TRASH_ENABLED=.*/CHUNK_TRASH_ENABLED=1/' "${chunkserver_cfg}"
 	sed -E -i 's/^CHUNK_TRASH_EXPIRATION_SECONDS=.*/CHUNK_TRASH_EXPIRATION_SECONDS=50/' \
@@ -110,7 +111,7 @@ assert_success test "${trashed_chunks_before_reload}" -gt 0
 
 # Change the config to disable chunk trashing and reload it
 truncate -s 0 "${TEMP_DIR}/log"
-for chunkserver_id in $(seq 0 "$((CHUNKSERVERS-1))"); do
+for chunkserver_id in $(seq 0 "$((chunkserver_count-1))"); do
 	chunkserver_cfg="${etcdir}/sfschunkserver_${chunkserver_id}.cfg"
 	sed -E -i 's/^CHUNK_TRASH_ENABLED=.*/CHUNK_TRASH_ENABLED=0/' "${chunkserver_cfg}"
 	sed -E -i 's/^CHUNK_TRASH_EXPIRATION_SECONDS=.*/CHUNK_TRASH_EXPIRATION_SECONDS=50/' \
@@ -134,7 +135,7 @@ fi
 ##### Change the config to disable chunk trashing and reload it
 ######################################################################
 truncate -s 0 "${TEMP_DIR}/log"
-for chunkserver_id in $(seq 0 "$((CHUNKSERVERS-1))"); do
+for chunkserver_id in $(seq 0 "$((chunkserver_count-1))"); do
 	chunkserver_cfg="${etcdir}/sfschunkserver_${chunkserver_id}.cfg"
 	sed -E -i 's/^CHUNK_TRASH_ENABLED=.*/CHUNK_TRASH_ENABLED=0/' "${chunkserver_cfg}"
 	sed -E -i 's/^CHUNK_TRASH_EXPIRATION_SECONDS=.*/CHUNK_TRASH_EXPIRATION_SECONDS=90/' "${chunkserver_cfg}"
