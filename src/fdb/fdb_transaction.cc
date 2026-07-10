@@ -107,7 +107,7 @@ std::optional<int64_t> FDBTransaction::getCommittedVersion() const {
 	return tr_.getCommittedVersion();
 }
 
-std::optional<uint64_t> FDBTransaction::getApproximateSize() {
+std::optional<uint64_t> FDBTransaction::getApproximateSize() const {
 	if (!tr_) { return std::nullopt; }
 
 	return tr_.getApproximateSize();

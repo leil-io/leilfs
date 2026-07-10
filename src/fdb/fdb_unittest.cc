@@ -951,8 +951,9 @@ TEST_F(FDBKVEngineTest, GetApproximateSize) {
 	txn->set(key, smallValue);
 	auto afterSmall = txn->getApproximateSize();
 	ASSERT_TRUE(afterSmall.has_value());
-	EXPECT_GT(*afterSmall, *initial) << "A buffered set() must increase the approximate size.";
-	EXPECT_GE(*afterSmall - *initial, smallValue.size())
+	EXPECT_GT(afterSmall.value(), initial.value())
+	    << "A buffered set() must increase the approximate size.";
+	EXPECT_GE(afterSmall.value(), initial.value() + smallValue.size())
 	    << "The growth must cover at least the written value bytes.";
 
 	// A large value grows the estimate substantially more than a small one.
@@ -961,11 +962,11 @@ TEST_F(FDBKVEngineTest, GetApproximateSize) {
 	txn->set(bigKey, bigValue);
 	auto afterBig = txn->getApproximateSize();
 	ASSERT_TRUE(afterBig.has_value());
-	EXPECT_GE(*afterBig - *afterSmall, bigValue.size())
+	EXPECT_GE(afterBig.value(), afterSmall.value() + bigValue.size())
 	    << "A large buffered value must be reflected in the approximate size.";
 
-	safs::log_info("Approximate size: initial={}, after 64B set={}, after 64KiB set={}", *initial,
-	               *afterSmall, *afterBig);
+	safs::log_info("Approximate size: initial={}, after 64B set={}, after 64KiB set={}",
+	               initial.value(), afterSmall.value(), afterBig.value());
 	// No cleanup: the transaction is intentionally dropped without committing.
 }
 

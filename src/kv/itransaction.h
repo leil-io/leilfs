@@ -178,7 +178,7 @@ public:
 	/// backend's per-transaction size limit. Returns std::nullopt when the backend cannot
 	/// report it (callers then fall back to a count-based bound). Computed client-side, so it
 	/// is cheap to poll while applying a batch.
-	virtual std::optional<uint64_t> getApproximateSize() { return std::nullopt; }
+	virtual std::optional<uint64_t> getApproximateSize() const { return std::nullopt; }
 
 protected:
 	IReadWriteTransaction() = default;
