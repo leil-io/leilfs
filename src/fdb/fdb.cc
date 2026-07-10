@@ -384,6 +384,31 @@ bool Transaction::commit() {
 	return true;
 }
 
+std::optional<uint64_t> Transaction::getApproximateSize() const {
+	if (!tr_) { return std::nullopt; }
+
+	// This is an advisory query: on failure we return std::nullopt and let the caller fall back
+	// to a count-based bound. Errors are kept in a local variable rather than the member error_,
+	// so a transient/unsupported query does not poison the transaction's validity (operator bool).
+	UniqueFDBFuture future(fdb_transaction_get_approximate_size(tr_.get()));
+	fdb_error_t error = fdb_future_block_until_ready(future.get());
+	if (error != 0) {
+		safs::log_err("Transaction::getApproximateSize: fdb_future_block_until_ready: error: {}",
+		              fdb_get_error(error));
+		return std::nullopt;
+	}
+
+	int64_t size{};
+	error = fdb_future_get_int64(future.get(), &size);
+	if (error != 0) {
+		safs::log_err("Transaction::getApproximateSize: fdb_future_get_int64: error: {}",
+		              fdb_get_error(error));
+		return std::nullopt;
+	}
+
+	return static_cast<uint64_t>(size);
+}
+
 namespace {
 
 /// Pollable wrapper around an in-flight fdb_transaction_commit() future.

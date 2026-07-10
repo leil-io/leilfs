@@ -113,6 +113,9 @@ public:
 	/// Number of buffered mutations issued on this transaction so far.
 	uint64_t mutationCount() const override { return mutationCount_; }
 
+	/// Approximate byte size of the buffered writes so far (client-side estimate).
+	std::optional<uint64_t> getApproximateSize() const override;
+
 	/// Returns the error code of the last operation.
 	fdb_error_t error() const { return error_; }
 
