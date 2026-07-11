@@ -99,6 +99,16 @@ public:
 	/// @note The transaction must remain alive until the future's get() method is called.
 	virtual std::unique_ptr<IFuture> getAsync(const Key &key) = 0;
 
+	/// Retrieves the value for a given key asynchronously without adding it to
+	/// the transaction's read conflict range (snapshot/advisory read).
+	/// @see getSnapshot for the conflict-semantics warning; it applies here too.
+	/// @param key The key to retrieve the value for.
+	/// @return A future that will contain the value when ready.
+	/// @note Backend read failures are reported by the future's get(), which throws
+	///   RetryableTransactionError / TransactionError (see IFuture::get()).
+	/// @note The transaction must remain alive until the future's get() method is called.
+	virtual std::unique_ptr<IFuture> getSnapshotAsync(const Key &key) = 0;
+
 	/// Retrieves a range of keys and values
 	/// @param start The starting key for the range.
 	/// @param end The ending key for the range.
@@ -171,6 +181,16 @@ public:
 	/// @param start Inclusive start key.
 	/// @param end Exclusive end key.
 	virtual void removeRange(const Key &start, const Key &end) = 0;
+
+	/// Adds @p key to the transaction's read-conflict set without reading it, as if
+	/// the transaction had read the key. This turns a blind write into a
+	/// conflict-checked one: another transaction committing a write to @p key between
+	/// this transaction's read version and its commit aborts this transaction with a
+	/// retryable conflict instead of being silently overwritten by it.
+	/// @param key The key to add to the read-conflict set.
+	/// @throws std::invalid_argument if the backend rejects the conflict-range
+	///   registration; the annotation is never silently dropped.
+	virtual void addReadConflictKey(const Key &key) = 0;
 
 	/// Commits the transaction, making all changes permanent.
 	/// @return True if the commit succeeded and is durable, false on a backend commit

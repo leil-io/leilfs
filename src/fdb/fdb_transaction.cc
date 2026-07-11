@@ -41,6 +41,10 @@ std::unique_ptr<kv::IFuture> FDBTransaction::getAsync(const kv::Key &key) {
 	return tr_.getAsync(key);
 }
 
+std::unique_ptr<kv::IFuture> FDBTransaction::getSnapshotAsync(const kv::Key &key) {
+	return tr_.getAsync(key, /*snapshot=*/true);
+}
+
 kv::GetRangeResult FDBTransaction::getRange(const kv::KeySelector &start,
                                             const kv::KeySelector &end, int limit) {
 	return tr_.getRange(start, end, limit);
@@ -76,6 +80,8 @@ void FDBTransaction::removeRange(const kv::Key &start, const kv::Key &end) {
 	tr_.removeRange(start, end);
 	mutationCount_++;
 }
+
+void FDBTransaction::addReadConflictKey(const kv::Key &key) { tr_.addReadConflictKey(key); }
 
 bool FDBTransaction::commit() { return tr_.commit(); }
 

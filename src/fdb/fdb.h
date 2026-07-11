@@ -320,6 +320,10 @@ public:
 	/// Removes a half-open key range [start, end) from the database.
 	void removeRange(const kv::Key &start, const kv::Key &end);
 
+	/// Adds the single key to the read-conflict set without reading it.
+	/// @see kv::IReadWriteTransaction::addReadConflictKey
+	void addReadConflictKey(const kv::Key &key);
+
 	/// Commits the transaction.
 	/// @return True if the commit succeeded and is durable, false on a backend commit
 	///   failure. A wrong-state call (no backend handle) throws std::logic_error instead

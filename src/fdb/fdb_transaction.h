@@ -73,6 +73,10 @@ public:
 	///   kv::RetryableTransactionError / kv::TransactionError.
 	std::unique_ptr<kv::IFuture> getAsync(const kv::Key &key) override;
 
+	/// Retrieves the value for a given key asynchronously as a snapshot read.
+	/// @see kv::IReadOnlyTransaction::getSnapshotAsync.
+	std::unique_ptr<kv::IFuture> getSnapshotAsync(const kv::Key &key) override;
+
 	/// Retrieves a range of keys and values
 	/// @param start The starting key for the range.
 	/// @param end The ending key for the range.
@@ -115,6 +119,11 @@ public:
 
 	/// Removes a half-open key range [start, end) from the database.
 	void removeRange(const kv::Key &start, const kv::Key &end) override;
+
+	/// Adds a key to the transaction's read-conflict set without reading it,
+	/// turning a blind write into a conflict-checked one.
+	/// @see kv::IReadWriteTransaction::addReadConflictKey.
+	void addReadConflictKey(const kv::Key &key) override;
 
 	/// Commits the transaction, making all changes permanent.
 	/// @return True if the commit succeeded and is durable, false on a backend failure.
