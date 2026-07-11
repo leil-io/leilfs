@@ -25,7 +25,37 @@
 
 #include <foundationdb/fdb_c.h>
 
+#include <stdexcept>
+#include <string>
+
 #include "kv/ifuture.h"
+
+namespace fdb {
+
+/// Initialization/lifecycle failure of the FDB client itself (runtime start, database
+/// creation), as opposed to per-transaction errors (kv::TransactionError family).
+class FDBException : public std::runtime_error {
+public:
+	FDBException(int errorCode, const std::string &message)
+	    : std::runtime_error("FoundationDB error: " + message +
+	                         " (code: " + std::to_string(errorCode) + ")"),
+	      errorCode_(errorCode) {}
+
+	/// The fdb_c error code that caused this failure.
+	int errorCode() const noexcept { return errorCode_; }
+
+private:
+	int errorCode_;
+};
+
+/// Throws FDBException when a lifecycle-level fdb_c call failed.
+inline void checkFdbError(fdb_error_t err, const std::string &message) {
+	if (err != 0) {
+		throw FDBException(static_cast<int>(err), message + ": " + std::string(fdb_get_error(err)));
+	}
+}
+
+}  // namespace fdb
 
 namespace fdb::detail {
 

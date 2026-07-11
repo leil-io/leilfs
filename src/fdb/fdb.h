@@ -111,24 +111,6 @@ public:
 	/// @see FDBNetworkOption for available options.
 	static fdb_error_t setNetworkOption(FDBNetworkOption option, std::string_view value = {});
 
-	/// Sets up the FoundationDB network thread.
-	/// This must be called before any database operations.
-	/// @return The error code of the operation.
-	static fdb_error_t setupNetwork();
-
-	/// Runs the FoundationDB network thread.
-	/// This must be called after setting up the network.
-	/// @return The error code of the operation.
-	/// @note This function blocks until the network thread is stopped.
-	/// It is typically called in a separate thread.
-	static fdb_error_t runNetwork();
-
-	/// Stops the FoundationDB network thread.
-	/// This should be called when the application is shutting down.
-	/// @return The error code of the operation.
-	/// @note This function blocks until the network thread is stopped.
-	static fdb_error_t stopNetwork();
-
 	// database
 
 	/// Returns the error code of the last operation.

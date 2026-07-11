@@ -190,12 +190,6 @@ fdb_error_t DB::setNetworkOption(FDBNetworkOption option, std::string_view value
 	return fdb_network_set_option(option, toU8(value), static_cast<int>(value.length()));
 }
 
-fdb_error_t DB::setupNetwork() { return fdb_setup_network(); }
-
-fdb_error_t DB::runNetwork() { return fdb_run_network(); }
-
-fdb_error_t DB::stopNetwork() { return fdb_stop_network(); }
-
 // DB
 
 fdb_error_t DB::setOption(FDBDatabaseOption option, std::string_view value) {
