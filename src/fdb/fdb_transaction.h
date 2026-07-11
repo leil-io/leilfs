@@ -35,9 +35,15 @@ namespace fdb {
 /// it returns std::nullopt when no estimate can be reported.
 class FDBTransaction final : public kv::IReadWriteTransaction {
 public:
-	/// Constructs a FDBTransaction using the provided fdb::Transaction.
-	/// @param _tr The fdb::Transaction to wrap.
-	FDBTransaction(fdb::Transaction &&_tr) : tr_(std::move(_tr)) {}
+	/// Constructs a FDBTransaction wrapping a new fdb::Transaction on the given
+	/// database (constructed in place: fdb::Transaction is non-movable because its
+	/// futures hold pointers into it).
+	/// @param db The database to create the wrapped transaction on; may be null,
+	///   which yields a handle-less transaction (see operator bool).
+	explicit FDBTransaction(fdb::DB *db) : tr_(db) {}
+
+	/// True when the wrapped transaction has a backend handle to operate on.
+	explicit operator bool() const { return static_cast<bool>(tr_); }
 
 	// Non-copyable, non-movable (base class is non-movable)
 	FDBTransaction(const FDBTransaction &) = delete;

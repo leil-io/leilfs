@@ -23,6 +23,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "kv/kv_types.h"
 
@@ -35,7 +36,7 @@ namespace kv {
 ///  - Backend failures (the operation reached the backend and failed there) are reported
 ///    as a TransactionError; retryable() says whether the caller may replay the op.
 ///  - Invalid argument values (e.g. a bad versionstamp offset) are std::invalid_argument.
-///  - Calls in the wrong transaction state are std::logic_error.
+///  - Calls in the wrong transaction state throw TransactionStateError (a std::logic_error).
 /// The local domains carry no backend error code, so they can never be mistaken for (or
 /// fed into) backend retry handling.
 ///
@@ -70,6 +71,19 @@ public:
 	    : TransactionError(errorCode, message) {}
 
 	bool retryable() const noexcept override { return true; }
+};
+
+/// Thrown when a transaction or one of its single-use futures is called in the wrong state:
+/// no backend handle, an illegal lifecycle state (e.g. reset/cancel while a commit is in
+/// flight, or on a maybe-committed transaction), or a future consumed twice. This is a
+/// coordinator SEQUENCING bug, distinct from a backend TransactionError (which carries a
+/// backend code) and from the arbitrary std::logic_error subclasses (std::out_of_range,
+/// std::length_error, ...) unrelated caller code may raise. It derives std::logic_error so
+/// existing catch(std::logic_error) sites stay valid; a retry harness can catch THIS type
+/// alone to contain its own sequencing bugs while letting genuine caller logic bugs escape.
+class TransactionStateError : public std::logic_error {
+public:
+	explicit TransactionStateError(const std::string &message) : std::logic_error(message) {}
 };
 
 /// Interface for asynchronous future results from key-value operations.
@@ -186,6 +200,41 @@ public:
 
 protected:
 	ICommitFuture() = default;
+};
+
+/// Interface for an asynchronous operation that yields no value, only success or a
+/// typed failure (e.g. backend recovery between retry attempts, watches).
+///
+/// @note Single-use: get() may be called only once.
+/// @note The transaction that produced this future must stay alive until get() returns
+///   (or until the future is destroyed, whichever comes first).
+class IVoidFuture {
+public:
+	virtual ~IVoidFuture() = default;
+
+	// Non-copyable, non-movable
+	IVoidFuture(const IVoidFuture &) = delete;
+	IVoidFuture &operator=(const IVoidFuture &) = delete;
+	IVoidFuture(IVoidFuture &&) = delete;
+	IVoidFuture &operator=(IVoidFuture &&) = delete;
+
+	/// Checks whether the result is available without blocking.
+	virtual bool isReady() = 0;
+
+	/// Registers a one-shot wakeup fired when the result becomes ready. Same contract
+	/// as ICommitFuture::setReadyCallback: may fire immediately and inline, may run on
+	/// another thread, must not touch this future or its transaction; best-effort.
+	virtual void setReadyCallback(void (*callback)(void *), void *arg) = 0;
+
+	/// Blocks until the result is ready. Returns normally on success.
+	/// @throws RetryableTransactionError when the operation failed with a retryable
+	///   backend error.
+	/// @throws TransactionError when it failed with any other backend error.
+	/// @throws std::logic_error when called more than once (single-use).
+	virtual void get() = 0;
+
+protected:
+	IVoidFuture() = default;
 };
 
 /// Trivial already-completed commit future, for backends that commit synchronously

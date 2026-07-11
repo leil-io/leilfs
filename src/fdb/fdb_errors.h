@@ -59,22 +59,27 @@ inline void checkFdbError(fdb_error_t err, const std::string &message) {
 
 namespace fdb::detail {
 
+/// Whether a failed READ may be replayed on a fresh transaction.
+/// transaction_timed_out (1031) is deliberately absent from FDB's RETRYABLE
+/// predicate because a timeout during COMMIT has an unknown result. This predicate
+/// guards READ paths only, and the op-boundary replay runs on a fresh transaction
+/// with a fresh timeout budget, so a timed-out read is safe to replay. The commit
+/// path (FDBCommitFuture::getResult) uses RETRYABLE_NOT_COMMITTED, which excludes
+/// 1031 and the whole maybe-committed class, so a commit with an unknown result is
+/// never blindly replayed.
+inline bool isRetryableReadError(fdb_error_t err) {
+	constexpr fdb_error_t kTransactionTimedOut = 1031;
+	return err == kTransactionTimedOut ||
+	       fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err) != 0;
+}
+
 /// Translates a failed FoundationDB READ into the typed error contract: retryable
 /// errors throw kv::RetryableTransactionError so the master's op boundary replays the
 /// op on a fresh transaction, and every other backend error throws the
 /// kv::TransactionError base so a backend failure can never be mistaken for a missing
 /// key (absent keys are the only thing reported as an empty result).
 [[noreturn]] inline void throwTransactionError(fdb_error_t err) {
-	// transaction_timed_out (1031) is deliberately absent from FDB's RETRYABLE
-	// predicate because a timeout during COMMIT has an unknown result. This helper
-	// guards READ paths only, and the op-boundary replay runs on a fresh
-	// transaction with a fresh timeout budget, so a timed-out read is safe to
-	// replay. The commit path (FDBCommitFuture::getResult) uses RETRYABLE_NOT_COMMITTED,
-	// which excludes 1031 and the whole maybe-committed class, so a commit with an
-	// unknown result is never blindly replayed.
-	constexpr fdb_error_t kTransactionTimedOut = 1031;
-	if (err == kTransactionTimedOut ||
-	    fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err) != 0) {
+	if (isRetryableReadError(err)) {
 		throw kv::RetryableTransactionError(static_cast<int>(err), fdb_get_error(err));
 	}
 	throw kv::TransactionError(static_cast<int>(err), fdb_get_error(err));
