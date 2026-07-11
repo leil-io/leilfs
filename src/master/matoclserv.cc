@@ -386,6 +386,14 @@ static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
 			    "matoclserv: retryable read error in op body (err {}), retrying, attempt {}",
 			    e.errorCode(), attempt + 1);
 			continue;
+		} catch (const kv::TransactionError &e) {
+			// Non-retryable backend failure while running the op body: fail this op with
+			// EIO instead of letting the exception escape the event loop. Nothing throws
+			// this base type yet (non-retryable read errors still report via error
+			// codes); this is the safety net for when they start to.
+			safs::log_err("matoclserv: backend transaction error in op body (err {}): {}",
+			              e.errorCode(), e.what());
+			return SAUNAFS_ERROR_IO;
 		}
 
 		if (status != SAUNAFS_STATUS_OK) { return status; }  // op error/status, do not commit
@@ -538,6 +546,15 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 			    "attempt {}",
 			    e.errorCode(), member.attempts);
 		}
+		return true;
+	} catch (const kv::TransactionError &e) {
+		// Non-retryable backend failure: fail this member with EIO and restart the batch
+		// on a fresh transaction (the shared transaction is unusable after a thrown
+		// error). Nothing throws this base type yet; safety net for when reads start to.
+		safs::log_err("matoclserv: backend transaction error in batch member (err {}): {}",
+		              e.errorCode(), e.what());
+		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+		members.erase(members.begin() + idx);
 		return true;
 	}
 }

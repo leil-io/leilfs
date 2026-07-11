@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
@@ -162,6 +163,50 @@ private:
 	fdb_error_t error_ = 1;  ///< The error code of the last operation.
 };
 
+/// TEST-ONLY deterministic fault injection for fdb::Transaction and its futures.
+///
+/// Each queue scripts the outcomes of one injection point, consumed front-to-back, one
+/// entry per call: a non-zero entry makes that call fail with exactly that FDB error
+/// code, a zero entry leaves that call untouched, and an exhausted (empty) queue stops
+/// injecting. This makes error sequences fully deterministic, e.g. "fail only the second
+/// read with not_committed" is {0, 1020}.
+///
+/// Production never constructs one of these; transactions carry a null pointer and each
+/// injection point costs a single null check. Not owned by the transaction: the test
+/// keeps the instance alive for the transaction's (and its futures') lifetime.
+struct FaultInjection {
+	/// Read results (point get and range get, sync and async): the read fails with the
+	/// scripted error before contacting the cluster.
+	std::deque<fdb_error_t> readErrors;
+	/// Commit attempts, checked BEFORE submitting: the commit fails with the scripted
+	/// error and nothing is sent to the cluster.
+	std::deque<fdb_error_t> preCommitErrors;
+	/// Commit results, checked AFTER a real successful commit: the already-durable
+	/// commit is reported as failed with the scripted error. With commit_unknown_result
+	/// (1021) this reproduces the maybe-committed case: the data IS in the database but
+	/// the caller is told the outcome is unknown.
+	std::deque<fdb_error_t> postCommitErrors;
+	/// Committed-version lookups after a successful commit: the lookup fails with the
+	/// scripted error although the commit itself succeeded.
+	std::deque<fdb_error_t> committedVersionErrors;
+
+	/// Pops the next scripted outcome from `queue`: the error to inject, or 0 for none.
+	static fdb_error_t next(std::deque<fdb_error_t> &queue) {
+		if (queue.empty()) { return 0; }
+		fdb_error_t err = queue.front();
+		queue.pop_front();
+		return err;
+	}
+
+	/// Clears all scripted outcomes (for reuse between test cases).
+	void reset() {
+		readErrors.clear();
+		preCommitErrors.clear();
+		postCommitErrors.clear();
+		committedVersionErrors.clear();
+	}
+};
+
 /// Custom deleter for FDBFuture (C struct), to ensure proper cleanup.
 struct FDBFutureDeleter {
 	constexpr FDBFutureDeleter() noexcept = default;
@@ -275,6 +320,11 @@ public:
 	/// @return The approximate size, or std::nullopt on error.
 	std::optional<uint64_t> getApproximateSize() const;
 
+	/// TEST-ONLY: attaches a deterministic fault-injection script to this transaction and
+	/// the futures it creates afterwards. Not owned; pass nullptr to detach. The script
+	/// must outlive the transaction and its futures. See FaultInjection.
+	void setFaultInjection(FaultInjection *fault) { faultInjection_ = fault; }
+
 private:
 	/// Custom deleter for FDBTransaction (C struct), to ensure proper cleanup.
 	struct FDBTransactionDeleter {
@@ -291,6 +341,9 @@ private:
 
 	/// The commit version of the transaction, if applicable.
 	std::optional<int64_t> committedVersion_;
+
+	/// TEST-ONLY fault-injection script; null in production (see setFaultInjection).
+	FaultInjection *faultInjection_{nullptr};
 };
 
 }  // namespace fdb

@@ -75,6 +75,18 @@ inline void addNanos(std::atomic<uint64_t> &counter, uint64_t nanos) {
 	counter.fetch_add(nanos, std::memory_order_relaxed);
 }
 
+/// Attributes a failed commit to the conflict or failure counter. Gated on accounting
+/// because evaluatePredicate() calls into the FDB C API. Matches
+/// FDBCommitFuture::getResult: a commit_unknown_result / maybe-committed error is a
+/// commitFailure, not a (definitely-not-committed) conflict.
+inline void countFailedCommit(fdb_error_t err) {
+	if (!opCountersEnabled()) { return; }
+	auto &counter = DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED, err)
+	                    ? gOpCounters.commitConflicts
+	                    : gOpCounters.commitFailures;
+	counter.fetch_add(1, std::memory_order_relaxed);
+}
+
 /// Nanoseconds elapsed since `start` on the steady clock, for accumulating the
 /// wall time the single MDS thread spends blocked in FDB read/commit futures.
 inline uint64_t elapsedNanosSince(std::chrono::steady_clock::time_point start) {
@@ -201,6 +213,18 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 
 	bump(gOpCounters.pointReads);
 	bumpReadPrefix(key);
+
+	// TEST-ONLY scripted read failure; short-circuits before contacting the cluster and
+	// mirrors the real error path below (sync reads report via error_, they do not throw).
+	if (faultInjection_ != nullptr) {
+		fdb_error_t injected = FaultInjection::next(faultInjection_->readErrors);
+		if (injected != 0) {
+			error_ = injected;
+			safs::log_err("Transaction::get: injected error: {}", fdb_get_error(injected));
+			return std::nullopt;
+		}
+	}
+
 	UniqueFDBFuture future(
 	    fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()), snapshot));
 
@@ -243,7 +267,7 @@ std::unique_ptr<kv::IFuture> Transaction::getAsync(const kv::Key &key, bool snap
 	FDBFuture *future = fdb_transaction_get(tr_.get(), key.data(), static_cast<int>(key.size()),
 	                                        static_cast<fdb_bool_t>(snapshot));
 
-	return std::make_unique<FDBFutureValue>(future);
+	return std::make_unique<FDBFutureValue>(future, faultInjection_);
 }
 
 kv::GetRangeResult Transaction::getRange(
@@ -284,7 +308,7 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
 	    endOffset, limit, kBytesLimit, streamingMode, iteration, static_cast<fdb_bool_t>(snapshot),
 	    static_cast<fdb_bool_t>(reverse));
 
-	return std::make_unique<FDBFutureRange>(future);
+	return std::make_unique<FDBFutureRange>(future, faultInjection_);
 }
 
 void Transaction::set(const kv::Key &key, const kv::Value &value) {
@@ -332,6 +356,20 @@ bool Transaction::commit() {
 	if (!tr_) { return false; }
 
 	bump(gOpCounters.commits);
+
+	// TEST-ONLY scripted pre-commit failure: nothing is submitted to the cluster; the
+	// scripted code takes the same classification path as a real failed commit.
+	if (faultInjection_ != nullptr) {
+		fdb_error_t injected = FaultInjection::next(faultInjection_->preCommitErrors);
+		if (injected != 0) {
+			error_ = injected;
+			safs::log_err("Transaction::commit: injected pre-commit error: {}",
+			              fdb_get_error(injected));
+			countFailedCommit(injected);
+			return false;
+		}
+	}
+
 	UniqueFDBFuture future(fdb_transaction_commit(tr_.get()));
 
 	const bool profiling = opCountersEnabled();
@@ -352,25 +390,26 @@ bool Transaction::commit() {
 	// future itself and must be checked with fdb_future_get_error().
 	error_ = fdb_future_get_error(future.get());
 
+	// TEST-ONLY scripted post-commit override: at this point the commit IS durable; the
+	// caller is nevertheless told it failed with the scripted code (commit_unknown_result
+	// 1021 reproduces the maybe-committed case).
+	if (error_ == 0 && faultInjection_ != nullptr) {
+		error_ = FaultInjection::next(faultInjection_->postCommitErrors);
+	}
+
 	if (error_ != 0) {
 		safs::log_err("Transaction::commit: commit failed: {}", fdb_get_error(error_));
-		// evaluatePredicate() calls into the FDB C API, so only pay for it when
-		// accounting is on; keeps the disabled path a single relaxed bool load.
-		// The gate is already known here, so increment directly instead of bump().
-		if (opCountersEnabled()) {
-			// Match FDBCommitFuture::getResult: a commit_unknown_result / maybe-committed
-			// error is a commitFailure, not a (definitely-not-committed) conflict.
-			auto &counter =
-			    DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED, error_)
-			        ? gOpCounters.commitConflicts
-			        : gOpCounters.commitFailures;
-			counter.fetch_add(1, std::memory_order_relaxed);
-		}
+		countFailedCommit(error_);
 		return false;
 	}
 
 	int64_t version{};
 	fdb_error_t versionError = fdb_transaction_get_committed_version(tr_.get(), &version);
+
+	// TEST-ONLY scripted committed-version-lookup failure after a successful commit.
+	if (versionError == 0 && faultInjection_ != nullptr) {
+		versionError = FaultInjection::next(faultInjection_->committedVersionErrors);
+	}
 
 	if (versionError != 0) {
 		safs::log_err("Transaction::commit: fdb_transaction_get_committed_version: error: {}",
@@ -419,11 +458,13 @@ namespace {
 class FDBCommitFuture final : public kv::ICommitFuture {
 public:
 	FDBCommitFuture(FDBFuture *commitFuture, FDBTransaction *trHandle,
-	                std::optional<int64_t> *committedVersionOut, fdb_error_t *errorOut)
+	                std::optional<int64_t> *committedVersionOut, fdb_error_t *errorOut,
+	                FaultInjection *fault)
 	    : future_(commitFuture),
 	      trHandle_(trHandle),
 	      committedVersionOut_(committedVersionOut),
-	      errorOut_(errorOut) {}
+	      errorOut_(errorOut),
+	      faultInjection_(fault) {}
 
 	~FDBCommitFuture() override {
 		if (future_ != nullptr) { fdb_future_destroy(future_); }
@@ -486,6 +527,13 @@ public:
 		if (profiling) { addNanos(gOpCounters.commitWaitNanos, elapsedNanosSince(waitStart)); }
 		if (err == 0) { err = fdb_future_get_error(future_); }
 
+		// TEST-ONLY scripted post-commit override: at this point the commit IS durable;
+		// the caller is nevertheless told it failed with the scripted code
+		// (commit_unknown_result 1021 reproduces the maybe-committed case).
+		if (err == 0 && faultInjection_ != nullptr) {
+			err = FaultInjection::next(faultInjection_->postCommitErrors);
+		}
+
 		if (err != 0) {
 			*errorOut_ = err;
 			consumedError_ = err;
@@ -512,6 +560,12 @@ public:
 
 		int64_t version{};
 		fdb_error_t versionError = fdb_transaction_get_committed_version(trHandle_, &version);
+
+		// TEST-ONLY scripted committed-version-lookup failure after a successful commit.
+		if (versionError == 0 && faultInjection_ != nullptr) {
+			versionError = FaultInjection::next(faultInjection_->committedVersionErrors);
+		}
+
 		if (versionError != 0) {
 			*errorOut_ = versionError;
 			consumedError_ = versionError;
@@ -544,9 +598,39 @@ private:
 	FDBTransaction *trHandle_;
 	std::optional<int64_t> *committedVersionOut_;
 	fdb_error_t *errorOut_;
+	FaultInjection *faultInjection_;
 	bool consumed_ = false;
 	fdb_error_t consumedError_ = 0;
 	bool consumedRetryable_ = false;
+};
+
+/// TEST-ONLY already-failed commit future for a scripted pre-commit error: reports the
+/// scripted code with the same RETRYABLE_NOT_COMMITTED classification and accounting as
+/// a real failed commit, but nothing was submitted to the cluster.
+class InjectedCommitFuture final : public kv::ICommitFuture {
+public:
+	explicit InjectedCommitFuture(fdb_error_t err) : error_(err) {}
+
+	bool isReady() override { return true; }
+
+	void setReadyCallback(void (*callback)(void *), void *arg) override {
+		if (callback != nullptr) { callback(arg); }
+	}
+
+	bool getResult(int *error, bool *retryable) override {
+		const bool isRetryable =
+		    DB::evaluatePredicate(FDB_ERROR_PREDICATE_RETRYABLE_NOT_COMMITTED, error_);
+		if (error != nullptr) { *error = error_; }
+		if (retryable != nullptr) { *retryable = isRetryable; }
+		if (consumed_) { return false; }
+		consumed_ = true;
+		countFailedCommit(error_);
+		return false;
+	}
+
+private:
+	fdb_error_t error_;
+	bool consumed_ = false;
 };
 
 }  // namespace
@@ -555,9 +639,22 @@ std::unique_ptr<kv::ICommitFuture> Transaction::commitAsync() {
 	if (!tr_) { return std::make_unique<kv::ImmediateCommitFuture>(false); }
 
 	bump(gOpCounters.commits);
+
+	// TEST-ONLY scripted pre-commit failure: nothing is submitted to the cluster.
+	if (faultInjection_ != nullptr) {
+		fdb_error_t injected = FaultInjection::next(faultInjection_->preCommitErrors);
+		if (injected != 0) {
+			error_ = injected;
+			safs::log_err("Transaction::commitAsync: injected pre-commit error: {}",
+			              fdb_get_error(injected));
+			return std::make_unique<InjectedCommitFuture>(injected);
+		}
+	}
+
 	FDBFuture *future = fdb_transaction_commit(tr_.get());
 
-	return std::make_unique<FDBCommitFuture>(future, tr_.get(), &committedVersion_, &error_);
+	return std::make_unique<FDBCommitFuture>(future, tr_.get(), &committedVersion_, &error_,
+	                                         faultInjection_);
 }
 
 }  // namespace fdb

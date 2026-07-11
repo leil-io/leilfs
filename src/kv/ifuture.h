@@ -28,6 +28,35 @@
 
 namespace kv {
 
+/// Base type for backend transaction failures, carrying the backend error code and
+/// whether the failed operation may be replayed.
+///
+/// Error-domain rules for the kv/fdb layers:
+///  - Backend failures (the operation reached the backend and failed there) are reported
+///    as a TransactionError; retryable() says whether the caller may replay the op.
+///  - Invalid argument values (e.g. a bad versionstamp offset) are std::invalid_argument.
+///  - Calls in the wrong transaction state are std::logic_error.
+/// The local domains carry no backend error code, so they can never be mistaken for (or
+/// fed into) backend retry handling.
+///
+/// Today only the retryable subclass is thrown; non-retryable backend read failures are
+/// still reported via error out-parameters and empty results. Reads start throwing this
+/// base type for non-retryable errors when the uniform error contract lands.
+class TransactionError : public std::runtime_error {
+public:
+	TransactionError(int errorCode, const std::string &message)
+	    : std::runtime_error(message), errorCode_(errorCode) {}
+
+	int errorCode() const noexcept { return errorCode_; }
+
+	/// Whether the caller may replay the failed operation (transient conflict/timeout
+	/// class, as opposed to a permanent backend failure).
+	virtual bool retryable() const noexcept { return false; }
+
+private:
+	int errorCode_;
+};
+
 /// Thrown by a read future's get() when the underlying transaction failed with a
 /// RETRYABLE backend error (e.g. FoundationDB transaction_timed_out / not_committed /
 /// transaction_too_old). The single-threaded master event loop catches this at the op
@@ -35,15 +64,12 @@ namespace kv {
 /// transient read failure abort the whole MDS. Non-retryable read failures (corruption,
 /// genuinely-absent keys) are still reported the old way (error code / nullopt), not via
 /// this type.
-class RetryableTransactionError : public std::runtime_error {
+class RetryableTransactionError : public TransactionError {
 public:
 	RetryableTransactionError(int errorCode, const std::string &message)
-	    : std::runtime_error(message), errorCode_(errorCode) {}
+	    : TransactionError(errorCode, message) {}
 
-	int errorCode() const noexcept { return errorCode_; }
-
-private:
-	int errorCode_;
+	bool retryable() const noexcept override { return true; }
 };
 
 /// Interface for asynchronous future results from key-value operations.

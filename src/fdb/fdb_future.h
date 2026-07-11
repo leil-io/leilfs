@@ -29,6 +29,8 @@
 
 namespace fdb {
 
+struct FaultInjection;
+
 /// Wraps a FoundationDB future (FDBFuture*) with RAII semantics.
 /// Implements the kv::IFuture interface for asynchronous get operations.
 ///
@@ -38,7 +40,8 @@ class FDBFutureValue final : public kv::IFuture {
 public:
 	/// Constructs a FDBFutureValue wrapping the given FDBFuture*.
 	/// @param future The FDB future to wrap. Takes ownership.
-	explicit FDBFutureValue(FDBFuture *future);
+	/// @param fault Optional TEST-ONLY fault-injection script (not owned, may be null).
+	explicit FDBFutureValue(FDBFuture *future, FaultInjection *fault = nullptr);
 
 	/// Destructor. Destroys the wrapped FDB future.
 	~FDBFutureValue() override;
@@ -62,6 +65,8 @@ public:
 private:
 	FDBFuture *future_;
 	bool consumed_ = false;
+	/// TEST-ONLY fault-injection script; null in production.
+	FaultInjection *faultInjection_;
 };
 
 /// Wraps a FoundationDB range future (FDBFuture*) with RAII semantics.
@@ -73,7 +78,8 @@ class FDBFutureRange final : public kv::IRangeFuture {
 public:
 	/// Constructs a FDBFutureRange wrapping the given FDBFuture*.
 	/// @param future The FDB future to wrap. Takes ownership.
-	explicit FDBFutureRange(FDBFuture *future);
+	/// @param fault Optional TEST-ONLY fault-injection script (not owned, may be null).
+	explicit FDBFutureRange(FDBFuture *future, FaultInjection *fault = nullptr);
 
 	/// Destructor. Destroys the wrapped FDB future.
 	~FDBFutureRange() override;
@@ -97,6 +103,8 @@ public:
 private:
 	FDBFuture *future_;
 	bool consumed_ = false;
+	/// TEST-ONLY fault-injection script; null in production.
+	FaultInjection *faultInjection_;
 };
 
 }  // namespace fdb
