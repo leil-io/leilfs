@@ -35,6 +35,7 @@
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
+#include "fdb/fdb_transaction.h"
 #include "kv/ifuture.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
@@ -1091,6 +1092,61 @@ TEST_F(FDBKVEngineTest, MutationCount) {
 
 	txn->removeRange(kv::toBytes("mc_a"), kv::toBytes("mc_b"));
 	EXPECT_EQ(txn->mutationCount(), uint64_t{5}) << "removeRange() buffers one mutation.";
+}
+
+// recoverAsync() makes the SAME kv transaction reusable after a retryable commit
+// conflict: the recovery future completes, the adapter's bookkeeping is reset, and the
+// replayed mutations commit. The retry coordinator relies on this to keep the backend's
+// accumulated backoff across attempts instead of recreating the transaction.
+TEST_F(FDBKVEngineTest, RecoverAsyncReusesTransactionAfterConflict) {
+	const auto key = kv::toBytes("recover_async_key");
+
+	auto txn = kvEngine->createReadWriteTransaction();
+	(void)txn->get(key);  // Put the key in this transaction's read conflict range.
+	{
+		auto external = kvEngine->createReadWriteTransaction();
+		external->set(key, kv::toBytes("external"));
+		ASSERT_TRUE(external->commit());
+	}
+	txn->set(key, kv::toBytes("mine"));
+
+	int commitError = 0;
+	bool retryable = false;
+	ASSERT_FALSE(txn->commitAsync()->getResult(&commitError, &retryable))
+	    << "The external write must conflict with this transaction's read.";
+	ASSERT_TRUE(retryable);
+
+	auto recovery = txn->recoverAsync(commitError);
+	ASSERT_NE(recovery, nullptr);
+	recovery->get();
+	EXPECT_EQ(txn->mutationCount(), uint64_t{0})
+	    << "Recovery resets the adapter's bookkeeping for the replay.";
+
+	// Replay on the same transaction object; this attempt sees the external write.
+	auto observed = txn->get(key);
+	ASSERT_TRUE(observed.has_value());
+	EXPECT_EQ(*observed, kv::toBytes("external"));
+	txn->set(key, kv::toBytes("replayed"));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{1});
+	ASSERT_TRUE(txn->commitAsync()->getResult(&commitError, &retryable));
+
+	{  // Verify the replayed value, then clean up.
+		auto check = kvEngine->createReadWriteTransaction();
+		auto value = check->get(key);
+		ASSERT_TRUE(value.has_value());
+		EXPECT_EQ(*value, kv::toBytes("replayed"));
+		check->remove(key);
+		ASSERT_TRUE(check->commit());
+	}
+}
+
+// recoverAsync() on an adapter whose wrapped transaction has no backend handle is a
+// wrong-state call: it must throw std::logic_error, never return a nullptr future that
+// poses as a started recovery (see the recoverAsync contract in kv/itransaction.h).
+TEST_F(FDBKVEngineTest, RecoverAsyncWithoutBackendHandleThrows) {
+	fdb::FDBTransaction handleless{nullptr};
+	constexpr int kNotCommitted = 1020;  // A retryable code, to isolate the handle check.
+	EXPECT_THROW((void)handleless.recoverAsync(kNotCommitted), std::logic_error);
 }
 
 // getApproximateSize() reports the client-side estimate of the transaction's buffered writes.

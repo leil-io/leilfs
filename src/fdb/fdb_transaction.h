@@ -143,6 +143,15 @@ public:
 	/// Returns the committed version of the transaction, if available.
 	std::optional<int64_t> getCommittedVersion() const override;
 
+	/// Begins FDB-managed recovery (fdb_transaction_on_error) so this SAME transaction
+	/// can be replayed with the backend's accumulating backoff. Resets mutationCount().
+	/// @see kv::IReadWriteTransaction::recoverAsync for the full contract.
+	std::unique_ptr<kv::IVoidFuture> recoverAsync(int backendErrorCode) override;
+
+	/// Bounds the transaction's total blocking time (FDB TIMEOUT option); sticky across
+	/// recoverAsync() retries. @see kv::IReadWriteTransaction::setTimeoutMs.
+	void setTimeoutMs(int ms) override;
+
 	/// Number of buffered mutations issued on this transaction so far.
 	uint64_t mutationCount() const override { return mutationCount_; }
 

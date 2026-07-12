@@ -32,6 +32,7 @@ namespace kv {
 class IFuture;
 class IRangeFuture;
 class ICommitFuture;
+class IVoidFuture;
 
 /// Represents a key selector for range queries.
 class KeySelector {
@@ -139,7 +140,7 @@ protected:
 /// Inherits from IReadOnlyTransaction and adds methods for modifying the database.
 /// Per the error-domain rules in kv/ifuture.h, backend failures throw the
 /// TransactionError family and wrong-state calls (e.g. operations on a moved-from
-/// backend transaction) throw std::logic_error; a write is never silently dropped.
+/// backend transaction) throw TransactionStateError; a write is never silently dropped.
 class IReadWriteTransaction : public IReadOnlyTransaction {
 public:
 	virtual ~IReadWriteTransaction() override = default;
@@ -217,6 +218,37 @@ public:
 	/// report it (callers then fall back to a count-based bound). Computed client-side, so it
 	/// is cheap to poll while applying a batch.
 	virtual std::optional<uint64_t> getApproximateSize() const { return std::nullopt; }
+
+	/// Begins backend recovery after a retryable error so this SAME transaction object
+	/// can be reused for a replay (backends with server-paced backoff, like
+	/// FoundationDB's on_error, accumulate their delay in the transaction; recreating
+	/// it on every attempt loses that pacing).
+	/// Contract:
+	///  - backendErrorCode must be the code this transaction just surfaced via a
+	///    kv::TransactionError with retryable() == true. Calling without such a
+	///    surfaced error is a std::logic_error; a zero code is a std::invalid_argument.
+	///  - The caller owns the transaction while the future is outstanding; no other
+	///    operation may be issued on it.
+	///  - get() returning normally guarantees the transaction is reusable, with the
+	///    implementation's bookkeeping (mutation count, committed version) reset.
+	///  - get() throwing means the transaction is terminal; destroy it and retry on a
+	///    fresh transaction if the thrown error is retryable.
+	///  - Destroying the future without get() leaves the transaction terminal.
+	///  - Never returns nullptr; wrong-state calls throw TransactionStateError per the
+	///    class contract.
+	/// In-memory backends have no recovery work and return an immediately-successful
+	/// future; all retry pacing then comes from the caller.
+	virtual std::unique_ptr<IVoidFuture> recoverAsync(int backendErrorCode) = 0;
+
+	/// Bounds the total time this transaction may block (reads and commit) before the
+	/// backend auto-cancels it, in milliseconds. The bound persists across recoverAsync()
+	/// retries (like FoundationDB's transaction TIMEOUT option, measured from this call),
+	/// so a caller with its own wall-clock retry deadline sets the remaining budget here
+	/// and a stuck backend cannot block the caller's thread past it. Pass a positive value;
+	/// a non-positive one is a caller error (0 would DISABLE the timeout on backends like
+	/// FDB, the opposite of bounding) and may throw. Backends without a timeout concept
+	/// (in-memory) do not block on a cluster and ignore it; the default is a no-op.
+	virtual void setTimeoutMs(int /*milliseconds*/) {}
 
 protected:
 	IReadWriteTransaction() = default;

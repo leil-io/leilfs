@@ -97,6 +97,14 @@ public:
 	/// Get the read-write transaction (null if none or read-only)
 	kv::IReadWriteTransaction *getReadWriteTransaction() const;
 
+	/// Relinquishes ownership of the read-write transaction (nullptr if none). Used by
+	/// the retry coordinator to retain the transaction across attempts (backend
+	/// recovery keeps its accumulated backoff) while this context, with all its
+	/// attempt-scoped state (arena, deferred changelog buffer, confirmation flag), is
+	/// discarded. After this call the context has no transaction and should only be
+	/// destroyed.
+	std::unique_ptr<kv::IReadWriteTransaction> releaseReadWriteTransaction();
+
 	/// Get the transaction type hint
 	TransactionType getTransactionType() const { return transactionType_; }
 

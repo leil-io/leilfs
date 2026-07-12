@@ -237,6 +237,41 @@ protected:
 	IVoidFuture() = default;
 };
 
+/// Trivial already-completed void future, for backends whose recovery (or watch)
+/// completes synchronously: in-memory backends, test mocks, and synthesized failures.
+class ImmediateVoidFuture final : public IVoidFuture {
+public:
+	/// Successful outcome.
+	ImmediateVoidFuture() = default;
+
+	/// Failed outcome: get() throws a TransactionError with this code, the retryable
+	/// subclass when `retryable` is set.
+	ImmediateVoidFuture(int errorCode, bool retryable, std::string message)
+	    : errorCode_(errorCode), retryable_(retryable), message_(std::move(message)) {}
+
+	bool isReady() override { return true; }
+
+	void setReadyCallback(void (*callback)(void *), void *arg) override {
+		if (callback != nullptr) { callback(arg); }
+	}
+
+	void get() override {
+		if (consumed_) {
+			throw TransactionStateError("ImmediateVoidFuture::get: future already consumed");
+		}
+		consumed_ = true;
+		if (errorCode_ == 0) { return; }
+		if (retryable_) { throw RetryableTransactionError(errorCode_, message_); }
+		throw TransactionError(errorCode_, message_);
+	}
+
+private:
+	int errorCode_ = 0;
+	bool retryable_ = false;
+	std::string message_;
+	bool consumed_ = false;
+};
+
 /// Trivial already-completed commit future, for backends that commit synchronously
 /// (in-memory Master, test mocks). Keeps the deferred-commit code path uniform.
 class ImmediateCommitFuture final : public ICommitFuture {

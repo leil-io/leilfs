@@ -97,4 +97,38 @@ std::optional<uint64_t> FDBTransaction::getApproximateSize() const {
 	return tr_.getApproximateSize();
 }
 
+namespace {
+
+/// Adapter shim over the wrapper's backoff future: a successful recovery must also
+/// reset the ADAPTER's bookkeeping (mutationCount lives here, not in the wrapper).
+class RecoveryFuture final : public kv::IVoidFuture {
+public:
+	RecoveryFuture(std::unique_ptr<kv::IVoidFuture> inner, uint64_t *mutationCount)
+	    : inner_(std::move(inner)), mutationCount_(mutationCount) {}
+
+	bool isReady() override { return inner_->isReady(); }
+
+	void setReadyCallback(void (*callback)(void *), void *arg) override {
+		inner_->setReadyCallback(callback, arg);
+	}
+
+	void get() override {
+		inner_->get();
+		*mutationCount_ = 0;
+	}
+
+private:
+	std::unique_ptr<kv::IVoidFuture> inner_;
+	uint64_t *mutationCount_;
+};
+
+}  // namespace
+
+std::unique_ptr<kv::IVoidFuture> FDBTransaction::recoverAsync(int backendErrorCode) {
+	auto inner = tr_.onErrorAsync(static_cast<fdb_error_t>(backendErrorCode));
+	return std::make_unique<RecoveryFuture>(std::move(inner), &mutationCount_);
+}
+
+void FDBTransaction::setTimeoutMs(int ms) { tr_.setTimeoutMs(ms); }
+
 }  // namespace fdb
