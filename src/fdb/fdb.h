@@ -165,29 +165,23 @@ private:
 
 /// TEST-ONLY deterministic fault injection for fdb::Transaction and its futures.
 ///
-/// Each queue scripts the outcomes of one injection point, consumed front-to-back, one
-/// entry per call: a non-zero entry makes that call fail with exactly that FDB error
-/// code, a zero entry leaves that call untouched, and an exhausted (empty) queue stops
-/// injecting. This makes error sequences fully deterministic, e.g. "fail only the second
-/// read with not_committed" is {0, 1020}.
-///
-/// Production never constructs one of these; transactions carry a null pointer and each
-/// injection point costs a single null check. Not owned by the transaction: the test
-/// keeps the instance alive for the transaction's (and its futures') lifetime.
+/// Each queue scripts one injection point, consumed front-to-back, one entry per call:
+/// non-zero fails that call with exactly that FDB error code, zero skips it, empty stops
+/// injecting ("fail only the second read with not_committed" is {0, 1020}). Not owned by
+/// the transaction; production carries a null pointer, one null check per operation.
 struct FaultInjection {
-	/// Read results (point get and range get, sync and async): the read fails with the
-	/// scripted error before contacting the cluster.
+	/// Read results (point and range, sync and async); the injected failure takes the
+	/// real error path when the result is consumed. Sync point reads short-circuit
+	/// before contacting the cluster; async and range reads have already issued the
+	/// real request, only its result is overridden.
 	std::deque<fdb_error_t> readErrors;
-	/// Commit attempts, checked BEFORE submitting: the commit fails with the scripted
-	/// error and nothing is sent to the cluster.
+	/// Commit attempts, checked BEFORE submitting; nothing is sent to the cluster.
 	std::deque<fdb_error_t> preCommitErrors;
-	/// Commit results, checked AFTER a real successful commit: the already-durable
-	/// commit is reported as failed with the scripted error. With commit_unknown_result
-	/// (1021) this reproduces the maybe-committed case: the data IS in the database but
-	/// the caller is told the outcome is unknown.
+	/// Commit results, checked AFTER a real successful commit: the already-durable commit
+	/// is reported as failed. With commit_unknown_result (1021) this reproduces the
+	/// maybe-committed case, the data IS in the database but the caller cannot know it.
 	std::deque<fdb_error_t> postCommitErrors;
-	/// Committed-version lookups after a successful commit: the lookup fails with the
-	/// scripted error although the commit itself succeeded.
+	/// Committed-version lookups after a successful commit.
 	std::deque<fdb_error_t> committedVersionErrors;
 
 	/// Pops the next scripted outcome from `queue`: the error to inject, or 0 for none.
@@ -220,31 +214,51 @@ using UniqueFDBFuture = std::unique_ptr<FDBFuture, FDBFutureDeleter>;
 
 /// A class that wraps a FoundationDB transaction.
 /// Provides methods to perform read and write operations on the database.
+/// Every read, write, and commit operation throws std::logic_error when the transaction
+/// has no backend handle (moved-from, or constructed from a null or errored database):
+/// per the kv error-domain rules a wrong-state call must never pose as a missing key, an
+/// empty range, or a silently dropped write.
 class Transaction {
 public:
 	/// Constructs a Transaction object using the provided DB instance.
 	/// @param db A pointer to the FoundationDB database instance.
 	/// @note The transaction is created with default options.
 	Transaction(DB *db) {
+		// A null or errored DB has no handle to create a transaction from; keep the
+		// default nonzero error_ so operator bool is false, instead of passing nullptr
+		// into fdb_database_create_transaction (undefined behavior).
+		if (db == nullptr || db->getDB() == nullptr) { return; }
+
 		FDBTransaction *auxTr{nullptr};
 		error_ = fdb_database_create_transaction(db->getDB(), &auxTr);
 
 		if (error_ == 0) { tr_.reset(auxTr); }
 	}
 
+	/// Returns the last backend error recorded directly by this wrapper.
+	/// Synchronous point reads and commit outcomes update it. Future-based reads,
+	/// including getRange(), report failures through kv::TransactionError and do not
+	/// update it. A committed-version lookup failure after a durable commit leaves it at 0.
 	fdb_error_t error() const { return error_; }
 	explicit operator bool() const { return error_ == 0 && tr_; }
 
+	/// Sets an option on the transaction.
+	/// @throws std::logic_error when the transaction has no backend handle.
 	fdb_error_t setOption(FDBTransactionOption option, std::string_view value = {});
 
 	/// Gets a value for a given key.
 	/// @param key The key to retrieve the value for.
+	/// @return The value, or std::nullopt only when the key does not exist.
+	/// @throws kv::RetryableTransactionError / kv::TransactionError when the read fails,
+	///   so a backend failure can never be mistaken for a missing key.
 	std::optional<kv::Value> get(const kv::Key &key, bool snapshot = false);
 
 	/// Gets a value for a given key asynchronously.
 	/// @param key The key to retrieve the value for.
 	/// @param snapshot Whether to use a snapshot for the transaction.
 	/// @return A future that will contain the value when ready.
+	/// @note Backend read failures are reported by the future's get(), which throws
+	///   kv::RetryableTransactionError / kv::TransactionError (see kv::IFuture::get()).
 	/// @note The transaction must remain alive until the future's get() method is called.
 	std::unique_ptr<kv::IFuture> getAsync(const kv::Key &key, bool snapshot = false);
 
@@ -256,8 +270,10 @@ public:
 	/// @param snapshot Whether to use a snapshot for the transaction.
 	/// @param reverse Whether to retrieve the range in reverse order.
 	/// @param streamingMode The streaming mode to use for the range query.
-	/// @return GetRangeResult with key-value pairs and whether more results are available.
-	/// @note If the transaction is not valid, it returns an empty GetRangeResult
+	/// @return GetRangeResult with key-value pairs and whether more results are available;
+	///   empty only when no keys fall in the range.
+	/// @throws kv::RetryableTransactionError / kv::TransactionError when the read fails,
+	///   so a backend failure can never be mistaken for an empty range.
 	kv::GetRangeResult getRange(const kv::KeySelector &begin, const kv::KeySelector &end, int limit,
 	                            int iteration = 0, bool snapshot = false, bool reverse = false,
 	                            FDBStreamingMode streamingMode = FDB_STREAMING_MODE_SERIAL);
@@ -271,6 +287,8 @@ public:
 	/// @param reverse Whether to retrieve the range in reverse order.
 	/// @param streamingMode The streaming mode to use for the range query.
 	/// @return A future that will contain the range when ready.
+	/// @note Backend read failures are reported by the future's get(), which throws
+	///   kv::RetryableTransactionError / kv::TransactionError (see kv::IRangeFuture::get()).
 	/// @note The transaction must remain alive until the future's get() method is called.
 	std::unique_ptr<kv::IRangeFuture> getRangeAsync(
 	    const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration = 0,
@@ -303,12 +321,16 @@ public:
 	void removeRange(const kv::Key &start, const kv::Key &end);
 
 	/// Commits the transaction.
-	/// @return True if the commit was successful, false otherwise.
+	/// @return True if the commit succeeded and is durable, false on a backend commit
+	///   failure. A wrong-state call (no backend handle) throws std::logic_error instead
+	///   of returning false.
 	bool commit();
 
 	/// Submits the commit asynchronously, returning a pollable future.
 	/// The future references this transaction's state, so the Transaction must
 	/// outlive the returned future.
+	/// A wrong-state call (no backend handle) throws std::logic_error instead of
+	/// returning a failed future.
 	std::unique_ptr<kv::ICommitFuture> commitAsync();
 
 	/// Gets the committed version of the transaction.
@@ -317,15 +339,28 @@ public:
 
 	/// Approximate byte size that the buffered mutations and conflict ranges would contribute
 	/// to a commit (fdb_transaction_get_approximate_size). Computed client-side.
-	/// @return The approximate size, or std::nullopt on error.
+	/// @return The approximate size, or std::nullopt when the size cannot be reported (no
+	///   backend handle, or a backend error). Diagnostic-only, so unlike the data reads
+	///   this deliberately does not throw: nullopt is not confusable with real data.
 	std::optional<uint64_t> getApproximateSize() const;
 
 	/// TEST-ONLY: attaches a deterministic fault-injection script to this transaction and
 	/// the futures it creates afterwards. Not owned; pass nullptr to detach. The script
-	/// must outlive the transaction and its futures. See FaultInjection.
+	/// must outlive the transaction and its futures. Injected synchronous point-read and
+	/// pre/post-commit failures update error(). Future-based reads (getAsync(), getRange(),
+	/// and getRangeAsync()) carry the code in the thrown kv::TransactionError without
+	/// updating error(); async callers may also request it through the future get() error
+	/// out-param. A committed-version lookup failure leaves error() at 0 because the commit
+	/// itself succeeded. See FaultInjection.
 	void setFaultInjection(FaultInjection *fault) { faultInjection_ = fault; }
 
 private:
+	/// Throws std::logic_error when this transaction has no backend handle (moved-from,
+	/// or constructed from a null database). Per the kv error-domain rules a wrong-state
+	/// call must never pose as a missing key, an empty range, or a silently dropped
+	/// write.
+	void requireHandle(const char *operation) const;
+
 	/// Custom deleter for FDBTransaction (C struct), to ensure proper cleanup.
 	struct FDBTransactionDeleter {
 		constexpr FDBTransactionDeleter() noexcept = default;

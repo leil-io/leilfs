@@ -26,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,6 +34,7 @@
 #include <foundationdb/fdb_c_types.h>
 
 #include "fdb/fdb.h"
+#include "fdb/fdb_errors.h"
 #include "fdb/fdb_future.h"
 #include "slogger/slogger.h"
 
@@ -204,24 +206,31 @@ fdb_error_t DB::setOption(FDBDatabaseOption option, std::string_view value) {
 // Transaction
 
 fdb_error_t Transaction::setOption(FDBTransactionOption option, std::string_view value) {
+	requireHandle("setOption");
 	return fdb_transaction_set_option(tr_.get(), option, toU8(value),
 	                                  static_cast<int>(value.length()));
 }
 
+void Transaction::requireHandle(const char *operation) const {
+	if (tr_) { return; }
+	throw std::logic_error(std::string("fdb::Transaction::") + operation +
+	                       ": no backend transaction handle");
+}
+
 std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
-	if (!tr_) { return std::nullopt; }
+	requireHandle("get");
 
 	bump(gOpCounters.pointReads);
 	bumpReadPrefix(key);
 
 	// TEST-ONLY scripted read failure; short-circuits before contacting the cluster and
-	// mirrors the real error path below (sync reads report via error_, they do not throw).
+	// takes exactly the real error path below.
 	if (faultInjection_ != nullptr) {
 		fdb_error_t injected = FaultInjection::next(faultInjection_->readErrors);
 		if (injected != 0) {
 			error_ = injected;
 			safs::log_err("Transaction::get: injected error: {}", fdb_get_error(injected));
-			return std::nullopt;
+			detail::throwTransactionError(injected);
 		}
 	}
 
@@ -237,7 +246,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	if (error_ != 0) {
 		safs::log_err("Transaction::get: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(error_));
-		return std::nullopt;
+		detail::throwTransactionError(error_);
 	}
 
 	fdb_bool_t valuePresent{};
@@ -248,7 +257,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 
 	if (error_ != 0) {
 		safs::log_err("Transaction::get: fdb_future_get_value: error: {}", fdb_get_error(error_));
-		return std::nullopt;
+		detail::throwTransactionError(error_);
 	}
 
 	if (valuePresent == 0) {
@@ -260,7 +269,7 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 }
 
 std::unique_ptr<kv::IFuture> Transaction::getAsync(const kv::Key &key, bool snapshot) {
-	if (!tr_) { return nullptr; }
+	requireHandle("getAsync");
 
 	bump(gOpCounters.pointReads);
 	bumpReadPrefix(key);
@@ -275,7 +284,6 @@ kv::GetRangeResult Transaction::getRange(
     bool snapshot /* = false */, bool reverse /* = false */,
     FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
 	auto future = getRangeAsync(begin, end, limit, iteration, snapshot, reverse, streamingMode);
-	if (!future) { return {{}, false}; }
 
 	return future->get();
 }
@@ -284,7 +292,7 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
     const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration /* = 0 */,
     bool snapshot /* = false */, bool reverse /* = false */,
     FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
-	if (!tr_) { return nullptr; }
+	requireHandle("getRangeAsync");
 
 	bump(gOpCounters.rangeReads);
 	bumpReadPrefix(begin.getKey());
@@ -312,7 +320,7 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
 }
 
 void Transaction::set(const kv::Key &key, const kv::Value &value) {
-	if (!tr_) { return; }
+	requireHandle("set");
 
 	bump(gOpCounters.sets);
 	fdb_transaction_set(tr_.get(), key.data(), static_cast<int>(key.size()), value.data(),
@@ -320,7 +328,7 @@ void Transaction::set(const kv::Key &key, const kv::Value &value) {
 }
 
 void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
-	if (!tr_) { return; }
+	requireHandle("atomicAdd");
 
 	bump(gOpCounters.atomicAdds);
 	fdb_transaction_atomic_op(tr_.get(), key.data(), static_cast<int>(key.size()), delta.data(),
@@ -328,7 +336,7 @@ void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
 }
 
 void Transaction::atomicMax(const kv::Key &key, const kv::Value &value) {
-	if (!tr_) { return; }
+	requireHandle("atomicMax");
 
 	// Counted under atomicAdds is wrong, and adding a positional counter field would
 	// desync the FdbOpCounters snapshot init; atomicMax is profiling-irrelevant, so it
@@ -338,14 +346,14 @@ void Transaction::atomicMax(const kv::Key &key, const kv::Value &value) {
 }
 
 void Transaction::remove(const kv::Key &key) {
-	if (!tr_) { return; }
+	requireHandle("remove");
 
 	bump(gOpCounters.clears);
 	fdb_transaction_clear(tr_.get(), key.data(), static_cast<int>(key.size()));
 }
 
 void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
-	if (!tr_) { return; }
+	requireHandle("removeRange");
 
 	bump(gOpCounters.clearRanges);
 	fdb_transaction_clear_range(tr_.get(), start.data(), static_cast<int>(start.size()), end.data(),
@@ -353,7 +361,11 @@ void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
 }
 
 bool Transaction::commit() {
-	if (!tr_) { return false; }
+	requireHandle("commit");
+
+	// A new attempt invalidates the previous attempt's version: a failed re-commit on a
+	// reused transaction must not leave a stale success visible via getCommittedVersion.
+	committedVersion_.reset();
 
 	bump(gOpCounters.commits);
 
@@ -381,7 +393,7 @@ bool Transaction::commit() {
 	if (error_ != 0) {
 		safs::log_err("Transaction::commit: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(error_));
-		bump(gOpCounters.commitFailures);
+		countFailedCommit(error_);
 		return false;
 	}
 
@@ -412,10 +424,15 @@ bool Transaction::commit() {
 	}
 
 	if (versionError != 0) {
-		safs::log_err("Transaction::commit: fdb_transaction_get_committed_version: error: {}",
-		              fdb_get_error(versionError));
-		error_ = versionError;
-		return false;
+		// The commit itself succeeded and is durable; only the version lookup failed.
+		// Report success without a version (committedVersion_ stays cleared from the
+		// attempt start): signaling failure here would invite the caller to replay an
+		// already-applied operation.
+		safs::log_err(
+		    "Transaction::commit: fdb_transaction_get_committed_version failed after a "
+		    "successful commit, continuing without a committed version: {}",
+		    fdb_get_error(versionError));
+		return true;
 	}
 
 	committedVersion_ = version;
@@ -508,9 +525,10 @@ public:
 	bool getResult(int *error, bool *retryable) override {
 		if (retryable != nullptr) { *retryable = false; }
 		if (consumed_ || future_ == nullptr) {
-			// A null future is a defensive failure (commitAsync never builds one: it
-			// returns an ImmediateCommitFuture when there is no transaction). Report a
-			// generic non-zero error rather than the success-looking consumedError_ (0).
+			// A consumed future re-reports the first call's outcome (consumedError_, 0
+			// after a successful commit). A null future is a defensive failure
+			// (commitAsync never builds one: it throws when there is no transaction
+			// handle) and reports a generic non-zero error instead.
 			if (error != nullptr) { *error = future_ == nullptr ? 1 : consumedError_; }
 			if (retryable != nullptr) { *retryable = consumedRetryable_; }
 			return false;
@@ -567,12 +585,17 @@ public:
 		}
 
 		if (versionError != 0) {
-			*errorOut_ = versionError;
-			consumedError_ = versionError;
-			safs::log_err("FDBCommitFuture::getResult: fdb_transaction_get_committed_version: {}",
-			              fdb_get_error(versionError));
-			if (error != nullptr) { *error = versionError; }
-			return false;
+			// The commit itself succeeded and is durable; only the version lookup
+			// failed. Report success without a version (the version out-param stays
+			// cleared from the attempt start): signaling failure here would invite the
+			// caller to replay an already-applied operation.
+			safs::log_err(
+			    "FDBCommitFuture::getResult: fdb_transaction_get_committed_version failed "
+			    "after a successful commit, continuing without a committed version: {}",
+			    fdb_get_error(versionError));
+			*errorOut_ = 0;
+			if (error != nullptr) { *error = 0; }
+			return true;
 		}
 
 		*committedVersionOut_ = version;
@@ -636,7 +659,11 @@ private:
 }  // namespace
 
 std::unique_ptr<kv::ICommitFuture> Transaction::commitAsync() {
-	if (!tr_) { return std::make_unique<kv::ImmediateCommitFuture>(false); }
+	requireHandle("commitAsync");
+
+	// A new attempt invalidates the previous attempt's version: a failed re-commit on a
+	// reused transaction must not leave a stale success visible via getCommittedVersion.
+	committedVersion_.reset();
 
 	bump(gOpCounters.commits);
 

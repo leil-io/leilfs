@@ -66,9 +66,7 @@ TEST(KVTransactionErrorTest, CatchingRetryableSkipsBase) {
 		throw kv::TransactionError(kTransactionTooLarge, "transaction too large");
 	} catch (const kv::RetryableTransactionError &) {
 		caughtRetryable = true;
-	} catch (const kv::TransactionError &) {
-		caughtBase = true;
-	}
+	} catch (const kv::TransactionError &) { caughtBase = true; }
 	EXPECT_FALSE(caughtRetryable);
 	EXPECT_TRUE(caughtBase);
 }

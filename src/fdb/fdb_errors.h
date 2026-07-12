@@ -29,15 +29,15 @@
 
 namespace fdb::detail {
 
-/// Translates a RETRYABLE FoundationDB read error into a typed exception so the
-/// master's op boundary can replay the op on a fresh transaction instead of letting
-/// the read failure (e.g. transaction_timed_out under load) propagate uncaught and
-/// abort the whole MDS. Non-retryable errors are left for the caller to report via
-/// the *error out-parameter as before.
-inline void throwIfRetryable(fdb_error_t err) {
+/// Translates a failed FoundationDB READ into the typed error contract: retryable
+/// errors throw kv::RetryableTransactionError so the master's op boundary replays the
+/// op on a fresh transaction, and every other backend error throws the
+/// kv::TransactionError base so a backend failure can never be mistaken for a missing
+/// key (absent keys are the only thing reported as an empty result).
+[[noreturn]] inline void throwTransactionError(fdb_error_t err) {
 	// transaction_timed_out (1031) is deliberately absent from FDB's RETRYABLE
 	// predicate because a timeout during COMMIT has an unknown result. This helper
-	// guards READ futures only, and the op-boundary replay runs on a fresh
+	// guards READ paths only, and the op-boundary replay runs on a fresh
 	// transaction with a fresh timeout budget, so a timed-out read is safe to
 	// replay. The commit path (FDBCommitFuture::getResult) uses RETRYABLE_NOT_COMMITTED,
 	// which excludes 1031 and the whole maybe-committed class, so a commit with an
@@ -47,6 +47,7 @@ inline void throwIfRetryable(fdb_error_t err) {
 	    fdb_error_predicate(FDB_ERROR_PREDICATE_RETRYABLE, err) != 0) {
 		throw kv::RetryableTransactionError(static_cast<int>(err), fdb_get_error(err));
 	}
+	throw kv::TransactionError(static_cast<int>(err), fdb_get_error(err));
 }
 
 }  // namespace fdb::detail

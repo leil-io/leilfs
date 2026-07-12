@@ -21,6 +21,7 @@
 #include <cassert>
 #include <chrono>
 #include <iterator>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -33,7 +34,7 @@
 
 namespace fdb {
 
-using detail::throwIfRetryable;
+using detail::throwTransactionError;
 
 namespace {
 
@@ -59,10 +60,11 @@ bool FDBFutureValue::isReady() {
 }
 
 std::optional<kv::Value> FDBFutureValue::get(int *error) {
-	// Return nullopt if already consumed or invalid
+	// Wrong-state call per the kv error-domain rules: posing as a missing key would hide
+	// the caller's bug, and no real backend error code exists to report.
 	if (consumed_ || future_ == nullptr) {
-		if (error != nullptr) { *error = 1; }
-		return std::nullopt;
+		throw std::logic_error(consumed_ ? "FDBFutureValue::get: future already consumed"
+		                                 : "FDBFutureValue::get: invalid future");
 	}
 
 	// Mark as consumed
@@ -72,8 +74,7 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 	// takes exactly the real error path below.
 	if (fdb_error_t injected = injectedReadError(faultInjection_); injected != 0) {
 		if (error != nullptr) { *error = static_cast<int>(injected); }
-		throwIfRetryable(injected);
-		return std::nullopt;
+		throwTransactionError(injected);
 	}
 
 	// Block until the future is ready. Times the wait so a pipelined read (issued
@@ -94,8 +95,7 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 		safs::log_err("FDBFutureValue::get: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
-		throwIfRetryable(fdbError);
-		return std::nullopt;
+		throwTransactionError(fdbError);
 	}
 
 	// Extract the value from the future
@@ -109,8 +109,7 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 		safs::log_err("FDBFutureValue::get: fdb_future_get_value: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
-		throwIfRetryable(fdbError);
-		return std::nullopt;
+		throwTransactionError(fdbError);
 	}
 
 	// Set error to success
@@ -140,10 +139,11 @@ bool FDBFutureRange::isReady() {
 }
 
 kv::GetRangeResult FDBFutureRange::get(int *error) {
-	// Return an empty result if already consumed or invalid.
+	// Wrong-state call per the kv error-domain rules: posing as an empty range would
+	// hide the caller's bug, and no real backend error code exists to report.
 	if (consumed_ || future_ == nullptr) {
-		if (error != nullptr) { *error = 1; }
-		return {{}, false};
+		throw std::logic_error(consumed_ ? "FDBFutureRange::get: future already consumed"
+		                                 : "FDBFutureRange::get: invalid future");
 	}
 
 	consumed_ = true;
@@ -152,8 +152,7 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 	// takes exactly the real error path below.
 	if (fdb_error_t injected = injectedReadError(faultInjection_); injected != 0) {
 		if (error != nullptr) { *error = static_cast<int>(injected); }
-		throwIfRetryable(injected);
-		return {{}, false};
+		throwTransactionError(injected);
 	}
 
 	const bool profiling = opCountersEnabled();
@@ -171,8 +170,7 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 		safs::log_err("FDBFutureRange::get: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
-		throwIfRetryable(fdbError);
-		return {{}, false};
+		throwTransactionError(fdbError);
 	}
 
 	const FDBKeyValue *keyValues = nullptr;
@@ -185,8 +183,7 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 		safs::log_err("FDBFutureRange::get: fdb_future_get_keyvalue_array: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
-		throwIfRetryable(fdbError);
-		return {{}, false};
+		throwTransactionError(fdbError);
 	}
 
 	std::vector<kv::KeyValuePair> pairs;
