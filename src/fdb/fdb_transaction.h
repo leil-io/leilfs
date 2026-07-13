@@ -28,11 +28,16 @@ namespace fdb {
 /// Provides an implementation of a read-write transaction for FoundationDB, compatible with the
 /// kv::IReadWriteTransaction interface, to be used with the kv::IKVEngine interface.
 /// Wraps a fdb::Transaction to provide the necessary methods for key-value operations.
+/// The adapter adds no guards to data operations: wrong-state calls (an absent backend
+/// handle in the wrapped transaction) propagate std::logic_error from fdb::Transaction,
+/// and backend failures throw the kv::TransactionError family, per the error-domain rules
+/// in kv/ifuture.h. The diagnostic getApproximateSize() query is the deliberate exception:
+/// it returns std::nullopt when no estimate can be reported.
 class FDBTransaction final : public kv::IReadWriteTransaction {
 public:
 	/// Constructs a FDBTransaction using the provided fdb::Transaction.
-	/// @param tr The fdb::Transaction to wrap.
-	FDBTransaction(fdb::Transaction &&_tr) : tr_(std::move(_tr)), error_(0) {}
+	/// @param _tr The fdb::Transaction to wrap.
+	FDBTransaction(fdb::Transaction &&_tr) : tr_(std::move(_tr)) {}
 
 	// Non-copyable, non-movable (base class is non-movable)
 	FDBTransaction(const FDBTransaction &) = delete;
@@ -45,6 +50,8 @@ public:
 
 	/// Retrieves the value for a given key.
 	/// @param key The key to retrieve the value for.
+	/// @return The value, or std::nullopt only when the key does not exist.
+	/// @throws kv::RetryableTransactionError / kv::TransactionError on a backend failure.
 	std::optional<kv::Value> get(const kv::Key &key) override;
 
 	/// Retrieves the value for a given key without adding it to the
@@ -54,18 +61,24 @@ public:
 	///          logic. They are intended for advisory reads (e.g. observing
 	///          a hot counter) where occasional anomalies are acceptable.
 	/// @param key The key to retrieve the value for.
+	/// @return The value, or std::nullopt only when the key does not exist.
+	/// @throws kv::RetryableTransactionError / kv::TransactionError on a backend failure.
 	std::optional<kv::Value> getSnapshot(const kv::Key &key) override;
 
 	/// Retrieves the value for a given key asynchronously.
 	/// @param key The key to retrieve the value for.
 	/// @return A future that will contain the value when ready.
 	/// @note The transaction must remain alive until the future's get() method is called.
+	/// @note Backend failures are reported by the future's get() as
+	///   kv::RetryableTransactionError / kv::TransactionError.
 	std::unique_ptr<kv::IFuture> getAsync(const kv::Key &key) override;
 
 	/// Retrieves a range of keys and values
 	/// @param start The starting key for the range.
 	/// @param end The ending key for the range.
 	/// @param limit The maximum number of key-value pairs to retrieve.
+	/// @return The range result; empty only when no keys fall in the range.
+	/// @throws kv::RetryableTransactionError / kv::TransactionError on a backend failure.
 	kv::GetRangeResult getRange(const kv::KeySelector &start, const kv::KeySelector &end,
 	                            int limit = kv::kDefaultGetRangeLimit) override;
 
@@ -74,6 +87,8 @@ public:
 	/// @param end The ending key for the range.
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	/// @return A future that will contain the range when ready.
+	/// @note Backend failures are reported by the future's get() as
+	///   kv::RetryableTransactionError / kv::TransactionError.
 	/// @note The transaction must remain alive until the future's get() method is called.
 	std::unique_ptr<kv::IRangeFuture> getRangeAsync(const kv::KeySelector &start,
 	                                                const kv::KeySelector &end,
@@ -102,9 +117,12 @@ public:
 	void removeRange(const kv::Key &start, const kv::Key &end) override;
 
 	/// Commits the transaction, making all changes permanent.
+	/// @return True if the commit succeeded and is durable, false on a backend failure.
+	/// @throws std::logic_error when the wrapped transaction has no backend handle.
 	bool commit() override;
 
 	/// Submits the commit asynchronously and returns a pollable future.
+	/// @throws std::logic_error when the wrapped transaction has no backend handle.
 	std::unique_ptr<kv::ICommitFuture> commitAsync() override;
 
 	/// Returns the committed version of the transaction, if available.
@@ -114,14 +132,16 @@ public:
 	uint64_t mutationCount() const override { return mutationCount_; }
 
 	/// Approximate byte size of the buffered writes so far (client-side estimate).
+	/// @return The estimate, or std::nullopt when it cannot be reported. This diagnostic
+	///   query deliberately does not throw for a missing backend handle.
 	std::optional<uint64_t> getApproximateSize() const override;
 
-	/// Returns the error code of the last operation.
-	fdb_error_t error() const { return error_; }
+	/// Returns the error state recorded by the wrapped transaction; see
+	/// fdb::Transaction::error() for the sync/async distinction.
+	fdb_error_t error() const { return tr_.error(); }
 
 private:
 	fdb::Transaction tr_;
-	fdb_error_t error_{1};
 	uint64_t mutationCount_{0};
 };
 

@@ -70,6 +70,9 @@ public:
 
 	/// Retrieves the value for a given key.
 	/// @param key The key to retrieve the value for.
+	/// @return The value, or std::nullopt only when the key does not exist.
+	/// @throws RetryableTransactionError / TransactionError when the backend read fails,
+	///   so a backend failure can never be mistaken for a missing key.
 	virtual std::optional<Value> get(const Key &key) = 0;
 
 	/// Retrieves the value for a given key without adding it to the
@@ -83,11 +86,16 @@ public:
 	///          conflict. Use get() for reads that must be transactionally
 	///          consistent.
 	/// @param key The key to retrieve the value for.
+	/// @return The value, or std::nullopt only when the key does not exist.
+	/// @throws RetryableTransactionError / TransactionError when the backend read fails,
+	///   so a backend failure can never be mistaken for a missing key.
 	virtual std::optional<Value> getSnapshot(const Key &key) = 0;
 
 	/// Retrieves the value for a given key asynchronously.
 	/// @param key The key to retrieve the value for.
 	/// @return A future that will contain the value when ready.
+	/// @note Backend read failures are reported by the future's get(), which throws
+	///   RetryableTransactionError / TransactionError (see IFuture::get()).
 	/// @note The transaction must remain alive until the future's get() method is called.
 	virtual std::unique_ptr<IFuture> getAsync(const Key &key) = 0;
 
@@ -95,6 +103,9 @@ public:
 	/// @param start The starting key for the range.
 	/// @param end The ending key for the range.
 	/// @param limit The maximum number of key-value pairs to retrieve.
+	/// @return The range result; empty only when no keys fall in the range.
+	/// @throws RetryableTransactionError / TransactionError when the backend read fails,
+	///   so a backend failure can never be mistaken for an empty range.
 	virtual GetRangeResult getRange(const KeySelector &start, const KeySelector &end,
 	                                int limit = kDefaultGetRangeLimit) = 0;
 
@@ -103,6 +114,8 @@ public:
 	/// @param end The ending key for the range.
 	/// @param limit The maximum number of key-value pairs to retrieve.
 	/// @return A future that will contain the range when ready.
+	/// @note Backend read failures are reported by the future's get(), which throws
+	///   RetryableTransactionError / TransactionError (see IRangeFuture::get()).
 	/// @note The transaction must remain alive until the future's get() method is called.
 	virtual std::unique_ptr<IRangeFuture> getRangeAsync(const KeySelector &start,
 	                                                    const KeySelector &end,
@@ -114,6 +127,9 @@ protected:
 
 /// Interface for read-write transactions in the key-value store.
 /// Inherits from IReadOnlyTransaction and adds methods for modifying the database.
+/// Per the error-domain rules in kv/ifuture.h, backend failures throw the
+/// TransactionError family and wrong-state calls (e.g. operations on a moved-from
+/// backend transaction) throw std::logic_error; a write is never silently dropped.
 class IReadWriteTransaction : public IReadOnlyTransaction {
 public:
 	virtual ~IReadWriteTransaction() override = default;
@@ -157,6 +173,8 @@ public:
 	virtual void removeRange(const Key &start, const Key &end) = 0;
 
 	/// Commits the transaction, making all changes permanent.
+	/// @return True if the commit succeeded and is durable, false on a backend commit
+	///   failure.
 	virtual bool commit() = 0;
 
 	/// Submits the commit asynchronously and returns a pollable future.

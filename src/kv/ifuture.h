@@ -28,22 +28,48 @@
 
 namespace kv {
 
-/// Thrown by a read future's get() when the underlying transaction failed with a
-/// RETRYABLE backend error (e.g. FoundationDB transaction_timed_out / not_committed /
-/// transaction_too_old). The single-threaded master event loop catches this at the op
-/// boundary and replays the op on a fresh transaction (bounded) instead of letting a
-/// transient read failure abort the whole MDS. Non-retryable read failures (corruption,
-/// genuinely-absent keys) are still reported the old way (error code / nullopt), not via
-/// this type.
-class RetryableTransactionError : public std::runtime_error {
+/// Base type for backend transaction failures, carrying the backend error code and
+/// whether the failed operation may be replayed.
+///
+/// Error-domain rules for the kv/fdb layers:
+///  - Backend failures (the operation reached the backend and failed there) are reported
+///    as a TransactionError; retryable() says whether the caller may replay the op.
+///  - Invalid argument values (e.g. a bad versionstamp offset) are std::invalid_argument.
+///  - Calls in the wrong transaction state are std::logic_error.
+/// The local domains carry no backend error code, so they can never be mistaken for (or
+/// fed into) backend retry handling.
+///
+/// Read contract: an empty result (nullopt) means only that the key does not exist.
+/// Every backend read failure throws this family, the retryable subclass for transient
+/// errors the op boundary may replay, this base type for everything else, so a backend
+/// failure can never be mistaken for a missing key.
+class TransactionError : public std::runtime_error {
 public:
-	RetryableTransactionError(int errorCode, const std::string &message)
+	TransactionError(int errorCode, const std::string &message)
 	    : std::runtime_error(message), errorCode_(errorCode) {}
 
 	int errorCode() const noexcept { return errorCode_; }
 
+	/// Whether the caller may replay the failed operation (transient conflict/timeout
+	/// class, as opposed to a permanent backend failure).
+	virtual bool retryable() const noexcept { return false; }
+
 private:
 	int errorCode_;
+};
+
+/// Thrown by a read future's get() when the underlying transaction failed with a
+/// RETRYABLE backend error (e.g. FoundationDB transaction_timed_out / not_committed /
+/// transaction_too_old). The single-threaded master event loop catches this at the op
+/// boundary and replays the op on a fresh transaction (bounded) instead of letting a
+/// transient read failure abort the whole MDS. Non-retryable backend failures throw the
+/// TransactionError base instead.
+class RetryableTransactionError : public TransactionError {
+public:
+	RetryableTransactionError(int errorCode, const std::string &message)
+	    : TransactionError(errorCode, message) {}
+
+	bool retryable() const noexcept override { return true; }
 };
 
 /// Interface for asynchronous future results from key-value operations.
@@ -66,12 +92,15 @@ public:
 	virtual bool isReady() = 0;
 
 	/// Blocks until the result is ready and retrieves the value.
-	/// @param error Optional pointer to store error code (0 on success, non-zero on error).
-	/// @return The value if successful and present, std::nullopt on error or if key not found.
+	/// @param error Optional out-param for the backend error code: 0 on success; on a
+	///   backend failure the code is stored before the throw. Exceptions are the failure
+	///   signal, the code is diagnostic only.
+	/// @return The value, or std::nullopt only when the key does not exist.
 	/// @throws RetryableTransactionError if the backend read failed with a retryable
-	///   error; callers must catch it at the op boundary. Non-retryable failures and
-	///   genuinely-absent keys still report via @p error / std::nullopt.
-	/// @note This method can only be called once. Subsequent calls return std::nullopt.
+	///   error (callers catch it at the op boundary and replay), TransactionError for
+	///   any other backend failure. A failed read never looks like a missing key.
+	/// @note This method can only be called once. Subsequent calls are wrong-state calls
+	///   and throw std::logic_error.
 	/// @note The caller must keep the transaction alive until this method returns.
 	virtual std::optional<Value> get(int *error = nullptr) = 0;
 
@@ -98,12 +127,15 @@ public:
 	virtual bool isReady() = 0;
 
 	/// Blocks until the result is ready and retrieves the range.
-	/// @param error Optional pointer to store error code (0 on success, non-zero on error).
-	/// @return The range result, or an empty result on error.
+	/// @param error Optional out-param for the backend error code: 0 on success; on a
+	///   backend failure the code is stored before the throw. Exceptions are the failure
+	///   signal, the code is diagnostic only.
+	/// @return The range result; empty only when no keys fall in the range.
 	/// @throws RetryableTransactionError if the backend read failed with a retryable
-	///   error; callers must catch it at the op boundary. Non-retryable failures still
-	///   report via @p error / an empty result.
-	/// @note This method can only be called once. Subsequent calls return an empty result.
+	///   error (callers catch it at the op boundary and replay), TransactionError for
+	///   any other backend failure. A failed read never looks like an empty range.
+	/// @note This method can only be called once. Subsequent calls are wrong-state calls
+	///   and throw std::logic_error.
 	/// @note The caller must keep the transaction alive until this method returns.
 	virtual GetRangeResult get(int *error = nullptr) = 0;
 

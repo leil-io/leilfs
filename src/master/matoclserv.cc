@@ -386,6 +386,12 @@ static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
 			    "matoclserv: retryable read error in op body (err {}), retrying, attempt {}",
 			    e.errorCode(), attempt + 1);
 			continue;
+		} catch (const kv::TransactionError &e) {
+			// Non-retryable backend failure: fail this op with EIO instead of letting
+			// the exception escape the event loop.
+			safs::log_err("matoclserv: backend transaction error in op body (err {}): {}",
+			              e.errorCode(), e.what());
+			return SAUNAFS_ERROR_IO;
 		}
 
 		if (status != SAUNAFS_STATUS_OK) { return status; }  // op error/status, do not commit
@@ -538,6 +544,15 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 			    "attempt {}",
 			    e.errorCode(), member.attempts);
 		}
+		return true;
+	} catch (const kv::TransactionError &e) {
+		// Non-retryable backend failure: fail this member with EIO and restart the batch
+		// on a fresh transaction (the shared transaction is unusable after a thrown
+		// error).
+		safs::log_err("matoclserv: backend transaction error in batch member (err {}): {}",
+		              e.errorCode(), e.what());
+		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+		members.erase(members.begin() + idx);
 		return true;
 	}
 }
@@ -6782,15 +6797,23 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 		// the dispatch boundary from a read-only or not-yet-wrapped op. Do NOT abort the
 		// single-threaded master: drop this client connection so it reconnects and retries
 		// the request. Write ops route their bodies through the group-commit batch, which
-		// retries retryable read errors in replay before ever reaching here. Non-retryable
-		// failures (corruption, genuinely-absent required keys) still propagate and
-		// fail-stop the master.
+		// retries retryable read errors in replay before ever reaching here.
 		safs::log_warn(
 				"main master server module: retryable backend read error handling message "
 				"(type:{}, length:{}, err:{}): {}; dropping client connection",
 				type, length, e.errorCode(), e.what());
 		eptr->mode = ClientConnectionMode::KILL;
-	} catch (IncorrectDeserializationException& e) {
+	} catch (const kv::TransactionError &e) {
+		// A non-retryable backend failure on a single request. Also not worth aborting
+		// the whole master: drop the connection and let the client decide whether to
+		// retry. Exceptions from outside the backend error family (corruption-class
+		// invariant violations) still propagate and fail-stop the master.
+		safs::log_err(
+		    "main master server module: backend transaction error handling message "
+		    "(type:{}, length:{}, err:{}): {}; dropping client connection",
+		    type, length, e.errorCode(), e.what());
+		eptr->mode = ClientConnectionMode::KILL;
+	} catch (IncorrectDeserializationException &e) {
 		safs::log_info(
 				"main master server module: got inconsistent message from mount "
 				"(type:{}, length:{}), {}", type, length, e.what());

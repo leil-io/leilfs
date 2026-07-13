@@ -23,85 +23,63 @@
 
 namespace fdb {
 
-std::optional<kv::Value> FDBTransaction::get(const kv::Key &key) {
-	if (!tr_) { return std::nullopt; }
+// The adapter adds no handle guards to data operations: an absent backend handle
+// (moved-from wrapper) is a wrong-state call and the wrapped fdb::Transaction throws
+// std::logic_error for it, per the kv error-domain rules. Swallowing it here would pose
+// as a missing key, an empty range, or a silently dropped write. Mutations are counted
+// only after the wrapper accepts them, so a throwing call leaves the count untouched.
+// getApproximateSize() remains a diagnostic exception that returns std::nullopt when no
+// estimate can be reported.
 
-	return tr_.get(key);
-}
+std::optional<kv::Value> FDBTransaction::get(const kv::Key &key) { return tr_.get(key); }
 
 std::optional<kv::Value> FDBTransaction::getSnapshot(const kv::Key &key) {
-	if (!tr_) { return std::nullopt; }
-
 	return tr_.get(key, /*snapshot=*/true);
 }
 
 std::unique_ptr<kv::IFuture> FDBTransaction::getAsync(const kv::Key &key) {
-	if (!tr_) { return nullptr; }
-
 	return tr_.getAsync(key);
 }
 
 kv::GetRangeResult FDBTransaction::getRange(const kv::KeySelector &start,
                                             const kv::KeySelector &end, int limit) {
-	if (!tr_) { return {{}, false}; }
-
 	return tr_.getRange(start, end, limit);
 }
 
 std::unique_ptr<kv::IRangeFuture> FDBTransaction::getRangeAsync(const kv::KeySelector &start,
                                                                 const kv::KeySelector &end,
                                                                 int limit) {
-	if (!tr_) { return nullptr; }
-
 	return tr_.getRangeAsync(start, end, limit);
 }
 
 void FDBTransaction::set(const kv::Key &key, const kv::Value &value) {
-	if (!tr_) { return; }
-
-	mutationCount_++;
 	tr_.set(key, value);
+	mutationCount_++;
 }
 
 void FDBTransaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
-	if (!tr_) { return; }
-
-	mutationCount_++;
 	tr_.atomicAdd(key, delta);
+	mutationCount_++;
 }
 
 void FDBTransaction::atomicMax(const kv::Key &key, const kv::Value &value) {
-	if (!tr_) { return; }
-
-	mutationCount_++;
 	tr_.atomicMax(key, value);
+	mutationCount_++;
 }
 
 void FDBTransaction::remove(const kv::Key &key) {
-	if (!tr_) { return; }
-
-	mutationCount_++;
 	tr_.remove(key);
+	mutationCount_++;
 }
 
 void FDBTransaction::removeRange(const kv::Key &start, const kv::Key &end) {
-	if (!tr_) { return; }
-
-	mutationCount_++;
 	tr_.removeRange(start, end);
+	mutationCount_++;
 }
 
-bool FDBTransaction::commit() {
-	if (!tr_) { return false; }
+bool FDBTransaction::commit() { return tr_.commit(); }
 
-	return tr_.commit();
-}
-
-std::unique_ptr<kv::ICommitFuture> FDBTransaction::commitAsync() {
-	if (!tr_) { return std::make_unique<kv::ImmediateCommitFuture>(false); }
-
-	return tr_.commitAsync();
-}
+std::unique_ptr<kv::ICommitFuture> FDBTransaction::commitAsync() { return tr_.commitAsync(); }
 
 std::optional<int64_t> FDBTransaction::getCommittedVersion() const {
 	return tr_.getCommittedVersion();

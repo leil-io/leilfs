@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -289,11 +290,8 @@ TEST_F(FDBKVEngineTest, GetRangeAsync) {
 		ASSERT_EQ(rangeResult.getPairs().size(), 2U);
 		ASSERT_TRUE(rangeResult.hasMore());
 
-		error = 0;
-		auto secondRead = future->get(&error);
-		ASSERT_NE(error, 0);
-		ASSERT_TRUE(secondRead.getPairs().empty());
-		ASSERT_FALSE(secondRead.hasMore());
+		// The future is single-use: a second get() is a wrong-state call.
+		EXPECT_THROW(future->get(), std::logic_error);
 	}
 
 	{
@@ -1017,4 +1015,469 @@ TEST_F(FDBKVEngineTest, CommitAsync) {
 		cleanup->remove(key);
 		ASSERT_TRUE(cleanup->commit());
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic fault injection (fdb::FaultInjection)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr fdb_error_t kNotCommitted = 1020;         // retryable, definitely not committed
+constexpr fdb_error_t kCommitUnknownResult = 1021;  // maybe committed, NOT retryable
+constexpr fdb_error_t kTransactionCancelled = 1025;
+constexpr fdb_error_t kTransactionTooLarge = 2101;  // non-retryable
+
+}  // namespace
+
+TEST_F(FDBKVEngineTest, FaultInjectionRetryableAsyncReadThrows) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	auto future = transaction.getAsync(kv::toBytes("fi_read_retryable"));
+	ASSERT_NE(future, nullptr);
+	int error = 0;
+	EXPECT_THROW(future->get(&error), kv::RetryableTransactionError);
+	EXPECT_EQ(error, kNotCommitted);
+	EXPECT_EQ(transaction.error(), 0);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionRetryableIsCatchableAsBase) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	auto future = transaction.getAsync(kv::toBytes("fi_read_base_catch"));
+	ASSERT_NE(future, nullptr);
+	bool caught = false;
+	try {
+		future->get();
+	} catch (const kv::TransactionError &error) {
+		caught = true;
+		EXPECT_EQ(error.errorCode(), kNotCommitted);
+		EXPECT_TRUE(error.retryable());
+	}
+	EXPECT_TRUE(caught);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionNonRetryableAsyncReadThrowsBase) {
+	// A non-retryable read error throws the TransactionError base (and specifically
+	// NOT the retryable subclass): a failed read never looks like a missing key, and
+	// the op boundary never replays it.
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kTransactionTooLarge};
+	transaction.setFaultInjection(&fault);
+
+	auto future = transaction.getAsync(kv::toBytes("fi_read_nonretryable"));
+	ASSERT_NE(future, nullptr);
+	bool caughtBase = false;
+	try {
+		future->get();
+	} catch (const kv::RetryableTransactionError &) {
+		FAIL() << "A non-retryable error must not be catchable as retryable.";
+	} catch (const kv::TransactionError &error) {
+		caughtBase = true;
+		EXPECT_EQ(error.errorCode(), kTransactionTooLarge);
+		EXPECT_FALSE(error.retryable());
+	}
+	EXPECT_TRUE(caughtBase);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionRetryableRangeReadThrows) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	kv::KeySelector begin(kv::toBytes("fi_range_a"), true, 0);
+	kv::KeySelector end(kv::toBytes("fi_range_z"), true, 0);
+	auto future = transaction.getRangeAsync(begin, end, 10);
+	ASSERT_NE(future, nullptr);
+	int error = 0;
+	EXPECT_THROW(future->get(&error), kv::RetryableTransactionError);
+	EXPECT_EQ(error, kNotCommitted);
+	EXPECT_EQ(transaction.error(), 0);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionSyncRangeReadThrowsWithoutUpdatingError) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	kv::KeySelector begin(kv::toBytes("fi_sync_range_a"), true, 0);
+	kv::KeySelector end(kv::toBytes("fi_sync_range_z"), true, 0);
+	try {
+		(void)transaction.getRange(begin, end, 10);
+		FAIL() << "The injected range-read failure must throw.";
+	} catch (const kv::TransactionError &error) { EXPECT_EQ(error.errorCode(), kNotCommitted); }
+	EXPECT_EQ(transaction.error(), 0);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionSyncReadThrowsLikeAsync) {
+	// The sync read follows the same contract as the async path: a retryable error
+	// throws instead of being swallowed into an empty result.
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	EXPECT_THROW(transaction.get(kv::toBytes("fi_read_sync")), kv::RetryableTransactionError);
+	EXPECT_EQ(transaction.error(), kNotCommitted);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionZeroEntriesSkipInjection) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {0, kTransactionTooLarge};
+	transaction.setFaultInjection(&fault);
+
+	// First read: zero entry, no injection; absent key reads as nullopt with no error.
+	auto value = transaction.get(kv::toBytes("fi_read_zero_skip_absent"));
+	EXPECT_FALSE(value.has_value());
+	EXPECT_EQ(transaction.error(), 0);
+
+	// Second read: scripted non-retryable failure throws the base type.
+	EXPECT_THROW(transaction.get(kv::toBytes("fi_read_zero_skip_absent")), kv::TransactionError);
+	EXPECT_EQ(transaction.error(), kTransactionTooLarge);
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionPreCommitFailsWithoutWriting) {
+	const kv::Key key = kv::toBytes("fi_pre_commit");
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.preCommitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	transaction.set(key, kv::toBytes("value"));
+	EXPECT_FALSE(transaction.commit());
+	EXPECT_EQ(transaction.error(), kNotCommitted);
+
+	// Nothing was submitted: the key must not exist.
+	auto verify = kvEngine->createReadWriteTransaction();
+	EXPECT_FALSE(verify->get(key).has_value());
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionPreCommitAsyncReportsRetryable) {
+	const kv::Key key = kv::toBytes("fi_pre_commit_async");
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.preCommitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	transaction.set(key, kv::toBytes("value"));
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+	EXPECT_TRUE(future->isReady());
+
+	int error = 0;
+	bool retryable = false;
+	EXPECT_FALSE(future->getResult(&error, &retryable));
+	EXPECT_EQ(error, kNotCommitted);
+	EXPECT_TRUE(retryable) << "not_committed is definitely-not-committed, hence retryable.";
+
+	auto verify = kvEngine->createReadWriteTransaction();
+	EXPECT_FALSE(verify->get(key).has_value());
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionPostCommitOverrideCommitAppliesExactlyOnce) {
+	// The maybe-committed detector: the commit really happens, then the result is
+	// overridden with commit_unknown_result. A non-idempotent atomicAdd is the oracle:
+	// the value becomes exactly one, proving that the durable mutation applied once.
+	const kv::Key key = kv::toBytes("fi_post_commit");
+	const kv::Value increment = kv::toBytesLE(uint64_t{1});
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.postCommitErrors = {kCommitUnknownResult};
+	transaction.setFaultInjection(&fault);
+
+	transaction.atomicAdd(key, increment);
+	EXPECT_FALSE(transaction.commit());
+	EXPECT_EQ(transaction.error(), kCommitUnknownResult);
+
+	{  // The write is durable despite the reported failure.
+		auto verify = kvEngine->createReadWriteTransaction();
+		auto got = verify->get(key);
+		ASSERT_TRUE(got.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*got), uint64_t{1});
+	}
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionPostCommitOverrideAsyncAppliesOnceAndIsNotRetryable) {
+	const kv::Key key = kv::toBytes("fi_post_commit_async");
+	const kv::Value increment = kv::toBytesLE(uint64_t{1});
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.postCommitErrors = {kCommitUnknownResult};
+	transaction.setFaultInjection(&fault);
+
+	transaction.atomicAdd(key, increment);
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+
+	int error = 0;
+	bool retryable = true;
+	EXPECT_FALSE(future->getResult(&error, &retryable));
+	EXPECT_EQ(error, kCommitUnknownResult);
+	EXPECT_FALSE(retryable) << "A maybe-committed outcome must never be reported retryable: "
+	                           "a blind replay could double-apply.";
+
+	{  // The write is durable despite the reported failure.
+		auto verify = kvEngine->createReadWriteTransaction();
+		auto got = verify->get(key);
+		ASSERT_TRUE(got.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*got), uint64_t{1});
+	}
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionCommittedVersionLookupFailure) {
+	// A committed-version lookup failure AFTER a successful commit is reported as a
+	// SUCCESSFUL commit without a version: the data is durable, and reporting a
+	// failure would invite the caller to replay an already-applied operation.
+	const kv::Key key = kv::toBytes("fi_version_lookup");
+	const kv::Value value = kv::toBytes("durable");
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.committedVersionErrors = {kTransactionCancelled};
+	transaction.setFaultInjection(&fault);
+
+	transaction.set(key, value);
+	EXPECT_TRUE(transaction.commit()) << "The commit is durable; a failed version lookup "
+	                                     "must not be reported as a failed commit.";
+	EXPECT_EQ(transaction.error(), 0);
+	EXPECT_FALSE(transaction.getCommittedVersion().has_value());
+
+	{  // The write is durable and the commit reported success.
+		auto verify = kvEngine->createReadWriteTransaction();
+		auto got = verify->get(key);
+		ASSERT_TRUE(got.has_value());
+		EXPECT_EQ(*got, value);
+	}
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
+TEST_F(FDBKVEngineTest, FaultInjectionCommittedVersionLookupFailureAsync) {
+	// Async twin of the sync case: getResult() reports success without a version.
+	const kv::Key key = kv::toBytes("fi_version_lookup_async");
+	const kv::Value value = kv::toBytes("durable");
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.committedVersionErrors = {kTransactionCancelled};
+	transaction.setFaultInjection(&fault);
+
+	transaction.set(key, value);
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+
+	int error = -1;
+	bool retryable = true;
+	EXPECT_TRUE(future->getResult(&error, &retryable))
+	    << "The commit is durable; a failed version lookup must not fail the commit.";
+	EXPECT_EQ(error, 0);
+	EXPECT_FALSE(retryable);
+	EXPECT_FALSE(transaction.getCommittedVersion().has_value());
+	EXPECT_EQ(transaction.error(), 0);
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
+TEST_F(FDBKVEngineTest, FailedRecommitClearsCommittedVersion) {
+	// A failed commit attempt on a previously committed transaction must not leave the
+	// earlier attempt's version visible: every attempt clears the version on entry.
+	const kv::Key key = kv::toBytes("fi_recommit_version");
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	transaction.set(key, kv::toBytes("value"));
+	ASSERT_TRUE(transaction.commit());
+	ASSERT_TRUE(transaction.getCommittedVersion().has_value());
+
+	// Second attempt on the same transaction, failed deterministically before
+	// submission: the version from the first attempt must be gone.
+	fdb::FaultInjection fault;
+	fault.preCommitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+	EXPECT_FALSE(transaction.commit());
+	EXPECT_FALSE(transaction.getCommittedVersion().has_value());
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
+TEST_F(FDBKVEngineTest, FailedRecommitAsyncClearsCommittedVersion) {
+	// Async twin: commitAsync() clears the version on entry as well.
+	const kv::Key key = kv::toBytes("fi_recommit_version_async");
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	transaction.set(key, kv::toBytes("value"));
+	ASSERT_TRUE(transaction.commit());
+	ASSERT_TRUE(transaction.getCommittedVersion().has_value());
+
+	fdb::FaultInjection fault;
+	fault.preCommitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+	int error = 0;
+	EXPECT_FALSE(future->getResult(&error));
+	EXPECT_EQ(error, kNotCommitted);
+	EXPECT_FALSE(transaction.getCommittedVersion().has_value());
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
+TEST_F(FDBKVEngineTest, TransactionFromNullDBIsInvalidNotUB) {
+	// Constructing a transaction from a null DB pointer must produce an invalid
+	// transaction, never pass nullptr into the C API. Using it is a wrong-state call
+	// per the kv error-domain rules: reads, writes and commits throw std::logic_error
+	// instead of posing as a missing key or silently dropping a mutation. (An errored
+	// DB cannot be built through the public API to test the getDB()==nullptr branch
+	// the same way: fdb_create_database is lazy and succeeds even for a bogus
+	// cluster-file path, deferring the failure to the first operation.)
+	fdb::Transaction fromNull(nullptr);
+	EXPECT_FALSE(fromNull);
+	const kv::Key key = kv::toBytes("any");
+	const kv::Value value = kv::toBytesLE(uint64_t{1});
+	kv::KeySelector begin(kv::toBytes("a"), true, 0);
+	kv::KeySelector end(kv::toBytes("z"), true, 0);
+
+	EXPECT_THROW(fromNull.setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE), std::logic_error);
+	EXPECT_THROW(fromNull.get(key), std::logic_error);
+	EXPECT_THROW(fromNull.getAsync(key), std::logic_error);
+	EXPECT_THROW(fromNull.getRange(begin, end, 1), std::logic_error);
+	EXPECT_THROW(fromNull.getRangeAsync(begin, end, 1), std::logic_error);
+	EXPECT_THROW(fromNull.set(key, value), std::logic_error);
+	EXPECT_THROW(fromNull.atomicAdd(key, value), std::logic_error);
+	EXPECT_THROW(fromNull.atomicMax(key, value), std::logic_error);
+	EXPECT_THROW(fromNull.remove(key), std::logic_error);
+	EXPECT_THROW(fromNull.removeRange(begin.getKey(), end.getKey()), std::logic_error);
+	EXPECT_THROW(fromNull.commit(), std::logic_error);
+	EXPECT_THROW(fromNull.commitAsync(), std::logic_error);
+	EXPECT_FALSE(fromNull.getCommittedVersion().has_value());
+	EXPECT_FALSE(fromNull.getApproximateSize().has_value());
+}
+
+TEST_F(FDBKVEngineTest, ConsumedReadFutureThrowsLogicError) {
+	// Double-get on a single-use read future is a wrong-state call: it must throw
+	// std::logic_error, never pose as a missing key or an empty range.
+	auto transaction = kvEngine->createReadWriteTransaction();
+
+	auto valueFuture = transaction->getAsync(kv::toBytes("consumed_future_key"));
+	ASSERT_TRUE(valueFuture != nullptr);
+	(void)valueFuture->get();
+	EXPECT_THROW(valueFuture->get(), std::logic_error);
+
+	auto rangeFuture =
+	    transaction->getRangeAsync(kv::KeySelector(kv::toBytes("consumed_range_a"), true, 0),
+	                               kv::KeySelector(kv::toBytes("consumed_range_b"), false, 0));
+	ASSERT_TRUE(rangeFuture != nullptr);
+	(void)rangeFuture->get();
+	EXPECT_THROW(rangeFuture->get(), std::logic_error);
 }

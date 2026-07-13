@@ -42,22 +42,28 @@ ExitingStatus gExitingStatus = ExitingStatus::kRunning;
 bool gReloadRequested = false;
 static bool nextPollNonblocking = false;
 
-/// Runs one event-loop handler, containing retryable KV backend errors.
+/// Runs one event-loop handler, containing KV backend errors.
 ///
 /// Op bodies replay these on a fresh transaction at the op boundary, but periodic
 /// and connection handlers (session sweeps, disconnect bookkeeping, ...) have no
-/// such boundary; before this guard an escaped kv::RetryableTransactionError
-/// (e.g. a transaction_timed_out read while the backend is slow or shutting
-/// down) reached std::terminate and aborted the whole server. The interrupted
-/// handler simply runs again on a later loop iteration.
+/// such boundary. An escaped backend error must not reach std::terminate and abort
+/// the whole server: retryable failures are warnings, non-retryable failures are
+/// errors, and the interrupted handler runs again on a later loop iteration. Exceptions
+/// outside the backend error family still propagate and retain fail-stop behavior.
 template <typename Handler, typename... Args>
 static void eventloop_run_handler(const char *kind, Handler &&handler, Args &&...args) {
 	try {
 		handler(std::forward<Args>(args)...);
 	} catch (const kv::RetryableTransactionError &e) {
 		safs::log_warn(
-		    "event loop: retryable backend error escaped a {} handler, skipping this run: {}", kind,
-		    e.what());
+		    "event loop: retryable backend error escaped a {} handler (err {}), skipping this "
+		    "run: {}",
+		    kind, e.errorCode(), e.what());
+	} catch (const kv::TransactionError &e) {
+		safs::log_err(
+		    "event loop: backend transaction error escaped a {} handler (err {}), skipping this "
+		    "run: {}",
+		    kind, e.errorCode(), e.what());
 	}
 }
 
