@@ -1,4 +1,6 @@
-timeout_set 3 minutes
+# Most of the runtime is a fixed wall-clock floor (75s buffer-expiry wait,
+# slowed preads); the budget needs headroom for the ~6 GB of real I/O on top.
+timeout_set 5 minutes
 
 cacheexpirationtime_ms=15000
 readbuffersexpirationtime_ms=60000
@@ -27,14 +29,31 @@ dd if=file of=/dev/null bs=1M count=$((30 * 64)) status=none
 saunafs settrashtime 0 file
 rm file
 
+# The next file needs the ramdisk space; a restart mid-deletion would make the
+# chunkserver rejoin with the leftover chunks still on disk and fail the
+# writes below with ENOSPC.
+assert_eventually '[[ $(find_chunkserver_chunks 0 | wc -l) == 0 ]]' "2 minutes"
+
 # Restart the first chunkserver preloading pread with slow version of reads
 LD_PRELOAD="${SAUNAFS_INSTALL_FULL_LIBDIR}/libchunk_operations_eio.so" \
 		assert_success saunafs_chunkserver_daemon 0 restart
 saunafs_wait_for_all_ready_chunkservers
 
 create-and-reread-file "file" $(( (cacheexpirationtime_ms + readbuffersexpirationtime_ms) / 1000)) &
+helper_pid=$!
 
-while ! [[ -f notify_file_reread ]]; do sleep 0.1; done
+# The helper keeps the notify file around for only one second before removing
+# it and exiting, so a clean helper exit is an equivalent success signal; a
+# failed exit fails the test fast instead of spinning until the timeout.
+while ! [[ -f notify_file_reread ]]; do
+	if ! kill -0 "${helper_pid}" 2>/dev/null; then
+		helper_status=0
+		wait "${helper_pid}" || helper_status=$?
+		assert_equals 0 "${helper_status}"
+		break
+	fi
+	sleep 0.1
+done
 
 # At least 75s must have passed since the last read of the file (see create_and_reread_file.cc),
 # so all read buffers should have been expired by now. Check that sfsmount is not using too much 

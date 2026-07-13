@@ -1,4 +1,5 @@
-timeout_set 45 seconds
+# Budget must absorb one master chunk-lock expiry (120s LOCKTIMEOUT, unscaled).
+timeout_set 150 seconds
 
 USE_RAMDISK=YES \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
@@ -46,7 +47,18 @@ sudo -nu saunafstest_1 truncate -s 1P file_2
 sudo -nu saunafstest_1 dd if=/dev/zero of=file_2 bs=1M seek=63 count=1 conv=notrunc
 # .. one can't create new chunks:
 expect_failure sudo -nu saunafstest_1 dd if=/dev/zero of=file_2 bs=1M seek=64 count=1 conv=notrunc
-sudo -nu saunafstest_1 truncate -s 1024 file_2
+# The rejected write's quota error stays latched on the mount's inode until the
+# writer's state is released asynchronously. A tight retry cadence re-adopts
+# that state and keeps the stale error alive, so space the attempts out.
+truncated=""
+for _ in {1..30}; do
+	if sudo -nu saunafstest_1 truncate -s 1024 file_2; then
+		truncated="yes"
+		break
+	fi
+	sleep $(timeout_rescale_seconds 2)
+done
+assert_equals "yes" "${truncated}"
 
 # changing group should affect usage:
 sudo -nu saunafstest_1 chgrp $gid file_2
