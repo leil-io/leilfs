@@ -198,7 +198,7 @@ dnf_packages=(
 # determine which OS we are running and choose the right set of packages to be installed
 release="$(lsb_release -si)/$(lsb_release -sr)"
 case "${release}" in
-	Ubuntu/24.04)
+	Ubuntu/24.04|Ubuntu/26.04)
 		echo $release
 		apt-get -y install ca-certificates-java # https://www.mail-archive.com/debian-bugs-dist@lists.debian.org/msg1911078.html
 		apt-get -y install "${common_packages[@]}" "${apt_packages[@]}" "${noble_packages[@]}"
@@ -220,7 +220,11 @@ esac
 
 case "${release}" in
 	LinuxMint/*|Ubuntu/*|Debian/*)
-		if ! "$script_dir/llvm.sh" 19; then
+		if [[ "$(lsb_release -sc)" == "resolute" ]]; then
+			# Ubuntu 26.04 ships clang-19 in universe and apt.llvm.org has no
+			# 'resolute' repo yet, so install it straight from the distro.
+			apt-get install -y clang-19 lldb-19 lld-19 clangd-19
+		elif ! "$script_dir/llvm.sh" 19; then
 			echo "Error: Failed to install Clang 19 using llvm.sh script."
 			exit 1
 		fi

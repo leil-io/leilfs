@@ -6,10 +6,12 @@ on:
     push:
         branches:
             - dev
+            - test-ubuntu-26.04
 
 jobs:
     Run-Unit-Tests-and-Ganesha:
-        runs-on: ubuntu-24.04
+        runs-on: ubuntu-26.04
+        timeout-minutes: 120
 
         env:
             SAUNAFS_TEST_TIMEOUT_MULTIPLIER: 2
@@ -21,6 +23,15 @@ jobs:
               with:
                   submodules: true
                   fetch-depth: 0
+
+            - name: Harden apt (retries and stall timeouts)
+              run: |
+                sudo tee /etc/apt/apt.conf.d/99-ci-retries >/dev/null <<'EOF'
+                Acquire::Retries "5";
+                Acquire::http::Timeout "30";
+                Acquire::https::Timeout "30";
+                Acquire::ftp::Timeout "30";
+                EOF
 
             - name: ccache
               uses: hendrikmuhs/ccache-action@v1.2
@@ -97,7 +108,7 @@ jobs:
                 git submodule update --recursive --init
                 mkdir build
                 cmake -B build src \
-                    -DCMAKE_C_FLAGS="-Wno-unused-function" \
+                    -DCMAKE_C_FLAGS="-Wno-unused-function -Wno-discarded-qualifiers" \
                     -DCMAKE_INSTALL_PREFIX=/usr \
                     -DUSE_FSAL_CEPH=OFF \
                     -DUSE_FSAL_GLUSTER=OFF \
