@@ -151,6 +151,7 @@ dnf_packages=(
 	iproute
 	iozone              # required by Ganesha -> iozone suite
 	isa-l-devel
+	iwpmd               # iWARP port mapper (siw); separate pkg on Fedora, not in rdma-core
 	Judy-devel
 	kernel-devel
 	libblkid-devel
@@ -163,7 +164,7 @@ dnf_packages=(
 	pam-devel
 	pkgconfig
 	python3-virtualenv
-	rdma-core           # iwpmd + librdmacm runtime (NFS/RDMA Ganesha test)
+	rdma-core           # librdmacm / rdma tooling runtime (NFS/RDMA Ganesha test)
 	rpm-build
 	spdlog-devel
 	systemd-devel
