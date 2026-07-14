@@ -1,0 +1,38 @@
+# Single source of truth for the apt dependencies to build AND run NFS-Ganesha
+# and its test suite. Every consumer (developers, the CI workflow, the Ganesha
+# Docker image) both builds Ganesha and runs its tests, so they all need the
+# same set; one list avoids drift between a separate build/runtime split.
+#
+# Consumed by the CI workflow and the Ganesha Docker image; the version and the
+# build procedure live alongside in ganesha.env / build-ganesha.sh. One package
+# per line; blank lines and '#' comments are ignored.
+bison
+build-essential
+ca-certificates
+cmake
+doxygen
+flex
+git
+ibverbs-utils
+iozone3
+keyutils
+krb5-admin-server
+krb5-kdc
+libacl1-dev
+libblkid-dev
+libcap-dev
+libdbus-1-dev
+libibverbs-dev
+libjemalloc-dev
+libkrb5-dev
+libnfsidmap-dev
+libnsl-dev
+librdmacm-dev
+libunwind-dev
+liburcu-dev
+lsb-release
+nfs-common
+pkg-config
+python3-gssapi
+python3-ply
+rdma-core

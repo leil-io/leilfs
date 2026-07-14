@@ -21,14 +21,14 @@ HEALTHCHECK --interval=30s --timeout=3s \
 FROM base AS ganesha-builder
 
 # Build NFS-Ganesha from the single shared source of truth: the version and the
-# build procedure live in ganesha.env / build-ganesha.sh, and the build deps in
-# ganesha-build-deps.txt. ntirpc is resolved from the release's git submodule, so
+# build procedure live in ganesha.env / build-ganesha.sh, and the deps in
+# ganesha-deps.txt. ntirpc is resolved from the release's git submodule, so
 # there is no ntirpc version to pin here.
-COPY ganesha.env build-ganesha.sh ganesha-build-deps.txt /opt/ganesha/
+COPY ganesha.env build-ganesha.sh ganesha-deps.txt /opt/ganesha/
 
 RUN set -e ; \
     apt-get update ; \
-    grep -vE '^[[:space:]]*(#|$)' /opt/ganesha/ganesha-build-deps.txt \
+    grep -vE '^[[:space:]]*(#|$)' /opt/ganesha/ganesha-deps.txt \
         | xargs apt-get install -y --no-install-recommends ; \
     rm -rf /var/lib/apt/lists/*
 
@@ -81,14 +81,15 @@ COPY --from=ganesha-builder /tmp/dependencies/lib /lib
 COPY --from=ganesha-builder /tmp/dependencies/lib64 /lib64
 COPY --from=ganesha-builder /tmp/dependencies/usr/lib /usr/lib
 
+# Install the shared Ganesha deps (build + runtime; a single list is used
+# everywhere). ibverbs-providers is image-specific (the dlopen'd RDMA provider
+# plugins ldd cannot discover).
+COPY ganesha-deps.txt /opt/ganesha/ganesha-deps.txt
 RUN set -e ; \
     apt update; \
-    apt install -y --no-install-recommends \
-        ibverbs-providers \
-        keyutils \
-        krb5-admin-server \
-        krb5-kdc \
-        nfs-common ; \
+    grep -vE '^[[:space:]]*(#|$)' /opt/ganesha/ganesha-deps.txt \
+        | xargs apt install -y --no-install-recommends ; \
+    apt install -y --no-install-recommends ibverbs-providers ; \
     rm -rf /var/lib/apt/lists/* ; \
     true
 

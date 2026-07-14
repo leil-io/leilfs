@@ -42,9 +42,7 @@ common_packages=(
 	nfs4-acl-tools
 	pkg-config
 	pylint
-	python3-gssapi      # required by Ganesha -> pynfs suite
 	python3-pip
-	python3-ply         # required by Ganesha -> pynfs suite
 	python3-setuptools
 	python3-wheel
 	psmisc
@@ -58,14 +56,7 @@ common_packages=(
 	time
 	valgrind
 	wget
-	## For NFS-Ganesha tests (duplicate are commented out as reference)
-	# acl
-	# asciidoc
-	# cmake
-	# fio
 	bison
-	byacc
-	dbus
 	flex
 	tree
 )
@@ -73,9 +64,7 @@ apt_packages=(
 	debhelper
 	devscripts
 	build-essential
-	ibverbs-utils       # ibv_devices / ibv_devinfo (NFS/RDMA Ganesha test)
 	iproute2
-	iozone3             # required by Ganesha -> iozone suite
 	libblkid-dev
 	libboost-filesystem-dev
 	libboost-iostreams-dev
@@ -101,34 +90,10 @@ apt_packages=(
 	python3-venv
 	uuid-dev
 	zlib1g-dev
-	## For NFS-Ganesha tests (duplicate are commented out as reference)
-	# build-essential
-	# libblkid-dev
-	# libboost-filesystem-dev
-	# libboost-iostreams-dev
-	# libboost-program-options-dev
-	# libboost-system-dev
-	# libjudy-dev
-	# liburcu-dev
-	docbook
-	docbook-xml
-	keyutils
-	krb5-admin-server
-	krb5-kdc
-	krb5-user
-	libacl1-dev
-	libcap-dev
-	libdbus-1-dev
-	libgssapi-krb5-2
-	libjemalloc-dev
-	libkrb5-dev
-	libkrb5support0
-	libnfsidmap-dev
-	libnsl-dev
-	libsqlite3-dev
-	nfs-common
-	rdma-core           # iwpmd + librdmacm runtime (NFS/RDMA Ganesha test)
 	software-properties-common
+	# NFS-Ganesha build + runtime deps live in
+	# tests/ci_build/ganesha/ganesha-deps.txt, installed only by the Ganesha
+	# test path so non-Ganesha machines skip them.
 )
 noble_packages=(
 	prometheus-cpp-dev
@@ -175,12 +140,7 @@ dnf_packages=(
 	zlib
 	zlib-devel
 	## For NFS-Ganesha tests (duplicate are commented out as reference)
-	# boost-filesystem
-	# boost-iostreams
-	# boost-program-options
-	# boost-system
 	# gcc-c++
-	# Judy-devel
 	# kernel-devel
 	# userspace-rcu-devel
 	dbus-devel

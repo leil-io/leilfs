@@ -50,9 +50,9 @@ jobs:
                 set -eux
                 cd "${GITHUB_WORKSPACE}"
                 sudo apt-get update
-                # Build deps and the Ganesha version/build come from the single
-                # shared source of truth under tests/ci_build/ganesha/.
-                grep -vE '^[[:space:]]*(#|$)' tests/ci_build/ganesha/ganesha-build-deps.txt \
+                # All Ganesha build + runtime deps come from the single shared list;
+                # the version and build procedure live alongside it.
+                grep -vE '^[[:space:]]*(#|$)' tests/ci_build/ganesha/ganesha-deps.txt \
                     | xargs sudo apt-get install -y --no-install-recommends
                 tests/ci_build/ganesha/build-ganesha.sh /usr
 
