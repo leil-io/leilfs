@@ -20,84 +20,20 @@ HEALTHCHECK --interval=30s --timeout=3s \
 
 FROM base AS ganesha-builder
 
-ARG GANESHA_VERSION=9.15
-ENV GANESHA_VERSION=${GANESHA_VERSION}
-ARG NTIRPC_VERSION=7.2
-ENV NTIRPC_VERSION=${NTIRPC_VERSION}
+# Build NFS-Ganesha from the single shared source of truth: the version and the
+# build procedure live in ganesha.env / build-ganesha.sh, and the build deps in
+# ganesha-build-deps.txt. ntirpc is resolved from the release's git submodule, so
+# there is no ntirpc version to pin here.
+COPY ganesha.env build-ganesha.sh ganesha-build-deps.txt /opt/ganesha/
 
-# install ganesha from sources
 RUN set -e ; \
-    apt-get update; \
-    apt-get install -y  --no-install-recommends \
-          acl \
-          asciidoc \
-          bison \
-          build-essential \
-          byacc \
-          cmake \
-          dbus \
-          docbook \
-          docbook-xml \
-          doxygen \
-          fio \
-          flex \
-          krb5-user \
-          libacl1-dev \
-          libblkid-dev \
-          libboost-filesystem-dev \
-          libboost-iostreams-dev \
-          libboost-program-options-dev \
-          libboost-system-dev \
-          libcap-dev \
-          libdbus-1-dev \
-          libgssapi-krb5-2 \
-          libibverbs-dev \
-          libjemalloc-dev \
-          libjudy-dev \
-          libkrb5-dev \
-          librdmacm-dev \
-          libkrb5support0 \
-          libnfsidmap-dev \
-          libnsl-dev \
-          libsqlite3-dev \
-          liburcu-dev \
-          pkg-config \
-          pv \
-          wget \
-          unzip \
-          rpcbind \
-    ; \
+    apt-get update ; \
+    grep -vE '^[[:space:]]*(#|$)' /opt/ganesha/ganesha-build-deps.txt \
+        | xargs apt-get install -y --no-install-recommends ; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -e ; \
-    (cd /usr/src ; \
-        wget https://github.com/nfs-ganesha/nfs-ganesha/archive/V${GANESHA_VERSION}.zip ; \
-        unzip V${GANESHA_VERSION}.zip ; \
-        wget https://github.com/nfs-ganesha/ntirpc/archive/v${NTIRPC_VERSION}.zip ; \
-        unzip v${NTIRPC_VERSION}.zip ; \
-        rm -f V${GANESHA_VERSION}.zip v${NTIRPC_VERSION}.zip ; \
-        rm -r nfs-ganesha-${GANESHA_VERSION}/src/libntirpc ; \
-        ln -s /usr/src/ntirpc-${NTIRPC_VERSION} nfs-ganesha-${GANESHA_VERSION}/src/libntirpc ; \
-        mkdir nfs-ganesha-${GANESHA_VERSION}/build ; \
-        cmake -Bnfs-ganesha-${GANESHA_VERSION}/build \
-            -DCMAKE_INSTALL_PREFIX=/ \
-            -DUSE_9P=NO \
-            -DUSE_FSAL_CEPH=NO \
-            -DUSE_FSAL_GLUSTER=NO \
-            -DUSE_FSAL_GPFS=NO \
-            -DUSE_FSAL_KVSFS=NO \
-            -DUSE_FSAL_LIZARDFS=NO \
-            -DUSE_FSAL_LUSTRE=NO \
-            -DUSE_FSAL_PROXY_V3=NO \
-            -DUSE_FSAL_PROXY_V4=NO \
-            -DUSE_FSAL_RGW=NO \
-            -DUSE_FSAL_XFS=NO \
-            -DUSE_GSS=YES \
-            -DUSE_NFS_RDMA=ON \
-            -Snfs-ganesha-${GANESHA_VERSION}/src; \
-        make -Cnfs-ganesha-${GANESHA_VERSION}/build -j$(($(nproc)*3/4+1)) install ; \
-        rm -rf nfs-ganesha-${GANESHA_VERSION} ntirpc-${NTIRPC_VERSION} ; \
-    ); \
+    bash /opt/ganesha/build-ganesha.sh / ; \
     mkdir -p /tmp/dependencies; \
     find /usr/ -name ganesha.nfsd -type f -exec ldd {} \; | \
         grep -oP '(/usr)?(/local)?/lib(64)?/.*\s' | sed 's/\s*$//' | sort -u | \
@@ -148,6 +84,7 @@ COPY --from=ganesha-builder /tmp/dependencies/usr/lib /usr/lib
 RUN set -e ; \
     apt update; \
     apt install -y --no-install-recommends \
+        ibverbs-providers \
         keyutils \
         krb5-admin-server \
         krb5-kdc \

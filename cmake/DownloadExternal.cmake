@@ -53,3 +53,31 @@ function(download_external PCKG_NAME PCKG_DIR_NAME PCKG_URL)
     message(STATUS "Found ${PCKG_NAME}")
   endif()
 endfunction()
+
+# Like download_external, but clones a git repository at a tag WITH its submodules
+# instead of unpacking an archive. Use this when a project pins dependencies as
+# git submodules (e.g. nfs-ganesha pins ntirpc): a source zip omits submodule
+# contents, whereas --recurse-submodules checks each one out at its pinned commit,
+# so the dependency version tracks the parent tag automatically.
+function(clone_external_git PCKG_NAME PCKG_DIR_NAME GIT_URL GIT_TAG)
+  set(${PCKG_NAME}_DIR_NAME ${PCKG_DIR_NAME} CACHE INTERNAL "" FORCE)
+  set(_dest ${CMAKE_SOURCE_DIR}/external/${PCKG_DIR_NAME})
+  if(NOT IS_DIRECTORY ${_dest})
+    message(STATUS "Cloning ${GIT_URL} @ ${GIT_TAG} (with submodules)...")
+    execute_process(
+      COMMAND git clone --depth 1 --branch ${GIT_TAG}
+              --recurse-submodules --shallow-submodules
+              ${GIT_URL} ${_dest}
+      RESULT_VARIABLE CLONE_ERROR
+      ERROR_VARIABLE CLONE_ERROR_MESSAGE)
+    if(NOT CLONE_ERROR EQUAL 0)
+      message(FATAL_ERROR "git clone ${GIT_URL} failed: ${CLONE_ERROR} ${CLONE_ERROR_MESSAGE}")
+    endif()
+    if(NOT IS_DIRECTORY ${_dest})
+      message(FATAL_ERROR "Cloning ${GIT_URL} didn't produce directory '${PCKG_DIR_NAME}'")
+    endif()
+    message(STATUS "Cloning ${PCKG_NAME} finished successfully")
+  else()
+    message(STATUS "Found ${PCKG_NAME}")
+  endif()
+endfunction()

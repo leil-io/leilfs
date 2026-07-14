@@ -142,14 +142,9 @@ case "${option,,}" in
 		;;
 	ganesha)
 		docker_context_dir="${PROJECT_DIR}/tests/ci_build/ganesha"
-		case ${DOCKER_BASE_IMAGE,,} in
-			*ubuntu-24.04* | *debian-trixie*)
-				dockerfile="${docker_context_dir}/Dockerfile.ubuntu-24.04"
-				;;
-			*)
-				dockerfile="${docker_context_dir}/Dockerfile"
-				;;
-		esac
+		# All bases use the source-building Dockerfile so the image ships the
+		# pinned Ganesha V9.15 (+ its ntirpc).
+		dockerfile="${docker_context_dir}/Dockerfile"
 		;;
 	*)
 		docker_context_dir="${PROJECT_DIR}"
