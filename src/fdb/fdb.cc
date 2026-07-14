@@ -360,6 +360,24 @@ void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
 	                            static_cast<int>(end.size()));
 }
 
+void Transaction::addReadConflictKey(const kv::Key &key) {
+	requireHandle("addReadConflictKey");
+
+	// FDB conflict ranges are half-open; a single key is [key, key + '\0').
+	kv::Key end = key;
+	end.push_back('\0');
+	const fdb_error_t err = fdb_transaction_add_conflict_range(
+	    tr_.get(), key.data(), static_cast<int>(key.size()), end.data(),
+	    static_cast<int>(end.size()), FDB_CONFLICT_RANGE_TYPE_READ);
+	if (err != 0) {
+		// add_conflict_range is a synchronous client call; a failure is local misuse,
+		// not a backend read failure, and must not silently drop the caller's protection.
+		safs::log_err("Transaction::addReadConflictKey: error: {}", fdb_get_error(err));
+		throw std::invalid_argument("fdb::Transaction::addReadConflictKey: " +
+		                            std::string(fdb_get_error(err)));
+	}
+}
+
 bool Transaction::commit() {
 	requireHandle("commit");
 

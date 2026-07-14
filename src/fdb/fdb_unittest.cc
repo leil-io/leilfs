@@ -583,6 +583,166 @@ TEST_F(FDBKVEngineTest, GetAsync) {
 	               nonExistentKeyStr);
 }
 
+TEST_F(FDBKVEngineTest, GetSnapshotAsync) {
+	auto key = kv::toBytes("snapshot_async_key");
+	constexpr uint64_t initialValue = 42;
+
+	// Write the initial value.
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->set(key, kv::toBytesLE(initialValue));
+		ASSERT_TRUE(transaction->commit())
+		    << "Failed to commit initial value for snapshot async test.";
+	}
+
+	// getSnapshotAsync returns the correct value when the key exists.
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto future = transaction->getSnapshotAsync(key);
+		ASSERT_TRUE(future != nullptr) << "Failed to create snapshot async future.";
+
+		int error = 0;
+		auto result = future->get(&error);
+		ASSERT_EQ(error, 0) << "Error occurred while getting snapshot async value.";
+		ASSERT_TRUE(result.has_value())
+		    << "getSnapshotAsync should return a value for an existing key.";
+		ASSERT_EQ(kv::fromBytesLE<uint64_t>(*result), initialValue)
+		    << "getSnapshotAsync returned an unexpected value.";
+	}
+
+	// getSnapshotAsync returns nullopt for a non-existent key.
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		auto future = transaction->getSnapshotAsync(kv::toBytes("snapshot_async_key_missing"));
+		ASSERT_TRUE(future != nullptr) << "Failed to create snapshot async future.";
+
+		int error = 0;
+		auto result = future->get(&error);
+		ASSERT_EQ(error, 0) << "Error occurred while getting non-existent snapshot async value.";
+		ASSERT_FALSE(result.has_value())
+		    << "getSnapshotAsync should return nullopt for a non-existent key.";
+	}
+
+	// getSnapshotAsync does not add the key to the read conflict range:
+	// a transaction that snapshot-reads a key can still commit even if
+	// another transaction modifies that key concurrently.
+	{
+		constexpr uint64_t kSideValue = 123U;
+		const auto sideKey = kv::toBytes("snapshot_async_side_key");
+
+		// Txn A: snapshot-read key asynchronously and write to a different key.
+		auto txnA = kvEngine->createReadWriteTransaction();
+		auto future = txnA->getSnapshotAsync(key);
+		ASSERT_TRUE(future != nullptr) << "Failed to create snapshot async future.";
+
+		int error = 0;
+		auto snapResult = future->get(&error);
+		ASSERT_EQ(error, 0) << "Error occurred while getting snapshot async value.";
+		ASSERT_TRUE(snapResult.has_value())
+		    << "Snapshot async read should return a value for existing key.";
+		txnA->set(sideKey, kv::toBytesLE(kSideValue));
+
+		// Txn B: concurrently modify key and commit.
+		auto txnB = kvEngine->createReadWriteTransaction();
+		txnB->atomicAdd(key, kv::toBytesLE(uint64_t{1}));
+		ASSERT_TRUE(txnB->commit()) << "Concurrent writer (Txn B) should commit successfully.";
+
+		// Txn A should still commit: the snapshot read on key does not register
+		// a read conflict, so Txn B's write does not cause a conflict.
+		ASSERT_TRUE(txnA->commit())
+		    << "Transaction with only a snapshot async read on key should commit "
+		       "despite a concurrent write to that key.";
+
+		// Verify sideKey was written by Txn A.
+		auto verifyTxn = kvEngine->createReadWriteTransaction();
+		auto sideVal = verifyTxn->get(sideKey);
+		ASSERT_TRUE(sideVal.has_value()) << "Side key written by Txn A should exist.";
+		ASSERT_EQ(kv::fromBytesLE<uint64_t>(*sideVal), kSideValue)
+		    << "Side key should contain the value written by Txn A.";
+	}
+
+	// Cleanup.
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->remove(key);
+		transaction->remove(kv::toBytes("snapshot_async_side_key"));
+		ASSERT_TRUE(transaction->commit()) << "Failed to clean up snapshot async test keys.";
+	}
+}
+
+TEST_F(FDBKVEngineTest, AddReadConflictKey) {
+	auto key = kv::toBytes("read_conflict_key");
+	constexpr uint64_t initialValue = 42;
+
+	// Write the initial value.
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->set(key, kv::toBytesLE(initialValue));
+		ASSERT_TRUE(transaction->commit())
+		    << "Failed to commit initial value for read conflict test.";
+	}
+
+	// Control: a snapshot read of key followed by a blind write elsewhere commits
+	// despite a concurrent write to key -- nothing conflicts on its own.
+	{
+		constexpr uint64_t kSideValue = 123U;
+		const auto sideKey = kv::toBytes("read_conflict_control_side_key");
+
+		auto txnA = kvEngine->createReadWriteTransaction();
+		auto snapResult = txnA->getSnapshot(key);
+		ASSERT_TRUE(snapResult.has_value())
+		    << "Snapshot read should return a value for existing key.";
+		txnA->set(sideKey, kv::toBytesLE(kSideValue));
+
+		auto txnB = kvEngine->createReadWriteTransaction();
+		txnB->atomicAdd(key, kv::toBytesLE(uint64_t{1}));
+		ASSERT_TRUE(txnB->commit()) << "Concurrent writer (Txn B) should commit successfully.";
+
+		ASSERT_TRUE(txnA->commit())
+		    << "Control transaction without addReadConflictKey should commit.";
+	}
+
+	// addReadConflictKey turns the same shape into a conflict-checked one:
+	// Txn A never reads key with conflict tracking, but declaring it as a read
+	// conflict makes Txn B's concurrent write abort Txn A's commit.
+	{
+		constexpr uint64_t kSideValue = 456U;
+		const auto sideKey = kv::toBytes("read_conflict_side_key");
+
+		// Txn A: pin the read version with a snapshot read, declare the read
+		// conflict on key without reading it, and write to a different key.
+		auto txnA = kvEngine->createReadWriteTransaction();
+		auto snapResult = txnA->getSnapshot(key);
+		ASSERT_TRUE(snapResult.has_value())
+		    << "Snapshot read should return a value for existing key.";
+		txnA->addReadConflictKey(key);
+		txnA->set(sideKey, kv::toBytesLE(kSideValue));
+
+		// Txn B: concurrently modify key and commit.
+		auto txnB = kvEngine->createReadWriteTransaction();
+		txnB->atomicAdd(key, kv::toBytesLE(uint64_t{1}));
+		ASSERT_TRUE(txnB->commit()) << "Concurrent writer (Txn B) should commit successfully.";
+
+		// Txn A should fail: key is in its read conflict set and Txn B wrote it.
+		ASSERT_FALSE(txnA->commit())
+		    << "Transaction with addReadConflictKey on key should fail to commit "
+		       "when another transaction modifies that key first.";
+
+		// Verify sideKey was not written by the aborted Txn A.
+		auto verifyTxn = kvEngine->createReadWriteTransaction();
+		ASSERT_FALSE(verifyTxn->get(sideKey).has_value())
+		    << "Side key from the aborted transaction should not exist.";
+	}
+
+	// Cleanup.
+	{
+		auto transaction = kvEngine->createReadWriteTransaction();
+		transaction->remove(key);
+		transaction->remove(kv::toBytes("read_conflict_control_side_key"));
+		ASSERT_TRUE(transaction->commit()) << "Failed to clean up read conflict test keys.";
+	}
+}
+
 /// Tests extractIntegralLEFromFuture with various integral types and scenarios.
 TEST_F(FDBKVEngineTest, ExtractIntegralLEFromFuture) {
 	// Test with int64_t
