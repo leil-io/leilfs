@@ -34,7 +34,7 @@ git clone --depth 1 --branch "${GANESHA_VERSION}" \
 	"${GANESHA_GIT_URL}" "${src}"
 
 cmake -B "${src}/build" "${src}/src" \
-	-DCMAKE_C_FLAGS="-Wno-unused-function" \
+	-DCMAKE_BUILD_TYPE=RelWithDebInfo \
 	-DCMAKE_INSTALL_PREFIX="${prefix}" \
 	-DUSE_9P=OFF \
 	-DUSE_FSAL_CEPH=OFF \
