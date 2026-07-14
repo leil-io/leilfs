@@ -191,7 +191,23 @@ if ! wait_for_tcp_port 2049; then
 	cat "${ganesha_log}"
 	test_fail "Ganesha did not open the NFSv4 control port 2049"
 fi
-if ! grep -qi 'LISTENING for RPC/RDMA' "${ganesha_log}"; then
+
+# The RDMA listener is set up (Create_RDMA -> svc_rdma_create) after the TCP
+# control port is already LISTENing, and the SoftiWARP setup can take a moment,
+# so the "now LISTENING for RPC/RDMA" line lands slightly later. Poll for it
+# instead of checking once (a one-shot grep races and flakes on slow runners).
+# Bail out early if Ganesha died (e.g. svc_rdma_create failed -> LogFatal).
+wait_for_rdma_listener() {
+	local tries=30
+	while ((tries-- > 0)); do
+		grep -qi 'LISTENING for RPC/RDMA' "${ganesha_log}" && return 0
+		pgrep -x ganesha.nfsd >/dev/null 2>&1 || return 1
+		sleep 1
+	done
+	return 1
+}
+
+if ! wait_for_rdma_listener; then
 	cat "${ganesha_log}"
 	test_fail "Ganesha did not bring up the RDMA listener"
 fi

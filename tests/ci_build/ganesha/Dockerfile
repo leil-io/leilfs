@@ -33,8 +33,10 @@ RUN set -e ; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -e ; \
-    bash /opt/ganesha/build-ganesha.sh / ; \
-    mkdir -p /tmp/dependencies; \
+    bash /opt/ganesha/build-ganesha.sh /usr ; \
+    # Pre-create every dir the final stage copies, so a COPY does not fail when
+    # ldd happens to resolve no dependency into that particular location.
+    mkdir -p /tmp/dependencies/lib /tmp/dependencies/lib64 /tmp/dependencies/usr/lib; \
     find /usr/ -name ganesha.nfsd -type f -exec ldd {} \; | \
         grep -oP '(/usr)?(/local)?/lib(64)?/.*\s' | sed 's/\s*$//' | sort -u | \
         xargs -I{} cp -v --parents {} /tmp/dependencies; \
