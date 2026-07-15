@@ -92,7 +92,7 @@ tests/test_suites/WindowsClientTests
 src/mds
 src/data/sfsmds*
 src/data/leil-mds.cfg.in
-tests/test_suites/FDBTests
+tests/test_suites/FDBTests*
 
 # Windows #
 ###########
