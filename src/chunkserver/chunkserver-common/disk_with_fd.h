@@ -206,6 +206,11 @@ public:
 	/// Setter for lastErrorIndex_
 	void setLastErrorIndex(uint32_t newLastErrorIndex) override;
 
+	/// Applies any disk-specific on-disk format to a brand-new chunk before its
+	/// header is sized and serialized. Called only from the new-chunk creation
+	/// path (not for duplicates). Default: no-op.
+	int applyNewChunkFormat(IChunk * /*chunk*/) override;
+
 private:
 	/// Internal helper to sync both FDs (metadata and data)
 	int fsyncFD(IChunk *chunk, bool isForMetadata);
