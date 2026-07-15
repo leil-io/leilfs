@@ -1823,24 +1823,22 @@ static fsal_status_t mknode(struct fsal_obj_handle *directoryHandle, const char 
  * @brief Read the content of a link.
  *
  * File object operations.
- * This function reads the content of a symbolic link. The FSAL will
- * allocate a buffer and store its address and the link length in the
- * link_content gsh_buffdesc. The caller must free this buffer with
- * gsh_free.
+ * This function reads the content of a symbolic link. The FSAL copies the
+ * link target into the caller-provided @c buffer utf8string via
+ * copy_into_utf8string(); Ganesha owns that storage and frees it.
  *
- * The symlink content passed back must be null terminated and the length
- * indicated in the buffer description must include the terminator.
+ * The copied content is null terminated; the utf8string length excludes the
+ * terminator.
  *
  * @param [in]  objectHandle  Link to read
- * @param [out] buffer        Buffer descriptor to which the FSAL will
- *                            store the address of the buffer holding the link
- *                            and the link length
- * @param [out] refresh       true if the content are to be retrieved from
- *                            the underlying filesystem rather than cache
+ * @param [out] buffer        utf8string the FSAL fills with the link target
+ * @param [in]  refresh       true to retrieve the content from the underlying
+ *                            filesystem rather than cache (unused: the FSAL
+ *                            always reads live)
  *
  * @returns: FSAL status
  */
-static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle, struct gsh_buffdesc *buffer,
+static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle, utf8string *buffer,
                                bool refresh) {
 	(void)refresh;
 	struct SaunaFSExport *export = NULL;
@@ -1865,7 +1863,7 @@ static fsal_status_t readlink_(struct fsal_obj_handle *objectHandle, struct gsh_
 	if (size < 0) { return fsalLastError(); }
 
 	size = MIN(size, SAUNAFS_MAX_READLINK_LENGTH);
-	buffer->addr = gsh_strldup(result, size, &buffer->len);
+	copy_into_utf8string(buffer, result, size);
 
 	return fsalstat(ERR_FSAL_NO_ERROR, 0);
 }

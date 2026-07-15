@@ -157,12 +157,23 @@ message(STATUS "ISAL PIC LIBRARY: ${ISAL_PIC_LIBRARY}")
 
 # Download nfs-ganesha
 if(ENABLE_NFS_GANESHA)
-  set(NFS_GANESHA_VERSION "9.2")
-  download_external(NFS_GANESHA "nfs-ganesha-${NFS_GANESHA_VERSION}"
-                    "https://github.com/nfs-ganesha/nfs-ganesha/archive/V${NFS_GANESHA_VERSION}.zip")
-  set(NTIRPC_VERSION "7.2")
-  download_external(NTIRPC "ntirpc-${NTIRPC_VERSION}"
-                    "https://github.com/nfs-ganesha/ntirpc/archive/v${NTIRPC_VERSION}.zip")
+  # Single source of truth for the Ganesha release: tests/ci_build/ganesha/ganesha.env
+  # (shared with the CI workflow and the Ganesha Docker image).
+  set(GANESHA_ENV "${CMAKE_SOURCE_DIR}/tests/ci_build/ganesha/ganesha.env")
+  file(STRINGS "${GANESHA_ENV}" _ganesha_version_line REGEX "^GANESHA_VERSION=")
+  string(REGEX REPLACE "^GANESHA_VERSION=" "" GANESHA_GIT_TAG "${_ganesha_version_line}")
+  file(STRINGS "${GANESHA_ENV}" _ganesha_url_line REGEX "^GANESHA_GIT_URL=")
+  string(REGEX REPLACE "^GANESHA_GIT_URL=" "" GANESHA_GIT_URL "${_ganesha_url_line}")
+  # Local directory name keeps the numeric form (V9.15 -> nfs-ganesha-9.15).
+  string(REGEX REPLACE "^[Vv]" "" NFS_GANESHA_VERSION "${GANESHA_GIT_TAG}")
+
+  # Clone at the pinned tag WITH submodules so src/libntirpc is checked out at the
+  # exact commit this release pins. ntirpc thus tracks the Ganesha version with no
+  # separate pin to maintain (a source zip would omit the submodule entirely).
+  clone_external_git(NFS_GANESHA "nfs-ganesha-${NFS_GANESHA_VERSION}"
+                     "${GANESHA_GIT_URL}" "${GANESHA_GIT_TAG}")
+  # ntirpc headers live inside the Ganesha submodule checkout.
+  set(NTIRPC_DIR_NAME "${NFS_GANESHA_DIR_NAME}/src/libntirpc" CACHE INTERNAL "" FORCE)
 endif()
 
 # Find Prometheus

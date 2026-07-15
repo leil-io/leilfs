@@ -179,6 +179,20 @@ if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Ganesha' /etc/sudoers.d/s
 	END
 fi
 
+if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Ganesha RDMA' /etc/sudoers.d/saunafstest >/dev/null; then
+	cat <<-'END' >>/etc/sudoers.d/saunafstest
+		# Ganesha RDMA (NFS over RDMA) automated test
+		saunafstest ALL = NOPASSWD: /usr/sbin/modprobe siw
+		saunafstest ALL = NOPASSWD: /usr/sbin/modprobe rdma_rxe
+		saunafstest ALL = NOPASSWD: /usr/sbin/modprobe rpcrdma
+		saunafstest ALL = NOPASSWD: /usr/bin/rdma link add sfs_rdma0 type siw netdev *
+		saunafstest ALL = NOPASSWD: /usr/bin/rdma link add sfs_rdma0 type rxe netdev *
+		saunafstest ALL = NOPASSWD: /usr/bin/rdma link delete sfs_rdma0
+		saunafstest ALL = NOPASSWD: /usr/sbin/iwpmd
+		saunafstest ALL = NOPASSWD: /usr/bin/pkill -x iwpmd
+	END
+fi
+
 if [ ! -f /etc/sudoers.d/saunafstest ] || ! grep -q '# Kerberos' /etc/sudoers.d/saunafstest >/dev/null; then
 	cat <<-'END' >>/etc/sudoers.d/saunafstest
 		# Kerberos automated tests

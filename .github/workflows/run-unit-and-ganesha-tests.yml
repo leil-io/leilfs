@@ -45,73 +45,16 @@ jobs:
                   docker-images: false       # 0B
                   swap-storage: false        # Keep swap enabled for safety
 
-            - name: Build and install Ganesha v9.2
+            - name: Build and install NFS-Ganesha
               run: |
                 set -eux
-                # Install build dependencies
-                sudo apt update
-                sudo apt install -y --no-install-recommends \
-                    acl \
-                    bison \
-                    build-essential \
-                    byacc \
-                    cmake \
-                    dbus \
-                    docbook \
-                    docbook-xml \
-                    doxygen \
-                    fio \
-                    flex \
-                    git \
-                    krb5-user \
-                    libacl1-dev \
-                    libblkid-dev \
-                    libboost-filesystem-dev \
-                    libboost-iostreams-dev \
-                    libboost-program-options-dev \
-                    libboost-system-dev \
-                    libcap-dev \
-                    libdbus-1-dev \
-                    libgssapi-krb5-2 \
-                    libjemalloc-dev \
-                    libjudy-dev \
-                    libkrb5-dev \
-                    libkrb5support0 \
-                    libnfsidmap-dev \
-                    libnsl-dev \
-                    libsqlite3-dev \
-                    libtirpc-dev \
-                    liburcu-dev \
-                    nfs-common \
-                    pkg-config \
-                    pv \
-                    wget \
-                    unzip \
-                    rpcbind
-
-                # Clone and build Ganesha v9.2
-                cd $GITHUB_WORKSPACE
-                git clone https://github.com/nfs-ganesha/nfs-ganesha.git
-                cd nfs-ganesha
-                git checkout V9.2
-                git submodule update --recursive --init
-                mkdir build
-                cmake -B build src \
-                    -DCMAKE_C_FLAGS="-Wno-unused-function" \
-                    -DCMAKE_INSTALL_PREFIX=/usr \
-                    -DUSE_FSAL_CEPH=OFF \
-                    -DUSE_FSAL_GLUSTER=OFF \
-                    -DUSE_FSAL_GPFS=OFF \
-                    -DUSE_FSAL_KVSFS=OFF \
-                    -DUSE_FSAL_LIZARDFS=OFF \
-                    -DUSE_FSAL_LUSTRE=OFF \
-                    -DUSE_FSAL_PROXY_V3=OFF \
-                    -DUSE_FSAL_PROXY_V4=OFF \
-                    -DUSE_FSAL_RGW=OFF \
-                    -DUSE_FSAL_XFS=OFF \
-                    -DUSE_GSS=ON \
-                    -DUSE_MONITORING=OFF
-                sudo cmake --build build --target install
+                cd "${GITHUB_WORKSPACE}"
+                sudo apt-get update
+                # All Ganesha build + runtime deps come from the single shared list;
+                # the version and build procedure live alongside it.
+                grep -vE '^[[:space:]]*(#|$)' tests/ci_build/ganesha/ganesha-deps.txt \
+                    | xargs sudo apt-get install -y --no-install-recommends
+                tests/ci_build/ganesha/build-ganesha.sh /usr
 
             - name: Set up Python
               uses: actions/setup-python@v4
@@ -172,6 +115,18 @@ jobs:
             - name: Run Unit Tests suite
               run: |
                   "${GITHUB_WORKSPACE}/build/src/unittests/unittests" --gtest_color=yes
+
+            - name: Enable soft-RDMA kernel modules
+              run: |
+                  # Needed by RDMA tests. SoftiWARP (siw) / SoftRoCE (rdma_rxe) usually ship
+                  # in linux-modules-extra.
+                  sudo apt-get install -y "linux-modules-extra-$(uname -r)" || true
+                  sudo modprobe siw 2>/dev/null || sudo modprobe rdma_rxe 2>/dev/null || true
+                  if modinfo siw >/dev/null 2>&1 || modinfo rdma_rxe >/dev/null 2>&1; then
+                      echo "soft-RDMA module available; RDMA test will run"
+                  else
+                      echo "soft-RDMA module NOT available on this kernel; RDMA test will skip"
+                  fi
 
             - name: Run Ganesha suite
               run: |
