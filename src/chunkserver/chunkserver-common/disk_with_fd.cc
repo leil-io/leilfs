@@ -60,7 +60,7 @@ bool FDDisk::isMarkedForDeletion() const {
 bool FDDisk::isZonedDevice() const { return isZonedDevice_; }
 
 bool FDDisk::isSelectableForNewChunk() const {
-	return !isDamaged_ && !isMarkedForDeletion() && totalSpace_ != 0 &&
+	return !isDamaged_ && !isMarkedForDeletion() && !wasRemovedFromConfig_ && totalSpace_ != 0 &&
 	       availableSpace_ != 0 && scanState_ == IDisk::ScanState::kWorking;
 }
 
