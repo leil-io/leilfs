@@ -424,12 +424,15 @@ void hddCheckDisks() {
 				if (!(*it)->isZonedDevice() && (*it)->metaPath() != (*it)->dataPath()) {
 					ChunkTrashManager::eraseDisk((*it)->dataPath());
 				}
-				if (!diskToDelWithPendingChunks.second.empty()) {
-					// Pending chunks; moving *it leaves a null unique_ptr in
-					// gDisks, so it must stay the last use of the disk.
-					gDisksToBeDeletedWithPendingChunks.emplace_back(
-					    std::move(*it), std::move(diskToDelWithPendingChunks.second));
-				}
+				// Always defer the actual destruction to hddReleaseDisksToBeDeleted,
+				// which runs without gDisksMutex.
+				// Destroying the disk here would join its worker threads
+				// (e.g. a plugin garbage collector) while holding gDisksMutex,
+				// and any of those threads taking gDisksMutex would deadlock
+				// the whole chunkserver. Moving *it leaves a null unique_ptr
+				// in gDisks, so it must stay the last use of the disk.
+				gDisksToBeDeletedWithPendingChunks.emplace_back(
+				    std::move(*it), std::move(diskToDelWithPendingChunks.second));
 				gDisks.erase(it);
 				break;
 			}
