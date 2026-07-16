@@ -393,6 +393,15 @@ void hddCheckDisks() {
 
 	changed = 0;
 
+	// Owning pointers of removed disks with no pending chunks. Declared
+	// before the lock so it is destroyed after the lock is released: the
+	// disk destructor joins per-disk worker threads (e.g. plugin garbage
+	// collectors) which may take gDisksMutex, and destroying promptly here
+	// (instead of deferring to hddReleaseDisksToBeDeleted) minimizes the
+	// window in which a re-added disk coexists with its old instance
+	// (stale lock-file descriptors, still-running workers).
+	std::vector<std::unique_ptr<IDisk>> disksToDestroy;
+
 	std::unique_lock disksUniqueLock(gDisksMutex);
 
 	if (gDiskActions == 0) {
@@ -439,15 +448,22 @@ void hddCheckDisks() {
 				if (!(*it)->isZonedDevice() && (*it)->metaPath() != (*it)->dataPath()) {
 					ChunkTrashManager::eraseDisk((*it)->dataPath());
 				}
-				// Always defer the actual destruction to hddReleaseDisksToBeDeleted,
-				// which runs without gDisksMutex.
-				// Destroying the disk here would join its worker threads
-				// (e.g. a plugin garbage collector) while holding gDisksMutex,
-				// and any of those threads taking gDisksMutex would deadlock
-				// the whole chunkserver. Moving *it leaves a null unique_ptr
-				// in gDisks, so it must stay the last use of the disk.
-				gDisksToBeDeletedWithPendingChunks.emplace_back(
-				    std::move(*it), std::move(diskToDelWithPendingChunks.second));
+				// Never destroy the disk here: the destructor joins worker
+				// threads (e.g. a plugin garbage collector) that may take
+				// gDisksMutex, which is held now — that join would deadlock
+				// the whole chunkserver. Disks with pending chunks are
+				// deferred to hddReleaseDisksToBeDeleted; disks without
+				// pending chunks are destroyed by disksToDestroy right after
+				// this function releases gDisksMutex, keeping the overlap
+				// window with a possible fast re-add minimal. Moving *it
+				// leaves a null unique_ptr in gDisks, so it must stay the
+				// last use of the disk.
+				if (!diskToDelWithPendingChunks.second.empty()) {
+					gDisksToBeDeletedWithPendingChunks.emplace_back(
+					    std::move(*it), std::move(diskToDelWithPendingChunks.second));
+				} else {
+					disksToDestroy.push_back(std::move(*it));
+				}
 				gDisks.erase(it);
 				break;
 			}
