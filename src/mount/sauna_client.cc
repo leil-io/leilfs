@@ -532,6 +532,14 @@ uint8_t attr_get_mattr(const Attributes &attr) {
 	return (attr[1]>>4);    // higher 4 bits of mode
 }
 
+/// Adopts the open's data-cache decision into lookup-derived attributes. The
+/// entry and attribute cache bits stay with the lookup result, which carries
+/// the parent context the open does not have.
+static void attr_merge_open_datacache(Attributes &attr, const Attributes &open_attr) {
+	constexpr uint8_t kAllowDataCacheBit = MATTR_ALLOWDATACACHE << 4;
+	attr[1] = (attr[1] & ~kAllowDataCacheBit) | (open_attr[1] & kAllowDataCacheBit);
+}
+
 void attr_to_stat(inode_t inode, const Attributes &attr, struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
@@ -2145,6 +2153,17 @@ void remove_file_info(FileInfo *f) {
 	delete fileinfo;
 }
 
+/// Logs a failed create() and converts the status to the thrown
+/// RequestException. The suffix names the failing phase when the create is
+/// split into several master calls.
+[[noreturn]] static void logCreateFailAndThrow(const Context &ctx, inode_t parent, const char *name,
+                                               const char *modestr, mode_t mode, int status,
+                                               const char *suffix = "") {
+	oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o)%s: %s", parent, name, modestr + 1,
+	             (unsigned int)mode, suffix, saunafs_error_string(status));
+	throw RequestException(status);
+}
+
 EntryParam create(Context &ctx, inode_t parent, const char *name, mode_t mode,
 		FileInfo* fi) {
 	struct EntryParam e;
@@ -2170,24 +2189,12 @@ EntryParam create(Context &ctx, inode_t parent, const char *name, mode_t mode,
 	}
 	if (parent==SPECIAL_INODE_ROOT) {
 		if (IS_SPECIAL_NAME(name)) {
-			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
-					parent,
-					name,
-					modestr+1,
-					(unsigned int)mode,
-					saunafs_error_string(SAUNAFS_ERROR_EACCES));
-			throw RequestException(SAUNAFS_ERROR_EACCES);
+			logCreateFailAndThrow(ctx, parent, name, modestr, mode, SAUNAFS_ERROR_EACCES);
 		}
 	}
 	nleng = strlen(name);
 	if (nleng>SFS_NAME_MAX) {
-		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
-				parent,
-				name,
-				modestr+1,
-				(unsigned int)mode,
-				saunafs_error_string(SAUNAFS_ERROR_ENAMETOOLONG));
-		throw RequestException(SAUNAFS_ERROR_ENAMETOOLONG);
+		logCreateFailAndThrow(ctx, parent, name, modestr, mode, SAUNAFS_ERROR_ENAMETOOLONG);
 	}
 
 	oflags = AFTER_CREATE;
@@ -2198,56 +2205,67 @@ EntryParam create(Context &ctx, inode_t parent, const char *name, mode_t mode,
 	} else if ((fi->flags & O_ACCMODE) == O_RDWR) {
 		oflags |= WANT_READ | WANT_WRITE;
 	} else {
-		oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
-				parent,
-				name,
-				modestr+1,
-				(unsigned int)mode,
-				saunafs_error_string(SAUNAFS_ERROR_EINVAL));
-		throw RequestException(SAUNAFS_ERROR_EINVAL);
+		logCreateFailAndThrow(ctx, parent, name, modestr, mode, SAUNAFS_ERROR_EINVAL);
 	}
 
-	if (masterVersion.load() >= kFirstVersionWithFusedCreate) {
-		// Fused create+open: one FUSE_CREATE RPC instead of the separate FUSE_MKNOD
-		// and FUSE_OPEN round-trip pair.
-		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-			fs_create(parent, nleng, (const uint8_t*)name, mode & 07777, ctx.umask, ctx.uid,
-			          ctx.gid, oflags, inode, attr));
-		if (status != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o): %s",
-					parent,
-					name,
-					modestr+1,
-					(unsigned int)mode,
-					saunafs_error_string(status));
-			throw RequestException(status);
+	// A file created by a racing client can be seen as EEXIST and vanish again
+	// before the fallback open; under O_CREAT that means creating it ourselves,
+	// so the whole create/lookup/open sequence retries a bounded number of times.
+	constexpr int kCreateRaceRetries = 2;
+	// Fused create+open (one FUSE_CREATE RPC) replaces the separate FUSE_MKNOD
+	// and FUSE_OPEN round-trip pair when the master supports it.
+	const bool useFusedCreate = masterVersion.load() >= kFirstVersionWithFusedCreate;
+	bool lostCreateRace = false;
+	bool openFailed = false;
+	Attributes open_attr;
+	for (int attempt = 0;; ++attempt) {
+		lostCreateRace = false;
+		openFailed = false;
+		if (useFusedCreate) {
+			RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
+			    status, ctx,
+			    fs_create(parent, nleng, (const uint8_t *)name, mode & 07777, ctx.umask, ctx.uid,
+			              ctx.gid, oflags, inode, attr));
+		} else {
+			RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
+			    status, ctx,
+			    fs_mknod(parent, nleng, (const uint8_t *)name, TYPE_FILE, mode & 07777, ctx.umask,
+			             ctx.uid, ctx.gid, 0, inode, attr));
 		}
-	} else {
-		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-			fs_mknod(parent,nleng,(const uint8_t*)name,TYPE_FILE,mode&07777,ctx.umask,ctx.uid,ctx.gid,0,inode,attr));
-		if (status != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (mknod): %s",
-					parent,
-					name,
-					modestr+1,
-					(unsigned int)mode,
-					saunafs_error_string(status));
-			throw RequestException(status);
+		if (status == SAUNAFS_ERROR_EEXIST && !(fi->flags & O_EXCL)) {
+			// Lost a create race with another client. Without O_EXCL the open
+			// must fall back to the file that won the race instead of failing.
+			lostCreateRace = true;
+			RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
+			    status, ctx,
+			    fs_lookup(parent, std::string(name, nleng), ctx.uid, ctx.gid, &inode, attr));
+			if (status == SAUNAFS_ERROR_ENOENT && attempt < kCreateRaceRetries) { continue; }
 		}
-		Attributes tmp_attr;
-		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
-			fs_opencheck(inode,ctx.uid,ctx.gid,oflags,tmp_attr));
-
-		if (status != SAUNAFS_STATUS_OK) {
-			oplog_printf(ctx, "create (%" PRIiNode ",%s,-%s:0%04o) (open): %s",
-					parent,
-					name,
-					modestr+1,
-					(unsigned int)mode,
-					saunafs_error_string(status));
-			throw RequestException(status);
+		if (status != SAUNAFS_STATUS_OK) { break; }
+		// Fused create has already opened the file unless the open fell back to the
+		// race winner's; plain mknod never opens, so both need the explicit opencheck.
+		if (!useFusedCreate || lostCreateRace) {
+			// AFTER_CREATE skips the master's permission checks; it is only valid
+			// for the client that actually created the inode.
+			const uint8_t opencheckFlags =
+			    lostCreateRace ? static_cast<uint8_t>(oflags & ~AFTER_CREATE) : oflags;
+			RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
+			    status, ctx, fs_opencheck(inode, ctx.uid, ctx.gid, opencheckFlags, open_attr));
+			if (status != SAUNAFS_STATUS_OK) {
+				openFailed = true;
+				if (lostCreateRace && status == SAUNAFS_ERROR_ENOENT &&
+				    attempt < kCreateRaceRetries) {
+					continue;
+				}
+			}
 		}
+		break;
 	}
+	if (status != SAUNAFS_STATUS_OK) {
+		const char *suffix = useFusedCreate ? "" : (openFailed ? " (open)" : " (mknod)");
+		logCreateFailAndThrow(ctx, parent, name, modestr, mode, status, suffix);
+	}
+	if (lostCreateRace) { attr_merge_open_datacache(attr, open_attr); }
 
 	mattr = attr_get_mattr(attr);
 	fileinfo = fs_newfileinfo(fi->flags & O_ACCMODE,inode);
