@@ -260,6 +260,14 @@ static IChunk *hddChunkCreate(IDisk *disk, uint64_t chunkId,
 }
 
 void hddReleaseDisksToBeDeleted() {
+	// Owning pointers of the disks selected for destruction. Declared before
+	// the lock so it is destroyed after the lock is released: the disk
+	// destructor joins per-disk worker threads (e.g. plugin garbage
+	// collectors), and destroying a disk while holding
+	// gDisksToBeDeletedWithPendingChunksMutex can deadlock with
+	// hddCheckDisks, which acquires that mutex while holding gDisksMutex.
+	std::vector<std::unique_ptr<IDisk>> disksToDestroy;
+
 	std::lock_guard diskToBeDeletedLock(gDisksToBeDeletedWithPendingChunksMutex);
 	std::unique_lock chunksMapLock(gChunksMapMutex, std::defer_lock);
 
@@ -296,14 +304,21 @@ void hddReleaseDisksToBeDeleted() {
 		}
 	}
 
+	disksToDestroy.reserve(disksToDelete.size());
+
 	for (auto *disk : disksToDelete) {
 		safs::log_info("({}) Deleting disk {} with no pending chunks", __func__,
 		               disk->getPaths().c_str());
-		gDisksToBeDeletedWithPendingChunks.erase(
-		    std::remove_if(gDisksToBeDeletedWithPendingChunks.begin(),
-		                   gDisksToBeDeletedWithPendingChunks.end(),
-		                   [disk](const auto &pair) { return pair.first.get() == disk; }),
-		    gDisksToBeDeletedWithPendingChunks.end());
+		auto diskIter =
+		    std::find_if(gDisksToBeDeletedWithPendingChunks.begin(),
+		                 gDisksToBeDeletedWithPendingChunks.end(),
+		                 [disk](const auto &pair) { return pair.first.get() == disk; });
+		if (diskIter != gDisksToBeDeletedWithPendingChunks.end()) {
+			// Take ownership; the disk is destroyed by disksToDestroy after
+			// the mutex is released.
+			disksToDestroy.push_back(std::move(diskIter->first));
+			gDisksToBeDeletedWithPendingChunks.erase(diskIter);
+		}
 	}
 }
 
