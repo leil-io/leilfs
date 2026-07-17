@@ -348,7 +348,7 @@ like 'chmod ug-s', and therefore can't be controlled by SFS as 'chown'
 
 You can define your `/etc/fstab` LeilFS share like this:
 
-    leil-master:/ /mnt/leil safs default 0 0
+    leil-master:/ /mnt/leil safs rw 0 0
 
 == REPORTING BUGS
 
