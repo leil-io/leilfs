@@ -22,7 +22,7 @@
 }
 
 {
-   # fuse_session_new is called only once at starting time. 
+   # fuse_session_new is called only once at starting time.
    # Looks like related to fuse and not to our client.
    fuse_session_new_initialization
    Helgrind:Race
@@ -30,6 +30,19 @@
    obj:*
    obj:*
    obj:*
+   fun:start_thread
+   fun:clone
+}
+
+{
+   # Races between libfuse3 worker threads on the fuse_session structure
+   # (allocated in fuse_session_new). Every racing frame is inside
+   # libfuse3.so, so this is fuse-internal bookkeeping, not our client code.
+   libfuse3_worker_loop_internal_races
+   Helgrind:Race
+   obj:*libfuse3.so*
+   obj:*libfuse3.so*
+   obj:*vgpreload_helgrind*
    fun:start_thread
    fun:clone
 }
@@ -80,4 +93,34 @@
    fun:_ZN19NetworkWorkerThreadclEv
    ...
    fun:start_thread
+}
+
+# GLIBC INTERNALS (any daemon)
+
+{
+   # pthread_join recycles the dead thread's cached stack and TLS block
+   # (__nptl_free_stacks -> _dl_deallocate_tls) while helgrind still sees the
+   # dying thread's own TLS destructors (__call_tls_dtors) as a conflicting
+   # access: glibc's stack-cache reuse has no happens-before edge helgrind
+   # can observe. pthread_join only returns after the thread fully exited,
+   # so this is glibc-internal, not our code.
+   glibc_thread_stack_and_tls_teardown
+   Helgrind:Race
+   fun:free
+   ...
+   fun:_dl_deallocate_tls
+   fun:__nptl_free_stacks
+   ...
+}
+
+{
+   # On a timed condition-variable wait, glibc's __pthread_cond_wait_common
+   # internally signals the condvar (wakeup handoff between waiter groups)
+   # without holding the associated mutex; helgrind reports it as a dubious
+   # signal. Purely glibc-internal, affects any pthread_cond_clockwait user.
+   glibc_cond_clockwait_internal_signal
+   Helgrind:Dubious
+   obj:*vgpreload_helgrind*
+   fun:__pthread_cond_wait_common
+   ...
 }
