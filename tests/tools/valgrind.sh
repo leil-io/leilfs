@@ -112,7 +112,7 @@ valgrind_terminate() {
 	# Wait a bit if there are any valgrind processes which have just started. This is
 	# because of a bug in glibc/valgrind which results in SIGSEGV if we kill it too soon.
 	wait_for "! pgrep -u saunafstest -d, ${valgrind_tool_} | xargs -r ps -o etime= -p | grep -q '^ *00:0[0-3]$'" '5 seconds' || true
-	local pattern="${valgrind_tool_}|polonaise-"
+	local pattern="${valgrind_tool_}"
 	if pgrep -u saunafstest "$pattern" >/dev/null; then
 		echo " --- valgrind: Waiting for all processes to be terminated --- "
 		pkill -TERM -u saunafstest "$pattern"

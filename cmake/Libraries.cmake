@@ -72,31 +72,6 @@ endif()
 # Find Boost
 find_package(Boost CONFIG REQUIRED COMPONENTS filesystem iostreams program_options)
 
-# Find Thrift
-find_package(Thrift COMPONENTS library)
-if(THRIFT_FOUND)
-  message(STATUS "Found Thrift")
-else()
-  message(STATUS "Could NOT find Thrift (but it's not required)")
-  message(STATUS "   If it's installed in a non-standard path, set THRIFT_ROOT variable")
-  message(STATUS "   to point this path (cmake -DTHRIFT_ROOT=...)")
-endif()
-
-# Find Polonaise
-set(POLONAISE_REQUIRED_VERSION 0.3.1)
-find_package(Polonaise ${POLONAISE_REQUIRED_VERSION} EXACT QUIET NO_MODULE NO_CMAKE_BUILDS_PATH)
-if(POLONAISE_FOUND)
-  message(STATUS "Found Polonaise")
-else()
-  message(STATUS "Could NOT find Polonaise v${POLONAISE_REQUIRED_VERSION} (but it's not required)")
-  if(Polonaise_CONSIDERED_VERSIONS)
-    message(STATUS "   Incompatible versions ${Polonaise_CONSIDERED_VERSIONS} "
-        "found in ${Polonaise_CONSIDERED_CONFIGS}")
-  endif()
-  message(STATUS "   If it's installed in a non-standard path, set Polonaise_DIR variable")
-  message(STATUS "   to point this path (cmake -DPolonaise_DIR=...)")
-endif()
-
 # Find crcutil
 if(NOT BIG_ENDIAN)
   INCLUDE(FindPkgConfig)

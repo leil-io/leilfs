@@ -55,7 +55,7 @@ test_end() {
 	# terminate all SaunaFS daemons if requested (eg. to collect some code coverage data)
 	if [[ ${GENTLY_KILL:-} ]]; then
 		for i in {1..50}; do
-			local pattern='sfs|saunafs-polo|polonaise-'
+			local pattern='sfs'
 			pkill -USR1 -u saunafstest "$pattern" || true
 			if ! pgrep -u saunafstest "$pattern" >/dev/null; then
 				echo "All SaunaFS processes terminated"
@@ -193,7 +193,7 @@ terminate_fs_processes() {
 		windows_unmount_fs
 		return
 	fi
-	local pattern='sfs|saunafs-polo|polonaise-'
+	local pattern='sfs'
 	unix_unmount_fs
 	pkill -TERM -u saunafstest "$pattern" || true
 	for i in {1..25}; do

@@ -3,8 +3,8 @@
 The `src/mount` module is the client-side runtime for LeilFS. It is
 responsible for:
 
-- translating frontend requests (FUSE, C/C++ API, and legacy Polonaise) into
-  metadata RPCs to the master,
+- translating frontend requests (FUSE and C/C++ API) into metadata RPCs to the
+  master,
 - coordinating chunkserver reads/writes,
 - maintaining client-side caches and I/O limiting,
 - exposing operational special files (for example `.stats`,
@@ -13,8 +13,6 @@ responsible for:
 This directory produces the shared `mount` library and multiple frontends:
 
 - `leil-mount` (`src/mount/fuse`) -- FUSE daemon.
-- `leil-polonaise-server` (`src/mount/polonaise`) -- optional Thrift
-  server, intended for removal in a future cleanup.
 - `saunafs-client` / `saunafs-client-cpp` (`src/mount/client`) -- embeddable
   client libraries (when `ENABLE_CLIENT_LIB` is enabled).
 
@@ -26,7 +24,6 @@ This directory produces the shared `mount` library and multiple frontends:
 src/mount/
 |-- *.{h,cc}         # Core mount runtime and data path
 |-- fuse/            # FUSE frontend (leil-mount)
-|-- polonaise/       # Thrift frontend (leil-polonaise-server)
 |-- client/          # C/C++ API libraries
 `-- windows -> ...   # Symlink to the Windows-client repo (populated when building for Windows)
 ```
@@ -64,18 +61,6 @@ modes:
 `sfs_fuse.cc` adapts `fuse_req_t` to `SaunaClient::Context`, updates
 supplementary groups, and translates `RequestException` to `errno`.
 
-### Polonaise (`saunafs-polonaise-server`)
-
-`src/mount/polonaise/main.cc` initializes `SaunaClient`, then starts a Thrift
-`TThreadedServer` (`PolonaiseProcessor`).
-
-This frontend is not actively maintained and is intended for removal in a future
-cleanup. The build option (`ENABLE_POLONAISE`) is still `ON` by default and
-produces a normal executable with no deprecation guard.
-
-Build is conditional (`Boost.Program_options`, `Polonaise`, `Thrift`) and may
-be skipped when dependencies are unavailable.
-
 ### Embedded Client Libraries
 
 `src/mount/client` provides:
@@ -100,7 +85,6 @@ copy from `/tmp` to isolate singleton global state per instance.
 |---|---|---|
 | `mount` library | always from `src/mount` | Core client runtime shared by all frontends. |
 | `leil-mount` | top-level `NOT MINGW` + FUSE3 detected (fatal error if not found) | Added via `add_subdirectory(src/mount/fuse)`. |
-| `leil-polonaise-server` | `ENABLE_POLONAISE=ON` + Boost.Program_options + Polonaise + Thrift | Subdirectory returns early when dependencies are missing. |
 | `saunafs-client`, `saunafs-client-cpp`, `saunafsmount_shared` | `ENABLE_CLIENT_LIB=ON` | Unit/integration test mode (`ENABLE_TESTS`) forces this option on. |
 | `fsalsaunafs` (NFS-Ganesha FSAL) | `ENABLE_NFS_GANESHA=ON` | Links against `saunafs-client_pic`; `ENABLE_CLIENT_LIB=ON` is required for in-tree builds since `saunafs-client_pic` is only produced when that option is on. |
 
