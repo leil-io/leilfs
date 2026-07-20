@@ -14,9 +14,11 @@ FILE_SIZE=123456789 BLOCK_SIZE=12345 file-generate dir_ec/file
 saunafs_chunkserver_daemon 0 stop
 saunafs_chunkserver_daemon 1 stop
 saunafs_chunkserver_daemon 2 stop
+saunafs_wait_for_ready_chunkservers 4
 
 assert_failure "saunafs fileinfo dir_ec/file | grep 'not enough parts available'"
 
 saunafs_chunkserver_daemon 3 stop
+saunafs_wait_for_ready_chunkservers 3
 
 saunafs fileinfo dir_ec/file | grep "not enough parts available"
