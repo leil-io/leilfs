@@ -66,11 +66,6 @@ public:
 	/// function does nothing, but we need the function in the interface.
 	void shrinkToBlocks(uint16_t newBlocks) override;
 
-	/// Returns true if the Chunk is in an state considered as dirty. For
-	/// CmrChunk, this function always returns false because CmrChunk doesn't
-	/// require fragmentation, so it never becomes dirty.
-	bool isDirty() override;
-
 	/// String representation of CmrChunk members, useful for debugging.
 	std::string toString() const override;
 };

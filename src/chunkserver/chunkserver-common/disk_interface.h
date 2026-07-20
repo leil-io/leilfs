@@ -140,6 +140,11 @@ public:
 	virtual IChunk *instantiateNewConcreteChunk(uint64_t chunkId,
 	                                            ChunkPartType type) = 0;
 
+	/// Applies any disk-specific on-disk format to a brand-new chunk before its
+	/// header is sized and serialized. Called only from the new-chunk creation
+	/// path (not for duplicates). Default: no-op.
+	virtual int applyNewChunkFormat(IChunk * /*chunk*/) = 0;
+
 	/// Sets the number of blocks for \a chunk from \a originalBlocks to \a
 	/// newBlocks.
 	virtual void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,

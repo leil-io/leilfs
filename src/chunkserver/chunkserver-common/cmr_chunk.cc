@@ -102,8 +102,6 @@ off_t CmrChunk::getCrcOffset() const { return kMaxSignatureBlockSize; }
 
 void CmrChunk::shrinkToBlocks(uint16_t newBlocks) { (void)newBlocks; }
 
-bool CmrChunk::isDirty() { return false; }
-
 std::string CmrChunk::toString() const {
 	std::stringstream result;
 

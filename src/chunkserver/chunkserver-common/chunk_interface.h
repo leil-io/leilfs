@@ -165,9 +165,11 @@ public:
 	/// truncating a file.
 	virtual void shrinkToBlocks(uint16_t newBlocks) = 0;
 
-	/// Returns true if the Chunk is in an state considered as dirty.
-	/// For example the Chunk is fragmented and needs defragmentation.
-	virtual bool isDirty() = 0;
+	/// Releases memory the chunk caches only to speed up I/O (e.g. per-chunk
+	/// compression dictionaries). Called when the chunk leaves the open-chunks
+	/// cache (its descriptors are being closed), with the chunk locked, so the
+	/// caches can be rebuilt lazily on the next I/O. Default: no-op.
+	virtual void releaseCachedResources() noexcept {}
 
 	/// Returns the Chunk format. Check \ref ChunkFormat for more information.
 	virtual ChunkFormat chunkFormat() const = 0;

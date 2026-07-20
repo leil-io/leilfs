@@ -81,3 +81,22 @@
    ...
    fun:start_thread
 }
+
+{
+   # False positive at shutdown: glibc caches exited threads' stacks, and a
+   # later pthread_join() (JobPool::stop()) trims that cache, freeing the TLS
+   # blocks of OTHER, already-dead threads. glibc knows those threads are gone
+   # via the kernel CLEARTID futex, which helgrind cannot observe, so (with
+   # --free-is-write=yes) the free() looks like a write racing the dead
+   # thread's own thread_local destructors (e.g. the zonefs_disk compressed
+   # I/O scratch buffers). The frames between the TLS free and join vary with
+   # the glibc version, hence the "...".
+   jobpool_stop_tls_teardown_race
+   Helgrind:Race
+   fun:free
+   ...
+   fun:_dl_deallocate_tls
+   ...
+   fun:_ZNSt6thread4joinEv
+   fun:_ZN7JobPool4stopEv*
+}

@@ -1205,6 +1205,17 @@ std::pair<int, IChunk *> hddInternalCreateChunk(uint64_t chunkId,
 		return {SAUNAFS_ERROR_IO, ChunkNotFound};
 	}
 
+	// Let the disk stamp any format-specific state (e.g. compression) on the
+	// brand-new chunk before its header is sized and serialized.
+	status = disk->applyNewChunkFormat(chunk);
+	if (status != SAUNAFS_STATUS_OK) {
+		hddAddErrorAndPreserveErrno(chunk);
+		hddIOEnd(chunk);
+		disk->unlinkChunk(chunk);
+		hddDeleteChunkFromRegistry(chunk);
+		return {SAUNAFS_ERROR_IO, ChunkNotFound};
+	}
+
 	uint8_t *ptr = chunk->getChunkHeaderBuffer();
 	memset(ptr, 0, chunk->getHeaderSize());
 

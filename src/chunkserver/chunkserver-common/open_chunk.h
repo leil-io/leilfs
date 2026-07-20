@@ -89,6 +89,10 @@ public:
 
 			chunk_->setMetaFD(-1);
 			chunk_->setDataFD(-1);
+			// The chunk is leaving the open-chunks cache: drop I/O-speedup
+			// caches (e.g. compression dictionaries) so idle chunks do not pin
+			// memory. They are rebuilt lazily on the next I/O.
+			chunk_->releaseCachedResources();
 			hddChunkRelease(chunk_);
 		} else if (metaFD_ >= 0) {
 			::close(metaFD_);
