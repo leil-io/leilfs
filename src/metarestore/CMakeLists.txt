@@ -18,6 +18,11 @@ file(GLOB METARESTORE_BACKEND_SOURCES ../master/metadata_backend*.cc)
 # Exclude possible matching unit tests files in the previous glob
 list(FILTER METARESTORE_BACKEND_SOURCES EXCLUDE REGEX ".*unittest.*")
 
+# metarestore is a file-backend-only tool: it never instantiates the forkless/FDB backend,
+# so exclude it outright. Compiling it here only pulled in FoundationDB client headers
+# (fdb_c.h), which broke the build wherever FDB support is off (e.g. the Fedora RPM build).
+list(FILTER METARESTORE_BACKEND_SOURCES EXCLUDE REGEX ".*metadata_backend_forkless\\.cc$")
+
 add_library(metarestore ${METARESTORE_SOURCES} ${METARESTORE_MASTER_SOURCES} ${METARESTORE_HSTRING_SOURCES}
   ${METARESTORE_BACKEND_SOURCES}
   ../master/acl_storage.cc ../master/chunks.cc ../master/chunk_operations_base.cc
