@@ -688,9 +688,7 @@ void safs_setlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi, struc
 					reinterpret_cast<void*>(interrupt_data_key));
 		}
 
-		// WARNING: csetlk_recv() won't work with polonaise server,
-		// since actual code requires setlk_send()
-		// to be executed by the same thread.
+		// setlk_recv() must run on the same thread as setlk_send().
 		SaunaClient::setlk_recv();
 
 		// release the memory

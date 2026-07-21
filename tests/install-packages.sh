@@ -82,7 +82,6 @@ apt_packages=(
 	libspdlog-dev
 	libssl-dev
 	libsystemd-dev
-	libthrift-dev
 	libtirpc-dev
 	liburcu-dev
 	libyaml-cpp-dev
@@ -133,7 +132,6 @@ dnf_packages=(
 	rpm-build
 	spdlog-devel
 	systemd-devel
-	thrift-devel
 	userspace-rcu-devel
 	uuid-devel
 	yaml-cpp-devel

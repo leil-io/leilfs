@@ -3,8 +3,7 @@ unalias -a
 shopt -s expand_aliases extdebug
 
 command_prefix=
-for i in sfsmaster sfschunkserver sfsmount sfsmetarestore sfsmetalogger \
-	saunafs-polonaise-server; do
+for i in sfsmaster sfschunkserver sfsmount sfsmetarestore sfsmetalogger; do
 	alias $i="\${command_prefix} $i"
 done
 

@@ -41,7 +41,6 @@ option(ENABLE_URAFT             "Enable installation of uraft util"             
 option(ENABLE_VERBOSE_ASCIIDOCTOR  "Enable verbose output of asciidoctor"                OFF)
 option(ENABLE_TCMALLOC          "Enable use of tcmalloc-minimal library"                 OFF)
 option(ENABLE_JEMALLOC          "Enable use of jemalloc library"                         OFF)
-option(ENABLE_POLONAISE         "Enable polonaise"                                       ON)
 option(ENABLE_CLIENT_LIB        "Enable dynamic client library (libsaunafs-client)"     OFF)
 # end of SaunaFS options
 option(ENABLE_TRACES            "Enable traces"                                          OFF)
@@ -140,7 +139,6 @@ message(STATUS "ENABLE_DEBUG_LOG: ${ENABLE_DEBUG_LOG}")
 message(STATUS "ENABLE_VERBOSE_ASCIIDOCTOR: ${ENABLE_VERBOSE_ASCIIDOCTOR}")
 message(STATUS "ENABLE_TCMALLOC: ${ENABLE_TCMALLOC}")
 message(STATUS "ENABLE_JEMALLOC: ${ENABLE_JEMALLOC}")
-message(STATUS "ENABLE_POLONAISE: ${ENABLE_POLONAISE}")
 message(STATUS "ENABLE_CLIENT_LIB: ${ENABLE_CLIENT_LIB}")
 message(STATUS "ENABLE_URAFT: ${ENABLE_URAFT}")
 # end of SaunaFS options values
@@ -438,10 +436,6 @@ add_subdirectory(src/common)
 add_subdirectory(src/protocol)
 add_subdirectory(src/tools)
 add_subdirectory(src/mount)
-
-if(ENABLE_POLONAISE)
-  add_subdirectory(src/mount/polonaise)
-endif()
 
 if(NOT MINGW)
   if(BUILD_DEVTOOLS)

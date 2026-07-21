@@ -233,7 +233,6 @@ pipeline {
                                          -DENABLE_CLIENT_LIB=ON \
                                          -DENABLE_DOCS=ON \
                                          -DENABLE_NFS_GANESHA=ON \
-                                         -DENABLE_POLONAISE=OFF \
                                          -DENABLE_URAFT=ON \
                                          -DGSH_CAN_HOST_LOCAL_FS=ON \
                                          -DCMAKE_INSTALL_PREFIX="/usr/local/" \

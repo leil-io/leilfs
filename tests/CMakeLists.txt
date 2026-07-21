@@ -1,8 +1,4 @@
 # Create automatically generated list of test cases
-
-if ( NOT ( ENABLE_POLONAISE AND POLONAISE_FOUND ) )
-  set ( filter_out "|" "grep" "-v" "polonaise" )
-endif ()
 add_custom_target(list_of_test_cases
   COMMAND ls ${CMAKE_CURRENT_SOURCE_DIR}/test_suites
     | xargs -IXXX echo "class XXX : public BashTestingSuite {};"
@@ -12,7 +8,6 @@ add_custom_target(list_of_test_cases
   COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR} && bash tools/generate_tests_from_templates.sh
 
   COMMAND find -L ${CMAKE_CURRENT_SOURCE_DIR}/test_suites/ -name test_*.sh
-    ${filter_out}
     | sed -e "s/[.]sh$//"
     | awk -F/ "{print $(NF-1) \",\" $NF}"
     | xargs -IXXX echo "add_test_case(XXX)"

@@ -41,7 +41,6 @@ BuildRequires:  openssl-devel
 BuildRequires:  pam-devel
 BuildRequires:  spdlog-devel
 BuildRequires:  systemd-devel
-BuildRequires:  thrift-devel
 BuildRequires:  yaml-cpp-devel
 BuildRequires:  zlib-devel
 
