@@ -457,8 +457,11 @@ private:
 		}
 	};
 
-	/// Requires kActive; throws std::logic_error otherwise.
+	/// Requires a backend handle in kActive; throws std::logic_error otherwise.
 	void requireActive(const char *operation) const;
+
+	/// Records a backend failure in the coupled lifecycle fields.
+	void recordFailure(TransactionState failureState, fdb_error_t error);
 
 	/// Encodes and sets an int-valued transaction option (8-byte little-endian).
 	fdb_error_t setIntOption(FDBTransactionOption option, int64_t value);

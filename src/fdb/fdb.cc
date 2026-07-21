@@ -22,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -254,14 +255,19 @@ fdb_error_t DB::setOption(FDBDatabaseOption option, std::string_view value) {
 // Transaction
 
 void Transaction::requireActive(const char *operation) const {
+	requireHandle(operation);
 	if (state_ == TransactionState::kActive) { return; }
 	throw kv::TransactionStateError(std::string("fdb::Transaction::") + operation +
 	                                ": transaction is not usable in state " +
 	                                transactionStateName(state_));
 }
 
+void Transaction::recordFailure(TransactionState failureState, fdb_error_t error) {
+	state_ = failureState;
+	lastFailureCode_ = error;
+}
+
 fdb_error_t Transaction::setOption(FDBTransactionOption option, std::string_view value) {
-	requireHandle("setOption");
 	requireActive("setOption");
 
 	return fdb_transaction_set_option(tr_.get(), option, toU8(value),
@@ -286,7 +292,6 @@ void Transaction::setMaxRetryDelayMs(int64_t ms) {
 	if (ms < 0 || ms > std::numeric_limits<int>::max()) {
 		throw std::invalid_argument("fdb::Transaction::setMaxRetryDelayMs: delay out of range");
 	}
-	requireHandle("setMaxRetryDelayMs");
 	requireActive("setMaxRetryDelayMs");
 
 	fdb_error_t err = setIntOption(FDB_TR_OPTION_MAX_RETRY_DELAY, ms);
@@ -295,8 +300,7 @@ void Transaction::setMaxRetryDelayMs(int64_t ms) {
 		// backoff bound is not enforced, so the transaction must not continue as if
 		// nothing happened (reset/cancel stay legal).
 		error_ = err;
-		state_ = TransactionState::kFailed;
-		lastFailureCode_ = err;
+		recordFailure(TransactionState::kFailed, err);
 		detail::throwTransactionError(err);
 	}
 	// Remember it: FDB reverts options on reset (but keeps them across on_error), so
@@ -312,7 +316,6 @@ void Transaction::setTimeoutMs(int64_t ms) {
 		throw std::invalid_argument(
 		    "fdb::Transaction::setTimeoutMs: timeout must be in (0, INT_MAX]");
 	}
-	requireHandle("setTimeoutMs");
 	requireActive("setTimeoutMs");
 
 	fdb_error_t err = setIntOption(FDB_TR_OPTION_TIMEOUT, ms);
@@ -321,8 +324,7 @@ void Transaction::setTimeoutMs(int64_t ms) {
 		// transaction runs unbounded, so it must not continue as if nothing happened
 		// (reset/cancel stay legal).
 		error_ = err;
-		state_ = TransactionState::kFailed;
-		lastFailureCode_ = err;
+		recordFailure(TransactionState::kFailed, err);
 		detail::throwTransactionError(err);
 	}
 	// Remember it: FDB reverts options on reset (but keeps them across on_error), so
@@ -331,7 +333,6 @@ void Transaction::setTimeoutMs(int64_t ms) {
 }
 
 std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
-	requireHandle("get");
 	requireActive("get");
 
 	bump(gOpCounters.pointReads);
@@ -343,9 +344,9 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 		fdb_error_t injected = FaultInjection::next(faultInjection_->readErrors);
 		if (injected != 0) {
 			error_ = injected;
-			state_ = detail::isRetryableReadError(injected) ? TransactionState::kRetryPending
-			                                                : TransactionState::kFailed;
-			lastFailureCode_ = injected;
+			recordFailure(detail::isRetryableReadError(injected) ? TransactionState::kRetryPending
+			                                                     : TransactionState::kFailed,
+			              injected);
 			safs::log_err("Transaction::get: injected error: {}", fdb_get_error(injected));
 			detail::throwTransactionError(injected);
 		}
@@ -361,9 +362,9 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	if (profiling) { addNanos(gOpCounters.readWaitNanos, elapsedNanosSince(waitStart)); }
 
 	if (error_ != 0) {
-		state_ = detail::isRetryableReadError(error_) ? TransactionState::kRetryPending
-		                                              : TransactionState::kFailed;
-		lastFailureCode_ = error_;
+		recordFailure(detail::isRetryableReadError(error_) ? TransactionState::kRetryPending
+		                                                   : TransactionState::kFailed,
+		              error_);
 		safs::log_err("Transaction::get: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(error_));
 		detail::throwTransactionError(error_);
@@ -376,9 +377,9 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 	error_ = fdb_future_get_value(future.get(), &valuePresent, &valueRead, &valueLength);
 
 	if (error_ != 0) {
-		state_ = detail::isRetryableReadError(error_) ? TransactionState::kRetryPending
-		                                              : TransactionState::kFailed;
-		lastFailureCode_ = error_;
+		recordFailure(detail::isRetryableReadError(error_) ? TransactionState::kRetryPending
+		                                                   : TransactionState::kFailed,
+		              error_);
 		safs::log_err("Transaction::get: fdb_future_get_value: error: {}", fdb_get_error(error_));
 		detail::throwTransactionError(error_);
 	}
@@ -392,7 +393,6 @@ std::optional<kv::Value> Transaction::get(const kv::Key &key, bool snapshot) {
 }
 
 std::unique_ptr<kv::IFuture> Transaction::getAsync(const kv::Key &key, bool snapshot) {
-	requireHandle("getAsync");
 	requireActive("getAsync");
 
 	bump(gOpCounters.pointReads);
@@ -418,7 +418,6 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
     const kv::KeySelector &begin, const kv::KeySelector &end, int limit, int iteration /* = 0 */,
     bool snapshot /* = false */, bool reverse /* = false */,
     FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
-	requireHandle("getRangeAsync");
 	requireActive("getRangeAsync");
 
 	bump(gOpCounters.rangeReads);
@@ -449,7 +448,6 @@ std::unique_ptr<kv::IRangeFuture> Transaction::getRangeAsync(
 }
 
 void Transaction::set(const kv::Key &key, const kv::Value &value) {
-	requireHandle("set");
 	requireActive("set");
 
 	bump(gOpCounters.sets);
@@ -458,7 +456,6 @@ void Transaction::set(const kv::Key &key, const kv::Value &value) {
 }
 
 void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
-	requireHandle("atomicAdd");
 	requireActive("atomicAdd");
 
 	bump(gOpCounters.atomicAdds);
@@ -467,7 +464,6 @@ void Transaction::atomicAdd(const kv::Key &key, const kv::Value &delta) {
 }
 
 void Transaction::atomicMax(const kv::Key &key, const kv::Value &value) {
-	requireHandle("atomicMax");
 	requireActive("atomicMax");
 
 	// Counted under atomicAdds is wrong, and adding a positional counter field would
@@ -478,7 +474,6 @@ void Transaction::atomicMax(const kv::Key &key, const kv::Value &value) {
 }
 
 void Transaction::remove(const kv::Key &key) {
-	requireHandle("remove");
 	requireActive("remove");
 
 	bump(gOpCounters.clears);
@@ -486,7 +481,6 @@ void Transaction::remove(const kv::Key &key) {
 }
 
 void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
-	requireHandle("removeRange");
 	requireActive("removeRange");
 
 	bump(gOpCounters.clearRanges);
@@ -495,7 +489,6 @@ void Transaction::removeRange(const kv::Key &start, const kv::Key &end) {
 }
 
 void Transaction::addReadConflictKey(const kv::Key &key) {
-	requireHandle("addReadConflictKey");
 	// A read-conflict annotation is a read into the attempt's conflict footprint, so it
 	// obeys the same lifecycle as every other data op: only valid on the live attempt,
 	// never once a failure or commit has moved the transaction on.
@@ -521,7 +514,6 @@ void Transaction::addReadConflictKey(const kv::Key &key) {
 }
 
 bool Transaction::commit() {
-	requireHandle("commit");
 	requireActive("commit");
 
 	// A new attempt invalidates the previous attempt's version: a failed re-commit on a
@@ -536,8 +528,7 @@ bool Transaction::commit() {
 		fdb_error_t injected = FaultInjection::next(faultInjection_->preCommitErrors);
 		if (injected != 0) {
 			error_ = injected;
-			state_ = classifyCommitFailure(injected);
-			lastFailureCode_ = injected;
+			recordFailure(classifyCommitFailure(injected), injected);
 			safs::log_err("Transaction::commit: injected pre-commit error: {}",
 			              fdb_get_error(injected));
 			countFailedCommit(injected);
@@ -562,8 +553,7 @@ bool Transaction::commit() {
 		// The commit was already submitted; a wait-layer failure means its outcome is
 		// UNKNOWN. Force kIndeterminate (never retryable): replaying a commit that actually
 		// landed would double-apply it.
-		state_ = TransactionState::kIndeterminate;
-		lastFailureCode_ = error_;
+		recordFailure(TransactionState::kIndeterminate, error_);
 		safs::log_err("Transaction::commit: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(error_));
 		countFailedCommit(error_);
@@ -583,8 +573,7 @@ bool Transaction::commit() {
 	}
 
 	if (error_ != 0) {
-		state_ = classifyCommitFailure(error_);
-		lastFailureCode_ = error_;
+		recordFailure(classifyCommitFailure(error_), error_);
 		safs::log_err("Transaction::commit: commit failed: {}", fdb_get_error(error_));
 		countFailedCommit(error_);
 		return false;
@@ -685,8 +674,7 @@ void Transaction::reset() {
 		if (err != 0) {
 			// The handle was reset but the promised option is gone; unusable.
 			error_ = err;
-			state_ = TransactionState::kFailed;
-			lastFailureCode_ = err;
+			recordFailure(TransactionState::kFailed, err);
 			detail::throwTransactionError(err);
 		}
 	}
@@ -695,8 +683,7 @@ void Transaction::reset() {
 		if (err != 0) {
 			// The handle was reset but the promised time bound is gone; unusable.
 			error_ = err;
-			state_ = TransactionState::kFailed;
-			lastFailureCode_ = err;
+			recordFailure(TransactionState::kFailed, err);
 			detail::throwTransactionError(err);
 		}
 	}
@@ -729,8 +716,7 @@ void Transaction::cancel() {
 	fdb_transaction_cancel(tr_.get());
 	constexpr fdb_error_t kTransactionCancelled = 1025;
 	error_ = kTransactionCancelled;
-	state_ = TransactionState::kCancelled;
-	lastFailureCode_ = kTransactionCancelled;
+	recordFailure(TransactionState::kCancelled, kTransactionCancelled);
 }
 
 namespace {
@@ -742,9 +728,15 @@ struct ReadyNode {
 	void *arg;
 };
 
-void fireReadyNode(FDBFuture * /*future*/, void *param) {
+void fireReadyNode(FDBFuture * /*future*/, void *param) noexcept {
 	std::unique_ptr<ReadyNode> node(static_cast<ReadyNode *>(param));
-	if (node->callback != nullptr) { node->callback(node->arg); }
+	if (node->callback == nullptr) { return; }
+	try {
+		node->callback(node->arg);
+	} catch (...) {
+		safs::log_err("fireReadyNode: callback threw across the FDB C callback boundary");
+		std::terminate();
+	}
 }
 
 /// Arms a one-shot ready callback on an FDB future. Routes the wakeup through a
@@ -1072,7 +1064,6 @@ private:
 }  // namespace
 
 std::unique_ptr<kv::ICommitFuture> Transaction::commitAsync() {
-	requireHandle("commitAsync");
 	requireActive("commitAsync");
 
 	// A new attempt invalidates the previous attempt's version: a failed re-commit on a

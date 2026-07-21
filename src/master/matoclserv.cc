@@ -425,6 +425,7 @@ static BlockingRecoveryResult matoclserv_recover_transaction_blocking(
     std::chrono::steady_clock::time_point deadline) {
 	auto txn = ctx.releaseReadWriteTransaction();
 	if (txn == nullptr) { return {}; }
+
 	// TEST-ONLY: simulate a retryable recovery failure (the transaction is dropped
 	// unrecovered, like the real failure below) to force the paced fresh-replay path.
 	static uint32_t injectedRecoveryFailures = 0;
@@ -435,10 +436,12 @@ static BlockingRecoveryResult matoclserv_recover_transaction_blocking(
 		    injectedRecoveryFailures);
 		return {};
 	}
+
 	auto recovery = txn->recoverAsync(errorCode);
 	// recoverAsync never returns nullptr (it throws on a wrong-state call), so a null future is
 	// a library contract violation; fail-stop loudly instead of masking it as a fresh replay.
 	massert(recovery != nullptr, "recoverAsync returned a nullptr future");
+
 	// Bounded blocking wait: the network thread fail-stops on death, so recovery cannot
 	// hang forever, but it can still block the event loop for a backend timeout. Spin on
 	// isReady() so the stall is capped by the shared retry deadline; past it, give the op up.
@@ -450,6 +453,7 @@ static BlockingRecoveryResult matoclserv_recover_transaction_blocking(
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
+
 	try {
 		recovery->get();
 		return {std::move(txn), false};
