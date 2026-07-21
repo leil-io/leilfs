@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -31,6 +32,7 @@
 #include <foundationdb/fdb_c.h>
 #include <foundationdb/fdb_c_types.h>
 
+#include "kv/ifuture.h"
 #include "kv/itransaction.h"
 
 namespace fdb {
@@ -111,24 +113,6 @@ public:
 	/// @see FDBNetworkOption for available options.
 	static fdb_error_t setNetworkOption(FDBNetworkOption option, std::string_view value = {});
 
-	/// Sets up the FoundationDB network thread.
-	/// This must be called before any database operations.
-	/// @return The error code of the operation.
-	static fdb_error_t setupNetwork();
-
-	/// Runs the FoundationDB network thread.
-	/// This must be called after setting up the network.
-	/// @return The error code of the operation.
-	/// @note This function blocks until the network thread is stopped.
-	/// It is typically called in a separate thread.
-	static fdb_error_t runNetwork();
-
-	/// Stops the FoundationDB network thread.
-	/// This should be called when the application is shutting down.
-	/// @return The error code of the operation.
-	/// @note This function blocks until the network thread is stopped.
-	static fdb_error_t stopNetwork();
-
 	// database
 
 	/// Returns the error code of the last operation.
@@ -181,6 +165,9 @@ struct FaultInjection {
 	/// is reported as failed. With commit_unknown_result (1021) this reproduces the
 	/// maybe-committed case, the data IS in the database but the caller cannot know it.
 	std::deque<fdb_error_t> postCommitErrors;
+	/// Commit wait-layer failures: the commit WAS submitted, but fdb_future_block_until_ready
+	/// is scripted to fail, so the outcome is unknown (maybe-committed) regardless of the code.
+	std::deque<fdb_error_t> commitWaitErrors;
 	/// Committed-version lookups after a successful commit.
 	std::deque<fdb_error_t> committedVersionErrors;
 
@@ -197,9 +184,36 @@ struct FaultInjection {
 		readErrors.clear();
 		preCommitErrors.clear();
 		postCommitErrors.clear();
+		commitWaitErrors.clear();
 		committedVersionErrors.clear();
 	}
 };
+
+/// Lifecycle state of a Transaction (one transaction handle, many attempts).
+/// Wrong-state calls throw kv::TransactionStateError (a std::logic_error); destruction is
+/// legal from every state.
+enum class TransactionState {
+	kActive,           ///< Usable: reads, mutations, options, commit, cancel, reset.
+	kCommitInFlight,   ///< commitAsync() issued; only the commit future may act.
+	kRetryPending,     ///< Failed retryable + definitely-not-committed; onErrorAsync/reset/cancel.
+	kBackoffInFlight,  ///< onErrorAsync() issued; only the backoff future may act.
+	kIndeterminate,    ///< Commit outcome unknown (maybe-committed); destroy only.
+	kCommitted,        ///< Commit succeeded; committed-version reads and reset.
+	kFailed,           ///< Non-retryable failure; reset/cancel (destroy only if the
+	                   ///< backoff future was abandoned, see Transaction::reset).
+	kCancelled,        ///< cancel() called; reset only.
+};
+
+/// Human-readable state name for logs and std::logic_error messages.
+const char *transactionStateName(TransactionState state);
+
+namespace detail {
+
+/// Encodes an int-valued FDB option parameter: 8 bytes, little-endian, regardless of
+/// host endianness (the fdb_c option ABI).
+std::array<uint8_t, 8> encodeInt64LE(int64_t value);
+
+}  // namespace detail
 
 /// Custom deleter for FDBFuture (C struct), to ensure proper cleanup.
 struct FDBFutureDeleter {
@@ -214,10 +228,11 @@ using UniqueFDBFuture = std::unique_ptr<FDBFuture, FDBFutureDeleter>;
 
 /// A class that wraps a FoundationDB transaction.
 /// Provides methods to perform read and write operations on the database.
-/// Every read, write, and commit operation throws std::logic_error when the transaction
-/// has no backend handle (moved-from, or constructed from a null or errored database):
-/// per the kv error-domain rules a wrong-state call must never pose as a missing key, an
-/// empty range, or a silently dropped write.
+/// Every operation (reads, writes, options, commit, and the lifecycle calls reset,
+/// cancel, and onErrorAsync) throws std::logic_error when the transaction has no
+/// backend handle (constructed from a null or errored database): per the kv
+/// error-domain rules a wrong-state call must never pose as a missing key, an empty
+/// range, or a silently dropped write.
 class Transaction {
 public:
 	/// Constructs a Transaction object using the provided DB instance.
@@ -235,16 +250,84 @@ public:
 		if (error_ == 0) { tr_.reset(auxTr); }
 	}
 
-	/// Returns the last backend error recorded directly by this wrapper.
-	/// Synchronous point reads and commit outcomes update it. Future-based reads,
-	/// including getRange(), report failures through kv::TransactionError and do not
-	/// update it. A committed-version lookup failure after a durable commit leaves it at 0.
-	fdb_error_t error() const { return error_; }
-	explicit operator bool() const { return error_ == 0 && tr_; }
+	// Non-copyable, non-movable: futures created by this transaction hold raw
+	// pointers to its members (state_, error_, ...), which a move would leave
+	// dangling while the future silently updates the moved-from object.
+	Transaction(const Transaction &) = delete;
+	Transaction &operator=(const Transaction &) = delete;
+	Transaction(Transaction &&) = delete;
+	Transaction &operator=(Transaction &&) = delete;
 
-	/// Sets an option on the transaction.
-	/// @throws std::logic_error when the transaction has no backend handle.
+	~Transaction() = default;
+
+	/// Returns the last backend error recorded directly by this wrapper.
+	/// Synchronous point reads and commit outcomes update it, and so do the lifecycle
+	/// calls: cancel() records 1025 (transaction_cancelled), a failed
+	/// setMaxRetryDelayMs() records the option failure, and reset() or a successful
+	/// onErrorAsync() recovery clears it back to 0. Future-based reads, including
+	/// getRange(), report failures through kv::TransactionError and do not update it.
+	/// A committed-version lookup failure after a durable commit leaves it at 0.
+	fdb_error_t error() const { return error_; }
+
+	/// True when this transaction has a backend handle to operate on. A past
+	/// operation error does NOT make this false: errors surface as exceptions and in
+	/// state()/error(), and reset() can make the handle usable again.
+	explicit operator bool() const { return tr_ != nullptr; }
+
+	/// Current lifecycle state; operations legal per TransactionState. A handle-less
+	/// transaction still reports its state, though every operation on it throws (see
+	/// the class doc).
+	TransactionState state() const { return state_; }
+
+	/// Sets an option on the transaction. Requires kActive.
+	/// @throws std::logic_error when the transaction has no backend handle or is not
+	///   kActive.
 	fdb_error_t setOption(FDBTransactionOption option, std::string_view value = {});
+
+	/// Upper bound in milliseconds for the backoff delay onErrorAsync() may apply
+	/// (FDB max_retry_delay). Sticky: re-applied automatically after reset(), because
+	/// FDB reverts options on reset but keeps them across on_error. Requires kActive.
+	/// @throws std::invalid_argument if ms is outside [0, INT_MAX], the FDB option
+	///   range; kv::TransactionError family if the backend rejects the option.
+	void setMaxRetryDelayMs(int64_t ms);
+
+	/// Total time in milliseconds the transaction may run (reads plus commit) before FDB
+	/// auto-cancels it (FDB TIMEOUT option), surfaced as a transaction_timed_out error.
+	/// Sticky like setMaxRetryDelayMs: re-applied after reset(), and (per FDB) kept across
+	/// on_error, so one call bounds the whole recover-and-replay chain from that point. A
+	/// caller with its own wall-clock retry deadline sets the remaining budget here so a
+	/// stuck backend cannot block past it. Requires kActive.
+	/// @throws std::invalid_argument if ms is outside (0, INT_MAX]: 0 is rejected because FDB
+	///   reads it as "disable the timeout", the opposite of bounding; kv::TransactionError
+	///   family if the backend rejects the option.
+	void setTimeoutMs(int64_t ms);
+
+	/// Begins backend recovery (fdb_transaction_on_error) after a retryable,
+	/// definitely-not-committed failure so this SAME transaction can be replayed with
+	/// FDB's accumulating backoff. Requires kRetryPending; moves to kBackoffInFlight.
+	/// The future's get() returning normally means the transaction is kActive again;
+	/// get() throwing (or abandoning the future unconsumed) leaves it terminal.
+	/// @param err The backend error that put the transaction in kRetryPending.
+	/// @throws std::invalid_argument if err is 0 or is not the failure this
+	///   transaction recorded: the code drives FDB's retry classification and
+	///   backoff, so a code from some other transaction must not be applied here.
+	std::unique_ptr<kv::IVoidFuture> onErrorAsync(fdb_error_t err);
+
+	/// Returns the transaction to kActive for a fresh attempt, discarding buffered
+	/// mutations and clearing the error/committed-version bookkeeping. Sticky options
+	/// (setMaxRetryDelayMs, setTimeoutMs) are re-applied, everything else reverts to defaults.
+	/// Legal from kActive, kRetryPending, kCommitted, kCancelled and error-surfaced
+	/// kFailed. Illegal (std::logic_error) while a commit/backoff future is in flight,
+	/// from kIndeterminate (a maybe-committed op must never be replayed on a reused
+	/// object), and from kFailed entered by abandoning a backoff future (recovery
+	/// outcome unknown; FDB leaves reset-during-on_error undefined).
+	void reset();
+
+	/// Cancels the transaction (outstanding futures resolve with error 1025). Legal
+	/// from kActive, kRetryPending and error-surfaced kFailed; moves to kCancelled.
+	/// Illegal while a commit is in flight (the C API calls the outcome unpredictable;
+	/// abandon the commit future instead, which lands in kIndeterminate).
+	void cancel();
 
 	/// Gets a value for a given key.
 	/// @param key The key to retrieve the value for.
@@ -344,8 +427,9 @@ public:
 	/// Approximate byte size that the buffered mutations and conflict ranges would contribute
 	/// to a commit (fdb_transaction_get_approximate_size). Computed client-side.
 	/// @return The approximate size, or std::nullopt when the size cannot be reported (no
-	///   backend handle, or a backend error). Diagnostic-only, so unlike the data reads
-	///   this deliberately does not throw: nullopt is not confusable with real data.
+	///   backend handle, not kActive, or a backend error). Diagnostic-only, so unlike the
+	///   data reads this deliberately does not throw: nullopt is not confusable with real
+	///   data.
 	std::optional<uint64_t> getApproximateSize() const;
 
 	/// TEST-ONLY: attaches a deterministic fault-injection script to this transaction and
@@ -373,10 +457,47 @@ private:
 		}
 	};
 
+	/// Requires a backend handle in kActive; throws std::logic_error otherwise.
+	void requireActive(const char *operation) const;
+
+	/// Records a backend failure in the coupled lifecycle fields.
+	void recordFailure(TransactionState failureState, fdb_error_t error);
+
+	/// Encodes and sets an int-valued transaction option (8-byte little-endian).
+	fdb_error_t setIntOption(FDBTransactionOption option, int64_t value);
+
 	/// The wrapped FDBTransaction pointer.
 	std::unique_ptr<FDBTransaction, FDBTransactionDeleter> tr_;
 	/// The error code of the last operation.
 	fdb_error_t error_{1};
+
+	/// Lifecycle state; transitions per TransactionState. Futures created by this
+	/// transaction hold a pointer to it (like error_/committedVersion_), which is why
+	/// the class is non-movable.
+	TransactionState state_{TransactionState::kActive};
+
+	/// The backend error that accompanied the most recent transition into
+	/// kRetryPending or kFailed (0 when none is pending; reset() clears it, a
+	/// successful recovery clears it). Written by every failure path, including the
+	/// future-based reads that deliberately do not touch the public error_; used to
+	/// validate that onErrorAsync() is driven with this transaction's own failure.
+	fdb_error_t lastFailureCode_{0};
+
+	/// Monotonic attempt counter: bumped every time a new attempt begins on this same
+	/// handle (reset() and a successful onErrorAsync() recovery). Read futures capture it
+	/// at issue time so a future left over from a superseded attempt cannot record its
+	/// failure into the current one (see ReadFailureSink / recordReadFailure).
+	uint64_t attemptGeneration_{0};
+
+	/// Set when kFailed was entered by abandoning a backoff future: the recovery
+	/// outcome is unknown, so reset()/cancel() are forbidden (destroy only).
+	bool backoffAbandoned_{false};
+
+	/// Sticky max_retry_delay value to re-apply after reset() (see setMaxRetryDelayMs).
+	std::optional<int64_t> maxRetryDelayMs_;
+
+	/// Sticky transaction TIMEOUT value to re-apply after reset() (see setTimeoutMs).
+	std::optional<int64_t> timeoutMs_;
 
 	/// The commit version of the transaction, if applicable.
 	std::optional<int64_t> committedVersion_;

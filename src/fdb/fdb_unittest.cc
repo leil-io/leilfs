@@ -19,18 +19,23 @@
 #include "common/platform.h"
 
 #include <gtest/gtest.h>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 #include "fdb/fdb.h"
 #include "fdb/fdb_context.h"
 #include "fdb/fdb_kv_engine.h"
+#include "fdb/fdb_transaction.h"
 #include "kv/ifuture.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
@@ -1089,6 +1094,61 @@ TEST_F(FDBKVEngineTest, MutationCount) {
 	EXPECT_EQ(txn->mutationCount(), uint64_t{5}) << "removeRange() buffers one mutation.";
 }
 
+// recoverAsync() makes the SAME kv transaction reusable after a retryable commit
+// conflict: the recovery future completes, the adapter's bookkeeping is reset, and the
+// replayed mutations commit. The retry coordinator relies on this to keep the backend's
+// accumulated backoff across attempts instead of recreating the transaction.
+TEST_F(FDBKVEngineTest, RecoverAsyncReusesTransactionAfterConflict) {
+	const auto key = kv::toBytes("recover_async_key");
+
+	auto txn = kvEngine->createReadWriteTransaction();
+	(void)txn->get(key);  // Put the key in this transaction's read conflict range.
+	{
+		auto external = kvEngine->createReadWriteTransaction();
+		external->set(key, kv::toBytes("external"));
+		ASSERT_TRUE(external->commit());
+	}
+	txn->set(key, kv::toBytes("mine"));
+
+	int commitError = 0;
+	bool retryable = false;
+	ASSERT_FALSE(txn->commitAsync()->getResult(&commitError, &retryable))
+	    << "The external write must conflict with this transaction's read.";
+	ASSERT_TRUE(retryable);
+
+	auto recovery = txn->recoverAsync(commitError);
+	ASSERT_NE(recovery, nullptr);
+	recovery->get();
+	EXPECT_EQ(txn->mutationCount(), uint64_t{0})
+	    << "Recovery resets the adapter's bookkeeping for the replay.";
+
+	// Replay on the same transaction object; this attempt sees the external write.
+	auto observed = txn->get(key);
+	ASSERT_TRUE(observed.has_value());
+	EXPECT_EQ(*observed, kv::toBytes("external"));
+	txn->set(key, kv::toBytes("replayed"));
+	EXPECT_EQ(txn->mutationCount(), uint64_t{1});
+	ASSERT_TRUE(txn->commitAsync()->getResult(&commitError, &retryable));
+
+	{  // Verify the replayed value, then clean up.
+		auto check = kvEngine->createReadWriteTransaction();
+		auto value = check->get(key);
+		ASSERT_TRUE(value.has_value());
+		EXPECT_EQ(*value, kv::toBytes("replayed"));
+		check->remove(key);
+		ASSERT_TRUE(check->commit());
+	}
+}
+
+// recoverAsync() on an adapter whose wrapped transaction has no backend handle is a
+// wrong-state call: it must throw std::logic_error, never return a nullptr future that
+// poses as a started recovery (see the recoverAsync contract in kv/itransaction.h).
+TEST_F(FDBKVEngineTest, RecoverAsyncWithoutBackendHandleThrows) {
+	fdb::FDBTransaction handleless{nullptr};
+	constexpr int kNotCommitted = 1020;  // A retryable code, to isolate the handle check.
+	EXPECT_THROW((void)handleless.recoverAsync(kNotCommitted), std::logic_error);
+}
+
 // getApproximateSize() reports the client-side estimate of the transaction's buffered writes.
 // It is supported by the FDB backend, grows as mutations are added, and reflects the payload
 // size (a large value increases it substantially more than a small one). The writer relies on
@@ -1545,8 +1605,10 @@ TEST_F(FDBKVEngineTest, FailedRecommitClearsCommittedVersion) {
 	ASSERT_TRUE(transaction.commit());
 	ASSERT_TRUE(transaction.getCommittedVersion().has_value());
 
-	// Second attempt on the same transaction, failed deterministically before
-	// submission: the version from the first attempt must be gone.
+	// Second attempt on the same transaction (the state machine requires reset()
+	// to leave kCommitted), failed deterministically before submission: the
+	// version from the first attempt must be gone.
+	transaction.reset();
 	fdb::FaultInjection fault;
 	fault.preCommitErrors = {kNotCommitted};
 	transaction.setFaultInjection(&fault);
@@ -1576,6 +1638,8 @@ TEST_F(FDBKVEngineTest, FailedRecommitAsyncClearsCommittedVersion) {
 	ASSERT_TRUE(transaction.commit());
 	ASSERT_TRUE(transaction.getCommittedVersion().has_value());
 
+	// The state machine requires reset() to leave kCommitted before a new attempt.
+	transaction.reset();
 	fdb::FaultInjection fault;
 	fault.preCommitErrors = {kNotCommitted};
 	transaction.setFaultInjection(&fault);
@@ -1618,6 +1682,7 @@ TEST_F(FDBKVEngineTest, TransactionFromNullDBIsInvalidNotUB) {
 	EXPECT_THROW(fromNull.atomicMax(key, value), std::logic_error);
 	EXPECT_THROW(fromNull.remove(key), std::logic_error);
 	EXPECT_THROW(fromNull.removeRange(begin.getKey(), end.getKey()), std::logic_error);
+	EXPECT_THROW(fromNull.addReadConflictKey(key), std::logic_error);
 	EXPECT_THROW(fromNull.commit(), std::logic_error);
 	EXPECT_THROW(fromNull.commitAsync(), std::logic_error);
 	EXPECT_FALSE(fromNull.getCommittedVersion().has_value());
@@ -1640,4 +1705,581 @@ TEST_F(FDBKVEngineTest, ConsumedReadFutureThrowsLogicError) {
 	ASSERT_TRUE(rangeFuture != nullptr);
 	(void)rangeFuture->get();
 	EXPECT_THROW(rangeFuture->get(), std::logic_error);
+}
+
+// ---------------------------------------------------------------------------
+// Transaction state machine (fdb::TransactionState), onErrorAsync, options
+// ---------------------------------------------------------------------------
+
+using fdb::TransactionState;
+
+TEST_F(FDBKVEngineTest, StateCommitAndResetRoundTrip) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+
+	const kv::Key key = kv::toBytes("state_commit_reset");
+	transaction.set(key, kv::toBytes("v1"));
+	ASSERT_TRUE(transaction.commit());
+	EXPECT_EQ(transaction.state(), TransactionState::kCommitted);
+	EXPECT_TRUE(transaction.getCommittedVersion().has_value());
+
+	// Committed forbids further work but allows reset for the next attempt.
+	EXPECT_THROW(transaction.set(key, kv::toBytes("v2")), std::logic_error);
+	transaction.reset();
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+	EXPECT_FALSE(transaction.getCommittedVersion().has_value());
+
+	transaction.remove(key);
+	ASSERT_TRUE(transaction.commit());
+}
+
+TEST_F(FDBKVEngineTest, StateRetryableReadErrorEntersRetryPending) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	EXPECT_THROW(transaction.get(kv::toBytes("state_rp")), kv::RetryableTransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kRetryPending);
+
+	// A poisoned transaction refuses further work loudly instead of no-opping.
+	EXPECT_THROW(transaction.set(kv::toBytes("k"), kv::toBytes("v")), std::logic_error);
+	EXPECT_THROW(transaction.commit(), std::logic_error);
+	EXPECT_THROW((void)transaction.getAsync(kv::toBytes("k")), std::logic_error);
+	EXPECT_THROW(transaction.addReadConflictKey(kv::toBytes("k")), std::logic_error);
+}
+
+TEST_F(FDBKVEngineTest, StateNonRetryableReadErrorEntersFailedAndResetRevives) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kTransactionTooLarge};
+	transaction.setFaultInjection(&fault);
+
+	auto future = transaction.getAsync(kv::toBytes("state_failed"));
+	ASSERT_NE(future, nullptr);
+	EXPECT_THROW(future->get(), kv::TransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kFailed);
+
+	transaction.reset();
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+	// The same handle is usable again after reset (live read).
+	EXPECT_NO_THROW((void)transaction.get(kv::toBytes("state_failed_absent")));
+}
+
+// A read future issued in one attempt, held unconsumed while reset() starts a FRESH
+// attempt, must not record its late failure into the new attempt: the attempt-generation
+// guard keeps the superseded future inert so it cannot regress kActive.
+TEST_F(FDBKVEngineTest, StaleReadFailureAfterResetLeavesFreshAttemptActive) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	transaction.setFaultInjection(&fault);
+
+	// Issue a read in the first attempt; hold the future unconsumed.
+	auto stale = transaction.getAsync(kv::toBytes("stale_after_reset"));
+	ASSERT_NE(stale, nullptr);
+
+	// Start a fresh attempt.
+	transaction.reset();
+	ASSERT_EQ(transaction.state(), TransactionState::kActive);
+
+	// The stale future now fails: it must throw to ITS caller but leave the fresh attempt
+	// Active. Without the generation guard it would stamp kRetryPending.
+	fault.readErrors = {kNotCommitted};
+	EXPECT_THROW(stale->get(), kv::RetryableTransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+}
+
+// The same guard across a successful onErrorAsync() recovery, which re-activates the SAME
+// handle for a fresh attempt: a read future from the recovered-past attempt must not drive
+// the new attempt back out of kActive.
+TEST_F(FDBKVEngineTest, StaleReadFailureAfterRecoveryLeavesFreshAttemptActive) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	transaction.setFaultInjection(&fault);
+
+	// Issue a read in the first attempt; hold the future unconsumed.
+	auto stale = transaction.getAsync(kv::toBytes("stale_after_recovery"));
+	ASSERT_NE(stale, nullptr);
+
+	// Drive the transaction to a retryable failure, then recover it back to Active.
+	fault.readErrors = {kNotCommitted};
+	EXPECT_THROW((void)transaction.get(kv::toBytes("stale_after_recovery_trigger")),
+	             kv::RetryableTransactionError);
+	ASSERT_EQ(transaction.state(), TransactionState::kRetryPending);
+	auto recovery = transaction.onErrorAsync(kNotCommitted);
+	ASSERT_NE(recovery, nullptr);
+	recovery->get();
+	ASSERT_EQ(transaction.state(), TransactionState::kActive);
+
+	// The stale future (issued before the failure) resolves as a failure now; it must not
+	// regress the recovered attempt.
+	fault.readErrors = {kNotCommitted};
+	EXPECT_THROW(stale->get(), kv::RetryableTransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+}
+
+TEST_F(FDBKVEngineTest, StatePreCommitConflictEntersRetryPending) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.preCommitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	transaction.set(kv::toBytes("state_precommit"), kv::toBytes("v"));
+	EXPECT_FALSE(transaction.commit());
+	EXPECT_EQ(transaction.state(), TransactionState::kRetryPending);
+}
+
+TEST_F(FDBKVEngineTest, StateMaybeCommittedEntersIndeterminate) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.postCommitErrors = {kCommitUnknownResult};
+	transaction.setFaultInjection(&fault);
+
+	const kv::Key key = kv::toBytes("state_indeterminate");
+	transaction.set(key, kv::toBytes("v"));
+	EXPECT_FALSE(transaction.commit());
+	EXPECT_EQ(transaction.state(), TransactionState::kIndeterminate);
+
+	// A maybe-committed transaction is destroy-only: no reset, no cancel, no reuse.
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+	EXPECT_THROW(transaction.cancel(), std::logic_error);
+	EXPECT_THROW(transaction.commit(), std::logic_error);
+
+	// The injected override happened after a REAL commit; clean up the key.
+	fdb::Transaction cleanup(fdbDB.get());
+	cleanup.remove(key);
+	ASSERT_TRUE(cleanup.commit());
+}
+
+TEST_F(FDBKVEngineTest, CommitWaitFailureEntersIndeterminate) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	// A wait-layer failure after the commit was submitted: the commit is durable but its
+	// outcome is unknown to us. Injecting not_committed (which classifies as retryable)
+	// proves the wait path forces kIndeterminate regardless of the code, never a resettable
+	// or retryable state that would double-apply.
+	fdb::FaultInjection fault;
+	fault.commitWaitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	const kv::Key key = kv::toBytes("state_commit_wait");
+	transaction.set(key, kv::toBytes("v"));
+	EXPECT_FALSE(transaction.commit());
+	EXPECT_EQ(transaction.state(), TransactionState::kIndeterminate);
+
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+	EXPECT_THROW(transaction.cancel(), std::logic_error);
+	EXPECT_THROW(transaction.commit(), std::logic_error);
+
+	// The wait failed after a REAL commit; clean up the key.
+	fdb::Transaction cleanup(fdbDB.get());
+	cleanup.remove(key);
+	ASSERT_TRUE(cleanup.commit());
+}
+
+TEST_F(FDBKVEngineTest, CommitAsyncWaitFailureEntersIndeterminate) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.commitWaitErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	const kv::Key key = kv::toBytes("state_commit_async_wait");
+	transaction.set(key, kv::toBytes("v"));
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+
+	int error = 0;
+	bool retryable = true;
+	EXPECT_FALSE(future->getResult(&error, &retryable));
+	// Never retryable: a maybe-committed op must not be replayed.
+	EXPECT_FALSE(retryable);
+	EXPECT_EQ(transaction.state(), TransactionState::kIndeterminate);
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+
+	fdb::Transaction cleanup(fdbDB.get());
+	cleanup.remove(key);
+	ASSERT_TRUE(cleanup.commit());
+}
+
+TEST_F(FDBKVEngineTest, StateCommitAsyncTransitions) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	const kv::Key key = kv::toBytes("state_commit_async");
+	transaction.set(key, kv::toBytes("v"));
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+	EXPECT_EQ(transaction.state(), TransactionState::kCommitInFlight);
+	// Only the commit future may act while the commit is in flight.
+	EXPECT_THROW(transaction.commit(), std::logic_error);
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+
+	EXPECT_TRUE(future->getResult());
+	EXPECT_EQ(transaction.state(), TransactionState::kCommitted);
+
+	transaction.reset();
+	transaction.remove(key);
+	ASSERT_TRUE(transaction.commit());
+}
+
+TEST_F(FDBKVEngineTest, StateAbandonedCommitFutureEntersIndeterminate) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	const kv::Key key = kv::toBytes("state_abandoned_commit");
+	transaction.set(key, kv::toBytes("v"));
+	{
+		auto future = transaction.commitAsync();
+		ASSERT_NE(future, nullptr);
+		// Destroyed unconsumed: the commit may have applied, so the transaction
+		// must land in the destroy-only Indeterminate state.
+	}
+	EXPECT_EQ(transaction.state(), TransactionState::kIndeterminate);
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+
+	// The abandoned commit may have been durable; remove the key either way.
+	fdb::Transaction cleanup(fdbDB.get());
+	cleanup.remove(key);
+	ASSERT_TRUE(cleanup.commit());
+}
+
+TEST_F(FDBKVEngineTest, OnErrorAsyncRecoversTheSameTransaction) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	EXPECT_THROW(transaction.get(kv::toBytes("state_recover")), kv::RetryableTransactionError);
+	ASSERT_EQ(transaction.state(), TransactionState::kRetryPending);
+
+	auto backoff = transaction.onErrorAsync(kNotCommitted);
+	ASSERT_NE(backoff, nullptr);
+	EXPECT_EQ(transaction.state(), TransactionState::kBackoffInFlight);
+	EXPECT_NO_THROW(backoff->get());
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+
+	// The recovered handle must complete a real replay end to end.
+	const kv::Key key = kv::toBytes("state_recover");
+	transaction.set(key, kv::toBytes("v"));
+	ASSERT_TRUE(transaction.commit());
+
+	fdb::Transaction verify(fdbDB.get());
+	auto got = verify.get(key);
+	ASSERT_TRUE(got.has_value());
+	EXPECT_EQ(*got, kv::toBytes("v"));
+	verify.reset();
+	verify.remove(key);
+	ASSERT_TRUE(verify.commit());
+}
+
+TEST_F(FDBKVEngineTest, OnErrorAsyncAbandonedFutureIsDestroyOnly) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	EXPECT_THROW(transaction.get(kv::toBytes("state_abandoned_backoff")),
+	             kv::RetryableTransactionError);
+	{
+		auto backoff = transaction.onErrorAsync(kNotCommitted);
+		ASSERT_NE(backoff, nullptr);
+		// Destroyed unconsumed: the recovery outcome is unknown, reuse is unsafe
+		// and reset-during-on_error is undefined in FDB.
+	}
+	EXPECT_EQ(transaction.state(), TransactionState::kFailed);
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+	EXPECT_THROW(transaction.cancel(), std::logic_error);
+}
+
+TEST_F(FDBKVEngineTest, OnErrorAsyncArgumentAndStateChecks) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	EXPECT_THROW((void)transaction.onErrorAsync(0), std::invalid_argument);
+	// Only a surfaced retryable failure (kRetryPending) permits backend recovery.
+	EXPECT_THROW((void)transaction.onErrorAsync(kNotCommitted), std::logic_error);
+}
+
+TEST_F(FDBKVEngineTest, OnErrorAsyncRejectsForeignErrorCode) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+	EXPECT_THROW(transaction.get(kv::toBytes("foreign_code")), kv::RetryableTransactionError);
+	ASSERT_EQ(transaction.state(), TransactionState::kRetryPending);
+
+	// A code this transaction never surfaced would drive FDB's retry classification
+	// and backoff with someone else's failure; only the recorded code is accepted.
+	constexpr fdb_error_t kTransactionTooOld = 1007;
+	EXPECT_THROW((void)transaction.onErrorAsync(kTransactionTooOld), std::invalid_argument);
+	EXPECT_EQ(transaction.state(), TransactionState::kRetryPending);
+
+	auto backoff = transaction.onErrorAsync(kNotCommitted);
+	ASSERT_NE(backoff, nullptr);
+	EXPECT_NO_THROW(backoff->get());
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+}
+
+TEST_F(FDBKVEngineTest, LateReadFailureDoesNotRegressCommitted) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	transaction.setFaultInjection(&fault);
+
+	const kv::Key key = kv::toBytes("late_read_committed");
+	auto pending = transaction.getAsync(kv::toBytes("late_read_committed_other"));
+	ASSERT_NE(pending, nullptr);
+	transaction.set(key, kv::toBytes("v"));
+	ASSERT_TRUE(transaction.commit());
+	ASSERT_EQ(transaction.state(), TransactionState::kCommitted);
+
+	// The pre-commit read resolves late and fails: it must throw, but it must not
+	// regress the commit outcome into a replayable state (a replay would double-apply).
+	fault.readErrors = {kNotCommitted};
+	EXPECT_THROW((void)pending->get(), kv::RetryableTransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kCommitted);
+
+	transaction.reset();
+	transaction.remove(key);
+	ASSERT_TRUE(transaction.commit());
+}
+
+TEST_F(FDBKVEngineTest, LateReadFailureDoesNotRegressIndeterminate) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.postCommitErrors = {kCommitUnknownResult};
+	transaction.setFaultInjection(&fault);
+
+	const kv::Key key = kv::toBytes("late_read_indeterminate");
+	auto pending = transaction.getAsync(kv::toBytes("late_read_indeterminate_other"));
+	ASSERT_NE(pending, nullptr);
+	transaction.set(key, kv::toBytes("v"));
+	EXPECT_FALSE(transaction.commit());
+	ASSERT_EQ(transaction.state(), TransactionState::kIndeterminate);
+
+	// A late failed read must not turn a maybe-committed transaction replayable.
+	fault.readErrors = {kNotCommitted};
+	EXPECT_THROW((void)pending->get(), kv::RetryableTransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kIndeterminate);
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+
+	// The injected override happened after a REAL commit; clean up the key.
+	fdb::Transaction cleanup(fdbDB.get());
+	cleanup.remove(key);
+	ASSERT_TRUE(cleanup.commit());
+}
+
+TEST_F(FDBKVEngineTest, GetApproximateSizeReportsOnlyWhileActive) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	const kv::Key key = kv::toBytes("approx_size_states");
+	transaction.set(key, kv::toBytes("v"));
+	EXPECT_TRUE(transaction.getApproximateSize().has_value());
+
+	auto future = transaction.commitAsync();
+	ASSERT_NE(future, nullptr);
+	// In-flight and post-commit states are owned by their futures; the buffered-mutation
+	// estimate is meaningless there, so the diagnostic reports "no estimate".
+	EXPECT_EQ(transaction.state(), TransactionState::kCommitInFlight);
+	EXPECT_EQ(transaction.getApproximateSize(), std::nullopt);
+	ASSERT_TRUE(future->getResult());
+	EXPECT_EQ(transaction.state(), TransactionState::kCommitted);
+	EXPECT_EQ(transaction.getApproximateSize(), std::nullopt);
+
+	transaction.reset();
+	EXPECT_TRUE(transaction.getApproximateSize().has_value());
+	transaction.remove(key);
+	ASSERT_TRUE(transaction.commit());
+}
+
+TEST_F(FDBKVEngineTest, VoidFutureIsSingleUse) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	EXPECT_THROW(transaction.get(kv::toBytes("state_single_use")), kv::RetryableTransactionError);
+	auto backoff = transaction.onErrorAsync(kNotCommitted);
+	ASSERT_NE(backoff, nullptr);
+	EXPECT_NO_THROW(backoff->get());
+	EXPECT_THROW(backoff->get(), std::logic_error);
+}
+
+TEST_F(FDBKVEngineTest, CancelEntersCancelledAndResetRevives) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	transaction.cancel();
+	EXPECT_EQ(transaction.state(), TransactionState::kCancelled);
+	EXPECT_EQ(transaction.error(), kTransactionCancelled);
+	EXPECT_THROW((void)transaction.get(kv::toBytes("state_cancel")), std::logic_error);
+	EXPECT_THROW(transaction.cancel(), std::logic_error);
+
+	transaction.reset();
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+	EXPECT_NO_THROW((void)transaction.get(kv::toBytes("state_cancel_absent")));
+}
+
+TEST_F(FDBKVEngineTest, DestroyingArmedUnreadyFutureFiresCallback) {
+	// Pins the fdb_c lifetime semantics armReadyCallback (fdb.cc) relies on: destroying
+	// a not-yet-ready future cancels it, cancellation makes it ready, and the armed
+	// callback fires exactly once, releasing the heap node. A watch on a key nobody
+	// writes is the one future that stays unready indefinitely, so it isolates the
+	// destroy-before-ready path deterministically.
+	FDBTransaction *rawTr = nullptr;
+	ASSERT_EQ(fdb_database_create_transaction(fdbDB->getDB(), &rawTr), 0);
+	const kv::Key key = kv::toBytes("armed_callback_never_written");
+	FDBFuture *watch = fdb_transaction_watch(rawTr, key.data(), static_cast<int>(key.size()));
+	ASSERT_NE(watch, nullptr);
+	// A watch only becomes durable once its transaction commits.
+	FDBFuture *commitFuture = fdb_transaction_commit(rawTr);
+	ASSERT_EQ(fdb_future_block_until_ready(commitFuture), 0);
+	ASSERT_EQ(fdb_future_get_error(commitFuture), 0);
+	fdb_future_destroy(commitFuture);
+	ASSERT_EQ(fdb_future_is_ready(watch), 0) << "watch resolved early; experiment invalid";
+
+	static std::atomic<int> fired;
+	fired = 0;
+	ASSERT_EQ(
+	    fdb_future_set_callback(
+	        watch, [](FDBFuture * /*future*/, void * /*param*/) { fired.fetch_add(1); }, nullptr),
+	    0);
+	fdb_future_destroy(watch);
+
+	// The callback runs on the FDB network thread; wait bounded.
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (fired.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	EXPECT_EQ(fired.load(), 1);
+	fdb_transaction_destroy(rawTr);
+}
+
+TEST(FdbIntOptionEncodingTest, EncodesLittleEndian) {
+	const auto bytes = fdb::detail::encodeInt64LE(0x0102030405060708);
+	const std::array<uint8_t, 8> expected{0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01};
+	EXPECT_EQ(bytes, expected);
+	const auto minusOne = fdb::detail::encodeInt64LE(-1);
+	for (uint8_t byte : minusOne) { EXPECT_EQ(byte, 0xFF); }
+}
+
+TEST_F(FDBKVEngineTest, SetMaxRetryDelayValidatesAndApplies) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	EXPECT_THROW(transaction.setMaxRetryDelayMs(-1), std::invalid_argument);
+	// The FDB option range is [0, INT_MAX]; a larger value is the caller's bug and
+	// must not reach the backend (where it would surface as a TransactionError).
+	EXPECT_THROW(
+	    transaction.setMaxRetryDelayMs(static_cast<int64_t>(std::numeric_limits<int>::max()) + 1),
+	    std::invalid_argument);
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+	EXPECT_NO_THROW(transaction.setMaxRetryDelayMs(1000));
+	// Sticky: survives reset (re-applied internally; a live backend rejection would
+	// throw here).
+	EXPECT_NO_THROW(transaction.reset());
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+}
+
+TEST_F(FDBKVEngineTest, SetTimeoutValidatesAndApplies) {
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	EXPECT_THROW(transaction.setTimeoutMs(-1), std::invalid_argument);
+	// The valid range is (0, INT_MAX]. 0 is rejected (FDB would read it as "disable the
+	// timeout", the opposite of bounding), and a larger value is the caller's bug; neither
+	// may reach the backend (where it would surface as a TransactionError).
+	EXPECT_THROW(transaction.setTimeoutMs(0), std::invalid_argument);
+	EXPECT_THROW(
+	    transaction.setTimeoutMs(static_cast<int64_t>(std::numeric_limits<int>::max()) + 1),
+	    std::invalid_argument);
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+	EXPECT_NO_THROW(transaction.setTimeoutMs(5000));
+	// Sticky like max_retry_delay: survives reset (re-applied internally; a live backend
+	// rejection would throw here).
+	EXPECT_NO_THROW(transaction.reset());
+	EXPECT_EQ(transaction.state(), TransactionState::kActive);
+}
+
+TEST_F(FDBKVEngineTest, OptionsPersistAcrossOnErrorAndRevertOnReset) {
+	// Live contract test for the FDB option lifetime the retry design relies on:
+	// options persist across on_error but revert on reset. Observable via
+	// retry_limit=1: the first backend recovery succeeds, the second fails ONLY if
+	// the option survived the first on_error; after reset the limit is gone and
+	// recovery succeeds again.
+	fdb::Transaction transaction(fdbDB.get());
+	ASSERT_TRUE(transaction);
+
+	const auto limit = fdb::detail::encodeInt64LE(1);
+	const std::string_view limitValue(reinterpret_cast<const char *>(limit.data()), limit.size());
+	ASSERT_EQ(transaction.setOption(FDB_TR_OPTION_RETRY_LIMIT, limitValue), 0);
+
+	fdb::FaultInjection fault;
+	fault.readErrors = {kNotCommitted, kNotCommitted, kNotCommitted};
+	transaction.setFaultInjection(&fault);
+
+	EXPECT_THROW(transaction.get(kv::toBytes("opt_persist")), kv::RetryableTransactionError);
+	auto first = transaction.onErrorAsync(kNotCommitted);
+	ASSERT_NE(first, nullptr);
+	EXPECT_NO_THROW(first->get());
+
+	EXPECT_THROW(transaction.get(kv::toBytes("opt_persist")), kv::RetryableTransactionError);
+	auto second = transaction.onErrorAsync(kNotCommitted);
+	ASSERT_NE(second, nullptr);
+	// retry_limit=1 persisted across the first recovery, so the second one fails
+	// and the transaction is terminal.
+	EXPECT_THROW(second->get(), kv::TransactionError);
+	EXPECT_EQ(transaction.state(), TransactionState::kFailed);
+	// A failed recovery is destroy-only: the transaction cannot be reset and reused.
+	EXPECT_THROW(transaction.reset(), std::logic_error);
+
+	// Revert on reset, shown on a fresh transaction: a reset from a legal (non-terminal)
+	// state clears retry_limit back to its default, so a later recovery is no longer bounded
+	// and succeeds where the already-consumed budget would otherwise fail.
+	fdb::Transaction reused(fdbDB.get());
+	ASSERT_TRUE(reused);
+	ASSERT_EQ(reused.setOption(FDB_TR_OPTION_RETRY_LIMIT, limitValue), 0);
+	fdb::FaultInjection revertFault;
+	revertFault.readErrors = {kNotCommitted, kNotCommitted};
+	reused.setFaultInjection(&revertFault);
+
+	EXPECT_THROW(reused.get(kv::toBytes("opt_revert")), kv::RetryableTransactionError);
+	auto beforeReset = reused.onErrorAsync(kNotCommitted);
+	ASSERT_NE(beforeReset, nullptr);
+	EXPECT_NO_THROW(beforeReset->get());  // consumes the single retry the limit allows
+
+	reused.reset();  // legal from kActive; reverts retry_limit to the default
+	EXPECT_THROW(reused.get(kv::toBytes("opt_revert")), kv::RetryableTransactionError);
+	auto afterReset = reused.onErrorAsync(kNotCommitted);
+	ASSERT_NE(afterReset, nullptr);
+	EXPECT_NO_THROW(afterReset->get());  // succeeds only because the limit reverted
+	EXPECT_EQ(reused.state(), TransactionState::kActive);
 }

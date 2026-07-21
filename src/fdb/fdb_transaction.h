@@ -35,9 +35,15 @@ namespace fdb {
 /// it returns std::nullopt when no estimate can be reported.
 class FDBTransaction final : public kv::IReadWriteTransaction {
 public:
-	/// Constructs a FDBTransaction using the provided fdb::Transaction.
-	/// @param _tr The fdb::Transaction to wrap.
-	FDBTransaction(fdb::Transaction &&_tr) : tr_(std::move(_tr)) {}
+	/// Constructs a FDBTransaction wrapping a new fdb::Transaction on the given
+	/// database (constructed in place: fdb::Transaction is non-movable because its
+	/// futures hold pointers into it).
+	/// @param db The database to create the wrapped transaction on; may be null,
+	///   which yields a handle-less transaction (see operator bool).
+	explicit FDBTransaction(fdb::DB *db) : tr_(db) {}
+
+	/// True when the wrapped transaction has a backend handle to operate on.
+	explicit operator bool() const { return static_cast<bool>(tr_); }
 
 	// Non-copyable, non-movable (base class is non-movable)
 	FDBTransaction(const FDBTransaction &) = delete;
@@ -136,6 +142,15 @@ public:
 
 	/// Returns the committed version of the transaction, if available.
 	std::optional<int64_t> getCommittedVersion() const override;
+
+	/// Begins FDB-managed recovery (fdb_transaction_on_error) so this SAME transaction
+	/// can be replayed with the backend's accumulating backoff. Resets mutationCount().
+	/// @see kv::IReadWriteTransaction::recoverAsync for the full contract.
+	std::unique_ptr<kv::IVoidFuture> recoverAsync(int backendErrorCode) override;
+
+	/// Bounds the transaction's total blocking time (FDB TIMEOUT option); sticky across
+	/// recoverAsync() retries. @see kv::IReadWriteTransaction::setTimeoutMs.
+	void setTimeoutMs(int ms) override;
 
 	/// Number of buffered mutations issued on this transaction so far.
 	uint64_t mutationCount() const override { return mutationCount_; }

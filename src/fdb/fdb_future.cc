@@ -44,10 +44,29 @@ fdb_error_t injectedReadError(FaultInjection *fault) {
 	return FaultInjection::next(fault->readErrors);
 }
 
+/// Records a failed read in the owning transaction's state (when wired): retryable
+/// errors leave it replayable via onErrorAsync, everything else is terminal. Left inert
+/// unless the transaction is still Active AND still on the attempt that issued this
+/// future. Reads are only issued while Active, so a transaction that already moved on
+/// (commit in flight, committed, maybe-committed, or an earlier recorded failure) is
+/// left untouched: a late-resolving read must never regress a commit outcome. The
+/// generation guard adds the other half: a future from a superseded attempt (after
+/// reset() or a successful recovery re-activated the handle) must not stamp the FRESH
+/// attempt with the old attempt's error, which recovery could then act on.
+void recordReadFailure(const ReadFailureSink &sink, fdb_error_t err) {
+	if (sink.state == nullptr || *sink.state != TransactionState::kActive) { return; }
+	if (sink.attemptGeneration != nullptr && *sink.attemptGeneration != sink.issuedGeneration) {
+		return;
+	}
+	*sink.state = detail::isRetryableReadError(err) ? TransactionState::kRetryPending
+	                                                : TransactionState::kFailed;
+	if (sink.lastFailureCode != nullptr) { *sink.lastFailureCode = err; }
+}
+
 }  // namespace
 
-FDBFutureValue::FDBFutureValue(FDBFuture *future, FaultInjection *fault)
-    : future_(future), faultInjection_(fault) {}
+FDBFutureValue::FDBFutureValue(FDBFuture *future, FaultInjection *fault, ReadFailureSink sink)
+    : future_(future), faultInjection_(fault), sink_(sink) {}
 
 FDBFutureValue::~FDBFutureValue() {
 	if (future_ != nullptr) { fdb_future_destroy(future_); }
@@ -63,8 +82,8 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 	// Wrong-state call per the kv error-domain rules: posing as a missing key would hide
 	// the caller's bug, and no real backend error code exists to report.
 	if (consumed_ || future_ == nullptr) {
-		throw std::logic_error(consumed_ ? "FDBFutureValue::get: future already consumed"
-		                                 : "FDBFutureValue::get: invalid future");
+		throw kv::TransactionStateError(consumed_ ? "FDBFutureValue::get: future already consumed"
+		                                          : "FDBFutureValue::get: invalid future");
 	}
 
 	// Mark as consumed
@@ -74,6 +93,7 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 	// takes exactly the real error path below.
 	if (fdb_error_t injected = injectedReadError(faultInjection_); injected != 0) {
 		if (error != nullptr) { *error = static_cast<int>(injected); }
+		recordReadFailure(sink_, injected);
 		throwTransactionError(injected);
 	}
 
@@ -95,6 +115,7 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 		safs::log_err("FDBFutureValue::get: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
+		recordReadFailure(sink_, fdbError);
 		throwTransactionError(fdbError);
 	}
 
@@ -109,6 +130,7 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 		safs::log_err("FDBFutureValue::get: fdb_future_get_value: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
+		recordReadFailure(sink_, fdbError);
 		throwTransactionError(fdbError);
 	}
 
@@ -125,8 +147,8 @@ std::optional<kv::Value> FDBFutureValue::get(int *error) {
 	return std::nullopt;
 }
 
-FDBFutureRange::FDBFutureRange(FDBFuture *future, FaultInjection *fault)
-    : future_(future), faultInjection_(fault) {}
+FDBFutureRange::FDBFutureRange(FDBFuture *future, FaultInjection *fault, ReadFailureSink sink)
+    : future_(future), faultInjection_(fault), sink_(sink) {}
 
 FDBFutureRange::~FDBFutureRange() {
 	if (future_ != nullptr) { fdb_future_destroy(future_); }
@@ -142,8 +164,8 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 	// Wrong-state call per the kv error-domain rules: posing as an empty range would
 	// hide the caller's bug, and no real backend error code exists to report.
 	if (consumed_ || future_ == nullptr) {
-		throw std::logic_error(consumed_ ? "FDBFutureRange::get: future already consumed"
-		                                 : "FDBFutureRange::get: invalid future");
+		throw kv::TransactionStateError(consumed_ ? "FDBFutureRange::get: future already consumed"
+		                                          : "FDBFutureRange::get: invalid future");
 	}
 
 	consumed_ = true;
@@ -152,6 +174,7 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 	// takes exactly the real error path below.
 	if (fdb_error_t injected = injectedReadError(faultInjection_); injected != 0) {
 		if (error != nullptr) { *error = static_cast<int>(injected); }
+		recordReadFailure(sink_, injected);
 		throwTransactionError(injected);
 	}
 
@@ -170,6 +193,7 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 		safs::log_err("FDBFutureRange::get: fdb_future_block_until_ready: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
+		recordReadFailure(sink_, fdbError);
 		throwTransactionError(fdbError);
 	}
 
@@ -183,6 +207,7 @@ kv::GetRangeResult FDBFutureRange::get(int *error) {
 		safs::log_err("FDBFutureRange::get: fdb_future_get_keyvalue_array: error: {}",
 		              fdb_get_error(fdbError));
 		if (error != nullptr) { *error = static_cast<int>(fdbError); }
+		recordReadFailure(sink_, fdbError);
 		throwTransactionError(fdbError);
 	}
 

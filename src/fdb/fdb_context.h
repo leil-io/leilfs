@@ -18,10 +18,11 @@
 
 #pragma once
 
-#include "fdb/fdb.h"
+#include "common/platform.h"
 
 #include <memory>
-#include <thread>
+
+#include "fdb/fdb.h"
 
 namespace fdb {
 
@@ -32,44 +33,39 @@ struct FDBConfig {
 	std::string clusterFile;
 };
 
-/// FDBContext manages the FoundationDB client library context.
-/// It initializes the network thread and provides access to the database instance.
-/// On destruction, it stops the network thread and cleans up resources.
+/// Handle to one FoundationDB database connection on the shared process-wide runtime
+/// (fdb::Runtime). Creating a context starts the runtime if needed; destroying it never
+/// stops the network (a stopped FDB client cannot be restarted in-process), so contexts
+/// may be created and destroyed freely. The network stops only via an explicit
+/// Runtime::shutdown(); otherwise the runtime is deliberately leaked at process exit (see
+/// fdb::Runtime).
 class FDBContext {
 public:
 	/// Creates a shared pointer to an FDBContext instance.
+	/// @throws FDBException if the shared runtime cannot be started.
+	/// @throws std::logic_error when the runtime was already shut down (it cannot be
+	///   restarted in-process; see fdb::Runtime).
 	static std::shared_ptr<FDBContext> create(FDBConfig &&config);
 
-	/// Not needed constructors and assignment operators.
-	/// Deleted to prevent copying or moving of the FDBContext object.
 	FDBContext(const FDBContext &) = delete;
 	FDBContext &operator=(const FDBContext &) = delete;
 	FDBContext(FDBContext &&) = delete;
 	FDBContext &operator=(FDBContext &&) = delete;
 
-	/// Destructor that stops the network thread and cleans up resources.
-	~FDBContext();
+	~FDBContext() = default;
 
-	/// Returns a shared pointer to the FoundationDB database instance.
-	/// If the database instance is not yet created, it initializes it using the provided
-	/// configuration.
+	/// Returns a shared pointer to the FoundationDB database instance, creating it on
+	/// first use from the configured cluster file.
+	/// @throws FDBException if the database cannot be created.
 	std::shared_ptr<DB> getDB();
 
 private:
-	/// Initializes the FoundationDB client library and starts the network thread.
-	/// @param config Configuration for the FoundationDB client.
 	explicit FDBContext(FDBConfig &&config);
-
-	/// The thread that runs the FoundationDB network loop.
-	/// It is created when the FDBContext is initialized and runs until the context is destroyed.
-	/// This thread is responsible for handling network events and processing transactions.
-	std::thread networkThread_;
 
 	/// The configuration for the FoundationDB client.
 	FDBConfig config_;
 
-	/// The database instance managed by this context.
-	/// It is created lazily when the getDB() method is called.
+	/// The database instance managed by this context, created lazily by getDB().
 	std::shared_ptr<DB> db_;
 };
 

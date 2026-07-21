@@ -50,3 +50,9 @@ kv::IReadOnlyTransaction *FilesystemOperationContext::getReadOnlyTransaction() c
 kv::IReadWriteTransaction *FilesystemOperationContext::getReadWriteTransaction() const {
 	return rwTransaction_.get();
 }
+
+std::unique_ptr<kv::IReadWriteTransaction>
+FilesystemOperationContext::releaseReadWriteTransaction() {
+	if (rwTransaction_ != nullptr) { transactionType_ = TransactionType::kNone; }
+	return std::move(rwTransaction_);
+}

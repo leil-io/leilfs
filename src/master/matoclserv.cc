@@ -42,11 +42,15 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <random>
+#include <stdexcept>
+#include <thread>
 
 #include "common/charts.h"
 #include "common/chunk_type_with_address.h"
@@ -268,6 +272,11 @@ static uint32_t gDebugInjectConflicts = 0;
 // inode is burned. N < MATOCL_MAX_COMMIT_RETRIES recovers; N >= it exhausts to a bounded
 // EIO with no abort. Reloadable. Leave 0 in production.
 static uint32_t gDebugInjectReadConflicts = 0;
+// TEST-ONLY fault injection (MATOCL_DEBUG_INJECT_RECOVERY_ERRORS, default 0): make the
+// first N blocking backend recoveries report a retryable failure (the transaction is
+// dropped unrecovered), forcing the paced fresh-transaction replay path of the sync
+// retry loop. Counted per process. Reloadable. Leave 0 in production.
+static uint32_t gDebugInjectRecoveryErrors = 0;
 
 // eventfd the commit future's ready callback writes to (from the backend network
 // thread, or inline from the event-loop thread) so poll() wakes immediately to
@@ -353,67 +362,265 @@ static void matoclserv_commit_confirmed(const FilesystemOperationContext &ctx) {
 	matoclserv_publish_deferred_changelog(ctx);
 }
 
-/// Runs a replayable op on a fresh read-write transaction and commits synchronously.
-/// Retryable body reads and retryable commit conflicts replay the whole body on a
-/// new transaction, bounded by gMaxCommitRetries. Non-OK body status returns without
-/// commit; non-retryable commit failure or retry exhaustion returns SAUNAFS_ERROR_IO.
-/// Unknown commit result is not replayed because it may have applied already; replay
-/// could double-apply. Used by standalone post-durability cleanups outside the group
-/// batch because they can conflict with batched commits on the same inode. The body
-/// must rebuild out state each attempt and defer persistent in-memory side effects
-/// until OK. Without a read-write transaction, the body has already applied in place.
-static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
+/// Replay pacing for fresh-transaction replays (the sync retry loop and the timed
+/// BatchRetry flavor), mirroring the backend's own series: 10ms doubled per attempt,
+/// with the base capped at 1s and then jittered x[0.8, 1.2] (so up to ~1.2s), so
+/// replays of independent conflicts do not lockstep. Event-loop thread only (plain
+/// static locals).
+static std::chrono::milliseconds matoclserv_replay_delay(uint32_t attempt) {
+	constexpr int64_t kBaseMs = 10;
+	constexpr int64_t kMaxMs = 1000;
+	const uint32_t doublings = std::min(attempt > 0 ? attempt - 1 : 0, 7U);
+	static std::mt19937 rng{std::random_device{}()};
+	static std::uniform_real_distribution<double> jitter(0.8, 1.2);
+	const auto delayMs = static_cast<int64_t>(
+	    static_cast<double>(std::min(kBaseMs << doublings, kMaxMs)) * jitter(rng));
+	return std::chrono::milliseconds(delayMs);
+}
+
+/// Wall-clock ceiling on one synchronous retry loop. The sync path runs on the event-loop
+/// thread, and its recovery waits and pacing sleeps block it, so the whole loop is capped
+/// here (mirroring the batch path's kBatchRecoveryDeadline): past the deadline the op fails
+/// with EIO rather than stall the loop further. This bounds, but does not remove, the
+/// stall; the non-blocking redesign (park like the batch path) is a separate follow-up.
+static constexpr std::chrono::seconds kSyncRetryDeadline{10};
+
+/// Sleeps for the paced replay delay but never past `deadline`, so a fresh-replay pace
+/// cannot push the event-loop stall beyond the retry budget.
+static void matoclserv_sleep_bounded(std::chrono::milliseconds delay,
+                                     std::chrono::steady_clock::time_point deadline) {
+	const auto now = std::chrono::steady_clock::now();
+	if (now >= deadline) { return; }
+	const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+	std::this_thread::sleep_for(std::min(delay, remaining));
+}
+
+/// Milliseconds left until `deadline`, as an FDB transaction-timeout value: the whole
+/// budget is < kSyncRetryDeadline so it fits an int, and it is clamped to at least 1 so a
+/// stale or just-crossed deadline never yields 0 (which FDB reads as "disable the
+/// timeout", the opposite of what a spent budget wants).
+static int matoclserv_remaining_ms(std::chrono::steady_clock::time_point deadline) {
+	const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+	                           deadline - std::chrono::steady_clock::now())
+	                           .count();
+	return static_cast<int>(std::max<int64_t>(remaining, 1));
+}
+
+/// Outcome of a blocking backend recovery attempt (sync retry path). txn non-null:
+/// replay on the SAME recovered transaction. txn null with giveUp false: no recovery
+/// available or it failed retryably; the caller replays on a fresh transaction with
+/// its own pacing. giveUp true: recovery failed non-retryably, fail the op.
+struct BlockingRecoveryResult {
+	std::unique_ptr<kv::IReadWriteTransaction> txn;
+	bool giveUp = false;
+};
+
+/// Blocking backend recovery of ctx's transaction after a retryable failure, so the
+/// SAME transaction can be replayed with the backend's accumulated backoff (the
+/// blocking wait IS that backoff). Outcomes are classified as in BlockingRecoveryResult.
+/// Used by the synchronous retry path only; the batch coordinator recovers without
+/// blocking via the wakeup eventfd.
+static BlockingRecoveryResult matoclserv_recover_transaction_blocking(
+    FilesystemOperationContext &ctx, int errorCode,
+    std::chrono::steady_clock::time_point deadline) {
+	auto txn = ctx.releaseReadWriteTransaction();
+	if (txn == nullptr) { return {}; }
+
+	// TEST-ONLY: simulate a retryable recovery failure (the transaction is dropped
+	// unrecovered, like the real failure below) to force the paced fresh-replay path.
+	static uint32_t injectedRecoveryFailures = 0;
+	if (injectedRecoveryFailures < gDebugInjectRecoveryErrors) {
+		++injectedRecoveryFailures;
+		safs::log_info(
+		    "matoclserv: injected recovery failure {} (MATOCL_DEBUG_INJECT_RECOVERY_ERRORS)",
+		    injectedRecoveryFailures);
+		return {};
+	}
+
+	auto recovery = txn->recoverAsync(errorCode);
+	// recoverAsync never returns nullptr (it throws on a wrong-state call), so a null future is
+	// a library contract violation; fail-stop loudly instead of masking it as a fresh replay.
+	massert(recovery != nullptr, "recoverAsync returned a nullptr future");
+
+	// Bounded blocking wait: the network thread fail-stops on death, so recovery cannot
+	// hang forever, but it can still block the event loop for a backend timeout. Spin on
+	// isReady() so the stall is capped by the shared retry deadline; past it, give the op up.
+	while (!recovery->isReady()) {
+		if (std::chrono::steady_clock::now() >= deadline) {
+			safs::log_err(
+			    "matoclserv: backend recovery exceeded the sync retry deadline, giving up");
+			return {nullptr, true};
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
+	try {
+		recovery->get();
+		return {std::move(txn), false};
+	} catch (const kv::RetryableTransactionError &e) {
+		safs::log_info(
+		    "matoclserv: backend recovery failed (err {}), replaying on a fresh transaction: {}",
+		    e.errorCode(), e.what());
+		return {};
+	} catch (const kv::TransactionError &e) {
+		safs::log_err("matoclserv: backend recovery failed non-retryably (err {}): {}",
+		              e.errorCode(), e.what());
+		return {nullptr, true};
+	}
+}
+
+/// Body of the synchronous retry loop (matoclserv_commit_op_with_retry). Retryable body
+/// reads and retryable commit conflicts replay the whole body, bounded by gMaxCommitRetries
+/// and the wall-clock `deadline`: on the SAME transaction after backend recovery (whose
+/// bounded blocking wait IS the backend's pacing), or on a fresh transaction when recovery
+/// is unavailable or failed retryably, paced with the backend's jittered series
+/// (matoclserv_replay_delay, clamped to the deadline) so a persistent failure cannot burn
+/// the retry budget in a burst. A non-retryable recovery failure or a passed deadline fails
+/// the op. Non-OK body status returns without commit; non-retryable commit failure or retry
+/// exhaustion returns SAUNAFS_ERROR_IO. Unknown commit result is not replayed because it may
+/// have applied already; replay could double-apply. The body must rebuild out state each
+/// attempt and defer persistent in-memory side effects until OK. Without a read-write
+/// transaction, the body has already applied in place.
+static uint8_t matoclserv_commit_op_with_retry_impl(
+    const OpReplay &body, std::chrono::steady_clock::time_point deadline) {
+	std::unique_ptr<kv::IReadWriteTransaction> retained;
 	for (uint32_t attempt = 0;; ++attempt) {
-		FilesystemOperationContext ctx = gFSOperations->createFilesystemOperationContext(
-		    FilesystemOperationContext::TransactionType::kReadWrite);
-		if (ctx.hasReadWriteTransaction()) { ctx.setDeferChangelog(); }
-		uint8_t status;
+		// Refuse to START a new attempt past the budget: no fresh transaction, read, or
+		// commit may begin after the deadline. A call already in flight is bounded by the
+		// per-attempt transaction timeout set below, not by this check.
+		if (std::chrono::steady_clock::now() >= deadline) {
+			safs::log_warn("matoclserv: op retry deadline reached after {} attempts, giving up",
+			               attempt);
+			return SAUNAFS_ERROR_IO;
+		}
+		FilesystemOperationContext ctx =
+		    retained != nullptr ? FilesystemOperationContext(std::move(retained))
+		                        : gFSOperations->createFilesystemOperationContext(
+		                              FilesystemOperationContext::TransactionType::kReadWrite);
+		const bool hasTxn = ctx.hasReadWriteTransaction();
+		// Contain a kv::TransactionStateError (a coordinator SEQUENCING bug, e.g. a consumed
+		// future or a wrong-state call) ONLY here: pre-durability, on a rollback-capable
+		// transaction. Catching that narrow type, not std::logic_error, lets a genuine body
+		// bug (std::out_of_range, ...) still fail-stop instead of being masked as EIO. The
+		// durable-publication step and the no-transaction in-memory path deliberately sit
+		// OUTSIDE this try, so a bug there fail-stops rather than mask durable state as EIO.
 		try {
-			if (attempt < gDebugInjectReadConflicts) {
-				// Fault injection (no commit, no write): force the retry path.
-				throw kv::RetryableTransactionError(
-				    1031, "injected retryable read conflict (MATOCL_DEBUG_INJECT_READ_CONFLICTS)");
-			}
-			status = body(ctx);
-		} catch (const kv::RetryableTransactionError &e) {
-			if (attempt >= gMaxCommitRetries) {
-				safs::log_warn(
-				    "matoclserv: op body read retry exhausted after {} attempts (err {}): {}",
-				    attempt, e.errorCode(), e.what());
+			if (hasTxn) { ctx.setDeferChangelog(); }
+			uint8_t status;
+			try {
+				if (hasTxn) {
+					// Bound this attempt (reads and commit) to the remaining budget so a stuck
+					// backend cannot stall the event loop past the deadline; re-applied each
+					// attempt since a fresh replay restarts the clock. Kept inside this try so an
+					// option-set backend error fails the op with EIO, while a wrong-state throw
+					// still reaches the outer catch.
+					ctx.getReadWriteTransaction()->setTimeoutMs(matoclserv_remaining_ms(deadline));
+				}
+				if (attempt < gDebugInjectReadConflicts) {
+					// Fault injection (no commit, no write): force the retry path.
+					throw kv::RetryableTransactionError(
+					    1031,
+					    "injected retryable read conflict (MATOCL_DEBUG_INJECT_READ_CONFLICTS)");
+				}
+				status = body(ctx);
+			} catch (const kv::RetryableTransactionError &e) {
+				if (attempt >= gMaxCommitRetries || std::chrono::steady_clock::now() >= deadline) {
+					safs::log_warn(
+					    "matoclserv: op body read retry giving up after {} attempts (err {}): {}",
+					    attempt, e.errorCode(), e.what());
+					return SAUNAFS_ERROR_IO;
+				}
+				// An injected error never touched the transaction, so it has nothing to
+				// recover from; replay on a fresh one (as a real code path, not test-only:
+				// recovery below can also come back empty).
+				if (attempt >= gDebugInjectReadConflicts) {
+					auto recovered =
+					    matoclserv_recover_transaction_blocking(ctx, e.errorCode(), deadline);
+					if (recovered.giveUp) { return SAUNAFS_ERROR_IO; }
+					retained = std::move(recovered.txn);
+				}
+				// A recovered transaction was paced by the blocking recovery wait; a fresh
+				// replay paces itself with the backend's own series, clamped to the deadline.
+				if (retained == nullptr) {
+					matoclserv_sleep_bounded(matoclserv_replay_delay(attempt + 1), deadline);
+				}
+				safs::log_info(
+				    "matoclserv: retryable read error in op body (err {}), retrying, attempt {}",
+				    e.errorCode(), attempt + 1);
+				continue;
+			} catch (const kv::TransactionError &e) {
+				// Non-retryable backend failure: fail this op with EIO instead of letting
+				// the exception escape the event loop.
+				safs::log_err("matoclserv: backend transaction error in op body (err {}): {}",
+				              e.errorCode(), e.what());
 				return SAUNAFS_ERROR_IO;
 			}
-			safs::log_info(
-			    "matoclserv: retryable read error in op body (err {}), retrying, attempt {}",
-			    e.errorCode(), attempt + 1);
-			continue;
-		} catch (const kv::TransactionError &e) {
-			// Non-retryable backend failure: fail this op with EIO instead of letting
-			// the exception escape the event loop.
-			safs::log_err("matoclserv: backend transaction error in op body (err {}): {}",
-			              e.errorCode(), e.what());
+
+			if (status != SAUNAFS_STATUS_OK) { return status; }  // op error/status, do not commit
+			auto *txn = ctx.getReadWriteTransaction();
+			if (txn == nullptr) { return status; }  // in-memory Master: already applied in place
+
+			// Do not submit a commit we already know is past budget (the transaction is
+			// discarded unwritten; nothing durable).
+			if (std::chrono::steady_clock::now() >= deadline) {
+				safs::log_warn("matoclserv: op retry deadline reached before commit, giving up");
+				return SAUNAFS_ERROR_IO;
+			}
+			int commitError = 0;
+			bool retryable = false;
+			if (txn->commitAsync()->getResult(&commitError, &retryable)) {
+				// Durable: fall through (the sole normal exit of this try) to publish below,
+				// OUTSIDE the logic_error catch, so a post-durable throw fail-stops.
+			} else if (retryable && attempt < gMaxCommitRetries &&
+			           std::chrono::steady_clock::now() < deadline) {
+				auto recovered =
+				    matoclserv_recover_transaction_blocking(ctx, commitError, deadline);
+				if (recovered.giveUp) { return SAUNAFS_ERROR_IO; }
+				retained = std::move(recovered.txn);
+				if (retained == nullptr) {
+					matoclserv_sleep_bounded(matoclserv_replay_delay(attempt + 1), deadline);
+				}
+				safs::log_info(
+				    "matoclserv: sync commit conflict (err {}), replaying op, attempt {}",
+				    commitError, attempt + 1);
+				continue;
+			} else {
+				safs::log_err("matoclserv: sync commit failed (err {}, retryable {}), giving up",
+				              commitError, retryable);
+				return SAUNAFS_ERROR_IO;
+			}
+		} catch (const kv::TransactionStateError &e) {
+			// Rollback-capable and pre-durability: the transaction is destroyed with the
+			// context, leaving nothing durable, so contain the bug to this standalone op.
+			// Without a transaction there is no rollback (in-memory apply-in-place), so
+			// re-throw to fail-stop rather than pretend the op cleanly failed.
+			if (!hasTxn) { throw; }
+			safs::log_err(
+			    "matoclserv: coordinator invariant violated in sync op commit, failing op: {}",
+			    e.what());
 			return SAUNAFS_ERROR_IO;
 		}
 
-		if (status != SAUNAFS_STATUS_OK) { return status; }  // op error/status, do not commit
-		auto *txn = ctx.getReadWriteTransaction();
-		if (txn == nullptr) { return status; }  // in-memory Master: already applied in place
-
-		int commitError = 0;
-		bool retryable = false;
-		if (txn->commitAsync()->getResult(&commitError, &retryable)) {
-			matoclserv_commit_confirmed(ctx);
-			return SAUNAFS_STATUS_OK;  // durable
-		}
-		if (retryable && attempt < gMaxCommitRetries) {
-			safs::log_info(
-			    "matoclserv: sync commit conflict (err {}), replaying op, attempt {}",
-			    commitError, attempt + 1);
-			continue;
-		}
-		safs::log_err("matoclserv: sync commit failed (err {}, retryable {}), giving up", commitError,
-		              retryable);
-		return SAUNAFS_ERROR_IO;
+		// Reached only after a durable commit. Publication is POST-durability and is kept
+		// out of the catch above on purpose: a throw here (e.g. a changelog signal slot)
+		// must fail-stop, never be reported as EIO, because the KV mutation already landed
+		// and a caller retry would double-apply it.
+		matoclserv_commit_confirmed(ctx);
+		return SAUNAFS_STATUS_OK;  // durable
 	}
+}
+
+/// Runs a replayable op and commits synchronously, opening a fresh retry budget (see
+/// matoclserv_commit_op_with_retry_impl for the loop and its phase-aware TransactionStateError
+/// handling). Used by standalone post-durability cleanups outside the group batch because
+/// they can conflict with batched commits on the same inode. No exception is caught here:
+/// a catch would defeat the impl's phase boundary, which must let a coordinator
+/// TransactionStateError escape to fail-stop after a durable commit or on the transactionless
+/// in-memory path (masking it as EIO would hide durable or partial state), and must let a
+/// genuine caller logic bug (std::out_of_range, ...) escape everywhere.
+static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
+	const auto deadline = std::chrono::steady_clock::now() + kSyncRetryDeadline;
+	return matoclserv_commit_op_with_retry_impl(body, deadline);
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +662,11 @@ struct OpBatch {
 	std::vector<BatchMember> members;
 	uint32_t attempt = 0;     ///< whole-batch commit attempts (conflict replays)
 	bool hasContext = false;  ///< ctx is created lazily for the open batch
+	/// True when this batch's commit future is a TEST-ONLY injected conflict (the real
+	/// transaction was never committed). Captured at launch: the injection setting is
+	/// reloadable, so re-deriving it at finalize time could misclassify the batch and
+	/// recover a transaction that is still Active.
+	bool injected = false;
 };
 
 static OpBatch gOpenBatch;
@@ -466,6 +678,35 @@ static std::deque<BatchMember> gHeldOps;
 // even in the window where gInFlightBatch is already reset, or its body would
 // run against state the resolution is still rebuilding.
 static bool gBatchResolving = false;
+
+/// A batch parked between commit attempts after a retryable conflict, in one of two
+/// flavors. Backend-recovery flavor: `txn` (the batch's own transaction, retained so
+/// the backend's accumulated backoff pacing survives across attempts) plus `recovery`,
+/// whose completion IS the backoff wait. Timed flavor (recovery unavailable: injected
+/// conflicts never touch the real transaction, or a recovery attempt failed): both
+/// null, replay on a fresh transaction once `notBefore` passes. The timed flavor has
+/// no dedicated timer: the replay starts on the first event-loop poll tick at or after
+/// `notBefore`, so the added latency is bounded by the poll cadence. While one is
+/// parked, arriving ops are held, keeping the invariant that bodies only ever run
+/// against durable state.
+struct BatchRetry {
+	std::vector<BatchMember> members;
+	uint32_t attempt = 0;  ///< the upcoming attempt number
+	/// Declared before `recovery` so the future is destroyed first.
+	std::unique_ptr<kv::IReadWriteTransaction> txn;
+	std::unique_ptr<kv::IVoidFuture> recovery;
+	std::chrono::steady_clock::time_point notBefore{};  ///< timed flavor only
+	std::chrono::steady_clock::time_point parkedAt{};   ///< recovery-flavor deadline base
+};
+static std::optional<BatchRetry> gBatchRetry;
+
+/// Upper bound on how long a recovery-flavor BatchRetry may stay parked. Backend
+/// recovery normally completes within the backoff cap (1s); a recovery future that is
+/// still not ready after this much longer means the backend client can no longer make
+/// progress (e.g. its network thread died), and waiting would also wedge shutdown:
+/// matoclserv_canexit blocks while a retry is parked, and matoclserv_term only runs
+/// after it. Past the deadline the batch fails with EIO and the retry is dropped.
+static constexpr std::chrono::seconds kBatchRecoveryDeadline{10};
 
 // Group-commit batch-stats accounting. Off by default; the master
 // flips it on with FDB_OP_PROFILING. Touched only on the single event-loop thread (the batch
@@ -631,9 +872,9 @@ static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
                                  std::function<void(uint8_t status)> finish,
                                  std::function<void(uint8_t status)> onCommit = {}) {
 	eptr->pendingCommits++;
-	if (gInFlightBatch.has_value() || gBatchResolving) {
-		// Hold the body until the in-flight batch is durable so it runs against
-		// committed state (the soundness core of this design).
+	if (gInFlightBatch.has_value() || gBatchRetry.has_value() || gBatchResolving) {
+		// Hold the body until the in-flight batch (or its parked retry) is durable
+		// so it runs against committed state (the soundness core of this design).
 		if (gBatchStatsEnabled) { gBatchStats.heldOps++; }
 		gHeldOps.push_back(
 		    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit)});
@@ -660,8 +901,8 @@ static void matoclserv_poll_batch() {
 			future = ctx.getReadWriteTransaction()->commitAsync();
 		}
 		future->setReadyCallback(&matoclserv_commit_wakeup, nullptr);
-		gInFlightBatch.emplace(
-		    OpBatch{std::move(ctx), std::move(future), std::move(members), attempt, true});
+		gInFlightBatch.emplace(OpBatch{std::move(ctx), std::move(future), std::move(members),
+		                               attempt, true, attempt < gDebugInjectConflicts});
 	};
 
 	if (gInFlightBatch.has_value() && gInFlightBatch->future->isReady()) {
@@ -680,21 +921,40 @@ static void matoclserv_poll_batch() {
 			gInFlightBatch.reset();
 		} else if (retryable && gInFlightBatch->attempt < gMaxCommitRetries) {
 			// A conflict can only come from a writer outside the batch (sync
-			// handlers, chunkserver-driven writes, other masters): replay the whole
-			// batch on a fresh transaction and resubmit.
+			// handlers, chunkserver-driven writes, other masters): park the batch for
+			// a paced replay. Recover the SAME transaction when the failure came from
+			// a real commit; injected conflicts never touched it, so there is nothing
+			// to recover and they take the timed fresh-replay flavor.
 			if (gBatchStatsEnabled) { gBatchStats.batchReplays++; }
 			const uint32_t attempt = gInFlightBatch->attempt + 1;
 			safs::log_info(
 			    "matoclserv: batch commit conflict (err {}), replaying {} member(s), attempt {}",
 			    commitError, gInFlightBatch->members.size(), attempt);
-			std::vector<BatchMember> members = std::move(gInFlightBatch->members);
-			gInFlightBatch.reset();  // destroy the old future before its txn
-			FilesystemOperationContext ctx = matoclserv_replay_members(members);
-			// The replay may have replied and dropped every member; relaunch a commit only
-			// when some survived (this conflict path is KV only, so the ctx owns a txn).
-			if (!members.empty()) {
-				launchInFlightBatch(std::move(ctx), std::move(members), attempt);
+			BatchRetry retry;
+			retry.members = std::move(gInFlightBatch->members);
+			retry.attempt = attempt;
+			// The launch-time injected flag, NOT the reloadable setting: re-deriving it
+			// here could release a transaction the injected future never committed,
+			// still Active, and recoverAsync on it would fail stop the event loop.
+			if (!gInFlightBatch->injected) {
+				retry.txn = gInFlightBatch->ctx.releaseReadWriteTransaction();
 			}
+			gInFlightBatch.reset();  // destroy the consumed commit future
+			if (retry.txn != nullptr) {
+				retry.recovery = retry.txn->recoverAsync(commitError);
+				// Same contract as the sync path: a non-null txn yields a non-null future, so a
+				// null one is a library invariant violation, not a "no recovery available" case.
+				massert(retry.recovery != nullptr, "recoverAsync returned a nullptr future");
+			}
+			if (retry.recovery != nullptr) {
+				retry.recovery->setReadyCallback(&matoclserv_commit_wakeup, nullptr);
+				retry.parkedAt = std::chrono::steady_clock::now();
+			} else {
+				retry.txn.reset();
+				retry.notBefore =
+				    std::chrono::steady_clock::now() + matoclserv_replay_delay(attempt);
+			}
+			gBatchRetry.emplace(std::move(retry));
 		} else {
 			safs::log_err("matoclserv: batch commit failed (err {}, retryable {}), giving up",
 			              commitError, retryable);
@@ -705,11 +965,91 @@ static void matoclserv_poll_batch() {
 		}
 	}
 
+	// Resolve a parked retry: replay once its recovery completed (or its timer
+	// expired) and resubmit the batch. Replay-time finishes can submit follow-up
+	// ops, so this runs under gBatchResolving like the block above.
+	if (!gInFlightBatch.has_value() && gBatchRetry.has_value()) {
+		if (gBatchRetry->recovery != nullptr) {
+			if (gBatchRetry->recovery->isReady()) {
+				gBatchResolving = true;
+				BatchRetry retry = std::move(*gBatchRetry);
+				gBatchRetry.reset();
+				// Only backend failures are caught below. A std::logic_error (e.g. a
+				// consumed future) is a coordinator bug and fails stop, like everywhere
+				// else in the event loop.
+				try {
+					retry.recovery->get();
+					retry.recovery.reset();
+					// Replay onto the recovered transaction; if a member invalidates
+					// it, fall back to the fresh-transaction rebuild.
+					FilesystemOperationContext ctx(std::move(retry.txn));
+					ctx.setDeferChangelog();
+					bool restart = false;
+					for (size_t idx = 0; idx < retry.members.size() && !restart;) {
+						restart = matoclserv_replay_members_iteration(retry.members, idx, ctx);
+					}
+					if (restart) { ctx = matoclserv_replay_members(retry.members); }
+					// The replay may have replied and dropped every member; relaunch a
+					// commit only when some survived.
+					if (!retry.members.empty()) {
+						launchInFlightBatch(std::move(ctx), std::move(retry.members),
+						                    retry.attempt);
+					}
+				} catch (const kv::RetryableTransactionError &e) {
+					// The transaction is terminal after a failed recovery; fall back
+					// to a timed fresh replay.
+					safs::log_info(
+					    "matoclserv: batch recovery failed (err {}), timed fresh replay, "
+					    "attempt {}: {}",
+					    e.errorCode(), retry.attempt, e.what());
+					retry.recovery.reset();
+					retry.txn.reset();
+					retry.notBefore =
+					    std::chrono::steady_clock::now() + matoclserv_replay_delay(retry.attempt);
+					gBatchRetry.emplace(std::move(retry));
+				} catch (const kv::TransactionError &e) {
+					safs::log_err("matoclserv: batch recovery failed (err {}), giving up: {}",
+					              e.errorCode(), e.what());
+					for (BatchMember &member : retry.members) {
+						matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+					}
+				}
+			} else if (std::chrono::steady_clock::now() >=
+			           gBatchRetry->parkedAt + kBatchRecoveryDeadline) {
+				// Recovery normally resolves within the 1s backoff cap; well past that,
+				// the backend can no longer make progress and waiting longer would also
+				// wedge shutdown (canexit blocks while a retry is parked). Fail the
+				// members and drop the retry: the abandoned recovery future cancels
+				// itself and the unrecovered transaction is destroy-only.
+				gBatchResolving = true;
+				BatchRetry retry = std::move(*gBatchRetry);
+				gBatchRetry.reset();
+				safs::log_err(
+				    "matoclserv: batch recovery not ready after {}s, failing {} member(s)",
+				    std::chrono::duration_cast<std::chrono::seconds>(kBatchRecoveryDeadline)
+				        .count(),
+				    retry.members.size());
+				for (BatchMember &member : retry.members) {
+					matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+				}
+			}
+		} else if (std::chrono::steady_clock::now() >= gBatchRetry->notBefore) {
+			gBatchResolving = true;
+			BatchRetry retry = std::move(*gBatchRetry);
+			gBatchRetry.reset();
+			FilesystemOperationContext ctx = matoclserv_replay_members(retry.members);
+			if (!retry.members.empty()) {
+				launchInFlightBatch(std::move(ctx), std::move(retry.members), retry.attempt);
+			}
+		}
+	}
+
 	gBatchResolving = false;
 
-	// Drain held ops into the open batch once nothing is in flight. Bodies run
-	// here, against the now-durable state. FIFO keeps per-connection op order.
-	while (!gInFlightBatch.has_value() && !gHeldOps.empty()) {
+	// Drain held ops into the open batch once neither a batch nor a parked retry is
+	// pending. Bodies run here, against the now-durable state. FIFO keeps
+	// per-connection op order.
+	while (!gInFlightBatch.has_value() && !gBatchRetry.has_value() && !gHeldOps.empty()) {
 		BatchMember held = std::move(gHeldOps.front());
 		gHeldOps.pop_front();
 		if (held.eptr->mode == ClientConnectionMode::KILL) {
@@ -719,8 +1059,9 @@ static void matoclserv_poll_batch() {
 		matoclserv_join_open_batch(std::move(held));
 	}
 
-	// Submit the open batch.
-	if (!gInFlightBatch.has_value() && !gOpenBatch.members.empty()) {
+	// Submit the open batch. The retry gate is defensive: while a retry is parked,
+	// submits are held, so the open batch stays empty.
+	if (!gInFlightBatch.has_value() && !gBatchRetry.has_value() && !gOpenBatch.members.empty()) {
 		launchInFlightBatch(std::move(gOpenBatch.ctx), std::move(gOpenBatch.members), 0);
 		gOpenBatch.members.clear();
 		gOpenBatch.hasContext = false;
@@ -6828,6 +7169,7 @@ void matoclserv_term() {
 	// Drop any in-flight batch commits before tearing down client entries so their
 	// reply continuations (which capture eptr) cannot run against freed memory.
 	gInFlightBatch.reset();
+	gBatchRetry.reset();
 	gHeldOps.clear();
 	gOpenBatch.members.clear();
 	gOpenBatch.hasContext = false;
@@ -6998,9 +7340,11 @@ int matoclserv_canexit() {
 		return 0;
 	}
 
-	// Wait for the group-commit pipeline to drain: an in-flight batch's continuations
-	// still reference client entries, and held ops have unsent replies.
-	if (gInFlightBatch.has_value() || !gHeldOps.empty() || !gOpenBatch.members.empty()) {
+	// Wait for the group-commit pipeline to drain: an in-flight batch's (or parked
+	// retry's) continuations still reference client entries, and held ops have
+	// unsent replies.
+	if (gInFlightBatch.has_value() || gBatchRetry.has_value() || !gHeldOps.empty() ||
+	    !gOpenBatch.members.empty()) {
 		return 0;
 	}
 
@@ -7251,6 +7595,7 @@ void matoclserv_reload() {
 	gMaxCommitRetries = cfg_getuint32("MATOCL_MAX_COMMIT_RETRIES", 5U);
 	gDebugInjectConflicts = cfg_getuint32("MATOCL_DEBUG_INJECT_COMMIT_CONFLICTS", 0U);
 	gDebugInjectReadConflicts = cfg_getuint32("MATOCL_DEBUG_INJECT_READ_CONFLICTS", 0U);
+	gDebugInjectRecoveryErrors = cfg_getuint32("MATOCL_DEBUG_INJECT_RECOVERY_ERRORS", 0U);
 
 	std::string oldListenHost = gListenHost;
 	std::string oldListenPort = gListenPort;
@@ -7304,6 +7649,7 @@ int matoclserv_network_init() {
 	gMaxCommitRetries = cfg_getuint32("MATOCL_MAX_COMMIT_RETRIES", 5U);
 	gDebugInjectConflicts = cfg_getuint32("MATOCL_DEBUG_INJECT_COMMIT_CONFLICTS", 0U);
 	gDebugInjectReadConflicts = cfg_getuint32("MATOCL_DEBUG_INJECT_READ_CONFLICTS", 0U);
+	gDebugInjectRecoveryErrors = cfg_getuint32("MATOCL_DEBUG_INJECT_RECOVERY_ERRORS", 0U);
 
 	if (matoclserv_iolimits_reload() != 0) {
 		return -1;

@@ -51,14 +51,14 @@ public:
 	/// Creates a new transaction for reading and writing.
 	/// @return A pointer to the created transaction.
 	std::unique_ptr<kv::IReadWriteTransaction> createReadWriteTransaction() override {
-		fdb::Transaction auxTr(db_.get());
+		auto transaction = std::make_unique<fdb::FDBTransaction>(db_.get());
 
-		if (!auxTr) {
+		if (!*transaction) {
 			safs::log_err("FDBKVEngine::createReadWriteTransaction: Failed to create transaction");
 			return nullptr;
 		}
 
-		return std::make_unique<fdb::FDBTransaction>(std::move(auxTr));
+		return transaction;
 	}
 
 private:

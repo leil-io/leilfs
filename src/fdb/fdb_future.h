@@ -20,6 +20,8 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
+
 // Needs to be included before foundationdb/fdb_c.h
 #include <fdb/fdb_api_version.h>
 
@@ -30,6 +32,27 @@
 namespace fdb {
 
 struct FaultInjection;
+enum class TransactionState;
+
+/// Back-reference a read future uses to record a late backend failure into its owning
+/// transaction. recordReadFailure() writes through it only while the transaction is
+/// still on the attempt that issued the future: state Active AND the attempt generation
+/// unchanged. A future from a superseded attempt (after reset() or a successful
+/// onErrorAsync() recovery advanced the generation) is left inert, so it can neither
+/// regress a commit outcome nor stamp the fresh attempt with a stale attempt's error.
+/// All-null (the default) means "not wired": handle-less transactions and detached
+/// futures record nothing.
+struct ReadFailureSink {
+	/// Owning transaction's state; moved to RetryPending/Failed on a wired, in-attempt
+	/// failure, untouched otherwise.
+	TransactionState *state = nullptr;
+	/// Owning transaction's recorded failure code, written together with state.
+	fdb_error_t *lastFailureCode = nullptr;
+	/// Owning transaction's live attempt counter; compared against issuedGeneration.
+	const uint64_t *attemptGeneration = nullptr;
+	/// The attempt (attemptGeneration value) this future was issued in.
+	uint64_t issuedGeneration = 0;
+};
 
 /// Wraps a FoundationDB future (FDBFuture*) with RAII semantics.
 /// Implements the kv::IFuture interface for asynchronous get operations.
@@ -41,7 +64,12 @@ public:
 	/// Constructs a FDBFutureValue wrapping the given FDBFuture*.
 	/// @param future The FDB future to wrap. Takes ownership.
 	/// @param fault Optional TEST-ONLY fault-injection script (not owned, may be null).
-	explicit FDBFutureValue(FDBFuture *future, FaultInjection *fault = nullptr);
+	/// @param sink Back-reference for recording a late read failure into the owning
+	///   transaction, guarded to the issuing attempt (see ReadFailureSink); default is
+	///   inert, so a late-resolving read never regresses a commit outcome or a fresh
+	///   attempt.
+	explicit FDBFutureValue(FDBFuture *future, FaultInjection *fault = nullptr,
+	                        ReadFailureSink sink = {});
 
 	/// Destructor. Destroys the wrapped FDB future.
 	~FDBFutureValue() override;
@@ -72,6 +100,9 @@ private:
 	bool consumed_ = false;
 	/// TEST-ONLY fault-injection script; null in production.
 	FaultInjection *faultInjection_;
+	/// Records a late read failure into the owning transaction, guarded so a superseded
+	/// attempt's future stays inert (see ReadFailureSink).
+	ReadFailureSink sink_;
 };
 
 /// Wraps a FoundationDB range future (FDBFuture*) with RAII semantics.
@@ -84,7 +115,12 @@ public:
 	/// Constructs a FDBFutureRange wrapping the given FDBFuture*.
 	/// @param future The FDB future to wrap. Takes ownership.
 	/// @param fault Optional TEST-ONLY fault-injection script (not owned, may be null).
-	explicit FDBFutureRange(FDBFuture *future, FaultInjection *fault = nullptr);
+	/// @param sink Back-reference for recording a late read failure into the owning
+	///   transaction, guarded to the issuing attempt (see ReadFailureSink); default is
+	///   inert, so a late-resolving read never regresses a commit outcome or a fresh
+	///   attempt.
+	explicit FDBFutureRange(FDBFuture *future, FaultInjection *fault = nullptr,
+	                        ReadFailureSink sink = {});
 
 	/// Destructor. Destroys the wrapped FDB future.
 	~FDBFutureRange() override;
@@ -115,6 +151,9 @@ private:
 	bool consumed_ = false;
 	/// TEST-ONLY fault-injection script; null in production.
 	FaultInjection *faultInjection_;
+	/// Records a late read failure into the owning transaction, guarded so a superseded
+	/// attempt's future stays inert (see ReadFailureSink).
+	ReadFailureSink sink_;
 };
 
 }  // namespace fdb
