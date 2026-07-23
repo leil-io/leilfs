@@ -59,9 +59,7 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 			    inode, uid_, trashtime_, smode_);
 
 			// Schedule the node update for KV backends.
-			if (fsOpContext.hasReadWriteTransaction()) {
-				gFSOperations->nodeOperations()->updateNode(fsOpContext, node);
-			}
+			gFSOperations->nodeOperations()->updateNode(fsOpContext, node);
 		}
 	}
 
@@ -121,10 +119,6 @@ uint8_t SetTrashtimeTask::setTrashtime(const FilesystemOperationContext &fsOpCon
 				}
 				fsnodes_update_checksum(node);
 
-				// Emit node changed signal to notify ctime updates
-				if (gMetadata->nodeChangedSignal.size() > 0) {
-					gMetadata->nodeChangedSignal.emit(node);
-				}
 				return SetTrashtimeTask::kChanged;
 			} else {
 				return SetTrashtimeTask::kNotChanged;
