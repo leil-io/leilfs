@@ -304,17 +304,17 @@ int SnapshotTask::cloneNodeStep(const FilesystemOperationContext &fsOpContext, u
 	fsnodes_update_checksum(dst_node);
 	fsnodes_update_checksum(dst_parent);
 
-	// Persist post-createNode in-memory mutations on KV backends.
-	if (fsOpContext.hasReadWriteTransaction()) {
-		gFSOperations->nodeOperations()->updateNode(fsOpContext, dst_node);
-		gFSOperations->nodeOperations()->updateNode(fsOpContext, dst_parent);
-	}
-
 	emitChangelog(fsOpContext, ts, dst_node->id);
 
 	if (dst_inode_ != 0 && dst_inode_ != dst_node->id) {
 		return SAUNAFS_ERROR_MISMATCH;
 	}
+
+	// Persist post-createNode in-memory mutations on KV backends only on the success path.
+	// KV stages the nodes into the transaction, signal backends (forkless) emit.
+	// Kept below the MISMATCH check so a rejected clone is never persisted to FDB.
+	gFSOperations->nodeOperations()->updateNode(fsOpContext, dst_node);
+	gFSOperations->nodeOperations()->updateNode(fsOpContext, dst_parent);
 
 	if (fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.commitTransaction()) {
@@ -323,12 +323,6 @@ int SnapshotTask::cloneNodeStep(const FilesystemOperationContext &fsOpContext, u
 			    __func__, current_subtask_->first, dst_parent_inode_, current_subtask_->second);
 			return SAUNAFS_ERROR_IO;
 		}
-	}
-
-	// Emit node changed signal to notify changes during the node creation and data cloning
-	if (gMetadata->nodeChangedSignal.size() > 0) {
-		gMetadata->nodeChangedSignal.emit(dst_node);
-		gMetadata->nodeChangedSignal.emit(dst_parent);
 	}
 
 	return SAUNAFS_STATUS_OK;
