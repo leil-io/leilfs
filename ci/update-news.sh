@@ -7,7 +7,7 @@ gitChangelog=$(./ci/get-changelog.sh "${1:-stable}" "${headCommit}")
 version=$(sed -nE 's/^set\(DEFAULT_MIN_VERSION "([^"]+)"\).*/\1/p' ./CMakeLists.txt)
 
 
-newsEntry="* SaunaFS (${version}) ($(date '+%Y-%m-%d' -u))\n"
+newsEntry="* LeilFS (${version}) ($(date '+%Y-%m-%d' -u))\n"
 
 isPartOfMerge() {
 	commit="$1"
