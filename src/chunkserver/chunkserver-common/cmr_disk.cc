@@ -182,10 +182,11 @@ IChunk *CmrDisk::instantiateNewConcreteChunk(uint64_t chunkId,
 	return chunk;
 }
 
-void CmrDisk::setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-                             uint16_t newBlocks) {
+int CmrDisk::setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
+                            uint16_t newBlocks) {
 	(void)originalBlocks;
 	chunk->setBlocks(newBlocks);
+	return SAUNAFS_STATUS_OK;
 }
 
 void CmrDisk::updateAfterScan() {

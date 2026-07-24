@@ -84,6 +84,11 @@ IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType);
 
 int chunkWriteCrc(IChunk *chunk);
 
+/// Calls disk->updateChunkAttributes(), retrying a few times (with backoff)
+/// while it keeps returning SAUNAFS_ERROR_IO, since that's a transient read
+/// failure rather than a confirmed-absent chunk.
+int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromScan);
+
 /// Finds an existing chunk or creates a new one, and locks it anyway.
 ///
 /// The function locks the returned chunk (may block if the chunk is already

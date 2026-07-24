@@ -1839,7 +1839,15 @@ static int hddInternalTruncate(uint64_t chunkId, ChunkPartType chunkType,
 		disk->setNeedRefresh(true);
 	}
 
-	disk->setChunkBlocks(chunk, chunk->blocks(), blocks);
+	status = disk->setChunkBlocks(chunk, chunk->blocks(), blocks);
+	if (status != SAUNAFS_STATUS_OK) {
+		hddAddErrorAndPreserveErrno(chunk);
+		safs::log_warn("truncate: file:{} - set chunk blocks error",
+		               chunk->fullMetaFilename().c_str());
+		hddIOEnd(chunk);
+		hddChunkRelease(chunk);
+		return status;
+	}
 
 	status = hddIOEnd(chunk);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -2327,8 +2335,16 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 		return status;
 	}
 
-	dupDisk->setChunkBlocks(dupChunk, originalChunk->blocks(), blocks);
+	status = dupDisk->setChunkBlocks(dupChunk, originalChunk->blocks(), blocks);
 	dupDisk->setNeedRefresh(true);
+
+	if (status != SAUNAFS_STATUS_OK) {
+		hddAddErrorAndPreserveErrno(dupChunk);
+		dupDisk->unlinkChunk(dupChunk);
+		hddDeleteChunkFromRegistry(dupChunk);
+		hddChunkRelease(originalChunk);
+		return status;
+	}
 
 	hddChunkRelease(dupChunk);
 	hddChunkRelease(originalChunk);
@@ -2551,10 +2567,17 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 	chunk->setVersion(version);
 	sassert(chunk->fullMetaFilename() == fullname);
 
-	{
-		disk->updateChunkAttributes(chunk, true);
-		chunk->setValidAttr(0);
+	int attrStatus = hddUpdateChunkAttributesWithRetry(disk, chunk, true);
+	if (attrStatus != SAUNAFS_STATUS_OK) {
+		safs::log_err(
+		    "hddAddChunkFromDiskScan: could not read attributes "
+		    "for {} (status {}); reporting damaged",
+		    fullname.c_str(), attrStatus);
+		hddReportDamagedChunk(chunk->id(), chunk->type());
+		hddChunkRelease(chunk);
+		return;
 	}
+	chunk->setValidAttr(0);
 
 	{
 		std::lock_guard testsLockGuard(gTestsMutex);

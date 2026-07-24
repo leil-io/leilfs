@@ -20,6 +20,7 @@
 
 #include "chunkserver-common/hdd_utils.h"
 
+#include <cinttypes>
 #include <fcntl.h>
 #include <sys/time.h>
 
@@ -306,6 +307,15 @@ int hddIOBegin(IChunk *chunk, int newFlag, uint32_t chunkVersion) {
 
 bool hddScansInProgress() { return gScansInProgress != 0; }
 
+int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromScan) {
+	int status = SAUNAFS_ERROR_IO;
+	for (int i = 0; i < kOpenRetryCount && status == SAUNAFS_ERROR_IO; ++i) {
+		if (i > 0) { usleep(kOpenRetry_ms * 1000); }
+		status = disk->updateChunkAttributes(chunk, isFromScan);
+	}
+	return status;
+}
+
 IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType) {
 	LOG_AVG_TILL_END_OF_SCOPE0("chunk_find");
 
@@ -349,8 +359,9 @@ IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
 			chunk->setState(ChunkState::Locked);
 			chunksMapLock.unlock();
 			if (chunk->validAttr() == 0) {
-				if (effectiveDisk->updateChunkAttributes(chunk, false) ==
-				    SAUNAFS_ERROR_NOCHUNK) {
+				int attrStatus =
+				    hddUpdateChunkAttributesWithRetry(effectiveDisk, chunk, false);
+				if (attrStatus != SAUNAFS_STATUS_OK) {
 					// The chunk was found as available, but we can not
 					// update its attributes, let's recreate it only if
 					// requested
