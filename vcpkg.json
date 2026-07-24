@@ -11,7 +11,8 @@
     "gtest",
     "openssl",
     "prometheus-cpp",
-    "spdlog"
+    "spdlog",
+    "zstd"
   ],
   "overrides": [
     {
