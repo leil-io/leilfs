@@ -83,8 +83,8 @@ public:
 	IChunk *instantiateNewConcreteChunk(uint64_t chunkId,
 	                                    ChunkPartType type) override;
 
-	void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-	                    uint16_t newBlocks) override;
+	int setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
+	                   uint16_t newBlocks) override;
 
 	void updateAfterScan() override;
 

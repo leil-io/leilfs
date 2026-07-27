@@ -100,3 +100,23 @@
    fun:_ZNSt6thread4joinEv
    fun:_ZN7JobPool4stopEv*
 }
+
+{
+   # Same false positive as jobpool_stop_tls_teardown_race above (see its
+   # comment for the full explanation), reached via a different, equally
+   # legitimate join(): mainNetworkThreadTerm() joins each NetworkWorkerThread's
+   # own thread directly, and that join's internal __nptl_free_stacks() cache
+   # trim can free the TLS blocks of OTHER, separately-already-exited threads
+   # (e.g. a JobPool worker) that glibc had been retaining in its dead-stack
+   # cache. Only the join() call site differs from the stanza above.
+   network_thread_term_tls_teardown_race
+   Helgrind:Race
+   fun:free
+   ...
+   fun:_dl_deallocate_tls
+   ...
+   fun:_ZNSt6thread4joinEv
+   fun:_Z21mainNetworkThreadTermv
+   fun:_Z18eventloop_destructv
+   fun:main
+}

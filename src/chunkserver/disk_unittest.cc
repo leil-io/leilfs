@@ -1,6 +1,28 @@
 #include <gtest/gtest.h>
 
 #include "chunkserver-common/cmr_disk.h"
+#include "chunkserver-common/global_shared_resources.h"
+#include "chunkserver-common/hdd_utils.h"
+#include "errors/saunafs_error_codes.h"
+
+namespace {
+
+// Fails with SAUNAFS_ERROR_IO on every call before succeedOnAttempt, then
+// succeeds; the chunk pointer is never dereferenced.
+class FlakyAttributesDisk : public CmrDisk {
+public:
+	using CmrDisk::CmrDisk;
+
+	int updateChunkAttributes(IChunk * /*chunk*/, bool /*isFromScan*/) override {
+		++callCount;
+		return callCount < succeedOnAttempt ? SAUNAFS_ERROR_IO : SAUNAFS_STATUS_OK;
+	}
+
+	int callCount = 0;
+	int succeedOnAttempt = 1;
+};
+
+}  // namespace
 
 TEST(DiskTests, ParseSingleHddLine) {
 	const std::string hddCfgLine {"/mnt/hdd_22/"};
@@ -71,3 +93,22 @@ TEST(DiskTests, ParseZonedHddLine) {
 	ASSERT_FALSE(diskConfig2.isValid);
 }
 
+TEST(DiskTests, UpdateChunkAttributesRetrySucceedsAfterTransientErrors) {
+	const disk::Configuration diskConfig("/mnt/hdd_22/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount;
+
+	ASSERT_EQ(hddUpdateChunkAttributesWithRetry(&disk, nullptr, false),
+	          SAUNAFS_STATUS_OK);
+	ASSERT_EQ(disk.callCount, kOpenRetryCount);
+}
+
+TEST(DiskTests, UpdateChunkAttributesRetryGivesUpAfterMaxAttempts) {
+	const disk::Configuration diskConfig("/mnt/hdd_22/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount + 1;  // never succeeds in time
+
+	ASSERT_EQ(hddUpdateChunkAttributesWithRetry(&disk, nullptr, false),
+	          SAUNAFS_ERROR_IO);
+	ASSERT_EQ(disk.callCount, kOpenRetryCount);
+}

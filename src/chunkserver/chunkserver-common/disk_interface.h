@@ -147,8 +147,10 @@ public:
 
 	/// Sets the number of blocks for \a chunk from \a originalBlocks to \a
 	/// newBlocks.
-	virtual void setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-	                            uint16_t newBlocks) = 0;
+	/// @return SAUNAFS_STATUS_OK on success, or a SAUNAFS_ERROR_* code if the
+	///         new layout could not be persisted.
+	virtual int setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
+	                           uint16_t newBlocks) = 0;
 
 	/// Updates this disk attributes after a scan.
 	/// Useful for SMR drives, for instance, to update the zones state after

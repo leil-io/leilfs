@@ -127,7 +127,10 @@ int CmrDisk::updateChunkAttributes(IChunk *chunk, bool isFromScan) {
 	if (::stat(chunk->fullMetaFilename().c_str(), &metaStat) < 0) {
 		safs::log_err("CmrDisk::updateChunkAttributes: could not access chunk metadata: chunk->metaFilename ({}), strerror ({})",
 				chunk->fullMetaFilename(), strerror(errno));
-		return SAUNAFS_ERROR_NOCHUNK;
+		// Only a confirmed-gone file is NOCHUNK; other errno values
+		// (EMFILE, EINTR, EIO...) must not delete a healthy chunk.
+		return (errno == ENOENT || errno == ENOTDIR) ? SAUNAFS_ERROR_NOCHUNK
+		                                             : SAUNAFS_ERROR_IO;
 	}
 	if (!S_ISREG(metaStat.st_mode)) {
 		safs::log_critical("CmrDisk::updateChunkAttributes: chunk metadata file not a regular file: metaFilename ({})",
@@ -139,7 +142,8 @@ int CmrDisk::updateChunkAttributes(IChunk *chunk, bool isFromScan) {
 	if (::stat(chunk->fullDataFilename().c_str(), &dataStat) < 0) {
 		safs::log_err("CmrDisk::updateChunkAttributes: could not access chunk data {}: {}",
 				chunk->fullDataFilename(), strerror(errno));
-		return SAUNAFS_ERROR_NOCHUNK;
+		return (errno == ENOENT || errno == ENOTDIR) ? SAUNAFS_ERROR_NOCHUNK
+		                                             : SAUNAFS_ERROR_IO;
 	}
 	if ((dataStat.st_mode & S_IFMT) != S_IFREG) {
 		safs::log_critical("CmrDisk::updateChunkAttributes: chunk data file not a regular file: dataFilename ({})",
@@ -182,10 +186,11 @@ IChunk *CmrDisk::instantiateNewConcreteChunk(uint64_t chunkId,
 	return chunk;
 }
 
-void CmrDisk::setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
-                             uint16_t newBlocks) {
+int CmrDisk::setChunkBlocks(IChunk *chunk, uint16_t originalBlocks,
+                            uint16_t newBlocks) {
 	(void)originalBlocks;
 	chunk->setBlocks(newBlocks);
+	return SAUNAFS_STATUS_OK;
 }
 
 void CmrDisk::updateAfterScan() {
