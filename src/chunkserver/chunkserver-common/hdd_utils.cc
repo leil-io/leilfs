@@ -20,7 +20,6 @@
 
 #include "chunkserver-common/hdd_utils.h"
 
-#include <cinttypes>
 #include <fcntl.h>
 #include <sys/time.h>
 
@@ -308,11 +307,12 @@ int hddIOBegin(IChunk *chunk, int newFlag, uint32_t chunkVersion) {
 bool hddScansInProgress() { return gScansInProgress != 0; }
 
 int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromScan) {
-	int status = SAUNAFS_ERROR_IO;
-	for (int i = 0; i < kOpenRetryCount && status == SAUNAFS_ERROR_IO; ++i) {
-		if (i > 0) { usleep(kOpenRetry_ms * 1000); }
+	int status;
+	int attempt = 0;
+	do {
+		if (attempt > 0) { usleep((kOpenRetry_ms * 1000) << (attempt - 1)); }
 		status = disk->updateChunkAttributes(chunk, isFromScan);
-	}
+	} while (status == SAUNAFS_ERROR_IO && ++attempt < kOpenRetryCount);
 	return status;
 }
 
