@@ -17,7 +17,8 @@ slice_size = int(${FILE_COUNT}) // 2
 dirents = 0
 with os.scandir("${info[mount0]}") as dir:
 	dirents += len(list(itertools.islice(dir, slice_size)))
-	os.system("sfsmaster -c ${MASTER_CFG_FILE} restart")
+	if os.system("${mds_command} -c ${MASTER_CFG_FILE} restart") != 0:
+		raise SystemExit("restart failed")
 	dirents += len(list(itertools.islice(dir, slice_size)))
 print(dirents)
 END_OF_SCRIPT
