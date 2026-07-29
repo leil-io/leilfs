@@ -130,10 +130,13 @@ public:
 
 	/// Initializes an empty metadata signature in the provided buffer.
 	/// Useful in the duplicate and duplicate-truncate operations.
+	/// @param formatSource Chunk whose on-disk format the signature must match;
+	///        null selects the legacy default.
 	virtual void serializeEmptyChunkSignature(uint8_t **destination,
 	                                          uint64_t chunkId,
 	                                          uint32_t chunkVersion,
-	                                          ChunkPartType chunkType) = 0;
+	                                          ChunkPartType chunkType,
+	                                          const IChunk *formatSource = nullptr) = 0;
 
 	/// Instantiates a new Chunk for this type of Disk.
 	/// The ChunkState is CH_LOCKED by default.
@@ -141,8 +144,9 @@ public:
 	                                            ChunkPartType type) = 0;
 
 	/// Applies any disk-specific on-disk format to a brand-new chunk before its
-	/// header is sized and serialized. Called only from the new-chunk creation
-	/// path (not for duplicates). Default: no-op.
+	/// header is sized and serialized. Called when creating a chunk and when
+	/// duplicating one: a duplicate adopts this disk's configured format
+	/// instead of the source chunk's. Default: no-op.
 	virtual int applyNewChunkFormat(IChunk * /*chunk*/) = 0;
 
 	/// Sets the number of blocks for \a chunk from \a originalBlocks to \a

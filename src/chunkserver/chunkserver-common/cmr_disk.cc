@@ -174,7 +174,8 @@ std::unique_ptr<ChunkSignature> CmrDisk::createChunkSignature() {
 void CmrDisk::serializeEmptyChunkSignature(uint8_t **destination,
                                            uint64_t chunkId,
                                            uint32_t chunkVersion,
-                                           ChunkPartType chunkType) {
+                                           ChunkPartType chunkType,
+                                           const IChunk * /*formatSource*/) {
 	serialize(destination, ChunkSignature(chunkId, chunkVersion, chunkType));
 }
 

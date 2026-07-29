@@ -1180,14 +1180,14 @@ sfschunkserver_check_no_buffer_in_use() {
 	sleep 5
 
 	# Assert that the last 5 seconds of log contains chunkserver_count lines with:
-	# "Current total buffer blocks per operation: read 0, write 0, replicate 0"
+	# "Current total buffer blocks per operation: read 0, write 0, chunk copy 0"
 	# Plus, the last chunkserver_count lines should be unique disregarding the timestamp.
 	# The difference should be the CS pid. This means that the buffers were released correctly.
 	last_total_entries=$(
 		grep '(releaseOldIoBuffers) Current total' "${TEMP_DIR}/log" | tail -n \
 			${chunkserver_count} | awk '{for(i=4;i<=NF;++i) printf "%s%s", $i, (i<NF?" ":"\n")}'
 	)
-	full_zeroes=$(echo "${last_total_entries}" | grep -c 'read 0, write 0, replicate 0')
+	full_zeroes=$(echo "${last_total_entries}" | grep -c 'read 0, write 0, chunk copy 0')
 	unique_count=$(echo "${last_total_entries}" | sort | uniq | wc -l)
 
 	assert_equals "${chunkserver_count}" "${full_zeroes}"

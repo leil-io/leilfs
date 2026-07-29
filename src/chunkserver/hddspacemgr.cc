@@ -58,6 +58,7 @@
 #ifdef SAUNAFS_HAVE_THREAD_LOCAL
 #include <array>
 #endif // SAUNAFS_HAVE_THREAD_LOCAL
+#include <algorithm>
 #include <atomic>
 #include <deque>
 #include <list>
@@ -79,6 +80,7 @@
 #include "chunkserver-common/subfolder.h"
 #include "chunkserver/chartsdata.h"
 #include "chunkserver/chunk_filename_parser.h"
+#include "chunkserver/io_buffers.h"
 #include "common/chunk_version_with_todel_flag.h"
 #include "common/crc.h"
 #include "common/datapack.h"
@@ -1352,20 +1354,116 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 	return SAUNAFS_STATUS_OK;
 }
 
+/// Blocks per read+write batch when copying a chunk. It matters most on a
+/// zoned destination, which writes one fragment per call, so batching keeps a
+/// full chunk well below the fragment limit; 256 matches the batch a compressed
+/// write flushes at, and bounds the staging buffer at 16 MiB.
+static constexpr uint16_t kChunkCopyBatchBlocks = 256;
+
+/// Which side of a copy failed; only a failed read means a damaged source.
+enum class ChunkCopyResult { Ok, ReadFailed, WriteFailed };
+
+/// Copies the first \a blockCount blocks of \a sourceChunk into \a dupChunk,
+/// reusing the source CRCs in \a sourceCrcData (reads decompress, so they
+/// still describe the copied bytes) and updating \a dupCrcData.
+///
+/// Both formats copy in batches of kChunkCopyBatchBlocks: zoned destinations
+/// through writeChunkBlocks(), the rest appending to the caller's data seek
+/// through writeChunkData().
+static ChunkCopyResult hddCopyChunkBlocks(IChunk *sourceChunk, IChunk *dupChunk,
+                                          uint16_t blockCount,
+                                          const uint8_t *sourceCrcData,
+                                          uint8_t *dupCrcData,
+                                          const char *errorMsg) {
+	IDisk *sourceDisk = sourceChunk->owner();
+	IDisk *dupDisk = dupChunk->owner();
+	const bool isZonedDestination = dupDisk->isZonedDevice();
+
+	// Pooled, so repeated duplications reuse the allocation; zone reads are
+	// O_DIRECT straight into it, hence the buffer's IO alignment.
+	auto buffer =
+	    getChunkCopyBuffersPool().get(kChunkCopyBufferHeaderSize, kChunkCopyBatchBlocks);
+	auto &blockBuffer = buffer->getBlockBuffer();
+	blockBuffer.resize(static_cast<size_t>(kChunkCopyBatchBlocks) * SFSBLOCKSIZE);
+
+	// Reused across batches; only the last batch may hold fewer blocks.
+	std::vector<uint32_t> crcs;
+	std::vector<uint16_t> blocksPerBuffer{0};
+	const std::vector<const uint8_t *> buffers{blockBuffer.data()};
+
+	ChunkCopyResult result = ChunkCopyResult::Ok;
+
+	for (uint16_t block = 0; block < blockCount; block += kChunkCopyBatchBlocks) {
+		const uint16_t blocksInBatch =
+		    std::min<uint16_t>(kChunkCopyBatchBlocks, blockCount - block);
+		const int32_t batchSize =
+		    static_cast<int32_t>(blocksInBatch) * SFSBLOCKSIZE;
+
+		{
+			DiskReadStatsUpdater updater(sourceDisk, batchSize);
+
+			if (sourceDisk->preadData(
+			        sourceChunk, blockBuffer.data(), batchSize,
+			        static_cast<uint64_t>(block) * SFSBLOCKSIZE) != batchSize) {
+				hddAddErrorAndPreserveErrno(sourceChunk);
+				safs::log_warn_with_error_code(
+				    errno, "{}: file:{} - data read error", errorMsg,
+				    sourceChunk->fullMetaFilename());
+				updater.markReadAsFailed();
+				result = ChunkCopyResult::ReadFailed;
+				break;
+			}
+		}
+		HddStats::overheadRead(batchSize);
+
+		{
+			DiskWriteStatsUpdater updater(dupDisk, batchSize);
+			int written = 0;
+
+			if (isZonedDestination) {
+				crcs.resize(blocksInBatch);
+				for (uint16_t i = 0; i < blocksInBatch; i++) {
+					const uint8_t *crcPointer =
+					    sourceCrcData + static_cast<size_t>(block + i) * kCrcSize;
+					get32bit(&crcPointer, crcs[i]);
+				}
+				blocksPerBuffer[0] = blocksInBatch;
+
+				written = dupDisk->writeChunkBlocks(
+				    dupChunk, dupChunk->version(), block, blocksInBatch, crcs,
+				    dupCrcData, blocksPerBuffer, buffers);
+			} else {
+				written = dupDisk->writeChunkData(dupChunk, blockBuffer.data(),
+				                                 batchSize, 0);
+			}
+
+			if (written != batchSize) {
+				hddAddErrorAndPreserveErrno(dupChunk);
+				safs::log_warn_with_error_code(
+				    errno, "{}: file:{} - data write error", errorMsg,
+				    dupChunk->fullMetaFilename());
+				updater.markWriteAsFailed();
+				result = ChunkCopyResult::WriteFailed;
+				break;
+			}
+		}
+		HddStats::overheadWrite(batchSize);
+	}
+
+	getChunkCopyBuffersPool().put(std::move(buffer));
+	return result;
+}
+
 static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
                                 uint32_t chunkNewVersion,
                                 ChunkPartType chunkType, uint64_t copyChunkId,
                                 uint32_t copyChunkVersion) {
 	TRACETHIS();
-	uint16_t block;
-	int32_t retSize;
 	int status;
 	IChunk *dupChunk, *originalChunk;
 	IDisk *dupDisk, *originalDisk;
 
 	HddStats::gStatsOperationsDuplicate++;
-
-	uint8_t *blockBuffer = getChunkBlockBuffer() + kCrcSize;
 
 	originalChunk = hddChunkFindAndLock(chunkId, chunkType);
 
@@ -1452,7 +1550,18 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 		return status;
 	}
 
-	int32_t blockSize = SFSBLOCKSIZE;
+	// The copy takes the destination disk's configured format, not the source
+	// chunk's, and must be stamped before its header is sized below.
+	status = dupDisk->applyNewChunkFormat(dupChunk);
+	if (status != SAUNAFS_STATUS_OK) {
+		hddAddErrorAndPreserveErrno(dupChunk);
+		hddIOEnd(dupChunk);
+		dupDisk->unlinkChunk(dupChunk);
+		hddDeleteChunkFromRegistry(dupChunk);
+		hddIOEnd(originalChunk);
+		hddChunkRelease(originalChunk);
+		return SAUNAFS_ERROR_IO;
+	}
 
 	// Clean the header buffer and copy the signature
 	uint8_t *ptr = dupChunk->getChunkHeaderBuffer();
@@ -1461,7 +1570,8 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 	dupDisk->serializeEmptyChunkSignature(&ptr,
 	                                      copyChunkId,
 	                                      copyChunkVersion,
-	                                      chunkType);
+	                                      chunkType,
+	                                      dupChunk);
 
 	uint8_t *dupCrcData = gOpenChunks.getResource(dupChunk->metaFD()).crcData();
 	uint8_t *origCrcData =
@@ -1496,64 +1606,20 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 	                        SEEK_SET);
 
 	// Read each original block and write it to the duplicated chunk
-	for (block = 0; block < originalChunk->blocks(); block++) {
-		{
-			DiskReadStatsUpdater updater(originalDisk, blockSize);
+	const auto copyResult =
+	    hddCopyChunkBlocks(originalChunk, dupChunk, originalChunk->blocks(),
+	                       origCrcData, dupCrcData, "duplicate");
 
-			retSize = originalDisk->preadData(originalChunk, blockBuffer,
-			                                  blockSize, block * SFSBLOCKSIZE);
-
-			if (retSize != blockSize) {
-				hddAddErrorAndPreserveErrno(originalChunk);
-				safs_silent_errlog(LOG_WARNING,
-				                   "duplicate: file:%s - data read error",
-				                   dupChunk->fullMetaFilename().c_str());
-				hddIOEnd(dupChunk);
-				dupDisk->unlinkChunk(dupChunk);
-				hddDeleteChunkFromRegistry(dupChunk);
-				hddIOEnd(originalChunk);
-				hddReportDamagedChunk(chunkId, chunkType);
-				hddChunkRelease(originalChunk);
-				updater.markReadAsFailed();
-				return SAUNAFS_ERROR_IO;
-			}
+	if (copyResult != ChunkCopyResult::Ok) {
+		hddIOEnd(dupChunk);
+		dupDisk->unlinkChunk(dupChunk);
+		hddDeleteChunkFromRegistry(dupChunk);
+		hddIOEnd(originalChunk);
+		if (copyResult == ChunkCopyResult::ReadFailed) {
+			hddReportDamagedChunk(chunkId, chunkType);
 		}
-		HddStats::overheadRead(blockSize);
-
-		{
-			DiskWriteStatsUpdater updater(dupDisk, blockSize);
-
-			if (dupDisk->isZonedDevice()) {
-				const uint8_t *dupCrcBlock = dupCrcData + kCrcSize * block;
-				uint32_t crc;
-				get32bit(&dupCrcBlock, crc);
-				if (dupDisk->writeChunkBlock(
-				        dupChunk, dupChunk->version(), block, 0, SFSBLOCKSIZE,
-				        crc, dupCrcData, blockBuffer) == SAUNAFS_STATUS_OK) {
-					retSize = SFSBLOCKSIZE;
-				} else {
-					retSize = SAUNAFS_ERROR_IO;
-				}
-			} else {
-				retSize = dupDisk->writeChunkData(dupChunk, blockBuffer,
-				                                  blockSize, 0);
-			}
-
-			if (retSize != blockSize) {
-				hddAddErrorAndPreserveErrno(dupChunk);
-				safs_silent_errlog(LOG_WARNING,
-				                   "duplicate: file:%s - data write error",
-				                   dupChunk->fullMetaFilename().c_str());
-				hddIOEnd(dupChunk);
-				dupDisk->unlinkChunk(dupChunk);
-				hddDeleteChunkFromRegistry(dupChunk);
-				hddIOEnd(originalChunk);
-				hddChunkRelease(originalChunk);
-				updater.markWriteAsFailed();
-				return SAUNAFS_ERROR_IO;        //write error
-			}
-		}
-		HddStats::overheadWrite(blockSize);
+		hddChunkRelease(originalChunk);
+		return SAUNAFS_ERROR_IO;
 	}
 
 	status = hddIOEnd(originalChunk);
@@ -1916,7 +1982,6 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 		return SAUNAFS_ERROR_CHUNKEXIST;
 	}
 
-	uint8_t *headerBuffer = dupChunk->getChunkHeaderBuffer();
 	origDisk = originalChunk->owner();
 
 	if (chunkNewVersion != chunkVersion) { // Different versions
@@ -1970,6 +2035,20 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 		return status;
 	}
 
+	// The copy takes the destination disk's configured format, not the source
+	// chunk's, and must be stamped before getChunkHeaderBuffer() below sizes
+	// the header buffer from it.
+	status = dupDisk->applyNewChunkFormat(dupChunk);
+	if (status != SAUNAFS_STATUS_OK) {
+		hddAddErrorAndPreserveErrno(dupChunk);
+		hddIOEnd(dupChunk);
+		dupDisk->unlinkChunk(dupChunk);
+		hddDeleteChunkFromRegistry(dupChunk);
+		hddIOEnd(originalChunk);
+		hddChunkRelease(originalChunk);
+		return SAUNAFS_ERROR_IO;
+	}
+
 	sassert((dupChunk == nullptr && originalChunk == nullptr) ||
 	        (dupChunk != nullptr && originalChunk != nullptr));
 
@@ -1979,17 +2058,44 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 	uint8_t *crcDataOriginal = nullptr;
 	uint8_t *crcDataDup = nullptr;
 
+	uint8_t *headerBuffer = dupChunk->getChunkHeaderBuffer();
+
 	if (dupChunk) {
 		memset(headerBuffer, 0, dupChunk->getHeaderSize());
 		uint8_t *ptr = headerBuffer;
 
 		dupDisk->serializeEmptyChunkSignature(&ptr, copyChunkId,
-		                                      copyChunkVersion, chunkType);
+		                                      copyChunkVersion, chunkType,
+		                                      dupChunk);
 
 		crcDataOriginal = gOpenChunks.getResource(originalChunk->metaFD()).crcData();
 		memcpy(headerBuffer + dupChunk->getCrcOffset(), crcDataOriginal,
 		       dupChunk->getCrcBlockSize());
 		crcDataDup = gOpenChunks.getResource(dupChunk->metaFD()).crcData();
+
+		// Write the header before the copy, which may add format-specific
+		// metadata of its own to that same region (a compressed chunk stores
+		// its dictionary there), so nothing here can overwrite it afterwards.
+		dupDisk->lseekMetadata(dupChunk, 0, SEEK_SET);
+
+		{
+			DiskWriteStatsUpdater updater(dupDisk, dupChunk->getHeaderSize());
+
+			if (dupDisk->writeChunkHeader(dupChunk) != SAUNAFS_STATUS_OK) {
+				hddAddErrorAndPreserveErrno(dupChunk);
+				safs::log_warn_with_error_code(
+				    errno, "duptrunc: file:{} - hdr write error",
+				    dupChunk->fullMetaFilename());
+				hddIOEnd(dupChunk);
+				dupDisk->unlinkChunk(dupChunk);
+				hddDeleteChunkFromRegistry(dupChunk);
+				hddIOEnd(originalChunk);
+				hddChunkRelease(originalChunk);
+				updater.markWriteAsFailed();
+				return SAUNAFS_ERROR_IO;
+			}
+		}
+		HddStats::overheadWrite(dupChunk->getHeaderSize());
 	}
 
 	// Seek to the beginning of data block on both chunks
@@ -2002,69 +2108,31 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 		                    SEEK_SET);
 	}
 
-	if (blocks > originalChunk->blocks()) { // expanding
-		for (block = 0 ; block < originalChunk->blocks() ; block++) {
-			{
-				DiskReadStatsUpdater updater(origDisk, blockSize);
+	// A misaligned shrink ends mid-block: that trailing block is copied on its
+	// own below, with a CRC recomputed over the bytes that survive.
+	const uint32_t lastBlockSize = copyChunkLength % SFSBLOCKSIZE;
+	const bool isExpanding = blocks > originalChunk->blocks();
+	const uint16_t blocksToCopy =
+	    isExpanding ? originalChunk->blocks()
+	                : static_cast<uint16_t>(lastBlockSize == 0 ? blocks : blocks - 1);
 
-				retSize = origDisk->preadData(originalChunk, blockBuffer,
-				                              blockSize, block * SFSBLOCKSIZE);
+	const auto copyResult =
+	    hddCopyChunkBlocks(originalChunk, dupChunk, blocksToCopy, crcDataOriginal,
+	                       crcDataDup, "duptrunc");
 
-				if (retSize != blockSize) {
-					hddAddErrorAndPreserveErrno(originalChunk);
-					safs_silent_errlog(LOG_WARNING,
-					    "duptrunc: file:%s - data read error",
-					    originalChunk->fullMetaFilename().c_str());
-					hddIOEnd(dupChunk);
-					dupDisk->unlinkChunk(dupChunk);
-					hddDeleteChunkFromRegistry(dupChunk);
-					hddIOEnd(originalChunk);
-					hddReportDamagedChunk(chunkId, chunkType);
-					hddChunkRelease(originalChunk);
-					updater.markReadAsFailed();
-					return SAUNAFS_ERROR_IO;
-				}
-			}
-			HddStats::overheadRead(blockSize);
-
-			{
-				DiskWriteStatsUpdater updater(dupDisk, blockSize);
-
-				if (dupDisk->isZonedDevice()) {
-					const uint8_t *dupCrcBlock = crcDataOriginal + kCrcSize * block;
-					uint32_t crc;
-					get32bit(&dupCrcBlock, crc);
-
-					if (dupDisk->writeChunkBlock(dupChunk, dupChunk->version(),
-					                             block, 0, SFSBLOCKSIZE, crc,
-					                             crcDataDup, blockBuffer) ==
-					    SAUNAFS_STATUS_OK) {
-						retSize = SFSBLOCKSIZE;
-					} else {
-						retSize = SAUNAFS_ERROR_IO;
-					}
-				} else {
-					retSize = dupDisk->writeChunkData(dupChunk, blockBuffer,
-					                                  blockSize, 0);
-				}
-
-				if (retSize != blockSize) {
-					hddAddErrorAndPreserveErrno(dupChunk);
-					safs_silent_errlog(LOG_WARNING,
-					    "duptrunc: file:%s - data write error",
-					    dupChunk->fullMetaFilename().c_str());
-					hddIOEnd(dupChunk);
-					dupDisk->unlinkChunk(dupChunk);
-					hddDeleteChunkFromRegistry(dupChunk);
-					hddIOEnd(originalChunk);
-					hddChunkRelease(originalChunk);
-					updater.markWriteAsFailed();
-					return SAUNAFS_ERROR_IO;
-				}
-			}
-			HddStats::overheadWrite(blockSize);
+	if (copyResult != ChunkCopyResult::Ok) {
+		hddIOEnd(dupChunk);
+		dupDisk->unlinkChunk(dupChunk);
+		hddDeleteChunkFromRegistry(dupChunk);
+		hddIOEnd(originalChunk);
+		if (copyResult == ChunkCopyResult::ReadFailed) {
+			hddReportDamagedChunk(chunkId, chunkType);
 		}
+		hddChunkRelease(originalChunk);
+		return SAUNAFS_ERROR_IO;
+	}
 
+	if (isExpanding) {
 		if (dupChunk) {
 			for (block = originalChunk->blocks(); block < blocks; block++) {
 				memcpy(headerBuffer + dupChunk->getCrcOffset() +
@@ -2085,224 +2153,66 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 			hddChunkRelease(originalChunk);
 			return SAUNAFS_ERROR_IO;        //write error
 		}
-	} else { // shrinking
-		uint32_t lastBlockSize =
-		    copyChunkLength - (copyChunkLength / SFSBLOCKSIZE) * SFSBLOCKSIZE;
-
-		if (lastBlockSize == 0) { // aligned shrink
-			for (block = 0; block < blocks; block++) {
-				{
-					DiskReadStatsUpdater updater(origDisk, blockSize);
-
-					retSize = origDisk->preadData(originalChunk, blockBuffer,
-					                              blockSize,
-					                              block * SFSBLOCKSIZE);
-
-					if (retSize != blockSize) {
-						hddAddErrorAndPreserveErrno(originalChunk);
-						safs_silent_errlog(LOG_WARNING,
-						    "duptrunc: file:%s - data read error",
-						    originalChunk->fullMetaFilename().c_str());
-						hddIOEnd(dupChunk);
-						dupDisk->unlinkChunk(dupChunk);
-						hddDeleteChunkFromRegistry(dupChunk);
-						hddIOEnd(originalChunk);
-						hddReportDamagedChunk(chunkId, chunkType);
-						hddChunkRelease(originalChunk);
-						updater.markReadAsFailed();
-						return SAUNAFS_ERROR_IO;
-					}
-				}
-				HddStats::overheadRead(blockSize);
-
-				{
-					DiskWriteStatsUpdater updater(dupDisk, blockSize);
-
-					if (dupDisk->isZonedDevice()) {
-						const uint8_t *dupCrcBlock = crcDataOriginal + kCrcSize * block;
-						uint32_t crc;
-						get32bit(&dupCrcBlock, crc);
-
-						if (dupDisk->writeChunkBlock(
-						        dupChunk, dupChunk->version(), block, 0,
-						        SFSBLOCKSIZE, crc, crcDataDup,
-						        blockBuffer) == SAUNAFS_STATUS_OK) {
-							retSize = SFSBLOCKSIZE;
-						} else {
-							retSize = SAUNAFS_ERROR_IO;
-						}
-					} else {
-						retSize = dupDisk->writeChunkData(dupChunk, blockBuffer,
-						                                  blockSize, 0);
-					}
-
-					if (retSize != blockSize) {
-						hddAddErrorAndPreserveErrno(dupChunk);
-						safs_silent_errlog(LOG_WARNING,
-						    "duptrunc: file:%s - data write error",
-						    dupChunk->fullMetaFilename().c_str());
-						hddIOEnd(dupChunk);
-						dupDisk->unlinkChunk(dupChunk);
-						hddDeleteChunkFromRegistry(dupChunk);
-						hddIOEnd(originalChunk);
-						hddChunkRelease(originalChunk);
-						updater.markWriteAsFailed();
-						return SAUNAFS_ERROR_IO;
-					}
-				}
-				HddStats::overheadWrite(blockSize);
-			}
-		} else { // misaligned shrink
-			for (block = 0; block < blocks - 1; block++) {
-				{
-					DiskReadStatsUpdater updater(origDisk, blockSize);
-
-					retSize = origDisk->preadData(originalChunk, blockBuffer,
-					                              blockSize,
-					                              block * SFSBLOCKSIZE);
-
-					if (retSize != blockSize) {
-						hddAddErrorAndPreserveErrno(originalChunk);
-						safs_silent_errlog(LOG_WARNING,
-						    "duptrunc: file:%s - data read error",
-						    originalChunk->fullMetaFilename().c_str());
-						hddIOEnd(dupChunk);
-						dupDisk->unlinkChunk(dupChunk);
-						hddDeleteChunkFromRegistry(dupChunk);
-						hddIOEnd(originalChunk);
-						hddReportDamagedChunk(chunkId, chunkType);
-						hddChunkRelease(originalChunk);
-						updater.markReadAsFailed();
-						return SAUNAFS_ERROR_IO;
-					}
-				}
-				HddStats::overheadRead(blockSize);
-
-				{
-					DiskWriteStatsUpdater updater(dupDisk, blockSize);
-
-					if (dupDisk->isZonedDevice()) {
-						const uint8_t *dupCrcBlock = crcDataOriginal + kCrcSize * block;
-						uint32_t crc;
-						get32bit(&dupCrcBlock, crc);
-
-						if (dupDisk->writeChunkBlock(
-						        dupChunk, dupChunk->version(), block, 0,
-						        SFSBLOCKSIZE, crc, crcDataDup,
-						        blockBuffer) == SAUNAFS_STATUS_OK) {
-							retSize = SFSBLOCKSIZE;
-						} else {
-							retSize = SAUNAFS_ERROR_IO;
-						}
-					} else {
-						retSize = dupDisk->writeChunkData(dupChunk, blockBuffer,
-						                                  blockSize, 0);
-					}
-
-					if (retSize != blockSize) {
-						hddAddErrorAndPreserveErrno(dupChunk);
-						safs_silent_errlog(LOG_WARNING,
-						    "duptrunc: file:%s - data write error",
-						    dupChunk->fullMetaFilename().c_str());
-						hddIOEnd(dupChunk);
-						dupDisk->unlinkChunk(dupChunk);
-						hddDeleteChunkFromRegistry(dupChunk);
-						hddIOEnd(originalChunk);
-						hddChunkRelease(originalChunk);
-						updater.markWriteAsFailed();
-						return SAUNAFS_ERROR_IO;        //write error
-					}
-				}
-				HddStats::overheadWrite(blockSize);
-			}
-
-			block = blocks - 1;
-			auto toBeRead = lastBlockSize;
-
-			{
-				DiskReadStatsUpdater updater(origDisk, SFSBLOCKSIZE);
-
-				retSize = origDisk->preadData(originalChunk, blockBuffer,
-				                              SFSBLOCKSIZE,
-				                              block * SFSBLOCKSIZE);
-
-				if (retSize != (signed)SFSBLOCKSIZE) {
-					hddAddErrorAndPreserveErrno(originalChunk);
-					safs_silent_errlog(LOG_WARNING,
-					    "duptrunc: file:%s - data read error",
-					    originalChunk->fullMetaFilename().c_str());
-					hddIOEnd(dupChunk);
-					dupDisk->unlinkChunk(dupChunk);
-					hddDeleteChunkFromRegistry(dupChunk);
-					hddIOEnd(originalChunk);
-					hddReportDamagedChunk(chunkId, chunkType);
-					hddChunkRelease(originalChunk);
-					updater.markReadAsFailed();
-					return SAUNAFS_ERROR_IO;
-				}
-			}
-			HddStats::overheadRead(SFSBLOCKSIZE);
-
-			auto* ptr = headerBuffer + dupChunk->getCrcOffset()
-			            + kCrcSize * block;
-			auto crc = mycrc32_zeroexpanded(0, blockBuffer, lastBlockSize,
-			                                SFSBLOCKSIZE - lastBlockSize);
-			put32bit(&ptr, crc);
-
-			// Fill with zeros the remaining part of the block
-			memset(blockBuffer + toBeRead, 0, SFSBLOCKSIZE - lastBlockSize);
-
-			{
-				DiskWriteStatsUpdater updater(dupDisk, blockSize);
-
-				if (dupDisk->isZonedDevice()) {
-
-					if (dupDisk->writeChunkBlock(dupChunk, dupChunk->version(),
-					                             block, 0, SFSBLOCKSIZE, crc,
-					                             crcDataDup, blockBuffer) ==
-					    SAUNAFS_STATUS_OK) {
-						retSize = SFSBLOCKSIZE;
-					} else {
-						retSize = 0;
-					}
-				} else {
-					retSize = dupDisk->writeChunkData(dupChunk, blockBuffer,
-					                                  blockSize, 0);
-				}
-
-				if (retSize != blockSize) {
-					hddAddErrorAndPreserveErrno(dupChunk);
-					safs_silent_errlog(LOG_WARNING,
-					    "duptrunc: file:%s - data write error",
-					    dupChunk->fullMetaFilename().c_str());
-					hddIOEnd(dupChunk);
-					dupDisk->unlinkChunk(dupChunk);
-					hddDeleteChunkFromRegistry(dupChunk);
-					hddIOEnd(originalChunk);
-					hddChunkRelease(originalChunk);
-					updater.markWriteAsFailed();
-					return SAUNAFS_ERROR_IO;
-				}
-			}
-			HddStats::overheadWrite(blockSize);
-		}
-	}
-
-	if (dupChunk) {
-		memcpy(crcDataDup, headerBuffer + dupChunk->getCrcOffset(),
-		       dupChunk->getCrcBlockSize());
-
-		dupDisk->lseekMetadata(dupChunk, 0, SEEK_SET);
+	} else if (lastBlockSize > 0) {
+		block = blocks - 1;
+		auto toBeRead = lastBlockSize;
 
 		{
-			DiskWriteStatsUpdater updater(dupDisk,
-			                              dupChunk->getHeaderSize());
+			DiskReadStatsUpdater updater(origDisk, SFSBLOCKSIZE);
 
-			if (dupDisk->writeChunkHeader(dupChunk) != SAUNAFS_STATUS_OK) {
+			retSize = origDisk->preadData(originalChunk, blockBuffer,
+			                              SFSBLOCKSIZE,
+			                              block * SFSBLOCKSIZE);
+
+			if (retSize != (signed)SFSBLOCKSIZE) {
+				hddAddErrorAndPreserveErrno(originalChunk);
+				safs::log_warn_with_error_code(
+				    errno, "duptrunc: file:{} - data read error",
+				    originalChunk->fullMetaFilename());
+				hddIOEnd(dupChunk);
+				dupDisk->unlinkChunk(dupChunk);
+				hddDeleteChunkFromRegistry(dupChunk);
+				hddIOEnd(originalChunk);
+				hddReportDamagedChunk(chunkId, chunkType);
+				hddChunkRelease(originalChunk);
+				updater.markReadAsFailed();
+				return SAUNAFS_ERROR_IO;
+			}
+		}
+		HddStats::overheadRead(SFSBLOCKSIZE);
+
+		auto* ptr = headerBuffer + dupChunk->getCrcOffset()
+		            + kCrcSize * block;
+		auto crc = mycrc32_zeroexpanded(0, blockBuffer, lastBlockSize,
+		                                SFSBLOCKSIZE - lastBlockSize);
+		put32bit(&ptr, crc);
+
+		// Fill with zeros the remaining part of the block
+		memset(blockBuffer + toBeRead, 0, SFSBLOCKSIZE - lastBlockSize);
+
+		{
+			DiskWriteStatsUpdater updater(dupDisk, blockSize);
+
+			if (dupDisk->isZonedDevice()) {
+
+				if (dupDisk->writeChunkBlock(dupChunk, dupChunk->version(),
+				                             block, 0, SFSBLOCKSIZE, crc,
+				                             crcDataDup, blockBuffer) ==
+				    SAUNAFS_STATUS_OK) {
+					retSize = SFSBLOCKSIZE;
+				} else {
+					retSize = 0;
+				}
+			} else {
+				retSize = dupDisk->writeChunkData(dupChunk, blockBuffer,
+				                                  blockSize, 0);
+			}
+
+			if (retSize != blockSize) {
 				hddAddErrorAndPreserveErrno(dupChunk);
-				safs_silent_errlog(LOG_WARNING,
-				                   "duptrunc: file:%s - hdr write error",
-				                   dupChunk->fullMetaFilename().c_str());
+				safs::log_warn_with_error_code(
+				    errno, "duptrunc: file:{} - data write error",
+				    dupChunk->fullMetaFilename());
 				hddIOEnd(dupChunk);
 				dupDisk->unlinkChunk(dupChunk);
 				hddDeleteChunkFromRegistry(dupChunk);
@@ -2312,7 +2222,33 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 				return SAUNAFS_ERROR_IO;
 			}
 		}
-		HddStats::overheadWrite(dupChunk->getHeaderSize());
+		HddStats::overheadWrite(blockSize);
+	}
+
+	if (dupChunk) {
+		// The header buffer accumulated the copy's CRCs; persist just those.
+		memcpy(crcDataDup, headerBuffer + dupChunk->getCrcOffset(),
+		       dupChunk->getCrcBlockSize());
+
+		{
+			DiskWriteStatsUpdater updater(dupDisk, dupChunk->getCrcBlockSize());
+
+			if (dupDisk->writeCrc(dupChunk, crcDataDup) !=
+			    static_cast<ssize_t>(dupChunk->getCrcBlockSize())) {
+				hddAddErrorAndPreserveErrno(dupChunk);
+				safs::log_warn_with_error_code(
+				    errno, "duptrunc: file:{} - crc write error",
+				    dupChunk->fullMetaFilename());
+				hddIOEnd(dupChunk);
+				dupDisk->unlinkChunk(dupChunk);
+				hddDeleteChunkFromRegistry(dupChunk);
+				hddIOEnd(originalChunk);
+				hddChunkRelease(originalChunk);
+				updater.markWriteAsFailed();
+				return SAUNAFS_ERROR_IO;
+			}
+		}
+		HddStats::overheadWrite(dupChunk->getCrcBlockSize());
 	}
 
 	status = hddIOEnd(originalChunk);

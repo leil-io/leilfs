@@ -464,11 +464,11 @@ const uint8_t *InputBuffer::getBlockBufferData(size_t blockIndex, size_t offsetI
 void releaseOldIoBuffers(uint32_t expirationTime_ms) {
 	auto initialTotalOutputBufferBlocks = gCurrentTotalOutputBufferBlocks.load();
 	auto initialTotalInputBufferBlocks = gCurrentTotalInputBufferBlocks.load();
-	auto initialTotalReplicatorBufferBlocks = gCurrentTotalReplicatorBufferBlocks.load();
+	auto initialTotalChunkCopyBufferBlocks = gCurrentTotalChunkCopyBufferBlocks.load();
 
 	getReadOutputBufferPool().releaseOldBuffers(expirationTime_ms);
 	getWriteInputBufferPool().releaseOldBuffers(expirationTime_ms);
-	getReplicateBuffersPool().releaseOldBuffers(expirationTime_ms);
+	getChunkCopyBuffersPool().releaseOldBuffers(expirationTime_ms);
 
 	// Calculate the number of released blocks. Please note that the number of released
 	// could be negative because some buffers could be added to the pools in the meantime.
@@ -476,18 +476,18 @@ void releaseOldIoBuffers(uint32_t expirationTime_ms) {
 	    initialTotalOutputBufferBlocks - gCurrentTotalOutputBufferBlocks.load();
 	int releasedInputBuffers =
 	    initialTotalInputBufferBlocks - gCurrentTotalInputBufferBlocks.load();
-	int releasedReplicatorBuffers =
-	    initialTotalReplicatorBufferBlocks - gCurrentTotalReplicatorBufferBlocks.load();
+	int releasedChunkCopyBuffers =
+	    initialTotalChunkCopyBufferBlocks - gCurrentTotalChunkCopyBufferBlocks.load();
 	// Log the number of released buffers.
-	safs::log_debug("({}) Released buffer blocks per operation: read {}, write {}, replicate {}",
+	safs::log_debug("({}) Released buffer blocks per operation: read {}, write {}, chunk copy {}",
 	                __func__, releasedOutputBuffers, releasedInputBuffers,
-	                releasedReplicatorBuffers);
+	                releasedChunkCopyBuffers);
 
 	// Log the current amount of blocks buffers per operation.
 	safs::log_debug(
-	    "({}) Current total buffer blocks per operation: read {}, write {}, replicate {}",
+	    "({}) Current total buffer blocks per operation: read {}, write {}, chunk copy {}",
 	    __func__, gCurrentTotalOutputBufferBlocks.load(), gCurrentTotalInputBufferBlocks.load(),
-	    gCurrentTotalReplicatorBufferBlocks.load());
+	    gCurrentTotalChunkCopyBufferBlocks.load());
 }
 
 void setNewMaxIoBuffersPoolSize(size_t maxBuffersPoolSize_mb) {
@@ -501,5 +501,5 @@ void setNewMaxIoBuffersPoolSize(size_t maxBuffersPoolSize_mb) {
 	size_t maxBuffersPoolSize_blocks = (maxBuffersPoolSize_mb * 1024 * 1024) / SFSBLOCKSIZE;
 	getReadOutputBufferPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
 	getWriteInputBufferPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
-	getReplicateBuffersPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
+	getChunkCopyBuffersPool().setMaxNumberOfBlocks(maxBuffersPoolSize_blocks);
 }

@@ -38,7 +38,7 @@ Files in the top-level directory are grouped by subsystem:
 | `chunk_file_creator.*`            | RAII helper for safe chunk creation           |
 | `chunk_filename_parser.*`         | Parse chunk filenames to extract metadata     |
 | `io_buffers.*`                    | Aligned I/O buffers for moving data between network and disk        |
-| `buffers_pool.h`                  | Thread-safe buffer (`OutputBuffer`, `InputBuffer`, `ReplicatorBuffer`) recycling pool     |
+| `buffers_pool.h`                  | Thread-safe buffer (`OutputBuffer`, `InputBuffer`, `ChunkCopyBuffer`) recycling pool     |
 | `slice_recovery_planner.h`        | EC/XOR slice recovery planning                |
 | `g_limiters.*`                    | Singleton for replication bandwidth limiter   |
 | `replication_bandwidth_limiter.*` | I/O throttling for replication                |
@@ -465,10 +465,11 @@ IPlugin (root interface: name, version, initialize)
   tracks which writes were already acknowledged, and `hddspacemgr` may use the
   buffered data to patch later reads until the disk write completes.
   Pool-recycled via `BuffersPool`.
-- **`ReplicatorBuffer`** (`io_buffers.h`) -- specialized for replications. Contains only
+- **`ChunkCopyBuffer`** (`io_buffers.h`) -- specialized for the paths that stage whole
+  chunk blocks while copying them: replication and local chunk duplication. Contains only
   a block buffer aligned to 4 KiB (`disk::kIoBlockSize`). Pool-recycled via `BuffersPool`.
 - **`BuffersPool<T>`** (`buffers_pool.h`) -- thread-safe pool of
-  `OutputBuffer`, `InputBuffer` and `ReplicatorBuffer` objects, keyed by
+  `OutputBuffer`, `InputBuffer` and `ChunkCopyBuffer` objects, keyed by
   `(headerSize, numBlocks)`. Auto-creates new buffers when the pool is empty, recycles
   after use, and supports TTL-based expiration via `releaseOldBuffers()`.
 

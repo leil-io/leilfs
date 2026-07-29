@@ -76,7 +76,8 @@ public:
 
 	void serializeEmptyChunkSignature(uint8_t **destination, uint64_t chunkId,
 	                                  uint32_t chunkVersion,
-	                                  ChunkPartType chunkType) override;
+	                                  ChunkPartType chunkType,
+	                                  const IChunk *formatSource = nullptr) override;
 
 	/// Instantiates a new Chunk for this type of Disk.
 	/// The ChunkState is CH_LOCKED by default.
