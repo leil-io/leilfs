@@ -18,7 +18,9 @@
 
 #include "master/chunk_operations_base.h"
 
+#include "errors/sfserr.h"
 #include "master/chunks.h"
+#include "master/filesystem_operation_context.h"
 
 // Default behavior forwards to the existing chunks.cc free functions, which hold
 // the real in-memory logic. leil-master uses these as-is; ChunkOperationsKV (or similars)

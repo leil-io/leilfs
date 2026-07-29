@@ -20,12 +20,31 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
 #include <optional>
 #include <unordered_map>
 
 #include "common/type_defs.h"
 
 class FSNode;
+
+/// KV-only bookkeeping for file chunk tables stored outside FSNodeFile.
+///
+/// In-memory Master and Shadow never create these entries. KV backends attach one to
+/// each file-like node materialized in an operation arena and persist it inside NODE_.
+struct OutOfLineChunkTableMeta {
+	/// Sentinel for mutablePrefixEnd: no bulk operation fences the file.
+	static constexpr uint32_t kNoMutablePrefix = 0xFFFFFFFF;
+
+	uint32_t liveChunkCount{};
+	uint32_t chunkTableSize{};
+	/// Monotonic content revision used to detect a source table changing during a bulk copy.
+	uint64_t chunkTableRevision{};
+	/// Monotonic identity assigned to durable bulk operations targeting this inode.
+	uint64_t bulkOperationGeneration{};
+	/// While an operation is active, only indices below this exclusive bound may mutate.
+	uint32_t mutablePrefixEnd{kNoMutablePrefix};
+};
 
 /// Per-operation owner of FSNode objects materialized from a KV backend.
 ///
@@ -57,14 +76,32 @@ public:
 	/// node is destroyed and the pinned instance returned; adopting over a tombstone re-pins.
 	[[nodiscard]] FSNode *adopt(inode_t inode, FSNode *node);
 
-	/// Drops ownership without destroying the node and tombstones the inode, so a later
-	/// resolve in the same operation returns null instead of a dangling pointer.
-	/// For delete paths where the removal call destroys the node itself.
+	/// Returns the KV chunk-table metadata attached to @p inode, or nullptr when absent.
+	OutOfLineChunkTableMeta *chunkTableMeta(inode_t inode);
+	const OutOfLineChunkTableMeta *chunkTableMeta(inode_t inode) const;
+
+	/// Returns the existing metadata or creates a default, unfenced entry.
+	OutOfLineChunkTableMeta &ensureChunkTableMeta(inode_t inode);
+
+	/// Replaces the metadata attached to @p inode.
+	void setChunkTableMeta(inode_t inode, OutOfLineChunkTableMeta metadata);
+
+	/// Drops ownership and chunk-table metadata, then tombstones the inode.
+	/// A later resolve in the same operation returns null instead of a dangling pointer.
+	/// Used by delete paths where the removal call destroys the node itself.
 	void releaseAndTombstone(inode_t inode);
+
+	/// Drops node ownership and tombstones the inode while retaining its out-of-line metadata.
+	/// Delete paths use this before removeNode(), which still needs chunk-table metadata, then
+	/// call releaseAndTombstone() after the node has been destroyed.
+	void releaseNodeOwnershipAndTombstone(inode_t inode);
 
 private:
 	void destroyAll();
 
 	/// Owned nodes by inode; a null value is a tombstone for a node deleted this operation.
 	std::unordered_map<inode_t, FSNode *> nodes_;
+
+	/// KV-only file chunk-table metadata. Empty for in-memory Master and Shadow operations.
+	std::unordered_map<inode_t, OutOfLineChunkTableMeta> chunkTableMetadata_;
 };

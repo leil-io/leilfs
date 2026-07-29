@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <cassert>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -35,6 +36,29 @@ namespace kv {
 class IReadOnlyTransaction;
 class IReadWriteTransaction;
 }  // namespace kv
+
+/// Final durability outcome delivered to backend-owned transaction effects.
+enum class FilesystemTransactionOutcome : std::uint8_t {
+	kCommitted,
+	kAborted,
+	kIndeterminate,
+};
+
+/// Backend-owned effects that must follow the durability outcome of one transaction.
+///
+/// The public filesystem layer deliberately does not know what an effect contains. A KV
+/// backend can use this object to stage cache changes while its transaction is active, apply
+/// them after a known commit, discard them after a definite abort, and reconcile them from
+/// durable state after an indeterminate commit.
+class FilesystemTransactionEffects {
+public:
+	FilesystemTransactionEffects() = default;
+	FilesystemTransactionEffects(const FilesystemTransactionEffects &) = delete;
+	FilesystemTransactionEffects &operator=(const FilesystemTransactionEffects &) = delete;
+	virtual ~FilesystemTransactionEffects() = default;
+
+	virtual void finish(FilesystemTransactionOutcome outcome) noexcept = 0;
+};
 
 /// Context for filesystem operations that may require database transactions.
 ///
@@ -71,8 +95,8 @@ public:
 	/// Move-only semantics (transactions cannot be copied)
 	FilesystemOperationContext(const FilesystemOperationContext &) = delete;
 	FilesystemOperationContext &operator=(const FilesystemOperationContext &) = delete;
-	FilesystemOperationContext(FilesystemOperationContext &&) = default;
-	FilesystemOperationContext &operator=(FilesystemOperationContext &&) = default;
+	FilesystemOperationContext(FilesystemOperationContext &&other) noexcept;
+	FilesystemOperationContext &operator=(FilesystemOperationContext &&other) noexcept;
 
 	/// Destructor.
 	/// Destroying the context releases any owned transaction objects and destroys the nodes
@@ -81,9 +105,7 @@ public:
 	/// before the context is destroyed.
 	/// Debug builds catch a committed context whose deferred changelog was not drained,
 	/// because dropping those entries would lose changelog, metalogger and notifier sinks.
-	~FilesystemOperationContext() {
-		assert(deferredChangelogEntries_.empty() || !commitConfirmed_);
-	}
+	~FilesystemOperationContext();
 
 	/// Returns true if this context has an active transaction
 	bool hasTransaction() const;
@@ -105,6 +127,31 @@ public:
 	/// destroyed.
 	std::unique_ptr<kv::IReadWriteTransaction> releaseReadWriteTransaction();
 
+	/// Returns the backend-owned effects object, or nullptr when none is attached.
+	FilesystemTransactionEffects *transactionEffects() const { return transactionEffects_.get(); }
+
+	/// Attaches the effects object for this transaction.
+	///
+	/// A context has one backend owner, so replacing an existing object is a programming
+	/// error. The object may be attached through a const operation seam because it is
+	/// transaction-local physical state, like nodeArena().
+	void setTransactionEffects(std::unique_ptr<FilesystemTransactionEffects> effects) const;
+
+	/// Delivers the transaction's final durability outcome exactly once.
+	///
+	/// Destroying an unfinished context delivers kAborted automatically. Callers must
+	/// explicitly deliver kIndeterminate because reconciliation can require backend reads.
+	void finishTransactionEffects(FilesystemTransactionOutcome outcome) const noexcept;
+
+	/// Commits the owned read-write transaction and finalizes backend effects from the
+	/// reported outcome. Returns true without work when the context has no transaction.
+	bool commitTransaction() const;
+
+	/// Finalizes backend effects after an externally driven synchronous or asynchronous
+	/// commit. The transaction's commitOutcomeUnknown() distinguishes a definite abort
+	/// from an indeterminate result.
+	void finishTransactionEffectsAfterCommit(bool committed) const noexcept;
+
 	/// Get the transaction type hint
 	TransactionType getTransactionType() const { return transactionType_; }
 
@@ -113,6 +160,15 @@ public:
 	/// const resolution seam, not a logical filesystem mutation.
 	/// @see FSNodeArena
 	FSNodeArena &nodeArena() const { return nodeArena_; }
+
+	/// Per-operation cache of decoded chunk-table bucket rows, keyed by (inode,
+	/// bucket); an empty vector caches an absent row. Only KV backends populate
+	/// it, mirroring their transaction's view so one operation reads each row at
+	/// most once. Mutable like nodeArena_: physical cache state shared through
+	/// the const resolution seam.
+	std::map<std::pair<inode_t, uint32_t>, std::vector<uint64_t>> &bucketRowCache() const {
+		return bucketRowCache_;
+	}
 
 	/// A changelog entry whose publication is held until the owning transaction commits.
 	struct DeferredChangelogEntry {
@@ -142,6 +198,16 @@ public:
 	/// Records that the transaction committed so the destructor catches an undrained buffer.
 	void confirmCommitted() const { commitConfirmed_ = true; }
 
+	/// Marks this context as the shared transaction of a client group-commit batch.
+	/// Batch bodies stage in-memory-derived blind writes long before the batch's
+	/// asynchronous commit is submitted; those writes must be conflict-checked (see
+	/// kv::IReadWriteTransaction::addReadConflictKey) or a synchronous commit landing
+	/// inside that window is silently overwritten by the stale staged value.
+	void setGroupCommitBatch() { groupCommitBatch_ = true; }
+
+	/// Returns true for the shared transaction of a client group-commit batch.
+	bool isGroupCommitBatch() const { return groupCommitBatch_; }
+
 private:
 	/// The active read-write transaction (if any)
 	std::unique_ptr<kv::IReadWriteTransaction> rwTransaction_ = nullptr;
@@ -156,12 +222,24 @@ private:
 	/// Mutable so the const seam can pin; see nodeArena().
 	mutable FSNodeArena nodeArena_;
 
+	/// See bucketRowCache(); mutable like nodeArena_.
+	mutable std::map<std::pair<inode_t, uint32_t>, std::vector<uint64_t>> bucketRowCache_;
+
 	/// See setDeferChangelog().
 	bool deferChangelog_ = false;
 
 	/// Changelog entries buffered for post-commit publication; mutable like nodeArena_.
 	mutable std::vector<DeferredChangelogEntry> deferredChangelogEntries_;
 
+	/// See setGroupCommitBatch().
+	bool groupCommitBatch_ = false;
+
 	/// See confirmCommitted(); mutable like the entry buffer it guards.
 	mutable bool commitConfirmed_ = false;
+
+	/// Type-erased backend effects whose lifetime is tied to the transaction.
+	mutable std::unique_ptr<FilesystemTransactionEffects> transactionEffects_;
+
+	/// Guards the exactly-once outcome contract.
+	mutable bool transactionEffectsFinished_ = false;
 };

@@ -53,6 +53,13 @@ public:
 	                   uint16_t umask, uint32_t uid, uint32_t gid, uint8_t copysgid,
 	                   AclInheritance inheritAcl, inode_t requestedINode = 0) override;
 
+	FSNode *createNodeWithPreallocatedId(const FilesystemOperationContext &fsOpContext,
+	                                     uint32_t timeStamp, FSNodeDirectory *parent,
+	                                     const HString &name, FSNodeType type, uint16_t mode,
+	                                     uint16_t umask, uint32_t uid, uint32_t gid,
+	                                     uint8_t copysgid, AclInheritance inheritAcl,
+	                                     inode_t inode) override;
+
 	/// Syncs the current state of the node to persistent storage on backends that need it.
 	/// @see IFilesystemNodeOperations::updateNode
 	/// @note This implementation is a no-op for in-memory storage.
@@ -118,11 +125,114 @@ public:
 	               uint64_t length, bool eraseFurtherChunks) override;
 	uint8_t appendChunks(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                     FSNodeFile *destNodeFile, FSNodeFile *srcNodeFile) override;
-	void changeFileGoal(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
-	                    uint8_t goal) override;
+	/// Allows file-goal changes unconditionally for the in-memory backend.
+	/// @see IFilesystemNodeOperations::canChangeFileGoal
+	uint8_t canChangeFileGoal(const FilesystemOperationContext &fsOpContext,
+	                          const FSNodeFile *nodeFile) override;
+	/// Allows every chunk-index range for the in-memory backend.
+	/// @see IFilesystemNodeOperations::canMutateFileChunks
+	uint8_t canMutateFileChunks(const FilesystemOperationContext &fsOpContext,
+	                            const FSNodeFile *nodeFile, uint32_t beginIndex,
+	                            uint32_t endIndex) override;
+	uint8_t changeFileGoal(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                       uint8_t goal, const FileGoalChangeRequest &request) override;
 #ifndef METARESTORE
-	void checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) override;
+	void checkFile(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	               ChunkCountArray &chunkCount) override;
 #endif
+
+	// Chunk-table access seam: in-memory implementations over FSNodeFile::chunks.
+
+	/// Reads the vector slot; an index past the vector is a hole.
+	/// @see IFilesystemNodeOperations::getFileChunkId
+	uint64_t getFileChunkId(const FilesystemOperationContext &fsOpContext,
+	                        const FSNodeFile *nodeFile, uint32_t index) override;
+
+	/// Writes the vector slot; asserts the index is within the table.
+	/// @see IFilesystemNodeOperations::setFileChunkId
+	void setFileChunkId(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                    uint32_t index, uint64_t chunkId) override;
+
+	/// Returns FSNodeFile::chunks.size().
+	/// @see IFilesystemNodeOperations::getFileChunkTableSize
+	uint32_t getFileChunkTableSize(const FilesystemOperationContext &fsOpContext,
+	                               const FSNodeFile *nodeFile) override;
+
+	/// Zero-fill resize of the vector when newSize exceeds it.
+	/// @see IFilesystemNodeOperations::growFileChunkTable
+	void growFileChunkTable(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                        uint32_t newSize) override;
+
+	/// Unconditional vector resize (zero-fills growth).
+	/// @see IFilesystemNodeOperations::resizeFileChunkTable
+	void resizeFileChunkTable(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                          uint32_t newSize) override;
+
+	/// Always SAUNAFS_STATUS_OK: the vector has no backing rows to fail.
+	/// @see IFilesystemNodeOperations::validateFileChunkRows
+	uint8_t validateFileChunkRows(const FilesystemOperationContext &fsOpContext,
+	                              const FSNodeFile *nodeFile, uint32_t fromIndex,
+	                              uint32_t endIndex) override;
+
+	/// Always SAUNAFS_STATUS_OK: this backend never defers chunk releases.
+	/// @see IFilesystemNodeOperations::canGrowFileChunkTable
+	uint8_t canGrowFileChunkTable(const FilesystemOperationContext &fsOpContext,
+	                              const FSNodeFile *nodeFile, uint32_t newSize) override;
+
+	/// Always SAUNAFS_STATUS_OK: the in-memory table releases every discarded chunk inline.
+	/// @see IFilesystemNodeOperations::canTruncateFileChunks
+	uint8_t canTruncateFileChunks(const FilesystemOperationContext &fsOpContext,
+	                              const FSNodeFile *nodeFile, uint64_t newLength) override;
+
+	/// Returns FSNodeFile::chunkCount().
+	/// @see IFilesystemNodeOperations::getFileChunkCount
+	uint32_t getFileChunkCount(const FilesystemOperationContext &fsOpContext,
+	                           const FSNodeFile *nodeFile) override;
+
+	/// Counts the non-zero slots of the vector.
+	/// @see IFilesystemNodeOperations::getLiveFileChunkCount
+	uint32_t getLiveFileChunkCount(const FilesystemOperationContext &fsOpContext,
+	                               FSNodeFile *nodeFile) override;
+
+	/// Checks the slot covering the file's last byte directly in the vector.
+	/// @see IFilesystemNodeOperations::isLastFileChunkNonEmpty
+	bool isLastFileChunkNonEmpty(const FilesystemOperationContext &fsOpContext,
+	                             FSNodeFile *nodeFile) override;
+
+	/// Plain forward loop over the vector, skipping holes.
+	/// @see IFilesystemNodeOperations::forEachFileChunk
+	void forEachFileChunk(const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
+	                      uint32_t fromIndex,
+	                      const std::function<bool(uint32_t, uint64_t)> &callback) override;
+
+	/// Hands each discarded live slot to the callback (no deferral), then shrinks the vector.
+	/// @see IFilesystemNodeOperations::truncateFileChunks
+	FileChunkCutResult truncateFileChunks(
+	    const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile, uint32_t newSize,
+	    const std::function<void(uint32_t, uint64_t)> &callback) override;
+
+	/// Equivalent to truncateFileChunks to size zero (no deferral).
+	/// @see IFilesystemNodeOperations::removeAllFileChunks
+	FileChunkCutResult removeAllFileChunks(
+	    const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	    const std::function<void(uint32_t, uint64_t)> &callback) override;
+
+	/// Direct copy from the vector.
+	/// @see IFilesystemNodeOperations::getFileChunkIds
+	void getFileChunkIds(const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
+	                     uint32_t fromIndex, uint32_t count,
+	                     std::vector<uint64_t> &chunkIdsOut) override;
+
+	/// Exact vector comparison.
+	/// @see IFilesystemNodeOperations::fileChunksEqual
+	bool fileChunksEqual(const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFileA,
+	                     const FSNodeFile *nodeFileB) override;
+
+	/// Vector assignment; every copied live slot reaches the callback (no deferral).
+	/// @see IFilesystemNodeOperations::copyFileChunks
+	void copyFileChunks(const FilesystemOperationContext &fsOpContext, FSNodeFile *destNodeFile,
+	                    const FSNodeFile *srcNodeFile,
+	                    const std::function<bool(uint32_t, uint64_t)> &callback) override;
 	int64_t getSize(const FilesystemOperationContext &fsOpContext, FSNode *node) override;
 
 	/// Returns the number of parents of the given node.
@@ -319,6 +429,12 @@ public:
 	           FSNode *node, uint8_t modeMask) override;
 
 protected:
+	FSNode *createNodeWithIdInternal(const FilesystemOperationContext &fsOpContext,
+	                                 uint32_t timeStamp, FSNodeDirectory *parent,
+	                                 const HString &name, FSNodeType type, uint16_t mode,
+	                                 uint16_t umask, uint32_t uid, uint32_t gid, uint8_t copysgid,
+	                                 AclInheritance inheritAcl, inode_t inode);
+
 	/// Returns the stored RichACL for @p node, or nullptr if none is present.
 	/// @p scratch is an optional caller-supplied buffer; implementations that need
 	/// to materialise a temporary ACL (e.g. KV backends) emplace into @p scratch
@@ -437,21 +553,16 @@ private:
 	/// Number of blocks in the last chunk before EOF
 	static uint32_t lastChunkBlocks(FSNodeFile *node);
 
-	/// Does the last chunk exist and contain non-zero data?
-	static bool isLastChunkNonEmpty(FSNodeFile *node);
-
-	/// Count chunks in a file, disregard sparse file holes
-	static uint32_t fileChunksCount(FSNodeFile *node);
-
 	/// Compute the "size" statistic for a file node
-	static uint64_t fileSize(FSNodeFile *node, uint32_t nonZeroChunks);
+	uint64_t fileSize(const FilesystemOperationContext &fsOpContext, FSNodeFile *node,
+	                  uint32_t nonZeroChunks);
 
 	/// Compute the "realsize" statistic for a file node.
 	/// @param node file node (used e.g. to detect a partial last chunk and goal).
 	/// @param nonZeroChunks number of non-empty chunks (used for EC/XOR slice calculations).
 	/// @param logicalFileSize logical file "size" as returned by fileSize(...).
-	static uint64_t fileRealSize(FSNodeFile *node, uint32_t nonZeroChunks,
-	                             uint64_t logicalFileSize);
+	uint64_t fileRealSize(const FilesystemOperationContext &fsOpContext, FSNodeFile *node,
+	                      uint32_t nonZeroChunks, uint64_t logicalFileSize);
 
 #ifndef METARESTORE
 	/// Compute the disk space cost of all parts of a xor/ec chunk of given size

@@ -92,6 +92,10 @@ void fs_periodic_emptyreserved(void) {
 	gFSOperations->doEmptyReserved(eventloop_time());
 }
 
+void fs_periodic_file_operations(void) {
+	gFSOperations->drainPendingFileOperations(eventloop_time());
+}
+
 void fs_read_periodic_config_file() {
 	FilesystemOperationsBase::setFileTestLoopTime(cfg_get_minmaxvalue<uint32_t>(
 	    "FILE_TEST_LOOP_MIN_TIME", 3600, FILETESTSMINLOOPTIME, FILETESTSMAXLOOPTIME));
@@ -105,5 +109,6 @@ void fs_periodic_master_init() {
 	eventloop_eachloopregister(fs_background_file_test);
 	eventloop_timeregister_ms(100, fs_periodic_emptytrash);
 	eventloop_timeregister_ms(gEmptyReservedFilesPeriod, fs_periodic_emptyreserved);
+	eventloop_timeregister_ms(100, fs_periodic_file_operations);
 }
 #endif

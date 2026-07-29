@@ -137,6 +137,7 @@ struct matoclserventry;
 struct DelayedChunkOperation {
 	uint64_t chunkId = 0;     ///< Chunk ID
 	uint64_t fileLength = 0;  ///< File length
+	uint32_t chunkIndex = 0;  ///< Exact file slot for failed-write cleanup
 	uint32_t lockId = 0;      ///< Lock ID
 	uint32_t messageId = 0;   ///< Message ID for reply
 	inode_t inode = 0;        ///< Inode
@@ -346,8 +347,9 @@ void matoclserv_emit_changelog_sinks(uint64_t version, char *entry, std::size_t 
 /// Staged KV versions can collide, so this is the total-order point that reissues
 /// monotonically increasing versions for changelog, metaloggers and notifiers.
 /// Gaps are allowed; direct inline KV publications use the same sequencer.
-static void matoclserv_publish_deferred_changelog(const FilesystemOperationContext &ctx) {
-	auto entries = ctx.takeDeferredChangelogEntries();
+void matoclserv_publish_committed_changelog(const FilesystemOperationContext &context) {
+	context.confirmCommitted();
+	auto entries = context.takeDeferredChangelogEntries();
 	for (auto &deferred : entries) {
 		deferred.version = matoclserv_sequence_published_changelog_version(deferred.version);
 		matoclserv_emit_changelog_sinks(deferred.version, deferred.entry.data(),
@@ -358,8 +360,8 @@ static void matoclserv_publish_deferred_changelog(const FilesystemOperationConte
 /// Confirms a durable deferring commit and drains its changelog buffer.
 /// confirmCommitted() arms the destructor tripwire before publication drains entries.
 static void matoclserv_commit_confirmed(const FilesystemOperationContext &ctx) {
-	ctx.confirmCommitted();
-	matoclserv_publish_deferred_changelog(ctx);
+	ctx.finishTransactionEffects(FilesystemTransactionOutcome::kCommitted);
+	matoclserv_publish_committed_changelog(ctx);
 }
 
 /// Replay pacing for fresh-transaction replays (the sync retry loop and the timed
@@ -587,6 +589,7 @@ static uint8_t matoclserv_commit_op_with_retry_impl(
 			} else {
 				safs::log_err("matoclserv: sync commit failed (err {}, retryable {}), giving up",
 				              commitError, retryable);
+				ctx.finishTransactionEffectsAfterCommit(false);
 				return SAUNAFS_ERROR_IO;
 			}
 		} catch (const kv::TransactionStateError &e) {
@@ -672,6 +675,10 @@ struct OpBatch {
 static OpBatch gOpenBatch;
 static std::optional<OpBatch> gInFlightBatch;
 static std::deque<BatchMember> gHeldOps;
+// A bounded background-maintenance request. Existing staged/open work is flushed before
+// the idle check grants the window; arriving operation bodies remain unexecuted in
+// gHeldOps, so they carry no stale writes while the background transaction commits.
+static bool gBatchMaintenanceRequested = false;
 // True while matoclserv_poll_batch is resolving an in-flight batch (running
 // finishes / replaying members). A finish can submit a follow-up op (e.g. the
 // truncate finalize via matoclserv_resolve_pending_delayed_op); it must be HELD
@@ -717,6 +724,23 @@ static MatoclBatchStats gBatchStats;
 void matoclserv_set_batch_stats_enabled(bool enabled) { gBatchStatsEnabled = enabled; }
 
 MatoclBatchStats matoclserv_get_batch_stats() { return gBatchStats; }
+
+void matoclserv_request_commit_pipeline_maintenance() { gBatchMaintenanceRequested = true; }
+
+void matoclserv_complete_commit_pipeline_maintenance() { gBatchMaintenanceRequested = false; }
+
+/// @see fs_register_commit_pipeline_idle_check. Member bodies stage writes
+/// derived from in-memory state long before the batch commit is submitted; a
+/// background transaction committing inside that window either aborts the whole
+/// batch into replay (conflict-checked keys) or is silently overwritten by the
+/// batch's stale value (blind ones). "Idle" therefore covers the open batch,
+/// held ops, and a parked retry (whose members' in-memory effects are applied
+/// but not durable), not just the in-flight commit.
+static bool matoclserv_commit_pipeline_idle() {
+	const bool stagedWorkIsDurable = !gInFlightBatch.has_value() && !gBatchRetry.has_value() &&
+	                                 !gBatchResolving && gOpenBatch.members.empty();
+	return stagedWorkIsDurable && (gBatchMaintenanceRequested || gHeldOps.empty());
+}
 
 /// Records a committed batch of `size` members in the stats (size-histogram bucketed by
 /// power of two as 1, 2-3, 4-7, 8-15, 16+). No-op unless accounting is enabled.
@@ -810,7 +834,10 @@ static FilesystemOperationContext matoclserv_replay_members(std::vector<BatchMem
 	for (;;) {
 		FilesystemOperationContext ctx = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
-		if (ctx.hasReadWriteTransaction()) { ctx.setDeferChangelog(); }
+		if (ctx.hasReadWriteTransaction()) {
+			ctx.setDeferChangelog();
+			ctx.setGroupCommitBatch();
+		}
 		bool restart = false;
 		for (size_t idx = 0; idx < members.size() && !restart;) {
 			restart = matoclserv_replay_members_iteration(members, idx, ctx);
@@ -839,9 +866,13 @@ static void matoclserv_join_open_batch(BatchMember member) {
 		gOpenBatch.ctx = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
 		// Batched KV ops buffer changelog entries until commit, avoiding uncommitted
-		// publication and duplicate entries from replayed batches.
+		// publication and duplicate entries from replayed batches. The batch flag
+		// makes registry-derived blind writes conflict-checked: the async commit
+		// leaves a window where an interleaved synchronous commit would otherwise
+		// be overwritten by the batch's stale staged value.
 		if (gOpenBatch.ctx.hasReadWriteTransaction()) {
 			gOpenBatch.ctx.setDeferChangelog();
+			gOpenBatch.ctx.setGroupCommitBatch();
 		}
 		gOpenBatch.hasContext = true;
 	}
@@ -872,7 +903,8 @@ static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
                                  std::function<void(uint8_t status)> finish,
                                  std::function<void(uint8_t status)> onCommit = {}) {
 	eptr->pendingCommits++;
-	if (gInFlightBatch.has_value() || gBatchRetry.has_value() || gBatchResolving) {
+	if (gBatchMaintenanceRequested || gInFlightBatch.has_value() || gBatchRetry.has_value() ||
+	    gBatchResolving) {
 		// Hold the body until the in-flight batch (or its parked retry) is durable
 		// so it runs against committed state (the soundness core of this design).
 		if (gBatchStatsEnabled) { gBatchStats.heldOps++; }
@@ -933,6 +965,7 @@ static void matoclserv_poll_batch() {
 			BatchRetry retry;
 			retry.members = std::move(gInFlightBatch->members);
 			retry.attempt = attempt;
+			gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
 			// The launch-time injected flag, NOT the reloadable setting: re-deriving it
 			// here could release a transaction the injected future never committed,
 			// still Active, and recoverAsync on it would fail stop the event loop.
@@ -958,6 +991,7 @@ static void matoclserv_poll_batch() {
 		} else {
 			safs::log_err("matoclserv: batch commit failed (err {}, retryable {}), giving up",
 			              commitError, retryable);
+			gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
 			for (BatchMember &member : gInFlightBatch->members) {
 				matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
 			}
@@ -981,9 +1015,13 @@ static void matoclserv_poll_batch() {
 					retry.recovery->get();
 					retry.recovery.reset();
 					// Replay onto the recovered transaction; if a member invalidates
-					// it, fall back to the fresh-transaction rebuild.
+					// it, fall back to the fresh-transaction rebuild. Batch flags as in
+					// matoclserv_join_open_batch: the replayed bodies stage the same
+					// registry-derived blind writes, so they need the same
+					// conflict-checking.
 					FilesystemOperationContext ctx(std::move(retry.txn));
 					ctx.setDeferChangelog();
+					ctx.setGroupCommitBatch();
 					bool restart = false;
 					for (size_t idx = 0; idx < retry.members.size() && !restart;) {
 						restart = matoclserv_replay_members_iteration(retry.members, idx, ctx);
@@ -1049,7 +1087,8 @@ static void matoclserv_poll_batch() {
 	// Drain held ops into the open batch once neither a batch nor a parked retry is
 	// pending. Bodies run here, against the now-durable state. FIFO keeps
 	// per-connection op order.
-	while (!gInFlightBatch.has_value() && !gBatchRetry.has_value() && !gHeldOps.empty()) {
+	while (!gBatchMaintenanceRequested && !gInFlightBatch.has_value() && !gBatchRetry.has_value() &&
+	       !gHeldOps.empty()) {
 		BatchMember held = std::move(gHeldOps.front());
 		gHeldOps.pop_front();
 		if (held.eptr->mode == ClientConnectionMode::KILL) {
@@ -1443,6 +1482,7 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 	const uint8_t operationType = operation.type;
 	const inode_t inode = operation.inode;
 	const uint64_t chunkId = operation.chunkId;
+	const uint32_t chunkIndex = operation.chunkIndex;
 
 	if (status == SAUNAFS_STATUS_OK) { dcm_modify(inode, eptr->sessionData->sessionId); }
 
@@ -1489,12 +1529,16 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 		// killed client) and does not depend on this commit, so the on-commit hook only
 		// logs a commit failure (mirrors the FUSE_TRUNCATE_END path); the log lives in
 		// onCommit, not finish, so a killed client cannot suppress it.
-		OpReplay runCleanup = [context, inode, chunkId,
+		OpReplay runCleanup = [context, inode, chunkIndex, chunkId,
 		                       removeChunk](FilesystemOperationContext &ctx) -> uint8_t {
-			if (removeChunk) {
-				gFSOperations->removeChunkFromFile(context, ctx, inode, chunkId);
-			}
+			// Persist the lock release before staging a possible reference removal.
+			// KV reference effects then read the lock-cleared CHNK_ value through
+			// transaction read-your-writes and cannot be overwritten by a later
+			// registry-derived persist.
 			gFSOperations->writeEnd(ctx, 0, 0, chunkId, 0);  // ignore status, just release
+			if (removeChunk) {
+				gFSOperations->removeChunkFromFile(context, ctx, inode, chunkIndex, chunkId);
+			}
 			return SAUNAFS_STATUS_OK;
 		};
 		matoclserv_submit_op(
@@ -2619,7 +2663,7 @@ void matoclserv_update_mount_info(matoclserventry *eptr, const uint8_t *data, ui
                                           size_t &operationCount) {
 	assert(fsOpContext.hasReadWriteTransaction());
 
-	auto commitResult = fsOpContext.getReadWriteTransaction()->commit();
+	auto commitResult = fsOpContext.commitTransaction();
 
 	fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -2734,7 +2778,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 
 	// Commit the final batch for KV backends
 	if (transactional && operationCount > 0) {
-		const bool committed = fsOpContext.getReadWriteTransaction()->commit();
+		const bool committed = fsOpContext.commitTransaction();
 		if (!committed) {
 			safs::log_err("{}: failed to commit final transaction for reserving inodes", __func__);
 		}
@@ -3284,7 +3328,7 @@ void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32
 	status = gFSOperations->readlink(context, fsOpContext, inode, path);
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			// Best-effort: atime update only, do not fail the readlink.
 			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
 		}
@@ -3997,7 +4041,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 			                                number_of_entries, dir_entries);
 
 			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
-				if (!fsOpContext.getReadWriteTransaction()->commit()) {
+				if (!fsOpContext.commitTransaction()) {
 					// Best-effort: atime update only, do not fail the directory listing.
 					safs::log_err("{}: Failed to commit atime update for inode {}", __func__,
 					              inode);
@@ -4083,7 +4127,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 		// Best effort to update atime
 		if (fsOpContext.hasReadWriteTransaction()) {
-			if (!fsOpContext.getReadWriteTransaction()->commit()) {
+			if (!fsOpContext.commitTransaction()) {
 				safs::log_err("{}: Failed to commit atime update for inode {}", __func__, inode);
 			}
 		}
@@ -4214,7 +4258,7 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 	}
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			// Best-effort: atime update only, do not fail the chunk read.
 			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}", __func__,
 			              inode, index);
@@ -4293,6 +4337,9 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	// flight.
 	struct WriteChunkState {
 		uint64_t chunkId = 0;
+		// Lock created by an earlier replay attempt. This remains valid input state,
+		// unlike chunkId, which is output from the current attempt only.
+		uint64_t retainedChunkId = 0;
 		uint64_t fileLength = 0;
 		uint32_t lockId = 0;
 		uint8_t opflag = 0;
@@ -4313,13 +4360,23 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	                          wc](FilesystemOperationContext &ctx) -> uint8_t {
 		matoclserv_drop_queued_delayed_op(eptr, wc->queued);
 		wc->queued = nullptr;
+		// Reset the previous attempt's outputs so a failed replay cannot leak them
+		// into the error handling below; retainedChunkId alone survives (see above).
+		wc->chunkId = 0;
+		wc->fileLength = 0;
+		wc->opflag = 0;
+		wc->tookDelayedPath = false;
+
 		uint8_t st = gFSOperations->writeChunk(matoclserv_get_context(eptr), ctx, inode,
 		                                       chunkIndex, &wc->lockId, &wc->chunkId, &wc->opflag,
 		                                       &wc->fileLength, min_server_version);
+		if (st == SAUNAFS_STATUS_OK) { wc->retainedChunkId = wc->chunkId; }
+
 		if (st == SAUNAFS_STATUS_OK && wc->opflag) {
 			auto operation = std::make_unique<DelayedChunkOperation>();
 			operation->inode = inode;
 			operation->chunkId = wc->chunkId;
+			operation->chunkIndex = chunkIndex;
 			operation->messageId = messageId;
 			operation->fileLength = wc->fileLength;
 			operation->lockId = wc->lockId;
@@ -4332,11 +4389,34 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		return st;
 	};
 
-	auto sendWriteChunkError = [eptr, serializer, messageId, inode, chunkIndex,
-	                            wc](uint8_t errorStatus) {
-		if (errorStatus == SAUNAFS_ERROR_LOCKED) {
+	auto releaseWriteLockById = [inode, chunkIndex](uint64_t chunkId, const char *reason) {
+		if (chunkId == 0) { return; }
+		OpReplay runWriteEndCleanup = [chunkId](FilesystemOperationContext &ctx) -> uint8_t {
+			gFSOperations->writeEnd(ctx, 0, 0, chunkId, 0);
+			return SAUNAFS_STATUS_OK;
+		};
+		if (matoclserv_commit_op_with_retry(runWriteEndCleanup) != SAUNAFS_STATUS_OK) {
+			safs::log_err("matoclserv_fuse_write_chunk: {}, inode {}, chunk index {}, chunk {}",
+			              reason, inode, chunkIndex, chunkId);
+		}
+	};
+
+	auto releaseRetainedWriteLock = [wc, releaseWriteLockById]() {
+		if (wc->retainedChunkId == 0) { return; }
+		const uint64_t chunkId = wc->retainedChunkId;
+		wc->retainedChunkId = 0;
+		releaseWriteLockById(chunkId, "failed retained-lock cleanup");
+	};
+
+	auto sendWriteChunkError = [eptr, serializer, messageId, inode, chunkIndex, wc,
+	                            releaseRetainedWriteLock](uint8_t errorStatus) {
+		releaseRetainedWriteLock();
+
+		if (errorStatus == SAUNAFS_ERROR_LOCKED && wc->chunkId != 0) {
 			// The chunk is locked, so we need to add this client to the wait-for-unlock
-			// list. The chunkId must have been set by writeChunk above.
+			// list. LOCKED without a chunk id means an active bulk operation fenced the
+			// write, not a chunk lock; no unlock notice will ever fire for it, so
+			// leave it to the mount's own LOCKED retry loop.
 			matoclserv_add_to_wait_for_unlock_list(eptr, wc->chunkId, inode, chunkIndex);
 		}
 		std::vector<uint8_t> outMessage;
@@ -4353,8 +4433,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	// (LOCKED keeps the wait-for-unlock path).
 	matoclserv_submit_op(
 	    eptr, std::move(runWriteChunk),
-	    [eptr, serializer, messageId, inode, chunkIndex, wc,
-	     sendWriteChunkError](uint8_t commitStatus) {
+	    [eptr, serializer, messageId, inode, wc, sendWriteChunkError,
+	     releaseWriteLockById](uint8_t commitStatus) {
 		    // Reply only (kill-gated). The delayed-op queue transition runs in onCommit below.
 		    if (commitStatus != SAUNAFS_STATUS_OK) {
 			    sendWriteChunkError(commitStatus);
@@ -4371,18 +4451,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		    if (respondStatus != SAUNAFS_STATUS_OK) {
 			    // The write transaction is already durable; release the chunk lock with
 			    // its own small op (conflict-retried, since other commits are in flight).
-			    const uint64_t chunkId = wc->chunkId;
-			    OpReplay runWriteEndCleanup =
-			        [chunkId](FilesystemOperationContext &ctx) -> uint8_t {
-				    gFSOperations->writeEnd(ctx, 0, 0, chunkId, 0);  // ignore status, just do it
-				    return SAUNAFS_STATUS_OK;
-			    };
-			    if (matoclserv_commit_op_with_retry(runWriteEndCleanup) != SAUNAFS_STATUS_OK) {
-				    safs::log_err(
-				        "matoclserv_fuse_write_chunk: transaction failed to commit during write "
-				        "end: inode {}, chunk index {}",
-				        inode, chunkIndex);
-			    }
+			    releaseWriteLockById(wc->chunkId, "transaction failed during write-end cleanup");
 		    }
 	    },
 	    [eptr, wc](uint8_t commitStatus) {
@@ -4451,12 +4520,31 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 	});
 }
 
+static void matoclserv_fuse_repair_wake_up(uint32_t sessionId, uint32_t msgid,
+                                           const std::shared_ptr<FileRepairStats> &stats,
+                                           int status) {
+	matoclserventry *eptr = matoclserv_find_connection(sessionId);
+	if (eptr == nullptr) { return; }
+
+	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(uint8_t);
+	constexpr uint32_t kSuccessSize =
+	    sizeof(msgid) + sizeof(stats->notChanged) + sizeof(stats->erased) + sizeof(stats->repaired);
+	uint8_t *ptr = matoclserv_createpacket(
+	    eptr, MATOCL_FUSE_REPAIR, status == SAUNAFS_STATUS_OK ? kSuccessSize : kFailedSize);
+	put32bit(&ptr, msgid);
+	if (status != SAUNAFS_STATUS_OK) {
+		put8bit(&ptr, static_cast<uint8_t>(status));
+		return;
+	}
+	put32bit(&ptr, stats->notChanged);
+	put32bit(&ptr, stats->erased);
+	put32bit(&ptr, stats->repaired);
+}
+
 void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
-	uint32_t uid,gid;
+	uint32_t uid, gid;
 	uint32_t msgid;
-	uint32_t chunksnotchanged, chunkserased, chunksrepaired;
-	uint8_t *ptr;
 	uint8_t status;
 	uint8_t correct_only = 0;
 
@@ -4479,37 +4567,44 @@ void matoclserv_fuse_repair(matoclserventry *eptr, const uint8_t *data, uint32_t
 	}
 
 	status = matoclserv_check_group_cache(eptr, gid);
+	auto stats = std::make_shared<FileRepairStats>();
 
 	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		status = gFSOperations->repair(context, inode, correct_only, &chunksnotchanged,
-		                               &chunkserased, &chunksrepaired);
+		const uint32_t sessionId = eptr->sessionData->sessionId;
+		status = gFSOperations->repairAsync(
+		    context, inode, correct_only, stats, [sessionId, msgid, stats](int repairStatus) {
+			    matoclserv_fuse_repair_wake_up(sessionId, msgid, stats, repairStatus);
+		    });
 	}
+	if (status != SAUNAFS_ERROR_WAITING) {
+		matoclserv_fuse_repair_wake_up(eptr->sessionData->sessionId, msgid, stats, status);
+	}
+}
 
-	constexpr uint32_t kFailedSize = sizeof(msgid) + sizeof(status);
-	constexpr uint32_t kSuccessSize =
-	    sizeof(msgid) + sizeof(chunksnotchanged) + sizeof(chunkserased) + sizeof(chunksrepaired);
+static void matoclserv_fuse_check_wake_up(uint32_t sessionId, uint32_t msgid,
+                                          const std::shared_ptr<ChunkCountArray> &chunkCount,
+                                          int status) {
+	matoclserventry *eptr = matoclserv_find_connection(sessionId);
+	if (eptr == nullptr) { return; }
 
-	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_REPAIR,
-	                              (status != SAUNAFS_STATUS_OK) ? kFailedSize : kSuccessSize);
-
-	put32bit(&ptr,msgid);
-
+	uint8_t *ptr;
 	if (status != SAUNAFS_STATUS_OK) {
-		put8bit(&ptr, status);
-	} else {
-		put32bit(&ptr, chunksnotchanged);
-		put32bit(&ptr, chunkserased);
-		put32bit(&ptr, chunksrepaired);
+		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK, sizeof(msgid) + sizeof(uint8_t));
+		put32bit(&ptr, msgid);
+		put8bit(&ptr, static_cast<uint8_t>(status));
+		return;
 	}
+
+	ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
+	                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
+	put32bit(&ptr, msgid);
+	for (uint32_t count : *chunkCount) { put32bit(&ptr, count); }
 }
 
 void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
-	ChunkCountArray chunkCount;
 	uint32_t msgid;
-	uint8_t *ptr;
-	uint8_t status;
 
 	constexpr uint32_t kExpectedSize = sizeof(msgid) + sizeof(inode);
 
@@ -4523,17 +4618,16 @@ void matoclserv_fuse_check(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	get32bit(&data, msgid);
 	getINode(&data, inode);
 
-	status = gFSOperations->checkFile(matoclserv_get_context(eptr), inode, chunkCount);
+	auto chunkCount = std::make_shared<ChunkCountArray>();
+	const uint32_t sessionId = eptr->sessionData->sessionId;
+	const uint8_t status = gFSOperations->checkFileAsync(
+	    matoclserv_get_context(eptr), inode, chunkCount,
+	    [sessionId, msgid, chunkCount](int checkStatus) {
+		    matoclserv_fuse_check_wake_up(sessionId, msgid, chunkCount, checkStatus);
+	    });
 
-	if (status != SAUNAFS_STATUS_OK) {
-		ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_CHECK, sizeof(msgid) + sizeof(status));
-		put32bit(&ptr,msgid);
-		put8bit(&ptr,status);
-	} else {
-		ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_CHECK,
-		                              sizeof(msgid) + CHUNK_MATRIX_SIZE * sizeof(uint32_t));
-		put32bit(&ptr, msgid);
-		for (uint32_t i = 0; i < CHUNK_MATRIX_SIZE; i++) { put32bit(&ptr, chunkCount[i]); }
+	if (status != SAUNAFS_ERROR_WAITING) {
+		matoclserv_fuse_check_wake_up(sessionId, msgid, chunkCount, status);
 	}
 }
 
@@ -4683,7 +4777,7 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	    gFSOperations->getGoal(matoclserv_get_context(eptr), fsOpContext, inode, gmode, fgtab, dgtab);
 
 	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			safs::log_err("{}: transaction failed to commit: inode {}, gmode {}", __func__, inode,
 			              static_cast<uint32_t>(gmode));
 			status = SAUNAFS_ERROR_IO;
@@ -5095,6 +5189,16 @@ void matoclserv_fuse_setxattr(matoclserventry *eptr, const uint8_t *data, uint32
 	matoclserv_submit_op(eptr, std::move(runSetXattr), sendSetXattrReply);
 }
 
+static void matoclserv_fuse_append_wake_up(uint32_t sessionId, uint32_t msgid, int status) {
+	matoclserventry *eptr = matoclserv_find_connection(sessionId);
+	if (eptr == nullptr) { return; }
+
+	uint8_t *ptr =
+	    matoclserv_createpacket(eptr, MATOCL_FUSE_APPEND, sizeof(msgid) + sizeof(uint8_t));
+	put32bit(&ptr, msgid);
+	put8bit(&ptr, static_cast<uint8_t>(status));
+}
+
 void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	inode_t inode;
 	inode_t inode_src;
@@ -5121,31 +5225,17 @@ void matoclserv_fuse_append(matoclserventry *eptr, const uint8_t *data, uint32_t
 
 	status = matoclserv_check_group_cache(eptr, gid);
 
-	// Replayable body: append copies the source file's chunk references onto the target
-	// (addFile bumps each chunk's in-memory refcount + persists the chunk record), so it
-	// shares write_chunk's accepted property -- a whole-batch replay re-runs addFile and
-	// the failed attempt's in-memory refcount bump lingers (backend rolls back). That is a
-	// conservative leak (refcount too high => extra COW, never too low), not corruption.
-	OpReplay runAppend = [eptr, uid, gid, inode,
-	                      inode_src](FilesystemOperationContext &ctx) -> uint8_t {
+	if (status == SAUNAFS_STATUS_OK) {
 		FsContext context = matoclserv_get_context(eptr, uid, gid);
-		return gFSOperations->append(context, ctx, inode, inode_src);
-	};
-
-	auto sendAppendReply = [eptr, msgid](uint8_t replyStatus) {
-		uint8_t *ptr =
-		    matoclserv_createpacket(eptr, MATOCL_FUSE_APPEND, sizeof(msgid) + sizeof(replyStatus));
-		put32bit(&ptr, msgid);
-		put8bit(&ptr, replyStatus);
-	};
-
-	if (status != SAUNAFS_STATUS_OK) {  // group-cache error: reply without running the op
-		sendAppendReply(status);
-		return;
+		const uint32_t sessionId = eptr->sessionData->sessionId;
+		status = gFSOperations->appendAsync(
+		    context, inode, inode_src, [sessionId, msgid](int appendStatus) {
+			    matoclserv_fuse_append_wake_up(sessionId, msgid, appendStatus);
+		    });
 	}
-
-	matoclserv_submit_op(eptr, std::move(runAppend),
-	                     [sendAppendReply](uint8_t commitStatus) { sendAppendReply(commitStatus); });
+	if (status != SAUNAFS_ERROR_WAITING) {
+		matoclserv_fuse_append_wake_up(eptr->sessionData->sessionId, msgid, status);
+	}
 }
 
 void matoclserv_fuse_snapshot_wake_up(uint32_t type, uint32_t session_id, uint32_t msgid, int status) {
@@ -6527,7 +6617,7 @@ bool matocl_close_files(Session *currentSession) {
 
 	// Commits one pending batch for transactional backends.
 	auto flushBatch = [&](bool isFinal) -> bool {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) { return false; }
+		if (!fsOpContext.commitTransaction()) { return false; }
 
 		if (!isFinal) {
 			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
@@ -6660,20 +6750,20 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 		if (operation->type == FUSE_TRUNCATE) {
 			gFSOperations->endSetLength(fsOpContext, operation->chunkId);
 		} else if (operation->type == FUSE_WRITE) {
+			gFSOperations->writeEnd(fsOpContext, 0, 0, operation->chunkId, 0);
 			if (operation->statusArrived && operation->pendingIsFailedCreate && eptr->sessionData) {
 				FsContext context = FsContext::getForMasterWithSession(
 				    eventloop_time(), eptr->sessionData->rootInode, eptr->sessionData->flags,
 				    operation->uid, operation->gid, operation->auid, operation->agid);
 				gFSOperations->removeChunkFromFile(context, fsOpContext, operation->inode,
-				                                   operation->chunkId);
+				                                   operation->chunkIndex, operation->chunkId);
 			}
-			gFSOperations->writeEnd(fsOpContext, 0, 0, operation->chunkId, 0);
 		}
 	}
 
 	// Commit the transaction for KV backends
 	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			safs::log_critical(
 			    "{}: transaction failed to commit while unlocking chunks for session {}", __func__,
 			    eptr->sessionData ? eptr->sessionData->sessionId : 0);
@@ -7171,6 +7261,7 @@ void matoclserv_term() {
 	gInFlightBatch.reset();
 	gBatchRetry.reset();
 	gHeldOps.clear();
+	gBatchMaintenanceRequested = false;
 	gOpenBatch.members.clear();
 	gOpenBatch.hasContext = false;
 	gOpenBatch.ctx = FilesystemOperationContext();
@@ -7650,6 +7741,8 @@ int matoclserv_network_init() {
 	gDebugInjectConflicts = cfg_getuint32("MATOCL_DEBUG_INJECT_COMMIT_CONFLICTS", 0U);
 	gDebugInjectReadConflicts = cfg_getuint32("MATOCL_DEBUG_INJECT_READ_CONFLICTS", 0U);
 	gDebugInjectRecoveryErrors = cfg_getuint32("MATOCL_DEBUG_INJECT_RECOVERY_ERRORS", 0U);
+
+	fs_register_commit_pipeline_idle_check(matoclserv_commit_pipeline_idle);
 
 	if (matoclserv_iolimits_reload() != 0) {
 		return -1;

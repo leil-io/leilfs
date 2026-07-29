@@ -65,6 +65,16 @@ public:
 		return {};
 	}
 
+	TaskManager::Task *createSnapshotTask(SnapshotTask::SubtaskContainer &&subtasks,
+	                                      inode_t originalInode, inode_t destinationParentInode,
+	                                      inode_t destinationInode, uint8_t canOverwrite,
+	                                      uint8_t ignoreMissingSource, bool emitChangelog,
+	                                      bool enqueueWork) override {
+		return new SnapshotTask(std::move(subtasks), originalInode, destinationParentInode,
+		                        destinationInode, canOverwrite, ignoreMissingSource, emitChangelog,
+		                        enqueueWork);
+	}
+
 	/// Returns version of the loaded metadata.
 	uint64_t getMetadataVersion() override;
 
@@ -94,6 +104,8 @@ public:
 	/// @see IFilesystemOperations::append
 	uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	               inode_t inode, inode_t inode_src) override;
+	uint8_t appendAsync(const FsContext &context, inode_t inode, inode_t sourceInode,
+	                    const std::function<void(int)> &callback) override;
 
 	/// Removes or prunes the ACL stored on a node, given its inode.
 	/// @see IFilesystemOperations::deleteAcl
@@ -255,12 +267,15 @@ public:
 	/// @see IFilesystemOperations::removeChunkFromFile
 	uint8_t removeChunkFromFile(const FsContext &context,
 	                            const FilesystemOperationContext &fsOpContext, inode_t inode,
-	                            uint64_t chunkId) override;
+	                            uint32_t chunkIndex, uint64_t chunkId) override;
 
 	/// Scans and repairs chunk metadata for a file-like node.
 	/// @see IFilesystemOperations::repair
 	uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	               uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) override;
+	uint8_t repairAsync(const FsContext &context, inode_t inode, uint8_t correctOnly,
+	                    std::shared_ptr<FileRepairStats> stats,
+	                    const std::function<void(int)> &callback) override;
 
 	/// Removes an empty directory from the filesystem.
 	/// @see IFilesystemOperations::rmdir
@@ -290,6 +305,9 @@ public:
 
 	uint8_t checkFile(const FsContext &context, inode_t inode,
 	                  ChunkCountArray &chunkCount) override;
+	uint8_t checkFileAsync(const FsContext &context, inode_t inode,
+	                       std::shared_ptr<ChunkCountArray> chunkCount,
+	                       const std::function<void(int)> &callback) override;
 	uint8_t openCheck(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                  inode_t inode, uint8_t flags, Attributes &attr) override;
 	uint8_t getGoal(const FsContext &context, const FilesystemOperationContext &fsOpContext,
@@ -435,6 +453,10 @@ public:
 	/// of whether those sessions are still active.
 	/// @see IFilesystemOperations::doEmptyReserved
 	void doEmptyReserved(uint32_t timeStamp) override;
+
+	/// No-op: the in-memory backend completes file operations synchronously.
+	/// @see IFilesystemOperations::drainPendingFileOperations
+	void drainPendingFileOperations([[maybe_unused]] uint32_t timeStamp) override {}
 #endif
 
 	// QUOTAS
@@ -714,3 +736,13 @@ private:
 	/// Node operations object
 	std::unique_ptr<IFilesystemNodeOperations> nodeOperations_;
 };
+
+/// Registers the check consulted by fs_commit_pipeline_idle. The client-server
+/// layer registers its group-commit pipeline state at init; nothing registered
+/// means no pipeline exists and the state reads idle.
+void fs_register_commit_pipeline_idle_check(bool (*check)());
+
+/// True when no client group-commit batch is open, held, or in flight.
+/// Background maintenance whose own transactions must not commit between a
+/// batch's staged writes and that batch's commit consults this before writing.
+bool fs_commit_pipeline_idle();

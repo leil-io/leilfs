@@ -66,6 +66,10 @@ public:
 	 */
 	int cloneNode(uint32_t ts);
 
+	/// One clone attempt on an established context; cloneNode wraps it with backend
+	/// transaction handling so aborted attempts discard staged reference effects.
+	int cloneNodeStep(const FilesystemOperationContext &fsOpContext, uint32_t ts);
+
 	/*! \brief Execute task specified by this SnapshotTask object.
 	 *
 	 * This function overrides pure virtual execute function of TaskManager::Task.
@@ -89,15 +93,20 @@ protected:
 	/*! \brief Test if node can be cloned. */
 	int cloneNodeTest(const FilesystemOperationContext &fsOpContext, FSNode *src_node,
 	                  FSNode *dst_node, FSNodeDirectory *dst_parent);
+	/// Clones a node and writes @p status only when cloning a file branch.
+	/// The caller must initialize @p status to SAUNAFS_STATUS_OK.
 	FSNode *cloneToExistingNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
-	                            FSNode *src_node, FSNodeDirectory *dst_parent, FSNode *dst_node);
+	                            FSNode *src_node, FSNodeDirectory *dst_parent, FSNode *dst_node,
+	                            int &status);
+	/// Clones a new node and writes @p status only when cloning a file branch.
+	/// The caller must initialize @p status to SAUNAFS_STATUS_OK.
 	FSNode *cloneToNewNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
-	                       FSNode *src_node, FSNodeDirectory *dst_parent);
+	                       FSNode *src_node, FSNodeDirectory *dst_parent, int &status);
 	FSNodeFile *cloneToExistingFileNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
 	                                    FSNodeFile *src_node, FSNodeDirectory *dst_parent,
-	                                    FSNodeFile *dst_node);
-	void cloneChunkData(const FilesystemOperationContext &fsOpContext, const FSNodeFile *src_node,
-	                    FSNodeFile *dst_node, FSNodeDirectory *dst_parent);
+	                                    FSNodeFile *dst_node, int &status);
+	int cloneChunkData(const FilesystemOperationContext &fsOpContext, const FSNodeFile *src_node,
+	                   FSNodeFile *dst_node, FSNodeDirectory *dst_parent);
 	void cloneDirectoryData(const FilesystemOperationContext &fsOpContext,
 	                        const FSNodeDirectory *src_node, FSNodeDirectory *dst_node);
 	void cloneSymlinkData(const FilesystemOperationContext &fsOpContext, FSNodeSymlink *src_node,

@@ -99,6 +99,24 @@ bool chunk_has_only_invalid_copies(uint64_t chunkid);
 
 int chunk_get_fullcopies(uint64_t chunkid,uint8_t *vcopies);
 int chunk_get_partstomodify(uint64_t chunkid, int &recover, int &remove);
+
+enum class ChunkRepairAction : uint8_t {
+	kUnchanged = 0,
+	kEraseReference = 1,
+	kSetVersion = 2,
+};
+
+struct ChunkRepairPlan {
+	ChunkRepairAction action = ChunkRepairAction::kUnchanged;
+	uint32_t version = 0;
+};
+
+/// Computes repair work without changing the in-memory chunk registry.
+ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only);
+
+/// Applies an exact plan produced by chunk_plan_repair().
+bool chunk_apply_repair_plan(uint8_t goal, uint64_t ochunkid, const ChunkRepairPlan &plan);
+
 int chunk_repair(uint8_t goal,uint64_t ochunkid,uint32_t *nversion, uint8_t correct_only);
 
 int chunk_getversionandlocations(uint64_t chunkid, uint32_t currentIp, uint32_t& version,

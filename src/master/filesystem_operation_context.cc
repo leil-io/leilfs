@@ -20,6 +20,8 @@
 
 #include "master/filesystem_operation_context.h"
 
+#include <stdexcept>
+
 #include "kv/itransaction.h"
 
 FilesystemOperationContext::FilesystemOperationContext(
@@ -29,6 +31,44 @@ FilesystemOperationContext::FilesystemOperationContext(
 FilesystemOperationContext::FilesystemOperationContext(
     std::unique_ptr<kv::IReadWriteTransaction> txn)
     : rwTransaction_(std::move(txn)), transactionType_(TransactionType::kReadWrite) {}
+
+FilesystemOperationContext::FilesystemOperationContext(
+    FilesystemOperationContext &&other) noexcept = default;
+
+FilesystemOperationContext &FilesystemOperationContext::operator=(
+    FilesystemOperationContext &&other) noexcept {
+	if (this == &other) { return *this; }
+	if (transactionEffects_ != nullptr && !transactionEffectsFinished_) {
+		transactionEffects_->finish(FilesystemTransactionOutcome::kAborted);
+	}
+	assert(deferredChangelogEntries_.empty() || !commitConfirmed_);
+
+	rwTransaction_ = std::move(other.rwTransaction_);
+	roTransaction_ = std::move(other.roTransaction_);
+	transactionType_ = other.transactionType_;
+	nodeArena_ = std::move(other.nodeArena_);
+	bucketRowCache_ = std::move(other.bucketRowCache_);
+	deferChangelog_ = other.deferChangelog_;
+	deferredChangelogEntries_ = std::move(other.deferredChangelogEntries_);
+	groupCommitBatch_ = other.groupCommitBatch_;
+	commitConfirmed_ = other.commitConfirmed_;
+	transactionEffects_ = std::move(other.transactionEffects_);
+	transactionEffectsFinished_ = other.transactionEffectsFinished_;
+
+	other.transactionType_ = TransactionType::kNone;
+	other.deferChangelog_ = false;
+	other.groupCommitBatch_ = false;
+	other.commitConfirmed_ = false;
+	other.transactionEffectsFinished_ = true;
+	return *this;
+}
+
+FilesystemOperationContext::~FilesystemOperationContext() {
+	if (transactionEffects_ != nullptr && !transactionEffectsFinished_) {
+		transactionEffects_->finish(FilesystemTransactionOutcome::kAborted);
+	}
+	assert(deferredChangelogEntries_.empty() || !commitConfirmed_);
+}
 
 bool FilesystemOperationContext::hasTransaction() const {
 	return rwTransaction_ != nullptr || roTransaction_ != nullptr;
@@ -55,4 +95,38 @@ std::unique_ptr<kv::IReadWriteTransaction>
 FilesystemOperationContext::releaseReadWriteTransaction() {
 	if (rwTransaction_ != nullptr) { transactionType_ = TransactionType::kNone; }
 	return std::move(rwTransaction_);
+}
+
+void FilesystemOperationContext::setTransactionEffects(
+    std::unique_ptr<FilesystemTransactionEffects> effects) const {
+	if (effects == nullptr) { throw std::invalid_argument("transaction effects must not be null"); }
+	if (transactionEffects_ != nullptr || transactionEffectsFinished_) {
+		throw std::logic_error("transaction effects already attached or finished");
+	}
+	transactionEffects_ = std::move(effects);
+}
+
+void FilesystemOperationContext::finishTransactionEffects(
+    FilesystemTransactionOutcome outcome) const noexcept {
+	if (transactionEffectsFinished_) { return; }
+	if (transactionEffects_ != nullptr) { transactionEffects_->finish(outcome); }
+	transactionEffectsFinished_ = true;
+}
+
+bool FilesystemOperationContext::commitTransaction() const {
+	if (rwTransaction_ == nullptr) { return true; }
+	const bool committed = rwTransaction_->commit();
+	finishTransactionEffectsAfterCommit(committed);
+	return committed;
+}
+
+void FilesystemOperationContext::finishTransactionEffectsAfterCommit(
+    bool committed) const noexcept {
+	if (committed) {
+		finishTransactionEffects(FilesystemTransactionOutcome::kCommitted);
+	} else if (rwTransaction_ != nullptr && rwTransaction_->commitOutcomeUnknown()) {
+		finishTransactionEffects(FilesystemTransactionOutcome::kIndeterminate);
+	} else {
+		finishTransactionEffects(FilesystemTransactionOutcome::kAborted);
+	}
 }

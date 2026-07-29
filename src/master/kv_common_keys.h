@@ -112,6 +112,29 @@ inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 /// Write locks live elsewhere (a future CHNK_LOCK_ prefix), so they are not part of this record.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
 
+/// Number of chunk-id slots covered by one FCHK_ bucket.
+inline constexpr uint32_t kChunkIdsPerBucket = 1024;
+
+/// Prefix for a file's out-of-line chunk-id table, stored in fixed-span buckets.
+/// Format: FCHK_<InodeId><BucketIndex> -> [<ChunkId>]*
+/// - InodeId: inode_t serialized as Big Endian; BucketIndex: uint32_t Big Endian.
+///   Bucket b covers chunk indexes [b*kChunkIdsPerBucket, (b+1)*kChunkIdsPerBucket).
+/// - Value: 64-bit Big Endian chunk ids for the covered slots in index order, with
+///   trailing zero slots trimmed (value length / 8 = stored slot count). An absent
+///   bucket, or a slot beyond the stored count, reads as chunk id 0 (a hole). A bucket
+///   whose slots are all zero is removed rather than stored, so the last stored slot of
+///   a file's last bucket always holds a live chunk id.
+/// @note Big Endian numeric key parts keep the buckets of one inode contiguous and in
+/// index order, so a file's whole table is one range scan by the FCHK_<InodeId> prefix.
+/// @note Caps the value size at 8 KiB regardless of file length: the chunk table of a
+/// file is no longer serialized into its NODE_ value, whose size would grow with the
+/// highest written chunk index and overflow the KV store's value limit.
+inline constexpr std::string_view kFileChunksKeyPrefix = "FCHK_";
+
+/// Prefix for worker-neutral durable file operations.
+/// Format: BULKOP_<TargetInode><Generation> -> <VersionedBulkOperationRecord>
+inline constexpr std::string_view kBulkOperationKeyPrefix = "BULKOP_";
+
 /// Prefix for extended attributes (xattrs)
 /// Format: XATR_<InodeId><AttributeName>:<AttributeValue>
 /// e.g.: XATR_1999UserAttr:UserValue
@@ -172,6 +195,10 @@ inline constexpr std::string_view kFileTestLeaseKey = "FILETEST_LEASE";
 /// @note InodeId inside LastCommittedNodeKey is serialized as Big Endian.
 inline constexpr std::string_view kFileTestCursorKey = "FILETEST_CURSOR";
 
+/// Durable partial state while the scanner processes one file's FCHK pages.
+/// The NODE cursor does not advance until this row is removed after finalizing the file.
+inline constexpr std::string_view kFileTestFileProgressKey = "FILETEST_FILE_PROGRESS";
+
 /// Running counters for the in-progress scan cycle; written by the lease owner each committed page.
 /// Reset to a fresh Stats with the new generation when a cycle completes or a new one begins.
 /// Format: FILETEST_ACTIVE_STATS:<ScanGeneration><LoopStart><LoopEnd><Files>
@@ -205,10 +232,12 @@ inline constexpr std::string_view kFileTestPublishedStatsKey = "FILETEST_PUBLISH
 inline constexpr std::string_view kFileTestPublishedReportKey = "FILETEST_PUBLISHED_REPORT";
 
 /// Prefix for per-defective-inode file-test rows.
-/// Format: FILETEST_DEFECTIVE_<InodeId>:<ScanGeneration><Flags>
+/// Format:
+/// FILETEST_DEFECTIVE_<InodeId>:<ScanGeneration><Flags><PreviousScanGeneration><PreviousFlags>
 /// - InodeId: inode_t serialized as Big Endian
 /// - ScanGeneration: uint64_t serialized as Big Endian
 /// - Flags: uint8_t NodeErrorFlag bitmask
+/// - PreviousScanGeneration and PreviousFlags: fixed predecessor snapshot for published readers
 /// @note InodeId is encoded in the key to preserve numeric ordering for scans.
 inline constexpr std::string_view kFileTestDefectiveKeyPrefix = "FILETEST_DEFECTIVE_";
 

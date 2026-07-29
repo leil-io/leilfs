@@ -21,6 +21,8 @@
 
 #include "master/recursive_remove_task.h"
 
+#include <limits>
+
 #include "master/filesystem_operations_interface.h"
 #include "master/filesystem_stats.h"
 
@@ -44,6 +46,12 @@ int RemoveTask::retrieveNodes(const FilesystemOperationContext &fsOpContext, FSN
 	}
 	if (!gFSOperations->nodeOperations()->stickyAccess(wd, child, context_->uid())) {
 		return SAUNAFS_ERROR_EPERM;
+	}
+	if (child->type == FSNodeType::kFile || child->type == FSNodeType::kTrash ||
+	    child->type == FSNodeType::kReserved) {
+		const uint8_t status = gFSOperations->nodeOperations()->canMutateFileChunks(
+		    fsOpContext, static_cast<FSNodeFile *>(child), 0, std::numeric_limits<uint32_t>::max());
+		if (status != SAUNAFS_STATUS_OK) { return status; }
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -89,8 +97,7 @@ int RemoveTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 		doUnlink(fsOpContext, ts, wd, child);
 
 		// commit the transaction
-		if (fsOpContext.hasReadWriteTransaction() &&
-		    !fsOpContext.getReadWriteTransaction()->commit()) {
+		if (fsOpContext.hasReadWriteTransaction() && !fsOpContext.commitTransaction()) {
 			return SAUNAFS_ERROR_IO;
 		}
 

@@ -40,6 +40,7 @@
 #include "master/locks.h"
 #include "master/setgoal_task.h"
 #include "master/settrashtime_task.h"
+#include "master/snapshot_task.h"
 #include "protocol/quota.h"
 
 class HString;
@@ -51,6 +52,13 @@ struct ChunkWithAddressAndLabel;
 
 struct QuotaEntry;
 struct QuotaOwner;
+
+/// Counts chunk slots left unchanged, erased, and repaired by a file repair.
+struct FileRepairStats {
+	uint32_t notChanged = 0;
+	uint32_t erased = 0;
+	uint32_t repaired = 0;
+};
 
 /// Result of a quota enforcement check. Fallible backends must report quota read failures
 /// through status, because a KV backend read error may not reliably fail the later commit.
@@ -121,6 +129,14 @@ public:
 	/// In-memory implementation should return a context without transactions.
 	virtual FilesystemOperationContext createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType type) = 0;
+
+	/// Creates one snapshot task for the active metadata backend.
+	virtual TaskManager::Task *createSnapshotTask(SnapshotTask::SubtaskContainer &&subtasks,
+	                                              inode_t originalInode,
+	                                              inode_t destinationParentInode,
+	                                              inode_t destinationInode, uint8_t canOverwrite,
+	                                              uint8_t ignoreMissingSource, bool emitChangelog,
+	                                              bool enqueueWork) = 0;
 
 	/// Returns version of the loaded metadata.
 	virtual uint64_t getMetadataVersion() = 0;
@@ -244,6 +260,13 @@ public:
 	/// @return SAUNAFS_ERROR_INDEXTOOBIG if the resulting chunk index range would overflow.
 	virtual uint8_t append(const FsContext &context, const FilesystemOperationContext &fsOpContext,
 	                       inode_t inode, inode_t inode_src) = 0;
+
+	/// Asynchronous append seam for backends that require bounded transactions.
+	///
+	/// A synchronous implementation returns its final status and does not invoke callback.
+	/// A deferred implementation returns SAUNAFS_ERROR_WAITING and invokes callback once.
+	virtual uint8_t appendAsync(const FsContext &context, inode_t inode, inode_t sourceInode,
+	                            const std::function<void(int)> &callback) = 0;
 
 	/// Removes or prunes the ACL stored on a node, given its inode.
 	///
@@ -1135,12 +1158,14 @@ public:
 	///
 	/// Used to roll back a chunk allocation after chunkserver-side work fails. Verifies a
 	/// read-write session, resolves `inode` as a writable file-like node, locates the first slot
-	/// equal to `chunkId`, drops the file's reference in chunk metadata, clears that slot, and
+	/// verifies the exact slot equals `chunkId`, drops the file's reference in chunk metadata,
+	/// clears that slot, and
 	/// logs `REPAIR(inode,index):0`.
 	///
 	/// @param context The FS operation context (user credentials, session flags, timestamp).
 	/// @param fsOpContext The operation context (read-write transaction in KV backends).
 	/// @param inode The file-like node to update.
+	/// @param chunkIndex The exact slot allocated by the failed write.
 	/// @param chunkId The chunk id to remove. Must be non-zero.
 	/// @return SAUNAFS_STATUS_OK on success.
 	/// @return SAUNAFS_ERROR_NOCHUNK if `chunkId` is zero, absent from the file layout, or absent
@@ -1152,7 +1177,7 @@ public:
 	/// @return SAUNAFS_ERROR_CHUNKLOST if chunk metadata cannot remove the file reference cleanly.
 	virtual uint8_t removeChunkFromFile(const FsContext &context,
 	                                    const FilesystemOperationContext &fsOpContext,
-	                                    inode_t inode, uint64_t chunkId) = 0;
+	                                    inode_t inode, uint32_t chunkIndex, uint64_t chunkId) = 0;
 
 	/// Scans and repairs chunk metadata for a file-like node.
 	///
@@ -1175,6 +1200,11 @@ public:
 	/// @return SAUNAFS_ERROR_ENOENT if the inode cannot be resolved.
 	virtual uint8_t repair(const FsContext &context, inode_t inode, uint8_t correct_only,
 	                       uint32_t *notchanged, uint32_t *erased, uint32_t *repaired) = 0;
+
+	/// Asynchronous repair seam for backends that require bounded transactions.
+	virtual uint8_t repairAsync(const FsContext &context, inode_t inode, uint8_t correctOnly,
+	                            std::shared_ptr<FileRepairStats> stats,
+	                            const std::function<void(int)> &callback) = 0;
 
 	/// Removes an empty directory from the filesystem.
 	///
@@ -1307,6 +1337,10 @@ public:
 
 	virtual uint8_t checkFile(const FsContext &context, inode_t inode,
 	                          ChunkCountArray &chunkCount) = 0;
+	/// Asynchronous check seam for backends that page a large file across task turns.
+	virtual uint8_t checkFileAsync(const FsContext &context, inode_t inode,
+	                               std::shared_ptr<ChunkCountArray> chunkCount,
+	                               const std::function<void(int)> &callback) = 0;
 	virtual uint8_t openCheck(const FsContext &context,
 	                          const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                          uint8_t flags, Attributes &attr) = 0;
@@ -1864,6 +1898,14 @@ public:
 	///
 	/// @param timeStamp Current wall-clock time (seconds since epoch).
 	virtual void doEmptyReserved(uint32_t timeStamp) = 0;
+
+	/// Runs one bounded round of pending durable file-operation work.
+	///
+	/// The in-memory backend completes operations synchronously and implements this as a no-op.
+	/// KV backends override it to advance worker-neutral durable records.
+	///
+	/// @param timeStamp Current wall-clock time (seconds since epoch).
+	virtual void drainPendingFileOperations(uint32_t timeStamp) = 0;
 
 	// CHECKSUM
 

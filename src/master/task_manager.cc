@@ -22,6 +22,9 @@
 #include "master/task_manager.h"
 
 #include "common/loop_watchdog.h"
+#include "errors/sfserr.h"
+#include "kv/ifuture.h"
+#include "slogger/slogger.h"
 
 void TaskManager::Job::finalize(int status) {
 	if (finish_callback_) {
@@ -41,7 +44,17 @@ void TaskManager::Job::finalizeTask(TaskIterator itask, int status) {
 void TaskManager::Job::processTask(uint32_t ts) {
 	if (!tasks_.empty()) {
 		auto i_front = tasks_.begin();
-		int status = i_front->execute(ts, tasks_);
+		int status;
+		try {
+			status = i_front->execute(ts, tasks_);
+		} catch (const kv::TransactionError &e) {
+			// Without this boundary the job stays at the front of the queue and
+			// re-executes (and fails again) every loop iteration, never answering
+			// the client. Fail the whole job cleanly instead.
+			safs::log_warn("task manager: backend error, failing job '{}': {}", description_,
+			               e.what());
+			status = SAUNAFS_ERROR_IO;
+		}
 		finalizeTask(i_front, status);
 	}
 }

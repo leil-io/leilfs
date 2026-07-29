@@ -41,6 +41,10 @@ public:
 	               uint8_t goal) override;
 	int changeFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
 	               uint8_t prevGoal, uint8_t newGoal) override;
+	bool defersFileReferenceMutations(
+	    const FilesystemOperationContext & /*fsOpContext*/) const override {
+		return false;
+	}
 
 	int increaseVersion(const FilesystemOperationContext &fsOpContext, uint64_t chunkid) override;
 	int setVersion(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,

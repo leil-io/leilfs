@@ -21,6 +21,9 @@
 
 #include "master/snapshot_task.h"
 
+#include <limits>
+
+#include "kv/ifuture.h"
 #include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/filesystem_checksum.h"
@@ -38,6 +41,15 @@ int SnapshotTask::cloneNodeTest(const FilesystemOperationContext &fsOpContext, F
 		quotaStatus = gFSOperations->checkQuotaUgDir(
 		    fsOpContext, src_node->uid, src_node->gid, dst_parent, {{QuotaResource::kSize, 1}});
 		if (quotaStatus != SAUNAFS_STATUS_OK) { return quotaStatus; }
+
+		// A source row the copy cannot decode must fail the clone before any
+		// destination mutation; skipping it would commit a snapshot that silently
+		// misses part of the file.
+		const auto *srcFile = static_cast<const FSNodeFile *>(src_node);
+		const uint8_t chunkRowStatus = gFSOperations->nodeOperations()->validateFileChunkRows(
+		    fsOpContext, srcFile, 0,
+		    gFSOperations->nodeOperations()->getFileChunkTableSize(fsOpContext, srcFile));
+		if (chunkRowStatus != SAUNAFS_STATUS_OK) { return chunkRowStatus; }
 	}
 
 	if (dst_node) {
@@ -56,7 +68,8 @@ int SnapshotTask::cloneNodeTest(const FilesystemOperationContext &fsOpContext, F
 
 FSNode *SnapshotTask::cloneToExistingNode(const FilesystemOperationContext &fsOpContext,
                                           uint32_t ts, FSNode *src_node,
-                                          FSNodeDirectory *dst_parent, FSNode *dst_node) {
+                                          FSNodeDirectory *dst_parent, FSNode *dst_node,
+                                          int &status) {
 	assert(src_node->type == dst_node->type);
 
 	switch (src_node->type) {
@@ -66,7 +79,7 @@ FSNode *SnapshotTask::cloneToExistingNode(const FilesystemOperationContext &fsOp
 		break;
 	case FSNodeType::kFile:
 		dst_node = cloneToExistingFileNode(fsOpContext, ts, static_cast<FSNodeFile *>(src_node),
-		                                   dst_parent, static_cast<FSNodeFile *>(dst_node));
+		                                   dst_parent, static_cast<FSNodeFile *>(dst_node), status);
 		break;
 	case FSNodeType::kSymlink:
 		cloneSymlinkData(fsOpContext, static_cast<FSNodeSymlink *>(src_node),
@@ -92,7 +105,7 @@ FSNode *SnapshotTask::cloneToExistingNode(const FilesystemOperationContext &fsOp
 }
 
 FSNode *SnapshotTask::cloneToNewNode(const FilesystemOperationContext &fsOpContext, uint32_t ts,
-                                     FSNode *src_node, FSNodeDirectory *dst_parent) {
+                                     FSNode *src_node, FSNodeDirectory *dst_parent, int &status) {
 	FSNode *dst_node = gFSOperations->nodeOperations()->createNode(fsOpContext,
 	    ts, dst_parent, current_subtask_->second, src_node->type, src_node->mode, 0, src_node->uid,
 	    src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_);
@@ -109,8 +122,8 @@ FSNode *SnapshotTask::cloneToNewNode(const FilesystemOperationContext &fsOpConte
 		                   static_cast<FSNodeDirectory *>(dst_node));
 		break;
 	case FSNodeType::kFile:
-		cloneChunkData(fsOpContext, static_cast<FSNodeFile *>(src_node),
-		               static_cast<FSNodeFile *>(dst_node), dst_parent);
+		status = cloneChunkData(fsOpContext, static_cast<FSNodeFile *>(src_node),
+		                        static_cast<FSNodeFile *>(dst_node), dst_parent);
 		break;
 	case FSNodeType::kSymlink:
 		cloneSymlinkData(fsOpContext, static_cast<FSNodeSymlink *>(src_node),
@@ -130,9 +143,10 @@ FSNode *SnapshotTask::cloneToNewNode(const FilesystemOperationContext &fsOpConte
 
 FSNodeFile *SnapshotTask::cloneToExistingFileNode(const FilesystemOperationContext &fsOpContext,
                                                   uint32_t ts, FSNodeFile *src_node,
-                                                  FSNodeDirectory *dst_parent,
-                                                  FSNodeFile *dst_node) {
-	bool same = dst_node->length == src_node->length && dst_node->chunks == src_node->chunks;
+                                                  FSNodeDirectory *dst_parent, FSNodeFile *dst_node,
+                                                  int &status) {
+	bool same = dst_node->length == src_node->length &&
+	            gFSOperations->nodeOperations()->fileChunksEqual(fsOpContext, dst_node, src_node);
 
 	if (same) {
 		return dst_node;
@@ -145,39 +159,45 @@ FSNodeFile *SnapshotTask::cloneToExistingFileNode(const FilesystemOperationConte
 	    fsOpContext, ts, dst_parent, current_subtask_->second, FSNodeType::kFile, src_node->mode, 0,
 	    src_node->uid, src_node->gid, 0, AclInheritance::kDontInheritAcl, dst_inode_));
 
-	cloneChunkData(fsOpContext, src_node, dst_node, dst_parent);
+	status = cloneChunkData(fsOpContext, src_node, dst_node, dst_parent);
 
 	return dst_node;
 }
 
-void SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
-                                  const FSNodeFile *src_node, FSNodeFile *dst_node,
-                                  FSNodeDirectory *dst_parent) {
+int SnapshotTask::cloneChunkData(const FilesystemOperationContext &fsOpContext,
+                                 const FSNodeFile *src_node, FSNodeFile *dst_node,
+                                 FSNodeDirectory *dst_parent) {
 	StatsRecord psr, nsr;
+	int copyStatus = SAUNAFS_STATUS_OK;
 
 	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &psr);
 
 	dst_node->goal = src_node->goal;
 	dst_node->trashtime = src_node->trashtime;
-	dst_node->chunks = src_node->chunks;
 	dst_node->length = src_node->length;
-	for (uint32_t i = 0; i < src_node->chunks.size(); ++i) {
-		auto chunkid = src_node->chunks[i];
-		if (chunkid > 0) {
-			if (gChunkOperations->addFile(fsOpContext, chunkid, dst_node->goal) !=
-			    SAUNAFS_STATUS_OK) {
-				safs_pretty_syslog(LOG_ERR,
-				       "structure error - chunk %016" PRIX64
-				       " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",
-				       chunkid, src_node->id, i);
-			}
-		}
+	gFSOperations->nodeOperations()->copyFileChunks(
+	    fsOpContext, dst_node, src_node, [&](uint32_t index, uint64_t chunkid) {
+		    copyStatus = gChunkOperations->addFile(fsOpContext, chunkid, dst_node->goal);
+		    if (copyStatus != SAUNAFS_STATUS_OK) {
+			    safs_pretty_syslog(LOG_ERR,
+			                       "structure error - chunk %016" PRIX64
+			                       " not found (inode: %" PRIiNode " ; index: %" PRIu32 ")",
+			                       chunkid, src_node->id, index);
+			    // Master has no transaction to discard partially built nodes, so preserve
+			    // its historical best-effort behavior. KV callers abort and roll back.
+			    return !fsOpContext.hasReadWriteTransaction();
+		    }
+		    return true;
+	    });
+	if (copyStatus != SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		return copyStatus;
 	}
 
 	gFSOperations->nodeOperations()->getStats(fsOpContext, dst_node, &nsr);
 	gFSOperations->nodeOperations()->addSubStats(fsOpContext, dst_parent, &nsr, &psr);
 	gFSOperations->quotaUpdate(fsOpContext, dst_node,
 	                           {{QuotaResource::kSize, nsr.size - psr.size}});
+	return SAUNAFS_STATUS_OK;
 }
 
 void SnapshotTask::cloneDirectoryData(const FilesystemOperationContext &fsOpContext,
@@ -194,8 +214,9 @@ void SnapshotTask::cloneDirectoryData(const FilesystemOperationContext &fsOpCont
 		data.emplace_back(childId, std::move(name));
 	}
 	if (!data.empty()) {
-		auto task = new SnapshotTask(std::move(data), orig_inode_, dst_node->id, 0, can_overwrite_,
-		                             ignore_missing_src_, emit_changelog_, enqueue_work_);
+		auto *task = gFSOperations->createSnapshotTask(std::move(data), orig_inode_, dst_node->id,
+		                                               0, can_overwrite_, ignore_missing_src_,
+		                                               emit_changelog_, enqueue_work_);
 		local_tasks_.push_back(*task);
 	}
 }
@@ -231,6 +252,16 @@ void SnapshotTask::emitChangelog(const FilesystemOperationContext &fsOpContext, 
 int SnapshotTask::cloneNode(uint32_t ts) {
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
+
+	try {
+		return cloneNodeStep(fsOpContext, ts);
+	} catch (const kv::TransactionError &e) {
+		safs::log_warn("snapshot: backend error: {}", e.what());
+		return SAUNAFS_ERROR_IO;
+	}
+}
+
+int SnapshotTask::cloneNodeStep(const FilesystemOperationContext &fsOpContext, uint32_t ts) {
 	FSNode *src_node =
 	    gFSOperations->nodeOperations()->idToNode(fsOpContext, current_subtask_->first);
 	auto *dst_parent =
@@ -240,12 +271,22 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	    src_node->type == FSNodeType::kReserved) {
 		return SAUNAFS_ERROR_ENOENT;
 	}
-	if (!dst_parent || dst_parent->type != FSNodeType::kDirectory) {
-		return SAUNAFS_ERROR_EINVAL;
+	if (!dst_parent || dst_parent->type != FSNodeType::kDirectory) { return SAUNAFS_ERROR_EINVAL; }
+	if (src_node->type == FSNodeType::kFile) {
+		const int fenceStatus = gFSOperations->nodeOperations()->canMutateFileChunks(
+		    fsOpContext, static_cast<FSNodeFile *>(src_node), 0,
+		    std::numeric_limits<uint32_t>::max());
+		if (fenceStatus != SAUNAFS_STATUS_OK) { return fenceStatus; }
 	}
 
 	FSNode *dst_node =
 	    gFSOperations->nodeOperations()->lookup(fsOpContext, dst_parent, current_subtask_->second);
+	if (dst_node != nullptr && dst_node->type == FSNodeType::kFile) {
+		const int fenceStatus = gFSOperations->nodeOperations()->canMutateFileChunks(
+		    fsOpContext, static_cast<FSNodeFile *>(dst_node), 0,
+		    std::numeric_limits<uint32_t>::max());
+		if (fenceStatus != SAUNAFS_STATUS_OK) { return fenceStatus; }
+	}
 
 	int status = cloneNodeTest(fsOpContext, src_node, dst_node, dst_parent);
 	if (status != SAUNAFS_STATUS_OK) {
@@ -253,10 +294,11 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	}
 
 	if (dst_node) {
-		dst_node = cloneToExistingNode(fsOpContext, ts, src_node, dst_parent, dst_node);
+		dst_node = cloneToExistingNode(fsOpContext, ts, src_node, dst_parent, dst_node, status);
 	} else {
-		dst_node = cloneToNewNode(fsOpContext, ts, src_node, dst_parent);
+		dst_node = cloneToNewNode(fsOpContext, ts, src_node, dst_parent, status);
 	}
+	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	assert(dst_node);
 	fsnodes_update_checksum(dst_node);
@@ -275,7 +317,7 @@ int SnapshotTask::cloneNode(uint32_t ts) {
 	}
 
 	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			safs::log_err(
 			    "{}: transaction failed to commit: source inode {}, destination parent inode {}, name {}",
 			    __func__, current_subtask_->first, dst_parent_inode_, current_subtask_->second);
