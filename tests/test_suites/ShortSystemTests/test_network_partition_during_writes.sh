@@ -22,7 +22,7 @@ FILE_SIZE=${FILE_SIZE_MB}M file-generate ${FILE_NAME}
 ( dd if=${FILE_NAME} of=${FILE_NAME_CPY} bs=1M count=${FILE_SIZE_MB} status=none ) &
 
 # Allow write to start
-sleep 0.2
+sleep $(timeout_rescale_seconds 1)
 
 # Simulate network partition by stopping master
 echo "Stopping master to simulate network partition."
@@ -30,7 +30,7 @@ saunafs_master_daemon stop
 
 # Sleep for a while to ensure the write tries to complete
 # After a few second wake up the master
-sleep 10
+sleep $(timeout_rescale_seconds 10)
 
 saunafs_master_daemon restart
 echo "Done simulating network partition."
@@ -55,7 +55,7 @@ rm ${FILE_NAME_CPY}
 ( dd if=${FILE_NAME} of=${FILE_NAME_CPY} bs=1M count=${FILE_SIZE_MB} status=none ) &
 
 # Allow write to start
-sleep 0.2
+sleep $(timeout_rescale_seconds 1)
 
 # Simulate chunkserver failures
 for i in {0..3}; do
@@ -65,7 +65,7 @@ done
 
 # Sleep for a while to ensure the write tries to complete
 # After a few second wake up the CSs
-sleep 10
+sleep $(timeout_rescale_seconds 10)
 
 # Restart chunkservers
 for i in {0..3}; do
@@ -94,7 +94,7 @@ rm ${FILE_NAME_CPY}
 ( dd if=${FILE_NAME} of=${FILE_NAME_CPY} bs=1M count=${FILE_SIZE_MB} status=none ) &
 
 # Allow write to start
-sleep 0.2
+sleep $(timeout_rescale_seconds 1)
 
 # Simulate master and chunkserver failures
 echo "Stopping master to simulate network partition."
@@ -106,7 +106,7 @@ done
 
 # Sleep for a while to ensure the write tries to complete
 # After a few second wake up the CSs
-sleep 10
+sleep $(timeout_rescale_seconds 10)
 
 # Restart chunkservers and master
 for i in {0..3}; do
