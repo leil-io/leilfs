@@ -72,6 +72,11 @@ public:
 	                       uint8_t goal) = 0;
 	virtual int changeFile(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
 	                       uint8_t prevGoal, uint8_t newGoal) = 0;
+	/// Whether successful add/delete/change calls are only staged for the transaction.
+	/// Generic callers use this to avoid compensating changes that never reached the
+	/// in-memory registry.
+	virtual bool defersFileReferenceMutations(
+	    const FilesystemOperationContext &fsOpContext) const = 0;
 
 	// --- Version (persisted version) ---
 	virtual int increaseVersion(const FilesystemOperationContext &fsOpContext,

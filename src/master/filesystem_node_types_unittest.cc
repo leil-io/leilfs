@@ -91,6 +91,9 @@ protected:
 	std::array<uint8_t, kMaxSize> serializeBuffer;
 };
 
+static_assert(sizeof(FSNodeFile) == 104,
+              "KV-only chunk-table bookkeeping must not grow in-memory file nodes");
+
 TEST_F(FilesystemNodeTypesTest, SerializeFSNodeDirectory) {
 	constexpr int finalNode = 12;
 

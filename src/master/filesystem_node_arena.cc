@@ -28,15 +28,19 @@
 // Moves clear the source explicitly. A moved-from std::unordered_map is only "valid but
 // unspecified", so without the clear() the moved-from arena's destructor could still see
 // entries and destroy nodes that are now owned by the destination arena.
-FSNodeArena::FSNodeArena(FSNodeArena &&other) noexcept : nodes_(std::move(other.nodes_)) {
+FSNodeArena::FSNodeArena(FSNodeArena &&other) noexcept
+    : nodes_(std::move(other.nodes_)), chunkTableMetadata_(std::move(other.chunkTableMetadata_)) {
 	other.nodes_.clear();
+	other.chunkTableMetadata_.clear();
 }
 
 FSNodeArena &FSNodeArena::operator=(FSNodeArena &&other) noexcept {
 	if (this != &other) {
 		destroyAll();
 		nodes_ = std::move(other.nodes_);
+		chunkTableMetadata_ = std::move(other.chunkTableMetadata_);
 		other.nodes_.clear();
+		other.chunkTableMetadata_.clear();
 	}
 	return *this;
 }
@@ -48,6 +52,7 @@ void FSNodeArena::destroyAll() {
 		if (node != nullptr) { FSNode::destroy(node); }
 	}
 	nodes_.clear();
+	chunkTableMetadata_.clear();
 }
 
 std::optional<FSNode *> FSNodeArena::lookup(inode_t inode) const {
@@ -74,4 +79,27 @@ FSNode *FSNodeArena::adopt(inode_t inode, FSNode *node) {
 	return entryIt->second;
 }
 
-void FSNodeArena::releaseAndTombstone(inode_t inode) { nodes_[inode] = nullptr; }
+OutOfLineChunkTableMeta *FSNodeArena::chunkTableMeta(inode_t inode) {
+	auto entryIt = chunkTableMetadata_.find(inode);
+	return entryIt == chunkTableMetadata_.end() ? nullptr : &entryIt->second;
+}
+
+const OutOfLineChunkTableMeta *FSNodeArena::chunkTableMeta(inode_t inode) const {
+	auto entryIt = chunkTableMetadata_.find(inode);
+	return entryIt == chunkTableMetadata_.end() ? nullptr : &entryIt->second;
+}
+
+OutOfLineChunkTableMeta &FSNodeArena::ensureChunkTableMeta(inode_t inode) {
+	return chunkTableMetadata_[inode];
+}
+
+void FSNodeArena::setChunkTableMeta(inode_t inode, OutOfLineChunkTableMeta metadata) {
+	chunkTableMetadata_[inode] = metadata;
+}
+
+void FSNodeArena::releaseAndTombstone(inode_t inode) {
+	releaseNodeOwnershipAndTombstone(inode);
+	chunkTableMetadata_.erase(inode);
+}
+
+void FSNodeArena::releaseNodeOwnershipAndTombstone(inode_t inode) { nodes_[inode] = nullptr; }

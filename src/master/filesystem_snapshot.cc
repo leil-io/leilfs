@@ -70,9 +70,10 @@ uint8_t fs_snapshot(const FsContext &context, inode_t inode_src, inode_t parent_
 
 	assert(context.isPersonalityMaster());
 
-	auto task = new SnapshotTask({{src_node->id, name_dst}}, src_node->id,
-	                                   static_cast<FSNodeDirectory *>(dst_parent_node)->id,
-	                                   0, can_overwrite, ignore_missing_src, true, true);
+	auto *task =
+	    gFSOperations->createSnapshotTask({{src_node->id, name_dst}}, src_node->id,
+	                                      static_cast<FSNodeDirectory *>(dst_parent_node)->id, 0,
+	                                      can_overwrite, ignore_missing_src, true, true);
 	std::string src_path;
 	FSNodeDirectory *parent =
 	    gFSOperations->nodeOperations()->getFirstParent(fsOpContext, src_node);

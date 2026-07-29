@@ -94,6 +94,9 @@ std::vector<ServerWithUsage> matocsserv_getservers_sorted();
 /*! \brief Check if chunkserver is killed. */
 bool matocsserv_is_killed(matocsserventry* eptr);
 
+/*! \brief Mark a chunkserver connection for disconnection by the event loop. */
+void matocsserv_request_disconnect(matocsserventry *eptr);
+
 uint32_t matocsserv_get_version(matocsserventry* eptr);
 void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *usablescount,
                                 uint16_t *totalscount);

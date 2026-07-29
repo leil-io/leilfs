@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,35 @@ struct HandleInodeEntry;
 struct NamedInodeEntry;
 
 using ChunkCountArray = std::array<uint32_t, CHUNK_MATRIX_SIZE>;
+
+enum class FileChunkCutState : std::uint8_t {
+	kComplete,
+	kDeferred,
+};
+
+/// Result of logically cutting a file's chunk table.
+///
+/// A deferred result means the visible table was cut atomically, while durable reference
+/// cleanup continues in bounded backend work. Generation is backend-defined and zero when no
+/// durable operation was needed.
+struct FileChunkCutResult {
+	FileChunkCutState state = FileChunkCutState::kComplete;
+	uint64_t generation = 0;
+
+	bool deferred() const { return state == FileChunkCutState::kDeferred; }
+};
+
+/// Request metadata needed when a backend completes a file-goal change asynchronously.
+///
+/// Synchronous backends leave publication to SetGoalTask. A durable backend records these
+/// fields so any worker can publish ctime, metadata version, and changelog without owning the
+/// original task.
+struct FileGoalChangeRequest {
+	uint32_t timestamp = 0;
+	uint32_t uid = 0;
+	uint8_t mode = 0;
+	bool emitChangelog = false;
+};
 
 /// Maximum length for a file or directory name in bytes
 inline constexpr size_t kMaxFileNameLength = 255;
@@ -135,6 +165,14 @@ public:
 	                           uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
 	                           uint8_t copysgid, AclInheritance inheritAcl,
 	                           inode_t requestedINode = 0) = 0;
+
+	/// Creates and links a node using an inode already reserved by the active backend.
+	virtual FSNode *createNodeWithPreallocatedId(const FilesystemOperationContext &fsOpContext,
+	                                             uint32_t timeStamp, FSNodeDirectory *parent,
+	                                             const HString &name, FSNodeType type,
+	                                             uint16_t mode, uint16_t umask, uint32_t uid,
+	                                             uint32_t gid, uint8_t copysgid,
+	                                             AclInheritance inheritAcl, inode_t inode) = 0;
 
 	/// Syncs the current state of the node to persistent storage on backends that need it.
 	///
@@ -368,11 +406,149 @@ public:
 	                       uint64_t length, bool eraseFurtherChunks) = 0;
 	virtual uint8_t appendChunks(const FilesystemOperationContext &fsOpContext, uint32_t timeStamp,
 	                             FSNodeFile *destNodeFile, FSNodeFile *srcNodeFile) = 0;
-	virtual void changeFileGoal(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
-	                            uint8_t goal) = 0;
+	/// Returns whether a file goal change may start. KV backends use this to reject a
+	/// file fenced by another bulk operation; in-memory returns OK.
+	virtual uint8_t canChangeFileGoal(const FilesystemOperationContext &fsOpContext,
+	                                  const FSNodeFile *nodeFile) = 0;
+	/// Returns whether the half-open chunk-index range [beginIndex, endIndex) may be
+	/// mutated. A backend with a durable bulk operation may allow only a safe prefix.
+	virtual uint8_t canMutateFileChunks(const FilesystemOperationContext &fsOpContext,
+	                                    const FSNodeFile *nodeFile, uint32_t beginIndex,
+	                                    uint32_t endIndex) = 0;
+	/// Changes the goal of every chunk the file's table references and of the node.
+	/// Every file goal change funnels through here, so the guards cannot be bypassed
+	/// by recursive paths: returns SAUNAFS_ERROR_LOCKED while another bulk operation
+	/// fences the file, and the validateFileChunkRows status when part of the table is unreadable.
+	/// Neither read-side failure modifies the file. A chunk-reference move failure
+	/// propagates its status; the in-memory backend reverses the applied prefix, but
+	/// a failed reversal can leave residue and is logged at critical severity.
+	virtual uint8_t changeFileGoal(const FilesystemOperationContext &fsOpContext,
+	                               FSNodeFile *nodeFile, uint8_t goal,
+	                               const FileGoalChangeRequest &request) = 0;
 #ifndef METARESTORE
-	virtual void checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) = 0;
+	virtual void checkFile(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                       ChunkCountArray &chunkCount) = 0;
 #endif
+
+	// Chunk-table access seam
+	//
+	// All reads and writes of a file's chunk table go through these methods so a backend
+	// may store the table outside the node itself. The in-memory backend operates on
+	// FSNodeFile::chunks; a KV backend keeps the node value free of chunk ids and resolves
+	// slots from its own storage. A "live" chunk is a slot holding a non-zero chunk id.
+
+	/// Returns the chunk id at @p index, or 0 when the slot is a hole or beyond the table.
+	virtual uint64_t getFileChunkId(const FilesystemOperationContext &fsOpContext,
+	                                const FSNodeFile *nodeFile, uint32_t index) = 0;
+
+	/// Stores @p chunkId at @p index. The slot must already be covered by the table
+	/// (see growFileChunkTable). Implementations maintain any live-chunk bookkeeping.
+	virtual void setFileChunkId(const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	                            uint32_t index, uint64_t chunkId) = 0;
+
+	/// Returns the chunk-table size (the analogue of FSNodeFile::chunks.size(): one past
+	/// the highest slot the table currently covers, holes included). Serialization trims
+	/// trailing holes, so backends that round-trip the node through storage on every
+	/// operation report the trimmed size (== getFileChunkCount); callers must not rely
+	/// on grow padding staying observable.
+	virtual uint32_t getFileChunkTableSize(const FilesystemOperationContext &fsOpContext,
+	                                       const FSNodeFile *nodeFile) = 0;
+
+	/// Grows the chunk table to cover at least @p newSize slots (new slots are holes).
+	/// Never shrinks; shrinking goes through truncateFileChunks. Backends whose holes
+	/// are implicit may treat this as a no-op (see getFileChunkTableSize).
+	virtual void growFileChunkTable(const FilesystemOperationContext &fsOpContext,
+	                                FSNodeFile *nodeFile, uint32_t newSize) = 0;
+
+	/// Sets the chunk table to exactly @p newSize slots. Unlike growFileChunkTable it
+	/// also shrinks, dropping trailing hole padding a rounded growth left behind; the
+	/// caller guarantees every slot at or past @p newSize is a hole (appendChunks
+	/// computes @p newSize from the trimmed chunk counts). Backends whose table
+	/// storage keeps no trailing holes may treat this as a no-op.
+	virtual void resizeFileChunkTable(const FilesystemOperationContext &fsOpContext,
+	                                  FSNodeFile *nodeFile, uint32_t newSize) = 0;
+
+	/// Returns SAUNAFS_STATUS_OK when the stored chunk-table rows covering indices
+	/// [@p fromIndex, @p endIndex) are readable, SAUNAFS_ERROR_IO otherwise.
+	/// Mutating operations call this before touching chunk counters, node state or
+	/// destination tables: reads may degrade an unreadable row to holes, but a
+	/// mutation doing so would acknowledge work it silently dropped. Backends that
+	/// store the table as keyed rows also verify key shape; a whole-visible-table
+	/// check fails when any stored key under the file's prefix cannot be attributed
+	/// to a bucket. The in-memory table is always readable (returns OK).
+	virtual uint8_t validateFileChunkRows(const FilesystemOperationContext &fsOpContext,
+	                                      const FSNodeFile *nodeFile, uint32_t fromIndex,
+	                                      uint32_t endIndex) = 0;
+
+	/// Returns SAUNAFS_STATUS_OK when the table may grow to cover @p newSize slots now.
+	/// A backend that is still releasing chunks discarded by an earlier truncate returns
+	/// SAUNAFS_ERROR_LOCKED for growth past the truncation point until that finishes
+	/// (the mount retries LOCKED writes); other callers surface the status as-is.
+	virtual uint8_t canGrowFileChunkTable(const FilesystemOperationContext &fsOpContext,
+	                                      const FSNodeFile *nodeFile, uint32_t newSize) = 0;
+
+	/// Returns SAUNAFS_STATUS_OK when the file may be truncated to @p newLength bytes
+	/// now. A backend that cannot release the discarded tail without silently dropping
+	/// chunk references returns SAUNAFS_ERROR_IO; callers fail the truncate before
+	/// mutating anything (length, boundary chunk, table rows).
+	virtual uint8_t canTruncateFileChunks(const FilesystemOperationContext &fsOpContext,
+	                                      const FSNodeFile *nodeFile, uint64_t newLength) = 0;
+
+	/// Returns one past the highest live slot (the analogue of FSNodeFile::chunkCount()).
+	virtual uint32_t getFileChunkCount(const FilesystemOperationContext &fsOpContext,
+	                                   const FSNodeFile *nodeFile) = 0;
+
+	/// Returns the number of live chunks in the table.
+	virtual uint32_t getLiveFileChunkCount(const FilesystemOperationContext &fsOpContext,
+	                                       FSNodeFile *nodeFile) = 0;
+
+	/// Returns true when the chunk covering the file's last byte is live.
+	virtual bool isLastFileChunkNonEmpty(const FilesystemOperationContext &fsOpContext,
+	                                     FSNodeFile *nodeFile) = 0;
+
+	/// Invokes @p callback(index, chunkId) for every live chunk with index >= @p fromIndex,
+	/// in increasing index order. The callback returns false to stop the iteration.
+	virtual void forEachFileChunk(const FilesystemOperationContext &fsOpContext,
+	                              const FSNodeFile *nodeFile, uint32_t fromIndex,
+	                              const std::function<bool(uint32_t, uint64_t)> &callback) = 0;
+
+	/// Shrinks the chunk table to @p newSize slots, invoking @p callback(index, chunkId)
+	/// for every live chunk being discarded (so the caller can release it).
+	/// A backend may defer a bulk discard: the table size retreats immediately, but part
+	/// of the discarded chunks is released asynchronously and the callback is NOT invoked
+	/// for those. Callers must not rely on the callback covering every discarded chunk.
+	virtual FileChunkCutResult truncateFileChunks(
+	    const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile, uint32_t newSize,
+	    const std::function<void(uint32_t, uint64_t)> &callback) = 0;
+
+	/// Discards the whole chunk table of a node that is being removed, invoking
+	/// @p callback(index, chunkId) for live chunks it releases synchronously. Unlike
+	/// truncateFileChunks(0), the backend knows the node itself is going away and may
+	/// defer the entire release without leaving truncation state on the node.
+	virtual FileChunkCutResult removeAllFileChunks(
+	    const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+	    const std::function<void(uint32_t, uint64_t)> &callback) = 0;
+
+	/// Copies chunk ids for slots [@p fromIndex, @p fromIndex + @p count) into @p chunkIdsOut,
+	/// clamped to the chunk-table size (holes are returned as 0).
+	virtual void getFileChunkIds(const FilesystemOperationContext &fsOpContext,
+	                             const FSNodeFile *nodeFile, uint32_t fromIndex, uint32_t count,
+	                             std::vector<uint64_t> &chunkIdsOut) = 0;
+
+	/// Returns true when both files' chunk tables are known identical. A conservative
+	/// false (e.g. for a fenced table, or for tables differing only in trailing hole
+	/// padding) is allowed: callers use equality only to skip work.
+	virtual bool fileChunksEqual(const FilesystemOperationContext &fsOpContext,
+	                             const FSNodeFile *nodeFileA, const FSNodeFile *nodeFileB) = 0;
+
+	/// Replaces @p destNodeFile's chunk table with a copy of @p srcNodeFile's, invoking
+	/// @p callback(index, chunkId) for every live chunk copied (so the caller can add a
+	/// reference to it). Returning false from the callback stops iteration, allowing
+	/// callers to abort after a failed chunk-reference update.
+	virtual void copyFileChunks(const FilesystemOperationContext &fsOpContext,
+	                            FSNodeFile *destNodeFile, const FSNodeFile *srcNodeFile,
+	                            const std::function<bool(uint32_t, uint64_t)> &callback) = 0;
+
 	virtual int64_t getSize(const FilesystemOperationContext &fsOpContext, FSNode *node) = 0;
 
 	/// Returns the number of parents of the given node, possibly reusing the transaction

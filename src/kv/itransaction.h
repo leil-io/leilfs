@@ -198,6 +198,14 @@ public:
 	///   failure.
 	virtual bool commit() = 0;
 
+	/// True when the last commit() attempt ended without a knowable outcome: the
+	/// backend cannot tell whether the mutations became durable (e.g. the commit
+	/// response was lost in flight). A false return from commit() paired with true
+	/// here means "maybe committed", so a caller mirroring durable state in memory
+	/// must re-verify against the store instead of assuming the commit was
+	/// discarded. Backends whose commits fail atomically keep the default.
+	virtual bool commitOutcomeUnknown() const { return false; }
+
 	/// Submits the commit asynchronously and returns a pollable future.
 	/// The caller drives completion via ICommitFuture::isReady()/getResult().
 	/// @note The transaction must stay alive until the future's getResult() returns.

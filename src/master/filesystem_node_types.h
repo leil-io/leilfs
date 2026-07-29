@@ -212,7 +212,7 @@ constexpr FSNode *kUnknownNode = nullptr;
 /*! \brief Node used for storing file object.
  *
  * Node size = 64B + 40B + 8 * chunks_count + 4 * session_count
- * Avg size (assuming 1 chunk and session id) = 104 + 8 + 4 ~ 120B
+ * Avg size (assuming 1 chunk and session id) = 104 + 8 + 4 ~ 116B
  */
 class FSNodeFile : public FSNode {
 public:
@@ -569,7 +569,7 @@ public:
 	 * For case-insensitive directories, this populates lowerCaseEntries so that
 	 * lookups can be performed in a case-insensitive manner. If multiple entries
 	 * exist whose names differ only by case (e.g., "foo" and "Foo"), only one of
-	 * them will be present in lowerCaseEntries after this operation—the first one
+	 * them will be present in lowerCaseEntries after this operation; the first one
 	 * encountered during iteration. This means only one will be found by a
 	 * case-insensitive lookup, and others will be hidden.
 	 */

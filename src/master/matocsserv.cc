@@ -1666,6 +1666,10 @@ bool matocsserv_is_killed(matocsserventry* eptr) {
 	return eptr != nullptr && eptr->mode == ChunkserverConnectionMode::KILL;
 }
 
+void matocsserv_request_disconnect(matocsserventry *eptr) {
+	if (eptr != nullptr) { eptr->mode = ChunkserverConnectionMode::KILL; }
+}
+
 uint32_t matocsserv_get_version(matocsserventry *eptr) {
 	return eptr->version;
 }

@@ -27,6 +27,8 @@
 
 #include "common/type_defs.h"
 
+class FilesystemOperationContext;
+
 /// Get stats from client and reset them in the server.
 /// @param stats Array of 5 elements to store stats in the following order:
 /// 0 - packets received
@@ -56,6 +58,11 @@ uint64_t matoclserv_sequence_published_changelog_version(uint64_t stagedVersion)
 /// C-string sinks; `size` counts the trailing NUL so broadcasts match the inline framing.
 void matoclserv_emit_changelog_sinks(uint64_t version, char *entry, std::size_t size);
 
+/// Publishes and drains changelog entries buffered by a transaction whose commit is known
+/// durable. The context is marked committed before publication so an undrained buffer trips its
+/// destructor invariant.
+void matoclserv_publish_committed_changelog(const FilesystemOperationContext &context);
+
 /// Initializes the network configuration and register the eventloop callbacks.
 /// @return 0 on success, negative value on error
 int matoclserv_network_init();
@@ -68,7 +75,8 @@ void matoclserv_broadcast_metadata_saved(uint8_t status);
 /// @param status Status of the metadata checksum recalculation process
 void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status);
 
-/// Check whether there are any async filesystem operations that still need to finished (e.g delayed chunk operations)
+/// Check whether there are any async filesystem operations that still need to finished (e.g delayed
+/// chunk operations)
 bool matoclserv_client_async_operations_finished();
 
 /// Group-commit runtime counters, for diagnosing how well batching amortizes
@@ -91,3 +99,11 @@ void matoclserv_set_batch_stats_enabled(bool enabled);
 
 /// Returns the current group-commit batch-stats counters (process-wide, since process start).
 MatoclBatchStats matoclserv_get_batch_stats();
+
+/// Requests one quiescent group-commit window for background metadata maintenance.
+/// Already staged client work is committed first; newly submitted bodies remain held
+/// and unexecuted until matoclserv_complete_commit_pipeline_maintenance is called.
+void matoclserv_request_commit_pipeline_maintenance();
+
+/// Ends a previously requested maintenance window and lets held client operations resume.
+void matoclserv_complete_commit_pipeline_maintenance();

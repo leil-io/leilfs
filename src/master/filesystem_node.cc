@@ -27,8 +27,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include "common/attributes.h"
 #include "common/massert.h"
@@ -57,7 +59,8 @@ uint32_t FilesystemNodeOperationsBase::lastChunkBlocks(FSNodeFile *node) {
 	return blockCount;
 }
 
-bool FilesystemNodeOperationsBase::isLastChunkNonEmpty(FSNodeFile *node) {
+bool FilesystemNodeOperationsBase::isLastFileChunkNonEmpty(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *node) {
 	std::size_t chunks = node->chunks.size();
 	if (chunks == 0) {
 		// no non-zero chunks, return now
@@ -75,15 +78,17 @@ bool FilesystemNodeOperationsBase::isLastChunkNonEmpty(FSNodeFile *node) {
 	return false;
 }
 
-uint32_t FilesystemNodeOperationsBase::fileChunksCount(FSNodeFile *node) {
+uint32_t FilesystemNodeOperationsBase::getLiveFileChunkCount(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *node) {
 	return std::accumulate(node->chunks.begin(), node->chunks.end(), (uint32_t)0,
 	                       [](uint32_t sum, uint64_t v) { return sum + (v != 0); });
 }
 
-uint64_t FilesystemNodeOperationsBase::fileSize(FSNodeFile *node, uint32_t nonZeroChunks) {
+uint64_t FilesystemNodeOperationsBase::fileSize(const FilesystemOperationContext &fsOpContext,
+                                                FSNodeFile *node, uint32_t nonZeroChunks) {
 	uint64_t size = static_cast<uint64_t>(nonZeroChunks) * (SFSCHUNKSIZE + SFSHDRSIZE);
 
-	if (isLastChunkNonEmpty(node)) {
+	if (isLastFileChunkNonEmpty(fsOpContext, node)) {
 		size -= SFSCHUNKSIZE;
 		size += lastChunkBlocks(node) * SFSBLOCKSIZE;
 	}
@@ -106,9 +111,11 @@ uint32_t FilesystemNodeOperationsBase::ecChunkRealSize(uint32_t blocks, uint32_t
 }
 #endif
 
-uint64_t FilesystemNodeOperationsBase::fileRealSize(FSNodeFile *node, uint32_t nonZeroChunks,
+uint64_t FilesystemNodeOperationsBase::fileRealSize(const FilesystemOperationContext &fsOpContext,
+                                                    FSNodeFile *node, uint32_t nonZeroChunks,
                                                     uint64_t logicalFileSize) {
 #ifdef METARESTORE
+	(void)fsOpContext;
 	(void)node;
 	(void)nonZeroChunks;
 	(void)logicalFileSize;
@@ -127,7 +134,7 @@ uint64_t FilesystemNodeOperationsBase::fileRealSize(FSNodeFile *node, uint32_t n
 			uint32_t fullChunkRealSize =
 			    ecChunkRealSize(SFSBLOCKSINCHUNK, dataPartCount, parityPartCount);
 			uint64_t size = (uint64_t)nonZeroChunks * fullChunkRealSize;
-			if (isLastChunkNonEmpty(node)) {
+			if (isLastFileChunkNonEmpty(fsOpContext, node)) {
 				size -= fullChunkRealSize;
 				size += ecChunkRealSize(lastChunkBlocks(node), dataPartCount, parityPartCount);
 			}
@@ -354,11 +361,11 @@ void FilesystemNodeOperationsBase::getStats(
 		statsOut->dirs = 0;
 		statsOut->files = 1;
 		statsOut->links = 0;
-		statsOut->chunks = fileChunksCount(static_cast<FSNodeFile *>(node));
+		statsOut->chunks = getLiveFileChunkCount(fsOpContext, static_cast<FSNodeFile *>(node));
 		statsOut->length = static_cast<FSNodeFile *>(node)->length;
-		statsOut->size = fileSize(static_cast<FSNodeFile *>(node), statsOut->chunks);
-		statsOut->realsize =
-		    fileRealSize(static_cast<FSNodeFile *>(node), statsOut->chunks, statsOut->size);
+		statsOut->size = fileSize(fsOpContext, static_cast<FSNodeFile *>(node), statsOut->chunks);
+		statsOut->realsize = fileRealSize(fsOpContext, static_cast<FSNodeFile *>(node),
+		                                  statsOut->chunks, statsOut->size);
 		break;
 	case FSNodeType::kSymlink:
 		statsOut->inodes = 1;
@@ -387,6 +394,105 @@ int64_t FilesystemNodeOperationsBase::getSize(const FilesystemOperationContext &
 	StatsRecord stats;
 	getStats(fsOpContext, node, &stats);
 	return stats.size;
+}
+
+// Chunk-table access seam (in-memory implementations over FSNodeFile::chunks)
+
+uint64_t FilesystemNodeOperationsBase::getFileChunkId(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
+    uint32_t index) {
+	return index < nodeFile->chunks.size() ? nodeFile->chunks[index] : 0;
+}
+
+void FilesystemNodeOperationsBase::setFileChunkId(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+    uint32_t index, uint64_t chunkId) {
+	assert(index < nodeFile->chunks.size());
+	nodeFile->chunks[index] = chunkId;
+}
+
+uint32_t FilesystemNodeOperationsBase::getFileChunkTableSize(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile) {
+	return nodeFile->chunks.size();
+}
+
+void FilesystemNodeOperationsBase::growFileChunkTable(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+    uint32_t newSize) {
+	if (newSize > nodeFile->chunks.size()) { nodeFile->chunks.resize(newSize, 0); }
+}
+
+void FilesystemNodeOperationsBase::resizeFileChunkTable(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+    uint32_t newSize) {
+	nodeFile->chunks.resize(newSize, 0);
+}
+
+uint8_t FilesystemNodeOperationsBase::validateFileChunkRows(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] const FSNodeFile *nodeFile, [[maybe_unused]] uint32_t fromIndex,
+    [[maybe_unused]] uint32_t endIndex) {
+	return SAUNAFS_STATUS_OK;
+}
+
+uint32_t FilesystemNodeOperationsBase::getFileChunkCount(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile) {
+	return nodeFile->chunkCount();
+}
+
+uint8_t FilesystemNodeOperationsBase::canGrowFileChunkTable(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] const FSNodeFile *nodeFile, [[maybe_unused]] uint32_t newSize) {
+	return SAUNAFS_STATUS_OK;
+}
+
+void FilesystemNodeOperationsBase::forEachFileChunk(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
+    uint32_t fromIndex, const std::function<bool(uint32_t, uint64_t)> &callback) {
+	for (uint32_t i = fromIndex; i < nodeFile->chunks.size(); ++i) {
+		if (nodeFile->chunks[i] == 0) { continue; }
+		if (!callback(i, nodeFile->chunks[i])) { return; }
+	}
+}
+
+FileChunkCutResult FilesystemNodeOperationsBase::truncateFileChunks(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+    uint32_t newSize, const std::function<void(uint32_t, uint64_t)> &callback) {
+	for (uint32_t i = newSize; i < nodeFile->chunks.size(); ++i) {
+		if (nodeFile->chunks[i] != 0) { callback(i, nodeFile->chunks[i]); }
+	}
+	if (newSize < nodeFile->chunks.size()) { nodeFile->chunks.resize(newSize); }
+	return {};
+}
+
+FileChunkCutResult FilesystemNodeOperationsBase::removeAllFileChunks(
+    const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile,
+    const std::function<void(uint32_t, uint64_t)> &callback) {
+	return truncateFileChunks(fsOpContext, nodeFile, 0, callback);
+}
+
+void FilesystemNodeOperationsBase::getFileChunkIds(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile,
+    uint32_t fromIndex, uint32_t count, std::vector<uint64_t> &chunkIdsOut) {
+	chunkIdsOut.clear();
+	for (uint32_t i = fromIndex; i < nodeFile->chunks.size() && count > 0; ++i, --count) {
+		chunkIdsOut.push_back(nodeFile->chunks[i]);
+	}
+}
+
+bool FilesystemNodeOperationsBase::fileChunksEqual(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFileA,
+    const FSNodeFile *nodeFileB) {
+	return nodeFileA->chunks == nodeFileB->chunks;
+}
+
+void FilesystemNodeOperationsBase::copyFileChunks(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNodeFile *destNodeFile,
+    const FSNodeFile *srcNodeFile, const std::function<bool(uint32_t, uint64_t)> &callback) {
+	destNodeFile->chunks = srcNodeFile->chunks;
+	for (uint32_t i = 0; i < srcNodeFile->chunks.size(); ++i) {
+		if (srcNodeFile->chunks[i] != 0 && !callback(i, srcNodeFile->chunks[i])) { return; }
+	}
 }
 
 uint64_t FilesystemNodeOperationsBase::getNumberOfParents(
@@ -718,7 +824,8 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 void FilesystemNodeOperationsBase::persistDirChildChangeTime(
     const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
     uint32_t /*timeStamp*/) {
-	// Default no-op: the in-memory master keeps dir mtime/ctime in the node; the KV backend overrides.
+	// Default no-op: the in-memory master keeps dir mtime/ctime in the node; the KV backend
+	// overrides.
 }
 
 uint32_t FilesystemNodeOperationsBase::getDirChildChangeTime(
@@ -803,13 +910,30 @@ FSNode *FilesystemNodeOperationsBase::createNode(
     const FilesystemOperationContext &fsOpContext, uint32_t timeStamp, FSNodeDirectory *parent,
     const HString &name, FSNodeType type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
     uint8_t copysgid, AclInheritance inheritAcl, inode_t requestedINode) {
+	const inode_t inode = gInodeIdGenerator->getNextId(timeStamp, requestedINode);
+	return createNodeWithIdInternal(fsOpContext, timeStamp, parent, name, type, mode, umask, uid,
+	                                gid, copysgid, inheritAcl, inode);
+}
+
+FSNode *FilesystemNodeOperationsBase::createNodeWithPreallocatedId(
+    const FilesystemOperationContext &fsOpContext, uint32_t timeStamp, FSNodeDirectory *parent,
+    const HString &name, FSNodeType type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
+    uint8_t copysgid, AclInheritance inheritAcl, inode_t inode) {
+	assert(inode != 0);
+	return createNodeWithIdInternal(fsOpContext, timeStamp, parent, name, type, mode, umask, uid,
+	                                gid, copysgid, inheritAcl, inode);
+}
+
+FSNode *FilesystemNodeOperationsBase::createNodeWithIdInternal(
+    const FilesystemOperationContext &fsOpContext, uint32_t timeStamp, FSNodeDirectory *parent,
+    const HString &name, FSNodeType type, uint16_t mode, uint16_t umask, uint32_t uid, uint32_t gid,
+    uint8_t copysgid, AclInheritance inheritAcl, inode_t inode) {
 	assert(type != FSNodeType::kTrash);
 
 	FSNode *node = FSNode::create(type);
 	incrementNodeCounters(fsOpContext, type);  // Increment global metadata counters
 
-	// Ask for a node id
-	node->id = gInodeIdGenerator->getNextId(timeStamp, requestedINode);
+	node->id = inode;
 
 	// Init timestamps
 	node->ctime = node->mtime = node->atime = timeStamp;
@@ -1350,18 +1474,17 @@ void FilesystemNodeOperationsBase::getDir(const FilesystemOperationContext &fsOp
 	}
 }
 
-void FilesystemNodeOperationsBase::checkFile(FSNodeFile *nodeFile, ChunkCountArray &chunkCount) {
-	uint8_t count;
-
+void FilesystemNodeOperationsBase::checkFile(const FilesystemOperationContext &fsOpContext,
+                                             FSNodeFile *nodeFile, ChunkCountArray &chunkCount) {
 	chunkCount.fill(0);
 
-	for (const auto &chunkid : nodeFile->chunks) {
-		if (chunkid > 0) {
-			gChunkOperations->getFullCopies(chunkid, &count);
-			count = std::min<unsigned>(count, CHUNK_MATRIX_SIZE - 1);
-			chunkCount[count]++;
-		}
-	}
+	forEachFileChunk(fsOpContext, nodeFile, 0, [&chunkCount](uint32_t /*index*/, uint64_t chunkid) {
+		uint8_t count = 0;
+		gChunkOperations->getFullCopies(chunkid, &count);
+		count = std::min<unsigned>(count, CHUNK_MATRIX_SIZE - 1);
+		chunkCount[count]++;
+		return true;
+	});
 }
 #endif
 
@@ -1404,36 +1527,77 @@ std::string FilesystemNodeOperationsBase::getBaseStoredChildName(
 uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationContext &fsOpContext,
                                                    uint32_t timeStamp, FSNodeFile *destNodeFile,
                                                    FSNodeFile *srcNodeFile) {
-	if (srcNodeFile->chunks.empty()) { return SAUNAFS_STATUS_OK; }
+	if (getFileChunkTableSize(fsOpContext, srcNodeFile) == 0) { return SAUNAFS_STATUS_OK; }
 
-	uint32_t srcChunks = srcNodeFile->chunkCount();
-	uint32_t dstChunks = destNodeFile->chunkCount();
+	uint32_t srcChunks = getFileChunkCount(fsOpContext, srcNodeFile);
+	uint32_t dstChunks = getFileChunkCount(fsOpContext, destNodeFile);
 
 	if (((uint64_t)srcChunks + (uint64_t)dstChunks) > ((uint64_t)kMaxChunkIndex + 1)) {
 		return SAUNAFS_ERROR_INDEXTOOBIG;
 	}
 
+	uint32_t resultChunks = srcChunks + dstChunks;
+	uint8_t growStatus = canGrowFileChunkTable(fsOpContext, destNodeFile, resultChunks);
+	if (growStatus != SAUNAFS_STATUS_OK) { return growStatus; }
+
+	// Rows the append reads (source) or updates (destination tail) must decode
+	// before anything mutates: a skipped source row would append holes while its
+	// chunks miss their added references, and a refused destination write would
+	// strand references without a mapping.
+	uint8_t validateStatus = validateFileChunkRows(fsOpContext, srcNodeFile, 0, srcChunks);
+	if (validateStatus != SAUNAFS_STATUS_OK) { return validateStatus; }
+	validateStatus = validateFileChunkRows(fsOpContext, destNodeFile, dstChunks, resultChunks);
+	if (validateStatus != SAUNAFS_STATUS_OK) { return validateStatus; }
+
 	StatsRecord previousStats;
 	StatsRecord newStats;
 	getStats(fsOpContext, destNodeFile, &previousStats);
 
-	uint32_t resultChunks = srcChunks + dstChunks;
-	destNodeFile->chunks.resize(resultChunks, 0);
+	// Exact resize, not grow: the destination may carry rounded trailing-hole padding
+	// from chunk-table growth, and append sizes its result from the trimmed counts.
+	resizeFileChunkTable(fsOpContext, destNodeFile, resultChunks);
 
-	// Copy source chunks to the end of destination chunks
-	std::copy(srcNodeFile->chunks.begin(), srcNodeFile->chunks.begin() + srcChunks,
-	          destNodeFile->chunks.begin() + dstChunks);
-
-	// Add each source chunk to the destination file's goal and handle errors
-	for (uint32_t i = 0; i < srcChunks; ++i) {
-		auto chunkId = srcNodeFile->chunks[i];
-		if (chunkId > 0) {
-			if (gChunkOperations->addFile(fsOpContext, chunkId, destNodeFile->goal) !=
-			    SAUNAFS_STATUS_OK) {
-				safs::log_err("structure error - chunk {:016X} not found (inode: {} ; index: {})",
-				              chunkId, srcNodeFile->id, i);
+	// Copy source chunks to the end of destination chunks and add each one to the
+	// destination file's goal. A failed reference add must not commit: the copied
+	// slot would reference a chunk that never gained the reference, and deleting
+	// the destination would then drop a reference the source still owns. With a
+	// transaction the whole append aborts (the caller discards it); the in-memory
+	// backend keeps the legacy log-and-continue (its slot writes cannot unwind).
+	uint8_t appendStatus = SAUNAFS_STATUS_OK;
+	std::vector<uint64_t> immediatelyAddedChunkIds;
+	forEachFileChunk(fsOpContext, srcNodeFile, 0, [&](uint32_t index, uint64_t chunkId) {
+		if (index >= srcChunks) { return false; }
+		setFileChunkId(fsOpContext, destNodeFile, dstChunks + index, chunkId);
+		const int addStatus = gChunkOperations->addFile(fsOpContext, chunkId, destNodeFile->goal);
+		if (addStatus != SAUNAFS_STATUS_OK) {
+			safs::log_err("structure error - chunk {:016X} not found (inode: {} ; index: {})",
+			              chunkId, srcNodeFile->id, index);
+			if (fsOpContext.hasReadWriteTransaction()) {
+				appendStatus = static_cast<uint8_t>(addStatus);
+				return false;
+			}
+		} else if (fsOpContext.hasReadWriteTransaction() &&
+		           !gChunkOperations->defersFileReferenceMutations(fsOpContext)) {
+			// A transactional backend without deferred effects changed the registry
+			// immediately and still needs legacy compensation. KV attaches effects,
+			// so its staged additions are discarded with the transaction instead.
+			immediatelyAddedChunkIds.push_back(chunkId);
+		}
+		return true;
+	});
+	if (appendStatus != SAUNAFS_STATUS_OK) {
+		bool rollbackFailed = false;
+		for (auto chunkId = immediatelyAddedChunkIds.rbegin();
+		     chunkId != immediatelyAddedChunkIds.rend(); ++chunkId) {
+			const int rollbackStatus = chunk_delete_file(*chunkId, destNodeFile->goal);
+			if (rollbackStatus != SAUNAFS_STATUS_OK) {
+				safs::log_critical(
+				    "appendChunks: cannot reverse chunk {:#016x} after failure, status {}",
+				    *chunkId, rollbackStatus);
+				rollbackFailed = true;
 			}
 		}
+		return rollbackFailed ? static_cast<uint8_t>(SAUNAFS_ERROR_IO) : appendStatus;
 	}
 
 	uint64_t previousLength = destNodeFile->length;
@@ -1468,30 +1632,81 @@ uint8_t FilesystemNodeOperationsBase::appendChunks(const FilesystemOperationCont
 	return SAUNAFS_STATUS_OK;
 }
 
-void FilesystemNodeOperationsBase::changeFileGoal(const FilesystemOperationContext &fsOpContext,
-                                                  FSNodeFile *nodeFile, uint8_t goal) {
+uint8_t FilesystemNodeOperationsBase::changeFileGoal(
+    const FilesystemOperationContext &fsOpContext, FSNodeFile *nodeFile, uint8_t goal,
+    [[maybe_unused]] const FileGoalChangeRequest &request) {
+	// A backend may fence a range while a bulk operation owns its chunk references.
+	// Guard here so no recursive or direct caller can bypass that ownership.
+	const uint8_t canChangeStatus = canChangeFileGoal(fsOpContext, nodeFile);
+	if (canChangeStatus != SAUNAFS_STATUS_OK) { return canChangeStatus; }
+	// A row this change cannot iterate would leave its chunks registered under the
+	// old goal while the node advertises the new one; fail before touching anything.
+	uint8_t status = validateFileChunkRows(fsOpContext, nodeFile, 0,
+	                                       getFileChunkTableSize(fsOpContext, nodeFile));
+	if (status != SAUNAFS_STATUS_OK) { return status; }
+
 	uint8_t oldGoal = nodeFile->goal;
 	StatsRecord previousStats;
 	StatsRecord newStats;
+
+	uint8_t changeStatus = SAUNAFS_STATUS_OK;
+	uint32_t failedIndex = 0;
+	forEachFileChunk(fsOpContext, nodeFile, 0, [&](uint32_t index, uint64_t chunkId) {
+		changeStatus = gChunkOperations->changeFile(fsOpContext, chunkId, oldGoal, goal);
+		failedIndex = index;
+		return changeStatus == SAUNAFS_STATUS_OK;
+	});
+	if (changeStatus != SAUNAFS_STATUS_OK) {
+		// KV callers discard their staged transaction effects. Master and Shadow
+		// mutate immediately, so undo every successful prefix mutation here.
+		if (!fsOpContext.hasReadWriteTransaction()) {
+			forEachFileChunk(fsOpContext, nodeFile, 0, [&](uint32_t index, uint64_t chunkId) {
+				if (index >= failedIndex) { return false; }
+				const int rollbackStatus = chunk_change_file(chunkId, goal, oldGoal);
+				if (rollbackStatus != SAUNAFS_STATUS_OK) {
+					safs::log_critical(
+					    "changeFileGoal: cannot reverse chunk {:#016x} after failure, status {}",
+					    chunkId, rollbackStatus);
+				}
+				return true;
+			});
+		}
+		return changeStatus;
+	}
 
 	getStats(fsOpContext, nodeFile, &previousStats);
 	nodeFile->goal = goal;
 
 	newStats = previousStats;
-	newStats.realsize = fileRealSize(nodeFile, newStats.chunks, newStats.size);
+	newStats.realsize = fileRealSize(fsOpContext, nodeFile, newStats.chunks, newStats.size);
 
 	for (const auto &[parentId, _] : nodeFile->parents) {
 		auto *parentNode = idToNodeVerify<FSNodeDirectory>(fsOpContext, parentId);
 		addSubStats(fsOpContext, parentNode, &newStats, &previousStats);
 	}
 
-	for (const auto &chunkId : nodeFile->chunks) {
-		if (chunkId > 0) { gChunkOperations->changeFile(fsOpContext, chunkId, oldGoal, goal); }
-	}
-
 	fsnodes_update_checksum(nodeFile);
 
 	if (!fsOpContext.hasReadWriteTransaction()) { gMetadata->nodeChangedSignal.emit(nodeFile); }
+	return SAUNAFS_STATUS_OK;
+}
+
+uint8_t FilesystemNodeOperationsBase::canChangeFileGoal(
+    const FilesystemOperationContext &fsOpContext, const FSNodeFile *nodeFile) {
+	return canMutateFileChunks(fsOpContext, nodeFile, 0, std::numeric_limits<uint32_t>::max());
+}
+
+uint8_t FilesystemNodeOperationsBase::canMutateFileChunks(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] const FSNodeFile *nodeFile, [[maybe_unused]] uint32_t beginIndex,
+    [[maybe_unused]] uint32_t endIndex) {
+	return SAUNAFS_STATUS_OK;
+}
+
+uint8_t FilesystemNodeOperationsBase::canTruncateFileChunks(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] const FSNodeFile *nodeFile, [[maybe_unused]] uint64_t newLength) {
+	return SAUNAFS_STATUS_OK;
 }
 
 void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &fsOpContext,
@@ -1514,19 +1729,13 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 			chunks = 0;
 		}
 
-		for (uint32_t i = chunks; i < nodeFile->chunks.size(); i++) {
-			uint64_t chunkId = nodeFile->chunks[i];
-			if (chunkId > 0) {
-				if (gChunkOperations->deleteFile(fsOpContext, chunkId, nodeFile->goal) !=
-				    SAUNAFS_STATUS_OK) {
-					safs::log_err(
-					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
-					    chunkId, nodeFile->id, i);
-				}
+		truncateFileChunks(fsOpContext, nodeFile, chunks, [&](uint32_t index, uint64_t chunkId) {
+			if (gChunkOperations->deleteFile(fsOpContext, chunkId, nodeFile->goal) !=
+			    SAUNAFS_STATUS_OK) {
+				safs::log_err("structure error - chunk {:#016x} not found (inode: {} ; index: {})",
+				              chunkId, nodeFile->id, index);
 			}
-		}
-
-		if (chunks < nodeFile->chunks.size()) { nodeFile->chunks.resize(chunks); }
+		});
 	}
 
 	getStats(fsOpContext, nodeFile, &newStats);
@@ -1630,20 +1839,25 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 
 	if (node->type == FSNodeType::kDirectory) { gMetadata->dirNodes--; }
 
+	// The quota refund below needs the file's size, and discarding the chunk table
+	// destroys the bookkeeping getSize reads from, so capture the size first.
+	int64_t fileSizeToRefund = 0;
+
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
 		gMetadata->fileNodes--;
-		for (uint32_t i = 0; i < static_cast<FSNodeFile *>(node)->chunks.size(); ++i) {
-			uint64_t chunkid = static_cast<FSNodeFile *>(node)->chunks[i];
-			if (chunkid > 0) {
-				if (gChunkOperations->deleteFile(fsOpContext, chunkid, node->goal) !=
-				    SAUNAFS_STATUS_OK) {
-					safs::log_err(
-					    "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
-					    chunkid, node->id, i);
-				}
-			}
-		}
+		fileSizeToRefund = getSize(fsOpContext, node);
+		// Releases every live chunk and discards the chunk table's own storage (a no-op
+		// for the in-memory backend, whose table dies with the node object below).
+		removeAllFileChunks(
+		    fsOpContext, static_cast<FSNodeFile *>(node), [&](uint32_t index, uint64_t chunkid) {
+			    if (gChunkOperations->deleteFile(fsOpContext, chunkid, node->goal) !=
+			        SAUNAFS_STATUS_OK) {
+				    safs::log_err(
+				        "structure error - chunk {:#016x} not found (inode: {} ; index: {})",
+				        chunkid, node->id, index);
+			    }
+		    });
 	}
 
 	if (node->type == FSNodeType::kSymlink) { gMetadata->linkNodes--; }
@@ -1652,9 +1866,8 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 	xattr_removeinode(node->id);
 	if (node->type == FSNodeType::kFile || node->type == FSNodeType::kTrash ||
 	    node->type == FSNodeType::kReserved) {
-		nodeQuotaUpdate(
-		    fsOpContext, node,
-		    {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -getSize(fsOpContext, node)}});
+		nodeQuotaUpdate(fsOpContext, node,
+		                {{QuotaResource::kInodes, -1}, {QuotaResource::kSize, -fileSizeToRefund}});
 	} else {
 		nodeQuotaUpdate(fsOpContext, node, {{QuotaResource::kInodes, -1}});
 	}
@@ -1881,7 +2094,14 @@ void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationCon
 	    node->type == FSNodeType::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
 			safs::log_warn("file inode {}: unknown goal !!! - fixing", node->id);
-			changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), DEFAULT_GOAL);
+			if (changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), DEFAULT_GOAL, {}) !=
+			    SAUNAFS_STATUS_OK) {
+				safs::log_err(
+				    "file inode {}: unknown goal not fixed (chunk table busy or unreadable)",
+				    node->id);
+				// Still invalid: it cannot index the statistics table; skip the file.
+				return;
+			}
 		}
 
 		fileGoalsTab[node->goal]++;
@@ -1958,20 +2178,27 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 			(*permissionDeniedINodesOut)++;
 		} else {
 			if ((smode & SMODE_TMASK) == SMODE_SET && node->goal != goal) {
+				bool goalApplied = true;
 				if (node->type != FSNodeType::kDirectory) {
-					changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), goal);
-					(*modifiedINodesOut)++;
+					// LOCKED (bulk operation active) or unreadable chunk-table
+					// rows leave the file untouched; count it as unchanged.
+					goalApplied = changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), goal,
+					                             {}) == SAUNAFS_STATUS_OK;
 				} else {
 					node->goal = goal;
 					if (!fsOpContext.hasReadWriteTransaction()) {
 						gMetadata->nodeChangedSignal.emit(node);
 					}
-					(*modifiedINodesOut)++;
 				}
 
-				updateCTime(fsOpContext, node, timeStamp);
-				fsnodes_update_checksum(node);
-				nodeChanged = true;
+				if (goalApplied) {
+					(*modifiedINodesOut)++;
+					updateCTime(fsOpContext, node, timeStamp);
+					fsnodes_update_checksum(node);
+					nodeChanged = true;
+				} else {
+					(*unchangedINodesOut)++;
+				}
 			} else {
 				(*unchangedINodesOut)++;
 			}

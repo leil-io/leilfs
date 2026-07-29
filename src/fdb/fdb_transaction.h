@@ -136,6 +136,12 @@ public:
 	/// @throws std::logic_error when the wrapped transaction has no backend handle.
 	bool commit() override;
 
+	/// True when the wrapped transaction's last commit outcome is unknown (maybe
+	/// committed). @see kv::IReadWriteTransaction::commitOutcomeUnknown.
+	bool commitOutcomeUnknown() const override {
+		return tr_.state() == TransactionState::kIndeterminate;
+	}
+
 	/// Submits the commit asynchronously and returns a pollable future.
 	/// @throws std::logic_error when the wrapped transaction has no backend handle.
 	std::unique_ptr<kv::ICommitFuture> commitAsync() override;

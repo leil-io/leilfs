@@ -848,7 +848,7 @@ void chunk_emergency_increase_version(Chunk *c) {
 
 	// Commit the transaction under KV backends
 	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			safs::log_critical(
 			    "{}: Failed to commit transaction for increasing version of chunk {}.", __func__,
 			    c->chunkid);
@@ -1693,26 +1693,18 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 }
 
 #ifndef METARESTORE
-int chunk_repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t correct_only) {
+ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
 	uint32_t best_version;
 	Chunk *c;
 
-	*nversion=0;
-	if (ochunkid==0) {
-		return 0; // not changed
-	}
+	if (ochunkid == 0) { return {}; }
 
 	c = chunk_find(ochunkid);
-	if (c==NULL) { // no such chunk - erase (nchunkid already is 0 - so just return with "changed" status)
-		if (correct_only == 1) { // don't erase if correct only flag is set
-			return 0;
-		} else {
-			return 1;
-		}
+	if (c == NULL) {
+		if (correct_only == 1) { return {}; }
+		return {.action = ChunkRepairAction::kEraseReference};
 	}
-	if (c->isLocked()) { // can't repair locked chunks - but if it's locked, then likely it doesn't need to be repaired
-		return 0;
-	}
+	if (c->isLocked()) { return {}; }
 
 	// calculators will be sorted by decreasing keys, so highest version will be first.
 	std::map<uint32_t, ChunkCopiesCalculator, std::greater<uint32_t>> calculators;
@@ -1737,30 +1729,44 @@ int chunk_repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t co
 		}
 	}
 	// current version is readable
-	if (best_version == c->version) {
-		return 0;
-	}
+	if (best_version == c->version) { return {}; }
 	// didn't find sensible chunk
 	if (best_version == 0) {
-		if (correct_only == 1) { // don't erase if correct only flag is set
-			return 0;
-		} else {                  // otherwise erase it
-			chunk_delete_file_int(c, goal);
-			return 1;
-		}
+		if (correct_only == 1) { return {}; }
+		return {.action = ChunkRepairAction::kEraseReference};
 	}
-	// found previous version which is readable
-	c->version = best_version;
+
+	return {.action = ChunkRepairAction::kSetVersion, .version = best_version};
+}
+
+bool chunk_apply_repair_plan(uint8_t goal, uint64_t ochunkid, const ChunkRepairPlan &plan) {
+	if (plan.action == ChunkRepairAction::kUnchanged) { return true; }
+
+	Chunk *c = chunk_find(ochunkid);
+	if (plan.action == ChunkRepairAction::kEraseReference) {
+		return c == nullptr || chunk_delete_file_int(c, goal) == SAUNAFS_STATUS_OK;
+	}
+	if (c == nullptr || plan.version == 0) { return false; }
+
+	c->version = plan.version;
 	for (auto &part : c->parts) {
-		if (part.state == ChunkPart::INVALID && part.version==best_version) {
+		if (part.state == ChunkPart::INVALID && part.version == plan.version) {
 			part.state = ChunkPart::VALID;
 		}
 	}
-	*nversion = best_version;
 	c->needVersionIncrease = 1;
 	c->updateStats();
 	chunk_update_checksum(c);
 	emit_chunk_changed(c);
+	return true;
+}
+
+int chunk_repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t correct_only) {
+	*nversion = 0;
+	const ChunkRepairPlan plan = chunk_plan_repair(ochunkid, correct_only);
+	if (plan.action == ChunkRepairAction::kUnchanged) { return 0; }
+	if (!chunk_apply_repair_plan(goal, ochunkid, plan)) { return 0; }
+	*nversion = plan.version;
 	return 1;
 }
 #endif

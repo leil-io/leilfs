@@ -33,7 +33,10 @@ public:
 	  kNotChanged,
 	  kNotPermitted,
 	  kStatsSize,
-	  kNoAction
+	  kNoAction,
+	  kTemporarilyLocked,
+	  kChunkTableError,
+	  kBackendWaiting
 	};
 
 	using StatsArray = std::array<inode_t, kStatsSize>;
@@ -79,7 +82,8 @@ private:
 	uint8_t goal_;
 	uint8_t smode_;
 	std::shared_ptr<StatsArray> stats_; /*< array for setgoal operation statistics
-			                       [kChanged] - number of inodes with changed goal
-			                    [kNotChanged] - number of inodes with not changed goal
-			                  [kNotPermitted] - number of inodes with permission denied */
+	                               [kChanged] - number of inodes with changed goal
+	                            [kNotChanged] - number of inodes with not changed goal
+	                          [kNotPermitted] - number of inodes with permission denied */
+	bool waitingForChange_ = false;
 };

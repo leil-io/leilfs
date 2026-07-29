@@ -65,7 +65,7 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 	}
 
 	if (result == kChanged && fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.getReadWriteTransaction()->commit()) {
+		if (!fsOpContext.commitTransaction()) {
 			safs::log_err("{}: transaction failed to commit: inode {}, trashtime {}, smode {}",
 			              __func__, inode, trashtime_, static_cast<uint32_t>(smode_));
 			return SAUNAFS_ERROR_IO;
