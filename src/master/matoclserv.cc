@@ -40,7 +40,6 @@
 #include <time.h>
 #include <unistd.h>
 #include <algorithm>
-#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -88,6 +87,7 @@
 #include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
+#include "master/commit_wakeup_channel.h"
 #include "master/datacachemgr.h"
 #include "master/exports.h"
 #include "master/filesystem.h"
@@ -279,47 +279,38 @@ static uint32_t gDebugInjectReadConflicts = 0;
 // retry loop. Counted per process. Reloadable. Leave 0 in production.
 static uint32_t gDebugInjectRecoveryErrors = 0;
 
-// eventfd the commit future's ready callback writes to (from the backend network
-// thread, or inline from the event-loop thread) so poll() wakes immediately to
-// finalize the commit instead of waiting out the poll timeout. -1 until
-// matoclserv_network_init creates it. Linux-only; without it the group commit path
-// still works, just serviced at the poll-timeout cadence.
-static std::atomic<int> gCommitWakeupFd{-1};
+namespace {
+
+CommitWakeupChannel &commitWakeupChannel() {
+	// Deliberately leaked (never deleted): mirrors fdb::Runtime's globalCore
+	// (fdb_runtime.cc:203-213). The FDB network thread is never joined before
+	// process exit, so it may still call wakeup() after ordinary static
+	// destructors would have run; an ordinary static object here would
+	// register a destructor that could then lock/use an already-destroyed
+	// mutex, which is undefined behavior.
+	static CommitWakeupChannel *channel = new CommitWakeupChannel();
+	return *channel;
+}
+
+}  // namespace
 
 /// Wakes the event loop when a batch commit becomes durable. Invoked from the
 /// backend network thread, so it stays minimal and touches only the eventfd. The
 /// write is best-effort: if the 64-bit counter is somehow saturated the existing
 /// pending value still keeps poll() readable, and a dropped wakeup only defers
 /// finalization to the next poll.
-static void matoclserv_commit_wakeup(void * /*arg*/) {
-	int fd = gCommitWakeupFd.load(std::memory_order_acquire);
-	if (fd < 0) { return; }
-	uint64_t one = 1;
-	ssize_t written = write(fd, &one, sizeof(one));
-	(void)written;
-}
+static void matoclserv_commit_wakeup(void * /*arg*/) { commitWakeupChannel().wakeup(); }
 
 /// pollregister desc: have poll() watch the wakeup eventfd for readability.
 static void matoclserv_commit_wakeup_desc(std::vector<pollfd> &pdesc) {
-	int fd = gCommitWakeupFd.load(std::memory_order_acquire);
-	if (fd < 0) { return; }
-	pdesc.push_back(pollfd{fd, POLLIN, 0});
+	commitWakeupChannel().pollDesc(pdesc);
 }
 
 /// pollregister serve: drain the eventfd so it stops signalling. The matching
 /// commit finalization runs in matoclserv_poll_batch (an eachloop hook
 /// that fires every iteration regardless), so this only clears the wakeup.
 static void matoclserv_commit_wakeup_serve(const std::vector<pollfd> &pdesc) {
-	int fd = gCommitWakeupFd.load(std::memory_order_acquire);
-	if (fd < 0) { return; }
-	for (const auto &pfd : pdesc) {
-		if (pfd.fd == fd && (pfd.revents & POLLIN) != 0) {
-			uint64_t drain = 0;
-			ssize_t got = read(fd, &drain, sizeof(drain));
-			(void)got;
-			break;
-		}
-	}
+	commitWakeupChannel().pollServe(pdesc);
 }
 
 /// Last changelog version handed to KV changelog sinks.
@@ -7266,12 +7257,10 @@ void matoclserv_term() {
 	gOpenBatch.hasContext = false;
 	gOpenBatch.ctx = FilesystemOperationContext();
 
-	// Invalidate before closing so a commit-wakeup callback racing in from the backend
-	// network thread reads -1 (and skips the write) instead of touching a closed fd.
-	int wakeupFd = gCommitWakeupFd.exchange(-1, std::memory_order_acq_rel);
-	if (wakeupFd >= 0) {
-		close(wakeupFd);
-	}
+	// CommitWakeupChannel::retire() holds its lock through both the invalidation and
+	// the close(), so a commit-wakeup callback racing in from the backend network
+	// thread either finishes its write first or observes the fd already cleared.
+	commitWakeupChannel().retire();
 
 	for (const auto &eptr : matoclservList) {
 		eptr->delayedChunkOperations.clear();
@@ -7780,7 +7769,7 @@ int matoclserv_network_init() {
 	// completing on the backend network thread wakes the loop immediately. Non-fatal if
 	// it fails (EFD missing): the deferred path then runs at poll-timeout cadence.
 	int wakeupFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-	gCommitWakeupFd.store(wakeupFd, std::memory_order_release);
+	commitWakeupChannel().arm(wakeupFd);
 	if (wakeupFd < 0) {
 		safs::log_warn("main master server module: eventfd for async commit wakeup failed: {}",
 		               strerr(errno));
