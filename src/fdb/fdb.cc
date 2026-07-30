@@ -248,6 +248,11 @@ fdb_error_t DB::setNetworkOption(FDBNetworkOption option, std::string_view value
 // DB
 
 fdb_error_t DB::setOption(FDBDatabaseOption option, std::string_view value) {
+	// No hermetic test for this guard: fdb_create_database is lazy and succeeds even
+	// for a bogus cluster-file path, deferring failure to first use, so there is no
+	// way to build a DB with db_ == nullptr through the public API (same limitation
+	// as TransactionFromNullDBIsInvalidNotUB in fdb_unittest.cc).
+	if (!db_) { throw std::logic_error("fdb::DB::setOption: database has no backend handle"); }
 	return fdb_database_set_option(db_.get(), option, toU8(value),
 	                               static_cast<int>(value.length()));
 }

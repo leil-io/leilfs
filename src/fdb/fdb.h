@@ -132,6 +132,7 @@ public:
 	}
 
 	/// Wrapper to set an option for the database.
+	/// @throws std::logic_error if the database has no backend handle.
 	fdb_error_t setOption(FDBDatabaseOption option, std::string_view value = {});
 
 private:
