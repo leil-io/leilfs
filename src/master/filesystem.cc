@@ -362,7 +362,7 @@ static void fs_read_goals_from_stream(std::istream&& stream) {
 
 static void fs_read_goal_config_file() {
 	const std::string defaultGoalConfigFile = ETC_PATH "/leil-goals.cfg";
-	const std::string legacyGoalConfigFile = ETC_PATH "/sfsgoals.cfg";
+	const std::string legacyGoalConfigFile = ETC_PATH_LEGACY "/sfsgoals.cfg";
 	std::string goalConfigFile =
 			cfg_getstring("CUSTOM_GOALS_FILENAME", "");
 	if (goalConfigFile.empty()) {

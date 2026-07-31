@@ -565,7 +565,7 @@ int main(int argc, char *argv[]) try {
 
 	if (!gCustomCfg) {
 		const std::string defaultConfigPath = DEFAULT_SFSMOUNT_CONFIG_PATH;
-		const std::string legacyConfigPath = ETC_PATH "/" STR(CFGNAME_LEGACY) ".cfg";
+		const std::string legacyConfigPath = ETC_PATH_LEGACY "/" STR(CFGNAME_LEGACY) ".cfg";
 		std::string configPath = defaultConfigPath;
 
 		if (access(defaultConfigPath.c_str(), F_OK) != 0 &&

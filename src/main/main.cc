@@ -828,7 +828,7 @@ int main(int argc,char **argv) {
 	uint32_t locktimeout;
 	struct rlimit rls;
 	std::string defaultCfgFile = ETC_PATH "/" STR(APPNAME) ".cfg";
-	std::string legacyDefaultCfgFile = ETC_PATH "/" STR(CFGNAME_LEGACY) ".cfg";
+	std::string legacyDefaultCfgFile = ETC_PATH_LEGACY "/" STR(CFGNAME_LEGACY) ".cfg";
 	std::string cfgfile = defaultCfgFile;
 	bool usingLegacyDefaultCfgFile = false;
 	std::string pidfile;
@@ -972,6 +972,14 @@ int main(int argc,char **argv) {
 
 	wrkdir = cfg_getstr("DATA_PATH",DATA_PATH);
 
+	if (strcmp(wrkdir, DATA_PATH) == 0 && access(DATA_PATH, F_OK) != 0 &&
+	    access(DATA_PATH_LEGACY, F_OK) == 0) {
+		safs::log_warn(
+		    "using legacy data directory {} because default directory {} was not found",
+		    DATA_PATH_LEGACY, DATA_PATH);
+		free(wrkdir);
+		wrkdir = strdup(DATA_PATH_LEGACY);
+	}
 
 	if (chdir(wrkdir)<0) {
 		safs::log_error_code(errno, "can't set working directory to {}", wrkdir);

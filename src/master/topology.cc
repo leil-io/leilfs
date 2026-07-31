@@ -438,7 +438,7 @@ void topology_reload(void) {
 		free(TopologyFileName);
 	}
 	const std::string defaultTopologyFileName = ETC_PATH "/leil-topology.cfg";
-	const std::string legacyTopologyFileName = ETC_PATH "/sfstopology.cfg";
+	const std::string legacyTopologyFileName = ETC_PATH_LEGACY "/sfstopology.cfg";
 	std::string topologyFileName = cfg_getstring("TOPOLOGY_FILENAME", defaultTopologyFileName);
 	if (topologyFileName == defaultTopologyFileName && access(defaultTopologyFileName.c_str(), F_OK) != 0 &&
 	    access(legacyTopologyFileName.c_str(), F_OK) == 0) {

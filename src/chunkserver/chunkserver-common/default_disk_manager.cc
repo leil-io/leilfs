@@ -147,7 +147,7 @@ void DefaultDiskManager::reloadDisksFromCfg() {
 	TRACETHIS();
 
 	const std::string defaultHddFilename = ETC_PATH "/leil-hdd.cfg";
-	const std::string legacyHddFilename = ETC_PATH "/sfshdd.cfg";
+	const std::string legacyHddFilename = ETC_PATH_LEGACY "/sfshdd.cfg";
 	std::string hddFilename = cfg_get("HDD_CONF_FILENAME", defaultHddFilename);
 	if (hddFilename == defaultHddFilename && !std::ifstream(defaultHddFilename).good() &&
 	    std::ifstream(legacyHddFilename).good()) {

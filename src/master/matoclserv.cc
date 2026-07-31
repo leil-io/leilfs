@@ -7670,7 +7670,7 @@ void matoclserv_start_cond_check() {
 int matoclserv_iolimits_reload() {
 	std::string configFile = cfg_getstring("GLOBALIOLIMITS_FILENAME", "");
 	const std::string defaultConfigFile = ETC_PATH "/leil-globaliolimits.cfg";
-	const std::string legacyConfigFile = ETC_PATH "/sfsglobaliolimits.cfg";
+	const std::string legacyConfigFile = ETC_PATH_LEGACY "/sfsglobaliolimits.cfg";
 	if (configFile == defaultConfigFile && access(defaultConfigFile.c_str(), F_OK) != 0 &&
 	    access(legacyConfigFile.c_str(), F_OK) == 0) {
 		safs::log_warn(

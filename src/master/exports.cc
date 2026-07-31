@@ -942,7 +942,7 @@ static void exports_loadexports() {
 
 static void exports_load() {
 	const std::string defaultExportsFileName = ETC_PATH "/leil-exports.cfg";
-	const std::string legacyExportsFileName = ETC_PATH "/sfsexports.cfg";
+	const std::string legacyExportsFileName = ETC_PATH_LEGACY "/sfsexports.cfg";
 	ExportsFileName = cfg_getstring("EXPORTS_FILENAME", defaultExportsFileName);
 	if (ExportsFileName == defaultExportsFileName &&
 	    access(defaultExportsFileName.c_str(), F_OK) != 0 &&

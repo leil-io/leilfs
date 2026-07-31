@@ -21,7 +21,7 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	namespace po = boost::program_options;
 	po::options_description generic("options");
 	const std::string defaultConfigFile = ETC_PATH "/leil-uraft.cfg";
-	const std::string legacyConfigFile = ETC_PATH "/saunafs-uraft.cfg";
+	const std::string legacyConfigFile = ETC_PATH_LEGACY "/saunafs-uraft.cfg";
 
 	generic.add_options()
 	("help", "produce help message")
