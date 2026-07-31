@@ -1,14 +1,14 @@
 [Unit]
 Description=LeilFS CGI server daemon
-Documentation=man:saunafs-cgiserver(8)
+Documentation=man:leil-cgiserver(8)
 After=network-online.target
 
 [Service]
 Environment=BIND_HOST=0.0.0.0
 Environment=BIND_PORT=9425
-Environment=ROOT_PATH=/usr/share/sfscgi
+Environment=ROOT_PATH=/usr/share/leil-cgi
 EnvironmentFile=-/etc/sysconfig/%p
-ExecStart=/usr/sbin/saunafs-cgiserver -H ${BIND_HOST} -P ${BIND_PORT} -R ${ROOT_PATH}
+ExecStart=/usr/sbin/leil-cgiserver -H ${BIND_HOST} -P ${BIND_PORT} -R ${ROOT_PATH}
 Restart=on-abort
 User=saunafs
 
