@@ -1,14 +1,14 @@
 [Unit]
 Description=LeilFS master server daemon
-Documentation=man:sfsmaster(8) man:sfsgoals.cfg(5) man:sfsmaster.cfg(5) man:sfsglobaliolimits.cfg(5) man:saunafs(7) man:sfsmaster(8) man:sfsmetadump(8) man:sfsrestoremaster(8)
+Documentation=man:leil-master(8) man:leil-goals.cfg(5) man:leil-master.cfg(5) man:leil-globaliolimits.cfg(5) man:leil(7) man:leil-master(8) man:leil-metadump(8) man:leil-restoremaster(8)
 After=network-online.target
 
 [Service]
 Type=forking
 TimeoutSec=0
-ExecStart=/usr/sbin/sfsmaster start
-ExecStop=/usr/sbin/sfsmaster stop
-ExecReload=/usr/sbin/sfsmaster reload
+ExecStart=/usr/sbin/leil-master start
+ExecStop=/usr/sbin/leil-master stop
+ExecReload=/usr/sbin/leil-master reload
 Restart=no
 
 [Install]

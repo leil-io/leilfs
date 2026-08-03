@@ -63,9 +63,9 @@ Don't install any debuginfo packages. Replace **VERSION** and **RELEASE** with a
 After installation, follow [this quick guide on setting up local manual test](https://docs.leil.io/quick-start).
 
 > [!IMPORTANT]
-> Also copy sfsexports to /etc/saunafs:
+> Also copy leil-exports to /etc/saunafs:
 ```
-sudo cp /usr/share/doc/saunafs-master/examples/sfsexports.cfg /etc/saunafs/
+sudo cp /usr/share/doc/saunafs-master/examples/leil-exports.cfg /etc/saunafs/
 ```
 
 Navigate to the */mnt/client* after starting services and try to create and delete files to confirm the binaries are working.

@@ -1,15 +1,15 @@
 [Unit]
 Description=LeilFS uraft high availability daemon
-Documentation=man:saunafs-uraft(8) man:saunafs-uraft-helper(8) man:saunafs-uraft.cfg(5)
+Documentation=man:leil-uraft(8) man:leil-uraft-helper(8) man:leil-uraft.cfg(5)
 Wants=saunafs-ha-master.service
 After=network-online.target
 After=saunafs-ha-master.service
 
 [Service]
-PIDFile=/var/run/saunafs-uraft.pid
+PIDFile=/var/run/leil-uraft.pid
 TimeoutSec=0
-ExecStart=/usr/sbin/saunafs-uraft
-ExecStopPost=/usr/sbin/saunafs-uraft-helper demote
+ExecStart=/usr/sbin/leil-uraft
+ExecStopPost=/usr/sbin/leil-uraft-helper demote
 Restart=on-failure
 RestartSec=60
 User=saunafs

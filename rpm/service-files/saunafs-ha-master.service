@@ -1,15 +1,15 @@
 [Unit]
 Description=LeilFS high availability master server daemon
-Documentation=man:sfsmaster(8) man:sfsgoals.cfg(5) man:sfsmaster.cfg(5) man:sfsglobaliolimits.cfg(5) man:saunafs(7) man:sfsmaster(8) man:sfsmetadump(8) man:sfsrestoremaster(8)
+Documentation=man:leil-master(8) man:leil-goals.cfg(5) man:leil-master.cfg(5) man:leil-globaliolimits.cfg(5) man:leil(7) man:leil-master(8) man:leil-metadump(8) man:leil-restoremaster(8)
 After=network-online.target
 PartOf=saunafs-uraft.service
 
 [Service]
 Type=forking
 TimeoutSec=0
-ExecStart=/usr/sbin/sfsmaster -o ha-cluster-managed -o initial-personality=shadow start
-ExecStop=/usr/sbin/sfsmaster -o ha-cluster-managed -o initial-personality=shadow stop
-ExecReload=/usr/sbin/sfsmaster -o ha-cluster-managed -o initial-personality=shadow reload
+ExecStart=/usr/sbin/leil-master -o ha-cluster-managed -o initial-personality=shadow start
+ExecStop=/usr/sbin/leil-master -o ha-cluster-managed -o initial-personality=shadow stop
+ExecReload=/usr/sbin/leil-master -o ha-cluster-managed -o initial-personality=shadow reload
 Restart=no
 
 [Install]

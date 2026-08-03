@@ -1,13 +1,13 @@
 [Unit]
 Description=LeilFS chunkserver daemon
-Documentation=man:sfschunkserver(8) man:sfschunkserver.cfg(5) man:sfshdd.cfg(5)
+Documentation=man:leil-chunkserver(8) man:leil-chunkserver.cfg(5) man:leil-hdd.cfg(5)
 After=network-online.target
 
 [Service]
 Type=forking
-ExecStart=/usr/sbin/sfschunkserver start
-ExecStop=/usr/sbin/sfschunkserver stop
-ExecReload=/usr/sbin/sfschunkserver reload
+ExecStart=/usr/sbin/leil-chunkserver start
+ExecStop=/usr/sbin/leil-chunkserver stop
+ExecReload=/usr/sbin/leil-chunkserver reload
 Restart=on-abort
 
 [Install]
