@@ -43,7 +43,9 @@ if(ENABLE_JEMALLOC)
 endif()
 
 # Find extra binaries
-if(NOT WIN32)
+# (only needed when docs are actually going to be built -- see ENABLE_DOCS
+# guard around add_subdirectory(doc) in CMakeLists.txt)
+if(NOT WIN32 AND ENABLE_DOCS)
   include(FindAsciidoctor)
 endif()
 
