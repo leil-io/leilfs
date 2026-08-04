@@ -131,7 +131,9 @@ void mallocTrimThread(const std::stop_token& stop, unsigned mallocTrimePeriod_ms
 
 	while (!stop.stop_requested()) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(mallocTrimePeriod_ms));
+#if defined(SAUNAFS_HAVE_MALLOC_TRIM)
 		malloc_trim(0);
+#endif
 	}
 }
 #endif
