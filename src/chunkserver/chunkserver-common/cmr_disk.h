@@ -156,5 +156,5 @@ public:
 
 	/// Writes to device custom blockSize from blockBuffer
 	int writeChunkData(IChunk *chunk, uint8_t *blockBuffer, int32_t blockSize,
-	                   off64_t offset) override;
+	                   off_t offset) override;
 };

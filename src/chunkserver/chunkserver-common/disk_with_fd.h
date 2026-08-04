@@ -94,10 +94,10 @@ public:
 	///
 	/// Should be possible for all Disk types if the metadata is stored in CMR
 	/// drives.
-	off64_t lseekMetadata(IChunk *chunk, off64_t offset, int whence) override;
+	off_t lseekMetadata(IChunk *chunk, off_t offset, int whence) override;
 
 	/// lseeks the data file descriptor if possible
-	off64_t lseekData(IChunk *chunk, off64_t offset, int whence) override;
+	off_t lseekData(IChunk *chunk, off_t offset, int whence) override;
 
 	/// Reads the CRC into the gOpenChunks entry for this Chunk
 	int readChunkCrc(IChunk *chunk, uint32_t chunkVersion,

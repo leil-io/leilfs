@@ -702,7 +702,7 @@ int CmrDisk::writeChunkBlocks(IChunk *chunk, uint32_t version, uint16_t startBlo
 }
 
 int CmrDisk::writeChunkData(IChunk *chunk, uint8_t *blockBuffer,
-                            int32_t blockSize, off64_t offset) {
+                            int32_t blockSize, off_t offset) {
 	(void)offset;  // Not needed for conventional disks
 
 	return ::write(chunk->dataFD(), blockBuffer, blockSize);

@@ -182,11 +182,11 @@ public:
 	///
 	/// Should be possible for all Disk types if the metadata is stored in CMR
 	/// drives.
-	virtual off64_t lseekMetadata(IChunk *chunk, off64_t offset,
+	virtual off_t lseekMetadata(IChunk *chunk, off_t offset,
 	                              int whence) = 0;
 
 	/// lseeks the data file descriptor if possible
-	virtual off64_t lseekData(IChunk *chunk, off64_t offset, int whence) = 0;
+	virtual off_t lseekData(IChunk *chunk, off_t offset, int whence) = 0;
 
 	/// Reads the complete CRC into the provided buffer.
 	/// This buffer usually matches with the gOpenChunks entry for this Chunk.
@@ -250,7 +250,7 @@ public:
 	/// Writes to device custom blockSize from blockBuffer.
 	/// \returns the written bytes
 	virtual int writeChunkData(IChunk *chunk, uint8_t *blockBuffer,
-	                           int32_t blockSize, off64_t offset) = 0;
+	                           int32_t blockSize, off_t offset) = 0;
 
 	/// Getter for currentStats
 	virtual HddAtomicStatistics &getCurrentStats() = 0;

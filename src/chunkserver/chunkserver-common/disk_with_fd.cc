@@ -245,11 +245,11 @@ int FDDisk::fsyncChunk(IChunk *chunk) {
 	return SAUNAFS_STATUS_OK;
 }
 
-off64_t FDDisk::lseekMetadata(IChunk *chunk, off64_t offset, int whence) {
+off_t FDDisk::lseekMetadata(IChunk *chunk, off_t offset, int whence) {
 	return ::lseek(chunk->metaFD(), offset, whence);
 }
 
-off64_t FDDisk::lseekData(IChunk *chunk, off64_t offset, int whence) {
+off_t FDDisk::lseekData(IChunk *chunk, off_t offset, int whence) {
 	return ::lseek(chunk->dataFD(), offset, whence);
 }
 
