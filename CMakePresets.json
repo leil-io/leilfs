@@ -119,6 +119,16 @@
             "inherits": "default"
         },
         {
+            "name": "musl",
+            "displayName": "musl libc (e.g. Alpine Linux)",
+            "binaryDir": "${sourceDir}/build/leilfs/musl",
+            "cacheVariables": {
+                "ENABLE_NFS_GANESHA": "OFF",
+                "ENABLE_DOCS": "OFF"
+            },
+            "inherits": "release"
+        },
+        {
             "name": "debug-vcpkg",
             "inherits": ["debug", "vcpkg"]
         },
@@ -214,6 +224,11 @@
         {
             "name": "release",
             "configurePreset": "release",
+            "inherits": ["default"]
+        },
+        {
+            "name": "musl",
+            "configurePreset": "musl",
             "inherits": ["default"]
         },
         {
@@ -324,6 +339,19 @@
                 {
                     "type": "build",
                     "name": "test"
+                }
+            ]
+        },
+        {
+            "name": "musl",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "musl"
+                },
+                {
+                    "type": "build",
+                    "name": "musl"
                 }
             ]
         },
