@@ -110,6 +110,7 @@
 #cmakedefine SAUNAFS_HAVE_STD_TO_STRING
 #cmakedefine SAUNAFS_HAVE_STD_STOULL
 #cmakedefine SAUNAFS_HAVE_MALLOPT
+#cmakedefine SAUNAFS_HAVE_MALLOC_TRIM
 
 /* [CMake] Optional functions #2 */
 #cmakedefine SAUNAFS_HAVE_DUP2

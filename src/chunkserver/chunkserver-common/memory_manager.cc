@@ -66,6 +66,7 @@ void MemoryManager::trimThreadFunc(std::stop_token stoken) {
 }
 
 void MemoryManager::trimMemory() {
+#if defined(SAUNAFS_HAVE_MALLOC_TRIM)
 	auto start = std::chrono::high_resolution_clock::now();
 	int result = malloc_trim(0);
 	auto end = std::chrono::high_resolution_clock::now();
@@ -77,6 +78,14 @@ void MemoryManager::trimMemory() {
 	} else {
 		safs::log_info("Memory trim returned {} (0 means no memory was trimmed).", result);
 	}
+#else
+	// malloc_trim() is a glibc-specific extension (e.g. absent on musl libc /
+	// Alpine Linux). There is no portable equivalent, so trimming is simply
+	// unavailable here; the background thread still runs but has nothing to do.
+	safs::log_info(
+	    "Memory trim requested, but malloc_trim() is not available on this "
+	    "platform (non-glibc malloc); skipping.");
+#endif
 }
 
 void MemoryManager::reload() {
