@@ -28,6 +28,14 @@
 #endif
 #endif
 
+/* Workaround for musl libc (e.g. Alpine Linux), which doesn't define the
+   BSD/glibc S_BLKSIZE extension. Its value has always been 512 wherever
+   it is defined, so this is a behavior-preserving fallback, not a guess. */
+#include <sys/stat.h>
+#ifndef S_BLKSIZE
+#define S_BLKSIZE 512
+#endif
+
 #ifndef SAUNAFS_HAVE_STD_TO_STRING
 
 #include <sstream>

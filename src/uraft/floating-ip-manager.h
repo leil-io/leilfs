@@ -86,7 +86,7 @@ public:
 	/// @param checkPeriod The period (in milliseconds) to check the floating IP
 	/// status.
 	HAFloatingIPManager(const std::string &iface, const std::string &ipAddress,
-	                    const uint &checkPeriod);
+	                    const unsigned int &checkPeriod);
 
 	/// @brief Destructor for HAFloatingIPManager.
 	virtual ~HAFloatingIPManager();
@@ -143,6 +143,6 @@ protected:
 
 	std::string floatingIpInterface; ///< Network interface for the floating IP.
 	std::string floatingIpAddress;   ///< Floating IP address.
-	uint checkFloatingIpPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
+	unsigned int checkFloatingIpPeriodMS = 500; ///< Period (in milliseconds) to check the floating IP status.
 	std::function<bool()> assignFloatingIpFunction{nullptr}; ///< Function to assign the floating IP.
 };

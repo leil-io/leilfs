@@ -29,7 +29,7 @@
 
 HAFloatingIPManager::HAFloatingIPManager(const std::string &iface,
                                          const std::string &ipAddress,
-                                         const uint &checkPeriod)
+                                         const unsigned int &checkPeriod)
     : floatingIpInterface(iface),
       floatingIpAddress(ipAddress),
       checkFloatingIpPeriodMS(checkPeriod) {

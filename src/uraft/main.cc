@@ -53,7 +53,7 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	("URAFT_STATUS_PORT", po::value<int>()->default_value(9428), "node status port")
 	("URAFT_FLOATING_IP", po::value<std::string>(), "floating IP address")
 	("URAFT_FLOATING_IFACE", po::value<std::string>(), "floating IP interface")
-	("URAFT_FLOATING_IP_CHECK_PERIOD", po::value<uint>()->default_value(500), "floating IP check status period")
+	("URAFT_FLOATING_IP_CHECK_PERIOD", po::value<unsigned int>()->default_value(500), "floating IP check status period")
 	("QUORUM_LOSS_GRACE_HEARTBEATS", po::value<int>()->default_value(5), "consecutive misses before demotion");
 
 	po::options_description cmdline_options;
@@ -125,7 +125,7 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	opt.check_cmd_status_period   = vm["URAFT_CHECK_CMD_PERIOD"].as<int>();
 	opt.floating_ip               = vm["URAFT_FLOATING_IP"].as<std::string>();
 	opt.floating_iface            = vm["URAFT_FLOATING_IFACE"].as<std::string>();
-	opt.check_floating_ip_period  = vm["URAFT_FLOATING_IP_CHECK_PERIOD"].as<uint>();
+	opt.check_floating_ip_period  = vm["URAFT_FLOATING_IP_CHECK_PERIOD"].as<unsigned int>();
 	opt.quorum_loss_grace_heartbeats = vm["QUORUM_LOSS_GRACE_HEARTBEATS"].as<int>();
 	make_daemon                   = vm["start-daemon"].as<bool>();
 
