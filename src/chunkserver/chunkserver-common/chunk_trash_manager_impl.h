@@ -47,7 +47,7 @@ public:
 	static constexpr std::string kTimeStampFormat = "%Y%m%d%H%M%S";
 
 	/// Length of the timestamp string expected in file names.
-	static constexpr u_short kTimeStampLength = 14;
+	static constexpr unsigned short kTimeStampLength = 14;
 
 	/**
 	 * @brief Initializes the chunk trash manager.
