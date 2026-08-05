@@ -818,6 +818,25 @@ inline void tuneMalloc() {
 #endif
 }
 
+/// True if `dir` looks like an initialized data directory rather than an
+/// empty one freshly created by package install/upgrade (the master's
+/// metadata.sfs.empty placeholder is always present regardless, so bare
+/// directory existence can't tell the two apart). Mirrors the filenames
+/// master/metalogger actually look for at startup (metadata_backend_common.h
+/// kMetadataFilename/kMetadataLegacyFilename/kMetadataMlFilename), duplicated
+/// here as literals since this generic entry point is shared by chunkserver
+/// too and shouldn't pull in master-specific headers.
+inline bool hasKnownMetadata(const std::string &dir) {
+	static const char *const kKnownMetadataFilenames[] = {
+	    "metadata.sfs", "metadata.mfs", "metadata_ml.sfs"};
+	for (const char *name : kKnownMetadataFilenames) {
+		if (access((dir + "/" + name).c_str(), F_OK) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 int main(int argc,char **argv) {
 	char *wrkdir;
 	char *appname;
@@ -972,11 +991,18 @@ int main(int argc,char **argv) {
 
 	wrkdir = cfg_getstr("DATA_PATH",DATA_PATH);
 
-	if (strcmp(wrkdir, DATA_PATH) == 0 && access(DATA_PATH, F_OK) != 0 &&
-	    access(DATA_PATH_LEGACY, F_OK) == 0) {
-		safs::log_warn(
-		    "using legacy data directory {} because default directory {} was not found",
-		    DATA_PATH_LEGACY, DATA_PATH);
+	if (strcmp(wrkdir, DATA_PATH) == 0 && !hasKnownMetadata(DATA_PATH) &&
+	    hasKnownMetadata(DATA_PATH_LEGACY)) {
+		// Only log once a real sink is set up (see the legacy config file warning
+		// above). Lightweight run modes such as isalive never call setup_logs(),
+		// so logging here unconditionally falls back to spdlog's default stdout
+		// sink and corrupts the plain "alive"/"dead" output callers like
+		// leil-uraft-helper's isalive rely on being exact.
+		if (runmode == RunMode::kStart || runmode == RunMode::kRestart) {
+			safs::log_warn(
+			    "using legacy data directory {} because default directory {} has no metadata",
+			    DATA_PATH_LEGACY, DATA_PATH);
+		}
 		free(wrkdir);
 		wrkdir = strdup(DATA_PATH_LEGACY);
 	}

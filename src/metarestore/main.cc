@@ -306,9 +306,14 @@ int main(int argc,char **argv) {
 	if (autorestore) {
 		if (datapath.empty()) {
 			datapath = DATA_PATH;
-			if (access(DATA_PATH, F_OK) != 0 && access(DATA_PATH_LEGACY, F_OK) == 0) {
+			auto hasKnownMetadata = [](const std::string &dir) {
+				return access((dir + "/" + kMetadataFilename).c_str(), F_OK) == 0 ||
+				       access((dir + "/" + kMetadataLegacyFilename).c_str(), F_OK) == 0 ||
+				       access((dir + "/" + kMetadataMlFilename).c_str(), F_OK) == 0;
+			};
+			if (!hasKnownMetadata(DATA_PATH) && hasKnownMetadata(DATA_PATH_LEGACY)) {
 				safs_pretty_syslog(LOG_WARNING,
-				    "using legacy data directory %s because default directory %s was not found",
+				    "using legacy data directory %s because default directory %s has no metadata",
 				    DATA_PATH_LEGACY, DATA_PATH);
 				datapath = DATA_PATH_LEGACY;
 			}

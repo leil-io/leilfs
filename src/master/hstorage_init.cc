@@ -25,6 +25,7 @@
 #include "common/event_loop.h"
 #include "config/cfg.h"
 #include "master/hstring_memstorage.h"
+#include "master/metadata_backend_common.h"
 #ifdef SAUNAFS_HAVE_DB
   #include "master/hstring_bdbstorage.h"
 #endif
@@ -33,12 +34,18 @@ static int gUseBDBStorage;
 static std::string gBDBStoragePath;
 static uint64_t gBDBStorageCacheSize;
 
+static bool hasKnownMetadata(const std::string &dir) {
+	return access((dir + "/" + kMetadataFilename).c_str(), F_OK) == 0 ||
+	       access((dir + "/" + kMetadataLegacyFilename).c_str(), F_OK) == 0 ||
+	       access((dir + "/" + kMetadataMlFilename).c_str(), F_OK) == 0;
+}
+
 static std::string resolveDataPath() {
 	std::string path = cfg_getstring("DATA_PATH", DATA_PATH);
-	if (path == DATA_PATH && access(DATA_PATH, F_OK) != 0 &&
-	    access(DATA_PATH_LEGACY, F_OK) == 0) {
+	if (path == DATA_PATH && !hasKnownMetadata(DATA_PATH) &&
+	    hasKnownMetadata(DATA_PATH_LEGACY)) {
 		safs_pretty_syslog(LOG_WARNING,
-		    "using legacy data directory %s because default directory %s was not found",
+		    "using legacy data directory %s because default directory %s has no metadata",
 		    DATA_PATH_LEGACY, DATA_PATH);
 		path = DATA_PATH_LEGACY;
 	}
