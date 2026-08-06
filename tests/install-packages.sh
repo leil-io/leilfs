@@ -186,6 +186,15 @@ case "${release}" in
 esac
 
 case "${release}" in
+	Ubuntu/26.04)
+		# apt.llvm.org's repo for this release doesn't carry LLVM 19, but
+		# Ubuntu's own archive does.
+		if ! apt-get -y install clang-19 lldb-19 lld-19 clangd-19; then
+			echo "Error: Failed to install Clang 19 from the Ubuntu archive."
+			exit 1
+		fi
+
+		;;
 	LinuxMint/*|Ubuntu/*|Debian/*)
 		if ! "$script_dir/llvm.sh" 19; then
 			echo "Error: Failed to install Clang 19 using llvm.sh script."
