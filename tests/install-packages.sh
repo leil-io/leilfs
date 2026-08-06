@@ -94,7 +94,7 @@ apt_packages=(
 	# tests/ci_build/ganesha/ganesha-deps.txt, installed only by the Ganesha
 	# test path so non-Ganesha machines skip them.
 )
-noble_packages=(
+newer_ubuntu_packages=(
 	prometheus-cpp-dev
 	util-linux-extra
 )
@@ -161,10 +161,10 @@ dnf_packages=(
 # determine which OS we are running and choose the right set of packages to be installed
 release="$(lsb_release -si)/$(lsb_release -sr)"
 case "${release}" in
-	Ubuntu/24.04)
+	Ubuntu/24.04|Ubuntu/26.04)
 		echo $release
 		apt-get -y install ca-certificates-java # https://www.mail-archive.com/debian-bugs-dist@lists.debian.org/msg1911078.html
-		apt-get -y install "${common_packages[@]}" "${apt_packages[@]}" "${noble_packages[@]}"
+		apt-get -y install "${common_packages[@]}" "${apt_packages[@]}" "${newer_ubuntu_packages[@]}"
 		;;
 	LinuxMint/*|Ubuntu/*|Debian/*)
 		apt-get -y install ca-certificates-java # https://www.mail-archive.com/debian-bugs-dist@lists.debian.org/msg1911078.html
