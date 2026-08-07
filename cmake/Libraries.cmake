@@ -59,6 +59,17 @@ else()
   message(STATUS "   to point this path (cmake -DZLIB_ROOT=...)")
 endif()
 
+# Find Zstandard, used for per-block chunk compression in the disk plugins
+find_package(zstd CONFIG REQUIRED)
+if(TARGET zstd::libzstd_shared)
+  set(ZSTD_LIBRARIES zstd::libzstd_shared)
+elseif(TARGET zstd::libzstd_static)
+  set(ZSTD_LIBRARIES zstd::libzstd_static)
+else()
+  set(ZSTD_LIBRARIES zstd::libzstd)
+endif()
+message(STATUS "ZSTD LIBRARY: ${ZSTD_LIBRARIES}")
+
 # Find Systemd
 INCLUDE(FindPkgConfig)
 pkg_check_modules(SYSTEMD libsystemd)
