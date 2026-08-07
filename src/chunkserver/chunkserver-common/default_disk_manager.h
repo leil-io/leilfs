@@ -20,6 +20,9 @@
 
 #include "common/platform.h"
 
+#include <map>
+#include <string>
+
 #include "chunkserver-common/disk_manager_interface.h"
 #include "chunkserver-common/global_shared_resources.h"
 
@@ -86,6 +89,9 @@ public:
 	void resetDiskIteratorForTests() override;
 
 private:
+	/// Plugin prefix each metadata path was last configured with.
+	std::map<std::string, std::string> diskPrefixes_;
+
 	/// Next disk index for GC. Helps in the round-robin strategy.
 	uint32_t nextDiskIndexForGC_ = 0;
 

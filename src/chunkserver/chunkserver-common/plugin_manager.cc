@@ -23,7 +23,19 @@
 #include <boost/filesystem/exception.hpp>
 
 #include "chunkserver-common/disk_plugin.h"
+#include "chunkserver-common/disk_utils.h"
 #include "slogger/slogger.h"
+
+namespace {
+
+/// An hdd.cfg selector holds nothing else, so any other prefix is unreachable.
+bool isUsableDiskPrefix(const std::string &prefix) {
+	return !prefix.empty() &&
+	       prefix.find_first_not_of(disk::kDiskPrefixCharacters) ==
+	           std::string::npos;
+}
+
+}  // namespace
 
 bool PluginManager::loadPlugins(const std::string &directory) {
 	try {
@@ -65,10 +77,21 @@ bool PluginManager::loadPlugins(const std::string &directory) {
 
 				if (!checkVersion(plugin.get())) { continue; }
 
-				allPlugins_.insert(std::make_pair(plugin->name(), plugin));
-
 				boost::shared_ptr<DiskPlugin> diskPlugin =
 				    boost::dynamic_pointer_cast<DiskPlugin>(plugin);
+
+				// Rejected before any registration, so an unusable plugin is
+				// never advertised, reloaded or cleaned up as a loaded one.
+				if (diskPlugin != nullptr &&
+				    !isUsableDiskPrefix(diskPlugin->prefix())) {
+					safs_pretty_syslog(
+					    LOG_WARNING,
+					    "Ignoring plugin %s: '%s' is not a usable hdd.cfg prefix",
+					    plugin->name().c_str(), diskPlugin->prefix().c_str());
+					continue;
+				}
+
+				allPlugins_.insert(std::make_pair(plugin->name(), plugin));
 
 				if (diskPlugin != nullptr) {
 					diskPlugins_.insert(std::make_pair(diskPlugin->prefix(),
@@ -93,6 +116,17 @@ IDisk *PluginManager::createDisk(const disk::Configuration &configuration) {
 	}
 
 	return nullptr;
+}
+
+std::string PluginManager::loadedDiskPrefixes() const {
+	std::string prefixes;
+
+	for (const auto &[prefix, plugin] : diskPlugins_) {
+		if (!prefixes.empty()) { prefixes += ", "; }
+		prefixes += prefix;
+	}
+
+	return prefixes.empty() ? "none" : prefixes;
 }
 
 void PluginManager::showLoadedPlugins() {

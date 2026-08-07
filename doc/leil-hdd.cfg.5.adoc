@@ -24,10 +24,29 @@ even in a separate drive, by splitting both paths using ' | ':
 This way, the metadata parts can be stored, for instance, in NVMe and the data
 parts in HDD.
 
+=== STORAGE PLUGIN PREFIXES
+
+A directory may be served by a chunkserver storage plugin rather than by the
+built-in one. Name the plugin at the start of the line, followed by a colon:
+
+----
+[*]<plugin>:/path/to/metadata[ | /path/to/data]
+----
+
+The plugin name may contain letters, digits and underscores, and the colon must
+follow it immediately. An absolute path is therefore never read as a prefix,
+since the leading `/` cannot appear in a plugin name. A *relative* path is
+ambiguous when its first component is made only of those characters and
+contains a colon, as in `archive:01`; write it as `./archive:01` to have it
+read as a path.
+
+A line naming a plugin that is not installed is rejected and the chunkserver
+refuses to start. Whether the two-path form is required depends on the plugin.
+
 === HOST-MANAGED SMR SPECIFICS
 
-With the proprietary chunkserver plugin for Host-Managed SMR drives, use the
-`zonefs:` prefix with the following syntax:
+The proprietary chunkserver plugin for Host-Managed SMR drives answers to the
+`zonefs:` prefix, and always requires the two-path form:
 
 ----
 [*]zonefs:/path/to/metadata | /path/to/data
