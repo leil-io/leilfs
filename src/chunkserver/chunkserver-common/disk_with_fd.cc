@@ -59,6 +59,11 @@ bool FDDisk::isMarkedForDeletion() const {
 
 bool FDDisk::isZonedDevice() const { return isZonedDevice_; }
 
+// Sequential zones are written at a moving write head, so a zoned Disk maps
+// blocks itself. Every other Disk keeps the plain block N -> N * SFSBLOCKSIZE
+// layout unless it overrides this.
+bool FDDisk::hasImplicitBlockOffsets() const { return !isZonedDevice_; }
+
 bool FDDisk::isSelectableForNewChunk() const {
 	return !isDamaged_ && !isMarkedForDeletion() && !wasRemovedFromConfig_ && totalSpace_ != 0 &&
 	       availableSpace_ != 0 && scanState_ == IDisk::ScanState::kWorking;

@@ -30,6 +30,9 @@ constexpr IDisk* DiskNotFound = nullptr;
 
 class IChunk;
 
+/// Shared with dlopen'ed Disk plugins, so changing it breaks every plugin
+/// built against an older revision of the same release.
+///
 /// Represents a data disk in the Chunkserver context.
 ///
 /// Each Disk maps to a single line in the hdd.cfg file.
@@ -84,6 +87,15 @@ public:
 	/// Tells if this Disk is a Zoned device. A Zoned device is the one that
 	/// have their address space divided into zones, for instance SMR drives.
 	virtual bool isZonedDevice() const = 0;
+
+	/// Tells if block N of a Chunk on this Disk lives at N * SFSBLOCKSIZE in
+	/// the data file.
+	///
+	/// When true, the caller may compute data-file offsets itself, truncate the
+	/// data file to a logical length and append raw bytes with writeChunkData().
+	/// When false the Disk owns its own data layout, so every access must go
+	/// through the block-level API (writeChunkBlock/writeChunkBlocks/preadData).
+	virtual bool hasImplicitBlockOffsets() const = 0;
 
 	/// Tells if this Disk is suitable for storing new chunks, according to its
 	/// general state (available space, not readonly, etc.).
