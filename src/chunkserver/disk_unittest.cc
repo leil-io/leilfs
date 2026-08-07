@@ -93,6 +93,48 @@ TEST(DiskTests, ParseZonedHddLine) {
 	ASSERT_FALSE(diskConfig2.isValid);
 }
 
+TEST(DiskTests, ParsePluginPrefixHddLine) {
+	// A non-zonefs prefix selects a plugin serving a conventional device, so a
+	// single path is enough.
+	const disk::Configuration diskConfig("leil_cmr:/mnt/hdd_35");
+
+	ASSERT_TRUE(diskConfig.isValid);
+	ASSERT_FALSE(diskConfig.isZoned);
+	ASSERT_EQ(diskConfig.prefix, "leil_cmr");
+	ASSERT_EQ(diskConfig.metaPath, "/mnt/hdd_35/");
+	ASSERT_EQ(diskConfig.dataPath, "/mnt/hdd_35/");
+
+	// The removal marker is stripped before the prefix is read.
+	const disk::Configuration removedDisk("*leil_cmr:/mnt/hdd_35");
+
+	ASSERT_TRUE(removedDisk.isValid);
+	ASSERT_TRUE(removedDisk.isMarkedForRemoval);
+	ASSERT_EQ(removedDisk.prefix, "leil_cmr");
+}
+
+TEST(DiskTests, ParseHddLineWithoutPluginPrefix) {
+	// A bare path has no prefix and is served by the built-in CmrDisk.
+	const disk::Configuration plainPath("/mnt/hdd_35");
+
+	ASSERT_TRUE(plainPath.isValid);
+	ASSERT_TRUE(plainPath.prefix.empty());
+	ASSERT_FALSE(plainPath.isZoned);
+
+	// A colon inside a path is not a prefix separator: the path starts with a
+	// character that cannot appear in a prefix.
+	const disk::Configuration colonInPath("/mnt/hdd:35/meta");
+
+	ASSERT_TRUE(colonInPath.isValid);
+	ASSERT_TRUE(colonInPath.prefix.empty());
+	ASSERT_EQ(colonInPath.metaPath, "/mnt/hdd:35/meta/");
+
+	// A relative path with no colon at all is not a prefix either.
+	const disk::Configuration relativePath("hdd_35");
+
+	ASSERT_TRUE(relativePath.isValid);
+	ASSERT_TRUE(relativePath.prefix.empty());
+}
+
 TEST(DiskTests, UpdateChunkAttributesRetrySucceedsAfterTransientErrors) {
 	const disk::Configuration diskConfig("/mnt/hdd_22/");
 	FlakyAttributesDisk disk(diskConfig);

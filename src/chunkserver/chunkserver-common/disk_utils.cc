@@ -57,11 +57,15 @@ Configuration::Configuration(std::string hddCfgLine) {
 		hddCfgLine.erase(hddCfgLine.begin());
 	}
 
-	static const std::string zonedToken = "zonefs:";
-	if (hddCfgLine.find(zonedToken) == 0) {
-		prefix = hddCfgLine.substr(0, zonedToken.size() - 1);
-		isZoned = true;
-		hddCfgLine.erase(0, zonedToken.size());
+	// A leading "<prefix>:" selects the Disk plugin owning this device; a bare
+	// path has no prefix and is served by the built-in CmrDisk.
+	const auto prefixEnd = hddCfgLine.find_first_not_of(kDiskPrefixCharacters);
+
+	if (prefixEnd != std::string::npos && prefixEnd > 0 &&
+	    hddCfgLine.at(prefixEnd) == ':') {
+		prefix = hddCfgLine.substr(0, prefixEnd);
+		isZoned = (prefix == kZonedDiskPrefix);
+		hddCfgLine.erase(0, prefixEnd + 1);
 	}
 
 	static std::string const delimiter = " | ";
