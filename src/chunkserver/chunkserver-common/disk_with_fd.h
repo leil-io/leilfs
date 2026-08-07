@@ -65,6 +65,9 @@ public:
 	/// Tells if this Disk is a Zoned device
 	bool isZonedDevice() const override;
 
+	/// Tells if block N lives at N * SFSBLOCKSIZE in the data file
+	bool hasImplicitBlockOffsets() const override;
+
 	/// Tells if this Disk is suitable for storing new chunks,
 	/// according to its general state
 	bool isSelectableForNewChunk() const override;

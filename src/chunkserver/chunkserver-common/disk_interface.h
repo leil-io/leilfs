@@ -85,6 +85,15 @@ public:
 	/// have their address space divided into zones, for instance SMR drives.
 	virtual bool isZonedDevice() const = 0;
 
+	/// Tells if block N of a Chunk on this Disk lives at N * SFSBLOCKSIZE in
+	/// the data file.
+	///
+	/// When true, the caller may compute data-file offsets itself, truncate the
+	/// data file to a logical length and append raw bytes with writeChunkData().
+	/// When false the Disk owns its own data layout, so every access must go
+	/// through the block-level API (writeChunkBlock/writeChunkBlocks/preadData).
+	virtual bool hasImplicitBlockOffsets() const = 0;
+
 	/// Tells if this Disk is suitable for storing new chunks, according to its
 	/// general state (available space, not readonly, etc.).
 	virtual bool isSelectableForNewChunk() const = 0;

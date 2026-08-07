@@ -1367,15 +1367,15 @@ enum class ChunkCopyResult : std::uint8_t { Ok, ReadFailed, WriteFailed };
 /// reusing the source CRCs in \a sourceCrcData (reads decompress, so they
 /// still describe the copied bytes) and updating \a dupCrcData.
 ///
-/// Both formats copy in batches of kChunkCopyBatchBlocks: zoned destinations
-/// through writeChunkBlocks(), the rest appending to the caller's data seek
-/// through writeChunkData().
+/// Both formats copy in batches of kChunkCopyBatchBlocks: destinations that map
+/// blocks themselves through writeChunkBlocks(), the rest appending to the
+/// caller's data seek through writeChunkData().
 static ChunkCopyResult hddCopyChunkBlocks(IChunk *sourceChunk, IChunk *dupChunk,
                                           uint16_t blockCount, const uint8_t *sourceCrcData,
                                           uint8_t *dupCrcData, const char *errorMsg) {
 	IDisk *sourceDisk = sourceChunk->owner();
 	IDisk *dupDisk = dupChunk->owner();
-	const bool isZonedDestination = dupDisk->isZonedDevice();
+	const bool destinationMapsBlocksItself = !dupDisk->hasImplicitBlockOffsets();
 
 	// Pooled, so repeated duplications reuse the allocation; zone reads are
 	// O_DIRECT straight into it, hence the buffer's IO alignment.
@@ -1414,7 +1414,7 @@ static ChunkCopyResult hddCopyChunkBlocks(IChunk *sourceChunk, IChunk *dupChunk,
 			DiskWriteStatsUpdater updater(dupDisk, batchSize);
 			int written = 0;
 
-			if (isZonedDestination) {
+			if (destinationMapsBlocksItself) {
 				crcs.resize(blocksInBatch);
 				for (uint16_t i = 0; i < blocksInBatch; i++) {
 					const uint8_t *crcPointer =
@@ -1737,7 +1737,7 @@ static int finishTruncatedCopy(ChunkCopyGuard &guard, IChunk *sourceChunk, IChun
 	{
 		DiskWriteStatsUpdater updater(copyDisk, SFSBLOCKSIZE);
 
-		if (copyDisk->isZonedDevice()) {
+		if (!copyDisk->hasImplicitBlockOffsets()) {
 			retSize = copyDisk->writeChunkBlock(copy, copy->version(), block, 0, SFSBLOCKSIZE, crc,
 			                                    buffers.copyCrc, blockBuffer) == SAUNAFS_STATUS_OK
 			              ? SFSBLOCKSIZE
@@ -2026,16 +2026,22 @@ static int hddInternalTruncate(uint64_t chunkId, ChunkPartType chunkType,
 			return SAUNAFS_ERROR_IO;
 		}
 
+		// A Disk that maps blocks itself ignored the ftruncate calls above, so
+		// the blocks past the new length are dropped from its own layout here.
+		const bool diskMapsBlocksItself = !disk->hasImplicitBlockOffsets();
+
 		// remove unneeded blocks
-		if (disk->isZonedDevice()) {
+		if (diskMapsBlocksItself) {
 			chunk->shrinkToBlocks(static_cast<uint16_t>(blocks));
 		}
 
 		if (lastPartialBlockSize > 0) {
 			auto offset = chunk->getBlockOffset(fullBlocks);
 
+			// The trailing block cannot be cut in place, so it is read whole,
+			// zero-filled past the new length and written back below.
 			auto toBeRead =
-			    disk->isZonedDevice() ? SFSBLOCKSIZE : lastPartialBlockSize;
+			    diskMapsBlocksItself ? SFSBLOCKSIZE : lastPartialBlockSize;
 
 			{
 				DiskReadStatsUpdater updater(disk, toBeRead);
@@ -2056,7 +2062,7 @@ static int hddInternalTruncate(uint64_t chunkId, ChunkPartType chunkType,
 
 			HddStats::overheadRead(toBeRead);
 
-			if (disk->isZonedDevice()) {
+			if (diskMapsBlocksItself) {
 				memset(blockBuffer + lastPartialBlockSize, 0,
 				       SFSBLOCKSIZE - lastPartialBlockSize);
 			}
@@ -2071,14 +2077,14 @@ static int hddInternalTruncate(uint64_t chunkId, ChunkPartType chunkType,
 			uint8_t *crData = gOpenChunks.getResource(chunk->metaFD()).crcData();
 			memcpy(crData + fullBlocks * kCrcSize, crcBuff, kCrcSize);
 
-			uint32_t jump = disk->isZonedDevice() ? 2 : 1;
+			uint32_t jump = diskMapsBlocksItself ? 2 : 1;
 
 			for (auto block = fullBlocks + jump; block < originalBlocks;
 			     block++) {
 				memcpy(crData + block * kCrcSize, &gEmptyBlockCrc, kCrcSize);
 			}
 
-			if (disk->isZonedDevice()) {
+			if (diskMapsBlocksItself) {
 				{
 					DiskWriteStatsUpdater updater(disk, SFSBLOCKSIZE);
 
@@ -2185,12 +2191,13 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 	const uint16_t blocks =
 	    static_cast<uint16_t>((copyChunkLength + SFSBLOCKSIZE - 1) / SFSBLOCKSIZE);
 
-	// Seek to the beginning of data block on both chunks
-	if (!dupDisk->isZonedDevice()) {
+	// Seek to the beginning of data block on both chunks. A Disk that maps
+	// blocks itself has no meaningful data-file cursor, so it is left alone.
+	if (dupDisk->hasImplicitBlockOffsets()) {
 		dupDisk->lseekData(dupChunk, dupChunk->getBlockOffset(0), SEEK_SET);
 	}
 
-	if (!origDisk->isZonedDevice()) {
+	if (origDisk->hasImplicitBlockOffsets()) {
 		origDisk->lseekData(originalChunk, originalChunk->getBlockOffset(0),
 		                    SEEK_SET);
 	}
