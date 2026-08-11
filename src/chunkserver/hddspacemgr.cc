@@ -1361,7 +1361,7 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 static constexpr uint16_t kChunkCopyBatchBlocks = 256;
 
 /// Which side of a copy failed; only a failed read means a damaged source.
-enum class ChunkCopyResult { Ok, ReadFailed, WriteFailed };
+enum class ChunkCopyResult : std::uint8_t { Ok, ReadFailed, WriteFailed };
 
 /// Copies the first \a blockCount blocks of \a sourceChunk into \a dupChunk,
 /// reusing the source CRCs in \a sourceCrcData (reads decompress, so they
@@ -1371,18 +1371,15 @@ enum class ChunkCopyResult { Ok, ReadFailed, WriteFailed };
 /// through writeChunkBlocks(), the rest appending to the caller's data seek
 /// through writeChunkData().
 static ChunkCopyResult hddCopyChunkBlocks(IChunk *sourceChunk, IChunk *dupChunk,
-                                          uint16_t blockCount,
-                                          const uint8_t *sourceCrcData,
-                                          uint8_t *dupCrcData,
-                                          const char *errorMsg) {
+                                          uint16_t blockCount, const uint8_t *sourceCrcData,
+                                          uint8_t *dupCrcData, const char *errorMsg) {
 	IDisk *sourceDisk = sourceChunk->owner();
 	IDisk *dupDisk = dupChunk->owner();
 	const bool isZonedDestination = dupDisk->isZonedDevice();
 
 	// Pooled, so repeated duplications reuse the allocation; zone reads are
 	// O_DIRECT straight into it, hence the buffer's IO alignment.
-	auto buffer =
-	    getChunkCopyBuffersPool().get(kChunkCopyBufferHeaderSize, kChunkCopyBatchBlocks);
+	auto buffer = getChunkCopyBuffersPool().get(kChunkCopyBufferHeaderSize, kChunkCopyBatchBlocks);
 	auto &blockBuffer = buffer->getBlockBuffer();
 	blockBuffer.resize(static_cast<size_t>(kChunkCopyBatchBlocks) * SFSBLOCKSIZE);
 
@@ -1396,19 +1393,16 @@ static ChunkCopyResult hddCopyChunkBlocks(IChunk *sourceChunk, IChunk *dupChunk,
 	for (uint16_t block = 0; block < blockCount; block += kChunkCopyBatchBlocks) {
 		const uint16_t blocksInBatch =
 		    std::min<uint16_t>(kChunkCopyBatchBlocks, blockCount - block);
-		const int32_t batchSize =
-		    static_cast<int32_t>(blocksInBatch) * SFSBLOCKSIZE;
+		const int32_t batchSize = static_cast<int32_t>(blocksInBatch) * SFSBLOCKSIZE;
 
 		{
 			DiskReadStatsUpdater updater(sourceDisk, batchSize);
 
-			if (sourceDisk->preadData(
-			        sourceChunk, blockBuffer.data(), batchSize,
-			        static_cast<uint64_t>(block) * SFSBLOCKSIZE) != batchSize) {
+			if (sourceDisk->preadData(sourceChunk, blockBuffer.data(), batchSize,
+			                          static_cast<uint64_t>(block) * SFSBLOCKSIZE) != batchSize) {
 				hddAddErrorAndPreserveErrno(sourceChunk);
-				safs::log_warn_with_error_code(
-				    errno, "{}: file:{} - data read error", errorMsg,
-				    sourceChunk->fullMetaFilename());
+				safs::log_warn_with_error_code(errno, "{}: file:{} - data read error", errorMsg,
+				                               sourceChunk->fullMetaFilename());
 				updater.markReadAsFailed();
 				result = ChunkCopyResult::ReadFailed;
 				break;
@@ -1429,19 +1423,17 @@ static ChunkCopyResult hddCopyChunkBlocks(IChunk *sourceChunk, IChunk *dupChunk,
 				}
 				blocksPerBuffer[0] = blocksInBatch;
 
-				written = dupDisk->writeChunkBlocks(
-				    dupChunk, dupChunk->version(), block, blocksInBatch, crcs,
-				    dupCrcData, blocksPerBuffer, buffers);
+				written =
+				    dupDisk->writeChunkBlocks(dupChunk, dupChunk->version(), block, blocksInBatch,
+				                              crcs, dupCrcData, blocksPerBuffer, buffers);
 			} else {
-				written = dupDisk->writeChunkData(dupChunk, blockBuffer.data(),
-				                                 batchSize, 0);
+				written = dupDisk->writeChunkData(dupChunk, blockBuffer.data(), batchSize, 0);
 			}
 
 			if (written != batchSize) {
 				hddAddErrorAndPreserveErrno(dupChunk);
-				safs::log_warn_with_error_code(
-				    errno, "{}: file:{} - data write error", errorMsg,
-				    dupChunk->fullMetaFilename());
+				safs::log_warn_with_error_code(errno, "{}: file:{} - data write error", errorMsg,
+				                               dupChunk->fullMetaFilename());
 				updater.markWriteAsFailed();
 				result = ChunkCopyResult::WriteFailed;
 				break;
@@ -1518,7 +1510,7 @@ public:
 	}
 
 	/// Report the source chunk to the master as damaged while unwinding.
-	void sourceIsDamaged() { sourceDamaged_ = true; }
+	void markSourceAsDamaged() { sourceDamaged_ = true; }
 
 	/// The copy is complete: keep it, and only release both chunks.
 	void commit() { committed_ = true; }
@@ -1590,7 +1582,7 @@ static int openSourceForCopy(ChunkCopyGuard &guard, IChunk *sourceChunk, uint32_
 
 		if (status != SAUNAFS_STATUS_OK) {
 			hddAddErrorAndPreserveErrno(sourceChunk);
-			guard.sourceIsDamaged();
+			guard.markSourceAsDamaged();
 			return status;
 		}
 
@@ -1601,8 +1593,8 @@ static int openSourceForCopy(ChunkCopyGuard &guard, IChunk *sourceChunk, uint32_
 
 	if (sourceChunk->renameChunkFile(chunkNewVersion) < 0) {
 		hddAddErrorAndPreserveErrno(sourceChunk);
-		safs_silent_errlog(LOG_WARNING, "%s: file:%s - rename error", errorMsg,
-		                   sourceChunk->fullMetaFilename().c_str());
+		safs::log_warn_with_error_code(errno, "{}: file:{} - rename error", errorMsg,
+		                               sourceChunk->fullMetaFilename());
 		return SAUNAFS_ERROR_IO;
 	}
 
@@ -1616,8 +1608,8 @@ static int openSourceForCopy(ChunkCopyGuard &guard, IChunk *sourceChunk, uint32_
 	status = sourceChunk->owner()->overwriteChunkVersion(sourceChunk, chunkNewVersion);
 	if (status != SAUNAFS_STATUS_OK) {
 		hddAddErrorAndPreserveErrno(sourceChunk);
-		safs_silent_errlog(LOG_WARNING, "%s: file:%s - write error", errorMsg,
-		                   sourceChunk->fullMetaFilename().c_str());
+		safs::log_warn_with_error_code(errno, "{}: file:{} - write error", errorMsg,
+		                               sourceChunk->fullMetaFilename());
 		return SAUNAFS_ERROR_IO;
 	}
 
@@ -1703,9 +1695,9 @@ static int finishTruncatedCopy(ChunkCopyGuard &guard, IChunk *sourceChunk, IChun
 
 		if (copyDisk->ftruncateData(copy, copy->getFileSizeFromBlockCount(blocks)) < 0) {
 			hddAddErrorAndPreserveErrno(copy);
-			safs_silent_errlog(LOG_WARNING, "%s: file:%s - ftruncate error", errorMsg,
-			                   copy->fullMetaFilename().c_str());
-			return SAUNAFS_ERROR_IO;        //write error
+			safs::log_warn_with_error_code(errno, "{}: file:{} - ftruncate error", errorMsg,
+			                               copy->fullMetaFilename());
+			return SAUNAFS_ERROR_IO;  // write error
 		}
 
 		return SAUNAFS_STATUS_OK;
@@ -1727,7 +1719,7 @@ static int finishTruncatedCopy(ChunkCopyGuard &guard, IChunk *sourceChunk, IChun
 			hddAddErrorAndPreserveErrno(sourceChunk);
 			safs::log_warn_with_error_code(errno, "{}: file:{} - data read error", errorMsg,
 			                               sourceChunk->fullMetaFilename());
-			guard.sourceIsDamaged();
+			guard.markSourceAsDamaged();
 			updater.markReadAsFailed();
 			return SAUNAFS_ERROR_IO;
 		}
@@ -1843,7 +1835,7 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 
 	if (copyResult != ChunkCopyResult::Ok) {
 		if (copyResult == ChunkCopyResult::ReadFailed) {
-			guard.sourceIsDamaged();
+			guard.markSourceAsDamaged();
 		}
 		return SAUNAFS_ERROR_IO;
 	}
@@ -1851,7 +1843,7 @@ static int hddInternalDuplicate(uint64_t chunkId, uint32_t chunkVersion,
 	status = guard.endSourceIo();
 	if (status != SAUNAFS_STATUS_OK) {
 		hddAddErrorAndPreserveErrno(originalChunk);
-		guard.sourceIsDamaged();
+		guard.markSourceAsDamaged();
 		return status;
 	}
 
@@ -2217,7 +2209,7 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 
 	if (copyResult != ChunkCopyResult::Ok) {
 		if (copyResult == ChunkCopyResult::ReadFailed) {
-			guard.sourceIsDamaged();
+			guard.markSourceAsDamaged();
 		}
 		return SAUNAFS_ERROR_IO;
 	}
@@ -2232,7 +2224,7 @@ static int hddInternalDuplicateTruncate(uint64_t chunkId, uint32_t chunkVersion,
 	status = guard.endSourceIo();
 	if (status != SAUNAFS_STATUS_OK) {
 		hddAddErrorAndPreserveErrno(originalChunk);
-		guard.sourceIsDamaged();
+		guard.markSourceAsDamaged();
 		return status;
 	}
 
