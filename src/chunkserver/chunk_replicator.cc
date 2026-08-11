@@ -142,7 +142,7 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 	SliceRecoveryPlanner planner;
 	ReadPlanExecutor::ChunkTypeLocations locations;
 	SliceRecoveryPlanner::PartsContainer available_parts;
-	auto buffer = getReplicateBuffersPool().get(kReplicatorBufferHeaderSize, batchSize);
+	auto buffer = getChunkCopyBuffersPool().get(kChunkCopyBufferHeaderSize, batchSize);
 
 	try {
 		for (const auto &source : sources) {
@@ -186,9 +186,9 @@ void ChunkReplicator::replicate(ChunkFileCreator& fileCreator,
 			                  static_cast<uint16_t>(firstBlock), static_cast<uint16_t>(nrOfBlocks),
 			                  crcData);
 		}
-		getReplicateBuffersPool().put(std::move(buffer));
+		getChunkCopyBuffersPool().put(std::move(buffer));
 	} catch (...) {
-		getReplicateBuffersPool().put(std::move(buffer));
+		getChunkCopyBuffersPool().put(std::move(buffer));
 		throw;
 	}
 

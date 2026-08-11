@@ -34,7 +34,7 @@
 
 inline std::atomic<uint32_t> gCurrentTotalOutputBufferBlocks = 0;
 inline std::atomic<uint32_t> gCurrentTotalInputBufferBlocks = 0;
-inline std::atomic<uint32_t> gCurrentTotalReplicatorBufferBlocks = 0;
+inline std::atomic<uint32_t> gCurrentTotalChunkCopyBufferBlocks = 0;
 
 /// @class Buffer
 /// @brief Manages a data buffer.
@@ -519,27 +519,32 @@ protected:
 	std::vector<WriteInfo> writeInfo_;
 };
 
-/// @brief The size of the header for the replicator buffer.
+/// @brief The size of the header for the chunk-copy buffer.
 /// The 0 is picked for simplicity, main goal is to make it a single value.
-constexpr size_t kReplicatorBufferHeaderSize = 0;
+constexpr size_t kChunkCopyBufferHeaderSize = 0;
 
 /**
- * @class ReplicatorBuffer
- * @brief Wraps an IO aligned buffer for the replicator to fit the BuffersPool interface.
+ * @class ChunkCopyBuffer
+ * @brief Wraps an IO aligned buffer to fit the BuffersPool interface, for the
+ * paths that stage whole chunk blocks while copying them: replication and
+ * local chunk duplication.
+ *
+ * The block buffer starts out empty; consumers size it to the batch they need,
+ * and pooling keeps that capacity across uses.
  */
-class ReplicatorBuffer {
+class ChunkCopyBuffer {
 public:
-	/// @brief Constructs a ReplicatorBuffer with the given number of blocks.
+	/// @brief Constructs a ChunkCopyBuffer with the given number of blocks.
 	/// @param headerSize The size of the header (not used, but required for compatibility).
 	/// @param numBlocks The number of blocks the buffer can hold.
-	ReplicatorBuffer(size_t headerSize, size_t numBlocks) : numBlocks_(numBlocks) {
+	ChunkCopyBuffer(size_t headerSize, size_t numBlocks) : numBlocks_(numBlocks) {
 		(void)headerSize;
-		gCurrentTotalReplicatorBufferBlocks += numBlocks_;
+		gCurrentTotalChunkCopyBufferBlocks += numBlocks_;
 	}
 
-	/// @brief Destructor only decreases the global counter of replicator buffers blocks.
-	~ReplicatorBuffer() {
-		gCurrentTotalReplicatorBufferBlocks -= numBlocks_;
+	/// @brief Destructor only decreases the global counter of chunk-copy buffers blocks.
+	~ChunkCopyBuffer() {
+		gCurrentTotalChunkCopyBufferBlocks -= numBlocks_;
 	}
 
 	/// @brief Clears the buffer.
@@ -554,7 +559,7 @@ public:
 	const uint8_t *data() const { return blockBuffer_.data(); }
 
 	/// @brief Returns the type of the buffer.
-	std::pair<size_t, size_t> type() const { return {kReplicatorBufferHeaderSize, numBlocks_}; }
+	std::pair<size_t, size_t> type() const { return {kChunkCopyBufferHeaderSize, numBlocks_}; }
 
 private:
 	const size_t numBlocks_;  ///< The number of blocks.
@@ -565,7 +570,7 @@ private:
 
 using OutputBufferPool = BuffersPool<OutputBuffer>;
 using InputBufferPool = BuffersPool<InputBuffer>;
-using ReplicatorBufferPool = BuffersPool<ReplicatorBuffer>;
+using ChunkCopyBufferPool = BuffersPool<ChunkCopyBuffer>;
 
 /// @brief Returns the read output buffer pool.
 /// It is a singleton.
@@ -581,11 +586,12 @@ inline InputBufferPool &getWriteInputBufferPool() {
 	return writeInputBuffersPool;
 }
 
-/// @brief Returns the replicate buffer pool.
+/// @brief Returns the chunk-copy buffer pool, shared by replication and
+/// local chunk duplication.
 /// It is a singleton.
-inline ReplicatorBufferPool &getReplicateBuffersPool() {
-	static ReplicatorBufferPool replicateBuffersPool;
-	return replicateBuffersPool;
+inline ChunkCopyBufferPool &getChunkCopyBuffersPool() {
+	static ChunkCopyBufferPool chunkCopyBuffersPool;
+	return chunkCopyBuffersPool;
 }
 
 /// @brief Releases the old IO buffers that have been in the pool for longer than the given
