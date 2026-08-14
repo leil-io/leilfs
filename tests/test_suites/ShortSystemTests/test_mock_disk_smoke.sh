@@ -33,11 +33,6 @@ echo "mock:${CHUNK_COUNT}:1:${mock_dir}" >> "${info[chunkserver0_hdd]}"
 saunafs_chunkserver_daemon 0 reload
 
 # The master should eventually know all the fake chunk copies
-# (list-chunkservers humanizes counts -- "100k" -- so use 'info' instead)
-count_chunk_copies() {
-	saunafs-admin info localhost "${info[matocl]}" 2>/dev/null \
-		| awk '/^Chunk copies:/ {print $NF}'
-}
 assert_eventually_equals "echo $CHUNK_COUNT" 'count_chunk_copies' '3 minutes'
 
 # No chunk data files were created for the fake chunks
