@@ -73,3 +73,22 @@ function check_one_file_replicated() {
 	assert_eventually 'check_one_file_part_coverage_impl_ "${path}" "${expected_number_of_parts}"' "${replication_timeout}"
 }
 
+# count_registered_parts <path>
+# Prints how many chunk parts the master currently has registered for a file,
+# summed over all of its chunks. Counts one per copy for replicated goals and
+# one per part for xor/ec goals, so a single-chunk ec(2,1) file reports 3 when
+# fully registered.
+#
+# Useful while chunkservers are (re-)registering, when the cluster-wide
+# counters cannot answer the question: "Chunk copies" counts chunks rather than
+# parts, and a chunkserver's reported chunk count arrives in the space report it
+# sends before registering anything. fileinfo is answered through the
+# chunks-info path, which has no deferring logic, so reading it does not perturb
+# what a test is measuring.
+#
+# Prints 0 rather than failing when the file has no registered part at all.
+function count_registered_parts() {
+	local path="${1}"
+	saunafs fileinfo "${path}" 2>/dev/null | awk '$1 == "copy" { parts++ } END { print parts + 0 }'
+}
+

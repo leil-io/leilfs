@@ -3154,7 +3154,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
                                              [[maybe_unused]] uint32_t min_server_version) {
 	ChecksumUpdater checksumUpdater(context.ts());
 	uint64_t oldChunkId;
-	uint64_t newChunkId;
+	uint64_t newChunkId = 0;
 	FSNode *node;
 
 	uint8_t status =
@@ -3225,7 +3225,14 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 		                                             fileNode->goal, increaseVersion, &newChunkId);
 	}
 	if (status != SAUNAFS_STATUS_OK) {
-		if (status == SAUNAFS_ERROR_LOCKED) { *chunkid = newChunkId; }
+		// These three report the id of the existing chunk, so the caller can wait for
+		// an unlock notice (LOCKED) or defer the request on the on-demand chunk
+		// location query (CHUNKLOST, NOCHUNKSERVERS). Every other failure leaves
+		// *chunkid untouched.
+		if (status == SAUNAFS_ERROR_LOCKED || status == SAUNAFS_ERROR_CHUNKLOST ||
+		    status == SAUNAFS_ERROR_NOCHUNKSERVERS) {
+			*chunkid = newChunkId;
+		}
 		fsnodes_update_checksum(fileNode);
 		return status;
 	}

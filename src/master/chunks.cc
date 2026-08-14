@@ -1500,14 +1500,22 @@ uint8_t chunk_modify(uint64_t currentChunkId, uint32_t *lockId, uint8_t goal, bo
 		return SAUNAFS_ERROR_LOCKED;
 	}
 
-	// Check if the chunk is writable
-	if (!currentChunk->isWritable()) { return SAUNAFS_ERROR_CHUNKLOST; }
+	// Check if the chunk is writable. Report the chunk id along with the failure:
+	// the caller defers the request on the on-demand chunk-location query, which
+	// needs to know which chunk to ask the registering chunkservers about.
+	if (!currentChunk->isWritable()) {
+		*targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_CHUNKLOST;
+	}
 
 	// Check if the chunk would be safe to write with the desired redundancy level
 	ChunkCopiesCalculator calculator(currentChunk->getGoal());
 	for (auto &part : currentChunk->parts) { calculator.addPart(part.type, MediaLabel::kWildcard); }
 	calculator.evalRedundancyLevel();
-	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
+		*targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_NOCHUNKSERVERS;
+	}
 
 	if (currentChunk->fileCount() == 1) {
 		// Only one reference case
