@@ -1,10 +1,27 @@
-timeout_set '15 minutes'
+timeout_set '1 minute'
 
-# Client IO must keep working while chunkservers are (re-)registering their
-# chunks: reads of not-yet-registered chunks are resolved on demand (M1),
-# writes create or update chunks normally, unlink works. Exercises the window
-# by restarting both chunkservers with re-registration throttled to one chunk
-# per packet.
+# Client IO must keep working while a chunkserver is (re-)registering its
+# chunks: reads of not-yet-registered chunks are resolved on demand, writes
+# create or update chunks normally, unlink works.
+#
+# Only chunkserver 1 is restarted, and that is what makes each of those claims
+# testable:
+#
+#   reads  - chunkserver 1 holds the only copy of the chunks in its id range
+#            (goal 1, disjoint ranges), so a read of one of them can only be
+#            answered by resolving the location on demand. Probing a chunk from
+#            chunkserver 0's range would prove nothing: it is registered the
+#            whole time.
+#
+#   writes - a chunkserver reports no free space until its registration has
+#            COMPLETED, so a cluster whose every chunkserver is registering can
+#            place no new chunk at all and creating a file can only fail and be
+#            retried. Keeping chunkserver 0 up gives new chunks somewhere to
+#            land while chunkserver 1 is still registering.
+#
+# The same rule explains why the gate below cannot wait for chunkservers to
+# report ready: readiness is that same post-registration space report, so
+# waiting for it would close the window this test is about.
 
 CHUNK_COUNT=${CHUNK_COUNT:-200000}
 CHUNKS_PER_FILE=1000
@@ -35,24 +52,41 @@ for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" reload
 done
 
-assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies'
 echo "PHASE: initial registration complete ($(count_chunk_copies) copies)"
 
-# Restart both chunkservers: the master drops all their copies and the
-# re-registration window (paced by CHUNK_REGISTRATION_CHUNKS_PER_SECOND set
-# above) begins
-for csid in 0 1; do
-	saunafs_chunkserver_daemon "$csid" restart
-done
-saunafs_wait_for_all_ready_chunkservers
-echo "PHASE: chunkservers restarted, registration window open"
+# Restart chunkserver 1: the master drops its copies and its re-registration
+# window (paced by CHUNK_REGISTRATION_CHUNKS_PER_SECOND set above) begins.
+# Chunkserver 0 keeps serving throughout.
+saunafs_chunkserver_daemon 1 restart
 
-# IO during the registration window, spread across the id space (none of
-# these files was read before, so no location is cached in the mount):
+# Wait until chunkserver 1 has registered at least one chunk, and no more than
+# that. Chunkserver 0 never stops accounting for CHUNK_COUNT copies, so any
+# count above that comes from chunkserver 1's sweep, which means it has scanned
+# its disks and can answer on-demand location queries for the chunks it has not
+# streamed yet. Waiting merely for "registration started" is not enough:
+# the sweep begins before the disk scan finishes, and until the scan populates
+# the registry the chunkserver truthfully answers that it does not have the
+# chunk, so the probe would measure the client's retry loop instead.
+registration_in_progress() {
+	local copies
+	copies=$(count_chunk_copies)
+	[[ -n "$copies" && "$copies" -gt "$CHUNK_COUNT" && "$copies" -lt $((2 * CHUNK_COUNT)) ]]
+}
+assert_eventually 'registration_in_progress'
+echo "PHASE: chunkserver 1 restarted, registration window open" \
+	"($(count_chunk_copies) / $((2 * CHUNK_COUNT)) copies known)"
+
+# IO during the registration window. The probes are spread across chunkserver 1's id
+# range only. Those chunks have no other copy while it registers, so each read
+# has to be resolved on demand. None of these files was read before, so the mount
+# holds no cached location for them either.
 total_files=$((2 * CHUNK_COUNT / CHUNKS_PER_FILE))
+first_probe_file=$((CHUNK_COUNT / CHUNKS_PER_FILE))
+last_probe_file=$((total_files - 1))
 expected_head="5a5b58595e5f5c5d5253505156575455"
 for fraction_idx in 0 1 2 3; do
-	file_idx=$((fraction_idx * (total_files - 1) / 3))
+	file_idx=$((first_probe_file + fraction_idx * (last_probe_file - first_probe_file) / 3))
 	file="${info[mount0]}/$(printf 'mock_%07d' "$file_idx")"
 	# reads of mock-backed chunks succeed with the right content
 	head_hex=$(dd if="$file" bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
@@ -60,7 +94,8 @@ for fraction_idx in 0 1 2 3; do
 		assert_equals "$expected_head" "$head_hex"
 done
 
-# writes work (land on the real disks) and read back correctly
+# writes work and read back correctly: their new chunks land on chunkserver 0's
+# real disk, the only one with space to offer while chunkserver 1 registers
 for i in 1 2 3; do
 	echo "data $i" > "${info[mount0]}/during_registration_$i"
 	MESSAGE="write+read during registration" \
@@ -73,8 +108,16 @@ done
 assert_success rm -f "${info[mount0]}/mock_0000001"
 assert_success rm -f "${info[mount0]}/during_registration_3"
 
-echo "PHASE: IO checks done, waiting for registration to converge" \
-	"(bounded by CHUNK_REGISTRATION_CHUNKS_PER_SECOND: ~8s at these counts)"
+# All of the IO above must have run while registration was still in progress,
+# otherwise it exercised a converged cluster and this test measured nothing.
+# Unlinking only ever lowers the count, so comparing against the full total
+# is safe here.
+copies_at_probe=$(count_chunk_copies)
+MESSAGE="IO must be served while registration is still in progress" \
+	assert_less_than "$copies_at_probe" "$((2 * CHUNK_COUNT))"
+
+echo "PHASE: IO checks done at $copies_at_probe / $((2 * CHUNK_COUNT)) copies," \
+	"waiting for registration to converge"
 # Registration converges: all copies of the remaining mock chunks plus the
 # two remaining new files' chunks are eventually known (>=: the copies of the
 # unlinked chunks disappear later, via the regular deletion machinery)
@@ -84,7 +127,7 @@ copies_at_least() {
 	copies=$(count_chunk_copies)
 	[[ -n "$copies" && "$copies" -ge $((remaining_mock_copies + 2)) ]]
 }
-assert_eventually 'copies_at_least' '10 minutes'
+assert_eventually 'copies_at_least'
 
 # And the data is still consistent afterwards
 assert_equals "data 1" "$(cat "${info[mount0]}/during_registration_1")"
