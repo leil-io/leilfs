@@ -4427,11 +4427,18 @@ static void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader heade
 		return;
 	}
 
-	// The chunk exists but no location is known -- typically a chunkserver is
-	// still (re-)registering it, e.g. right after a promotion. Ask the
-	// registering chunkservers about it instead of returning an empty
-	// location list, which the client can only retry against.
-	if (allowDefer && chunkid > 0 && allChunkCopies.empty() &&
+	// Defer when the client-visible locations cannot serve the read. Replicated
+	// chunks are unreadable when allChunkCopies is empty; EC chunks may expose
+	// some parts but still have no full copy, so both checks are required.
+	bool chunkUnreadable = false;
+	if (allowDefer && chunkid > 0) {
+		uint8_t fullCopies = 0;
+		chunkUnreadable =
+		    allChunkCopies.empty() ||
+		    (gChunkOperations->getFullCopies(chunkid, &fullCopies) == SAUNAFS_STATUS_OK &&
+		     fullCopies == 0);
+	}
+	if (chunkUnreadable &&
 	    matoclserv_defer_chunk_location_wait(eptr, chunkid, header, receivedData)) {
 		return;
 	}
@@ -4605,7 +4612,12 @@ static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader head
 			// leave it to the mount's own LOCKED retry loop.
 			matoclserv_add_to_wait_for_unlock_list(eptr, wc->chunkId, inode, chunkIndex);
 		}
-		if (errorStatus == SAUNAFS_ERROR_NOCHUNKSERVERS && allowDefer && wc->chunkId > 0 &&
+		// CHUNKLOST covers a chunk whose registered parts cannot be written -- none
+		// at all, or too few to assemble an EC stripe -- while NOCHUNKSERVERS covers
+		// one that is writable but below the configured redundancy level.
+		if ((errorStatus == SAUNAFS_ERROR_NOCHUNKSERVERS ||
+		     errorStatus == SAUNAFS_ERROR_CHUNKLOST) &&
+		    allowDefer && wc->chunkId > 0 &&
 		    matoclserv_defer_chunk_location_wait(eptr, wc->chunkId, header, receivedData)) {
 			// The chunk's copies are probably still being re-registered; the
 			// request is replayed when the on-demand query resolves.
