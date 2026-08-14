@@ -1163,6 +1163,19 @@ saunafs_rebalancing_status() {
 		list-chunkservers | sort | awk '$2 == "'$SAUNAFS_VERSION'" {print $1":"$10,$3}'
 }
 
+# print the number of full chunk copies the master knows about, cluster-wide
+#
+# Counts complete, reconstructible replicas rather than parts: a chunk under a
+# replicated goal contributes one per copy, a complete ec(2,1) chunk
+# contributes 1, and an ec(2,1) chunk whose registered parts cannot be
+# assembled contributes 0 -- indistinguishable from having no part at all.
+# A test that needs to tell those two apart, for instance while chunkservers are
+# still registering, has to look at the parts of a single file instead.
+count_chunk_copies() {
+	get_value_from_dirinfo_and_admin_info \
+		"$(saunafs-admin info localhost "${saunafs_info_[matocl]}" 2>/dev/null)" "Chunk copies"
+}
+
 # Tells if the hdd configuration line is for a zoned disk
 function is_zoned_device() {
 	if [[ "${1}" = *zonefs* ]]; then

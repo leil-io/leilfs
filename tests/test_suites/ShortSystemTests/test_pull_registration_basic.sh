@@ -39,10 +39,6 @@ for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" reload
 done
 
-count_chunk_copies() {
-	saunafs-admin info localhost "${info[matocl]}" 2>/dev/null \
-		| awk '/^Chunk copies:/ {print $NF}'
-}
 assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
 echo "PHASE: initial registration complete"
 

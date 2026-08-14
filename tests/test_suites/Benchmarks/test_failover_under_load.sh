@@ -43,11 +43,6 @@ MASTERSERVERS=2 \
 
 now_ms() { echo $(($(date +%s%N) / 1000000)); }
 
-count_chunk_copies() {
-	saunafs-admin info localhost "${info[matocl]}" 2>/dev/null \
-		| awk '/^Chunk copies:/ {print $NF}'
-}
-
 total_copies=$((MOCK_CS_COUNT * CHUNK_COUNT))
 total_files=$((total_copies / CHUNKS_PER_FILE))
 

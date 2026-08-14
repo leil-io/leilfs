@@ -30,12 +30,6 @@ MASTERSERVERS=2 \
 
 now_ms() { echo $(($(date +%s%N) / 1000000)); }
 
-# (list-chunkservers humanizes counts -- "100k" -- so use 'info' instead)
-count_chunk_copies() {
-	saunafs-admin info localhost "${info[matocl]}" 2>/dev/null \
-		| awk '/^Chunk copies:/ {print $NF}'
-}
-
 wait_for_chunk_count() {
 	local expected=$1
 	while [[ "$(count_chunk_copies)" != "$expected" ]]; do
