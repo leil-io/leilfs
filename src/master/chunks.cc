@@ -1984,6 +1984,25 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 			default:
 				break;
 			}
+
+			// A report can be older than reality. SAU_CSTOMA_CHUNK_NEW announcements
+			// carry the version captured when the disk scan first saw the chunk, and
+			// that queue is only drained once registration has completed, so a version
+			// change applied in between leaves the queued announcement stale by up to
+			// a whole registration window.
+			//
+			// A registration packet can also be overtaken by an on-demand query reply.
+			// The reply can start a version operation before the old packet arrives,
+			// leaving the part BUSY at the current version. The operation's terminal
+			// status is authoritative in that case: processing the old report would
+			// replace the operation-owned version and invalidate the part before that
+			// status is handled. A current-version valid part, including a BUSY one,
+			// therefore makes an older report out-of-order news rather than a
+			// correction.
+			if (new_version < c->version && part.version == c->version && part.is_valid()) {
+				return;
+			}
+
 			if (part.version != new_version) {
 				safs_pretty_syslog(LOG_WARNING, "chunk %016" PRIX64 ": master data indicated "
 						"version %08" PRIX32 ", chunkserver reports %08"
