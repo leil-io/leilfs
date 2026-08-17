@@ -1200,8 +1200,9 @@ bool matocsserv_query_chunk_location(uint64_t chunkId) {
 	if (!anyTarget) { return false; }
 
 	gPendingChunkQueries.emplace(
-	    chunkId,
-	    PendingChunkQuery{Timeout(std::chrono::milliseconds(gOnDemandChunkQueryTimeout_ms)), 0});
+	    chunkId, PendingChunkQuery{
+	                 .deadline = Timeout(std::chrono::milliseconds(gOnDemandChunkQueryTimeout_ms)),
+	                 .outstandingReplies = 0});
 	gChunkQueryIdsToSend.push_back(chunkId);
 
 	return true;
