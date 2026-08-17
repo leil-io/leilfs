@@ -56,6 +56,7 @@
 #include "slogger/slogger.h"
 
 static constexpr uint32_t kMaxBackgroundJobsThreshold = (kMaxBackgroundJobsCount * 9) / 10;
+static constexpr auto kPullRegistrationSweepRetryDelay = std::chrono::seconds(1);
 
 MasterConn::~MasterConn() {
 	*callbackActive_ = false;
@@ -313,6 +314,7 @@ void MasterConn::onRegisterChunksStart(const std::vector<uint8_t> &data) {
 	pullBulkSize_ = std::clamp(bulkSize, kMinChunkBulkSize, kMaxChunkBulkSize);
 	pullCredits_ = initialCredits;
 	pullChunksSent_ = 0;
+	pullSweepRetryTimeout_ = Timeout(std::chrono::seconds(0));
 	registrationStatus_ = RegistrationStatus::kChunksRegistering;
 
 	safs::log_info(
@@ -340,12 +342,18 @@ void MasterConn::pumpPullRegistration() {
 	std::vector<ChunkWithVersionAndType> bulk;
 
 	while (pullCredits_ > 0) {
-		if (!hddRegistrationSweepNext(bulk, pullBulkSize_)) {
+		switch (hddRegistrationSweepNext(bulk, pullBulkSize_)) {
+		case RegistrationSweepResult::kComplete:
 			createAttachedPacket(cstoma::registerChunksEnd::build(pullChunksSent_));
 			registrationStatus_ = RegistrationStatus::kChunksRegistered;
 			safs::log_info("MasterConn: master-driven chunk registration complete ({} chunks)",
 			               pullChunksSent_);
 			return;
+		case RegistrationSweepResult::kRetry:
+			pullSweepRetryTimeout_ = Timeout(kPullRegistrationSweepRetryDelay);
+			return;
+		case RegistrationSweepResult::kBulkReady:
+			break;
 		}
 
 		pullChunksSent_ += bulk.size();
@@ -354,7 +362,14 @@ void MasterConn::pumpPullRegistration() {
 	}
 }
 
-void MasterConn::checkPullRegistrationStartTimeout() {
+void MasterConn::checkPullRegistration() {
+	if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
+		if (pullCredits_ > 0 && pullSweepRetryTimeout_.expired()) {
+			pumpPullRegistration();
+		}
+		return;
+	}
+
 	if (registrationStatus_ != RegistrationStatus::kAwaitingPullStart ||
 	    !pullStartTimeout_.expired()) {
 		return;
@@ -865,7 +880,7 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, chunkType));
 				if (chunkIter == gChunksMap.end()) { continue; }
 
-				const IChunk *chunk = chunkIter->second.get();
+				IChunk *chunk = chunkIter->second.get();
 				if (chunk->state() == ChunkState::Deleted ||
 				    chunk->state() == ChunkState::ToBeDeleted) {
 					continue;
@@ -877,15 +892,11 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				    chunkId,
 				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
 				    chunkType);
+				// Mark under the map lock while this chunk still matches the reply.
+				if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
+					hddRegistrationSweepMarkRegistered(*chunk);
+				}
 			}
-		}
-	}
-
-	// During a pull-registration sweep the answered chunks are already known
-	// to the master, so the sweep does not need to repeat them.
-	if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
-		for (const auto &foundChunk : foundChunks) {
-			hddRegistrationSweepMarkRegistered(foundChunk.id, foundChunk.type);
 		}
 	}
 

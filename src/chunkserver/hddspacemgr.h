@@ -69,16 +69,22 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 /// invalidating the marks of the previous session.
 void hddRegistrationSweepBegin();
 
-/// Collects at most (approximately) \p bulkSize chunks not yet reported in
-/// this sweep session and marks them as reported. Returns false when the
-/// sweep is complete (\p bulk is then empty); a true return means "send this
-/// bulk and call again".
-bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize);
+enum class RegistrationSweepResult {
+	kBulkReady,  ///< A nonempty bulk is ready to send.
+	kRetry,      ///< Locked chunks remain; retry without consuming a credit.
+	kComplete,   ///< No reportable chunks remain.
+};
+
+/// Collects and marks at most \p bulkSize unreported chunks in this session.
+/// Returns kRetry for locked stragglers instead of waiting for them.
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize);
 
 /// Marks a chunk as already reported in the current sweep session. Used when
 /// the chunk's info was already sent through an on-demand chunk-location
 /// query, so the sweep does not need to repeat it.
-void hddRegistrationSweepMarkRegistered(uint64_t chunkId, ChunkPartType type);
+/// Caller must hold gChunksMapMutex.
+void hddRegistrationSweepMarkRegistered(IChunk &chunk);
 
 int hddGetAndResetSpaceChanged();
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,

@@ -27,6 +27,7 @@
 #include "chunkserver-common/iostat.h"
 #include "chunkserver-common/open_chunk.h"
 #include "chunkserver-common/plugin_manager.h"
+#include "slogger/slogger.h"
 
 inline IndexedResourcePool<OpenChunk> gOpenChunks;
 
@@ -65,6 +66,28 @@ inline void hddForgetPresentChunkType(ChunkPartType type) {
 	auto typeIterator = gPresentChunkTypes.find(type);
 	if (typeIterator != gPresentChunkTypes.end() && --(typeIterator->second) == 0) {
 		gPresentChunkTypes.erase(typeIterator);
+	}
+}
+
+/// Logs and asserts if gPresentChunkTypes totals differ from gChunksMap.size().
+/// Detects missing type-count updates that can hide chunks from id-only queries.
+/// Acquires gChunksMapMutex; callers must not already hold it.
+inline void hddVerifyPresentChunkTypes() {
+	uint64_t countedChunks = 0;
+	uint64_t registrySize = 0;
+	{
+		const std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		for (const auto &[type, count] : gPresentChunkTypes) { countedChunks += count; }
+		registrySize = gChunksMap.size();
+	}
+
+	if (countedChunks != registrySize) {
+		safs::log_err(
+		    "gPresentChunkTypes out of sync with the chunk registry: {} chunks counted across {} "
+		    "types, {} chunks in the registry -- an insert or erase path is missing its "
+		    "hddNotePresentChunkType/hddForgetPresentChunkType call",
+		    countedChunks, gPresentChunkTypes.size(), registrySize);
+		assert(false && "gPresentChunkTypes out of sync with gChunksMap");
 	}
 }
 
