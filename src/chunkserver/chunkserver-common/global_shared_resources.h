@@ -27,6 +27,7 @@
 #include "chunkserver-common/iostat.h"
 #include "chunkserver-common/open_chunk.h"
 #include "chunkserver-common/plugin_manager.h"
+#include "slogger/slogger.h"
 
 inline IndexedResourcePool<OpenChunk> gOpenChunks;
 
@@ -65,6 +66,41 @@ inline void hddForgetPresentChunkType(ChunkPartType type) {
 	auto typeIterator = gPresentChunkTypes.find(type);
 	if (typeIterator != gPresentChunkTypes.end() && --(typeIterator->second) == 0) {
 		gPresentChunkTypes.erase(typeIterator);
+	}
+}
+
+/// Checks that the per-type counts still add up to the number of chunks in the
+/// registry, and complains if they do not.
+///
+/// The index is only correct as long as every gChunksMap insert and erase is
+/// paired with hddNotePresentChunkType / hddForgetPresentChunkType. A path that
+/// forgets the pairing does not fail loudly: it makes id-only lookups skip a
+/// type, so the master's on-demand chunk-location query silently reports chunks
+/// as absent that this chunkserver actually holds. This turns that into
+/// something visible.
+///
+/// The invariant holds at every point where gChunksMapMutex is free, so this
+/// can be called from anywhere; disk-scan completion is a natural moment, being
+/// when the registry has just changed in bulk. Cost is one pass over the
+/// distinct hosted types, of which there are a handful.
+///
+/// Takes gChunksMapMutex, so do not call with it already held.
+inline void hddVerifyPresentChunkTypes() {
+	uint64_t countedChunks = 0;
+	uint64_t registrySize = 0;
+	{
+		const std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		for (const auto &[type, count] : gPresentChunkTypes) { countedChunks += count; }
+		registrySize = gChunksMap.size();
+	}
+
+	if (countedChunks != registrySize) {
+		safs::log_err(
+		    "gPresentChunkTypes out of sync with the chunk registry: {} chunks counted across {} "
+		    "types, {} chunks in the registry -- an insert or erase path is missing its "
+		    "hddNotePresentChunkType/hddForgetPresentChunkType call",
+		    countedChunks, gPresentChunkTypes.size(), registrySize);
+		assert(false && "gPresentChunkTypes out of sync with gChunksMap");
 	}
 }
 

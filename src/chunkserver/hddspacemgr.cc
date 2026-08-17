@@ -159,13 +159,30 @@ void hddReportNewChunkToMaster(uint64_t id, uint32_t version, bool todel,
 	    ChunkWithVersionAndType(id, versionWithTodelFlag, type));
 }
 
+/// Drops the entries the master already learned in the current registration
+/// session. Defined with the rest of the sweep state below.
+static void hddRegistrationSweepDropReported(std::vector<ChunkWithVersionAndType> &chunks);
+
 void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks,
                      std::size_t limit) {
 	TRACETHIS();
-	std::lock_guard lockGuard(gMasterReportsLock);
-	std::size_t size = std::min(gNewChunks.size(), limit);
-	chunks.assign(gNewChunks.begin(), gNewChunks.begin() + size);
-	gNewChunks.erase(gNewChunks.begin(), gNewChunks.begin() + size);
+	{
+		std::lock_guard lockGuard(gMasterReportsLock);
+		std::size_t size = std::min(gNewChunks.size(), limit);
+		chunks.assign(gNewChunks.begin(), gNewChunks.begin() + size);
+		gNewChunks.erase(gNewChunks.begin(), gNewChunks.begin() + size);
+	}
+
+	// Announcements queued while registration was running are redundant: the
+	// sweep reports the whole registry anyway, and both it and the on-demand
+	// query mark what they send. Worse than redundant: an entry carries the
+	// version the disk scan happened to see, so a version change applied
+	// before the queue drains puts a superseded claim on the wire.
+	//
+	// Deliberately outside the gMasterReportsLock scope above: the filter takes
+	// gChunksMapMutex, and hddSendDataToMaster already holds that while queueing
+	// a report, so nesting the two would invert the established order.
+	hddRegistrationSweepDropReported(chunks);
 }
 
 uint32_t hddGetAndResetErrorCounter() {
@@ -600,13 +617,16 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize) {
 
 /// Master-driven (pull) chunk registration sweep.
 /// All sweep state is guarded by gChunksMapMutex, like the registry itself.
-/// Chunks are marked with the session epoch when reported; the termination
-/// pass rescans the whole registry until no unmarked chunk remains, which
-/// covers chunks skipped while locked, chunks moved behind the bucket cursor
-/// by a rehash, and chunks inserted during the sweep.
+/// Chunks are marked with the session epoch when reported. The termination
+/// pass rescans the whole registry until no unmarked, reportable chunk
+/// remains. If it finds a locked chunk, it asks the caller to retry later
+/// rather than waiting on the network event loop.
 
-static uint8_t gRegistrationSweepEpoch = 0;
+static uint32_t gRegistrationSweepEpoch = 0;
 static std::size_t gRegistrationSweepBucket = 0;
+/// Bucket array the cursor above refers to. A different value means the
+/// registry rehashed between calls and the cursor lost its meaning.
+static std::size_t gRegistrationSweepBucketCount = 0;
 static bool gRegistrationSweepCursorDone = false;
 
 void hddRegistrationSweepBegin() {
@@ -615,20 +635,22 @@ void hddRegistrationSweepBegin() {
 	++gRegistrationSweepEpoch;
 	if (gRegistrationSweepEpoch == 0) {
 		// The epoch wrapped: clear every stale mark, or a chunk still
-		// carrying this epoch value from 256 sessions ago would be skipped.
+		// carrying this epoch value from 2^32 sessions ago would be skipped.
 		for (const auto &chunkEntry : gChunksMap) { chunkEntry.second->setRegistrationEpoch(0); }
 		gRegistrationSweepEpoch = 1;
 	}
 
 	gRegistrationSweepBucket = 0;
+	gRegistrationSweepBucketCount = gChunksMap.bucket_count();
 	gRegistrationSweepCursorDone = false;
 }
 
-bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize) {
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize) {
 	bulk.clear();
 	bulk.reserve(bulkSize);
 
-	auto addChunkToBulk = [&bulk](IChunk *chunk, uint8_t epoch) {
+	auto addChunkToBulk = [&bulk](IChunk *chunk, uint32_t epoch) {
 		chunk->setRegistrationEpoch(epoch);
 		bulk.emplace_back(chunk->id(),
 		                  common::combineVersionWithTodelFlag(
@@ -636,72 +658,111 @@ bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::s
 		                  chunk->type());
 	};
 
-	std::vector<ChunkWithType> recheckList;
-	{
-		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 
-		// Phase 1: advance the bucket cursor. Buckets are consumed whole, so
-		// a bulk can slightly exceed bulkSize (bucket sizes are ~1).
-		const std::size_t bucketCount = gChunksMap.bucket_count();
-		while (!gRegistrationSweepCursorDone && bulk.size() < bulkSize) {
-			if (gRegistrationSweepBucket >= bucketCount) {
-				gRegistrationSweepCursorDone = true;
-				break;
-			}
-			for (auto bucketIter = gChunksMap.begin(gRegistrationSweepBucket);
-			     bucketIter != gChunksMap.end(gRegistrationSweepBucket); ++bucketIter) {
-				IChunk *chunk = bucketIter->second.get();
-				if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
-				    chunk->state() != ChunkState::Available) {
-					// Marked already, or picked up by a later pass
-					continue;
-				}
-				addChunkToBulk(chunk, gRegistrationSweepEpoch);
-			}
-			++gRegistrationSweepBucket;
+	// Phase 1: advance the bucket cursor. A bucket may hold several EC
+	// parts for one chunk id, so leave it selected when the bulk fills and
+	// revisit its remaining unmarked entries on the next credit.
+	const std::size_t bucketCount = gChunksMap.bucket_count();
+
+	// A rehash redistributed every entry, so the cursor no longer separates
+	// swept buckets from unswept ones and chunks can now sit behind it.
+	// Walk again from the start rather than leaving them to the termination
+	// pass: chunks already reported cost one epoch compare each, and a
+	// table only doubles a logarithmic number of times, so restarting
+	// cannot happen often. The termination pass would find them too, but it
+	// rescans the whole registry once per bulk, which is at its worst
+	// exactly when a rehash displaced many chunks at once.
+	if (bucketCount != gRegistrationSweepBucketCount) {
+		gRegistrationSweepBucketCount = bucketCount;
+		gRegistrationSweepBucket = 0;
+		gRegistrationSweepCursorDone = false;
+	}
+
+	while (!gRegistrationSweepCursorDone && bulk.size() < bulkSize) {
+		if (gRegistrationSweepBucket >= bucketCount) {
+			gRegistrationSweepCursorDone = true;
+			break;
 		}
-
-		if (!bulk.empty()) { return true; }
-
-		// Phase 2 (termination): collect the stragglers
-		for (const auto &chunkEntry : gChunksMap) {
-			IChunk *chunk = chunkEntry.second.get();
+		for (auto bucketIter = gChunksMap.begin(gRegistrationSweepBucket);
+		     bucketIter != gChunksMap.end(gRegistrationSweepBucket); ++bucketIter) {
+			IChunk *chunk = bucketIter->second.get();
 			if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
-			    chunk->state() == ChunkState::Deleted ||
-			    chunk->state() == ChunkState::ToBeDeleted) {
+			    chunk->state() != ChunkState::Available) {
+				// Marked already, or picked up by a later pass
 				continue;
 			}
-			if (chunk->state() == ChunkState::Available) {
-				addChunkToBulk(chunk, gRegistrationSweepEpoch);
-			} else {
-				recheckList.emplace_back(chunk->id(), chunk->type());
-			}
-			if (bulk.size() + recheckList.size() >= bulkSize) { break; }
+			addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			if (bulk.size() == bulkSize) { break; }
+		}
+		if (bulk.size() == bulkSize) { break; }
+		++gRegistrationSweepBucket;
+	}
+
+	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+
+	// Phase 2 (termination): a complete scan decides whether the sweep is
+	// finished. Do not wait for Locked entries here: this function is called
+	// by the master connection's network event loop.
+	bool hasLockedChunks = false;
+	for (const auto &chunkEntry : gChunksMap) {
+		IChunk *chunk = chunkEntry.second.get();
+		if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
+		    chunk->state() == ChunkState::Deleted ||
+		    chunk->state() == ChunkState::ToBeDeleted) {
+			continue;
+		}
+		if (chunk->state() == ChunkState::Available) {
+			addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			if (bulk.size() == bulkSize) { break; }
+		} else {
+			hasLockedChunks = true;
 		}
 	}
 
-	// Wait for the locked stragglers, mirroring hddForeachChunkInBulks
-	for (const auto &chunkWithType : recheckList) {
-		auto *chunk = hddChunkFindAndLock(chunkWithType.id, chunkWithType.type);
-		if (chunk == ChunkNotFound) { continue; }
-		{
-			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-			if (chunk->registrationEpoch() != gRegistrationSweepEpoch) {
-				addChunkToBulk(chunk, gRegistrationSweepEpoch);
-			}
-		}
-		hddChunkRelease(chunk);
-	}
-
-	return !bulk.empty();
+	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+	return hasLockedChunks ? RegistrationSweepResult::kRetry
+	                       : RegistrationSweepResult::kComplete;
 }
 
-void hddRegistrationSweepMarkRegistered(uint64_t chunkId, ChunkPartType type) {
+void hddRegistrationSweepMarkRegistered(IChunk &chunk) {
+	chunk.setRegistrationEpoch(gRegistrationSweepEpoch);
+}
+
+uint64_t hddGetChunkRegistryBucketCount() {
 	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-	auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, type));
-	if (chunkIter != gChunksMap.end()) {
-		chunkIter->second->setRegistrationEpoch(gRegistrationSweepEpoch);
-	}
+	return gChunksMap.bucket_count();
+}
+
+static void hddRegistrationSweepDropReported(std::vector<ChunkWithVersionAndType> &chunks) {
+	if (chunks.empty()) { return; }
+
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+
+	// Epoch 0 is also the unmarked value, so comparing against it would discard
+	// every announcement. Both registration paths open a session before the
+	// drain can run, and hddRegistrationSweepBegin never leaves the epoch at 0,
+	// so this is not reachable today. It is kept because a future registration
+	// path that neglects to open one would otherwise silently drop every chunk
+	// this server owns.
+	if (gRegistrationSweepEpoch == 0) { return; }
+
+	// registrationEpoch is guarded by gChunksMapMutex, so the mark is readable
+	// without locking each chunk: no attribute refresh, and no waiting behind
+	// an operation already holding the chunk.
+	auto alreadyReported = [](const ChunkWithVersionAndType &entry) {
+		auto chunkIter = gChunksMap.find(makeChunkKey(entry.id, entry.type));
+		if (chunkIter == gChunksMap.end()) {
+			// Removed since it was queued: deleted on the master's order, found damaged,
+			// or carried away with its disk. Whatever removed it already told the master,
+			// and the lost report is drained ahead of this one, so announcing it now would
+			// add back a copy that no longer exists.
+			return true;
+		}
+		return chunkIter->second->registrationEpoch() == gRegistrationSweepEpoch;
+	};
+
+	std::erase_if(chunks, alreadyReported);
 }
 
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
@@ -2611,11 +2672,21 @@ static bool hddScanSyntheticChunks(IDisk *disk) {
 
 	sink.emitBulk = [disk, totalInserted,
 	                 totalSkipped](std::vector<ChunkWithVersionAndType> &&bulk) {
-		std::vector<IChunk *> insertedChunks;
+		// Values rather than pointers: a chunk becomes reachable the moment it
+		// turns Available, so once the locks are dropped a delete ordered by the
+		// master, which an on-demand location query can prompt as soon as the
+		// chunk is in the registry, may destroy it. Reporting from the entries
+		// keeps the loop below off freed memory.
+		std::vector<ChunkWithVersionAndType> insertedChunks;
 		insertedChunks.reserve(bulk.size());
 
 		{
+			// Both containers are populated before anything is published, in the
+			// order hddSendDataToMaster established. Nested guards rather than a
+			// scoped_lock, matching the disk-test loop above: helgrind complains
+			// about the latter.
 			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			std::lock_guard testsLockGuard(gTestsMutex);
 			for (const auto &entry : bulk) {
 				const auto key = makeChunkKey(entry.id, entry.type);
 				if (gChunksMap.find(key) != gChunksMap.end()) {
@@ -2629,19 +2700,15 @@ static bool hddScanSyntheticChunks(IDisk *disk) {
 				hddNotePresentChunkType(entry.type);
 				chunk->setVersion(entry.version);
 				disk->updateChunkAttributes(chunk, true);
+				disk->chunks().insert(chunk);
 				chunk->setState(ChunkState::Available);
-				insertedChunks.push_back(chunk);
+				insertedChunks.push_back(entry);
 			}
 		}
 
-		{
-			std::lock_guard testsLockGuard(gTestsMutex);
-			for (auto *chunk : insertedChunks) { disk->chunks().insert(chunk); }
-		}
-
-		for (const auto *chunk : insertedChunks) {
-			hddReportNewChunkToMaster(chunk->id(), chunk->version(), disk->isMarkedForDeletion(),
-			                          chunk->type());
+		for (const auto &entry : insertedChunks) {
+			hddReportNewChunkToMaster(entry.id, entry.version, disk->isMarkedForDeletion(),
+			                          entry.type);
 		}
 
 		*totalInserted += insertedChunks.size();
@@ -2676,6 +2743,7 @@ void hddDiskScan(IDisk *disk, uint32_t beginTime) {
 		gHddSpaceChanged = true;  // report chunk count to master
 		safs::log_info("scanning disk {}: synthetic scan complete ({}s)", disk->getPaths().c_str(),
 		               static_cast<uint32_t>(time(nullptr)) - beginTime);
+		hddVerifyPresentChunkTypes();
 		return;
 	}
 
@@ -2798,6 +2866,10 @@ void hddDiskScanThread(IDisk *disk) {
 	hddDiskScan(disk, beginTime);
 	hddDiskRandomizeChunksForTests(disk);
 	gScansInProgress--;
+
+	// Before taking gDisksMutex: this acquires gChunksMapMutex, and no other
+	// path holds the disks lock while waiting for the chunk map one.
+	hddVerifyPresentChunkTypes();
 
 	std::lock_guard disksLockGuard(gDisksMutex);
 
@@ -2932,6 +3004,7 @@ void hddTerminate(void) {
 	// other chunkserver modules' (that use chunk objects) cleanup functions
 	// were executed.
 	gChunksMap.clear();
+	gPresentChunkTypes.clear();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
 	gDisks.clear();
 	// Destroy the disks-to-be-deleted related structures
