@@ -93,6 +93,11 @@ struct ReconciliationHarness {
 		auto packet = matocs::registerHost::build(SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX, "default");
 		removeHeaderInPlace(packet);
 		seed->onRegistered(packet);
+		if (sendInventory) {
+			auto startPacket = matocs::registerChunksStart::build(1, 1);
+			removeHeaderInPlace(startPacket);
+			seed->onRegisterChunksStart(startPacket);
+		}
 		ASSERT_TRUE(seed->isRegistered());
 	}
 

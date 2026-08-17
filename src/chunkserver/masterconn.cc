@@ -117,7 +117,7 @@ void masterconn_check_hdd_reports() {
 	for (auto &slot : gConnectionState.connections) {
 		if (slot.connection && !slot.retiring &&
 		    slot.connection->mode() == ConnectionMode::CONNECTED) {
-			slot.connection->checkPullRegistrationStartTimeout();
+			slot.connection->checkPullRegistration();
 		}
 	}
 
