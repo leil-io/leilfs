@@ -1,5 +1,3 @@
-timeout_set '10 minutes'
-
 # CHUNK_REGISTRATION_FORCE_PUSH=1 must keep a chunkserver on the old push
 # registration protocol even against a pull-capable master, and everything
 # must still converge. This also covers the mixed-version path (an old
@@ -36,14 +34,14 @@ for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" reload
 done
 
-assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies'
 
 # Restart both chunkservers: re-registration must also use push
 for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" restart
 done
 saunafs_wait_for_all_ready_chunkservers
-assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies'
 
 # IO works
 expected_head="5a5b58595e5f5c5d5253505156575455"

@@ -1,4 +1,4 @@
-timeout_set '15 minutes'
+timeout_set '3 minutes'
 
 # Fourth case of the registration-window family: a WRITE to a chunk whose
 # registered parts are present but insufficient. Companion to
@@ -61,7 +61,7 @@ done
 first_file=$(file_path 0)
 last_file=$(file_path $((FILE_COUNT - 1)))
 MESSAGE="every EC(2,1) chunk must start with all 3 parts known" \
-	assert_eventually_equals "echo 3" "count_registered_parts '$last_file'" '3 minutes'
+	assert_eventually_equals "echo 3" "count_registered_parts '$last_file'"
 echo "PHASE: $FILE_COUNT EC(2,1) chunks created, 3 parts each"
 
 # Drop every client-side cache so nothing carries over into the probe
@@ -84,7 +84,7 @@ done
 restarted_chunkservers_registering() {
 	[[ "$(count_registered_parts "$first_file")" -ge 2 ]]
 }
-assert_eventually 'restarted_chunkservers_registering' '3 minutes'
+assert_eventually 'restarted_chunkservers_registering'
 echo "PHASE: registration window open (first file back to $(count_registered_parts "$first_file") parts)"
 
 # The other side of the gate: pick probe targets that are demonstrably still
@@ -159,4 +159,4 @@ probed_chunks_rebuilt() {
 	done
 	return 0
 }
-assert_eventually 'probed_chunks_rebuilt' '5 minutes'
+assert_eventually 'probed_chunks_rebuilt' '1 minute'

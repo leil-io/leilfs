@@ -1,5 +1,3 @@
-timeout_set '5 minutes'
-
 # Verifies the mock disk plugin (src/chunkserver/plugins/mockdisk):
 # - a mock hdd.cfg line synthesizes chunks without creating chunk files,
 # - the master learns all of them and they match seeded metadata,
@@ -33,7 +31,7 @@ echo "mock:${CHUNK_COUNT}:1:${mock_dir}" >> "${info[chunkserver0_hdd]}"
 saunafs_chunkserver_daemon 0 reload
 
 # The master should eventually know all the fake chunk copies
-assert_eventually_equals "echo $CHUNK_COUNT" 'count_chunk_copies' '3 minutes'
+assert_eventually_equals "echo $CHUNK_COUNT" 'count_chunk_copies'
 
 # No chunk data files were created for the fake chunks
 assert_equals 0 "$(find "$mock_dir" -name "chunk_*" | wc -l)"
@@ -46,7 +44,7 @@ read_head() {
 		| od -An -tx1 | tr -d ' \n'
 }
 first_file="${info[mount0]}/mock_0000000"
-assert_eventually_equals "echo $expected_head" 'read_head "$first_file"' '2 minutes'
+assert_eventually_equals "echo $expected_head" 'read_head "$first_file"'
 # A block in the middle of another chunk of the same file (chunk index 3)
 assert_equals "$expected_head" "$(read_head "$first_file" $((3 * 67108864 + 655360)))"
 # A file whose chunks live further into the id space

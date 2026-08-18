@@ -1,4 +1,4 @@
-timeout_set '15 minutes'
+timeout_set '2 minutes'
 
 # Verifies the on-demand chunk-location query (M1): right after a shadow
 # promotion, while chunkservers are still re-registering their chunks, a read
@@ -37,7 +37,7 @@ for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" reload
 done
 
-assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies'
 
 # Re-registration is paced by the masters' CHUNK_REGISTRATION_CHUNKS_PER_SECOND
 # budget (set above), so the post-promotion registration window is long enough
@@ -55,7 +55,7 @@ saunafs_master_daemon reload
 total_files=$((2 * CHUNK_COUNT / CHUNKS_PER_FILE))
 probe_file="${info[mount0]}/$(printf 'mock_%07d' $((total_files / 2)))"
 probe_start_ns=$(date +%s%N)
-assert_eventually 'dd if="$probe_file" bs=16 count=1 > /dev/null 2>&1' '2 minutes'
+assert_eventually 'dd if="$probe_file" bs=16 count=1 > /dev/null 2>&1'
 probe_ms=$(( ($(date +%s%N) - probe_start_ns) / 1000000 ))
 copies_at_probe=$(count_chunk_copies)
 
@@ -67,4 +67,4 @@ assert_less_than "$copies_at_probe" "$((2 * CHUNK_COUNT))"
 assert_less_than "$probe_ms" "$((MAX_PROBE_SECONDS * 1000))"
 
 # Cluster still converges to the full picture
-assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '10 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '40 seconds'
