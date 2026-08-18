@@ -765,6 +765,37 @@ static void hddRegistrationSweepDropReported(std::vector<ChunkWithVersionAndType
 	std::erase_if(chunks, alreadyReported);
 }
 
+static void hddRegistrationSweepDropReported(std::vector<ChunkWithVersionAndType> &chunks) {
+	if (chunks.empty()) { return; }
+
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+
+	// Epoch 0 is also the unmarked value, so comparing against it would discard
+	// every announcement. Both registration paths open a session before the
+	// drain can run, and hddRegistrationSweepBegin never leaves the epoch at 0,
+	// so this is not reachable today. It is kept because a future registration
+	// path that neglects to open one would otherwise silently drop every chunk
+	// this server owns.
+	if (gRegistrationSweepEpoch == 0) { return; }
+
+	// registrationEpoch is guarded by gChunksMapMutex, so the mark is readable
+	// without locking each chunk: no attribute refresh, and no waiting behind
+	// an operation already holding the chunk.
+	auto alreadyReported = [](const ChunkWithVersionAndType &entry) {
+		auto chunkIter = gChunksMap.find(makeChunkKey(entry.id, entry.type));
+		if (chunkIter == gChunksMap.end()) {
+			// Removed since it was queued: deleted on the master's order, found damaged,
+			// or carried away with its disk. Whatever removed it already told the master,
+			// and the lost report is drained ahead of this one, so announcing it now would
+			// add back a copy that no longer exists.
+			return true;
+		}
+		return chunkIter->second->registrationEpoch() == gRegistrationSweepEpoch;
+	};
+
+	std::erase_if(chunks, alreadyReported);
+}
+
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
                       uint32_t *chunkCount, uint64_t *toDelUsedSpace,
                       uint64_t *toDelTotalSpace, uint32_t *toDelChunkCount) {

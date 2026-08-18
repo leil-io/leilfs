@@ -213,6 +213,13 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 }
 
 void MasterConn::pushRegisterChunks() {
+	// No sweep runs on this path, but the epoch must still advance. It is read
+	// on every drain of the new-chunk queue, whichever way this connection
+	// registered, and marks left by a pull session earlier in this process
+	// would otherwise read as "already reported to this master" and suppress
+	// announcements it was never told about.
+	hddRegistrationSweepBegin();
+
 	hddForeachChunkInBulks(
 	    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
