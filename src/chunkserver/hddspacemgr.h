@@ -65,8 +65,11 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 /// (see SAU_MATOCS_REGISTER_CHUNKS_START), so enumeration must survive
 /// concurrent registry mutation between calls.
 
-/// Starts a new pull-registration sweep session over the chunk registry,
-/// invalidating the marks of the previous session.
+/// Starts a new registration session over the chunk registry, invalidating the
+/// marks of the previous one. Called by both registration paths: the pull path
+/// sweeps afterwards, while the push path calls it only to retire the previous
+/// session's marks, which would otherwise still read as current when the
+/// new-chunk queue is drained (see hddGetNewChunks).
 void hddRegistrationSweepBegin();
 
 enum class RegistrationSweepResult {
@@ -80,9 +83,7 @@ enum class RegistrationSweepResult {
 RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
                                                  std::size_t bulkSize);
 
-/// Marks a chunk as already reported in the current sweep session. Used when
-/// the chunk's info was already sent through an on-demand chunk-location
-/// query, so the sweep does not need to repeat it.
+/// Marks a chunk as reported so the sweep and new-chunk queue skip it.
 /// Caller must hold gChunksMapMutex.
 void hddRegistrationSweepMarkRegistered(IChunk &chunk);
 
