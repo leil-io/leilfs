@@ -1,4 +1,4 @@
-timeout_set '15 minutes'
+timeout_set '1 minute'
 
 # Counterpart to the registration-window family: the same cluster state that
 # those tests create TEMPORARILY -- an EC(2,1) chunk with too few parts to be
@@ -47,7 +47,7 @@ for ((i = 0; i < FILE_COUNT; ++i)); do
 done
 probe_file=$(file_path 0)
 MESSAGE="every chunk must start with all 3 parts known" \
-	assert_eventually_equals "echo 3" "count_registered_parts '$probe_file'" '3 minutes'
+	assert_eventually_equals "echo 3" "count_registered_parts '$probe_file'"
 echo "PHASE: $FILE_COUNT EC(2,1) chunks created, 3 parts each"
 
 # Drop every client-side cache so the probes below must consult the master
@@ -61,7 +61,7 @@ for csid in 1 2; do
 	saunafs_chunkserver_daemon "$csid" stop
 done
 MESSAGE="the chunk must be left below the EC(2,1) threshold, permanently" \
-	assert_eventually_equals "echo 1" "count_registered_parts '$probe_file'" '3 minutes'
+	assert_eventually_equals "echo 1" "count_registered_parts '$probe_file'"
 echo "PHASE: chunkservers 1 and 2 stopped, chunk down to 1 of 3 parts for good"
 
 # A read must fail rather than hang: the master consults the surviving
@@ -103,7 +103,7 @@ for csid in 1 2; do
 done
 saunafs_wait_for_all_ready_chunkservers
 MESSAGE="the chunk must be complete again once the chunkservers return" \
-	assert_eventually_equals "echo 3" "count_registered_parts '$probe_file'" '5 minutes'
+	assert_eventually_equals "echo 3" "count_registered_parts '$probe_file'"
 
 # Both operations that failed while the chunk was incomplete must work again,
 # on that very same chunk. Order matters: the read is checked against the
