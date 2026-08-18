@@ -1,4 +1,4 @@
-timeout_set '15 minutes'
+timeout_set '3 minutes'
 
 # Read-path counterpart of test_write_during_registration.sh, run against the
 # very same scenario: a chunk that exists in metadata while its only copy is
@@ -16,9 +16,9 @@ timeout_set '15 minutes'
 # the master, which would make the probe vacuous.
 
 FILE_COUNT=${FILE_COUNT:-300}
-REGISTRATION_CHUNKS_PER_SECOND=2
-PROBE_COUNT=5
-MAX_PROBE_SECONDS=10
+REGISTRATION_CHUNKS_PER_SECOND=5
+PROBE_COUNT=10
+MAX_PROBE_SECONDS=15
 
 CHUNKSERVERS=1 \
 	MOUNTS=1 \
@@ -34,7 +34,7 @@ CHUNKSERVERS=1 \
 for ((i = 0; i < FILE_COUNT; ++i)); do
 	echo "seed $i" > "${info[mount0]}/$(printf 'file_%05d' "$i")"
 done
-assert_eventually_equals "echo $FILE_COUNT" 'count_chunk_copies' '3 minutes'
+assert_eventually_equals "echo $FILE_COUNT" 'count_chunk_copies'
 echo "PHASE: $FILE_COUNT chunks created and known to the master"
 
 # Drop every client-side cache, so the probe reads below must go to the master
@@ -57,15 +57,28 @@ registration_in_progress() {
 	copies=$(count_chunk_copies)
 	[[ -n "$copies" && "$copies" -gt 0 && "$copies" -lt "$FILE_COUNT" ]]
 }
-assert_eventually 'registration_in_progress' '2 minutes'
+assert_eventually 'registration_in_progress'
 echo "PHASE: registration window open ($(count_chunk_copies) / $FILE_COUNT copies known)"
 
-# Probe: read the files created last, which re-register last and so are still
-# unknown to the master. Content is verified too -- a deferred read must return
-# the real data, not a short or empty result.
+# Pick chunks whose copy the master does not know about yet, by measuring
+# rather than by position: a chunkserver streams its chunks in its own internal
+# order, not by chunk id, so "created last" says nothing about "registers
+# last". Reading a chunk that happens to be registered already would be served
+# from a known location and prove nothing about the deferred path.
+probe_indices=()
+for ((i = FILE_COUNT - 1; i >= 0; --i)); do
+	[[ ${#probe_indices[@]} -lt $PROBE_COUNT ]] || break
+	if [[ "$(count_registered_parts "${info[mount0]}/$(printf 'file_%05d' "$i")")" -eq 0 ]]; then
+		probe_indices+=("$i")
+	fi
+done
+MESSAGE="need $PROBE_COUNT chunks whose copy is not registered yet" \
+	assert_equals "$PROBE_COUNT" "${#probe_indices[@]}"
+
+# Probe: content is verified too: a deferred read must return the real data,
+# not a short or empty result.
 probe_start_ns=$(date +%s%N)
-for ((p = 0; p < PROBE_COUNT; ++p)); do
-	probe_idx=$((FILE_COUNT - 1 - p))
+for probe_idx in "${probe_indices[@]}"; do
 	probe_file="${info[mount0]}/$(printf 'file_%05d' "$probe_idx")"
 	MESSAGE="read of not-yet-registered chunk of file_$(printf '%05d' "$probe_idx")" \
 		assert_equals "seed $probe_idx" "$(cat "$probe_file")"
@@ -76,10 +89,10 @@ copies_at_probe=$(count_chunk_copies)
 echo "READ_PROBE_MS: $probe_ms for $PROBE_COUNT reads" \
 	"(copies known at probe: $copies_at_probe / $FILE_COUNT)"
 
-# The probes must have been served while registration was still in progress --
+# The probes must have been served while registration was still in progress,
 # otherwise this test measured nothing
 assert_less_than "$copies_at_probe" "$FILE_COUNT"
 assert_less_than "$probe_ms" "$((MAX_PROBE_SECONDS * 1000))"
 
 # Cluster still converges to the full picture afterwards
-assert_eventually_equals "echo $FILE_COUNT" 'count_chunk_copies' '10 minutes'
+assert_eventually_equals "echo $FILE_COUNT" 'count_chunk_copies' '2 minutes'

@@ -1,4 +1,4 @@
-timeout_set '30 minutes'
+timeout_set '2 minutes'
 
 # Regression test for the shadow-promotion chunk-registration bottleneck.
 #
@@ -53,7 +53,7 @@ for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" reload
 done
 
-assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies' '5 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies'
 
 # Canary file written through the mount (lands on the real disks).
 # From here on the expected copies count includes the canary chunk.
@@ -105,14 +105,14 @@ saunafs_master_daemon reload
 assert_eventually '
 	cat "${info[mount0]}/canary" > /dev/null 2>&1 &&
 	files_readable "${probe_files[@]}"
-' '20 minutes'
+'
 recovery_ms=$(( ($(date +%s%N) - promotion_start_ts) / 1000000 ))
 
 echo "PROMOTION_CLIENT_IO_RECOVERY_MS: $recovery_ms (chunks per cs: $CHUNK_COUNT)"
 
 # Also report how long the full re-registration takes, for comparison
 # (+1: the canary chunk on the real disk)
-assert_eventually_equals "echo $((2 * CHUNK_COUNT + 1))" 'count_chunk_copies' '20 minutes'
+assert_eventually_equals "echo $((2 * CHUNK_COUNT + 1))" 'count_chunk_copies' '30 seconds'
 full_registration_ms=$(( ($(date +%s%N) - promotion_start_ts) / 1000000 ))
 echo "PROMOTION_FULL_REGISTRATION_MS: $full_registration_ms (chunks per cs: $CHUNK_COUNT)"
 

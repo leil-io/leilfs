@@ -1,4 +1,4 @@
-timeout_set '15 minutes'
+timeout_set '2 minutes'
 
 # Third case of the registration-window family, after
 # test_read_during_registration.sh (no part registered) and
@@ -31,7 +31,7 @@ timeout_set '15 minutes'
 
 FILE_COUNT=${FILE_COUNT:-100}
 FILE_SIZE=${FILE_SIZE:-262144}
-REGISTRATION_CHUNKS_PER_SECOND=2
+REGISTRATION_CHUNKS_PER_SECOND=5
 PROBE_COUNT=5
 MAX_PROBE_SECONDS=10
 
@@ -62,7 +62,7 @@ done
 first_file=$(file_path 0)
 last_file=$(file_path $((FILE_COUNT - 1)))
 MESSAGE="every EC(2,1) chunk must start with all 3 parts known" \
-	assert_eventually_equals "echo 3" "count_registered_parts '$last_file'" '3 minutes'
+	assert_eventually_equals "echo 3" "count_registered_parts '$last_file'"
 echo "PHASE: $FILE_COUNT EC(2,1) chunks created, 3 parts each"
 
 # Drop every client-side cache, so the probe reads below must go to the master
@@ -86,11 +86,11 @@ done
 restarted_chunkservers_registering() {
 	[[ "$(count_registered_parts "$first_file")" -ge 2 ]]
 }
-assert_eventually 'restarted_chunkservers_registering' '3 minutes'
+assert_eventually 'restarted_chunkservers_registering'
 echo "PHASE: registration window open (first file back to $(count_registered_parts "$first_file") parts)"
 
 # The other side of the gate: pick probe targets that are demonstrably still
-# one part short, right now. They cannot be chosen up front -- a chunkserver
+# one part short, right now. They cannot be chosen up front: a chunkserver
 # streams its chunks in its own internal order rather than by chunk id, so
 # "created last" says nothing about "registers last".
 probe_files=()
@@ -129,10 +129,9 @@ assert_less_than "$probe_ms" "$((MAX_PROBE_SECONDS * 1000))"
 #
 # Waiting for the chunkservers to report ready is the right tool here, and only
 # here: it returns once registration has COMPLETED, which is exactly why it must
-# not be used before the probe. Checking every file matters too -- the probe
-# targets have their locations resolved by the on-demand query as a side effect
-# of being probed, so asserting on one of them would pass without the rest of
-# the cluster ever converging.
+# not be used before the probe. Checking every file matters too: the probe targets
+# have their locations resolved by the on-demand query as a side effect of being probed,
+# so asserting on one of them would pass without the rest of the cluster ever converging.
 saunafs_wait_for_all_ready_chunkservers
 incomplete=0
 for ((i = 0; i < FILE_COUNT; ++i)); do
