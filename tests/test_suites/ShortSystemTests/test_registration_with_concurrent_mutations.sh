@@ -63,12 +63,16 @@ echo "PHASE: initial registration complete"
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
 
-# How many registrations had completed before the promotion, so the mutations
-# below can be checked against this baseline
-sweeps_finished() {
-	grep -c "finished master-driven chunk registration" "$syslog_file" | cat
+# Sweeps completed by the master promoted below, counted on their own rather
+# than as a delta against a snapshot taken here. Syslog delivery lags the
+# script by up to a second, so a snapshot can miss registrations that have
+# already completed: the master restart during the seeding above produces
+# two, and they then surface later as if they had happened during the
+# mutations. Attributing them to the promoted master instead needs no
+# snapshot: before the promotion its count is necessarily zero.
+sweeps_finished_after_promotion() {
+	grep -c "master_1\[.*finished master-driven chunk registration" "$syslog_file" | cat
 }
-sweeps_finished_before=$(sweeps_finished)
 
 # Promote the shadow. The chunkservers keep running, reconnect to the new
 # leader and re-register everything, paced by the master's budget.
@@ -122,7 +126,7 @@ MESSAGE="mutations must run while the registration sweep is still going" \
 # Without this the test can quietly degrade to mutating an already-finished
 # chunkserver, which is what it looked like before it was promotion-based.
 MESSAGE="inserts must land in a registry that is still being swept" \
-	assert_equals "$sweeps_finished_before" "$(sweeps_finished)"
+	assert_equals 0 "$(sweeps_finished_after_promotion)"
 
 echo "PHASE: mutations done at $copies_after_mutations / $((2 * CHUNK_COUNT)) copies," \
 	"waiting for convergence"
