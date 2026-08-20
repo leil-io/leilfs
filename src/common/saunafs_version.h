@@ -57,3 +57,4 @@ constexpr uint32_t kFirstVersionWithUnlockChunkNotice = saunafsVersion(5, 8, 0);
 constexpr uint32_t kFirstVersionWithChunkserverSideChunkLock = saunafsVersion(5, 8, 0);
 constexpr uint32_t kFirstVersionWithWriteFlushPacket = saunafsVersion(5, 11, 0);
 constexpr uint32_t kFirstVersionWithFusedCreate = saunafsVersion(5, 11, 0);
+constexpr uint32_t kFirstVersionWithMdsRegistry = saunafsVersion(5, 12, 0);

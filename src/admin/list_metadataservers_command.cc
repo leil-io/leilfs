@@ -92,17 +92,31 @@ void ListMetadataserversCommand::run(const Options& options) const {
 	std::reverse(shadowsList.begin(), shadowsList.end());
 	int server = 1;
 	for (const auto& e : shadowsList) {
-		MetadataserverStatus s{"unknown", "unknown", 0};
+		MetadataserverStatus s{"unknown", "unknown", 0, std::nullopt};
 		std::string hostname;
 		// If information about MATOCL_SERV_PORT used by shadows isn't available we cannot query it
 		// for its hostname, metaversion etc.
 		if (e.port != 0) {
-			ServerConnection shadowConnection(NetworkAddress(e.ip, e.port), tlsCfg);
-			s = MetadataserverStatusCommand::getStatus(shadowConnection);
+			bool statusKnown = false;
+			try {
+				ServerConnection shadowConnection(NetworkAddress(e.ip, e.port), tlsCfg);
+				// The list reply already carries each member's software version, so the
+				// status query can be built in the right shape without probing the member.
+				s = MetadataserverStatusCommand::getStatus(ipToString(e.ip), std::to_string(e.port),
+				                                           tlsCfg, e.version);
+				statusKnown = true;
 
-			auto request = cltoma::hostname::build();
-			auto response = shadowConnection.sendAndReceive(request, SAU_MATOCL_HOSTNAME);
-			matocl::hostname::deserialize(response, hostname);
+				auto request = cltoma::hostname::build();
+				auto response = shadowConnection.sendAndReceive(request, SAU_MATOCL_HOSTNAME);
+				matocl::hostname::deserialize(response, hostname);
+			} catch (const std::exception &) {
+				// One unreachable member must not hide the rest of the list, and a failed
+				// hostname lookup alone must not discard a status already fetched.
+				if (!statusKnown) {
+					s = MetadataserverStatus{"unreachable", "unreachable", 0, std::nullopt};
+				}
+				hostname = "unreachable";
+			}
 		} else {
 			hostname = "unknown";
 		}

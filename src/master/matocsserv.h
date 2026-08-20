@@ -123,6 +123,13 @@ void matocsserv_sorted_servers_refresh_done();
 std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_for_new_chunk(
     uint8_t goalId, uint16_t &min_server_count, uint32_t min_server_version = 0);
 void matocsserv_getspace(uint64_t* totalspace, uint64_t* availspace);
+/// Returns the port this instance is actually listening on for chunkserver connections,
+/// resolved the same way the listener resolved it at bind time (a number or a service
+/// name); 0 means no concrete port (the ephemeral "*", or a string naming no port).
+/// Can differ from MATOCS_LISTEN_PORT's raw config value right after a reload that failed
+/// to rebind: the listener then keeps its previous, working port, but config already shows
+/// the new one.
+uint16_t matocsserv_get_listen_port();
 const char* matocsserv_getstrip(matocsserventry* eptr);
 uint32_t matocsserv_get_servip(matocsserventry *eptr);
 int matocsserv_getlocation(matocsserventry* eptr, uint32_t* servip, uint16_t* servport,

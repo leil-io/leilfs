@@ -24,6 +24,8 @@
 #include <iomanip>
 #include <iostream>
 
+#include "common/saunafs_version.h"
+#include "common/server_connection.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
 
@@ -48,28 +50,65 @@ void MetadataserverStatusCommand::run(const Options& options) const {
 	auto tlsCfg =
 	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
 
-	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
-	MetadataserverStatus s = MetadataserverStatusCommand::getStatus(connection);
+	MetadataserverStatus s =
+	    MetadataserverStatusCommand::getStatus(options.argument(0), options.argument(1), tlsCfg);
 
 	if (options.isSet(kPorcelainMode)) {
-		std::cout << s.personality << "\t" << s.serverStatus << "\t"
-				<< s.metadataVersion << std::endl;
+		std::cout << s.personality << "\t" << s.serverStatus << "\t" << s.metadataVersion;
+		// Only Master/Shadow's existing 3-field porcelain output must stay byte-for-byte
+		// unchanged; the 4th field is appended only when there is an mdsId to report.
+		if (s.mdsId) { std::cout << "\t" << *s.mdsId; }
+		std::cout << std::endl;
 	} else {
 		std::cout << "     personality: " << s.personality << std::endl;
 		std::cout << "   server status: " << s.serverStatus << std::endl;
 		std::cout << "metadata version: " << s.metadataVersion << std::endl;
+		if (s.mdsId) { std::cout << "          mds id: " << *s.mdsId << std::endl; }
 	}
 }
 
-MetadataserverStatus MetadataserverStatusCommand::getStatus(ServerConnection& connection) {
-	std::vector<uint8_t> request;
-	request = cltoma::metadataserverStatus::build(1);
-	auto response = connection.sendAndReceive(request, SAU_MATOCL_METADATASERVER_STATUS);
+MetadataserverStatus MetadataserverStatusCommand::getStatus(
+    const std::string &host, const std::string &port, const std::string &tlsConfigFile,
+    std::optional<uint32_t> knownPeerVersion) {
+	auto sendStatusRequest = [&](bool wantsIdentity) {
+		MessageBuffer request;
+		if (wantsIdentity) {
+			request = cltoma::metadataserverStatus::build(1, uint8_t{1});
+		} else {
+			request = cltoma::metadataserverStatus::build(1);
+		}
+		ServerConnection connection(host, port, tlsConfigFile);
+		return connection.sendAndReceive(request, SAU_MATOCL_METADATASERVER_STATUS);
+	};
+
+	MessageBuffer response;
+	if (knownPeerVersion) {
+		response = sendStatusRequest(*knownPeerVersion >= kFirstVersionWithMdsRegistry);
+	} else {
+		// Prefer the identity-bearing request when the peer version is unknown. Releases
+		// older than 5.12 reject that packet shape and close the connection, so retry the
+		// legacy request on a fresh connection. Response decoding stays outside this catch:
+		// a malformed response is not evidence that the peer needs the legacy request.
+		try {
+			response = sendStatusRequest(true);
+		} catch (const std::exception &) { response = sendStatusRequest(false); }
+	}
+
+	PacketVersion packetVersion;
+	deserializePacketVersionNoHeader(response, packetVersion);
 
 	uint32_t messageId;
 	uint8_t status;
 	uint64_t metadataVersion;
-	matocl::metadataserverStatus::deserialize(response, messageId, status, metadataVersion);
+	std::optional<uint32_t> mdsId;
+	if (packetVersion == matocl::metadataserverStatus::kWithIdentityResponse) {
+		uint32_t reportedMdsId;
+		matocl::metadataserverStatus::deserialize(response, messageId, status, metadataVersion,
+		                                          reportedMdsId);
+		mdsId = reportedMdsId;
+	} else {
+		matocl::metadataserverStatus::deserialize(response, messageId, status, metadataVersion);
+	}
 
 	std::string personality, serverStatus;
 	switch (status) {
@@ -89,5 +128,5 @@ MetadataserverStatus MetadataserverStatusCommand::getStatus(ServerConnection& co
 		personality = "<unknown>";
 		serverStatus = "<unknown>";
 	}
-	return MetadataserverStatus{personality, serverStatus, metadataVersion};
+	return MetadataserverStatus{personality, serverStatus, metadataVersion, mdsId};
 }

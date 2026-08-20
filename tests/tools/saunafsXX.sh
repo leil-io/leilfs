@@ -47,19 +47,23 @@ END
 		echo "deb [arch=amd64 signed-by=${TEMP_DIR}/apt/saunafs-archive-keyring.gpg] https://repo.saunafs.com/repository/saunafs-${distro_id}-${release}/ ${codename} main" >"${TEMP_DIR}/apt/saunafs.list"
 		env APT_CONFIG="${TEMP_DIR}/apt/apt.conf" apt-get update
 		env APT_CONFIG="${TEMP_DIR}/apt/apt.conf" apt-get install --yes libyaml-cpp*
-		SAUNAFSXX_TAG_APT="4.1.0-20240509-152518-stable-main-a7cb5669"
-		if [ "${distro}" == Ubuntu ]; then
-			case "${release}" in
-				'22.04')
-					SAUNAFSXX_TAG_APT="4.1.0-20240509-152513-stable-main-a7cb5669"
-				;;
-				'24.04')
-					SAUNAFSXX_TAG_APT="4.1.0-20240509-152518-stable-main-a7cb5669"
-				;;
-				*)
-					test_fail "Your Ubuntu release (${release}) is not supported."
-				;;
-			esac
+		# A test may pre-set SAUNAFSXX_TAG_APT (together with SAUNAFSXX_TAG) to pin a
+		# different released version; newer releases use plain <version>-<rev> strings.
+		if [ -z "${SAUNAFSXX_TAG_APT:-}" ]; then
+			SAUNAFSXX_TAG_APT="4.1.0-20240509-152518-stable-main-a7cb5669"
+			if [ "${distro}" == Ubuntu ]; then
+				case "${release}" in
+					'22.04')
+						SAUNAFSXX_TAG_APT="4.1.0-20240509-152513-stable-main-a7cb5669"
+					;;
+					'24.04')
+						SAUNAFSXX_TAG_APT="4.1.0-20240509-152518-stable-main-a7cb5669"
+					;;
+					*)
+						test_fail "Your Ubuntu release (${release}) is not supported."
+					;;
+				esac
+			fi
 		fi
 		env APT_CONFIG="${TEMP_DIR}/apt/apt.conf" apt-get --yes --allow-downgrades install --download-only \
 			saunafs-master="${SAUNAFSXX_TAG_APT}" \
@@ -70,8 +74,11 @@ END
 			# saunafs-metalogger="${SAUNAFSXX_TAG_APT}"
 		# unpack binaries
 		(	cd "${destdir}" || return 1
-			find . -name "*master*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/sbin/sfsmaster
-			find . -name "*chunkserver*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/sbin/sfschunkserver
+			# Whole directories, not single members: since 5.x the sfs* names are symlinks
+			# to the leil-* binaries next to them, and extracting just the symlink member
+			# would leave it dangling.
+			find . -name "*master*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/sbin/
+			find . -name "*chunkserver*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/sbin/
 			find . -name "*client*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/bin/
 			find . -name "*adm*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/bin/
 			# find . -name "*metalogger*.deb" -print0 | xargs -0 dpkg-deb --fsys-tarfile | tar -x ./usr/sbin/

@@ -416,6 +416,9 @@ create_sfsmds_cfg_() {
 	fi
 
 	echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster"
+	# The default listen host is the wildcard, which is not a dialable address; without a
+	# concrete address to advertise in the cluster registry, an MDS refuses to start.
+	echo "MDS_ADVERTISE_HOST = 127.0.0.1"
 }
 
 create_sfsmaster_shadow_cfg_() {
