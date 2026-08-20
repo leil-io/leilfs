@@ -268,8 +268,9 @@ void MasterConn::onRegisterChunksStart(const std::vector<uint8_t> &data) {
 	registrationStatus_ = RegistrationStatus::kChunksRegistering;
 
 	safs::log_info(
-	    "MasterConn: master-driven chunk registration started (bulk size {}, initial credits {})",
-	    pullBulkSize_, pullCredits_);
+	    "MasterConn: master-driven chunk registration started (bulk size {}, initial credits {}, "
+	    "registry buckets {})",
+	    pullBulkSize_, pullCredits_, hddGetChunkRegistryBucketCount());
 
 	hddRegistrationSweepBegin();
 	pumpPullRegistration();
@@ -295,8 +296,10 @@ void MasterConn::pumpPullRegistration() {
 		if (!hddRegistrationSweepNext(bulk, pullBulkSize_)) {
 			createAttachedPacket(cstoma::registerChunksEnd::build(pullChunksSent_));
 			registrationStatus_ = RegistrationStatus::kChunksRegistered;
-			safs::log_info("MasterConn: master-driven chunk registration complete ({} chunks)",
-			               pullChunksSent_);
+			safs::log_info(
+			    "MasterConn: master-driven chunk registration complete ({} chunks, "
+			    "registry buckets {})",
+			    pullChunksSent_, hddGetChunkRegistryBucketCount());
 			return;
 		}
 

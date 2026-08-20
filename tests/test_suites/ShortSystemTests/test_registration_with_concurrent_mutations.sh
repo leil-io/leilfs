@@ -1,9 +1,17 @@
 timeout_set '2 minutes'
 
 # The resumable pull-registration sweep must not lose chunks when the registry
-# mutates mid-sweep: new chunks are created (registry inserts can rehash the
-# map under the sweep's bucket cursor) and files are unlinked while a
-# budget-paced registration is running.
+# mutates mid-sweep: new chunks are inserted and files are unlinked while a
+# budget-paced registration is running. What this exercises is the sweep's
+# termination pass, which rescans until no unmarked chunk remains and so has to
+# pick up chunks inserted after the bucket cursor passed their bucket.
+#
+# It does NOT exercise a rehash under the cursor, the other hazard that pass
+# exists for. The synthetic scan reserves the map for the whole seeded registry
+# up front (SyntheticChunkSink::reserve), so at this volume the few dozen
+# inserts below cannot grow it past its load factor. That case needs the
+# opposite parameters: a tiny seeded registry with many times its size
+# inserted.
 #
 # The window is opened by promoting a shadow, not by restarting chunkservers,
 # and that is what makes the premise reachable at all. A restarted chunkserver
