@@ -16,6 +16,8 @@
    along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "common/platform.h"
+
 #include <charconv>
 #include <string>
 

@@ -18,7 +18,10 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstdint>
+#include <vector>
 
 #include "chunkserver-common/cmr_disk.h"
 
@@ -69,12 +72,16 @@ public:
 	/// No stat() calls: every fake chunk is a full, valid chunk.
 	int updateChunkAttributes(IChunk *chunk, bool isFromScan) override;
 
+	/// Creates chunks whose version changes do not touch the filesystem.
+	IChunk *instantiateNewConcreteChunk(uint64_t chunkId, ChunkPartType type) override;
+
 	// IO: file descriptors point to /dev/null so the generic fd-based
 	// bookkeeping (gOpenChunks, crc resources) keeps working.
 
 	void creat(IChunk *chunk) override;
 	void open(IChunk *chunk) override;
 	int unlinkChunk(IChunk *chunk) override;
+	int fsyncChunk(IChunk *chunk) override;
 	int ftruncateData(IChunk *chunk, uint64_t size) override;
 
 	/// Fills crcData with the static pattern-block CRC for every block.
@@ -92,7 +99,8 @@ public:
 	/// Updates the in-memory version only; there is no metadata file.
 	int overwriteChunkVersion(IChunk *chunk, uint32_t newVersion) override;
 
-	// Writes: accept and discard (avoids fd/punch-hole side effects).
+	// Writes: accept and discard both data and CRCs, preserving the static
+	// synthetic contents (avoids fd/punch-hole side effects).
 
 	int writePartialBlockAndCrc(IChunk *chunk, const uint8_t *buffer, uint32_t offsetInBlock,
 	                            uint32_t size, const uint8_t *crcBuff, uint8_t *crcData,

@@ -88,10 +88,14 @@ inline void hddForgetPresentChunkType(ChunkPartType type) {
 inline void hddVerifyPresentChunkTypes() {
 	uint64_t countedChunks = 0;
 	uint64_t registrySize = 0;
+	// Captured in the same locked snapshot as the totals: reading it afterwards
+	// would race with the scan and worker threads mutating the index.
+	std::size_t typeCount = 0;
 	{
 		const std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 		for (const auto &[type, count] : gPresentChunkTypes) { countedChunks += count; }
 		registrySize = gChunksMap.size();
+		typeCount = gPresentChunkTypes.size();
 	}
 
 	if (countedChunks != registrySize) {
@@ -99,7 +103,7 @@ inline void hddVerifyPresentChunkTypes() {
 		    "gPresentChunkTypes out of sync with the chunk registry: {} chunks counted across {} "
 		    "types, {} chunks in the registry -- an insert or erase path is missing its "
 		    "hddNotePresentChunkType/hddForgetPresentChunkType call",
-		    countedChunks, gPresentChunkTypes.size(), registrySize);
+		    countedChunks, typeCount, registrySize);
 		assert(false && "gPresentChunkTypes out of sync with gChunksMap");
 	}
 }

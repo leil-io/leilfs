@@ -103,6 +103,11 @@ constexpr double kBytesPerGiB = 1024.0 * 1024.0 * 1024.0;
 // Minimum allowed register timeout (ms)
 constexpr uint32_t kMinRegisterTimeoutMs = 10;
 
+// How often deferred chunk queries are examined for expiry. Matches the
+// smallest accepted ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS so that the configured
+// value is honored as the maximum it is documented to be.
+constexpr uint64_t kPendingChunkQueriesCheckPeriod_ms = 100;
+
 // Keep-alive timeout divisor
 constexpr uint32_t kDefaultKeepAliveTimeoutDivisor = 3;
 
@@ -2030,6 +2035,11 @@ int matocsserv_init() {
 	eventloop_pollregister(matocsserv_desc, matocsserv_serve);
 	eventloop_eachloopregister(matocsserv_flush_chunk_queries);
 	eventloop_eachloopregister(matocsserv_pull_registration_budget_tick);
-	eventloop_timeregister(TIMEMODE_RUN_LATE, 1, 0, matocsserv_pending_chunk_queries_check);
+	// Checked at the granularity of the smallest configurable query timeout:
+	// a one-second timer would let a 100 ms deadline overrun by an order of
+	// magnitude, while ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS is documented as a
+	// maximum. The check returns immediately when nothing is pending.
+	eventloop_timeregister_ms(kPendingChunkQueriesCheckPeriod_ms,
+	                          matocsserv_pending_chunk_queries_check);
 	return 0;
 }

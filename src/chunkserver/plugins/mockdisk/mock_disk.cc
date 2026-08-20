@@ -18,21 +18,35 @@
 
 #include "common/platform.h"
 
-#include "mock_disk.h"
-
 #include <fcntl.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
 
+#include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "common/crc.h"
 #include "common/datapack.h"
 #include "common/slice_traits.h"
 #include "errors/saunafs_error_codes.h"
+#include "mock_disk.h"
 #include "slogger/slogger.h"
 
 namespace mockdisk {
+
+namespace {
+
+class MockChunk final : public CmrChunk {
+public:
+	using CmrChunk::CmrChunk;
+
+	int renameChunkFile(uint32_t newVersion) override {
+		setVersion(newVersion);
+		return 0;
+	}
+};
+
+}  // namespace
 
 MockDisk::MockDisk(const disk::Configuration &configuration, uint64_t chunkCount,
                    uint64_t firstChunkId)
@@ -110,6 +124,12 @@ int MockDisk::updateChunkAttributes(IChunk *chunk, bool /*isFromScan*/) {
 	return SAUNAFS_STATUS_OK;
 }
 
+IChunk *MockDisk::instantiateNewConcreteChunk(uint64_t chunkId, ChunkPartType type) {
+	auto *chunk = new MockChunk(chunkId, type, ChunkState::Locked);
+	chunk->setOwner(this);
+	return chunk;
+}
+
 void MockDisk::creat(IChunk *chunk) { open(chunk); }
 
 void MockDisk::open(IChunk *chunk) {
@@ -120,6 +140,8 @@ void MockDisk::open(IChunk *chunk) {
 }
 
 int MockDisk::unlinkChunk(IChunk * /*chunk*/) { return SAUNAFS_STATUS_OK; }
+
+int MockDisk::fsyncChunk(IChunk * /*chunk*/) { return SAUNAFS_STATUS_OK; }
 
 int MockDisk::ftruncateData(IChunk * /*chunk*/, uint64_t /*size*/) { return 0; }
 
@@ -161,20 +183,20 @@ int MockDisk::overwriteChunkVersion(IChunk *chunk, uint32_t newVersion) {
 
 int MockDisk::writePartialBlockAndCrc(IChunk * /*chunk*/, const uint8_t * /*buffer*/,
                                       uint32_t /*offsetInBlock*/, uint32_t size,
-                                      const uint8_t *crcBuff, uint8_t *crcData, uint16_t blockNum,
-                                      bool /*isNewBlock*/, const char * /*errorMsg*/) {
-	memcpy(crcData + blockNum * kCrcSize, crcBuff, kCrcSize);
+                                      const uint8_t * /*crcBuff*/, uint8_t * /*crcData*/,
+                                      uint16_t /*blockNum*/, bool /*isNewBlock*/,
+                                      const char * /*errorMsg*/) {
 	return static_cast<int>(size);
 }
 
 int MockDisk::writeFullBlocksAndCrcs(IChunk * /*chunk*/,
                                      const std::vector<uint16_t> &blocksPerBuffer,
                                      const std::vector<const uint8_t *> & /*buffers*/,
-                                     uint16_t startBlock, const uint8_t *crcBuff, uint8_t *crcData,
-                                     bool /*areNewBlocks*/, const char * /*errorMsg*/) {
+                                     uint16_t /*startBlock*/, const uint8_t * /*crcBuff*/,
+                                     uint8_t * /*crcData*/, bool /*areNewBlocks*/,
+                                     const char * /*errorMsg*/) {
 	uint32_t blocksWritten = 0;
 	for (const auto blocksInBuffer : blocksPerBuffer) { blocksWritten += blocksInBuffer; }
-	memcpy(crcData + startBlock * kCrcSize, crcBuff, kCrcSize * blocksWritten);
 	return static_cast<int>(blocksWritten * SFSBLOCKSIZE);
 }
 

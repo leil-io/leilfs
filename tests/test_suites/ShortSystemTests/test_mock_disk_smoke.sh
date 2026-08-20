@@ -18,7 +18,9 @@ CHUNKSERVERS=1 \
 # goal 1 -- exactly the chunks the mock disk will register.
 saunafs_master_daemon stop
 metadata_version=$(metadata_get_version "${info[master_data_path]}/metadata.sfs")
+# Use 0666 (438 decimal) so the test mount user can write the fixture.
 generate_mock_chunks_changelog "$CHUNK_COUNT" 10000 "$metadata_version" \
+	438 \
 	> "${info[master_data_path]}/changelog.sfs"
 assert_success sfsmetarestore -a -d "${info[master_data_path]}"
 saunafs_master_daemon start
@@ -50,6 +52,11 @@ assert_equals "$expected_head" "$(read_head "$first_file" $((3 * 67108864 + 6553
 # A file whose chunks live further into the id space
 last_file=$(ls "${info[mount0]}" | grep mock_ | tail -1)
 assert_equals "$expected_head" "$(read_head "${info[mount0]}/$last_file")"
+
+# Writes to a mock-backed chunk are acknowledged and discarded. The next
+# uncached read must still return the static data with its matching CRC.
+printf 'discarded mock write' | dd of="$first_file" bs=1 conv=notrunc status=none
+assert_equals "$expected_head" "$(read_head "$first_file")"
 
 # Writes must succeed and land on the real disk, never on the mock disk
 echo "canary data" > "${info[mount0]}/canary"

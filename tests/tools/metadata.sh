@@ -331,7 +331,7 @@ metadata_generate_all() {
 	done
 }
 
-# generate_mock_chunks_changelog <chunk_count> [chunks_per_file] [start_version]
+# generate_mock_chunks_changelog <chunk_count> [chunks_per_file] [start_version] [file_mode]
 # Prints a changelog which populates a filesystem containing no files yet
 # with <chunk_count> chunks, spread over files of <chunks_per_file> chunks each.
 # Chunk ids are sequential starting from 1 and get version 1 -- matching the
@@ -343,15 +343,18 @@ metadata_generate_all() {
 # SETGOAL to other goal ids cannot be applied offline.
 # [start_version] must be the current metadata version (metadata_get_version);
 # session bookkeeping bumps it above 1 even on a fresh cluster.
+# [file_mode] is a decimal POSIX file mode and defaults to 0644.
 # Apply with: sfsmetarestore -a -d <master_data_path> (master stopped).
 generate_mock_chunks_changelog() {
 	local chunk_count=$1
 	local chunks_per_file=${2:-10000}
 	local start_version=${3:-1}
+	local file_mode=${4:-420}
 	assert_program_installed awk
 	awk -v chunk_count="$chunk_count" \
 			-v chunks_per_file="$chunks_per_file" \
-			-v start_version="$start_version" '
+			-v start_version="$start_version" \
+			-v file_mode="$file_mode" '
 	END {
 		version = start_version
 		chunkid = 1
@@ -362,8 +365,8 @@ generate_mock_chunks_changelog() {
 			if (chunks_in_file > chunks_per_file) {
 				chunks_in_file = chunks_per_file
 			}
-			printf "%d: 1|CREATE(1,mock_%07d,f,420,9,9,0):%d\n", \
-					version++, file_nr, inode
+			printf "%d: 1|CREATE(1,mock_%07d,f,%d,9,9,0):%d\n", \
+					version++, file_nr, file_mode, inode
 			for (i = 0; i < chunks_in_file; ++i) {
 				printf "%d: 1|WRITE(%d,%d,1,1):%d\n", version++, inode, i, chunkid++
 			}
