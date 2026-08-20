@@ -1,3 +1,10 @@
+# Test-only plugin: it fakes chunks that have no data behind them, so it must
+# never reach a production install. Built and installed only for test builds,
+# where the chunkserver loads it from the installed plugins directory.
+if(NOT BUILD_TESTS)
+  return()
+endif()
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 collect_sources(MOCK_DISK_PLUGIN)
 
