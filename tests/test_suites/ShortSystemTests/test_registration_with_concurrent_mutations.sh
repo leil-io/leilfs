@@ -1,27 +1,12 @@
 timeout_set '2 minutes'
 
-# The resumable pull-registration sweep must not lose chunks when the registry
-# mutates mid-sweep: new chunks are created (registry inserts can rehash the
-# map under the sweep's bucket cursor) and files are unlinked while a
-# budget-paced registration is running.
+# Verify that paced pull registration does not lose chunks while files are
+# created and removed. Check convergence and registration of each surviving
+# mutation, not just successful client I/O.
 #
-# The window is opened by promoting a shadow, not by restarting chunkservers,
-# and that is what makes the premise reachable at all. A restarted chunkserver
-# advertises no free space until its registration has COMPLETED, so the leader
-# can never choose it to host a new chunk while it sweeps. Every insert would
-# land in a registry that had already finished being swept, which is the one
-# thing this test must avoid. A chunkserver that merely reconnects scanned its
-# disks long ago, reports real space in its registration tail, and can take new
-# chunks immediately, while its sweep is still running.
-#
-# Distinct from test_io_during_failover, which shares the promotion setup but
-# asks a different question. That test asks whether client operations succeed
-# during the window and bounds their latency. This one asks whether the sweep
-# loses anything, so its assertion is the exact chunk count once registration
-# has converged: every probe here could succeed instantly and the test would
-# still fail if a single chunk went missing. It also needs the volume, a
-# large seeded registry and dozens of concurrent inserts and removals for
-# the map to rehash under the cursor at all.
+# Promote a shadow so chunkservers reconnect with scanned disks and can
+# receive new chunks while their sweeps are still running.
+# Rehash coverage belongs to test_registration_rehash_during_sweep.
 
 CHUNK_COUNT=${CHUNK_COUNT:-100000}
 CHUNKS_PER_FILE=1000
