@@ -22,13 +22,16 @@
 
 #include "common/platform.h"
 
-#include "common/server_connection.h"
+#include <cstdint>
+#include <optional>
+
 #include "admin/saunafs_admin_command.h"
 
 struct MetadataserverStatus {
 	std::string personality;
 	std::string serverStatus;
 	uint64_t metadataVersion;
+	std::optional<uint32_t> mdsId;
 };
 
 class MetadataserverStatusCommand : public SaunaFsAdminCommand {
@@ -37,5 +40,11 @@ public:
 	void usage() const override;
 	SupportedOptions supportedOptions() const override;
 	void run(const Options& options) const override;
-	static MetadataserverStatus getStatus(ServerConnection& connection);
+	/// Queries host:port for its status. When the caller already knows the peer's software
+	/// version (e.g. from a metadataservers list reply, which carries one per member),
+	/// passing it picks the request shape directly; otherwise the identity-bearing request is
+	/// tried first, with the legacy request retried on a fresh connection if the peer rejects it.
+	static MetadataserverStatus getStatus(const std::string &host, const std::string &port,
+	                                      const std::string &tlsConfigFile,
+	                                      std::optional<uint32_t> knownPeerVersion = std::nullopt);
 };

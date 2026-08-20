@@ -544,6 +544,14 @@ void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
 	*availspace = tspace-uspace;
 }
 
+uint16_t matocsserv_get_listen_port() {
+	// Resolved through the same getaddrinfo path the listener bound with, so a service name
+	// (e.g. from /etc/services) reports the port it actually resolved to at bind time.
+	uint16_t port = 0;
+	if (tcpresolve(nullptr, gListenPort.c_str(), nullptr, &port, 1) < 0) { return 0; }
+	return port;
+}
+
 const char* matocsserv_getstrip(matocsserventry *eptr) {
 	static const char *empty = "???";
 	if (eptr->mode != ChunkserverConnectionMode::KILL && !eptr->serviceStrIp.empty()) {

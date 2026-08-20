@@ -104,6 +104,7 @@
 #include "master/matontserv.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadataserver_hooks.h"
 #include "master/personality.h"
 #include "master/settrashtime_task.h"
 #include "metrics/metrics.h"
@@ -1150,6 +1151,16 @@ static int starting;  ///< Flag indicating whether the server is starting (1) or
 static std::string gListenHost;
 static std::string gListenPort;
 
+uint16_t matoclserv_get_listen_port() {
+	// Resolved through the same getaddrinfo path the listener bound with, so a service name
+	// (e.g. from /etc/services) reports the port it actually resolved to at bind time.
+	uint16_t port = 0;
+	if (tcpresolve(nullptr, gListenPort.c_str(), nullptr, &port, 1) < 0) { return 0; }
+	return port;
+}
+
+const std::string &matoclserv_get_listen_host() { return gListenHost; }
+
 static uint32_t gIoLimitsAccumulate_ms;
 static double gIoLimitsRefreshTime;
 static uint32_t gIoLimitsConfigId;
@@ -1784,21 +1795,45 @@ void matoclserv_iolimits_status(matoclserventry* eptr, const uint8_t* data, uint
 /// @param length The length of the data received
 void matoclserv_metadataserver_status(matoclserventry* eptr, const uint8_t* data, uint32_t length) {
 	uint32_t messageId = 0;
-	cltoma::metadataserverStatus::deserialize(data, length, messageId);
+	uint8_t requestsIdentity = 0;
+	PacketVersion packetVersion;
+	deserializePacketVersionNoHeader(data, length, packetVersion);
+	if (packetVersion == cltoma::metadataserverStatus::kWithIdentityRequest) {
+		cltoma::metadataserverStatus::deserialize(data, length, messageId, requestsIdentity);
+	} else {
+		cltoma::metadataserverStatus::deserialize(data, length, messageId);
+	}
 
 	uint64_t metadataVersion = 0;
 	try {
 		metadataVersion = gFSOperations->getMetadataVersion();
 	} catch (NoMetadataException &) {}
 
-	uint8_t status =
-	    metadataserver::isMaster()
-	        ? SAU_METADATASERVER_STATUS_MASTER
-	        : (masterconn_is_connected() ? SAU_METADATASERVER_STATUS_SHADOW_CONNECTED
-	                                     : SAU_METADATASERVER_STATUS_SHADOW_DISCONNECTED);
+	MetadataserverStatusResult result;
+	try {
+		result = gMetadataserverStatusHook();
+	} catch (const std::exception &exception) {
+		// Same contract as matoclserv_metadataservers_list: a failing hook drops only this
+		// connection, never the process.
+		safs::log_err("main master server module: metadataserver status failed: {}",
+		              exception.what());
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	} catch (...) {
+		safs::log_err("main master server module: metadataserver status failed");
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	}
 
 	MessageBuffer buffer;
-	matocl::metadataserverStatus::serialize(buffer, messageId, status, metadataVersion);
+	// Fall back to the legacy shape if the hook has no identity to report (e.g.
+	// leil-master's default hook), even when the client asked for the richer one.
+	if (packetVersion == cltoma::metadataserverStatus::kWithIdentityRequest && result.identity) {
+		matocl::metadataserverStatus::serialize(buffer, messageId, result.status, metadataVersion,
+		                                        result.identity->mdsId);
+	} else {
+		matocl::metadataserverStatus::serialize(buffer, messageId, result.status, metadataVersion);
+	}
 	matoclserv_createpacket(eptr, std::move(buffer));
 }
 
@@ -2215,8 +2250,25 @@ void matoclserv_inotifier_list(matoclserventry *eptr, const uint8_t *data, uint3
 
 void matoclserv_metadataservers_list(matoclserventry* eptr, const uint8_t* data, uint32_t length) {
 	cltoma::metadataserversList::deserialize(data, length);
-	matoclserv_createpacket(eptr, matocl::metadataserversList::build(SAUNAFS_VERSHEX,
-			matomlserv_shadows()));
+
+	std::vector<MetadataserverListEntry> entries;
+	try {
+		entries = gMetadataserversListHook();
+	} catch (const std::exception &exception) {
+		// The hook's implementation may live outside this module (a KV-backed registry) and
+		// can fail or refuse. Drop only this connection, so the caller sees a failed query
+		// rather than an answer indistinguishable from an empty cluster, and an exception
+		// type from outside the backend error family cannot fail-stop the whole process.
+		safs::log_err("main master server module: metadataservers list failed: {}",
+		              exception.what());
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	} catch (...) {
+		safs::log_err("main master server module: metadataservers list failed");
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	}
+	matoclserv_createpacket(eptr, matocl::metadataserversList::build(SAUNAFS_VERSHEX, entries));
 }
 
 static void matoclserv_send_iolimits_cfg(matoclserventry *eptr) {

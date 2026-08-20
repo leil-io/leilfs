@@ -164,9 +164,17 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, messageId)
 
 // SAU_CLTOMA_METADATASERVER_STATUS
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, metadataserverStatus, kLegacyRequest, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, metadataserverStatus, kWithIdentityRequest, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		cltoma, metadataserverStatus, SAU_CLTOMA_METADATASERVER_STATUS, 0,
+		cltoma, metadataserverStatus, SAU_CLTOMA_METADATASERVER_STATUS, kLegacyRequest,
 		uint32_t, messageId)
+// requestsIdentity only needs to exist so this version's build/deserialize overload has a
+// different arity from kLegacyRequest's; the version tag itself is already the real signal.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		cltoma, metadataserverStatus, SAU_CLTOMA_METADATASERVER_STATUS, kWithIdentityRequest,
+		uint32_t, messageId,
+		uint8_t, requestsIdentity)
 
 // SAU_CLTOMA_METADATASERVERS_LIST
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

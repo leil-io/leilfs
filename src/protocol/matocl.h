@@ -191,11 +191,19 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		std::vector<IoGroupAndLimit>, groupsAndLimits)
 
 // SAU_MATOCL_METADATASERVER_STATUS
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, metadataserverStatus, kLegacyResponse, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(matocl, metadataserverStatus, kWithIdentityResponse, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		matocl, metadataserverStatus, SAU_MATOCL_METADATASERVER_STATUS, 0,
+		matocl, metadataserverStatus, SAU_MATOCL_METADATASERVER_STATUS, kLegacyResponse,
 		uint32_t, messageId,
 		uint8_t, status,
 		uint64_t, metadataVersion)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, metadataserverStatus, SAU_MATOCL_METADATASERVER_STATUS, kWithIdentityResponse,
+		uint32_t, messageId,
+		uint8_t, status,
+		uint64_t, metadataVersion,
+		uint32_t, mdsId)
 
 // SAU_MATOCL_FUSE_GETGOAL
 SAUNAFS_DEFINE_PACKET_VERSION(matocl, fuseGetGoal, kStatusPacketVersion, 0)

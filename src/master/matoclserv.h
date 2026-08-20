@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "common/type_defs.h"
 
@@ -99,6 +100,19 @@ void matoclserv_set_batch_stats_enabled(bool enabled);
 
 /// Returns the current group-commit batch-stats counters (process-wide, since process start).
 MatoclBatchStats matoclserv_get_batch_stats();
+
+/// Returns the port this instance is actually listening on for client/admin connections,
+/// resolved the same way the listener resolved it at bind time (a number or a service
+/// name); 0 means no concrete port (the ephemeral "*", or a string naming no port).
+/// Can differ from MATOCL_LISTEN_PORT's raw config value right after a reload that failed
+/// to rebind: the listener then keeps its previous, working port, but config already shows
+/// the new one.
+uint16_t matoclserv_get_listen_port();
+
+/// Returns the host this instance is actually bound to for client/admin connections. Can
+/// differ from MATOCL_LISTEN_HOST's raw config value the same way matoclserv_get_listen_port
+/// can differ from its own config value.
+const std::string &matoclserv_get_listen_host();
 
 /// Requests one quiescent group-commit window for background metadata maintenance.
 /// Already staged client work is committed first; newly submitted bodies remain held

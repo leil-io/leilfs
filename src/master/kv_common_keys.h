@@ -65,6 +65,23 @@ inline constexpr std::string_view kSessionRangeStartKey = "META_NEXT_SESSION_RAN
 /// has ever been allocated"; allocated ids start at 1.
 inline constexpr std::string_view kMetaNextMdsIdKey = "META_NEXT_MDS_ID";
 
+/// Prefix for per-MDS cluster membership records.
+/// Format: MDS_REGISTRY_<MdsId (Big Endian)> : <Ip><MatoclPort><MatocsPort><Version>
+/// Written once by the owning MDS at startup; no other process ever writes this row.
+/// @note Deliberately separate from MDS_HEARTBEAT_ (below): this row never changes while
+/// its process lives, while the heartbeat renews constantly, so splitting them keeps
+/// renewal conflict-free.
+inline constexpr std::string_view kMdsRegistryKeyPrefix = "MDS_REGISTRY_";
+
+/// Prefix for per-MDS liveness signals.
+/// Format: MDS_HEARTBEAT_<MdsId (Big Endian)> : <UnixTimestamp, uint64_t Little Endian>
+/// Renewed by the owning MDS on its periodic tick with a plain blind set: the row has a
+/// single writer, so nothing needs atomicMax ordering, and a renewal after a forward
+/// clock step heals an implausibly-future value within one tick instead of pinning it
+/// until wall time catches up. No ownership or takeover semantics: every MDS only ever
+/// touches its own row.
+inline constexpr std::string_view kMdsHeartbeatKeyPrefix = "MDS_HEARTBEAT_";
+
 // Keys for filesystem statistics
 inline constexpr std::string_view kMetaNodesKey = "META_NODES";
 inline constexpr std::string_view kMetaTrashSpaceKey = "META_TRASH_SPACE";
