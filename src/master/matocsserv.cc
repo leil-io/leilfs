@@ -168,6 +168,13 @@ struct matocsserventry {
 	/// matocsserv_pull_registration_budget_tick.
 	uint32_t pullCreditsOwed{0};
 
+	/// True once a registration bulk has arrived in the current registration.
+	/// Tells the two protocols apart when they disagree: a pull chunkserver
+	/// sends its space report before any chunks, a push one after them all.
+	/// Cleared when a registration begins, so it describes that registration
+	/// rather than everything the connection has ever carried.
+	bool registrationChunksSeen{false};
+
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
@@ -1096,6 +1103,17 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	safs::log_info("chunkserver register begin (packet version: 5) - ip: {}, port: {}",
 	               eptr->serviceStrIp, eptr->servport);
 
+	// Registration state is scoped to a registration, not to the connection. A
+	// fresh entry is built for every accepted connection, so all of this is
+	// already clear the first time round; resetting it here keeps a second
+	// registration on the same connection from inheriting the first one's
+	// answers, which would have it close itself out the moment the space
+	// report arrives, and refuse to grant the credits its stream is waiting on.
+	eptr->registrationChunksSeen = false;
+	eptr->chunkRegistrationComplete = false;
+	eptr->pullRegistration = false;
+	eptr->pullCreditsOwed = 0;
+
 	// Send the answer with the status
 	if (eptr->version >= kFirstVersionWithClusterId) {
 		OutputPacket outPacket;
@@ -1406,6 +1424,8 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 	// Chunks registration is in progress, so we reset the timeout
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
 
+	eptr->registrationChunksSeen = true;
+
 	// Pull-mode registration: release the next bulk (budget permitting)
 	if (eptr->pullRegistration && !eptr->chunkRegistrationComplete) {
 		matocsserv_regrant_pull_credit(eptr, chunks.size());
@@ -1419,7 +1439,19 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 	// so it marks the end of this connection's chunk registration.
 	// Pull-mode chunkservers send it before their chunks; their registration ends
 	// with SAU_CSTOMA_REGISTER_CHUNKS_END.
-	if (!eptr->pullRegistration) { eptr->chunkRegistrationComplete = true; }
+	//
+	// Chunks already seen on a connection marked pull-mode mean the chunkserver
+	// registered by push after all: it forced the legacy protocol, or gave up
+	// waiting for a START that arrived late. Believing the flag over the stream
+	// would leave this connection registering forever: no END is coming, so every
+	// bulk would keep drawing on the shared budget and the tick would keep paying
+	// credits nobody reads.
+	if (!eptr->pullRegistration || eptr->registrationChunksSeen) {
+		eptr->chunkRegistrationComplete = true;
+		eptr->pullRegistration = false;
+		eptr->pullCreditsOwed = 0;
+	}
+
 	register_space(eptr);
 }
 

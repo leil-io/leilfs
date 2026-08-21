@@ -220,13 +220,26 @@ void MasterConn::pushRegisterChunks() {
 	// announcements it was never told about.
 	hddRegistrationSweepBegin();
 
+	uint64_t pushedChunks = 0;
 	hddForeachChunkInBulks(
-	    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
+	    [this, &pushedChunks](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
+		    pushedChunks += chunksBulk.size();
 	    },
 	    gChunkBulkSize.load(std::memory_order_relaxed));
 
 	sendRegistrationTail();
+
+	// A pull-capable master has already marked this connection as pull-mode and
+	// is waiting on an END that the push path would never send, leaving it
+	// paying credits into a stream that ignores them. Say so explicitly. The
+	// master closes the connection out on the space report above as well, but
+	// only by inferring the protocol from the order of what arrived; this
+	// leaves nothing to infer. Reached whenever push is chosen against such a
+	// master: CHUNK_REGISTRATION_FORCE_PUSH, or a START that never came.
+	if (version_ >= kFirstVersionWithPullChunkRegistration) {
+		createAttachedPacket(cstoma::registerChunksEnd::build(pushedChunks));
+	}
 
 	registrationStatus_ = RegistrationStatus::kChunksRegistered;
 }
