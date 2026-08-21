@@ -1,16 +1,19 @@
-# CHUNK_REGISTRATION_FORCE_PUSH=1 must keep a chunkserver on the old push
-# registration protocol even against a pull-capable master, and everything
-# must still converge. This also covers the mixed-version path (an old
-# chunkserver never enters the pull protocol).
+# Verify CHUNK_REGISTRATION_FORCE_PUSH=1 uses push registration against a
+# pull-capable master, including after chunkserver restarts.
+#
+# Configure a budget to exercise cleanup of pull credits for push connections.
+# Require convergence, completion of every registration, and working I/O.
 
 CHUNK_COUNT=${CHUNK_COUNT:-100000}
 CHUNKS_PER_FILE=1000
+REGISTRATION_CHUNKS_PER_SECOND=50000
 
 MASTERSERVERS=1 \
 	CHUNKSERVERS=2 \
 	MOUNTS=1 \
 	USE_RAMDISK=YES \
 	AUTO_SHADOW_MASTER=NO \
+	MASTER_EXTRA_CONFIG="CHUNK_REGISTRATION_CHUNKS_PER_SECOND = ${REGISTRATION_CHUNKS_PER_SECOND}" \
 	CHUNKSERVER_EXTRA_CONFIG="MASTER_RECONNECTION_DELAY = 1|CHUNK_REGISTRATION_FORCE_PUSH = 1" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
 	setup_local_empty_saunafs info
@@ -43,7 +46,7 @@ done
 saunafs_wait_for_all_ready_chunkservers
 assert_eventually_equals "echo $((2 * CHUNK_COUNT))" 'count_chunk_copies'
 
-# IO works
+# Verify existing mock data and a new real-file round trip.
 expected_head="5a5b58595e5f5c5d5253505156575455"
 assert_equals "$expected_head" \
 	"$(dd if="${info[mount0]}/mock_0000002" bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
@@ -52,3 +55,33 @@ assert_equals "canary" "$(cat "${info[mount0]}/canary")"
 
 # The pull protocol was never entered by the forced-push chunkservers
 assert_equals 0 "$(grep -c 'master-driven chunk registration started' "$syslog_file" | cat)"
+
+# Compare starts and completions, including reconnects during metadata seeding,
+# to catch registrations left open by forced push.
+registrations_begun() {
+	grep -c 'chunkserver register begin' "$syslog_file" | cat
+}
+
+registrations_closed() {
+	# Include ' - ip:' to avoid counting assertion text in syslog.
+	grep -c 'finished master-driven chunk registration - ip:' "$syslog_file" | cat
+}
+
+every_registration_closed() {
+	local begun closed
+	begun=$(registrations_begun)
+	closed=$(registrations_closed)
+	[[ "$begun" -gt 0 && "$begun" -eq "$closed" ]]
+}
+MESSAGE="the master must close out a forced-push registration, not wait for an END that never comes" \
+	assert_eventually 'every_registration_closed'
+
+# Verify push-registered chunkservers accept new chunks and preserve data.
+for i in $(seq 1 20); do
+	echo "post-registration $i" > "${info[mount0]}/post_$i"
+done
+
+for i in $(seq 1 20); do
+	MESSAGE="reading back post_$i written after a forced-push registration" \
+		assert_equals "post-registration $i" "$(cat "${info[mount0]}/post_$i")"
+done
