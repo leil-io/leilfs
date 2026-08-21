@@ -271,7 +271,23 @@ minimum is 1)
 budget, in chunks per second, shared by all chunkservers registering through
 the pull protocol. Protects the master from a registration flood when many
 chunkservers reconnect at once (e.g. right after a failover). 0 means
-unlimited (default is 0)
+unlimited (default is 0).
++
+The budget is a shared pool, not a per-server quota, and normally limits the
+rate at which registration work is admitted across all chunkservers. However,
+the opening window is handled differently: when the budget is unlimited, it
+is granted immediately rather than paced.
+With the default values, this allows 4000 chunks per chunkserver to be
+enqueued immediately, so N chunkservers reconnecting at once can enqueue
+N x 4000 chunks. A chunkserver sends each bulk only when it holds a credit;
+after the opening window the master grants one more each time it finishes
+processing a bulk. This bounds the work in flight to
+CHUNK_REGISTRATION_WINDOW x CHUNK_REGISTRATION_BULK_SIZE per chunkserver.
+When a non-zero budget is configured, the opening window is also subject to
+the budget and is released at the configured rate, removing the initial burst.
+To choose a value, measure the registration rate with the budget unset and
+use a fraction of that rate. Avoid setting the value too low, as chunk
+registration after a failover could then take minutes instead of seconds.
 
 *PRIORITIZE_DATA_PARTS*:: When set, master server will prioritize data parts in
 EC goals to land in the chunkservers with higher percentage of available space.
