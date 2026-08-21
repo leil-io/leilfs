@@ -1109,9 +1109,19 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	if (eptr->version >= kFirstVersionWithPullChunkRegistration) {
 		eptr->pullRegistration = true;
 
+		// The opening window goes through the budget like every later credit.
+		// Granted outright it would escape the cap entirely: N chunkservers
+		// reconnecting at once would put N * window * bulkSize chunks on the
+		// wire before the budget was consulted even once, which is precisely
+		// the burst the pacing exists to prevent. Owing them instead leaves
+		// the tick below to release them at the configured rate.
+		const uint32_t initialCredits =
+		    gChunkRegistrationChunksPerSecond == 0 ? gChunkRegistrationWindow : 0;
+		if (initialCredits == 0) { eptr->pullCreditsOwed = gChunkRegistrationWindow; }
+
 		OutputPacket outPacket;
 		matocs::registerChunksStart::serialize(outPacket.packet, gChunkRegistrationBulkSize,
-		                                       gChunkRegistrationWindow);
+		                                       initialCredits);
 		eptr->outputPackets.push_back(std::move(outPacket));
 
 		// Registration is now in progress; hold background metadata dumps
@@ -1331,15 +1341,25 @@ void matocsserv_pull_registration_budget_tick() {
 			continue;
 		}
 
-		while (eptr->pullCreditsOwed > 0 &&
-		       (gChunkRegistrationChunksPerSecond == 0 ||
-		        gRegistrationChunksThisSecond < gChunkRegistrationChunksPerSecond)) {
-			// Account the owed bulk against the budget upfront; the actual
-			// chunk count arrives with the bulk itself.
-			gRegistrationChunksThisSecond += gChunkRegistrationBulkSize;
-			--eptr->pullCreditsOwed;
-			matocsserv_grant_pull_credits(eptr, 1);
+		// One credit per chunkserver per pass, never a whole backlog: draining
+		// each in turn would let whichever sits first in the list spend the
+		// second's budget while the rest wait, which is the opposite of what
+		// pacing a mass reconnect should do. This runs once per event loop
+		// iteration, so a backlog still clears quickly, just evenly.
+		if (gChunkRegistrationChunksPerSecond != 0 &&
+		    gRegistrationChunksThisSecond >= gChunkRegistrationChunksPerSecond) {
+			continue;
 		}
+
+		// Account the owed bulk against the budget upfront; the actual chunk
+		// count arrives with the bulk itself. The decrement needs no guard of
+		// its own: the early continue above already established a non-zero
+		// balance, nothing in between touches it, and this runs on the event
+		// loop thread alone. An underflow here would wrap the unsigned counter
+		// and hand out credits without end, so the reasoning is worth stating.
+		gRegistrationChunksThisSecond += gChunkRegistrationBulkSize;
+		--eptr->pullCreditsOwed;
+		matocsserv_grant_pull_credits(eptr, 1);
 	}
 }
 
