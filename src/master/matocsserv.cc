@@ -173,6 +173,13 @@ struct matocsserventry {
 	/// matocsserv_pull_registration_budget_tick.
 	uint32_t pullCreditsOwed{0};
 
+	/// True once a registration bulk has arrived in the current registration.
+	/// Tells the two protocols apart when they disagree: a pull chunkserver
+	/// sends its space report before any chunks, a push one after them all.
+	/// Cleared when a registration begins, so it describes that registration
+	/// rather than everything the connection has ever carried.
+	bool registrationChunksSeen{false};
+
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
@@ -1225,6 +1232,12 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		return;
 	}
 
+	// Initialize chunk-registration tracking after accepting the host.
+	eptr->registrationChunksSeen = false;
+	eptr->chunkRegistrationComplete = false;
+	eptr->pullRegistration = false;
+	eptr->pullCreditsOwed = 0;
+
 	if (eptr->registrationState.identityPending()) {
 		safs::log_info("requesting chunkserver identity from {}:{}", eptr->serviceStrIp,
 		               eptr->servport);
@@ -1493,6 +1506,8 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 	// Chunks registration is in progress, so we reset the timeout
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
 
+	eptr->registrationChunksSeen = true;
+
 	// Pull-mode registration: release the next bulk (budget permitting)
 	if (eptr->pullRegistration && !eptr->chunkRegistrationComplete) {
 		matocsserv_regrant_pull_credit(eptr, chunks.size());
@@ -1530,11 +1545,17 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 		}
 	}
 
-	// For push-mode chunkservers REGISTER_SPACE is sent right after the last registration bulk,
-	// so it marks the end of this connection's chunk registration.
-	// Pull-mode chunkservers send it before their chunks; their registration ends
-	// with SAU_CSTOMA_REGISTER_CHUNKS_END.
-	if (!eptr->pullRegistration) { eptr->chunkRegistrationComplete = true; }
+	// Pull sends REGISTER_SPACE before chunks and ends with REGISTER_CHUNKS_END.
+	// Push sends space after chunks. Chunks preceding this report indicate
+	// forced push or a START-timeout fallback, even if pull mode was expected.
+	// Complete push registration and clear owed credits to avoid wasting
+	// the shared registration budget on a stream that ignores them.
+	if (!eptr->pullRegistration || eptr->registrationChunksSeen) {
+		eptr->chunkRegistrationComplete = true;
+		eptr->pullRegistration = false;
+		eptr->pullCreditsOwed = 0;
+	}
+
 	register_space(eptr);
 }
 
