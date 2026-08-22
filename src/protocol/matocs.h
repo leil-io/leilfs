@@ -32,10 +32,20 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t, version,
 		std::string, clusterId)
 
+/// Largest packet a chunkserver will accept from the master. Anything above it
+/// is a protocol violation there and costs the connection, so the master has to
+/// keep every packet it builds within it. Shared rather than duplicated on each
+/// side: a master that believed a larger number would disconnect chunkservers
+/// instead of talking to them.
+constexpr uint32_t kMaxMasterToChunkserverPacketSize = 10000;
+
 // On-demand chunk-location query: while a chunkserver's registration is in
 // progress, the master asks which of these chunks the chunkserver hosts so
 // that waiting client operations can be answered without waiting for the
 // full registration. Answered with SAU_CSTOMA_QUERY_CHUNKS_RESPONSE.
+//
+// The id list is bounded by the packet limit above, not by how many chunks are
+// waiting: see matocsserv_split_chunk_query_ids.
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, queryChunks, SAU_MATOCS_QUERY_CHUNKS, 0,
                                     std::vector<uint64_t>, chunkIds)
 

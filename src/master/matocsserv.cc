@@ -1157,9 +1157,14 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 			++query.outstandingReplies;
 		}
 
-		OutputPacket outPacket;
-		matocs::queryChunks::serialize(outPacket.packet, chunkIds);
-		eptr->outputPackets.push_back(std::move(outPacket));
+		// Split: the whole pending set goes to this newcomer at once, and it is
+		// bounded only by ON_DEMAND_CHUNK_QUERY_LIMIT, which is far above what
+		// one packet may carry.
+		for (const auto &idGroup : matocsserv_split_chunk_query_ids(chunkIds)) {
+			OutputPacket outPacket;
+			matocs::queryChunks::serialize(outPacket.packet, idGroup);
+			eptr->outputPackets.push_back(std::move(outPacket));
+		}
 	}
 }
 
@@ -1209,6 +1214,37 @@ static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
 	       eptr->version >= kFirstVersionWithChunkLocationQuery;
 }
 
+std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
+    const std::vector<uint64_t> &chunkIds) {
+	if (chunkIds.empty()) { return {}; }
+
+	// Measured off the serializer rather than assumed, so a change to the
+	// packet's framing cannot silently push it back over the receiver's limit.
+	static const std::size_t maxIdsPerPacket = [] {
+		MessageBuffer empty;
+		matocs::queryChunks::serialize(empty, std::vector<uint64_t>{});
+		MessageBuffer single;
+		matocs::queryChunks::serialize(single, std::vector<uint64_t>{0});
+
+		const std::size_t overhead = empty.size();
+		const std::size_t perId = single.size() - overhead;
+		massert(perId > 0 && overhead + perId <= kMaxMasterToChunkserverPacketSize,
+		        "a single-id chunk query does not fit the chunkserver packet limit");
+		return (kMaxMasterToChunkserverPacketSize - overhead) / perId;
+	}();
+
+	std::vector<std::vector<uint64_t>> groups;
+	groups.reserve((chunkIds.size() + maxIdsPerPacket - 1) / maxIdsPerPacket);
+
+	for (std::size_t offset = 0; offset < chunkIds.size(); offset += maxIdsPerPacket) {
+		const std::size_t count = std::min(maxIdsPerPacket, chunkIds.size() - offset);
+		const auto begin = chunkIds.begin() + static_cast<std::ptrdiff_t>(offset);
+		groups.emplace_back(begin, begin + static_cast<std::ptrdiff_t>(count));
+	}
+
+	return groups;
+}
+
 /// Completes the on-demand query for \p chunkId and wakes its waiters.
 static void matocsserv_resolve_chunk_query(uint64_t chunkId) {
 	gPendingChunkQueries.erase(chunkId);
@@ -1249,14 +1285,21 @@ void matocsserv_flush_chunk_queries() {
 	std::vector<uint64_t> chunkIds;
 	chunkIds.swap(gChunkQueryIdsToSend);
 
+	// Split once, then hand the same groups to every target: what accumulated
+	// in one event-loop iteration is bounded by how many clients blocked at
+	// once, not by anything the packet format can carry.
+	const auto idGroups = matocsserv_split_chunk_query_ids(chunkIds);
+
 	uint32_t targetCount = 0;
 	for (auto &entry : matocsservList) {
 		auto *eptr = entry.get();
 		if (!matocsserv_can_answer_chunk_queries(eptr)) { continue; }
 
-		OutputPacket outPacket;
-		matocs::queryChunks::serialize(outPacket.packet, chunkIds);
-		eptr->outputPackets.push_back(std::move(outPacket));
+		for (const auto &idGroup : idGroups) {
+			OutputPacket outPacket;
+			matocs::queryChunks::serialize(outPacket.packet, idGroup);
+			eptr->outputPackets.push_back(std::move(outPacket));
+		}
 		++targetCount;
 	}
 

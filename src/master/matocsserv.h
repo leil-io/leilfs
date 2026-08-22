@@ -182,3 +182,19 @@ csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
  *         queries in flight) and the caller should reply immediately.
  */
 bool matocsserv_query_chunk_location(uint64_t chunkId);
+
+/*!
+ * \brief Groups chunk ids for SAU_MATOCS_QUERY_CHUNKS packets.
+ *
+ * A chunkserver drops the connection on any packet above
+ * kMaxMasterToChunkserverPacketSize, and the number of chunks waiting on a
+ * location is bounded only by ON_DEMAND_CHUNK_QUERY_LIMIT, so the ids cannot
+ * all go out together. Each returned group is small enough that the packet
+ * built from it fits; every id appears exactly once, in the order given.
+ *
+ * Exposed for testing: the volume needed to overflow a packet is a cluster's
+ * worth of clients blocking at the same instant, which a system test cannot
+ * reproduce.
+ */
+std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
+    const std::vector<uint64_t> &chunkIds);
