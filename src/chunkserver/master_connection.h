@@ -38,8 +38,9 @@
 #include "common/saunafs_version.h"
 #include "common/time_utils.h"
 #include "common/tls_session.h"
+#include "protocol/matocs.h"
 
-static constexpr uint32_t kMaxPacketSize = 10000;
+static constexpr uint32_t kMaxPacketSize = kMaxMasterToChunkserverPacketSize;
 static constexpr uint32_t kMaxBackgroundJobsCount = 1000;
 
 // Common variables from config
