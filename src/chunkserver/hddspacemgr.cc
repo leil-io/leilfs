@@ -174,8 +174,8 @@ void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks,
 	}
 
 	// Announcements queued while registration was running are redundant: the
-	// sweep reports the whole registry anyway, and both it and the on-demand
-	// query mark what they send. Worse than redundant: an entry carries the
+	// sweep reports the whole registry anyway, and marks every entry it sends.
+	// Worse than redundant: an entry carries the
 	// version the disk scan happened to see, so a version change applied
 	// before the queue drains puts a superseded claim on the wire.
 	//
@@ -730,14 +730,6 @@ bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::s
 	}
 
 	return !bulk.empty();
-}
-
-void hddRegistrationSweepMarkRegistered(uint64_t chunkId, ChunkPartType type) {
-	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-	auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, type));
-	if (chunkIter != gChunksMap.end()) {
-		chunkIter->second->setRegistrationEpoch(gRegistrationSweepEpoch);
-	}
 }
 
 uint64_t hddGetChunkRegistryBucketCount() {

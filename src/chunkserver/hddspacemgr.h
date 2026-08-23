@@ -75,12 +75,6 @@ void hddRegistrationSweepBegin();
 /// bulk and call again".
 bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize);
 
-/// Marks a chunk as already reported in the current registration session. Used
-/// when the chunk's info was already sent through an on-demand chunk-location
-/// query, so that neither the sweep nor the new-chunk queue repeats it (see
-/// hddGetNewChunks).
-void hddRegistrationSweepMarkRegistered(uint64_t chunkId, ChunkPartType type);
-
 /// Number of buckets currently backing the chunk registry. Reported alongside
 /// the registration progress messages so a test can tell whether the registry
 /// rehashed while the sweep was walking it: a rehash moves chunks across

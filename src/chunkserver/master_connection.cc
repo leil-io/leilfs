@@ -823,11 +823,17 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, chunkType));
 				if (chunkIter == gChunksMap.end()) { continue; }
 
-				const IChunk *chunk = chunkIter->second.get();
-				if (chunk->state() == ChunkState::Deleted ||
-				    chunk->state() == ChunkState::ToBeDeleted) {
-					continue;
-				}
+				IChunk *chunk = chunkIter->second.get();
+
+				// Available only: state changes happen under gChunksMapMutex,
+				// so seeing it here proves nobody holds the chunk and its
+				// version is not being written. A version change runs with the
+				// chunk Locked, where reading it would race the write. The
+				// sweep keeps the same rule, but parks such chunks and locks
+				// them afterwards; this reply cannot, running on the event loop
+				// with the master holding client operations until it arrives.
+				// Omitting a busy chunk costs one retry.
+				if (chunk->state() != ChunkState::Available) { continue; }
 
 				const bool markedForDeletion =
 				    chunk->owner() != nullptr && chunk->owner()->isMarkedForDeletion();
@@ -835,15 +841,12 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				    chunkId,
 				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
 				    chunkType);
-			}
-		}
-	}
 
-	// During a pull-registration sweep the answered chunks are already known
-	// to the master, so the sweep does not need to repeat them.
-	if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
-		for (const auto &foundChunk : foundChunks) {
-			hddRegistrationSweepMarkRegistered(foundChunk.id, foundChunk.type);
+				// Do not mark query results as swept: no acknowledgement follows
+				// this reply, so the master can discard it after its query
+				// generation expires. The regular sweep will report it later;
+				// duplicate location reports are safe.
+			}
 		}
 	}
 
