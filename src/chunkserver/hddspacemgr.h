@@ -83,10 +83,6 @@ enum class RegistrationSweepResult {
 RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
                                                  std::size_t bulkSize);
 
-/// Marks a chunk as reported so the sweep and new-chunk queue skip it.
-/// Caller must hold gChunksMapMutex.
-void hddRegistrationSweepMarkRegistered(IChunk &chunk);
-
 /// Number of buckets currently backing the chunk registry. Reported alongside
 /// the registration progress messages so a test can tell whether the registry
 /// rehashed while the sweep was walking it: a rehash moves chunks across
