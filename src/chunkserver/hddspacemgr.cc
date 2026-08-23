@@ -749,10 +749,6 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
 	                       : RegistrationSweepResult::kComplete;
 }
 
-void hddRegistrationSweepMarkRegistered(IChunk &chunk) {
-	chunk.setRegistrationEpoch(gRegistrationSweepEpoch);
-}
-
 uint64_t hddGetChunkRegistryBucketCount() {
 	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 	return gChunksMap.bucket_count();

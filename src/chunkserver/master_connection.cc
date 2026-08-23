@@ -904,10 +904,11 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				if (chunkIter == gChunksMap.end()) { continue; }
 
 				IChunk *chunk = chunkIter->second.get();
-				if (chunk->state() == ChunkState::Deleted ||
-				    chunk->state() == ChunkState::ToBeDeleted) {
-					continue;
-				}
+
+				// Read versions only from Available chunks under gChunksMapMutex.
+				// Workers change versions while chunks are Locked; skip busy chunks
+				// without blocking the network event loop.
+				if (chunk->state() != ChunkState::Available) { continue; }
 
 				const bool markedForDeletion =
 				    chunk->owner() != nullptr && chunk->owner()->isMarkedForDeletion();
@@ -915,10 +916,11 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				    chunkId,
 				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
 				    chunkType);
-				// Mark under the map lock while this chunk still matches the reply.
-				if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
-					hddRegistrationSweepMarkRegistered(*chunk);
-				}
+
+				// Do not mark query results as swept: no acknowledgement follows
+				// this reply, so the master can discard it after its query
+				// generation expires. The regular sweep will report it later;
+				// duplicate location reports are safe.
 			}
 		}
 	}

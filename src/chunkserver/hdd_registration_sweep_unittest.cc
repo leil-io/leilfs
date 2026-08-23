@@ -135,14 +135,16 @@ TEST_F(RegistrationSweepTests, RehashDoesNotLoseUnreportedChunks) {
 }
 
 TEST_F(RegistrationSweepTests, DropsReportedAndRemovedAnnouncements) {
-	auto *reported = addChunk(1);
-	ASSERT_NE(reported, nullptr);
-	ASSERT_NE(addChunk(3), nullptr);
+	ASSERT_NE(addChunk(1), nullptr);
 	hddRegistrationSweepBegin();
-	{
-		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-		hddRegistrationSweepMarkRegistered(*reported);
-	}
+
+	std::vector<ChunkWithVersionAndType> swept;
+	ASSERT_EQ(hddRegistrationSweepNext(swept, 1), RegistrationSweepResult::kBulkReady);
+	ASSERT_EQ(swept.size(), 1U);
+	ASSERT_EQ(swept.front().id, 1U);
+
+	ASSERT_NE(addChunk(3), nullptr);
+
 	const auto type = ChunkPartType();
 	hddEnqueueChunkReport(ChunkWithVersionAndType(1, 1, type), true);
 	hddEnqueueChunkReport(ChunkWithVersionAndType(2, 1, type), true);
