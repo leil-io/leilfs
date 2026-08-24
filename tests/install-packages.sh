@@ -78,6 +78,7 @@ apt_packages=(
 	libgtest-dev
 	libisal-dev
 	libjudy-dev
+	liblz4-dev
 	libpam0g-dev
 	libspdlog-dev
 	libssl-dev
@@ -126,6 +127,7 @@ dnf_packages=(
 	libnsl
 	libtirpc-devel
 	libzstd-devel
+	lz4-devel
 	netcat
 	pam-devel
 	pkgconfig

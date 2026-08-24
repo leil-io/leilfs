@@ -24,52 +24,79 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string_view>
 
-// Opaque digested-dictionary types, forward-declared exactly as <zstd.h> does
-// so this header does not drag the zstd headers into every includer.
-typedef struct ZSTD_CDict_s ZSTD_CDict;
-typedef struct ZSTD_DDict_s ZSTD_DDict;
-
-/// Shared wrapper isolating Zstandard usage, so the compressed on-disk formats
-/// stay byte compatible across disk plugins.
+/// Shared wrapper isolating compression-library usage, so the compressed
+/// on-disk formats stay byte compatible across disk plugins.
 ///
 /// One frame per SFSBLOCKSIZE block, so a random read decompresses only the
-/// block it asked for. A chunk's frames share one immutable dictionary,
-/// digested once per chunk because digesting costs more than a block does.
+/// block it asked for. A chunk may carry one immutable dictionary shared by all
+/// its frames, prepared once per chunk because preparing costs more than
+/// compressing a block; usesDictionary() says which algorithms get one.
 namespace block_compression {
 
-/// Deleters, so the opaque types above can still be held in unique_ptr.
-struct CDictDeleter {
-	void operator()(ZSTD_CDict *cdict) const;
+/// Compression library for a chunk's blocks, fixed when the chunk is created.
+/// Never serialized - each on-disk format spells its algorithm out its own way
+/// - so these values can be renumbered freely.
+enum class Algorithm : uint8_t {
+	None,  ///< Blocks are stored uncompressed; the (de)compression calls reject it.
+	Zstd,
+	Lz4,
 };
-struct DDictDeleter {
-	void operator()(ZSTD_DDict *ddict) const;
+
+/// Maps an HDD_COMPRESSION_ALGORITHM value ("none", "zstd", "lz4", case
+/// insensitive) to its algorithm; here, so every plugin accepts the same
+/// spellings. std::nullopt for an unrecognized name.
+std::optional<Algorithm> algorithmFromName(std::string_view name);
+
+/// The config spelling of @p algorithm, as accepted by algorithmFromName().
+const char *algorithmName(Algorithm algorithm);
+
+/// Per-chunk dictionaries, prepared into whatever form the algorithm wants: a
+/// digest for Zstd, the raw bytes for LZ4. Opaque to keep the library headers
+/// out of every includer.
+class CompressDict;
+class DecompressDict;
+
+/// Deleters, so the incomplete types above can still be held in unique_ptr.
+struct CompressDictDeleter {
+	void operator()(CompressDict *dict) const;
+};
+struct DecompressDictDeleter {
+	void operator()(DecompressDict *dict) const;
 };
 
-using CDictPtr = std::unique_ptr<ZSTD_CDict, CDictDeleter>;
-using DDictPtr = std::unique_ptr<ZSTD_DDict, DDictDeleter>;
+using CompressDictPtr = std::unique_ptr<CompressDict, CompressDictDeleter>;
+using DecompressDictPtr = std::unique_ptr<DecompressDict, DecompressDictDeleter>;
 
-/// Digests dictionary bytes for compression at @p level, auto-detecting trained
-/// vs raw-content. nullptr if empty or on failure - compress without one.
-CDictPtr createCDict(const uint8_t *dict, size_t dictSize, int level);
+/// Prepares dictionary bytes for compression: Zstd digests them at @p level
+/// (auto-detecting trained vs raw-content dictionaries), LZ4 ignores it and
+/// keeps them as they are. nullptr if empty or on failure.
+CompressDictPtr createCompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize,
+                                   int level);
 
-/// Digests dictionary bytes for decompression; nullptr if empty or on failure.
-DDictPtr createDDict(const uint8_t *dict, size_t dictSize);
+/// Prepares dictionary bytes for decompression; nullptr if empty or on
+/// failure.
+DecompressDictPtr createDecompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize);
 
-/// Compresses one block into @p dst, using @p cdict or nullptr for none - in
-/// which case @p level applies instead.
+/// Compresses one block into @p dst, using @p dict or nullptr for none. @p
+/// algorithm is named separately because a chunk may have no dictionary at all.
+/// @p level is a Zstd level, ignored by LZ4.
 ///
-/// @return the compressed size, or negative on error. A size >= srcSize means
-///         the caller should store the block raw.
-ssize_t compressBlock(const ZSTD_CDict *cdict, const uint8_t *src, size_t srcSize, uint8_t *dst,
-                      size_t dstCapacity, int level);
+/// @return the compressed size, or <= 0 when the block was not compressed -
+///         the algorithm failed, or the result did not fit. The caller stores
+///         the block raw either way, so the two need not be told apart.
+ssize_t compressBlock(Algorithm algorithm, const CompressDict *dict, const uint8_t *src,
+                      size_t srcSize, uint8_t *dst, size_t dstCapacity, int level);
 
-/// Decompresses one block produced by compressBlock() with the same dictionary.
-/// @return the decompressed size, or negative on error.
-ssize_t decompressBlock(const ZSTD_DDict *ddict, const uint8_t *src, size_t srcSize, uint8_t *dst,
-                        size_t dstCapacity);
+/// Decompresses one block produced by compressBlock() with the same algorithm
+/// and dictionary. @return the decompressed size, or negative on error.
+ssize_t decompressBlock(Algorithm algorithm, const DecompressDict *dict, const uint8_t *src,
+                        size_t srcSize, uint8_t *dst, size_t dstCapacity);
 
-/// Upper bound on the compressed size of a block of srcSize bytes.
-size_t compressBound(size_t srcSize);
+/// Upper bound on the compressed size of @p srcSize bytes - above srcSize for
+/// both algorithms, since framing costs a few bytes. 0 for None.
+size_t compressBound(Algorithm algorithm, size_t srcSize);
 
 }  // namespace block_compression
