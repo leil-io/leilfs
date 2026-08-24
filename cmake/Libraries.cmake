@@ -70,6 +70,17 @@ else()
 endif()
 message(STATUS "ZSTD LIBRARY: ${ZSTD_LIBRARIES}")
 
+# Find LZ4, the other algorithm offered for per-block chunk compression
+find_package(lz4 CONFIG REQUIRED)
+if(TARGET LZ4::lz4_shared)
+  set(LZ4_LIBRARIES LZ4::lz4_shared)
+elseif(TARGET LZ4::lz4_static)
+  set(LZ4_LIBRARIES LZ4::lz4_static)
+else()
+  set(LZ4_LIBRARIES lz4::lz4)
+endif()
+message(STATUS "LZ4 LIBRARY: ${LZ4_LIBRARIES}")
+
 # Find Systemd
 INCLUDE(FindPkgConfig)
 pkg_check_modules(SYSTEMD libsystemd)
