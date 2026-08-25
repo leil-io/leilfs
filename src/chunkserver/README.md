@@ -58,6 +58,7 @@ Files in `chunkserver-common/` provide core abstractions:
 | `disk_chunks.*`                      | Per-disk chunk collection with test tracking  |
 | `disk_utils.*`                       | Shared constants, `LockFile`, configuration   |
 | `chunk_signature.*`                  | On-disk signature (`SAUC 1.0`)                |
+| `block_compression.*`                | Per-block Zstd/LZ4 compression for disk plugins |
 | `chunk_map.h`                        | Global `ChunkMap` (chunkId+type -> IChunk)    |
 | `subfolder.h`                        | Directory hashing (256 subfolders)            |
 | `open_chunk.h`                       | RAII guard for open chunk FDs                 |
