@@ -44,7 +44,7 @@ namespace {
 /// Size of the packet the master would actually put on the wire for \p ids.
 size_t serializedQueryPacketSize(const std::vector<uint64_t> &ids) {
 	MessageBuffer packet;
-	matocs::queryChunks::serialize(packet, ids);
+	matocs::queryChunks::serialize(packet, 1, ids);
 	return packet.size();
 }
 

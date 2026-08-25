@@ -87,8 +87,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 // queriedChunkIds echoes every id from the query, so the master can account
 // for negative answers; foundChunks lists the parts this chunkserver hosts
 // (possibly several per id for EC parts).
+// generation echoes the query attempt and prevents late responses from an
+// older retry from satisfying a newer request for the same chunk ID.
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunksResponse, SAU_CSTOMA_QUERY_CHUNKS_RESPONSE,
-                                    0, std::vector<uint64_t>, queriedChunkIds,
+                                    0, uint64_t, generation,
+                                    std::vector<uint64_t>, queriedChunkIds,
                                     std::vector<ChunkWithVersionAndType>, foundChunks)
 
 // Ends a master-driven (pull) chunk registration stream started by

@@ -184,6 +184,9 @@ void matocsserv_test_connection_free(matocsserventry *eptr);
 /// runs after all answers or timeout; false if no query can start.
 bool matocsserv_query_chunk_location(uint64_t chunkId);
 
+/*! \brief Maximum number of deferred client waits. */
+uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit();
+
 /*!
  * \brief Groups chunk ids for SAU_MATOCS_QUERY_CHUNKS packets.
  *
