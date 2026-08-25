@@ -38,11 +38,15 @@ namespace block_compression {
 
 namespace {
 
-/// LZ4 speed/ratio dial, in LZ4's own inverted units (higher is faster and
-/// compresses less). Fixed at the strongest setting: LZ4 is the choice for
-/// chunks whose write path is CPU bound, and Zstd covers the other end of the
-/// dial through HDD_COMPRESSION_LEVEL.
-constexpr int kLz4Acceleration = 1;
+/// The level from which LZ4 compresses no harder.
+constexpr int kLz4StrongestLevel = 9;
+
+/// Effort level to LZ4's acceleration, which runs the other way round. Keeps
+/// the inversion here rather than in every caller's head. Clamps first, since
+/// the subtraction would overflow on an absurd level.
+int lz4Acceleration(int level) {
+	return kLz4StrongestLevel + 1 - std::clamp(level, 1, kLz4StrongestLevel);
+}
 
 struct CCtxDeleter {
 	void operator()(ZSTD_CCtx *cctx) const { ZSTD_freeCCtx(cctx); }
@@ -140,6 +144,18 @@ const char *algorithmName(Algorithm algorithm) {
 
 bool usesDictionary(Algorithm algorithm) { return algorithm == Algorithm::Zstd; }
 
+int strongestLevel(Algorithm algorithm) {
+	switch (algorithm) {
+	case Algorithm::Zstd:
+		return ZSTD_maxCLevel();
+	case Algorithm::Lz4:
+		return kLz4StrongestLevel;
+	case Algorithm::None:
+		break;
+	}
+	return 0;
+}
+
 CompressDictPtr createCompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize,
                                    int level) {
 	if (dict == nullptr || dictSize == 0) { return nullptr; }
@@ -231,10 +247,12 @@ ssize_t compressBlock(Algorithm algorithm, const CompressDict *dict, const uint8
 		const int sourceSize = static_cast<int>(srcSize);
 		const int destinationCapacity = static_cast<int>(dstCapacity);
 
+		const int acceleration = lz4Acceleration(level);
+
 		if (dict == nullptr) {
 			// Re-initializes the state, so one stream serves both paths.
 			return LZ4_compress_fast_extState(stream, source, destination, sourceSize,
-			                                  destinationCapacity, kLz4Acceleration);
+			                                  destinationCapacity, acceleration);
 		}
 
 		// Rebuilds the match table, so it both applies the dictionary and
@@ -244,7 +262,7 @@ ssize_t compressBlock(Algorithm algorithm, const CompressDict *dict, const uint8
 		             static_cast<int>(dict->rawDict.size()));
 
 		return LZ4_compress_fast_continue(stream, source, destination, sourceSize,
-		                                  destinationCapacity, kLz4Acceleration);
+		                                  destinationCapacity, acceleration);
 	}
 	case Algorithm::None:
 		break;

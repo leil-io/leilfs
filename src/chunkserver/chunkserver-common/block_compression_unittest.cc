@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -83,11 +84,11 @@ constexpr size_t kWriteDstCapacity = SFSBLOCKSIZE - 1;
 /// The bytes a write path would store, or empty when it would store the block
 /// raw.
 std::vector<uint8_t> compressWith(Algorithm algorithm, const block_compression::CompressDict *dict,
-                                  const std::vector<uint8_t> &source) {
+                                  const std::vector<uint8_t> &source, int level = kZstdLevel) {
 	std::vector<uint8_t> compressed(kWriteDstCapacity);
 	const ssize_t compressedSize =
 	    block_compression::compressBlock(algorithm, dict, source.data(), source.size(),
-	                                     compressed.data(), compressed.size(), kZstdLevel);
+	                                     compressed.data(), compressed.size(), level);
 	if (compressedSize <= 0) { return {}; }
 	compressed.resize(static_cast<size_t>(compressedSize));
 	return compressed;
@@ -457,6 +458,77 @@ TEST(BlockCompressionTests, ABlockCompressedWithoutADictionaryDecodesAlone) {
 		                                             decompressed.size()));
 		EXPECT_EQ(source, decompressed);
 	}
+}
+
+// LZ4's dial runs the opposite way to ours, so the mistake to catch is an
+// inverted mapping: its strongest setting must store less than its weakest.
+// Only the two ends are ordered. Acceleration is a search stride, and a coarser
+// stride sometimes lands a luckier parse, so adjacent levels may go either way.
+TEST(BlockCompressionTests, Lz4StoresLessAtItsStrongestEffortThanAtItsWeakest) {
+	const std::vector<uint8_t> source = moderatelyCompressibleBlock();
+
+	const int weakest = 1;
+	const int strongest = block_compression::strongestLevel(Algorithm::Lz4);
+	ASSERT_GT(strongest, weakest);
+
+	const std::vector<uint8_t> atWeakest = compressWith(Algorithm::Lz4, nullptr, source, weakest);
+	const std::vector<uint8_t> atStrongest =
+	    compressWith(Algorithm::Lz4, nullptr, source, strongest);
+	ASSERT_FALSE(atWeakest.empty());
+	ASSERT_FALSE(atStrongest.empty());
+	EXPECT_LT(atStrongest.size(), atWeakest.size()) << "the effort level is inverted";
+
+	// Whatever effort wrote it, a block decodes the same way: the level is a
+	// write-side choice that leaves no trace in the block.
+	for (const int level : {weakest, 3, 5, strongest, strongest + 10}) {
+		SCOPED_TRACE(level);
+		const std::vector<uint8_t> compressed =
+		    compressWith(Algorithm::Lz4, nullptr, source, level);
+		ASSERT_FALSE(compressed.empty());
+		expectDecodesTo(Algorithm::Lz4, nullptr, compressed, source);
+	}
+}
+
+// Above LZ4's strongest setting nothing changes. Driven by strongestLevel(),
+// so the number callers are told cannot drift from the one that saturates.
+TEST(BlockCompressionTests, Lz4SaturatesAboveItsStrongestLevel) {
+	const std::vector<uint8_t> source = moderatelyCompressibleBlock();
+
+	const int strongest = block_compression::strongestLevel(Algorithm::Lz4);
+	ASSERT_GT(strongest, 0);
+
+	const std::vector<uint8_t> atStrongest =
+	    compressWith(Algorithm::Lz4, nullptr, source, strongest);
+	ASSERT_FALSE(atStrongest.empty());
+
+	for (const int above : {strongest + 1, strongest + 10}) {
+		SCOPED_TRACE(above);
+		EXPECT_EQ(atStrongest, compressWith(Algorithm::Lz4, nullptr, source, above));
+	}
+}
+
+// And below the weakest there is no weaker setting to ask for. The inversion
+// onto acceleration must not overflow on its way to saying so.
+TEST(BlockCompressionTests, Lz4SaturatesBelowItsWeakestLevel) {
+	const std::vector<uint8_t> source = moderatelyCompressibleBlock();
+
+	const int weakest = 1;
+	const std::vector<uint8_t> atWeakest = compressWith(Algorithm::Lz4, nullptr, source, weakest);
+	ASSERT_FALSE(atWeakest.empty());
+
+	for (const int below : {0, -10, std::numeric_limits<int>::min()}) {
+		SCOPED_TRACE(below);
+		EXPECT_EQ(atWeakest, compressWith(Algorithm::Lz4, nullptr, source, below));
+	}
+}
+
+// Zstd keeps spending CPU long after LZ4 has run out of dial, which is why one
+// default level does not suit both.
+TEST(BlockCompressionTests, EachAlgorithmReportsWhereItStopsImproving) {
+	EXPECT_EQ(0, block_compression::strongestLevel(Algorithm::None));
+	EXPECT_GT(block_compression::strongestLevel(Algorithm::Lz4), 0);
+	EXPECT_GT(block_compression::strongestLevel(Algorithm::Zstd),
+	          block_compression::strongestLevel(Algorithm::Lz4));
 }
 
 TEST(BlockCompressionTests, CompressBoundLeavesRoomForFraming) {

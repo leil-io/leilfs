@@ -62,6 +62,11 @@ const char *algorithmName(Algorithm algorithm);
 /// loads one per block, and its match window already spans the whole block.
 bool usesDictionary(Algorithm algorithm);
 
+/// The level at which @p algorithm stops improving; levels above it cost and
+/// save nothing more. Zero for None. Lets a caller pick a default effort
+/// without knowing each library's dial.
+int strongestLevel(Algorithm algorithm);
+
 /// Per-chunk dictionaries, prepared into whatever form the algorithm wants: a
 /// digest for Zstd, the raw bytes for LZ4. Opaque to keep the library headers
 /// out of every includer.
@@ -80,8 +85,8 @@ using CompressDictPtr = std::unique_ptr<CompressDict, CompressDictDeleter>;
 using DecompressDictPtr = std::unique_ptr<DecompressDict, DecompressDictDeleter>;
 
 /// Prepares dictionary bytes for compression: Zstd digests them at @p level
-/// (auto-detecting trained vs raw-content dictionaries), LZ4 ignores it and
-/// keeps them as they are. nullptr if empty or on failure.
+/// (auto-detecting trained vs raw-content dictionaries), LZ4 keeps them as they
+/// are. nullptr for an empty dictionary or on failure - compress without one.
 CompressDictPtr createCompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize,
                                    int level);
 
@@ -89,9 +94,11 @@ CompressDictPtr createCompressDict(Algorithm algorithm, const uint8_t *dict, siz
 /// failure.
 DecompressDictPtr createDecompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize);
 
-/// Compresses one block into @p dst, using @p dict or nullptr for none. @p
-/// algorithm is named separately because a chunk may have no dictionary at all.
-/// @p level is a Zstd level, ignored by LZ4.
+/// Compresses one block into @p dst, using @p dict or nullptr for none.
+///
+/// @p level is effort, higher being harder, the way Zstd's levels read; LZ4
+/// inverts it onto acceleration. Ignored when @p dict is a Zstd dictionary,
+/// which carries the level digested into it, and capped at strongestLevel().
 ///
 /// @return the compressed size, or <= 0 when the block was not compressed -
 ///         the algorithm failed, or the result did not fit. The caller stores
