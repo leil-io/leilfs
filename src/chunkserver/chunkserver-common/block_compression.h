@@ -53,6 +53,15 @@ std::optional<Algorithm> algorithmFromName(std::string_view name);
 /// The config spelling of @p algorithm, as accepted by algorithmFromName().
 const char *algorithmName(Algorithm algorithm);
 
+/// Whether a per-chunk dictionary is worth building for @p algorithm. Asked
+/// only when creating a chunk; a chunk that already carries one keeps using it,
+/// which today means a Zstd chunk, the only kind that can hold one.
+///
+/// True only for Zstd, which digests one per chunk and then applies it for
+/// free. LZ4's equivalent is stable only from liblz4 1.10.0, so portably it
+/// loads one per block, and its match window already spans the whole block.
+bool usesDictionary(Algorithm algorithm);
+
 /// Per-chunk dictionaries, prepared into whatever form the algorithm wants: a
 /// digest for Zstd, the raw bytes for LZ4. Opaque to keep the library headers
 /// out of every includer.
