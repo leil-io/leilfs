@@ -765,6 +765,10 @@ static void matoclserv_finish_member(BatchMember &member, uint8_t status) {
 /// already wrote and the backend cannot undo a single op. The caller then restarts the
 /// replay on a fresh transaction. Shared by the whole-batch replay and the single-member
 /// join.
+///
+/// Every unusable-transaction exit delivers the context's abort before anything else
+/// runs: members that already ran may have left eager effects on the context, and both
+/// the finish callbacks below and the rebuilt replay would otherwise observe them.
 static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &members, size_t &idx,
                                                 FilesystemOperationContext &ctx) {
 	auto *txn = ctx.getReadWriteTransaction();
@@ -782,12 +786,14 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 			return false;
 		}
 		const bool poisoned = txn != nullptr && txn->mutationCount() != mutationsBefore;
+		if (poisoned) { ctx.finishTransactionEffects(FilesystemTransactionOutcome::kAborted); }
 		matoclserv_finish_member(member, status);
 		members.erase(members.begin() + idx);
 		return poisoned;
 	} catch (const kv::RetryableTransactionError &e) {
 		// The shared transaction is invalid after a thrown read error:
 		// restart on a fresh one regardless of what this member did.
+		ctx.finishTransactionEffects(FilesystemTransactionOutcome::kAborted);
 		if (member.attempts >= gMaxCommitRetries) {
 			safs::log_warn(
 			    "matoclserv: batch member read retry exhausted after {} attempts (err {}): {}",
@@ -806,6 +812,7 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 		// Non-retryable backend failure: fail this member with EIO and restart the batch
 		// on a fresh transaction (the shared transaction is unusable after a thrown
 		// error).
+		ctx.finishTransactionEffects(FilesystemTransactionOutcome::kAborted);
 		safs::log_err("matoclserv: backend transaction error in batch member (err {}): {}",
 		              e.errorCode(), e.what());
 		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
