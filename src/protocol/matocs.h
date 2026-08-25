@@ -46,7 +46,10 @@ constexpr uint32_t kMaxMasterToChunkserverPacketSize = 10000;
 //
 // The id list is bounded by the packet limit above, not by how many chunks are
 // waiting: see matocsserv_split_chunk_query_ids.
+// generation identifies the query attempt, so a late response from an older
+// retry cannot be mistaken for the current request for the same chunk ID.
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, queryChunks, SAU_MATOCS_QUERY_CHUNKS, 0,
+                                    uint64_t, generation,
                                     std::vector<uint64_t>, chunkIds)
 
 // Master-driven (pull) chunk registration: tells a freshly host-registered

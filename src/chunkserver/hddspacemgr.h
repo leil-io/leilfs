@@ -69,7 +69,7 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 /// new-chunk queue is drained (see hddGetNewChunks).
 void hddRegistrationSweepBegin();
 
-/// Collects at most (approximately) \p bulkSize chunks not yet reported in
+/// Collects at most \p bulkSize chunks not yet reported in
 /// this sweep session and marks them as reported. Returns false when the
 /// sweep is complete (\p bulk is then empty); a true return means "send this
 /// bulk and call again".

@@ -85,8 +85,11 @@ echo "PHASE: promoted, re-registration running ($(count_chunk_copies) / $CHUNK_C
 # reading nothing, which nothing else here would notice.
 shared_idx=$((CHUNK_COUNT - 1))
 shared_file=$(printf 'mock_%07d' "$shared_idx")
+distinct_results="$TEMP_DIR/distinct_chunk_reads"
 shared_results="$TEMP_DIR/shared_chunk_reads"
+rm -rf "$distinct_results"
 rm -rf "$shared_results"
+mkdir -p "$distinct_results"
 mkdir -p "$shared_results"
 
 reader_pids=()
@@ -96,7 +99,7 @@ for ((m = 0; m < MOUNT_COUNT; ++m)); do
 			idx=$((m * READERS_PER_MOUNT + r))
 			[[ $idx -lt $shared_idx ]] || break
 			dd if="${info[mount$m]}/$(printf 'mock_%07d' "$idx")" bs=16 count=1 \
-				> /dev/null 2>&1 &
+				2>/dev/null | od -An -tx1 | tr -d ' \n' > "$distinct_results/${m}_${r}" &
 		done
 		for ((s = 0; s < SHARED_READERS_PER_MOUNT; ++s)); do
 			dd if="${info[mount$m]}/$shared_file" bs=16 count=1 2>/dev/null \
@@ -111,6 +114,17 @@ echo "PHASE: burst done, $((MOUNT_COUNT * READERS_PER_MOUNT)) reads on distinct 
 	"$((MOUNT_COUNT * SHARED_READERS_PER_MOUNT)) on chunk $shared_idx"
 
 expected_head="5a5b58595e5f5c5d5253505156575455"
+
+# Every reader on a distinct chunk must have got its data. The reader jobs
+# write their own results because wait only reports process completion, not
+# whether every read succeeded.
+distinct_expected=$((MOUNT_COUNT * READERS_PER_MOUNT))
+if ((distinct_expected > shared_idx)); then distinct_expected=$shared_idx; fi
+MESSAGE="every reader on a distinct chunk must have produced a result" \
+	assert_equals "$distinct_expected" "$(find "$distinct_results" -type f | wc -l)"
+distinct_correct=$(grep -lFx "$expected_head" "$distinct_results"/* 2>/dev/null | wc -l)
+MESSAGE="every distinct chunk must read back after on-demand resolution" \
+	assert_equals "$distinct_expected" "$distinct_correct"
 
 # Every waiter parked on the shared chunk got the answer, not just whichever
 # one caused the query. Counted as well as compared: a reader that never ran

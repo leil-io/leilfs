@@ -50,6 +50,7 @@
 #include <random>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 
 #include "common/charts.h"
 #include "common/chunk_type_with_address.h"
@@ -227,7 +228,7 @@ struct matoclserventry {
 	///< Delayed chunk operations for this client
 	std::vector<std::unique_ptr<DelayedChunkOperation>> delayedChunkOperations;
 	///< Chunk operations waiting for an on-demand chunk-location query
-	std::vector<DeferredChunkLocationWait> deferredChunkLocationWaits;
+	std::unordered_map<uint64_t, std::vector<DeferredChunkLocationWait>> deferredChunkLocationWaits;
 	///< Number of async commits still in flight that will write a reply to this
 	///< client. The entry must not be freed while this is non-zero (see the close
 	///< loop in matoclserv_serve), so deferred replies never touch a dangling eptr.
@@ -252,6 +253,11 @@ struct WaitEntryCmp {
 std::unordered_map<uint64_t, std::set<WaitEntry, WaitEntryCmp>> gWaitForUnlockMap;
 
 static std::list<std::unique_ptr<matoclserventry>> matoclservList;
+
+// Deferred waits are indexed by chunk, so resolution visits only affected clients.
+static std::unordered_map<uint64_t, std::vector<matoclserventry *>> gDeferredChunkLocationWaiters;
+static std::size_t gDeferredChunkLocationWaitCount = 0;
+static bool gDeferredChunkLocationWaitLimitWarningEmitted = false;
 
 // ---------------------------------------------------------------------------
 // Op submission
@@ -4289,10 +4295,23 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t chunkId,
                                                  PacketHeader header,
                                                  const std::vector<uint8_t> &requestData) {
+	const auto waiterLimit = matocsserv_get_on_demand_chunk_query_waiter_limit();
+	if (gDeferredChunkLocationWaitCount >= waiterLimit) {
+		if (!gDeferredChunkLocationWaitLimitWarningEmitted) {
+			safs::log_warn(
+			    "{}: on-demand chunk-location query waiter limit reached ({}); "
+			    "returning new requests with currently known locations",
+			    __func__, waiterLimit);
+			gDeferredChunkLocationWaitLimitWarningEmitted = true;
+		}
+		return false;
+	}
 	if (!matocsserv_query_chunk_location(chunkId)) { return false; }
 
-	eptr->deferredChunkLocationWaits.push_back(
-	    DeferredChunkLocationWait{chunkId, header, requestData});
+	auto &waits = eptr->deferredChunkLocationWaits[chunkId];
+	if (waits.empty()) { gDeferredChunkLocationWaiters[chunkId].push_back(eptr); }
+	waits.push_back(DeferredChunkLocationWait{chunkId, header, requestData});
+	++gDeferredChunkLocationWaitCount;
 	return true;
 }
 
@@ -4590,22 +4609,22 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 }
 
 void matoclserv_chunk_locations_resolved(uint64_t chunkId) {
-	for (auto &entry : matoclservList) {
-		auto *eptr = entry.get();
-		if (eptr->mode == ClientConnectionMode::KILL) { continue; }
+	auto waiterIter = gDeferredChunkLocationWaiters.find(chunkId);
+	if (waiterIter == gDeferredChunkLocationWaiters.end()) { return; }
 
-		auto &waits = eptr->deferredChunkLocationWaits;
-		// Extract the matching waits first: replaying them appends packets
-		// and must never re-enter this list
-		std::vector<DeferredChunkLocationWait> matchedWaits;
-		for (auto waitIter = waits.begin(); waitIter != waits.end();) {
-			if (waitIter->chunkId == chunkId) {
-				matchedWaits.push_back(std::move(*waitIter));
-				waitIter = waits.erase(waitIter);
-			} else {
-				++waitIter;
-			}
+	auto clients = std::move(waiterIter->second);
+	gDeferredChunkLocationWaiters.erase(waiterIter);
+	for (auto *eptr : clients) {
+		auto waitsIter = eptr->deferredChunkLocationWaits.find(chunkId);
+		if (waitsIter == eptr->deferredChunkLocationWaits.end()) { continue; }
+
+		auto matchedWaits = std::move(waitsIter->second);
+		eptr->deferredChunkLocationWaits.erase(waitsIter);
+		gDeferredChunkLocationWaitCount -= matchedWaits.size();
+		if (gDeferredChunkLocationWaitCount < matocsserv_get_on_demand_chunk_query_waiter_limit()) {
+			gDeferredChunkLocationWaitLimitWarningEmitted = false;
 		}
+		if (eptr->mode == ClientConnectionMode::KILL) { continue; }
 
 		// Replay with deferring disabled: the client gets whatever is known
 		// now (possibly still no locations, which it retries as before)
@@ -6899,6 +6918,18 @@ void matocl_session_check() {
 }
 
 void matocl_before_disconnect(matoclserventry *eptr) {
+	for (const auto &[chunkId, waits] : eptr->deferredChunkLocationWaits) {
+		gDeferredChunkLocationWaitCount -= waits.size();
+		auto waiterIter = gDeferredChunkLocationWaiters.find(chunkId);
+		if (waiterIter == gDeferredChunkLocationWaiters.end()) { continue; }
+		std::erase(waiterIter->second, eptr);
+		if (waiterIter->second.empty()) { gDeferredChunkLocationWaiters.erase(waiterIter); }
+	}
+	eptr->deferredChunkLocationWaits.clear();
+	if (gDeferredChunkLocationWaitCount < matocsserv_get_on_demand_chunk_query_waiter_limit()) {
+		gDeferredChunkLocationWaitLimitWarningEmitted = false;
+	}
+
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 
@@ -7434,6 +7465,10 @@ void matoclserv_term() {
 	for (const auto &eptr : matoclservList) {
 		eptr->delayedChunkOperations.clear();
 	}
+
+	gDeferredChunkLocationWaiters.clear();
+	gDeferredChunkLocationWaitCount = 0;
+	gDeferredChunkLocationWaitLimitWarningEmitted = false;
 
 	matoclservList.clear();
 	matoclserv_session_unload();

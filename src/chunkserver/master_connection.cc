@@ -812,8 +812,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 // Chunk operations
 
 void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
+	uint64_t generation{};
 	std::vector<uint64_t> chunkIds;
-	matocs::queryChunks::deserialize(data, chunkIds);
+	matocs::queryChunks::deserialize(data, generation, chunkIds);
 
 	std::vector<ChunkWithVersionAndType> foundChunks;
 	{
@@ -852,7 +853,8 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 
 	// The master holds client operations back until this answer arrives, so
 	// it must jump any registration backlog in the output queue.
-	createAttachedPriorityPacket(cstoma::queryChunksResponse::build(chunkIds, foundChunks));
+	createAttachedPriorityPacket(
+	    cstoma::queryChunksResponse::build(generation, chunkIds, foundChunks));
 }
 
 void MasterConn::createChunk(const std::vector<uint8_t> &data) {

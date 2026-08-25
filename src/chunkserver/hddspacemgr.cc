@@ -661,8 +661,9 @@ bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::s
 	{
 		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 
-		// Phase 1: advance the bucket cursor. Buckets are consumed whole, so
-		// a bulk can slightly exceed bulkSize (bucket sizes are ~1).
+		// Phase 1: advance the bucket cursor. A bucket may hold several EC
+		// parts for one chunk id, so leave it selected when the bulk fills and
+		// revisit its remaining unmarked entries on the next credit.
 		const std::size_t bucketCount = gChunksMap.bucket_count();
 
 		// A rehash redistributed every entry, so the cursor no longer separates
@@ -693,7 +694,9 @@ bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::s
 					continue;
 				}
 				addChunkToBulk(chunk, gRegistrationSweepEpoch);
+				if (bulk.size() == bulkSize) { break; }
 			}
+			if (bulk.size() == bulkSize) { break; }
 			++gRegistrationSweepBucket;
 		}
 
