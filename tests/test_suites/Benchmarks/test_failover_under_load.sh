@@ -11,7 +11,7 @@ timeout_set '4 hours'
 # re-registration takes.
 #
 # Parameters (env):
-#   CHUNK_COUNT     mock chunks per chunkserver (default 2'000'000).
+#   CHUNK_COUNT     mock chunks per chunkserver (default 10'000'000).
 #                   RAM: ~180B/chunk per chunkserver + ~170B/copy on the
 #                   master (~350B per copy in total). Guidance:
 #                     32GB box:  15M/cs x 4 cs (60M copies, ~21GB)

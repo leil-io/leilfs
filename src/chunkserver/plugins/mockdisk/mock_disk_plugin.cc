@@ -72,8 +72,9 @@ public:
 		    std::from_chars(spec.data() + firstColon + 1, spec.data() + secondColon, firstChunkId);
 		const std::string path = spec.substr(secondColon + 1);
 
-		if (countResult.ec != std::errc() || idResult.ec != std::errc() || chunkCount == 0 ||
-		    firstChunkId == 0 || path.empty() || path.front() != '/') {
+		if (countResult.ec != std::errc() || countResult.ptr != spec.data() + firstColon ||
+		    idResult.ec != std::errc() || idResult.ptr != spec.data() + secondColon ||
+		    chunkCount == 0 || firstChunkId == 0 || path.empty() || path.front() != '/') {
 			safs::log_err(
 			    "mock disk: invalid specification '{}', expected "
 			    "mock:<chunkCount>:<firstChunkId>:<path> with chunkCount > 0, "
