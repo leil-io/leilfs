@@ -430,11 +430,11 @@ enum class SugidClearMode : uint8_t {
 
 // 0x049C
 #define SAU_MATOCS_QUERY_CHUNKS (1000U + 180U)
-/// version==0 chunkids:(N * [chunkid:64])
+/// version==0 generation:64 chunkids:(N * [chunkid:64])
 
 // 0x049D
 #define SAU_CSTOMA_QUERY_CHUNKS_RESPONSE (1000U + 181U)
-/// version==0 queriedchunkids:(N * [chunkid:64])
+/// version==0 generation:64 queriedchunkids:(N * [chunkid:64])
 ///            foundchunks:(M * [chunkid:64 chunkversion:32 chunktype:16])
 
 // 0x049E
