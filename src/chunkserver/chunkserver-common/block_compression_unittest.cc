@@ -258,6 +258,39 @@ TEST(BlockCompressionTests, AlgorithmNamesAreTheConfigSpellings) {
 	}
 }
 
+// Which algorithms a disk plugin should sample a per-chunk dictionary for.
+// Getting this wrong is not a correctness bug - it costs write CPU for a
+// dictionary the algorithm cannot apply cheaply - so it is pinned here rather
+// than left to each plugin to rediscover.
+TEST(BlockCompressionTests, OnlyZstdAsksForADictionary) {
+	EXPECT_TRUE(block_compression::usesDictionary(Algorithm::Zstd));
+	EXPECT_FALSE(block_compression::usesDictionary(Algorithm::Lz4));
+	EXPECT_FALSE(block_compression::usesDictionary(Algorithm::None));
+}
+
+// A dictionary is never required to decode: an algorithm that says it wants
+// none must still round-trip its blocks with no dictionary anywhere in sight.
+TEST(BlockCompressionTests, ABlockCompressedWithoutADictionaryDecodesAlone) {
+	const std::vector<uint8_t> source = compressibleBlock();
+
+	for (const Algorithm algorithm : compressingAlgorithms()) {
+		SCOPED_TRACE(block_compression::algorithmName(algorithm));
+
+		std::vector<uint8_t> compressed(kWriteDstCapacity);
+		const ssize_t compressedSize =
+		    block_compression::compressBlock(algorithm, nullptr, source.data(), source.size(),
+		                                     compressed.data(), compressed.size(), kZstdLevel);
+		ASSERT_GT(compressedSize, 0);
+
+		std::vector<uint8_t> decompressed(SFSBLOCKSIZE);
+		ASSERT_EQ(static_cast<ssize_t>(SFSBLOCKSIZE),
+		          block_compression::decompressBlock(algorithm, nullptr, compressed.data(),
+		                                             compressedSize, decompressed.data(),
+		                                             decompressed.size()));
+		EXPECT_EQ(source, decompressed);
+	}
+}
+
 TEST(BlockCompressionTests, CompressBoundLeavesRoomForFraming) {
 	for (const Algorithm algorithm : compressingAlgorithms()) {
 		SCOPED_TRACE(block_compression::algorithmName(algorithm));

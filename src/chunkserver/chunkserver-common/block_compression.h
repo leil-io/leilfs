@@ -62,6 +62,22 @@ std::optional<Algorithm> algorithmFromName(std::string_view name);
 /// The config spelling of @p algorithm, as accepted by algorithmFromName().
 const char *algorithmName(Algorithm algorithm);
 
+/// Whether a per-chunk dictionary is worth building for @p algorithm, for a
+/// disk plugin deciding whether to sample and store one.
+///
+/// True only for Zstd, which digests a dictionary once per chunk and then
+/// applies it to every block for free. LZ4's stable API can only apply one
+/// through LZ4_loadDict() on the very stream that compresses the block, which
+/// re-initializes the stream and inserts a hash every three dictionary bytes -
+/// per block, not per chunk. Its match window already spans a whole
+/// SFSBLOCKSIZE block, so a dictionary only helps matches near the block's
+/// start, which does not pay for that.
+///
+/// This governs new chunks only. A chunk that already carries a dictionary
+/// keeps using it whatever its algorithm, since that is how its blocks were
+/// written.
+bool usesDictionary(Algorithm algorithm);
+
 /// Per-chunk dictionaries, prepared once into whatever form the algorithm
 /// wants: a digest for Zstd, the raw bytes for LZ4. Opaque so this header does
 /// not drag the compression-library headers into every includer.

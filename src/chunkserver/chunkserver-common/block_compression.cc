@@ -139,6 +139,8 @@ const char *algorithmName(Algorithm algorithm) {
 	return "none";
 }
 
+bool usesDictionary(Algorithm algorithm) { return algorithm == Algorithm::Zstd; }
+
 CompressDictPtr createCompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize,
                                    int level) {
 	if (dict == nullptr || dictSize == 0) { return nullptr; }
