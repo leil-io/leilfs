@@ -213,9 +213,9 @@ public:
 	/// Epoch of the last master-driven registration sweep which reported this
 	/// chunk (see hddRegistrationSweep* in hddspacemgr). Guarded by
 	/// gChunksMapMutex, like the registry itself.
-	virtual uint8_t registrationEpoch() const = 0;
+	virtual uint32_t registrationEpoch() const = 0;
 	/// Sets the registration sweep epoch.
-	virtual void setRegistrationEpoch(uint8_t newEpoch) = 0;
+	virtual void setRegistrationEpoch(uint32_t newEpoch) = 0;
 
 	/// Returns the number of blocks in the Chunk.
 	virtual uint16_t blocks() const = 0;

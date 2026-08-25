@@ -101,7 +101,7 @@ void masterconn_stats(uint64_t *bin,uint64_t *bout,uint32_t *maxjobscnt) {
 void masterconn_check_hdd_reports() {
 	MasterConn *eptr = gMasterConnSingleton.get();
 	uint32_t errorcounter;
-	if (eptr->mode() == ConnectionMode::CONNECTED) { eptr->checkPullRegistrationStartTimeout(); }
+	if (eptr->mode() == ConnectionMode::CONNECTED) { eptr->checkPullRegistration(); }
 	if (eptr->mode() == ConnectionMode::CONNECTED &&
 	    eptr->registrationStatus() == RegistrationStatus::kChunksRegistered) {
 		if (hddGetAndResetSpaceChanged()) {

@@ -617,12 +617,12 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize) {
 
 /// Master-driven (pull) chunk registration sweep.
 /// All sweep state is guarded by gChunksMapMutex, like the registry itself.
-/// Chunks are marked with the session epoch when reported; the termination
-/// pass rescans the whole registry until no unmarked chunk remains, which
-/// covers chunks skipped while locked, chunks moved behind the bucket cursor
-/// by a rehash, and chunks inserted during the sweep.
+/// Chunks are marked with the session epoch when reported. The termination
+/// pass rescans the whole registry until no unmarked, reportable chunk
+/// remains. If it finds a locked chunk, it asks the caller to retry later
+/// rather than waiting on the network event loop.
 
-static uint8_t gRegistrationSweepEpoch = 0;
+static uint32_t gRegistrationSweepEpoch = 0;
 static std::size_t gRegistrationSweepBucket = 0;
 /// Bucket array the cursor above refers to. A different value means the
 /// registry rehashed between calls and the cursor lost its meaning.
@@ -635,7 +635,7 @@ void hddRegistrationSweepBegin() {
 	++gRegistrationSweepEpoch;
 	if (gRegistrationSweepEpoch == 0) {
 		// The epoch wrapped: clear every stale mark, or a chunk still
-		// carrying this epoch value from 256 sessions ago would be skipped.
+		// carrying this epoch value from 2^32 sessions ago would be skipped.
 		for (const auto &chunkEntry : gChunksMap) { chunkEntry.second->setRegistrationEpoch(0); }
 		gRegistrationSweepEpoch = 1;
 	}
@@ -645,11 +645,12 @@ void hddRegistrationSweepBegin() {
 	gRegistrationSweepCursorDone = false;
 }
 
-bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize) {
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize) {
 	bulk.clear();
 	bulk.reserve(bulkSize);
 
-	auto addChunkToBulk = [&bulk](IChunk *chunk, uint8_t epoch) {
+	auto addChunkToBulk = [&bulk](IChunk *chunk, uint32_t epoch) {
 		chunk->setRegistrationEpoch(epoch);
 		bulk.emplace_back(chunk->id(),
 		                  common::combineVersionWithTodelFlag(
@@ -657,82 +658,71 @@ bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::s
 		                  chunk->type());
 	};
 
-	std::vector<ChunkWithType> recheckList;
-	{
-		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 
-		// Phase 1: advance the bucket cursor. A bucket may hold several EC
-		// parts for one chunk id, so leave it selected when the bulk fills and
-		// revisit its remaining unmarked entries on the next credit.
-		const std::size_t bucketCount = gChunksMap.bucket_count();
+	// Phase 1: advance the bucket cursor. A bucket may hold several EC
+	// parts for one chunk id, so leave it selected when the bulk fills and
+	// revisit its remaining unmarked entries on the next credit.
+	const std::size_t bucketCount = gChunksMap.bucket_count();
 
-		// A rehash redistributed every entry, so the cursor no longer separates
-		// swept buckets from unswept ones and chunks can now sit behind it.
-		// Walk again from the start rather than leaving them to the termination
-		// pass: chunks already reported cost one epoch compare each, and a
-		// table only doubles a logarithmic number of times, so restarting
-		// cannot happen often. The termination pass would find them too, but it
-		// rescans the whole registry once per bulk, which is at its worst
-		// exactly when a rehash displaced many chunks at once.
-		if (bucketCount != gRegistrationSweepBucketCount) {
-			gRegistrationSweepBucketCount = bucketCount;
-			gRegistrationSweepBucket = 0;
-			gRegistrationSweepCursorDone = false;
+	// A rehash redistributed every entry, so the cursor no longer separates
+	// swept buckets from unswept ones and chunks can now sit behind it.
+	// Walk again from the start rather than leaving them to the termination
+	// pass: chunks already reported cost one epoch compare each, and a
+	// table only doubles a logarithmic number of times, so restarting
+	// cannot happen often. The termination pass would find them too, but it
+	// rescans the whole registry once per bulk, which is at its worst
+	// exactly when a rehash displaced many chunks at once.
+	if (bucketCount != gRegistrationSweepBucketCount) {
+		gRegistrationSweepBucketCount = bucketCount;
+		gRegistrationSweepBucket = 0;
+		gRegistrationSweepCursorDone = false;
+	}
+
+	while (!gRegistrationSweepCursorDone && bulk.size() < bulkSize) {
+		if (gRegistrationSweepBucket >= bucketCount) {
+			gRegistrationSweepCursorDone = true;
+			break;
 		}
-
-		while (!gRegistrationSweepCursorDone && bulk.size() < bulkSize) {
-			if (gRegistrationSweepBucket >= bucketCount) {
-				gRegistrationSweepCursorDone = true;
-				break;
-			}
-			for (auto bucketIter = gChunksMap.begin(gRegistrationSweepBucket);
-			     bucketIter != gChunksMap.end(gRegistrationSweepBucket); ++bucketIter) {
-				IChunk *chunk = bucketIter->second.get();
-				if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
-				    chunk->state() != ChunkState::Available) {
-					// Marked already, or picked up by a later pass
-					continue;
-				}
-				addChunkToBulk(chunk, gRegistrationSweepEpoch);
-				if (bulk.size() == bulkSize) { break; }
-			}
-			if (bulk.size() == bulkSize) { break; }
-			++gRegistrationSweepBucket;
-		}
-
-		if (!bulk.empty()) { return true; }
-
-		// Phase 2 (termination): collect the stragglers
-		for (const auto &chunkEntry : gChunksMap) {
-			IChunk *chunk = chunkEntry.second.get();
+		for (auto bucketIter = gChunksMap.begin(gRegistrationSweepBucket);
+		     bucketIter != gChunksMap.end(gRegistrationSweepBucket); ++bucketIter) {
+			IChunk *chunk = bucketIter->second.get();
 			if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
-			    chunk->state() == ChunkState::Deleted ||
-			    chunk->state() == ChunkState::ToBeDeleted) {
+			    chunk->state() != ChunkState::Available) {
+				// Marked already, or picked up by a later pass
 				continue;
 			}
-			if (chunk->state() == ChunkState::Available) {
-				addChunkToBulk(chunk, gRegistrationSweepEpoch);
-			} else {
-				recheckList.emplace_back(chunk->id(), chunk->type());
-			}
-			if (bulk.size() + recheckList.size() >= bulkSize) { break; }
+			addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			if (bulk.size() == bulkSize) { break; }
+		}
+		if (bulk.size() == bulkSize) { break; }
+		++gRegistrationSweepBucket;
+	}
+
+	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+
+	// Phase 2 (termination): a complete scan decides whether the sweep is
+	// finished. Do not wait for Locked entries here: this function is called
+	// by the master connection's network event loop.
+	bool hasLockedChunks = false;
+	for (const auto &chunkEntry : gChunksMap) {
+		IChunk *chunk = chunkEntry.second.get();
+		if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
+		    chunk->state() == ChunkState::Deleted ||
+		    chunk->state() == ChunkState::ToBeDeleted) {
+			continue;
+		}
+		if (chunk->state() == ChunkState::Available) {
+			addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			if (bulk.size() == bulkSize) { break; }
+		} else {
+			hasLockedChunks = true;
 		}
 	}
 
-	// Wait for the locked stragglers, mirroring hddForeachChunkInBulks
-	for (const auto &chunkWithType : recheckList) {
-		auto *chunk = hddChunkFindAndLock(chunkWithType.id, chunkWithType.type);
-		if (chunk == ChunkNotFound) { continue; }
-		{
-			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-			if (chunk->registrationEpoch() != gRegistrationSweepEpoch) {
-				addChunkToBulk(chunk, gRegistrationSweepEpoch);
-			}
-		}
-		hddChunkRelease(chunk);
-	}
-
-	return !bulk.empty();
+	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+	return hasLockedChunks ? RegistrationSweepResult::kRetry
+	                       : RegistrationSweepResult::kComplete;
 }
 
 uint64_t hddGetChunkRegistryBucketCount() {

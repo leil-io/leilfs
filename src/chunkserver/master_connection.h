@@ -140,11 +140,9 @@ public:
 	/// Handles SAU_MATOCS_REGISTER_CHUNKS_CREDIT: releases more bulks.
 	void onRegisterChunksCredit(const std::vector<uint8_t> &data);
 
-	/// Falls back to the old push registration when the master never sent
-	/// SAU_MATOCS_REGISTER_CHUNKS_START (e.g. a master which advertises a
-	/// pull-capable version but does not speak the protocol).
-	/// Called periodically from the event loop.
-	void checkPullRegistrationStartTimeout();
+	/// Handles the pull-registration timeout and retries a sweep deferred by a
+	/// locked chunk. Called periodically from the event loop.
+	void checkPullRegistration();
 
 	int initConnect();
 
@@ -294,6 +292,8 @@ private:
 	uint64_t pullChunksSent_{0};  ///< Chunks reported in this pull session.
 	/// Expires while waiting for SAU_MATOCS_REGISTER_CHUNKS_START.
 	Timeout pullStartTimeout_{std::chrono::seconds(0)};
+	/// Limits registry rescans while waiting for a locked chunk to become available.
+	Timeout pullSweepRetryTimeout_{std::chrono::seconds(0)};
 
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	/// Registration status to this MDS.

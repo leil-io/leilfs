@@ -69,11 +69,19 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 /// new-chunk queue is drained (see hddGetNewChunks).
 void hddRegistrationSweepBegin();
 
+/// Result of advancing a master-driven registration sweep.
+enum class RegistrationSweepResult {
+	kBulkReady,  ///< \p bulk contains records ready to send to the master.
+	kRetry,      ///< Locked records remain; retry later without consuming a credit.
+	kComplete,   ///< Every reportable record has been included in the sweep.
+};
+
 /// Collects at most \p bulkSize chunks not yet reported in
-/// this sweep session and marks them as reported. Returns false when the
-/// sweep is complete (\p bulk is then empty); a true return means "send this
-/// bulk and call again".
-bool hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk, std::size_t bulkSize);
+/// this sweep session and marks them as reported. Locked chunks are not
+/// waited on: callers receive \ref RegistrationSweepResult::kRetry and must
+/// try again later without consuming a master credit.
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize);
 
 /// Number of buckets currently backing the chunk registry. Reported alongside
 /// the registration progress messages so a test can tell whether the registry

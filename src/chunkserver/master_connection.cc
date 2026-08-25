@@ -55,6 +55,7 @@
 #include "slogger/slogger.h"
 
 static constexpr uint32_t kMaxBackgroundJobsThreshold = (kMaxBackgroundJobsCount * 9) / 10;
+static constexpr auto kPullRegistrationSweepRetryDelay = std::chrono::seconds(1);
 
 MasterConn::~MasterConn() {
 	if (socketFD_ >= 0) { tcpclose(socketFD_); }
@@ -278,6 +279,7 @@ void MasterConn::onRegisterChunksStart(const std::vector<uint8_t> &data) {
 	pullBulkSize_ = std::clamp(bulkSize, kMinChunkBulkSize, kMaxChunkBulkSize);
 	pullCredits_ = initialCredits;
 	pullChunksSent_ = 0;
+	pullSweepRetryTimeout_ = Timeout(std::chrono::seconds(0));
 	registrationStatus_ = RegistrationStatus::kChunksRegistering;
 
 	safs::log_info(
@@ -306,7 +308,8 @@ void MasterConn::pumpPullRegistration() {
 	std::vector<ChunkWithVersionAndType> bulk;
 
 	while (pullCredits_ > 0) {
-		if (!hddRegistrationSweepNext(bulk, pullBulkSize_)) {
+		switch (hddRegistrationSweepNext(bulk, pullBulkSize_)) {
+		case RegistrationSweepResult::kComplete:
 			createAttachedPacket(cstoma::registerChunksEnd::build(pullChunksSent_));
 			registrationStatus_ = RegistrationStatus::kChunksRegistered;
 			safs::log_info(
@@ -314,6 +317,11 @@ void MasterConn::pumpPullRegistration() {
 			    "registry buckets {})",
 			    pullChunksSent_, hddGetChunkRegistryBucketCount());
 			return;
+		case RegistrationSweepResult::kRetry:
+			pullSweepRetryTimeout_ = Timeout(kPullRegistrationSweepRetryDelay);
+			return;
+		case RegistrationSweepResult::kBulkReady:
+			break;
 		}
 
 		pullChunksSent_ += bulk.size();
@@ -322,7 +330,14 @@ void MasterConn::pumpPullRegistration() {
 	}
 }
 
-void MasterConn::checkPullRegistrationStartTimeout() {
+void MasterConn::checkPullRegistration() {
+	if (registrationStatus_ == RegistrationStatus::kChunksRegistering) {
+		if (pullCredits_ > 0 && pullSweepRetryTimeout_.expired()) {
+			pumpPullRegistration();
+		}
+		return;
+	}
+
 	if (registrationStatus_ != RegistrationStatus::kAwaitingPullStart ||
 	    !pullStartTimeout_.expired()) {
 		return;
