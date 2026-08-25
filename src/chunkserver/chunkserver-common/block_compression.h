@@ -99,9 +99,9 @@ using DecompressDictPtr = std::unique_ptr<DecompressDict, DecompressDictDeleter>
 
 /// Prepares the per-chunk dictionary bytes for compression with @p algorithm.
 /// Zstd digests them at @p level (and auto-detects trained (ZDICT) vs
-/// raw-content dictionaries); LZ4 ignores @p level and keeps the bytes as they
-/// are. Returns nullptr for an empty dictionary or on failure (callers then
-/// compress without one).
+/// raw-content dictionaries); LZ4 keeps the bytes as they are, its effort being
+/// chosen per block instead. Returns nullptr for an empty dictionary or on
+/// failure (callers then compress without one).
 CompressDictPtr createCompressDict(Algorithm algorithm, const uint8_t *dict, size_t dictSize,
                                    int level);
 
@@ -119,7 +119,11 @@ DecompressDictPtr createDecompressDict(Algorithm algorithm, const uint8_t *dict,
 /// @param srcSize       Number of uncompressed bytes.
 /// @param dst           Destination buffer for the compressed frame.
 /// @param dstCapacity   Capacity of the destination buffer.
-/// @param level         Zstd compression level; ignored by LZ4.
+/// @param level         How hard to compress: higher spends more CPU for a
+///                      smaller result, the way Zstd's own levels read. Zstd
+///                      takes it as its level; LZ4 maps it onto its inverted
+///                      acceleration dial, reaching its strongest setting at
+///                      level 9 and compressing no harder above that.
 /// @return The compressed size on success, or a value <= 0 when the block was
 ///         not compressed - because the algorithm failed, or because the result
 ///         did not fit in @p dstCapacity. Either way the caller stores the block

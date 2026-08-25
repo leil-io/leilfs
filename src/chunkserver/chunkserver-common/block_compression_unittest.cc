@@ -20,6 +20,8 @@
 
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -45,6 +47,22 @@ std::vector<uint8_t> compressibleBlock() {
 	std::vector<uint8_t> block(SFSBLOCKSIZE);
 	for (size_t i = 0; i < block.size(); ++i) {
 		block[i] = static_cast<uint8_t>(pattern[i % pattern.size()]);
+	}
+	return block;
+}
+
+/// A block with real matches to find but no trivial structure: 8-byte tokens
+/// drawn at random from a small pool. Highly repetitive data compresses to
+/// almost nothing whatever the effort, which would leave an effort comparison
+/// with nothing to compare; this gives the compressor something to trade CPU
+/// against. Seeded, so a failure reproduces.
+std::vector<uint8_t> moderatelyCompressibleBlock() {
+	std::mt19937 generator(20260826);
+	std::uniform_int_distribution<uint64_t> token(0, 63);
+	std::vector<uint8_t> block(SFSBLOCKSIZE);
+	for (size_t i = 0; i + sizeof(uint64_t) <= block.size(); i += sizeof(uint64_t)) {
+		const uint64_t value = 0x0123456789ABCDEFULL * token(generator);
+		std::memcpy(block.data() + i, &value, sizeof(value));
 	}
 	return block;
 }
@@ -289,6 +307,61 @@ TEST(BlockCompressionTests, ABlockCompressedWithoutADictionaryDecodesAlone) {
 		                                             decompressed.size()));
 		EXPECT_EQ(source, decompressed);
 	}
+}
+
+// One config option has to mean the same thing for both algorithms: higher
+// compresses harder. LZ4's own dial runs the other way, so the mistake to catch
+// is an inverted mapping, which would silently turn the strongest setting into
+// the weakest. A strict inequality is deliberately not asserted - by how much
+// the sizes differ depends on the payload and the LZ4 version, and the point
+// here is the direction.
+TEST(BlockCompressionTests, ALz4BlockNeverGrowsWithTheEffortLevel) {
+	const std::vector<uint8_t> source = moderatelyCompressibleBlock();
+
+	ssize_t previousSize = std::numeric_limits<ssize_t>::max();
+	for (const int level : {1, 3, 5, 9, 19}) {
+		SCOPED_TRACE(level);
+
+		std::vector<uint8_t> compressed(kWriteDstCapacity);
+		const ssize_t compressedSize =
+		    block_compression::compressBlock(Algorithm::Lz4, nullptr, source.data(), source.size(),
+		                                     compressed.data(), compressed.size(), level);
+		ASSERT_GT(compressedSize, 0);
+		EXPECT_LE(compressedSize, previousSize) << "a higher level must not compress less";
+		previousSize = compressedSize;
+
+		// Whatever effort wrote it, a block still decodes the same way: the
+		// level is a write-side choice that leaves no trace in the block.
+		std::vector<uint8_t> decompressed(SFSBLOCKSIZE);
+		ASSERT_EQ(static_cast<ssize_t>(SFSBLOCKSIZE),
+		          block_compression::decompressBlock(Algorithm::Lz4, nullptr, compressed.data(),
+		                                             compressedSize, decompressed.data(),
+		                                             decompressed.size()));
+		EXPECT_EQ(source, decompressed);
+	}
+}
+
+// LZ4 reaches its strongest setting at level 9, so everything above it is the
+// same compression - the range above exists only to keep one option's numbers
+// meaning one thing across algorithms.
+TEST(BlockCompressionTests, Lz4SaturatesAboveItsStrongestLevel) {
+	const std::vector<uint8_t> source = moderatelyCompressibleBlock();
+
+	std::vector<uint8_t> atNine(kWriteDstCapacity);
+	std::vector<uint8_t> atNineteen(kWriteDstCapacity);
+
+	const ssize_t sizeAtNine =
+	    block_compression::compressBlock(Algorithm::Lz4, nullptr, source.data(), source.size(),
+	                                     atNine.data(), atNine.size(), 9);
+	const ssize_t sizeAtNineteen =
+	    block_compression::compressBlock(Algorithm::Lz4, nullptr, source.data(), source.size(),
+	                                     atNineteen.data(), atNineteen.size(), 19);
+
+	ASSERT_GT(sizeAtNine, 0);
+	ASSERT_EQ(sizeAtNine, sizeAtNineteen);
+	atNine.resize(sizeAtNine);
+	atNineteen.resize(sizeAtNineteen);
+	EXPECT_EQ(atNine, atNineteen);
 }
 
 TEST(BlockCompressionTests, CompressBoundLeavesRoomForFraming) {

@@ -33,11 +33,16 @@ namespace block_compression {
 
 namespace {
 
-/// LZ4 speed/ratio dial, in LZ4's own inverted units (higher is faster and
-/// compresses less). Fixed at the strongest setting: LZ4 is the choice for
-/// chunks whose write path is CPU bound, and Zstd covers the other end of the
-/// dial through HDD_COMPRESSION_LEVEL.
-constexpr int kLz4Acceleration = 1;
+/// The effort level from which LZ4 is already at its strongest setting;
+/// anything above it compresses no harder.
+constexpr int kLz4StrongestLevel = 9;
+
+/// Turns an effort level (higher compresses harder, as Zstd's own levels do)
+/// into LZ4's acceleration, which runs the other way: higher is faster and
+/// compresses less. One config option can then mean the same thing for both
+/// algorithms, at the cost of this inversion living here rather than in
+/// everyone's head.
+int lz4Acceleration(int level) { return std::max(1, kLz4StrongestLevel + 1 - level); }
 
 struct CCtxDeleter {
 	void operator()(ZSTD_CCtx *cctx) const { ZSTD_freeCCtx(cctx); }
@@ -222,11 +227,13 @@ ssize_t compressBlock(Algorithm algorithm, const CompressDict *dict, const uint8
 		const int sourceSize = static_cast<int>(srcSize);
 		const int destinationCapacity = static_cast<int>(dstCapacity);
 
+		const int acceleration = lz4Acceleration(level);
+
 		if (dict == nullptr) {
 			// LZ4_compress_fast_extState() re-initializes the state it is
 			// given, so the same stream serves both paths.
 			return LZ4_compress_fast_extState(stream, source, destination, sourceSize,
-			                                  destinationCapacity, kLz4Acceleration);
+			                                  destinationCapacity, acceleration);
 		}
 
 		// LZ4_loadDict() rebuilds the match table from scratch, which both
@@ -239,7 +246,7 @@ ssize_t compressBlock(Algorithm algorithm, const CompressDict *dict, const uint8
 		             static_cast<int>(dict->rawDict.size()));
 
 		return LZ4_compress_fast_continue(stream, source, destination, sourceSize,
-		                                  destinationCapacity, kLz4Acceleration);
+		                                  destinationCapacity, acceleration);
 	}
 	case Algorithm::None:
 		break;
