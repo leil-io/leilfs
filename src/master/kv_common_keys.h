@@ -65,6 +65,25 @@ inline constexpr std::string_view kSessionRangeStartKey = "META_NEXT_SESSION_RAN
 /// has ever been allocated"; allocated ids start at 1.
 inline constexpr std::string_view kMetaNextMdsIdKey = "META_NEXT_MDS_ID";
 
+/// Cluster-wide counter used to allocate stable chunkserver ids.
+/// Format: META_NEXT_CS_ID : <uint32_t LE>
+/// The MDS handling a first distributed registration (sentinel id zero) does
+/// atomicAdd(+1) and returns the post-increment value in the registration reply;
+/// the chunkserver stores it durably and presents it on every later registration.
+/// Value 0 means "never allocated"; allocated ids start at 1. Skipped values from
+/// lost replies are harmless: an id that was never served under never enters a
+/// part set.
+inline constexpr std::string_view kMetaNextCsIdKey = "META_NEXT_CS_ID";
+
+/// Prefix for the globally admitted process incarnation of one stable chunkserver.
+/// Format: CS_SESSION_<StableChunkserverId (Big Endian)> :
+///         <FormatVersion u8><ChunkserverIncarnation u64><RenewerMdsId u32>
+///         <RenewerMdsIncarnation u64><ClaimSequence u64><LeaseDeadline u64>
+/// The value uses the common datapack big-endian representation and is accepted only at
+/// its exact encoded size. A registration transaction must read this row non-snapshot
+/// before it can admit a distributed chunkserver connection.
+inline constexpr std::string_view kChunkserverSessionKeyPrefix = "CS_SESSION_";
+
 /// Prefix for per-MDS cluster membership records.
 /// Format: MDS_REGISTRY_<MdsId (Big Endian)> : <Ip><MatoclPort><MatocsPort><Version>
 /// Written once by the owning MDS at startup; no other process ever writes this row.
@@ -119,15 +138,142 @@ inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
 /// when the inode was freed.
 inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 
-/// Prefix for chunk records (durable refcount + version)
-/// Format: CHNK_<ChunkId> -> <Version><GoalCount>[<Goal><Count>]*
+/// Prefix for chunk records (durable refcount, version and write lock)
+/// Format: CHNK_<ChunkId> -> <Version><LockId><LockedTo><GoalCount>[<Goal><Count>]*
 /// @note ChunkId (64-bit) is serialized as Big Endian in the key, keeping the keyspace in
 /// chunk-id order for range scans. The value is a single datapack big-endian blob: Version
-/// (32-bit), GoalCount (16-bit, number of (Goal, Count) pairs), then that many per-goal reference
-/// counts (Goal 8-bit, Count 8-bit), mirroring ChunkGoalCounters. GoalCount is 16-bit because
-/// per-goal overflow can split one goal across several entries, so the count may exceed 255.
-/// Write locks live elsewhere (a future CHNK_LOCK_ prefix), so they are not part of this record.
+/// (32-bit), LockId (32-bit), LockedTo (32-bit Unix time, lock expiry), GoalCount (16-bit,
+/// number of (Goal, Count) pairs), then that many per-goal reference counts (Goal 8-bit,
+/// Count 8-bit), mirroring ChunkGoalCounters. GoalCount is 16-bit because per-goal overflow
+/// can split one goal across several entries, so the count may exceed 255.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
+
+/// Prefix for durable distributed chunk operation records.
+/// Format: CHUNK_OP_<ChunkId> -> <VersionedChunkOpRecord>
+/// - ChunkId: uint64_t serialized as Big Endian
+/// - Value: format-versioned record owned by the MDS chunk operation coordinator. The
+///   active form carries the operation state machine (state, kind, per-chunk generation,
+///   owner identity, nonce, deadlines, target version, write grant, participant snapshot,
+///   dropped-participant ledger, recovery payload); the idle form is a compact residue
+///   keeping the generation, the allocated-version high-water mark and the ledger.
+///   Exact layouts live in mds/chunk_op_kv_utils.h.
+/// @note Deliberately not CHNK_OP_: CHNK_ keys are exactly prefix plus 8 id bytes, so a
+/// sibling string under that prefix would sit inside CHNK_ range scans.
+inline constexpr std::string_view kChunkOpKeyPrefix = "CHUNK_OP_";
+
+/// Prefix for the authoritative chunk part set on distributed clusters.
+/// Format: CHUNK_PARTS_<ChunkId> -> <FormatVersion><SetRevision><PublishedAtVersion>
+///                                  <Count>[<CsId><PartType>]*
+/// - ChunkId: uint64_t serialized as Big Endian
+/// - Value: datapack big-endian; FormatVersion u8, SetRevision u64, PublishedAtVersion u32,
+///   Count u16, then Count members (CsId u32 stable chunkserver id, PartType u16).
+/// @note Written only by coordinated durable transitions, copied verbatim from the
+/// acknowledged participant snapshot; reports and observations never touch it. A missing
+/// record for a referenced chunk on a distributed cluster is a fail-closed defect, not a
+/// state. PublishedAtVersion always equals the CHNK_ version; a mismatch fails closed.
+inline constexpr std::string_view kChunkPartsKeyPrefix = "CHUNK_PARTS_";
+
+/// Prefix for durable observations about a chunk's physical parts, awaiting reconciliation.
+/// Format: CHUNK_EVIDENCE_<ChunkId> -> <FormatVersion><ObservedAtVersion><FirstObservedAt>
+///                                     <Count>[<CsId><PartType><Kind>]*
+/// - ChunkId: uint64_t serialized as Big Endian
+/// - Value: datapack big-endian; FormatVersion u8, ObservedAtVersion u32, FirstObservedAt u64
+///   (unix ms), Count u16, then Count observations (CsId u32, PartType u16, Kind u8 where
+///   1 means the server reported holding the part and 2 means the part was observed missing).
+/// @note An observation is evidence, never a decision: reports, loss notifications, scans and
+/// discoveries write here and never touch CHUNK_PARTS_ or CHUNK_OP_. Observations for one
+/// chunk coalesce by (CsId, PartType), so repeated reports cost one record rather than one
+/// per report. A fenced coordinator transition consumes the whole record atomically when it
+/// publishes; evidence that names a version other than the chunk's current one is stale and
+/// is discarded rather than acted on.
+inline constexpr std::string_view kChunkEvidenceKeyPrefix = "CHUNK_EVIDENCE_";
+
+/// Prefix for the reverse view of the published sets: which parts the authoritative sets expect
+/// on one chunkserver. Written in the same transaction as every CHUNK_PARTS_ change, so the two
+/// cannot drift.
+/// Format: CS_EXPECT_<CsId><ChunkId> -> <FormatVersion><Count>[<PartType>]*
+/// - CsId: uint32_t serialized as Big Endian, so one server's expectations form a range
+/// - ChunkId: uint64_t serialized as Big Endian
+/// - Value: datapack big-endian; FormatVersion u8, Count u16, then Count PartType u16
+/// @note This is not an inventory and grants nothing: it may not authorize serving, may not
+/// authorize publication, and is never a source of locations. Its only use is to bound a
+/// question, so that a chunkserver returning under a new incarnation can be asked about the
+/// parts its own entries name instead of the cluster being scanned or a reader being relied on
+/// to stumble onto the absence. An entry is a claim about what the published set says, so it is
+/// derived state: a disagreement with CHUNK_PARTS_ is a defect in whoever wrote them apart.
+inline constexpr std::string_view kChunkServerExpectedPartsKeyPrefix = "CS_EXPECT_";
+
+/// Prefix for the witness that tells a landed batch commit from an abandoned one.
+/// Format: MDS_BATCH_WITNESS_<MdsId><MdsIncarnation><BatchSequence>
+///         -> <FormatVersion><RequestDigest[32]><RequestCount><CommittedAt>
+/// - MdsId: uint32_t Big Endian; MdsIncarnation: uint64_t Big Endian; BatchSequence: uint64_t
+///   Big Endian
+/// - Value: datapack big-endian; FormatVersion u8, RequestDigest 32 bytes, RequestCount u16,
+///   CommittedAt u64 (unix ms)
+/// @note FoundationDB answers a commit it cannot vouch for with commit_unknown_result, and the
+/// only legal move on that handle is to drop it. That leaves the question of whether the work
+/// landed, which a metadata server may not answer by guessing: reporting a definite failure for an
+/// operation that committed is a lie the client acts on. Every batch writes its own key here in
+/// the same transaction as its work, so the question has an exact answer on a fresh read: the row
+/// is present exactly when that transaction committed. The key carries the process incarnation and
+/// a checked batch sequence allocated once per logical batch (reused across its own replay
+/// attempts, never by another batch, zero invalid, exhaustion fails closed) rather than the stable
+/// id alone: keying by id alone rests on strict single flight, and a later batch overwriting the
+/// key before an earlier resolver reads it would report a landed transaction as lost. The digest
+/// over the batch's ordered client identities lets a resolver tell its own row from one a second
+/// process sharing the same id and incarnation wrote to the same key (a state D6 leaves unfenced):
+/// a foreign digest is neither a landed nor a lost answer.
+inline constexpr std::string_view kBatchCommitWitnessKeyPrefix = "MDS_BATCH_WITNESS_";
+
+/// Prefix for durable create reservations, keyed by the namespace anchor so a recovering
+/// MDS can rediscover an ambiguous create without any in-memory state.
+/// Format: CHUNK_CREATE_RSV_<InodeId><ChunkIndex> -> <FormatVersion><TargetChunkId>
+///                                                   <OpNonce><OwnerMdsId><OwnerIncarnation>
+///                                                   <CreatedAt>
+/// - InodeId: uint32_t Big Endian; ChunkIndex: uint32_t Big Endian
+/// - Value: datapack big-endian; FormatVersion u8, TargetChunkId u64, OpNonce u64,
+///   OwnerMdsId u32, OwnerIncarnation u64, CreatedAt u64 (unix ms).
+/// @note Publication consumes it atomically; a cancelled create releases it (the retry
+/// mints a fresh one). Not CHUNK_OP_CREATE_RSV_, which would nest inside CHUNK_OP_ scans.
+inline constexpr std::string_view kChunkCreateReservationKeyPrefix = "CHUNK_CREATE_RSV_";
+
+/// Prefix for owed physical deletions: the copies a committed retirement still has to withdraw.
+/// Format: CHUNK_RECLAIM_<ChunkId><SetRevision><Reason> -> <FormatVersion><OwnerMdsId>
+///         <OwnerIncarnation><Count>[<CsId><PartType><ExpectedVersion><Attempts>]*
+/// - ChunkId: uint64_t Big Endian; SetRevision: uint64_t Big Endian, the revision of the set the
+///   retirement removed, so two retirements owed for one live chunk are separate items;
+///   Reason: u8, 1 = whole chunk, 2 = retired part
+/// - Value: datapack big-endian; FormatVersion u8, OwnerMdsId u32, OwnerIncarnation u64,
+///   Count u16, then Count items of CsId u32, PartType u16, ExpectedVersion u32, Attempts u8
+/// @note Written inside the transaction that retires the set, so a present row proves that
+/// transaction committed; an absent row proves only that nothing is owed now, because another
+/// owner may have executed and erased it. An item leaves the row only on an exact terminal result
+/// for its tuple (deleted, proven absent over a complete storage scope, or superseded by a newer
+/// publication), never on send, and the row goes with its last item. Nothing here is authority:
+/// an executor may act only on a row it read in its own transaction, and the command it sends
+/// is conditional on the exact part type and expected version.
+inline constexpr std::string_view kChunkReclaimKeyPrefix = "CHUNK_RECLAIM_";
+
+/// Prefix for durable maintenance tasks: one row per task kind, scope and partition of a static
+/// range scheme over a named source key family.
+/// Format: MDS_TASK_<TaskKind><ScopeId><PartitionBegin> -> <FormatVersion><SchemeVersion>
+///         <SourceFamily><PartitionEnd><ActiveGeneration><RequestedGeneration><OwnerMdsId>
+///         <OwnerIncarnation><LeaseSequence><LeaseDeadline><Cursor><Terminal>
+/// - TaskKind: u8 (1 = reclamation over CHUNK_RECLAIM_); ScopeId: uint32_t Big Endian, the stable
+///   server for a server-scoped kind and zero for a global one; PartitionBegin: uint64_t Big
+///   Endian, the first source key of the half-open range this partition owns
+/// - Value: datapack big-endian; FormatVersion u8, SchemeVersion u8, SourceFamily u8,
+///   PartitionEnd u64 (exclusive; 0 means the end of the source prefix), ActiveGeneration u64,
+///   RequestedGeneration u64, OwnerMdsId u32, OwnerIncarnation u64, LeaseSequence u64,
+///   LeaseDeadline u64 (session authority clock, seconds), Cursor u64, Terminal u8
+/// @note Partitions are named by the range they own and never by an index derived from the
+/// metadata server count, so membership changes move owners and never boundaries. The range
+/// set of a scope is validated as an exact cover of its source, in one snapshot, before any
+/// partition runs; a mismatch fails closed and visibly. Ownership is a lease bound to (owner id,
+/// incarnation, sequence) and renewed conditionally; a new trigger raises only the requested
+/// generation, never the active owner, cursor or pending work. Eligibility to schedule comes
+/// from the role mask; authority over any chunk stays with CHUNK_OP_.
+inline constexpr std::string_view kMdsTaskKeyPrefix = "MDS_TASK_";
 
 /// Number of chunk-id slots covered by one FCHK_ bucket.
 inline constexpr uint32_t kChunkIdsPerBucket = 1024;

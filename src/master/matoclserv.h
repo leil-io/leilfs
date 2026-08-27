@@ -24,11 +24,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "common/type_defs.h"
 
 class FilesystemOperationContext;
+
+/// Runs a replayable metadata op body and commits it synchronously, replaying the body on a
+/// fresh transaction when the commit hits a retryable conflict.
+/// @see matoclserv_commit_op_with_retry_impl in matoclserv.cc for the retry budget, the
+/// pacing, and why an unknown commit outcome is never replayed.
+uint8_t matoclserv_commit_op_with_retry(
+    const std::function<uint8_t(FilesystemOperationContext &)> &body);
 
 /// Get stats from client and reset them in the server.
 /// @param stats Array of 5 elements to store stats in the following order:

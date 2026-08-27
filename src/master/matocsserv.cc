@@ -35,11 +35,16 @@
 #include <cstring>
 #include <ctime>
 #include <list>
+#include <map>
 #include <vector>
 
+#include "common/chunk_command_identity.h"
 #include "common/counting_sort.h"
 #include "common/datapack.h"
 #include "common/event_loop.h"
+#include "common/session_authority_clock.h"
+#include "common/test_event_stream.h"
+#include "common/test_packet_faults.h"
 #include "common/goal.h"
 #include "common/input_packet.h"
 #include "common/loop_watchdog.h"
@@ -60,6 +65,7 @@
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
+#include "master/metadataserver_hooks.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cstoma.h"
@@ -71,9 +77,9 @@ constexpr uint32_t kMaxPacketSize = 500'000'000;
 
 // matocsserventry.mode
 enum class ChunkserverConnectionMode : std::uint8_t {
-	KILL,			/// Connection is terminated
-	CONNECTED,		/// Connection is active
-	HANDSHAKE		/// TLS handshake in progress
+	KILL,       /// Connection is terminated
+	CONNECTED,  /// Connection is active
+	HANDSHAKE   /// TLS handshake in progress
 };
 
 double gLoadFactorPenalty = 0.;
@@ -109,23 +115,54 @@ constexpr uint32_t kSpacePktUsedTotal = 16;           // usedspace(8) + totalspa
 constexpr uint32_t kSpacePktWithToDelSpace = 32;      // + todelusedspace(8) + todeltotalspace(8)
 constexpr uint32_t kSpacePktWithCountsAndToDel = 40;  // + chunkscount(4) + todelchunkscount(4)
 
+/// One chunk command that was sent and is still waiting for its answer.
+///
+/// The admission decides whether a late answer may be believed. The deadline decides something
+/// else entirely: how long the operation behind the command may be left with no answer at all.
+/// Those are separate questions and a ledger that records only the first can watch an operation
+/// wait forever while every one of its own rules is satisfied.
+struct OutstandingChunkCommand {
+	/// Exactly what was sent. A reply must echo all of it, and echoing all of it is the only way
+	/// a reply can say which command it answers rather than merely which chunk it is about.
+	ChunkCommandIdentity identity;
+	ChunkCommandFamily family{ChunkCommandFamily::kCreate};
+	uint64_t chunkId{0};
+	uint64_t admissionEpoch{0};
+	/// Event loop microseconds after which nothing more is expected. Never zero once recorded.
+	uint64_t deadlineMicroseconds{0};
+	ChunkPartType partType{slice_traits::standard::ChunkPartType()};
+	/// Version the command named. Replication keeps its own accounting keyed by it, so closing
+	/// that accounting without an answer needs it back. Zero for every other family.
+	uint32_t chunkVersion{0};
+};
+
+/// Seconds a sent chunk command may go unanswered before the operation behind it is failed
+/// closed. This is a liveness bound rather than an authority bound, and its production value is
+/// gated by the D5 and D9 measurements; the default here is deliberately generous.
+static uint32_t gCommandReplyTimeoutSeconds = 60;
+
+/// Outstanding commands one connection may hold. A ledger with no ceiling is a ledger a peer that
+/// answers nothing can use to exhaust this metadata server, so reaching the ceiling refuses to
+/// send rather than accepting work it cannot account for.
+static uint32_t gMaxOutstandingCommands = 65536;
+
 struct matocsserventry {
 	matocsserventry() : inputPacket(kMaxPacketSize) {}
 
 	ChunkserverConnectionMode mode;
 	int sock;
 	int32_t pdescpos;
-	Timer lastread,lastwrite;
+	Timer lastread, lastwrite;
 	InputPacket inputPacket;
 	std::list<OutputPacket> outputPackets;
-	std::string serviceStrIp;       // human readable version of servip
+	std::string serviceStrIp;  // human readable version of servip
 	uint32_t version;
-	uint32_t servip;                // ip to connect to
-	uint16_t servport;              // port to connect to
-	uint32_t timeout;               // communication timeout
-	MediaLabel label;               // server label, empty if not set
-	uint64_t usedspace;             // used hdd space in bytes
-	uint64_t totalspace;            // total hdd space in bytes
+	uint32_t servip;      // ip to connect to
+	uint16_t servport;    // port to connect to
+	uint32_t timeout;     // communication timeout
+	MediaLabel label;     // server label, empty if not set
+	uint64_t usedspace;   // used hdd space in bytes
+	uint64_t totalspace;  // total hdd space in bytes
 	uint32_t chunkscount;
 	uint64_t todelusedspace;
 	uint64_t todeltotalspace;
@@ -142,14 +179,56 @@ struct matocsserventry {
 	std::unique_ptr<TlsSession> tlsSession;
 	int lastHandshakeError{0};
 
+	/// The last cluster-members packet queued to this chunkserver, to resend only on change.
+	MessageBuffer lastClusterViewSent;
+
+	uint32_t stableId{0};
+	uint64_t chunkserverIncarnation{0};
+	/// Increments on every admission this connection is granted, an in place role upgrade
+	/// included. A command sent under one admission and answered under the next was answered
+	/// by a session this metadata server never dispatched that command to.
+	uint64_t sessionAdmissionEpoch{0};
+	/// Chunk commands sent on this connection and not yet answered, keyed by their sequence.
+	///
+	/// Keyed by sequence rather than by family and chunk, because family and chunk is not a key:
+	/// two commands of one family for one chunk can be outstanding at once, and a map keyed that
+	/// way silently drops the first the moment the second is sent, leaving whichever answer
+	/// arrives first to be applied to whichever command it happens to land on.
+	///
+	/// Every admission abandons what it finds here: those commands belong to the admission that
+	/// just ended, and abandoning them means failing them closed rather than forgetting them,
+	/// since an operation waiting on a forgotten command waits for nothing.
+	std::map<uint64_t, OutstandingChunkCommand> outstandingCommands;
+	/// Next command sequence to hand out on this connection. Monotone within an admission and
+	/// never reused; exhaustion is checked at the send boundary and fails closed.
+	uint64_t nextCommandSequence{1};
+	uint64_t sessionClaimSequence{0};
+	uint64_t sessionLeaseDeadline{0};
+	uint64_t scanEpoch{0};
+	bool distributedSession{false};
+	bool distributedReady{false};
+	/// Role the distributed handshake admitted this connection under.
+	DistributedRegistrationRole distributedRole{DistributedRegistrationRole::kMintOnly};
+	/// Durable-authority gate: locate and dispatch offer this server only while true
+	/// AND the session authority clock is before sessionDispatchCutoff.
+	bool sessionEligible{false};
+	uint64_t sessionDispatchCutoff{0};
+	/// Set only by the pin test seam; while true nothing restores eligibility.
+	bool sessionCutoffPinned{false};
+	/// Nonzero while an asynchronous registration decision is in flight for this
+	/// connection; keys gPendingSessionRegistrations.
+	uint64_t pendingRegistrationId{0};
+
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
 
-		double first_usage = double(first->usedspace) / double(first->totalspace) + first_load_penalty;
-		double second_usage = double(second->usedspace) / double(second->totalspace) + second_load_penalty;
+		double first_usage =
+		    double(first->usedspace) / double(first->totalspace) + first_load_penalty;
+		double second_usage =
+		    double(second->usedspace) / double(second->totalspace) + second_load_penalty;
 
 		return first_usage < second_usage;
 	}
@@ -158,6 +237,198 @@ struct matocsserventry {
 static std::list<std::unique_ptr<matocsserventry>> matocsservList;
 static int lsock;
 static int32_t lsockpdescpos;
+
+/// Registrations whose durable decision is still resolving off the event loop. The
+/// completion looks its id up here; a connection that died meanwhile is simply absent,
+/// so a late result is dropped instead of touching freed memory.
+static std::map<uint64_t, matocsserventry *> gPendingSessionRegistrations;
+static uint64_t gNextPendingSessionRegistrationId = 1;
+
+/// Test seam: pins a session non dispatchable once it first loses durable authority, and
+/// keeps its connection. Production drops the connection within a tick and the next
+/// arbitration restores authority a second later, so the state the send boundary exists
+/// for is otherwise too short to observe. Off by default; production never sets it.
+static bool gTestPinCutoff = false;
+
+/// The durable-authority dispatch gate. Legacy connections pass untouched. A
+/// distributed session is offered only while marked eligible and strictly before its
+/// dispatch cutoff on the session authority clock; a failed clock read fails closed.
+static bool matocsserv_session_dispatchable(const matocsserventry *eptr) {
+	if (!eptr->distributedSession) { return true; }
+	if (!eptr->sessionEligible || eptr->sessionDispatchCutoff == 0) { return false; }
+	const auto now = session_authority_clock::now();
+	return now.has_value() && *now < eptr->sessionDispatchCutoff;
+}
+
+/// The single chunk command enqueue boundary. Selecting a server and sending to it are
+/// separate moments, and authority can lapse between them, so the same predicate is
+/// applied again here. Placing it in the send functions rather than at their call sites
+/// means a new caller cannot reach a lapsed server by forgetting a check of its own.
+/// The refusal is reported on the authority branch only, naming the command family and
+/// chunk, so a harness can assert that a command really reached this boundary instead
+/// of inferring it from a command that was never selected in the first place.
+/// The reply acceptance boundary, and the third place the same predicate has to hold. A status
+/// is not a report of what a chunkserver did; it is an instruction to record it, and recording
+/// it changes durable state on behalf of a server whose authority this metadata server may no
+/// longer be able to vouch for. Sending was gated and publishing was gated, but the answer
+/// coming back was applied whatever had happened in between.
+///
+/// A refusal here is not a lost effect. The command either took effect on the holder or it did
+/// not; either way this metadata server has no basis to record it, and the reconciliation that
+/// follows readmission is what settles it.
+static bool matocsserv_may_accept_fenced_status(matocsserventry *eptr,
+                                               const ChunkCommandIdentity &echoed,
+                                               uint64_t chunkId,
+                                               OutstandingChunkCommand &answered) {
+	const auto refuse = [&](const char *reason) {
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("status_refused_after_cutoff",
+			                        {{"chunk", chunkId},
+			                         {"sequence", echoed.sequence},
+			                         {"reason", reason},
+			                         {"cs_stable_id", eptr->stableId},
+			                         {"cs_incarnation", eptr->chunkserverIncarnation}});
+		}
+		return false;
+	};
+
+	// Releasing the row and applying the reply are separate dispositions. Whatever this answer
+	// turns out to be worth, the command it answers is no longer outstanding, and leaving the
+	// row behind because the answer was refused would keep a bounded ledger filling on exactly
+	// the path that produces the most refusals.
+	const auto outstanding = eptr->outstandingCommands.find(echoed.sequence);
+	if (outstanding == eptr->outstandingCommands.end()) {
+		// A duplicate of an answer already applied looks exactly like this, and so does an
+		// answer to a command some other exit already disposed of. Both are correctly refused:
+		// exactly one completion removes exactly one row, and the second one finds nothing.
+		return refuse("no outstanding command");
+	}
+	answered = outstanding->second;
+	eptr->outstandingCommands.erase(outstanding);
+
+	if (!matocsserv_session_dispatchable(eptr)) { return refuse("cutoff"); }
+
+	// The exact match, which is what separates this from bookkeeping. The sequence found the
+	// row; requiring the rest of the identity to agree is what makes finding it mean something,
+	// because a sequence is only unique within the process, incarnation and era that issued it.
+	if (echoed != answered.identity) { return refuse("identity mismatch"); }
+	if (answered.chunkId != chunkId) { return refuse("chunk mismatch"); }
+
+	// Correlation to the admission, and it is a separate question from the gate above. A session
+	// can be perfectly current and still be a different admission from the one that authorized
+	// this command: an in place role upgrade re-admits a live connection without disturbing what
+	// is already in flight on it. An answer that crosses that boundary is truthful about what the
+	// chunkserver did and says nothing about who authorized it.
+	if (answered.admissionEpoch != eptr->sessionAdmissionEpoch) {
+		return refuse("superseded admission");
+	}
+	return true;
+}
+
+/// The cutoff gate for a legacy reply, which carries no identity to match.
+///
+/// Legacy connections keep no ledger, so authority is the only question this can ask. Every
+/// distributed command answers on the fenced plane instead, where the check above applies.
+static bool matocsserv_may_accept_chunk_status(matocsserventry *eptr, ChunkCommandFamily family,
+                                               uint64_t chunkId) {
+	if (matocsserv_session_dispatchable(eptr)) { return true; }
+	if (test_event_stream::enabled()) {
+		test_event_stream::emit("status_refused_after_cutoff",
+		                        {{"family", chunkCommandFamilyName(family)},
+		                         {"chunk", chunkId},
+		                         {"reason", "cutoff"},
+		                         {"cs_stable_id", eptr->stableId},
+		                         {"cs_incarnation", eptr->chunkserverIncarnation}});
+	}
+	return false;
+}
+
+static bool matocsserv_may_send_chunk_command(matocsserventry *eptr, ChunkCommandFamily family,
+                                              uint64_t chunkId) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL) { return false; }
+	if (!matocsserv_session_dispatchable(eptr)) {
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("command_refused_after_cutoff",
+			                        {{"family", chunkCommandFamilyName(family)},
+			                         {"chunk", chunkId},
+			                         {"cs_stable_id", eptr->stableId},
+			                         {"cs_incarnation", eptr->chunkserverIncarnation}});
+		}
+		return false;
+	}
+
+	if (!eptr->distributedSession || !chunkCommandFamilyExpectsReply(family)) { return true; }
+
+	// Capacity, and it is checked here rather than at the record call because a command whose
+	// row cannot be held is a command whose answer cannot be correlated. Sending it anyway would
+	// buy an untracked effect, which is the one thing the ledger exists to prevent.
+	if (eptr->outstandingCommands.size() >= gMaxOutstandingCommands) {
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("command_refused_ledger_full",
+			                        {{"family", chunkCommandFamilyName(family)},
+			                         {"chunk", chunkId},
+			                         {"outstanding", eptr->outstandingCommands.size()},
+			                         {"cs_stable_id", eptr->stableId}});
+		}
+		return false;
+	}
+
+	// Sequence exhaustion. Wrapping would hand a new command the identity of an older one, which
+	// is the single assumption every match below rests on, so the connection stops issuing
+	// commands instead. A reconnect mints a fresh sequence space.
+	if (eptr->nextCommandSequence == std::numeric_limits<uint64_t>::max()) {
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("command_refused_sequence_exhausted",
+			                        {{"family", chunkCommandFamilyName(family)},
+			                         {"chunk", chunkId},
+			                         {"cs_stable_id", eptr->stableId}});
+		}
+		return false;
+	}
+	return true;
+}
+
+/// Mints the identity for the next command to @p eptr.
+///
+/// The operation nonce and generation stay zero here, and deliberately so: the durable operation
+/// record that owns those numbers is not what drives this send yet, and inventing values that
+/// look like operation identity would make an unmatched field look matched. They are carried,
+/// echoed and compared exactly, so the day the coordinator supplies them nothing else changes.
+static ChunkCommandIdentity matocsserv_next_command_identity(matocsserventry *eptr) {
+	ChunkCommandIdentity identity;
+	identity.operationNonce = 0;
+	identity.generation = 0;
+	identity.sequence = eptr->nextCommandSequence++;
+	identity.targetIncarnation = eptr->chunkserverIncarnation;
+	identity.targetServingEra = eptr->sessionClaimSequence;
+	identity.targetStableId = eptr->stableId;
+	return identity;
+}
+
+/// Records that a command is outstanding, against the admission that authorized it and against a
+/// deadline, so its answer can be matched back to that admission and its silence can be noticed.
+///
+/// Called after the packet is on the output queue, never before. A gate that records is a gate
+/// that records commands it then declines to send: the unlock path builds no packet at all for
+/// an older chunkserver, and every one of those would have left a row waiting for an answer
+/// that was never asked for.
+static void matocsserv_record_outstanding_command(matocsserventry *eptr,
+                                                  ChunkCommandFamily family, uint64_t chunkId,
+                                                  const ChunkCommandIdentity &identity,
+                                                  ChunkPartType partType,
+                                                  uint32_t chunkVersion = 0) {
+	if (!eptr->distributedSession || !chunkCommandFamilyExpectsReply(family)) { return; }
+	OutstandingChunkCommand entry;
+	entry.identity = identity;
+	entry.family = family;
+	entry.chunkId = chunkId;
+	entry.admissionEpoch = eptr->sessionAdmissionEpoch;
+	entry.deadlineMicroseconds =
+	    eventloop_utime() + static_cast<uint64_t>(gCommandReplyTimeoutSeconds) * 1000000ULL;
+	entry.partType = partType;
+	entry.chunkVersion = chunkVersion;
+	eptr->outstandingCommands[identity.sequence] = entry;
+}
 
 // from config
 static std::string gListenHost;
@@ -172,13 +443,9 @@ csdbentry *matocsserv_get_csdb(matocsserventry *eptr) {
 	return eptr->csdb;
 }
 
-bool matocsserv_sorted_servers_need_refresh() {
-	return gSortedServersNeedsRefresh;
-}
+bool matocsserv_sorted_servers_need_refresh() { return gSortedServersNeedsRefresh; }
 
-void matocsserv_sorted_servers_refresh_done() {
-	gSortedServersNeedsRefresh = false;
-}
+void matocsserv_sorted_servers_refresh_done() { gSortedServersNeedsRefresh = false; }
 
 /* replications DB */
 
@@ -217,10 +484,8 @@ int matocsserv_replication_find(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
                                 matocsserventry *dst) {
 	uint32_t hash = replicationHash(chunkId, chunkVersion);
 	for (const auto &replica : rephash[hash]) {
-		if (replica->chunkId == chunkId
-				&& replica->chunkVersion == chunkVersion
-				&& replica->chunkType == chunkType
-				&& replica->destinationCs == dst) {
+		if (replica->chunkId == chunkId && replica->chunkVersion == chunkVersion &&
+		    replica->chunkType == chunkType && replica->destinationCs == dst) {
 			return 1;
 		}
 	}
@@ -230,9 +495,7 @@ int matocsserv_replication_find(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
 void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                                   matocsserventry *destination, uint8_t srccnt,
                                   matocsserventry *const *src) {
-	if (srccnt == 0) {
-		return;
-	}
+	if (srccnt == 0) { return; }
 
 	uint32_t hash = replicationHash(chunkId, chunkVersion);
 
@@ -244,7 +507,7 @@ void matocsserv_replication_begin(uint64_t chunkId, uint32_t chunkVersion, Chunk
 	replica->chunkType = chunkType;
 	replica->destinationCs = destination;
 
-	for (uint8_t i = 0 ; i < srccnt ; i++) {
+	for (uint8_t i = 0; i < srccnt; i++) {
 		replicaSource = std::make_unique<ReplicaSourceEntry>();
 		replicaSource->src = src[i];
 		replica->replicaSourceList.push_back(std::move(replicaSource));
@@ -263,7 +526,6 @@ void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
 		auto &replica = *replicaIt;
 		if (replica->chunkId == chunkId && replica->chunkVersion == chunkVersion &&
 		    replica->chunkType == chunkType && replica->destinationCs == destination) {
-
 			for (auto &replicaSource : replica->replicaSourceList) {
 				replicaSource->src->rrepcounter--;
 			}
@@ -279,7 +541,7 @@ void matocsserv_replication_end(uint64_t chunkId, uint32_t chunkVersion, ChunkPa
 }
 
 void matocsserv_replication_disconnected(matocsserventry *server) {
-	for (auto & hash : rephash) {
+	for (auto &hash : rephash) {
 		// Iterate through the list of replicas in the hash bucket.
 		for (auto replicaIterator = hash.begin(); replicaIterator != hash.end();) {
 			auto &replica = *replicaIterator;
@@ -312,6 +574,119 @@ void matocsserv_replication_disconnected(matocsserventry *server) {
 }
 
 /* replication DB END */
+
+/// Disposes of a command that is never going to be answered, by telling the operation waiting on
+/// it that it did not happen.
+///
+/// Silence and failure are not the same thing, and this metadata server has to pick one of them,
+/// but only one of the two is safe to pick. Recording success asserts something no chunkserver
+/// said. Recording failure leaves the chunk one member short of what the operation asked for and
+/// hands the possible physical effect to reconciliation, which is exactly where an effect nobody
+/// can vouch for belongs. The alternative that looks safest, waiting longer, is the one that is
+/// not available: the operation holds a client request open while it waits, so unbounded patience
+/// here is an unbounded stall in a POSIX call.
+static void matocsserv_fail_outstanding_command(matocsserventry *eptr,
+                                                const OutstandingChunkCommand &entry,
+                                                const char *reason) {
+	const ChunkCommandFamily family = entry.family;
+	const uint64_t chunkId = entry.chunkId;
+	if (test_event_stream::enabled()) {
+		test_event_stream::emit("command_failed_without_reply",
+		                        {{"family", chunkCommandFamilyName(family)},
+		                         {"chunk", chunkId},
+		                         {"sequence", entry.identity.sequence},
+		                         {"reason", reason},
+		                         {"cs_stable_id", eptr->stableId},
+		                         {"cs_incarnation", eptr->chunkserverIncarnation}});
+	}
+	if (gChunkOperations == nullptr) { return; }
+
+	const ChunkPartType partType = entry.partType;
+	switch (family) {
+	case ChunkCommandFamily::kCreate:
+		gChunkOperations->gotCreateStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kDelete:
+		gChunkOperations->gotDeleteStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		if (eptr->delcounter > 0) { eptr->delcounter--; }
+		break;
+	case ChunkCommandFamily::kReplicate:
+		// Replication carries its own accounting, and the read and write counters it holds are
+		// what admits the next replication. Failing the operation without closing them would
+		// leave this server permanently busy in the eyes of the scheduler.
+		matocsserv_replication_end(chunkId, entry.chunkVersion, partType, eptr);
+		gChunkOperations->gotReplicateStatus(eptr, chunkId, entry.chunkVersion, partType,
+		                                     SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kChunkLock:
+		gChunkOperations->gotChunkLockStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kSetVersion:
+		gChunkOperations->gotSetVersionStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kDuplicate:
+		gChunkOperations->gotDuplicateStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kTruncate:
+		gChunkOperations->gotTruncateStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kDuptrunc:
+		gChunkOperations->gotDuptruncStatus(eptr, chunkId, partType, SAUNAFS_ERROR_NOTDONE);
+		break;
+	case ChunkCommandFamily::kVerifyPart:
+		// A question nobody answered decides nothing. The row is released like any other, and
+		// the expectation simply stays unverified: inferring an absence from silence is the one
+		// thing this whole path exists to avoid.
+		break;
+	case ChunkCommandFamily::kReplicateSource:
+	case ChunkCommandFamily::kChunkUnlock:
+	case ChunkCommandFamily::kWriteEnd:
+		// Never recorded, so never reached. Listed so a new family cannot be added silently.
+		break;
+	}
+}
+
+/// Fails every command this connection is still waiting on, and empties the ledger.
+///
+/// Used where the connection survives but the admission behind its outstanding work does not, so
+/// no disconnect handling will run. Dropping the rows alone was the shape of the original defect:
+/// the ledger looked clean afterwards while every operation behind those rows was still waiting.
+static void matocsserv_abandon_outstanding_commands(matocsserventry *eptr, const char *reason) {
+	if (eptr->outstandingCommands.empty()) { return; }
+	auto abandoned = std::move(eptr->outstandingCommands);
+	eptr->outstandingCommands.clear();
+	for (const auto &[sequence, entry] : abandoned) {
+		matocsserv_fail_outstanding_command(eptr, entry, reason);
+	}
+}
+
+/// The unanswered command sweep. One pass over every distributed connection, failing closed the
+/// commands whose deadline has passed.
+///
+/// The disposition can dispatch further sends on the same connection, so each expired row leaves
+/// the ledger before it is disposed of and the pass works from a snapshot of what was due.
+static void matocsserv_expire_outstanding_commands() {
+	const uint64_t now = eventloop_utime();
+	for (auto &entryPtr : matocsservList) {
+		matocsserventry *eptr = entryPtr.get();
+		if (eptr == nullptr || !eptr->distributedSession) { continue; }
+		if (eptr->outstandingCommands.empty()) { continue; }
+
+		std::vector<OutstandingChunkCommand> due;
+		for (auto it = eptr->outstandingCommands.begin(); it != eptr->outstandingCommands.end();) {
+			if (it->second.deadlineMicroseconds > now) {
+				++it;
+				continue;
+			}
+			due.push_back(it->second);
+			it = eptr->outstandingCommands.erase(it);
+		}
+		for (const auto &entry : due) {
+			matocsserv_fail_outstanding_command(eptr, entry, "reply timeout");
+		}
+	}
+}
+
 void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *usablescount,
                                 uint16_t *totalscount) {
 	double minspace = 1.0;
@@ -347,17 +722,17 @@ void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *us
 std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
 	std::vector<ServerWithUsage> result;
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != ChunkserverConnectionMode::KILL
-				&& eptr->totalspace > 0
-				&& eptr->usedspace <= eptr->totalspace) {
+		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0 &&
+		    eptr->usedspace <= eptr->totalspace && matocsserv_session_dispatchable(eptr.get())) {
 			double usage = double(eptr->usedspace) / double(eptr->totalspace);
 			result.emplace_back(eptr.get(), usage, eptr->label);
 		}
 	}
 
-	std::sort(result.begin(), result.end(), [](const ServerWithUsage &u1, const ServerWithUsage &u2){
-		return matocsserventry::lessUsedAndLoaded(u1.server, u2.server);
-	});
+	std::sort(result.begin(), result.end(),
+	          [](const ServerWithUsage &u1, const ServerWithUsage &u2) {
+		          return matocsserventry::lessUsedAndLoaded(u1.server, u2.server);
+	          });
 
 	return result;
 }
@@ -373,10 +748,11 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	for (const auto &eptr : matocsservList) {
 		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0 &&
 		    eptr->usedspace <= eptr->totalspace &&
-		    (eptr->totalspace - eptr->usedspace) >= SFSCHUNKSIZE) {
-
+		    (eptr->totalspace - eptr->usedspace) >= SFSCHUNKSIZE &&
+		    matocsserv_session_dispatchable(eptr.get())) {
 			// A good weight formula will do the following:
-			//   * Agree with the chunk balancing algorithm, i.e. avoid creating a distribution which
+			//   * Agree with the chunk balancing algorithm, i.e. avoid creating a distribution
+			//   which
 			//     immediately needs to be re-balanced.
 			//   * Be coarse enough that when the cluster is balanced, weights are generally equal.
 			//   * Keep weights constant across the cluster for long enough periods
@@ -410,53 +786,43 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 
 		if (gPrioritizeDataParts) {
 			// Move xor parity to the end of a list
-			if (slice_traits::isXor(slice)) {
-				std::swap(shuffle[0], shuffle[slice.size() - 1]);
-			}
+			if (slice_traits::isXor(slice)) { std::swap(shuffle[0], shuffle[slice.size() - 1]); }
 
 			// Shuffle data before parity to prioritize data parts before parity
 			// in partial writes
 			int data_count = slice_traits::getNumberOfDataParts(slice);
-			assert(std::all_of(shuffle.begin(), shuffle.begin() + data_count,
-			                   [&slice](int i) {
-				                   return slice_traits::isDataPart(
-				                       ChunkPartType(slice.getType(), i));
-			                   }));
-			std::shuffle(shuffle.begin(), shuffle.begin() + data_count,
+			assert(std::all_of(shuffle.begin(), shuffle.begin() + data_count, [&slice](int i) {
+				return slice_traits::isDataPart(ChunkPartType(slice.getType(), i));
+			}));
+			std::shuffle(shuffle.begin(), shuffle.begin() + data_count, kRandomEngine);
+			std::shuffle(shuffle.begin() + data_count, shuffle.begin() + slice.size(),
 			             kRandomEngine);
-			std::shuffle(shuffle.begin() + data_count,
-			             shuffle.begin() + slice.size(), kRandomEngine);
 		} else {
-			std::shuffle(shuffle.begin(), shuffle.begin() + slice.size(),
-			             kRandomEngine);
+			std::shuffle(shuffle.begin(), shuffle.begin() + slice.size(), kRandomEngine);
 		}
 
-		uint32_t min_version = std::max({
-			slice_traits::isXor(slice) ? kFirstXorVersion : 0,
-			slice_traits::isEC(slice) ? kFirstECVersion : 0,
-			slice_traits::isEC(slice) && slice_traits::ec::isEC2(slice) ? kEC2Version : 0,
-			min_server_version
-		});
+		uint32_t min_version =
+		    std::max({slice_traits::isXor(slice) ? kFirstXorVersion : 0,
+		              slice_traits::isEC(slice) ? kFirstECVersion : 0,
+		              slice_traits::isEC(slice) && slice_traits::ec::isEC2(slice) ? kEC2Version : 0,
+		              min_server_version});
 
 		int count_full_parts = 0;
 		for (int i = 0; i < slice.size(); ++i) {
-			servers = getter.chooseServersForLabels(
-			        history[goal_id], slice[shuffle[i]],
-			        min_version, used_servers);
+			servers = getter.chooseServersForLabels(history[goal_id], slice[shuffle[i]],
+			                                        min_version, used_servers);
 
-			if (servers.empty()) {
-				continue;
-			}
+			if (servers.empty()) { continue; }
 
 			++count_full_parts;
 			for (const auto &server : servers) {
-				slice_ret.push_back(std::make_pair(
-				        server, ChunkPartType(slice.getType(), shuffle[i])));
+				slice_ret.push_back(
+				    std::make_pair(server, ChunkPartType(slice.getType(), shuffle[i])));
 			}
 		}
 
 		if (count_full_parts < slice_traits::getNumberOfDataParts(slice.getType())) {
-			continue; // do not create any parts if servers are missing
+			continue;  // do not create any parts if servers are missing
 		}
 
 		ret.insert(ret.end(), slice_ret.begin(), slice_ret.end());
@@ -466,24 +832,23 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 }
 
 void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunkserver_version,
-		uint16_t replication_write_limit, const IpCounter &ip_counter, std::vector<matocsserventry *> &servers,
-		int &total_matching, int &returned_matching, int &temporarily_unavailable) {
+                                    uint16_t replication_write_limit, const IpCounter &ip_counter,
+                                    std::vector<matocsserventry *> &servers, int &total_matching,
+                                    int &returned_matching, int &temporarily_unavailable) {
 	total_matching = 0;
 	returned_matching = 0;
 	temporarily_unavailable = 0;
 	servers.clear();
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode == ChunkserverConnectionMode::KILL
-				|| eptr->totalspace == 0
-				|| eptr->usedspace > eptr->totalspace
-				|| (eptr->totalspace - eptr->usedspace) <= (eptr->totalspace / 100)) {
+		if (eptr->mode == ChunkserverConnectionMode::KILL || eptr->totalspace == 0 ||
+		    eptr->usedspace > eptr->totalspace ||
+		    (eptr->totalspace - eptr->usedspace) <= (eptr->totalspace / 100)) {
 			// Skip full and disconnected chunkservers
 			continue;
 		}
+		if (!matocsserv_session_dispatchable(eptr.get())) { continue; }
 
-		if (eptr->version < min_chunkserver_version) {
-			continue;
-		}
+		if (eptr->version < min_chunkserver_version) { continue; }
 
 		bool matchesRequestedLabel = false;
 		if (label != MediaLabel::kWildcard && eptr->label == label) {
@@ -493,9 +858,7 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 
 		if (eptr->wrepcounter < replication_write_limit) {
 			servers.push_back(eptr.get());
-			if (matchesRequestedLabel) {
-				++returned_matching;
-			}
+			if (matchesRequestedLabel) { ++returned_matching; }
 		} else {
 			temporarily_unavailable++;
 		}
@@ -512,26 +875,23 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 
 	if (returned_matching > 0) {
 		// Move servers matching the requested label to the front of the servers array
-		std::stable_partition(servers.begin(), servers.end(), [&label](matocsserventry* cs) {
-			return cs->label == label;
-		});
+		std::stable_partition(servers.begin(), servers.end(),
+		                      [&label](matocsserventry *cs) { return cs->label == label; });
 	}
 }
 
-const MediaLabel& matocsserv_get_label(matocsserventry* eptr) {
+const MediaLabel &matocsserv_get_label(matocsserventry *eptr) {
 	assert(eptr);
 	return eptr->label;
 }
 
-double matocsserv_get_usage(matocsserventry* eptr) {
-	if (eptr->usedspace > eptr->totalspace) {
-		return 1.0;
-	}
+double matocsserv_get_usage(matocsserventry *eptr) {
+	if (eptr->usedspace > eptr->totalspace) { return 1.0; }
 
 	return double(eptr->usedspace) / double(eptr->totalspace);
 }
 
-void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
+void matocsserv_getspace(uint64_t *totalspace, uint64_t *availspace) {
 	uint64_t tspace = 0;
 	uint64_t uspace = 0;
 	for (const auto &eptr : matocsservList) {
@@ -541,7 +901,7 @@ void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
 		}
 	}
 	*totalspace = tspace;
-	*availspace = tspace-uspace;
+	*availspace = tspace - uspace;
 }
 
 uint16_t matocsserv_get_listen_port() {
@@ -552,7 +912,7 @@ uint16_t matocsserv_get_listen_port() {
 	return port;
 }
 
-const char* matocsserv_getstrip(matocsserventry *eptr) {
+const char *matocsserv_getstrip(matocsserventry *eptr) {
 	static const char *empty = "???";
 	if (eptr->mode != ChunkserverConnectionMode::KILL && !eptr->serviceStrIp.empty()) {
 		return eptr->serviceStrIp.c_str();
@@ -565,8 +925,45 @@ uint32_t matocsserv_get_servip(matocsserventry *eptr) {
 	return eptr->servip;
 }
 
-int matocsserv_getlocation(matocsserventry *eptr,uint32_t *servip,uint16_t *servport,
-		MediaLabel* label) {
+uint32_t matocsserv_stable_id_by_address(uint32_t servip, uint16_t servport) {
+	for (auto &entry : matocsservList) {
+		if (entry->servip == servip && entry->servport == servport &&
+		    entry->mode != ChunkserverConnectionMode::KILL) {
+			return entry->stableId;
+		}
+	}
+	return 0;
+}
+
+matocsserventry *matocsserv_entry_by_stable_id(uint32_t stableId) {
+	if (stableId == 0) { return nullptr; }
+	for (auto &entry : matocsservList) {
+		if (entry->stableId == stableId && entry->mode != ChunkserverConnectionMode::KILL &&
+		    entry->csdb != nullptr && matocsserv_session_dispatchable(entry.get())) {
+			return entry.get();
+		}
+	}
+	return nullptr;
+}
+
+bool matocsserv_location_by_stable_id(uint32_t stableId, uint32_t &servip, uint16_t &servport,
+                                      MediaLabel &label, uint32_t &version) {
+	if (stableId == 0) { return false; }
+	for (auto &entry : matocsservList) {
+		if (entry->stableId == stableId && entry->mode != ChunkserverConnectionMode::KILL &&
+		    entry->csdb != nullptr && matocsserv_session_dispatchable(entry.get())) {
+			servip = entry->servip;
+			servport = entry->servport;
+			label = entry->label;
+			version = entry->version;
+			return true;
+		}
+	}
+	return false;
+}
+
+int matocsserv_getlocation(matocsserventry *eptr, uint32_t *servip, uint16_t *servport,
+                           MediaLabel *label) {
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		*servip = eptr->servip;
 		*servport = eptr->servport;
@@ -576,20 +973,13 @@ int matocsserv_getlocation(matocsserventry *eptr,uint32_t *servip,uint16_t *serv
 	return -1;
 }
 
+uint16_t matocsserv_replication_write_counter(matocsserventry *eptr) { return eptr->wrepcounter; }
 
-uint16_t matocsserv_replication_write_counter(matocsserventry *eptr) {
-	return eptr->wrepcounter;
-}
+uint16_t matocsserv_replication_read_counter(matocsserventry *eptr) { return eptr->rrepcounter; }
 
-uint16_t matocsserv_replication_read_counter(matocsserventry *eptr) {
-	return eptr->rrepcounter;
-}
+uint16_t matocsserv_deletion_counter(matocsserventry *eptr) { return eptr->delcounter; }
 
-uint16_t matocsserv_deletion_counter(matocsserventry *eptr) {
-	return eptr->delcounter;
-}
-
-uint8_t* matocsserv_createpacket(matocsserventry *eptr,uint32_t type,uint32_t size) {
+uint8_t *matocsserv_createpacket(matocsserventry *eptr, uint32_t type, uint32_t size) {
 	eptr->outputPackets.emplace_back(PacketHeader(type, size));
 	return eptr->outputPackets.back().packet.data() + PacketHeader::kSize;
 }
@@ -630,7 +1020,20 @@ void matocsserv_got_chunk_checksum(matocsserventry *eptr, const uint8_t *data, u
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
                                 uint32_t chunkVersion, bool needsLock, bool &sentChunkLock) {
 	sentChunkLock = false;
-	if (eptr->mode != ChunkserverConnectionMode::KILL) {
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kCreate, chunkId)) {
+		return 0;
+	}
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		eptr->outputPackets.emplace_back();
+		matocs::fencedCreateChunk::serialize(eptr->outputPackets.back().packet, identity, chunkId,
+		                                     chunkType, chunkVersion, needsLock);
+		sentChunkLock = needsLock;
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kCreate, chunkId, identity,
+		                                      chunkType);
+		return 0;
+	}
+	{
 		eptr->outputPackets.push_back(OutputPacket());
 		sassert(eptr->version >= kFirstECVersion);
 		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
@@ -659,6 +1062,9 @@ void matocsserv_got_createchunk_status(matocsserventry *eptr, const std::vector<
 	sassert(v == cstoma::createChunk::kECChunks);
 	cstoma::createChunk::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kCreate, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotCreateStatus(eptr, chunkId, chunkType, status);
 
 	if (status != 0) {
@@ -667,19 +1073,47 @@ void matocsserv_got_createchunk_status(matocsserventry *eptr, const std::vector<
 	}
 }
 
-int matocsserv_send_deletechunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
-		ChunkPartType chunkType) {
-	if (eptr->mode != ChunkserverConnectionMode::KILL) {
-		eptr->outputPackets.push_back(OutputPacket());
-		sassert(eptr->version >= kFirstECVersion);
-		matocs::deleteChunk::serialize(eptr->outputPackets.back().packet,
-				chunkId, chunkType, chunkVersion);
-		eptr->delcounter++;
+int matocsserv_send_fenced_verify_part(matocsserventry *eptr, uint64_t chunkId,
+                                      ChunkPartType chunkType) {
+	// Only a distributed session can be asked this: the question exists because such a session
+	// sends no inventory, and a legacy connection reports one, so asking it would duplicate what
+	// it already told us.
+	if (!eptr->distributedSession) { return 0; }
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kVerifyPart, chunkId)) {
+		return 0;
 	}
+	eptr->outputPackets.push_back(OutputPacket());
+	const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+	matocs::fencedVerifyPart::serialize(eptr->outputPackets.back().packet, identity, chunkId,
+	                                    chunkType);
+	matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kVerifyPart, chunkId, identity,
+	                                      chunkType);
 	return 0;
 }
 
-void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+int matocsserv_send_deletechunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
+                                ChunkPartType chunkType) {
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kDelete, chunkId)) {
+		return 0;
+	}
+	sassert(eptr->version >= kFirstECVersion);
+	eptr->outputPackets.push_back(OutputPacket());
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		matocs::fencedDeleteChunk::serialize(eptr->outputPackets.back().packet, identity, chunkId,
+		                                     chunkType, chunkVersion);
+		eptr->delcounter++;
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kDelete, chunkId, identity,
+		                                      chunkType);
+		return 0;
+	}
+	matocs::deleteChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+	                               chunkVersion);
+	eptr->delcounter++;
+	return 0;
+}
+
+void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint8_t status;
@@ -690,6 +1124,9 @@ void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<
 	sassert(v == cstoma::deleteChunk::kECChunks);
 	cstoma::deleteChunk::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kDelete, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotDeleteStatus(eptr, chunkId, chunkType, status);
 	eptr->delcounter--;
 	if (status != 0) {
@@ -698,21 +1135,24 @@ void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<
 	}
 }
 
-int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, uint32_t version, ChunkPartType type,
-		const std::vector<matocsserventry*> &sourcePointers, const std::vector<ChunkPartType> &sourceTypes) {
-	if (matocsserv_replication_find(chunkid, version, type, eptr)) {
-		return -1;
-	}
+int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, uint32_t version,
+                                       ChunkPartType type,
+                                       const std::vector<matocsserventry *> &sourcePointers,
+                                       const std::vector<ChunkPartType> &sourceTypes) {
+	if (matocsserv_replication_find(chunkid, version, type, eptr)) { return -1; }
 	if (sourcePointers.size() != sourceTypes.size()) {
 		safs::log_err("Inconsistent arguments for sau_replicatechunk ({} != {})",
 		              sourcePointers.size(), sourceTypes.size());
 		return -1;
 	}
-	if (eptr->mode == ChunkserverConnectionMode::KILL) {
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kReplicate, chunkid)) {
 		return 0;
 	}
+	// Sources are participants too: replication reads their data, so a source whose own
+	// durable claim has lapsed must not be named as one.
 	for (auto source : sourcePointers) {
-		if (source->mode == ChunkserverConnectionMode::KILL) {
+		if (!matocsserv_may_send_chunk_command(source, ChunkCommandFamily::kReplicateSource,
+		                                       chunkid)) {
 			return 0;
 		}
 	}
@@ -725,16 +1165,26 @@ int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, 
 		                     src->version);
 	}
 	eptr->outputPackets.emplace_back();
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		matocs::fencedReplicateChunk::serialize(eptr->outputPackets.back().packet, identity, chunkid,
+		                                        version, type, sources);
+		matocsserv_replication_begin(chunkid, version, type, eptr, sourcePointers.size(),
+		                             sourcePointers.data());
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kReplicate, chunkid,
+		                                      identity, type, version);
+		return 0;
+	}
 	matocs::replicateChunk::serialize(eptr->outputPackets.back().packet, chunkid, version, type,
 	                                  sources);
 
-	matocsserv_replication_begin(chunkid, version, type,
-			eptr, sourcePointers.size(), sourcePointers.data());
+	matocsserv_replication_begin(chunkid, version, type, eptr, sourcePointers.size(),
+	                             sourcePointers.data());
 	return 0;
 }
 
 void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data,
-		 uint32_t /*packetType*/) {
+                                          uint32_t /*packetType*/) {
 	uint64_t chunkId;
 	uint32_t chunkVersion;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
@@ -746,6 +1196,9 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 	cstoma::replicateChunk::deserialize(data, chunkId, chunkType, status, chunkVersion);
 
 	matocsserv_replication_end(chunkId, chunkVersion, chunkType, eptr);
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kReplicate, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotReplicateStatus(eptr, chunkId, chunkVersion, chunkType, status);
 	if (status != 0 && status != SAUNAFS_ERROR_WAITING) {
 		safs::log_info("({}:{}) chunk: {:016X} replication status: {}", eptr->serviceStrIp,
@@ -756,8 +1209,20 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
                               bool needsLock, bool &sentChunkLock) {
 	sentChunkLock = false;
-	if (eptr->mode != ChunkserverConnectionMode::KILL) {
+	if (matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kChunkLock, chunkId)) {
 		sassert(eptr->version >= kFirstECVersion);
+		if (eptr->distributedSession) {
+			if (needsLock) {
+				const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+				eptr->outputPackets.emplace_back();
+				matocs::fencedLockChunk::serialize(eptr->outputPackets.back().packet, identity,
+				                                   chunkId, chunkType);
+				sentChunkLock = true;
+				matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kChunkLock, chunkId,
+				                                      identity, chunkType);
+			}
+			return 0;
+		}
 		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 			eptr->outputPackets.emplace_back();
 			matocs::chunkLock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
@@ -780,6 +1245,9 @@ void matocsserv_got_chunklock_status(matocsserventry *eptr, const std::vector<ui
 	sassert(v == cstoma::chunkLock::kECChunks);
 	cstoma::chunkLock::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kChunkLock, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotChunkLockStatus(eptr, chunkId, chunkType, status);
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_info("({}:{}) chunk: {:016X} chunk lock status: {}", eptr->serviceStrIp,
@@ -798,6 +1266,9 @@ void matocsserv_got_writeend_status(matocsserventry *eptr, const std::vector<uin
 	sassert(v == cstoma::writeEndStatus::kECChunks);
 	cstoma::writeEndStatus::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kWriteEnd, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotWriteEndStatus(eptr, chunkId, chunkType, status);
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_info("({}:{}) chunk: {:016X} chunk write end status: {}", eptr->serviceStrIp,
@@ -805,9 +1276,110 @@ void matocsserv_got_writeend_status(matocsserventry *eptr, const std::vector<uin
 	}
 }
 
+/// The one place a fenced command result is applied.
+///
+/// Nine commands, one reply, and one match. What arrives is checked against the row the command
+/// left, and only then is it allowed to mean anything about a chunk. Refusing here is not a lost
+/// effect: the command either took effect on the holder or it did not, and either way this
+/// metadata server has no basis to record it, so what follows is reconciliation rather than a
+/// guess.
+void matocsserv_got_fenced_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkId = 0;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint8_t status = 0;
+	ChunkCommandIdentity echoed;
+	uint8_t familyByte = 0;
+	uint32_t resultVersion = 0;
+
+	cstoma::fencedStatus::deserialize(data, chunkId, chunkType, status, echoed, familyByte,
+	                                  resultVersion);
+
+	// A reply on this plane from a connection that holds no distributed session cannot be
+	// correlated to anything, and a legacy connection has no business sending one at all.
+	if (!eptr->distributedSession) {
+		safs::log_err("fenced status on a connection with no distributed session");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	const ChunkCommandFamily family = static_cast<ChunkCommandFamily>(familyByte);
+	if (familyByte > static_cast<uint8_t>(ChunkCommandFamily::kWriteEnd) ||
+	    !chunkCommandFamilyExpectsReply(family)) {
+		safs::log_err("fenced status names a family that answers nothing: {}", familyByte);
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	// Replication accounting closes on arrival, before the answer is judged. It tracks what this
+	// metadata server asked for rather than what it is willing to believe, and leaving it open
+	// because the answer was refused would keep the participant busy for a replication that is
+	// over either way.
+	if (family == ChunkCommandFamily::kReplicate) {
+		matocsserv_replication_end(chunkId, resultVersion, chunkType, eptr);
+	}
+
+	OutstandingChunkCommand answered;
+	if (!matocsserv_may_accept_fenced_status(eptr, echoed, chunkId, answered)) { return; }
+	if (answered.family != family) {
+		safs::log_err("fenced status for chunk {:016X} names family {} against a recorded {}",
+		              chunkId, chunkCommandFamilyName(family),
+		              chunkCommandFamilyName(answered.family));
+		return;
+	}
+
+	switch (family) {
+	case ChunkCommandFamily::kCreate:
+		gChunkOperations->gotCreateStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kDelete:
+		gChunkOperations->gotDeleteStatus(eptr, chunkId, chunkType, status);
+		if (eptr->delcounter > 0) { eptr->delcounter--; }
+		break;
+	case ChunkCommandFamily::kReplicate:
+		gChunkOperations->gotReplicateStatus(eptr, chunkId, resultVersion, chunkType, status);
+		break;
+	case ChunkCommandFamily::kChunkLock:
+		gChunkOperations->gotChunkLockStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kSetVersion:
+		gChunkOperations->gotSetVersionStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kDuplicate:
+		gChunkOperations->gotDuplicateStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kTruncate:
+		gChunkOperations->gotTruncateStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kDuptrunc:
+		gChunkOperations->gotDuptruncStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kVerifyPart:
+		gChunkOperations->gotVerifyPartStatus(eptr, chunkId, chunkType, status);
+		break;
+	case ChunkCommandFamily::kReplicateSource:
+	case ChunkCommandFamily::kChunkUnlock:
+	case ChunkCommandFamily::kWriteEnd:
+		break;
+	}
+
+	if (status != 0) {
+		safs::log_info("({}:{}) chunk: {:016X} {} status: {}", eptr->serviceStrIp, eptr->servport,
+		               chunkId, chunkCommandFamilyName(family), saunafs_error_string(status));
+	}
+}
+
 int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType) {
-	if (eptr->mode != ChunkserverConnectionMode::KILL) {
+	if (matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kChunkUnlock, chunkId)) {
 		sassert(eptr->version >= kFirstECVersion);
+		if (eptr->distributedSession) {
+			// No status ever comes back for an unlock, so it takes an identity for the record it
+			// leaves on the participant and no row here.
+			const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+			eptr->outputPackets.emplace_back();
+			matocs::fencedUnlockChunk::serialize(eptr->outputPackets.back().packet, identity,
+			                                     chunkId, chunkType);
+			return 0;
+		}
 		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock) {
 			eptr->outputPackets.emplace_back();
 			matocs::chunkUnlock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
@@ -818,11 +1390,25 @@ int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPa
 }
 
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
-		uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock, bool &sentChunkLock) {
+                                    uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock,
+                                    bool &sentChunkLock) {
 	sentChunkLock = false;
-	if (eptr->mode != ChunkserverConnectionMode::KILL) {
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kSetVersion, chunkId)) {
+		return 0;
+	}
+	sassert(eptr->version >= kFirstECVersion);
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
 		eptr->outputPackets.emplace_back();
-		sassert(eptr->version >= kFirstECVersion);
+		matocs::fencedSetVersion::serialize(eptr->outputPackets.back().packet, identity, chunkId,
+		                                    chunkType, chunkVersion, newVersion, needsLock);
+		sentChunkLock = needsLock;
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kSetVersion, chunkId,
+		                                      identity, chunkType);
+		return 0;
+	}
+	{
+		eptr->outputPackets.emplace_back();
 		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 			// For newer chunkservers, set version with chunk lock
 			matocs::setVersionAndLock::serialize(eptr->outputPackets.back().packet, chunkId,
@@ -839,7 +1425,7 @@ int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uin
 }
 
 void matocsserv_got_setchunkversion_status(matocsserventry *eptr,
-		const std::vector<uint8_t>& data) {
+                                           const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint8_t status;
@@ -850,10 +1436,13 @@ void matocsserv_got_setchunkversion_status(matocsserventry *eptr,
 	sassert(v == cstoma::setVersion::kECChunks);
 	cstoma::setVersion::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kSetVersion, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotSetVersionStatus(eptr, chunkId, chunkType, status);
 	if (status != 0) {
-		safs::log_info("({}:{}) chunk: {:016X} set version status: {}",
-				eptr->serviceStrIp, eptr->servport, chunkId, saunafs_error_string(status));
+		safs::log_info("({}:{}) chunk: {:016X} set version status: {}", eptr->serviceStrIp,
+		               eptr->servport, chunkId, saunafs_error_string(status));
 	}
 }
 
@@ -862,10 +1451,24 @@ int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
                                    uint64_t chunkId, uint32_t chunkVersion, bool needsLock,
                                    bool &sentChunkLock) {
 	sentChunkLock = false;
-	if (eptr->mode == ChunkserverConnectionMode::KILL) { return 0; }
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kDuplicate, newChunkId)) {
+		return 0;
+	}
+
+	sassert(eptr->version >= kFirstECVersion);
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		eptr->outputPackets.emplace_back();
+		matocs::fencedDuplicateChunk::serialize(eptr->outputPackets.back().packet, identity,
+		                                        newChunkId, newChunkVersion, chunkType, chunkId,
+		                                        chunkVersion, needsLock);
+		sentChunkLock = needsLock;
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kDuplicate, newChunkId,
+		                                      identity, chunkType);
+		return 0;
+	}
 
 	OutputPacket outPacket;
-	sassert(eptr->version >= kFirstECVersion);
 	if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 		// For newer chunkservers, duplicate with chunk lock
 		matocs::duplicateAndLockChunk::serialize(outPacket.packet, newChunkId, newChunkVersion,
@@ -880,7 +1483,7 @@ int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
 	return 0;
 }
 
-void matocsserv_got_duplicatechunk_status(matocsserventry* eptr, const std::vector<uint8_t>& data) {
+void matocsserv_got_duplicatechunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint8_t status;
@@ -891,6 +1494,9 @@ void matocsserv_got_duplicatechunk_status(matocsserventry* eptr, const std::vect
 	sassert(v == cstoma::duplicateChunk::kECChunks);
 	cstoma::duplicateChunk::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kDuplicate, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotDuplicateStatus(eptr, chunkId, chunkType, status);
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X}, type: {} duplication status: {}",
@@ -899,20 +1505,28 @@ void matocsserv_got_duplicatechunk_status(matocsserventry* eptr, const std::vect
 	}
 }
 
-void matocsserv_send_truncatechunk(matocsserventry* eptr, uint64_t chunkid, ChunkPartType chunkType, uint32_t length,
-		uint32_t newVersion,uint32_t oldVersion) {
-	if (eptr->mode == ChunkserverConnectionMode::KILL) {
+void matocsserv_send_truncatechunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
+                                   uint32_t length, uint32_t newVersion, uint32_t oldVersion) {
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kTruncate, chunkid)) {
 		return;
 	}
 
 	sassert(eptr->version >= kFirstECVersion);
 	eptr->outputPackets.emplace_back();
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		matocs::fencedTruncateChunk::serialize(eptr->outputPackets.back().packet, identity, chunkid,
+		                                       chunkType, length, newVersion, oldVersion);
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kTruncate, chunkid, identity,
+		                                      chunkType);
+		return;
+	}
 	matocs::truncateChunk::serialize(eptr->outputPackets.back().packet, chunkid, chunkType, length,
 	                                 newVersion, oldVersion);
 }
 
 void matocsserv_got_sau_truncatechunk_status(matocsserventry *eptr,
-		const std::vector<uint8_t>& data) {
+                                             const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType;
 	uint8_t status;
@@ -927,22 +1541,38 @@ void matocsserv_got_sau_truncatechunk_status(matocsserventry *eptr,
 		chunkType = legacy_type;
 	}
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kTruncate, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotTruncateStatus(eptr, chunkId, chunkType, status);
-	if (status!=0) {
+	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X}, type: {:08X} truncate status: {}",
 		               eptr->serviceStrIp, eptr->servport, chunkId, chunkType.getId(),
 		               saunafs_error_string(status));
 	}
 }
 
-int matocsserv_send_duptruncchunk(matocsserventry* eptr, uint64_t newChunkId, uint32_t newChunkVersion,
-		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion, uint32_t newChunkLength) {
-	if (eptr->mode == ChunkserverConnectionMode::KILL) {
+int matocsserv_send_duptruncchunk(matocsserventry *eptr, uint64_t newChunkId,
+                                  uint32_t newChunkVersion, ChunkPartType chunkType,
+                                  uint64_t chunkId, uint32_t chunkVersion,
+                                  uint32_t newChunkLength) {
+	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kDuptrunc, newChunkId)) {
+		return 0;
+	}
+
+	sassert(eptr->version >= kFirstECVersion);
+	if (eptr->distributedSession) {
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		eptr->outputPackets.emplace_back();
+		matocs::fencedDuptruncChunk::serialize(eptr->outputPackets.back().packet, identity,
+		                                       newChunkId, newChunkVersion, chunkType, chunkId,
+		                                       chunkVersion, newChunkLength);
+		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kDuptrunc, newChunkId,
+		                                      identity, chunkType);
 		return 0;
 	}
 
 	OutputPacket outPacket;
-	sassert(eptr->version >= kFirstECVersion);
 	matocs::duptruncChunk::serialize(outPacket.packet, newChunkId, newChunkVersion, chunkType,
 	                                 chunkId, chunkVersion, newChunkLength);
 
@@ -950,7 +1580,7 @@ int matocsserv_send_duptruncchunk(matocsserventry* eptr, uint64_t newChunkId, ui
 	return 0;
 }
 
-void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vector<uint8_t>& data) {
+void matocsserv_got_duptruncchunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint8_t status;
@@ -961,6 +1591,9 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 	sassert(v == cstoma::duptruncChunk::kECChunks);
 	cstoma::duptruncChunk::deserialize(data, chunkId, chunkType, status);
 
+	if (!matocsserv_may_accept_chunk_status(eptr, ChunkCommandFamily::kDuptrunc, chunkId)) {
+		return;
+	}
 	gChunkOperations->gotDuptruncStatus(eptr, chunkId, chunkType, status);
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X}, type: {} duplication with truncate status: {}",
@@ -969,65 +1602,74 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 	}
 }
 
-void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t servip,
-                              uint16_t servport, uint32_t timeout, const std::string &clusterId) {
-	eptr->version  = version;
-	eptr->servip   = servip;
+bool matocsserv_prepare_registration(matocsserventry *eptr, uint32_t version, uint32_t servip,
+                                     uint16_t servport, uint32_t timeout,
+                                     const std::string &clusterId, bool requireClusterId,
+                                     const char *packetName) {
+	eptr->version = version;
+	eptr->servip = servip;
 	eptr->servport = servport;
-	eptr->timeout  = timeout;
+	eptr->timeout = timeout;
 
 	if (eptr->version < kFirstECVersion) {
-		safs::log_err(
-		    "SAU_CSTOMA_REGISTER_HOST received too old version: {} (minimum supported version is {})",
-		    saunafsVersionToString(eptr->version), saunafsVersionToString(kFirstECVersion));
+		safs::log_err("{} received too old version: {} (minimum supported version is {})",
+		              packetName, saunafsVersionToString(eptr->version),
+		              saunafsVersionToString(kFirstECVersion));
 		eptr->mode = ChunkserverConnectionMode::KILL;
-		return;
+		return false;
 	}
 
-	if (eptr->version >= kFirstVersionWithClusterId) {
+	if (requireClusterId || eptr->version >= kFirstVersionWithClusterId) {
 		if (clusterId.empty()) {
-			safs::log_err("SAU_CSTOMA_REGISTER_HOST received empty cluster ID");
+			safs::log_err("{} received empty cluster ID", packetName);
 			eptr->mode = ChunkserverConnectionMode::KILL;
-			return;
+			return false;
 		}
-
 		if (clusterId != gClusterId) {
-			safs::log_err(
-			    "SAU_CSTOMA_REGISTER_HOST received mismatched cluster ID: expected {}, got {}",
-			    gClusterId, clusterId);
+			safs::log_err("{} received mismatched cluster ID: expected {}, got {}", packetName,
+			              gClusterId, clusterId);
 			eptr->mode = ChunkserverConnectionMode::KILL;
-			return;
+			return false;
 		}
 	}
 
 	if (eptr->timeout < kMinRegisterTimeoutMs) {
 		safs::log_info(
-		    "SAU_CSTOMA_REGISTER communication timeout too small ({} milliseconds - should be at least 10 milliseconds)",
-		    eptr->timeout);
+		    "{} communication timeout too small ({} milliseconds - should be at least 10 milliseconds)",
+		    packetName, eptr->timeout);
 		eptr->mode = ChunkserverConnectionMode::KILL;
-		return;
+		return false;
 	}
 
 	if (eptr->servip == 0) { tcpgetpeer(eptr->sock, &(eptr->servip), nullptr); }
-
 	eptr->serviceStrIp = ipToString(eptr->servip);
-
 	if (isLoopbackAddress(eptr->servip)) {
-		safs::log_warn("Chunkserver loopback IP addresses are experimental; consider assigning a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
+		safs::log_warn(
+		    "Chunkserver loopback IP addresses are experimental; consider assigning a non-loopback IP address to chunkserver (via /etc/hosts or some other way)");
 	}
+	return true;
+}
 
+bool matocsserv_admit_prepared_connection(matocsserventry *eptr) {
 	if (csdb_new_connection(eptr->servip, eptr->servport, eptr) < 0) {
 		safs::log_warn("chunk-server already connected !!!");
 		eptr->mode = ChunkserverConnectionMode::KILL;
+		return false;
+	}
+	eptr->csdb = csdb_find(eptr->servip, eptr->servport);
+	safs::log_info("chunkserver register begin (packet version: 5) - ip: {}, port: {}",
+	               eptr->serviceStrIp, eptr->servport);
+	return true;
+}
+
+void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t servip,
+                              uint16_t servport, uint32_t timeout, const std::string &clusterId) {
+	if (!matocsserv_prepare_registration(eptr, version, servip, servport, timeout, clusterId, false,
+	                                     "SAU_CSTOMA_REGISTER_HOST") ||
+	    !matocsserv_admit_prepared_connection(eptr)) {
 		return;
 	}
 
-	eptr->csdb = csdb_find(eptr->servip, eptr->servport);
-
-	safs::log_info("chunkserver register begin (packet version: 5) - ip: {}, port: {}",
-	               eptr->serviceStrIp, eptr->servport);
-
-	// Send the answer with the status
 	if (eptr->version >= kFirstVersionWithClusterId) {
 		OutputPacket outPacket;
 		matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
@@ -1036,7 +1678,7 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	}
 }
 
-void register_space(matocsserventry* eptr) {
+void register_space(matocsserventry *eptr) {
 	double us = (double)(eptr->usedspace) / kBytesPerGiB;
 	double ts = (double)(eptr->totalspace) / kBytesPerGiB;
 	safs::log_info(
@@ -1084,10 +1726,291 @@ void matocsserv_sau_register_host(matocsserventry *eptr, const std::vector<uint8
 		cstoma::registerHost::deserialize(data, servip, servport, timeout, version);
 	}
 
+	// An MDS is distributed-only. The hook is unset on Master/Shadow, so the exact
+	// legacy path below remains unchanged there. Refuse before csdb admission or any
+	// inventory/report ingestion and return a real status to capable 5.x peers.
+	if (gChunkserverSessionRegistrationHook) {
+		OutputPacket outPacket;
+		matocs::registerHost::serialize(outPacket.packet, SAUNAFS_ERROR_ENOTSUP, SAUNAFS_VERSHEX,
+		                                gClusterId);
+		eptr->outputPackets.push_back(std::move(outPacket));
+		safs::log_warn("MDS refused legacy chunkserver registration");
+		return;
+	}
+
 	matocsserv_register_host(eptr, version, servip, servport, timeout, clusterId);
 }
 
-void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+/// Finishes one distributed registration once its durable decision resolved. Runs on
+/// the event loop; a connection that died while the decision was in flight is absent
+/// from the pending map and the result is dropped.
+static void matocsserv_finish_register_distributed(
+    uint64_t pendingId, uint32_t stableId, uint64_t chunkserverIncarnation, uint8_t readiness,
+    uint64_t scanEpoch, DistributedRegistrationRole role,
+    const ChunkserverSessionRegistrationResult &hookResult) {
+	const auto pendingIt = gPendingSessionRegistrations.find(pendingId);
+	if (pendingIt == gPendingSessionRegistrations.end()) {
+		safs::log_info("distributed registration {} resolved after its connection died",
+		               pendingId);
+		return;
+	}
+	matocsserventry *eptr = pendingIt->second;
+	gPendingSessionRegistrations.erase(pendingIt);
+	eptr->pendingRegistrationId = 0;
+	if (eptr->mode == ChunkserverConnectionMode::KILL) { return; }
+
+	ChunkserverSessionRegistrationResult result = hookResult;
+	const bool mintOnly = role == DistributedRegistrationRole::kMintOnly;
+	const bool validMint = mintOnly && result.status == SAUNAFS_STATUS_OK && result.stableId != 0 &&
+	                       result.mdsId != 0 && result.mdsIncarnation != 0 &&
+	                       result.claimSequence == 0 && result.leaseDeadline == 0;
+	const bool validAdmission = !mintOnly && result.status == SAUNAFS_STATUS_OK &&
+	                            result.stableId == stableId && result.mdsId != 0 &&
+	                            result.mdsIncarnation != 0 && result.claimSequence != 0 &&
+	                            result.leaseDeadline != 0 && result.dispatchCutoff != 0;
+	if (result.status == SAUNAFS_STATUS_OK && !validMint && !validAdmission) {
+		safs::log_err("distributed registration hook returned a non-canonical success");
+		result.status = SAUNAFS_ERROR_UNKNOWN;
+	}
+
+	if (validAdmission) {
+		const bool alreadyAdmitted = eptr->distributedSession;
+		// A new admission, including an in place role upgrade on a live connection. Anything
+		// still outstanding belongs to the admission that just ended and can no longer be
+		// attributed, so it is failed closed rather than carried across. The connection itself
+		// survives here, so no disconnect handling will run and this is the only place those
+		// operations can be released.
+		++eptr->sessionAdmissionEpoch;
+		matocsserv_abandon_outstanding_commands(eptr, "readmitted under a new admission");
+		eptr->stableId = stableId;
+		eptr->chunkserverIncarnation = chunkserverIncarnation;
+		eptr->sessionClaimSequence = result.claimSequence;
+		eptr->sessionLeaseDeadline = result.leaseDeadline;
+		eptr->scanEpoch = scanEpoch;
+		eptr->distributedReady = readiness != 0;
+		eptr->distributedSession = true;
+		eptr->distributedRole = role;
+		eptr->sessionEligible = !eptr->sessionCutoffPinned;
+		eptr->sessionDispatchCutoff = result.dispatchCutoff;
+		// An in-place role upgrade keeps its existing csdb admission.
+		if (!alreadyAdmitted && !matocsserv_admit_prepared_connection(eptr)) { return; }
+		gSortedServersNeedsRefresh = true;
+	}
+
+	OutputPacket outPacket;
+	matocs::registerDistributed::serialize(outPacket.packet, result.status, result.stableId,
+	                                       result.mdsId, result.mdsIncarnation, SAUNAFS_VERSHEX,
+	                                       gClusterId, result.claimSequence, result.leaseDeadline,
+	                                       result.cutoffReserveSeconds);
+	eptr->outputPackets.push_back(std::move(outPacket));
+	if (validMint) {
+		safs::log_info("mint-only registration assigned stable chunkserver id {}", result.stableId);
+	} else if (validAdmission) {
+		safs::log_info(
+		    "admitted distributed chunkserver stable_id={} incarnation={} claim_sequence={}",
+		    stableId, chunkserverIncarnation, result.claimSequence);
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("session_readmitted",
+			                        {{"cs_stable_id", stableId},
+			                         {"cs_incarnation", chunkserverIncarnation},
+			                         {"claim_sequence", result.claimSequence},
+			                         {"claim_deadline", result.leaseDeadline}});
+		}
+		// What the published sets expect on this server was last confirmed by a process that no
+		// longer exists, and this one sends no inventory to say otherwise.
+		if (gChunkOperations != nullptr) {
+			gChunkOperations->chunkserverReadmitted(stableId, chunkserverIncarnation);
+		}
+	}
+}
+
+void matocsserv_sau_register_distributed(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint32_t servip = 0;
+	uint16_t servport = 0;
+	uint32_t timeout = 0;
+	uint32_t version = 0;
+	std::string clusterId;
+	uint32_t stableId = 0;
+	uint64_t chunkserverIncarnation = 0;
+	uint8_t readiness = 0;
+	uint64_t scanEpoch = 0;
+	uint8_t roleValue = 0;
+	cstoma::registerDistributed::deserialize(data, servip, servport, timeout, version, clusterId,
+	                                         stableId, chunkserverIncarnation, readiness, scanEpoch,
+	                                         roleValue);
+
+	if (!gChunkserverSessionRegistrationHook) {
+		safs::log_warn("Master/Shadow refused distributed chunkserver registration");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+	// An already-admitted connection may re-present its registration in place (the
+	// renewer upgrade); its identity must not change, and no fresh csdb admission runs.
+	if (eptr->distributedSession &&
+	    (eptr->stableId != stableId || eptr->chunkserverIncarnation != chunkserverIncarnation)) {
+		safs::log_warn("in-place distributed re-registration changed identity");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+	if (!eptr->distributedSession &&
+	    !matocsserv_prepare_registration(eptr, version, servip, servport, timeout, clusterId, true,
+	                                     "SAU_CSTOMA_REGISTER_DISTRIBUTED")) {
+		return;
+	}
+	if (!isValidDistributedRegistrationRole(roleValue) || readiness > 1 ||
+	    chunkserverIncarnation == 0 || (readiness != 0 && scanEpoch == 0)) {
+		safs::log_warn("invalid distributed chunkserver registration shape");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	const auto role = static_cast<DistributedRegistrationRole>(roleValue);
+	const bool mintOnly = role == DistributedRegistrationRole::kMintOnly;
+	if (mintOnly != (stableId == 0)) {
+		safs::log_warn("distributed mint role and stable id sentinel disagree");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+	if (eptr->pendingRegistrationId != 0) {
+		safs::log_warn("distributed registration repeated while one is still resolving");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	// Submit the durable decision; the reply is queued by the completion on a later
+	// loop iteration. The hook itself performs no FoundationDB work on this thread.
+	const uint64_t pendingId = gNextPendingSessionRegistrationId++;
+	eptr->pendingRegistrationId = pendingId;
+	gPendingSessionRegistrations[pendingId] = eptr;
+	try {
+		gChunkserverSessionRegistrationHook(
+		    {stableId, chunkserverIncarnation, role, readiness != 0, scanEpoch},
+		    [pendingId, stableId, chunkserverIncarnation, readiness, scanEpoch,
+		     role](const ChunkserverSessionRegistrationResult &result) {
+			    matocsserv_finish_register_distributed(pendingId, stableId,
+			                                           chunkserverIncarnation, readiness,
+			                                           scanEpoch, role, result);
+		    });
+	} catch (const std::exception &exception) {
+		safs::log_err("distributed chunkserver registration submit failed: {}", exception.what());
+		gPendingSessionRegistrations.erase(pendingId);
+		eptr->pendingRegistrationId = 0;
+		eptr->mode = ChunkserverConnectionMode::KILL;
+	}
+}
+
+std::vector<ChunkserverSessionSnapshotEntry> matocsserv_distributed_session_snapshot() {
+	std::vector<ChunkserverSessionSnapshotEntry> snapshot;
+	for (const auto &entry : matocsservList) {
+		if (entry->mode == ChunkserverConnectionMode::KILL || !entry->distributedSession ||
+		    entry->csdb == nullptr) {
+			continue;
+		}
+		snapshot.push_back({entry->stableId, entry->chunkserverIncarnation,
+		                    static_cast<uint8_t>(entry->distributedRole), entry->sessionEligible,
+		                    entry->sessionClaimSequence, entry->sessionLeaseDeadline,
+		                    entry->sessionDispatchCutoff});
+	}
+	return snapshot;
+}
+
+bool matocsserv_deliver_session_lease(uint32_t stableId, uint64_t chunkserverIncarnation,
+                                      uint32_t renewerMdsId, uint64_t renewerMdsIncarnation,
+                                      uint64_t claimSequence, uint64_t leaseDeadline,
+                                      uint64_t cutoffReserveSeconds, uint64_t dispatchCutoff) {
+	for (auto &entry : matocsservList) {
+		if (entry->stableId != stableId || entry->mode == ChunkserverConnectionMode::KILL ||
+		    !entry->distributedSession) {
+			continue;
+		}
+		if (entry->chunkserverIncarnation != chunkserverIncarnation) { return false; }
+		entry->sessionClaimSequence = claimSequence;
+		entry->sessionLeaseDeadline = leaseDeadline;
+		entry->sessionDispatchCutoff = dispatchCutoff;
+		entry->sessionEligible = !entry->sessionCutoffPinned;
+
+		OutputPacket outPacket;
+		matocs::chunkserverSessionLease::serialize(outPacket.packet, stableId,
+		                                           chunkserverIncarnation, renewerMdsId,
+		                                           renewerMdsIncarnation, claimSequence,
+		                                           leaseDeadline, cutoffReserveSeconds);
+		entry->outputPackets.push_back(std::move(outPacket));
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("lease_packet_queued",
+			                        {{"cs_stable_id", stableId},
+			                         {"cs_incarnation", chunkserverIncarnation},
+			                         {"claim_sequence", claimSequence},
+			                         {"claim_deadline", leaseDeadline}});
+		}
+		return true;
+	}
+	return false;
+}
+
+void matocsserv_update_session_authority(uint32_t stableId, uint64_t chunkserverIncarnation,
+                                         uint64_t claimSequence, uint64_t leaseDeadline,
+                                         uint64_t dispatchCutoff) {
+	for (auto &entry : matocsservList) {
+		if (entry->stableId != stableId || entry->mode == ChunkserverConnectionMode::KILL ||
+		    !entry->distributedSession) {
+			continue;
+		}
+		if (entry->chunkserverIncarnation != chunkserverIncarnation) { return; }
+		entry->sessionClaimSequence = claimSequence;
+		entry->sessionLeaseDeadline = leaseDeadline;
+		entry->sessionDispatchCutoff = dispatchCutoff;
+		entry->sessionEligible = !entry->sessionCutoffPinned;
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("observer_refresh",
+			                        {{"cs_stable_id", stableId},
+			                         {"cs_incarnation", chunkserverIncarnation},
+			                         {"claim_sequence", claimSequence},
+			                         {"claim_deadline", leaseDeadline}});
+		}
+		return;
+	}
+}
+
+void matocsserv_session_ineligible(uint32_t stableId, uint64_t chunkserverIncarnation,
+                                   const char *reason) {
+	for (auto &entry : matocsservList) {
+		if (entry->stableId != stableId || entry->mode == ChunkserverConnectionMode::KILL ||
+		    !entry->distributedSession || !entry->sessionEligible) {
+			continue;
+		}
+		// Skip rather than stop, unlike the two installers above: during a re-registration
+		// two entries briefly carry the same stable id, and the one this verdict is about
+		// is not necessarily the one found first.
+		if (entry->chunkserverIncarnation != chunkserverIncarnation) { continue; }
+		entry->sessionEligible = false;
+		safs::log_warn("chunkserver session stable_id={} lost durable authority: {}", stableId,
+		               reason);
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("session_cutoff_entered",
+			                        {{"cs_stable_id", stableId},
+			                         {"cs_incarnation", entry->chunkserverIncarnation},
+			                         {"reason", reason}});
+		}
+		// Ineligible means unknown, not absent: drop the connection so the server
+		// re-registers and re-arbitrates through FoundationDB.
+		if (gTestPinCutoff) {
+			entry->sessionCutoffPinned = true;
+			safs::log_warn("test seam active: chunkserver stable_id={} pinned non dispatchable "
+			               "with its connection kept",
+			               stableId);
+		} else {
+			entry->mode = ChunkserverConnectionMode::KILL;
+		}
+		return;
+	}
+}
+
+void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	if (eptr->distributedSession) {
+		safs::log_err("distributed chunkserver sent forbidden complete inventory");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
 
@@ -1100,13 +2023,14 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
 }
 
-void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	cstoma::registerSpace::deserialize(data, eptr->usedspace, eptr->totalspace, eptr->chunkscount,
-			eptr->todelusedspace, eptr->todeltotalspace, eptr->todelchunkscount);
+	                                   eptr->todelusedspace, eptr->todeltotalspace,
+	                                   eptr->todelchunkscount);
 	register_space(eptr);
 }
 
-void matocsserv_sau_register_label(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+void matocsserv_sau_register_label(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	std::string label;
 	cstoma::registerLabel::deserialize(data, label);
 	if (!MediaLabelManager::isLabelValid(label)) {
@@ -1129,15 +2053,15 @@ void matocsserv_sau_register_label(matocsserventry *eptr, const std::vector<uint
 
 	if (label != static_cast<std::string>(eptr->label)) {
 		safs::log_info("chunkserver (ip: {}, port {}) changed its label from '{}' to '{}'",
-		    eptr->serviceStrIp, eptr->servport, static_cast<std::string>(eptr->label), label);
+		               eptr->serviceStrIp, eptr->servport, static_cast<std::string>(eptr->label),
+		               label);
 		gChunkOperations->serverLabelChanged(eptr->label, MediaLabel(label));
 		eptr->label = MediaLabel(label);
 		eptr->csdb->label = eptr->label;
 	}
 }
 
-void matocsserv_sau_register_config(matocsserventry *eptr,
-                                    const std::vector<uint8_t>& data) {
+void matocsserv_sau_register_config(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	std::string config;
 	cstoma::registerConfig::deserialize(data, config);
 	if (eptr->csdb == nullptr) {
@@ -1156,7 +2080,7 @@ void matocsserv_sau_status(matocsserventry *eptr, const std::vector<uint8_t> &da
 	eptr->load_factor = load_factor;
 }
 
-void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
 
@@ -1166,7 +2090,7 @@ void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8
 	for (const auto &chunk : chunks) { gChunkOperations->damaged(eptr, chunk.id, chunk.type); }
 }
 
-void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
 
@@ -1176,7 +2100,7 @@ void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t
 	for (const auto &chunk : chunks) { gChunkOperations->lost(eptr, chunk.id, chunk.type); }
 }
 
-void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t>& data) {
+void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
 
@@ -1204,8 +2128,8 @@ void matocsserv_tlshandshake(matocsserventry *eptr) {
 	int ret = SSL_accept(eptr->tlsSession->session());
 
 	if (ret == 1) {
-		safs::log_info("TLS handshake completed with chunkserver from {}:{}",
-		               eptr->serviceStrIp, eptr->servport);
+		safs::log_info("TLS handshake completed with chunkserver from {}:{}", eptr->serviceStrIp,
+		               eptr->servport);
 		eptr->mode = ChunkserverConnectionMode::CONNECTED;
 		return;
 	}
@@ -1229,8 +2153,7 @@ void matocsserv_starttls(matocsserventry *eptr) {
 	// Initialize a TLS session for the peer.
 	std::string keyFile = cfg_getstring("TLS_KEY_FILE", std::string(TlsSession::kNoFile));
 	std::string certFile = cfg_getstring("TLS_CERT_FILE", std::string(TlsSession::kNoFile));
-	std::string trustFile =
-	    cfg_getstring("TLS_CA_CERT_FILE", std::string(TlsSession::kNoFile));
+	std::string trustFile = cfg_getstring("TLS_CA_CERT_FILE", std::string(TlsSession::kNoFile));
 
 	try {
 		eptr->tlsSession =
@@ -1246,91 +2169,159 @@ void matocsserv_starttls(matocsserventry *eptr) {
 	}
 }
 
-void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const MessageBuffer& data) {
+/// Packets held back by the H4 delay fault, with the loop time each is due at. A connection
+/// that died meanwhile is simply absent from the list of live entries, so a held packet is
+/// dropped rather than delivered to freed memory.
+struct DeferredPacket {
+	matocsserventry *eptr;
+	PacketHeader header;
+	MessageBuffer data;
+	uint64_t dueMicroseconds;
+};
+static std::vector<DeferredPacket> gDeferredPackets;
+
+static void matocsserv_dispatch_packet(matocsserventry *eptr, PacketHeader header,
+                                       const MessageBuffer &data);
+
+void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const MessageBuffer &data) {
+	if (test_packet_faults::enabled()) {
+		uint32_t delayMilliseconds = 0;
+		switch (test_packet_faults::decide("matocs_recv", header.type, &delayMilliseconds)) {
+		case test_packet_faults::Verdict::kDrop:
+			return;
+		case test_packet_faults::Verdict::kDelay:
+			gDeferredPackets.push_back({eptr, header, data,
+			                            eventloop_utime() + delayMilliseconds * 1000ULL});
+			return;
+		case test_packet_faults::Verdict::kDuplicate:
+			matocsserv_dispatch_packet(eptr, header, data);
+			break;
+		case test_packet_faults::Verdict::kPass:
+			break;
+		}
+	}
+	matocsserv_dispatch_packet(eptr, header, data);
+}
+
+/// Releases every held packet whose delay has run out, to the connection that is still live.
+static void matocsserv_release_deferred_packets() {
+	if (gDeferredPackets.empty()) { return; }
+
+	const uint64_t now = eventloop_utime();
+	std::vector<DeferredPacket> due;
+	auto stillHeld = std::stable_partition(
+	    gDeferredPackets.begin(), gDeferredPackets.end(),
+	    [&](const DeferredPacket &held) { return held.dueMicroseconds > now; });
+	due.assign(std::make_move_iterator(stillHeld), std::make_move_iterator(gDeferredPackets.end()));
+	gDeferredPackets.erase(stillHeld, gDeferredPackets.end());
+
+	for (const auto &held : due) {
+		const bool live = std::any_of(
+		    matocsservList.begin(), matocsservList.end(),
+		    [&](const std::unique_ptr<matocsserventry> &entry) {
+			    return entry.get() == held.eptr &&
+			           entry->mode != ChunkserverConnectionMode::KILL;
+		    });
+		if (live) { matocsserv_dispatch_packet(held.eptr, held.header, held.data); }
+	}
+}
+
+static void matocsserv_dispatch_packet(matocsserventry *eptr, PacketHeader header,
+                                       const MessageBuffer &data) {
 	uint32_t length = data.size();
 	try {
 		switch (header.type) {
-			case ANTOAN_NOP:
-				break;
-			case ANTOAN_UNKNOWN_COMMAND: // for future use
-				break;
-			case ANTOAN_BAD_COMMAND_SIZE: // for future use
-				break;
-			case CSTOMA_SPACE:
-				matocsserv_space(eptr, data.data(), length);
-				break;
-			case CSTOMA_ERROR_OCCURRED:
-				matocsserv_error_occurred(eptr, data.data(), length);
-				break;
-			case CSTOAN_CHUNK_CHECKSUM:
-				matocsserv_got_chunk_checksum(eptr, data.data(), length);
-				break;
-			case SAU_CSTOMA_CREATE_CHUNK:
-				matocsserv_got_createchunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_DELETE_CHUNK:
-				matocsserv_got_deletechunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_REPLICATE_CHUNK:
-				matocsserv_got_replicatechunk_status(eptr, data, header.type);
-				break;
-			case SAU_CSTOMA_DUPLICATE_CHUNK:
-				matocsserv_got_duplicatechunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_LOCK_CHUNK:
-				matocsserv_got_chunklock_status(eptr, data);
-				break;
-			case SAU_CSTOMA_WRITE_END_STATUS:
-				matocsserv_got_writeend_status(eptr, data);
-				break;
-			case SAU_CSTOMA_SET_VERSION:
-				matocsserv_got_setchunkversion_status(eptr, data);
-				break;
-			case SAU_CSTOMA_TRUNCATE:
-				matocsserv_got_sau_truncatechunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_DUPTRUNC_CHUNK:
-				matocsserv_got_duptruncchunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_CHUNK_DAMAGED:
-				matocsserv_sau_chunk_damaged(eptr, data);
-				break;
-			case SAU_CSTOMA_CHUNK_LOST:
-				matocsserv_sau_chunks_lost(eptr, data);
-				break;
-			case SAU_CSTOMA_CHUNK_NEW:
-				matocsserv_sau_chunk_new(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_HOST:
-				matocsserv_sau_register_host(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_CHUNKS:
-				matocsserv_sau_register_chunks(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_SPACE:
-				matocsserv_sau_register_space(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_LABEL:
-				matocsserv_sau_register_label(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_CONFIG:
-				matocsserv_sau_register_config(eptr, data);
-				break;
-			case SAU_CSTOMA_STATUS:
-				matocsserv_sau_status(eptr, data);
-				break;
-			case SAU_CSTOMA_STARTTLS:
-				matocsserv_starttls(eptr);
-				break;
-			default:
-				safs::log_info("master <-> chunkservers module: got unknown message "
-						"(type:{})", header.type);
-				eptr->mode = ChunkserverConnectionMode::KILL;
-				break;
+		case ANTOAN_NOP:
+			break;
+		case ANTOAN_UNKNOWN_COMMAND:  // for future use
+			break;
+		case ANTOAN_BAD_COMMAND_SIZE:  // for future use
+			break;
+		case CSTOMA_SPACE:
+			matocsserv_space(eptr, data.data(), length);
+			break;
+		case CSTOMA_ERROR_OCCURRED:
+			matocsserv_error_occurred(eptr, data.data(), length);
+			break;
+		case CSTOAN_CHUNK_CHECKSUM:
+			matocsserv_got_chunk_checksum(eptr, data.data(), length);
+			break;
+		case SAU_CSTOMA_CREATE_CHUNK:
+			matocsserv_got_createchunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_DELETE_CHUNK:
+			matocsserv_got_deletechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_REPLICATE_CHUNK:
+			matocsserv_got_replicatechunk_status(eptr, data, header.type);
+			break;
+		case SAU_CSTOMA_DUPLICATE_CHUNK:
+			matocsserv_got_duplicatechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_LOCK_CHUNK:
+			matocsserv_got_chunklock_status(eptr, data);
+			break;
+		case SAU_CSTOMA_WRITE_END_STATUS:
+			matocsserv_got_writeend_status(eptr, data);
+			break;
+		case SAU_CSTOMA_SET_VERSION:
+			matocsserv_got_setchunkversion_status(eptr, data);
+			break;
+		case SAU_CSTOMA_TRUNCATE:
+			matocsserv_got_sau_truncatechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_DUPTRUNC_CHUNK:
+			matocsserv_got_duptruncchunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_FENCED_STATUS:
+			matocsserv_got_fenced_status(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNK_DAMAGED:
+			matocsserv_sau_chunk_damaged(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNK_LOST:
+			matocsserv_sau_chunks_lost(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNK_NEW:
+			matocsserv_sau_chunk_new(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_HOST:
+			matocsserv_sau_register_host(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_DISTRIBUTED:
+			matocsserv_sau_register_distributed(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_CHUNKS:
+			matocsserv_sau_register_chunks(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_SPACE:
+			matocsserv_sau_register_space(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_LABEL:
+			matocsserv_sau_register_label(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_CONFIG:
+			matocsserv_sau_register_config(eptr, data);
+			break;
+		case SAU_CSTOMA_STATUS:
+			matocsserv_sau_status(eptr, data);
+			break;
+		case SAU_CSTOMA_STARTTLS:
+			matocsserv_starttls(eptr);
+			break;
+		default:
+			safs::log_info(
+			    "master <-> chunkservers module: got unknown message "
+			    "(type:{})",
+			    header.type);
+			eptr->mode = ChunkserverConnectionMode::KILL;
+			break;
 		}
-	} catch (IncorrectDeserializationException& e) {
-		safs::log_info("master <-> chunkservers module: got inconsistent message "
-				"(type:{}, length:{}), {}", header.type, length, e.what());
+	} catch (IncorrectDeserializationException &e) {
+		safs::log_info(
+		    "master <-> chunkservers module: got inconsistent message "
+		    "(type:{}, length:{}), {}",
+		    header.type, length, e.what());
 		eptr->mode = ChunkserverConnectionMode::KILL;
 	}
 }
@@ -1362,12 +2353,11 @@ void matocsserv_read(matocsserventry *eptr) {
 		ssize_t ret;
 
 		if (eptr->tlsSession != nullptr && eptr->mode != ChunkserverConnectionMode::HANDSHAKE) {
-			ret =
-			    SSL_read(eptr->tlsSession->session(), eptr->inputPacket.pointerToBeReadInto(),
-			             eptr->inputPacket.bytesToBeRead());
+			ret = SSL_read(eptr->tlsSession->session(), eptr->inputPacket.pointerToBeReadInto(),
+			               eptr->inputPacket.bytesToBeRead());
 		} else {
 			ret = read(eptr->sock, eptr->inputPacket.pointerToBeReadInto(),
-			                 eptr->inputPacket.bytesToBeRead());
+			           eptr->inputPacket.bytesToBeRead());
 		}
 
 		if (ret == 0) {
@@ -1397,7 +2387,7 @@ void matocsserv_read(matocsserventry *eptr) {
 
 		try {
 			eptr->inputPacket.increaseBytesRead(ret);
-		} catch (InputPacketTooLongException& ex) {
+		} catch (InputPacketTooLongException &ex) {
 			safs::log_warn("reading from CS({}): {}", eptr->serviceStrIp, ex.what());
 			eptr->mode = ChunkserverConnectionMode::KILL;
 			return;
@@ -1413,9 +2403,7 @@ void matocsserv_read(matocsserventry *eptr) {
 		matocsserv_gotpacket(eptr, eptr->inputPacket.getHeader(), eptr->inputPacket.getData());
 		eptr->inputPacket.reset();
 
-		if (watchdog.expired()) {
-			break;
-		}
+		if (watchdog.expired()) { break; }
 	}
 }
 
@@ -1428,9 +2416,9 @@ void matocsserv_write(matocsserventry *eptr) {
 		ssize_t bytesWritten;
 
 		if (eptr->tlsSession != nullptr) {
-			bytesWritten = SSL_write(eptr->tlsSession->session(),
-			                         pack.packet.data() + pack.bytesSent,
-			                         pack.packet.size() - pack.bytesSent);
+			bytesWritten =
+			    SSL_write(eptr->tlsSession->session(), pack.packet.data() + pack.bytesSent,
+			              pack.packet.size() - pack.bytesSent);
 			if (bytesWritten < 0) {
 				int err = SSL_get_error(eptr->tlsSession->session(), bytesWritten);
 				if (err != SSL_ERROR_WANT_WRITE && err != SSL_ERROR_WANT_READ) {
@@ -1455,15 +2443,11 @@ void matocsserv_write(matocsserventry *eptr) {
 		}
 
 		pack.bytesSent += bytesWritten;
-		if (pack.packet.size() != pack.bytesSent) {
-			return;
-		}
+		if (pack.packet.size() != pack.bytesSent) { return; }
 
 		eptr->outputPackets.pop_front();
 
-		if (watchdog.expired()) {
-			break;
-		}
+		if (watchdog.expired()) { break; }
 	}
 }
 
@@ -1496,6 +2480,8 @@ void matocsserv_desc(std::vector<pollfd> &pdesc) {
 }
 
 void matocsserv_serve(const std::vector<pollfd> &pdesc) {
+	matocsserv_release_deferred_packets();
+
 	uint32_t peerip;
 	std::unique_ptr<matocsserventry> eptr;
 	int newSocket;
@@ -1594,6 +2580,10 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 
 			gChunkOperations->serverDisconnected(eptr, eptr->label);
 
+			if (eptr->pendingRegistrationId != 0) {
+				gPendingSessionRegistrations.erase(eptr->pendingRegistrationId);
+			}
+
 			if (eptr->csdb) { csdb_lost_connection(eptr->servip, eptr->servport); }
 
 			tcpclose(eptr->sock);
@@ -1610,13 +2600,22 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 void matocsserv_reload() {
 	std::string oldListenHost = gListenHost;
 	std::string oldListenPort = gListenPort;
-	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST","*");
-	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
+	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST", "*");
+	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT", "9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
 
+	gTestPinCutoff = cfg_getuint32("TEST_SESSION_PIN_CUTOFF", 0) != 0;
+	// The H4 dispatch point below has always been here; without this the rules that drive it
+	// were only ever read on the chunkserver side, so the seam was half present.
+	test_packet_faults::configure(cfg_getuint32("TEST_PACKET_FAULTS_ENABLED", 0) != 0,
+	                              cfg_getstring("TEST_PACKET_FAULTS", ""));
+	gCommandReplyTimeoutSeconds =
+	    cfg_get_minmaxvalue<uint32_t>("CS_COMMAND_REPLY_TIMEOUT_SECONDS", 60, 1, 86400);
+	gMaxOutstandingCommands =
+	    cfg_get_minmaxvalue<uint32_t>("CS_MAX_OUTSTANDING_COMMANDS", 65536, 1, 1048576);
+
 	auto previousValue = gPrioritizeDataParts;
-	gPrioritizeDataParts =
-	    static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
+	gPrioritizeDataParts = static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
 
 	if (previousValue != gPrioritizeDataParts) {
 		safs::log_info(
@@ -1670,7 +2669,7 @@ void matocsserv_reload() {
 	lsock = newlsock;
 }
 
-bool matocsserv_is_killed(matocsserventry* eptr) {
+bool matocsserv_is_killed(matocsserventry *eptr) {
 	return eptr != nullptr && eptr->mode == ChunkserverConnectionMode::KILL;
 }
 
@@ -1678,15 +2677,55 @@ void matocsserv_request_disconnect(matocsserventry *eptr) {
 	if (eptr != nullptr) { eptr->mode = ChunkserverConnectionMode::KILL; }
 }
 
-uint32_t matocsserv_get_version(matocsserventry *eptr) {
-	return eptr->version;
+uint32_t matocsserv_get_version(matocsserventry *eptr) { return eptr->version; }
+
+/// Periodic tick on distributed clusters: pushes the cluster member list to every
+/// registered chunkserver whose last-sent view differs. Master/Shadow deployments never
+/// set the hook, so they never send the packet.
+static void matocsserv_broadcast_cluster_members() {
+	if (!gMetadataserverClusterViewHook) { return; }
+
+	MetadataserverClusterView view;
+	try {
+		view = gMetadataserverClusterViewHook();
+	} catch (const std::exception &exception) {
+		safs::log_warn("master <-> chunkservers module: cluster view read failed: {}",
+		               exception.what());
+		return;
+	}
+	if (view.selfMdsId == 0 || view.members.empty()) { return; }
+
+	MessageBuffer buffer;
+	matocs::clusterMembers::serialize(buffer, view.selfMdsId, view.members);
+
+	for (auto &entry : matocsservList) {
+		auto *eptr = entry.get();
+		if (eptr->mode == ChunkserverConnectionMode::KILL || eptr->csdb == nullptr ||
+		    !eptr->distributedSession) {
+			continue;
+		}
+		if (eptr->lastClusterViewSent == buffer) { continue; }
+
+		eptr->outputPackets.push_back(OutputPacket());
+		eptr->outputPackets.back().packet = buffer;
+		eptr->lastClusterViewSent = buffer;
+	}
 }
 
 int matocsserv_init() {
-	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST","*");
-	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
+	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST", "*");
+	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT", "9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
 	gPrioritizeDataParts = static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
+	gTestPinCutoff = cfg_getuint32("TEST_SESSION_PIN_CUTOFF", 0) != 0;
+	// The H4 dispatch point below has always been here; without this the rules that drive it
+	// were only ever read on the chunkserver side, so the seam was half present.
+	test_packet_faults::configure(cfg_getuint32("TEST_PACKET_FAULTS_ENABLED", 0) != 0,
+	                              cfg_getstring("TEST_PACKET_FAULTS", ""));
+	gCommandReplyTimeoutSeconds =
+	    cfg_get_minmaxvalue<uint32_t>("CS_COMMAND_REPLY_TIMEOUT_SECONDS", 60, 1, 86400);
+	gMaxOutstandingCommands =
+	    cfg_get_minmaxvalue<uint32_t>("CS_MAX_OUTSTANDING_COMMANDS", 65536, 1, 1048576);
 
 	lsock = tcpsocket();
 	if (lsock < 0) {
@@ -1712,6 +2751,8 @@ int matocsserv_init() {
 
 	matocsserv_replication_init();
 
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 2, 0, matocsserv_broadcast_cluster_members);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 1, 0, matocsserv_expire_outstanding_commands);
 	eventloop_reloadregister(matocsserv_reload);
 	eventloop_destructregister(matocsserv_term);
 	eventloop_pollregister(matocsserv_desc, matocsserv_serve);

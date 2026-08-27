@@ -26,6 +26,7 @@
 #include "chunkserver/hdd_readahead.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
+#include "common/test_event_stream.h"
 #include "chunkserver/network_stats.h"
 #include "protocol/cstocl.h"
 #include "protocol/cstocs.h"
@@ -59,6 +60,16 @@ void GetBlocksHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkP
 }
 
 bool GetBlocksHighLevelOp::isRunning() const { return getBlocksJobId_ > 0; }
+
+size_t GetBlocksHighLevelOp::cancelQueuedJobs() {
+	if (getBlocksJobId_ == 0) { return 0; }
+	return workerJobPool()->disableJobs({getBlocksJobId_}).size();
+}
+
+size_t WriteHighLevelOp::cancelQueuedJobs() {
+	if (writeJobId_ == 0) { return 0; }
+	return workerJobPool()->disableJobs({writeJobId_}).size();
+}
 
 void GetBlocksHighLevelOp::delayedClose() {
 	workerJobPool()->disableJob(getBlocksJobId_);
@@ -153,6 +164,21 @@ void ReadHighLevelOp::readFinishedCallback(uint8_t status, void *buffer) {
 	auto outputBuffer = static_cast<OutputBuffer *>(buffer);
 	passert(outputBuffer);
 	outputBuffer->setIsCallbackStarted(true);
+
+	// This is where a job result becomes a packet the client will read, which makes it the
+	// boundary that matters: the physical read already happened and is fine, and what must not
+	// happen is handing it to a client under an authority this server no longer holds. Checking
+	// it only when the output loop comes back around would miss exactly the block that was in
+	// flight when the cutoff fired, which is the one block a cutoff is about.
+	if (status == SAUNAFS_STATUS_OK && !parentServingEraIsCurrent()) {
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("read_result_refused_stale_era",
+			                        {{"chunk", chunkId_},
+			                         {"admitted_era", parentServingEra()},
+			                         {"current_era", masterconn_serving_era()}});
+		}
+		status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
+	}
 
 	if (status == SAUNAFS_STATUS_OK) {
 		isChunkOpen_ = true;
@@ -302,6 +328,14 @@ void ReadHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartTy
 
 void ReadHighLevelOp::continueReadingIfPossible() {
 	if (!pendingReadDataBuffers_.empty() || size_ > 0) { readContinue(maxParallelHddReadJobs_); }
+}
+
+size_t ReadHighLevelOp::cancelQueuedJobs() {
+	if (pendingReadJobIds_.empty()) { return 0; }
+	// disableJobs returns the ids it did disable, not the ones it could not. Reading it the
+	// other way round reported zero cancellations exactly when everything had been cancelled,
+	// which is the number a run would have used as its evidence.
+	return workerJobPool()->disableJobs(pendingReadJobIds_).size();
 }
 
 bool ReadHighLevelOp::prepareForDelayedClose() {

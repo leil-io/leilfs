@@ -34,6 +34,7 @@
 #include "chunkserver/chunk_high_level_ops.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/io_buffers.h"
+#include "chunkserver/masterconn.h"
 #include "chunkserver/network_stats.h"
 #include "common/charts.h"
 #include "common/connection_pool.h"
@@ -47,7 +48,17 @@
 #include "protocol/cstocl.h"
 #include "protocol/cstocs.h"
 #include "protocol/packet.h"
+#include "common/test_event_stream.h"
 #include "slogger/slogger.h"
+
+/// Records that one client plane frame was refused because the local session cutoff had
+/// already fired. A frame can only reach this point after the deadline, so the event is
+/// what proves a gate ran rather than the work simply never being requested.
+static void noteFrameRefusedAfterCutoff(const char *frame, uint64_t chunkId) {
+	if (test_event_stream::enabled()) {
+		test_event_stream::emit("client_frame_refused", {{"frame", frame}, {"chunk_id", chunkId}});
+	}
+}
 
 // Connection timeout in seconds
 constexpr uint32_t kDefaultConnectionTimeout_s = 3;
@@ -250,7 +261,12 @@ void ChunkserverEntry::readInit(const uint8_t *data, PacketHeader::Type type,
 	}
 	// Check if the request is valid
 	std::vector<uint8_t> instantResponseBuffer;
-	if (size == 0) {
+	if (!bindServingEra()) {
+		// Client-plane session cutoff gate (FR-044): no new read after durable
+		// authority expired, independently of any MDS-side gate.
+		cstocl::readStatus::serialize(instantResponseBuffer, chunkId,
+		                              SAUNAFS_ERROR_TEMP_NOTPOSSIBLE);
+	} else if (size == 0) {
 		cstocl::readStatus::serialize(instantResponseBuffer, chunkId, SAUNAFS_STATUS_OK);
 	} else if (size > SFSCHUNKSIZE) {
 		cstocl::readStatus::serialize(instantResponseBuffer, chunkId, SAUNAFS_ERROR_WRONGSIZE);
@@ -281,6 +297,11 @@ void ChunkserverEntry::prefetch(const uint8_t *data, PacketHeader::Type type,
 		safs::log_info("({}) Cannot deserialize PREFETCH message (type:{:X}, length:{})", __func__,
 		               type, length);
 		state = State::Close;
+		return;
+	}
+	if (masterconn_serving_era() == 0) {
+		// Prefetch has no reply, so refusing it is simply declining to start the job.
+		noteFrameRefusedAfterCutoff("prefetch", chunkId);
 		return;
 	}
 	// Start prefetching in background, don't wait for it to complete
@@ -352,6 +373,14 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 
+	if (!bindServingEra()) {
+		// Client-plane session cutoff gate (FR-044): no new write chain after durable
+		// authority expired, independently of any MDS-side gate.
+		createAttachedWriteStatus(chunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
+		state = State::IOFinish;
+		return;
+	}
+
 	if (!chain.empty()) {
 		// Create a chain -- connect to the next chunkserver
 		fwdServer = chain[0].address;
@@ -413,7 +442,12 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 	}
 
 	uint8_t status = SAUNAFS_STATUS_OK;
-	if (!writeHLOs_.back()->isLastHeaderSizeValid()) {
+	if (!servingEraIsCurrent()) {
+		// A chain admitted before the deadline must not keep writing past it, so
+		// authority is rechecked on every frame and not only once at WRITE_INIT.
+		noteFrameRefusedAfterCutoff("write_data", opChunkId);
+		status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
+	} else if (!writeHLOs_.back()->isLastHeaderSizeValid()) {
 		status = SAUNAFS_ERROR_WRONGSIZE;
 	} else if (opChunkId != chunkId) {
 		status = SAUNAFS_ERROR_WRONGCHUNKID;
@@ -460,6 +494,20 @@ void ChunkserverEntry::writeStatus(const uint8_t *data, PacketHeader::Type type,
 		return;
 	}
 
+	// A downstream success can become an upstream client success, so accepting this is an
+	// authority-bearing act and not merely bookkeeping. The packet was parsed and the
+	// transport state is released above whatever happens next, because refusing to believe an
+	// answer is not a reason to leak the resources that carried it. What a retired era may not
+	// do is turn that answer into an acknowledgement: the chain fails closed instead, and
+	// whatever the downstream server actually did becomes something for reconciliation to
+	// settle rather than something this process asserts.
+	if (!servingEraIsCurrent()) {
+		noteFrameRefusedAfterCutoff("write_status", opChunkId);
+		createAttachedWriteStatus(chunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
+		state = State::IOFinish;
+		return;
+	}
+
 	writeHLOs_.back()->updateUsingWriteStatusAndReply(status, writeId);
 }
 
@@ -479,6 +527,15 @@ void ChunkserverEntry::writeFlush(const uint8_t *data, uint32_t length) {
 		safs::log_info(
 		    "Received malformed WRITE_FLUSH message (got chunkId={:016X}, expected {:016X})",
 		    opChunkId, chunkId);
+		state = State::IOFinish;
+		return;
+	}
+
+	// Sealing buffered work is an effect, so it is refused the same way a new frame is. A
+	// chain admitted before the deadline must not be able to finish itself after it.
+	if (!servingEraIsCurrent()) {
+		noteFrameRefusedAfterCutoff("write_flush", opChunkId);
+		createAttachedWriteStatus(opChunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
 		state = State::IOFinish;
 		return;
 	}
@@ -509,6 +566,15 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 		safs::log_info(
 		    "Received malformed WRITE_END message (got chunkId={:016X}, expected {:016X})",
 		    opChunkId, chunkId);
+		state = State::IOFinish;
+		return;
+	}
+
+	// Ending a write is where it becomes durable and acknowledged, which is the last moment
+	// this chunkserver can still decline to speak for a claim it no longer holds.
+	if (!servingEraIsCurrent()) {
+		noteFrameRefusedAfterCutoff("write_end", opChunkId);
+		createAttachedWriteStatus(opChunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
 		state = State::IOFinish;
 		return;
 	}
@@ -564,6 +630,18 @@ void ChunkserverEntry::sauGetChunkBlocks(const uint8_t *data, uint32_t length) {
 		safs::log_info("Received malformed SAU_CSTOCS_GET_CHUNK_BLOCKS message (length: {})",
 		               length);
 		state = State::Close;
+		return;
+	}
+
+	if (!bindServingEra()) {
+		// Replication and repair size their work from this answer, so a server whose
+		// durable authority has lapsed must not describe a chunk it may no longer own.
+		noteFrameRefusedAfterCutoff("get_chunk_blocks", chunkId);
+		std::vector<uint8_t> buffer;
+		cstocs::getChunkBlocksStatus::serialize(buffer, chunkId, chunkVersion, chunkType, 0,
+		                                        SAUNAFS_ERROR_TEMP_NOTPOSSIBLE);
+		createAttachedPacket(buffer);
+		state = State::Idle;
 		return;
 	}
 
@@ -670,9 +748,31 @@ void ChunkserverEntry::testChunk(const uint8_t *data, uint32_t length) {
 
 void ChunkserverEntry::outputCheckReadFinished() {
 	TRACETHIS();
-	if (state == State::Read) {
-		readHLO_->continueReadingIfPossible();
+	if (state != State::Read) { return; }
+	// A read admitted before the cutoff is still a read after it. The drain component of the
+	// cutoff reserve exists to cover work already in flight, but nothing stopped this one from
+	// handing out blocks for as long as the client kept asking for them, so the reserve
+	// bounded an assumption rather than the work. Terminate the read with the same refusal a
+	// new one would get; the client retries it against a holder that still has authority.
+	if (!servingEraIsCurrent()) {
+		// Carrying both eras is what makes this observable as the property it is. A refusal
+		// while authority is simply gone proves nothing a flag could not also have produced;
+		// a refusal while this process is serving again, under a different era, is the whole
+		// claim: readmission authorizes new work and does not revive old work.
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("read_continuation_refused_stale_era",
+			                        {{"chunk", readHLO_->chunkId()},
+			                         {"admitted_era", servingEra_},
+			                         {"current_era", masterconn_serving_era()}});
+		}
+		std::vector<uint8_t> refusal;
+		cstocl::readStatus::serialize(refusal, readHLO_->chunkId(),
+		                              SAUNAFS_ERROR_TEMP_NOTPOSSIBLE);
+		createAttachedPacket(refusal);
+		state = State::Close;
+		return;
 	}
+	readHLO_->continueReadingIfPossible();
 }
 
 bool ChunkserverEntry::isChunkOpen() {
@@ -693,6 +793,66 @@ void ChunkserverEntry::forceCloseOpenChunks() {
 	if (readHLO_->isChunkOpen()) {
 		hddClose(readHLO_->chunkId(), readHLO_->chunkType());
 	}
+}
+
+bool ChunkserverEntry::bindServingEra() {
+	const uint64_t era = masterconn_serving_era();
+	if (era == 0) { return false; }
+	servingEra_ = era;
+	return true;
+}
+
+bool ChunkserverEntry::servingEraIsCurrent() const {
+	// Work with no era was never admitted under one, which happens on a connection that has
+	// not started anything yet. Asking the process whether it may serve is the right question
+	// there and the wrong one afterwards.
+	if (servingEra_ == 0) { return masterconn_session_serving_allowed(); }
+	return masterconn_era_is_current(servingEra_);
+}
+
+bool ChunkserverEntry::cancelJobsAfterCutoff() {
+	if (servingEraIsCurrent()) {
+		// Readmission re-arms it, so a session that recovers and lapses again is drained again.
+		cutoffCancellationDone_ = false;
+		return false;
+	}
+	// Once per lapse. It no longer changes the connection's state, so nothing else would stop
+	// it running on every loop for as long as the cutoff lasts.
+	if (cutoffCancellationDone_) { return false; }
+	if (state == State::Close || state == State::CloseWait || state == State::Closed) {
+		return false;
+	}
+	// What counts as work inside is the connection's own state, not whether a chunk handle is
+	// open yet. A read whose first job is still queued has opened nothing and is nonetheless
+	// exactly the case this exists for: admitted before the cutoff, unfinished after it.
+	const bool readInProgress = state == State::Read;
+	const bool working = readInProgress || state == State::GetBlock ||
+	                     state == State::WriteLast || state == State::WriteForward ||
+	                     state == State::WriteInit || state == State::Connecting ||
+	                     state == State::IOFinish;
+	if (!working && !isChunkOpen() && pendingWriteJobs == 0) { return false; }
+
+	// Cancel what is queued, and only that. Routing this through the teardown path instead
+	// would also take the connection down, and taking the connection down is how the client
+	// frame gates stopped being reachable: a frame the client sends next can only be refused
+	// by a connection that is still there to refuse it. So the work stops and the connection
+	// stays, which is both halves of what the cutoff is supposed to mean.
+	size_t cancelled = readHLO_->cancelQueuedJobs() + getBlocksHLO_->cancelQueuedJobs();
+	// Write jobs were missed the first time, which left the half of the client plane that
+	// actually changes data as the only one the cutoff did not stop.
+	for (auto &writeHLO : writeHLOs_) { cancelled += writeHLO->cancelQueuedJobs(); }
+	cutoffCancellationDone_ = true;
+
+	// The record carries what was inside, because that is the thing a gate at the entrance
+	// cannot show: refusing entry proves nothing about what was already through the door.
+	if (test_event_stream::enabled()) {
+		test_event_stream::emit("jobs_cancelled_after_cutoff",
+		                        {{"read_in_progress", readInProgress ? 1U : 0U},
+		                         {"read_open", readHLO_->isChunkOpen() ? 1U : 0U},
+		                         {"cancelled_jobs", static_cast<uint32_t>(cancelled)},
+		                         {"pending_write_jobs", pendingWriteJobs}});
+	}
+	return true;
 }
 
 void ChunkserverEntry::closeJobs() {

@@ -161,6 +161,13 @@ void ChunkWriter::init(WriteChunkLocator* locator, uint32_t chunkserverTimeout_m
 		executors_.insert(std::make_pair(fd, std::move(executor)));
 	}
 
+	// No usable location means no stripe size, and every later stripe computation divides by
+	// it. Refuse the write here instead: a chunk the master could not resolve to a single
+	// chunkserver is a failed write, never a division by zero in a write worker.
+	if (executors_.empty() || combinedStripeSize_ == 0) {
+		throw RecoverableWriteException("No chunkserver available for the chunk");
+	}
+
 	// Initialize all the executors -- this is a special operation with id=0
 	for (const auto& fdAndExecutor : executors_) {
 		fdAndExecutor.second->addInitPacket();

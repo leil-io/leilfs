@@ -43,3 +43,5 @@ std::vector<MetadataserverListEntry> defaultMetadataserversList() { return matom
 
 MetadataserversListHook gMetadataserversListHook = defaultMetadataserversList;
 MetadataserverStatusHook gMetadataserverStatusHook = defaultMetadataserverStatus;
+MetadataserverClusterViewHook gMetadataserverClusterViewHook;
+ChunkserverSessionRegistrationHook gChunkserverSessionRegistrationHook;

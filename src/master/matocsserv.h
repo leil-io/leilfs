@@ -132,6 +132,55 @@ void matocsserv_getspace(uint64_t* totalspace, uint64_t* availspace);
 uint16_t matocsserv_get_listen_port();
 const char* matocsserv_getstrip(matocsserventry* eptr);
 uint32_t matocsserv_get_servip(matocsserventry *eptr);
+
+/// Stable id of the connected chunkserver listening at (servip, servport); 0 when no
+/// live registration matches or the server has no assigned identity.
+uint32_t matocsserv_stable_id_by_address(uint32_t servip, uint16_t servport);
+
+/// Location of the connected chunkserver owning a stable id; false when that server has
+/// no live registration here.
+bool matocsserv_location_by_stable_id(uint32_t stableId, uint32_t &servip, uint16_t &servport,
+                                      MediaLabel &label, uint32_t &version);
+
+/// The live registration entry of the chunkserver owning a stable id; nullptr when none.
+matocsserventry *matocsserv_entry_by_stable_id(uint32_t stableId);
+
+/// One admitted distributed session as the renewal and refresh driver sees it.
+struct ChunkserverSessionSnapshotEntry {
+	uint32_t stableId = 0;
+	uint64_t chunkserverIncarnation = 0;
+	uint8_t role = 0;  ///< DistributedRegistrationRole this connection was admitted under.
+	bool eligible = false;
+	uint64_t claimSequence = 0;
+	uint64_t leaseDeadline = 0;
+	uint64_t dispatchCutoff = 0;
+};
+
+/// Every admitted distributed session, for the asynchronous renewal/refresh driver.
+std::vector<ChunkserverSessionSnapshotEntry> matocsserv_distributed_session_snapshot();
+
+/// Installs a known-committed renewed claim on the matching live session and queues the
+/// lease packet to the chunkserver. False when no live connection matches that exact
+/// stable id and incarnation (the renewal still committed; the server re-reads on its
+/// next registration).
+bool matocsserv_deliver_session_lease(uint32_t stableId, uint64_t chunkserverIncarnation,
+                                      uint32_t renewerMdsId, uint64_t renewerMdsIncarnation,
+                                      uint64_t claimSequence, uint64_t leaseDeadline,
+                                      uint64_t cutoffReserveSeconds, uint64_t dispatchCutoff);
+
+/// Installs a refreshed claim view on an observer connection (bounded point read result;
+/// no packet is sent, an observer never extends the chunkserver's authority).
+void matocsserv_update_session_authority(uint32_t stableId, uint64_t chunkserverIncarnation,
+                                         uint64_t claimSequence, uint64_t leaseDeadline,
+                                         uint64_t dispatchCutoff);
+
+/// Marks one session's durable authority lost (expiry, renewal or read failure) and
+/// drops the connection so the chunkserver must re-arbitrate through FoundationDB. Applies
+/// only to the exact stable id and incarnation the verdict was computed for: a chunkserver
+/// that re-registered while the verdict was in flight is a different holder, and cutting it
+/// off would retire authority that was never examined.
+void matocsserv_session_ineligible(uint32_t stableId, uint64_t chunkserverIncarnation,
+                                   const char *reason);
 int matocsserv_getlocation(matocsserventry* eptr, uint32_t* servip, uint16_t* servport,
 		MediaLabel* label);
 uint16_t matocsserv_replication_read_counter(matocsserventry* eptr);
@@ -141,6 +190,13 @@ int matocsserv_send_sau_replicatechunk(matocsserventry* eptr,
 		uint64_t chunkid, uint32_t version, ChunkPartType type,
 		const std::vector<matocsserventry*> &sourcePointers,
 		const std::vector<ChunkPartType> &sourceTypes);
+
+/// Asks one distributed chunkserver whether it still holds a part the published set expects there.
+/// It commands nothing and moves nothing: the answer arrives as a correlated status, and only a
+/// fenced reconciliation may act on it. A legacy connection is never asked, because it reports an
+/// inventory of its own.
+int matocsserv_send_fenced_verify_part(matocsserventry *eptr, uint64_t chunkId,
+                                      ChunkPartType chunkType);
 
 int matocsserv_send_deletechunk(matocsserventry* eptr,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);

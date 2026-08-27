@@ -225,6 +225,14 @@ void NetworkWorkerThread::servePoll() {
 	uint32_t jobscnt;
 	ChunkserverEntry::State lstate;
 
+	// Cancel before completions are applied, not after. Applying a completed job first lets a
+	// result produced under a claim that has since lapsed take effect on this iteration, and
+	// cancelling afterwards is then a decision about work that already landed.
+	{
+		std::unique_lock cancelLock(csservheadLock);
+		for (auto &entry : csservEntries) { entry.cancelJobsAfterCutoff(); }
+	}
+
 	if (pdesc[JOB_FD_PDESC_POS].revents & POLLIN) {
 		bgJobPool_->processCompletedJobs();
 	}

@@ -29,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1067,6 +1068,79 @@ private:
 };
 
 }  // namespace
+
+namespace {
+
+/// The process wide fault script and whether anything is armed in it. Single threaded by
+/// construction: the metadata server drives FoundationDB from its event loop.
+FaultInjection gProcessFaultScript;
+bool gProcessFaultScriptArmed = false;
+
+/// Pushes @p count copies of @p error onto the queue named by @p queue. Unknown names arm
+/// nothing, so a typo cannot leave a run half faulted.
+bool armFaultQueue(const std::string &queue, fdb_error_t error, uint64_t count) {
+	std::deque<fdb_error_t> *target = nullptr;
+	if (queue == "post_commit") {
+		target = &gProcessFaultScript.postCommitErrors;
+	} else if (queue == "commit_wait") {
+		target = &gProcessFaultScript.commitWaitErrors;
+	} else if (queue == "pre_commit") {
+		target = &gProcessFaultScript.preCommitErrors;
+	} else if (queue == "read") {
+		target = &gProcessFaultScript.readErrors;
+	} else {
+		return false;
+	}
+	for (uint64_t index = 0; index < count; ++index) { target->push_back(error); }
+	return true;
+}
+
+}  // namespace
+
+FaultInjection *processFaultScript() {
+	return gProcessFaultScriptArmed ? &gProcessFaultScript : nullptr;
+}
+
+void configureProcessFaultScript(bool testFaultsEnabled, const std::string &spec) {
+	gProcessFaultScript.reset();
+	gProcessFaultScriptArmed = false;
+
+	if (spec.empty()) { return; }
+	if (!testFaultsEnabled) {
+		safs::log_err("fdb fault script refused: the test gate is not set");
+		return;
+	}
+
+	std::stringstream fields(spec);
+	std::string field;
+	while (std::getline(fields, field, ';')) {
+		if (field.empty()) { continue; }
+		std::stringstream parts(field);
+		std::string queue;
+		std::string errorText;
+		std::string countText;
+		if (!std::getline(parts, queue, ':') || !std::getline(parts, errorText, ':') ||
+		    !std::getline(parts, countText, ':')) {
+			safs::log_err("fdb fault script refused: cannot parse '{}'", field);
+			gProcessFaultScript.reset();
+			return;
+		}
+		try {
+			if (!armFaultQueue(queue, std::stoi(errorText), std::stoull(countText))) {
+				safs::log_err("fdb fault script refused: unknown queue '{}'", queue);
+				gProcessFaultScript.reset();
+				return;
+			}
+		} catch (const std::exception &) {
+			safs::log_err("fdb fault script refused: cannot parse '{}'", field);
+			gProcessFaultScript.reset();
+			return;
+		}
+	}
+
+	gProcessFaultScriptArmed = true;
+	safs::log_warn("test seam active: fdb fault script armed from '{}'", spec);
+}
 
 std::unique_ptr<kv::ICommitFuture> Transaction::commitAsync() {
 	requireActive("commitAsync");

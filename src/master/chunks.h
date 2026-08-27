@@ -97,6 +97,24 @@ void chunk_info(uint32_t *allchunks,uint32_t *allcopies,uint32_t *regcopies);
 /// Checks if the given chunk has only invalid copies (ie. needs to be repaired).
 bool chunk_has_only_invalid_copies(uint64_t chunkid);
 
+/// True when the chunk is in memory with at least one part in any state (including
+/// busy or invalid); false for unknown chunks.
+bool chunk_has_any_parts(uint64_t chunkid);
+
+/// True when the chunk is in memory with at least one live part: valid (busy included)
+/// or still being written. Invalid and deleting parts do not count.
+bool chunk_has_live_parts(uint64_t chunkid);
+
+/// What memory knows about one part on one server: 0 unknown, 1 live, -1 known but not
+/// servable (invalid or deleting, e.g. a stale copy reported after a restart).
+int chunk_part_memory_state(uint64_t chunkid, matocsserventry *server, ChunkPartType type);
+
+/// Adopts the durable version and lock state for a chunk whose in-memory view may be
+/// stale (mutated through another metadata server). No-op while any local operation or
+/// write on the chunk is in flight; then memory is the authority.
+void chunk_refresh_from_record(uint64_t chunkid, uint32_t version, uint32_t lockid,
+                               uint32_t lockedto);
+
 int chunk_get_fullcopies(uint64_t chunkid,uint8_t *vcopies);
 int chunk_get_partstomodify(uint64_t chunkid, int &recover, int &remove);
 
@@ -106,9 +124,22 @@ enum class ChunkRepairAction : uint8_t {
 	kSetVersion = 2,
 };
 
+/// One holder of the version a repair settled on: the chunkserver's stable id and the part it
+/// holds. Named by stable id rather than by address, because the set this ends up in outlives
+/// every connection that could resolve an address back to a server.
+struct ChunkRepairMember {
+	uint32_t stableId = 0;
+	uint16_t partType = 0;
+};
+
 struct ChunkRepairPlan {
 	ChunkRepairAction action = ChunkRepairAction::kUnchanged;
 	uint32_t version = 0;
+	/// Who holds @a version, for kSetVersion only. A repair moves a chunk to a version that a
+	/// different set of servers holds than the one currently published, so the plan has to carry
+	/// that set: after the repair commits, a set still stamped at the old version describes a
+	/// chunk that no longer exists, and nothing is entitled to reconcile the two.
+	std::vector<ChunkRepairMember> members;
 };
 
 /// Computes repair work without changing the in-memory chunk registry.

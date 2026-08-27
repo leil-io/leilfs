@@ -65,6 +65,15 @@ int hddGetLoadFactor();
 /* I/O operations */
 int hddOpen(IChunk *chunk);
 int hddOpen(uint64_t chunkId, ChunkPartType chunkType);
+
+/// Whether this chunkserver still holds @p chunkType of @p chunkId, answered from the chunk
+/// registry alone: no file is opened and no block is read, because the question is about what this
+/// process has a record of and not about whether the bytes are readable.
+///
+/// SAUNAFS_STATUS_OK when the part is present and SAUNAFS_ERROR_NOCHUNK when it is not. The
+/// second answer is a statement about this incarnation, which is what makes it usable as evidence
+/// rather than as an inference from silence.
+uint8_t hddVerifyPartPresence(uint64_t chunkId, ChunkPartType chunkType);
 int hddClose(IChunk *chunk);
 int hddClose(uint64_t chunkId, ChunkPartType chunkType);
 int hddPrefetchBlocks(uint64_t chunkId, ChunkPartType chunkType,

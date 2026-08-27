@@ -398,6 +398,14 @@ create_sfsmaster_master_cfg_() {
 }
 
 create_sfsmds_cfg_() {
+	# Short chunkserver-session leases for the suite: a restarted chunkserver may
+	# replace its own durable claim only after the previous deadline plus tolerance,
+	# so production-length leases would add a ~95 second readmission stall to every
+	# chunkserver restart. Tests override these through MASTER_EXTRA_CONFIG, which
+	# is emitted later in this file and therefore wins.
+	echo "CS_SESSION_LEASE_SECONDS = 15"
+	echo "CS_SESSION_CLOCK_TOLERANCE_SECONDS = 2"
+	echo "CS_SESSION_DRAIN_BOUND_SECONDS = 3"
 	create_mds_common_cfg_
 	# MDS 0 uses global ports (for client/chunkserver connections)
 	# Other MDSs will use their own local ports (like shadows do)
@@ -691,6 +699,14 @@ create_sfschunkserver_cfg_() {
 	echo "HDD_LEAVE_SPACE_DEFAULT = 128MiB"
 	echo "MASTER_HOST = $ip_address"
 	echo "MASTER_PORT = ${saunafs_info_[matocs]}"
+	if [[ ${metadata_backend} == "FDB" ]]; then
+		# The generated chunkserver config opts into the distinct distributed plane.
+		# MASTER_HOST/PORT remain present with their legacy meaning for non-FDB tests,
+		# while the distributed implementation reads only these explicit seed keys.
+		echo "METADATA_SERVER_CONNECTION_MODE = DISTRIBUTED"
+		echo "MDS_SEED_HOST = $ip_address"
+		echo "MDS_SEED_PORT = ${saunafs_info_[matocs]}"
+	fi
 	echo "CSSERV_LISTEN_PORT = $csserv_port"
 	echo "WRITE_BUFFERING_SIZE_MB = 64"
 	create_chunkserver_label_entry_ "${chunkserver_id}"
@@ -1121,14 +1137,19 @@ saunafs_ready_chunkservers_count() {
 # saunafs_wait_for_ready_chunkservers <num> -- waits until <num> chunkservers are fully operational
 saunafs_wait_for_ready_chunkservers() {
 	local chunkservers=$1
+	local time_limit="${2:-3 minutes}"
 	local port=${saunafs_info_[matocl]}
-	while [[ "$(saunafs-admin ready-chunkservers-count localhost $port 2>/dev/null | cat)" != "$chunkservers" ]]; do
-		sleep 0.1
-	done
+	local count="saunafs-admin ready-chunkservers-count localhost $port 2>/dev/null | cat"
+	# A deadline keeps a cluster that will never reach the count from turning an ordinary
+	# failure into an endless poll, which outlives the test watchdog once a test is frozen.
+	if ! wait_for "[[ \"\$($count)\" == \"$chunkservers\" ]]" "$time_limit"; then
+		test_fail "Timed out waiting for $chunkservers ready chunkservers"
+		return 1
+	fi
 }
 
 saunafs_wait_for_all_ready_chunkservers() {
-	saunafs_wait_for_ready_chunkservers ${saunafs_info_[chunkserver_count]}
+	saunafs_wait_for_ready_chunkservers ${saunafs_info_[chunkserver_count]} "$@"
 }
 
 # saunafs_shadow_synchronized <num> -- check if shadow <num> is fully synchronized with master

@@ -42,6 +42,7 @@
 #include <vector>
 
 #include "common/chunk_copies_calculator.h"
+#include "common/test_event_stream.h"
 #include "common/chunk_version_with_todel_flag.h"
 #include "common/chunks_availability_state.h"
 #include "common/compact_vector.h"
@@ -839,21 +840,33 @@ void chunk_emergency_increase_version(Chunk *c) {
 	chunk_increase_version_operation(c, false);
 	chunk_update_checksum(c);
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
-	gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
+	// The new version is already live by the time we get here: memory carries it and the
+	// setversion commands are on the wire, so there is nothing to roll back and the durable
+	// record has to be made to agree. A commit conflict at this point is ordinary rather than
+	// exceptional, because a failing write is exactly what makes a chunkserver report on the
+	// same chunk, and that report's transaction writes the same keys.
+	//
+	// Treating the conflict as terminal strands the chunk for good. Memory stays a version
+	// ahead of the record, and nothing can close the gap from either side: the part set cannot
+	// be republished, because publication only accepts a report whose version matches the
+	// record, and no write can proceed, because the session gate refuses a set that does not
+	// match the version memory holds. A retryable conflict must never be allowed to mean that.
+	//
+	// Replaying is safe because the body persists the version memory already holds instead of
+	// incrementing whatever it reads, so a second attempt writes the same value. The harness
+	// does not replay an unknown outcome, which matters here: that attempt may have applied,
+	// and a repeated INCVERSION would raise the version twice on anything replaying the log.
+	const uint8_t status =
+	    matoclserv_commit_op_with_retry([c](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		    gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
+		    return SAUNAFS_STATUS_OK;
+	    });
+	if (status != SAUNAFS_STATUS_OK) {
+		safs::log_critical("{}: Failed to commit transaction for increasing version of chunk {}.",
+		                   __func__, c->chunkid);
+	}
 
 	emit_chunk_changed(c);
-
-	// Commit the transaction under KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.commitTransaction()) {
-			safs::log_critical(
-			    "{}: Failed to commit transaction for increasing version of chunk {}.", __func__,
-			    c->chunkid);
-		}
-	}
 }
 
 /// @brief This function should be called when an operation on a chunk fails (chunk not writable)
@@ -1693,6 +1706,22 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 }
 
 #ifndef METARESTORE
+/// Declines a repair that cannot name who holds the version it would settle on.
+///
+/// Repairing anyway would move the chunk to a version whose holders cannot be published, and a
+/// chunk whose published set describes a version it has left is one nothing may serve and nothing
+/// may reconcile. Doing nothing leaves it readable at the version it is on, so this is the
+/// conservative half of the choice and not the timid one. It is reported because a repair that
+/// silently declines looks exactly like a repair that found nothing to do.
+static ChunkRepairPlan chunk_refuse_unnameable_repair(uint64_t chunkId, uint32_t version,
+                                                      const char *reason) {
+	if (test_event_stream::enabled()) {
+		test_event_stream::emit("repair_refused_unnameable_members",
+		                        {{"chunk", chunkId}, {"version", version}, {"reason", reason}});
+	}
+	return {};
+}
+
 ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
 	uint32_t best_version;
 	Chunk *c;
@@ -1702,7 +1731,7 @@ ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
 	c = chunk_find(ochunkid);
 	if (c == NULL) {
 		if (correct_only == 1) { return {}; }
-		return {.action = ChunkRepairAction::kEraseReference};
+		return {.action = ChunkRepairAction::kEraseReference, .version = 0, .members = {}};
 	}
 	if (c->isLocked()) { return {}; }
 
@@ -1733,10 +1762,35 @@ ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
 	// didn't find sensible chunk
 	if (best_version == 0) {
 		if (correct_only == 1) { return {}; }
-		return {.action = ChunkRepairAction::kEraseReference};
+		return {.action = ChunkRepairAction::kEraseReference, .version = 0, .members = {}};
 	}
 
-	return {.action = ChunkRepairAction::kSetVersion, .version = best_version};
+	// Name who holds the version being settled on, while the parts that say so are in front of
+	// us. A repair that cannot name its holders cannot publish them, and a repaired chunk whose
+	// published set still describes the version it left is one nothing may serve and nothing may
+	// reconcile, so it fails closed and repairs nothing rather than stranding the chunk.
+	std::vector<ChunkRepairMember> members;
+	for (const auto &part : c->parts) {
+		if (part.state == ChunkPart::DEL || part.version != best_version) { continue; }
+		uint32_t serverIp = 0;
+		uint16_t serverPort = 0;
+		MediaLabel serverLabel = MediaLabel::kWildcard;
+		if (matocsserv_getlocation(part.server(), &serverIp, &serverPort, &serverLabel) != 0) {
+			return chunk_refuse_unnameable_repair(ochunkid, best_version, "location unresolved");
+		}
+		const uint32_t stableId = matocsserv_stable_id_by_address(serverIp, serverPort);
+		if (stableId == 0) {
+			return chunk_refuse_unnameable_repair(ochunkid, best_version, "no stable id");
+		}
+		members.push_back({stableId, static_cast<uint16_t>(part.type.getId())});
+	}
+	if (members.empty()) {
+		return chunk_refuse_unnameable_repair(ochunkid, best_version, "no holder of that version");
+	}
+
+	return {.action = ChunkRepairAction::kSetVersion,
+	        .version = best_version,
+	        .members = std::move(members)};
 }
 
 bool chunk_apply_repair_plan(uint8_t goal, uint64_t ochunkid, const ChunkRepairPlan &plan) {
@@ -1921,6 +1975,77 @@ int chunk_getversionandlocations(uint64_t chunkid, uint32_t currentIp, uint32_t&
 		serversList.emplace_back(loc.address, static_cast<std::string>(loc.label), loc.chunkType);
 	}
 	return SAUNAFS_STATUS_OK;
+}
+
+bool chunk_has_any_parts(uint64_t chunkid) {
+	Chunk *chunk = chunk_find(chunkid);
+	return chunk != nullptr && !chunk->parts.empty();
+}
+
+bool chunk_has_live_parts(uint64_t chunkid) {
+	Chunk *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) { return false; }
+	for (const auto &part : chunk->parts) {
+		if (part.is_valid() || part.is_being_written()) { return true; }
+	}
+	return false;
+}
+
+int chunk_part_memory_state(uint64_t chunkid, matocsserventry *server, ChunkPartType type) {
+	Chunk *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) { return 0; }
+	for (const auto &part : chunk->parts) {
+		if (part.server() == server && part.type == type) {
+			return part.is_valid() ? 1 : -1;
+		}
+	}
+	return 0;
+}
+
+void chunk_refresh_from_record(uint64_t chunkid, uint32_t version, uint32_t lockid,
+                               uint32_t lockedto) {
+	// Another metadata server may have moved the durable version or lock while this one
+	// held a stale in-memory view. Adopt the durable state only while nothing local is in
+	// flight: a local operation or write in progress makes memory the authority.
+	Chunk *chunk = chunk_find(chunkid);
+	if (chunk == nullptr || chunk->operation != Chunk::NONE) { return; }
+
+	// A session leaves write-in-progress tracking that only its own chunkserver acks
+	// clear, and with several MDSs those acks can land elsewhere, pinning this chunk
+	// locked here forever. Once the lock is gone both here (expired or cleared) and
+	// durably, drop the tracking: the chunkserver-side chunk lock is what actually
+	// serializes write chains.
+	if (chunk->lockedto != 0 && chunk->lockedto < eventloop_time()) {
+		for (auto &part : chunk->parts) { part.unmark_being_written(); }
+		chunk->lockedto = 0;
+	} else if (chunk->lockedto == 0 && lockedto == 0) {
+		for (auto &part : chunk->parts) { part.unmark_being_written(); }
+	}
+
+	for (const auto &part : chunk->parts) {
+		if (part.is_being_written() || part.is_busy()) { return; }
+	}
+
+	// Forward only: the version is monotonic, so a durable value BEHIND memory is a
+	// commit of ours still in flight, never something to regress to; regressing would
+	// hand out a version the chunkservers already left behind.
+	if (version > chunk->version) {
+		for (auto &part : chunk->parts) {
+			if (part.is_valid() && part.version == chunk->version) { part.version = version; }
+		}
+		chunk->version = version;
+	}
+
+	// Same owner: adopt only a SHORTER lock (an unlock made durable elsewhere); a longer
+	// durable value must never extend a lock this side already saw expire, and a renewal
+	// still in flight locally must never be regressed into a stealable window. A different
+	// owner is adopted whole: that lock was granted through another metadata server.
+	if (chunk->lockid == lockid) {
+		if (lockedto < chunk->lockedto) { chunk->lockedto = lockedto; }
+	} else {
+		chunk->lockid = lockid;
+		chunk->lockedto = lockedto;
+	}
 }
 
 void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t versionWithTodelFlag, ChunkPartType chunkType) {

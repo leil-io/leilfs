@@ -77,6 +77,7 @@ public:
 		Delete,             ///< Delete a chunk. Master only.
 		Create,             ///< Create a chunk. Master only.
 		Replicate,          ///< Replicate a chunk. Master only.
+		VerifyPart,         ///< Answer whether a part is still held here. Master only.
 		Open,               ///< Open a chunk for reading or writing. Client only.
 		Close,              ///< Close a chunk. Client only.
 		GetBlocks,          ///< Get the blocks of a chunk. Client (actually other CS) only.
@@ -203,6 +204,11 @@ public:
 	                    uint32_t listenerId = 0);
 
 protected:
+	/// True on the pool that serves client reads and writes. The H6 hold applies only there:
+	/// the master connection pool carries the lease and command traffic that the drain
+	/// question is asked about, not the work the question is about.
+	bool clientFacing_ = false;
+
 	/// @brief Represents a job in the JobPool.
 	struct Job {
 		uint32_t jobId;                 // The ID of the job.
@@ -425,6 +431,7 @@ public:
 	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs,
 	              ioPriorityMode == IOPriorityMode::Fifo ? 2 : 3),
 	      ioPriorityMode_(ioPriorityMode) {
+		clientFacing_ = true;
 		if (ioPriorityMode_ == IOPriorityMode::Switch) {
 			preferredIOType_.store(kPreferRead);
 		} else {
@@ -605,6 +612,22 @@ uint32_t job_invalid(MasterJobPool &jobPool, JobPool::JobCallback callback, void
 uint32_t job_delete(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                     uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                     uint32_t listenerId = 0);
+
+/// @brief Adds a part verification job to the JobPool.
+///
+/// It answers whether this chunkserver still has a record of the part, so it runs on the pool
+/// rather than the network thread: a registry lookup can wait behind IO already in flight on that
+/// chunk, and a question about bookkeeping may not hold up the connection that asked it.
+///
+/// @param jobPool The MasterJobPool instance.
+/// @param callback The callback function to be called upon job completion.
+/// @param extra Additional data to be passed to the callback.
+/// @param chunkId The ID of the chunk.
+/// @param chunkType The type of the chunk.
+/// @param listenerId The ID of the listener associated with the job.
+/// @return The ID of the added job.
+uint32_t job_verify_part(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                         uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId = 0);
 
 /// @brief Adds a create job to the JobPool.
 ///

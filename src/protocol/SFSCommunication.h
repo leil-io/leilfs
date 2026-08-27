@@ -396,7 +396,73 @@ enum class SugidClearMode : uint8_t {
 
 // 0x0497
 #define SAU_MATOCS_REGISTER_HOST (1000U + 175U)
+
+// 0:32 senderMdsId
+// N*( mdsId:32 ip:32 matocsPort:16 version:32 )
+#define SAU_MATOCS_CLUSTER_MEMBERS (1000U + 180U)
 /// status:8 version:32 clusterid:STDSTRING
+
+// Distinct distributed-MDS registration plane. These packet types are never sent in
+// legacy Master/Shadow mode; keeping them separate prevents capability guessing from
+// changing the deployed SAU_CSTOMA_REGISTER_HOST contract.
+#define SAU_CSTOMA_REGISTER_DISTRIBUTED (1000U + 181U)
+#define SAU_MATOCS_REGISTER_DISTRIBUTED (1000U + 182U)
+#define SAU_MATOCS_CS_SESSION_LEASE (1000U + 183U)
+
+// The fenced chunk command plane. One type per command, each carrying a ChunkCommandIdentity
+// ahead of its own parameters, and one generic reply that echoes the identity back. Separate
+// types rather than new versions of the legacy commands, so that a legacy Master can never
+// build one and a chunkserver can never mistake one for a command it may execute unfenced.
+//
+// The identity is spelled out field by field on every line below rather than named, because these
+// lines are the dissector's source and it reads scalars only. They follow the wire, so a field
+// order here that disagrees with the packet definition is a bug in this file.
+#define SAU_MATOCS_FENCED_CREATE_CHUNK (1000U + 184U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+///   chunkversion:32 needslock:8
+#define SAU_MATOCS_FENCED_DELETE_CHUNK (1000U + 185U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+///   chunkversion:32
+#define SAU_MATOCS_FENCED_SET_VERSION (1000U + 186U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+///   chunkversion:32 newchunkversion:32 needslock:8
+#define SAU_MATOCS_FENCED_DUPLICATE_CHUNK (1000U + 187U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunkversion:32
+///   chunktype:16 oldchunkid:64 oldchunkversion:32 needslock:8
+#define SAU_MATOCS_FENCED_TRUNCATE (1000U + 188U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+///   chunklength:32 newchunkversion:32 chunkversion:32
+#define SAU_MATOCS_FENCED_DUPTRUNC_CHUNK (1000U + 189U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunkversion:32
+///   chunktype:16 oldchunkid:64 oldchunkversion:32 chunklength:32
+#define SAU_MATOCS_FENCED_REPLICATE_CHUNK (1000U + 190U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunkversion:32
+///   chunktype:16 sources:(N * [ip:32 port:16 chunktype:16 chunkserverversion:32])
+#define SAU_MATOCS_FENCED_LOCK_CHUNK (1000U + 191U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+#define SAU_MATOCS_FENCED_UNLOCK_CHUNK (1000U + 192U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+#define SAU_CSTOMA_FENCED_STATUS (1000U + 193U)
+/// version==0 chunkid:64 chunktype:16 status:8 opnonce:64 opgeneration:64 commandsequence:64
+///   targetincarnation:64 targetservingera:64 targetstableid:32 family:8 resultversion:32
+
+// Asking one chunkserver whether it still holds a part the published set expects there. It grants
+// nothing and moves nothing: the answer is an observation, and only a fenced reconciliation may
+// act on it. Separate from a read so that a verification cannot be mistaken for service, and
+// separate from a report so that absence is a statement about this incarnation rather than an
+// inference from silence.
+#define SAU_MATOCS_FENCED_VERIFY_PART (1000U + 194U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
 
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)

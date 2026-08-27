@@ -208,6 +208,25 @@ enum class TransactionState {
 /// Human-readable state name for logs and std::logic_error messages.
 const char *transactionStateName(TransactionState state);
 
+/// The H8 backend fault script: a process wide FaultInjection every transaction picks up, so a
+/// running daemon can be made to see a commit whose outcome is genuinely unknown.
+///
+/// The maybe-committed case has to be produced here and nowhere above. FoundationDB puts a
+/// transaction that reported commit_unknown_result into kIndeterminate, where the only legal
+/// move is to destroy it and replay the work on a fresh one. Synthesizing that error at the
+/// caller instead leaves the handle in a state the error does not imply, and the recovery path
+/// is then entitled to do something FoundationDB would never have asked of it.
+///
+/// Returns nullptr unless a script is armed, which is the production case.
+FaultInjection *processFaultScript();
+
+/// Arms the process wide script; reloadable. The spec is a semicolon separated list of
+/// `queue:error:count`, where queue is post_commit (a real commit reported as failed, the
+/// maybe-committed case), commit_wait (the wait layer fails, outcome unknown either way),
+/// pre_commit (nothing reaches the cluster) or read. A nonempty spec is honored only when
+/// @p testFaultsEnabled; otherwise it is refused and nothing is armed.
+void configureProcessFaultScript(bool testFaultsEnabled, const std::string &spec);
+
 namespace detail {
 
 /// Encodes an int-valued FDB option parameter: 8 bytes, little-endian, regardless of

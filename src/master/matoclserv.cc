@@ -18,6 +18,7 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "common/test_commit_pause.h"
 #include "common/platform.h"
 
 #include "master/matoclserv.h"
@@ -40,12 +41,15 @@
 #include <time.h>
 #include <unistd.h>
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <cstring>
 #include <chrono>
 #include <cstdint>
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -57,7 +61,9 @@
 #include "common/chunks_availability_state.h"
 #include "common/cwrap.h"
 #include "common/datapack.h"
+#include "common/hashfn.h"
 #include "common/event_loop.h"
+#include "common/test_event_stream.h"
 #include "common/generic_lru_cache.h"
 #include "common/goal.h"
 #include "common/human_readable_format.h"
@@ -105,6 +111,8 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadataserver_hooks.h"
+#include "master/kv_common_keys.h"
+#include "kv/kv_utils.h"
 #include "master/personality.h"
 #include "master/settrashtime_task.h"
 #include "metrics/metrics.h"
@@ -613,7 +621,7 @@ static uint8_t matoclserv_commit_op_with_retry_impl(
 /// TransactionStateError escape to fail-stop after a durable commit or on the transactionless
 /// in-memory path (masking it as EIO would hide durable or partial state), and must let a
 /// genuine caller logic bug (std::out_of_range, ...) escape everywhere.
-static uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
+uint8_t matoclserv_commit_op_with_retry(const OpReplay &body) {
 	const auto deadline = std::chrono::steady_clock::now() + kSyncRetryDeadline;
 	return matoclserv_commit_op_with_retry_impl(body, deadline);
 }
@@ -915,6 +923,143 @@ static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
 	    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit)});
 }
 
+/// The nonce the in-flight batch wrote into its own transaction, so that a commit the backend
+/// cannot vouch for can still be resolved exactly. Zero when no batch carries one.
+/// The witness identity of the batch currently in flight or retrying. Allocated once when a
+/// batch is first launched and reused across its own replay attempts, so whichever attempt lands
+/// leaves the row under the sequence the resolver looks for. Zero sequence means none is active
+/// (or allocation was refused at exhaustion, which leaves the outcome unresolvable rather than
+/// guessed). Single-threaded event loop; at most one batch is ever in flight.
+struct BatchWitnessIdentity {
+	uint64_t sequence = 0;
+	std::array<uint8_t, 32> digest{};
+	uint16_t requestCount = 0;
+};
+static uint64_t gWitnessSequenceCounter = 0;  ///< monotonic per process incarnation, never reused
+static BatchWitnessIdentity gCurrentBatchWitness;
+
+/// This metadata server's witness key, or empty when it has no identity to key one by, which is
+/// every Master/Shadow deployment: those never reach the batch path's unknown branch because they
+/// keep no such transaction.
+static kv::Key matoclserv_batch_witness_key(uint64_t sequence) {
+	uint32_t mdsId = 0;
+	uint64_t incarnation = 0;
+	try {
+		const auto status = gMetadataserverStatusHook();
+		if (status.identity.has_value()) {
+			mdsId = status.identity->mdsId;
+			incarnation = status.identity->incarnation;
+		}
+	} catch (const std::exception &) {
+		return {};
+	}
+	if (mdsId == 0) { return {}; }
+	return kv::encodeKeyBE(kBatchCommitWitnessKeyPrefix, mdsId, incarnation, sequence);
+}
+
+/// A 32-byte digest over the batch's ordered client session identities and its size, so a resolver
+/// can tell its own witness row from one a second process sharing this stable id and incarnation
+/// wrote to the same key. Not cryptographic: the trust model excludes malice, and this only has to
+/// separate two distinct batches that collided on a key.
+static std::array<uint8_t, 32> matoclserv_batch_digest(const std::vector<BatchMember> &members,
+                                                        uint64_t sequence) {
+	std::array<uint8_t, 32> digest{};
+	for (size_t word = 0; word < 4; ++word) {
+		uint64_t seed = 0x9E3779B97F4A7C15ULL * (word + 1);
+		hashCombine(seed, sequence, static_cast<uint64_t>(members.size()));
+		for (const auto &member : members) {
+			const uint64_t sessionId =
+			    member.eptr != nullptr && member.eptr->sessionData != nullptr
+			        ? member.eptr->sessionData->sessionId
+			        : 0;
+			hashCombine(seed, sessionId);
+		}
+		uint8_t *destination = digest.data() + word * sizeof(uint64_t);
+		put64bit(&destination, seed);
+	}
+	return digest;
+}
+
+/// Allocates the witness identity for a logical batch on its first launch and reuses it on every
+/// replay, so whichever attempt commits leaves the row under one sequence. Called before each
+/// launch with the attempt number.
+static void matoclserv_prepare_batch_witness(const std::vector<BatchMember> &members,
+                                             uint32_t attempt) {
+	if (attempt != 0 && gCurrentBatchWitness.sequence != 0) { return; }  // keep the batch's own
+	if (gWitnessSequenceCounter == std::numeric_limits<uint64_t>::max()) {
+		safs::log_err("matoclserv: batch witness sequence exhausted; commit outcome unresolvable");
+		gCurrentBatchWitness = {};
+		return;
+	}
+	gCurrentBatchWitness.sequence = ++gWitnessSequenceCounter;
+	gCurrentBatchWitness.digest = matoclserv_batch_digest(members, gCurrentBatchWitness.sequence);
+	gCurrentBatchWitness.requestCount =
+	    static_cast<uint16_t>(std::min<size_t>(members.size(), 0xFFFF));
+}
+
+/// Writes the witness into the batch's own transaction. It rides the work, so it is present after
+/// the commit exactly when the work is.
+static void matoclserv_stamp_batch_witness(const FilesystemOperationContext &ctx) {
+	if (gCurrentBatchWitness.sequence == 0) { return; }
+	const kv::Key key = matoclserv_batch_witness_key(gCurrentBatchWitness.sequence);
+	if (key.empty()) { return; }
+	auto *txn = ctx.getReadWriteTransaction();
+	if (txn == nullptr) { return; }
+	kv::Value value(sizeof(uint8_t) + gCurrentBatchWitness.digest.size() + sizeof(uint16_t) +
+	                sizeof(uint64_t));
+	uint8_t *destination = value.data();
+	put8bit(&destination, 1);  // format version
+	std::memcpy(destination, gCurrentBatchWitness.digest.data(),
+	            gCurrentBatchWitness.digest.size());
+	destination += gCurrentBatchWitness.digest.size();
+	put16bit(&destination, gCurrentBatchWitness.requestCount);
+	put64bit(&destination, static_cast<uint64_t>(eventloop_utime() / 1000));
+	txn->set(key, value);
+}
+
+/// The outcome of a witness read for a batch whose commit came back unknown.
+enum class BatchWitnessVerdict {
+	kLanded,      ///< the row is present with this batch's own digest: the transaction committed
+	kNotLanded,   ///< no row at the exact key: the transaction did not commit
+	kUnresolved,  ///< the read failed, or a row is present with a foreign digest (a second process
+	              ///< sharing this identity), so no landed/lost answer may be given
+};
+
+/// Reads the current batch's witness on a fresh transaction and reports which of the three it is.
+/// Nothing is assumed on a read that cannot be made, and a foreign digest is never turned into a
+/// definite answer: reporting a landed transaction as failed, or another process's success as this
+/// one's, are both lies a client acts on.
+static BatchWitnessVerdict matoclserv_batch_witness_verdict() {
+	if (gCurrentBatchWitness.sequence == 0) { return BatchWitnessVerdict::kUnresolved; }
+	const kv::Key key = matoclserv_batch_witness_key(gCurrentBatchWitness.sequence);
+	if (key.empty()) { return BatchWitnessVerdict::kUnresolved; }
+	try {
+		FilesystemOperationContext ctx = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadOnly);
+		auto *txn = ctx.getReadOnlyTransaction();
+		if (txn == nullptr) { return BatchWitnessVerdict::kUnresolved; }
+		const auto stored = txn->get(key);
+		if (!stored.has_value()) { return BatchWitnessVerdict::kNotLanded; }
+		const size_t expected = sizeof(uint8_t) + gCurrentBatchWitness.digest.size() +
+		                        sizeof(uint16_t) + sizeof(uint64_t);
+		if (stored->size() != expected || (*stored)[0] != 1) {
+			return BatchWitnessVerdict::kUnresolved;
+		}
+		const bool sameDigest = std::memcmp(stored->data() + sizeof(uint8_t),
+		                                    gCurrentBatchWitness.digest.data(),
+		                                    gCurrentBatchWitness.digest.size()) == 0;
+		if (!sameDigest) {
+			safs::log_err("matoclserv: batch witness at our own key carries a foreign digest; a "
+			              "second process shares this identity. Outcome left unresolved.");
+			return BatchWitnessVerdict::kUnresolved;
+		}
+		return BatchWitnessVerdict::kLanded;
+	} catch (const std::exception &exception) {
+		safs::log_warn("matoclserv: batch witness read failed: {}", exception.what());
+		return BatchWitnessVerdict::kUnresolved;
+	}
+}
+
 /// Runs once per event-loop iteration (after the serve pass): finalizes an
 /// in-flight batch commit, drains held ops into the next batch, and submits the
 /// open batch. Ops arriving in the same poll pass share one commit.
@@ -929,7 +1074,21 @@ static void matoclserv_poll_batch() {
 			// Fault injection: keep failing without committing.
 			future = std::make_unique<kv::ImmediateCommitFuture>(false, true);
 		} else {
-			future = ctx.getReadWriteTransaction()->commitAsync();
+			// Stamped before the commit is started, so it is part of the same transaction and
+			// answers for it afterwards.
+			matoclserv_prepare_batch_witness(members, attempt);
+			matoclserv_stamp_batch_witness(ctx);
+			// The async window before the batch learns its outcome. The window after a durable
+			// commit and before its effects (H11) is held in finishTransactionEffects instead.
+			if (test_event_stream::enabled()) {
+				const auto *effects = ctx.transactionEffects();
+				test_event_stream::emit(
+				    "batch_commit_site",
+				    {{"has_effects", static_cast<uint8_t>(effects ? 1 : 0)},
+				     {"retires", static_cast<uint8_t>(effects && effects->retiresChunks() ? 1 : 0)},
+				     {"members", static_cast<uint64_t>(members.size())}});
+			}
+			future = test_commit_pause::hold(ctx.getReadWriteTransaction()->commitAsync(), "batch");
 		}
 		future->setReadyCallback(&matoclserv_commit_wakeup, nullptr);
 		gInFlightBatch.emplace(OpBatch{std::move(ctx), std::move(future), std::move(members),
@@ -949,6 +1108,7 @@ static void matoclserv_poll_batch() {
 			for (BatchMember &member : gInFlightBatch->members) {
 				matoclserv_finish_member(member, SAUNAFS_STATUS_OK);
 			}
+			gCurrentBatchWitness = {};
 			gInFlightBatch.reset();
 		} else if (retryable && gInFlightBatch->attempt < gMaxCommitRetries) {
 			// A conflict can only come from a writer outside the batch (sync
@@ -987,6 +1147,61 @@ static void matoclserv_poll_batch() {
 				    std::chrono::steady_clock::now() + matoclserv_replay_delay(attempt);
 			}
 			gBatchRetry.emplace(std::move(retry));
+		} else if (gInFlightBatch->ctx.getReadWriteTransaction() != nullptr &&
+		           gInFlightBatch->ctx.getReadWriteTransaction()->commitOutcomeUnknown()) {
+			// The backend could not vouch for this commit, so its outcome is resolved by an exact
+			// reread of the witness the batch stamped, never by guessing. Only a row present with
+			// this batch's own digest is a landed answer; a missing row is a lost one; a foreign
+			// digest or a failed read stays unresolved and must not become a definite failure.
+			const BatchWitnessVerdict verdict = matoclserv_batch_witness_verdict();
+			if (test_event_stream::enabled()) {
+				const char *name = verdict == BatchWitnessVerdict::kLanded
+				                       ? "landed"
+				                       : (verdict == BatchWitnessVerdict::kNotLanded ? "not_landed"
+				                                                                     : "unresolved");
+				test_event_stream::emit("batch_witness_resolved",
+				                        {{"verdict", name},
+				                         {"members",
+				                          static_cast<uint64_t>(gInFlightBatch->members.size())}});
+			}
+			if (verdict == BatchWitnessVerdict::kLanded) {
+				safs::log_info(
+				    "matoclserv: batch commit reported unknown (err {}) but its witness is durable; "
+				    "reporting success for {} member(s)",
+				    commitError, gInFlightBatch->members.size());
+				matoclserv_record_committed_batch(gInFlightBatch->members.size());
+				matoclserv_commit_confirmed(gInFlightBatch->ctx);
+				for (BatchMember &member : gInFlightBatch->members) {
+					matoclserv_finish_member(member, SAUNAFS_STATUS_OK);
+				}
+			} else if (verdict == BatchWitnessVerdict::kNotLanded) {
+				safs::log_err(
+				    "matoclserv: batch commit reported unknown (err {}); witness absent, so it did "
+				    "not land; failing {} member(s)",
+				    commitError, gInFlightBatch->members.size());
+				gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
+				for (BatchMember &member : gInFlightBatch->members) {
+					matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+				}
+			} else {
+				// Unresolved: drop each member's connection without a definite answer, so the
+				// client retries as a fresh request rather than acting on a guess. A foreign
+				// digest also means a second process shares this identity (D6 leaves that
+				// unfenced); the fuller FR-013 self-suspend is deferred with FR-083's MDS handle.
+				safs::log_err(
+				    "matoclserv: batch commit outcome unresolved (err {}); dropping {} client "
+				    "connection(s) without an answer so each retries afresh",
+				    commitError, gInFlightBatch->members.size());
+				gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
+				for (BatchMember &member : gInFlightBatch->members) {
+					if (member.eptr != nullptr) { member.eptr->mode = ClientConnectionMode::KILL; }
+					if (member.eptr != nullptr && member.eptr->pendingCommits > 0) {
+						member.eptr->pendingCommits--;
+					}
+				}
+			}
+			gCurrentBatchWitness = {};
+			gInFlightBatch.reset();
 		} else {
 			safs::log_err("matoclserv: batch commit failed (err {}, retryable {}), giving up",
 			              commitError, retryable);
@@ -994,6 +1209,7 @@ static void matoclserv_poll_batch() {
 			for (BatchMember &member : gInFlightBatch->members) {
 				matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
 			}
+			gCurrentBatchWitness = {};
 			gInFlightBatch.reset();
 		}
 	}

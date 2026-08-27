@@ -22,6 +22,7 @@
 
 #include <stdexcept>
 
+#include "common/test_commit_pause.h"
 #include "kv/itransaction.h"
 
 FilesystemOperationContext::FilesystemOperationContext(
@@ -109,7 +110,15 @@ void FilesystemOperationContext::setTransactionEffects(
 void FilesystemOperationContext::finishTransactionEffects(
     FilesystemTransactionOutcome outcome) const noexcept {
 	if (transactionEffectsFinished_) { return; }
-	if (transactionEffects_ != nullptr) { transactionEffects_->finish(outcome); }
+	if (transactionEffects_ != nullptr) {
+		// The H11 window: the commit is durable and its effects have not run. Every commit
+		// path, client batch, synchronous op or internal sweep, passes through here.
+		if (outcome == FilesystemTransactionOutcome::kCommitted) {
+			test_commit_pause::holdAfterDurableCommit(
+			    transactionEffects_->retiresChunks() ? "retirement" : "effects");
+		}
+		transactionEffects_->finish(outcome);
+	}
 	transactionEffectsFinished_ = true;
 }
 

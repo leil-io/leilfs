@@ -58,6 +58,10 @@ public:
 	virtual ~FilesystemTransactionEffects() = default;
 
 	virtual void finish(FilesystemTransactionOutcome outcome) noexcept = 0;
+
+	/// True when the staged transaction retires a chunk's published set, so a commit seam can
+	/// name the commit that owes physical deletions and hold exactly that one.
+	virtual bool retiresChunks() const { return false; }
 };
 
 /// Context for filesystem operations that may require database transactions.

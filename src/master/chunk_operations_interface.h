@@ -138,7 +138,22 @@ public:
 	virtual void serverLabelChanged(const MediaLabel &previousLabel,
 	                                const MediaLabel &newLabel) = 0;
 
+	/// A chunkserver has been admitted under a new process incarnation, so whatever the
+	/// published sets expect on it was last confirmed by a process that is gone. A deployment
+	/// that keeps published sets uses this to ask that one server about its own expected parts;
+	/// one that does not has nothing to verify and ignores it.
+	virtual void chunkserverReadmitted(uint32_t /*stableId*/, uint64_t /*incarnation*/) {}
+
 	// --- Async operation results from chunkservers ---
+
+	/// A chunkserver's answer about whether it still holds a part the published set expects
+	/// there. Not a completion: nothing was commanded, so a positive answer confirms only what
+	/// was already expected. A `SAUNAFS_ERROR_NOCHUNK` answer is the explicit absence that a
+	/// fenced reconciliation may act on. Default is to ignore it, because a deployment that
+	/// keeps no published sets has nothing to verify against and never asks.
+	virtual void gotVerifyPartStatus(matocsserventry * /*ptr*/, uint64_t /*chunkId*/,
+	                                 ChunkPartType /*chunkType*/, uint8_t /*status*/) {}
+
 	virtual void gotDeleteStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                             uint8_t status) = 0;
 	virtual void gotReplicateStatus(matocsserventry *ptr, uint64_t chunkId, uint32_t chunkVersion,

@@ -40,7 +40,10 @@ public:
 	/// futures hold pointers into it).
 	/// @param db The database to create the wrapped transaction on; may be null,
 	///   which yields a handle-less transaction (see operator bool).
-	explicit FDBTransaction(fdb::DB *db) : tr_(db) {}
+	/// Every transaction picks up the process wide fault script, which is null in production.
+	/// Attaching here rather than at a call site means a scripted backend failure reaches the
+	/// same code path in a running daemon that it reaches in a unit test.
+	explicit FDBTransaction(fdb::DB *db) : tr_(db) { tr_.setFaultInjection(fdb::processFaultScript()); }
 
 	/// True when the wrapped transaction has a backend handle to operate on.
 	explicit operator bool() const { return static_cast<bool>(tr_); }

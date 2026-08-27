@@ -376,6 +376,36 @@ struct ChunkserverEntry {
 	/// Called from the `NetworkWorkerThread` when a connection is closed.
 	void closeJobs();
 
+	/// Cancels work already inside this connection once durable authority has lapsed.
+	///
+	/// The frame gates refuse work at the entrance, which says nothing about work admitted a
+	/// moment earlier and now sitting in the pool. That work is exactly what the drain
+	/// component of the cutoff reserve is a promise about, and until this ran nothing
+	/// finished it and nothing stopped it, so the reserve bounded an assumption rather than
+	/// the work. Returns true when something was cancelled.
+	bool cancelJobsAfterCutoff();
+
+	/// Whether the queued work was already cancelled for the current lapse of authority.
+	bool cutoffCancellationDone_ = false;
+
+	/// The serving era that admitted the work currently on this connection; zero when there
+	/// is none. Bound once at admission and never rewritten, because the question every
+	/// result boundary asks is which authority let this work start, and rewriting it would
+	/// turn that question into "may this process serve now", which is a different one with
+	/// the same answer only when nothing has gone wrong.
+	uint64_t servingEra_ = 0;
+
+	/// Binds this connection's work to whatever era is admitting now. Returns false when
+	/// authority is retired, in which case nothing was admitted.
+	bool bindServingEra();
+
+	/// Whether the era that admitted this connection's work is still the serving one. False
+	/// for work admitted under an era a cutoff has since retired, and it stays false after a
+	/// readmission: a new era authorizes new work and never revives old work.
+	bool servingEraIsCurrent() const;
+
+	friend class HighLevelOp;
+
 private:
 	/// Retrieves the active write high level operation for the current entry.
 	/// @param callerName The name of the calling function for logging purposes.

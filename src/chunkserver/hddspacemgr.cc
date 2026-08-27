@@ -662,6 +662,13 @@ int hddOpen(IChunk *chunk) {
 	return status;
 }
 
+uint8_t hddVerifyPartPresence(uint64_t chunkId, ChunkPartType chunkType) {
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
+	if (chunk == ChunkNotFound) { return SAUNAFS_ERROR_NOCHUNK; }
+	hddChunkRelease(chunk);
+	return SAUNAFS_STATUS_OK;
+}
+
 int hddOpen(uint64_t chunkId, ChunkPartType chunkType) {
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 	if (chunk == ChunkNotFound) {

@@ -71,6 +71,12 @@ protected:
 	/// Checks and applies closing on the parent ChunkserverEntry.
 	void checkAndApplyClosedOnParent() const { parent_->checkAndApplyClosed(); }
 
+	/// Whether the serving era that admitted this operation is still the era serving now.
+	bool parentServingEraIsCurrent() const { return parent_->servingEraIsCurrent(); }
+
+	/// The era this operation was admitted under, for the record a refusal leaves behind.
+	uint64_t parentServingEra() const { return parent_->servingEra_; }
+
 	/// Creates an attached packet on the parent ChunkserverEntry.
 	void createAttachedPacket(MessageBuffer &packet) { parent_->createAttachedPacket(packet); }
 
@@ -113,6 +119,10 @@ public:
 	/// Closes the get blocks job, assuming it is running.
 	void delayedClose();
 
+	/// Disables the queued get blocks job without closing anything. @see
+	/// ReadHighLevelOp::cancelQueuedJobs.
+	size_t cancelQueuedJobs();
+
 protected:
 	/// Callback after delayed close operations.
 	void delayedCloseCallback(uint8_t status, void * /*entry*/);
@@ -144,6 +154,17 @@ public:
 	/// @param size Size of data to read.
 	void setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType, uint32_t offset,
 	           uint32_t size);
+
+	/// Disables every queued read job, leaving the connection and this operation alone.
+	///
+	/// Unlike the close paths, this changes no callback and closes nothing: a disabled job
+	/// comes back through the callback it already had, reporting that it was not done, and
+	/// the read ends the way any failed read ends. That is what lets the cutoff stop work
+	/// already inside the pool without taking the connection down with it, so the frame gates
+	/// are still there to refuse whatever the client sends next.
+	///
+	/// @return How many jobs were disabled.
+	size_t cancelQueuedJobs();
 
 	/// Checks if there are jobs that need a delayed close.
 	/// Discards pending read jobs.
@@ -225,6 +246,10 @@ protected:
 /// `protected` section). Default implementations match the no-flush (eager) variant.
 class WriteHighLevelOp : public HighLevelOp {
 public:
+	/// Disables the queued write job without closing anything. @see
+	/// ReadHighLevelOp::cancelQueuedJobs.
+	size_t cancelQueuedJobs();
+
 	/// @brief Default initial number of blocks for the next input buffer, which can be adjusted
 	/// based on the max blocks per HDD write job.
 	constexpr static uint16_t kDefaultInitialNextInputBufferBlockCount = 4;

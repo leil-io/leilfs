@@ -21,6 +21,8 @@
 #include "common/platform.h"
 
 #include "chunkserver/bgjobs.h"
+
+#include "chunkserver/test_job_faults.h"
 #include "chunkserver/chunk_replicator.h"
 #include "chunkserver/hddspacemgr.h"
 #include "common/chunk_part_type.h"
@@ -28,6 +30,7 @@
 #include "common/massert.h"
 #include "common/output_packet.h"
 #include "common/pcqueue.h"
+#include "common/test_event_stream.h"
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
 #include "slogger/slogger.h"
@@ -322,6 +325,8 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 		}
 
 		jobsUniqueLock.unlock();
+
+		if (test_job_faults::enabled()) { test_job_faults::holdIfArmed(jobId, clientFacing_); }
 
 		auto processJobCallback = job->processJob;
 		if (processJobCallback) {
@@ -625,6 +630,33 @@ uint32_t job_close(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64
 	                      processJob, listenerId);
 }
 
+/// Tells the metadata servers that a part they sent a reader to is not here.
+///
+/// A read only reaches a chunkserver because a metadata server named it as holding the part, so
+/// answering "no such chunk" is a statement about this server, not a guess about the cluster:
+/// this process has no record of the part at all. That distinction is the whole point. Membership
+/// may only shrink on an explicit statement, because a server that merely went quiet has said
+/// nothing, and a copy removed on silence is a copy removed on every slow reconnect.
+///
+/// Only the read path reports. A write chain open can race a create the metadata server has
+/// already commanded, so its absence is not yet a fact; a read has no such window, because a
+/// reader is sent to a member of a set that was already published.
+static void reportReadOfAbsentChunk(uint64_t chunkId, ChunkPartType chunkType, uint8_t status) {
+	if (status != SAUNAFS_STATUS_OK && test_event_stream::enabled()) {
+		test_event_stream::emit("read_part_failed",
+		                        {{"chunk", chunkId},
+		                         {"part_type", static_cast<uint64_t>(chunkType.getId())},
+		                         {"status", status}});
+	}
+	if (status != SAUNAFS_ERROR_NOCHUNK) { return; }
+	hddReportLostChunk(chunkId, chunkType);
+	if (test_event_stream::enabled()) {
+		test_event_stream::emit("read_absence_report_queued",
+		                        {{"chunk", chunkId},
+		                         {"part_type", static_cast<uint64_t>(chunkType.getId())}});
+	}
+}
+
 uint32_t job_read(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
                   uint32_t version, ChunkPartType chunkType, uint32_t offset, uint32_t size,
                   uint32_t maxBlocksToBeReadBehind, uint32_t blocksToBeReadAhead,
@@ -634,7 +666,10 @@ uint32_t job_read(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_
 		uint8_t status = SAUNAFS_STATUS_OK;
 		if (performHddOpen) {
 			status = hddOpen(chunkId, chunkType);
-			if (status != SAUNAFS_STATUS_OK) { return status; }
+			if (status != SAUNAFS_STATUS_OK) {
+				reportReadOfAbsentChunk(chunkId, chunkType, status);
+				return status;
+			}
 		}
 
 		status = hddRead(chunkId, version, chunkType, offset, size, maxBlocksToBeReadBehind,
@@ -647,6 +682,7 @@ uint32_t job_read(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_
 				              saunafs_error_string(status), saunafs_error_string(ret));
 			}
 		}
+		reportReadOfAbsentChunk(chunkId, chunkType, status);
 		return status;
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::Read, std::move(callback), outputBuffer,
@@ -801,6 +837,17 @@ uint32_t job_invalid(MasterJobPool &jobPool, JobPool::JobCallback callback, void
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t { return SAUNAFS_ERROR_EINVAL; };
 	return jobPool.addJob(JobPool::ChunkOperation::Invalid, std::move(callback), extra, processJob,
 	                      listenerId);
+}
+
+uint32_t job_verify_part(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                         uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId) {
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddVerifyPartPresence(chunkId, chunkType);
+	};
+	// Not addJobIfNotLocked: a chunk locked for work in progress is not an answer to whether the
+	// part is here, and a refusal would be read as an absence.
+	return jobPool.addJob(JobPool::ChunkOperation::VerifyPart, std::move(callback), extra,
+	                      processJob, listenerId);
 }
 
 uint32_t job_delete(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
