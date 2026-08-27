@@ -100,3 +100,9 @@ TEST(MatocsservChunkQuerySplitTests, PacksIdsRatherThanSendingThemOneByOne) {
 	EXPECT_GT(groups.front().size(), 1000U)
 	    << "expected the packet budget to be used, got " << groups.front().size() << " ids";
 }
+
+TEST(MatocsservChunkRegistrationConfigTests, CapsRecordsInFlightPerChunkserver) {
+	EXPECT_EQ(4U, matocsserv_limit_chunk_registration_window(1000, 4));
+	EXPECT_EQ(100U, matocsserv_limit_chunk_registration_window(1000, 1000));
+	EXPECT_EQ(1U, matocsserv_limit_chunk_registration_window(100000, 2));
+}

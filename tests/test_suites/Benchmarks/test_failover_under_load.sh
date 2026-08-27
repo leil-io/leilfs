@@ -21,8 +21,9 @@ timeout_set '4 hours'
 #                                metadata.sfs when iterating)
 #   MOCK_CS_COUNT   number of chunkservers (default 4)
 #   READER_COUNT    reader clients (default 3); writers = MOUNTS - readers
-#   REGISTRATION_BUDGET  CHUNK_REGISTRATION_CHUNKS_PER_SECOND (default 0 =
-#                   unlimited; set e.g. 1000000 to observe pacing)
+#   REGISTRATION_BUDGET  CHUNK_REGISTRATION_CHUNKS_PER_SECOND (default 500000,
+#                   matching the shipped paced default; set 0 for an
+#                   unpaced baseline)
 
 CHUNK_COUNT=${CHUNK_COUNT:-10000000}
 MOCK_CS_COUNT=${MOCK_CS_COUNT:-4}
@@ -30,8 +31,10 @@ READER_COUNT=${READER_COUNT:-3}
 MOUNT_COUNT=5
 CHUNKS_PER_FILE=10000
 LOAD_WARMUP_SECONDS=5
-REGISTRATION_BUDGET=${REGISTRATION_BUDGET:-0}
 
+REGISTRATION_BUDGET=${REGISTRATION_BUDGET:-500000}
+
+echo "REGISTRATION_BUDGET: ${REGISTRATION_BUDGET}"
 MASTERSERVERS=2 \
 	CHUNKSERVERS=$MOCK_CS_COUNT \
 	MOUNTS=$MOUNT_COUNT \
