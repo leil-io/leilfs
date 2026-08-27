@@ -259,6 +259,11 @@ static std::unordered_map<uint64_t, std::vector<matoclserventry *>> gDeferredChu
 static std::size_t gDeferredChunkLocationWaitCount = 0;
 static bool gDeferredChunkLocationWaitLimitWarningEmitted = false;
 
+static void matoclserv_update_deferred_chunk_location_waiter_gauge() {
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_LOCATION_QUERY_WAITERS,
+	                    static_cast<double>(gDeferredChunkLocationWaitCount));
+}
+
 // ---------------------------------------------------------------------------
 // Op submission
 //
@@ -4304,6 +4309,8 @@ static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t
 			    __func__, waiterLimit);
 			gDeferredChunkLocationWaitLimitWarningEmitted = true;
 		}
+		metrics::Counter::increment(
+		    metrics::Counter::Master::CHUNK_LOCATION_WAITER_LIMIT_REJECTED);
 		return false;
 	}
 	if (!matocsserv_query_chunk_location(chunkId)) { return false; }
@@ -4312,6 +4319,7 @@ static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t
 	if (waits.empty()) { gDeferredChunkLocationWaiters[chunkId].push_back(eptr); }
 	waits.push_back(DeferredChunkLocationWait{chunkId, header, requestData});
 	++gDeferredChunkLocationWaitCount;
+	matoclserv_update_deferred_chunk_location_waiter_gauge();
 	return true;
 }
 
@@ -4624,6 +4632,7 @@ void matoclserv_chunk_locations_resolved(uint64_t chunkId) {
 		if (gDeferredChunkLocationWaitCount < matocsserv_get_on_demand_chunk_query_waiter_limit()) {
 			gDeferredChunkLocationWaitLimitWarningEmitted = false;
 		}
+		matoclserv_update_deferred_chunk_location_waiter_gauge();
 		if (eptr->mode == ClientConnectionMode::KILL) { continue; }
 
 		// Replay with deferring disabled: the client gets whatever is known
@@ -6929,6 +6938,7 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 	if (gDeferredChunkLocationWaitCount < matocsserv_get_on_demand_chunk_query_waiter_limit()) {
 		gDeferredChunkLocationWaitLimitWarningEmitted = false;
 	}
+	matoclserv_update_deferred_chunk_location_waiter_gauge();
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -7469,6 +7479,7 @@ void matoclserv_term() {
 	gDeferredChunkLocationWaiters.clear();
 	gDeferredChunkLocationWaitCount = 0;
 	gDeferredChunkLocationWaitLimitWarningEmitted = false;
+	matoclserv_update_deferred_chunk_location_waiter_gauge();
 
 	matoclservList.clear();
 	matoclserv_session_unload();
