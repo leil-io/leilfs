@@ -201,13 +201,14 @@ int matocsserv_send_fenced_verify_part(matocsserventry *eptr, uint64_t chunkId,
 int matocsserv_send_deletechunk(matocsserventry* eptr,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
-                                uint32_t version, bool needsLock, bool &sentChunkLock);
+                                uint32_t version, bool needsLock, bool &sentChunkLock,
+                                uint64_t generation = 0);
 int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
                               bool needsLock, bool &sentChunkLock);
 int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType);
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
                                     uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock,
-                                    bool &sentChunkLock);
+                                    bool &sentChunkLock, uint64_t generation = 0);
 int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
                                    uint32_t newChunkVersion, ChunkPartType chunkType,
                                    uint64_t chunkId, uint32_t chunkVersion, bool needsLock,

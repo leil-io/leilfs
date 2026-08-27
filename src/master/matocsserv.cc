@@ -394,10 +394,11 @@ static bool matocsserv_may_send_chunk_command(matocsserventry *eptr, ChunkComman
 /// record that owns those numbers is not what drives this send yet, and inventing values that
 /// look like operation identity would make an unmatched field look matched. They are carried,
 /// echoed and compared exactly, so the day the coordinator supplies them nothing else changes.
-static ChunkCommandIdentity matocsserv_next_command_identity(matocsserventry *eptr) {
+static ChunkCommandIdentity matocsserv_next_command_identity(matocsserventry *eptr,
+                                                             uint64_t generation = 0) {
 	ChunkCommandIdentity identity;
 	identity.operationNonce = 0;
-	identity.generation = 0;
+	identity.generation = generation;
 	identity.sequence = eptr->nextCommandSequence++;
 	identity.targetIncarnation = eptr->chunkserverIncarnation;
 	identity.targetServingEra = eptr->sessionClaimSequence;
@@ -1018,13 +1019,14 @@ void matocsserv_got_chunk_checksum(matocsserventry *eptr, const uint8_t *data, u
 }
 
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
-                                uint32_t chunkVersion, bool needsLock, bool &sentChunkLock) {
+                                uint32_t chunkVersion, bool needsLock, bool &sentChunkLock,
+                                uint64_t generation) {
 	sentChunkLock = false;
 	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kCreate, chunkId)) {
 		return 0;
 	}
 	if (eptr->distributedSession) {
-		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr, generation);
 		eptr->outputPackets.emplace_back();
 		matocs::fencedCreateChunk::serialize(eptr->outputPackets.back().packet, identity, chunkId,
 		                                     chunkType, chunkVersion, needsLock);
@@ -1391,14 +1393,14 @@ int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPa
 
 int matocsserv_send_setchunkversion(matocsserventry *eptr, uint64_t chunkId, uint32_t newVersion,
                                     uint32_t chunkVersion, ChunkPartType chunkType, bool needsLock,
-                                    bool &sentChunkLock) {
+                                    bool &sentChunkLock, uint64_t generation) {
 	sentChunkLock = false;
 	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kSetVersion, chunkId)) {
 		return 0;
 	}
 	sassert(eptr->version >= kFirstECVersion);
 	if (eptr->distributedSession) {
-		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr, generation);
 		eptr->outputPackets.emplace_back();
 		matocs::fencedSetVersion::serialize(eptr->outputPackets.back().packet, identity, chunkId,
 		                                    chunkType, chunkVersion, newVersion, needsLock);
