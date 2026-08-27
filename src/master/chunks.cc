@@ -61,6 +61,7 @@
 #include "common/small_vector.h"
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunk_metadata.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
@@ -2343,6 +2344,13 @@ void chunk_write_end_status(Chunk *chunk, ChunkPartType chunkType, uint8_t statu
 			// If chunk is not writable, we probably have a lost chunk here
 			safs::log_warn("{}: chunk {} is not writable. Lost chunk?", __func__, chunk->chunkid);
 		}
+	}
+
+	if (!anyCopyBeingWritten) {
+		// Every part has reported its write end, so the client write is complete: close the
+		// durable ownership round this chunk was opened under. Backends that keep no such round
+		// do nothing here.
+		gChunkOperations->finalizeWriteRound(chunk->chunkid);
 	}
 
 	if (!anyCopyBeingWritten && !chunk->isLocked()) {

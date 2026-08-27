@@ -173,6 +173,10 @@ public:
 	virtual void gotDuptruncStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                               uint8_t status) = 0;
 
+	/// Every part of a client write has reported its write end. A backend that owns a durable
+	/// write round for the chunk closes it here; the default keeps no such round and does nothing.
+	virtual void finalizeWriteRound(uint64_t /*chunkId*/) {}
+
 	// --- Stats / introspection ---
 	virtual void stats(uint32_t *del, uint32_t *repl) = 0;
 	virtual uint32_t getChunkInfoSerializedSize() = 0;
