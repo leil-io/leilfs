@@ -11,7 +11,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     container:
-      image: fedora:rawhide
+      image: fedora:44
       options: --privileged
 
     steps:
