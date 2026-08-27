@@ -67,6 +67,7 @@
 #include "master/matoclserv.h"
 #include "master/metadataserver_hooks.h"
 #include "master/personality.h"
+#include "metrics/metrics.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cstoma.h"
 #include "protocol/matocs.h"
@@ -231,6 +232,14 @@ struct PendingChunkQuery {
 
 /// Chunk ids currently being resolved by on-demand queries.
 static std::unordered_map<uint64_t, PendingChunkQuery> gPendingChunkQueries;
+
+// Avoid a warning per request while the query cap remains saturated.
+static bool gOnDemandChunkQueryLimitWarningEmitted = false;
+
+static void matocsserv_update_pending_chunk_query_gauge() {
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_LOCATION_QUERY_PENDING,
+	                    static_cast<double>(gPendingChunkQueries.size()));
+}
 
 /// Chunk ids queued this event-loop iteration; flushed in size-limited
 /// SAU_MATOCS_QUERY_CHUNKS packets grouped by generation per eligible chunkserver.
@@ -1380,6 +1389,11 @@ std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
 /// Completes the on-demand query for \p chunkId and wakes its waiters.
 static void matocsserv_resolve_chunk_query(uint64_t chunkId) {
 	gPendingChunkQueries.erase(chunkId);
+	if (gOnDemandChunkQueryLimit == 0 ||
+	    gPendingChunkQueries.size() < gOnDemandChunkQueryLimit) {
+		gOnDemandChunkQueryLimitWarningEmitted = false;
+	}
+	matocsserv_update_pending_chunk_query_gauge();
 	matoclserv_chunk_locations_resolved(chunkId);
 }
 
@@ -1393,7 +1407,20 @@ bool matocsserv_query_chunk_location(uint64_t chunkId) {
 		return true;
 	}
 
-	if (gPendingChunkQueries.size() >= gOnDemandChunkQueryLimit) { return false; }
+	if (gPendingChunkQueries.size() >= gOnDemandChunkQueryLimit) {
+		if (gOnDemandChunkQueryLimit != 0) {
+			if (!gOnDemandChunkQueryLimitWarningEmitted) {
+				safs::log_warn(
+				    "on-demand chunk-location query limit reached ({}); returning new requests "
+				    "with currently known locations",
+				    gOnDemandChunkQueryLimit);
+				gOnDemandChunkQueryLimitWarningEmitted = true;
+			}
+			metrics::Counter::increment(
+			    metrics::Counter::Master::CHUNK_LOCATION_QUERY_LIMIT_REJECTED);
+		}
+		return false;
+	}
 
 	bool anyTarget = false;
 	for (const auto &entry : matocsservList) {
@@ -1409,6 +1436,7 @@ bool matocsserv_query_chunk_location(uint64_t chunkId) {
 	                 .deadline = Timeout(std::chrono::milliseconds(gOnDemandChunkQueryTimeout_ms)),
 	                 .outstandingReplies = 0});
 	gChunkQueryIdsToSend.push_back(chunkId);
+	matocsserv_update_pending_chunk_query_gauge();
 
 	return true;
 }
@@ -1470,6 +1498,10 @@ void matocsserv_pending_chunk_queries_check() {
 	}
 
 	for (const auto chunkId : expiredChunkIds) { matocsserv_resolve_chunk_query(chunkId); }
+	if (!expiredChunkIds.empty()) {
+		metrics::Counter::increment(metrics::Counter::Master::CHUNK_LOCATION_QUERY_TIMEOUT,
+		                            expiredChunkIds.size());
+	}
 }
 
 void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vector<uint8_t> &data) {
@@ -1578,11 +1610,34 @@ static void matocsserv_regrant_pull_credit(matocsserventry *eptr) {
 	}
 }
 
+static void matocsserv_update_registration_metrics() {
+#ifdef HAVE_PROMETHEUS
+	std::size_t activeRegistrations = 0;
+	for (const auto &entry : matocsservList) {
+		const auto *eptr = entry.get();
+		if (eptr->pullRegistration && !eptr->chunkRegistrationComplete) {
+			++activeRegistrations;
+		}
+	}
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_REGISTRATION_ACTIVE,
+	                    static_cast<double>(activeRegistrations));
+	const double budgetUtilization = gChunkRegistrationChunksPerSecond == 0
+	                                     ? 0.0
+	                                     : static_cast<double>(gRegistrationChunksThisSecond) /
+	                                           gChunkRegistrationChunksPerSecond;
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_REGISTRATION_BUDGET_UTILIZATION,
+	                    budgetUtilization);
+#endif
+}
+
 /// Runs every event-loop iteration and pays withheld credits in round-robin
 /// order until the current whole-bulk budget is exhausted.
 void matocsserv_pull_registration_budget_tick() {
 	matocsserv_refresh_registration_budget();
-	if (matocsservList.empty()) { return; }
+	if (matocsservList.empty()) {
+		matocsserv_update_registration_metrics();
+		return;
+	}
 
 	auto start = matocsservList.begin();
 	if (gRegistrationBudgetCursor != matocsservList.end()) {
@@ -1606,6 +1661,7 @@ void matocsserv_pull_registration_budget_tick() {
 	}
 
 	if (lastGranted != matocsservList.end()) { gRegistrationBudgetCursor = lastGranted; }
+	matocsserv_update_registration_metrics();
 }
 
 void matocsserv_sau_register_chunks_end(matocsserventry *eptr, const std::vector<uint8_t> &data) {
@@ -1708,6 +1764,9 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 	} else {
 		// A pull chunkserver sends REGISTER_SPACE before waiting for its first
 		// credit. Only now can the budgeted opening window be made payable.
+		metrics::Counter::increment(eptr->pullInitialCreditsPending == 0
+		                                ? metrics::Counter::Master::CHUNK_REGISTRATION_UNPACED_START
+		                                : metrics::Counter::Master::CHUNK_REGISTRATION_PACED_START);
 		eptr->pullRegistrationConfirmed = true;
 		eptr->pullCreditsOwed += eptr->pullInitialCreditsPending;
 		eptr->pullInitialCreditsPending = 0;
@@ -2002,6 +2061,11 @@ void matocsserv_term() {
 
 	gRegistrationBudgetCursor = matocsservList.end();
 	matocsservList.clear();
+	gPendingChunkQueries.clear();
+	gChunkQueryIdsToSend.clear();
+	gOnDemandChunkQueryLimitWarningEmitted = false;
+	matocsserv_update_pending_chunk_query_gauge();
+	matocsserv_update_registration_metrics();
 }
 
 void matocsserv_read(matocsserventry *eptr) {
