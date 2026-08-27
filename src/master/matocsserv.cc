@@ -258,14 +258,21 @@ static void matocsserv_assign_unassigned_query_generations() {
 // Defaults for the CHUNK_REGISTRATION_* configuration entries
 constexpr uint32_t kDefaultChunkRegistrationBulkSize = 1000;
 constexpr uint32_t kDefaultChunkRegistrationWindow = 4;
+constexpr uint32_t kDefaultChunkRegistrationChunksPerSecond = 500000;
 
 /// Chunks per registration bulk, dictated to pull-mode chunkservers.
 static uint32_t gChunkRegistrationBulkSize = kDefaultChunkRegistrationBulkSize;
 /// Bulks a pull-mode chunkserver may have in flight.
 static uint32_t gChunkRegistrationWindow = kDefaultChunkRegistrationWindow;
-/// Global registration ingest budget, chunks per second; 0 = unlimited.
+/// Global registration ingest budget, chunks per second; 0 disables pacing.
 /// This is the DOS guard for a mass reconnect (e.g. after a failover).
-static uint32_t gChunkRegistrationChunksPerSecond = 0;
+static uint32_t gChunkRegistrationChunksPerSecond = kDefaultChunkRegistrationChunksPerSecond;
+
+uint32_t matocsserv_limit_chunk_registration_window(uint32_t bulkSize, uint32_t requestedWindow) {
+	sassert(bulkSize > 0 && bulkSize <= kMaxChunkRegistrationInFlightChunks);
+	sassert(requestedWindow > 0);
+	return std::min(requestedWindow, kMaxChunkRegistrationInFlightChunks / bulkSize);
+}
 
 /// Budget accounting for the current second.
 static uint64_t gRegistrationBudgetSecond = 0;
@@ -2125,9 +2132,28 @@ static void matocsserv_reload_chunk_query_cfg() {
 	    cfg_getuint32("ON_DEMAND_CHUNK_QUERY_LIMIT", kDefaultOnDemandChunkQueryLimit);
 	gChunkRegistrationBulkSize = cfg_get_minmaxvalue<uint32_t>(
 	    "CHUNK_REGISTRATION_BULK_SIZE", kDefaultChunkRegistrationBulkSize, 1, 100000);
-	gChunkRegistrationWindow =
+	const auto configuredWindow =
 	    cfg_get_minvalue<uint32_t>("CHUNK_REGISTRATION_WINDOW", kDefaultChunkRegistrationWindow, 1);
-	gChunkRegistrationChunksPerSecond = cfg_getuint32("CHUNK_REGISTRATION_CHUNKS_PER_SECOND", 0);
+	gChunkRegistrationWindow =
+	    matocsserv_limit_chunk_registration_window(gChunkRegistrationBulkSize, configuredWindow);
+	if (gChunkRegistrationWindow != configuredWindow) {
+		safs::log_warn(
+		    "CHUNK_REGISTRATION_WINDOW={} with CHUNK_REGISTRATION_BULK_SIZE={} would admit "
+		    "{} chunks per chunkserver; clamping the window to {} to keep at most {} in flight",
+		    configuredWindow, gChunkRegistrationBulkSize,
+		    static_cast<uint64_t>(configuredWindow) * gChunkRegistrationBulkSize,
+		    gChunkRegistrationWindow, kMaxChunkRegistrationInFlightChunks);
+	}
+	gChunkRegistrationChunksPerSecond = cfg_getuint32("CHUNK_REGISTRATION_CHUNKS_PER_SECOND",
+	                                                  kDefaultChunkRegistrationChunksPerSecond);
+	if (gChunkRegistrationChunksPerSecond == 0) {
+		safs::log_warn(
+		    "CHUNK_REGISTRATION_CHUNKS_PER_SECOND=0 disables global pull-registration pacing; "
+		    "each new chunkserver may have up to {} chunks in flight (window {} x bulk {}). "
+		    "Set a non-zero budget before a large simultaneous reconnect",
+		    static_cast<uint64_t>(gChunkRegistrationWindow) * gChunkRegistrationBulkSize,
+		    gChunkRegistrationWindow, gChunkRegistrationBulkSize);
+	}
 }
 
 void matocsserv_reload() {

@@ -261,17 +261,24 @@ on-demand queries entirely (default is 10000)
 
 *CHUNK_REGISTRATION_BULK_SIZE*:: Number of chunks per bulk this master
 dictates to chunkservers registering through the master-driven (pull)
-protocol (default is 1000, range 1..100000)
+protocol (default is 1000, range 1..100000). Together with
+*CHUNK_REGISTRATION_WINDOW*, it can admit no more than 100000 chunks per
+chunkserver at a time.
 
 *CHUNK_REGISTRATION_WINDOW*:: Number of registration bulks a chunkserver may
 have in flight before waiting for this master's credit grants (default is 4,
-minimum is 1)
+minimum is 1). Its effective value is capped so that
+CHUNK_REGISTRATION_WINDOW x CHUNK_REGISTRATION_BULK_SIZE never exceeds 100000;
+the master logs a warning when it clamps a configured value.
 
 *CHUNK_REGISTRATION_CHUNKS_PER_SECOND*:: Global chunk-registration ingest
 budget, in chunks per second, shared by all chunkservers registering through
 the pull protocol. Protects the master from a registration flood when many
-chunkservers reconnect at once (e.g. right after a failover). 0 means
-unlimited (default is 0).
+chunkservers reconnect at once (e.g. right after a failover). The default is a
+conservative starting point of 500000 chunks per second, not a throughput
+promise or a hardware-independent optimum. Setting it to 0 disables pacing.
+With that setting, the master logs a warning at startup and reload, and each
+unpaced registration is counted by the metadata_chunk_registration_total metric.
 +
 The budget is a shared pool, not a per-server quota, and normally limits the
 rate at which registration work is admitted across all chunkservers. However,
@@ -282,12 +289,14 @@ enqueued immediately, so N chunkservers reconnecting at once can enqueue
 N x 4000 chunks. A chunkserver sends each bulk only when it holds a credit;
 after the opening window the master grants one more each time it finishes
 processing a bulk. This bounds the work in flight to
-CHUNK_REGISTRATION_WINDOW x CHUNK_REGISTRATION_BULK_SIZE per chunkserver.
+CHUNK_REGISTRATION_WINDOW x CHUNK_REGISTRATION_BULK_SIZE per chunkserver,
+capped at 100000 chunks.
 When a non-zero budget is configured, the opening window is also subject to
 the budget and is released at the configured rate, removing the initial burst.
-To choose a value, measure the registration rate with the budget unset and
-use a fraction of that rate. Avoid setting the value too low, as chunk
-registration after a failover could then take minutes instead of seconds.
+The default is shared across the whole cluster, not per chunkserver. Override
+it only after measuring registration throughput and client-operation latency in
+a representative environment. Avoid setting it too low, as registration after
+a failover can then take substantially longer.
 
 *PRIORITIZE_DATA_PARTS*:: When set, master server will prioritize data parts in
 EC goals to land in the chunkservers with higher percentage of available space.

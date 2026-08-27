@@ -186,6 +186,16 @@ bool matocsserv_query_chunk_location(uint64_t chunkId);
 /*! \brief Maximum number of deferred client waits. */
 uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit();
 
+/// Maximum number of chunk records one pull-registration window may admit per
+/// chunkserver. This bounds the per-connection queue independently of the
+/// operator-selected bulk size and window.
+constexpr uint32_t kMaxChunkRegistrationInFlightChunks = 100000;
+
+/// Limits a requested pull-registration window so it never admits more than
+/// kMaxChunkRegistrationInFlightChunks records for the given bulk size.
+/// Exposed to pin the configuration safety limit in unit tests.
+uint32_t matocsserv_limit_chunk_registration_window(uint32_t bulkSize, uint32_t requestedWindow);
+
 /*!
  * \brief Groups chunk ids for SAU_MATOCS_QUERY_CHUNKS packets.
  *
