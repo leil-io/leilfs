@@ -138,6 +138,17 @@ public:
 	virtual void serverLabelChanged(const MediaLabel &previousLabel,
 	                                const MediaLabel &newLabel) = 0;
 
+	/// Maintenance found a chunk with one healthy copy too many and picked @p ptr's part as the
+	/// one to retire. A deployment that keeps durable published sets claims the retirement by
+	/// returning true: the set narrows first, the physical copy is owed to reclamation, and the
+	/// caller must not delete it directly, because a copy deleted ahead of the set that names it
+	/// is a ghost member every reader can be sent to. The default keeps no such set and returns
+	/// false, so the legacy delete proceeds unchanged.
+	virtual bool retireSurplusPart(matocsserventry * /*ptr*/, uint64_t /*chunkId*/,
+	                               ChunkPartType /*chunkType*/) {
+		return false;
+	}
+
 	/// A chunkserver has been admitted under a new process incarnation, so whatever the
 	/// published sets expect on it was last confirmed by a process that is gone. A deployment
 	/// that keeps published sets uses this to ask that one server about its own expected parts;

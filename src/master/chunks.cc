@@ -2872,6 +2872,14 @@ bool ChunkWorker::removeUnneededChunkPart(Chunk *c, Goal::Slice::Type slice_type
 
 	if (candidate &&
 	    calc.canRemovePart(slice_type, slice_part, matocsserv_get_label(candidate->server()))) {
+		// A backend that keeps durable published sets retires the copy through its own
+		// coordinated transition: the set narrows first and the physical delete follows from
+		// the durable debt, never ahead of the set that still names the copy.
+		if (gChunkOperations->retireSurplusPart(candidate->server(), c->chunkid, candidate->type)) {
+			inforec_.done.del_overgoal++;
+			deleteDone_++;
+			return true;
+		}
 		c->deleteCopy(*candidate);
 		c->needVersionIncrease = 1;
 		stats_deletions++;
