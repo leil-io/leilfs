@@ -186,6 +186,10 @@ int matocsserv_getlocation(matocsserventry* eptr, uint32_t* servip, uint16_t* se
 uint16_t matocsserv_replication_read_counter(matocsserventry* eptr);
 uint16_t matocsserv_replication_write_counter(matocsserventry* eptr);
 uint16_t matocsserv_deletion_counter(matocsserventry* eptr);
+/// Acknowledges a chunkserver's evidence outbox up to @p ackedUpToSequence. Send only after the
+/// observations and the source's position were committed in one transaction.
+void matocsserv_send_evidence_ack(matocsserventry *eptr, uint64_t ackedUpToSequence);
+
 int matocsserv_send_sau_replicatechunk(matocsserventry* eptr,
 		uint64_t chunkid, uint32_t version, ChunkPartType type,
 		const std::vector<matocsserventry*> &sourcePointers,

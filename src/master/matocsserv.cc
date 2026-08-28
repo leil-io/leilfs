@@ -1389,6 +1389,12 @@ void matocsserv_got_fenced_status(matocsserventry *eptr, const std::vector<uint8
 	}
 }
 
+void matocsserv_send_evidence_ack(matocsserventry *eptr, uint64_t ackedUpToSequence) {
+	if (eptr == nullptr || eptr->mode == ChunkserverConnectionMode::KILL) { return; }
+	eptr->outputPackets.emplace_back();
+	matocs::evidenceAck::serialize(eptr->outputPackets.back().packet, ackedUpToSequence);
+}
+
 int matocsserv_send_chunkunlock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType) {
 	if (matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kChunkUnlock, chunkId)) {
 		sassert(eptr->version >= kFirstECVersion);
@@ -2111,6 +2117,12 @@ void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8
 	for (const auto &chunk : chunks) { gChunkOperations->damaged(eptr, chunk.id, chunk.type); }
 }
 
+void matocsserv_sau_evidence_items(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	std::vector<EvidenceItem> items;
+	cstoma::evidenceItems::deserialize(data, items);
+	gChunkOperations->gotEvidenceItems(eptr, items);
+}
+
 void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
@@ -2299,6 +2311,9 @@ static void matocsserv_dispatch_packet(matocsserventry *eptr, PacketHeader heade
 			break;
 		case SAU_CSTOMA_CHUNK_DAMAGED:
 			matocsserv_sau_chunk_damaged(eptr, data);
+			break;
+		case SAU_CSTOMA_EVIDENCE_ITEMS:
+			matocsserv_sau_evidence_items(eptr, data);
 			break;
 		case SAU_CSTOMA_CHUNK_LOST:
 			matocsserv_sau_chunks_lost(eptr, data);

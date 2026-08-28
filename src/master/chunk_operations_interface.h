@@ -20,6 +20,8 @@
 
 #include "common/platform.h"
 
+#include "common/evidence_item.h"
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -137,6 +139,13 @@ public:
 	virtual void serverUnlabelledConnected() = 0;
 	virtual void serverLabelChanged(const MediaLabel &previousLabel,
 	                                const MediaLabel &newLabel) = 0;
+
+	/// A batch from a chunkserver's durable evidence outbox. A deployment that keeps durable
+	/// records commits the observations together with the source's idempotency position and only
+	/// then acknowledges, so the source may forget them; the default keeps no such records and
+	/// ignores the batch, which simply leaves it queued at the source.
+	virtual void gotEvidenceItems(matocsserventry * /*ptr*/,
+	                              const std::vector<EvidenceItem> & /*items*/) {}
 
 	/// Maintenance found a chunk with one healthy copy too many and picked @p ptr's part as the
 	/// one to retire. A deployment that keeps durable published sets claims the retirement by

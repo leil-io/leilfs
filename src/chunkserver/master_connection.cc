@@ -39,6 +39,7 @@
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/chunk_generation_fence.h"
+#include "chunkserver/evidence_outbox.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
 #include "chunkserver/network_main_thread.h"
@@ -985,6 +986,9 @@ void MasterConn::dispatchPacket(PacketHeader header, const MessageBuffer &messag
 			clusterMembers(message);
 		}
 		break;
+	case SAU_MATOCS_EVIDENCE_ACK:
+		evidenceAck(message);
+		break;
 	case SAU_MATOCS_CS_SESSION_LEASE:
 		if (!distributedMode_) {
 			setMode(ConnectionMode::KILL);
@@ -1244,6 +1248,12 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 }
 
 // Fenced chunk operations
+
+void MasterConn::evidenceAck(const std::vector<uint8_t> &data) {
+	uint64_t ackedUpToSequence = 0;
+	matocs::evidenceAck::deserialize(data, ackedUpToSequence);
+	evidence_outbox::ack(ackedUpToSequence);
+}
 
 void MasterConn::refuseFencedCommand(const ChunkCommandIdentity &identity, uint64_t chunkId,
                                      ChunkPartType chunkType, ChunkCommandFamily family,

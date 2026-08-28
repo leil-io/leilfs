@@ -188,6 +188,15 @@ inline constexpr std::string_view kChunkPartsKeyPrefix = "CHUNK_PARTS_";
 /// is discarded rather than acted on.
 inline constexpr std::string_view kChunkEvidenceKeyPrefix = "CHUNK_EVIDENCE_";
 
+/// Prefix for an evidence source's committed idempotency position.
+/// Format: CS_EVIDENCE_POS_<StableId> -> <FormatVersion><AckedSequence><LastIncarnation>
+/// - StableId: uint32_t Big Endian; Value: datapack big-endian; FormatVersion u8,
+///   AckedSequence u64 (every outbox item at or below it is committed), LastIncarnation u64
+///   (informational: the origin of the newest committed item).
+/// @note Written in the same transaction as the observations it covers, which is what makes the
+/// acknowledgement safe to send and every replay below the position free to skip.
+inline constexpr std::string_view kCsEvidencePosKeyPrefix = "CS_EVIDENCE_POS_";
+
 /// Prefix for the reverse view of the published sets: which parts the authoritative sets expect
 /// on one chunkserver. Written in the same transaction as every CHUNK_PARTS_ change, so the two
 /// cannot drift.

@@ -28,6 +28,7 @@
 #include "common/chunk_part_type.h"
 #include "common/chunk_with_version.h"
 #include "common/chunk_with_version_and_type.h"
+#include "common/evidence_item.h"
 #include "common/serialization_macros.h"
 #include "protocol/chunks_with_type.h"
 #include "protocol/packet.h"
@@ -175,6 +176,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, chunkLost, SAU_CSTOMA_CHUNK_LOST, kS
                                     std::vector<legacy::ChunkWithType>, chunks)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, chunkLost, SAU_CSTOMA_CHUNK_LOST, kECChunks,
                                     std::vector<ChunkWithType>, chunks)
+
+// The acknowledged evidence channel: a batch of durable-outbox observations. Items carry their
+// own non-authorizing origin identity; the connection carrying them is what authenticates.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, evidenceItems, SAU_CSTOMA_EVIDENCE_ITEMS, 0,
+                                    std::vector<EvidenceItem>, items)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, status, SAU_CSTOMA_STATUS, 0, uint8_t, load)
 

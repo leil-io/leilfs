@@ -41,19 +41,20 @@
 #include <random>
 
 #include "chunkserver/bgjobs.h"
+#include "chunkserver/evidence_outbox.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/master_connection.h"
 #include "chunkserver/network_main_thread.h"
+#include "chunkserver/test_job_faults.h"
 #include "common/event_loop.h"
 #include "common/human_readable_format.h"
 #include "common/massert.h"
 #include "common/network_address.h"
 #include "common/random.h"
 #include "common/session_authority_clock.h"
-#include "common/test_packet_faults.h"
-#include "chunkserver/test_job_faults.h"
 #include "common/sockets.h"
 #include "common/test_event_stream.h"
+#include "common/test_packet_faults.h"
 #include "config/cfg.h"
 #include "devtools/request_log.h"
 #include "protocol/SFSCommunication.h"
@@ -466,6 +467,24 @@ void masterconn_check_hdd_reports() {
 			eptr->createAttachedPacket(cstoma::chunkNew::build(chunks_with_version));
 		}
 	}
+
+	// The acknowledged evidence channel: the outbox's unacknowledged tail goes to every
+	// registered distributed session until an acknowledgement names it. Unlike the legacy queues
+	// above, which empty themselves as they are read, the outbox keeps its items by design, so
+	// the resend is paced by a clock rather than by this function's call rate: once a second is
+	// a retry, every call would be a flood.
+	static uint32_t lastEvidenceSend = 0;
+	const uint32_t nowSeconds = eventloop_time();
+	if (nowSeconds != lastEvidenceSend) {
+		const auto evidenceItems = evidence_outbox::unacked(chunkBulkSize);
+		if (!evidenceItems.empty()) {
+			lastEvidenceSend = nowSeconds;
+			for (auto *eptr : registered) {
+				if (!eptr->distributedMode()) { continue; }
+				eptr->createAttachedPacket(cstoma::evidenceItems::build(evidenceItems));
+			}
+		}
+	}
 }
 
 void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
@@ -847,6 +866,7 @@ int masterconn_init(void) {
 
 	if (gDistributedMode) {
 		masterconn_load_stable_id();
+		evidence_outbox::init();
 		gChunkserverIncarnation = masterconn_mint_incarnation();
 		// Deny-by-default: no client or distributed control work before the first
 		// accepted claim opens a serving window, and no era to bind it to either.

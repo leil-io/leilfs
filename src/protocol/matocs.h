@@ -166,6 +166,12 @@ inline void deserializePartial(const std::vector<uint8_t> &source, uint64_t &chu
 }  // namespace replicateChunk
 }  // namespace matocs
 
+// Acknowledges the evidence outbox up to a sequence: sent only after the observations and the
+// source's idempotency position were committed in one transaction, which is what entitles the
+// source to forget them.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, evidenceAck, SAU_MATOCS_EVIDENCE_ACK, 0, uint64_t,
+                                    ackedUpToSequence)
+
 // The fenced chunk command plane. Each command carries the identity its reply must echo, ahead
 // of the parameters it shares with the erasure coded legacy variant. There is one type per
 // command rather than one kind switched command, which keeps the one type per command style the

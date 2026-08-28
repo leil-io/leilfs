@@ -24,7 +24,10 @@
 
 #include "chunkserver/chunk_generation_fence.h"
 #include "chunkserver/chunk_replicator.h"
+#include "chunkserver/chunkserver-common/hdd_utils.h"
+#include "chunkserver/evidence_outbox.h"
 #include "chunkserver/hddspacemgr.h"
+#include "chunkserver/masterconn.h"
 #include "chunkserver/test_job_faults.h"
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
@@ -651,6 +654,18 @@ static void reportReadOfAbsentChunk(uint64_t chunkId, ChunkPartType chunkType, u
 	}
 	if (status != SAUNAFS_ERROR_NOCHUNK) { return; }
 	hddReportLostChunk(chunkId, chunkType);
+	// The durable statement behind the acknowledged evidence channel. The volatile report above
+	// stays for legacy masters; this one survives everything between here and the durable
+	// record, bound to a non-authorizing origin identity.
+	EvidenceItem item;
+	item.incarnation = masterconn_incarnation();
+	item.originClaimSequence = masterconn_claim_sequence();
+	item.scanEpoch = hddScansInProgress() ? 0 : 1;
+	item.kind = static_cast<uint8_t>(EvidenceItemKind::kLost);
+	item.chunkId = chunkId;
+	item.partType = static_cast<uint16_t>(chunkType.getId());
+	item.observedAtMs = static_cast<uint64_t>(time(nullptr)) * 1000ULL;
+	evidence_outbox::append(item);
 	if (test_event_stream::enabled()) {
 		test_event_stream::emit("read_absence_report_queued",
 		                        {{"chunk", chunkId},

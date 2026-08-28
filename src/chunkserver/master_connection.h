@@ -224,6 +224,9 @@ public:
 
 	void fencedReplicateChunk(const std::vector<uint8_t> &data);
 
+	/// A metadata server committed the outbox items up to a sequence; the outbox may forget them.
+	void evidenceAck(const std::vector<uint8_t> &data);
+
 	/// Decides whether a fenced command may run here, and builds the reply it will answer with.
 	///
 	/// A command names the process it was addressed to, so the first question is whether this is
