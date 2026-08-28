@@ -2340,6 +2340,10 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,
 		} else {
 			chunk_finalize_failed_operation(c);
 		}
+		// Every part has reported this operation's status, so the operation is complete:
+		// close the durable ownership round it ran under, exactly as the write end path
+		// does. Backends that keep no such round do nothing here.
+		gChunkOperations->finalizeWriteRound(c->chunkid);
 	}
 }
 
