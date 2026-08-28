@@ -111,9 +111,15 @@ static uint32_t stats_maxjobscnt = 0;
 static const char *kStableIdFilename = "chunkserverid";
 static uint32_t gStableId = 0;
 static uint64_t gChunkserverIncarnation = 0;
+/// FR-083: process memory only, and never written to any log or test event stream.
+static uint64_t gSessionClaimToken = 0;
 
 uint32_t masterconn_stable_id() { return gStableId; }
 uint64_t masterconn_incarnation() { return gChunkserverIncarnation; }
+uint64_t masterconn_claim_token() { return gSessionClaimToken; }
+void masterconn_adopt_claim_token(uint64_t token) {
+	if (token != 0) { gSessionClaimToken = token; }
+}
 
 static void masterconn_load_stable_id() {
 	FILE *file = fopen(kStableIdFilename, "re");
@@ -868,6 +874,15 @@ int masterconn_init(void) {
 		masterconn_load_stable_id();
 		evidence_outbox::init();
 		gChunkserverIncarnation = masterconn_mint_incarnation();
+		// Test seam: SC-044's equal-incarnation case cannot be produced by waiting for a
+		// collision, so a gated knob forces the value. Honored only under the explicit gate.
+		if (cfg_getuint32("TEST_IDENTITY_SEAMS_ENABLED", 0) != 0) {
+			const uint64_t forced = cfg_getuint64("TEST_FORCE_INCARNATION", 0);
+			if (forced != 0) {
+				gChunkserverIncarnation = forced;
+				safs::log_warn("MasterConn: TEST identity seam forced incarnation {}", forced);
+			}
+		}
 		// Deny-by-default: no client or distributed control work before the first
 		// accepted claim opens a serving window, and no era to bind it to either.
 		gSessionServingAllowed.store(false, std::memory_order_relaxed);

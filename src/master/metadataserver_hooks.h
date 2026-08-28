@@ -86,6 +86,9 @@ struct ChunkserverSessionRegistrationRequest {
 	DistributedRegistrationRole role = DistributedRegistrationRole::kMintOnly;
 	bool ready = false;
 	uint64_t scanEpoch = 0;
+	/// The claim token this process holds, zero when it holds none. Arbitration between two
+	/// live processes presenting one identity rests on this, never on incarnation uniqueness.
+	uint64_t claimToken = 0;
 };
 
 /// A mint-only success has stableId != 0 and both claim fields zero. An admission
@@ -104,6 +107,9 @@ struct ChunkserverSessionRegistrationResult {
 	/// Absolute session-authority second after which this MDS must not offer the
 	/// server for locate or dispatch (leaseDeadline minus the reserve, checked).
 	uint64_t dispatchCutoff = 0;
+	/// The claim token the admission minted or confirmed, returned only to the process it
+	/// admitted; zero on mint-only and observer replies.
+	uint64_t claimToken = 0;
 };
 
 /// Invoked exactly once with the registration outcome, on the MDS network event loop,

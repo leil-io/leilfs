@@ -69,7 +69,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, registerDistributed, SAU_CSTOMA_REGI
                                     uint32_t, ip, uint16_t, port, uint32_t, timeout, uint32_t,
                                     csVersion, std::string, clusterId, uint32_t, stableId, uint64_t,
                                     chunkserverIncarnation, uint8_t, readiness, uint64_t, scanEpoch,
-                                    uint8_t, role)
+                                    uint8_t, role, uint64_t, claimToken)
 
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, registerChunks, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, registerChunks, kStandardChunksOnly, 1)

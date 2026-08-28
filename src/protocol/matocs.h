@@ -40,7 +40,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, registerDistributed, SAU_MATOCS_REGI
                                     uint8_t, status, uint32_t, stableId, uint32_t, mdsId, uint64_t,
                                     mdsIncarnation, uint32_t, version, std::string, clusterId,
                                     uint64_t, claimSequence, uint64_t, leaseDeadline, uint64_t,
-                                    cutoffReserveSeconds)
+                                    cutoffReserveSeconds, uint64_t, claimToken)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, chunkserverSessionLease, SAU_MATOCS_CS_SESSION_LEASE, 0,
                                     uint32_t, stableId, uint64_t, chunkserverIncarnation, uint32_t,

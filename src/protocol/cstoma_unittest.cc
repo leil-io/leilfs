@@ -104,9 +104,10 @@ TEST(CstomaCommunicationTests, RegisterDistributedRoundTrip) {
 	uint8_t readiness = 1;
 	uint64_t scanEpoch = 9;
 	uint8_t role = 2;
+	uint64_t claimToken = 0x2122232425262728ULL;
 	std::vector<uint8_t> buffer;
 	cstoma::registerDistributed::serialize(buffer, ip, port, timeout, version, clusterId, stableId,
-	                                       incarnation, readiness, scanEpoch, role);
+	                                       incarnation, readiness, scanEpoch, role, claimToken);
 
 	verifyHeader(buffer, SAU_CSTOMA_REGISTER_DISTRIBUTED);
 	removeHeaderInPlace(buffer);
@@ -120,9 +121,11 @@ TEST(CstomaCommunicationTests, RegisterDistributedRoundTrip) {
 	uint8_t decodedReadiness = 0;
 	uint64_t decodedScanEpoch = 0;
 	uint8_t decodedRole = 0;
-	cstoma::registerDistributed::deserialize(
-	    buffer, decodedIp, decodedPort, decodedTimeout, decodedVersion, decodedClusterId,
-	    decodedStableId, decodedIncarnation, decodedReadiness, decodedScanEpoch, decodedRole);
+	uint64_t decodedClaimToken = 0;
+	cstoma::registerDistributed::deserialize(buffer, decodedIp, decodedPort, decodedTimeout,
+	                                         decodedVersion, decodedClusterId, decodedStableId,
+	                                         decodedIncarnation, decodedReadiness,
+	                                         decodedScanEpoch, decodedRole, decodedClaimToken);
 	EXPECT_EQ(decodedIp, ip);
 	EXPECT_EQ(decodedPort, port);
 	EXPECT_EQ(decodedTimeout, timeout);
@@ -133,6 +136,7 @@ TEST(CstomaCommunicationTests, RegisterDistributedRoundTrip) {
 	EXPECT_EQ(decodedReadiness, readiness);
 	EXPECT_EQ(decodedScanEpoch, scanEpoch);
 	EXPECT_EQ(decodedRole, role);
+	EXPECT_EQ(decodedClaimToken, claimToken);
 }
 
 TEST(CstomaCommunicationTests, RegisterChunks) {

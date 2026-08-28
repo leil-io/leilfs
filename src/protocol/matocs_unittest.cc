@@ -49,7 +49,8 @@ TEST(MatocsCommunicationTests, RegisterDistributedAndLeaseRoundTrip) {
 	std::vector<uint8_t> registration;
 	matocs::registerDistributed::serialize(registration, SAUNAFS_STATUS_OK, 7, 3,
 	                                       0x1112131415161718ULL, SAUNAFS_VERSHEX,
-	                                       std::string("distributed-cluster"), 5, 10'000, 40);
+	                                       std::string("distributed-cluster"), 5, 10'000, 40,
+	                                       0x0102030405060708ULL);
 	verifyHeader(registration, SAU_MATOCS_REGISTER_DISTRIBUTED);
 	removeHeaderInPlace(registration);
 
@@ -62,8 +63,10 @@ TEST(MatocsCommunicationTests, RegisterDistributedAndLeaseRoundTrip) {
 	uint64_t sequence = 0;
 	uint64_t deadline = 0;
 	uint64_t cutoffReserve = 0;
+	uint64_t claimToken = 0;
 	matocs::registerDistributed::deserialize(registration, status, stableId, mdsId, mdsIncarnation,
-	                                         version, clusterId, sequence, deadline, cutoffReserve);
+	                                         version, clusterId, sequence, deadline, cutoffReserve,
+	                                         claimToken);
 	EXPECT_EQ(status, SAUNAFS_STATUS_OK);
 	EXPECT_EQ(stableId, 7U);
 	EXPECT_EQ(mdsId, 3U);
@@ -73,6 +76,7 @@ TEST(MatocsCommunicationTests, RegisterDistributedAndLeaseRoundTrip) {
 	EXPECT_EQ(sequence, 5U);
 	EXPECT_EQ(deadline, 10'000U);
 	EXPECT_EQ(cutoffReserve, 40U);
+	EXPECT_EQ(claimToken, 0x0102030405060708ULL);
 
 	std::vector<uint8_t> lease;
 	matocs::chunkserverSessionLease::serialize(lease, 7, 0x2122232425262728ULL, 3,

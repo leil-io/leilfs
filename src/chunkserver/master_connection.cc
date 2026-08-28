@@ -197,7 +197,7 @@ void MasterConn::sendRegister() {
 		createAttachedPacket(cstoma::registerDistributed::build(
 		    myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_, stableId,
 		    masterconn_incarnation(), static_cast<uint8_t>(ready), scanEpoch,
-		    static_cast<uint8_t>(role)));
+		    static_cast<uint8_t>(role), masterconn_claim_token()));
 		safs::log_info("MasterConn: requesting distributed registration from {} as role {}",
 		               address_.toString(), static_cast<uint8_t>(role));
 		registrationStatus_ = RegistrationStatus::kRegistrationRequested;
@@ -239,7 +239,8 @@ void MasterConn::requestRenewerUpgrade() {
 	createAttachedPacket(cstoma::registerDistributed::build(
 	    myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_, masterconn_stable_id(),
 	    masterconn_incarnation(), static_cast<uint8_t>(ready), scanEpoch,
-	    static_cast<uint8_t>(DistributedRegistrationRole::kClaimRenewer)));
+	    static_cast<uint8_t>(DistributedRegistrationRole::kClaimRenewer),
+	    masterconn_claim_token()));
 	safs::log_info("MasterConn: requesting in-place renewer upgrade from MDS {}", mdsId_);
 }
 
@@ -282,13 +283,20 @@ void MasterConn::onDistributedRegistered(const std::vector<uint8_t> &data) {
 	uint64_t claimSequence = 0;
 	uint64_t leaseDeadline = 0;
 	uint64_t cutoffReserveSeconds = 0;
+	uint64_t claimToken = 0;
 	matocs::registerDistributed::deserialize(data, status, stableId, mdsId, mdsIncarnation, version,
 	                                         clusterId, claimSequence, leaseDeadline,
-	                                         cutoffReserveSeconds);
+	                                         cutoffReserveSeconds, claimToken);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_err("MasterConn: distributed registration to {} failed with status {}",
 		              address_.toString(), saunafs_error_string(status));
+		if (test_event_stream::enabled()) {
+			// The status, not the token, goes to the stream: the token never leaves memory.
+			test_event_stream::emit("session_admission_refused",
+			                        {{"sender_mds_id", mdsId},
+			                         {"status", static_cast<uint64_t>(status)}});
+		}
 		setMode(ConnectionMode::KILL);
 		return;
 	}
@@ -319,6 +327,7 @@ void MasterConn::onDistributedRegistered(const std::vector<uint8_t> &data) {
 		setMode(ConnectionMode::KILL);
 		return;
 	}
+	masterconn_adopt_claim_token(claimToken);
 	if (distributedRole_ == DistributedRegistrationRole::kClaimRenewer) {
 		// The renewer's reply is a lease-bearing tuple; only the acceptance model may
 		// install it. An observer's reply stays a hint and never extends authority.

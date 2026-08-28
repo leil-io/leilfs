@@ -1828,7 +1828,7 @@ static void matocsserv_finish_register_distributed(
 	matocs::registerDistributed::serialize(outPacket.packet, result.status, result.stableId,
 	                                       result.mdsId, result.mdsIncarnation, SAUNAFS_VERSHEX,
 	                                       gClusterId, result.claimSequence, result.leaseDeadline,
-	                                       result.cutoffReserveSeconds);
+	                                       result.cutoffReserveSeconds, result.claimToken);
 	eptr->outputPackets.push_back(std::move(outPacket));
 	if (validMint) {
 		safs::log_info("mint-only registration assigned stable chunkserver id {}", result.stableId);
@@ -1862,9 +1862,10 @@ void matocsserv_sau_register_distributed(matocsserventry *eptr, const std::vecto
 	uint8_t readiness = 0;
 	uint64_t scanEpoch = 0;
 	uint8_t roleValue = 0;
+	uint64_t claimToken = 0;
 	cstoma::registerDistributed::deserialize(data, servip, servport, timeout, version, clusterId,
 	                                         stableId, chunkserverIncarnation, readiness, scanEpoch,
-	                                         roleValue);
+	                                         roleValue, claimToken);
 
 	if (!gChunkserverSessionRegistrationHook) {
 		safs::log_warn("Master/Shadow refused distributed chunkserver registration");
@@ -1911,7 +1912,7 @@ void matocsserv_sau_register_distributed(matocsserventry *eptr, const std::vecto
 	gPendingSessionRegistrations[pendingId] = eptr;
 	try {
 		gChunkserverSessionRegistrationHook(
-		    {stableId, chunkserverIncarnation, role, readiness != 0, scanEpoch},
+		    {stableId, chunkserverIncarnation, role, readiness != 0, scanEpoch, claimToken},
 		    [pendingId, stableId, chunkserverIncarnation, readiness, scanEpoch,
 		     role](const ChunkserverSessionRegistrationResult &result) {
 			    matocsserv_finish_register_distributed(pendingId, stableId,

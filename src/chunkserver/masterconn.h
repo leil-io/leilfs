@@ -50,6 +50,11 @@ uint32_t masterconn_stable_id();
 /// Random nonzero identity of this chunkserver process start in distributed mode.
 uint64_t masterconn_incarnation();
 
+/// The claim token this process holds, zero when it holds none. Process memory only: never
+/// persisted, logged, or streamed, so cloning storage clones identity and not admission.
+uint64_t masterconn_claim_token();
+void masterconn_adopt_claim_token(uint64_t token);
+
 /// Adopts an id assigned by a registration reply: persists it durably on first sight,
 /// accepts a matching repeat, and refuses a mismatch (false), which must fail visibly.
 bool masterconn_adopt_stable_id(uint32_t stableId);
