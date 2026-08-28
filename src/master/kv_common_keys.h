@@ -208,6 +208,16 @@ inline constexpr std::string_view kCsEvidencePosKeyPrefix = "CS_EVIDENCE_POS_";
 /// no longer the one the claim names.
 inline constexpr std::string_view kCsVerifyKeyPrefix = "CS_VERIFY_";
 
+/// Prefix for pending verified additions: members a report claims exist but the published set
+/// does not name. A report is not provenance, so the addition waits here until the holder
+/// confirms the part through a fenced verify question; only the confirming answer publishes.
+/// Format: VERIFY_ADD_<ChunkId><StableId><PartType> -> <FormatVersion><ChunkVersion><ObservedAtMs>
+/// - ChunkId u64, StableId u32, PartType u16, all Big Endian; Value: datapack big-endian;
+///   FormatVersion u8, ChunkVersion u32, ObservedAtMs u64.
+/// @note Deleted when the answer arrives (either way), when the chunk version moves on, or when
+/// the holder's claim lapses; a row is a question in flight, never a membership statement.
+inline constexpr std::string_view kVerifyAddKeyPrefix = "VERIFY_ADD_";
+
 /// Prefix for the reverse view of the published sets: which parts the authoritative sets expect
 /// on one chunkserver. Written in the same transaction as every CHUNK_PARTS_ change, so the two
 /// cannot drift.
