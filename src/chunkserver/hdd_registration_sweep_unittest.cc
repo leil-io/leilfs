@@ -40,13 +40,18 @@
 class RegistrationSweepTests : public testing::Test {
 protected:
 	void SetUp() override {
-		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-		ASSERT_TRUE(gChunksMap.empty());
-		ASSERT_TRUE(gPresentChunkTypes.empty());
+		{
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			ASSERT_TRUE(gChunksMap.empty());
+			ASSERT_TRUE(gPresentChunkTypes.empty());
+		}
+		std::lock_guard masterReportsLockGuard(gMasterReportsLock);
+		ASSERT_TRUE(gNewChunks.empty());
+		ASSERT_TRUE(gNewChunkReportOriginRuns.empty());
 	}
 
 	void TearDown() override {
-		hddDiscardNewChunks();
+		hddRegistrationSweepBegin(RegistrationSweepMode::kPush);
 		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 		gChunksMap.clear();
 		gPresentChunkTypes.clear();
@@ -73,7 +78,7 @@ protected:
 TEST_F(RegistrationSweepTests, LockedChunkIsRetriedWithoutWaiting) {
 	auto *chunk = addChunk(1, ChunkState::Locked);
 	ASSERT_NE(chunk, nullptr);
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 	std::vector<ChunkWithVersionAndType> bulk;
 	auto sweep = std::async(std::launch::async,
 	                        [&bulk] { return hddRegistrationSweepNext(bulk, 1); });
@@ -93,7 +98,7 @@ TEST_F(RegistrationSweepTests, EpochSurvivesMoreThan255Sessions) {
 	ASSERT_NE(chunk, nullptr);
 	std::vector<ChunkWithVersionAndType> bulk;
 	for (unsigned session = 0; session < 300; ++session) {
-		hddRegistrationSweepBegin();
+		hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 		ASSERT_EQ(hddRegistrationSweepNext(bulk, 1), RegistrationSweepResult::kBulkReady);
 		ASSERT_EQ(bulk.size(), 1U);
 		ASSERT_EQ(hddRegistrationSweepNext(bulk, 1), RegistrationSweepResult::kComplete);
@@ -108,7 +113,7 @@ TEST_F(RegistrationSweepTests, PartsInOneBucketRespectBulkLimit) {
 	          nullptr);
 	ASSERT_NE(addChunk(1, ChunkState::Available, slice_traits::xors::ChunkPartType(2, 2)),
 	          nullptr);
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 	std::vector<ChunkWithVersionAndType> bulk;
 	for (unsigned part = 0; part < 3; ++part) {
 		ASSERT_EQ(hddRegistrationSweepNext(bulk, 1), RegistrationSweepResult::kBulkReady);
@@ -120,7 +125,7 @@ TEST_F(RegistrationSweepTests, PartsInOneBucketRespectBulkLimit) {
 TEST_F(RegistrationSweepTests, RehashDoesNotLoseUnreportedChunks) {
 	ASSERT_NE(addChunk(1), nullptr);
 	ASSERT_NE(addChunk(2), nullptr);
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 	std::vector<ChunkWithVersionAndType> bulk;
 	ASSERT_EQ(hddRegistrationSweepNext(bulk, 1), RegistrationSweepResult::kBulkReady);
 	const auto firstId = bulk.front().id;
@@ -136,7 +141,7 @@ TEST_F(RegistrationSweepTests, RehashDoesNotLoseUnreportedChunks) {
 
 TEST_F(RegistrationSweepTests, DropsReportedAndRemovedAnnouncements) {
 	ASSERT_NE(addChunk(1), nullptr);
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 
 	std::vector<ChunkWithVersionAndType> swept;
 	ASSERT_EQ(hddRegistrationSweepNext(swept, 1), RegistrationSweepResult::kBulkReady);
@@ -184,4 +189,27 @@ TEST_F(RegistrationSweepTests, ConnectionRetriesWithRetainedCredit) {
 	removeHeaderInPlace(credit);
 	connection.onRegisterChunksCredit(credit);
 	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistered);
+}
+
+TEST_F(RegistrationSweepTests, StartsWithoutPreRegistrationNewChunkQueue) {
+	ASSERT_NE(addChunk(1), nullptr);
+	const auto type = ChunkPartType();
+	hddEnqueueChunkReport(ChunkWithVersionAndType(1, 1, type), true);
+
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+
+	{
+		std::lock_guard masterReportsLockGuard(gMasterReportsLock);
+		EXPECT_TRUE(gNewChunkReportOriginRuns.empty());
+	}
+
+	std::vector<ChunkWithVersionAndType> newChunks;
+	hddGetNewChunks(newChunks, 1);
+	EXPECT_TRUE(newChunks.empty());
+
+	std::vector<ChunkWithVersionAndType> bulk;
+	EXPECT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(1U, bulk.size());
+	EXPECT_EQ(1U, bulk.front().id);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
 }

@@ -126,6 +126,10 @@ enum class SendDataToMasterMode : uint8_t {
 	ForNewChunk
 };
 
+// Suppress redundant announcements while the pull sweep reports the registry.
+// Atomic because hddQueueChunkReport() may run with gChunksMapMutex already held.
+static std::atomic_bool gPullRegistrationSweepActive = false;
+
 void hddGetDamagedChunks(std::vector<ChunkWithType>& chunks,
                          std::size_t limit) {
 	TRACETHIS();
@@ -152,8 +156,23 @@ void hddGetLostChunks(std::vector<ChunkWithType> &chunks, std::size_t limit) {
 static void hddQueueChunkReport(uint64_t id, uint32_t version, bool todel, ChunkPartType type,
                                 bool fromDiskScan) {
 	TRACETHIS();
-	uint32_t versionWithTodelFlag = common::combineVersionWithTodelFlag(version, todel);
-	hddEnqueueChunkReport(ChunkWithVersionAndType(id, versionWithTodelFlag, type), fromDiskScan);
+	// The active pull sweep reports these chunks; avoid redundant announcements.
+	if (gPullRegistrationSweepActive.load(std::memory_order_acquire)) { return; }
+
+	const uint32_t versionWithTodelFlag = common::combineVersionWithTodelFlag(version, todel);
+	std::lock_guard lockGuard(gMasterReportsLock);
+
+	// Recheck under the queue lock to synchronize with registration start.
+	if (gPullRegistrationSweepActive.load(std::memory_order_acquire)) { return; }
+
+	// Keep reports and their origin runs consistent under the same lock.
+	gNewChunks.emplace_back(id, versionWithTodelFlag, type);
+	if (gNewChunkReportOriginRuns.empty() ||
+	    gNewChunkReportOriginRuns.back().fromDiskScan != fromDiskScan) {
+		gNewChunkReportOriginRuns.push_back({1, fromDiskScan});
+	} else {
+		++gNewChunkReportOriginRuns.back().count;
+	}
 }
 
 void hddReportNewChunkToMaster(uint64_t id, uint32_t version, bool todel, ChunkPartType type) {
@@ -653,7 +672,7 @@ static std::size_t gRegistrationSweepBucket = 0;
 static std::size_t gRegistrationSweepBucketCount = 0;
 static bool gRegistrationSweepCursorDone = false;
 
-void hddRegistrationSweepBegin() {
+void hddRegistrationSweepBegin(RegistrationSweepMode mode) {
 	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 
 	++gRegistrationSweepEpoch;
@@ -667,6 +686,15 @@ void hddRegistrationSweepBegin() {
 	gRegistrationSweepBucket = 0;
 	gRegistrationSweepBucketCount = gChunksMap.bucket_count();
 	gRegistrationSweepCursorDone = false;
+
+	// A full registration sends every current registry entry, so retaining
+	// reports from before it started only duplicates the whole disk scan. Keep
+	// gChunksMapMutex while publishing the pull state: a concurrent scanner can
+	// then either be part of this sweep or enqueue an announcement afterwards.
+	gPullRegistrationSweepActive.store(mode == RegistrationSweepMode::kPull,
+	                                   std::memory_order_release);
+
+	hddDiscardNewChunks();
 }
 
 RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
@@ -745,8 +773,13 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
 	}
 
 	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
-	return hasLockedChunks ? RegistrationSweepResult::kRetry
-	                       : RegistrationSweepResult::kComplete;
+	if (hasLockedChunks) { return RegistrationSweepResult::kRetry; }
+
+	// This store happens while gChunksMapMutex is still held. A scanner that
+	// publishes a chunk before it observes false will be caught by the terminal
+	// scan above; one that observes false queues a CHUNK_NEW report instead.
+	gPullRegistrationSweepActive.store(false, std::memory_order_release);
+	return RegistrationSweepResult::kComplete;
 }
 
 uint64_t hddGetChunkRegistryBucketCount() {
@@ -3052,6 +3085,8 @@ void hddTerminate(void) {
 	// were executed.
 	gChunksMap.clear();
 	gPresentChunkTypes.clear();
+	gPullRegistrationSweepActive.store(false, std::memory_order_release);
+	hddDiscardNewChunks();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
 	gDisks.clear();
 	// Destroy the disks-to-be-deleted related structures
