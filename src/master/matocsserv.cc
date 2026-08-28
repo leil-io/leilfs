@@ -1437,30 +1437,12 @@ void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vect
 	std::vector<ChunkWithVersionAndType> foundChunks;
 	cstoma::queryChunksResponse::deserialize(data, generation, queriedChunkIds, foundChunks);
 
-	// A response from an older attempt may arrive after its query timed out and
-	// the same chunk ID was queried again. Only apply answers that still match
-	// a live query generation; this also prevents stale locations from being
-	// inserted into the chunk-operation state.
-	bool generationIsCurrent = false;
-	for (const auto chunkId : queriedChunkIds) {
-		auto queryIter = gPendingChunkQueries.find(chunkId);
-		if (queryIter != gPendingChunkQueries.end() && queryIter->second.generation == generation) {
-			generationIsCurrent = true;
-			break;
-		}
-	}
-	if (!generationIsCurrent) { return; }
-
-	std::vector<ChunkWithVersionAndType> currentFoundChunks;
-	for (const auto &foundChunk : foundChunks) {
-		auto queryIter = gPendingChunkQueries.find(foundChunk.id);
-		if (queryIter != gPendingChunkQueries.end() && queryIter->second.generation == generation) {
-			currentFoundChunks.push_back(foundChunk);
-		}
-	}
-	if (!currentFoundChunks.empty()) {
+	// generation identifies the query attempt used to account for replies, not
+	// the lifetime of the location fact. A late positive answer still describes
+	// a copy the chunkserver has and must be retained for the next attempt.
+	if (!foundChunks.empty()) {
 		// Register the found copies exactly like a registration bulk would.
-		gChunkOperations->serverHasChunks(eptr, currentFoundChunks);
+		gChunkOperations->serverHasChunks(eptr, foundChunks);
 	}
 
 	for (const auto chunkId : queriedChunkIds) {
