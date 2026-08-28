@@ -1126,6 +1126,16 @@ void chunk_set_operation_generation(uint64_t chunkid, uint64_t generation) {
 #endif
 }
 
+uint64_t chunk_operation_generation(uint64_t chunkid) {
+#ifndef METARESTORE
+	Chunk *c = chunk_find(chunkid);
+	return c != nullptr ? c->operationGeneration : 0;
+#else
+	(void)chunkid;
+	return 0;
+#endif
+}
+
 bool chunk_exists(uint64_t chunkid) { return chunk_find(chunkid) != nullptr; }
 
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,

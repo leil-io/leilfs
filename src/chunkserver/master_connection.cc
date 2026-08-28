@@ -34,20 +34,21 @@
 #include <cstring>
 #include <ctime>
 
+#include <algorithm>
+#include <iterator>
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
+#include "chunkserver/chunk_generation_fence.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
 #include "chunkserver/network_main_thread.h"
+#include "common/event_loop.h"
 #include "common/input_packet.h"
 #include "common/loop_watchdog.h"
 #include "common/network_address.h"
 #include "common/output_packet.h"
 #include "common/saunafs_version.h"
 #include "common/sockets.h"
-#include <algorithm>
-#include <iterator>
-#include "common/event_loop.h"
 #include "common/test_event_stream.h"
 #include "common/test_packet_faults.h"
 #include "config/cfg.h"
@@ -1264,6 +1265,7 @@ OutputPacket *MasterConn::acceptFencedCommand(const ChunkCommandIdentity &identi
                                               uint64_t chunkId, ChunkPartType chunkType,
                                               ChunkCommandFamily family, uint32_t resultVersion) {
 	const char *refusal = nullptr;
+	uint8_t refusalStatus = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
 	if (identity.targetStableId != masterconn_stable_id()) {
 		refusal = "wrong stable id";
 	} else if (identity.targetIncarnation != masterconn_incarnation()) {
@@ -1275,6 +1277,12 @@ OutputPacket *MasterConn::acceptFencedCommand(const ChunkCommandIdentity &identi
 		// before the cutoff. An ordinary renewal raises the claim without ending the era, which is
 		// why this compares against the era's starting claim and not against the current one.
 		refusal = "stale claim";
+	} else if (!chunk_generation_fence::admit(chunkId, identity.generation, "accept")) {
+		// Issued by a round already superseded for this chunk. Refused as busy rather than
+		// failed: the issuer's round is over, and recording a failure for it would punish the
+		// part for a command that was right to die.
+		refusal = "stale generation";
+		refusalStatus = SAUNAFS_ERROR_CHUNKBUSY;
 	}
 	if (refusal == nullptr) {
 		auto *outputPacket = new OutputPacket;
@@ -1294,7 +1302,7 @@ OutputPacket *MasterConn::acceptFencedCommand(const ChunkCommandIdentity &identi
 	// Answered rather than dropped. Refusing to execute and refusing to say so are separate
 	// choices, and only the first is required here: an answer that names the command lets the
 	// metadata server retire exactly that row now instead of waiting out its deadline.
-	refuseFencedCommand(identity, chunkId, chunkType, family, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE);
+	refuseFencedCommand(identity, chunkId, chunkType, family, refusalStatus);
 	return nullptr;
 }
 
@@ -1358,7 +1366,7 @@ void MasterConn::fencedSetVersion(const std::vector<uint8_t> &data) {
 	}
 	job_version(*jobPool_,
 	            needsLock ? sauJobFinishedAndLock(this, chunkId, chunkType) : sauJobFinished(this),
-	            outputPacket, chunkId, chunkVersion, chunkType, newVersion);
+	            outputPacket, chunkId, chunkVersion, chunkType, newVersion, identity.generation);
 }
 
 void MasterConn::fencedVerifyPart(const std::vector<uint8_t> &data) {

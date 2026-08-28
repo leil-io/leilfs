@@ -1329,6 +1329,25 @@ void matocsserv_got_fenced_status(matocsserventry *eptr, const std::vector<uint8
 		return;
 	}
 
+	// A reply can outlive its round: the participant answers busy when its generation fence
+	// refused the command, and this server's own stamped generation is ahead once it opened a
+	// newer round on the chunk itself. Either way the round this answers is over. Recording a
+	// failure for it would invalidate a healthy part and bump the version underneath the round
+	// that superseded it, so the row is retired and nothing is applied; the write that lost
+	// simply retries under a fresh round.
+	if (echoed.generation != 0) {
+		const bool refusedAsBusy = status == SAUNAFS_ERROR_CHUNKBUSY;
+		const bool locallySuperseded = echoed.generation < chunk_operation_generation(chunkId);
+		if (refusedAsBusy || locallySuperseded) {
+			if (test_event_stream::enabled()) {
+				test_event_stream::emit(
+				    "status_dropped_superseded_round",
+				    {{"chunk", chunkId}, {"generation", echoed.generation}, {"status", status}});
+			}
+			return;
+		}
+	}
+
 	switch (family) {
 	case ChunkCommandFamily::kCreate:
 		gChunkOperations->gotCreateStatus(eptr, chunkId, chunkType, status);

@@ -652,11 +652,13 @@ uint32_t job_create(MasterJobPool &jobPool, JobPool::JobCallback callback, void 
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param newChunkVersion The new version of the chunk.
+/// @param operationGeneration The issuing round's generation; zero when no round issued it.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                     uint32_t newChunkVersion, uint32_t listenerId = 0);
+                     uint32_t newChunkVersion, uint64_t operationGeneration = 0,
+                     uint32_t listenerId = 0);
 
 /// @brief Adds a truncate job to the JobPool.
 ///

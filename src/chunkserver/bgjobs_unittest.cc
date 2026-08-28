@@ -17,6 +17,10 @@
 */
 
 #include "chunkserver/bgjobs.h"
+
+#include <atomic>
+
+#include "chunkserver/chunk_generation_fence.h"
 #include "errors/saunafs_error_codes.h"
 
 #include <sys/poll.h>
@@ -386,4 +390,27 @@ TEST_F(JobPoolTest, IOPriorityMode) {
 	}
 
 	EXPECT_EQ(counters[1].load(), fifoCounterExpectedFinalValue);
+}
+
+void generationStatusCallback(uint8_t status, void *extra) {
+	static_cast<std::atomic<int> *>(extra)->store(status);
+}
+
+TEST_F(JobPoolTest, VersionJobBelowGenerationHighWaterReturnsBusy) {
+	// The execution-time half of the generation fence: a version job whose round generation is
+	// below the chunk's recorded high water returns busy from the worker without touching the
+	// disk. The pool machinery is real; only the fence decides.
+	stopServePoll();
+	chunk_generation_fence::resetForTest();
+	ASSERT_TRUE(chunk_generation_fence::admit(4242, 7, "accept"));
+
+	std::atomic<int> delivered{-1};
+	job_version(*masterJobPool, generationStatusCallback, &delivered, 4242, 1,
+	            slice_traits::standard::ChunkPartType(), 2, 6);
+	for (int i = 0; i < 400 && delivered.load() == -1; ++i) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		masterJobPool->processCompletedJobs();
+	}
+	EXPECT_EQ(SAUNAFS_ERROR_CHUNKBUSY, delivered.load());
+	chunk_generation_fence::resetForTest();
 }

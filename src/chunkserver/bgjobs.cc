@@ -22,9 +22,10 @@
 
 #include "chunkserver/bgjobs.h"
 
-#include "chunkserver/test_job_faults.h"
+#include "chunkserver/chunk_generation_fence.h"
 #include "chunkserver/chunk_replicator.h"
 #include "chunkserver/hddspacemgr.h"
+#include "chunkserver/test_job_faults.h"
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
 #include "common/massert.h"
@@ -873,9 +874,15 @@ uint32_t job_create(MasterJobPool &jobPool, JobPool::JobCallback callback, void 
 
 uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                     uint32_t newChunkVersion, uint32_t listenerId) {
+                     uint32_t newChunkVersion, uint64_t operationGeneration, uint32_t listenerId) {
 	if (newChunkVersion > 0) {
 		JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+			// Re-checked at execution, not only at accept: a job can wait in the pool across
+			// the arrival of a newer round's command, and the header write is the moment that
+			// must not happen out of order.
+			if (!chunk_generation_fence::admit(chunkId, operationGeneration, "execute")) {
+				return SAUNAFS_ERROR_CHUNKBUSY;
+			}
 			return hddInternalUpdateVersion(chunkId, chunkVersion, newChunkVersion, chunkType);
 		};
 		return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
