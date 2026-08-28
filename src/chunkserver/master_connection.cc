@@ -247,7 +247,7 @@ void MasterConn::pushRegisterChunks() {
 	// registered, and marks left by a pull session earlier in this process
 	// would otherwise read as "already reported to this master" and suppress
 	// announcements it was never told about.
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPush);
 
 	uint64_t pushedChunks = 0;
 	hddForeachChunkInBulks(
@@ -342,7 +342,7 @@ void MasterConn::onRegisterChunksStart(const std::vector<uint8_t> &data) {
 	    "registry buckets {})",
 	    pullBulkSize_, pullCredits_, hddGetChunkRegistryBucketCount());
 
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 	pumpPullRegistration();
 }
 
