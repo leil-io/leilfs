@@ -938,6 +938,17 @@ struct BatchWitnessIdentity {
 static uint64_t gWitnessSequenceCounter = 0;  ///< monotonic per process incarnation, never reused
 static BatchWitnessIdentity gCurrentBatchWitness;
 
+/// Witnesses whose batches resolved and whose rows may now be cleared. Each entry is re-staged
+/// into every later batch transaction as a conditional clear (read, digest compare, remove)
+/// until one of those transactions confirms, which is when the whole ledger is dropped: what
+/// was staged rode the confirmed commit. A clear is never a blind remove, so a foreign-digest
+/// row, the evidence of a second process under this identity, is left exactly where it is.
+struct ResolvedWitness {
+	uint64_t sequence = 0;
+	std::array<uint8_t, 32> digest{};
+};
+static std::vector<ResolvedWitness> gPendingWitnessClears;
+
 /// This metadata server's witness key, or empty when it has no identity to key one by, which is
 /// every Master/Shadow deployment: those never reach the batch path's unknown branch because they
 /// keep no such transaction.
@@ -1015,6 +1026,23 @@ static void matoclserv_stamp_batch_witness(const FilesystemOperationContext &ctx
 	put16bit(&destination, gCurrentBatchWitness.requestCount);
 	put64bit(&destination, static_cast<uint64_t>(eventloop_utime() / 1000));
 	txn->set(key, value);
+
+	// Resolved predecessors leave with this batch: a conditional clear on the exact identity,
+	// staged into the same transaction so it costs no extra commit and shares its fate.
+	for (const auto &resolved : gPendingWitnessClears) {
+		const kv::Key resolvedKey = matoclserv_batch_witness_key(resolved.sequence);
+		if (resolvedKey.empty()) { continue; }
+		const auto stored = txn->get(resolvedKey);
+		if (!stored.has_value()) { continue; }
+		if (stored->size() != sizeof(uint8_t) + resolved.digest.size() + sizeof(uint16_t) +
+		                          sizeof(uint64_t) ||
+		    (*stored)[0] != 1 ||
+		    std::memcmp(stored->data() + sizeof(uint8_t), resolved.digest.data(),
+		                resolved.digest.size()) != 0) {
+			continue;
+		}
+		txn->remove(resolvedKey);
+	}
 }
 
 /// The outcome of a witness read for a batch whose commit came back unknown.
@@ -1108,6 +1136,13 @@ static void matoclserv_poll_batch() {
 			for (BatchMember &member : gInFlightBatch->members) {
 				matoclserv_finish_member(member, SAUNAFS_STATUS_OK);
 			}
+			// The staged clears committed with the batch; the batch's own resolved row is the
+			// next one to go.
+			gPendingWitnessClears.clear();
+			if (gCurrentBatchWitness.sequence != 0) {
+				gPendingWitnessClears.push_back(
+				    {gCurrentBatchWitness.sequence, gCurrentBatchWitness.digest});
+			}
 			gCurrentBatchWitness = {};
 			gInFlightBatch.reset();
 		} else if (retryable && gInFlightBatch->attempt < gMaxCommitRetries) {
@@ -1171,6 +1206,13 @@ static void matoclserv_poll_batch() {
 				    commitError, gInFlightBatch->members.size());
 				matoclserv_record_committed_batch(gInFlightBatch->members.size());
 				matoclserv_commit_confirmed(gInFlightBatch->ctx);
+				// The transaction landed, so the clears staged into it landed too, and this
+				// batch's own resolved row is next.
+				gPendingWitnessClears.clear();
+				if (gCurrentBatchWitness.sequence != 0) {
+					gPendingWitnessClears.push_back(
+					    {gCurrentBatchWitness.sequence, gCurrentBatchWitness.digest});
+				}
 				for (BatchMember &member : gInFlightBatch->members) {
 					matoclserv_finish_member(member, SAUNAFS_STATUS_OK);
 				}
