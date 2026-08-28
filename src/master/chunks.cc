@@ -1739,7 +1739,7 @@ static ChunkRepairPlan chunk_refuse_unnameable_repair(uint64_t chunkId, uint32_t
 	return {};
 }
 
-ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
+ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only, bool nameMembers) {
 	uint32_t best_version;
 	Chunk *c;
 
@@ -1785,24 +1785,30 @@ ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
 	// Name who holds the version being settled on, while the parts that say so are in front of
 	// us. A repair that cannot name its holders cannot publish them, and a repaired chunk whose
 	// published set still describes the version it left is one nothing may serve and nothing may
-	// reconcile, so it fails closed and repairs nothing rather than stranding the chunk.
+	// reconcile, so it fails closed and repairs nothing rather than stranding the chunk. Only a
+	// caller that publishes the member set needs this: the in-memory backend ignores members and
+	// its connections carry no stable id, so it must plan without naming.
 	std::vector<ChunkRepairMember> members;
-	for (const auto &part : c->parts) {
-		if (part.state == ChunkPart::DEL || part.version != best_version) { continue; }
-		uint32_t serverIp = 0;
-		uint16_t serverPort = 0;
-		MediaLabel serverLabel = MediaLabel::kWildcard;
-		if (matocsserv_getlocation(part.server(), &serverIp, &serverPort, &serverLabel) != 0) {
-			return chunk_refuse_unnameable_repair(ochunkid, best_version, "location unresolved");
+	if (nameMembers) {
+		for (const auto &part : c->parts) {
+			if (part.state == ChunkPart::DEL || part.version != best_version) { continue; }
+			uint32_t serverIp = 0;
+			uint16_t serverPort = 0;
+			MediaLabel serverLabel = MediaLabel::kWildcard;
+			if (matocsserv_getlocation(part.server(), &serverIp, &serverPort, &serverLabel) != 0) {
+				return chunk_refuse_unnameable_repair(ochunkid, best_version,
+				                                      "location unresolved");
+			}
+			const uint32_t stableId = matocsserv_stable_id_by_address(serverIp, serverPort);
+			if (stableId == 0) {
+				return chunk_refuse_unnameable_repair(ochunkid, best_version, "no stable id");
+			}
+			members.push_back({stableId, static_cast<uint16_t>(part.type.getId())});
 		}
-		const uint32_t stableId = matocsserv_stable_id_by_address(serverIp, serverPort);
-		if (stableId == 0) {
-			return chunk_refuse_unnameable_repair(ochunkid, best_version, "no stable id");
+		if (members.empty()) {
+			return chunk_refuse_unnameable_repair(ochunkid, best_version,
+			                                      "no holder of that version");
 		}
-		members.push_back({stableId, static_cast<uint16_t>(part.type.getId())});
-	}
-	if (members.empty()) {
-		return chunk_refuse_unnameable_repair(ochunkid, best_version, "no holder of that version");
 	}
 
 	return {.action = ChunkRepairAction::kSetVersion,
@@ -1834,7 +1840,7 @@ bool chunk_apply_repair_plan(uint8_t goal, uint64_t ochunkid, const ChunkRepairP
 
 int chunk_repair(uint8_t goal, uint64_t ochunkid, uint32_t *nversion, uint8_t correct_only) {
 	*nversion = 0;
-	const ChunkRepairPlan plan = chunk_plan_repair(ochunkid, correct_only);
+	const ChunkRepairPlan plan = chunk_plan_repair(ochunkid, correct_only, false);
 	if (plan.action == ChunkRepairAction::kUnchanged) { return 0; }
 	if (!chunk_apply_repair_plan(goal, ochunkid, plan)) { return 0; }
 	*nversion = plan.version;

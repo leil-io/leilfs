@@ -146,8 +146,10 @@ struct ChunkRepairPlan {
 	std::vector<ChunkRepairMember> members;
 };
 
-/// Computes repair work without changing the in-memory chunk registry.
-ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only);
+/// Computes repair work without changing the in-memory chunk registry. Callers that publish
+/// the plan's member set pass nameMembers, and naming may fail the plan closed; the in-memory
+/// backend ignores members, so it plans without naming.
+ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only, bool nameMembers);
 
 /// Applies an exact plan produced by chunk_plan_repair().
 bool chunk_apply_repair_plan(uint8_t goal, uint64_t ochunkid, const ChunkRepairPlan &plan);
