@@ -197,6 +197,17 @@ inline constexpr std::string_view kChunkEvidenceKeyPrefix = "CHUNK_EVIDENCE_";
 /// acknowledgement safe to send and every replay below the position free to skip.
 inline constexpr std::string_view kCsEvidencePosKeyPrefix = "CS_EVIDENCE_POS_";
 
+/// Prefix for the durable readmission-verification task: one row per chunkserver whose expected
+/// parts still owe a bounded verification pass.
+/// Format: CS_VERIFY_<StableId> -> <FormatVersion><Incarnation><PassesLeft>
+/// - StableId: uint32_t Big Endian; Value: datapack big-endian; FormatVersion u8,
+///   Incarnation u64 (the process start the questions are about), PassesLeft u8.
+/// @note Written at readmission before any question is asked, so the task survives the server
+/// that started it; a resume sweep re-runs whole passes, which is safe because a verification
+/// question is idempotent, and deletes the row when the passes are spent or the incarnation is
+/// no longer the one the claim names.
+inline constexpr std::string_view kCsVerifyKeyPrefix = "CS_VERIFY_";
+
 /// Prefix for the reverse view of the published sets: which parts the authoritative sets expect
 /// on one chunkserver. Written in the same transaction as every CHUNK_PARTS_ change, so the two
 /// cannot drift.
