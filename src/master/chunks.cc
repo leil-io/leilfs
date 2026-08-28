@@ -261,6 +261,12 @@ public:
 	uint64_t checksum;
 #ifndef METARESTORE
 	compact_vector<ChunkPart> parts;
+	/// Generation of the durable write ownership round open on this chunk, threaded into the
+	/// fenced version command so a chunkserver can tell one round from the next. Zero when no
+	/// round set it. In memory only; the durable identity is the CHUNK_OP_ record. Costs eight
+	/// bytes per chunk; a transient side table would spare resting chunks that, and is left for
+	/// later.
+	uint64_t operationGeneration = 0;
 #endif
 private: // public/private sections are mixed here to make the struct as small as possible
 	ChunkGoalCounters goalCounters_;
@@ -1110,6 +1116,16 @@ bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto
 	return true;
 }
 
+void chunk_set_operation_generation(uint64_t chunkid, uint64_t generation) {
+#ifndef METARESTORE
+	Chunk *c = chunk_find(chunkid);
+	if (c != nullptr) { c->operationGeneration = generation; }
+#else
+	(void)chunkid;
+	(void)generation;
+#endif
+}
+
 bool chunk_exists(uint64_t chunkid) { return chunk_find(chunkid) != nullptr; }
 
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
@@ -1280,7 +1296,7 @@ void chunk_increase_version_operation(Chunk *chunk, bool needsLocking) {
 			bool sentChunkLock = false;
 			matocsserv_send_setchunkversion(part.server(), chunk->chunkid, chunk->version + 1,
 			                                chunk->version, part.type, partNeedsLocking,
-			                                sentChunkLock);
+			                                sentChunkLock, chunk->operationGeneration);
 
 			if (partNeedsLocking && sentChunkLock) { part.mark_being_written(); }
 		}

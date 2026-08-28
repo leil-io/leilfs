@@ -56,6 +56,10 @@ int chunk_unlock(uint64_t chunkid);
 bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
                                          ChunkGoalCounters &counters);
 
+/// Stamps the generation of the write ownership round open on a chunk, so the next version
+/// command it sends carries it. A no-op for an unknown chunk or under METARESTORE.
+void chunk_set_operation_generation(uint64_t chunkid, uint64_t generation);
+
 /// Reads a chunk's write-lock state (lockid and lock expiry timestamp).
 /// Returns false if the chunk is unknown.
 bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto);
