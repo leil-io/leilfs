@@ -254,6 +254,19 @@ inline constexpr std::string_view kChunkCreateReservationKeyPrefix = "CHUNK_CREA
 /// is conditional on the exact part type and expected version.
 inline constexpr std::string_view kChunkReclaimKeyPrefix = "CHUNK_RECLAIM_";
 
+/// Prefix for owed replications: the copies a committed loss removal leaves the cluster short.
+/// Format: CHUNK_REPLICATE_<ChunkId><PartType> -> <FormatVersion><OwnerMdsId><OwnerIncarnation>
+///         <AtVersion>
+/// - ChunkId: uint64_t Big Endian; PartType: uint16_t Big Endian, the part the set lost.
+/// - Value: datapack big-endian; FormatVersion u8, OwnerMdsId u32, OwnerIncarnation u64,
+///   AtVersion u32, the chunk version current when the debt was recorded.
+/// @note Written inside the transaction that removes a member on explicit loss, so a present row
+/// proves the removal committed. The row is a trigger, not authority: an executor revalidates
+/// against the current chunk and part set before sending, and the row is cleared when the
+/// acknowledged replica is admitted to the set, or when revalidation finds the debt moot (the
+/// part is back, or the chunk is gone).
+inline constexpr std::string_view kChunkReplicateKeyPrefix = "CHUNK_REPLICATE_";
+
 /// Prefix for durable maintenance tasks: one row per task kind, scope and partition of a static
 /// range scheme over a named source key family.
 /// Format: MDS_TASK_<TaskKind><ScopeId><PartitionBegin> -> <FormatVersion><SchemeVersion>
