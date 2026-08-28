@@ -36,15 +36,23 @@
 class RegistrationSweepTests : public testing::Test {
 protected:
 	void SetUp() override {
-		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-		ASSERT_TRUE(gChunksMap.empty());
-		ASSERT_TRUE(gPresentChunkTypes.empty());
+		{
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			ASSERT_TRUE(gChunksMap.empty());
+			ASSERT_TRUE(gPresentChunkTypes.empty());
+		}
+		std::lock_guard masterReportsLockGuard(gMasterReportsLock);
+		ASSERT_TRUE(gNewChunks.empty());
 	}
 
 	void TearDown() override {
-		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
-		gChunksMap.clear();
-		gPresentChunkTypes.clear();
+		{
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			gChunksMap.clear();
+			gPresentChunkTypes.clear();
+		}
+		std::lock_guard masterReportsLockGuard(gMasterReportsLock);
+		gNewChunks.clear();
 	}
 
 	IChunk *addChunk(ChunkState state) {
@@ -68,7 +76,7 @@ TEST_F(RegistrationSweepTests, LockedChunkIsRetriedWithoutWaiting) {
 	IChunk *lockedChunk = addChunk(ChunkState::Locked);
 	ASSERT_NE(lockedChunk, nullptr);
 
-	hddRegistrationSweepBegin();
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 	std::vector<ChunkWithVersionAndType> bulk;
 	auto sweep =
 	    std::async(std::launch::async, [&bulk] { return hddRegistrationSweepNext(bulk, 1); });
@@ -83,6 +91,27 @@ TEST_F(RegistrationSweepTests, LockedChunkIsRetriedWithoutWaiting) {
 
 	EXPECT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
 	ASSERT_EQ(bulk.size(), 1U);
+	EXPECT_EQ(1U, bulk.front().id);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
+TEST_F(RegistrationSweepTests, StartsWithoutPreRegistrationNewChunkQueue) {
+	ASSERT_NE(addChunk(ChunkState::Available), nullptr);
+	const auto type = slice_traits::standard::ChunkPartType();
+	{
+		std::lock_guard masterReportsLockGuard(gMasterReportsLock);
+		gNewChunks.emplace_back(1, 1, type);
+	}
+
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+
+	std::vector<ChunkWithVersionAndType> newChunks;
+	hddGetNewChunks(newChunks, 1);
+	EXPECT_TRUE(newChunks.empty());
+
+	std::vector<ChunkWithVersionAndType> bulk;
+	EXPECT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(1U, bulk.size());
 	EXPECT_EQ(1U, bulk.front().id);
 	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
 }

@@ -63,11 +63,17 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 /// concurrent registry mutation between calls.
 
 /// Starts a new registration session over the chunk registry, invalidating the
-/// marks of the previous one. Called by both registration paths: the pull path
-/// sweeps afterwards, while the push path calls it only to retire the previous
-/// session's marks, which would otherwise still read as current when the
-/// new-chunk queue is drained (see hddGetNewChunks).
-void hddRegistrationSweepBegin();
+/// marks of the previous one. Full registry registration makes previously
+/// queued reports redundant; a pull sweep also covers new records until it
+/// completes.
+///
+/// \p mode distinguishes the push path, which only retires old marks, from the
+/// pull path, which suppresses redundant CHUNK_NEW reports while it sweeps.
+enum class RegistrationSweepMode {
+	kPush,
+	kPull,
+};
+void hddRegistrationSweepBegin(RegistrationSweepMode mode);
 
 /// Result of advancing a master-driven registration sweep.
 enum class RegistrationSweepResult {
