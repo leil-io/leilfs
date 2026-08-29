@@ -148,6 +148,8 @@ struct DelayedChunkOperation {
 	uint64_t fileLength = 0;  ///< File length
 	uint32_t chunkIndex = 0;  ///< Exact file slot for failed-write cleanup
 	uint32_t lockId = 0;      ///< Lock ID
+	uint64_t grantGeneration = 0;  ///< Write grant identity riding the delayed reply
+	uint64_t grantRandom = 0;      ///< Write grant identity riding the delayed reply
 	uint32_t messageId = 0;   ///< Message ID for reply
 	inode_t inode = 0;        ///< Inode
 	uint32_t uid = 0;         ///< Remapped uid of the user which will run the operation
@@ -1658,7 +1660,8 @@ static void remove_unsupported_ec_parts(uint32_t version,
 uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
                                             const PacketSerializer *serializer, uint64_t chunkId,
                                             uint32_t messageId, uint64_t fileLength,
-                                            uint32_t lockId) {
+                                            uint32_t lockId, uint64_t grantGeneration = 0,
+                                            uint64_t grantRandom = 0) {
 	uint32_t chunkVersion;
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
 	uint8_t status = gChunkOperations->getVersionAndLocations(
@@ -1682,8 +1685,14 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
 
 	std::vector<uint8_t> outMessage;
 	if (status == SAUNAFS_STATUS_OK) {
-		serializer->serializeFuseWriteChunk(outMessage, messageId, fileLength,
-				chunkId, chunkVersion, lockId, allChunkCopies);
+		if (grantRandom != 0 && serializer->isSaunaFsPacketSerializer()) {
+			serializer->serializeFuseWriteChunk(outMessage, messageId, fileLength, chunkId,
+			                                    chunkVersion, lockId, grantGeneration,
+			                                    grantRandom, allChunkCopies);
+		} else {
+			serializer->serializeFuseWriteChunk(outMessage, messageId, fileLength, chunkId,
+			                                    chunkVersion, lockId, allChunkCopies);
+		}
 	} else {
 		serializer->serializeFuseWriteChunk(outMessage, messageId, status);
 	}
@@ -1746,6 +1755,8 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 	const uint32_t messageId = operation.messageId;
 	const uint64_t fileLength = operation.fileLength;
 	const uint32_t lockId = operation.lockId;
+	const uint64_t grantGeneration = operation.grantGeneration;
+	const uint64_t grantRandom = operation.grantRandom;
 	const uint8_t operationType = operation.type;
 	const inode_t inode = operation.inode;
 	const uint64_t chunkId = operation.chunkId;
@@ -1779,8 +1790,9 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 		} else if (alive) {
 			// The chunkserver write succeeded: reply with the chunk version and locations.
 			// This can still fail (e.g. NOCHUNK), in which case the lock is released below.
-			status = matoclserv_fuse_write_chunk_respond(eptr, serializer,
-					chunkId, messageId, fileLength, lockId);
+			status = matoclserv_fuse_write_chunk_respond(eptr, serializer, chunkId, messageId,
+			                                             fileLength, lockId, grantGeneration,
+			                                             grantRandom);
 			if (status == SAUNAFS_STATUS_OK) {
 				return;  // success: the chunk stays locked for the active writer
 			}
@@ -4650,6 +4662,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		uint64_t retainedChunkId = 0;
 		uint64_t fileLength = 0;
 		uint32_t lockId = 0;
+		uint64_t grantGeneration = 0;
+		uint64_t grantRandom = 0;
 		uint8_t opflag = 0;
 		DelayedChunkOperation *queued = nullptr;
 		bool tookDelayedPath = false;  ///< onCommit took the delayed path; reply via chunk_status
@@ -4677,7 +4691,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 
 		uint8_t st = gFSOperations->writeChunk(matoclserv_get_context(eptr), ctx, inode,
 		                                       chunkIndex, &wc->lockId, &wc->chunkId, &wc->opflag,
-		                                       &wc->fileLength, min_server_version);
+		                                       &wc->fileLength, min_server_version,
+		                                       &wc->grantGeneration, &wc->grantRandom);
 		if (st == SAUNAFS_STATUS_OK) { wc->retainedChunkId = wc->chunkId; }
 
 		if (st == SAUNAFS_STATUS_OK && wc->opflag) {
@@ -4688,6 +4703,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 			operation->messageId = messageId;
 			operation->fileLength = wc->fileLength;
 			operation->lockId = wc->lockId;
+			operation->grantGeneration = wc->grantGeneration;
+			operation->grantRandom = wc->grantRandom;
 			operation->type = FUSE_WRITE;
 			operation->serializer = serializer;
 			operation->commitPending = true;
@@ -4755,7 +4772,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		    // Immediate path: reply with the chunk's version and locations.
 		    dcm_modify(inode, eptr->sessionData->sessionId);
 		    uint8_t respondStatus = matoclserv_fuse_write_chunk_respond(
-		        eptr, serializer, wc->chunkId, messageId, wc->fileLength, wc->lockId);
+		        eptr, serializer, wc->chunkId, messageId, wc->fileLength, wc->lockId,
+		        wc->grantGeneration, wc->grantRandom);
 		    if (respondStatus != SAUNAFS_STATUS_OK) {
 			    // The write transaction is already durable; release the chunk lock with
 			    // its own small op (conflict-retried, since other commits are in flight).

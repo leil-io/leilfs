@@ -37,9 +37,12 @@ const uint32_t kReceiveBufferSize = 1024;
 WriteExecutor::WriteExecutor(ChunkserverStats &chunkserverStats, const NetworkAddress &headAddress,
                              uint32_t chunkserver_version, int headFd, uint32_t responseTimeout_ms,
                              uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                             uint32_t writeWindowSize, bool useWriteFlushPacket)
+                             uint32_t writeWindowSize, bool useWriteFlushPacket,
+                             uint64_t grantGeneration, uint64_t grantRandom)
 		: chunkserverStats_(chunkserverStats),
 		  isRunning_(false),
+		  grantGeneration_(grantGeneration),
+		  grantRandom_(grantRandom),
 		  chunkId_(chunkId),
 		  chunkVersion_(chunkVersion),
 		  chunkType_(chunkType),
@@ -83,7 +86,11 @@ void WriteExecutor::addInitPacket() {
 	}
 	sassert(minChunkserverVersion >= kFirstECVersion);
 
-	if (minChunkserverVersion < kFirstVersionWithWriteFlushPacket) {
+	if (minChunkserverVersion >= kFirstVersionWithWriteGrant && grantRandom_ != 0) {
+		cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_,
+		                             useWriteFlushPacket_, grantGeneration_, grantRandom_,
+		                             chain_);
+	} else if (minChunkserverVersion < kFirstVersionWithWriteFlushPacket) {
 		// Some chunkserver in the chain doesn't support write flush packet
 		cltocs::writeInit::serialize(buffer, chunkId_, chunkVersion_, chunkType_, chain_);
 		useWriteFlushPacket_ = false;

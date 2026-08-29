@@ -117,6 +117,7 @@ static uint64_t gSessionClaimToken = 0;
 uint32_t masterconn_stable_id() { return gStableId; }
 uint64_t masterconn_incarnation() { return gChunkserverIncarnation; }
 uint64_t masterconn_claim_token() { return gSessionClaimToken; }
+bool masterconn_is_distributed() { return gDistributedMode; }
 void masterconn_adopt_claim_token(uint64_t token) {
 	if (token != 0) { gSessionClaimToken = token; }
 }

@@ -3148,7 +3148,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
                                              inode_t inode, uint32_t index,
                                              /* inout */ uint32_t *lockid, uint64_t *chunkid,
                                              uint8_t *opflag, uint64_t *length,
-                                             [[maybe_unused]] uint32_t min_server_version) {
+                                             [[maybe_unused]] uint32_t min_server_version,
+    [[maybe_unused]] uint64_t *grantGeneration,
+    [[maybe_unused]] uint64_t *grantRandom) {
 	ChecksumUpdater checksumUpdater(context.ts());
 	uint64_t oldChunkId;
 	uint64_t newChunkId;
@@ -3209,9 +3211,9 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	oldChunkId = nodeOperations_->getFileChunkId(fsOpContext, fileNode, index);
 	if (context.isPersonalityMaster()) {
 #ifndef METARESTORE
-		status =
-		    gChunkOperations->multiModify(fsOpContext, oldChunkId, lockid, fileNode->goal,
-		                                  isQuotaExceeded, opflag, &newChunkId, min_server_version);
+		status = gChunkOperations->multiModify(fsOpContext, oldChunkId, lockid, fileNode->goal,
+		                                       isQuotaExceeded, opflag, &newChunkId,
+		                                       min_server_version, grantGeneration, grantRandom);
 #else
 		// This will NEVER happen (metarestore doesn't call this in master context)
 		mabort("bad code path: fs_writechunk");

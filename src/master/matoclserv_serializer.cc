@@ -182,6 +182,32 @@ void SaunaFsPacketSerializer::serializeFuseWriteChunk(
 	                                  lockId, chunkCopies);
 }
 
+void SaunaFsPacketSerializer::serializeFuseWriteChunk(
+    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength, uint64_t chunkId,
+    uint32_t chunkVersion, uint32_t lockId, uint64_t grantGeneration, uint64_t grantRandom,
+    const std::vector<ChunkTypeWithAddress> &chunkCopies) const {
+	matocl::fuseWriteChunk::serialize(packetBuffer, messageId, fileLength, chunkId, chunkVersion,
+	                                  lockId, grantGeneration, grantRandom, chunkCopies);
+}
+
+void LegacyPacketSerializer::serializeFuseWriteChunk(
+    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength, uint64_t chunkId,
+    uint32_t chunkVersion, uint32_t lockId, uint64_t /*grantGeneration*/,
+    uint64_t /*grantRandom*/, const std::vector<ChunkTypeWithAddress> &chunkCopies) const {
+	// A legacy client cannot hold a grant; fall back to the grantless shape.
+	serializeFuseWriteChunk(packetBuffer, messageId, fileLength, chunkId, chunkVersion, lockId,
+	                        chunkCopies);
+}
+
+void SaunaFsStdXorPacketSerializer::serializeFuseWriteChunk(
+    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength, uint64_t chunkId,
+    uint32_t chunkVersion, uint32_t lockId, uint64_t /*grantGeneration*/,
+    uint64_t /*grantRandom*/, const std::vector<ChunkTypeWithAddress> &chunkCopies) const {
+	// A std-xor era client cannot hold a grant either; its own override keeps the shape.
+	serializeFuseWriteChunk(packetBuffer, messageId, fileLength, chunkId, chunkVersion, lockId,
+	                        chunkCopies);
+}
+
 void SaunaFsPacketSerializer::deserializeFuseWriteChunk(const std::vector<uint8_t> &packetBuffer,
                                                         uint32_t &messageId, inode_t &inode,
                                                         uint32_t &chunkIndex,

@@ -2720,9 +2720,12 @@ uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &chunkservers, uint64_
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, uint64_t &fileLength,
+uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId,
+                         uint64_t &grantGeneration, uint64_t &grantRandom, uint64_t &fileLength,
                          uint64_t &chunkId, uint32_t &chunkVersion,
                          std::vector<ChunkTypeWithAddress> &chunkservers) {
+	grantGeneration = 0;
+	grantRandom = 0;
 	threc *rec = fs_get_my_threc();
 
 	std::vector<uint8_t> message;
@@ -2749,6 +2752,11 @@ uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, u
 				return SAUNAFS_ERROR_IO;
 			}
 			return status;
+		} else if (packetVersion ==
+		           matocl::fuseWriteChunk::kECChunksWithGrant_ResponsePacketVersion) {
+			matocl::fuseWriteChunk::deserialize(message, fileLength, chunkId, chunkVersion,
+			                                    lockId, grantGeneration, grantRandom,
+			                                    chunkservers);
 		} else if (packetVersion == matocl::fuseWriteChunk::kECChunks_ResponsePacketVersion) {
 			matocl::fuseWriteChunk::deserialize(message,
 					fileLength, chunkId, chunkVersion, lockId, chunkservers);

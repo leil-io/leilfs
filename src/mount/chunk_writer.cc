@@ -157,7 +157,8 @@ void ChunkWriter::init(WriteChunkLocator* locator, uint32_t chunkserverTimeout_m
 		std::unique_ptr<WriteExecutor> executor(new WriteExecutor(
 				chunkserverStats_, location.address, location.chunkserver_version, fd,
 				chunkserverTimeout_ms, locator_->locationInfo().chunkId, locator_->locationInfo().version,
-				location.chunk_type, writeWindowSize_, useWriteFlushPacket_));
+				location.chunk_type, writeWindowSize_, useWriteFlushPacket_,
+				locator_->grantGeneration(), locator_->grantRandom()));
 		executors_.insert(std::make_pair(fd, std::move(executor)));
 	}
 

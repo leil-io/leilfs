@@ -606,6 +606,7 @@ namespace fuseWriteChunk {
 const PacketVersion kStatusPacketVersion = 0;
 const PacketVersion kResponsePacketVersion = 1;
 const PacketVersion kECChunks_ResponsePacketVersion = 2;
+const PacketVersion kECChunksWithGrant_ResponsePacketVersion = 3;
 
 inline void serialize(std::vector<uint8_t>& destination, uint32_t messageId, uint8_t status) {
 	serializePacket(destination, SAU_MATOCL_FUSE_WRITE_CHUNK, kStatusPacketVersion,
@@ -650,6 +651,25 @@ inline void deserialize(const std::vector<uint8_t>& source,
 	verifyPacketVersionNoHeader(source, kECChunks_ResponsePacketVersion);
 	deserializeAllPacketDataNoHeader(source, dummyMessageId,
 			fileLength, chunkId, chunkVersion, lockId, serversList);
+}
+
+inline void serialize(std::vector<uint8_t> &destination, uint32_t messageId, uint64_t fileLength,
+                      uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
+                      uint64_t grantGeneration, uint64_t grantRandom,
+                      const std::vector<ChunkTypeWithAddress> &serversList) {
+	serializePacket(destination, SAU_MATOCL_FUSE_WRITE_CHUNK,
+	                kECChunksWithGrant_ResponsePacketVersion, messageId, fileLength, chunkId,
+	                chunkVersion, lockId, grantGeneration, grantRandom, serversList);
+}
+
+inline void deserialize(const std::vector<uint8_t> &source, uint64_t &fileLength,
+                        uint64_t &chunkId, uint32_t &chunkVersion, uint32_t &lockId,
+                        uint64_t &grantGeneration, uint64_t &grantRandom,
+                        std::vector<ChunkTypeWithAddress> &serversList) {
+	uint32_t dummyMessageId;
+	verifyPacketVersionNoHeader(source, kECChunksWithGrant_ResponsePacketVersion);
+	deserializeAllPacketDataNoHeader(source, dummyMessageId, fileLength, chunkId, chunkVersion,
+	                                 lockId, grantGeneration, grantRandom, serversList);
 }
 
 } //namespace fuseWriteChunk

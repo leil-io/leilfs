@@ -97,7 +97,8 @@ void WriteChunkLocator::locateAndLockChunk(inode_t inode, uint32_t index) {
 	uint32_t oldLockId = lockId_;
 	uint64_t oldFileLength = locationInfo_.fileLength;
 
-	uint8_t status = fs_sauwritechunk(inode, index, lockId_, locationInfo_.fileLength,
+	uint8_t status = fs_sauwritechunk(inode, index, lockId_, grantGeneration_, grantRandom_,
+			locationInfo_.fileLength,
 			locationInfo_.chunkId, locationInfo_.version, locationInfo_.locations);
 	if (status != SAUNAFS_STATUS_OK) {
 		if (status == SAUNAFS_ERROR_IO

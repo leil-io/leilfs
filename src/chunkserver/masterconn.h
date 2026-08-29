@@ -53,6 +53,10 @@ uint64_t masterconn_incarnation();
 /// The claim token this process holds, zero when it holds none. Process memory only: never
 /// persisted, logged, or streamed, so cloning storage clones identity and not admission.
 uint64_t masterconn_claim_token();
+
+/// True when this chunkserver runs in distributed mode; client-plane gates that only apply
+/// there read it instead of reaching for the connection module's internals.
+bool masterconn_is_distributed();
 void masterconn_adopt_claim_token(uint64_t token);
 
 /// Adopts an id assigned by a registration reply: persists it durably on first sight,

@@ -356,10 +356,16 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 
 	sassert(type == SAU_CLTOCS_WRITE_INIT);
 	bool expectWriteFlush = false;
+	uint64_t grantGeneration = 0;
+	uint64_t grantRandom = 0;
 	try {
 		PacketVersion v;
 		deserializePacketVersionNoHeader(data, length, v);
-		if (v == cltocs::writeInit::kECChunks) {
+		if (v == cltocs::writeInit::kECChunksWithGrant) {
+			cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType,
+			                               expectWriteFlush, grantGeneration, grantRandom,
+			                               chain);
+		} else if (v == cltocs::writeInit::kECChunks) {
 			cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType, chain);
 		} else if (v == cltocs::writeInit::kECChunksWithWriteFlush) {
 			cltocs::writeInit::deserialize(data, length, chunkId, chunkVersion, chunkType,
@@ -371,6 +377,22 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		safs::log_info("Received malformed WRITE_INIT message (length: {}): {}", length, ex.what());
 		state = State::Close;
 		return;
+	}
+
+	if (masterconn_is_distributed() && grantRandom == 0) {
+		// FR-062/FR-059: a distributed write carries its grant or does not start. An old
+		// client cannot silently enter the distributed write path.
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("write_grant_missing_refused", {{"chunk_id", chunkId}});
+		}
+		createAttachedWriteStatus(chunkId, SAUNAFS_ERROR_EPERM, 0);
+		state = State::IOFinish;
+		return;
+	}
+	if (grantRandom != 0 && test_event_stream::enabled()) {
+		test_event_stream::emit("write_grant_bound", {{"chunk_id", chunkId},
+		                                              {"grant_generation", grantGeneration},
+		                                              {"grant_random", grantRandom}});
 	}
 
 	if (!bindServingEra()) {
@@ -385,7 +407,10 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		// Create a chain -- connect to the next chunkserver
 		fwdServer = chain[0].address;
 		chain.erase(chain.begin());
-		if (expectWriteFlush) {
+		if (grantRandom != 0) {
+			cltocs::writeInit::serialize(fwdInitPacket, chunkId, chunkVersion, chunkType,
+			                             expectWriteFlush, grantGeneration, grantRandom, chain);
+		} else if (expectWriteFlush) {
 			cltocs::writeInit::serialize(fwdInitPacket, chunkId, chunkVersion, chunkType,
 			                             expectWriteFlush, chain);
 		} else {

@@ -63,7 +63,8 @@ public:
 	WriteExecutor(ChunkserverStats& chunkserverStats,
 			const NetworkAddress& headAddress, uint32_t chunkserver_version, int headFd,
 			uint32_t responseTimeout_ms, uint64_t chunkId, uint32_t chunkVersion,
-			ChunkPartType chunkType, uint32_t writeWindowSize, bool useWriteFlushPacket);
+			ChunkPartType chunkType, uint32_t writeWindowSize, bool useWriteFlushPacket,
+			uint64_t grantGeneration = 0, uint64_t grantRandom = 0);
 	WriteExecutor(const WriteExecutor&) = delete;
 	~WriteExecutor();
 	WriteExecutor& operator=(const WriteExecutor&) = delete;
@@ -112,6 +113,9 @@ private:
 
 	ChunkserverStats& chunkserverStats_;
 	bool isRunning_;
+	/// Write grant identity this chain presents; zero when the reply carried none.
+	uint64_t grantGeneration_ = 0;
+	uint64_t grantRandom_ = 0;
 	const uint64_t chunkId_;
 	const uint32_t chunkVersion_;
 	const ChunkPartType chunkType_;

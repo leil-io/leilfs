@@ -95,7 +95,8 @@ void fs_release(inode_t inode);
 
 uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &serverList, uint64_t &chunkId,
                         uint32_t &chunkVersion, uint64_t &fileLength, inode_t inode, uint32_t index);
-uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId, uint64_t &fileLength,
+uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId,
+                         uint64_t &grantGeneration, uint64_t &grantRandom, uint64_t &fileLength,
                          uint64_t &chunkId, uint32_t &chunkVersion,
                          std::vector<ChunkTypeWithAddress> &chunkservers);
 uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length);

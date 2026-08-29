@@ -76,6 +76,13 @@ public:
 	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
 	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
 	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const = 0;
+	/// The grant-bearing reply. Only the modern serializer can carry it on the wire; the
+	/// legacy and std-xor shapes fall back to the grantless reply, and their clients never
+	/// hold a grant to begin with.
+	virtual void serializeFuseWriteChunk(
+	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
+	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId, uint64_t grantGeneration,
+	    uint64_t grantRandom, const std::vector<ChunkTypeWithAddress> &chunkCopies) const = 0;
 	virtual void deserializeFuseWriteChunk(const std::vector<uint8_t> &packetBuffer,
 	                                       uint32_t &messageId, inode_t &inode,
 	                                       uint32_t &chunkIndex, uint32_t &lockId) const = 0;
@@ -119,6 +126,12 @@ public:
 	void serializeFuseWriteChunk(
 	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
 	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
+	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const override;
+
+	void serializeFuseWriteChunk(
+	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
+	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId, uint64_t grantGeneration,
+	    uint64_t grantRandom,
 	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const override;
 
 	void deserializeFuseWriteChunk(const std::vector<uint8_t> &packetBuffer, uint32_t &messageId,
@@ -173,6 +186,12 @@ public:
 	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
 	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const override;
 
+	void serializeFuseWriteChunk(
+	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
+	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId, uint64_t grantGeneration,
+	    uint64_t grantRandom,
+	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const override;
+
 	void deserializeFuseWriteChunk(const std::vector<uint8_t> &packetBuffer, uint32_t &messageId,
 	                               inode_t &inode, uint32_t &chunkIndex,
 	                               uint32_t &lockId) const override;
@@ -205,5 +224,11 @@ public:
 	void serializeFuseWriteChunk(
 	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
 	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId,
+	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const override;
+
+	void serializeFuseWriteChunk(
+	    std::vector<uint8_t> &packetBuffer, uint32_t messageId, uint64_t fileLength,
+	    uint64_t chunkId, uint32_t chunkVersion, uint32_t lockId, uint64_t grantGeneration,
+	    uint64_t grantRandom,
 	    const std::vector<ChunkTypeWithAddress> &chunkCopies) const override;
 };

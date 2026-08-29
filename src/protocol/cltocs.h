@@ -81,6 +81,7 @@ namespace writeInit {
 
 const PacketVersion kECChunks = 1;
 const PacketVersion kECChunksWithWriteFlush = 2;
+const PacketVersion kECChunksWithGrant = 3;
 
 inline void serialize(std::vector<uint8_t>& destination,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
@@ -110,6 +111,22 @@ inline void deserialize(const uint8_t *source, uint32_t sourceSize, uint64_t &ch
 	verifyPacketVersionNoHeader(source, sourceSize, kECChunksWithWriteFlush);
 	deserializeAllPacketDataNoHeader(source, sourceSize,
 			chunkId, chunkVersion, chunkType, expectWriteFlush, chain);
+}
+
+inline void serialize(std::vector<uint8_t> &destination, uint64_t chunkId, uint32_t chunkVersion,
+                      ChunkPartType chunkType, bool expectWriteFlush, uint64_t grantGeneration,
+                      uint64_t grantRandom, const std::vector<ChunkTypeWithAddress> &chain) {
+	serializePacket(destination, SAU_CLTOCS_WRITE_INIT, kECChunksWithGrant, chunkId, chunkVersion,
+	                chunkType, expectWriteFlush, grantGeneration, grantRandom, chain);
+}
+
+inline void deserialize(const uint8_t *source, uint32_t sourceSize, uint64_t &chunkId,
+                        uint32_t &chunkVersion, ChunkPartType &chunkType, bool &expectWriteFlush,
+                        uint64_t &grantGeneration, uint64_t &grantRandom,
+                        std::vector<ChunkTypeWithAddress> &chain) {
+	verifyPacketVersionNoHeader(source, sourceSize, kECChunksWithGrant);
+	deserializeAllPacketDataNoHeader(source, sourceSize, chunkId, chunkVersion, chunkType,
+	                                 expectWriteFlush, grantGeneration, grantRandom, chain);
 }
 
 } // namespace writeInit

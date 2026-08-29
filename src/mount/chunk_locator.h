@@ -128,7 +128,16 @@ protected:
 	inode_t inode_ = 0;
 	uint32_t index_ = 0;
 	uint32_t lockId_ = 0;
+	/// Write grant identity the metadata server returned beside the lock; zero when the
+	/// reply predates grants. Held here so every executor for this locked chunk presents
+	/// the same pair.
+	uint64_t grantGeneration_ = 0;
+	uint64_t grantRandom_ = 0;
 	ChunkLocationInfo locationInfo_;
+
+public:
+	uint64_t grantGeneration() const { return grantGeneration_; }
+	uint64_t grantRandom() const { return grantRandom_; }
 };
 
 // Fit for truncating xor chunks down when master, not client, locks a chunk
