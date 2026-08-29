@@ -1657,6 +1657,27 @@ static void remove_unsupported_ec_parts(uint32_t version,
 /// @param fileLength The length of the file being written
 /// @param lockId The lock ID for the chunk
 /// @return SAUNAFS_STATUS_OK on success, or an error code otherwise
+/// Advisory renewal of a live write grant. No reply by design: a renewal that cannot be
+/// applied leaves the grant to lapse, and revocation, not this path, owns that outcome.
+static void matoclserv_write_grant_renew(matoclserventry *eptr, const uint8_t *data,
+                                         uint32_t length) {
+	uint32_t messageId = 0;
+	uint64_t chunkId = 0;
+	uint64_t grantGeneration = 0;
+	uint64_t grantRandom = 0;
+	try {
+		std::vector<uint8_t> request(data, data + length);
+		cltoma::writeGrantRenew::deserialize(request, messageId, chunkId, grantGeneration,
+		                                     grantRandom);
+	} catch (const std::exception &exception) {
+		safs::log_info("malformed write grant renewal: {}", exception.what());
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	}
+	if (chunkId == 0 || grantRandom == 0) { return; }
+	gChunkOperations->renewWriteGrant(chunkId, grantGeneration, grantRandom);
+}
+
 uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
                                             const PacketSerializer *serializer, uint64_t chunkId,
                                             uint32_t messageId, uint64_t fileLength,
@@ -7362,6 +7383,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 					break;
 				case SAU_CLTOMA_FUSE_WRITE_CHUNK:
 					matoclserv_fuse_write_chunk(eptr, PacketHeader(type, length), data);
+					break;
+				case SAU_CLTOMA_WRITE_GRANT_RENEW:
+					matoclserv_write_grant_renew(eptr, data, length);
 					break;
 				case SAU_CLTOMA_FUSE_WRITE_CHUNK_END:
 				case CLTOMA_FUSE_WRITE_CHUNK_END:

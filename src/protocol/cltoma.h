@@ -484,6 +484,10 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cltoma, mountInfoList, SAU_CLTOMA_MOUNT_INFO_LIST, 0)
 
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, writeGrantRenew, SAU_CLTOMA_WRITE_GRANT_RENEW, 0,
+                                    uint32_t, messageId, uint64_t, chunkId, uint64_t,
+                                    grantGeneration, uint64_t, grantRandom)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, startTls, SAU_CLTOMA_STARTTLS, 0)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, endTls, SAU_CLTOMA_ENDTLS, 0)

@@ -95,6 +95,10 @@ void fs_release(inode_t inode);
 
 uint8_t fs_saureadchunk(std::vector<ChunkTypeWithAddress> &serverList, uint64_t &chunkId,
                         uint32_t &chunkVersion, uint64_t &fileLength, inode_t inode, uint32_t index);
+/// Advisory renewal of a live write grant; no reply. A renewal that is lost or refused
+/// surfaces later as revocation, never as a client error here.
+void fs_saurenewwritegrant(uint64_t chunkId, uint64_t grantGeneration, uint64_t grantRandom);
+
 uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId,
                          uint64_t &grantGeneration, uint64_t &grantRandom, uint64_t &fileLength,
                          uint64_t &chunkId, uint32_t &chunkVersion,

@@ -224,6 +224,16 @@ uint32_t ChunkWriter::startNewOperations(bool can_expect_next_block,
 
 void ChunkWriter::processOperations(uint32_t msTimeout) {
 	LOG_AVG_TILL_END_OF_SCOPE0("ChunkWriter::processOperations");
+	// A stream that outlives the round's client lock keeps its authority by renewal. A third
+	// of the 30 second lock; advisory, so a lost renewal costs nothing here.
+	if (locator_ != nullptr && locator_->grantRandom() != 0) {
+		const auto now = std::chrono::steady_clock::now();
+		if (now - lastGrantRenewal_ >= std::chrono::seconds(10)) {
+			lastGrantRenewal_ = now;
+			fs_saurenewwritegrant(locator_->locationInfo().chunkId,
+			                      locator_->grantGeneration(), locator_->grantRandom());
+		}
+	}
 	LOG_AVG_TILL_END_OF_SCOPE1("ChunkWriter::processOperations#op", getPendingOperationsCount());
 	std::vector<pollfd> pollFds;
 	if (dataChainFd_ >= 0) {

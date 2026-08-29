@@ -1743,6 +1743,10 @@ enum class SugidClearMode : uint8_t {
 
 // 0x64A
 #define SAU_MATOCL_MOUNT_INFO_LIST (1000U + 610U)
+
+// 0x64B
+#define SAU_CLTOMA_WRITE_GRANT_RENEW (1000U + 611U)
+// msgid:32 chunkid:64 grantgeneration:64 grantrandom:64 (no reply)
 // N * [ sessionid:32 mountinfo:STDSTRING ]
 
 // CHUNKSERVER STATS

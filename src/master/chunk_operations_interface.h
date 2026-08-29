@@ -104,6 +104,11 @@ public:
 
 #ifndef METARESTORE
 	// --- Write / modify (client write path) ---
+	/// Advisory renewal of the write grant on @p chunkid's live round; grant-bound, applied
+	/// off the event loop. Backends without rounds ignore it.
+	virtual void renewWriteGrant(uint64_t /*chunkid*/, uint64_t /*grantGeneration*/,
+	                             uint64_t /*grantRandom*/) {}
+
 	virtual uint8_t multiModify(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
 	                            uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag,
 	                            uint64_t *nchunkid, uint32_t minServerVersion,

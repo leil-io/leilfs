@@ -196,6 +196,8 @@ private:
 	ChunkserverStats& chunkserverStats_;
 	ChunkConnector& connector_;
 	WriteChunkLocator *locator_ = nullptr;
+	/// Last advisory grant renewal for this chunk's open chain.
+	std::chrono::steady_clock::time_point lastGrantRenewal_ = std::chrono::steady_clock::now();
 	uint32_t idCounter_ = 0;
 	bool acceptsNewOperations_ = true;
 	int combinedStripeSize_ = 0;

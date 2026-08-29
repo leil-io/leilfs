@@ -3490,6 +3490,16 @@ bool fs_unregister_packet_type_handler(PacketHeader::Type type, PacketHandler *h
 	return true;
 }
 
+void fs_saurenewwritegrant(uint64_t chunkId, uint64_t grantGeneration, uint64_t grantRandom) {
+	threc *rec = fs_get_my_threc();
+	std::vector<uint8_t> message;
+	cltoma::writeGrantRenew::serialize(message, rec->packetId, chunkId, grantGeneration,
+	                                   grantRandom);
+	// Advisory: nothing to do if the send fails; the grant then lapses and revocation owns it.
+	fs_saucreatepacket(rec, message);
+	fs_sausend(rec);
+}
+
 void fs_flock_interrupt(const safs_locks::InterruptData &data) {
 	threc *rec = fs_get_my_threc();
 	auto message = cltoma::fuseFlock::build(rec->packetId, data);
