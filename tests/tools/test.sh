@@ -121,13 +121,15 @@ function parametrize_command() {
 # Do not run directly in test cases
 # This should be called at the very beginning of a test
 test_begin() {
-	if ! is_windows_system; then
-		( tail -n0 -f /var/log/syslog | stdbuf -oL tee "$ERROR_DIR/syslog.log" & )
-	fi
 	test_result_file="$TEMP_DIR/$(unique_file)_results.txt"
 	test_end_file=$test_result_file.end
 	check_configuration
 	test_cleanup
+	# Armed only after test_cleanup: cleanup unlinks ERROR_DIR contents, and a tee started
+	# before it keeps writing the deleted inode, so the copy a test greps never sees a line.
+	if ! is_windows_system; then
+		( tail -n0 -f /var/log/syslog | stdbuf -oL tee "$ERROR_DIR/syslog.log" & )
+	fi
 	remove_all_emulated_zoned_disks
 	touch "$test_result_file"
 	trap 'trap - ERR; set +eE; catch_error_ "${BASH_SOURCE:-}" "${LINENO:-}" "${FUNCNAME:-}"; test_end' ERR
