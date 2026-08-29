@@ -1400,7 +1400,8 @@ void chunk_truncate_operation(Chunk *chunk, uint32_t length) {
 			uint32_t chunkTypeLength =
 			    slice_traits::chunkLengthToChunkPartLength(part.type, length);
 			matocsserv_send_truncatechunk(part.server(), chunk->chunkid, part.type, chunkTypeLength,
-			                              chunk->version + 1, chunk->version);
+			                              chunk->version + 1, chunk->version,
+			                              chunk->operationGeneration);
 		}
 	}
 

@@ -219,7 +219,8 @@ int matocsserv_send_duplicatechunk(matocsserventry *eptr, uint64_t newChunkId,
                                    bool &sentChunkLock);
 void matocsserv_send_truncatechunk(matocsserventry* eptr,
 		uint64_t chunkid, ChunkPartType chunkType, uint32_t length,
-		uint32_t version, uint32_t oldversion);
+		uint32_t version, uint32_t oldversion,
+                                   uint64_t generation);
 int matocsserv_send_duptruncchunk(matocsserventry* eptr,
 		uint64_t newChunkId, uint32_t newChunkVersion,
 		ChunkPartType chunkType, uint64_t chunkId, uint32_t chunkVersion, uint32_t length);

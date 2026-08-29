@@ -1533,7 +1533,8 @@ void matocsserv_got_duplicatechunk_status(matocsserventry *eptr, const std::vect
 }
 
 void matocsserv_send_truncatechunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
-                                   uint32_t length, uint32_t newVersion, uint32_t oldVersion) {
+                                   uint32_t length, uint32_t newVersion, uint32_t oldVersion,
+                                   uint64_t generation) {
 	if (!matocsserv_may_send_chunk_command(eptr, ChunkCommandFamily::kTruncate, chunkid)) {
 		return;
 	}
@@ -1541,7 +1542,9 @@ void matocsserv_send_truncatechunk(matocsserventry *eptr, uint64_t chunkid, Chun
 	sassert(eptr->version >= kFirstECVersion);
 	eptr->outputPackets.emplace_back();
 	if (eptr->distributedSession) {
-		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr);
+		// The generation is what lets the fence refuse this command after its round is
+		// superseded; a zero would bypass the fence, which is exactly the hole this closes.
+		const ChunkCommandIdentity identity = matocsserv_next_command_identity(eptr, generation);
 		matocs::fencedTruncateChunk::serialize(eptr->outputPackets.back().packet, identity, chunkid,
 		                                       chunkType, length, newVersion, oldVersion);
 		matocsserv_record_outstanding_command(eptr, ChunkCommandFamily::kTruncate, chunkid, identity,
