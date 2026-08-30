@@ -404,6 +404,17 @@ struct ChunkserverEntry {
 	/// readmission: a new era authorizes new work and never revives old work.
 	bool servingEraIsCurrent() const;
 
+	/// The write grant generation this chain bound at WRITE_INIT; zero for a legacy, unfenced
+	/// write. Every subsequent frame is checked against the chunk generation fence under this
+	/// number, so a grant a newer round has fenced (recovery raised the fence with its own
+	/// SET_VERSION) stops writing mid-stream instead of appending to a version the cluster moved
+	/// past. Bound once and never rewritten, like the serving era beside it.
+	uint64_t boundGrantGeneration_ = 0;
+
+	/// Whether a newer round has fenced @p opChunkId above the grant generation this chain bound,
+	/// which makes the grant stale and the frame something a superseded writer must not finish.
+	bool writeGrantSuperseded(uint64_t opChunkId) const;
+
 	friend class HighLevelOp;
 
 private:

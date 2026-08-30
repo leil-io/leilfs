@@ -71,8 +71,10 @@ uint8_t ChunkOperationsBase::applyModification(uint32_t ts, uint64_t oldChunkId,
 uint8_t ChunkOperationsBase::multiModify(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
     uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag, uint64_t *nchunkid,
-    uint32_t minServerVersion, uint64_t * /*grantGeneration*/, uint64_t * /*grantRandom*/) {
-	// Legacy backends issue no write grants; the out-params stay at the caller's zeros.
+    uint32_t minServerVersion, uint64_t /*opNonce*/, uint64_t /*requestedGrantRandom*/,
+    uint64_t * /*grantGeneration*/, uint64_t * /*grantRandom*/) {
+	// Legacy backends run no write rounds: the operation identity and grant out-params are unused
+	// and the out-params stay at the caller's zeros.
 	return chunk_multi_modify(ochunkid, lockid, goal, quotaExceeded, opflag, nchunkid,
 	                          minServerVersion);
 }

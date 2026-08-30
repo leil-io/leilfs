@@ -47,6 +47,13 @@ namespace chunk_generation_fence {
 /// table cannot hold a new chunk: an untracked generation cannot be ordered, so it is refused.
 bool admit(uint64_t chunkId, uint64_t generation, const char *stage);
 
+/// Read-only check: whether @p generation for @p chunkId has already been overtaken by a higher
+/// generation admitted for that chunk, meaning a newer round has fenced it. Records and advances
+/// nothing, so a data frame can be checked on every arrival without disturbing the table. A chunk
+/// with no recorded high water is not superseded, and generation zero (the unfenced legacy plane)
+/// is never superseded.
+bool isSuperseded(uint64_t chunkId, uint64_t generation);
+
 /// Test support: empties the table and restores the default capacity.
 void resetForTest();
 

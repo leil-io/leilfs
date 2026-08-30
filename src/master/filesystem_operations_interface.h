@@ -684,6 +684,8 @@ public:
 	                           uint32_t index,
 	                           /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                           uint64_t *length, uint32_t min_server_version = 0,
+	                           /* in */ uint64_t opNonce = 0,
+	                           /* in */ uint64_t requestedGrantRandom = 0,
 	                           /* out, nullable */ uint64_t *grantGeneration = nullptr,
 	                           /* out, nullable */ uint64_t *grantRandom = nullptr) = 0;
 
@@ -1677,7 +1679,8 @@ public:
 	virtual uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                          uint32_t indx, uint64_t *chunkid, uint64_t *length) = 0;
 	virtual uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode,
-	                         uint64_t length, uint64_t chunkid, uint32_t lockid) = 0;
+	                         uint64_t length, uint64_t chunkid, uint32_t lockid,
+	                         uint64_t grantGeneration = 0, uint64_t grantRandom = 0) = 0;
 	virtual void getTrashTimeStore(TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes,
 	                               uint8_t *buff) = 0;
 

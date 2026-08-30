@@ -61,8 +61,8 @@ public:
 #ifndef METARESTORE
 	uint8_t multiModify(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
 	                    uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag,
-	                    uint64_t *nchunkid, uint32_t minServerVersion,
-	                    uint64_t *grantGeneration = nullptr,
+	                    uint64_t *nchunkid, uint32_t minServerVersion, uint64_t opNonce = 0,
+	                    uint64_t requestedGrantRandom = 0, uint64_t *grantGeneration = nullptr,
 	                    uint64_t *grantRandom = nullptr) override;
 	uint8_t multiTruncate(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
 	                      uint32_t lockid, uint32_t length, uint8_t goal,

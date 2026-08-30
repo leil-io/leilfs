@@ -72,4 +72,30 @@ TEST_F(ChunkGenerationFenceTest, FullTableRefusesUnseenChunksButServesTrackedOne
 	EXPECT_TRUE(chunk_generation_fence::admit(1, 6, "execute"));
 }
 
+TEST_F(ChunkGenerationFenceTest, SupersededReportsAGenerationBelowTheHighWater) {
+	// A grant bound at 5 is superseded once a newer round admitted 6 for the chunk; the equal
+	// and higher generations are the grant's own round and are not superseded.
+	EXPECT_TRUE(chunk_generation_fence::admit(1, 6, "accept"));
+	EXPECT_TRUE(chunk_generation_fence::isSuperseded(1, 5));
+	EXPECT_FALSE(chunk_generation_fence::isSuperseded(1, 6));
+	EXPECT_FALSE(chunk_generation_fence::isSuperseded(1, 7));
+}
+
+TEST_F(ChunkGenerationFenceTest, SupersededIsFalseForAnUntrackedChunkAndForGenerationZero) {
+	// No recorded high water means no newer round has fenced the chunk, so a write proceeds; and
+	// generation zero is the unfenced legacy plane, never superseded.
+	EXPECT_FALSE(chunk_generation_fence::isSuperseded(99, 5));
+	EXPECT_TRUE(chunk_generation_fence::admit(1, 6, "accept"));
+	EXPECT_FALSE(chunk_generation_fence::isSuperseded(1, 0));
+}
+
+TEST_F(ChunkGenerationFenceTest, SupersededRecordsNothing) {
+	// The check is read only: querying a generation neither creates an entry nor moves the high
+	// water, so a chunk it was asked about is still admissible from its first real generation.
+	chunk_generation_fence::setCapacityForTest(1);
+	EXPECT_FALSE(chunk_generation_fence::isSuperseded(5, 3));
+	EXPECT_TRUE(chunk_generation_fence::admit(5, 1, "accept"));
+	EXPECT_FALSE(chunk_generation_fence::isSuperseded(5, 1));
+}
+
 }  // namespace

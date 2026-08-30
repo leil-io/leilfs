@@ -68,6 +68,14 @@ bool admit(uint64_t chunkId, uint64_t generation, const char *stage) {
 	return true;
 }
 
+bool isSuperseded(uint64_t chunkId, uint64_t generation) {
+	if (generation == 0) { return false; }
+	std::lock_guard<std::mutex> guard(gMutex);
+	auto it = gHighWater.find(chunkId);
+	if (it == gHighWater.end()) { return false; }
+	return generation < it->second;
+}
+
 void resetForTest() {
 	std::lock_guard<std::mutex> guard(gMutex);
 	gHighWater.clear();

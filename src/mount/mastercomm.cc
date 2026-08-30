@@ -2793,10 +2793,16 @@ uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId,
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length) {
+uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length,
+                       uint64_t grantGeneration, uint64_t grantRandom) {
 	threc* rec = fs_get_my_threc();
 	std::vector<uint8_t> message;
-	cltoma::fuseWriteChunkEnd::serialize(message, rec->packetId, chunkId, lockId, inode, length);
+	if (grantRandom != 0) {
+		cltoma::fuseWriteChunkEnd::serialize(message, rec->packetId, chunkId, lockId, inode, length,
+		                                     grantGeneration, grantRandom);
+	} else {
+		cltoma::fuseWriteChunkEnd::serialize(message, rec->packetId, chunkId, lockId, inode, length);
+	}
 	if (!fs_saucreatepacket(rec, message)) {
 		return SAUNAFS_ERROR_IO;
 	}

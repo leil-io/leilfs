@@ -93,6 +93,14 @@ public:
 	                                          uint32_t &messageId, uint64_t &chunkId,
 	                                          uint32_t &lockId, inode_t &inode,
 	                                          uint64_t &fileLength) const = 0;
+	virtual void deserializeFuseWriteChunkEnd(
+	    const std::vector<uint8_t> &packetBuffer, uint32_t &messageId, uint64_t &chunkId,
+	    uint32_t &lockId, inode_t &inode, uint64_t &fileLength, uint64_t &grantGeneration,
+	    uint64_t &grantRandom) const {
+		deserializeFuseWriteChunkEnd(packetBuffer, messageId, chunkId, lockId, inode, fileLength);
+		grantGeneration = 0;
+		grantRandom = 0;
+	}
 
 	virtual void serializeFuseTruncate(std::vector<uint8_t> &packetBuffer,
 	                                   uint32_t type /* FUSE_TRUNCATE | FUSE_TRUNCATE_END*/,
@@ -144,6 +152,10 @@ public:
 	void deserializeFuseWriteChunkEnd(const std::vector<uint8_t> &packetBuffer, uint32_t &messageId,
 	                                  uint64_t &chunkId, uint32_t &lockId, inode_t &inode,
 	                                  uint64_t &fileLength) const override;
+	void deserializeFuseWriteChunkEnd(
+	    const std::vector<uint8_t> &packetBuffer, uint32_t &messageId, uint64_t &chunkId,
+	    uint32_t &lockId, inode_t &inode, uint64_t &fileLength, uint64_t &grantGeneration,
+	    uint64_t &grantRandom) const override;
 
 	void serializeFuseTruncate(std::vector<uint8_t> &packetBuffer, uint32_t type,
 	                           uint32_t messageId, uint8_t status) const override;
@@ -202,6 +214,10 @@ public:
 	void deserializeFuseWriteChunkEnd(const std::vector<uint8_t> &packetBuffer, uint32_t &messageId,
 	                                  uint64_t &chunkId, uint32_t &lockId, inode_t &inode,
 	                                  uint64_t &fileLength) const override;
+	void deserializeFuseWriteChunkEnd(
+	    const std::vector<uint8_t> &packetBuffer, uint32_t &messageId, uint64_t &chunkId,
+	    uint32_t &lockId, inode_t &inode, uint64_t &fileLength, uint64_t &grantGeneration,
+	    uint64_t &grantRandom) const override;
 
 	void serializeFuseTruncate(std::vector<uint8_t> &packetBuffer, uint32_t type,
 	                           uint32_t messageId, uint8_t status) const override;

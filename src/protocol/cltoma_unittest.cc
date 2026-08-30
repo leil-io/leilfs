@@ -70,6 +70,8 @@ TEST(CltomaCommunicationTests, FuseWriteChunkEnd) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, lockId, 986589, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 112, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, fileLength, 1583, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, grantGeneration, 73, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, grantRandom, 0x123456789abcdef0ULL, 0);
 
 	std::vector<uint8_t> buffer;
 	ASSERT_NO_THROW(cltoma::fuseWriteChunkEnd::serialize(buffer,
@@ -85,6 +87,18 @@ TEST(CltomaCommunicationTests, FuseWriteChunkEnd) {
 	SAUNAFS_VERIFY_INOUT_PAIR(inode);
 	SAUNAFS_VERIFY_INOUT_PAIR(fileLength);
 	SAUNAFS_VERIFY_INOUT_PAIR(lockId);
+
+	buffer.clear();
+	ASSERT_NO_THROW(cltoma::fuseWriteChunkEnd::serialize(
+	    buffer, messageIdIn, chunkIdIn, lockIdIn, inodeIn, fileLengthIn, grantGenerationIn,
+	    grantRandomIn));
+	verifyHeader(buffer, SAU_CLTOMA_FUSE_WRITE_CHUNK_END);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cltoma::fuseWriteChunkEnd::deserialize(
+	    buffer, messageIdOut, chunkIdOut, lockIdOut, inodeOut, fileLengthOut, grantGenerationOut,
+	    grantRandomOut));
+	SAUNAFS_VERIFY_INOUT_PAIR(grantGeneration);
+	SAUNAFS_VERIFY_INOUT_PAIR(grantRandom);
 }
 
 TEST(CltomaCommunicationTests, XorChunksHealth) {

@@ -177,6 +177,7 @@ public:
 	                   inode_t inode, uint32_t index,
 	                   /* inout */ uint32_t *lockid, uint64_t *chunkid, uint8_t *opflag,
 	                   uint64_t *length, [[maybe_unused]] uint32_t min_server_version = 0,
+	                   uint64_t opNonce = 0, uint64_t requestedGrantRandom = 0,
 	                   uint64_t *grantGeneration = nullptr,
 	                   uint64_t *grantRandom = nullptr) override;
 
@@ -397,7 +398,8 @@ public:
 	uint8_t readChunk(const FilesystemOperationContext &fsOpContext, inode_t inode, uint32_t indx,
 	                  uint64_t *chunkid, uint64_t *length) override;
 	uint8_t writeEnd(const FilesystemOperationContext &fsOpContext, inode_t inode, uint64_t length,
-	                 uint64_t chunkid, uint32_t lockid) override;
+	                 uint64_t chunkid, uint32_t lockid, uint64_t grantGeneration,
+	                 uint64_t grantRandom) override;
 	void getTrashTimeStore(TrashtimeMap &fileTrashtimes, TrashtimeMap &dirTrashtimes,
 	                       uint8_t *buff) override;
 

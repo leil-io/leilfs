@@ -926,6 +926,14 @@ uint32_t matocsserv_get_servip(matocsserventry *eptr) {
 	return eptr->servip;
 }
 
+uint32_t matocsserv_stable_id(const matocsserventry *eptr) {
+	return eptr == nullptr ? 0 : eptr->stableId;
+}
+
+uint64_t matocsserv_chunkserver_incarnation(const matocsserventry *eptr) {
+	return eptr == nullptr ? 0 : eptr->chunkserverIncarnation;
+}
+
 uint32_t matocsserv_stable_id_by_address(uint32_t servip, uint16_t servport) {
 	for (auto &entry : matocsservList) {
 		if (entry->servip == servip && entry->servport == servport &&

@@ -103,6 +103,16 @@ void LegacyPacketSerializer::deserializeFuseWriteChunkEnd(const std::vector<uint
 	lockId = 1;
 }
 
+void LegacyPacketSerializer::deserializeFuseWriteChunkEnd(
+    const std::vector<uint8_t> &packetBuffer, uint32_t &messageId, uint64_t &chunkId,
+    uint32_t &lockId, inode_t &inode, uint64_t &fileLength, uint64_t &grantGeneration,
+    uint64_t &grantRandom) const {
+	// A legacy client carries no distributed write grant, so the pair is always absent here.
+	deserializeFuseWriteChunkEnd(packetBuffer, messageId, chunkId, lockId, inode, fileLength);
+	grantGeneration = 0;
+	grantRandom = 0;
+}
+
 void LegacyPacketSerializer::serializeFuseTruncate(std::vector<uint8_t> &packetBuffer,
                                                    uint32_t type, uint32_t messageId,
                                                    uint8_t status) const {
@@ -226,6 +236,22 @@ void SaunaFsPacketSerializer::deserializeFuseWriteChunkEnd(const std::vector<uin
                                                            uint64_t &fileLength) const {
 	cltoma::fuseWriteChunkEnd::deserialize(packetBuffer, messageId, chunkId, lockId, inode,
 	                                       fileLength);
+}
+
+void SaunaFsPacketSerializer::deserializeFuseWriteChunkEnd(
+    const std::vector<uint8_t> &packetBuffer, uint32_t &messageId, uint64_t &chunkId,
+    uint32_t &lockId, inode_t &inode, uint64_t &fileLength, uint64_t &grantGeneration,
+    uint64_t &grantRandom) const {
+	PacketVersion version = 0;
+	deserializePacketVersionNoHeader(packetBuffer, version);
+	if (version == cltoma::fuseWriteChunkEnd::kLegacyPacketVersion) {
+		deserializeFuseWriteChunkEnd(packetBuffer, messageId, chunkId, lockId, inode, fileLength);
+		grantGeneration = 0;
+		grantRandom = 0;
+		return;
+	}
+	cltoma::fuseWriteChunkEnd::deserialize(packetBuffer, messageId, chunkId, lockId, inode,
+	                                       fileLength, grantGeneration, grantRandom);
 }
 
 void SaunaFsPacketSerializer::serializeFuseTruncate(std::vector<uint8_t> &packetBuffer,

@@ -2341,10 +2341,6 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,
 		} else {
 			chunk_finalize_failed_operation(c);
 		}
-		// Every part has reported this operation's status, so the operation is complete:
-		// close the durable ownership round it ran under, exactly as the write end path
-		// does. Backends that keep no such round do nothing here.
-		gChunkOperations->finalizeWriteRound(c->chunkid);
 	}
 }
 
@@ -2381,13 +2377,6 @@ void chunk_write_end_status(Chunk *chunk, ChunkPartType chunkType, uint8_t statu
 			// If chunk is not writable, we probably have a lost chunk here
 			safs::log_warn("{}: chunk {} is not writable. Lost chunk?", __func__, chunk->chunkid);
 		}
-	}
-
-	if (!anyCopyBeingWritten) {
-		// Every part has reported its write end, so the client write is complete: close the
-		// durable ownership round this chunk was opened under. Backends that keep no such round
-		// do nothing here.
-		gChunkOperations->finalizeWriteRound(chunk->chunkid);
 	}
 
 	if (!anyCopyBeingWritten && !chunk->isLocked()) {

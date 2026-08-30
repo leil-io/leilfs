@@ -145,6 +145,12 @@ bool matocsserv_location_by_stable_id(uint32_t stableId, uint32_t &servip, uint1
 /// The live registration entry of the chunkserver owning a stable id; nullptr when none.
 matocsserventry *matocsserv_entry_by_stable_id(uint32_t stableId);
 
+/// Stable identity carried by an entry, including during disconnect teardown.
+uint32_t matocsserv_stable_id(const matocsserventry *eptr);
+
+/// Process incarnation carried by an entry, including during disconnect teardown.
+uint64_t matocsserv_chunkserver_incarnation(const matocsserventry *eptr);
+
 /// One admitted distributed session as the renewal and refresh driver sees it.
 struct ChunkserverSessionSnapshotEntry {
 	uint32_t stableId = 0;

@@ -528,19 +528,37 @@ inline void deserialize(const std::vector<uint8_t>& source,
 
 namespace fuseWriteChunkEnd {
 
+const PacketVersion kLegacyPacketVersion = 0;
+const PacketVersion kWithWriteGrantPacketVersion = 1;
+
 inline void serialize(std::vector<uint8_t>& destination,
 		uint32_t messageId, uint64_t chunkId, uint32_t lockId,
 		inode_t inode, uint64_t fileLength) {
-	serializePacket(destination, SAU_CLTOMA_FUSE_WRITE_CHUNK_END, 0,
+	serializePacket(destination, SAU_CLTOMA_FUSE_WRITE_CHUNK_END, kLegacyPacketVersion,
 			messageId, chunkId, lockId, inode, fileLength);
 }
 
+inline void serialize(std::vector<uint8_t> &destination, uint32_t messageId, uint64_t chunkId,
+                      uint32_t lockId, inode_t inode, uint64_t fileLength,
+                      uint64_t grantGeneration, uint64_t grantRandom) {
+	serializePacket(destination, SAU_CLTOMA_FUSE_WRITE_CHUNK_END, kWithWriteGrantPacketVersion,
+	                messageId, chunkId, lockId, inode, fileLength, grantGeneration, grantRandom);
+}
 
 inline void deserialize(const std::vector<uint8_t>& source,
 		uint32_t& messageId, uint64_t& chunkId, uint32_t& lockId,
 		inode_t& inode, uint64_t& fileLength) {
-	verifyPacketVersionNoHeader(source, 0);
+	verifyPacketVersionNoHeader(source, kLegacyPacketVersion);
 	deserializeAllPacketDataNoHeader(source, messageId, chunkId, lockId, inode, fileLength);
+}
+
+inline void deserialize(const std::vector<uint8_t> &source, uint32_t &messageId,
+                        uint64_t &chunkId, uint32_t &lockId, inode_t &inode,
+                        uint64_t &fileLength, uint64_t &grantGeneration,
+                        uint64_t &grantRandom) {
+	verifyPacketVersionNoHeader(source, kWithWriteGrantPacketVersion);
+	deserializeAllPacketDataNoHeader(source, messageId, chunkId, lockId, inode, fileLength,
+	                                 grantGeneration, grantRandom);
 }
 
 } // namespace fuseWriteChunkEnd

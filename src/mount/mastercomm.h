@@ -103,7 +103,8 @@ uint8_t fs_sauwritechunk(inode_t inode, uint32_t chunkIndex, uint32_t &lockId,
                          uint64_t &grantGeneration, uint64_t &grantRandom, uint64_t &fileLength,
                          uint64_t &chunkId, uint32_t &chunkVersion,
                          std::vector<ChunkTypeWithAddress> &chunkservers);
-uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length);
+uint8_t fs_sauwriteend(uint64_t chunkId, uint32_t lockId, inode_t inode, uint64_t length,
+                       uint64_t grantGeneration = 0, uint64_t grantRandom = 0);
 
 uint8_t fs_getxattr(inode_t inode, uint8_t opened, uint32_t uid, uint32_t gid, uint8_t nleng,
                     const uint8_t *name, uint8_t mode, const uint8_t **vbuff, uint32_t *vleng);

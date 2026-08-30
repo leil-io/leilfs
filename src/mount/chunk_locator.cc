@@ -122,7 +122,7 @@ void WriteChunkLocator::unlockChunk() {
 	LOG_AVG_TILL_END_OF_SCOPE0("WriteChunkLocator::unlockChunk");
 	sassert(lockId_ != 0);
 	uint8_t status = fs_sauwriteend(locationInfo_.chunkId, lockId_,
-			inode_, locationInfo_.fileLength);
+			inode_, locationInfo_.fileLength, grantGeneration_, grantRandom_);
 	if (status == SAUNAFS_ERROR_IO) {
 		// Communication with the master server failed
 		throw RecoverableWriteException("Sending WRITE_END to the master failed", status);

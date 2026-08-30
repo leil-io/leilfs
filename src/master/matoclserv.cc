@@ -382,6 +382,18 @@ static std::chrono::milliseconds matoclserv_replay_delay(uint32_t attempt) {
 	return std::chrono::milliseconds(delayMs);
 }
 
+/// A per-operation identity value: unique per logical request, and stable across a request's
+/// replays only because it is minted once here, in the caller's outer state, before any replayable
+/// transaction body (D17). Used for a write round's operation nonce and its requested grant random.
+/// Full 64-bit, never zero (zero is the "none" sentinel); the counter guarantees uniqueness within
+/// this process even if the generator repeats. Event-loop thread only (plain static locals).
+static uint64_t matoclserv_mint_operation_identity() {
+	static std::mt19937_64 rng{std::random_device{}()};
+	static uint64_t counter = 0;
+	const uint64_t value = rng() ^ (++counter);
+	return value == 0 ? 1 : value;
+}
+
 /// Wall-clock ceiling on one synchronous retry loop. The sync path runs on the event-loop
 /// thread, and its recovery waits and pacing sleeps block it, so the whole loop is capped
 /// here (mirroring the batch path's kBatchRecoveryDeadline): past the deadline the op fails
@@ -3487,12 +3499,18 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		uint32_t lockId = 0;
 		uint64_t length = 0;
 		uint64_t fileLength = 0;
+		// The operation identity for the write round the duplication path opens, minted once here in
+		// the outer request state and held across body replays, exactly as the write handler does.
+		uint64_t opNonce = 0;
+		uint64_t requestedGrantRandom = 0;
 		Attributes attr{};
 		DelayedChunkOperation *queued = nullptr;  ///< commit-pending entry of the latest run
 		bool tookDelayedPath = false;  ///< onCommit took the delayed path; reply comes via chunk_status
 	};
 	auto truncState = std::make_shared<TruncState>();
 	truncState->type = isEnd ? FUSE_TRUNCATE_END : FUSE_TRUNCATE;
+	truncState->opNonce = matoclserv_mint_operation_identity();
+	truncState->requestedGrantRandom = matoclserv_mint_operation_identity();
 	// lockId must survive body replays (mirror write_chunk): a batch-conflict replay of the
 	// non-END duplicate path passes the previously allocated lockId back into writeChunk so it
 	// re-enters its own surviving in-memory lock instead of bouncing off it as LOCKED. For END it
@@ -3539,7 +3557,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 			uint8_t chunkOperationPending;
 			st = gFSOperations->writeChunk(context, ctx, inode, truncState->length / SFSCHUNKSIZE,
 			                               &truncState->lockId, &truncState->chunkId,
-			                               &chunkOperationPending, &truncState->fileLength);
+			                               &chunkOperationPending, &truncState->fileLength, 0,
+			                               truncState->opNonce, truncState->requestedGrantRandom);
 			if (st != SAUNAFS_STATUS_OK) { return st; }
 			if (chunkOperationPending) {
 				// But first we have to duplicate chunk :)
@@ -4683,6 +4702,13 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		uint64_t retainedChunkId = 0;
 		uint64_t fileLength = 0;
 		uint32_t lockId = 0;
+		// The operation identity for the write round, minted once here in the outer request state
+		// and held across every replay of the body below, so a retried transaction presents the
+		// same nonce (acquireForWrite recognises its own round) and the same requested grant random
+		// (a fresh prepare uses it; a replay returns the stored pair). Never the chunk id, never
+		// minted inside the transaction body (D17).
+		uint64_t opNonce = 0;
+		uint64_t requestedGrantRandom = 0;
 		uint64_t grantGeneration = 0;
 		uint64_t grantRandom = 0;
 		uint8_t opflag = 0;
@@ -4691,6 +4717,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	};
 	auto wc = std::make_shared<WriteChunkState>();
 	wc->lockId = lockId;
+	wc->opNonce = matoclserv_mint_operation_identity();
+	wc->requestedGrantRandom = matoclserv_mint_operation_identity();
 
 	// Replayable body: re-runnable on a fresh txn if the commit conflicts (concurrent
 	// writers to the same inode are exactly the EC/overlapping-write workload). When
@@ -4712,8 +4740,9 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 
 		uint8_t st = gFSOperations->writeChunk(matoclserv_get_context(eptr), ctx, inode,
 		                                       chunkIndex, &wc->lockId, &wc->chunkId, &wc->opflag,
-		                                       &wc->fileLength, min_server_version,
-		                                       &wc->grantGeneration, &wc->grantRandom);
+		                                       &wc->fileLength, min_server_version, wc->opNonce,
+		                                       wc->requestedGrantRandom, &wc->grantGeneration,
+		                                       &wc->grantRandom);
 		if (st == SAUNAFS_STATUS_OK) { wc->retainedChunkId = wc->chunkId; }
 
 		if (st == SAUNAFS_STATUS_OK && wc->opflag) {
@@ -4829,9 +4858,16 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 	uint64_t fileLength;
 	uint8_t status = SAUNAFS_STATUS_OK;
 
+	// The exact grant a distributed write round finalizes under. A legacy packet carries none, so
+	// the pair stays zero and closes no distributed round; only the exact pair a live client held
+	// finalizes its own round, so a stale finalize cannot close a successor's.
+	uint64_t grantGeneration = 0;
+	uint64_t grantRandom = 0;
+
 	std::vector<uint8_t> request(data, data + header.length);
 	const PacketSerializer* serializer = PacketSerializer::getSerializer(header.type, eptr->version);
-	serializer->deserializeFuseWriteChunkEnd(request, messageId, chunkId, lockId, inode, fileLength);
+	serializer->deserializeFuseWriteChunkEnd(request, messageId, chunkId, lockId, inode, fileLength,
+	                                         grantGeneration, grantRandom);
 
 	if (lockId == 0) {
 		// this lock id passed to chunk_unlock would force chunk unlock
@@ -4842,10 +4878,12 @@ void matoclserv_fuse_write_chunk_end(matoclserventry *eptr, PacketHeader header,
 
 	// Replayable body: writeEnd updates the inode length and unlocks the chunk; with
 	// group commit a concurrent writer on the same inode can make this commit conflict,
-	// so it must replay on a fresh txn rather than reply EIO.
-	OpReplay runWriteEnd = [inode, fileLength, chunkId,
-	                        lockId](FilesystemOperationContext &ctx) -> uint8_t {
-		return gFSOperations->writeEnd(ctx, inode, fileLength, chunkId, lockId);
+	// so it must replay on a fresh txn rather than reply EIO. The grant pair is captured from
+	// dispatch so every replay finalizes the exact round the client held.
+	OpReplay runWriteEnd = [inode, fileLength, chunkId, lockId, grantGeneration,
+	                        grantRandom](FilesystemOperationContext &ctx) -> uint8_t {
+		return gFSOperations->writeEnd(ctx, inode, fileLength, chunkId, lockId, grantGeneration,
+		                               grantRandom);
 	};
 
 	auto sendWriteEndReply = [eptr, serializer, messageId, inode](uint8_t replyStatus) {

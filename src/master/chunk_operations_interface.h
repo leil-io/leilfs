@@ -112,6 +112,8 @@ public:
 	virtual uint8_t multiModify(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
 	                            uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag,
 	                            uint64_t *nchunkid, uint32_t minServerVersion,
+	                            /* in */ uint64_t opNonce = 0,
+	                            /* in */ uint64_t requestedGrantRandom = 0,
 	                            /* out, nullable */ uint64_t *grantGeneration = nullptr,
 	                            /* out, nullable */ uint64_t *grantRandom = nullptr) = 0;
 	virtual uint8_t multiTruncate(const FilesystemOperationContext &fsOpContext, uint64_t ochunkid,
@@ -203,6 +205,14 @@ public:
 	/// Every part of a client write has reported its write end. A backend that owns a durable
 	/// write round for the chunk closes it here; the default keeps no such round and does nothing.
 	virtual void finalizeWriteRound(uint64_t /*chunkId*/) {}
+
+	/// Stages completion of the exact grant carried by a client release. Legacy backends keep no
+	/// durable grant and accept it as part of their ordinary unlock transaction.
+	virtual uint8_t finalizeWriteRound(const FilesystemOperationContext & /*fsOpContext*/,
+	                                  uint64_t /*chunkId*/, uint64_t /*grantGeneration*/,
+	                                  uint64_t /*grantRandom*/) {
+		return SAUNAFS_STATUS_OK;
+	}
 
 	// --- Stats / introspection ---
 	virtual void stats(uint32_t *del, uint32_t *repl) = 0;

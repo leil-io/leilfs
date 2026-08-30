@@ -31,6 +31,7 @@
 
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver/bgjobs.h"
+#include "chunkserver/chunk_generation_fence.h"
 #include "chunkserver/chunk_high_level_ops.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/io_buffers.h"
@@ -395,6 +396,23 @@ void ChunkserverEntry::writeInit(const uint8_t *data, PacketHeader::Type type,
 		                                              {"grant_random", grantRandom}});
 	}
 
+	// A grant a newer round has already fenced starts no write: recovery raises the chunk fence
+	// above the revoked grant with its own SET_VERSION, so a grant below the fence is one the
+	// cluster moved past. The chain binds the grant generation so every later frame is checked
+	// under it too, and a mid-stream revocation stops the writer instead of appending to a
+	// version nobody owns.
+	if (chunk_generation_fence::isSuperseded(chunkId, grantGeneration)) {
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit("write_grant_superseded", {{"chunk_id", chunkId},
+			                                                   {"grant_generation", grantGeneration},
+			                                                   {"stage", "write_init"}});
+		}
+		createAttachedWriteStatus(chunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
+		state = State::IOFinish;
+		return;
+	}
+	boundGrantGeneration_ = grantGeneration;
+
 	if (!bindServingEra()) {
 		// Client-plane session cutoff gate (FR-044): no new write chain after durable
 		// authority expired, independently of any MDS-side gate.
@@ -471,6 +489,16 @@ void ChunkserverEntry::writeData(const uint8_t *data, PacketHeader::Type type,
 		// A chain admitted before the deadline must not keep writing past it, so
 		// authority is rechecked on every frame and not only once at WRITE_INIT.
 		noteFrameRefusedAfterCutoff("write_data", opChunkId);
+		status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
+	} else if (writeGrantSuperseded(opChunkId)) {
+		// A newer round fenced this chunk after the chain bound its grant, so the grant is stale
+		// and this frame must not extend a write the cluster moved past.
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit(
+			    "write_grant_superseded",
+			    {{"chunk_id", opChunkId}, {"grant_generation", boundGrantGeneration_},
+			     {"stage", "write_data"}});
+		}
 		status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
 	} else if (!writeHLOs_.back()->isLastHeaderSizeValid()) {
 		status = SAUNAFS_ERROR_WRONGSIZE;
@@ -565,6 +593,20 @@ void ChunkserverEntry::writeFlush(const uint8_t *data, uint32_t length) {
 		return;
 	}
 
+	if (writeGrantSuperseded(opChunkId)) {
+		// Sealing buffered work under a grant a newer round fenced would make durable a version the
+		// cluster moved past, so it fails closed the same way an after-cutoff seal does.
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit(
+			    "write_grant_superseded",
+			    {{"chunk_id", opChunkId}, {"grant_generation", boundGrantGeneration_},
+			     {"stage", "write_flush"}});
+		}
+		createAttachedWriteStatus(opChunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
+		state = State::IOFinish;
+		return;
+	}
+
 	if (writeHLOs_.empty()) {
 		safs::log_warn("Received WRITE_FLUSH message without prior WRITE_INIT (chunkId={:016X})",
 		               opChunkId);
@@ -599,6 +641,20 @@ void ChunkserverEntry::writeEnd(const uint8_t *data, uint32_t length) {
 	// this chunkserver can still decline to speak for a claim it no longer holds.
 	if (!servingEraIsCurrent()) {
 		noteFrameRefusedAfterCutoff("write_end", opChunkId);
+		createAttachedWriteStatus(opChunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
+		state = State::IOFinish;
+		return;
+	}
+
+	if (writeGrantSuperseded(opChunkId)) {
+		// Ending a write under a grant a newer round fenced would acknowledge a claim this
+		// chunkserver no longer holds, so it declines here, the last moment it still can.
+		if (test_event_stream::enabled()) {
+			test_event_stream::emit(
+			    "write_grant_superseded",
+			    {{"chunk_id", opChunkId}, {"grant_generation", boundGrantGeneration_},
+			     {"stage", "write_end"}});
+		}
 		createAttachedWriteStatus(opChunkId, SAUNAFS_ERROR_TEMP_NOTPOSSIBLE, 0);
 		state = State::IOFinish;
 		return;
@@ -833,6 +889,10 @@ bool ChunkserverEntry::servingEraIsCurrent() const {
 	// there and the wrong one afterwards.
 	if (servingEra_ == 0) { return masterconn_session_serving_allowed(); }
 	return masterconn_era_is_current(servingEra_);
+}
+
+bool ChunkserverEntry::writeGrantSuperseded(uint64_t opChunkId) const {
+	return chunk_generation_fence::isSuperseded(opChunkId, boundGrantGeneration_);
 }
 
 bool ChunkserverEntry::cancelJobsAfterCutoff() {
