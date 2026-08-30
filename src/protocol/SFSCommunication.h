@@ -461,19 +461,20 @@ enum class SugidClearMode : uint8_t {
 // separate from a report so that absence is a statement about this incarnation rather than an
 // inference from silence.
 #define SAU_MATOCS_FENCED_VERIFY_PART (1000U + 194U)
+/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
+///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
 
 // chunkserver <-> master (the acknowledged evidence channel)
 
-/// A batch of one-shot chunkserver observations from the durable outbox. Re-sent until the
-/// matching acknowledgement names their sequences; the receiver deduplicates by the source's
-/// committed position, so duplicates are harmless by design.
+// A batch of one-shot chunkserver observations from the durable outbox. Re-sent until the
+// matching acknowledgement names their sequences; the receiver deduplicates by the source's
+// committed position, so duplicates are harmless by design.
 #define SAU_CSTOMA_EVIDENCE_ITEMS (1000U + 195U)
 
-/// Acknowledges every outbox item up to a sequence, sent only after the observations and the
-/// source's idempotency position are durably committed together.
+// Acknowledges every outbox item up to a sequence, sent only after the observations and the
+// source's idempotency position are durably committed together.
 #define SAU_MATOCS_EVIDENCE_ACK (1000U + 196U)
-/// version==0 opnonce:64 opgeneration:64 commandsequence:64 targetincarnation:64
-///   targetservingera:64 targetstableid:32 chunkid:64 chunktype:16
+/// version==0 ackeduptosequence:64
 
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
