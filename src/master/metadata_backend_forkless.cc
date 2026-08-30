@@ -1,5 +1,5 @@
 /*
-   Copyright 2023      Leil Storage OÜ
+   Copyright 2026      Leil Storage OÜ
 
    This file is part of SaunaFS.
 
@@ -214,13 +214,17 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	Timer timer;
 	safs::log_info("Loading chunks from FoundationDB");
 
+	// A zero value means the descriptor carried no META_NEXT_CHUNK_ID (e.g. after an upgrade or
+	// partial bootstrap). Skip the call in that case: the generator starts at 1, so setting it
+	// backwards to 0 would always fail and log a misleading warning. Non-fatal either way — the
+	// chunk ids seen during the load below still establish the effective watermark.
 	uint64_t nextChunkId = loadedCheckpointDescriptor_.nextChunkId;
-	auto status = chunk_set_next_chunkid(nextChunkId);
-
-	if (status != SAUNAFS_STATUS_OK) {
-		// Non-fatal: a missing or stale META_NEXT_CHUNK_ID (e.g. after an upgrade or partial
-		// bootstrap) must not block startup. Match the file loader and continue; chunk ids seen
-		// during the load below still establish the effective watermark.
+	if (nextChunkId == 0) {
+		safs::log_warn(
+		    "{}: no next chunk id in the checkpoint descriptor, deriving it from the "
+		    "loaded chunks",
+		    __func__);
+	} else if (chunk_set_next_chunkid(nextChunkId) != SAUNAFS_STATUS_OK) {
 		safs::log_warn("{}: could not set next chunk id to {}, continuing with chunk load",
 		               __func__, nextChunkId);
 	}
@@ -286,8 +290,20 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	// chunk_add_from_initial_metadata_load() creates chunks without advancing the id generator,
 	// so a stale/missing META_NEXT_CHUNK_ID (checkpoint descriptor) could otherwise reuse an
 	// already-loaded chunk id. Advance the watermark past the highest id seen in FDB.
-	// chunk_set_next_chunkid() only moves the generator forward, so this never lowers it.
-	if (maxChunkId > 0) { chunk_set_next_chunkid(maxChunkId + 1); }
+	//
+	// Only call chunk_set_next_chunkid() when it would actually move the generator forward: an
+	// aged filesystem legitimately keeps a next chunk id well past its highest live chunk id
+	// (deleted chunks are forgotten, the descriptor is not), and an unconditional call would log
+	// a "failed to set next chunk id" warning on every start in that healthy state. Conversely,
+	// when the safety net does fire the descriptor was stale, which is worth reporting.
+	const uint64_t generatorNextChunkId = chunk_get_next_id();
+	if (maxChunkId > 0 && maxChunkId + 1 > generatorNextChunkId) {
+		safs::log_warn(
+		    "{}: next chunk id {} is not past the highest loaded chunk id {}; advancing "
+		    "the generator (stale or missing META_NEXT_CHUNK_ID)",
+		    __func__, generatorNextChunkId, maxChunkId);
+		chunk_set_next_chunkid(maxChunkId + 1);
+	}
 
 	safs::log_info("Loaded {} chunks", chunkCount);
 	safs::log_info("Section loaded successfully (CHNK 1.0): {}s", timer.elapsed_s());
@@ -1190,13 +1206,11 @@ std::string MetadataBackendForkless::getHeaderSignature() {
 
 	auto result = transaction->get(headerKey);
 
-	if (result != std::nullopt) {
-		const uint8_t *data = result.value().data();
-		std::string signature(reinterpret_cast<const char *>(data), result.value().size());
-		return signature;
+	if (result.has_value()) {
+		return {reinterpret_cast<const char *>(result->data()), result->size()};
 	}
 
-	return "";
+	return {};
 }
 
 void MetadataBackendForkless::createConnections() {

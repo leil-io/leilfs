@@ -63,7 +63,9 @@ public:
 	/// Returns the current metadata version
 	virtual uint64_t getVersion(const std::string& file) = 0;
 
-	/// Returns the current metadata header signature
+	/// Returns the current metadata header signature, or an empty string when the backend has no
+	/// header stored. Callers read "empty" as "no header": backends that keep no header of their
+	/// own (the file backend) always return empty.
 	virtual std::string getHeaderSignature() = 0;
 
 	/// Returns the concrete backend implementation type.

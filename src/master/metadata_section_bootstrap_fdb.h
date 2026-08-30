@@ -1,5 +1,5 @@
 /*
-   Copyright 2023      Leil Storage OÜ
+   Copyright 2026      Leil Storage OÜ
 
    This file is part of SaunaFS.
 
@@ -63,8 +63,23 @@ private:
 		uint64_t length = 0;
 	};
 
+	/// Bounds of a section payload inside the mapped metadata file, as resolved by openSection().
+	struct SectionSpan {
+		const uint8_t *begin = nullptr;  ///< First byte of the section payload.
+		size_t end = 0;                  ///< File offset one past the section payload.
+		uint64_t length = 0;             ///< Payload length as recorded in the file.
+	};
+
 	bool prepare(const std::string &metadataFilePath);
 	std::optional<SectionMarker> findSection(std::string_view name) const;
+
+	/// Resolves the payload bounds of a section shared by every load*Section() entry point:
+	/// checks the engine and the mapped file, looks the marker up, rejects an offset+length
+	/// overflow and a payload shorter than `minLength` (for sections starting with a fixed-size
+	/// header), and seeks to the first payload byte. Logs the reason and returns nullopt on any
+	/// failure, so callers only have to propagate kOpFailure.
+	std::optional<SectionSpan> openSection(std::string_view name, size_t minLength = 0);
+
 	int8_t saveMetadataHeader();
 
 	void initMetadataFileSections();

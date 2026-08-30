@@ -1,5 +1,5 @@
 /*
-   Copyright 2023      Leil Storage OÜ
+   Copyright 2026      Leil Storage OÜ
 
    This file is part of SaunaFS.
 
@@ -23,7 +23,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -176,21 +178,46 @@ int8_t MetadataSectionBootstrapFDB::isSectionBootstrapNeeded(std::string_view pr
 	return page.getPairs().empty() ? 1 : 0;
 }
 
-int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
-	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+std::optional<MetadataSectionBootstrapFDB::SectionSpan> MetadataSectionBootstrapFDB::openSection(
+    std::string_view name, size_t minLength) {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return std::nullopt; }
 
-	auto marker = findSection("NODE 1.0");
+	auto marker = findSection(name);
 	if (!marker.has_value()) {
-		safs::log_warn("No metadata section marker found for NODE 1.0");
-		return kOpFailure;
+		safs::log_warn("No metadata section marker found for {}", name);
+		return std::nullopt;
 	}
 
 	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
-		safs::log_err("Bootstrapping nodes: section bounds overflow");
-		return kOpFailure;
+		safs::log_err("Bootstrapping {}: section bounds overflow", name);
+		return std::nullopt;
 	}
-	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
-	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	// Sections starting with a fixed-size header (e.g. the next-chunk-id, the free-node count)
+	// reject a payload too short to hold it, so the reads and the length arithmetic that follow
+	// cannot underflow.
+	if (marker->length < minLength) {
+		safs::log_err("Bootstrapping {}: section length {} is too small", name, marker->length);
+		return std::nullopt;
+	}
+
+	try {
+		return SectionSpan{.begin = metadataFile_->seek(marker->offset),
+		                   .end = marker->offset + static_cast<size_t>(marker->length),
+		                   .length = marker->length};
+	} catch (const std::exception &ex) {
+		safs::log_err("Bootstrapping {}: cannot seek to section offset {}: {}", name,
+		              marker->offset, ex.what());
+		return std::nullopt;
+	}
+}
+
+int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
+	auto section = openSection("NODE 1.0");
+	if (!section.has_value()) { return kOpFailure; }
+
+	const size_t sectionEnd = section->end;
+	const uint8_t *ptr = section->begin;
 	uint64_t nodeCount = 0;
 
 	MetadataWriterFDB writer(kvEngine_);
@@ -252,28 +279,12 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 }
 
 int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
-	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+	// The section starts with the next-chunk-id (uint64_t).
+	auto section = openSection("CHNK 1.0", sizeof(uint64_t));
+	if (!section.has_value()) { return kOpFailure; }
 
-	auto marker = findSection("CHNK 1.0");
-	if (!marker.has_value()) {
-		safs::log_warn("No metadata section marker found for CHNK 1.0");
-		return kOpFailure;
-	}
-
-	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
-		safs::log_err("Bootstrapping chunks: section bounds overflow");
-		return kOpFailure;
-	}
-	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
-
-	// The section starts with the next-chunk-id (uint64_t); reject a section too small to
-	// hold it so the read below and the loop bound below cannot underflow.
-	if (marker->length < sizeof(uint64_t)) {
-		safs::log_err("{}: section length {} is too small", __func__, marker->length);
-		return kOpFailure;
-	}
-
-	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+	const size_t sectionEnd = section->end;
+	const uint8_t *ptr = section->begin;
 
 	uint64_t nextChunkId = get64bit(&ptr);
 	uint64_t chunkCount = 0;
@@ -336,20 +347,11 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 }
 
 int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
-	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+	auto section = openSection("EDGE 1.0");
+	if (!section.has_value()) { return kOpFailure; }
 
-	auto marker = findSection("EDGE 1.0");
-	if (!marker.has_value()) {
-		safs::log_warn("No metadata section marker found for EDGE 1.0");
-		return kOpFailure;
-	}
-
-	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
-		safs::log_err("Bootstrapping edges: section bounds overflow");
-		return kOpFailure;
-	}
-	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
-	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+	const size_t sectionEnd = section->end;
+	const uint8_t *ptr = section->begin;
 	uint64_t edgeCount = 0;
 
 	MetadataWriterFDB writer(kvEngine_);
@@ -406,37 +408,21 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 }
 
 int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
-	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+	// The section starts with the free-node count (inode_t).
+	auto section = openSection("FREE 1.0", sizeof(inode_t));
+	if (!section.has_value()) { return kOpFailure; }
 
-	auto marker = findSection("FREE 1.0");
-	if (!marker.has_value()) {
-		safs::log_warn("No metadata section marker found for FREE 1.0");
-		return kOpFailure;
-	}
-
-	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
-		safs::log_err("Bootstrapping free: section bounds overflow");
-		return kOpFailure;
-	}
-	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
-	const uint8_t *ptr = metadataFile_->seek(marker->offset);
-
-	// The section starts with the free-node count (inode_t); reject a section too small to hold it
-	// so the count-vs-length computation below cannot underflow.
-	if (marker->length < sizeof(inode_t)) {
-		safs::log_err("{}: section length {} is too small", __func__, marker->length);
-		return kOpFailure;
-	}
+	const size_t sectionEnd = section->end;
+	const uint8_t *ptr = section->begin;
 
 	inode_t freeNodesNumber{};
 	getINode(&ptr, freeNodesNumber);
 
 	constexpr uint8_t kFreeNodesEntrySize = sizeof(inode_t) + sizeof(uint32_t);
-	if (marker->length > 0 &&
-	    freeNodesNumber != (marker->length - sizeof(inode_t)) / kFreeNodesEntrySize) {
+	if (freeNodesNumber != (section->length - sizeof(inode_t)) / kFreeNodesEntrySize) {
 		safs::log_warn("FREE section: count ({}) does not match section length, adjusting",
 		               freeNodesNumber);
-		freeNodesNumber = (marker->length - sizeof(inode_t)) / kFreeNodesEntrySize;
+		freeNodesNumber = (section->length - sizeof(inode_t)) / kFreeNodesEntrySize;
 	}
 
 	MetadataWriterFDB writer(kvEngine_);
@@ -475,20 +461,11 @@ int8_t MetadataSectionBootstrapFDB::loadFreeSection() {
 }
 
 int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
-	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+	auto section = openSection("XATR 1.0");
+	if (!section.has_value()) { return kOpFailure; }
 
-	auto marker = findSection("XATR 1.0");
-	if (!marker.has_value()) {
-		safs::log_warn("No metadata section marker found for XATR 1.0");
-		return kOpFailure;
-	}
-
-	const uint8_t *ptr = metadataFile_->seek(marker->offset);
-	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
-		safs::log_err("Bootstrapping xattr: section bounds overflow");
-		return kOpFailure;
-	}
-	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	const size_t sectionEnd = section->end;
+	const uint8_t *ptr = section->begin;
 	constexpr size_t kXAttrHeaderSize = sizeof(inode_t) + sizeof(uint8_t) + sizeof(uint32_t);
 
 	MetadataWriterFDB writer(kvEngine_);

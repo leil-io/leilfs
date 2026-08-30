@@ -1,5 +1,5 @@
 /*
-   Copyright 2023      Leil Storage OÜ
+   Copyright 2026      Leil Storage OÜ
 
    This file is part of SaunaFS.
 
