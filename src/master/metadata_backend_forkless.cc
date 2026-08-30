@@ -1243,6 +1243,15 @@ void MetadataBackendForkless::connectGlobalSignalsOnce() {
 		    }
 	    });
 
+	// Deleting the row keeps the CHNL_ keyspace in step with the in-memory chunk table: the
+	// writer queue is FIFO, so a pending update for the same chunk is applied before this
+	// removal. Guarded on metadataWriter_ like the update handler above.
+	gChunkRemovedSignal.connect([](uint64_t chunkId) {
+		if (gForklessBackend != nullptr && gForklessBackend->metadataWriter_) {
+			gForklessBackend->metadataWriter_->enqueue(std::make_unique<ChunkRemoveEvent>(chunkId));
+		}
+	});
+
 	gXAttrInodeRemovedSignal.connect([](inode_t inode) {
 		if (gForklessBackend != nullptr) { gForklessBackend->onXAttrInodeRemoved(inode); }
 	});

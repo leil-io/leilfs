@@ -71,6 +71,20 @@ private:
 	uint32_t lockId;
 };
 
+/// Removal event for chunks dropped from the in-memory metadata (see gChunkRemovedSignal).
+/// Without it the CHNL_ keyspace would only ever grow and deleted chunks would be reloaded as
+/// zombies on every restart.
+class ChunkRemoveEvent : public IMetadataUpdateEvent {
+public:
+	ChunkRemoveEvent(uint64_t _chunkId);
+	~ChunkRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	uint64_t chunkId;
+};
+
 /// Update event for node changes
 class NodeUpdateEvent : public IMetadataUpdateEvent {
 public:

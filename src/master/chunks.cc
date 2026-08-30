@@ -971,6 +971,9 @@ void chunk_delete(Chunk *c) {
 		gChunksMetadata->lastchunkid=0;
 		gChunksMetadata->lastchunkptr=NULL;
 	}
+	// Report the removal before the chunk is freed: KV backends persist chunks individually and
+	// must drop the row, otherwise deleted chunks come back as zombies on the next load.
+	if (!gChunkRemovedSignal.empty()) { gChunkRemovedSignal.emit(c->chunkid); }
 	c->freeStats();
 	chunk_free(c);
 }
