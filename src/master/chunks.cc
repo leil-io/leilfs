@@ -232,6 +232,12 @@ static uint32_t ChunksLoopTimeout;
 static double   gAcceptableDifference;
 static bool     RebalancingBetweenLabels = false;
 
+// Whether this server issues background chunk maintenance commands (repair, replication,
+// physical deletion, rebalancing). Default true; an embedding server may turn it off before
+// promotion. The chunk worker still runs either way: its per-chunk statistics refresh is
+// required by client write and truncate paths and must not depend on this flag.
+static bool gChunkMaintenanceEnabled = true;
+
 static uint32_t jobsnorepbefore;
 
 constexpr uint32_t kStartupGracePeriodSeconds = 60;
@@ -2899,6 +2905,12 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 	// Useful e.g. if definitions of goals did change.
 	chunk_handle_disconnected_copies(c);
 	c->updateStats();
+
+	// Skip maintenance planning and commands after completing required bookkeeping.
+	if (!gChunkMaintenanceEnabled) {
+		return;
+	}
+
 	if (serverCount == 0) {
 		return;
 	}
@@ -3172,6 +3184,8 @@ void ChunkWorker::mainLoop() {
 
 static std::unique_ptr<ChunkWorker> gChunkWorker;
 
+void chunk_set_maintenance_enabled(bool enabled) { gChunkMaintenanceEnabled = enabled; }
+
 void chunk_jobs_main(void) {
 	if (gChunkWorker->is_complete()) {
 		gChunkWorker->reset();
@@ -3311,6 +3325,9 @@ void chunk_newfs(void) {
 void chunk_become_master() {
 	starttime = eventloop_time();
 	jobsnorepbefore = starttime + gOperationsDelayInit;
+	if (!gChunkMaintenanceEnabled) {
+		safs::log_info("background chunk maintenance commands disabled by config");
+	}
 	gChunkWorker = std::unique_ptr<ChunkWorker>(new ChunkWorker());
 	gChunkLoopEventHandle = eventloop_timeregister_ms(ChunksLoopPeriod, chunk_jobs_main);
 	eventloop_eachloopregister(chunk_jobs_process_bit);

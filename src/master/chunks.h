@@ -152,6 +152,14 @@ int chunk_can_unlock(uint64_t chunkid, uint32_t lockid);
 
 int chunk_invalidate_goal_cache();
 
+/// Enables or disables background chunk maintenance commands (repair, replication, physical
+/// deletion, rebalancing) sent to chunkservers. Must be called before promotion; the default is
+/// enabled. The chunk worker keeps running either way: it still refreshes each chunk's cached
+/// statistics, which client write and truncate paths rely on, and still drops already-empty
+/// in-memory chunk records. Foreground client operations and their recovery stay enabled; only
+/// the listed background maintenance commands are suppressed.
+void chunk_set_maintenance_enabled(bool enabled);
+
 #endif
 
 bool chunksLoadFromFile(MetadataLoader::Options);
