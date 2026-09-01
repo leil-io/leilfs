@@ -305,7 +305,7 @@ int hddIOBegin(IChunk *chunk, int newFlag, uint32_t chunkVersion) {
 	return SAUNAFS_STATUS_OK;
 }
 
-bool hddScansInProgress() { return gScansInProgress != 0; }
+bool hddScansInProgress() { return gScansInProgress.load(std::memory_order_acquire) != 0; }
 
 int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromScan) {
 	int status;

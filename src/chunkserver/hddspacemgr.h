@@ -80,12 +80,12 @@ void hddRegistrationSweepBegin(RegistrationSweepMode mode);
 
 enum class RegistrationSweepResult {
 	kBulkReady,  ///< A nonempty bulk is ready to send.
-	kRetry,      ///< Locked chunks remain; retry without consuming a credit.
-	kComplete,   ///< No reportable chunks remain.
+	kRetry,      ///< Chunks are locked or scans are pending; retain the credit.
+	kComplete,   ///< No reportable chunks or pending scans remain.
 };
 
 /// Collects and marks at most \p bulkSize unreported chunks in this session.
-/// Returns kRetry for locked stragglers instead of waiting for them.
+/// Returns kRetry while chunks are locked or disk scans are pending.
 RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
                                                  std::size_t bulkSize);
 

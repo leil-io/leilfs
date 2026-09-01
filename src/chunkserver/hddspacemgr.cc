@@ -473,6 +473,7 @@ void hddCheckDisks() {
 
 	for (auto &disk : gDisks) {
 		if (disk->wasRemovedFromConfig()) {
+			const bool scanWasPending = disk->scanState() == IDisk::ScanState::kNeeded;
 			switch (disk->scanState()) {
 			case IDisk::ScanState::kInProgress:
 				disk->setScanState(IDisk::ScanState::kTerminate);
@@ -494,6 +495,9 @@ void hddCheckDisks() {
 			}
 			// At this point, this is only true if it was already sent to master
 			if (!disk->wasRemovedFromConfig()) {
+				if (scanWasPending && !disk->isDamaged()) {
+					gScansInProgress.fetch_sub(1, std::memory_order_relaxed);
+				}
 				// Delay the deletion after the loop
 				safs_pretty_syslog(LOG_NOTICE, "Disk %s successfully removed",
 				                   disk->getPaths().c_str());
@@ -774,6 +778,12 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
 
 	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
 	if (hasLockedChunks) { return RegistrationSweepResult::kRetry; }
+
+	// The counter includes scans that are scheduled but have not started, so a
+	// registration cannot complete between accepting a disk and its scanner
+	// publishing the first chunk. Keep the credit while waiting; the caller
+	// retries from its normal event-loop tick.
+	if (hddScansInProgress()) { return RegistrationSweepResult::kRetry; }
 
 	// This store happens while gChunksMapMutex is still held. A scanner that
 	// publishes a chunk before it observes false will be caught by the terminal
@@ -2931,8 +2941,6 @@ void hddDiskScanThread(IDisk *disk) {
 	TRACETHIS();
 	uint32_t beginTime = static_cast<uint32_t>(time(nullptr));
 
-	gScansInProgress++;
-
 	{
 		std::lock_guard disksLockGuard(gDisksMutex);
 		disk->refreshDataDiskUsage();
@@ -2945,7 +2953,7 @@ void hddDiskScanThread(IDisk *disk) {
 	}
 	hddDiskScan(disk, beginTime);
 	hddDiskRandomizeChunksForTests(disk);
-	gScansInProgress--;
+	gScansInProgress.fetch_sub(1, std::memory_order_release);
 
 	// Before taking gDisksMutex: this acquires gChunksMapMutex, and no other
 	// path holds the disks lock while waiting for the chunk map one.
@@ -3085,6 +3093,7 @@ void hddTerminate(void) {
 	// were executed.
 	gChunksMap.clear();
 	gPresentChunkTypes.clear();
+	gScansInProgress.store(0, std::memory_order_relaxed);
 	gPullRegistrationSweepActive.store(false, std::memory_order_release);
 	hddDiscardNewChunks();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
