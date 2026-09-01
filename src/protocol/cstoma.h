@@ -98,6 +98,10 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerConfig, SAU_CSTOMA_REGISTER_CONFIG, 0,
 		std::string, config)
 
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, registerPassive, SAU_CSTOMA_REGISTER_PASSIVE, 0,
+                                    uint32_t, ip, uint16_t, port, uint32_t, timeout, uint32_t,
+                                    csVersion, std::string, clusterId)
+
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

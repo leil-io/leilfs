@@ -22,15 +22,22 @@
 #include "common/platform.h"
 
 #include "common/chunk_type_with_address.h"
+#include "common/metadataserver_cluster_entry.h"
+#include "common/serialization_macros.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/packet.h"
-#include "common/serialization_macros.h"
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, registerHost, SAU_MATOCS_REGISTER_HOST, 0,
 		uint8_t, status,
 		uint32_t, version,
 		std::string, clusterId)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, clusterMembers, SAU_MATOCS_CLUSTER_MEMBERS, 0,
+                                    std::vector<MetadataserverClusterEntry>, members)
+
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, registerPassive, SAU_MATOCS_REGISTER_PASSIVE, 0,
+                                    uint8_t, status, uint32_t, version, std::string, clusterId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)

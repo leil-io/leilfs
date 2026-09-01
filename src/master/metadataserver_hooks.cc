@@ -41,5 +41,6 @@ std::vector<MetadataserverListEntry> defaultMetadataserversList() { return matom
 
 }  // namespace
 
+MetadataserverClusterMembersHook gMetadataserverClusterMembersHook;
 MetadataserversListHook gMetadataserversListHook = defaultMetadataserversList;
 MetadataserverStatusHook gMetadataserverStatusHook = defaultMetadataserverStatus;

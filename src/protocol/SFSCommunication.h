@@ -547,6 +547,18 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CSTOMA_STARTTLS (1000U + 173U)
 /// -
 
+// 0x049C
+#define SAU_MATOCS_CLUSTER_MEMBERS (1000U + 180U)
+/// version==0 members:(N * [mdsid:32 ip:32 matocsport:16 version:32])
+
+// 0x049D
+#define SAU_CSTOMA_REGISTER_PASSIVE (1000U + 181U)
+/// version==0 ip:32 port:16 timeout:32 vershex:32 clusterid:STDSTRING
+
+// 0x049E
+#define SAU_MATOCS_REGISTER_PASSIVE (1000U + 182U)
+/// version==0 status:8 version:32 clusterid:STDSTRING
+
 // CHUNKSERVER <-> CLIENT/CHUNKSERVER
 
 // 0x04B0

@@ -24,9 +24,11 @@
 
 #include <sys/poll.h>
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "common/chunk_part_type.h"
 #include "common/input_packet.h"
@@ -64,17 +66,25 @@ enum class RegistrationStatus : std::uint8_t {
 	kChunksRegistered,       ///< Chunks have been registered with the MDS.
 };
 
+/// Selects whether this connection carries the active chunk inventory and operations.
+enum class MetadataConnectionType : std::uint8_t {
+	kActive,
+	kPassive,
+};
+
 /// @brief Class representing a connection to a Metadata Server (MDS).
 ///
-/// Currently, only one active MDS (known as Master) is supported.
+/// One connection remains active. Discovered MDS connections use the passive type.
 class MasterConn {
 public:
 	explicit MasterConn(const std::string &masterHostStr, const std::string &masterPortStr,
-	                    const std::string &clusterId, const std::shared_ptr<MasterJobPool> &jobPool,
+	                    const std::string &clusterId, MetadataConnectionType connectionType,
+	                    const std::shared_ptr<MasterJobPool> &jobPool,
 	                    const std::shared_ptr<MasterJobPool> &replicationJobPool)
 	    : masterHostStr_(masterHostStr),
 	      masterPortStr_(masterPortStr),
 	      clusterId_(clusterId),
+	      connectionType_(connectionType),
 	      jobPool_(jobPool),
 	      replicationJobPool_(replicationJobPool) {}
 
@@ -114,6 +124,8 @@ public:
 	void sendRegister();
 
 	void onRegistered(const std::vector<uint8_t> &data);
+
+	void onPassiveRegistered(const std::vector<uint8_t> &data);
 
 	int initConnect();
 
@@ -184,6 +196,8 @@ public:
 
 	RegistrationStatus registrationStatus() const { return registrationStatus_; }
 
+	bool isActive() const { return connectionType_ == MetadataConnectionType::kActive; }
+
 	void setMode(ConnectionMode newMode) {
 		mode_ = newMode;
 
@@ -231,6 +245,7 @@ private:
 	std::string masterPortStr_;                     ///< Port of the master server.
 	uint32_t version_{saunafsVersion(0, 0, 0)};     ///< Version of the master server.
 	std::string clusterId_;                         ///< Cluster ID for this connection.
+	MetadataConnectionType connectionType_;         ///< Active authority or passive observation.
 	std::shared_ptr<MasterJobPool> jobPool_;        ///< Shared reference to the JobPool.
 	/// Shared reference to the ReplicationJobPool.
 	std::shared_ptr<MasterJobPool> replicationJobPool_;

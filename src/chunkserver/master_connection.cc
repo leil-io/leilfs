@@ -37,6 +37,7 @@
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
+#include "chunkserver/masterconn.h"
 #include "chunkserver/network_main_thread.h"
 #include "common/input_packet.h"
 #include "common/loop_watchdog.h"
@@ -77,6 +78,8 @@ void MasterConn::createAttachedPacket(MessageBuffer serializedPacket) {
 // Configuration
 
 void MasterConn::reloadConfig() {
+	if (!isActive()) { return; }
+
 	auto newMasterHostStr_ = cfg_getstring("MASTER_HOST", "sfsmaster");
 	auto newMasterPortStr_ = cfg_getstring("MASTER_PORT", "9420");
 
@@ -117,13 +120,13 @@ void MasterConn::reloadConfig() {
 // Connection management
 
 void MasterConn::sendRegisterLabel() {
-	if (mode_ == ConnectionMode::CONNECTED) {
+	if (isActive() && mode_ == ConnectionMode::CONNECTED) {
 		createAttachedPacket(cstoma::registerLabel::build(gLabel));
 	}
 }
 
 void MasterConn::sendConfig() {
-	if (mode_ == ConnectionMode::CONNECTED) {
+	if (isActive() && mode_ == ConnectionMode::CONNECTED) {
 		createAttachedPacket(cstoma::registerConfig::build(cfg_yaml_string()));
 	}
 }
@@ -133,6 +136,15 @@ void MasterConn::sendRegister() {
 
 	uint32_t myip = mainNetworkThreadGetListenIp();
 	uint16_t myport = mainNetworkThreadGetListenPort();
+
+	if (!isActive()) {
+		createAttachedPacket(
+		    cstoma::registerPassive::build(myip, myport, gTimeout_ms, SAUNAFS_VERSHEX, clusterId_));
+		safs::log_info("MasterConn: registering passive connection to MDS: {}",
+		               address_.toString());
+		registrationStatus_ = RegistrationStatus::kRegistrationRequested;
+		return;
+	}
 
 	if (isVersionLessThan5_) {  // Preserve compatibility with masters < 5.0
 		createAttachedPacket(
@@ -210,7 +222,38 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	sendConfig();
 }
 
+void MasterConn::onPassiveRegistered(const std::vector<uint8_t> &data) {
+	if (registrationStatus_ != RegistrationStatus::kRegistrationRequested) {
+		safs::log_warn("MasterConn: unexpected passive registration response from {}",
+		               address_.toString());
+		setMode(ConnectionMode::KILL);
+		return;
+	}
+
+	uint8_t status = SAUNAFS_ERROR_UNKNOWN;
+	uint32_t version = 0;
+	std::string clusterId;
+	matocs::registerPassive::deserialize(data, status, version, clusterId);
+
+	if (status != SAUNAFS_STATUS_OK || version < kFirstVersionWithPassiveMdsDiscovery ||
+	    clusterId != clusterId_) {
+		safs::log_warn(
+		    "MasterConn: passive registration to {} rejected, status: {}, version: {}, clusterId: {}",
+		    address_.toString(), saunafs_error_string(status), saunafsVersionToString(version),
+		    clusterId);
+		setMode(ConnectionMode::KILL);
+		return;
+	}
+
+	version_ = version;
+	registrationStatus_ = RegistrationStatus::kHostRegistered;
+	safs::log_info("MasterConn: passive connection registered to MDS: {}, version: {}",
+	               address_.toString(), saunafsVersionToString(version));
+}
+
 void MasterConn::handleRegistrationAttempt() {
+	if (!isActive()) { return; }
+
 	if (registrationAttempts_ < kMaxRegistrationAttemptsToBeConsideredOldMaster) {
 		if (registrationStatus_ == RegistrationStatus::kRegistrationRequested) {
 			safs::log_warn(
@@ -394,8 +437,10 @@ void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc, bool doTermi
 	if (mode_ == ConnectionMode::FREE || socketFD_ < 0) { return; }
 
 	if (mode_ == ConnectionMode::CONNECTED) {
-		if (!doTerminate && (jobPool_->getJobCount() < kMaxBackgroundJobsThreshold ||
-		    replicationJobPool_->getJobCount() < kMaxBackgroundJobsThreshold)) {
+		const bool activeCanRead =
+		    isActive() && (jobPool_->getJobCount() < kMaxBackgroundJobsThreshold ||
+		                   replicationJobPool_->getJobCount() < kMaxBackgroundJobsThreshold);
+		if (!doTerminate && (!isActive() || activeCanRead)) {
 			pdesc.emplace_back(socketFD_, POLLIN, 0);
 			pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 		}
@@ -492,8 +537,8 @@ void MasterConn::readFromSocket() {
 
 	while (mode_ != ConnectionMode::KILL) {
 		// If any job pool is too busy, do not read more data.
-		if (jobPool_->getJobCount() >= kMaxBackgroundJobsThreshold ||
-		    replicationJobPool_->getJobCount() >= kMaxBackgroundJobsThreshold) {
+		if (isActive() && (jobPool_->getJobCount() >= kMaxBackgroundJobsThreshold ||
+		                   replicationJobPool_->getJobCount() >= kMaxBackgroundJobsThreshold)) {
 			return;
 		}
 
@@ -618,6 +663,21 @@ void MasterConn::writeToSocket() {
 }
 
 void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) try {
+	if (!isActive()) {
+		switch (header.type) {
+		case ANTOAN_NOP:
+			return;
+		case SAU_MATOCS_REGISTER_PASSIVE:
+			onPassiveRegistered(message);
+			return;
+		default:
+			safs::log_warn("MasterConn: rejecting packet type {} on passive metadata connection {}",
+			               header.type, address_.toString());
+			setMode(ConnectionMode::KILL);
+			return;
+		}
+	}
+
 	switch (header.type) {
 	case ANTOAN_NOP:
 		break;
@@ -664,6 +724,24 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_REGISTER_HOST:
 		onRegistered(message);
 		break;
+	case SAU_MATOCS_CLUSTER_MEMBERS: {
+		if (registrationStatus_ < RegistrationStatus::kHostRegistered) {
+			safs::log_warn("MasterConn: discovery arrived before registration from {}",
+			               address_.toString());
+			setMode(ConnectionMode::KILL);
+			break;
+		}
+
+		try {
+			std::vector<MetadataserverClusterEntry> members;
+			matocs::clusterMembers::deserialize(message, members);
+			masterconn_apply_cluster_members(members);
+		} catch (const IncorrectDeserializationException &exception) {
+			safs::log_warn("MasterConn: ignoring malformed MDS discovery snapshot from {}: {}",
+			               address_.toString(), exception.what());
+		}
+		break;
+	}
 	default:
 		safs::log_info("MasterConn: got unknown message (type: {}): {}", header.type,
 		               address_.toString());

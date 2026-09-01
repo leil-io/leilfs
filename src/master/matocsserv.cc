@@ -60,6 +60,7 @@
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
+#include "master/metadataserver_hooks.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cstoma.h"
@@ -135,6 +136,8 @@ struct matocsserventry {
 	uint16_t wrepcounter;
 	uint16_t delcounter;
 	uint8_t load_factor;
+	bool passive{false};
+	bool chunkserverAccountingStarted{false};
 
 	/// Context of the TLS channel used for communication with chunkserver.
 	///
@@ -322,6 +325,8 @@ void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *us
 	constexpr uint32_t kMaxChunkservers = 65'535;
 
 	for (const auto &eptr : matocsservList) {
+		if (!eptr->chunkserverAccountingStarted) { continue; }
+
 		if (eptr->mode != ChunkserverConnectionMode::KILL) {
 			if (eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace) {
 				space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
@@ -347,9 +352,8 @@ void matocsserv_usagedifference(double *minusage, double *maxusage, uint16_t *us
 std::vector<ServerWithUsage> matocsserv_getservers_sorted() {
 	std::vector<ServerWithUsage> result;
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != ChunkserverConnectionMode::KILL
-				&& eptr->totalspace > 0
-				&& eptr->usedspace <= eptr->totalspace) {
+		if (eptr->chunkserverAccountingStarted && eptr->mode != ChunkserverConnectionMode::KILL &&
+		    eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace) {
 			double usage = double(eptr->usedspace) / double(eptr->totalspace);
 			result.emplace_back(eptr.get(), usage, eptr->label);
 		}
@@ -371,10 +375,9 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	min_server_count = std::numeric_limits<uint16_t>::max();
 
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0 &&
-		    eptr->usedspace <= eptr->totalspace &&
+		if (eptr->chunkserverAccountingStarted && eptr->mode != ChunkserverConnectionMode::KILL &&
+		    eptr->totalspace > 0 && eptr->usedspace <= eptr->totalspace &&
 		    (eptr->totalspace - eptr->usedspace) >= SFSCHUNKSIZE) {
-
 			// A good weight formula will do the following:
 			//   * Agree with the chunk balancing algorithm, i.e. avoid creating a distribution which
 			//     immediately needs to be re-balanced.
@@ -473,10 +476,9 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 	temporarily_unavailable = 0;
 	servers.clear();
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode == ChunkserverConnectionMode::KILL
-				|| eptr->totalspace == 0
-				|| eptr->usedspace > eptr->totalspace
-				|| (eptr->totalspace - eptr->usedspace) <= (eptr->totalspace / 100)) {
+		if (!eptr->chunkserverAccountingStarted || eptr->mode == ChunkserverConnectionMode::KILL ||
+		    eptr->totalspace == 0 || eptr->usedspace > eptr->totalspace ||
+		    (eptr->totalspace - eptr->usedspace) <= (eptr->totalspace / 100)) {
 			// Skip full and disconnected chunkservers
 			continue;
 		}
@@ -535,7 +537,8 @@ void matocsserv_getspace(uint64_t *totalspace,uint64_t *availspace) {
 	uint64_t tspace = 0;
 	uint64_t uspace = 0;
 	for (const auto &eptr : matocsservList) {
-		if (eptr->mode != ChunkserverConnectionMode::KILL && eptr->totalspace > 0) {
+		if (eptr->chunkserverAccountingStarted && eptr->mode != ChunkserverConnectionMode::KILL &&
+		    eptr->totalspace > 0) {
 			tspace += eptr->totalspace;
 			uspace += eptr->usedspace;
 		}
@@ -969,8 +972,36 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 	}
 }
 
+void matocsserv_send_cluster_members(matocsserventry *eptr) {
+	if (eptr->version < kFirstVersionWithPassiveMdsDiscovery ||
+	    !gMetadataserverClusterMembersHook) {
+		return;
+	}
+
+	try {
+		auto members = gMetadataserverClusterMembersHook();
+		if (members.size() > kMaxMetadataserverClusterEntries) {
+			safs::log_warn("MDS discovery has {} members, refusing an oversized snapshot",
+			               members.size());
+			return;
+		}
+
+		OutputPacket discoveryPacket;
+		matocs::clusterMembers::serialize(discoveryPacket.packet, members);
+		eptr->outputPackets.push_back(std::move(discoveryPacket));
+	} catch (const std::exception &exception) {
+		safs::log_warn("MDS discovery snapshot failed: {}", exception.what());
+	}
+}
+
 void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t servip,
                               uint16_t servport, uint32_t timeout, const std::string &clusterId) {
+	if (eptr->passive || eptr->csdb != nullptr) {
+		safs::log_warn("SAU_CSTOMA_REGISTER_HOST received on an already registered connection");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
 	eptr->version  = version;
 	eptr->servip   = servip;
 	eptr->servport = servport;
@@ -1023,6 +1054,10 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	}
 
 	eptr->csdb = csdb_find(eptr->servip, eptr->servport);
+	if (!eptr->chunkserverAccountingStarted) {
+		gChunkOperations->serverUnlabelledConnected();
+		eptr->chunkserverAccountingStarted = true;
+	}
 
 	safs::log_info("chunkserver register begin (packet version: 5) - ip: {}, port: {}",
 	               eptr->serviceStrIp, eptr->servport);
@@ -1034,6 +1069,50 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		                                gClusterId);
 		eptr->outputPackets.push_back(std::move(outPacket));
 	}
+
+	matocsserv_send_cluster_members(eptr);
+}
+
+void matocsserv_sau_register_passive(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	if (!gMetadataserverClusterMembersHook) {
+		safs::log_warn("SAU_CSTOMA_REGISTER_PASSIVE is not supported by Master");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	if (eptr->passive || eptr->csdb != nullptr) {
+		safs::log_warn("SAU_CSTOMA_REGISTER_PASSIVE received on an already registered connection");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	uint32_t servip = 0;
+	uint16_t servport = 0;
+	uint32_t timeout = 0;
+	uint32_t version = 0;
+	std::string clusterId;
+	cstoma::registerPassive::deserialize(data, servip, servport, timeout, version, clusterId);
+
+	if (version < kFirstVersionWithPassiveMdsDiscovery || servport == 0 ||
+	    timeout < kMinRegisterTimeoutMs || clusterId.empty() || clusterId != gClusterId) {
+		safs::log_warn("SAU_CSTOMA_REGISTER_PASSIVE received invalid registration data");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+	if (servip == 0) { tcpgetpeer(eptr->sock, &servip, nullptr); }
+
+	eptr->version = version;
+	eptr->servip = servip;
+	eptr->servport = servport;
+	eptr->timeout = timeout;
+	eptr->serviceStrIp = ipToString(servip);
+	eptr->passive = true;
+
+	eptr->outputPackets.emplace_back();
+	matocs::registerPassive::serialize(eptr->outputPackets.back().packet, SAUNAFS_STATUS_OK,
+	                                   SAUNAFS_VERSHEX, gClusterId);
+	safs::log_info("passive chunkserver registered, ip: {}, port: {}, request bytes: {}",
+	               eptr->serviceStrIp, eptr->servport, data.size());
 }
 
 void register_space(matocsserventry* eptr) {
@@ -1248,6 +1327,13 @@ void matocsserv_starttls(matocsserventry *eptr) {
 
 void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const MessageBuffer& data) {
 	uint32_t length = data.size();
+	if (eptr->passive && header.type != ANTOAN_NOP) {
+		safs::log_warn("passive chunkserver connection sent packet type {}, closing it",
+		               header.type);
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
 	try {
 		switch (header.type) {
 			case ANTOAN_NOP:
@@ -1303,6 +1389,9 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 				break;
 			case SAU_CSTOMA_REGISTER_HOST:
 				matocsserv_sau_register_host(eptr, data);
+				break;
+			case SAU_CSTOMA_REGISTER_PASSIVE:
+				matocsserv_sau_register_passive(eptr, data);
 				break;
 			case SAU_CSTOMA_REGISTER_CHUNKS:
 				matocsserv_sau_register_chunks(eptr, data);
@@ -1536,10 +1625,15 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 			eptr->delcounter = 0;
 			eptr->csdb = nullptr;
 			eptr->load_factor = 0;
+			eptr->passive = false;
+			eptr->chunkserverAccountingStarted = false;
 			eptr->tlsSession = nullptr;
 
 			matocsservList.emplace_back(std::move(eptr));
-			gChunkOperations->serverUnlabelledConnected();
+			if (!gMetadataserverClusterMembersHook) {
+				gChunkOperations->serverUnlabelledConnected();
+				matocsservList.back()->chunkserverAccountingStarted = true;
+			}
 		} else {
 			tcpclose(newSocket);
 		}
@@ -1582,25 +1676,30 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 	for (auto entriesIterator = matocsservList.begin(); entriesIterator != matocsservList.end();) {
 		auto *eptr = entriesIterator->get();
 		if (eptr->mode == ChunkserverConnectionMode::KILL) {
-			double usedSpace = (double)(eptr->usedspace) / kBytesPerGiB;
-			double totalSpace = (double)(eptr->totalspace) / kBytesPerGiB;
+			if (eptr->passive) {
+				safs::log_info("passive chunkserver disconnected, ip: {}, port: {}",
+				               eptr->serviceStrIp, eptr->servport);
+			} else {
+				double usedSpace = (double)(eptr->usedspace) / kBytesPerGiB;
+				double totalSpace = (double)(eptr->totalspace) / kBytesPerGiB;
+				safs::log_info(
+				    "chunkserver disconnected - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), "
+				    "totalspace: {} ({:.2f} GiB)",
+				    eptr->serviceStrIp, eptr->servport, eptr->usedspace, usedSpace,
+				    eptr->totalspace, totalSpace);
+			}
 
-			safs::log_info(
-			    "chunkserver disconnected - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
-			    eptr->serviceStrIp, eptr->servport, eptr->usedspace, usedSpace, eptr->totalspace,
-			    totalSpace);
-
-			matocsserv_replication_disconnected(eptr);
-
-			gChunkOperations->serverDisconnected(eptr, eptr->label);
+			if (eptr->chunkserverAccountingStarted) {
+				matocsserv_replication_disconnected(eptr);
+				gChunkOperations->serverDisconnected(eptr, eptr->label);
+			}
 
 			if (eptr->csdb) { csdb_lost_connection(eptr->servip, eptr->servport); }
 
 			tcpclose(eptr->sock);
+			if (eptr->chunkserverAccountingStarted) { gSortedServersNeedsRefresh = true; }
 
 			entriesIterator = matocsservList.erase(entriesIterator);
-
-			gSortedServersNeedsRefresh = true;
 		} else {
 			++entriesIterator;
 		}

@@ -25,7 +25,13 @@
 #include <optional>
 #include <vector>
 
+#include "common/metadataserver_cluster_entry.h"
 #include "common/metadataserver_list_entry.h"
+
+/// Returns live MDS endpoints for chunkserver discovery. It is empty in Master and set by
+/// the FoundationDB-backed MDS at startup, so Master never publishes a discovery packet.
+using MetadataserverClusterMembersHook = std::function<std::vector<MetadataserverClusterEntry>()>;
+extern MetadataserverClusterMembersHook gMetadataserverClusterMembersHook;
 
 /// Returns the list of other known metadata servers. Defaults to today's Master/Shadow
 /// logic (matomlserv_shadows), a leil-mds reassigns this at startup to read its

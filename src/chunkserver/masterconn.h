@@ -24,9 +24,13 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <vector>
+
+#include "common/metadataserver_cluster_entry.h"
 
 void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt);
 int masterconn_init(void);
 int masterconn_init_threads(void);
 MasterJobPool* masterconn_get_job_pool();
 bool masterconn_canexit();
+void masterconn_apply_cluster_members(const std::vector<MetadataserverClusterEntry> &members);

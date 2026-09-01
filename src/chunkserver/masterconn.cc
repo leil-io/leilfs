@@ -53,6 +53,7 @@
 //  From config
 static std::string gMasterHost;
 static std::string gMasterPort;
+static std::string gClusterId;
 static bool gEnableLoadFactor;
 
 static const uint64_t kSendStatusDelay = 5;
@@ -61,8 +62,11 @@ static const uint64_t kSendStatusDelay = 5;
 static std::shared_ptr<MasterJobPool> gJobPool;
 static std::shared_ptr<MasterJobPool> gReplicationJobPool;
 
-//  Singleton for the MasterConn instance (will become a list of connections in the future)
+// The configured MDS connection remains the sole active connection.
 static std::unique_ptr<MasterConn> gMasterConnSingleton = nullptr;
+
+// Registry discovery adds only passive connections. They never receive disk reports or jobs.
+static std::vector<std::unique_ptr<MasterConn>> gPassiveMasterConnections;
 
 static int gJobFD{-1};  ///< File descriptor for the job pool notifications
 static int32_t gJobFDpDescPos{-1};  ///< Position in the pollfd array for the job pool notifications
@@ -83,10 +87,14 @@ static void* gReconnectHook;
 //  Stats
 static uint32_t stats_maxjobscnt = 0;
 
-void masterconn_stats(uint64_t *bin,uint64_t *bout,uint32_t *maxjobscnt) {
-	//  For each connection, add the statistics
+void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt) {
 	auto totalBytesIn = gMasterConnSingleton->bytesIn();
 	auto totalBytesOut = gMasterConnSingleton->bytesOut();
+	for (const auto &connection : gPassiveMasterConnections) {
+		totalBytesIn += connection->bytesIn();
+		totalBytesOut += connection->bytesOut();
+		connection->resetStats();
+	}
 
 	*bin = totalBytesIn;
 	*bout = totalBytesOut;
@@ -189,7 +197,9 @@ bool masterconn_canexit() {
 }
 
 void masterconn_term(void) {
-	//  For each connection (currently only one), release its resources.
+	for (const auto &connection : gPassiveMasterConnections) { connection->releaseResources(); }
+	gPassiveMasterConnections.clear();
+
 	MasterConn *eptr = gMasterConnSingleton.get();
 	eptr->releaseResources();
 	gMasterConnSingleton.reset();
@@ -202,7 +212,6 @@ void masterconn_term(void) {
 void masterconn_desc(std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_desc");
 
-	// For each connection to master (currently only one), add its socket to the pollfd array.
 	MasterConn *eptr = gMasterConnSingleton.get();
 
 	// Add the descriptor for listening for background jobs finishing.
@@ -221,6 +230,9 @@ void masterconn_desc(std::vector<pollfd> &pdesc) {
 	}
 
 	eptr->providePollDescriptors(pdesc, doTerminate());
+	for (const auto &connection : gPassiveMasterConnections) {
+		connection->providePollDescriptors(pdesc, doTerminate());
+	}
 }
 
 void masterconn_send_status() {
@@ -242,7 +254,10 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	MasterConn *eptr = gMasterConnSingleton.get();
 
 	eptr->handlePollErrors(pdesc);
-	
+	for (const auto &connection : gPassiveMasterConnections) {
+		connection->handlePollErrors(pdesc);
+	}
+
 	// Check if there are any background jobs to process.
 	if (eptr->mode() == ConnectionMode::CONNECTED) {
 		if (gJobFDpDescPos >= 0 && (pdesc[gJobFDpDescPos].revents & POLLIN)) {
@@ -253,8 +268,8 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		}
 	}
 
-	// For each connection to master (currently only one), process its socket.
 	eptr->servePoll(pdesc);
+	for (const auto &connection : gPassiveMasterConnections) { connection->servePoll(pdesc); }
 
 	// Update general statistics
 	if (eptr->mode() == ConnectionMode::CONNECTED) {
@@ -272,6 +287,14 @@ void masterconn_serve(const std::vector<pollfd> &pdesc) {
 		eptr->resetPackets();
 		eptr->setMode(ConnectionMode::FREE);
 	}
+
+	for (const auto &connection : gPassiveMasterConnections) {
+		if (connection->mode() != ConnectionMode::KILL) { continue; }
+
+		connection->releaseResources();
+		connection->resetPackets();
+		connection->setMode(ConnectionMode::FREE);
+	}
 }
 
 void masterconn_reconnect(void) {
@@ -279,6 +302,82 @@ void masterconn_reconnect(void) {
 	if (eptr->mode() == ConnectionMode::FREE) {
 		eptr->initConnect();
 	}
+	for (const auto &connection : gPassiveMasterConnections) {
+		if (connection->mode() == ConnectionMode::FREE) { connection->initConnect(); }
+	}
+}
+
+void masterconn_apply_cluster_members(const std::vector<MetadataserverClusterEntry> &members) {
+	if (members.size() > kMaxMetadataserverClusterEntries) {
+		safs::log_warn("MasterConn: refusing discovery snapshot with {} entries", members.size());
+		return;
+	}
+
+	const auto &activeAddress = gMasterConnSingleton->address();
+	std::vector<MetadataserverClusterEntry> passiveMembers;
+	passiveMembers.reserve(members.size());
+
+	// Validate the complete snapshot before changing any live passive connection.
+	for (const auto &member : members) {
+		if (member.mdsId == 0 || member.ip == 0 || member.matocsPort == 0) {
+			safs::log_warn("MasterConn: refusing discovery snapshot with an invalid endpoint");
+			return;
+		}
+		if (member.version < kFirstVersionWithPassiveMdsDiscovery) { continue; }
+		if (member.ip == activeAddress.ip && member.matocsPort == activeAddress.port) { continue; }
+
+		for (const auto &accepted : passiveMembers) {
+			const bool sameIdentity = accepted.mdsId == member.mdsId;
+			const bool sameEndpoint =
+			    accepted.ip == member.ip && accepted.matocsPort == member.matocsPort;
+			if (sameIdentity || sameEndpoint) {
+				safs::log_warn("MasterConn: refusing ambiguous MDS discovery snapshot");
+				return;
+			}
+		}
+		passiveMembers.push_back(member);
+	}
+
+	// Create every missing connection before moving anything out of the live vector.
+	const size_t noExistingConnection = gPassiveMasterConnections.size();
+	std::vector<size_t> existingConnectionIndices(passiveMembers.size(), noExistingConnection);
+	std::vector<std::unique_ptr<MasterConn>> createdConnections(passiveMembers.size());
+	for (size_t memberIndex = 0; memberIndex < passiveMembers.size(); ++memberIndex) {
+		const auto &member = passiveMembers[memberIndex];
+		for (size_t connectionIndex = 0; connectionIndex < gPassiveMasterConnections.size();
+		     ++connectionIndex) {
+			const auto &connection = gPassiveMasterConnections[connectionIndex];
+			const auto &address = connection->address();
+			if (address.ip == member.ip && address.port == member.matocsPort) {
+				existingConnectionIndices[memberIndex] = connectionIndex;
+				break;
+			}
+		}
+		if (existingConnectionIndices[memberIndex] != noExistingConnection) { continue; }
+
+		auto connection = std::make_unique<MasterConn>(
+		    ipToString(member.ip), std::to_string(member.matocsPort), gClusterId,
+		    MetadataConnectionType::kPassive, gJobPool, gReplicationJobPool);
+		connection->initConnect();
+		createdConnections[memberIndex] = std::move(connection);
+	}
+
+	// Assemble the replacement without allocations, then close connections no longer listed.
+	std::vector<std::unique_ptr<MasterConn>> nextConnections;
+	nextConnections.reserve(passiveMembers.size());
+	for (size_t memberIndex = 0; memberIndex < passiveMembers.size(); ++memberIndex) {
+		const size_t connectionIndex = existingConnectionIndices[memberIndex];
+		if (connectionIndex != noExistingConnection) {
+			nextConnections.push_back(std::move(gPassiveMasterConnections[connectionIndex]));
+		} else {
+			nextConnections.push_back(std::move(createdConnections[memberIndex]));
+		}
+	}
+
+	for (const auto &connection : gPassiveMasterConnections) {
+		if (connection) { connection->releaseResources(); }
+	}
+	gPassiveMasterConnections.swap(nextConnections);
 }
 
 static uint32_t get_cfg_timeout() {
@@ -318,6 +417,11 @@ void masterconn_reload(void) {
 	} else {
 		eptr->setMasterAddressValid(false);
 	}
+	for (const auto &connection : gPassiveMasterConnections) {
+		if (connection->bindHostAddress().ip == bip) { continue; }
+		connection->setBindHostAddress(bip, connection->bindHostAddress().port);
+		connection->setMode(ConnectionMode::KILL);
+	}
 
 	gTimeout_ms = get_cfg_timeout();
 
@@ -334,16 +438,17 @@ int masterconn_init(void) {
 	uint32_t reconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY", 5);
 	gMasterHost = cfg_getstring("MASTER_HOST", "sfsmaster");
 	gMasterPort = cfg_getstring("MASTER_PORT", "9420");
-	std::string clusterId = cfg_getstring("CLUSTER_ID", "default");
+	gClusterId = cfg_getstring("CLUSTER_ID", "default");
 	gBindHostStr = cfg_getstring("BIND_HOST", "*");
 	gTimeout_ms = get_cfg_timeout();
 	gEnableLoadFactor = static_cast<bool>(cfg_getuint32("ENABLE_LOAD_FACTOR", 0));
 
 	if (!masterconn_load_label()) { return -1; }
 
-	// Create the connections (only one at this point)
-	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, clusterId,
-	                                                    gJobPool, gReplicationJobPool);
+	// Create the configured active connection. Discovery may add passive connections later.
+	gMasterConnSingleton = std::make_unique<MasterConn>(gMasterHost, gMasterPort, gClusterId,
+	                                                    MetadataConnectionType::kActive, gJobPool,
+	                                                    gReplicationJobPool);
 	MasterConn *eptr = gMasterConnSingleton.get();
 	passert(eptr);
 

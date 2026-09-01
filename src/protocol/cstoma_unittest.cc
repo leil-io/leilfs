@@ -68,6 +68,30 @@ TEST(CstomaCommunicationTests, RegisterHost) {
 	SAUNAFS_VERIFY_INOUT_PAIR(csVersion);
 }
 
+TEST(CstomaCommunicationTests, RegisterPassive) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, ip, 127001, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint16_t, port, 8080, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, timeout, 100000, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, csVersion, SAUNAFS_VERSHEX, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(std::string, clusterId, "cluster-1", "");
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::registerPassive::serialize(buffer, ipIn, portIn, timeoutIn, csVersionIn,
+	                                                   clusterIdIn));
+
+	verifyHeader(buffer, SAU_CSTOMA_REGISTER_PASSIVE);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, 0);
+	ASSERT_NO_THROW(cstoma::registerPassive::deserialize(buffer, ipOut, portOut, timeoutOut,
+	                                                     csVersionOut, clusterIdOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(ip);
+	SAUNAFS_VERIFY_INOUT_PAIR(port);
+	SAUNAFS_VERIFY_INOUT_PAIR(timeout);
+	SAUNAFS_VERIFY_INOUT_PAIR(csVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(clusterId);
+}
+
 TEST(CstomaCommunicationTests, RegisterChunks) {
 	SAUNAFS_DEFINE_INOUT_VECTOR_PAIR(ChunkWithVersionAndType, chunks) = {
 			ChunkWithVersionAndType(0, 1000, xor_1_of_3),

@@ -26,6 +26,48 @@
 #include "unittests/inout_pair.h"
 #include "unittests/packet.h"
 
+TEST(MatocsCommunicationTests, ClusterMembers) {
+	SAUNAFS_DEFINE_INOUT_VECTOR_PAIR(MetadataserverClusterEntry, members) = {
+	    MetadataserverClusterEntry(1, 0xC0A80001, 9422, SAUNAFS_VERSHEX),
+	    MetadataserverClusterEntry(2, 0xC0A80002, 9423, SAUNAFS_VERSHEX),
+	    MetadataserverClusterEntry(3, 0xC0A80003, 9424, SAUNAFS_VERSHEX - 1),
+	};
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::clusterMembers::serialize(buffer, membersIn));
+
+	verifyHeader(buffer, SAU_MATOCS_CLUSTER_MEMBERS);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, 0);
+	ASSERT_NO_THROW(matocs::clusterMembers::deserialize(buffer, membersOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(members);
+
+	buffer.pop_back();
+	std::vector<MetadataserverClusterEntry> truncatedMembers;
+	ASSERT_THROW(matocs::clusterMembers::deserialize(buffer, truncatedMembers),
+	             IncorrectDeserializationException);
+}
+
+TEST(MatocsCommunicationTests, RegisterPassive) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, 0, 0xFF);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, version, SAUNAFS_VERSHEX, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(std::string, clusterId, "cluster-1", "");
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::registerPassive::serialize(buffer, statusIn, versionIn, clusterIdIn));
+
+	verifyHeader(buffer, SAU_MATOCS_REGISTER_PASSIVE);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, 0);
+	ASSERT_NO_THROW(
+	    matocs::registerPassive::deserialize(buffer, statusOut, versionOut, clusterIdOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(status);
+	SAUNAFS_VERIFY_INOUT_PAIR(version);
+	SAUNAFS_VERIFY_INOUT_PAIR(clusterId);
+}
+
 TEST(MatocsCommunicationTests, SetVersion) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87,  0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52,  0);
