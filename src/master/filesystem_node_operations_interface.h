@@ -846,7 +846,8 @@ public:
 	/// - have mode (extraattr bits) updated,
 	/// - propagate mode to stored ACL metadata (if present),
 	/// - update ctime/checksum,
-	/// - are persisted via updateNode() when a read-write transaction is present.
+	/// - are persisted via updateNode(), which is a no-op on backends that do not persist
+	///   individual nodes.
 	///
 	/// @param fsOpContext The filesystem operation context (transaction).
 	/// @param node Root node for update traversal.

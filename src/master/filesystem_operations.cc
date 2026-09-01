@@ -892,10 +892,17 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 		gMetadata->metadataVersion++;
 	}
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.commitTransaction()) {
-			safs::log_err("undel: failed to commit transaction for inode {}", inode);
-			status = SAUNAFS_ERROR_IO;
+	if (status == SAUNAFS_STATUS_OK) {
+		if (fsOpContext.hasReadWriteTransaction()) {
+			// MDS: the operation already staged the node; just commit.
+			if (!fsOpContext.commitTransaction()) {
+				safs::log_err("undel: failed to commit transaction for inode {}", inode);
+				status = SAUNAFS_ERROR_IO;
+			}
+		} else {
+			// Signal backends (forkless) persist via updateNode() -> nodeChangedSignal;
+			// in-memory backend no-ops.
+			nodeOperations_->updateNode(fsOpContext, node);
 		}
 	}
 
@@ -1030,7 +1037,7 @@ uint8_t FilesystemOperationsBase::applyAccess(const FilesystemOperationContext &
 	gMetadata->metadataVersion++;
 
 	// Make the change persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+	nodeOperations_->updateNode(fsOpContext, node);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1338,9 +1345,7 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 				fsnodes_update_checksum(node);
 
 				// Make the change persistent for KV backends
-				if (fsOpContext.hasReadWriteTransaction()) {
-					nodeOperations_->updateNode(fsOpContext, node);
-				}
+				nodeOperations_->updateNode(fsOpContext, node);
 
 				return SAUNAFS_ERROR_DELAYED;
 			}
@@ -1448,9 +1453,7 @@ uint8_t FilesystemOperationsBase::applyTrunc(const FilesystemOperationContext &f
 	fsnodes_update_checksum(nodeFile);
 
 	// Make the change persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		nodeOperations_->updateNode(fsOpContext, nodeFile);
-	}
+	nodeOperations_->updateNode(fsOpContext, nodeFile);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1531,7 +1534,7 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	// Make the change persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+	nodeOperations_->updateNode(fsOpContext, node);
 
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
@@ -1685,7 +1688,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	fsnodes_update_checksum(node);
 
 	// Make persistent the changes on KV backends
-	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+	nodeOperations_->updateNode(fsOpContext, node);
 
 	incrementFSStat(FsStats::Setattr);
 	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
@@ -1719,7 +1722,7 @@ uint8_t FilesystemOperationsBase::applyAttr(const FilesystemOperationContext &fs
 	gMetadata->metadataVersion++;
 
 	// Make persistent the changes on KV backends
-	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+	nodeOperations_->updateNode(fsOpContext, node);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1745,7 +1748,7 @@ uint8_t FilesystemOperationsBase::applyLength(const FilesystemOperationContext &
 	gMetadata->metadataVersion++;
 
 	// Make the change persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) { nodeOperations_->updateNode(fsOpContext, node); }
+	nodeOperations_->updateNode(fsOpContext, node);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1761,9 +1764,10 @@ static inline void fs_update_atime(const FilesystemOperationContext &fsOpContext
 		fsnodes_update_checksum(p);
 		gFSOperations->changeLog(fsOpContext, ts, "ACCESS(%" PRIiNode ")", p->id);
 
-		// Persist the advance: no-op on the in-memory master; the KV backend records it with a
-		// conflict-free atomicMax on NODE_ATIME_ instead of a whole-node write. fillAttr serves
-		// max(node->atime, NODE_ATIME_), recovering the advance if the cached bump is lost.
+		// Persist the advance: on a signal backend persistNodeAtime() emits the whole node; the
+		// KV backend records it with a conflict-free atomicMax on NODE_ATIME_ instead of a
+		// whole-node write. fillAttr serves max(node->atime, NODE_ATIME_), recovering the advance
+		// if the cached bump is lost.
 		gFSOperations->nodeOperations()->persistNodeAtime(fsOpContext, p, ts);
 	}
 }
@@ -1857,9 +1861,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 
 	// Re-persist: createNode() stored the node before the symlink target was set above
 	// (no-op on the in-memory backend).
-	if (fsOpContext.hasReadWriteTransaction()) {
-		nodeOperations_->updateNode(fsOpContext, newNode);
-	}
+	nodeOperations_->updateNode(fsOpContext, newNode);
 
 	StatsRecord statsRecord;
 	memset(&statsRecord, 0, sizeof(StatsRecord));
@@ -1962,6 +1964,9 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	metrics::Counter::increment(metrics::Counter::Master::FS_MKNOD);
 	fsnodes_update_checksum(newNode);
 
+	// Persist the newly created node: KV stages it into the transaction, signal backends emit.
+	nodeOperations_->updateNode(fsOpContext, newNode);
+
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2060,6 +2065,10 @@ uint8_t FilesystemOperationsBase::applyCreate(const FilesystemOperationContext &
 	if (type == FSNodeType::kBlockDev || type == FSNodeType::kCharDev) {
 		static_cast<FSNodeDevice *>(node)->rdev = rdev;
 		fsnodes_update_checksum(node);
+
+		// Persist the device node after setting rdev (post-create mutation): KV stages it into
+		// the transaction, signal backends emit.
+		nodeOperations_->updateNode(fsOpContext, node);
 	}
 	if (inode != node->id) {
 		// if inode!=p->id then requested inode number was already acquired
@@ -2494,10 +2503,8 @@ uint8_t FilesystemOperationsBase::append(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
 	// Make append changes persistent for KV backends.
-	if (fsOpContext.hasReadWriteTransaction()) {
-		nodeOperations_->updateNode(fsOpContext, targetNode);
-		nodeOperations_->updateNode(fsOpContext, sourceNode);
-	}
+	nodeOperations_->updateNode(fsOpContext, targetNode);
+	nodeOperations_->updateNode(fsOpContext, sourceNode);
 
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(), "APPEND(%" PRIiNode ",%" PRIiNode ")", targetNode->id,
@@ -2972,9 +2979,7 @@ uint8_t FilesystemOperationsBase::acquire(const FsContext &context,
 	fsnodes_update_checksum(fileNode);
 
 	// Persist the changes in KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		nodeOperations_->updateNode(fsOpContext, fileNode);
-	}
+	nodeOperations_->updateNode(fsOpContext, fileNode);
 
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(), "ACQUIRE(%" PRIiNode ",%" PRIu32 ")", inode,
@@ -3015,9 +3020,7 @@ uint8_t FilesystemOperationsBase::release(const FsContext &context,
 			fsnodes_update_checksum(fileNode);
 
 			// Persist the changes in KV backends
-			if (fsOpContext.hasReadWriteTransaction()) {
-				nodeOperations_->updateNode(fsOpContext, fileNode);
-			}
+			nodeOperations_->updateNode(fsOpContext, fileNode);
 		}
 
 #ifndef METARESTORE
@@ -3256,9 +3259,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 	fsnodes_update_checksum(fileNode);
 
 	// Make the change persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		nodeOperations_->updateNode(fsOpContext, fileNode);
-	}
+	nodeOperations_->updateNode(fsOpContext, fileNode);
 
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Write);
@@ -3305,9 +3306,7 @@ uint8_t FilesystemOperationsBase::writeEnd(const FilesystemOperationContext &fsO
 			fsnodes_update_checksum(nodeFile);
 
 			// Make the change persistent for KV backends
-			if (fsOpContext.hasReadWriteTransaction()) {
-				nodeOperations_->updateNode(fsOpContext, nodeFile);
-			}
+			nodeOperations_->updateNode(fsOpContext, nodeFile);
 
 			changeLog(fsOpContext, timeStamp, "LENGTH(%" PRIiNode ",%" PRIu64 ",%" PRIu32 ")",
 			          inode, length, static_cast<uint32_t>(eraseFurtherChunks));
@@ -3386,10 +3385,9 @@ uint8_t FilesystemOperationsBase::removeChunkFromFile(const FsContext &context,
 	            {{QuotaResource::kSize, newStats.size - previousStats.size}});
 	fsnodes_update_checksum(nodeFile);
 
-	// Make the chunk-table and mtime edits persistent for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		nodeOperations_->updateNode(fsOpContext, nodeFile);
-	}
+	// Make the chunk-table and mtime edits persistent for KV backends, signal backends emit.
+	nodeOperations_->updateNode(fsOpContext, nodeFile);
+
 	return SAUNAFS_STATUS_OK;
 }
 #endif /* #ifndef METARESTORE */
@@ -3466,9 +3464,16 @@ uint8_t FilesystemOperationsBase::repair(const FsContext &context, inode_t inode
 	quotaUpdate(fsOpContext, node, {{QuotaResource::kSize, newStats.size - previousStats.size}});
 	fsnodes_update_checksum(node);
 
-	if (fsOpContext.hasReadWriteTransaction() && !fsOpContext.commitTransaction()) {
-		safs::log_err("{}: failed to commit transaction for inode {}", __func__, inode);
-		return SAUNAFS_ERROR_IO;
+	if (fsOpContext.hasReadWriteTransaction()) {
+		// MDS: the operation already staged the node; just commit.
+		if (!fsOpContext.commitTransaction()) {
+			safs::log_err("{}: failed to commit transaction for inode {}", __func__, inode);
+			return SAUNAFS_ERROR_IO;
+		}
+	} else {
+		// Signal backends (forkless) persist via updateNode() -> nodeChangedSignal;
+		// in-memory backend no-ops.
+		nodeOperations_->updateNode(fsOpContext, node);
 	}
 
 	return SAUNAFS_STATUS_OK;
@@ -3529,6 +3534,12 @@ uint8_t FilesystemOperationsBase::applyRepair(const FilesystemOperationContext &
 	nodeOperations_->updateCTime(fsOpContext, nodeFile, timestamp);
 
 	fsnodes_update_checksum(nodeFile);
+
+	// Signal backends (forkless) persist via updateNode() -> nodeChangedSignal;
+	// in-memory backend no-ops.
+	if (!fsOpContext.hasReadWriteTransaction()) {
+		nodeOperations_->updateNode(fsOpContext, nodeFile);
+	}
 
 	return status;
 }
@@ -3784,7 +3795,8 @@ uint8_t FilesystemOperationsBase::applySetTrashTime(const FsContext &context, in
 
 	gMetadata->metadataVersion++;
 	if (master_result != myResult) { return SAUNAFS_ERROR_MISMATCH; }
-	if (myResult == SetTrashtimeTask::kChanged && fsOpContext.hasReadWriteTransaction()) {
+
+	if (myResult == SetTrashtimeTask::kChanged) {
 		nodeOperations_->updateNode(fsOpContext, node);
 		if (!fsOpContext.commitTransaction()) { return SAUNAFS_ERROR_IO; }
 	}
@@ -3910,6 +3922,11 @@ uint8_t FilesystemOperationsBase::setXAttr(const FsContext &context,
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 	nodeOperations_->updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Persist the node after setxattr (ctime change): KV stages it into the transaction, signal
+	// backends emit.
+	nodeOperations_->updateNode(fsOpContext, node);
+
 	changeLog(fsOpContext, timeStamp, "SETXATTR(%" PRIiNode ",%s,%s,%" PRIu8 ")", node->id,
 	          nodeOperations_->escapeName(std::string((const char *)attrname, anleng)).c_str(),
 	          nodeOperations_->escapeName(std::string((const char *)attrvalue, avleng)).c_str(),
@@ -3980,6 +3997,10 @@ uint8_t FilesystemOperationsBase::applySetXAttr(const FilesystemOperationContext
 	nodeOperations_->updateCTime(fsOpContext, node, timestamp);
 	gMetadata->metadataVersion++;
 	fsnodes_update_checksum(node);
+
+	// Persist the node after setxattr (ctime change): KV stages it into the transaction, signal
+	// backends emit.
+	nodeOperations_->updateNode(fsOpContext, node);
 	return status;
 }
 

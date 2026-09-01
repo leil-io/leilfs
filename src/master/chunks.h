@@ -40,6 +40,10 @@ struct matocsserventry;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
+/// Emitted with the chunk id when a chunk is dropped from the in-memory metadata, so KV backends
+/// can delete its persisted row instead of resurrecting it on the next load.
+inline Signal<uint64_t> gChunkRemovedSignal;
+
 inline std::unique_ptr<IIdGeneratorWithState<uint64_t>> gChunkIdGenerator = nullptr;
 
 void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersion,
@@ -155,5 +159,7 @@ void chunk_store(FILE *fd);
 void chunk_unload(void);
 void chunk_newfs(void);
 int chunk_strinit(void);
+/// Returns the next chunk ID to be used.
+uint64_t chunk_get_next_id(void);
 uint64_t chunk_checksum(ChecksumMode mode);
 ChecksumRecalculationStatus chunks_update_checksum_a_bit(uint32_t speedLimit);

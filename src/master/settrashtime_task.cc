@@ -23,6 +23,7 @@
 #include "master/settrashtime_task.h"
 
 #include "master/filesystem_checksum.h"
+#include "master/filesystem_metadata.h"
 #include "master/filesystem_operations_interface.h"
 
 int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
@@ -58,9 +59,7 @@ int SetTrashtimeTask::execute(uint32_t ts, intrusive_list<Task> &work_queue) {
 			    inode, uid_, trashtime_, smode_);
 
 			// Schedule the node update for KV backends.
-			if (fsOpContext.hasReadWriteTransaction()) {
-				gFSOperations->nodeOperations()->updateNode(fsOpContext, node);
-			}
+			gFSOperations->nodeOperations()->updateNode(fsOpContext, node);
 		}
 	}
 
@@ -119,6 +118,7 @@ uint8_t SetTrashtimeTask::setTrashtime(const FilesystemOperationContext &fsOpCon
 					gFSOperations->nodeOperations()->updateCTime(fsOpContext, node, ts);
 				}
 				fsnodes_update_checksum(node);
+
 				return SetTrashtimeTask::kChanged;
 			} else {
 				return SetTrashtimeTask::kNotChanged;

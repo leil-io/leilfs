@@ -63,9 +63,21 @@ public:
 	/// Returns the current metadata version
 	virtual uint64_t getVersion(const std::string& file) = 0;
 
+	/// Returns the current metadata header signature, or an empty string when the backend has no
+	/// header stored. Callers read "empty" as "no header": backends that keep no header of their
+	/// own (the file backend) always return empty.
+	virtual std::string getHeaderSignature() = 0;
+
 	/// Returns the concrete backend implementation type.
 	/// To be used from configuration to instantiate the correct backend.
 	virtual std::string backendType() = 0;
+
+	/// Whether this backend keeps a downloadable metadata image file (metadata.sfs) on the
+	/// master that a shadow/metalogger can fetch. File-based backends return true; backends that
+	/// hold metadata elsewhere (e.g. the forkless/FDB backend) return false, so the download
+	/// chain continues from changelogs instead. Keeps download behavior a backend capability
+	/// rather than a match on the diagnostic backendType() name.
+	virtual bool supportsMetadataFileDownload() = 0;
 
 // Available for master, shadow and metarestore
 #ifndef METALOGGER

@@ -59,6 +59,10 @@
 ## (Default: @DATA_PATH@)
 # DATA_PATH = @DATA_PATH@
 
+## Path to FDB_CLUSTER file
+## (Default: @ETC_PATH@/fdb/conf/fdb.cluster)
+# FDB_CLUSTER_FILE = @ETC_PATH@/fdb/conf/fdb.cluster
+
 ## If set, servers with the same IP address will be treated
 ## as their topology distance is 0.
 ## (Default: 1)
@@ -367,3 +371,15 @@
 ## can disrupt ongoing operations and lead to unexpected errors.
 ##
 # EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0
+
+## Metadata backend selection for storing and loading metadata.
+## Allowed values: FILE, FORKLESS.
+## FILE uses the MetadataBackendFile which stores filesystem metadata in `metadata.sfs` file.
+## FORKLESS enables the MetadataBackendForkless, which stores filesystem metadata in FoundationDB
+## without forking the master process during metadata dumps.
+##
+## Note: FORKLESS metadata backend is experimental and under active development.
+## It is not suitable for production use. Data loss or inconsistencies may occur.
+##
+## (Default: FILE)
+# METADATA_BACKEND = FILE

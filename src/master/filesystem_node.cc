@@ -796,8 +796,10 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	}
 
 	fsnodes_update_checksum(parent);
-	// Persist the parent's child-change time conflict-free; see link().
+	// Persist the parent's child-change time conflict-free; see link(). On a signal backend this
+	// emits the whole parent; the KV backend writes the child-change time on a separate key.
 	persistDirChildChangeTime(fsOpContext, parent, timeStamp);
+
 	HString currentName = childName;
 	if (parent->caseInsensitive) { currentName = HString::hstringToLowerCase(childName); }
 
@@ -818,14 +820,23 @@ void FilesystemNodeOperationsBase::removeEdge(const FilesystemOperationContext &
 	childNode->ctime = timeStamp;
 	fsnodes_update_checksum(childNode);
 
+	// Persist the child's ctime change
+	updateNode(fsOpContext, childNode);
+
 	gMetadata->edgeRemovedSignal.emit(parent->id, childName);
 }
 
 void FilesystemNodeOperationsBase::persistDirChildChangeTime(
-    const FilesystemOperationContext & /*fsOpContext*/, FSNodeDirectory * /*dir*/,
-    uint32_t /*timeStamp*/) {
-	// Default no-op: the in-memory master keeps dir mtime/ctime in the node; the KV backend
-	// overrides.
+    const FilesystemOperationContext &fsOpContext, FSNodeDirectory *dir, uint32_t /*timeStamp*/) {
+	// Signal backends (forkless) persist the parent directory like any node change: a whole-node
+	// emit via updateNode(). The KV backend overrides this with a conflict-free child-change-time
+	// write on a separate key and never reaches this body.
+	//
+	// TODO(unify-backends): the target is one shared FDB scheme for both backends, reusing the MDS
+	// layout as much as possible. Forkless should converge on it and persist the directory
+	// child-change time via the same separate key instead of a whole-node emit; when that lands,
+	// `timeStamp` becomes the value written here rather than being ignored.
+	updateNode(fsOpContext, dir);
 }
 
 uint32_t FilesystemNodeOperationsBase::getDirChildChangeTime(
@@ -850,9 +861,17 @@ uint32_t FilesystemNodeOperationsBase::getDirNlink(
 	return dir->nlink;
 }
 
-void FilesystemNodeOperationsBase::persistNodeAtime(
-    const FilesystemOperationContext & /*fsOpContext*/, FSNode * /*node*/, uint32_t /*timeStamp*/) {
-	// Default no-op: the in-memory master keeps atime in the node; the KV backend overrides.
+void FilesystemNodeOperationsBase::persistNodeAtime(const FilesystemOperationContext &fsOpContext,
+                                                    FSNode *node, uint32_t /*timeStamp*/) {
+	// Signal backends (forkless) persist an atime change like any node change: a whole-node emit
+	// via updateNode(). node->atime is already set before this call, so timeStamp is unused here.
+	// The KV backend overrides this with a conflict-free atomicMax and never reaches this body.
+	//
+	// TODO(unify-backends): the target is one shared FDB scheme for both backends, reusing the MDS
+	// layout as much as possible. Forkless should converge on it and persist atime via the same
+	// separate conflict-free key (NODE_ATIME_) instead of a whole-node emit; when that lands,
+	// `timeStamp` becomes the value written here rather than being ignored.
+	updateNode(fsOpContext, node);
 }
 
 uint32_t FilesystemNodeOperationsBase::getNodeAtime(
@@ -897,12 +916,15 @@ void FilesystemNodeOperationsBase::link(const FilesystemOperationContext &fsOpCo
 	if (timeStamp > 0) {
 		parent->mtime = parent->ctime = timeStamp;
 		fsnodes_update_checksum(parent);
-		// Persist the parent's child-change time conflict-free so it survives a
-		// reload without rewriting (and conflicting on) the whole parent node.
+		// Persist the parent's child-change time conflict-free so it survives a reload without
+		// rewriting (and conflicting on) the whole parent node. On a signal backend this emits
+		// the whole parent; the KV backend writes the child-change time on a separate key.
 		persistDirChildChangeTime(fsOpContext, parent, timeStamp);
 		assert(child->type != FSNodeType::kTrash);
 		child->ctime = timeStamp;
 		fsnodes_update_checksum(child);
+		// Persist the child's ctime change
+		updateNode(fsOpContext, child);
 	}
 }
 
@@ -998,8 +1020,12 @@ FSNode *FilesystemNodeOperationsBase::createNodeWithIdInternal(
 }
 
 void FilesystemNodeOperationsBase::updateNode(
-    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, [[maybe_unused]] FSNode *node) {
-	// Default implementation does nothing, it is not needed for the in-memory backend
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
+	// The in-memory backend keeps the node in gMetadata, so there is nothing to write here.
+	// Signal-based durable backends (forkless/FDB) persist by observing nodeChangedSignal, so
+	// emit it here: this makes updateNode() the single "persist this node change" call every
+	// mutation site issues, instead of a separate updateNode()+emit() pair that can desync.
+	if (gMetadata->nodeChangedSignal.size() > 0) { gMetadata->nodeChangedSignal.emit(node); }
 }
 
 uint32_t FilesystemNodeOperationsBase::getPathSize(const FilesystemOperationContext &fsOpContext,
@@ -1687,7 +1713,9 @@ uint8_t FilesystemNodeOperationsBase::changeFileGoal(
 
 	fsnodes_update_checksum(nodeFile);
 
-	if (!fsOpContext.hasReadWriteTransaction()) { gMetadata->nodeChangedSignal.emit(nodeFile); }
+	// No persist here: every changeFileGoal() caller persists the node afterwards via updateNode()
+	// (setgoalRecursive/setGoal tail, getGoalRecursive file-fix), covering both backends.
+	// Emitting here too would double-persist.
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1746,8 +1774,8 @@ void FilesystemNodeOperationsBase::setLength(const FilesystemOperationContext &f
 	updateParentStatsForNode(fsOpContext, nodeFile, &newStats, &previousStats);
 
 	fsnodes_update_checksum(nodeFile);
-
-	if (!fsOpContext.hasTransaction()) { gMetadata->nodeChangedSignal.emit(nodeFile); }
+	// No persist here: every setLength() caller calls updateNode(node) afterwards, which persists
+	// on both backends (KV transaction write / signal emit). Emitting here too would double-persist.
 }
 
 void FilesystemNodeOperationsBase::changeUidGid(const FilesystemOperationContext &fsOpContext,
@@ -1918,6 +1946,9 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 			childNode->ctime = timeStamp;
 			fsnodes_update_checksum(childNode);
 
+			// Persist the node's move to Trash
+			updateNode(fsOpContext, childNode);
+
 			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			              gMetadata->trashReservedToId, childNode, path);
 
@@ -1926,6 +1957,9 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 		} else if (!fileNode->sessionIds.empty()) {
 			childNode->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(childNode);
+
+			// Persist the node's move to Reserved
+			updateNode(fsOpContext, childNode);
 
 			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                 gMetadata->trashReservedToId, childNode, path);
@@ -1951,6 +1985,10 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 		if (!fileNode->sessionIds.empty()) {
 			fileNode->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(fileNode);
+
+			// Persist the node's move to Reserved
+			updateNode(fsOpContext, fileNode);
+
 			gMetadata->reservedSpace += fileNode->length;
 			gMetadata->reservedNodes++;
 
@@ -1965,6 +2003,9 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 		                 gMetadata->trashReservedToId, node);
 		node->ctime = timeStamp;
 		fsnodes_update_checksum(node);
+
+		// No pre-delete node emit: removeNode() below persists the removal (nodeRemovedSignal), so
+		// emitting the node here would only write a row removeNode immediately deletes.
 		removeNode(fsOpContext, timeStamp, node);
 
 		return 1;  // Return 1 to indicate the node was successfully deleted
@@ -1981,6 +2022,9 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 
 		fileNode->ctime = timeStamp;
 		fsnodes_update_checksum(fileNode);
+
+		// No pre-delete node emit: removeNode() below persists the removal (nodeRemovedSignal), so
+		// emitting the node here would only write a row removeNode immediately deletes.
 		removeNode(fsOpContext, timeStamp, fileNode);
 		return 1;
 	}
@@ -2094,6 +2138,7 @@ void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationCon
 	    node->type == FSNodeType::kReserved) {
 		if (!GoalId::isValid(node->goal)) {
 			safs::log_warn("file inode {}: unknown goal !!! - fixing", node->id);
+			// changeFileGoal updates the checksum; the caller persists the node (see below).
 			if (changeFileGoal(fsOpContext, static_cast<FSNodeFile *>(node), DEFAULT_GOAL, {}) !=
 			    SAUNAFS_STATUS_OK) {
 				safs::log_err(
@@ -2102,6 +2147,13 @@ void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationCon
 				// Still invalid: it cannot index the statistics table; skip the file.
 				return;
 			}
+
+			// Persist the fix. MDS reaches this inside a read-write transaction
+			// (matoclserv_fuse_getgoal opens one precisely so an invalid goal can be repaired),
+			// where KV::changeFileGoal has already written the node; this repeats the same key
+			// with the same bytes, which is idempotent. Forkless needs it: changeFileGoal is a
+			// pure mutation there and the caller persists.
+			updateNode(fsOpContext, node);
 		}
 
 		fileGoalsTab[node->goal]++;
@@ -2109,6 +2161,13 @@ void FilesystemNodeOperationsBase::getGoalRecursive(const FilesystemOperationCon
 		if (!GoalId::isValid(node->goal)) {
 			safs::log_warn("directory inode {}: unknown goal !!! - fixing", node->id);
 			node->goal = DEFAULT_GOAL;
+			fsnodes_update_checksum(node);
+			// Persist the fix on both backends. Unlike the previous !hasReadWriteTransaction()
+			// guard, the repaired directory goal now also reaches KV: matoclserv_fuse_getgoal
+			// opens a read-write transaction for exactly this repair and commits it, so the fix
+			// no longer survives only in memory until the next load. Gated on an actual fix by
+			// the enclosing invalid-goal check, not every visited node.
+			updateNode(fsOpContext, node);
 		}
 
 		dirGoalsTab[node->goal]++;
@@ -2186,9 +2245,6 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 					                             {}) == SAUNAFS_STATUS_OK;
 				} else {
 					node->goal = goal;
-					if (!fsOpContext.hasReadWriteTransaction()) {
-						gMetadata->nodeChangedSignal.emit(node);
-					}
 				}
 
 				if (goalApplied) {
@@ -2212,7 +2268,7 @@ void FilesystemNodeOperationsBase::setgoalRecursive(const FilesystemOperationCon
 		}
 	}
 
-	if (nodeChanged && fsOpContext.hasReadWriteTransaction()) { updateNode(fsOpContext, node); }
+	if (nodeChanged) { updateNode(fsOpContext, node); }
 }
 
 void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t timeStamp,
@@ -2259,6 +2315,10 @@ void FilesystemNodeOperationsBase::setTrashTimeRecursive(FSNode *node, uint32_t 
 				}
 
 				fsnodes_update_checksum(node);
+
+				// No node persistence hook here: this function is dead code (no external callers;
+				// only the recursive self-call below). The active recursive settrashtime path is
+				// SetTrashtimeTask (settrashtime_task.cc), which persists via updateNode() + commit.
 			} else {
 				(*unchangedINodesOut)++;
 			}
@@ -2335,7 +2395,7 @@ void FilesystemNodeOperationsBase::setExtraAttrRecursive(
 	fsnodes_update_checksum(node);
 
 	// Make the change persistent for KV backends
-	if (nodeChanged && fsOpContext.hasReadWriteTransaction()) { updateNode(fsOpContext, node); }
+	if (nodeChanged) { updateNode(fsOpContext, node); }
 }
 
 uint8_t FilesystemNodeOperationsBase::deleteAcl(
@@ -2376,6 +2436,9 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(
 
 	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Persist the ACL deletion
+	updateNode(fsOpContext, node);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2428,6 +2491,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Persist the ACL update
+	updateNode(fsOpContext, node);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2461,6 +2527,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	updateCTime(fsOpContext, node, timeStamp);
 	fsnodes_update_checksum(node);
+
+	// Persist the ACL update
+	updateNode(fsOpContext, node);
 	return SAUNAFS_STATUS_OK;
 }
 

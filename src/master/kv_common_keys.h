@@ -25,6 +25,9 @@
 
 inline constexpr std::string_view kMetaFormatKey = "META_FORMAT";
 inline constexpr std::string_view kMetaVersionKey = "META_VERSION";
+inline constexpr std::string_view kMetaHeaderKey = "META_HEADER";
+inline constexpr std::string_view kMetaMaxInodeIdKey = "META_MAX_INODE_ID";
+inline constexpr std::string_view kMetaNextSessionKey = "META_NEXT_SESSION";
 
 /// Prefix for persisted session records.
 /// Format: SESS_REC_<SessionId>:<SerializedSessionRecord>
@@ -151,6 +154,19 @@ inline constexpr std::string_view kFileChunksKeyPrefix = "FCHK_";
 /// Prefix for worker-neutral durable file operations.
 /// Format: BULKOP_<TargetInode><Generation> -> <VersionedBulkOperationRecord>
 inline constexpr std::string_view kBulkOperationKeyPrefix = "BULKOP_";
+
+/// Prefix for chunk entries (mostly used for chunk locking)
+/// Format: CHNL_<ChunkId>:<ChunkVersion><LockedTo><LockId>
+/// @note ChunkId (64-bit) is serialized as Big Endian in the key.
+/// ChunkVersion, LockedTo and LockId (all 32-bit) are also Big Endian.
+inline constexpr std::string_view kChunkLatestKeyPrefix = "CHNL_";  // Latest chunk versions (hot)
+
+/// Ordered catalog of sealed metadata checkpoint versions retained in FDB.
+/// Format: META_CHECKPOINT_VERSIONS:<Version1><Version2>...<VersionN>
+/// @note Versions are encoded as 64-bit Big Endian integers in ascending order.
+/// @note Values are used to decide which undo ranges should be applied when restoring
+/// metadata/chunk state to a target snapshot version.
+inline constexpr std::string_view kMetaCheckpointVersionsKey = "META_CHECKPOINT_VERSIONS";
 
 /// Prefix for extended attributes (xattrs)
 /// Format: XATR_<InodeId><AttributeName>:<AttributeValue>
@@ -281,6 +297,13 @@ inline constexpr std::string_view kFileTestReportKeyPrefix = "FILETEST_REPORT_";
 /// The value contains all lock entries for the given (inode, type, status)
 /// tuple, serialized as a contiguous sequence via FileLocks serialization.
 inline constexpr std::string_view kLocksKeyPrefix = "FLCK_";  // Section FLCK 1.0
+
+/// Key storing the latest next chunk id.
+/// Format: META_NEXT_CHUNK_ID:<NextChunkId>
+/// @note NextChunkId is encoded as a 64-bit Big Endian value.
+/// @note This key mirrors the current in-memory chunk id generator state and is used
+/// to restore allocation continuity without scanning all chunk keys.
+inline constexpr std::string_view kMetaNextChunkIdKey = "META_NEXT_CHUNK_ID";
 
 // Case-insensitive directory support
 

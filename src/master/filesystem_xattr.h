@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "common/massert.h"
@@ -106,3 +107,11 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 
 /// Signal emitted when all xattrs for an inode are removed (node deletion cleanup).
 inline Signal<inode_t> gXAttrInodeRemovedSignal;
+
+/// Signal emitted when an xattr is created or its value is updated.
+/// Parameters: inode, attributeName bytes, attributeValue bytes.
+inline Signal<inode_t, std::span<const uint8_t>, std::span<const uint8_t>> gXAttrChangedSignal;
+
+/// Signal emitted when a single xattr entry is removed.
+/// Parameters: inode, attributeName bytes.
+inline Signal<inode_t, std::span<const uint8_t>> gXAttrRemovedSignal;

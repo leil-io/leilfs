@@ -41,7 +41,13 @@ public:
 	/// @param file -- path to the metadata binary file
 	uint64_t getVersion(const std::string &file) override;
 
+	/// Returns the current metadata header signature
+	/// @return empty string (not implemented in MetadataBackendFile)
+	std::string getHeaderSignature() override { return ""; }
+
 	std::string backendType() override { return "MetadataBackendFile"; }
+
+	bool supportsMetadataFileDownload() override { return true; }
 
 	void setMetadataFile(const std::string &metadataFile) {
 		metadataFile_ = metadataFile;

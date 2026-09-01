@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <sys/syslog.h>
+#include <string>
 #include <vector>
 
 #include "common/event_loop.h"
@@ -40,6 +41,9 @@
 #include "master/matomlserv.h"
 #include "master/matontserv.h"
 #include "master/metadata_backend_file.h"
+#ifdef ENABLE_FOUNDATIONDB
+#include "master/metadata_backend_forkless.h"
+#endif
 #include "master/metadata_backend_interface.h"
 #include "master/personality.h"
 #include "master/session_manager.h"
@@ -59,11 +63,31 @@ inline int prometheus_init() {
 }
 
 inline int metadata_backend_init() {
+	std::string backendType = cfg_getstr("METADATA_BACKEND", "FILE");
+	safs::log_info("Initializing metadata backend of type: {}", backendType);
+
 	if (gMetadataBackend == nullptr) {
-		try {
+		if (backendType == "FILE") {
 			gMetadataBackend = std::make_unique<MetadataBackendFile>();
+		} else if (backendType == "FORKLESS") {
+#ifdef ENABLE_FOUNDATIONDB
+			gMetadataBackend = std::make_unique<MetadataBackendForkless>();
+#else
+			constexpr auto kErrorMessage =
+			    "FORKLESS metadata backend requires ENABLE_FOUNDATIONDB";
+			safs::log_err(kErrorMessage);
+			throw Exception(kErrorMessage);
+#endif
+		} else {
+			std::string errorMessage = "Unsupported METADATA_BACKEND type: " + backendType;
+			safs::log_err("{}", errorMessage);
+			throw Exception(errorMessage);
+		}
+
+		try {
 			gMetadataBackend->init();
 			gInodeIdGenerator = std::make_unique<IdGeneratorWithDetainer>();
+			safs::log_info("Initialized {} metadata backend", backendType);
 		} catch (const std::exception &e) {
 			constexpr auto kErrorMessage = "Failed to initialize metadata backend";
 			safs::log_err("{}: {}", kErrorMessage, e.what());

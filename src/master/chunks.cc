@@ -971,6 +971,9 @@ void chunk_delete(Chunk *c) {
 		gChunksMetadata->lastchunkid=0;
 		gChunksMetadata->lastchunkptr=NULL;
 	}
+	// Report the removal before the chunk is freed: KV backends persist chunks individually and
+	// must drop the row, otherwise deleted chunks come back as zombies on the next load.
+	if (!gChunkRemovedSignal.empty()) { gChunkRemovedSignal.emit(c->chunkid); }
 	c->freeStats();
 	chunk_free(c);
 }
@@ -1032,6 +1035,7 @@ int chunk_change_file(uint64_t chunkid,uint8_t prevgoal,uint8_t newgoal) {
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1044,6 +1048,7 @@ static inline int chunk_delete_file_int(Chunk *c, uint8_t goal) {
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
 	chunk_update_checksum(c);
+	emit_chunk_changed(c);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1056,6 +1061,7 @@ static inline int chunk_add_file_int(Chunk *c, uint8_t goal, bool isMetadataLoad
 		return SAUNAFS_ERROR_CHUNKLOST;
 	}
 	chunk_update_checksum(c, isMetadataLoading);
+	if (!isMetadataLoading) { emit_chunk_changed(c); }
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1808,6 +1814,10 @@ uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet) {
 	    ChunksMetadata::getNextChunkId(), nextChunkIdToBeSet);
 
 	return SAUNAFS_ERROR_MISMATCH;
+}
+
+uint64_t chunk_get_next_id() {
+	return ChunksMetadata::getNextChunkId();
 }
 
 #ifndef METARESTORE
