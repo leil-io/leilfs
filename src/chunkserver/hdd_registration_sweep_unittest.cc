@@ -36,6 +36,7 @@
 class RegistrationSweepTests : public testing::Test {
 protected:
 	void SetUp() override {
+		gScansInProgress.store(0);
 		{
 			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 			ASSERT_TRUE(gChunksMap.empty());
@@ -46,6 +47,7 @@ protected:
 	}
 
 	void TearDown() override {
+		gScansInProgress.store(0);
 		{
 			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 			gChunksMap.clear();
@@ -110,6 +112,23 @@ TEST_F(RegistrationSweepTests, StartsWithoutPreRegistrationNewChunkQueue) {
 	EXPECT_TRUE(newChunks.empty());
 
 	std::vector<ChunkWithVersionAndType> bulk;
+	EXPECT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(1U, bulk.size());
+	EXPECT_EQ(1U, bulk.front().id);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
+TEST_F(RegistrationSweepTests, WaitsForPendingDiskScansBeforeCompleting) {
+	gScansInProgress.store(1);
+
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	EXPECT_EQ(RegistrationSweepResult::kRetry, hddRegistrationSweepNext(bulk, 1));
+	EXPECT_TRUE(bulk.empty());
+
+	ASSERT_NE(addChunk(ChunkState::Available), nullptr);
+
+	gScansInProgress.store(0);
 	EXPECT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
 	ASSERT_EQ(1U, bulk.size());
 	EXPECT_EQ(1U, bulk.front().id);

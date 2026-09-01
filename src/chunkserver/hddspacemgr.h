@@ -78,7 +78,7 @@ void hddRegistrationSweepBegin(RegistrationSweepMode mode);
 /// Result of advancing a master-driven registration sweep.
 enum class RegistrationSweepResult {
 	kBulkReady,  ///< \p bulk contains records ready to send to the master.
-	kRetry,      ///< Locked records remain; retry later without consuming a credit.
+	kRetry,      ///< Locked records or pending disk scans remain; retry without consuming a credit.
 	kComplete,   ///< Every reportable record has been included in the sweep.
 };
 

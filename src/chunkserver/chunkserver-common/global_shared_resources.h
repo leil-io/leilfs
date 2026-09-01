@@ -131,9 +131,10 @@ inline std::unique_ptr<IDiskManager> gDiskManager;
 /// Container to reuse free condition variables (guarded by `gChunksMapMutex`)
 inline std::vector<std::unique_ptr<CondVarWithWaitCount>> gFreeCondVars;
 
-/// Active Disks scans in progress.
-/// Note: theoretically it would return a false positive if scans haven't
-/// started yet, but it's a _very_ unlikely situation.
+/// Disk scans that have been scheduled and have not completed yet.
+///
+/// Count a scan before its worker starts so an empty registry cannot be
+/// mistaken for a completed startup scan.
 inline std::atomic_int gScansInProgress(0);
 
 inline std::atomic_bool gStatChunksAtDiskScan{true};
