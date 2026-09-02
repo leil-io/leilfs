@@ -1668,6 +1668,20 @@ enum class SugidClearMode : uint8_t {
 #define SAU_MATOCL_MOUNT_INFO_LIST (1000U + 610U)
 // N * [ sessionid:32 mountinfo:STDSTRING ]
 
+// New master/chunkserver stats. Unlike charts versions, this is not reset and contains the
+// lifetime stats of the process
+
+// 0x64B
+#define SAU_CLTOAN_GET_METRICS (1000U + 611U)
+// -
+
+// Type is a uint8_t enum (see src/metrics/types.h). For now only 64-bit
+// integers are used, but in the future more types could be used (for example
+// floating point etc.)
+// 0x64C
+#define SAU_ANTOCL_GET_METRICS (1000U + 612U)
+// N:32 N * [ name:STDRING type:8 value:64 ]
+
 // CHUNKSERVER STATS
 
 // 0x0258
