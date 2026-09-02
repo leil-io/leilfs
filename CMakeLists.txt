@@ -437,6 +437,15 @@ add_subdirectory(src/protocol)
 add_subdirectory(src/tools)
 add_subdirectory(src/mount)
 
+# Go tools (API server, leil CLI, monitoring). leilfs-api is NOT part of leilfs;
+# it lives in the private leilos superproject and is symlinked into api/ by
+# leilos/create-softlinks.sh (source modules + a CMakeLists.txt). Build it only
+# when those symlinks are present — a bare leilfs checkout has no api/ and is
+# skipped. api/CMakeLists.txt is itself self-guarding (Windows / no `go`).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/api/CMakeLists.txt")
+  add_subdirectory(api)
+endif()
+
 if(NOT MINGW)
   if(BUILD_DEVTOOLS)
     add_subdirectory(src/devtools)
