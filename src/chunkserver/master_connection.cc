@@ -70,23 +70,22 @@ void MasterConn::deletePacket(void *packet) {
 
 void MasterConn::attachPacket(void *packet) {
 	auto *outputPacket = static_cast<OutputPacket *>(packet);
-	outputPackets_.emplace_back(std::move(*outputPacket));
+	outputPackets_.emplace(std::move(*outputPacket));
 	delete outputPacket;
 }
 
 void MasterConn::createAttachedPacket(MessageBuffer serializedPacket) {
-	outputPackets_.emplace_back(std::move(serializedPacket));
+	outputPackets_.emplace(std::move(serializedPacket));
 }
 
 void MasterConn::createAttachedPriorityPacket(MessageBuffer serializedPacket) {
-	if (outputPackets_.empty()) {
-		outputPackets_.emplace_back(std::move(serializedPacket));
-		return;
-	}
+	priorityOutputPackets_.emplace(std::move(serializedPacket));
+}
 
-	// The head packet may already be partially written to the socket, so the
-	// earliest safe position is right after it.
-	outputPackets_.emplace(std::next(outputPackets_.begin()), std::move(serializedPacket));
+std::queue<OutputPacket> &MasterConn::nextOutputPacketQueue() {
+	if (!outputPackets_.empty() && outputPackets_.front().bytesSent != 0) { return outputPackets_; }
+	if (!priorityOutputPackets_.empty()) { return priorityOutputPackets_; }
+	return outputPackets_;
 }
 
 // Configuration
@@ -561,7 +560,7 @@ void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc, bool doTermi
 		pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 	}
 
-	if (((mode_ == ConnectionMode::CONNECTED) && !outputPackets_.empty()) ||
+	if (((mode_ == ConnectionMode::CONNECTED) && !isOutputQueueEmpty()) ||
 	    mode_ == ConnectionMode::CONNECTING) {
 		if (pDescPos_ >= 0) {
 			pdesc[pDescPos_].events |= POLLOUT;
@@ -618,7 +617,7 @@ void MasterConn::servePoll(const std::vector<pollfd> &pdesc) {
 
 			// Keep the connection alive by sending a NOP packet
 			if ((mode_ == ConnectionMode::CONNECTED) &&
-			    lastWrite_.elapsed_ms() > (gTimeout_ms / 3) && outputPackets_.empty()) {
+			    lastWrite_.elapsed_ms() > (gTimeout_ms / 3) && isOutputQueueEmpty()) {
 				createAttachedNoVersionPacket(ANTOAN_NOP, 0);
 			}
 		}
@@ -715,8 +714,9 @@ void MasterConn::writeToSocket() {
 
 	watchdog.start();
 
-	while (!outputPackets_.empty()) {
-		OutputPacket &pack = outputPackets_.front();
+	while (!isOutputQueueEmpty()) {
+		auto &packets = nextOutputPacketQueue();
+		OutputPacket &pack = packets.front();
 
 		if (mode_ == ConnectionMode::CONNECTED && tlsSession_) {
 			bytesWritten = ::SSL_write(tlsSession_->session(), pack.packet.data() + pack.bytesSent,
@@ -751,7 +751,7 @@ void MasterConn::writeToSocket() {
 
 		if (pack.packet.size() != pack.bytesSent) { return; }
 
-		outputPackets_.pop_front();
+		packets.pop();
 
 		if (watchdog.expired()) { break; }
 	}
@@ -1169,5 +1169,6 @@ void MasterConn::releaseResources() {
 
 void MasterConn::resetPackets() {
 	inputPacket_.reset();
-	outputPackets_.clear();
+	decltype(outputPackets_){}.swap(outputPackets_);
+	decltype(priorityOutputPackets_){}.swap(priorityOutputPackets_);
 }

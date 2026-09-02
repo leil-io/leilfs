@@ -24,8 +24,8 @@
 
 #include <sys/poll.h>
 #include <cstdint>
-#include <list>
 #include <memory>
+#include <queue>
 #include <string>
 
 #include "common/chunk_part_type.h"
@@ -56,6 +56,7 @@ inline bool gForcePushRegistration;
 
 // Forward declaration
 class MasterJobPool;
+class MasterConnOutputQueueTests;
 
 /// @brief Enum representing the connection mode to the Metadata Server (MDS).
 enum class ConnectionMode : std::uint8_t {
@@ -106,9 +107,9 @@ public:
 
 	void createAttachedPacket(MessageBuffer serializedPacket);
 
-	/// Enqueues a packet right after the (possibly partially written) head of
-	/// the output queue, so it jumps any long backlog (e.g. registration
-	/// bulks). Used for replies the master is actively waiting for.
+	/// Enqueues a reply in the FIFO priority lane. The write loop finishes an
+	/// already partially transmitted packet first, then sends priority packets
+	/// ahead of the ordinary backlog (e.g. registration bulks).
 	void createAttachedPriorityPacket(MessageBuffer serializedPacket);
 
 	template <class... Data>
@@ -258,9 +259,13 @@ public:
 
 	bool isTlsEnabled() const { return !tlsCertFile_.empty() && !tlsKeyFile_.empty(); }
 
-	bool isOutputQueueEmpty() const { return outputPackets_.empty(); }
+	bool isOutputQueueEmpty() const {
+		return outputPackets_.empty() && priorityOutputPackets_.empty();
+	}
 
 private:
+	std::queue<OutputPacket> &nextOutputPacketQueue();
+
 	std::string masterHostStr_;                     ///< Hostname of the master server.
 	std::string masterPortStr_;                     ///< Port of the master server.
 	uint32_t version_{saunafsVersion(0, 0, 0)};     ///< Version of the master server.
@@ -303,7 +308,8 @@ private:
 	Timer lastRead_;                             ///< Time since the last read operation.
 	Timer lastWrite_;                            ///< Time since the last write operation.
 	InputPacket inputPacket_{kMaxPacketSize};    ///< Input buffer for reading data from the socket.
-	std::list<OutputPacket> outputPackets_;      ///< Output packets to be sent to the master.
+	std::queue<OutputPacket> outputPackets_;      ///< Ordinary packets to be sent to the master.
+	std::queue<OutputPacket> priorityOutputPackets_;  ///< Priority replies to be sent to the master.
 
 	NetworkAddress address_;            ///< Address of this master server (IP and port).
 	NetworkAddress bindHostAddress_;    ///< Address to bind the socket to (IP and port).
@@ -318,4 +324,5 @@ private:
 	std::string tlsKeyFile_;                           ///< Path to the TLS private key file.
 	std::string tlsCaCertFile_;                        ///< Path to the TLS CA certificate file.
 	int lastHandshakeError_{0};                        ///< Last error code from TLS handshake.
+	friend class MasterConnOutputQueueTests;
 };
