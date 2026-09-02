@@ -313,7 +313,6 @@ Startup is orchestrated by ordered `RunTab` arrays in `init.h`. The sequence
 is dependency-ordered -- comments in the source mark critical orderings:
 
 ```
-1.  prometheus_init          -- Optional Prometheus metrics endpoint
 2.  hstorage_init            -- String storage backend (must be first)
 3.  personality_init         -- Set master/shadow personality (must be second)
 4.  rnd_init                 -- Random number generator

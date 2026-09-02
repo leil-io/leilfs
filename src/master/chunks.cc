@@ -682,7 +682,7 @@ struct loop_info {
 static loop_info chunksinfo = {{0,0,0,0,0},{0,0,0,0,0},0};
 static uint32_t chunksinfo_loopstart=0,chunksinfo_loopend=0;
 
-// DEPRECATED: Use prometheus metrics instead
+// DEPRECATED: Use the metrics library instead
 static uint32_t stats_deletions=0;
 static uint32_t stats_replications=0;
 
