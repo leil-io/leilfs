@@ -38,6 +38,8 @@ public:
 	int get() const;
 	void reset(int fd);
 	void close();
+	/// Gives up ownership without closing; returns the descriptor (-1 if none).
+	int release();
 	bool isOpened() const;
 
 private:

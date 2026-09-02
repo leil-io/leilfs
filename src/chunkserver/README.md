@@ -516,20 +516,21 @@ is dependency-ordered:
 
 ```
  Normal run:
-  1. rnd_init                -- Random number generator
-  2. MemoryManager::init     -- Periodic malloc_trim thread
-  3. initDiskManager         -- Create DefaultDiskManager (before plugins)
-  4. loadPlugins             -- Load .so plugins via PluginManager
-  5. hddInit                 -- Parse hdd.cfg, create/reload disks, prepare scan state
-  6. mainNetworkThreadInit   -- Bind listen socket (before masterconn)
-  7. masterconn_init_threads -- Create master MasterJobPool + replication job pool (MasterJobPool)
-  8. masterconn_init         -- Create MasterConn, register event loop hooks
-  9. chartsdata_init         -- Charts/monitoring initialization
+  1. chunkserverIdInit       -- Load or create the persistent chunkserver identity
+  2. rnd_init                -- Random number generator
+  3. MemoryManager::init     -- Periodic malloc_trim thread
+  4. initDiskManager         -- Create DefaultDiskManager (before plugins)
+  5. loadPlugins             -- Load .so plugins via PluginManager
+  6. hddInit                 -- Parse hdd.cfg, create/reload disks, prepare scan state
+  7. mainNetworkThreadInit   -- Bind listen socket (before masterconn)
+  8. masterconn_init_threads -- Create master MasterJobPool + replication job pool (MasterJobPool)
+  9. masterconn_init         -- Create MasterConn, register event loop hooks
+ 10. chartsdata_init         -- Charts/monitoring initialization
 
  Late run (after init):
- 10. hddLateInit             -- Spawn disk-management, tester, free-resource, and
+ 11. hddLateInit             -- Spawn disk-management, tester, free-resource, and
                                 client-reported-test threads
- 11. mainNetworkThreadInitThreads -- Spawn network worker threads
+ 12. mainNetworkThreadInitThreads -- Spawn network worker threads
 ```
 
 Client connections are accepted only after all subsystems are ready.

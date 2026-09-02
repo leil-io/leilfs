@@ -24,6 +24,7 @@
 
 #include "chunkserver-common/memory_manager.h"
 #include "chunkserver/chartsdata.h"
+#include "chunkserver/chunkserver_id.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
 #include "chunkserver/network_main_thread.h"
@@ -35,6 +36,7 @@ inline const std::vector<RunTab> earlyRunTabs = {};
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
+    RunTab{.function = chunkserver::chunkserverIdInit, .name = "chunkserver identity"},
     RunTab{.function = rnd_init, .name = "random generator"},
     RunTab{.function = MemoryManager::init, .name = "memory manager"},
     RunTab{.function = initDiskManager, .name = "disk manager"},  // Always before "plugin manager"

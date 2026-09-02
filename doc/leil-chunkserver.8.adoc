@@ -67,6 +67,10 @@ freed by replicating all data already stored there to another locations)
 *.sfschunkserver.lock*:: lock file of running LeilFS chunkserver process
 (created in data directory)
 
+*chunkserver_id*:: stable UUID of this chunkserver installation, created in the
+data directory during startup when missing. Copying the complete data directory
+preserves the identity. Running two copies with the same identity is not supported.
+
 *data.csstats*::
 Chunkserver charts state
 
