@@ -511,6 +511,51 @@ pipeline {
                         }
                     }
                 }
+                stage('Build Ubuntu 26.04') {
+                    environment {
+                        SANITY_WORKERS = "${env.SANITY_WORKERS ?: '4'}"
+                        SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
+                        LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
+                        MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu26.04-leil-test:$GIT_COMMIT"
+                    }
+                    agent { label "build && ubuntu-2604" }
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkout scm
+                            }
+                        }
+                        stage('Build image') {
+                            steps {
+                                script {
+                                    buildImage("ubuntu:26.04")
+                                    pushImage(env.REGISTRY_IMAGE_NAME)
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        // Clean after build
+                        failure {
+                            slackBadMessage(
+                                "Ubuntu 26.04 build failed on ${BRANCH_NAME}",
+                                "Ubuntu 26.04 build failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                            )
+                        }
+                        cleanup {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh """
+                                docker image rm ${env.REGISTRY_IMAGE_NAME} || true
+                                docker image rm leil-test:latest || true
+                                """
+                        }
+                    }
+                }
                 stage('Long system tests (Ubuntu 24.04)') {
                     when {
                         beforeAgent true
