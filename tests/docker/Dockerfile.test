@@ -63,6 +63,8 @@ COPY tests ./tests
 COPY COPYING .
 COPY README.md .
 
+RUN git config --global http.version HTTP/1.1
+
 RUN mkdir -p /leilfs/build && ls /leilfs && \
     cd /leilfs/build && cmake \
 	-DCMAKE_TOOLCHAIN_FILE="/leilfs/vcpkg/scripts/buildsystems/vcpkg.cmake" \
