@@ -112,6 +112,14 @@ set(CGI_PATH                    "${CGI_SUBDIR}")
 set(ETC_PATH                    "${ETC_SUBDIR}")
 set(DATA_PATH                   "${DATA_SUBDIR}")
 
+# Pre-rebrand ("saunafs") equivalents of the paths above. Daemons and helper
+# scripts fall back to these at runtime when the new ${..._PATH} location has
+# no data/config yet, so an in-place upgrade from a pre-rebrand install keeps
+# working without an admin having to move anything by hand.
+set(PLUGINS_PATH_LEGACY         "${LIB_PATH}/saunafs/plugins")
+set(ETC_PATH_LEGACY             "${CMAKE_INSTALL_FULL_SYSCONFDIR}/saunafs")
+set(DATA_PATH_LEGACY            "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/lib/saunafs")
+
 set(DEFAULT_USER                 "saunafs"                 CACHE STRING "Default user to run daemons as")
 set(DEFAULT_GROUP                "saunafs"                 CACHE STRING "Default group to run daemons as")
 set(DEFAULT_MASTER_HOSTNAME      "sfsmaster"                CACHE STRING "Default master server hostname")
