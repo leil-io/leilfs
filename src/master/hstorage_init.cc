@@ -34,12 +34,6 @@ static int gUseBDBStorage;
 static std::string gBDBStoragePath;
 static uint64_t gBDBStorageCacheSize;
 
-static bool hasKnownMetadata(const std::string &dir) {
-	return access((dir + "/" + kMetadataFilename).c_str(), F_OK) == 0 ||
-	       access((dir + "/" + kMetadataLegacyFilename).c_str(), F_OK) == 0 ||
-	       access((dir + "/" + kMetadataMlFilename).c_str(), F_OK) == 0;
-}
-
 static std::string resolveDataPath() {
 	std::string path = cfg_getstring("DATA_PATH", DATA_PATH);
 	if (path == DATA_PATH && !hasKnownMetadata(DATA_PATH) &&
