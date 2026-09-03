@@ -145,6 +145,8 @@ if(ENABLE_NFS_GANESHA)
   # Clone at the pinned tag WITH submodules so src/libntirpc is checked out at the
   # exact commit this release pins. ntirpc thus tracks the Ganesha version with no
   # separate pin to maintain (a source zip would omit the submodule entirely).
+  # CI checks this directory out beforehand with its GitHub credential (Jenkinsfile,
+  # fetchGanesha), so on Jenkins the clone below finds it and is skipped.
   clone_external_git(NFS_GANESHA "nfs-ganesha-${NFS_GANESHA_VERSION}"
                      "${GANESHA_GIT_URL}" "${GANESHA_GIT_TAG}")
   # ntirpc headers live inside the Ganesha submodule checkout.

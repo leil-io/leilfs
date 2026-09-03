@@ -19,6 +19,73 @@ def getLeilTestsRef() {
     return ref
 }
 
+// The multibranch job checks this repository out with a GitHub App credential. Every other
+// GitHub fetch in the pipeline reuses it: GitHub refuses anonymous clones often enough to
+// break builds, and an anonymous clone is the only kind cmake can run inside a Docker build.
+def githubCredentialsId() {
+    def credentialsId = scm.userRemoteConfigs[0].credentialsId
+    if (!credentialsId) {
+        // Not fatal: an anonymous fetch is what this pipeline did before, and it still works
+        // whenever GitHub is not throttling.
+        echo 'WARNING: the job SCM carries no credential, so GitHub fetches run anonymously ' +
+             'and may fail with a 401 from GitHub\'s anti-abuse protection.'
+    }
+    return credentialsId
+}
+
+// Reads a KEY=value setting out of ganesha.env. Fails loudly rather than checking out
+// refs/tags/ from an empty URL if the file ever stops carrying the setting.
+def ganeshaEnvVar(String text, String key) {
+    def prefix = "${key}="
+    for (line in text.split('\n')) {
+        if (line.startsWith(prefix)) {
+            def value = line.substring(prefix.length()).trim()
+            if (value) {
+                return value
+            }
+        }
+    }
+    error("${key} is missing or empty in tests/ci_build/ganesha/ganesha.env")
+}
+
+// cmake clones nfs-ganesha at configure time (cmake/DownloadExternal.cmake) unless
+// external/nfs-ganesha-<version> already exists. That clone runs anonymously inside the image
+// build and on the host build, so check the pinned tag out here with the job credential first.
+// The Dockerfile copies external/ into the image and cmake then finds the directory and skips
+// the clone. Tag and URL come from tests/ci_build/ganesha/ganesha.env, the single source of truth.
+def fetchGanesha() {
+    def ganeshaEnv = readFile('tests/ci_build/ganesha/ganesha.env')
+    def tag = ganeshaEnvVar(ganeshaEnv, 'GANESHA_VERSION')
+    def url = ganeshaEnvVar(ganeshaEnv, 'GANESHA_GIT_URL')
+    // Directory name keeps the numeric form (V9.15 -> nfs-ganesha-9.15), like Libraries.cmake.
+    def version = tag.replaceFirst(/^[Vv]/, '')
+    dir("external/nfs-ganesha-${version}") {
+        checkout([
+            $class: 'GitSCM',
+            branches: [[name: "refs/tags/${tag}"]],
+            extensions: [
+                // Shallow fetch of the pinned tag only; noTags keeps git from pulling every tag.
+                [$class: 'CloneOption', shallow: true, depth: 1, noTags: true, honorRefspec: true],
+                // libntirpc is a GitHub submodule as well, so it needs the same credential.
+                [$class: 'SubmoduleOption', recursiveSubmodules: true, parentCredentials: true,
+                 shallow: true, depth: 1]
+            ],
+            userRemoteConfigs: [[
+                url: url,
+                refspec: "+refs/tags/${tag}:refs/tags/${tag}",
+                credentialsId: githubCredentialsId()
+            ]]
+        ])
+    }
+}
+
+// Every stage that builds leilfs needs both halves: this repository, and the Ganesha source
+// cmake expects in external/. Kept in one step so a new stage cannot pick up only the first.
+def checkoutSource() {
+    checkout scm
+    fetchGanesha()
+}
+
 def buildLeilTests() {
     dir('leil-tests') {
         deleteDir()
@@ -27,7 +94,8 @@ def buildLeilTests() {
             branches: [[name: getLeilTestsRef()]],
             doGenerateSubmoduleConfigurations: false,
             userRemoteConfigs: [[
-                url: 'https://github.com/leil-io/leil-tests.git'
+                url: 'https://github.com/leil-io/leil-tests.git',
+                credentialsId: githubCredentialsId()
             ]]
         ])
     }
@@ -216,7 +284,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
+                                checkoutSource()
                             }
                         }
                         stage("Build and unit test") {
@@ -281,7 +349,7 @@ pipeline {
                 stage('Build with clang') {
                     agent {label 'build'}
                     steps {
-                        checkout scm
+                        checkoutSource()
                         script {
                             sh """
                                 docker buildx build --tag leilfs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
@@ -319,7 +387,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
+                                checkoutSource()
                             }
                         }
                         stage('Build image') {
@@ -364,7 +432,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
+                                checkoutSource()
                             }
                         }
                         stage('Build leil-tests') {
@@ -461,7 +529,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
+                                checkoutSource()
                             }
                         }
                         stage('Build leil-tests') {
