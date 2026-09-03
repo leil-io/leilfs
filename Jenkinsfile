@@ -23,7 +23,29 @@ def getLeilTestsRef() {
 // GitHub fetch in the pipeline reuses it: GitHub refuses anonymous clones often enough to
 // break builds, and an anonymous clone is the only kind cmake can run inside a Docker build.
 def githubCredentialsId() {
-    return scm.userRemoteConfigs[0].credentialsId
+    def credentialsId = scm.userRemoteConfigs[0].credentialsId
+    if (!credentialsId) {
+        // Not fatal: an anonymous fetch is what this pipeline did before, and it still works
+        // whenever GitHub is not throttling.
+        echo 'WARNING: the job SCM carries no credential, so GitHub fetches run anonymously ' +
+             'and may fail with a 401 from GitHub\'s anti-abuse protection.'
+    }
+    return credentialsId
+}
+
+// Reads a KEY=value setting out of ganesha.env. Fails loudly rather than checking out
+// refs/tags/ from an empty URL if the file ever stops carrying the setting.
+def ganeshaEnvVar(String text, String key) {
+    def prefix = "${key}="
+    for (line in text.split('\n')) {
+        if (line.startsWith(prefix)) {
+            def value = line.substring(prefix.length()).trim()
+            if (value) {
+                return value
+            }
+        }
+    }
+    error("${key} is missing or empty in tests/ci_build/ganesha/ganesha.env")
 }
 
 // cmake clones nfs-ganesha at configure time (cmake/DownloadExternal.cmake) unless
@@ -32,15 +54,9 @@ def githubCredentialsId() {
 // The Dockerfile copies external/ into the image and cmake then finds the directory and skips
 // the clone. Tag and URL come from tests/ci_build/ganesha/ganesha.env, the single source of truth.
 def fetchGanesha() {
-    def ganeshaEnv = 'tests/ci_build/ganesha/ganesha.env'
-    def tag = sh(
-        script: "sed -n 's/^GANESHA_VERSION=//p' ${ganeshaEnv}",
-        returnStdout: true
-    ).trim()
-    def url = sh(
-        script: "sed -n 's/^GANESHA_GIT_URL=//p' ${ganeshaEnv}",
-        returnStdout: true
-    ).trim()
+    def ganeshaEnv = readFile('tests/ci_build/ganesha/ganesha.env')
+    def tag = ganeshaEnvVar(ganeshaEnv, 'GANESHA_VERSION')
+    def url = ganeshaEnvVar(ganeshaEnv, 'GANESHA_GIT_URL')
     // Directory name keeps the numeric form (V9.15 -> nfs-ganesha-9.15), like Libraries.cmake.
     def version = tag.replaceFirst(/^[Vv]/, '')
     dir("external/nfs-ganesha-${version}") {
@@ -61,6 +77,13 @@ def fetchGanesha() {
             ]]
         ])
     }
+}
+
+// Every stage that builds leilfs needs both halves: this repository, and the Ganesha source
+// cmake expects in external/. Kept in one step so a new stage cannot pick up only the first.
+def checkoutSource() {
+    checkout scm
+    fetchGanesha()
 }
 
 def buildLeilTests() {
@@ -261,8 +284,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
-                                fetchGanesha()
+                                checkoutSource()
                             }
                         }
                         stage("Build and unit test") {
@@ -327,8 +349,7 @@ pipeline {
                 stage('Build with clang') {
                     agent {label 'build'}
                     steps {
-                        checkout scm
-                        fetchGanesha()
+                        checkoutSource()
                         script {
                             sh """
                                 docker buildx build --tag leilfs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
@@ -366,8 +387,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
-                                fetchGanesha()
+                                checkoutSource()
                             }
                         }
                         stage('Build image') {
@@ -412,8 +432,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
-                                fetchGanesha()
+                                checkoutSource()
                             }
                         }
                         stage('Build leil-tests') {
@@ -510,8 +529,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
-                                checkout scm
-                                fetchGanesha()
+                                checkoutSource()
                             }
                         }
                         stage('Build leil-tests') {
