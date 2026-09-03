@@ -379,6 +379,12 @@ void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 			if (mode != SendDataToMasterMode::ForNewChunk) {
 				chunksToRemove.push_back(chunk);
 			} else {
+				// A disk state reload changes the to-delete flag carried by this
+				// report. If a pull sweep emitted the old state already, make it
+				// revisit this entry. While the sweep is active its report remains
+				// suppressed and the next pass sends the new state; afterwards the
+				// queued report is retained instead of being dropped as a duplicate.
+				chunk->setRegistrationEpoch(0);
 				hddReportNewChunkToMaster(chunk->id(), chunk->version(),
 				                          markedForDeletion, chunk->type());
 			}
