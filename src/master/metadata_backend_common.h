@@ -44,12 +44,18 @@ constexpr const char *kSessionsMlTmpFilename     = "sessions_ml.sfs.tmp";
 /// True if `dir` looks like an initialized data directory rather than an
 /// empty one freshly created by package install/upgrade (metadata.sfs.empty
 /// is always installed into the default data dir regardless of state, so
-/// bare directory existence can't tell the two apart).
+/// bare directory existence can't tell the two apart). Also recognizes the
+/// ".1" rotated backup MasterConn::downloadNext() leaves behind (see
+/// rotateFiles() in masterconn.cc), so a directory left with only a rotated
+/// backup after a crash during a metadata dump is still recognized as
+/// having data instead of reading as empty.
 inline bool hasKnownMetadata(const std::string &dir) {
 	static const std::string kKnownMetadataFilenames[] = {
 	    kMetadataFilename,
 	    kMetadataLegacyFilename,
 	    kMetadataMlFilename,
+	    std::string(kMetadataFilename) + ".1",
+	    std::string(kMetadataMlFilename) + ".1",
 	};
 	for (const auto &name : kKnownMetadataFilenames) {
 		if (access((dir + "/" + name).c_str(), F_OK) == 0) {

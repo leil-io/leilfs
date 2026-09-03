@@ -101,10 +101,13 @@ select_readable_config() {
 # one freshly created by package install/upgrade (metadata.sfs.empty is
 # always installed into the default data dir regardless, so bare directory
 # existence can't tell the two apart). Mirrors the filenames master and
-# metalogger look for at startup, see hasKnownMetadata() in src/main/main.cc.
+# metalogger look for at startup, plus the ".1" rotated backup left behind
+# by a metadata download (see rotateFiles() in masterconn.cc), see
+# hasKnownMetadata() in src/master/metadata_backend_common.h.
 has_known_metadata() {
 	local dir="$1"
-	[ -f "$dir/metadata.sfs" ] || [ -f "$dir/metadata.mfs" ] || [ -f "$dir/metadata_ml.sfs" ]
+	[ -f "$dir/metadata.sfs" ] || [ -f "$dir/metadata.mfs" ] || [ -f "$dir/metadata_ml.sfs" ] \
+		|| [ -f "$dir/metadata.sfs.1" ] || [ -f "$dir/metadata_ml.sfs.1" ]
 }
 
 # Picks $1 unless it's still the compiled-in default (i.e. the config file

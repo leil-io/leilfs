@@ -822,13 +822,16 @@ inline void tuneMalloc() {
 /// empty one freshly created by package install/upgrade (the master's
 /// metadata.sfs.empty placeholder is always present regardless, so bare
 /// directory existence can't tell the two apart). Mirrors the filenames
-/// master/metalogger actually look for at startup (metadata_backend_common.h
-/// kMetadataFilename/kMetadataLegacyFilename/kMetadataMlFilename), duplicated
-/// here as literals since this generic entry point is shared by chunkserver
-/// too and shouldn't pull in master-specific headers.
+/// master/metalogger actually look for at startup, plus the ".1" rotated
+/// backup MasterConn::downloadNext() leaves behind (see rotateFiles() in
+/// masterconn.cc). Duplicated here as literals (metadata_backend_common.h
+/// kMetadataFilename/kMetadataLegacyFilename/kMetadataMlFilename) since this
+/// generic entry point is shared by chunkserver too and shouldn't pull in
+/// master-specific headers.
 inline bool hasKnownMetadata(const std::string &dir) {
 	static const char *const kKnownMetadataFilenames[] = {
-	    "metadata.sfs", "metadata.mfs", "metadata_ml.sfs"};
+	    "metadata.sfs", "metadata.mfs", "metadata_ml.sfs", "metadata.sfs.1",
+	    "metadata_ml.sfs.1"};
 	for (const char *name : kKnownMetadataFilenames) {
 		if (access((dir + "/" + name).c_str(), F_OK) == 0) {
 			return true;
