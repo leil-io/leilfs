@@ -2853,8 +2853,8 @@ int loadPlugins() {
 	    cfg_getstring("PLUGINS_DIR", ""),              // Higher priority (user-defined)
 	    PLUGINS_PATH "/chunkserver",                   // Build-time defined path
 	    BUILD_PATH "/plugins/chunkserver",             // Build tree (for development)
-	    "/usr/local/lib/saunafs/plugins/chunkserver",  // Local install
-	    "/usr/lib/saunafs/plugins/chunkserver"         // Standard install
+	    "/usr/local/lib/leil/plugins/chunkserver",     // Local install
+	    "/usr/lib/leil/plugins/chunkserver"           // Standard install
 	};
 
 	for (const auto &path : pluginPaths) {

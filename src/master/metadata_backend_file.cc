@@ -1450,6 +1450,23 @@ void MetadataBackendFile::init() {
 
 #if !defined(METALOGGER) && !defined(METARESTORE)
 	if (!metadataserver::isMaster() && metadataFile_.empty()) {
+		if (!metadataFileExists && !legacyMetadataFileExists) {
+			// Not an error: a shadow with no metadata yet is the normal state for
+			// a node joining the cluster for the first time, it will download a
+			// full copy from the master. But it's indistinguishable from a shadow
+			// that lost track of its real data, e.g. because DATA_PATH now points
+			// somewhere new and the fallback to the legacy path didn't apply (an
+			// explicit DATA_PATH override, or the old directory only holding
+			// rotated backups). Warn so that case leaves a trace instead of the
+			// old data silently being orphaned.
+			std::string currentPath = fs::getCurrentWorkingDirectoryNoThrow();
+			safs_pretty_syslog(LOG_WARNING,
+			    "No metadata file found in %s, starting as a fresh shadow and"
+			    " downloading a full copy from the master. If this directory is"
+			    " expected to already hold data, stop now and check DATA_PATH"
+			    " before it is overwritten.",
+			    currentPath.c_str());
+		}
 		metadataFile_ = kMetadataFilename;
 	}
 

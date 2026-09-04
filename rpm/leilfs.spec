@@ -44,9 +44,9 @@ BuildRequires:  systemd-devel
 BuildRequires:  yaml-cpp-devel
 BuildRequires:  zlib-devel
 
-%global         leil_project        saunafs
-%global         leil_group          %{leil_project}
-%global         leil_user           %{leil_project}
+%global         leil_project        leil
+%global         leil_group          saunafs
+%global         leil_user           saunafs
 %global         leil_datadir        %{_localstatedir}/lib/%{leil_project}
 %global         leil_confdir        %{_sysconfdir}/%{leil_project}
 %global         leil_limits_conf    10-leilfs.conf
@@ -356,18 +356,18 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_mandir}/man8/leil-metarestore.8*
 %{_mandir}/man8/sfsrestoremaster.8*
 %{_mandir}/man8/leil-restoremaster.8*
-%dir %{_docdir}/saunafs-master/
-%dir %{_docdir}/saunafs-master/examples/
-%{_docdir}/saunafs-master/examples/sfsexports.cfg
-%{_docdir}/saunafs-master/examples/leil-exports.cfg
-%{_docdir}/saunafs-master/examples/sfstopology.cfg
-%{_docdir}/saunafs-master/examples/leil-topology.cfg
-%{_docdir}/saunafs-master/examples/sfsgoals.cfg
-%{_docdir}/saunafs-master/examples/leil-goals.cfg
-%{_docdir}/saunafs-master/examples/sfsmaster.cfg
-%{_docdir}/saunafs-master/examples/leil-master.cfg
-%{_docdir}/saunafs-master/examples/sfsglobaliolimits.cfg
-%{_docdir}/saunafs-master/examples/leil-globaliolimits.cfg
+%dir %{_docdir}/leil-master/
+%dir %{_docdir}/leil-master/examples/
+%{_docdir}/leil-master/examples/sfsexports.cfg
+%{_docdir}/leil-master/examples/leil-exports.cfg
+%{_docdir}/leil-master/examples/sfstopology.cfg
+%{_docdir}/leil-master/examples/leil-topology.cfg
+%{_docdir}/leil-master/examples/sfsgoals.cfg
+%{_docdir}/leil-master/examples/leil-goals.cfg
+%{_docdir}/leil-master/examples/sfsmaster.cfg
+%{_docdir}/leil-master/examples/leil-master.cfg
+%{_docdir}/leil-master/examples/sfsglobaliolimits.cfg
+%{_docdir}/leil-master/examples/leil-globaliolimits.cfg
 %config(noreplace) %{_sysconfdir}/pam.d/saunafs
 %config(noreplace) %{_sysconfdir}/security/limits.d/%{leil_limits_conf}
 
@@ -386,10 +386,10 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_mandir}/man5/leil-metalogger.cfg.5*
 %{_mandir}/man8/sfsmetalogger.8*
 %{_mandir}/man8/leil-metalogger.8*
-%dir %{_docdir}/saunafs-metalogger/
-%dir %{_docdir}/saunafs-metalogger/examples/
-%{_docdir}/saunafs-metalogger/examples/sfsmetalogger.cfg
-%{_docdir}/saunafs-metalogger/examples/leil-metalogger.cfg
+%dir %{_docdir}/leil-metalogger/
+%dir %{_docdir}/leil-metalogger/examples/
+%{_docdir}/leil-metalogger/examples/sfsmetalogger.cfg
+%{_docdir}/leil-metalogger/examples/leil-metalogger.cfg
 
 # Files - chunkserver
 ############################################################
@@ -408,12 +408,12 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_mandir}/man5/leil-hdd.cfg.5*
 %{_mandir}/man8/sfschunkserver.8*
 %{_mandir}/man8/leil-chunkserver.8*
-%dir %{_docdir}/saunafs-chunkserver/
-%dir %{_docdir}/saunafs-chunkserver/examples/
-%{_docdir}/saunafs-chunkserver/examples/sfschunkserver.cfg
-%{_docdir}/saunafs-chunkserver/examples/leil-chunkserver.cfg
-%{_docdir}/saunafs-chunkserver/examples/sfshdd.cfg
-%{_docdir}/saunafs-chunkserver/examples/leil-hdd.cfg
+%dir %{_docdir}/leil-chunkserver/
+%dir %{_docdir}/leil-chunkserver/examples/
+%{_docdir}/leil-chunkserver/examples/sfschunkserver.cfg
+%{_docdir}/leil-chunkserver/examples/leil-chunkserver.cfg
+%{_docdir}/leil-chunkserver/examples/sfshdd.cfg
+%{_docdir}/leil-chunkserver/examples/leil-hdd.cfg
 %config(noreplace) %{_sysconfdir}/pam.d/saunafs
 %config(noreplace) %{_sysconfdir}/security/limits.d/%{leil_limits_conf}
 
@@ -473,14 +473,14 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_mandir}/man7/leil.7*
 %{_mandir}/man7/saunafs-migrations.7*
 %{_mandir}/man7/leil-migrations.7*
-%dir %{_docdir}/saunafs-client/
-%dir %{_docdir}/saunafs-client/examples/
-%{_docdir}/saunafs-client/examples/sfstls.cfg
-%{_docdir}/saunafs-client/examples/leil-tls.cfg
-%{_docdir}/saunafs-client/examples/sfsiolimits.cfg
-%{_docdir}/saunafs-client/examples/leil-iolimits.cfg
-%{_docdir}/saunafs-client/examples/sfsmount.cfg
-%{_docdir}/saunafs-client/examples/leil-mount.cfg
+%dir %{_docdir}/leil-client/
+%dir %{_docdir}/leil-client/examples/
+%{_docdir}/leil-client/examples/sfstls.cfg
+%{_docdir}/leil-client/examples/leil-tls.cfg
+%{_docdir}/leil-client/examples/sfsiolimits.cfg
+%{_docdir}/leil-client/examples/leil-iolimits.cfg
+%{_docdir}/leil-client/examples/sfsmount.cfg
+%{_docdir}/leil-client/examples/leil-mount.cfg
 %{_datadir}/bash-completion/completions/leil
 %{_datadir}/bash-completion/completions/saunafs
 
@@ -490,9 +490,9 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files client-devel
 %doc NEWS README.md
 %license COPYING
-%dir %{_includedir}/saunafs/
-%{_includedir}/saunafs/saunafs_c_api.h
-%{_includedir}/saunafs/saunafs_error_codes.h
+%dir %{_includedir}/leil/
+%{_includedir}/leil/saunafs_c_api.h
+%{_includedir}/leil/saunafs_error_codes.h
 
 # Files - client-static
 ############################################################
@@ -500,7 +500,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %files client-static
 %doc NEWS README.md
 %license COPYING
-%dir %{_includedir}/saunafs/
+%dir %{_includedir}/leil/
 %{_libdir}/libsaunafs-client-cpp.a
 %{_libdir}/libsaunafs-client-cpp_pic.a
 %{_libdir}/libsaunafs-client.a
@@ -571,10 +571,10 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_mandir}/man8/saunafs-uraft-helper.8*
 %{_mandir}/man5/leil-uraft.cfg.5*
 %{_mandir}/man5/saunafs-uraft.cfg.5*
-%dir %{_docdir}/saunafs-uraft/
-%dir %{_docdir}/saunafs-uraft/examples/
-%{_docdir}/saunafs-uraft/examples/leil-uraft.cfg
-%{_docdir}/saunafs-uraft/examples/saunafs-uraft.cfg
+%dir %{_docdir}/leil-uraft/
+%dir %{_docdir}/leil-uraft/examples/
+%{_docdir}/leil-uraft/examples/leil-uraft.cfg
+%{_docdir}/leil-uraft/examples/saunafs-uraft.cfg
 %config(noreplace) %{_sysconfdir}/sysctl.d/10-leilfs-uraft-arp.conf
 %attr(0440, root, root) %config(noreplace) %{_sysconfdir}/sudoers.d/leilfs-uraft
 

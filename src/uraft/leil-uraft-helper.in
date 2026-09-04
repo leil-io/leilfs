@@ -5,30 +5,77 @@ SAUNAFS_URAFT_ERROR=1
 SAUNAFS_DATA_DIR="@DATA_PATH@"
 METADATA_LOCK="@DATA_PATH@/metadata.sfs.lock"
 SAUNAFS_URAFT_CONFIG="@ETC_PATH@/leil-uraft.cfg"
-SAUNAFS_URAFT_LEGACY_CONFIG="@ETC_PATH@/saunafs-uraft.cfg"
+# Same filename as SAUNAFS_URAFT_CONFIG, but under the pre-rebrand directory:
+# covers installations that already adopted the "leil-uraft.cfg" name before
+# @ETC_PATH@ itself was renamed.
+SAUNAFS_URAFT_OLDDIR_CONFIG="@ETC_PATH_LEGACY@/leil-uraft.cfg"
+SAUNAFS_URAFT_LEGACY_CONFIG="@ETC_PATH_LEGACY@/saunafs-uraft.cfg"
 SAUNAFS_MASTER_CONFIG="@ETC_PATH@/leil-master.cfg"
-SAUNAFS_MASTER_LEGACY_CONFIG="@ETC_PATH@/sfsmaster.cfg"
+SAUNAFS_MASTER_OLDDIR_CONFIG="@ETC_PATH_LEGACY@/leil-master.cfg"
+SAUNAFS_MASTER_LEGACY_CONFIG="@ETC_PATH_LEGACY@/sfsmaster.cfg"
 
 metadata_location=
 
 select_existing_config() {
 	local default_config="$1"
-	local legacy_config="$2"
+	local olddir_config="$2"
+	local legacy_config="$3"
 
-	if [ ! -f "$default_config" ] && [ -f "$legacy_config" ]; then
+	if [ -f "$default_config" ]; then
+		echo "$default_config"
+	elif [ -f "$olddir_config" ]; then
+		echo "$olddir_config"
+	elif [ -f "$legacy_config" ]; then
 		echo "$legacy_config"
 	else
 		echo "$default_config"
 	fi
 }
 
-SAUNAFS_URAFT_CONFIG=$(select_existing_config "$SAUNAFS_URAFT_CONFIG" "$SAUNAFS_URAFT_LEGACY_CONFIG")
-SAUNAFS_MASTER_CONFIG=$(select_existing_config "$SAUNAFS_MASTER_CONFIG" "$SAUNAFS_MASTER_LEGACY_CONFIG")
+# True if $1 looks like an initialized data directory rather than an empty
+# one freshly created by package install/upgrade (metadata.sfs.empty is
+# always installed into the default data dir regardless, so bare directory
+# existence can't tell the two apart). Mirrors the filenames master/metarestore
+# look for at startup, plus the ".1" rotated backup left behind by a
+# metadata download (see rotateFiles() in masterconn.cc), see
+# hasKnownMetadata() in src/master/metadata_backend_common.h.
+has_known_metadata() {
+	local dir="$1"
+	[ -f "$dir/metadata.sfs" ] || [ -f "$dir/metadata.mfs" ] || [ -f "$dir/metadata_ml.sfs" ] \
+		|| [ -f "$dir/metadata.sfs.1" ] || [ -f "$dir/metadata_ml.sfs.1" ]
+}
+
+# Picks $1 unless it has no metadata yet and $2 (the pre-rebrand data dir)
+# does, in which case a machine upgraded in place is still using the old
+# directory.
+select_data_dir() {
+	local default_dir="$1"
+	local legacy_dir="$2"
+
+	if ! has_known_metadata "$default_dir" && has_known_metadata "$legacy_dir"; then
+		echo "$legacy_dir"
+	else
+		echo "$default_dir"
+	fi
+}
+
+SAUNAFS_URAFT_CONFIG=$(select_existing_config "$SAUNAFS_URAFT_CONFIG" "$SAUNAFS_URAFT_OLDDIR_CONFIG" "$SAUNAFS_URAFT_LEGACY_CONFIG")
+SAUNAFS_MASTER_CONFIG=$(select_existing_config "$SAUNAFS_MASTER_CONFIG" "$SAUNAFS_MASTER_OLDDIR_CONFIG" "$SAUNAFS_MASTER_LEGACY_CONFIG")
+# SAUNAFS_DATA_DIR is still the compiled-in default here (load_config() below
+# is what applies any admin override from SAUNAFS_MASTER_CONFIG), so this
+# fallback mirrors the daemon's own guard of only kicking in when nothing
+# overrode the default path.
+SAUNAFS_DATA_DIR=$(select_data_dir "$SAUNAFS_DATA_DIR" "@DATA_PATH_LEGACY@")
+METADATA_LOCK="${SAUNAFS_DATA_DIR}/metadata.sfs.lock"
 
 print_missing_config() {
-	echo "$1 file is missing, it looks like a clean installation."
+	local missing_path="$1"
+	local examples_dir="$2"
+	local example_name
+	example_name=$(basename "$missing_path")
+	echo "$missing_path file is missing, it looks like a clean installation."
 	echo "You can use example configuration and fill it with appropriate data:"
-	echo "cp '@URAFT_EXAMPLES_SUBDIR@/$1' '@ETC_PATH@/$1'"
+	echo "cp '${examples_dir}/${example_name}' '${missing_path}'"
 	exit $SAUNAFS_URAFT_ERROR
 }
 
@@ -37,13 +84,13 @@ load_config() {
 		. <(sed "s:\ *=\ *:=:g" $SAUNAFS_MASTER_CONFIG | grep "ADMIN_PASSWORD")
 		. <(sed "s:\ *=\ *:=:g" $SAUNAFS_MASTER_CONFIG | grep "DATA_PATH")
 	else
-		print_missing_config $SAUNAFS_MASTER_CONFIG
+		print_missing_config "$SAUNAFS_MASTER_CONFIG" "@SFSMASTER_EXAMPLES_SUBDIR@"
 	fi
 
 	if [ -f $SAUNAFS_URAFT_CONFIG ] ; then
 		. <(sed "s:\ *=\ *:=:g" $SAUNAFS_URAFT_CONFIG)
 	else
-		print_missing_config $SAUNAFS_URAFT_CONFIG
+		print_missing_config "$SAUNAFS_URAFT_CONFIG" "@URAFT_EXAMPLES_SUBDIR@"
 	fi
 
 	matocl_host=${LOCAL_MASTER_ADDRESS:=0}
@@ -57,7 +104,16 @@ load_config() {
 	netmask2=${URAFT_FLOATING_NETMASK_SECONDARY:=}
 	iface2=${URAFT_FLOATING_IFACE_SECONDARY:=}
 
-	SAUNAFS_DATA_DIR=${DATA_PATH:="@DATA_PATH@"}
+	local configured_data_dir=${DATA_PATH:="@DATA_PATH@"}
+	if [[ "${configured_data_dir}" == "@DATA_PATH@" ]]; then
+		# No explicit DATA_PATH override in the config file: same fallback as
+		# above, re-applied here in case the config file wasn't loaded yet
+		# when the top-level one ran.
+		SAUNAFS_DATA_DIR=$(select_data_dir "${configured_data_dir}" "@DATA_PATH_LEGACY@")
+	else
+		SAUNAFS_DATA_DIR="${configured_data_dir}"
+	fi
+	METADATA_LOCK="${SAUNAFS_DATA_DIR}/metadata.sfs.lock"
 
 	if [[ $ipaddr == "" || $netmask == "" || $iface == "" ]] ; then
 		echo "Configuration file $SAUNAFS_URAFT_CONFIG does not contain valid network information."
@@ -97,7 +153,7 @@ load_and_validate_elector_mode() {
 			URAFT_ELECTOR_MODE="0"
 		fi
 	else
-		print_missing_config "${SAUNAFS_URAFT_CONFIG}"
+		print_missing_config "${SAUNAFS_URAFT_CONFIG}" "@URAFT_EXAMPLES_SUBDIR@"
 	fi
 
 	if [[ "${URAFT_ELECTOR_MODE}" != "0" && "${URAFT_ELECTOR_MODE}" != "1" ]]; then

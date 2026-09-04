@@ -306,6 +306,12 @@ int main(int argc,char **argv) {
 	if (autorestore) {
 		if (datapath.empty()) {
 			datapath = DATA_PATH;
+			if (!hasKnownMetadata(DATA_PATH) && hasKnownMetadata(DATA_PATH_LEGACY)) {
+				safs_pretty_syslog(LOG_WARNING,
+				    "using legacy data directory %s because default directory %s has no metadata",
+				    DATA_PATH_LEGACY, DATA_PATH);
+				datapath = DATA_PATH_LEGACY;
+			}
 		}
 		// All candidates from the least to the most preferred one
 		// We still load metadata.sfs.back for scenarios where metaretore

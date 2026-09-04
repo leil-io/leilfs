@@ -438,14 +438,24 @@ void topology_reload(void) {
 		free(TopologyFileName);
 	}
 	const std::string defaultTopologyFileName = ETC_PATH "/leil-topology.cfg";
-	const std::string legacyTopologyFileName = ETC_PATH "/sfstopology.cfg";
+	// Same filename as defaultTopologyFileName, but under the pre-rebrand
+	// directory: covers installations that already adopted the
+	// "leil-topology.cfg" name before ETC_PATH itself was renamed.
+	const std::string oldDirTopologyFileName = ETC_PATH_LEGACY "/leil-topology.cfg";
+	const std::string legacyTopologyFileName = ETC_PATH_LEGACY "/sfstopology.cfg";
 	std::string topologyFileName = cfg_getstring("TOPOLOGY_FILENAME", defaultTopologyFileName);
-	if (topologyFileName == defaultTopologyFileName && access(defaultTopologyFileName.c_str(), F_OK) != 0 &&
-	    access(legacyTopologyFileName.c_str(), F_OK) == 0) {
-		safs::log_warn(
-		    "using legacy topology configuration file {} because default file {} was not found",
-		    legacyTopologyFileName.c_str(), defaultTopologyFileName.c_str());
-		topologyFileName = legacyTopologyFileName;
+	if (topologyFileName == defaultTopologyFileName && access(defaultTopologyFileName.c_str(), F_OK) != 0) {
+		if (access(oldDirTopologyFileName.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using topology configuration file {} because default file {} was not found",
+			    oldDirTopologyFileName.c_str(), defaultTopologyFileName.c_str());
+			topologyFileName = oldDirTopologyFileName;
+		} else if (access(legacyTopologyFileName.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using legacy topology configuration file {} because default file {} was not found",
+			    legacyTopologyFileName.c_str(), defaultTopologyFileName.c_str());
+			topologyFileName = legacyTopologyFileName;
+		}
 	}
 	TopologyFileName = strdup(topologyFileName.c_str());
 	topology_load();

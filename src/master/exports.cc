@@ -942,15 +942,25 @@ static void exports_loadexports() {
 
 static void exports_load() {
 	const std::string defaultExportsFileName = ETC_PATH "/leil-exports.cfg";
-	const std::string legacyExportsFileName = ETC_PATH "/sfsexports.cfg";
+	// Same filename as defaultExportsFileName, but under the pre-rebrand
+	// directory: covers installations that already adopted the
+	// "leil-exports.cfg" name before ETC_PATH itself was renamed.
+	const std::string oldDirExportsFileName = ETC_PATH_LEGACY "/leil-exports.cfg";
+	const std::string legacyExportsFileName = ETC_PATH_LEGACY "/sfsexports.cfg";
 	ExportsFileName = cfg_getstring("EXPORTS_FILENAME", defaultExportsFileName);
 	if (ExportsFileName == defaultExportsFileName &&
-	    access(defaultExportsFileName.c_str(), F_OK) != 0 &&
-	    access(legacyExportsFileName.c_str(), F_OK) == 0) {
-		safs::log_warn(
-		    "using legacy exports configuration file {} because default file {} was not found",
-		    legacyExportsFileName.c_str(), defaultExportsFileName.c_str());
-		ExportsFileName = legacyExportsFileName;
+	    access(defaultExportsFileName.c_str(), F_OK) != 0) {
+		if (access(oldDirExportsFileName.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using exports configuration file {} because default file {} was not found",
+			    oldDirExportsFileName.c_str(), defaultExportsFileName.c_str());
+			ExportsFileName = oldDirExportsFileName;
+		} else if (access(legacyExportsFileName.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using legacy exports configuration file {} because default file {} was not found",
+			    legacyExportsFileName.c_str(), defaultExportsFileName.c_str());
+			ExportsFileName = legacyExportsFileName;
+		}
 	}
 	exports_loadexports();
 }

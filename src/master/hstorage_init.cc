@@ -20,9 +20,12 @@
 
 #include "common/platform.h"
 
+#include <unistd.h>
+
 #include "common/event_loop.h"
 #include "config/cfg.h"
 #include "master/hstring_memstorage.h"
+#include "master/metadata_backend_common.h"
 #ifdef SAUNAFS_HAVE_DB
   #include "master/hstring_bdbstorage.h"
 #endif
@@ -31,9 +34,21 @@ static int gUseBDBStorage;
 static std::string gBDBStoragePath;
 static uint64_t gBDBStorageCacheSize;
 
+static std::string resolveDataPath() {
+	std::string path = cfg_getstring("DATA_PATH", DATA_PATH);
+	if (path == DATA_PATH && !hasKnownMetadata(DATA_PATH) &&
+	    hasKnownMetadata(DATA_PATH_LEGACY)) {
+		safs_pretty_syslog(LOG_WARNING,
+		    "using legacy data directory %s because default directory %s has no metadata",
+		    DATA_PATH_LEGACY, DATA_PATH);
+		path = DATA_PATH_LEGACY;
+	}
+	return path;
+}
+
 void hstorage_reload() {
 	int use_bdb = cfg_getuint8("USE_BDB_FOR_NAME_STORAGE", 0);
-	std::string bdb_path = cfg_getstring("DATA_PATH", DATA_PATH);
+	std::string bdb_path = resolveDataPath();
 	uint64_t cache_size = cfg_getuint32("BDB_NAME_STORAGE_CACHE_SIZE", 10);
 
 	if (use_bdb != gUseBDBStorage) {
@@ -57,7 +72,7 @@ void hstorage_term(void) {
 
 int hstorage_init() {
 	gUseBDBStorage = cfg_getuint8("USE_BDB_FOR_NAME_STORAGE", 0);
-	gBDBStoragePath = cfg_getstring("DATA_PATH", DATA_PATH);
+	gBDBStoragePath = resolveDataPath();
 	gBDBStorageCacheSize = cfg_getuint32("BDB_NAME_STORAGE_CACHE_SIZE", 10);
 
 	if (gUseBDBStorage) {
