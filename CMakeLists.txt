@@ -52,7 +52,6 @@ option(ENABLE_NFS_GANESHA       "Enable nfs-ganesha plugin"                     
 option(ENABLE_CCACHE            "Enable ccache during compilation"                       ON)
 option(ENABLE_NFS_ACL_SUPPORT   "Enable nfs-ganesha ACL support"                         ON)
 option(ENABLE_COMPILE_COMMANDS  "Enable generation of compile_commands.json"             ON)
-option(ENABLE_PROMETHEUS        "Enable prometheus metrics"                              ON)
 option(ASCIIDOCTOR_AUTO_SETUP   "Permit CMake to self-install asciidoctor gem when absent" ON)
 # Experimental
 option(ENABLE_INODE64           "Enable 64 bits for inode numbers and quantities"        OFF)
@@ -73,7 +72,7 @@ if(ENABLE_CCACHE AND CCACHE_FOUND)
   message(STATUS "Using ccache")
 endif()
 
-set(DEFAULT_MIN_VERSION "5.12.0")
+set(DEFAULT_MIN_VERSION "5.13.0")
 
 include(GNUInstallDirs)
 
@@ -390,15 +389,6 @@ set(CHARTS_CSV_CHARTID_BASE 90000)
 
 # Internal capability required by some FSALs
 set(GSH_CAN_HOST_LOCAL_FS ${ENABLE_NFS_GANESHA})
-
-if (ENABLE_PROMETHEUS AND NOT PROMETHEUS_CPP_ENABLE_PULL)
-    message(STATUS "Prometheus C++ Client Library: Enabled but not found")
-elseif(ENABLE_PROMETHEUS)
-    add_definitions(-DHAVE_PROMETHEUS)
-    message(STATUS "Prometheus C++ Client Library: Enabled")
-else()
-    message(STATUS "Prometheus C++ Client Library: Disabled")
-endif()
 
 # Create config.h file
 configure_file(config.h.in config.h)

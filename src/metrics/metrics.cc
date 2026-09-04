@@ -1,8 +1,5 @@
 /*
-
-   Copyright 2024 Leil Storage OÜ
-
-   This file is part of SaunaFS.
+   Copyright 2026 Urmas Rist <urmas@urist.ee>
 
    SaunaFS is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -10,119 +7,107 @@
 
    SaunaFS is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with SaunaFS. If not, see <http://www.gnu.org/licenses/>.
+   along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// This library provides a means of manipulating Prometheus metrics safely and
-// efficiently.
-// The two key restraints in the design are:
-// 1. Prefer compile time costs/safety over initialization time costs/safety,
-// and avoid runtime costs except in accessing the metrics themselves (but
-// minimize them).
-// 2. Do not allow dynamic dimensional data on runtime (i.e, calling Add after
-// initialization)
-//
-// This should allow placing metric gathering functions pretty much everywhere,
-// without worry for performance impact. To do this, it uses a lookup table
-// using enums instead of a map. See master.cc and master.h for an example
-// implementation for adding new metrics.
-
-#ifdef HAVE_PROMETHEUS
-#include <prometheus/counter.h>
-#include <prometheus/detail/builder.h>
-#include <prometheus/family.h>
-#include <prometheus/registry.h>
-#include <pthread.h>
-#include <unistd.h>
+#include <cstdint>
 #include <array>
-#include <exception>
-#include <memory>
-#endif
+#include <vector>
 
 #include "metrics.h"
-#include "metrics/master.h"
-#include "slogger/slogger.h"
+
+#include "common/serialization.h"
+
+namespace {
+
+using namespace metrics;
+
+constexpr auto makeMetadataMetricList()
+{
+    return std::array{
+#define X(name) Metric{#name, MetricType::UINT64, {uint64_t{}}},
+        METRIC_METADATA_UINT64_LIST(X) // You can add more types below
+#undef X
+    };
+}
+
+// Remember to add to the total as more types expand
+constexpr auto MetadataMetricListSize = static_cast<size_t>(master::U64::COUNT);
+static_assert(MetadataMetricListSize == makeMetadataMetricList().size());
+
+// This is used to calculate string sizes in compile time
+constexpr std::array<Metric, MetadataMetricListSize> ConstMetadataMetricList = makeMetadataMetricList();
+// This is the actual runtime array used to modify the values
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables, cert-err58-cpp)
+std::array<Metric, MetadataMetricListSize> MetadataMetricList = makeMetadataMetricList();
+
+template<std::size_t SIZE>
+constexpr uint32_t getTotalStringSize(const std::array<Metric, SIZE> &arr) {
+	uint32_t size = 0;
+	for (const auto &metric: arr) {
+		size += metric.name.size() + 4 + 1; // 32-bit string size in protocol + NULL
+	}
+	return size;
+}
+
+constexpr Metric& metric(const master::U64 enu)
+{
+    return MetadataMetricList.at(static_cast<size_t>(enu));
+}
+
+template<std::size_t SIZE>
+MetricSerialized serializeMetrics(std::array<Metric, SIZE> &arr, const size_t size) {
+	// This size should never wary between calls
+	static std::vector<unsigned char> buffer(size);
+	auto *bufferPtr = buffer.data();
+	// Remember to add more Metric COUNTS to the total as types increase here
+	serialize(&bufferPtr, static_cast<uint32_t>(arr.size()));
+
+	for (const auto &value : arr) {
+		serialize(&bufferPtr, std::string(value.name));
+		switch (value.type) {
+			case MetricType::UINT64:
+				serialize(&bufferPtr, static_cast<uint8_t>(MetricType::UINT64));
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
+				serialize(&bufferPtr, value.value.u64.load());
+				break;
+			case MetricType::FLOAT64:
+				serialize(&bufferPtr, static_cast<uint8_t>(MetricType::FLOAT64));
+				// NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
+				serialize(&bufferPtr, value.value.f64.load());
+		}
+	}
+
+	return {.size = static_cast<uint32_t>(bufferPtr - buffer.data()), .data = buffer.data()};
+}
+
+} // namespace
 
 namespace metrics {
 
-#ifndef HAVE_PROMETHEUS
-
-void destroy() {}
-
-void init(const char* /* unused */) {
-	safs::log_err(
-	    "could not setup prometheus server: Prometheus isn't compiled with "
-	    "this program");
-}
-}
-#else
-
-std::unique_ptr<std::jthread>
-    gMetricsMainThread;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-
-void destroy() {
-	if (gMetricsMainThread != nullptr) {
-		gMetricsMainThread->request_stop();
-	}
+// N.B: This function should be only called from a single thread, never from
+// more than one threads (due to the static vector used in the
+// serializeMetrics, which avoids array initialization since this function
+// could be called very frequently)
+MetricSerialized serializeMasterMetrics() {
+	constexpr auto stringSize =  getTotalStringSize(ConstMetadataMetricList);
+	constexpr auto u64TypeSize = ((sizeof(uint64_t) + sizeof(uint8_t)) * static_cast<uint32_t>(master::U64::COUNT));
+	constexpr size_t size = sizeof(uint32_t) + u64TypeSize + stringSize;
+	return serializeMetrics(MetadataMetricList, size);
 }
 
-
-constexpr auto THREAD_SLEEP_TIME_MS = 100;
-
-class PrometheusMetrics {
-public:
-	PrometheusMetrics() : registry(std::make_shared<prometheus::Registry>()) {
-		master = Master(registry);
-	}
-
-	std::shared_ptr<prometheus::Registry> getRegistry() {
-		return registry;
-	}
-
-	// Master metrics
-	Master master; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-
-private:
-	// Registry
-	std::shared_ptr<prometheus::Registry> registry;
-};
-PrometheusMetrics gPrometheusMetrics;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-
-template <typename T>
-void Counter::increment(T key, double n) {
-	// Safe as all values are constructed at specific keys, however a check
-	// needs to be made whether the actual counter initialized or not (for
-	// whatever reason)
-	auto counterKey = static_cast<unsigned int>(key);
-	auto counter = gPrometheusMetrics.master.masterCounters[counterKey]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
-	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
+void increment(const master::U64 enu) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
+    metric(enu).value.u64++;
 }
 
-void prometheusLoop(const std::stop_token& stop, const char* host) {
-	try {
-		// create an http server
-		prometheus::Exposer exposer{host};
-
-		exposer.RegisterCollectable(gPrometheusMetrics.getRegistry());
-		safs::log_info("started prometheus server");
-
-		while (!stop.stop_requested()) {
-			std::this_thread::sleep_for(std::chrono::milliseconds(THREAD_SLEEP_TIME_MS));
-		};
-	} catch (std::exception &e) {
-		safs::log_err("could not setup prometheus server: {}", e.what());
-	}
+void set(const master::U64 enu, uint64_t val) {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
+	metric(enu).value.u64 = val;
 }
 
-void init(const char* host) {
-	gMetricsMainThread = std::make_unique<std::jthread>(std::jthread(prometheusLoop, host));
-}
-
-}
-#endif
-template void metrics::Counter::increment<metrics::Counter::Master>
-	(metrics::Counter::Master key, double n);
+} // metricsNew

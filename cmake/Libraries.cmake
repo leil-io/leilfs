@@ -153,14 +153,6 @@ if(ENABLE_NFS_GANESHA)
   set(NTIRPC_DIR_NAME "${NFS_GANESHA_DIR_NAME}/src/libntirpc" CACHE INTERNAL "" FORCE)
 endif()
 
-# Find Prometheus
-find_package(prometheus-cpp CONFIG)
-if (PROMETHEUS_CPP_ENABLE_PULL)
-    message(STATUS "Found Prometheus C++ Client Library")
-else()
-    message(STATUS "Did not find Prometheus C++ Client Library (but not needed)")
-endif()
-
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 message(STATUS "OpenSSL: includes=${OPENSSL_INCLUDE_DIR}, libs=${OPENSSL_LIBRARIES}")
