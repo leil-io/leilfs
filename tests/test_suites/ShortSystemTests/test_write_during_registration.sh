@@ -58,7 +58,7 @@ registration_in_progress() {
 	copies=$(count_chunk_copies)
 	[[ -n "$copies" && "$copies" -gt 0 && "$copies" -lt "$FILE_COUNT" ]]
 }
-assert_eventually 'registration_in_progress' #'2 minutes'
+assert_eventually 'registration_in_progress'
 echo "PHASE: registration window open ($(count_chunk_copies) / $FILE_COUNT copies known)"
 
 # Pick chunks whose copy the master does not know about yet, by measuring

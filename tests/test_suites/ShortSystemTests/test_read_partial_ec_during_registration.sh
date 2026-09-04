@@ -78,7 +78,7 @@ for csid in 1 2; do
 	saunafs_chunkserver_daemon "$csid" restart
 done
 
-# Two-sided gate. The first file re-registers early, so it regaining a second
+# Two-sided gate. The first file re-registers early, so its second registered
 # part proves the restarted chunkservers have reconnected and are streaming
 # chunks -- they must be connected for the on-demand query to have anyone to
 # ask. Deliberately not saunafs_wait_for_all_ready_chunkservers, which returns
