@@ -27,9 +27,7 @@ timeout_set '2 minutes'
 # during the window and bounds their latency. This one asks whether the sweep
 # loses anything, so its assertion is the exact chunk count once registration
 # has converged: every probe here could succeed instantly and the test would
-# still fail if a single chunk went missing. It also needs the volume, a
-# large seeded registry and dozens of concurrent inserts and removals for
-# the map to rehash under the cursor at all.
+# still fail if a single chunk went missing.
 
 CHUNK_COUNT=${CHUNK_COUNT:-100000}
 CHUNKS_PER_FILE=1000
