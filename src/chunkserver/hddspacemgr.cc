@@ -753,7 +753,14 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
 		}
 	}
 
-	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+	if (!bulk.empty()) {
+		// These entries were inserted behind a cursor that had already reached
+		// the end. Resume the bucket walk for the remaining entries instead of
+		// repeating this full-map termination pass once per bulk.
+		gRegistrationSweepBucket = 0;
+		gRegistrationSweepCursorDone = false;
+		return RegistrationSweepResult::kBulkReady;
+	}
 	if (hasLockedChunks) { return RegistrationSweepResult::kRetry; }
 
 	// The counter includes scans that are scheduled but have not started, so a

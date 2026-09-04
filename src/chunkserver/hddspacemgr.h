@@ -91,9 +91,8 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
 
 /// Number of buckets currently backing the chunk registry. Reported alongside
 /// the registration progress messages so a test can tell whether the registry
-/// rehashed while the sweep was walking it: a rehash moves chunks across
-/// buckets behind the sweep's cursor, and the termination pass is what has to
-/// catch them. Carries no meaning for the sweep itself.
+/// rehashed while the sweep was walking it. The sweep detects that change and
+/// restarts its bucket cursor. Carries no meaning for the sweep itself.
 uint64_t hddGetChunkRegistryBucketCount();
 
 int hddGetAndResetSpaceChanged();
