@@ -22,7 +22,7 @@ Lines starting with *#* character are ignored.
 
 Configuration options:
 
-*DATA_PATH*:: where to store files with usage statistics and daemon lock file
+*DATA_PATH*:: where to store the chunkserver identity, usage statistics, and daemon lock file
 
 *LABEL*:: the label of this chunkserver (for tiering)
 

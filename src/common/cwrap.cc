@@ -54,6 +54,12 @@ void FileDescriptor::reset(int fd) {
 	fd_ = fd;
 }
 
+int FileDescriptor::release() {
+	const int fd = fd_;
+	fd_ = -1;
+	return fd;
+}
+
 void FileDescriptor::close() {
 	massert(fd_ >= 0, "file descriptor is not opened");
 	::close(fd_);
