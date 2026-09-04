@@ -21,10 +21,17 @@
 #ifdef HAVE_PROMETHEUS
 #include <prometheus/counter.h>
 #include <prometheus/family.h>
+#include <prometheus/gauge.h>
 
 inline prometheus::Family<prometheus::Counter> &setupFamily(
     const char *name, const char *help,
     std::shared_ptr<prometheus::Registry> &registry) {
 	return prometheus::BuildCounter().Name(name).Help(help).Register(*registry);
+}
+
+inline prometheus::Family<prometheus::Gauge> &setupGaugeFamily(
+    const char *name, const char *help,
+    std::shared_ptr<prometheus::Registry> &registry) {
+	return prometheus::BuildGauge().Name(name).Help(help).Register(*registry);
 }
 #endif

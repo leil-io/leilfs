@@ -56,6 +56,45 @@ using BulkFunction = std::function<void(std::vector<ChunkWithVersionAndType>&)>;
 /// Executes the callback for each bulk of at most \p bulkSize chunks.
 void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 
+/// Master-driven (pull) chunk registration sweep.
+/// Unlike hddForeachChunkInBulks, which enumerates everything in one call,
+/// this sweep is resumable: the master releases bulks one credit at a time
+/// (see SAU_MATOCS_REGISTER_CHUNKS_START), so enumeration must survive
+/// concurrent registry mutation between calls.
+
+/// Starts a new registration session over the chunk registry, invalidating the
+/// marks of the previous one. Full registry registration makes previously
+/// queued reports redundant; a pull sweep also covers new records until it
+/// completes.
+///
+/// \p mode distinguishes the push path, which only retires old marks, from the
+/// pull path, which suppresses redundant CHUNK_NEW reports while it sweeps.
+enum class RegistrationSweepMode {
+	kPush,
+	kPull,
+};
+void hddRegistrationSweepBegin(RegistrationSweepMode mode);
+
+/// Result of advancing a master-driven registration sweep.
+enum class RegistrationSweepResult {
+	kBulkReady,  ///< \p bulk contains records ready to send to the master.
+	kRetry,      ///< Locked records or pending disk scans remain; retry without consuming a credit.
+	kComplete,   ///< Every reportable record has been included in the sweep.
+};
+
+/// Collects at most \p bulkSize chunks not yet reported in
+/// this sweep session and marks them as reported. Locked chunks are not
+/// waited on: callers receive \ref RegistrationSweepResult::kRetry and must
+/// try again later without consuming a master credit.
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize);
+
+/// Number of buckets currently backing the chunk registry. Reported alongside
+/// the registration progress messages so a test can tell whether the registry
+/// rehashed while the sweep was walking it. The sweep detects that change and
+/// restarts its bucket cursor. Carries no meaning for the sweep itself.
+uint64_t hddGetChunkRegistryBucketCount();
+
 int hddGetAndResetSpaceChanged();
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
                       uint32_t *chunkCount, uint64_t *toDelUsedSpace,

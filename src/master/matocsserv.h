@@ -165,3 +165,49 @@ int matocsserv_send_duptruncchunk(matocsserventry* eptr,
 int matocsserv_init();
 void matocsserv_getserverdata(const matocsserventry* eptr, ChunkserverListEntry &result);
 csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
+
+/*! \brief Starts an on-demand chunk-location query for \p chunkId.
+ *
+ * Broadcast to every connected chunkserver that supports location queries.
+ * This includes chunkservers that have finished their registration handshake:
+ * an ongoing disk scan can still announce chunks through CHUNK_NEW, whose
+ * locations may not be known to the master yet.
+ * When all queried chunkservers answered -- or the query timed out -- the
+ * waiters are completed through matoclserv_chunk_locations_resolved().
+ * Queries for the same chunk id are coalesced.
+ *
+ * \return true if the query is pending and the caller should defer its reply
+ *         until matoclserv_chunk_locations_resolved(chunkId) fires; false if
+ *         nothing can be queried (no eligible chunkserver, or too many
+ *         queries in flight) and the caller should reply immediately.
+ */
+bool matocsserv_query_chunk_location(uint64_t chunkId);
+
+/*! \brief Maximum number of deferred client waits. */
+uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit();
+
+/// Maximum number of chunk records one pull-registration window may admit per
+/// chunkserver. This bounds the per-connection queue independently of the
+/// operator-selected bulk size and window.
+constexpr uint32_t kMaxChunkRegistrationInFlightChunks = 100000;
+
+/// Limits a requested pull-registration window so it never admits more than
+/// kMaxChunkRegistrationInFlightChunks records for the given bulk size.
+/// Exposed to pin the configuration safety limit in unit tests.
+uint32_t matocsserv_limit_chunk_registration_window(uint32_t bulkSize, uint32_t requestedWindow);
+
+/*!
+ * \brief Groups chunk ids for SAU_MATOCS_QUERY_CHUNKS packets.
+ *
+ * A chunkserver drops the connection on any packet above
+ * kMaxMasterToChunkserverPacketSize, and the number of chunks waiting on a
+ * location is bounded only by ON_DEMAND_CHUNK_QUERY_LIMIT, so the ids cannot
+ * all go out together. Each returned group is small enough that the packet
+ * built from it fits; every id appears exactly once, in the order given.
+ *
+ * Exposed for testing: the volume needed to overflow a packet is a cluster's
+ * worth of clients blocking at the same instant, which a system test cannot
+ * reproduce.
+ */
+std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
+    const std::vector<uint64_t> &chunkIds);

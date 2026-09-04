@@ -23,6 +23,7 @@
 #include <boost/config.hpp>
 #include <boost/dll/alias.hpp>
 #include <boost/dll/import.hpp>
+#include <boost/shared_ptr.hpp>
 
 /// IPlugin is the base interface for all plugins.
 /// It contains the basic information for all plugins.

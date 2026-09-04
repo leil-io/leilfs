@@ -122,6 +122,7 @@ void hddRemoveChunkFromContainers(IChunk *chunk) {
 		disk->setNeedRefresh(true);
 	}
 
+	hddForgetPresentChunkType(chunkIter->first.type);
 	gChunksMap.erase(chunkIter);
 }
 
@@ -304,7 +305,7 @@ int hddIOBegin(IChunk *chunk, int newFlag, uint32_t chunkVersion) {
 	return SAUNAFS_STATUS_OK;
 }
 
-bool hddScansInProgress() { return gScansInProgress != 0; }
+bool hddScansInProgress() { return gScansInProgress.load(std::memory_order_acquire) != 0; }
 
 int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromScan) {
 	int status;
@@ -456,6 +457,7 @@ IChunk *hddRecreateChunk(IDisk *disk, IChunk *chunk, uint64_t chunkId,
 	massert(success,
 	        "Cannot insert new chunk to the map as a chunk with "
 	        "its chunkId and chunkPartType already exists");
+	hddNotePresentChunkType(type);
 
 	chunk->setCondVar(std::move(waiting));
 

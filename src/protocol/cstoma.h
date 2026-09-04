@@ -81,6 +81,24 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerChunks, SAU_CSTOMA_REGISTER_CHUNKS, kECChunks,
 		std::vector<ChunkWithVersionAndType>, chunks)
 
+// Reply to SAU_MATOCS_QUERY_CHUNKS (on-demand chunk-location query, sent by
+// the master while a chunkserver's registration is still in progress).
+// queriedChunkIds echoes every id from the query, so the master can account
+// for negative answers; foundChunks lists the parts this chunkserver hosts
+// (possibly several per id for EC parts). generation echoes the query attempt
+// and prevents a late response from an older retry from satisfying a newer
+// request for the same chunk ID.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunksResponse, SAU_CSTOMA_QUERY_CHUNKS_RESPONSE,
+                                    0, uint64_t, generation,
+                                    std::vector<uint64_t>, queriedChunkIds,
+                                    std::vector<ChunkWithVersionAndType>, foundChunks)
+
+// Ends a master-driven (pull) chunk registration stream started by
+// SAU_MATOCS_REGISTER_CHUNKS_START; chunkCount is the number of chunks the
+// sweep reported, for logging/verification.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, registerChunksEnd, SAU_CSTOMA_REGISTER_CHUNKS_END, 0,
+                                    uint64_t, chunkCount)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerSpace, SAU_CSTOMA_REGISTER_SPACE, 0,
 		uint64_t, usedSpace,

@@ -1500,14 +1500,22 @@ uint8_t chunk_modify(uint64_t currentChunkId, uint32_t *lockId, uint8_t goal, bo
 		return SAUNAFS_ERROR_LOCKED;
 	}
 
-	// Check if the chunk is writable
-	if (!currentChunk->isWritable()) { return SAUNAFS_ERROR_CHUNKLOST; }
+	// Check if the chunk is writable. Report the chunk id along with the failure:
+	// the caller defers the request on the on-demand chunk-location query, which
+	// needs to know which chunk to ask the registering chunkservers about.
+	if (!currentChunk->isWritable()) {
+		*targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_CHUNKLOST;
+	}
 
 	// Check if the chunk would be safe to write with the desired redundancy level
 	ChunkCopiesCalculator calculator(currentChunk->getGoal());
 	for (auto &part : currentChunk->parts) { calculator.addPart(part.type, MediaLabel::kWildcard); }
 	calculator.evalRedundancyLevel();
-	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
+		*targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_NOCHUNKSERVERS;
+	}
 
 	if (currentChunk->fileCount() == 1) {
 		// Only one reference case
@@ -1976,6 +1984,25 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 			default:
 				break;
 			}
+
+			// A report can be older than reality. SAU_CSTOMA_CHUNK_NEW announcements
+			// carry the version captured when the disk scan first saw the chunk, and
+			// that queue is only drained once registration has completed, so a version
+			// change applied in between leaves the queued announcement stale by up to
+			// a whole registration window.
+			//
+			// A registration packet can also be overtaken by an on-demand query reply.
+			// The reply can start a version operation before the old packet arrives,
+			// leaving the part BUSY at the current version. The operation's terminal
+			// status is authoritative in that case: processing the old report would
+			// replace the operation-owned version and invalidate the part before that
+			// status is handled. A current-version valid part, including a BUSY one,
+			// therefore makes an older report out-of-order news rather than a
+			// correction.
+			if (new_version < c->version && part.version == c->version && part.is_valid()) {
+				return;
+			}
+
 			if (part.version != new_version) {
 				safs_pretty_syslog(LOG_WARNING, "chunk %016" PRIX64 ": master data indicated "
 						"version %08" PRIX32 ", chunkserver reports %08"

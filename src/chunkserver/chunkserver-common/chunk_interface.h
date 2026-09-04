@@ -210,6 +210,13 @@ public:
 	/// Sets the value of wasChanged.
 	virtual void setWasChanged(uint8_t newWasChanged) = 0;
 
+	/// Epoch of the last master-driven registration sweep which reported this
+	/// chunk (see hddRegistrationSweep* in hddspacemgr). Guarded by
+	/// gChunksMapMutex, like the registry itself.
+	virtual uint32_t registrationEpoch() const = 0;
+	/// Sets the registration sweep epoch.
+	virtual void setRegistrationEpoch(uint32_t newEpoch) = 0;
+
 	/// Returns the number of blocks in the Chunk.
 	virtual uint16_t blocks() const = 0;
 	/// Sets the number of blocks in the Chunk.

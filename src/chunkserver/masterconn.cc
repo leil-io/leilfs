@@ -101,6 +101,7 @@ void masterconn_stats(uint64_t *bin,uint64_t *bout,uint32_t *maxjobscnt) {
 void masterconn_check_hdd_reports() {
 	MasterConn *eptr = gMasterConnSingleton.get();
 	uint32_t errorcounter;
+	if (eptr->mode() == ConnectionMode::CONNECTED) { eptr->checkPullRegistration(); }
 	if (eptr->mode() == ConnectionMode::CONNECTED &&
 	    eptr->registrationStatus() == RegistrationStatus::kChunksRegistered) {
 		if (hddGetAndResetSpaceChanged()) {
@@ -238,11 +239,11 @@ void masterconn_send_status() {
 
 void masterconn_serve(const std::vector<pollfd> &pdesc) {
 	LOG_AVG_TILL_END_OF_SCOPE0("master_serve");
-	
+
 	MasterConn *eptr = gMasterConnSingleton.get();
 
 	eptr->handlePollErrors(pdesc);
-	
+
 	// Check if there are any background jobs to process.
 	if (eptr->mode() == ConnectionMode::CONNECTED) {
 		if (gJobFDpDescPos >= 0 && (pdesc[gJobFDpDescPos].revents & POLLIN)) {
@@ -285,6 +286,13 @@ static uint32_t get_cfg_timeout() {
 	return 1000 * cfg_get_minmaxvalue<double>("MASTER_TIMEOUT", 60, 0.01, 1000 * 1000);
 }
 
+/// Reads the master-driven (pull) chunk registration configuration
+static void masterconn_load_pull_registration_cfg() {
+	gPullRegistrationStartTimeout_s =
+	    cfg_get_minvalue<uint32_t>("CHUNK_REGISTRATION_START_TIMEOUT", 10, 1);
+	gForcePushRegistration = cfg_getuint32("CHUNK_REGISTRATION_FORCE_PUSH", 0) != 0;
+}
+
 /// Read the label from configuration file and return true if it's changed to a valid one
 bool masterconn_load_label() {
 	std::string oldLabel = gLabel;
@@ -320,6 +328,7 @@ void masterconn_reload(void) {
 	}
 
 	gTimeout_ms = get_cfg_timeout();
+	masterconn_load_pull_registration_cfg();
 
 	if (masterconn_load_label()) { eptr->sendRegisterLabel(); }
 
@@ -338,6 +347,7 @@ int masterconn_init(void) {
 	gBindHostStr = cfg_getstring("BIND_HOST", "*");
 	gTimeout_ms = get_cfg_timeout();
 	gEnableLoadFactor = static_cast<bool>(cfg_getuint32("ENABLE_LOAD_FACTOR", 0));
+	masterconn_load_pull_registration_cfg();
 
 	if (!masterconn_load_label()) { return -1; }
 
