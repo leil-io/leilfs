@@ -850,9 +850,13 @@ int main(int argc,char **argv) {
 	uint32_t locktimeout;
 	struct rlimit rls;
 	std::string defaultCfgFile = ETC_PATH "/" STR(APPNAME) ".cfg";
+	// Same filename as defaultCfgFile, but under the pre-rebrand directory:
+	// covers installations that already adopted the "APPNAME" config name
+	// before the "ETC_PATH" directory itself was renamed.
+	std::string oldDirCfgFile = ETC_PATH_LEGACY "/" STR(APPNAME) ".cfg";
 	std::string legacyDefaultCfgFile = ETC_PATH_LEGACY "/" STR(CFGNAME_LEGACY) ".cfg";
 	std::string cfgfile = defaultCfgFile;
-	bool usingLegacyDefaultCfgFile = false;
+	std::string usedFallbackCfgFile;
 	std::string pidfile;
 
 	prepareEnvironment();
@@ -936,10 +940,14 @@ int main(int argc,char **argv) {
 		makePidFile(pidfile);
 	}
 
-	if (cfgfile == defaultCfgFile && access(defaultCfgFile.c_str(), F_OK) != 0 &&
-		access(legacyDefaultCfgFile.c_str(), F_OK) == 0) {
-		cfgfile = legacyDefaultCfgFile;
-		usingLegacyDefaultCfgFile = true;
+	if (cfgfile == defaultCfgFile && access(defaultCfgFile.c_str(), F_OK) != 0) {
+		if (access(oldDirCfgFile.c_str(), F_OK) == 0) {
+			cfgfile = oldDirCfgFile;
+			usedFallbackCfgFile = oldDirCfgFile;
+		} else if (access(legacyDefaultCfgFile.c_str(), F_OK) == 0) {
+			cfgfile = legacyDefaultCfgFile;
+			usedFallbackCfgFile = legacyDefaultCfgFile;
+		}
 	}
 
 	ch = cfg_load(cfgfile.c_str(), logundefined);
@@ -954,9 +962,9 @@ int main(int argc,char **argv) {
 	} else if (runmode==RunMode::kStart || runmode==RunMode::kRestart) {
 		// Setup logs before first log
 		safs::setup_logs();
-		if (usingLegacyDefaultCfgFile) {
-			safs::log_warn("using legacy configuration file {} because default file {} was not found",
-			               legacyDefaultCfgFile, defaultCfgFile);
+		if (!usedFallbackCfgFile.empty()) {
+			safs::log_warn("using configuration file {} because default file {} was not found",
+			               usedFallbackCfgFile, defaultCfgFile);
 		}
 		safs::log_info("Configuration file {} loaded", cfgfile);
 	}

@@ -147,14 +147,24 @@ void DefaultDiskManager::reloadDisksFromCfg() {
 	TRACETHIS();
 
 	const std::string defaultHddFilename = ETC_PATH "/leil-hdd.cfg";
+	// Same filename as defaultHddFilename, but under the pre-rebrand
+	// directory: covers installations that already adopted the
+	// "leil-hdd.cfg" name before ETC_PATH itself was renamed.
+	const std::string oldDirHddFilename = ETC_PATH_LEGACY "/leil-hdd.cfg";
 	const std::string legacyHddFilename = ETC_PATH_LEGACY "/sfshdd.cfg";
 	std::string hddFilename = cfg_get("HDD_CONF_FILENAME", defaultHddFilename);
-	if (hddFilename == defaultHddFilename && !std::ifstream(defaultHddFilename).good() &&
-	    std::ifstream(legacyHddFilename).good()) {
-		safs::log_warn(
-		    "using legacy hdd configuration file {} because default file {} was not found",
-		    legacyHddFilename.c_str(), defaultHddFilename.c_str());
-		hddFilename = legacyHddFilename;
+	if (hddFilename == defaultHddFilename && !std::ifstream(defaultHddFilename).good()) {
+		if (std::ifstream(oldDirHddFilename).good()) {
+			safs::log_warn(
+			    "using hdd configuration file {} because default file {} was not found",
+			    oldDirHddFilename.c_str(), defaultHddFilename.c_str());
+			hddFilename = oldDirHddFilename;
+		} else if (std::ifstream(legacyHddFilename).good()) {
+			safs::log_warn(
+			    "using legacy hdd configuration file {} because default file {} was not found",
+			    legacyHddFilename.c_str(), defaultHddFilename.c_str());
+			hddFilename = legacyHddFilename;
+		}
 	}
 	std::ifstream hddFile(hddFilename);
 

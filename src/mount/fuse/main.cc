@@ -565,15 +565,25 @@ int main(int argc, char *argv[]) try {
 
 	if (!gCustomCfg) {
 		const std::string defaultConfigPath = DEFAULT_SFSMOUNT_CONFIG_PATH;
+		// Same filename as defaultConfigPath, but under the pre-rebrand
+		// directory: covers installations that already adopted the
+		// "leil-mount.cfg" name before ETC_PATH itself was renamed.
+		const std::string oldDirConfigPath = ETC_PATH_LEGACY "/leil-mount.cfg";
 		const std::string legacyConfigPath = ETC_PATH_LEGACY "/" STR(CFGNAME_LEGACY) ".cfg";
 		std::string configPath = defaultConfigPath;
 
-		if (access(defaultConfigPath.c_str(), F_OK) != 0 &&
-		    access(legacyConfigPath.c_str(), F_OK) == 0) {
-			safs::log_warn(
-			    "using legacy mount configuration file {} because default file {} was not found",
-			    legacyConfigPath, defaultConfigPath);
-			configPath = legacyConfigPath;
+		if (access(defaultConfigPath.c_str(), F_OK) != 0) {
+			if (access(oldDirConfigPath.c_str(), F_OK) == 0) {
+				safs::log_warn(
+				    "using mount configuration file {} because default file {} was not found",
+				    oldDirConfigPath, defaultConfigPath);
+				configPath = oldDirConfigPath;
+			} else if (access(legacyConfigPath.c_str(), F_OK) == 0) {
+				safs::log_warn(
+				    "using legacy mount configuration file {} because default file {} was not found",
+				    legacyConfigPath, defaultConfigPath);
+				configPath = legacyConfigPath;
+			}
 		}
 
 		sfs_opt_parse_cfg_file(configPath.c_str(), 1, &defaultargs);

@@ -362,6 +362,10 @@ static void fs_read_goals_from_stream(std::istream&& stream) {
 
 static void fs_read_goal_config_file() {
 	const std::string defaultGoalConfigFile = ETC_PATH "/leil-goals.cfg";
+	// Same filename as defaultGoalConfigFile, but under the pre-rebrand
+	// directory: covers installations that already adopted the
+	// "leil-goals.cfg" name before ETC_PATH itself was renamed.
+	const std::string oldDirGoalConfigFile = ETC_PATH_LEGACY "/leil-goals.cfg";
 	const std::string legacyGoalConfigFile = ETC_PATH_LEGACY "/sfsgoals.cfg";
 	std::string goalConfigFile =
 			cfg_getstring("CUSTOM_GOALS_FILENAME", "");
@@ -370,6 +374,11 @@ static void fs_read_goal_config_file() {
 		if (access(defaultGoalConfigFile.c_str(), F_OK) == 0) {
 			// the default file exists - use it
 			goalConfigFile = defaultGoalConfigFile;
+		} else if (access(oldDirGoalConfigFile.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using goal configuration file {} because default file {} was not found",
+			    oldDirGoalConfigFile.c_str(), defaultGoalConfigFile.c_str());
+			goalConfigFile = oldDirGoalConfigFile;
 		} else if (access(legacyGoalConfigFile.c_str(), F_OK) == 0) {
 			safs::log_warn(
 			    "using legacy goal configuration file {} because default file {} was not found",

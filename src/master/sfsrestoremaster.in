@@ -40,6 +40,12 @@ fi
 
 net_interface="$1"
 etc_directory="${2:-@ETC_PATH@}"
+# When no directory was given explicitly, this is the pre-rebrand directory
+# to fall back to if $etc_directory has neither config. An explicit $2 is
+# always honored as-is (this collapses to the same value as etc_directory,
+# making the fallback tier below a no-op), matching select_data_dir's rule
+# for DATA_PATH.
+legacy_etc_directory="${2:-@ETC_PATH_LEGACY@}"
 
 get_config_option() {
 	local file="$1"
@@ -88,9 +94,14 @@ EOF
 
 select_readable_config() {
 	local default_config="$1"
-	local legacy_config="$2"
+	local olddir_config="$2"
+	local legacy_config="$3"
 
-	if [ ! -r "$default_config" ] && [ -r "$legacy_config" ]; then
+	if [ -r "$default_config" ]; then
+		echo "$default_config"
+	elif [ -r "$olddir_config" ]; then
+		echo "$olddir_config"
+	elif [ -r "$legacy_config" ]; then
 		echo "$legacy_config"
 	else
 		echo "$default_config"
@@ -130,8 +141,10 @@ notice "Using configuration directory: $etc_directory"
 
 notice "Checking configuration files..."
 
-ml_config=$(select_readable_config "$etc_directory/leil-metalogger.cfg" "$etc_directory/sfsmetalogger.cfg")
-ma_config=$(select_readable_config "$etc_directory/leil-master.cfg" "$etc_directory/sfsmaster.cfg")
+ml_config=$(select_readable_config "$etc_directory/leil-metalogger.cfg" \
+	"$legacy_etc_directory/leil-metalogger.cfg" "$legacy_etc_directory/sfsmetalogger.cfg")
+ma_config=$(select_readable_config "$etc_directory/leil-master.cfg" \
+	"$legacy_etc_directory/leil-master.cfg" "$legacy_etc_directory/sfsmaster.cfg")
 
 if [ ! -r "$ml_config" ]; then
 	panic "Can't read metalogger configuration: $ml_config"

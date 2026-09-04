@@ -21,6 +21,10 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 	namespace po = boost::program_options;
 	po::options_description generic("options");
 	const std::string defaultConfigFile = ETC_PATH "/leil-uraft.cfg";
+	// Same filename as defaultConfigFile, but under the pre-rebrand
+	// directory: covers installations that already adopted the
+	// "leil-uraft.cfg" name before ETC_PATH itself was renamed.
+	const std::string oldDirConfigFile = ETC_PATH_LEGACY "/leil-uraft.cfg";
 	const std::string legacyConfigFile = ETC_PATH_LEGACY "/saunafs-uraft.cfg";
 
 	generic.add_options()
@@ -82,12 +86,18 @@ void parseOptions(int argc, char **argv, uRaftController::Options &opt, bool &ma
 		std::string config_file;
 
 		config_file = vm["config"].as<std::string>();
-		if (config_file == defaultConfigFile && access(defaultConfigFile.c_str(), F_OK) != 0 &&
-		    access(legacyConfigFile.c_str(), F_OK) == 0) {
-			syslog(LOG_WARNING,
-			       "using legacy uraft configuration file %s because default file %s was not found",
-			       legacyConfigFile.c_str(), defaultConfigFile.c_str());
-			config_file = legacyConfigFile;
+		if (config_file == defaultConfigFile && access(defaultConfigFile.c_str(), F_OK) != 0) {
+			if (access(oldDirConfigFile.c_str(), F_OK) == 0) {
+				syslog(LOG_WARNING,
+				       "using uraft configuration file %s because default file %s was not found",
+				       oldDirConfigFile.c_str(), defaultConfigFile.c_str());
+				config_file = oldDirConfigFile;
+			} else if (access(legacyConfigFile.c_str(), F_OK) == 0) {
+				syslog(LOG_WARNING,
+				       "using legacy uraft configuration file %s because default file %s was not found",
+				       legacyConfigFile.c_str(), defaultConfigFile.c_str());
+				config_file = legacyConfigFile;
+			}
 		}
 		std::ifstream ifs(config_file.c_str());
 

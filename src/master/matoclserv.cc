@@ -7670,13 +7670,23 @@ void matoclserv_start_cond_check() {
 int matoclserv_iolimits_reload() {
 	std::string configFile = cfg_getstring("GLOBALIOLIMITS_FILENAME", "");
 	const std::string defaultConfigFile = ETC_PATH "/leil-globaliolimits.cfg";
+	// Same filename as defaultConfigFile, but under the pre-rebrand
+	// directory: covers installations that already adopted the
+	// "leil-globaliolimits.cfg" name before ETC_PATH itself was renamed.
+	const std::string oldDirConfigFile = ETC_PATH_LEGACY "/leil-globaliolimits.cfg";
 	const std::string legacyConfigFile = ETC_PATH_LEGACY "/sfsglobaliolimits.cfg";
-	if (configFile == defaultConfigFile && access(defaultConfigFile.c_str(), F_OK) != 0 &&
-	    access(legacyConfigFile.c_str(), F_OK) == 0) {
-		safs::log_warn(
-		    "using legacy global I/O limits configuration file {} because configured default file {} was not found",
-		    legacyConfigFile, defaultConfigFile);
-		configFile = legacyConfigFile;
+	if (configFile == defaultConfigFile && access(defaultConfigFile.c_str(), F_OK) != 0) {
+		if (access(oldDirConfigFile.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using global I/O limits configuration file {} because configured default file {} was not found",
+			    oldDirConfigFile, defaultConfigFile);
+			configFile = oldDirConfigFile;
+		} else if (access(legacyConfigFile.c_str(), F_OK) == 0) {
+			safs::log_warn(
+			    "using legacy global I/O limits configuration file {} because configured default file {} was not found",
+			    legacyConfigFile, defaultConfigFile);
+			configFile = legacyConfigFile;
+		}
 	}
 	gIoLimitsAccumulate_ms = cfg_get_minvalue("GLOBALIOLIMITS_ACCUMULATE_MS", 250U, 1U);
 
