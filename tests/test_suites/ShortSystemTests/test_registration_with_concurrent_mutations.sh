@@ -71,10 +71,8 @@ saunafs_make_conf_for_shadow 0
 saunafs_make_conf_for_master 1
 saunafs_master_daemon reload
 
-# Wait only until the sweep has STARTED, while it is still far from complete.
-# Deliberately not saunafs_wait_for_all_ready_chunkservers: readiness is the
-# post-registration space report, so waiting for it would close the window the
-# mutations below are supposed to run concurrently with.
+# Wait for a partially populated registry so mutations run during the sweep.
+# Readiness alone does not establish that registration is in progress.
 registration_in_progress() {
 	local copies
 	copies=$(count_chunk_copies)
@@ -84,10 +82,8 @@ assert_eventually 'registration_in_progress'
 echo "PHASE: promoted, paced re-registration running" \
 	"($(count_chunk_copies) / $((2 * CHUNK_COUNT)) copies known)"
 
-# Mutations during the sweep: create many new files (their chunks land on the
-# real disks of chunkservers that are still streaming, so the inserts rehash a
-# registry that is being swept), read them back, and unlink a seeded mock file
-# plus some of the new files
+# Create and read back files while registration runs, then remove a seeded
+# mock file and some new files.
 created=0
 for i in $(seq 1 40); do
 	echo "mutation data $i" > "${info[mount0]}/mutation_$i"
