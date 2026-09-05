@@ -6,7 +6,8 @@ shared_target_link_libraries(chunkserver-common
         safsprotocol
         leil-common
         ${Boost_LIBRARIES}
-        ${ADDITIONAL_LIBS})
+        ${ADDITIONAL_LIBS}
+        ${ZSTD_LIBRARIES})
 
 shared_target_link_libraries(chunkserver-common STATIC sfserr SHARED sfserr_pic)
 

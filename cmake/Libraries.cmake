@@ -59,6 +59,42 @@ else()
   message(STATUS "   to point this path (cmake -DZLIB_ROOT=...)")
 endif()
 
+# Find Zstandard, used for per-block chunk compression in the chunkserver.
+# CONFIG mode covers vcpkg; distribution packages often ship only pkg-config.
+find_package(zstd CONFIG QUIET)
+
+if(TARGET zstd::libzstd_shared)
+  set(ZSTD_LIBRARIES zstd::libzstd_shared)
+elseif(TARGET zstd::libzstd_static)
+  set(ZSTD_LIBRARIES zstd::libzstd_static)
+elseif(TARGET zstd::libzstd)
+  set(ZSTD_LIBRARIES zstd::libzstd)
+else()
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(ZSTD_PC QUIET IMPORTED_TARGET libzstd)
+  endif()
+
+  if(TARGET PkgConfig::ZSTD_PC)
+    set(ZSTD_LIBRARIES PkgConfig::ZSTD_PC)
+  else()
+    find_library(ZSTD_LIBRARY NAMES zstd)
+    find_path(ZSTD_INCLUDE_DIR NAMES zstd.h)
+
+    if(NOT ZSTD_LIBRARY OR NOT ZSTD_INCLUDE_DIR)
+      message(FATAL_ERROR "Could not find Zstandard (required). "
+              "Install libzstd-dev (Debian) or libzstd-devel (Fedora).")
+    endif()
+
+    add_library(zstd::libzstd UNKNOWN IMPORTED)
+    set_target_properties(zstd::libzstd PROPERTIES
+      IMPORTED_LOCATION "${ZSTD_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${ZSTD_INCLUDE_DIR}")
+    set(ZSTD_LIBRARIES zstd::libzstd)
+  endif()
+endif()
+message(STATUS "ZSTD LIBRARY: ${ZSTD_LIBRARIES}")
+
 # Find Systemd
 INCLUDE(FindPkgConfig)
 pkg_check_modules(SYSTEMD libsystemd)

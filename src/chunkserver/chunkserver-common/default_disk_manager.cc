@@ -42,17 +42,32 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 		                          hddCfgLine);
 	}
 
+	// Disks are matched by path on reload, and a Disk does not remember which
+	// plugin made it, so a changed prefix would silently keep the old one.
+	const auto knownPrefix = diskPrefixes_.find(configuration.metaPath);
+
+	if (knownPrefix != diskPrefixes_.end() &&
+	    knownPrefix->second != configuration.prefix) {
+		throw InitializeException(
+		    "Disk plugin has changed between reloads for line: " + hddCfgLine);
+	}
+
 	IDisk *currentDisk = DiskNotFound;
 
-	if (configuration.isZoned) {
+	// The prefix names the plugin owning the Disk; no prefix is a plain CmrDisk.
+	if (!configuration.prefix.empty()) {
 		currentDisk = pluginManager.createDisk(configuration);
 	} else {
 		currentDisk = new CmrDisk(configuration);
 	}
 
 	if (currentDisk == DiskNotFound) {
-		throw InitializeException("HDD configuration line not valid: " +
-		                          hddCfgLine);
+		// The line parsed, so say which plugin is missing rather than blaming
+		// its syntax.
+		throw InitializeException(
+		    "No Disk plugin loaded for prefix '" + configuration.prefix +
+		    "' (loaded: " + pluginManager.loadedDiskPrefixes() +
+		    ") in line: " + hddCfgLine);
 	}
 
 	{
@@ -91,6 +106,10 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 		delete currentDisk;
 		throw InitializeException(ie.what());
 	}
+
+	// Recorded only now: a line that threw above was never configured, so a
+	// corrected retry must not be read as a change of plugin.
+	diskPrefixes_[configuration.metaPath] = configuration.prefix;
 
 	std::unique_lock disksUniqueLock(gDisksMutex);
 

@@ -48,6 +48,15 @@ static constexpr size_t kScanInProgressFlagIndex = 2;
 
 static constexpr mode_t kDefaultOpenMode = 0666;
 
+/// Characters allowed in an hdd.cfg "<prefix>:" plugin selector. Excludes '/'
+/// and '.', so a plain path is never parsed as a prefix.
+constexpr char kDiskPrefixCharacters[] =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+
+/// The only prefix denoting a zoned device; every other plugin serves a
+/// conventional one.
+constexpr char kZonedDiskPrefix[] = "zonefs";
+
 /// Possible modes to call the `hddChunkFindOrCreatePlusLock` function.
 enum class ChunkGetMode {
 	kFindOnly,      ///< Do not create any new Chunk, just look for existing.

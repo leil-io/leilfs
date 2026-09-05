@@ -85,6 +85,7 @@ apt_packages=(
 	libtirpc-dev
 	liburcu-dev
 	libyaml-cpp-dev
+	libzstd-dev
 	netcat-openbsd
 	python3-venv
 	uuid-dev
@@ -124,6 +125,7 @@ dnf_packages=(
 	libibverbs-utils    # ibv_devices / ibv_devinfo (NFS/RDMA Ganesha test)
 	libnsl
 	libtirpc-devel
+	libzstd-devel
 	netcat
 	pam-devel
 	pkgconfig

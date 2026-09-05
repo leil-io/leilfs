@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <map>
+#include <string>
 
 #include <boost/dll/import.hpp>
 #include <boost/filesystem.hpp>
@@ -45,6 +46,10 @@ public:
 
 	/// Shows information about the loaded plugins.
 	void showLoadedPlugins();
+
+	/// Returns the hdd.cfg prefixes a Disk plugin is loaded for, comma
+	/// separated, so an unresolved prefix can be reported against them.
+	std::string loadedDiskPrefixes() const;
 
 	/// True if this plugin manager can handle the plugin based on the version.
 	bool checkVersion(IPlugin *plugin);

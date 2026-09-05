@@ -83,7 +83,7 @@ automate the build process. Please, follow the instructions below to build LeilF
 ### Dependencies needed to build deb packages
 
 ```text
-acl asciidoc attr bc build-essential ca-certificates-java ccache cmake curl debhelper devscripts fuse3 git libblkid-dev libboost-filesystem-dev libboost-iostreams-dev libboost-program-options-dev libboost-system-dev libcrcutil-dev libdb-dev libfmt-dev libfuse3-dev libgoogle-perftools-dev libgtest-dev libisal-dev libjudy-dev libpam0g-dev libspdlog-dev libssl-dev libsystemd-dev liburcu-dev libyaml-cpp-dev lsb-release netcat-openbsd nfs4-acl-tools pkg-config pylint python3 python3-pip rsync socat sudo tidy time uuid-dev valgrind wget zlib1g-dev
+acl asciidoc attr bc build-essential ca-certificates-java ccache cmake curl debhelper devscripts fuse3 git libblkid-dev libboost-filesystem-dev libboost-iostreams-dev libboost-program-options-dev libboost-system-dev libcrcutil-dev libdb-dev libfmt-dev libfuse3-dev libgoogle-perftools-dev libgtest-dev libisal-dev libjudy-dev libpam0g-dev libspdlog-dev libssl-dev libsystemd-dev liburcu-dev libyaml-cpp-dev libzstd-dev lsb-release netcat-openbsd nfs4-acl-tools pkg-config pylint python3 python3-pip rsync socat sudo tidy time uuid-dev valgrind wget zlib1g-dev
 ```
 
 The following scripts can be used to install the dependencies on Ubuntu 24.04 (Noble):
