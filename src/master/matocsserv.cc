@@ -35,6 +35,7 @@
 #include <cstring>
 #include <ctime>
 #include <list>
+#include <stdexcept>
 #include <vector>
 
 #include "common/counting_sort.h"
@@ -57,9 +58,11 @@
 #include "master/chunk_operations_interface.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
+#include "master/chunkserver_registration_state.h"
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
+#include "master/metadataserver_hooks.h"
 #include "master/personality.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cstoma.h"
@@ -135,6 +138,8 @@ struct matocsserventry {
 	uint16_t wrepcounter;
 	uint16_t delcounter;
 	uint8_t load_factor;
+	/// Where this connection stands in the registration sequence.
+	ChunkserverRegistrationState registrationState;
 
 	/// Context of the TLS channel used for communication with chunkserver.
 	///
@@ -679,6 +684,31 @@ int matocsserv_send_deletechunk(matocsserventry *eptr, uint64_t chunkId, uint32_
 	return 0;
 }
 
+int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL ||
+	    eptr->version < kFirstVersionWithChunkserverIdentity) {
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
+	eptr->outputPackets.emplace_back();
+	matocs::probeChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+	return SAUNAFS_STATUS_OK;
+}
+
+void matocsserv_got_probechunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t chunkVersion;
+	uint8_t status;
+
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+	if (v != cstoma::probeChunk::kDefault) {
+		throw IncorrectDeserializationException("unsupported probe chunk packet version");
+	}
+	cstoma::probeChunk::deserialize(data, chunkId, chunkType, chunkVersion, status);
+	gChunkOperations->gotProbeStatus(eptr, chunkId, chunkType, chunkVersion, status);
+}
+
 void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<uint8_t>& data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
@@ -969,6 +999,17 @@ void matocsserv_got_duptruncchunk_status(matocsserventry* eptr, const std::vecto
 	}
 }
 
+/// Answers the host registration; deferred until the identity reply arrives when one was
+/// requested, so the chunkserver sends nothing else before its identity is known.
+void matocsserv_send_register_host_response(matocsserventry *eptr) {
+	if (eptr->version < kFirstVersionWithClusterId) { return; }
+
+	OutputPacket outPacket;
+	matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
+	                                gClusterId);
+	eptr->outputPackets.push_back(std::move(outPacket));
+}
+
 void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t servip,
                               uint16_t servport, uint32_t timeout, const std::string &clusterId) {
 	eptr->version  = version;
@@ -980,6 +1021,20 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		safs::log_err(
 		    "SAU_CSTOMA_REGISTER_HOST received too old version: {} (minimum supported version is {})",
 		    saunafsVersionToString(eptr->version), saunafsVersionToString(kFirstECVersion));
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	// A backend that records copies by chunkserver identity cannot serve a peer that predates the
+	// identity exchange: it would register without one and still send an inventory, which
+	// materializes chunks the shared records know nothing about.
+	if (gChunkOperations->requestsChunkserverIdentity() &&
+	    eptr->version < kFirstVersionWithChunkserverIdentity) {
+		safs::log_err(
+		    "SAU_CSTOMA_REGISTER_HOST received version {}, but this metadata backend needs "
+		    "chunkserver version {} or newer",
+		    saunafsVersionToString(eptr->version),
+		    saunafsVersionToString(kFirstVersionWithChunkserverIdentity));
 		eptr->mode = ChunkserverConnectionMode::KILL;
 		return;
 	}
@@ -1027,13 +1082,23 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	safs::log_info("chunkserver register begin (packet version: 5) - ip: {}, port: {}",
 	               eptr->serviceStrIp, eptr->servport);
 
-	// Send the answer with the status
-	if (eptr->version >= kFirstVersionWithClusterId) {
-		OutputPacket outPacket;
-		matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
-		                                gClusterId);
-		eptr->outputPackets.push_back(std::move(outPacket));
+	if (!eptr->registrationState.begin(gChunkOperations->requestsChunkserverIdentity(),
+	                                   eptr->version)) {
+		safs::log_warn("chunkserver sent duplicate host registration");
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
 	}
+
+	if (eptr->registrationState.identityPending()) {
+		safs::log_info("requesting chunkserver identity from {}:{}", eptr->serviceStrIp,
+		               eptr->servport);
+		OutputPacket outPacket;
+		matocs::requestChunkserverId::serialize(outPacket.packet);
+		eptr->outputPackets.push_back(std::move(outPacket));
+		return;
+	}
+
+	matocsserv_send_register_host_response(eptr);
 }
 
 void register_space(matocsserventry* eptr) {
@@ -1103,7 +1168,49 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t>& data) {
 	cstoma::registerSpace::deserialize(data, eptr->usedspace, eptr->totalspace, eptr->chunkscount,
 			eptr->todelusedspace, eptr->todeltotalspace, eptr->todelchunkscount);
+
+	// The first space report completes the registration; later ones only refresh the counters.
+	if (eptr->registrationState.markRegistrationComplete()) {
+		const ChunkserverRegistration registration{NetworkAddress(eptr->servip, eptr->servport),
+		                                           eptr->version, eptr->timeout,
+		                                           eptr->registrationState.identity()};
+		gChunkOperations->serverRegistered(eptr, registration);
+		if (eptr->mode == ChunkserverConnectionMode::KILL) { return; }
+
+		// Discovery goes only to peers that identified themselves; a bad snapshot ends the
+		// connection rather than leaving the chunkserver with a partial view.
+		if (registration.chunkserverId && gMetadataClusterSnapshotHook) {
+			try {
+				const auto snapshot = gMetadataClusterSnapshotHook();
+				if (!isValidMetadataClusterSnapshot(snapshot.seedId, snapshot.members)) {
+					throw std::runtime_error("invalid cluster discovery snapshot");
+				}
+				OutputPacket packet;
+				matocs::clusterMembers::serialize(packet.packet, snapshot.seedId, snapshot.members);
+				eptr->outputPackets.push_back(std::move(packet));
+			} catch (const std::exception &exception) {
+				safs::log_warn("chunkserver discovery failed: {}", exception.what());
+				eptr->mode = ChunkserverConnectionMode::KILL;
+				return;
+			}
+		}
+	}
 	register_space(eptr);
+}
+
+/// The identity reply the master requested at host registration; the host response follows.
+void matocsserv_sau_chunkserver_id(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	chunkserver::ChunkserverId chunkserverId;
+	cstoma::chunkserverId::deserialize(data, chunkserverId);
+	if (!eptr->registrationState.acceptIdentity(chunkserverId)) {
+		safs::log_warn("invalid or unexpected chunkserver identity reply from {}:{}",
+		               eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	safs::log_info("accepted chunkserver identity from {}:{}", eptr->serviceStrIp, eptr->servport);
+	matocsserv_send_register_host_response(eptr);
 }
 
 void matocsserv_sau_register_label(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -1163,7 +1270,7 @@ void matocsserv_sau_chunk_damaged(matocsserventry *eptr, const std::vector<uint8
 	sassert(v == cstoma::chunkDamaged::kECChunks);
 	std::vector<ChunkWithType> chunks;
 	cstoma::chunkDamaged::deserialize(data, chunks);
-	for (const auto &chunk : chunks) { gChunkOperations->damaged(eptr, chunk.id, chunk.type); }
+	gChunkOperations->damagedChunks(eptr, chunks);
 }
 
 void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -1173,7 +1280,7 @@ void matocsserv_sau_chunks_lost(matocsserventry *eptr, const std::vector<uint8_t
 	sassert(v == cstoma::chunkLost::kECChunks);
 	std::vector<ChunkWithType> chunks;
 	cstoma::chunkLost::deserialize(data, chunks);
-	for (const auto &chunk : chunks) { gChunkOperations->lost(eptr, chunk.id, chunk.type); }
+	gChunkOperations->lostChunks(eptr, chunks);
 }
 
 void matocsserv_sau_chunk_new(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -1249,84 +1356,103 @@ void matocsserv_starttls(matocsserventry *eptr) {
 void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const MessageBuffer& data) {
 	uint32_t length = data.size();
 	try {
+		// A load factor report carries nothing about chunks and the chunkserver sends it on its
+		// own timer, so it can legitimately arrive inside this window; everything else has to
+		// wait until the identity is known.
+		if (eptr->registrationState.identityPending() && header.type != ANTOAN_NOP &&
+		    header.type != SAU_CSTOMA_STATUS && header.type != SAU_CSTOMA_CHUNKSERVER_ID) {
+			safs::log_warn("unexpected packet while chunkserver identity is pending (type:{})",
+			               header.type);
+			eptr->mode = ChunkserverConnectionMode::KILL;
+			return;
+		}
+
 		switch (header.type) {
-			case ANTOAN_NOP:
-				break;
-			case ANTOAN_UNKNOWN_COMMAND: // for future use
-				break;
-			case ANTOAN_BAD_COMMAND_SIZE: // for future use
-				break;
-			case CSTOMA_SPACE:
-				matocsserv_space(eptr, data.data(), length);
-				break;
-			case CSTOMA_ERROR_OCCURRED:
-				matocsserv_error_occurred(eptr, data.data(), length);
-				break;
-			case CSTOAN_CHUNK_CHECKSUM:
-				matocsserv_got_chunk_checksum(eptr, data.data(), length);
-				break;
-			case SAU_CSTOMA_CREATE_CHUNK:
-				matocsserv_got_createchunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_DELETE_CHUNK:
-				matocsserv_got_deletechunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_REPLICATE_CHUNK:
-				matocsserv_got_replicatechunk_status(eptr, data, header.type);
-				break;
-			case SAU_CSTOMA_DUPLICATE_CHUNK:
-				matocsserv_got_duplicatechunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_LOCK_CHUNK:
-				matocsserv_got_chunklock_status(eptr, data);
-				break;
-			case SAU_CSTOMA_WRITE_END_STATUS:
-				matocsserv_got_writeend_status(eptr, data);
-				break;
-			case SAU_CSTOMA_SET_VERSION:
-				matocsserv_got_setchunkversion_status(eptr, data);
-				break;
-			case SAU_CSTOMA_TRUNCATE:
-				matocsserv_got_sau_truncatechunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_DUPTRUNC_CHUNK:
-				matocsserv_got_duptruncchunk_status(eptr, data);
-				break;
-			case SAU_CSTOMA_CHUNK_DAMAGED:
-				matocsserv_sau_chunk_damaged(eptr, data);
-				break;
-			case SAU_CSTOMA_CHUNK_LOST:
-				matocsserv_sau_chunks_lost(eptr, data);
-				break;
-			case SAU_CSTOMA_CHUNK_NEW:
-				matocsserv_sau_chunk_new(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_HOST:
-				matocsserv_sau_register_host(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_CHUNKS:
-				matocsserv_sau_register_chunks(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_SPACE:
-				matocsserv_sau_register_space(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_LABEL:
-				matocsserv_sau_register_label(eptr, data);
-				break;
-			case SAU_CSTOMA_REGISTER_CONFIG:
-				matocsserv_sau_register_config(eptr, data);
-				break;
-			case SAU_CSTOMA_STATUS:
-				matocsserv_sau_status(eptr, data);
-				break;
-			case SAU_CSTOMA_STARTTLS:
-				matocsserv_starttls(eptr);
-				break;
-			default:
-				safs::log_info("master <-> chunkservers module: got unknown message "
-						"(type:{})", header.type);
-				eptr->mode = ChunkserverConnectionMode::KILL;
-				break;
+		case ANTOAN_NOP:
+			break;
+		case ANTOAN_UNKNOWN_COMMAND:  // for future use
+			break;
+		case ANTOAN_BAD_COMMAND_SIZE:  // for future use
+			break;
+		case CSTOMA_SPACE:
+			matocsserv_space(eptr, data.data(), length);
+			break;
+		case CSTOMA_ERROR_OCCURRED:
+			matocsserv_error_occurred(eptr, data.data(), length);
+			break;
+		case CSTOAN_CHUNK_CHECKSUM:
+			matocsserv_got_chunk_checksum(eptr, data.data(), length);
+			break;
+		case SAU_CSTOMA_CREATE_CHUNK:
+			matocsserv_got_createchunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_DELETE_CHUNK:
+			matocsserv_got_deletechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_REPLICATE_CHUNK:
+			matocsserv_got_replicatechunk_status(eptr, data, header.type);
+			break;
+		case SAU_CSTOMA_DUPLICATE_CHUNK:
+			matocsserv_got_duplicatechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_LOCK_CHUNK:
+			matocsserv_got_chunklock_status(eptr, data);
+			break;
+		case SAU_CSTOMA_WRITE_END_STATUS:
+			matocsserv_got_writeend_status(eptr, data);
+			break;
+		case SAU_CSTOMA_SET_VERSION:
+			matocsserv_got_setchunkversion_status(eptr, data);
+			break;
+		case SAU_CSTOMA_PROBE_CHUNK:
+			matocsserv_got_probechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_TRUNCATE:
+			matocsserv_got_sau_truncatechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_DUPTRUNC_CHUNK:
+			matocsserv_got_duptruncchunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNK_DAMAGED:
+			matocsserv_sau_chunk_damaged(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNK_LOST:
+			matocsserv_sau_chunks_lost(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNK_NEW:
+			matocsserv_sau_chunk_new(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_HOST:
+			matocsserv_sau_register_host(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_CHUNKS:
+			matocsserv_sau_register_chunks(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_SPACE:
+			matocsserv_sau_register_space(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_LABEL:
+			matocsserv_sau_register_label(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_CONFIG:
+			matocsserv_sau_register_config(eptr, data);
+			break;
+		case SAU_CSTOMA_CHUNKSERVER_ID:
+			matocsserv_sau_chunkserver_id(eptr, data);
+			break;
+		case SAU_CSTOMA_STATUS:
+			matocsserv_sau_status(eptr, data);
+			break;
+		case SAU_CSTOMA_STARTTLS:
+			matocsserv_starttls(eptr);
+			break;
+		default:
+			safs::log_info(
+			    "master <-> chunkservers module: got unknown message "
+			    "(type:{})",
+			    header.type);
+			eptr->mode = ChunkserverConnectionMode::KILL;
+			break;
 		}
 	} catch (IncorrectDeserializationException& e) {
 		safs::log_info("master <-> chunkservers module: got inconsistent message "
@@ -1570,6 +1696,12 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 		}
 
 		if (eptr->lastread.elapsed_ms() > eptr->timeout) {
+			eptr->mode = ChunkserverConnectionMode::KILL;
+		}
+
+		if (eptr->registrationState.identityExpired(eptr->timeout)) {
+			safs::log_warn("chunkserver identity request timed out for {}:{}", eptr->serviceStrIp,
+			               eptr->servport);
 			eptr->mode = ChunkserverConnectionMode::KILL;
 		}
 
