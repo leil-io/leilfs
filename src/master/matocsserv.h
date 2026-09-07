@@ -144,6 +144,9 @@ int matocsserv_send_sau_replicatechunk(matocsserventry* eptr,
 
 int matocsserv_send_deletechunk(matocsserventry* eptr,
 		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
+/// Asks which version of a chunk part the chunkserver holds; ENOTSUP for peers that predate the
+/// probe packet, so a backend can fall back instead of waiting for a reply that never comes.
+int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType);
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
                                 uint32_t version, bool needsLock, bool &sentChunkLock);
 int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,

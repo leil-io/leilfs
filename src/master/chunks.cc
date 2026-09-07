@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <random>
 #include <unordered_map>
@@ -61,6 +62,7 @@
 #include "master/checksum.h"
 #include "master/chunk_goal_counters.h"
 #include "master/chunk_metadata.h"
+#include "master/chunk_operations_interface.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
@@ -342,6 +344,16 @@ public:
 
 	// Per-goal reference counts, for persisting the chunk record to a KV backend
 	const ChunkGoalCounters &goalCounters() const { return goalCounters_; }
+
+#ifndef METARESTORE
+	/// Swaps in counters rebuilt from a durable record; the stats leave and re-enter so the
+	/// per-goal availability matrix stays consistent with the new reference counts.
+	void replaceGoalCounters(ChunkGoalCounters counters) {
+		removeFromStats();
+		goalCounters_ = std::move(counters);
+		updateStats(false);
+	}
+#endif
 
 	// Called when this chunk becomes a part of a file with the given goal
 	void addFileWithGoal(uint8_t goal) {
@@ -845,19 +857,21 @@ void chunk_emergency_increase_version(Chunk *c) {
 	chunk_increase_version_operation(c, false);
 	chunk_update_checksum(c);
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
-
-	gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
-
-	emit_chunk_changed(c);
-
-	// Commit the transaction under KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.commitTransaction()) {
+	// Under KV backends this commit races the client's own batch on the same chunk record. The
+	// in-memory version has already moved and the chunkservers are being told, so the record must
+	// follow: repeat the persist on a fresh transaction until it lands.
+	constexpr int kCommitAttempts = 5;
+	for (int attempt = 1;; ++attempt) {
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+		gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
+		if (attempt == 1) { emit_chunk_changed(c); }
+		if (!fsOpContext.hasReadWriteTransaction() || fsOpContext.commitTransaction()) { break; }
+		if (attempt == kCommitAttempts) {
 			safs::log_critical(
 			    "{}: Failed to commit transaction for increasing version of chunk {}.", __func__,
 			    c->chunkid);
+			break;
 		}
 	}
 }
@@ -895,6 +909,7 @@ void chunk_handle_disconnected_copies(Chunk *c) {
 	auto it = std::remove_if(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
 		if (csdb_find(part.csid)->eptr == nullptr) {
 			if (part.is_being_written()) { any_lost_copy_being_written = true; }
+			if (gChunkOperations) { gChunkOperations->copyDropped(c->chunkid, part.csid); }
 			return true;
 		}
 		return false;
@@ -1100,6 +1115,26 @@ bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
 	return true;
 }
 
+bool chunk_has_parts(uint64_t chunkid) {
+#ifndef METARESTORE
+	Chunk *c = chunk_find(chunkid);
+	return c != nullptr && !c->parts.empty();
+#else
+	(void)chunkid;
+	return false;
+#endif
+}
+
+bool chunk_needs_version_increase(uint64_t chunkid) {
+#ifndef METARESTORE
+	Chunk *c = chunk_find(chunkid);
+	return c != nullptr && c->needVersionIncrease != 0;
+#else
+	(void)chunkid;
+	return false;
+#endif
+}
+
 bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto) {
 	Chunk *c = chunk_find(chunkid);
 	if (c == nullptr) { return false; }
@@ -1120,6 +1155,10 @@ void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
 	}
 	c->lockid = lockid;
 	c->lockedto = lockedto;
+#ifndef METARESTORE
+	// A chunk hydrated from a durable record owes no version bump by itself; the record says.
+	c->needVersionIncrease = 0;
+#endif
 	chunk_update_checksum(c);
 }
 
@@ -1857,6 +1896,90 @@ struct ChunkLocation {
 	}
 };
 
+int chunk_replace_part_locations(uint64_t chunkid, uint32_t version, uint32_t lockid,
+                                 uint32_t lockedto, const std::vector<ChunkPartLocation> &parts,
+                                 size_t maxParts,
+                                 const std::vector<ChunkGoalCounters::GoalCounter> &goals,
+                                 bool needVersionIncrease) {
+	auto *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
+	if (chunk->isLocked()) { return SAUNAFS_ERROR_LOCKED; }
+	if (chunk->operation != Chunk::NONE) { return SAUNAFS_ERROR_CHUNKBUSY; }
+	if (version == 0 || parts.size() > maxParts) { return SAUNAFS_ERROR_EINVAL; }
+
+	ChunkGoalCounters counters;
+	try {
+		counters = ChunkGoalCounters(goals);
+	} catch (const ChunkGoalCounters::InvalidOperation &) { return SAUNAFS_ERROR_EINVAL; }
+
+	compact_vector<ChunkPart> replacement;
+	for (const auto &part : parts) {
+		if (part.server == nullptr || part.server->csid == 0 ||
+		    part.server->csid >= csdbentry::kMaxIdCount || part.server->eptr == nullptr ||
+		    csdb_find(part.server->csid) != part.server || !part.partType.isValid()) {
+			return SAUNAFS_ERROR_EINVAL;
+		}
+		const auto duplicate =
+		    std::any_of(replacement.begin(), replacement.end(), [&](const ChunkPart &existing) {
+			    return existing.csid == part.server->csid && existing.type == part.partType;
+		    });
+		if (duplicate) { return SAUNAFS_ERROR_EINVAL; }
+		replacement.emplace_back(part.server->csid, ChunkPart::VALID, version, part.partType);
+	}
+
+	chunk->parts = std::move(replacement);
+	chunk->version = version;
+	chunk->lockid = lockid;
+	chunk->lockedto = lockedto;
+	// Reloading cached parts is not a copy change; the caller knows from durable state.
+	chunk->needVersionIncrease = needVersionIncrease ? 1 : 0;
+	chunk->interrupted = 0;
+	chunk->replaceGoalCounters(std::move(counters));
+	chunk_update_checksum(chunk);
+	return SAUNAFS_STATUS_OK;
+}
+
+int chunk_get_publishable_parts(uint64_t chunkid, uint32_t &version,
+                                std::vector<ChunkPartLocation> &parts, size_t maxParts) {
+	parts.clear();
+	version = 0;
+	auto *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
+	if (chunk->lockedto != 0 || chunk->operation != Chunk::NONE) { return SAUNAFS_ERROR_CHUNKBUSY; }
+
+	for (const auto &part : chunk->parts) {
+		if (!part.is_valid() || part.is_busy() || part.version != chunk->version) { continue; }
+		auto *server = csdb_find(part.csid);
+		if (server == nullptr || server->eptr == nullptr) { continue; }
+		if (parts.size() == maxParts) {
+			parts.clear();
+			return SAUNAFS_ERROR_EINVAL;
+		}
+		parts.push_back({server, part.type});
+	}
+	version = chunk->version;
+	return SAUNAFS_STATUS_OK;
+}
+
+int chunk_get_parts_at_version(uint64_t chunkid, uint32_t version,
+                               std::vector<ChunkPartLocation> &parts, size_t maxParts) {
+	parts.clear();
+	auto *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
+	if (chunk->lockedto != 0 || chunk->operation != Chunk::NONE) { return SAUNAFS_ERROR_CHUNKBUSY; }
+	for (const auto &part : chunk->parts) {
+		if (part.state == ChunkPart::DEL || part.is_busy() || part.version != version) { continue; }
+		auto *server = csdb_find(part.csid);
+		if (server == nullptr || server->eptr == nullptr) { continue; }
+		if (parts.size() == maxParts) {
+			parts.clear();
+			return SAUNAFS_ERROR_EINVAL;
+		}
+		parts.push_back({server, part.type});
+	}
+	return SAUNAFS_STATUS_OK;
+}
+
 // TODO deduplicate
 int chunk_getversionandlocations(uint64_t chunkid, uint32_t currentIp, uint32_t& version,
 		uint32_t maxNumberOfChunkCopies, std::vector<ChunkTypeWithAddress>& serversList) {
@@ -2194,6 +2317,7 @@ void chunk_operation_status(Chunk *c, ChunkPartType chunkType, uint8_t status,
 				matoclserv_chunk_status(c->chunkid, SAUNAFS_STATUS_OK);
 				c->operation = Chunk::NONE;
 				c->needVersionIncrease = 0;
+				if (gChunkOperations) { gChunkOperations->operationSettled(c->chunkid); }
 			}
 		} else {
 			chunk_finalize_failed_operation(c);
@@ -2353,6 +2477,9 @@ void chunk_store_info(uint8_t *buff) {
 class ChunkWorker : public coroutine {
 public:
 	ChunkWorker();
+	/// A worker whose commands go to @p sink instead of the chunkservers, for planning on a
+	/// snapshot chunk a backend supplied.
+	explicit ChunkWorker(const ChunkMaintenanceSink *sink) : ChunkWorker() { commandSink_ = sink; }
 	void doEveryLoopTasks();
 	void doEverySecondTasks();
 	void doChunkJobs(Chunk *c, uint16_t serverCount);
@@ -2377,6 +2504,9 @@ private:
 
 	uint32_t getMinChunkserverVersion(Chunk *c, ChunkPartType type);
 	bool tryReplication(Chunk *c, ChunkPartType type, matocsserventry *destinationServer);
+	/// Offers a delete to the sink before it is sent; without a sink every delete is approved,
+	/// which is Master's behaviour.
+	bool approveDelete(Chunk *chunk, const ChunkPart &part, uint32_t version);
 
 	void deleteInvalidChunkParts(Chunk *c);
 	void deleteAllChunkParts(Chunk *c);
@@ -2400,6 +2530,8 @@ private:
 	std::map<MediaLabel, ServersWithUsage> labeledSortedServers_;
 
 	MainLoopStack stack_;
+	/// Null for the master's own worker; set only by chunk_run_maintenance.
+	const ChunkMaintenanceSink *commandSink_ = nullptr;
 };
 
 ChunkWorker::ChunkWorker()
@@ -2506,18 +2638,39 @@ bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 		return false;
 	}
 
-	matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version, part_to_recover,
-	                                   all_servers, all_parts);
+	if (commandSink_ != nullptr) {
+		ChunkMaintenanceCommand command{ChunkMaintenanceKind::kReplicate,
+		                                c->chunkid,
+		                                c->version,
+		                                {matocsserv_get_csdb(destination_server), part_to_recover},
+		                                {}};
+		for (size_t index = 0; index < all_servers.size(); ++index) {
+			command.sources.push_back({matocsserv_get_csdb(all_servers[index]), all_parts[index]});
+		}
+		if (!(*commandSink_)(command)) { return false; }
+	} else {
+		matocsserv_send_sau_replicatechunk(destination_server, c->chunkid, c->version,
+		                                   part_to_recover, all_servers, all_parts);
+	}
 	stats_replications++;
 	metrics::Counter::increment(metrics::Counter::Master::CHUNK_REPLICATE);
 	c->needVersionIncrease = 1;
 	return true;
 }
 
+bool ChunkWorker::approveDelete(Chunk *chunk, const ChunkPart &part, uint32_t version) {
+	return commandSink_ == nullptr || (*commandSink_)({ChunkMaintenanceKind::kDelete,
+	                                                   chunk->chunkid,
+	                                                   version,
+	                                                   {csdb_find(part.csid), part.type},
+	                                                   {}});
+}
+
 void ChunkWorker::deleteInvalidChunkParts(Chunk *c) {
 	for (auto &part : c->parts) {
 		if (matocsserv_deletion_counter(part.server()) < TmpMaxDel) {
 			if (!part.is_valid()) {
+				if (!approveDelete(c, part, 0)) { continue; }
 				if (part.state == ChunkPart::DEL) {
 					safs_pretty_syslog(LOG_WARNING,
 					       "chunk hasn't been deleted since previous loop - "
@@ -2526,7 +2679,9 @@ void ChunkWorker::deleteInvalidChunkParts(Chunk *c) {
 				part.state = ChunkPart::DEL;
 				stats_deletions++;
 				metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
-				matocsserv_send_deletechunk(part.server(), c->chunkid, 0, part.type);
+				if (commandSink_ == nullptr) {
+					matocsserv_send_deletechunk(part.server(), c->chunkid, 0, part.type);
+				}
 				inforec_.done.del_invalid++;
 				deleteDone_++;
 			}
@@ -2543,12 +2698,14 @@ void ChunkWorker::deleteAllChunkParts(Chunk *c) {
 	for (auto &part : c->parts) {
 		if (matocsserv_deletion_counter(part.server()) < TmpMaxDel) {
 			if (part.is_valid() && !part.is_busy()) {
+				if (!approveDelete(c, part, c->version)) { continue; }
 				c->deleteCopy(part);
 				c->needVersionIncrease = 1;
 				stats_deletions++;
 				metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
-				matocsserv_send_deletechunk(part.server(), c->chunkid, c->version,
-				                            part.type);
+				if (commandSink_ == nullptr) {
+					matocsserv_send_deletechunk(part.server(), c->chunkid, c->version, part.type);
+				}
 				inforec_.done.del_unused++;
 				deleteDone_++;
 			}
@@ -2723,11 +2880,14 @@ bool ChunkWorker::removeUnneededChunkPart(Chunk *c, Goal::Slice::Type slice_type
 
 	if (candidate &&
 	    calc.canRemovePart(slice_type, slice_part, matocsserv_get_label(candidate->server()))) {
+		if (!approveDelete(c, *candidate, 0)) { return false; }
 		c->deleteCopy(*candidate);
 		c->needVersionIncrease = 1;
 		stats_deletions++;
 		metrics::Counter::increment(metrics::Counter::Master::CHUNK_DELETE);
-		matocsserv_send_deletechunk(candidate->server(), c->chunkid, 0, candidate->type);
+		if (commandSink_ == nullptr) {
+			matocsserv_send_deletechunk(candidate->server(), c->chunkid, 0, candidate->type);
+		}
 
 		int overgoal_copies = calc.countPartsToMove(slice_type, slice_part).second;
 
@@ -2907,7 +3067,8 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 	c->updateStats();
 
 	// Skip maintenance planning and commands after completing required bookkeeping.
-	if (!gChunkMaintenanceEnabled) {
+	if (!gChunkMaintenanceEnabled || (commandSink_ == nullptr && gChunkOperations &&
+	                                  gChunkOperations->usesExternalMaintenance())) {
 		return;
 	}
 
@@ -3184,15 +3345,116 @@ void ChunkWorker::mainLoop() {
 
 static std::unique_ptr<ChunkWorker> gChunkWorker;
 
+int chunk_run_maintenance(uint64_t chunkid, uint32_t version,
+                          const std::vector<ChunkPartLocation> &parts,
+                          const std::vector<ChunkGoalCounters::GoalCounter> &goals,
+                          const ChunkMaintenanceSink &sink) {
+	if (chunkid == 0 || version == 0 || parts.size() > UINT8_MAX || !sink) {
+		return SAUNAFS_ERROR_EINVAL;
+	}
+	if (auto *cached = chunk_find(chunkid)) {
+		if (cached->isLocked()) { return SAUNAFS_ERROR_LOCKED; }
+		if (cached->operation != Chunk::NONE) { return SAUNAFS_ERROR_CHUNKBUSY; }
+	}
+
+	// Validate the snapshot before anything is built from it.
+	ChunkGoalCounters counters;
+	try {
+		counters = ChunkGoalCounters(goals);
+	} catch (const ChunkGoalCounters::InvalidOperation &) { return SAUNAFS_ERROR_EINVAL; }
+	compact_vector<ChunkPart> replacement;
+	for (const auto &part : parts) {
+		if (part.server == nullptr || part.server->csid == 0 ||
+		    part.server->csid >= csdbentry::kMaxIdCount || part.server->eptr == nullptr ||
+		    csdb_find(part.server->csid) != part.server || !part.partType.isValid()) {
+			return SAUNAFS_ERROR_EINVAL;
+		}
+		if (std::any_of(replacement.begin(), replacement.end(), [&](const ChunkPart &existing) {
+			    return existing.csid == part.server->csid && existing.type == part.partType;
+		    })) {
+			return SAUNAFS_ERROR_EINVAL;
+		}
+		replacement.emplace_back(part.server->csid, ChunkPart::VALID, version, part.partType);
+	}
+
+	// Detached state must never enter a pointer queue or outlive this synchronous planner call;
+	// a set inEndangeredQueue flag keeps the planner from enqueuing the snapshot.
+	struct Snapshot {
+		Chunk chunk;
+		Snapshot() {
+			chunk.clear();
+			chunk.inEndangeredQueue = 1;
+		}
+		~Snapshot() { chunk.freeStats(); }
+	} snapshot;
+	snapshot.chunk.chunkid = chunkid;
+	snapshot.chunk.version = version;
+	snapshot.chunk.parts = std::move(replacement);
+	snapshot.chunk.replaceGoalCounters(std::move(counters));
+
+	// Plan with a throwaway worker so the master's own worker keeps its loop state.
+	ChunkWorker worker(&sink);
+	worker.doEverySecondTasks();
+	uint16_t serverCount = 0;
+	matocsserv_usagedifference(nullptr, nullptr, &serverCount, nullptr);
+	worker.doChunkJobs(&snapshot.chunk, serverCount);
+	return SAUNAFS_STATUS_OK;
+}
+
+bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server) {
+	Chunk *c = chunk_find(chunkid);
+	if (c == nullptr || server == nullptr) { return false; }
+	return std::any_of(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
+		return part.server() == server && part.is_valid() && part.version == c->version;
+	});
+}
+
+size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord) {
+	// Resumes where the previous call stopped, so a small budget still covers the whole table.
+	static uint32_t bucket = 0;
+	size_t visited = 0;
+	for (uint32_t step = 0; step < static_cast<uint32_t>(kChunkHashSize) && visited < budget;
+	     ++step) {
+		for (Chunk *c : gChunksMetadata->chunkhash[bucket]) {
+			++visited;
+			if (c->fileCount() != 0 || c->isLocked() || c->operation != Chunk::NONE) { continue; }
+			if (hasRecord(c->chunkid)) { continue; }
+
+			for (auto &part : c->parts) {
+				if (!part.is_valid() || part.is_busy() || part.server() == nullptr) { continue; }
+				matocsserv_send_deletechunk(part.server(), c->chunkid, c->version, part.type);
+				c->deleteCopy(part);
+			}
+		}
+		bucket = (bucket + 1) & kChunkHashMask;
+	}
+	return visited;
+}
+
+uint32_t chunk_maintenance_ticks_per_pass() {
+	return HashSteps == 0 ? 1 : (static_cast<uint32_t>(kChunkHashSize) + HashSteps - 1) / HashSteps;
+}
+
+uint32_t chunk_maintenance_tick_budget_ms() { return ChunksLoopTimeout; }
+
 void chunk_set_maintenance_enabled(bool enabled) { gChunkMaintenanceEnabled = enabled; }
 
 void chunk_jobs_main(void) {
+	if (gChunkMaintenanceEnabled && starttime + gOperationsDelayInit <= eventloop_time() &&
+	    gChunkOperations && gChunkOperations->usesExternalMaintenance()) {
+		gChunkOperations->maintenanceTick();
+	}
 	if (gChunkWorker->is_complete()) {
 		gChunkWorker->reset();
 	}
 }
 
 void chunk_jobs_process_bit(void) {
+	if (gChunkMaintenanceEnabled && gChunkOperations &&
+	    gChunkOperations->usesExternalMaintenance() && gChunkOperations->maintenanceStep()) {
+		// A record-paged maintainer works in slices between polls, as the worker below yields.
+		eventloop_make_next_poll_nonblocking();
+	}
 	if (!gChunkWorker->is_complete()) {
 		gChunkWorker->mainLoop();
 		if (!gChunkWorker->is_complete()) {
