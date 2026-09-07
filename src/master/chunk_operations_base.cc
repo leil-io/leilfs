@@ -88,6 +88,13 @@ int ChunkOperationsBase::canUnlock(uint64_t chunkid, uint32_t lockid) {
 	return chunk_can_unlock(chunkid, lockid);
 }
 
+int ChunkOperationsBase::getWriteVersionAndLocations(
+    uint64_t chunkid, uint32_t currentIp, uint32_t &version, uint32_t maxNumberOfChunkCopies,
+    std::vector<ChunkTypeWithAddress> &serversList) {
+	return chunk_getversionandlocations(chunkid, currentIp, version, maxNumberOfChunkCopies,
+	                                    serversList);
+}
+
 int ChunkOperationsBase::getVersionAndLocations(uint64_t chunkid, uint32_t currentIp,
                                                 uint32_t &version, uint32_t maxNumberOfChunkCopies,
                                                 std::vector<ChunkTypeWithAddress> &serversList) {
@@ -136,6 +143,16 @@ void ChunkOperationsBase::damaged(matocsserventry *ptr, uint64_t chunkid, ChunkP
 
 void ChunkOperationsBase::lost(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) {
 	chunk_lost(ptr, chunkid, chunkType);
+}
+
+void ChunkOperationsBase::damagedChunks(matocsserventry *ptr,
+                                        const std::vector<ChunkWithType> &chunks) {
+	for (const auto &chunk : chunks) { damaged(ptr, chunk.id, chunk.type); }
+}
+
+void ChunkOperationsBase::lostChunks(matocsserventry *ptr,
+                                     const std::vector<ChunkWithType> &chunks) {
+	for (const auto &chunk : chunks) { lost(ptr, chunk.id, chunk.type); }
 }
 
 void ChunkOperationsBase::serverDisconnected(matocsserventry *ptr, const MediaLabel &label) {

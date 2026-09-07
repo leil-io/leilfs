@@ -24,6 +24,23 @@
 
 #include "common/goal.h"
 
+ChunkGoalCounters::ChunkGoalCounters(std::span<const GoalCounter> counters) {
+	if (counters.size() > counters_.max_size()) {
+		throw InvalidOperation("There is no more space for goals");
+	}
+
+	// Entries must arrive sorted by goal, so the scan doubles as the ordering check.
+	uint8_t previousGoal = 0;
+	for (const auto &counter : counters) {
+		if (!GoalId::isValid(counter.goal) || counter.count == 0 || counter.goal < previousGoal) {
+			throw InvalidOperation("Invalid goal counter sequence");
+		}
+		previousGoal = counter.goal;
+	}
+
+	counters_.assign(counters.begin(), counters.end());
+}
+
 void ChunkGoalCounters::addFile(uint8_t goal) {
 	if (!GoalId::isValid(goal)) {
 		throw ChunkGoalCounters::InvalidOperation(

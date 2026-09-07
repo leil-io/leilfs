@@ -67,6 +67,11 @@ public:
 	                      bool denyTruncatingParityParts, bool quotaExceeded,
 	                      uint64_t *nchunkid) override;
 	int canUnlock(uint64_t chunkid, uint32_t lockid) override;
+	/// The in-memory registry never hides locations, so the writer reads the ordinary ones.
+	/// @see IChunkOperations::getWriteVersionAndLocations
+	int getWriteVersionAndLocations(uint64_t chunkid, uint32_t currentIp, uint32_t &version,
+	                                uint32_t maxNumberOfChunkCopies,
+	                                std::vector<ChunkTypeWithAddress> &serversList) override;
 
 	int getVersionAndLocations(uint64_t chunkid, uint32_t currentIp, uint32_t &version,
 	                           uint32_t maxNumberOfChunkCopies,
@@ -87,6 +92,28 @@ public:
 	                     const std::vector<ChunkWithVersionAndType> &chunks) override;
 	void damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) override;
 	void lost(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType) override;
+	/// Applies damaged() to each entry in order.
+	/// @see IChunkOperations::damagedChunks
+	void damagedChunks(matocsserventry *ptr, const std::vector<ChunkWithType> &chunks) override;
+	/// Applies lost() to each entry in order.
+	/// @see IChunkOperations::lostChunks
+	void lostChunks(matocsserventry *ptr, const std::vector<ChunkWithType> &chunks) override;
+	/// The in-memory registry keys copies by connection, so registration needs no identity.
+	/// @see IChunkOperations::requestsChunkserverIdentity
+	bool requestsChunkserverIdentity() const override { return false; }
+	/// The in-memory registry walks its own chunk table, so it needs no external maintenance.
+	/// @see IChunkOperations::usesExternalMaintenance
+	bool usesExternalMaintenance() const override { return false; }
+	/// Never called while usesExternalMaintenance is false.
+	/// @see IChunkOperations::maintenanceTick
+	void maintenanceTick() override {}
+	/// Never called while usesExternalMaintenance is false.
+	/// @see IChunkOperations::maintenanceStep
+	bool maintenanceStep() override { return false; }
+	/// The registration inventory arrived before this call and already brought the copies.
+	/// @see IChunkOperations::serverRegistered
+	void serverRegistered(matocsserventry * /*ptr*/,
+	                      const ChunkserverRegistration & /*registration*/) override {}
 	void serverDisconnected(matocsserventry *ptr, const MediaLabel &label) override;
 	void serverUnlabelledConnected() override;
 	void serverLabelChanged(const MediaLabel &previousLabel, const MediaLabel &newLabel) override;
@@ -109,6 +136,14 @@ public:
 	                       uint8_t status) override;
 	void gotDuptruncStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                       uint8_t status) override;
+	/// Master never probes; the in-memory backend learns copies from registration.
+	void gotProbeStatus(matocsserventry * /*ptr*/, uint64_t /*chunkId*/,
+	                    ChunkPartType /*chunkType*/, uint32_t /*chunkVersion*/,
+	                    uint8_t /*status*/) override {}
+	/// The in-memory part set is already current when an operation settles.
+	void operationSettled(uint64_t /*chunkId*/) override {}
+	/// Master learns returning copies from the chunkserver's registration inventory.
+	void copyDropped(uint64_t /*chunkId*/, uint16_t /*csid*/) override {}
 
 	void stats(uint32_t *del, uint32_t *repl) override;
 	uint32_t getChunkInfoSerializedSize() override;

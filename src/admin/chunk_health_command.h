@@ -50,6 +50,11 @@ private:
 
 	static void initializeGoals(ServerConnection& connection);
 
+	/// Human-readable paragraph on when the counts were measured, printed before them.
+	void printFreshness(const ChunkHealthFreshness &freshness, uint32_t serverTime) const;
+	/// Porcelain MEA row, printed after the counters: generation, age, duration, chunks scanned,
+	/// chunks excluded, chunkservers unreachable. Generation 0 means nothing measured yet.
+	void printFreshnessRow(const ChunkHealthFreshness &freshness, uint32_t serverTime) const;
 	void printState(const ChunksAvailabilityState& state, bool isPorcelain) const;
 	void printState(bool isReplication, const ChunksReplicationState& state,
 			bool isPorcelain) const;
