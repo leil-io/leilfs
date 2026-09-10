@@ -195,6 +195,12 @@ terminate_fs_processes() {
 	fi
 	local pattern='sfs'
 	unix_unmount_fs
+	# Reap any leilfs-api daemons started via API_SERVERS: their process name has
+	# no 'sfs' substring, so the pattern below never matches them. Defined in
+	# tools/saunafs.sh; guarded so this stays a no-op when it is not sourced.
+	if declare -F leilfs_stop_all_api_servers >/dev/null; then
+		leilfs_stop_all_api_servers
+	fi
 	pkill -TERM -u saunafstest "$pattern" || true
 	for i in {1..25}; do
 		if ! pgrep -u saunafstest "$pattern" >/dev/null; then

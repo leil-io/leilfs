@@ -109,6 +109,14 @@ tests/hdd*
 ##############
 vcpkg_installed
 
+# leilfs-api (Go) #
+##############
+# leilfs-api is a leilos-only submodule; create-softlinks.sh symlinks its Go
+# source modules + CMakeLists.txt into api/, and its test suite into
+# tests/test_suites/API_tests. None of it is tracked in leilfs.
+/api/
+tests/test_suites/API_tests
+
 # CMake #
 ##############
 CMakeUserPresets.json
