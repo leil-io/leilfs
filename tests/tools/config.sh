@@ -1,4 +1,10 @@
 is_windows_system() {
+	# WSL2's kernel string also contains "microsoft", which would wrongly select
+	# the Windows-client mount path (sfsmount.exe via cmd.exe + `mount -t drvfs`)
+	# when running the ordinary Linux tests under WSL. A WSL user can force the
+	# Linux path with SAUNAFS_FORCE_LINUX=1 (export it, or set it in the
+	# tests.conf sourced below).
+	[[ ${SAUNAFS_FORCE_LINUX:-} == 1 ]] && return 1
 	grep /proc/version -e [Mm]icrosoft > /dev/null
 }
 

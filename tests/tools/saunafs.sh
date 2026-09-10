@@ -15,6 +15,7 @@ setup_local_empty_saunafs() {
 	local number_of_masterservers=${MASTERSERVERS:-1}
 	local number_of_chunkservers=${CHUNKSERVERS:-1}
 	local number_of_mounts=${MOUNTS:-1}
+	local number_of_api_servers=${API_SERVERS:-0}
 	local disks_per_chunkserver=${DISK_PER_CHUNKSERVER:-1}
 	local auto_shadow_master=${AUTO_SHADOW_MASTER:-YES}
 	# Shadow masters are not used with the FDB metadata backend
@@ -147,6 +148,18 @@ setup_local_empty_saunafs() {
 		sleep 3 # A reasonable fallback
 	fi
 
+	# Start leilfs-api servers (opt-in via API_SERVERS). Done last, once the
+	# cluster is up, so each server's /readyz (which probes the master) passes.
+	# The API daemon path is POSIX-only (no Windows-client equivalent yet), so
+	# refuse it on a Windows system rather than misbehave silently.
+	if [[ $number_of_api_servers -gt 0 && ${saunafs_info_[is_windows_system]} -eq 1 ]]; then
+		test_fail "API_SERVERS is not supported on Windows systems"
+	fi
+	for ((apiid = 0; apiid < number_of_api_servers; ++apiid)); do
+		add_api_server_ $apiid
+	done
+	saunafs_info_[api_server_count]=$number_of_api_servers
+
 	# Return array containing information about the installation
 	local out_var=$1
 	unset "$out_var"
@@ -240,6 +253,91 @@ saunafs_metalogger_daemon() {
 		sfsmetalogger -c "${saunafs_info_[metalogger_cfg]}" "$@" | cat
 	fi
 	return ${PIPESTATUS[0]}
+}
+
+# leilfs-api is a foreground HTTP server with no built-in start/stop framework
+# (unlike the C++ daemons), so its lifecycle is managed here directly via a
+# recorded PID + pidfile. Config comes from the env file written by
+# add_api_server_ (leilfs-api is configured entirely through LEILFS_* env vars).
+# leilfs_api_daemon <id> start|stop|restart|kill|isalive
+leilfs_api_daemon() {
+	local id=$1
+	shift
+	local action=$1
+	local env_file=${saunafs_info_[api${id}_env]}
+	local pidfile=${saunafs_info_[api${id}_pidfile]}
+	local logfile=${saunafs_info_[api${id}_log]}
+	case "$action" in
+		start)
+			# Export the generated env and exec the server in the background; the
+			# subshell PID becomes leilfs-api's PID via exec, so it can be signalled.
+			( set -a; source "$env_file"; set +a; exec leilfs-api ) >>"$logfile" 2>&1 &
+			local pid=$!
+			echo "$pid" >"$pidfile"
+			saunafs_info_[api${id}_pid]=$pid
+			;;
+		stop) api_signal_ "$pidfile" TERM; saunafs_info_[api${id}_pid]= ;;
+		kill) api_signal_ "$pidfile" KILL; saunafs_info_[api${id}_pid]= ;;
+		restart)
+			leilfs_api_daemon "$id" stop
+			leilfs_api_daemon "$id" start
+			;;
+		isalive)
+			local pid
+			pid=$(cat "$pidfile" 2>/dev/null) || return 1
+			[[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+			;;
+		*)
+			echo "leilfs_api_daemon: unknown action '$action'" >&2
+			return 2
+			;;
+	esac
+}
+
+# api_signal_ <pidfile> <signal>: signal the recorded PID and wait for it to
+# exit; escalate to SIGKILL if it outlives the graceful window, and drop the
+# pidfile only once the process is really gone (a premature removal would make
+# isalive lie and let a restart race the old listener on the same port). The
+# window is rescaled by the test timeout multiplier and sized above leilfs-api's
+# own graceful-shutdown budget (server.go shutdownTimeout = 10s). This mirrors
+# terminate_fs_processes' TERM-then-KILL escalation for the C++ daemons.
+api_signal_() {
+	local pidfile=$1 sig=$2 pid i deadline
+	pid=$(cat "$pidfile" 2>/dev/null) || return 0
+	if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+		kill -"$sig" "$pid" 2>/dev/null || true
+		deadline=$(( $(timeout_rescale_seconds 12) * 10 ))  # tenths of a second
+		for ((i = 0; i < deadline; ++i)); do
+			kill -0 "$pid" 2>/dev/null || break
+			sleep 0.1
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -KILL "$pid" 2>/dev/null || true
+			for ((i = 0; i < 20; ++i)); do
+				kill -0 "$pid" 2>/dev/null || break
+				sleep 0.1
+			done
+		fi
+	fi
+	rm -f "$pidfile"
+}
+
+# leilfs_stop_all_api_servers: kill every leilfs-api daemon started via
+# API_SERVERS. Invoked from the test teardown (terminate_fs_processes) so the
+# API is reaped by name like the C++ daemons, not only by the coarse user-wide
+# pkill backstop. A no-op when no API servers were started.
+leilfs_stop_all_api_servers() {
+	local count=${saunafs_info_[api_server_count]:-0}
+	local id
+	for ((id = 0; id < count; ++id)); do
+		leilfs_api_daemon "$id" kill 2>/dev/null || true
+	done
+}
+
+# leilfs_api_ready <id>: true once the API answers /readyz.
+leilfs_api_ready() {
+	local id=$1
+	curl -fsS -o /dev/null "http://localhost:${saunafs_info_[api${id}_port]}/readyz" 2>/dev/null
 }
 
 # saunafs_mount_unmount_async <id>
@@ -734,6 +832,60 @@ add_chunkserver_() {
 	saunafs_info_[chunkserver${chunkserver_id}_port]=$csserv_port
 	saunafs_info_[chunkserver${chunkserver_id}_cfg]=$chunkserver_cfg
 	saunafs_info_[chunkserver${chunkserver_id}_hdd]=$hdd_cfg
+}
+
+# create_leilfs_api_env_ <id> <port>: emit the LEILFS_* environment for one
+# leilfs-api instance pointed at the running master. Tests may inject extra
+# "KEY=VALUE" lines via API_EXTRA_CONFIG or API_<id>_EXTRA_CONFIG (pipe-
+# separated), matching the *_EXTRA_CONFIG convention of the other daemons.
+create_leilfs_api_env_() {
+	local api_id=$1
+	local api_port=$2
+	local this_api_cfg_variable="API_${api_id}_EXTRA_CONFIG"
+	# localhost is deliberate: the master listens on * (MATOCL_LISTEN_HOST is
+	# unset in the test config), so localhost avoids reverse-DNS and works for the
+	# /readyz master probe. If a test ever pins MATOCL_LISTEN_HOST, switch these
+	# to $(get_ip_addr) to match the rest of the harness.
+	echo "LEILFS_MASTER_ENDPOINTS=localhost:${saunafs_info_[matocl]}"
+	echo "LEILFS_API_HOST=localhost"
+	echo "LEILFS_API_PORT=${api_port}"
+	echo "LEILFS_ADMIN_ENABLED=true"
+	echo "LEILFS_RATE_LIMIT_ENABLED=false"
+	echo "LEILFS_LOG_LEVEL=debug"
+	echo "${API_EXTRA_CONFIG-}" | tr '|' '\n'
+	echo "${!this_api_cfg_variable-}" | tr '|' '\n'
+}
+
+# add_api_server_ <id>: allocate a port, write the env, start the leilfs-api
+# daemon and wait until it is ready. Mirrors add_chunkserver_/add_metadata_server_.
+add_api_server_() {
+	local api_id=$1
+	local api_port
+	local api_data_path=$vardir/api_$api_id
+	local api_env=$etcdir/leilfs_api_$api_id.env
+
+	command -v leilfs-api >/dev/null \
+		|| test_fail "leilfs-api not found on PATH (build/install it; it lives in \$SAUNAFS_ROOT/sbin)"
+	command -v curl >/dev/null \
+		|| test_fail "curl not found (required to probe the leilfs-api /readyz endpoint)"
+
+	get_next_port_number api_port
+	mkdir -p "$api_data_path"
+	create_leilfs_api_env_ "$api_id" "$api_port" >"$api_env"
+
+	saunafs_info_[api${api_id}_port]=$api_port
+	saunafs_info_[api${api_id}_env]=$api_env
+	saunafs_info_[api${api_id}_pidfile]=$api_data_path/leilfs-api.pid
+	saunafs_info_[api${api_id}_log]=$api_data_path/leilfs-api.log
+
+	leilfs_api_daemon "$api_id" start
+	# Wait for readiness; on failure surface the daemon log (which test_cleanup
+	# would otherwise wipe) before failing, so the cause is diagnosable on CI.
+	if ! wait_for "leilfs_api_ready $api_id" "$(timeout_rescale_seconds 30) seconds"; then
+		echo "leilfs-api $api_id did not become ready; log follows:" >&2
+		cat "${saunafs_info_[api${api_id}_log]}" >&2 || true
+		test_fail "leilfs-api $api_id did not become ready"
+	fi
 }
 
 function validate_and_append_fuse_options() {
