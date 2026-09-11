@@ -47,7 +47,7 @@ void *Client::linkLibrary() {
 
 	// Special case for the first instance - no copying needed
 	if (instance_count_++ == 0) {
-		ret = dlopen(kLibraryPath, RTLD_NOW);
+		ret = dlopen(kLibraryPath, RTLD_NOW | RTLD_DEEPBIND);
 		if (ret == nullptr) {
 			instance_count_--;
 			throw std::runtime_error(std::string("Cannot link: ") + dlerror());
@@ -69,7 +69,7 @@ void *Client::linkLibrary() {
 
 	source.close();
 	dest.close();
-	ret = dlopen(pattern, RTLD_NOW);
+	ret = dlopen(pattern, RTLD_NOW | RTLD_DEEPBIND);
 	::close(out_fd);
 	::unlink(pattern);
 	if (ret == nullptr) {
