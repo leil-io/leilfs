@@ -7,6 +7,9 @@ timeout_set 3 minutes
 # survive a shadow promotion unchanged. Focuses on edge/topology operations
 # (creates, renames, unlinks, hardlinks, snapshots).
 
+# METADATA_DUMP_PERIOD_SECONDS = 0 disables metadata periodical dumping, preventing the master
+# from auto-re-dumping a fresh image with the drifted topology. This ensures the shadow must
+# rebuild the namespace from the saved metadata image.
 master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
 
 CHUNKSERVERS=3 \
@@ -18,6 +21,7 @@ CHUNKSERVERS=3 \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
 	SFSEXPORTS_META_EXTRA_OPTIONS="nonrootmeta" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
+	MASTER_0_EXTRA_CONFIG="MAGIC_DEBUG_LOG = ${TEMP_DIR}/master0.log|LOG_FLUSH_ON=DEBUG" \
 	setup_local_empty_saunafs info
 
 # Save path of meta-mount in SFS_META_MOUNT_PATH for metadata generators (trash ops)
@@ -76,6 +80,14 @@ cd
 # metadata image, then converge through changelog replay.
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
+
+# The shadow must converge from the metadata image saved above. A shadow that fails to apply the
+# changelog asks the master for a fresh image (SAU_MLTOMA_CHANGELOG_APPLY_ERROR); the master then
+# re-dumps and the shadow resynchronizes from already-current state, so the assertions below would
+# pass without the namespace rebuild ever being exercised.
+assert_file_exists "${TEMP_DIR}/master0.log"
+log=$(cat "${TEMP_DIR}/master0.log")
+assert_awk_finds_no '/SAU_MLTOMA_CHANGELOG_APPLY_ERROR/' "$log"
 
 # Capture the namespace as served by the original master.
 cd "${info[mount0]}"

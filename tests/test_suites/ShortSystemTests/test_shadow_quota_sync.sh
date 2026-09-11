@@ -24,6 +24,7 @@ CHUNKSERVERS=3 \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
 	SFSEXPORTS_META_EXTRA_OPTIONS="nonrootmeta" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
+	MASTER_0_EXTRA_CONFIG="MAGIC_DEBUG_LOG = ${TEMP_DIR}/master0.log|LOG_FLUSH_ON=DEBUG" \
 	setup_local_empty_saunafs info
 
 export SFS_META_MOUNT_PATH=${info[mount1]}
@@ -68,6 +69,14 @@ cd
 # then converge through changelog replay.
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
+
+# The shadow must converge from the metadata image saved above. A shadow that fails to apply the
+# changelog asks the master for a fresh image (SAU_MLTOMA_CHANGELOG_APPLY_ERROR); the master then
+# re-dumps and the shadow resynchronizes from already-current state, so the assertions below would
+# pass without the quota rebuild ever being exercised.
+assert_file_exists "${TEMP_DIR}/master0.log"
+log=$(cat "${TEMP_DIR}/master0.log")
+assert_awk_finds_no '/SAU_MLTOMA_CHANGELOG_APPLY_ERROR/' "$log"
 
 # Capture the namespace (including quotas via repquota) as served by the original master.
 cd "${info[mount0]}"

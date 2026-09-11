@@ -11,11 +11,10 @@ assert_program_installed attr
 # AFTER the metadata dump: the drift is isolated to the xattr state (no node or edge
 # changes), and the shadow must reconcile the dumped image with the post-dump changelog.
 
-# METADATA_SAVE_REQUEST_MIN_PERIOD stops the master from auto-re-dumping a fresh image right
-# after the shadow reports a checksum mismatch. Without it, a genuine sync divergence would
-# be silently healed by the re-dump and the test would pass despite a real bug.
+# METADATA_DUMP_PERIOD_SECONDS = 0 disables metadata periodical dumping, preventing the master
+# from auto-re-dumping a fresh image with the drifted xattrs. This ensures the shadow must
+# rebuild the extended attributes from the saved metadata image.
 master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
-master_cfg+="|METADATA_SAVE_REQUEST_MIN_PERIOD = 1800"
 
 CHUNKSERVERS=3 \
 	MASTERSERVERS=2 \
@@ -26,6 +25,7 @@ CHUNKSERVERS=3 \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
 	SFSEXPORTS_META_EXTRA_OPTIONS="nonrootmeta" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
+	MASTER_0_EXTRA_CONFIG="MAGIC_DEBUG_LOG = ${TEMP_DIR}/master0.log|LOG_FLUSH_ON=DEBUG" \
 	setup_local_empty_saunafs info
 
 export SFS_META_MOUNT_PATH=${info[mount1]}
@@ -64,6 +64,14 @@ cd
 # image, then converge through changelog replay.
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
+
+# The shadow must converge from the metadata image saved above. A shadow that fails to apply the
+# changelog asks the master for a fresh image (SAU_MLTOMA_CHANGELOG_APPLY_ERROR); the master then
+# re-dumps and the shadow resynchronizes from already-current state, so the assertions below would
+# pass without the xattr rebuild ever being exercised.
+assert_file_exists "${TEMP_DIR}/master0.log"
+log=$(cat "${TEMP_DIR}/master0.log")
+assert_awk_finds_no '/SAU_MLTOMA_CHANGELOG_APPLY_ERROR/' "$log"
 
 # Capture the namespace (including xattrs via getfattr) as served by the original master.
 cd "${info[mount0]}"
