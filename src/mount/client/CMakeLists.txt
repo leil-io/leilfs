@@ -14,6 +14,10 @@ target_link_libraries(saunafs-client_shared ${CMAKE_DL_LIBS} mount_pic)
 
 add_library(saunafsmount_shared SHARED ${MOUNT_SOURCES} sauna_client_c_linkage.cc)
 target_link_libraries(saunafsmount_shared mount_pic ${ADDITIONAL_LIBS})
+# Client dlopen()s this library into processes that already link the same mount
+# code. Bind its references to its own definitions, so its globals aren't
+# interposed by the caller's copies (which destroyed them twice at exit).
+target_link_options(saunafsmount_shared PRIVATE -Wl,-Bsymbolic)
 
 install(TARGETS saunafs-client DESTINATION ${LIB_SUBDIR} COMPONENT client)
 install(TARGETS saunafs-client_pic DESTINATION ${LIB_SUBDIR} COMPONENT client)
