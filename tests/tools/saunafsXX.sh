@@ -15,6 +15,27 @@ install_saunafsXX() {
 	rm -rf "${SAUNAFSXX_DIR:?}"
 	mkdir -p "${SAUNAFSXX_DIR}"
 	local distro="$(lsb_release -si)"
+	if [ "${distro}" == Ubuntu ]; then
+		# Legacy SaunaFS ${SAUNAFSXX_TAG} packages predate 26.04 (resolute) -
+		# it didn't exist when 4.1.0 shipped - and aren't published for it
+		# yet. There's no release close enough to fall back to either: the
+		# legacy binaries are linked against their own build release's
+		# libfuse3/boost sonames, which a newer release may no longer ship
+		# at all. Skip these upgrade tests here until real packages exist,
+		# rather than fail on a install that can never succeed. Probing the
+		# repo (instead of hardcoding "26.04") means this starts running
+		# again automatically the day they're published.
+		local distro_id="$(lsb_release -si | tr '[:upper:]' '[:lower:]' | tail -1)"
+		local codename="$(lsb_release -sc | tail -1)"
+		local release="$(lsb_release -sr | tail -1)"
+		local repo_probe_url="https://repo.saunafs.com/repository/saunafs-${distro_id}-${release}/dists/${codename}/InRelease"
+		if ! curl -sSLf -o /dev/null "${repo_probe_url}"; then
+			echo "Legacy SaunaFS ${SAUNAFSXX_TAG} packages aren't published" \
+				"for Ubuntu ${release} (${codename}) yet. Skipping this" \
+				"test until they are."
+			test_end
+		fi
+	fi
 	case "${distro}" in
 	Ubuntu | Debian)
 		local distro_id="$(lsb_release -si | tr '[:upper:]' '[:lower:]' | tail -1)"
