@@ -859,13 +859,19 @@ void chunk_emergency_increase_version(Chunk *c) {
 
 	// Under KV backends this commit races the client's own batch on the same chunk record. The
 	// in-memory version has already moved and the chunkservers are being told, so the record must
-	// follow: repeat the persist on a fresh transaction until it lands.
+	// follow: repeat the persist on a fresh transaction until it lands. The changelog line and
+	// the chunk-changed notice describe the one in-memory bump, so only the first attempt emits
+	// them; a retry persists the record alone.
 	constexpr int kCommitAttempts = 5;
 	for (int attempt = 1;; ++attempt) {
 		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
-		gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
-		if (attempt == 1) { emit_chunk_changed(c); }
+		if (attempt == 1) {
+			gFSOperations->increaseChunkVersion(fsOpContext, c->chunkid);
+			emit_chunk_changed(c);
+		} else {
+			gChunkOperations->persistRecord(fsOpContext, c->chunkid);
+		}
 		if (!fsOpContext.hasReadWriteTransaction() || fsOpContext.commitTransaction()) { break; }
 		if (attempt == kCommitAttempts) {
 			safs::log_critical(
