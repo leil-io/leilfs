@@ -1122,6 +1122,14 @@ bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto
 
 bool chunk_exists(uint64_t chunkid) { return chunk_find(chunkid) != nullptr; }
 
+uint64_t chunk_get_max_id() {
+	uint64_t maxChunkId = 0;
+	for (const auto &bucket : gChunksMetadata->chunkhash) {
+		for (const Chunk *chunk : bucket) { maxChunkId = std::max(maxChunkId, chunk->chunkid); }
+	}
+	return maxChunkId;
+}
+
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
                                      const std::vector<ChunkGoalCounters::GoalCounter> &goals,
                                      uint32_t lockid, uint32_t lockedto) {

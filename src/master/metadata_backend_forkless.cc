@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -233,7 +234,7 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 	// A zero value means the descriptor carried no META_NEXT_CHUNK_ID (e.g. after an upgrade or
 	// partial bootstrap). Skip the call in that case: the generator starts at 1, so setting it
 	// backwards to 0 would always fail and log a misleading warning. Non-fatal either way — the
-	// chunk ids seen during the load below still establish the effective watermark.
+	// chunk ids remaining after checkpoint rollback below still establish the effective watermark.
 	uint64_t nextChunkId = loadedCheckpointDescriptor_.nextChunkId;
 	if (nextChunkId == 0) {
 		safs::log_warn(
@@ -252,7 +253,6 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 
 	kv::Key lastKey;
 	uint64_t chunkCount = 0;
-	uint64_t maxChunkId = 0;
 
 	while (true) {
 		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
@@ -292,7 +292,6 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 
 			if (chunkId > 0) {
 				chunk_add_from_initial_metadata_load(chunkId, chunkVersion, lockedTo, lockId);
-				maxChunkId = std::max(maxChunkId, chunkId);
 				chunkCount++;
 			}
 		}
@@ -301,24 +300,6 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 
 		lastKey = pageResult.getPairs().back().key;
 		startSelector = kv::KeySelector(lastKey, false, 0);
-	}
-
-	// chunk_add_from_initial_metadata_load() creates chunks without advancing the id generator,
-	// so a stale/missing META_NEXT_CHUNK_ID (checkpoint descriptor) could otherwise reuse an
-	// already-loaded chunk id. Advance the watermark past the highest id seen in FDB.
-	//
-	// Only call chunk_set_next_chunkid() when it would actually move the generator forward: an
-	// aged filesystem legitimately keeps a next chunk id well past its highest live chunk id
-	// (deleted chunks are forgotten, the descriptor is not), and an unconditional call would log
-	// a "failed to set next chunk id" warning on every start in that healthy state. Conversely,
-	// when the safety net does fire the descriptor was stale, which is worth reporting.
-	const uint64_t generatorNextChunkId = chunk_get_next_id();
-	if (maxChunkId > 0 && maxChunkId + 1 > generatorNextChunkId) {
-		safs::log_warn(
-		    "{}: next chunk id {} is not past the highest loaded chunk id {}; advancing "
-		    "the generator (stale or missing META_NEXT_CHUNK_ID)",
-		    __func__, generatorNextChunkId, maxChunkId);
-		chunk_set_next_chunkid(maxChunkId + 1);
 	}
 
 	// Apply undo checkpoints so that chunk state matches the loaded checkpoint version
@@ -330,6 +311,25 @@ int8_t MetadataBackendForkless::loadChunks(bool ignoreFlag) {
 		safs::log_err("{}: failed to roll back chunks to checkpoint version {}", __func__,
 		              targetVersion);
 		return kOpFailure;
+	}
+
+	// CHNL_ contains the latest live image, which can include chunks allocated after the selected
+	// checkpoint. Derive any missing/stale generator fallback only after undo has reconstructed
+	// the checkpoint image; otherwise those newer chunks permanently advance the monotonic
+	// generator and changelog replay allocates different IDs from the primary.
+	const uint64_t maxChunkId = chunk_get_max_id();
+	if (maxChunkId == std::numeric_limits<uint64_t>::max()) {
+		safs::log_err("{}: cannot advance the chunk id generator past {}", __func__, maxChunkId);
+		return kOpFailure;
+	}
+
+	const uint64_t generatorNextChunkId = chunk_get_next_id();
+	if (maxChunkId > 0 && maxChunkId + 1 > generatorNextChunkId) {
+		safs::log_warn(
+		    "{}: next chunk id {} is not past the highest checkpoint chunk id {}; "
+		    "advancing the generator (stale or missing META_NEXT_CHUNK_ID)",
+		    __func__, generatorNextChunkId, maxChunkId);
+		chunk_set_next_chunkid(maxChunkId + 1);
 	}
 
 	safs::log_info("Loaded {} chunks", chunkCount);

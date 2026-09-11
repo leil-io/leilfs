@@ -102,6 +102,9 @@ bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto
 /// Returns true if the chunk is present in the in-memory hash.
 bool chunk_exists(uint64_t chunkid);
 
+/// Returns the highest chunk ID present in the in-memory hash, or 0 when it is empty.
+uint64_t chunk_get_max_id();
+
 /// Restores an in-memory chunk from persisted version, refs and lock state.
 /// Used by on-demand restore paths when a chunk is not present in memory yet.
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
