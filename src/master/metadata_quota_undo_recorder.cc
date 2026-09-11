@@ -16,6 +16,8 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_quota_undo_recorder.h"
 
 #include <array>
@@ -210,15 +212,8 @@ void QuotaUndoRecorder::beforeOwnerMutation(const MetadataMutationContext &conte
                                             const kv::Key &rangeBegin, const kv::Key &rangeEnd) {
 	if (context.checkpointVersion == 0) { return; }
 
-	// The owner prefix (rangeBegin) uniquely identifies the owner; use it as the first-touch dedup
-	// key so only the interval-start pre-image is captured.
-	std::string dedupKey(rangeBegin.begin(), rangeBegin.end());
-	if (touchedOwners_.contains(dedupKey)) { return; }
-
 	recordOwnerUndo(context.transaction, context.checkpointVersion, ownerType, ownerId, rangeBegin,
 	                rangeEnd);
-
-	touchedOwners_.insert(std::move(dedupKey));
 }
 
 void QuotaUndoRecorder::recordOwnerUndo(kv::IReadWriteTransaction *transaction,

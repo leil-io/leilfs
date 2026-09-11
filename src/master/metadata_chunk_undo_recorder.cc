@@ -16,6 +16,8 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_chunk_undo_recorder.h"
 
 #include <cstdint>
@@ -182,12 +184,9 @@ int8_t ChunkUndoRecorder::dropCheckpointData(kv::IReadWriteTransaction *transact
 void ChunkUndoRecorder::beforeChunkSet(const MetadataMutationContext &context,
                                        const ChunkSetMutation &mutation) {
 	if (context.checkpointVersion == 0) { return; }
-	if (touchedChunkIds_.contains(mutation.chunkId)) { return; }
 
 	recordChunkUndo(context.transaction, context.checkpointVersion, mutation.chunkId,
 	                mutation.liveKey);
-
-	touchedChunkIds_.insert(mutation.chunkId);
 }
 
 void ChunkUndoRecorder::recordChunkUndo(kv::IReadWriteTransaction *transaction,

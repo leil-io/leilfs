@@ -18,9 +18,10 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstdint>
 #include <string>
-#include <unordered_set>
 
 #include "kv/ikv_engine.h"
 #include "kv/kv_types.h"
@@ -43,7 +44,8 @@
 /// removed, inside the same write transaction. The checkpoint manager calls
 /// restoreToCheckpointVersion() during load to roll the live topology back, dropCheckpointData()
 /// when a checkpoint is trimmed from the retained catalog, and resetIntervalState() after a
-/// checkpoint is sealed so first-touch tracking restarts for the next interval.
+/// checkpoint is sealed. The durable undo key is the authoritative first-touch guard, so there is
+/// no recorder-local interval state to reset.
 ///
 /// Section-local scope: this recorder rebuilds directory topology only (entry maps, link counts,
 /// aggregated directory stats), delegating the actual in-memory attach/detach to
@@ -107,13 +109,13 @@ public:
 	int8_t dropCheckpointData(kv::IReadWriteTransaction *transaction,
 	                          uint64_t droppedCheckpointVersion) override;
 
-	/// Clears the per-interval first-touch tracking. Called after a checkpoint is sealed so the
-	/// next interval starts recording fresh pre-images.
-	void resetIntervalState() override { touchedEdges_.clear(); }
+	/// No in-memory first-touch state is retained; durable undo keys are authoritative.
+	/// Kept for the common recorder lifecycle interface.
+	void resetIntervalState() override {}
 
 private:
-	/// Records the pre-image for one edge identified by (parentId, name) once per interval and
-	/// marks the edge as touched. Shared by the set and remove mutation paths.
+	/// Records the pre-image for one edge identified by (parentId, name), using the durable undo
+	/// key as the first-touch guard. Shared by the set and remove mutation paths.
 	void beforeEdgeMutation(const MetadataMutationContext &context, inode_t parentId,
 	                        const HString &name, const kv::Key &liveKey);
 
@@ -125,8 +127,4 @@ private:
 
 	/// Key-value engine used for all durable undo state. Not owned.
 	kv::IKVEngine *kvEngine_{nullptr};
-
-	/// Live EDGE_ keys already captured in the active checkpoint interval (first-touch guard).
-	/// Keyed by the live-key bytes, which uniquely identify an edge (parentId, name).
-	std::unordered_set<std::string> touchedEdges_;
 };

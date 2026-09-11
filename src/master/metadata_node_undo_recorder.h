@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstdint>
 #include <unordered_set>
 
@@ -41,7 +43,8 @@
 /// removed, inside the same write transaction. The checkpoint manager calls
 /// restoreToCheckpointVersion() during load to roll the live image back, dropCheckpointData()
 /// when a checkpoint is trimmed from the retained catalog, and resetIntervalState() after a
-/// checkpoint is sealed so first-touch tracking restarts for the next interval.
+/// checkpoint is sealed. The durable undo key is the authoritative first-touch guard, so there is
+/// no recorder-local interval state to reset.
 ///
 /// Section-local scope: this recorder restores node bodies and node-local accounting only,
 /// delegating the actual in-memory replacement/removal to metadata_node_restore_helpers. It
@@ -105,9 +108,9 @@ public:
 	int8_t dropCheckpointData(kv::IReadWriteTransaction *transaction,
 	                          uint64_t droppedCheckpointVersion) override;
 
-	/// Clears the per-interval first-touch tracking. Called after a checkpoint is sealed so the
-	/// next interval starts recording fresh pre-images.
-	void resetIntervalState() override { touchedNodeIds_.clear(); }
+	/// No in-memory first-touch state is retained; durable undo keys are authoritative.
+	/// Kept for the common recorder lifecycle interface.
+	void resetIntervalState() override {}
 
 	/// Inodes removed from the in-memory node table during the most recent rollback.
 	///
@@ -130,13 +133,13 @@ private:
 
 	/// Writes the undo row holding the serialized node pre-image for inode under
 	/// checkpointVersion. Never overwrites an existing undo row, so the interval-start pre-image
-	/// is preserved, and marks the inode as touched.
+	/// is preserved.
 	void recordNodeUndoSet(kv::IReadWriteTransaction *transaction, uint64_t checkpointVersion,
 	                       inode_t inode, const kv::Value &serializedNode);
 
 	/// Writes an empty-value tombstone undo row for inode under checkpointVersion, recording
 	/// that the node did not exist before the first mutation in the interval. Never overwrites
-	/// an existing undo row, and marks the inode as touched.
+	/// an existing undo row.
 	void recordNodeUndoRemove(kv::IReadWriteTransaction *transaction, uint64_t checkpointVersion,
 	                          inode_t inode);
 
@@ -148,9 +151,6 @@ private:
 
 	/// Key-value engine used for all durable undo state. Not owned.
 	kv::IKVEngine *kvEngine_{nullptr};
-
-	/// Inodes already captured in the active checkpoint interval (first-touch guard).
-	std::unordered_set<uint64_t> touchedNodeIds_;
 
 	/// Inodes deleted during the most recent restoreToCheckpointVersion() (see
 	/// removedDuringRestore()). Cleared at the start of each restore.

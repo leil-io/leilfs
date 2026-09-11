@@ -16,6 +16,8 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_xattr_undo_recorder.h"
 
 #include <cstdint>
@@ -206,14 +208,7 @@ void XAttrUndoRecorder::beforeXAttrKey(const MetadataMutationContext &context, i
                                        std::span<const uint8_t> name, const kv::Key &liveKey) {
 	if (context.checkpointVersion == 0) { return; }
 
-	// The live XATR_ key uniquely identifies the xattr (inode, name); use it as the first-touch
-	// dedup key so only the interval-start pre-image is captured.
-	std::string dedupKey(liveKey.begin(), liveKey.end());
-	if (touchedXAttrs_.contains(dedupKey)) { return; }
-
 	recordXAttrUndo(context.transaction, context.checkpointVersion, inode, name, liveKey);
-
-	touchedXAttrs_.insert(std::move(dedupKey));
 }
 
 void XAttrUndoRecorder::beforeXAttrRange(const MetadataMutationContext &context,
@@ -229,15 +224,11 @@ void XAttrUndoRecorder::beforeXAttrRange(const MetadataMutationContext &context,
 		    context.transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
 		for (const auto &pair : page.getPairs()) {
-			std::string dedupKey(pair.key.begin(), pair.key.end());
-			if (touchedXAttrs_.contains(dedupKey)) { continue; }
-
 			inode_t inode = 0;
 			std::vector<uint8_t> name;
 			if (!decodeLiveXAttrKey(pair.key, inode, name)) { continue; }
 
 			recordXAttrUndo(context.transaction, context.checkpointVersion, inode, name, pair.key);
-			touchedXAttrs_.insert(std::move(dedupKey));
 		}
 
 		if (!page.hasMore() || page.getPairs().empty()) { break; }

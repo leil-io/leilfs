@@ -16,6 +16,8 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_edge_undo_recorder.h"
 
 #include <cstdint>
@@ -178,14 +180,7 @@ void EdgeUndoRecorder::beforeEdgeMutation(const MetadataMutationContext &context
                                           const HString &name, const kv::Key &liveKey) {
 	if (context.checkpointVersion == 0) { return; }
 
-	// The live EDGE_ key uniquely identifies the edge (parentId, name); use it as the
-	// first-touch dedup key so only the interval-start pre-image is captured.
-	std::string dedupKey(liveKey.begin(), liveKey.end());
-	if (touchedEdges_.contains(dedupKey)) { return; }
-
 	recordEdgeUndo(context.transaction, context.checkpointVersion, parentId, name, liveKey);
-
-	touchedEdges_.insert(std::move(dedupKey));
 }
 
 void EdgeUndoRecorder::recordEdgeUndo(kv::IReadWriteTransaction *transaction,

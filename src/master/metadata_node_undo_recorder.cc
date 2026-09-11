@@ -16,6 +16,8 @@
    along with SaunaFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_node_undo_recorder.h"
 
 #include <cstdint>
@@ -172,7 +174,6 @@ int8_t NodeUndoRecorder::dropCheckpointData(kv::IReadWriteTransaction *transacti
 void NodeUndoRecorder::beforeNodeSet(const MetadataMutationContext &context,
                                      const NodeSetMutation &mutation) {
 	if (context.checkpointVersion == 0) { return; }
-	if (touchedNodeIds_.contains(mutation.inode)) { return; }
 
 	// currentValue will be the value of NODE_<inode> key if it exists, or std::nullopt
 	// if the key does not exist (i.e. node is being created)
@@ -190,7 +191,6 @@ void NodeUndoRecorder::beforeNodeSet(const MetadataMutationContext &context,
 void NodeUndoRecorder::beforeNodeRemove(const MetadataMutationContext &context,
                                         const NodeRemoveMutation &mutation) {
 	if (context.checkpointVersion == 0) { return; }
-	if (touchedNodeIds_.contains(mutation.inode)) { return; }
 
 	// currentValue will be the value of NODE_<inode> key if it exists, or std::nullopt
 	// if the key does not exist (i.e. node is being removed)
@@ -211,13 +211,8 @@ void NodeUndoRecorder::recordNodeUndoSet(kv::IReadWriteTransaction *transaction,
 	kv::Key undoKey = nodeUndoKey(checkpointVersion, inode);
 
 	// Preserve the original pre-image if already recorded.
-	if (transaction->get(undoKey).has_value()) {
-		touchedNodeIds_.insert(inode);
-		return;
-	}
-
+	if (transaction->get(undoKey).has_value()) { return; }
 	transaction->set(undoKey, serializedNode);
-	touchedNodeIds_.insert(inode);
 }
 
 void NodeUndoRecorder::recordNodeUndoRemove(kv::IReadWriteTransaction *transaction,
@@ -228,14 +223,9 @@ void NodeUndoRecorder::recordNodeUndoRemove(kv::IReadWriteTransaction *transacti
 	kv::Key undoKey = nodeUndoKey(checkpointVersion, inode);
 
 	// Preserve the original pre-image if already recorded.
-	if (transaction->get(undoKey).has_value()) {
-		touchedNodeIds_.insert(inode);
-		return;
-	}
-
+	if (transaction->get(undoKey).has_value()) { return; }
 	// Tombstone: node did not exist before the first mutation in this checkpoint interval
 	transaction->set(undoKey, kv::Value{});
-	touchedNodeIds_.insert(inode);
 }
 
 bool NodeUndoRecorder::applyNodeUndoEntry(const FilesystemOperationContext &fsOpContext, inode_t nodeId,

@@ -18,8 +18,9 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstdint>
-#include <unordered_set>
 
 #include "kv/ikv_engine.h"
 #include "kv/kv_types.h"
@@ -40,8 +41,9 @@
 /// Lifecycle: MetadataWriterFDB calls beforeMutation() before a chunk live key is written,
 /// inside the same write transaction. The checkpoint manager calls restoreToCheckpointVersion()
 /// during load to roll the live image back, dropCheckpointData() when a checkpoint is trimmed
-/// from the retained catalog, and resetIntervalState() after a checkpoint is sealed so
-/// first-touch tracking restarts for the next interval.
+/// from the retained catalog, and resetIntervalState() after a checkpoint is sealed. The durable
+/// undo key is the authoritative first-touch guard, so there is no recorder-local interval state
+/// to reset.
 ///
 /// Section-local scope: this recorder rebuilds chunk-table state only. It must not touch node
 /// bodies, edges, or any other section's owned state; see ISectionUndoRecorder and the
@@ -102,13 +104,13 @@ public:
 	int8_t dropCheckpointData(kv::IReadWriteTransaction *transaction,
 	                          uint64_t droppedCheckpointVersion) override;
 
-	/// Clears the per-interval first-touch tracking. Called after a checkpoint is sealed so the
-	/// next interval starts recording fresh pre-images.
-	void resetIntervalState() override { touchedChunkIds_.clear(); }
+	/// No in-memory first-touch state is retained; durable undo keys are authoritative.
+	/// Kept for the common recorder lifecycle interface.
+	void resetIntervalState() override {}
 
 private:
-	/// Handles a ChunkSetMutation: records the pre-image once per chunk per interval and marks
-	/// the chunk as touched.
+	/// Handles a ChunkSetMutation: records the pre-image once per chunk per interval, using the
+	/// durable undo key as the first-touch guard.
 	void beforeChunkSet(const MetadataMutationContext &context, const ChunkSetMutation &mutation);
 
 	/// Writes the undo row for chunkId under checkpointVersion, copying the current live value
@@ -119,7 +121,4 @@ private:
 
 	/// Key-value engine used for all durable undo state. Not owned.
 	kv::IKVEngine *kvEngine_{nullptr};
-
-	/// Chunk ids already captured in the active checkpoint interval (first-touch guard).
-	std::unordered_set<uint64_t> touchedChunkIds_;
 };
