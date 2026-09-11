@@ -866,13 +866,26 @@ int8_t MetadataBackendForkless::loadQuotas(bool ignoreFlag) {
 			}
 
 			const uint8_t *keyPtr = pair.key.data() + kQuotasKeyPrefix.size();
-			auto ownerType = static_cast<QuotaOwnerType>(*keyPtr);
+			const uint8_t ownerTypeValue = *keyPtr;
 			keyPtr++;
 			inode_t ownerId{};
 			getINode(&keyPtr, ownerId);
-			auto rigor = static_cast<QuotaRigor>(*keyPtr);
+			const uint8_t rigorValue = *keyPtr;
 			keyPtr++;
-			auto resource = static_cast<QuotaResource>(*keyPtr);
+			const uint8_t resourceValue = *keyPtr;
+
+			if (ownerTypeValue > static_cast<uint8_t>(QuotaOwnerType::kInode) ||
+			    rigorValue > static_cast<uint8_t>(QuotaRigor::kHard) ||
+			    resourceValue > static_cast<uint8_t>(QuotaResource::kSize)) {
+				safs::log_warn(
+				    "{}: skipping quota row with invalid owner type {}, rigor {}, or resource {}",
+				    __func__, ownerTypeValue, rigorValue, resourceValue);
+				continue;
+			}
+
+			const auto ownerType = static_cast<QuotaOwnerType>(ownerTypeValue);
+			const auto rigor = static_cast<QuotaRigor>(rigorValue);
+			const auto resource = static_cast<QuotaResource>(resourceValue);
 
 			const uint8_t *valuePtr = pair.value.data();
 			uint64_t limit = get64bit(&valuePtr);
@@ -1075,6 +1088,17 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
                                          bool ignoreFlag, bool init) {
 	if (init) {
 		currentLoadParentId_ = 0;
+		return kOpSuccess;
+	}
+
+	// Node rollback removes directories created after the target checkpoint before live EDGE_
+	// rows are loaded. Every edge below such a parent is post-checkpoint drift, even when its
+	// child already existed at the checkpoint (for example, an old file moved into a new
+	// directory). Edge rollback and changelog replay will reconstruct the final topology.
+	if (parentId != 0 && checkpointManager_ != nullptr &&
+	    checkpointManager_->nodesRemovedDuringRestore().contains(parentId)) {
+		safs::log_debug("{}: {}, {}->{} skipped: parent removed by node rollback", __func__,
+		               parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
 		return kOpSuccess;
 	}
 
@@ -1450,9 +1474,32 @@ void MetadataBackendForkless::reconcileDirtyEdgesToFDB(uint64_t &persisted, uint
 	}
 }
 
-// XAttrs: resolve (inode, name) against the in-memory attribute set, then whole-inode removals.
+// XAttrs: resolve range removals and point mutations against the in-memory attribute set.
 void MetadataBackendForkless::reconcileDirtyXAttrsToFDB(uint64_t &persisted, uint64_t &removed) {
+	auto persistCurrentInodeXattrs = [this, &persisted](inode_t inode) {
+		for (const auto &inodeEntry : gMetadata->xattrInodeHash[get_xattr_inode_hash(inode)]) {
+			if (inodeEntry->inode != inode) { continue; }
+			for (const XAttributeDataEntry *dataEntry : inodeEntry->xattrDataEntries) {
+				onXAttrChanged(inode, dataEntry->attributeName, dataEntry->attributeValue);
+				++persisted;
+			}
+			return;
+		}
+	};
+
+	// A whole-inode removal can be followed by inode reuse while a shadow runs. Clear the
+	// persisted range first and then reconstruct the inode's current attributes. Point mutations
+	// for the same inode are covered by that reconstruction and must not be enqueued before the
+	// range deletion.
+	for (const inode_t inode : dirtyXattrInodes_) {
+		onXAttrInodeRemoved(inode);
+		++removed;
+		persistCurrentInodeXattrs(inode);
+	}
+
 	for (const auto &[inode, name] : dirtyXattrs_) {
+		if (dirtyXattrInodes_.contains(inode)) { continue; }
+
 		const std::vector<uint8_t> *value = nullptr;
 		for (const auto &inodeEntry : gMetadata->xattrInodeHash[get_xattr_inode_hash(inode)]) {
 			if (inodeEntry->inode != inode) { continue; }
@@ -1473,12 +1520,6 @@ void MetadataBackendForkless::reconcileDirtyXAttrsToFDB(uint64_t &persisted, uin
 			onXAttrRemoved(inode, name);
 			++removed;
 		}
-	}
-
-	// Whole-inode xattr removals (e.g. node deletions).
-	for (const inode_t inode : dirtyXattrInodes_) {
-		onXAttrInodeRemoved(inode);
-		++removed;
 	}
 }
 

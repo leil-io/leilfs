@@ -70,12 +70,12 @@ int chunk_restore_set(uint64_t chunkId, uint32_t chunkVersion, uint32_t lockedTo
 /// Removes a chunk entry during shadow sync paths with checkpoint undo.
 ///
 /// Intended for shadow sync paths that replay undo information for chunks.
-/// If the chunk exists, it is unlinked from the internal chunk hash table, removed from checksum
-/// accounting (including the recalculated checksum when applicable), and freed (via chunk_delete()).
-/// If the chunk does not exist, this is a no-op.
+/// If the chunk exists, it is unlinked from the internal chunk hash table, removed from count,
+/// statistics and checksum accounting (including the recalculated checksum when applicable), and
+/// returned to the internal free list without emitting a removal signal.
 ///
 /// @param chunkId Chunk identifier.
-/// @return SAUNAFS_STATUS_OK (no-op or success).
+/// @return SAUNAFS_STATUS_OK on success, or SAUNAFS_ERROR_NOCHUNK if the chunk does not exist.
 int chunk_restore_remove(uint64_t chunkId);
 
 /// Re-emits gChunkChangedSignal for one live chunk (if it exists) so a listener

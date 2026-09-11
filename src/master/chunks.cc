@@ -982,14 +982,16 @@ Chunk *chunk_find(uint64_t chunkid) {
 }
 
 #ifndef METARESTORE
-void chunk_delete(Chunk *c) {
+void chunk_delete(Chunk *c, bool emitRemovalSignal = true) {
 	if (gChunksMetadata->lastchunkptr==c) {
 		gChunksMetadata->lastchunkid=0;
 		gChunksMetadata->lastchunkptr=NULL;
 	}
 	// Report the removal before the chunk is freed: KV backends persist chunks individually and
 	// must drop the row, otherwise deleted chunks come back as zombies on the next load.
-	if (!gChunkRemovedSignal.empty()) { gChunkRemovedSignal.emit(c->chunkid); }
+	if (emitRemovalSignal && !gChunkRemovedSignal.empty()) {
+		gChunkRemovedSignal.emit(c->chunkid);
+	}
 	c->freeStats();
 	chunk_free(c);
 }
@@ -3239,25 +3241,6 @@ void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersio
 	chunk->lockid = lockId;
 }
 
-/// Deletes a chunk structure without updating statistics.
-///
-/// This function only invalidates the "last chunk" lookup cache (if it points to the given chunk)
-/// and then frees the chunk structure via chunk_free().
-///
-/// Unlike the master runtime variant, this variant does not update master statistics
-/// (e.g. via Chunk::freeStats()).
-///
-/// @param chunk Chunk to delete.
-void chunk_delete_without_updating_stats(Chunk *chunk) {
-	if (gChunksMetadata->lastchunkptr == chunk) {
-		gChunksMetadata->lastchunkid = 0;
-		gChunksMetadata->lastchunkptr = nullptr;
-	}
-#ifndef METARESTORE
-	chunk_free(chunk);
-#endif /* METARESTORE */
-}
-
 int chunk_restore_set(uint64_t chunkId, uint32_t chunkVersion, uint32_t lockedTo, uint32_t lockId) {
 	// Find existing or create if missing.
 	// For undo, "missing" can happen if earlier undo deleted it and later undo re-adds it.
@@ -3281,7 +3264,7 @@ int chunk_restore_remove(uint64_t chunkId) {
 	const auto bucketIndex = chunkHashPos(chunkId);
 	auto &bucket = gChunksMetadata->chunkhash[bucketIndex];
 
-	// Unlink from hash chain (must happen before chunk_delete_without_updating_stats()).
+	// Unlink from the hash chain before deleting the chunk.
 	auto chunkIterator = std::ranges::find(bucket.begin(), bucket.end(), foundChunk);
 	if (chunkIterator != bucket.end()) { bucket.erase(chunkIterator); }
 
@@ -3298,8 +3281,11 @@ int chunk_restore_remove(uint64_t chunkId) {
 	}
 	removeFromChecksum(gChunksMetadata->chunksChecksum, foundChunk->checksum);
 
-	// Now it's safe to free.
-	chunk_delete_without_updating_stats(foundChunk);
+#ifndef METARESTORE
+	// Use the normal accounting and free-list path, but restoring a checkpoint must not publish a
+	// new persistence mutation.
+	chunk_delete(foundChunk, /*emitRemovalSignal=*/false);
+#endif
 	return SAUNAFS_STATUS_OK;
 }
 

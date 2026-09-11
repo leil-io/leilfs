@@ -39,6 +39,13 @@ for owner in {2001..2020}; do
 	saunafs setquota -u "$owner" 10GB 30GB 100 200 .
 	saunafs setquota -g "$owner" 5GB 15GB 50 100 .
 done
+
+# Give the test user nonzero usage in the saved metadata image while leaving its limits unset.
+# Adding limits afterward makes shadow recovery combine that saved usage with a later quota
+# update.
+truncate -s 1M quota_usage_file
+quota_usage_owner=$(id -u)
+
 cd
 
 # Dump the metadata image: the quota limits are captured at this point.
@@ -52,6 +59,9 @@ for owner in {2001..2020}; do
 	saunafs setquota -u "$owner" 50GB 90GB 500 800 .
 	saunafs setquota -g "$owner" 40GB 70GB 400 600 .
 done
+
+saunafs setquota -u "$quota_usage_owner" 1GB 2GB 10 20 .
+
 cd
 
 # Start the shadow AFTER the churn so it must rebuild the quotas: load the saved metadata image,

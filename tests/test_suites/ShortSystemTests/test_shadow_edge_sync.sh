@@ -42,6 +42,10 @@ metadata_generate_renames
 metadata_generate_uids_gids
 metadata_generate_touch
 metadata_generate_truncate
+
+# Create a child before saving the metadata image; a later operation will move it into a new parent.
+touch pre_dump_child
+
 cd
 
 # Dump the metadata image. The shadow will later load this image and replay only
@@ -59,6 +63,12 @@ mkdir post_dump_rename_src
 mv post_dump_rename_src post_dump_rename_dst
 touch post_dump_unlink{1..10}
 rm -f post_dump_unlink{1..10}
+
+# Move a saved child below a directory created after the metadata image. A shadow starting from
+# that image must reconstruct their final parent-child relationship from the later changes.
+mkdir post_dump_parent
+mv pre_dump_child post_dump_parent/
+
 ln post_dump_dir/file1 post_dump_dir/file1_hardlink
 cd
 

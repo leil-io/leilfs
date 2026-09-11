@@ -72,7 +72,10 @@ bool decodeQuotaUndoKey(const kv::Key &key, QuotaOwnerType &ownerType, inode_t &
 	if (!startsWith(key, kQuotaUndoKeyPrefix) || key.size() != fixedSize) { return false; }
 
 	const uint8_t *ptr = key.data() + kQuotaUndoKeyPrefix.size() + sizeof(uint64_t);
-	ownerType = static_cast<QuotaOwnerType>(*ptr);
+	const uint8_t ownerTypeValue = *ptr;
+	if (ownerTypeValue > static_cast<uint8_t>(QuotaOwnerType::kInode)) { return false; }
+
+	ownerType = static_cast<QuotaOwnerType>(ownerTypeValue);
 	ptr++;
 	getINode(&ptr, ownerId);
 	return true;
@@ -166,8 +169,14 @@ std::pair<uint64_t, bool> QuotaUndoRecorder::restoreSingleCheckpoint(
 			if (!decodeQuotaUndoKey(pair.key, ownerType, ownerId) || pair.value.empty()) { continue; }
 
 			if (pair.value[0] == kQuotaTombstone) {
-				// Owner had no limits at the checkpoint: remove it.
-				gMetadata->quotaDatabase.remove(ownerType, ownerId);
+				// The owner had no limits at the checkpoint. Clear only the persisted limit
+				// slots: node loading has already reconstructed kUsed, which must survive quota
+				// rollback for correct reporting and enforcement.
+				for (const auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard}) {
+					for (const auto resource : {QuotaResource::kInodes, QuotaResource::kSize}) {
+						gMetadata->quotaDatabase.remove(ownerType, ownerId, rigor, resource);
+					}
+				}
 			} else if (pair.value.size() >= 1 + (kQuotaLimitSlots * sizeof(uint64_t))) {
 				const uint8_t *valuePtr = pair.value.data() + 1;
 				std::array<uint64_t, kQuotaLimitSlots> limits{};
