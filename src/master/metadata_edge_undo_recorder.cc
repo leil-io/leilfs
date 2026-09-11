@@ -22,8 +22,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <ranges>
 #include <string>
+#include <vector>
 
 #include "common/datapack.h"
 #include "kv/kv_utils.h"
@@ -49,6 +51,12 @@ kv::Key edgeUndoKey(uint64_t checkpointVersion, inode_t parentId, const HString 
 	kv::appendStr(key, name);
 	return key;
 }
+
+struct EdgeUndoEntry {
+	inode_t parentId = 0;
+	std::string name;
+	std::optional<inode_t> childId;
+};
 
 // Key format: EDGEU_ + <checkpoint:u64> + <parentId:inode_t> + <name>
 bool decodeEdgeUndoKey(const kv::Key &key, inode_t &parentId, std::string &name) {
@@ -132,7 +140,7 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 	kv::Key prefix = edgeUndoPrefix(checkpointVersion);
 	kv::KeySelector startSelector(prefix, true, 0);
 	kv::KeySelector endSelector(kv::prefixEnd(prefix), true, 0);
-	uint64_t restoredEntries = 0;
+	std::vector<EdgeUndoEntry> undoEntries;
 
 	while (true) {
 		auto transaction = kvEngine_->createReadOnlyTransaction();
@@ -143,27 +151,46 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 			std::string name;
 			if (!decodeEdgeUndoKey(pair.key, parentId, name)) { continue; }
 
-			HString edgeName(name);
-			int8_t status = kOpSuccess;
 			if (pair.value.empty()) {
-				// Tombstone: edge did not exist at the checkpoint, so remove it.
-				status = metadata::edges::removeLoadedEdge(fsOpContext, parentId, edgeName);
+				undoEntries.push_back(
+				    {.parentId = parentId, .name = name, .childId = std::nullopt});
 			} else {
+				if (pair.value.size() != sizeof(inode_t)) {
+					safs::log_err("{}: malformed edge undo value of size {}", __func__,
+					              pair.value.size());
+					return {0, false};
+				}
 				const uint8_t *ptr = pair.value.data();
 				inode_t childId{};
 				getINode(&ptr, childId);
-				status = metadata::edges::restoreLoadedEdge(fsOpContext, parentId, childId, edgeName);
+				undoEntries.push_back({.parentId = parentId, .name = name, .childId = childId});
 			}
-
-			if (status != kOpSuccess) { return {restoredEntries, false}; }
-			++restoredEntries;
 		}
 
 		if (!page.hasMore() || page.getPairs().empty()) { break; }
 
 		startSelector = kv::KeySelector(page.getPairs().back().key, false, 0);
 	}
-	return {restoredEntries, true};
+
+	// Detach every affected live edge before attaching any checkpoint pre-image. Applying the
+	// rows independently can attach one side of a directory hierarchy inversion while its live
+	// inverse still exists, temporarily creating a parent cycle during recursive stats updates.
+	for (const auto &entry : undoEntries) {
+		if (metadata::edges::removeLoadedEdge(fsOpContext, entry.parentId, HString(entry.name)) !=
+		    kOpSuccess) {
+			return {0, false};
+		}
+	}
+
+	for (const auto &entry : undoEntries) {
+		if (!entry.childId.has_value()) { continue; }
+		if (metadata::edges::restoreLoadedEdge(fsOpContext, entry.parentId, *entry.childId,
+		                                       HString(entry.name)) != kOpSuccess) {
+			return {0, false};
+		}
+	}
+
+	return {static_cast<uint64_t>(undoEntries.size()), true};
 }
 
 int8_t EdgeUndoRecorder::dropCheckpointData(kv::IReadWriteTransaction *transaction,

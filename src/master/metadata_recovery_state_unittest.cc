@@ -24,6 +24,8 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -34,8 +36,14 @@
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/filesystem_metadata.h"
+#include "master/filesystem_node.h"
+#include "master/filesystem_node_types.h"
+#include "master/filesystem_operations.h"
+#include "master/hstring_memstorage.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_checkpoint_helpers.h"
+#include "master/metadata_edge_restore_helpers.h"
+#include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_quota_undo_recorder.h"
 
 namespace {
@@ -116,6 +124,189 @@ kv::Key quotaUndoKey(uint64_t checkpointVersion, uint8_t ownerType, inode_t owne
 	const kv::Value ownerIdBytes = kv::toBytesBE(ownerId);
 	key.insert(key.end(), ownerIdBytes.begin(), ownerIdBytes.end());
 	return key;
+}
+
+kv::Key edgeUndoKey(uint64_t checkpointVersion, inode_t parentId, std::string_view name) {
+	kv::Key key = kv::encodeKeyBE(kEdgeUndoKeyPrefix, checkpointVersion, parentId);
+	key.insert(key.end(), name.begin(), name.end());
+	return key;
+}
+
+// This test models a hierarchy inversion between a sealed checkpoint and the latest live image
+// (arrows point from parent to child):
+//
+//     checkpoint                 latest live image
+//     ----------                 -----------------
+//     root                       root
+//       |                          |
+//       A                          B
+//       |                          |
+//       B                          A
+//
+// The corresponding undo rows restore root/A and A/B, and remove root/B and B/A. The old
+// row-at-a-time implementation processed them in key order:
+//
+//     1. restore root/A
+//     2. remove  root/B
+//     3. restore A/B    -> root -> A <-> B (B/A is still live)
+//     4. remove  B/A    -> root -> A -> B
+//
+// Step 3 temporarily forms a directory cycle. Recursive directory-stat maintenance can then
+// overflow the stack even though step 4 would leave the final graph correct. The production fix
+// avoids the invalid intermediate graph by detaching all affected live edges before attaching
+// any checkpoint pre-images.
+class CycleDetectingNodeOperations final : public FilesystemNodeOperationsBase {
+public:
+	// The production implementations recursively traverse directory topology. Detect a cycle
+	// iteratively first and suppress that recursive call, so the regression is deterministic
+	// instead of crashing with a stack overflow and can report that the bad state was observed.
+	void getStats(const FilesystemOperationContext &fsOpContext, FSNode *node,
+	              StatsRecord *stats) override {
+		if (node != nullptr && node->type == FSNodeType::kDirectory &&
+		    hasParentCycle(fsOpContext, static_cast<FSNodeDirectory *>(node))) {
+			transientCycleDetected_ = true;
+			*stats = {};
+			return;
+		}
+		FilesystemNodeOperationsBase::getStats(fsOpContext, node, stats);
+	}
+
+	void addStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	              StatsRecord *stats) override {
+		if (hasParentCycle(fsOpContext, parent)) {
+			transientCycleDetected_ = true;
+			return;
+		}
+		FilesystemNodeOperationsBase::addStats(fsOpContext, parent, stats);
+	}
+
+	void subStats(const FilesystemOperationContext &fsOpContext, FSNodeDirectory *parent,
+	              StatsRecord *stats) override {
+		if (hasParentCycle(fsOpContext, parent)) {
+			transientCycleDetected_ = true;
+			return;
+		}
+		FilesystemNodeOperationsBase::subStats(fsOpContext, parent, stats);
+	}
+
+	bool transientCycleDetected() const { return transientCycleDetected_; }
+
+private:
+	bool hasParentCycle(const FilesystemOperationContext &fsOpContext,
+	                    const FSNodeDirectory *start) {
+		if (start == nullptr) { return false; }
+
+		std::vector<inode_t> pending;
+		for (const auto &[parentId, handle] : start->parents) {
+			(void)handle;
+			pending.push_back(parentId);
+		}
+
+		std::unordered_set<inode_t> visited;
+		while (!pending.empty()) {
+			const inode_t parentId = pending.back();
+			pending.pop_back();
+			if (parentId == start->id) { return true; }
+			if (!visited.insert(parentId).second) { continue; }
+
+			FSNode *parent = idToNode(fsOpContext, parentId);
+			if (parent == nullptr || parent->type != FSNodeType::kDirectory) { continue; }
+			for (const auto &[ancestorId, handle] : parent->parents) {
+				(void)handle;
+				pending.push_back(ancestorId);
+			}
+		}
+		return false;
+	}
+
+	bool transientCycleDetected_ = false;
+};
+
+class EdgeRecoveryStateTest : public ::testing::Test {
+protected:
+	void SetUp() override {
+		previousMetadata_ = gMetadata;
+		previousFSOperations_ = std::move(gFSOperations);
+
+		gMetadata = new FilesystemMetadata;
+		hstorage::Storage::reset(new hstorage::MemStorage());
+		auto nodeOperations = std::make_unique<CycleDetectingNodeOperations>();
+		nodeOperations_ = nodeOperations.get();
+		gFSOperations = std::make_unique<FilesystemOperationsBase>(std::move(nodeOperations));
+
+		root_ = addDirectory(/*inode=*/1);
+		directoryA_ = addDirectory(/*inode=*/2);
+		directoryB_ = addDirectory(/*inode=*/3);
+		gMetadata->root = root_;
+
+		// Construct the latest live hierarchy: root -> B -> A.
+		ASSERT_EQ(
+		    metadata::edges::restoreLoadedEdge(context_, root_->id, directoryB_->id, HString("B")),
+		    kOpSuccess);
+		ASSERT_EQ(metadata::edges::restoreLoadedEdge(context_, directoryB_->id, directoryA_->id,
+		                                             HString("A")),
+		          kOpSuccess);
+
+		engine_.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+
+		// Record the pre-images needed to reconstruct the checkpoint hierarchy root -> A -> B.
+		// Empty values are tombstones: those edges were absent at the checkpoint and must be
+		// removed from the latest live hierarchy.
+		engine_.store()[edgeUndoKey(kCheckpointVersion, root_->id, "A")] =
+		    kv::toBytesBE(directoryA_->id);
+		engine_.store()[edgeUndoKey(kCheckpointVersion, root_->id, "B")] = {};
+		engine_.store()[edgeUndoKey(kCheckpointVersion, directoryA_->id, "B")] =
+		    kv::toBytesBE(directoryB_->id);
+		engine_.store()[edgeUndoKey(kCheckpointVersion, directoryB_->id, "A")] = {};
+	}
+
+	void TearDown() override {
+		gFSOperations.reset();
+		delete gMetadata;
+		gMetadata = previousMetadata_;
+		gFSOperations = std::move(previousFSOperations_);
+	}
+
+	FSNodeDirectory *addDirectory(inode_t inode) {
+		auto *directory = new FSNodeDirectory;
+		directory->id = inode;
+		gMetadata->addNode(directory, /*isFromScan=*/true);
+		gMetadata->inodePool.markAsAcquired(inode);
+		return directory;
+	}
+
+	static constexpr uint64_t kCheckpointVersion = 17;
+
+	FilesystemMetadata *previousMetadata_ = nullptr;
+	std::unique_ptr<IFilesystemOperations> previousFSOperations_;
+	FilesystemOperationContext context_;
+	StoreKVEngine engine_;
+	CycleDetectingNodeOperations *nodeOperations_ = nullptr;
+	FSNodeDirectory *root_ = nullptr;
+	FSNodeDirectory *directoryA_ = nullptr;
+	FSNodeDirectory *directoryB_ = nullptr;
+};
+
+TEST_F(EdgeRecoveryStateTest, DirectoryHierarchyInversionNeverCreatesTransientCycle) {
+	EdgeUndoRecorder recorder(&engine_);
+	ASSERT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+
+	// The final graph alone is insufficient: the old implementation also eventually produced the
+	// right graph, but exposed A <-> B while applying its third undo row.
+	EXPECT_FALSE(nodeOperations_->transientCycleDetected());
+
+	// Verify the complete checkpoint topology root -> A -> B and the removal of both inverse live
+	// edges, root/B and B/A.
+	auto rootToA = root_->find(HString("A"));
+	ASSERT_NE(rootToA, root_->entries.end());
+	EXPECT_EQ(rootToA->second, directoryA_);
+	EXPECT_EQ(root_->find(HString("B")), root_->entries.end());
+
+	auto aToB = directoryA_->find(HString("B"));
+	ASSERT_NE(aToB, directoryA_->entries.end());
+	EXPECT_EQ(aToB->second, directoryB_);
+	EXPECT_EQ(directoryB_->find(HString("A")), directoryB_->entries.end());
 }
 
 class QuotaRecoveryStateTest : public ::testing::Test {
