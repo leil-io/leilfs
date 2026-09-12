@@ -20,6 +20,7 @@
 
 #include "master/metadata_edge_undo_recorder.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>

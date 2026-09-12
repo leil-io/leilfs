@@ -22,6 +22,7 @@
 
 #include <fcntl.h>  // for open and O_RDONLY
 #include <sys/mman.h>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>

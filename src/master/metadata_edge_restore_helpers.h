@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstdint>
 
 #include "common/type_defs.h"
