@@ -18,8 +18,11 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <unordered_set>
 #include <vector>
@@ -31,8 +34,8 @@
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_quota_undo_recorder.h"
-#include "master/metadata_xattr_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
+#include "master/metadata_xattr_undo_recorder.h"
 
 /// Snapshot descriptor bound to one metadata checkpoint boundary.
 ///

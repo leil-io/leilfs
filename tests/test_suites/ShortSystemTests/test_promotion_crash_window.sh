@@ -1,6 +1,6 @@
 timeout_set 3 minutes
 
-assert_program_installed setfacl getfacl
+assert_program_installed setfacl getfacl setfattr getfattr
 
 # Regression test: a master killed mid-burst and recovered by promoting its shadow must durably
 # persist the changelog-replayed state, so data the promoted master serves is not lost on a later

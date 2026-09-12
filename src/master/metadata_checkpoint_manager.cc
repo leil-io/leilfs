@@ -16,6 +16,8 @@
    along with LeilFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_checkpoint_manager.h"
 
 #include <cstring>
