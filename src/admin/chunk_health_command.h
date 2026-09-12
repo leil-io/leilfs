@@ -24,9 +24,10 @@
 
 #include <map>
 
+#include "admin/saunafs_admin_command.h"
+#include "common/chunk_health_freshness.h"
 #include "common/chunks_availability_state.h"
 #include "common/server_connection.h"
-#include "admin/saunafs_admin_command.h"
 
 class ChunksHealthCommand : public SaunaFsAdminCommand {
 public:
@@ -34,6 +35,12 @@ public:
 	virtual SupportedOptions supportedOptions() const;
 	virtual void usage() const;
 	virtual void run(const Options& options) const;
+
+	/// Human-readable sentence on when the counts were measured, printed before them.
+	static std::string freshnessSummary(const ChunkHealthFreshness &freshness, uint32_t serverTime);
+	/// Porcelain MEA row, printed after the counters: generation, age, duration, chunks scanned,
+	/// chunks excluded, chunkservers unreachable. Generation 0 means nothing measured yet.
+	static std::string freshnessRow(const ChunkHealthFreshness &freshness, uint32_t serverTime);
 
 private:
 	static const std::string kOptionAll;

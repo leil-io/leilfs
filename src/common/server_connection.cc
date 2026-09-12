@@ -40,6 +40,21 @@ constexpr size_t kMaxMessageSize = 4 * 1024 * 1024;
 
 namespace {
 
+/// Whether a failed SSL_read means the peer closed the connection: a close_notify, an EOF with
+/// no error, or the abrupt EOF OpenSSL 3 reports as a protocol error when the peer skipped the
+/// close_notify, as a server that tears its socket down does.
+bool tlsPeerClosed(int sslError, int readResult) {
+	if (sslError == SSL_ERROR_ZERO_RETURN) { return true; }
+	if (sslError == SSL_ERROR_SYSCALL && readResult == 0) { return true; }
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+	if (sslError == SSL_ERROR_SSL &&
+	    ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) {
+		return true;
+	}
+#endif
+	return false;
+}
+
 /// Writes the \p request to the \p fd_ socket
 void sendRequestGeneric(int fd, const MessageBuffer &request, const Timeout &timeout,
                         const TlsSession *tlsSession) {
@@ -113,6 +128,10 @@ MessageBuffer receiveRequestGeneric(int fd, PacketHeader::Type expectedType,
 						}
 						continue;
 					}
+					if (totalRead == 0 && tlsPeerClosed(err, ret)) {
+						throw ConnectionClosedException(
+						    "TLS read failed: connection closed by peer before answering");
+					}
 					throw ConnectionException("TLS read failed: " + opensslErrorString(err));
 				}
 				totalRead += ret;
@@ -175,6 +194,10 @@ MessageBuffer receiveRequestGeneric(int fd, PacketHeader::Type expectedType,
 			}
 			ssize_t bytesRead = reader.readFrom(fd);
 			if (bytesRead == 0) {
+				if (reader.isEmpty()) {
+					throw ConnectionClosedException(
+					    "Can't read data from socket: connection closed by peer before answering");
+				}
 				throw ConnectionException("Can't read data from socket: connection reset by peer");
 			}
 			if (bytesRead < 0) {

@@ -175,6 +175,53 @@ TEST(MatoclCommunicationTests, XorChunksHealth) {
 	}
 }
 
+TEST(MatoclCommunicationTests, ChunksHealthWithFreshness) {
+	ChunksAvailabilityState availIn, availOut;
+	ChunksReplicationState replIn, replOut;
+	availIn.addChunk(1, ChunksAvailabilityState::kEndangered);
+	availIn.addChunk(3, ChunksAvailabilityState::kLost);
+	replIn.addChunk(2, 2, 10);
+	replIn.addChunk(3, 15, 5);
+	SAUNAFS_DEFINE_INOUT_PAIR(bool, fromScan, true, false);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, serverTime, 1789126905U, 0U);
+	ChunkHealthFreshness freshnessIn, freshnessOut;
+	freshnessIn.generation = 41;
+	freshnessIn.scanStart = 1789126800;
+	freshnessIn.scanEnd = 1789126803;
+	freshnessIn.chunksScanned = 123456789012ULL;
+	freshnessIn.chunksExcluded = 7;
+	freshnessIn.chunkserversDown = 2;
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocl::chunksHealth::serialize(buffer, availIn, replIn, fromScanIn,
+	                                                freshnessIn, serverTimeIn));
+
+	verifyHeader(buffer, SAU_MATOCL_CHUNKS_HEALTH);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, matocl::chunksHealth::kWithFreshness);
+	ASSERT_NO_THROW(matocl::chunksHealth::deserialize(buffer, availOut, replOut, fromScanOut,
+	                                                  freshnessOut, serverTimeOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(fromScan);
+	SAUNAFS_VERIFY_INOUT_PAIR(serverTime);
+	EXPECT_EQ(freshnessIn.generation, freshnessOut.generation);
+	EXPECT_EQ(freshnessIn.scanStart, freshnessOut.scanStart);
+	EXPECT_EQ(freshnessIn.scanEnd, freshnessOut.scanEnd);
+	EXPECT_EQ(freshnessIn.chunksScanned, freshnessOut.chunksScanned);
+	EXPECT_EQ(freshnessIn.chunksExcluded, freshnessOut.chunksExcluded);
+	EXPECT_EQ(freshnessIn.chunkserversDown, freshnessOut.chunkserversDown);
+	EXPECT_TRUE(freshnessOut.measured());
+	for (uint8_t goal = 0; goal <= GoalId::kMax; ++goal) {
+		EXPECT_EQ(availIn.safeChunks(goal), availOut.safeChunks(goal)) << "goal " << (int)goal;
+		EXPECT_EQ(availIn.endangeredChunks(goal), availOut.endangeredChunks(goal));
+		EXPECT_EQ(availIn.lostChunks(goal), availOut.lostChunks(goal));
+		for (uint32_t part = 0; part < ChunksReplicationState::kMaxPartsCount; ++part) {
+			EXPECT_EQ(replIn.chunksToReplicate(goal, part), replOut.chunksToReplicate(goal, part));
+			EXPECT_EQ(replIn.chunksToDelete(goal, part), replOut.chunksToDelete(goal, part));
+		}
+	}
+}
+
 TEST(MatoclCommunicationTests, FuseDeleteAcl) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 123, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, SAUNAFS_ERROR_EPERM, 0);

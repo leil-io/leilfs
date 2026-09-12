@@ -1865,17 +1865,35 @@ void matoclserv_list_goals(matoclserventry* eptr) {
 /// @param data Pointer to the data received from the client
 /// @param length The length of the data received
 ///
-/// This function deserializes the request data to determine if only regular chunks should be
-/// considered for health checks, and then builds a response message containing the health status
-/// of the chunks, including their availability and replication states.
+/// Answers in the version the client asked in. Version 1 also carries when the counters were
+/// measured, which matters on a backend that derives them from its records instead of keeping
+/// them current as chunks change.
 void matoclserv_chunks_health(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
-	bool regularChunksOnly;
-	cltoma::chunksHealth::deserialize(data, length, regularChunksOnly);
-	auto message =
-	    matocl::chunksHealth::build(regularChunksOnly, gChunkOperations->getAvailabilityState(),
-	                                gChunkOperations->getReplicationState());
+	PacketVersion version = 0;
+	deserializePacketVersionNoHeader(data, length, version);
 
-	matoclserv_createpacket(eptr, std::move(message));
+	MessageBuffer buffer;
+
+	if (version == cltoma::chunksHealth::kStandard) {
+		bool regularChunksOnly = false;
+		cltoma::chunksHealth::deserialize(data, length, regularChunksOnly);
+		matocl::chunksHealth::serialize(buffer, regularChunksOnly,
+		                                gChunkOperations->getAvailabilityState(),
+		                                gChunkOperations->getReplicationState());
+	} else if (version == cltoma::chunksHealth::kWithFreshness) {
+		cltoma::chunksHealth::deserialize(data, length);
+		auto freshness = gChunkOperations->getHealthFreshness();
+		matocl::chunksHealth::serialize(
+		    buffer, gChunkOperations->getAvailabilityState(),
+		    gChunkOperations->getReplicationState(), freshness.has_value(),
+		    freshness.value_or(ChunkHealthFreshness()), static_cast<uint32_t>(eventloop_time()));
+	} else {
+		safs::log_info("SAU_CLTOMA_CHUNKS_HEALTH - wrong packet version {}", version);
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	}
+
+	matoclserv_createpacket(eptr, std::move(buffer));
 }
 
 /// Handles the CLTOMA_SESSION_LIST command, which lists all active sessions.

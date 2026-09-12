@@ -31,6 +31,10 @@ SAUNAFS_CREATE_EXCEPTION_CLASS(ConfigurationException, Exception);
 SAUNAFS_CREATE_EXCEPTION_CLASS(FilesystemException, Exception);
 SAUNAFS_CREATE_EXCEPTION_CLASS(InitializeException, Exception);
 SAUNAFS_CREATE_EXCEPTION_CLASS(ConnectionException, Exception);
+/// The peer closed the connection before sending any byte of an answer. A server that does not
+/// know a request does this, so a client may retry with an older request shape on this failure
+/// alone; a close in the middle of an answer is an ordinary ConnectionException.
+SAUNAFS_CREATE_EXCEPTION_CLASS(ConnectionClosedException, ConnectionException);
 
 SAUNAFS_CREATE_EXCEPTION_CLASS(ReadException, Exception);
 SAUNAFS_CREATE_EXCEPTION_CLASS(RecoverableReadException, ReadException);

@@ -3,7 +3,7 @@ collect_sources(LEIL_ADMIN)
 add_library(leil-admin-lib ${LEIL_ADMIN_SOURCES})
 target_link_libraries(leil-admin-lib leil-common)
 create_unittest(leil-admin-lib ${LEIL_ADMIN_TESTS})
-link_unittest(leil-admin-lib leil-common)
+link_unittest(leil-admin-lib leil-admin-lib leil-common)
 
 set(ADMIN_RC_FILE "")
 if(MINGW)

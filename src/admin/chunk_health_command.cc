@@ -22,10 +22,13 @@
 #include "admin/chunk_health_command.h"
 
 #include <iostream>
+#include <memory>
+#include <sstream>
 
+#include "common/exceptions.h"
+#include "common/server_connection.h"
 #include "protocol/cltoma.h"
 #include "protocol/matocl.h"
-#include "common/server_connection.h"
 
 std::vector<uint8_t> ChunksHealthCommand::goals;
 std::map<uint8_t, std::string> ChunksHealthCommand::goalNames;
@@ -80,32 +83,105 @@ void ChunksHealthCommand::run(const Options& options) const {
 	auto tlsCfg =
 	    options.getValue<std::string>("--tlsconfigfile", std::string(TlsSession::kNoFile));
 
-	ServerConnection connection(options.argument(0), options.argument(1), tlsCfg);
-	bool regularOnly = false;
-	auto request = cltoma::chunksHealth::build(regularOnly);
-	auto response = connection.sendAndReceive(request, SAU_MATOCL_CHUNKS_HEALTH);
-	ChunksAvailabilityState availability;
-	ChunksReplicationState replication;
-	matocl::chunksHealth::deserialize(response, regularOnly, availability, replication);
-	if (regularOnly) {
-		throw Exception("Incorrect response type received");
+	auto connection =
+	    std::make_unique<ServerConnection>(options.argument(0), options.argument(1), tlsCfg);
+
+	// An older server closes the connection on the dated request without answering; that failure
+	// alone is retried with the original request. Any other failure is reported as it is: an
+	// answer without its measurement date would read as a server that keeps none.
+	MessageBuffer response;
+	try {
+		response =
+		    connection->sendAndReceive(cltoma::chunksHealth::build(), SAU_MATOCL_CHUNKS_HEALTH);
+	} catch (const ConnectionClosedException &) {
+		std::cerr << "The server closed the connection on the request that carries the measurement"
+		             " date; asking again with the original request, whose answer carries none."
+		          << std::endl;
+		connection =
+		    std::make_unique<ServerConnection>(options.argument(0), options.argument(1), tlsCfg);
+		response = connection->sendAndReceive(cltoma::chunksHealth::build(false),
+		                                      SAU_MATOCL_CHUNKS_HEALTH);
 	}
 
-	initializeGoals(connection);
+	ChunksAvailabilityState availability;
+	ChunksReplicationState replication;
+	bool healthFromScan = false;
+	ChunkHealthFreshness freshness;
+	uint32_t serverTime = 0;
+
+	PacketVersion responseVersion = 0;
+	deserializePacketVersionNoHeader(response, responseVersion);
+
+	if (responseVersion == matocl::chunksHealth::kWithFreshness) {
+		matocl::chunksHealth::deserialize(response, availability, replication, healthFromScan,
+		                                  freshness, serverTime);
+	} else {
+		bool regularOnly = false;
+		matocl::chunksHealth::deserialize(response, regularOnly, availability, replication);
+		if (regularOnly) { throw Exception("Incorrect response type received"); }
+	}
+
+	initializeGoals(*connection);
 
 	bool showAllReports = !options.isSet(kOptionAvailability)
 			&& !options.isSet(kOptionReplication)
 			&& !options.isSet(kOptionDeletion);
-	if (showAllReports || options.isSet(kOptionAvailability)) {
-		printState(availability, options.isSet(kPorcelainMode));
-	}
-	if (showAllReports || options.isSet(kOptionReplication)) {
-		printState(true, replication, options.isSet(kPorcelainMode));
-	}
-	if (showAllReports || options.isSet(kOptionDeletion)) {
-		printState(false, replication, options.isSet(kPorcelainMode));
+	// The measurement is printed whichever report was asked for, since a count without its date
+	// cannot be told from one nobody has taken yet: before the counts for a reader, after them
+	// for a script.
+	const bool isPorcelain = options.isSet(kPorcelainMode);
+	if (healthFromScan && !isPorcelain) {
+		std::cout << freshnessSummary(freshness, serverTime) << std::endl << std::endl;
 	}
 
+	if (showAllReports || options.isSet(kOptionAvailability)) {
+		printState(availability, isPorcelain);
+	}
+	if (showAllReports || options.isSet(kOptionReplication)) {
+		printState(true, replication, isPorcelain);
+	}
+	if (showAllReports || options.isSet(kOptionDeletion)) {
+		printState(false, replication, isPorcelain);
+	}
+
+	if (healthFromScan && isPorcelain) {
+		std::cout << freshnessRow(freshness, serverTime) << std::endl;
+	}
+}
+
+/// Seconds between the end of the measurement and the answering server's clock, never negative.
+static uint32_t measurementAge(const ChunkHealthFreshness &freshness, uint32_t serverTime) {
+	return serverTime > freshness.scanEnd ? serverTime - freshness.scanEnd : 0;
+}
+
+/// Seconds the measurement took, never negative.
+static uint32_t measurementDuration(const ChunkHealthFreshness &freshness) {
+	return freshness.scanEnd > freshness.scanStart ? freshness.scanEnd - freshness.scanStart : 0;
+}
+
+std::string ChunksHealthCommand::freshnessSummary(const ChunkHealthFreshness &freshness,
+                                                  uint32_t serverTime) {
+	if (!freshness.measured()) {
+		return "Chunk health has not been measured yet, so the counts below are not a statement"
+		       " about the installation.";
+	}
+	std::ostringstream out;
+	out << "Measured " << measurementAge(freshness, serverTime) << "s ago (scan "
+	    << freshness.generation << " took " << measurementDuration(freshness) << "s, "
+	    << freshness.chunksScanned << " chunks, " << freshness.chunksExcluded << " excluded, "
+	    << freshness.chunkserversDown << " chunkservers unreachable)";
+	return out.str();
+}
+
+std::string ChunksHealthCommand::freshnessRow(const ChunkHealthFreshness &freshness,
+                                              uint32_t serverTime) {
+	// One shape whether or not anything has been measured: real generations start at 1.
+	const uint32_t age = freshness.measured() ? measurementAge(freshness, serverTime) : 0;
+	std::ostringstream out;
+	out << "MEA " << freshness.generation << ' ' << age << ' ' << measurementDuration(freshness)
+	    << ' ' << freshness.chunksScanned << ' ' << freshness.chunksExcluded << ' '
+	    << freshness.chunkserversDown;
+	return out.str();
 }
 
 void ChunksHealthCommand::printState(const ChunksAvailabilityState& state, bool isPorcelain) const {

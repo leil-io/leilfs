@@ -22,8 +22,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "common/chunk_health_freshness.h"
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
 #include "common/chunk_with_address_and_label.h"
@@ -167,6 +169,10 @@ public:
 	virtual uint32_t count() = 0;
 	virtual const ChunksReplicationState &getReplicationState() = 0;
 	virtual const ChunksAvailabilityState &getAvailabilityState() = 0;
+	/// When the two states above were measured, for a backend that derives them from its records
+	/// instead of maintaining them as chunks change. Empty means the counters are current by
+	/// construction, so there is no measurement to date.
+	virtual std::optional<ChunkHealthFreshness> getHealthFreshness() = 0;
 	virtual void info(uint32_t *allChunks, uint32_t *allCopies, uint32_t *regCopies) = 0;
 	virtual int invalidateGoalCache() = 0;
 #endif  // METARESTORE

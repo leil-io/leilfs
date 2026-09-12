@@ -100,6 +100,16 @@ TEST(CltomaCommunicationTests, XorChunksHealth) {
 	SAUNAFS_VERIFY_INOUT_PAIR(regular);
 }
 
+TEST(CltomaCommunicationTests, ChunksHealthWithFreshness) {
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cltoma::chunksHealth::serialize(buffer));
+
+	verifyHeader(buffer, SAU_CLTOMA_CHUNKS_HEALTH);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, cltoma::chunksHealth::kWithFreshness);
+	ASSERT_NO_THROW(cltoma::chunksHealth::deserialize(buffer));
+}
+
 TEST(CltomaCommunicationTests, FuseDeleteAcl) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, messageId, 123, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(inode_t, inode, 456, 0);

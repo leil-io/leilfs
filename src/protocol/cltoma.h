@@ -206,9 +206,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		bool, dummy)
 
 // SAU_CLTOMA_CHUNKS_HEALTH
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(
-		cltoma, chunksHealth, SAU_CLTOMA_CHUNKS_HEALTH, 0,
-		bool, regularChunksOnly)
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, chunksHealth, kStandard, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(cltoma, chunksHealth, kWithFreshness, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, chunksHealth, SAU_CLTOMA_CHUNKS_HEALTH, kStandard, bool,
+                                    regularChunksOnly)
+// The regular-only flag is not carried: no server has ever honored it, and a client asking
+// this way states instead that it can read the measurement date of the answer.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cltoma, chunksHealth, SAU_CLTOMA_CHUNKS_HEALTH, kWithFreshness)
 
 // SAU_CLTOMA_CSERV_LIST
 SAUNAFS_DEFINE_PACKET_VERSION(cltoma, cservList, kStandard, 0)

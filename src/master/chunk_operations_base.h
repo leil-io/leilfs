@@ -118,6 +118,8 @@ public:
 	uint32_t count() override;
 	const ChunksReplicationState &getReplicationState() override;
 	const ChunksAvailabilityState &getAvailabilityState() override;
+	/// The in-memory counters move with every chunk change, so they have no measurement date.
+	std::optional<ChunkHealthFreshness> getHealthFreshness() override { return std::nullopt; }
 	void info(uint32_t *allChunks, uint32_t *allCopies, uint32_t *regCopies) override;
 	int invalidateGoalCache() override;
 #endif  // METARESTORE
