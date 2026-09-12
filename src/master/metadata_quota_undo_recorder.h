@@ -97,7 +97,8 @@ public:
 	///
 	/// @param fsOpContext      Unused for quota restore (kept for ISectionUndoRecorder parity).
 	/// @param checkpointVersion Interval whose undo rows are replayed.
-	/// @return {entriesRestored, success}.
+	/// @return {entriesRestored, success}; success is false if an undo value is malformed or
+	///         cannot be applied.
 	std::pair<uint64_t, bool> restoreSingleCheckpoint(const FilesystemOperationContext &fsOpContext,
 	                                                  uint64_t checkpointVersion) override;
 

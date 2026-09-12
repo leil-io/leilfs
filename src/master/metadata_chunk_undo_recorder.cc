@@ -20,6 +20,7 @@
 
 #include "master/metadata_chunk_undo_recorder.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <ranges>
@@ -33,6 +34,8 @@
 #include "slogger/slogger.h"
 
 namespace {
+
+constexpr auto kChunkUndoValueSize = 3 * sizeof(uint32_t);
 
 bool startsWith(const kv::Key &key, std::string_view prefix) {
 	return key.size() >= prefix.size() &&
@@ -123,6 +126,11 @@ bool ChunkUndoRecorder::restoreToCheckpointVersion(uint64_t targetVersion) {
 
 		auto [entries, success] =
 		    restoreSingleCheckpoint(FilesystemOperationContext{}, checkpointVersion);
+		if (!success) {
+			safs::log_err("{}: failed to restore chunk checkpoint version {}", __func__,
+			              checkpointVersion);
+			return false;
+		}
 		restoredEntries += entries;
 	}
 
@@ -149,6 +157,12 @@ std::pair<uint64_t, bool> ChunkUndoRecorder::restoreSingleCheckpoint(
 			if (pair.value.empty()) {
 				chunk_restore_remove(chunkId);
 			} else {
+				if (pair.value.size() != kChunkUndoValueSize) {
+					safs::log_err("{}: malformed chunk undo value of size {} for chunk {}",
+					              __func__, pair.value.size(), chunkId);
+					return {restoredEntries, false};
+				}
+
 				const uint8_t *ptr = pair.value.data();
 				uint32_t chunkVersion = 0;
 				uint32_t lockedTo = 0;

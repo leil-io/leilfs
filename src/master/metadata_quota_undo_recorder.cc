@@ -20,7 +20,9 @@
 
 #include "master/metadata_quota_undo_recorder.h"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ranges>
@@ -42,6 +44,17 @@ constexpr uint8_t kQuotaTombstone = 0;
 constexpr uint8_t kQuotaPresent = 1;
 // Number of persisted limit slots per owner: rigor {soft, hard} x resource {inodes, size}.
 constexpr size_t kQuotaLimitSlots = 4;
+constexpr size_t kQuotaTombstoneValueSize = sizeof(kQuotaTombstone);
+constexpr size_t kQuotaPresentValueSize =
+    sizeof(kQuotaPresent) + (kQuotaLimitSlots * sizeof(uint64_t));
+
+bool isValidQuotaUndoValue(const kv::Value &value) {
+	if (value.empty()) { return false; }
+
+	if (value[0] == kQuotaTombstone) { return value.size() == kQuotaTombstoneValueSize; }
+	if (value[0] == kQuotaPresent) { return value.size() == kQuotaPresentValueSize; }
+	return false;
+}
 
 // Slot index in the recorded pre-image for a (rigor, resource) pair.
 constexpr size_t quotaSlot(QuotaRigor rigor, QuotaResource resource) {
@@ -166,7 +179,13 @@ std::pair<uint64_t, bool> QuotaUndoRecorder::restoreSingleCheckpoint(
 		for (const auto &pair : page.getPairs()) {
 			QuotaOwnerType ownerType{};
 			inode_t ownerId = 0;
-			if (!decodeQuotaUndoKey(pair.key, ownerType, ownerId) || pair.value.empty()) { continue; }
+			if (!decodeQuotaUndoKey(pair.key, ownerType, ownerId)) { continue; }
+
+			if (!isValidQuotaUndoValue(pair.value)) {
+				safs::log_err("{}: malformed quota undo value of size {} for owner {}", __func__,
+				              pair.value.size(), ownerId);
+				return {restoredEntries, false};
+			}
 
 			if (pair.value[0] == kQuotaTombstone) {
 				// The owner had no limits at the checkpoint. Clear only the persisted limit
@@ -177,7 +196,7 @@ std::pair<uint64_t, bool> QuotaUndoRecorder::restoreSingleCheckpoint(
 						gMetadata->quotaDatabase.remove(ownerType, ownerId, rigor, resource);
 					}
 				}
-			} else if (pair.value.size() >= 1 + (kQuotaLimitSlots * sizeof(uint64_t))) {
+			} else {
 				const uint8_t *valuePtr = pair.value.data() + 1;
 				std::array<uint64_t, kQuotaLimitSlots> limits{};
 				for (auto &limit : limits) { limit = get64bit(&valuePtr); }
@@ -190,10 +209,6 @@ std::pair<uint64_t, bool> QuotaUndoRecorder::restoreSingleCheckpoint(
 				}
 				// Drop the owner if the restored limits are all zero, matching setquota semantics.
 				gMetadata->quotaDatabase.removeEmpty(ownerType, ownerId);
-			} else {
-				safs::log_warn("{}: skipping malformed quota undo value of size {}", __func__,
-				               pair.value.size());
-				continue;
 			}
 
 			++restoredEntries;

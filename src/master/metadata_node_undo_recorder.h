@@ -144,8 +144,10 @@ private:
 	                          inode_t inode);
 
 	/// Applies one undo row to in-memory state: removes the loaded node for an empty tombstone,
-	/// otherwise deserializes the pre-image and restores it via metadata_node_restore_helpers.
-	/// @return true on success, false if creation or restore fails.
+	/// otherwise validates the type-specific serialized size, deserializes the pre-image, verifies
+	/// that its inode matches the undo key, and restores it via metadata_node_restore_helpers.
+	/// @return true on success, false if the value is malformed, its inode does not match the key,
+	///         or creation or restore fails.
 	bool applyNodeUndoEntry(const FilesystemOperationContext &fsOpContext, inode_t nodeId,
 	                        const kv::Value &undoValue);
 

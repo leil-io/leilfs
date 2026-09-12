@@ -20,6 +20,8 @@
 
 #include "master/metadata_xattr_undo_recorder.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ranges>
@@ -39,6 +41,18 @@ namespace {
 
 constexpr uint8_t kXAttrTombstone = 0;
 constexpr uint8_t kXAttrPresent = 1;
+constexpr size_t kXAttrTombstoneValueSize = sizeof(kXAttrTombstone);
+constexpr size_t kXAttrPresentHeaderSize = sizeof(kXAttrPresent);
+
+bool isValidXAttrUndoValue(const kv::Value &value) {
+	if (value.empty()) { return false; }
+
+	if (value[0] == kXAttrTombstone) { return value.size() == kXAttrTombstoneValueSize; }
+	if (value[0] == kXAttrPresent) {
+		return value.size() <= kXAttrPresentHeaderSize + SFS_XATTR_SIZE_MAX;
+	}
+	return false;
+}
 
 bool startsWith(const kv::Key &key, std::string_view prefix) {
 	return key.size() >= prefix.size() &&
@@ -58,7 +72,10 @@ kv::Key xattrUndoKey(uint64_t checkpointVersion, inode_t inode, std::span<const 
 // Undo key format: XATRU_ + <checkpoint:u64> + <inode:inode_t> + <name>
 bool decodeXAttrUndoKey(const kv::Key &key, inode_t &inode, std::vector<uint8_t> &name) {
 	const size_t fixedSize = kXAttrUndoKeyPrefix.size() + sizeof(uint64_t) + sizeof(inode_t);
-	if (!startsWith(key, kXAttrUndoKeyPrefix) || key.size() <= fixedSize) { return false; }
+	if (!startsWith(key, kXAttrUndoKeyPrefix) || key.size() <= fixedSize ||
+	    key.size() > fixedSize + SFS_XATTR_NAME_MAX) {
+		return false;
+	}
 
 	const uint8_t *ptr = key.data() + kXAttrUndoKeyPrefix.size() + sizeof(uint64_t);
 	getINode(&ptr, inode);
@@ -163,7 +180,16 @@ std::pair<uint64_t, bool> XAttrUndoRecorder::restoreSingleCheckpoint(
 		for (const auto &pair : page.getPairs()) {
 			inode_t inode = 0;
 			std::vector<uint8_t> name;
-			if (!decodeXAttrUndoKey(pair.key, inode, name) || pair.value.empty()) { continue; }
+			if (!decodeXAttrUndoKey(pair.key, inode, name)) {
+				safs::log_err("{}: malformed xattr undo key of size {}", __func__, pair.key.size());
+				return {restoredEntries, false};
+			}
+
+			if (!isValidXAttrUndoValue(pair.value)) {
+				safs::log_err("{}: malformed xattr undo value of size {} for inode {}", __func__,
+				              pair.value.size(), inode);
+				return {restoredEntries, false};
+			}
 
 			const auto nameLength = static_cast<uint8_t>(name.size());
 			uint8_t status = SAUNAFS_STATUS_OK;

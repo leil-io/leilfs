@@ -99,7 +99,8 @@ public:
 	///
 	/// @param fsOpContext      Unused for xattr restore (kept for ISectionUndoRecorder parity).
 	/// @param checkpointVersion Interval whose undo rows are replayed.
-	/// @return {entriesRestored, success}; success is false if any undo entry fails to apply.
+	/// @return {entriesRestored, success}; success is false if an undo key or value is malformed,
+	///         or if an undo entry fails to apply.
 	std::pair<uint64_t, bool> restoreSingleCheckpoint(const FilesystemOperationContext &fsOpContext,
 	                                                  uint64_t checkpointVersion) override;
 

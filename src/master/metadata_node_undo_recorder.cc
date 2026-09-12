@@ -20,10 +20,14 @@
 
 #include "master/metadata_node_undo_recorder.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <ranges>
 
+#include "common/datapack.h"
 #include "kv/kv_utils.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_interface.h"
@@ -32,6 +36,57 @@
 #include "slogger/slogger.h"
 
 namespace {
+
+bool isValidNodeUndoValue(const kv::Value &value) {
+	if (value.empty()) { return false; }
+
+	const auto type = static_cast<FSNodeType>(value[0]);
+	size_t expectedSize = 0;
+	switch (type) {
+	case FSNodeType::kDirectory:
+	case FSNodeType::kFifo:
+	case FSNodeType::kSocket:
+		expectedSize = FSNode::kNodeHeaderSize;
+		break;
+	case FSNodeType::kBlockDev:
+	case FSNodeType::kCharDev:
+		expectedSize = FSNodeDevice::kDeviceHeaderSize;
+		break;
+	case FSNodeType::kFile:
+	case FSNodeType::kTrash:
+	case FSNodeType::kReserved: {
+		if (value.size() < FSNodeFile::kFileHeaderSize) { return false; }
+
+		const uint8_t *source = value.data() + FSNode::kNodeHeaderSize + sizeof(uint64_t);
+		uint32_t chunkCount = 0;
+		get32bit(&source, chunkCount);
+		const uint16_t sessionCount = get16bit(&source);
+
+		const size_t payloadSize = value.size() - FSNodeFile::kFileHeaderSize;
+		const size_t sessionBytes = sizeof(uint32_t) * sessionCount;
+		if (sessionBytes > payloadSize) { return false; }
+
+		const size_t chunkBytes = payloadSize - sessionBytes;
+		return chunkBytes % sizeof(uint64_t) == 0 && chunkBytes / sizeof(uint64_t) == chunkCount;
+	}
+	case FSNodeType::kSymlink: {
+		if (value.size() < FSNodeSymlink::kSymlinkHeaderSize) { return false; }
+
+		const uint8_t *source = value.data() + FSNode::kNodeHeaderSize;
+		uint32_t pathLength = 0;
+		get32bit(&source, pathLength);
+		if (pathLength > std::numeric_limits<uint16_t>::max()) { return false; }
+
+		expectedSize = FSNodeSymlink::kSymlinkHeaderSize + pathLength;
+		break;
+	}
+	case FSNodeType::kUnknown:
+	default:
+		return false;
+	}
+
+	return value.size() == expectedSize;
+}
 
 bool startsWith(const kv::Key &key, std::string_view prefix) {
 	return key.size() >= prefix.size() &&
@@ -238,8 +293,14 @@ bool NodeUndoRecorder::applyNodeUndoEntry(const FilesystemOperationContext &fsOp
 		return true;
 	}
 
+	if (!isValidNodeUndoValue(undoValue)) {
+		safs::log_err("{}: malformed node undo value of size {} for inode {}", __func__,
+		              undoValue.size(), nodeId);
+		return false;
+	}
+
 	const uint8_t *source = undoValue.data();
-	auto type = static_cast<FSNodeType>(source[0]);
+	const auto type = static_cast<FSNodeType>(source[0]);
 	FSNode *node = FSNode::create(type);
 	if (node == nullptr) {
 		safs::log_err("{}: failed to create node for inode {}", __func__, nodeId);
@@ -247,5 +308,11 @@ bool NodeUndoRecorder::applyNodeUndoEntry(const FilesystemOperationContext &fsOp
 	}
 
 	node->deserialize(&source);
+	if (source != undoValue.data() + undoValue.size() || node->id != nodeId) {
+		safs::log_err("{}: node undo value does not match inode {}", __func__, nodeId);
+		FSNode::destroy(node);
+		return false;
+	}
+
 	return metadata::nodes::restoreLoadedNode(fsOpContext, node) == kOpSuccess;
 }

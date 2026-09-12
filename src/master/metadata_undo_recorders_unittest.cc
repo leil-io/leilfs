@@ -46,6 +46,7 @@
 #include "master/metadata_quota_undo_recorder.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_xattr_undo_recorder.h"
+#include "protocol/SFSCommunication.h"
 
 struct MetadataBackendForklessTestAccess {
 	static void recordDetainedInode(MetadataBackendForkless &backend, inode_t inode,
@@ -417,6 +418,152 @@ kv::Value quotaUndoValue(const QuotaLimits &limits) {
 constexpr uint64_t kCheckpointVersion = 17;
 
 }  // namespace
+
+TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValue) {
+	RecordingKVEngine engine;
+	ChunkUndoRecorder recorder(&engine);
+
+	constexpr uint64_t kChunkId = 41;
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[kv::encodeKeyBE(kChunkUndoKeyPrefix, kCheckpointVersion, kChunkId)] =
+	    kv::Value{0x01};
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoValue) {
+	RecordingKVEngine engine;
+	EdgeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kParentId = 41;
+	kv::Key undoKey = kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, kParentId);
+	kv::appendStr(undoKey, "child");
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[undoKey] = kv::Value{0x01};
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, XAttrRejectsMalformedUndoValues) {
+	kv::Value oversizedPresent(SFS_XATTR_SIZE_MAX + 2, 0);
+	oversizedPresent[0] = 0x01;
+	const std::array<kv::Value, 4> malformedValues{
+	    kv::Value{},
+	    kv::Value{0x00, 0xff},
+	    kv::Value{0x02},
+	    std::move(oversizedPresent),
+	};
+
+	for (const auto &malformedValue : malformedValues) {
+		SCOPED_TRACE(::testing::PrintToString(malformedValue));
+		RecordingKVEngine engine;
+		XAttrUndoRecorder recorder(&engine);
+
+		constexpr inode_t kInode = 41;
+		kv::Key undoKey = kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, kInode);
+		kv::appendStr(undoKey, "user.test");
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[undoKey] = malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
+}
+
+TEST(MetadataUndoRecorderRestore, XAttrRejectsOversizedUndoName) {
+	RecordingKVEngine engine;
+	XAttrUndoRecorder recorder(&engine);
+
+	constexpr inode_t kInode = 41;
+	kv::Key undoKey = kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, kInode);
+	undoKey.insert(undoKey.end(), SFS_XATTR_NAME_MAX + 1, 'x');
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[undoKey] = kv::Value{0x00};
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, QuotaRejectsMalformedUndoValues) {
+	kv::Value unknownTag = quotaUndoValue({1, 2, 3, 4});
+	unknownTag[0] = 0x02;
+	kv::Value oversizedPresent = quotaUndoValue({1, 2, 3, 4});
+	oversizedPresent.push_back(0xff);
+	const std::array<kv::Value, 5> malformedValues{
+	    kv::Value{},           kv::Value{0x00, 0xff},       kv::Value{0x01},
+	    std::move(unknownTag), std::move(oversizedPresent),
+	};
+
+	for (const auto &malformedValue : malformedValues) {
+		SCOPED_TRACE(::testing::PrintToString(malformedValue));
+		RecordingKVEngine engine;
+		QuotaUndoRecorder recorder(&engine);
+
+		constexpr inode_t kOwnerId = 41;
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[quotaUndoKey(kCheckpointVersion, QuotaOwnerType::kUser, kOwnerId)] =
+		    malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
+}
+
+TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoValues) {
+	kv::Value truncatedFile(FSNode::kNodeHeaderSize + sizeof(uint64_t), 0);
+	truncatedFile[0] = static_cast<uint8_t>(FSNodeType::kFile);
+	appendBigEndian(truncatedFile, uint32_t{1});
+	appendBigEndian(truncatedFile, uint16_t{0});
+
+	kv::Value truncatedSymlink(FSNode::kNodeHeaderSize, 0);
+	truncatedSymlink[0] = static_cast<uint8_t>(FSNodeType::kSymlink);
+	appendBigEndian(truncatedSymlink, uint32_t{1});
+
+	kv::Value oversizedDirectory(FSNode::kNodeHeaderSize + 1, 0);
+	oversizedDirectory[0] = static_cast<uint8_t>(FSNodeType::kDirectory);
+
+	const std::array<kv::Value, 5> malformedValues{
+	    kv::Value{0xff},
+	    kv::Value{static_cast<uint8_t>(FSNodeType::kDirectory)},
+	    std::move(oversizedDirectory),
+	    std::move(truncatedFile),
+	    std::move(truncatedSymlink),
+	};
+
+	for (const auto &malformedValue : malformedValues) {
+		SCOPED_TRACE(::testing::PrintToString(malformedValue));
+		RecordingKVEngine engine;
+		NodeUndoRecorder recorder(&engine);
+
+		constexpr inode_t kInode = 41;
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, kInode)] =
+		    malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
+}
+
+TEST(MetadataUndoRecorderRestore, NodeRejectsMismatchedUndoInode) {
+	RecordingKVEngine engine;
+	NodeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kUndoKeyInode = 41;
+	FSNodeDirectory serializedNode;
+	serializedNode.id = 42;
+	kv::Value undoValue(serializedNode.serializedSize());
+	uint8_t *destination = undoValue.data();
+	serializedNode.serialize(&destination);
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, kUndoKeyInode)] =
+	    std::move(undoValue);
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
 
 TEST(MetadataUndoRecorderRetry, ChunkPreservesOriginalPreimage) {
 	RecordingKVEngine engine;
