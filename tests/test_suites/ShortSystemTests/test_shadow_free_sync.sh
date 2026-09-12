@@ -50,9 +50,17 @@ assert_success saunafs_admin_master save-metadata
 # grows); the create+delete batch detains more. The live pool drifts from the dumped image,
 # which is what the shadow must reconcile on load.
 cd "${info[mount0]}"
+post_dump_detained_inodes="$TEMP_DIR/post_dump_detained_inodes"
+for file in free_churn/file{1..60}; do
+	inode_of "$file"
+done > "$post_dump_detained_inodes"
 rm -f free_churn/file{1..60}
 touch free_extra{1..40}
+for file in free_extra{1..40}; do
+	inode_of "$file"
+done >> "$post_dump_detained_inodes"
 rm -f free_extra{1..40}
+sort -u -o "$post_dump_detained_inodes" "$post_dump_detained_inodes"
 cd
 
 # Start the shadow AFTER the churn so it must rebuild the detained inode pool: load the saved
@@ -75,3 +83,17 @@ saunafs_wait_for_all_ready_chunkservers
 cd "${info[mount0]}"
 assert_no_diff "$metadata" "$(metadata_print)"
 metadata_validate_files
+
+# Namespace equality does not expose the detained inode pool. Allocate as many new inodes as were
+# detained by the post-dump churn and prove none is reused before the 24-hour detention expires.
+# If the shadow lost those FREE entries, the allocator would draw from these lower available IDs
+# instead of assigning fresh ones, and the set intersection would be non-empty.
+mkdir free_reuse_probe
+touch free_reuse_probe/file{1..100}
+allocated_inodes="$TEMP_DIR/post_promotion_allocated_inodes"
+for file in free_reuse_probe/file{1..100}; do
+	inode_of "$file"
+done | sort -u > "$allocated_inodes"
+
+# comm -12 suppresses entries unique to either sorted file, leaving only their intersection.
+assert_empty "$(comm -12 "$post_dump_detained_inodes" "$allocated_inodes")"

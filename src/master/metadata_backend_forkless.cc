@@ -671,21 +671,11 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 
 	// Connect the signal handlers after initial loading to avoid triggering them for already loaded
 	// free nodes.
-	gMetadata->inodePool.detainedAddedSignal.connect([this](inode_t inode, uint32_t timestamp) {
-		if (metadataWriter_) {
-			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
-		} else {
-			dirtyFreeInodes_.insert(inode);
-		}
-	});
+	gMetadata->inodePool.detainedAddedSignal.connect(
+	    [this](inode_t inode, uint32_t timestamp) { onFreeInodeDetained(inode, timestamp); });
 
-	gMetadata->inodePool.detainedRemovedSignal.connect([this](inode_t inode) {
-		if (metadataWriter_) {
-			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));
-		} else {
-			dirtyFreeInodes_.insert(inode);
-		}
-	});
+	gMetadata->inodePool.detainedRemovedSignal.connect(
+	    [this](inode_t inode) { onFreeInodeReleased(inode); });
 
 	// NOTE: unlike NODE, EDGE and CHNK, the FREE section intentionally has no checkpoint
 	// rollback (no FreeNodeUndoRecorder is registered, and FreeNodeUpdateEvent does not call
@@ -700,6 +690,22 @@ int8_t MetadataBackendForkless::loadFree(bool ignoreFlag) {
 	// replay, which the forkless backend never does. See test_shadow_free_sync.sh.
 	safs::log_info("Section loaded successfully (FREE 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
+}
+
+void MetadataBackendForkless::onFreeInodeDetained(inode_t inode, uint32_t timestamp) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, timestamp));
+	} else {
+		dirtyFreeInodeValues_[inode] = timestamp;
+	}
+}
+
+void MetadataBackendForkless::onFreeInodeReleased(inode_t inode) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));
+	} else {
+		dirtyFreeInodeValues_[inode] = std::nullopt;
+	}
 }
 
 int8_t MetadataBackendForkless::loadXAttr(bool ignoreFlag) {
@@ -1541,16 +1547,11 @@ void MetadataBackendForkless::reconcileDirtyAclsToFDB(uint64_t &persisted, uint6
 	}
 }
 
-// Free inodes: re-add still-detained ones (with their timestamp), remove released ones.
+// Free inodes: persist the final value captured by the last shadow-side transition for each key.
 void MetadataBackendForkless::reconcileDirtyFreeInodesToFDB(uint64_t &persisted, uint64_t &removed) {
-	std::unordered_map<inode_t, uint32_t> detained;
-	for (const auto &freeEntry : gMetadata->inodePool) {
-		detained.emplace(freeEntry.id, freeEntry.ts);
-	}
-	for (const inode_t inode : dirtyFreeInodes_) {
-		auto it = detained.find(inode);
-		if (it != detained.end()) {
-			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, it->second));
+	for (const auto &[inode, timestamp] : dirtyFreeInodeValues_) {
+		if (timestamp.has_value()) {
+			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode, *timestamp));
 			++persisted;
 		} else {
 			metadataWriter_->enqueue(std::make_unique<FreeNodeUpdateEvent>(inode));  // removal form
@@ -1579,7 +1580,7 @@ void MetadataBackendForkless::clearDirtySets() {
 	dirtyXattrInodes_.clear();
 	dirtyQuotaOwners_.clear();
 	dirtyAcls_.clear();
-	dirtyFreeInodes_.clear();
+	dirtyFreeInodeValues_.clear();
 	dirtyChunks_.clear();
 }
 

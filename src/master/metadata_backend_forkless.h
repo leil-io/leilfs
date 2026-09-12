@@ -22,7 +22,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <span>
 #include <string>
@@ -221,7 +223,12 @@ private:
 	void reconcileDirtyFreeInodesToFDB(uint64_t &persisted, uint64_t &removed);
 	void reconcileDirtyChunksToFDB(uint64_t &persisted, uint64_t &removed);
 
-	/// Clears every dirty set. Called on each load: after loading FDB, memory matches the FDB
+	/// Persists a detained/released inode immediately when the writer is active, or records it for
+	/// promotion reconciliation while running as a shadow.
+	void onFreeInodeDetained(inode_t inode, uint32_t timestamp);
+	void onFreeInodeReleased(inode_t inode);
+
+	/// Clears all dirty state. Called on each load: after loading FDB, memory matches the FDB
 	/// snapshot, so there is nothing dirty until the next changelog-replay mutation.
 	void clearDirtySets();
 
@@ -473,7 +480,7 @@ private:
 	std::unique_ptr<MetadataSectionBootstrapFDB> sectionBootstrapper_ = nullptr;
 #endif  // #ifndef METARESTORE
 
-	/// Per-section "dirty" sets: keys touched by changelog replay while running as a shadow (the
+	/// Per-section dirty state: keys touched by changelog replay while running as a shadow (the
 	/// writer is null then, so nothing is persisted). Reset on each FDB load (clearDirtySets()),
 	/// drained on promotion (reconcileDirtyToFDB()). See reconcileDirtyToFDB().
 	std::set<inode_t> dirtyNodes_;
@@ -482,6 +489,10 @@ private:
 	std::set<inode_t> dirtyXattrInodes_;
 	std::set<std::pair<QuotaOwnerType, inode_t>> dirtyQuotaOwners_;
 	std::set<inode_t> dirtyAcls_;
-	std::set<inode_t> dirtyFreeInodes_;
+	/// Final desired FREE value per dirty inode. Retaining the timestamp or removal at signal time
+	/// keeps promotion reconciliation bounded by dirty keys instead of scanning the inode pool.
+	std::map<inode_t, std::optional<uint32_t>> dirtyFreeInodeValues_;
 	std::set<uint64_t> dirtyChunks_;
+
+	friend struct MetadataBackendForklessTestAccess;
 };

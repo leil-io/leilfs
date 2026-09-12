@@ -21,6 +21,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <optional>
@@ -35,12 +36,34 @@
 #include "kv/ikv_engine.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/filesystem_metadata.h"
 #include "master/kv_common_keys.h"
+#include "master/metadata_backend_forkless.h"
 #include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_quota_undo_recorder.h"
 #include "master/metadata_xattr_undo_recorder.h"
+
+struct MetadataBackendForklessTestAccess {
+	static void recordDetainedInode(MetadataBackendForkless &backend, inode_t inode,
+	                                uint32_t timestamp) {
+		backend.onFreeInodeDetained(inode, timestamp);
+	}
+
+	static void recordReleasedInode(MetadataBackendForkless &backend, inode_t inode) {
+		backend.onFreeInodeReleased(inode);
+	}
+
+	static void attachWriter(MetadataBackendForkless &backend, kv::IKVEngine *kvEngine) {
+		backend.metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvEngine);
+	}
+
+	static void reconcileFreeInodes(MetadataBackendForkless &backend, uint64_t &persisted,
+	                                uint64_t &removed) {
+		backend.reconcileDirtyFreeInodesToFDB(persisted, removed);
+	}
+};
 
 namespace {
 
@@ -188,6 +211,62 @@ public:
 private:
 	DurableStore store_;
 };
+
+// Promotion reconciliation must be able to replay the shadow's recorded FREE delta without
+// consulting the complete in-memory inode pool. Run the scenario in a child process with
+// gMetadata unset: a full-pool scan would crash the child, while recorded-state-only
+// reconciliation reaches the expected zero exit code and keeps the test failure contained.
+TEST(MetadataBackendForklessTest, FreePromotionReconcileUsesOnlyRecordedDirtyState) {
+	EXPECT_EXIT(
+	    {
+		    // Deliberately make the authoritative inode pool unavailable. The recorded dirty values
+		    // must contain everything promotion needs to reconstruct the affected FREE keys.
+		    gMetadata = nullptr;
+
+		    RecordingKVEngine engine;
+		    constexpr inode_t kDetainedInode = 41;
+		    constexpr inode_t kReleasedInode = 42;
+		    constexpr uint32_t kTimestamp = 1234;
+		    // Model stale persisted state: inode 42 was detained in the last FDB image, but the
+		    // shadow will subsequently observe its release and must remove this key on promotion.
+		    engine.store()[kv::encodeKeyBE(kFreeKeyPrefix, kReleasedInode)] =
+		        kv::toBytesBE(uint32_t{5678});
+
+		    // A newly constructed backend has no writer, matching a shadow. Drive both inodes
+		    // through opposite transitions to prove that only the last state per key is retained:
+		    //   inode 41: released -> detained(1234) => persist FREE_41 = 1234
+		    //   inode 42: detained(4321) -> released => remove  FREE_42
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::recordReleasedInode(backend, kDetainedInode);
+		    MetadataBackendForklessTestAccess::recordDetainedInode(backend, kDetainedInode,
+		                                                           kTimestamp);
+		    MetadataBackendForklessTestAccess::recordDetainedInode(backend, kReleasedInode,
+		                                                           /*timestamp=*/4321);
+		    MetadataBackendForklessTestAccess::recordReleasedInode(backend, kReleasedInode);
+
+		    // Attaching the writer after the transitions models promotion. Reconciliation should
+		    // enqueue exactly one final update and one final removal, not all four transitions.
+		    MetadataBackendForklessTestAccess::attachWriter(backend, &engine);
+
+		    uint64_t persisted = 0;
+		    uint64_t removed = 0;
+		    MetadataBackendForklessTestAccess::reconcileFreeInodes(backend, persisted, removed);
+		    if (persisted != 1 || removed != 1 || !backend.flushPendingUpdates(true)) {
+			    std::_Exit(1);
+		    }
+
+		    // Flushing must materialize the final shadow-observed state: inode 41 is detained with
+		    // its last timestamp, and the stale row for the now-released inode 42 is gone.
+		    const auto detained =
+		        engine.store().find(kv::encodeKeyBE(kFreeKeyPrefix, kDetainedInode));
+		    if (detained == engine.store().end() || detained->second != kv::toBytesBE(kTimestamp) ||
+		        engine.store().contains(kv::encodeKeyBE(kFreeKeyPrefix, kReleasedInode))) {
+			    std::_Exit(2);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
 
 template <typename ApplyMutation>
 void expectFailedFirstTouchRetryPreservesPreimage(
