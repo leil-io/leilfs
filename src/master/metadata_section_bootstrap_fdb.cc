@@ -42,6 +42,7 @@
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_writer_fdb.h"
 #include "protocol/quota.h"
 #include "slogger/slogger.h"
@@ -163,6 +164,14 @@ int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	kv::Value nextSessionIdValue;
 	serialize(nextSessionIdValue, nextSessionId_);
 	transaction->set(kv::toBytes(kMetaNextSessionKey), nextSessionIdValue);
+
+	// The imported metadata image is the first restorable checkpoint. Publish its catalog entry in
+	// the same transaction as META_HEADER so a completed bootstrap can never expose a header
+	// without the checkpoint version needed by every section undo recorder.
+	std::vector<uint64_t> checkpointVersions{metadataVersion_};
+	if (checkpoints::saveCheckpointVersions(transaction.get(), checkpointVersions) != kOpSuccess) {
+		return kOpFailure;
+	}
 
 	if (!transaction->commit()) {
 		safs::log_err("Failed to commit bootstrapped metadata header to FDB");

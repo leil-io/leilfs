@@ -39,10 +39,12 @@
 #include "master/filesystem_metadata.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_forkless.h"
+#include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_quota_undo_recorder.h"
+#include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_xattr_undo_recorder.h"
 
 struct MetadataBackendForklessTestAccess {
@@ -62,6 +64,16 @@ struct MetadataBackendForklessTestAccess {
 	static void reconcileFreeInodes(MetadataBackendForkless &backend, uint64_t &persisted,
 	                                uint64_t &removed) {
 		backend.reconcileDirtyFreeInodesToFDB(persisted, removed);
+	}
+};
+
+struct MetadataSectionBootstrapFDBTestAccess {
+	static int8_t saveMetadataHeader(MetadataSectionBootstrapFDB &bootstrap, inode_t maxInodeId,
+	                                 uint64_t metadataVersion, uint32_t nextSessionId) {
+		bootstrap.maxInodeId_ = maxInodeId;
+		bootstrap.metadataVersion_ = metadataVersion;
+		bootstrap.nextSessionId_ = nextSessionId;
+		return bootstrap.saveMetadataHeader();
 	}
 };
 
@@ -266,6 +278,19 @@ TEST(MetadataBackendForklessTest, FreePromotionReconcileUsesOnlyRecordedDirtySta
 		    std::_Exit(0);
 	    },
 	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataSectionBootstrapFDBTest, SeedsImportedVersionAsInitialCheckpoint) {
+	RecordingKVEngine engine;
+	MetadataSectionBootstrapFDB bootstrap(&engine);
+	constexpr uint64_t kImportedVersion = 123;
+
+	ASSERT_EQ(MetadataSectionBootstrapFDBTestAccess::saveMetadataHeader(
+	              bootstrap, /*maxInodeId=*/42, kImportedVersion, /*nextSessionId=*/7),
+	          kOpSuccess);
+
+	EXPECT_EQ(checkpoints::loadCheckpointVersions(&engine),
+	          std::vector<uint64_t>{kImportedVersion});
 }
 
 template <typename ApplyMutation>

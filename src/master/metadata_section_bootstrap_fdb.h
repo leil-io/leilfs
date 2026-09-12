@@ -102,4 +102,6 @@ private:
 
 	/// Sections to bootstrap from metadata.sfs
 	std::vector<MetadataFileSection> metadataFileSections_;
+
+	friend struct MetadataSectionBootstrapFDBTestAccess;
 };
