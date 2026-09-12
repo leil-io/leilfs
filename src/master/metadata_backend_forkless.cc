@@ -41,6 +41,7 @@
 #include "common/scoped_timer.h"
 #include "common/serialization.h"
 #include "common/time_utils.h"
+#include "config/cfg.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/acl_storage.h"
@@ -68,6 +69,7 @@
 
 namespace {
 constexpr uint32_t kMetadataFlushIntervalMs = 100;
+constexpr auto kDisablePeriodicFlushOption = "METADATA_FDB_DEBUG_DISABLE_PERIODIC_FLUSH";
 
 MetadataBackendForkless *gForklessBackend = nullptr;
 
@@ -1586,6 +1588,12 @@ void MetadataBackendForkless::clearDirtySets() {
 
 void MetadataBackendForkless::registerFlushTimer() {
 	if (flushTimerHandle_ != nullptr) { return; }  // already registered; never stack timers
+	if (cfg_getuint32(kDisablePeriodicFlushOption, 0U) != 0U) {
+		safs::log_warn("Periodic FDB metadata flush disabled by {} (debug/test only)",
+		               kDisablePeriodicFlushOption);
+		return;
+	}
+
 	flushTimerHandle_ = eventloop_timeregister_ms(kMetadataFlushIntervalMs, flushMetadataCallback);
 
 	// Install a destruct hook bound to the current eventloop's lifetime. It runs during

@@ -21,9 +21,10 @@ assert_program_installed setfacl getfacl
 # The burst touches every metadata kind (file content/chunk, xattr, quota, ACL, and deletions),
 # so the reload validates that promotion persists all of them, not just names.
 
-# Disable periodic metadata dumping so the burst is not auto-saved before the crash; the shadow
-# must recover it from the streamed changelog.
-master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0"
+# Disable periodic metadata dumping and automatic FDB writer flushes. Explicit metadata saves still
+# drain the writer, so the baseline below becomes durable while the later crash-window tail cannot
+# reach FDB before the primary is killed.
+master_cfg="METADATA_DUMP_PERIOD_SECONDS = 0|METADATA_FDB_DEBUG_DISABLE_PERIODIC_FLUSH = 1"
 
 CHUNKSERVERS=1 \
 	MASTERSERVERS=2 \
@@ -31,7 +32,12 @@ CHUNKSERVERS=1 \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER,sfsdirentrycacheto=0" \
 	SFSEXPORTS_EXTRA_OPTIONS="allcanchangequota,ignoregid" \
 	MASTER_EXTRA_CONFIG="$master_cfg" \
+	MASTER_0_EXTRA_CONFIG="MAGIC_DEBUG_LOG = ${TEMP_DIR}/master0.log|LOG_FLUSH_ON=DEBUG" \
 	setup_local_empty_saunafs info
+
+# Confirm that the deterministic test gate is active on the primary. Manual save-metadata drains
+# are intentionally unaffected by this option.
+assert_eventually "grep -q 'Periodic FDB metadata flush disabled' '${TEMP_DIR}/master0.log'"
 
 # Baseline namespace, fully saved before we start racing the crash window.
 cd "${info[mount0]}"
@@ -44,12 +50,12 @@ assert_success saunafs_admin_master save-metadata
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
 
-# Crash-window writes: create a burst and SIGKILL the master immediately, before it can persist
-# the burst (a graceful stop would save it). The changelog (on disk + streamed to the shadow)
-# carries the entries regardless. The burst also touches file content (a chunk), an xattr, a
-# quota and an ACL, plus deletions, so the reload validates that promotion persists every kind.
+# Crash-window writes: automatic writer flushes are paused, so these changes remain absent from FDB
+# until the shadow is promoted. The changelog (on disk + streamed to the shadow) carries the entries
+# regardless. The tail also touches file content (a chunk), an xattr, a quota and an ACL, plus
+# deletions, so the reload validates that promotion persists every kind.
 cd "${info[mount0]}"
-touch crash_file{1..1000}
+touch crash_file{1..100}
 echo "crash-window-payload" > crash_content_file              # allocates a chunk
 setfattr -n user.crashattr -v crashval crash_content_file     # xattr
 saunafs setquota -u 4242 1GB 2GB 10 20 .                      # quota (limits for uid 4242)
@@ -72,9 +78,7 @@ quota_live=$(saunafs repquota -u 4242 .)
 acl_live=$(getfacl --absolute-names crash_content_file)
 cd
 echo "crash_files present after promotion (live, via changelog replay): $live_count"
-if (( live_count == 0 )); then
-	test_fail "Shadow recovered no crash-window files; cannot demonstrate the persistence gap"
-fi
+assert_equals 100 "$live_count"
 
 # Save metadata on the promoted master, then restart it. The restart reloads the saved metadata
 # image, so this checks the promoted master durably persisted the crash-window state.
