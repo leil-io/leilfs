@@ -851,8 +851,11 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 		if (path[i] == 0) { return SAUNAFS_ERROR_EINVAL; }
 	}
 
+	const HString oldPath = gMetadata->trash.at(TrashPathKey(node)).get();
 	updateTrashNameEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 	                     gMetadata->trashReservedToId, node, path);
+	gMetadata->edgeRemovedSignal.emit(/*parentId=*/0, oldPath);
+	gMetadata->detachedEdgeChangedSignal.emit(node->id, HString(path));
 
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(), "SETPATH(%" PRIiNode ",%s)", node->id,

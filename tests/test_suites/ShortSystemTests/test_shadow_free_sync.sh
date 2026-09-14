@@ -41,6 +41,7 @@ metadata_generate_truncate
 # Files that exist at the dump and will be deleted afterwards.
 mkdir free_churn
 touch free_churn/file{1..60}
+saunafs settrashtime 0 free_churn/file{1..60}
 cd
 
 # Dump the metadata image: the detained inode pool is captured at this point.
@@ -56,6 +57,7 @@ for file in free_churn/file{1..60}; do
 done > "$post_dump_detained_inodes"
 rm -f free_churn/file{1..60}
 touch free_extra{1..40}
+saunafs settrashtime 0 free_extra{1..40}
 for file in free_extra{1..40}; do
 	inode_of "$file"
 done >> "$post_dump_detained_inodes"

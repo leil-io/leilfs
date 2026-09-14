@@ -1956,6 +1956,7 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 
 			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			              gMetadata->trashReservedToId, childNode, path);
+			gMetadata->detachedEdgeChangedSignal.emit(childNode->id, HString(path));
 
 			gMetadata->trashSpace += fileNode->length;
 			gMetadata->trashNodes++;
@@ -1968,6 +1969,7 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 
 			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                 gMetadata->trashReservedToId, childNode, path);
+			gMetadata->detachedEdgeChangedSignal.emit(childNode->id, HString(path));
 
 			gMetadata->reservedSpace += fileNode->length;
 			gMetadata->reservedNodes++;
@@ -2004,8 +2006,10 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 			return 0;  // Return 0 to indicate the node was moved to Reserved, not deleted
 		}
 
+		const HString path = gMetadata->trash.at(TrashPathKey(node)).get();
 		removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 		                 gMetadata->trashReservedToId, node);
+		gMetadata->edgeRemovedSignal.emit(/*parentId=*/0, path);
 		node->ctime = timeStamp;
 		fsnodes_update_checksum(node);
 
@@ -2022,8 +2026,10 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 		gMetadata->reservedSpace -= fileNode->length;
 		gMetadata->reservedNodes--;
 
+		const HString path = gMetadata->reserved.at(node->id).get();
 		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 		                    gMetadata->trashReservedToId, node->id);
+		gMetadata->edgeRemovedSignal.emit(/*parentId=*/0, path);
 
 		fileNode->ctime = timeStamp;
 		fsnodes_update_checksum(fileNode);
@@ -2078,6 +2084,7 @@ uint8_t FilesystemNodeOperationsBase::undel(const FilesystemOperationContext &fs
 			if (isNameUsed(fsOpContext, currentParent, name)) { return SAUNAFS_ERROR_EEXIST; }
 
 			// remove from trash and link to new parent
+			const HString detachedPath(pathStr);
 			if (node->type == FSNodeType::kTrash) {
 				removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 				                 gMetadata->trashReservedToId, node);
@@ -2085,6 +2092,7 @@ uint8_t FilesystemNodeOperationsBase::undel(const FilesystemOperationContext &fs
 				removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 				                    gMetadata->trashReservedToId, node->id);
 			}
+			gMetadata->edgeRemovedSignal.emit(/*parentId=*/0, detachedPath);
 
 			node->type = FSNodeType::kFile;
 			node->ctime = timeStamp;

@@ -99,8 +99,11 @@ public:
 	/// Signal emitted when an edge changes (added, modified, but not removed)
 	Signal<FSNodeDirectory *, FSNode *, hstorage::Handle *> edgeChangedSignal;
 
-	/// Signal emitted when an edge is removed
+	/// Signal emitted when an edge is removed; parent 0 identifies a trash/reserved path
 	Signal<inode_t, const HString &> edgeRemovedSignal;
+
+	/// Signal emitted when a trash/reserved path (EDGE_ with parent 0) changes
+	Signal<inode_t, const HString &> detachedEdgeChangedSignal;
 
 	FilesystemMetadata()
 	    : inodePool{SFS_INODE_REUSE_DELAY,

@@ -173,6 +173,12 @@ public:
 	/// when no node recorder is registered.
 	const std::unordered_set<uint64_t> &nodesRemovedDuringRestore() const;
 
+	/// Edge keys processed by the most recent edge-section restore.
+	///
+	/// Used by the forkless loader to distinguish transient NODE/EDGE checkpoint skew from a
+	/// malformed live parent-zero edge. Returns an empty set when no edge recorder is registered.
+	const EdgeUndoRecorder::EdgeKeySet &edgesTouchedDuringRestore() const;
+
 private:
 	/// Registers the per-section undo recorders into recorders_.
 	///

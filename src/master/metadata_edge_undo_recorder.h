@@ -21,7 +21,9 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <set>
 #include <string>
+#include <utility>
 
 #include "kv/ikv_engine.h"
 #include "kv/kv_types.h"
@@ -54,6 +56,9 @@
 /// in MetadataCheckpointManager.
 class EdgeUndoRecorder final : public ISectionUndoRecorder {
 public:
+	using EdgeKey = std::pair<inode_t, std::string>;
+	using EdgeKeySet = std::set<EdgeKey>;
+
 	/// Creates a recorder bound to the given key-value engine.
 	/// @param kvEngine Key-value engine used to open transactions during restore and to load the
 	///                 retained checkpoint catalog. Not owned.
@@ -89,6 +94,13 @@ public:
 	/// @return true on success, including when no checkpoints are retained; false when
 	///         targetVersion is outside the retained range or a single-checkpoint replay fails.
 	bool restoreToCheckpointVersion(uint64_t targetVersion) override;
+
+	/// Returns the exact edge keys processed by the most recent restoreToCheckpointVersion().
+	///
+	/// This includes tombstones as well as stored pre-images. The forkless loader uses it to
+	/// verify that a temporarily incompatible live edge is post-checkpoint state covered by the
+	/// durable EDGE undo history, rather than silently accepting corrupted live metadata.
+	const EdgeKeySet &touchedDuringRestore() const { return touchedDuringRestore_; }
 
 	/// Applies every undo row of a single checkpoint interval to the in-memory directory tree.
 	///
@@ -127,4 +139,7 @@ private:
 
 	/// Key-value engine used for all durable undo state. Not owned.
 	kv::IKVEngine *kvEngine_{nullptr};
+
+	/// Exact (parent, name) keys processed by the current/most recent checkpoint restore.
+	EdgeKeySet touchedDuringRestore_;
 };

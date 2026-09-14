@@ -26,6 +26,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -37,6 +38,10 @@
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
 #include "master/filesystem_metadata.h"
+#include "master/filesystem_node.h"
+#include "master/filesystem_operations.h"
+#include "master/filesystem_trash_reserved_files.h"
+#include "master/hstring_memstorage.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_forkless.h"
 #include "master/metadata_checkpoint_helpers.h"
@@ -58,6 +63,16 @@ struct MetadataBackendForklessTestAccess {
 		backend.onFreeInodeReleased(inode);
 	}
 
+	static void recordChangedEdge(MetadataBackendForkless &backend, inode_t parentId,
+	                              inode_t childId, const HString &name) {
+		backend.onEdgeChanged(parentId, childId, name);
+	}
+
+	static void recordRemovedEdge(MetadataBackendForkless &backend, inode_t parentId,
+	                              const HString &name) {
+		backend.onEdgeRemoved(parentId, name);
+	}
+
 	static void attachWriter(MetadataBackendForkless &backend, kv::IKVEngine *kvEngine) {
 		backend.metadataWriter_ = std::make_unique<MetadataWriterFDB>(kvEngine);
 	}
@@ -65,6 +80,27 @@ struct MetadataBackendForklessTestAccess {
 	static void reconcileFreeInodes(MetadataBackendForkless &backend, uint64_t &persisted,
 	                                uint64_t &removed) {
 		backend.reconcileDirtyFreeInodesToFDB(persisted, removed);
+	}
+
+	static void reconcileEdges(MetadataBackendForkless &backend, uint64_t &persisted,
+	                           uint64_t &removed) {
+		backend.reconcileDirtyEdgesToFDB(persisted, removed);
+	}
+
+	static void prepareCheckpointLoad(MetadataBackendForkless &backend, kv::IKVEngine *kvEngine,
+	                                  uint64_t checkpointVersion) {
+		backend.checkpointManager_ = std::make_unique<MetadataCheckpointManager>(kvEngine);
+		backend.loadedCheckpointDescriptor_.metadataVersion = checkpointVersion;
+	}
+
+	static int8_t loadEdge(MetadataBackendForkless &backend, inode_t parentId, inode_t childId,
+	                       const std::string &name) {
+		return backend.loadEdge(FilesystemOperationContext{}, parentId, childId, name,
+		                        /*ignoreFlag=*/false, /*init=*/false);
+	}
+
+	static bool restoreEdges(MetadataBackendForkless &backend, uint64_t checkpointVersion) {
+		return backend.restoreEdgesToCheckpointVersion(checkpointVersion) == kOpSuccess;
 	}
 };
 
@@ -277,6 +313,169 @@ TEST(MetadataBackendForklessTest, FreePromotionReconcileUsesOnlyRecordedDirtySta
 			    std::_Exit(2);
 		    }
 		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// Detached trash/reserved paths share the EDGE_ keyspace with directory entries, using parent 0.
+// They live in dedicated containers rather than under a real directory node, so promotion must
+// resolve dirty parent-zero keys from those containers. Exercise both container kinds plus a stale
+// key whose final state is absent. The child process isolates the process-global metadata/backend
+// state used by the production reconciliation path.
+TEST(MetadataBackendForklessTest, DetachedEdgePromotionReconcileUsesParentZeroContainers) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kTrashInode = 41;
+		    constexpr inode_t kReservedInode = 42;
+		    const HString trashPath("trash/path");
+		    const HString reservedPath("reserved/path");
+		    const HString stalePath("stale/path");
+
+		    auto *trashNode = new FSNodeFile(FSNodeType::kTrash);
+		    trashNode->id = kTrashInode;
+		    gMetadata->addNode(trashNode, /*isFromScan=*/true);
+		    addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
+		                  gMetadata->trashReservedToId, trashNode, trashPath);
+
+		    auto *reservedNode = new FSNodeFile(FSNodeType::kReserved);
+		    reservedNode->id = kReservedInode;
+		    gMetadata->addNode(reservedNode, /*isFromScan=*/true);
+		    addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+		                     gMetadata->trashReservedToId, reservedNode, reservedPath);
+
+		    auto edgeKey = [](const HString &name) {
+			    kv::Key key = kv::encodeKeyBE(kEdgeKeyPrefix, inode_t{0});
+			    kv::appendStr(key, name);
+			    return key;
+		    };
+
+		    RecordingKVEngine engine;
+		    engine.store()[edgeKey(stalePath)] = kv::toBytesBE(inode_t{99});
+
+		    // Record the same dirty keys a shadow observes while replaying detached-path updates.
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::recordChangedEdge(backend, /*parentId=*/0,
+		                                                         kTrashInode, trashPath);
+		    MetadataBackendForklessTestAccess::recordChangedEdge(backend, /*parentId=*/0,
+		                                                         kReservedInode, reservedPath);
+		    MetadataBackendForklessTestAccess::recordRemovedEdge(backend, /*parentId=*/0,
+		                                                         stalePath);
+
+		    MetadataBackendForklessTestAccess::attachWriter(backend, &engine);
+		    uint64_t persisted = 0;
+		    uint64_t removed = 0;
+		    MetadataBackendForklessTestAccess::reconcileEdges(backend, persisted, removed);
+		    if (persisted != 2 || removed != 1 || !backend.flushPendingUpdates(true)) {
+			    std::_Exit(1);
+		    }
+
+		    const auto trash = engine.store().find(edgeKey(trashPath));
+		    const auto reserved = engine.store().find(edgeKey(reservedPath));
+		    if (trash == engine.store().end() || trash->second != kv::toBytesBE(kTrashInode) ||
+		        reserved == engine.store().end() ||
+		        reserved->second != kv::toBytesBE(kReservedInode) ||
+		        engine.store().contains(edgeKey(stalePath))) {
+			    std::_Exit(2);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// NODE rollback runs before EDGE rollback. Model a file that was regular at checkpoint 17 and was
+// subsequently unlinked into trash: NODE rollback has already restored the regular-file body, but
+// the hot EDGE_ image still contains the newer parent-zero trash path. The matching EDGEU_
+// tombstone proves that path did not exist at the checkpoint. Loading must defer this temporarily
+// incompatible edge so EDGE rollback can remove it, rather than rejecting the regular child type
+// before rollback gets a chance to run.
+TEST(MetadataBackendForklessTest, DefersPostCheckpointTrashEdgeUntilEdgeRollback) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kFileInode = 41;
+		    constexpr uint64_t kCheckpointVersion = 17;
+		    const HString trashPath("directory/file");
+
+		    // This is the checkpoint NODE state after node rollback, not the latest kTrash body.
+		    auto *checkpointFile = new FSNodeFile(FSNodeType::kFile);
+		    checkpointFile->id = kFileInode;
+		    gMetadata->addNode(checkpointFile, /*isFromScan=*/true);
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		    kv::Key undoKey = kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0});
+		    kv::appendStr(undoKey, trashPath);
+		    engine.store()[undoKey] = {};  // The parent-zero path was absent at the checkpoint.
+
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::prepareCheckpointLoad(backend, &engine,
+		                                                             kCheckpointVersion);
+
+		    // This row comes from the newer hot EDGE_ image. It must not be materialized against
+		    // the already-restored regular node, but its applicable undo row makes it safe to
+		    // defer.
+		    if (MetadataBackendForklessTestAccess::loadEdge(backend, /*parentId=*/0, kFileInode,
+		                                                    trashPath) != kOpSuccess) {
+			    std::_Exit(1);
+		    }
+		    if (!MetadataBackendForklessTestAccess::restoreEdges(backend, kCheckpointVersion)) {
+			    std::_Exit(2);
+		    }
+
+		    // The checkpoint state has neither a detached path nor a detached node type.
+		    if (checkpointFile->type != FSNodeType::kFile || !gMetadata->trash.empty() ||
+		        !gMetadata->reserved.empty()) {
+			    std::_Exit(3);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// Deferral is not a general relaxation of parent-zero edge validation. Without a matching EDGEU_
+// row, the same mixed-looking live row is not proven to be post-checkpoint drift and the section
+// restore must reject it as inconsistent metadata.
+TEST(MetadataBackendForklessTest, RejectsIncompatibleDetachedEdgeWithoutApplicableUndo) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kFileInode = 41;
+		    constexpr uint64_t kCheckpointVersion = 17;
+		    const std::string trashPath("directory/file");
+
+		    auto *checkpointFile = new FSNodeFile(FSNodeType::kFile);
+		    checkpointFile->id = kFileInode;
+		    gMetadata->addNode(checkpointFile, /*isFromScan=*/true);
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::prepareCheckpointLoad(backend, &engine,
+		                                                             kCheckpointVersion);
+		    if (MetadataBackendForklessTestAccess::loadEdge(backend, /*parentId=*/0, kFileInode,
+		                                                    trashPath) != kOpSuccess) {
+			    std::_Exit(1);
+		    }
+
+		    std::_Exit(MetadataBackendForklessTestAccess::restoreEdges(backend, kCheckpointVersion)
+		                   ? 2
+		                   : 0);
 	    },
 	    ::testing::ExitedWithCode(0), "");
 }

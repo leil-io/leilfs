@@ -346,6 +346,10 @@ private:
 	int8_t loadEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
 	                inode_t childId, const std::string &name, bool ignoreFlag, bool init = false);
 
+	/// Rolls the EDGE section back and verifies every live parent-zero edge deferred because its
+	/// child already has the checkpoint NODE type was covered by applicable durable EDGE undo.
+	int8_t restoreEdgesToCheckpointVersion(uint64_t targetVersion);
+
 	/// Loads CHNK_ metadata
 	/// Loads all chunks from the KV store and reconstructs the in-memory chunk table.
 	///
@@ -474,6 +478,10 @@ private:
 	MetadataCheckpointDescriptor loadedCheckpointDescriptor_{};
 
 	inode_t currentLoadParentId_ = 0;
+
+	/// Parent-zero live edges whose child is already a regular checkpoint node. They are deferred
+	/// until EDGE rollback proves each key is post-checkpoint state and removes or restores it.
+	EdgeUndoRecorder::EdgeKeySet deferredIncompatibleEdges_;
 
 #ifndef METARESTORE
 	/// Bootstrapper for metadata sections

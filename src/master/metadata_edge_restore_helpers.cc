@@ -20,12 +20,86 @@
 
 #include "master/metadata_edge_restore_helpers.h"
 
+#include "master/filesystem_metadata.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_operations_interface.h"
+#include "master/filesystem_trash_reserved_files.h"
 #include "master/metadata_backend_interface.h"
 #include "slogger/slogger.h"
 
 namespace {
+
+/// Removes a trash/reserved entry identified by its persisted parent-zero EDGE_ name.
+/// Signal-free: checkpoint rollback must not enqueue writes while loading.
+int8_t removeDetachedEdge(const FilesystemOperationContext &fsOpContext, const HString &name) {
+	for (const auto &entry : gMetadata->trash) {
+		if (entry.second.get() != name) { continue; }
+
+		const TrashPathKey key = entry.first;
+		auto *node = gFSOperations->nodeOperations()->idToNode<FSNodeFile>(fsOpContext, key.id);
+		if (node == nullptr || node->type != FSNodeType::kTrash) {
+			safs::log_err("{}: trash inode {} missing or has invalid type", __func__, key.id);
+			return kOpFailure;
+		}
+
+		gMetadata->trashSpace -= node->length;
+		gMetadata->trashNodes--;
+		removeTrashEntryByKey(gMetadata->trash, gMetadata->trashHandlesIndex,
+		                      gMetadata->trashReservedToId, key);
+		return kOpSuccess;
+	}
+
+	for (const auto &entry : gMetadata->reserved) {
+		if (entry.second.get() != name) { continue; }
+
+		const inode_t inode = entry.first;
+		auto *node = gFSOperations->nodeOperations()->idToNode<FSNodeFile>(fsOpContext, inode);
+		if (node == nullptr || node->type != FSNodeType::kReserved) {
+			safs::log_err("{}: reserved inode {} missing or has invalid type", __func__, inode);
+			return kOpFailure;
+		}
+
+		gMetadata->reservedSpace -= node->length;
+		gMetadata->reservedNodes--;
+		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+		                    gMetadata->trashReservedToId, inode);
+		return kOpSuccess;
+	}
+
+	return kOpSuccess;
+}
+
+/// Attaches a parent-zero EDGE_ pre-image to the matching trash/reserved container.
+/// Signal-free: checkpoint rollback must not enqueue writes while loading.
+int8_t restoreDetachedEdge(const FilesystemOperationContext &fsOpContext, inode_t childId,
+                           const HString &name) {
+	FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, childId);
+	if (child == nullptr) {
+		safs::log_err("{}: detached child inode {} not found", __func__, childId);
+		return kOpFailure;
+	}
+
+	if (removeDetachedEdge(fsOpContext, name) != kOpSuccess) { return kOpFailure; }
+
+	if (child->type == FSNodeType::kTrash) {
+		addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex, gMetadata->trashReservedToId,
+		              child, name);
+		gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
+		gMetadata->trashNodes++;
+		return kOpSuccess;
+	}
+	if (child->type == FSNodeType::kReserved) {
+		addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+		                 gMetadata->trashReservedToId, child, name);
+		gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
+		gMetadata->reservedNodes++;
+		return kOpSuccess;
+	}
+
+	safs::log_err("{}: detached child inode {} has invalid type {}", __func__, childId,
+	              static_cast<char>(child->type));
+	return kOpFailure;
+}
 
 /// Resolves an inode to a directory node, or nullptr when it is absent or not a directory.
 /// @param[out] missing Set to true when the inode simply does not exist (vs. exists but is not a
@@ -79,6 +153,8 @@ namespace metadata::edges {
 
 int8_t restoreLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
                          inode_t childId, const HString &name) {
+	if (parentId == 0) { return restoreDetachedEdge(fsOpContext, childId, name); }
+
 	bool parentMissing = false;
 	FSNodeDirectory *parent = resolveDirectory(fsOpContext, parentId, parentMissing);
 	if (parent == nullptr) {
@@ -123,6 +199,8 @@ int8_t restoreLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t 
 
 int8_t removeLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
                         const HString &name) {
+	if (parentId == 0) { return removeDetachedEdge(fsOpContext, name); }
+
 	bool parentMissing = false;
 	FSNodeDirectory *parent = resolveDirectory(fsOpContext, parentId, parentMissing);
 	if (parent == nullptr) {

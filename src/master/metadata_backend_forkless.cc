@@ -1015,6 +1015,7 @@ int8_t MetadataBackendForkless::loadACLs(bool ignoreFlag) {
 int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	safs::log_info("Loading edges from FoundationDB");
 	Timer timer;
+	deferredIncompatibleEdges_.clear();
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -1081,12 +1082,7 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	// version points to a node present at that version, which the node rollback already restored.
 	const auto targetVersion = loadedCheckpointDescriptor_.metadataVersion;
 
-	if (checkpointManager_ != nullptr && !checkpointManager_->restoreSectionToCheckpointVersion(
-	                                         MetadataSectionKind::Edge, targetVersion)) {
-		safs::log_err("{}: failed to roll back edges to checkpoint version {}", __func__,
-		              targetVersion);
-		return kOpFailure;
-	}
+	if (restoreEdgesToCheckpointVersion(targetVersion) != kOpSuccess) { return kOpFailure; }
 
 	safs::log_info("Section loaded successfully (EDGE 1.0): {}s", timer.elapsed_s());
 	return kOpSuccess;
@@ -1136,18 +1132,26 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 
 	if (parentId == 0U) {
 		if (child->type == FSNodeType::kTrash) {
-			gMetadata->trash.insert({TrashPathKey(child), hstorage::Handle(name)});
+			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
+			              gMetadata->trashReservedToId, child, name);
 			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->trashNodes++;
 		} else if (child->type == FSNodeType::kReserved) {
-			gMetadata->reserved.insert({child->id, hstorage::Handle(name)});
+			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+			                 gMetadata->trashReservedToId, child, name);
 			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
 			gMetadata->reservedNodes++;
 		} else {
-			safs::log_err("{}: {}, {}->{} error: bad child type ({})", __func__, parentId,
-			              gFSOperations->nodeOperations()->escapeName(name), childId,
-			              static_cast<char>(child->type));
-			return kOpFailure;
+			// NODE rollback precedes EDGE loading. An unlink performed after the selected
+			// checkpoint can therefore leave a newer live parent-zero edge pointing at an inode
+			// whose checkpoint body is already a regular file. Do not materialize that temporarily
+			// incompatible edge. After EDGE rollback, require durable undo to prove the edge was
+			// post-checkpoint drift; otherwise the load still fails as corrupted metadata.
+			deferredIncompatibleEdges_.emplace(parentId, name);
+			safs::log_debug("{}: {}, {}->{} deferred until edge rollback: child type ({})",
+			                __func__, parentId, gFSOperations->nodeOperations()->escapeName(name),
+			                childId, static_cast<char>(child->type));
+			return kOpSuccess;
 		}
 	} else {
 		auto *parent =
@@ -1234,6 +1238,27 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 		gFSOperations->nodeOperations()->addStats(fsOpContext, parent, &statsRecord);
 	}
 
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::restoreEdgesToCheckpointVersion(uint64_t targetVersion) {
+	if (checkpointManager_ == nullptr || !checkpointManager_->restoreSectionToCheckpointVersion(
+	                                         MetadataSectionKind::Edge, targetVersion)) {
+		safs::log_err("{}: failed to roll back edges to checkpoint version {}", __func__,
+		              targetVersion);
+		return kOpFailure;
+	}
+
+	const auto &restoredEdges = checkpointManager_->edgesTouchedDuringRestore();
+	for (const auto &[parentId, name] : deferredIncompatibleEdges_) {
+		if (!restoredEdges.contains({parentId, name})) {
+			safs::log_err("{}: {}, {} error: incompatible live edge has no applicable undo",
+			              __func__, parentId, gFSOperations->nodeOperations()->escapeName(name));
+			return kOpFailure;
+		}
+	}
+
+	deferredIncompatibleEdges_.clear();
 	return kOpSuccess;
 }
 
@@ -1459,22 +1484,40 @@ void MetadataBackendForkless::reconcileDirtyNodesToFDB(uint64_t &persisted, uint
 	}
 }
 
-// Edges: resolve (parent, name) against the parent directory.
+// Edges: resolve directory entries against their parent and parent-zero detached paths against
+// the trash/reserved containers.
 void MetadataBackendForkless::reconcileDirtyEdgesToFDB(uint64_t &persisted, uint64_t &removed) {
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
 	auto *nodeOps = gFSOperations->nodeOperations();
 
 	for (const auto &[parentId, name] : dirtyEdges_) {
-		FSNode *parent = nodeOps->idToNode(fsOpContext, parentId);
-		FSNode *child = nullptr;
-		if (parent != nullptr && parent->type == FSNodeType::kDirectory) {
-			auto *directory = static_cast<FSNodeDirectory *>(parent);
-			auto it = directory->find(name);
-			if (it != directory->end()) { child = it->second; }
+		std::optional<inode_t> childId;
+		if (parentId == 0) {
+			for (const auto &entry : gMetadata->trash) {
+				if (entry.second.get() == name) {
+					childId = entry.first.id;
+					break;
+				}
+			}
+			if (!childId.has_value()) {
+				for (const auto &entry : gMetadata->reserved) {
+					if (entry.second.get() == name) {
+						childId = entry.first;
+						break;
+					}
+				}
+			}
+		} else {
+			FSNode *parent = nodeOps->idToNode(fsOpContext, parentId);
+			if (parent != nullptr && parent->type == FSNodeType::kDirectory) {
+				auto *directory = static_cast<FSNodeDirectory *>(parent);
+				auto it = directory->find(name);
+				if (it != directory->end()) { childId = it->second->id; }
+			}
 		}
-		if (child != nullptr) {
-			onEdgeChanged(parentId, child->id, name);
+		if (childId.has_value()) {
+			onEdgeChanged(parentId, *childId, name);
 			++persisted;
 		} else {
 			onEdgeRemoved(parentId, name);
@@ -1757,6 +1800,9 @@ void MetadataBackendForkless::connectPerLoadSignals() {
 
 	gMetadata->edgeRemovedSignal.connect(
 	    [this](inode_t parentId, const HString &name) { onEdgeRemoved(parentId, name); });
+
+	gMetadata->detachedEdgeChangedSignal.connect(
+	    [this](inode_t childId, const HString &name) { onEdgeChanged(0, childId, name); });
 }
 
 void MetadataBackendForkless::connectGlobalSignalsOnce() {

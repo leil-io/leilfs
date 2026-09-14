@@ -31,10 +31,11 @@
 ///
 /// These helpers implement the section-local contract for the EDGE section: they rebuild
 /// directory topology (the parent's entry map and entries hash, the child's parent
-/// back-pointers, the directory link count, and recursively aggregated directory stats), but
-/// they deliberately do not touch node bodies (mode, times, length, checksums) which are owned
-/// and restored by the NODE section. The full metadata checksum is recomputed once after all
-/// sections load, so the helpers do not maintain per-node checksums.
+/// back-pointers, the directory link count, and recursively aggregated directory stats) and
+/// parent-zero trash/reserved paths. They deliberately do not touch node bodies (mode, times,
+/// length, checksums) which are owned and restored by the NODE section. The full metadata
+/// checksum is recomputed once after all sections load, so the helpers do not maintain per-node
+/// checksums.
 ///
 /// Unlike the runtime link()/removeEdge() operations, these helpers are signal-free: they must
 /// not emit edgeChangedSignal/edgeRemovedSignal/nodeChangedSignal. During load the metadata
@@ -50,7 +51,8 @@ namespace metadata::edges {
 /// is a no-op. If it maps to a different child, that edge is detached first. Then the child is
 /// attached under name: inserted into the parent's entry map, linked back via child->parents,
 /// the directory link count is bumped for directory children, and the child's stats are added to
-/// the parent subtree.
+/// the parent subtree. A parentId of 0 restores the path to the trash or reserved container based
+/// on the already-restored child type and updates its detached-file counters and indexes.
 ///
 /// @param fsOpContext Filesystem operation context.
 /// @param parentId    Inode of the parent directory.
@@ -66,7 +68,8 @@ int8_t restoreLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t 
 /// Idempotent: returns success when the edge or its parent is already absent. On success the
 /// entry is erased from the parent's map, the child's matching parent back-pointer is dropped,
 /// the directory link count is decremented for directory children, and the child's stats are
-/// subtracted from the parent subtree.
+/// subtracted from the parent subtree. A parentId of 0 removes the matching trash/reserved path
+/// and updates its detached-file counters and indexes.
 ///
 /// @param fsOpContext Filesystem operation context.
 /// @param parentId    Inode of the parent directory.

@@ -93,6 +93,8 @@ void EdgeUndoRecorder::beforeMutation(const MetadataMutationContext &context,
 }
 
 bool EdgeUndoRecorder::restoreToCheckpointVersion(uint64_t targetVersion) {
+	touchedDuringRestore_.clear();
+
 	auto retainedCheckpointVersions = checkpoints::loadCheckpointVersions(kvEngine_);
 	if (retainedCheckpointVersions.empty()) {
 		safs::log_info("No retained edge checkpoints found");
@@ -166,6 +168,8 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 				getINode(&ptr, childId);
 				undoEntries.push_back({.parentId = parentId, .name = name, .childId = childId});
 			}
+
+			touchedDuringRestore_.emplace(parentId, name);
 		}
 
 		if (!page.hasMore() || page.getPairs().empty()) { break; }

@@ -39,6 +39,7 @@
 #include "master/filesystem_node.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_operations.h"
+#include "master/filesystem_trash_reserved_files.h"
 #include "master/hstring_memstorage.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_checkpoint_helpers.h"
@@ -276,6 +277,15 @@ protected:
 		return directory;
 	}
 
+	FSNodeFile *addDetachedFile(inode_t inode, FSNodeType type, uint64_t length) {
+		auto *file = new FSNodeFile(type);
+		file->id = inode;
+		file->length = length;
+		gMetadata->addNode(file, /*isFromScan=*/true);
+		gMetadata->inodePool.markAsAcquired(inode);
+		return file;
+	}
+
 	static constexpr uint64_t kCheckpointVersion = 17;
 
 	FilesystemMetadata *previousMetadata_ = nullptr;
@@ -307,6 +317,50 @@ TEST_F(EdgeRecoveryStateTest, DirectoryHierarchyInversionNeverCreatesTransientCy
 	ASSERT_NE(aToB, directoryA_->entries.end());
 	EXPECT_EQ(aToB->second, directoryB_);
 	EXPECT_EQ(directoryB_->find(HString("A")), directoryB_->entries.end());
+}
+
+TEST_F(EdgeRecoveryStateTest, RestoresDetachedParentZeroPaths) {
+	constexpr uint64_t kTrashLength = 1024;
+	constexpr uint64_t kReservedLength = 2048;
+	auto *trashNode = addDetachedFile(/*inode=*/4, FSNodeType::kTrash, kTrashLength);
+	auto *reservedNode = addDetachedFile(/*inode=*/5, FSNodeType::kReserved, kReservedLength);
+
+	addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex, gMetadata->trashReservedToId,
+	              trashNode, "latest/trash");
+	addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+	                 gMetadata->trashReservedToId, reservedNode, "latest/reserved");
+	gMetadata->trashNodes = 1;
+	gMetadata->trashSpace = kTrashLength;
+	gMetadata->reservedNodes = 1;
+	gMetadata->reservedSpace = kReservedLength;
+
+	// The latest parent-zero paths did not exist at the checkpoint, while the checkpoint paths
+	// must be restored for the same detached nodes. As with directory edges, all removals happen
+	// before either pre-image is attached.
+	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "latest/trash")] = {};
+	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "latest/reserved")] = {};
+	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "checkpoint/trash")] =
+	    kv::toBytesBE(trashNode->id);
+	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "checkpoint/reserved")] =
+	    kv::toBytesBE(reservedNode->id);
+
+	EdgeUndoRecorder recorder(&engine_);
+	ASSERT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+
+	ASSERT_EQ(gMetadata->trash.size(), 1U);
+	EXPECT_EQ((*gMetadata->trash.begin()).first.id, trashNode->id);
+	EXPECT_EQ(static_cast<std::string>((*gMetadata->trash.begin()).second), "checkpoint/trash");
+	EXPECT_EQ(gMetadata->trashNodes, 1U);
+	EXPECT_EQ(gMetadata->trashSpace, kTrashLength);
+	EXPECT_EQ(gMetadata->trashHandlesIndex.size(), 1U);
+
+	ASSERT_EQ(gMetadata->reserved.size(), 1U);
+	EXPECT_EQ((*gMetadata->reserved.begin()).first, reservedNode->id);
+	EXPECT_EQ(static_cast<std::string>((*gMetadata->reserved.begin()).second),
+	          "checkpoint/reserved");
+	EXPECT_EQ(gMetadata->reservedNodes, 1U);
+	EXPECT_EQ(gMetadata->reservedSpace, kReservedLength);
+	EXPECT_EQ(gMetadata->reservedHandlesIndex.size(), 1U);
 }
 
 class QuotaRecoveryStateTest : public ::testing::Test {

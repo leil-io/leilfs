@@ -220,6 +220,11 @@ const std::unordered_set<uint64_t> &MetadataCheckpointManager::nodesRemovedDurin
 	return nodeUndoRecorder_ ? nodeUndoRecorder_->removedDuringRestore() : kEmpty;
 }
 
+const EdgeUndoRecorder::EdgeKeySet &MetadataCheckpointManager::edgesTouchedDuringRestore() const {
+	static const EdgeUndoRecorder::EdgeKeySet kEmpty;
+	return edgeUndoRecorder_ ? edgeUndoRecorder_->touchedDuringRestore() : kEmpty;
+}
+
 void MetadataCheckpointManager::initializeRecorders() {
 	chunkUndoRecorder_ = std::make_unique<ChunkUndoRecorder>(kvEngine_);
 	nodeUndoRecorder_ = std::make_unique<NodeUndoRecorder>(kvEngine_);
