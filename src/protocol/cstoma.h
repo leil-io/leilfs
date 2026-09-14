@@ -27,6 +27,7 @@
 #include "common/chunk_part_type.h"
 #include "common/chunk_with_version.h"
 #include "common/chunk_with_version_and_type.h"
+#include "common/chunkserver_id.h"
 #include "common/serialization_macros.h"
 #include "protocol/chunks_with_type.h"
 #include "protocol/packet.h"
@@ -97,6 +98,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerConfig, SAU_CSTOMA_REGISTER_CONFIG, 0,
 		std::string, config)
+
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, probeChunk, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, probeChunk, SAU_CSTOMA_PROBE_CHUNK, kDefault, uint64_t,
+                                    chunkId, ChunkPartType, chunkType, uint32_t, chunkVersion,
+                                    uint8_t, status)
 
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, setVersion, kECChunks, 1)
@@ -228,3 +234,7 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint8_t,  load)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, startTls, SAU_CSTOMA_STARTTLS, 0)
+
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, chunkserverId, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, chunkserverId, SAU_CSTOMA_CHUNKSERVER_ID, kDefault,
+                                    chunkserver::ChunkserverId, chunkserverId)

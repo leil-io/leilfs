@@ -36,6 +36,7 @@
 
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
+#include "chunkserver/chunkserver_id.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_main_thread.h"
 #include "common/input_packet.h"
@@ -78,6 +79,7 @@ void MasterConn::createAttachedPacket(MessageBuffer serializedPacket) {
 // Configuration
 
 void MasterConn::reloadConfig() {
+	if (!isConfigured()) { return; }
 	auto newMasterHostStr_ = cfg_getstring("MASTER_HOST", "sfsmaster");
 	auto newMasterPortStr_ = cfg_getstring("MASTER_PORT", "9420");
 
@@ -154,7 +156,26 @@ void MasterConn::sendRegister() {
 	}
 }
 
+void MasterConn::sendChunkserverId(const std::vector<uint8_t> &data) {
+	matocs::requestChunkserverId::deserialize(data);
+	if (registrationStatus_ != RegistrationStatus::kRegistrationRequested) {
+		safs::log_warn("MasterConn: unexpected chunkserver identity request from {}",
+		               address_.toString());
+		setMode(ConnectionMode::KILL);
+		return;
+	}
+
+	createAttachedPacket(cstoma::chunkserverId::build(chunkserver::chunkserverId()));
+	setSendInventory(false);
+}
+
 void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
+	if (!isConfigured() && sendInventory_) {
+		safs::log_warn("discovered server did not select identity registration: {}",
+		               address_.toString());
+		setMode(ConnectionMode::KILL);
+		return;
+	}
 	if (isVersionLessThan5_) {
 		(void)data;  // Not used
 		version_ = saunafsVersion(0, 0, 0);  // The version is unknown at this point
@@ -185,11 +206,13 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	isVersionLessThan5_ = false;
 	registrationAttempts_ = 0;
 
-	hddForeachChunkInBulks(
-	    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
-		    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
-	    },
-	    gChunkBulkSize.load(std::memory_order_relaxed));
+	if (sendInventory_) {
+		hddForeachChunkInBulks(
+		    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
+			    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
+		    },
+		    gChunkBulkSize.load(std::memory_order_relaxed));
+	}
 
 	uint64_t usedSpace;
 	uint64_t totalSpace;
@@ -211,7 +234,35 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	sendConfig();
 }
 
+void MasterConn::receiveClusterSnapshot(const std::vector<uint8_t> &data) {
+	// Only a registered inventory-free connection takes part in discovery.
+	if (!isRegistered() || sendInventory_) {
+		throw IncorrectDeserializationException("unexpected cluster discovery packet");
+	}
+
+	auto snapshot = matocs::clusterMembers::readSnapshot(data);
+
+	// A discovered connection only confirms it reached the server it dialled; the configured
+	// connection is the one that owns the member list.
+	if (!isConfigured()) {
+		if (snapshot.seedId != serverId_) {
+			throw IncorrectDeserializationException("discovered server identity mismatch");
+		}
+		return;
+	}
+
+	// The configured endpoint is the seed, never one of the discovered members.
+	for (const auto &member : snapshot.members) {
+		if (NetworkAddress(member.ip, member.port) == address_) {
+			throw IncorrectDeserializationException("discovery repeats the configured endpoint");
+		}
+	}
+
+	clusterSnapshot_ = std::move(snapshot);
+}
+
 void MasterConn::handleRegistrationAttempt() {
+	if (!isConfigured()) { return; }
 	if (registrationAttempts_ < kMaxRegistrationAttemptsToBeConsideredOldMaster) {
 		if (registrationStatus_ == RegistrationStatus::kRegistrationRequested) {
 			safs::log_warn(
@@ -635,6 +686,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_DELETE_CHUNK:
 		deleteChunk(message);
 		break;
+	case SAU_MATOCS_PROBE_CHUNK:
+		probeChunk(message);
+		break;
 	case SAU_MATOCS_SET_VERSION:
 		setChunkVersion(message);
 		break;
@@ -665,6 +719,12 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_REGISTER_HOST:
 		onRegistered(message);
 		break;
+	case SAU_MATOCS_REQUEST_CHUNKSERVER_ID:
+		sendChunkserverId(message);
+		break;
+	case SAU_MATOCS_CLUSTER_MEMBERS:
+		receiveClusterSnapshot(message);
+		break;
 	default:
 		safs::log_info("MasterConn: got unknown message (type: {}): {}", header.type,
 		               address_.toString());
@@ -687,7 +747,8 @@ void MasterConn::createChunk(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
 	if (jobPool_) {
-		job_create(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType);
+		job_create(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
+		           listenerId_);
 	} else {
 		safs::log_err("MasterConn::createChunk: jobPool is null.");
 		delete outputPacket;
@@ -704,7 +765,7 @@ void MasterConn::createAndLockChunk(const std::vector<uint8_t> &data) {
 	cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
 	if (jobPool_) {
 		job_create(*jobPool_, sauJobFinishedAndLock(this, chunkId, chunkType), outputPacket,
-		           chunkId, chunkVersion, chunkType);
+		           chunkId, chunkVersion, chunkType, listenerId_);
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		delete outputPacket;
@@ -720,11 +781,33 @@ void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
-		job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType);
+		job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
+		           listenerId_);
 	} else {
 		safs::log_err("MasterConn::deleteChunk: jobPool is null.");
 		delete outputPacket;
 	}
+}
+
+void MasterConn::probeChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+
+	matocs::probeChunk::deserialize(data, chunkId, chunkType);
+	if (!jobPool_) {
+		safs::log_err("MasterConn::probeChunk: jobPool is null.");
+		return;
+	}
+	// The reply is built after the job, so the version can travel with the status. A stale
+	// socket drops it like every other late completion.
+	auto version = std::make_shared<uint32_t>(0);
+	auto finished = [this, active = callbackActive_, chunkId, chunkType, version](
+	                    uint8_t status, void * /*extra*/) {
+		if (*active && mode_ == ConnectionMode::CONNECTED) {
+			createAttachedPacket(cstoma::probeChunk::build(chunkId, chunkType, *version, status));
+		}
+	};
+	job_probe(*jobPool_, std::move(finished), nullptr, chunkId, chunkType, version, listenerId_);
 }
 
 void MasterConn::setChunkVersion(const std::vector<uint8_t> &data) {
@@ -738,7 +821,7 @@ void MasterConn::setChunkVersion(const std::vector<uint8_t> &data) {
 	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
 		job_version(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
-		            newVersion);
+		            newVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::setChunkVersion: jobPool is null.");
 		delete outputPacket;
@@ -756,7 +839,7 @@ void MasterConn::setChunkVersionAndLock(const std::vector<uint8_t> &data) {
 	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
 		job_version(*jobPool_, sauJobFinishedAndLock(this, chunkId, chunkType), outputPacket,
-		            chunkId, chunkVersion, chunkType, newVersion);
+		            chunkId, chunkVersion, chunkType, newVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		delete outputPacket;
@@ -775,7 +858,7 @@ void MasterConn::lockChunk(const std::vector<uint8_t> &data) {
 	cstoma::writeEndStatus::serialize(writeEndStatusOutputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
 		bool createdNewLockJob = jobPool_->startChunkLock(
-		    sauJobFinished(this), writeEndStatusOutputPacket, chunkId, chunkType);
+		    sauJobFinished(this), writeEndStatusOutputPacket, chunkId, chunkType, listenerId_);
 		if (!createdNewLockJob) {
 			// A lock job for this chunk and type is already in progress, so we can free the output
 			// packet recently allocated for the job callback, as it won't be used.
@@ -813,7 +896,7 @@ void MasterConn::duplicateChunk(const std::vector<uint8_t> &data) {
 	cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
 	if (jobPool_) {
 		job_duplicate(*jobPool_, sauJobFinished(this), outputPacket, oldChunkId, oldChunkVersion,
-		              oldChunkVersion, chunkType, newChunkId, newChunkVersion);
+		              oldChunkVersion, chunkType, newChunkId, newChunkVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::duplicateChunk: jobPool is null.");
 		delete outputPacket;
@@ -832,7 +915,7 @@ void MasterConn::duplicateAndLockChunk(const std::vector<uint8_t> &data) {
 	if (jobPool_) {
 		job_duplicate(*jobPool_, sauJobFinishedAndLock(this, newChunkId, chunkType), outputPacket,
 		              oldChunkId, oldChunkVersion, oldChunkVersion, chunkType, newChunkId,
-		              newChunkVersion);
+		              newChunkVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		delete outputPacket;
@@ -851,7 +934,7 @@ void MasterConn::truncateChunk(const std::vector<uint8_t> &data) {
 	cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
 		job_truncate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkType, version,
-		             newVersion, chunkLength);
+		             newVersion, chunkLength, listenerId_);
 	} else {
 		safs::log_err("MasterConn::truncateChunk: jobPool is null.");
 		delete outputPacket;
@@ -870,7 +953,8 @@ void MasterConn::duplicateTruncateChunk(const std::vector<uint8_t> &data) {
 	cstoma::duptruncChunk::serialize(outputPacket->packet, copyChunkId, chunkType, 0);
 	if (jobPool_) {
 		job_duptrunc(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion,
-		             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength);
+		             chunkVersion, chunkType, copyChunkId, copyChunkVersion, newLength,
+		             listenerId_);
 	} else {
 		safs::log_err("MasterConn::duplicateTruncateChunk: jobPool is null.");
 		delete outputPacket;
@@ -900,7 +984,7 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 		if (replicationJobPool_) {
 			// If replication job pool is available, use it to handle the replication job
 			job_replicate(*replicationJobPool_, sauJobFinished(this), outputPacket, chunkId,
-			              chunkVersion, chunkType, sourcesBufferSize, sourcesBuffer);
+			              chunkVersion, chunkType, sourcesBufferSize, sourcesBuffer, listenerId_);
 		} else {
 			safs::log_err("MasterConn::replicateChunk: replicationJobPool is null.");
 			delete outputPacket;
@@ -930,7 +1014,8 @@ std::function<void(uint8_t status, void *packet)> MasterConn::sauJobFinishedAndL
 		cstoma::writeEndStatus::serialize(writeEndStatusOutputPacket->packet, chunkId, chunkType,
 		                                  status);
 		bool createdNewLockJob = masterConn->jobPool_->startChunkLock(
-		    masterConn->sauJobFinished(masterConn), writeEndStatusOutputPacket, chunkId, chunkType);
+		    masterConn->sauJobFinished(masterConn), writeEndStatusOutputPacket, chunkId, chunkType,
+		    masterConn->listenerId_);
 		if (!createdNewLockJob) {
 			// A lock job for this chunk and type is already in progress, so we can free the output
 			// packet recently allocated for the job callback, as it won't be used.
@@ -963,6 +1048,18 @@ void MasterConn::sauJobFinished(uint8_t status, void *packet) {
 
 // Termination
 
+void MasterConn::closeSocketQuietly() {
+	if (socketFD_ >= 0) {
+		tcpclose(socketFD_);
+		socketFD_ = -1;
+		inputPacket_.reset();
+	}
+
+	// Freeing the session writes nothing to a socket that is already gone, so the peer sees the
+	// same thing the released build showed it.
+	tlsSession_.reset();
+}
+
 void MasterConn::releaseResources() {
 	if (mode_ != ConnectionMode::FREE && mode_ != ConnectionMode::CONNECTING) {
 		if (tlsSession_ != nullptr) {
@@ -986,4 +1083,28 @@ void MasterConn::releaseResources() {
 void MasterConn::resetPackets() {
 	inputPacket_.reset();
 	outputPackets_.clear();
+}
+
+void MasterConn::requeueUnsentReports() {
+	for (const auto &output : outputPackets_) {
+		if (output.packet.size() < PacketHeader::kSize) { continue; }
+		PacketHeader header;
+		deserializePacketHeader(output.packet, header);
+		if (header.type != SAU_CSTOMA_CHUNK_LOST && header.type != SAU_CSTOMA_CHUNK_DAMAGED) {
+			continue;
+		}
+
+		// Put every entry back on its disk queue, including a packet the socket had begun to
+		// send: a report that arrives twice is harmless, one that never arrives is not.
+		const std::vector<uint8_t> payload(output.packet.begin() + PacketHeader::kSize,
+		                                   output.packet.end());
+		std::vector<ChunkWithType> chunks;
+		if (header.type == SAU_CSTOMA_CHUNK_LOST) {
+			cstoma::chunkLost::deserialize(payload, chunks);
+			for (const auto &chunk : chunks) { hddReportLostChunk(chunk.id, chunk.type); }
+		} else {
+			cstoma::chunkDamaged::deserialize(payload, chunks);
+			for (const auto &chunk : chunks) { hddReportDamagedChunk(chunk.id, chunk.type); }
+		}
+	}
 }

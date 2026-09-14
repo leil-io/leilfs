@@ -79,6 +79,10 @@
 #  error "Wrong value of SFSBLOCKSIZE: only powers of two (max 67108864) are supported"
 #endif
 
+// Triple-slash comments in this file are machine readable: utils/wireshark/plugins/epan/saunafs
+// parses them as packet field grammar or as a field-values directive, and generation fails on
+// anything else. Prose about a packet goes in an ordinary comment.
+
 //UNIVERSAL
 #define VERSION_ANY 0
 
@@ -394,9 +398,35 @@ enum class SugidClearMode : uint8_t {
 /// version==0 ip:32 port:16 timeout:32 vershex:32
 /// version==1 ip:32 port:16 timeout:32 vershex:32 clusterid:STDSTRING
 
+// 0x0496
+#define SAU_CSTOMA_CHUNKSERVER_ID (1000U + 174U)
+/// version==0 chunkserverid:BYTES[16]
+// Reply to SAU_MATOCS_REQUEST_CHUNKSERVER_ID with the chunkserver's persistent identity.
+
 // 0x0497
 #define SAU_MATOCS_REGISTER_HOST (1000U + 175U)
 /// status:8 version:32 clusterid:STDSTRING
+
+// 0x0498
+#define SAU_MATOCS_REQUEST_CHUNKSERVER_ID (1000U + 176U)
+/// version==0
+// Sent after the host registration by a metadata server that records copies by identity.
+
+// 0x0499
+#define SAU_MATOCS_CLUSTER_MEMBERS (1000U + 177U)
+/// version==0 seedid:32 members:(N * [serverid:32 ip:32 port:16 version:32])
+// Discovery: the other metadata servers a registered chunkserver should also connect to.
+
+// 0x049A
+#define SAU_MATOCS_PROBE_CHUNK (1000U + 178U)
+/// version==0 chunkid:64 chunktype:16
+// Asks which version of one part the chunkserver holds; replaces the inventory for servers
+// that register without one.
+
+// 0x049B
+#define SAU_CSTOMA_PROBE_CHUNK (1000U + 179U)
+/// version==0 chunkid:64 chunktype:16 chunkversion:32 status:8
+// Reply to SAU_MATOCS_PROBE_CHUNK; status NOCHUNK when the part is not stored.
 
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)

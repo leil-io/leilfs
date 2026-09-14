@@ -21,56 +21,84 @@
 #include "common/platform.h"
 
 #include "chunkserver/bgjobs.h"
+
+#include <sys/eventfd.h>
+#include <sys/syslog.h>
+#include <unistd.h>
+#include <cassert>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 #include "chunkserver/chunk_replicator.h"
 #include "chunkserver/hddspacemgr.h"
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
 #include "common/massert.h"
+#include "common/metadata_cluster_member.h"
 #include "common/output_packet.h"
 #include "common/pcqueue.h"
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
 #include "slogger/slogger.h"
 
-#include <sys/eventfd.h>
-#include <sys/syslog.h>
-#include <unistd.h>
-#include <cassert>
-#include <cstdint>
-#include <cstring>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <thread>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
 constexpr auto kInvalidJob = nullptr;
+
+int JobPool::allocateListener(uint32_t listenerId) {
+	if (listenerId >= kMaxMetadataConnections) {
+		safs::log_err("JobPool: {}: listenerId {} exceeds max {}", __func__, listenerId,
+		              kMaxMetadataConnections);
+		return -1;
+	}
+
+	auto *listener = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listener != nullptr) { return listener->notifierFD; }
+
+	auto *newListener = new ListenerInfo();
+	newListener->notifierFD = ::eventfd(0, EFD_NONBLOCK);
+	if (newListener->notifierFD < 0) {
+		const int err = errno;
+		delete newListener;
+		throw std::runtime_error("JobPool: eventfd() failed for listener " +
+		                         std::to_string(listenerId) + ": " + std::string(strerror(err)));
+	}
+	newListener->nextJobId = 1;
+
+	ListenerInfo *expected = nullptr;
+	if (!listenerInfos_[listenerId].compare_exchange_strong(
+	        expected, newListener, std::memory_order_acq_rel, std::memory_order_acquire)) {
+		close(newListener->notifierFD);
+		delete newListener;
+		return expected->notifierFD;
+	}
+
+	return newListener->notifierFD;
+}
+
+uint32_t JobPool::allocatedListenerCount() const {
+	uint32_t count = 0;
+	for (const auto &atomicSlot : listenerInfos_) {
+		if (atomicSlot.load(std::memory_order_acquire) != nullptr) { ++count; }
+	}
+	return count;
+}
 
 JobPool::JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
                  std::vector<int> &wakeupFDs, uint8_t numPriorities)
-    // EFD_NONBLOCK to prevent blocking reads/writes
-    : listenerInfos_(std::max(nrListeners, 1U)), name_(name), workers(workers) {
-	nrListeners = std::max(nrListeners, 1U);  // Ensure at least one listener
+    : name_(name), workers(workers) {
+	for (auto &slot : listenerInfos_) { slot.store(nullptr, std::memory_order_relaxed); }
 
-	if (wakeupFDs.size() != nrListeners) {
-		safs::log_warn(
-		    "JobPool: wakeupFDs size {} does not match nrListeners {}, resizing to match.",
-		    wakeupFDs.size(), nrListeners);
-		wakeupFDs.resize(nrListeners);
-	}
-
-	for (uint32_t i = 0; i < nrListeners; ++i) {
-		listenerInfos_[i].notifierFD = ::eventfd(0, EFD_NONBLOCK);
-		if (listenerInfos_[i].notifierFD < 0) {
-			throw std::runtime_error("JobPool: eventfd() failed for listener" +
-			                         std::to_string(i) + ": " + std::string(strerror(errno)));
-		}
-		wakeupFDs[i] = listenerInfos_[i].notifierFD;
-
-		listenerInfos_[i].nextJobId = 1;
-	}
+	const uint32_t initialListeners = std::min(std::max(nrListeners, 1U), kMaxMetadataConnections);
+	wakeupFDs.resize(initialListeners);
+	for (uint32_t i = 0; i < initialListeners; ++i) { wakeupFDs[i] = allocateListener(i); }
 
 	// Initialize the job queue with a maximum size
 	if (numPriorities > 1) {
@@ -100,7 +128,14 @@ JobPool::~JobPool() {
 
 	workerThreads.clear();
 
-	for (auto &listenerInfo : listenerInfos_) { close(listenerInfo.notifierFD); }
+	for (auto &atomicSlot : listenerInfos_) {
+		auto *listener = atomicSlot.load(std::memory_order_acquire);
+		if (listener != nullptr) {
+			if (listener->notifierFD >= 0) { close(listener->notifierFD); }
+			delete listener;
+			atomicSlot.store(nullptr, std::memory_order_relaxed);
+		}
+	}
 }
 
 void JobPool::stop() {
@@ -116,23 +151,40 @@ void JobPool::stop() {
 		if (thread.joinable()) { thread.join(); }
 	}
 
-	for (size_t i = 0; i < listenerInfos_.size(); ++i) {
-		if (!listenerInfos_[i].statusQueue.empty()) { processCompletedJobs(i); }
+	for (uint32_t i = 0; i < kMaxMetadataConnections; ++i) {
+		auto *listener = listenerInfos_[i].load(std::memory_order_acquire);
+		if (listener != nullptr && !listener->statusQueue.empty()) { processCompletedJobs(i); }
 	}
+}
+
+JobPool::ListenerInfo *JobPool::listenerForJob(uint32_t &listenerId, const char *caller) {
+	// Listener zero exists for the whole life of the pool, so a job always has somewhere to land.
+	// Every other slot is allocated when its connection is admitted, never here: allocating from
+	// the job path could throw into a caller that has no way to undo the work it already did.
+	if (listenerId >= kMaxMetadataConnections) {
+		safs::log_warn("{} job pool: {}: invalid listenerId {}, resetting to 0", name_, caller,
+		               listenerId);
+		listenerId = 0;
+	}
+
+	auto *listener = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listener == nullptr) {
+		safs::log_warn("{} job pool: {}: listener {} was never allocated, resetting to 0", name_,
+		               caller, listenerId);
+		listenerId = 0;
+		listener = listenerInfos_[0].load(std::memory_order_acquire);
+	}
+
+	sassert(listener != nullptr);
+	return listener;
 }
 
 uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
                          ProcessJobCallback processJob, uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
-		safs::log_warn("JobPool: {}: Invalid listenerId {} for operation {}, resetting to 0",
-		               __func__, listenerId, static_cast<int>(operation));
-		listenerId = 0;  // Reset to the first listener
-	}
+	auto *listenerInfo = listenerForJob(listenerId, __func__);
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::unique_lock lock(listenerInfo.jobsMutex);
-	uint32_t jobId = listenerInfo.nextJobId++;
+	std::unique_lock lock(listenerInfo->jobsMutex);
+	uint32_t jobId = listenerInfo->nextJobId++;
 	auto job = std::make_unique<Job>();
 	job->jobId = jobId;
 	job->callback = std::move(callback);
@@ -140,9 +192,10 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	job->extra = extra;
 	job->state = JobPool::State::Enabled;
 	job->listenerId = listenerId;
-	listenerInfo.jobHash[jobId] = std::move(job);
+	listenerInfo->jobHash[jobId] = std::move(job);
 
-	putToJobQueue(jobId, operation, reinterpret_cast<uint8_t *>(listenerInfo.jobHash[jobId].get()));
+	putToJobQueue(jobId, operation,
+	              reinterpret_cast<uint8_t *>(listenerInfo->jobHash[jobId].get()));
 	unprocessedJobs_.fetch_add(1, std::memory_order_relaxed);
 	return jobId;
 }
@@ -154,9 +207,11 @@ bool JobPool::allJobsProcessed() const {
 bool JobPool::isEmpty() {
 	if (jobsQueue->elements() > 0) { return false; }
 
-	for (auto &listenerInfo : listenerInfos_) {
-		std::lock_guard lock(listenerInfo.notifierMutex);
-		if (!listenerInfo.statusQueue.empty()) { return false; }
+	for (const auto &atomicSlot : listenerInfos_) {
+		auto *listener = atomicSlot.load(std::memory_order_acquire);
+		if (listener == nullptr) { continue; }
+		std::lock_guard lock(listener->notifierMutex);
+		if (!listener->statusQueue.empty()) { return false; }
 	}
 	return true;
 }
@@ -166,38 +221,48 @@ uint32_t JobPool::getJobCount() const {
 	return jobsQueue->elements();
 }
 
+bool JobPool::isListenerIdle(uint32_t listenerId) {
+	if (listenerId >= kMaxMetadataConnections) { return true; }
+	auto *listener = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listener == nullptr) { return true; }
+	std::lock_guard lock(listener->jobsMutex);
+	return listener->jobHash.empty() && listener->deferredJobs.load() == 0;
+}
+
 bool JobPool::isFull() const {
 	return jobsQueue->isFull();
 }
 
 void JobPool::disableAndChangeCallbackAll(const JobCallback &callback, uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: disableAndChangeCallbackAll: Invalid listenerId {}, returning",
 		               listenerId);
 		return;
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::lock_guard jobsLockGuard(listenerInfo.jobsMutex);
-	for (auto &[jobId, job] : listenerInfo.jobHash) {
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
+	std::lock_guard jobsLockGuard(listenerInfo->jobsMutex);
+	for (auto &[jobId, job] : listenerInfo->jobHash) {
 		if (job->state == JobPool::State::Enabled) { job->state = JobPool::State::Disabled; }
 		job->callback = callback;
 	}
 }
 
 void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: disableJob: Invalid listenerId {} for jobId {}, returning",
 		               listenerId, jobId);
 		return;
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex, std::defer_lock);
-	auto jobIterator = listenerInfo.jobHash.find(jobId);
-	if (jobIterator != listenerInfo.jobHash.end()) {
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
+	std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex, std::defer_lock);
+	auto jobIterator = listenerInfo->jobHash.find(jobId);
+	if (jobIterator != listenerInfo->jobHash.end()) {
 		jobsUniqueLock.lock();
 		if (jobIterator->second->state == JobPool::State::Enabled) {
 			jobIterator->second->state = JobPool::State::Disabled;
@@ -209,18 +274,20 @@ void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
 std::list<uint32_t> JobPool::disableJobs(const std::list<uint32_t> &jobIds, uint32_t listenerId) {
 	// Check if the listenerId is valid
 	std::list<uint32_t> disabledJobIds;
-	if (listenerId >= listenerInfos_.size()) {
-		safs::log_warn("JobPool: disableJobs: Invalid listenerId {}, returning",
-		               listenerId);
+	if (listenerId >= kMaxMetadataConnections) {
+		safs::log_warn("JobPool: disableJobs: Invalid listenerId {}, returning", listenerId);
 		return disabledJobIds;
 	}
 
 	if (jobIds.empty()) { return disabledJobIds; }  // to save the locking
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex);
+
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return disabledJobIds; }
+
+	std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
 	for (auto jobId : jobIds) {
-		auto jobIterator = listenerInfo.jobHash.find(jobId);
-		if (jobIterator != listenerInfo.jobHash.end()) {
+		auto jobIterator = listenerInfo->jobHash.find(jobId);
+		if (jobIterator != listenerInfo->jobHash.end()) {
 			if (jobIterator->second->state == JobPool::State::Enabled) {
 				jobIterator->second->state = JobPool::State::Disabled;
 				disabledJobIds.push_back(jobId);
@@ -231,24 +298,25 @@ std::list<uint32_t> JobPool::disableJobs(const std::list<uint32_t> &jobIds, uint
 }
 
 void JobPool::processCompletedJobs(uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: processCompletedJobs: Invalid listenerId {}, returning",
 		               listenerId);
 		return;
 	}
 
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
 	uint32_t jobId{};
 	uint8_t status{};
 	bool notLastJob = true;
-	auto &listenerInfo = listenerInfos_[listenerId];
 	while (notLastJob) {
 		notLastJob = receiveStatus(jobId, status, listenerId);
-		auto jobIterator = listenerInfo.jobHash.find(jobId);
-		if (jobIterator != listenerInfo.jobHash.end()) {
+		auto jobIterator = listenerInfo->jobHash.find(jobId);
+		if (jobIterator != listenerInfo->jobHash.end()) {
 			auto callback = jobIterator->second->callback;
 			if (callback) { callback(status, jobIterator->second->extra); }
-			listenerInfo.jobHash.erase(jobIterator);
+			listenerInfo->jobHash.erase(jobIterator);
 			unprocessedJobs_.fetch_sub(1, std::memory_order_relaxed);
 		}
 	}
@@ -256,16 +324,17 @@ void JobPool::processCompletedJobs(uint32_t listenerId) {
 
 void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
                              uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: changeCallback: Invalid listenerId {} for jobId {}, returning",
 		               listenerId, jobId);
 		return;
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	auto jobIterator = listenerInfo.jobHash.find(jobId);
-	if (jobIterator != listenerInfo.jobHash.end()) {
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
+	auto jobIterator = listenerInfo->jobHash.find(jobId);
+	if (jobIterator != listenerInfo->jobHash.end()) {
 		jobIterator->second->callback = std::move(callback);
 		jobIterator->second->extra = extra;
 	}
@@ -273,16 +342,19 @@ void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
 
 void JobPool::changeCallback(std::list<uint32_t> &jobIds, const JobCallback &callback,
                              uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: changeCallback: Invalid listenerId {}, returning", listenerId);
 		return;
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
 	for (auto jobId : jobIds) {
-		auto jobIterator = listenerInfo.jobHash.find(jobId);
-		if (jobIterator != listenerInfo.jobHash.end()) { jobIterator->second->callback = callback; }
+		auto jobIterator = listenerInfo->jobHash.find(jobId);
+		if (jobIterator != listenerInfo->jobHash.end()) {
+			jobIterator->second->callback = callback;
+		}
 	}
 }
 
@@ -310,7 +382,10 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 
 		// job exists
 		uint32_t listenerId = job->listenerId;
-		std::unique_lock jobsUniqueLock(listenerInfos_[listenerId].jobsMutex);
+		// A job only exists once its listener does, and listeners outlive every job in the pool.
+		auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+		sassert(listenerInfo != nullptr);
+		std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
 		jobState = job->state;
 		if (job->state == State::Enabled) { job->state = State::InProgress; }
 
@@ -335,40 +410,51 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 }
 
 void JobPool::sendStatus(uint32_t jobId, uint8_t status, uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: SendStatus: Invalid listenerId {} for jobId {}, returning",
 		               listenerId, jobId);
 		return;
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::lock_guard statusLock(listenerInfo.notifierMutex);
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) {
+		safs::log_warn("JobPool: SendStatus: Listener {} is null for jobId {}, returning",
+		               listenerId, jobId);
+		return;
+	}
 
-	if (listenerInfo.statusQueue.empty()) {
-		static constexpr eventfd_t dummyValue = 1;  // Dummy value to wake up the eventfd
-		eassert(::eventfd_write(listenerInfo.notifierFD, dummyValue) == 0 &&
+	std::lock_guard statusLock(listenerInfo->notifierMutex);
+
+	if (listenerInfo->statusQueue.empty()) {
+		static constexpr eventfd_t dummyValue = 1;
+		eassert(::eventfd_write(listenerInfo->notifierFD, dummyValue) == 0 &&
 		        "JobPool: SendStatus: Failed to write to eventfd");
 	}
-	listenerInfo.statusQueue.emplace(jobId, status);
+	listenerInfo->statusQueue.emplace(jobId, status);
 }
 
 bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn("JobPool: receiveStatus: Invalid listenerId {} for jobId {}, returning",
 		               listenerId, jobId);
-		return false; // Return false to indicate that we should stop processing
+		return false;  // Return false to indicate that we should stop processing
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::lock_guard statusLock(listenerInfo.notifierMutex);
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) {
+		safs::log_warn("JobPool: receiveStatus: Listener {} is null, returning", listenerId);
+		return false;
+	}
 
-	std::tie(jobId, status) = listenerInfo.statusQueue.front();
-	listenerInfo.statusQueue.pop();
-	if (listenerInfo.statusQueue.empty()) {
-		eventfd_t dummyEvent;  // Only to clear the eventfd
-		eassert(::eventfd_read(listenerInfo.notifierFD, &dummyEvent) == 0 &&
+	std::lock_guard statusLock(listenerInfo->notifierMutex);
+
+	if (listenerInfo->statusQueue.empty()) { return false; }
+
+	std::tie(jobId, status) = listenerInfo->statusQueue.front();
+	listenerInfo->statusQueue.pop();
+	if (listenerInfo->statusQueue.empty()) {
+		eventfd_t dummyEvent;
+		eassert(::eventfd_read(listenerInfo->notifierFD, &dummyEvent) == 0 &&
 		        "JobPool: ReceiveStatus: Failed to read from eventfd");
 		return false;
 	}
@@ -391,17 +477,23 @@ void JobPool::getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jo
 uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
                                           JobCallback callback, void *extra,
                                           ProcessJobCallback processJob, uint32_t listenerId) {
+	auto *listener = listenerForJob(listenerId, __func__);
+
 	std::unique_lock lockedChunkLock(chunkToJobReplyMapMutex_);
 	auto it = chunkToJobReplyMap_.find(chunkWithType);
 	if (it != chunkToJobReplyMap_.end() && it->second.writeInitReceived) {
 		// Chunk is locked, store the job to be added later
 		auto &lockedChunkData = it->second;
+		listener->deferredJobs.fetch_add(1);
 
 		lockedChunkData.pendingAddJobs.emplace_back(
 		    [this, operation, extra, listenerId, callback = std::move(callback),
 		     processJob = std::move(processJob)]() mutable -> uint32_t {
-			    return addJob(operation, std::move(callback), extra, std::move(processJob),
-			                  listenerId);
+			    const auto jobId = addJob(operation, std::move(callback), extra,
+			                              std::move(processJob), listenerId);
+			    auto *l = listenerInfos_[listenerId].load(std::memory_order_acquire);
+			    if (l != nullptr) { l->deferredJobs.fetch_sub(1); }
+			    return jobId;
 		    });
 
 		return lockedChunkData.lockJobId;  // Lock guard is released here
@@ -413,16 +505,10 @@ uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOper
 }
 
 uint32_t MasterJobPool::addLockJob(JobCallback callback, void *extra, uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
-		safs::log_warn("{} job pool: {}: Invalid listenerId {} for operation LOCK, resetting to 0",
-		               name_, __func__, listenerId);
-		listenerId = 0;  // Reset to the first listener
-	}
+	auto *listenerInfo = listenerForJob(listenerId, __func__);
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::unique_lock lock(listenerInfo.jobsMutex);
-	uint32_t jobId = listenerInfo.nextJobId++;
+	std::unique_lock lock(listenerInfo->jobsMutex);
+	uint32_t jobId = listenerInfo->nextJobId++;
 	auto job = std::make_unique<Job>();
 	job->jobId = jobId;
 	job->callback = std::move(callback);
@@ -430,27 +516,28 @@ uint32_t MasterJobPool::addLockJob(JobCallback callback, void *extra, uint32_t l
 	job->extra = extra;
 	job->state = JobPool::State::Enabled;
 	job->listenerId = listenerId;
-	listenerInfo.jobHash[jobId] = std::move(job);
+	listenerInfo->jobHash[jobId] = std::move(job);
 	// Not an actual job, but a marker for a locked chunk, so never inserted into the job queue.
 	return jobId;
 }
 
 void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCallbackMaker,
                                            uint32_t listenerId) {
-	// Check if the listenerId is valid
-	if (listenerId >= listenerInfos_.size()) {
+	if (listenerId >= kMaxMetadataConnections) {
 		safs::log_warn(
 		    "{} job pool: {}: Invalid listenerId {} for changing lock jobs callback, resetting to 0",
 		    name_, __func__, listenerId);
-		listenerId = 0;  // Reset to the first listener
+		listenerId = 0;
 	}
 
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo.jobsMutex);
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
+	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo->jobsMutex);
 	for (auto &[chunkWithType, lockedChunkData] : chunkToJobReplyMap_) {
 		if (lockedChunkData.listenerId == listenerId) {
-			auto jobIterator = listenerInfo.jobHash.find(lockedChunkData.lockJobId);
-			if (jobIterator != listenerInfo.jobHash.end()) {
+			auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
+			if (jobIterator != listenerInfo->jobHash.end()) {
 				jobIterator->second->callback = lockJobCallbackMaker(chunkWithType, listenerId);
 			}
 		}
@@ -459,6 +546,11 @@ void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCa
 
 bool MasterJobPool::startChunkLock(const JobPool::JobCallback &callback, void *packet,
                                    uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId) {
+	// Resolve the listener before recording it. addLockJob corrects its own copy of the argument,
+	// so the map would otherwise name a listener that never receives the reply, stranding the
+	// lock job on the one that does.
+	listenerForJob(listenerId, __func__);
+
 	std::unique_lock lock(chunkToJobReplyMapMutex_);
 	if (chunkToJobReplyMap_.contains(ChunkWithType{chunkId, chunkType})) {
 		lock.unlock();  // Release the lock before logging to avoid extra contention
@@ -541,14 +633,15 @@ void MasterJobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
 	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
 
 	// Remove the lock job and the related packet
-	auto &listenerInfo = listenerInfos_[listenerId];
-	std::unique_lock jobsUniqueLock(listenerInfo.jobsMutex);
-	auto lockJobIterator = listenerInfo.jobHash.find(lockJobId);
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+	std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
+	auto lockJobIterator = listenerInfo->jobHash.find(lockJobId);
 
-	if (lockJobIterator != listenerInfo.jobHash.end()) {
+	if (lockJobIterator != listenerInfo->jobHash.end()) {
 		auto *outputPacket = reinterpret_cast<OutputPacket *>(lockJobIterator->second->extra);
 		delete outputPacket;
-		listenerInfo.jobHash.erase(lockJobIterator);
+		listenerInfo->jobHash.erase(lockJobIterator);
 	}
 }
 
@@ -769,6 +862,18 @@ uint32_t job_get_blocks(ClientJobPool &jobPool, JobPool::JobCallback callback, u
 		return hddChunkGetNumberOfBlocks(chunkId, chunkType, version, blocks);
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, std::move(callback), kEmptyExtra,
+	                      processJob, listenerId);
+}
+
+uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                   uint64_t chunkId, ChunkPartType chunkType, std::shared_ptr<uint32_t> version,
+                   uint32_t listenerId) {
+	// The worker lambda and the callback share ownership of the buffer: a connection close
+	// replaces the callback, and a raw pointer owned by it would dangle under a running worker.
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddChunkGetVersion(chunkId, chunkType, version.get());
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::GetBlocks, std::move(callback), extra,
 	                      processJob, listenerId);
 }
 

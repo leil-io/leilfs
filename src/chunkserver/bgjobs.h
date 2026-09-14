@@ -22,18 +22,22 @@
 
 #include "common/platform.h"
 
-#include "chunkserver-common/chunk_map.h"
-#include "chunkserver/io_buffers.h"
-#include "common/pcqueue.h"
-
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#include "chunkserver-common/chunk_map.h"
+#include "chunkserver/io_buffers.h"
+#include "common/metadata_cluster_member.h"
+#include "common/pcqueue.h"
 
 constexpr auto kEmptyCallback = nullptr;
 constexpr auto kEmptyExtra = nullptr;
@@ -156,6 +160,21 @@ public:
 	/// jobPool to check if it is idle.
 	bool isEmpty();
 
+	/// @brief Checks whether a listener has no job left, running or waiting behind a chunk lock,
+	/// so its connection slot can be reused.
+	/// @param listenerId The listener to check.
+	/// @return True when the listener owns no job.
+	bool isListenerIdle(uint32_t listenerId);
+
+	/// @brief Allocates a listener slot lazily if not already present.
+	/// Monotonically allocated; never freed during pool lifetime to prevent worker UAF.
+	/// @param listenerId The ID of the listener slot to allocate.
+	/// @return The notification eventfd associated with this listener.
+	int allocateListener(uint32_t listenerId);
+
+	/// @brief Returns the number of currently allocated listeners.
+	uint32_t allocatedListenerCount() const;
+
 	/// @brief Gets the number of jobs in the JobPool.
 	uint32_t getJobCount() const;
 
@@ -215,13 +234,22 @@ protected:
 
 	/// @brief Structure to hold information about a listener.
 	struct ListenerInfo {
-		int notifierFD;            /// File descriptor for notifications.
+		int notifierFD{-1};        /// File descriptor for notifications.
 		std::mutex notifierMutex;  /// Mutex for event notifications.
 		std::mutex jobsMutex;      /// Mutex for job operations.
 		std::queue<std::pair<uint32_t, uint8_t>> statusQueue;        /// Queue for job statuses.
 		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
-		uint32_t nextJobId;                                          /// Next job ID to be assigned.
+		uint32_t nextJobId{1};                                       /// Next job ID to be assigned.
+		std::atomic<uint32_t> deferredJobs{0};  /// Jobs waiting behind a chunk lock.
 	};
+
+	/// @brief Resolves the listener a job must land on, falling back to listener zero when the
+	/// caller names one that does not exist. Never allocates: a job path has no way to recover
+	/// from a failed allocation.
+	/// @param listenerId Corrected in place when it does not name an allocated listener.
+	/// @param caller Name of the calling function, for the warning.
+	/// @return The listener that will own the job, never null.
+	ListenerInfo *listenerForJob(uint32_t &listenerId, const char *caller);
 
 	/// @brief Worker thread function.
 	/// @param poolName Parent pool name, used to name the specific thread.
@@ -258,10 +286,12 @@ protected:
 	/// @param jobPtrArg A pointer to the data of the job to be retrieved.
 	virtual void getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jobPtrArg);
 
-	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
-	std::string name_;                         /// Human readable id of the JobPool.
-	uint8_t workers;                           /// Number of worker threads in the pool.
-	std::vector<std::thread> workerThreads;    /// Vector of worker threads.
+	/// @brief Monotonically allocated table of listeners. Lazily allocated on first use,
+	/// never freed during pool lifetime to eliminate worker thread use-after-free hazards.
+	std::array<std::atomic<ListenerInfo *>, kMaxMetadataConnections> listenerInfos_{};
+	std::string name_;                       /// Human readable id of the JobPool.
+	uint8_t workers;                         /// Number of worker threads in the pool.
+	std::vector<std::thread> workerThreads;  /// Vector of worker threads.
 	std::unique_ptr<ProducerConsumerQueueWithPriority> jobsQueue;  /// Queue for jobs.
 	/// Counter for unprocessed jobs, i.e jobs that have been added to the JobPool but have not yet
 	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
@@ -634,6 +664,20 @@ uint32_t job_create(MasterJobPool &jobPool, JobPool::JobCallback callback, void 
 uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                      uint32_t newChunkVersion, uint32_t listenerId = 0);
+
+/// @brief Adds a job that reads the stored version of a chunk part into @p version.
+/// @param jobPool The MasterJobPool instance.
+/// @param callback The callback function to be called when the job is finished.
+/// @param extra Extra data passed to the callback.
+/// @param chunkId The ID of the chunk.
+/// @param chunkType The type of the chunk part.
+/// @param version Receives the stored version; shared with the callback so it survives a
+/// connection close that replaces the callback while the worker still writes it.
+/// @param listenerId The listener that receives the completion.
+/// @return The ID of the added job.
+uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                   uint64_t chunkId, ChunkPartType chunkType, std::shared_ptr<uint32_t> version,
+                   uint32_t listenerId = 0);
 
 /// @brief Adds a truncate job to the JobPool.
 ///
