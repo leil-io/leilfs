@@ -96,7 +96,6 @@ apt_packages=(
 	# test path so non-Ganesha machines skip them.
 )
 noble_packages=(
-	prometheus-cpp-dev
 	util-linux-extra
 )
 dnf_packages=(
@@ -154,7 +153,6 @@ dnf_packages=(
 	libacl-devel
 	libcap-devel
 	libnfsidmap-devel
-	libprometheus-cpp-devel
 	libsqlite3x-devel
 	nfs-utils
 	xfsprogs-devel

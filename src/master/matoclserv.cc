@@ -1213,6 +1213,18 @@ uint8_t *matoclserv_createpacket(matoclserventry *eptr, uint32_t type, uint32_t 
 	return eptr->outputPackets.back().packet.data() + PacketHeader::kSize;
 }
 
+/// Creates a new output packet header (v2 with version) for a given session entry.
+/// @param eptr Pointer to the client connection in the master
+/// @param type The type of the packet
+/// @param size The size of the packet data
+/// @return Pointer to the start of the packet data
+uint8_t *matoclserv_createpacket(matoclserventry *eptr, uint32_t type, uint32_t size, uint32_t version) {
+	eptr->outputPackets.emplace_back(PacketHeader(type, size + sizeof(uint32_t)));
+	auto *outputPacket = eptr->outputPackets.back().packet.data() + PacketHeader::kSize;
+	serialize(&outputPacket, version);
+	return outputPacket;
+}
+
 /// Creates a new output packet for a given session entry.
 /// @param eptr Pointer to the client connection in the master
 /// @param buffer The message buffer containing the packet data
@@ -6202,6 +6214,13 @@ void matoclserv_list_tasks(matoclserventry *eptr) {
 	matoclserv_createpacket(eptr, matocl::listTasks::build(jobs_info));
 }
 
+void matoclserv_send_metrics(matoclserventry *eptr) {
+	const uint32_t metricsVersion = 1;
+	auto metricsSerialized = metrics::serializeMasterMetrics();
+	auto *dest = matoclserv_createpacket(eptr, SAU_ANTOCL_GET_METRICS, metricsSerialized.size, metricsVersion);
+	memcpy(dest, metricsSerialized.data, metricsSerialized.size);
+}
+
 void matoclserv_stop_task(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint32_t job_id, msgid;
 	uint8_t status;
@@ -7010,6 +7029,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case SAU_CLTOMA_STOP_TASK:
 					matoclserv_stop_task(eptr, data, length);
 					break;
+				case SAU_CLTOAN_GET_METRICS:
+					matoclserv_send_metrics(eptr);
+					break;
 				default:
 				    safs::log_info(
 				        "main master server module: got unknown message from unregistered (type:{})",
@@ -7393,7 +7415,7 @@ void matoclserv_read(matoclserventry *eptr) {
 			return;
 		}
 
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_BYTES, bytesRead);
+		metrics::increment(metrics::master::U64::METADATA_CLIENT_BYTES_RECEIVED_INCREMENT);
 		statsBytesReceived += bytesRead;
 
 		if (eptr->inputPacket.hasData()) {
@@ -7402,7 +7424,7 @@ void matoclserv_read(matoclserventry *eptr) {
 			matoclserv_gotpacket(eptr, header.type, data.data(), data.size());
 
 			statsPacketsReceived++;
-			metrics::Counter::increment(metrics::Counter::Master::CLIENT_RX_PACKETS);
+			metrics::increment(metrics::master::U64::METADATA_CLIENT_PACKETS_RECEIVED_INCREMENT);
 
 			eptr->inputPacket.reset();
 		}
@@ -7446,12 +7468,12 @@ void matoclserv_write(matoclserventry *eptr) {
 		}
 
 		outputPacket.bytesSent += bytesWritten;
-		metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_BYTES, bytesWritten);
+		metrics::increment(metrics::master::U64::METADATA_CLIENT_BYTES_SENT_INCREMENT);
 		statsBytesSent += bytesWritten;
 
 		if (outputPacket.bytesSent >= outputPacket.packet.size()) {
 			statsPacketsSent++;
-			metrics::Counter::increment(metrics::Counter::Master::CLIENT_TX_PACKETS);
+			metrics::increment(metrics::master::U64::METADATA_CLIENT_PACKETS_SENT_INCREMENT);
 			eptr->outputPackets.pop_front();
 		} else {
 			return;

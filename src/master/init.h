@@ -48,19 +48,6 @@
 #include "master/personality.h"
 #include "master/session_manager.h"
 #include "master/topology.h"
-#include "metrics/metrics.h"
-
-inline int prometheus_init() {
-	if (cfg_getuint8("ENABLE_PROMETHEUS", 0) != 1) {
-		safs::log_info(
-		    "Prometheus disabled, no Prometheus metrics will be "
-		    "gathered");
-		return 0;
-	}
-	metrics::init(cfg_getstr("PROMETHEUS_HOST", "0.0.0.0:9499"));
-	eventloop_destructregister(metrics::destroy);
-	return 0;
-}
 
 inline int metadata_backend_init() {
 	std::string backendType = cfg_getstr("METADATA_BACKEND", "FILE");
@@ -109,7 +96,6 @@ inline const std::vector<RunTab> earlyRunTabs = {
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
-    RunTab{.function = prometheus_init, .name = "prometheus module"},
     // has to be first
     RunTab{.function = hstorage_init, .name = "name storage"},
     // has to be second

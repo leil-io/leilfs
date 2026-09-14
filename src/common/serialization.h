@@ -263,6 +263,10 @@ inline void serialize(uint8_t** destination, int64_t value) {
 	put64bit(destination, value);
 }
 
+inline void serialize(uint8_t** destination, double value) {
+	put64bit(destination, static_cast<uint64_t>(value));
+}
+
 // serialize a string
 inline void serialize(uint8_t** destination, const std::string& value) {
 	serialize(destination, uint32_t(value.length() + 1));

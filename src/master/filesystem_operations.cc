@@ -1013,7 +1013,7 @@ void FilesystemOperationsBase::statfs(const FsContext &context,
 		*inodes = statsRecord.inodes;
 	}
 	incrementFSStat(FsStats::Statfs);
-	metrics::Counter::increment(metrics::Counter::Master::FS_STATFS);
+	metrics::increment(metrics::master::U64::METADATA_FS_STATFS_INCREMENT);
 }
 #endif /* #ifndef METARESTORE */
 
@@ -1088,7 +1088,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 			nodeOperations_->fillAttr(fsOpContext, workDir, workDir, context.uid(), context.gid(),
 			                          context.auid(), context.agid(), context.sesflags(), attr);
 			incrementFSStat(FsStats::Lookup);
-			metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
+			metrics::increment(metrics::master::U64::METADATA_FS_LOOKUP_INCREMENT);
 			return SAUNAFS_STATUS_OK;
 		}
 
@@ -1116,7 +1116,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 				}
 			}
 			incrementFSStat(FsStats::Lookup);
-			metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
+			metrics::increment(metrics::master::U64::METADATA_FS_LOOKUP_INCREMENT);
 			return SAUNAFS_STATUS_OK;
 		}
 	}
@@ -1132,7 +1132,7 @@ uint8_t FilesystemOperationsBase::lookup(const FsContext &context,
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	incrementFSStat(FsStats::Lookup);
-	metrics::Counter::increment(metrics::Counter::Master::FS_LOOKUP);
+	metrics::increment(metrics::master::U64::METADATA_FS_LOOKUP_INCREMENT);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -1280,7 +1280,7 @@ uint8_t FilesystemOperationsBase::getAttr(const FsContext &context,
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 
 	incrementFSStat(FsStats::Getattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_GETATTR);
+	metrics::increment(metrics::master::U64::METADATA_FS_GETATTR_INCREMENT);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1354,7 +1354,7 @@ uint8_t FilesystemOperationsBase::trySetLength(const FsContext &context,
 	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Setattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+	metrics::increment(metrics::master::U64::METADATA_FS_SETATTR_INCREMENT);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1537,7 +1537,7 @@ uint8_t FilesystemOperationsBase::doSetLength(const FsContext &context,
 	nodeOperations_->updateNode(fsOpContext, node);
 
 	incrementFSStat(FsStats::Setattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+	metrics::increment(metrics::master::U64::METADATA_FS_SETATTR_INCREMENT);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -1691,7 +1691,7 @@ uint8_t FilesystemOperationsBase::setAttr(const FsContext &context,
 	nodeOperations_->updateNode(fsOpContext, node);
 
 	incrementFSStat(FsStats::Setattr);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SETATTR);
+	metrics::increment(metrics::master::U64::METADATA_FS_SETATTR_INCREMENT);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1793,7 +1793,7 @@ uint8_t FilesystemOperationsBase::readlink(const FsContext &context,
 	path = (std::string) static_cast<FSNodeSymlink *>(node)->path;
 	fs_update_atime(fsOpContext, node, timeStamp);
 	incrementFSStat(FsStats::Readlink);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READLINK);
+	metrics::increment(metrics::master::U64::METADATA_FS_READLINK_INCREMENT);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -1887,7 +1887,7 @@ uint8_t FilesystemOperationsBase::symlink(const FsContext &context,
 
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Symlink);
-	metrics::Counter::increment(metrics::Counter::Master::FS_SYMLINK);
+	metrics::increment(metrics::master::U64::METADATA_FS_SYMLINK_INCREMENT);
 #endif /* #ifndef METARESTORE */
 
 	return SAUNAFS_STATUS_OK;
@@ -1961,7 +1961,7 @@ uint8_t FilesystemOperationsBase::mknod(const FsContext &context,
 	          newNode->mode & kPermissionsMask, context.uid(), context.gid(), rdev, newNode->id);
 
 	incrementFSStat(FsStats::Mknod);
-	metrics::Counter::increment(metrics::Counter::Master::FS_MKNOD);
+	metrics::increment(metrics::master::U64::METADATA_FS_MKNOD_INCREMENT);
 	fsnodes_update_checksum(newNode);
 
 	// Persist the newly created node: KV stages it into the transaction, signal backends emit.
@@ -2029,7 +2029,7 @@ uint8_t FilesystemOperationsBase::mkdir(const FsContext &context,
 	          context.uid(), context.gid(), 0, newNode->id);
 
 	incrementFSStat(FsStats::Mkdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_MKDIR);
+	metrics::increment(metrics::master::U64::METADATA_FS_MKDIR_INCREMENT);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2127,7 +2127,7 @@ uint8_t FilesystemOperationsBase::unlink(const FsContext &context,
 	nodeOperations_->unlink(fsOpContext, timeStamp, workDir, baseName, child);
 
 	incrementFSStat(FsStats::Unlink);
-	metrics::Counter::increment(metrics::Counter::Master::FS_UNLINK);
+	metrics::increment(metrics::master::U64::METADATA_FS_UNLINK_INCREMENT);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2207,7 +2207,7 @@ uint8_t FilesystemOperationsBase::rmdir(const FsContext &context,
 	nodeOperations_->unlink(fsOpContext, timeStamp, workDir, name, child);
 
 	incrementFSStat(FsStats::Rmdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_RMDIR);
+	metrics::increment(metrics::master::U64::METADATA_FS_RMDIR_INCREMENT);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2396,7 +2396,7 @@ uint8_t FilesystemOperationsBase::rename(const FsContext &context,
 
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Rename);
-	metrics::Counter::increment(metrics::Counter::Master::FS_RENAME);
+	metrics::increment(metrics::master::U64::METADATA_FS_RENAME_INCREMENT);
 #endif
 
 	return SAUNAFS_STATUS_OK;
@@ -2456,7 +2456,7 @@ uint8_t FilesystemOperationsBase::link(const FsContext &context,
 
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Link);
-	metrics::Counter::increment(metrics::Counter::Master::FS_LINK);
+	metrics::increment(metrics::master::U64::METADATA_FS_LINK_INCREMENT);
 #endif
 	return SAUNAFS_STATUS_OK;
 }
@@ -2859,7 +2859,7 @@ void FilesystemOperationsBase::readdirData(const FsContext &context,
 	                            static_cast<FSNodeDirectory *>(node), dbuff,
 	                            flags & GETDIR_FLAG_WITHATTR);
 	incrementFSStat(FsStats::Readdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
+	metrics::increment(metrics::master::U64::METADATA_FS_READDIR_INCREMENT);
 }
 
 uint8_t FilesystemOperationsBase::readdir(const FsContext &context,
@@ -2888,7 +2888,7 @@ uint8_t FilesystemOperationsBase::readdir(const FsContext &context,
 	                        dir_entries);
 
 	incrementFSStat(FsStats::Readdir);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READDIR);
+	metrics::increment(metrics::master::U64::METADATA_FS_READDIR_INCREMENT);
 
 	return SAUNAFS_STATUS_OK;
 }
@@ -2945,7 +2945,7 @@ uint8_t FilesystemOperationsBase::openCheck(const FsContext &context,
 	nodeOperations_->fillAttr(fsOpContext, node, nullptr, context.uid(), context.gid(),
 	                          context.auid(), context.agid(), context.sesflags(), attr);
 	incrementFSStat(FsStats::Open);
-	metrics::Counter::increment(metrics::Counter::Master::FS_OPEN);
+	metrics::increment(metrics::master::U64::METADATA_FS_OPEN_INCREMENT);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -3141,7 +3141,7 @@ uint8_t FilesystemOperationsBase::readChunk(const FilesystemOperationContext &fs
 	*length = nodeFile->length;
 	fs_update_atime(fsOpContext, nodeFile, timeStamp);
 	incrementFSStat(FsStats::Read);
-	metrics::Counter::increment(metrics::Counter::Master::FS_READ);
+	metrics::increment(metrics::master::U64::METADATA_FS_READ_INCREMENT);
 	return SAUNAFS_STATUS_OK;
 }
 #endif
@@ -3263,7 +3263,7 @@ uint8_t FilesystemOperationsBase::writeChunk(const FsContext &context,
 
 #ifndef METARESTORE
 	incrementFSStat(FsStats::Write);
-	metrics::Counter::increment(metrics::Counter::Master::FS_WRITE);
+	metrics::increment(metrics::master::U64::METADATA_FS_WRITE_INCREMENT);
 #endif
 	return SAUNAFS_STATUS_OK;
 }

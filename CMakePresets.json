@@ -51,7 +51,7 @@
                 "ENABLE_FOUNDATIONDB": "OFF",
                 "ENABLE_NFS_ACL_SUPPORT": "OFF",
                 "ENABLE_NFS_GANESHA": "OFF",
-                "ENABLE_PROMETHEUS": "OFF",
+                "ENABLE_POLONAISE": "OFF",
                 "ENABLE_TESTS": "OFF",
                 "ENABLE_URAFT": "OFF",
                 "ENABLE_WERROR": "ON",

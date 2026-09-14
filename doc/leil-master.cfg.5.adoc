@@ -255,13 +255,6 @@ operation will wait for events. The value is applied for the polling in the
 events loop. Smaller values could reduce latency at the cost of CPU usage
 (default: 50)
 
-*ENABLE_PROMETHEUS (EXPERIMENTAL)*:: Whether to enable Prometheus support and
-metric collection. Note that this requires compiling with Prometheus support.
-Set to either 1 to enable, or 0 to disable (default is 0)
-
-*PROMETHEUS_HOST (EXPERIMENTAL)*:: Host address where Prometheus metric data
-can be collected, must be in the format of HOST:PORT (default 0.0.0.0:9499)
-
 *CREATE_EMPTY_FOLDERS_WHEN_SPACE_DEPLETED (EXPERIMENTAL)* When enabled,
 this option allows the system to create metadata for empty folders when
 storage space is depleted. This helps preserving the intended file and
