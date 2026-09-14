@@ -26,12 +26,12 @@
 
 #include "gtest/gtest.h"
 
-void mockJobCallback(uint8_t  /*status*/, void *extra) {
+void mockJobCallback(uint8_t /*status*/, void *extra) {
 	auto *counter = static_cast<std::atomic<int> *>(extra);
 	counter->fetch_add(1);
 }
 
-void mockJobCallbackDoubling(uint8_t  /*status*/, void *extra) {
+void mockJobCallbackDoubling(uint8_t /*status*/, void *extra) {
 	auto *counter = static_cast<std::atomic<int> *>(extra);
 	counter->fetch_add(counter->load());
 }
@@ -94,12 +94,8 @@ protected:
 		    std::make_unique<ClientJobPool>("TestClientPoolFifo", 1, 10, kNrListeners,
 		                                    clientFifoModeWakeupDescVec, IOPriorityMode::Fifo);
 
-		for (uint32_t i = 0; i < kNrListeners; ++i) {
-			processingCount[i] = 0;
-		}
-		for (uint32_t i = 0; i < kNrOperationTypes; ++i) {
-			counters[i] = 0;
-		}
+		for (uint32_t i = 0; i < kNrListeners; ++i) { processingCount[i] = 0; }
+		for (uint32_t i = 0; i < kNrOperationTypes; ++i) { counters[i] = 0; }
 		startServePoll();
 	}
 
@@ -121,16 +117,14 @@ protected:
 		lock.unlock();
 
 		for (auto &thread : servePollThreads) {
-			if (thread.joinable()) {
-				thread.join();
-			}
+			if (thread.joinable()) { thread.join(); }
 		}
 		servePollThreads.clear();
 	}
 
 	JobPool::ProcessJobCallback mockProcessJob = []() -> uint8_t {
 		usleep(1000);  // Simulate some work by sleeping for 1ms
-		return 0;  // Return success status
+		return 0;      // Return success status
 	};
 
 	std::unique_ptr<JobPool> jobPool;
@@ -386,4 +380,44 @@ TEST_F(JobPoolTest, IOPriorityMode) {
 	}
 
 	EXPECT_EQ(counters[1].load(), fifoCounterExpectedFinalValue);
+}
+
+TEST_F(JobPoolTest, AllocatesSingleListenerInitiallyAndExpandsOnDemand) {
+	std::vector<int> fds;
+	auto testPool = std::make_unique<JobPool>("LazyTestPool", 1, 10, 1, fds);
+	EXPECT_EQ(testPool->allocatedListenerCount(), 1U);
+	EXPECT_EQ(fds.size(), 1U);
+	EXPECT_TRUE(testPool->isEmpty());
+
+	// Expand to listener 1 on demand
+	int fd1 = testPool->allocateListener(1);
+	EXPECT_GE(fd1, 0);
+	EXPECT_EQ(testPool->allocatedListenerCount(), 2U);
+	EXPECT_TRUE(testPool->isEmpty());
+
+	// Re-allocating the same listener returns the same fd
+	EXPECT_EQ(testPool->allocateListener(1), fd1);
+	EXPECT_EQ(testPool->allocatedListenerCount(), 2U);
+
+	// Start workers and submit a job on listener 1 to verify end-to-end completion
+	testPool->startWorkers();
+	std::atomic<int> callbackRan = 0;
+	testPool->addJob(
+	    JobPool::ChunkOperation::Read,
+	    [](uint8_t status, void *extra) {
+		    EXPECT_EQ(status, SAUNAFS_STATUS_OK);
+		    auto *counter = static_cast<std::atomic<int> *>(extra);
+		    counter->fetch_add(1);
+	    },
+	    &callbackRan, []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 1);
+
+	// Wait for worker to notify on listener 1's fd
+	pollfd pfd{fd1, POLLIN, 0};
+	int ret = poll(&pfd, 1, 1000);
+	EXPECT_GT(ret, 0);
+	EXPECT_TRUE(pfd.revents & POLLIN);
+
+	testPool->processCompletedJobs(1);
+	EXPECT_EQ(callbackRan.load(), 1);
+	EXPECT_TRUE(testPool->isEmpty());
 }
