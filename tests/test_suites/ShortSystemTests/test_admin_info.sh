@@ -15,5 +15,8 @@ done
 rm dir_3/file
 rm dir_xor2/file
 
+# The chunk totals are current as chunks change on the in-memory master and a measurement behind
+# on the FDB backend, so on that backend the report is read once it covers the files above.
+wait_for_chunk_health_measurement "${info[matocl]}"
 expect_equals "$SAUNAFS_VERSION 2 0 0 9 5 4 0 4 7 7" \
 	"$(saunafs-admin info --porcelain localhost "${info[matocl]}" | cut -d' ' -f 1,6-)"

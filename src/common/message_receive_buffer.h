@@ -57,6 +57,9 @@ public:
 		return bytesReceived_ >= PacketHeader::kSize;
 	}
 
+	/// True until the first byte of a message arrives.
+	bool isEmpty() const { return bytesReceived_ == 0; }
+
 	/*
 	 * This is true when the whole message has been read.
 	 */

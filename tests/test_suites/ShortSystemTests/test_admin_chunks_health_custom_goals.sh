@@ -19,13 +19,24 @@ done
 
 function chunks-health-trimmed() {
 	saunafs-admin chunks-health --porcelain localhost "${info[matocl]}" \
-		| egrep -o "^... [234AB_]+ (0 )*[1-9]+" \
+		| egrep -o "^(AVA|REP|DEL) [234AB_]+ (0 )*[1-9]+" \
 		| tr "\n" "|" \
 		| sed 's/|$//'
 }
+# The in-memory master reports a goal change at once; a measuring backend reports it a
+# measurement later. The immediate expectation stays where it holds.
+expect_chunks_health_() {
+	local expected="$1"
+	if [[ "${METADATA_BACKEND:-}" == "FDB" ]]; then
+		expect_eventually_prints "${expected}" "chunks-health-trimmed"
+	else
+		expect_equals "${expected}" "$(chunks-health-trimmed)"
+	fi
+}
+
 # Check if the admin outputs proper values
 first_output="AVA 2 1|AVA 3 1|AVA 4 1|REP 2 1|REP 3 0 1|REP 4 0 0 1|DEL 2 1|DEL 3 1|DEL 4 1"
-expect_equals "$first_output" "$(chunks-health-trimmed)"
+expect_chunks_health_ "$first_output"
 
 declare -A output
 output+=([AA]="AVA AA 3|REP AA 0 3|DEL AA 0 3")
@@ -44,12 +55,12 @@ output+=([B__]="AVA B__ 3|REP B__ 0 3|DEL B__ 3")
 for new_goal in "${!output[@]}"; do
 	MESSAGE="Testing goal ${new_goal}"
 	saunafs setgoal ${new_goal} file_*
-	expect_equals "${output[$new_goal]}" "$(chunks-health-trimmed)"
+	expect_chunks_health_ "${output[$new_goal]}"
 	chunks-health-trimmed
 	for old_goal in $goals; do
 		saunafs setgoal ${old_goal} file_${old_goal}
 	done
-	expect_equals "$first_output" "$(chunks-health-trimmed)"
+	expect_chunks_health_ "$first_output"
 done
 
 # Check if the output is fine after chunkserver disconnection and reconnection

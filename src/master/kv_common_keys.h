@@ -132,6 +132,31 @@ inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 /// Write locks live elsewhere (a future CHNK_LOCK_ prefix), so they are not part of this record.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
 
+/// Chunk health scanner lease.
+/// Format: CHUNK_HEALTH_LEASE:<OwnerMdsId><ExpiryTime><LeaseEpoch><PublishedGeneration>
+/// - OwnerMdsId: uint32_t serialized as Big Endian
+/// - ExpiryTime: uint32_t Unix timestamp serialized as Big Endian
+/// - LeaseEpoch: uint64_t serialized as Big Endian
+/// - PublishedGeneration: uint64_t serialized as Big Endian, the last generation this owner
+///   published, carried for takeover visibility only
+inline constexpr std::string_view kChunkHealthLeaseKey = "CHUNK_HEALTH_LEASE";
+
+/// Cluster-wide chunk health of the last completed scan, published by the lease owner and read
+/// by every server answering a health request.
+/// Format: CHUNK_HEALTH_PUBLISHED:<Freshness><ChunkserversDown><Availability><Replication>
+///         <FullCopies>
+/// - Freshness: serialized ChunkHealthFreshness (generation, scan start and end, chunks scanned,
+///   chunks excluded, count of chunkservers counted as unreachable). It comes first and must stay
+///   first, so a reader of an older layout can still decode the generation.
+/// - ChunkserversDown: length-prefixed vector of the 16-byte chunkserver identities the scan
+///   counted as unreachable, so a reader can tell a chunkserver being down from data loss
+/// - Availability, Replication: serialized ChunksAvailabilityState and ChunksReplicationState,
+///   each a sparse per-goal map, so an idle cluster keeps this value small
+/// - FullCopies: the goal by full-copies matrix of uint64_t counts, as the in-memory table caps it
+/// @note Only a completed scan is written here. A partial scan undercounts, so it is never
+/// published; absence means no scan has completed yet, which is not the same as nothing lost.
+inline constexpr std::string_view kChunkHealthPublishedKey = "CHUNK_HEALTH_PUBLISHED";
+
 /// Number of chunk-id slots covered by one FCHK_ bucket.
 inline constexpr uint32_t kChunkIdsPerBucket = 1024;
 
