@@ -157,6 +157,8 @@ int fuse_mnt_check_empty(const char *mnt, mode_t rootmode, off_t rootsize) {
 		struct dirent *ent;
 		DIR *dp = opendir(mnt);
 		if (!dp) {
+			fprintf(stderr, "failed to open mountpoint %s: %s\n",
+				mnt, strerror(errno));
 			return -1;
 		}
 		while ((ent = readdir(dp))) {
@@ -171,8 +173,11 @@ int fuse_mnt_check_empty(const char *mnt, mode_t rootmode, off_t rootsize) {
 		isempty = 0;
 	}
 
-	if (!isempty)
+	if (!isempty) {
+		fprintf(stderr, "mountpoint %s is not empty\n", mnt);
+		fprintf(stderr, "use '-o nonempty' if you are sure this is safe\n");
 		return -1;
+	}
 
 	return 0;
 }
