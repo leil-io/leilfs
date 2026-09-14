@@ -38,6 +38,7 @@ void hddGetLostChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
 void hddReportLostChunk(uint64_t chunkid, ChunkPartType chunk_type);
 void hddGetNewChunks(std::vector<ChunkWithVersionAndType>& chunks,
                      std::size_t limit);
+void hddDiscardNewChunks();
 
 /* Both must be called with the disks mutex locked */
 uint32_t hddGetSerializedSizeOfAllDiskInfosV2();
@@ -86,6 +87,10 @@ int hddChunkWriteFullBlocks(uint64_t chunkId, uint32_t version, ChunkPartType ch
 /* chunk info */
 int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
                               uint32_t version, uint16_t *blocks);
+/// Reports the stored version of a chunk part, NOCHUNK when the part is not on this server; the
+/// answer to a metadata server's probe, which needs the version without a block count. This is
+/// the raw version: unlike the inventory, it carries no to-delete flag in the high bit.
+int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *version);
 
 /* chunk operations */
 int hddTruncate(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,

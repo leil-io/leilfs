@@ -67,12 +67,11 @@ NetworkWorkerThread::NetworkWorkerThread(uint32_t id, uint32_t nrOfBgjobsWorkers
 	eassert(fcntl(notify_pipe[1], F_SETPIPE_SZ, kPageAlignedPipeSize));
 #endif
 	try {
-		// Create the JobPool instance with the specified number of workers. It would be serving
-		// only this network worker thread, thus the number of listeners is 1.
-		std::vector<int> bgJobPoolWakeUpFds(1);
-		bgJobPool_ = std::make_unique<ClientJobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, 1,
-		                                             bgJobPoolWakeUpFds, gIOPriorityMode);
-		bgJobPoolWakeUpFd_ = bgJobPoolWakeUpFds[0];
+		// Create the JobPool instance with the specified number of workers. It serves only this
+		// network worker thread, so listener 0 is the only one used.
+		bgJobPool_ =
+		    std::make_unique<ClientJobPool>(name_, nrOfBgjobsWorkers, bgjobsCount, gIOPriorityMode);
+		bgJobPoolWakeUpFd_ = bgJobPool_->allocateListener(0);
 	} catch (const std::exception &e) {
 		safs::log_err("NetworkWorkerThread: Failed to create JobPool instance: {}", e.what());
 		throw;

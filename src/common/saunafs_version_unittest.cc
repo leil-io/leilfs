@@ -29,3 +29,7 @@ TEST(SaunaFsVersionTests, SaunaFsVersion) {
 	EXPECT_EQ(0x01071BU, saunafsVersion(1, 7, 27));
 	EXPECT_EQ(0x02061BU, saunafsVersion(2, 6, 27));
 }
+
+TEST(SaunaFsVersionTests, ChunkserverIdentityVersion) {
+	EXPECT_EQ(saunafsVersion(5, 13, 0), kFirstVersionWithChunkserverIdentity);
+}
