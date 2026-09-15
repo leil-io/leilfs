@@ -95,6 +95,52 @@ else()
 endif()
 message(STATUS "ZSTD LIBRARY: ${ZSTD_LIBRARIES}")
 
+# Find LZ4, the other algorithm offered for per-block chunk compression.
+# Same fallback chain as Zstandard above, and needed more: upstream's Makefile
+# install ships no CMake config at all (only its cmake_unofficial build does),
+# so a distribution package is even likelier to offer pkg-config alone.
+# Both namespace spellings are checked because they differ between the CMake
+# config vcpkg installs and the one upstream's own build exports.
+find_package(lz4 CONFIG QUIET)
+
+if(TARGET lz4::lz4_shared)
+  set(LZ4_LIBRARIES lz4::lz4_shared)
+elseif(TARGET lz4::lz4_static)
+  set(LZ4_LIBRARIES lz4::lz4_static)
+elseif(TARGET lz4::lz4)
+  set(LZ4_LIBRARIES lz4::lz4)
+elseif(TARGET LZ4::lz4_shared)
+  set(LZ4_LIBRARIES LZ4::lz4_shared)
+elseif(TARGET LZ4::lz4_static)
+  set(LZ4_LIBRARIES LZ4::lz4_static)
+elseif(TARGET LZ4::lz4)
+  set(LZ4_LIBRARIES LZ4::lz4)
+else()
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(LZ4_PC QUIET IMPORTED_TARGET liblz4)
+  endif()
+
+  if(TARGET PkgConfig::LZ4_PC)
+    set(LZ4_LIBRARIES PkgConfig::LZ4_PC)
+  else()
+    find_library(LZ4_LIBRARY NAMES lz4)
+    find_path(LZ4_INCLUDE_DIR NAMES lz4.h)
+
+    if(NOT LZ4_LIBRARY OR NOT LZ4_INCLUDE_DIR)
+      message(FATAL_ERROR "Could not find LZ4 (required). "
+              "Install liblz4-dev (Debian) or lz4-devel (Fedora).")
+    endif()
+
+    add_library(lz4::lz4 UNKNOWN IMPORTED)
+    set_target_properties(lz4::lz4 PROPERTIES
+      IMPORTED_LOCATION "${LZ4_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${LZ4_INCLUDE_DIR}")
+    set(LZ4_LIBRARIES lz4::lz4)
+  endif()
+endif()
+message(STATUS "LZ4 LIBRARY: ${LZ4_LIBRARIES}")
+
 # Find Systemd
 INCLUDE(FindPkgConfig)
 pkg_check_modules(SYSTEMD libsystemd)
