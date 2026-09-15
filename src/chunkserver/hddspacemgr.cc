@@ -1173,6 +1173,16 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 	return SAUNAFS_STATUS_OK;
 }
 
+int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *version) {
+	TRACETHIS1(chunkId);
+	*version = 0;
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
+	if (chunk == ChunkNotFound) { return SAUNAFS_ERROR_NOCHUNK; }
+	*version = chunk->version();
+	hddChunkRelease(chunk);
+	return SAUNAFS_STATUS_OK;
+}
+
 std::pair<int, IChunk *> hddInternalCreateChunk(uint64_t chunkId,
                                                 uint32_t version,
                                                 ChunkPartType chunkType) {

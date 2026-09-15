@@ -20,16 +20,15 @@
 
 #include "common/platform.h"
 
-#include <array>
-#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <string_view>
 
+#include "common/chunkserver_id.h"
+
 namespace chunkserver {
 
-using ChunkserverId = std::array<uint8_t, 16>;
 using ChunkserverIdGenerator = std::function<ChunkserverId()>;
 
 inline constexpr const char *kChunkserverIdFilename = "chunkserver_id";
