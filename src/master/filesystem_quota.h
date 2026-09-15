@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "common/massert.h"
+#include "common/observable_property.h"
 #include "common/quota_database.h"
 #include "master/filesystem_freenode.h"
 #include "master/filesystem_node_types.h"
@@ -130,6 +131,12 @@ void fsnodes_quota_remove(QuotaOwnerType owner_type, inode_t owner_id);
  * \param available_space Free space.
  */
 void fsnodes_quota_adjust_space(FSNode *node, uint64_t &total_space, uint64_t &available_space);
+
+/// Signal emitted whenever an owner's quota limits change (set or removed).
+/// Parameters: owner type, owner id. Handlers should read the current limits from
+/// gMetadata->quotaDatabase to persist or remove the owner's rows. Only soft/hard limits are
+/// durable; usage (kUsed) is excluded from the quota checksum and rebuilt from node loading.
+inline Signal<QuotaOwnerType, inode_t> gQuotaChangedSignal;
 
 namespace quotas {
 uint8_t fs_quota_get_all(const FsContext &context, std::vector<QuotaEntry> &results);

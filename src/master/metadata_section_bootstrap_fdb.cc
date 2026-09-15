@@ -25,20 +25,27 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <map>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "common/datapack.h"
 #include "common/memory_mapped_file.h"
+#include "common/richacl.h"
+#include "common/serialization.h"
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/filesystem_node_types.h"
 #include "master/hstring.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_writer_fdb.h"
+#include "protocol/quota.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -66,6 +73,7 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	maxInodeId_ = 0;
 	metadataVersion_ = 0;
 	nextSessionId_ = 0;
+	detachedNodeTypes_.clear();
 
 	sectionMarkers_.clear();
 
@@ -159,6 +167,14 @@ int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	serialize(nextSessionIdValue, nextSessionId_);
 	transaction->set(kv::toBytes(kMetaNextSessionKey), nextSessionIdValue);
 
+	// The imported metadata image is the first restorable checkpoint. Publish its catalog entry in
+	// the same transaction as META_HEADER so a completed bootstrap can never expose a header
+	// without the checkpoint version needed by every section undo recorder.
+	std::vector<uint64_t> checkpointVersions{metadataVersion_};
+	if (checkpoints::saveCheckpointVersions(transaction.get(), checkpointVersions) != kOpSuccess) {
+		return kOpFailure;
+	}
+
 	if (!transaction->commit()) {
 		safs::log_err("Failed to commit bootstrapped metadata header to FDB");
 		return kOpFailure;
@@ -220,6 +236,8 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 	const uint8_t *ptr = section->begin;
 	uint64_t nodeCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (NODEU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -257,8 +275,10 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 			return kOpFailure;
 		}
 
-		// Enqueue node update with checkpointVersion=0 to avoid NODEU_ entries.
 		writer.enqueue(std::make_unique<NodeUpdateEvent>(node));
+		if (type == FSNodeType::kTrash || type == FSNodeType::kReserved) {
+			detachedNodeTypes_[node->id] = typeU8;
+		}
 
 		FSNode::destroy(node);
 		nodeCount++;
@@ -289,6 +309,8 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	uint64_t nextChunkId = get64bit(&ptr);
 	uint64_t chunkCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (CHNU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -310,7 +332,6 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 
 		if (chunkId == 0) { break; }
 
-		// Enqueue chunk update event for FDB with no checkpoint version to avoid undo logging
 		writer.enqueue(std::make_unique<ChunkUpdateEvent>(chunkId, chunkVersion, lockedTo, lockId));
 
 		chunkCount++;
@@ -354,6 +375,8 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 	const uint8_t *ptr = section->begin;
 	uint64_t edgeCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (EDGEU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -389,7 +412,18 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 		std::string name(reinterpret_cast<const char *>(ptr), edgeNameSize);
 		ptr += edgeNameSize;
 
-		writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		if (parentId == 0) {
+			const auto type = detachedNodeTypes_.find(childId);
+			if (type == detachedNodeTypes_.end()) {
+				safs::log_err("Bootstrapping detached path: inode {} is not trash or reserved",
+				              childId);
+				return kOpFailure;
+			}
+			writer.enqueue(std::make_unique<DetachedPathUpdateEvent>(
+			    childId, static_cast<FSNodeType>(type->second), HString(name)));
+		} else {
+			writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		}
 		edgeCount++;
 
 		if (++pending >= kFlushThreshold) {
@@ -530,6 +564,153 @@ int8_t MetadataSectionBootstrapFDB::loadXAttrSection() {
 	return kOpSuccess;
 }
 
+int8_t MetadataSectionBootstrapFDB::loadACLSection() {
+	if (kvEngine_ == nullptr || metadataFile_ == nullptr) { return kOpFailure; }
+
+	auto marker = findSection("ACLS 1.2");
+	if (!marker.has_value()) {
+		safs::log_warn("No metadata section marker found for ACLS 1.2");
+		return kOpFailure;
+	}
+
+	if (marker->length > std::numeric_limits<size_t>::max() - marker->offset) {
+		safs::log_err("Bootstrapping ACLs: section bounds overflow");
+		return kOpFailure;
+	}
+	const size_t sectionEnd = marker->offset + static_cast<size_t>(marker->length);
+	const uint8_t *ptr = metadataFile_->seek(marker->offset);
+
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging and will be flushed directly to FDB.
+	MetadataWriterFDB writer(kvEngine_);
+	uint64_t aclCount = 0;
+	size_t pending = 0;
+
+	// Each entry is <size:u32><serialize(inode, acl)>; a zero size is the end marker. This mirrors
+	// fs_store_acls()/fs_load_acl() in the FILE backend.
+	constexpr size_t kSizeFieldLength = sizeof(uint32_t);
+
+	try {
+		while (metadataFile_->offset(ptr) < sectionEnd) {
+			// Subtraction avoids overflow; offset(ptr) < sectionEnd is guaranteed by the loop.
+			if (kSizeFieldLength > sectionEnd - metadataFile_->offset(ptr)) {
+				safs::log_err("{}: truncated ACL entry size", __func__);
+				return kOpFailure;
+			}
+
+			uint32_t entrySize = 0;
+			deserialize(ptr, kSizeFieldLength, entrySize);
+			ptr += kSizeFieldLength;
+
+			// End-of-ACLs marker.
+			if (entrySize == 0) { break; }
+
+			if (entrySize > sectionEnd - metadataFile_->offset(ptr)) {
+				safs::log_err("{}: truncated ACL entry payload", __func__);
+				return kOpFailure;
+			}
+
+			inode_t inode{};
+			RichACL acl;
+			deserialize(ptr, entrySize, inode, acl);
+			ptr += entrySize;
+
+			// Re-serialize the ACL alone for FDB, matching loadACLs()/onAclChanged() so the value
+			// reads back identically (the inode is encoded in the ACLS_<inode> key, not the value).
+			std::vector<uint8_t> serializedAcl;
+			serialize(serializedAcl, acl);
+
+			writer.enqueue(std::make_unique<AclUpdateEvent>(inode, std::move(serializedAcl)));
+			aclCount++;
+
+			if (++pending >= kFlushThreshold) {
+				if (!writer.flush()) { return kOpFailure; }
+				pending = 0;
+			}
+		}
+	} catch (const std::exception &ex) {
+		safs::log_err("Bootstrapping ACLs: failed to deserialize entry: {}", ex.what());
+		return kOpFailure;
+	}
+
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
+		safs::log_err("Failed to flush bootstrapped ACLs to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} ACLs from metadata file into FDB", aclCount);
+	return kOpSuccess;
+}
+
+int8_t MetadataSectionBootstrapFDB::loadQuotaSection() {
+	auto section = openSection("QUOT 1.1", sizeof(uint32_t));
+	if (!section.has_value()) { return kOpFailure; }
+
+	const size_t sectionEnd = section->end;
+	const uint8_t *ptr = section->begin;
+
+	// The QUOT 1.1 section is a single length-prefixed blob: <size:u32><serialize(vector<QuotaEntry>)>,
+	// mirroring storequotas()/fs_loadquotas() in the FILE backend. A zero size is the empty marker.
+	// openSection() already rejected a payload too short to hold the size field, so this read is
+	// within the section.
+	constexpr size_t kSizeFieldLength = sizeof(uint32_t);
+
+	uint32_t blobSize = 0;
+	deserialize(ptr, kSizeFieldLength, blobSize);
+	ptr += kSizeFieldLength;
+
+	if (blobSize == 0) {
+		safs::log_info("Bootstrapped 0 quotas from metadata file into FDB");
+		return kOpSuccess;
+	}
+
+	// Subtraction avoids overflow; offset(ptr) <= sectionEnd holds after the size field read.
+	if (blobSize > sectionEnd - metadataFile_->offset(ptr)) {
+		safs::log_err("{}: truncated quota blob payload", __func__);
+		return kOpFailure;
+	}
+
+	std::vector<QuotaEntry> entries;
+	try {
+		deserialize(ptr, blobSize, entries);
+	} catch (const std::exception &ex) {
+		safs::log_err("Bootstrapping quotas: failed to deserialize entries: {}", ex.what());
+		return kOpFailure;
+	}
+
+	// Group entries by owner so each owner is persisted with one QuotaUpdateEvent, matching
+	// onQuotaChanged(). storequotas() emits only soft/hard limits (usage is excluded), so the
+	// grouped entries reproduce exactly the QUOT_<owner><rigor><resource> rows the backend expects.
+	std::map<std::pair<QuotaOwnerType, inode_t>, std::vector<QuotaEntry>> entriesByOwner;
+	for (const QuotaEntry &entry : entries) {
+		entriesByOwner[{entry.entryKey.owner.ownerType, entry.entryKey.owner.ownerId}].push_back(entry);
+	}
+
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging and will be flushed directly to FDB.
+	MetadataWriterFDB writer(kvEngine_);
+	size_t pending = 0;
+
+	for (auto &[owner, ownerEntries] : entriesByOwner) {
+		writer.enqueue(
+		    std::make_unique<QuotaUpdateEvent>(owner.first, owner.second, std::move(ownerEntries)));
+
+		if (++pending >= kFlushThreshold) {
+			if (!writer.flush()) { return kOpFailure; }
+			pending = 0;
+		}
+	}
+
+	if (!writer.flush(MetadataWriterFDB::FlushMode::kDrainUntilEmpty)) {
+		safs::log_err("Failed to flush bootstrapped quotas to FDB");
+		return kOpFailure;
+	}
+
+	safs::log_info("Bootstrapped {} quota owners ({} entries) from metadata file into FDB",
+	               entriesByOwner.size(), entries.size());
+	return kOpSuccess;
+}
+
 std::optional<MetadataSectionBootstrapFDB::SectionMarker> MetadataSectionBootstrapFDB::findSection(
     std::string_view name) const {
 	auto sectionIterator = sectionMarkers_.find(std::string(name));
@@ -569,7 +750,19 @@ void MetadataSectionBootstrapFDB::initMetadataFileSections() {
 	});
 
 	// Filesystem MetadataSection "ACLS 1.2"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "ACLS 1.2",
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kACLsKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadACLSection(); },
+	});
+
 	// Filesystem MetadataSection "QUOT 1.1"
+	metadataFileSections_.emplace_back(MetadataFileSection{
+	    .name = "QUOT 1.1",
+	    .isBootstrapNeeded = [this](bool) { return isSectionBootstrapNeeded(kQuotasKeyPrefix); },
+	    .loadFunction = [this](bool) { return loadQuotaSection(); },
+	});
+
 	// Filesystem MetadataSection "FLCK 1.0"
 
 	// Filesystem MetadataSection "CHNK 1.0"

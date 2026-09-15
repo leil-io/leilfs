@@ -853,6 +853,7 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 
 	updateTrashNameEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 	                     gMetadata->trashReservedToId, node, path);
+	gMetadata->detachedPathChangedSignal.emit(node->id, FSNodeType::kTrash, HString(path));
 
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(), "SETPATH(%" PRIiNode ",%s)", node->id,

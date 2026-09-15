@@ -16,6 +16,8 @@
    along with LeilFS  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "common/platform.h"
+
 #include "master/metadata_checkpoint_manager.h"
 
 #include <cstring>
@@ -174,12 +176,17 @@ void MetadataCheckpointManager::recordPreMutation(const MetadataMutationContext 
 		                         std::is_same_v<T, FreeNodeRemoveMutation>) {
 			    return MetadataSectionKind::FreeNode;
 		    } else if constexpr (std::is_same_v<T, EdgeSetMutation> ||
-		                         std::is_same_v<T, EdgeRemoveMutation>) {
+		                         std::is_same_v<T, EdgeRemoveMutation> ||
+		                         std::is_same_v<T, DetachedPathSetMutation> ||
+		                         std::is_same_v<T, DetachedPathRemoveMutation>) {
 			    return MetadataSectionKind::Edge;
 		    } else if constexpr (std::is_same_v<T, XAttrSetMutation> ||
 		                         std::is_same_v<T, XAttrRemoveMutation> ||
 		                         std::is_same_v<T, XAttrRangeRemoveMutation>) {
 			    return MetadataSectionKind::XAttr;
+		    } else if constexpr (std::is_same_v<T, QuotaSetMutation> ||
+		                         std::is_same_v<T, QuotaRemoveMutation>) {
+			    return MetadataSectionKind::Quota;
 		    } else {
 			    // Force a compile error if a new MetadataMutation alternative is added
 			    // without being mapped to a section here.
@@ -210,10 +217,29 @@ bool MetadataCheckpointManager::restoreSectionToCheckpointVersion(MetadataSectio
 	return false;
 }
 
+const std::unordered_set<uint64_t> &MetadataCheckpointManager::nodesRemovedDuringRestore() const {
+	static const std::unordered_set<uint64_t> kEmpty;
+	return nodeUndoRecorder_ ? nodeUndoRecorder_->removedDuringRestore() : kEmpty;
+}
+
+const EdgeUndoRecorder::DetachedPathKeySet &
+MetadataCheckpointManager::detachedPathsTouchedDuringRestore() const {
+	static const EdgeUndoRecorder::DetachedPathKeySet kEmpty;
+	return edgeUndoRecorder_ ? edgeUndoRecorder_->detachedPathsTouchedDuringRestore() : kEmpty;
+}
+
 void MetadataCheckpointManager::initializeRecorders() {
-	// Initialize recorders for each metadata section.
-	// Each recorder is responsible for tracking mutations and restoring data for its respective
-	// section.
+	chunkUndoRecorder_ = std::make_unique<ChunkUndoRecorder>(kvEngine_);
+	nodeUndoRecorder_ = std::make_unique<NodeUndoRecorder>(kvEngine_);
+	edgeUndoRecorder_ = std::make_unique<EdgeUndoRecorder>(kvEngine_);
+	xattrUndoRecorder_ = std::make_unique<XAttrUndoRecorder>(kvEngine_);
+	quotaUndoRecorder_ = std::make_unique<QuotaUndoRecorder>(kvEngine_);
+
+	recorders_[static_cast<size_t>(MetadataSectionKind::Chunk)] = chunkUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::Node)] = nodeUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::Edge)] = edgeUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::XAttr)] = xattrUndoRecorder_.get();
+	recorders_[static_cast<size_t>(MetadataSectionKind::Quota)] = quotaUndoRecorder_.get();
 }
 
 ISectionUndoRecorder *MetadataCheckpointManager::recorderFor(MetadataSectionKind section) {

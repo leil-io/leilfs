@@ -103,6 +103,10 @@ inline constexpr std::string_view kMetaLinkNodesKey = "META_LINK_NODES";
 /// enabling efficient range queries for all nodes or specific inode ranges.
 inline constexpr std::string_view kNodeKeyPrefix = "NODE_";  // Section NODE 1.0
 
+/// Prefix for node undo entries (cold)
+/// Format: NODEU_<checkpointVersion><nodeId>:<SerializedFSNodeUndoData>
+inline constexpr std::string_view kNodeUndoKeyPrefix = "NODEU_";  // Undo node versions (cold)
+
 /// Prefix for edges (directory entries)
 /// Format: EDGE_<ParentId><Name>:<ChildId>
 /// e.g.: EDGE_1999ChildName: 2535
@@ -115,6 +119,23 @@ inline constexpr std::string_view kNodeKeyPrefix = "NODE_";  // Section NODE 1.0
 /// @see kEdgeByHashKeyPrefix, kEdgeLowerKeyPrefix, kDirParentKeyPrefix, kParentKeyPrefix,
 /// kDirNodesCountPrefix, kDirStatsPrefix
 inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
+
+/// Prefix for edge undo entries (used for restoring edge state to historical checkpoint versions)
+/// Stores the pre-image of an edge at the first time it is mutated within a checkpoint interval,
+/// so directory topology can be rolled back to a checkpoint boundary during load/shadow sync.
+///
+/// Format: EDGEU_<CheckpointVersion><ParentId><Name>:<ChildId>
+/// @note CheckpointVersion (64-bit) and ParentId (inode_t) are serialized as Big Endian in the
+/// key; Name is the raw edge-name bytes (matching the EDGE_ key layout). ChildId (inode_t) in the
+/// value is Big Endian.
+/// @note Empty values represent edges that did not exist at the start of the interval (tombstones);
+/// applying them during rollback removes the edge.
+///
+/// Detached trash/reserved paths share this cold undo family but not the live EDGE_ family:
+/// `EDGEU_<CheckpointVersion><0><InodeId>` stores a tagged path pre-image whose first byte is
+/// FSNodeType::kTrash or FSNodeType::kReserved, followed by the raw path. An empty value is the
+/// detached-path tombstone. Parent id 0 is therefore invalid for live EDGE_ rows.
+inline constexpr std::string_view kEdgeUndoKeyPrefix = "EDGEU_";  // Undo edge versions (cold)
 
 /// Prefix for free/reusable inode ids
 /// Format: FREE_<InodeId>:<TimeStamp>
@@ -186,6 +207,16 @@ inline constexpr std::string_view kBulkOperationKeyPrefix = "BULKOP_";
 /// ChunkVersion, LockedTo and LockId (all 32-bit) are also Big Endian.
 inline constexpr std::string_view kChunkLatestKeyPrefix = "CHNL_";  // Latest chunk versions (hot)
 
+/// Prefix for chunk undo entries (used for restoring chunk state to historical checkpoint versions)
+/// Represents the initial state of a chunk at the beginning of a checkpoint interval, which can be
+/// used to undo changes to that chunk when restoring to a snapshot at the checkpoint version.
+///
+/// Format: CHNU_<CheckpointVersion><ChunkId>:<ChunkVersion><LockedTo><LockId>
+/// @note CheckpointVersion (64-bit) and ChunkId (64-bit) are serialized as Big Endian in the key.
+/// ChunkVersion, LockedTo and LockId (all 32-bit) are also Big Endian.
+/// @note Empty values represent chunk removals during rollback.
+inline constexpr std::string_view kChunkUndoKeyPrefix = "CHNU_";  // Undo chunk versions (cold)
+
 /// Ordered catalog of sealed metadata checkpoint versions retained in FDB.
 /// Format: META_CHECKPOINT_VERSIONS:<Version1><Version2>...<VersionN>
 /// @note Versions are encoded as 64-bit Big Endian integers in ascending order.
@@ -199,6 +230,20 @@ inline constexpr std::string_view kMetaCheckpointVersionsKey = "META_CHECKPOINT_
 /// @note InodeId is serialized as Big Endian to maintain numeric order in lexicographical sorting,
 /// enabling efficient range queries for all xattrs of a specific inode.
 inline constexpr std::string_view kXAttrKeyPrefix = "XATR_";  // Section XATR 1.0
+
+/// Prefix for extended-attribute undo entries (used for restoring xattr state to historical
+/// checkpoint versions). Stores the pre-image of an xattr at the first time it is mutated within a
+/// checkpoint interval, so xattrs can be rolled back to a checkpoint boundary during load/shadow
+/// sync.
+///
+/// Format: XATRU_<CheckpointVersion><InodeId><AttributeName>:<Presence><AttributeValue>
+/// @note CheckpointVersion (64-bit) and InodeId (inode_t) are serialized as Big Endian in the key;
+/// AttributeName is the raw attribute-name bytes (matching the XATR_ key layout).
+/// @note The value is prefixed by a single Presence byte: 0x01 means the xattr existed and the
+/// remaining bytes are its pre-image value; 0x00 is a tombstone (the xattr did not exist before the
+/// first mutation in the interval). The flag byte is required because xattrs may legitimately hold
+/// an empty value, so an empty payload cannot itself signal a tombstone.
+inline constexpr std::string_view kXAttrUndoKeyPrefix = "XATRU_";  // Undo xattr versions (cold)
 
 /// Prefix for Access Control Lists (ACLs)
 /// Format: ACLS_<InodeId>:<binary RichACL>
@@ -218,6 +263,23 @@ inline constexpr std::string_view kACLsKeyPrefix = "ACLS_";  // Section ACLS 1.2
 /// @note Numeric fields in the key are serialized as Big Endian to preserve numeric order in
 /// lexicographical sorting, enabling efficient scans by owner prefix and global quota prefix.
 inline constexpr std::string_view kQuotasKeyPrefix = "QUOT_";  // Section QUOT 1.1
+
+/// Prefix for quota undo entries (used for restoring quota limits to historical checkpoint
+/// versions). Stores the pre-image of an owner's full limit set at the first time it is mutated
+/// within a checkpoint interval, so quota limits can be rolled back to a checkpoint boundary
+/// during load/shadow sync.
+///
+/// Format:
+/// QUOTU_<CheckpointVersion><OwnerType><OwnerId>:<Presence>[<SoftInodes><SoftSize><HardInodes><HardSize>]
+/// - CheckpointVersion: (64-bit) serialized as Big Endian
+/// - OwnerType: u8 (user/group/inode)
+/// - OwnerId: inode_t serialized as Big Endian
+/// - Presence: u8 (0x01 = owner had limits, 0x00 = owner had no limits)
+/// - SoftInodes, SoftSize, HardInodes, HardSize: four u64 Big Endian limits (soft/hard x
+///   inodes/size order)
+/// @note Usage (kUsed) is never recorded; it is rebuilt from node loading and excluded from the
+/// quota checksum.
+inline constexpr std::string_view kQuotaUndoKeyPrefix = "QUOTU_";  // Undo quota versions (cold)
 
 /// Prefix for trash time-ordered entries (for periodic expiry scans)
 /// Format: TRSH_TIME_<ExpiryTimestamp><InodeId>:<empty>

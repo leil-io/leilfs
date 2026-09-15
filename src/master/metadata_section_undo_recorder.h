@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -28,8 +30,10 @@
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_types.h"
+#include "master/filesystem_node_types.h"
 #include "master/filesystem_operation_context.h"
 #include "master/hstring.h"
+#include "protocol/quota.h"
 
 enum class MetadataSectionKind : uint8_t {
 	Chunk = 0,
@@ -37,6 +41,7 @@ enum class MetadataSectionKind : uint8_t {
 	Edge,
 	FreeNode,
 	XAttr,
+	Quota,
 	Count
 };
 
@@ -52,6 +57,8 @@ constexpr std::string_view sectionName(MetadataSectionKind section) {
 		return "FreeNode";
 	case MetadataSectionKind::XAttr:
 		return "XAttr";
+	case MetadataSectionKind::Quota:
+		return "Quota";
 	case MetadataSectionKind::Count:
 		// Sentinel, not a real section: report as Unknown so callers reject it.
 		return "Unknown";
@@ -104,6 +111,15 @@ struct EdgeRemoveMutation {
 	kv::Key liveKey;
 };
 
+struct DetachedPathSetMutation {
+	inode_t inode;
+	FSNodeType nodeType;
+};
+
+struct DetachedPathRemoveMutation {
+	inode_t inode;
+};
+
 struct XAttrSetMutation {
 	inode_t inode;
 	std::vector<uint8_t> name;
@@ -122,10 +138,29 @@ struct XAttrRangeRemoveMutation {
 	kv::Key rangeEnd;
 };
 
+// Both quota mutations operate on a whole owner: the writer rewrites or removes all of the owner's
+// QUOT_ limit rows at once, so the recorder captures the owner's full pre-image over [rangeBegin,
+// rangeEnd) (the QUOT_<ownerType><ownerId> prefix range).
+struct QuotaSetMutation {
+	QuotaOwnerType ownerType;
+	inode_t ownerId;
+	kv::Key rangeBegin;
+	kv::Key rangeEnd;
+};
+
+struct QuotaRemoveMutation {
+	QuotaOwnerType ownerType;
+	inode_t ownerId;
+	kv::Key rangeBegin;
+	kv::Key rangeEnd;
+};
+
 using MetadataMutation =
     std::variant<ChunkSetMutation, NodeSetMutation, NodeRemoveMutation, FreeNodeSetMutation,
-                 FreeNodeRemoveMutation, EdgeSetMutation, EdgeRemoveMutation, XAttrSetMutation,
-                 XAttrRemoveMutation, XAttrRangeRemoveMutation>;
+                 FreeNodeRemoveMutation, EdgeSetMutation, EdgeRemoveMutation,
+                 DetachedPathSetMutation, DetachedPathRemoveMutation, XAttrSetMutation,
+                 XAttrRemoveMutation, XAttrRangeRemoveMutation, QuotaSetMutation,
+                 QuotaRemoveMutation>;
 
 class ISectionUndoRecorder {
 public:
