@@ -38,7 +38,7 @@
 ///
 /// Unlike free inodes, xattrs are NOT coupled to node create/delete: node rollback does not
 /// restore them, and the xattr checksum is part of the metadata checksum. Without this recorder a
-/// drifted XATR_ image causes a shadow checksum mismatch (see test_shadow_xattr_sync_with_fdb.sh).
+/// drifted XATR_ image causes a shadow checksum mismatch (see test_shadow_xattr_sync.sh).
 ///
 /// Undo keyspace: XATRU_<checkpointVersion:u64><inode:inode_t><name> (kXAttrUndoKeyPrefix). The
 /// value is a one-byte presence flag followed by the pre-image value: 0x01 + value when the xattr

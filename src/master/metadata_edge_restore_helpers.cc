@@ -29,78 +29,6 @@
 
 namespace {
 
-/// Removes a trash/reserved entry identified by its persisted parent-zero EDGE_ name.
-/// Signal-free: checkpoint rollback must not enqueue writes while loading.
-int8_t removeDetachedEdge(const FilesystemOperationContext &fsOpContext, const HString &name) {
-	for (const auto &entry : gMetadata->trash) {
-		if (entry.second.get() != name) { continue; }
-
-		const TrashPathKey key = entry.first;
-		auto *node = gFSOperations->nodeOperations()->idToNode<FSNodeFile>(fsOpContext, key.id);
-		if (node == nullptr || node->type != FSNodeType::kTrash) {
-			safs::log_err("{}: trash inode {} missing or has invalid type", __func__, key.id);
-			return kOpFailure;
-		}
-
-		gMetadata->trashSpace -= node->length;
-		gMetadata->trashNodes--;
-		removeTrashEntryByKey(gMetadata->trash, gMetadata->trashHandlesIndex,
-		                      gMetadata->trashReservedToId, key);
-		return kOpSuccess;
-	}
-
-	for (const auto &entry : gMetadata->reserved) {
-		if (entry.second.get() != name) { continue; }
-
-		const inode_t inode = entry.first;
-		auto *node = gFSOperations->nodeOperations()->idToNode<FSNodeFile>(fsOpContext, inode);
-		if (node == nullptr || node->type != FSNodeType::kReserved) {
-			safs::log_err("{}: reserved inode {} missing or has invalid type", __func__, inode);
-			return kOpFailure;
-		}
-
-		gMetadata->reservedSpace -= node->length;
-		gMetadata->reservedNodes--;
-		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-		                    gMetadata->trashReservedToId, inode);
-		return kOpSuccess;
-	}
-
-	return kOpSuccess;
-}
-
-/// Attaches a parent-zero EDGE_ pre-image to the matching trash/reserved container.
-/// Signal-free: checkpoint rollback must not enqueue writes while loading.
-int8_t restoreDetachedEdge(const FilesystemOperationContext &fsOpContext, inode_t childId,
-                           const HString &name) {
-	FSNode *child = gFSOperations->nodeOperations()->idToNode(fsOpContext, childId);
-	if (child == nullptr) {
-		safs::log_err("{}: detached child inode {} not found", __func__, childId);
-		return kOpFailure;
-	}
-
-	if (removeDetachedEdge(fsOpContext, name) != kOpSuccess) { return kOpFailure; }
-
-	if (child->type == FSNodeType::kTrash) {
-		addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex, gMetadata->trashReservedToId,
-		              child, name);
-		gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
-		gMetadata->trashNodes++;
-		return kOpSuccess;
-	}
-	if (child->type == FSNodeType::kReserved) {
-		addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-		                 gMetadata->trashReservedToId, child, name);
-		gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
-		gMetadata->reservedNodes++;
-		return kOpSuccess;
-	}
-
-	safs::log_err("{}: detached child inode {} has invalid type {}", __func__, childId,
-	              static_cast<char>(child->type));
-	return kOpFailure;
-}
-
 /// Resolves an inode to a directory node, or nullptr when it is absent or not a directory.
 /// @param[out] missing Set to true when the inode simply does not exist (vs. exists but is not a
 ///                     directory), so callers can treat "parent gone" as idempotent success.
@@ -153,7 +81,10 @@ namespace metadata::edges {
 
 int8_t restoreLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
                          inode_t childId, const HString &name) {
-	if (parentId == 0) { return restoreDetachedEdge(fsOpContext, childId, name); }
+	if (parentId == 0) {
+		safs::log_err("{}: parent 0 is reserved for detached-path undo", __func__);
+		return kOpFailure;
+	}
 
 	bool parentMissing = false;
 	FSNodeDirectory *parent = resolveDirectory(fsOpContext, parentId, parentMissing);
@@ -199,7 +130,10 @@ int8_t restoreLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t 
 
 int8_t removeLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
                         const HString &name) {
-	if (parentId == 0) { return removeDetachedEdge(fsOpContext, name); }
+	if (parentId == 0) {
+		safs::log_err("{}: parent 0 is reserved for detached-path undo", __func__);
+		return kOpFailure;
+	}
 
 	bool parentMissing = false;
 	FSNodeDirectory *parent = resolveDirectory(fsOpContext, parentId, parentMissing);
@@ -216,6 +150,71 @@ int8_t removeLoadedEdge(const FilesystemOperationContext &fsOpContext, inode_t p
 	if (entry == parent->entries.end()) { return kOpSuccess; }  // already absent
 
 	detachEntry(fsOpContext, parent, entry);
+	return kOpSuccess;
+}
+
+int8_t removeLoadedDetachedPath(const FilesystemOperationContext &fsOpContext, inode_t inode) {
+	for (const auto &entry : gMetadata->trash) {
+		if (entry.first.id != inode) { continue; }
+		const TrashPathKey key = entry.first;
+
+		auto *node = gFSOperations->nodeOperations()->idToNode<FSNodeFile>(fsOpContext, inode);
+		if (node == nullptr) {
+			safs::log_err("{}: trash inode {} not found", __func__, inode);
+			return kOpFailure;
+		}
+
+		gMetadata->trashSpace -= node->length;
+		gMetadata->trashNodes--;
+		removeTrashEntryByKey(gMetadata->trash, gMetadata->trashHandlesIndex,
+		                      gMetadata->trashReservedToId, key);
+		break;
+	}
+
+	if (gMetadata->reserved.find(inode) != gMetadata->reserved.end()) {
+		auto *node = gFSOperations->nodeOperations()->idToNode<FSNodeFile>(fsOpContext, inode);
+		if (node == nullptr) {
+			safs::log_err("{}: reserved inode {} not found", __func__, inode);
+			return kOpFailure;
+		}
+
+		gMetadata->reservedSpace -= node->length;
+		gMetadata->reservedNodes--;
+		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+		                    gMetadata->trashReservedToId, inode);
+	}
+
+	return kOpSuccess;
+}
+
+int8_t restoreLoadedDetachedPath(const FilesystemOperationContext &fsOpContext, inode_t inode,
+                                 FSNodeType nodeType, const HString &path) {
+	FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
+	if (node == nullptr) {
+		safs::log_err("{}: detached inode {} not found", __func__, inode);
+		return kOpFailure;
+	}
+	if (node->type != nodeType ||
+	    (nodeType != FSNodeType::kTrash && nodeType != FSNodeType::kReserved)) {
+		safs::log_err("{}: detached inode {} has type {}, expected {}", __func__, inode,
+		              static_cast<char>(node->type), static_cast<char>(nodeType));
+		return kOpFailure;
+	}
+
+	if (removeLoadedDetachedPath(fsOpContext, inode) != kOpSuccess) { return kOpFailure; }
+
+	if (nodeType == FSNodeType::kTrash) {
+		addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex, gMetadata->trashReservedToId,
+		              node, path);
+		gMetadata->trashSpace += static_cast<FSNodeFile *>(node)->length;
+		gMetadata->trashNodes++;
+	} else {
+		addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+		                 gMetadata->trashReservedToId, node, path);
+		gMetadata->reservedSpace += static_cast<FSNodeFile *>(node)->length;
+		gMetadata->reservedNodes++;
+	}
+
 	return kOpSuccess;
 }
 

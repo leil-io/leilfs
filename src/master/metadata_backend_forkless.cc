@@ -61,6 +61,7 @@
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_dumper_file.h"
+#include "master/metadata_edge_restore_helpers.h"
 #include "master/metadata_node_restore_helpers.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/personality.h"
@@ -86,6 +87,12 @@ bool hasPersistedMetadataSectionData(kv::IKVEngine *kvEngine,
 		auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
 		                                  kv::KeySelector(endKey, true, 0), 1);
 
+		if (!page.getPairs().empty()) { return true; }
+	}
+	for (const std::string_view prefix : {kTrashPathKeyPrefix, kReservedPathKeyPrefix}) {
+		kv::Key startKey = kv::toBytes(prefix);
+		auto page = transaction->getRange(kv::KeySelector(startKey, true, 0),
+		                                  kv::KeySelector(kv::prefixEnd(startKey), true, 0), 1);
 		if (!page.getPairs().empty()) { return true; }
 	}
 
@@ -392,6 +399,23 @@ void MetadataBackendForkless::onEdgeRemoved(inode_t parentId, const HString &nam
 		metadataWriter_->enqueue(std::make_unique<EdgeRemoveEvent>(parentId, name));
 	} else {
 		dirtyEdges_.emplace(parentId, name);
+	}
+}
+
+void MetadataBackendForkless::onDetachedPathChanged(inode_t inode, FSNodeType nodeType,
+                                                    const HString &path) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<DetachedPathUpdateEvent>(inode, nodeType, path));
+	} else {
+		dirtyDetachedPaths_[inode] = DirtyDetachedPath{.nodeType = nodeType, .path = path};
+	}
+}
+
+void MetadataBackendForkless::onDetachedPathRemoved(inode_t inode) {
+	if (metadataWriter_) {
+		metadataWriter_->enqueue(std::make_unique<DetachedPathRemoveEvent>(inode));
+	} else {
+		dirtyDetachedPaths_[inode] = std::nullopt;
 	}
 }
 
@@ -1007,7 +1031,7 @@ int8_t MetadataBackendForkless::loadACLs(bool ignoreFlag) {
 	//   - SETACL/DELETEACL replay is idempotent (full replace / erase), so loading the latest
 	//     ACLS_ image and replaying to the current version converges to the same ACLs.
 	// A dedicated ACL rollback would only matter for point-in-time restore without changelog
-	// replay, which the forkless backend never does. See test_shadow_acl_sync_with_fdb.sh.
+	// replay, which the forkless backend never does. See test_shadow_acl_sync.sh.
 	safs::log_info("Section loaded successfully (ACLS 1.2): {}s", timer.elapsed_s());
 	return kOpSuccess;
 }
@@ -1015,7 +1039,7 @@ int8_t MetadataBackendForkless::loadACLs(bool ignoreFlag) {
 int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 	safs::log_info("Loading edges from FoundationDB");
 	Timer timer;
-	deferredIncompatibleEdges_.clear();
+	deferredIncompatibleDetachedPaths_.clear();
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -1051,6 +1075,11 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 			const uint8_t *source = pair.key.data();
 			source += kEdgeKeyPrefix.size();  // Skip "EDGE_"
 			getINode(&source, parentId);
+			if (parentId == 0) {
+				safs::log_err(
+				    "loading edge: parent-zero EDGE_ rows are not valid in the current schema");
+				return kOpFailure;
+			}
 
 			auto nameSize = pair.key.size() - kEdgeKeyPrefix.size() - sizeof(inode_t);
 			edgeName = std::string(reinterpret_cast<const char *>(source), nameSize);
@@ -1075,6 +1104,13 @@ int8_t MetadataBackendForkless::loadEdges(bool ignoreFlag) {
 
 		kv::Key lastKey = pageResult.getPairs().back().key;
 		startSelector = kv::KeySelector(lastKey, false, 0);
+	}
+
+	if (loadDetachedPaths(fsOpContext, FSNodeType::kTrash, kTrashPathKeyPrefix, ignoreFlag) !=
+	        kOpSuccess ||
+	    loadDetachedPaths(fsOpContext, FSNodeType::kReserved, kReservedPathKeyPrefix, ignoreFlag) !=
+	        kOpSuccess) {
+		return kOpFailure;
 	}
 
 	// Apply undo checkpoints so that edge (directory topology) state matches the loaded checkpoint
@@ -1131,114 +1167,158 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 	}
 
 	if (parentId == 0U) {
-		if (child->type == FSNodeType::kTrash) {
-			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
-			              gMetadata->trashReservedToId, child, name);
-			gMetadata->trashSpace += static_cast<FSNodeFile *>(child)->length;
-			gMetadata->trashNodes++;
-		} else if (child->type == FSNodeType::kReserved) {
-			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
-			                 gMetadata->trashReservedToId, child, name);
-			gMetadata->reservedSpace += static_cast<FSNodeFile *>(child)->length;
-			gMetadata->reservedNodes++;
-		} else {
-			// NODE rollback precedes EDGE loading. An unlink performed after the selected
-			// checkpoint can therefore leave a newer live parent-zero edge pointing at an inode
-			// whose checkpoint body is already a regular file. Do not materialize that temporarily
-			// incompatible edge. After EDGE rollback, require durable undo to prove the edge was
-			// post-checkpoint drift; otherwise the load still fails as corrupted metadata.
-			deferredIncompatibleEdges_.emplace(parentId, name);
-			safs::log_debug("{}: {}, {}->{} deferred until edge rollback: child type ({})",
-			                __func__, parentId, gFSOperations->nodeOperations()->escapeName(name),
-			                childId, static_cast<char>(child->type));
-			return kOpSuccess;
-		}
-	} else {
-		auto *parent =
-		    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
+		safs::log_err("{}: parent 0 is reserved for detached path rows", __func__);
+		return kOpFailure;
+	}
 
-		if (parent == nullptr) {
-			safs::log_err("{}: {}, {}->{} error: parent not found", __func__, parentId,
+	auto *parent =
+	    gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext, parentId);
+
+	if (parent == nullptr) {
+		safs::log_err("{}: {}, {}->{} error: parent not found", __func__, parentId,
+		              gFSOperations->nodeOperations()->escapeName(name), childId);
+
+		if (ignoreFlag) {
+			parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext,
+			                                                                    SPECIAL_INODE_ROOT);
+
+			if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
+				safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
+				              gFSOperations->nodeOperations()->escapeName(name), childId);
+				return kOpFailure;
+			}
+
+			safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
 			              gFSOperations->nodeOperations()->escapeName(name), childId);
-
-			if (ignoreFlag) {
-				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
-				    fsOpContext, SPECIAL_INODE_ROOT);
-
-				if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
-					safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
-					              gFSOperations->nodeOperations()->escapeName(name), childId);
-					return kOpFailure;
-				}
-
-				safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
-				              gFSOperations->nodeOperations()->escapeName(name), childId);
-				parentId = SPECIAL_INODE_ROOT;
-			} else {
-				safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
-				return kOpFailure;
-			}
-		}
-
-		if (parent->type != FSNodeType::kDirectory) {
-			safs::log_err("{}: {}, {}->{} error: bad parent type ({})", __func__, parentId,
-			              gFSOperations->nodeOperations()->escapeName(name), childId,
-			              static_cast<char>(parent->type));
-
-			if (ignoreFlag) {
-				parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(
-				    fsOpContext, SPECIAL_INODE_ROOT);
-
-				if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
-					safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
-					              gFSOperations->nodeOperations()->escapeName(name), childId);
-					return kOpFailure;
-				}
-
-				safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
-				              gFSOperations->nodeOperations()->escapeName(name), childId);
-				parentId = SPECIAL_INODE_ROOT;
-			} else {
-				safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
-				return kOpFailure;
-			}
-		}
-
-		if (currentLoadParentId_ != parentId) {
-			if (parent->entries.size() > 0) {
-				safs::log_err("{}: {}, {}->{} error: parent node sequence error", __func__,
-				              parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
-				return kOpFailure;
-			}
-
-			currentLoadParentId_ = parentId;
-		}
-
-		auto handleOwner = std::make_unique<hstorage::Handle>(name);
-		hstorage::Handle *handlePtr = handleOwner.get();
-		if (parent->entries.insert({handlePtr, child}).second) {
-			// On successful insert, the parent now owns the handle
-			handleOwner.release();  // NOLINT(bugprone-unused-return-value)
-			parent->entries_hash ^= handlePtr->hash();
+			parentId = SPECIAL_INODE_ROOT;
 		} else {
-			// insert failed → unique_ptr cleans up automatically
-			safs::log_err("{}: duplicate entry {}->{} in directory {}", __func__,
-			              gFSOperations->nodeOperations()->escapeName(name), childId, parentId);
+			safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
+			return kOpFailure;
+		}
+	}
+
+	if (parent->type != FSNodeType::kDirectory) {
+		safs::log_err("{}: {}, {}->{} error: bad parent type ({})", __func__, parentId,
+		              gFSOperations->nodeOperations()->escapeName(name), childId,
+		              static_cast<char>(parent->type));
+
+		if (ignoreFlag) {
+			parent = gFSOperations->nodeOperations()->idToNode<FSNodeDirectory>(fsOpContext,
+			                                                                    SPECIAL_INODE_ROOT);
+
+			if (parent == nullptr || parent->type != FSNodeType::kDirectory) {
+				safs::log_err("{}: {}, {}->{} root dir not found !!!", __func__, parentId,
+				              gFSOperations->nodeOperations()->escapeName(name), childId);
+				return kOpFailure;
+			}
+
+			safs::log_err("{}: {}, {}->{} attaching node to root dir", __func__, parentId,
+			              gFSOperations->nodeOperations()->escapeName(name), childId);
+			parentId = SPECIAL_INODE_ROOT;
+		} else {
+			safs::log_err("use sfsmetarestore (option -i) to attach this node to root dir");
+			return kOpFailure;
+		}
+	}
+
+	if (currentLoadParentId_ != parentId) {
+		if (parent->entries.size() > 0) {
+			safs::log_err("{}: {}, {}->{} error: parent node sequence error", __func__, parentId,
+			              gFSOperations->nodeOperations()->escapeName(name), childId);
 			return kOpFailure;
 		}
 
-		child->parents.push_back({parent->id, handlePtr});
+		currentLoadParentId_ = parentId;
+	}
 
-		if (child->type == FSNodeType::kDirectory) {
-			parent->nlink++;
+	auto handleOwner = std::make_unique<hstorage::Handle>(name);
+	hstorage::Handle *handlePtr = handleOwner.get();
+	if (parent->entries.insert({handlePtr, child}).second) {
+		// On successful insert, the parent now owns the handle
+		handleOwner.release();  // NOLINT(bugprone-unused-return-value)
+		parent->entries_hash ^= handlePtr->hash();
+	} else {
+		// insert failed → unique_ptr cleans up automatically
+		safs::log_err("{}: duplicate entry {}->{} in directory {}", __func__,
+		              gFSOperations->nodeOperations()->escapeName(name), childId, parentId);
+		return kOpFailure;
+	}
+
+	child->parents.push_back({parent->id, handlePtr});
+
+	if (child->type == FSNodeType::kDirectory) { parent->nlink++; }
+
+	StatsRecord statsRecord{};
+	gFSOperations->nodeOperations()->getStats(fsOpContext, child, &statsRecord);
+	gFSOperations->nodeOperations()->addStats(fsOpContext, parent, &statsRecord);
+
+	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadDetachedPaths(const FilesystemOperationContext &fsOpContext,
+                                                  FSNodeType nodeType, std::string_view keyPrefix,
+                                                  bool ignoreFlag) {
+	constexpr size_t kPathPageSize = 1000;
+	const size_t expectedKeySize = keyPrefix.size() + sizeof(inode_t);
+	kv::Key startKey = kv::toBytes(keyPrefix);
+	const kv::Key endKey = kv::prefixEnd(startKey);
+	kv::KeySelector startSelector(startKey, true, 0);
+	const kv::KeySelector endSelector(endKey, true, 0);
+
+	while (true) {
+		auto transaction = kvConnector_->getKVEngine()->createReadOnlyTransaction();
+		auto page = transaction->getRange(startSelector, endSelector, kPathPageSize);
+
+		for (const auto &pair : page.getPairs()) {
+			if (pair.key.size() != expectedKeySize || pair.value.empty()) {
+				safs::log_err("loading detached path: malformed {} row", keyPrefix);
+				return kOpFailure;
+			}
+
+			const uint8_t *source = pair.key.data() + keyPrefix.size();
+			inode_t inode = 0;
+			getINode(&source, inode);
+			std::string path(reinterpret_cast<const char *>(pair.value.data()), pair.value.size());
+			if (loadDetachedPath(fsOpContext, inode, nodeType, path, ignoreFlag) != kOpSuccess) {
+				return kOpFailure;
+			}
 		}
 
-		StatsRecord statsRecord{};
-		gFSOperations->nodeOperations()->getStats(fsOpContext, child, &statsRecord);
-		gFSOperations->nodeOperations()->addStats(fsOpContext, parent, &statsRecord);
+		if (!page.hasMore() || page.getPairs().empty()) { break; }
+		startSelector = kv::KeySelector(page.getPairs().back().key, false, 0);
 	}
 
 	return kOpSuccess;
+}
+
+int8_t MetadataBackendForkless::loadDetachedPath(const FilesystemOperationContext &fsOpContext,
+                                                 inode_t inode, FSNodeType nodeType,
+                                                 const std::string &path, bool ignoreFlag) {
+	FSNode *node = gFSOperations->nodeOperations()->idToNode(fsOpContext, inode);
+	if (node == nullptr) {
+		if (checkpointManager_ != nullptr &&
+		    checkpointManager_->nodesRemovedDuringRestore().contains(inode)) {
+			safs::log_debug("{}: inode {} skipped: child removed by node rollback", __func__,
+			                inode);
+			return kOpSuccess;
+		}
+
+		safs::log_err("{}: detached inode {} not found", __func__, inode);
+		return ignoreFlag ? kOpSuccess : kOpFailure;
+	}
+
+	if (node->type != nodeType) {
+		// NODE rollback precedes path loading. The live row may therefore describe a later
+		// transition than the node body already restored for the checkpoint. Defer it, then
+		// require durable undo to prove the mismatch is expected post-checkpoint state.
+		deferredIncompatibleDetachedPaths_.insert(inode);
+		safs::log_debug(
+		    "{}: inode {} path deferred until edge rollback: child type {}, row type {}", __func__,
+		    inode, static_cast<char>(node->type), static_cast<char>(nodeType));
+		return kOpSuccess;
+	}
+
+	return metadata::edges::restoreLoadedDetachedPath(fsOpContext, inode, nodeType, HString(path));
 }
 
 int8_t MetadataBackendForkless::restoreEdgesToCheckpointVersion(uint64_t targetVersion) {
@@ -1249,16 +1329,16 @@ int8_t MetadataBackendForkless::restoreEdgesToCheckpointVersion(uint64_t targetV
 		return kOpFailure;
 	}
 
-	const auto &restoredEdges = checkpointManager_->edgesTouchedDuringRestore();
-	for (const auto &[parentId, name] : deferredIncompatibleEdges_) {
-		if (!restoredEdges.contains({parentId, name})) {
-			safs::log_err("{}: {}, {} error: incompatible live edge has no applicable undo",
-			              __func__, parentId, gFSOperations->nodeOperations()->escapeName(name));
+	const auto &restoredPaths = checkpointManager_->detachedPathsTouchedDuringRestore();
+	for (inode_t inode : deferredIncompatibleDetachedPaths_) {
+		if (!restoredPaths.contains(inode)) {
+			safs::log_err("{}: inode {} has an incompatible live path with no applicable undo",
+			              __func__, inode);
 			return kOpFailure;
 		}
 	}
 
-	deferredIncompatibleEdges_.clear();
+	deferredIncompatibleDetachedPaths_.clear();
 	return kOpSuccess;
 }
 
@@ -1455,6 +1535,7 @@ void MetadataBackendForkless::reconcileDirtyToFDB() {
 
 	reconcileDirtyNodesToFDB(persisted, removed);
 	reconcileDirtyEdgesToFDB(persisted, removed);
+	reconcileDirtyDetachedPathsToFDB(persisted, removed);
 	reconcileDirtyXAttrsToFDB(persisted, removed);
 	reconcileDirtyQuotasToFDB(persisted, removed);
 	reconcileDirtyAclsToFDB(persisted, removed);
@@ -1484,8 +1565,7 @@ void MetadataBackendForkless::reconcileDirtyNodesToFDB(uint64_t &persisted, uint
 	}
 }
 
-// Edges: resolve directory entries against their parent and parent-zero detached paths against
-// the trash/reserved containers.
+// Edges: resolve directory entries against their parent.
 void MetadataBackendForkless::reconcileDirtyEdgesToFDB(uint64_t &persisted, uint64_t &removed) {
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadOnly);
@@ -1493,34 +1573,32 @@ void MetadataBackendForkless::reconcileDirtyEdgesToFDB(uint64_t &persisted, uint
 
 	for (const auto &[parentId, name] : dirtyEdges_) {
 		std::optional<inode_t> childId;
-		if (parentId == 0) {
-			for (const auto &entry : gMetadata->trash) {
-				if (entry.second.get() == name) {
-					childId = entry.first.id;
-					break;
-				}
-			}
-			if (!childId.has_value()) {
-				for (const auto &entry : gMetadata->reserved) {
-					if (entry.second.get() == name) {
-						childId = entry.first;
-						break;
-					}
-				}
-			}
-		} else {
-			FSNode *parent = nodeOps->idToNode(fsOpContext, parentId);
-			if (parent != nullptr && parent->type == FSNodeType::kDirectory) {
-				auto *directory = static_cast<FSNodeDirectory *>(parent);
-				auto it = directory->find(name);
-				if (it != directory->end()) { childId = it->second->id; }
-			}
+		FSNode *parent = nodeOps->idToNode(fsOpContext, parentId);
+		if (parent != nullptr && parent->type == FSNodeType::kDirectory) {
+			auto *directory = static_cast<FSNodeDirectory *>(parent);
+			auto it = directory->find(name);
+			if (it != directory->end()) { childId = it->second->id; }
 		}
 		if (childId.has_value()) {
 			onEdgeChanged(parentId, *childId, name);
 			++persisted;
 		} else {
 			onEdgeRemoved(parentId, name);
+			++removed;
+		}
+	}
+}
+
+// Detached paths: persist the final state captured at signal time. The inode is the durable
+// identity, so duplicate paths remain separate and reconciliation stays bounded by dirty inodes.
+void MetadataBackendForkless::reconcileDirtyDetachedPathsToFDB(uint64_t &persisted,
+                                                               uint64_t &removed) {
+	for (const auto &[inode, state] : dirtyDetachedPaths_) {
+		if (state.has_value()) {
+			onDetachedPathChanged(inode, state->nodeType, state->path);
+			++persisted;
+		} else {
+			onDetachedPathRemoved(inode);
 			++removed;
 		}
 	}
@@ -1621,6 +1699,7 @@ void MetadataBackendForkless::reconcileDirtyChunksToFDB(uint64_t &persisted, uin
 void MetadataBackendForkless::clearDirtySets() {
 	dirtyNodes_.clear();
 	dirtyEdges_.clear();
+	dirtyDetachedPaths_.clear();
 	dirtyXattrs_.clear();
 	dirtyXattrInodes_.clear();
 	dirtyQuotaOwners_.clear();
@@ -1801,8 +1880,13 @@ void MetadataBackendForkless::connectPerLoadSignals() {
 	gMetadata->edgeRemovedSignal.connect(
 	    [this](inode_t parentId, const HString &name) { onEdgeRemoved(parentId, name); });
 
-	gMetadata->detachedEdgeChangedSignal.connect(
-	    [this](inode_t childId, const HString &name) { onEdgeChanged(0, childId, name); });
+	gMetadata->detachedPathChangedSignal.connect(
+	    [this](inode_t inode, FSNodeType nodeType, const HString &path) {
+		    onDetachedPathChanged(inode, nodeType, path);
+	    });
+
+	gMetadata->detachedPathRemovedSignal.connect(
+	    [this](inode_t inode) { onDetachedPathRemoved(inode); });
 }
 
 void MetadataBackendForkless::connectGlobalSignalsOnce() {

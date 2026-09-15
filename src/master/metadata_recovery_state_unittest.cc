@@ -133,6 +133,16 @@ kv::Key edgeUndoKey(uint64_t checkpointVersion, inode_t parentId, std::string_vi
 	return key;
 }
 
+kv::Key detachedPathUndoKey(uint64_t checkpointVersion, inode_t inode) {
+	return kv::encodeKeyBE(kEdgeUndoKeyPrefix, checkpointVersion, inode_t{0}, inode);
+}
+
+kv::Value detachedPathUndoValue(FSNodeType nodeType, std::string_view path) {
+	kv::Value value{static_cast<uint8_t>(nodeType)};
+	value.insert(value.end(), path.begin(), path.end());
+	return value;
+}
+
 // This test models a hierarchy inversion between a sealed checkpoint and the latest live image
 // (arrows point from parent to child):
 //
@@ -319,7 +329,7 @@ TEST_F(EdgeRecoveryStateTest, DirectoryHierarchyInversionNeverCreatesTransientCy
 	EXPECT_EQ(directoryB_->find(HString("A")), directoryB_->entries.end());
 }
 
-TEST_F(EdgeRecoveryStateTest, RestoresDetachedParentZeroPaths) {
+TEST_F(EdgeRecoveryStateTest, RestoresInodeKeyedDetachedPaths) {
 	constexpr uint64_t kTrashLength = 1024;
 	constexpr uint64_t kReservedLength = 2048;
 	auto *trashNode = addDetachedFile(/*inode=*/4, FSNodeType::kTrash, kTrashLength);
@@ -334,15 +344,13 @@ TEST_F(EdgeRecoveryStateTest, RestoresDetachedParentZeroPaths) {
 	gMetadata->reservedNodes = 1;
 	gMetadata->reservedSpace = kReservedLength;
 
-	// The latest parent-zero paths did not exist at the checkpoint, while the checkpoint paths
-	// must be restored for the same detached nodes. As with directory edges, all removals happen
-	// before either pre-image is attached.
-	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "latest/trash")] = {};
-	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "latest/reserved")] = {};
-	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "checkpoint/trash")] =
-	    kv::toBytesBE(trashNode->id);
-	engine_.store()[edgeUndoKey(kCheckpointVersion, /*parentId=*/0, "checkpoint/reserved")] =
-	    kv::toBytesBE(reservedNode->id);
+	// Each inode has one undo identity regardless of its current path or container. The tagged
+	// values restore both the checkpoint container kind and its path after removing the latest
+	// state by inode.
+	engine_.store()[detachedPathUndoKey(kCheckpointVersion, trashNode->id)] =
+	    detachedPathUndoValue(FSNodeType::kTrash, "checkpoint/trash");
+	engine_.store()[detachedPathUndoKey(kCheckpointVersion, reservedNode->id)] =
+	    detachedPathUndoValue(FSNodeType::kReserved, "checkpoint/reserved");
 
 	EdgeUndoRecorder recorder(&engine_);
 	ASSERT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));

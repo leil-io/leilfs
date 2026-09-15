@@ -38,6 +38,7 @@
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/filesystem_node_types.h"
 #include "master/hstring.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
@@ -72,6 +73,7 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	maxInodeId_ = 0;
 	metadataVersion_ = 0;
 	nextSessionId_ = 0;
+	detachedNodeTypes_.clear();
 
 	sectionMarkers_.clear();
 
@@ -274,6 +276,9 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 		}
 
 		writer.enqueue(std::make_unique<NodeUpdateEvent>(node));
+		if (type == FSNodeType::kTrash || type == FSNodeType::kReserved) {
+			detachedNodeTypes_[node->id] = typeU8;
+		}
 
 		FSNode::destroy(node);
 		nodeCount++;
@@ -407,7 +412,18 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 		std::string name(reinterpret_cast<const char *>(ptr), edgeNameSize);
 		ptr += edgeNameSize;
 
-		writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		if (parentId == 0) {
+			const auto type = detachedNodeTypes_.find(childId);
+			if (type == detachedNodeTypes_.end()) {
+				safs::log_err("Bootstrapping detached path: inode {} is not trash or reserved",
+				              childId);
+				return kOpFailure;
+			}
+			writer.enqueue(std::make_unique<DetachedPathUpdateEvent>(
+			    childId, static_cast<FSNodeType>(type->second), HString(name)));
+		} else {
+			writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		}
 		edgeCount++;
 
 		if (++pending >= kFlushThreshold) {
