@@ -345,6 +345,16 @@ public:
 	void changeLockJobsCallback(const LockJobCallbackMaker &lockJobCallbackMaker,
 	                            uint32_t listenerId = 0);
 
+	/// @brief Moves the lock jobs of a listener whose connection slot will be reused to a stable
+	/// listener. The chunk locks and their deferred jobs remain active, but their completions no
+	/// longer keep the retiring listener busy or reach a future connection in the same slot; they
+	/// are delivered through the stable listener like any other completion.
+	/// @param lockJobCallbackMaker Creates the connection-independent completion callback.
+	/// @param listenerId The listener whose lock jobs are moved.
+	/// @param callbackListenerId The stable listener that receives the lock jobs.
+	void detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMaker, uint32_t listenerId,
+	                    uint32_t callbackListenerId = 0);
+
 	/// @brief Starts a chunk lock job for a specific chunk and type.
 	/// This function is triggered when the master server sends a chunk lock request for a chunk
 	/// that is not currently locked. It adds a lock job to the JobPool and associates it with the

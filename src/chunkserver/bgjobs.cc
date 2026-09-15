@@ -540,6 +540,53 @@ void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCa
 	}
 }
 
+void MasterJobPool::detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMaker,
+                                   uint32_t listenerId, uint32_t callbackListenerId) {
+	if (listenerId >= kMaxMetadataConnections) {
+		safs::log_warn("{} job pool: {}: Invalid listenerId {}, returning", name_, __func__,
+		               listenerId);
+		return;
+	}
+	if (callbackListenerId >= kMaxMetadataConnections) {
+		safs::log_warn("{} job pool: {}: Invalid callback listener {}, resetting to 0", name_,
+		               __func__, callbackListenerId);
+		callbackListenerId = 0;
+	}
+
+	if (listenerId == callbackListenerId) { return; }
+
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	auto *targetInfo = listenerInfos_[callbackListenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr || targetInfo == nullptr) { return; }
+
+	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo->jobsMutex, targetInfo->jobsMutex);
+	for (auto &[chunkWithType, lockedChunkData] : chunkToJobReplyMap_) {
+		if (lockedChunkData.listenerId != listenerId) { continue; }
+
+		auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
+		if (jobIterator == listenerInfo->jobHash.end()) { continue; }
+		auto callback = lockJobCallbackMaker(chunkWithType, callbackListenerId);
+		if (!callback) {
+			safs::log_err("{} job pool: {}: Refusing to detach lock job {} without a callback",
+			              name_, __func__, lockedChunkData.lockJobId);
+			continue;
+		}
+
+		// The lock job moves to the stable listener whole, so its completion still travels
+		// through that listener's status queue and runs on the thread that drains it.
+		auto job = std::move(jobIterator->second);
+		listenerInfo->jobHash.erase(jobIterator);
+		// A lock job never reaches the queue, so no worker can read the fields rewritten here.
+		sassert(!job->processJob);
+		job->jobId = targetInfo->nextJobId++;
+		job->listenerId = callbackListenerId;
+		job->callback = std::move(callback);
+		lockedChunkData.lockJobId = job->jobId;
+		lockedChunkData.listenerId = callbackListenerId;
+		targetInfo->jobHash[job->jobId] = std::move(job);
+	}
+}
+
 bool MasterJobPool::startChunkLock(const JobPool::JobCallback &callback, void *packet,
                                    uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId) {
 	// Resolve the listener before recording it. addLockJob corrects its own copy of the argument,

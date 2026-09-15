@@ -314,7 +314,8 @@ private:
 	/// Registration status to this MDS.
 	RegistrationStatus registrationStatus_{RegistrationStatus::kUnregistered};
 	bool sendInventory_{true};  ///< Whether registration sends the chunk inventory.
-	/// Durable completion policy for connections which selected identity registration.
+	/// Durable completion policy for connections which selected identity registration. Never
+	/// reset: a lock job moved to listener 0 from a retired peer completes only while it drains.
 	bool identityProtocolSelected_{false};
 	int socketFD_{-1};                         ///< Socket file descriptor for this connection.
 	int32_t pDescPos_{-1};                     ///< Position in the pollfd array.
