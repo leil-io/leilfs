@@ -420,11 +420,11 @@ TEST_F(QuotaRecoveryStateTest, TombstoneClearsLimitsButPreservesReconstructedUsa
 	}
 }
 
-TEST_F(QuotaRecoveryStateTest, InvalidUndoOwnerTypeIsIgnored) {
+TEST_F(QuotaRecoveryStateTest, InvalidUndoOwnerTypeIsRejected) {
 	engine_.store()[quotaUndoKey(kCheckpointVersion, /*ownerType=*/0xff, kOwnerId)] = kv::Value{0};
 
 	QuotaUndoRecorder recorder(&engine_);
-	EXPECT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 	EXPECT_EQ(gMetadata->quotaDatabase.get(QuotaOwnerType::kUser, kOwnerId), nullptr);
 	EXPECT_EQ(gMetadata->quotaDatabase.get(QuotaOwnerType::kGroup, kOwnerId), nullptr);
 	EXPECT_EQ(gMetadata->quotaDatabase.get(QuotaOwnerType::kInode, kOwnerId), nullptr);

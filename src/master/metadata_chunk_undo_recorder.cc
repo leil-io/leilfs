@@ -152,7 +152,11 @@ std::pair<uint64_t, bool> ChunkUndoRecorder::restoreSingleCheckpoint(
 		for (const auto &pair : page.getPairs()) {
 			uint64_t undoCheckpointVersion = 0;
 			uint64_t chunkId = 0;
-			if (!decodeChunkUndoKey(pair.key, undoCheckpointVersion, chunkId)) { continue; }
+			if (!decodeChunkUndoKey(pair.key, undoCheckpointVersion, chunkId)) {
+				safs::log_err("{}: malformed chunk undo key of size {}", __func__,
+				              pair.key.size());
+				return {restoredEntries, false};
+			}
 
 			if (pair.value.empty()) {
 				chunk_restore_remove(chunkId);

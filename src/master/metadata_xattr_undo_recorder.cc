@@ -79,6 +79,7 @@ bool decodeXAttrUndoKey(const kv::Key &key, inode_t &inode, std::vector<uint8_t>
 
 	const uint8_t *ptr = key.data() + kXAttrUndoKeyPrefix.size() + sizeof(uint64_t);
 	getINode(&ptr, inode);
+	if (inode == 0) { return false; }
 
 	name.assign(key.data() + fixedSize, key.data() + key.size());
 	return true;

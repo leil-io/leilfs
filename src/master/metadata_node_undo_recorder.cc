@@ -101,18 +101,17 @@ kv::Key nodeUndoKey(uint64_t checkpointVersion, inode_t inode) {
 	return kv::encodeKeyBE(kNodeUndoKeyPrefix, checkpointVersion, inode);
 }
 
-inode_t decodeNodeUndoKey(const kv::Key &key) {
+bool decodeNodeUndoKey(const kv::Key &key, inode_t &nodeId) {
 	// Key format: NODEU_ + <checkpoint:u64> + <nodeId:inode_t>
 	if (!startsWith(key, kNodeUndoKeyPrefix) ||
 	    key.size() != kNodeUndoKeyPrefix.size() + sizeof(uint64_t) + sizeof(inode_t)) {
-		return 0U;  // Invalid key format
+		return false;
 	}
 
 	// Skip prefix and checkpointVersion to get nodeId
 	const uint8_t *ptr = key.data() + kNodeUndoKeyPrefix.size() + sizeof(uint64_t);
-	inode_t nodeId{};
 	getINode(&ptr, nodeId);
-	return nodeId;
+	return nodeId != 0;
 }
 }  // namespace
 
@@ -203,7 +202,11 @@ std::pair<uint64_t, bool> NodeUndoRecorder::restoreSingleCheckpoint(
 		auto page = transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
 
 		for (const auto &pair : page.getPairs()) {
-			inode_t nodeId = decodeNodeUndoKey(pair.key);
+			inode_t nodeId = 0;
+			if (!decodeNodeUndoKey(pair.key, nodeId)) {
+				safs::log_err("{}: malformed node undo key of size {}", __func__, pair.key.size());
+				return {restoredEntries, false};
+			}
 
 			if (!applyNodeUndoEntry(fsOpContext, nodeId, pair.value)) { return {0, false}; }
 			restoredEntries++;

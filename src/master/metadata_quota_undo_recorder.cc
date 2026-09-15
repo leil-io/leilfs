@@ -91,7 +91,7 @@ bool decodeQuotaUndoKey(const kv::Key &key, QuotaOwnerType &ownerType, inode_t &
 	ownerType = static_cast<QuotaOwnerType>(ownerTypeValue);
 	ptr++;
 	getINode(&ptr, ownerId);
-	return true;
+	return ownerType != QuotaOwnerType::kInode || ownerId != 0;
 }
 
 }  // namespace
@@ -179,7 +179,10 @@ std::pair<uint64_t, bool> QuotaUndoRecorder::restoreSingleCheckpoint(
 		for (const auto &pair : page.getPairs()) {
 			QuotaOwnerType ownerType{};
 			inode_t ownerId = 0;
-			if (!decodeQuotaUndoKey(pair.key, ownerType, ownerId)) { continue; }
+			if (!decodeQuotaUndoKey(pair.key, ownerType, ownerId)) {
+				safs::log_err("{}: malformed quota undo key of size {}", __func__, pair.key.size());
+				return {restoredEntries, false};
+			}
 
 			if (!isValidQuotaUndoValue(pair.value)) {
 				safs::log_err("{}: malformed quota undo value of size {} for owner {}", __func__,

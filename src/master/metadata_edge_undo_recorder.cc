@@ -72,7 +72,7 @@ struct DetachedPathUndoEntry {
 // Key format: EDGEU_ + <checkpoint:u64> + <parentId:inode_t> + <name>
 bool decodeEdgeUndoKey(const kv::Key &key, inode_t &parentId, std::string &name) {
 	const size_t fixedSize = kEdgeUndoKeyPrefix.size() + sizeof(uint64_t) + sizeof(inode_t);
-	if (!startsWith(key, kEdgeUndoKeyPrefix) || key.size() < fixedSize) { return false; }
+	if (!startsWith(key, kEdgeUndoKeyPrefix) || key.size() <= fixedSize) { return false; }
 
 	const uint8_t *ptr = key.data() + kEdgeUndoKeyPrefix.size() + sizeof(uint64_t);
 	getINode(&ptr, parentId);
@@ -90,7 +90,7 @@ bool decodeDetachedPathUndoKey(const kv::Key &key, inode_t &inode) {
 	getINode(&ptr, parentId);
 	if (parentId != 0) { return false; }
 	getINode(&ptr, inode);
-	return true;
+	return inode != 0;
 }
 
 kv::Value detachedPathUndoValue(FSNodeType nodeType, const kv::Value &path) {
@@ -193,7 +193,10 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 		for (const auto &pair : page.getPairs()) {
 			inode_t parentId = 0;
 			std::string name;
-			if (!decodeEdgeUndoKey(pair.key, parentId, name)) { continue; }
+			if (!decodeEdgeUndoKey(pair.key, parentId, name)) {
+				safs::log_err("{}: malformed edge undo key of size {}", __func__, pair.key.size());
+				return {0, false};
+			}
 
 			if (parentId == 0) {
 				inode_t inode = 0;

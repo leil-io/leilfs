@@ -668,7 +668,27 @@ constexpr uint64_t kCheckpointVersion = 17;
 
 }  // namespace
 
-TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValue) {
+TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoKeys) {
+	std::vector<kv::Key> malformedKeys;
+	malformedKeys.push_back(kv::encodeKeyBE(kChunkUndoKeyPrefix, kCheckpointVersion));
+	auto oversizedKey =
+	    kv::encodeKeyBE(kChunkUndoKeyPrefix, kCheckpointVersion, uint64_t{41});
+	oversizedKey.push_back(0xff);
+	malformedKeys.push_back(std::move(oversizedKey));
+
+	for (const kv::Key &malformedKey : malformedKeys) {
+		SCOPED_TRACE(::testing::PrintToString(malformedKey));
+		RecordingKVEngine engine;
+		ChunkUndoRecorder recorder(&engine);
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[malformedKey] = {};
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
+}
+
+TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValues) {
 	RecordingKVEngine engine;
 	ChunkUndoRecorder recorder(&engine);
 
@@ -681,7 +701,35 @@ TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValue) {
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 }
 
-TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoValue) {
+TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing parent id.
+		    malformedKeys.push_back(kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion));
+		    // A non-detached edge must contain a non-empty name after its parent id.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{41}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    EdgeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = {};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoValues) {
 	RecordingKVEngine engine;
 	EdgeUndoRecorder recorder(&engine);
 
@@ -693,6 +741,42 @@ TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoValue) {
 	engine.store()[undoKey] = kv::Value{0x01};
 
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, DetachedPathRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing the detached inode after the parent-zero discriminator.
+		    auto truncatedKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0});
+		    truncatedKey.push_back(0xff);
+		    malformedKeys.push_back(std::move(truncatedKey));
+		    // Detached-path keys have no payload after the inode.
+		    auto oversizedKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, inode_t{41});
+		    oversizedKey.push_back(0xff);
+		    malformedKeys.push_back(std::move(oversizedKey));
+		    // Inode 0 is only the detached-path discriminator, never a detached inode.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{0}, inode_t{0}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    EdgeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = {};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
 }
 
 TEST(MetadataUndoRecorderRestore, DetachedPathRejectsMalformedUndoValues) {
@@ -710,6 +794,41 @@ TEST(MetadataUndoRecorderRestore, DetachedPathRejectsMalformedUndoValues) {
 
 		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 	}
+}
+
+TEST(MetadataUndoRecorderRestore, XAttrRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    gMetadata = new FilesystemMetadata;
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing both the inode and attribute name.
+		    malformedKeys.push_back(kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion));
+		    // Attribute names must be non-empty.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, inode_t{41}));
+		    // Attribute names must fit the metadata name-length limit.
+		    auto oversizedName =
+		        kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, inode_t{41});
+		    oversizedName.insert(oversizedName.end(), SFS_XATTR_NAME_MAX + 1, uint8_t{0x78});
+		    malformedKeys.push_back(std::move(oversizedName));
+		    // Inode 0 is not a valid extended-attribute owner.
+		    auto zeroInode =
+		        kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, inode_t{0});
+		    kv::appendStr(zeroInode, "user.test");
+		    malformedKeys.push_back(std::move(zeroInode));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    XAttrUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = kv::Value{0x00};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
 }
 
 TEST(MetadataUndoRecorderRestore, XAttrRejectsMalformedUndoValues) {
@@ -752,6 +871,41 @@ TEST(MetadataUndoRecorderRestore, XAttrRejectsOversizedUndoName) {
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 }
 
+TEST(MetadataUndoRecorderRestore, QuotaRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    gMetadata = new FilesystemMetadata;
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing the owner type and id.
+		    malformedKeys.push_back(kv::encodeKeyBE(kQuotaUndoKeyPrefix, kCheckpointVersion));
+		    // Quota undo keys have no payload after the fixed-size owner identity.
+		    auto oversizedKey =
+		        quotaUndoKey(kCheckpointVersion, QuotaOwnerType::kUser, inode_t{41});
+		    oversizedKey.push_back(0xff);
+		    malformedKeys.push_back(std::move(oversizedKey));
+		    // Only user, group, and inode are valid quota owner types.
+		    auto invalidOwnerType = kv::encodeKeyBE(kQuotaUndoKeyPrefix, kCheckpointVersion);
+		    invalidOwnerType.push_back(0xff);
+		    appendBigEndian(invalidOwnerType, inode_t{41});
+		    malformedKeys.push_back(std::move(invalidOwnerType));
+		    // User and group id 0 are valid, but inode 0 is not.
+		    malformedKeys.push_back(
+		        quotaUndoKey(kCheckpointVersion, QuotaOwnerType::kInode, inode_t{0}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    QuotaUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = kv::Value{0x00};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
 TEST(MetadataUndoRecorderRestore, QuotaRejectsMalformedUndoValues) {
 	kv::Value unknownTag = quotaUndoValue({1, 2, 3, 4});
 	unknownTag[0] = 0x02;
@@ -775,6 +929,34 @@ TEST(MetadataUndoRecorderRestore, QuotaRejectsMalformedUndoValues) {
 
 		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 	}
+}
+
+TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing inode.
+		    malformedKeys.push_back(kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion));
+		    // Inode 0 is not a valid NODE_ identity.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, inode_t{0}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    NodeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = {};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
 }
 
 TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoValues) {
