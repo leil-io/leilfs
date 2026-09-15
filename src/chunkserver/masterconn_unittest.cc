@@ -294,6 +294,40 @@ TEST(MasterConnReconciliationTests, ReturningPeerWaitsForItsRetirementToFinish) 
 	EXPECT_EQ(harness.connectionCount(), 2U);
 }
 
+TEST(MasterConnReconciliationTests, DetachedLockDoesNotBlockEndpointReplacement) {
+	ReconciliationHarness harness;
+	ASSERT_NO_FATAL_FAILURE(harness.initialize());
+	const auto original = harness.member(2, harness.firstServer);
+	const auto replacement = harness.member(2, harness.replacementServer);
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t chunkId = 123;
+	harness.stage({original});
+	harness.reconcile();
+	ASSERT_NE(harness.state.connections[1].connection, nullptr);
+	auto *originalConnection = harness.state.connections[1].connection.get();
+	auto *writeEndPacket = new OutputPacket;
+	cstoma::writeEndStatus::serialize(writeEndPacket->packet, chunkId, chunkType,
+	                                  SAUNAFS_STATUS_OK);
+	ASSERT_TRUE(harness.jobs->startChunkLock(MasterConn::sauJobFinished(originalConnection),
+	                                         writeEndPacket, chunkId, chunkType, 1));
+	ASSERT_FALSE(harness.jobs->isListenerIdle(1));
+
+	harness.stage({replacement});
+	harness.reconcile();
+	ASSERT_NE(harness.state.connections[1].connection, nullptr);
+	auto &replacementConnection = *harness.state.connections[1].connection;
+	EXPECT_FALSE(harness.state.connections[1].retiring);
+	EXPECT_EQ(replacementConnection.serverId(), 2U);
+	EXPECT_EQ(replacementConnection.address(), harness.replacementServer.address());
+	EXPECT_TRUE(harness.jobs->isListenerIdle(1));
+
+	EXPECT_TRUE(harness.jobs->enforceChunkLock(chunkId, chunkType));
+	replacementConnection.resetPackets();
+	harness.jobs->endChunkLock(chunkId, chunkType, SAUNAFS_STATUS_OK);
+	EXPECT_TRUE(replacementConnection.isOutputQueueEmpty());
+	EXPECT_FALSE(harness.jobs->enforceChunkLock(chunkId, chunkType));
+}
+
 TEST(MasterConnReconciliationTests, ReusedSlotDoesNotReceivePreviousPeersReply) {
 	ReconciliationHarness harness;
 	ASSERT_NO_FATAL_FAILURE(harness.initialize());

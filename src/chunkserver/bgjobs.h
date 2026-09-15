@@ -348,6 +348,15 @@ public:
 	void changeLockJobsCallback(const LockJobCallbackMaker &lockJobCallbackMaker,
 	                            uint32_t listenerId = 0);
 
+	/// @brief Detaches lock completions from a listener whose connection slot will be reused.
+	/// The chunk locks and their deferred jobs remain active, but their completions no longer keep
+	/// the retiring listener busy or send replies through a future connection in the same slot.
+	/// @param lockJobCallbackMaker Creates the connection-independent completion callback.
+	/// @param listenerId The listener whose lock jobs are detached.
+	/// @param callbackListenerId The stable listener used by asynchronous cleanup work.
+	void detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMaker, uint32_t listenerId,
+	                    uint32_t callbackListenerId = 0);
+
 	/// @brief Starts a chunk lock job for a specific chunk and type.
 	/// This function is triggered when the master server sends a chunk lock request for a chunk
 	/// that is not currently locked. It adds a lock job to the JobPool and associates it with the
@@ -394,6 +403,8 @@ private:
 	struct LockedChunkData {
 		uint32_t lockJobId;   /// The ID of the lock job associated with the locked chunk.
 		uint32_t listenerId;  /// The ID of the listener associated with the locked chunk.
+		/// Completion removed from a listener that is being retired.
+		std::unique_ptr<Job> detachedJob;
 		/// A vector of functions to add pending jobs to be executed once the lock is released.
 		std::vector<AddJobFunc> pendingAddJobs;
 		/// Flag to indicate if the write initialization has been received for the locked chunk.
@@ -414,17 +425,19 @@ private:
 	uint32_t addLockJob(JobCallback callback, void *extra, uint32_t listenerId = 0);
 
 	/// @brief Releases a chunk lock entry for a specific chunk and type.
-	/// This is a helper function that returns the lock job ID, listener ID, and pending jobs
-	/// associated with a locked chunk if found, and removes the lock entry from the internal map.
+	/// This is a helper function that returns the completion and pending jobs associated with a
+	/// locked chunk if found, and removes the lock entry from the internal map.
 	/// @param chunkId The ID of the chunk to release the lock on.
 	/// @param chunkType The type of the chunk to release the lock on.
 	/// @param callerName The name of the function calling this helper, used for logging.
 	/// @param lockJobId The ID of the lock job associated with the chunk.
 	/// @param listenerId The ID of the listener associated with the lock job.
+	/// @param detachedJob The completion detached from a retired listener, when present.
 	/// @param pendingAddJobs The list of pending jobs associated with the locked chunk.
 	/// @return true if the lock entry was found and released, false otherwise.
 	bool releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType, const char *callerName,
 	                           uint32_t &lockJobId, uint32_t &listenerId,
+	                           std::unique_ptr<Job> &detachedJob,
 	                           std::vector<AddJobFunc> &pendingAddJobs);
 
 	/// Mutex to protect access to the chunkToJobReplyMap_.
