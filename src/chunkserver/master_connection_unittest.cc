@@ -1,5 +1,5 @@
 /*
-   Copyright 2026 Leil Storage
+   Copyright 2026 Leil Storage OÜ
 
    This file is part of LeilFS.
 
