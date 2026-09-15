@@ -17,6 +17,20 @@ RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
 	apt-get update && apt-get install tini && \
     ./tests/install-packages.sh;
 
+# Ubuntu 26.04 ("Resolute Raccoon") ships sudo-rs as the system default sudo
+# instead of GNU sudo. Our test harness relies on GNU behavior (`sudo -E`/
+# `--preserve-env`, and GNU's more permissive sudoers grammar), so when this
+# image is built on 26.04 we switch back to the GNU implementation Canonical
+# ships side-by-side (as `sudo.ws`) for exactly this transition. This is a
+# plain update-alternatives choice that nothing later in this build
+# disturbs, so it's safe to do right here, next to where `sudo` is installed
+# (by install-packages.sh above).
+RUN . /etc/os-release && \
+    if [ "${ID}" = "ubuntu" ] && [ "${VERSION_ID}" = "26.04" ]; then \
+        echo "Ubuntu 26.04 detected: reverting sudo-rs to GNU sudo" && \
+        update-alternatives --set sudo /usr/bin/sudo.ws; \
+    fi
+
 COPY ./tests/ci_build/install-foundationdb.sh ./tests/ci_build/
 COPY ./tests/setup_machine.sh ./tests/
 
@@ -35,6 +49,31 @@ RUN if [ "$BASE_IMAGE" = "ubuntu:22.04" ]; then \
         ln -s -f /usr/bin/gcc-12 /usr/bin/gcc; \
         ln -s -f /usr/bin/g++-12 /usr/bin/g++; \
 fi;
+
+# Ubuntu 26.04 ships uutils coreutils as the system default instead of GNU
+# coreutils. LeilFS's hidden inodes (.oplog, .saunafs_tweaks, etc.) report
+# st_size=0 and rely on `cat` reading them anyway; uutils' `cat` skips the
+# read() when size is 0, so it silently returns nothing. Unlike the sudo
+# switch above, this can't run right after packages are installed: any
+# later `apt-get install` (install-packages.sh installs
+# prometheus-cpp-dev/util-linux-extra on 26.04, and install-foundationdb.sh
+# runs inside setup_machine.sh above) makes apt's dependency solver
+# re-resolve the coreutils "from-uutils | from-gnu" alternative and silently
+# pull uutils back in. So this has to be the last apt operation in the
+# build, after everything above has already run.
+RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
+    --mount=target=/var/cache/apt,type=cache,sharing=locked \
+    . /etc/os-release && \
+    if [ "${ID}" = "ubuntu" ] && [ "${VERSION_ID}" = "26.04" ]; then \
+        echo "Ubuntu 26.04 detected: reverting uutils coreutils to GNU" && \
+        apt-get -y install coreutils-from-gnu coreutils-from-uutils- --allow-remove-essential; \
+    fi
+
+# Surface which sudo/cat binaries actually made it into this image, so a
+# build log settles "was the GNU switch applied?" without needing to shell
+# into the container.
+RUN echo "sudo binary baked into image: $(readlink -f "$(command -v sudo)") ($(sudo --version | head -1))" && \
+    echo "cat binary baked into image: $(readlink -f "$(command -v cat)") ($(cat --version | head -1))"
 
 ### Build Phase
 FROM test-setup AS test-build

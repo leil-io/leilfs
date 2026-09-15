@@ -96,7 +96,7 @@ apt_packages=(
 	# tests/ci_build/ganesha/ganesha-deps.txt, installed only by the Ganesha
 	# test path so non-Ganesha machines skip them.
 )
-noble_packages=(
+newer_ubuntu_packages=(
 	prometheus-cpp-dev
 	util-linux-extra
 )
@@ -165,10 +165,10 @@ dnf_packages=(
 # determine which OS we are running and choose the right set of packages to be installed
 release="$(lsb_release -si)/$(lsb_release -sr)"
 case "${release}" in
-	Ubuntu/24.04)
+	Ubuntu/24.04|Ubuntu/26.04)
 		echo $release
 		apt-get -y install ca-certificates-java # https://www.mail-archive.com/debian-bugs-dist@lists.debian.org/msg1911078.html
-		apt-get -y install "${common_packages[@]}" "${apt_packages[@]}" "${noble_packages[@]}"
+		apt-get -y install "${common_packages[@]}" "${apt_packages[@]}" "${newer_ubuntu_packages[@]}"
 		;;
 	LinuxMint/*|Ubuntu/*|Debian/*)
 		apt-get -y install ca-certificates-java # https://www.mail-archive.com/debian-bugs-dist@lists.debian.org/msg1911078.html
@@ -187,9 +187,19 @@ esac
 
 case "${release}" in
 	LinuxMint/*|Ubuntu/*|Debian/*)
-		if ! "$script_dir/llvm.sh" 19; then
-			echo "Error: Failed to install Clang 19 using llvm.sh script."
-			exit 1
+		# Newer releases (e.g. Ubuntu 26.04) ship clang-19 directly in their
+		# own archive, so try that before reaching for apt.llvm.org's repo.
+		if ! apt-get -y install clang-19 lldb-19 lld-19 clangd-19; then
+			if ! "$script_dir/llvm.sh" 19; then
+				# apt.llvm.org may not have a repo yet for a codename this
+				# new; fall back to Noble's, which lags upstream far less.
+				echo "Warning: apt.llvm.org has no repo for this release yet, retrying with Ubuntu Noble's."
+				if ! "$script_dir/llvm.sh" 19 -n noble; then
+					# Clang isn't required for the default GCC build, so
+					# don't abort the whole install over optional tooling.
+					echo "Warning: Failed to install Clang 19; continuing without it."
+				fi
+			fi
 		fi
 
 		;;

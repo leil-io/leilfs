@@ -75,7 +75,19 @@ cd ${TEMP_DIR}
 
 git clone https://github.com/leil-io/cthon04.git
 cd cthon04
-make all
+# cthon04's domount.c redeclares getenv() with empty parens the old K&R way.
+# Starting with GCC 15, the default standard is gnu23, where C23 gives
+# empty parens "(void)" semantics instead of the old "unspecified
+# arguments" meaning, so that redeclaration now conflicts with
+# <stdlib.h>'s real prototype and the build fails. Only pin an older
+# standard on compilers new enough to need it, so earlier GCCs (22.04,
+# 24.04) keep building with their own default exactly as before.
+gcc_major="$(gcc -dumpversion | cut -d. -f1)"
+if [ "${gcc_major}" -ge 15 ]; then
+	make all CC="gcc -std=gnu17"
+else
+	make all
+fi
 
 ./runtests -b -n
 ./runtests -l -n
