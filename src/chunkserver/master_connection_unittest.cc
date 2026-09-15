@@ -132,6 +132,80 @@ TEST(MasterConnectionTests, RetiredListenerWaitsForDeferredJob) {
 	EXPECT_TRUE(pool.isListenerIdle(1));
 }
 
+TEST(MasterConnectionTests, DetachedLockRemainsEnforceable) {
+	std::vector<int> descriptors(2);
+	MasterJobPool pool("connection-test", 1, 10, 2, descriptors);
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t chunkId = 123;
+	uint32_t callbackListener = kMaxMetadataConnections;
+	uint8_t callbackStatus = SAUNAFS_STATUS_OK;
+	uint32_t completionCount = 0;
+
+	ASSERT_TRUE(pool.startChunkLock({}, new uint32_t(7), chunkId, chunkType, 1));
+	pool.detachLockJobs(
+	    [&](ChunkWithType chunk, uint32_t listenerId) {
+		    EXPECT_EQ(chunk.id, chunkId);
+		    EXPECT_EQ(chunk.type, chunkType);
+		    callbackListener = listenerId;
+		    return [&](uint8_t status, void *extra) {
+			    callbackStatus = status;
+			    ++completionCount;
+			    delete static_cast<uint32_t *>(extra);
+		    };
+	    },
+	    1, 0);
+
+	EXPECT_TRUE(pool.isListenerIdle(1));
+	EXPECT_EQ(callbackListener, 0U);
+	EXPECT_TRUE(pool.enforceChunkLock(chunkId, chunkType));
+	pool.endChunkLock(chunkId, chunkType, SAUNAFS_ERROR_IO);
+	EXPECT_EQ(completionCount, 1U);
+	EXPECT_EQ(callbackStatus, SAUNAFS_ERROR_IO);
+}
+
+TEST(MasterConnectionTests, DetachedLockKeepsDeferredListenerBusy) {
+	std::vector<int> descriptors(2);
+	MasterJobPool pool("connection-test", 1, 10, 2, descriptors);
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t chunkId = 123;
+	uint32_t completionCount = 0;
+
+	ASSERT_TRUE(pool.startChunkLock({}, nullptr, chunkId, chunkType, 1));
+	ASSERT_TRUE(pool.enforceChunkLock(chunkId, chunkType));
+	pool.addJobIfNotLocked(
+	    {chunkId, chunkType}, JobPool::ChunkOperation::Read, {}, nullptr,
+	    []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 1);
+	pool.detachLockJobs(
+	    [&](ChunkWithType, uint32_t) { return [&](uint8_t, void *) { ++completionCount; }; }, 1, 0);
+	EXPECT_FALSE(pool.isListenerIdle(1));
+
+	pool.eraseChunkLock(chunkId, chunkType);
+	pollfd descriptor{descriptors[1], POLLIN, 0};
+	ASSERT_EQ(poll(&descriptor, 1, 1000), 1);
+	pool.processCompletedJobs(1);
+	EXPECT_TRUE(pool.isListenerIdle(1));
+	EXPECT_EQ(completionCount, 1U);
+}
+
+TEST(MasterConnectionTests, ConfiguredDisconnectKeepsLockCompletionAttached) {
+	std::vector<int> jobDescriptors;
+	std::vector<int> replicationDescriptors;
+	auto jobPool = std::make_shared<MasterJobPool>("configured-lock", 1, 10, 1, jobDescriptors);
+	auto replicationPool =
+	    std::make_shared<MasterJobPool>("configured-lock-repl", 1, 10, 1, replicationDescriptors);
+	MasterConn connection("localhost", "9420", "default", jobPool, replicationPool);
+	connection.setMode(ConnectionMode::CONNECTED);
+	auto packet = matocs::chunkLock::build(123, slice_traits::standard::ChunkPartType());
+	removeHeaderInPlace(packet);
+	connection.lockChunk(packet);
+
+	connection.setMode(ConnectionMode::KILL);
+	masterconn_close_connection(*jobPool, *replicationPool, connection, 0);
+	EXPECT_FALSE(jobPool->isListenerIdle(0));
+	jobPool->eraseChunkLock(123, slice_traits::standard::ChunkPartType());
+	EXPECT_TRUE(jobPool->isListenerIdle(0));
+}
+
 namespace {
 
 // Keeps a worker inside the job until the test releases it, so the job stays in flight.

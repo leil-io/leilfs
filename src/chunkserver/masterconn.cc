@@ -364,6 +364,7 @@ void masterconn_reconcile_connections(MasterConnReconciliationState &state,
 		    });
 		if (!slot.retiring && wanted == state.desiredMembers.end()) {
 			slot.retiring = true;
+			jobPool->detachLockJobs(masterconn_unwantedLockJobFinished, index, 0);
 			slot.connection->setMode(ConnectionMode::KILL);
 			masterconn_close_connection(*jobPool, *replicationJobPool, *slot.connection, index);
 		}

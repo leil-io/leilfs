@@ -544,6 +544,41 @@ void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCa
 	}
 }
 
+void MasterJobPool::detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMaker,
+                                   uint32_t listenerId, uint32_t callbackListenerId) {
+	if (listenerId >= kMaxMetadataConnections) {
+		safs::log_warn("{} job pool: {}: Invalid listenerId {}, returning", name_, __func__,
+		               listenerId);
+		return;
+	}
+	if (callbackListenerId >= kMaxMetadataConnections) {
+		safs::log_warn("{} job pool: {}: Invalid callback listener {}, resetting to 0", name_,
+		               __func__, callbackListenerId);
+		callbackListenerId = 0;
+	}
+
+	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
+	if (listenerInfo == nullptr) { return; }
+
+	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo->jobsMutex);
+	for (auto &[chunkWithType, lockedChunkData] : chunkToJobReplyMap_) {
+		if (lockedChunkData.listenerId != listenerId || lockedChunkData.detachedJob) { continue; }
+
+		auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
+		if (jobIterator == listenerInfo->jobHash.end()) { continue; }
+		auto callback = lockJobCallbackMaker(chunkWithType, callbackListenerId);
+		if (!callback) {
+			safs::log_err("{} job pool: {}: Refusing to detach lock job {} without a callback",
+			              name_, __func__, lockedChunkData.lockJobId);
+			continue;
+		}
+
+		jobIterator->second->callback = std::move(callback);
+		lockedChunkData.detachedJob = std::move(jobIterator->second);
+		listenerInfo->jobHash.erase(jobIterator);
+	}
+}
+
 bool MasterJobPool::startChunkLock(const JobPool::JobCallback &callback, void *packet,
                                    uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId) {
 	// Resolve the listener before recording it. addLockJob corrects its own copy of the argument,
@@ -585,7 +620,7 @@ bool MasterJobPool::enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType) 
 
 bool MasterJobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType,
                                           const char *callerName, uint32_t &lockJobId,
-                                          uint32_t &listenerId,
+                                          uint32_t &listenerId, std::unique_ptr<Job> &detachedJob,
                                           std::vector<AddJobFunc> &pendingAddJobs) {
 	std::unique_lock lock(chunkToJobReplyMapMutex_);
 	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
@@ -600,6 +635,7 @@ bool MasterJobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkT
 
 	lockJobId = entry->second.lockJobId;
 	listenerId = entry->second.listenerId;
+	detachedJob = std::move(entry->second.detachedJob);
 	pendingAddJobs = std::move(entry->second.pendingAddJobs);
 	chunkToJobReplyMap_.erase(entry);
 	return true;
@@ -608,14 +644,23 @@ bool MasterJobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkT
 void MasterJobPool::endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status) {
 	uint32_t lockJobId;
 	uint32_t listenerId;
+	std::unique_ptr<Job> detachedJob;
 	std::vector<AddJobFunc> pendingAddJobs;
 
-	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId,
+	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId, detachedJob,
 	                           pendingAddJobs)) {
 		return;  // No lock job found, just return
 	}
 
 	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
+
+	if (detachedJob) {
+		auto callback = std::move(detachedJob->callback);
+		void *extra = detachedJob->extra;
+		detachedJob->extra = nullptr;
+		callback(status, extra);
+		return;
+	}
 
 	sendStatus(lockJobId, status, listenerId);
 }
@@ -623,14 +668,23 @@ void MasterJobPool::endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint
 void MasterJobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
 	uint32_t lockJobId;
 	uint32_t listenerId;
+	std::unique_ptr<Job> detachedJob;
 	std::vector<AddJobFunc> pendingAddJobs;
 
-	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId,
+	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId, detachedJob,
 	                           pendingAddJobs)) {
 		return;  // No lock job found, just return
 	}
 
 	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
+
+	if (detachedJob) {
+		auto callback = std::move(detachedJob->callback);
+		void *extra = detachedJob->extra;
+		detachedJob->extra = nullptr;
+		callback(SAUNAFS_STATUS_OK, extra);
+		return;
+	}
 
 	// Remove the lock job and the related packet
 	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
