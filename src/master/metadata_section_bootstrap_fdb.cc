@@ -236,6 +236,8 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 	const uint8_t *ptr = section->begin;
 	uint64_t nodeCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (NODEU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -273,7 +275,6 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 			return kOpFailure;
 		}
 
-		// Enqueue node update with checkpointVersion=0 to avoid NODEU_ entries.
 		writer.enqueue(std::make_unique<NodeUpdateEvent>(node));
 
 		FSNode::destroy(node);
