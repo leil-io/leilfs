@@ -17,6 +17,7 @@ function(install_relative_symlink target link_name destination)
 endfunction()
 
 install(FILES metadata.sfs                                   DESTINATION ${DATA_SUBDIR} RENAME metadata.sfs.empty)
+install_legacy_dir_symlink(${DATA_PATH_LEGACY} leil)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/leil-exports.cfg      DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/leil-goals.cfg        DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/leil-hdd.cfg          DESTINATION ${CHUNKSERVER_EXAMPLES_SUBDIR})
@@ -46,6 +47,12 @@ install_relative_symlink(leil-mount.cfg sfsmount.cfg ${CLIENT_EXAMPLES_SUBDIR} C
 install_relative_symlink(leil-iolimits.cfg sfsiolimits.cfg ${CLIENT_EXAMPLES_SUBDIR} COMPONENT client)
 install_relative_symlink(leil-tls.cfg sfstls.cfg ${CLIENT_EXAMPLES_SUBDIR} COMPONENT client)
 install_relative_symlink(leil-uraft.cfg saunafs-uraft.cfg ${URAFT_EXAMPLES_SUBDIR})
+
+install_legacy_dir_symlink(${USR_SHARE_DOC_NO_SLASH}/${MASTER_NAME_LEGACY} ${MASTER_NAME})
+install_legacy_dir_symlink(${USR_SHARE_DOC_NO_SLASH}/${CHUNKSERVER_NAME_LEGACY} ${CHUNKSERVER_NAME})
+install_legacy_dir_symlink(${USR_SHARE_DOC_NO_SLASH}/${METALOGGER_NAME_LEGACY} ${METALOGGER_NAME})
+install_legacy_dir_symlink(${USR_SHARE_DOC_NO_SLASH}/${URAFT_NAME_LEGACY} ${URAFT_NAME})
+install_legacy_dir_symlink(${USR_SHARE_DOC_NO_SLASH}/${CLIENT_NAME_LEGACY} ${CLIENT_NAME} COMPONENT client)
 
 install(FILES leil.completion DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/bash_completion.d RENAME leil COMPONENT client)
 install_relative_symlink(leil saunafs ${CMAKE_INSTALL_FULL_SYSCONFDIR}/bash_completion.d COMPONENT client)

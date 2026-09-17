@@ -339,6 +339,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %dir %{leil_confdir}
 %attr(-,%{leil_user},%{leil_group}) %dir %{leil_datadir}
 %attr(-,%{leil_user},%{leil_group}) %{leil_datadir}/metadata.sfs.empty
+%{_localstatedir}/lib/saunafs
 %{_mandir}/man5/sfsexports.cfg.5*
 %{_mandir}/man5/leil-exports.cfg.5*
 %{_mandir}/man5/sfstopology.cfg.5*
@@ -373,6 +374,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_docdir}/leil-master/examples/leil-master.cfg
 %{_docdir}/leil-master/examples/sfsglobaliolimits.cfg
 %{_docdir}/leil-master/examples/leil-globaliolimits.cfg
+%{_docdir}/saunafs-master
 
 # Files - metalogger
 ############################################################
@@ -393,6 +395,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %dir %{_docdir}/leil-metalogger/examples/
 %{_docdir}/leil-metalogger/examples/sfsmetalogger.cfg
 %{_docdir}/leil-metalogger/examples/leil-metalogger.cfg
+%{_docdir}/saunafs-metalogger
 
 # Files - chunkserver
 ############################################################
@@ -417,6 +420,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_docdir}/leil-chunkserver/examples/leil-chunkserver.cfg
 %{_docdir}/leil-chunkserver/examples/sfshdd.cfg
 %{_docdir}/leil-chunkserver/examples/leil-hdd.cfg
+%{_docdir}/saunafs-chunkserver
 
 # Files - client
 ############################################################
@@ -482,6 +486,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %{_docdir}/leil-client/examples/leil-iolimits.cfg
 %{_docdir}/leil-client/examples/sfsmount.cfg
 %{_docdir}/leil-client/examples/leil-mount.cfg
+%{_docdir}/saunafs-client
 %{_datadir}/bash-completion/completions/leil
 %{_datadir}/bash-completion/completions/saunafs
 
@@ -494,6 +499,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %dir %{_includedir}/leil/
 %{_includedir}/leil/saunafs_c_api.h
 %{_includedir}/leil/saunafs_error_codes.h
+%{_includedir}/saunafs
 
 # Files - client-static
 ############################################################
@@ -576,6 +582,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %dir %{_docdir}/leil-uraft/examples/
 %{_docdir}/leil-uraft/examples/leil-uraft.cfg
 %{_docdir}/leil-uraft/examples/saunafs-uraft.cfg
+%{_docdir}/saunafs-uraft
 %config(noreplace) %{_sysconfdir}/sysctl.d/10-leilfs-uraft-arp.conf
 %attr(0440, root, root) %config(noreplace) %{_sysconfdir}/sudoers.d/leilfs-uraft
 

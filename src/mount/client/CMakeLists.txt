@@ -24,3 +24,5 @@ install(TARGETS saunafs-client_shared DESTINATION ${LIB_SUBDIR} COMPONENT client
 
 install(FILES saunafs_c_api.h DESTINATION ${INCL_SUBDIR} COMPONENT client)
 install(FILES ../../errors/saunafs_error_codes.h DESTINATION ${INCL_SUBDIR} COMPONENT client)
+
+install_legacy_dir_symlink(${INCL_PATH_LEGACY} leil COMPONENT client)
