@@ -329,6 +329,21 @@ void XAttrUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = XAttrSetMutation{
+		    .inode = inode,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	// Value: raw attribute value bytes
 	context.transaction->set(key, value);
 }
@@ -346,6 +361,21 @@ void XAttrRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = XAttrRemoveMutation{
+		    .inode = inode,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->remove(key);
 }
 
@@ -362,6 +392,21 @@ void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	// invalid range.
 	auto startKey = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	auto endKey = kv::prefixEnd(startKey);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = XAttrRangeRemoveMutation{
+		    .inode = inode,
+		    .rangeBegin = startKey,
+		    .rangeEnd = endKey,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
 
 	context.transaction->removeRange(startKey, endKey);
 }
