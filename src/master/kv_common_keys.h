@@ -130,6 +130,11 @@ inline constexpr std::string_view kEdgeKeyPrefix = "EDGE_";  // Section EDGE 1.0
 /// value is Big Endian.
 /// @note Empty values represent edges that did not exist at the start of the interval (tombstones);
 /// applying them during rollback removes the edge.
+///
+/// Detached trash/reserved paths share this cold undo family but not the live EDGE_ family:
+/// `EDGEU_<CheckpointVersion><0><InodeId>` stores a tagged path pre-image whose first byte is
+/// FSNodeType::kTrash or FSNodeType::kReserved, followed by the raw path. An empty value is the
+/// detached-path tombstone. Parent id 0 is therefore invalid for live EDGE_ rows.
 inline constexpr std::string_view kEdgeUndoKeyPrefix = "EDGEU_";  // Undo edge versions (cold)
 
 /// Prefix for free/reusable inode ids

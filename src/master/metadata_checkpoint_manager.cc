@@ -176,7 +176,9 @@ void MetadataCheckpointManager::recordPreMutation(const MetadataMutationContext 
 		                         std::is_same_v<T, FreeNodeRemoveMutation>) {
 			    return MetadataSectionKind::FreeNode;
 		    } else if constexpr (std::is_same_v<T, EdgeSetMutation> ||
-		                         std::is_same_v<T, EdgeRemoveMutation>) {
+		                         std::is_same_v<T, EdgeRemoveMutation> ||
+		                         std::is_same_v<T, DetachedPathSetMutation> ||
+		                         std::is_same_v<T, DetachedPathRemoveMutation>) {
 			    return MetadataSectionKind::Edge;
 		    } else if constexpr (std::is_same_v<T, XAttrSetMutation> ||
 		                         std::is_same_v<T, XAttrRemoveMutation> ||
@@ -215,6 +217,12 @@ bool MetadataCheckpointManager::restoreSectionToCheckpointVersion(MetadataSectio
 const std::unordered_set<uint64_t> &MetadataCheckpointManager::nodesRemovedDuringRestore() const {
 	static const std::unordered_set<uint64_t> kEmpty;
 	return nodeUndoRecorder_ ? nodeUndoRecorder_->removedDuringRestore() : kEmpty;
+}
+
+const EdgeUndoRecorder::DetachedPathKeySet &
+MetadataCheckpointManager::detachedPathsTouchedDuringRestore() const {
+	static const EdgeUndoRecorder::DetachedPathKeySet kEmpty;
+	return edgeUndoRecorder_ ? edgeUndoRecorder_->detachedPathsTouchedDuringRestore() : kEmpty;
 }
 
 void MetadataCheckpointManager::initializeRecorders() {

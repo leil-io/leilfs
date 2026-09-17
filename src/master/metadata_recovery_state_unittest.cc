@@ -123,6 +123,17 @@ kv::Key edgeUndoKey(uint64_t checkpointVersion, inode_t parentId, std::string_vi
 	key.insert(key.end(), name.begin(), name.end());
 	return key;
 }
+
+kv::Key detachedPathUndoKey(uint64_t checkpointVersion, inode_t inode) {
+	return kv::encodeKeyBE(kEdgeUndoKeyPrefix, checkpointVersion, inode_t{0}, inode);
+}
+
+kv::Value detachedPathUndoValue(FSNodeType nodeType, std::string_view path) {
+	kv::Value value{static_cast<uint8_t>(nodeType)};
+	value.insert(value.end(), path.begin(), path.end());
+	return value;
+}
+
 // This test models a hierarchy inversion between a sealed checkpoint and the latest live image
 // (arrows point from parent to child):
 //
@@ -267,6 +278,15 @@ protected:
 		return directory;
 	}
 
+	FSNodeFile *addDetachedFile(inode_t inode, FSNodeType type, uint64_t length) {
+		auto *file = new FSNodeFile(type);
+		file->id = inode;
+		file->length = length;
+		gMetadata->addNode(file, /*isFromScan=*/true);
+		gMetadata->inodePool.markAsAcquired(inode);
+		return file;
+	}
+
 	static constexpr uint64_t kCheckpointVersion = 17;
 
 	FilesystemMetadata *previousMetadata_ = nullptr;
@@ -299,4 +319,46 @@ TEST_F(EdgeRecoveryStateTest, DirectoryHierarchyInversionNeverCreatesTransientCy
 	EXPECT_EQ(aToB->second, directoryB_);
 	EXPECT_EQ(directoryB_->find(HString("A")), directoryB_->entries.end());
 }
+TEST_F(EdgeRecoveryStateTest, RestoresInodeKeyedDetachedPaths) {
+	constexpr uint64_t kTrashLength = 1024;
+	constexpr uint64_t kReservedLength = 2048;
+	auto *trashNode = addDetachedFile(/*inode=*/4, FSNodeType::kTrash, kTrashLength);
+	auto *reservedNode = addDetachedFile(/*inode=*/5, FSNodeType::kReserved, kReservedLength);
+
+	addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex, gMetadata->trashReservedToId,
+	              trashNode, "latest/trash");
+	addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
+	                 gMetadata->trashReservedToId, reservedNode, "latest/reserved");
+	gMetadata->trashNodes = 1;
+	gMetadata->trashSpace = kTrashLength;
+	gMetadata->reservedNodes = 1;
+	gMetadata->reservedSpace = kReservedLength;
+
+	// Each inode has one undo identity regardless of its current path or container. The tagged
+	// values restore both the checkpoint container kind and its path after removing the latest
+	// state by inode.
+	engine_.store()[detachedPathUndoKey(kCheckpointVersion, trashNode->id)] =
+	    detachedPathUndoValue(FSNodeType::kTrash, "checkpoint/trash");
+	engine_.store()[detachedPathUndoKey(kCheckpointVersion, reservedNode->id)] =
+	    detachedPathUndoValue(FSNodeType::kReserved, "checkpoint/reserved");
+
+	EdgeUndoRecorder recorder(&engine_);
+	ASSERT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+
+	ASSERT_EQ(gMetadata->trash.size(), 1U);
+	EXPECT_EQ((*gMetadata->trash.begin()).first.id, trashNode->id);
+	EXPECT_EQ(static_cast<std::string>((*gMetadata->trash.begin()).second), "checkpoint/trash");
+	EXPECT_EQ(gMetadata->trashNodes, 1U);
+	EXPECT_EQ(gMetadata->trashSpace, kTrashLength);
+	EXPECT_EQ(gMetadata->trashHandlesIndex.size(), 1U);
+
+	ASSERT_EQ(gMetadata->reserved.size(), 1U);
+	EXPECT_EQ((*gMetadata->reserved.begin()).first, reservedNode->id);
+	EXPECT_EQ(static_cast<std::string>((*gMetadata->reserved.begin()).second),
+	          "checkpoint/reserved");
+	EXPECT_EQ(gMetadata->reservedNodes, 1U);
+	EXPECT_EQ(gMetadata->reservedSpace, kReservedLength);
+	EXPECT_EQ(gMetadata->reservedHandlesIndex.size(), 1U);
+}
+
 }  // namespace
