@@ -95,6 +95,11 @@ set(METALOGGER_NAME             "leil-metalogger")
 set(MASTER_NAME                 "leil-master")
 set(SFSMDS_NAME                 "leil-mds")
 set(URAFT_NAME                  "leil-uraft")
+set(CHUNKSERVER_NAME_LEGACY     "saunafs-chunkserver")
+set(CLIENT_NAME_LEGACY          "saunafs-client")
+set(METALOGGER_NAME_LEGACY      "saunafs-metalogger")
+set(MASTER_NAME_LEGACY          "saunafs-master")
+set(URAFT_NAME_LEGACY           "saunafs-uraft")
 string(REGEX REPLACE "/$" "" USR_SHARE_DOC_NO_SLASH "${USR_SHARE_DOC}")
 set(CHUNKSERVER_EXAMPLES_SUBDIR "${USR_SHARE_DOC_NO_SLASH}/${CHUNKSERVER_NAME}/${EXAMPLES_SUBDIR}")
 set(CLIENT_EXAMPLES_SUBDIR      "${USR_SHARE_DOC_NO_SLASH}/${CLIENT_NAME}/${EXAMPLES_SUBDIR}")
@@ -119,6 +124,24 @@ set(DATA_PATH                   "${DATA_SUBDIR}")
 set(PLUGINS_PATH_LEGACY         "${LIB_PATH}/saunafs/plugins")
 set(ETC_PATH_LEGACY             "${CMAKE_INSTALL_FULL_SYSCONFDIR}/saunafs")
 set(DATA_PATH_LEGACY            "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/lib/saunafs")
+set(INCL_PATH_LEGACY            "${CMAKE_INSTALL_FULL_INCLUDEDIR}/saunafs")
+
+# Compat symlinks at the pre-rebrand ("saunafs") paths above, pointing at their
+# "leil" replacement, so packaging manifests still expecting the old layout
+# keep working unmodified. Skipped when a real, non-symlink directory already
+# occupies the legacy path (e.g. actual data from a pre-rebrand install) -
+# never delete what's already there.
+function(install_legacy_dir_symlink legacy_path relative_target)
+  install(CODE "
+    set(_legacy \"\$ENV{DESTDIR}${legacy_path}\")
+    if(NOT EXISTS \"\${_legacy}\" OR IS_SYMLINK \"\${_legacy}\")
+      file(REMOVE \"\${_legacy}\")
+      get_filename_component(_legacy_parent \"\${_legacy}\" DIRECTORY)
+      file(MAKE_DIRECTORY \"\${_legacy_parent}\")
+      file(CREATE_LINK \"${relative_target}\" \"\${_legacy}\" SYMBOLIC)
+    endif()
+  " ${ARGN})
+endfunction()
 
 set(DEFAULT_USER                 "saunafs"                 CACHE STRING "Default user to run daemons as")
 set(DEFAULT_GROUP                "saunafs"                 CACHE STRING "Default group to run daemons as")
