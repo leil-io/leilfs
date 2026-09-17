@@ -49,6 +49,7 @@
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_section_bootstrap_fdb.h"
+#include "master/metadata_xattr_undo_recorder.h"
 #include "protocol/SFSCommunication.h"
 
 struct MetadataBackendForklessTestAccess {
@@ -603,6 +604,81 @@ TEST(MetadataUndoRecorderRestore, DetachedPathRejectsMalformedUndoValues) {
 	}
 }
 
+TEST(MetadataUndoRecorderRestore, XAttrRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    gMetadata = new FilesystemMetadata;
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing both the inode and attribute name.
+		    malformedKeys.push_back(kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion));
+		    // Attribute names must be non-empty.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, inode_t{41}));
+		    // Attribute names must fit the metadata name-length limit.
+		    auto oversizedName =
+		        kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, inode_t{41});
+		    oversizedName.insert(oversizedName.end(), SFS_XATTR_NAME_MAX + 1, uint8_t{0x78});
+		    malformedKeys.push_back(std::move(oversizedName));
+		    // Inode 0 is not a valid extended-attribute owner.
+		    auto zeroInode =
+		        kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, inode_t{0});
+		    kv::appendStr(zeroInode, "user.test");
+		    malformedKeys.push_back(std::move(zeroInode));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    XAttrUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = kv::Value{0x00};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, XAttrRejectsMalformedUndoValues) {
+	kv::Value oversizedPresent(SFS_XATTR_SIZE_MAX + 2, 0);
+	oversizedPresent[0] = 0x01;
+	const std::array<kv::Value, 4> malformedValues{
+	    kv::Value{},
+	    kv::Value{0x00, 0xff},
+	    kv::Value{0x02},
+	    std::move(oversizedPresent),
+	};
+
+	for (const auto &malformedValue : malformedValues) {
+		SCOPED_TRACE(::testing::PrintToString(malformedValue));
+		RecordingKVEngine engine;
+		XAttrUndoRecorder recorder(&engine);
+
+		constexpr inode_t kInode = 41;
+		kv::Key undoKey = kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, kInode);
+		kv::appendStr(undoKey, "user.test");
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[undoKey] = malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
+}
+
+TEST(MetadataUndoRecorderRestore, XAttrRejectsOversizedUndoName) {
+	RecordingKVEngine engine;
+	XAttrUndoRecorder recorder(&engine);
+
+	constexpr inode_t kInode = 41;
+	kv::Key undoKey = kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, kInode);
+	undoKey.insert(undoKey.end(), SFS_XATTR_NAME_MAX + 1, 'x');
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[undoKey] = kv::Value{0x00};
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
 TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoKeys) {
 	EXPECT_EXIT(
 	    {
@@ -784,4 +860,34 @@ TEST(MetadataUndoRecorderRetry, DetachedPathPreservesOriginalPreimage) {
 	    });
 	EXPECT_FALSE(engine.store().contains(trashKey));
 	EXPECT_EQ(engine.store().at(reservedKey), laterValue);
+}
+
+TEST(MetadataUndoRecorderRetry, XAttrPreservesOriginalPreimage) {
+	RecordingKVEngine engine;
+	XAttrUndoRecorder recorder(&engine);
+
+	constexpr inode_t kInode = 47;
+	const std::vector<uint8_t> name{'u', 's', 'e', 'r', '.', 'k', 'e', 'y'};
+	kv::Key liveKey = kv::encodeKeyBE(kXAttrKeyPrefix, kInode);
+	liveKey.insert(liveKey.end(), name.begin(), name.end());
+	kv::Key undoKey = kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, kInode);
+	undoKey.insert(undoKey.end(), name.begin(), name.end());
+	const kv::Value originalValue{0x10, 0x11};
+	const kv::Value updatedValue{0x20, 0x21};
+	const kv::Value laterValue{0x30, 0x31};
+	kv::Value expectedUndoValue{0x01};
+	expectedUndoValue.insert(expectedUndoValue.end(), originalValue.begin(), originalValue.end());
+	engine.store()[liveKey] = originalValue;
+
+	const MetadataMutation mutation = XAttrSetMutation{
+	    .inode = kInode,
+	    .name = name,
+	    .liveKey = liveKey,
+	};
+	expectFailedFirstTouchRetryPreservesPreimage(
+	    recorder, engine.store(), mutation, undoKey, expectedUndoValue,
+	    [&](RecordingTransaction &transaction, bool laterMutation) {
+		    transaction.set(liveKey, laterMutation ? laterValue : updatedValue);
+	    });
+	EXPECT_EQ(engine.store().at(liveKey), laterValue);
 }
