@@ -28,6 +28,7 @@
 #include "kv/kv_utils.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_checkpoint_manager.h"
+#include "master/metadata_section_undo_recorder.h"
 
 ChunkUpdateEvent::ChunkUpdateEvent(uint64_t _chunkId, uint32_t _version, uint32_t _lockedTo,
                                    uint32_t _lockId)
@@ -49,6 +50,20 @@ void ChunkUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	put32bit(&ptr, lockedTo);
 	put32bit(&ptr, lockId);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->set(key, value);
 }
 
@@ -62,6 +77,22 @@ void ChunkRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 
 	// Key: CHNL_<ChunkId>
 	kv::Key key = kv::encodeKeyBE(kChunkLatestKeyPrefix, chunkId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		// ChunkSetMutation records the pre-image (or a tombstone) generically, which is exactly the
+		// undo a removal needs: rollback restores the chunk that existed before this checkpoint.
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
 
 	context.transaction->remove(key);
 }

@@ -18,14 +18,18 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include "common/special_inode_defs.h"
 #include "common/type_defs.h"
 #include "kv/ikv_engine.h"
+#include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
 
 /// Snapshot descriptor bound to one metadata checkpoint boundary.
@@ -229,6 +233,8 @@ private:
 	/// Recorders indexed by MetadataSectionKind; null entries mean the section has no
 	/// registered recorder. Recorders are not owned by this array.
 	std::array<ISectionUndoRecorder *, kMetadataSectionKindCount> recorders_{};
+
+	std::unique_ptr<ChunkUndoRecorder> chunkUndoRecorder_;
 
 	/// Last sealed checkpoint version; 0 before any checkpoint has been sealed.
 	uint64_t activeCheckpointVersion_{0};

@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string_view>

@@ -274,6 +274,19 @@ TEST(FileChunkTableResizeTest, GrowNeverShrinks) {
 	EXPECT_EQ(32U, ops.getFileChunkTableSize(ctx, &node));
 }
 
+TEST_F(AppendChunksRollbackTest, CheckpointRemovalReversesChunkAccounting) {
+	constexpr uint64_t kChunkId = 100;
+	const uint32_t initialCount = chunk_count();
+
+	chunk_add_from_initial_metadata_load(kChunkId, /*chunkVersion=*/1, /*lockedTo=*/0,
+	                                     /*lockId=*/0);
+	ASSERT_EQ(initialCount + 1, chunk_count());
+
+	EXPECT_EQ(SAUNAFS_STATUS_OK, chunk_restore_remove(kChunkId));
+	EXPECT_EQ(initialCount, chunk_count());
+	EXPECT_EQ(SAUNAFS_ERROR_NOCHUNK, chunk_restore_remove(kChunkId));
+}
+
 TEST_F(AppendChunksRollbackTest, FailedAddReversesSuccessfulPrefix) {
 	constexpr uint8_t goal = 2;
 	const std::vector<uint64_t> chunkIds = {101, 102, 103};
