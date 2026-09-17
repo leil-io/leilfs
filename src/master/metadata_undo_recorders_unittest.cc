@@ -46,6 +46,7 @@
 #include "master/metadata_backend_forkless.h"
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_chunk_undo_recorder.h"
+#include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "protocol/SFSCommunication.h"
 
@@ -352,6 +353,88 @@ TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValues) {
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
 }
 
+TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing inode.
+		    malformedKeys.push_back(kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion));
+		    // Inode 0 is not a valid NODE_ identity.
+		    malformedKeys.push_back(
+		        kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, inode_t{0}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    NodeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = {};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoValues) {
+	kv::Value truncatedFile(FSNode::kNodeHeaderSize + sizeof(uint64_t), 0);
+	truncatedFile[0] = static_cast<uint8_t>(FSNodeType::kFile);
+	appendBigEndian(truncatedFile, uint32_t{1});
+	appendBigEndian(truncatedFile, uint16_t{0});
+
+	kv::Value truncatedSymlink(FSNode::kNodeHeaderSize, 0);
+	truncatedSymlink[0] = static_cast<uint8_t>(FSNodeType::kSymlink);
+	appendBigEndian(truncatedSymlink, uint32_t{1});
+
+	kv::Value oversizedDirectory(FSNode::kNodeHeaderSize + 1, 0);
+	oversizedDirectory[0] = static_cast<uint8_t>(FSNodeType::kDirectory);
+
+	const std::array<kv::Value, 5> malformedValues{
+	    kv::Value{0xff},
+	    kv::Value{static_cast<uint8_t>(FSNodeType::kDirectory)},
+	    std::move(oversizedDirectory),
+	    std::move(truncatedFile),
+	    std::move(truncatedSymlink),
+	};
+
+	for (const auto &malformedValue : malformedValues) {
+		SCOPED_TRACE(::testing::PrintToString(malformedValue));
+		RecordingKVEngine engine;
+		NodeUndoRecorder recorder(&engine);
+
+		constexpr inode_t kInode = 41;
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, kInode)] =
+		    malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
+}
+
+TEST(MetadataUndoRecorderRestore, NodeRejectsMismatchedUndoInode) {
+	RecordingKVEngine engine;
+	NodeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kUndoKeyInode = 41;
+	FSNodeDirectory serializedNode;
+	serializedNode.id = 42;
+	kv::Value undoValue(serializedNode.serializedSize());
+	uint8_t *destination = undoValue.data();
+	serializedNode.serialize(&destination);
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	engine.store()[kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, kUndoKeyInode)] =
+	    std::move(undoValue);
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
 TEST(MetadataUndoRecorderRetry, ChunkPreservesOriginalPreimage) {
 	RecordingKVEngine engine;
 	ChunkUndoRecorder recorder(&engine);
@@ -373,3 +456,23 @@ TEST(MetadataUndoRecorderRetry, ChunkPreservesOriginalPreimage) {
 	EXPECT_EQ(engine.store().at(liveKey), laterValue);
 }
 
+TEST(MetadataUndoRecorderRetry, NodePreservesOriginalPreimage) {
+	RecordingKVEngine engine;
+	NodeUndoRecorder recorder(&engine);
+
+	constexpr inode_t kInode = 42;
+	const kv::Key liveKey = kv::encodeKeyBE(kNodeKeyPrefix, kInode);
+	const kv::Key undoKey = kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, kInode);
+	const kv::Value originalValue{0x01, 0x02, 0x03};
+	const kv::Value updatedValue{0x04, 0x05, 0x06};
+	const kv::Value laterValue{0x07, 0x08, 0x09};
+	engine.store()[liveKey] = originalValue;
+
+	const MetadataMutation mutation = NodeSetMutation{.inode = kInode, .liveKey = liveKey};
+	expectFailedFirstTouchRetryPreservesPreimage(
+	    recorder, engine.store(), mutation, undoKey, originalValue,
+	    [&](RecordingTransaction &transaction, bool laterMutation) {
+		    transaction.set(liveKey, laterMutation ? laterValue : updatedValue);
+	    });
+	EXPECT_EQ(engine.store().at(liveKey), laterValue);
+}
