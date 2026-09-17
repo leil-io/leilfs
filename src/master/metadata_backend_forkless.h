@@ -345,6 +345,19 @@ private:
 	/// @param name  Attribute name bytes.
 	void onXAttrRemoved(inode_t inode, std::span<const uint8_t> name);
 
+	/// Enqueue a chunk update event to the metadata writer.
+	///
+	/// @param chunkId  Chunk whose metadata changed.
+	/// @param version  Chunk version.
+	/// @param lockedTo Lock expiry timestamp.
+	/// @param lockId   Lock id.
+	void onChunkChanged(uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId);
+
+	/// Enqueue a chunk removal event to the metadata writer.
+	///
+	/// @param chunkId Chunk that was removed.
+	void onChunkRemoved(uint64_t chunkId);
+
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
 	std::shared_ptr<IKVConnector> kvConnector_;
 
