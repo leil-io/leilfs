@@ -94,6 +94,7 @@ private:
 	inode_t maxInodeId_ = 0;
 	uint64_t metadataVersion_ = 0;
 	uint32_t nextSessionId_ = 0;
+	std::unordered_map<inode_t, uint8_t> detachedNodeTypes_;
 	std::shared_ptr<MemoryMappedFile> metadataFile_;
 	std::unordered_map<std::string, SectionMarker> sectionMarkers_;
 	kv::IKVEngine *kvEngine_ = nullptr;

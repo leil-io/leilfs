@@ -30,6 +30,7 @@
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_types.h"
+#include "master/filesystem_node_types.h"
 #include "master/filesystem_operation_context.h"
 #include "master/hstring.h"
 
@@ -106,6 +107,15 @@ struct EdgeRemoveMutation {
 	kv::Key liveKey;
 };
 
+struct DetachedPathSetMutation {
+	inode_t inode;
+	FSNodeType nodeType;
+};
+
+struct DetachedPathRemoveMutation {
+	inode_t inode;
+};
+
 struct XAttrSetMutation {
 	inode_t inode;
 	std::vector<uint8_t> name;
@@ -126,7 +136,8 @@ struct XAttrRangeRemoveMutation {
 
 using MetadataMutation =
     std::variant<ChunkSetMutation, NodeSetMutation, NodeRemoveMutation, FreeNodeSetMutation,
-                 FreeNodeRemoveMutation, EdgeSetMutation, EdgeRemoveMutation, XAttrSetMutation,
+                 FreeNodeRemoveMutation, EdgeSetMutation, EdgeRemoveMutation,
+                 DetachedPathSetMutation, DetachedPathRemoveMutation, XAttrSetMutation,
                  XAttrRemoveMutation, XAttrRangeRemoveMutation>;
 
 class ISectionUndoRecorder {

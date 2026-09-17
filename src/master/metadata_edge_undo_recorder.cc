@@ -18,14 +18,13 @@
 
 #include "common/platform.h"
 
-#include "master/metadata_edge_undo_recorder.h"
-
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "common/datapack.h"
@@ -34,6 +33,7 @@
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_edge_restore_helpers.h"
+#include "master/metadata_edge_undo_recorder.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -53,10 +53,19 @@ kv::Key edgeUndoKey(uint64_t checkpointVersion, inode_t parentId, const HString 
 	return key;
 }
 
+kv::Key detachedPathUndoKey(uint64_t checkpointVersion, inode_t inode) {
+	return kv::encodeKeyBE(kEdgeUndoKeyPrefix, checkpointVersion, inode_t{0}, inode);
+}
+
 struct EdgeUndoEntry {
 	inode_t parentId = 0;
 	std::string name;
 	std::optional<inode_t> childId;
+};
+
+struct DetachedPathUndoEntry {
+	inode_t inode = 0;
+	std::optional<std::pair<FSNodeType, HString>> preimage;
 };
 
 // Key format: EDGEU_ + <checkpoint:u64> + <parentId:inode_t> + <name>
@@ -69,6 +78,26 @@ bool decodeEdgeUndoKey(const kv::Key &key, inode_t &parentId, std::string &name)
 
 	name.assign(reinterpret_cast<const char *>(key.data()) + fixedSize, key.size() - fixedSize);
 	return true;
+}
+
+bool decodeDetachedPathUndoKey(const kv::Key &key, inode_t &inode) {
+	const size_t expectedSize = kEdgeUndoKeyPrefix.size() + sizeof(uint64_t) + (sizeof(inode_t) * 2);
+	if (key.size() != expectedSize) { return false; }
+
+	const uint8_t *ptr = key.data() + kEdgeUndoKeyPrefix.size() + sizeof(uint64_t);
+	inode_t parentId = 0;
+	getINode(&ptr, parentId);
+	if (parentId != 0) { return false; }
+	getINode(&ptr, inode);
+	return inode != 0;
+}
+
+kv::Value detachedPathUndoValue(FSNodeType nodeType, const kv::Value &path) {
+	kv::Value value;
+	value.reserve(path.size() + 1);
+	value.push_back(static_cast<uint8_t>(nodeType));
+	value.insert(value.end(), path.begin(), path.end());
+	return value;
 }
 
 }  // namespace
@@ -89,10 +118,22 @@ void EdgeUndoRecorder::beforeMutation(const MetadataMutationContext &context,
 		return;
 	}
 
+	if (const auto *detachedSet = std::get_if<DetachedPathSetMutation>(&mutation)) {
+		beforeDetachedPathMutation(context, detachedSet->inode);
+		return;
+	}
+
+	if (const auto *detachedRemove = std::get_if<DetachedPathRemoveMutation>(&mutation)) {
+		beforeDetachedPathMutation(context, detachedRemove->inode);
+		return;
+	}
+
 	safs::log_warn("{}: received non-edge mutation for edge recorder", __func__);
 }
 
 bool EdgeUndoRecorder::restoreToCheckpointVersion(uint64_t targetVersion) {
+	detachedPathsTouchedDuringRestore_.clear();
+
 	auto retainedCheckpointVersions = checkpoints::loadCheckpointVersions(kvEngine_);
 	if (retainedCheckpointVersions.empty()) {
 		safs::log_info("No retained edge checkpoints found");
@@ -142,6 +183,7 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 	kv::KeySelector startSelector(prefix, true, 0);
 	kv::KeySelector endSelector(kv::prefixEnd(prefix), true, 0);
 	std::vector<EdgeUndoEntry> undoEntries;
+	std::vector<DetachedPathUndoEntry> detachedUndoEntries;
 
 	while (true) {
 		auto transaction = kvEngine_->createReadOnlyTransaction();
@@ -153,6 +195,34 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 			if (!decodeEdgeUndoKey(pair.key, parentId, name)) {
 				safs::log_err("{}: malformed edge undo key of size {}", __func__, pair.key.size());
 				return {0, false};
+			}
+
+			if (parentId == 0) {
+				inode_t inode = 0;
+				if (!decodeDetachedPathUndoKey(pair.key, inode)) {
+					safs::log_err("{}: malformed detached-path undo key", __func__);
+					return {0, false};
+				}
+
+				if (pair.value.empty()) {
+					detachedUndoEntries.push_back({.inode = inode, .preimage = std::nullopt});
+				} else {
+					const auto nodeType = static_cast<FSNodeType>(pair.value.front());
+					if ((nodeType != FSNodeType::kTrash && nodeType != FSNodeType::kReserved) ||
+					    pair.value.size() == 1) {
+						safs::log_err("{}: malformed detached-path undo value of size {}", __func__,
+						              pair.value.size());
+						return {0, false};
+					}
+					detachedUndoEntries.push_back(
+					    {.inode = inode,
+					     .preimage = std::pair{
+					         nodeType,
+					         HString(pair.value.begin() + 1, pair.value.end()),
+					     }});
+				}
+				detachedPathsTouchedDuringRestore_.insert(inode);
+				continue;
 			}
 
 			if (pair.value.empty()) {
@@ -185,6 +255,11 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 			return {0, false};
 		}
 	}
+	for (const auto &entry : detachedUndoEntries) {
+		if (metadata::edges::removeLoadedDetachedPath(fsOpContext, entry.inode) != kOpSuccess) {
+			return {0, false};
+		}
+	}
 
 	for (const auto &entry : undoEntries) {
 		if (!entry.childId.has_value()) { continue; }
@@ -193,8 +268,16 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 			return {0, false};
 		}
 	}
+	for (const auto &entry : detachedUndoEntries) {
+		if (!entry.preimage.has_value()) { continue; }
+		if (metadata::edges::restoreLoadedDetachedPath(fsOpContext, entry.inode,
+		                                               entry.preimage->first,
+		                                               entry.preimage->second) != kOpSuccess) {
+			return {0, false};
+		}
+	}
 
-	return {static_cast<uint64_t>(undoEntries.size()), true};
+	return {static_cast<uint64_t>(undoEntries.size() + detachedUndoEntries.size()), true};
 }
 
 int8_t EdgeUndoRecorder::dropCheckpointData(kv::IReadWriteTransaction *transaction,
@@ -230,6 +313,41 @@ void EdgeUndoRecorder::recordEdgeUndo(kv::IReadWriteTransaction *transaction,
 		transaction->set(undoKey, *currentValue);
 	} else {
 		// Tombstone: edge did not exist before the first mutation in this checkpoint interval.
+		transaction->set(undoKey, kv::Value{});
+	}
+}
+
+void EdgeUndoRecorder::beforeDetachedPathMutation(const MetadataMutationContext &context,
+                                                  inode_t inode) {
+	if (context.checkpointVersion == 0) { return; }
+
+	recordDetachedPathUndo(context.transaction, context.checkpointVersion, inode);
+}
+
+void EdgeUndoRecorder::recordDetachedPathUndo(kv::IReadWriteTransaction *transaction,
+                                              uint64_t checkpointVersion, inode_t inode) {
+	if (transaction == nullptr || checkpointVersion == 0) { return; }
+
+	// Undo Key: EDGEU_<checkpointVersion><0><inode>
+	kv::Key undoKey = detachedPathUndoKey(checkpointVersion, inode);
+	if (transaction->get(undoKey).has_value()) { return; }
+
+	const auto trashPath = transaction->get(kv::encodeKeyBE(kTrashPathKeyPrefix, inode));
+	const auto reservedPath = transaction->get(kv::encodeKeyBE(kReservedPathKeyPrefix, inode));
+	if (trashPath.has_value() && reservedPath.has_value()) {
+		safs::log_err("{}: inode {} has both trash and reserved path rows", __func__, inode);
+		// Preserve evidence that the interval-start state violated the live-key invariant. A
+		// malformed tagged value makes a later rollback fail closed instead of treating the
+		// mutation as if no detached path had existed.
+		transaction->set(undoKey, kv::Value{static_cast<uint8_t>(FSNodeType::kFile)});
+		return;
+	}
+
+	if (trashPath.has_value()) {
+		transaction->set(undoKey, detachedPathUndoValue(FSNodeType::kTrash, *trashPath));
+	} else if (reservedPath.has_value()) {
+		transaction->set(undoKey, detachedPathUndoValue(FSNodeType::kReserved, *reservedPath));
+	} else {
 		transaction->set(undoKey, kv::Value{});
 	}
 }

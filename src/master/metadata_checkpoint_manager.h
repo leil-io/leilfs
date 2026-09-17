@@ -171,6 +171,9 @@ public:
 	/// when no node recorder is registered.
 	const std::unordered_set<uint64_t> &nodesRemovedDuringRestore() const;
 
+	/// Detached-path inodes processed by the most recent edge-section restore.
+	const EdgeUndoRecorder::DetachedPathKeySet &detachedPathsTouchedDuringRestore() const;
+
 private:
 	/// Registers the per-section undo recorders into recorders_.
 	///
