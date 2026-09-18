@@ -24,7 +24,9 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <memory>
+#include <vector>
 
 #include "common/chunk_part_type.h"
 #include "common/chunk_type_with_address.h"
@@ -37,6 +39,7 @@
 #include "master/metadata_loader.h"
 
 struct matocsserventry;
+struct csdbentry;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
@@ -64,8 +67,16 @@ bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
 /// Returns false if the chunk is unknown.
 bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto);
 
+/// True when the chunk's copies changed since the last version operation completed, so the
+/// next write must bump the version first. False for an unknown chunk.
+bool chunk_needs_version_increase(uint64_t chunkid);
+
 /// Returns true if the chunk is present in the in-memory hash.
 bool chunk_exists(uint64_t chunkid);
+
+/// True when the in-memory chunk knows at least one part, whatever its state. A chunk rebuilt
+/// from durable metadata alone knows none.
+bool chunk_has_parts(uint64_t chunkid);
 
 /// Restores an in-memory chunk from persisted version, refs and lock state.
 /// Used by on-demand restore paths when a chunk is not present in memory yet.
@@ -84,6 +95,68 @@ uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet);
 #ifdef METARESTORE
 void chunk_dump(void);
 #else
+/// One stored part named by its chunkserver, the currency between a backend that keeps
+/// locations outside memory and the in-memory chunk table. The csdbentry outlives connections,
+/// so a location stays valid across a reconnect; its eptr says whether the server is live.
+struct ChunkPartLocation {
+	csdbentry *server;
+	ChunkPartType partType;
+};
+
+/// The two commands the maintenance planner issues to chunkservers.
+enum class ChunkMaintenanceKind {
+	kReplicate,
+	kDelete
+};
+
+/// A planner decision handed to a backend's sink instead of being sent directly, so the backend
+/// can record it before the chunkserver acts on it.
+struct ChunkMaintenanceCommand {
+	ChunkMaintenanceKind kind;
+	uint64_t chunkid;
+	/// For kReplicate the version the new copy is created at; for kDelete the exact version to
+	/// delete, or 0 to delete whatever the server holds.
+	uint32_t version;
+	/// Server that receives the command.
+	ChunkPartLocation destination;
+	/// Copies to replicate from; empty for kDelete.
+	std::vector<ChunkPartLocation> sources;
+};
+
+/// Receives each planner command synchronously. Returns true when the command was sent, false
+/// to refuse it; a refused command is simply not issued and the planner revisits the chunk later.
+using ChunkMaintenanceSink = std::function<bool(const ChunkMaintenanceCommand &)>;
+
+/// Runs the existing planner on a disposable snapshot of one chunk, without caching it, so a
+/// backend that pages its own records can reuse Master's placement rules. The sink sends the
+/// accepted commands; the snapshot retains nothing. Returns EINVAL for an inconsistent snapshot,
+/// LOCKED or CHUNKBUSY when a cached copy of the chunk is in use.
+int chunk_run_maintenance(uint64_t chunkid, uint32_t version,
+                          const std::vector<ChunkPartLocation> &parts,
+                          const std::vector<ChunkGoalCounters::GoalCounter> &goals,
+                          const ChunkMaintenanceSink &sink);
+
+/// Refills an idle cached chunk from the caller's authoritative snapshot, older versions
+/// included, without sending commands or mutation notifications; the caller's records, not this
+/// process, decide what the chunk holds. Validates parts and goal counts before mutating.
+int chunk_replace_part_locations(uint64_t chunkid, uint32_t version, uint32_t lockid,
+                                 uint32_t lockedto, const std::vector<ChunkPartLocation> &parts,
+                                 size_t maxParts,
+                                 const std::vector<ChunkGoalCounters::GoalCounter> &goals,
+                                 bool needVersionIncrease);
+
+/// Readable current-version parts of a chunk a client just unlocked, the set a backend publishes
+/// at write end. Excludes parts with an unfinished command; retiring copies and buffered writes
+/// stay readable as they always were. An error leaves the output empty.
+int chunk_get_publishable_parts(uint64_t chunkid, uint32_t &version,
+                                std::vector<ChunkPartLocation> &parts, size_t maxParts);
+
+/// Live parts stored at @p version whatever their validity state, for a repair or a settled
+/// operation that adopts that version. Parts with an unfinished command are excluded; retiring
+/// copies are included, as in chunk_get_publishable_parts.
+int chunk_get_parts_at_version(uint64_t chunkid, uint32_t version,
+                               std::vector<ChunkPartLocation> &parts, size_t maxParts);
+
 uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal, bool quota_exceeded,
                            uint8_t *opflag, uint64_t *nchunkid, uint32_t min_server_version);
 uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
@@ -159,6 +232,21 @@ int chunk_invalidate_goal_cache();
 /// in-memory chunk records. Foreground client operations and their recovery stay enabled; only
 /// the listed background maintenance commands are suppressed.
 void chunk_set_maintenance_enabled(bool enabled);
+/// Deletes the copies of in-memory chunks that no file references and that have no durable
+/// record (a create or copy-on-write attempt that never committed). Master's own loop does this
+/// in place; a backend that pages records instead calls it with a per-tick budget. Locked or busy
+/// chunks wait. Returns how many chunks were visited.
+size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord);
+/// True when memory holds a valid part of @p chunkid on @p server at the chunk's version, so a
+/// backend can skip re-verifying a copy this process itself created after the server returned.
+bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server);
+
+/// Ticks of chunk_jobs_main that one pass over the in-memory chunk table takes, derived from the
+/// hash size and the configured steps per tick; a backend paging its own records paces itself
+/// the same way so per-server command limits behave as under Master.
+uint32_t chunk_maintenance_ticks_per_pass();
+/// Time budget of one maintenance tick in milliseconds, the configured loop timeout.
+uint32_t chunk_maintenance_tick_budget_ms();
 
 #endif
 
