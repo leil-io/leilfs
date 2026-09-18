@@ -242,6 +242,11 @@ pipeline {
             defaultValue: 'v0.8.0',
             description: 'leil-tests ref: branch (dev, fix/foo), tag (v0.8.0), refs/*, or SHA'
         )
+        choice(
+            name: 'LONG_TESTS_DISTRO',
+            choices: ['24.04', '26.04'],
+            description: 'Ubuntu release to run LongSystemTests against'
+        )
     }
 
     options {
@@ -440,8 +445,6 @@ pipeline {
                                 buildLeilTests()
                             }
                         }
-
-
                         stage('Build image') {
                             steps {
                                 script {
@@ -450,19 +453,16 @@ pipeline {
                                 }
                             }
                         }
-
                         stage('Run Sanity') {
                             steps {
                                 runSanity()
                             }
                         }
-
                         stage('Run short system tests') {
                             steps {
                                 runShort()
                             }
                         }
-
                         stage('Run machine tests') {
                             when {
                                 anyOf {
@@ -511,7 +511,83 @@ pipeline {
                         }
                     }
                 }
-                stage('Long system tests (Ubuntu 24.04)') {
+                stage('Build Ubuntu 26.04') {
+                    environment {
+                        SANITY_WORKERS = "${env.SANITY_WORKERS ?: '4'}"
+                        SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
+                        LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
+                        MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                        REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu26.04-leil-test:$GIT_COMMIT"
+                    }
+                    agent { label "test && ubuntu-2604" }
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkout scm
+                            }
+                        }
+                        stage('Build leil-tests') {
+                            steps {
+                                buildLeilTests()
+                            }
+                        }
+                        stage('Build image') {
+                            steps {
+                                script {
+                                    buildImage("ubuntu:26.04")
+                                    pushImage(env.REGISTRY_IMAGE_NAME)
+                                }
+                            }
+                        }
+                        stage('Run Sanity') {
+                            steps {
+                                runSanity()
+                            }
+                        }
+                        stage('Run short system tests') {
+                            steps {
+                                runShort()
+                            }
+                        }
+                        stage('Run machine tests') {
+                            when {
+                                anyOf {
+                                    branch 'dev'
+                                    branch 'gh-readonly-queue/*'
+                                    branch 'stable'
+                                    changeRequest()
+                                }
+                            }
+                            steps {
+                                runMachine()
+                            }
+                        }
+                    }
+                    post {
+                        // Clean after build
+                        failure {
+                            slackBadMessage(
+                                "Ubuntu 26.04 build failed on ${BRANCH_NAME}",
+                                "Ubuntu 26.04 build failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                            )
+                        }
+                        cleanup {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh '''
+                                docker rm $(docker stop $(docker ps -a -q --filter ancestor=leil-test --format="{{.ID}}")) || true
+                                '''
+                            sh """
+                                docker image rm ${env.REGISTRY_IMAGE_NAME} || true
+                                docker image rm leil-test:latest || true
+                                """
+                        }
+                    }
+                }
+                stage('Long system tests') {
                     when {
                         beforeAgent true
                         anyOf {
@@ -521,7 +597,7 @@ pipeline {
                             changeRequest()
                         }
                     }
-                    agent { label "test && ubuntu-2404" }
+                    agent { label "test && ubuntu-${params.LONG_TESTS_DISTRO.replace('.', '')}" }
                     environment {
                         LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
@@ -529,6 +605,7 @@ pipeline {
                     stages {
                         stage("Checkout source") {
                             steps {
+                                echo "Running LongSystemTests against Ubuntu ${params.LONG_TESTS_DISTRO}"
                                 checkoutSource()
                             }
                         }
@@ -540,7 +617,7 @@ pipeline {
                         stage('Build image') {
                             steps {
                                 script {
-                                    buildImage("ubuntu:24.04")
+                                    buildImage("ubuntu:${params.LONG_TESTS_DISTRO}")
                                 }
                             }
                         }
@@ -554,16 +631,18 @@ pipeline {
                         unstable {
                             script {
                                 slackBadMessage(
-                                    "Long tests failed to pass on ${BRANCH_NAME}",
-                                    "Long tests failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                    "Long tests failed to pass on ${BRANCH_NAME} (Ubuntu ${params.LONG_TESTS_DISTRO})",
+                                    "Long tests failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER} " +
+                                        "(Ubuntu ${params.LONG_TESTS_DISTRO})"
                                 )
                             }
                         }
                         failure {
                             script {
                                 slackBadMessage(
-                                    "Long tests pipeline failed on ${BRANCH_NAME}",
-                                    "Long tests pipeline failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                    "Long tests pipeline failed on ${BRANCH_NAME} (Ubuntu ${params.LONG_TESTS_DISTRO})",
+                                    "Long tests pipeline failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER} " +
+                                        "(Ubuntu ${params.LONG_TESTS_DISTRO})"
                                 )
                             }
                         }
