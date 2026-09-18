@@ -45,6 +45,7 @@
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_edge_restore_helpers.h"
 #include "master/metadata_edge_undo_recorder.h"
+#include "master/metadata_quota_undo_recorder.h"
 
 namespace {
 
@@ -117,6 +118,14 @@ public:
 private:
 	DurableStore store_;
 };
+
+kv::Key quotaUndoKey(uint64_t checkpointVersion, uint8_t ownerType, inode_t ownerId) {
+	kv::Key key = kv::encodeKeyBE(kQuotaUndoKeyPrefix, checkpointVersion);
+	key.push_back(ownerType);
+	const kv::Value ownerIdBytes = kv::toBytesBE(ownerId);
+	key.insert(key.end(), ownerIdBytes.begin(), ownerIdBytes.end());
+	return key;
+}
 
 kv::Key edgeUndoKey(uint64_t checkpointVersion, inode_t parentId, std::string_view name) {
 	kv::Key key = kv::encodeKeyBE(kEdgeUndoKeyPrefix, checkpointVersion, parentId);
@@ -319,6 +328,7 @@ TEST_F(EdgeRecoveryStateTest, DirectoryHierarchyInversionNeverCreatesTransientCy
 	EXPECT_EQ(aToB->second, directoryB_);
 	EXPECT_EQ(directoryB_->find(HString("A")), directoryB_->entries.end());
 }
+
 TEST_F(EdgeRecoveryStateTest, RestoresInodeKeyedDetachedPaths) {
 	constexpr uint64_t kTrashLength = 1024;
 	constexpr uint64_t kReservedLength = 2048;
@@ -359,6 +369,65 @@ TEST_F(EdgeRecoveryStateTest, RestoresInodeKeyedDetachedPaths) {
 	EXPECT_EQ(gMetadata->reservedNodes, 1U);
 	EXPECT_EQ(gMetadata->reservedSpace, kReservedLength);
 	EXPECT_EQ(gMetadata->reservedHandlesIndex.size(), 1U);
+}
+
+class QuotaRecoveryStateTest : public ::testing::Test {
+protected:
+	void SetUp() override {
+		previousMetadata_ = gMetadata;
+		gMetadata = new FilesystemMetadata;
+		engine_.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	}
+
+	void TearDown() override {
+		delete gMetadata;
+		gMetadata = previousMetadata_;
+	}
+
+	static constexpr uint64_t kCheckpointVersion = 17;
+	static constexpr inode_t kOwnerId = 42;
+
+	FilesystemMetadata *previousMetadata_ = nullptr;
+	StoreKVEngine engine_;
+};
+
+TEST_F(QuotaRecoveryStateTest, TombstoneClearsLimitsButPreservesReconstructedUsage) {
+	constexpr QuotaOwnerType kOwnerType = QuotaOwnerType::kUser;
+	auto &quotaDatabase = gMetadata->quotaDatabase;
+	quotaDatabase.set(kOwnerType, kOwnerId, QuotaRigor::kUsed, QuotaResource::kInodes, 3);
+	quotaDatabase.set(kOwnerType, kOwnerId, QuotaRigor::kUsed, QuotaResource::kSize, 4096);
+	quotaDatabase.set(kOwnerType, kOwnerId, QuotaRigor::kSoft, QuotaResource::kInodes, 10);
+	quotaDatabase.set(kOwnerType, kOwnerId, QuotaRigor::kHard, QuotaResource::kSize, 8192);
+	engine_.store()[quotaUndoKey(kCheckpointVersion, static_cast<uint8_t>(kOwnerType), kOwnerId)] =
+	    kv::Value{0};
+
+	QuotaUndoRecorder recorder(&engine_);
+	ASSERT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+
+	const auto *limits = quotaDatabase.get(kOwnerType, kOwnerId);
+	ASSERT_NE(limits, nullptr);
+	EXPECT_EQ(
+	    (*limits)[static_cast<int>(QuotaRigor::kUsed)][static_cast<int>(QuotaResource::kInodes)],
+	    3U);
+	EXPECT_EQ(
+	    (*limits)[static_cast<int>(QuotaRigor::kUsed)][static_cast<int>(QuotaResource::kSize)],
+	    4096U);
+	for (const auto rigor : {QuotaRigor::kSoft, QuotaRigor::kHard}) {
+		for (const auto resource : {QuotaResource::kInodes, QuotaResource::kSize}) {
+			EXPECT_EQ((*limits)[static_cast<int>(rigor)][static_cast<int>(resource)], 0U);
+		}
+	}
+}
+
+TEST_F(QuotaRecoveryStateTest, InvalidUndoOwnerTypeIsRejected) {
+	engine_.store()[quotaUndoKey(kCheckpointVersion, /*ownerType=*/0xff, kOwnerId)] = kv::Value{0};
+
+	QuotaUndoRecorder recorder(&engine_);
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	EXPECT_EQ(gMetadata->quotaDatabase.get(QuotaOwnerType::kUser, kOwnerId), nullptr);
+	EXPECT_EQ(gMetadata->quotaDatabase.get(QuotaOwnerType::kGroup, kOwnerId), nullptr);
+	EXPECT_EQ(gMetadata->quotaDatabase.get(QuotaOwnerType::kInode, kOwnerId), nullptr);
 }
 
 }  // namespace

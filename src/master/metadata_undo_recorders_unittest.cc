@@ -48,6 +48,7 @@
 #include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
+#include "master/metadata_quota_undo_recorder.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_xattr_undo_recorder.h"
 #include "protocol/SFSCommunication.h"
@@ -472,6 +473,53 @@ kv::Key namedKey(std::string_view prefix, inode_t inode, std::string_view name) 
 	kv::appendStr(key, name);
 	return key;
 }
+
+kv::Key quotaOwnerPrefix(QuotaOwnerType ownerType, inode_t ownerId) {
+	kv::Key key = kv::toBytes(kQuotasKeyPrefix);
+	key.push_back(static_cast<uint8_t>(ownerType));
+	appendBigEndian(key, ownerId);
+	return key;
+}
+
+kv::Key quotaUndoKey(uint64_t checkpointVersion, QuotaOwnerType ownerType, inode_t ownerId) {
+	kv::Key key = kv::encodeKeyBE(kQuotaUndoKeyPrefix, checkpointVersion);
+	key.push_back(static_cast<uint8_t>(ownerType));
+	appendBigEndian(key, ownerId);
+	return key;
+}
+
+using QuotaLimits = std::array<uint64_t, 4>;
+using QuotaKeys = std::array<kv::Key, 4>;
+
+QuotaKeys quotaKeys(QuotaOwnerType ownerType, inode_t ownerId) {
+	const kv::Key ownerPrefix = quotaOwnerPrefix(ownerType, ownerId);
+	auto makeKey = [&ownerPrefix](QuotaRigor rigor, QuotaResource resource) {
+		kv::Key key = ownerPrefix;
+		key.push_back(static_cast<uint8_t>(rigor));
+		key.push_back(static_cast<uint8_t>(resource));
+		return key;
+	};
+
+	return {
+	    makeKey(QuotaRigor::kSoft, QuotaResource::kInodes),
+	    makeKey(QuotaRigor::kSoft, QuotaResource::kSize),
+	    makeKey(QuotaRigor::kHard, QuotaResource::kInodes),
+	    makeKey(QuotaRigor::kHard, QuotaResource::kSize),
+	};
+}
+
+void setQuotaLimits(RecordingTransaction &transaction, const QuotaKeys &keys,
+                    const QuotaLimits &limits) {
+	for (size_t i = 0; i < keys.size(); ++i) { transaction.set(keys[i], kv::toBytesBE(limits[i])); }
+}
+
+kv::Value quotaUndoValue(const QuotaLimits &limits) {
+	kv::Value value{0x01};
+	value.reserve(1 + (limits.size() * sizeof(uint64_t)));
+	for (const uint64_t limit : limits) { appendBigEndian(value, limit); }
+	return value;
+}
+
 constexpr uint64_t kCheckpointVersion = 17;
 
 }  // namespace
@@ -677,6 +725,66 @@ TEST(MetadataUndoRecorderRestore, XAttrRejectsOversizedUndoName) {
 	engine.store()[undoKey] = kv::Value{0x00};
 
 	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST(MetadataUndoRecorderRestore, QuotaRejectsMalformedUndoKeys) {
+	EXPECT_EXIT(
+	    {
+		    gMetadata = new FilesystemMetadata;
+
+		    std::vector<kv::Key> malformedKeys;
+		    // Missing the owner type and id.
+		    malformedKeys.push_back(kv::encodeKeyBE(kQuotaUndoKeyPrefix, kCheckpointVersion));
+		    // Quota undo keys have no payload after the fixed-size owner identity.
+		    auto oversizedKey =
+		        quotaUndoKey(kCheckpointVersion, QuotaOwnerType::kUser, inode_t{41});
+		    oversizedKey.push_back(0xff);
+		    malformedKeys.push_back(std::move(oversizedKey));
+		    // Only user, group, and inode are valid quota owner types.
+		    auto invalidOwnerType = kv::encodeKeyBE(kQuotaUndoKeyPrefix, kCheckpointVersion);
+		    invalidOwnerType.push_back(0xff);
+		    appendBigEndian(invalidOwnerType, inode_t{41});
+		    malformedKeys.push_back(std::move(invalidOwnerType));
+		    // User and group id 0 are valid, but inode 0 is not.
+		    malformedKeys.push_back(
+		        quotaUndoKey(kCheckpointVersion, QuotaOwnerType::kInode, inode_t{0}));
+
+		    for (const kv::Key &malformedKey : malformedKeys) {
+			    RecordingKVEngine engine;
+			    QuotaUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    engine.store()[malformedKey] = kv::Value{0x00};
+			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, QuotaRejectsMalformedUndoValues) {
+	kv::Value unknownTag = quotaUndoValue({1, 2, 3, 4});
+	unknownTag[0] = 0x02;
+	kv::Value oversizedPresent = quotaUndoValue({1, 2, 3, 4});
+	oversizedPresent.push_back(0xff);
+	const std::array<kv::Value, 5> malformedValues{
+	    kv::Value{},           kv::Value{0x00, 0xff},       kv::Value{0x01},
+	    std::move(unknownTag), std::move(oversizedPresent),
+	};
+
+	for (const auto &malformedValue : malformedValues) {
+		SCOPED_TRACE(::testing::PrintToString(malformedValue));
+		RecordingKVEngine engine;
+		QuotaUndoRecorder recorder(&engine);
+
+		constexpr inode_t kOwnerId = 41;
+		engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		engine.store()[quotaUndoKey(kCheckpointVersion, QuotaOwnerType::kUser, kOwnerId)] =
+		    malformedValue;
+
+		EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	}
 }
 
 TEST(MetadataUndoRecorderRestore, NodeRejectsMalformedUndoKeys) {
@@ -890,4 +998,36 @@ TEST(MetadataUndoRecorderRetry, XAttrPreservesOriginalPreimage) {
 		    transaction.set(liveKey, laterMutation ? laterValue : updatedValue);
 	    });
 	EXPECT_EQ(engine.store().at(liveKey), laterValue);
+}
+
+TEST(MetadataUndoRecorderRetry, QuotaPreservesOriginalPreimage) {
+	RecordingKVEngine engine;
+	QuotaUndoRecorder recorder(&engine);
+
+	constexpr QuotaOwnerType kOwnerType = QuotaOwnerType::kUser;
+	constexpr inode_t kOwnerId = 48;
+	const QuotaKeys keys = quotaKeys(kOwnerType, kOwnerId);
+	const QuotaLimits originalLimits{10, 20, 30, 40};
+	const QuotaLimits updatedLimits{11, 21, 31, 41};
+	const QuotaLimits laterLimits{12, 22, 32, 42};
+	for (size_t i = 0; i < keys.size(); ++i) {
+		engine.store()[keys[i]] = kv::toBytesBE(originalLimits[i]);
+	}
+
+	const kv::Key ownerPrefix = quotaOwnerPrefix(kOwnerType, kOwnerId);
+	const MetadataMutation mutation = QuotaSetMutation{
+	    .ownerType = kOwnerType,
+	    .ownerId = kOwnerId,
+	    .rangeBegin = ownerPrefix,
+	    .rangeEnd = kv::prefixEnd(ownerPrefix),
+	};
+	const kv::Key undoKey = quotaUndoKey(kCheckpointVersion, kOwnerType, kOwnerId);
+	expectFailedFirstTouchRetryPreservesPreimage(
+	    recorder, engine.store(), mutation, undoKey, quotaUndoValue(originalLimits),
+	    [&](RecordingTransaction &transaction, bool laterMutation) {
+		    setQuotaLimits(transaction, keys, laterMutation ? laterLimits : updatedLimits);
+	    });
+	for (size_t i = 0; i < keys.size(); ++i) {
+		EXPECT_EQ(engine.store().at(keys[i]), kv::toBytesBE(laterLimits[i]));
+	}
 }
