@@ -253,6 +253,16 @@ private:
 	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadQuotas(bool ignoreFlag);
 
+	/// Loads ACLS_ metadata
+	/// Loads all per-inode ACLs from the KV store into gMetadata->aclStorage.
+	///
+	/// ACLs are stored as `ACLS_<InodeId>: <serialized RichACL>` entries. ACLs are not part of the
+	/// metadata checksum, but they must be persisted so a forkless reload/shadow reconstructs them.
+	///
+	/// @param ignoreFlag Currently unused; reserved for consistency with other load functions.
+	/// @return kOpSuccess on success, kOpFailure on error.
+	int8_t loadACLs(bool ignoreFlag);
+
 	/// Loads EDGE_ metadata and inode-keyed detached paths.
 	/// Loads all directory edges and trash/reserved paths from the KV store.
 	///
@@ -419,6 +429,15 @@ private:
 	/// @param ownerType Quota owner type (user, group, inode/directory).
 	/// @param ownerId   Quota owner id.
 	void onQuotaChanged(QuotaOwnerType ownerType, inode_t ownerId);
+
+	/// Enqueue an ACL update or removal event to the metadata writer.
+	///
+	/// Called when an inode's ACL changes. Reads the inode's current ACL from
+	/// gMetadata->aclStorage: if present, serializes it and enqueues an AclUpdateEvent; otherwise
+	/// enqueues an AclRemoveEvent.
+	///
+	/// @param inode Inode whose ACL changed.
+	void onAclChanged(inode_t inode);
 
 	/// Enqueue a chunk update event to the metadata writer.
 	///
