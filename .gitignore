@@ -109,6 +109,11 @@ tests/hdd*
 ##############
 vcpkg_installed
 
+# leilfs-api (Go) #
+##############
+/api/
+tests/test_suites/API_tests
+
 # CMake #
 ##############
 CMakeUserPresets.json
