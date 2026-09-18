@@ -23,6 +23,7 @@
 #include <atomic>
 #include <limits>
 #include <sstream>
+#include <unordered_map>
 
 #include "common/attributes.h"
 #include "common/shared_mutex.h"
@@ -183,12 +184,28 @@ public:
 	 * \param timeout    cache entry expiration timeout (us).
 	 */
 	DirEntryCache(uint64_t timeout = kDefaultTimeout_us)
-	    : timer_(), current_time_(0), timeout_(timeout) {
-	}
+	    : timer_(), current_time_(0), generation_(0), timeout_(timeout) {}
 
 	~DirEntryCache() {
 		clear();
 	}
+
+	/*! \brief Generation value that disables the staleness check on insert.
+	 *
+	 * Only for callers whose data cannot predate an invalidation, such as tests.
+	 */
+	static constexpr uint64_t kAnyGeneration = std::numeric_limits<uint64_t>::max();
+
+	/*! \brief Invalidation generation, bumped by every invalidate call.
+	 *
+	 * A caller reads this before asking the master and passes it back to insert, which drops
+	 * data fetched before an invalidation of an inode the entry is keyed by. That is what stops a
+	 * reply in flight from reviving an entry the invalidation erased.
+	 */
+	uint64_t generation() const { return generation_; }
+
+	/*! \brief Distinct inodes whose last invalidation is remembered before the table resets. */
+	static constexpr size_t kMaxTrackedInvalidations = 16384;
 
 	/*! \brief Set cache entry expiration timeout (us).
 	 *
@@ -324,8 +341,10 @@ public:
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
 	void insert(const SaunaClient::Context &ctx, inode_t parent_inode, inode_t inode,
-	            uint64_t index, uint64_t next_index, const std::string name,
-				const Attributes &attr, uint64_t timestamp) {
+	            uint64_t index, uint64_t next_index, const std::string name, const Attributes &attr,
+	            uint64_t timestamp, uint64_t generation = kAnyGeneration) {
+		if (!currentSince(generation, parent_inode) || !currentSince(generation, inode)) { return; }
+
 		// Avoid inserting stale data
 		if (timestamp + timeout_ <= current_time_) {
 			return;
@@ -355,9 +374,11 @@ public:
 	 * \param attr attributes of found directory entry.
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
-	void insert(const SaunaClient::Context &ctx, inode_t parent_inode,
-	            inode_t inode, const std::string name, const Attributes &attr,
-	            uint64_t timestamp) {
+	void insert(const SaunaClient::Context &ctx, inode_t parent_inode, inode_t inode,
+	            const std::string name, const Attributes &attr, uint64_t timestamp,
+	            uint64_t generation = kAnyGeneration) {
+		if (!currentSince(generation, parent_inode) || !currentSince(generation, inode)) { return; }
+
 		// Avoid inserting stale data
 		if (timestamp + timeout_ <= current_time_) {
 			return;
@@ -381,8 +402,10 @@ public:
 	 * \param attr attributes of found directory entry.
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
 	 */
-	void insert(const SaunaClient::Context &ctx, inode_t inode,
-	            const Attributes &attr, uint64_t timestamp) {
+	void insert(const SaunaClient::Context &ctx, inode_t inode, const Attributes &attr,
+	            uint64_t timestamp, uint64_t generation = kAnyGeneration) {
+		if (!currentSince(generation, inode)) { return; }
+
 		// Avoid inserting stale data
 		if (timestamp + timeout_ <= current_time_) {
 			return;
@@ -401,14 +424,20 @@ public:
 	 * \param parent_inode Parent node index (inode).
 	 * \param container Container with data to add to cache.
 	 * \param timestamp Time when data has been obtained (used for entry timeout).
+	 * \param generation Cache generation captured before the data was requested.
+	 * \return False when the data was too old or predates an invalidation and was dropped.
 	 */
 	template <typename Container>
-	void insertSequence(const SaunaClient::Context &ctx, inode_t parent_inode,
-	                      const Container &container, uint64_t timestamp) {
-		// Avoid inserting stale data
-		if (timestamp + timeout_ <= current_time_) {
-			return;
+	bool insertSequence(const SaunaClient::Context &ctx, inode_t parent_inode,
+	                    const Container &container, uint64_t timestamp,
+	                    uint64_t generation = kAnyGeneration) {
+		if (!currentSince(generation, parent_inode)) { return false; }
+		for (const DirectoryEntry &entry : container) {
+			if (!currentSince(generation, entry.inode)) { return false; }
 		}
+
+		// Avoid inserting stale data
+		if (timestamp + timeout_ <= current_time_) { return false; }
 		removeExpired(container.size(), timestamp);
 
 		for (const DirectoryEntry &de : container) {
@@ -432,6 +461,7 @@ public:
 				overwriteEntry(*index_it, de, timestamp);
 			}
 		}
+		return true;
 	}
 
 	/*! \brief Remove data from cache matching specified criteria.
@@ -441,6 +471,8 @@ public:
 	 * \param first_index Directory index of first entry to remove.
 	 */
 	void invalidate(const SaunaClient::Context &ctx, inode_t parent_inode, uint64_t first_index) {
+		// Tail maintenance after a readdir reply, not a change in the directory: whatever removed
+		// the entries dropped here already stamped the parent, so no stamp is taken.
 		uint64_t entry_index = first_index;
 		while (true) {
 			auto it = index_set_.find(
@@ -464,6 +496,7 @@ public:
 	 */
 	void lockAndInvalidateInode(inode_t inode) {
 		std::unique_lock<SharedMutex> guard(rwlock_);
+		markInvalidated(inode);
 		auto it = inode_multiset_.find(inode, InodeCompare());
 		while (it != inode_multiset_.end() && it->inode == inode) {
 			DirEntry *entry = std::addressof(*it);
@@ -480,6 +513,7 @@ public:
 	 */
 	void lockAndInvalidateParent(inode_t parent_inode) {
 		std::unique_lock<SharedMutex> guard(rwlock_);
+		markInvalidated(parent_inode);
 		// lookup_set_ should contain all the elements inside index_set
 		auto it = lookup_set_.lower_bound(
 		    std::make_tuple(parent_inode, 0, 0, ""), LookupCompare());
@@ -510,6 +544,7 @@ public:
 	 */
 	void lockAndInvalidateParent(const SaunaClient::Context &ctx, inode_t parent_inode) {
 		std::unique_lock<SharedMutex> guard(rwlock_);
+		markInvalidated(parent_inode);
 		// lookup_set_ should contain all the elements inside index_set
 		auto it = lookup_set_.lower_bound(
 		    std::make_tuple(parent_inode, ctx.uid, ctx.gid, ""), LookupCompare());
@@ -598,6 +633,9 @@ public:
 	 */
 	void clear() {
 		std::unique_lock<SharedMutex> guard(rwlock_);
+		// Everything goes, so every inode counts as invalidated from this generation on.
+		invalidated_at_.clear();
+		invalidation_floor_ = ++generation_;
 		auto it = fifo_list_.begin();
 		while (it != fifo_list_.end()) {
 			auto next_it = std::next(it);
@@ -718,8 +756,38 @@ protected:
 		}
 	}
 
+	/*! \brief Record that entries keyed by inode were invalidated, at a fresh generation.
+	 *
+	 * Caller holds the write lock. A full table is dropped and its floor raised to the current
+	 * generation, which treats every inode as invalidated now: more rejected inserts, never fewer.
+	 */
+	void markInvalidated(inode_t inode) {
+		uint64_t generation = ++generation_;
+		if (invalidated_at_.size() >= kMaxTrackedInvalidations) {
+			invalidated_at_.clear();
+			invalidation_floor_ = generation;
+			return;
+		}
+		invalidated_at_[inode] = generation;
+	}
+
+	/*! \brief Whether nothing keyed by inode was invalidated after generation was captured.
+	 *
+	 * Caller holds the write lock. kAnyGeneration is always current.
+	 */
+	bool currentSince(uint64_t generation, inode_t inode) const {
+		if (generation == kAnyGeneration) { return true; }
+		auto found = invalidated_at_.find(inode);
+		uint64_t invalidatedAt =
+		    found == invalidated_at_.end() ? invalidation_floor_ : found->second;
+		return invalidatedAt <= generation;
+	}
+
 	Timer timer_;
 	std::atomic<uint64_t> current_time_;
+	std::atomic<uint64_t> generation_;
+	std::unordered_map<inode_t, uint64_t> invalidated_at_;
+	uint64_t invalidation_floor_ = 0;
 	uint64_t timeout_;
 	LookupSet lookup_set_;
 	IndexSet index_set_;

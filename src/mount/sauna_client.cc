@@ -231,6 +231,7 @@ bool isSpecialInode(inode_t ino) {
 enum {IO_NONE,IO_READ,IO_WRITE,IO_READONLY,IO_WRITEONLY};
 
 struct finfo {
+	inode_t inode;
 	uint8_t mode;
 	void *data;
 	uint8_t use_flocks;
@@ -953,6 +954,10 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	Attributes attr;
 	bool cacheHit = false;
 	int status;
+
+	// Captured before the master request, see DirEntryCache::generation().
+	uint64_t cacheGeneration = gDirEntryCache.generation();
+
 	if (parent == SPECIAL_INODE_FILE_BY_INODE) {
 		char *endPtr = nullptr;
 		inode = strtol(name, &endPtr, 10);
@@ -1035,8 +1040,9 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	// Files with at least one hardlink are impossible to keep track of, so better not track them.
 	if (!cacheHit && (attr[0] != TYPE_FILE || e.attr.st_nlink <= 1)) {
 		std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
-		uint64_t data_acquire_time = gDirEntryCache.updateTime();
-		gDirEntryCache.insert(ctx, parent, e.ino, std::string(name), attr, data_acquire_time);
+		uint64_t dataAcquireTime = gDirEntryCache.updateTime();
+		gDirEntryCache.insert(ctx, parent, e.ino, std::string(name), attr, dataAcquireTime,
+		                      cacheGeneration);
 		if (gDirEntryCache.size() > gDirEntryCacheMaxSize) {
 			gDirEntryCache.removeOldest(gDirEntryCache.size() - gDirEntryCacheMaxSize);
 		}
@@ -1076,6 +1082,10 @@ AttrReply getattr(Context &ctx, inode_t ino) {
 #endif
 	}
 
+	// Captured before the master request, see DirEntryCache::generation(). The entry timeout is
+	// taken at insert, so a slow request is not charged against the lifetime of its own answer.
+	uint64_t cacheGeneration = gDirEntryCache.generation();
+
 	if (usedircache && gDirEntryCache.lookup(ctx,ino,attr)) {
 		if (debug_mode) {
 			safs::log_debug("getattr: sending data from dircache");
@@ -1112,12 +1122,10 @@ AttrReply getattr(Context &ctx, inode_t ino) {
 	// Files with at least one hardlink are impossible to keep track of, so it is
 	// better to don't track them.
 	if (!fromCache && !(o_stbuf.st_nlink > 1 && attr[0] == TYPE_FILE)) {
-		auto data_acquire_time = gDirEntryCache.updateTime();
-
 		std::unique_lock<shared_mutex> write_guard(gDirEntryCache.rwlock());
-		gDirEntryCache.updateTime();
+		uint64_t dataAcquireTime = gDirEntryCache.updateTime();
 
-		gDirEntryCache.insert(ctx, ino, attr, data_acquire_time);
+		gDirEntryCache.insert(ctx, ino, attr, dataAcquireTime, cacheGeneration);
 		if (gDirEntryCache.size() > gDirEntryCacheMaxSize) {
 			gDirEntryCache.removeOldest(gDirEntryCache.size() -
 			                            gDirEntryCacheMaxSize);
@@ -1771,6 +1779,9 @@ void rename(Context &ctx, inode_t parent, const char *name,
 				saunafs_error_string(status));
 		throw RequestException(status);
 	} else {
+		// The moved inode's own attributes changed too, and a getattr reply in flight is checked
+		// against the inode, not the parents.
+		gDirEntryCache.lockAndInvalidateInode(inode);
 		oplog_printf(ctx, "rename (%" PRIiNode ",%s,%" PRIiNode ",%s): OK",
 				parent,
 				name,
@@ -1974,6 +1985,9 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 		}
 	};
 
+	// Captured before the master request, see DirEntryCache::generation().
+	uint64_t cacheGeneration = gDirEntryCache.generation();
+
 	do {
 		status = updateNextReaddirEntryIndexIfMasterRestarted(*readdirSession, entry_index, ctx,
 		                                                      ino, request_size);
@@ -2000,15 +2014,18 @@ std::vector<DirEntry> readdir(Context &ctx, uint64_t fh, inode_t ino, off_t off,
 	gDirEntryCache.updateTime();
 
 	// dir_entries.front().index must be equal to entry_index
-	gDirEntryCache.insertSequence(ctx, ino, dir_entries, data_acquire_time);
-	if (dir_entries.size() < request_size) {
+	// One staleness decision covers this whole reply, entries and end marker alike.
+	bool inserted =
+	    gDirEntryCache.insertSequence(ctx, ino, dir_entries, data_acquire_time, cacheGeneration);
+	if (inserted && dir_entries.size() < request_size) {
 		// insert 'no more entries' marker
 		auto marker_index = entry_index;
 		if (!dir_entries.empty()) {
 			marker_index = dir_entries.back().next_index;
 		}
 		gDirEntryCache.invalidate(ctx, ino, marker_index);
-		gDirEntryCache.insert(ctx, ino, 0, marker_index, marker_index, "", Attributes{{}}, data_acquire_time);
+		gDirEntryCache.insert(ctx, ino, 0, marker_index, marker_index, "", Attributes{{}},
+		                      data_acquire_time, cacheGeneration);
 	}
 
 	if (gDirEntryCache.size() > gDirEntryCacheMaxSize) {
@@ -2113,6 +2130,7 @@ void releasedir(inode_t ino) {
 static finfo* fs_newfileinfo(uint8_t accmode, inode_t inode) {
 	finfo *fileinfo = new finfo();
 	std::lock_guard lock((fileinfo->lock)); // make helgrind happy
+	fileinfo->inode = inode;
 #ifdef __FreeBSD__
 	/* old FreeBSD fuse reads whole file when opening with O_WRONLY|O_APPEND,
 	 * so can't open it write-only */
@@ -2138,6 +2156,19 @@ static finfo* fs_newfileinfo(uint8_t accmode, inode_t inode) {
 	return fileinfo;
 }
 
+/*! \brief Drop the cached entries of an inode whose write record ended, or whose data the FUSE
+ * flush just pushed out.
+ *
+ * Once the data is out the master is authoritative for the attributes, and ending the record
+ * also releases the client side value that used to correct a cached length. Callers: the FUSE
+ * flush, the record teardown shared by release and the failed open cleanups, and the write to
+ * read transition. fsync and the inode wide flush before a read or a time change keep the record
+ * alive, so lookup and getattr still correct the size there.
+ */
+static void invalidateInodeAfterWriteFlush(inode_t ino) {
+	gDirEntryCache.lockAndInvalidateInode(ino);
+}
+
 void remove_file_info(FileInfo *f) {
 	finfo* fileinfo = (finfo*)(f->fh);
 	std::unique_lock lock(fileinfo->lock);
@@ -2146,6 +2177,10 @@ void remove_file_info(FileInfo *f) {
 	if (fileinfo->mode == IO_READONLY || fileinfo->mode == IO_READ) {
 		read_data_end(static_cast<ReadRecord *>(fileinfo->data));
 	} else if (fileinfo->mode == IO_WRITEONLY || fileinfo->mode == IO_WRITE) {
+		// The order matters: get the data out so the master owns the length, drop the cached
+		// entry while the write record can still correct a reply in flight, end the record last.
+		WriteAlgorithm::write_data_flush(fileinfo->data);
+		invalidateInodeAfterWriteFlush(fileinfo->inode);
 		WriteAlgorithm::write_data_end(fileinfo->data);
 	}
 	lock.unlock(); // This unlock is needed, since we want to destroy the mutex
@@ -2469,6 +2504,7 @@ ReadCache::Result read(Context &ctx,
 					saunafs_error_string(err));
 			throw RequestException(err);
 		}
+		invalidateInodeAfterWriteFlush(ino);
 		WriteAlgorithm::write_data_end(fileinfo->data);
 	}
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_NONE) {
@@ -2638,6 +2674,7 @@ void flush(Context &ctx, inode_t ino, FileInfo* fi) {
 	std::unique_lock lock(fileinfo->lock);
 	if (fileinfo->mode==IO_WRITE || fileinfo->mode==IO_WRITEONLY) {
 		err = WriteAlgorithm::write_data_flush(fileinfo->data);
+		invalidateInodeAfterWriteFlush(ino);
 	}
 	safs_locks::FlockWrapper file_lock(safs_locks::kRelease,0,0,0);
 	auto use_posixlocks = fileinfo->use_posixlocks;

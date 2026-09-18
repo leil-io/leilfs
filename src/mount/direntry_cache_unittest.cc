@@ -421,3 +421,175 @@ TEST(DirEntryCache, InvalidateParentItself) {
 	ASSERT_TRUE(cache.lookup(SaunaClient::Context(1, 0, 0, 0), 22, attr));
 	ASSERT_EQ(attr[0], 0);
 }
+
+TEST(DirEntryCache, InvalidationDuringLookupIsNotUndone) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	Attributes small_file;
+	small_file.fill(0);
+	small_file[0] = 1;
+	Attributes grown_file = small_file;
+	grown_file[0] = 2;
+
+	// A reader captures the generation before asking the master, as the mount does.
+	// The cache treats a zero timestamp as no entry, so let the timer advance first.
+	while (cache.updateTime() == 0) {}
+	uint64_t generation_before_request = cache.generation();
+	uint64_t request_time = cache.updateTime();
+
+	// A writer extends the file and invalidates while that request is still in flight.
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 5, grown_file, cache.updateTime());
+	cache.lockAndInvalidateInode(5);
+
+	// The in flight answer carries the size from before the write and must not be cached.
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 5, small_file, request_time,
+	             generation_before_request);
+
+	Attributes attr;
+	ASSERT_FALSE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 5, attr));
+}
+
+TEST(DirEntryCache, CurrentGenerationStillInserts) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	Attributes attributes;
+	attributes.fill(0);
+	attributes[0] = 3;
+
+	while (cache.updateTime() == 0) {}
+	uint64_t generation_before_request = cache.generation();
+	uint64_t request_time = cache.updateTime();
+
+	// Nothing invalidated while the request was in flight, so the answer is cached.
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 7, attributes, request_time,
+	             generation_before_request);
+
+	Attributes attr;
+	ASSERT_TRUE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 7, attr));
+	ASSERT_EQ(attr[0], 3);
+}
+
+TEST(DirEntryCache, InvalidationBumpsGeneration) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	uint64_t initial = cache.generation();
+	cache.lockAndInvalidateInode(11);
+	ASSERT_GT(cache.generation(), initial);
+
+	uint64_t after_inode = cache.generation();
+	cache.lockAndInvalidateParent(12);
+	ASSERT_GT(cache.generation(), after_inode);
+
+	uint64_t after_parent = cache.generation();
+	cache.lockAndInvalidateParent(SaunaClient::Context(0, 0, 0, 0), 13);
+	ASSERT_GT(cache.generation(), after_parent);
+}
+
+TEST(DirEntryCache, ClearBumpsGeneration) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	// Clearing on master disconnect must also stop a reply already on its way back from
+	// repopulating what the clear discarded.
+	uint64_t initial = cache.generation();
+	cache.clear();
+	ASSERT_GT(cache.generation(), initial);
+}
+
+TEST(DirEntryCache, UnrelatedInvalidationStillInserts) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	Attributes attributes;
+	attributes.fill(0);
+	attributes[0] = 4;
+
+	while (cache.updateTime() == 0) {}
+	uint64_t generation_before_request = cache.generation();
+	uint64_t request_time = cache.updateTime();
+
+	// A write to some other file while the request is in flight must not cost this answer.
+	cache.lockAndInvalidateInode(99);
+	cache.lockAndInvalidateParent(98);
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 7, attributes, request_time,
+	             generation_before_request);
+
+	Attributes attr;
+	ASSERT_TRUE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 7, attr));
+	ASSERT_EQ(attr[0], 4);
+}
+
+TEST(DirEntryCache, ParentInvalidationDuringLookupIsNotUndone) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	Attributes attributes;
+	attributes.fill(0);
+	attributes[0] = 1;
+
+	while (cache.updateTime() == 0) {}
+	uint64_t generation_before_request = cache.generation();
+	uint64_t request_time = cache.updateTime();
+
+	// The directory changed while a lookup of one of its names was in flight.
+	cache.lockAndInvalidateParent(3);
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 3, 8, "name", attributes, request_time,
+	             generation_before_request);
+
+	inode_t inode;
+	Attributes attr;
+	ASSERT_FALSE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 3, "name", inode, attr));
+}
+
+TEST(DirEntryCache, FullInvalidationTableRejectsOlderAnswers) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	Attributes attributes;
+	attributes.fill(0);
+	attributes[0] = 6;
+
+	while (cache.updateTime() == 0) {}
+	uint64_t generation_before_request = cache.generation();
+	uint64_t request_time = cache.updateTime();
+
+	// Once the table overflows, the cache forgets which inodes were touched and must treat an
+	// untouched one as invalidated too, but only for answers captured before the overflow.
+	for (inode_t inode = 1000; inode < 1000 + DirEntryCache::kMaxTrackedInvalidations + 1;
+	     ++inode) {
+		cache.lockAndInvalidateInode(inode);
+	}
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 5, attributes, request_time,
+	             generation_before_request);
+
+	Attributes attr;
+	ASSERT_FALSE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 5, attr));
+
+	uint64_t generation_after_overflow = cache.generation();
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 5, attributes, cache.updateTime(),
+	             generation_after_overflow);
+	ASSERT_TRUE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 5, attr));
+	ASSERT_EQ(attr[0], 6);
+}
+
+TEST(DirEntryCache, ReaddirTailCleanupDoesNotStamp) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	Attributes attributes;
+	attributes.fill(0);
+	attributes[0] = 5;
+
+	while (cache.updateTime() == 0) {}
+	uint64_t generation_before_request = cache.generation();
+	uint64_t request_time = cache.updateTime();
+
+	// Dropping a cached tail before the end marker is not a change in the directory, so a
+	// lookup of one of its names that was in flight meanwhile must still be cached.
+	cache.insertSequence(SaunaClient::Context(0, 0, 0, 0), 3,
+	                     std::vector<DirectoryEntry>{{0, 1, 20, "first", attributes}},
+	                     cache.updateTime());
+	cache.invalidate(SaunaClient::Context(0, 0, 0, 0), 3, 1);
+	cache.insert(SaunaClient::Context(0, 0, 0, 0), 3, 21, "second", attributes, request_time,
+	             generation_before_request);
+
+	inode_t inode;
+	Attributes attr;
+	ASSERT_TRUE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 3, "second", inode, attr));
+	ASSERT_EQ(inode, 21U);
+}
