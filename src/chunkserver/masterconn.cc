@@ -241,7 +241,15 @@ void masterconn_term(void) {
 		slot.connection.reset();
 	}
 
-	//  Now reset the last reference to the job pools.
+	// A lock completion that ended in error adds a delete job to gJobPool. Drain the queued
+	// completions while the workers still run, so those deletes execute before the exit jobs
+	// queued behind them; stop() drains their own completions after the join.
+	for (uint32_t index = 0; index < kMaxMetadataConnections; ++index) {
+		gJobPool->processCompletedJobs(index);
+		gReplicationJobPool->processCompletedJobs(index);
+	}
+	gJobPool->stop();
+	gReplicationJobPool->stop();
 	gReplicationJobPool.reset();
 	gJobPool.reset();
 }
