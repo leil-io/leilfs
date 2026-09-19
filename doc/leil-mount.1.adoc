@@ -89,6 +89,12 @@ Path to the TLS configuration file for client-side TLS settings.
 Connection with master is done in background - with this option mount can be
 run without network (good for being run from fstab / init scripts etc.).
 
+*-o sfswan*::
+Apply mount settings tuned for a high-latency link, equivalent to
+`sfschunkserverlatencysort=1,sfsacl=0,sfsxattrs=0,sfsdirentrycacheto=60,`
+`sfsdirentrycachesize=10000000`. Individual options given after *-o sfswan*
+override the preset.
+
 *-o sfsacl=*'0|1'::
 Enable or disable ACL handling (default: 1). ACLs are exposed through extended
 attributes, so *-o sfsxattrs=0* disables them as well. With ACLs disabled the
