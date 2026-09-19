@@ -22,10 +22,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
+#include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "kv/ikv_engine.h"
@@ -191,6 +195,44 @@ private:
 	/// fresh instance -- on every loadall -- not once at init. Without this, a shadow that is later
 	/// promoted has a live writer but no signal->writer wiring, so its mutations never reach FDB.
 	void connectPerLoadSignals();
+
+	/// Promotion crash-window gap: persist the changelog-replayed state that a shadow
+	/// applied while the writer was null (so it never reached FDB -- e.g. the previous master was
+	/// SIGKILLed within its flush window). Instead of re-writing the whole namespace, only the
+	/// delta is reconciled: while running as a shadow, every signal handler records the touched
+	/// key in a per-section dirty set (reset on each FDB load); on promotion this method resolves
+	/// each dirty key against the authoritative in-memory state and enqueues an update or a remove.
+	/// Bounded by changes since the last load, not by namespace size. Routed through the writer
+	/// queue so the flush timer drains it and the checkpoint undo stays consistent.
+	/// TODO: Bound the dirty sets so they cannot grow unboundedly in a long-running shadow. A
+	/// shadow must never write to FDB (see fs_storeall(): that races the live master), so they
+	/// cannot simply be flushed early. Two workable directions: prune entries already sealed in
+	/// FDB (tag each entry with its metadataVersion and drop those at or below META_VERSION, which
+	/// only advances after the master drains its writer), and/or cap each section with an overflow
+	/// flag that switches promotion to a full reconcile of that section -- clearing its key range
+	/// and rewriting it from memory, since re-persisting alone would resurrect deleted rows.
+	void reconcileDirtyToFDB();
+
+	/// Per-section reconcile helpers invoked by reconcileDirtyToFDB(). Each resolves its own dirty
+	/// set against the authoritative in-memory state, enqueues updates/removals through the writer,
+	/// and accumulates counts into the shared persisted/removed references.
+	void reconcileDirtyNodesToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyEdgesToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyDetachedPathsToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyXAttrsToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyQuotasToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyAclsToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyFreeInodesToFDB(uint64_t &persisted, uint64_t &removed);
+	void reconcileDirtyChunksToFDB(uint64_t &persisted, uint64_t &removed);
+
+	/// Persists a detained/released inode immediately when the writer is active, or records it for
+	/// promotion reconciliation while running as a shadow.
+	void onFreeInodeDetained(inode_t inode, uint32_t timestamp);
+	void onFreeInodeReleased(inode_t inode);
+
+	/// Clears all dirty state. Called on each load: after loading FDB, memory matches the FDB
+	/// snapshot, so there is nothing dirty until the next changelog-replay mutation.
+	void clearDirtySets();
 
 	// FS Load from FDB
 
@@ -448,17 +490,14 @@ private:
 	/// @param inode Inode whose ACL changed.
 	void onAclChanged(inode_t inode);
 
-	/// Enqueue a chunk update event to the metadata writer.
+	/// Enqueue a chunk update or removal event to the metadata writer. On a shadow (no writer) the
+	/// chunk id is recorded in the dirty set instead, to be reconciled on promotion.
 	///
-	/// @param chunkId  Chunk whose metadata changed.
-	/// @param version  Chunk version.
-	/// @param lockedTo Lock expiry timestamp.
-	/// @param lockId   Lock id.
+	/// @param chunkId  Chunk whose metadata changed/was removed.
+	/// @param version  Chunk version (changed only).
+	/// @param lockedTo Lock expiry timestamp (changed only).
+	/// @param lockId   Lock id (changed only).
 	void onChunkChanged(uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId);
-
-	/// Enqueue a chunk removal event to the metadata writer.
-	///
-	/// @param chunkId Chunk that was removed.
 	void onChunkRemoved(uint64_t chunkId);
 
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
@@ -496,6 +535,25 @@ private:
 	/// Bootstrapper for metadata sections
 	std::unique_ptr<MetadataSectionBootstrapFDB> sectionBootstrapper_ = nullptr;
 #endif  // #ifndef METARESTORE
+
+	/// Per-section dirty state: keys touched by changelog replay while running as a shadow (the
+	/// writer is null then, so nothing is persisted). Reset on each FDB load (clearDirtySets()),
+	/// drained on promotion (reconcileDirtyToFDB()). See reconcileDirtyToFDB().
+	std::set<inode_t> dirtyNodes_;
+	std::set<std::pair<inode_t, HString>> dirtyEdges_;
+	struct DirtyDetachedPath {
+		FSNodeType nodeType;
+		HString path;
+	};
+	std::map<inode_t, std::optional<DirtyDetachedPath>> dirtyDetachedPaths_;
+	std::set<std::pair<inode_t, std::vector<uint8_t>>> dirtyXattrs_;
+	std::set<inode_t> dirtyXattrInodes_;
+	std::set<std::pair<QuotaOwnerType, inode_t>> dirtyQuotaOwners_;
+	std::set<inode_t> dirtyAcls_;
+	/// Final desired FREE value per dirty inode. Retaining the timestamp or removal at signal time
+	/// keeps promotion reconciliation bounded by dirty keys instead of scanning the inode pool.
+	std::map<inode_t, std::optional<uint32_t>> dirtyFreeInodeValues_;
+	std::set<uint64_t> dirtyChunks_;
 
 	friend struct MetadataBackendForklessTestAccess;
 };
