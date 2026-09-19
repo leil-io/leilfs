@@ -248,6 +248,8 @@ uint8_t fs_quota_set(const FsContext &context, const FilesystemOperationContext 
 		    fsOpContext, ts, "SETQUOTA(%c,%c,%c,%" PRIiNode ",%" PRIu64 ")",
 		    rigor_name[(int)entry.entryKey.rigor], resource_name[(int)entry.entryKey.resource],
 		    owner_name[(int)owner.ownerType], inode_t{owner.ownerId}, uint64_t{entry.limit});
+		// Notify durable backends so the owner's limit rows are persisted
+		gQuotaChangedSignal.emit(owner.ownerType, owner.ownerId);
 	}
 	return SAUNAFS_STATUS_OK;
 }
@@ -275,6 +277,8 @@ uint8_t fs_apply_setquota(char rigor, char resource, char owner_type, inode_t ow
 	gMetadata->quotaDatabase.set(quotaOwnerType, owner_id, quotaRigor, quotaResource, limit);
 	gMetadata->quotaDatabase.removeEmpty(quotaOwnerType, owner_id);
 	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
+	// Notify durable backends so the owner's limit rows are persisted
+	gQuotaChangedSignal.emit(quotaOwnerType, owner_id);
 	return SAUNAFS_STATUS_OK;
 }
 }  // namespace quotas
@@ -487,6 +491,8 @@ void fsnodes_quota_update(FSNode *node,
 void fsnodes_quota_remove(QuotaOwnerType owner_type, inode_t owner_id) {
 	gMetadata->quotaDatabase.remove(owner_type, owner_id);
 	gMetadata->quotaChecksum = gMetadata->quotaDatabase.checksum();
+	// Notify durable backends so the owner's limit rows are removed
+	gQuotaChangedSignal.emit(owner_type, owner_id);
 }
 
 void fsnodes_quota_adjust_space(FSNode * /*node*/, uint64_t & /*total_space*/,

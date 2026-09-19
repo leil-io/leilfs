@@ -785,6 +785,16 @@ static inline void emit_chunk_changed(const Chunk *c) {
 	}
 }
 
+void chunk_emit_changed(uint64_t chunkId) {
+	if (gChunksMetadata == nullptr) { return; }
+	for (Chunk *chunk : gChunksMetadata->chunkhash[chunkHashPos(chunkId)]) {
+		if (chunk->chunkid == chunkId) {
+			emit_chunk_changed(chunk);
+			return;
+		}
+	}
+}
+
 uint64_t chunk_checksum(ChecksumMode mode) {
 	uint64_t checksum = 46586918175221;
 	addToChecksum(checksum, ChunksMetadata::getNextChunkId());
@@ -972,14 +982,16 @@ Chunk *chunk_find(uint64_t chunkid) {
 }
 
 #ifndef METARESTORE
-void chunk_delete(Chunk *c) {
+void chunk_delete(Chunk *c, bool emitRemovalSignal = true) {
 	if (gChunksMetadata->lastchunkptr==c) {
 		gChunksMetadata->lastchunkid=0;
 		gChunksMetadata->lastchunkptr=NULL;
 	}
 	// Report the removal before the chunk is freed: KV backends persist chunks individually and
 	// must drop the row, otherwise deleted chunks come back as zombies on the next load.
-	if (!gChunkRemovedSignal.empty()) { gChunkRemovedSignal.emit(c->chunkid); }
+	if (emitRemovalSignal && !gChunkRemovedSignal.empty()) {
+		gChunkRemovedSignal.emit(c->chunkid);
+	}
 	c->freeStats();
 	chunk_free(c);
 }
@@ -1109,6 +1121,14 @@ bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto
 }
 
 bool chunk_exists(uint64_t chunkid) { return chunk_find(chunkid) != nullptr; }
+
+uint64_t chunk_get_max_id() {
+	uint64_t maxChunkId = 0;
+	for (const auto &bucket : gChunksMetadata->chunkhash) {
+		for (const Chunk *chunk : bucket) { maxChunkId = std::max(maxChunkId, chunk->chunkid); }
+	}
+	return maxChunkId;
+}
 
 void chunk_create_with_goal_counters(uint64_t chunkid, uint32_t version,
                                      const std::vector<ChunkGoalCounters::GoalCounter> &goals,
@@ -3227,6 +3247,54 @@ void chunk_add_from_initial_metadata_load(uint64_t chunkId, uint32_t chunkVersio
 	Chunk *chunk = chunk_new(chunkId, chunkVersion);
 	chunk->lockedto = lockedTo;
 	chunk->lockid = lockId;
+}
+
+int chunk_restore_set(uint64_t chunkId, uint32_t chunkVersion, uint32_t lockedTo, uint32_t lockId) {
+	// Find existing or create if missing.
+	// For undo, "missing" can happen if earlier undo deleted it and later undo re-adds it.
+	Chunk *foundChunk = chunk_find(chunkId);
+	if (foundChunk == nullptr) {
+		chunk_add_from_initial_metadata_load(chunkId, chunkVersion, lockedTo, lockId);
+		return SAUNAFS_STATUS_OK;
+	}
+
+	foundChunk->version = chunkVersion;
+	foundChunk->lockedto = lockedTo;
+	foundChunk->lockid = lockId;
+	chunk_update_checksum(foundChunk, true);
+	return SAUNAFS_STATUS_OK;
+}
+
+int chunk_restore_remove(uint64_t chunkId) {
+	Chunk *foundChunk = chunk_find(chunkId);
+	if (foundChunk == nullptr) { return SAUNAFS_ERROR_NOCHUNK; }
+
+	const auto bucketIndex = chunkHashPos(chunkId);
+	auto &bucket = gChunksMetadata->chunkhash[bucketIndex];
+
+	// Unlink from the hash chain before deleting the chunk.
+	auto chunkIterator = std::ranges::find(bucket.begin(), bucket.end(), foundChunk);
+	if (chunkIterator != bucket.end()) { bucket.erase(chunkIterator); }
+
+	// Invalidate "last chunk" cache if it pointed to this chunk
+	if (gChunksMetadata->lastchunkptr == foundChunk) {
+		gChunksMetadata->lastchunkptr = nullptr;
+		gChunksMetadata->lastchunkid = 0;
+	}
+
+	// Remove checksum contribution (safe even if checksum is 0).
+	// Mirror chunk_update_checksum removal rules for recalculated checksum.
+	if (chunkHashPos(foundChunk->chunkid) < gChunksMetadata->checksumRecalculationPosition) {
+		removeFromChecksum(gChunksMetadata->chunksChecksumRecalculated, foundChunk->checksum);
+	}
+	removeFromChecksum(gChunksMetadata->chunksChecksum, foundChunk->checksum);
+
+#ifndef METARESTORE
+	// Use the normal accounting and free-list path, but restoring a checkpoint must not publish a
+	// new persistence mutation.
+	chunk_delete(foundChunk, /*emitRemovalSignal=*/false);
+#endif
+	return SAUNAFS_STATUS_OK;
 }
 
 bool chunksLoadFromFile(MetadataLoader::Options options) {

@@ -31,6 +31,7 @@
 #include "common/type_defs.h"
 #include "kv/ikv_engine.h"
 #include "master/filesystem_node_types.h"
+#include "protocol/quota.h"
 
 class MetadataCheckpointManager;
 
@@ -147,6 +148,36 @@ private:
 	HString name;
 };
 
+/// Update event for a detached trash or reserved path.
+/// Writes the MDS-compatible `TRSH_PATH_<inode>` or `RSVD_PATH_<inode>` row and removes the
+/// opposite row so a transition between the containers is atomic.
+class DetachedPathUpdateEvent : public IMetadataUpdateEvent {
+public:
+	DetachedPathUpdateEvent(inode_t _inode, FSNodeType _nodeType, HString _path);
+	~DetachedPathUpdateEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+	FSNodeType nodeType;
+	HString path;
+};
+
+/// Removal event for a detached trash or reserved path.
+/// Removes both possible inode-keyed rows so the operation is idempotent across container
+/// transitions.
+class DetachedPathRemoveEvent : public IMetadataUpdateEvent {
+public:
+	explicit DetachedPathRemoveEvent(inode_t _inode);
+	~DetachedPathRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+};
+
 /// Update event for xattr creation or value change.
 /// Writes XATR_<InodeId><AttributeName>: <AttributeValue> to FDB.
 class XAttrUpdateEvent : public IMetadataUpdateEvent {
@@ -183,6 +214,65 @@ class XAttrInodeRemoveEvent : public IMetadataUpdateEvent {
 public:
 	explicit XAttrInodeRemoveEvent(inode_t _inode);
 	~XAttrInodeRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+};
+
+/// Update event for quota limit creation or change for one owner.
+/// Writes QUOT_<OwnerType><OwnerId><Rigor><Resource>: <Limit> for each provided entry.
+/// Only soft/hard limit entries are persisted; usage (kUsed) is rebuilt from node loading and is
+/// excluded from the quota checksum.
+class QuotaUpdateEvent : public IMetadataUpdateEvent {
+public:
+	QuotaUpdateEvent(QuotaOwnerType _ownerType, inode_t _ownerId, std::vector<QuotaEntry> _entries);
+	~QuotaUpdateEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	QuotaOwnerType ownerType;
+	inode_t ownerId;
+	std::vector<QuotaEntry> entries;
+};
+
+/// Removal event for all quota limits of one owner.
+/// Removes the range QUOT_<OwnerType><OwnerId> .. (prefix end) from FDB.
+class QuotaRemoveEvent : public IMetadataUpdateEvent {
+public:
+	QuotaRemoveEvent(QuotaOwnerType _ownerType, inode_t _ownerId);
+	~QuotaRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	QuotaOwnerType ownerType;
+	inode_t ownerId;
+};
+
+/// Update event for an inode's ACL creation or change.
+/// Writes ACLS_<InodeId>: <serialized RichACL> to FDB. The caller serializes the RichACL at emit
+/// time so the event carries a snapshot independent of later in-memory changes.
+class AclUpdateEvent : public IMetadataUpdateEvent {
+public:
+	AclUpdateEvent(inode_t _inode, std::vector<uint8_t> _serializedAcl);
+	~AclUpdateEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+	std::vector<uint8_t> serializedAcl;
+};
+
+/// Removal event for an inode's ACL.
+/// Removes ACLS_<InodeId> from FDB.
+class AclRemoveEvent : public IMetadataUpdateEvent {
+public:
+	explicit AclRemoveEvent(inode_t _inode);
+	~AclRemoveEvent() override = default;
 
 	void applyEvent(const MetadataWriteContext &context) override;
 

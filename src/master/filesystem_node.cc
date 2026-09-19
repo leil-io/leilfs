@@ -1863,7 +1863,12 @@ void FilesystemNodeOperationsBase::removeNode(const FilesystemOperationContext &
 
 	// and free
 	gMetadata->nodes--;
+
+	// Notify durable backends to drop the inode's ACL row so it cannot be reattached to a reused
+	// inode. Only emit when the inode actually had an ACL.
+	const bool hadAcl = gMetadata->aclStorage.get(node->id) != nullptr;
 	gMetadata->aclStorage.erase(node->id);
+	if (hadAcl) { gAclChangedSignal.emit(node->id); }
 
 	if (node->type == FSNodeType::kDirectory) { gMetadata->dirNodes--; }
 
@@ -1951,6 +1956,8 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 
 			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			              gMetadata->trashReservedToId, childNode, path);
+			gMetadata->detachedPathChangedSignal.emit(childNode->id, FSNodeType::kTrash,
+			                                          HString(path));
 
 			gMetadata->trashSpace += fileNode->length;
 			gMetadata->trashNodes++;
@@ -1963,6 +1970,8 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 
 			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                 gMetadata->trashReservedToId, childNode, path);
+			gMetadata->detachedPathChangedSignal.emit(childNode->id, FSNodeType::kReserved,
+			                                          HString(path));
 
 			gMetadata->reservedSpace += fileNode->length;
 			gMetadata->reservedNodes++;
@@ -1983,6 +1992,7 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 
 		// If the file has active sessions, move it to Reserved instead of deleting
 		if (!fileNode->sessionIds.empty()) {
+			const HString path = gMetadata->trash.at(TrashPathKey(node)).get();
 			fileNode->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(fileNode);
 
@@ -1995,12 +2005,14 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 			moveTrashToReservedEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			                         gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                         gMetadata->trashReservedToId, node);
+			gMetadata->detachedPathChangedSignal.emit(node->id, FSNodeType::kReserved, path);
 
 			return 0;  // Return 0 to indicate the node was moved to Reserved, not deleted
 		}
 
 		removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 		                 gMetadata->trashReservedToId, node);
+		gMetadata->detachedPathRemovedSignal.emit(node->id);
 		node->ctime = timeStamp;
 		fsnodes_update_checksum(node);
 
@@ -2019,6 +2031,7 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 
 		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 		                    gMetadata->trashReservedToId, node->id);
+		gMetadata->detachedPathRemovedSignal.emit(node->id);
 
 		fileNode->ctime = timeStamp;
 		fsnodes_update_checksum(fileNode);
@@ -2080,6 +2093,7 @@ uint8_t FilesystemNodeOperationsBase::undel(const FilesystemOperationContext &fs
 				removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 				                    gMetadata->trashReservedToId, node->id);
 			}
+			gMetadata->detachedPathRemovedSignal.emit(node->id);
 
 			node->type = FSNodeType::kFile;
 			node->ctime = timeStamp;
@@ -2440,12 +2454,16 @@ uint8_t FilesystemNodeOperationsBase::deleteAcl(
 	// Persist the ACL deletion
 	updateNode(fsOpContext, node);
 
+	// Notify durable backends so the inode's ACL row is updated/removed
+	gAclChangedSignal.emit(node->id);
 	return SAUNAFS_STATUS_OK;
 }
 
 void FilesystemNodeOperationsBase::syncAclWithMode(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node) {
 	gMetadata->aclStorage.setMode(node->id, node->mode, node->type == FSNodeType::kDirectory);
+	// Notify durable backends: setMode rewrites the stored ACL's mode
+	gAclChangedSignal.emit(node->id);
 }
 
 #ifndef METARESTORE
@@ -2494,6 +2512,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	// Persist the ACL update
 	updateNode(fsOpContext, node);
+
+	// Notify durable backends so the inode's ACL row is updated/removed
+	gAclChangedSignal.emit(node->id);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2530,6 +2551,9 @@ uint8_t FilesystemNodeOperationsBase::setAcl(
 
 	// Persist the ACL update
 	updateNode(fsOpContext, node);
+
+	// Notify durable backends so the inode's ACL row is updated/removed
+	gAclChangedSignal.emit(node->id);
 	return SAUNAFS_STATUS_OK;
 }
 
@@ -2557,6 +2581,8 @@ const RichACL *FilesystemNodeOperationsBase::getAclForAccess(
 void FilesystemNodeOperationsBase::storeInheritedAcl(
     [[maybe_unused]] const FilesystemOperationContext &fsOpContext, FSNode *node, RichACL &&acl) {
 	gMetadata->aclStorage.set(node->id, std::move(acl));
+	// Notify durable backends so the inherited ACL is persisted
+	gAclChangedSignal.emit(node->id);
 }
 
 int FilesystemNodeOperationsBase::access(const FsContext &context,
