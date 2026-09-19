@@ -61,6 +61,7 @@
 #include "common/user_groups.h"
 #include "devtools/request_log.h"
 #include "mount/acl_cache.h"
+#include "mount/acl_xattr_names.h"
 #include "mount/chunk_locator.h"
 #include "mount/client_common.h"
 #include "mount/direntry_cache.h"
@@ -254,6 +255,8 @@ static double attr_cache_timeout = 0.1;
 static int mkdir_copy_sgid = 0;
 static int sugid_clear_mode = 0;
 bool use_rwlock = 0;
+static std::atomic<bool> gEnableAcl(true);
+static std::atomic<bool> gEnableXattrs(true);
 static std::atomic<bool> gDirectIo(false);
 
 // lock_request_counter shared by flock and setlk
@@ -3091,6 +3094,12 @@ static std::map<std::string, XattrHandler*> xattr_handlers = {
 };
 
 static XattrHandler* choose_xattr_handler(const char *name) {
+	if (!gEnableXattrs.load()) {
+		return &enotsupXattrHandler;
+	}
+	if (!gEnableAcl.load() && isAclXattrName(name)) {
+		return &enotsupXattrHandler;
+	}
 	try {
 		return xattr_handlers.at(name);
 	} catch (std::out_of_range&) {
@@ -3335,7 +3344,16 @@ XattrReply listxattr(Context &ctx, inode_t ino, size_t size) {
 				saunafs_error_string(SAUNAFS_ERROR_EPERM));
 		throw RequestException(SAUNAFS_ERROR_EPERM);
 	}
-	if (size==0) {
+	// listxattr does not go through choose_xattr_handler, so it needs its own gate.
+	if (!gEnableXattrs.load()) {
+		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): OK (0)",
+				ino,
+				(uint64_t)size);
+		return XattrReply{0, {}};
+	}
+	const bool hideAclNames = !gEnableAcl.load();
+	// Hiding ACL names rules out a length-only request: the length must match the list.
+	if (size==0 && !hideAclNames) {
 		mode = XATTR_GMODE_LENGTH_ONLY;
 	} else {
 		mode = XATTR_GMODE_GET_DATA;
@@ -3349,7 +3367,14 @@ XattrReply listxattr(Context &ctx, inode_t ino, size_t size) {
 				saunafs_error_string(status));
 		throw RequestException(status);
 	}
-	if (size==0) {
+	std::vector<uint8_t> visibleNames;
+	if (hideAclNames) {
+		visibleNames = filterAclXattrNames(buff, leng);
+		buff = visibleNames.data();
+		leng = visibleNames.size();
+	}
+	// A list filtered down to nothing answers any buffer size.
+	if (size==0 || leng==0) {
 		oplog_printf(ctx, "listxattr (%" PRIiNode ",%" PRIu64 "): OK (%" PRIu32 ")",
 				ino,
 				(uint64_t)size,
@@ -3642,6 +3667,7 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 		unsigned negative_cache_timeout_, unsigned negative_cache_size_,
 		double entry_cache_timeout_, double attr_cache_timeout_, int mkdir_copy_sgid_,
 		SugidClearMode sugid_clear_mode_, bool use_rwlock_,
+		bool enable_acl_, bool enable_xattrs_,
 		double acl_cache_timeout_, unsigned acl_cache_size_, bool direct_io,
 #ifdef _WIN32
 		int mounting_uid_, int mounting_gid_, std::unordered_set<uint32_t> &allowed_users_,
@@ -3675,6 +3701,9 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 	mkdir_copy_sgid = mkdir_copy_sgid_;
 	sugid_clear_mode = static_cast<decltype (sugid_clear_mode)>(sugid_clear_mode_);
 	use_rwlock = use_rwlock_;
+	gEnableXattrs = enable_xattrs_;
+	// ACLs are exposed as xattrs; clamped here so the C API gets the rule too.
+	gEnableAcl = enable_acl_ && enable_xattrs_;
 	uint64_t timeout = (uint64_t)(direntry_cache_timeout * 1000000);
 	gDirEntryCache.setTimeout(timeout);
 	gDirEntryCacheMaxSize = direntry_cache_size_;
@@ -3687,6 +3716,8 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 		safs::log_debug("mkdir copy sgid={} sugid clear mode={}",
 		                mkdir_copy_sgid_, sugidClearModeString(sugid_clear_mode_));
 		safs::log_debug("RW lock {}", use_rwlock ? "enabled" : "disabled");
+		safs::log_debug("ACL support {}", gEnableAcl.load() ? "enabled" : "disabled");
+		safs::log_debug("XATTR support {}", gEnableXattrs.load() ? "enabled" : "disabled");
 		safs::log_debug("ACL acl_cache_timeout={:.2f}, acl_cache_size={}\n",
 		                acl_cache_timeout_, acl_cache_size_);
 	}
@@ -3812,6 +3843,7 @@ void fs_init(FsInitParams &params) {
 		params.negative_cache_timeout, params.negative_cache_size,
 		params.entry_cache_timeout, params.attr_cache_timeout, params.mkdir_copy_sgid,
 		params.sugid_clear_mode, params.use_rw_lock,
+		params.enable_acl, params.enable_xattrs,
 		params.acl_cache_timeout, params.acl_cache_size, params.direct_io,
 #ifdef _WIN32
 		params.mounting_uid, params.mounting_gid, params.allowed_users,

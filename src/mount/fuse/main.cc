@@ -123,7 +123,12 @@ static void sfs_fsinit(void *userdata, struct fuse_conn_info *conn) {
 
 	fuse_conn_info_opts *conn_opts = (fuse_conn_info_opts *)userdata;
 	fuse_apply_conn_info_opts(conn_opts, conn);
-	conn->want |= FUSE_CAP_POSIX_ACL;
+	// Advertising ACL support would keep the kernel making the calls sfsacl=0 avoids.
+	if (gMountOptions.acl) {
+		conn->want |= FUSE_CAP_POSIX_ACL;
+	} else {
+		conn->want &= ~FUSE_CAP_POSIX_ACL;
+	}
 	conn->want &= ~FUSE_CAP_ATOMIC_O_TRUNC;
 
 	daemonize_return_status(0);
@@ -268,6 +273,8 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	params.mkdir_copy_sgid = gMountOptions.mkdircopysgid;
 	params.sugid_clear_mode = gMountOptions.sugidclearmode;
 	params.use_rw_lock = gMountOptions.rwlock;
+	params.enable_acl = gMountOptions.acl;
+	params.enable_xattrs = gMountOptions.xattrs;
 	params.acl_cache_timeout = gMountOptions.aclcacheto;
 	params.acl_cache_size = gMountOptions.aclcachesize;
 	params.debug_mode = gMountOptions.debug;
@@ -731,6 +738,11 @@ int main(int argc, char *argv[]) try {
 
 	if (!gMountOptions.nostdmountoptions)
 		fuse_opt_add_arg(&args, "-o" DEFAULT_OPTIONS);
+
+	if (gMountOptions.acl && !gMountOptions.xattrs) {
+		fprintf(stderr, "acl support requires xattrs - disabling acl support\n");
+		gMountOptions.acl = 0;
+	}
 
 	if (gMountOptions.aclcachesize > 1000 * 1000) {
 		fprintf(stderr, "acl cache size too big (%u) - decreased to "
