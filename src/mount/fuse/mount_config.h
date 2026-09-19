@@ -77,6 +77,7 @@ struct sfsopts_ {
 	int debug;
 	int delayedinit;
 	int acl;
+	int xattrs;
 	double aclcacheto;
 	unsigned aclcachesize;
 	int rwlock;
@@ -148,7 +149,8 @@ struct sfsopts_ {
 		meta(0),
 		debug(SaunaClient::FsInitParams::kDefaultDebugMode),
 		delayedinit(SaunaClient::FsInitParams::kDefaultDelayedInit),
-		acl(), // deprecated
+		acl(SaunaClient::FsInitParams::kDefaultEnableAcl),
+		xattrs(SaunaClient::FsInitParams::kDefaultEnableXattrs),
 		aclcacheto(SaunaClient::FsInitParams::kDefaultAclCacheTimeout),
 		aclcachesize(SaunaClient::FsInitParams::kDefaultAclCacheSize),
 		rwlock(SaunaClient::FsInitParams::kDefaultUseRwLock),

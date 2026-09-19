@@ -67,6 +67,9 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsmeta", meta, 1),
 	SFS_OPT("sfsdelayedinit", delayedinit, 1),
 	SFS_OPT("sfsacl", acl, 1),
+	SFS_OPT("sfsacl=%d", acl, 0),
+	SFS_OPT("sfsxattrs", xattrs, 1),
+	SFS_OPT("sfsxattrs=%d", xattrs, 0),
 	SFS_OPT("sfsrwlock=%d", rwlock, 0),
 	SFS_OPT("sfsdonotrememberpassword", donotrememberpassword, 1),
 	SFS_OPT("sfscachemode=%s", cachemode, 0),
@@ -168,6 +171,7 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsmeta"] = std::to_string(gMountOptions.meta);
 	gOptsNameValues["sfsdelayedinit"] = std::to_string(gMountOptions.delayedinit);
 	gOptsNameValues["sfsacl"] = std::to_string(gMountOptions.acl);
+	gOptsNameValues["sfsxattrs"] = std::to_string(gMountOptions.xattrs);
 	gOptsNameValues["sfsrwlock"] = std::to_string(gMountOptions.rwlock);
 	gOptsNameValues["sfsdonotrememberpassword"] =
 	    std::to_string(gMountOptions.donotrememberpassword);
@@ -320,8 +324,10 @@ void usage(const char *progname) {
 				"- with this option mount can be run without "
 				"network (good for being run from fstab/init "
 				"scripts etc.)\n"
-"    -o sfsacl                   DEPRECATED, used to enable/disable ACL "
-				"support, ignored now\n"
+"    -o sfsacl=0|1               enable/disable ACL handling, requires sfsxattrs "
+				"(default: %d)\n"
+"    -o sfsxattrs=0|1            enable/disable extended attribute handling "
+				"(default: %d)\n"
 "    -o sfsrwlock=0|1            when set to 1, parallel reads from the same "
 				"descriptor are performed (default: %d)\n"
 "    -o sfsmkdircopysgid=N       sgid bit should be copied during mkdir "
@@ -416,6 +422,8 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultWriteWindowSize,
 		SaunaClient::FsInitParams::kDefaultMaxChunksWrittenInParallelPerInode,
 		SaunaClient::FsInitParams::kDefaultUseWriteFlushPacket,
+		SaunaClient::FsInitParams::kDefaultEnableAcl,
+		SaunaClient::FsInitParams::kDefaultEnableXattrs,
 		SaunaClient::FsInitParams::kDefaultUseRwLock,
 		SaunaClient::FsInitParams::kDefaultMkdirCopySgid,
 		sugidClearModeString(SaunaClient::FsInitParams::kDefaultSugidClearMode),

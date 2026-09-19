@@ -89,8 +89,17 @@ Path to the TLS configuration file for client-side TLS settings.
 Connection with master is done in background - with this option mount can be
 run without network (good for being run from fstab / init scripts etc.).
 
-*-o sfsacl*::
-Enable ACL support (disabled by default).
+*-o sfsacl=*'0|1'::
+Enable or disable ACL handling (default: 1). ACLs are exposed through extended
+attributes, so *-o sfsxattrs=0* disables them as well. With ACLs disabled the
+client reports no POSIX ACL support to the kernel, hides the ACL extended
+attributes from *listxattr*, and answers requests for them with ENOTSUP.
+
+*-o sfsxattrs=*'0|1'::
+Enable or disable extended attribute handling (default: 1). With xattrs
+disabled *listxattr* reports an empty list and every other extended attribute
+request answers ENOTSUP. Useful on high-latency links, where the kernel's
+repeated attribute probing dominates the round trip count.
 
 *-o sfsaclcacheto=*'SEC'::
 Set ACL cache timeout in seconds (default: 1.0).
