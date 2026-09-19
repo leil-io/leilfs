@@ -268,7 +268,7 @@ protected:
 	/// @param jobId The ID of the job.
 	/// @param status The status of the job.
 	/// @param listenerId The ID of the listener associated with the job.
-	/// @return 1 if a status is not the last one, 0 if it is the last status.
+	/// @return true if a status was received, false if the queue was empty.
 	bool receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId = 0);
 
 	/// @brief Puts an exit job into the job queue.

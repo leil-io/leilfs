@@ -256,14 +256,11 @@ void JobPool::disableJob(uint32_t jobId, uint32_t listenerId) {
 	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
 	if (listenerInfo == nullptr) { return; }
 
-	std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex, std::defer_lock);
+	std::lock_guard jobsLockGuard(listenerInfo->jobsMutex);
 	auto jobIterator = listenerInfo->jobHash.find(jobId);
-	if (jobIterator != listenerInfo->jobHash.end()) {
-		jobsUniqueLock.lock();
-		if (jobIterator->second->state == JobPool::State::Enabled) {
-			jobIterator->second->state = JobPool::State::Disabled;
-		}
-		jobsUniqueLock.unlock();
+	if (jobIterator != listenerInfo->jobHash.end() &&
+	    jobIterator->second->state == JobPool::State::Enabled) {
+		jobIterator->second->state = JobPool::State::Disabled;
 	}
 }
 
@@ -305,16 +302,17 @@ void JobPool::processCompletedJobs(uint32_t listenerId) {
 
 	uint32_t jobId{};
 	uint8_t status{};
-	bool notLastJob = true;
-	while (notLastJob) {
-		notLastJob = receiveStatus(jobId, status, listenerId);
+	while (receiveStatus(jobId, status, listenerId)) {
+		std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
 		auto jobIterator = listenerInfo->jobHash.find(jobId);
-		if (jobIterator != listenerInfo->jobHash.end()) {
-			auto callback = jobIterator->second->callback;
-			if (callback) { callback(status, jobIterator->second->extra); }
-			listenerInfo->jobHash.erase(jobIterator);
-			unprocessedJobs_.fetch_sub(1, std::memory_order_relaxed);
-		}
+		if (jobIterator == listenerInfo->jobHash.end()) { continue; }
+		auto job = std::move(jobIterator->second);
+		listenerInfo->jobHash.erase(jobIterator);
+		jobsUniqueLock.unlock();
+
+		// A callback may add a job to this pool, so it runs with the table unlocked.
+		if (job->callback) { job->callback(status, job->extra); }
+		unprocessedJobs_.fetch_sub(1, std::memory_order_relaxed);
 	}
 }
 
@@ -329,6 +327,7 @@ void JobPool::changeCallback(uint32_t jobId, JobCallback callback, void *extra,
 	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
 	if (listenerInfo == nullptr) { return; }
 
+	std::lock_guard jobsLockGuard(listenerInfo->jobsMutex);
 	auto jobIterator = listenerInfo->jobHash.find(jobId);
 	if (jobIterator != listenerInfo->jobHash.end()) {
 		jobIterator->second->callback = std::move(callback);
@@ -346,6 +345,7 @@ void JobPool::changeCallback(std::list<uint32_t> &jobIds, const JobCallback &cal
 	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
 	if (listenerInfo == nullptr) { return; }
 
+	std::lock_guard jobsLockGuard(listenerInfo->jobsMutex);
 	for (auto jobId : jobIds) {
 		auto jobIterator = listenerInfo->jobHash.find(jobId);
 		if (jobIterator != listenerInfo->jobHash.end()) {
@@ -452,7 +452,6 @@ bool JobPool::receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerI
 		eventfd_t dummyEvent;
 		eassert(::eventfd_read(listenerInfo->notifierFD, &dummyEvent) == 0 &&
 		        "JobPool: ReceiveStatus: Failed to read from eventfd");
-		return false;
 	}
 
 	return true;
