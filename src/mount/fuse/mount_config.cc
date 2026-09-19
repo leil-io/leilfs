@@ -81,6 +81,8 @@ struct fuse_opt gSfsOptsStage2[] = {
 	SFS_OPT("sfsaclcacheto=%lf", aclcacheto, 0),
 	SFS_OPT("sfsreportreservedperiod=%u", reportreservedperiod, 0),
 	SFS_OPT("sfsiolimits=%s", iolimits, 0),
+	SFS_OPT("sfschunkserverlatencysort", chunkserverlatencysort, 1),
+	SFS_OPT("sfschunkserverlatencysort=%d", chunkserverlatencysort, 0),
 	SFS_OPT("sfschunkserverrtt=%d", chunkserverrtt, 0),
 	SFS_OPT("sfschunkserverconnectreadto=%d", chunkserverconnectreadto, 0),
 	SFS_OPT("sfschunkserverwavereadto=%d", chunkserverwavereadto, 0),
@@ -186,6 +188,8 @@ void initialize_opts_name_values() {
 	gOptsNameValues["sfsreportreservedperiod"] = std::to_string(gMountOptions.reportreservedperiod);
 	gOptsNameValues["sfsiolimits"] =
 	    gMountOptions.iolimits ? std::string(gMountOptions.iolimits) : "";
+	gOptsNameValues["sfschunkserverlatencysort"] =
+	    std::to_string(gMountOptions.chunkserverlatencysort);
 	gOptsNameValues["sfschunkserverrtt"] = std::to_string(gMountOptions.chunkserverrtt);
 	gOptsNameValues["sfschunkserverconnectreadto"] =
 	    std::to_string(gMountOptions.chunkserverconnectreadto);
@@ -344,6 +348,9 @@ void usage(const char *progname) {
 "    -o sfsaclcacheto=SEC        set ACL cache timeout in seconds (default: %.2f)\n"
 "    -o sfsreportreservedperiod=SEC  set reporting reserved inodes interval in "
 				"seconds (default: %u)\n"
+"    -o sfschunkserverlatencysort=0|1  prefer chunkservers with a lower observed "
+				"round trip time when choosing which replica to read from. Server health "
+				"still takes precedence (default: %d)\n"
 "    -o sfschunkserverrtt=MSEC   set timeout after which SYN packet is "
 				"considered lost during the first retry of "
 				"connecting a chunkserver (default: %u)\n"
@@ -420,6 +427,7 @@ void usage(const char *progname) {
 		SaunaClient::FsInitParams::kDefaultNegativeCacheSize,
 		SaunaClient::FsInitParams::kDefaultAclCacheTimeout,
 		SaunaClient::FsInitParams::kDefaultReportReservedPeriod,
+		SaunaClient::FsInitParams::kDefaultChunkserverLatencySort,
 		SaunaClient::FsInitParams::kDefaultRoundTime,
 		SaunaClient::FsInitParams::kDefaultChunkserverWaveReadTo,
 		SaunaClient::FsInitParams::kDefaultAclCacheSize,

@@ -65,6 +65,7 @@
 #include "mount/client_common.h"
 #include "mount/direntry_cache.h"
 #include "mount/g_io_limiters.h"
+#include "mount/global_chunkserver_stats.h"
 #include "mount/io_limit_group.h"
 #include "mount/mastercomm.h"
 #include "mount/masterproxy.h"
@@ -3762,6 +3763,9 @@ void fs_init(FsInitParams &params) {
 		throw std::runtime_error("Can't initialize I/O limiting");
 	}
 
+	// One ChunkserverStats backs both paths, so decide here rather than per subsystem.
+	globalChunkserverStats.setUseRoundTripTime(params.chunkserver_latency_sort);
+
 	read_data_init(params.io_retries,
 			params.chunkserver_round_time_ms,
 			params.chunkserver_connect_timeout_ms,
@@ -3778,7 +3782,8 @@ void fs_init(FsInitParams &params) {
 
 	WriteAlgorithm::write_data_init(
 	    params.write_cache_size, params.io_retries, params.write_workers, params.write_window_size,
-	    params.chunkserver_write_timeout_ms, params.cache_per_inode_percentage,
+	    params.chunkserver_write_timeout_ms, params.chunkserver_round_time_ms,
+	    params.cache_per_inode_percentage,
 	    params.write_wave_timeout_ms, params.max_chunks_written_in_parallel_per_inode,
 	    params.use_write_flush_packet);
 #ifdef _WIN32

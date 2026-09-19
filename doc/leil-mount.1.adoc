@@ -144,6 +144,24 @@ milliseconds (default: 2000).
 Set chunkserver response timeout during write operation in milliseconds
 (default: 5000).
 
+*-o sfschunkserverlatencysort=*'0|1'::
+When set to 1, prefer chunkservers with a lower observed round trip time when
+choosing which replica to read from, including the reads a write performs to
+complete a partial stripe (default: 0). Server health still takes precedence,
+so a chunkserver recently marked defective is never preferred over a healthy
+one no matter how distant the healthy one is.
++
+Write targets are not affected: the client writes to the chunkservers the
+master supplies, in the order it supplies them.
++
+Round trip times are sampled when the client opens a new connection to a
+chunkserver, and only when that connection succeeds on its first attempt: one
+that succeeded after a retry measures the retry backoff rather than the path.
+Connections served from the connection pool are not sampled, and samples do not
+decay, so on a steady workload the estimate may rest on comparatively few and
+comparatively old observations, and a chunkserver whose connections keep needing
+a retry may carry no estimate at all.
+
 *-o sfschunkserverrtt=*'MSEC'::
 Set timeout after which SYN packet is considered lost during the first retry of
 connecting a chunkserver (default: 200).
