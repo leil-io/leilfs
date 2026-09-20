@@ -37,6 +37,7 @@
 #include "kv/ikv_engine.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/chunks.h"
 #include "master/filesystem_metadata.h"
 #include "master/filesystem_node.h"
 #include "master/filesystem_operations.h"
@@ -496,6 +497,19 @@ TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoKeys) {
 	}
 }
 
+TEST(MetadataUndoRecorderRestore, ChunkRejectsZeroUndoId) {
+	ASSERT_EQ(1, chunk_strinit());
+	RecordingKVEngine engine;
+	ChunkUndoRecorder recorder(&engine);
+	engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	// Chunk ID zero denotes a hole; even an empty undo value is malformed for it.
+	engine.store()[kv::encodeKeyBE(kChunkUndoKeyPrefix, kCheckpointVersion, uint64_t{0})] = {};
+
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+	chunk_unload();
+}
+
 TEST(MetadataUndoRecorderRestore, ChunkRejectsMalformedUndoValues) {
 	RecordingKVEngine engine;
 	ChunkUndoRecorder recorder(&engine);
@@ -533,6 +547,31 @@ TEST(MetadataUndoRecorderRestore, EdgeRejectsMalformedUndoKeys) {
 			    if (recorder.restoreToCheckpointVersion(kCheckpointVersion)) { std::_Exit(1); }
 		    }
 		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MetadataUndoRecorderRestore, EdgeRejectsOversizedUndoName) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    auto restoreWithName = [](size_t nameLength) {
+			    RecordingKVEngine engine;
+			    EdgeUndoRecorder recorder(&engine);
+			    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+			        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+			    kv::Key key = kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, inode_t{41});
+			    key.insert(key.end(), nameLength, uint8_t{'n'});
+			    engine.store()[key] = {};  // Removing an already-absent edge is otherwise valid.
+			    return recorder.restoreToCheckpointVersion(kCheckpointVersion);
+		    };
+
+		    if (!restoreWithName(SFS_NAME_MAX)) { std::_Exit(2); }
+		    std::_Exit(restoreWithName(SFS_NAME_MAX + 1) ? 1 : 0);
 	    },
 	    ::testing::ExitedWithCode(0), "");
 }

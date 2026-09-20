@@ -59,7 +59,7 @@ bool decodeChunkUndoKey(const kv::Key &key, uint64_t &checkpointVersion, uint64_
 	const uint8_t *ptr = key.data() + kChunkUndoKeyPrefix.size();
 	checkpointVersion = get64bit(&ptr);
 	chunkId = get64bit(&ptr);
-	return true;
+	return chunkId != 0;
 }
 
 }  // namespace

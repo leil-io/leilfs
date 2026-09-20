@@ -34,6 +34,7 @@
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_edge_restore_helpers.h"
 #include "master/metadata_edge_undo_recorder.h"
+#include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
 namespace {
@@ -71,7 +72,10 @@ struct DetachedPathUndoEntry {
 // Key format: EDGEU_ + <checkpoint:u64> + <parentId:inode_t> + <name>
 bool decodeEdgeUndoKey(const kv::Key &key, inode_t &parentId, std::string &name) {
 	const size_t fixedSize = kEdgeUndoKeyPrefix.size() + sizeof(uint64_t) + sizeof(inode_t);
-	if (!startsWith(key, kEdgeUndoKeyPrefix) || key.size() <= fixedSize) { return false; }
+	if (!startsWith(key, kEdgeUndoKeyPrefix) || key.size() <= fixedSize ||
+	    key.size() > fixedSize + SFS_NAME_MAX) {
+		return false;
+	}
 
 	const uint8_t *ptr = key.data() + kEdgeUndoKeyPrefix.size() + sizeof(uint64_t);
 	getINode(&ptr, parentId);

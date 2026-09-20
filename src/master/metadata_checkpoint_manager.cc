@@ -18,8 +18,6 @@
 
 #include "common/platform.h"
 
-#include "master/metadata_checkpoint_manager.h"
-
 #include <cstring>
 #include <set>
 #include <string>
@@ -34,6 +32,7 @@
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_checkpoint_helpers.h"
+#include "master/metadata_checkpoint_manager.h"
 #include "master/metadata_section_undo_recorder.h"
 #include "slogger/slogger.h"
 

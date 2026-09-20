@@ -33,8 +33,8 @@
 #include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_edge_undo_recorder.h"
 #include "master/metadata_node_undo_recorder.h"
-#include "master/metadata_xattr_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
+#include "master/metadata_xattr_undo_recorder.h"
 
 /// Snapshot descriptor bound to one metadata checkpoint boundary.
 ///
